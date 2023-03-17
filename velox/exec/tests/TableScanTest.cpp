@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/exec/TableScan.h"
 #include <velox/type/Timestamp.h>
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/tests/GTestUtils.h"
@@ -211,6 +212,7 @@ TEST_F(TableScanTest, allColumns) {
   auto it = planStats.find(scanNodeId);
   ASSERT_TRUE(it != planStats.end());
   ASSERT_TRUE(it->second.peakMemoryBytes > 0);
+  EXPECT_LT(0, exec::TableScan::ioWaitNanos());
 }
 
 TEST_F(TableScanTest, columnAliases) {
@@ -1933,7 +1935,9 @@ TEST_F(TableScanTest, remainingFilterConstantResult) {
           makeFlatVector<int64_t>(size, [](auto row) { return row; }),
           makeFlatVector<StringView>(
               size,
-              [](auto row) { return StringView(fmt::format("{}", row % 23)); }),
+              [](auto row) {
+                return StringView::makeInline(fmt::format("{}", row % 23));
+              }),
       }),
       makeRowVector({
           makeFlatVector<int64_t>(

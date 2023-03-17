@@ -158,6 +158,7 @@ class EvalCtx {
     std::swap(errors_, other);
   }
 
+  /// Adds errors in 'this' to 'other'. Clears errors from 'this'.
   void moveAppendErrors(ErrorVectorPtr& other) {
     if (!errors_) {
       return;

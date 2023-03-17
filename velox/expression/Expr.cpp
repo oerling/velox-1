@@ -178,20 +178,30 @@ bool Expr::allSupportFlatNoNullsFastPath(
 }
 
 void Expr::computeMetadata() {
-  // Sets propagatesNulls if all subtrees that depend on at least one input
-  // field propagate nulls. Sets isDeterministic to false if some subtree is
+  // Sets propagatesNulls_ if a null in any of the columns this
+  // depends on makes the Expr null. If the set of fields
+  // null-propagating arguments depend on is a superset of the fields
+  // non null-propagating arguments depend on and the function itself
+  // has default null behavior, then the Expr propagates nulls.  Sets
+  // isDeterministic to false if some subtree is
   // non-deterministic. Sets 'distinctFields_' to be the union of
-  // 'distinctFields_' of inputs. If one of the inputs has the identical set of
-  // distinct fields, then the input's distinct fields are set to empty.
+  // 'distinctFields_' of inputs. If one of the inputs has the
+  // identical set of distinct fields, then the input's distinct
+  // fields are set to empty.
+  bool isNullPropagatingFunction = false;
   if (isSpecialForm()) {
     // 'propagatesNulls_' will be adjusted after inputs are processed.
     propagatesNulls_ = true;
     deterministic_ = true;
   } else if (vectorFunction_) {
-    propagatesNulls_ = vectorFunction_->isDefaultNullBehavior();
     deterministic_ = vectorFunction_->isDeterministic();
+    isNullPropagatingFunction = vectorFunction_->isDefaultNullBehavior();
+    propagatesNulls_ = isNullPropagatingFunction;
   }
 
+  std::vector<FieldReference*> nullPropagatingFields;
+  std::vector<FieldReference*> nonNullPropagatingFields;
+  std::unordered_set<FieldReference*> ignore;
   for (auto& input : inputs_) {
     // Skip computing for inputs already marked as multiply referenced as they
     // would have it computed already.
@@ -200,13 +210,24 @@ void Expr::computeMetadata() {
     }
     deterministic_ &= input->deterministic_;
     if (!input->distinctFields_.empty()) {
-      propagatesNulls_ &= input->propagatesNulls_;
+      if (!isNullPropagatingFunction) {
+        propagatesNulls_ &= input->propagatesNulls_;
+      } else if (input->propagatesNulls_) {
+        mergeFields(nullPropagatingFields, ignore, input->distinctFields_);
+      } else {
+        mergeFields(nonNullPropagatingFields, ignore, input->distinctFields_);
+      }
     }
     mergeFields(
         distinctFields_, multiplyReferencedFields_, input->distinctFields_);
   }
   if (isSpecialForm()) {
     propagatesNulls_ = propagatesNulls();
+  } else if (isNullPropagatingFunction) {
+    propagatesNulls_ =
+        isSubsetOfFields(nonNullPropagatingFields, nullPropagatingFields);
+  } else {
+    propagatesNulls_ = false;
   }
   for (auto& input : inputs_) {
     if (!input->isMultiplyReferenced_ &&
@@ -219,6 +240,37 @@ void Expr::computeMetadata() {
 }
 
 namespace {
+void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
+  bits::forEachBit(
+      errors->rawNulls(), 0, errors->size(), bits::kNotNull, [&](auto row) {
+        auto exceptionPtr =
+            std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
+        std::rethrow_exception(*exceptionPtr);
+      });
+}
+
+  // Sets errors in 'context' to be the union of 'argumentErrors' and
+// 'errors'. If 'context' throws on first error and 'argumentErrors'
+// has errors, throws the first error in 'argumentErrors'. Otherwise
+// sets 'errors()' of 'context' to the union of the errors. This is
+// used after all arguments of a function call have been evaluated and
+// we decide on whether to throw or what errors to leave in 'context'  for  the
+// caller.
+void mergeOrThrowArgumentErrors(
+    const SelectivityVector& rows,
+    EvalCtx::ErrorVectorPtr& originalErrors,
+    EvalCtx::ErrorVectorPtr& argumentErrors,
+    EvalCtx& context) {
+  if (argumentErrors) {
+    if (context.throwOnError()) {
+      rethrowFirstError(argumentErrors);
+    }
+    context.addErrors(rows, argumentErrors, originalErrors);
+  }
+  context.swapErrors(originalErrors);
+}
+
+  
 // Returns true if vector is a LazyVector that hasn't been loaded yet or
 // is not dictionary, sequence or constant encoded.
 bool isFlat(const BaseVector& vector) {
@@ -237,6 +289,110 @@ bool isFlat(const BaseVector& vector) {
 }
 
 } // namespace
+
+bool MutableRemainingRows::deselectNonErrorNulls(
+    const VectorPtr& result,
+    EvalCtx::ErrorVectorPtr& errors) {
+  const uint64_t* flatNulls = nullptr;
+  if (result->mayHaveNulls()) {
+    decoded_.get()->decode(*result, rows());
+    flatNulls = decoded_.get()->nulls();
+  }
+  // A null with no error deselects the row and clears a possible error. An
+  // error adds itself to argument errors.
+  if (context_.errors()) {
+    // There are new errors.
+    auto& remainingRows = mutableRows();
+    context_.ensureErrorsVectorSize(*context_.errorsPtr(), rows().end());
+    auto newErrors = context_.errors();
+    if (flatNulls) {
+      // There are both nulls and errors. Only a null with no error removes a
+      // row.
+      auto errorNulls = newErrors->rawNulls();
+      auto rowBits = mutableRows().asMutableRange().bits();
+      auto nwords = bits::nwords(rows().end());
+      for (auto i = 0; i < nwords; ++i) {
+        auto nullNoError = errorNulls ? flatNulls[i] | errorNulls[i] : 0;
+        rowBits[i] &= nullNoError;
+        if (errors) {
+          errors->mutableRawNulls()[i] &= nullNoError;
+        }
+      }
+      mutableRows().updateBounds();
+    }
+    context_.moveAppendErrors(errors);
+  } else {
+    // There are no new errors, a null deselects a row and clears an error.
+    if (flatNulls) {
+      if (errors) {
+	errors->addNulls(flatNulls, rows());
+      }
+      deselectNulls(flatNulls);
+    }
+  }
+  return rows().hasSelections();
+}
+
+template <typename EvalArg>
+bool Expr::evalArgsDefaultNulls(
+    MutableRemainingRows& rows,
+    EvalArg evalArg,
+    EvalCtx& context,
+    VectorPtr& result) {
+  EvalCtx::ErrorVectorPtr argumentErrors;
+  EvalCtx::ErrorVectorPtr originalErrors;
+  // Store pre-existing errors locally and clear them from
+  // 'context'. We distinguish between argument errors and
+  // pre-existing ones.
+  if (context.errors()) {
+    context.swapErrors(originalErrors);
+  }
+
+  inputValues_.resize(inputs_.size());
+  {
+    ScopedVarSetter throwErrors(
+        context.mutableThrowOnError(), throwArgumentErrors(context));
+
+    for (int32_t i = 0; i < inputs_.size(); ++i) {
+      evalArg(i);
+      if (!rows.deselectNonErrorNulls(inputValues_[i], argumentErrors)) {
+        break;
+      }
+    }
+  }
+
+  mergeOrThrowArgumentErrors(
+      rows.originalRows(), originalErrors, argumentErrors, context);
+
+  if (!rows.deselectErrors()) {
+    releaseInputValues(context);
+    setAllNulls(rows.originalRows(), context, result);
+    return false;
+  }
+
+  return true;
+}
+
+template <typename EvalArg>
+bool Expr::evalArgsWithNulls(
+    MutableRemainingRows& rows,
+    EvalArg evalArg,
+    EvalCtx& context,
+    VectorPtr& result) {
+  inputValues_.resize(inputs_.size());
+  for (int32_t i = 0; i < inputs_.size(); ++i) {
+    evalArg(i);
+    if (!rows.deselectErrors()) {
+      break;
+    }
+  }
+  if (!rows.rows().hasSelections()) {
+    releaseInputValues(context);
+    setAllNulls(rows.originalRows(), context, result);
+    return false;
+  }
+  return true;
+}
 
 void Expr::evalSimplified(
     const SelectivityVector& rows,
@@ -271,122 +427,6 @@ void Expr::releaseInputValues(EvalCtx& evalCtx) {
   inputValues_.clear();
 }
 
-namespace {
-
-void ensureErrorsSize(EvalCtx::ErrorVector& errors, int32_t size) {
-  if (size > errors.size()) {
-    int32_t oldSize = errors.size();
-    errors.resize(size);
-    for (auto i = oldSize; i < size; ++i) {
-      errors.setNull(i, true);
-    }
-  }
-}
-
-// Adds the errors from 'errors' to 'result'.
-void addErrors(
-    const EvalCtx::ErrorVector& errors,
-    EvalCtx::ErrorVector& result) {
-  ensureErrorsSize(result, errors.size());
-  bits::forEachBit(
-      errors.rawNulls(), 0, errors.size(), bits::kNotNull, [&](auto row) {
-        result.set(row, errors.valueAt(row));
-      });
-}
-
-void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
-  bits::forEachBit(
-      errors->rawNulls(), 0, errors->size(), bits::kNotNull, [&](auto row) {
-        auto exceptionPtr =
-            std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
-        std::rethrow_exception(*exceptionPtr);
-      });
-}
-
-// Sets errors in 'context' to be the union of 'argumentErrors' and
-// 'errors'. If 'context' throws on first error and 'argumentErrors'
-// has errors, throws the first error in 'argumentErrors'. Otherwise
-// sets 'errors()' of 'context' to the union of the errors. This is
-// used after all arguments of a function call have been evaluated and
-// we decide on whether to throw or what errors to leave in 'context'  for  the
-// caller.
-void mergeOrThrowArgumentErrors(
-    const SelectivityVector& rows,
-    EvalCtx::ErrorVectorPtr& originalErrors,
-    EvalCtx::ErrorVectorPtr& argumentErrors,
-    EvalCtx& context) {
-  if (argumentErrors) {
-    if (context.throwOnError()) {
-      rethrowFirstError(argumentErrors);
-    }
-    context.addErrors(rows, argumentErrors, originalErrors);
-  }
-  context.swapErrors(originalErrors);
-}
-
-// Records errors and nulls from evaluating an argument of a
-// function. Called after evaluating each argument. For a null
-// propagating function, a null removes an error on the same row. An
-// error does not deselect the row because a future null could remove
-// the error. For non-null propagating functions, nulls do nothing but
-// errors deselect the row for subsequent arguments. 'rawNulls' is the
-// flat nulls from evaluating the last argument. 'argumentErrors'
-// accumulates errors from all arguments of a function call. This does
-// not include the errors already in effect before the function
-// call. The errors from the last argument are found in
-// context.errors().
-template <typename GetRemainingRows>
-void processNullsAndErrorsFromArgument(
-    const uint64_t* flatNulls,
-    bool defaultNulls,
-    GetRemainingRows getRemainingRows,
-    EvalCtx::ErrorVectorPtr& argumentErrors,
-    EvalCtx& context) {
-  if (!defaultNulls) {
-    // If the function does not propagate nulls, errors simply deselect rows for
-    // next arguments and the function.
-    if (context.errors()) {
-      context.deselectErrors(getRemainingRows());
-      context.moveAppendErrors(argumentErrors);
-    }
-    return;
-  }
-  // A null with no error deselects the row and clears a possible error. An
-  // error adds itself to argument errors.
-  if (context.errors()) {
-    auto& remainingRows = getRemainingRows();
-    ensureErrorsSize(*context.errors(), remainingRows.end());
-    auto newErrors = context.errors();
-    if (flatNulls) {
-      auto errorNulls = newErrors->mutableRawNulls();
-      auto rowBits = remainingRows.asMutableRange().bits();
-      auto nwords = bits::nwords(remainingRows.end());
-      for (auto i = 0; i < nwords; ++i) {
-        auto nullNoError = flatNulls[i] | errorNulls[i];
-        rowBits[i] &= nullNoError;
-        if (argumentErrors) {
-          argumentErrors->mutableRawNulls()[i] &= nullNoError;
-        }
-      }
-      remainingRows.updateBounds();
-    }
-    context.moveAppendErrors(argumentErrors);
-  } else {
-    if (flatNulls) {
-      auto& remainingRows = getRemainingRows();
-      if (argumentErrors) {
-        // A null with no error clears an error. If the null behavior is
-        // non-default, flatNulls is nullptr.
-        argumentErrors->addNulls(flatNulls, remainingRows);
-      }
-      remainingRows.deselectNulls(
-          flatNulls, remainingRows.begin(), remainingRows.end());
-    }
-  }
-}
-
-} // namespace
-
 void Expr::evalSimplifiedImpl(
     const SelectivityVector& rows,
     EvalCtx& context,
@@ -397,69 +437,34 @@ void Expr::evalSimplifiedImpl(
     return;
   }
 
-  SelectivityVector remainingRows = rows;
-  inputValues_.resize(inputs_.size());
+  MutableRemainingRows remainingRows (rows, context);
   const bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
-
-  LocalDecodedVector decodedVector(context);
-
-  EvalCtx::ErrorVectorPtr argumentErrors;
-  EvalCtx::ErrorVectorPtr originalErrors;
-  if (context.errors()) {
-    context.swapErrors(originalErrors);
-  }
-
-  {
-    ScopedVarSetter throwErrors(
-        context.mutableThrowOnError(), throwArgumentErrors(context));
-
-    for (int32_t i = 0; i < inputs_.size(); ++i) {
-      auto& inputValue = inputValues_[i];
-      inputs_[i]->evalSimplified(remainingRows, context, inputValue);
-
-      BaseVector::flattenVector(inputValue, rows.end());
-      VELOX_CHECK(
-          inputValue->encoding() == VectorEncoding::Simple::FLAT ||
-          inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
-          inputValue->encoding() == VectorEncoding::Simple::MAP ||
-          inputValue->encoding() == VectorEncoding::Simple::ROW);
-
-      const uint64_t* flatNulls = nullptr;
-      if (defaultNulls && inputValue->mayHaveNulls()) {
-        decodedVector.get()->decode(*inputValue, rows);
-        flatNulls = decodedVector->nulls();
-      }
-      processNullsAndErrorsFromArgument(
-          flatNulls,
-          defaultNulls,
-          [&]() -> SelectivityVector& { return remainingRows; },
-          argumentErrors,
-          context);
-
-      if (flatNulls) {
-        // All rows are null, return a null constant.
-        if (!remainingRows.hasSelections()) {
-          releaseInputValues(context);
-          result = BaseVector::createNullConstant(
-              type(), rows.size(), context.pool());
-          mergeOrThrowArgumentErrors(
-              rows, originalErrors, argumentErrors, context);
-          return;
-        }
-      }
+  auto evalArg = [&](int32_t i) {
+    auto& inputValue = inputValues_[i];
+    inputs_[i]->evalSimplified(remainingRows.rows(), context, inputValue);
+    
+    BaseVector::flattenVector(inputValue, rows.end());
+    VELOX_CHECK(
+		inputValue->encoding() == VectorEncoding::Simple::FLAT ||
+		inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
+		inputValue->encoding() == VectorEncoding::Simple::MAP ||
+		inputValue->encoding() == VectorEncoding::Simple::ROW);
+  };
+  
+  if (defaultNulls) {
+    if (!evalArgsDefaultNulls(
+            remainingRows,
+	    evalArg,
+	    context,
+            result)) {
+      return;
     }
-  }
-  mergeOrThrowArgumentErrors(rows, originalErrors, argumentErrors, context);
-
-  // We need to deselect rows with errors since otherwise they will
-  // be cleared by Conjunct special form , as current assumption is
-  // that they are only invoked on rows that do not have exceptions.
-  if (context.errors()) {
-    context.deselectErrors(remainingRows);
-    if (!remainingRows.hasSelections()) {
-      releaseInputValues(context);
-      result =
-          BaseVector::createNullConstant(type(), rows.size(), context.pool());
+  } else {
+    if (!evalArgsWithNulls(
+            remainingRows,
+	    evalArg,
+            context,
+            result)) {
       return;
     }
   }
@@ -467,7 +472,7 @@ void Expr::evalSimplifiedImpl(
   // Apply the actual function.
   try {
     vectorFunction_->apply(
-        remainingRows, inputValues_, type(), context, result);
+			   remainingRows.rows(), inputValues_, type(), context, result);
   } catch (const VeloxException& ve) {
     throw;
   } catch (const std::exception& e) {
@@ -475,7 +480,7 @@ void Expr::evalSimplifiedImpl(
   }
 
   // Make sure the returned vector has its null bitmap properly set.
-  addNulls(rows, remainingRows.asRange().bits(), context, result);
+  addNulls(rows, remainingRows.rows().asRange().bits(), context, result);
   releaseInputValues(context);
 }
 
@@ -1364,69 +1369,6 @@ inline bool isPeelable(VectorEncoding::Simple encoding) {
       return false;
   }
 }
-
-/// Maintains a set of rows for evaluation and removes rows with
-/// nulls or errors as needed. Helps to avoid copying SelectivityVector in cases
-/// when evaluation doesn't encounter nulls or errors.
-class MutableRemainingRows {
- public:
-  /// @param rows Initial set of rows.
-  MutableRemainingRows(const SelectivityVector& rows, EvalCtx& context)
-      : context_{context}, rows_{&rows}, mutableRowsHolder_{context} {}
-
-  /// @return current set of rows which may be different from the initial set if
-  /// deselectNulls or deselectErrors were called.
-  const SelectivityVector& rows() const {
-    return *rows_;
-  }
-
-  SelectivityVector& mutableRows() {
-    ensureMutableRemainingRows();
-    return *mutableRows_;
-  }
-
-  /// Removes rows with nulls.
-  /// @return true if at least one row remains.
-  bool deselectNulls(const uint64_t* rawNulls) {
-    ensureMutableRemainingRows();
-    mutableRows_->deselectNulls(rawNulls, rows_->begin(), rows_->end());
-
-    return mutableRows_->hasSelections();
-  }
-
-  /// Removes rows with errors (as recorded in EvalCtx::errors).
-  /// @return true if at least one row remains.
-  bool deselectErrors() {
-    ensureMutableRemainingRows();
-    context_.deselectErrors(*mutableRows_);
-
-    return mutableRows_->hasSelections();
-  }
-
-  /// @return true if current set of rows might be different from the original
-  /// set of rows, which may happen if deselectNull() or deselectErrors() were
-  /// called. May return 'true' even if current set of rows is the same as
-  /// original set. Returns 'false' only if current set of rows is for sure the
-  /// same as original.
-  bool mayHaveChanged() const {
-    return mutableRows_ != nullptr && !mutableRows_->isAllSelected();
-  }
-
- private:
-  void ensureMutableRemainingRows() {
-    if (mutableRows_ == nullptr) {
-      mutableRows_ = mutableRowsHolder_.get(*rows_);
-      rows_ = mutableRows_;
-    }
-  }
-
-  EvalCtx& context_;
-  const SelectivityVector* rows_;
-
-  SelectivityVector* mutableRows_{nullptr};
-  LocalSelectivityVector mutableRowsHolder_;
-};
-
 } // namespace
 
 void Expr::evalAll(
@@ -1475,62 +1417,30 @@ void Expr::evalAllImpl(
   // Tracks what subset of rows shall un-evaluated inputs and current expression
   // evaluates. Initially points to rows.
   MutableRemainingRows remainingRows(rows, context);
-  LocalDecodedVector localDecoded(context);
-
-  EvalCtx::ErrorVectorPtr argumentErrors;
-  EvalCtx::ErrorVectorPtr originalErrors;
-  // Store pre-existing errors locally and clear them from
-  // 'context'. We distinguish between argument errors and
-  // pre-existing ones.
-  if (context.errors()) {
-    context.swapErrors(originalErrors);
-  }
-
-  inputValues_.resize(inputs_.size());
-  {
-    ScopedVarSetter throwErrors(
-        context.mutableThrowOnError(), throwArgumentErrors(context));
-
-    for (int32_t i = 0; i < inputs_.size(); ++i) {
-      inputs_[i]->eval(remainingRows.rows(), context, inputValues_[i]);
-      const uint64_t* flatNulls = nullptr;
-      if (defaultNulls && inputValues_[i]->mayHaveNulls()) {
-        localDecoded.get()->decode(*inputValues_[i], rows);
-        flatNulls = localDecoded->nulls();
-      }
-
-      processNullsAndErrorsFromArgument(
-          flatNulls,
-          defaultNulls,
-          [&]() -> SelectivityVector& { return remainingRows.mutableRows(); },
-          argumentErrors,
-          context);
-
-      tryPeelArgs = tryPeelArgs && isPeelable(inputValues_[i]->encoding());
-      if (!remainingRows.rows().hasSelections()) {
-        releaseInputValues(context);
-        setAllNulls(rows, context, result);
-        mergeOrThrowArgumentErrors(
-            rows, originalErrors, argumentErrors, context);
-        return;
-      }
+  if (defaultNulls) {
+    if (!evalArgsDefaultNulls(
+            remainingRows,
+            [&](auto i) {
+              inputs_[i]->eval(remainingRows.rows(), context, inputValues_[i]);
+              tryPeelArgs =
+                  tryPeelArgs && isPeelable(inputValues_[i]->encoding());
+            },
+	    context,
+            result)) {
+      return;
     }
-  }
-
-  mergeOrThrowArgumentErrors(rows, originalErrors, argumentErrors, context);
-
-  // If any errors occurred evaluating the arguments, it's possible (even
-  // likely) that the values for those arguments were not defined which
-  // could lead to undefined behavior if we try to evaluate the current
-  // function on them.  It's safe to skip evaluating them since the value
-  // for this branch of the expression tree will be NULL for those rows
-  // anyway.
-
-  if (context.errors() && !remainingRows.deselectErrors()) {
-    // All rows are either null or have an error.
-    releaseInputValues(context);
-    setAllNulls(rows, context, result);
-    return;
+  } else {
+    if (!evalArgsWithNulls(
+            remainingRows,
+            [&](auto i) {
+              inputs_[i]->eval(remainingRows.rows(), context, inputValues_[i]);
+              tryPeelArgs =
+                  tryPeelArgs && isPeelable(inputValues_[i]->encoding());
+            },
+            context,
+            result)) {
+      return;
+    }
   }
 
   if (!tryPeelArgs ||
