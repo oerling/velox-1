@@ -249,7 +249,7 @@ void rethrowFirstError(const EvalCtx::ErrorVectorPtr& errors) {
       });
 }
 
-  // Sets errors in 'context' to be the union of 'argumentErrors' and
+// Sets errors in 'context' to be the union of 'argumentErrors' and
 // 'errors'. If 'context' throws on first error and 'argumentErrors'
 // has errors, throws the first error in 'argumentErrors'. Otherwise
 // sets 'errors()' of 'context' to the union of the errors. This is
@@ -270,7 +270,6 @@ void mergeOrThrowArgumentErrors(
   context.swapErrors(originalErrors);
 }
 
-  
 // Returns true if vector is a LazyVector that hasn't been loaded yet or
 // is not dictionary, sequence or constant encoded.
 bool isFlat(const BaseVector& vector) {
@@ -325,7 +324,7 @@ bool MutableRemainingRows::deselectNonErrorNulls(
     // There are no new errors, a null deselects a row and clears an error.
     if (flatNulls) {
       if (errors) {
-	errors->addNulls(flatNulls, rows());
+        errors->addNulls(flatNulls, rows());
       }
       deselectNulls(flatNulls);
     }
@@ -437,34 +436,26 @@ void Expr::evalSimplifiedImpl(
     return;
   }
 
-  MutableRemainingRows remainingRows (rows, context);
+  MutableRemainingRows remainingRows(rows, context);
   const bool defaultNulls = vectorFunction_->isDefaultNullBehavior();
   auto evalArg = [&](int32_t i) {
     auto& inputValue = inputValues_[i];
     inputs_[i]->evalSimplified(remainingRows.rows(), context, inputValue);
-    
+
     BaseVector::flattenVector(inputValue, rows.end());
     VELOX_CHECK(
-		inputValue->encoding() == VectorEncoding::Simple::FLAT ||
-		inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
-		inputValue->encoding() == VectorEncoding::Simple::MAP ||
-		inputValue->encoding() == VectorEncoding::Simple::ROW);
+        inputValue->encoding() == VectorEncoding::Simple::FLAT ||
+        inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
+        inputValue->encoding() == VectorEncoding::Simple::MAP ||
+        inputValue->encoding() == VectorEncoding::Simple::ROW);
   };
-  
+
   if (defaultNulls) {
-    if (!evalArgsDefaultNulls(
-            remainingRows,
-	    evalArg,
-	    context,
-            result)) {
+    if (!evalArgsDefaultNulls(remainingRows, evalArg, context, result)) {
       return;
     }
   } else {
-    if (!evalArgsWithNulls(
-            remainingRows,
-	    evalArg,
-            context,
-            result)) {
+    if (!evalArgsWithNulls(remainingRows, evalArg, context, result)) {
       return;
     }
   }
@@ -472,7 +463,7 @@ void Expr::evalSimplifiedImpl(
   // Apply the actual function.
   try {
     vectorFunction_->apply(
-			   remainingRows.rows(), inputValues_, type(), context, result);
+        remainingRows.rows(), inputValues_, type(), context, result);
   } catch (const VeloxException& ve) {
     throw;
   } catch (const std::exception& e) {
@@ -1425,7 +1416,7 @@ void Expr::evalAllImpl(
               tryPeelArgs =
                   tryPeelArgs && isPeelable(inputValues_[i]->encoding());
             },
-	    context,
+            context,
             result)) {
       return;
     }
