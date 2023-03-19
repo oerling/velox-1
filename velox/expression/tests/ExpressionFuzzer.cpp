@@ -1203,11 +1203,11 @@ void ExpressionFuzzer::drilldownRecursive(
     // Re-running the minimum failed. Put breakpoint here to debug.
     try2(plan, rowVector, columnsToWrapInLazy);
     if (!columnsToWrapInLazy.empty()) {
-	LOG(INFO) << "Trying without lazy:";
-	if (try2(plan, rowVector, {})) {
-	  LOG(INFO) << "Minimal failure succeeded without lazy vectors";
-	}
+      LOG(INFO) << "Trying without lazy:";
+      if (try2(plan, rowVector, {})) {
+        LOG(INFO) << "Minimal failure succeeded without lazy vectors";
       }
+    }
   }
 }
 
