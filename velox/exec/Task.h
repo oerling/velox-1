@@ -139,11 +139,20 @@ class Task : public std::enable_shared_from_this<Task> {
   /// This API is available for query plans that do not use
   /// PartitionedOutputNode and LocalPartitionNode plan nodes.
   ///
-  /// The caller is required to add all the necessary splits and signal
-  /// no-more-splits before calling 'next' for the first time. The operators in
-  /// the pipeline are not allowed to block for external events, but can block
-  /// waiting for data to be produced by a different pipeline of the same task.
-  RowVectorPtr next();
+  /// The caller is required to add all the necessary splits, and signal
+  /// no-more-splits before calling 'next' for the first time.
+  ///
+  /// If no `future` is provided, the operators in the pipeline are not allowed
+  /// to block for external events, but can block waiting for data to be
+  /// produced by a different pipeline of the same task.
+  ///
+  /// If `future` is provided, the operators in the pipeline can block
+  /// externally. When any operators are blocked externally, the function lets
+  /// all non-blocked operators to run until completion, returns nullptr and
+  /// updates `future`. `future` is realized when the operators are no longer
+  /// blocked. Caller thread is responsible to wait for future before calling
+  /// `next` again.
+  RowVectorPtr next(ContinueFuture* FOLLY_NULLABLE future = nullptr);
 
   /// Resumes execution of 'self' after a successful pause. All 'drivers_' must
   /// be off-thread and there must be no 'exception_'
@@ -274,6 +283,17 @@ class Task : public std::enable_shared_from_this<Task> {
       int pipelineId,
       uint32_t driverId,
       const std::string& operatorType);
+
+  /// Creates new instance of MemoryPool for the connector writer used by a
+  /// table write operator, stores it in the task to ensure lifetime and returns
+  /// a raw pointer. Not thread safe, e.g. must be called from the Operator's
+  /// constructor.
+  velox::memory::MemoryPool* addConnectorWriterPoolLocked(
+      const core::PlanNodeId& planNodeId,
+      int pipelineId,
+      uint32_t driverId,
+      const std::string& operatorType,
+      const std::string& connectorId);
 
   /// Creates new instance of MemoryPool for a merge source in a
   /// MergeExchangeNode, stores it in the task to ensure lifetime and returns a
@@ -536,6 +556,9 @@ class Task : public std::enable_shared_from_this<Task> {
   void testingVisitDrivers(const std::function<void(Driver*)>& callback);
 
  private:
+  // Returns time (ms) since the task execution started or zero, if not started.
+  uint64_t timeSinceStartMsLocked() const;
+
   // Returns reference to the SplitsState structure for the specified plan node
   // id. Throws if not found, meaning that plan node does not expect splits.
   SplitsState& getPlanNodeSplitsStateLocked(const core::PlanNodeId& planNodeId);
