@@ -79,12 +79,13 @@ class MutableRemainingRows {
   /// @param rows Initial set of rows.
   MutableRemainingRows(const SelectivityVector& rows, EvalCtx& context)
       : context_{context},
+        originalRows_{&rows},
         rows_{&rows},
         mutableRowsHolder_{context},
         decoded_(context) {}
 
   const SelectivityVector& originalRows() const {
-    return *rows_;
+    return *originalRows_;
   }
 
   /// @return current set of rows which may be different from the initial set if
@@ -144,6 +145,8 @@ class MutableRemainingRows {
   }
 
   EvalCtx& context_;
+  const SelectivityVector* const originalRows_;
+
   const SelectivityVector* rows_;
 
   SelectivityVector* mutableRows_{nullptr};
