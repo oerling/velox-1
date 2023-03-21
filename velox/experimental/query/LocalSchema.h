@@ -9,17 +9,25 @@
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *0123 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 
-#include "velox/experimental/query/LocalRunner.h"
+#pragma once
 
-namespace facebook::velox::exec {
+namespace facebook::verax {
 
-test::TaskCursor* LocalRunner::cursor() {
-  return nullptr;
-}
+class LocalSchema : public SchemaSource {
+ public:
+  LocalSchema(std::string& path);
 
-} // namespace facebook::velox::exec
+  void addTable(const std::string& name, SchemaPtr schema) override;
+
+ private:
+  std::unordered_set<std::string> tableNames_;  
+  
+};
+
+
+} // namespace facebook::verax

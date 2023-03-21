@@ -17,6 +17,8 @@
 
 #include "velox/common/base/SimdUtil.h"
 #include "velox/core/PlanNode.h"
+#include "velox/parse/PlanNodeIdGenerator.h"
+#include "velox/experimental/query/ExecutablePlan.h"
 #include "velox/experimental/query/RelationOp.h"
 /// Planning-time data structures. Represent the state of the planning process
 /// plus utilities.
@@ -340,11 +342,9 @@ class Optimization {
   /// Returns the optimized RelationOp plan for 'plan' given at construction.
   PlanPtr bestPlan();
 
-  /// Returns   a Velox PlanNode tree for a RelationOp tree.
-  std::shared_ptr<const velox::core::PlanNode> toVeloxPlan(
-      RelationOpPtr /*plan*/) {
-    VELOX_NYI();
-  }
+  /// Returns a set of per-stage Velox PlanNode trees.
+  std::vector<velox::exec::ExecutableFragment> toVeloxPlan(RelationOpPtr plan, const velox::exec::ExecutablePlanOptions& options);
+										  
 
   // Produces trace output if event matches 'traceFlags_'.
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
@@ -404,6 +404,12 @@ class Optimization {
   ExprVector translateColumns(
       const std::vector<velox::core::FieldAccessTypedExprPtr>& source);
 
+  // Records the use of a TypePtr in a Value. Allows mapping from the Type* back to TypePtr.
+  void registerType(const velox::TypePtr& type);
+
+  // Maps from Type* to the original TypePtr. Used when reconstructing Velox plans from RelationOp.
+  velox::TypePtr toTypePtr(const velox::Type* type);
+  
   // Adds a JoinEdge corresponding to 'join' to the enclosing DerivedTable.
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
@@ -513,6 +519,13 @@ class Optimization {
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
+  // Translates from Expr to Velox.
+  velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
+  
+  velox::core::PlanNodePtr makeFragment(
+    RelationOpPtr op,
+    velox::exec::ExecutableFragment& fragment,
+    std::vector<velox::exec::ExecutableFragment>& stages);
   const Schema& schema_;
   const velox::core::PlanNode& inputPlan_;
   DerivedTablePtr root_;
@@ -525,10 +538,16 @@ class Optimization {
   // Maps unique core::TypedExprs from 'inputPlan_' to deduplicated Exps.
   ExprDedupMap exprDedup_;
 
+  // Maps raw Type* back to shared TypePtr. Needed for  reconstructing core::PlanNodes from RelationOp.
+  std::unordered_map<const velox::Type*, velox::TypePtr> toTypePtr_;
+  
   // Counter for generating unique correlation names for BaseTables and
   // DerivedTables.
   int32_t nameCounter_{0};
 
+  // Serial number for stages in executable plan.
+  int32_t stageCounter_{0};
+  
   std::unordered_map<MemoKey, PlanSet> memo_;
 
   // The top level PlanState. Contains the set of top level interesting plans.
@@ -545,6 +564,9 @@ class Optimization {
   // from the topmost (final) and the input from the lefmost (whichever consumes
   // raw values). Records the output type of the final aggregation.
   velox::RowTypePtr aggFinalType_;
+
+  velox::exec::ExecutablePlanOptions options_;
+  velox::core::PlanNodeIdGenerator idGenerator_;
 };
 
 /// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().

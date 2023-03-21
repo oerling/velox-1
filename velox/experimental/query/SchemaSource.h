@@ -14,12 +14,20 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/LocalRunner.h"
+#pragma once
 
-namespace facebook::velox::exec {
+#include "velox/experimental/query/Schema.h"
 
-test::TaskCursor* LocalRunner::cursor() {
-  return nullptr;
+namespace facebook::verax {
+
+/// Abstract class for accessing schema information.
+class SchemaSource {
+public:
+  
+  // Creates information on 'table' in 'schema'. The information is allocated in the QueryGraphContext of the calling thread.
+  virtual void addTable(std::string_view name, SchemaPtr schema) = 0; 
+};
+
+
+  
 }
-
-} // namespace facebook::velox::exec

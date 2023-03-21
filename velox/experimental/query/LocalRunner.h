@@ -15,31 +15,33 @@
  */
 #pragma once
 
-#include "velox/exec/task.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/experimental/query/ExecutablePlan.h"
 
 namespace facebook::velox::exec {
-
+  
 class LocalRunner {
  public:
   LocalRunner(
-      std::vector<const LocalFragment> plan,
+      std::vector<ExecutableFragment> plan,
       std::shared_ptr<core::QueryCtx> queryCtx,
-      int32_t numDrivers) {
-    queryCtx_(std::move(queryCtx)), numDrivers_(numDrivers),
+      int32_t numDrivers)
+    : 
+        numDrivers_(numDrivers),
         plan_(std::move(plan)) {
-      params_.queryCtx = queryCtx;
-    }
+    params_.queryCtx = queryCtx;
   }
+	LocalRunner(const std::string& text, verax::SchemaPrtr schema, StatsSource* stats);
+	
+  test::TaskCursor*
+cursor();
 
- private:
-  test::CursorParameters params_;
-  std::vector<const LocalFragment> plan_;
-  const int32_t numDrivers_;
-  std::unique_ptr<test::TaskCursor> cursor_;
-  std::vector<std::vector<std::shared_ptr<Task>>> stages_;
-  test::TaskCursor cursor_;
+private:
+test::CursorParameters params_;
+const int32_t numDrivers_;
+std::vector<ExecutableFragment> plan_;
+std::unique_ptr<test::TaskCursor> cursor_;
+std::vector<std::vector<std::shared_ptr<Task>>> stages_;
 };
 
 } // namespace facebook::velox::exec

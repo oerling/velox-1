@@ -26,16 +26,19 @@
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-#include "velox/exec/tests/utils/TpchQueryBuilder.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/experimental/query/Plan.h"
+#include "velox/experimental/query/LocalRunner.h"
+#include "velox/parse/QueryPlanner.h"
+#include "velox/exec/tests/utils/HiveConnectorTestbase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
+
 
 namespace {
 static bool notEmpty(const char* /*flagName*/, const std::string& value) {
@@ -55,10 +58,6 @@ static bool validateDataFormat(const char* flagname, const std::string& value) {
   return false;
 }
 
-void ensureTaskCompletion(exec::Task* task) {
-  // ASSERT_TRUE requires a function with return type void.
-  ASSERT_TRUE(waitForTaskCompletion(task));
-}
 
 void printResults(const std::vector<RowVectorPtr>& results) {
   std::cout << "Results:" << std::endl;
@@ -105,7 +104,7 @@ DEFINE_string(
     DEFINE_validator(data_path, &notEmpty);
 DEFINE_validator(data_format, &validateDataFormat);
 
-class VeloxRunner {
+class VeloxRunner : public HiveConnectorTestBase {
  public:
   void initialize() {
     if (FLAGS_cache_gb) {
@@ -139,9 +138,9 @@ class VeloxRunner {
     connector::registerConnector(hiveConnector);
   }
 
-  std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> run(
+  std::unique_ptr<TaskCursor> run(
       const TpchPlan& tpchPlan) {
-    int32_t repeat = 0;
+
     try {
       for (;;) {
         CursorParameters params;

@@ -154,6 +154,26 @@ struct Distribution {
     return result;
   }
 
+  /// Returns a distribution for an end of query gather from last stage
+  /// fragments. Specifying order will create a merging exchange when the
+  /// Distribution occurs in a Repartition.
+  static Distribution gather(
+      DistributionType type,
+      const ExprVector& order = {},
+      const OrderTypeVector& orderType = {}) {
+    auto singleType = type;
+    singleType.numPartitions = 1;
+    return Distribution(singleType, 1, {}, order, orderType);
+  }
+
+  /// Returns a copy of 'this' with 'order' and 'orderType' set from arguments.
+  Distribution copyWithOrder(ExprVector order, OrderTypeVector orderType) const {
+    Distribution copy = *this;
+    copy.order = order;
+    copy.orderType = orderType;
+    return copy;
+  }
+  
   /// True if 'this' and 'other' have the same number/type of keys and same
   /// distribution type. Data is copartitioned if both sides have a 1:1 equality
   /// on all partitioning key columns.

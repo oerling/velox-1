@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/LocalRunner.h"
+#pragma once
 
-namespace facebook::velox::exec {
+#include "velox/experimental/query/Schema.h"
 
-test::TaskCursor* LocalRunner::cursor() {
-  return nullptr;
-}
+namespace facebook::verax {
 
-} // namespace facebook::velox::exec
+LocalSchema::LocalSchema(const std::string& path) {}
+
+void LocalSchema::addTable(const std::string& name, SchemaPtr schema) {}
+} // namespace facebook::verax

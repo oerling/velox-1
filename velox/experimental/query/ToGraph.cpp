@@ -31,6 +31,7 @@ void Optimization::setDerivedTableOutput(
   auto& outputType = planNode.outputType();
   for (auto i = 0; i < outputType->size(); ++i) {
     auto fieldType = outputType->childAt(i);
+    registerType(fieldType);
     auto fieldName = outputType->nameOf(i);
     auto expr = translateColumn(fieldName);
     Value value(fieldType.get(), 0);
@@ -95,7 +96,24 @@ void Optimization::translateConjuncts(
   }
 }
 
+  void Optimization::registerType(const TypePtr& type) {
+    if (toTypePtr_.find(type.get()) != toTypePtr_.end()) {
+      return;
+    }
+    toTypePtr_[type.get()] = type;
+  }
+
+  TypePtr Optimization::toTypePtr(const Type* type) {
+    auto it = toTypePtr_.find(type);
+    if (it != toTypePtr_.end()) {
+      return it->second;
+    }
+    VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
+  }
+
+  
 ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
+  registerType(expr->type());
   if (auto name = columnName(expr)) {
     return translateColumn(*name);
   }
@@ -151,6 +169,7 @@ ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
+    registerType(source[i]->type());
     result[i] = translateColumn(source[i]->name()); // NOLINT
   }
   return result;
@@ -259,6 +278,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   velox::RowTypePtr type =
       node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
   for (auto i = 0; i < type->size(); ++i) {
+    registerType(type->childAt(i));
     ExprPtr inner = translateColumn(type->nameOf(i));
     newDt->exprs.push_back(inner);
     Declare(Column, outer, toName(type->nameOf(i)), newDt, inner->value());
