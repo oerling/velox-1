@@ -727,7 +727,8 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
     // with 16 bytes of tags and 16 * 6 bytes of pointers and a
     // padding of 16 bytes to round up the cache line.
     auto numPages = bits::roundUp(size * sizeof(char*), kPageSize) / kPageSize;
-    rows_->pool()->allocateContiguous(numPages, tableAllocation_);    tags_ = tableAllocation_.data<uint8_t>();
+    rows_->pool()->allocateContiguous(numPages, tableAllocation_);
+    tags_ = tableAllocation_.data<uint8_t>();
     table_ = nullptr;
     memset(tags_, 0, capacity_ * sizeof(char*));
   } else {
