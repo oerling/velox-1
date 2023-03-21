@@ -296,16 +296,15 @@ int main(int argc, char** argv) {
   bm.makeBenchmark("Str4_50", varchar4, 2000, 50);
 
   // Strings dictionary encoded.
-  bm.makeBenchmark("StrDict4_10K", varchar4, 10, 10000, 4000, true, false, true);
+  bm.makeBenchmark("StrDict4_10K", varchar4, 10, 10000, 800, true, false, true);
   bm.makeBenchmark("StrDict4_50", varchar4, 2000, 50, 80, true, false, true);
 
   // Strings with dictionary base values shared between batches.
   bm.makeBenchmark(
-      "StrRepDict4_10K", varchar4, 10, 10000, 4000, true, true, true);
+      "StrRepDict4_10K", varchar4, 10, 10000, 8000, true, true, true);
   bm.makeBenchmark(
-      "StrRepDict4_50", varchar4, 2000, 50, 80, true, true, true);
+      "StrRepDict4_50", varchar4, 2000, 50, 8000, true, true, true);
 
-  
   folly::runBenchmarks();
   return 0;
 }

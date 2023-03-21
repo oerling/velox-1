@@ -178,11 +178,11 @@ bool Expr::allSupportFlatNoNullsFastPath(
 }
 
 void Expr::computeMetadata() {
-  // Sets propagatesNulls_ if a null in any of the dependent columns
-  // makes the Expr null.  field propagate nulls. If the set of fields
-  // null-propagating arguments depend on is a superset of fields non
-  // nul-propagating arguments depend on and the function itself has
-  // default null behavior the Expr propagates nulls.  Sets
+  // Sets propagatesNulls_ if a null in any of the columns this
+  // depends on makes the Expr null. If the set of fields
+  // null-propagating arguments depend on is a superset of the fields
+  // non null-propagating arguments depend on and the function itself
+  // has default null behavior, then the Expr propagates nulls.  Sets
   // isDeterministic to false if some subtree is
   // non-deterministic. Sets 'distinctFields_' to be the union of
   // 'distinctFields_' of inputs. If one of the inputs has the
@@ -210,7 +210,9 @@ void Expr::computeMetadata() {
     }
     deterministic_ &= input->deterministic_;
     if (!input->distinctFields_.empty()) {
-      if (input->propagatesNulls_) {
+      if (!isNullPropagatingFunction) {
+        propagatesNulls_ &= input->propagatesNulls_;
+      } else if (input->propagatesNulls_) {
         mergeFields(nullPropagatingFields, ignore, input->distinctFields_);
       } else {
         mergeFields(nonNullPropagatingFields, ignore, input->distinctFields_);
@@ -886,6 +888,9 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
     auto& values = peeledVectors[i];
     if (!values) {
       continue;
+    }
+    if (values->isConstantEncoding() && values->size() < newRows->end()) {
+      values = BaseVector::wrapInConstant(newRows->end(), 0, values);
     }
     context.setPeeled(i, values);
     if (constantFields.empty() || !constantFields[i]) {
