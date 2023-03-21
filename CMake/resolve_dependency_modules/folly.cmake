@@ -44,17 +44,34 @@ if(COMPILER_HAS_W_UNDEF_PREFIX)
 endif()
 set(FOLLY_CXX_FLAGS -Wno-unused -Wno-unused-parameter -Wno-overloaded-virtual
                     ${EXTRA_CXX_FLAGS})
+
+if(gflags_SOURCE STREQUAL "BUNDLED")
+  set(glog_patch && git apply
+                 ${CMAKE_CURRENT_LIST_DIR}/folly/folly-gflags-glog.patch)
+endif()
+
 FetchContent_Declare(
   folly
   URL ${FOLLY_SOURCE_URL}
-  URL_HASH SHA256=${VELOX_FOLLY_BUILD_SHA256_CHECKSUM})
-# Fetch the content using previously declared details
+  URL_HASH SHA256=${VELOX_FOLLY_BUILD_SHA256_CHECKSUM}
+  PATCH_COMMAND git apply ${CMAKE_CURRENT_LIST_DIR}/folly/folly-no-export.patch
+                ${glog_patch})
+
+if(ON_APPLE_M1)
+  # folly will wrongly assume x86_64 if this is not set
+  set(CMAKE_LIBRARY_ARCHITECTURE aarch64)
+endif()
 FetchContent_MakeAvailable(folly)
+
 # Avoid possible errors for known warnings
 target_compile_options(folly PUBLIC ${FOLLY_CXX_FLAGS})
 
 # Folly::folly is not valid for FC but we want to match FindFolly
 add_library(Folly::folly ALIAS folly)
+
+if(${gflags_SOURCE} STREQUAL "BUNDLED")
+  add_dependencies(folly glog gflags)
+endif()
 
 set(FOLLY_BENCHMARK_STATIC_LIB
     ${folly_BINARY_DIR}/folly/libfollybenchmark${CMAKE_STATIC_LIBRARY_SUFFIX})
