@@ -32,7 +32,7 @@
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/LocalRunner.h"
 #include "velox/parse/QueryPlanner.h"
-#include "velox/exec/tests/utils/HiveConnectorTestbase.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -139,8 +139,9 @@ class VeloxRunner : public HiveConnectorTestBase {
   }
 
   std::unique_ptr<TaskCursor> run(
-      const TpchPlan& tpchPlan) {
-
+				  const std::string& test) {
+    
+    
     try {
       for (;;) {
         CursorParameters params;

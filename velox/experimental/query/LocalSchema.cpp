@@ -14,13 +14,63 @@
  * limitations under the License.
  */
 
-#pragma once
-
+#include "velox/experimental/query/LocalSchema.h"
 #include "velox/experimental/query/Schema.h"
 
+#include "velox/common/base/Fs.h"
+
 namespace facebook::verax {
+  using namespace facebook::velox;
+  
+LocalSchema::LocalSchema(
+    const std::string& path,
+    velox::dwio::common::FileFormat fmt) {
+  format_ = fmt;
+  initialize(path);
+}
 
-LocalSchema::LocalSchema(const std::string& path) {}
+void LocalSchema::initialize(const std::string& path) {
+  for (auto const& dirEntry : fs::directory_iterator{path}) {
+    if (!dirEntry.is_directory() || dirEntry.path().filename().c_str()[0] == '.') {
+      continue;
+    }
+    readTable(dirEntry.path().filename(), dirEntry.path());
+  }
+}
 
-void LocalSchema::addTable(const std::string& name, SchemaPtr schema) {}
+void LocalSchema::readTable(
+    const std::string& tableName,
+    const fs::path& tablePath) {
+  for (auto const& dirEntry : fs::directory_iterator{tablePath}) {
+    if (!dirEntry.is_regular_file()) {
+      continue;
+    }
+    // Ignore hidden files.
+    if (dirEntry.path().filename().c_str()[0] == '.') {
+      continue;
+    }
+    if (tables_.find(tableName) == tables_.end()) {
+      tables_[tableName] = std::make_unique<LocalTable>(tableName, format_);
+      auto& table = *tables_[tableName];
+      dwio::common::ReaderOptions readerOptions{pool_.get()};
+      readerOptions.setFileFormat(format_);
+      auto input = std::make_unique<dwio::common::BufferedInput>(
+          std::make_shared<LocalReadFile>(dirEntry.path().string()),
+          readerOptions.getMemoryPool());
+      std::unique_ptr<dwio::common::Reader> reader =
+          dwio::common::getReaderFactory(readerOptions.getFileFormat())
+              ->createReader(std::move(input), readerOptions);
+      const auto fileType = reader->rowType();
+      for (auto i = 0; i < fileType.size(); ++i) {
+        auto name = tableType->nameOf(i);
+        auto column =
+            std::make_unique<LocalColumn>(name, tableType->childat(i), nullptr);
+        table.columns[name] = std::move(column);
+      }
+    }
+    table.dataFiles.push_back(dirEntry.path());
+  }
+}
+void LocalSchema::fetchSchemaTable(std::string_view name, SchemaPtr schema) {}
+
 } // namespace facebook::verax

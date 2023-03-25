@@ -16,17 +16,41 @@
 
 #pragma once
 
+#include "velox/common/base/Fs.h"
+#include "velox/experimental/query/SchemaSource.h"
+#include "velox/dwio/common/Options.h"
+#include "velox/dwio/common/Statistics.h"
+
+
 namespace facebook::verax {
 
 class LocalSchema : public SchemaSource {
  public:
-  LocalSchema(std::string& path);
+  LocalSchema(const std::string& path, velox::dwio::common::FileFormat format);
 
-  void addTable(const std::string& name, SchemaPtr schema) override;
+  void fetchSchemaTable(std::string_view name, SchemaPtr schema) override;
 
  private:
-  std::unordered_set<std::string> tableNames_;  
-  
+  struct LocalColumn {
+    std::string name;
+    velox::TypePtr type;
+    std::unique_ptr<velox::dwio::common::ColumnStatistics> stats;
+  };
+
+  struct LocalTable {
+    velox::dwio::common::FileFormat format;
+    velox::TypePtr type;
+    std::vector<std::string> files;
+    std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns;
+  };
+
+  void initialize(const std::string& path);
+
+  void readTable(const std::string& tableName, const fs::path& tablePath);  
+  velox::dwio::common::FileFormat format_;
+
+  std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
+  std::unique_ptr<velox::memory::MemoryPool> pool_;
 };
 
 

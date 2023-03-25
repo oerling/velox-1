@@ -17,8 +17,10 @@
 
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/experimental/query/ExecutablePlan.h"
+#include "velox/experimental/query/SchemaSource.h"
 
 namespace facebook::velox::exec {
+
   
 class LocalRunner {
  public:
@@ -31,7 +33,7 @@ class LocalRunner {
         plan_(std::move(plan)) {
     params_.queryCtx = queryCtx;
   }
-	LocalRunner(const std::string& text, verax::SchemaPrtr schema, StatsSource* stats);
+	LocalRunner(const std::string& text, verax::SchemaPtr schema);
 	
   test::TaskCursor*
 cursor();
