@@ -96,22 +96,21 @@ void Optimization::translateConjuncts(
   }
 }
 
-  void Optimization::registerType(const TypePtr& type) {
-    if (toTypePtr_.find(type.get()) != toTypePtr_.end()) {
-      return;
-    }
-    toTypePtr_[type.get()] = type;
+void Optimization::registerType(const TypePtr& type) {
+  if (toTypePtr_.find(type.get()) != toTypePtr_.end()) {
+    return;
   }
+  toTypePtr_[type.get()] = type;
+}
 
-  TypePtr Optimization::toTypePtr(const Type* type) {
-    auto it = toTypePtr_.find(type);
-    if (it != toTypePtr_.end()) {
-      return it->second;
-    }
-    VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
+TypePtr Optimization::toTypePtr(const Type* type) {
+  auto it = toTypePtr_.find(type);
+  if (it != toTypePtr_.end()) {
+    return it->second;
   }
+  VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
+}
 
-  
 ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   registerType(expr->type());
   if (auto name = columnName(expr)) {

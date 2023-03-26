@@ -168,13 +168,14 @@ struct Distribution {
   }
 
   /// Returns a copy of 'this' with 'order' and 'orderType' set from arguments.
-  Distribution copyWithOrder(ExprVector order, OrderTypeVector orderType) const {
+  Distribution copyWithOrder(ExprVector order, OrderTypeVector orderType)
+      const {
     Distribution copy = *this;
     copy.order = order;
     copy.orderType = orderType;
     return copy;
   }
-  
+
   /// True if 'this' and 'other' have the same number/type of keys and same
   /// distribution type. Data is copartitioned if both sides have a 1:1 equality
   /// on all partitioning key columns.
@@ -374,7 +375,7 @@ struct SchemaTable {
   // All indices. Must contain at least one.
   std::vector<IndexPtr, QGAllocator<IndexPtr>> indices;
 };
-  
+
 /// Represents a collection of tables. Normally filled in ad hoc given the set
 /// of tables referenced by a query.
 class Schema {
@@ -382,7 +383,6 @@ class Schema {
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
   Schema(Name _name, SchemaSource* source);
 
-  
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
 
@@ -391,7 +391,7 @@ class Schema {
   }
 
   void addTable(SchemaTablePtr table) const;
-  
+
  private:
   Name name_;
   mutable NameMap<SchemaTablePtr> tables_;

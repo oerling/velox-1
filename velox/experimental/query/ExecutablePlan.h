@@ -25,7 +25,6 @@ struct InputStage {
   std::string producerTaskPrefix;
 };
 
-
 /// Describes a fragment of a distributed plan. This allows a run
 /// time to distribute fragments across workers and to set up
 /// exchanges. A complete plan is a vector of these with the last

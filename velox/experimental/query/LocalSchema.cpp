@@ -108,7 +108,9 @@ void LocalColumn::addStats(
   }
 }
 
-void LocalSchema::fetchSchemaTable(std::string_view name, const Schema* schema) {
+void LocalSchema::fetchSchemaTable(
+    std::string_view name,
+    const Schema* schema) {
   auto str = std::string(name);
   auto it = tables_.find(str);
   if (it == tables_.end()) {
@@ -116,7 +118,7 @@ void LocalSchema::fetchSchemaTable(std::string_view name, const Schema* schema) 
   }
   auto table = it->second.get();
   Declare(SchemaTable, schemaTable, toName(str), table->rowType());
- ColumnVector columns;
+  ColumnVector columns;
   for (auto& pair : table->columns) {
     float cardinality = table->numRows;
     auto original = pair.second.get();

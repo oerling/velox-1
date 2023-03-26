@@ -386,13 +386,16 @@ struct Aggregation : public RelationOp {
 
 /// Represents an order by. The order is given by the distribution.
 struct OrderBy : public RelationOp {
-  OrderBy(RelationOpPtr input, ExprVector keys, OrderTypeVector orderType, PlanObjectSet dependentKeys = {})
+  OrderBy(
+      RelationOpPtr input,
+      ExprVector keys,
+      OrderTypeVector orderType,
+      PlanObjectSet dependentKeys = {})
       : RelationOp(
             RelType::kOrderBy,
             input,
-	    input->distribution().copyWithOrder(keys, orderType)),
-	dependentKeys(dependentKeys) {}
-
+            input->distribution().copyWithOrder(keys, orderType)),
+        dependentKeys(dependentKeys) {}
 
   // Keys where the key expression is functionally dependent on
   // another key or keys. These can be late materialized or converted

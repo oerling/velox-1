@@ -987,8 +987,8 @@ Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
 }
 
 Schema::Schema(const char* _name, SchemaSource* source)
-  : name_(_name), source_(source) {}
-  
+    : name_(_name), source_(source) {}
+
 SchemaTablePtr Schema::findTable(const std::string& name) const {
   auto it = tables_.find(toName(name));
   if (it == tables_.end()) {
@@ -996,7 +996,7 @@ SchemaTablePtr Schema::findTable(const std::string& name) const {
       source_->fetchSchemaTable(std::string_view(name), this);
       it = tables_.find(toName(name));
       if (it != tables_.end()) {
-	return it->second;
+        return it->second;
       }
     }
     VELOX_FAIL("No table {}", name);
@@ -1004,11 +1004,11 @@ SchemaTablePtr Schema::findTable(const std::string& name) const {
   return it->second;
 }
 
-  void Schema::addTable(SchemaTablePtr table) const {
-    tables_[table->name] = table;
-  }
+void Schema::addTable(SchemaTablePtr table) const {
+  tables_[table->name] = table;
+}
 
-  template <typename T>
+template <typename T>
 ColumnPtr findColumnByName(const T& columns, Name name) {
   for (auto column : columns) {
     if (column->type() == PlanType::kColumn &&
