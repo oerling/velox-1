@@ -29,6 +29,8 @@ class DuckDbQueryPlanner {
       const std::string& name,
       const std::vector<RowVectorPtr>& data);
 
+  void registerTable(const std::string& name, const RowTypePtr& type);
+
   void registerScalarFunction(
       const std::string& name,
       const std::vector<TypePtr>& argTypes,

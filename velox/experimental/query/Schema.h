@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/experimental/query/PlanObject.h"
+#include "velox/experimental/query/SchemaSource.h"
 
 /// Schema representation for use in query planning. All objects are
 /// arena allocated for the duration of planning the query. We do
@@ -365,7 +366,7 @@ struct SchemaTable {
 
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
   Name name;
-  const velox::RowTypePtr type;
+  const velox::RowTypePtr& type;
 
   // Lookup from name to column.
   NameMap<ColumnPtr> columns;
@@ -373,13 +374,15 @@ struct SchemaTable {
   // All indices. Must contain at least one.
   std::vector<IndexPtr, QGAllocator<IndexPtr>> indices;
 };
-
+  
 /// Represents a collection of tables. Normally filled in ad hoc given the set
 /// of tables referenced by a query.
 class Schema {
  public:
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
+  Schema(Name _name, SchemaSource* source);
 
+  
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
 
@@ -387,9 +390,12 @@ class Schema {
     return name_;
   }
 
+  void addTable(SchemaTablePtr table) const;
+  
  private:
   Name name_;
-  NameMap<SchemaTablePtr> tables_;
+  mutable NameMap<SchemaTablePtr> tables_;
+  SchemaSource* source_ = nullptr;
 };
 
 using SchemaPtr = Schema*;

@@ -26,19 +26,19 @@
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/experimental/query/LocalRunner.h"
+#include "velox/experimental/query/LocalSchema.h"
+#include "velox/experimental/query/Plan.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/parse/TypeResolver.h"
-#include "velox/experimental/query/Plan.h"
-#include "velox/experimental/query/LocalRunner.h"
 #include "velox/parse/QueryPlanner.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/parse/TypeResolver.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
-
 
 namespace {
 static bool notEmpty(const char* /*flagName*/, const std::string& value) {
@@ -57,7 +57,6 @@ static bool validateDataFormat(const char* flagname, const std::string& value) {
       << std::endl;
   return false;
 }
-
 
 void printResults(const std::vector<RowVectorPtr>& results) {
   std::cout << "Results:" << std::endl;
@@ -80,6 +79,8 @@ DEFINE_string(
     "",
     "Root path of data. Data layout must follow Hive-style partitioning. ");
 
+DEFINE_int32(optimizer_trace, 0, "Optimizer trace level");
+
 DEFINE_bool(print_stats, false, "print statistics");
 DEFINE_bool(
     include_custom_stats,
@@ -88,6 +89,8 @@ DEFINE_bool(
 DEFINE_bool(include_results, false, "Include results in the output");
 DEFINE_bool(use_native_parquet_reader, true, "Use Native Parquet Reader");
 DEFINE_int32(num_drivers, 4, "Number of drivers");
+DEFINE_int32(num_workers, 4, "Number of in-process workers");
+
 DEFINE_string(data_format, "parquet", "Data format");
 DEFINE_int32(num_splits_per_file, 10, "Number of splits per file");
 DEFINE_int32(
@@ -99,12 +102,12 @@ DEFINE_int32(num_repeats, 1, "Number of times to run --query");
 DEFINE_string(
     query,
     "",
-    "Text of query. If empty, reads ';' separated queries from standard input")
+    "Text of query. If empty, reads ';' separated queries from standard input");
 
-    DEFINE_validator(data_path, &notEmpty);
+DEFINE_validator(data_path, &notEmpty);
 DEFINE_validator(data_format, &validateDataFormat);
 
-class VeloxRunner : public HiveConnectorTestBase {
+class VeloxRunner {
  public:
   void initialize() {
     if (FLAGS_cache_gb) {
@@ -119,6 +122,8 @@ class VeloxRunner : public HiveConnectorTestBase {
           allocator, memoryBytes, nullptr);
       memory::MemoryAllocator::setDefaultInstance(allocator_.get());
     }
+    pool_ = memory::getProcessDefaultMemoryManager().getPool()->addChild(
+        "interactive_sql");
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
@@ -136,56 +141,73 @@ class VeloxRunner : public HiveConnectorTestBase {
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
+    schema_ = std::make_unique<facebook::verax::LocalSchema>(
+        FLAGS_data_path, toFileFormat(FLAGS_data_format));
+    planner_ = std::make_unique<core::DuckDbQueryPlanner>(pool_.get());
+    for (auto& pair : schema_->tables()) {
+      planner_->registerTable(pair.first, pair.second->rowType());
+    }
+    splitSourceFactory_ = std::make_unique<LocalSplitSourceFactory>(
+        *schema_, FLAGS_num_splits_per_file);
   }
 
-  std::unique_ptr<TaskCursor> run(
-				  const std::string& test) {
-    
-    
+  void run(const std::string& sql) {
+    core::PlanNodePtr plan;
     try {
-      for (;;) {
-        CursorParameters params;
-        params.maxDrivers = FLAGS_num_drivers;
-        params.planNode = tpchPlan.plan;
-        const int numSplitsPerFile = FLAGS_num_splits_per_file;
+      plan = planner_->plan(sql);
+    } catch (std::exception& e) {
+      std::cout << "parse error: " << e.what();
+      return;
+    }
+    std::vector<ExecutableFragment> fragments;
+    ExecutablePlanOptions opts;
+    opts.numWorkers = FLAGS_num_workers;
+    opts.numDrivers = FLAGS_num_drivers;
 
-        bool noMoreSplits = false;
-        auto addSplits = [&](exec::Task* task) {
-          if (!noMoreSplits) {
-            for (const auto& entry : tpchPlan.dataFiles) {
-              for (const auto& path : entry.second) {
-                auto const splits =
-                    HiveConnectorTestBase::makeHiveConnectorSplits(
-                        path, numSplitsPerFile, tpchPlan.dataFileFormat);
-                for (const auto& split : splits) {
-                  task->addSplit(entry.first, exec::Split(split));
-                }
-              }
-              task->noMoreSplits(entry.first);
-            }
-          }
-          noMoreSplits = true;
-        };
-        auto result = readCursor(params, addSplits);
-        ensureTaskCompletion(result.first->task().get());
-        if (++repeat >= FLAGS_num_repeats) {
-          return result;
-        }
+    try {
+      auto allocator = std::make_unique<HashStringAllocator>(pool_.get());
+      auto context =
+          std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
+      facebook::verax::queryCtx() = context.get();
+      facebook::verax::Schema veraxSchema("test", schema_.get());
+      facebook::verax::Optimization opt(
+          *plan, veraxSchema, FLAGS_optimizer_trace);
+      auto best = opt.bestPlan();
+      fragments = opt.toVeloxPlan(best->op, opts);
+      facebook::verax::queryCtx() = nullptr;
+    } catch (const std::exception& e) {
+      facebook::verax::queryCtx() = nullptr;
+      std::cout << "Optimization error: " << e.what();
+      return;
+    }
+
+    try {
+      LocalRunner runner(
+          std::move(fragments), queryCtx_, splitSourceFactory_.get(), opts);
+      auto cursor = runner.cursor();
+      std::vector<VectorPtr> result;
+      while (cursor->moveNext()) {
+        result.push_back(cursor->current());
       }
+      waitForTaskCompletion(cursor->task().get());
     } catch (const std::exception& e) {
       LOG(ERROR) << "Query terminated with: " << e.what();
-      return {nullptr, std::vector<RowVectorPtr>()};
+      return;
     }
   }
 
-  std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
   std::shared_ptr<memory::MemoryAllocator> allocator_;
-}
-
+  std::shared_ptr<memory::MemoryPool> pool_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
+  std::shared_ptr<core::QueryCtx> queryCtx_;
+  std::unique_ptr<facebook::verax::LocalSchema> schema_;
+  std::unique_ptr<LocalSplitSourceFactory> splitSourceFactory_;
+  std::unique_ptr<core::DuckDbQueryPlanner> planner_;
+};
 
 int main(int argc, char** argv) {
   std::string kUsage(
-		     "Velox local SQL command line. Run 'velox_sql --help' for available options.\n");
+      "Velox local SQL command line. Run 'velox_sql --help' for available options.\n");
   gflags::SetUsageMessage(kUsage);
   folly::init(&argc, &argv, false);
   VeloxRunner runner;
@@ -193,4 +215,3 @@ int main(int argc, char** argv) {
   runner.run(FLAGS_query);
   return 0;
 }
-

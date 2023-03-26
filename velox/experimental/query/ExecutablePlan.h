@@ -22,14 +22,9 @@ namespace facebook::velox::exec {
 /// Describes an exchange source for an ExchangeNode a non-leaf stage.
 struct InputStage {
   core::PlanNodeId consumer;
-  std::string producertaskPrefix;
+  std::string producerTaskPrefix;
 };
 
-/// Describes a set of splits for a leaf scan.
-struct LeafSplits {
-  core::PlanNodeId leaf;
-  std::vector<Split> splits;
-};
 
 /// Describes a fragment of a distributed plan. This allows a run
 /// time to distribute fragments across workers and to set up
@@ -44,8 +39,7 @@ struct ExecutableFragment {
   int32_t width;
   velox::core::PlanFragment fragment;
   std::vector<InputStage> inputStages;
-  std::vector<LeafSplits> leafSplits;
-  std::function<int32_t(const Split&)> splitToBucket{nullptr};
+  std::vector<std::shared_ptr<const core::TableScanNode>> scans;
 };
 
 /// Describes options for generating an executable plan.

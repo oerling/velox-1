@@ -16,16 +16,19 @@
 
 #pragma once
 
-#include "velox/experimental/query/Schema.h"
-
 namespace facebook::verax {
+
+class Schema;
 
 /// Abstract class for accessing schema information.
 class SchemaSource {
  public:
   // Creates information on 'table' in 'schema'. The information is allocated in
-  // the QueryGraphContext of the calling thread.
-  virtual void fetchSchemaTable(std::string_view name, SchemaPtr schema) = 0;
+  // the QueryGraphContext of the calling thread. Adds a table to 'schema' using
+  // addTable, which takes a const Schema*.
+  virtual void fetchSchemaTable(
+      std::string_view name,
+      const Schema* schema) = 0;
 };
 
 } // namespace facebook::verax

@@ -514,6 +514,19 @@ void DuckDbQueryPlanner::registerTable(
   tables_.insert({name, data});
 }
 
+void DuckDbQueryPlanner::registerTable(
+    const std::string& name,
+    const RowTypePtr& type) {
+  VELOX_CHECK_EQ(
+      0, tables_.count(name), "Table is already registered: {}", name);
+
+  auto createTableSql =
+      duckdb::makeCreateTableSql(name, *type);
+  auto res = conn_.Query(createTableSql);
+  VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
+}
+
+  
 void DuckDbQueryPlanner::registerScalarFunction(
     const std::string& name,
     const std::vector<TypePtr>& argTypes,
