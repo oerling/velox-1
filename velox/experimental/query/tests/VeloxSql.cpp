@@ -142,13 +142,44 @@ class VeloxRunner {
             ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
-        FLAGS_data_path, toFileFormat(FLAGS_data_format));
+        FLAGS_data_path, toFileFormat(FLAGS_data_format), kHiveConnectorId);
     planner_ = std::make_unique<core::DuckDbQueryPlanner>(pool_.get());
     for (auto& pair : schema_->tables()) {
       planner_->registerTable(pair.first, pair.second->rowType());
     }
+    planner_->registerTableScan([this](
+                                    const std::string& id,
+                                    const std::string& name,
+                                    const RowTypePtr& rowType) {
+      return toTableScan(id, name, rowType);
+    });
     splitSourceFactory_ = std::make_unique<LocalSplitSourceFactory>(
         *schema_, FLAGS_num_splits_per_file);
+  }
+
+  core::PlanNodePtr toTableScan(
+      const std::string& id,
+      const std::string& name,
+      const RowTypePtr& rowType) {
+    using namespace connector::hive;
+    auto handle = std::make_shared<HiveTableHandle>(
+        kHiveConnectorId, name, true, SubfieldFilters{}, nullptr);
+    std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+        assignments;
+
+    auto table = schema_->findTable(name);
+    for (auto i = 0; i < rowType->size(); ++i) {
+      auto column = rowType->nameOf(i);
+      VELOX_CHECK(
+          table->columns.find(column) != table->columns.end(),
+          "No column {} in {}",
+          column,
+          name);
+      assignments[column] = std::make_shared<HiveColumnHandle>(
+          column, HiveColumnHandle::ColumnType::kRegular, rowType->childAt(i));
+    }
+    return std::make_shared<core::TableScanNode>(
+        id, rowType, handle, assignments);
   }
 
   void run(const std::string& sql) {

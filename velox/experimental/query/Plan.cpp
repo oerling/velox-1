@@ -30,6 +30,7 @@ Optimization::Optimization(
     const Schema& schema,
     int32_t traceFlags)
     : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
+  queryCtx()->optimization() = this;
   root_ = makeQueryGraph();
   root_->addImpliedJoins();
   root_->linkTablesToJoins();

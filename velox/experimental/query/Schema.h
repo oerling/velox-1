@@ -78,13 +78,19 @@ class RelationOp;
 /// represents the type of system for a schema object. For a
 /// RelationOp, the  locus of its distribution means that the op is performed by
 /// the corresponding system. Distributions can be copartitioned only
-/// if their locus is equal (==) to the other locus.
+/// if their locus is equal (==) to the other locus. A Locus is referenced by
+/// raw pointer and may be allocated from outside the optimization arena. It is
+/// immutable and lives past the optimizer arena.
 class Locus {
  public:
   explicit Locus(Name name) : name_(name) {}
 
-  virtual ~Locus() {
-    LOG(FATAL) << "Locus is arena allocated";
+  virtual ~Locus() = default;
+
+  Name name() const {
+    // Make sure the name is in the current optimization
+    // arena. 'this' may live across several arenas.
+    return toName(name_);
   }
 
   /// Sets the cardinality in op. Returns true if set. If false, default
@@ -167,7 +173,8 @@ struct Distribution {
     return Distribution(singleType, 1, {}, order, orderType);
   }
 
-  /// Returns a copy of 'this' with 'order' and 'orderType' set from arguments.
+  /// Returns a copy of 'this' with 'order' and 'orderType' set from
+  /// arguments.
   Distribution copyWithOrder(ExprVector order, OrderTypeVector orderType)
       const {
     Distribution copy = *this;
@@ -177,8 +184,8 @@ struct Distribution {
   }
 
   /// True if 'this' and 'other' have the same number/type of keys and same
-  /// distribution type. Data is copartitioned if both sides have a 1:1 equality
-  /// on all partitioning key columns.
+  /// distribution type. Data is copartitioned if both sides have a 1:1
+  /// equality on all partitioning key columns.
   bool isSamePartition(const Distribution& other) const;
 
   Distribution rename(const ExprVector& exprs, const ColumnVector& names) const;
@@ -187,8 +194,8 @@ struct Distribution {
 
   DistributionType distributionType;
 
-  // Number of rows 'this' applies to. This is the size in rows if 'this' occurs
-  // in a table or index.
+  // Number of rows 'this' applies to. This is the size in rows if 'this'
+  // occurs in a table or index.
   float cardinality;
 
   // Partitioning columns. The values of these columns determine which of
@@ -205,8 +212,8 @@ struct Distribution {
   OrderTypeVector orderType;
 
   // Number of leading elements of 'order' such that these uniquely
-  // identify a row. 0 if there is no uniqueness. This can be non-0 also if data
-  // is not sorted. This indicates a uniqueness for joining.
+  // identify a row. 0 if there is no uniqueness. This can be non-0 also if
+  // data is not sorted. This indicates a uniqueness for joining.
   int32_t numKeysUnique{0};
 
   // Specifies the selectivity between the source of the ordered data
@@ -261,6 +268,16 @@ class Relation {
     return columns_;
   }
 
+  template <typename T>
+  const T* as() const {
+    return reinterpret_cast<const T*>(this);
+  }
+
+  template <typename T>
+  T* as() {
+    return reinterpret_cast<T*>(this);
+  }
+
  protected:
   const RelType relType_;
   const Distribution distribution_;
@@ -271,8 +288,8 @@ struct SchemaTable;
 using SchemaTablePtr = const SchemaTable*;
 
 /// Represents a stored collection of rows. An index may have a uniqueness
-/// constraint over a set of columns, a partitioning and an ordering plus a set
-/// of payload columns.
+/// constraint over a set of columns, a partitioning and an ordering plus a
+/// set of payload columns.
 struct Index : public Relation {
   Index(
       Name _name,
@@ -301,8 +318,8 @@ struct IndexInfo {
   // Index chosen based on columns.
   IndexPtr index;
 
-  // True if the column combination is unique. This can be true even if there is
-  // no key order in 'index'.
+  // True if the column combination is unique. This can be true even if there
+  // is no key order in 'index'.
   bool unique{false};
 
   // The number of rows selected after index lookup based on 'lookupKeys'. For
@@ -310,13 +327,13 @@ struct IndexInfo {
   float scanCardinality;
 
   // The expected number of hits for an equality match of lookup keys. This is
-  // the expected number of rows given the lookup column combination regardless
-  // of whether an index order can be used.
+  // the expected number of rows given the lookup column combination
+  // regardless of whether an index order can be used.
   float joinCardinality;
 
-  // The lookup columns that match 'index'. These match 1:1 the leading keys of
-  // 'index'. If 'index' has no ordering columns or if the lookup columns are
-  // not a prefix of these, this is empty.
+  // The lookup columns that match 'index'. These match 1:1 the leading keys
+  // of 'index'. If 'index' has no ordering columns or if the lookup columns
+  // are not a prefix of these, this is empty.
   std::vector<ColumnPtr> lookupKeys;
 
   // The columns that were considered in 'scanCardinality' and
@@ -324,8 +341,8 @@ struct IndexInfo {
   // indexInfo() if the index does not cover some columns.
   PlanObjectSet coveredColumns;
 
-  /// Returns the schema column for the BaseTable column 'column' or nullptr if
-  /// not in the index.
+  /// Returns the schema column for the BaseTable column 'column' or nullptr
+  /// if not in the index.
   ColumnPtr schemaColumn(ColumnPtr keyValue) const;
 };
 
@@ -361,8 +378,8 @@ struct SchemaTable {
   /// where 'columns' have an equality constraint.
   IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns) const;
 
-  /// Returns the best index to use for lookup where 'columns' have an equality
-  /// constraint.
+  /// Returns the best index to use for lookup where 'columns' have an
+  /// equality constraint.
   IndexInfo indexByColumns(PtrSpan<Column> columns) const;
 
   std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);

@@ -20,6 +20,8 @@
 #include "velox/experimental/query/ExecutablePlan.h"
 #include "velox/experimental/query/RelationOp.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
+#include "velox/connectors/hive/HiveConnector.h"
+
 /// Planning-time data structures. Represent the state of the planning process
 /// plus utilities.
 namespace facebook::verax {
@@ -350,6 +352,19 @@ class Optimization {
   // Produces trace output if event matches 'traceFlags_'.
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
 
+  void setLeafHandle(int32_t id, std::shared_ptr<velox::connector::ConnectorTableHandle> handle) {
+    leafHandles_[id] = handle;
+  }
+
+  std::shared_ptr<velox::connector::ConnectorTableHandle> leafHandle(int32_t id) {
+    auto it = leafHandles_.find(id);
+    return it != leafHandles_.end() ? it->second : nullptr;
+  }
+  // Translates from Expr to Velox.
+  velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
+
+
+  
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
@@ -522,9 +537,9 @@ class Optimization {
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
-  // Translates from Expr to Velox.
-  velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
-
+  // Makes an output type for PlanNode.
+  velox::RowTypePtr makeOutputType(const ColumnVector& columns);
+  
   velox::core::PlanNodePtr makeFragment(
       RelationOpPtr op,
       velox::exec::ExecutableFragment& fragment,
@@ -569,6 +584,9 @@ class Optimization {
   // raw values). Records the output type of the final aggregation.
   velox::RowTypePtr aggFinalType_;
 
+  // Map from plan object id to handle with pushdown filters. 
+  std::unordered_map<int32_t, std::shared_ptr<velox::connector::ConnectorTableHandle>> leafHandles_;
+  
   velox::exec::ExecutablePlanOptions options_;
   velox::core::PlanNodeIdGenerator idGenerator_;
 };
@@ -582,4 +600,7 @@ FunctionSet functionBits(Name name);
 
 const JoinEdgeVector& joinedBy(PlanObjectConstPtr table);
 
+void filterUpdated(BaseTablePtr baseTable);
+
+  
 } // namespace facebook::verax

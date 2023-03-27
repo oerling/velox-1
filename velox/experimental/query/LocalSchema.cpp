@@ -27,11 +27,14 @@ using namespace facebook::velox;
 
 LocalSchema::LocalSchema(
     const std::string& path,
-    velox::dwio::common::FileFormat fmt) {
+    velox::dwio::common::FileFormat fmt,
+    const std::string& connectorId)
+  : connectorId_(connectorId) {
   pool_ =
       memory::getProcessDefaultMemoryManager().getPool()->addChild("schema");
   format_ = fmt;
   initialize(path);
+  locus_ = std::make_unique<Locus>(connectorId_.c_str());
 }
 
 void LocalSchema::initialize(const std::string& path) {
@@ -127,6 +130,7 @@ void LocalSchema::fetchSchemaTable(
     columns.push_back(column);
   }
   DistributionType defaultDist;
+  defaultDist.locus = locus_.get();
   schemaTable->addIndex(
       toName("pk"), table->numRows, 0, 0, {}, defaultDist, {}, columns);
   schema->addTable(schemaTable);

@@ -477,6 +477,9 @@ struct BaseTable : public PlanObject {
     pushBackUnique(joinedBy, join);
   }
 
+  /// Adds 'expr' to 'filters' or 'columnFilters'.
+  void addFilter(ExprPtr expr);
+  
   std::string toString() const override;
 };
 
@@ -649,6 +652,11 @@ struct DerivedTable : public PlanObject {
     pushBackUnique(joinedBy, join);
   }
 
+  /// Moves suitable elements of 'conjuncts' into join edges or single
+  /// table filters. May be called repeatedly if enclosing dt's add
+  /// more conjuncts. May call itself recursively on component dts.
+  void distributeConjuncts();
+  
  private:
   // Imports the joins in 'this' inside 'firstDt', which must be a
   // member of 'this'. The import is possible if the join is not

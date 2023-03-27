@@ -19,7 +19,7 @@
 #include "velox/common/base/Fs.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/Statistics.h"
-#include "velox/experimental/query/SchemaSource.h"
+#include "velox/experimental/query/Schema.h"
 
 namespace facebook::verax {
 
@@ -52,7 +52,7 @@ struct LocalTable {
 
 class LocalSchema : public SchemaSource {
  public:
-  LocalSchema(const std::string& path, velox::dwio::common::FileFormat format);
+  LocalSchema(const std::string& path, velox::dwio::common::FileFormat format, const std::string& connectorId);
 
   void fetchSchemaTable(std::string_view name, const Schema* schema) override;
 
@@ -60,12 +60,19 @@ class LocalSchema : public SchemaSource {
     return tables_;
   }
 
+  LocalTable* findTable(const std::string& name) {
+    auto it = tables_.find(name);
+    VELOX_CHECK(it != tables_.end(), "Table {} not found", name);
+    return  it->second.get();
+  }
+  
  private:
   void initialize(const std::string& path);
 
   void readTable(const std::string& tableName, const fs::path& tablePath);
   velox::dwio::common::FileFormat format_;
-
+  std::string connectorId_;
+  std::unique_ptr<Locus> locus_;
   std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
   std::shared_ptr<velox::memory::MemoryPool> pool_;
 };

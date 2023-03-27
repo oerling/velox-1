@@ -45,6 +45,7 @@ struct QueryContext {
   ColumnNameGenerator columnNameGenerator;
   const std::unordered_map<std::string, std::vector<RowVectorPtr>>&
       inMemoryTables;
+  MakeTableScan makeTableScan;
 
   QueryContext(const std::unordered_map<std::string, std::vector<RowVectorPtr>>&
                    _inMemoryTables)
@@ -147,11 +148,11 @@ PlanNodePtr toVeloxPlan(
 
   auto tableName = logicalGet.function.to_string(logicalGet.bind_data.get());
   auto it = queryContext.inMemoryTables.find(tableName);
-  VELOX_CHECK(
-      it != queryContext.inMemoryTables.end(),
-      "Can't find in-memory table: {}",
-      tableName);
 
+  if (it == queryContext.inMemoryTables.end()) {
+    return queryContext.makeTableScan(
+        queryContext.nextNodeId(), tableName, rowType);
+  }
   std::vector<RowVectorPtr> data;
   for (auto& rowVector : it->second) {
     std::vector<VectorPtr> children;
@@ -569,6 +570,7 @@ PlanNodePtr DuckDbQueryPlanner::plan(const std::string& sql) {
   auto plan = conn_.ExtractPlan(sql);
 
   QueryContext queryContext{tables_};
+  queryContext.makeTableScan = makeTableScan_;
   return toVeloxPlan(*plan, pool_, queryContext);
 }
 

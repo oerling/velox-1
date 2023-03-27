@@ -24,7 +24,11 @@ using namespace facebook::velox;
 
 using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
-
+  std::string veloxToString(core::PlanNode* plan) {
+    return plan->toString(true, true);
+  }
+ 
+  
 void Optimization::setDerivedTableOutput(
     DerivedTablePtr dt,
     const velox::core::PlanNode& planNode) {
@@ -101,6 +105,9 @@ void Optimization::registerType(const TypePtr& type) {
     return;
   }
   toTypePtr_[type.get()] = type;
+  for (auto i = 0; i < type->size(); ++i) {
+    registerType(type->childAt(i));
+  }
 }
 
 TypePtr Optimization::toTypePtr(const Type* type) {
@@ -248,7 +255,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
 
 bool isJoin(const core::PlanNode& node) {
   auto name = node.name();
-  if (name == "HashJoin" || name == "MergeJoin") {
+  if (name == "HashJoin" || name == "MergeJoin" || name == "CrossJoin") {
     return true;
   }
   if (name == "Project" || name == "Filter") {
@@ -378,7 +385,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
     if (isDirectOver(node, "Aggregation")) {
       VELOX_CHECK(
           currentSelect_->having.empty(),
-          "Must have al;all HAVING in one filter");
+          "Must have aall of HAVING in one filter");
       currentSelect_->having = flat;
     } else {
       currentSelect_->conjuncts.insert(
@@ -392,6 +399,11 @@ PlanObjectPtr Optimization::makeQueryGraph(
     }
     translateJoin(*reinterpret_cast<const core::AbstractJoinNode*>(&node));
     return currentSelect_;
+  }
+  if (name == "CrossJoin") {
+    makeQueryGraph(*node.sources()[0], allow(PlanType::kJoin));
+  makeQueryGraph(*node.sources()[1], allow(PlanType::kJoin));
+      return currentSelect_;
   }
   if (name == "LocalPartition") {
     makeQueryGraph(*node.sources()[0], allowedInDt);

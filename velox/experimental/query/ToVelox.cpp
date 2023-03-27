@@ -18,11 +18,51 @@
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/expression/ExprToSubfieldFilter.h"
 
 namespace facebook::verax {
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+
+void filterUpdated(BaseTablePtr table) {
+  auto optimization = queryCtx()->optimization();
+  std::vector<core::TypedExprPtr> remainingConjuncts;
+  connector::hive::SubfieldFilters subfieldFilters;
+  for (auto filter : table->columnFilters) {
+    auto typedExpr = optimization->toTypedExpr(filter);
+    auto pair = velox::exec::toSubfieldFilter(typedExpr);
+    if (!pair.second) {
+      remainingConjuncts.push_back(std::move(typedExpr));
+      continue;
+    }
+    subfieldFilters[std::move(pair.first)] = std::move(pair.second);
+  }
+  for (auto expr : table->filter) {
+    remainingConjuncts.push_back(optimization->toTypedExpr(expr));
+  }
+  core::TypedExprPtr remainingFilter;
+  for (auto conjunct : remainingConjuncts) {
+    if (!remainingFilter) {
+      remainingFilter = conjunct;
+    } else {
+      remainingFilter = std::make_shared<core::CallTypedExpr>(
+          BOOLEAN(),
+          std::vector<core::TypedExprPtr>{remainingFilter, conjunct},
+          "and");
+    }
+  }
+  const char* connector = table->schemaTable->indices[0]
+                              ->distribution()
+                              .distributionType.locus->name();
+  auto handle = std::make_shared<connector::hive::HiveTableHandle>(
+      connector,
+      table->schemaTable->name,
+      true,
+      std::move(subfieldFilters),
+      remainingFilter);
+  optimization->setLeafHandle(table->id(), handle);
+}
 
 RelationOpPtr addGather(RelationOpPtr op) {
   if (op->relType() == RelType::kOrderBy) {
@@ -56,12 +96,37 @@ std::vector<ExecutableFragment> Optimization::toVeloxPlan(
   return stages;
 }
 
+RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  for (auto i = 0; i < columns.size(); ++i) {
+    names.push_back(columns[i]->name());
+    types.push_back(toTypePtr(columns[i]->value().type));
+  }
+  return ROW(std::move(names), std::move(types));
+}
+
 core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
   switch (expr->type()) {
     case PlanType::kColumn: {
       return std::make_shared<core::FieldAccessTypedExpr>(
           toTypePtr(expr->value().type), expr->as<Column>()->name());
     }
+    case PlanType::kCall: {
+      std::vector<core::TypedExprPtr> inputs;
+      auto call = expr->as<Call>();
+      for (auto arg : call->args()) {
+        inputs.push_back(toTypedExpr(arg));
+      }
+      return std::make_shared<core::CallTypedExpr>(
+          toTypePtr(expr->value().type), std::move(inputs), call->name());
+    }
+    case PlanType::kLiteral: {
+      auto literal = expr->as<Literal>();
+      return std::make_shared<core::ConstantTypedExpr>(
+          toTypePtr(literal->value().type), literal->literal());
+    }
+
     default:
       VELOX_FAIL("Cannot translate {} to TypeExpr", expr->toString());
   }
@@ -81,6 +146,29 @@ core::PlanNodePtr Optimization::makeFragment(
       source.fragment.planNode = makeFragment(op->input(), source, stages);
       stages.push_back(std::move(source));
       break;
+    }
+    case RelType::kTableScan: {
+      auto scan = op->as<TableScan>();
+      auto handle = leafHandle(scan->baseTable->id());
+      if (!handle) {
+        filterUpdated(scan->baseTable);
+        handle = leafHandle(scan->baseTable->id());
+        VELOX_CHECK(handle, "No table for scan {}", scan->toString(true, true));
+      }
+      std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+          assignments;
+      for (auto column : scan->columns()) {
+        assignments[column->name()] =
+            std::make_shared<connector::hive::HiveColumnHandle>(
+								column->name(),
+                connector::hive::HiveColumnHandle::ColumnType::kRegular,
+                toTypePtr(column->value().type));
+      }
+      return std::make_shared<core::TableScanNode>(
+          idGenerator_.next(),
+          makeOutputType(scan->columns()),
+          handle,
+          assignments);
     }
     default:
       VELOX_FAIL("Unsupported RelationOp {}", op->relType());
