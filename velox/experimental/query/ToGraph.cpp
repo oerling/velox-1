@@ -24,11 +24,10 @@ using namespace facebook::velox;
 
 using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
-  std::string veloxToString(core::PlanNode* plan) {
-    return plan->toString(true, true);
-  }
- 
-  
+std::string veloxToString(core::PlanNode* plan) {
+  return plan->toString(true, true);
+}
+
 void Optimization::setDerivedTableOutput(
     DerivedTablePtr dt,
     const velox::core::PlanNode& planNode) {
@@ -402,8 +401,8 @@ PlanObjectPtr Optimization::makeQueryGraph(
   }
   if (name == "CrossJoin") {
     makeQueryGraph(*node.sources()[0], allow(PlanType::kJoin));
-  makeQueryGraph(*node.sources()[1], allow(PlanType::kJoin));
-      return currentSelect_;
+    makeQueryGraph(*node.sources()[1], allow(PlanType::kJoin));
+    return currentSelect_;
   }
   if (name == "LocalPartition") {
     makeQueryGraph(*node.sources()[0], allowedInDt);

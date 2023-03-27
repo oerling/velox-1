@@ -29,7 +29,7 @@ LocalSchema::LocalSchema(
     const std::string& path,
     velox::dwio::common::FileFormat fmt,
     const std::string& connectorId)
-  : connectorId_(connectorId) {
+    : connectorId_(connectorId) {
   pool_ =
       memory::getProcessDefaultMemoryManager().getPool()->addChild("schema");
   format_ = fmt;

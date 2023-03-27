@@ -52,7 +52,10 @@ struct LocalTable {
 
 class LocalSchema : public SchemaSource {
  public:
-  LocalSchema(const std::string& path, velox::dwio::common::FileFormat format, const std::string& connectorId);
+  LocalSchema(
+      const std::string& path,
+      velox::dwio::common::FileFormat format,
+      const std::string& connectorId);
 
   void fetchSchemaTable(std::string_view name, const Schema* schema) override;
 
@@ -63,9 +66,9 @@ class LocalSchema : public SchemaSource {
   LocalTable* findTable(const std::string& name) {
     auto it = tables_.find(name);
     VELOX_CHECK(it != tables_.end(), "Table {} not found", name);
-    return  it->second.get();
+    return it->second.get();
   }
-  
+
  private:
   void initialize(const std::string& path);
 

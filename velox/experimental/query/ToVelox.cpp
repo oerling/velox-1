@@ -160,7 +160,7 @@ core::PlanNodePtr Optimization::makeFragment(
       for (auto column : scan->columns()) {
         assignments[column->name()] =
             std::make_shared<connector::hive::HiveColumnHandle>(
-								column->name(),
+                column->name(),
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
                 toTypePtr(column->value().type));
       }
