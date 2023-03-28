@@ -541,6 +541,16 @@ class Optimization {
   // Makes an output type for PlanNode.
   velox::RowTypePtr makeOutputType(const ColumnVector& columns);
 
+  // Returns a filter expr that ands 'exprs'. nullptr if 'exprs' is empty.
+  velox::core::TypedExprPtr toAnd(const ExprVector& exprs);
+
+
+  // Translates 'exprs' and returns them in 'result'. If an expr is
+  // other than a column, adds a projection node to evaluate the
+  // expression. The projection is added on top of 'source' and
+  // returned. If no projection is added, 'source' is returned.
+  velox::core::PlanNodePtr maybeProject(const ExprVector& exprs, velox::core::PlanNodePtr source, std::vector<velox::core::FieldAccessTypedExprPtr>& result);
+  
   velox::core::PlanNodePtr makeFragment(
       RelationOpPtr op,
       velox::exec::ExecutableFragment& fragment,
@@ -564,6 +574,9 @@ class Optimization {
   // Counter for generating unique correlation names for BaseTables and
   // DerivedTables.
   int32_t nameCounter_{0};
+
+  // Serial number for columns created for projections that name Exprs, e.g. in join or grouping keys.
+  int32_t resultNameCounter_{0};
 
   // Serial number for stages in executable plan.
   int32_t stageCounter_{0};

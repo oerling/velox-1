@@ -106,6 +106,20 @@ RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
   return ROW(std::move(names), std::move(types));
 }
 
+core::TypedExprPtr Optimization::toAnd(const ExprVector& exprs) {
+  core::TypedExprPtr result;
+  for (auto expr : exprs) {
+    auto conjunct = toTypedExpr(expr);
+    if (!result) {
+      result = conjunct;
+    } else {
+      result = std::make_shared<core::CallTypedExpr>(
+          BOOLEAN(), std::vector<core::TypedExprPtr>{result, conjunct}, "and");
+    }
+  }
+  return result;
+}
+
 core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
   switch (expr->type()) {
     case PlanType::kColumn: {
@@ -132,6 +146,42 @@ core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
   }
 }
 
+core::PlanNodePtr Optimization::maybeProject(
+    const ExprVector& exprs,
+    core::PlanNodePtr source,
+    std::vector<core::FieldAccessTypedExprPtr>& result) {
+  bool anyNonColumn = false;
+  for (auto expr : exprs) {
+    result.push_back(
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+            toTypedExpr(expr)));
+    if (expr->type() != PlanType::kColumn) {
+      anyNonColumn = true;
+    }
+  }
+  if (!anyNonColumn) {
+    return source;
+  }
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  std::vector<core::TypedExprPtr> projections;
+  for (auto i = 0; i < source->outputType()->size(); ++i) {
+    names.push_back(source->outputType()->nameOf(i));
+    types.push_back(source->outputType()->childAt(i));
+    projections.push_back(std::make_shared<core::FieldAccessTypedExpr>(
+        types.back(), names.back()));
+  }
+  for (auto i = 0; i < exprs.size(); ++i) {
+    names.push_back(fmt::format("r{}", ++resultNameCounter_));
+    types.push_back(toTypePtr(exprs[i]->value().type));
+    projections.push_back(toTypedExpr(exprs[i]));
+    result.push_back(std::make_shared<core::FieldAccessTypedExpr>(
+        types.back(), names.back()));
+  }
+  return std::make_shared<core::ProjectNode>(
+      idGenerator_.next(), std::move(names), std::move(projections), source);
+}
+
 core::PlanNodePtr Optimization::makeFragment(
     RelationOpPtr op,
     ExecutableFragment& fragment,
@@ -139,6 +189,15 @@ core::PlanNodePtr Optimization::makeFragment(
   switch (op->relType()) {
     case RelType::kProject: {
       auto input = makeFragment(op->input(), fragment, stages);
+      auto project = op->as<Project>();
+      std::vector<std::string> names;
+      std::vector<core::TypedExprPtr> exprs;
+      for (auto i = 0; i < project->exprs().size(); ++i) {
+        names.push_back(project->columns()[i]->name());
+        exprs.push_back(toTypedExpr(project->exprs()[i]));
+      }
+      return std::make_shared<core::ProjectNode>(
+          idGenerator_.next(), std::move(names), std::move(exprs), input);
     }
     case RelType::kRepartition: {
       ExecutableFragment source;
@@ -169,6 +228,25 @@ core::PlanNodePtr Optimization::makeFragment(
           makeOutputType(scan->columns()),
           handle,
           assignments);
+    }
+    case RelType::kJoin: {
+      auto join = op->as<Join>();
+      auto left = makeFragment(op->input(), fragment, stages);
+      auto right = makeFragment(op->input(), fragment, stages);
+      std::vector<core::FieldAccessTypedExprPtr> leftKeys;
+      left = maybeProject(join->leftKeys, left, leftKeys);
+      std::vector<core::FieldAccessTypedExprPtr> rightKeys;
+      right = maybeProject(join->rightKeys, right, rightKeys);
+      return std::make_shared<core::HashJoinNode>(
+          idGenerator_.next(),
+          join->joinType,
+          false,
+          leftKeys,
+          rightKeys,
+          toAnd(join->filter),
+          left,
+          right,
+          makeOutputType(join->columns()));
     }
     default:
       VELOX_FAIL("Unsupported RelationOp {}", op->relType());
