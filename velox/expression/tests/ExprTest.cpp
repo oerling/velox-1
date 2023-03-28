@@ -2811,6 +2811,15 @@ TEST_F(ExprTest, flatNoNullsFastPath) {
   ASSERT_EQ(1, exprSet->exprs().size());
   ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath())
       << exprSet->toString();
+
+  // Field dereference.
+  exprSet = compileExpression("a", rowType);
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_TRUE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath());
+
+  exprSet = compileExpression("a.c0", ROW({"a"}, {ROW({"c0"}, {INTEGER()})}));
+  ASSERT_EQ(1, exprSet->exprs().size());
+  ASSERT_FALSE(exprSet->exprs()[0]->supportsFlatNoNullsFastPath());
 }
 
 TEST_F(ExprTest, commonSubExpressionWithEncodedInput) {
@@ -3542,4 +3551,22 @@ TEST_F(ExprTest, peelingWithSmallerConstantInput) {
   // values out of bound.
   auto result = evaluate("coalesce(c0, c1)", makeRowVector({d0, c1}));
   assertEqualVectors(c1, result);
+}
+
+TEST_F(ExprTest, ifWithLazyNulls) {
+  // Makes a null-propagating switch. Evaluates it so that null propagation
+  // masks out errors.
+  constexpr int32_t kSize = 100;
+  const char* kExpr =
+      "CASE WHEN 10 % (c0 - 2) < 0 then c0 + c1 when 10 % (c0 - 4) = 3 then c0 + c1 * 2 else c0 + c1 end";
+  auto c0 = makeFlatVector<int64_t>(kSize, [](auto row) { return row % 10; });
+  auto c1 = makeFlatVector<int64_t>(
+      kSize,
+      [](auto row) { return row; },
+      [](auto row) { return row % 10 == 2 || row % 10 == 4; });
+
+  auto result = evaluate(kExpr, makeRowVector({c0, c1}));
+  auto resultFromLazy =
+      evaluate(kExpr, makeRowVector({c0, wrapInLazyDictionary(c1)}));
+  assertEqualVectors(result, resultFromLazy);
 }
