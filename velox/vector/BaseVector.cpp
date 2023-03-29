@@ -192,11 +192,13 @@ VectorPtr BaseVector::wrapInSequence(
     numIndices += rawLengths[i];
   }
   VELOX_CHECK_LT(numIndices, std::numeric_limits<int32_t>::max());
-  BufferPtr indices = AlignedBuffer::allocate<vector_size_t>(numIndices, vector->pool());
+  BufferPtr indices =
+      AlignedBuffer::allocate<vector_size_t>(numIndices, vector->pool());
   auto rawIndices = indices->asMutable<vector_size_t>();
   int32_t fill = 0;
   for (auto i = 0; i < numLengths; ++i) {
-    std::fill(rawIndices + fill, rawIndices + fill + rawLengths[i], i); ;
+    std::fill(rawIndices + fill, rawIndices + fill + rawLengths[i], i);
+    ;
     fill += rawLengths[i];
   }
   return wrapInDictionary(nullptr, indices, numIndices, vector);

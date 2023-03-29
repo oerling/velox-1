@@ -339,7 +339,8 @@ TEST_F(ExprTest, moreEncodings) {
   b = wrapInDictionary(indices, size, b);
 
   // Wrap both a and b in another dictionary.
-  // a and b are wrapped in different dictionaries now since b's dictionaries are combined.
+  // a and b are wrapped in different dictionaries now since b's dictionaries
+  // are combined.
   auto evenIndices = makeIndices(size / 2, [](auto row) { return row * 2; });
 
   a = wrapInDictionary(evenIndices, size / 2, a);
