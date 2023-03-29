@@ -70,7 +70,8 @@ float subfieldSelectivity(const HiveTableHandle& handle) {
 const std::string* FOLLY_NULLABLE columnName(const core::TypedExprPtr& expr) {
   if (auto column =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
-    if (column->inputs().empty() || dynamic_cast<const core::InputTypedExpr*>(column->inputs()[0].get())) {
+    if (column->inputs().empty() ||
+        dynamic_cast<const core::InputTypedExpr*>(column->inputs()[0].get())) {
       return &column->name();
     }
   }
