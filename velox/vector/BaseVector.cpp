@@ -146,6 +146,11 @@ VectorPtr BaseVector::wrapInDictionary(
 
   if (vector->encoding() == VectorEncoding::Simple::DICTIONARY) {
     auto base = vector->valueVector();
+    if (isLazyNotLoaded(*base)) {
+      // It is OK to rewrap a lazy. It is an error to wrap a lazy in multiple
+      // different dictionaries.
+      base->containsLazyAndIsWrapped_ = false;
+    }
     auto rawNulls = vector->rawNulls();
     if (indices->refCount() > 1) {
       indices = AlignedBuffer::copy(vector->pool(), indices);
@@ -175,37 +180,26 @@ VectorPtr BaseVector::wrapInDictionary(
       addDictionary, kind, nulls, indices, size, std::move(vector));
 }
 
-template <TypeKind kind>
-static VectorPtr
-addSequence(BufferPtr lengths, vector_size_t size, VectorPtr vector) {
-  auto base = vector.get();
-  auto pool = base->pool();
-  auto lsize = lengths->size();
-  return std::make_shared<
-      SequenceVector<typename KindToFlatVector<kind>::WrapperType>>(
-      pool,
-      size,
-      std::move(vector),
-      std::move(lengths),
-      SimpleVectorStats<typename KindToFlatVector<kind>::WrapperType>{},
-      std::nullopt /*distinctCount*/,
-      std::nullopt,
-      false /*sorted*/,
-      base->representedBytes().has_value()
-          ? std::optional<ByteCount>(
-                base->representedBytes().value() * size /
-                (1 + (lsize / sizeof(vector_size_t))))
-          : std::nullopt);
-}
-
 // static
 VectorPtr BaseVector::wrapInSequence(
     BufferPtr lengths,
     vector_size_t size,
     VectorPtr vector) {
-  auto kind = vector->typeKind();
-  return VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
-      addSequence, kind, lengths, size, std::move(vector));
+  auto numLengths = lengths->size() / sizeof(vector_size_t);
+  int64_t numIndices = 0;
+  auto rawLengths = lengths->as<vector_size_t>();
+  for (auto i = 0; i < numLengths; ++i) {
+    numIndices += rawLengths[i];
+  }
+  VELOX_CHECK_LT(numIndices, std::numeric_limits<int32_t>::max());
+  BufferPtr indices = AlignedBuffer::allocate<vector_size_t>(numIndices, vector->pool());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  int32_t fill = 0;
+  for (auto i = 0; i < numLengths; ++i) {
+    std::fill(rawIndices + fill, rawIndices + fill + rawLengths[i], i); ;
+    fill += rawLengths[i];
+  }
+  return wrapInDictionary(nullptr, indices, numIndices, vector);
 }
 
 template <TypeKind kind>
