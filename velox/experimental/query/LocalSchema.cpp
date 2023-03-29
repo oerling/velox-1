@@ -126,7 +126,9 @@ void LocalSchema::fetchSchemaTable(
     float cardinality = table->numRows;
     auto original = pair.second.get();
     Value value(original->type.get(), cardinality);
-    Declare(Column, column, toName(pair.first), nullptr, value);
+    auto columnName = toName(pair.first);
+    Declare(Column, column, columnName, nullptr, value);
+    schemaTable->columns[columnName] = column;
     columns.push_back(column);
   }
   DistributionType defaultDist;
