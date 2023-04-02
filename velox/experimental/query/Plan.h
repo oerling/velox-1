@@ -365,8 +365,15 @@ class Optimization {
   }
   // Translates from Expr to Velox.
   velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
+  auto& idGenerator() {
+    return idGenerator_;
+  }
 
- private:
+  // Translates from Type* to the original TypePtr. Used when reconstructing Velox
+  // plans from RelationOp.
+  velox::TypePtr toTypePtr(const velox::Type* type);
+
+private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
   // True if 'op' is in 'mask.
@@ -424,10 +431,6 @@ class Optimization {
   // Records the use of a TypePtr in a Value. Allows mapping from the Type* back
   // to TypePtr.
   void registerType(const velox::TypePtr& type);
-
-  // Maps from Type* to the original TypePtr. Used when reconstructing Velox
-  // plans from RelationOp.
-  velox::TypePtr toTypePtr(const velox::Type* type);
 
   // Adds a JoinEdge corresponding to 'join' to the enclosing DerivedTable.
   void translateJoin(const velox::core::AbstractJoinNode& join);
@@ -552,6 +555,12 @@ class Optimization {
       const ExprVector& exprs,
       velox::core::PlanNodePtr source,
       std::vector<velox::core::FieldAccessTypedExprPtr>& result);
+
+  // Makes a Velox AggregationNode for a RelationOp.
+  velox::core::PlanNodePtr makeAggregation(
+					   Aggregation& agg,
+      velox::exec::ExecutableFragment& fragment,
+      std::vector<velox::exec::ExecutableFragment>& stages);
 
   velox::core::PlanNodePtr makeFragment(
       RelationOpPtr op,

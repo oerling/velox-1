@@ -739,7 +739,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
             functions,
             aggregate->isDistinct(),
             newCondition,
-            aggregate->isAccumulator());
+            aggregate->isAccumulator(),
+	    aggregate->intermediateType());
         return copy;
       }
     }
@@ -1262,7 +1263,7 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
   result.scanCardinality = distribution->cardinality;
   const ExprVector* groupingKeys = nullptr;
   if (dt->aggregation) {
-    groupingKeys = &dt->aggregation->grouping;
+    groupingKeys = &dt->aggregation->aggregation->grouping;
   }
   result.joinCardinality = result.scanCardinality;
   for (auto i = 0; i < keys.size(); ++i) {

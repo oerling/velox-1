@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/core/PlanNode.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
@@ -182,6 +183,120 @@ core::PlanNodePtr Optimization::maybeProject(
       idGenerator_.next(), std::move(names), std::move(projections), source);
 }
 
+// Translates ExprPtrs to FieldAccessTypedExprs. Maintains a set of
+// projections and produces a ProjectNode to evaluate distinct
+// expressions for non-column Exprs given to toFieldref() and
+// related functions.
+class TempProjections {
+ public:
+  TempProjections(Optimization& optimization, const RelationOp& input)
+      : optimization_(optimization), input_(input) {
+    for (auto& column : input_.columns()) {
+      exprChannel_[column] = nextChannel_++;
+      names_.push_back(column->name());
+      fieldRefs_.push_back(std::make_shared<core::FieldAccessTypedExpr>(
+          optimization_.toTypePtr(column->value().type), column->name()));
+    }
+    exprs_.insert(exprs_.begin(), fieldRefs_.begin(), fieldRefs_.end());
+  }
+
+  core::FieldAccessTypedExprPtr toFieldRef(ExprPtr expr) {
+    auto it = exprChannel_.find(expr);
+    if (it == exprChannel_.end()) {
+      VELOX_CHECK_NE(expr->type(), PlanType::kColumn);
+      exprChannel_[expr] = nextChannel_++;
+      exprs_.push_back(optimization_.toTypedExpr(expr));
+      names_.push_back(fmt::format("__r{}", nextChannel_ - 1));
+      fieldRefs_.push_back(std::make_shared<core::FieldAccessTypedExpr>(
+          optimization_.toTypePtr(expr->value().type), names_.back()));
+      return fieldRefs_.back();
+    }
+    return fieldRefs_[it->second];
+  }
+
+  template <typename Result = core::FieldAccessTypedExprPtr>
+  std::vector<Result> toFieldRefs(const ExprVector& exprs) {
+    std::vector<Result> result;
+    for (auto expr : exprs) {
+      result.push_back(toFieldRef(expr));
+    }
+    return result;
+  }
+
+  core::PlanNodePtr maybeProject(core::PlanNodePtr inputNode) {
+    if (nextChannel_ == input_.columns().size()) {
+      return inputNode;
+    }
+    return std::make_shared<core::ProjectNode>(
+        optimization_.idGenerator().next(),
+        std::move(names_),
+        std::move(exprs_),
+        inputNode);
+  }
+
+ private:
+  Optimization& optimization_;
+  const RelationOp& input_;
+  int32_t nextChannel_;
+  std::vector<core::FieldAccessTypedExprPtr> fieldRefs_;
+  std::vector<std::string> names_;
+  std::vector<core::TypedExprPtr> exprs_;
+  std::map<ExprPtr, int32_t> exprChannel_;
+};
+
+core::PlanNodePtr Optimization::makeAggregation(
+    Aggregation& op,
+    ExecutableFragment& fragment,
+    std::vector<ExecutableFragment>& stages) {
+  auto input = makeFragment(op.input(), fragment, stages);
+  TempProjections projections(*this, *op.input());
+
+  std::vector<std::string> aggregateNames;
+  std::vector<core::CallTypedExprPtr> aggregates;
+  std::vector<core::FieldAccessTypedExprPtr> masks;
+  bool isRawInput = op.step == core::AggregationNode::Step::kPartial ||
+      op.step == core::AggregationNode::Step::kSingle;
+  bool isIntermediateOutput =
+      op.step == core::AggregationNode::Step::kPartial ||
+      op.step == core::AggregationNode::Step::kIntermediate;
+  for (auto i = 0; i < op.aggregates.size(); ++i) {
+    aggregateNames.push_back(op.columns()[i + op.grouping.size()]->name());
+    auto aggregate = op.aggregates[i];
+    if (isRawInput) {
+      if (aggregate->condition()) {
+        masks.resize(i + 1);
+        masks[i] = projections.toFieldRef(aggregate->condition());
+      }
+      aggregates.push_back(std::make_shared<core::CallTypedExpr>(
+          toTypePtr(aggregate->value().type),
+          projections.toFieldRefs<core::TypedExprPtr>(aggregate->args()),
+          aggregate->name()));
+    } else {
+      aggregates.push_back(std::make_shared<core::CallTypedExpr>(
+          toTypePtr(aggregate->value().type),
+          std::vector<core::TypedExprPtr>{
+              std::make_shared<core::FieldAccessTypedExpr>(
+                  toTypePtr(aggregate->value().type), fmt::format("a{}", i))},
+          aggregate->name()));
+    }
+  }
+  auto keys = projections.toFieldRefs(op.grouping);
+  auto project = projections.maybeProject(input);
+  auto r =new core::AggregationNode(
+      idGenerator_.next(),
+      op.step,
+      keys,
+      {},
+      aggregateNames,
+      aggregates,
+      masks,
+      false,
+      project);
+  core::PlanNodePtr ptr;
+  ptr.reset(r);
+  return ptr;
+}
+  
 core::PlanNodePtr Optimization::makeFragment(
     RelationOpPtr op,
     ExecutableFragment& fragment,
@@ -198,6 +313,16 @@ core::PlanNodePtr Optimization::makeFragment(
       }
       return std::make_shared<core::ProjectNode>(
           idGenerator_.next(), std::move(names), std::move(exprs), input);
+    }
+    case RelType::kFilter: {
+      auto filter = op->as<Filter>();
+      return std::make_shared<core::FilterNode>(
+          idGenerator_.next(),
+          toAnd(filter->exprs()),
+          makeFragment(filter->input(), fragment, stages));
+    }
+    case RelType::kAggregation: {
+      return makeAggregation(*op->as<Aggregation>(), fragment, stages);
     }
     case RelType::kRepartition: {
       ExecutableFragment source;

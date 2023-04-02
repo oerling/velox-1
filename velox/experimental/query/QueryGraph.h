@@ -497,7 +497,8 @@ class Aggregate : public Call {
       FunctionSet functions,
       bool isDistinct,
       ExprPtr condition,
-      bool isAccumulator)
+      bool isAccumulator,
+      const velox::Type* intermediateType)
       : Call(
             PlanType::kAggregate,
             name,
@@ -506,7 +507,8 @@ class Aggregate : public Call {
             functions | FunctionSet::kAggregate),
         isDistinct_(isDistinct),
         condition_(condition),
-        isAccumulator_(isAccumulator) {
+        isAccumulator_(isAccumulator),
+        intermediateType_(intermediateType) {
     if (condition_) {
       columns_.unionSet(condition_->columns());
     }
@@ -524,10 +526,15 @@ class Aggregate : public Call {
     return isAccumulator_;
   }
 
+  const velox::Type* intermediateType() const {
+    return intermediateType_;
+  }
+
  private:
   bool isDistinct_;
   ExprPtr condition_;
   bool isAccumulator_;
+  const velox::Type* intermediateType_;
 };
 
 using AggregatePtr = const Aggregate*;
@@ -535,6 +542,16 @@ using AggregatePtr = const Aggregate*;
 struct Aggregation;
 using AggregationPtr = Aggregation*;
 
+/// Wraps an Aggregation RelationOp. This gives the aggregation a PlanObject id
+struct AggregationPlan : public PlanObject {
+  AggregationPlan(AggregationPtr agg)
+      : PlanObject(PlanType::kAggregate), aggregation(agg) {}
+
+  AggregationPtr aggregation;
+};
+
+  using AggregationPlanPtr = const AggregationPlan*;
+  
 struct OrderBy;
 using OrderByPtr = OrderBy*;
 
@@ -601,7 +618,7 @@ struct DerivedTable : public PlanObject {
   PlanObjectSet fullyImported;
 
   // Postprocessing clauses, group by, having, order by, limit, offset.
-  AggregationPtr aggregation{nullptr};
+  AggregationPlanPtr aggregation{nullptr};
   ExprVector having;
   OrderByPtr orderBy{nullptr};
   int32_t limit{-1};

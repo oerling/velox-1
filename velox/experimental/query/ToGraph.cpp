@@ -181,6 +181,14 @@ ExprVector Optimization::translateColumns(
   return result;
 }
 
+TypePtr intermediateType(const core::CallTypedExprPtr& call) {
+  std::vector<TypePtr> types;
+  for (auto& arg : call->inputs()) {
+    types.push_back(arg->type());
+  }
+  return exec::Aggregate::intermediateType(call->name(), types);
+}
+
 AggregationPtr FOLLY_NULLABLE
 Optimization::translateAggregation(const core::AggregationNode& source) {
   using velox::core::AggregationNode;
@@ -192,12 +200,32 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
         aggregation,
         nullptr,
         translateColumns(source.groupingKeys()));
+    for (auto i = 0; i < source.groupingKeys().size(); ++i) {
+      if (aggregation->grouping[i]->type() == PlanType::kColumn) {
+        aggregation->mutableColumns().push_back(aggregation->grouping[i]->as<Column>());
+      } else {
+        auto name = toName(source.outputType()->nameOf(i));
+        auto type = source.outputType()->childAt(i);
+        registerType(type);
+        Declare(
+            Column,
+            column,
+            name,
+            currentSelect_,
+            aggregation->grouping[i]->value());
+        aggregation->mutableColumns().push_back(column);
+      }
+    }
+    // The keys for intermediate are the same as for final.
+    aggregation->intermediateColumns = aggregation->columns();
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
       auto rawFunc = translateExpr(source.aggregates()[i])->as<Call>();
       ExprPtr condition = nullptr;
-      if (source.aggregateMasks()[i]) {
+      if (source.aggregateMasks().size() > i && source.aggregateMasks()[i]) {
         condition = translateExpr(source.aggregateMasks()[i]);
       }
+      auto accumulatorType = intermediateType(source.aggregates()[i]);
+      registerType(accumulatorType);
       Declare(
           Aggregate,
           agg,
@@ -207,11 +235,20 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
           rawFunc->functions(),
           false,
           condition,
-          false);
+          false,
+          accumulatorType.get());
+      auto name = toName(source.aggregateNames()[i]);
+      Declare(Column, column, name, currentSelect_, agg->value());
+      aggregation->mutableColumns().push_back(column);
+      auto intermediateValue = agg->value();
+      intermediateValue.type = accumulatorType.get();
+      Declare(
+          Column, intermediateColumn, name, currentSelect_, intermediateValue);
+      aggregation->intermediateColumns.push_back(intermediateColumn);
       auto dedupped = queryCtx()->dedup(agg);
       aggregation->aggregates.push_back(dedupped->as<Aggregate>());
-      auto name = toName(source.aggregateNames()[i]);
-      renames_[name] = dedupped->as<Expr>();
+      auto resultName = toName(source.aggregateNames()[i]);
+      renames_[resultName] = dedupped->as<Expr>();
     }
     return aggregation;
   }
@@ -424,7 +461,8 @@ PlanObjectPtr Optimization::makeQueryGraph(
           *node.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
       auto agg = translateAggregation(aggNode);
       if (agg) {
-        currentSelect_->aggregation = agg;
+        Declare(AggregationPlan, aggPlan, agg);
+        currentSelect_->aggregation = aggPlan;
       }
     } else {
       if (aggNode.step() == AggregationNode::Step::kFinal) {

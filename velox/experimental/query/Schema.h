@@ -268,20 +268,25 @@ class Relation {
     return columns_;
   }
 
+  ColumnVector& mutableColumns()  {
+    return columns_;
+  }
+
+  
   template <typename T>
   const T* as() const {
-    return reinterpret_cast<const T*>(this);
+    return static_cast<const T*>(this);
   }
 
   template <typename T>
   T* as() {
-    return reinterpret_cast<T*>(this);
+    return static_cast<T*>(this);
   }
 
  protected:
   const RelType relType_;
   const Distribution distribution_;
-  const ColumnVector columns_;
+  ColumnVector columns_;
 };
 
 struct SchemaTable;

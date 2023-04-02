@@ -500,12 +500,10 @@ bool MemoKey::operator==(const MemoKey& other) const {
   return false;
 }
 
-RelationOpPtr repartitionForAgg(
-    const ExprVector& keyValues,
-    const RelationOpPtr& plan,
-    PlanState& state) {
+RelationOpPtr repartitionForAgg(const RelationOpPtr& plan, PlanState& state) {
   // No shuffle if all grouping keys are in partitioning.
   bool shuffle = false;
+  const ExprVector& keyValues = state.dt->aggregation->aggregation->grouping;
   for (auto& key : keyValues) {
     auto nthKey = position(plan->distribution().partition, *key);
     if (nthKey == kNotFound) {
@@ -532,10 +530,23 @@ void Optimization::addPostprocess(
     RelationOpPtr& plan,
     PlanState& state) {
   if (dt->aggregation) {
-    plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
-    Declare(Aggregation, newGroupBy, *dt->aggregation, plan);
-    state.addCost(*newGroupBy);
-    plan = newGroupBy;
+    Declare(
+        Aggregation,
+        partialAgg,
+        *dt->aggregation->aggregation,
+        plan,
+        partialAgg->step = core::AggregationNode::Step::kPartial);
+    state.placed.add(dt->aggregation);
+    state.addCost(*partialAgg);
+    plan = repartitionForAgg(plan, state);
+    Declare(
+        Aggregation,
+        finalAgg,
+        *dt->aggregation->aggregation,
+        plan,
+        core::AggregationNode::Step::kFinal);
+    state.addCost(*finalAgg);
+    plan = finalAgg;
   }
   if (!dt->columns.empty()) {
     Declare(Project, project, plan, dt->exprs, dt->columns);
