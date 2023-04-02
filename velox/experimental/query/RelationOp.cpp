@@ -180,26 +180,27 @@ std::string Repartition::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
-  Aggregation::Aggregation(const Aggregation& other, RelationOpPtr input, velox::core::AggregationNode::Step _step)
-      : Aggregation(other) {
-    *const_cast<Distribution*>(&distribution_) = input->distribution();
-    input_ = std::move(input);
-    step = _step;
-    using velox::core::AggregationNode;
-    ColumnVector columns;
-    for (auto key : grouping) {
-      if (key->type() == PlanType::kColumn) {
-      } else {
-	
-      }
-    }
-    if (step == AggregationNode::Step::kPartial || step == AggregationNode::Step::kIntermediate) {
-      
+Aggregation::Aggregation(
+    const Aggregation& other,
+    RelationOpPtr input,
+    velox::core::AggregationNode::Step _step)
+    : Aggregation(other) {
+  *const_cast<Distribution*>(&distribution_) = input->distribution();
+  input_ = std::move(input);
+  step = _step;
+  using velox::core::AggregationNode;
+  ColumnVector columns;
+  for (auto key : grouping) {
+    if (key->type() == PlanType::kColumn) {
     } else {
     }
   }
+  if (step == AggregationNode::Step::kPartial ||
+      step == AggregationNode::Step::kIntermediate) {
+  } else {
+  }
+}
 
-  
 std::string Aggregation::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {

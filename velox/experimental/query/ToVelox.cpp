@@ -282,7 +282,7 @@ core::PlanNodePtr Optimization::makeAggregation(
   }
   auto keys = projections.toFieldRefs(op.grouping);
   auto project = projections.maybeProject(input);
-  auto r =new core::AggregationNode(
+  auto r = new core::AggregationNode(
       idGenerator_.next(),
       op.step,
       keys,
@@ -296,7 +296,7 @@ core::PlanNodePtr Optimization::makeAggregation(
   ptr.reset(r);
   return ptr;
 }
-  
+
 core::PlanNodePtr Optimization::makeFragment(
     RelationOpPtr op,
     ExecutableFragment& fragment,

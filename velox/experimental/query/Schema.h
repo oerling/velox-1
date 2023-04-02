@@ -268,11 +268,10 @@ class Relation {
     return columns_;
   }
 
-  ColumnVector& mutableColumns()  {
+  ColumnVector& mutableColumns() {
     return columns_;
   }
 
-  
   template <typename T>
   const T* as() const {
     return static_cast<const T*>(this);

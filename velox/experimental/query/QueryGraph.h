@@ -550,8 +550,8 @@ struct AggregationPlan : public PlanObject {
   AggregationPtr aggregation;
 };
 
-  using AggregationPlanPtr = const AggregationPlan*;
-  
+using AggregationPlanPtr = const AggregationPlan*;
+
 struct OrderBy;
 using OrderByPtr = OrderBy*;
 

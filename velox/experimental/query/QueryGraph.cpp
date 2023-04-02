@@ -740,7 +740,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
             aggregate->isDistinct(),
             newCondition,
             aggregate->isAccumulator(),
-	    aggregate->intermediateType());
+            aggregate->intermediateType());
         return copy;
       }
     }

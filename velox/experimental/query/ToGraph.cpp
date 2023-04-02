@@ -202,7 +202,8 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
         translateColumns(source.groupingKeys()));
     for (auto i = 0; i < source.groupingKeys().size(); ++i) {
       if (aggregation->grouping[i]->type() == PlanType::kColumn) {
-        aggregation->mutableColumns().push_back(aggregation->grouping[i]->as<Column>());
+        aggregation->mutableColumns().push_back(
+            aggregation->grouping[i]->as<Column>());
       } else {
         auto name = toName(source.outputType()->nameOf(i));
         auto type = source.outputType()->childAt(i);

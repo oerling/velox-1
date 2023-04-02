@@ -354,7 +354,10 @@ using HashBuildPtr = HashBuild*;
 
 /// Represents aggregation with or without grouping.
 struct Aggregation : public RelationOp {
-  Aggregation(const Aggregation& other, RelationOpPtr input, velox::core::AggregationNode::Step _step);
+  Aggregation(
+      const Aggregation& other,
+      RelationOpPtr input,
+      velox::core::AggregationNode::Step _step);
 
   Aggregation(RelationOpPtr input, ExprVector _grouping)
       : RelationOp(
@@ -376,7 +379,8 @@ struct Aggregation : public RelationOp {
   velox::core::AggregationNode::Step step{
       velox::core::AggregationNode::Step::kSingle};
 
-  // 'columns' of RelationOp is the final columns. 'intermediateColumns is the output of the corresponding partial aggregation.
+  // 'columns' of RelationOp is the final columns. 'intermediateColumns is the
+  // output of the corresponding partial aggregation.
   ColumnVector intermediateColumns;
 
   void setCost(const PlanState& input) override;

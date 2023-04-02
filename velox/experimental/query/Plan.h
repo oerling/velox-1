@@ -369,11 +369,11 @@ class Optimization {
     return idGenerator_;
   }
 
-  // Translates from Type* to the original TypePtr. Used when reconstructing Velox
-  // plans from RelationOp.
+  // Translates from Type* to the original TypePtr. Used when reconstructing
+  // Velox plans from RelationOp.
   velox::TypePtr toTypePtr(const velox::Type* type);
 
-private:
+ private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
   // True if 'op' is in 'mask.
@@ -558,7 +558,7 @@ private:
 
   // Makes a Velox AggregationNode for a RelationOp.
   velox::core::PlanNodePtr makeAggregation(
-					   Aggregation& agg,
+      Aggregation& agg,
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
 
