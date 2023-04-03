@@ -16,11 +16,11 @@
 
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/core/PlanNode.h"
+#include "velox/exec/HashPartitionFunction.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
-#include "velox/exec/HashPartitionFunction.h"
 
 namespace facebook::verax {
 
@@ -205,11 +205,11 @@ class TempProjections {
  private:
   Optimization& optimization_;
   const RelationOp& input_;
-  int32_t nextChannel_;
+  int32_t nextChannel_{0};
   std::vector<core::FieldAccessTypedExprPtr> fieldRefs_;
   std::vector<std::string> names_;
   std::vector<core::TypedExprPtr> exprs_;
-  std::map<ExprPtr, int32_t> exprChannel_;
+  std::unordered_map<ExprPtr, int32_t> exprChannel_;
 };
 
 core::PlanNodePtr Optimization::makeAggregation(
@@ -283,7 +283,6 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
   const std::vector<column_index_t> keys_;
 };
 
-  
 core::PartitionFunctionSpecPtr createPartitionFunctionSpec(
     const RowTypePtr& inputType,
     const std::vector<core::TypedExprPtr>& keys) {
@@ -294,8 +293,7 @@ core::PartitionFunctionSpecPtr createPartitionFunctionSpec(
     keyIndices.reserve(keys.size());
     for (const auto& key : keys) {
       keyIndices.push_back(inputType->getChildIdx(
-          dynamic_cast<const core::FieldAccessTypedExpr*>(key.get())
-              ->name()));
+          dynamic_cast<const core::FieldAccessTypedExpr*>(key.get())->name()));
     }
     return std::make_shared<HashPartitionFunctionSpec>(
         inputType, std::move(keyIndices));
@@ -398,6 +396,8 @@ core::PlanNodePtr Optimization::makeFragment(
           rightProjections.maybeProject(right),
           makeOutputType(join->columns()));
     }
+    case RelType::kHashBuild:
+      return makeFragment(op->input(), fragment, stages);
     default:
       VELOX_FAIL("Unsupported RelationOp {}", op->relType());
   }

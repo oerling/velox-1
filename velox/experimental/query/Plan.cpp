@@ -53,8 +53,19 @@ void Optimization::trace(
 
 PlanPtr Optimization::bestPlan() {
   topState_.dt = root_;
-  for (auto expr : root_->exprs) {
-    topState_.targetColumns.unionColumns(expr);
+  if (root_->aggregation) {
+    auto aggregation = root_->aggregation->aggregation;
+    for (auto expr : aggregation->grouping) {
+      topState_.targetColumns.unionColumns(expr);
+    }
+    for (auto expr : aggregation->aggregates) {
+      topState_.targetColumns.unionColumns(expr);
+    }
+
+  } else {
+    for (auto expr : root_->exprs) {
+      topState_.targetColumns.unionColumns(expr);
+    }
   }
   makeJoins(nullptr, topState_);
   Distribution empty;
@@ -505,14 +516,15 @@ RelationOpPtr repartitionForAgg(const RelationOpPtr& plan, PlanState& state) {
   // No shuffle if all grouping keys are in partitioning.
   bool shuffle = false;
   const ExprVector& keyValues = state.dt->aggregation->aggregation->grouping;
-  // If no grouping and not yet gathered on a single node, add a gather before final agg.
+  // If no grouping and not yet gathered on a single node, add a gather before
+  // final agg.
   if (keyValues.empty() && !plan->distribution().distributionType.isGather) {
     Declare(
-	    Repartition,
-      gather,
-	    plan,
-      Distribution::gather(plan->distribution().distributionType),
-	    plan->columns());
+        Repartition,
+        gather,
+        plan,
+        Distribution::gather(plan->distribution().distributionType),
+        plan->columns());
     state.addCost(*gather);
     return gather;
   }
