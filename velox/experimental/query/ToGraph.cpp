@@ -50,7 +50,6 @@ DerivedTablePtr Optimization::makeQueryGraph() {
   root_ = root;
   currentSelect_ = root_;
   root->cname = toName(fmt::format("dt{}", ++nameCounter_));
-  ;
   makeQueryGraph(inputPlan_, kAllAllowedInDt);
   return root_;
 }
@@ -249,7 +248,7 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
       auto dedupped = queryCtx()->dedup(agg);
       aggregation->aggregates.push_back(dedupped->as<Aggregate>());
       auto resultName = toName(source.aggregateNames()[i]);
-      renames_[resultName] = dedupped->as<Expr>();
+      renames_[resultName] = aggregation->columns().back();
     }
     return aggregation;
   }
@@ -334,6 +333,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   MemoKey key;
   key.firstTable = newDt;
   key.tables.add(newDt);
+  newDt->distributeConjuncts();
   newDt->addImpliedJoins();
   newDt->linkTablesToJoins();
   newDt->setStartTables();

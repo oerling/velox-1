@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
 
@@ -155,6 +156,9 @@ class VeloxRunner {
     });
     splitSourceFactory_ = std::make_unique<LocalSplitSourceFactory>(
         *schema_, FLAGS_num_splits_per_file);
+    executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
+        FLAGS_num_drivers * 2 + 2);
+    spillExecutor_ = std::make_shared<folly::IOThreadPoolExecutor>(4);
   }
 
   core::PlanNodePtr toTableScan(
@@ -183,6 +187,17 @@ class VeloxRunner {
   }
 
   void run(const std::string& sql) {
+    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+    connectorConfigs[kHiveConnectorId] =
+        std::make_shared<core::MemConfig>(hiveConfig_);
+    queryCtx_ = std::make_shared<core::QueryCtx>(
+        executor_.get(),
+        std::make_shared<core::MemConfig>(config_),
+        std::move(connectorConfigs),
+        memory::MemoryAllocator::getInstance(),
+        pool_,
+        spillExecutor_);
+
     core::PlanNodePtr plan;
     try {
       plan = planner_->plan(sql);
@@ -194,23 +209,23 @@ class VeloxRunner {
     ExecutablePlanOptions opts;
     opts.numWorkers = FLAGS_num_workers;
     opts.numDrivers = FLAGS_num_drivers;
+    auto allocator = std::make_unique<HashStringAllocator>(pool_.get());
+    auto context =
+        std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
+    facebook::verax::queryCtx() = context.get();
 
     try {
-      auto allocator = std::make_unique<HashStringAllocator>(pool_.get());
-      auto context =
-          std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
-      facebook::verax::queryCtx() = context.get();
       facebook::verax::Schema veraxSchema("test", schema_.get());
       facebook::verax::Optimization opt(
           *plan, veraxSchema, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
       fragments = opt.toVeloxPlan(best->op, opts);
-      facebook::verax::queryCtx() = nullptr;
     } catch (const std::exception& e) {
       facebook::verax::queryCtx() = nullptr;
       std::cout << "Optimization error: " << e.what();
       return;
     }
+    facebook::verax::queryCtx() = nullptr;
 
     try {
       LocalRunner runner(
@@ -230,10 +245,14 @@ class VeloxRunner {
   std::shared_ptr<memory::MemoryAllocator> allocator_;
   std::shared_ptr<memory::MemoryPool> pool_;
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
+  std::shared_ptr<folly::CPUThreadPoolExecutor> executor_;
+  std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
   std::shared_ptr<core::QueryCtx> queryCtx_;
   std::unique_ptr<facebook::verax::LocalSchema> schema_;
   std::unique_ptr<LocalSplitSourceFactory> splitSourceFactory_;
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;
+  std::unordered_map<std::string, std::string> config_;
+  std::unordered_map<std::string, std::string> hiveConfig_;
 };
 
 int main(int argc, char** argv) {

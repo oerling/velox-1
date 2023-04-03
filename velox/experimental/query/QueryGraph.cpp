@@ -953,6 +953,7 @@ findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
   if (create) {
     Declare(
         JoinEdge, join, tables[0], tables[1], {}, false, false, false, false);
+    dt->joins.push_back(join);
     return join;
   }
   return nullptr;

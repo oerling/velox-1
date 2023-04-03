@@ -126,12 +126,13 @@ enum class ShuffleMode { kNone, kHive };
 struct DistributionType {
   bool operator==(const DistributionType& other) const {
     return mode == other.mode && numPartitions == other.numPartitions &&
-        locus == other.locus;
+        locus == other.locus && isGather == other.isGather;
   }
 
   ShuffleMode mode{ShuffleMode::kNone};
   int32_t numPartitions{1};
   LocusPtr locus{nullptr};
+  bool isGather{false};
 };
 
 // Describes output of relational operator. If base table, cardinality is
@@ -170,6 +171,7 @@ struct Distribution {
       const OrderTypeVector& orderType = {}) {
     auto singleType = type;
     singleType.numPartitions = 1;
+    singleType.isGather = true;
     return Distribution(singleType, 1, {}, order, orderType);
   }
 

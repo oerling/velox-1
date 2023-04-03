@@ -32,6 +32,7 @@ Optimization::Optimization(
     : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
   queryCtx()->optimization() = this;
   root_ = makeQueryGraph();
+  root_->distributeConjuncts();
   root_->addImpliedJoins();
   root_->linkTablesToJoins();
   setDerivedTableOutput(root_, inputPlan_);
@@ -504,6 +505,17 @@ RelationOpPtr repartitionForAgg(const RelationOpPtr& plan, PlanState& state) {
   // No shuffle if all grouping keys are in partitioning.
   bool shuffle = false;
   const ExprVector& keyValues = state.dt->aggregation->aggregation->grouping;
+  // If no grouping and not yet gathered on a single node, add a gather before final agg.
+  if (keyValues.empty() && !plan->distribution().distributionType.isGather) {
+    Declare(
+	    Repartition,
+      gather,
+	    plan,
+      Distribution::gather(plan->distribution().distributionType),
+	    plan->columns());
+    state.addCost(*gather);
+    return gather;
+  }
   for (auto& key : keyValues) {
     auto nthKey = position(plan->distribution().partition, *key);
     if (nthKey == kNotFound) {
@@ -538,7 +550,7 @@ void Optimization::addPostprocess(
         partialAgg->step = core::AggregationNode::Step::kPartial);
     state.placed.add(dt->aggregation);
     state.addCost(*partialAgg);
-    plan = repartitionForAgg(plan, state);
+    plan = repartitionForAgg(partialAgg, state);
     Declare(
         Aggregation,
         finalAgg,
