@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
+#include <fcntl.h>
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
-#include <fstream>
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <fstream>
 
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/file/FileSystems.h"
@@ -164,7 +164,7 @@ struct RunStats {
 
   std::string toString(bool detail) {
     std::stringstream out;
-    out << succinctNanos(micros*1000) << " flags: ";
+    out << succinctNanos(micros * 1000) << " flags: ";
     for (auto& pair : flags) {
       out << pair.first << "=" << pair.second << " ";
     }
@@ -378,12 +378,12 @@ class TpchBenchmark {
     } else {
       auto& flag = parameters_[level].flag;
       for (auto& value : parameters_[level].values) {
-	std::string result =
+        std::string result =
             gflags::SetCommandLineOption(flag.c_str(), value.c_str());
-	if (result.empty()) {
-	  LOG(ERROR) << "Failed to set " << flag << "=" << value;
-	}
-	std::cout << result << std::endl;
+        if (result.empty()) {
+          LOG(ERROR) << "Failed to set " << flag << "=" << value;
+        }
+        std::cout << result << std::endl;
         runCombinations(level + 1);
       }
     }
