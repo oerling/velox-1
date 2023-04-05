@@ -24,6 +24,11 @@ DEFINE_int32(
     80,
     "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
 
+DEFINE_int64(
+    max_coalesced_bytes,
+    128 << 20,
+    "Maximum size of single coalesced IO");
+
 namespace facebook::velox::dwio::common {
 
 using cache::CachePin;
@@ -229,7 +234,7 @@ void CachedBufferedInput::makeLoads(
   // Combine adjacent short reads.
 
   int32_t numNewLoads = 0;
-
+  int64_t coalescedBytes = 0;
   coalesceIo<CacheRequest*, CacheRequest*>(
       requests,
       maxDistance,
@@ -239,8 +244,16 @@ void CachedBufferedInput::makeLoads(
         return isSsd ? requests[index]->ssdPin.run().offset()
                      : requests[index]->key.offset;
       },
-      [&](int32_t index) { return requests[index]->size; },
       [&](int32_t index) {
+        auto size = requests[index]->size;
+        coalescedBytes += size;
+        return size;
+      },
+      [&](int32_t index) {
+        if (coalescedBytes > FLAGS_max_coalesced_bytes) {
+          coalescedBytes = 0;
+          return kNoCoalesce;
+        }
         return requests[index]->coalesces ? 1 : kNoCoalesce;
       },
       [&](CacheRequest* request, std::vector<CacheRequest*>& ranges) {

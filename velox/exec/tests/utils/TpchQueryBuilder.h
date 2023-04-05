@@ -76,6 +76,13 @@ class TpchQueryBuilder {
   static const std::vector<std::string>& getTableNames();
 
  private:
+  // Initializes the schema information for 'tableName' from sample file at
+  // 'filePath'.
+  void readFileSchema(
+      const std::string& tableName,
+      const std::string& filePath,
+      const std::vector<std::string>& columns);
+
   TpchPlan getQ1Plan() const;
   TpchPlan getQ3Plan() const;
   TpchPlan getQ5Plan() const;
