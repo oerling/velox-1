@@ -72,6 +72,13 @@ class TpchQueryBuilder {
   /// @param queryId TPC-H query number
   TpchPlan getQueryPlan(int queryId) const;
 
+  /// Returns a plan for select max(c1), max(c2), .. from lineitem where partkey
+  /// between
+  /// ... such that 'columnPct' columns are aggregated with max(c) for numbers
+  /// and with max(length(c)) for strings. To select the columns, we sort them
+  /// by column name and take the first columnPct percent.
+  TpchPlan getIoMeterPlan(int columnPct) const;
+
   /// Get the TPC-H table names present.
   static const std::vector<std::string>& getTableNames();
 

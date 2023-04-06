@@ -273,6 +273,7 @@ void CachedBufferedInput::makeLoads(
     for (auto i = 0; i < allCoalescedLoads_.size(); ++i) {
       auto& load = allCoalescedLoads_[i];
       if (load->state() == LoadState::kPlanned) {
+	prefetchSize_ += load->size();
         executor_->add([pendingLoad = load]() {
           process::TraceContext trace("Read Ahead");
           pendingLoad->loadOrFuture(nullptr);
@@ -304,12 +305,17 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
         ioStats_(std::move(ioStats)),
         groupId_(groupId) {
     for (auto& request : requests) {
+      size_ += request->size;
       requests_.push_back(std::move(*request));
     }
   }
 
   const std::vector<CacheRequest>& requests() {
     return requests_;
+  }
+
+  int64_t size() const override {
+    return size_;
   }
 
   std::string toString() const override {
@@ -365,6 +371,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
   std::vector<CacheRequest> requests_;
   std::shared_ptr<IoStatistics> ioStats_;
   const uint64_t groupId_;
+  int64_t size_{0};
 };
 
 // Represents a CoalescedLoad from ReadFile, e.g. disagg disk.

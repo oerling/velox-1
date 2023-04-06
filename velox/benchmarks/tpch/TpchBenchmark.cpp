@@ -103,6 +103,10 @@ DEFINE_int32(
     run_query_verbose,
     -1,
     "Run a given query and print execution statistics");
+DEFINE_int32(io_meter_column_pct, 0, "Percentage of lineitem columns to "
+  "include in IO meter query. The columns are sorted by name and the n% first "
+  "are scanned");
+
 DEFINE_bool(
     include_custom_stats,
     false,
@@ -270,11 +274,13 @@ class TpchBenchmark {
   }
 
   void runMain(std::ostream& out) {
-    if (FLAGS_run_query_verbose == -1) {
+    if (FLAGS_run_query_verbose == -1 && FLAGS_io_meter_column_pct == 0) {
       folly::runBenchmarks();
     } else {
       const auto queryPlan =
-          queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
+	FLAGS_io_meter_column_pct > 0
+	? queryBuilder->getIoMeterPlan(FLAGS_io_meter_column_pct) 
+	: queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
       auto [cursor, actualResults] = run(queryPlan);
       if (!cursor) {
         LOG(ERROR) << "Query terminated with error. Exiting";
@@ -531,4 +537,5 @@ int main(int argc, char** argv) {
   } else {
     benchmark.runAllCombinations();
   }
+  queryBuilder.reset();
 }

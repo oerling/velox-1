@@ -1993,6 +1993,57 @@ TpchPlan TpchQueryBuilder::getQ22Plan() const {
   return context;
 }
 
+TpchPlan TpchQueryBuilder::getIoMeterPlan(int columnPct) const {
+  VELOX_CHECK(columnPct > 0 && columnPct <= 100);
+  auto columns = getFileColumnNames(kLineitem);
+  std::vector<std::string> names;
+  for (auto& pair : columns) {
+    names.push_back(pair.first);
+  }
+  std::sort(names.begin(), names.end());
+  names.resize(names.size() * columnPct / 100);
+  if (std::find(names.begin(), names.end(), "l_partkey") == names.end()) {
+    names.push_back("l_partkey");
+  }
+
+  const auto selectedRowType = getRowType(kLineitem, names);
+  std::vector<std::string> aggregates;
+  std::vector<std::string> projectExprs;
+
+  for (auto i = 0; i < selectedRowType->size(); ++i) {
+    if (selectedRowType->childAt(i)->kind() == TypeKind::VARCHAR) {
+      projectExprs.push_back(
+			     fmt::format("length({}) as l{}", selectedRowType->nameOf(i), i));
+      aggregates.push_back(fmt::format("max(l{})", i));
+    } else {
+      projectExprs.push_back(selectedRowType->nameOf(i));
+      aggregates.push_back(fmt::format("max({})", selectedRowType->nameOf(i)));
+    }
+  }
+
+  std::string filter = "l_partkey between 2000000 and 2500000";
+
+  core::PlanNodeId lineitemPlanNodeId;
+  std::unordered_map<std::string, std::string> aliases;
+  for (auto& name : names) {
+    aliases[name] = name;
+  }
+  auto plan = PlanBuilder()
+    .tableScan(kLineitem, selectedRowType, aliases, {filter})
+                  .capturePlanNodeId(lineitemPlanNodeId)
+    .project(projectExprs)
+    .partialAggregation({}, aggregates)
+                  .localPartition({})
+                  .finalAggregation()
+                  .planNode();
+
+  TpchPlan context;
+  context.plan = std::move(plan);
+  context.dataFiles[lineitemPlanNodeId] = getTableFilePaths(kLineitem);
+  context.dataFileFormat = format_;
+  return context;
+}
+
 const std::vector<std::string> TpchQueryBuilder::kTableNames_ = {
     kLineitem,
     kOrders,
@@ -2031,3 +2082,4 @@ const std::unordered_map<std::string, std::vector<std::string>>
             tpch::getTableSchema(tpch::Table::TBL_PARTSUPP)->names())};
 
 } // namespace facebook::velox::exec::test
+
