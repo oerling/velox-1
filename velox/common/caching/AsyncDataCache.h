@@ -429,12 +429,11 @@ class CoalescedLoad {
 
   /// Returns the cache space 'this' will occupy after loaded.
   virtual int64_t size() const = 0;
-  
+
   virtual std::string toString() const {
     return "<CoalescedLoad>";
   }
 
-  
  protected:
   // Makes entries for 'keys_' and loads their content. Elements of
   // 'keys_' that are already loaded or loading are expected to be left

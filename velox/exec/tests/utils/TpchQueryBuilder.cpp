@@ -2013,7 +2013,7 @@ TpchPlan TpchQueryBuilder::getIoMeterPlan(int columnPct) const {
   for (auto i = 0; i < selectedRowType->size(); ++i) {
     if (selectedRowType->childAt(i)->kind() == TypeKind::VARCHAR) {
       projectExprs.push_back(
-			     fmt::format("length({}) as l{}", selectedRowType->nameOf(i), i));
+          fmt::format("length({}) as l{}", selectedRowType->nameOf(i), i));
       aggregates.push_back(fmt::format("max(l{})", i));
     } else {
       projectExprs.push_back(selectedRowType->nameOf(i));
@@ -2029,10 +2029,10 @@ TpchPlan TpchQueryBuilder::getIoMeterPlan(int columnPct) const {
     aliases[name] = name;
   }
   auto plan = PlanBuilder()
-    .tableScan(kLineitem, selectedRowType, aliases, {filter})
+                  .tableScan(kLineitem, selectedRowType, aliases, {filter})
                   .capturePlanNodeId(lineitemPlanNodeId)
-    .project(projectExprs)
-    .partialAggregation({}, aggregates)
+                  .project(projectExprs)
+                  .partialAggregation({}, aggregates)
                   .localPartition({})
                   .finalAggregation()
                   .planNode();
@@ -2082,4 +2082,3 @@ const std::unordered_map<std::string, std::vector<std::string>>
             tpch::getTableSchema(tpch::Table::TBL_PARTSUPP)->names())};
 
 } // namespace facebook::velox::exec::test
-

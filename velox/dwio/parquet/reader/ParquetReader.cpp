@@ -464,20 +464,22 @@ void ReaderBase::scheduleRowGroups(
     newInput->load(dwio::common::LogType::STRIPE);
     inputs_[thisGroup] = std::move(newInput);
   }
-  for (auto counter = 0; counter < FLAGS_parquet_prefetch_rowgroups; ++counter) {
+  for (auto counter = 0; counter < FLAGS_parquet_prefetch_rowgroups;
+       ++counter) {
     if (nextGroup) {
       if (inputs_.count(nextGroup) != 0) {
-      auto newInput = input_->clone();
-      reader.enqueueRowGroup(nextGroup, *newInput);
-      newInput->load(dwio::common::LogType::STRIPE);
-      inputs_[nextGroup] = std::move(newInput);
+        auto newInput = input_->clone();
+        reader.enqueueRowGroup(nextGroup, *newInput);
+        newInput->load(dwio::common::LogType::STRIPE);
+        inputs_[nextGroup] = std::move(newInput);
       }
     } else {
       break;
     }
-    nextGroup =       nextGroup + 1 < rowGroupIds.size() ? rowGroupIds[nextGroup + 1] : 0;
+    nextGroup =
+        nextGroup + 1 < rowGroupIds.size() ? rowGroupIds[nextGroup + 1] : 0;
   }
-    if (currentGroup > 1) {
+  if (currentGroup > 1) {
     inputs_.erase(rowGroupIds[currentGroup - 1]);
   }
 }

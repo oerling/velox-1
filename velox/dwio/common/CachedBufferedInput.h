@@ -167,7 +167,7 @@ class CachedBufferedInput : public BufferedInput {
   int64_t prefetchSize() const override {
     return prefetchSize_;
   }
-  
+
  private:
   // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
   // is true, starts background loading.

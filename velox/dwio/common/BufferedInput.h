@@ -123,7 +123,7 @@ class BufferedInput {
   virtual int64_t prefetchSize() const {
     return 0;
   }
-  
+
  protected:
   std::shared_ptr<ReadFileInputStream> input_;
   memory::MemoryPool& pool_;
