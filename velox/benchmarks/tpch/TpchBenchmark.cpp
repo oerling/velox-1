@@ -15,6 +15,9 @@
  */
 
 #include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
@@ -166,12 +169,19 @@ DEFINE_validator(data_format, &validateDataFormat);
 
 struct RunStats {
   std::map<std::string, std::string> flags;
-  int64_t micros;
+  int64_t micros{0};
+  int64_t rawInputBytes{0};
+  int64_t userNanos{0};
+  int64_t systemNanos{0};
   std::string output;
 
   std::string toString(bool detail) {
     std::stringstream out;
-    out << succinctNanos(micros * 1000) << " flags: ";
+    out << succinctNanos(micros * 1000) << " "
+        << succinctBytes(rawInputBytes / (micros / 1000000.0)) << "/s raw, "
+        << succinctNanos(userNanos) << " user " << succinctNanos(systemNanos)
+        << " system (" << (100 * (userNanos + systemNanos) / (micros * 1000))
+        << "%), flags: ";
     for (auto& pair : flags) {
       out << pair.first << "=" << pair.second << " ";
     }
@@ -276,7 +286,7 @@ class TpchBenchmark {
     }
   }
 
-  void runMain(std::ostream& out) {
+  void runMain(std::ostream& out, RunStats& runStats) {
     if (FLAGS_run_query_verbose == -1 && FLAGS_io_meter_column_pct == 0) {
       folly::runBenchmarks();
     } else {
@@ -295,6 +305,14 @@ class TpchBenchmark {
         out << std::endl;
       }
       const auto stats = task->taskStats();
+      int64_t rawInputBytes = 0;
+      for (auto& pipeline : stats.pipelineStats) {
+        auto& first = pipeline.operatorStats[0];
+        if (first.operatorType == "TableScan") {
+          rawInputBytes += first.rawInputBytes;
+        }
+      }
+      runStats.rawInputBytes = rawInputBytes;
       out << fmt::format(
                  "Execution time: {}",
                  succinctMillis(
@@ -366,14 +384,24 @@ class TpchBenchmark {
       }
       if (FLAGS_warmup_after_clear) {
         std::stringstream result;
-        runMain(result);
+        RunStats ignore;
+        runMain(result, ignore);
       }
       RunStats stats;
       std::stringstream result;
       uint64_t micros = 0;
       {
+        struct rusage start;
+        getrusage(RUSAGE_SELF, &start);
         MicrosecondTimer timer(&micros);
-        runMain(result);
+        runMain(result, stats);
+        struct rusage final;
+        getrusage(RUSAGE_SELF, &final);
+        auto tvNanos = [](struct timeval tv) {
+          return tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
+        };
+        stats.userNanos = tvNanos(final.ru_utime) - tvNanos(start.ru_utime);
+        stats.systemNanos = tvNanos(final.ru_stime) - tvNanos(start.ru_stime);
       }
       stats.micros = micros;
       stats.output = result.str();
@@ -525,19 +553,17 @@ BENCHMARK(q22) {
   benchmark.run(planContext);
 }
 
-int main(int argc, char** argv) {
-  std::string kUsage(
-      "This program benchmarks TPC-H queries. Run 'velox_tpch_benchmark -helpon=TpchBenchmark' for available options.\n");
-  gflags::SetUsageMessage(kUsage);
-  folly::init(&argc, &argv, false);
+int tpchBenchmarkMain() {
   benchmark.initialize();
   queryBuilder =
       std::make_shared<TpchQueryBuilder>(toFileFormat(FLAGS_data_format));
   queryBuilder->initialize(FLAGS_data_path);
   if (FLAGS_test_flags_file.empty()) {
-    benchmark.runMain(std::cout);
+    RunStats ignore;
+    benchmark.runMain(std::cout, ignore);
   } else {
     benchmark.runAllCombinations();
   }
   queryBuilder.reset();
+  return 0;
 }
