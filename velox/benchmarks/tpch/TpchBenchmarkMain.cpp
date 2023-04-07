@@ -26,5 +26,3 @@ int main(int argc, char** argv) {
   folly::init(&argc, &argv, false);
   tpchBenchmarkMain();
 }
-
-
