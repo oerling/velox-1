@@ -165,7 +165,7 @@ class DwrfStreamIdentifier : public dwio::common::StreamIdentifier {
       uint32_t column,
       StreamKind kind)
       : StreamIdentifier(
-			 velox::cache::TrackingId((node << kNodeShift) | kind).id()),
+            velox::cache::TrackingId((node << kNodeShift) | kind).id()),
         column_{column},
         kind_(kind),
         encodingKey_{node, sequence} {}
@@ -208,7 +208,7 @@ class DwrfStreamIdentifier : public dwio::common::StreamIdentifier {
   int8_t columnShift() const override {
     return kNodeShift;
   }
-  
+
   std::string toString() const {
     return fmt::format(
         "[id={}, node={}, sequence={}, column={}, kind={}]",

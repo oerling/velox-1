@@ -257,7 +257,7 @@ HiveDataSource::HiveDataSource(
     memory::MemoryAllocator* allocator,
     const std::string& scanId,
     folly::Executor* executor)
-  : outputType_(outputType),
+    : outputType_(outputType),
       fileHandleFactory_(fileHandleFactory),
       pool_(pool),
       readerOpts_(pool),
@@ -436,7 +436,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         readerOpts_.loadQuantum(),
         readerOpts_.maxCoalesceDistance());
     if (Connector::fileGroupStats()) {
-      Connector::fileGroupStats()->recordGroupTable(tableName_, fileHandle_->groupId.id());
+      Connector::fileGroupStats()->recordGroupTable(
+          tableName_, fileHandle_->groupId.id());
     }
   } else {
     input = std::make_unique<dwio::common::BufferedInput>(

@@ -45,11 +45,12 @@ class StreamIdentifier {
     return std::hash<uint32_t>()(id_);
   }
 
-  /// The number of low bits in id() that represent parts of a column, e.g. different streams in DWRF. 0 for Parquet.
+  /// The number of low bits in id() that represent parts of a column, e.g.
+  /// different streams in DWRF. 0 for Parquet.
   virtual int8_t columnShift() const {
     return 0;
   }
-  
+
   virtual std::string toString() const {
     return fmt::format("[id={}]", id_);
   }

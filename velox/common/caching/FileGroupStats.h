@@ -118,7 +118,7 @@ class FileGroupStats {
   /// for human readable report on file access. Column names are
   /// obtained from the files when if needed.
   void recordGroupTable(const std::string& tableName, uint64_t groupId);
-  
+
   // Records ScanTracker::recordReference at group level
   void recordReference(
       uint64_t /*fileId*/,
@@ -201,7 +201,7 @@ class FileGroupStats {
   folly::F14FastMap<uint64_t, std::unique_ptr<GroupTracker>> groups_;
 
   folly::F14FastMap<uint64_t, StringIdLease> groupToTable_;
-  
+
   // Max number of columns tracked.
   const int32_t maxColumns_;
 

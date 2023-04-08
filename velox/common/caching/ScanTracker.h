@@ -34,7 +34,8 @@ class TrackingId {
  public:
   TrackingId() : id_(-1), columnShift_(0) {}
 
-  explicit TrackingId(int32_t id, int8_t columnShift = 0) : id_(id), columnShift_(columnShift) {}
+  explicit TrackingId(int32_t id, int8_t columnShift = 0)
+      : id_(id), columnShift_(columnShift) {}
 
   size_t hash() const {
     return std::hash<int32_t>()(id_);
@@ -56,10 +57,11 @@ class TrackingId {
     return id_ >> columnShift_;
   }
 
-  
  private:
   int32_t id_;
-  // Number of low bits to shift out of id to get a column level identifier. Low bits of DWRF/ORC identifiers encode the stream within the column, which is ignored in file group level stats.
+  // Number of low bits to shift out of id to get a column level identifier. Low
+  // bits of DWRF/ORC identifiers encode the stream within the column, which is
+  // ignored in file group level stats.
   int8_t columnShift_;
 };
 

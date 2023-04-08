@@ -102,7 +102,7 @@ class HiveTableHandle : public ConnectorTableHandle {
   const std::string tableName() const {
     return tableName_;
   }
-  
+
   bool isFilterPushdownEnabled() const {
     return filterPushdownEnabled_;
   }
@@ -202,7 +202,7 @@ class HiveDataSource : public DataSource {
 
   // Table name used for tracking access history.
   std::string tableName_;
-  
+
   const RowTypePtr outputType_;
   // Column handles for the partition key columns keyed on partition key column
   // name.

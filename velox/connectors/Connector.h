@@ -343,7 +343,8 @@ class Connector {
     return nullptr;
   }
 
-  /// Registers a process-wide FileGroupStats for tracking tavle/column level access across all connectors.
+  /// Registers a process-wide FileGroupStats for tracking tavle/column level
+  /// access across all connectors.
   static void registerFileGroupStats(cache::FileGroupStats* stats) {
     fileGroupStats_ = stats;
   }
@@ -351,7 +352,7 @@ class Connector {
   static cache::FileGroupStats* fileGroupStats() {
     return fileGroupStats_;
   }
-  
+
  private:
   static void unregisterTracker(cache::ScanTracker* FOLLY_NONNULL tracker);
 
