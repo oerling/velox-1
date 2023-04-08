@@ -99,6 +99,10 @@ class HiveTableHandle : public ConnectorTableHandle {
 
   ~HiveTableHandle() override;
 
+  const std::string tableName() const {
+    return tableName_;
+  }
+  
   bool isFilterPushdownEnabled() const {
     return filterPushdownEnabled_;
   }
@@ -196,6 +200,9 @@ class HiveDataSource : public DataSource {
   /// Clear split_, reader_ and rowReader_ after split has been fully processed.
   void resetSplit();
 
+  // Table name used for tracking access history.
+  std::string tableName_;
+  
   const RowTypePtr outputType_;
   // Column handles for the partition key columns keyed on partition key column
   // name.

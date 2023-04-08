@@ -31,6 +31,9 @@ std::unordered_map<std::string, std::shared_ptr<Connector>>& connectors() {
 }
 } // namespace
 
+//  static
+cache::FileGroupStats* Connector::FOLLY_NULLABLE fileGroupStats_;
+
 bool registerConnectorFactory(std::shared_ptr<ConnectorFactory> factory) {
   bool ok =
       connectorFactories().insert({factory->connectorName(), factory}).second;
@@ -90,7 +93,7 @@ std::shared_ptr<cache::ScanTracker> Connector::getTracker(
     auto it = trackers.find(scanId);
     if (it == trackers.end()) {
       auto newTracker = std::make_shared<cache::ScanTracker>(
-          scanId, unregisterTracker, loadQuantum);
+          scanId, unregisterTracker, loadQuantum, fileGroupStats_);
       trackers[newTracker->id()] = newTracker;
       return newTracker;
     }

@@ -123,6 +123,17 @@ void GroupTracker::addColumnScores(
 
 FileGroupStats::FileGroupStats() : maxColumns_(FLAGS_max_tracked_columns) {}
 
+void FileGroupStats::recordGroupTable(
+    const std::string& tableName,
+    uint64_t groupId) {
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = groupToTable_.find(groupId);
+  if (it == groupToTable_.end()) {
+    StringIdLease lease(fileIds(), tableName);
+    groupToTable_[groupId] = std::move(lease);
+  }
+}
+
 void FileGroupStats::recordFile(
     uint64_t fileId,
     uint64_t groupId,

@@ -45,7 +45,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
 
   TrackingId id;
   if (si) {
-    id = TrackingId(si->getId());
+    id = TrackingId(si->getId(), si->columnShift());
   }
   VELOX_CHECK_LE(region.offset + region.length, fileSize_);
   requests_.emplace_back(

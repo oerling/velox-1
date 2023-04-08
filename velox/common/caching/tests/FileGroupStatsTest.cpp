@@ -114,17 +114,17 @@ class GroupTrackerTest : public testing::Test {
           stats_->recordReference(
               file.id.id(),
               group.id.id(),
-              TrackingId(column, 0),
+              TrackingId(column),
               group.columnSizes[column]);
           auto readBytes = shouldRead(column, group.columnSizes[column]);
           if (readBytes) {
-            if (stats_->shouldSaveToSsd(group.id.id(), TrackingId(column, 0))) {
+            if (stats_->shouldSaveToSsd(group.id.id(), TrackingId(column))) {
               numFromSsd_ += readBytes;
             } else {
               numFromDisk_ += readBytes;
             }
             stats_->recordRead(
-                file.id.id(), group.id.id(), TrackingId(column, 0), readBytes);
+                file.id.id(), group.id.id(), TrackingId(column), readBytes);
           }
         }
       }

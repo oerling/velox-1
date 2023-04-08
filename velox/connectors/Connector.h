@@ -343,6 +343,15 @@ class Connector {
     return nullptr;
   }
 
+  /// Registers a process-wide FileGroupStats for tracking tavle/column level access across all connectors.
+  static void registerFileGroupStats(cache::FileGroupStats* stats) {
+    fileGroupStats_ = stats;
+  }
+
+  static cache::FileGroupStats* fileGroupStats() {
+    return fileGroupStats_;
+  }
+  
  private:
   static void unregisterTracker(cache::ScanTracker* FOLLY_NONNULL tracker);
 
@@ -353,6 +362,7 @@ class Connector {
       trackers_;
 
   const std::shared_ptr<const Config> properties_;
+  static cache::FileGroupStats* FOLLY_NULLABLE fileGroupStats_;
 };
 
 class ConnectorFactory {

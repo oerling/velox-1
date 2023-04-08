@@ -257,7 +257,7 @@ HiveDataSource::HiveDataSource(
     memory::MemoryAllocator* allocator,
     const std::string& scanId,
     folly::Executor* executor)
-    : outputType_(outputType),
+  : outputType_(outputType),
       fileHandleFactory_(fileHandleFactory),
       pool_(pool),
       readerOpts_(pool),
@@ -303,6 +303,7 @@ HiveDataSource::HiveDataSource(
       hiveTableHandle->isFilterPushdownEnabled(),
       "Filter pushdown must be enabled");
 
+  tableName_ = hiveTableHandle->tableName();
   auto outputTypes = outputType_->children();
   readerOutputType_ = ROW(std::move(columnNames), std::move(outputTypes));
   scanSpec_ = makeScanSpec(
@@ -434,6 +435,9 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
         executor_,
         readerOpts_.loadQuantum(),
         readerOpts_.maxCoalesceDistance());
+    if (Connector::fileGroupStats()) {
+      Connector::fileGroupStats()->recordGroupTable(tableName_, fileHandle_->groupId.id());
+    }
   } else {
     input = std::make_unique<dwio::common::BufferedInput>(
         fileHandle_->file,
