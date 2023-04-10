@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "velox/exec/TaskStats.h"
+#include "velox/experimental/query/ExecutablePlan.h"
 #include "velox/experimental/query/Plan.h"
 
 namespace facebook::verax {
@@ -29,6 +31,12 @@ class VeloxHistory : public History {
   void recordCost(const RelationOp& op, Cost cost) override {}
 
   bool setLeafSelectivity(BaseTable& table) override;
+
+  /// Stores observed costs and cardinalities from a query execution. If 'op' is non-null, non-leaf costs from non-leaf levels are recorded. Otherwise only leaf scan selectivities  are recorded.
+  void recordVeloxExecution(
+      const RelationOp* op,
+      const std::vector<velox::exec::ExecutableFragment>& plan,
+      const std::vector<velox::exec::TaskStats>& stats);
 };
 
 } // namespace facebook::verax

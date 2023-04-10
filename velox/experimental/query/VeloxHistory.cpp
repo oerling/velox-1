@@ -18,6 +18,8 @@
 
 namespace facebook::verax {
 
+using namespace facebook::velox::exec;
+
 bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   auto optimization = queryCtx()->optimization();
   auto& handle = *dynamic_cast<velox::connector::hive::HiveTableHandle*>(
@@ -35,4 +37,29 @@ bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   table.filterSelectivity = 0.1;
   return false;
 }
+
+void VeloxHistory::recordVeloxExecution(
+    const RelationOp* op,
+    const std::vector<ExecutableFragment>& plan,
+    const std::vector<velox::exec::TaskStats>& stats) {
+  std::unordered_map<std::string, const velox::exec::OperatorStats*> map;
+  for (auto& task : stats) {
+    for (auto& pipeline : task.pipelineStats) {
+      for (auto& op : pipeline.operatorStats) {
+        map[op.planNodeId] = &op;
+      }
+    }
+  }
+  for (auto& fragment : plan) {
+    for (auto& scan : fragment.scans) {
+      auto scanStats = map[scan->id()];
+      std::string handle = scan->tableHandle()->toString();
+      recordLeafSelectivity(
+          handle,
+          scanStats->outputPositions /
+              std::max<float>(1, scanStats->rawInputPositions));
+    }
+  }
+}
+
 } // namespace facebook::verax
