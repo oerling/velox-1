@@ -354,11 +354,10 @@ using HashBuildPtr = HashBuild*;
 
 /// Represents aggregation with or without grouping.
 struct Aggregation : public RelationOp {
-  Aggregation(const Aggregation& other, RelationOpPtr input)
-      : Aggregation(other) {
-    *const_cast<Distribution*>(&distribution_) = input->distribution();
-    input_ = std::move(input);
-  }
+  Aggregation(
+      const Aggregation& other,
+      RelationOpPtr input,
+      velox::core::AggregationNode::Step _step);
 
   Aggregation(RelationOpPtr input, ExprVector _grouping)
       : RelationOp(
@@ -380,16 +379,32 @@ struct Aggregation : public RelationOp {
   velox::core::AggregationNode::Step step{
       velox::core::AggregationNode::Step::kSingle};
 
+  // 'columns' of RelationOp is the final columns. 'intermediateColumns is the
+  // output of the corresponding partial aggregation.
+  ColumnVector intermediateColumns;
+
   void setCost(const PlanState& input) override;
   std::string toString(bool recursive, bool detail) const override;
 };
 
 /// Represents an order by. The order is given by the distribution.
 struct OrderBy : public RelationOp {
+  OrderBy(
+      RelationOpPtr input,
+      ExprVector keys,
+      OrderTypeVector orderType,
+      PlanObjectSet dependentKeys = {})
+      : RelationOp(
+            RelType::kOrderBy,
+            input,
+            input->distribution().copyWithOrder(keys, orderType)),
+        dependentKeys(dependentKeys) {}
+
   // Keys where the key expression is functionally dependent on
   // another key or keys. These can be late materialized or converted
   // to payload.
   PlanObjectSet dependentKeys;
+  int32_t limit{-1};
 };
 
 } // namespace facebook::verax

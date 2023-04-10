@@ -391,6 +391,11 @@ VectorSerde* Exchange::getSerde() {
   return getVectorSerde();
 }
 
+// static
+void Exchange::registerLocalExchangeSource() {
+  ExchangeSource::registerFactory(createLocalExchangeSource);
+}
+
 VELOX_REGISTER_EXCHANGE_SOURCE_METHOD_DEFINITION(
     ExchangeSource,
     createLocalExchangeSource);

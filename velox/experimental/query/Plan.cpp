@@ -28,9 +28,15 @@ using facebook::velox::core::JoinType;
 Optimization::Optimization(
     const core::PlanNode& plan,
     const Schema& schema,
+    History& history,
     int32_t traceFlags)
-    : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
+    : schema_(schema),
+      inputPlan_(plan),
+      history_(history),
+      traceFlags_(traceFlags) {
+  queryCtx()->optimization() = this;
   root_ = makeQueryGraph();
+  root_->distributeConjuncts();
   root_->addImpliedJoins();
   root_->linkTablesToJoins();
   setDerivedTableOutput(root_, inputPlan_);
@@ -51,8 +57,19 @@ void Optimization::trace(
 
 PlanPtr Optimization::bestPlan() {
   topState_.dt = root_;
-  for (auto expr : root_->exprs) {
-    topState_.targetColumns.unionColumns(expr);
+  if (root_->aggregation) {
+    auto aggregation = root_->aggregation->aggregation;
+    for (auto expr : aggregation->grouping) {
+      topState_.targetColumns.unionColumns(expr);
+    }
+    for (auto expr : aggregation->aggregates) {
+      topState_.targetColumns.unionColumns(expr);
+    }
+
+  } else {
+    for (auto expr : root_->exprs) {
+      topState_.targetColumns.unionColumns(expr);
+    }
   }
   makeJoins(nullptr, topState_);
   Distribution empty;
@@ -499,12 +516,22 @@ bool MemoKey::operator==(const MemoKey& other) const {
   return false;
 }
 
-RelationOpPtr repartitionForAgg(
-    const ExprVector& keyValues,
-    const RelationOpPtr& plan,
-    PlanState& state) {
+RelationOpPtr repartitionForAgg(const RelationOpPtr& plan, PlanState& state) {
   // No shuffle if all grouping keys are in partitioning.
   bool shuffle = false;
+  const ExprVector& keyValues = state.dt->aggregation->aggregation->grouping;
+  // If no grouping and not yet gathered on a single node, add a gather before
+  // final agg.
+  if (keyValues.empty() && !plan->distribution().distributionType.isGather) {
+    Declare(
+        Repartition,
+        gather,
+        plan,
+        Distribution::gather(plan->distribution().distributionType),
+        plan->columns());
+    state.addCost(*gather);
+    return gather;
+  }
   for (auto& key : keyValues) {
     auto nthKey = position(plan->distribution().partition, *key);
     if (nthKey == kNotFound) {
@@ -531,10 +558,23 @@ void Optimization::addPostprocess(
     RelationOpPtr& plan,
     PlanState& state) {
   if (dt->aggregation) {
-    plan = repartitionForAgg(dt->aggregation->grouping, plan, state);
-    Declare(Aggregation, newGroupBy, *dt->aggregation, plan);
-    state.addCost(*newGroupBy);
-    plan = newGroupBy;
+    Declare(
+        Aggregation,
+        partialAgg,
+        *dt->aggregation->aggregation,
+        plan,
+        core::AggregationNode::Step::kPartial);
+    state.placed.add(dt->aggregation);
+    state.addCost(*partialAgg);
+    plan = repartitionForAgg(partialAgg, state);
+    Declare(
+        Aggregation,
+        finalAgg,
+        *dt->aggregation->aggregation,
+        plan,
+        core::AggregationNode::Step::kFinal);
+    state.addCost(*finalAgg);
+    plan = finalAgg;
   }
   if (!dt->columns.empty()) {
     Declare(Project, project, plan, dt->exprs, dt->columns);

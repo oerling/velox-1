@@ -467,6 +467,7 @@ struct BaseTable : public PlanObject {
 
   // the fraction of base table rows selected by all filters involving this
   // table only.
+
   float filterSelectivity{1};
 
   // System specific representation of filter on columns, e.g. set of
@@ -476,6 +477,9 @@ struct BaseTable : public PlanObject {
   void addJoinedBy(JoinEdgePtr join) {
     pushBackUnique(joinedBy, join);
   }
+
+  /// Adds 'expr' to 'filters' or 'columnFilters'.
+  void addFilter(ExprPtr expr);
 
   std::string toString() const override;
 };
@@ -494,7 +498,8 @@ class Aggregate : public Call {
       FunctionSet functions,
       bool isDistinct,
       ExprPtr condition,
-      bool isAccumulator)
+      bool isAccumulator,
+      const velox::Type* intermediateType)
       : Call(
             PlanType::kAggregate,
             name,
@@ -503,7 +508,8 @@ class Aggregate : public Call {
             functions | FunctionSet::kAggregate),
         isDistinct_(isDistinct),
         condition_(condition),
-        isAccumulator_(isAccumulator) {
+        isAccumulator_(isAccumulator),
+        intermediateType_(intermediateType) {
     if (condition_) {
       columns_.unionSet(condition_->columns());
     }
@@ -521,16 +527,31 @@ class Aggregate : public Call {
     return isAccumulator_;
   }
 
+  const velox::Type* intermediateType() const {
+    return intermediateType_;
+  }
+
  private:
   bool isDistinct_;
   ExprPtr condition_;
   bool isAccumulator_;
+  const velox::Type* intermediateType_;
 };
 
 using AggregatePtr = const Aggregate*;
 
 struct Aggregation;
 using AggregationPtr = Aggregation*;
+
+/// Wraps an Aggregation RelationOp. This gives the aggregation a PlanObject id
+struct AggregationPlan : public PlanObject {
+  AggregationPlan(AggregationPtr agg)
+      : PlanObject(PlanType::kAggregate), aggregation(agg) {}
+
+  AggregationPtr aggregation;
+};
+
+using AggregationPlanPtr = const AggregationPlan*;
 
 struct OrderBy;
 using OrderByPtr = OrderBy*;
@@ -598,7 +619,7 @@ struct DerivedTable : public PlanObject {
   PlanObjectSet fullyImported;
 
   // Postprocessing clauses, group by, having, order by, limit, offset.
-  AggregationPtr aggregation{nullptr};
+  AggregationPlanPtr aggregation{nullptr};
   ExprVector having;
   OrderByPtr orderBy{nullptr};
   int32_t limit{-1};
@@ -648,6 +669,11 @@ struct DerivedTable : public PlanObject {
   void addJoinedBy(JoinEdgePtr join) {
     pushBackUnique(joinedBy, join);
   }
+
+  /// Moves suitable elements of 'conjuncts' into join edges or single
+  /// table filters. May be called repeatedly if enclosing dt's add
+  /// more conjuncts. May call itself recursively on component dts.
+  void distributeConjuncts();
 
  private:
   // Imports the joins in 'this' inside 'firstDt', which must be a

@@ -24,6 +24,9 @@ using namespace facebook::velox;
 
 using velox::connector::hive::HiveColumnHandle;
 using velox::connector::hive::HiveTableHandle;
+std::string veloxToString(core::PlanNode* plan) {
+  return plan->toString(true, true);
+}
 
 void Optimization::setDerivedTableOutput(
     DerivedTablePtr dt,
@@ -31,6 +34,7 @@ void Optimization::setDerivedTableOutput(
   auto& outputType = planNode.outputType();
   for (auto i = 0; i < outputType->size(); ++i) {
     auto fieldType = outputType->childAt(i);
+    registerType(fieldType);
     auto fieldName = outputType->nameOf(i);
     auto expr = translateColumn(fieldName);
     Value value(fieldType.get(), 0);
@@ -46,27 +50,15 @@ DerivedTablePtr Optimization::makeQueryGraph() {
   root_ = root;
   currentSelect_ = root_;
   root->cname = toName(fmt::format("dt{}", ++nameCounter_));
-  ;
   makeQueryGraph(inputPlan_, kAllAllowedInDt);
   return root_;
-}
-
-float subfieldSelectivity(const HiveTableHandle& handle) {
-  if (handle.subfieldFilters().empty() && !handle.remainingFilter()) {
-    return 1;
-  }
-  auto string = handle.toString();
-  auto it = baseSelectivities().find(string);
-  if (it != baseSelectivities().end()) {
-    return it->second;
-  }
-  return 0.1;
 }
 
 const std::string* FOLLY_NULLABLE columnName(const core::TypedExprPtr& expr) {
   if (auto column =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
-    if (dynamic_cast<const core::InputTypedExpr*>(column->inputs()[0].get())) {
+    if (column->inputs().empty() ||
+        dynamic_cast<const core::InputTypedExpr*>(column->inputs()[0].get())) {
       return &column->name();
     }
   }
@@ -95,7 +87,26 @@ void Optimization::translateConjuncts(
   }
 }
 
+void Optimization::registerType(const TypePtr& type) {
+  if (toTypePtr_.find(type.get()) != toTypePtr_.end()) {
+    return;
+  }
+  toTypePtr_[type.get()] = type;
+  for (auto i = 0; i < type->size(); ++i) {
+    registerType(type->childAt(i));
+  }
+}
+
+TypePtr Optimization::toTypePtr(const Type* type) {
+  auto it = toTypePtr_.find(type);
+  if (it != toTypePtr_.end()) {
+    return it->second;
+  }
+  VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
+}
+
 ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
+  registerType(expr->type());
   if (auto name = columnName(expr)) {
     return translateColumn(*name);
   }
@@ -151,9 +162,18 @@ ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
+    registerType(source[i]->type());
     result[i] = translateColumn(source[i]->name()); // NOLINT
   }
   return result;
+}
+
+TypePtr intermediateType(const core::CallTypedExprPtr& call) {
+  std::vector<TypePtr> types;
+  for (auto& arg : call->inputs()) {
+    types.push_back(arg->type());
+  }
+  return exec::Aggregate::intermediateType(call->name(), types);
 }
 
 AggregationPtr FOLLY_NULLABLE
@@ -167,12 +187,33 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
         aggregation,
         nullptr,
         translateColumns(source.groupingKeys()));
+    for (auto i = 0; i < source.groupingKeys().size(); ++i) {
+      if (aggregation->grouping[i]->type() == PlanType::kColumn) {
+        aggregation->mutableColumns().push_back(
+            aggregation->grouping[i]->as<Column>());
+      } else {
+        auto name = toName(source.outputType()->nameOf(i));
+        auto type = source.outputType()->childAt(i);
+        registerType(type);
+        Declare(
+            Column,
+            column,
+            name,
+            currentSelect_,
+            aggregation->grouping[i]->value());
+        aggregation->mutableColumns().push_back(column);
+      }
+    }
+    // The keys for intermediate are the same as for final.
+    aggregation->intermediateColumns = aggregation->columns();
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
       auto rawFunc = translateExpr(source.aggregates()[i])->as<Call>();
       ExprPtr condition = nullptr;
-      if (source.aggregateMasks()[i]) {
+      if (source.aggregateMasks().size() > i && source.aggregateMasks()[i]) {
         condition = translateExpr(source.aggregateMasks()[i]);
       }
+      auto accumulatorType = intermediateType(source.aggregates()[i]);
+      registerType(accumulatorType);
       Declare(
           Aggregate,
           agg,
@@ -182,11 +223,20 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
           rawFunc->functions(),
           false,
           condition,
-          false);
+          false,
+          accumulatorType.get());
+      auto name = toName(source.aggregateNames()[i]);
+      Declare(Column, column, name, currentSelect_, agg->value());
+      aggregation->mutableColumns().push_back(column);
+      auto intermediateValue = agg->value();
+      intermediateValue.type = accumulatorType.get();
+      Declare(
+          Column, intermediateColumn, name, currentSelect_, intermediateValue);
+      aggregation->intermediateColumns.push_back(intermediateColumn);
       auto dedupped = queryCtx()->dedup(agg);
       aggregation->aggregates.push_back(dedupped->as<Aggregate>());
-      auto name = toName(source.aggregateNames()[i]);
-      renames_[name] = dedupped->as<Expr>();
+      auto resultName = toName(source.aggregateNames()[i]);
+      renames_[resultName] = aggregation->columns().back();
     }
     return aggregation;
   }
@@ -230,7 +280,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
 
 bool isJoin(const core::PlanNode& node) {
   auto name = node.name();
-  if (name == "HashJoin" || name == "MergeJoin") {
+  if (name == "HashJoin" || name == "MergeJoin" || name == "CrossJoin") {
     return true;
   }
   if (name == "Project" || name == "Filter") {
@@ -259,6 +309,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   velox::RowTypePtr type =
       node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
   for (auto i = 0; i < type->size(); ++i) {
+    registerType(type->childAt(i));
     ExprPtr inner = translateColumn(type->nameOf(i));
     newDt->exprs.push_back(inner);
     Declare(Column, outer, toName(type->nameOf(i)), newDt, inner->value());
@@ -270,6 +321,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   MemoKey key;
   key.firstTable = newDt;
   key.tables.add(newDt);
+  newDt->distributeConjuncts();
   newDt->addImpliedJoins();
   newDt->linkTablesToJoins();
   newDt->setStartTables();
@@ -316,7 +368,6 @@ PlanObjectPtr Optimization::makeQueryGraph(
     VELOX_CHECK(tableHandle);
     auto assignments = tableScan->assignments();
     auto schemaTable = schema_.findTable(tableHandle->tableName());
-    float selection = subfieldSelectivity(*tableHandle);
     auto cname = fmt::format("t{}", ++nameCounter_);
 
     Declare(BaseTable, baseTable);
@@ -335,7 +386,9 @@ PlanObjectPtr Optimization::makeQueryGraph(
       renames_[pair.first] = column;
     }
     baseTable->columns = columns;
-    baseTable->filterSelectivity = selection;
+
+    setLeafHandle(baseTable->id(), tableScan->tableHandle());
+    setLeafSelectivity(*baseTable);
     currentSelect_->tables.push_back(baseTable);
     currentSelect_->tableSet.add(baseTable);
     return baseTable;
@@ -359,7 +412,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
     if (isDirectOver(node, "Aggregation")) {
       VELOX_CHECK(
           currentSelect_->having.empty(),
-          "Must have al;all HAVING in one filter");
+          "Must have aall of HAVING in one filter");
       currentSelect_->having = flat;
     } else {
       currentSelect_->conjuncts.insert(
@@ -372,6 +425,11 @@ PlanObjectPtr Optimization::makeQueryGraph(
       return wrapInDt(node);
     }
     translateJoin(*reinterpret_cast<const core::AbstractJoinNode*>(&node));
+    return currentSelect_;
+  }
+  if (name == "CrossJoin") {
+    makeQueryGraph(*node.sources()[0], allow(PlanType::kJoin));
+    makeQueryGraph(*node.sources()[1], allow(PlanType::kJoin));
     return currentSelect_;
   }
   if (name == "LocalPartition") {
@@ -393,7 +451,8 @@ PlanObjectPtr Optimization::makeQueryGraph(
           *node.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
       auto agg = translateAggregation(aggNode);
       if (agg) {
-        currentSelect_->aggregation = agg;
+        Declare(AggregationPlan, aggPlan, agg);
+        currentSelect_->aggregation = aggPlan;
       }
     } else {
       if (aggNode.step() == AggregationNode::Step::kFinal) {

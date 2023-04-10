@@ -739,7 +739,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
             functions,
             aggregate->isDistinct(),
             newCondition,
-            aggregate->isAccumulator());
+            aggregate->isAccumulator(),
+            aggregate->intermediateType());
         return copy;
       }
     }
@@ -917,6 +918,116 @@ void DerivedTable::flattenDt(const DerivedTable* dt) {
   having = dt->having;
 }
 
+void BaseTable::addFilter(ExprPtr expr) {
+  if (expr->type() == PlanType::kCall) {
+    auto call = expr->as<Call>();
+    auto args = call->args();
+    if (args.size() == 2) {
+      if (args[0]->type() == PlanType::kColumn &&
+          args[1]->type() == PlanType::kLiteral) {
+        columnFilters.push_back(expr);
+        filterUpdated(this);
+        return;
+      }
+    }
+  }
+  filter.push_back(expr);
+  filterUpdated(this);
+}
+
+// Finds a JoinEdge between tables[0] and tables[1]. Sets tables[0] to the left
+// and [1] to the right table of the found join. Returns the JoinEdge. If
+// 'create' is true and no edge is found, makes a new edge with tables[0] as
+// left and [1] as right.
+JoinEdgePtr
+findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
+  for (auto& join : dt->joins) {
+    if (join->leftTable() == tables[0] && join->rightTable() == tables[1]) {
+      return join;
+    }
+    if (join->leftTable() == tables[1] && join->rightTable() == tables[0]) {
+      std::swap(tables[0], tables[1]);
+      return join;
+    }
+  }
+  if (create) {
+    Declare(
+        JoinEdge, join, tables[0], tables[1], {}, false, false, false, false);
+    dt->joins.push_back(join);
+    return join;
+  }
+  return nullptr;
+}
+
+// True if 'expr' is of the form a = b where a depends on one of ''tables' and b
+// on the other. If true, returns the side depending on tables[0] in 'left' and
+// the other in 'right'.
+bool isJoinEquality(
+    ExprPtr expr,
+    std::vector<PlanObjectPtr>& tables,
+    ExprPtr& left,
+    ExprPtr& right) {
+  if (expr->type() == PlanType::kCall) {
+    auto call = expr->as<Call>();
+    if (call->name() == toName("eq")) {
+      left = call->args()[0];
+      right = call->args()[1];
+      auto leftTable = singleTable(left);
+      auto rightTable = singleTable(right);
+      if (!leftTable || !rightTable) {
+        return false;
+      }
+      if (leftTable == tables[1]) {
+        std::swap(left, right);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+void DerivedTable::distributeConjuncts() {
+  std::vector<DerivedTablePtr> changedDts;
+  for (auto i = 0; i < conjuncts.size(); ++i) {
+    PlanObjectSet tableSet = conjuncts[i]->allTables();
+    std::vector<PlanObjectPtr> tables;
+    tableSet.forEachMutable([&](auto table) { tables.push_back(table); });
+    if (tables.size() == 1) {
+      if (tables[0]->type() == PlanType::kDerivedTable) {
+        // Translate the column names and add the condition to the conjuncts in
+        // the dt.
+        VELOX_NYI();
+      } else {
+        VELOX_CHECK(tables[0]->type() == PlanType::kTable);
+        tables[0]->as<BaseTable>()->addFilter(conjuncts[i]);
+      }
+      conjuncts.erase(conjuncts.begin() + i);
+      --i;
+      continue;
+    }
+    if (tables.size() == 2) {
+      ExprPtr left = nullptr;
+      ExprPtr right = nullptr;
+      // expr depends on 2 tables. If it is left = right or right = left and
+      // there is no edge or the edge is inner, add the equality. For other
+      // cases, leave the conjunct in place, to be evaluated when its
+      // dependences are known.
+      if (isJoinEquality(conjuncts[i], tables, left, right)) {
+        auto join = findJoin(this, tables, true);
+        if (join->isInner()) {
+          if (join->leftTable() == tables[0]) {
+            join->addEquality(left, right);
+          } else {
+            join->addEquality(right, left);
+          }
+          conjuncts.erase(conjuncts.begin() + i);
+          --i;
+        }
+      }
+    }
+  }
+}
+
 std::string DerivedTable::toString() const {
   std::stringstream out;
   out << "{dt " << cname;
@@ -986,12 +1097,26 @@ Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
   }
 }
 
+Schema::Schema(const char* _name, SchemaSource* source)
+    : name_(_name), source_(source) {}
+
 SchemaTablePtr Schema::findTable(const std::string& name) const {
   auto it = tables_.find(toName(name));
   if (it == tables_.end()) {
+    if (source_) {
+      source_->fetchSchemaTable(std::string_view(name), this);
+      it = tables_.find(toName(name));
+      if (it != tables_.end()) {
+        return it->second;
+      }
+    }
     VELOX_FAIL("No table {}", name);
   }
   return it->second;
+}
+
+void Schema::addTable(SchemaTablePtr table) const {
+  tables_[table->name] = table;
 }
 
 template <typename T>
@@ -1139,7 +1264,7 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
   result.scanCardinality = distribution->cardinality;
   const ExprVector* groupingKeys = nullptr;
   if (dt->aggregation) {
-    groupingKeys = &dt->aggregation->grouping;
+    groupingKeys = &dt->aggregation->aggregation->grouping;
   }
   result.joinCardinality = result.scanCardinality;
   for (auto i = 0; i < keys.size(); ++i) {

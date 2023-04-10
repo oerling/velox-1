@@ -25,3 +25,15 @@ target_link_libraries(
   velox_dwio_native_parquet_reader
   gtest
   gtest_main)
+
+add_executable(velox_sql VeloxSql.cpp)
+
+target_link_libraries(
+  velox_sql
+  velox_local_runner
+  velox_verax
+  velox_dwio_common
+  velox_dwio_parquet_reader
+  velox_dwio_native_parquet_reader
+  velox_parse_parser
+  velox_parse_expression)

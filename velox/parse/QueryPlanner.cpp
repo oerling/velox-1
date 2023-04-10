@@ -45,6 +45,7 @@ struct QueryContext {
   ColumnNameGenerator columnNameGenerator;
   const std::unordered_map<std::string, std::vector<RowVectorPtr>>&
       inMemoryTables;
+  MakeTableScan makeTableScan;
 
   QueryContext(const std::unordered_map<std::string, std::vector<RowVectorPtr>>&
                    _inMemoryTables)
@@ -147,11 +148,11 @@ PlanNodePtr toVeloxPlan(
 
   auto tableName = logicalGet.function.to_string(logicalGet.bind_data.get());
   auto it = queryContext.inMemoryTables.find(tableName);
-  VELOX_CHECK(
-      it != queryContext.inMemoryTables.end(),
-      "Can't find in-memory table: {}",
-      tableName);
 
+  if (it == queryContext.inMemoryTables.end()) {
+    return queryContext.makeTableScan(
+        queryContext.nextNodeId(), tableName, rowType);
+  }
   std::vector<RowVectorPtr> data;
   for (auto& rowVector : it->second) {
     std::vector<VectorPtr> children;
@@ -514,6 +515,17 @@ void DuckDbQueryPlanner::registerTable(
   tables_.insert({name, data});
 }
 
+void DuckDbQueryPlanner::registerTable(
+    const std::string& name,
+    const RowTypePtr& type) {
+  VELOX_CHECK_EQ(
+      0, tables_.count(name), "Table is already registered: {}", name);
+
+  auto createTableSql = duckdb::makeCreateTableSql(name, *type);
+  auto res = conn_.Query(createTableSql);
+  VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
+}
+
 void DuckDbQueryPlanner::registerScalarFunction(
     const std::string& name,
     const std::vector<TypePtr>& argTypes,
@@ -558,6 +570,7 @@ PlanNodePtr DuckDbQueryPlanner::plan(const std::string& sql) {
   auto plan = conn_.ExtractPlan(sql);
 
   QueryContext queryContext{tables_};
+  queryContext.makeTableScan = makeTableScan_;
   return toVeloxPlan(*plan, pool_, queryContext);
 }
 
