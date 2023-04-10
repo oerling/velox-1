@@ -197,8 +197,8 @@ Aggregation::Aggregation(
       grouping[i] = intermediateColumns[i];
     }
   }
- }
- 
+}
+
 std::string Aggregation::toString(bool recursive, bool detail) const {
   std::stringstream out;
   if (recursive) {

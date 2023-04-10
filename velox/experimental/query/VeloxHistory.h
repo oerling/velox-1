@@ -29,7 +29,6 @@ class VeloxHistory : public History {
   void recordCost(const RelationOp& op, Cost cost) override {}
 
   bool setLeafSelectivity(BaseTable& table) override;
-
 };
 
 } // namespace facebook::verax

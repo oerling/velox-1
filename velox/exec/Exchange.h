@@ -426,7 +426,7 @@ class Exchange : public SourceOperator {
 
   /// Registers a testing in-process exchange source.
   static void registerLocalExchangeSource();
-  
+
  protected:
   virtual VectorSerde* getSerde();
 

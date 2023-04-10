@@ -32,8 +32,8 @@
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/experimental/query/LocalRunner.h"
 #include "velox/experimental/query/LocalSchema.h"
-#include "velox/experimental/query/VeloxHistory.h"
 #include "velox/experimental/query/Plan.h"
+#include "velox/experimental/query/VeloxHistory.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/QueryPlanner.h"
@@ -277,7 +277,7 @@ class VeloxRunner {
     try {
       facebook::verax::Schema veraxSchema("test", schema_.get());
       facebook::verax::Optimization opt(
-					*plan, veraxSchema, *history_, FLAGS_optimizer_trace);
+          *plan, veraxSchema, *history_, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
       fragments = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {

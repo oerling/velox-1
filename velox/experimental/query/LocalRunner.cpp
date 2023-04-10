@@ -151,7 +151,9 @@ std::vector<TaskStats> LocalRunner::stats() const {
       auto moreStats = tasks[j]->taskStats();
       for (auto pipeline = 0; pipeline < stats.pipelineStats.size();
            ++pipeline) {
-        for (auto op = 0; op < stats.pipelineStats[pipeline].operatorStats.size(); ++op) {
+        for (auto op = 0;
+             op < stats.pipelineStats[pipeline].operatorStats.size();
+             ++op) {
           stats.pipelineStats[pipeline].operatorStats[op].add(
               moreStats.pipelineStats[pipeline].operatorStats[op]);
         }

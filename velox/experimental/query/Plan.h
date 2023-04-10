@@ -376,10 +376,10 @@ class Optimization {
   // Velox plans from RelationOp.
   velox::TypePtr toTypePtr(const velox::Type* type);
 
-	    /// Sets 'filterSelectivity' of 'baseTable' from history. Returns True if set. 
-	    bool setLeafSelectivity(BaseTable& baseTable) {
-	    return history_.setLeafSelectivity(baseTable);
-}
+  /// Sets 'filterSelectivity' of 'baseTable' from history. Returns True if set.
+  bool setLeafSelectivity(BaseTable& baseTable) {
+    return history_.setLeafSelectivity(baseTable);
+  }
 
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
@@ -642,7 +642,6 @@ class Optimization {
   velox::exec::ExecutablePlanOptions options_;
   velox::core::PlanNodeIdGenerator idGenerator_;
 };
-
 
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);

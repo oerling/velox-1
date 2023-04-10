@@ -245,7 +245,8 @@ core::PlanNodePtr Optimization::makeAggregation(
           toTypePtr(aggregate->value().type),
           std::vector<core::TypedExprPtr>{
               std::make_shared<core::FieldAccessTypedExpr>(
-							   toTypePtr(aggregate->intermediateType()), aggregateNames.back())},
+                  toTypePtr(aggregate->intermediateType()),
+                  aggregateNames.back())},
           aggregate->name()));
     }
   }
@@ -286,7 +287,7 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
   std::string toString() const override {
     return "<Verax partition function spec>";
   }
-  
+
  private:
   const RowTypePtr inputType_;
   const std::vector<column_index_t> keys_;
@@ -348,7 +349,7 @@ core::PlanNodePtr Optimization::makeFragment(
           repartition->distribution().partition);
       auto& distribution = repartition->distribution();
       if (distribution.distributionType.isGather) {
-	fragment.width = 1;
+        fragment.width = 1;
       }
       auto partitioningInput = project.maybeProject(sourcePlan);
       auto partitionFunctionFactory =
@@ -363,9 +364,10 @@ core::PlanNodePtr Optimization::makeFragment(
           std::move(partitionFunctionFactory),
           makeOutputType(repartition->columns()),
           partitioningInput);
-      auto exchange =  std::make_shared<core::ExchangeNode>(
+      auto exchange = std::make_shared<core::ExchangeNode>(
           idGenerator_.next(), sourcePlan->outputType());
-      fragment.inputStages.push_back(InputStage{exchange->id(), source.taskPrefix});
+      fragment.inputStages.push_back(
+          InputStage{exchange->id(), source.taskPrefix});
       stages.push_back(std::move(source));
       return exchange;
     }
@@ -386,8 +388,8 @@ core::PlanNodePtr Optimization::makeFragment(
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
                 toTypePtr(column->value().type));
       }
-      auto scanNode =  std::make_shared<core::TableScanNode>(
-						   idGenerator_.next(),
+      auto scanNode = std::make_shared<core::TableScanNode>(
+          idGenerator_.next(),
           makeOutputType(scan->columns()),
           handle,
           assignments);

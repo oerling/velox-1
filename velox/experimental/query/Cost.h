@@ -37,7 +37,6 @@ class History {
   /// execution.
   virtual void recordCost(const RelationOp& op, Cost cost) = 0;
 
-
   /// Sets 'filterSelectivity' of 'baseTable' from historical data. Considers
   /// filters only and does not return a cost since the cost depends on the
   /// columns extracted. This is used first for coming up with join orders. The
@@ -45,14 +44,16 @@ class History {
   /// cost and plan cardinality.
   virtual bool setLeafSelectivity(BaseTable& baseTable) = 0;
 
- virtual void recordLeafSelectivity(const std::string& handle, float selectivity) {
+  virtual void recordLeafSelectivity(
+      const std::string& handle,
+      float selectivity) {
     leafSelectivities_[handle] = selectivity;
   }
-  
+
  protected:
-    /// Memo for selectivity keyed on ConnectorTableHandle::toString().
-      /// Values between 0 and 1.
-      std::unordered_map<std::string, float> leafSelectivities_;
+  /// Memo for selectivity keyed on ConnectorTableHandle::toString().
+  /// Values between 0 and 1.
+  std::unordered_map<std::string, float> leafSelectivities_;
 };
 
 float shuffleCost(const ColumnVector& columns);

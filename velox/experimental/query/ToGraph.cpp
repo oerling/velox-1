@@ -386,9 +386,9 @@ PlanObjectPtr Optimization::makeQueryGraph(
       renames_[pair.first] = column;
     }
     baseTable->columns = columns;
-	    
-	    setLeafHandle(baseTable->id(), tableScan->tableHandle());
-	    setLeafSelectivity(*baseTable);
+
+    setLeafHandle(baseTable->id(), tableScan->tableHandle());
+    setLeafSelectivity(*baseTable);
     currentSelect_->tables.push_back(baseTable);
     currentSelect_->tableSet.add(baseTable);
     return baseTable;
