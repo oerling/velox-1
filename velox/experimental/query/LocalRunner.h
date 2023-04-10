@@ -51,15 +51,15 @@ class LocalRunner {
       std::shared_ptr<core::QueryCtx> queryCtx,
       SplitSourceFactory* splitSourceFactory,
       ExecutablePlanOptions options)
-      :
-
-        plan_(std::move(plan)),
+      : plan_(std::move(plan)),
         splitSourceFactory_(splitSourceFactory),
         options_(options) {
     params_.queryCtx = queryCtx;
   }
 
   test::TaskCursor* cursor();
+
+  std::vector<TaskStats> stats() const;
 
  private:
   std::vector<std::shared_ptr<RemoteConnectorSplit>> makeStages();

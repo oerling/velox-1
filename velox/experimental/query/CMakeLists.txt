@@ -22,7 +22,8 @@ add_library(
   Cost.cpp
   PlanUtils.cpp
   RelationOp.cpp
-  ToVelox.cpp)
+  ToVelox.cpp
+  VeloxHistory.cpp)
 
 add_dependencies(velox_verax velox_hive_connector)
 

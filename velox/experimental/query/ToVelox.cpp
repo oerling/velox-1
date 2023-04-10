@@ -64,6 +64,7 @@ void filterUpdated(BaseTablePtr table) {
       std::move(subfieldFilters),
       remainingFilter);
   optimization->setLeafHandle(table->id(), handle);
+  optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
 }
 
 RelationOpPtr addGather(RelationOpPtr op) {
@@ -96,7 +97,7 @@ std::vector<ExecutableFragment> Optimization::toVeloxPlan(
     plan = addGather(plan);
   }
   ExecutableFragment top;
-  makeFragment(plan, top, stages);
+  top.fragment.planNode = makeFragment(plan, top, stages);
   stages.push_back(std::move(top));
   return stages;
 }
@@ -244,7 +245,7 @@ core::PlanNodePtr Optimization::makeAggregation(
           toTypePtr(aggregate->value().type),
           std::vector<core::TypedExprPtr>{
               std::make_shared<core::FieldAccessTypedExpr>(
-                  toTypePtr(aggregate->value().type), fmt::format("a{}", i))},
+							   toTypePtr(aggregate->intermediateType()), aggregateNames.back())},
           aggregate->name()));
     }
   }
@@ -278,6 +279,14 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
         numPartitions, inputType_, keys_);
   }
 
+  folly::dynamic serialize() const override {
+    VELOX_UNREACHABLE();
+  }
+
+  std::string toString() const override {
+    return "<Verax partition function spec>";
+  }
+  
  private:
   const RowTypePtr inputType_;
   const std::vector<column_index_t> keys_;
@@ -329,6 +338,7 @@ core::PlanNodePtr Optimization::makeFragment(
     }
     case RelType::kRepartition: {
       ExecutableFragment source;
+      source.width = options_.numWorkers;
       source.taskPrefix = fmt::format("stage{}", ++stageCounter_);
       auto sourcePlan = makeFragment(op->input(), source, stages);
       TempProjections project(*this, *op->input());
@@ -337,6 +347,9 @@ core::PlanNodePtr Optimization::makeFragment(
       auto keys = project.toFieldRefs<core::TypedExprPtr>(
           repartition->distribution().partition);
       auto& distribution = repartition->distribution();
+      if (distribution.distributionType.isGather) {
+	fragment.width = 1;
+      }
       auto partitioningInput = project.maybeProject(sourcePlan);
       auto partitionFunctionFactory =
           createPartitionFunctionSpec(partitioningInput->outputType(), keys);
@@ -350,9 +363,11 @@ core::PlanNodePtr Optimization::makeFragment(
           std::move(partitionFunctionFactory),
           makeOutputType(repartition->columns()),
           partitioningInput);
-      stages.push_back(std::move(source));
-      return std::make_shared<core::ExchangeNode>(
+      auto exchange =  std::make_shared<core::ExchangeNode>(
           idGenerator_.next(), sourcePlan->outputType());
+      fragment.inputStages.push_back(InputStage{exchange->id(), source.taskPrefix});
+      stages.push_back(std::move(source));
+      return exchange;
     }
     case RelType::kTableScan: {
       auto scan = op->as<TableScan>();
@@ -371,11 +386,13 @@ core::PlanNodePtr Optimization::makeFragment(
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
                 toTypePtr(column->value().type));
       }
-      return std::make_shared<core::TableScanNode>(
-          idGenerator_.next(),
+      auto scanNode =  std::make_shared<core::TableScanNode>(
+						   idGenerator_.next(),
           makeOutputType(scan->columns()),
           handle,
           assignments);
+      fragment.scans.push_back(scanNode);
+      return scanNode;
     }
     case RelType::kJoin: {
       auto join = op->as<Join>();

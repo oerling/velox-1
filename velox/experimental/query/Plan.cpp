@@ -28,8 +28,12 @@ using facebook::velox::core::JoinType;
 Optimization::Optimization(
     const core::PlanNode& plan,
     const Schema& schema,
+    History& history,
     int32_t traceFlags)
-    : schema_(schema), inputPlan_(plan), traceFlags_(traceFlags) {
+    : schema_(schema),
+      inputPlan_(plan),
+      history_(history),
+      traceFlags_(traceFlags) {
   queryCtx()->optimization() = this;
   root_ = makeQueryGraph();
   root_->distributeConjuncts();
@@ -559,7 +563,7 @@ void Optimization::addPostprocess(
         partialAgg,
         *dt->aggregation->aggregation,
         plan,
-        partialAgg->step = core::AggregationNode::Step::kPartial);
+        core::AggregationNode::Step::kPartial);
     state.placed.add(dt->aggregation);
     state.addCost(*partialAgg);
     plan = repartitionForAgg(partialAgg, state);

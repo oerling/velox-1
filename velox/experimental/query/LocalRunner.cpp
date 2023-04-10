@@ -19,13 +19,18 @@
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
 namespace facebook::velox::exec {
+namespace {
+auto remoteSplit(const std::string& taskId) {
+  return std::make_shared<RemoteConnectorSplit>(taskId);
+}
+} // namespace
 
 test::TaskCursor* LocalRunner::cursor() {
   auto lastStage = makeStages();
   params_.planNode = plan_.back().fragment.planNode;
   cursor_ = std::make_unique<test::TaskCursor>(params_);
   if (!lastStage.empty()) {
-    auto node = plan_.back().inputStages[0].consumer; // NOLINT
+    auto node = plan_.back().inputStages[0].consumer;
     for (auto& remote : lastStage) {
       cursor_->task()->addSplit(node, Split(remote));
     }
@@ -43,7 +48,7 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
     stages_.emplace_back();
     for (auto i = 0; i < fragment.width; ++i) {
       auto task = std::make_shared<Task>(
-          fmt::format("{}.{}", fragment.taskPrefix, i),
+          fmt::format("local://{}.{}", fragment.taskPrefix, i),
           fragment.fragment,
           i,
           params_.queryCtx);
@@ -79,8 +84,7 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
       auto sourceStage = prefixMap[input.producerTaskPrefix];
       std::vector<std::shared_ptr<RemoteConnectorSplit>> sourceSplits;
       for (auto i = 0; i < stages_[sourceStage].size(); ++i) {
-        sourceSplits.push_back(std::make_shared<RemoteConnectorSplit>(
-            stages_[sourceStage][i]->taskId()));
+        sourceSplits.push_back(remoteSplit(stages_[sourceStage][i]->taskId()));
       }
       for (auto& task : stages_[fragmentIndex]) {
         for (auto& remote : sourceSplits) {
@@ -95,13 +99,13 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
   }
   std::vector<std::shared_ptr<RemoteConnectorSplit>> lastStage;
   for (auto& task : stages_.back()) {
-    lastStage.push_back(std::make_shared<RemoteConnectorSplit>(task->taskId()));
+    lastStage.push_back(remoteSplit(task->taskId()));
   }
   return lastStage;
 }
 
 Split LocalSplitSource::next(int32_t /*worker*/) {
-  if (currentFile_ >= table_->files.size()) {
+  if (currentFile_ >= static_cast<int32_t>(table_->files.size())) {
     return Split();
   }
   if (currentSplit_ >= fileSplits_.size()) {
@@ -135,6 +139,27 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   VELOX_CHECK(it != schema_.tables().end());
   auto table = it->second.get();
   return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
+}
+
+std::vector<TaskStats> LocalRunner::stats() const {
+  std::vector<TaskStats> result;
+  for (auto i = 0; i < stages_.size(); ++i) {
+    auto& tasks = stages_[i];
+    assert(!tasks.empty());
+    auto stats = tasks[0]->taskStats();
+    for (auto j = 1; j < tasks.size(); ++j) {
+      auto moreStats = tasks[j]->taskStats();
+      for (auto pipeline = 0; pipeline < stats.pipelineStats.size();
+           ++pipeline) {
+        for (auto op = 0; op < stats.pipelineStats[pipeline].operatorStats.size(); ++op) {
+          stats.pipelineStats[pipeline].operatorStats[op].add(
+              moreStats.pipelineStats[pipeline].operatorStats[op]);
+        }
+      }
+    }
+    result.push_back(std::move(stats));
+  }
+  return result;
 }
 
 } // namespace facebook::velox::exec

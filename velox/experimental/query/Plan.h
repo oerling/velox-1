@@ -18,6 +18,7 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/core/PlanNode.h"
+#include "velox/experimental/query/Cost.h"
 #include "velox/experimental/query/ExecutablePlan.h"
 #include "velox/experimental/query/RelationOp.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
@@ -329,10 +330,10 @@ struct hash<::facebook::verax::MemoKey> {
 
 namespace facebook::verax {
 
-/// Instance of query optimization. Comverts a plan and schema into an optimized
-/// plan. Depends on QueryGraphContext being set on the calling thread. There is
-/// one instance per query to plan. The instance must stay live as long as a
-/// returned plan is live.
+/// Instance of query optimization. Comverts a plan and schema into an
+/// optimized plan. Depends on QueryGraphContext being set on the
+/// calling thread. There is one instance per query to plan. The
+/// instance must stay live as long as a returned plan is live.
 class Optimization {
  public:
   static constexpr int32_t kRetained = 1;
@@ -340,6 +341,7 @@ class Optimization {
   Optimization(
       const velox::core::PlanNode& plan,
       const Schema& schema,
+      History& history,
       int32_t traceFlags = 0);
 
   /// Returns the optimized RelationOp plan for 'plan' given at construction.
@@ -373,6 +375,11 @@ class Optimization {
   // Translates from Type* to the original TypePtr. Used when reconstructing
   // Velox plans from RelationOp.
   velox::TypePtr toTypePtr(const velox::Type* type);
+
+	    /// Sets 'filterSelectivity' of 'baseTable' from history. Returns True if set. 
+	    bool setLeafSelectivity(BaseTable& baseTable) {
+	    return history_.setLeafSelectivity(baseTable);
+}
 
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
@@ -563,14 +570,29 @@ class Optimization {
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
 
+  // Makes a tree of PlanNode for a tree of
+  // RelationOp. 'fragment' is the fragment that 'op'
+  // belongs to. If op or children are repartitions then the
+  // source of each makes a separate fragment. These
+  // fragments are referenced from 'fragment' via
+  // 'inputStages' and are returned in 'stages'.
   velox::core::PlanNodePtr makeFragment(
       RelationOpPtr op,
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
+
   const Schema& schema_;
+
+  // Top level plan to optimize.
   const velox::core::PlanNode& inputPlan_;
+
+  // Source of historical cost/cardinality information.
+  History& history_;
+
+  // Top DerivedTable when making a QueryGraph from PlanNode.
   DerivedTablePtr root_;
 
+  // Innermost DerivedTable when making a QueryGraph from PlanNode.
   DerivedTablePtr currentSelect_;
 
   // Maps names in project noes of 'inputPlan_' to deduplicated Exprs.
@@ -621,9 +643,6 @@ class Optimization {
   velox::core::PlanNodeIdGenerator idGenerator_;
 };
 
-/// Cheat sheet for selectivity keyed on ConnectorTableHandle::toString().
-/// Values between 0 and 1.
-std::unordered_map<std::string, float>& baseSelectivities();
 
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);

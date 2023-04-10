@@ -54,18 +54,6 @@ DerivedTablePtr Optimization::makeQueryGraph() {
   return root_;
 }
 
-float subfieldSelectivity(const HiveTableHandle& handle) {
-  if (handle.subfieldFilters().empty() && !handle.remainingFilter()) {
-    return 1;
-  }
-  auto string = handle.toString();
-  auto it = baseSelectivities().find(string);
-  if (it != baseSelectivities().end()) {
-    return it->second;
-  }
-  return 0.1;
-}
-
 const std::string* FOLLY_NULLABLE columnName(const core::TypedExprPtr& expr) {
   if (auto column =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
@@ -380,7 +368,6 @@ PlanObjectPtr Optimization::makeQueryGraph(
     VELOX_CHECK(tableHandle);
     auto assignments = tableScan->assignments();
     auto schemaTable = schema_.findTable(tableHandle->tableName());
-    float selection = subfieldSelectivity(*tableHandle);
     auto cname = fmt::format("t{}", ++nameCounter_);
 
     Declare(BaseTable, baseTable);
@@ -399,7 +386,9 @@ PlanObjectPtr Optimization::makeQueryGraph(
       renames_[pair.first] = column;
     }
     baseTable->columns = columns;
-    baseTable->filterSelectivity = selection;
+	    
+	    setLeafHandle(baseTable->id(), tableScan->tableHandle());
+	    setLeafSelectivity(*baseTable);
     currentSelect_->tables.push_back(baseTable);
     currentSelect_->tableSet.add(baseTable);
     return baseTable;

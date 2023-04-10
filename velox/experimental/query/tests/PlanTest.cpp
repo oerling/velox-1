@@ -15,6 +15,8 @@
  */
 
 #include "velox/experimental/query/Plan.h"
+#include "velox/experimental/query/VeloxHistory.h"
+
 #include <folly/init/Init.h>
 #include <gtest/gtest.h>
 #include "velox/common/file/FileSystems.h"
@@ -56,22 +58,23 @@ class PlanTest : public testing::Test {
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);
     builder_->initialize(FLAGS_data_path);
+    history_ = std::make_unique<VeloxHistory>();
     makeCheats();
   }
 
   void makeCheats() {
-    baseSelectivities()
-        ["table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]"] =
-            0.5;
-    baseSelectivities()
-        ["table: orders, range filters: [(o_orderdate, BigintRange: [-9223372036854775808, 9203] no nulls)]"] =
-            0.5;
-    baseSelectivities()
-        ["table: customer, range filters: [(c_mktsegment, Filter(BytesValues, deterministic, null not allowed))]"] =
-            0.2;
-    baseSelectivities()
-        ["table: part, remaining filter: (like(ROW[\"p_name\"],\"%green%\"))"] =
-            1.0 / 17;
+    history_->recordLeafSelectivity(
+        "table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]",
+        0.5);
+    history_->recordLeafSelectivity(
+        "table: orders, range filters: [(o_orderdate, BigintRange: [-9223372036854775808, 9203] no nulls)]",
+        0.5);
+    history_->recordLeafSelectivity(
+        "table: customer, range filters: [(c_mktsegment, Filter(BytesValues, deterministic, null not allowed))]",
+        0.2);
+    history_->recordLeafSelectivity(
+        "table: part, remaining filter: (like(ROW[\"p_name\"],\"%green%\"))",
+        1.0 / 17);
   }
 
   std::string makePlan(
@@ -82,7 +85,7 @@ class PlanTest : public testing::Test {
     auto schema = tpchSchema(100, partitioned, ordered, false);
     std::string string;
     for (auto counter = 0; counter < numRepeats; ++counter) {
-      Optimization opt(*plan, *schema, FLAGS_trace);
+      Optimization opt(*plan, *schema, *history_, FLAGS_trace);
       auto result = opt.bestPlan();
       if (counter == numRepeats - 1) {
         string = result->toString(true);
@@ -100,6 +103,7 @@ class PlanTest : public testing::Test {
   std::unique_ptr<HashStringAllocator> allocator_;
 
   std::unique_ptr<QueryGraphContext> context_;
+  std::unique_ptr<VeloxHistory> history_;
   std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
   static bool registered;
 };
