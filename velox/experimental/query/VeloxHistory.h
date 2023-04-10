@@ -32,7 +32,9 @@ class VeloxHistory : public History {
 
   bool setLeafSelectivity(BaseTable& table) override;
 
-  /// Stores observed costs and cardinalities from a query execution. If 'op' is non-null, non-leaf costs from non-leaf levels are recorded. Otherwise only leaf scan selectivities  are recorded.
+  /// Stores observed costs and cardinalities from a query execution. If 'op' is
+  /// non-null, non-leaf costs from non-leaf levels are recorded. Otherwise only
+  /// leaf scan selectivities  are recorded.
   void recordVeloxExecution(
       const RelationOp* op,
       const std::vector<velox::exec::ExecutableFragment>& plan,

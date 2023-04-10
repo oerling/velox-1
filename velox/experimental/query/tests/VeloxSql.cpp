@@ -312,8 +312,8 @@ class VeloxRunner {
         }
         std::cout << runStats.toString(false) << std::endl;
       }
-	    history_->recordVeloxExecution(nullptr, fragments, stats);
-	    } catch (const std::exception& e) {
+      history_->recordVeloxExecution(nullptr, fragments, stats);
+    } catch (const std::exception& e) {
       LOG(ERROR) << "Query terminated with: " << e.what();
       return;
     }

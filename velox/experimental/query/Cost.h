@@ -51,8 +51,8 @@ class History {
   }
 
  protected:
-	    // serializes access to all data members. 
-	    std::mutex mutex_;
+  // serializes access to all data members.
+  std::mutex mutex_;
 
   /// Memo for selectivity keyed on ConnectorTableHandle::toString().
   /// Values between 0 and 1.
