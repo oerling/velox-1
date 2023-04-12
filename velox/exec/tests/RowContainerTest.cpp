@@ -729,6 +729,41 @@ TEST_F(RowContainerTest, rowSizeWithNormalizedKey) {
   ASSERT_EQ(numRows, 1);
 }
 
+TEST_F(RowContainerTest, estimateRowSize) {
+  auto numRows = 1000;
+
+  // Make a RowContainer with a fixed-length key column and a variable-length
+  // dependent column.
+  auto rowContainer = makeRowContainer({BIGINT()}, {VARCHAR()});
+  EXPECT_FALSE(rowContainer->estimateRowSize().has_value());
+
+  // Store rows to the container.
+  auto input = vectorMaker_.rowVector(
+      {makeFlatVector<int64_t>(numRows, [](auto row) { return row; }),
+       makeFlatVector<StringView>(numRows, [](auto row) {
+         auto str = std::string(row, 'x');
+         return StringView(str);
+       })});
+  SelectivityVector allRows(numRows);
+  DecodedVector decodedKey(*input->childAt(0), allRows);
+  DecodedVector decodedDependent(*input->childAt(1), allRows);
+  for (size_t i = 0; i < numRows; i++) {
+    auto row = rowContainer->newRow();
+    rowContainer->store(decodedKey, i, row, 0);
+    rowContainer->store(decodedDependent, i, row, 1);
+  }
+
+  RowContainerIterator iter;
+  char* result[numRows];
+  auto resultRows = rowContainer->listRows(
+      &iter,
+      numRows * 10, // More rows than the container has so that the list is
+                    // not bounded by this argument.
+      rowContainer->estimateRowSize().value() * numRows,
+      result);
+  EXPECT_EQ(resultRows, numRows);
+}
+
 class AggregateWithAlignment : public Aggregate {
  public:
   explicit AggregateWithAlignment(TypePtr resultType, int alignment)
