@@ -45,7 +45,9 @@ HashAggregation::HashAggregation(
               ? operatorCtx_->makeSpillConfig(Spiller::Type::kAggregate)
               : std::nullopt),
       maxPartialAggregationMemoryUsage_(
-          driverCtx->queryConfig().maxPartialAggregationMemoryUsage()) {
+					driverCtx->queryConfig().maxPartialAggregationMemoryUsage()),
+      testingAbandonPartialAggregation_(
+          driverCtx->queryConfig().testingAbandonPartialAggregation()) {
   VELOX_CHECK_NOT_NULL(memoryTracker_, "Memory usage tracker is not set");
   auto inputType = aggregationNode->sources()[0]->outputType();
 
@@ -163,6 +165,11 @@ void HashAggregation::addInput(RowVectorPtr input) {
     mayPushdown_ = operatorCtx_->driver()->mayPushdownAggregation(this);
     pushdownChecked_ = true;
   }
+  if (abandonedPartialAggregation_) {
+    input_ = input;
+    numInputRows_ += input->size();
+    return;
+  }
   groupingSet_->addInput(input, mayPushdown_);
   numInputRows_ += input->size();
   {
@@ -238,12 +245,44 @@ void HashAggregation::resetPartialOutputIfNeed() {
 }
 
 void HashAggregation::maybeIncreasePartialAggregationMemoryUsage(
-    double aggregationPct) {
+								 // If
+								 // remaining
+								 // row
+								 // count
+								 // at
+								 // full
+								 // memory
+								 // is
+								 // is
+								 // more
+								 // than
+								 // this,
+								 // the
+								 // partial
+								 // aggregation
+								 // should
+								 // be
+								 // abandoned
+								 // and
+								 // turned
+								 // into
+								 // a
+								 // no-op.
+								 constexpr int32_t kMinimumPartialPct = 40;
+								 double aggregationPct) {
   VELOX_DCHECK(isPartialOutput_);
-  // Do not increase the aggregation memory usage further if we have already
-  // achieved good aggregation ratio with the current size.
-  if (maxPartialAggregationMemoryUsage_ >=
-      maxExtendedPartialAggregationMemoryUsage_) {
+  // If size is at max and there still is not enough reduction, abandon partial
+  // aggregation.
+  if (testingAbandonPartialAggregation_ ||
+      (aggregationPct > kMinimumpartialPct &&
+       maxPartialAggregationMemoryUsage_ >=
+           maxExtendedPartialAggregationMemoryUsage_)) {
+    groupingSet_->abandonPartialAggregation();
+    memoryTracker_->release();
+    addRuntimeStat(
+        "abandonedPartialAggregation",
+        RuntimeCounter(1, RuntimeCounter::Unit::kNone));
+    abandonedPartialAggregation_ = true;
     return;
   }
   const int64_t extendedPartialAggregationMemoryUsage = std::min(
@@ -271,6 +310,19 @@ RowVectorPtr HashAggregation::getOutput() {
   if (finished_) {
     input_ = nullptr;
     return nullptr;
+  }
+  if (abandonedPartialAggregation_) {
+      if (noMoreInput_) {
+        finished_ = true;
+      }
+      if (!input_) {
+      return nullptr;
+    }
+      prepareOutput(input_->size());
+  groupingSet_->toIntermediate(input_, output_);
+    numOutputRows_ += input_->size();
+    input_ = nullptr;
+    return output_;
   }
 
   // Produce results if one of the following is true:

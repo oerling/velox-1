@@ -88,6 +88,9 @@ class QueryConfig {
   static constexpr const char* kMaxExtendedPartialAggregationMemory =
       "max_extended_partial_aggregation_memory";
 
+  static constexpr const char* kAbandonPartialAggregation =
+      "abandon_partial_aggregation";
+  
   static constexpr const char* kMaxPartitionedOutputBufferSize =
       "driver.max-page-partitioning-buffer-size";
 
@@ -176,6 +179,11 @@ class QueryConfig {
     return get<uint64_t>(kMaxExtendedPartialAggregationMemory, kDefault);
   }
 
+  bool testingAbandonPartialAggregation() const {
+    return get<bool>(kAbandonPartialAggregation, false);
+  }
+
+  
   uint64_t aggregationSpillMemoryThreshold() const {
     static constexpr uint64_t kDefault = 0;
     return get<uint64_t>(kAggregationSpillMemoryThreshold, kDefault);
