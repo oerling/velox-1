@@ -75,9 +75,9 @@ class Aggregate {
     return true;
   }
 
-  /// Returns true if rawToIntermediate() is supported.
-  virtual bool supportsRawToIntermediate() const {
-    false;
+  /// Returns true if toIntermediate() is supported.
+  virtual bool supportsToIntermediate() const {
+    return false;
   }
   
   void setAllocator(HashStringAllocator* allocator) {
@@ -206,8 +206,12 @@ class Aggregate {
   virtual void
   extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result) = 0;
 
-  /// Returns an accumulator with a single value based on 'args'. 'args' are as for addRawInput(). An accumulator containing the state for  one null input is produced for each unselected row in 'rows'.
-  VectorPtr toIntermediate(const SelectivityVector& rows, std::vector<VectorPtr>& args) const {
+  /// Produces an accumulator initialized from a single value for each
+  /// row in 'rows'. The raw arguments of the aggregate are in 'args',
+  /// which have the same meaning as in addRawInput. The result is
+  /// placed in 'result'. 'result is allocated if nullptr, otherwise
+  /// it is expected to be a writable flat vector of the right type.
+  virtual void toIntermediate(const SelectivityVector& rows, std::vector<VectorPtr>& args, VectorPtr& result) const {
     VELOX_NYI("toIntermediate not supported");
   }
   
