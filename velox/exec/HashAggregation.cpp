@@ -45,7 +45,7 @@ HashAggregation::HashAggregation(
               ? operatorCtx_->makeSpillConfig(Spiller::Type::kAggregate)
               : std::nullopt),
       maxPartialAggregationMemoryUsage_(
-					driverCtx->queryConfig().maxPartialAggregationMemoryUsage()),
+          driverCtx->queryConfig().maxPartialAggregationMemoryUsage()),
       testingAbandonPartialAggregation_(
           driverCtx->queryConfig().testingAbandonPartialAggregation()) {
   VELOX_CHECK_NOT_NULL(memoryTracker_, "Memory usage tracker is not set");
@@ -245,31 +245,30 @@ void HashAggregation::resetPartialOutputIfNeed() {
 }
 
 void HashAggregation::maybeIncreasePartialAggregationMemoryUsage(
-								 // If
-								 // remaining
-								 // row
-								 // count
-								 // at
-								 // full
-								 // memory
-								 // is
-								 // is
-								 // more
-								 // than
-								 // this,
-								 // the
-								 // partial
-								 // aggregation
-								 // should
-								 // be
-								 // abandoned
-								 // and
-								 // turned
-								 // into
-								 // a
-								 // no-op.
-								 constexpr int32_t kMinimumPartialPct = 40;
-								 double aggregationPct) {
+    // If
+    // remaining
+    // row
+    // count
+    // at
+    // full
+    // memory
+    // is
+    // is
+    // more
+    // than
+    // this,
+    // the
+    // partial
+    // aggregation
+    // should
+    // be
+    // abandoned
+    // and
+    // turned
+    // into
+    // a
+    // no-op.
+    constexpr int32_t kMinimumPartialPct = 40; double aggregationPct) {
   VELOX_DCHECK(isPartialOutput_);
   // If size is at max and there still is not enough reduction, abandon partial
   // aggregation.
@@ -312,14 +311,14 @@ RowVectorPtr HashAggregation::getOutput() {
     return nullptr;
   }
   if (abandonedPartialAggregation_) {
-      if (noMoreInput_) {
-        finished_ = true;
-      }
-      if (!input_) {
+    if (noMoreInput_) {
+      finished_ = true;
+    }
+    if (!input_) {
       return nullptr;
     }
-      prepareOutput(input_->size());
-  groupingSet_->toIntermediate(input_, output_);
+    prepareOutput(input_->size());
+    groupingSet_->toIntermediate(input_, output_);
     numOutputRows_ += input_->size();
     input_ = nullptr;
     return output_;

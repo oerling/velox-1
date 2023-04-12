@@ -708,8 +708,9 @@ void GroupingSet::abandonPartialAggregation() {
   table_ = nullptr;
 }
 
-
-void GroupingSet::toIntermediate(const RowVectorPtr& input, RowVectorPtr& result) {
+void GroupingSet::toIntermediate(
+    const RowVectorPtr& input,
+    RowVectorPtr& result) {
   VELOX_CHECK(abandonedPartialAggregation_);
   VELOX_CHECK(result.unique());
   auto numRows = input->size();
@@ -723,7 +724,8 @@ void GroupingSet::toIntermediate(const RowVectorPtr& input, RowVectorPtr& result
       intermediateGroups_[i] = intermediateRows_->newRow();
     }
     intermediateRowNumbers_.resize(numRows);
-    std::iota(intermediateRowNumbers_.begin(), intermediateRowNumbers_.end(), 0);
+    std::iota(
+        intermediateRowNumbers_.begin(), intermediateRowNumbers_.end(), 0);
   }
 
   for (auto i = 0; i < keyChannels_.size(); ++i) {
@@ -748,20 +750,21 @@ void GroupingSet::toIntermediate(const RowVectorPtr& input, RowVectorPtr& result
       continue;
     }
     aggregates_[i]->initializeNewGroups(
-					intermediateGroups_.data(), intermediateRowNumbers_);
+        intermediateGroups_.data(), intermediateRowNumbers_);
 
     aggregates_[i]->addRawInput(
-				  intermediateGroups_.data(), rows, tempVectors_, false);
+        intermediateGroups_.data(), rows, tempVectors_, false);
 
     aggregates_[i]->extractAccumulators(
-					intermediateGroups_.data(), intermediateGroups_.size(), &aggregateVector);
-
+        intermediateGroups_.data(),
+        intermediateGroups_.size(),
+        &aggregateVector);
   }
   if (intermediateRows_) {
-    intermediateRows_->eraseRows(folly::Range<char**>(intermediateGroups_.data(), intermediateGroups_.size()));
+    intermediateRows_->eraseRows(folly::Range<char**>(
+        intermediateGroups_.data(), intermediateGroups_.size()));
   }
   tempVectors_.clear();
 }
-
 
 } // namespace facebook::velox::exec

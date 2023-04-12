@@ -92,12 +92,14 @@ class GroupingSet {
     return table_ ? table_->rows()->numRows() : 0;
   }
 
-  // Frees hash tables and other state when giving up partial aggregation as non-productive. Must be called before toIntermediate() is used.
+  // Frees hash tables and other state when giving up partial aggregation as
+  // non-productive. Must be called before toIntermediate() is used.
   void abandonPartialAggregation();
-  
-  /// Translates the raw input in input to accumulators initialized from a single input row. Passes grouping keys through. 
+
+  /// Translates the raw input in input to accumulators initialized from a
+  /// single input row. Passes grouping keys through.
   void toIntermediate(const RowVectorPtr& input, RowVectorPtr& result);
-  
+
  private:
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
@@ -271,11 +273,13 @@ class GroupingSet {
 
   // True if partial aggregation has been given up as non-productive.
   bool abandonedPartialAggregation_{false};
-  
-  // True if partial aggregation and all aggregates have a fast path from raw input to intermediate. Initialized in abandonPartialAggregation().
+
+  // True if partial aggregation and all aggregates have a fast path from raw
+  // input to intermediate. Initialized in abandonPartialAggregation().
   bool allHaveToIntermediate_;
 
-  // RowContainer for toIntermediate for aggregates that do not have a toIntermediate() fast path
+  // RowContainer for toIntermediate for aggregates that do not have a
+  // toIntermediate() fast path
   std::unique_ptr<RowContainer> intermediateRows_;
   std::vector<char*> intermediateGroups_;
   std::vector<vector_size_t> intermediateRowNumbers_;

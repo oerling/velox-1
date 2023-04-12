@@ -83,7 +83,7 @@ class HashAggregation : public Operator {
   // True if partial aggregation has been found to be non-reducing.
   bool abandonedPartialAggregation_{false};
   const bool testingAbandonPartialAggregation_;
-  
+
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
   bool mayPushdown_ = false;

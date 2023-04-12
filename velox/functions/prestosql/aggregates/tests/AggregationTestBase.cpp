@@ -227,8 +227,7 @@ void AggregationTestBase::testAggregations(
     makeSource(builder);
 
     core::PlanNodeId partialNodeId;
-    builder
-      .partialAggregation(groupingKeys, aggregates)
+    builder.partialAggregation(groupingKeys, aggregates)
         .capturePlanNodeId(partialNodeId)
         .finalAggregation();
 
@@ -236,16 +235,16 @@ void AggregationTestBase::testAggregations(
       builder.project(postAggregationProjections);
     }
 
-
     AssertQueryBuilder queryBuilder(builder.planNode(), duckDbQueryRunner_);
     queryBuilder.config(core::QueryConfig::kAbandonPartialAggregation, "true")
-      .config(core::QueryConfig::kMaxPartialAggregationMemory , "0")
-      .config(core::QueryConfig::kMaxExtendedPartialAggregationMemory , "0")
+        .config(core::QueryConfig::kMaxPartialAggregationMemory, "0")
+        .config(core::QueryConfig::kMaxExtendedPartialAggregationMemory, "0")
         .maxDrivers(1);
 
     auto task = assertResults(queryBuilder);
 
-    // Expect partial aggregation was turned off if there were more than 1 input batches.
+    // Expect partial aggregation was turned off if there were more than 1 input
+    // batches.
     auto taskStats = toPlanStats(task->taskStats());
     auto inputVectors = taskStats.at(partialNodeId).inputVectors;
     auto runtimeStats = taskStats.at(partialNodeId).customStats;
@@ -253,7 +252,7 @@ void AggregationTestBase::testAggregations(
       EXPECT_LT(0, runtimeStats.at("abandonedPartialAggregation").count);
     }
   }
-  
+
   {
     SCOPED_TRACE("Run single");
     PlanBuilder builder(pool());

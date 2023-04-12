@@ -79,7 +79,7 @@ class Aggregate {
   virtual bool supportsToIntermediate() const {
     return false;
   }
-  
+
   void setAllocator(HashStringAllocator* allocator) {
     allocator_ = allocator;
   }
@@ -211,10 +211,13 @@ class Aggregate {
   /// which have the same meaning as in addRawInput. The result is
   /// placed in 'result'. 'result is allocated if nullptr, otherwise
   /// it is expected to be a writable flat vector of the right type.
-  virtual void toIntermediate(const SelectivityVector& rows, std::vector<VectorPtr>& args, VectorPtr& result) const {
+  virtual void toIntermediate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      VectorPtr& result) const {
     VELOX_NYI("toIntermediate not supported");
   }
-  
+
   // Frees any out of line storage for the accumulator in
   // 'groups'. No-op for fixed length accumulators.
   virtual void destroy(folly::Range<char**> /*groups*/) {}
