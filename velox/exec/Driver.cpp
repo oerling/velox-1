@@ -381,9 +381,7 @@ StopReason Driver::runInternal(
                 resultBytes = result->estimateFlatSize();
                 {
                   auto lockedStats = op->stats().wlock();
-                  lockedStats->outputVectors += 1;
-                  lockedStats->outputPositions += result->size();
-                  lockedStats->outputBytes += resultBytes;
+                  lockedStats->addOutputVector(resultBytes, result->size());
                 }
               }
             }
@@ -395,9 +393,7 @@ StopReason Driver::runInternal(
                   });
               {
                 auto lockedStats = nextOp->stats().wlock();
-                lockedStats->inputVectors += 1;
-                lockedStats->inputPositions += result->size();
-                lockedStats->inputBytes += resultBytes;
+                lockedStats->addInputVector(resultBytes, result->size());
               }
               RuntimeStatWriterScopeGuard statsWriterGuard(nextOp);
               nextOp->addInput(result);
@@ -455,9 +451,8 @@ StopReason Driver::runInternal(
                   op->operatorType());
               {
                 auto lockedStats = op->stats().wlock();
-                lockedStats->outputVectors += 1;
-                lockedStats->outputPositions += result->size();
-                lockedStats->outputBytes += result->estimateFlatSize();
+                lockedStats->addOutputVector(
+                    result->estimateFlatSize(), result->size());
               }
 
               // This code path is used only in single-threaded execution.
@@ -706,12 +701,14 @@ std::string blockingReasonToString(BlockingReason reason) {
       return "kWaitForConsumer";
     case BlockingReason::kWaitForSplit:
       return "kWaitForSplit";
-    case BlockingReason::kWaitForExchange:
-      return "kWaitForExchange";
+    case BlockingReason::kWaitForProducer:
+      return "kWaitForProducer";
     case BlockingReason::kWaitForJoinBuild:
       return "kWaitForJoinBuild";
     case BlockingReason::kWaitForJoinProbe:
       return "kWaitForJoinProbe";
+    case BlockingReason::kWaitForMergeJoinRightSide:
+      return "kWaitForMergeJoinRightSide";
     case BlockingReason::kWaitForMemory:
       return "kWaitForMemory";
     case BlockingReason::kWaitForConnector:

@@ -344,14 +344,13 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     std::vector<ContinueFuture> futures;
     futures.push_back(std::move(splitFuture_));
     futures.push_back(std::move(dataFuture));
-
     *future = folly::collectAny(futures).unit();
-  } else {
-    // Block until data becomes available.
-    *future = std::move(dataFuture);
+    return BlockingReason::kWaitForSplit;
   }
-  return stats_.rlock()->numSplits == 0 ? BlockingReason::kWaitForSplit
-                                        : BlockingReason::kWaitForExchange;
+
+  // Block until data becomes available.
+  *future = std::move(dataFuture);
+  return BlockingReason::kWaitForProducer;
 }
 
 bool Exchange::isFinished() {
@@ -376,8 +375,7 @@ RowVectorPtr Exchange::getOutput() {
   {
     auto lockedStats = stats_.wlock();
     lockedStats->rawInputBytes += rawInputBytes;
-    lockedStats->inputPositions += result_->size();
-    lockedStats->inputBytes += result_->retainedSize();
+    lockedStats->addInputVector(result_->estimateFlatSize(), result_->size());
   }
 
   if (inputStream_->atEnd()) {
