@@ -123,9 +123,7 @@ class MutableRemainingRows {
   /// moves the error into the corresponding element of
   /// 'errors'. Leaves context with no errors. Returns true if
   /// 'rows()' is left non empty.
-  bool deselectNonErrorNulls(
-      const VectorPtr& result,
-      ErrorVectorPtr& errors);
+  bool deselectNonErrorNulls(const VectorPtr& result, ErrorVectorPtr& errors);
 
   /// @return true if current set of rows might be different from the original
   /// set of rows, which may happen if deselectNull() or deselectErrors() were

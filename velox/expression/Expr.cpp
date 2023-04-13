@@ -312,7 +312,8 @@ bool MutableRemainingRows::deselectNonErrorNulls(
       auto rowBits = mutableRows().asMutableRange().bits();
       auto nwords = bits::nwords(rows().end());
       for (auto i = 0; i < nwords; ++i) {
-        auto nullNoError = errorNulls ? flatNulls[i] | errorNulls[i] : flatNulls[i];
+        auto nullNoError =
+            errorNulls ? flatNulls[i] | errorNulls[i] : flatNulls[i];
         rowBits[i] &= nullNoError;
         if (errors) {
           errors->mutableRawNulls()[i] &= nullNoError;
