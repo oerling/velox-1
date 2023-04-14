@@ -302,7 +302,6 @@ bool isFlat(const BaseVector& vector) {
 
 } // namespace
 
-
 template <typename EvalArg>
 bool Expr::evalArgsDefaultNulls(
     MutableRemainingRows& rows,
