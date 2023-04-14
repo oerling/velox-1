@@ -2191,6 +2191,7 @@ void collectNodeMemoryUsage(
   // Run through the node's child operator pools and update the memory usage.
   nodePool->visitChildren([&nodeMemoryUsage](memory::MemoryPool* operatorPool) {
     collectOperatorMemoryUsage(nodeMemoryUsage, operatorPool);
+    return true;
   });
 }
 
@@ -2200,6 +2201,7 @@ void collectTaskMemoryUsage(
   taskMemoryUsage.taskId = taskPool->name();
   taskPool->visitChildren([&taskMemoryUsage](memory::MemoryPool* nodePool) {
     collectNodeMemoryUsage(taskMemoryUsage, nodePool);
+    return true;
   });
 }
 
@@ -2210,6 +2212,7 @@ std::string getQueryMemoryUsageString(memory::MemoryPool* queryPool) {
   queryPool->visitChildren([&taskMemoryUsages](memory::MemoryPool* taskPool) {
     taskMemoryUsages.emplace_back(TaskMemoryUsage{});
     collectTaskMemoryUsage(taskMemoryUsages.back(), taskPool);
+    return true;
   });
 
   // We will collect each operator's aggregated memory usage to later show the
