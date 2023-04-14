@@ -81,8 +81,7 @@ class MutableRemainingRows {
       : context_{context},
         originalRows_{&rows},
         rows_{&rows},
-        mutableRowsHolder_{context},
-        decoded_(context) {}
+        mutableRowsHolder_{context} {}
 
   const SelectivityVector& originalRows() const {
     return *originalRows_;
@@ -117,14 +116,6 @@ class MutableRemainingRows {
     return mutableRows_->hasSelections();
   }
 
-  /// Deselects rows where 'result' is null and 'context_' has no
-  /// error. Sets 'errors' at 'i' to null if the 'ith' element of
-  /// result is null and has no error. If 'context_' has an error,
-  /// moves the error into the corresponding element of
-  /// 'errors'. Leaves context with no errors. Returns true if
-  /// 'rows()' is left non empty.
-  bool deselectNonErrorNulls(const VectorPtr& result, ErrorVectorPtr& errors);
-
   /// @return true if current set of rows might be different from the original
   /// set of rows, which may happen if deselectNull() or deselectErrors() were
   /// called. May return 'true' even if current set of rows is the same as
@@ -149,7 +140,6 @@ class MutableRemainingRows {
 
   SelectivityVector* mutableRows_{nullptr};
   LocalSelectivityVector mutableRowsHolder_;
-  LocalDecodedVector decoded_;
 };
 
 // An executable expression.

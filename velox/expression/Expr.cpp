@@ -250,10 +250,10 @@ void rethrowFirstError(const ErrorVectorPtr& errors) {
       });
 }
 
-// Sets errors in 'context' to be the union of 'argumentErrors' and
+// Sets errors in 'context' to be the union of 'argumentErrors' for 'rows' and
 // 'errors'. If 'context' throws on first error and 'argumentErrors'
-// has errors, throws the first error in 'argumentErrors'. Otherwise
-// sets 'errors()' of 'context' to the union of the errors. This is
+// has errors, throws the first error in 'argumentErrors' scoped to 'rows'.
+// Otherwise sets 'errors()' of 'context' to the union of the errors. This is
 // used after all arguments of a function call have been evaluated and
 // we decide on whether to throw or what errors to leave in 'context'  for  the
 // caller.
@@ -263,6 +263,18 @@ void mergeOrThrowArgumentErrors(
     ErrorVectorPtr& argumentErrors,
     EvalCtx& context) {
   if (argumentErrors) {
+    // Clears argument errors outside of 'rows'.
+    auto errorNulls = argumentErrors->mutableRawNulls();
+    auto rowBits = rows.asRange().bits();
+    auto end = rows.end();
+    auto numNullWords = bits::nwords(argumentErrors->size());
+    auto numRowsWords = bits::nwords(end);
+    for (auto i = 0; i < numNullWords; ++i) {
+      // A 0 in rows makes a zero in error nulls, e.g. nulls out an
+      // existing error. If there are more error rows than words in
+      // the rows, the trailing errors are nulled out.
+      errorNulls[i] &= i < numRowsWords ? rowBits[i] : 0;
+    }
     if (context.throwOnError()) {
       rethrowFirstError(argumentErrors);
     }
@@ -290,49 +302,6 @@ bool isFlat(const BaseVector& vector) {
 
 } // namespace
 
-bool MutableRemainingRows::deselectNonErrorNulls(
-    const VectorPtr& result,
-    ErrorVectorPtr& errors) {
-  const uint64_t* flatNulls = nullptr;
-  if (result->mayHaveNulls()) {
-    decoded_.get()->decode(*result, rows());
-    flatNulls = decoded_.get()->nulls();
-  }
-  // A null with no error deselects the row and clears a possible error. An
-  // error adds itself to argument errors.
-  if (context_.errors()) {
-    // There are new errors.
-    auto& remainingRows = mutableRows();
-    context_.ensureErrorsVectorSize(*context_.errorsPtr(), rows().end());
-    auto newErrors = context_.errors();
-    if (flatNulls) {
-      // There are both nulls and errors. Only a null with no error removes a
-      // row.
-      auto errorNulls = newErrors->rawNulls();
-      auto rowBits = mutableRows().asMutableRange().bits();
-      auto nwords = bits::nwords(rows().end());
-      for (auto i = 0; i < nwords; ++i) {
-        auto nullNoError =
-            errorNulls ? flatNulls[i] | errorNulls[i] : flatNulls[i];
-        rowBits[i] &= nullNoError;
-        if (errors) {
-          errors->mutableRawNulls()[i] &= nullNoError;
-        }
-      }
-      mutableRows().updateBounds();
-    }
-    context_.moveAppendErrors(errors);
-  } else {
-    // There are no new errors, a null deselects a row and clears an error.
-    if (flatNulls) {
-      if (errors) {
-        errors->addNulls(flatNulls, rows());
-      }
-      deselectNulls(flatNulls);
-    }
-  }
-  return rows().hasSelections();
-}
 
 template <typename EvalArg>
 bool Expr::evalArgsDefaultNulls(
@@ -342,6 +311,7 @@ bool Expr::evalArgsDefaultNulls(
     VectorPtr& result) {
   ErrorVectorPtr argumentErrors;
   ErrorVectorPtr originalErrors;
+  LocalDecodedVector decoded(context);
   // Store pre-existing errors locally and clear them from
   // 'context'. We distinguish between argument errors and
   // pre-existing ones.
@@ -356,14 +326,45 @@ bool Expr::evalArgsDefaultNulls(
 
     for (int32_t i = 0; i < inputs_.size(); ++i) {
       evalArg(i);
-      if (!rows.deselectNonErrorNulls(inputValues_[i], argumentErrors)) {
+      const uint64_t* flatNulls = nullptr;
+      auto& result = inputValues_[i];
+      if (result->mayHaveNulls()) {
+        decoded.get()->decode(*result, rows.rows());
+        flatNulls = decoded.get()->nulls();
+      }
+      // A null with no error deselects the row.
+      // An error adds itself to argument errors.
+      if (context.errors()) {
+        // There are new errors.
+        auto& remainingRows = rows.mutableRows();
+        context.ensureErrorsVectorSize(*context.errorsPtr(), rows.rows().end());
+        auto newErrors = context.errors();
+        if (flatNulls) {
+          // There are both nulls and errors. Only a null with no error removes
+          // a row.
+          auto errorNulls = newErrors->rawNulls();
+          auto rowBits = rows.mutableRows().asMutableRange().bits();
+          auto nwords = bits::nwords(rows.rows().end());
+          for (auto i = 0; i < nwords; ++i) {
+            auto nullNoError =
+                errorNulls ? flatNulls[i] | errorNulls[i] : flatNulls[i];
+            rowBits[i] &= nullNoError;
+          }
+          rows.mutableRows().updateBounds();
+        }
+        context.moveAppendErrors(argumentErrors);
+      } else if (flatNulls) {
+        rows.deselectNulls(flatNulls);
+      }
+
+      if (!rows.rows().hasSelections()) {
         break;
       }
     }
   }
 
   mergeOrThrowArgumentErrors(
-      rows.originalRows(), originalErrors, argumentErrors, context);
+      rows.rows(), originalErrors, argumentErrors, context);
 
   if (!rows.deselectErrors()) {
     releaseInputValues(context);
