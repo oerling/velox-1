@@ -2011,7 +2011,7 @@ StopReason Task::shouldStop() {
 
 int32_t Task::yieldIfDue(uint64_t startTimeMicros) {
   if (onThreadSince_ < startTimeMicros) {
-    std::lock_guard<std::mutex> xx(mutex_);
+    std::lock_guard<std::mutex> l(mutex_);
     // Reread inside the mutex
     if (onThreadSince_ < startTimeMicros && numThreads_ && !toYield_ &&
         !terminateRequested_ && !pauseRequested_) {
