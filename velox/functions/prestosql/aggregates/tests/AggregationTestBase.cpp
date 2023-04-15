@@ -230,9 +230,9 @@ void AggregationTestBase::testAggregations(
     core::PlanNodeId intermediateNodeId;
     builder.partialAggregation(groupingKeys, aggregates)
         .capturePlanNodeId(partialNodeId)
-      .intermediateAggregation()
+        .intermediateAggregation()
         .capturePlanNodeId(intermediateNodeId)
-      .finalAggregation();
+        .finalAggregation();
 
     if (!postAggregationProjections.empty()) {
       builder.project(postAggregationProjections);
