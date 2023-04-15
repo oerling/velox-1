@@ -16,6 +16,8 @@
 
 #include "velox/common/memory/Memory.h"
 
+DECLARE_bool(velox_enable_memory_usage_track_in_default_memory_pool);
+
 namespace facebook::velox::memory {
 namespace {
 #define VELOX_MEM_MANAGER_CAP_EXCEEDED(cap)                         \
@@ -48,10 +50,10 @@ MemoryManager::MemoryManager(const Options& options)
           MemoryPool::Options{
               .alignment = alignment_,
               .capacity = kMaxMemory,
-              .trackUsage = false})},
-      deprecatedDefaultLeafPool_(defaultRoot_->addChild(
-          kDefaultLeafName.str(),
-          MemoryPool::Kind::kLeaf)) {
+              .trackUsage =
+                  FLAGS_velox_enable_memory_usage_track_in_default_memory_pool})},
+      deprecatedDefaultLeafPool_(
+          defaultRoot_->addLeafChild(kDefaultLeafName.str())) {
   VELOX_CHECK_NOT_NULL(allocator_);
   VELOX_USER_CHECK_GE(memoryQuota_, 0);
   MemoryAllocator::alignmentCheck(0, alignment_);
@@ -83,11 +85,51 @@ uint16_t MemoryManager::alignment() const {
   return alignment_;
 }
 
+std::shared_ptr<MemoryPool> MemoryManager::addRootPool(
+    const std::string& name,
+    int64_t maxBytes,
+    bool trackUsage,
+    std::shared_ptr<MemoryReclaimer> reclaimer) {
+  std::string poolName = name;
+  if (poolName.empty()) {
+    static std::atomic<int64_t> poolId{0};
+    poolName = fmt::format("default_root_{}", poolId++);
+  }
+
+  MemoryPool::Options options;
+  options.alignment = alignment_;
+  options.capacity = maxBytes;
+  options.trackUsage = trackUsage;
+  options.reclaimer = std::move(reclaimer);
+  auto pool = std::make_shared<MemoryPoolImpl>(
+      this,
+      poolName,
+      MemoryPool::Kind::kAggregate,
+      nullptr,
+      poolDestructionCb_,
+      options);
+  folly::SharedMutex::WriteHolder guard{mutex_};
+  pools_.push_back(pool.get());
+  return pool;
+}
+
+std::shared_ptr<MemoryPool> MemoryManager::addLeafPool(
+    const std::string& name,
+    bool threadSafe,
+    std::shared_ptr<MemoryReclaimer> reclaimer) {
+  std::string poolName = name;
+  if (poolName.empty()) {
+    static std::atomic<int64_t> poolId{0};
+    poolName = fmt::format("default_leaf_{}", poolId++);
+  }
+  return defaultRoot_->addLeafChild(poolName, threadSafe, reclaimer);
+}
+
+/// TODO Remove once Prestissimo is updated.
 std::shared_ptr<MemoryPool> MemoryManager::getPool(
     const std::string& name,
     MemoryPool::Kind kind,
-    int64_t maxBytes,
-    bool trackUsage) {
+    int64_t maxBytes) {
   std::string poolName = name;
   if (poolName.empty()) {
     static std::atomic<int64_t> poolId{0};
@@ -95,13 +137,13 @@ std::shared_ptr<MemoryPool> MemoryManager::getPool(
         fmt::format("default_{}_{}", MemoryPool::kindString(kind), poolId++);
   }
   if (kind == MemoryPool::Kind::kLeaf) {
-    return defaultRoot_->addChild(poolName, kind);
+    return defaultRoot_->addLeafChild(poolName);
   }
 
   MemoryPool::Options options;
   options.alignment = alignment_;
   options.capacity = maxBytes;
-  options.trackUsage = trackUsage;
+
   auto pool = std::make_shared<MemoryPoolImpl>(
       this,
       poolName,
@@ -128,7 +170,7 @@ void MemoryManager::dropPool(MemoryPool* pool) {
   VELOX_UNREACHABLE("Memory pool is not found");
 }
 
-MemoryPool& MemoryManager::deprecatedGetPool() {
+MemoryPool& MemoryManager::deprecatedLeafPool() {
   return *deprecatedDefaultLeafPool_;
 }
 
@@ -177,13 +219,24 @@ std::string MemoryManager::toString() const {
   return out.str();
 }
 
+IMemoryManager& defaultMemoryManager() {
+  return MemoryManager::getInstance();
+}
+
+std::shared_ptr<MemoryPool> addDefaultLeafMemoryPool(
+    const std::string& name,
+    bool threadSafe) {
+  auto& memoryManager = defaultMemoryManager();
+  return memoryManager.addLeafPool(name, threadSafe);
+}
+
 IMemoryManager& getProcessDefaultMemoryManager() {
   return MemoryManager::getInstance();
 }
 
 std::shared_ptr<MemoryPool> getDefaultMemoryPool(const std::string& name) {
   auto& memoryManager = getProcessDefaultMemoryManager();
-  return memoryManager.getPool(name, MemoryPool::Kind::kLeaf);
+  return memoryManager.addLeafPool(name);
 }
 
 } // namespace facebook::velox::memory
