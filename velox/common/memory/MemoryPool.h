@@ -31,8 +31,11 @@
 #include "velox/common/base/GTestMacros.h"
 #include "velox/common/memory/Allocation.h"
 #include "velox/common/memory/MemoryAllocator.h"
+#include "velox/common/memory/MemoryArbitrator.h"
 #include "velox/common/memory/MemoryUsage.h"
 #include "velox/common/memory/MemoryUsageTracker.h"
+
+DECLARE_bool(velox_memory_leak_check_enabled);
 
 namespace facebook::velox::memory {
 
@@ -105,6 +108,28 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     uint16_t alignment{MemoryAllocator::kMaxAlignment};
     /// Specifies the memory capacity of this memory pool.
     int64_t capacity{kMaxMemory};
+    /// Used by memory arbitration to reclaim memory from the associated query
+    /// object if not null. For example, a memory pool can reclaim the used
+    /// memory from a spillable operator through disk spilling. If null, we
+    /// can't reclaim memory from this memory pool.
+    std::shared_ptr<MemoryReclaimer> reclaimer{nullptr};
+    /// If true, creates the memory usage tracker on constructor to track usage.
+    /// Otherwise not.
+    ///
+    /// NOTE: there are some use cases which doesn't need memory usage tracking
+    /// but sensitive to its cpu cost so we provide an options for user to turn
+    /// it off.
+    bool trackUsage{true};
+    /// If true, track the leaf memory pool usage in a thread-safe mode
+    /// otherwise not. This only applies for leaf memory pool with memory usage
+    /// tracking enabled. We use non-thread safe tracking mode for single
+    /// threaded use case.
+    bool threadSafe{true};
+    /// If true, check the memory usage leak on destruction.
+    ///
+    /// TODO: deprecate this flag after all the existing memory leak use cases
+    /// have been fixed.
+    bool checkUsageLeak{FLAGS_velox_memory_leak_check_enabled};
   };
 
   /// Constructs a named memory pool with specified 'name', 'parent' and 'kind'.
@@ -140,14 +165,29 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   virtual uint64_t getChildCount() const;
 
   /// Invoked to traverse the memory pool subtree rooted at this, and calls
-  /// 'visitor' on each visited child memory pool.
-  virtual void visitChildren(std::function<void(MemoryPool*)> visitor) const;
+  /// 'visitor' on each visited child memory pool with the parent pool's
+  /// 'childrenMutex_' reader lock held. The 'visitor' must not access the
+  /// parent memory pool to avoid the potential recursive locking issues. Note
+  /// that the traversal stops if 'visitor' returns false.
+  virtual void visitChildren(
+      const std::function<bool(MemoryPool*)>& visitor) const;
 
-  /// Invoked to create a named child memory pool from this with specified
-  /// 'kind'.
+  /// TODO Remove once Prestissimo is updated.
+  /// Creates named child memory pool from this with specified 'kind'.
   virtual std::shared_ptr<MemoryPool> addChild(
       const std::string& name,
       Kind kind = MemoryPool::Kind::kLeaf);
+
+  /// Invoked to create a named leaf child memory pool.
+  virtual std::shared_ptr<MemoryPool> addLeafChild(
+      const std::string& name,
+      bool threadSafe = true,
+      std::shared_ptr<MemoryReclaimer> reclaimer = nullptr);
+
+  /// Invoked to create a named aggregate child memory pool.
+  virtual std::shared_ptr<MemoryPool> addAggregateChild(
+      const std::string& name,
+      std::shared_ptr<MemoryReclaimer> reclaimer = nullptr);
 
   /// Allocates a buffer with specified 'size'.
   virtual void* allocate(int64_t size) = 0;
@@ -167,9 +207,9 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// Allocates one or more runs that add up to at least 'numPages', with the
   /// smallest run being at least 'minSizeClass' pages. 'minSizeClass' must be
   /// <= the size of the largest size class. The new memory is returned in 'out'
-  /// and any memory formerly referenced by 'out' is freed. The function returns
-  /// true if the allocation succeeded. If returning false, 'out' references no
-  /// memory and any partially allocated memory is freed.
+  /// on success and any memory formerly referenced by 'out' is freed. The
+  /// function throws if allocation fails and 'out' references no memory and any
+  /// partially allocated memory is freed.
   virtual void allocateNonContiguous(
       MachinePageCount numPages,
       Allocation& out,
@@ -235,6 +275,53 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     VELOX_NYI("release() needs to be implemented in derived memory pool.");
   }
 
+  /// Memory arbitration related interfaces.
+
+  /// Returns the free memory capacity in bytes that haven't been reserved for
+  /// use, and can be freed by reducing this memory pool's capacity without
+  /// actually freeing the used memory.
+  virtual uint64_t freeBytes() const = 0;
+
+  /// Invoked to free up to the specified amount of free memory by reducing
+  /// this memory pool's capacity without actually freeing any used memory. The
+  /// function returns the actually freed memory capacity in bytes. If
+  /// 'targetBytes' is zero, the function frees all the free memory capacity.
+  virtual uint64_t shrink(uint64_t targetBytes = 0) = 0;
+
+  /// Invoked to increase the memory pool's capacity by 'bytes'. The function
+  /// returns the memory pool's capacity after the growth.
+  virtual uint64_t grow(uint64_t bytes) = 0;
+
+  /// Returns the memory reclaimer of this memory pool if not null.
+  MemoryReclaimer* reclaimer() const;
+
+  /// Invoked by the memory arbitrator to enter memory arbitration processing.
+  /// It is a noop if 'reclaimer_' is not set, otherwise invoke the reclaimer's
+  /// corresponding method.
+  virtual void enterArbitration();
+
+  /// Invoked by the memory arbitrator to leave memory arbitration processing.
+  /// It is a noop if 'reclaimer_' is not set, otherwise invoke the reclaimer's
+  /// corresponding method.
+  virtual void leaveArbitration();
+
+  /// Indicates whether we can reclaim memory from this memory pool or not.
+  /// The function returns false if 'reclaimer_' is not set, otherwise invoke
+  /// the reclaimer's corresponding method.
+  virtual bool canReclaim() const;
+
+  /// Returns how many bytes is reclaimable from this memory pool. The function
+  /// returns zero if 'reclaimer_' is not set, otherwise invoke the reclaimer's
+  /// corresponding methods.
+  virtual uint64_t reclaimableBytes() const;
+
+  /// Invoked by the memory arbitrator to reclaim memory from this memory pool
+  /// with specified reclaim target bytes. If 'targetBytes' is zero, then it
+  /// tries to reclaim all the reclaimable memory from the memory pool. It is
+  /// noop if the reclaimer is not set, otherwise invoke the reclaimer's
+  /// corresponding method.
+  virtual uint64_t reclaim(uint64_t targetBytes);
+
   virtual std::string toString() const = 0;
 
  protected:
@@ -243,7 +330,9 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   virtual std::shared_ptr<MemoryPool> genChild(
       std::shared_ptr<MemoryPool> parent,
       const std::string& name,
-      Kind kind) = 0;
+      Kind kind,
+      bool threadSafe,
+      std::shared_ptr<MemoryReclaimer>) = 0;
 
   /// Invoked only on destruction to remove this memory pool from its parent's
   /// child memory pool tracking.
@@ -269,10 +358,15 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   const Kind kind_;
   const uint16_t alignment_;
   const std::shared_ptr<MemoryPool> parent_;
+  const std::shared_ptr<MemoryReclaimer> reclaimer_;
+  const bool checkUsageLeak_;
 
   /// Protects 'children_'.
   mutable folly::SharedMutex childrenMutex_;
-  std::unordered_map<std::string, std::weak_ptr<MemoryPool>> children_;
+  // NOTE: we use raw pointer instead of weak pointer here to minimize
+  // visitChildren() cost as we don't have to upgrade the weak pointer and copy
+  // out the upgraded shared pointers.git
+  std::unordered_map<std::string, MemoryPool*> children_;
 };
 
 std::ostream& operator<<(std::ostream& out, MemoryPool::Kind kind);
@@ -340,7 +434,9 @@ class MemoryPoolImpl : public MemoryPool {
   std::shared_ptr<MemoryPool> genChild(
       std::shared_ptr<MemoryPool> parent,
       const std::string& name,
-      Kind kind) override;
+      Kind kind,
+      bool threadSafe,
+      std::shared_ptr<MemoryReclaimer> reclaimer) override;
 
   // Gets the memory allocation stats of the MemoryPoolImpl attached to the
   // current MemoryPoolImpl. Not to be confused with total memory usage of the
@@ -357,6 +453,18 @@ class MemoryPoolImpl : public MemoryPool {
   void reserve(int64_t size) override;
 
   void release(int64_t size) override;
+
+  uint64_t freeBytes() const override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
+
+  uint64_t shrink(uint64_t targetBytes = 0) override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
+
+  uint64_t grow(uint64_t bytes) override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
 
   std::string toString() const override;
 

@@ -187,8 +187,6 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   virtual ~MemoryAllocator() = default;
 
   static constexpr int32_t kMaxSizeClasses = 12;
-  /// Allocations smaller than 3K should go to malloc.
-  static constexpr int32_t kMaxMallocBytes = 3072;
   static constexpr uint16_t kMinAlignment = alignof(max_align_t);
   static constexpr uint16_t kMaxAlignment = 64;
 
@@ -205,12 +203,12 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// called with the actual allocation bytes and a flag indicating if it is
   /// called for pre-allocation or post-allocation failure. The flag is true for
   /// pre-allocation call and false for post-allocation failure call. The latter
-  /// is to let user have a chance to rollback if needed. For instance,
-  /// 'MemoryPoolImpl' object will make memory counting reservation in
+  /// is to let user have a chance to rollback if needed. As for now, it is only
+  /// used by 'MemoryPoolImpl' object to make memory counting reservation in
   /// 'reservationCB' before the actual memory allocation so it needs to release
-  /// the reservation if the actual allocation fails. The function returns true
-  /// if the allocation succeeded. If returning false, 'out' references no
-  /// memory and any partially allocated memory is freed.
+  /// the reservation if the actual allocation fails halfway. The function
+  /// returns true if the allocation succeeded. If it returns false, 'out'
+  /// references no memory and any partially allocated memory is freed.
   ///
   /// NOTE: user needs to explicitly release allocation 'out' by calling
   /// 'freeNonContiguous' on the same memory allocator object.
@@ -247,19 +245,11 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
 
-  /// Allocates 'bytes' contiguous bytes and returns the pointer to the first
-  /// byte. If 'bytes' is less than 'kMaxMallocBytes', delegates the allocation
-  /// to malloc. If the size is above that and below the largest size classes'
-  /// size, allocates one element of the next size classes' size. If 'size' is
-  /// greater than the largest size classes' size, calls allocateContiguous().
-  /// Returns nullptr if there is no space. The amount to allocate is subject to
-  /// the size limit of 'this'. This function is not virtual but calls the
-  /// virtual functions allocateNonContiguous and allocateContiguous, which can
-  /// track sizes and enforce caps etc. If 'alignment' is not kMinAlignment,
-  /// then 'bytes' must be a multiple of 'alignment'.
+  /// Allocates contiguous 'bytes' and return the first byte. Returns nullptr if
+  /// there is no space.
   ///
-  /// NOTE: 'alignment' must be power of two and in range of [kMinAlignment,
-  /// kMaxAlignment].
+  /// NOTE: 'alignment' must be power of two and in range of
+  /// [kMinAlignment, kMaxAlignment].
   virtual void* allocateBytes(
       uint64_t bytes,
       uint16_t alignment = kMinAlignment) = 0;

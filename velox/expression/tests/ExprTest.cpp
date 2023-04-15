@@ -146,9 +146,12 @@ class ExprTest : public testing::Test, public VectorTestBase {
   }
 
   /// Create constant expression from a variant of primitive type.
-  std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(variant value) {
-    auto type = value.inferType();
-    return std::make_shared<core::ConstantTypedExpr>(type, std::move(value));
+  std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(
+      variant value,
+      const TypePtr& type = nullptr) {
+    auto valueType = type != nullptr ? type : value.inferType();
+    return std::make_shared<core::ConstantTypedExpr>(
+        valueType, std::move(value));
   }
 
   // Create LazyVector that produces a flat vector and asserts that is is being
@@ -2357,8 +2360,8 @@ TEST_F(ExprTest, constantToString) {
 }
 
 TEST_F(ExprTest, constantToSql) {
-  auto toSql = [&](const variant& value) {
-    exec::ExprSet exprSet({makeConstantExpr(value)}, execCtx_.get());
+  auto toSql = [&](const variant& value, const TypePtr& type = nullptr) {
+    exec::ExprSet exprSet({makeConstantExpr(value, type)}, execCtx_.get());
     auto sql = exprSet.expr(0)->toSql();
 
     auto input = makeRowVector(ROW({}), 1);
@@ -2399,9 +2402,11 @@ TEST_F(ExprTest, constantToSql) {
       "'1970-01-02T10:17:36.000123000'::TIMESTAMP");
   ASSERT_EQ(toSql(variant::null(TypeKind::TIMESTAMP)), "NULL::TIMESTAMP");
 
-  ASSERT_EQ(toSql(IntervalDayTime(123'456)), "INTERVAL 123456 MILLISECONDS");
   ASSERT_EQ(
-      toSql(variant::null(TypeKind::INTERVAL_DAY_TIME)),
+      toSql(123'456LL, INTERVAL_DAY_TIME()),
+      "'123456'::INTERVAL DAY TO SECOND");
+  ASSERT_EQ(
+      toSql(variant::null(TypeKind::BIGINT), INTERVAL_DAY_TIME()),
       "NULL::INTERVAL DAY TO SECOND");
 
   ASSERT_EQ(toSql(1.5f), "'1.5'::REAL");
@@ -3527,4 +3532,139 @@ TEST_F(ExprTest, ifWithLazyNulls) {
   auto resultFromLazy =
       evaluate(kExpr, makeRowVector({c0, wrapInLazyDictionary(c1)}));
   assertEqualVectors(result, resultFromLazy);
+}
+
+int totalDefaultNullFunc = 0;
+template <typename T>
+struct DefaultNullFunc {
+  void call(int64_t& output, int64_t input1, int64_t input2) {
+    output = input1 + input2;
+    totalDefaultNullFunc++;
+  }
+};
+
+int totalNotDefaultNullFunc = 0;
+template <typename T>
+struct NotDefaultNullFunc {
+  bool callNullable(int64_t& output, const int64_t* input) {
+    output = totalNotDefaultNullFunc++;
+    return input;
+  }
+};
+
+TEST_F(ExprTest, commonSubExpressionWithPeeling) {
+  registerFunction<DefaultNullFunc, int64_t, int64_t, int64_t>(
+      {"default_null"});
+  registerFunction<NotDefaultNullFunc, int64_t, int64_t>({"not_default_null"});
+
+  // func1(func2(c0), c0) propagates nulls of c0. since func1 is default null.
+  std::string expr1 = "default_null(not_default_null(c0), c0)";
+  EXPECT_TRUE(propagatesNulls(parseExpression(expr1, ROW({"c0"}, {BIGINT()}))));
+
+  // func2(c0) does not propagate nulls.
+  std::string expr2 = "not_default_null(c0)";
+  EXPECT_FALSE(
+      propagatesNulls(parseExpression(expr2, ROW({"c0"}, {BIGINT()}))));
+
+  auto clearResults = [&]() {
+    totalDefaultNullFunc = 0;
+    totalNotDefaultNullFunc = 0;
+  };
+
+  // When the input does not have additional nulls, peeling happens for both
+  // expr1, and expr2 identically, hence each of them will be evaluated only
+  // once per peeled row.
+  {
+    auto data = makeRowVector({wrapInDictionary(
+        makeIndices({0, 0, 0, 1}), 4, makeFlatVector<int64_t>({1, 2, 3, 4}))});
+    auto check = [&](const std::vector<std::string>& expressions) {
+      auto result = makeRowVector(evaluateMultiple(expressions, data));
+      ASSERT_EQ(totalDefaultNullFunc, 2);
+      ASSERT_EQ(totalNotDefaultNullFunc, 2);
+      clearResults();
+    };
+    check({expr1, expr2});
+    check({expr1});
+    check({expr1, expr1, expr2});
+    check({expr2, expr1, expr2});
+  }
+
+  // When the dictionary input have additional nulls, peeling won't happen for
+  // expressions that do not propagate nulls. Hence when expr2 is reached it
+  // shall be evaluated again for all rows.
+  {
+    auto data = makeRowVector({BaseVector::wrapInDictionary(
+        makeNulls(4, nullEvery(2)),
+        makeIndices({0, 0, 0, 1}),
+        4,
+        makeFlatVector<int64_t>({1, 2, 3, 4}))});
+    {
+      auto results = makeRowVector(evaluateMultiple({expr1, expr2}, data));
+
+      ASSERT_EQ(totalDefaultNullFunc, 2);
+      // It is evaluated twice during expr1 and 4 times during expr2.
+      ASSERT_EQ(totalNotDefaultNullFunc, 6);
+      clearResults();
+    }
+    {
+      // if expr2 appears again it shall be not be re-evaluated.
+      auto results =
+          makeRowVector(evaluateMultiple({expr1, expr2, expr1, expr2}, data));
+      ASSERT_EQ(totalDefaultNullFunc, 2);
+      // It is evaluated twice during expr1 and 4 times during expr2.
+      ASSERT_EQ(totalNotDefaultNullFunc, 6);
+    }
+  }
+}
+
+TEST_F(ExprTest, dictionaryOverLoadedLazy) {
+  // This test verifies a corner case where peeling does not go past a loaded
+  // lazy layer which caused wrong set of inputs being passed to shared
+  // sub-expressions evaluation.
+  // Inputs are of the form c0: Dict1(Lazy(Dict2(Flat1))) and c1: Dict1(Flat
+  constexpr int32_t kSize = 100;
+
+  // Generate inputs of the form c0: Dict1(Lazy(Dict2(Flat1))) and c1:
+  // Dict1(Flat2). Note c0 and c1 have the same top encoding layer.
+
+  // Generate indices that randomly point to different rows of the base flat
+  // layer. This makes sure that wrong values are copied over if there is a bug
+  // in shared sub-expressions evaluation.
+  std::vector<int> indicesUnderLazy = {2, 5, 4, 1, 2, 4, 5, 6, 4, 9};
+  auto smallFlat =
+      makeFlatVector<int64_t>(kSize / 10, [](auto row) { return row * 2; });
+  auto indices = makeIndices(kSize, [&indicesUnderLazy](vector_size_t row) {
+    return indicesUnderLazy[row % 10];
+  });
+  auto lazyDict = std::make_shared<LazyVector>(
+      execCtx_->pool(),
+      smallFlat->type(),
+      kSize,
+      std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
+        return wrapInDictionary(indices, kSize, smallFlat);
+      }));
+  // Make sure it is loaded, otherwise during evaluation ensureLoaded() would
+  // transform the input vector from Dict1(Lazy(Dict2(Flat1))) to
+  // Dict1((Dict2(Flat1))) which recreates the buffers for the top layers and
+  // disables any peeling that can happen between c0 and c1.
+  lazyDict->loadedVector();
+
+  auto sharedIndices = makeIndices(kSize / 2, [](auto row) { return row * 2; });
+  auto c0 = wrapInDictionary(sharedIndices, kSize / 2, lazyDict);
+  auto c1 = wrapInDictionary(
+      sharedIndices,
+      makeFlatVector<int64_t>(kSize, [](auto row) { return row; }));
+
+  // "(c0 < 5 and c1 < 90)" would peel Dict1 layer in the top level conjunct
+  // expression then when peeled c0 is passed to the inner "c0 < 5" expression,
+  // a call to EvalCtx::getField() removes the lazy layer which ensures the last
+  // dictionary layer is peeled. This means that shared sub-expression
+  // evaluation is done on the lowest flat layer. In the second expression "c0 <
+  // 5" the input is Dict1(Lazy(Dict2(Flat1))) and if peeling only removed till
+  // the lazy layer, the shared sub-expression evaluation gets called on
+  // Lazy(Dict2(Flat1)) which then results in wrong results.
+  auto result = evaluateMultiple(
+      {"(c0 < 5 and c1 < 90)", "c0 < 5"}, makeRowVector({c0, c1}));
+  auto resultFromLazy = evaluate("c0 < 5", makeRowVector({c0, c1}));
+  assertEqualVectors(result[1], resultFromLazy);
 }

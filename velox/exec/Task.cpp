@@ -27,6 +27,7 @@
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/LocalPlanner.h"
 #include "velox/exec/Merge.h"
+#include "velox/exec/OperatorUtils.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/exec/Task.h"
 #if CODEGEN_ENABLED == 1
@@ -183,9 +184,8 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
-      pool_(queryCtx_->pool()->addChild(
-          fmt::format("task.{}", taskId_.c_str()),
-          memory::MemoryPool::Kind::kAggregate)),
+      pool_(queryCtx_->pool()->addAggregateChild(
+          fmt::format("task.{}", taskId_.c_str()))),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
       splitsStates_(buildSplitStates(planFragment_.planNode)),
@@ -262,9 +262,8 @@ Task::getOrAddNodePool(const core::PlanNodeId& planNodeId) {
     return nodePools_[planNodeId];
   }
 
-  childPools_.push_back(pool_->addChild(
-      fmt::format("node.{}", planNodeId),
-      memory::MemoryPool::Kind::kAggregate));
+  childPools_.push_back(
+      pool_->addAggregateChild(fmt::format("node.{}", planNodeId)));
   auto* nodePool = childPools_.back().get();
   nodePools_[planNodeId] = nodePool;
   return nodePool;
@@ -276,27 +275,25 @@ velox::memory::MemoryPool* Task::addOperatorPool(
     uint32_t driverId,
     const std::string& operatorType) {
   auto* nodePool = getOrAddNodePool(planNodeId);
-  childPools_.push_back(nodePool->addChild(fmt::format(
+  childPools_.push_back(nodePool->addLeafChild(fmt::format(
       "op.{}.{}.{}.{}", planNodeId, pipelineId, driverId, operatorType)));
   return childPools_.back().get();
 }
 
-velox::memory::MemoryPool* Task::addConnectorWriterPoolLocked(
+velox::memory::MemoryPool* Task::addConnectorPoolLocked(
     const core::PlanNodeId& planNodeId,
     int pipelineId,
     uint32_t driverId,
     const std::string& operatorType,
     const std::string& connectorId) {
   auto* nodePool = getOrAddNodePool(planNodeId);
-  childPools_.push_back(nodePool->addChild(
-      fmt::format(
-          "op.{}.{}.{}.{}.{}",
-          planNodeId,
-          pipelineId,
-          driverId,
-          operatorType,
-          connectorId),
-      memory::MemoryPool::Kind::kAggregate));
+  childPools_.push_back(nodePool->addAggregateChild(fmt::format(
+      "op.{}.{}.{}.{}.{}",
+      planNodeId,
+      pipelineId,
+      driverId,
+      operatorType,
+      connectorId)));
   return childPools_.back().get();
 }
 
@@ -306,7 +303,7 @@ velox::memory::MemoryPool* Task::addMergeSourcePool(
     uint32_t sourceId) {
   std::lock_guard<std::mutex> l(mutex_);
   auto* nodePool = getOrAddNodePool(planNodeId);
-  childPools_.push_back(nodePool->addChild(fmt::format(
+  childPools_.push_back(nodePool->addLeafChild(fmt::format(
       "mergeExchangeClient.{}.{}.{}", planNodeId, pipelineId, sourceId)));
   return childPools_.back().get();
 }
@@ -315,7 +312,7 @@ velox::memory::MemoryPool* Task::addExchangeClientPool(
     const core::PlanNodeId& planNodeId,
     uint32_t pipelineId) {
   auto* nodePool = getOrAddNodePool(planNodeId);
-  childPools_.push_back(nodePool->addChild(
+  childPools_.push_back(nodePool->addLeafChild(
       fmt::format("exchangeClient.{}.{}", planNodeId, pipelineId)));
   return childPools_.back().get();
 }
@@ -571,6 +568,12 @@ void Task::start(
     drivers.reserve(self->numDriversUngrouped_);
     self->createSplitGroupStateLocked(kUngroupedGroupId);
     self->createDriversLocked(self, kUngroupedGroupId, drivers);
+
+    // Prevent the connecting structures from being cleaned up before all split
+    // groups are finished during the grouped exeution mode.
+    if (self->isGroupedExecution()) {
+      self->splitGroupStates_[kUngroupedGroupId].mixedExecutionMode = true;
+    }
 
     // We might have first slots taken for grouped execution drivers, so need to
     // append the ungrouped execution drivers afterwards in that case.
@@ -1408,6 +1411,14 @@ std::shared_ptr<TBridgeType> Task::getJoinBridgeInternalLocked(
   const auto& splitGroupState = splitGroupStates_[splitGroupId];
 
   auto it = splitGroupState.bridges.find(planNodeId);
+  if (it == splitGroupState.bridges.end()) {
+    // We might be looking for a bridge between grouped and ungrouped execution.
+    // It will belong to the 'ungrouped' state.
+    if (isGroupedExecution() && splitGroupId != kUngroupedGroupId) {
+      return getJoinBridgeInternalLocked<TBridgeType>(
+          kUngroupedGroupId, planNodeId);
+    }
+  }
   VELOX_CHECK(
       it != splitGroupState.bridges.end(),
       "Join bridge for plan node ID {} not found for group {}, task {}",
@@ -1613,6 +1624,7 @@ void Task::addOperatorStats(OperatorStats& stats) {
       stats.operatorId >= 0 &&
       stats.operatorId <
           taskStats_.pipelineStats[stats.pipelineId].operatorStats.size());
+  aggregateOperatorRuntimeStats(stats.runtimeStats);
   taskStats_.pipelineStats[stats.pipelineId]
       .operatorStats[stats.operatorId]
       .add(stats);
@@ -1637,6 +1649,7 @@ TaskStats Task::taskStats() const {
 
     for (auto& op : driver->operators()) {
       auto statsCopy = op->stats(false);
+      aggregateOperatorRuntimeStats(statsCopy.runtimeStats);
       taskStats.pipelineStats[statsCopy.pipelineId]
           .operatorStats[statsCopy.operatorId]
           .add(statsCopy);
@@ -2158,6 +2171,7 @@ void collectNodeMemoryUsage(
   // Run through the node's child operator pools and update the memory usage.
   nodePool->visitChildren([&nodeMemoryUsage](memory::MemoryPool* operatorPool) {
     collectOperatorMemoryUsage(nodeMemoryUsage, operatorPool);
+    return true;
   });
 }
 
@@ -2167,6 +2181,7 @@ void collectTaskMemoryUsage(
   taskMemoryUsage.taskId = taskPool->name();
   taskPool->visitChildren([&taskMemoryUsage](memory::MemoryPool* nodePool) {
     collectNodeMemoryUsage(taskMemoryUsage, nodePool);
+    return true;
   });
 }
 
@@ -2177,6 +2192,7 @@ std::string getQueryMemoryUsageString(memory::MemoryPool* queryPool) {
   queryPool->visitChildren([&taskMemoryUsages](memory::MemoryPool* taskPool) {
     taskMemoryUsages.emplace_back(TaskMemoryUsage{});
     collectTaskMemoryUsage(taskMemoryUsages.back(), taskPool);
+    return true;
   });
 
   // We will collect each operator's aggregated memory usage to later show the
