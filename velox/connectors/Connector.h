@@ -213,14 +213,16 @@ class ExpressionEvaluator {
 class ConnectorQueryCtx {
  public:
   ConnectorQueryCtx(
-      memory::MemoryPool* FOLLY_NONNULL pool,
-      const Config* FOLLY_NONNULL connectorConfig,
+      memory::MemoryPool* operatorPool,
+      memory::MemoryPool* connectorPool,
+      const Config* connectorConfig,
       std::unique_ptr<ExpressionEvaluator> expressionEvaluator,
       memory::MemoryAllocator* FOLLY_NONNULL allocator,
       const std::string& taskId,
       const std::string& planNodeId,
       int driverId)
-      : pool_(pool),
+      : operatorPool_(operatorPool),
+        connectorPool_(connectorPool),
         config_(connectorConfig),
         expressionEvaluator_(std::move(expressionEvaluator)),
         allocator_(allocator),
@@ -228,8 +230,17 @@ class ConnectorQueryCtx {
         taskId_(taskId),
         driverId_(driverId) {}
 
-  memory::MemoryPool* FOLLY_NONNULL memoryPool() const {
-    return pool_;
+  /// Returns the associated operator's memory pool which is a leaf kind of
+  /// memory pool, used for direct memory allocation use.
+  memory::MemoryPool* memoryPool() const {
+    return operatorPool_;
+  }
+
+  /// Returns the connector's memory pool which is an aggregate kind of memory
+  /// pool, used for the data sink for table write that needs the hierarchical
+  /// memory pool management, such as HiveDataSink.
+  memory::MemoryPool* connectorMemoryPool() const {
+    return connectorPool_;
   }
 
   const Config* FOLLY_NONNULL config() const {
@@ -263,7 +274,8 @@ class ConnectorQueryCtx {
   }
 
  private:
-  memory::MemoryPool* FOLLY_NONNULL pool_;
+  memory::MemoryPool* operatorPool_;
+  memory::MemoryPool* connectorPool_;
   const Config* FOLLY_NONNULL config_;
   std::unique_ptr<ExpressionEvaluator> expressionEvaluator_;
   memory::MemoryAllocator* FOLLY_NONNULL allocator_;
@@ -382,6 +394,10 @@ bool unregisterConnector(const std::string& connectorId);
 
 /// Returns a connector with specified ID. Throws if connector doesn't exist.
 std::shared_ptr<Connector> getConnector(const std::string& connectorId);
+
+/// Returns a map of all (connectorId -> connector) pairs currently registered.
+const std::unordered_map<std::string, std::shared_ptr<Connector>>&
+getAllConnectors();
 
 #define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \
   namespace {                                                             \

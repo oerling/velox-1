@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include "velox/common/memory/Memory.h"
+#include "velox/common/memory/MemoryArbitrator.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/type/fbhive/HiveTypeParser.h"
 
@@ -36,9 +37,10 @@ class MockMemoryPool : public velox::memory::MemoryPool {
  public:
   explicit MockMemoryPool(
       const std::string& name,
+      MemoryPool::Kind kind,
       std::shared_ptr<MemoryPool> parent,
       int64_t cap = std::numeric_limits<int64_t>::max())
-      : MemoryPool{name, parent, {.alignment = velox::memory::MemoryAllocator::kMinAlignment}},
+      : MemoryPool{name, kind, parent, {.alignment = velox::memory::MemoryAllocator::kMinAlignment}},
         memoryUsageTracker_{velox::memory::MemoryUsageTracker::create(cap)} {}
 
   // Methods not usually exposed by MemoryPool interface to
@@ -56,7 +58,8 @@ class MockMemoryPool : public velox::memory::MemoryPool {
   }
 
   static std::shared_ptr<MockMemoryPool> create() {
-    return std::make_shared<MockMemoryPool>("standalone_pool", nullptr);
+    return std::make_shared<MockMemoryPool>(
+        "standalone_pool", MemoryPool::Kind::kAggregate, nullptr);
   }
 
   void* allocate(int64_t size) override {
@@ -71,15 +74,13 @@ class MockMemoryPool : public velox::memory::MemoryPool {
 
   // No-op for attempts to shrink buffer.
   void* reallocate(void* p, int64_t size, int64_t newSize) override {
-    auto difference = newSize - size;
-    updateLocalMemoryUsage(difference);
-    // No-op for attempts to shrink buffer. MemoryAllocator's free works
-    // properly despite signature.
-    if (UNLIKELY(difference <= 0)) {
-      return p;
-    }
-    return allocator_->reallocateBytes(p, size, newSize);
+    void* newP = allocate(newSize);
+    VELOX_CHECK_NOT_NULL(newP);
+    ::memcpy(newP, p, std::min(size, newSize));
+    free(p, size);
+    return newP;
   }
+
   void free(void* p, int64_t size) override {
     allocator_->freeBytes(p, size);
     updateLocalMemoryUsage(-size);
@@ -122,15 +123,12 @@ class MockMemoryPool : public velox::memory::MemoryPool {
 
   std::shared_ptr<MemoryPool> genChild(
       std::shared_ptr<MemoryPool> parent,
-      const std::string& name) override {
+      const std::string& name,
+      MemoryPool::Kind kind,
+      bool /*unused*/,
+      std::shared_ptr<memory::MemoryReclaimer> /*unused*/) override {
     return std::make_shared<MockMemoryPool>(
-        name, parent, memoryUsageTracker_->maxMemory());
-  }
-
-  void setMemoryUsageTracker(
-      const std::shared_ptr<velox::memory::MemoryUsageTracker>& tracker)
-      override {
-    memoryUsageTracker_ = tracker;
+        name, kind, parent, memoryUsageTracker_->maxMemory());
   }
 
   const std::shared_ptr<velox::memory::MemoryUsageTracker>&
@@ -143,6 +141,18 @@ class MockMemoryPool : public velox::memory::MemoryPool {
   MOCK_METHOD1(updateSubtreeMemoryUsage, int64_t(int64_t));
 
   MOCK_CONST_METHOD0(getAlignment, uint16_t());
+
+  uint64_t freeBytes() const override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
+
+  uint64_t shrink(uint64_t /*unused*/) override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
+
+  uint64_t grow(uint64_t /*unused*/) override {
+    VELOX_NYI("{} unsupported", __FUNCTION__);
+  }
 
   std::string toString() const override {
     return fmt::format(
@@ -289,7 +299,10 @@ class WriterFlushTestHelper {
         // Unused sink.
         std::make_unique<dwio::common::MemorySink>(*sinkPool, kSizeKB),
         std::make_shared<MockMemoryPool>(
-            "writer_root_pool", nullptr, writerMemoryBudget));
+            "writer_root_pool",
+            memory::MemoryPool::Kind::kAggregate,
+            nullptr,
+            writerMemoryBudget));
     auto& context = writer->getContext();
     zeroOutMemoryUsage(context);
     return writer;

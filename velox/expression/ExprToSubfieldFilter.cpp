@@ -27,9 +27,10 @@ namespace {
 VectorPtr toConstant(
     const core::TypedExprPtr& expr,
     const std::shared_ptr<core::QueryCtx>& queryCtx) {
+  static auto pool = memory::addDefaultLeafMemoryPool();
   auto data = std::make_shared<RowVector>(
-      queryCtx->pool(), ROW({}, {}), nullptr, 1, std::vector<VectorPtr>{});
-  core::ExecCtx execCtx{queryCtx->pool(), queryCtx.get()};
+      pool.get(), ROW({}, {}), nullptr, 1, std::vector<VectorPtr>{});
+  core::ExecCtx execCtx{pool.get(), queryCtx.get()};
   ExprSet exprSet({expr}, &execCtx);
   if (!exprSet.exprs()[0]->isConstant()) {
     return nullptr;
@@ -161,6 +162,9 @@ std::unique_ptr<common::Filter> makeLessThanOrEqualFilter(
       return lessThanOrEqual(singleValue<StringView>(upper));
     case TypeKind::DATE:
       return lessThanOrEqual(singleValue<Date>(upper).days());
+    case TypeKind::SHORT_DECIMAL:
+      return lessThanOrEqual(
+          singleValue<UnscaledShortDecimal>(upper).unscaledValue());
     default:
       return nullptr;
   }
@@ -190,6 +194,8 @@ std::unique_ptr<common::Filter> makeLessThanFilter(
       return lessThan(singleValue<StringView>(upper));
     case TypeKind::DATE:
       return lessThan(singleValue<Date>(upper).days());
+    case TypeKind::SHORT_DECIMAL:
+      return lessThan(singleValue<UnscaledShortDecimal>(upper).unscaledValue());
     default:
       return nullptr;
   }
@@ -219,6 +225,9 @@ std::unique_ptr<common::Filter> makeGreaterThanOrEqualFilter(
       return greaterThanOrEqual(singleValue<StringView>(lower));
     case TypeKind::DATE:
       return greaterThanOrEqual(singleValue<Date>(lower).days());
+    case TypeKind::SHORT_DECIMAL:
+      return greaterThanOrEqual(
+          singleValue<UnscaledShortDecimal>(lower).unscaledValue());
     default:
       return nullptr;
   }
@@ -248,6 +257,9 @@ std::unique_ptr<common::Filter> makeGreaterThanFilter(
       return greaterThan(singleValue<StringView>(lower));
     case TypeKind::DATE:
       return greaterThan(singleValue<Date>(lower).days());
+    case TypeKind::SHORT_DECIMAL:
+      return greaterThan(
+          singleValue<UnscaledShortDecimal>(lower).unscaledValue());
     default:
       return nullptr;
   }
@@ -275,6 +287,8 @@ std::unique_ptr<common::Filter> makeEqualFilter(
       return equal(singleValue<StringView>(value));
     case TypeKind::DATE:
       return equal(singleValue<Date>(value).days());
+    case TypeKind::SHORT_DECIMAL:
+      return equal(singleValue<UnscaledShortDecimal>(value).unscaledValue());
     default:
       return nullptr;
   }
@@ -399,6 +413,10 @@ std::unique_ptr<common::Filter> makeBetweenFilter(
     case TypeKind::VARCHAR:
       return between(
           singleValue<StringView>(lower), singleValue<StringView>(upper));
+    case TypeKind::SHORT_DECIMAL:
+      return between(
+          singleValue<UnscaledShortDecimal>(lower).unscaledValue(),
+          singleValue<UnscaledShortDecimal>(upper).unscaledValue());
     default:
       return nullptr;
   }

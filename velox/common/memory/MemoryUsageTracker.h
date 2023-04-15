@@ -23,6 +23,7 @@
 
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/SuccinctPrinter.h"
 
 namespace facebook::velox::memory {
 constexpr std::string_view MEM_CAP_EXCEEDED_ERROR_FORMAT =
@@ -81,11 +82,12 @@ class MemoryUsageTracker
   };
 
   /// Function to increase a MemoryUsageTracker's limits. This is called when an
-  /// allocation would exceed the tracker's size limit. The usage in 'tracker'
-  /// at the time of call is as if the allocation had succeeded.
-  /// If this returns true, this must set the limits to be >= the usage in
-  /// 'tracker'. If this returns false, this should not modify 'tracker'. The
-  /// caller will revert the allocation that invoked this and signal an error.
+  /// allocation would exceed the tracker's size limit. If this returns true, it
+  /// ensures at the call return time point the tracker has sufficient capacity
+  /// to satisfy the usage request of 'size'. GrowCallback either bumps up the
+  /// limit or reclaims the memory usage in 'tracker' through techniques such as
+  /// spilling. If this returns false, this should not modify 'tracker', and the
+  /// caller will throw a memory limit exceeding error.
   ///
   /// This may be called on one tracker from several threads. This is
   /// responsible for serializing these. When this is called, the 'tracker's
@@ -104,11 +106,17 @@ class MemoryUsageTracker
 
   /// Create default usage tracker which is a 'root' tracker.
   static std::shared_ptr<MemoryUsageTracker> create(
-      int64_t maxMemory = kMaxMemory) {
-    return create(nullptr, maxMemory);
+      int64_t maxMemory = kMaxMemory,
+      bool checkUsageLeak = false) {
+    return create(
+        /*parent=*/nullptr,
+        /*leafTracker=*/false,
+        true,
+        maxMemory,
+        checkUsageLeak);
   }
 
-  ~MemoryUsageTracker();
+  virtual ~MemoryUsageTracker();
 
   /// Increments the reservation for 'this' so that we can allocate at least
   /// 'size' bytes on top of the current allocation. This is used when a memory
@@ -135,17 +143,15 @@ class MemoryUsageTracker
   void update(int64_t size);
 
   /// Returns the current memory usage.
-  ///
-  /// TODO: we will add tracker type to calculate the current bytes based on the
-  /// tracker type explicitly.
   int64_t currentBytes() const {
-    return adjustByReservation(reservationBytes_);
+    std::lock_guard<std::mutex> l(mutex_);
+    return currentBytesLocked();
   }
 
   /// Returns the unused reservations in bytes.
   int64_t availableReservation() const {
-    return std::max<int64_t>(
-        0, grantedReservationBytes_ - usedReservationBytes_);
+    std::lock_guard<std::mutex> l(mutex_);
+    return availableReservationLocked();
   }
 
   /// Returns the number of allocations.
@@ -160,6 +166,7 @@ class MemoryUsageTracker
   ///
   /// TODO: deprecate this API and get peak bytes through stats().
   int64_t peakBytes() const {
+    std::lock_guard<std::mutex> l(mutex_);
     return peakBytes_;
   }
 
@@ -168,17 +175,20 @@ class MemoryUsageTracker
   ///
   /// TODO: deprecate this API and get cumulative bytes through stats().
   int64_t cumulativeBytes() const {
+    std::lock_guard<std::mutex> l(mutex_);
     return cumulativeBytes_;
   }
 
   /// Returns the total memory reservation size including unused reservation.
   int64_t reservedBytes() const {
+    std::lock_guard<std::mutex> l(mutex_);
     return reservationBytes_;
   }
 
   /// Returns the actual used memory reservation size which is only meaningful
   /// for a leaf memory tracker.
   int64_t usedReservationBytes() const {
+    std::lock_guard<std::mutex> l(mutex_);
     return usedReservationBytes_;
   }
 
@@ -186,10 +196,14 @@ class MemoryUsageTracker
     return parent_ != nullptr ? parent_->maxMemory() : maxMemory_;
   }
 
-  std::shared_ptr<MemoryUsageTracker> addChild() {
-    ++numChildren_;
-    return create(shared_from_this());
-  }
+  /// Create a child memory usage tracker. 'leafTracker' indicates if the child
+  /// is a leaf tracker for memory reservation use. If it is false, then the
+  /// child is used for memory reservation aggregation and it is associated with
+  /// an aggregation memory pool. The tracker can not be used for memory
+  /// reservation but it allows to create child trackers from it.
+  std::shared_ptr<MemoryUsageTracker> addChild(
+      bool leafTracker = true,
+      bool threadSafe = true);
 
   void setGrowCallback(GrowCallback func) {
     VELOX_CHECK_NULL(
@@ -207,47 +221,192 @@ class MemoryUsageTracker
   std::string toString() const;
 
   void testingUpdateMaxMemory(int64_t maxMemory) {
+    if (parent_ != nullptr) {
+      parent_->testingUpdateMaxMemory(maxMemory);
+      return;
+    }
     maxMemory_ = maxMemory;
   }
 
- private:
+ protected:
   static constexpr int64_t kMB = 1 << 20;
 
   static std::shared_ptr<MemoryUsageTracker> create(
       const std::shared_ptr<MemoryUsageTracker>& parent,
-      int64_t maxMemory = kMaxMemory);
+      bool leafTracker,
+      bool threadSafe,
+      int64_t maxMemory = kMaxMemory,
+      bool checkUsageLeak = false);
 
   MemoryUsageTracker(
       const std::shared_ptr<MemoryUsageTracker>& parent,
-      int64_t maxMemory)
-      : parent_(parent), maxMemory_{maxMemory} {
+      bool leafTracker,
+      bool threadSafe,
+      int64_t maxMemory,
+      bool checkUsageLeak)
+      : parent_(parent),
+        leafTracker_(leafTracker),
+        threadSafe_(threadSafe),
+        checkUsageLeak_(checkUsageLeak),
+        maxMemory_{maxMemory} {
     // NOTE: only the root memory tracker enforces the memory limit check.
     VELOX_CHECK(parent_ == nullptr || maxMemory_ == kMaxMemory);
+    VELOX_CHECK(parent_ != nullptr || !leafTracker_);
+    VELOX_CHECK(
+        leafTracker_ || threadSafe_,
+        "Can only turn off thread-safe on leaf memory usage tracker");
   }
 
-  void reserve(uint64_t size, bool reserveOnly);
-  void release(uint64_t size);
+  FOLLY_ALWAYS_INLINE void reservationCheck() const {
+    if (!leafTracker_) {
+      VELOX_FAIL(
+          "Reservation is only allowed on leaf memory usage tracker: {}",
+          toString());
+    }
+  }
 
-  void maybeUpdatePeakBytes(int64_t newPeak);
+  // Reserve memory for a new allocation/reservation with specified 'size'.
+  // 'reserveThreadSafe' processes the memory reservation at leaf tracker with
+  // mutex lock protection to prevent concurrent updates to the same leaf
+  // tracker. 'reserveThreadSafe' processes the memory reservation without mutex
+  // lock at the leaf tracker.
+  FOLLY_ALWAYS_INLINE void reserve(uint64_t size, bool reserveOnly) {
+    if (threadSafe_) {
+      reserveThreadSafe(size, reserveOnly);
+    } else {
+      reserveNonThreadSafe(size, reserveOnly);
+    }
+  }
+
+  void reserveThreadSafe(uint64_t size, bool reserveOnly);
+
+  FOLLY_ALWAYS_INLINE void releaseNonThreadSafe(uint64_t size) {
+    int64_t newQuantized;
+    if (FOLLY_UNLIKELY(size == 0)) {
+      if (minReservationBytes_ == 0) {
+        return;
+      }
+      newQuantized = quantizedSize(usedReservationBytes_);
+      minReservationBytes_ = 0;
+    } else {
+      usedReservationBytes_ -= size;
+      const int64_t newCap =
+          std::max(minReservationBytes_, usedReservationBytes_);
+      newQuantized = quantizedSize(newCap);
+    }
+
+    const int64_t freeable = reservationBytes_ - newQuantized;
+    if (FOLLY_UNLIKELY(freeable > 0)) {
+      // NOTE: we can only release memory from a leaf memory usage tracker.
+      VELOX_DCHECK_NOT_NULL(parent_);
+      reservationBytes_ = newQuantized;
+      sanityCheckNoLock();
+      parent_->decrementReservation(freeable);
+    }
+  }
+
+  // Release memory reservation for an allocation free or memory release with
+  // specified 'size'. 'reserveThreadSafe' processes the memory release at leaf
+  // tracker with mutex lock protection to prevent concurrent updates to the
+  // same leaf tracker. 'reserveThreadSafe' processes the memory release without
+  // mutex lock at the leaf tracker.
+  FOLLY_ALWAYS_INLINE void release(uint64_t size) {
+    if (threadSafe_) {
+      releaseThreadSafe(size);
+    } else {
+      releaseNonThreadSafe(size);
+    }
+  }
+
+  void releaseThreadSafe(uint64_t size);
+
+  FOLLY_ALWAYS_INLINE void reserveNonThreadSafe(
+      uint64_t size,
+      bool reserveOnly) {
+    VELOX_CHECK(!threadSafe_);
+    VELOX_CHECK_GT(size, 0);
+
+    int32_t numAttempts{0};
+    for (;; ++numAttempts) {
+      int64_t increment = reservationSizeNoLock(size);
+      if (FOLLY_LIKELY(increment == 0)) {
+        if (FOLLY_UNLIKELY(reserveOnly)) {
+          minReservationBytes_ = reservationBytes_;
+        } else {
+          usedReservationBytes_ += size;
+        }
+        sanityCheckNoLock();
+        break;
+      }
+      incrementReservationNonThreadSafe(increment);
+    }
+
+    // NOTE: in case of concurrent reserve requests to the same root memory pool
+    // from the other leaf memory pools, we might have to retry
+    // incrementReservation(). This should happen rarely in production
+    // as the leaf tracker does quantized memory reservation so that we don't
+    // expect high concurrency at the root memory pool.
+    if (FOLLY_UNLIKELY(numAttempts > 1)) {
+      numCollisions_ += numAttempts - 1;
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE void maybeUpdatePeakBytesNoLock(int64_t newPeak) {
+    peakBytes_ = std::max(peakBytes_, newPeak);
+  }
 
   // Increments the reservation and checks against limits at root tracker. Calls
   // root tracker's 'growCallback_' if it is set and limit exceeded. Should be
-  // called without holding 'mutex_'. This throws if a limit is exceeded and
-  // there is no corresponding GrowCallback or the GrowCallback fails.
-  void incrementReservation(uint64_t size);
+  // called without holding 'mutex_'. This function returns true if reservation
+  // succeeds. It returns false if there is concurrent reservation increment
+  // requests and need a retry from the leaf memory usage tracker. The function
+  // throws if a limit is exceeded and there is no corresponding GrowCallback or
+  // the GrowCallback fails.
+  bool incrementReservationThreadSafe(uint64_t size);
+
+  FOLLY_ALWAYS_INLINE bool incrementReservationNonThreadSafe(uint64_t size) {
+    VELOX_CHECK_NOT_NULL(parent_);
+    VELOX_CHECK(!threadSafe_ && leafTracker_);
+    try {
+      if (!parent_->incrementReservationThreadSafe(size)) {
+        return false;
+      }
+    } catch (const VeloxRuntimeError& e) {
+      if (makeMemoryCapExceededMessage_ == nullptr) {
+        throw;
+      }
+      auto errorMessage =
+          e.message() + ". " + makeMemoryCapExceededMessage_(*this);
+      VELOX_MEM_CAP_EXCEEDED(errorMessage);
+    }
+
+    reservationBytes_ += size;
+    cumulativeBytes_ += size;
+    maybeUpdatePeakBytesNoLock(reservationBytes_);
+    return true;
+  }
+
+  // Tries to increment the reservation 'size' if it is within the limit and
+  // returns true, otherwise the function returns false.
+  bool maybeIncrementReservation(uint64_t size);
+  bool maybeIncrementReservationLocked(uint64_t size);
 
   //  Decrements the reservation in 'this' and parents.
   void decrementReservation(uint64_t size) noexcept;
 
-  int64_t adjustByReservation(int64_t total) const {
-    return grantedReservationBytes_ > 0
-        ? std::max<int64_t>(total - availableReservation(), 0)
-        : std::max<int64_t>(total, 0);
+  int64_t currentBytesLocked() const {
+    return leafTracker_ ? usedReservationBytes_ : reservationBytes_;
+  }
+
+  int64_t availableReservationLocked() const {
+    return !leafTracker_
+        ? 0
+        : std::max<int64_t>(0, reservationBytes_ - usedReservationBytes_);
   }
 
   // Returns the needed reservation size. If there is sufficient unused memory
   // reservation, this function returns zero.
-  int64_t reservationSizeLocked(int64_t size);
+  int64_t reservationSizeNoLock(int64_t size);
 
   // Returns a rounded up delta based on adding 'delta' to 'size'. Adding the
   // rounded delta to 'size' will result in 'size' a quantized size, rounded to
@@ -258,7 +417,7 @@ class MemoryUsageTracker
 
   // Returns the next higher quantized size. Small sizes are at MB granularity,
   // larger ones at coarser granularity.
-  static uint64_t quantizedSize(uint64_t size) {
+  FOLLY_ALWAYS_INLINE static uint64_t quantizedSize(uint64_t size) {
     if (size < 16 * kMB) {
       return bits::roundUp(size, kMB);
     }
@@ -268,50 +427,61 @@ class MemoryUsageTracker
     return bits::roundUp(size, 8 * kMB);
   }
 
-  void checkNonNegativeSizes(const char* FOLLY_NONNULL message) const;
+  FOLLY_ALWAYS_INLINE std::string toStringNoLock() const {
+    std::stringstream out;
+    out << "<tracker used " << succinctBytes(currentBytesLocked())
+        << " available " << succinctBytes(availableReservationLocked());
+    if (maxMemory() != kMaxMemory) {
+      out << " limit " << succinctBytes(maxMemory());
+    }
+    out << " reservation [used " << succinctBytes(usedReservationBytes_)
+        << ", reserved " << succinctBytes(reservationBytes_) << ", min "
+        << succinctBytes(minReservationBytes_);
+    out << "] counters [allocs " << numAllocs_ << ", frees " << numFrees_
+        << ", reserves " << numReserves_ << ", releases " << numReleases_
+        << ", collisions " << numCollisions_ << ", children " << numChildren_
+        << "])";
+    out << ">";
+    return out.str();
+  }
 
-  void sanityCheckLocked() const;
+  FOLLY_ALWAYS_INLINE void sanityCheckNoLock() const {
+    if ((reservationBytes_ < usedReservationBytes_) ||
+        (reservationBytes_ < minReservationBytes_) ||
+        (usedReservationBytes_ < 0)) {
+      VELOX_FAIL("Bad tracker state: {}", toStringNoLock());
+    }
+  }
 
-  // Serializes updates on 'grantedReservationBytes_', 'usedReservationBytes_'
+  const std::shared_ptr<MemoryUsageTracker> parent_;
+  const bool leafTracker_;
+  const bool threadSafe_;
+  const bool checkUsageLeak_;
+
+  // Serializes updates on 'reservationBytes_', 'usedReservationBytes_'
   // and 'minReservationBytes_' to make reservation decision on a consistent
-  // read/write of those counters. incrementReservation()/decrementReservation()
-  // work based on atomic 'reservationBytes_' without mutex as children updating
-  // the same parent do not have to be serialized.
-  std::mutex mutex_;
-  std::shared_ptr<MemoryUsageTracker> parent_;
+  // read/write of those counters. It also serializes the updates to stats
+  // counters such as 'peakBytes_' and 'cumulativeBytes_'.
+  mutable std::mutex mutex_;
 
   // The memory limit in bytes to enforce.
   int64_t maxMemory_;
 
-  std::atomic<int64_t> peakBytes_{0};
-  std::atomic<int64_t> cumulativeBytes_{0};
+  int64_t peakBytes_{0};
+  int64_t cumulativeBytes_{0};
 
   // The number of reservation bytes propagated up to the parent for memory
   // limit check at the root tracker.
-  std::atomic<int64_t> reservationBytes_{0};
-
-  // The number of granted reservation bytes which is maintained at the leaf
-  // tracker and protected by mutex for consistent memory reservation/release
-  // decisions.
-  //
-  // NOTE: after making memory reservation decision, we first try to propagate
-  // 'reservationBytes_' increment up to the root tracker without mutex. If the
-  // increment succeeds, then update 'grantedReservationBytes_',
-  // 'usedReservationBytes_' and 'minReservationBytes_' accordingly with mutex.
-  // Correspondingly, a memory release first updates 'grantedReservationBytes_',
-  // 'usedReservationBytes_' and 'minReservationBytes_' under mutex, and then
-  // propagates the 'reservationBytes_' decrement up to the root tracker without
-  // mutex.
-  std::atomic<int64_t> grantedReservationBytes_{0};
+  int64_t reservationBytes_{0};
 
   // The number of used reservation bytes which is maintained at the leaf
   // tracker and protected by mutex for consistent memory reservation/release
   // decisions.
-  std::atomic<int64_t> usedReservationBytes_{0};
+  int64_t usedReservationBytes_{0};
 
   // Minimum amount of reserved memory in bytes to hold until explicit
   // release().
-  std::atomic<int64_t> minReservationBytes_{0};
+  int64_t minReservationBytes_{0};
 
   GrowCallback growCallback_{};
 

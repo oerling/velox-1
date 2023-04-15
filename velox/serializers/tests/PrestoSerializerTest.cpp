@@ -29,7 +29,7 @@ using namespace facebook::velox::test;
 class PrestoSerializerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    pool_ = memory::getDefaultMemoryPool();
+    pool_ = memory::addDefaultLeafMemoryPool();
     serde_ = std::make_unique<serializer::presto::PrestoVectorSerde>();
     vectorMaker_ = std::make_unique<test::VectorMaker>(pool_.get());
   }
@@ -227,9 +227,11 @@ TEST_F(PrestoSerializerTest, timestampWithTimeZone) {
 }
 
 TEST_F(PrestoSerializerTest, intervalDayTime) {
-  auto vector = vectorMaker_->flatVector<IntervalDayTime>(100, [](auto row) {
-    return IntervalDayTime(row + folly::Random::rand32());
-  });
+  auto vector = vectorMaker_->flatVector<int64_t>(
+      100,
+      [](auto row) { return row + folly::Random::rand32(); },
+      nullptr, // nullAt
+      INTERVAL_DAY_TIME());
 
   testRoundTrip(vector);
 

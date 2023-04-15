@@ -48,9 +48,7 @@ void assertCopyableVector(const VectorPtr& vector);
 
 class VectorTestBase {
  protected:
-  VectorTestBase() {
-    pool_->setMemoryUsageTracker(memory::MemoryUsageTracker::create());
-  }
+  VectorTestBase() = default;
 
   ~VectorTestBase();
 
@@ -232,8 +230,10 @@ class VectorTestBase {
   //   });
   //   EXPECT_EQ(3, arrayVector->size());
   template <typename T>
-  ArrayVectorPtr makeArrayVector(const std::vector<std::vector<T>>& data) {
-    return vectorMaker_.arrayVector<T>(data);
+  ArrayVectorPtr makeArrayVector(
+      const std::vector<std::vector<T>>& data,
+      const TypePtr& elementType = CppToType<T>::create()) {
+    return vectorMaker_.arrayVector<T>(data, elementType);
   }
 
   ArrayVectorPtr makeAllNullArrayVector(
@@ -738,7 +738,9 @@ class VectorTestBase {
     return pool_.get();
   }
 
-  std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> rootPool_{
+      memory::defaultMemoryManager().addRootPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{rootPool_->addLeafChild("leaf")};
   velox::test::VectorMaker vectorMaker_{pool_.get()};
   std::shared_ptr<folly::Executor> executor_{
       std::make_shared<folly::CPUThreadPoolExecutor>(

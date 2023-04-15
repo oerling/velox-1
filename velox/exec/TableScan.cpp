@@ -36,7 +36,13 @@ TableScan::TableScan(
           "TableScan"),
       tableHandle_(tableScanNode->tableHandle()),
       columnHandles_(tableScanNode->assignments()),
-      driverCtx_(driverCtx) {
+      driverCtx_(driverCtx),
+      connectorPool_(driverCtx_->task->addConnectorPoolLocked(
+          planNodeId(),
+          driverCtx_->pipelineId,
+          driverCtx_->driverId,
+          operatorType(),
+          tableHandle_->connectorId())) {
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 
@@ -92,7 +98,7 @@ RowVectorPtr TableScan::getOutput() {
 
       if (!dataSource_) {
         connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
-            connectorSplit->connectorId, planNodeId());
+            connectorSplit->connectorId, planNodeId(), connectorPool_);
         dataSource_ = connector_->createDataSource(
             outputType_,
             tableHandle_,
@@ -149,10 +155,6 @@ RowVectorPtr TableScan::getOutput() {
 
     auto dataOptional = dataSource_->next(readBatchSize_, blockingFuture_);
     checkPreload();
-    if (!dataOptional.has_value()) {
-      blockingReason_ = BlockingReason::kWaitForConnector;
-      return nullptr;
-    }
 
     {
       auto lockedStats = stats_.wlock();
@@ -161,13 +163,18 @@ RowVectorPtr TableScan::getOutput() {
           RuntimeCounter(
               (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
               RuntimeCounter::Unit::kNanos));
+
+      if (!dataOptional.has_value()) {
+        blockingReason_ = BlockingReason::kWaitForConnector;
+        return nullptr;
+      }
+
       lockedStats->rawInputPositions = dataSource_->getCompletedRows();
       lockedStats->rawInputBytes = dataSource_->getCompletedBytes();
       auto data = dataOptional.value();
       if (data) {
         if (data->size() > 0) {
-          lockedStats->inputPositions += data->size();
-          lockedStats->inputBytes += data->retainedSize();
+          lockedStats->addInputVector(data->estimateFlatSize(), data->size());
           return data;
         }
         continue;
@@ -176,15 +183,16 @@ RowVectorPtr TableScan::getOutput() {
 
     {
       auto lockedStats = stats_.wlock();
-      lockedStats->addRuntimeStat(
-          "preloadedSplits",
-          RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numPreloadedSplits_ = 0;
-      lockedStats->addRuntimeStat(
-          "readyPreloadedSplits",
-          RuntimeCounter(
-              numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numReadyPreloadedSplits_ = 0;
+      if (numPreloadedSplits_ > 0) {
+        lockedStats->addRuntimeStat(
+            "preloadedSplits", RuntimeCounter(numPreloadedSplits_));
+        numPreloadedSplits_ = 0;
+      }
+      if (numReadyPreloadedSplits_ > 0) {
+        lockedStats->addRuntimeStat(
+            "readyPreloadedSplits", RuntimeCounter(numReadyPreloadedSplits_));
+        numReadyPreloadedSplits_ = 0;
+      }
     }
 
     driverCtx_->task->splitFinished();
@@ -205,7 +213,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
        columns = columnHandles_,
        connector = connector_,
        ctx = operatorCtx_->createConnectorQueryCtx(
-           split->connectorId, planNodeId()),
+           split->connectorId, planNodeId(), connectorPool_),
        task = operatorCtx_->task(),
        split]() -> std::unique_ptr<DataSourcePtr> {
         if (task->isCancelled()) {
