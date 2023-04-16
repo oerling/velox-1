@@ -743,7 +743,7 @@ void GroupingSet::toIntermediate(
   activeRows_.setAll();
 
   result->resize(numRows);
-  if (!allHaveToIntermediate_) {
+  if (intermediateRows_) {
     intermediateGroups_.resize(numRows);
     for (auto i = 0; i < numRows; ++i) {
       intermediateGroups_[i] = intermediateRows_->newRow();
@@ -784,6 +784,7 @@ void GroupingSet::toIntermediate(
         intermediateGroups_.data(),
         intermediateGroups_.size(),
         &aggregateVector);
+    aggregates_[i]->clear();
   }
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
