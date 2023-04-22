@@ -29,14 +29,20 @@ class SerializedPage {
  public:
   static constexpr int kSerializedPageOwner = -11;
 
-  // Construct from IOBuf chain. The external memory usage of 'iobuf' will be
-  // tracked if 'pool' is not null.
-  //
-  // TODO: consider to enforce setting memory pool if possible.
+  // Construct from IOBuf chain.
+  explicit SerializedPage(
+      std::unique_ptr<folly::IOBuf> iobuf,
+      std::function<void(folly::IOBuf&)> onDestructionCb = nullptr);
+
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
   explicit SerializedPage(
       std::unique_ptr<folly::IOBuf> iobuf,
       memory::MemoryPool* pool = nullptr,
-      std::function<void(folly::IOBuf&)> onDestructionCb = nullptr);
+      std::function<void(folly::IOBuf&)> onDestructionCb = nullptr)
+      : SerializedPage(std::move(iobuf), std::move(onDestructionCb)) {
+    VELOX_CHECK_NULL(pool);
+  }
+#endif
 
   ~SerializedPage();
 
@@ -70,7 +76,6 @@ class SerializedPage {
 
   // Number of payload bytes in 'iobuf_'.
   const int64_t iobufBytes_;
-  memory::MemoryPool* pool_;
 
   // Callback that will be called on destruction of the SerializedPage,
   // primarily used to free externally allocated memory backing folly::IOBuf
@@ -297,6 +302,16 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   // once it received enough data.
   virtual void close() = 0;
 
+// TODO Remove after updating Prestissimo.
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+  virtual folly::F14FastMap<std::string, int64_t> stats() const {
+    return {};
+  }
+#else
+  // Returns runtime statistics.
+  virtual folly::F14FastMap<std::string, int64_t> stats() const = 0;
+#endif
+
   virtual std::string toString() {
     std::stringstream out;
     out << "[ExchangeSource " << taskId_ << ":" << destination_
@@ -324,7 +339,7 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
 
  protected:
   memory::MemoryPool* pool_;
-};
+}; // namespace facebook::velox::exec
 
 struct RemoteConnectorSplit : public connector::ConnectorSplit {
   const std::string taskId;
@@ -369,6 +384,9 @@ class ExchangeClient {
 
   // Closes exchange sources.
   void close();
+
+  // Returns runtime statistics aggregates across all of the exchange sources.
+  folly::F14FastMap<std::string, RuntimeMetric> stats() const;
 
   std::shared_ptr<ExchangeQueue> queue() const {
     return queue_;
@@ -439,6 +457,8 @@ class Exchange : public SourceOperator {
   /// not responsible for fetching splits and adding them to the
   /// exchangeClient_.
   bool getSplits(ContinueFuture* future);
+
+  void recordStats();
 
   const core::PlanNodeId planNodeId_;
   bool noMoreSplits_ = false;

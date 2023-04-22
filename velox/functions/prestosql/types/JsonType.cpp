@@ -55,8 +55,7 @@ void generateJsonTyped(
     if constexpr (std::is_same_v<T, bool>) {
       result.append(value ? "true" : "false");
     } else if constexpr (
-        std::is_same_v<T, Date> || std::is_same_v<T, Timestamp> ||
-        std::is_same_v<T, IntervalDayTime>) {
+        std::is_same_v<T, Date> || std::is_same_v<T, Timestamp>) {
       result.append(std::to_string(value));
     } else if constexpr (std::is_same_v<T, UnscaledShortDecimal>) {
       // UnscaledShortDecimal doesn't include precision and scale information
@@ -184,7 +183,7 @@ struct AsJson {
 
         exec::LocalDecodedVector localDecoded(context);
         std::vector<VectorPtr> peeledVectors;
-        auto peeledEncoding = exec::PeeledEncoding::Peel(
+        auto peeledEncoding = exec::PeeledEncoding::peel(
             {input}, rows, localDecoded, true, peeledVectors);
         VELOX_CHECK_EQ(peeledVectors.size(), 1);
         auto newRows =
