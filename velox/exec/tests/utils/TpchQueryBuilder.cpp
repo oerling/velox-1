@@ -1963,7 +1963,7 @@ TpchPlan TpchQueryBuilder::getQ22Plan() const {
               {},
               phoneFilter)
           .capturePlanNodeId(customerScanNodeIdWithKey)
-          .crossJoin(
+          .nestedLoopJoin(
               customerAvgAccountBalance,
               {"c_acctbal", "avg_acctbal", "c_custkey", "c_phone"})
           .filter("c_acctbal > avg_acctbal")

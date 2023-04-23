@@ -19,10 +19,9 @@ add_executable(
   CompactDoubleListTest.cpp
   HashStringAllocatorTest.cpp
   MemoryAllocatorTest.cpp
+  MemoryArbitratorTest.cpp
   MemoryManagerTest.cpp
-  MemoryPoolTest.cpp
-  MemoryUsageTest.cpp
-  MemoryUsageTrackerTest.cpp)
+  MemoryPoolTest.cpp)
 
 target_link_libraries(
   velox_memory_test

@@ -17,6 +17,14 @@ cmake_minimum_required(VERSION 3.14)
 cmake_policy(SET CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
+# Sets new behavior for CMP0135, which controls how timestamps are extracted
+# when using ExternalProject_Add():
+# https://cmake.org/cmake/help/latest/policy/CMP0135.html
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
+endif()
+
 # set the project name
 project(velox)
 
@@ -61,7 +69,7 @@ option(VELOX_ENABLE_PARSE "Build parser used for unit tests." ON)
 option(VELOX_ENABLE_EXAMPLES
        "Build examples. This will enable VELOX_ENABLE_EXPRESSION automatically."
        OFF)
-option(VELOX_ENABLE_SUBSTRAIT "Buid Substrait-to-Velox converter." OFF)
+option(VELOX_ENABLE_SUBSTRAIT "Build Substrait-to-Velox converter." OFF)
 option(VELOX_ENABLE_BENCHMARKS "Enable Velox top level benchmarks." OFF)
 option(VELOX_ENABLE_BENCHMARKS_BASIC "Enable Velox basic benchmarks." OFF)
 option(VELOX_ENABLE_S3 "Build S3 Connector" OFF)
@@ -277,7 +285,8 @@ if("${ENABLE_ALL_WARNINGS}")
          -Wno-format-overflow \
          -Wno-strict-aliasing \
          -Wno-type-limits \
-         -Wno-stringop-overflow")
+         -Wno-stringop-overflow \
+         -Wno-return-type")
   endif()
 
   set(KNOWN_WARNINGS

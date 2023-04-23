@@ -146,9 +146,12 @@ class ExprTest : public testing::Test, public VectorTestBase {
   }
 
   /// Create constant expression from a variant of primitive type.
-  std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(variant value) {
-    auto type = value.inferType();
-    return std::make_shared<core::ConstantTypedExpr>(type, std::move(value));
+  std::shared_ptr<core::ConstantTypedExpr> makeConstantExpr(
+      variant value,
+      const TypePtr& type = nullptr) {
+    auto valueType = type != nullptr ? type : value.inferType();
+    return std::make_shared<core::ConstantTypedExpr>(
+        valueType, std::move(value));
   }
 
   // Create LazyVector that produces a flat vector and asserts that is is being
@@ -2355,8 +2358,8 @@ TEST_F(ExprTest, constantToString) {
 }
 
 TEST_F(ExprTest, constantToSql) {
-  auto toSql = [&](const variant& value) {
-    exec::ExprSet exprSet({makeConstantExpr(value)}, execCtx_.get());
+  auto toSql = [&](const variant& value, const TypePtr& type = nullptr) {
+    exec::ExprSet exprSet({makeConstantExpr(value, type)}, execCtx_.get());
     auto sql = exprSet.expr(0)->toSql();
 
     auto input = makeRowVector(ROW({}), 1);
@@ -2397,9 +2400,11 @@ TEST_F(ExprTest, constantToSql) {
       "'1970-01-02T10:17:36.000123000'::TIMESTAMP");
   ASSERT_EQ(toSql(variant::null(TypeKind::TIMESTAMP)), "NULL::TIMESTAMP");
 
-  ASSERT_EQ(toSql(IntervalDayTime(123'456)), "INTERVAL 123456 MILLISECONDS");
   ASSERT_EQ(
-      toSql(variant::null(TypeKind::INTERVAL_DAY_TIME)),
+      toSql(123'456LL, INTERVAL_DAY_TIME()),
+      "'123456'::INTERVAL DAY TO SECOND");
+  ASSERT_EQ(
+      toSql(variant::null(TypeKind::BIGINT), INTERVAL_DAY_TIME()),
       "NULL::INTERVAL DAY TO SECOND");
 
   ASSERT_EQ(toSql(1.5f), "'1.5'::REAL");
@@ -3608,4 +3613,56 @@ TEST_F(ExprTest, commonSubExpressionWithPeeling) {
       ASSERT_EQ(totalNotDefaultNullFunc, 6);
     }
   }
+}
+
+TEST_F(ExprTest, dictionaryOverLoadedLazy) {
+  // This test verifies a corner case where peeling does not go past a loaded
+  // lazy layer which caused wrong set of inputs being passed to shared
+  // sub-expressions evaluation.
+  // Inputs are of the form c0: Dict1(Lazy(Dict2(Flat1))) and c1: Dict1(Flat
+  constexpr int32_t kSize = 100;
+
+  // Generate inputs of the form c0: Dict1(Lazy(Dict2(Flat1))) and c1:
+  // Dict1(Flat2). Note c0 and c1 have the same top encoding layer.
+
+  // Generate indices that randomly point to different rows of the base flat
+  // layer. This makes sure that wrong values are copied over if there is a bug
+  // in shared sub-expressions evaluation.
+  std::vector<int> indicesUnderLazy = {2, 5, 4, 1, 2, 4, 5, 6, 4, 9};
+  auto smallFlat =
+      makeFlatVector<int64_t>(kSize / 10, [](auto row) { return row * 2; });
+  auto indices = makeIndices(kSize, [&indicesUnderLazy](vector_size_t row) {
+    return indicesUnderLazy[row % 10];
+  });
+  auto lazyDict = std::make_shared<LazyVector>(
+      execCtx_->pool(),
+      smallFlat->type(),
+      kSize,
+      std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
+        return wrapInDictionary(indices, kSize, smallFlat);
+      }));
+  // Make sure it is loaded, otherwise during evaluation ensureLoaded() would
+  // transform the input vector from Dict1(Lazy(Dict2(Flat1))) to
+  // Dict1((Dict2(Flat1))) which recreates the buffers for the top layers and
+  // disables any peeling that can happen between c0 and c1.
+  lazyDict->loadedVector();
+
+  auto sharedIndices = makeIndices(kSize / 2, [](auto row) { return row * 2; });
+  auto c0 = wrapInDictionary(sharedIndices, kSize / 2, lazyDict);
+  auto c1 = wrapInDictionary(
+      sharedIndices,
+      makeFlatVector<int64_t>(kSize, [](auto row) { return row; }));
+
+  // "(c0 < 5 and c1 < 90)" would peel Dict1 layer in the top level conjunct
+  // expression then when peeled c0 is passed to the inner "c0 < 5" expression,
+  // a call to EvalCtx::getField() removes the lazy layer which ensures the last
+  // dictionary layer is peeled. This means that shared sub-expression
+  // evaluation is done on the lowest flat layer. In the second expression "c0 <
+  // 5" the input is Dict1(Lazy(Dict2(Flat1))) and if peeling only removed till
+  // the lazy layer, the shared sub-expression evaluation gets called on
+  // Lazy(Dict2(Flat1)) which then results in wrong results.
+  auto result = evaluateMultiple(
+      {"(c0 < 5 and c1 < 90)", "c0 < 5"}, makeRowVector({c0, c1}));
+  auto resultFromLazy = evaluate("c0 < 5", makeRowVector({c0, c1}));
+  assertEqualVectors(result[1], resultFromLazy);
 }
