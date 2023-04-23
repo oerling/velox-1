@@ -241,13 +241,19 @@ void Expr::computeMetadata() {
 }
 
 namespace {
-void rethrowFirstError(const ErrorVectorPtr& errors) {
-  bits::forEachBit(
-      errors->rawNulls(), 0, errors->size(), bits::kNotNull, [&](auto row) {
+void rethrowFirstError(    const SelectivityVector& rows, const ErrorVectorPtr& errors) {
+  auto errorSize = errors->size();
+  rows.testSelected([&](vector_size_t row) {
+    if (row >= errorSize) {
+      return false;
+    }
+    if (!errors->isNullAt(row)) {
         auto exceptionPtr =
             std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
         std::rethrow_exception(*exceptionPtr);
-      });
+    }
+    return true;
+  });
 }
 
 // Sets errors in 'context' to be the union of 'argumentErrors' for 'rows' and
@@ -263,20 +269,8 @@ void mergeOrThrowArgumentErrors(
     ErrorVectorPtr& argumentErrors,
     EvalCtx& context) {
   if (argumentErrors) {
-    // Clears argument errors outside of 'rows'.
-    auto errorNulls = argumentErrors->mutableRawNulls();
-    auto rowBits = rows.asRange().bits();
-    auto end = rows.end();
-    auto numNullWords = bits::nwords(argumentErrors->size());
-    auto numRowsWords = bits::nwords(end);
-    for (auto i = 0; i < numNullWords; ++i) {
-      // A 0 in rows makes a zero in error nulls, e.g. nulls out an
-      // existing error. If there are more error rows than words in
-      // the rows, the trailing errors are nulled out.
-      errorNulls[i] &= i < numRowsWords ? rowBits[i] : 0;
-    }
     if (context.throwOnError()) {
-      rethrowFirstError(argumentErrors);
+      rethrowFirstError(rows, argumentErrors);
     }
     context.addErrors(rows, argumentErrors, originalErrors);
   }
@@ -443,7 +437,6 @@ void Expr::evalSimplifiedImpl(
   auto evalArg = [&](int32_t i) {
     auto& inputValue = inputValues_[i];
     inputs_[i]->evalSimplified(remainingRows.rows(), context, inputValue);
-
     BaseVector::flattenVector(inputValue, rows.end());
     VELOX_CHECK(
         inputValue->encoding() == VectorEncoding::Simple::FLAT ||
@@ -652,7 +645,7 @@ void Expr::evalFlatNoNullsImpl(
       // No need to re-evaluate constant expression. Simply move constant values
       // from constantInputs_.
       inputValues_[i] = std::move(constantInputs_[i]);
-      inputValues_[i]->resize(rows.size());
+      inputValues_[i]->resize(rows.end());
     } else {
       inputs_[i]->evalFlatNoNulls(rows, context, inputValues_[i]);
     }
@@ -760,7 +753,7 @@ void Expr::evaluateSharedSubexpr(
     eval(rows, context, result);
 
     if (!sharedSubexprRows) {
-      sharedSubexprRows = context.execCtx()->getSelectivityVector(rows.size());
+      sharedSubexprRows = context.execCtx()->getSelectivityVector(rows.end());
     }
 
     *sharedSubexprRows = rows;
@@ -856,7 +849,7 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
   // Attempt peeling.
   VELOX_CHECK(!vectorsToPeel.empty());
   std::vector<VectorPtr> peeledVectors;
-  auto peeledEncoding = PeeledEncoding::Peel(
+  auto peeledEncoding = PeeledEncoding::peel(
       vectorsToPeel, rowsToPeel, localDecoded, propagatesNulls_, peeledVectors);
 
   if (!peeledEncoding) {
@@ -1152,7 +1145,7 @@ void Expr::setAllNulls(
     result->addNulls(notNulls.get()->asRange().bits(), rows);
     return;
   }
-  result = BaseVector::createNullConstant(type(), rows.size(), context.pool());
+  result = BaseVector::createNullConstant(type(), rows.end(), context.pool());
 }
 
 namespace {
@@ -1343,7 +1336,7 @@ bool Expr::applyFunctionWithPeeling(
   ScopedContextSaver saver;
   // Attempt peeling.
   std::vector<VectorPtr> peeledVectors;
-  auto peeledEncoding = PeeledEncoding::Peel(
+  auto peeledEncoding = PeeledEncoding::peel(
       inputValues_,
       applyRows,
       localDecoded,

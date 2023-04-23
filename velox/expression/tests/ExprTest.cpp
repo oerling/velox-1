@@ -3192,6 +3192,47 @@ TEST_F(ExprTest, maskErrorByNull) {
   auto result = evaluate("plus5(c0 + c1)", data);
   assertEqualVectors(
       result, makeNullableFlatVector<int32_t>({7, 7, 11, 9, 15, 17}));
+
+  // try permutations of nulls and errors. c1 is 0 every 3rd. c1 is null every
+  // 5th. c2 is 0 every 7th.
+  data = makeRowVector(
+      {makeFlatVector<int32_t>(100, [](auto row) { return row % 3; }),
+       makeFlatVector<int32_t>(
+           100,
+           [](auto row) { return 1 + (row % 5); },
+           [](auto row) { return row % 5 == 0; }),
+       makeFlatVector<int32_t>(100, [](auto row) { return row % 7; })});
+  // All 6 permutations of 0, 1, 2.
+  std::vector<std::vector<int32_t>> permutations = {
+      {0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}};
+  VectorPtr firstResult;
+  VectorPtr firstCoalesceResult;
+  for (auto& permutation : permutations) {
+    auto result = evaluate(
+        fmt::format(
+            "try((100 / c{}) + (100 / c{}) + (100 / c{}))",
+            permutation[0],
+            permutation[1],
+            permutation[2]),
+        data);
+    if (!firstResult) {
+      firstResult = result;
+    } else {
+      assertEqualVectors(firstResult, result);
+    }
+    auto coalesceResult = evaluate(
+        fmt::format(
+            "try(coalesce((100 / c{}) + (100 / c{}) + (100 / c{}), 9999))",
+            permutation[0],
+            permutation[1],
+            permutation[2]),
+        data);
+    if (!firstCoalesceResult) {
+      firstCoalesceResult = coalesceResult;
+    } else {
+      assertEqualVectors(firstCoalesceResult, coalesceResult);
+    }
+  }
 }
 
 /// Test recursive constant peeling: in general expression evaluation first,
