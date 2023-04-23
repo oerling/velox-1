@@ -241,16 +241,18 @@ void Expr::computeMetadata() {
 }
 
 namespace {
-void rethrowFirstError(    const SelectivityVector& rows, const ErrorVectorPtr& errors) {
+void rethrowFirstError(
+    const SelectivityVector& rows,
+    const ErrorVectorPtr& errors) {
   auto errorSize = errors->size();
   rows.testSelected([&](vector_size_t row) {
     if (row >= errorSize) {
       return false;
     }
     if (!errors->isNullAt(row)) {
-        auto exceptionPtr =
-            std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
-        std::rethrow_exception(*exceptionPtr);
+      auto exceptionPtr =
+          std::static_pointer_cast<std::exception_ptr>(errors->valueAt(row));
+      std::rethrow_exception(*exceptionPtr);
     }
     return true;
   });
