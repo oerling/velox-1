@@ -154,12 +154,9 @@ class VeloxRunner {
     }
     rootPool_ = memory::defaultMemoryManager().addRootPool("velox_sql");
 
-    optimizerPool_ =
-      rootPool_->addLeafChild("optimizer");
-    schemaPool_ =
-      rootPool_->addLeafChild("schema");
+    optimizerPool_ = rootPool_->addLeafChild("optimizer");
+    schemaPool_ = rootPool_->addLeafChild("schema");
     pool_ = rootPool_->addAggregateChild("exec");
-
 
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -177,7 +174,10 @@ class VeloxRunner {
             ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
-							     FLAGS_data_path, toFileFormat(FLAGS_data_format), kHiveConnectorId, schemaPool_);
+        FLAGS_data_path,
+        toFileFormat(FLAGS_data_format),
+        kHiveConnectorId,
+        schemaPool_);
     planner_ = std::make_unique<core::DuckDbQueryPlanner>(pool_.get());
     for (auto& pair : schema_->tables()) {
       planner_->registerTable(pair.first, pair.second->rowType());

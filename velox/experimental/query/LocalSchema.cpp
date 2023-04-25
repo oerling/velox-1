@@ -30,8 +30,7 @@ LocalSchema::LocalSchema(
     velox::dwio::common::FileFormat fmt,
     const std::string& connectorId,
     std::shared_ptr<velox::memory::MemoryPool> pool)
-  : connectorId_(connectorId),
-    pool_(pool) {
+    : connectorId_(connectorId), pool_(pool) {
   format_ = fmt;
   initialize(path);
   locus_ = std::make_unique<Locus>(connectorId_.c_str());
