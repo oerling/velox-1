@@ -44,6 +44,8 @@ std::string nodeString(core::PlanNode* node) {
 class PlanTest : public testing::Test {
  protected:
   void SetUp() override {
+    rootPool_ = memory::defaultMemoryManager().addRootPool("velox_sql");
+    pool_ = rootPool_->addLeafChild("optimizer");
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
     queryCtx() = context_.get();
@@ -98,7 +100,8 @@ class PlanTest : public testing::Test {
         string);
   }
 
-  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
+  std::shared_ptr<memory::MemoryPool> rootPool_;
+  std::shared_ptr<memory::MemoryPool> pool_;
 
   std::unique_ptr<HashStringAllocator> allocator_;
 

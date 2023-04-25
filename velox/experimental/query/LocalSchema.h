@@ -55,7 +55,8 @@ class LocalSchema : public SchemaSource {
   LocalSchema(
       const std::string& path,
       velox::dwio::common::FileFormat format,
-      const std::string& connectorId);
+      const std::string& connectorId,
+      std::shared_ptr<velox::memory::MemoryPool> pool);
 
   void fetchSchemaTable(std::string_view name, const Schema* schema) override;
 
