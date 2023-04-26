@@ -143,6 +143,10 @@ class QueryCtx : public Context {
     return queryId_;
   }
 
+  void testingOverrideMemoryPool(std::shared_ptr<memory::MemoryPool> pool) {
+    pool_ = std::move(pool);
+  }
+
  private:
   static Config* FOLLY_NONNULL getEmptyConfig() {
     static const std::unique_ptr<Config> kEmptyConfig =
@@ -152,11 +156,8 @@ class QueryCtx : public Context {
 
   void initPool(const std::string& queryId) {
     if (pool_ == nullptr) {
-      pool_ = memory::getProcessDefaultMemoryManager().getPool(
+      pool_ = memory::defaultMemoryManager().addRootPool(
           QueryCtx::generatePoolName(queryId));
-    }
-    if (pool_->getMemoryUsageTracker() == nullptr) {
-      pool_->setMemoryUsageTracker(memory::MemoryUsageTracker::create());
     }
   }
 

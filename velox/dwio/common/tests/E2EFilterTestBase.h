@@ -79,9 +79,8 @@ class E2EFilterTestBase : public testing::Test {
   static constexpr int32_t kRowsInGroup = 10'000;
 
   void SetUp() override {
-    rootPool_ =
-        memory::getProcessDefaultMemoryManager().getPool("E2EFilterTestBase");
-    leafPool_ = rootPool_->addChild("E2EFilterTestBase");
+    rootPool_ = memory::defaultMemoryManager().addRootPool("E2EFilterTestBase");
+    leafPool_ = rootPool_->addLeafChild("E2EFilterTestBase");
   }
 
   static bool typeKindSupportsValueHook(TypeKind kind) {
@@ -254,7 +253,18 @@ class E2EFilterTestBase : public testing::Test {
       const std::vector<RowVectorPtr>& batches,
       const std::vector<std::string>& filterable);
 
-  void testSenario(
+ private:
+  void testReadWithFilterLazy(
+      const std::shared_ptr<common::ScanSpec>& spec,
+      const std::vector<RowVectorPtr>& batches,
+      const std::vector<uint64_t>& hitRows);
+
+  void testPruningWithFilter(
+      std::vector<RowVectorPtr>& batches,
+      const std::vector<std::string>& filterable);
+
+ protected:
+  void testScenario(
       const std::string& columns,
       std::function<void()> customize,
       bool wrapInStruct,

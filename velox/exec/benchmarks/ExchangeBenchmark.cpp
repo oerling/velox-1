@@ -150,8 +150,9 @@ class ExchangeBenchmark : public VectorTestBase {
       int64_t maxMemory = kMaxMemory) {
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(), std::make_shared<core::MemConfig>(configSettings_));
-    queryCtx->pool()->setMemoryUsageTracker(
-        memory::MemoryUsageTracker::create(maxMemory));
+    queryCtx->testingOverrideMemoryPool(
+        memory::defaultMemoryManager().addRootPool(
+            queryCtx->queryId(), maxMemory));
     core::PlanFragment planFragment{planNode};
     return std::make_shared<Task>(
         taskId,

@@ -286,13 +286,14 @@ class ScanSpec {
 
   // Resets cached values after this or children were updated, e.g. a new filter
   // was added or existing filter was modified.
-  void resetCachedValues() {
+  void resetCachedValues(bool doReorder) {
     hasFilter_.reset();
     for (auto& child : children_) {
-      child->resetCachedValues();
+      child->resetCachedValues(doReorder);
     }
-
-    reorder();
+    if (doReorder) {
+      reorder();
+    }
   }
 
   void setEnableFilterReorder(bool enableFilterReorder) {
@@ -312,16 +313,33 @@ class ScanSpec {
 
   std::string toString() const;
 
+  // Add a field to this ScanSpec, with content projected out.
+  ScanSpec* addField(const std::string& name, column_index_t channel);
+
   // Add a field and its children recursively to this ScanSpec, all projected
   // out.
-  ScanSpec*
-  addField(const std::string& name, const Type&, column_index_t channel);
+  ScanSpec* addFieldRecursively(
+      const std::string& name,
+      const Type&,
+      column_index_t channel);
 
-  ScanSpec* addMapKeys(const Type&);
+  // Add a field for map key.
+  ScanSpec* addMapKeyField();
 
-  ScanSpec* addMapValues(const Type&);
+  // Add a field for map key, along with its child recursively.
+  ScanSpec* addMapKeyFieldRecursively(const Type&);
 
-  ScanSpec* addArrayElements(const Type&);
+  // Add a field for map value.
+  ScanSpec* addMapValueField();
+
+  // Add a field for map value, along with its child recursively.
+  ScanSpec* addMapValueFieldRecursively(const Type&);
+
+  // Add a field for array element.
+  ScanSpec* addArrayElementField();
+
+  // Add a field for array element, along with its child recursively.
+  ScanSpec* addArrayElementFieldRecursively(const Type&);
 
   // Add all child fields on the type recursively to this ScanSpec, all
   // projected out.

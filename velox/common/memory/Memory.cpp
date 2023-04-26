@@ -16,6 +16,8 @@
 
 #include "velox/common/memory/Memory.h"
 
+DECLARE_bool(velox_enable_memory_usage_track_in_default_memory_pool);
+
 namespace facebook::velox::memory {
 namespace {
 #define VELOX_MEM_MANAGER_CAP_EXCEEDED(cap)                         \
@@ -35,6 +37,7 @@ MemoryManager::MemoryManager(const Options& options)
     : allocator_{options.allocator->shared_from_this()},
       memoryQuota_{options.capacity},
       alignment_(std::max(MemoryAllocator::kMinAlignment, options.alignment)),
+      checkUsageLeak_(options.checkUsageLeak),
       poolDestructionCb_([&](MemoryPool* pool) { dropPool(pool); }),
       defaultRoot_{std::make_shared<MemoryPoolImpl>(
           this,
@@ -42,27 +45,35 @@ MemoryManager::MemoryManager(const Options& options)
           MemoryPool::Kind::kAggregate,
           nullptr,
           nullptr,
-          MemoryPool::Options{alignment_, memoryQuota_})},
-      deprecatedDefaultLeafPool_(defaultRoot_->addChild(
-          kDefaultLeafName.str(),
-          MemoryPool::Kind::kLeaf)) {
+          // NOTE: the default root memory pool has no quota limit, and it is
+          // used for system usage in production such as disk spilling.
+          MemoryPool::Options{
+              .alignment = alignment_,
+              .capacity = kMaxMemory,
+              .trackUsage =
+                  FLAGS_velox_enable_memory_usage_track_in_default_memory_pool})},
+      deprecatedDefaultLeafPool_(
+          defaultRoot_->addLeafChild(kDefaultLeafName.str())) {
   VELOX_CHECK_NOT_NULL(allocator_);
   VELOX_USER_CHECK_GE(memoryQuota_, 0);
   MemoryAllocator::alignmentCheck(0, alignment_);
 }
 
 MemoryManager::~MemoryManager() {
-  VELOX_CHECK_EQ(
-      numPools(),
-      0,
-      "There are {} unexpected alive memory pools allocated by user on memory manager destruction:\n{}",
-      numPools(),
-      toString());
+  if (checkUsageLeak_) {
+    VELOX_CHECK_EQ(
+        numPools(),
+        0,
+        "There are {} unexpected alive memory pools allocated by user on memory manager destruction:\n{}",
+        numPools(),
+        toString());
 
-  auto currentBytes = getTotalBytes();
-  if (currentBytes > 0) {
-    VELOX_MEM_LOG(WARNING) << "Leaked total memory of " << currentBytes
-                           << " bytes.";
+    const auto currentBytes = getTotalBytes();
+    VELOX_CHECK_EQ(
+        currentBytes,
+        0,
+        "Leaked total memory of {}",
+        succinctBytes(currentBytes));
   }
 }
 
@@ -74,23 +85,22 @@ uint16_t MemoryManager::alignment() const {
   return alignment_;
 }
 
-std::shared_ptr<MemoryPool> MemoryManager::getPool(
+std::shared_ptr<MemoryPool> MemoryManager::addRootPool(
     const std::string& name,
-    MemoryPool::Kind kind,
-    int64_t maxBytes) {
+    int64_t maxBytes,
+    bool trackUsage,
+    std::shared_ptr<MemoryReclaimer> reclaimer) {
   std::string poolName = name;
   if (poolName.empty()) {
     static std::atomic<int64_t> poolId{0};
-    poolName =
-        fmt::format("default_{}_{}", MemoryPool::kindString(kind), poolId++);
-  }
-  if (kind == MemoryPool::Kind::kLeaf) {
-    return defaultRoot_->addChild(poolName, kind);
+    poolName = fmt::format("default_root_{}", poolId++);
   }
 
   MemoryPool::Options options;
   options.alignment = alignment_;
   options.capacity = maxBytes;
+  options.trackUsage = trackUsage;
+  options.reclaimer = std::move(reclaimer);
   auto pool = std::make_shared<MemoryPoolImpl>(
       this,
       poolName,
@@ -101,6 +111,18 @@ std::shared_ptr<MemoryPool> MemoryManager::getPool(
   folly::SharedMutex::WriteHolder guard{mutex_};
   pools_.push_back(pool.get());
   return pool;
+}
+
+std::shared_ptr<MemoryPool> MemoryManager::addLeafPool(
+    const std::string& name,
+    bool threadSafe,
+    std::shared_ptr<MemoryReclaimer> reclaimer) {
+  std::string poolName = name;
+  if (poolName.empty()) {
+    static std::atomic<int64_t> poolId{0};
+    poolName = fmt::format("default_leaf_{}", poolId++);
+  }
+  return defaultRoot_->addLeafChild(poolName, threadSafe, reclaimer);
 }
 
 void MemoryManager::dropPool(MemoryPool* pool) {
@@ -117,7 +139,7 @@ void MemoryManager::dropPool(MemoryPool* pool) {
   VELOX_UNREACHABLE("Memory pool is not found");
 }
 
-MemoryPool& MemoryManager::deprecatedGetPool() {
+MemoryPool& MemoryManager::deprecatedLeafPool() {
   return *deprecatedDefaultLeafPool_;
 }
 
@@ -166,13 +188,14 @@ std::string MemoryManager::toString() const {
   return out.str();
 }
 
-IMemoryManager& getProcessDefaultMemoryManager() {
+IMemoryManager& defaultMemoryManager() {
   return MemoryManager::getInstance();
 }
 
-std::shared_ptr<MemoryPool> getDefaultMemoryPool(const std::string& name) {
-  auto& memoryManager = getProcessDefaultMemoryManager();
-  return memoryManager.getPool(name, MemoryPool::Kind::kLeaf);
+std::shared_ptr<MemoryPool> addDefaultLeafMemoryPool(
+    const std::string& name,
+    bool threadSafe) {
+  auto& memoryManager = defaultMemoryManager();
+  return memoryManager.addLeafPool(name, threadSafe);
 }
-
 } // namespace facebook::velox::memory

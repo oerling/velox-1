@@ -30,7 +30,6 @@ target_link_libraries(
   velox_serialization
   velox_external_date
   ${FOLLY}
-  ${DOUBLE_CONVERSION}
   gtest
   gtest_main
   gmock
@@ -45,7 +44,6 @@ target_link_libraries(
   velox_serialization
   ${FOLLY}
   ${FOLLY_BENCHMARK}
-  ${DOUBLE_CONVERSION}
   gtest
   gtest_main
   gflags::gflags
@@ -60,7 +58,6 @@ target_link_libraries(
   velox_serialization
   ${FOLLY}
   ${FOLLY_BENCHMARK}
-  ${DOUBLE_CONVERSION}
   gtest
   gtest_main
   gflags::gflags
@@ -75,7 +72,6 @@ target_link_libraries(
   velox_serialization
   ${FOLLY}
   ${FOLLY_BENCHMARK}
-  ${DOUBLE_CONVERSION}
   gtest
   gtest_main
   gflags::gflags
@@ -90,7 +86,6 @@ target_link_libraries(
   velox_serialization
   ${FOLLY}
   ${FOLLY_BENCHMARK}
-  ${DOUBLE_CONVERSION}
   gtest
   gtest_main
   gflags::gflags
@@ -105,7 +100,18 @@ target_link_libraries(
   velox_serialization
   ${FOLLY}
   ${FOLLY_BENCHMARK}
-  ${DOUBLE_CONVERSION}
+  gtest
+  gtest_main
+  gflags::gflags
+  glog::glog)
+
+add_executable(velox_string_view_benchmark StringViewBenchmark.cpp)
+
+target_link_libraries(
+  velox_string_view_benchmark
+  velox_type
+  ${FOLLY}
+  ${FOLLY_BENCHMARK}
   gtest
   gtest_main
   gflags::gflags

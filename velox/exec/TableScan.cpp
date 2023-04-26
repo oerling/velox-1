@@ -36,7 +36,16 @@ TableScan::TableScan(
           "TableScan"),
       tableHandle_(tableScanNode->tableHandle()),
       columnHandles_(tableScanNode->assignments()),
-      driverCtx_(driverCtx) {
+      driverCtx_(driverCtx),
+      connectorPool_(driverCtx_->task->addConnectorPoolLocked(
+          planNodeId(),
+          driverCtx_->pipelineId,
+          driverCtx_->driverId,
+          operatorType(),
+          tableHandle_->connectorId())),
+      readBatchSize_(driverCtx_->task->queryCtx()
+                         ->queryConfig()
+                         .preferredOutputBatchRows()) {
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 
@@ -92,7 +101,7 @@ RowVectorPtr TableScan::getOutput() {
 
       if (!dataSource_) {
         connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
-            connectorSplit->connectorId, planNodeId(), true);
+            connectorSplit->connectorId, planNodeId(), connectorPool_);
         dataSource_ = connector_->createDataSource(
             outputType_,
             tableHandle_,
@@ -132,7 +141,12 @@ RowVectorPtr TableScan::getOutput() {
         dataSource_->addSplit(connectorSplit);
       }
       ++stats_.wlock()->numSplits;
-      setBatchSize();
+
+      auto estimatedRowSize = dataSource_->estimatedRowSize();
+      readBatchSize_ =
+          estimatedRowSize == connector::DataSource::kUnknownRowSize
+          ? outputBatchRows()
+          : outputBatchRows(estimatedRowSize);
     }
 
     const auto ioTimeStartMicros = getCurrentTimeMicro();
@@ -149,10 +163,6 @@ RowVectorPtr TableScan::getOutput() {
 
     auto dataOptional = dataSource_->next(readBatchSize_, blockingFuture_);
     checkPreload();
-    if (!dataOptional.has_value()) {
-      blockingReason_ = BlockingReason::kWaitForConnector;
-      return nullptr;
-    }
 
     {
       auto lockedStats = stats_.wlock();
@@ -161,13 +171,18 @@ RowVectorPtr TableScan::getOutput() {
           RuntimeCounter(
               (getCurrentTimeMicro() - ioTimeStartMicros) * 1'000,
               RuntimeCounter::Unit::kNanos));
+
+      if (!dataOptional.has_value()) {
+        blockingReason_ = BlockingReason::kWaitForConnector;
+        return nullptr;
+      }
+
       lockedStats->rawInputPositions = dataSource_->getCompletedRows();
       lockedStats->rawInputBytes = dataSource_->getCompletedBytes();
       auto data = dataOptional.value();
       if (data) {
         if (data->size() > 0) {
-          lockedStats->inputPositions += data->size();
-          lockedStats->inputBytes += data->retainedSize();
+          lockedStats->addInputVector(data->estimateFlatSize(), data->size());
           return data;
         }
         continue;
@@ -176,15 +191,16 @@ RowVectorPtr TableScan::getOutput() {
 
     {
       auto lockedStats = stats_.wlock();
-      lockedStats->addRuntimeStat(
-          "preloadedSplits",
-          RuntimeCounter(numPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numPreloadedSplits_ = 0;
-      lockedStats->addRuntimeStat(
-          "readyPreloadedSplits",
-          RuntimeCounter(
-              numReadyPreloadedSplits_, RuntimeCounter::Unit::kNone));
-      numReadyPreloadedSplits_ = 0;
+      if (numPreloadedSplits_ > 0) {
+        lockedStats->addRuntimeStat(
+            "preloadedSplits", RuntimeCounter(numPreloadedSplits_));
+        numPreloadedSplits_ = 0;
+      }
+      if (numReadyPreloadedSplits_ > 0) {
+        lockedStats->addRuntimeStat(
+            "readyPreloadedSplits", RuntimeCounter(numReadyPreloadedSplits_));
+        numReadyPreloadedSplits_ = 0;
+      }
     }
 
     driverCtx_->task->splitFinished();
@@ -205,7 +221,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
        columns = columnHandles_,
        connector = connector_,
        ctx = operatorCtx_->createConnectorQueryCtx(
-           split->connectorId, planNodeId(), true),
+           split->connectorId, planNodeId(), connectorPool_),
        task = operatorCtx_->task(),
        split]() -> std::unique_ptr<DataSourcePtr> {
         if (task->isCancelled()) {
@@ -250,20 +266,6 @@ void TableScan::checkPreload() {
 
 bool TableScan::isFinished() {
   return noMoreSplits_;
-}
-
-void TableScan::setBatchSize() {
-  constexpr int64_t kMB = 1 << 20;
-  auto estimate = dataSource_->estimatedRowSize();
-  if (estimate == connector::DataSource::kUnknownRowSize) {
-    readBatchSize_ = kDefaultBatchSize;
-    return;
-  }
-  if (estimate < 1024) {
-    readBatchSize_ = 10000; // No more than 10MB of data per batch.
-    return;
-  }
-  readBatchSize_ = std::min<int64_t>(100, 10 * kMB / estimate);
 }
 
 void TableScan::addDynamicFilter(

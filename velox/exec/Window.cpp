@@ -52,8 +52,6 @@ Window::Window(
           operatorId,
           windowNode->id(),
           "Window"),
-      outputBatchSizeInBytes_(
-          driverCtx->queryConfig().preferredOutputBatchSize()),
       numInputColumns_(windowNode->sources()[0]->outputType()->size()),
       data_(std::make_unique<RowContainer>(
           windowNode->sources()[0]->outputType()->children(),
@@ -190,7 +188,7 @@ inline bool Window::compareRowsWithKeys(
 void Window::createPeerAndFrameBuffers() {
   // TODO: This computation needs to be revised. It only takes into account
   // the input columns size. We need to also account for the output columns.
-  numRowsPerOutput_ = data_->estimatedNumRowsPerBatch(outputBatchSizeInBytes_);
+  numRowsPerOutput_ = outputBatchRows(data_->estimateRowSize());
 
   peerStartBuffer_ = AlignedBuffer::allocate<vector_size_t>(
       numRowsPerOutput_, operatorCtx_->pool());
@@ -299,11 +297,9 @@ void Window::updateKRowsFrameBounds(
 
   if (frameArg.index == kConstantChannel) {
     auto constantOffset = frameArg.constant.value();
-    std::iota(
-        rawFrameBounds,
-        rawFrameBounds + numRows,
-        startRow + (isKPreceding ? -constantOffset : constantOffset) -
-            firstPartitionRow);
+    auto startValue = startRow +
+        (isKPreceding ? -constantOffset : constantOffset) - firstPartitionRow;
+    std::iota(rawFrameBounds, rawFrameBounds + numRows, startValue);
   } else {
     windowPartition_->extractColumn(
         frameArg.index, partitionOffset_, numRows, 0, frameArg.value);
@@ -315,11 +311,12 @@ void Window::updateKRowsFrameBounds(
           offsets[i], 1, "k in frame bounds must be at least 1");
     }
 
+    // Preceding involves subtracting from the current position, while following
+    // moves ahead.
+    int precedingFactor = isKPreceding ? -1 : 1;
     for (auto i = 0; i < numRows; i++) {
       rawFrameBounds[i] = (startRow + i) +
-          (isKPreceding ? -vector_size_t(offsets[i])
-                        : vector_size_t(offsets[i])) -
-          firstPartitionRow;
+          vector_size_t(precedingFactor * offsets[i]) - firstPartitionRow;
     }
   }
 }

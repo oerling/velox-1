@@ -39,9 +39,6 @@ class SimpleFunctionTest : public functions::test::FunctionBaseTest {
       return std::accumulate(data[row].begin(), data[row].end(), 0);
     });
   }
-
-  std::shared_ptr<memory::MemoryUsageTracker> tracker_{
-      memory::MemoryUsageTracker::create()};
 };
 
 template <typename T>
@@ -107,7 +104,7 @@ struct ArrayWriterFunction {
 
 TEST_F(SimpleFunctionTest, arrayWriter) {
   registerFunction<ArrayWriterFunction, Array<int64_t>, int64_t>(
-      {"array_writer_func"}, ARRAY(BIGINT()));
+      {"array_writer_func"});
 
   const size_t rows = arrayData.size();
   auto flatVector = makeFlatVector<int64_t>(rows, [](auto row) { return row; });
@@ -144,7 +141,7 @@ struct ArrayOfStringsWriterFunction {
 
 TEST_F(SimpleFunctionTest, arrayOfStringsWriter) {
   registerFunction<ArrayOfStringsWriterFunction, Array<Varchar>, int64_t>(
-      {"array_of_strings_writer_func"}, ARRAY(VARCHAR()));
+      {"array_of_strings_writer_func"});
 
   const size_t rows = stringArrayData.size();
   auto flatVector = makeFlatVector<int64_t>(rows, [](auto row) { return row; });
@@ -250,7 +247,7 @@ struct RowWriterFunction {
 
 TEST_F(SimpleFunctionTest, rowWriter) {
   registerFunction<RowWriterFunction, Row<int64_t, double>, int64_t>(
-      {"row_writer_func"}, ROW({BIGINT(), DOUBLE()}));
+      {"row_writer_func"});
 
   const size_t rows = rowVectorCol1.size();
   auto flatVector = makeFlatVector<int64_t>(rows, [](auto row) { return row; });
@@ -352,7 +349,7 @@ TEST_F(SimpleFunctionTest, arrayRowWriter) {
   registerFunction<
       ArrayRowWriterFunction,
       Array<Row<int64_t, double>>,
-      int32_t>({"array_row_writer_func"}, ARRAY(ROW({BIGINT(), DOUBLE()})));
+      int32_t>({"array_row_writer_func"});
 
   const size_t rows = rowVectorCol1.size();
   auto flatVector = makeFlatVector<int32_t>(rows, [](auto row) { return row; });
@@ -891,7 +888,6 @@ TEST_F(SimpleFunctionTest, cseDisabledFuncWithInput) {
 
 TEST_F(SimpleFunctionTest, reuseArgVector) {
   std::mt19937 rng;
-  pool_->setMemoryUsageTracker(tracker_->addChild());
 
   vector_size_t size = 256;
   auto data = makeRowVector({
@@ -903,10 +899,10 @@ TEST_F(SimpleFunctionTest, reuseArgVector) {
   auto exprSet =
       compileExpressions({"(c0 - 0.5::REAL) * 2.0::REAL + 0.3::REAL"}, rowType);
 
-  auto prevAllocations = pool_->getMemoryUsageTracker()->numAllocs();
+  auto prevAllocations = pool_->stats().numAllocs;
 
   evaluate(*exprSet, data);
-  auto currAllocations = pool_->getMemoryUsageTracker()->numAllocs();
+  auto currAllocations = pool_->stats().numAllocs;
 
   // Expect a single allocation for the result. Intermediate results should
   // reuse memory.
@@ -1065,4 +1061,50 @@ TEST_F(SimpleFunctionTest, isAsciiArgs) {
   input->as<SimpleVector<StringView>>()->computeAndSetIsAscii(rows);
   ASSERT_TRUE(function_t::isAsciiArgs(rows, {input}));
 }
+
+// Return false always.
+template <typename T>
+struct GenericOutputFunc {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  // If input is Array<x> out is x.
+  bool call(out_type<Generic<T1>>&, const arg_type<Array<Generic<T1>>>&) {
+    return false;
+  }
+};
+
+TEST_F(SimpleFunctionTest, evalGenericOutput) {
+  registerFunction<GenericOutputFunc, Generic<T1>, Array<Generic<T1>>>(
+      {"test_generic_out"});
+
+  auto input = makeArrayVector<int32_t>({{1, 2}, {1, 3}});
+  auto result = evaluate("test_generic_out(c0)", makeRowVector({input}));
+  auto expected = makeNullableFlatVector<int32_t>({std::nullopt, std::nullopt});
+  assertEqualVectors(expected, result);
+}
+
+template <typename T>
+struct NotDefaultNull {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  void
+  callNullable(int32_t& out, const int32_t* input1, const int32_t* input2) {
+    out = (input1 && input2) ? 1 : 2;
+  }
+
+  void callNullFree(int32_t& out, int32_t input1, int32_t input2) {
+    out = 10;
+  }
+};
+
+// Test that callNullable is called when nulls are purned.
+TEST_F(SimpleFunctionTest, testAllNotNull) {
+  auto input = makeNullableFlatVector<int32_t>({std::nullopt, 2});
+  registerFunction<NotDefaultNull, int32_t, int32_t, int32_t>({"func"});
+  // This expression triggers null pruinig on distinct fields.
+  auto result = evaluate(
+      "try(switch(func(c0, NULL::INT)==0, c0))", makeRowVector({input}));
+  auto expected = makeNullableFlatVector<int32_t>({std::nullopt, std::nullopt});
+  assertEqualVectors(expected, result);
+}
+
 } // namespace

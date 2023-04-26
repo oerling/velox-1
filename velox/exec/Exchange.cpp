@@ -23,16 +23,11 @@ namespace facebook::velox::exec {
 
 SerializedPage::SerializedPage(
     std::unique_ptr<folly::IOBuf> iobuf,
-    memory::MemoryPool* pool,
     std::function<void(folly::IOBuf&)> onDestructionCb)
     : iobuf_(std::move(iobuf)),
       iobufBytes_(chainBytes(*iobuf_.get())),
-      pool_(pool),
       onDestructionCb_(onDestructionCb) {
   VELOX_CHECK_NOT_NULL(iobuf_);
-  if (pool_ != nullptr) {
-    pool_->reserve(iobufBytes_);
-  }
   for (auto& buf : *iobuf_) {
     int32_t bufSize = buf.size();
     ranges_.push_back(ByteRange{
@@ -45,10 +40,6 @@ SerializedPage::SerializedPage(
 SerializedPage::~SerializedPage() {
   if (onDestructionCb_) {
     onDestructionCb_(*iobuf_.get());
-  }
-  if (pool_) {
-    // Release the tracked memory consumption for the query
-    pool_->release(iobufBytes_);
   }
 }
 
@@ -128,9 +119,10 @@ class LocalExchangeSource : public ExchangeSource {
             }
             inputPage->unshare();
             pages.push_back(
-                std::make_unique<SerializedPage>(std::move(inputPage), pool_));
+                std::make_unique<SerializedPage>(std::move(inputPage)));
             inputPage = nullptr;
           }
+          numPages_ += pages.size();
           int64_t ackSequence;
           {
             std::vector<ContinuePromise> promises;
@@ -164,8 +156,15 @@ class LocalExchangeSource : public ExchangeSource {
     buffers->deleteResults(taskId_, destination_);
   }
 
+  folly::F14FastMap<std::string, int64_t> stats() const override {
+    return {{"localExchangeSource.numPages", numPages_}};
+  }
+
  private:
   static constexpr uint64_t kMaxBytes = 32 * 1024 * 1024; // 32 MB
+
+  // Records the total number of pages fetched from sources.
+  int64_t numPages_{0};
 };
 
 std::unique_ptr<ExchangeSource> createLocalExchangeSource(
@@ -237,6 +236,16 @@ void ExchangeClient::close() {
   queue_->close();
 }
 
+folly::F14FastMap<std::string, RuntimeMetric> ExchangeClient::stats() const {
+  folly::F14FastMap<std::string, RuntimeMetric> stats;
+  for (const auto& source : sources_) {
+    for (const auto& [name, value] : source->stats()) {
+      stats[name].addValue(value);
+    }
+  }
+  return stats;
+}
+
 std::unique_ptr<SerializedPage> ExchangeClient::next(
     bool* atEnd,
     ContinueFuture* future) {
@@ -306,6 +315,7 @@ bool Exchange::getSplits(ContinueFuture* future) {
         if (atEnd_) {
           operatorCtx_->task()->multipleSplitsFinished(
               stats_.rlock()->numSplits);
+          recordStats();
         }
         return false;
       }
@@ -333,6 +343,7 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     if (atEnd_ && noMoreSplits_) {
       const auto numSplits = stats_.rlock()->numSplits;
       operatorCtx_->task()->multipleSplitsFinished(numSplits);
+      recordStats();
     }
     return BlockingReason::kNotBlocked;
   }
@@ -344,14 +355,13 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     std::vector<ContinueFuture> futures;
     futures.push_back(std::move(splitFuture_));
     futures.push_back(std::move(dataFuture));
-
     *future = folly::collectAny(futures).unit();
-  } else {
-    // Block until data becomes available.
-    *future = std::move(dataFuture);
+    return BlockingReason::kWaitForSplit;
   }
-  return stats_.rlock()->numSplits == 0 ? BlockingReason::kWaitForSplit
-                                        : BlockingReason::kWaitForExchange;
+
+  // Block until data becomes available.
+  *future = std::move(dataFuture);
+  return BlockingReason::kWaitForProducer;
 }
 
 bool Exchange::isFinished() {
@@ -376,8 +386,7 @@ RowVectorPtr Exchange::getOutput() {
   {
     auto lockedStats = stats_.wlock();
     lockedStats->rawInputBytes += rawInputBytes;
-    lockedStats->inputPositions += result_->size();
-    lockedStats->inputBytes += result_->retainedSize();
+    lockedStats->addInputVector(result_->estimateFlatSize(), result_->size());
   }
 
   if (inputStream_->atEnd()) {
@@ -386,6 +395,13 @@ RowVectorPtr Exchange::getOutput() {
   }
 
   return result_;
+}
+
+void Exchange::recordStats() {
+  auto lockedStats = stats_.wlock();
+  for (const auto& [name, value] : exchangeClient_->stats()) {
+    lockedStats->runtimeStats[name].merge(value);
+  }
 }
 
 VectorSerde* Exchange::getSerde() {

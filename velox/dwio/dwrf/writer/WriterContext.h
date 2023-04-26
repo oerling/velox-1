@@ -42,9 +42,9 @@ class WriterContext : public CompressionBufferPool {
       std::unique_ptr<encryption::EncryptionHandler> handler = nullptr)
       : config_{config},
         pool_{std::move(pool)},
-        dictionaryPool_{pool_->addChild(".dictionary")},
-        outputStreamPool_{pool_->addChild(".compression")},
-        generalPool_{pool_->addChild(".general")},
+        dictionaryPool_{pool_->addLeafChild(".dictionary")},
+        outputStreamPool_{pool_->addLeafChild(".compression")},
+        generalPool_{pool_->addLeafChild(".general")},
         handler_{std::move(handler)},
         compression{getConfig(Config::COMPRESSION)},
         compressionBlockSize{getConfig(Config::COMPRESSION_BLOCK_SIZE)},
@@ -72,11 +72,6 @@ class WriterContext : public CompressionBufferPool {
     }
     validateConfigs();
     VLOG(1) << fmt::format("Compression config: {}", compression);
-    if (auto tracker = pool_->getMemoryUsageTracker()) {
-      dictionaryPool_->setMemoryUsageTracker(tracker->addChild());
-      outputStreamPool_->setMemoryUsageTracker(tracker->addChild());
-      generalPool_->setMemoryUsageTracker(tracker->addChild());
-    }
     compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
         *generalPool_, compressionBlockSize + PAGE_HEADER_SIZE);
   }
@@ -249,9 +244,7 @@ class WriterContext : public CompressionBufferPool {
   }
 
   int64_t getMemoryBudget() const {
-    auto memoryUsageTracker = pool_->getMemoryUsageTracker();
-    return memoryUsageTracker ? memoryUsageTracker->maxMemory()
-                              : std::numeric_limits<int64_t>::max();
+    return pool_->capacity();
   }
 
   const encryption::EncryptionHandler& getEncryptionHandler() const {
@@ -445,7 +438,6 @@ class WriterContext : public CompressionBufferPool {
       case TypeKind::VARBINARY:
       case TypeKind::TIMESTAMP:
       case TypeKind::DATE:
-      case TypeKind::INTERVAL_DAY_TIME:
       case TypeKind::SHORT_DECIMAL:
       case TypeKind::LONG_DECIMAL:
         physicalSizeAggregators_.emplace(

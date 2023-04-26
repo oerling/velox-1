@@ -30,10 +30,9 @@
 #include "velox/type/Type.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
-DECLARE_int32(split_preload_per_driver);
-
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::common::test;
 using namespace facebook::velox::exec::test;
@@ -54,10 +53,6 @@ class TableScanTest : public virtual HiveConnectorTestBase {
       const RowTypePtr& rowType = nullptr) {
     auto inputs = rowType ? rowType : rowType_;
     return HiveConnectorTestBase::makeVectors(inputs, count, rowsPerVector);
-  }
-
-  exec::Split makeHiveSplitWithGroup(std::string path, int32_t group) {
-    return exec::Split(makeHiveConnectorSplit(std::move(path)), group);
   }
 
   exec::Split makeHiveSplit(std::string path) {
@@ -111,17 +106,15 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     return getTableScanRuntimeStats(task)["skippedSplits"].sum;
   }
 
-  static std::unordered_set<int32_t> getCompletedSplitGroups(
-      const std::shared_ptr<Task>& task) {
-    return task->taskStats().completedSplitGroups;
-  }
-
   static void waitForFinishedDrivers(
       const std::shared_ptr<Task>& task,
       uint32_t n) {
-    while (task->numFinishedDrivers() < n) {
+    // Limit wait to 10 seconds.
+    size_t iteration{0};
+    while (task->numFinishedDrivers() < n and iteration < 100) {
       /* sleep override */
       usleep(100'000); // 0.1 second.
+      ++iteration;
     }
     ASSERT_EQ(n, task->numFinishedDrivers());
   }
@@ -215,6 +208,40 @@ TEST_F(TableScanTest, allColumns) {
   EXPECT_LT(0, exec::TableScan::ioWaitNanos());
 }
 
+TEST_F(TableScanTest, connectorStats) {
+  auto hiveConnector =
+      std::dynamic_pointer_cast<connector::hive::HiveConnector>(
+          connector::getConnector(kHiveConnectorId));
+  EXPECT_NE(nullptr, hiveConnector);
+  auto cacheStats = hiveConnector->fileHandleCacheStats();
+  EXPECT_EQ(0, cacheStats.curSize);
+  EXPECT_EQ(0, cacheStats.pinnedSize);
+  EXPECT_EQ(0, cacheStats.numElements);
+  EXPECT_EQ(0, cacheStats.numHits);
+  EXPECT_EQ(0, cacheStats.numLookups);
+
+  for (size_t i = 0; i < 99; i++) {
+    auto vectors = makeVectors(10, 10);
+    auto filePath = TempFilePath::create();
+    writeToFile(filePath->path, vectors);
+    createDuckDbTable(vectors);
+    auto plan = tableScanNode();
+    assertQuery(plan, {filePath}, "SELECT * FROM tmp");
+  }
+
+  cacheStats = hiveConnector->fileHandleCacheStats();
+  EXPECT_EQ(0, cacheStats.pinnedSize);
+  EXPECT_EQ(99, cacheStats.numElements);
+  EXPECT_EQ(0, cacheStats.numHits);
+  EXPECT_EQ(99, cacheStats.numLookups);
+
+  cacheStats = hiveConnector->clearFileHandleCache();
+  EXPECT_EQ(0, cacheStats.pinnedSize);
+  EXPECT_EQ(0, cacheStats.numElements);
+  EXPECT_EQ(0, cacheStats.numHits);
+  EXPECT_EQ(99, cacheStats.numLookups);
+}
+
 TEST_F(TableScanTest, columnAliases) {
   auto vectors = makeVectors(1, 1'000);
   auto filePath = TempFilePath::create();
@@ -295,7 +322,7 @@ TEST_F(TableScanTest, subfieldPruningRowType) {
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, vectors);
   std::vector<common::Subfield> requiredSubfields;
-  requiredSubfields.emplace_back("c");
+  requiredSubfields.emplace_back("e.c");
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   assignments["e"] = std::make_shared<HiveColumnHandle>(
@@ -369,11 +396,9 @@ TEST_F(TableScanTest, subfieldPruningMapType) {
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, vectors);
   std::vector<common::Subfield> requiredSubfields;
-  for (int i = 0; i < kMapSize; i += 2) {
-    std::vector<std::unique_ptr<common::Subfield::PathElement>> path;
-    path.push_back(std::make_unique<common::Subfield::LongSubscript>(i));
-    requiredSubfields.emplace_back(std::move(path));
-  }
+  requiredSubfields.emplace_back("c[0]");
+  requiredSubfields.emplace_back("c[2]");
+  requiredSubfields.emplace_back("c[4]");
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   assignments["c"] = std::make_shared<HiveColumnHandle>(
@@ -442,9 +467,7 @@ TEST_F(TableScanTest, subfieldPruningArrayType) {
   auto filePath = TempFilePath::create();
   writeToFile(filePath->path, vectors);
   std::vector<common::Subfield> requiredSubfields;
-  std::vector<std::unique_ptr<common::Subfield::PathElement>> path;
-  path.push_back(std::make_unique<common::Subfield::LongSubscript>(2));
-  requiredSubfields.emplace_back(std::move(path));
+  requiredSubfields.emplace_back("c[3]");
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   assignments["c"] = std::make_shared<HiveColumnHandle>(
@@ -595,6 +618,80 @@ TEST_F(TableScanTest, count) {
   EXPECT_EQ(numRead, 10'000);
 }
 
+TEST_F(TableScanTest, batchSize) {
+  // Make a wide row of many BIGINT columns to ensure that row size is
+  // larger than 1KB.
+  auto rowSize = 1024; // 1KB
+  auto columnSize = sizeof(int64_t);
+  auto numColumns = 2 * rowSize / columnSize;
+  // Make total input size 2MB, less than 10MB.
+  auto totalInputSize = 2048 * 1024;
+  auto numRows = totalInputSize / rowSize; // 1024 rows
+
+  std::vector<std::string> names;
+  for (int i = 0; i < numColumns; i++) {
+    names.push_back(fmt::format("c{}", i));
+  }
+  auto rowType =
+      ROW(std::move(names), std::vector<TypePtr>(numColumns, BIGINT()));
+  auto vector = makeVectors(1, numRows, rowType);
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, vector);
+
+  createDuckDbTable(vector);
+
+  auto plan = PlanBuilder().tableScan(rowType).planNode();
+  // Test kPreferredOutputBatchBytes is set to be very small and less than a
+  // single row size. Then each output batch contains 1 and only 1 row, or
+  // the number of batches equals to the number of output rows.
+  {
+    auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                    .plan(plan)
+                    .splits(makeHiveConnectorSplits({filePath}))
+                    .config(
+                        QueryConfig::kPreferredOutputBatchBytes,
+                        folly::to<std::string>(rowSize - 100))
+                    .assertResults("SELECT * FROM tmp");
+    const auto opStats = task->taskStats().pipelineStats[0].operatorStats[0];
+
+    EXPECT_EQ(opStats.outputVectors, opStats.outputPositions);
+  }
+  // Test kPreferredOutputBatchBytes is set to be very large and more than the
+  // total input size.Then there would be only 1 output batch containing all
+  // output rows.
+  {
+    auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                    .plan(plan)
+                    .splits(makeHiveConnectorSplits({filePath}))
+                    .config(
+                        QueryConfig::kPreferredOutputBatchBytes,
+                        folly::to<std::string>(totalInputSize * 5))
+                    .assertResults("SELECT * FROM tmp");
+    const auto opStats = task->taskStats().pipelineStats[0].operatorStats[0];
+
+    EXPECT_EQ(opStats.outputVectors, 1);
+  }
+  // Test kPreferredOutputBatchBytes is set to be less than the total input
+  // size. Then there would be more than 1 output batch. Each batch contains
+  // more than 1 row but fewer than the total output rows.
+  {
+    auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                    .plan(plan)
+                    .splits(makeHiveConnectorSplits({filePath}))
+                    .config(
+                        QueryConfig::kPreferredOutputBatchBytes,
+                        folly::to<std::string>(totalInputSize - 1024))
+                    .assertResults("SELECT * FROM tmp");
+    const auto opStats = task->taskStats().pipelineStats[0].operatorStats[0];
+
+    EXPECT_GT(opStats.outputVectors, 1);
+    EXPECT_LT(opStats.outputVectors, opStats.outputPositions);
+    EXPECT_GT(opStats.outputPositions / opStats.outputVectors, 1);
+    EXPECT_LT(opStats.outputPositions / opStats.outputVectors, numRows);
+  }
+}
+
 // Test that adding the same split with the same sequence id does not cause
 // double read and the 2nd split is ignored.
 TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
@@ -698,11 +795,10 @@ TEST_F(TableScanTest, multipleSplits) {
 
     auto task = assertQuery(tableScanNode(), filePaths, "SELECT * FROM tmp");
     auto stats = getTableScanRuntimeStats(task);
-    auto preload = stats.at("preloadedSplits");
     if (numPrefetchSplit != 0) {
-      ASSERT_GT(preload.sum, 10);
+      ASSERT_GT(stats.at("preloadedSplits").sum, 10);
     } else {
-      ASSERT_EQ(preload.sum, 0);
+      ASSERT_EQ(stats.count("preloadedSplits"), 0);
     }
   }
 }
@@ -2249,178 +2345,6 @@ TEST_F(TableScanTest, structInArrayOrMap) {
                 .planNode();
 
   assertQuery(op, {filePath}, "select c0, c0 from tmp");
-}
-
-// Here we test various aspects of grouped/bucketed execution also involving
-// output buffer.
-TEST_F(TableScanTest, groupedExecutionWithOutputBuffer) {
-  // Create source file - we will read from it in 6 splits.
-  const size_t numSplits{6};
-  auto vectors = makeVectors(10, 1'000);
-  auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
-
-  auto planFragment =
-      PlanBuilder()
-          .tableScan(rowType_)
-          .partitionedOutput({}, 1, {"c0", "c1", "c2", "c3", "c4", "c5"})
-          .planFragment();
-  planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
-  planFragment.numSplitGroups = 10;
-  auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  auto task = std::make_shared<exec::Task>(
-      "0", std::move(planFragment), 0, std::move(queryCtx));
-  // 3 drivers max and 1 concurrent split group.
-  task->start(task, 3, 1);
-
-  // Add one splits before start to ensure we can handle such cases.
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-
-  // Only one split group should be in the processing mode, so 3 drivers.
-  EXPECT_EQ(3, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
-
-  // Add the rest of splits
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-
-  // One split group should be in the processing mode, so 3 drivers.
-  EXPECT_EQ(3, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
-
-  // Finalize one split group (8) and wait until 3 drivers are finished.
-  task->noMoreSplitsForGroup("0", 8);
-  waitForFinishedDrivers(task, 3);
-  // As one split group is finished, another one should kick in, so 3 drivers.
-  EXPECT_EQ(3, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>({8}), getCompletedSplitGroups(task));
-
-  // Finalize the second split group (1) and wait until 6 drivers are finished.
-  task->noMoreSplitsForGroup("0", 1);
-  waitForFinishedDrivers(task, 6);
-
-  // As one split group is finished, another one should kick in, so 3 drivers.
-  EXPECT_EQ(3, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>({1, 8}), getCompletedSplitGroups(task));
-
-  // Finalize the third split group (5) and wait until 9 drivers are finished.
-  task->noMoreSplitsForGroup("0", 5);
-  waitForFinishedDrivers(task, 9);
-
-  // No split groups should be processed at the moment, so 0 drivers.
-  EXPECT_EQ(0, task->numRunningDrivers());
-  EXPECT_EQ(
-      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
-
-  // Flag that we would have no more split groups.
-  task->noMoreSplits("0");
-
-  // 'Delete results' from output buffer triggers 'set all output consumed',
-  // which should finish the task.
-  auto outputBufferManager =
-      PartitionedOutputBufferManager::getInstance().lock();
-  outputBufferManager->deleteResults(task->taskId(), 0);
-
-  // Task must be finished at this stage.
-  EXPECT_EQ(TaskState::kFinished, task->state());
-  EXPECT_EQ(
-      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
-}
-
-// Here we test various aspects of grouped/bucketed execution.
-TEST_F(TableScanTest, groupedExecution) {
-  // Create source file - we will read from it in 6 splits.
-  const size_t numSplits{6};
-  auto vectors = makeVectors(10, 1'000);
-  auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
-
-  CursorParameters params;
-  params.planNode = tableScanNode(ROW({}, {}));
-  params.maxDrivers = 2;
-  // We will have 10 split groups 'in total', but our task will only handle
-  // three of them: 1, 5 and 8.
-  // Split 0 is from split group 1.
-  // Splits 1 and 2 are from split group 5.
-  // Splits 3, 4 and 5 are from split group 8.
-  params.executionStrategy = core::ExecutionStrategy::kGrouped;
-  params.numSplitGroups = 3;
-  params.numConcurrentSplitGroups = 2;
-
-  // Create the cursor with the task underneath. It is not started yet.
-  auto cursor = std::make_unique<TaskCursor>(params);
-  auto task = cursor->task();
-
-  // Add one splits before start to ensure we can handle such cases.
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-
-  // Start task now.
-  cursor->start();
-
-  // Only one split group should be in the processing mode, so 2 drivers.
-  EXPECT_EQ(2, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
-
-  // Add the rest of splits
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-
-  // Only two split groups should be in the processing mode, so 4 drivers.
-  EXPECT_EQ(4, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
-
-  // Finalize one split group (8) and wait until 2 drivers are finished.
-  task->noMoreSplitsForGroup("0", 8);
-  waitForFinishedDrivers(task, 2);
-
-  // As one split group is finished, another one should kick in, so 4 drivers.
-  EXPECT_EQ(4, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>({8}), getCompletedSplitGroups(task));
-
-  // Finalize the second split group (5) and wait until 4 drivers are finished.
-  task->noMoreSplitsForGroup("0", 5);
-  waitForFinishedDrivers(task, 4);
-
-  // As the second split group is finished, only one is left, so 2 drivers.
-  EXPECT_EQ(2, task->numRunningDrivers());
-  EXPECT_EQ(std::unordered_set<int32_t>({5, 8}), getCompletedSplitGroups(task));
-
-  // Finalize the third split group (1) and wait until 6 drivers are finished.
-  task->noMoreSplitsForGroup("0", 1);
-  waitForFinishedDrivers(task, 6);
-
-  // No split groups should be processed at the moment, so 0 drivers.
-  EXPECT_EQ(0, task->numRunningDrivers());
-  EXPECT_EQ(
-      std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
-
-  // Make sure split groups with no splits are reported as complete.
-  task->noMoreSplitsForGroup("0", 3);
-  EXPECT_EQ(
-      std::unordered_set<int32_t>({1, 3, 5, 8}), getCompletedSplitGroups(task));
-
-  // Flag that we would have no more split groups.
-  task->noMoreSplits("0");
-
-  // Make sure we've got the right number of rows.
-  int32_t numRead = 0;
-  while (cursor->moveNext()) {
-    auto vector = cursor->current();
-    EXPECT_EQ(vector->childrenSize(), 0);
-    numRead += vector->size();
-  }
-
-  // Task must be finished at this stage.
-  EXPECT_EQ(TaskState::kFinished, task->state());
-  EXPECT_EQ(
-      std::unordered_set<int32_t>({1, 3, 5, 8}), getCompletedSplitGroups(task));
-  EXPECT_EQ(numRead, numSplits * 10'000);
 }
 
 TEST_F(TableScanTest, addSplitsToFailedTask) {

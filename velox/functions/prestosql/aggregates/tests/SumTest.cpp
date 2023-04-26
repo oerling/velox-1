@@ -18,10 +18,11 @@
 #include "velox/exec/AggregationHook.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
 
 using facebook::velox::exec::test::PlanBuilder;
 using namespace facebook::velox::exec::test;
+using namespace facebook::velox::functions::aggregate::test;
 
 namespace facebook::velox::aggregate::test {
 
@@ -265,6 +266,38 @@ TEST_F(SumTest, sumDecimal) {
   createDuckDbTable({input});
   testAggregations(
       {input}, {}, {"sum(c0)", "sum(c1)"}, "SELECT sum(c0), sum(c1) FROM tmp");
+
+  // Decimal sum aggregation with multiple groups.
+  auto inputRows = {
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({1, 1}),
+           makeShortDecimalFlatVector({37220, 53450}, DECIMAL(5, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({2, 2}),
+           makeShortDecimalFlatVector({10410, 9250}, DECIMAL(5, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({3, 3}),
+           makeShortDecimalFlatVector({-12783, 0}, DECIMAL(5, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({1, 2}),
+           makeShortDecimalFlatVector({23178, 41093}, DECIMAL(5, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({2, 3}),
+           makeShortDecimalFlatVector({-10023, 5290}, DECIMAL(5, 2))}),
+  };
+
+  auto expectedResult = {
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({1}),
+           makeLongDecimalFlatVector({113848}, DECIMAL(38, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({2}),
+           makeLongDecimalFlatVector({50730}, DECIMAL(38, 2))}),
+      makeRowVector(
+          {makeNullableFlatVector<int32_t>({3}),
+           makeLongDecimalFlatVector({-7493}, DECIMAL(38, 2))})};
+
+  testAggregations(inputRows, {"c0"}, {"sum(c1)"}, expectedResult);
 }
 
 TEST_F(SumTest, sumDecimalOverflow) {
