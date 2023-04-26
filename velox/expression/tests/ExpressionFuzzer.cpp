@@ -1151,14 +1151,15 @@ void ExpressionFuzzer::go() {
     auto resultVector = generateResultVector(plan->type());
     ResultOrError result;
     catch {
-    result = verifier_.verify(
-        plan,
-        rowVector,
-        resultVector ? BaseVector::copy(*resultVector) : nullptr,
-        true, // canThrow
-        columnsToWrapInLazy);
+      result = verifier_.verify(
+          plan,
+          rowVector,
+          resultVector ? BaseVector::copy(*resultVector) : nullptr,
+          true, // canThrow
+          columnsToWrapInLazy);
     }
-  } catch (const std::exception& e) {
+  }
+  catch (const std::exception& e) {
     if (FLAGS_drilldown) {
       drilldown(plan, rowVector, columnsToWrapInLazy);
     }
@@ -1168,11 +1169,11 @@ void ExpressionFuzzer::go() {
     // If both paths threw compatible exceptions, we add a try() function to
     // the expression's root and execute it again. This time the expression
     // cannot throw.
-    if (result.exceptionPtr && FLAGS_retry_with_try) {
-      LOG(INFO)
-          << "Both paths failed with compatible exceptions. Retrying expression using try().";
-      retryWithTry(plan, rowVector, resultVector, columnsToWrapInLazy);
-    }
+  if (result.exceptionPtr && FLAGS_retry_with_try) {
+    LOG(INFO)
+        << "Both paths failed with compatible exceptions. Retrying expression using try().";
+    retryWithTry(plan, rowVector, resultVector, columnsToWrapInLazy);
+  }
 
     LOG(INFO) << "==============================> Done with iteration " << i;
     reSeed();
