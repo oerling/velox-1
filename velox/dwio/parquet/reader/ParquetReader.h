@@ -102,7 +102,8 @@ class ReaderBase {
   memory::MemoryPool& pool_;
   const uint64_t directorySizeGuess_;
   const uint64_t filePreloadThreshold_;
-  const dwio::common::ReaderOptions& options_;
+  // Copy of options. Must be owned by 'this'.
+  const dwio::common::ReaderOptions options_;
   std::unique_ptr<velox::dwio::common::BufferedInput> input_;
   uint64_t fileLength_;
   std::unique_ptr<thrift::FileMetaData> fileMetaData_;
