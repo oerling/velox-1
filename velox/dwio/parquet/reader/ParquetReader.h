@@ -161,7 +161,7 @@ class ParquetRowReader : public dwio::common::RowReader {
 
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
-  const dwio::common::RowReaderOptions& options_;
+  const dwio::common::RowReaderOptions options_;
 
   // All row groups from file metadata.
   const std::vector<thrift::RowGroup>& rowGroups_;
