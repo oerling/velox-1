@@ -3007,3 +3007,58 @@ TEST_F(DateTimeFunctionsTest, dateFunctionTimestampWithTimezone) {
       dateFunction(
           (-18297 * kSecondsInDay + 6 * 3'600) * 1'000, "America/Los_Angeles"));
 }
+
+TEST_F(DateTimeFunctionsTest, timeZoneHour) {
+  const auto timezone_hour = [&](const char* time, const char* timezone) {
+    Timestamp ts = util::fromTimestampString(time);
+    auto timestamp = ts.toMillis();
+    auto hour = evaluateWithTimestampWithTimezone<int64_t>(
+                    "timezone_hour(c0)", timestamp, timezone)
+                    .value();
+    return hour;
+  };
+
+  // Asia/Kolkata - should return 5 throughout the year
+  EXPECT_EQ(5, timezone_hour("2023-01-01 03:20:00", "Asia/Kolkata"));
+  EXPECT_EQ(5, timezone_hour("2023-06-01 03:20:00", "Asia/Kolkata"));
+  // America/Los_Angeles - Day light savings is from March 12 to Nov 5
+  EXPECT_EQ(-8, timezone_hour("2023-03-11 12:00:00", "America/Los_Angeles"));
+  EXPECT_EQ(-8, timezone_hour("2023-03-12 02:30:00", "America/Los_Angeles"));
+  EXPECT_EQ(-7, timezone_hour("2023-03-13 12:00:00", "America/Los_Angeles"));
+  EXPECT_EQ(-7, timezone_hour("2023-11-05 01:30:00", "America/Los_Angeles"));
+  EXPECT_EQ(-8, timezone_hour("2023-12-05 01:30:00", "America/Los_Angeles"));
+  // Different time with same date
+  EXPECT_EQ(-4, timezone_hour("2023-01-01 03:20:00", "Canada/Atlantic"));
+  EXPECT_EQ(-4, timezone_hour("2023-01-01 10:00:00", "Canada/Atlantic"));
+  // Invalid inputs
+  VELOX_ASSERT_THROW(
+      timezone_hour("invalid_date", "Canada/Atlantic"),
+      "Unable to parse timestamp value: \"invalid_date\", expected format is (YYYY-MM-DD HH:MM:SS[.MS])");
+  VELOX_ASSERT_THROW(
+      timezone_hour("123456", "Canada/Atlantic"),
+      "Unable to parse timestamp value: \"123456\", expected format is (YYYY-MM-DD HH:MM:SS[.MS])");
+}
+
+TEST_F(DateTimeFunctionsTest, timeZoneMinute) {
+  const auto timezone_minute = [&](const char* time, const char* timezone) {
+    Timestamp ts = util::fromTimestampString(time);
+    auto timestamp = ts.toMillis();
+    auto minute = evaluateWithTimestampWithTimezone<int64_t>(
+                      "timezone_minute(c0)", timestamp, timezone)
+                      .value();
+    return minute;
+  };
+
+  EXPECT_EQ(30, timezone_minute("1970-01-01 03:20:00", "Asia/Kolkata"));
+  EXPECT_EQ(0, timezone_minute("1970-01-01 03:20:00", "America/Los_Angeles"));
+  EXPECT_EQ(0, timezone_minute("1970-05-01 04:20:00", "America/Los_Angeles"));
+  EXPECT_EQ(0, timezone_minute("1970-01-01 03:20:00", "Canada/Atlantic"));
+  EXPECT_EQ(30, timezone_minute("1970-01-01 03:20:00", "Asia/Katmandu"));
+  EXPECT_EQ(45, timezone_minute("1970-01-01 03:20:00", "Pacific/Chatham"));
+  VELOX_ASSERT_THROW(
+      timezone_minute("abc", "Pacific/Chatham"),
+      "Unable to parse timestamp value: \"abc\", expected format is (YYYY-MM-DD HH:MM:SS[.MS])");
+  VELOX_ASSERT_THROW(
+      timezone_minute("2023-", "Pacific/Chatham"),
+      "Unable to parse timestamp value: \"2023-\", expected format is (YYYY-MM-DD HH:MM:SS[.MS])");
+}
