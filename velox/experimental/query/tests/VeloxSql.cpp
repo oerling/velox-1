@@ -39,6 +39,7 @@
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
+#include "velox/vector/VectorSaver.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -108,6 +109,17 @@ DEFINE_string(
     "",
     "Text of query. If empty, reads ';' separated queries from standard input");
 
+DEFINE_string(
+    record,
+    "",
+    "Name of SQL file with a single query. Writes the "
+    "output to <name>.ref for use with --check");
+DEFINE_string(
+    check,
+    "",
+    "Name of SQL file with a single query. Runs and "
+    "compares with <name>.ref, previously recorded with --record");
+
 DEFINE_validator(data_path, &notEmpty);
 DEFINE_validator(data_format, &validateDataFormat);
 
@@ -157,6 +169,7 @@ class VeloxRunner {
     optimizerPool_ = rootPool_->addLeafChild("optimizer");
     schemaPool_ = rootPool_->addLeafChild("schema");
     pool_ = rootPool_->addAggregateChild("exec");
+    checkPool_ = rootPool_->addLeafChild("check");
 
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();
@@ -248,7 +261,87 @@ class VeloxRunner {
     stats.micros = micros;
   }
 
+  /// stores results and plans to 'ref', to be used with --check.
+  void setRecordStream(std::ofstream* ref) {
+    record_ = ref;
+  }
+
+  /// Compares results to data in 'ref'. 'ref' is produced with --record.
+  void setCheckStream(std::ifstream* ref) {
+    check_ = ref;
+  }
+
   void run(const std::string& sql) {
+    if (record_ || check_) {
+      std::unique_ptr<LocalRunner> localRunner;
+      std::string error;
+      std::string plan;
+      std::vector<RowVectorPtr> result;
+      run1(sql, nullptr, nullptr, &error);
+      if (error.empty()) {
+        localRunner = run1(sql, &result, &plan, &error);
+      }
+      if (record_) {
+        if (!error.empty()) {
+          writeString(error, *record_);
+        } else {
+          writeString("", *record_);
+          writeString(plan, *record_);
+          writeVectors(result, *record_);
+        }
+      } else if (check_) {
+        auto refError = readString(*check_);
+        if (refError != error) {
+          ++numFailed_;
+          std::cerr << "Expected error "
+                    << (refError.empty() ? std::string("no error") : refError)
+                    << " got "
+                    << (error.empty() ? std::string("no error") : error)
+                    << std::endl;
+          if (!refError.empty()) {
+            readString(*check_);
+            readVectors(*check_);
+          }
+          return;
+        }
+        if (!error.empty()) {
+          // errors matched.
+          return;
+        }
+        auto refPlan = readString(*check_);
+        auto refResult = readVectors(*check_);
+        bool planMiss = false;
+        bool resultMiss = false;
+        if (plan != refPlan) {
+          std::cerr << "Plan mismatch: Expected " << refPlan << std::endl
+                    << " got " << plan << std::endl;
+          ++numPlanMismatch_;
+          planMiss = true;
+        }
+        if (!assertEqualResults(refResult, result)) {
+          ++numResultMismatch_;
+          resultMiss = true;
+        }
+        if (!resultMiss && !planMiss) {
+          ++numPassed_;
+        } else {
+          ++numFailed_;
+        }
+      }
+    } else {
+      run1(sql);
+    }
+  }
+
+  /// Runs a query and returns the result as a single vector in *resultVector,
+  /// the plan text in *planString and the error message in *errorString.
+  /// *errorString is not set if no error. Any of these may be nullptr.
+  std::unique_ptr<LocalRunner> run1(
+      const std::string& sql,
+      std::vector<RowVectorPtr>* resultVector = nullptr,
+      std::string* planString = nullptr,
+      std::string* errorString = nullptr) {
+    std::unique_ptr<LocalRunner> runner;
     std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
@@ -265,7 +358,10 @@ class VeloxRunner {
       plan = planner_->plan(sql);
     } catch (std::exception& e) {
       std::cout << "parse error: " << e.what();
-      return;
+      if (errorString) {
+        *errorString = fmt::format("Parse error: {}", e.what());
+      }
+      return nullptr;
     }
     std::vector<ExecutableFragment> fragments;
     ExecutablePlanOptions opts;
@@ -282,22 +378,31 @@ class VeloxRunner {
       facebook::verax::Optimization opt(
           *plan, veraxSchema, *history_, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
+      if (planString) {
+        *planString = best->op->toString(true, false);
+      }
       fragments = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {
       facebook::verax::queryCtx() = nullptr;
-      std::cout << "Optimization error: " << e.what();
-      return;
+      std::cout << "optimizer error: " << e.what();
+      if (errorString) {
+        *errorString = fmt::format("optimizer error: {}", e.what());
+      }
+      return nullptr;
     }
     facebook::verax::queryCtx() = nullptr;
     RunStats runStats;
     try {
-      LocalRunner runner(fragments, queryCtx_, splitSourceFactory_.get(), opts);
+      runner = std::make_unique<LocalRunner>(
+          fragments, queryCtx_, splitSourceFactory_.get(), opts);
       std::vector<RowVectorPtr> results;
-      runInner(runner, results, runStats);
+      runInner(*runner, results, runStats);
 
       printResults(results);
-
-      auto stats = runner.stats();
+      if (resultVector) {
+        *resultVector = results;
+      }
+      auto stats = runner->stats();
       for (int32_t i = fragments.size() - 1; i >= 0; --i) {
         for (auto& pipeline : stats[i].pipelineStats) {
           auto& first = pipeline.operatorStats[0];
@@ -318,7 +423,66 @@ class VeloxRunner {
       history_->recordVeloxExecution(nullptr, fragments, stats);
     } catch (const std::exception& e) {
       LOG(ERROR) << "Query terminated with: " << e.what();
-      return;
+      if (errorString) {
+        *errorString = fmt::format("Runtime error: {}", e.what());
+      }
+      return nullptr;
+    }
+    return runner;
+  }
+
+  /// Returns exit status for run. 0 is passed, 1 is plan differences only, 2 is
+  /// result differences.
+  int32_t checkStatus() {
+    std::cerr << numPassed_ << " passed " << numFailed_ << " failed "
+              << numPlanMismatch_ << " plan mismatch " << numResultMismatch_
+              << " result mismatch" << std::endl;
+    if (!numFailed_) {
+      return 0;
+    }
+    return numResultMismatch_ ? 2 : 1;
+  }
+
+ private:
+  template <typename T>
+  static void write(const T& value, std::ostream& out) {
+    out.write((char*)&value, sizeof(T));
+  }
+
+  template <typename T>
+  static T read(std::istream& in) {
+    T value;
+    in.read((char*)&value, sizeof(T));
+    return value;
+  }
+
+  static std::string readString(std::istream& in) {
+    auto len = read<int32_t>(in);
+    std::string result;
+    result.resize(len);
+    in.read(result.data(), result.size());
+    return result;
+  }
+
+  static void writeString(const std::string& string, std::ostream& out) {
+    write<int32_t>(string.size(), out);
+    out.write(string.data(), string.size());
+  }
+
+  std::vector<RowVectorPtr> readVectors(std::istream& in) {
+    auto size = read<int32_t>(in);
+    std::vector<RowVectorPtr> result(size);
+    for (auto i = 0; i < size; ++i) {
+      result[i] =
+          std::dynamic_pointer_cast<RowVector>(restoreVector(in, checkPool_.get()));
+    }
+    return result;
+  }
+
+  void writeVectors(std::vector<RowVectorPtr>& vectors, std::ostream& out) {
+    write<int32_t>(vectors.size(), out);
+    for (auto& vector : vectors) {
+      saveVector(*vector, out);
     }
   }
 
@@ -356,6 +520,7 @@ class VeloxRunner {
   std::shared_ptr<memory::MemoryPool> optimizerPool_;
   std::shared_ptr<memory::MemoryPool> schemaPool_;
   std::shared_ptr<memory::MemoryPool> pool_;
+  std::shared_ptr<memory::MemoryPool> checkPool_;
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
   std::shared_ptr<folly::CPUThreadPoolExecutor> executor_;
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
@@ -366,13 +531,19 @@ class VeloxRunner {
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;
   std::unordered_map<std::string, std::string> config_;
   std::unordered_map<std::string, std::string> hiveConfig_;
+  std::ofstream* record_{nullptr};
+  std::ifstream* check_{nullptr};
+  int32_t numPassed_{0};
+  int32_t numFailed_{0};
+  int32_t numPlanMismatch_{0};
+  int32_t numResultMismatch_{0};
 };
 
-std::string readCommand(bool& end) {
+std::string readCommand(std::istream& in, bool& end) {
   std::string line;
   std::stringstream command;
   end = false;
-  while (std::getline(std::cin, line)) {
+  while (std::getline(in, line)) {
     if (!line.empty() && line.back() == ';') {
       command << line.substr(0, line.size() - 1);
       return command.str();
@@ -383,40 +554,71 @@ std::string readCommand(bool& end) {
   return "";
 }
 
+void readCommands(
+    VeloxRunner& runner,
+    const std::string& prompt,
+    std::istream& in) {
+  for (;;) {
+    std::cout << prompt;
+    bool end;
+    std::string command = readCommand(in, end);
+    if (end) {
+      break;
+    }
+    if (command.empty()) {
+      continue;
+    }
+    auto cstr = command.c_str();
+    char* flag = nullptr;
+    char* value = nullptr;
+    if (sscanf(cstr, "flag %ms = %ms", &flag, &value) == 2) {
+      std::cout << gflags::SetCommandLineOption(flag, value);
+      free(flag);
+      free(value);
+      continue;
+    }
+    runner.run(command);
+  }
+}
+
+void recordQueries(VeloxRunner& runner) {
+  std::ifstream in(FLAGS_record);
+  std::ofstream ref;
+  ref.open(FLAGS_record + ".ref", std::ios_base::out | std::ios_base::trunc);
+  runner.setRecordStream(&ref);
+  readCommands(runner, "", in);
+}
+
+void checkQueries(VeloxRunner& runner) {
+  std::ifstream in(FLAGS_check);
+  std::ifstream ref(FLAGS_check + ".ref");
+  runner.setCheckStream(&ref);
+  readCommands(runner, "", in);
+  exit(runner.checkStatus());
+}
+
 int main(int argc, char** argv) {
   std::string kUsage(
       "Velox local SQL command line. Run 'velox_sql --help' for available options.\n");
   gflags::SetUsageMessage(kUsage);
   folly::init(&argc, &argv, false);
   VeloxRunner runner;
-  runner.initialize();
-  if (!FLAGS_query.empty()) {
-    runner.run(FLAGS_query);
-  } else {
-    std::cout
-        << "Velox SQL. Type statement and end with ;. flag name=value; sets a gflag."
-        << std::endl;
-    for (;;) {
-      std::cout << "SQL> ";
-      bool end;
-      std::string command = readCommand(end);
-      if (end) {
-        break;
-      }
-      if (command.empty()) {
-        continue;
-      }
-      auto cstr = command.c_str();
-      char* flag = nullptr;
-      char* value = nullptr;
-      if (sscanf(cstr, "flag %ms = %ms", &flag, &value) == 2) {
-        std::cout << gflags::SetCommandLineOption(flag, value);
-        free(flag);
-        free(value);
-        continue;
-      }
-      runner.run(command);
+  try {
+    runner.initialize();
+    if (!FLAGS_query.empty()) {
+      runner.run(FLAGS_query);
+    } else if (!FLAGS_record.empty()) {
+      recordQueries(runner);
+    } else if (!FLAGS_check.empty()) {
+      checkQueries(runner);
+    } else {
+      std::cout
+          << "Velox SQL. Type statement and end with ;. flag name=value; sets a gflag."
+          << std::endl;
+      readCommands(runner, "SQL>", std::cin);
     }
+  } catch (std::exception& e) {
+    exit(-1);
   }
   return 0;
 }

@@ -29,6 +29,7 @@ test::TaskCursor* LocalRunner::cursor() {
   auto lastStage = makeStages();
   params_.planNode = plan_.back().fragment.planNode;
   cursor_ = std::make_unique<test::TaskCursor>(params_);
+  stages_.push_back({cursor_->task()});
   if (!lastStage.empty()) {
     auto node = plan_.back().inputStages[0].consumer;
     for (auto& remote : lastStage) {
