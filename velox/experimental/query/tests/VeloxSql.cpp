@@ -473,8 +473,8 @@ class VeloxRunner {
     auto size = read<int32_t>(in);
     std::vector<RowVectorPtr> result(size);
     for (auto i = 0; i < size; ++i) {
-      result[i] =
-          std::dynamic_pointer_cast<RowVector>(restoreVector(in, checkPool_.get()));
+      result[i] = std::dynamic_pointer_cast<RowVector>(
+          restoreVector(in, checkPool_.get()));
     }
     return result;
   }
