@@ -26,7 +26,8 @@ namespace facebook::velox::core {
 using MakeTableScan = std::function<PlanNodePtr(
     const std::string& id,
     const std::string& name,
-    const RowTypePtr& rowType)>;
+    const RowTypePtr& rowType,
+    const std::vector<std::string>& columnNames)>;
 
 class DuckDbQueryPlanner {
  public:

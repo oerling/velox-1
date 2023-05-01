@@ -137,9 +137,12 @@ struct RunStats {
         << succinctBytes(rawInputBytes / (micros / 1000000.0)) << "/s raw, "
         << succinctNanos(userNanos) << " user " << succinctNanos(systemNanos)
         << " system (" << (100 * (userNanos + systemNanos) / (micros * 1000))
-        << "%), flags: ";
-    for (auto& pair : flags) {
-      out << pair.first << "=" << pair.second << " ";
+        << "%)";
+    if (!flags.empty()) {
+      out << ", flags: ";
+      for (auto& pair : flags) {
+        out << pair.first << "=" << pair.second << " ";
+      }
     }
     out << std::endl << "======" << std::endl;
     if (detail) {
@@ -168,7 +171,6 @@ class VeloxRunner {
 
     optimizerPool_ = rootPool_->addLeafChild("optimizer");
     schemaPool_ = rootPool_->addLeafChild("schema");
-    pool_ = rootPool_->addAggregateChild("exec");
     checkPool_ = rootPool_->addLeafChild("check");
 
     functions::prestosql::registerAllScalarFunctions();
@@ -191,16 +193,18 @@ class VeloxRunner {
         toFileFormat(FLAGS_data_format),
         kHiveConnectorId,
         schemaPool_);
-    planner_ = std::make_unique<core::DuckDbQueryPlanner>(pool_.get());
+    planner_ = std::make_unique<core::DuckDbQueryPlanner>(optimizerPool_.get());
     for (auto& pair : schema_->tables()) {
       planner_->registerTable(pair.first, pair.second->rowType());
     }
-    planner_->registerTableScan([this](
-                                    const std::string& id,
-                                    const std::string& name,
-                                    const RowTypePtr& rowType) {
-      return toTableScan(id, name, rowType);
-    });
+    planner_->registerTableScan(
+        [this](
+            const std::string& id,
+            const std::string& name,
+            const RowTypePtr& rowType,
+            const std::vector<std::string>& columnNames) {
+          return toTableScan(id, name, rowType, columnNames);
+        });
     splitSourceFactory_ = std::make_unique<LocalSplitSourceFactory>(
         *schema_, FLAGS_num_splits_per_file);
     history_ = std::make_unique<facebook::verax::VeloxHistory>();
@@ -212,7 +216,8 @@ class VeloxRunner {
   core::PlanNodePtr toTableScan(
       const std::string& id,
       const std::string& name,
-      const RowTypePtr& rowType) {
+      const RowTypePtr& rowType,
+      const std::vector<std::string>& columnNames) {
     using namespace connector::hive;
     auto handle = std::make_shared<HiveTableHandle>(
         kHiveConnectorId, name, true, SubfieldFilters{}, nullptr);
@@ -221,14 +226,17 @@ class VeloxRunner {
 
     auto table = schema_->findTable(name);
     for (auto i = 0; i < rowType->size(); ++i) {
-      auto column = rowType->nameOf(i);
+      auto projectedName = rowType->nameOf(i);
+      auto& columnName = columnNames[i];
       VELOX_CHECK(
-          table->columns.find(column) != table->columns.end(),
+          table->columns.find(columnName) != table->columns.end(),
           "No column {} in {}",
-          column,
+          columnName,
           name);
-      assignments[column] = std::make_shared<HiveColumnHandle>(
-          column, HiveColumnHandle::ColumnType::kRegular, rowType->childAt(i));
+      assignments[projectedName] = std::make_shared<HiveColumnHandle>(
+          columnName,
+          HiveColumnHandle::ColumnType::kRegular,
+          rowType->childAt(i));
     }
     return std::make_shared<core::TableScanNode>(
         id, rowType, handle, assignments);
@@ -345,19 +353,19 @@ class VeloxRunner {
     std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
-    queryCtx_ = std::make_shared<core::QueryCtx>(
+    auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(),
         std::make_shared<core::MemConfig>(config_),
         std::move(connectorConfigs),
         memory::MemoryAllocator::getInstance(),
-        pool_,
+        rootPool_->addAggregateChild("query"),
         spillExecutor_);
 
     core::PlanNodePtr plan;
     try {
       plan = planner_->plan(sql);
     } catch (std::exception& e) {
-      std::cout << "parse error: " << e.what();
+      std::cerr << "parse error: " << e.what() << std::endl;
       if (errorString) {
         *errorString = fmt::format("Parse error: {}", e.what());
       }
@@ -384,7 +392,7 @@ class VeloxRunner {
       fragments = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {
       facebook::verax::queryCtx() = nullptr;
-      std::cout << "optimizer error: " << e.what();
+      std::cerr << "optimizer error: " << e.what() << std::endl;
       if (errorString) {
         *errorString = fmt::format("optimizer error: {}", e.what());
       }
@@ -394,7 +402,7 @@ class VeloxRunner {
     RunStats runStats;
     try {
       runner = std::make_unique<LocalRunner>(
-          fragments, queryCtx_, splitSourceFactory_.get(), opts);
+          fragments, queryCtx, splitSourceFactory_.get(), opts);
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 
@@ -418,11 +426,11 @@ class VeloxRunner {
               FLAGS_include_custom_stats);
           std::cout << std::endl;
         }
-        std::cout << runStats.toString(false) << std::endl;
       }
       history_->recordVeloxExecution(nullptr, fragments, stats);
+      std::cout << runStats.toString(false) << std::endl;
     } catch (const std::exception& e) {
-      LOG(ERROR) << "Query terminated with: " << e.what();
+      std::cerr << "Query terminated with: " << e.what() << std::endl;
       if (errorString) {
         *errorString = fmt::format("Runtime error: {}", e.what());
       }
@@ -519,12 +527,10 @@ class VeloxRunner {
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> optimizerPool_;
   std::shared_ptr<memory::MemoryPool> schemaPool_;
-  std::shared_ptr<memory::MemoryPool> pool_;
   std::shared_ptr<memory::MemoryPool> checkPool_;
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
   std::shared_ptr<folly::CPUThreadPoolExecutor> executor_;
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
-  std::shared_ptr<core::QueryCtx> queryCtx_;
   std::unique_ptr<facebook::verax::LocalSchema> schema_;
   std::unique_ptr<LocalSplitSourceFactory> splitSourceFactory_;
   std::unique_ptr<facebook::verax::VeloxHistory> history_;
@@ -597,6 +603,15 @@ void checkQueries(VeloxRunner& runner) {
   exit(runner.checkStatus());
 }
 
+std::string sevenBit(std::string& in) {
+  for (auto i = 0; i < in.size(); ++i) {
+    if ((uint8_t)in[i] > 127) {
+      in[i] = ' ';
+    }
+  }
+  return in;
+}
+
 int main(int argc, char** argv) {
   std::string kUsage(
       "Velox local SQL command line. Run 'velox_sql --help' for available options.\n");
@@ -618,6 +633,7 @@ int main(int argc, char** argv) {
       readCommands(runner, "SQL>", std::cin);
     }
   } catch (std::exception& e) {
+    std::cerr << "Error: " << e.what() << std::endl;
     exit(-1);
   }
   return 0;

@@ -379,10 +379,10 @@ class JoinEdge {
 
   std::string toString() const;
 
- private:
   //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
   void guessFanout();
 
+ private:
   // Leading left side join keys.
   ExprVector leftKeys_;
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.

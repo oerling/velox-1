@@ -135,13 +135,18 @@ PlanNodePtr toVeloxPlan(
   VELOX_CHECK_EQ(logicalGet.function.name, "seq_scan");
   VELOX_CHECK_EQ(0, sources.size());
 
+  std::vector<std::string> columnNames;
   const auto& columnIds = logicalGet.column_ids;
-  std::vector<std::string> names(columnIds.size());
-  std::vector<TypePtr> types(columnIds.size());
-
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  constexpr uint64_t kNone = ~0UL;
   for (auto i = 0; i < columnIds.size(); ++i) {
-    names[i] = queryContext.nextColumnName(logicalGet.names[columnIds[i]]);
-    types[i] = duckdb::toVeloxType(logicalGet.returned_types[columnIds[i]]);
+    if (columnIds[i] == kNone) {
+      continue;
+    }
+    names.push_back(queryContext.nextColumnName(logicalGet.names[columnIds[i]]));
+    types.push_back(duckdb::toVeloxType(logicalGet.returned_types[columnIds[i]]));
+    columnNames.push_back(logicalGet.names[columnIds[i]]);
   }
 
   auto rowType = ROW(std::move(names), std::move(types));
@@ -151,7 +156,7 @@ PlanNodePtr toVeloxPlan(
 
   if (it == queryContext.inMemoryTables.end()) {
     return queryContext.makeTableScan(
-        queryContext.nextNodeId(), tableName, rowType);
+        queryContext.nextNodeId(), tableName, rowType, columnNames);
   }
   std::vector<RowVectorPtr> data;
   for (auto& rowVector : it->second) {
@@ -287,6 +292,15 @@ PlanNodePtr toVeloxPlan(
       std::move(sources[0]));
 }
 
+namespace {
+std::string translateAggregateName(const std::string& name) {
+  if (name == "first") {
+    return "any";
+  }
+  return name;
+}
+} // namespace
+
 PlanNodePtr toVeloxPlan(
     ::duckdb::LogicalAggregate& logicalAggregate,
     memory::MemoryPool* pool,
@@ -318,8 +332,9 @@ PlanNodePtr toVeloxPlan(
       }
     }
 
-    aggregates.push_back(std::make_shared<CallTypedExpr>(
-        call->type(), fieldInputs, call->name()));
+    auto aggName = translateAggregateName(call->name());
+    aggregates.push_back(
+        std::make_shared<CallTypedExpr>(call->type(), fieldInputs, aggName));
   }
 
   std::vector<FieldAccessTypedExprPtr> groupingKeys;
@@ -437,6 +452,15 @@ PlanNodePtr toVeloxPlan(
           pool,
           std::move(sources),
           queryContext);
+    case ::duckdb::LogicalOperatorType::LOGICAL_LIMIT: {
+      auto& limit = dynamic_cast<const ::duckdb::LogicalLimit&>(plan);
+      return std::make_shared<core::LimitNode>(
+          queryContext.nextNodeId(),
+          limit.offset_val,
+          limit.limit_val,
+          false,
+          sources[0]);
+    }
     default:
       VELOX_NYI(
           "Plan node is not supported yet: {}",

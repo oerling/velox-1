@@ -268,19 +268,101 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
         l->as<Column>()->equals(r->as<Column>());
         currentSelect_->addJoinEquality(l, r, {}, false, false, false, false);
       } else {
-        VELOX_NYI("Only column to column inner joins");
+        currentSelect_->addJoinEquality(l, r, {}, false, false, false, false);
       }
     }
     currentSelect_->conjuncts.insert(
         currentSelect_->conjuncts.end(), conjuncts.begin(), conjuncts.end());
   } else {
-    VELOX_NYI("Only inner joins");
+    auto joinType = join.joinType();
+    bool leftOptional =
+        joinType == core::JoinType::kRight || joinType == core::JoinType::kFull;
+    bool rightOptional =
+        joinType == core::JoinType::kLeft || joinType == core::JoinType::kFull;
+    bool rightExists = joinType == core::JoinType::kLeftSemiFilter;
+    bool rightNotExists = joinType == core::JoinType::kAnti;
+    PlanObjectSet leftTables;
+    PlanObjectConstPtr rightTable = nullptr;
+
+    for (auto i = 0; i < leftKeys.size(); ++i) {
+      auto l = leftKeys[i];
+      leftTables.unionColumns(l);
+      auto r = rightKeys.at(i);
+      auto rightKeyTable = r->singleTable();
+      if (rightTable) {
+        VELOX_CHECK(rightKeyTable == rightTable);
+      } else {
+        rightTable = rightKeyTable;
+      }
+    }
+    VELOX_CHECK(rightTable, "No right side in join");
+    std::vector<PlanObjectConstPtr> leftTableVector;
+    leftTables.forEach(
+        [&](PlanObjectConstPtr table) { leftTableVector.push_back(table); });
+    Declare(
+        JoinEdge,
+        edge,
+        leftTableVector.size() == 1 ? leftTableVector[0] : nullptr,
+        rightTable,
+        conjuncts,
+        leftOptional,
+        rightOptional,
+        rightExists,
+        rightNotExists);
+    currentSelect_->joins.push_back(edge);
+    for (auto i = 0; i < leftKeys.size(); ++i) {
+      edge->addEquality(leftKeys[i], rightKeys[i]);
+    }
+  }
+}
+
+
+void Optimization::translateNonEqualityJoin(
+    const core::NestedLoopJoinNode& join) {
+  auto joinType = join.joinType();
+  bool isInner = joinType == core::JoinType::kInner;
+  makeQueryGraph(*join.sources()[0], allow(PlanType::kJoin));
+  // For an inner join a join tree on the right can be flattened, for all other
+  // kinds it must be kept together in its own dt.
+  makeQueryGraph(*join.sources()[1], isInner ? allow(PlanType::kJoin) : 0);
+  ExprVector conjuncts;
+  translateConjuncts(join.joinCondition(), conjuncts);
+  if (conjuncts.empty()) {
+    // Inner cross product. Join conditions may be added from
+    // conjuncts of the enclosing DerivedTable.
+    return;
+  }
+  PlanObjectSet tables;
+  for (auto& conjunct : conjuncts) {
+    tables.unionColumns(conjunct);
+  }
+  std::vector<PlanObjectConstPtr> tableVector;
+  tables.forEach(
+      [&](PlanObjectConstPtr table) { tableVector.push_back(table); });
+  if (tableVector.size() == 2) {
+    Declare(
+        JoinEdge,
+        edge,
+        tableVector[0],
+        tableVector[1],
+        conjuncts,
+        false,
+        false,
+        false,
+        false);
+    edge->guessFanout();
+    currentSelect_->joins.push_back(edge);
+
+  } else {
+    VELOX_NYI("Multiway non-equality join not supported");
+    currentSelect_->conjuncts.insert(
+        currentSelect_->conjuncts.end(), conjuncts.begin(), conjuncts.end());
   }
 }
 
 bool isJoin(const core::PlanNode& node) {
   auto name = node.name();
-  if (name == "HashJoin" || name == "MergeJoin" || name == "CrossJoin") {
+  if (name == "HashJoin" || name == "MergeJoin" || name == "NestedLoopJoin") {
     return true;
   }
   if (name == "Project" || name == "Filter") {
@@ -427,9 +509,12 @@ PlanObjectPtr Optimization::makeQueryGraph(
     translateJoin(*reinterpret_cast<const core::AbstractJoinNode*>(&node));
     return currentSelect_;
   }
-  if (name == "CrossJoin") {
-    makeQueryGraph(*node.sources()[0], allow(PlanType::kJoin));
-    makeQueryGraph(*node.sources()[1], allow(PlanType::kJoin));
+  if (name == "NestedLoopJoin") {
+    if (!contains(allowedInDt, PlanType::kJoin)) {
+      return wrapInDt(node);
+    }
+    translateNonEqualityJoin(
+        *reinterpret_cast<const core::NestedLoopJoinNode*>(&node));
     return currentSelect_;
   }
   if (name == "LocalPartition") {
@@ -480,6 +565,8 @@ PlanObjectPtr Optimization::makeQueryGraph(
     auto limit = reinterpret_cast<const core::LimitNode*>(&node);
     currentSelect_->limit = limit->count();
     currentSelect_->offset = limit->offset();
+  } else {
+    VELOX_NYI("Unsupported PlanNode {}", name);
   }
   return currentSelect_;
 }
