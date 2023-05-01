@@ -196,56 +196,60 @@ class LogicalCrossProduct : public LogicalOperator {
   void ResolveTypes() override;
 };
 
-  //! LogicalLimit represents a LIMIT clause
+//! LogicalLimit represents a LIMIT clause
 class LogicalLimit : public LogicalOperator {
-public:
-	LogicalLimit(int64_t limit_val, int64_t offset_val, unique_ptr<Expression> limit, unique_ptr<Expression> offset);
+ public:
+  LogicalLimit(
+      int64_t limit_val,
+      int64_t offset_val,
+      unique_ptr<Expression> limit,
+      unique_ptr<Expression> offset);
 
-	//! Limit and offset values in case they are constants, used in optimizations.
-	int64_t limit_val;
-	int64_t offset_val;
-	//! The maximum amount of elements to emit
-	unique_ptr<Expression> limit;
-	//! The offset from the start to begin emitting elements
-	unique_ptr<Expression> offset;
+  //! Limit and offset values in case they are constants, used in optimizations.
+  int64_t limit_val;
+  int64_t offset_val;
+  //! The maximum amount of elements to emit
+  unique_ptr<Expression> limit;
+  //! The offset from the start to begin emitting elements
+  unique_ptr<Expression> offset;
 
-public:
-	vector<ColumnBinding> GetColumnBindings() override;
+ public:
+  vector<ColumnBinding> GetColumnBindings() override;
 
-	idx_t EstimateCardinality(ClientContext &context) override;
+  idx_t EstimateCardinality(ClientContext& context) override;
 
-protected:
-	void ResolveTypes() override;
+ protected:
+  void ResolveTypes() override;
 };
 
 class LogicalOrder : public LogicalOperator {
-public:
-	explicit LogicalOrder(vector<BoundOrderByNode> orders)
-	    : LogicalOperator(LogicalOperatorType::LOGICAL_ORDER_BY), orders(move(orders)) {
-	}
+ public:
+  explicit LogicalOrder(vector<BoundOrderByNode> orders)
+      : LogicalOperator(LogicalOperatorType::LOGICAL_ORDER_BY),
+        orders(move(orders)) {}
 
-	vector<BoundOrderByNode> orders;
+  vector<BoundOrderByNode> orders;
 
-	string ParamsToString() const override {
-		string result;
-		for (idx_t i = 0; i < orders.size(); i++) {
-			if (i > 0) {
-				result += "\n";
-			}
-			result += orders[i].expression->GetName();
-		}
-		return result;
-	}
+  string ParamsToString() const override {
+    string result;
+    for (idx_t i = 0; i < orders.size(); i++) {
+      if (i > 0) {
+        result += "\n";
+      }
+      result += orders[i].expression->GetName();
+    }
+    return result;
+  }
 
-public:
-	vector<ColumnBinding> GetColumnBindings() override {
-		return children[0]->GetColumnBindings();
-	}
+ public:
+  vector<ColumnBinding> GetColumnBindings() override {
+    return children[0]->GetColumnBindings();
+  }
 
-protected:
-	void ResolveTypes() override {
-		types = children[0]->types;
-	}
+ protected:
+  void ResolveTypes() override {
+    types = children[0]->types;
+  }
 };
-  
+
 } // namespace duckdb

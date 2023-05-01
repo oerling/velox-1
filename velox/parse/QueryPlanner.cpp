@@ -144,8 +144,10 @@ PlanNodePtr toVeloxPlan(
     if (columnIds[i] == kNone) {
       continue;
     }
-    names.push_back(queryContext.nextColumnName(logicalGet.names[columnIds[i]]));
-    types.push_back(duckdb::toVeloxType(logicalGet.returned_types[columnIds[i]]));
+    names.push_back(
+        queryContext.nextColumnName(logicalGet.names[columnIds[i]]));
+    types.push_back(
+        duckdb::toVeloxType(logicalGet.returned_types[columnIds[i]]));
     columnNames.push_back(logicalGet.names[columnIds[i]]);
   }
 

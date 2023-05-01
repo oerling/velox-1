@@ -316,7 +316,6 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
   }
 }
 
-
 void Optimization::translateNonEqualityJoin(
     const core::NestedLoopJoinNode& join) {
   auto joinType = join.joinType();

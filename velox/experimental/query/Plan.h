@@ -445,7 +445,7 @@ class Optimization {
 
   // Adds a join edge for a join with no equalities.
   void translateNonEqualityJoin(const velox::core::NestedLoopJoinNode& join);
-  
+
   // Adds order by information to the enclosing DerivedTable.
   OrderByPtr FOLLY_NULLABLE
   translateOrderBy(const velox::core::OrderByNode& order);
