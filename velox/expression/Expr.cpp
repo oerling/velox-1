@@ -232,7 +232,8 @@ void Expr::computeMetadata() {
   }
   for (auto& input : inputs_) {
     if (!input->isMultiplyReferenced_ &&
-        isSameFields(distinctFields_, input->distinctFields_)) {
+        isSameFields(distinctFields_, input->distinctFields_)
+	&& propagatesNulls_ == input->propagatesNulls_) {
       input->distinctFields_.clear();
     }
   }
