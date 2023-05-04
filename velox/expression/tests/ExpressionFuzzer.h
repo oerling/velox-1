@@ -157,7 +157,7 @@ class ExpressionFuzzer {
       bool& minimalFound);
   // Tries 'plan' against 'rowVector' with and without pre-existing contents in
   // result vector.
-  bool try2(
+  bool tryWithResults(
       core::TypedExprPtr plan,
       const RowVectorPtr& rowVector,
       const std::vector<column_index_t>& columnsToWrapInLazy);

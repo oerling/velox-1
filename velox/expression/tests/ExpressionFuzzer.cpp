@@ -1252,30 +1252,28 @@ void ExpressionFuzzer::go() {
     auto columnsToWrapInLazy = generateLazyColumnIds(rowVector, vectorFuzzer_);
     auto resultVector = generateResultVector(plan->type());
     ResultOrError result;
-    catch {
+    try {
       result = verifier_.verify(
           plan,
           rowVector,
           resultVector ? BaseVector::copy(*resultVector) : nullptr,
           true, // canThrow
           columnsToWrapInLazy);
+    } catch (const std::exception& e) {
+      if (FLAGS_drilldown) {
+        drilldown(plan, rowVector, columnsToWrapInLazy);
+      }
+      throw;
     }
-  }
-  catch (const std::exception& e) {
-    if (FLAGS_drilldown) {
-      drilldown(plan, rowVector, columnsToWrapInLazy);
-    }
-    throw;
-  }
 
     // If both paths threw compatible exceptions, we add a try() function to
     // the expression's root and execute it again. This time the expression
     // cannot throw.
-  if (result.exceptionPtr && FLAGS_retry_with_try) {
-    LOG(INFO)
-        << "Both paths failed with compatible exceptions. Retrying expression using try().";
-    retryWithTry(plan, rowVector, resultVector, columnsToWrapInLazy);
-  }
+    if (result.exceptionPtr && FLAGS_retry_with_try) {
+      LOG(INFO)
+          << "Both paths failed with compatible exceptions. Retrying expression using try().";
+      retryWithTry(plan, rowVector, resultVector, columnsToWrapInLazy);
+    }
 
     LOG(INFO) << "==============================> Done with iteration " << i;
     reSeed();
@@ -1292,7 +1290,7 @@ void ExpressionFuzzer::drilldown(
     core::TypedExprPtr plan,
     const RowVectorPtr& rowVector,
     const std::vector<column_index_t>& columnsToWrapInLazy) {
-  if (try2(plan, rowVector, columnsToWrapInLazy)) {
+  if (tryWithResults(plan, rowVector, columnsToWrapInLazy)) {
     errorExit("Retry should have failed");
   }
   bool minimalFound = false;
@@ -1311,7 +1309,7 @@ void ExpressionFuzzer::drilldownRecursive(
     bool& minimalFound) {
   bool anyFailed = false;
   for (auto& input : plan->inputs()) {
-    if (!try2(input, rowVector, columnsToWrapInLazy)) {
+    if (!tryWithResults(input, rowVector, columnsToWrapInLazy)) {
       anyFailed = true;
       drilldownRecursive(input, rowVector, columnsToWrapInLazy, minimalFound);
       if (minimalFound) {
@@ -1323,17 +1321,17 @@ void ExpressionFuzzer::drilldownRecursive(
     minimalFound = true;
     LOG(INFO) << "Failed with all children succeeding: " << plan->toString();
     // Re-running the minimum failed. Put breakpoint here to debug.
-    try2(plan, rowVector, columnsToWrapInLazy);
+    tryWithResults(plan, rowVector, columnsToWrapInLazy);
     if (!columnsToWrapInLazy.empty()) {
       LOG(INFO) << "Trying without lazy:";
-      if (try2(plan, rowVector, {})) {
+      if (tryWithResults(plan, rowVector, {})) {
         LOG(INFO) << "Minimal failure succeeded without lazy vectors";
       }
     }
   }
 }
 
-bool ExpressionFuzzer::try2(
+bool ExpressionFuzzer::tryWithResults(
     core::TypedExprPtr plan,
     const RowVectorPtr& rowVector,
     const std::vector<column_index_t>& columnsToWrapInLazy) {
