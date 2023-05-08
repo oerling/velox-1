@@ -577,7 +577,12 @@ void Optimization::addPostprocess(
     plan = finalAgg;
   }
   if (dt->orderBy) {
-    Declare(OrderBy, orderBy,plan, dt->orderBy->distribution().order, dt->orderBy->distribution().orderType);
+    Declare(
+        OrderBy,
+        orderBy,
+        plan,
+        dt->orderBy->distribution().order,
+        dt->orderBy->distribution().orderType);
     state.addCost(*orderBy);
     plan = orderBy;
   }

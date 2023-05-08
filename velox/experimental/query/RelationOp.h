@@ -397,7 +397,8 @@ struct OrderBy : public RelationOp {
       : RelationOp(
             RelType::kOrderBy,
             input,
-            input ? input->distribution().copyWithOrder(keys, orderType) : Distribution(DistributionType(), 1, {}, keys, orderType)),
+            input ? input->distribution().copyWithOrder(keys, orderType)
+                  : Distribution(DistributionType(), 1, {}, keys, orderType)),
         dependentKeys(dependentKeys) {}
 
   // Keys where the key expression is functionally dependent on

@@ -140,7 +140,7 @@ core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
       }
       if (call->name() == toName("cast")) {
         return std::make_shared<core::CastTypedExpr>(
-						     toTypePtr(expr->value().type), std::move(inputs), false);
+            toTypePtr(expr->value().type), std::move(inputs), false);
       }
       return std::make_shared<core::CallTypedExpr>(
           toTypePtr(expr->value().type), std::move(inputs), call->name());

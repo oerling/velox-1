@@ -436,8 +436,10 @@ PlanNodePtr toVeloxPlan(
     keys.push_back(
         projections.toFieldAccess(*order.expression, source->outputType()));
     sortOrder.push_back(SortOrder(
-        order.type == ::duckdb::OrderType::ASCENDING || order.type == ::duckdb::OrderType::ORDER_DEFAULT,
-        order.null_order == ::duckdb::OrderByNullType::NULLS_FIRST  || order.null_order == ::duckdb::OrderByNullType::ORDER_DEFAULT));
+        order.type == ::duckdb::OrderType::ASCENDING ||
+            order.type == ::duckdb::OrderType::ORDER_DEFAULT,
+        order.null_order == ::duckdb::OrderByNullType::NULLS_FIRST ||
+            order.null_order == ::duckdb::OrderByNullType::ORDER_DEFAULT));
   }
 
   return std::make_shared<OrderByNode>(

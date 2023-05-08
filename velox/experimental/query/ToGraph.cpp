@@ -258,21 +258,18 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
   return nullptr;
 }
 
-OrderByPtr 
-Optimization::translateOrderBy(const core::OrderByNode& order) {
+OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   OrderTypeVector orderType;
   for (auto& sort : order.sortingOrders()) {
-    orderType.push_back(sort.isAscending() ? (sort.isNullsFirst() ? OrderType::kAscNullsFirst : OrderType::kAscNullsLast)
-			: (sort.isNullsFirst() ? OrderType::kDescNullsFirst : OrderType::kDescNullsLast));
+    orderType.push_back(
+        sort.isAscending() ? (sort.isNullsFirst() ? OrderType::kAscNullsFirst
+                                                  : OrderType::kAscNullsLast)
+                           : (sort.isNullsFirst() ? OrderType::kDescNullsFirst
+                                                  : OrderType::kDescNullsLast));
   }
-    auto keys = translateColumns(order.sortingKeys());
-    Declare(
-	    OrderBy,
-	    orderBy,
-        nullptr,
-	    keys,
-	    orderType, {});
-    return orderBy;
+  auto keys = translateColumns(order.sortingKeys());
+  Declare(OrderBy, orderBy, nullptr, keys, orderType, {});
+  return orderBy;
 }
 
 void Optimization::translateJoin(const core::AbstractJoinNode& join) {
