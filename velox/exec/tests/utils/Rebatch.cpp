@@ -19,15 +19,15 @@
 
 namespace facebook::velox::exec::test {
 
-  //static
-  void TestingRebatchNode::registerNode() {
-    static bool registered;
-    if (!registered) {
-      registered = true;
-      Operator::registerOperator(std::make_unique<TestingRebatchFactory>());
-    }
+// static
+void TestingRebatchNode::registerNode() {
+  static bool registered;
+  if (!registered) {
+    registered = true;
+    Operator::registerOperator(std::make_unique<TestingRebatchFactory>());
   }
-  
+}
+
 void TestingRebatch::nextEncoding() {
   encoding_ = static_cast<Encoding>(
       (static_cast<int32_t>(encoding_) + 1) % kNumEncodings);
@@ -69,9 +69,10 @@ RowVectorPtr TestingRebatch::getOutput() {
     }
     case Encoding::kSameDoubleDict:
     default: {
-      auto indices = velox::test::makeIndicesInReverse(input_->size(), input_->pool());
+      auto indices =
+          velox::test::makeIndicesInReverse(input_->size(), input_->pool());
       output_ = BaseVector::create<RowVector>(
-					      input_->type(), input_->size(), input_->pool());
+          input_->type(), input_->size(), input_->pool());
       for (auto i = 0; i < input_->type()->size(); ++i) {
         output_->childAt(i) = BaseVector::wrapInDictionary(
             BufferPtr(nullptr),

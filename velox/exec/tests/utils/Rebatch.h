@@ -22,7 +22,7 @@ namespace facebook::velox::exec::test {
 class TestingRebatchNode : public core::PlanNode {
  public:
   explicit TestingRebatchNode(core::PlanNodeId id, core::PlanNodePtr input)
-    : PlanNode(id), sources_({input}) {
+      : PlanNode(id), sources_({input}) {
     registerNode();
   }
 
@@ -55,7 +55,7 @@ class TestingRebatch : public Operator {
     kDicts,
     kSameDict,
     kSameDoubleDict,
-      kLastEncoding // Must be last in enum.
+    kLastEncoding // Must be last in enum.
   };
   static constexpr int32_t kNumEncodings =
       static_cast<int32_t>(Encoding::kLastEncoding);

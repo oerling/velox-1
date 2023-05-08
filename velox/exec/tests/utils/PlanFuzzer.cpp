@@ -28,9 +28,7 @@ DEFINE_int32(
 namespace facebook::velox::exec::test {
 
 namespace {
-void addSplitVector(
-    Task* task,
-    const std::vector<Task::TaskSplit>& splits) {
+void addSplitVector(Task* task, const std::vector<Task::TaskSplit>& splits) {
   for (auto& split : splits) {
     auto splitCopy = split.split;
     task->addSplit(split.nodeId, std::move(splitCopy));
@@ -57,9 +55,10 @@ int32_t maxNodeId(const core::PlanNodePtr& node, std::vector<int32_t>& allIds) {
   return max;
 }
 
-#define COPY_PLAN_CASE(className)                                  \
-  else if (const className* node = dynamic_cast<const className*>(source.get())) { \
-    return std::make_shared<className>(*node);                     \
+#define COPY_PLAN_CASE(className)                                             \
+  else if (                                                                   \
+      const className* node = dynamic_cast<const className*>(source.get())) { \
+    return std::make_shared<className>(*node);                                \
   }
 
 // Copies any non-leaf PlanNode.
@@ -109,7 +108,8 @@ core::PlanNodePtr fuzzPlan(
     newSources.push_back(fuzzPlan(source, counter, fuzzable, idGenerator));
   }
   auto copy = copyNode(node);
-  auto& copySources = const_cast<std::vector<core::PlanNodePtr>&>(copy->sources());
+  auto& copySources =
+      const_cast<std::vector<core::PlanNodePtr>&>(copy->sources());
   copySources = newSources;
   if (fuzzable.isValid(counter)) {
     return fuzzOutput(copy, idGenerator);

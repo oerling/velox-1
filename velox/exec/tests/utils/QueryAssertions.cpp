@@ -1216,12 +1216,13 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
 
   EXPECT_TRUE(waitForTaskCompletion(task)) << task->taskId();
   if (FLAGS_fuzz_plans) {
-    checkFuzzedPlans(params, result, cursor->task()); 
+    checkFuzzedPlans(params, result, cursor->task());
   }
   return {std::move(cursor), std::move(result)};
 }
 
-std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursorOnly(
+std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>>
+readCursorOnly(
     const CursorParameters& params,
     std::function<void(exec::Task*)> addSplits) {
   auto cursor = std::make_unique<TaskCursor>(params);
@@ -1239,7 +1240,6 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursorOnly
   return {std::move(cursor), std::move(result)};
 }
 
-  
 bool waitForTaskFinish(
     exec::Task* task,
     TaskState expectedState,
