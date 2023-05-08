@@ -17,17 +17,14 @@
 
 #include "velox/exec/Operator.h"
 
-
 namespace facebook::velox::exec::test {
-
 
 class TestingRebatchNode : public core::PlanNode {
  public:
-  explicit TestingRebatchNode(core::PlanNodePtr input)
-      : PlanNode("Rebatch"), sources_{input} {}
-
-  TestingRebatchNode(const core::PlanNodeId& id, core::PlanNodePtr input)
-      : PlanNode(id), sources_{input} {}
+  explicit TestingRebatchNode(core::PlanNodeId id, core::PlanNodePtr input)
+    : PlanNode(id), sources_({input}) {
+    registerNode();
+  }
 
   const RowTypePtr& outputType() const override {
     return sources_[0]->outputType();
@@ -42,24 +39,29 @@ class TestingRebatchNode : public core::PlanNode {
   }
 
  private:
+  static void registerNode();
   void addDetails(std::stringstream& /* stream */) const override {}
 
   std::vector<core::PlanNodePtr> sources_;
 };
 
-
-
 class TestingRebatch : public Operator {
  public:
-  enum class Twist {kConstant, kLongFlat, kShortFlat, kDicts, kSameDict, kSameDoubleDict};
+  enum class Encoding {
+    kConstant,
+    kSlice,
+    kLongFlat,
+    kShortFlat,
+    kDicts,
+    kSameDict,
+    kSameDoubleDict,
+      kLastEncoding // Must be last in enum.
+  };
+  static constexpr int32_t kNumEncodings =
+      static_cast<int32_t>(Encoding::kLastEncoding);
 
- TestingRebatch(
-      DriverCtx* ctx,
-      int32_t id,
-      std::shared_ptr<const TestingPauserNode> node,
-      DriverTest* test,
-      int32_t sequence)
-    : Operator(ctx, node->outputType(), id, node->id(), "Rebatch") {}
+  TestingRebatch(DriverCtx* ctx, int32_t id, const core::PlanNodePtr& node)
+      : Operator(ctx, node->outputType(), id, node->id(), "Rebatch") {}
 
   bool needsInput() const override {
     return !noMoreInput_ && !input_;
@@ -67,13 +69,14 @@ class TestingRebatch : public Operator {
 
   void addInput(RowVectorPtr input) override {
     input_ = std::move(input);
+    currentRow_ = 0;
   }
 
   void noMoreInput() override {
     Operator::noMoreInput();
   }
 
-  RowVectorPtr getOutput() override; 
+  RowVectorPtr getOutput() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override {
     return BlockingReason::kNotBlocked;
@@ -84,15 +87,43 @@ class TestingRebatch : public Operator {
   }
 
  private:
+  void nextEncoding();
 
   // Counter deciding the next action in getOutput().
   int32_t counter_;
 
+  // Flat concatenation of multiple batches of input
+  RowVectorPtr output_;
+
   // Next row of input to be sent to output.
   vector_size_t currentRow_{0};
 
-  // Drop every second row of input. Used for introducing a predictable error to test drilldown into minimal breaking fuzziness.
+  Encoding encoding_;
+  int32_t nthSlice_{0};
+
+  // Drop rows between batches. Used for introducing a predictable error to test
+  // drilldown into minimal breaking fuzziness.
   bool injectError_{false};
 };
- 
-}
+
+class TestingRebatchFactory : public Operator::PlanNodeTranslator {
+ public:
+  TestingRebatchFactory() = default;
+
+  std::unique_ptr<Operator> toOperator(
+      DriverCtx* ctx,
+      int32_t id,
+      const core::PlanNodePtr& node) override {
+    if (auto rebatch =
+            std::dynamic_pointer_cast<const TestingRebatchNode>(node)) {
+      return std::make_unique<TestingRebatch>(ctx, id, rebatch);
+    }
+    return nullptr;
+  }
+
+  std::optional<uint32_t> maxDrivers(const core::PlanNodePtr& node) override {
+    return std::nullopt;
+  }
+};
+
+} // namespace facebook::velox::exec::test

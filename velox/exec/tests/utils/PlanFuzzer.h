@@ -15,11 +15,18 @@
  */
 #pragma once
 
+#include "velox/exec/tests/utils/Cursor.h"
+#include "velox/exec/tests/utils/Rebatch.h"
 
 namespace facebook::velox::exec::test {
 
-  core::PlanNodePtr fuzzPlan(core::PlanNodePtr input, SelectivityVector& nodeSet);
-  
-  
+/// Reruns the Task of 'params' with plan fuzzing against splits recorded in
+/// 'referenceTask'. Checks the results of each fuzzed plan against 'results'.
+void checkFuzzedPlans(
+    const CursorParameters& params,
+    const std::vector<RowVectorPtr>& result,
+    const std::shared_ptr<Task>& referencetask);
 
-}
+core::PlanNodePtr fuzzPlan(core::PlanNodePtr input, SelectivityVector& nodeSet);
+
+} // namespace facebook::velox::exec::test
