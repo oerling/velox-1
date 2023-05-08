@@ -8,7 +8,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an " IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -191,6 +191,46 @@ TypedExprPtr toVeloxComparisonExpression(
 
   return std::make_shared<CallTypedExpr>(BOOLEAN(), std::move(children), name);
 }
+
+struct VeloxProjections {
+  VeloxProjections(QueryContext& context) : context(context) {}
+
+  core::FieldAccessTypedExprPtr toVeloxExpression(
+      ::duckdb::Expression& expression,
+      const TypePtr& inputType) {
+    auto expr = toVeloxExpression(expression, inputType);
+    auto column = std::dynamic_pointer_cast<const FieldAccessTypedExpr>(expr);
+    if (column) {
+      columns.push_back(column);
+      exprs.push_back(expr);
+      return column;
+    }
+    allIdentity = false;
+    exprs.push_back(expr);
+    auto name = context.nextColumnName("_p");
+    auto projected =
+        std::make_shared<FieldAccessTypedExpr>(exprs.back()->type(), name);
+    columns.push_back(projected);
+    return projected;
+  }
+
+  PlanNodePtr source(PlanNodePtr input) {
+    if (allIdentity) {
+      return input;
+    }
+    std::vector<std::string> names;
+    for (auto& column : columns) {
+      names.push_back(column->name());
+    }
+    return std::make_shared<ProjectNode>(
+        context.nextNodeId(), std::move(names), std::move(exprs), input);
+  }
+
+  QueryContext& context;
+  bool allIdentity{true};
+  std::vector<core::TypedExprPtr> exprs;
+  std::vector<core::FieldAccessTypedExprPtr> columns;
+};
 
 TypedExprPtr toVeloxExpression(
     ::duckdb::Expression& expression,
@@ -384,6 +424,31 @@ PlanNodePtr toVeloxPlan(
 }
 
 PlanNodePtr toVeloxPlan(
+    ::duckdb::LogicalOrder& logicalOrder,
+    memory::MemoryPool* pool,
+    std::vector<PlanNodePtr> sources,
+    QueryContext& queryContext) {
+  VeloxProjections projections(queryContext);
+  std::vector<FieldAccessTypedExprPtr> keys;
+  std::vector<SortOrder> sortOrder;
+  auto source = sources[0];
+  for (auto& order : logicalOrder.orders) {
+    keys.push_back(
+        projections.toVeloxExpression(*order.expression, source->outputType()));
+    sortOrder.push_back(SortOrder(
+        order.type == ::duckdb::OrderType::ASCENDING,
+        order.null_order == ::duckdb::OrderByNullType::NULLS_FIRST));
+  }
+
+  return std::make_shared<OrderByNode>(
+      queryContext.nextNodeId(),
+      keys,
+      sortOrder,
+      false,
+      projections.source(source));
+}
+
+PlanNodePtr toVeloxPlan(
     ::duckdb::LogicalCrossProduct& logicalCrossProduct,
     memory::MemoryPool* pool,
     std::vector<PlanNodePtr> sources,
@@ -454,6 +519,13 @@ PlanNodePtr toVeloxPlan(
           pool,
           std::move(sources),
           queryContext);
+    case ::duckdb::LogicalOperatorType::LOGICAL_ORDER_BY: {
+      return toVeloxPlan(
+          dynamic_cast<::duckdb::LogicalOrder&>(plan),
+          pool,
+          std::move(sources),
+          queryContext);
+    }
     case ::duckdb::LogicalOperatorType::LOGICAL_LIMIT: {
       auto& limit = dynamic_cast<const ::duckdb::LogicalLimit&>(plan);
       return std::make_shared<core::LimitNode>(
