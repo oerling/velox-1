@@ -195,7 +195,7 @@ TypedExprPtr toVeloxComparisonExpression(
 struct VeloxProjections {
   VeloxProjections(QueryContext& context) : context(context) {}
 
-  core::FieldAccessTypedExprPtr toVeloxExpression(
+  core::FieldAccessTypedExprPtr toFieldAccess(
       ::duckdb::Expression& expression,
       const TypePtr& inputType) {
     auto expr = toVeloxExpression(expression, inputType);
@@ -434,10 +434,10 @@ PlanNodePtr toVeloxPlan(
   auto source = sources[0];
   for (auto& order : logicalOrder.orders) {
     keys.push_back(
-        projections.toVeloxExpression(*order.expression, source->outputType()));
+        projections.toFieldAccess(*order.expression, source->outputType()));
     sortOrder.push_back(SortOrder(
-        order.type == ::duckdb::OrderType::ASCENDING,
-        order.null_order == ::duckdb::OrderByNullType::NULLS_FIRST));
+        order.type == ::duckdb::OrderType::ASCENDING || order.type == ::duckdb::OrderType::ORDER_DEFAULT,
+        order.null_order == ::duckdb::OrderByNullType::NULLS_FIRST  || order.null_order == ::duckdb::OrderByNullType::ORDER_DEFAULT));
   }
 
   return std::make_shared<OrderByNode>(

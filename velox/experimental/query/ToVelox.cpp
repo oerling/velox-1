@@ -138,6 +138,10 @@ core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
       for (auto arg : call->args()) {
         inputs.push_back(toTypedExpr(arg));
       }
+      if (call->name() == toName("cast")) {
+        return std::make_shared<core::CastTypedExpr>(
+						     toTypePtr(expr->value().type), std::move(inputs), false);
+      }
       return std::make_shared<core::CallTypedExpr>(
           toTypePtr(expr->value().type), std::move(inputs), call->name());
     }
@@ -267,6 +271,51 @@ core::PlanNodePtr Optimization::makeAggregation(
   return ptr;
 }
 
+core::PlanNodePtr Optimization::makeOrderBy(
+    OrderBy& op,
+    ExecutableFragment& fragment,
+    std::vector<ExecutableFragment>& stages) {
+  ExecutableFragment source;
+  source.width = options_.numWorkers;
+  source.taskPrefix = fmt::format("stage{}", ++stageCounter_);
+  auto input = makeFragment(op.input(), source, stages);
+  TempProjections projections(*this, *op.input());
+  std::vector<core::SortOrder> sortOrder;
+  for (auto order : op.distribution().orderType) {
+    sortOrder.push_back(
+        order == OrderType::kAscNullsFirst       ? core::SortOrder(true, true)
+            : order == OrderType ::kAscNullsLast ? core::SortOrder(true, false)
+            : order == OrderType::kDescNullsFirst
+            ? core::SortOrder(false, true)
+            : core::SortOrder(false, false));
+  }
+  auto keys = projections.toFieldRefs(op.distribution().order);
+  auto project = projections.maybeProject(input);
+  auto orderByNode = std::make_shared<core::OrderByNode>(
+      idGenerator_.next(), keys, sortOrder, true, project);
+  auto localMerge = std::make_shared<core::LocalMergeNode>(
+      idGenerator_.next(),
+      keys,
+      sortOrder,
+      std::vector<core::PlanNodePtr>{orderByNode});
+
+  source.fragment.planNode = std::make_shared<core::PartitionedOutputNode>(
+      idGenerator_.next(),
+      std::vector<core::TypedExprPtr>{},
+      1,
+      false,
+      false,
+      std::make_shared<core::GatherPartitionFunctionSpec>(),
+      localMerge->outputType(),
+      localMerge);
+  stages.push_back(std::move(source));
+  auto merge = std::make_shared<core::MergeExchangeNode>(
+      idGenerator_.next(), localMerge->outputType(), keys, sortOrder);
+  fragment.width = 1;
+  fragment.inputStages.push_back(InputStage{merge->id(), source.taskPrefix});
+  return merge;
+}
+
 class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
  public:
   HashPartitionFunctionSpec(
@@ -336,6 +385,9 @@ core::PlanNodePtr Optimization::makeFragment(
     }
     case RelType::kAggregation: {
       return makeAggregation(*op->as<Aggregation>(), fragment, stages);
+    }
+    case RelType::kOrderBy: {
+      return makeOrderBy(*op->as<OrderBy>(), fragment, stages);
     }
     case RelType::kRepartition: {
       ExecutableFragment source;

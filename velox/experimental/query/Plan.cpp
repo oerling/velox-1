@@ -576,6 +576,11 @@ void Optimization::addPostprocess(
     state.addCost(*finalAgg);
     plan = finalAgg;
   }
+  if (dt->orderBy) {
+    Declare(OrderBy, orderBy,plan, dt->orderBy->distribution().order, dt->orderBy->distribution().orderType);
+    state.addCost(*orderBy);
+    plan = orderBy;
+  }
   if (!dt->columns.empty()) {
     Declare(Project, project, plan, dt->exprs, dt->columns);
     plan = project;

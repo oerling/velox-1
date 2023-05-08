@@ -146,6 +146,21 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
+  if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
+    auto name = toName("cast");
+    funcs = funcs | functionBits(name);
+
+    Declare(
+        Call,
+        callExpr,
+        name,
+        Value(cast->type().get(), cardinality),
+        args,
+        funcs);
+    exprDedup_[expr.get()] = callExpr;
+    return callExpr;
+  }
+
   VELOX_NYI();
   return nullptr;
 }
@@ -243,9 +258,21 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
   return nullptr;
 }
 
-OrderByPtr FOLLY_NULLABLE
-Optimization::translateOrderBy(const core::OrderByNode& /*order*/) {
-  return nullptr;
+OrderByPtr 
+Optimization::translateOrderBy(const core::OrderByNode& order) {
+  OrderTypeVector orderType;
+  for (auto& sort : order.sortingOrders()) {
+    orderType.push_back(sort.isAscending() ? (sort.isNullsFirst() ? OrderType::kAscNullsFirst : OrderType::kAscNullsLast)
+			: (sort.isNullsFirst() ? OrderType::kDescNullsFirst : OrderType::kDescNullsLast));
+  }
+    auto keys = translateColumns(order.sortingKeys());
+    Declare(
+	    OrderBy,
+	    orderBy,
+        nullptr,
+	    keys,
+	    orderType, {});
+    return orderBy;
 }
 
 void Optimization::translateJoin(const core::AbstractJoinNode& join) {

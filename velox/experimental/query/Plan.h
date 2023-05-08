@@ -573,6 +573,11 @@ class Optimization {
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
 
+  velox::core::PlanNodePtr makeOrderBy(
+    OrderBy& op,
+    velox::exec::ExecutableFragment& fragment,
+    std::vector<velox::exec::ExecutableFragment>& stages);
+  
   // Makes a tree of PlanNode for a tree of
   // RelationOp. 'fragment' is the fragment that 'op'
   // belongs to. If op or children are repartitions then the

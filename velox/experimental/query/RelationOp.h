@@ -397,14 +397,13 @@ struct OrderBy : public RelationOp {
       : RelationOp(
             RelType::kOrderBy,
             input,
-            input->distribution().copyWithOrder(keys, orderType)),
+            input ? input->distribution().copyWithOrder(keys, orderType) : Distribution(DistributionType(), 1, {}, keys, orderType)),
         dependentKeys(dependentKeys) {}
 
   // Keys where the key expression is functionally dependent on
   // another key or keys. These can be late materialized or converted
   // to payload.
   PlanObjectSet dependentKeys;
-  int32_t limit{-1};
 };
 
 } // namespace facebook::verax
