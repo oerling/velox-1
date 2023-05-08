@@ -85,9 +85,8 @@ VectorPtr getChildBySubfield(
 uint32_t AbstractColumnStats::counter_ = 0;
 
 template <>
-int64_t ColumnStats<UnscaledShortDecimal>::getIntegerValue(
-    const UnscaledShortDecimal& value) {
-  return value.unscaledValue();
+int64_t ColumnStats<Date>::getIntegerValue(const Date& value) {
+  return value.days();
 }
 
 template <>
@@ -414,6 +413,9 @@ SubfieldFilters FilterGenerator::makeSubfieldFilters(
       case TypeKind::BIGINT:
         stats = makeStats<TypeKind::BIGINT>(vector->type(), rowType_);
         break;
+      case TypeKind::DATE:
+        stats = makeStats<TypeKind::DATE>(vector->type(), rowType_);
+        break;
       case TypeKind::VARCHAR:
         stats = makeStats<TypeKind::VARCHAR>(vector->type(), rowType_);
         break;
@@ -437,9 +439,6 @@ SubfieldFilters FilterGenerator::makeSubfieldFilters(
         break;
       // TODO:
       // Add support for TypeKind::TIMESTAMP.
-      case TypeKind::SHORT_DECIMAL:
-        stats = makeStats<TypeKind::SHORT_DECIMAL>(vector->type(), rowType_);
-        break;
       default:
         VELOX_CHECK(
             false,

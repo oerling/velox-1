@@ -404,6 +404,7 @@ void DwrfRowReader::startNextStripe() {
   auto requestedType = getColumnSelector().getSchemaWithId();
   auto dataType = getReader().getSchemaWithId();
   auto flatMapContext = FlatMapContext::nonFlatMapContext();
+  flatMapContext.keySelectionCallback = options_.getKeySelectionCallback();
 
   if (scanSpec) {
     selectiveColumnReader_ = SelectiveDwrfReader::build(
@@ -619,8 +620,6 @@ uint64_t maxStreamsForType(const TypeWrapper& type) {
       case TypeKind::MAP:
         return 2;
       case TypeKind::VARBINARY:
-      case TypeKind::SHORT_DECIMAL:
-      case TypeKind::LONG_DECIMAL:
       case TypeKind::TIMESTAMP:
         return 3;
       case TypeKind::TINYINT:

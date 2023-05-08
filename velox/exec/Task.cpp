@@ -758,8 +758,8 @@ void Task::createDriversLocked(
   // need to track down initialization of operator stats separately as well.
   if ((groupedExecutionDrivers & !initializedGroupedOpStats_) ||
       (!groupedExecutionDrivers & !initializedUngroupedOpStats_)) {
-    groupedExecutionDrivers ? initializedGroupedOpStats_
-                            : initializedUngroupedOpStats_ = true;
+    (groupedExecutionDrivers ? initializedGroupedOpStats_
+                             : initializedUngroupedOpStats_) = true;
     size_t firstPipelineDriverIndex{0};
     for (auto pipeline = 0; pipeline < numPipelines; ++pipeline) {
       auto& factory = driverFactories_[pipeline];
@@ -967,10 +967,7 @@ std::unique_ptr<ContinuePromise> Task::addSplitLocked(
   ++taskStats_.numQueuedSplits;
 
   if (split.connectorSplit) {
-    // Tests may use the same splits list many times. Make sure there
-    // is no async load pending on any, if, for example, a test did
-    // not process all its splits.
-    split.connectorSplit->dataSource.reset();
+    VELOX_CHECK_NULL(split.connectorSplit->dataSource);
   }
 
   if (!split.hasGroup()) {
@@ -1299,6 +1296,27 @@ bool Task::checkIfFinishedLocked() {
   return false;
 }
 
+std::vector<Operator*> Task::findPeerOperators(
+    int pipelineId,
+    Operator* caller) {
+  std::vector<Operator*> peers;
+  const auto operatorId = caller->operatorId();
+  const auto& operatorType = caller->operatorType();
+  std::lock_guard<std::mutex> l(mutex_);
+  for (auto& driver : drivers_) {
+    if (driver == nullptr) {
+      continue;
+    }
+    if (driver->driverCtx()->pipelineId != pipelineId) {
+      continue;
+    }
+    Operator* peer = driver->findOperator(operatorId);
+    VELOX_CHECK_EQ(peer->operatorType(), operatorType);
+    peers.push_back(peer);
+  }
+  return peers;
+}
+
 bool Task::allPeersFinished(
     const core::PlanNodeId& planNodeId,
     Driver* caller,
@@ -1329,13 +1347,16 @@ bool Task::allPeersFinished(
       break;
     }
   }
-  VELOX_CHECK(
+  VELOX_CHECK_NOT_NULL(
       callerShared, "Caller of Task::allPeersFinished is not a valid Driver");
-  state.drivers.push_back(callerShared);
-  state.promises.emplace_back(
-      fmt::format("Task::allPeersFinished {}", taskId_));
-  *future = state.promises.back().getSemiFuture();
-
+  // NOTE: we only set promise for the driver caller if it wants to wait for all
+  // the peers to finish.
+  if (future != nullptr) {
+    state.drivers.push_back(callerShared);
+    state.promises.emplace_back(
+        fmt::format("Task::allPeersFinished {}", taskId_));
+    *future = state.promises.back().getSemiFuture();
+  }
   return false;
 }
 

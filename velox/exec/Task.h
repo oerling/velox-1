@@ -99,7 +99,7 @@ class Task : public std::enable_shared_from_this<Task> {
 
   /// Returns MemoryPool used to allocate memory during execution. This instance
   /// is a child of the MemoryPool passed in the constructor.
-  memory::MemoryPool* FOLLY_NONNULL pool() const {
+  memory::MemoryPool* pool() const {
     return pool_.get();
   }
 
@@ -152,7 +152,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// updates `future`. `future` is realized when the operators are no longer
   /// blocked. Caller thread is responsible to wait for future before calling
   /// `next` again.
-  RowVectorPtr next(ContinueFuture* FOLLY_NULLABLE future = nullptr);
+  RowVectorPtr next(ContinueFuture* future = nullptr);
 
   /// Resumes execution of 'self' after a successful pause. All 'drivers_' must
   /// be off-thread and there must be no 'exception_'
@@ -278,7 +278,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Creates new instance of MemoryPool for an operator, stores it in the task
   /// to ensure lifetime and returns a raw pointer. Not thread safe, e.g. must
   /// be called from the Operator's constructor.
-  velox::memory::MemoryPool* FOLLY_NONNULL addOperatorPool(
+  velox::memory::MemoryPool* addOperatorPool(
       const core::PlanNodeId& planNodeId,
       int pipelineId,
       uint32_t driverId,
@@ -297,7 +297,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Creates new instance of MemoryPool for a merge source in a
   /// MergeExchangeNode, stores it in the task to ensure lifetime and returns a
   /// raw pointer.
-  velox::memory::MemoryPool* FOLLY_NONNULL addMergeSourcePool(
+  velox::memory::MemoryPool* addMergeSourcePool(
       const core::PlanNodeId& planNodeId,
       uint32_t pipelineId,
       uint32_t sourceId);
@@ -306,9 +306,7 @@ class Task : public std::enable_shared_from_this<Task> {
   /// alive by 'self'. 'self' going out of scope may cause the Task to
   /// be freed. This happens if a cancelled task is decoupled from the
   /// task manager and threads are left to finish themselves.
-  static void removeDriver(
-      std::shared_ptr<Task> self,
-      Driver* FOLLY_NONNULL instance);
+  static void removeDriver(std::shared_ptr<Task> self, Driver* instance);
 
   /// Returns a split for the source operator corresponding to plan
   /// node with specified ID. If there are no splits and no-more-splits
@@ -371,24 +369,31 @@ class Task : public std::enable_shared_from_this<Task> {
 
   void setError(const std::string& message);
 
+  /// Returns all the peer operators of the 'caller' operator from a given
+  /// 'pipelindId' in this task.
+  std::vector<Operator*> findPeerOperators(int pipelineId, Operator* caller);
+
   /// Synchronizes completion of an Operator across Drivers of 'this'.
-  /// 'planNodeId' identifies the Operator within all
-  /// Operators/pipelines of 'this'.  Each Operator instance calls this
-  /// once. All but the last get a false return value and 'future' is
-  /// set to a future the caller should block on. At this point the
-  /// caller should go off thread as in any blocking situation.  The
-  /// last to call gets a true return value and 'peers' is set to all
-  /// Drivers except 'caller'. 'promises' coresponds pairwise to
-  /// 'peers'. Realizing the promise will continue the peer. This
-  /// effects a synchronization barrier between Drivers of a pipeline
-  /// inside one worker. This is used for example for multithreaded
-  /// hash join build to ensure all build threads are completed before
-  /// allowing the probe pipeline to proceed. Throws a cancelled error
-  /// if 'this' is in an error state.
+  /// 'planNodeId' identifies the Operator within all Operators/pipelines of
+  /// 'this'.  Each Operator instance calls this once. All but the last get a
+  /// false return value and 'future' is set to a future the caller should block
+  /// on. At this point the caller should go off thread as in any blocking
+  /// situation.  The last to call gets a true return value and 'peers' is set
+  /// to all Drivers except 'caller'. 'promises' corresponds pairwise to
+  /// 'peers'. Realizing the promise will continue the peer. This effects a
+  /// synchronization barrier between Drivers of a pipeline inside one worker.
+  /// This is used for example for multithreaded hash join build to ensure all
+  /// build threads are completed before allowing the probe pipeline to proceed.
+  /// Throws a cancelled error if 'this' is in an error state.
+  ///
+  /// NOTE: if 'future' is null, then the caller doesn't intend to wait for the
+  /// other peers to finish. The function won't set its promise and record it in
+  /// peers. This is used in scenario that the caller only needs to know whether
+  /// it is the last one to reach the barrier.g
   bool allPeersFinished(
       const core::PlanNodeId& planNodeId,
-      Driver* FOLLY_NONNULL caller,
-      ContinueFuture* FOLLY_NONNULL future,
+      Driver* caller,
+      ContinueFuture* future,
       std::vector<ContinuePromise>& promises,
       std::vector<std::shared_ptr<Driver>>& peers);
 
@@ -582,13 +587,12 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Creates new instance of MemoryPool for a plan node, stores it in the task
   // to ensure lifetime and returns a raw pointer.
-  memory::MemoryPool* FOLLY_NONNULL
-  getOrAddNodePool(const core::PlanNodeId& planNodeId);
+  memory::MemoryPool* getOrAddNodePool(const core::PlanNodeId& planNodeId);
 
   // Creates new instance of MemoryPool for the exchange client of an
   // ExchangeNode in a pipeline, stores it in the task to ensure lifetime and
   // returns a raw pointer.
-  velox::memory::MemoryPool* FOLLY_NONNULL addExchangeClientPool(
+  velox::memory::MemoryPool* addExchangeClientPool(
       const core::PlanNodeId& planNodeId,
       uint32_t pipelineId);
 
@@ -719,7 +723,7 @@ class Task : public std::enable_shared_from_this<Task> {
     return makeFinishFutureLocked(comment);
   }
 
-  ContinueFuture makeFinishFutureLocked(const char* FOLLY_NONNULL comment);
+  ContinueFuture makeFinishFutureLocked(const char* comment);
 
   bool isOutputPipeline(int pipelineId) const {
     return driverFactories_[pipelineId]->outputDriver;
