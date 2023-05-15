@@ -486,7 +486,7 @@ std::vector<JoinCandidate> Optimization::nextJoins(PlanState& state) {
     // There are no join edges. There could still be cross joins.
     state.dt->startTables.forEach([&](PlanObjectConstPtr object) {
       if (!state.placed.contains(object)) {
-	candidates.emplace_back(nullptr, object, tableCardinality(object));
+        candidates.emplace_back(nullptr, object, tableCardinality(object));
       }
     });
   }
@@ -938,7 +938,7 @@ void Optimization::crossJoin(
     std::vector<NextJoin>& toTry) {
   VELOX_NYI("No cross joins");
 }
-  
+
 void Optimization::addJoin(
     const JoinCandidate& candidate,
     const RelationOpPtr& plan,
@@ -992,11 +992,11 @@ void Optimization::tryNextJoins(
 }
 
 RelationOpPtr Optimization::placeSingleRowDt(
-					     RelationOpPtr plan,
+    RelationOpPtr plan,
     const DerivedTable* subq,
     ExprPtr filter,
     PlanState& state) {
-  auto broadcast =Distribution::broadcast(DistributionType(), 1);
+  auto broadcast = Distribution::broadcast(DistributionType(), 1);
   MemoKey memoKey;
   memoKey.firstTable = subq;
   for (auto& column : subq->columns) {
@@ -1004,8 +1004,7 @@ RelationOpPtr Optimization::placeSingleRowDt(
   }
   PlanObjectSet empty;
   bool needsShuffle = false;
-  auto rightPlan = makePlan(
-      memoKey, broadcast, empty, 1, state, needsShuffle);
+  auto rightPlan = makePlan(memoKey, broadcast, empty, 1, state, needsShuffle);
   Declare(
       Join,
       join,
@@ -1101,7 +1100,10 @@ bool Optimization::placeConjuncts(RelationOpPtr plan, PlanState& state) {
       });
       for (auto i = 0; i < placeable.size(); ++i) {
         plan = placeSingleRowDt(
-				plan, placeable[i], (i == placeable.size() - 1 ? conjunct : nullptr), state);
+            plan,
+            placeable[i],
+            (i == placeable.size() - 1 ? conjunct : nullptr),
+            state);
         makeJoins(plan, state);
         return true;
       }
@@ -1173,7 +1175,6 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
     }
     auto candidates = nextJoins(state);
     if (candidates.empty()) {
-      
       addPostprocess(dt, plan, state);
       auto kept = state.plans.addPlan(plan, state);
       if (kept) {

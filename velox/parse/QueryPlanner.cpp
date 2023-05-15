@@ -264,10 +264,10 @@ TypedExprPtr toVeloxExpression(
       return toVeloxComparisonExpression("gte", expression, inputType);
     case ::duckdb::ExpressionType::COMPARE_LESSTHAN:
       return toVeloxComparisonExpression("lt", expression, inputType);
-  case ::duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+    case ::duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
       return toVeloxComparisonExpression("lte", expression, inputType);
 
-  case ::duckdb::ExpressionType::OPERATOR_CAST: {
+    case ::duckdb::ExpressionType::OPERATOR_CAST: {
       auto* cast = dynamic_cast<::duckdb::BoundCastExpression*>(&expression);
       return std::make_shared<CastTypedExpr>(
           duckdb::toVeloxType(cast->return_type),
@@ -557,7 +557,7 @@ PlanNodePtr toVeloxPlan(
     names.push_back(source->name());
     types.push_back(source->type());
   }
-  for (auto i :  join.right_projection_map) {
+  for (auto i : join.right_projection_map) {
     auto source = std::make_shared<core::FieldAccessTypedExpr>(
         rightInputType->childAt(i), rightInputType->nameOf(i));
     rightProjection.addColumn(source);

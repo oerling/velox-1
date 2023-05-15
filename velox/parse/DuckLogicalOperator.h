@@ -272,8 +272,7 @@ class LogicalJoin : public LogicalOperator {
   //! Table index used to refer to the MARK column (in case of a MARK join)
   idx_t mark_index;
   //! The columns of the LHS that are output by the join
-  vector<idx_t>
-  left_projection_map;
+  vector<idx_t> left_projection_map;
   //! The columns of the RHS that are output by the join
   vector<idx_t> right_projection_map;
   //! Join Keys statistics (optional)

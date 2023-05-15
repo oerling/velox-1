@@ -567,7 +567,6 @@ class Optimization {
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
-  
   // Makes an output type for PlanNode.
   velox::RowTypePtr makeOutputType(const ColumnVector& columns);
 

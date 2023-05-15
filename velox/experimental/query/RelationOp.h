@@ -287,7 +287,7 @@ class Project : public RelationOp {
   const ColumnVector columns_;
 };
 
-  enum class JoinMethod { kHash, kMerge, kCross };
+enum class JoinMethod { kHash, kMerge, kCross };
 
 /// Represents a hash or merge join.
 struct Join : public RelationOp {

@@ -166,14 +166,12 @@ void PlanObjectSet::unionColumns(const ExprVector& exprs) {
   }
 }
 
-
-  void PlanObjectSet::unionColumns(const ColumnVector& exprs) {
+void PlanObjectSet::unionColumns(const ColumnVector& exprs) {
   for (auto& expr : exprs) {
     unionColumns(expr);
   }
 }
 
-  
 void PlanObjectSet::unionSet(const PlanObjectSet& other) {
   ensureWords(other.bits_.size());
   for (auto i = 0; i < other.bits_.size(); ++i) {
@@ -561,7 +559,8 @@ void DerivedTable::findSingleRowDts() {
       singleRowDts.add(object);
     }
   });
-  // if everything is a single row dt, then process tese as cross products and not as placed with filters.
+  // if everything is a single row dt, then process tese as cross products and
+  // not as placed with filters.
   if (numSingle == tables.size()) {
     singleRowDts = PlanObjectSet();
   }
