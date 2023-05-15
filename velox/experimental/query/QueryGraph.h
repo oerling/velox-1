@@ -595,6 +595,9 @@ struct DerivedTable : public PlanObject {
   // considered.
   PlanObjectSet tableSet;
 
+  // Single row tables from non-correlated scalar subqueries.
+  PlanObjectSet singleRowDts;
+  
   // Tables that are not to the right sides of non-commutative joins.
   PlanObjectSet startTables;
 
@@ -686,10 +689,15 @@ struct DerivedTable : public PlanObject {
 
   // Sets 'dt' to be the complete contents of 'this'.
   void flattenDt(const DerivedTable* dt);
+
+  // Finds single row dts from non-correlated scalar subqueries.
+  void findSingleRowDts();
 };
 
 using DerivedTablePtr = DerivedTable*;
 
+float tableCardinality(PlanObjectConstPtr table);
+  
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 

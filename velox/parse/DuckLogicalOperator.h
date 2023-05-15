@@ -252,4 +252,82 @@ class LogicalOrder : public LogicalOperator {
   }
 };
 
+//! LogicalJoin represents a join between two relations
+class LogicalJoin : public LogicalOperator {
+ public:
+  explicit LogicalJoin(
+      JoinType type,
+      LogicalOperatorType logical_type = LogicalOperatorType::LOGICAL_JOIN);
+
+  // Gets the set of table references that are reachable from this node
+  static void GetTableReferences(
+      LogicalOperator& op,
+      unordered_set<idx_t>& bindings);
+  static void GetExpressionBindings(
+      Expression& expr,
+      unordered_set<idx_t>& bindings);
+
+  //! The type of the join (INNER, OUTER, etc...)
+  JoinType join_type;
+  //! Table index used to refer to the MARK column (in case of a MARK join)
+  idx_t mark_index;
+  //! The columns of the LHS that are output by the join
+  vector<idx_t>
+  left_projection_map;
+  //! The columns of the RHS that are output by the join
+  vector<idx_t> right_projection_map;
+  //! Join Keys statistics (optional)
+  vector<unique_ptr<BaseStatistics>> join_stats;
+
+ public:
+  vector<ColumnBinding> GetColumnBindings() override;
+
+ protected:
+  void ResolveTypes() override;
+};
+
+//! JoinCondition represents a left-right comparison join condition
+struct JoinCondition {
+ public:
+  JoinCondition() {}
+
+  //! Turns the JoinCondition into an expression; note that this destroys the
+  //! JoinCondition as the expression inherits the left/right expressions
+  static unique_ptr<Expression> CreateExpression(JoinCondition cond);
+  static unique_ptr<Expression> CreateExpression(
+      vector<JoinCondition> conditions);
+
+ public:
+  unique_ptr<Expression> left;
+  unique_ptr<Expression> right;
+  ExpressionType comparison;
+};
+
+//! LogicalComparisonJoin represents a join that involves comparisons between
+//! the LHS and RHS
+class LogicalComparisonJoin : public LogicalJoin {
+ public:
+  explicit LogicalComparisonJoin(
+      JoinType type,
+      LogicalOperatorType logical_type =
+          LogicalOperatorType::LOGICAL_COMPARISON_JOIN);
+
+  //! The conditions of the join
+  vector<JoinCondition> conditions;
+  //! Used for duplicate-eliminated joins
+  vector<LogicalType> delim_types;
+
+ public:
+  string ParamsToString() const override;
+
+ public:
+  static unique_ptr<LogicalOperator> CreateJoin(
+      JoinType type,
+      unique_ptr<LogicalOperator> left_child,
+      unique_ptr<LogicalOperator> right_child,
+      unordered_set<idx_t>& left_bindings,
+      unordered_set<idx_t>& right_bindings,
+      vector<unique_ptr<Expression>>& expressions);
+};
+
 } // namespace duckdb

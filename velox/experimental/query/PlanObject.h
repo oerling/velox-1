@@ -149,11 +149,21 @@ class PlanObjectSet {
     }
   }
 
+  void except(const PlanObjectSet& other) {
+    velox::bits::forEachSetBit(
+        other.bits_.data(), 0, other.bits_.size() * 64, [&](auto id) {
+          if (id < bits_.size() * 64) {
+            velox::bits::clearBit(bits_.data(), id);
+          }
+        });
+  }
+
   /// Adds ids of all columns 'expr' depends on.
   void unionColumns(ExprPtr expr);
 
   /// Adds ids of all columns 'exprs' depend on.
   void unionColumns(const ExprVector& exprs);
+  void unionColumns(const ColumnVector& exprs);
 
   /// Adds all ids in 'other'.
   void unionSet(const PlanObjectSet& other);

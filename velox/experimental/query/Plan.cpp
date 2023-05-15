@@ -482,6 +482,14 @@ std::vector<JoinCandidate> Optimization::nextJoins(PlanState& state) {
       [](const JoinCandidate& left, const JoinCandidate& right) {
         return left.fanout < right.fanout;
       });
+  if (candidates.empty()) {
+    // There are no join edges. There could still be cross joins.
+    state.dt->startTables.forEach([&](PlanObjectConstPtr object) {
+      if (!state.placed.contains(object)) {
+	candidates.emplace_back(nullptr, object, tableCardinality(object));
+      }
+    });
+  }
   return candidates;
 }
 
@@ -923,12 +931,24 @@ void Optimization::joinByHash(
   state.addNextJoin(&candidate, join, {buildOp}, toTry);
 }
 
+void Optimization::crossJoin(
+    const RelationOpPtr& plan,
+    const JoinCandidate& candidate,
+    PlanState& state,
+    std::vector<NextJoin>& toTry) {
+  VELOX_NYI("No cross joins");
+}
+  
 void Optimization::addJoin(
     const JoinCandidate& candidate,
     const RelationOpPtr& plan,
     PlanState& state,
     std::vector<NextJoin>& result) {
   std::vector<NextJoin> toTry;
+  if (!candidate.join) {
+    crossJoin(plan, candidate, state, toTry);
+    return;
+  }
   joinByIndex(plan, candidate, state, toTry);
   joinByHash(plan, candidate, state, toTry);
   // If one is much better do not try the other.
@@ -969,6 +989,37 @@ void Optimization::tryNextJoins(
     state.addBuilds(next.newBuilds);
     makeJoins(next.plan, state);
   }
+}
+
+RelationOpPtr Optimization::placeSingleRowDt(
+					     RelationOpPtr plan,
+    const DerivedTable* subq,
+    ExprPtr filter,
+    PlanState& state) {
+  auto broadcast =Distribution::broadcast(DistributionType(), 1);
+  MemoKey memoKey;
+  memoKey.firstTable = subq;
+  for (auto& column : subq->columns) {
+    memoKey.columns.add(column);
+  }
+  PlanObjectSet empty;
+  bool needsShuffle = false;
+  auto rightPlan = makePlan(
+      memoKey, broadcast, empty, 1, state, needsShuffle);
+  Declare(
+      Join,
+      join,
+      JoinMethod::kCross,
+      JoinType::kInner,
+      plan,
+      rightPlan->op,
+      {},
+      {},
+      {filter},
+      0.5,
+      plan->columns());
+  state.addCost(*join);
+  return join;
 }
 
 void Optimization::placeDerivedTable(
@@ -1013,25 +1064,56 @@ void Optimization::placeDerivedTable(
   }
 }
 
-RelationOpPtr Optimization::placeConjuncts(
-    const RelationOpPtr& plan,
-    PlanState& state) {
+bool Optimization::placeConjuncts(RelationOpPtr plan, PlanState& state) {
+  PlanStateSaver save(state);
   ExprVector filters;
+  PlanObjectSet columnsAndSingles = state.columns;
+  state.dt->singleRowDts.forEach([&](PlanObjectConstPtr object) {
+    columnsAndSingles.unionColumns(object->as<DerivedTable>()->columns);
+  });
   for (auto& conjunct : state.dt->conjuncts) {
-    if (state.columns.contains(conjunct)) {
+    if (state.placed.contains(conjunct)) {
       continue;
     }
     if (conjunct->columns().isSubset(state.columns)) {
       state.columns.add(conjunct);
       filters.push_back(conjunct);
+      continue;
+    }
+    if (conjunct->columns().isSubset(columnsAndSingles)) {
+      // The filter depends on placed tables and non-correlated single row
+      // subqueries.
+      std::vector<const DerivedTable*> placeable;
+      auto subqColumns = conjunct->columns();
+      subqColumns.except(state.columns);
+      subqColumns.forEach([&](PlanObjectConstPtr object) {
+        state.dt->singleRowDts.forEach([&](PlanObjectConstPtr dtObject) {
+          auto subq = dtObject->as<DerivedTable>();
+          // If the subq provides columns for the filter, place it.
+          auto conjunctColumns = conjunct->columns();
+          for (auto subqColumn : subq->columns) {
+            if (conjunctColumns.contains(subqColumn)) {
+              placeable.push_back(subq);
+              break;
+            }
+          }
+        });
+      });
+      for (auto i = 0; i < placeable.size(); ++i) {
+        plan = placeSingleRowDt(
+				plan, placeable[i], (i == placeable.size() - 1 ? conjunct : nullptr), state);
+        makeJoins(plan, state);
+        return true;
+      }
     }
   }
   if (!filters.empty()) {
     Declare(Filter, filter, plan, std::move(filters));
     state.addCost(*filter);
-    return filter;
+    makeJoins(filter, state);
+    return true;
   }
-  return plan;
+  return false;
 }
 
 void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
@@ -1086,9 +1168,12 @@ void Optimization::makeJoins(RelationOpPtr plan, PlanState& state) {
       return;
     }
     // Add multitable filters not associated to a non-inner join.
-    plan = placeConjuncts(plan, state);
+    if (placeConjuncts(plan, state)) {
+      return;
+    }
     auto candidates = nextJoins(state);
     if (candidates.empty()) {
+      
       addPostprocess(dt, plan, state);
       auto kept = state.plans.addPlan(plan, state);
       if (kept) {

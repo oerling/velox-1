@@ -232,8 +232,10 @@ core::PlanNodePtr Optimization::makeAggregation(
   bool isIntermediateOutput =
       op.step == core::AggregationNode::Step::kPartial ||
       op.step == core::AggregationNode::Step::kIntermediate;
+  int32_t numKeys = op.grouping.size();
   for (auto i = 0; i < op.aggregates.size(); ++i) {
-    aggregateNames.push_back(op.columns()[i + op.grouping.size()]->name());
+    aggregateNames.push_back(op.columns()[i + numKeys]->name());
+
     auto aggregate = op.aggregates[i];
     if (isRawInput) {
       if (aggregate->condition()) {
@@ -241,12 +243,12 @@ core::PlanNodePtr Optimization::makeAggregation(
         masks[i] = projections.toFieldRef(aggregate->condition());
       }
       aggregates.push_back(std::make_shared<core::CallTypedExpr>(
-          toTypePtr(aggregate->value().type),
+          toTypePtr(op.columns()[numKeys + i]->value().type),
           projections.toFieldRefs<core::TypedExprPtr>(aggregate->args()),
           aggregate->name()));
     } else {
       aggregates.push_back(std::make_shared<core::CallTypedExpr>(
-          toTypePtr(aggregate->value().type),
+          toTypePtr(op.columns()[numKeys + i]->value().type),
           std::vector<core::TypedExprPtr>{
               std::make_shared<core::FieldAccessTypedExpr>(
                   toTypePtr(aggregate->intermediateType()),
@@ -454,6 +456,15 @@ core::PlanNodePtr Optimization::makeFragment(
       TempProjections rightProjections(*this, *join->right);
       auto left = makeFragment(op->input(), fragment, stages);
       auto right = makeFragment(join->right, fragment, stages);
+      if (join->method == JoinMethod::kCross) {
+        return std::make_shared<core::NestedLoopJoinNode>(
+            idGenerator_.next(),
+            join->joinType,
+            toAnd(join->filter),
+            leftProjections.maybeProject(left),
+            rightProjections.maybeProject(right),
+            makeOutputType(join->columns()));
+      }
       auto leftKeys = leftProjections.toFieldRefs(join->leftKeys);
       auto rightKeys = rightProjections.toFieldRefs(join->rightKeys);
       return std::make_shared<core::HashJoinNode>(

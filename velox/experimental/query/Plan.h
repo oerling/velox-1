@@ -511,10 +511,12 @@ class Optimization {
   void makeJoins(RelationOpPtr plan, PlanState& state);
 
   // Adds the items from 'dt.conjuncts' that are not placed in 'state'
-  // and whose prerequisite columns are placed in a Filter. Returns a
-  // Filter if any conjuncts were found, otherwise returns 'plan'. If
-  // conjuncts were placed, these are added to 'state.placed'.
-  RelationOpPtr placeConjuncts(const RelationOpPtr& plan, PlanState& state);
+  // and whose prerequisite columns are placed. If conjuncts can be
+  // placed, adds them to 'state.placed' and calls makeJoins()
+  // recursively to make the rest of the plan. Returns false if no
+  // unplaced conjuncts were found and and plan construction should
+  // proceed.
+  bool placeConjuncts(RelationOpPtr plan, PlanState& state);
 
   // Helper function that calls makeJoins recursively for each of
   // 'nextJoins'. The point of making 'nextJoins' first and only then
@@ -523,6 +525,13 @@ class Optimization {
   // based on partitioning and size and we do not need to evaluate
   // their different permutations.
   void tryNextJoins(PlanState& state, const std::vector<NextJoin>& nextJoins);
+
+  // Adds a cross join to access a single row from a non-correlated subquery.
+  RelationOpPtr placeSingleRowDt(
+      RelationOpPtr plan,
+      const DerivedTable* subq,
+      ExprPtr filter,
+      PlanState& state);
 
   // Adds the join represented by'candidate' on top of 'plan'. Tries index and
   // hash based methods and adds the index and hash based plans to 'result'. If
@@ -552,6 +561,13 @@ class Optimization {
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
+  void crossJoin(
+      const RelationOpPtr& plan,
+      const JoinCandidate& candidate,
+      PlanState& state,
+      std::vector<NextJoin>& toTry);
+
+  
   // Makes an output type for PlanNode.
   velox::RowTypePtr makeOutputType(const ColumnVector& columns);
 

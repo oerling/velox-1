@@ -166,6 +166,14 @@ void PlanObjectSet::unionColumns(const ExprVector& exprs) {
   }
 }
 
+
+  void PlanObjectSet::unionColumns(const ColumnVector& exprs) {
+  for (auto& expr : exprs) {
+    unionColumns(expr);
+  }
+}
+
+  
 void PlanObjectSet::unionSet(const PlanObjectSet& other) {
   ensureWords(other.bits_.size());
   for (auto i = 0; i < other.bits_.size(); ++i) {
@@ -516,11 +524,46 @@ void DerivedTable::addImpliedJoins() {
 }
 
 void DerivedTable::setStartTables() {
+  findSingleRowDts();
   startTables = tableSet;
+  startTables.except(singleRowDts);
   for (auto join : joins) {
     if (join->isNonCommutative()) {
       startTables.erase(join->rightTable());
     }
+  }
+}
+
+bool isSingleRowDt(PlanObjectConstPtr object) {
+  if (object->type() == PlanType::kDerivedTable) {
+    auto dt = object->as<DerivedTable>();
+    return dt->limit == 1 ||
+        (dt->aggregation && dt->aggregation->aggregation->grouping.empty());
+  }
+  return false;
+}
+
+void DerivedTable::findSingleRowDts() {
+  auto tablesCopy = tableSet;
+  int32_t numSingle = 0;
+  for (auto& join : joins) {
+    tablesCopy.erase(join->rightTable());
+    for (auto& key : join->leftKeys()) {
+      tablesCopy.except(key->allTables());
+    }
+    for (auto& filter : join->filter()) {
+      tablesCopy.except(filter->allTables());
+    }
+  }
+  tablesCopy.forEach([&](PlanObjectConstPtr object) {
+    if (isSingleRowDt(object)) {
+      ++numSingle;
+      singleRowDts.add(object);
+    }
+  });
+  // if everything is a single row dt, then process tese as cross products and not as placed with filters.
+  if (numSingle == tables.size()) {
+    singleRowDts = PlanObjectSet();
   }
 }
 
