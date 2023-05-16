@@ -137,15 +137,15 @@ void PlanState::addBuilds(const BuildSet& added) {
     }
   }
 }
-  void PlanState::setTargetColumnsForDt(const PlanObjectSet& target) {
-    targetColumns = target;
-    for (auto i = 0; i < dt->columns.size(); ++i) {
-      if (target.contains(dt->columns[i])) {
-	targetColumns.unionColumns(dt->exprs[i]);
-      }
+void PlanState::setTargetColumnsForDt(const PlanObjectSet& target) {
+  targetColumns = target;
+  for (auto i = 0; i < dt->columns.size(); ++i) {
+    if (target.contains(dt->columns[i])) {
+      targetColumns.unionColumns(dt->exprs[i]);
     }
   }
-  
+}
+
 PlanObjectSet PlanState::downstreamColumns() const {
   auto it = downstreamPrecomputed.find(placed);
   if (it != downstreamPrecomputed.end()) {
@@ -180,11 +180,12 @@ PlanObjectSet PlanState::downstreamColumns() const {
     auto aggToPlace = dt->aggregation->aggregation;
     for (auto i = 0; i < aggToPlace->columns().size(); ++i) {
       if (targetColumns.contains(aggToPlace->columns()[i])) {
-	if (i < aggToPlace->grouping.size()) {
-	  result.unionColumns(aggToPlace->grouping[i]);
-	} else {
-	  result.unionColumns(aggToPlace->aggregates[i - aggToPlace->grouping.size()]);
-	}
+        if (i < aggToPlace->grouping.size()) {
+          result.unionColumns(aggToPlace->grouping[i]);
+        } else {
+          result.unionColumns(
+              aggToPlace->aggregates[i - aggToPlace->grouping.size()]);
+        }
       }
     }
   }
@@ -433,7 +434,7 @@ void forJoinedTables(const PlanState& state, Func func) {
     if (!placedTable->isTable()) {
       return;
     }
-      for (auto join : joinedBy(placedTable)) {
+    for (auto join : joinedBy(placedTable)) {
       if (join->isNonCommutative()) {
         if (!visited.insert(join).second) {
           continue;
@@ -1036,12 +1037,7 @@ RelationOpPtr Optimization::placeSingleRowDt(
   auto rightPlan = makePlan(memoKey, broadcast, empty, 1, state, needsShuffle);
   auto rightOp = rightPlan->op;
   if (needsShuffle) {
-    Declare(
-	    Repartition,
-	    repartition,
-	    rightOp,
-	    broadcast,
-	    rightOp->columns());
+    Declare(Repartition, repartition, rightOp, broadcast, rightOp->columns());
     rightOp = repartition;
   }
   Declare(
@@ -1253,7 +1249,7 @@ PlanPtr Optimization::makePlan(
     } else {
       inner.targetColumns = key.columns;
     }
-      makeJoins(nullptr, inner);
+    makeJoins(nullptr, inner);
     memo_[key] = std::move(inner.plans);
     plans = &memo_[key];
   } else {

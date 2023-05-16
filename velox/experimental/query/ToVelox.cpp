@@ -464,12 +464,11 @@ core::PlanNodePtr Optimization::makeFragment(
             leftProjections.maybeProject(left),
             rightProjections.maybeProject(right),
             makeOutputType(join->columns()));
-	if (join->filter.empty()) {
-	  return joinNode;
-	}
-	return std::make_shared<core::FilterNode>(idGenerator().next(),
-	toAnd(join->filter),
-						  joinNode);
+        if (join->filter.empty()) {
+          return joinNode;
+        }
+        return std::make_shared<core::FilterNode>(
+            idGenerator().next(), toAnd(join->filter), joinNode);
       }
       auto leftKeys = leftProjections.toFieldRefs(join->leftKeys);
       auto rightKeys = rightProjections.toFieldRefs(join->rightKeys);
