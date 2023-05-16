@@ -412,7 +412,8 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
 
   currentSelect_ = previousDt;
   velox::RowTypePtr type =
-      node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
+    node.outputType();
+  //node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
   for (auto i = 0; i < type->size(); ++i) {
     registerType(type->childAt(i));
     ExprPtr inner = translateColumn(type->nameOf(i));
@@ -426,7 +427,10 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   MemoKey key;
   key.firstTable = newDt;
   key.tables.add(newDt);
-  newDt->distributeConjuncts();
+  for (auto& column : newDt->columns) {
+    key.columns.add(column);
+  }
+    newDt->distributeConjuncts();
   newDt->addImpliedJoins();
   newDt->linkTablesToJoins();
   newDt->setStartTables();

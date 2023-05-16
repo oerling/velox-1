@@ -474,6 +474,10 @@ struct BaseTable : public PlanObject {
   // common::Filter.
   void* nativeFilter;
 
+  bool isTable() const override {
+    return true;
+  }
+
   void addJoinedBy(JoinEdgePtr join) {
     pushBackUnique(joinedBy, join);
   }
@@ -658,6 +662,10 @@ struct DerivedTable : public PlanObject {
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences,
       float existsFanout = 1);
+
+  bool isTable() const override {
+    return true;
+  }
 
   //// True if 'table' is of 'this'.
   bool hasTable(PlanObjectConstPtr table) {

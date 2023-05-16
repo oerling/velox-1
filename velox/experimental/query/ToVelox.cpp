@@ -457,13 +457,19 @@ core::PlanNodePtr Optimization::makeFragment(
       auto left = makeFragment(op->input(), fragment, stages);
       auto right = makeFragment(join->right, fragment, stages);
       if (join->method == JoinMethod::kCross) {
-        return std::make_shared<core::NestedLoopJoinNode>(
+        auto joinNode = std::make_shared<core::NestedLoopJoinNode>(
             idGenerator_.next(),
             join->joinType,
-            toAnd(join->filter),
+            nullptr,
             leftProjections.maybeProject(left),
             rightProjections.maybeProject(right),
             makeOutputType(join->columns()));
+	if (join->filter.empty()) {
+	  return joinNode;
+	}
+	return std::make_shared<core::FilterNode>(idGenerator().next(),
+	toAnd(join->filter),
+						  joinNode);
       }
       auto leftKeys = leftProjections.toFieldRefs(join->leftKeys);
       auto rightKeys = rightProjections.toFieldRefs(join->rightKeys);

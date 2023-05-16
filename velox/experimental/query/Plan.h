@@ -250,6 +250,9 @@ struct PlanState {
   /// Adds 'added' to all hash join builds.
   void addBuilds(const BuildSet& added);
 
+  // Specifies that the plan to make only references 'target' columns and whatever these depend on. These refer to 'columns' of 'dt'.
+  void setTargetColumnsForDt(const PlanObjectSet& target);
+  
   /// Returns the  set of columns referenced in unplaced joins/filters union
   /// targetColumns. Gets smaller as more tables are placed.
   PlanObjectSet downstreamColumns() const;

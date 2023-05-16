@@ -137,7 +137,15 @@ void PlanState::addBuilds(const BuildSet& added) {
     }
   }
 }
-
+  void PlanState::setTargetColumnsForDt(const PlanObjectSet& target) {
+    targetColumns = target;
+    for (auto i = 0; i < dt->columns.size(); ++i) {
+      if (target.contains(dt->columns[i])) {
+	targetColumns.unionColumns(dt->exprs[i]);
+      }
+    }
+  }
+  
 PlanObjectSet PlanState::downstreamColumns() const {
   auto it = downstreamPrecomputed.find(placed);
   if (it != downstreamPrecomputed.end()) {
@@ -161,6 +169,23 @@ PlanObjectSet PlanState::downstreamColumns() const {
   for (auto& filter : dt->conjuncts) {
     if (!placed.contains(filter)) {
       result.unionColumns(filter);
+    }
+  }
+  for (auto& conjunct : dt->conjuncts) {
+    if (!placed.contains(conjunct)) {
+      result.unionColumns(conjunct);
+    }
+  }
+  if (dt->aggregation && !placed.contains(dt->aggregation)) {
+    auto aggToPlace = dt->aggregation->aggregation;
+    for (auto i = 0; i < aggToPlace->columns().size(); ++i) {
+      if (targetColumns.contains(aggToPlace->columns()[i])) {
+	if (i < aggToPlace->grouping.size()) {
+	  result.unionColumns(aggToPlace->grouping[i]);
+	} else {
+	  result.unionColumns(aggToPlace->aggregates[i - aggToPlace->grouping.size()]);
+	}
+      }
     }
   }
   result.unionSet(targetColumns);
@@ -405,7 +430,10 @@ template <typename Func>
 void forJoinedTables(const PlanState& state, Func func) {
   std::unordered_set<JoinEdgePtr> visited;
   state.placed.forEach([&](PlanObjectConstPtr placedTable) {
-    for (auto join : joinedBy(placedTable)) {
+    if (!placedTable->isTable()) {
+      return;
+    }
+      for (auto join : joinedBy(placedTable)) {
       if (join->isNonCommutative()) {
         if (!visited.insert(join).second) {
           continue;
@@ -999,19 +1027,30 @@ RelationOpPtr Optimization::placeSingleRowDt(
   auto broadcast = Distribution::broadcast(DistributionType(), 1);
   MemoKey memoKey;
   memoKey.firstTable = subq;
+  memoKey.tables.add(subq);
   for (auto& column : subq->columns) {
     memoKey.columns.add(column);
   }
   PlanObjectSet empty;
   bool needsShuffle = false;
   auto rightPlan = makePlan(memoKey, broadcast, empty, 1, state, needsShuffle);
+  auto rightOp = rightPlan->op;
+  if (needsShuffle) {
+    Declare(
+	    Repartition,
+	    repartition,
+	    rightOp,
+	    broadcast,
+	    rightOp->columns());
+    rightOp = repartition;
+  }
   Declare(
       Join,
       join,
       JoinMethod::kCross,
       JoinType::kInner,
       plan,
-      rightPlan->op,
+      rightOp,
       {},
       {},
       {filter},
@@ -1099,6 +1138,7 @@ bool Optimization::placeConjuncts(RelationOpPtr plan, PlanState& state) {
         });
       });
       for (auto i = 0; i < placeable.size(); ++i) {
+        state.placed.add(conjunct);
         plan = placeSingleRowDt(
             plan,
             placeable[i],
@@ -1110,6 +1150,9 @@ bool Optimization::placeConjuncts(RelationOpPtr plan, PlanState& state) {
     }
   }
   if (!filters.empty()) {
+    for (auto& filter : filters) {
+      state.placed.add(filter);
+    }
     Declare(Filter, filter, plan, std::move(filters));
     state.addCost(*filter);
     makeJoins(filter, state);
@@ -1205,8 +1248,12 @@ PlanPtr Optimization::makePlan(
     dt.import(
         *state.dt, key.firstTable, key.tables, key.existences, existsFanout);
     PlanState inner(*this, &dt);
-    inner.targetColumns = key.columns;
-    makeJoins(nullptr, inner);
+    if (key.firstTable->type() == PlanType::kDerivedTable) {
+      inner.setTargetColumnsForDt(key.columns);
+    } else {
+      inner.targetColumns = key.columns;
+    }
+      makeJoins(nullptr, inner);
     memo_[key] = std::move(inner.plans);
     plans = &memo_[key];
   } else {

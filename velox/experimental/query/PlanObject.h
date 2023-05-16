@@ -93,6 +93,11 @@ class PlanObject {
     return false;
   }
 
+  /// Returns true if this is a table or derived table.
+  virtual bool isTable() const {
+    return false;
+  }
+
   /// Returns true if 'this' is a function call or aggregate function call.
   virtual bool isFunction() const {
     return false;
