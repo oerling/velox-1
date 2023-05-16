@@ -31,6 +31,7 @@ void TestingRebatchNode::registerNode() {
 void TestingRebatch::nextEncoding() {
   encoding_ = static_cast<Encoding>(
       (static_cast<int32_t>(encoding_) + 1) % kNumEncodings);
+  encodingStartRow_ = currentRow_;
   nthSlice_ = 0;
 }
 
@@ -54,9 +55,14 @@ RowVectorPtr TestingRebatch::getOutput() {
       break;
     }
     case Encoding::kSlice: {
-      auto sliceSize = nthSlice_++;
+      auto sliceSize = (++nthSlice_) * 1.5;
+      auto initialSlize = slizeSize;
       if (currentRow_ + sliceSize > input_->size()) {
         sliceSize = input_->size() - currentRow_;
+      }
+      if (sliceSize == 0) {
+	input_ = nullptr;
+	return nullptr;
       }
       output_ = BaseVector::create<RowVector>(
           input_->type(), sliceSize, input_->pool());
@@ -64,27 +70,34 @@ RowVectorPtr TestingRebatch::getOutput() {
         output_->childAt(i) = input_->childAt(i)->slice(currentRow_, sliceSize);
       }
       currentRow_ += sliceSize;
-
+      if (initialSliceSize > 2000) {
+	nextEncoding();
+      }
       break;
     }
     case Encoding::kSameDoubleDict:
     default: {
+      int32_t available = input->size() - currentRow_;
       auto indices =
-          velox::test::makeIndicesInReverse(input_->size(), input_->pool());
+          velox::test::makeIndicesInReverse(available, input_->pool());
       output_ = BaseVector::create<RowVector>(
-          input_->type(), input_->size(), input_->pool());
+          input_->type(), available, input_->pool());
       for (auto i = 0; i < input_->type()->size(); ++i) {
+	auto base = input_->childAt(i);
+	if (currentRow_ > 0) {
+	  base = base->slice(currentRow_, available);
+	}
         output_->childAt(i) = BaseVector::wrapInDictionary(
             BufferPtr(nullptr),
             indices,
-            input_->size(),
+            available,
             BaseVector::wrapInDictionary(
                 BufferPtr(nullptr),
                 indices,
-                input_->size(),
-                input_->childAt(i)));
+                available,
+                base));
       }
-      currentRow_ += input_->size();
+      currentRow_ available;
       break;
     }
   }

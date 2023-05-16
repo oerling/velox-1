@@ -149,4 +149,8 @@ void checkFuzzedPlans(
   }
 }
 
+std::string planToString(core::PlanNode* plan) {
+  return plan->toString(true, true);
+}
+
 } // namespace facebook::velox::exec::test

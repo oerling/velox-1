@@ -70,6 +70,7 @@ class TestingRebatch : public Operator {
   void addInput(RowVectorPtr input) override {
     input_ = std::move(input);
     currentRow_ = 0;
+    encodingStartRow_ = 0;
   }
 
   void noMoreInput() override {
@@ -97,6 +98,9 @@ class TestingRebatch : public Operator {
 
   // Next row of input to be sent to output.
   vector_size_t currentRow_{0};
+
+  // First row to which current 'encoding_' has been applied.
+  vector_size_t encodingStartRow_{0};
 
   Encoding encoding_;
   int32_t nthSlice_{0};
