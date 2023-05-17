@@ -56,7 +56,7 @@ RowVectorPtr TestingRebatch::getOutput() {
     }
     case Encoding::kSlice: {
       auto sliceSize = (++nthSlice_) * 1.5;
-      auto initialSlize = slizeSize;
+      auto initialSize = sliceSize;
       if (currentRow_ + sliceSize > input_->size()) {
         sliceSize = input_->size() - currentRow_;
       }
@@ -70,14 +70,14 @@ RowVectorPtr TestingRebatch::getOutput() {
         output_->childAt(i) = input_->childAt(i)->slice(currentRow_, sliceSize);
       }
       currentRow_ += sliceSize;
-      if (initialSliceSize > 2000) {
+      if (initialSize > 2000) {
 	nextEncoding();
       }
       break;
     }
     case Encoding::kSameDoubleDict:
     default: {
-      int32_t available = input->size() - currentRow_;
+      int32_t available = input_->size() - currentRow_;
       auto indices =
           velox::test::makeIndicesInReverse(available, input_->pool());
       output_ = BaseVector::create<RowVector>(
@@ -97,16 +97,16 @@ RowVectorPtr TestingRebatch::getOutput() {
                 available,
                 base));
       }
-      currentRow_ available;
+      currentRow_ += available;
       break;
     }
   }
 
   if (currentRow_ == input_->size()) {
     input_ = nullptr;
-    nextEncoding();
+    currentRow_ = 0;
   }
-
+  
   return std::move(output_);
 }
 

@@ -35,15 +35,30 @@ using namespace facebook::velox::exec::test;
 using namespace facebook::velox::common::testutil;
 using facebook::velox::test::BatchMaker;
 
-
 class PlanFuzzerTest : public OperatorTestBase {
  protected:
-
 };
-
 
 TEST_F(PlanFuzzerTest, basic) {
   // Make a set of batches and see that they come through fuzzing.
   FLAGS_fuzz_plans = true;
-}
+  auto rowType = ROW(
+      {{"int_value", INTEGER()},
+       {"string_value", VARCHAR()},
+       {"struct_value",
+        ROW({{"int_field ", INTEGER()}, {"string_field", VARCHAR()}})}});
 
+  constexpr int32_t kNumBatches = 100;
+  std::vector<RowVectorPtr> batches;
+  for (auto i = 0; i < kNumBatches; ++i) {
+    auto size = ((i + 1) * 346) % 20000;
+    batches.push_back(std::static_pointer_cast<RowVector>(
+							  ::facebook::velox::test::BatchMaker::createBatch(rowType, size, *pool_)));
+  }
+
+  auto plan = PlanBuilder()
+                  .values(batches)
+                  .project({"int_value", "string_value", "struct_value"})
+    .planNode();
+  exec::test::AssertQueryBuilder(plan).maxDrivers(1).assertResults(batches);
+}
