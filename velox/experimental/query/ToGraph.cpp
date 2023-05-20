@@ -272,6 +272,15 @@ OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
   return orderBy;
 }
 
+ColumnPtr Optimization::makeMark(const core::AbstractJoinNode& join) {
+  auto type = join.outputType();
+  auto name = toName(type->nameOf(type->size() - 1));
+  Value value(type->childAt(type->size() - 1).get(), 2);
+  registerType(type->childAt(type->size() - 1));
+  Declare(Column, column, name, currentSelect_, value);
+  return column;
+}
+
 void Optimization::translateJoin(const core::AbstractJoinNode& join) {
   bool isInner = join.isInnerJoin();
   makeQueryGraph(*join.sources()[0], allow(PlanType::kJoin));
@@ -305,12 +314,16 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
         joinType == core::JoinType::kLeft || joinType == core::JoinType::kFull;
     bool rightExists = joinType == core::JoinType::kLeftSemiFilter;
     bool rightNotExists = joinType == core::JoinType::kAnti;
+    ColumnPtr markColumn =
+        joinType == core::JoinType::kLeftSemiProject ? makeMark(join) : nullptr;
+    ;
+
     PlanObjectSet leftTables;
     PlanObjectConstPtr rightTable = nullptr;
 
     for (auto i = 0; i < leftKeys.size(); ++i) {
       auto l = leftKeys[i];
-      leftTables.unionColumns(l);
+      leftTables.unionSet(l->allTables());
       auto r = rightKeys.at(i);
       auto rightKeyTable = r->singleTable();
       if (rightTable) {
@@ -332,7 +345,8 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
         leftOptional,
         rightOptional,
         rightExists,
-        rightNotExists);
+        rightNotExists,
+        markColumn);
     currentSelect_->joins.push_back(edge);
     for (auto i = 0; i < leftKeys.size(); ++i) {
       edge->addEquality(leftKeys[i], rightKeys[i]);
@@ -507,6 +521,13 @@ PlanObjectPtr Optimization::makeQueryGraph(
     auto names = project->names();
     auto exprs = project->projections();
     for (auto i = 0; i < names.size(); ++i) {
+      if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(exprs.at(i).get())) {
+        // A variable projected to itself adds no renames. Inputs contain this
+        // all the time.
+        if (field->name() == names[i]) {
+          continue;
+        }
+      }
       auto expr = translateExpr(exprs.at(i));
       renames_[names[i]] = expr;
     }

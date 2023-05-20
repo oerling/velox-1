@@ -64,7 +64,8 @@ static bool validateDataFormat(const char* flagname, const std::string& value) {
   return false;
 }
 
-void printResults(const std::vector<RowVectorPtr>& results) {
+int32_t printResults(const std::vector<RowVectorPtr>& results) {
+  int32_t numRows = 0;
   std::cout << "Results:" << std::endl;
   bool printType = true;
   for (const auto& vector : results) {
@@ -75,8 +76,10 @@ void printResults(const std::vector<RowVectorPtr>& results) {
     }
     for (vector_size_t i = 0; i < vector->size(); ++i) {
       std::cout << vector->toString(i) << std::endl;
+      ++numRows;
     }
   }
+  return numRows;
 }
 } // namespace
 
@@ -144,7 +147,7 @@ struct RunStats {
         out << pair.first << "=" << pair.second << " ";
       }
     }
-    out << std::endl << "======" << std::endl;
+    out << std::endl  << std::endl;
     if (detail) {
       out << std::endl << output << std::endl;
     }
@@ -281,7 +284,7 @@ class VeloxRunner {
 
   void run(const std::string& sql) {
     if (record_ || check_) {
-      std::unique_ptr<LocalRunner> localRunner;
+      std::shared_ptr<LocalRunner> localRunner;
       std::string error;
       std::string plan;
       std::vector<RowVectorPtr> result;
@@ -344,12 +347,12 @@ class VeloxRunner {
   /// Runs a query and returns the result as a single vector in *resultVector,
   /// the plan text in *planString and the error message in *errorString.
   /// *errorString is not set if no error. Any of these may be nullptr.
-  std::unique_ptr<LocalRunner> run1(
+  std::shared_ptr<LocalRunner> run1(
       const std::string& sql,
       std::vector<RowVectorPtr>* resultVector = nullptr,
       std::string* planString = nullptr,
       std::string* errorString = nullptr) {
-    std::unique_ptr<LocalRunner> runner;
+    std::shared_ptr<LocalRunner> runner;
     std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
@@ -358,7 +361,7 @@ class VeloxRunner {
         std::make_shared<core::MemConfig>(config_),
         std::move(connectorConfigs),
         memory::MemoryAllocator::getInstance(),
-        rootPool_->addAggregateChild("query"),
+        rootPool_->addAggregateChild(fmt::format("query_{}", ++queryCounter_)),
         spillExecutor_);
 
     core::PlanNodePtr plan;
@@ -401,12 +404,12 @@ class VeloxRunner {
     facebook::verax::queryCtx() = nullptr;
     RunStats runStats;
     try {
-      runner = std::make_unique<LocalRunner>(
+      runner = std::make_shared<LocalRunner>(
           fragments, queryCtx, splitSourceFactory_.get(), opts);
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 
-      printResults(results);
+      int numRows = printResults(results);
       if (resultVector) {
         *resultVector = results;
       }
@@ -428,7 +431,7 @@ class VeloxRunner {
         }
       }
       history_->recordVeloxExecution(nullptr, fragments, stats);
-      std::cout << runStats.toString(false) << std::endl;
+      std::cout << numRows << " rows " << runStats.toString(false) << std::endl;
     } catch (const std::exception& e) {
       std::cerr << "Query terminated with: " << e.what() << std::endl;
       if (errorString) {
@@ -494,7 +497,7 @@ class VeloxRunner {
     }
   }
 
-  void printResults(const std::vector<RowVectorPtr>& results) {
+  int32_t printResults(const std::vector<RowVectorPtr>& results) {
     std::cout << "Results:" << std::endl;
     bool printType = true;
     int32_t numRows = 0;
@@ -517,7 +520,7 @@ class VeloxRunner {
             std::cout << fmt::format("[Omitted {} more rows.", numLeft)
                       << std::endl;
           }
-          return;
+          return numRows + numLeft;
         }
       }
     }
@@ -543,6 +546,7 @@ class VeloxRunner {
   int32_t numFailed_{0};
   int32_t numPlanMismatch_{0};
   int32_t numResultMismatch_{0};
+  int32_t queryCounter_{0};
 };
 
 std::string readCommand(std::istream& in, bool& end) {
@@ -630,7 +634,7 @@ int main(int argc, char** argv) {
       std::cout
           << "Velox SQL. Type statement and end with ;. flag name=value; sets a gflag."
           << std::endl;
-      readCommands(runner, "SQL>", std::cin);
+      readCommands(runner, "SQL> ", std::cin);
     }
   } catch (std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;

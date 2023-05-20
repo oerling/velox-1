@@ -269,6 +269,7 @@ const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
         rightOptional_,
         rightExists_,
         rightNotExists_,
+	markColumn_,
         rightUnique_};
   }
   return {
@@ -278,9 +279,14 @@ const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
       leftOptional_,
       false,
       false,
+      nullptr,
       leftUnique_};
 }
-
+  
+bool JoinEdge::isBroadcastableType() const {
+  return !leftOptional_;
+}
+  
 void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
   leftKeys_.push_back(left);
   rightKeys_.push_back(right);
@@ -1173,6 +1179,11 @@ ColumnPtr findColumnByName(const T& columns, Name name) {
 }
 
 bool SchemaTable::isUnique(PtrSpan<Column> columns) const {
+  for (auto& column : columns) {
+    if (column->type() != PlanType::kColumn) {
+      return false;
+    }
+  }
   for (auto index : indices) {
     auto nUnique = index->distribution().numKeysUnique;
     if (!nUnique) {
@@ -1241,6 +1252,13 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
 
   for (auto i = 0; i < columns.size(); ++i) {
     auto column = columns[i];
+    if (column->type() != PlanType::kColumn) {
+      // Join key is an expression dependent on the table.
+      covered.unionColumns(column->as<Expr>());
+      info.joinCardinality =
+        combine(info.joinCardinality, numCovered, column->value().cardinality);
+      continue;
+    }
     if (covered.contains(column)) {
       continue;
     }
@@ -1276,7 +1294,7 @@ IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) const {
       continue;
     }
     if (candidate.lookupKeys.empty()) {
-      // No prefix match for secondary idex.
+      // No prefix match for secondary index.
       continue;
     }
     // The join cardinality estimate from the longest prefix is preferred for

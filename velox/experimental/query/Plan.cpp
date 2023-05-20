@@ -728,6 +728,9 @@ float fanoutJoinTypeLimit(JoinType joinType, float fanout) {
       return std::min<float>(1, fanout);
     case JoinType::kAnti:
       return 1 - std::min<float>(1, fanout);
+    case JoinType::kLeftSemiProject:
+    case JoinType::kRightSemiProject:
+      return 1;
     default:
       return fanout;
   }
@@ -763,6 +766,10 @@ void Optimization::joinByIndex(
     }
     state.placed.add(candidate.tables.at(0));
     auto joinType = right.leftJoinType();
+    if (joinType == JoinType::kFull || joinType == JoinType::kRight) {
+      // Not available by index.
+      return;
+    }
     auto fanout = fanoutJoinTypeLimit(
         joinType, info.scanCardinality * rightTable->filterSelectivity);
 
@@ -825,7 +832,7 @@ PlanObjectSet availableColumns(PlanObjectConstPtr object) {
   return set;
 }
 
-bool isBroadcastable(PlanPtr build, PlanState& /*state*/) {
+bool isBroadcastableSize(PlanPtr build, PlanState& /*state*/) {
   return build->cost.fanout < 100000;
 }
 
@@ -879,7 +886,9 @@ void Optimization::joinByHash(
       buildState.addCost(*shuffleTemp);
       buildInput = shuffleTemp;
     }
-  } else if (isBroadcastable(buildPlan, state)) {
+  } else if (
+      candidate.join->isBroadcastableType() &&
+      isBroadcastableSize(buildPlan, state)) {
     Declare(
         Repartition,
         broadcast,
@@ -936,12 +945,22 @@ void Optimization::joinByHash(
 
   ColumnVector columns;
   PlanObjectSet columnSet;
+  ColumnPtr mark = nullptr;
   downstream.forEach([&](auto object) {
-    columns.push_back(reinterpret_cast<ColumnPtr>(object));
     columnSet.add(object);
+    auto column = reinterpret_cast<ColumnPtr>(object);
+    if (column == build.markColumn) {
+      mark = column;
+    }
+    columns.push_back(column);
   });
+  // If there is an existence flag, it is the rightmost result column.
+  if (mark) {
+    const_cast<Value*>(&mark->value())->trueFraction = std::min<float>(1, candidate.fanout);
+    columns.push_back(mark);
+  }
   state.columns = columnSet;
-  auto joinType = velox::core::JoinType::kInner;
+  auto joinType = build.leftJoinType();
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
       Join,
@@ -957,6 +976,126 @@ void Optimization::joinByHash(
       std::move(columns));
   state.addCost(*join);
   state.cost.setupCost += buildState.cost.unitCost;
+  state.addNextJoin(&candidate, join, {buildOp}, toTry);
+}
+
+void Optimization::joinByHashRight(
+    const RelationOpPtr& plan,
+    const JoinCandidate& candidate,
+    PlanState& state,
+    std::vector<NextJoin>& toTry) {
+  assert(!candidate.tables.empty());
+  auto probe = candidate.sideOf(candidate.tables[0]);
+  auto build = candidate.sideOf(candidate.tables[0], true);
+  PlanStateSaver save(state);
+  PlanObjectSet probeTables;
+  PlanObjectSet probeColumns;
+  for (auto probeTable : candidate.tables) {
+    probeColumns.unionSet(availableColumns(probeTable));
+    state.placed.add(probeTable);
+    probeTables.add(probeTable);
+  }
+  auto downstream = state.downstreamColumns();
+  probeColumns.intersect(downstream);
+  probeColumns.unionColumns(probe.keys);
+  state.columns.unionSet(probeColumns);
+  auto memoKey = MemoKey{
+      candidate.tables[0], probeColumns, probeTables, candidate.existences};
+  PlanObjectSet empty;
+  bool needsShuffle = false;
+  auto probePlan = makePlan(
+      memoKey,
+      Distribution(plan->distribution().distributionType, 0, {}),
+      empty,
+      candidate.existsFanout,
+      state,
+      needsShuffle);
+  PlanState probeState(state.optimization, state.dt, probePlan);
+
+  RelationOpPtr probeInput = probePlan->op;
+  RelationOpPtr buildInput = plan;
+  // The build gets shuffled to align with probe. If probe is not partitioned
+  // on its keys, shuffle the probe too.
+  auto probePart = joinKeyPartition(probeInput, probe.keys);
+  if (probePart.empty()) {
+    Distribution probeDist(
+			   buildInput->distribution().distributionType,
+			   probeInput->resultCardinality(),
+			   probe.keys);
+    Declare(
+        Repartition,
+        probeShuffle,
+        probeInput,
+        probeDist,
+        probeInput->columns());
+    probeInput = probeShuffle;
+  }
+  ExprVector buildPartCols;
+  for (size_t i = 0; i < probe.keys.size(); ++i) {
+    auto key = probe.keys[i];
+    auto nthKey = position(probeInput->distribution().partition, *key);
+    if (nthKey != kNotFound) {
+      if (buildPartCols.size() <= nthKey) {
+        buildPartCols.resize(nthKey + 1);
+      }
+      assert(!buildPartCols.empty());
+      buildPartCols[nthKey] = build.keys[i];
+    }
+  }
+  Distribution buildDist(
+			 probeInput->distribution().distributionType,
+      buildInput->resultCardinality(),
+      std::move(buildPartCols));
+  Declare(
+      Repartition, buildShuffle, plan, std::move(buildDist), plan->columns());
+  state.addCost(*buildShuffle);
+  buildInput = buildShuffle;
+
+  Declare(
+      HashBuild, buildOp, buildInput, ++buildCounter_, build.keys, nullptr);
+  state.addCost(*buildOp);
+
+  ColumnVector columns;
+  PlanObjectSet columnSet;
+  downstream.forEach([&](auto object) {
+    columns.push_back(reinterpret_cast<ColumnPtr>(object));
+    columnSet.add(object);
+  });
+  state.columns = columnSet;
+  auto joinType = probe.leftJoinType();
+  auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
+  // Change the join type to the right join variant.
+  switch (joinType) {
+    case JoinType::kLeft:
+      joinType = JoinType::kRight;
+      break;
+    case JoinType::kLeftSemiFilter:
+      joinType = JoinType::kRightSemiFilter;
+      break;
+    case JoinType::kLeftSemiProject:
+      joinType = JoinType::kRightSemiProject;
+      break;
+    default:
+      VELOX_FAIL("Join type does not have right hash join variant");
+  }
+  auto buildCost = state.cost.unitCost;
+  state.cost = probeState.cost;
+  state.cost.setupCost += buildCost;
+
+  Declare(
+      Join,
+      join,
+      JoinMethod::kHash,
+      joinType,
+      probeInput,
+      buildOp,
+      probe.keys,
+      build.keys,
+      candidate.join->filter(),
+      fanout,
+      std::move(columns));
+  state.addCost(*join);
+
   state.addNextJoin(&candidate, join, {buildOp}, toTry);
 }
 
@@ -978,8 +1117,15 @@ void Optimization::addJoin(
     crossJoin(plan, candidate, state, toTry);
     return;
   }
+  auto initialSize = toTry.size();
   joinByIndex(plan, candidate, state, toTry);
+  auto sizeAfterIndex = toTry.size();
   joinByHash(plan, candidate, state, toTry);
+  if (toTry.size() > sizeAfterIndex && candidate.join->isNonCommutative()) {
+    // There is a hash based candidate with a non-commutative join. Try a right
+    // join variant.
+    joinByHashRight(plan, candidate, state, toTry);
+  }
   // If one is much better do not try the other.
   if (toTry.size() == 2 && candidate.tables.size() == 1) {
     if (toTry[0].isWorse(toTry[1])) {
@@ -1040,6 +1186,11 @@ RelationOpPtr Optimization::placeSingleRowDt(
     Declare(Repartition, repartition, rightOp, broadcast, rightOp->columns());
     rightOp = repartition;
   }
+  auto resultColumns = plan->columns();
+  resultColumns.insert(
+      resultColumns.end(),
+      rightOp->columns().begin(),
+      rightOp->columns().end());
   Declare(
       Join,
       join,
@@ -1051,7 +1202,7 @@ RelationOpPtr Optimization::placeSingleRowDt(
       {},
       {filter},
       0.5,
-      plan->columns());
+      resultColumns);
   state.addCost(*join);
   return join;
 }

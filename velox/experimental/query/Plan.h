@@ -447,6 +447,9 @@ class Optimization {
   // Adds a JoinEdge corresponding to 'join' to the enclosing DerivedTable.
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
+  // Makes an extra column for existence flag.
+  ColumnPtr makeMark(const velox::core::AbstractJoinNode& join);
+  
   // Adds a join edge for a join with no equalities.
   void translateNonEqualityJoin(const velox::core::NestedLoopJoinNode& join);
 
@@ -565,6 +568,14 @@ class Optimization {
       PlanState& state,
       std::vector<NextJoin>& toTry);
 
+  /// Tries a right hash join variant of left outer or left semijoin.
+  void joinByHashRight(
+      const RelationOpPtr& plan,
+      const JoinCandidate& candidate,
+      PlanState& state,
+      std::vector<NextJoin>& toTry);
+
+  
   void crossJoin(
       const RelationOpPtr& plan,
       const JoinCandidate& candidate,

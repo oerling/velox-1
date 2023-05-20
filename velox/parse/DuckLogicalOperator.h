@@ -329,4 +329,43 @@ class LogicalComparisonJoin : public LogicalJoin {
       vector<unique_ptr<Expression>>& expressions);
 };
 
+  //! LogicalDelimGet represents a duplicate eliminated scan belonging to a DelimJoin
+class LogicalDelimGet : public LogicalOperator {
+public:
+	LogicalDelimGet(idx_t table_index, vector<LogicalType> types)
+	    : LogicalOperator(LogicalOperatorType::LOGICAL_DELIM_GET), table_index(table_index) {
+		D_ASSERT(types.size() > 0);
+		chunk_types = types;
+	}
+
+	//! The table index in the current bind context
+	idx_t table_index;
+	//! The types of the chunk
+	vector<LogicalType> chunk_types;
+
+public:
+	vector<ColumnBinding> GetColumnBindings() override {
+		return GenerateColumnBindings(table_index, chunk_types.size());
+	}
+
+protected:
+	void ResolveTypes() override {
+		// types are resolved in the constructor
+		this->types = chunk_types;
+	}
+};
+
+  
+//! LogicalDelimJoin represents a special "duplicate eliminated" join. This join type is only used for subquery
+//! flattening, and involves performing duplicate elimination on the LEFT side which is then pushed into the RIGHT side.
+class LogicalDelimJoin : public LogicalComparisonJoin {
+public:
+	explicit LogicalDelimJoin(JoinType type) : LogicalComparisonJoin(type, LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+	}
+
+	//! The set of columns that will be duplicate eliminated from the LHS and pushed into the RHS
+	vector<unique_ptr<Expression>> duplicate_eliminated_columns;
+};
+
+  
 } // namespace duckdb

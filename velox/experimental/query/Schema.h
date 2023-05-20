@@ -52,6 +52,11 @@ struct Value {
   // cardinalities of group bys or joins.
   const float cardinality{1};
 
+  // Estimate of true fraction for booleans. 0 means always
+  // false. This is an estimate and 1 or 0 do not allow pruning
+  // dependent code paths.
+  float trueFraction{1};
+  
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
 

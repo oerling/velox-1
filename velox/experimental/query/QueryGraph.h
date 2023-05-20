@@ -33,7 +33,7 @@ namespace facebook::verax {
 /// base tables as leaves. Joins are described as join graph
 /// edges. Edges describe direction for non-inner joins. Scalar and
 /// existence subqueries are flattened into derived tables or base
-/// tables. The join graph would represent select ... form t where
+/// tables. The join graph would represent select ... from t where
 /// exists(x) or exists(y) as a derived table of three joined tables
 /// where the edge from t to x and t to y is directed and qualified as
 /// left semijoin. The semijoins project out one column, an existence
@@ -263,6 +263,7 @@ struct JoinSide {
   const bool isOptional;
   const bool isExists;
   const bool isNotExists;
+  ColumnPtr markColumn;
   const bool isUnique;
 
   /// Returns the join type to use if 'this' is the right side.
@@ -275,6 +276,9 @@ struct JoinSide {
     }
     if (isOptional) {
       return velox::core::JoinType::kLeft;
+    }
+    if (markColumn) {
+      return velox::core::JoinType::kLeftSemiProject;
     }
     return velox::core::JoinType::kInner;
   }
@@ -295,14 +299,16 @@ class JoinEdge {
       bool leftOptional,
       bool rightOptional,
       bool rightExists,
-      bool rightNotExists)
+      bool rightNotExists,
+      ColumnPtr markColumn = nullptr)
       : leftTable_(leftTable),
         rightTable_(rightTable),
         filter_(std::move(filter)),
         leftOptional_(leftOptional),
         rightOptional_(rightOptional),
         rightExists_(rightExists),
-        rightNotExists_(rightNotExists) {
+        rightNotExists_(rightNotExists),
+        markColumn_(markColumn) {
     if (isInner()) {
       VELOX_CHECK(filter_.empty());
     }
@@ -382,6 +388,9 @@ class JoinEdge {
   //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
   void guessFanout();
 
+  // True if a hash join build can be broadcastable. Used when building on the right. None of the right hash join variants is broadcastable.
+  bool isBroadcastableType() const;
+  
  private:
   // Leading left side join keys.
   ExprVector leftKeys_;
@@ -425,6 +434,9 @@ class JoinEdge {
 
   // True if produces a result for left if no match on the right.
   const bool rightNotExists_;
+
+  // Flag to set if right side has a match.
+  const ColumnPtr markColumn_;
 };
 
 using JoinEdgePtr = JoinEdge*;
@@ -708,5 +720,5 @@ float tableCardinality(PlanObjectConstPtr table);
 
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
-
+  
 } // namespace facebook::verax

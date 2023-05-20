@@ -28,31 +28,72 @@ auto remoteSplit(const std::string& taskId) {
 test::TaskCursor* LocalRunner::cursor() {
   auto lastStage = makeStages();
   params_.planNode = plan_.back().fragment.planNode;
-  cursor_ = std::make_unique<test::TaskCursor>(params_);
-  stages_.push_back({cursor_->task()});
+  auto cursor = std::make_unique<test::TaskCursor>(params_);
+  stages_.push_back({cursor->task()});
   if (!lastStage.empty()) {
     auto node = plan_.back().inputStages[0].consumer;
     for (auto& remote : lastStage) {
-      cursor_->task()->addSplit(node, Split(remote));
+      cursor->task()->addSplit(node, Split(remote));
     }
-    cursor_->task()->noMoreSplits(node);
+    cursor->task()->noMoreSplits(node);
+  }
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    tasksCreated_ = true;
+    if (!error_) {
+      cursor_ = std::move(cursor);
+    }
+  }
+  if (!cursor_) {
+    // The cursor was not set because previous fragments had an error.
+    terminate();
+    std::rethrow_exception(error_);
   }
   return cursor_.get();
 }
 
+void LocalRunner::terminate() {
+  VELOX_CHECK(tasksCreated_);
+  for (auto& stage : stages_) {
+    for (auto& task : stage) {
+      task->setError(error_);
+    }
+  }
+  if (cursor_) {
+    cursor_->setError(error_);
+  }
+}
+
 std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
   std::unordered_map<std::string, int32_t> prefixMap;
+  auto sharedRunner = shared_from_this();
+  auto onError = [self = sharedRunner, this](std::exception_ptr e) {
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      if (error_) {
+        return;
+      }
+      error_ = e;
+    }
+    if (cursor_) {
+      terminate();
+    }
+  };
+
   for (auto fragmentIndex = 0; fragmentIndex < plan_.size() - 1;
        ++fragmentIndex) {
     auto& fragment = plan_[fragmentIndex];
     prefixMap[fragment.taskPrefix] = stages_.size();
     stages_.emplace_back();
     for (auto i = 0; i < fragment.width; ++i) {
+      Consumer consumer = nullptr;
       auto task = std::make_shared<Task>(
           fmt::format("local://{}.{}", fragment.taskPrefix, i),
           fragment.fragment,
           i,
-          params_.queryCtx);
+          params_.queryCtx,
+          consumer,
+          onError);
       stages_.back().push_back(task);
       Task::start(task, options_.numDrivers);
     }

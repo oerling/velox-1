@@ -238,6 +238,9 @@ class Repartition : public RelationOp {
 
 using RepartitionPtr = const Repartition*;
 
+  // Returns the cost and cardinality ('unitCost' and 'fanout') for 'conjuncts'.
+Cost filterCost(PtrSpan<Expr> conjuncts);
+  
 /// Represents a usually multitable filter not associated with any non-inner
 /// join. Non-equality constraints over inner joins become Filters.
 class Filter : public RelationOp {
