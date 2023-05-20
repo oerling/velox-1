@@ -56,7 +56,7 @@ struct Value {
   // false. This is an estimate and 1 or 0 do not allow pruning
   // dependent code paths.
   float trueFraction{1};
-  
+
   // 0 means no nulls, 0.5 means half are null.
   float nullFraction{0};
 

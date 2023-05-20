@@ -956,7 +956,8 @@ void Optimization::joinByHash(
   });
   // If there is an existence flag, it is the rightmost result column.
   if (mark) {
-    const_cast<Value*>(&mark->value())->trueFraction = std::min<float>(1, candidate.fanout);
+    const_cast<Value*>(&mark->value())->trueFraction =
+        std::min<float>(1, candidate.fanout);
     columns.push_back(mark);
   }
   state.columns = columnSet;
@@ -1019,9 +1020,9 @@ void Optimization::joinByHashRight(
   auto probePart = joinKeyPartition(probeInput, probe.keys);
   if (probePart.empty()) {
     Distribution probeDist(
-			   buildInput->distribution().distributionType,
-			   probeInput->resultCardinality(),
-			   probe.keys);
+        buildInput->distribution().distributionType,
+        probeInput->resultCardinality(),
+        probe.keys);
     Declare(
         Repartition,
         probeShuffle,
@@ -1043,7 +1044,7 @@ void Optimization::joinByHashRight(
     }
   }
   Distribution buildDist(
-			 probeInput->distribution().distributionType,
+      probeInput->distribution().distributionType,
       buildInput->resultCardinality(),
       std::move(buildPartCols));
   Declare(
@@ -1051,8 +1052,7 @@ void Optimization::joinByHashRight(
   state.addCost(*buildShuffle);
   buildInput = buildShuffle;
 
-  Declare(
-      HashBuild, buildOp, buildInput, ++buildCounter_, build.keys, nullptr);
+  Declare(HashBuild, buildOp, buildInput, ++buildCounter_, build.keys, nullptr);
   state.addCost(*buildOp);
 
   ColumnVector columns;

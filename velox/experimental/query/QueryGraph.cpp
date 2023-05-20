@@ -269,7 +269,7 @@ const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
         rightOptional_,
         rightExists_,
         rightNotExists_,
-	markColumn_,
+        markColumn_,
         rightUnique_};
   }
   return {
@@ -282,11 +282,11 @@ const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
       nullptr,
       leftUnique_};
 }
-  
+
 bool JoinEdge::isBroadcastableType() const {
   return !leftOptional_;
 }
-  
+
 void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
   leftKeys_.push_back(left);
   rightKeys_.push_back(right);
@@ -1255,8 +1255,8 @@ IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
     if (column->type() != PlanType::kColumn) {
       // Join key is an expression dependent on the table.
       covered.unionColumns(column->as<Expr>());
-      info.joinCardinality =
-        combine(info.joinCardinality, numCovered, column->value().cardinality);
+      info.joinCardinality = combine(
+          info.joinCardinality, numCovered, column->value().cardinality);
       continue;
     }
     if (covered.contains(column)) {

@@ -147,7 +147,7 @@ struct RunStats {
         out << pair.first << "=" << pair.second << " ";
       }
     }
-    out << std::endl  << std::endl;
+    out << std::endl << std::endl;
     if (detail) {
       out << std::endl << output << std::endl;
     }

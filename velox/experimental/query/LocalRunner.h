@@ -44,7 +44,7 @@ class SplitSourceFactory {
       const core::TableScanNode& scan) = 0;
 };
 
-  class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
+class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
  public:
   LocalRunner(
       std::vector<ExecutableFragment> plan,
@@ -62,21 +62,21 @@ class SplitSourceFactory {
   std::vector<TaskStats> stats() const;
 
  private:
-    // Propagates 'error_' to 'stages_' and 'cursor_' if set
-    void terminate();
+  // Propagates 'error_' to 'stages_' and 'cursor_' if set
+  void terminate();
 
-    // Serializes 'cursor_' and 'error_'.
-    std::mutex mutex_;
-    std::vector<std::shared_ptr<RemoteConnectorSplit>> makeStages();
+  // Serializes 'cursor_' and 'error_'.
+  std::mutex mutex_;
+  std::vector<std::shared_ptr<RemoteConnectorSplit>> makeStages();
   test::CursorParameters params_;
   std::vector<ExecutableFragment> plan_;
   SplitSourceFactory* splitSourceFactory_;
   ExecutablePlanOptions options_;
   std::unique_ptr<test::TaskCursor> cursor_;
   std::vector<std::vector<std::shared_ptr<Task>>> stages_;
-    std::exception_ptr error_;
-    bool tasksCreated_{false};
-  };
+  std::exception_ptr error_;
+  bool tasksCreated_{false};
+};
 class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const verax::LocalTable* table, int32_t splitsPerFile)

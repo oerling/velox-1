@@ -740,8 +740,7 @@ PlanNodePtr toVeloxPlan(
   }
 }
 
-
-  PlanNodePtr processDelimGetJoin(
+PlanNodePtr processDelimGetJoin(
     const ::duckdb::LogicalFilter& filter,
     memory::MemoryPool* pool,
     QueryContext& queryContext) {
@@ -788,14 +787,13 @@ PlanNodePtr toVeloxPlan(
       veloxFilter = conjunct;
     } else {
       veloxFilter = std::make_shared<CallTypedExpr>(
-						    BOOLEAN(),std::vector<TypedExprPtr>{ veloxFilter, conjunct}, "and");
+          BOOLEAN(), std::vector<TypedExprPtr>{veloxFilter, conjunct}, "and");
     }
   }
   return std::make_shared<FilterNode>(
       queryContext.nextNodeId(), veloxFilter, project);
 }
 
-  
 static void customScalarFunction(
     ::duckdb::DataChunk& args,
     ::duckdb::ExpressionState& state,
@@ -839,8 +837,6 @@ static void customAggregateFinalize(
 
 } // namespace
 
-
-  
 PlanNodePtr parseQuery(
     const std::string& sql,
     memory::MemoryPool* pool,

@@ -521,7 +521,8 @@ PlanObjectPtr Optimization::makeQueryGraph(
     auto names = project->names();
     auto exprs = project->projections();
     for (auto i = 0; i < names.size(); ++i) {
-      if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(exprs.at(i).get())) {
+      if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(
+              exprs.at(i).get())) {
         // A variable projected to itself adds no renames. Inputs contain this
         // all the time.
         if (field->name() == names[i]) {

@@ -388,9 +388,10 @@ class JoinEdge {
   //// Fills in 'lrFanout' and 'rlFanout', 'leftUnique', 'rightUnique'.
   void guessFanout();
 
-  // True if a hash join build can be broadcastable. Used when building on the right. None of the right hash join variants is broadcastable.
+  // True if a hash join build can be broadcastable. Used when building on the
+  // right. None of the right hash join variants is broadcastable.
   bool isBroadcastableType() const;
-  
+
  private:
   // Leading left side join keys.
   ExprVector leftKeys_;
@@ -720,5 +721,5 @@ float tableCardinality(PlanObjectConstPtr table);
 
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
-  
+
 } // namespace facebook::verax
