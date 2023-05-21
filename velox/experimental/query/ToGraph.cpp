@@ -347,6 +347,9 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
         rightExists,
         rightNotExists,
         markColumn);
+    if (markColumn) {
+      renames_[markColumn->name()] = markColumn;
+    }
     currentSelect_->joins.push_back(edge);
     for (auto i = 0; i < leftKeys.size(); ++i) {
       edge->addEquality(leftKeys[i], rightKeys[i]);

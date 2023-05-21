@@ -828,6 +828,12 @@ PlanObjectSet availableColumns(PlanObjectConstPtr object) {
     for (auto& c : object->as<BaseTable>()->columns) {
       set.add(c);
     }
+  } else if (object->type() == PlanType::kDerivedTable) {
+    for (auto& c : object->as<DerivedTable>()->columns) {
+      set.add(c);
+    }
+  } else {
+    VELOX_UNREACHABLE("Joinable must be a table or derived table");
   }
   return set;
 }
@@ -951,6 +957,7 @@ void Optimization::joinByHash(
     auto column = reinterpret_cast<ColumnPtr>(object);
     if (column == build.markColumn) {
       mark = column;
+      return;
     }
     columns.push_back(column);
   });

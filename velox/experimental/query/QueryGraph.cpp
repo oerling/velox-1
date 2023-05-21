@@ -1041,7 +1041,10 @@ void DerivedTable::distributeConjuncts() {
     std::vector<PlanObjectPtr> tables;
     tableSet.forEachMutable([&](auto table) { tables.push_back(table); });
     if (tables.size() == 1) {
-      if (tables[0]->type() == PlanType::kDerivedTable) {
+      if (tables[0] == this) {
+        continue; // the conjunct depends on containing dt, like grouping or existence
+          // flags. Leave in place.
+      } else if (tables[0]->type() == PlanType::kDerivedTable) {
         // Translate the column names and add the condition to the conjuncts in
         // the dt.
         VELOX_NYI();

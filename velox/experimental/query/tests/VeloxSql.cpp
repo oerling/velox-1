@@ -356,13 +356,15 @@ class VeloxRunner {
     std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
+    ++queryCounter_;
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(),
         std::make_shared<core::MemConfig>(config_),
         std::move(connectorConfigs),
         memory::MemoryAllocator::getInstance(),
-        rootPool_->addAggregateChild(fmt::format("query_{}", ++queryCounter_)),
-        spillExecutor_);
+        rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
+        spillExecutor_,
+	fmt::format("query_{}", queryCounter_));
 
     core::PlanNodePtr plan;
     try {
@@ -524,6 +526,7 @@ class VeloxRunner {
         }
       }
     }
+    return numRows;
   }
 
   std::shared_ptr<memory::MemoryAllocator> allocator_;
