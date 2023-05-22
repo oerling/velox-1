@@ -385,10 +385,12 @@ PlanNodePtr toVeloxPlan(
   for (auto& expression : logicalAggregate.expressions) {
     auto call = std::dynamic_pointer_cast<const CallTypedExpr>(
         toVeloxExpression(*expression, sources[0]->outputType()));
-    if (expression->return_type.InternalType() == ::duckdb::PhysicalType::INT128) {
-      call = std::make_shared<CallTypedExpr>(BIGINT(), call->inputs(), call->name());
+    if (expression->return_type.InternalType() ==
+        ::duckdb::PhysicalType::INT128) {
+      call = std::make_shared<CallTypedExpr>(
+          BIGINT(), call->inputs(), call->name());
     }
-      std::vector<TypedExprPtr> fieldInputs;
+    std::vector<TypedExprPtr> fieldInputs;
 
     for (auto& input : call->inputs()) {
       projections.push_back(input);
@@ -658,7 +660,6 @@ PlanNodePtr processDelimGetJoin(
     memory::MemoryPool* pool,
     QueryContext& queryContext);
 
-  
 PlanNodePtr toVeloxPlan(
     ::duckdb::LogicalOperator& plan,
     memory::MemoryPool* pool,
@@ -680,10 +681,16 @@ PlanNodePtr toVeloxPlan(
       return processDelimGetJoin(filter, pool, queryContext);
     }
   }
-  if (plan.type == ::duckdb::LogicalOperatorType::LOGICAL_COMPARISON_JOIN && queryContext.isInDelimJoin && plan.children[0]->type == ::duckdb::LogicalOperatorType::LOGICAL_DELIM_GET) { 
-    return processDelimGetJoin(dynamic_cast<::duckdb::LogicalComparisonJoin&>(plan), pool, queryContext);
+  if (plan.type == ::duckdb::LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
+      queryContext.isInDelimJoin &&
+      plan.children[0]->type ==
+          ::duckdb::LogicalOperatorType::LOGICAL_DELIM_GET) {
+    return processDelimGetJoin(
+        dynamic_cast<::duckdb::LogicalComparisonJoin&>(plan),
+        pool,
+        queryContext);
   }
-    for (auto& child : plan.children) {
+  for (auto& child : plan.children) {
     sources.push_back(toVeloxPlan(*child, pool, queryContext));
   }
 
@@ -813,7 +820,6 @@ PlanNodePtr processDelimGetJoin(
       queryContext.nextNodeId(), veloxFilter, project);
 }
 
-  
 PlanNodePtr processDelimGetJoin(
     const ::duckdb::LogicalComparisonJoin& join,
     memory::MemoryPool* pool,
@@ -821,12 +827,13 @@ PlanNodePtr processDelimGetJoin(
   int32_t numFromDelimGet = join.children[0]->types.size();
   // Column index on the right side for each delim get column.
   std::vector<int32_t> delimAlias(numFromDelimGet);
-  auto right =
-      toVeloxPlan(*join.children[1], pool, queryContext);
+  auto right = toVeloxPlan(*join.children[1], pool, queryContext);
   auto rightType = right->outputType();
   for (auto& condition : join.conditions) {
-    auto left = dynamic_cast<::duckdb::BoundReferenceExpression*>(condition.left.get());
-    auto right = dynamic_cast<::duckdb::BoundReferenceExpression*>(condition.right.get());
+    auto left =
+        dynamic_cast<::duckdb::BoundReferenceExpression*>(condition.left.get());
+    auto right = dynamic_cast<::duckdb::BoundReferenceExpression*>(
+        condition.right.get());
     VELOX_CHECK(left && right);
     VELOX_CHECK_LT(left->index, numFromDelimGet);
     delimAlias[left->index] = right->index;
@@ -849,7 +856,6 @@ PlanNodePtr processDelimGetJoin(
       queryContext.nextNodeId(), std::move(names), std::move(exprs), right);
 }
 
-  
 static void customScalarFunction(
     ::duckdb::DataChunk& args,
     ::duckdb::ExpressionState& state,

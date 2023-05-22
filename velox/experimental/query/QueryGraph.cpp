@@ -919,9 +919,9 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     joinChain(other, joins, projected, visited, isContained, path);
     if (path.empty()) {
       if (other->type() == PlanType::kDerivedTable) {
-	const_cast<PlanObject*>(other)->as<DerivedTable>()->makeInitialPlan();
+        const_cast<PlanObject*>(other)->as<DerivedTable>()->makeInitialPlan();
       }
-      
+
       newFirst->tables.push_back(other);
       newFirst->tableSet.add(other);
       newFirst->joins.push_back(
@@ -1129,7 +1129,7 @@ void DerivedTable::makeInitialPlan() {
   if (!found) {
     optimization->memo()[key] = std::move(state.plans);
   }
-  }
+}
 
 std::string DerivedTable::toString() const {
   std::stringstream out;

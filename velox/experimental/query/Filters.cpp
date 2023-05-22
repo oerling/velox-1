@@ -14,19 +14,14 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/QueryGraph.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::verax {
 
+Cost filterCost(PtrSpan<Expr> conjuncts) {}
 
-  Cost filterCost(PtrSpan<Expr> conjuncts) {
-    
-  }
-
-
-  
-}
+} // namespace facebook::verax

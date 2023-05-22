@@ -364,7 +364,7 @@ class VeloxRunner {
         memory::MemoryAllocator::getInstance(),
         rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
         spillExecutor_,
-	fmt::format("query_{}", queryCounter_));
+        fmt::format("query_{}", queryCounter_));
 
     core::PlanNodePtr plan;
     try {
