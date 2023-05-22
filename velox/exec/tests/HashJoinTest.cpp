@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-#include <boost/regex.hpp>
+#include <re2/re2.h>
+
 #include "folly/experimental/EventCount.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
@@ -523,7 +524,7 @@ class HashJoinBuilder {
     }
     if (!configs_.empty()) {
       auto configCopy = configs_;
-      queryCtx->setConfigOverridesUnsafe(std::move(configCopy));
+      queryCtx->testingOverrideConfigUnsafe(std::move(configCopy));
     }
     if (queryPool_ != nullptr) {
       queryCtx->testingOverrideMemoryPool(queryPool_);
@@ -606,8 +607,6 @@ class HashJoinBuilder {
 
 class HashJoinTest : public HiveConnectorTestBase {
  protected:
-  friend class HashJoinBuilder;
-
   HashJoinTest() : HashJoinTest(TestParam(1)) {}
 
   explicit HashJoinTest(const TestParam& param)
@@ -732,6 +731,8 @@ class HashJoinTest : public HiveConnectorTestBase {
   // The default left and right table types used for test.
   RowTypePtr probeType_;
   RowTypePtr buildType_;
+
+  friend class HashJoinBuilder;
 };
 
 class MultiThreadedHashJoinTest
@@ -3502,11 +3503,11 @@ TEST_F(HashJoinTest, dynamicFilters) {
 
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
 
-  auto buildSide = PlanBuilder(planNodeIdGenerator)
+  auto buildSide = PlanBuilder(planNodeIdGenerator, pool_.get())
                        .values(buildVectors)
                        .project({"c0 AS u_c0", "c1 AS u_c1"})
                        .planNode();
-  auto keyOnlyBuildSide = PlanBuilder(planNodeIdGenerator)
+  auto keyOnlyBuildSide = PlanBuilder(planNodeIdGenerator, pool_.get())
                               .values(keyOnlyBuildVectors)
                               .project({"c0 AS u_c0"})
                               .planNode();
@@ -3515,7 +3516,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   {
     // Inner join.
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType)
                   .capturePlanNodeId(probeScanId)
                   .hashJoin(
@@ -3551,7 +3552,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
     }
 
     // Left semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType)
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -3589,7 +3590,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
     }
 
     // Right semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType)
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -3637,7 +3638,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
 
     core::PlanNodeId probeScanId;
     auto op =
-        PlanBuilder(planNodeIdGenerator)
+        PlanBuilder(planNodeIdGenerator, pool_.get())
             .tableScan(
                 scanOutputType,
                 makeTableHandle(common::test::SubfieldFiltersBuilder().build()),
@@ -3673,7 +3674,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   // Push-down that requires merging filters.
   {
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType, {"c0 < 500::INTEGER"})
                   .capturePlanNodeId(probeScanId)
                   .hashJoin({"c0"}, {"u_c0"}, buildSide, "", {"c1", "u_c1"})
@@ -3707,7 +3708,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   {
     core::PlanNodeId probeScanId;
     auto op =
-        PlanBuilder(planNodeIdGenerator)
+        PlanBuilder(planNodeIdGenerator, pool_.get())
             .tableScan(probeType)
             .capturePlanNodeId(probeScanId)
             .hashJoin({"c0"}, {"u_c0"}, keyOnlyBuildSide, "", {"c0", "c1"})
@@ -3742,7 +3743,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   // number of columns than the input.
   {
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType)
                   .capturePlanNodeId(probeScanId)
                   .hashJoin({"c0"}, {"u_c0"}, keyOnlyBuildSide, "", {"c0"})
@@ -3775,7 +3776,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   // Push-down that requires merging filters and turns join into a no-op.
   {
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType, {"c0 < 500::INTEGER"})
                   .capturePlanNodeId(probeScanId)
                   .hashJoin({"c0"}, {"u_c0"}, keyOnlyBuildSide, "", {"c1"})
@@ -3810,7 +3811,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
     // Inner join.
     core::PlanNodeId probeScanId;
     auto op =
-        PlanBuilder(planNodeIdGenerator)
+        PlanBuilder(planNodeIdGenerator, pool_.get())
             .tableScan(probeType, {"c0 < 200::INTEGER"})
             .capturePlanNodeId(probeScanId)
             .hashJoin(
@@ -3843,7 +3844,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
     }
 
     // Left semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType, {"c0 < 200::INTEGER"})
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -3881,7 +3882,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
     }
 
     // Right semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType, {"c0 < 200::INTEGER"})
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -3921,7 +3922,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
 
   // Disable filter push-down by using values in place of scan.
   {
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .values(probeVectors)
                   .hashJoin({"c0"}, {"u_c0"}, buildSide, "", {"c1"})
                   .project({"c1 + 1"})
@@ -3942,7 +3943,7 @@ TEST_F(HashJoinTest, dynamicFilters) {
   // probe side.
   {
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType)
                   .capturePlanNodeId(probeScanId)
                   .project({"cast(c0 + 1 as integer) AS t_key", "c1"})
@@ -4042,11 +4043,11 @@ TEST_F(HashJoinTest, dynamicFiltersWithSkippedSplits) {
 
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
 
-  auto buildSide = PlanBuilder(planNodeIdGenerator)
+  auto buildSide = PlanBuilder(planNodeIdGenerator, pool_.get())
                        .values(buildVectors)
                        .project({"c0 AS u_c0", "c1 AS u_c1"})
                        .planNode();
-  auto keyOnlyBuildSide = PlanBuilder(planNodeIdGenerator)
+  auto keyOnlyBuildSide = PlanBuilder(planNodeIdGenerator, pool_.get())
                               .values(keyOnlyBuildVectors)
                               .project({"c0 AS u_c0"})
                               .planNode();
@@ -4055,7 +4056,7 @@ TEST_F(HashJoinTest, dynamicFiltersWithSkippedSplits) {
   {
     // Inner join.
     core::PlanNodeId probeScanId;
-    auto op = PlanBuilder(planNodeIdGenerator)
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
                   .tableScan(probeType, {"c2 > 0"})
                   .capturePlanNodeId(probeScanId)
                   .hashJoin(
@@ -4096,7 +4097,7 @@ TEST_F(HashJoinTest, dynamicFiltersWithSkippedSplits) {
     }
 
     // Left semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType, {"c2 > 0"})
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -4139,7 +4140,7 @@ TEST_F(HashJoinTest, dynamicFiltersWithSkippedSplits) {
     }
 
     // Right semi join.
-    op = PlanBuilder(planNodeIdGenerator)
+    op = PlanBuilder(planNodeIdGenerator, pool_.get())
              .tableScan(probeType, {"c2 > 0"})
              .capturePlanNodeId(probeScanId)
              .hashJoin(
@@ -4352,7 +4353,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, buildReservationReleaseCheck) {
   // spilling is really triggered in test or not.
   auto spillDirectory = exec::test::TempDirectoryPath::create();
   params.spillDirectory = spillDirectory->path;
-  params.queryCtx->setConfigOverridesUnsafe(
+  params.queryCtx->testingOverrideConfigUnsafe(
       {{core::QueryConfig::kSpillEnabled, "true"},
        {core::QueryConfig::kMaxSpillLevel, "0"},
        {core::QueryConfig::kJoinSpillEnabled, "true"}});
@@ -4627,8 +4628,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
       std::function<void(memory::MemoryPoolImpl*)>(
           ([&](memory::MemoryPoolImpl* pool) {
             ASSERT_TRUE(op != nullptr);
-            const boost::regex re(".*HashBuild");
-            if (!regex_match(pool->name(), re)) {
+            const std::string re(".*HashBuild");
+            if (!RE2::FullMatch(pool->name(), re)) {
               return;
             }
             if (!injectOnce.exchange(false)) {
@@ -4744,8 +4745,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
         std::function<void(memory::MemoryPoolImpl*)>(
             ([&](memory::MemoryPoolImpl* pool) {
               ASSERT_TRUE(op != nullptr);
-              const boost::regex re(".*HashBuild");
-              if (!regex_match(pool->name(), re)) {
+              const std::string re(".*HashBuild");
+              if (!RE2::FullMatch(pool->name(), re)) {
                 return;
               }
               if (!injectOnce.exchange(false)) {
@@ -5053,6 +5054,4 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
 
   taskThread.join();
 }
-
-// TODO: add memory reclaim with multiple hash builder test.
 } // namespace

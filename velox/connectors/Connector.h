@@ -19,7 +19,7 @@
 #include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/future/VeloxPromise.h"
-#include "velox/core/Context.h"
+#include "velox/core/ExpressionEvaluator.h"
 #include "velox/vector/ComplexVector.h"
 
 #include <folly/Synchronized.h>
@@ -28,12 +28,8 @@ namespace facebook::velox::common {
 class Filter;
 }
 
-namespace facebook::velox::core {
-class ITypedExpr;
-} // namespace facebook::velox::core
-
-namespace facebook::velox::exec {
-class ExprSet;
+namespace facebook::velox {
+class Config;
 }
 
 namespace facebook::velox::connector {
@@ -45,7 +41,7 @@ class DataSource;
 struct ConnectorSplit {
   const std::string connectorId;
 
-  std::shared_ptr<AsyncSource<std::shared_ptr<DataSource>>> dataSource;
+  std::unique_ptr<AsyncSource<DataSource>> dataSource;
 
   explicit ConnectorSplit(const std::string& _connectorId)
       : connectorId(_connectorId) {}
@@ -166,7 +162,7 @@ class DataSource {
   // into 'this' Adaptation like dynamic filters stay in effect but
   // the parts dealing with open files, prefetched data etc. are moved. 'source'
   // is freed after the move.
-  virtual void setFromDataSource(std::shared_ptr<DataSource> /*source*/) {
+  virtual void setFromDataSource(std::unique_ptr<DataSource> /*source*/) {
     VELOX_UNSUPPORTED("setFromDataSource");
   }
 
@@ -181,31 +177,6 @@ class DataSource {
   }
 };
 
-// Exposes expression evaluation functionality of the engine to the
-// connector.  Connector may use it, for example, to evaluate pushed
-// down filters. This is not thread safe and serializing operations is
-// the responsibility of the caller. This is self-contained and does
-// not reference objects from the thread which constructs
-// this. Passing this between threads is allowed as long as uses are
-// sequential. May reference query-level structures like QueryCtx.
-class ExpressionEvaluator {
- public:
-  virtual ~ExpressionEvaluator() = default;
-
-  // Compiles an expression. Returns an instance of exec::ExprSet that can be
-  // used to evaluate that expression on multiple vectors using evaluate method.
-  virtual std::unique_ptr<exec::ExprSet> compile(
-      const std::shared_ptr<const core::ITypedExpr>& expression) const = 0;
-
-  // Evaluates previously compiled expression on the specified rows.
-  // Re-uses result vector if it is not null.
-  virtual void evaluate(
-      exec::ExprSet* FOLLY_NONNULL exprSet,
-      const SelectivityVector& rows,
-      RowVectorPtr& input,
-      VectorPtr* FOLLY_NULLABLE result) const = 0;
-};
-
 /// Collection of context data for use in a DataSource or DataSink. One instance
 /// of this per DataSource and DataSink. This may be passed between threads but
 /// methods must be invoked sequentially. Serializing use is the responsibility
@@ -216,7 +187,7 @@ class ConnectorQueryCtx {
       memory::MemoryPool* operatorPool,
       memory::MemoryPool* connectorPool,
       const Config* connectorConfig,
-      std::unique_ptr<ExpressionEvaluator> expressionEvaluator,
+      std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator,
       memory::MemoryAllocator* FOLLY_NONNULL allocator,
       const std::string& taskId,
       const std::string& planNodeId,
@@ -247,7 +218,7 @@ class ConnectorQueryCtx {
     return config_;
   }
 
-  ExpressionEvaluator* FOLLY_NULLABLE expressionEvaluator() const {
+  core::ExpressionEvaluator* expressionEvaluator() const {
     return expressionEvaluator_.get();
   }
 
@@ -277,7 +248,7 @@ class ConnectorQueryCtx {
   memory::MemoryPool* operatorPool_;
   memory::MemoryPool* connectorPool_;
   const Config* FOLLY_NONNULL config_;
-  std::unique_ptr<ExpressionEvaluator> expressionEvaluator_;
+  std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator_;
   memory::MemoryAllocator* FOLLY_NONNULL allocator_;
   const std::string scanId_;
   const std::string taskId_;
@@ -307,9 +278,9 @@ class Connector {
     return false;
   }
 
-  virtual std::shared_ptr<DataSource> createDataSource(
+  virtual std::unique_ptr<DataSource> createDataSource(
       const RowTypePtr& outputType,
-      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
+      const std::shared_ptr<ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
@@ -323,7 +294,7 @@ class Connector {
     return false;
   }
 
-  virtual std::shared_ptr<DataSink> createDataSink(
+  virtual std::unique_ptr<DataSink> createDataSink(
       RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx,

@@ -91,9 +91,12 @@ PlanBuilder& PlanBuilder::tableScan(
   }
   SubfieldFilters filters;
   filters.reserve(subfieldFilters.size());
+  core::QueryCtx queryCtx;
+  SimpleExpressionEvaluator evaluator(&queryCtx, pool_);
   for (const auto& filter : subfieldFilters) {
     auto filterExpr = parseExpr(filter, outputType, options_, pool_);
-    auto [subfield, subfieldFilter] = exec::toSubfieldFilter(filterExpr);
+    auto [subfield, subfieldFilter] =
+        exec::toSubfieldFilter(filterExpr, &evaluator);
 
     auto it = columnAliases.find(subfield.toString());
     if (it != columnAliases.end()) {
@@ -307,34 +310,6 @@ std::string throwAggregateFunctionDoesntExist(const std::string& name) {
              "Make sure to register some aggregate functions.";
   }
   VELOX_USER_FAIL(error.str());
-}
-
-std::string toString(
-    const std::string& name,
-    const std::vector<TypePtr>& types) {
-  std::ostringstream signature;
-  signature << name << "(";
-  for (auto i = 0; i < types.size(); i++) {
-    if (i > 0) {
-      signature << ", ";
-    }
-    signature << types[i]->toString();
-  }
-  signature << ")";
-  return signature.str();
-}
-
-std::string toString(
-    const std::vector<std::shared_ptr<AggregateFunctionSignature>>&
-        signatures) {
-  std::stringstream out;
-  for (auto i = 0; i < signatures.size(); ++i) {
-    if (i > 0) {
-      out << ", ";
-    }
-    out << signatures[i]->toString();
-  }
-  return out.str();
 }
 
 std::string throwAggregateFunctionSignatureNotSupported(
@@ -814,18 +789,30 @@ PlanBuilder& PlanBuilder::partitionedOutput(
     int numPartitions,
     bool replicateNullsAndAny,
     const std::vector<std::string>& outputLayout) {
+  return partitionedOutput(
+      keys,
+      numPartitions,
+      replicateNullsAndAny,
+      createPartitionFunctionSpec(planNode_->outputType(), keys),
+      outputLayout);
+}
+
+PlanBuilder& PlanBuilder::partitionedOutput(
+    const std::vector<std::string>& keys,
+    int numPartitions,
+    bool replicateNullsAndAny,
+    core::PartitionFunctionSpecPtr partitionFunctionSpec,
+    const std::vector<std::string>& outputLayout) {
   auto outputType = outputLayout.empty()
       ? planNode_->outputType()
       : extract(planNode_->outputType(), outputLayout);
-  auto partitionFunctionFactory =
-      createPartitionFunctionSpec(planNode_->outputType(), keys);
   planNode_ = std::make_shared<core::PartitionedOutputNode>(
       nextPlanNodeId(),
       exprs(keys),
       numPartitions,
       false,
       replicateNullsAndAny,
-      std::move(partitionFunctionFactory),
+      std::move(partitionFunctionSpec),
       outputType,
       planNode_);
   return *this;
@@ -1016,10 +1003,6 @@ PlanBuilder& PlanBuilder::unnest(
 }
 
 namespace {
-std::string toString(const std::vector<FunctionSignaturePtr>& signatures) {
-  return fmt::format("{}", fmt::join(signatures, ","));
-}
-
 std::string throwWindowFunctionDoesntExist(const std::string& name) {
   std::stringstream error;
   error << "Window function doesn't exist: " << name << ".";

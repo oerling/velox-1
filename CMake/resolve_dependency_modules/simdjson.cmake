@@ -11,26 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+include_guard(GLOBAL)
 
-add_executable(velox_row24_test UnsafeRow24DeserializerTest.cpp)
+set(VELOX_SIMDJSON_VERSION 3.1.5)
+set(VELOX_SIMDJSON_BUILD_SHA256_CHECKSUM
+    5b916be17343324426fc467a4041a30151e481700d60790acfd89716ecc37076)
+set(VELOX_SIMDJSON_SOURCE_URL
+    "https://github.com/simdjson/simdjson/archive/refs/tags/v${VELOX_SIMDJSON_VERSION}.tar.gz"
+)
 
-add_test(velox_row24_test velox_row24_test)
+resolve_dependency_url(SIMDJSON)
 
-target_link_libraries(
-  velox_row24_test
-  velox_row24
-  velox_exec
-  velox_exec_test_lib
-  velox_functions_lib
-  velox_functions_prestosql
-  velox_aggregates
-  velox_presto_serializer
-  velox_type
-  velox_vector
-  velox_vector_fuzzer
-  velox_vector_test_lib
-  Folly::folly
-  gtest
-  gtest_main
-  gflags::gflags
-  glog::glog)
+message(STATUS "Building simdjson from source")
+
+FetchContent_Declare(
+  simdjson
+  URL ${VELOX_SIMDJSON_SOURCE_URL}
+  URL_HASH ${VELOX_SIMDJSON_BUILD_SHA256_CHECKSUM})
+
+FetchContent_MakeAvailable(simdjson)

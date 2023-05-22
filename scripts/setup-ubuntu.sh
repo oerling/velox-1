@@ -31,8 +31,8 @@ export CMAKE_BUILD_TYPE=Release
 # Install all velox and folly dependencies. 
 # The is an issue on 22.04 where a version conflict prevents glog install,
 # installing libunwind first fixes this.
-sudo --preserve-env apt update && sudo apt install -y libunwind-dev && \
-  sudo apt install -y \
+sudo --preserve-env apt update && sudo --preserve-env apt install -y libunwind-dev && \
+  sudo --preserve-env apt install -y \
   g++ \
   cmake \
   ccache \
@@ -52,6 +52,7 @@ sudo --preserve-env apt update && sudo apt install -y libunwind-dev && \
   libzstd-dev \
   libre2-dev \
   libsnappy-dev \
+  libsodium-dev \
   libthrift-dev \
   liblzo2-dev \
   bison \
@@ -90,6 +91,21 @@ function install_folly {
   cmake_install -DBUILD_TESTS=OFF
 }
 
+function install_fizz {
+  github_checkout facebookincubator/fizz "${FB_OS_VERSION}"
+  cmake_install -DBUILD_TESTS=OFF -S fizz
+}
+
+function install_wangle {
+  github_checkout facebook/wangle "${FB_OS_VERSION}"
+  cmake_install -DBUILD_TESTS=OFF -S wangle
+}
+
+function install_fbthrift {
+  github_checkout facebook/fbthrift "${FB_OS_VERSION}"
+  cmake_install -DBUILD_TESTS=OFF
+}
+
 function install_conda {
   mkdir -p conda && cd conda
   wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
@@ -100,6 +116,9 @@ function install_conda {
 function install_velox_deps {
   run_and_time install_fmt
   run_and_time install_folly
+  run_and_time install_fizz
+  run_and_time install_wangle
+  run_and_time install_fbthrift
   run_and_time install_conda
 }
 
