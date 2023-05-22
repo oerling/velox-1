@@ -513,7 +513,7 @@ class VeloxRunner {
       for (vector_size_t i = 0; i < vector->size(); ++i) {
         std::cout << vector->toString(i) << std::endl;
         if (++numRows >= FLAGS_max_rows) {
-          int32_t numLeft = (vector->size() - i);
+          int32_t numLeft = (vector->size() - (i - 1));
           ++vectorIndex;
           for (; vectorIndex < results.size(); ++vectorIndex) {
             numLeft += results[vectorIndex]->size();

@@ -19,6 +19,7 @@ add_library(
   ToGraph.cpp
   Plan.cpp
   QueryGraph.cpp
+  Filters.cpp
   Cost.cpp
   PlanUtils.cpp
   RelationOp.cpp

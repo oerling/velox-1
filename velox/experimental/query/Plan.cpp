@@ -1064,10 +1064,22 @@ void Optimization::joinByHashRight(
 
   ColumnVector columns;
   PlanObjectSet columnSet;
+  ColumnPtr mark = nullptr;
   downstream.forEach([&](auto object) {
-    columns.push_back(reinterpret_cast<ColumnPtr>(object));
+    auto column = reinterpret_cast<ColumnPtr>(object);
     columnSet.add(object);
+    if (column == probe.markColumn) {
+      mark = column;
+      return;
+    }
+    columns.push_back(column);
   });
+  if (mark) {
+    const_cast<Value*>(&mark->value())->trueFraction =
+        std::min<float>(1, candidate.fanout);
+    columns.push_back(mark);
+  }
+
   state.columns = columnSet;
   auto joinType = probe.leftJoinType();
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);

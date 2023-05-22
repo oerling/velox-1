@@ -323,11 +323,18 @@ PlanNodePtr toVeloxPlan(
     memory::MemoryPool* pool,
     std::vector<PlanNodePtr> sources,
     QueryContext& queryContext) {
-  VELOX_CHECK_EQ(1, logicalFilter.expressions.size())
-  auto filter = toVeloxExpression(
-      *logicalFilter.expressions.front(), sources[0]->outputType());
+  TypedExprPtr veloxFilter;
+  for (auto& expr : logicalFilter.expressions) {
+    auto conjunct = toVeloxExpression(*expr, sources[0]->outputType());
+    if (!veloxFilter) {
+      veloxFilter = conjunct;
+    } else {
+      veloxFilter = std::make_shared<CallTypedExpr>(
+          BOOLEAN(), std::vector<TypedExprPtr>{veloxFilter, conjunct}, "and");
+    }
+  }
   return std::make_shared<FilterNode>(
-      queryContext.nextNodeId(), std::move(filter), std::move(sources[0]));
+      queryContext.nextNodeId(), std::move(veloxFilter), std::move(sources[0]));
 }
 
 PlanNodePtr toVeloxPlan(

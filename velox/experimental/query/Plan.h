@@ -385,6 +385,18 @@ class Optimization {
     return history_.setLeafSelectivity(baseTable);
   }
 
+  auto& memo() {
+    return memo_;
+  }
+
+  // Lists the possible joins based on 'state.placed' and adds each on top of
+  // 'plan'. This is a set of plans extending 'plan' by one join (single table
+  // or bush). Calls itself on the interesting next plans. If all tables have
+  // been used, adds postprocess and adds the plan to 'plans' in 'state'. If
+  // 'state' enables cutoff and a partial plan is worse than the best so far,
+  // discards the candidate.
+  void makeJoins(RelationOpPtr plan, PlanState& state);
+
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
@@ -508,14 +520,6 @@ class Optimization {
   // Places a derived table as first table in a plan. Imports possibly reducing
   // joins into the plan if can.
   void placeDerivedTable(const DerivedTable* from, PlanState& state);
-
-  // Lists the possible joins based on 'state.placed' and adds each on top of
-  // 'plan'. This is a set of plans extending 'plan' by one join (single table
-  // or bush). Calls itself on the interesting next plans. If all tables have
-  // been used, adds postprocess and adds the plan to 'plans' in 'state'. If
-  // 'state' enables cutoff and a partial plan is worse than the best so far,
-  // discards the candidate.
-  void makeJoins(RelationOpPtr plan, PlanState& state);
 
   // Adds the items from 'dt.conjuncts' that are not placed in 'state'
   // and whose prerequisite columns are placed. If conjuncts can be
@@ -678,6 +682,10 @@ class Optimization {
 
   velox::exec::ExecutablePlanOptions options_;
   velox::core::PlanNodeIdGenerator idGenerator_;
+  // Limit for a possible limit/top k order by for while making a Velox plan. -1
+  // means no limit.
+  int32_t toVeloxLimit_{-1};
+  int32_t toVeloxOffset_{0};
 };
 
 /// Returns bits describing function 'name'.

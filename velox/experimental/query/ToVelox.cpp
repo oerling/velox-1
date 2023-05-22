@@ -277,6 +277,10 @@ core::PlanNodePtr Optimization::makeOrderBy(
     OrderBy& op,
     ExecutableFragment& fragment,
     std::vector<ExecutableFragment>& stages) {
+  if (root_->limit > 0) {
+    toVeloxLimit_ = root_->limit;
+    toVeloxOffset_ = root_->offset;
+  }
   ExecutableFragment source;
   source.width = options_.numWorkers;
   source.taskPrefix = fmt::format("stage{}", ++stageCounter_);
@@ -293,8 +297,19 @@ core::PlanNodePtr Optimization::makeOrderBy(
   }
   auto keys = projections.toFieldRefs(op.distribution().order);
   auto project = projections.maybeProject(input);
-  auto orderByNode = std::make_shared<core::OrderByNode>(
-      idGenerator_.next(), keys, sortOrder, true, project);
+  core::PlanNodePtr orderByNode;
+  if (toVeloxLimit_ <= 0) {
+    orderByNode = std::make_shared<core::OrderByNode>(
+        idGenerator_.next(), keys, sortOrder, true, project);
+  } else {
+    orderByNode = std::make_shared<core::TopNNode>(
+        idGenerator_.next(),
+        keys,
+        sortOrder,
+        toVeloxLimit_ + toVeloxOffset_,
+        true,
+        project);
+  }
   auto localMerge = std::make_shared<core::LocalMergeNode>(
       idGenerator_.next(),
       keys,
@@ -310,11 +325,16 @@ core::PlanNodePtr Optimization::makeOrderBy(
       std::make_shared<core::GatherPartitionFunctionSpec>(),
       localMerge->outputType(),
       localMerge);
-  stages.push_back(std::move(source));
-  auto merge = std::make_shared<core::MergeExchangeNode>(
+
+  core::PlanNodePtr merge = std::make_shared<core::MergeExchangeNode>(
       idGenerator_.next(), localMerge->outputType(), keys, sortOrder);
   fragment.width = 1;
   fragment.inputStages.push_back(InputStage{merge->id(), source.taskPrefix});
+  stages.push_back(std::move(source));
+  if (toVeloxLimit_ > 0 || toVeloxOffset_ != 0) {
+    return std::make_shared<core::LimitNode>(
+        idGenerator().next(), toVeloxOffset_, toVeloxLimit_, false, merge);
+  }
   return merge;
 }
 

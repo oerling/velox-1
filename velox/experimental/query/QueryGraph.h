@@ -354,8 +354,11 @@ class JoinEdge {
   // this.
   bool isNonCommutative() const {
     // Inner and full outer joins are commutative.
-    return !leftTable_ || (rightOptional_ && !leftOptional_) || rightExists_ ||
-        rightNotExists_;
+    if (rightOptional_ && leftOptional_) {
+      return false;
+    }
+    return !leftTable_ || rightOptional_ || leftOptional_ || rightExists_ ||
+        rightNotExists_ || markColumn_;
   }
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
@@ -698,6 +701,11 @@ struct DerivedTable : public PlanObject {
   /// table filters. May be called repeatedly if enclosing dt's add
   /// more conjuncts. May call itself recursively on component dts.
   void distributeConjuncts();
+
+  /// memoizes plans for 'this' and fills in 'distribution_'. Needed
+  /// before adding 'this' as a join side because join sides must have
+  /// a cardinality guess.
+  void makeInitialPlan();
 
  private:
   // Imports the joins in 'this' inside 'firstDt', which must be a

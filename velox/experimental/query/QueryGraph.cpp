@@ -858,6 +858,7 @@ void joinChain(
   path.push_back(next);
   joinChain(next, joins, columns, visited, isContained, path);
 }
+
 JoinEdgePtr importedJoin(
     JoinEdgePtr join,
     PlanObjectConstPtr other,
@@ -917,6 +918,10 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     bool isContained = true;
     joinChain(other, joins, projected, visited, isContained, path);
     if (path.empty()) {
+      if (other->type() == PlanType::kDerivedTable) {
+	const_cast<PlanObject*>(other)->as<DerivedTable>()->makeInitialPlan();
+      }
+      
       newFirst->tables.push_back(other);
       newFirst->tableSet.add(other);
       newFirst->joins.push_back(
@@ -928,6 +933,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
         chainSet.add(object);
       }
       chainDt->import(*this, other, chainSet, {}, 1);
+      chainDt->makeInitialPlan();
       newFirst->tables.push_back(chainDt);
       newFirst->tableSet.add(chainDt);
       newFirst->joins.push_back(
@@ -1042,8 +1048,8 @@ void DerivedTable::distributeConjuncts() {
     tableSet.forEachMutable([&](auto table) { tables.push_back(table); });
     if (tables.size() == 1) {
       if (tables[0] == this) {
-        continue; // the conjunct depends on containing dt, like grouping or existence
-          // flags. Leave in place.
+        continue; // the conjunct depends on containing dt, like grouping or
+                  // existence flags. Leave in place.
       } else if (tables[0]->type() == PlanType::kDerivedTable) {
         // Translate the column names and add the condition to the conjuncts in
         // the dt.
@@ -1079,9 +1085,59 @@ void DerivedTable::distributeConjuncts() {
   }
 }
 
+void DerivedTable::makeInitialPlan() {
+  auto optimization = queryCtx()->optimization();
+  MemoKey key;
+  key.firstTable = this;
+  key.tables.add(this);
+  for (auto& column : columns) {
+    key.columns.add(column);
+  }
+  bool found = false;
+  auto it = optimization->memo().find(key);
+  if (it != optimization->memo().end()) {
+    found = true;
+  }
+  distributeConjuncts();
+  addImpliedJoins();
+  linkTablesToJoins();
+  setStartTables();
+  PlanState state(*optimization, this);
+  for (auto expr : exprs) {
+    state.targetColumns.unionColumns(expr);
+  }
+
+  optimization->makeJoins(nullptr, state);
+  Distribution emptyDistribution;
+  bool needsShuffle;
+  auto plan = state.plans.best(emptyDistribution, needsShuffle)->op;
+  auto& distribution = plan->distribution();
+  ExprVector partition = distribution.partition;
+  ExprVector order = distribution.order;
+  auto orderType = distribution.orderType;
+  replace(partition, exprs, columns.data());
+  replace(order, exprs, columns.data());
+  Declare(
+      Distribution,
+      dtDist,
+      distribution.distributionType,
+      distribution.cardinality,
+      partition,
+      order,
+      orderType);
+  this->distribution = dtDist;
+  if (!found) {
+    optimization->memo()[key] = std::move(state.plans);
+  }
+  }
+
 std::string DerivedTable::toString() const {
   std::stringstream out;
-  out << "{dt " << cname;
+  out << "{dt " << cname << " from ";
+  for (auto& table : tables) {
+    out << table->toString() << " ";
+  }
+  out << " where ";
   for (auto& join : joins) {
     out << join->toString();
   }

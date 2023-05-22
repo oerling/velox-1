@@ -440,41 +440,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   }
   currentSelect_->tables.push_back(newDt);
   currentSelect_->tableSet.add(newDt);
-  MemoKey key;
-  key.firstTable = newDt;
-  key.tables.add(newDt);
-  for (auto& column : newDt->columns) {
-    key.columns.add(column);
-  }
-  newDt->distributeConjuncts();
-  newDt->addImpliedJoins();
-  newDt->linkTablesToJoins();
-  newDt->setStartTables();
-  PlanState state(*this, newDt);
-  for (auto expr : newDt->exprs) {
-    state.targetColumns.unionColumns(expr);
-  }
-
-  makeJoins(nullptr, state);
-  Distribution emptyDistribution;
-  bool needsShuffle;
-  auto plan = state.plans.best(emptyDistribution, needsShuffle)->op;
-  auto& distribution = plan->distribution();
-  ExprVector partition = distribution.partition;
-  ExprVector order = distribution.order;
-  auto orderType = distribution.orderType;
-  replace(partition, newDt->exprs, newDt->columns.data());
-  replace(order, newDt->exprs, newDt->columns.data());
-  Declare(
-      Distribution,
-      dtDist,
-      distribution.distributionType,
-      distribution.cardinality,
-      partition,
-      order,
-      orderType);
-  newDt->distribution = dtDist;
-  memo_[key] = std::move(state.plans);
+  newDt->makeInitialPlan();
 
   return newDt;
 }

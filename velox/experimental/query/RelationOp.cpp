@@ -121,6 +121,10 @@ const char* joinTypeLabel(velox::core::JoinType type) {
       return "left";
     case velox::core::JoinType::kRight:
       return "right";
+    case velox::core::JoinType::kRightSemiFilter:
+      return "right exists";
+    case velox::core::JoinType::kRightSemiProject:
+      return "right exists-flag";
     case velox::core::JoinType::kLeftSemiFilter:
       return "exists";
     case velox::core::JoinType::kLeftSemiProject:
