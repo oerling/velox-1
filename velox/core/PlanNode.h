@@ -180,7 +180,7 @@ class PlanNode : public ISerializable {
   }
 
  private:
-  /// The details of the plan node in textual format.
+  // The details of the plan node in textual format.
   virtual void addDetails(std::stringstream& stream) const = 0;
 
   // Format when detailed and recursive are enabled is:
@@ -1480,11 +1480,6 @@ class NestedLoopJoinNode : public PlanNode {
   const std::vector<PlanNodePtr> sources_;
   const RowTypePtr outputType_;
 };
-
-// TODO Remove after updating Prestissimo.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-using CrossJoinNode = NestedLoopJoinNode;
-#endif
 
 // Represents the 'SortBy' node in the plan.
 class OrderByNode : public PlanNode {

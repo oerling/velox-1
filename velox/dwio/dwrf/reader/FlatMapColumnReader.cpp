@@ -17,6 +17,7 @@
 #include "velox/dwio/dwrf/reader/FlatMapColumnReader.h"
 #include <folly/json.h>
 #include "velox/common/base/BitUtil.h"
+#include "velox/dwio/common/FlatMapHelper.h"
 
 namespace facebook::velox::dwrf {
 
@@ -68,14 +69,55 @@ KeyPredicate<T> prepareKeyPredicate(
   return dwio::common::flatmap::prepareKeyPredicate<T>(expr);
 }
 
+// Helper function to perform uniqueness checks before visiting streams
+uint32_t visitUniqueStreamsOfNode(
+    const std::shared_ptr<const TypeWithId>& dataType,
+    StripeStreams& stripe,
+    std::function<void(const StreamInformation&)> visitor) {
+  const auto dataValueType = dataType->childAt(1);
+  std::unordered_set<size_t> processed;
+
+  auto streams = stripe.visitStreamsOfNode(
+      dataValueType->id, [&](const StreamInformation& stream) {
+        auto sequence = stream.getSequence();
+        // No need to load shared dictionary stream here.
+        if (sequence == 0) {
+          return;
+        }
+        // if this branch (sequence) is in the node list already
+        if (processed.count(sequence)) {
+          return;
+        }
+        processed.insert(sequence);
+
+        visitor(stream);
+      });
+
+  return streams;
+}
+
+void triggerKeySelectionNotification(
+    const FlatMapContext& context,
+    const facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats&
+        keySelectionStats) {
+  if (!context.keySelectionCallback) {
+    return;
+  }
+  context.keySelectionCallback(keySelectionStats);
+}
+
 template <typename T>
 std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesFiltered(
     const std::function<bool(const KeyValue<T>&)>& keyPredicate,
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
-    memory::MemoryPool& memoryPool) {
+    memory::MemoryPool& memoryPool,
+    FlatMapContext& flatMapContext) {
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes;
+
+  auto keySelectionStats =
+      facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats{};
 
   const auto requestedValueType = requestedType->childAt(1);
   const auto dataValueType = dataType->childAt(1);
@@ -83,8 +125,8 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesFiltered(
 
   // load all sub streams
   // fetch reader, in map bitmap and key object.
-  auto streams = stripe.visitStreamsOfNode(
-      dataValueType->id, [&](const StreamInformation& stream) {
+  auto streams = visitUniqueStreamsOfNode(
+      dataType, stripe, [&](const StreamInformation& stream) {
         auto sequence = stream.getSequence();
         // No need to load shared dictionary stream here.
         if (sequence == 0) {
@@ -115,7 +157,10 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesFiltered(
             requestedValueType,
             dataValueType,
             stripe,
-            FlatMapContext{sequence, inMapDecoder.get()});
+            FlatMapContext{
+                .sequence = sequence,
+                .inMapDecoder = inMapDecoder.get(),
+                .keySelectionCallback = nullptr});
 
         keyNodes.push_back(std::make_unique<KeyNode<T>>(
             std::move(valueReader),
@@ -124,6 +169,11 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesFiltered(
             sequence,
             memoryPool));
       });
+
+  keySelectionStats.selectedKeys = keyNodes.size();
+  keySelectionStats.totalKeys = processed.size();
+
+  triggerKeySelectionNotification(flatMapContext, keySelectionStats);
 
   VLOG(1) << "[Flat-Map] Initialized a flat-map column reader for node "
           << dataType->id << ", keys=" << keyNodes.size()
@@ -172,7 +222,8 @@ FlatMapColumnReader<T>::FlatMapColumnReader(
       requestedType,
       dataType,
       stripe,
-      memoryPool_);
+      memoryPool_,
+      flatMapContext_);
 
   // sort nodes by sequence id so order of keys is fixed
   std::sort(keyNodes_.begin(), keyNodes_.end(), [](auto& a, auto& b) {
@@ -489,7 +540,8 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesForStructEncoding(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& dataType,
     StripeStreams& stripe,
-    memory::MemoryPool& memoryPool) {
+    memory::MemoryPool& memoryPool,
+    FlatMapContext& flatMapContext) {
   // `KeyNode` is ordered based on the projection. So if [3, 2, 1] is
   // projected, the vector of key node will be created [3, 2, 1].
   // If the key is not found in the stripe, the key node will be nullptr.
@@ -501,7 +553,8 @@ std::vector<std::unique_ptr<KeyNode<T>>> getKeyNodesForStructEncoding(
       requestedType,
       dataType,
       stripe,
-      memoryPool);
+      memoryPool,
+      flatMapContext);
 
   const auto& mapColumnIdAsStruct =
       stripe.getRowReaderOptions().getMapColumnIdAsStruct();
@@ -523,7 +576,8 @@ FlatMapStructEncodingColumnReader<T>::FlatMapStructEncodingColumnReader(
           requestedType,
           dataType,
           stripe,
-          memoryPool_)},
+          memoryPool_,
+          flatMapContext_)},
       nullColumnReader_{std::make_unique<NullColumnReader>(
           stripe,
           requestedType_->type->asMap().valueType())} {

@@ -132,7 +132,7 @@ class HiveDataSource : public DataSource {
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       FileHandleFactory* fileHandleFactory,
       velox::memory::MemoryPool* pool,
-      ExpressionEvaluator* expressionEvaluator,
+      core::ExpressionEvaluator* expressionEvaluator,
       memory::MemoryAllocator* allocator,
       const std::string& scanId,
       folly::Executor* executor);
@@ -160,7 +160,7 @@ class HiveDataSource : public DataSource {
     return rowReader_ && rowReader_->allPrefetchIssued();
   }
 
-  void setFromDataSource(std::shared_ptr<DataSource> source) override;
+  void setFromDataSource(std::unique_ptr<DataSource> sourceUnique) override;
 
   int64_t estimatedRowSize() override;
 
@@ -236,8 +236,8 @@ class HiveDataSource : public DataSource {
 
   dwio::common::RuntimeStatistics runtimeStats_;
 
-  FileHandleCachedPtr fileHandle_;
-  ExpressionEvaluator* expressionEvaluator_;
+  std::shared_ptr<FileHandle> fileHandle_;
+  core::ExpressionEvaluator* expressionEvaluator_;
   uint64_t completedRows_ = 0;
 
   // Reusable memory for remaining filter evaluation.
@@ -261,14 +261,14 @@ class HiveConnector : public Connector {
     return true;
   }
 
-  std::shared_ptr<DataSource> createDataSource(
+  std::unique_ptr<DataSource> createDataSource(
       const RowTypePtr& outputType,
-      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
+      const std::shared_ptr<ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       ConnectorQueryCtx* connectorQueryCtx) override {
-    return std::make_shared<HiveDataSource>(
+    return std::make_unique<HiveDataSource>(
         outputType,
         tableHandle,
         columnHandles,
@@ -284,7 +284,7 @@ class HiveConnector : public Connector {
     return true;
   }
 
-  std::shared_ptr<DataSink> createDataSink(
+  std::unique_ptr<DataSink> createDataSink(
       RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx,
@@ -293,7 +293,7 @@ class HiveConnector : public Connector {
         connectorInsertTableHandle);
     VELOX_CHECK_NOT_NULL(
         hiveInsertHandle, "Hive connector expecting hive write handle!");
-    return std::make_shared<HiveDataSink>(
+    return std::make_unique<HiveDataSink>(
         inputType, hiveInsertHandle, connectorQueryCtx, commitStrategy);
   }
 
@@ -344,5 +344,37 @@ class HiveHadoop2ConnectorFactory : public HiveConnectorFactory {
   HiveHadoop2ConnectorFactory()
       : HiveConnectorFactory(kHiveHadoop2ConnectorName) {}
 };
+
+class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
+ public:
+  HivePartitionFunctionSpec(
+      int numBuckets,
+      std::vector<int> bucketToPartition,
+      std::vector<column_index_t> channels,
+      std::vector<VectorPtr> constValues)
+      : numBuckets_(numBuckets),
+        bucketToPartition_(std::move(bucketToPartition)),
+        channels_(std::move(channels)),
+        constValues_(std::move(constValues)) {}
+
+  std::unique_ptr<core::PartitionFunction> create(
+      int numPartitions) const override;
+
+  std::string toString() const override;
+
+  folly::dynamic serialize() const override;
+
+  static core::PartitionFunctionSpecPtr deserialize(
+      const folly::dynamic& obj,
+      void* context);
+
+ private:
+  const int numBuckets_;
+  const std::vector<int> bucketToPartition_;
+  const std::vector<column_index_t> channels_;
+  const std::vector<VectorPtr> constValues_;
+};
+
+void registerHivePartitionFunctionSerDe();
 
 } // namespace facebook::velox::connector::hive

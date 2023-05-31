@@ -23,6 +23,7 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/ErrorTolerance.h"
+#include "velox/dwio/common/FlatMapHelper.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/encryption/Encryption.h"
@@ -102,6 +103,13 @@ class RowReaderOptions {
   std::shared_ptr<folly::Executor> decodingExecutor_;
   std::shared_ptr<folly::Executor> ioExecutor_;
   bool appendRowNumberColumn_ = false;
+  // Function to populate metrics related to feature projection stats
+  // in Koski. This gets fired in FlatMapColumnReader.
+  // This is a bit of a hack as there is (by design) no good way
+  // To propogate information from column reader to Koski
+  std::function<void(
+      facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
+      keySelectionCallback_;
 
  public:
   RowReaderOptions() noexcept
@@ -275,6 +283,19 @@ class RowReaderOptions {
 
   bool getAppendRowNumberColumn() const {
     return appendRowNumberColumn_;
+  }
+
+  void setKeySelectionCallback(
+      std::function<void(
+          facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
+          keySelectionCallback) {
+    keySelectionCallback_ = std::move(keySelectionCallback);
+  }
+
+  const std::function<
+      void(facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
+  getKeySelectionCallback() const {
+    return keySelectionCallback_;
   }
 
   const std::shared_ptr<folly::Executor>& getDecodingExecutor() const {

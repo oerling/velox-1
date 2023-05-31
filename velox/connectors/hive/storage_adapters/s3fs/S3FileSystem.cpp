@@ -18,7 +18,7 @@
 #include "velox/common/file/File.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/storage_adapters/s3fs/S3Util.h"
-#include "velox/core/Context.h"
+#include "velox/core/Config.h"
 
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -365,8 +365,11 @@ std::string S3FileSystem::name() const {
   return "S3";
 }
 
-static std::function<std::shared_ptr<FileSystem>(std::shared_ptr<const Config>)>
-    filesystemGenerator = [](std::shared_ptr<const Config> properties) {
+static std::function<std::shared_ptr<FileSystem>(
+    std::shared_ptr<const Config>,
+    std::string_view)>
+    filesystemGenerator = [](std::shared_ptr<const Config> properties,
+                             std::string_view filePath) {
       // Only one instance of S3FileSystem is supported for now.
       // TODO: Support multiple S3FileSystem instances using a cache
       // Initialize on first access and reuse after that.

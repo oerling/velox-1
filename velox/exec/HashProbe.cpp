@@ -110,19 +110,18 @@ HashProbe::HashProbe(
           joinNode->outputType(),
           operatorId,
           joinNode->id(),
-          "HashProbe"),
+          "HashProbe",
+          joinNode->canSpill(driverCtx->queryConfig())
+              ? driverCtx->makeSpillConfig(operatorId)
+              : std::nullopt),
       outputBatchSize_{outputBatchRows()},
       joinNode_(std::move(joinNode)),
       joinType_{joinNode_->joinType()},
       nullAware_{joinNode_->isNullAware()},
+      probeType_(joinNode_->sources()[0]->outputType()),
       joinBridge_(operatorCtx_->task()->getHashJoinBridgeLocked(
           operatorCtx_->driverCtx()->splitGroupId,
           planNodeId())),
-      spillConfig_(
-          joinNode_->canSpill(driverCtx->queryConfig())
-              ? operatorCtx_->makeSpillConfig(Spiller::Type::kHashJoinProbe)
-              : std::nullopt),
-      probeType_(joinNode_->sources()[0]->outputType()),
       filterResult_(1),
       outputTableRows_(outputBatchSize_) {
   VELOX_CHECK_NOT_NULL(joinBridge_);
@@ -1392,6 +1391,15 @@ void HashProbe::checkRunning() const {
 
 void HashProbe::setRunning() {
   setState(ProbeOperatorState::kRunning);
+}
+
+void HashProbe::close() {
+  Operator::close();
+
+  // Free up major memory usage.
+  joinBridge_.reset();
+  spiller_.reset();
+  table_.reset();
 }
 
 } // namespace facebook::velox::exec
