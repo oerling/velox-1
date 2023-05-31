@@ -195,6 +195,31 @@ class ExchangeQueue {
     clearPromises(promises);
   }
 
+  int32_t numPromises() const {
+    return promises_.size();
+  }
+
+  void updateRequestStats(int32_t numRequest, int64_t micros) {
+    numRequests_ += numRequest;
+    requestMicros_ += micros;
+    ++numRequestBatches_;
+  }
+
+  std::string requestStats() {
+    std::stringstream out;
+    out << "numReqs=" << numRequests_  << " micros=" <<requestMicros_  << " batches=" << numRequestBatches_;
+    out << " in progress=" << requestsInProgress_;
+    return out.str();
+  }
+
+  int32_t requestsInProgress() {
+    return requestsInProgress_;
+  }
+
+  void updateRequestsInProgress(int32_t delta) {
+    requestsInProgress_ += delta;
+  }
+  
  private:
   std::vector<ContinuePromise> closeLocked() {
     queue_.clear();
@@ -244,6 +269,12 @@ class ExchangeQueue {
   // If 'totalBytes_' < 'minBytes_', an exchange should request more data from
   // producers.
   uint64_t minBytes_;
+
+  int32_t numRequests_{0};
+  int64_t requestMicros_{0};
+  int32_t numRequestBatches_{0};
+  std::atomic<int32_t> requestsInProgress_{0};
+  friend class ExchangeClient;
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
@@ -320,6 +351,10 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   std::atomic<bool> requestPending_{false};
   bool atEnd_ = false;
 
+  virtual void check() {}
+  
+
+  
  protected:
   // Holds a shared reference on the memory pool as it might be still possible
   // to be accessed by external components after the query task is destroyed.
@@ -384,6 +419,10 @@ class ExchangeClient {
 
   std::shared_ptr<ExchangeQueue> queue() const {
     return queue_;
+  }
+
+  bool atEnd() const {
+    return queue_ && queue_->atEnd_;
   }
 
   std::unique_ptr<SerializedPage> next(bool* atEnd, ContinueFuture* future);

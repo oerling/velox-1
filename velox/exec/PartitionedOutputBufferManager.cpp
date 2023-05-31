@@ -24,7 +24,7 @@ std::vector<std::unique_ptr<folly::IOBuf>> DestinationBuffer::getData(
     DataAvailableCallback notify) {
   VELOX_CHECK_GE(
       sequence, sequence_, "Get received for an already acknowledged item");
-
+  lastGet_ = getCurrentTimeMicro();
   if (sequence - sequence_ > data_.size()) {
     VLOG(0) << this << " Out of order get: " << sequence << " over "
             << sequence_ << " Setting second notify " << notifySequence_
@@ -125,9 +125,14 @@ DestinationBuffer::deleteResults() {
 
 std::string DestinationBuffer::toString() {
   std::stringstream out;
+  uint64_t now = getCurrentTimeMicro();
   out << "[available: " << data_.size() << ", "
       << "sequence: " << sequence_ << ", "
-      << (notify_ ? "notify registered, " : "") << this << "]";
+      << (notify_ ? "notify registered, " : "")
+      << (lastEnqueue_ ? fmt::format(" last add {} ago", now - lastEnqueue_)
+                       : "")
+      << (lastGet_ ? fmt::format(" last get {} ago", now - lastGet_) : "")
+      << this << "]";
   return out.str();
 }
 
@@ -460,7 +465,9 @@ std::string PartitionedOutputBuffer::toString() {
       << (atEnd_ ? "at end, " : "") << "destinations: " << std::endl;
   for (auto i = 0; i < buffers_.size(); ++i) {
     auto buffer = buffers_[i].get();
-    out << i << ": " << (buffer ? buffer->toString() : "none") << std::endl;
+    if (buffer && buffer->isInteresting()) {
+      out << i << ": " << (buffer ? buffer->toString() : "none") << std::endl;
+    }
   }
   out << "]" << std::endl;
   return out.str();

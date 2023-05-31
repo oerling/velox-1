@@ -23,6 +23,7 @@
 #include "velox/exec/Operator.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
+#include "velox/common/process/TraceContext.h"
 
 using facebook::velox::common::testutil::TestValue;
 
@@ -97,6 +98,8 @@ BlockingState::BlockingState(
 // static
 void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
   VELOX_CHECK(!state->driver_->isOnThread());
+  //LOG(INFO) << "EXCH: Blocking " << state->driver_->task()->taskId() << " with "
+  //<< blockingReasonToString(state->driver_->blockingReason());
   auto& exec = folly::QueuedImmediateExecutor::instance();
   std::move(state->future_)
       .via(&exec)
@@ -116,6 +119,10 @@ void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
           // The thread will be enqueued at resume.
           return;
         }
+        //LOG(INFO) << "EXCH: Resuming " << state->driver_->task()->taskId()
+	//<< " from "
+	//<< blockingReasonToString(state->driver_->blockingReason());
+
         Driver::enqueue(state->driver_);
       })
       .thenError(
@@ -296,10 +303,15 @@ void Driver::enqueueInternal() {
   queueTimeStartMicros_ = getCurrentTimeMicro();
 }
 
+#define OPTR(n, o)							\
+  process::TraceContext trac(fmt::format("{} {}", n, o->stats().withRLock([](auto& s){return s.operatorType;})));
+
+
 StopReason Driver::runInternal(
     std::shared_ptr<Driver>& self,
     std::shared_ptr<BlockingState>& blockingState,
     RowVectorPtr& result) {
+  process::TraceContext tr("Driver::runInternal");
   TestValue::adjust("facebook::velox::exec::Driver::runInternal", self.get());
   const auto now = getCurrentTimeMicro();
   const auto queuedTime = (now - queueTimeStartMicros_) * 1'000;
@@ -365,7 +377,10 @@ StopReason Driver::runInternal(
         curOpIndex_ = i;
         RuntimeStatWriterScopeGuard statsWriterGuard(op);
 
-        blockingReason_ = op->isBlocked(&future);
+	{
+	  OPTR("isBlocked", op);
+	  blockingReason_ = op->isBlocked(&future);
+	}
         if (blockingReason_ != BlockingReason::kNotBlocked) {
           blockingState = std::make_shared<BlockingState>(
               self, std::move(future), op, blockingReason_);
@@ -392,8 +407,11 @@ StopReason Driver::runInternal(
                     op->stats().wlock()->getOutputTiming.add(deltaTiming);
                   });
               RuntimeStatWriterScopeGuard statsWriterGuard(op);
-              result = op->getOutput();
-              if (result) {
+	      {
+		OPTR("getOutput", op);
+		result = op->getOutput();
+	      }
+		if (result) {
                 VELOX_CHECK(
                     result->size() > 0,
                     "Operator::getOutput() must return nullptr or "
@@ -420,8 +438,11 @@ StopReason Driver::runInternal(
               TestValue::adjust(
                   "facebook::velox::exec::Driver::runInternal::addInput",
                   nextOp);
-              nextOp->addInput(result);
-              // The next iteration will see if operators_[i + 1] has
+	      {
+		OPTR("addInput", nextOp);
+		nextOp->addInput(result);
+	      }
+		// The next iteration will see if operators_[i + 1] has
               // output now that it got input.
               i += 2;
               continue;
@@ -469,8 +490,11 @@ StopReason Driver::runInternal(
                 createDeltaCpuWallTimer([op](const CpuWallTiming& timing) {
                   op->stats().wlock()->getOutputTiming.add(timing);
                 });
-            result = op->getOutput();
-            if (result) {
+	    {
+	      OPTR("getOutput", op);
+	      result = op->getOutput();
+	    }
+	      if (result) {
               VELOX_CHECK(
                   result->size() > 0,
                   "Operator::getOutput() must return nullptr or "

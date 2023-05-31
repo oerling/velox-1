@@ -2297,5 +2297,13 @@ void Task::MemoryReclaimer::abort(memory::MemoryPool* pool) {
   task->requestAbort().wait();
   memory::MemoryReclaimer::abort(pool);
 }
+  
+std::string Task::bufferStateString() {
+  auto mgr = bufferManager_.lock();
+  if (!mgr) {
+    return "N/A";
+  }
+  return mgr->taskStateString(taskId_);
+}
 
 } // namespace facebook::velox::exec

@@ -43,6 +43,7 @@ struct DataAvailable {
 class DestinationBuffer {
  public:
   void enqueue(std::shared_ptr<SerializedPage> data) {
+    lastEnqueue_ = getCurrentTimeMicro();
     // drop duplicate end markers
     if (data == nullptr && !data_.empty() && data_.back() == nullptr) {
       return;
@@ -74,6 +75,14 @@ class DestinationBuffer {
 
   std::string toString();
 
+  bool isInteresting() const {
+    if (!lastGet_ || !lastEnqueue_) {
+      return true;
+    }
+    auto last = std::max(lastGet_, lastEnqueue_);
+    return getCurrentTimeMicro() - last > 4000000;
+  }
+
  private:
   std::vector<std::shared_ptr<SerializedPage>> data_;
   // The sequence number of the first in 'data_'.
@@ -82,6 +91,8 @@ class DestinationBuffer {
   // The sequence number of the first item to pass to 'notify'.
   int64_t notifySequence_;
   uint64_t notifyMaxBytes_;
+  uint64_t lastEnqueue_{0};
+  uint64_t lastGet_{0};
 };
 
 class PartitionedOutputBuffer {
@@ -265,6 +276,13 @@ class PartitionedOutputBufferManager {
   }
 
   std::string toString();
+
+  std::string taskStateString(const std::string& taskId) {
+    if (auto buffer = getBufferIfExists(taskId)) {
+      return buffer->toString();
+    }
+    return "N/A";
+  }
 
  private:
   // Retrieves the set of buffers for a query.

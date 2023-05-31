@@ -13,11 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <folly/ScopeGuard.h>
 #include "velox/exec/Exchange.h"
 #include <velox/common/base/Exceptions.h>
 #include <velox/common/memory/Memory.h>
 #include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/vector/VectorStream.h"
+
+#include "velox/common/process/TraceContext.h"
 
 namespace facebook::velox::exec {
 
@@ -252,6 +255,15 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     ContinueFuture* future) {
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
   std::unique_ptr<SerializedPage> page;
+  process::TraceContext tr("ExchangeClient::next");
+  int32_t numRequestable = 0;
+  int32_t numRequested = 0;
+  auto guard = folly::makeGuard([&]() {
+    if (numRequested != numRequestable) {
+      LOG(ERROR) << "Intended to request " << numRequestable << " requested " << numRequested;
+    }
+  });
+  try {
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
@@ -267,26 +279,63 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     for (auto& source : sources_) {
       if (source->shouldRequestLocked()) {
         toRequest.push_back(source);
+	++numRequestable;
       }
     }
   }
 
   // Outside of lock
-  for (auto& source : toRequest) {
-    source->request();
+  auto start = getCurrentTimeMicro();
+  queue_->updateRequestsInProgress(toRequest.size());
+  for (auto i = 0; i < toRequest.size(); ++i) {
+    auto& source = toRequest[i];
+    try {
+      source->request();
+      ++numRequested;
+    } catch (const std::exception& e) {
+      LOG(INFO) << "EXCHERR: Error requesting source " << i << " of " << toRequest.size() << ": " << e.what();
+      throw;
+    }
   }
+  queue_->updateRequestsInProgress(-numRequested);
+  queue_->updateRequestStats(numRequested, getCurrentTimeMicro() - start);
   return page;
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "EXCHERR: next(): " << e.what();
+    throw;
+  }
 }
-
+  
 ExchangeClient::~ExchangeClient() {
   close();
 }
 
 std::string ExchangeClient::toString() {
   std::stringstream out;
+  int32_t numRequestable = 0;
+  int32_t numAtEnd = 0;
+  int32_t numPending = 0;
+  std::lock_guard<std::mutex> l(queue_->mutex());
   for (auto& source : sources_) {
-    out << source->toString() << std::endl;
+    numRequestable += !source->requestPending_;
+    numPending += source->requestPending_;
+    numAtEnd += source->atEnd_;
   }
+
+  out << "{Exchange client " << sources_.size() << " sources " << numRequestable
+      << " requestable " << queue_->minBytes() << " min "
+      << queue_->totalBytes() << " total " << (queue_->atEnd_ ? "at end" : "")
+      << (queue_->noMoreSources_ ? " no more sources " : "") << " " << numAtEnd
+      << " sources at end " << numPending << " sources pending "
+      << " promises=" << queue_->numPromises()
+      << "reqs: " << queue_->requestStats() 
+      << std::endl;
+  for (auto& source : sources_) {
+    if (!source->atEnd_) {
+      out << source->toString() << std::endl;
+    }
+  }
+  out << "}\n\n";
   return out.str();
 }
 
