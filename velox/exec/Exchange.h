@@ -79,7 +79,7 @@ class SerializedPage {
 // for input.
 class ExchangeQueue {
  public:
-  explicit ExchangeQueue(int64_t minBytes) : minBytes_(minBytes) {}
+  explicit ExchangeQueue(int64_t minBytes, int64_t maxBytes) : minBytes_(minBytes), maxBytes_(maxBytes) {}
 
   ~ExchangeQueue() {
     clearAllPromises();
@@ -171,6 +171,10 @@ class ExchangeQueue {
     return minBytes_;
   }
 
+  uint64_t maxBytes() const {
+    return maxBytes_;
+  }
+
   void addSourceLocked() {
     VELOX_CHECK(!noMoreSources_, "addSource called after noMoreSources");
     numSources_++;
@@ -244,6 +248,26 @@ class ExchangeQueue {
   // If 'totalBytes_' < 'minBytes_', an exchange should request more data from
   // producers.
   uint64_t minBytes_;
+
+  // Maximum size of queue. Set request sizes and cap outstanding
+  // requests so as not to overrun this when data arrives.
+  uint64_t maxBytes_;
+
+  // Number of sources with a pending request.
+  int32_t numRequestsPending_{0};
+
+
+  int32_t numUnrequestedRequestable_{0};
+
+  // Volume expected from pending requests.
+  int64_t bytesExpected_{0};
+
+  
+  // Number of SerializedPages received.
+  int64_t numReceived_{0};
+
+  // Total size of SerializedPages received. Used to calculate an average expected size.
+  int64_t bytesRecived_{0}
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
@@ -286,8 +310,15 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   // shared_from_this() pointer if needed.
   virtual void request() = 0;
 
+  // Like request() but specifies a cap on the data to send. The cap
+  // can be exceeded if the producer has a single indivisible item
+  // that is larger than the cap.
+  virtual void request(int64_t maxBytes) {
+    request();
+  }
+  
   // Close the exchange source. May be called before all data
-  // has been received and proessed. This can happen in case
+  // has been received and processed. This can happen in case
   // of an error or an operator like Limit aborting the query
   // once it received enough data.
   virtual void close() = 0;
@@ -399,6 +430,8 @@ class ExchangeClient {
   std::shared_ptr<ExchangeQueue> queue_;
   std::unordered_set<std::string> taskIds_;
   std::vector<std::shared_ptr<ExchangeSource>> sources_;
+  // Next source to request. Clock hand over 'sources_'.
+  int32_t nextSourceIndex_{0};
   bool closed_{false};
 };
 
