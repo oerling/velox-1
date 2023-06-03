@@ -14,10 +14,11 @@
 add_subdirectory(prestosql)
 
 # Required to build the parser.
-string(APPEND CMAKE_CXX_FLAGS " -fbracket-depth=1024 -funsigned-char")
+#string(APPEND CMAKE_CXX_FLAGS " -fbracket-depth=1024 -funsigned-char")
+string(APPEND CMAKE_CXX_FLAGS " -Werror=misleading-indentation -funsigned-char")
 
 # Needed to make #include "parser.h" work.
-include_directories(/Users/mbasmanova/cpp/sql/parser/cpp)
+include_directories(/home/oerling/sql/parser/cpp)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/prestosql/generated)
 
 add_library(velox_parse_expression Expressions.cpp)

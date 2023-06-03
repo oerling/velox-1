@@ -13,10 +13,12 @@
 # limitations under the License.
 
 # Required to build the parser.
-string(APPEND CMAKE_CXX_FLAGS " -fbracket-depth=1024 -funsigned-char")
+#string(APPEND CMAKE_CXX_FLAGS " -fbracket-depth=1024 -funsigned-char")
+string(APPEND CMAKE_CXX_FLAGS " -Werror=misleading-indentation -funsigned-char")
+
 
 # Needed to make #include "AstNode.h" work.
-include_directories(/Users/mbasmanova/cpp/sql/parser/cpp)
+include_directories(/home/oerling/sql/parser/cpp)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
 
 file(GLOB PRESTOSQL_PARSER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/generated/*.h

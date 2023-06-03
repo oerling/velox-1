@@ -315,7 +315,7 @@ class PrestoSqlExprTranslator
     value = value.substr(1, value.size() - 2);
 
     nodes->push(
-        std::make_shared<core::ConstantExpr>(variant(value), std::nullopt));
+		std::make_shared<core::ConstantExpr>(VARCHAR(), variant(value), std::nullopt));
   }
 
   void visit(const commonsql::parser::UnsignedNumericLiteral* node, void* data)
@@ -323,14 +323,14 @@ class PrestoSqlExprTranslator
     auto* nodes = static_cast<std::stack<std::shared_ptr<core::IExpr>>*>(data);
 
     auto n = (int64_t)stoi(node->beginToken->image);
-    nodes->push(std::make_shared<core::ConstantExpr>(variant(n), std::nullopt));
+    nodes->push(std::make_shared<core::ConstantExpr>(BIGINT(), variant(n), std::nullopt));
   }
 
   void visit(const commonsql::parser::NullLiteral* node, void* data) override {
     auto* nodes = static_cast<std::stack<std::shared_ptr<core::IExpr>>*>(data);
 
     nodes->push(std::make_shared<core::ConstantExpr>(
-        variant::null(TypeKind::UNKNOWN), std::nullopt));
+						     UNKNOWN(), variant::null(TypeKind::UNKNOWN), std::nullopt));
   }
 
   void defaultVisit(const commonsql::parser::SimpleNode* node, void* data)

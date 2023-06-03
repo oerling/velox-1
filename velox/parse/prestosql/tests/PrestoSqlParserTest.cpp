@@ -33,7 +33,8 @@ int main(int argc, char** argv) {
   //  JAVACC_STRING_TYPE s = "SELECT array_construct(power(x, 2), power(y, 3))";
   //  JAVACC_STRING_TYPE s = "SELECT sqrt(x);\n";
 //  JAVACC_STRING_TYPE s = "map_filter(m, (k, v) -> k + v > 0)";
-  JAVACC_STRING_TYPE s = "c0 % 2 = 0 AND c1 % 3 = 0 AND c2 % 5 = 0";
+  //JAVACC_STRING_TYPE s = "c0 % 2 = 0 AND c1 % 3 = 0 AND 1 + 2 * c2 % 5 = 0";
+  JAVACC_STRING_TYPE s = "select l.l_orderkey, part.structcolumn.field, part.mapcolumn['subscript']  from lineitem l, hive.tpch.part where l.l_partkey = part.p_partkey;";
 
   clock_t start, finish;
   double time;
@@ -48,9 +49,9 @@ int main(int argc, char** argv) {
     parser.setErrorHandler(
         new facebook::velox::parse::PrestoSqlErrorHandler(errors));
     // Use for single expression.
-    parser.derived_column();
+    // parser.derived_column();
     // Use for full query.
-    //    parser.compilation_unit();
+    parser.compilation_unit();
 
     if (!errors.empty()) {
       VELOX_FAIL("{}", errors.front());
