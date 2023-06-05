@@ -456,9 +456,13 @@ class Optimization {
       DerivedTablePtr dt,
       const velox::core::PlanNode& planNode);
 
-  // Returns a literal from applying 'call' or 'cast' to 'literals'. nullptr if not successful.
-  ExprPtr tryFoldConstant(const velox::core::CallTypedExpr* call, const velox::core::CastTypedExpr* cast, const ExprVector& literals);
-  
+  // Returns a literal from applying 'call' or 'cast' to 'literals'. nullptr if
+  // not successful.
+  ExprPtr tryFoldConstant(
+      const velox::core::CallTypedExpr* call,
+      const velox::core::CastTypedExpr* cast,
+      const ExprVector& literals);
+
   // Makes a deduplicated Expr tree from 'expr'.
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
 

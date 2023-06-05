@@ -451,9 +451,7 @@ class VeloxRunner {
               *fragments[i].fragment.planNode,
               stats[i],
               FLAGS_include_custom_stats,
-              [&](auto id) {
-                return planCostString(id, estimates);
-              });
+              [&](auto id) { return planCostString(id, estimates); });
           std::cout << std::endl;
         }
       }

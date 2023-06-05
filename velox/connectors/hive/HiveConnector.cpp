@@ -538,7 +538,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     return;
   }
 
-   auto& fileType = reader_->rowType();
+  auto& fileType = reader_->rowType();
 
   for (int i = 0; i < readerOutputType_->size(); i++) {
     auto fieldName = readerOutputType_->nameOf(i);
