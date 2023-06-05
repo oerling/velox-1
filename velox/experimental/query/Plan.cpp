@@ -29,10 +29,12 @@ Optimization::Optimization(
     const core::PlanNode& plan,
     const Schema& schema,
     History& history,
+    velox::core::ExpressionEvaluator& evaluator,
     int32_t traceFlags)
     : schema_(schema),
       inputPlan_(plan),
       history_(history),
+      evaluator_(evaluator),
       traceFlags_(traceFlags) {
   queryCtx()->optimization() = this;
   root_ = makeQueryGraph();
@@ -860,14 +862,19 @@ void Optimization::joinByHash(
   PlanStateSaver save(state);
   PlanObjectSet buildTables;
   PlanObjectSet buildColumns;
+  PlanObjectSet buildFilterColumns;
+  for (auto& filter : candidate.join->filter()) {
+    buildFilterColumns.unionColumns(filter);
+  }
+  buildFilterColumns.intersect(availableColumns(candidate.tables[0]));
   for (auto buildTable : candidate.tables) {
     buildColumns.unionSet(availableColumns(buildTable));
-    state.placed.add(buildTable);
     buildTables.add(buildTable);
   }
   auto downstream = state.downstreamColumns();
   buildColumns.intersect(downstream);
   buildColumns.unionColumns(build.keys);
+  buildColumns.unionSet(buildFilterColumns);
   state.columns.unionSet(buildColumns);
   auto memoKey = MemoKey{
       candidate.tables[0], buildColumns, buildTables, candidate.existences};
@@ -880,6 +887,15 @@ void Optimization::joinByHash(
       candidate.existsFanout,
       state,
       needsShuffle);
+  // the build side tables are all joined if the first build is a
+  // table but if it is a derived table (most often with aggregation),
+  // only some of the tables may be fully joined.
+  if (candidate.tables[0]->type() == PlanType::kDerivedTable) {
+    state.placed.add(candidate.tables[0]);
+    state.placed.unionSet(buildPlan->fullyImported);
+  } else {
+    state.placed.unionSet(buildTables);
+  }
   PlanState buildState(state.optimization, state.dt, buildPlan);
   bool partitionByProbe = !partKeys.empty();
   RelationOpPtr buildInput = buildPlan->op;
@@ -952,13 +968,25 @@ void Optimization::joinByHash(
   ColumnVector columns;
   PlanObjectSet columnSet;
   ColumnPtr mark = nullptr;
+  PlanObjectSet probeColumns;
+  probeColumns.unionColumns(plan->columns());
+  auto joinType = build.leftJoinType();
+  bool probeOnly = joinType == JoinType::kLeftSemiFilter ||
+      joinType == JoinType::kLeftSemiProject || joinType == JoinType::kAnti ||
+      joinType == JoinType::kLeftSemiProject;
+  downstream = state.downstreamColumns();
   downstream.forEach([&](auto object) {
-    columnSet.add(object);
     auto column = reinterpret_cast<ColumnPtr>(object);
     if (column == build.markColumn) {
       mark = column;
+      columnSet.add(object);
       return;
     }
+    if (!(!probeOnly && buildColumns.contains(column)) &&
+        !probeColumns.contains(column)) {
+      return;
+    }
+    columnSet.add(object);
     columns.push_back(column);
   });
   // If there is an existence flag, it is the rightmost result column.
@@ -968,7 +996,6 @@ void Optimization::joinByHash(
     columns.push_back(mark);
   }
   state.columns = columnSet;
-  auto joinType = build.leftJoinType();
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   Declare(
       Join,
@@ -998,6 +1025,12 @@ void Optimization::joinByHashRight(
   PlanStateSaver save(state);
   PlanObjectSet probeTables;
   PlanObjectSet probeColumns;
+  PlanObjectSet probeFilterColumns;
+  for (auto& filter : candidate.join->filter()) {
+    probeFilterColumns.unionColumns(filter);
+  }
+  probeFilterColumns.intersect(availableColumns(candidate.tables[0]));
+
   for (auto probeTable : candidate.tables) {
     probeColumns.unionSet(availableColumns(probeTable));
     state.placed.add(probeTable);
@@ -1006,6 +1039,7 @@ void Optimization::joinByHashRight(
   auto downstream = state.downstreamColumns();
   probeColumns.intersect(downstream);
   probeColumns.unionColumns(probe.keys);
+  probeColumns.unionSet(probeFilterColumns);
   state.columns.unionSet(probeColumns);
   auto memoKey = MemoKey{
       candidate.tables[0], probeColumns, probeTables, candidate.existences};
@@ -1065,22 +1099,8 @@ void Optimization::joinByHashRight(
   ColumnVector columns;
   PlanObjectSet columnSet;
   ColumnPtr mark = nullptr;
-  downstream.forEach([&](auto object) {
-    auto column = reinterpret_cast<ColumnPtr>(object);
-    columnSet.add(object);
-    if (column == probe.markColumn) {
-      mark = column;
-      return;
-    }
-    columns.push_back(column);
-  });
-  if (mark) {
-    const_cast<Value*>(&mark->value())->trueFraction =
-        std::min<float>(1, candidate.fanout);
-    columns.push_back(mark);
-  }
-
-  state.columns = columnSet;
+  PlanObjectSet buildColumns;
+  buildColumns.unionColumns(plan->columns());
   auto joinType = probe.leftJoinType();
   auto fanout = fanoutJoinTypeLimit(joinType, candidate.fanout);
   // Change the join type to the right join variant.
@@ -1097,6 +1117,30 @@ void Optimization::joinByHashRight(
     default:
       VELOX_FAIL("Join type does not have right hash join variant");
   }
+
+  bool buildOnly = joinType == JoinType::kRightSemiFilter ||
+      joinType == JoinType::kRightSemiProject;
+  downstream = state.downstreamColumns();
+  downstream.forEach([&](auto object) {
+    auto column = reinterpret_cast<ColumnPtr>(object);
+    if (column == probe.markColumn) {
+      mark = column;
+      return;
+    }
+    if (!buildColumns.contains(column) &&
+        !(!buildOnly && probeColumns.contains(column))) {
+      return;
+    }
+    columnSet.add(object);
+    columns.push_back(column);
+  });
+  if (mark) {
+    const_cast<Value*>(&mark->value())->trueFraction =
+        std::min<float>(1, candidate.fanout);
+    columns.push_back(mark);
+  }
+
+  state.columns = columnSet;
   auto buildCost = state.cost.unitCost;
   state.cost = probeState.cost;
   state.cost.setupCost += buildCost;
@@ -1261,9 +1305,12 @@ void Optimization::placeDerivedTable(
       state, from, 1, 1.2, path, visited, reducingSet, reduction);
   if (reduction < 0.9) {
     key.tables = reducingSet;
-    state.placed.unionSet(reducingSet);
+    auto savedPlaced = state.placed;
     key.columns = state.downstreamColumns();
     plan = makePlan(key, Distribution(), PlanObjectSet(), 1, state, ignore);
+    // Not all reducing joins are necessarily retained in the plan. Only mark
+    // the ones fully imported as placed.
+    state.placed.unionSet(plan->fullyImported);
     makeJoins(plan->op, state);
   }
 }

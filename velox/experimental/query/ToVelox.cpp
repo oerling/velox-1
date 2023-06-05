@@ -21,6 +21,7 @@
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/expression/ScopedVarSetter.h"
 
 namespace facebook::verax {
 
@@ -31,9 +32,11 @@ void filterUpdated(BaseTablePtr table) {
   auto optimization = queryCtx()->optimization();
   std::vector<core::TypedExprPtr> remainingConjuncts;
   connector::hive::SubfieldFilters subfieldFilters;
+  ScopedVarSetter noAlias(&optimization->makeVeloxExprWithNoAlias(), true);
   for (auto filter : table->columnFilters) {
     auto typedExpr = optimization->toTypedExpr(filter);
-    auto pair = velox::exec::toSubfieldFilter(typedExpr);
+    auto evaluator = optimization->evaluator();
+    auto pair = velox::exec::toSubfieldFilter(typedExpr, evaluator);
     if (!pair.second) {
       remainingConjuncts.push_back(std::move(typedExpr));
       continue;
@@ -66,6 +69,22 @@ void filterUpdated(BaseTablePtr table) {
   optimization->setLeafHandle(table->id(), handle);
   optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
 }
+
+
+  core::PlanNodeId Optimization::nextId(const RelationOp& op) {
+    auto id = idGenerator_.next();
+    recordPlanNodeEstimate(id, op.cost(), "");
+    return id;
+  }
+
+  void Optimization::recordPlanNodeEstimate(const core::PlanNodeId id, Cost cost, const std::string& role) {
+    auto it = costEstimates_.find(id);
+    if (it == costEstimates_.end()) {
+      costEstimates_[id] = {std::make_pair(role, cost)};
+    } else {
+      it->second.push_back(std::make_pair(role, cost));
+    }
+  }
 
 RelationOpPtr addGather(RelationOpPtr op) {
   if (op->distribution().distributionType.isGather) {
@@ -106,7 +125,7 @@ RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto i = 0; i < columns.size(); ++i) {
-    names.push_back(columns[i]->name());
+    names.push_back(columns[i]->toString());
     types.push_back(toTypePtr(columns[i]->value().type));
   }
   return ROW(std::move(names), std::move(types));
@@ -129,8 +148,10 @@ core::TypedExprPtr Optimization::toAnd(const ExprVector& exprs) {
 core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
   switch (expr->type()) {
     case PlanType::kColumn: {
+      auto column = expr->as<Column>();
+      auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name()) : column->toString();
       return std::make_shared<core::FieldAccessTypedExpr>(
-          toTypePtr(expr->value().type), expr->as<Column>()->name());
+							  toTypePtr(expr->value().type), name);
     }
     case PlanType::kCall: {
       std::vector<core::TypedExprPtr> inputs;
@@ -166,9 +187,9 @@ class TempProjections {
       : optimization_(optimization), input_(input) {
     for (auto& column : input_.columns()) {
       exprChannel_[column] = nextChannel_++;
-      names_.push_back(column->name());
+      names_.push_back(column->toString());
       fieldRefs_.push_back(std::make_shared<core::FieldAccessTypedExpr>(
-          optimization_.toTypePtr(column->value().type), column->name()));
+          optimization_.toTypePtr(column->value().type), column->toString()));
     }
     exprs_.insert(exprs_.begin(), fieldRefs_.begin(), fieldRefs_.end());
   }
@@ -234,7 +255,7 @@ core::PlanNodePtr Optimization::makeAggregation(
       op.step == core::AggregationNode::Step::kIntermediate;
   int32_t numKeys = op.grouping.size();
   for (auto i = 0; i < op.aggregates.size(); ++i) {
-    aggregateNames.push_back(op.columns()[i + numKeys]->name());
+    aggregateNames.push_back(op.columns()[i + numKeys]->toString());
 
     auto aggregate = op.aggregates[i];
     if (isRawInput) {
@@ -259,7 +280,7 @@ core::PlanNodePtr Optimization::makeAggregation(
   auto keys = projections.toFieldRefs(op.grouping);
   auto project = projections.maybeProject(input);
   auto r = new core::AggregationNode(
-      idGenerator_.next(),
+				     nextId(op),
       op.step,
       keys,
       {},
@@ -300,10 +321,10 @@ core::PlanNodePtr Optimization::makeOrderBy(
   core::PlanNodePtr orderByNode;
   if (toVeloxLimit_ <= 0) {
     orderByNode = std::make_shared<core::OrderByNode>(
-        idGenerator_.next(), keys, sortOrder, true, project);
+						      nextId(op), keys, sortOrder, true, project);
   } else {
     orderByNode = std::make_shared<core::TopNNode>(
-        idGenerator_.next(),
+						   nextId(op),
         keys,
         sortOrder,
         toVeloxLimit_ + toVeloxOffset_,
@@ -392,11 +413,11 @@ core::PlanNodePtr Optimization::makeFragment(
       std::vector<std::string> names;
       std::vector<core::TypedExprPtr> exprs;
       for (auto i = 0; i < project->exprs().size(); ++i) {
-        names.push_back(project->columns()[i]->name());
+        names.push_back(project->columns()[i]->toString());
         exprs.push_back(toTypedExpr(project->exprs()[i]));
       }
       return std::make_shared<core::ProjectNode>(
-          idGenerator_.next(), std::move(names), std::move(exprs), input);
+						 nextId(*project), std::move(names), std::move(exprs), input);
     }
     case RelType::kFilter: {
       auto filter = op->as<Filter>();
@@ -430,7 +451,7 @@ core::PlanNodePtr Optimization::makeFragment(
           createPartitionFunctionSpec(partitioningInput->outputType(), keys);
 
       source.fragment.planNode = std::make_shared<core::PartitionedOutputNode>(
-          idGenerator_.next(),
+									       nextId(*op),
           keys,
           keys.empty() ? 1 : options_.numWorkers,
           distribution.isBroadcast,
@@ -456,14 +477,14 @@ core::PlanNodePtr Optimization::makeFragment(
       std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           assignments;
       for (auto column : scan->columns()) {
-        assignments[column->name()] =
+        assignments[column->toString()] =
             std::make_shared<connector::hive::HiveColumnHandle>(
                 column->name(),
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
                 toTypePtr(column->value().type));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
-          idGenerator_.next(),
+							    nextId(*op),
           makeOutputType(scan->columns()),
           handle,
           assignments);
@@ -478,7 +499,7 @@ core::PlanNodePtr Optimization::makeFragment(
       auto right = makeFragment(join->right, fragment, stages);
       if (join->method == JoinMethod::kCross) {
         auto joinNode = std::make_shared<core::NestedLoopJoinNode>(
-            idGenerator_.next(),
+								   nextId(*join),
             join->joinType,
             nullptr,
             leftProjections.maybeProject(left),
@@ -493,7 +514,7 @@ core::PlanNodePtr Optimization::makeFragment(
       auto leftKeys = leftProjections.toFieldRefs(join->leftKeys);
       auto rightKeys = rightProjections.toFieldRefs(join->rightKeys);
       return std::make_shared<core::HashJoinNode>(
-          idGenerator_.next(),
+						  nextId(*join),
           join->joinType,
           false,
           leftKeys,

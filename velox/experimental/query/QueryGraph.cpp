@@ -299,12 +299,12 @@ std::string JoinEdge::toString() const {
       << (leftTable_ ? leftTable_->toString() : " multiple tables ");
   if (leftOptional_ && rightOptional_) {
     out << " full outr ";
-  } else if (rightExists_ && rightOptional_) {
+  } else if (markColumn_) {
     out << " exists project ";
   } else if (rightOptional_) {
+    out << " left";
+  } else if (rightExists_) {
     out << " exists ";
-  } else if (rightOptional_) {
-    out << " left outer ";
   } else if (rightNotExists_) {
     out << " not exists ";
   } else {
@@ -603,7 +603,7 @@ void DerivedTable::linkTablesToJoins() {
 }
 
 // Returns a right exists (semijoin) with 'table' on the left and one of
-// 'tables'// on the right.
+// 'tables' on the right.
 JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
@@ -677,14 +677,21 @@ void DerivedTable::import(
     auto existsJoin = makeExists(firstTable, exists);
     if (existsTables.size() > 1) {
       // There is a join on the right of exists. Needs its own dt.
+      auto firstExistsTable = existsJoin->rightKeys()[0]->singleTable();
+      VELOX_CHECK(firstExistsTable);
       Declare(DerivedTable, existsDt);
+      existsDt->cname = queryCtx()->optimization()->newCName("edt");
       PlanObjectSet existsTableSet;
       existsTableSet.unionObjects(existsTables);
-      existsDt->import(super, firstTable, existsTableSet, {});
+      existsDt->import(super, firstExistsTable, existsTableSet, {});
       for (auto& k : existsJoin->rightKeys()) {
-        // TODO make a column alias for the expr. this would not work if the
-        // join term was not a column.
-        existsDt->columns.push_back(dynamic_cast<ColumnPtr>(k));
+        Declare(
+            Column,
+            existsColumn,
+            toName(fmt::format("{}.{}", existsDt->cname, k->toString())),
+            existsDt,
+            k->value());
+        existsDt->columns.push_back(existsColumn);
         existsDt->exprs.push_back(k);
       }
       Declare(
@@ -821,12 +828,15 @@ bool isUnique(JoinEdgePtr join, PlanObjectConstPtr side) {
   return join->sideOf(side, true).isUnique;
 }
 
+// Returns a join partner of 'startin 'joins' ' where the partner is
+// not in 'visited' Sets 'isFullyImported' to false if the partner is
+// not guaranteed n:1 reducing or has columns that are projected out.
 PlanObjectConstPtr FOLLY_NULLABLE nextJoin(
     PlanObjectConstPtr start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
     PlanObjectSet visited,
-    bool& isContained) {
+    bool& fullyImported) {
   for (auto& join : joins) {
     auto other = otherSide(join, start);
     if (!other) {
@@ -836,7 +846,7 @@ PlanObjectConstPtr FOLLY_NULLABLE nextJoin(
       continue;
     }
     if (!isUnique(join, other) || isProjected(other, columns)) {
-      isContained = false;
+      fullyImported = false;
     }
     return other;
   }
@@ -848,34 +858,61 @@ void joinChain(
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
     PlanObjectSet visited,
-    bool& isContained,
+    bool& fullyImported,
     std::vector<PlanObjectConstPtr>& path) {
-  auto next = nextJoin(start, joins, columns, visited, isContained);
+  auto next = nextJoin(start, joins, columns, visited, fullyImported);
   if (!next) {
     return;
   }
   visited.add(next);
   path.push_back(next);
-  joinChain(next, joins, columns, visited, isContained, path);
+  joinChain(next, joins, columns, visited, fullyImported, path);
 }
 
 JoinEdgePtr importedJoin(
     JoinEdgePtr join,
     PlanObjectConstPtr other,
     ExprPtr innerKey,
-    bool isContained) {
+    bool fullyImported) {
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
   auto otherKey = join->sideOf(other).keys[0];
   Declare(
-      JoinEdge, newJoin, left, other, {}, false, false, !isContained, false);
+      JoinEdge, newJoin, left, other, {}, false, false, !fullyImported, false);
+  newJoin->addEquality(innerKey, otherKey);
+  return newJoin;
+}
+
+JoinEdgePtr importedDtJoin(
+    JoinEdgePtr join,
+    DerivedTablePtr dt,
+    ExprPtr innerKey,
+    bool fullyImported) {
+  auto left = singleTable(innerKey);
+  VELOX_CHECK(left);
+  auto otherKey = dt->columns[0];
+  Declare(JoinEdge, newJoin, left, dt, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
 
 template <typename V, typename E>
 void eraseFirst(V& set, E element) {
-  set.erase(std::find(set.begin(), set.end(), element));
+  auto it = std::find(set.begin(), set.end(), element);
+  if (it != set.end()) {
+    set.erase(it);
+  } else {
+    LOG(INFO) << "suspect erase";
+  }
+}
+
+void DerivedTable::makeProjection(ExprVector exprs) {
+  auto optimization = queryCtx()->optimization();
+  for (auto& expr : exprs) {
+    Declare(Column, column, optimization->newCName("ec"), this, expr->value());
+    columns.push_back(column);
+    this->exprs.push_back(expr);
+  }
 }
 
 void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
@@ -883,7 +920,12 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     flattenDt(tables[0]->as<DerivedTable>());
     return;
   }
+  auto initialTables = tables;
   if (firstDt->limit != -1 || firstDt->orderBy) {
+    // tables can't be imported but are marked as used so not tried again.
+    for (auto i = 1; i < tables.size(); ++i) {
+      importedExistences.add(tables[i]);
+    }
     return;
   }
   auto& outer = firstDt->columns;
@@ -900,6 +942,10 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     if (!other) {
       continue;
     }
+    if (!tableSet.contains(other)) {
+      // Already placed in some previous join chain.
+      continue;
+    }
     auto side = join->sideOf(firstDt);
     if (side.keys.size() > 1 || !join->filter().empty()) {
       continue;
@@ -910,13 +956,13 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
       // If the join key is an aggregate, the join can't be moved below the agg.
       continue;
     }
-
+    auto otherSide = join->sideOf(firstDt, true);
     PlanObjectSet visited;
     visited.add(firstDt);
     visited.add(other);
     std::vector<PlanObjectConstPtr> path;
-    bool isContained = true;
-    joinChain(other, joins, projected, visited, isContained, path);
+    bool fullyImported = otherSide.isUnique;
+    joinChain(other, joins, projected, visited, fullyImported, path);
     if (path.empty()) {
       if (other->type() == PlanType::kDerivedTable) {
         const_cast<PlanObject*>(other)->as<DerivedTable>()->makeInitialPlan();
@@ -925,39 +971,47 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
       newFirst->tables.push_back(other);
       newFirst->tableSet.add(other);
       newFirst->joins.push_back(
-          importedJoin(join, other, innerKey, isContained));
+          importedJoin(join, other, innerKey, fullyImported));
+      if (fullyImported) {
+        newFirst->fullyImported.add(other);
+      }
     } else {
       Declare(DerivedTable, chainDt);
       PlanObjectSet chainSet;
+      chainSet.add(other);
+      if (fullyImported) {
+        newFirst->fullyImported.add(other);
+      }
       for (auto& object : path) {
         chainSet.add(object);
+        if (fullyImported) {
+          newFirst->fullyImported.add(object);
+        }
       }
+      chainDt->makeProjection(otherSide.keys);
       chainDt->import(*this, other, chainSet, {}, 1);
       chainDt->makeInitialPlan();
       newFirst->tables.push_back(chainDt);
       newFirst->tableSet.add(chainDt);
       newFirst->joins.push_back(
-          importedJoin(join, other, innerKey, isContained));
+          importedDtJoin(join, chainDt, innerKey, fullyImported));
     }
-    if (isContained) {
-      newFirst->fullyImported.add(other);
-      newFirst->fullyImported.unionObjects(path);
-      eraseFirst(tables, other);
-      tableSet.erase(other);
-      for (auto& table : path) {
-        eraseFirst(tables, table);
-        tableSet.erase(table);
-      }
+    eraseFirst(tables, other);
+    tableSet.erase(other);
+    for (auto& table : path) {
+      eraseFirst(tables, table);
+      tableSet.erase(table);
+    }
+  }
+
+  VELOX_CHECK_EQ(tables.size(), 1);
+  for (auto i = 0; i < initialTables.size(); ++i) {
+    if (!newFirst->fullyImported.contains(initialTables[i])) {
+      newFirst->importedExistences.add(initialTables[i]);
     }
   }
   tables[0] = newFirst;
-  if (tables.size() == 1) {
-    // All the joins and existences were added into the first derived table.
-    // Flatten the first dt into 'this'.
-    flattenDt(newFirst);
-  } else {
-    newFirst->linkTablesToJoins();
-  }
+  flattenDt(newFirst);
 }
 
 void DerivedTable::flattenDt(const DerivedTable* dt) {
@@ -968,22 +1022,28 @@ void DerivedTable::flattenDt(const DerivedTable* dt) {
   columns = dt->columns;
   exprs = dt->exprs;
   fullyImported = dt->fullyImported;
+  importedExistences.unionSet(dt->importedExistences);
   aggregation = dt->aggregation;
   having = dt->having;
 }
 
 void BaseTable::addFilter(ExprPtr expr) {
-  if (expr->type() == PlanType::kCall) {
-    auto call = expr->as<Call>();
-    auto args = call->args();
-    if (args.size() == 2) {
-      if (args[0]->type() == PlanType::kColumn &&
-          args[1]->type() == PlanType::kLiteral) {
-        columnFilters.push_back(expr);
-        filterUpdated(this);
-        return;
+  auto columns = expr->columns();
+  bool isMultiColumn = false;
+  bool isSingleColumn = false;
+  columns.forEach([&](PlanObjectConstPtr object) {
+    if (!isMultiColumn) {
+      if (isSingleColumn) {
+        isMultiColumn = true;
+      } else {
+        isSingleColumn = true;
       }
-    }
+    };
+  });
+  if (isSingleColumn) {
+    columnFilters.push_back(expr);
+    filterUpdated(this);
+    return;
   }
   filter.push_back(expr);
   filterUpdated(this);

@@ -90,6 +90,7 @@ DEFINE_string(
 
 DEFINE_int32(optimizer_trace, 0, "Optimizer trace level");
 
+DEFINE_bool(print_plan, false, "Print optimizer results");
 DEFINE_bool(print_stats, false, "print statistics");
 DEFINE_bool(
     include_custom_stats,
@@ -344,6 +345,20 @@ class VeloxRunner {
     }
   }
 
+  std::string planCostString(
+      const core::PlanNodeId& id,
+      const facebook::verax::Optimization::PlanCostMap& estimates) {
+    auto it = estimates.find(id);
+    if (it == estimates.end()) {
+      return "";
+    }
+    std::stringstream out;
+    for (auto& pair : it->second) {
+      out << pair.first << ": " << pair.second.toString(true);
+    }
+    return out.str();
+  }
+
   /// Runs a query and returns the result as a single vector in *resultVector,
   /// the plan text in *planString and the error message in *errorString.
   /// *errorString is not set if no error. Any of these may be nullptr.
@@ -359,7 +374,7 @@ class VeloxRunner {
     ++queryCounter_;
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(),
-        std::make_shared<core::MemConfig>(config_),
+        config_,
         std::move(connectorConfigs),
         memory::MemoryAllocator::getInstance(),
         rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
@@ -376,6 +391,7 @@ class VeloxRunner {
       }
       return nullptr;
     }
+    facebook::verax::Optimization::PlanCostMap estimates;
     std::vector<ExecutableFragment> fragments;
     ExecutablePlanOptions opts;
     opts.numWorkers = FLAGS_num_workers;
@@ -385,14 +401,20 @@ class VeloxRunner {
     auto context =
         std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
     facebook::verax::queryCtx() = context.get();
-
+    SimpleExpressionEvaluator evaluator(queryCtx.get(), optimizerPool_.get());
     try {
       facebook::verax::Schema veraxSchema("test", schema_.get());
       facebook::verax::Optimization opt(
-          *plan, veraxSchema, *history_, FLAGS_optimizer_trace);
+          *plan, veraxSchema, *history_, evaluator, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
       if (planString) {
         *planString = best->op->toString(true, false);
+      }
+      if (FLAGS_print_plan) {
+        std::cout << "Plan: " << best->toString(true);
+      }
+      if (FLAGS_print_stats) {
+        estimates = std::move(opt.planCostMap());
       }
       fragments = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {
@@ -428,7 +450,10 @@ class VeloxRunner {
           std::cout << printPlanWithStats(
               *fragments[i].fragment.planNode,
               stats[i],
-              FLAGS_include_custom_stats);
+              FLAGS_include_custom_stats,
+              [&](auto id) {
+                return planCostString(id, estimates);
+              });
           std::cout << std::endl;
         }
       }

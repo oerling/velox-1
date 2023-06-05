@@ -721,6 +721,9 @@ struct DerivedTable : public PlanObject {
 
   // Finds single row dts from non-correlated scalar subqueries.
   void findSingleRowDts();
+
+  // Sets 'columns' abd 'exprs'.
+  void makeProjection(ExprVector exprs);
 };
 
 using DerivedTablePtr = DerivedTable*;

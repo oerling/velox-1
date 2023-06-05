@@ -342,10 +342,16 @@ class Optimization {
  public:
   static constexpr int32_t kRetained = 1;
   static constexpr int32_t kExceededBest = 2;
+
+  using PlanCostMap = std::unordered_map<
+      velox::core::PlanNodeId,
+      std::vector<std::pair<std::string, Cost>>>;
+
   Optimization(
       const velox::core::PlanNode& plan,
       const Schema& schema,
       History& history,
+      velox::core::ExpressionEvaluator& evaluator,
       int32_t traceFlags = 0);
 
   /// Returns the optimized RelationOp plan for 'plan' given at construction.
@@ -397,6 +403,22 @@ class Optimization {
   // discards the candidate.
   void makeJoins(RelationOpPtr plan, PlanState& state);
 
+  velox::core::ExpressionEvaluator* evaluator() {
+    return &evaluator_;
+  }
+
+  Name newCName(const std::string& prefix) {
+    return toName(fmt::format("{}{}", prefix, ++nameCounter_));
+  }
+
+  PlanCostMap planCostMap() {
+    return costEstimates_;
+  }
+
+  bool& makeVeloxExprWithNoAlias() {
+    return makeVeloxExprWithNoAlias_;
+  }
+
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
@@ -434,6 +456,9 @@ class Optimization {
       DerivedTablePtr dt,
       const velox::core::PlanNode& planNode);
 
+  // Returns a literal from applying 'call' or 'cast' to 'literals'. nullptr if not successful.
+  ExprPtr tryFoldConstant(const velox::core::CallTypedExpr* call, const velox::core::CastTypedExpr* cast, const ExprVector& literals);
+  
   // Makes a deduplicated Expr tree from 'expr'.
   ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
 
@@ -606,6 +631,8 @@ class Optimization {
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
 
+  // Makes partial + final order by fragments for order by with and without
+  // limit.
   velox::core::PlanNodePtr makeOrderBy(
       OrderBy& op,
       velox::exec::ExecutableFragment& fragment,
@@ -622,6 +649,16 @@ class Optimization {
       velox::exec::ExecutableFragment& fragment,
       std::vector<velox::exec::ExecutableFragment>& stages);
 
+  // Returns a new PlanNodeId and associates the Cost of 'op' with it.
+  velox::core::PlanNodeId nextId(const RelationOp& op);
+
+  // Records 'cost' for 'id'. 'role' can be e.g. 'build; or
+  // 'probe'. for nodes that produce multiple operators.
+  void recordPlanNodeEstimate(
+      const velox::core::PlanNodeId id,
+      Cost cost,
+      const std::string& role);
+
   const Schema& schema_;
 
   // Top level plan to optimize.
@@ -629,7 +666,7 @@ class Optimization {
 
   // Source of historical cost/cardinality information.
   History& history_;
-
+  velox::core::ExpressionEvaluator& evaluator_;
   // Top DerivedTable when making a QueryGraph from PlanNode.
   DerivedTablePtr root_;
 
@@ -686,6 +723,14 @@ class Optimization {
   // means no limit.
   int32_t toVeloxLimit_{-1};
   int32_t toVeloxOffset_{0};
+
+  // map from Velox PlanNode ids to RelationOp. For cases that have multiple
+  // operators, e.g. probe and build, both RelationOps are mentioned.
+  PlanCostMap costEstimates_;
+
+  // On when producing a remaining filter for table scan, where columns must
+  // correspond 1:1 to the schema.
+  bool makeVeloxExprWithNoAlias_{false};
 };
 
 /// Returns bits describing function 'name'.

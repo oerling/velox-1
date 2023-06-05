@@ -87,7 +87,7 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
     stages_.emplace_back();
     for (auto i = 0; i < fragment.width; ++i) {
       Consumer consumer = nullptr;
-      auto task = std::Task::creat(
+      auto task = Task::create(
           fmt::format(
               "local://{}/{}.{}",
               params_.queryCtx->queryId(),

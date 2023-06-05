@@ -17,6 +17,7 @@
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/expression/ConstantExpr.h"
 
 namespace facebook::verax {
 
@@ -105,6 +106,47 @@ TypePtr Optimization::toTypePtr(const Type* type) {
   VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
 }
 
+template <TypeKind kind>
+variant toVariant(BaseVector& constantVector) {
+  using T = typename TypeTraits<kind>::NativeType;
+  if (auto typed = dynamic_cast<ConstantVector<T>*>(&constantVector)) {
+    return variant(typed->valueAt(0));
+  }
+  VELOX_FAIL("Literal not of foldable type");
+}
+
+ExprPtr Optimization::tryFoldConstant(
+    const core::CallTypedExpr* call,
+    const core::CastTypedExpr* cast,
+    const ExprVector& literals) {
+  try {
+    Value value(call ? call->type().get() : cast->type().get(), 1);
+    Declare(
+        Call,
+        veraxExpr,
+        PlanType::kCall,
+        cast ? toName("cast") : toName(call->name()),
+        value,
+        literals,
+        FunctionSet());
+    auto typedExpr = toTypedExpr(veraxExpr);
+    auto exprSet = evaluator_.compile(typedExpr);
+    auto first = exprSet->exprs().front().get();
+    if (auto constantExpr = dynamic_cast<const exec::ConstantExpr*>(first)) {
+      auto variantLiteral = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          toVariant, constantExpr->value()->typeKind(), *constantExpr->value());
+      Value value(constantExpr->value()->type().get(), 1);
+      // Copy the variant from value to allocated in arena.
+      Declare(variant, copy, variantLiteral);
+      Declare(Literal, literal, value, copy);
+      return literal;
+    }
+    return nullptr;
+  } catch (const std::exception& e) {
+    return nullptr;
+  }
+}
+
 ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   registerType(expr->type());
   if (auto name = columnName(expr)) {
@@ -125,14 +167,25 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   FunctionSet funcs;
   auto& inputs = expr->inputs();
   float cardinality = 1;
+  bool allConstant = true;
   for (auto i = 0; i < inputs.size(); ++i) {
     args[i] = translateExpr(inputs[i]);
+    allConstant &= args[i]->type() == PlanType::kLiteral;
     cardinality = std::max(cardinality, args[i]->value().cardinality);
     if (args[i]->type() == PlanType::kCall) {
       funcs = funcs | args[i]->as<Call>()->functions();
     }
   }
-  if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
+  auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get());
+  auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get());
+  if (allConstant && (call || cast)) {
+    auto literal = tryFoldConstant(call, cast, args);
+    if (literal) {
+      return literal;
+    }
+  }
+
+  if (call) {
     auto name = toName(call->name());
     funcs = funcs | functionBits(name);
 
@@ -146,7 +199,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
-  if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
+  if (cast) {
     auto name = toName("cast");
     funcs = funcs | functionBits(name);
 
