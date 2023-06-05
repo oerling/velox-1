@@ -39,15 +39,15 @@ void filterUpdated(BaseTablePtr table) {
       auto evaluator = optimization->evaluator();
       auto pair = velox::exec::toSubfieldFilter(typedExpr, evaluator);
       if (!pair.second) {
-	remainingConjuncts.push_back(std::move(typedExpr));
-	continue;
+        remainingConjuncts.push_back(std::move(typedExpr));
+        continue;
       }
       subfieldFilters[std::move(pair.first)] = std::move(pair.second);
     } catch (const std::exception& e) {
       remainingConjuncts.push_back(std::move(typedExpr));
     }
   }
-    for (auto expr : table->filter) {
+  for (auto expr : table->filter) {
     remainingConjuncts.push_back(optimization->toTypedExpr(expr));
   }
   core::TypedExprPtr remainingFilter;

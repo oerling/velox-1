@@ -289,15 +289,16 @@ TypedExprPtr toVeloxExpression(
       auto name = mapScalarFunctionName(func->function.name);
       bool negate = false;
       if (name == "not_like") {
-	name = "like";
-	negate = true;
+        name = "like";
+        negate = true;
       }
       auto call = std::make_shared<CallTypedExpr>(
           duckdb::toVeloxType(func->function.return_type),
           std::move(children),
           name);
       if (negate) {
-	return std::make_shared<CallTypedExpr>(BOOLEAN(), std::vector<TypedExprPtr>{call}, "not");
+        return std::make_shared<CallTypedExpr>(
+            BOOLEAN(), std::vector<TypedExprPtr>{call}, "not");
       }
       return call;
     }
