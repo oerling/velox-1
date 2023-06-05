@@ -658,7 +658,7 @@ int main(int argc, char** argv) {
       checkQueries(runner);
     } else {
       std::cout
-          << "Velox SQL. Type statement and end with ;. flag name=value; sets a gflag."
+          << "Velox SQL. Type statement and end with ;. flag name = value; sets a gflag."
           << std::endl;
       readCommands(runner, "SQL> ", std::cin);
     }

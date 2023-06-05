@@ -59,20 +59,9 @@ void Optimization::trace(
 
 PlanPtr Optimization::bestPlan() {
   topState_.dt = root_;
-  if (root_->aggregation) {
-    auto aggregation = root_->aggregation->aggregation;
-    for (auto expr : aggregation->grouping) {
-      topState_.targetColumns.unionColumns(expr);
-    }
-    for (auto expr : aggregation->aggregates) {
-      topState_.targetColumns.unionColumns(expr);
-    }
-
-  } else {
-    for (auto expr : root_->exprs) {
-      topState_.targetColumns.unionColumns(expr);
-    }
-  }
+  PlanObjectSet targetColumns;
+  targetColumns.unionColumns(root_->columns);
+  topState_.setTargetColumnsForDt(targetColumns);
   makeJoins(nullptr, topState_);
   Distribution empty;
   bool ignore;
@@ -139,12 +128,16 @@ void PlanState::addBuilds(const BuildSet& added) {
     }
   }
 }
+
 void PlanState::setTargetColumnsForDt(const PlanObjectSet& target) {
   targetColumns = target;
   for (auto i = 0; i < dt->columns.size(); ++i) {
     if (target.contains(dt->columns[i])) {
       targetColumns.unionColumns(dt->exprs[i]);
     }
+  }
+  for (auto& having : dt->having) {
+    targetColumns.unionColumns(having);
   }
 }
 
@@ -181,13 +174,13 @@ PlanObjectSet PlanState::downstreamColumns() const {
   if (dt->aggregation && !placed.contains(dt->aggregation)) {
     auto aggToPlace = dt->aggregation->aggregation;
     for (auto i = 0; i < aggToPlace->columns().size(); ++i) {
-      if (targetColumns.contains(aggToPlace->columns()[i])) {
-        if (i < aggToPlace->grouping.size()) {
-          result.unionColumns(aggToPlace->grouping[i]);
-        } else {
-          result.unionColumns(
-              aggToPlace->aggregates[i - aggToPlace->grouping.size()]);
-        }
+      // Grouping columns must be computed anyway, aggregates only if referenced
+      // by enclosing.
+      if (i < aggToPlace->grouping.size()) {
+        result.unionColumns(aggToPlace->grouping[i]);
+      } else if (targetColumns.contains(aggToPlace->columns()[i])) {
+        result.unionColumns(
+            aggToPlace->aggregates[i - aggToPlace->grouping.size()]);
       }
     }
   }

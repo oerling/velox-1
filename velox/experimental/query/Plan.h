@@ -216,9 +216,9 @@ struct PlanState {
   // The columns that have a value from placed tables.
   PlanObjectSet columns;
 
-  // The columns that need a value at the end of the plan. A dt can
-  // be planned for just join columns or all payload. Does not contain columns
-  // projected from aggregation results.
+  // The columns that need a value at the end of the plan. A dt can be
+  // planned for just join/filter columns or all payload. Initially,
+  // columns the selected columns of the dt depend on.
   PlanObjectSet targetColumns;
 
   // lookup keys for an index based derived table.

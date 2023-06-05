@@ -73,6 +73,8 @@ std::string mapScalarFunctionName(const std::string& name) {
       {"*", "multiply"},
       {"/", "divide"},
       {"%", "mod"},
+      {"~~", "like"},
+      {"!~~", "not_like"},
       {"list_value", "array_constructor"},
   };
 
@@ -284,10 +286,20 @@ TypedExprPtr toVeloxExpression(
         children.push_back(toVeloxExpression(*child, inputType));
       }
 
-      return std::make_shared<CallTypedExpr>(
+      auto name = mapScalarFunctionName(func->function.name);
+      bool negate = false;
+      if (name == "not_like") {
+	name = "like";
+	negate = true;
+      }
+      auto call = std::make_shared<CallTypedExpr>(
           duckdb::toVeloxType(func->function.return_type),
           std::move(children),
-          mapScalarFunctionName(func->function.name));
+          name);
+      if (negate) {
+	return std::make_shared<CallTypedExpr>(BOOLEAN(), std::vector<TypedExprPtr>{call}, "not");
+      }
+      return call;
     }
     case ::duckdb::ExpressionType::BOUND_REF: {
       auto* ref =

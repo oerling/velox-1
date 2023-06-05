@@ -35,15 +35,19 @@ void filterUpdated(BaseTablePtr table) {
   ScopedVarSetter noAlias(&optimization->makeVeloxExprWithNoAlias(), true);
   for (auto filter : table->columnFilters) {
     auto typedExpr = optimization->toTypedExpr(filter);
-    auto evaluator = optimization->evaluator();
-    auto pair = velox::exec::toSubfieldFilter(typedExpr, evaluator);
-    if (!pair.second) {
+    try {
+      auto evaluator = optimization->evaluator();
+      auto pair = velox::exec::toSubfieldFilter(typedExpr, evaluator);
+      if (!pair.second) {
+	remainingConjuncts.push_back(std::move(typedExpr));
+	continue;
+      }
+      subfieldFilters[std::move(pair.first)] = std::move(pair.second);
+    } catch (const std::exception& e) {
       remainingConjuncts.push_back(std::move(typedExpr));
-      continue;
     }
-    subfieldFilters[std::move(pair.first)] = std::move(pair.second);
   }
-  for (auto expr : table->filter) {
+    for (auto expr : table->filter) {
     remainingConjuncts.push_back(optimization->toTypedExpr(expr));
   }
   core::TypedExprPtr remainingFilter;
