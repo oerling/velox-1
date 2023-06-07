@@ -579,7 +579,11 @@ void Task::start(
           : factory->numDrivers;
       bufferManager->initializeTask(
           self,
-          partitionedOutputNode->isBroadcast(),
+          // TODO: change PartitionedOutputNode to pass partition output type
+          // which include arbitrary.
+          partitionedOutputNode->isBroadcast()
+              ? PartitionedOutputBuffer::Kind::kBroadcast
+              : PartitionedOutputBuffer::Kind::kPartitioned,
           partitionedOutputNode->numPartitions(),
           totalOutputDrivers);
     }
@@ -1257,6 +1261,10 @@ bool Task::isFinishedLocked() const {
 }
 
 bool Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
+  return updateOutputBuffers(numBuffers, noMoreBuffers);
+}
+
+bool Task::updateOutputBuffers(int numBuffers, bool noMoreBuffers) {
   auto bufferManager = bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
       bufferManager,
@@ -1264,16 +1272,15 @@ bool Task::updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers) {
       "PartitionedOutputBufferManager was already destructed");
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (noMoreBroadcastBuffers_) {
+    if (noMoreOutputBuffers_) {
       // Ignore messages received after no-more-buffers message.
       return false;
     }
     if (noMoreBuffers) {
-      noMoreBroadcastBuffers_ = true;
+      noMoreOutputBuffers_ = true;
     }
   }
-  return bufferManager->updateBroadcastOutputBuffers(
-      taskId_, numBuffers, noMoreBuffers);
+  return bufferManager->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
 }
 
 int Task::getOutputPipelineId() const {
@@ -1378,7 +1385,7 @@ bool Task::allPeersFinished(
   const auto numPeers = numDrivers(caller->driverCtx()->pipelineId);
   if (++state.numRequested == numPeers) {
     peers = std::move(state.drivers);
-    promises = std::move(state.promises);
+    promises = std::move(state.allPeersFinishedPromises);
     barriers.erase(planNodeId);
     return true;
   }
@@ -1395,9 +1402,9 @@ bool Task::allPeersFinished(
   // the peers to finish.
   if (future != nullptr) {
     state.drivers.push_back(callerShared);
-    state.promises.emplace_back(
+    state.allPeersFinishedPromises.emplace_back(
         fmt::format("Task::allPeersFinished {}", taskId_));
-    *future = state.promises.back().getSemiFuture();
+    *future = state.allPeersFinishedPromises.back().getSemiFuture();
   }
   return false;
 }
