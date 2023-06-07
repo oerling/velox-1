@@ -26,6 +26,7 @@
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -140,119 +141,127 @@ class MultiFragmentTest : public HiveConnectorTestBase {
         expectedCount, exchangeStats.at("localExchangeSource.numPages").count);
   }
 
-  void aggregationFlow(int32_t numPartitions, int32_t bytesPerSource, int32_t minRowBytes, int32_t maxRowBytes, int32_t partitionBufferSize, int32_t exchangeBufferSize) {
-  std::vector<std::shared_ptr<Task>> tasks;
-  int32_t taskWidth = 5;
-  std::vector<RowVectorPtr> vectors;
-  int32_t numVectors = 100;
-  do {
-    auto row = makeRowVector({flatVector<int64_t>(10000, [](auto row) {return row;}),
-						  flatVector<StringView>(10000, [&](auto row) {
-						  })});
-    bytes += row->retainedSize();
-    vectors.push_back(row);
-  } while (bytes < bytesPerSource);
-
-  for (int32_t i = 0; i < numPartitions; ++i) {
-    auto leafTaskId = makeTaskId("leaf", i);
-    core::PlanNodePtr partialAggPlan;
-    partialAggPlan = PlanBuilder()
-      .values(vectors, true)
-                         .partitionedOutput({"c0"}, numPartitions)
-                         .planNode();
-
-    auto leafTask = makeTask(leafTaskId, partialAggPlan, 0);
-    tasks.push_back(leafTask);
-    Task::start(leafTask, taskWidth);
-
+  // Returns a power law distributed pseudorandom size as a function of counter.
+  int32_t randomSize(int32_t counter, int32_t max) {
+    int32_t range = 30;
+    auto hash = folly::hasher<uint64_t>()(counter) >> 15;
+    int32_t low = (hash >> 10) & 1023;
+    if (low > 1010) {
+      range = 30;
+    } else if (low > 990) {
+      range = 20;
+    } else if (low > 950) {
+      range = 12;
+    } else {
+      range = 10;
+    }
+    auto size = 1 << (hash % range);
+    return size % max;
   }
 
-  core::PlanNodePtr finalAggPlan;
-  std::vector<Split> finalAggSplits;
-  for (int i = 0; i < numPartitions; i++) {
-    finalAggPlan = PlanBuilder()
-                       .exchange(partialAggPlan->outputType())
-                       .singleAggregation({"c0"}, {"count(a0)"}, {BIGINT()})
-                       .partitionedOutput({}, 1)
-                       .planNode();
+  // Parameters for aggregationFlow test.
+  struct FlowTestParams {
+    // number of partitions in the shuffle.
+    int32_t numPartitions{11};
 
-    auto taskId = makeTaskId("final-agg", i);
-    finalAggSplits.push_back(makeRemoteSplit(taskId));
-    auto task = makeTask(finalAggTaskIds.back(), finalAggPlan, i);
-    tasks.push_back(task);
-    Task::start(task, 1);
-    addRemoteSplits(task, leafTaskIds);
-  }
+    // Drivers in each of the Tasks
+    int32_t taskWidth{5};
 
-      auto expected =
+    // Number of bytes produced by each of 'numPartitions * taskWidth' drivers.
+    int64_t bytesPerSource{10000000};
+    // Minimum payload row size.
+    int32_t minRowBytes{100};
+    // Maximum payload row size.
+    int32_t maxRowBytes{1000};
+    // PartitionedOutputBufferManager capacity. Each task divides these bytes across its producers.
+    int32_t partitionBufferSize{20000};
+    // Maximum size of exchange queue for each consumer task. Determines request sizes.
+    int32_t exchangeBufferSize{10000};
+  };
+  
+  OperatorStats aggregationFlow(FlowTestParams params) {
+    configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
+        fmt::format("{}", params.partitionBufferSize);
+    configSettings_[core::QueryConfig::kExchangeBufferSize] =
+        fmt::format("{}", params.exchangeBufferSize);
+    std::vector<std::shared_ptr<Task>> tasks;
+    int32_t taskWidth = 5;
+    constexpr int32_t kVectorSize = 1000;
+    std::vector<RowVectorPtr> vectors;
+    int64_t bytes = 0;
+    int32_t counter = 0;
+    do {
+      std::string temp;
+      auto row = makeRowVector(
+          {makeFlatVector<int64_t>(kVectorSize, [](auto row) { return row; }),
+           makeFlatVector<StringView>(kVectorSize, [&](auto row) {
+             auto stringBytes =
+                 params.minRowBytes + randomSize(++counter, params.maxRowBytes - params.minRowBytes);
+             temp.resize(stringBytes);
+             return StringView(temp.data(), temp.size());
+           })});
+      bytes += row->retainedSize();
+      vectors.push_back(row);
+    } while (bytes < params.bytesPerSource);
+
+    RowTypePtr leafType;
+    std::vector<std::string> leafTaskIds;
+    for (int32_t i = 0; i < params.numPartitions; ++i) {
+      auto leafTaskId = makeTaskId("leaf", i);
+      leafTaskIds.push_back(leafTaskId);
+      core::PlanNodePtr leafPlan;
+      leafPlan = PlanBuilder()
+                           .values(vectors, true)
+                           .partitionedOutput({"c0"}, params.numPartitions)
+                           .planNode();
+      auto leafTask = makeTask(leafTaskId, leafPlan, 0);
+      leafType = leafPlan->outputType();
+      tasks.push_back(leafTask);
+      Task::start(leafTask, taskWidth);
+    }
+
+    core::PlanNodePtr finalAggPlan;
+    std::vector<Split> finalAggSplits;
+    for (int i = 0; i < params.numPartitions; i++) {
+      finalAggPlan = PlanBuilder()
+                         .exchange(leafType)
+                         .singleAggregation({"c0"}, {"count(1)"})
+	.partitionedOutput({}, 1)
+	.planNode();
+
+      auto taskId = makeTaskId("final-agg", i);
+      finalAggSplits.push_back(exec::Split(std::make_shared<RemoteConnectorSplit>(taskId), -1));
+      auto task = makeTask(taskId, finalAggPlan, i);
+      tasks.push_back(task);
+      Task::start(task, taskWidth);
+      addRemoteSplits(task, leafTaskIds);
+    }
+
+    auto expected =
         makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
-          return vectors.size() * vectors[0]->size() * numPartitions, * taskWidth;
+          return vectors.size() * kVectorSize * params.numPartitions *params.taskWidth;
         })});
 
-  auto op = PlanBuilder().exchange(finalAggPlan->outputType()).planNode();
+    auto op = PlanBuilder().exchange(finalAggPlan->outputType())
+      .singleAggregation({}, {"sum(a0)"})
+      .planNode();
 
-  AssertQueryBuilder(op)
-    .splits(finalAggsplits).assertResults(expected) );
+    AssertQueryBuilder(op).splits(finalAggSplits).assertResults(expected);
 
-      for (auto& task : tasks) {
+    OperatorStats allExchanges(0, 0, "0", "Exchange");
+    for (auto& task : tasks) {
       auto stats = task->taskStats();
       for (auto& pipeline : stats.pipelineStats) {
         for (auto& op : pipeline.operatorStats) {
           if (op.operatorType == "Exchange") {
-            bytes += op.rawInputBytes;
+            allExchanges.add(op);
           }
         }
       }
     }
-
-  for (auto& task : tasks) {
-    ASSERT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
+    return allExchanges;
   }
 
-  // Verify the created memory pools.
-  for (int i = 0; i < tasks.size(); ++i) {
-    SCOPED_TRACE(fmt::format("task {}", tasks[i]->taskId()));
-    int32_t numPools = 0;
-    std::unordered_map<std::string, memory::MemoryPool*> poolsByName;
-    std::vector<memory::MemoryPool*> pools;
-    pools.push_back(tasks[i]->pool());
-    poolsByName[tasks[i]->pool()->name()] = tasks[i]->pool();
-    while (!pools.empty()) {
-      numPools += pools.size();
-      std::vector<memory::MemoryPool*> childPools;
-      for (auto pool : pools) {
-        pool->visitChildren([&](memory::MemoryPool* childPool) -> bool {
-          EXPECT_EQ(poolsByName.count(childPool->name()), 0)
-              << childPool->name();
-          poolsByName[childPool->name()] = childPool;
-          if (childPool->parent() != nullptr) {
-            EXPECT_EQ(poolsByName.count(childPool->parent()->name()), 1);
-            EXPECT_EQ(
-                poolsByName[childPool->parent()->name()], childPool->parent());
-          }
-          childPools.push_back(childPool);
-          return true;
-        });
-      }
-      pools.swap(childPools);
-    }
-    if (i == 0) {
-      // For leaf task, it has total 21 memory pools: task pool + 4 plan node
-      // pools (TableScan, FilterProject, PartialAggregation, PartitionedOutput)
-      // + 16 operator pools (4 drivers * number of plan nodes) + 4 connector
-      // pools for TableScan.
-      ASSERT_EQ(numPools, 25);
-    } else {
-      // For root task, it has total 8 memory pools: task pool + 3 plan node
-      // pools (Exchange, Aggregation, PartitionedOutput) and 4 leaf pools: 3
-      // operator pools (1 driver * number of plan nodes) + 1 exchange client
-      // pool.
-      ASSERT_EQ(numPools, 8);
-    }
-  }
-}
-
-  
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
@@ -1401,6 +1410,11 @@ TEST_F(MultiFragmentTest, taskTerminateWithPendingOutputBuffers) {
   receivedIobufs.clear();
   ASSERT_EQ(task.use_count(), 1);
   task.reset();
+}
+
+TEST_F(MultiFragmentTest, flowControl) {
+  FlowTestParams params;
+  aggregationFlow(params);
 }
 
 DEBUG_ONLY_TEST_F(MultiFragmentTest, mergeWithEarlyTermination) {
