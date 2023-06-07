@@ -140,6 +140,119 @@ class MultiFragmentTest : public HiveConnectorTestBase {
         expectedCount, exchangeStats.at("localExchangeSource.numPages").count);
   }
 
+  void aggregationFlow(int32_t numPartitions, int32_t bytesPerSource, int32_t minRowBytes, int32_t maxRowBytes, int32_t partitionBufferSize, int32_t exchangeBufferSize) {
+  std::vector<std::shared_ptr<Task>> tasks;
+  int32_t taskWidth = 5;
+  std::vector<RowVectorPtr> vectors;
+  int32_t numVectors = 100;
+  do {
+    auto row = makeRowVector({flatVector<int64_t>(10000, [](auto row) {return row;}),
+						  flatVector<StringView>(10000, [&](auto row) {
+						  })});
+    bytes += row->retainedSize();
+    vectors.push_back(row);
+  } while (bytes < bytesPerSource);
+
+  for (int32_t i = 0; i < numPartitions; ++i) {
+    auto leafTaskId = makeTaskId("leaf", i);
+    core::PlanNodePtr partialAggPlan;
+    partialAggPlan = PlanBuilder()
+      .values(vectors, true)
+                         .partitionedOutput({"c0"}, numPartitions)
+                         .planNode();
+
+    auto leafTask = makeTask(leafTaskId, partialAggPlan, 0);
+    tasks.push_back(leafTask);
+    Task::start(leafTask, taskWidth);
+
+  }
+
+  core::PlanNodePtr finalAggPlan;
+  std::vector<Split> finalAggSplits;
+  for (int i = 0; i < numPartitions; i++) {
+    finalAggPlan = PlanBuilder()
+                       .exchange(partialAggPlan->outputType())
+                       .singleAggregation({"c0"}, {"count(a0)"}, {BIGINT()})
+                       .partitionedOutput({}, 1)
+                       .planNode();
+
+    auto taskId = makeTaskId("final-agg", i);
+    finalAggSplits.push_back(makeRemoteSplit(taskId));
+    auto task = makeTask(finalAggTaskIds.back(), finalAggPlan, i);
+    tasks.push_back(task);
+    Task::start(task, 1);
+    addRemoteSplits(task, leafTaskIds);
+  }
+
+      auto expected =
+        makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
+          return vectors.size() * vectors[0]->size() * numPartitions, * taskWidth;
+        })});
+
+  auto op = PlanBuilder().exchange(finalAggPlan->outputType()).planNode();
+
+  AssertQueryBuilder(op)
+    .splits(finalAggsplits).assertResults(expected) );
+
+      for (auto& task : tasks) {
+      auto stats = task->taskStats();
+      for (auto& pipeline : stats.pipelineStats) {
+        for (auto& op : pipeline.operatorStats) {
+          if (op.operatorType == "Exchange") {
+            bytes += op.rawInputBytes;
+          }
+        }
+      }
+    }
+
+  for (auto& task : tasks) {
+    ASSERT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
+  }
+
+  // Verify the created memory pools.
+  for (int i = 0; i < tasks.size(); ++i) {
+    SCOPED_TRACE(fmt::format("task {}", tasks[i]->taskId()));
+    int32_t numPools = 0;
+    std::unordered_map<std::string, memory::MemoryPool*> poolsByName;
+    std::vector<memory::MemoryPool*> pools;
+    pools.push_back(tasks[i]->pool());
+    poolsByName[tasks[i]->pool()->name()] = tasks[i]->pool();
+    while (!pools.empty()) {
+      numPools += pools.size();
+      std::vector<memory::MemoryPool*> childPools;
+      for (auto pool : pools) {
+        pool->visitChildren([&](memory::MemoryPool* childPool) -> bool {
+          EXPECT_EQ(poolsByName.count(childPool->name()), 0)
+              << childPool->name();
+          poolsByName[childPool->name()] = childPool;
+          if (childPool->parent() != nullptr) {
+            EXPECT_EQ(poolsByName.count(childPool->parent()->name()), 1);
+            EXPECT_EQ(
+                poolsByName[childPool->parent()->name()], childPool->parent());
+          }
+          childPools.push_back(childPool);
+          return true;
+        });
+      }
+      pools.swap(childPools);
+    }
+    if (i == 0) {
+      // For leaf task, it has total 21 memory pools: task pool + 4 plan node
+      // pools (TableScan, FilterProject, PartialAggregation, PartitionedOutput)
+      // + 16 operator pools (4 drivers * number of plan nodes) + 4 connector
+      // pools for TableScan.
+      ASSERT_EQ(numPools, 25);
+    } else {
+      // For root task, it has total 8 memory pools: task pool + 3 plan node
+      // pools (Exchange, Aggregation, PartitionedOutput) and 4 leaf pools: 3
+      // operator pools (1 driver * number of plan nodes) + 1 exchange client
+      // pool.
+      ASSERT_EQ(numPools, 8);
+    }
+  }
+}
+
+  
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};

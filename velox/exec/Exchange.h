@@ -79,7 +79,8 @@ class SerializedPage {
 // for input.
 class ExchangeQueue {
  public:
-  explicit ExchangeQueue(int64_t minBytes, int64_t maxBytes) : minBytes_(minBytes), maxBytes_(maxBytes) {}
+  explicit ExchangeQueue(int64_t minBytes, int64_t maxBytes)
+      : minBytes_(minBytes), maxBytes_(maxBytes) {}
 
   ~ExchangeQueue() {
     clearAllPromises();
@@ -93,6 +94,14 @@ class ExchangeQueue {
     return queue_.empty();
   }
 
+  int32_t numCompleted() const {
+    return numCompleted_;
+  }
+
+  int32_t numPending() const {
+    return numPending_;
+  }
+  
   void enqueueLocked(
       std::unique_ptr<SerializedPage>&& page,
       std::vector<ContinuePromise>& promises) {
@@ -106,6 +115,8 @@ class ExchangeQueue {
       return;
     }
     totalBytes_ += page->size();
+    receivedBytes_ += page->size();
+    ++numReceived_;
     queue_.push_back(std::move(page));
     if (!promises_.empty()) {
       // Resume one of the waiting drivers.
@@ -159,6 +170,39 @@ class ExchangeQueue {
     return page;
   }
 
+  // Returns a guess for a typical reply unit size. An expected reply size is
+  // the requested bytes rounded up to the next multiple of the estimate. Actual
+  // reply sizes have no hard limit.
+  uint64_t expectedSerializedPageSize() const;
+
+  uint64_t requestableSpace() const;
+
+  // Marks that 'numRequests', each for 'bytes' have been started.
+  void recordRequestLocked(
+      int32_t numRequests,
+      uint64_t bytes) {
+    numPending_ += numRequests;
+    expectedBytes_ += bytes;
+  }
+
+  /// Records that a pending request arrived with 'bytes' of payload. Decreases
+  /// expected reply bytes and count of pending. if there is space to do an
+  /// immediate rerequest, returns the requestable size, else 0. On non-zero
+  /// return, the caller must initiate a second request for the returned number
+  /// of bytes.
+
+  uint64_t recordReplyLocked(int64_t bytes) {
+    expectedBytes_ =
+      std::max<int64_t>(
+            0, expectedBytes_ - std::max<int64_t>(bytes, expectedBytes_ / numPending_));
+    if (false && !atEnd_ && totalBytes_ + expectedBytes_ < minBytes_) {
+      auto requestableBytes = maxBytes_ / numSources_;
+      return requestableBytes;
+    }
+    --numPending_;
+    return 0;
+  }
+
   // Returns the total bytes held by SerializedPages in 'this'.
   uint64_t totalBytes() const {
     return totalBytes_;
@@ -173,6 +217,10 @@ class ExchangeQueue {
 
   uint64_t maxBytes() const {
     return maxBytes_;
+  }
+
+  int64_t expectedBytes() const {
+    return expectedBytes_;
   }
 
   void addSourceLocked() {
@@ -254,20 +302,19 @@ class ExchangeQueue {
   uint64_t maxBytes_;
 
   // Number of sources with a pending request.
-  int32_t numRequestsPending_{0};
-
+  int32_t numPending_{0};
 
   int32_t numUnrequestedRequestable_{0};
 
   // Volume expected from pending requests.
-  int64_t bytesExpected_{0};
+  int64_t expectedBytes_{0};
 
-  
   // Number of SerializedPages received.
   int64_t numReceived_{0};
 
-  // Total size of SerializedPages received. Used to calculate an average expected size.
-  int64_t bytesRecived_{0}
+  // Total size of SerializedPages received. Used to calculate an average
+  // expected size.
+  int64_t receivedBytes_{0};
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
@@ -305,6 +352,14 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   // threads from issuing the same request.
   virtual bool shouldRequestLocked() = 0;
 
+  bool isPending() const {
+    return requestPending_;
+  }
+
+  bool isRequestable() const {
+    return !requestPending_ && !atEnd_;
+  }
+
   // Requests the producer to generate more data. Call only if shouldRequest()
   // was true. The object handles its own lifetime by acquiring a
   // shared_from_this() pointer if needed.
@@ -313,15 +368,27 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   // Like request() but specifies a cap on the data to send. The cap
   // can be exceeded if the producer has a single indivisible item
   // that is larger than the cap.
-  virtual void request(int64_t maxBytes) {
+  virtual void request(uint64_t maxBytes) {
     request();
   }
-  
+
+  // Returns the size of the next request reply. This may be known if a previous
+  // receive was aborted for e.g. no space in buffer.
+  virtual std::optional<int64_t> nextReplySize() {
+    return std::nullopt;
+  }
+
   // Close the exchange source. May be called before all data
   // has been received and processed. This can happen in case
   // of an error or an operator like Limit aborting the query
   // once it received enough data.
   virtual void close() = 0;
+
+  /// Returns true if 'this' supports request() with a size and calls
+  /// recordReplyLocked() after receiving a reply.
+  virtual bool supportsFlowControl() const {
+    return false;
+  }
 
   // Returns runtime statistics.
   virtual folly::F14FastMap<std::string, int64_t> stats() const = 0;
@@ -377,15 +444,15 @@ struct RemoteConnectorSplit : public connector::ConnectorSplit {
 // per consumer thread.
 class ExchangeClient {
  public:
-  static constexpr int32_t kDefaultMinSize = 32 << 20; // 32 MB.
+  static constexpr int32_t kDefaultBufferSize = 32 << 20; // 32 MB.
 
   ExchangeClient(
       int destination,
       memory::MemoryPool* pool,
-      int64_t minSize = kDefaultMinSize)
+      int64_t bufferSize = kDefaultBufferSize)
       : destination_(destination),
         pool_(pool),
-        queue_(std::make_shared<ExchangeQueue>(minSize)) {
+        queue_(std::make_shared<ExchangeQueue>(bufferSize * 0.8, bufferSize)) {
     VELOX_CHECK_NOT_NULL(pool_);
     VELOX_CHECK(
         destination >= 0,
@@ -422,6 +489,10 @@ class ExchangeClient {
   std::string toString();
 
  private:
+std::unique_ptr<SerializedPage> nextWithFlowControl(
+    bool* atEnd,
+    ContinueFuture* future);
+
   const int destination_;
   memory::MemoryPool* const pool_;
   std::shared_ptr<ExchangeQueue> queue_;
@@ -429,7 +500,9 @@ class ExchangeClient {
   std::vector<std::shared_ptr<ExchangeSource>> sources_;
   // Next source to request. Clock hand over 'sources_'.
   int32_t nextSourceIndex_{0};
+
   bool closed_{false};
+  bool supportsFlowControl_{false};
 };
 
 class Exchange : public SourceOperator {
