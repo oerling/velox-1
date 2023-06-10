@@ -23,10 +23,10 @@
 #include "velox/exec/Exchange.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -38,8 +38,39 @@ using namespace facebook::velox::memory;
 using facebook::velox::common::testutil::TestValue;
 using facebook::velox::test::BatchMaker;
 
+class PartitionedOutputBufferTimeout {
+public:
+  PartitionedOutputBufferTimeout(const int32_t* intervalMillis)
+      : intervalMillis_(intervalMillis) {
+    thread = std::thread([&]() {
+      while (!stopping_) {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(*intervalMillis_));
+        auto mgr = PartitionedOutputBufferManager::getInstance().lock();
+        if (mgr) {
+          mgr->testingClearNotifys();
+        }
+      }
+    });
+  }
+
+  ~PartitionedOutputBufferTimeout() {
+    stopping_ = true;
+    thread.join();
+  }
+
+ private:
+  const int32_t* intervalMillis_;
+  std::atomic<bool> stopping_{false};
+  std::thread thread;
+};
+
 class MultiFragmentTest : public HiveConnectorTestBase {
  protected:
+  void SetUp() override {
+    periodicTimeout_ = std::make_unique<PartitionedOutputBufferTimeout>(&clearInterval_);
+  }
+
   static std::string makeTaskId(const std::string& prefix, int num) {
     return fmt::format("local://{}-{}", prefix, num);
   }
@@ -169,17 +200,25 @@ class MultiFragmentTest : public HiveConnectorTestBase {
 
     // Number of bytes produced by each of 'numPartitions * taskWidth' drivers.
     int64_t bytesPerSource{10000000};
+
     // Minimum payload row size.
     int32_t minRowBytes{100};
+
     // Maximum payload row size.
     int32_t maxRowBytes{1000};
-    // PartitionedOutputBufferManager capacity. Each task divides these bytes across its producers.
+
+    // PartitionedOutputBufferManager capacity. Each task divides these bytes
+    // across its producers.
     int32_t partitionBufferSize{20000};
-    // Maximum size of exchange queue for each consumer task. Determines request sizes.
+    // Maximum size of exchange queue for each consumer task. Determines request
+    // sizes.
     int32_t exchangeBufferSize{10000};
   };
-  
-  OperatorStats aggregationFlow(FlowTestParams params) {
+
+  /// Tests a shuffle with parameters in 'params'. Returns the aggregated stats
+  /// of Exchanges and PartitionedOutputs from the plan.
+  std::pair<OperatorStats, OperatorStats> aggregationFlow(
+      FlowTestParams params) {
     configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
         fmt::format("{}", params.partitionBufferSize);
     configSettings_[core::QueryConfig::kExchangeBufferSize] =
@@ -195,8 +234,8 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       auto row = makeRowVector(
           {makeFlatVector<int64_t>(kVectorSize, [](auto row) { return row; }),
            makeFlatVector<StringView>(kVectorSize, [&](auto row) {
-             auto stringBytes =
-                 params.minRowBytes + randomSize(++counter, params.maxRowBytes - params.minRowBytes);
+             auto stringBytes = params.minRowBytes +
+                 randomSize(++counter, params.maxRowBytes - params.minRowBytes);
              temp.resize(stringBytes);
              return StringView(temp.data(), temp.size());
            })});
@@ -211,9 +250,9 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       leafTaskIds.push_back(leafTaskId);
       core::PlanNodePtr leafPlan;
       leafPlan = PlanBuilder()
-                           .values(vectors, true)
-                           .partitionedOutput({"c0"}, params.numPartitions)
-                           .planNode();
+                     .values(vectors, true)
+                     .partitionedOutput({"c0"}, params.numPartitions)
+                     .planNode();
       auto leafTask = makeTask(leafTaskId, leafPlan, 0);
       leafType = leafPlan->outputType();
       tasks.push_back(leafTask);
@@ -226,11 +265,12 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       finalAggPlan = PlanBuilder()
                          .exchange(leafType)
                          .singleAggregation({"c0"}, {"count(1)"})
-	.partitionedOutput({}, 1)
-	.planNode();
+                         .partitionedOutput({}, 1)
+                         .planNode();
 
       auto taskId = makeTaskId("final-agg", i);
-      finalAggSplits.push_back(exec::Split(std::make_shared<RemoteConnectorSplit>(taskId), -1));
+      finalAggSplits.push_back(
+          exec::Split(std::make_shared<RemoteConnectorSplit>(taskId), -1));
       auto task = makeTask(taskId, finalAggPlan, i);
       tasks.push_back(task);
       Task::start(task, taskWidth);
@@ -239,27 +279,35 @@ class MultiFragmentTest : public HiveConnectorTestBase {
 
     auto expected =
         makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
-          return vectors.size() * kVectorSize * params.numPartitions *params.taskWidth;
+          return vectors.size() * kVectorSize * params.numPartitions *
+              params.taskWidth;
         })});
 
-    auto op = PlanBuilder().exchange(finalAggPlan->outputType())
-      .singleAggregation({}, {"sum(a0)"})
-      .planNode();
+    auto op = PlanBuilder()
+                  .exchange(finalAggPlan->outputType())
+                  .singleAggregation({}, {"sum(a0)"})
+                  .planNode();
 
-    AssertQueryBuilder(op).splits(finalAggSplits).assertResults(expected);
+    AssertQueryBuilder(op)
+        .config(core::QueryConfig::kExchangeBufferSize, "10000")
+        .splits(finalAggSplits)
+        .assertResults(expected);
 
     OperatorStats allExchanges(0, 0, "0", "Exchange");
+    OperatorStats allRepartitions(0, 0, "0", "PartitionedOutput");
     for (auto& task : tasks) {
       auto stats = task->taskStats();
       for (auto& pipeline : stats.pipelineStats) {
         for (auto& op : pipeline.operatorStats) {
           if (op.operatorType == "Exchange") {
             allExchanges.add(op);
+          } else if (op.operatorType == "PartitionedOutput") {
+            allRepartitions.add(op);
           }
         }
       }
     }
-    return allExchanges;
+    return std::make_pair(allExchanges, allRepartitions);
   }
 
   RowTypePtr rowType_{
@@ -267,6 +315,12 @@ class MultiFragmentTest : public HiveConnectorTestBase {
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
   std::unordered_map<std::string, std::string> configSettings_;
   std::vector<std::shared_ptr<TempFilePath>> filePaths_;
+
+  std::unique_ptr<PartitionedOutputBufferTimeout> periodicTimeout_;
+
+  // Millisecond interval for clearing notifications for data that has not
+  // arrived from PartitionedOutputBufferManager.
+  int32_t clearInterval_{10};
   std::vector<RowVectorPtr> vectors_;
 };
 

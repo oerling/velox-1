@@ -622,7 +622,27 @@ void PartitionedOutputBuffer::terminate() {
   }
 }
 
-std::string PartitionedOutputBuffer::toString() {
+  void PartitionedOutputBuffer::testingClearNotifys() {
+    std::vector<DataAvailable> notifys;
+    {
+    std::lock_guard<std::mutex> l(mutex_);
+    for (auto i = 0; i < buffers_.size(); ++i) {
+      auto destination = buffers_[i].get();
+      if (destination) {
+
+	auto notify = destination->getAndClearNotify();
+	if (notify.callback) {
+	  notifys.push_back(std::move(notify));
+	}
+      }
+    }
+    }
+    for (auto& notify : notifys) {
+      notify.notify();
+    }
+  }
+
+      std::string PartitionedOutputBuffer::toString() {
   std::lock_guard<std::mutex> l(mutex_);
   return toStringLocked();
 }
@@ -789,6 +809,13 @@ void PartitionedOutputBufferManager::removeTask(const std::string& taskId) {
   }
 }
 
+void PartitionedOutputBufferManager::testingClearNotifys() {
+  auto buffers =  buffers_.withLock([&](const auto& buffers) { return buffers; });
+  for (auto pair : buffers) {
+    pair.second->testingClearNotifys();
+  }
+}
+  
 std::string PartitionedOutputBufferManager::toString() {
   return buffers_.withLock([](const auto& buffers) {
     std::stringstream out;

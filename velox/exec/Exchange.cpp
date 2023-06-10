@@ -16,6 +16,7 @@
 #include "velox/exec/Exchange.h"
 #include <velox/common/base/Exceptions.h>
 #include <velox/common/memory/Memory.h>
+#include "velox/exec/PartitionedOutput.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/vector/VectorStream.h"
 
@@ -127,12 +128,11 @@ class LocalExchangeSource : public ExchangeSource {
             inputPage = nullptr;
           }
           numPages_ += pages.size();
-          int64_t ackSequence;
+          int64_t ackSequence = kNoReply;
           {
             std::vector<ContinuePromise> promises;
             {
               std::lock_guard<std::mutex> l(queue_->mutex());
-              requestPending_ = false;
               uint64_t bytes = 0;
               for (auto& page : pages) {
                 bytes += page->size();
@@ -140,31 +140,37 @@ class LocalExchangeSource : public ExchangeSource {
               }
               if (atEnd) {
                 queue_->enqueueLocked(nullptr, promises);
+                requestPending_ = false;
                 atEnd_ = true;
               }
               queue_->recordReplyLocked(bytes);
-              ackSequence = sequence_ = sequence + pages.size();
+              if (pages.size() > 0) {
+                ackSequence = sequence_ = sequence + pages.size();
+              }
             }
             for (auto& promise : promises) {
               promise.setValue();
             }
-          }
-          // Outside of queue mutex.
-          if (atEnd_) {
-            buffers->deleteResults(taskId_, destination_);
-          } else {
-            buffers->acknowledge(taskId_, destination_, ackSequence);
+            // Outside of queue mutex. Sends a delete results, ack or new
+            // request to self and requests more sources if space in the queue.
+            queue_->requestIfDue(self, ackSequence);
           }
         });
+  }
+
+  void acknowledge(int64_t ackSequence) override {
+    auto buffers = PartitionedOutputBufferManager::getInstance().lock();
+    buffers->acknowledge(taskId_, destination_, ackSequence);
+  }
+
+  void deleteResults() override {
+    auto buffers = PartitionedOutputBufferManager::getInstance().lock();
+    buffers->deleteResults(taskId_, destination_);
   }
 
   void close() override {
     auto buffers = PartitionedOutputBufferManager::getInstance().lock();
     buffers->deleteResults(taskId_, destination_);
-  }
-
-  bool supportsFlowControl() const override {
-    return true;
   }
 
   folly::F14FastMap<std::string, int64_t> stats() const override {
@@ -194,7 +200,7 @@ std::unique_ptr<ExchangeSource> createLocalExchangeSource(
 
 uint64_t ExchangeQueue::expectedSerializedPageSize() const {
   // Initially, max size / number of sources. Later, average of received sizes.
-  constexpr int32_t kMinExpectedSize = 1000;
+  constexpr int32_t kMinExpectedSize = PartitionedOutput::kMinDestinationSize;
   if (!numSources_) {
     return kMinExpectedSize;
   }
@@ -202,7 +208,16 @@ uint64_t ExchangeQueue::expectedSerializedPageSize() const {
       noMoreSources_ ? numSources_ : std::max(numSources_, 100);
   return std::max<int64_t>(
       kMinExpectedSize,
-      (maxBytes_ + receivedBytes_) / (numReceived_ + numSourcesGuess));
+      (maxBytes_ + receivedBytes_) / (receivedPages_ + numSourcesGuess));
+}
+
+void ExchangeQueue::requestIfDue(
+    const std::shared_ptr<ExchangeSource>& replySource,
+    int64_t replySequence) {
+  auto client = client_.lock();
+  if (client) {
+    client->requestIfDue(replySource, replySequence);
+  }
 }
 
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
@@ -223,22 +238,11 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
     if (closed_) {
       toClose = std::move(source);
     } else {
-      bool supportsFlowControl = source->supportsFlowControl();
-      if (sources_.empty()) {
-        supportsFlowControl_ = supportsFlowControl;
-      } else {
-        VELOX_CHECK_EQ(
-            supportsFlowControl,
-            supportsFlowControl_,
-            "All sources must have the same supportsFlowControl()");
-      }
       sources_.push_back(source);
       queue_->addSourceLocked();
       if (source->shouldRequestLocked()) {
         requestSize = queue_->expectedSerializedPageSize();
-        if (supportsFlowControl_) {
-          queue_->recordRequestLocked(1, requestSize);
-        }
+        queue_->recordRequestLocked(1, requestSize);
         toRequest = source;
       }
     }
@@ -282,17 +286,15 @@ folly::F14FastMap<std::string, RuntimeMetric> ExchangeClient::stats() const {
       stats[name].addValue(value);
     }
   }
+  stats["peakBytes"] =
+      RuntimeMetric(queue_->peakBytes(), RuntimeCounter::Unit::kBytes);
   return stats;
 }
 
 std::unique_ptr<SerializedPage> ExchangeClient::next(
     bool* atEnd,
     ContinueFuture* future) {
-  std::vector<std::shared_ptr<ExchangeSource>> toRequest;
   std::unique_ptr<SerializedPage> page;
-  if (supportsFlowControl_) {
-    return nextWithFlowControl(atEnd, future);
-  }
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
@@ -303,47 +305,39 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
     if (page && queue_->totalBytes() > queue_->minBytes()) {
       return page;
     }
-    // There is space for more data, send requests to sources with no pending
-    // request.
-    for (auto& source : sources_) {
-      if (source->shouldRequestLocked()) {
-        toRequest.push_back(source);
-      }
-    }
   }
-
-  // Outside of lock
-  for (auto& source : toRequest) {
-    source->request();
-  }
+  std::shared_ptr<ExchangeSource> empty;
+  requestIfDue(empty, ExchangeSource::kNoReply);
   return page;
 }
 
-std::unique_ptr<SerializedPage> ExchangeClient::nextWithFlowControl(
-    bool* atEnd,
-    ContinueFuture* future) {
+void ExchangeClient::requestIfDue(
+    const std::shared_ptr<ExchangeSource>& replySource,
+    int64_t replySequence) {
+  // Requests data from as many next sources as will fit based on average
+  // response size and space in the queue. If 'replySource' is given and not at
+  // end, sends a data request to it if it fits in the new  requests batch and
+  // an ack if it had data but was not rerequested.
+
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
   int64_t requestSize = 0;
   int64_t requestedBytes = 0;
-  std::unique_ptr<SerializedPage> page;
-  {
-    std::lock_guard<std::mutex> l(queue_->mutex());
-    *atEnd = false;
-    page = queue_->dequeueLocked(atEnd, future);
-    if (*atEnd) {
-      return page;
+  if (replySource) {
+    if (replySource->isAtEnd()) {
+      replySource->deleteResults();
     }
-    if (page && queue_->totalBytes() > queue_->minBytes()) {
-      return page;
+  }
+  bool ack = false;
+  {
+    bool fullRequestBatch = false;
+    std::lock_guard<std::mutex> l(queue_->mutex());
+    if (replySource && replySequence == ExchangeSource::kNoReply) {
+      ++numEmptyRequests_;
     }
     int64_t space =
         queue_->maxBytes() - queue_->totalBytes() - queue_->expectedBytes();
     auto unit = queue_->expectedSerializedPageSize();
-    if (space < unit && space < queue_->maxBytes() / 2) {
-      // The unit is over half  the buffer and the buffer is not empty.
-      return page;
-    }
-    auto numToRequest = std::max<int64_t>(1, space / unit);
+    auto numToRequest = space / unit;
     int32_t numRequestable =
         sources_.size() - queue_->numCompleted() - queue_->numPending();
     int32_t numRequestableCheck = 0;
@@ -351,10 +345,8 @@ std::unique_ptr<SerializedPage> ExchangeClient::nextWithFlowControl(
       numRequestableCheck += source->isRequestable();
     }
     VELOX_CHECK_EQ(numRequestable, numRequestableCheck);
-    if (!numRequestable) {
-      return page;
-    }
-    requestSize = space / numRequestable;
+    requestSize = numRequestable ? bits::roundUp(space / numRequestable, unit) : unit;
+    fullRequestBatch = numRequestable == 0;
     for (auto i = 0; i < sources_.size(); ++i) {
       if (++nextSourceIndex_ >= sources_.size()) {
         nextSourceIndex_ = 0;
@@ -363,19 +355,33 @@ std::unique_ptr<SerializedPage> ExchangeClient::nextWithFlowControl(
       if (source->shouldRequestLocked()) {
         requestedBytes += requestSize;
         toRequest.push_back(source);
+        if (toRequest.size() >= numToRequest || requestedBytes > space) {
+          fullRequestBatch = toRequest.size() < numRequestable;
+          break;
+        }
       }
-      if (toRequest.size() >= numToRequest) {
-        break;
-      }
+    }
+    if (!fullRequestBatch && replySource && !replySource->isAtEnd()) {
+      ++numDirectRerequest_;
+      requestedBytes += requestSize;
+      toRequest.push_back(replySource);
+    } else if (
+        replySource && !replySource->isAtEnd() &&
+        replySequence != ExchangeSource::kNoReply) {
+      ack = true;
+      --queue_->numPending();
+      replySource->clearPendingLocked();
     }
     queue_->recordRequestLocked(toRequest.size(), requestedBytes);
   }
 
   // Outside of lock
+  if (ack) {
+    replySource->acknowledge(replySequence);
+  }
   for (auto& source : toRequest) {
     source->request(requestSize);
   }
-  return page;
 }
 
 ExchangeClient::~ExchangeClient() {
@@ -501,7 +507,12 @@ RowVectorPtr Exchange::getOutput() {
 void Exchange::recordStats() {
   auto lockedStats = stats_.wlock();
   for (const auto& [name, value] : exchangeClient_->stats()) {
-    lockedStats->runtimeStats[name].merge(value);
+    auto it = lockedStats->runtimeStats.find(name);
+    if (it == lockedStats->runtimeStats.end()) {
+      lockedStats->runtimeStats[name] = value;
+    } else {
+      lockedStats->runtimeStats[name].merge(value);
+    }
   }
 }
 
