@@ -39,7 +39,7 @@ using facebook::velox::common::testutil::TestValue;
 using facebook::velox::test::BatchMaker;
 
 class PartitionedOutputBufferTimeout {
-public:
+ public:
   PartitionedOutputBufferTimeout(const int32_t* intervalMillis)
       : intervalMillis_(intervalMillis) {
     thread = std::thread([&]() {
@@ -68,7 +68,8 @@ public:
 class MultiFragmentTest : public HiveConnectorTestBase {
  protected:
   void SetUp() override {
-    periodicTimeout_ = std::make_unique<PartitionedOutputBufferTimeout>(&clearInterval_);
+    periodicTimeout_ =
+        std::make_unique<PartitionedOutputBufferTimeout>(&clearInterval_);
   }
 
   static std::string makeTaskId(const std::string& prefix, int num) {

@@ -345,7 +345,8 @@ void ExchangeClient::requestIfDue(
       numRequestableCheck += source->isRequestable();
     }
     VELOX_CHECK_EQ(numRequestable, numRequestableCheck);
-    requestSize = numRequestable ? bits::roundUp(space / numRequestable, unit) : unit;
+    requestSize =
+        numRequestable ? bits::roundUp(space / numRequestable, unit) : unit;
     fullRequestBatch = numRequestable == 0;
     for (auto i = 0; i < sources_.size(); ++i) {
       if (++nextSourceIndex_ >= sources_.size()) {

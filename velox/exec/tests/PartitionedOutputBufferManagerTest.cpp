@@ -900,7 +900,7 @@ TEST_F(PartitionedOutputBufferManagerTest, outOfOrderAcks) {
 
 TEST_F(PartitionedOutputBufferManagerTest, errorInQueue) {
   std::weak_ptr<ExchangeClient> ignore;
-  auto queue = std::make_shared<ExchangeQueue>(1 << 20, 1<< 20, ignore);
+  auto queue = std::make_shared<ExchangeQueue>(1 << 20, 1 << 20, ignore);
   auto page = std::make_unique<SerializedPage>(folly::IOBuf::copyBuffer("", 0));
   std::vector<ContinuePromise> promises;
   { queue->setError("error"); }

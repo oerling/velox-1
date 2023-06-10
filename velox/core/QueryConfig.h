@@ -100,8 +100,7 @@ class QueryConfig {
   static constexpr const char* kMaxPartitionedOutputBufferSize =
       "max_page_partitioning_buffer_size";
 
-  static constexpr const char* kExchangeBufferSize =
-      "exchange.max_buffer_size";
+  static constexpr const char* kExchangeBufferSize = "exchange.max_buffer_size";
 
   /// Preferred size of batches in bytes to be returned by operators from
   /// Operator::getOutput. It is used when an estimate of average row size is
@@ -241,7 +240,7 @@ class QueryConfig {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kExchangeBufferSize, kDefault);
   }
-  
+
   uint64_t maxLocalExchangeBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxLocalExchangeBufferSize, kDefault);
