@@ -479,9 +479,10 @@ TEST(TestReader, testStatsCallbackFiredWithFiltering) {
 
   rowReaderOpts.setKeySelectionCallback(
       [&totalKeyStreamsAggregate, &selectedKeyStreamsAggregate](
-          uint64_t totalKeyStreams, uint64_t selectedKeyStreams) {
-        totalKeyStreamsAggregate += totalKeyStreams;
-        selectedKeyStreamsAggregate += selectedKeyStreams;
+          facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats
+              keySelectionStats) {
+        totalKeyStreamsAggregate += keySelectionStats.totalKeys;
+        selectedKeyStreamsAggregate += keySelectionStats.selectedKeys;
       });
 
   ReaderOptions readerOpts{defaultPool.get()};
@@ -503,6 +504,46 @@ TEST(TestReader, testStatsCallbackFiredWithFiltering) {
   // Features were projected, so we expect selected keys > total keys
   EXPECT_EQ(totalKeyStreamsAggregate, 16);
   EXPECT_EQ(selectedKeyStreamsAggregate, 4);
+}
+
+TEST(TestReader, testEstimatedSize) {
+  const std::string fmSmall(getExampleFilePath("fm_small.orc"));
+
+  auto requestedType =
+      asRowType(HiveTypeParser().parse("struct<\
+          id:int,\
+      map1:map<int, array<float>>,\
+      map2:map<string, map<smallint,bigint>>,\
+      map3:map<int,int>,\
+      map4:map<int,struct<field1:int,field2:float,field3:string>>,\
+      memo:string>"));
+
+  ReaderOptions readerOpts{defaultPool.get()};
+
+  {
+    auto reader = DwrfReader::create(
+        createFileBufferedInput(fmSmall, readerOpts.getMemoryPool()),
+        readerOpts);
+    auto cs = std::make_shared<ColumnSelector>(
+        requestedType, std::vector<std::string>{"map2"});
+    RowReaderOptions rowReaderOpts;
+    rowReaderOpts.select(cs);
+
+    auto rowReader = reader->createRowReader(rowReaderOpts);
+    ASSERT_EQ(rowReader->estimatedRowSize(), 79);
+  }
+
+  {
+    auto reader = DwrfReader::create(
+        createFileBufferedInput(fmSmall, readerOpts.getMemoryPool()),
+        readerOpts);
+    auto cs = std::make_shared<ColumnSelector>(
+        requestedType, std::vector<std::string>{"id"});
+    RowReaderOptions rowReaderOpts;
+    rowReaderOpts.select(cs);
+    auto rowReader = reader->createRowReader(rowReaderOpts);
+    ASSERT_EQ(rowReader->estimatedRowSize(), 13);
+  }
 }
 
 TEST(TestReader, testStatsCallbackFiredWithoutFiltering) {
@@ -528,9 +569,10 @@ TEST(TestReader, testStatsCallbackFiredWithoutFiltering) {
 
   rowReaderOpts.setKeySelectionCallback(
       [&totalKeyStreamsAggregate, &selectedKeyStreamsAggregate](
-          uint64_t totalKeyStreams, uint64_t selectedKeyStreams) {
-        totalKeyStreamsAggregate += totalKeyStreams;
-        selectedKeyStreamsAggregate += selectedKeyStreams;
+          facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats
+              keySelectionStats) {
+        totalKeyStreamsAggregate += keySelectionStats.totalKeys;
+        selectedKeyStreamsAggregate += keySelectionStats.selectedKeys;
       });
 
   ReaderOptions readerOpts{defaultPool.get()};
@@ -1039,8 +1081,13 @@ TEST(TestReader, testUpcastBoolean) {
           HiveTypeParser().parse("struct<col0:int>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
+  AllocationPool allocPool(defaultPool.get());
+  StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
-      TypeWithId::create(reqType), TypeWithId::create(rowType), streams);
+      TypeWithId::create(reqType),
+      TypeWithId::create(rowType),
+      streams,
+      labels);
 
   VectorPtr batch;
   reader->next(104, batch);
@@ -1083,8 +1130,13 @@ TEST(TestReader, testUpcastIntDirect) {
 
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
+  AllocationPool allocPool(defaultPool.get());
+  StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
-      TypeWithId::create(reqType), TypeWithId::create(rowType), streams);
+      TypeWithId::create(reqType),
+      TypeWithId::create(rowType),
+      streams,
+      labels);
 
   VectorPtr batch;
   reader->next(100, batch);
@@ -1144,8 +1196,13 @@ TEST(TestReader, testUpcastIntDict) {
           HiveTypeParser().parse("struct<col0:bigint>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
+  AllocationPool allocPool(defaultPool.get());
+  StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
-      TypeWithId::create(reqType), TypeWithId::create(rowType), streams);
+      TypeWithId::create(reqType),
+      TypeWithId::create(rowType),
+      streams,
+      labels);
 
   VectorPtr batch;
   reader->next(100, batch);
@@ -1193,8 +1250,13 @@ TEST(TestReader, testUpcastFloat) {
           HiveTypeParser().parse("struct<col0:double>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
+  AllocationPool allocPool(defaultPool.get());
+  StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
-      TypeWithId::create(reqType), TypeWithId::create(rowType), streams);
+      TypeWithId::create(reqType),
+      TypeWithId::create(rowType),
+      streams,
+      labels);
 
   VectorPtr batch;
   reader->next(100, batch);
@@ -1676,7 +1738,7 @@ void verifyRowNumbers(
   ASSERT_EQ(numRows, expectedNumRows);
 }
 
-std::pair<std::unique_ptr<Writer>, std::unique_ptr<DwrfReader>>
+std::pair<std::unique_ptr<dwrf::Writer>, std::unique_ptr<DwrfReader>>
 createWriterReader(
     const std::vector<VectorPtr>& batches,
     memory::MemoryPool& pool) {

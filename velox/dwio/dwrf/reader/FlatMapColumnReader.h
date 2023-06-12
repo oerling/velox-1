@@ -22,16 +22,10 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/dwio/dwrf/reader/ConstantColumnReader.h"
+#include "velox/dwio/dwrf/reader/StreamLabels.h"
 #include "velox/dwio/dwrf/utils/BitIterator.h"
 
 namespace facebook::velox::dwrf {
-
-// Stats used by callback passed from Koski layer
-// to give visibility into flatmap efficiency
-struct KeySelectionStats {
-  size_t totalKeyStreams{0};
-  size_t selectedKeyStreams{0};
-};
 
 class StringKeyBuffer;
 
@@ -152,6 +146,7 @@ class FlatMapColumnReader : public ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
+      const StreamLabels& streamLabels,
       FlatMapContext flatMapContext);
   ~FlatMapColumnReader() override = default;
 
@@ -164,7 +159,6 @@ class FlatMapColumnReader : public ColumnReader {
 
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
-  KeySelectionStats keySelectionStats_;
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes_;
   std::unique_ptr<StringKeyBuffer> stringKeyBuffer_;
   bool returnFlatVector_;
@@ -181,6 +175,7 @@ class FlatMapStructEncodingColumnReader : public ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
+      const StreamLabels& streamLabels,
       FlatMapContext flatMapContext);
   ~FlatMapStructEncodingColumnReader() override = default;
 
@@ -193,7 +188,6 @@ class FlatMapStructEncodingColumnReader : public ColumnReader {
 
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
-  KeySelectionStats keySelectionStats_;
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes_;
   std::unique_ptr<NullColumnReader> nullColumnReader_;
   BufferPtr mergedNulls_;
@@ -205,6 +199,7 @@ class FlatMapColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
       StripeStreams& stripe,
+      const StreamLabels& streamLabels,
       FlatMapContext flatMapContext);
 };
 

@@ -39,21 +39,18 @@ void BufferedInput::load(const LogType logType) {
   offsets_.reserve(regions_.size());
   buffers_.reserve(regions_.size());
 
-  if (wsVRLoad_) {
+  if (useVRead()) {
     std::vector<void*> buffers;
-    std::vector<Region> regions;
-    uint64_t sizeToRead = 0;
+    buffers.reserve(regions_.size());
     loadWithAction(
         logType,
-        [&buffers, &regions, &sizeToRead](
-            void* buf, uint64_t length, uint64_t offset, LogType) {
+        [&buffers](
+            void* buf, uint64_t /* length */, uint64_t /* offset */, LogType) {
           buffers.push_back(buf);
-          regions.emplace_back(offset, length);
-          sizeToRead += length;
         });
 
     // Now we have all buffers and regions, load it in parallel
-    input_->vread(buffers, regions, logType);
+    input_->vread(buffers, regions_, logType);
   } else {
     loadWithAction(
         logType,
@@ -88,6 +85,15 @@ std::unique_ptr<SeekableInputStream> BufferedInput::enqueue(
       [region, this, i = regions_.size() - 1]() {
         return readInternal(region.offset, region.length, i);
       });
+}
+
+bool BufferedInput::useVRead() const {
+  // Use value explicitly set by the user if any, otherwise use the GFLAG
+  // We want to update this on every use for now because during the onboarding
+  // to wsVRLoad=true we may change the value of this GFLAG programatically from
+  // a config update so we can rollback fast from config without the need of a
+  // deployment
+  return wsVRLoad_.value_or(FLAGS_wsVRLoad);
 }
 
 // Sort regions and enqueuedToOffset in the same way
@@ -157,13 +163,17 @@ void BufferedInput::loadWithAction(
 
 bool BufferedInput::tryMerge(Region& first, const Region& second) {
   DWIO_ENSURE_GE(second.offset, first.offset, "regions should be sorted.");
-  int64_t gap = second.offset - first.offset - first.length;
+  const int64_t gap = second.offset - first.offset - first.length;
+
+  // Duplicate regions (extension==0) is the only case allowed to merge for
+  // useVRead()
+  const int64_t extension = gap + second.length;
+  if (useVRead()) {
+    return extension == 0;
+  }
 
   // compare with 0 since it's comparison in different types
   if (gap < 0 || gap <= maxMergeDistance_) {
-    // ensure try merge will handle duplicate regions (extension==0)
-    int64_t extension = gap + second.length;
-
     // the second region is inside first one if extension is negative
     if (extension > 0) {
       first.length += extension;

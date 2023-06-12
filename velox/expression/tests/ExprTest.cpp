@@ -54,6 +54,15 @@ class ExprTest : public testing::Test, public VectorTestBase {
     return core::Expressions::inferTypes(untyped, rowType, execCtx_->pool());
   }
 
+  core::TypedExprPtr parseExpression(
+      const std::string& text,
+      const RowTypePtr& rowType,
+      const std::vector<TypePtr>& lambdaInputTypes) {
+    auto untyped = parse::parseExpr(text, options_);
+    return core::Expressions::inferTypes(
+        untyped, rowType, lambdaInputTypes, execCtx_->pool(), nullptr);
+  }
+
   std::vector<core::TypedExprPtr> parseMultipleExpression(
       const std::string& text,
       const RowTypePtr& rowType) {
@@ -160,6 +169,25 @@ class ExprTest : public testing::Test, public VectorTestBase {
     std::vector<VectorPtr> result(1);
     exprSet->eval(rows, context, result);
     return result[0];
+  }
+
+  template <typename T = exec::ExprSet>
+  void evalWithEmptyRows(
+      const std::string& expr,
+      const RowVectorPtr& input,
+      VectorPtr& result,
+      const VectorPtr& expected) {
+    parse::ParseOptions options;
+    auto untyped = parse::parseExpr(expr, options);
+    auto typedExpr = core::Expressions::inferTypes(
+        untyped, asRowType(input->type()), pool());
+
+    SelectivityVector rows{input->size(), false};
+    T exprSet({typedExpr}, execCtx_.get());
+    exec::EvalCtx evalCtx(execCtx_.get(), &exprSet, input.get());
+    std::vector<VectorPtr> results{result};
+    exprSet.eval(rows, evalCtx, results);
+    assertEqualVectors(result, expected);
   }
 
   template <typename T = ComplexType>
@@ -1967,9 +1995,11 @@ TEST_F(ExprTest, complexNullOutput) {
 TEST_F(ExprTest, rewriteInputs) {
   // rewrite one field
   {
+    auto alpha =
+        std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), "alpha");
     auto expr = parseExpression(
         "(a + b) * 2.1", ROW({"a", "b"}, {INTEGER(), DOUBLE()}));
-    expr = expr->rewriteInputNames({{"a", "alpha"}});
+    expr = expr->rewriteInputNames({{"a", alpha}});
 
     auto expectedExpr = parseExpression(
         "(alpha + b) * 2.1", ROW({"alpha", "b"}, {INTEGER(), DOUBLE()}));
@@ -1978,13 +2008,42 @@ TEST_F(ExprTest, rewriteInputs) {
 
   // rewrite 2 fields
   {
+    auto alpha =
+        std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), "alpha");
+    auto beta = std::make_shared<core::FieldAccessTypedExpr>(DOUBLE(), "beta");
     auto expr = parseExpression(
         "a + b * c", ROW({"a", "b", "c"}, {INTEGER(), DOUBLE(), DOUBLE()}));
-    expr = expr->rewriteInputNames({{"a", "alpha"}, {"b", "beta"}});
+    expr = expr->rewriteInputNames({{"a", alpha}, {"b", beta}});
 
     auto expectedExpr = parseExpression(
         "alpha + beta * c",
         ROW({"alpha", "beta", "c"}, {INTEGER(), DOUBLE(), DOUBLE()}));
+    ASSERT_EQ(*expectedExpr, *expr);
+  }
+
+  // rewrite with lambda
+  {
+    auto alpha =
+        std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), "alpha");
+    auto expr =
+        parseExpression("i -> i * a", ROW({"a"}, {INTEGER()}), {INTEGER()});
+    expr = expr->rewriteInputNames({{"a", alpha}});
+
+    auto expectedExpr = parseExpression(
+        "i -> i * alpha", ROW({"alpha"}, {INTEGER()}), {INTEGER()});
+    ASSERT_EQ(*expectedExpr, *expr);
+  }
+
+  // no rewrite with dereference
+  {
+    auto alpha =
+        std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), "alpha");
+    auto expr = parseExpression(
+        "i -> i * b.a", ROW({"b"}, {ROW({"a"}, {INTEGER()})}), {INTEGER()});
+    expr = expr->rewriteInputNames({{"a", alpha}});
+
+    auto expectedExpr = parseExpression(
+        "i -> i * b.a", ROW({"b"}, {ROW({"a"}, {INTEGER()})}), {INTEGER()});
     ASSERT_EQ(*expectedExpr, *expr);
   }
 }
@@ -3859,5 +3918,45 @@ TEST_F(ExprTest, dictionaryResizeWithIndicesReset) {
   auto result = evaluate(
       "coalesce(plus(c0, 1::BIGINT), 1::BIGINT)", makeRowVector({wrappedC0}));
   auto expected = makeNullableFlatVector<int64_t>({2, 2, 1});
+  assertEqualVectors(expected, result);
+}
+
+TEST_F(ExprTest, noSelectedRows) {
+  VectorPtr result = makeFlatVector<int64_t>({7, 8, 9});
+  auto expected = makeFlatVector<int64_t>({7, 8, 9});
+
+  // Test evalFlatNoNulls code path.
+  {
+    auto input = makeRowVector(
+        {makeFlatVector<int64_t>({1, 2, 3}),
+         makeFlatVector<int64_t>({4, 5, 6})});
+    evalWithEmptyRows("c0 + c1", input, result, expected);
+  }
+
+  // Test regular evaluation path.
+  {
+    auto input = makeRowVector(
+        {makeNullableFlatVector<int64_t>({1, std::nullopt, 3}),
+         makeNullableFlatVector<int64_t>({std::nullopt, 5, 6})});
+    evalWithEmptyRows("c0 + c1", input, result, expected);
+  }
+
+  // Test simplified evaluation path.
+  {
+    auto input = makeRowVector(
+        {makeNullableFlatVector<int64_t>({1, std::nullopt, 3}),
+         makeNullableFlatVector<int64_t>({std::nullopt, 5, 6})});
+    evalWithEmptyRows<exec::ExprSetSimplified>(
+        "c0 + c1", input, result, expected);
+  }
+}
+
+TEST_F(ExprTest, multiplyReferencedConstantField) {
+  auto data = makeRowVector(
+      {makeFlatVector<bool>({true, false, true, false}),
+       makeConstantArray<int64_t>(4, {1, 2, 3})});
+
+  auto result = evaluate("if(c0, c1, c1)", data);
+  auto expected = makeConstantArray<int64_t>(4, {1, 2, 3});
   assertEqualVectors(expected, result);
 }

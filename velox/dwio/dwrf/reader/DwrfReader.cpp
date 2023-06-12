@@ -17,6 +17,7 @@
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/common/TypeUtils.h"
 #include "velox/dwio/common/exception/Exception.h"
+#include "velox/dwio/dwrf/reader/StreamLabels.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::dwrf {
@@ -405,14 +406,21 @@ void DwrfRowReader::startNextStripe() {
   auto dataType = getReader().getSchemaWithId();
   FlatMapContext flatMapContext;
   flatMapContext.keySelectionCallback = options_.getKeySelectionCallback();
+  AllocationPool pool(&getReader().getMemoryPool());
+  StreamLabels streamLabels(pool);
 
   if (scanSpec) {
     selectiveColumnReader_ = SelectiveDwrfReader::build(
-        requestedType, dataType, stripeStreams, scanSpec, flatMapContext);
+        requestedType,
+        dataType,
+        stripeStreams,
+        streamLabels,
+        scanSpec,
+        flatMapContext);
     selectiveColumnReader_->setIsTopLevel();
   } else {
     columnReader_ = ColumnReader::build(
-        requestedType, dataType, stripeStreams, flatMapContext);
+        requestedType, dataType, stripeStreams, streamLabels, flatMapContext);
   }
   DWIO_ENSURE(
       (columnReader_ != nullptr) != (selectiveColumnReader_ != nullptr),
@@ -506,9 +514,10 @@ std::optional<size_t> DwrfRowReader::estimatedRowSizeHelper(
     case TypeKind::ROW: {
       // start the estimate with the offsets and hasNulls vectors sizes
       size_t totalEstimate = valueCount * (sizeof(uint8_t) + sizeof(uint64_t));
-      for (int32_t i = 0; i < t.subtypesSize() &&
-           columnSelector_->shouldReadNode(t.subtypes(i));
-           ++i) {
+      for (int32_t i = 0; i < t.subtypesSize(); ++i) {
+        if (!columnSelector_->shouldReadNode(t.subtypes(i))) {
+          continue;
+        }
         auto subtypeEstimate =
             estimatedRowSizeHelper(footer, stats, t.subtypes(i));
         if (subtypeEstimate.has_value()) {
