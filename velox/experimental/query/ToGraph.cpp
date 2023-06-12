@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/exec/Aggregate.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/expression/ConstantExpr.h"
