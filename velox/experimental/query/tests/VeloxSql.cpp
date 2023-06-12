@@ -192,11 +192,38 @@ class VeloxRunner {
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
+
+    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+    connectorConfigs[kHiveConnectorId] =
+        std::make_shared<core::MemConfig>(hiveConfig_);
+
+    schemaQueryCtx_ = std::make_shared<core::QueryCtx>(
+        executor_.get(),
+        config_,
+        std::move(connectorConfigs),
+        memory::MemoryAllocator::getInstance(),
+        rootPool_->addAggregateChild("schemaCtxPool"),
+        spillExecutor_,
+        "schema");
+
+    schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
+    connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
+        schemaPool_.get(),
+        schemaRootPool_.get(),
+        schemaQueryCtx_->getConnectorConfig(kHiveConnectorId),
+        std::make_unique<SimpleExpressionEvaluator>(
+            schemaQueryCtx_.get(), schemaPool_.get()),
+        schemaQueryCtx_->allocator(),
+        "scan_for_schema",
+        "schema",
+        0);
+
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
         FLAGS_data_path,
         toFileFormat(FLAGS_data_format),
-        kHiveConnectorId,
-        schemaPool_);
+        dynamic_cast<connector::hive::HiveConnector*>(hiveConnector.get()),
+        connectorQueryCtx_);
+
     planner_ = std::make_unique<core::DuckDbQueryPlanner>(optimizerPool_.get());
     for (auto& pair : schema_->tables()) {
       planner_->registerTable(pair.first, pair.second->rowType());
@@ -556,10 +583,13 @@ class VeloxRunner {
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> optimizerPool_;
   std::shared_ptr<memory::MemoryPool> schemaPool_;
+  std::shared_ptr<memory::MemoryPool> schemaRootPool_;
   std::shared_ptr<memory::MemoryPool> checkPool_;
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
   std::shared_ptr<folly::CPUThreadPoolExecutor> executor_;
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
+  std::shared_ptr<core::QueryCtx> schemaQueryCtx_;
+  std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   std::unique_ptr<facebook::verax::LocalSchema> schema_;
   std::unique_ptr<LocalSplitSourceFactory> splitSourceFactory_;
   std::unique_ptr<facebook::verax::VeloxHistory> history_;

@@ -641,6 +641,10 @@ struct DerivedTable : public PlanObject {
   // table, then 'fullyImported' is '_tables'.
   PlanObjectSet fullyImported;
 
+  //
+  // True if this dt is already a reducing join imported to a build side. Do not
+  // try to further restrict this with probe side.
+  bool noImportOfExists{false};
   // Postprocessing clauses, group by, having, order by, limit, offset.
   AggregationPlanPtr aggregation{nullptr};
   ExprVector having;
@@ -684,8 +688,15 @@ struct DerivedTable : public PlanObject {
   }
 
   //// True if 'table' is of 'this'.
-  bool hasTable(PlanObjectConstPtr table) {
+  bool hasTable(PlanObjectConstPtr table) const {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
+  }
+
+  // True if 'join' exists in 'this'. Tables link to joins that may be
+  // in different speculative candidate dts. So only consider joins
+  // inside the current dt wen planning.
+  bool hasJoin(JoinEdgePtr join) const {
+    return std::find(joins.begin(), joins.end(), join) != joins.end();
   }
 
   /// Fills in 'startTables_' to 'tables_' that are not to the right of

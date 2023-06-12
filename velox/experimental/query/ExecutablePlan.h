@@ -39,6 +39,7 @@ struct ExecutableFragment {
   velox::core::PlanFragment fragment;
   std::vector<InputStage> inputStages;
   std::vector<std::shared_ptr<const core::TableScanNode>> scans;
+  int32_t numBroadcastDestinations{0};
 };
 
 /// Describes options for generating an executable plan.

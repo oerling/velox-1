@@ -307,14 +307,17 @@ void reducingJoinsRecursive(
     std::vector<PlanObjectConstPtr>& path,
     PlanObjectSet& visited,
     PlanObjectSet& result,
-    float& reduction) {
+    float& reduction,
+    std::function<
+        void(const std::vector<PlanObjectConstPtr>& path, float reduction)>
+        resultFunc = nullptr) {
   bool isLeaf = true;
   for (auto join : joinedBy(candidate)) {
     if (join->leftOptional() || join->rightOptional()) {
       continue;
     }
     JoinSide other = join->sideOf(candidate, true);
-    if (!state.dt->tableSet.contains(other.table)) {
+    if (!state.dt->tableSet.contains(other.table) || !state.dt->hasJoin(join)) {
       continue;
     }
     if (other.table->type() != PlanType::kTable) {
@@ -345,7 +348,8 @@ void reducingJoinsRecursive(
         path,
         visited,
         result,
-        reduction);
+        reduction,
+        resultFunc);
     path.pop_back();
   }
   if (fanoutFromRoot < 1 && isLeaf) {
@@ -353,6 +357,9 @@ void reducingJoinsRecursive(
     // fanout for the set of all reducing join paths from the top level
     // 'candidate'.
     reduction *= fanoutFromRoot;
+    if (resultFunc) {
+      resultFunc(path, fanoutFromRoot);
+    }
   }
 }
 
@@ -391,24 +398,37 @@ JoinCandidate reducingJoins(
       reducing.fanout = candidate.fanout * reduction;
     }
   }
-  PlanObjectSet exists;
-  float reduction = 1;
-  assert(!candidate.tables.empty());
-  std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
-  // Look for reducing joins that were not added before, also covering already
-  // placed tables. This may copy reducing joins from a probe to the
-  // corresponding build.
-  reducingSet.add(candidate.tables[0]);
-  reducingSet.unionSet(state.dt->importedExistences);
-  reducingJoinsRecursive(
-      state, candidate.tables[0], 1, 10, path, reducingSet, exists, reduction);
-  if (reduction < 0.7) {
-    // The original table is added to the reducing existences because the path
-    // starts with it but it is not joined twice since it already is the start
-    // of the main join.
-    exists.erase(candidate.tables[0]);
-    reducing.existences.push_back(std::move(exists));
-    reducing.existsFanout *= reduction;
+  if (!state.dt->noImportOfExists) {
+    PlanObjectSet exists;
+    float reduction = 1;
+    assert(!candidate.tables.empty());
+    std::vector<PlanObjectConstPtr> path{candidate.tables[0]};
+    // Look for reducing joins that were not added before, also covering already
+    // placed tables. This may copy reducing joins from a probe to the
+    // corresponding build.
+    reducingSet.add(candidate.tables[0]);
+    reducingSet.unionSet(state.dt->importedExistences);
+    reducingJoinsRecursive(
+        state,
+        candidate.tables[0],
+        1,
+        10,
+        path,
+        reducingSet,
+        exists,
+        reduction,
+        [&](auto& path, float reduction) {
+          if (reduction < 0.7) {
+            // The original table is added to the reducing existences because
+            // the path starts with it but it is not joined twice since it
+            // already is the start of the main join.
+            PlanObjectSet added;
+            for (auto i = 1; i < path.size(); ++i) {
+              added.add(path[i]);
+            }
+            reducing.existences.push_back(std::move(added));
+          }
+        });
   }
   if (reducing.tables.empty() && reducing.existences.empty()) {
     // No reduction.
@@ -485,7 +505,8 @@ std::vector<JoinCandidate> Optimization::nextJoins(PlanState& state) {
   candidates.reserve(state.dt->tables.size());
   forJoinedTables(
       state, [&](JoinEdgePtr join, PlanObjectConstPtr joined, float fanout) {
-        if (!state.placed.contains(joined) && state.dt->hasTable(joined)) {
+        if (!state.placed.contains(joined) && state.dt->hasJoin(join) &&
+            state.dt->hasTable(joined)) {
           candidates.emplace_back(join, joined, fanout);
         }
       });
@@ -895,6 +916,11 @@ void Optimization::joinByHash(
   RelationOpPtr probeInput = plan;
   if (partitionByProbe) {
     if (needsShuffle) {
+      if (copartition.empty()) {
+        for (auto i : partKeys) {
+          copartition.push_back(build.keys[i]);
+        }
+      }
       Distribution dist(plan->distribution().distributionType, 0, copartition);
       Declare(
           Repartition, shuffleTemp, buildInput, dist, buildInput->columns());

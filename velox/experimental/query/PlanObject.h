@@ -229,6 +229,9 @@ class PlanObjectSet {
   std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 
+using PlanObjectVector =
+    std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>;
+
 } // namespace facebook::verax
 
 namespace std {

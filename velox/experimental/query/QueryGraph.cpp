@@ -649,6 +649,61 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   VELOX_UNREACHABLE("No join to make an exists build side restriction");
 }
 
+std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
+    const DerivedTable& super,
+    PlanObjectConstPtr firstTable,
+    float existsFanout,
+    PlanObjectVector& existsTables,
+    JoinEdgePtr existsJoin) {
+  auto firstExistsTable = existsJoin->rightKeys()[0]->singleTable();
+  VELOX_CHECK(firstExistsTable);
+  MemoKey existsDtKey;
+  existsDtKey.firstTable = firstExistsTable;
+  for (auto& column : existsJoin->rightKeys()) {
+    existsDtKey.columns.unionColumns(column);
+  }
+  auto optimization = queryCtx()->optimization();
+  existsDtKey.tables.unionObjects(existsTables);
+  auto it = optimization->existenceDts().find(existsDtKey);
+  DerivedTablePtr existsDt;
+  if (it == optimization->existenceDts().end()) {
+    Declare(DerivedTable, newDt);
+    existsDt = newDt;
+    existsDt->cname = queryCtx()->optimization()->newCName("edt");
+    existsDt->import(super, firstExistsTable, existsDtKey.tables, {});
+    for (auto& k : existsJoin->rightKeys()) {
+      Declare(
+          Column,
+          existsColumn,
+          toName(fmt::format("{}.{}", existsDt->cname, k->toString())),
+          existsDt,
+          k->value());
+      existsDt->columns.push_back(existsColumn);
+      existsDt->exprs.push_back(k);
+    }
+    existsDt->noImportOfExists = true;
+    existsDt->makeInitialPlan();
+    optimization->existenceDts()[existsDtKey] = existsDt;
+  } else {
+    existsDt = it->second;
+  }
+  Declare(
+      JoinEdge,
+      joinWithDt,
+      firstTable,
+      existsDt,
+      {},
+      false,
+      false,
+      true,
+      false);
+  joinWithDt->setFanouts(existsFanout, 1);
+  for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
+    joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
+  }
+  return std::make_pair(existsDt, joinWithDt);
+}
+
 void DerivedTable::import(
     const DerivedTable& super,
     PlanObjectConstPtr firstTable,
@@ -671,52 +726,23 @@ void DerivedTable::import(
     // of these tables goes into its own derived table which is joined
     // with exists to the main table(s) in the 'this'.
     importedExistences.unionSet(exists);
-    std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>
-        existsTables;
+    PlanObjectVector existsTables;
     exists.forEach([&](auto object) { existsTables.push_back(object); });
     auto existsJoin = makeExists(firstTable, exists);
     if (existsTables.size() > 1) {
       // There is a join on the right of exists. Needs its own dt.
-      auto firstExistsTable = existsJoin->rightKeys()[0]->singleTable();
-      VELOX_CHECK(firstExistsTable);
-      Declare(DerivedTable, existsDt);
-      existsDt->cname = queryCtx()->optimization()->newCName("edt");
-      PlanObjectSet existsTableSet;
-      existsTableSet.unionObjects(existsTables);
-      existsDt->import(super, firstExistsTable, existsTableSet, {});
-      for (auto& k : existsJoin->rightKeys()) {
-        Declare(
-            Column,
-            existsColumn,
-            toName(fmt::format("{}.{}", existsDt->cname, k->toString())),
-            existsDt,
-            k->value());
-        existsDt->columns.push_back(existsColumn);
-        existsDt->exprs.push_back(k);
-      }
-      Declare(
-          JoinEdge,
-          joinWithDt,
-          firstTable,
-          existsDt,
-          {},
-          false,
-          false,
-          true,
-          false);
-      joinWithDt->setFanouts(existsFanout, 1);
-      for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
-        joinWithDt->addEquality(
-            existsJoin->leftKeys()[i], existsDt->columns[i]);
-      }
+      auto [existsDt, joinWithDt] = makeExistsDtAndJoin(
+          super, firstTable, existsFanout, existsTables, existsJoin);
       joins.push_back(joinWithDt);
       tables.push_back(existsDt);
       tableSet.add(existsDt);
+      noImportOfExists = true;
     } else {
       joins.push_back(existsJoin);
       assert(!existsTables.empty());
       tables.push_back(existsTables[0]);
       tableSet.add(existsTables[0]);
+      noImportOfExists = true;
     }
   }
   if (firstTable->type() == PlanType::kDerivedTable) {
@@ -1132,6 +1158,10 @@ void DerivedTable::distributeConjuncts() {
       if (isJoinEquality(conjuncts[i], tables, left, right)) {
         auto join = findJoin(this, tables, true);
         if (join->isInner()) {
+          if (left->type() == PlanType::kColumn &&
+              right->type() == PlanType::kColumn) {
+            left->as<Column>()->equals(right->as<Column>());
+          }
           if (join->leftTable() == tables[0]) {
             join->addEquality(left, right);
           } else {
@@ -1142,6 +1172,10 @@ void DerivedTable::distributeConjuncts() {
         }
       }
     }
+  }
+  // Re-guess fanouts after all single table filters are pushed down.
+  for (auto& join : joins) {
+    join->guessFanout();
   }
 }
 

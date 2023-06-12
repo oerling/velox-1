@@ -395,6 +395,10 @@ class Optimization {
     return memo_;
   }
 
+  auto& existenceDts() {
+    return existenceDts_;
+  }
+
   // Lists the possible joins based on 'state.placed' and adds each on top of
   // 'plan'. This is a set of plans extending 'plan' by one join (single table
   // or bush). Calls itself on the interesting next plans. If all tables have
@@ -699,6 +703,10 @@ class Optimization {
   int32_t stageCounter_{0};
 
   std::unordered_map<MemoKey, PlanSet> memo_;
+
+  // Set of previously planned dts for importing probe side reducing joins to a
+  // build side
+  std::unordered_map<MemoKey, DerivedTablePtr> existenceDts_;
 
   // The top level PlanState. Contains the set of top level interesting plans.
   // Must stay alive as long as the Plans and RelationOps are reeferenced.

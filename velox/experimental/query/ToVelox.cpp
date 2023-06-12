@@ -392,9 +392,37 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
   const std::vector<column_index_t> keys_;
 };
 
+class BroadcastPartitionFunctionSpec : public core::PartitionFunctionSpec {
+ public:
+  std::unique_ptr<core::PartitionFunction> create(
+      int /* numPartitions */) const override {
+    return nullptr;
+  }
+
+  std::string toString() const override {
+    return "broadcast";
+  }
+
+  folly::dynamic serialize() const override {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "BroadcastPartitionFunctionSpec";
+    return obj;
+  }
+
+  static core::PartitionFunctionSpecPtr deserialize(
+      const folly::dynamic& /* obj */,
+      void* /* context */) {
+    return std::make_shared<BroadcastPartitionFunctionSpec>();
+  }
+};
+
 core::PartitionFunctionSpecPtr createPartitionFunctionSpec(
     const RowTypePtr& inputType,
-    const std::vector<core::TypedExprPtr>& keys) {
+    const std::vector<core::TypedExprPtr>& keys,
+    bool isBroadcast) {
+  if (isBroadcast) {
+    return std::make_shared<BroadcastPartitionFunctionSpec>();
+  }
   if (keys.empty()) {
     return std::make_shared<core::GatherPartitionFunctionSpec>();
   } else {
@@ -454,13 +482,15 @@ core::PlanNodePtr Optimization::makeFragment(
         fragment.width = 1;
       }
       auto partitioningInput = project.maybeProject(sourcePlan);
-      auto partitionFunctionFactory =
-          createPartitionFunctionSpec(partitioningInput->outputType(), keys);
-
+      auto partitionFunctionFactory = createPartitionFunctionSpec(
+          partitioningInput->outputType(), keys, distribution.isBroadcast);
+      if (distribution.isBroadcast) {
+        source.numBroadcastDestinations = options_.numWorkers;
+      }
       source.fragment.planNode = std::make_shared<core::PartitionedOutputNode>(
           nextId(*op),
           keys,
-          keys.empty() ? 1 : options_.numWorkers,
+          (keys.empty()) ? 1 : options_.numWorkers,
           distribution.isBroadcast,
           false,
           std::move(partitionFunctionFactory),

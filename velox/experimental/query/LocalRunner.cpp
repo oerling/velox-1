@@ -99,6 +99,10 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
           consumer,
           onError);
       stages_.back().push_back(task);
+      if (fragment.numBroadcastDestinations) {
+        task->updateBroadcastOutputBuffers(
+            fragment.numBroadcastDestinations, true);
+      }
       Task::start(task, options_.numDrivers);
     }
   }
