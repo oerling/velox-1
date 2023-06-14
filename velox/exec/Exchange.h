@@ -233,7 +233,7 @@ class ExchangeQueue {
   void clearExpectedBytes() {
     expectedBytes_ = 0;
   }
-  
+
   void addSourceLocked() {
     VELOX_CHECK(!noMoreSources_, "addSource called after noMoreSources");
     numSources_++;

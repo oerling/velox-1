@@ -337,7 +337,9 @@ void ExchangeClient::requestIfDue(
     bool fullRequestBatch = false;
     std::lock_guard<std::mutex> l(queue_->mutex());
     if (queue_->numPending() == (replySourcePending ? 1 : 0)) {
-      // If there are no sources pending or if replySource is the only one pending and jus got a reply, there can be no pending bytes expected for the queue.
+      // If there are no sources pending or if replySource is the only one
+      // pending and jus got a reply, there can be no pending bytes expected for
+      // the queue.
       queue_->clearExpectedBytes();
     }
     if (replySource && replySequence == ExchangeSource::kNoReply) {
@@ -359,8 +361,10 @@ void ExchangeClient::requestIfDue(
     requestSize = numRequestable
         ? bits::roundUp(std::max<int64_t>(1, space / numRequestable), unit)
         : unit;
-    // No new requests if there is no space and there is something already received or expected.
-    fullRequestBatch = numToRequest == 0 && (queue_->totalBytes() > 0 || queue_->expectedBytes() > 0);
+    // No new requests if there is no space and there is something already
+    // received or expected.
+    fullRequestBatch = numToRequest == 0 &&
+        (queue_->totalBytes() > 0 || queue_->expectedBytes() > 0);
     for (auto i = 0; !fullRequestBatch && i < sources_.size(); ++i) {
       if (++nextSourceIndex_ >= sources_.size()) {
         nextSourceIndex_ = 0;
@@ -403,7 +407,7 @@ void ExchangeClient::requestIfDue(
       // If one source is already pending, substract it from the new request
       // count.
       queue_->recordRequestLocked(
-				  toRequest.size() - isDirectRerequest, requestedBytes);
+          toRequest.size() - isDirectRerequest, requestedBytes);
     } else {
       ++numNothingRequestable_;
     }

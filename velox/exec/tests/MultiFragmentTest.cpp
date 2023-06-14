@@ -1472,7 +1472,8 @@ TEST_F(MultiFragmentTest, flowControl) {
   {
     FlowTestParams params;
     auto [exchange, partition] = aggregationFlow(params);
-    auto& stats = exchange.runtimeStats;;
+    auto& stats = exchange.runtimeStats;
+    ;
     EXPECT_LT(stats["peakBytes"].max, 124000);
   }
 }
