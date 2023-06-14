@@ -138,12 +138,12 @@ class LocalExchangeSource : public ExchangeSource {
                 bytes += page->size();
                 queue_->enqueueLocked(std::move(page), promises);
               }
+              queue_->recordReplyLocked(bytes);
               if (atEnd) {
                 queue_->enqueueLocked(nullptr, promises);
                 requestPending_ = false;
                 atEnd_ = true;
               }
-              queue_->recordReplyLocked(bytes);
               if (pages.size() > 0) {
                 ackSequence = sequence_ = sequence + pages.size();
               }
@@ -221,8 +221,8 @@ void ExchangeQueue::requestIfDue(
 }
 
 void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
-  std::shared_ptr<ExchangeSource> toRequest;
   std::shared_ptr<ExchangeSource> toClose;
+  bool toRequest = false;
   int64_t requestSize = 0;
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
@@ -240,11 +240,7 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
     } else {
       sources_.push_back(source);
       queue_->addSourceLocked();
-      if (source->shouldRequestLocked()) {
-        requestSize = queue_->expectedSerializedPageSize();
-        queue_->recordRequestLocked(1, requestSize);
-        toRequest = source;
-      }
+      toRequest = true;
     }
   }
 
@@ -252,7 +248,8 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
   if (toClose) {
     toClose->close();
   } else if (toRequest) {
-    toRequest->request(requestSize);
+    std::shared_ptr<ExchangeSource> empty;
+    requestIfDue(empty, 0);
   }
 }
 
@@ -288,6 +285,9 @@ folly::F14FastMap<std::string, RuntimeMetric> ExchangeClient::stats() const {
   }
   stats["peakBytes"] =
       RuntimeMetric(queue_->peakBytes(), RuntimeCounter::Unit::kBytes);
+  stats["directRerequest"] = RuntimeMetric(numDirectRerequest_);
+  stats["nothingRequestable"] = RuntimeMetric(numNothingRequestable_);
+
   return stats;
 }
 
@@ -322,22 +322,31 @@ void ExchangeClient::requestIfDue(
   std::vector<std::shared_ptr<ExchangeSource>> toRequest;
   int64_t requestSize = 0;
   int64_t requestedBytes = 0;
+  bool isDirectRerequest = false;
+  bool replySourcePending = false;
   if (replySource) {
     if (replySource->isAtEnd()) {
       replySource->deleteResults();
+    } else {
+      assert(replySource->isPending());
+      replySourcePending = true;
     }
   }
   bool ack = false;
   {
     bool fullRequestBatch = false;
     std::lock_guard<std::mutex> l(queue_->mutex());
+    if (queue_->numPending() == (replySourcePending ? 1 : 0)) {
+      // If there are no sources pending or if replySource is the only one pending and jus got a reply, there can be no pending bytes expected for the queue.
+      queue_->clearExpectedBytes();
+    }
     if (replySource && replySequence == ExchangeSource::kNoReply) {
       ++numEmptyRequests_;
     }
     int64_t space =
         queue_->maxBytes() - queue_->totalBytes() - queue_->expectedBytes();
-    auto unit = queue_->expectedSerializedPageSize();
-    auto numToRequest = space / unit;
+    int64_t unit = queue_->expectedSerializedPageSize();
+    int64_t numToRequest = std::max<int64_t>(0, space / unit);
     int32_t numRequestable =
         sources_.size() - queue_->numCompleted() - queue_->numPending();
     int32_t numRequestableCheck = 0;
@@ -345,14 +354,19 @@ void ExchangeClient::requestIfDue(
       numRequestableCheck += source->isRequestable();
     }
     VELOX_CHECK_EQ(numRequestable, numRequestableCheck);
-    requestSize =
-        numRequestable ? bits::roundUp(space / numRequestable, unit) : unit;
-    fullRequestBatch = numRequestable == 0;
-    for (auto i = 0; i < sources_.size(); ++i) {
+    // Note that space can be negative. Make requestSize no less than minimum
+    // reply.
+    requestSize = numRequestable
+        ? bits::roundUp(std::max<int64_t>(1, space / numRequestable), unit)
+        : unit;
+    // No new requests if there is no space and there is something already received or expected.
+    fullRequestBatch = numToRequest == 0 && (queue_->totalBytes() > 0 || queue_->expectedBytes() > 0);
+    for (auto i = 0; !fullRequestBatch && i < sources_.size(); ++i) {
       if (++nextSourceIndex_ >= sources_.size()) {
         nextSourceIndex_ = 0;
       }
       auto& source = sources_[nextSourceIndex_];
+      // 'replySource' is pending, so will not be added to 'toRequest.
       if (source->shouldRequestLocked()) {
         requestedBytes += requestSize;
         toRequest.push_back(source);
@@ -362,18 +376,37 @@ void ExchangeClient::requestIfDue(
         }
       }
     }
-    if (!fullRequestBatch && replySource && !replySource->isAtEnd()) {
-      ++numDirectRerequest_;
-      requestedBytes += requestSize;
-      toRequest.push_back(replySource);
-    } else if (
-        replySource && !replySource->isAtEnd() &&
-        replySequence != ExchangeSource::kNoReply) {
-      ack = true;
-      --queue_->numPending();
-      replySource->clearPendingLocked();
+    if (replySource && !replySource->isAtEnd()) {
+      // After requesting others, check if replySource 1. must send an ack, 2.
+      // must send a rerequest, 3. becomes not pending.
+      if (!fullRequestBatch) {
+        // There is space after requesting other sources. Send a new request in
+        // the the place of ack. Saves a message.
+        if (replySequence != ExchangeSource::kNoReply) {
+          // Count saved acks.
+          ++numDirectRerequest_;
+        }
+        isDirectRerequest = true;
+        requestedBytes += requestSize;
+        toRequest.push_back(replySource);
+      } else {
+        // Will not rerequest. If received data, must ack. In either case,
+        // replySource becomes not pending.
+        if (replySequence != ExchangeSource::kNoReply) {
+          ack = true;
+        }
+        --queue_->numPending();
+        replySource->clearPendingLocked();
+      }
     }
-    queue_->recordRequestLocked(toRequest.size(), requestedBytes);
+    if (!toRequest.empty()) {
+      // If one source is already pending, substract it from the new request
+      // count.
+      queue_->recordRequestLocked(
+				  toRequest.size() - isDirectRerequest, requestedBytes);
+    } else {
+      ++numNothingRequestable_;
+    }
   }
 
   // Outside of lock

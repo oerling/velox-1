@@ -196,6 +196,10 @@ class ExchangeQueue {
   /// Records that a pending request arrived with 'bytes' of payload. Decreases
   /// expected reply bytes.
   void recordReplyLocked(int64_t bytes) {
+    if (numPending_ == 1) {
+      expectedBytes_ = 0;
+      return;
+    }
     expectedBytes_ = std::max<int64_t>(
         0,
         expectedBytes_ -
@@ -226,6 +230,10 @@ class ExchangeQueue {
     return expectedBytes_;
   }
 
+  void clearExpectedBytes() {
+    expectedBytes_ = 0;
+  }
+  
   void addSourceLocked() {
     VELOX_CHECK(!noMoreSources_, "addSource called after noMoreSources");
     numSources_++;
@@ -335,7 +343,9 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
       std::shared_ptr<ExchangeQueue> queue,
       memory::MemoryPool* pool)>;
 
-  static constexpr int64_t kNoReply = 1;
+  // Sequence number given to requestIfDue to mark request expired without
+  // producing data.
+  static constexpr int64_t kNoReply = ~0L;
 
   ExchangeSource(
       const std::string& taskId,
@@ -544,6 +554,7 @@ class ExchangeClient {
   bool closed_{false};
   int64_t numEmptyRequests_{0};
   int64_t numDirectRerequest_{0};
+  int64_t numNothingRequestable_{0};
 };
 
 class Exchange : public SourceOperator {

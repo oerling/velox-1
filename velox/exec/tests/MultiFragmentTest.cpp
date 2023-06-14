@@ -68,6 +68,7 @@ class PartitionedOutputBufferTimeout {
 class MultiFragmentTest : public HiveConnectorTestBase {
  protected:
   void SetUp() override {
+    HiveConnectorTestBase::SetUp();
     periodicTimeout_ =
         std::make_unique<PartitionedOutputBufferTimeout>(&clearInterval_);
   }
@@ -1468,8 +1469,12 @@ TEST_F(MultiFragmentTest, taskTerminateWithPendingOutputBuffers) {
 }
 
 TEST_F(MultiFragmentTest, flowControl) {
-  FlowTestParams params;
-  aggregationFlow(params);
+  {
+    FlowTestParams params;
+    auto [exchange, partition] = aggregationFlow(params);
+    auto& stats = exchange.runtimeStats;;
+    EXPECT_LT(stats["peakBytes"].max, 124000);
+  }
 }
 
 DEBUG_ONLY_TEST_F(MultiFragmentTest, mergeWithEarlyTermination) {
