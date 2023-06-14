@@ -121,6 +121,10 @@ class ExchangeQueue {
       }
       return;
     }
+    auto pageSize = page->size();
+    if (pageSize > peakPageSize_) {
+      peakPageSize_ = pageSize;
+    }
     totalBytes_ += page->size();
     receivedBytes_ += page->size();
     if (totalBytes_ > peakBytes_) {
@@ -333,6 +337,7 @@ class ExchangeQueue {
   // expected size.
   int64_t receivedBytes_{0};
   int64_t peakBytes_{0};
+  int64_t peakPageSize_{0};
 };
 
 class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {

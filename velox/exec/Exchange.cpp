@@ -336,6 +336,9 @@ void ExchangeClient::requestIfDue(
   {
     bool fullRequestBatch = false;
     std::lock_guard<std::mutex> l(queue_->mutex());
+    if (closed_) {
+      return;
+    }
     if (queue_->numPending() == (replySourcePending ? 1 : 0)) {
       // If there are no sources pending or if replySource is the only one
       // pending and jus got a reply, there can be no pending bytes expected for
@@ -375,7 +378,9 @@ void ExchangeClient::requestIfDue(
         requestedBytes += requestSize;
         toRequest.push_back(source);
         if (toRequest.size() >= numToRequest || requestedBytes > space) {
-          fullRequestBatch = toRequest.size() < numRequestable;
+          // If we expect a full buffer from sources other than the one that
+          // replied, we ack the reply instead of direct rerequest.
+          fullRequestBatch = toRequest.size() <= numRequestable;
           break;
         }
       }
@@ -406,6 +411,10 @@ void ExchangeClient::requestIfDue(
     if (!toRequest.empty()) {
       // If one source is already pending, substract it from the new request
       // count.
+      if (toRequest.size() > 1) {
+        static int more;
+        ++more;
+      }
       queue_->recordRequestLocked(
           toRequest.size() - isDirectRerequest, requestedBytes);
     } else {

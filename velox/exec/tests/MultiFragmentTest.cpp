@@ -73,6 +73,10 @@ class MultiFragmentTest : public HiveConnectorTestBase {
         std::make_unique<PartitionedOutputBufferTimeout>(&clearInterval_);
   }
 
+  void TearDown() override {
+    periodicTimeout_.reset();
+    HiveConnectorTestBase::TearDown();  }
+
   static std::string makeTaskId(const std::string& prefix, int num) {
     return fmt::format("local://{}-{}", prefix, num);
   }
@@ -1472,8 +1476,7 @@ TEST_F(MultiFragmentTest, flowControl) {
   {
     FlowTestParams params;
     auto [exchange, partition] = aggregationFlow(params);
-    auto& stats = exchange.runtimeStats;
-    ;
+    auto& stats = exchange.runtimeStats;;
     EXPECT_LT(stats["peakBytes"].max, 124000);
   }
 }
