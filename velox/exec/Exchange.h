@@ -395,17 +395,13 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
     return atEnd_;
   }
 
-  // Requests the producer to generate more data. Call only if shouldRequest()
-  // was true. The object handles its own lifetime by acquiring a
-  // shared_from_this() pointer if needed.
-  virtual void request() = 0;
-
-  // Like request() but specifies a cap on the data to send. The cap
-  // can be exceeded if the producer has a single indivisible item
-  // that is larger than the cap.
-  virtual void request(uint64_t maxBytes) {
-    request();
-  }
+  // Requests the producer to generate more data. Call only if
+  // shouldRequest() was true. The object handles its own lifetime by
+  // acquiring a shared_from_this() pointer if needed.  'mexBytes'
+  // specifies a cap on the data to receive. The cap can be exceeded
+  // if the producer has a single indivisible item that is larger than
+  // the cap.
+  virtual void request(uint64_t maxBytes) = 0;
 
   /// Informs the source that responses with sequence number < 'sequence' may be
   /// deleted.

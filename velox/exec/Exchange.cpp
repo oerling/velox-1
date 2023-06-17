@@ -85,10 +85,6 @@ class LocalExchangeSource : public ExchangeSource {
     return !requestPending_.exchange(true);
   }
 
-  void request() override {
-    request(kMaxBytes);
-  }
-
   void request(uint64_t bytes) override {
     auto buffers = PartitionedOutputBufferManager::getInstance().lock();
     VELOX_CHECK_NOT_NULL(buffers, "invalid PartitionedOutputBufferManager");
