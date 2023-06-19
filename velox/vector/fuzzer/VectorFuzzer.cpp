@@ -119,11 +119,7 @@ int128_t rand(FuzzerGenerator& rng) {
 }
 
 Timestamp randTimestamp(FuzzerGenerator& rng, VectorFuzzer::Options opts) {
-  auto precision = opts.useMicrosecondPrecisionTimestamp
-      ? VectorFuzzer::Options::TimestampPrecision::kMicroSeconds
-      : opts.timestampPrecision;
-
-  switch (precision) {
+  switch (opts.timestampPrecision) {
     case VectorFuzzer::Options::TimestampPrecision::kNanoSeconds:
       return Timestamp(rand<int32_t>(rng), (rand<int64_t>(rng) % MAX_NANOS));
     case VectorFuzzer::Options::TimestampPrecision::kMicroSeconds:
@@ -883,7 +879,7 @@ RowVectorPtr VectorFuzzer::fuzzRowChildrenToLazy(RowVectorPtr rowVector) {
 
 RowVectorPtr VectorFuzzer::fuzzRowChildrenToLazy(
     RowVectorPtr rowVector,
-    const std::vector<column_index_t>& columnsToWrapInLazy) {
+    const std::vector<int>& columnsToWrapInLazy) {
   if (columnsToWrapInLazy.empty()) {
     return rowVector;
   }
@@ -894,9 +890,13 @@ RowVectorPtr VectorFuzzer::fuzzRowChildrenToLazy(
     VELOX_USER_CHECK_NOT_NULL(child);
     VELOX_USER_CHECK(!child->isLazy());
     if (listIndex < columnsToWrapInLazy.size() &&
-        i == columnsToWrapInLazy[listIndex]) {
-      listIndex++;
+        i == (column_index_t)std::abs(columnsToWrapInLazy[listIndex])) {
       child = VectorFuzzer::wrapInLazyVector(child);
+      if (columnsToWrapInLazy[listIndex] < 0) {
+        // Negative index represents a lazy vector that is loaded.
+        child->loadedVector();
+      }
+      listIndex++;
     }
     children.push_back(child);
   }

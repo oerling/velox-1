@@ -28,7 +28,9 @@ namespace facebook::velox::duckdb {
 ::duckdb::LogicalType fromVeloxType(const TypePtr& type);
 
 /// Converts DuckDB type to Velox type.
-TypePtr toVeloxType(::duckdb::LogicalType type);
+TypePtr toVeloxType(
+    ::duckdb::LogicalType type,
+    bool fileColumnNamesReadAsLowerCase = false);
 
 static ::duckdb::timestamp_t veloxTimestampToDuckDB(
     const Timestamp& timestamp) {
@@ -39,7 +41,18 @@ static ::duckdb::timestamp_t veloxTimestampToDuckDB(
 static Timestamp duckdbTimestampToVelox(
     const ::duckdb::timestamp_t& timestamp) {
   auto micros = ::duckdb::Timestamp::GetEpochMicroSeconds(timestamp);
-  return Timestamp(micros / 1000000, (micros % 1000000) * 1000);
+
+  auto seconds = micros / 1'000'000;
+  auto nanoSeconds = (micros % 1'000'000) * 1'000;
+
+  // Make sure nanoseconds are >= 0 even if timestamp represents time before
+  // epoch.
+  if (nanoSeconds < 0) {
+    seconds--;
+    nanoSeconds += 1'000'000'000;
+  }
+
+  return Timestamp(seconds, nanoSeconds);
 }
 
 // Converts a duckDB Value (class that holds an arbitrary data type) into

@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/HiveConfig.h"
+#include "velox/core/Config.h"
 
 #include <boost/algorithm/string.hpp>
 
@@ -40,11 +41,24 @@ stringToInsertExistingPartitionsBehavior(const std::string& strValue) {
 // static
 HiveConfig::InsertExistingPartitionsBehavior
 HiveConfig::insertExistingPartitionsBehavior(const Config* config) {
-  auto strBehavior =
+  const auto behavior =
       config->get<std::string>(kInsertExistingPartitionsBehavior);
-  return strBehavior.has_value()
-      ? stringToInsertExistingPartitionsBehavior(strBehavior.value())
+  return behavior.has_value()
+      ? stringToInsertExistingPartitionsBehavior(behavior.value())
       : InsertExistingPartitionsBehavior::kError;
+}
+
+// static
+std::string HiveConfig::insertExistingPartitionsBehaviorString(
+    InsertExistingPartitionsBehavior behavior) {
+  switch (behavior) {
+    case InsertExistingPartitionsBehavior::kError:
+      return "ERROR";
+    case InsertExistingPartitionsBehavior::kOverwrite:
+      return "OVERWRITE";
+    default:
+      return fmt::format("UNKNOWN BEHAVIOR {}", static_cast<int>(behavior));
+  }
 }
 
 // static
@@ -110,4 +124,10 @@ std::optional<std::string> HiveConfig::s3IAMRole(const Config* config) {
 std::string HiveConfig::s3IAMRoleSessionName(const Config* config) {
   return config->get(kS3IamRoleSessionName, std::string("velox-session"));
 }
+
+// static.
+bool HiveConfig::isFileColumnNamesReadAsLowerCase(const Config* config) {
+  return config->get<bool>(kFileColumnNamesReadAsLowerCase, false);
+}
+
 } // namespace facebook::velox::connector::hive

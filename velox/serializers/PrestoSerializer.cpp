@@ -53,6 +53,7 @@ int64_t computeChecksum(
   auto remainingBytes = uncompressedSize;
   while (remainingBytes > 0) {
     auto data = source->nextView(remainingBytes);
+    VELOX_CHECK_GT(data.size(), 0);
     crc32.process_bytes(data.data(), data.size());
     remainingBytes -= data.size();
   }
@@ -611,10 +612,10 @@ void readRowVector(
       if (!rawOffsets) {
         BaseVector::resizeIndices(
             size,
-            0,
             pool,
             &offsets,
-            const_cast<const vector_size_t**>(&rawOffsets));
+            const_cast<const vector_size_t**>(&rawOffsets),
+            0);
         for (int32_t child = 0; child < i; ++child) {
           rawOffsets[child] = child;
         }
@@ -753,7 +754,8 @@ class VectorStream {
           if (isTimestampWithTimeZoneType(type_)) {
             values_.startWrite(initialNumRows * 4);
             break;
-          } // else fall through
+          }
+          [[fallthrough]];
         case TypeKind::ARRAY:
         case TypeKind::MAP:
           hasLengths_ = true;

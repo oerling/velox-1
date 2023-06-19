@@ -15,7 +15,12 @@
  */
 #pragma once
 
-#include "velox/core/Context.h"
+#include <folly/Optional.h>
+#include <string>
+
+namespace facebook::velox {
+class Config;
+}
 
 namespace facebook::velox::connector::hive {
 
@@ -26,6 +31,9 @@ class HiveConfig {
     kError,
     kOverwrite,
   };
+
+  static std::string insertExistingPartitionsBehaviorString(
+      InsertExistingPartitionsBehavior behavior);
 
   /// Behavior on insert into existing partitions.
   static constexpr const char* kInsertExistingPartitionsBehavior =
@@ -71,6 +79,10 @@ class HiveConfig {
   static constexpr const char* kS3IamRoleSessionName =
       "hive.s3.iam-role-session-name";
 
+  // Read the source file column name as lower case.
+  static constexpr const char* kFileColumnNamesReadAsLowerCase =
+      "file_column_names_read_as_lower_case";
+
   static InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const Config* config);
 
@@ -95,6 +107,8 @@ class HiveConfig {
   static std::optional<std::string> s3IAMRole(const Config* config);
 
   static std::string s3IAMRoleSessionName(const Config* config);
+
+  static bool isFileColumnNamesReadAsLowerCase(const Config* config);
 };
 
 } // namespace facebook::velox::connector::hive

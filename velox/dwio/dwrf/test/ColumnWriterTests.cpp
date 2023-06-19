@@ -96,6 +96,7 @@ class TestStripeStreams : public StripeStreamsBase {
 
   std::unique_ptr<SeekableInputStream> getStream(
       const DwrfStreamIdentifier& si,
+      std::string_view /* label */,
       bool throwIfNotFound) const override {
     const DataBufferHolder* stream = nullptr;
     if (context_.hasStream(si)) {
@@ -336,8 +337,18 @@ void testDataTypeWriter(
     TestStripeStreams streams(context, sf, rowType, pool.get());
     auto typeWithId = TypeWithId::create(rowType);
     auto reqType = typeWithId->childAt(0);
+
+    AllocationPool allocPool(pool.get());
+    StreamLabels labels(allocPool);
     auto reader = ColumnReader::build(
-        reqType, reqType, streams, FlatMapContext{sequence, nullptr});
+        reqType,
+        reqType,
+        streams,
+        labels,
+        FlatMapContext{
+            .sequence = sequence,
+            .inMapDecoder = nullptr,
+            .keySelectionCallback = nullptr});
     VectorPtr out;
     for (auto strideI = 0; strideI < strideCount; ++strideI) {
       reader->next(size, out);
@@ -926,8 +937,11 @@ void testMapWriter(
     auto validate = [&](bool returnFlatVector = false) {
       TestStripeStreams streams(
           context, sf, rowType, &pool, returnFlatVector, structReaderContext);
+      auto pool = addDefaultLeafMemoryPool();
+      AllocationPool allocPool(pool.get());
+      StreamLabels labels(allocPool);
       const auto reader =
-          ColumnReader::build(dataTypeWithId, dataTypeWithId, streams);
+          ColumnReader::build(dataTypeWithId, dataTypeWithId, streams, labels);
       VectorPtr out;
 
       // Read map/row
@@ -1058,8 +1072,11 @@ void testMapWriterRow(
     auto validate = [&](bool returnFlatVector = false) {
       TestStripeStreams streams(
           context, sf, rowType, &pool, returnFlatVector, structReaderContext);
+      auto pool = addDefaultLeafMemoryPool();
+      AllocationPool allocPool(pool.get());
+      StreamLabels labels(allocPool);
       const auto reader =
-          ColumnReader::build(dataTypeWithId, dataTypeWithId, streams);
+          ColumnReader::build(dataTypeWithId, dataTypeWithId, streams, labels);
       VectorPtr out;
 
       // Read map/row
@@ -1482,7 +1499,7 @@ std::unique_ptr<DwrfReader> getDwrfReader(
   auto sink = std::make_unique<MemorySink>(leafPool, 2 * 1024 * 1024);
   auto sinkPtr = sink.get();
 
-  WriterOptions options;
+  dwrf::WriterOptions options;
   options.config = config;
   options.schema = type;
   options.flushPolicyFactory = [&]() {
@@ -1490,7 +1507,8 @@ std::unique_ptr<DwrfReader> getDwrfReader(
       return true; // Flushes every batch.
     });
   };
-  Writer writer{options, std::move(sink), rootPool};
+  options.memoryPool = &rootPool;
+  dwrf::Writer writer{std::move(sink), options};
   writer.write(batch);
   writer.close();
 
@@ -2017,7 +2035,10 @@ struct IntegerColumnWriterTypedTestCase {
       }
 
       auto reqType = TypeWithId::create(rowType)->childAt(0);
-      auto columnReader = ColumnReader::build(reqType, reqType, streams);
+      AllocationPool allocPool(pool.get());
+      StreamLabels labels(allocPool);
+      auto columnReader =
+          ColumnReader::build(reqType, reqType, streams, labels);
 
       for (size_t j = 0; j != repetitionCount; ++j) {
         // TODO Make reuse work
@@ -3248,7 +3269,10 @@ struct StringColumnWriterTestCase {
       }
 
       auto reqType = TypeWithId::create(rowType)->childAt(0);
-      auto columnReader = ColumnReader::build(reqType, reqType, streams);
+      AllocationPool allocPool(pool.get());
+      StreamLabels labels(allocPool);
+      auto columnReader =
+          ColumnReader::build(reqType, reqType, streams, labels);
 
       for (size_t j = 0; j != repetitionCount; ++j) {
         if (!writeDirect) {
@@ -4062,7 +4086,7 @@ TEST(ColumnWriterTests, IntDictWriterDirectValueOverflow) {
   // get data stream
   TestStripeStreams streams(context, sf, ROW({"foo"}, {type}), pool.get());
   DwrfStreamIdentifier si{1, 0, 0, proto::Stream_Kind_DATA};
-  auto stream = streams.getStream(si, true);
+  auto stream = streams.getStream(si, {}, true);
 
   // read it as long
   auto decoder = createRleDecoder<false>(
@@ -4107,7 +4131,7 @@ TEST(ColumnWriterTests, ShortDictWriterDictValueOverflow) {
   // get data stream
   TestStripeStreams streams(context, sf, ROW({"foo"}, {type}), pool.get());
   DwrfStreamIdentifier si{1, 0, 0, proto::Stream_Kind_DATA};
-  auto stream = streams.getStream(si, true);
+  auto stream = streams.getStream(si, {}, true);
 
   // read it as long
   auto decoder = createRleDecoder<false>(
@@ -4146,7 +4170,7 @@ TEST(ColumnWriterTests, RemovePresentStream) {
   // get data stream
   TestStripeStreams streams(context, sf, ROW({"foo"}, {type}), pool.get());
   DwrfStreamIdentifier si{1, 0, 0, proto::Stream_Kind_PRESENT};
-  ASSERT_EQ(streams.getStream(si, false), nullptr);
+  ASSERT_EQ(streams.getStream(si, {}, false), nullptr);
 }
 
 TEST(ColumnWriterTests, ColumnIdInStream) {
@@ -4185,7 +4209,7 @@ TEST(ColumnWriterTests, ColumnIdInStream) {
   TestStripeStreams streams(context, sf, ROW({"foo"}, {type}), pool.get());
   DwrfStreamIdentifier si{
       kNodeId, /* sequence */ 0, kColumnId, proto::Stream_Kind_DATA};
-  ASSERT_NE(streams.getStream(si, false), nullptr);
+  ASSERT_NE(streams.getStream(si, {}, false), nullptr);
 }
 
 template <typename T>
@@ -4317,7 +4341,9 @@ struct DictColumnWriterTestCase {
         .WillRepeatedly(Return(0));
     auto rowTypeWithId = TypeWithId::create(rowType);
     auto reqType = rowTypeWithId->childAt(0);
-    auto reader = ColumnReader::build(reqType, reqType, streams);
+    AllocationPool allocPool(pool.get());
+    StreamLabels labels(allocPool);
+    auto reader = ColumnReader::build(reqType, reqType, streams, labels);
     VectorPtr out;
     reader->next(batch->size(), out);
     compareResults(batch, out);

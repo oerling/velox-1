@@ -551,6 +551,9 @@ class Type : public Tree<const std::shared_ptr<const Type>>,
   bool isShortDecimal() const;
   bool isLongDecimal() const;
   bool isDecimal() const;
+  bool isIntervalYearMonth() const;
+
+  bool isIntervalDayTime() const;
 
   bool containsUnknown() const;
 
@@ -726,16 +729,24 @@ class LongDecimalType : public DecimalType<TypeKind::HUGEINT> {
 
 TypePtr DECIMAL(uint8_t precision, uint8_t scale);
 
-FOLLY_ALWAYS_INLINE bool isShortDecimalType(const Type& type) {
-  return dynamic_cast<const ShortDecimalType*>(&type) != nullptr;
+FOLLY_ALWAYS_INLINE const ShortDecimalType& Type::asShortDecimal() const {
+  return dynamic_cast<const ShortDecimalType&>(*this);
 }
 
-FOLLY_ALWAYS_INLINE bool isLongDecimalType(const Type& type) {
-  return dynamic_cast<const LongDecimalType*>(&type) != nullptr;
+FOLLY_ALWAYS_INLINE const LongDecimalType& Type::asLongDecimal() const {
+  return dynamic_cast<const LongDecimalType&>(*this);
 }
 
-FOLLY_ALWAYS_INLINE bool isDecimalType(const Type& type) {
-  return isShortDecimalType(type) || isLongDecimalType(type);
+FOLLY_ALWAYS_INLINE bool Type::isShortDecimal() const {
+  return dynamic_cast<const ShortDecimalType*>(this) != nullptr;
+}
+
+FOLLY_ALWAYS_INLINE bool Type::isLongDecimal() const {
+  return dynamic_cast<const LongDecimalType*>(this) != nullptr;
+}
+
+FOLLY_ALWAYS_INLINE bool Type::isDecimal() const {
+  return isShortDecimal() || isLongDecimal();
 }
 
 FOLLY_ALWAYS_INLINE bool isDecimalName(const std::string& name) {
@@ -1101,14 +1112,67 @@ class IntervalDayTimeType : public BigintType {
   }
 };
 
-FOLLY_ALWAYS_INLINE bool isIntervalDayTimeType(const TypePtr& type) {
-  // Pointer comparison works since this type is a singleton.
-  return IntervalDayTimeType::get() == type;
-}
-
 FOLLY_ALWAYS_INLINE std::shared_ptr<const IntervalDayTimeType>
 INTERVAL_DAY_TIME() {
   return IntervalDayTimeType::get();
+}
+
+FOLLY_ALWAYS_INLINE bool Type::isIntervalDayTime() const {
+  // Pointer comparison works since this type is a singleton.
+  return (this == INTERVAL_DAY_TIME().get());
+}
+
+constexpr long kMonthInYear = 12;
+/// Time interval in months.
+class IntervalYearMonthType : public IntegerType {
+ private:
+  IntervalYearMonthType() = default;
+
+ public:
+  static const std::shared_ptr<const IntervalYearMonthType>& get() {
+    static const std::shared_ptr<const IntervalYearMonthType> kType{
+        new IntervalYearMonthType()};
+    return kType;
+  }
+
+  const char* name() const override {
+    return "INTERVAL YEAR TO MONTH";
+  }
+
+  bool equivalent(const Type& other) const override {
+    // Pointer comparison works since this type is a singleton.
+    return this == &other;
+  }
+
+  std::string toString() const override {
+    return name();
+  }
+
+  /// Returns the interval 'value' (months) formatted as YEARS MONTHS.
+  /// For example, 14 months (INTERVAL '1-2' YEAR TO MONTH) would be represented
+  /// as 1-2; -14 months would be represents as -1-2.
+  std::string valueToString(int32_t value) const;
+
+  folly::dynamic serialize() const override {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "IntervalYearMonthType";
+    obj["type"] = name();
+    return obj;
+  }
+
+  static TypePtr deserialize(const folly::dynamic& /*obj*/) {
+    return IntervalYearMonthType::get();
+  }
+};
+
+FOLLY_ALWAYS_INLINE std::shared_ptr<const IntervalYearMonthType>
+INTERVAL_YEAR_MONTH() {
+  return IntervalYearMonthType::get();
+}
+
+FOLLY_ALWAYS_INLINE bool Type::isIntervalYearMonth() const {
+  // Pointer comparison works since this type is a singleton.
+  return (this == INTERVAL_YEAR_MONTH().get());
 }
 
 /// Used as T for SimpleVector subclasses that wrap another vector when
@@ -1215,6 +1279,10 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
         return TEMPLATE_FUNC<::facebook::velox::TypeKind::BIGINT>(            \
             __VA_ARGS__);                                                     \
       }                                                                       \
+      case ::facebook::velox::TypeKind::HUGEINT: {                            \
+        return TEMPLATE_FUNC<::facebook::velox::TypeKind::HUGEINT>(           \
+            __VA_ARGS__);                                                     \
+      }                                                                       \
       case ::facebook::velox::TypeKind::REAL: {                               \
         return TEMPLATE_FUNC<::facebook::velox::TypeKind::REAL>(__VA_ARGS__); \
       }                                                                       \
@@ -1267,6 +1335,10 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
         return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::BIGINT>(    \
             __VA_ARGS__);                                                \
       }                                                                  \
+      case ::facebook::velox::TypeKind::HUGEINT: {                       \
+        return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::HUGEINT>(   \
+            __VA_ARGS__);                                                \
+      }                                                                  \
       case ::facebook::velox::TypeKind::REAL: {                          \
         return TEMPLATE_FUNC<T, ::facebook::velox::TypeKind::REAL>(      \
             __VA_ARGS__);                                                \
@@ -1303,8 +1375,6 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       return TEMPLATE_FUNC<::facebook::velox::TypeKind::UNKNOWN>(__VA_ARGS__); \
     } else if ((typeKind) == ::facebook::velox::TypeKind::OPAQUE) {            \
       return TEMPLATE_FUNC<::facebook::velox::TypeKind::OPAQUE>(__VA_ARGS__);  \
-    } else if ((typeKind) == ::facebook::velox::TypeKind::HUGEINT) {           \
-      return TEMPLATE_FUNC<::facebook::velox::TypeKind::HUGEINT>(__VA_ARGS__); \
     } else {                                                                   \
       return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(                               \
           TEMPLATE_FUNC, typeKind, __VA_ARGS__);                               \
@@ -1332,6 +1402,10 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       }                                                                        \
       case ::facebook::velox::TypeKind::BIGINT: {                              \
         return PREFIX<::facebook::velox::TypeKind::BIGINT> SUFFIX(             \
+            __VA_ARGS__);                                                      \
+      }                                                                        \
+      case ::facebook::velox::TypeKind::HUGEINT: {                             \
+        return PREFIX<::facebook::velox::TypeKind::HUGEINT> SUFFIX(            \
             __VA_ARGS__);                                                      \
       }                                                                        \
       case ::facebook::velox::TypeKind::REAL: {                                \
@@ -1364,10 +1438,6 @@ std::shared_ptr<const OpaqueType> OPAQUE() {
       }                                                                        \
       case ::facebook::velox::TypeKind::ROW: {                                 \
         return PREFIX<::facebook::velox::TypeKind::ROW> SUFFIX(__VA_ARGS__);   \
-      }                                                                        \
-      case ::facebook::velox::TypeKind::HUGEINT: {                             \
-        return PREFIX<::facebook::velox::TypeKind::HUGEINT> SUFFIX(            \
-            __VA_ARGS__);                                                      \
       }                                                                        \
       default:                                                                 \
         VELOX_FAIL("not a known type kind: {}", mapTypeKindToName(typeKind));  \
@@ -1665,6 +1735,11 @@ struct IntervalDayTime {
   IntervalDayTime() {}
 };
 
+struct IntervalYearMonth {
+ private:
+  IntervalYearMonth() {}
+};
+
 struct Varbinary {
  private:
   Varbinary() {}
@@ -1719,6 +1794,11 @@ struct SimpleTypeTrait<IntervalDayTime> : public SimpleTypeTrait<int64_t> {
   static constexpr const char* name = "INTERVAL DAY TO SECOND";
 };
 
+template <>
+struct SimpleTypeTrait<IntervalYearMonth> : public SimpleTypeTrait<int32_t> {
+  static constexpr const char* name = "INTERVAL YEAR TO MONTH";
+};
+
 template <typename T>
 struct SimpleTypeTrait<Generic<T>> {
   static constexpr TypeKind typeKind = TypeKind::UNKNOWN;
@@ -1754,6 +1834,9 @@ struct SimpleTypeTrait<CustomType<T>>
   // This is different than the physical type name.
   static constexpr char* name = T::typeName;
 };
+
+template <>
+struct SimpleTypeTrait<UnknownValue> : public TypeTraits<TypeKind::UNKNOWN> {};
 
 // TODO: move cppToType testing utilities.
 template <typename T>
@@ -2184,7 +2267,7 @@ struct fmt::formatter<facebook::velox::TypeKind> {
   }
 
   template <typename FormatContext>
-  auto format(const facebook::velox::TypeKind& k, FormatContext& ctx) {
+  auto format(const facebook::velox::TypeKind& k, FormatContext& ctx) const {
     return format_to(ctx.out(), "{}", facebook::velox::mapTypeKindToName(k));
   }
 };
@@ -2199,7 +2282,7 @@ struct fmt::formatter<
   }
 
   template <typename FormatContext>
-  auto format(const std::shared_ptr<T>& k, FormatContext& ctx) {
+  auto format(const std::shared_ptr<T>& k, FormatContext& ctx) const {
     return format_to(ctx.out(), "{}", k->toString());
   }
 };

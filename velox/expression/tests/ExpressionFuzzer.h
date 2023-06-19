@@ -167,7 +167,7 @@ class ExpressionFuzzer {
 
   /// Randomize initial result vector data to test for correct null and data
   /// setting in functions.
-  VectorPtr generateResultVector(TypePtr vectorType);
+  RowVectorPtr generateResultVectors(std::vector<core::TypedExprPtr>& plans);
 
   core::TypedExprPtr generateArgConstant(const TypePtr& arg);
 
@@ -224,10 +224,10 @@ class ExpressionFuzzer {
   ///
   /// Throws in case any of these steps fail.
   void retryWithTry(
-      core::TypedExprPtr plan,
+      std::vector<core::TypedExprPtr> plans,
       const RowVectorPtr& rowVector,
-      const VectorPtr& resultVector,
-      const std::vector<column_index_t>& columnsToWrapInLazy);
+      const VectorPtr& resultVectors,
+      const std::vector<int>& columnsToWrapInLazy);
 
   /// Return a random signature mapped to functionName in expressionToSignature_
   /// whose return type can match returnType. Return nullptr if no such

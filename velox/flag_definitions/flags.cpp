@@ -38,6 +38,11 @@ DEFINE_int32(
     4 * 1024,
     "Size of file cache/operator working memory in MB");
 
+DEFINE_int32(
+    velox_memory_num_shared_leaf_pools,
+    32,
+    "Number of shared leaf memory pools per process");
+
 DEFINE_bool(
     velox_time_allocations,
     true,
@@ -102,3 +107,9 @@ DEFINE_bool(
     velox_enable_memory_usage_track_in_default_memory_pool,
     false,
     "If true, enable memory usage tracking in the default memory pool");
+
+DEFINE_bool(
+    velox_suppress_memory_capacity_exceeding_error_message,
+    false,
+    "If true, suppress the verbose error message in memory capacity exceeded "
+    "exception. This is only used by test to control the test error output size");

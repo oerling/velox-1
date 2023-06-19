@@ -21,6 +21,7 @@
 #include <folly/container/F14Map.h>
 
 #include "velox/common/time/CpuWallTimer.h"
+#include "velox/core/ExpressionEvaluator.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/DecodedArgs.h"
 #include "velox/expression/EvalCtx.h"
@@ -171,13 +172,15 @@ class Expr {
 
   /// Evaluates the expression for the specified 'rows'.
   ///
-  /// @param topLevel Boolean indicating whether this is a top-level expression
-  /// or one of the sub-expressions. Used to setup exception context.
+  /// @param parentExprSet pointer to the parent ExprSet which is calling
+  /// evaluate on this expression. Should only be set for top level expressions
+  /// and not passed on to child expressions as it is ssed to setup exception
+  /// context.
   void eval(
       const SelectivityVector& rows,
       EvalCtx& context,
       VectorPtr& result,
-      bool topLevel = false);
+      const ExprSet* FOLLY_NULLABLE parentExprSet = nullptr);
 
   /// Evaluates the expression using fast path that assumes all inputs and
   /// intermediate results are flat or constant and have no nulls.
@@ -188,19 +191,21 @@ class Expr {
   /// path is enabled only for batch sizes less than 1'000 and expressions where
   /// all input and intermediate types are primitive and not strings.
   ///
-  /// @param topLevel Boolean indicating whether this is a top-level expression
-  /// or one of the sub-expressions. Used to setup exception context.
+  /// @param parentExprSet pointer to the parent ExprSet which is calling
+  /// evaluate on this expression. Should only be set for top level expressions
+  /// and not passed on to child expressions as it is ssed to setup exception
+  /// context.
   void evalFlatNoNulls(
       const SelectivityVector& rows,
       EvalCtx& context,
       VectorPtr& result,
-      bool topLevel = false);
+      const ExprSet* FOLLY_NULLABLE parentExprSet = nullptr);
 
   void evalFlatNoNullsImpl(
       const SelectivityVector& rows,
       EvalCtx& context,
       VectorPtr& result,
-      bool topLevel);
+      const ExprSet* FOLLY_NULLABLE parentExprSet);
 
   // Simplified path for expression evaluation (flattens all vectors).
   void evalSimplified(
@@ -759,5 +764,34 @@ bool registerExprSetListener(std::shared_ptr<ExprSetListener> listener);
 /// unregistered successfully, false if listener was not found.
 bool unregisterExprSetListener(
     const std::shared_ptr<ExprSetListener>& listener);
+
+class SimpleExpressionEvaluator : public core::ExpressionEvaluator {
+ public:
+  SimpleExpressionEvaluator(core::QueryCtx* queryCtx, memory::MemoryPool* pool)
+      : queryCtx_(queryCtx), pool_(pool) {}
+
+  std::unique_ptr<ExprSet> compile(
+      const core::TypedExprPtr& expression) override {
+    return std::make_unique<ExprSet>(
+        std::vector<core::TypedExprPtr>{expression}, ensureExecCtx());
+  }
+
+  void evaluate(
+      ExprSet* exprSet,
+      const SelectivityVector& rows,
+      const RowVector& input,
+      VectorPtr& result) override;
+
+  memory::MemoryPool* pool() override {
+    return pool_;
+  }
+
+ private:
+  core::ExecCtx* ensureExecCtx();
+
+  core::QueryCtx* const queryCtx_;
+  memory::MemoryPool* const pool_;
+  std::unique_ptr<core::ExecCtx> execCtx_;
+};
 
 } // namespace facebook::velox::exec

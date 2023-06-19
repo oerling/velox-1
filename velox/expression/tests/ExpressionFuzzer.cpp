@@ -62,6 +62,11 @@ DEFINE_bool(
     "Retry failed expressions by wrapping it using a try() statement.");
 
 DEFINE_bool(
+    find_minimal_subexpression,
+    false,
+    "Automatically seeks minimum failed subexpression on result mismatch");
+
+DEFINE_bool(
     disable_constant_folding,
     false,
     "Disable constant-folding in the common evaluation path.");
@@ -132,6 +137,14 @@ DEFINE_string(
     "return type so not all functions may compete against the same number "
     "of functions at every instance. Number of tickets must be a positive "
     "integer. Example: eq=3,floor=5");
+
+DEFINE_int32(
+    max_expression_trees_per_step,
+    1,
+    "This sets an upper limit on the number of expression trees to generate "
+    "per step. These trees would be executed in the same ExprSet and can "
+    "re-use already generated columns and subexpressions (if re-use is "
+    "enabled).");
 
 namespace facebook::velox::test {
 
@@ -284,37 +297,48 @@ bool isSupportedSignature(const exec::FunctionSignature& signature) {
 }
 
 // Randomly pick columns from the input row vector to wrap in lazy.
-std::vector<column_index_t> generateLazyColumnIds(
+// Negative column indices represent lazy vectors that have been preloaded
+// before feeding them to the evaluator. This list is sorted on the absolute
+// value of the entries.
+std::vector<int> generateLazyColumnIds(
     const RowVectorPtr& rowVector,
     VectorFuzzer& vectorFuzzer) {
-  std::vector<column_index_t> columnsToWrapInLazy;
+  std::vector<int> columnsToWrapInLazy;
   if (FLAGS_lazy_vector_generation_ratio > 0) {
-    for (column_index_t idx = 0; idx < rowVector->childrenSize(); idx++) {
+    for (int idx = 0; idx < rowVector->childrenSize(); idx++) {
       VELOX_CHECK_NOT_NULL(rowVector->childAt(idx));
       if (vectorFuzzer.coinToss(FLAGS_lazy_vector_generation_ratio)) {
-        columnsToWrapInLazy.push_back(idx);
+        columnsToWrapInLazy.push_back(
+            vectorFuzzer.coinToss(0.8) ? idx : -1 * idx);
       }
     }
   }
   return columnsToWrapInLazy;
 }
 
-/// Returns row numbers for non-null rows in 'data' or null if all rows are
-/// null.
-BufferPtr extractNonNullIndices(const VectorPtr& data) {
-  BufferPtr indices = allocateIndices(data->size(), data->pool());
-  auto rawIndices = indices->asMutable<vector_size_t>();
-  vector_size_t cnt = 0;
-  for (auto i = 0; i < data->size(); ++i) {
-    if (!data->isNullAt(i)) {
-      rawIndices[cnt++] = i;
+/// Returns row numbers for non-null rows among all children in'data' or null
+/// if all rows are null.
+BufferPtr extractNonNullIndices(const RowVectorPtr& data) {
+  DecodedVector decoded;
+  SelectivityVector nonNullRows(data->size());
+
+  for (auto& child : data->children()) {
+    decoded.decode(*child);
+    auto* rawNulls = decoded.nulls();
+    if (rawNulls) {
+      nonNullRows.deselectNulls(rawNulls, 0, data->size());
+    }
+    if (!nonNullRows.hasSelections()) {
+      return nullptr;
     }
   }
 
-  if (cnt == 0) {
-    return nullptr;
-  }
-
+  BufferPtr indices = allocateIndices(nonNullRows.end(), data->pool());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  vector_size_t cnt = 0;
+  nonNullRows.applyToSelected(
+      [&](vector_size_t row) { rawIndices[cnt++] = row; });
+  VELOX_CHECK_GT(cnt, 0);
   indices->setSize(cnt * sizeof(vector_size_t));
   return indices;
 }
@@ -1150,9 +1174,23 @@ core::TypedExprPtr ExpressionFuzzer::ExprBank::getRandomExpression(
   return nullptr;
 }
 
-VectorPtr ExpressionFuzzer::generateResultVector(TypePtr vectorType) {
-  return vectorFuzzer_.coinToss(0.5) ? vectorFuzzer_.fuzzFlat(vectorType)
-                                     : nullptr;
+// Generates a row vector with child vectors corresponding to the same type as
+// the return type of the expression trees in 'plans'. These are used as
+// pre-allocated result vectors to be passed during expression evaluation.
+RowVectorPtr ExpressionFuzzer::generateResultVectors(
+    std::vector<core::TypedExprPtr>& plans) {
+  std::vector<VectorPtr> results;
+  std::vector<std::shared_ptr<const Type>> resultTypes;
+  size_t vectorSize = vectorFuzzer_.getOptions().vectorSize;
+  for (auto& plan : plans) {
+    results.push_back(
+        vectorFuzzer_.coinToss(0.5) ? vectorFuzzer_.fuzzFlat(plan->type())
+                                    : nullptr);
+    resultTypes.push_back(plan->type());
+  }
+  auto rowType = ROW(std::move(resultTypes));
+  return std::make_shared<RowVector>(
+      pool_.get(), rowType, BufferPtr(nullptr), vectorSize, results);
 }
 
 TypePtr ExpressionFuzzer::generateRootType() {
@@ -1189,23 +1227,41 @@ TypePtr ExpressionFuzzer::generateRootType() {
 }
 
 void ExpressionFuzzer::retryWithTry(
-    core::TypedExprPtr plan,
+    std::vector<core::TypedExprPtr> plans,
     const RowVectorPtr& rowVector,
     const VectorPtr& resultVector,
-    const std::vector<column_index_t>& columnsToWrapInLazy) {
-  auto tryPlan = std::make_shared<core::CallTypedExpr>(
-      plan->type(), std::vector<core::TypedExprPtr>{plan}, "try");
+    const std::vector<int>& columnsToWrapInLazy) {
+  // Wrap each expression tree with 'try'.
+  std::vector<core::TypedExprPtr> tryPlans;
+  for (auto& plan : plans) {
+    tryPlans.push_back(std::make_shared<core::CallTypedExpr>(
+        plan->type(), std::vector<core::TypedExprPtr>{plan}, "try"));
+  }
+
+  RowVectorPtr tryResult;
 
   // The function throws if anything goes wrong.
-  auto tryResult =
-      verifier_
-          .verify(
-              tryPlan,
-              rowVector,
-              resultVector ? BaseVector::copy(*resultVector) : nullptr,
-              false, // canThrow
-              columnsToWrapInLazy)
-          .result->childAt(0);
+  try {
+    tryResult =
+        verifier_
+            .verify(
+                tryPlans,
+                rowVector,
+                resultVector ? BaseVector::copy(*resultVector) : nullptr,
+                false, // canThrow
+                columnsToWrapInLazy)
+            .result;
+  } catch (const std::exception& e) {
+    if (FLAGS_find_minimal_subexpression) {
+      computeMinimumSubExpression(
+          {&execCtx_, {false, ""}},
+          vectorFuzzer_,
+          plans,
+          rowVector,
+          columnsToWrapInLazy);
+    }
+    throw;
+  }
 
   // Re-evaluate the original expression on rows that didn't produce an
   // error (i.e. returned non-NULL results when evaluated with TRY).
@@ -1217,14 +1273,26 @@ void ExpressionFuzzer::retryWithTry(
     LOG(INFO) << "Retrying original expression on " << noErrorRowVector->size()
               << " rows without errors";
 
-    verifier_.verify(
-        plan,
-        noErrorRowVector,
-        resultVector ? BaseVector::copy(*resultVector)
-                           ->slice(0, noErrorRowVector->size())
-                     : nullptr,
-        false, // canThrow
-        columnsToWrapInLazy);
+    try {
+      verifier_.verify(
+          plans,
+          noErrorRowVector,
+          resultVector ? BaseVector::copy(*resultVector)
+                             ->slice(0, noErrorRowVector->size())
+                       : nullptr,
+          false, // canThrow
+          columnsToWrapInLazy);
+    } catch (const std::exception& e) {
+      if (FLAGS_find_minimal_subexpression) {
+        computeMinimumSubExpression(
+            {&execCtx_, {false, ""}},
+            vectorFuzzer_,
+            plans,
+            noErrorRowVector,
+            columnsToWrapInLazy);
+      }
+      throw;
+    }
   }
 }
 
@@ -1232,6 +1300,10 @@ void ExpressionFuzzer::go() {
   VELOX_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
       "Either --steps or --duration_sec needs to be greater than zero.")
+  VELOX_CHECK_GT(
+      FLAGS_max_expression_trees_per_step,
+      0,
+      "--max_expression_trees_per_step needs to be greater than zero.")
 
   auto startTime = std::chrono::system_clock::now();
   size_t i = 0;
@@ -1241,35 +1313,45 @@ void ExpressionFuzzer::go() {
               << " (seed: " << currentSeed_ << ")";
     reset();
 
-    // Generate expression tree and input data vectors.
-    auto plan = generateExpression(generateRootType());
+    // Generate multiple expression trees and input data vectors. They can
+    // re-use columns and share sub-expressions if the appropriate flag is set.
+    int numExpressionTrees = boost::random::uniform_int_distribution<int>(
+        1, FLAGS_max_expression_trees_per_step)(rng_);
+    std::vector<core::TypedExprPtr> plans(numExpressionTrees);
+    for (int j = 0; j < numExpressionTrees; ++j) {
+      plans[j] = generateExpression(generateRootType());
+    }
     auto rowVector = generateRowVector();
     auto columnsToWrapInLazy = generateLazyColumnIds(rowVector, vectorFuzzer_);
-    auto resultVector = generateResultVector(plan->type());
+    auto resultVectors = generateResultVectors(plans);
     ResultOrError result;
 
-    result = verifier_.verify(
-        plan,
-        rowVector,
-        resultVector ? BaseVector::copy(*resultVector) : nullptr,
-        true, // canThrow
-        columnsToWrapInLazy);
+    try {
+      result = verifier_.verify(
+          plans,
+          rowVector,
+          resultVectors ? BaseVector::copy(*resultVectors) : nullptr,
+          true, // canThrow
+          columnsToWrapInLazy);
+    } catch (const std::exception& e) {
+      if (FLAGS_find_minimal_subexpression) {
+        computeMinimumSubExpression(
+            {&execCtx_, {false, ""}},
+            vectorFuzzer_,
+            plans,
+            rowVector,
+            columnsToWrapInLazy);
+      }
+      throw;
+    }
 
     // If both paths threw compatible exceptions, we add a try() function to
     // the expression's root and execute it again. This time the expression
     // cannot throw.
-    if (verifier_
-            .verify(
-                plan,
-                rowVector,
-                resultVector ? BaseVector::copy(*resultVector) : nullptr,
-                true, // canThrow
-                columnsToWrapInLazy)
-            .exceptionPtr &&
-        FLAGS_retry_with_try) {
+    if (result.exceptionPtr && FLAGS_retry_with_try) {
       LOG(INFO)
           << "Both paths failed with compatible exceptions. Retrying expression using try().";
-      retryWithTry(plan, rowVector, resultVector, columnsToWrapInLazy);
+      retryWithTry(plans, rowVector, resultVectors, columnsToWrapInLazy);
     }
 
     LOG(INFO) << "==============================> Done with iteration " << i;

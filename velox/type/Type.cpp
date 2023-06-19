@@ -16,8 +16,8 @@
 
 #include "velox/type/Type.h"
 #include <boost/algorithm/string.hpp>
-#include <boost/regex.hpp>
 #include <folly/Demangle.h>
+#include <re2/re2.h>
 #include <sstream>
 #include <typeindex>
 #include "velox/common/base/Exceptions.h"
@@ -33,32 +33,12 @@ struct hash<facebook::velox::TypeKind> {
 
 namespace {
 bool isColumnNameRequiringEscaping(const std::string& name) {
-  static const boost::regex re("^[a-zA-Z_][a-zA-Z0-9_]*$");
-  return !regex_match(name, re);
+  static const std::string re("^[a-zA-Z_][a-zA-Z0-9_]*$");
+  return !RE2::FullMatch(name, re);
 }
 } // namespace
 
 namespace facebook::velox {
-
-const ShortDecimalType& Type::asShortDecimal() const {
-  return dynamic_cast<const ShortDecimalType&>(*this);
-}
-
-const LongDecimalType& Type::asLongDecimal() const {
-  return dynamic_cast<const LongDecimalType&>(*this);
-}
-
-bool Type::isShortDecimal() const {
-  return isShortDecimalType(*this);
-}
-
-bool Type::isLongDecimal() const {
-  return isLongDecimalType(*this);
-}
-
-bool Type::isDecimal() const {
-  return isDecimalType(*this);
-}
 
 // Static variable intialization is not thread safe for non
 // constant-initialization, but scoped static initialization is thread safe.
@@ -234,6 +214,8 @@ void Type::registerSerDe() {
           Type::create));
 
   registry.Register("IntervalDayTimeType", IntervalDayTimeType::deserialize);
+  registry.Register(
+      "IntervalYearMonthType", IntervalYearMonthType::deserialize);
 }
 
 std::string ArrayType::toString() const {
@@ -917,6 +899,17 @@ std::string IntervalDayTimeType::valueToString(int64_t value) const {
   return buf;
 }
 
+std::string IntervalYearMonthType::valueToString(int32_t value) const {
+  std::ostringstream oss;
+  auto sign = "";
+  if (value < 0) {
+    sign = "-";
+    value = -value;
+  }
+  oss << fmt::format("{}{}-{}", sign, value / 12, value % 12);
+  return oss.str();
+}
+
 namespace {
 using SingletonTypeMap = std::unordered_map<std::string, TypePtr>;
 
@@ -934,6 +927,7 @@ const SingletonTypeMap& singletonBuiltInTypes() {
       {"TIMESTAMP", TIMESTAMP()},
       {"DATE", DATE()},
       {"INTERVAL DAY TO SECOND", INTERVAL_DAY_TIME()},
+      {"INTERVAL YEAR TO MONTH", INTERVAL_YEAR_MONTH()},
       {"UNKNOWN", UNKNOWN()},
   };
   return kTypes;

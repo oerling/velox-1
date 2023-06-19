@@ -39,19 +39,19 @@ class CastExprTest : public functions::test::CastBaseTest {
   }
 
   void setCastIntByTruncate(bool value) {
-    queryCtx_->setConfigOverridesUnsafe({
-        {core::QueryConfig::kCastIntByTruncate, std::to_string(value)},
+    queryCtx_->testingOverrideConfigUnsafe({
+        {core::QueryConfig::kCastToIntByTruncate, std::to_string(value)},
     });
   }
 
   void setCastMatchStructByName(bool value) {
-    queryCtx_->setConfigOverridesUnsafe({
+    queryCtx_->testingOverrideConfigUnsafe({
         {core::QueryConfig::kCastMatchStructByName, std::to_string(value)},
     });
   }
 
   void setTimezone(const std::string& value) {
-    queryCtx_->setConfigOverridesUnsafe({
+    queryCtx_->testingOverrideConfigUnsafe({
         {core::QueryConfig::kSessionTimezone, value},
         {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
     });
@@ -933,8 +933,8 @@ TEST_F(CastExprTest, integerToDecimal) {
 TEST_F(CastExprTest, castInTry) {
   // Test try(cast(array(varchar) as array(bigint))) whose input vector is
   // wrapped in dictinary encoding. The row of ["2a"] should trigger an error
-  // during casting and the try expression should turn this error into a null at
-  // this row.
+  // during casting and the try expression should turn this error into a null
+  // at this row.
   auto input = makeRowVector({makeNullableArrayVector<StringView>(
       {{{"1"_sv}}, {{"2a"_sv}}, std::nullopt, std::nullopt})});
   auto expected = makeNullableArrayVector<int64_t>(
@@ -1056,8 +1056,8 @@ TEST_F(CastExprTest, castAsCall) {
 }
 
 namespace {
-/// Wraps input in a constant encoding that repeats the first element and then
-/// in dictionary that reverses the order of rows.
+/// Wraps input in a constant encoding that repeats the first element and
+/// then in dictionary that reverses the order of rows.
 class TestingDictionaryOverConstFunction : public exec::VectorFunction {
  public:
   TestingDictionaryOverConstFunction() {}

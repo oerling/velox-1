@@ -106,23 +106,20 @@ struct DateFunction : public TimestampWithTimezoneSupport<T> {
   FOLLY_ALWAYS_INLINE void call(
       out_type<Date>& result,
       const arg_type<Varchar>& date) {
-    bool nullOutput;
-    result = util::Converter<TypeKind::DATE>::cast(date, nullOutput);
+    result = util::Converter<TypeKind::DATE>::cast(date);
   }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Date>& result,
       const arg_type<Timestamp>& timestamp) {
-    bool nullOutput;
-    result = util::Converter<TypeKind::DATE>::cast(timestamp, nullOutput);
+    result = util::Converter<TypeKind::DATE>::cast(timestamp);
   }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Date>& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
-    bool nullOutput;
     result = util::Converter<TypeKind::DATE>::cast(
-        this->toTimestamp(timestampWithTimezone), nullOutput);
+        this->toTimestamp(timestampWithTimezone));
   }
 };
 
@@ -540,28 +537,30 @@ inline std::optional<DateTimeUnit> fromDateTimeUnitString(
   static const StringView kQuarter("quarter");
   static const StringView kYear("year");
 
-  if (unitString == kMillisecond) {
+  const auto unit = boost::algorithm::to_lower_copy(unitString.str());
+
+  if (unit == kMillisecond) {
     return DateTimeUnit::kMillisecond;
   }
-  if (unitString == kSecond) {
+  if (unit == kSecond) {
     return DateTimeUnit::kSecond;
   }
-  if (unitString == kMinute) {
+  if (unit == kMinute) {
     return DateTimeUnit::kMinute;
   }
-  if (unitString == kHour) {
+  if (unit == kHour) {
     return DateTimeUnit::kHour;
   }
-  if (unitString == kDay) {
+  if (unit == kDay) {
     return DateTimeUnit::kDay;
   }
-  if (unitString == kMonth) {
+  if (unit == kMonth) {
     return DateTimeUnit::kMonth;
   }
-  if (unitString == kQuarter) {
+  if (unit == kQuarter) {
     return DateTimeUnit::kQuarter;
   }
-  if (unitString == kYear) {
+  if (unit == kYear) {
     return DateTimeUnit::kYear;
   }
   // TODO Add support for "week".
@@ -834,7 +833,7 @@ struct DateAddFunction {
 };
 
 template <typename T>
-struct DateDiffFunction {
+struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   const date::time_zone* sessionTimeZone_ = nullptr;
@@ -859,6 +858,16 @@ struct DateDiffFunction {
       const arg_type<Date>* /*date2*/) {
     if (unitString != nullptr) {
       unit_ = getDateUnit(*unitString, false);
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* unitString,
+      const arg_type<TimestampWithTimezone>* /*timestampWithTimezone1*/,
+      const arg_type<TimestampWithTimezone>* /*timestampWithTimezone2*/) {
+    if (unitString != nullptr) {
+      unit_ = fromDateTimeUnitString(*unitString, false /*throwIfInvalid*/);
     }
   }
 
@@ -905,6 +914,18 @@ struct DateDiffFunction {
 
     result = diffDate(unit, date1, date2);
     return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Varchar>& unitString,
+      const arg_type<TimestampWithTimezone>& timestamp1,
+      const arg_type<TimestampWithTimezone>& timestamp2) {
+    return call(
+        result,
+        unitString,
+        this->toTimestamp(timestamp1),
+        this->toTimestamp(timestamp2));
   }
 };
 

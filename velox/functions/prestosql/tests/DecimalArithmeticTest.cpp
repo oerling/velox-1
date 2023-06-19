@@ -351,6 +351,20 @@ TEST_F(DecimalArithmeticTest, decimalDivTest) {
       "Decimal overflow: 99999999999999999999999999999999999999 * 10000");
 }
 
+TEST_F(DecimalArithmeticTest, decimalDivDifferentTypes) {
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeShortDecimalFlatVector({1, 1, -1, 1}, DECIMAL(12, 2))},
+      "cast(c0 as decimal(12,2)) / c1",
+      {makeShortDecimalFlatVector({100, 200, -300, 400}, DECIMAL(12, 2)),
+       makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(19, 0))});
+
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeShortDecimalFlatVector({100, 100, -100, 100}, DECIMAL(14, 2))},
+      "cast(c0 as decimal(12,2)) / c1",
+      {makeLongDecimalFlatVector({1, 2, 3, 4}, DECIMAL(19, 0)),
+       makeShortDecimalFlatVector({100, 200, -300, 400}, DECIMAL(12, 2))});
+}
+
 TEST_F(DecimalArithmeticTest, round) {
   // Round short decimals.
   testDecimalExpr<TypeKind::BIGINT>(
@@ -377,6 +391,26 @@ TEST_F(DecimalArithmeticTest, round) {
       {makeLongDecimalFlatVector(
           {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
           DECIMAL(38, 1))});
+
+  // Min and max short decimals.
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMax, DecimalUtil::kShortDecimalMin},
+          DECIMAL(15, 0))},
+      "round(c0)",
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMax, DecimalUtil::kShortDecimalMin},
+          DECIMAL(15, 0))});
+
+  // Min and max long decimals.
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
+          DECIMAL(38, 0))},
+      "round(c0)",
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
+          DECIMAL(38, 0))});
 }
 
 TEST_F(DecimalArithmeticTest, abs) {
@@ -390,6 +424,34 @@ TEST_F(DecimalArithmeticTest, abs) {
       "abs(c0)",
       {makeLongDecimalFlatVector(
           {-11111111, 11112112, -99999999, 0}, DECIMAL(19, 19))});
+
+  // Min and max short decimals.
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMax}, DECIMAL(15, 0))},
+      "abs(c0)",
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMin}, DECIMAL(15, 0))});
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMax}, DECIMAL(15, 15))},
+      "abs(c0)",
+      {makeShortDecimalFlatVector(
+          {DecimalUtil::kShortDecimalMin}, DECIMAL(15, 15))});
+
+  // Min and max long decimals.
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 0))},
+      "abs(c0)",
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0))});
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 38))},
+      "abs(c0)",
+      {makeLongDecimalFlatVector(
+          {DecimalUtil::kLongDecimalMin}, DECIMAL(38, 38))});
 }
 
 TEST_F(DecimalArithmeticTest, negate) {
