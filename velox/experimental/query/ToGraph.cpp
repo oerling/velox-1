@@ -276,12 +276,13 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
     // The keys for intermediate are the same as for final.
     aggregation->intermediateColumns = aggregation->columns();
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
-      auto rawFunc = translateExpr(source.aggregates()[i])->as<Call>();
+      auto rawFunc = translateExpr(source.aggregates()[i].call)->as<Call>();
       ExprPtr condition = nullptr;
-      if (source.aggregateMasks().size() > i && source.aggregateMasks()[i]) {
-        condition = translateExpr(source.aggregateMasks()[i]);
+      if (source.aggregates()[i].mask) {
+        condition = translateExpr(source.aggregates()[i].mask);
       }
-      auto accumulatorType = intermediateType(source.aggregates()[i]);
+      VELOX_CHECK(source.aggregates()[i].sortingKeys.empty());
+      auto accumulatorType = intermediateType(source.aggregates()[i].call);
       registerType(accumulatorType);
       Declare(
           Aggregate,

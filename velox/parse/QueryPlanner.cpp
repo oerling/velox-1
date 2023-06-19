@@ -389,7 +389,7 @@ PlanNodePtr toVeloxPlan(
     memory::MemoryPool* pool,
     std::vector<PlanNodePtr> sources,
     QueryContext& queryContext) {
-  std::vector<CallTypedExprPtr> aggregates;
+  std::vector<AggregationNode::Aggregate> aggregates;
 
   std::vector<std::string> projectNames;
   std::vector<TypedExprPtr> projections;
@@ -422,7 +422,12 @@ PlanNodePtr toVeloxPlan(
 
     auto aggName = translateAggregateName(call->name());
     aggregates.push_back(
-        std::make_shared<CallTypedExpr>(call->type(), fieldInputs, aggName));
+
+			 {std::make_shared<CallTypedExpr>(
+							  call->type(), fieldInputs, aggName),
+         nullptr,
+         {},
+         {}});
   }
 
   std::vector<FieldAccessTypedExprPtr> groupingKeys;
@@ -463,8 +468,7 @@ PlanNodePtr toVeloxPlan(
       groupingKeys,
       std::vector<FieldAccessTypedExprPtr>{}, // preGroupedKeys
       names,
-      aggregates,
-      std::vector<FieldAccessTypedExprPtr>{}, // aggregateMasks
+      std::move(aggregates),
       false, // ignoreNullKeys
       source);
 }

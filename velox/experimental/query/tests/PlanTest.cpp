@@ -62,6 +62,10 @@ class PlanTest : public testing::Test {
     builder_->initialize(FLAGS_data_path);
     history_ = std::make_unique<VeloxHistory>();
     makeCheats();
+    queryCtx_ = std::make_shared<core::QueryCtx>();
+
+    evaluator_ = std::make_unique<exec::SimpleExpressionEvaluator>(
+								   queryCtx_.get(), pool_.get());
   }
 
   void makeCheats() {
@@ -87,7 +91,8 @@ class PlanTest : public testing::Test {
     auto schema = tpchSchema(100, partitioned, ordered, false);
     std::string string;
     for (auto counter = 0; counter < numRepeats; ++counter) {
-      Optimization opt(*plan, *schema, *history_, FLAGS_trace);
+      Optimization opt(
+          *plan, *schema, *history_, *evaluator_, FLAGS_trace);
       auto result = opt.bestPlan();
       if (counter == numRepeats - 1) {
         string = result->toString(true);
@@ -107,6 +112,8 @@ class PlanTest : public testing::Test {
 
   std::unique_ptr<QueryGraphContext> context_;
   std::unique_ptr<VeloxHistory> history_;
+  std::shared_ptr<core::QueryCtx> queryCtx_;
+  std::unique_ptr<core::ExpressionEvaluator> evaluator_;
   std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
   static bool registered;
 };

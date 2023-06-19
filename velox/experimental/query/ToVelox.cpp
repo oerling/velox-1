@@ -253,8 +253,7 @@ core::PlanNodePtr Optimization::makeAggregation(
   TempProjections projections(*this, *op.input());
 
   std::vector<std::string> aggregateNames;
-  std::vector<core::CallTypedExprPtr> aggregates;
-  std::vector<core::FieldAccessTypedExprPtr> masks;
+  std::vector<core::AggregationNode::Aggregate> aggregates;
   bool isRawInput = op.step == core::AggregationNode::Step::kPartial ||
       op.step == core::AggregationNode::Step::kSingle;
   bool isIntermediateOutput =
@@ -265,23 +264,25 @@ core::PlanNodePtr Optimization::makeAggregation(
     aggregateNames.push_back(op.columns()[i + numKeys]->toString());
 
     auto aggregate = op.aggregates[i];
+    core::FieldAccessTypedExprPtr mask;
     if (isRawInput) {
       if (aggregate->condition()) {
-        masks.resize(i + 1);
-        masks[i] = projections.toFieldRef(aggregate->condition());
+        mask = projections.toFieldRef(aggregate->condition());
       }
-      aggregates.push_back(std::make_shared<core::CallTypedExpr>(
+      auto call = std::make_shared<core::CallTypedExpr>(
           toTypePtr(op.columns()[numKeys + i]->value().type),
           projections.toFieldRefs<core::TypedExprPtr>(aggregate->args()),
-          aggregate->name()));
+          aggregate->name());
+      aggregates.push_back({call, mask, {}, {}});
     } else {
-      aggregates.push_back(std::make_shared<core::CallTypedExpr>(
+      auto call = std::make_shared<core::CallTypedExpr>(
           toTypePtr(op.columns()[numKeys + i]->value().type),
           std::vector<core::TypedExprPtr>{
               std::make_shared<core::FieldAccessTypedExpr>(
                   toTypePtr(aggregate->intermediateType()),
                   aggregateNames.back())},
-          aggregate->name()));
+          aggregate->name());
+      aggregates.push_back({call, mask, {}, {}});
     }
   }
   auto keys = projections.toFieldRefs(op.grouping);
@@ -293,7 +294,6 @@ core::PlanNodePtr Optimization::makeAggregation(
       {},
       aggregateNames,
       aggregates,
-      masks,
       false,
       project);
   core::PlanNodePtr ptr;
