@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(velox_aggregates_test_lib AggregationTestBase.cpp)
-
-target_link_libraries(velox_aggregates_test_lib velox_exec_test_lib)
-
 add_executable(
   velox_aggregates_test
   AggregationFunctionRegTest.cpp
@@ -27,6 +23,7 @@ add_executable(
   AverageAggregationTest.cpp
   BitwiseAggregationTest.cpp
   BoolAndOrTest.cpp
+  CentralMomentsAggregationTest.cpp
   ChecksumAggregateTest.cpp
   CountAggregationTest.cpp
   CountIfAggregationTest.cpp
@@ -36,6 +33,8 @@ add_executable(
   MinMaxByAggregationTest.cpp
   MinMaxTest.cpp
   PrestoHasherTest.cpp
+  SetAggTest.cpp
+  SetUnionTest.cpp
   SumTest.cpp
   MapAggTest.cpp
   MapUnionAggregationTest.cpp
@@ -52,12 +51,13 @@ add_test(
 target_link_libraries(
   velox_aggregates_test
   velox_aggregates
-  velox_aggregates_test_lib
   velox_core
   velox_dwio_common_test_utils
   velox_exec
   velox_exec_test_lib
   velox_file
+  velox_functions_aggregates
+  velox_functions_aggregates_test_lib
   velox_functions_test_lib
   velox_functions_prestosql
   velox_functions_lib

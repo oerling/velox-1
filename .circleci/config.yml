@@ -24,7 +24,7 @@ workflows:
       - macos-build:
           matrix:
             parameters:
-              os: [macos-intel, macos-m1]
+              os: [macos-intel]
       - format-check
       - header-check
 
@@ -47,6 +47,10 @@ workflows:
       - docker-compose-ubuntu-cpp
       - docker-compose-centos-cpp
       - docker-compose-presto-native
+      - macos-build:
+          matrix:
+            parameters:
+              os: [ macos-m1 ]
 
 
   # Hourly build on weekdays
@@ -66,7 +70,7 @@ workflows:
       - macos-build:
           matrix:
             parameters:
-              os: [macos-intel, macos-m1]
+              os: [macos-intel]
 
 commands:
   update-submodules:
@@ -180,6 +184,7 @@ executors:
         CC:  /opt/rh/gcc-toolset-9/root/bin/gcc
         CXX: /opt/rh/gcc-toolset-9/root/bin/g++
         VELOX_DEPENDENCY_SOURCE: BUNDLED
+        simdjson_SOURCE: BUNDLED
   check:
     docker:
       - image : ghcr.io/facebookincubator/velox-dev:check-avx
@@ -189,7 +194,7 @@ executors:
     resource_class: macos.x86.medium.gen2
   macos-m1:
     macos:
-      xcode: "14.3.0"
+      xcode: "14.2.0"
     resource_class: macos.m1.large.gen1
 
 jobs:
@@ -200,6 +205,7 @@ jobs:
     executor: << parameters.os >>
     environment:
       ICU_SOURCE: BUNDLED
+      simdjson_SOURCE: BUNDLED
     steps:
       - checkout
       - update-submodules
@@ -287,6 +293,7 @@ jobs:
                 --velox_fuzzer_enable_column_reuse \
                 --velox_fuzzer_enable_expression_reuse \
                 --retry_with_try \
+                --enable_dereference \
                 --duration_sec 60 \
                 --logtostderr=1 \
                 --minloglevel=0 \
@@ -418,12 +425,13 @@ jobs:
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
       ICU_SOURCE: BUNDLED
+      simdjson_SOURCE: BUNDLED
     steps:
       - pre-steps
       - run:
           name: "Install Adapter Dependencies"
           command: |
-            mkdir ~/adapter-deps ~/adapter-deps/install
+            mkdir -p ~/adapter-deps/install/bin
             source /opt/rh/gcc-toolset-9/enable
             set -xu
             DEPENDENCY_DIR=~/adapter-deps PROMPT_ALWAYS_RESPOND=n ./scripts/setup-adapters.sh
@@ -443,7 +451,7 @@ jobs:
       - run:
           name: Build including all Benchmarks
           command: |
-            make release EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_BENCHMARKS=ON -DVELOX_ENABLE_ARROW=ON -DVELOX_ENABLE_PARQUET=ON -DVELOX_ENABLE_HDFS=ON -DVELOX_ENABLE_S3=ON -DVELOX_ENABLE_SUBSTRAIT=ON" AWSSDK_ROOT_DIR=~/adapter-deps/install NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
+            make release EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_BENCHMARKS=ON -DVELOX_ENABLE_ARROW=ON -DVELOX_ENABLE_PARQUET=ON -DVELOX_ENABLE_HDFS=ON -DVELOX_ENABLE_S3=ON -DVELOX_ENABLE_GCS=ON -DVELOX_ENABLE_SUBSTRAIT=ON" AWSSDK_ROOT_DIR=~/adapter-deps/install GCSSDK_ROOT_DIR=~/adapter-deps/install NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=8
             ccache -s
           no_output_timeout: 1h
       - run:
@@ -462,6 +470,7 @@ jobs:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      simdjson_SOURCE: BUNDLED
     steps:
       - fuzzer-run:
           fuzzer_output: "/tmp/fuzzer.log"
@@ -474,6 +483,7 @@ jobs:
           --velox_fuzzer_enable_column_reuse \
           --velox_fuzzer_enable_expression_reuse \
           --retry_with_try \
+          --enable_dereference \
           --logtostderr=1 --minloglevel=0 \
           --repro_persist_path=/tmp/fuzzer_repro"
 
@@ -481,19 +491,21 @@ jobs:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      simdjson_SOURCE: BUNDLED
     steps:
       - fuzzer-run:
           fuzzer_output: "/tmp/spark_fuzzer.log"
           fuzzer_repro: "/tmp/spark_fuzzer_repro"
           fuzzer_name: "Spark"
           fuzzer_exe: "_build/debug/velox/expression/tests/spark_expression_fuzzer_test"
-          fuzzer_args: " --seed ${RANDOM} --duration_sec 600 --logtostderr=1 --minloglevel=0 \ 
+          fuzzer_args: " --seed ${RANDOM} --duration_sec 600 --logtostderr=1 --minloglevel=0 \
           --repro_persist_path=/tmp/spark_fuzzer_repro"
 
   linux-spark-aggregate-fuzzer-run:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      simdjson_SOURCE: BUNDLED
     steps:
       - fuzzer-run:
           fuzzer_output: "/tmp/spark_aggregate_fuzzer.log"
@@ -508,19 +520,21 @@ jobs:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      simdjson_SOURCE: BUNDLED
     steps:
       - fuzzer-run:
           fuzzer_output: "/tmp/aggregate_fuzzer.log"
           fuzzer_repro: "/tmp/aggregate_fuzzer_repro"
           fuzzer_name: "Aggregate"
           fuzzer_exe: "_build/debug/velox/exec/tests/velox_aggregation_fuzzer_test"
-          fuzzer_args: " --seed ${RANDOM} --duration_sec 3600 --logtostderr=1 --minloglevel=0 \ 
+          fuzzer_args: " --seed ${RANDOM} --duration_sec 3600 --logtostderr=1 --minloglevel=0 \
           --repro_persist_path=/tmp/aggregate_fuzzer_repro"
 
   linux-join-fuzzer-run:
     executor: build
     environment:
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      simdjson_SOURCE: BUNDLED
     steps:
       - fuzzer-run:
           fuzzer_output: "/tmp/join_fuzzer.log"

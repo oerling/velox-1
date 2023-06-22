@@ -106,6 +106,10 @@ void DecodedVector::makeIndices(
 }
 
 void DecodedVector::reset(vector_size_t size) {
+  if (!indicesNotCopied()) {
+    // Init with default value to avoid invalid indices for unselected rows)
+    std::fill(copiedIndices_.begin(), copiedIndices_.end(), 0);
+  }
   size_ = size;
   indices_ = nullptr;
   data_ = nullptr;
@@ -416,18 +420,7 @@ void DecodedVector::setBaseDataForConstant(
     });
     setFlatNulls(vector, rows);
   }
-  if (vector.typeKind() == TypeKind::BOOLEAN) {
-    // When the type of the vector is bool we access the data using
-    // bits::isBitSet(reinterpret_cast<const uint64_t*>(data_), index(idx)).
-    // But vector.valuesAsVoid() returns an address to a bool variable.
-
-    constantBoolDataHolder_ =
-        vector.asUnchecked<ConstantVector<bool>>()->valueAt(0);
-
-    data_ = &constantBoolDataHolder_;
-  } else {
-    data_ = vector.valuesAsVoid();
-  }
+  data_ = vector.valuesAsVoid();
   if (!nulls_) {
     nulls_ = vector.isNullAt(0) ? &constantNullMask_ : nullptr;
   }

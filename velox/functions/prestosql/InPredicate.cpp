@@ -113,6 +113,29 @@ std::pair<std::unique_ptr<common::Filter>, bool> createBytesValuesFilter(
   return {std::make_unique<common::BytesValues>(values, nullAllowed), false};
 }
 
+std::pair<std::unique_ptr<common::Filter>, bool> createDateValuesFilter(
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  auto valuesPair = toValues<Date, Date>(inputArgs);
+  if (!valuesPair.has_value()) {
+    return {nullptr, false};
+  }
+
+  const auto& values = valuesPair.value().first;
+  bool nullAllowed = valuesPair.value().second;
+
+  if (values.empty() && nullAllowed) {
+    return {nullptr, true};
+  }
+  VELOX_USER_CHECK(
+      !values.empty(),
+      "IN predicate expects at least one non-null value in the in-list");
+  std::vector<int64_t> dayValues;
+  for (auto date : values) {
+    dayValues.push_back(date.days());
+  }
+  return {common::createBigintValues(dayValues, nullAllowed), false};
+}
+
 class InPredicate : public exec::VectorFunction {
  public:
   explicit InPredicate(std::unique_ptr<common::Filter> filter, bool alwaysNull)
@@ -142,6 +165,9 @@ class InPredicate : public exec::VectorFunction {
       case TypeKind::VARCHAR:
       case TypeKind::VARBINARY:
         filter = createBytesValuesFilter(inputArgs);
+        break;
+      case TypeKind::DATE:
+        filter = createDateValuesFilter(inputArgs);
         break;
       case TypeKind::UNKNOWN:
         filter = {nullptr, true};
@@ -196,6 +222,11 @@ class InPredicate : public exec::VectorFunction {
               return filter_->testBytes(value.data(), value.size());
             });
         break;
+      case TypeKind::DATE:
+        applyTyped<Date>(rows, input, context, result, [&](Date value) {
+          return filter_->testInt64(value.days());
+        });
+        break;
       default:
         VELOX_UNSUPPORTED(
             "Unsupported input type for the IN predicate: {}",
@@ -207,7 +238,13 @@ class InPredicate : public exec::VectorFunction {
     // tinyint|smallint|integer|bigint|varchar... -> boolean
     std::vector<std::shared_ptr<exec::FunctionSignature>> signatures;
     for (auto& type :
-         {"tinyint", "smallint", "integer", "bigint", "varchar", "varbinary"}) {
+         {"tinyint",
+          "smallint",
+          "integer",
+          "bigint",
+          "varchar",
+          "varbinary",
+          "date"}) {
       signatures.emplace_back(exec::FunctionSignatureBuilder()
                                   .returnType("boolean")
                                   .argumentType(type)
@@ -244,7 +281,7 @@ class InPredicate : public exec::VectorFunction {
       VectorPtr& result,
       F&& testFunction) const {
     if (alwaysNull_) {
-      auto localResult = createBoolConstantNull(rows.size(), context);
+      auto localResult = createBoolConstantNull(rows.end(), context);
       context.moveOrCopyResult(localResult, rows, result);
       return;
     }
@@ -257,13 +294,13 @@ class InPredicate : public exec::VectorFunction {
       auto simpleArg = arg->asUnchecked<SimpleVector<T>>();
       VectorPtr localResult;
       if (simpleArg->isNullAt(rows.begin())) {
-        localResult = createBoolConstantNull(rows.size(), context);
+        localResult = createBoolConstantNull(rows.end(), context);
       } else {
         bool pass = testFunction(simpleArg->valueAt(rows.begin()));
         if (!pass && passOrNull) {
-          localResult = createBoolConstantNull(rows.size(), context);
+          localResult = createBoolConstantNull(rows.end(), context);
         } else {
-          localResult = createBoolConstant(pass, rows.size(), context);
+          localResult = createBoolConstant(pass, rows.end(), context);
         }
       }
 
@@ -276,6 +313,7 @@ class InPredicate : public exec::VectorFunction {
     auto rawValues = flatArg->rawValues();
 
     context.ensureWritable(rows, BOOLEAN(), result);
+    result->clearNulls(rows);
     auto* boolResult = result->asUnchecked<FlatVector<bool>>();
 
     auto* rawResults = boolResult->mutableRawValues<uint64_t>();

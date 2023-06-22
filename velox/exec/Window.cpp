@@ -52,8 +52,6 @@ Window::Window(
           operatorId,
           windowNode->id(),
           "Window"),
-      outputBatchSizeInBytes_(
-          driverCtx->queryConfig().preferredOutputBatchSize()),
       numInputColumns_(windowNode->sources()[0]->outputType()->size()),
       data_(std::make_unique<RowContainer>(
           windowNode->sources()[0]->outputType()->children(),
@@ -124,6 +122,9 @@ void Window::createWindowFunctions(
     const std::shared_ptr<const core::WindowNode>& windowNode,
     const RowTypePtr& inputType) {
   for (const auto& windowNodeFunction : windowNode->windowFunctions()) {
+    VELOX_USER_CHECK(
+        !windowNodeFunction.ignoreNulls,
+        "Ignore nulls for window functions is not supported yet");
     std::vector<WindowFunctionArg> functionArgs;
     functionArgs.reserve(windowNodeFunction.functionCall->inputs().size());
     for (auto& arg : windowNodeFunction.functionCall->inputs()) {
@@ -151,10 +152,8 @@ void Window::createWindowFunctions(
 }
 
 void Window::addInput(RowVectorPtr input) {
-  inputRows_.resize(input->size());
-
   for (auto col = 0; col < input->childrenSize(); ++col) {
-    decodedInputVectors_[col].decode(*input->childAt(col), inputRows_);
+    decodedInputVectors_[col].decode(*input->childAt(col));
   }
 
   // Add all the rows into the RowContainer.
@@ -165,7 +164,7 @@ void Window::addInput(RowVectorPtr input) {
       data_->store(decodedInputVectors_[col], row, newRow, col);
     }
   }
-  numRows_ += inputRows_.size();
+  numRows_ += input->size();
 }
 
 inline bool Window::compareRowsWithKeys(
@@ -190,7 +189,7 @@ inline bool Window::compareRowsWithKeys(
 void Window::createPeerAndFrameBuffers() {
   // TODO: This computation needs to be revised. It only takes into account
   // the input columns size. We need to also account for the output columns.
-  numRowsPerOutput_ = data_->estimatedNumRowsPerBatch(outputBatchSizeInBytes_);
+  numRowsPerOutput_ = outputBatchRows(data_->estimateRowSize());
 
   peerStartBuffer_ = AlignedBuffer::allocate<vector_size_t>(
       numRowsPerOutput_, operatorCtx_->pool());

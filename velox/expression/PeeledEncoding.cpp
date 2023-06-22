@@ -20,7 +20,7 @@
 
 namespace facebook::velox::exec {
 
-std::shared_ptr<PeeledEncoding> PeeledEncoding::Peel(
+std::shared_ptr<PeeledEncoding> PeeledEncoding::peel(
     const std::vector<VectorPtr>& vectorsToPeel,
     const SelectivityVector& rows,
     LocalDecodedVector& decodedVector,
@@ -57,12 +57,7 @@ SelectivityVector* PeeledEncoding::translateToInnerRows(
   auto flatNulls = wrapNulls_ ? wrapNulls_->as<uint64_t>() : nullptr;
 
   auto* newRows = innerRowsHolder.get(baseSize, false);
-  outerRows.applyToSelected([&](vector_size_t row) {
-    if (!(flatNulls && bits::isBitNull(flatNulls, row))) {
-      newRows->setValid(indices[row], true);
-    }
-  });
-  newRows->updateBounds();
+  velox::translateToInnerRows(outerRows, indices, flatNulls, *newRows);
 
   return newRows;
 }
@@ -255,7 +250,7 @@ bool PeeledEncoding::peelInternal(
   return true;
 }
 
-VectorEncoding::Simple PeeledEncoding::getWrapEncoding() const {
+VectorEncoding::Simple PeeledEncoding::wrapEncoding() const {
   return wrapEncoding_;
 }
 

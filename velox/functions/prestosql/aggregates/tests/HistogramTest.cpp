@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
 
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
+using namespace facebook::velox::functions::aggregate::test;
 
 namespace facebook::velox::aggregate::test {
 
@@ -190,7 +191,25 @@ TEST_F(HistogramTest, groupByInterval) {
   testHistogramWithDuck(vector1, vector2);
 }
 
-TEST_F(HistogramTest, globalGroupByInteger) {
+TEST_F(HistogramTest, groupByString) {
+  std::vector<std::string> strings = {
+      "grapes",
+      "oranges",
+      "sweet fruits: apple",
+      "sweet fruits: banana",
+      "sweet fruits: papaya",
+  };
+
+  auto keys = makeFlatVector<int16_t>(
+      1'000, [](auto row) { return row % 17; }, nullEvery(19));
+  auto data = makeFlatVector<StringView>(
+      1'000,
+      [&](auto row) { return StringView(strings[row % strings.size()]); },
+      nullEvery(11));
+  testGlobalHistogramWithDuck(data);
+}
+
+TEST_F(HistogramTest, globalInteger) {
   vector_size_t num = 29;
   auto vector = makeFlatVector<int32_t>(
       num, [](vector_size_t row) { return row % 5; }, nullEvery(7));
@@ -198,7 +217,7 @@ TEST_F(HistogramTest, globalGroupByInteger) {
   testGlobalHistogramWithDuck(vector);
 }
 
-TEST_F(HistogramTest, globalGroupByDouble) {
+TEST_F(HistogramTest, globalDouble) {
   vector_size_t num = 29;
   auto vector = makeFlatVector<double>(
       num, [](vector_size_t row) { return row % 5 + 0.05; }, nullEvery(7));
@@ -206,14 +225,14 @@ TEST_F(HistogramTest, globalGroupByDouble) {
   testGlobalHistogramWithDuck(vector);
 }
 
-TEST_F(HistogramTest, globalGroupByBoolean) {
+TEST_F(HistogramTest, globalBoolean) {
   auto vector = makeFlatVector<bool>(
       1'000, [](vector_size_t row) { return row % 5 == 2; }, nullEvery(7));
 
   testGlobalHistogramWithDuck(vector);
 }
 
-TEST_F(HistogramTest, globalGroupByTimestamp) {
+TEST_F(HistogramTest, globalTimestamp) {
   vector_size_t num = 10;
   auto vector = makeFlatVector<Timestamp>(
       num,
@@ -231,7 +250,7 @@ TEST_F(HistogramTest, globalGroupByTimestamp) {
   testHistogram("histogram(c1)", {}, vector, vector, expected);
 }
 
-TEST_F(HistogramTest, globalGroupByDate) {
+TEST_F(HistogramTest, globalDate) {
   vector_size_t num = 10;
   auto vector = makeFlatVector<Date>(
       num, [](vector_size_t row) { return Date{row % 4}; }, nullEvery(7));
@@ -242,16 +261,52 @@ TEST_F(HistogramTest, globalGroupByDate) {
   testHistogram("histogram(c1)", {}, vector, vector, expected);
 }
 
-TEST_F(HistogramTest, globalGroupByInterval) {
+TEST_F(HistogramTest, globalInterval) {
   auto vector = makeFlatVector<int64_t>(
       1'000, [](auto row) { return row; }, nullEvery(7), INTERVAL_DAY_TIME());
 
   testGlobalHistogramWithDuck(vector);
 }
 
-TEST_F(HistogramTest, globalGroupByEmpty) {
+TEST_F(HistogramTest, globalEmpty) {
   auto vector = makeFlatVector<int32_t>({});
   testGlobalHistogramWithDuck(vector);
+}
+
+TEST_F(HistogramTest, globalString) {
+  std::vector<std::string> strings = {
+      "grapes",
+      "oranges",
+      "sweet fruits: apple",
+      "sweet fruits: banana",
+      "sweet fruits: papaya",
+  };
+
+  auto data = makeFlatVector<StringView>(1'000, [&](auto row) {
+    return StringView(strings[row % strings.size()]);
+  });
+  testGlobalHistogramWithDuck(data);
+
+  // Some nulls.
+  data = makeFlatVector<StringView>(
+      1'000,
+      [&](auto row) { return StringView(strings[row % strings.size()]); },
+      nullEvery(7));
+  testGlobalHistogramWithDuck(data);
+
+  // All nulls.
+  testGlobalHistogramWithDuck(makeAllNullFlatVector<StringView>(1'000));
+
+  // Lots of unique strings.
+  std::string scratch;
+  data = makeFlatVector<StringView>(
+      1'000,
+      [&](auto row) {
+        scratch = std::string(50 + row, 'A' + (row % 11));
+        return StringView(scratch);
+      },
+      nullEvery(7));
+  testGlobalHistogramWithDuck(data);
 }
 
 } // namespace

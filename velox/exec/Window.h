@@ -159,7 +159,6 @@ class Window : public Operator {
       vector_size_t* rawFrameBounds);
 
   bool finished_ = false;
-  const vector_size_t outputBatchSizeInBytes_;
   const vector_size_t numInputColumns_;
 
   // The Window operator needs to see all the input rows before starting
@@ -196,8 +195,6 @@ class Window : public Operator {
   // It represents the frame spec for the function computation.
   std::vector<WindowFrame> windowFrames_;
 
-  // This SelectivityVector is used across addInput calls for decoding.
-  SelectivityVector inputRows_;
   // Number of input rows.
   vector_size_t numRows_ = 0;
 

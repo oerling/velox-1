@@ -17,29 +17,80 @@
 #include <memory>
 
 namespace facebook::velox {
+
+void VectorSerializer::append(const RowVectorPtr& vector) {
+  const IndexRange allRows{0, vector->size()};
+  append(vector, folly::Range(&allRows, 1));
+}
+
 namespace {
+
 std::unique_ptr<VectorSerde>& getVectorSerdeImpl() {
   static std::unique_ptr<VectorSerde> serde;
   return serde;
 }
+
+std::unordered_map<std::string, std::unique_ptr<VectorSerde>>&
+getNamedVectorSerdeImpl() {
+  static std::unordered_map<std::string, std::unique_ptr<VectorSerde>>
+      namedSerde;
+  return namedSerde;
+}
+
 } // namespace
 
 VectorSerde* getVectorSerde() {
   auto serde = getVectorSerdeImpl().get();
-  VELOX_CHECK_NOT_NULL(serde, "Vector serde is not registered");
+  VELOX_CHECK_NOT_NULL(serde, "Vector serde is not registered.");
   return serde;
 }
 
-/// This call is not thread safe. We only expect one call of it in the entire
-/// system upon startup.
+/// None of the calls below are thread-safe. We only expect one call of it in
+/// the entire system upon startup.
 void registerVectorSerde(std::unique_ptr<VectorSerde> serdeToRegister) {
   auto& serde = getVectorSerdeImpl();
-  VELOX_CHECK_NULL(serde, "Vector serde is already registered");
+  VELOX_CHECK_NULL(serde, "Vector serde is already registered.");
   serde = std::move(serdeToRegister);
+}
+
+void deregisterVectorSerde() {
+  getVectorSerdeImpl().reset();
 }
 
 bool isRegisteredVectorSerde() {
   return getVectorSerdeImpl() != nullptr;
+}
+
+/// Named serde helper functions.
+void registerNamedVectorSerde(
+    std::string_view serdeName,
+    std::unique_ptr<VectorSerde> serdeToRegister) {
+  auto& namedSerdeMap = getNamedVectorSerdeImpl();
+  VELOX_CHECK(
+      namedSerdeMap.find(std::string(serdeName)) == namedSerdeMap.end(),
+      "Vector serde '{}' is already registered.",
+      serdeName);
+  namedSerdeMap[std::string(serdeName)] = std::move(serdeToRegister);
+}
+
+void deregisterNamedVectorSerde(std::string_view serdeName) {
+  auto& namedSerdeMap = getNamedVectorSerdeImpl();
+  namedSerdeMap.erase(std::string(serdeName));
+}
+
+bool isRegisteredNamedVectorSerde(std::string_view serdeName) {
+  auto& namedSerdeMap = getNamedVectorSerdeImpl();
+  return namedSerdeMap.find(std::string(serdeName)) != namedSerdeMap.end();
+}
+
+VectorSerde* getNamedVectorSerde(std::string_view serdeName) {
+  auto& namedSerdeMap = getNamedVectorSerdeImpl();
+  auto it = namedSerdeMap.find(std::string(serdeName));
+  VELOX_CHECK(
+      it != namedSerdeMap.end(),
+      "Named vector serde '{}' is not registered.",
+      serdeName);
+  return it->second.get();
 }
 
 void VectorStreamGroup::createStreamTree(
@@ -51,9 +102,13 @@ void VectorStreamGroup::createStreamTree(
 }
 
 void VectorStreamGroup::append(
-    RowVectorPtr vector,
+    const RowVectorPtr& vector,
     const folly::Range<const IndexRange*>& ranges) {
   serializer_->append(vector, ranges);
+}
+
+void VectorStreamGroup::append(const RowVectorPtr& vector) {
+  serializer_->append(vector);
 }
 
 void VectorStreamGroup::flush(OutputStream* out) {
@@ -76,6 +131,46 @@ void VectorStreamGroup::read(
     RowVectorPtr* result,
     const VectorSerde::Options* options) {
   getVectorSerde()->deserialize(source, pool, type, result, options);
+}
+
+folly::IOBuf rowVectorToIOBuf(
+    const RowVectorPtr& rowVector,
+    memory::MemoryPool& pool) {
+  return rowVectorToIOBuf(rowVector, rowVector->size(), pool);
+}
+
+folly::IOBuf rowVectorToIOBuf(
+    const RowVectorPtr& rowVector,
+    vector_size_t rangeEnd,
+    memory::MemoryPool& pool) {
+  auto streamGroup = std::make_unique<VectorStreamGroup>(&pool);
+  streamGroup->createStreamTree(asRowType(rowVector->type()), rangeEnd);
+
+  IndexRange range{0, rangeEnd};
+  streamGroup->append(rowVector, folly::Range<IndexRange*>(&range, 1));
+
+  IOBufOutputStream stream(pool);
+  streamGroup->flush(&stream);
+  return std::move(*stream.getIOBuf());
+}
+
+RowVectorPtr IOBufToRowVector(
+    const folly::IOBuf& ioBuf,
+    const RowTypePtr& outputType,
+    memory::MemoryPool& pool) {
+  std::vector<ByteRange> ranges;
+  ranges.reserve(4);
+
+  for (const auto& range : ioBuf) {
+    ranges.emplace_back(ByteRange{
+        const_cast<uint8_t*>(range.data()), (int32_t)range.size(), 0});
+  }
+
+  ByteStream byteStream;
+  byteStream.resetInput(std::move(ranges));
+  RowVectorPtr outputVector;
+  VectorStreamGroup::read(&byteStream, &pool, outputType, &outputVector);
+  return outputVector;
 }
 
 } // namespace facebook::velox

@@ -35,17 +35,22 @@ class VectorSerializer {
  public:
   virtual ~VectorSerializer() = default;
 
+  /// Serialize a subset of rows in a vector.
   virtual void append(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges) = 0;
 
-  // Writes the contents to 'stream' in wire format
+  /// Serialize all rows in a vector.
+  void append(const RowVectorPtr& vector);
+
+  /// Write serialized data to 'stream'.
   virtual void flush(OutputStream* stream) = 0;
 };
 
 class VectorSerde {
  public:
   virtual ~VectorSerde() = default;
+
   // Lets the caller pass options to the Serde. This can be extended to add
   // custom options by each of its extended classes.
   struct Options {
@@ -71,11 +76,29 @@ class VectorSerde {
       const Options* options = nullptr) = 0;
 };
 
+/// Register/deregister the "default" vector serde.
 void registerVectorSerde(std::unique_ptr<VectorSerde> serdeToRegister);
+void deregisterVectorSerde();
 
+/// Check if a "default" vector serde has been registered.
 bool isRegisteredVectorSerde();
 
+/// Get the "default" vector serde, if one has been registered.
 VectorSerde* getVectorSerde();
+
+/// Register/deregister a named vector serde. `serdeName` is a handle that
+/// allows users to register multiple serde formats.
+void registerNamedVectorSerde(
+    std::string_view serdeName,
+    std::unique_ptr<VectorSerde> serdeToRegister);
+void deregisterNamedVectorSerde(std::string_view serdeName);
+
+/// Check if a named vector serde has been registered with `serdeName` as a
+/// handle.
+bool isRegisteredNamedVectorSerde(std::string_view serdeName);
+
+/// Get the vector serde identified by `serdeName`. Throws if not found.
+VectorSerde* getNamedVectorSerde(std::string_view serdeName);
 
 class VectorStreamGroup : public StreamArena {
  public:
@@ -93,8 +116,10 @@ class VectorStreamGroup : public StreamArena {
       vector_size_t** sizes);
 
   void append(
-      RowVectorPtr vector,
+      const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges);
+
+  void append(const RowVectorPtr& vector);
 
   // Writes the contents to 'stream' in wire format.
   void flush(OutputStream* stream);
@@ -110,5 +135,24 @@ class VectorStreamGroup : public StreamArena {
  private:
   std::unique_ptr<VectorSerializer> serializer_;
 };
+
+/// Convenience function to serialize a single rowVector into an IOBuf using the
+/// registered serde object.
+folly::IOBuf rowVectorToIOBuf(
+    const RowVectorPtr& rowVector,
+    memory::MemoryPool& pool);
+
+/// Same as above but serializes up until row `rangeEnd`.
+folly::IOBuf rowVectorToIOBuf(
+    const RowVectorPtr& rowVector,
+    vector_size_t rangeEnd,
+    memory::MemoryPool& pool);
+
+/// Convenience function to deserialize an IOBuf into a rowVector using the
+/// registered serde object.
+RowVectorPtr IOBufToRowVector(
+    const folly::IOBuf& ioBuf,
+    const RowTypePtr& outputType,
+    memory::MemoryPool& pool);
 
 } // namespace facebook::velox

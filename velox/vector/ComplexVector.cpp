@@ -165,11 +165,6 @@ void RowVector::copy(
     const BaseVector* source,
     const SelectivityVector& rows,
     const vector_size_t* toSourceRow) {
-  for (auto i = 0; i < children_.size(); ++i) {
-    BaseVector::ensureWritable(
-        rows, type()->asRow().childAt(i), pool(), children_[i]);
-  }
-
   // Copy non-null values.
   SelectivityVector nonNullRows = rows;
 
@@ -188,8 +183,14 @@ void RowVector::copy(
 
     auto rowSource = source->loadedVector()->as<RowVector>();
     for (auto i = 0; i < childrenSize_; ++i) {
-      children_[i]->copy(
-          rowSource->childAt(i)->loadedVector(), nonNullRows, toSourceRow);
+      if (rowSource->childAt(i)) {
+        BaseVector::ensureWritable(
+            rows, type()->asRow().childAt(i), pool(), children_[i]);
+        children_[i]->copy(
+            rowSource->childAt(i)->loadedVector(), nonNullRows, toSourceRow);
+      } else {
+        children_[i].reset();
+      }
     }
   } else {
     auto nulls = decodedSource.nulls();
@@ -209,8 +210,7 @@ void RowVector::copy(
     BufferPtr mappedIndices;
     vector_size_t* rawMappedIndices = nullptr;
     if (toSourceRow) {
-      mappedIndices =
-          AlignedBuffer::allocate<vector_size_t>(rows.size(), pool_);
+      mappedIndices = AlignedBuffer::allocate<vector_size_t>(rows.end(), pool_);
       rawMappedIndices = mappedIndices->asMutable<vector_size_t>();
       nonNullRows.applyToSelected(
           [&](auto row) { rawMappedIndices[row] = indices[toSourceRow[row]]; });
@@ -218,10 +218,16 @@ void RowVector::copy(
 
     auto baseSource = decodedSource.base()->as<RowVector>();
     for (auto i = 0; i < childrenSize_; ++i) {
-      children_[i]->copy(
-          baseSource->childAt(i)->loadedVector(),
-          nonNullRows,
-          rawMappedIndices ? rawMappedIndices : indices);
+      if (baseSource->childAt(i)) {
+        BaseVector::ensureWritable(
+            rows, type()->asRow().childAt(i), pool(), children_[i]);
+        children_[i]->copy(
+            baseSource->childAt(i)->loadedVector(),
+            nonNullRows,
+            rawMappedIndices ? rawMappedIndices : indices);
+      } else {
+        children_[i].reset();
+      }
     }
   }
 
@@ -388,7 +394,9 @@ void RowVector::prepareForReuse() {
 VectorPtr RowVector::slice(vector_size_t offset, vector_size_t length) const {
   std::vector<VectorPtr> children(children_.size());
   for (int i = 0; i < children_.size(); ++i) {
-    children[i] = children_[i]->slice(offset, length);
+    if (children_[i]) {
+      children[i] = children_[i]->slice(offset, length);
+    }
   }
   return std::make_shared<RowVector>(
       pool_, type_, sliceNulls(offset, length), length, std::move(children));
@@ -688,7 +696,7 @@ std::string ArrayVector::toString(vector_size_t index) const {
 }
 
 void ArrayVector::ensureWritable(const SelectivityVector& rows) {
-  auto newSize = std::max<vector_size_t>(rows.size(), BaseVector::length_);
+  auto newSize = std::max<vector_size_t>(rows.end(), BaseVector::length_);
   if (offsets_ && !offsets_->unique()) {
     BufferPtr newOffsets =
         AlignedBuffer::allocate<vector_size_t>(newSize, BaseVector::pool_);
@@ -950,7 +958,7 @@ std::string MapVector::toString(vector_size_t index) const {
 }
 
 void MapVector::ensureWritable(const SelectivityVector& rows) {
-  auto newSize = std::max<vector_size_t>(rows.size(), BaseVector::length_);
+  auto newSize = std::max<vector_size_t>(rows.end(), BaseVector::length_);
   if (offsets_ && !offsets_->unique()) {
     BufferPtr newOffsets =
         AlignedBuffer::allocate<vector_size_t>(newSize, BaseVector::pool_);

@@ -119,6 +119,44 @@ class StringTest : public SparkFunctionBaseTest {
       const std::optional<std::string>& pattern) {
     return evaluateOnce<bool>("contains(c0, c1)", str, pattern);
   }
+
+  std::optional<std::string> substring(
+      std::optional<std::string> str,
+      std::optional<int32_t> start) {
+    return evaluateOnce<std::string>("substring(c0, c1)", str, start);
+  }
+
+  std::optional<std::string> substring(
+      std::optional<std::string> str,
+      std::optional<int32_t> start,
+      std::optional<int32_t> length) {
+    return evaluateOnce<std::string>(
+        "substring(c0, c1, c2)", str, start, length);
+  }
+
+  std::optional<std::string> overlay(
+      std::optional<std::string> input,
+      std::optional<std::string> replace,
+      std::optional<int32_t> pos,
+      std::optional<int32_t> len) {
+    // overlay is a keyword of DuckDB, use double quote avoid parse error.
+    return evaluateOnce<std::string>(
+        "\"overlay\"(c0, c1, c2, c3)", input, replace, pos, len);
+  }
+
+  std::optional<std::string> overlayVarbinary(
+      std::optional<std::string> input,
+      std::optional<std::string> replace,
+      std::optional<int32_t> pos,
+      std::optional<int32_t> len) {
+    // overlay is a keyword of DuckDB, use double quote avoid parse error.
+    return evaluateOnce<std::string>(
+        "\"overlay\"(cast(c0 as varbinary), cast(c1 as varbinary), c2, c3)",
+        input,
+        replace,
+        pos,
+        len);
+  }
 };
 
 TEST_F(StringTest, Ascii) {
@@ -367,6 +405,78 @@ TEST_F(StringTest, rtrim) {
   EXPECT_EQ(
       rtrim("\u6570", "\u6574\u6570 \u6570\u636E!"),
       "\u6574\u6570 \u6570\u636E!");
+}
+
+TEST_F(StringTest, substring) {
+  EXPECT_EQ(substring("example", 0, 2), "ex");
+  EXPECT_EQ(substring("example", 1, -1), "");
+  EXPECT_EQ(substring("example", 1, 0), "");
+  EXPECT_EQ(substring("example", 1, 2), "ex");
+  EXPECT_EQ(substring("example", 1, 7), "example");
+  EXPECT_EQ(substring("example", 1, 100), "example");
+  EXPECT_EQ(substring("example", 2, 2), "xa");
+  EXPECT_EQ(substring("example", 8, 2), "");
+  EXPECT_EQ(substring("example", -2, 2), "le");
+  EXPECT_EQ(substring("example", -7, 2), "ex");
+  EXPECT_EQ(substring("example", -8, 2), "e");
+  EXPECT_EQ(substring("example", -9, 2), "");
+  EXPECT_EQ(substring("example", -7, 7), "example");
+  EXPECT_EQ(substring("example", -9, 9), "example");
+  EXPECT_EQ(substring("example", 4, 2147483645), "mple");
+  EXPECT_EQ(substring("example", 2147483645, 4), "");
+  EXPECT_EQ(substring("example", -2147483648, 1), "");
+  EXPECT_EQ(substring("da\u6570\u636Eta", 2, 4), "a\u6570\u636Et");
+  EXPECT_EQ(substring("da\u6570\u636Eta", -3, 2), "\u636Et");
+
+  EXPECT_EQ(substring("example", 0), "example");
+  EXPECT_EQ(substring("example", 1), "example");
+  EXPECT_EQ(substring("example", 2), "xample");
+  EXPECT_EQ(substring("example", 8), "");
+  EXPECT_EQ(substring("example", 2147483647), "");
+  EXPECT_EQ(substring("example", -2), "le");
+  EXPECT_EQ(substring("example", -7), "example");
+  EXPECT_EQ(substring("example", -8), "example");
+  EXPECT_EQ(substring("example", -9), "example");
+  EXPECT_EQ(substring("example", -2147483647), "example");
+  EXPECT_EQ(substring("da\u6570\u636Eta", 3), "\u6570\u636Eta");
+  EXPECT_EQ(substring("da\u6570\u636Eta", -3), "\u636Eta");
+}
+
+TEST_F(StringTest, overlayVarchar) {
+  EXPECT_EQ(overlay("Spark\u6570\u636ESQL", "_", 6, -1), "Spark_\u636ESQL");
+  EXPECT_EQ(
+      overlay("Spark\u6570\u636ESQL", "_", 6, 0), "Spark_\u6570\u636ESQL");
+  EXPECT_EQ(overlay("Spark\u6570\u636ESQL", "_", -6, 2), "_\u636ESQL");
+
+  EXPECT_EQ(overlay("Spark SQL", "_", 6, -1), "Spark_SQL");
+  EXPECT_EQ(overlay("Spark SQL", "CORE", 7, -1), "Spark CORE");
+  EXPECT_EQ(overlay("Spark SQL", "ANSI ", 7, 0), "Spark ANSI SQL");
+  EXPECT_EQ(overlay("Spark SQL", "tructured", 2, 4), "Structured SQL");
+
+  EXPECT_EQ(overlay("Spark SQL", "##", 10, -1), "Spark SQL##");
+  EXPECT_EQ(overlay("Spark SQL", "##", 10, 4), "Spark SQL##");
+  EXPECT_EQ(overlay("Spark SQL", "##", 0, -1), "##park SQL");
+  EXPECT_EQ(overlay("Spark SQL", "##", 0, 4), "##rk SQL");
+  EXPECT_EQ(overlay("Spark SQL", "##", -10, -1), "##park SQL");
+  EXPECT_EQ(overlay("Spark SQL", "##", -10, 4), "##rk SQL");
+}
+
+TEST_F(StringTest, overlayVarbinary) {
+  EXPECT_EQ(overlay("Spark\x65\x20SQL", "_", 6, -1), "Spark_\x20SQL");
+  EXPECT_EQ(overlay("Spark\x65\x20SQL", "_", 6, 0), "Spark_\x65\x20SQL");
+  EXPECT_EQ(overlay("Spark\x65\x20SQL", "_", -6, 2), "_\x20SQL");
+
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "_", 6, -1), "Spark_SQL");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "CORE", 7, -1), "Spark CORE");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "ANSI ", 7, 0), "Spark ANSI SQL");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "tructured", 2, 4), "Structured SQL");
+
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", 10, -1), "Spark SQL##");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", 10, 4), "Spark SQL##");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", 0, -1), "##park SQL");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", 0, 4), "##rk SQL");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", -10, -1), "##park SQL");
+  EXPECT_EQ(overlayVarbinary("Spark SQL", "##", -10, 4), "##rk SQL");
 }
 
 } // namespace

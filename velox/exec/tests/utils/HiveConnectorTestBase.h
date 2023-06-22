@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 #pragma once
+
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/dwrf/common/Config.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/TempFilePath.h"
@@ -65,7 +68,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
       uint64_t start = 0,
       uint64_t length = std::numeric_limits<uint64_t>::max());
 
-  /// Split file at path 'filePath' into 'splitCount' splits.
+  /// Split file at path 'filePath' into 'splitCount' splits. If not local file,
+  /// file size can be given as 'externalSize'.
   static std::vector<std::shared_ptr<connector::hive::HiveConnectorSplit>>
   makeHiveConnectorSplits(
       const std::string& filePath,
@@ -83,6 +87,14 @@ class HiveConnectorTestBase : public OperatorTestBase {
         std::move(subfieldFilters),
         remainingFilter);
   }
+
+  /// @param name Column name.
+  /// @param type Column type.
+  /// @param Required subfields of this column.
+  static std::shared_ptr<connector::hive::HiveColumnHandle> makeColumnHandle(
+      const std::string& name,
+      const TypePtr& type,
+      const std::vector<std::string>& requiredSubfields);
 
   /// @param targetDirectory Final directory of the target table after commit.
   /// @param writeDirectory Write directory of the target table before commit.
@@ -110,7 +122,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::vector<std::string>& tableColumnNames,
       const std::vector<TypePtr>& tableColumnTypes,
       const std::vector<std::string>& partitionedBy,
-      std::shared_ptr<connector::hive::LocationHandle> locationHandle);
+      std::shared_ptr<connector::hive::LocationHandle> locationHandle,
+      const dwio::common::FileFormat tableStorageFormat =
+          dwio::common::FileFormat::DWRF);
 
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
       const std::string& name,

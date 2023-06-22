@@ -16,6 +16,8 @@
 
 #include "velox/expression/FieldReference.h"
 
+#include "velox/expression/PeeledEncoding.h"
+
 namespace facebook::velox::exec {
 
 void FieldReference::evalSpecialForm(
@@ -28,6 +30,7 @@ void FieldReference::evalSpecialForm(
   const RowVector* row;
   DecodedVector decoded;
   VectorPtr input;
+  std::shared_ptr<PeeledEncoding> peeledEncoding;
   VectorRecycler inputRecycler(input, context.vectorPool());
   bool useDecode = false;
   if (inputs_.empty()) {
@@ -48,44 +51,53 @@ void FieldReference::evalSpecialForm(
 
     decoded.decode(*input, rows);
     useDecode = !decoded.isIdentityMapping();
-    const BaseVector* base = decoded.base();
-    VELOX_CHECK(base->encoding() == VectorEncoding::Simple::ROW);
-    row = base->as<const RowVector>();
+    if (useDecode) {
+      std::vector<VectorPtr> peeledVectors;
+      LocalDecodedVector localDecoded{context};
+      peeledEncoding = PeeledEncoding::peel(
+          {input}, rows, localDecoded, true, peeledVectors);
+      VELOX_CHECK_NOT_NULL(peeledEncoding);
+      VELOX_CHECK(peeledVectors[0]->encoding() == VectorEncoding::Simple::ROW);
+      row = peeledVectors[0]->as<const RowVector>();
+    } else {
+      VELOX_CHECK(input->encoding() == VectorEncoding::Simple::ROW);
+      row = input->as<const RowVector>();
+    }
   }
   if (index_ == -1) {
     auto rowType = dynamic_cast<const RowType*>(row->type().get());
     VELOX_CHECK(rowType);
     index_ = rowType->getChildIdx(field_);
   }
-  // If we refer to a column of the context row, this may have been
-  // peeled due to peeling off encoding, hence access it via
-  // 'context'.  Check if the child is unique before taking the second
-  // reference. Unique constant vectors can be resized in place, non-unique
-  // must be copied to set the size.
-  bool isUniqueChild = inputs_.empty() ? context.getField(index_).unique()
-                                       : row->childAt(index_).unique();
   VectorPtr child =
       inputs_.empty() ? context.getField(index_) : row->childAt(index_);
+  if (child->encoding() == VectorEncoding::Simple::LAZY) {
+    child = BaseVector::loadedVectorShared(child);
+  }
+  // Children of a RowVector may be shorter than the RowVector itself. Resize
+  // the child so that we can wrap it with the encoding of the RowVector later.
+  // Resizing through ensureWritable in case child is not singly referenced.
+  if (child->size() < row->size()) {
+    SelectivityVector extraRows{row->size(), false};
+    extraRows.setValidRange(child->size(), row->size(), true);
+    extraRows.updateBounds();
+    BaseVector::ensureWritable(extraRows, child->type(), context.pool(), child);
+  }
   if (result.get()) {
-    auto indices = useDecode ? decoded.indices() : nullptr;
-    result->copy(child.get(), rows, indices);
-  } else {
-    if (child->encoding() == VectorEncoding::Simple::LAZY) {
-      child = BaseVector::loadedVectorShared(child);
+    if (useDecode) {
+      child = peeledEncoding->wrap(type_, context.pool(), child, rows);
     }
+    result->copy(child.get(), rows, nullptr);
+  } else {
     // The caller relies on vectors having a meaningful size. If we
     // have a constant that is not wrapped in anything we set its size
-    // to correspond to rows.size(). This is in place for unique ones
-    // and a copy otherwise.
+    // to correspond to rows.end().
     if (!useDecode && child->isConstantEncoding()) {
-      if (isUniqueChild) {
-        child->resize(rows.size());
-      } else {
-        child = BaseVector::wrapInConstant(rows.size(), 0, child);
-      }
+      child = BaseVector::wrapInConstant(rows.end(), 0, child);
     }
-    result = useDecode ? std::move(decoded.wrap(child, *input, rows.end()))
-                       : std::move(child);
+    result = useDecode
+        ? std::move(peeledEncoding->wrap(type_, context.pool(), child, rows))
+        : std::move(child);
   }
 
   // Check for nulls in the input struct. Propagate these nulls to 'result'.
@@ -110,7 +122,7 @@ void FieldReference::evalSpecialFormSimplified(
   } else {
     VELOX_CHECK_EQ(inputs_.size(), 1);
     inputs_[0]->evalSimplified(rows, context, input);
-    BaseVector::flattenVector(input, rows.end());
+    BaseVector::flattenVector(input);
     row = input->as<RowVector>();
     VELOX_CHECK(row);
   }

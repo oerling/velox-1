@@ -16,10 +16,11 @@
 
 #include "velox/exec/Aggregate.h"
 #include "velox/expression/FunctionSignature.h"
-#include "velox/functions/lib/SimpleNumericAggregate.h"
+#include "velox/functions/lib/aggregates/SimpleNumericAggregate.h"
+#include "velox/functions/lib/aggregates/SingleValueAccumulator.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
-#include "velox/functions/prestosql/aggregates/SingleValueAccumulator.h"
-#include "velox/vector/DecodedVector.h"
+
+using namespace facebook::velox::functions::aggregate;
 
 namespace facebook::velox::aggregate::prestosql {
 
@@ -253,7 +254,7 @@ class NonNumericArbitrary : public exec::Aggregate {
   }
 };
 
-bool registerArbitrary(const std::string& name) {
+exec::AggregateRegistrationResult registerArbitrary(const std::string& name) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
       exec::AggregateFunctionSignatureBuilder()
           .typeVariable("T")
