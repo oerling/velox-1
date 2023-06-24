@@ -460,10 +460,14 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
   ProbeState state2;
   ProbeState state3;
   ProbeState state4;
+  ProbeState state5;
+  ProbeState state6;
+  ProbeState state7;
+  ProbeState state8;
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
   auto rows = lookup.rows.data();
-  for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
+  for (; probeIndex + 8 <= numProbes; probeIndex += 8) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, lookup.hashes[row], row);
     row = rows[probeIndex + 1];
@@ -472,14 +476,32 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
     state3.preProbe(*this, lookup.hashes[row], row);
     row = rows[probeIndex + 3];
     state4.preProbe(*this, lookup.hashes[row], row);
+    row = rows[probeIndex + 4];
+    state5.preProbe(*this, lookup.hashes[row], row);
+    row = rows[probeIndex + 5];
+    state6.preProbe(*this, lookup.hashes[row], row);
+    row = rows[probeIndex + 6];
+    state7.preProbe(*this, lookup.hashes[row], row);
+    row = rows[probeIndex + 7];
+    state8.preProbe(*this, lookup.hashes[row], row);
+
     state1.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
     state2.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
     state3.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
     state4.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
+    state5.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
+    state6.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
+    state7.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
+    state8.firstProbe<ProbeState::Operation::kInsert>(*this, 0);
+
     fullProbe<false>(lookup, state1, false);
     fullProbe<false>(lookup, state2, true);
     fullProbe<false>(lookup, state3, true);
     fullProbe<false>(lookup, state4, true);
+    fullProbe<false>(lookup, state5, false);
+    fullProbe<false>(lookup, state6, true);
+    fullProbe<false>(lookup, state7, true);
+    fullProbe<false>(lookup, state8, true);
   }
   for (; probeIndex < numProbes; ++probeIndex) {
     int32_t row = rows[probeIndex];
@@ -773,7 +795,7 @@ void HashTable<ignoreNullKeys>::checkSize(int32_t numNew) {
       hashMode_);
 
   const int64_t newNumDistincts = numNew + numDistinct_;
-  if (table_ == nullptr || capacity_ == 0) {
+  if (tags_ == nullptr || capacity_ == 0) {
     // Initial guess of cardinality is double the first input batch or at
     // least 2K entries.
     // stats_.numDistinct is non-0 when switching from HashMode::kArray to

@@ -411,7 +411,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
         }
       }
     }
-    LOG(INFO)
+    std::cout
         << fmt::format(
                "Hashed: {} Probed: {} Hit: {} Hash time/row {} probe time/row {}",
                numHashed,
@@ -524,7 +524,7 @@ TEST_P(HashTableTest, int2SparseNormalizedMostMiss) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
   keySpacing_ = 1000;
   insertPct_ = 10;
-  testCycle(BaseHashTable::HashMode::kNormalizedKey, 100000, 2, type, 2);
+  testCycle(BaseHashTable::HashMode::kNormalizedKey, 10000000, 2, type, 2);
 }
 
 TEST_P(HashTableTest, structKey) {

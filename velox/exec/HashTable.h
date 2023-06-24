@@ -326,7 +326,7 @@ class HashTable : public BaseHashTable {
   // non-interleaved. Interleaved tables are slightly smaller and are
   // more local since half the time the tag and corresponding payload
   // pointer are in the same cache line.
-  static constexpr bool kInterleaveRows = false;
+  static constexpr bool kInterleaveRows = true;
 
   // size of a group of 16 tags and 16 48-bit pointers to the
   // corresponding rows. Applies to interleaved mode.
