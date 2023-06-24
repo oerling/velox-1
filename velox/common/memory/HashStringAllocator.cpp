@@ -144,15 +144,16 @@ void HashStringAllocator::newSlab(int32_t size) {
   uint64_t available = 0;
   int32_t needed = std::max<int32_t>(
       bits::roundUp(
-          size + 2 * sizeof(Header) + kSimdPadding, memory::AllocationTraits::kPageSize),
+          size + 2 * sizeof(Header) + kSimdPadding,
+          memory::AllocationTraits::kPageSize),
       kUnitSize);
   auto pagesNeeded = memory::AllocationTraits::numPages(needed);
   if (pagesNeeded > pool()->largestSizeClass()) {
     LOG(WARNING) << "Unusually large allocation request received of bytes: "
                  << size;
     run = pool_.allocateFixed(needed);
-    available =
-        memory::AllocationTraits::pageBytes(pagesNeeded) - sizeof(Header) - kSimdPadding;
+    available = memory::AllocationTraits::pageBytes(pagesNeeded) -
+        sizeof(Header) - kSimdPadding;
   } else {
     pool_.newRun(needed);
     run = pool_.firstFreeInRun();

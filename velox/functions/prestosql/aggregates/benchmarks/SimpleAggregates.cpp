@@ -41,7 +41,7 @@ class SimpleAggregatesBenchmark : public HiveConnectorTestBase {
     OperatorTestBase::SetUpTestCase();
     HiveConnectorTestBase::SetUp();
     return;
-    
+
     inputType_ = ROW({
         {"k_array", INTEGER()},
         {"k_norm", INTEGER()},
@@ -185,8 +185,8 @@ return exec::BlockingReason::kNotBlocked;
                     .tableScan(rowType)
                     .singleAggregation(
                         {"separable_id", "longterm_id"}, {"sum(signal_value)"})
-      .singleAggregation({}, {"count(1) as c", "sum(a0)"})
-      .planFragment();
+                    .singleAggregation({}, {"count(1) as c", "sum(a0)"})
+                    .planFragment();
     suspender.dismiss();
 
     for (auto counter = 0; counter < 1; ++counter) {
@@ -215,7 +215,7 @@ return exec::BlockingReason::kNotBlocked;
       }
       folly::doNotOptimizeAway(numResultRows);
       LOG(ERROR) << exec::printPlanWithStats(
-					     *plan.planNode, task->taskStats(), true);
+          *plan.planNode, task->taskStats(), true);
     }
   }
 
@@ -235,16 +235,15 @@ return exec::BlockingReason::kNotBlocked;
     // exec::Split(makeHiveConnectorSplit(filePath_->path)));
     // task->addSplit("0",
     // exec::Split(makeHiveConnectorSplit(filePath_->path)));
-     task->addSplit("0",
-		     exec::Split(makeHiveConnectorSplit("/tmp/tf1")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf2")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf3")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf4")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf5")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf6")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf7")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf8")));
-      task->noMoreSplits("0");
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf1")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf2")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf3")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf4")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf5")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf6")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf7")));
+    task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf8")));
+    task->noMoreSplits("0");
 
     suspender.dismiss();
 
