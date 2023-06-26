@@ -20,9 +20,9 @@
 
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -196,23 +196,23 @@ return exec::BlockingReason::kNotBlocked;
     for (auto counter = 0; counter < 1; ++counter) {
       vector_size_t numResultRows = 0;
 
-std::vector<exec::Split> splits = {
-  exec::Split(makeHiveConnectorSplit("/tmp/tf1")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf2")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf3")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf4")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf5")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf6")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf7")),
-  exec::Split(makeHiveConnectorSplit("/tmp/tf8"))};
+      std::vector<exec::Split> splits = {
+          exec::Split(makeHiveConnectorSplit("/tmp/tf1")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf2")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf3")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf4")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf5")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf6")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf7")),
+          exec::Split(makeHiveConnectorSplit("/tmp/tf8"))};
       LOG(ERROR) << "Starting";
 
- auto task = AssertQueryBuilder(plan)
-	.maxDrivers(FLAGS_threads)
-	.splits(splits)
-   .assertTypeAndNumRows(ROW({BIGINT(), DOUBLE()}), FLAGS_threads);
-	LOG(ERROR) << exec::printPlanWithStats(
-					       *plan, task->taskStats(), true);
+      auto task =
+          AssertQueryBuilder(plan)
+              .maxDrivers(FLAGS_threads)
+              .splits(splits)
+              .assertTypeAndNumRows(ROW({BIGINT(), DOUBLE()}), FLAGS_threads);
+      LOG(ERROR) << exec::printPlanWithStats(*plan, task->taskStats(), true);
     }
   }
 
@@ -359,18 +359,14 @@ int main(int argc, char** argv) {
 
   std::shared_ptr<memory::MemoryAllocator> allocator;
   if (FLAGS_cache_gb) {
-      int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
-      memory::MmapAllocator::Options options;
-      options.capacity = memoryBytes;
+    int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
+    memory::MmapAllocator::Options options;
+    options.capacity = memoryBytes;
 
-
-      auto mmap = std::make_shared<memory::MmapAllocator>(options);
-      allocator = std::make_shared<cache::AsyncDataCache>(
-							  mmap, memoryBytes);
-      memory::MemoryAllocator::setDefaultInstance(allocator.get());
-    }
-
-
+    auto mmap = std::make_shared<memory::MmapAllocator>(options);
+    allocator = std::make_shared<cache::AsyncDataCache>(mmap, memoryBytes);
+    memory::MemoryAllocator::setDefaultInstance(allocator.get());
+  }
 
   benchmark = std::make_unique<SimpleAggregatesBenchmark>();
   // folly::runBenchmarks();
@@ -378,7 +374,3 @@ int main(int argc, char** argv) {
   benchmark.reset();
   return 0;
 }
-
-
-
-

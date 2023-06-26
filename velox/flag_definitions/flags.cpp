@@ -120,4 +120,3 @@ DEFINE_bool(
     "exception. This is only used by test to control the test error output size");
 
 DEFINE_bool(velox_use_hugepages, true, "Use explicit huge pages");
-

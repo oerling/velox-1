@@ -394,8 +394,7 @@ TEST_F(SimdUtilTest, memEqual) {
   EXPECT_TRUE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 66));
   EXPECT_FALSE(simd::memEqualUnsafe(data.x, data.y, 67));
   EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 66));
-
 }
-  
+
 } // namespace
  
