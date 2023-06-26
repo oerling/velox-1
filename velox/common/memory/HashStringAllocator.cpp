@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/memory/HashStringAllocator.h"
+#include "velox/common/base/SimdUtil.h"
 
 namespace facebook::velox {
 
@@ -139,7 +140,7 @@ HashStringAllocator::Position HashStringAllocator::finishWrite(
 }
 
 void HashStringAllocator::newSlab(int32_t size) {
-  constexpr int32_t kSimdPadding = 28;
+  constexpr int32_t kSimdPadding = simd::kPadding - sizeof(Header);
   char* run = nullptr;
   uint64_t available = 0;
   int32_t needed = std::max<int32_t>(
