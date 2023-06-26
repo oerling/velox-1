@@ -236,11 +236,12 @@ bool MmapAllocator::allocateContiguousImpl(
   }
   const auto numLargeCollateralPages = allocation.numPages();
   if (numLargeCollateralPages > 0) {
+    useHugePages(allocation, false);
     if (useMmapArena_) {
       std::lock_guard<std::mutex> l(arenaMutex_);
       managedArenas_->free(allocation.data(), allocation.size());
     } else {
-      if (::munmap(allocation.data(), allocation.size()) < 0) {
+	if (::munmap(allocation.data(), allocation.size()) < 0) {
         VELOX_MEM_LOG(ERROR) << "munmap got " << folly::errnoStr(errno)
                              << " for " << allocation.toString();
       }
@@ -348,19 +349,21 @@ bool MmapAllocator::allocateContiguousImpl(
     rollbackAllocation(numToMap);
     return false;
   }
-  allocation.set(data, AllocationTraits::pageBytes(numPages));
-  return true;
+    allocation.set(data, AllocationTraits::pageBytes(numPages));
+    useHugePages(allocation, true);
+    return true;
 }
 
 void MmapAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   if (allocation.empty()) {
     return;
   }
+  useHugePages(allocation, false);
   if (useMmapArena_) {
     std::lock_guard<std::mutex> l(arenaMutex_);
     managedArenas_->free(allocation.data(), allocation.size());
   } else {
-    if (::munmap(allocation.data(), allocation.size()) < 0) {
+      if (::munmap(allocation.data(), allocation.size()) < 0) {
       VELOX_MEM_LOG(ERROR) << "munmap returned " << folly::errnoStr(errno)
                            << " for " << allocation.toString();
     }

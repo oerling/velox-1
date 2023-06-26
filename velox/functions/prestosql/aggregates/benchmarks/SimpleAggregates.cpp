@@ -10,7 +10,7 @@
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
+ * See the License for the specific language governng permissions and
  * limitations under the License.
  */
 #include <fmt/format.h>
@@ -18,13 +18,17 @@
 #include <folly/init/Init.h>
 #include <string>
 
+#include "velox/common/memory/MmapAllocator.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
+DEFINE_int64(cache_gb, 10, "GB of MmapAllocator, 0 to use malloc");
 DEFINE_int64(fuzzer_seed, 99887766, "Seed for random input dataset generator");
+DEFINE_int32(threads, 1, "threads for agg from files");
 
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
@@ -186,36 +190,29 @@ return exec::BlockingReason::kNotBlocked;
                     .singleAggregation(
                         {"separable_id", "longterm_id"}, {"sum(signal_value)"})
                     .singleAggregation({}, {"count(1) as c", "sum(a0)"})
-                    .planFragment();
+                    .planNode();
     suspender.dismiss();
 
     for (auto counter = 0; counter < 1; ++counter) {
       vector_size_t numResultRows = 0;
-      auto task = makeTask(plan);
 
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf1")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf2")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf3")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf4")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf5")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf6")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf7")));
-      task->addSplit("0", exec::Split(makeHiveConnectorSplit("/tmp/tf8")));
-      task->noMoreSplits("0");
-
+std::vector<exec::Split> splits = {
+  exec::Split(makeHiveConnectorSplit("/tmp/tf1")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf2")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf3")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf4")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf5")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf6")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf7")),
+  exec::Split(makeHiveConnectorSplit("/tmp/tf8"))};
       LOG(ERROR) << "Starting";
 
-      // exec::Task::start(task, 8);
-      // auto& executor = folly::QueuedImmediateExecutor::instance();
-      // auto future = task->taskCompletionFuture(100'000'000).via(&executor);
-      // future.wait();
-
-      while (auto result = task->next()) {
-        numResultRows += result->size();
-      }
-      folly::doNotOptimizeAway(numResultRows);
-      LOG(ERROR) << exec::printPlanWithStats(
-          *plan.planNode, task->taskStats(), true);
+ auto task = AssertQueryBuilder(plan)
+	.maxDrivers(FLAGS_threads)
+	.splits(splits)
+   .assertTypeAndNumRows(ROW({BIGINT(), DOUBLE()}), FLAGS_threads);
+	LOG(ERROR) << exec::printPlanWithStats(
+					       *plan, task->taskStats(), true);
     }
   }
 
@@ -360,9 +357,28 @@ BENCHMARK_DRAW_LINE();
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
 
+  std::shared_ptr<memory::MemoryAllocator> allocator;
+  if (FLAGS_cache_gb) {
+      int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
+      memory::MmapAllocator::Options options;
+      options.capacity = memoryBytes;
+
+
+      auto mmap = std::make_shared<memory::MmapAllocator>(options);
+      allocator = std::make_shared<cache::AsyncDataCache>(
+							  mmap, memoryBytes);
+      memory::MemoryAllocator::setDefaultInstance(allocator.get());
+    }
+
+
+
   benchmark = std::make_unique<SimpleAggregatesBenchmark>();
   // folly::runBenchmarks();
   benchmark->run();
   benchmark.reset();
   return 0;
 }
+
+
+
+

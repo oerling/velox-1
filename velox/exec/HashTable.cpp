@@ -26,6 +26,8 @@
 
 using facebook::velox::common::testutil::TestValue;
 
+DEFINE_bool(no_unroll, false, "No interleave of probe cache misses");
+
 namespace facebook::velox::exec {
 namespace {
 constexpr int32_t kMinTableSizeForParallelJoinBuild = 1000;
@@ -467,7 +469,8 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
   int32_t probeIndex = 0;
   int32_t numProbes = lookup.rows.size();
   auto rows = lookup.rows.data();
-  for (; probeIndex + 8 <= numProbes; probeIndex += 8) {
+  bool noUnroll = FLAGS_no_unroll;
+  for (; !noUnroll && probeIndex + 8 <= numProbes; probeIndex += 8) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, lookup.hashes[row], row);
     row = rows[probeIndex + 1];
@@ -498,7 +501,7 @@ void HashTable<ignoreNullKeys>::groupProbe(HashLookup& lookup) {
     fullProbe<false>(lookup, state2, true);
     fullProbe<false>(lookup, state3, true);
     fullProbe<false>(lookup, state4, true);
-    fullProbe<false>(lookup, state5, false);
+    fullProbe<false>(lookup, state5, true);
     fullProbe<false>(lookup, state6, true);
     fullProbe<false>(lookup, state7, true);
     fullProbe<false>(lookup, state8, true);
@@ -522,7 +525,8 @@ void HashTable<ignoreNullKeys>::groupNormalizedKeyProbe(HashLookup& lookup) {
   auto rows = lookup.rows.data();
   constexpr int32_t kKeyOffset =
       -static_cast<int32_t>(sizeof(normalized_key_t));
-  for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
+  bool noUnroll = FLAGS_no_unroll;
+  for (; !noUnroll && probeIndex + 4 <= numProbes; probeIndex += 4) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, lookup.hashes[row], row);
     row = rows[probeIndex + 1];
@@ -620,7 +624,8 @@ void HashTable<ignoreNullKeys>::joinProbe(HashLookup& lookup) {
   ProbeState state2;
   ProbeState state3;
   ProbeState state4;
-  for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
+  bool noUnroll = FLAGS_no_unroll;
+  for (; !noUnroll && probeIndex + 4 <= numProbes; probeIndex += 4) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, lookup.hashes[row], row);
     row = rows[probeIndex + 1];
@@ -702,7 +707,8 @@ void HashTable<ignoreNullKeys>::joinNormalizedKeyProbe(HashLookup& lookup) {
   char** hits = lookup.hits.data();
   constexpr int32_t kKeyOffset =
       -static_cast<int32_t>(sizeof(normalized_key_t));
-  for (; probeIndex + 4 <= numProbes; probeIndex += 4) {
+  bool noUnroll = FLAGS_no_unroll;
+  for (; !noUnroll && probeIndex + 4 <= numProbes; probeIndex += 4) {
     int32_t row = rows[probeIndex];
     state1.preProbe(*this, hashes[row], row);
     row = rows[probeIndex + 1];
@@ -926,12 +932,19 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   // different depending on kInterleaveRows.
   int64_t tagIndexEnd = sizeMask_ + 1;
   for (auto i = 0; i < numPartitions; ++i) {
-    // The bounds are rounded up to cache line size.
-    buildPartitionBounds_[i] = bits::roundUp(
-        (capacity_ / numPartitions) * i,
-        folly::hardware_destructive_interference_size);
+    if (kInterleaveRows) {
+      // The bounds are the closes tag/row pointer group bound, always cache
+      // line aligned.
+      buildPartitionBounds_[i] = bits::roundUp(
+          ((sizeMask_ + 1) / numPartitions) * i, kTagRowGroupSize);
+    } else {
+      // The bounds are rounded up to cache line size.
+      buildPartitionBounds_[i] = bits::roundUp(
+          (capacity_ / numPartitions) * i,
+          folly::hardware_destructive_interference_size);
+    }
   }
-  buildPartitionBounds_.back() = capacity_;
+  buildPartitionBounds_.back() = sizeMask_ + 1;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
   std::vector<std::shared_ptr<AsyncSource<bool>>> buildSteps;
   auto sync = folly::makeGuard([&]() {
@@ -984,7 +997,7 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
         hashes.data(),
         overflows.size(),
         0,
-        capacity_,
+        sizeMask_ + 1,
         nullptr);
     auto table = i == 0 ? this : otherTables_[i - 1].get();
     VELOX_CHECK_EQ(table->rows()->numRows(), table->numParallelBuildRows_);
@@ -1920,14 +1933,18 @@ void HashTable<ignoreNullKeys>::checkConsistency() const {
   }
   uint64_t numEmpty = 0;
   uint64_t numTombstone = 0;
-  for (auto i = 0; i < capacity_; ++i) {
-    if (tags_[i] == ProbeState::kTombstoneTag) {
-      ++numTombstone;
-      continue;
-    }
-    if (tags_[i] == ProbeState::kEmptyTag) {
-      ++numEmpty;
-      continue;
+  constexpr int32_t kSpacing =
+      kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector);
+  for (auto start = 0; start < sizeMask_; start += kSpacing) {
+    for (auto i = start; i < start + sizeof(TagVector); ++i) {
+      if (tags_[i] == ProbeState::kTombstoneTag) {
+        ++numTombstone;
+        continue;
+      }
+      if (tags_[i] == ProbeState::kEmptyTag) {
+        ++numEmpty;
+        continue;
+      }
     }
   }
   VELOX_CHECK_EQ(
