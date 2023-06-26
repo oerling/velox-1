@@ -430,7 +430,10 @@ class HashTableTest : public testing::TestWithParam<bool> {
   // Same as testProbe for normalized keys, uses F14Set instead.
   void testF14Probe() {
     f14Table_ = std::make_unique<F14TestTable>(
-					       1024,F14TestHasher(), F14TestComparer(), memory::StlAllocator<uint64_t*>(*pool_));
+        1024,
+        F14TestHasher(),
+        F14TestComparer(),
+        memory::StlAllocator<uint64_t*>(*pool_));
     constexpr int32_t kInsertBatch = 1000;
     char* insertRows[kInsertBatch];
     VELOX_CHECK_EQ(
@@ -496,9 +499,10 @@ class HashTableTest : public testing::TestWithParam<bool> {
           for (auto row = 0; row < lookup->rows.size(); ++row) {
             auto index = lookup->rows[row];
             uint64_t key = lookup->hashes[index];
-	    uint64_t* keyPtr = &key + 1;
+            uint64_t* keyPtr = &key + 1;
             auto it = f14Table_->find(keyPtr);
-            lookup->hits[index] = it == f14Table_->end() ? nullptr : reinterpret_cast<char*>(*it);
+            lookup->hits[index] =
+                it == f14Table_->end() ? nullptr : reinterpret_cast<char*>(*it);
           }
         }
         for (auto i = 0; i < lookup->rows.size(); ++i) {
@@ -600,13 +604,13 @@ class HashTableTest : public testing::TestWithParam<bool> {
   };
 
   struct F14TestComparer {
-    bool operator()(uint64_t* left, uint64_t*  right) const {
+    bool operator()(uint64_t* left, uint64_t* right) const {
       return left[-1] == right[-1];
     }
   };
 
   using F14TestTable = folly::F14FastSet<
-    uint64_t*,
+      uint64_t*,
       F14TestHasher,
       F14TestComparer,
       memory::StlAllocator<uint64_t*>>;
@@ -899,10 +903,9 @@ TEST_P(HashTableTest, f14Small) {
 TEST_P(HashTableTest, f14Large) {
   tryF14_ = true;
   enableSpill_ = false;
-    auto type = ROW({"k1"}, {BIGINT()});
+  auto type = ROW({"k1"}, {BIGINT()});
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 10000000, 10, type, 1);
 }
-
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     HashTableTests,

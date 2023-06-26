@@ -494,7 +494,7 @@ class HashTable : public BaseHashTable {
   auto& testingOtherTables() const {
     return otherTables_;
   }
-  
+
  private:
   // When interleaving tags ad pointers we store 48 bits per pointer.
   static constexpr int32_t kBytesInPointer = 6;
