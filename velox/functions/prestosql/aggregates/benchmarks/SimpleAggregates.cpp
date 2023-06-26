@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include <fmt/format.h>
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
