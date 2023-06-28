@@ -907,6 +907,15 @@ TEST_P(HashTableTest, f14Large) {
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 10000000, 10, type, 1);
 }
 
+TEST_P(HashTableTest, f14LargeMiss) {
+  tryF14_ = true;
+  enableSpill_ = false;
+  auto type = ROW({"k1"}, {BIGINT()});
+  insertPct_ = 5;
+  testCycle(BaseHashTable::HashMode::kNormalizedKey, 20000000, 10, type, 1);
+}
+
+
 VELOX_INSTANTIATE_TEST_SUITE_P(
     HashTableTests,
     HashTableTest,
