@@ -16,11 +16,14 @@
 
 #pragma once
 
-#include "velox/common/file/File.h"
+#include "velox/functions/remote/if/gen-cpp2/RemoteFunction_types.h"
 
-namespace facebook::velox::tests::utils {
+namespace facebook::velox {
+class VectorSerde;
+}
 
-std::vector<std::string> iobufsToStrings(
-    const std::vector<folly::IOBuf>& iobufs);
+namespace facebook::velox::functions {
 
-} // namespace facebook::velox::tests::utils
+std::unique_ptr<VectorSerde> getSerde(const remote::PageFormat& format);
+
+} // namespace facebook::velox::functions

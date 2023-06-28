@@ -14,13 +14,20 @@
  * limitations under the License.
  */
 
-#pragma once
+#include "velox/functions/remote/if/GetSerde.h"
+#include "velox/serializers/PrestoSerializer.h"
+#include "velox/serializers/UnsafeRowSerializer.h"
 
-#include "velox/common/file/File.h"
+namespace facebook::velox::functions {
 
-namespace facebook::velox::tests::utils {
+std::unique_ptr<VectorSerde> getSerde(const remote::PageFormat& format) {
+  switch (format) {
+    case remote::PageFormat::PRESTO_PAGE:
+      return std::make_unique<serializer::presto::PrestoVectorSerde>();
 
-std::vector<std::string> iobufsToStrings(
-    const std::vector<folly::IOBuf>& iobufs);
+    case remote::PageFormat::SPARK_UNSAFE_ROW:
+      return std::make_unique<serializer::spark::UnsafeRowVectorSerde>();
+  }
+}
 
-} // namespace facebook::velox::tests::utils
+} // namespace facebook::velox::functions
