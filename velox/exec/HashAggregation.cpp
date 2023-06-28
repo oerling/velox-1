@@ -67,8 +67,6 @@ HashAggregation::HashAggregation(
   std::vector<AggregateInfo> aggregateInfos;
   aggregateInfos.reserve(numAggregates);
 
-  std::vector<std::unique_ptr<Aggregate>> aggregates;
-  aggregates.reserve(numAggregates);
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
@@ -120,18 +118,12 @@ HashAggregation::HashAggregation(
       info.sortingKeys.push_back(exprToChannel(key.get(), inputType));
     }
 
-    if (numSortingKeys > 0) {
-      VELOX_USER_CHECK_NULL(
-          aggregate.mask,
-          "Aggregations over sorted inputs with masks are not supported yet");
-    }
-
     aggregateInfos.emplace_back(std::move(info));
   }
 
-  // Check that aggregate result type match the output type
-  for (auto i = 0; i < aggregates.size(); i++) {
-    const auto& aggResultType = aggregates[i]->resultType();
+  // Check that aggregate result type match the output type.
+  for (auto i = 0; i < aggregateInfos.size(); i++) {
+    const auto& aggResultType = aggregateInfos[i].function->resultType();
     const auto& expectedType = outputType_->childAt(numHashers + i);
     VELOX_CHECK(
         aggResultType->kindEquals(expectedType),
@@ -178,18 +170,8 @@ void HashAggregation::addInput(RowVectorPtr input) {
   }
   groupingSet_->addInput(input, mayPushdown_);
   numInputRows_ += input->size();
-  {
-    const auto hashTableStats = groupingSet_->hashTableStats();
-    auto lockedStats = stats_.wlock();
-    lockedStats->runtimeStats["hashtable.capacity"] =
-        RuntimeMetric(hashTableStats.capacity);
-    lockedStats->runtimeStats["hashtable.numRehashes"] =
-        RuntimeMetric(hashTableStats.numRehashes);
-    lockedStats->runtimeStats["hashtable.numDistinct"] =
-        RuntimeMetric(hashTableStats.numDistinct);
-    lockedStats->runtimeStats["hashtable.numTombstones"] =
-        RuntimeMetric(hashTableStats.numTombstones);
-  }
+
+  updateRuntimeStats();
 
   // NOTE: we should not trigger partial output flush in case of global
   // aggregation as the final aggregator will handle it the same way as the
@@ -215,6 +197,35 @@ void HashAggregation::addInput(RowVectorPtr input) {
       partialFull_ = false;
     }
   }
+}
+
+void HashAggregation::updateRuntimeStats() {
+  // Report range sizes and number of distinct values for the group-by keys.
+  const auto& hashers = groupingSet_->hashLookup().hashers;
+  uint64_t asRange;
+  uint64_t asDistinct;
+  const auto hashTableStats = groupingSet_->hashTableStats();
+
+  auto lockedStats = stats_.wlock();
+  auto& runtimeStats = lockedStats->runtimeStats;
+
+  for (auto i = 0; i < hashers.size(); i++) {
+    hashers[i]->cardinality(0, asRange, asDistinct);
+    if (asRange != VectorHasher::kRangeTooLarge) {
+      runtimeStats[fmt::format("rangeKey{}", i)] = RuntimeMetric(asRange);
+    }
+    if (asDistinct != VectorHasher::kRangeTooLarge) {
+      runtimeStats[fmt::format("distinctKey{}", i)] = RuntimeMetric(asDistinct);
+    }
+  }
+
+  runtimeStats["hashtable.capacity"] = RuntimeMetric(hashTableStats.capacity);
+  runtimeStats["hashtable.numRehashes"] =
+      RuntimeMetric(hashTableStats.numRehashes);
+  runtimeStats["hashtable.numDistinct"] =
+      RuntimeMetric(hashTableStats.numDistinct);
+  runtimeStats["hashtable.numTombstones"] =
+      RuntimeMetric(hashTableStats.numTombstones);
 }
 
 void HashAggregation::recordSpillStats() {

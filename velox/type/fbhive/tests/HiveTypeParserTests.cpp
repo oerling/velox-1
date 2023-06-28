@@ -21,11 +21,11 @@
 #include "gtest/gtest-test-part.h"
 #include "gtest/gtest.h"
 #include "velox/common/base/tests/GTestUtils.h"
-#include "velox/dwio/type/fbhive/HiveTypeParser.h"
+#include "velox/type/fbhive/HiveTypeParser.h"
 
 using facebook::velox::TypeKind;
 
-namespace facebook::velox::dwio::type::fbhive {
+namespace facebook::velox::type::fbhive {
 
 template <TypeKind KIND>
 void validate(const char* str) {
@@ -44,6 +44,9 @@ TEST(FbHive, typeParserPrimitive) {
   validate<TypeKind::DATE>("date");
   validate<TypeKind::REAL>("float");
   validate<TypeKind::DOUBLE>("double");
+  validate<TypeKind::VARCHAR>("string");
+  validate<TypeKind::VARCHAR>("varchar");
+  validate<TypeKind::VARCHAR>("varchar(16)");
 
   validate<TypeKind::INTEGER>("   int  ");
 }
@@ -140,6 +143,11 @@ TEST(FbHive, badParse) {
   VELOX_ASSERT_THROW(
       parser.parse("decimal(20, b)"),
       "Decimal scale must be a positive integer");
+  VELOX_ASSERT_THROW(
+      parser.parse("varchar(foo)"),
+      "Varchar length must be a positive integer");
+  VELOX_ASSERT_THROW(
+      parser.parse("varchar()"), "Varchar length must be a positive integer");
 }
 
 TEST(FbHive, caseInsensitive) {
@@ -163,4 +171,4 @@ TEST(FbHive, parseSpecialChar) {
   ASSERT_EQ(t->toString(), "ROW<\"a$_#\":INTEGER>");
 }
 
-} // namespace facebook::velox::dwio::type::fbhive
+} // namespace facebook::velox::type::fbhive

@@ -767,13 +767,6 @@ void PartitionedOutputBufferManager::initializeTask(
   });
 }
 
-bool PartitionedOutputBufferManager::updateBroadcastOutputBuffers(
-    const std::string& taskId,
-    int numBuffers,
-    bool noMoreBuffers) {
-  return updateOutputBuffers(taskId, numBuffers, noMoreBuffers);
-}
-
 bool PartitionedOutputBufferManager::updateOutputBuffers(
     const std::string& taskId,
     int numBuffers,

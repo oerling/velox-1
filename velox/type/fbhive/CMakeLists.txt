@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_dwio_type_fbhive_test HiveTypeParserTests.cpp)
+add_library(velox_type_fbhive HiveTypeParser.cpp HiveTypeSerializer.cpp)
 
-add_test(
-  NAME velox_dwio_type_fbhive_test
-  COMMAND velox_dwio_type_fbhive_test
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(velox_type_fbhive velox_type)
 
-target_link_libraries(velox_dwio_type_fbhive_test velox_dwio_type_fbhive
-                      velox_type gtest gtest_main gmock)
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tests)
+endif()
