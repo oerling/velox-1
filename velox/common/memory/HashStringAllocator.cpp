@@ -298,7 +298,7 @@ HashStringAllocator::allocate(int32_t size, bool exactSize) {
   return header;
 }
 
-  HashStringAllocator::Header* FOLLY_NULLABLE
+HashStringAllocator::Header* FOLLY_NULLABLE
 HashStringAllocator::allocateFromFreeLists(
     int32_t preferredSize,
     bool mustHaveSize,
@@ -307,7 +307,9 @@ HashStringAllocator::allocateFromFreeLists(
   if (!numFree_) {
     return nullptr;
   }
-    for (auto index = freeListIndex(preferredSize, freeHasData_); index < kNumFreeLists; ++index) {
+  for (auto index = freeListIndex(preferredSize, freeHasData_);
+       index < kNumFreeLists;
+       ++index) {
     if (auto header = allocateFromFreeList(
             preferredSize, mustHaveSize, isFinalSize, index)) {
       return header;
@@ -375,7 +377,8 @@ HashStringAllocator::allocateFromFreeList(
 
 void HashStringAllocator::free(Header* _header) {
   Header* header = _header;
-  if (header->size() > kMaxAlloc && !pool_.isInCurrentAllocation(header) && allocationsFromPool_.find(header) != allocationsFromPool_.end()) {
+  if (header->size() > kMaxAlloc && !pool_.isInCurrentAllocation(header) &&
+      allocationsFromPool_.find(header) != allocationsFromPool_.end()) {
     // A large free can either be a rest of block or a standalone allocation.
     VELOX_CHECK(!header->isContinued());
     freeToPool(header, header->size() + sizeof(Header));
