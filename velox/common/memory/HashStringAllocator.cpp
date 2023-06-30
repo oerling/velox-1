@@ -255,7 +255,7 @@ void HashStringAllocator::freeRestOfBlock(Header* header, int32_t keepBytes) {
 }
 
   //  static
-  int32_t HashStringAllocator::freeListSizes_[kNumFreeLists] = {72, 8  * 16 + 20, 16 * 16 + 20, 32 * 16 + 20, 64 * 16 + 20, 128 * 16 + 20, HashStringAllocator::kMaxAlloc + 1}; 
+  int32_t HashStringAllocator::freeListSizes_[kNumFreeLists] = {72, 8  * 16 + 20, 16 * 16 + 20, 32 * 16 + 20, 64 * 16 + 20, 128 * 16 + 20, std::numeric_limits<int32_t>::max()};
 
   CompactDoubleList* HashStringAllocator::findNonEmptyFreeList(int32_t size) {
     auto index  = freeListIndex (size, freeHasData_);
