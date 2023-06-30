@@ -116,7 +116,6 @@ TEST_F(HashStringAllocatorTest, allocateLarge) {
       memory::AllocationTraits::pageBytes(pool_->largestSizeClass() + 1);
   auto header = allocate(size);
   instance_->free(header);
-  // We allow for some free overhead for free lists after all is freed.
   EXPECT_EQ(0, instance_->retainedSize());
 }
 

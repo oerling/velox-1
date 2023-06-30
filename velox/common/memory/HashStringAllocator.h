@@ -372,7 +372,8 @@ class HashStringAllocator : public StreamArena {
   void freeRestOfBlock(Header* FOLLY_NONNULL header, int32_t keepBytes);
 
   // Returns the free list index for 'size'. Masks out empty sizes that can be
-  // given by 'mask'.
+  // given by 'mask'. If 'mask' excludes all free lists, returns >
+  // kNumFreeLists.
   int32_t freeListIndex(int32_t size, uint32_t mask = ~0);
 
   // Circular list of free blocks.
