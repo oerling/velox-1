@@ -276,7 +276,7 @@ class HashStringAllocator : public StreamArena {
 
   // Returns the total memory footprint of 'this'.
   int64_t retainedSize() const {
-    return pool_.allocatedBytes();
+    return pool_.allocatedBytes() + sizeFromPool_;
   }
 
   // Adds the allocation of 'header' and any extensions (if header has
@@ -364,19 +364,15 @@ class HashStringAllocator : public StreamArena {
       int32_t preferredSize,
       bool mustHaveSize,
       bool isFinalSize,
-					      int32_t freeListIndex);
+      int32_t freeListIndex);
 
-  
   // Sets 'header' to be 'keepBytes' long and adds the remainder of
   // 'header's memory to free list. Does nothing if the resulting
   // blocks would be below minimum size.
   void freeRestOfBlock(Header* FOLLY_NONNULL header, int32_t keepBytes);
 
-  // Returns the free list for 'size' or the smallest non-empty free list if the
-  // first is empty. nullptr if all are empty.
-  CompactDoubleList* findNonEmptyFreeList(int32_t size);
-
-  // Returns the free list index for 'size'.
+  // Returns the free list index for 'size'. Masks out empty sizes that can be
+  // given by 'mask'.
   int32_t freeListIndex(int32_t size, uint32_t mask = ~0);
 
   // Circular list of free blocks.
@@ -405,7 +401,11 @@ class HashStringAllocator : public StreamArena {
   // Pool for getting new slabs.
   AllocationPool pool_;
 
+  // Map from pointer to size for large blocks allocated from pool().
   folly::F14FastMap<void*, size_t> allocationsFromPool_;
+
+  // Sum of sizes in 'allocationsFromPool_'.
+  int64_t sizeFromPool_{0};
 };
 
 // Utility for keeping track of allocation between two points in

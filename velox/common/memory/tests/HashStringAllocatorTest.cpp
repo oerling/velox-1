@@ -117,7 +117,7 @@ TEST_F(HashStringAllocatorTest, allocateLarge) {
   auto header = allocate(size);
   instance_->free(header);
   // We allow for some free overhead for free lists after all is freed.
-  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 200);
+  EXPECT_EQ(0, instance_->retainedSize());
 }
 
 TEST_F(HashStringAllocatorTest, multipart) {
@@ -125,6 +125,7 @@ TEST_F(HashStringAllocatorTest, multipart) {
   std::vector<Multipart> data(kNumSamples);
   for (auto count = 0; count < 3; ++count) {
     for (auto i = 0; i < kNumSamples; ++i) {
+      instance_->checkConsistency();
       if (data[i].start.header && folly::Random::rand32(rng_) % 10 > 7) {
         checkAndFree(data[i]);
         continue;
