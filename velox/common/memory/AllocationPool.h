@@ -48,7 +48,7 @@ class AllocationPool {
   }
 
   int32_t numSmallAllocations() const {
-    return 1 + allocations_.size();
+    return (allocation_.numPages() == 0 ? 0 : 1) + allocations_.size();
   }
 
   int32_t numLargeAllocations() const {
