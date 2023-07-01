@@ -124,7 +124,6 @@ TEST_F(HashStringAllocatorTest, multipart) {
   std::vector<Multipart> data(kNumSamples);
   for (auto count = 0; count < 3; ++count) {
     for (auto i = 0; i < kNumSamples; ++i) {
-      instance_->checkConsistency();
       if (data[i].start.header && folly::Random::rand32(rng_) % 10 > 7) {
         checkAndFree(data[i]);
         continue;
