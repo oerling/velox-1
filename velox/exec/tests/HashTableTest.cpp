@@ -915,7 +915,6 @@ TEST_P(HashTableTest, f14LargeMiss) {
   testCycle(BaseHashTable::HashMode::kNormalizedKey, 20000000, 10, type, 1);
 }
 
-
 VELOX_INSTANTIATE_TEST_SUITE_P(
     HashTableTests,
     HashTableTest,
