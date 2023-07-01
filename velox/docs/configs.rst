@@ -244,7 +244,7 @@ Hive Connector
    * - max_partitions_per_writers
      - integer
      - 100
-     - Maximum number of partitions per a single table writer instance.
+     - Maximum number of (bucketed) partitions per a single table writer instance.
    * - insert_existing_partitions_behavior
      - string
      - ERROR
@@ -262,6 +262,15 @@ Hive Connector
      - false
      - True if reading the source file column names as lower case, and planner should guarantee
      - the input column name and filter is also lower case to achive case-insensitive read..    
+   * - max-coalesced-bytes
+     - integer
+     - 512KB
+     - Maximum size in bytes to coalesce requests to be fetched in a single request.
+   * - max-coalesced-distance-bytes
+     - integer
+     - 128MB
+     - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
+
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -354,15 +354,15 @@ HiveDataSource::HiveDataSource(
         std::string,
         std::shared_ptr<connector::ColumnHandle>>& columnHandles,
     FileHandleFactory* fileHandleFactory,
-    velox::memory::MemoryPool* pool,
     core::ExpressionEvaluator* expressionEvaluator,
     memory::MemoryAllocator* allocator,
     const std::string& scanId,
     bool fileColumnNamesReadAsLowerCase,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const dwio::common::ReaderOptions& options)
     : fileHandleFactory_(fileHandleFactory),
-      readerOpts_(pool),
-      pool_(pool),
+      readerOpts_(options),
+      pool_(&options.getMemoryPool()),
       outputType_(outputType),
       expressionEvaluator_(expressionEvaluator),
       allocator_(allocator),
@@ -402,9 +402,6 @@ HiveDataSource::HiveDataSource(
   VELOX_CHECK(
       hiveTableHandle != nullptr,
       "TableHandle must be an instance of HiveTableHandle");
-  VELOX_CHECK(
-      hiveTableHandle->isFilterPushdownEnabled(),
-      "Filter pushdown must be enabled");
   if (fileColumnNamesReadAsLowerCase) {
     checkColumnNameLowerCase(outputType);
     checkColumnNameLowerCase(hiveTableHandle->subfieldFilters());
@@ -412,11 +409,20 @@ HiveDataSource::HiveDataSource(
   }
 
   SubfieldFilters filters;
-  for (auto& [k, v] : hiveTableHandle->subfieldFilters()) {
-    filters.emplace(k.clone(), v->clone());
+  core::TypedExprPtr remainingFilter;
+  if (hiveTableHandle->isFilterPushdownEnabled()) {
+    for (auto& [k, v] : hiveTableHandle->subfieldFilters()) {
+      filters.emplace(k.clone(), v->clone());
+    }
+    remainingFilter = extractFiltersFromRemainingFilter(
+        hiveTableHandle->remainingFilter(),
+        expressionEvaluator_,
+        false,
+        filters);
+  } else {
+    VELOX_CHECK(hiveTableHandle->subfieldFilters().empty());
+    remainingFilter = hiveTableHandle->remainingFilter();
   }
-  auto remainingFilter = extractFiltersFromRemainingFilter(
-      hiveTableHandle->remainingFilter(), expressionEvaluator_, false, filters);
   std::vector<common::Subfield> remainingFilterInputs;
   if (remainingFilter) {
     remainingFilterExprSet_ = expressionEvaluator_->compile(remainingFilter);
@@ -460,6 +466,7 @@ HiveDataSource::HiveDataSource(
     readerOutputType_ = ROW(std::move(names), std::move(types));
   }
 
+  readerOpts_.setFileSchema(hiveTableHandle->dataColumns());
   rowReaderOpts_.setScanSpec(scanSpec_);
   rowReaderOpts_.setMetadataFilter(metadataFilter_);
 
@@ -772,7 +779,6 @@ HiveDataSource::createBufferedInput(
   if (auto* asyncCache = dynamic_cast<cache::AsyncDataCache*>(allocator_)) {
     return std::make_unique<dwio::common::CachedBufferedInput>(
         fileHandle.file,
-        readerOpts.getMemoryPool(),
         dwio::common::MetricsLog::voidLog(),
         fileHandle.uuid.id(),
         asyncCache,
@@ -780,8 +786,7 @@ HiveDataSource::createBufferedInput(
         fileHandle.groupId.id(),
         ioStats_,
         executor_,
-        readerOpts.loadQuantum(),
-        readerOpts.maxCoalesceDistance());
+        readerOpts);
   }
   return std::make_unique<dwio::common::BufferedInput>(
       fileHandle.file,
