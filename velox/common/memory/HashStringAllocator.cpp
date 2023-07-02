@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 #include "velox/common/memory/HashStringAllocator.h"
-#include "velox/common/base/SimdUtil.h"
 #include "velox/common/base/Portability.h"
+#include "velox/common/base/SimdUtil.h"
 
 namespace facebook::velox {
 
