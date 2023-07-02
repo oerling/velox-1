@@ -324,8 +324,9 @@ class HashStringAllocator : public StreamArena {
 
   // different sizes have different free lists. Sizes below first size go to
   // freeLists_[0]. Sizes >= freeListSize_[i] go to freeLists_[i + 1]. The sizes
-  // match the size progression for growing F14 containers. This
-  static int32_t freeListSizes_[HashStringAllocator::kNumFreeLists];
+  // match the size progression for growing F14 containers. Static array of
+  // exactly 8 ints for simd.
+  static int32_t freeListSizes_[HashStringAllocator::kNumFreeLists + 1];
 
   void newRange(int32_t bytes, ByteRange* range, bool contiguous);
 

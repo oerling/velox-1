@@ -262,16 +262,18 @@ void HashStringAllocator::freeRestOfBlock(Header* header, int32_t keepBytes) {
 }
 
 //  static
-int32_t HashStringAllocator::freeListSizes_[kNumFreeLists] = {
+int32_t HashStringAllocator::freeListSizes_[kNumFreeLists + 1] = {
     72,
     8 * 16 + 20,
     16 * 16 + 20,
     32 * 16 + 20,
     64 * 16 + 20,
     128 * 16 + 20,
+    std::numeric_limits<int32_t>::max(),
     std::numeric_limits<int32_t>::max()};
 
 int32_t HashStringAllocator::freeListIndex(int32_t size, uint32_t mask) {
+  static_assert(sizeof(freeListSizes_) == sizeof(xsimd::batch<int32_t>));
   int32_t bits =
       simd::toBitMask(
           xsimd::broadcast(size) < xsimd::load_unaligned(freeListSizes_)) &
