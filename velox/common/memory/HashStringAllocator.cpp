@@ -15,6 +15,7 @@
  */
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/base/SimdUtil.h"
+#include "velox/common/base/Portability.h"
 
 namespace facebook::velox {
 
@@ -278,7 +279,7 @@ int32_t HashStringAllocator::freeListIndex(int32_t size, uint32_t mask) {
       simd::toBitMask(
           xsimd::broadcast(size) < xsimd::load_unaligned(freeListSizes_)) &
       mask;
-  return __builtin_ctz(bits);
+  return count_trailing_zeros(bits);
 }
 
 HashStringAllocator::Header* FOLLY_NULLABLE
@@ -317,7 +318,7 @@ HashStringAllocator::allocateFromFreeLists(
       return header;
     }
     // Go to the next larger size non-empty free list.
-    index = __builtin_ctz(freeHasData_ & ~bits::lowMask(index + 1));
+    index = count_trailing_zeros(freeHasData_ & ~bits::lowMask(index + 1));
   }
   if (mustHaveSize) {
     return nullptr;
