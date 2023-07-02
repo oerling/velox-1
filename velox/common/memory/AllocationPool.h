@@ -115,7 +115,7 @@ class AllocationPool {
   bool isInCurrentAllocation(void* ptr) const {
     return allocation_.numPages() && ptr >= allocation_.runAt(0).data<void>() &&
         ptr <
-        allocation_.runAt(1).data<char>() + allocation_.runAt(0).numBytes();
+        allocation_.runAt(0).data<char>() + allocation_.runAt(0).numBytes();
   }
 
  private:

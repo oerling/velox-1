@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/common/base/SimdUtil.h"
 
 namespace facebook::velox {
 
 namespace {
-/// Returns the size of the previous free block. The size is stored in the last
-/// 4 bytes of the free block, e.g. 4 bytes just before the current header.
+/// Returns the size of the previous free block. The size is stored in the
+/// last 4 bytes of the free block, e.g. 4 bytes just before the current
+/// header.
 uint32_t* previousFreeSize(HashStringAllocator::Header* header) {
   return reinterpret_cast<uint32_t*>(header) - 1;
 }
@@ -42,8 +42,9 @@ getPreviousFree(HashStringAllocator::Header* FOLLY_NONNULL header) {
   return previous;
 }
 
-/// Sets kFree flag in the 'header' and writes the size of the block to the last
-/// 4 bytes of the block. Sets kPreviousFree flag in the next block's 'header'.
+/// Sets kFree flag in the 'header' and writes the size of the block to the
+/// last 4 bytes of the block. Sets kPreviousFree flag in the next block's
+/// 'header'.
 void markAsFree(HashStringAllocator::Header* FOLLY_NONNULL header) {
   header->setFree();
   auto nextHeader = header->next();
@@ -273,7 +274,7 @@ int32_t HashStringAllocator::freeListSizes_[kNumFreeLists] = {
 int32_t HashStringAllocator::freeListIndex(int32_t size, uint32_t mask) {
   int32_t bits =
       simd::toBitMask(
-          xsimd::broadcast(size) <= xsimd::load_unaligned(freeListSizes_)) &
+          xsimd::broadcast(size) < xsimd::load_unaligned(freeListSizes_)) &
       mask;
   return __builtin_ctz(bits);
 }
@@ -307,18 +308,20 @@ HashStringAllocator::allocateFromFreeLists(
   if (!numFree_) {
     return nullptr;
   }
-  for (auto index = freeListIndex(preferredSize, freeHasData_);
-       index < kNumFreeLists;
-       ++index) {
+  auto index = freeListIndex(preferredSize, freeHasData_);
+  while (index < kNumFreeLists) {
     if (auto header = allocateFromFreeList(
             preferredSize, mustHaveSize, isFinalSize, index)) {
       return header;
     }
+    // Go to the next larger size non-empty free list.
+    index = __builtin_ctz(freeHasData_ & ~bits::lowMask(index + 1));
   }
   if (mustHaveSize) {
     return nullptr;
   }
-  for (auto index = freeListIndex(preferredSize) - 1; index >= 0; --index) {
+  index = freeListIndex(preferredSize) - 1;
+  for (; index >= 0; --index) {
     if (auto header =
             allocateFromFreeList(preferredSize, false, isFinalSize, index)) {
       return header;
@@ -407,16 +410,18 @@ void HashStringAllocator::free(Header* _header) {
     }
     if (header->isPreviousFree()) {
       auto previousFree = getPreviousFree(header);
+      removeFromFreeList(previousFree);
       previousFree->setSize(
           previousFree->size() + header->size() + sizeof(Header));
+      
       header = previousFree;
     } else {
       ++numFree_;
-      auto freeIndex = freeListIndex(header->size());
-      freeHasData_ |= 1 << freeIndex;
-      free_[freeIndex].insert(
-          reinterpret_cast<CompactDoubleList*>(header->begin()));
     }
+    auto freeIndex = freeListIndex(header->size());
+    freeHasData_ |= 1 << freeIndex;
+    free_[freeIndex].insert(
+			    reinterpret_cast<CompactDoubleList*>(header->begin()));
     markAsFree(header);
     header = continued;
   } while (header);
@@ -546,11 +551,20 @@ void HashStringAllocator::checkConsistency() const {
   uint64_t numInFreeList = 0;
   uint64_t bytesInFreeList = 0;
   for (auto i = 0; i < kNumFreeLists; ++i) {
+    bool hasData = freeHasData_ & (1 << i);
+    bool listNonEmpty = !free_[i].empty();
+    VELOX_CHECK_EQ(hasData, listNonEmpty);
     for (auto free = free_[i].next(); free != &free_[i]; free = free->next()) {
       ++numInFreeList;
-      bytesInFreeList += headerOf(free)->size() + sizeof(Header);
+      auto size = headerOf(free)->size();
+      if (i > 0) {
+        VELOX_CHECK_GE(size, freeListSizes_[i - 1]);
+      }
+      VELOX_CHECK_LT(size, freeListSizes_[i]);
+      bytesInFreeList += size + sizeof(Header);
     }
   }
+
   VELOX_CHECK_EQ(numInFreeList, numFree_);
   VELOX_CHECK_EQ(bytesInFreeList, freeBytes_);
 }
