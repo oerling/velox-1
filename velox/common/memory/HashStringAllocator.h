@@ -300,7 +300,7 @@ class HashStringAllocator : public StreamArena {
     freeBytes_ = 0;
     freeHasData_ = 0;
     for (auto i = 0; i < kNumFreeLists; ++i) {
-      new(&free_[i]) CompactDoubleList(); 
+      new (&free_[i]) CompactDoubleList();
     }
     pool_.clear();
   }

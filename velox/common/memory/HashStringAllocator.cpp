@@ -413,7 +413,7 @@ void HashStringAllocator::free(Header* _header) {
       removeFromFreeList(previousFree);
       previousFree->setSize(
           previousFree->size() + header->size() + sizeof(Header));
-      
+
       header = previousFree;
     } else {
       ++numFree_;
@@ -421,7 +421,7 @@ void HashStringAllocator::free(Header* _header) {
     auto freeIndex = freeListIndex(header->size());
     freeHasData_ |= 1 << freeIndex;
     free_[freeIndex].insert(
-			    reinterpret_cast<CompactDoubleList*>(header->begin()));
+        reinterpret_cast<CompactDoubleList*>(header->begin()));
     markAsFree(header);
     header = continued;
   } while (header);

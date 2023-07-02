@@ -33,9 +33,9 @@ class CompactDoubleList {
 
   CompactDoubleList(const CompactDoubleList& other) = delete;
   CompactDoubleList(CompactDoubleList&& other) = delete;
-  void operator=(const CompactDoubleList& other) = delete; 
-  void operator=(CompactDoubleList&& other) = delete; 
-  
+  void operator=(const CompactDoubleList& other) = delete;
+  void operator=(CompactDoubleList&& other) = delete;
+
   // Return true if 'this' is the only element.
   bool empty() const {
     return next() == this;
