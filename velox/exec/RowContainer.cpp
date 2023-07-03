@@ -674,14 +674,9 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     int32_t rowsInRun = (iter.endOfRun - iter.rowBegin) / rowSize;
     toSkip -= rowsInRun;
     auto numRuns = 1;
-    if (iter.runIndex >= numRuns - 1) {
-      ++iter.allocationIndex;
-      iter.runIndex = 0;
-    } else {
-      ++iter.runIndex;
-    }
+    ++iter.allocationIndex;
     auto range = rows_.rangeAt(iter.allocationIndex);
-    iter.endOfRun = range.data() + rows_.currentOffset();
+    iter.endOfRun = range.data() + (iter.allocationIndex == rows_.numRanges() - 1 ? rows_.currentOffset() : range.size());
     iter.rowBegin = range.data();
   }
   if (iter.normalizedKeysLeft) {

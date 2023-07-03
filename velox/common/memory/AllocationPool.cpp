@@ -87,7 +87,7 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   auto roundedPages = std::max<int32_t>(kMinPages, numPages);
   pool_->allocateNonContiguous(
 			       roundedPages, allocation, roundedPages);
-
+  VELOX_CHECK_EQ(allocation.numRuns(), 1);
     startOfRun_ = allocation.runAt(0).data<char>();
     bytesInRun_ = allocation.runAt(0).numBytes();
     currentOffset_ = 0;
