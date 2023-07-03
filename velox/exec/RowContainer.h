@@ -389,8 +389,7 @@ class RowContainer {
       char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     int32_t count = 0;
     uint64_t totalBytes = 0;
-    VELOX_CHECK_EQ(rows_.numLargeAllocations(), 0);
-    auto numAllocations = rows_.numSmallAllocations();
+    auto numAllocations = rows_.numRanges();
     if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
         iter->rowOffset == 0) {
       iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
@@ -399,17 +398,16 @@ class RowContainer {
     int32_t rowSize = fixedRowSize_ +
         (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
     for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
-      auto allocation = rows_.allocationAt(i);
-      auto numRuns = allocation->numRuns();
+      auto range = rows_.rangeAt(i);
+      auto numRuns = 1;
       for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
-        memory::Allocation::PageRun run = allocation->runAt(runIndex);
         auto* data =
-            run.data<char>() + memory::alignmentPadding(run.data(), alignment_);
+            range.data() + memory::alignmentPadding(range.data(), alignment_);
         int64_t limit;
-        if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
+        if (i == numAllocations - 1 ) {
           limit = rows_.currentOffset();
         } else {
-          limit = run.numPages() * memory::AllocationTraits::kPageSize;
+          limit = range.size();
         }
         auto row = iter->rowOffset;
         while (row + rowSize <= limit) {
@@ -444,7 +442,7 @@ class RowContainer {
           }
           if (count == maxRows || totalBytes > maxBytes) {
             iter->rowOffset = row;
-            iter->runIndex = runIndex;
+            iter->runIndex = 0;
             iter->allocationIndex = i;
             return count;
           }

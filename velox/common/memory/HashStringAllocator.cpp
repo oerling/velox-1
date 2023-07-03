@@ -416,19 +416,16 @@ void HashStringAllocator::ensureAvailable(int32_t bytes, Position& position) {
 void HashStringAllocator::checkConsistency() const {
   uint64_t numFree = 0;
   uint64_t freeBytes = 0;
-  VELOX_CHECK_EQ(pool_.numLargeAllocations(), 0);
-  for (auto i = 0; i < pool_.numSmallAllocations(); ++i) {
-    auto allocation = pool_.allocationAt(i);
-    VELOX_CHECK_EQ(allocation->numRuns(), 1);
-    auto run = allocation->runAt(0);
-    auto size = run.numBytes() - sizeof(Header);
+  for (auto i = 0; i < pool_.numRanges(); ++i) {
+    auto range = pool_.rangeAt(i);
+    auto size = range.size() - sizeof(Header);
     bool previousFree = false;
-    auto end = reinterpret_cast<Header*>(run.data<char>() + size);
-    auto header = run.data<Header>();
+    auto end = reinterpret_cast<Header*>(range.data() + size);
+    auto header = reinterpret_cast<Header*>(range.data());
     while (header != end) {
       VELOX_CHECK_GE(
           reinterpret_cast<char*>(header),
-          reinterpret_cast<char*>(run.data<Header>()));
+          range.data());
       VELOX_CHECK_LT(
           reinterpret_cast<char*>(header), reinterpret_cast<char*>(end));
       VELOX_CHECK_LE(
