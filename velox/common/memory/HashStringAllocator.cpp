@@ -423,9 +423,7 @@ void HashStringAllocator::checkConsistency() const {
     auto end = reinterpret_cast<Header*>(range.data() + size);
     auto header = reinterpret_cast<Header*>(range.data());
     while (header != end) {
-      VELOX_CHECK_GE(
-          reinterpret_cast<char*>(header),
-          range.data());
+      VELOX_CHECK_GE(reinterpret_cast<char*>(header), range.data());
       VELOX_CHECK_LT(
           reinterpret_cast<char*>(header), reinterpret_cast<char*>(end));
       VELOX_CHECK_LE(

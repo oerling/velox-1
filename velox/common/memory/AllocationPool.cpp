@@ -75,7 +75,7 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
 void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   if (FLAGS_min_apool_mb > 0) {
-        auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
+    auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
     pool_->allocateContiguous(FLAGS_min_apool_mb * 256, *largeAlloc);
     startOfRun_ = largeAlloc->data<char>();
     bytesInRun_ = largeAlloc->size();
@@ -85,15 +85,13 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   }
   memory::Allocation allocation;
   auto roundedPages = std::max<int32_t>(kMinPages, numPages);
-  pool_->allocateNonContiguous(
-			       roundedPages, allocation, roundedPages);
+  pool_->allocateNonContiguous(roundedPages, allocation, roundedPages);
   VELOX_CHECK_EQ(allocation.numRuns(), 1);
-    startOfRun_ = allocation.runAt(0).data<char>();
-    bytesInRun_ = allocation.runAt(0).numBytes();
-    currentOffset_ = 0;
-    allocations_.push_back(
-          std::make_unique<memory::Allocation>(std::move(allocation)));
-
+  startOfRun_ = allocation.runAt(0).data<char>();
+  bytesInRun_ = allocation.runAt(0).numBytes();
+  currentOffset_ = 0;
+  allocations_.push_back(
+      std::make_unique<memory::Allocation>(std::move(allocation)));
 }
 
 void AllocationPool::newRun(int32_t preferredSize) {

@@ -389,8 +389,7 @@ class RowContainer {
     int32_t count = 0;
     uint64_t totalBytes = 0;
     auto numAllocations = rows_.numRanges();
-    if (iter->allocationIndex == 0 &&
-        iter->rowOffset == 0) {
+    if (iter->allocationIndex == 0 && iter->rowOffset == 0) {
       iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
       iter->normalizedKeySize = originalNormalizedKeySize_;
     }
@@ -399,49 +398,49 @@ class RowContainer {
     for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
       auto range = rows_.rangeAt(i);
       auto* data =
-	range.data() + memory::alignmentPadding(range.data(), alignment_);
+          range.data() + memory::alignmentPadding(range.data(), alignment_);
       int64_t limit;
-      if (i == numAllocations - 1 ) {
-	limit = rows_.currentOffset();
+      if (i == numAllocations - 1) {
+        limit = rows_.currentOffset();
       } else {
-	limit = range.size();
+        limit = range.size();
       }
       auto row = iter->rowOffset;
       while (row + rowSize <= limit) {
-	rows[count++] = data + row +
-	  (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
-	VELOX_DCHECK_EQ(
-			reinterpret_cast<uintptr_t>(rows[count - 1]) % alignment_, 0);
-	row += rowSize;
-	auto newTotalBytes = totalBytes + rowSize;
-	if (--iter->normalizedKeysLeft == 0) {
-	  rowSize -= originalNormalizedKeySize_;
-	}
-	if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
-	  --count;
-	  continue;
-	}
-	if constexpr (probeType == ProbeType::kNotProbed) {
-	  if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
-	    --count;
-	    continue;
-	  }
-	}
-	if constexpr (probeType == ProbeType::kProbed) {
-	  if (not(bits::isBitSet(rows[count - 1], probedFlagOffset_))) {
-	    --count;
-	    continue;
-	  }
-	}
-	totalBytes = newTotalBytes;
-	if (rowSizeOffset_) {
-	  totalBytes += variableRowSize(rows[count - 1]);
-	}
-	if (count == maxRows || totalBytes > maxBytes) {
-	  iter->rowOffset = row;
-	  iter->allocationIndex = i;
-	  return count;
-	}
+        rows[count++] = data + row +
+            (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
+        VELOX_DCHECK_EQ(
+            reinterpret_cast<uintptr_t>(rows[count - 1]) % alignment_, 0);
+        row += rowSize;
+        auto newTotalBytes = totalBytes + rowSize;
+        if (--iter->normalizedKeysLeft == 0) {
+          rowSize -= originalNormalizedKeySize_;
+        }
+        if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
+          --count;
+          continue;
+        }
+        if constexpr (probeType == ProbeType::kNotProbed) {
+          if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
+            --count;
+            continue;
+          }
+        }
+        if constexpr (probeType == ProbeType::kProbed) {
+          if (not(bits::isBitSet(rows[count - 1], probedFlagOffset_))) {
+            --count;
+            continue;
+          }
+        }
+        totalBytes = newTotalBytes;
+        if (rowSizeOffset_) {
+          totalBytes += variableRowSize(rows[count - 1]);
+        }
+        if (count == maxRows || totalBytes > maxBytes) {
+          iter->rowOffset = row;
+          iter->allocationIndex = i;
+          return count;
+        }
       }
       iter->rowOffset = 0;
     }
