@@ -673,7 +673,7 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   }
 
   if (!tableIncrement && freeRows > input->size() &&
-      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes)) {
+      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes * 2)) {
     // Enough free rows for input rows and enough variable length free
     // space for the flat size of the whole vector. If outOfLineBytes
     // is 0 there is no need for variable length space.
