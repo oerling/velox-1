@@ -28,6 +28,7 @@ namespace facebook::velox {
 class AllocationPool {
  public:
   static constexpr int32_t kMinPages = 16;
+  static constexpr int64_t kPageSize = memory::AllocationTraits::kPageSize;
   static constexpr int64_t kHugePageSize =
       memory::AllocationTraits::kHugePageSize;
 
@@ -48,7 +49,7 @@ class AllocationPool {
 
   // Starts a new run for variable length allocation. The actual size
   // is at least one machine page. Throws std::bad_alloc if no space.
-  void newRun(int32_t preferredSize);
+  void newRun(int64_t preferredSize);
 
   int32_t numRanges() const {
     return allocations_.size() + largeAllocations_.size();
@@ -56,6 +57,8 @@ class AllocationPool {
 
   /// Returns the indexth contiguous range. If the range is a large allocation,
   /// returns the hugepage aligned range of contiguous huge pages in the range.
+  /// For the last rane, i.e. the one allocations come from, the size is the
+  /// distance from start to first byte after last allocation.
   folly::Range<char*> rangeAt(int32_t index) const;
 
   int64_t currentOffset() const {
@@ -67,7 +70,7 @@ class AllocationPool {
   }
 
   // Returns number of bytes left at the end of the current run.
-  int32_t availableInRun() const {
+  int64_t availableInRun() const {
     return bytesInRun_ - currentOffset_;
   }
 
@@ -90,8 +93,8 @@ class AllocationPool {
     return pool_;
   }
 
-  /// true if 'ptr' is inside the active allocation.
-  bool isInCurrentAllocation(void* ptr) const {
+  /// true if 'ptr' is inside the range alocations are made from.
+  bool isInCurrentRange(void* ptr) const {
     return reinterpret_cast<char*>(ptr) >= startOfRun_ &&
         reinterpret_cast<char*>(ptr) < startOfRun_ + bytesInRun_;
   }
@@ -116,15 +119,15 @@ class AllocationPool {
   void newRunImpl(memory::MachinePageCount numPages);
 
   memory::MemoryPoolImpl* pool_;
-  std::vector<std::unique_ptr<memory::Allocation>> allocations_;
-  std::vector<std::unique_ptr<memory::ContiguousAllocation>> largeAllocations_;
+  std::vector<memory::Allocation> allocations_;
+  std::vector<memory::ContiguousAllocation> largeAllocations_;
   char* startOfRun_{nullptr};
-  int32_t bytesInRun_{0};
-  int32_t currentOffset_ = 0;
+  int64_t bytesInRun_{0};
+  int64_t currentOffset_ = 0;
 
   // Offset from 'startOfRun_' that is counted as reserved in 'pool_'. This can
   // be less than the mmapped range for large mmaps.
-  int32_t reservedTo_{0};
+  int64_t reservedTo_{0};
 
   // Total explicit reservations made in 'pool_' for the items in
   // 'largeAllocations_'.

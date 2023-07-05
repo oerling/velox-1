@@ -23,13 +23,19 @@ namespace facebook::velox {
 
 folly::Range<char*> AllocationPool::rangeAt(int32_t index) const {
   if (index < allocations_.size()) {
-    auto run = allocations_[index]->runAt(0);
-    return folly::Range<char*>(run.data<char>(), run.numBytes());
+    auto run = allocations_[index].runAt(0);
+    return folly::Range<char*>(
+        run.data<char>(),
+        run.data<char>() == startOfRun_ ? currentOffset_ : run.numBytes());
   }
   auto largeIndex = index - allocations_.size();
   if (largeIndex < largeAllocations_.size()) {
-    memory::ContiguousAllocation& data = *largeAllocations_[largeIndex];
-    return data.hugePageRange();
+    auto data = &largeAllocations_[largeIndex];
+    auto range = data->hugePageRange();
+    if (range.data() == startOfRun_) {
+      return folly::Range<char*>(range.data(), currentOffset_);
+    }
+    return range;
   }
   VELOX_FAIL("Out of range index for rangeAt(): {}", index);
 }
@@ -38,9 +44,9 @@ void AllocationPool::clear() {
   allocations_.clear();
   if (largeReserved_) {
     for (auto& large : largeAllocations_) {
-      pool_->allocator()->freeContiguous(*large);
+      pool_->allocator()->freeContiguous(large);
     }
-    // The treservation may be a fraction of the size of the mmaps.
+    // The reservation may be a fraction of the size of the mmaps.
     pool_->release(largeReserved_);
     largeAllocations_.clear();
     largeReserved_ = 0;
@@ -67,7 +73,6 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
   auto numPages = memory::AllocationTraits::numPages(bytes + alignment - 1);
 
-
   if (availableInRun() == 0) {
     newRunImpl(numPages);
   } else {
@@ -90,7 +95,7 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
 void AllocationPool::increaseReservation() {
   VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
-  int32_t moreNeeded =
+  auto moreNeeded =
       bits::roundUp(currentOffset_ - reservedTo_, kHugePageSize);
   pool_->reserve(moreNeeded);
   largeReserved_ += moreNeeded;
@@ -99,7 +104,8 @@ void AllocationPool::increaseReservation() {
 }
 
 void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
-  if (usedBytes_ >= hugePageThreshold_) {
+  if (usedBytes_ >= hugePageThreshold_ ||
+      numPages > pool_->sizeClasses().back()) {
     // At least 16 huge pages, no more than kMaxMmapBytes. The next is
     // double the previous. Because the previous is a hair under the
     // power of two because of fractional pages at ends of allocation,
@@ -110,10 +116,14 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
             16 * kHugePageSize,
             bits::nextPowerOfTwo(usedBytes_ + kHugePageSize)));
     pool_->reserve(kHugePageSize);
-    auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
+    if (numPages * kPageSize + kHugePageSize > nextSize) {
+      // Extra large single request.
+      nextSize = numPages * kPageSize + kHugePageSize;
+    }
+    memory::ContiguousAllocation largeAlloc;
     pool_->allocator()->allocateContiguous(
-        nextSize / memory::AllocationTraits::kPageSize, nullptr, *largeAlloc);
-    auto range = largeAlloc->hugePageRange();
+        nextSize / memory::AllocationTraits::kPageSize, nullptr, largeAlloc);
+    auto range = largeAlloc.hugePageRange();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();
     largeAllocations_.emplace_back(std::move(largeAlloc));
@@ -121,7 +131,6 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
     usedBytes_ += kHugePageSize;
     largeReserved_ += kHugePageSize;
     reservedTo_ = kHugePageSize;
-    return;
     return;
   }
   memory::Allocation allocation;
@@ -132,12 +141,12 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   bytesInRun_ = allocation.runAt(0).numBytes();
   currentOffset_ = 0;
   allocations_.push_back(
-      std::make_unique<memory::Allocation>(std::move(allocation)));
+std::move(allocation));
   reservedTo_ = bytesInRun_;
   usedBytes_ += bytesInRun_;
 }
 
-void AllocationPool::newRun(int32_t preferredSize) {
+void AllocationPool::newRun(int64_t preferredSize) {
   newRunImpl(memory::AllocationTraits::numPages(preferredSize));
 }
 

@@ -383,7 +383,7 @@ HashStringAllocator::allocateFromFreeList(
 
 void HashStringAllocator::free(Header* _header) {
   Header* header = _header;
-  if (header->size() > kMaxAlloc && !pool_.isInCurrentAllocation(header) &&
+  if (header->size() > kMaxAlloc && !pool_.isInCurrentRange(header) &&
       allocationsFromPool_.find(header) != allocationsFromPool_.end()) {
     // A large free can either be a rest of block or a standalone allocation.
     VELOX_CHECK(!header->isContinued());
@@ -514,8 +514,7 @@ void HashStringAllocator::checkConsistency() const {
   for (auto i = 0; i < pool_.numRanges(); ++i) {
     auto topRange = pool_.rangeAt(i);
     const auto kHugePageSize = memory::AllocationTraits::kHugePageSize;
-    auto topRangeSize =
-        i == pool_.numRanges() - 1 ? pool_.currentOffset() : topRange.size();
+    auto topRangeSize = topRange.size();
     if (topRangeSize >= kHugePageSize) {
       VELOX_CHECK_EQ(0, topRangeSize % kHugePageSize);
     }

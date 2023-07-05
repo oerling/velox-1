@@ -630,8 +630,9 @@ std::optional<int64_t> RowContainer::estimateRowSize() const {
 int64_t RowContainer::sizeIncrement(
     vector_size_t numRows,
     int64_t variableLengthBytes) const {
-  constexpr int32_t kAllocUnit =
-      AllocationPool::kMinPages * memory::AllocationTraits::kPageSize;
+  // Small containers can grow in smaller units but for spilling the practical
+  // minimum increment is a huge page.
+  constexpr int32_t kAllocUnit = memory::AllocationTraits::kHugePageSize;
   int32_t needRows = std::max<int64_t>(0, numRows - numFreeRows_);
   int64_t needBytes =
       std::max<int64_t>(0, variableLengthBytes - stringAllocator_.freeSpace());
@@ -676,9 +677,7 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     auto numRuns = 1;
     ++iter.allocationIndex;
     auto range = rows_.rangeAt(iter.allocationIndex);
-    iter.endOfRun = range.data() +
-        (iter.allocationIndex == rows_.numRanges() - 1 ? rows_.currentOffset()
-                                                       : range.size());
+    iter.endOfRun = range.data() + range.size();
     iter.rowBegin = range.data();
   }
   if (iter.normalizedKeysLeft) {

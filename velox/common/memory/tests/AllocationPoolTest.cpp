@@ -43,10 +43,11 @@ TEST_F(AllocationPoolTest, hugePages) {
   allocationPool->setHugePageThreshold(128 << 10);
   int32_t counter = 0;
   for (;;) {
+    int32_t usedKB = 0;
     allocationPool->newRun(32 << 10);
     // Initial allocations round up to 64K
     EXPECT_EQ(1, allocationPool->numRanges());
-    EXPECT_EQ(allocationPool->rangeAt(0).size(), 64 << 10);
+    EXPECT_EQ(allocationPool->availableInRun(), 64 << 10);
     allocationPool->newRun(64 << 10);
     EXPECT_LE(128 << 10, pool_->currentBytes());
     allocationPool->allocateFixed(64 << 10);
@@ -72,7 +73,17 @@ TEST_F(AllocationPoolTest, hugePages) {
     // The first is at least 15 huge pages. The next is at least 31. The mmaps
     // may have unused addresses at either end, so count one huge page less than
     // the nominal size.
-    EXPECT_LE(62 << 20, allocationPool->rangeAt(3).size());
+    EXPECT_LE((62 << 20) - 1, allocationPool->availableInRun());
+
+    // We make a 5GB extra large allocation.
+    allocationPool->allocateFixed(5UL << 30);
+    EXPECT_EQ(5, allocationPool->numRanges());
+
+    // 5G is an even multiple of huge page, no free space at end.
+    EXPECT_EQ(0, allocationPool->availableInRun());
+
+    EXPECT_LE((5UL << 30) + (31 << 20) + (128 << 10), allocationPool->allocatedBytes());
+    EXPECT_LE((5UL << 30) + (31 << 20) + (128 << 10), pool_->currentBytes());
 
     if (counter++ >= 1) {
       break;

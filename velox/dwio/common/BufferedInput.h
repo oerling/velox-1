@@ -174,7 +174,7 @@ class BufferedInput {
     // Save the file offset and the buffer to which we'll read it
     offsets_.push_back(region.offset);
     buffers_.emplace_back(
-        allocPool_->allocateFixed(region.length), region.length);
+        allocPool_->allocateFixed(region.length));
     return folly::Range<char*>(buffers_.back().data(), region.length);
   }
 
