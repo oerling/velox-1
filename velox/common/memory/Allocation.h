@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <folly/Range.h>
 #include <cstdint>
 
 #include "velox/common/base/BitUtil.h"
@@ -32,6 +33,9 @@ using MachinePageCount = uint64_t;
 struct AllocationTraits {
   /// Defines a machine page size in bytes.
   static constexpr uint64_t kPageSize = 4096;
+
+  /// Size of huge page as intended with MADV_HUGEPAGE.
+  static constexpr uint64_t kHugePageSize = 2 << 20; // 2MB
 
   /// Returns the bytes of the given number pages.
   FOLLY_ALWAYS_INLINE static uint64_t pageBytes(MachinePageCount numPages) {
@@ -211,6 +215,9 @@ class ContiguousAllocation {
   uint64_t size() const {
     return size_;
   }
+
+  /// Returns the largest huge page range covered by 'this'
+  folly::Range<char*> hugePageRange() const;
 
   /// Invoked by memory pool to set the ownership on allocation success. All
   /// the external contiguous memory allocations go through memory pool.
