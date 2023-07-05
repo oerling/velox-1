@@ -79,8 +79,6 @@ class AllocationPool {
     return reservedTo_ - currentOffset_;
   }
 
-
-
   // Returns pointer to first unallocated byte in the current run.
   char* firstFreeInRun() {
     VELOX_DCHECK_GT(availableInRun(), 0);

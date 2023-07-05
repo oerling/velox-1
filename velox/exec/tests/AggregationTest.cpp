@@ -1137,7 +1137,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
                 QueryConfig::kSpillStartPartitionBit,
                 std::to_string(kPartitionStartBit))
             .config(QueryConfig::kPreferredOutputBatchBytes, "1024")
-      .assertResults(results);
+            .assertResults(results);
 
     auto stats = task->taskStats().pipelineStats;
     // Check spilled bytes.
