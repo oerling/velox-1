@@ -24,7 +24,8 @@ using namespace facebook::velox;
 class AllocationPoolTest : public testing::Test {
  protected:
   void SetUp() override {
-    auto root_ = memory::MemoryManager::getInstance().addRootPool("allocationPoolTestRoot");
+    auto root_ = memory::MemoryManager::getInstance().addRootPool(
+        "allocationPoolTestRoot");
     pool_ = root_->addLeafChild("leaf");
   }
 
@@ -32,7 +33,7 @@ class AllocationPoolTest : public testing::Test {
   void setByte(void* ptr) {
     *reinterpret_cast<char*>(ptr) = 1;
   }
-  
+
   std::shared_ptr<memory::MemoryPool> root_;
   std::shared_ptr<memory::MemoryPool> pool_;
 };
