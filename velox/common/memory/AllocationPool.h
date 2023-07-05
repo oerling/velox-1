@@ -74,6 +74,13 @@ class AllocationPool {
     return bytesInRun_ - currentOffset_;
   }
 
+  /// Returns the number of bytes allocatable without bumping up reservation.
+  int64_t availableInReservedRun() const {
+    return reservedTo_ - currentOffset_;
+  }
+
+
+
   // Returns pointer to first unallocated byte in the current run.
   char* firstFreeInRun() {
     VELOX_DCHECK_GT(availableInRun(), 0);
