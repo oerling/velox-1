@@ -95,8 +95,7 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
 void AllocationPool::increaseReservation() {
   VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
-  auto moreNeeded =
-      bits::roundUp(currentOffset_ - reservedTo_, kHugePageSize);
+  auto moreNeeded = bits::roundUp(currentOffset_ - reservedTo_, kHugePageSize);
   pool_->reserve(moreNeeded);
   largeReserved_ += moreNeeded;
   usedBytes_ += moreNeeded;
@@ -140,8 +139,7 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   startOfRun_ = allocation.runAt(0).data<char>();
   bytesInRun_ = allocation.runAt(0).numBytes();
   currentOffset_ = 0;
-  allocations_.push_back(
-std::move(allocation));
+  allocations_.push_back(std::move(allocation));
   reservedTo_ = bytesInRun_;
   usedBytes_ += bytesInRun_;
 }

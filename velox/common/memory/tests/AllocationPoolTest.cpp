@@ -82,7 +82,9 @@ TEST_F(AllocationPoolTest, hugePages) {
     // 5G is an even multiple of huge page, no free space at end.
     EXPECT_EQ(0, allocationPool->availableInRun());
 
-    EXPECT_LE((5UL << 30) + (31 << 20) + (128 << 10), allocationPool->allocatedBytes());
+    EXPECT_LE(
+        (5UL << 30) + (31 << 20) + (128 << 10),
+        allocationPool->allocatedBytes());
     EXPECT_LE((5UL << 30) + (31 << 20) + (128 << 10), pool_->currentBytes());
 
     if (counter++ >= 1) {
