@@ -343,11 +343,7 @@ TEST_F(HashStringAllocatorTest, stlAllocatorWithSet) {
   allocator_->checkConsistency();
 
   // We allow for some overhead for free lists after all is freed.
-<<<<<<< HEAD
-  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 180);
-=======
-  EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 100);
->>>>>>> main
+  EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 180);
 }
 
 TEST_F(HashStringAllocatorTest, alignedStlAllocatorWithF14Map) {
