@@ -28,9 +28,11 @@ namespace facebook::velox {
 class AllocationPool {
  public:
   static constexpr int32_t kMinPages = 16;
-  static constexpr int64_t kHugePageSize = memory::AllocationTraits::kHugePageSize;
-  
-  explicit AllocationPool(memory::MemoryPool* pool) : pool_(dynamic_cast<memory::MemoryPoolImpl*>(pool)) {
+  static constexpr int64_t kHugePageSize =
+      memory::AllocationTraits::kHugePageSize;
+
+  explicit AllocationPool(memory::MemoryPool* pool)
+      : pool_(dynamic_cast<memory::MemoryPoolImpl*>(pool)) {
     VELOX_CHECK_NOT_NULL(pool_);
   }
 
@@ -52,7 +54,8 @@ class AllocationPool {
     return allocations_.size() + largeAllocations_.size();
   }
 
-  /// Returns the indexth contiguous range. If the range is a large allocation, returns the hugepage aligned range of contiguous huge pages in the range.
+  /// Returns the indexth contiguous range. If the range is a large allocation,
+  /// returns the hugepage aligned range of contiguous huge pages in the range.
   folly::Range<char*> rangeAt(int32_t index) const;
 
   int64_t currentOffset() const {
@@ -96,19 +99,20 @@ class AllocationPool {
   int64_t hugePageThreshold() const {
     return hugePageThreshold_;
   }
-  
+
   /// Sets the size after which 'this' switches to large mmaps with huge pages.
   void setHugePageThreshold(int64_t size) {
     hugePageThreshold_ = size;
   }
-  
+
  private:
   static constexpr int64_t kDefaultHugePageThreshold = 256 * 1024;
   static constexpr int64_t kMaxMmapBytes = 512 << 20; // 512 MB
 
-  // Increses the reservation in 'pool_' when 'currentOffset_' goes past 'reservedTo_'.
+  // Increses the reservation in 'pool_' when 'currentOffset_' goes past
+  // 'reservedTo_'.
   void increaseReservation();
-  
+
   void newRunImpl(memory::MachinePageCount numPages);
 
   memory::MemoryPoolImpl* pool_;
@@ -118,16 +122,19 @@ class AllocationPool {
   int32_t bytesInRun_{0};
   int32_t currentOffset_ = 0;
 
-  // Offset from 'startOfRun_' that is counted as reserved in 'pool_'. This can be less than the mmapped range for large mmaps.
+  // Offset from 'startOfRun_' that is counted as reserved in 'pool_'. This can
+  // be less than the mmapped range for large mmaps.
   int32_t reservedTo_{0};
 
-  // Total explicit reservations made in 'pool_' for the items in 'largeAllocations_'.
+  // Total explicit reservations made in 'pool_' for the items in
+  // 'largeAllocations_'.
 
   int64_t largeReserved_{0};
-  
-  // Total space returned to users. Size of allocations can be larger specially if mmapped in advance of use.
+
+  // Total space returned to users. Size of allocations can be larger specially
+  // if mmapped in advance of use.
   int64_t usedBytes_{0};
-  
+
   // Start using large mmaps with huge pages after 'usedBytes_' exceeds this.
   int64_t hugePageThreshold_{kDefaultHugePageThreshold};
 };

@@ -105,12 +105,14 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
     // power of two because of fractional pages at ends of allocation,
     // add an extra huge page size.
     int64_t nextSize = std::min(
-				 kMaxMmapBytes,
-        std::max<int64_t>(16 * kHugePageSize, bits::nextPowerOfTwo(usedBytes_ + kHugePageSize)));
+        kMaxMmapBytes,
+        std::max<int64_t>(
+            16 * kHugePageSize,
+            bits::nextPowerOfTwo(usedBytes_ + kHugePageSize)));
     pool_->reserve(kHugePageSize);
     auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
     pool_->allocator()->allocateContiguous(
-					   nextSize / memory::AllocationTraits::kPageSize, nullptr, *largeAlloc);
+        nextSize / memory::AllocationTraits::kPageSize, nullptr, *largeAlloc);
     auto range = largeAlloc->hugePageRange();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();

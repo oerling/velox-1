@@ -223,7 +223,7 @@ void MemoryAllocator::useHugePages(
     return;
   }
   auto rc = ::madvise(
-		      range.data(), range.size(), enable ? MADV_HUGEPAGE : MADV_NOHUGEPAGE);
+      range.data(), range.size(), enable ? MADV_HUGEPAGE : MADV_NOHUGEPAGE);
   if (rc != 0) {
     VELOX_MEM_LOG(WARNING) << "madvise hugepage errno="
                            << folly ::errnoStr(errno);

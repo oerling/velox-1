@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <folly/Range.h>
+#include <cstdint>
 
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/CheckedArithmetic.h"
@@ -37,7 +37,6 @@ struct AllocationTraits {
   /// Size of huge page as intended with MADV_HUGEPAGE.
   static constexpr uint64_t kHugePageSize = 2 << 20; // 2MB
 
-  
   /// Returns the bytes of the given number pages.
   FOLLY_ALWAYS_INLINE static uint64_t pageBytes(MachinePageCount numPages) {
     return numPages * kPageSize;
