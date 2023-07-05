@@ -121,7 +121,7 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
     }
     memory::ContiguousAllocation largeAlloc;
     pool_->allocator()->allocateContiguous(
-        nextSize / memory::AllocationTraits::kPageSize, nullptr, largeAlloc);
+        nextSize / kPageSize, nullptr, largeAlloc);
     auto range = largeAlloc.hugePageRange();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();
