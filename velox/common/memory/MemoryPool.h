@@ -584,6 +584,19 @@ class MemoryPoolImpl : public MemoryPool {
 
   void release() override;
 
+  // Reserve memory for a new allocation/reservation with specified 'size'. If
+  // 'reserveOnly', then does not update the current usage. Public because
+  // AllocationPool uses this to gradually give account for giving out pieces of
+  // a larger mmap.
+  void reserve(uint64_t size, bool reserveOnly = false);
+
+  // Release memory reservation for an allocation free or memory release with
+  // specified 'size'. If 'releaseOnly' is true, then we only release the unused
+  // reservation if 'minReservationBytes_' is set. Public because AllocationPool
+  // uses this to account for freeing a large mmap of which only a fraction has
+  // been given out.
+  void release(uint64_t bytes, bool releaseOnly = false);
+
   uint64_t freeBytes() const override;
 
   void setReclaimer(std::unique_ptr<MemoryReclaimer> reclaimer) override;
@@ -615,7 +628,7 @@ class MemoryPoolImpl : public MemoryPool {
 
   void testingSetCapacity(int64_t bytes);
 
-  MemoryAllocator* testingAllocator() const {
+  MemoryAllocator* allocator() const {
     return allocator_;
   }
 
@@ -672,13 +685,10 @@ class MemoryPoolImpl : public MemoryPool {
     return quantizedSize(size + delta) - size;
   }
 
-  // Reserve memory for a new allocation/reservation with specified 'size'.
   // 'reserveThreadSafe' processes the memory reservation with mutex lock
   // protection to prevent concurrent updates to the same leaf memory pool.
   // 'reserveNonThreadSafe' processes the memory reservation without mutex lock
   // at the leaf memory pool.
-  void reserve(uint64_t size, bool reserveOnly = false);
-
   FOLLY_ALWAYS_INLINE void reserveNonThreadSafe(
       uint64_t size,
       bool reserveOnly = false) {
@@ -756,13 +766,9 @@ class MemoryPoolImpl : public MemoryPool {
   bool maybeIncrementReservation(uint64_t size);
   bool maybeIncrementReservationLocked(uint64_t size);
 
-  // Release memory reservation for an allocation free or memory release with
-  // specified 'size'. If 'releaseOnly' is true, then we only release the unused
-  // reservation if 'minReservationBytes_' is set. 'releaseThreadSafe' processes
+  // 'releaseThreadSafe' processes
   // the memory reservation release with mutex lock protection at the leaf
   // memory pool while 'reserveThreadSafe' doesn't.
-  void release(uint64_t bytes, bool releaseOnly = false);
-
   void releaseThreadSafe(uint64_t size, bool releaseOnly);
 
   FOLLY_ALWAYS_INLINE void releaseNonThreadSafe(

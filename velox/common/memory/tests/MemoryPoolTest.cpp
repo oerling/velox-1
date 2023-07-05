@@ -164,8 +164,8 @@ TEST_P(MemoryPoolTest, Ctor) {
         MemoryPool::Options{.threadSafe = false}));
     ASSERT_EQ("fake_root", fakeRoot->name());
     ASSERT_EQ(
-        static_cast<MemoryPoolImpl*>(root.get())->testingAllocator(),
-        fakeRoot->testingAllocator());
+        static_cast<MemoryPoolImpl*>(root.get())->allocator(),
+        fakeRoot->allocator());
     ASSERT_EQ(0, fakeRoot->currentBytes());
     ASSERT_EQ(fakeRoot->parent(), nullptr);
   }
@@ -177,8 +177,8 @@ TEST_P(MemoryPoolTest, Ctor) {
     auto& favoriteChild = dynamic_cast<MemoryPoolImpl&>(*child);
     ASSERT_EQ("child", favoriteChild.name());
     ASSERT_EQ(
-        static_cast<MemoryPoolImpl*>(root.get())->testingAllocator(),
-        favoriteChild.testingAllocator());
+        static_cast<MemoryPoolImpl*>(root.get())->allocator(),
+        favoriteChild.allocator());
     ASSERT_EQ(favoriteChild.currentBytes(), 0);
   }
   {

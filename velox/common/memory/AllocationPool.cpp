@@ -19,16 +19,37 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/MemoryAllocator.h"
 
-DEFINE_int32(min_apool_mb, 0, "Min MB for alloc pool");
-
 namespace facebook::velox {
+
+folly::Range<char*> AllocationPool::rangeAt(int32_t index) const {
+  if (index < allocations_.size()) {
+    auto run = allocations_[index]->runAt(0);
+    return folly::Range<char*>(run.data<char>(), run.numBytes());
+  }
+  auto largeIndex = index - allocations_.size();
+  if (largeIndex < largeAllocations_.size()) {
+    memory::ContiguousAllocation& data = *largeAllocations_[largeIndex];
+    return data.hugePageRange();
+  }
+  VELOX_FAIL("Out of range index for rangeAt(): {}", index);
+}
 
 void AllocationPool::clear() {
   allocations_.clear();
-  largeAllocations_.clear();
+  if (largeReserved_) {
+    for (auto& large : largeAllocations_) {
+      pool_->allocator()->freeContiguous(*large);
+    }
+    // The treservation may be a fraction of the size of the mmaps.
+    pool_->release(largeReserved_);
+    largeAllocations_.clear();
+    largeReserved_ = 0;
+  }
   startOfRun_ = nullptr;
   bytesInRun_ = 0;
   currentOffset_ = 0;
+  reservedTo_ = 0;
+  usedBytes_ = 0;
 }
 
 char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
@@ -36,6 +57,9 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
   if (availableInRun() >= bytes && alignment == 1) {
     auto* result = startOfRun_ + currentOffset_;
     currentOffset_ += bytes;
+    if (currentOffset_ > reservedTo_) {
+      increaseReservation();
+    }
     return result;
   }
   VELOX_CHECK_EQ(
@@ -43,18 +67,6 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
   auto numPages = memory::AllocationTraits::numPages(bytes + alignment - 1);
 
-  // Use contiguous allocations from mapped memory if allocation size is large
-  if (numPages > pool_->largestSizeClass()) {
-    auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
-    pool_->allocateContiguous(numPages, *largeAlloc);
-    largeAllocations_.emplace_back(std::move(largeAlloc));
-    auto result = largeAllocations_.back()->data<char>();
-    VELOX_CHECK_NOT_NULL(
-        result, "Unexpected nullptr for large contiguous allocation");
-    // Should be at page boundary and always aligned.
-    VELOX_CHECK_EQ(reinterpret_cast<uintptr_t>(result) % alignment, 0);
-    return result;
-  }
 
   if (availableInRun() == 0) {
     newRunImpl(numPages);
@@ -70,17 +82,44 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
   auto* result = startOfRun_ + currentOffset_;
   VELOX_CHECK_EQ(reinterpret_cast<uintptr_t>(result) % alignment, 0);
   currentOffset_ += bytes;
+  if (currentOffset_ > reservedTo_) {
+    increaseReservation();
+  }
   return result;
 }
 
+void AllocationPool::increaseReservation() {
+  VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
+  int32_t moreNeeded =
+      bits::roundUp(currentOffset_ - reservedTo_, kHugePageSize);
+  pool_->reserve(moreNeeded);
+  largeReserved_ += moreNeeded;
+  usedBytes_ += moreNeeded;
+  reservedTo_ += moreNeeded;
+}
+
 void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
-  if (FLAGS_min_apool_mb > 0) {
+  if (usedBytes_ >= hugePageThreshold_) {
+    // At least 16 huge pages, no more than kMaxMmapBytes. The next is
+    // double the previous. Because the previous is a hair under the
+    // power of two because of fractional pages at ends of allocation,
+    // add an extra huge page size.
+    int64_t nextSize = std::min(
+				 kMaxMmapBytes,
+        std::max<int64_t>(16 * kHugePageSize, bits::nextPowerOfTwo(usedBytes_ + kHugePageSize)));
+    pool_->reserve(kHugePageSize);
     auto largeAlloc = std::make_unique<memory::ContiguousAllocation>();
-    pool_->allocateContiguous(FLAGS_min_apool_mb * 256, *largeAlloc);
-    startOfRun_ = largeAlloc->data<char>();
-    bytesInRun_ = largeAlloc->size();
+    pool_->allocator()->allocateContiguous(
+					   nextSize / memory::AllocationTraits::kPageSize, nullptr, *largeAlloc);
+    auto range = largeAlloc->hugePageRange();
+    startOfRun_ = range.data();
+    bytesInRun_ = range.size();
     largeAllocations_.emplace_back(std::move(largeAlloc));
     currentOffset_ = 0;
+    usedBytes_ += kHugePageSize;
+    largeReserved_ += kHugePageSize;
+    reservedTo_ = kHugePageSize;
+    return;
     return;
   }
   memory::Allocation allocation;
@@ -92,6 +131,8 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   currentOffset_ = 0;
   allocations_.push_back(
       std::make_unique<memory::Allocation>(std::move(allocation)));
+  reservedTo_ = bytesInRun_;
+  usedBytes_ += bytesInRun_;
 }
 
 void AllocationPool::newRun(int32_t preferredSize) {

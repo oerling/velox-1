@@ -106,7 +106,7 @@ TEST_F(HashStringAllocatorTest, allocate) {
     }
   }
   // We allow for some free overhead for free lists after all is freed.
-  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 200);
+  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 250);
 }
 
 TEST_F(HashStringAllocatorTest, allocateLarge) {
@@ -116,8 +116,7 @@ TEST_F(HashStringAllocatorTest, allocateLarge) {
       memory::AllocationTraits::pageBytes(pool_->largestSizeClass() + 1);
   auto header = allocate(size);
   instance_->free(header);
-  // We allow for some free overhead for free lists after all is freed.
-  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 200);
+  EXPECT_EQ(0, instance_->retainedSize());
 }
 
 TEST_F(HashStringAllocatorTest, multipart) {
@@ -287,7 +286,7 @@ TEST_F(HashStringAllocatorTest, stlAllocatorWithSet) {
   instance_->checkConsistency();
 
   // We allow for some overhead for free lists after all is freed.
-  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 100);
+  EXPECT_LE(instance_->retainedSize() - instance_->freeSpace(), 180);
 }
 
 TEST_F(HashStringAllocatorTest, alignedStlAllocatorWithF14Map) {
