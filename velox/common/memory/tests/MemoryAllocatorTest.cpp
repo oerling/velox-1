@@ -416,7 +416,8 @@ TEST_P(MemoryAllocatorTest, allocationPool) {
 
   pool.allocateFixed(kLarge);
   EXPECT_EQ(pool.numRanges(), 2);
-  // The previous run is dropped, now we are a new one with kLarge bytes occupied.
+  // The previous run is dropped, now we are a new one with kLarge bytes
+  // occupied.
   EXPECT_EQ(pool.currentOffset(), kLarge);
 
   pool.allocateFixed(20);

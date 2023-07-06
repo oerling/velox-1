@@ -40,23 +40,23 @@ class MemoryCapExceededTest : public OperatorTestBase,
   }
 };
 
-  bool someLineMatches(std::string text, std::string pattern) {
-    std::stringstream in;
-    in << text;
-    std::string line;
-    auto exp = fmt::format(".*{}.*", pattern);
-    while (std::getline(in, line)) {
-      if (RE2::FullMatch(line, exp)) {
-	return true;
-      }
+bool someLineMatches(std::string text, std::string pattern) {
+  std::stringstream in;
+  in << text;
+  std::string line;
+  auto exp = fmt::format(".*{}.*", pattern);
+  while (std::getline(in, line)) {
+    if (RE2::FullMatch(line, exp)) {
+      return true;
     }
-    return false;
   }
+  return false;
+}
 
-  bool   testMatch(char* x, char* y) {
-    return someLineMatches(x, y);
-  }
-  
+bool testMatch(char* x, char* y) {
+  return someLineMatches(x, y);
+}
+
 TEST_P(MemoryCapExceededTest, singleDriver) {
   // Executes a plan with a single driver thread and query memory limit that
   // forces it to throw MEM_CAP_EXCEEDED exception. Verifies that the error
