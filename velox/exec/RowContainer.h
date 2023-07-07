@@ -399,12 +399,16 @@ class RowContainer {
       auto range = rows_.rangeAt(i);
       auto* data =
           range.data() + memory::alignmentPadding(range.data(), alignment_);
+<<<<<<< HEAD
       int64_t limit;
       if (i == numAllocations - 1) {
         limit = rows_.currentOffset();
       } else {
         limit = range.size();
       }
+=======
+      auto limit = range.size();
+>>>>>>> hp-pool-dev
       auto row = iter->rowOffset;
       while (row + rowSize <= limit) {
         rows[count++] = data + row +
@@ -573,7 +577,7 @@ class RowContainer {
   // reserved storage for variable length data.
   std::pair<uint64_t, uint64_t> freeSpace() const {
     return std::make_pair<uint64_t, uint64_t>(
-        rows_.availableInRun() / fixedRowSize_ + numFreeRows_,
+        rows_.availableInReservedRun() / fixedRowSize_ + numFreeRows_,
         stringAllocator_.freeSpace());
   }
 

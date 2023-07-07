@@ -407,12 +407,14 @@ TEST_P(MemoryAllocatorTest, mmapAllocatorInit) {
 
 TEST_P(MemoryAllocatorTest, allocationPool) {
   const size_t kNumLargeAllocPages = instance_->largestSizeClass() * 2;
+  const size_t kLarge = kNumLargeAllocPages * AllocationTraits::kPageSize;
   AllocationPool pool(pool_.get());
 
   pool.allocateFixed(10);
   EXPECT_EQ(pool.numRanges(), 1);
   EXPECT_EQ(pool.currentOffset(), 10);
 
+<<<<<<< HEAD
   pool.allocateFixed(kNumLargeAllocPages * AllocationTraits::kPageSize);
   EXPECT_EQ(pool.numRanges(), 2);
   EXPECT_EQ(pool.currentOffset(), 10);
@@ -438,6 +440,33 @@ TEST_P(MemoryAllocatorTest, allocationPool) {
     auto old = pool.numRanges();
     auto bytes = AllocationTraits::kPageSize * instance_->largestSizeClass();
     pool.allocateFixed(bytes);
+=======
+  pool.allocateFixed(kLarge);
+  EXPECT_EQ(pool.numRanges(), 2);
+  // The previous run is dropped, now we are a new one with kLarge bytes
+  // occupied.
+  EXPECT_EQ(pool.currentOffset(), kLarge);
+
+  pool.allocateFixed(20);
+  EXPECT_EQ(pool.numRanges(), 2);
+  EXPECT_EQ(pool.currentOffset(), kLarge + 20);
+
+  // Leaving 10 bytes room
+  pool.allocateFixed(128 * 4096 - 10);
+  EXPECT_EQ(pool.numRanges(), 2);
+  int32_t offset = 2621450;
+  EXPECT_EQ(pool.currentOffset(), offset);
+
+  pool.allocateFixed(5);
+  EXPECT_EQ(pool.numRanges(), 2);
+  EXPECT_EQ(pool.currentOffset(), (offset + 5));
+
+  {
+    auto old = pool.numRanges();
+    auto bytes = pool.availableInRun();
+    pool.allocateFixed(bytes);
+    pool.allocateFixed(1);
+>>>>>>> hp-pool-dev
     ASSERT_EQ(pool.numRanges(), old + 1);
     auto buf = pool.allocateFixed(bytes, 64);
     ASSERT_EQ(pool.numRanges(), old + 1);
@@ -451,7 +480,11 @@ TEST_P(MemoryAllocatorTest, allocationPool) {
 
   {
     // Leaving 10 bytes room
+<<<<<<< HEAD
     pool.allocateFixed(128 * 4096 - 10);
+=======
+    pool.allocateFixed(pool.availableInRun() - 10);
+>>>>>>> hp-pool-dev
     auto old = pool.numRanges();
     auto buf = pool.allocateFixed(1, 64);
     ASSERT_EQ(reinterpret_cast<uintptr_t>(buf) % 64, 0);
