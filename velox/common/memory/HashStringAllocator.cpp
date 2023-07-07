@@ -536,12 +536,7 @@ void HashStringAllocator::checkConsistency() const {
   for (auto i = 0; i < pool_.numRanges(); ++i) {
     auto topRange = pool_.rangeAt(i);
     const auto kHugePageSize = memory::AllocationTraits::kHugePageSize;
-<<<<<<< HEAD
-    auto topRangeSize =
-        i == pool_.numRanges() - 1 ? pool_.currentOffset() : topRange.size();
-=======
     auto topRangeSize = topRange.size();
->>>>>>> hp-pool-dev
     if (topRangeSize >= kHugePageSize) {
       VELOX_CHECK_EQ(0, topRangeSize % kHugePageSize);
     }

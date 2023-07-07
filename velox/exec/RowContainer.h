@@ -399,16 +399,7 @@ class RowContainer {
       auto range = rows_.rangeAt(i);
       auto* data =
           range.data() + memory::alignmentPadding(range.data(), alignment_);
-<<<<<<< HEAD
-      int64_t limit;
-      if (i == numAllocations - 1) {
-        limit = rows_.currentOffset();
-      } else {
-        limit = range.size();
-      }
-=======
       auto limit = range.size();
->>>>>>> hp-pool-dev
       auto row = iter->rowOffset;
       while (row + rowSize <= limit) {
         rows[count++] = data + row +
