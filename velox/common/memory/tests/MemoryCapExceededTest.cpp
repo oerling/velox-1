@@ -40,7 +40,8 @@ class MemoryCapExceededTest : public OperatorTestBase,
   }
 };
 
-bool someLineMatches(std::string text, std::string pattern) {
+  namespace {
+bool someLineMatches(const std::string& text, const std::string& pattern) {
   std::stringstream in;
   in << text;
   std::string line;
@@ -52,10 +53,7 @@ bool someLineMatches(std::string text, std::string pattern) {
   }
   return false;
 }
-
-bool testMatch(char* x, char* y) {
-  return someLineMatches(x, y);
-}
+  }
 
 TEST_P(MemoryCapExceededTest, singleDriver) {
   // Executes a plan with a single driver thread and query memory limit that
