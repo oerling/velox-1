@@ -960,7 +960,8 @@ TEST_P(MemoryAllocatorTest, allocContiguousFail) {
 }
 
 TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
-  // We allocate almost all capacity worth of small allocations, then make a large continguous allocation with a small initial size.
+  // We allocate almost all capacity worth of small allocations, then make a
+  // large continguous allocation with a small initial size.
   auto largestClass = instance_->sizeClasses().back();
   constexpr int32_t kInitialLarge = 1024;
   constexpr int32_t kMinGrow = 1024;
@@ -982,20 +983,24 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   }
   ContiguousAllocation large;
   // Exceeds capacity.
-  EXPECT_FALSE(instance_->allocateContiguous(kCapacityPages, nullptr, large, nullptr, kInitialLarge * 2));
-  EXPECT_TRUE(instance_->allocateContiguous(kCapacityPages, nullptr, large, nullptr, kInitialLarge));
+  EXPECT_FALSE(instance_->allocateContiguous(
+      kCapacityPages, nullptr, large, nullptr, kInitialLarge * 2));
+  EXPECT_TRUE(instance_->allocateContiguous(
+      kCapacityPages, nullptr, large, nullptr, kInitialLarge));
   EXPECT_FALSE(instance_->growContiguous(kMinGrow, large));
   freeSmall(kMinGrow);
   EXPECT_TRUE(instance_->growContiguous(kMinGrow, large));
   EXPECT_EQ(instance_->numAllocated(), kCapacityPages);
   freeSmall(4 * kMinGrow);
   EXPECT_TRUE(instance_->growContiguous(4 * kMinGrow, large));
-  EXPECT_THROW(instance_->growContiguous(100000 * kMinGrow, large), VeloxException);
+  EXPECT_THROW(
+      instance_->growContiguous(100000 * kMinGrow, large), VeloxException);
   instance_->freeContiguous(large);
-  EXPECT_EQ(kCapacityPages - kInitialLarge - 5 * kMinGrow, instance_->numAllocated());
+  EXPECT_EQ(
+      kCapacityPages - kInitialLarge - 5 * kMinGrow, instance_->numAllocated());
   freeSmall(kCapacityPages);
 }
-  
+
 TEST_P(MemoryAllocatorTest, allocateBytes) {
   constexpr int32_t kNumAllocs = 50;
   // Different sizes, including below minimum and above largest size class.

@@ -921,7 +921,7 @@ class MemoryPoolImpl : public MemoryPool {
 
   // Accounts for ContiguousAllocation size change in growContiguous().
   void recordGrowDbg(const void* addr, uint64_t newSize);
-  
+
   // Invoked by memory pool destructor to detect the sources of leaked memory
   // allocations from the call sites which are still recorded in
   // 'debugAllocRecords_'. If there is no memory leaks, 'debugAllocRecords_'

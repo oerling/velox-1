@@ -259,8 +259,13 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
 
   /// Increments the reserved part of 'allocation' by
   /// 'increment'. false if would exceed capacity, Throws if size
-  /// would exceed maxSize given in allocateContiguous(). Calls reservationCB before increasing the utilization and returns false with no effect if this fails.
-  virtual bool growContiguous(MachinePageCount increment, ContiguousAllocation& allocation, ReservationCallback reservationCB = nullptr) = 0;
+  /// would exceed maxSize given in allocateContiguous(). Calls reservationCB
+  /// before increasing the utilization and returns false with no effect if this
+  /// fails.
+  virtual bool growContiguous(
+      MachinePageCount increment,
+      ContiguousAllocation& allocation,
+      ReservationCallback reservationCB = nullptr) = 0;
 
   /// Allocates contiguous 'bytes' and return the first byte. Returns nullptr if
   /// there is no space.

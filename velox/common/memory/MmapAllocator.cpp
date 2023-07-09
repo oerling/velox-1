@@ -406,7 +406,7 @@ bool MmapAllocator::growContiguous(
     if (reservationCB != nullptr) {
       reservationCB(AllocationTraits::pageBytes(increment), false);
     }
-      return false;
+    return false;
   }
   // Check if need to advise away
   if (!ensureEnoughMappedPages(increment)) {

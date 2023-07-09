@@ -248,7 +248,7 @@ bool MallocAllocator::growContiguous(
     if (reservationCB != nullptr) {
       reservationCB(AllocationTraits::pageBytes(increment), false);
     }
-      return false;
+    return false;
   }
   numAllocated_ += increment;
   allocation.set(

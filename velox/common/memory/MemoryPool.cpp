@@ -1090,7 +1090,6 @@ void MemoryPoolImpl::recordGrowDbg(const void* addr, uint64_t newSize) {
   allocResult->second.size = newSize;
 }
 
-  
 void MemoryPoolImpl::leakCheckDbg() {
   VELOX_CHECK(debugEnabled_);
   if (debugAllocRecords_.empty()) {
