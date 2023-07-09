@@ -110,10 +110,16 @@ bool MallocAllocator::allocateNonContiguous(
 }
 
 bool MallocAllocator::allocateContiguousImpl(
-    MachinePageCount numPages,
+    MachinePageCount maxPages,
     Allocation* collateral,
     ContiguousAllocation& allocation,
-    ReservationCallback reservationCB) {
+    ReservationCallback reservationCB,
+    MachinePageCount numPages) {
+  if (numPages == 0) {
+    numPages = maxPages;
+  } else {
+    VELOX_CHECK_LE(numPages, maxPages);
+  }
   MachinePageCount numCollateralPages = 0;
   if (collateral != nullptr) {
     numCollateralPages =
@@ -166,13 +172,16 @@ bool MallocAllocator::allocateContiguousImpl(
   numMapped_.fetch_add(numPages);
   void* data = ::mmap(
       nullptr,
-      AllocationTraits::pageBytes(numPages),
+      AllocationTraits::pageBytes(maxPages),
       PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS,
       -1,
       0);
   // TODO: add handling of MAP_FAILED.
-  allocation.set(data, AllocationTraits::pageBytes(numPages));
+  allocation.set(
+      data,
+      AllocationTraits::pageBytes(maxPages),
+      AllocationTraits::pageBytes(numPages));
   useHugePages(allocation, true);
   return true;
 }
@@ -222,6 +231,28 @@ void MallocAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   numAllocated_.fetch_sub(numPages);
   decrementUsage(bytes);
   allocation.clear();
+}
+
+bool MallocAllocator::growContiguous(
+    MachinePageCount increment,
+    ContiguousAllocation& allocation,
+    ReservationCallback reservationCB) {
+  VELOX_CHECK_LE(
+      allocation.size() + increment * AllocationTraits::kPageSize,
+      allocation.maxSize());
+  if (reservationCB) {
+    // May throw. If does, there is nothing to revert.
+    reservationCB(AllocationTraits::pageBytes(increment), true);
+  }
+  if (!incrementUsage(increment)) {
+    reservationCB(increment, false);
+    return false;
+  }
+  allocation.set(
+      allocation.data(),
+      allocation.size() + AllocationTraits::kPageSize * increment,
+      allocation.maxSize());
+  return true;
 }
 
 void* MallocAllocator::allocateBytes(uint64_t bytes, uint16_t alignment) {

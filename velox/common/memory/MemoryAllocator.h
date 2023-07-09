@@ -239,17 +239,28 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// does. It may throw and the end state will be consistent, with no new
   /// allocation and 'allocation' and 'collateral' cleared.
   ///
-  /// NOTE:
-  /// - 'collateral' and passed in 'allocation' are guaranteed to be freed.
-  /// - Throws if allocation exceeds capacity
+  /// NOTE: - 'collateral' and passed in 'allocation' are guaranteed
+  /// to be freed.  If 'initialNumPages' is non-0, 'numPages' worth of
+  /// address space is mapped but the utilization in the allocator and
+  /// pool is incremented by 'initialNumPages'. This allows reserving
+  /// a large range of addresses for use with huge pages without
+  /// declaring the whole range as held by the query. The reservation
+  /// will be increased as and if addresses in the range are used. See
+  /// growContiguous().  - Throws if allocation exceeds capacity.
   virtual bool allocateContiguous(
       MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
-      ReservationCallback reservationCB = nullptr) = 0;
+      ReservationCallback reservationCB = nullptr,
+      MachinePageCount initialNumPages = 0) = 0;
 
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
+
+  /// Increments the reserved part of 'allocation' by
+  /// 'increment'. false if would exceed capacity, Throws if size
+  /// would exceed maxSize given in allocateContiguous(). Calls reservationCB before increasing the utilization and returns false with no effect if this fails.
+  virtual bool growContiguous(MachinePageCount increment, ContiguousAllocation& allocation, ReservationCallback reservationCB = nullptr) = 0;
 
   /// Allocates contiguous 'bytes' and return the first byte. Returns nullptr if
   /// there is no space.

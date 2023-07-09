@@ -274,15 +274,29 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// memory allocation.
   virtual const std::vector<MachinePageCount>& sizeClasses() const = 0;
 
-  /// Makes a large contiguous mmap of 'numPages'. The new mapped pages are
-  /// returned in 'out' on success. Any formly mapped pages referenced by
-  /// 'out' is unmapped in all the cases even if the allocation fails.
+  /// Makes a large contiguous mmap of 'numPages'. The new mapped
+  /// pages are returned in 'out' on success. Any formly mapped pages
+  /// referenced by 'out' is unmapped in all the cases even if the
+  /// allocation fails. If 'numPages' is not given, this defaults to
+  /// 'maxPages'. 'maxPages' gives the size of the mmap in
+  /// addresses. 'numPages' gives the amount to declare as
+  /// used. growContiguous() is used to increase the
+  /// reservation up to 'maxPages'. This allows reserving a large
+  /// range of addresses for huge pages. The range can be larger than
+  /// is likely to be used because usage can be declared as needed but
+  /// the number of huge pages  can be set according to an assumption of large
+  /// utilization.
   virtual void allocateContiguous(
-      MachinePageCount numPages,
-      ContiguousAllocation& out) = 0;
+      MachinePageCount maxPages,
+      ContiguousAllocation& out,
+      MachinePageCount numPages = 0) = 0;
 
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;
+
+  virtual void growContiguous(
+      MachinePageCount increment,
+      ContiguousAllocation& allocation) = 0;
 
   /// Rounds up to a power of 2 >= size, or to a size halfway between
   /// two consecutive powers of two, i.e 8, 12, 16, 24, 32, .... This
@@ -553,10 +567,16 @@ class MemoryPoolImpl : public MemoryPool {
 
   const std::vector<MachinePageCount>& sizeClasses() const override;
 
-  void allocateContiguous(MachinePageCount numPages, ContiguousAllocation& out)
-      override;
+  void allocateContiguous(
+      MachinePageCount maxPages,
+      ContiguousAllocation& out,
+      MachinePageCount numPages = 0) override;
 
   void freeContiguous(ContiguousAllocation& allocation) override;
+
+  void growContiguous(
+      MachinePageCount increment,
+      ContiguousAllocation& allocation) override;
 
   int64_t capacity() const override;
 
@@ -583,19 +603,6 @@ class MemoryPoolImpl : public MemoryPool {
   bool maybeReserve(uint64_t size) override;
 
   void release() override;
-
-  // Reserve memory for a new allocation/reservation with specified 'size'. If
-  // 'reserveOnly', then does not update the current usage. Public because
-  // AllocationPool uses this to gradually give account for giving out pieces of
-  // a larger mmap.
-  void reserve(uint64_t size, bool reserveOnly = false);
-
-  // Release memory reservation for an allocation free or memory release with
-  // specified 'size'. If 'releaseOnly' is true, then we only release the unused
-  // reservation if 'minReservationBytes_' is set. Public because AllocationPool
-  // uses this to account for freeing a large mmap of which only a fraction has
-  // been given out.
-  void release(uint64_t bytes, bool releaseOnly = false);
 
   uint64_t freeBytes() const override;
 
@@ -628,7 +635,7 @@ class MemoryPoolImpl : public MemoryPool {
 
   void testingSetCapacity(int64_t bytes);
 
-  MemoryAllocator* allocator() const {
+  MemoryAllocator* testingAllocator() const {
     return allocator_;
   }
 
@@ -685,10 +692,13 @@ class MemoryPoolImpl : public MemoryPool {
     return quantizedSize(size + delta) - size;
   }
 
+  // Reserve memory for a new allocation/reservation with specified 'size'.
   // 'reserveThreadSafe' processes the memory reservation with mutex lock
   // protection to prevent concurrent updates to the same leaf memory pool.
   // 'reserveNonThreadSafe' processes the memory reservation without mutex lock
   // at the leaf memory pool.
+  void reserve(uint64_t size, bool reserveOnly = false);
+
   FOLLY_ALWAYS_INLINE void reserveNonThreadSafe(
       uint64_t size,
       bool reserveOnly = false) {
@@ -766,9 +776,13 @@ class MemoryPoolImpl : public MemoryPool {
   bool maybeIncrementReservation(uint64_t size);
   bool maybeIncrementReservationLocked(uint64_t size);
 
-  // 'releaseThreadSafe' processes
+  // Release memory reservation for an allocation free or memory release with
+  // specified 'size'. If 'releaseOnly' is true, then we only release the unused
+  // reservation if 'minReservationBytes_' is set. 'releaseThreadSafe' processes
   // the memory reservation release with mutex lock protection at the leaf
   // memory pool while 'reserveThreadSafe' doesn't.
+  void release(uint64_t bytes, bool releaseOnly = false);
+
   void releaseThreadSafe(uint64_t size, bool releaseOnly);
 
   FOLLY_ALWAYS_INLINE void releaseNonThreadSafe(
