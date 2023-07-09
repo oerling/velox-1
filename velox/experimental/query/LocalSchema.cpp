@@ -101,6 +101,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
         std::make_shared<connector::hive::HiveColumnHandle>(
             names.back(),
             connector::hive::HiveColumnHandle::ColumnType::kRegular,
+            types.back(),
             types.back());
     switch (types.back()->kind()) {
       case TypeKind::BIGINT:
