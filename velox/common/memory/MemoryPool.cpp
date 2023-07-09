@@ -541,7 +541,7 @@ void MemoryPoolImpl::allocateContiguous(
   if (!out.empty()) {
     INC_MEM_OP_STATS(Frees);
   }
-  VELOX_CHECK_GT(numPages, 0);
+  VELOX_CHECK_GT(maxPages, 0);
   DEBUG_RECORD_FREE(out);
   if (!allocator_->allocateContiguous(
           maxPages,
@@ -590,6 +590,9 @@ void MemoryPoolImpl::growContiguous(
         __FUNCTION__,
         increment,
         toString()));
+  }
+  if (FOLLY_UNLIKELY(debugEnabled_)) {
+    recordGrowDbg(allocation.data(), allocation.size());
   }
 }
 
@@ -1073,6 +1076,21 @@ void MemoryPoolImpl::recordFreeDbg(const ContiguousAllocation& allocation) {
   recordFreeDbg(allocation.data(), allocation.size());
 }
 
+void MemoryPoolImpl::recordGrowDbg(const void* addr, uint64_t newSize) {
+  VELOX_CHECK(debugEnabled_);
+  if (!needRecordDbg(false) || addr == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> l(debugAllocMutex_);
+  uint64_t addrUint64 = reinterpret_cast<uint64_t>(addr);
+  auto allocResult = debugAllocRecords_.find(addrUint64);
+  if (allocResult == debugAllocRecords_.end()) {
+    VELOX_FAIL("Growing of un-allocated memory. Free address {}.", addrUint64);
+  }
+  allocResult->second.size = newSize;
+}
+
+  
 void MemoryPoolImpl::leakCheckDbg() {
   VELOX_CHECK(debugEnabled_);
   if (debugAllocRecords_.empty()) {

@@ -180,8 +180,8 @@ bool MallocAllocator::allocateContiguousImpl(
   // TODO: add handling of MAP_FAILED.
   allocation.set(
       data,
-      AllocationTraits::pageBytes(maxPages),
-      AllocationTraits::pageBytes(numPages));
+      AllocationTraits::pageBytes(numPages),
+      AllocationTraits::pageBytes(maxPages));
   useHugePages(allocation, true);
   return true;
 }
@@ -240,14 +240,17 @@ bool MallocAllocator::growContiguous(
   VELOX_CHECK_LE(
       allocation.size() + increment * AllocationTraits::kPageSize,
       allocation.maxSize());
-  if (reservationCB) {
+  if (reservationCB != nullptr) {
     // May throw. If does, there is nothing to revert.
     reservationCB(AllocationTraits::pageBytes(increment), true);
   }
-  if (!incrementUsage(increment)) {
-    reservationCB(increment, false);
-    return false;
+  if (!incrementUsage(AllocationTraits::pageBytes(increment))) {
+    if (reservationCB != nullptr) {
+      reservationCB(AllocationTraits::pageBytes(increment), false);
+    }
+      return false;
   }
+  numAllocated_ += increment;
   allocation.set(
       allocation.data(),
       allocation.size() + AllocationTraits::kPageSize * increment,

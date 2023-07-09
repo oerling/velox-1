@@ -358,8 +358,8 @@ bool MmapAllocator::allocateContiguousImpl(
   }
   allocation.set(
       data,
-      AllocationTraits::pageBytes(maxPages),
-      AllocationTraits::pageBytes(numPages));
+      AllocationTraits::pageBytes(numPages),
+      AllocationTraits::pageBytes(maxPages));
   useHugePages(allocation, true);
   return true;
 }
@@ -403,8 +403,10 @@ bool MmapAllocator::growContiguous(
         << " new pages for total allocation of " << allocation.numPages()
         << " pages, the memory allocator capacity is " << capacity_;
     numAllocated_ -= increment;
-    reservationCB(increment, false);
-    return false;
+    if (reservationCB != nullptr) {
+      reservationCB(AllocationTraits::pageBytes(increment), false);
+    }
+      return false;
   }
   // Check if need to advise away
   if (!ensureEnoughMappedPages(increment)) {

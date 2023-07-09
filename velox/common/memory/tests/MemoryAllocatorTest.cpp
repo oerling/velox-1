@@ -993,6 +993,7 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   EXPECT_THROW(instance_->growContiguous(100000 * kMinGrow, large), VeloxException);
   instance_->freeContiguous(large);
   EXPECT_EQ(kCapacityPages - kInitialLarge - 5 * kMinGrow, instance_->numAllocated());
+  freeSmall(kCapacityPages);
 }
   
 TEST_P(MemoryAllocatorTest, allocateBytes) {

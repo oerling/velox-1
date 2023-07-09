@@ -79,7 +79,7 @@ ContiguousAllocation::~ContiguousAllocation() {
 void ContiguousAllocation::set(void* data, uint64_t size, uint64_t maxSize) {
   data_ = data;
   size_ = size;
-  maxSize_ = maxSize_ != 0 ? maxSize_ : size_;
+  maxSize_ = maxSize != 0 ? maxSize : size;
   sanityCheck();
 }
 
