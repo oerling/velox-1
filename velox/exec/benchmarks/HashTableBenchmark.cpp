@@ -291,7 +291,7 @@ class HashTableBenchmark : public VectorTestBase {
             insertedRows.asMutableRange().bits(),
             0,
             batchSize);
-	insertedRows.updateBounds();
+        insertedRows.updateBounds();
       }
       decoded.emplace_back(batch->childrenSize());
       VELOX_CHECK_EQ(batch->size(), batchSize);
