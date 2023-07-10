@@ -627,8 +627,7 @@ int main(int argc, char** argv) {
       HashTableBenchmarkParams("Hit32M", 32000000, 100),
       HashTableBenchmarkParams("Miss32M", 32000000, 5),
 
-      HashTableBenchmarkParams("Hit128M", 128000000, 100),
-      HashTableBenchmarkParams("Miss64M", 64000000, 50)};
+      HashTableBenchmarkParams("Hit128M", 128000000, 100)};
   if (FLAGS_custom_size != 0) {
     params.push_back(HashTableBenchmarkParams(
         "Custom",
