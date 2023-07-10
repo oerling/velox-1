@@ -23,10 +23,16 @@
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
 #include <folly/Benchmark.h>
-#include <folly/init/Init.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
+#include <folly/init/Init.h>
 #include <gtest/gtest.h>
 #include <memory>
+
+DEFINE_int64(custom_size, 0, "Custom number of entries");
+DEFINE_int32(custom_hit_rate, 0, "Percentage of hits in custom test");
+DEFINE_int32(custom_key_spacing, 1, "Spacing between key values");
+
+DEFINE_int32(custom_num_ways, 10, "Number of build threads");
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -35,11 +41,18 @@ using namespace facebook::velox::test;
 struct HashTableBenchmarkParams {
   HashTableBenchmarkParams() = default;
 
-  HashTableBenchmarkParams(std::string title, int64_t size, int32_t hitrate)
+  HashTableBenchmarkParams(
+      std::string title,
+      int64_t size,
+      int32_t hitrate,
+      int32_t keySpacing = 1,
+      int32_t _numWays = 10)
       : title(std::move(title)),
         buildSize(size),
-        size(100 * size / hitrate),
-        insertPct(hitrate) {}
+        size(100 * (size / _numWays) / hitrate),
+        numWays(_numWays),
+        insertPct(hitrate),
+        keySpacing(keySpacing) {}
 
   // Title for reporting
   std::string title;
@@ -53,7 +66,7 @@ struct HashTableBenchmarkParams {
   int32_t size;
 
   // Number of build RowContainers.
-  int32_t numWays{10};
+  int32_t numWays;
 
   // Type of build row.
   TypePtr buildType{ROW({"k1"}, {BIGINT()})};
@@ -71,7 +84,7 @@ struct HashTableBenchmarkParams {
 
   std::string toString() const {
     return fmt::format(
-        "Rows={} Hit%={} NumProbes={}", buildSize, insertPct, size);
+        "{}: Rows={} Hit%={} NumProbes={}", title, buildSize, insertPct, size * numWays);
   }
 };
 
@@ -84,6 +97,12 @@ struct HashTableBenchmarkRun {
   // Result in __rdtsc clocks for total probe over number of probed rows.
   float probeClocks{0};
 
+  // Distinct rows in the table.
+  int32_t numDistinct;
+
+  // The mode of the table.
+  BaseHashTable::HashMode hashMode;
+
   // Clocks for same operation with F14FastSet if applicable.
   float f14ProbeClocks{-1};
 
@@ -95,6 +114,12 @@ struct HashTableBenchmarkRun {
       out << " f14Probe=" << f14ProbeClocks << " ("
           << (100 * f14ProbeClocks / probeClocks) << "%)";
     }
+    std::string modeString = hashMode == BaseHashTable::HashMode::kArray
+        ? "array"
+        : hashMode == BaseHashTable::HashMode::kHash ? "hash"
+                                                     : "normalized key";
+    out << std::endl
+        << " numDistinct=" << numDistinct << " mode=" << modeString;
     return out.str();
   }
 };
@@ -110,6 +135,9 @@ class HashTableBenchmark : public VectorTestBase {
  public:
   void makeData(HashTableBenchmarkParams params) {
     topTable_.reset();
+    batches_.clear();
+    rowOfKey_.clear();
+    isInTable_.clear();
     params_ = params;
     std::vector<TypePtr> dependentTypes;
     int32_t sequence = 0;
@@ -182,6 +210,8 @@ class HashTableBenchmark : public VectorTestBase {
     testProbe();
     result.hashClocks = hashClocksPerRow_;
     result.probeClocks = clocksPerRow_;
+    result.hashMode = topTable_->hashMode();
+    result.numDistinct = topTable_->numDistinct();
     if (topTable_->hashMode() == BaseHashTable::HashMode::kNormalizedKey) {
       testF14Probe();
       result.f14ProbeClocks = clocksPerRow_;
@@ -532,7 +562,6 @@ class HashTableBenchmark : public VectorTestBase {
   std::vector<char*> rowOfKey_;
   std::unique_ptr<HashTable<true>> topTable_;
   HashTableBenchmarkParams params_;
-  std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
 
   // Timing set by test*Probe().
   float hashClocksPerRow_{0};
@@ -557,13 +586,16 @@ class HashTableBenchmark : public VectorTestBase {
       F14TestHasher,
       F14TestComparer,
       memory::StlAllocator<uint64_t*>>;
-  std::shared_ptr<memory::MemoryAllocator> allocator_;
-
   std::unique_ptr<F14TestTable> f14Table_;
 };
 
-HashTableBenchmark* bm;
-std::vector<HashTableBenchmarkRun> results;
+void combineResults(
+    std::vector<HashTableBenchmarkRun>& results,
+    HashTableBenchmarkRun run) {
+  if (!results.empty() && results.back().params.title == run.params.title)
+    return;
+  results.push_back(run);
+}
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
@@ -574,33 +606,47 @@ int main(int argc, char** argv) {
 
   auto allocator = std::make_shared<memory::MmapAllocator>(options);
   memory::MemoryAllocator::setDefaultInstance(allocator.get());
-  auto bmUnique = std::make_unique<HashTableBenchmark>();
-  bm = bmUnique.get();
+  auto bm = std::make_unique<HashTableBenchmark>();
+  std::vector<HashTableBenchmarkRun> results;
 
   std::vector<HashTableBenchmarkParams> params = {
       HashTableBenchmarkParams("Hit10K", 10000, 100),
-      HashTableBenchmarkParams("Miss10K", 1000, 5)};
-#if 0
+      HashTableBenchmarkParams("Miss10K", 10000, 5),
 
-  HashTableBenchmarkParams hit1M();;
-  HashTableBenchmarkParams miss1M;
-  
-  HashTableBenchmarkParams hit9M;
-  HashTableBenchmarkParams miss9M;
+      HashTableBenchmarkParams("HitVid10K", 10000, 100, 1000),
+      HashTableBenchmarkParams("MissVid10K", 10000, 5, 1000),
 
-  HashTableBenchmarkParams hit100M;
-  HashTableBenchmarkParams miss100M;
+      HashTableBenchmarkParams("Hit4M", 4000000, 100),
+      HashTableBenchmarkParams("Miss4M", 4000000, 5),
 
-#endif
+      HashTableBenchmarkParams("Hit32M", 32000000, 100),
+      HashTableBenchmarkParams("Miss32M", 32000000, 5),
+
+      HashTableBenchmarkParams("Hit128M", 128000000, 100),
+      HashTableBenchmarkParams("Miss64M", 64000000, 50)};
+  if (FLAGS_custom_size != 0) {
+    params.push_back(HashTableBenchmarkParams(
+        "Custom",
+        FLAGS_custom_size,
+        FLAGS_custom_hit_rate,
+        FLAGS_custom_key_spacing,
+        FLAGS_custom_num_ways));
+  }
 
   for (auto& param : params) {
-    folly::addBenchmark(__FILE__, param.title, [param]() {
-      bm->makeData(param);
-      results.push_back(bm->run());
+    folly::addBenchmark(__FILE__, param.title, [param, &bm, &results]() {
+      std::string lastCase;
+      if (lastCase != param.title) {
+        lastCase = param.title;
+        folly::BenchmarkSuspender suspender;
+        bm->makeData(param);
+      }
+      combineResults(results, bm->run());
       return 1;
     });
   }
   folly::runBenchmarks();
+  std::cout << "*** Results:" << std::endl;
   for (auto& result : results) {
     std::cout << result.toString() << std::endl;
   }
