@@ -251,6 +251,7 @@ bool MallocAllocator::growContiguous(
     return false;
   }
   numAllocated_ += increment;
+  numMapped_ += increment;
   allocation.set(
       allocation.data(),
       allocation.size() + AllocationTraits::kPageSize * increment,
