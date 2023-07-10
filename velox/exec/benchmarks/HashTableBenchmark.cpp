@@ -84,7 +84,11 @@ struct HashTableBenchmarkParams {
 
   std::string toString() const {
     return fmt::format(
-        "{}: Rows={} Hit%={} NumProbes={}", title, buildSize, insertPct, size * numWays);
+        "{}: Rows={} Hit%={} NumProbes={}",
+        title,
+        buildSize,
+        insertPct,
+        size * numWays);
   }
 };
 
