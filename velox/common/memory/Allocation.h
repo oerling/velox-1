@@ -191,6 +191,7 @@ class ContiguousAllocation {
     pool_ = other.pool_;
     data_ = other.data_;
     size_ = other.size_;
+    maxSize_ = other.maxSize_;
     other.clear();
     sanityCheck();
     return *this;
@@ -200,6 +201,7 @@ class ContiguousAllocation {
     pool_ = other.pool_;
     data_ = other.data_;
     size_ = other.size_;
+    maxSize_ = other.maxSize_;
     other.clear();
     sanityCheck();
   }
@@ -235,11 +237,26 @@ class ContiguousAllocation {
 
   bool empty() const {
     sanityCheck();
-    return size_ == 0;
+    return maxSize_ == 0;
   }
 
-  void set(void* data, uint64_t size);
+  /// Sets the pointer and sizes. If maxSize is not specified it defaults to
+  /// 'size'.
+  void set(void* data, uint64_t size, uint64_t maxSize_ = 0);
+
+  // Adjusts 'size' towards 'maxSize' by 'increment' pages. Rounds
+  // 'increment' to huge pages, since this is the unit of growth of
+  // RSS for large contiguous runs.  Increases the reservation in in
+  // 'pool_' and its allocator. May fail by cap exceeded. If failing,
+  // the size is not changed. 'size_' cannot exceed 'maxSize_'.
+  void grow(MachinePageCount increment);
+
   void clear();
+
+  /// Returns the maximum size
+  uint64_t maxSize() const {
+    return maxSize_;
+  }
 
   std::string toString() const;
 
@@ -251,6 +268,11 @@ class ContiguousAllocation {
 
   MemoryPool* pool_{nullptr};
   void* data_{nullptr};
+
+  // Offset of first byte in 'data_' not counted reserved in 'pool_'.
   uint64_t size_{0};
+
+  // Offset of first byte after the mmap of 'data'.
+  uint64_t maxSize_{0};
 };
 } // namespace facebook::velox::memory

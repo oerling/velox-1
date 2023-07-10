@@ -39,7 +39,7 @@ class AllocationPoolTest : public testing::Test {
 };
 
 TEST_F(AllocationPoolTest, hugePages) {
-  constexpr int64_t kHugePageSize = memory::AllocationTraits::kHugePageSize ;
+  constexpr int64_t kHugePageSize = memory::AllocationTraits::kHugePageSize;
   auto allocationPool = std::make_unique<AllocationPool>(pool_.get());
   allocationPool->setHugePageThreshold(128 << 10);
   int32_t counter = 0;
@@ -80,7 +80,8 @@ TEST_F(AllocationPoolTest, hugePages) {
     allocationPool->allocateFixed(5UL << 30);
     EXPECT_EQ(5, allocationPool->numRanges());
 
-    // 5G is an even multiple of huge page, no free space at end. But it can be the mmap happens to start at 2MB boundary so we get another 2MB.
+    // 5G is an even multiple of huge page, no free space at end. But it can be
+    // the mmap happens to start at 2MB boundary so we get another 2MB.
     EXPECT_GE(kHugePageSize, allocationPool->availableInRun());
 
     EXPECT_LE(

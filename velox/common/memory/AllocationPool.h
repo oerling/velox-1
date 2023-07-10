@@ -134,11 +134,6 @@ class AllocationPool {
   // be less than the mmapped range for large mmaps.
   int64_t reservedTo_{0};
 
-  // Total explicit reservations made in 'pool_' for the items in
-  // 'largeAllocations_'.
-
-  int64_t largeReserved_{0};
-
   // Total space returned to users. Size of allocations can be larger specially
   // if mmapped in advance of use.
   int64_t usedBytes_{0};
