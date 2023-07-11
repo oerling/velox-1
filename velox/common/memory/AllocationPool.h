@@ -32,8 +32,7 @@ class AllocationPool {
   static constexpr int64_t kHugePageSize =
       memory::AllocationTraits::kHugePageSize;
 
-  explicit AllocationPool(memory::MemoryPool* pool)
-      : pool_(pool) {}
+  explicit AllocationPool(memory::MemoryPool* pool) : pool_(pool) {}
 
   ~AllocationPool() {
     clear();
@@ -142,7 +141,8 @@ class AllocationPool {
   // Points to the start of the run from which allocations are being nade.
   char* startOfRun_{nullptr};
 
-  // Total addressable bytes from 'startOfRun_'. Not all are necessarily declared allocated in 'pool_'. See growLastAllocation().
+  // Total addressable bytes from 'startOfRun_'. Not all are necessarily
+  // declared allocated in 'pool_'. See growLastAllocation().
   int64_t bytesInRun_{0};
 
   // Offset of first unused byte from 'startOfRun_'.
