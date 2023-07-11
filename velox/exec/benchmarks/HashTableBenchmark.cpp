@@ -38,6 +38,7 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
 
+namespace {
 struct HashTableBenchmarkParams {
   HashTableBenchmarkParams() = default;
 
@@ -597,10 +598,12 @@ class HashTableBenchmark : public VectorTestBase {
 void combineResults(
     std::vector<HashTableBenchmarkRun>& results,
     HashTableBenchmarkRun run) {
-  if (!results.empty() && results.back().params.title == run.params.title)
+  if (!results.empty() && results.back().params.title == run.params.title) {
     return;
+  }
   results.push_back(run);
 }
+} // namespace
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
