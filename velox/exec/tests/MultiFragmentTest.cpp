@@ -1474,12 +1474,24 @@ TEST_F(MultiFragmentTest, taskTerminateWithPendingOutputBuffers) {
 }
 
 TEST_F(MultiFragmentTest, flowControl) {
+  FlowTestParams params;
+
   {
-    FlowTestParams params;
     auto [exchange, partition] = aggregationFlow(params);
     auto& stats = exchange.runtimeStats;
-    ;
     EXPECT_LT(stats["peakBytes"].max, 124000);
+  }
+
+  params.numPartitions = 21;
+  params.bytesPerSource = 100000000;
+  params.minRowBytes = 100;
+  params.maxRowBytes = 100000;
+  params.partitionBufferSize = 16000000;
+  int32_t exchangeBufferSize = 9000000;
+  {
+    auto [exchange, partition] = aggregationFlow(params);
+    auto& stats = exchange.runtimeStats;
+    EXPECT_LT(stats["peakBytes"].max, 10000000);
   }
 }
 

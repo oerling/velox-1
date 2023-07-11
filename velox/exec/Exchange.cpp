@@ -336,7 +336,7 @@ void ExchangeClient::requestIfDue(
     if (replySource->isAtEnd()) {
       replySource->deleteResults();
     } else {
-      assert(replySource->isPending());
+      VELOX_CHECK(replySource->isPending());
       replySourcePending = true;
     }
   }
@@ -363,7 +363,7 @@ void ExchangeClient::requestIfDue(
     int32_t numRequestable =
         sources_.size() - queue_->numCompleted() - queue_->numPending();
     int32_t numRequestableCheck = 0;
-    for (auto& source : sources_) {
+    for (const auto& source : sources_) {
       numRequestableCheck += source->isRequestable();
     }
     VELOX_CHECK_EQ(numRequestable, numRequestableCheck);
@@ -419,10 +419,6 @@ void ExchangeClient::requestIfDue(
     if (!toRequest.empty()) {
       // If one source is already pending, substract it from the new request
       // count.
-      if (toRequest.size() > 1) {
-        static int more;
-        ++more;
-      }
       queue_->recordRequestLocked(
           toRequest.size() - isDirectRerequest, requestedBytes);
     } else {
