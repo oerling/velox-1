@@ -106,7 +106,7 @@ class MmapAllocator : public MemoryAllocator {
     bool result;
     stats_.recordAllocate(numPages * AllocationTraits::kPageSize, 1, [&]() {
       result = allocateContiguousImpl(
-				      numPages, collateral, allocation, reservationCB, maxPages);
+          numPages, collateral, allocation, reservationCB, maxPages);
     });
     return result;
   }

@@ -62,7 +62,7 @@ class MallocAllocator : public MemoryAllocator {
     bool result;
     stats_.recordAllocate(AllocationTraits::pageBytes(numPages), 1, [&]() {
       result = allocateContiguousImpl(
-				      numPages, collateral, allocation, reservationCB, maxPages);
+          numPages, collateral, allocation, reservationCB, maxPages);
     });
     return result;
   }

@@ -86,7 +86,8 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
 void AllocationPool::growLastAllocation() {
   VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
-  auto moreNeeded = bits::roundUp(currentOffset_ - endOfReservedRun(), kHugePageSize);
+  auto moreNeeded =
+      bits::roundUp(currentOffset_ - endOfReservedRun(), kHugePageSize);
   largeAllocations_.back().grow(moreNeeded / kPageSize);
   usedBytes_ += moreNeeded;
 }
@@ -109,7 +110,7 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
     }
     memory::ContiguousAllocation largeAlloc;
     pool_->allocateContiguous(
-			      kHugePageSize / kPageSize, largeAlloc, nextSize / kPageSize);
+        kHugePageSize / kPageSize, largeAlloc, nextSize / kPageSize);
     auto range = largeAlloc.hugePageRange().value();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();

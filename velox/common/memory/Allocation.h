@@ -218,7 +218,8 @@ class ContiguousAllocation {
     return size_;
   }
 
-  /// Returns the largest huge page range covered by 'this' or std::nullopt if no full huge page is fully contained in 'this'.
+  /// Returns the largest huge page range covered by 'this' or std::nullopt if
+  /// no full huge page is fully contained in 'this'.
   std::optional<folly::Range<char*>> hugePageRange() const;
 
   /// Invoked by memory pool to set the ownership on allocation success. All
