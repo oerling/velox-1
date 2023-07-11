@@ -97,13 +97,13 @@ MachinePageCount ContiguousAllocation::numPages() const {
       AllocationTraits::kPageSize;
 }
 
-folly::Range<char*> ContiguousAllocation::hugePageRange() const {
+  std::optional<folly::Range<char*>> ContiguousAllocation::hugePageRange() const {
   auto begin = reinterpret_cast<uintptr_t>(data_);
   auto roundedBegin = bits::roundUp(begin, AllocationTraits::kHugePageSize);
   auto roundedEnd = (begin + maxSize_) / AllocationTraits::kHugePageSize *
       AllocationTraits::kHugePageSize;
   if (roundedEnd <= roundedBegin) {
-    return folly::Range<char*>(nullptr, nullptr);
+    return std::nullopt;
   }
   return folly::Range<char*>(
       reinterpret_cast<char*>(roundedBegin), roundedEnd - roundedBegin);

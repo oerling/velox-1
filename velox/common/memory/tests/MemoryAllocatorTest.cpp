@@ -984,9 +984,9 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   ContiguousAllocation large;
   // Exceeds capacity.
   EXPECT_FALSE(instance_->allocateContiguous(
-      kCapacityPages, nullptr, large, nullptr, kInitialLarge * 2));
+					     kInitialLarge * 2, nullptr, large, nullptr, kCapacityPages));
   EXPECT_TRUE(instance_->allocateContiguous(
-      kCapacityPages, nullptr, large, nullptr, kInitialLarge));
+					    kInitialLarge, nullptr, large, nullptr, kCapacityPages));
   EXPECT_FALSE(instance_->growContiguous(kMinGrow, large));
   freeSmall(kMinGrow);
   EXPECT_TRUE(instance_->growContiguous(kMinGrow, large));

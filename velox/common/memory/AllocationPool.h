@@ -76,7 +76,10 @@ class AllocationPool {
 
   /// Returns the number of bytes allocatable without bumping up reservation.
   int64_t availableInReservedRun() const {
-    return reservedTo_ - currentOffset_;
+    if (largeAllocations_.empty()) {
+      return availableInRun();
+    }
+    return largeAllocations_.back().size() - currentOffset_;
   }
 
   // Returns pointer to first unallocated byte in the current run.
@@ -117,9 +120,20 @@ class AllocationPool {
   static constexpr int64_t kDefaultHugePageThreshold = 256 * 1024;
   static constexpr int64_t kMaxMmapBytes = 512 << 20; // 512 MB
 
+  // Returns the offset from 'startOfRun_' after which the last large
+  // allocation must be grown. There are mapped addresses all the way
+  // to 'bytesInRun_' ut they are not marked used by the
+  // pool/allocator. So use growContiguous() to update this.
+  int64_t endOfReservedRun() {
+    if (largeAllocations_.empty()) {
+      return bytesInRun_;
+    }
+    return largeAllocations_.back().size();
+  }
+
   // Increses the reservation in 'pool_' when 'currentOffset_' goes past
-  // 'reservedTo_'.
-  void increaseReservation();
+  // current end of last large allocation.
+  void growLastAllocation();
 
   void newRunImpl(memory::MachinePageCount numPages);
 
@@ -129,10 +143,6 @@ class AllocationPool {
   char* startOfRun_{nullptr};
   int64_t bytesInRun_{0};
   int64_t currentOffset_ = 0;
-
-  // Offset from 'startOfRun_' that is counted as reserved in 'pool_'. This can
-  // be less than the mmapped range for large mmaps.
-  int64_t reservedTo_{0};
 
   // Total space returned to users. Size of allocations can be larger specially
   // if mmapped in advance of use.

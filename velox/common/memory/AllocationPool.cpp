@@ -28,10 +28,10 @@ folly::Range<char*> AllocationPool::rangeAt(int32_t index) const {
         run.data<char>(),
         run.data<char>() == startOfRun_ ? currentOffset_ : run.numBytes());
   }
-  auto largeIndex = index - allocations_.size();
+  const auto largeIndex = index - allocations_.size();
   if (largeIndex < largeAllocations_.size()) {
     auto data = &largeAllocations_[largeIndex];
-    auto range = data->hugePageRange();
+    auto range = data->hugePageRange().value();
     if (range.data() == startOfRun_) {
       return folly::Range<char*>(range.data(), currentOffset_);
     }
@@ -46,7 +46,6 @@ void AllocationPool::clear() {
   startOfRun_ = nullptr;
   bytesInRun_ = 0;
   currentOffset_ = 0;
-  reservedTo_ = 0;
   usedBytes_ = 0;
 }
 
@@ -55,8 +54,8 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
   if (availableInRun() >= bytes && alignment == 1) {
     auto* result = startOfRun_ + currentOffset_;
     currentOffset_ += bytes;
-    if (currentOffset_ > reservedTo_) {
-      increaseReservation();
+    if (currentOffset_ > endOfReservedRun()) {
+      growLastAllocation();
     }
     return result;
   }
@@ -79,18 +78,17 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
   auto* result = startOfRun_ + currentOffset_;
   VELOX_CHECK_EQ(reinterpret_cast<uintptr_t>(result) % alignment, 0);
   currentOffset_ += bytes;
-  if (currentOffset_ > reservedTo_) {
-    increaseReservation();
+  if (currentOffset_ > endOfReservedRun()) {
+    growLastAllocation();
   }
   return result;
 }
 
-void AllocationPool::increaseReservation() {
+void AllocationPool::growLastAllocation() {
   VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
-  auto moreNeeded = bits::roundUp(currentOffset_ - reservedTo_, kHugePageSize);
+  auto moreNeeded = bits::roundUp(currentOffset_ - endOfReservedRun(), kHugePageSize);
   largeAllocations_.back().grow(moreNeeded / kPageSize);
   usedBytes_ += moreNeeded;
-  reservedTo_ += moreNeeded;
 }
 
 void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
@@ -111,14 +109,13 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
     }
     memory::ContiguousAllocation largeAlloc;
     pool_->allocateContiguous(
-        nextSize / kPageSize, largeAlloc, kHugePageSize / kPageSize);
-    auto range = largeAlloc.hugePageRange();
+			      kHugePageSize / kPageSize, largeAlloc, nextSize / kPageSize);
+    auto range = largeAlloc.hugePageRange().value();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();
     largeAllocations_.emplace_back(std::move(largeAlloc));
     currentOffset_ = 0;
     usedBytes_ += kHugePageSize;
-    reservedTo_ = kHugePageSize;
     return;
   }
   memory::Allocation allocation;
@@ -129,7 +126,6 @@ void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
   bytesInRun_ = allocation.runAt(0).numBytes();
   currentOffset_ = 0;
   allocations_.push_back(std::move(allocation));
-  reservedTo_ = bytesInRun_;
   usedBytes_ += bytesInRun_;
 }
 
