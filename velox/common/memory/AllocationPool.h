@@ -33,9 +33,7 @@ class AllocationPool {
       memory::AllocationTraits::kHugePageSize;
 
   explicit AllocationPool(memory::MemoryPool* pool)
-      : pool_(dynamic_cast<memory::MemoryPoolImpl*>(pool)) {
-    VELOX_CHECK_NOT_NULL(pool_);
-  }
+      : pool_(pool) {}
 
   ~AllocationPool() {
     clear();
@@ -57,7 +55,7 @@ class AllocationPool {
 
   /// Returns the indexth contiguous range. If the range is a large allocation,
   /// returns the hugepage aligned range of contiguous huge pages in the range.
-  /// For the last rane, i.e. the one allocations come from, the size is the
+  /// For the last range, i.e. the one allocations come from, the size is the
   /// distance from start to first byte after last allocation.
   folly::Range<char*> rangeAt(int32_t index) const;
 
@@ -90,7 +88,7 @@ class AllocationPool {
 
   // Sets the first free position in the current run.
   void setFirstFreeInRun(const char* firstFree) {
-    auto offset = firstFree - startOfRun_;
+    const auto offset = firstFree - startOfRun_;
     VELOX_CHECK(
         offset >= 0 && offset <= bytesInRun_,
         "Trying to set end of allocation outside of last allocated run");
@@ -101,7 +99,7 @@ class AllocationPool {
     return pool_;
   }
 
-  /// true if 'ptr' is inside the range alocations are made from.
+  /// Returns true if 'ptr' is inside the range alocations are made from.
   bool isInCurrentRange(void* ptr) const {
     return reinterpret_cast<char*>(ptr) >= startOfRun_ &&
         reinterpret_cast<char*>(ptr) < startOfRun_ + bytesInRun_;
@@ -137,11 +135,17 @@ class AllocationPool {
 
   void newRunImpl(memory::MachinePageCount numPages);
 
-  memory::MemoryPoolImpl* pool_;
+  memory::MemoryPool* pool_;
   std::vector<memory::Allocation> allocations_;
   std::vector<memory::ContiguousAllocation> largeAllocations_;
+
+  // Points to the start of the run from which allocations are being nade.
   char* startOfRun_{nullptr};
+
+  // Total addressable bytes from 'startOfRun_'. Not all are necessarily declared allocated in 'pool_'. See growLastAllocation().
   int64_t bytesInRun_{0};
+
+  // Offset of first unused byte from 'startOfRun_'.
   int64_t currentOffset_ = 0;
 
   // Total space returned to users. Size of allocations can be larger specially

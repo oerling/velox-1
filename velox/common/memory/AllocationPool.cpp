@@ -30,8 +30,7 @@ folly::Range<char*> AllocationPool::rangeAt(int32_t index) const {
   }
   const auto largeIndex = index - allocations_.size();
   if (largeIndex < largeAllocations_.size()) {
-    auto data = &largeAllocations_[largeIndex];
-    auto range = data->hugePageRange().value();
+    auto range = largeAllocations_[largeIndex].hugePageRange().value();
     if (range.data() == startOfRun_) {
       return folly::Range<char*>(range.data(), currentOffset_);
     }
@@ -86,10 +85,10 @@ char* AllocationPool::allocateFixed(uint64_t bytes, int32_t alignment) {
 
 void AllocationPool::growLastAllocation() {
   VELOX_CHECK_GT(bytesInRun_, kHugePageSize);
-  auto moreNeeded =
+  auto bytesToReserve =
       bits::roundUp(currentOffset_ - endOfReservedRun(), kHugePageSize);
-  largeAllocations_.back().grow(moreNeeded / kPageSize);
-  usedBytes_ += moreNeeded;
+  largeAllocations_.back().grow(bytesToReserve / kPageSize);
+  usedBytes_ += bytesToReserve;
 }
 
 void AllocationPool::newRunImpl(memory::MachinePageCount numPages) {
