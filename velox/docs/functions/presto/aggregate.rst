@@ -95,8 +95,6 @@ General Aggregate Functions
 
     Returns an array created from the distinct input ``x`` elements.
 
-    Supported types of ``x`` are: TINYINT, SMALLINT, INTEGER, BIGINT, VARCHAR.
-
 .. function:: set_union(array(T)) -> array(T)
 
     Returns an array of all the distinct values contained in each array of the input.
@@ -111,8 +109,6 @@ General Aggregate Functions
         ) AS t(elements);
 
     Returns ARRAY[1, 2, 3, 4]
-
-    Supported types are: TINYINT, SMALLINT, INTEGER, BIGINT, VARCHAR.
 
 .. function:: sum(x) -> [same as input]
 
@@ -327,3 +323,7 @@ Miscellaneous
 .. function:: max_data_size_for_stats(x) -> bigint
 
     Returns an estimate of the the maximum in-memory size in bytes of ``x``.
+
+.. function:: sum_data_size_for_stats(x) -> bigint
+
+    Returns an estimate of the sum of in-memory size in bytes of ``x``.

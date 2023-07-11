@@ -36,6 +36,17 @@ namespace facebook::velox::exec {
 
 namespace {
 
+std::string makeErrorMessage(
+    const BaseVector& input,
+    vector_size_t row,
+    const TypePtr& toType) {
+  return fmt::format(
+      "Failed to cast from {} to {}: {}.",
+      input.type()->toString(),
+      toType->toString(),
+      input.toString(row));
+}
+
 /// The per-row level Kernel
 /// @tparam ToKind The cast target type
 /// @tparam FromKind The expression type
@@ -47,17 +58,6 @@ void applyCastKernel(
     vector_size_t row,
     const SimpleVector<typename TypeTraits<FromKind>::NativeType>* input,
     FlatVector<typename TypeTraits<ToKind>::NativeType>* result) {
-  if (input->type()->isDecimal()) {
-    // Special handling for decimal types.
-    auto [precision, scale] = getDecimalPrecisionScale(*input->type());
-    if constexpr (ToKind == TypeKind::DOUBLE) {
-      auto output =
-          util::Converter<CppToType<double>::typeKind, void, Truncate>::cast(
-              input->valueAt(row));
-      result->set(row, output / (double)DecimalUtil::kPowersOfTen[scale]);
-    }
-    return;
-  }
   auto output =
       util::Converter<ToKind, void, Truncate>::cast(input->valueAt(row));
 
@@ -71,15 +71,100 @@ void applyCastKernel(
   }
 }
 
-std::string makeErrorMessage(
+VectorPtr castFromDate(
+    const SelectivityVector& rows,
     const BaseVector& input,
-    vector_size_t row,
+    exec::EvalCtx& context,
     const TypePtr& toType) {
-  return fmt::format(
-      "Failed to cast from {} to {}: {}.",
-      input.type()->toString(),
-      toType->toString(),
-      input.toString(row));
+  VectorPtr castResult;
+  context.ensureWritable(rows, toType, castResult);
+  (*castResult).clearNulls(rows);
+
+  auto* inputFlatVector = input.as<SimpleVector<int32_t>>();
+  switch (toType->kind()) {
+    case TypeKind::VARCHAR: {
+      auto* resultFlatVector = castResult->as<FlatVector<StringView>>();
+      context.applyToSelectedNoThrow(rows, [&](int row) {
+        try {
+          auto output = DATE()->toString(inputFlatVector->valueAt(row));
+          auto writer = exec::StringWriter<>(resultFlatVector, row);
+          writer.resize(output.size());
+          std::memcpy(writer.data(), output.data(), output.size());
+          writer.finalize();
+        } catch (const VeloxUserError& ue) {
+          VELOX_USER_FAIL(
+              makeErrorMessage(input, row, toType) + " " + ue.message());
+        } catch (const std::exception& e) {
+          VELOX_USER_FAIL(
+              makeErrorMessage(input, row, toType) + " " + e.what());
+        }
+      });
+      return castResult;
+    }
+    case TypeKind::TIMESTAMP: {
+      static const int64_t kMillisPerDay{86'400'000};
+      auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
+      context.applyToSelectedNoThrow(rows, [&](int row) {
+        resultFlatVector->set(
+            row,
+            Timestamp::fromMillis(
+                inputFlatVector->valueAt(row) * kMillisPerDay));
+      });
+      return castResult;
+    }
+    default:
+      VELOX_UNSUPPORTED(
+          "Cast from DATE to {} is not supported", toType->toString());
+  }
+}
+
+VectorPtr castToDate(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& fromType) {
+  VectorPtr castResult;
+  context.ensureWritable(rows, DATE(), castResult);
+  (*castResult).clearNulls(rows);
+  auto* resultFlatVector = castResult->as<FlatVector<int32_t>>();
+  switch (fromType->kind()) {
+    case TypeKind::VARCHAR: {
+      auto* inputVector = input.as<SimpleVector<StringView>>();
+      context.applyToSelectedNoThrow(rows, [&](int row) {
+        try {
+          auto inputString = inputVector->valueAt(row);
+          resultFlatVector->set(row, DATE()->toDays(inputString));
+        } catch (const VeloxUserError& ue) {
+          VELOX_USER_FAIL(
+              makeErrorMessage(input, row, DATE()) + " " + ue.message());
+        } catch (const std::exception& e) {
+          VELOX_USER_FAIL(
+              makeErrorMessage(input, row, DATE()) + " " + e.what());
+        }
+      });
+      return castResult;
+    }
+    case TypeKind::TIMESTAMP: {
+      auto* inputVector = input.as<SimpleVector<Timestamp>>();
+      static const int32_t kSecsPerDay{86'400};
+      context.applyToSelectedNoThrow(rows, [&](int row) {
+        auto input = inputVector->valueAt(row);
+        auto seconds = input.getSeconds();
+        if (seconds >= 0 || seconds % kSecsPerDay == 0) {
+          resultFlatVector->set(row, seconds / kSecsPerDay);
+        } else {
+          // For division with negatives, minus 1 to compensate the discarded
+          // fractional part. e.g. -1/86'400 yields 0, yet it should be
+          // considered as -1 day.
+          resultFlatVector->set(row, seconds / kSecsPerDay - 1);
+        }
+      });
+      return castResult;
+    }
+    default:
+      VELOX_UNSUPPORTED(
+          "Cast from {} to DATE is not supported", fromType->toString());
+  }
 }
 
 template <typename TInput, typename TOutput>
@@ -89,7 +174,7 @@ void applyDecimalCastKernel(
     exec::EvalCtx& context,
     const TypePtr& fromType,
     const TypePtr& toType,
-    VectorPtr castResult) {
+    VectorPtr& castResult) {
   auto sourceVector = input.as<SimpleVector<TInput>>();
   auto castResultRawBuffer =
       castResult->asUnchecked<FlatVector<TOutput>>()->mutableRawValues();
@@ -116,7 +201,7 @@ void applyIntToDecimalCastKernel(
     const BaseVector& input,
     exec::EvalCtx& context,
     const TypePtr& toType,
-    VectorPtr castResult) {
+    VectorPtr& castResult) {
   auto sourceVector = input.as<SimpleVector<TInput>>();
   auto castResultRawBuffer =
       castResult->asUnchecked<FlatVector<TOutput>>()->mutableRawValues();
@@ -132,6 +217,28 @@ void applyIntToDecimalCastKernel(
       castResult->setNull(row, true);
     }
   });
+}
+
+template <typename TInput>
+VectorPtr applyDecimalToDoubleCast(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& fromType) {
+  VectorPtr result;
+  context.ensureWritable(rows, DOUBLE(), result);
+  (*result).clearNulls(rows);
+  auto resultBuffer =
+      result->asUnchecked<FlatVector<double>>()->mutableRawValues();
+  const auto precisionScale = getDecimalPrecisionScale(*fromType);
+  const auto simpleInput = input.as<SimpleVector<TInput>>();
+  context.applyToSelectedNoThrow(rows, [&](int row) {
+    auto output = util::Converter<TypeKind::DOUBLE, void, false>::cast(
+        simpleInput->valueAt(row));
+    resultBuffer[row] =
+        output / DecimalUtil::kPowersOfTen[precisionScale.second];
+  });
+  return result;
 }
 
 template <TypeKind ToKind, TypeKind FromKind>
@@ -228,6 +335,7 @@ void applyCastPrimitivesDispatch(
       input,
       result);
 }
+
 } // namespace
 
 VectorPtr CastExpr::applyMap(
@@ -463,6 +571,7 @@ VectorPtr CastExpr::applyDecimal(
   VectorPtr castResult;
   context.ensureWritable(rows, toType, castResult);
   (*castResult).clearNulls(rows);
+
   // toType is a decimal
   switch (fromType->kind()) {
     case TypeKind::TINYINT:
@@ -522,10 +631,22 @@ void CastExpr::applyPeeled(
     } else {
       castFromOperator_->castFrom(input, context, rows, toType, result);
     }
+  } else if (fromType->isDate()) {
+    result = castFromDate(rows, input, context, toType);
+  } else if (toType->isDate()) {
+    result = castToDate(rows, input, context, fromType);
   } else if (toType->isShortDecimal()) {
     result = applyDecimal<int64_t>(rows, input, context, fromType, toType);
   } else if (toType->isLongDecimal()) {
     result = applyDecimal<int128_t>(rows, input, context, fromType, toType);
+  } else if (fromType->isDecimal() && toType->isDouble()) {
+    if (fromType->isShortDecimal()) {
+      result =
+          applyDecimalToDoubleCast<int64_t>(rows, input, context, fromType);
+    } else if (fromType->isLongDecimal()) {
+      result =
+          applyDecimalToDoubleCast<int128_t>(rows, input, context, fromType);
+    }
   } else {
     switch (toType->kind()) {
       case TypeKind::MAP:

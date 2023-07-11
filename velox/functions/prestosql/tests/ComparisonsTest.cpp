@@ -90,11 +90,10 @@ TEST_F(ComparisonsTest, betweenVarchar) {
 
 TEST_F(ComparisonsTest, betweenDate) {
   auto parseDate = [](const std::string& dateStr) {
-    Date returnDate;
-    parseTo(dateStr, returnDate);
-    return returnDate;
+    return DATE()->toDays(dateStr);
   };
-  std::vector<std::tuple<Date, bool>> testData = {
+
+  std::vector<std::tuple<int32_t, bool>> testData = {
       {parseDate("2019-05-01"), false},
       {parseDate("2019-06-01"), true},
       {parseDate("2019-07-01"), true},
@@ -104,11 +103,32 @@ TEST_F(ComparisonsTest, betweenDate) {
 
   auto result = evaluate<SimpleVector<bool>>(
       "c0 between cast(\'2019-06-01\' as date) and cast(\'2020-06-01\' as date)",
-      makeRowVector({makeFlatVector<Date, 0>(testData)}));
+      makeRowVector({makeFlatVector<int32_t, 0>(testData, DATE())}));
 
   for (int i = 0; i < testData.size(); ++i) {
     EXPECT_EQ(result->valueAt(i), std::get<1>(testData[i])) << "at " << i;
   }
+}
+
+TEST_F(ComparisonsTest, betweenTimestamp) {
+  using util::fromTimestampString;
+
+  const auto between = [&](std::optional<std::string> s) {
+    auto expr =
+        "c0 between cast(\'2019-02-28 10:00:00.500\' as timestamp) and"
+        " cast(\'2019-02-28 10:00:00.600\' as timestamp)";
+    if (s.has_value()) {
+      return evaluateOnce<bool>(
+          expr, std::optional(fromTimestampString((StringView)s.value())));
+    }
+    return evaluateOnce<bool>(expr, std::optional<Timestamp>());
+  };
+
+  EXPECT_EQ(std::nullopt, between(std::nullopt));
+  EXPECT_FALSE(between("2019-02-28 10:00:00.000").value());
+  EXPECT_TRUE(between("2019-02-28 10:00:00.500").value());
+  EXPECT_TRUE(between("2019-02-28 10:00:00.600").value());
+  EXPECT_FALSE(between("2019-02-28 10:00:00.650").value());
 }
 
 TEST_F(ComparisonsTest, betweenDecimal) {

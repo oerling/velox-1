@@ -354,15 +354,15 @@ HiveDataSource::HiveDataSource(
         std::string,
         std::shared_ptr<connector::ColumnHandle>>& columnHandles,
     FileHandleFactory* fileHandleFactory,
-    velox::memory::MemoryPool* pool,
     core::ExpressionEvaluator* expressionEvaluator,
     memory::MemoryAllocator* allocator,
     const std::string& scanId,
     bool fileColumnNamesReadAsLowerCase,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const dwio::common::ReaderOptions& options)
     : fileHandleFactory_(fileHandleFactory),
-      readerOpts_(pool),
-      pool_(pool),
+      readerOpts_(options),
+      pool_(&options.getMemoryPool()),
       outputType_(outputType),
       expressionEvaluator_(expressionEvaluator),
       allocator_(allocator),
@@ -627,8 +627,14 @@ std::optional<RowVectorPtr> HiveDataSource::next(
     std::vector<VectorPtr> outputColumns;
     outputColumns.reserve(outputType_->size());
     for (int i = 0; i < outputType_->size(); i++) {
-      outputColumns.emplace_back(exec::wrapChild(
-          rowsRemaining, remainingIndices, rowVector->childAt(i)));
+      auto& child = rowVector->childAt(i);
+      if (remainingIndices) {
+        // Disable dictionary values caching in expression eval so that we don't
+        // need to reallocate the result for every batch.
+        child->disableMemo();
+      }
+      outputColumns.emplace_back(
+          exec::wrapChild(rowsRemaining, remainingIndices, child));
     }
 
     return std::make_shared<RowVector>(
@@ -779,7 +785,6 @@ HiveDataSource::createBufferedInput(
   if (auto* asyncCache = dynamic_cast<cache::AsyncDataCache*>(allocator_)) {
     return std::make_unique<dwio::common::CachedBufferedInput>(
         fileHandle.file,
-        readerOpts.getMemoryPool(),
         dwio::common::MetricsLog::voidLog(),
         fileHandle.uuid.id(),
         asyncCache,
@@ -787,8 +792,7 @@ HiveDataSource::createBufferedInput(
         fileHandle.groupId.id(),
         ioStats_,
         executor_,
-        readerOpts.loadQuantum(),
-        readerOpts.maxCoalesceDistance());
+        readerOpts);
   }
   return std::make_unique<dwio::common::BufferedInput>(
       fileHandle.file,

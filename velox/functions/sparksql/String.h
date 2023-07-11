@@ -67,13 +67,15 @@ std::vector<std::shared_ptr<exec::FunctionSignature>> instrSignatures();
 
 std::shared_ptr<exec::VectorFunction> makeInstr(
     const std::string& name,
-    const std::vector<exec::VectorFunctionArg>& inputArgs);
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config);
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> lengthSignatures();
 
 std::shared_ptr<exec::VectorFunction> makeLength(
     const std::string& name,
-    const std::vector<exec::VectorFunctionArg>& inputArgs);
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config);
 
 /// Expands each char of the digest data to two chars,
 /// representing the hex value of each digest char, in order.
@@ -580,6 +582,61 @@ struct OverlayVarbinaryFunction : public OverlayFunctionBase {
       const int32_t pos,
       const int32_t len) {
     OverlayFunctionBase::doCall<false, false>(result, input, replace, pos, len);
+  }
+};
+
+/// left function
+/// left(string, length) -> string
+/// Returns the leftmost length characters from the string
+/// Return an empty string if length is less or equal than 0
+template <typename T>
+struct LeftFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Results refer to strings in the first argument.
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  // ASCII input always produces ASCII result.
+  static constexpr bool is_default_ascii_behavior = true;
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      int32_t length) {
+    doCall<false>(result, input, length);
+  }
+
+  FOLLY_ALWAYS_INLINE void callAscii(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      int32_t length) {
+    doCall<true>(result, input, length);
+  }
+
+  template <bool isAscii>
+  FOLLY_ALWAYS_INLINE void doCall(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      int32_t length) {
+    if (length <= 0) {
+      result.setEmpty();
+      return;
+    }
+
+    int32_t numCharacters = stringImpl::length<isAscii>(input);
+
+    if (length > numCharacters) {
+      length = numCharacters;
+    }
+
+    int32_t start = 1;
+
+    auto byteRange =
+        stringCore::getByteRange<isAscii>(input.data(), start, length);
+
+    // Generating output string
+    result.setNoCopy(StringView(
+        input.data() + byteRange.first, byteRange.second - byteRange.first));
   }
 };
 

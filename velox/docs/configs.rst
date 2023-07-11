@@ -208,6 +208,25 @@ Spilling
      - 0
      - Percentage of aggregation or join input batches that will be forced to spill for testing. 0 means no extra spilling.
 
+Table Writer
+------------
+.. list-table::
+   :widths: 20 10 10 70
+   :header-rows: 1
+
+   * - Property Name
+     - Type
+     - Default Value
+     - Description
+   * - task_writer_count
+     - integer
+     - 1
+     - The number of parallel table writer threads per task.
+   * - task_partitioned_writer_count
+     - integer
+     - task_writer_count
+     - The number of parallel table writer threads per task for bucketed table writes. If not set, use 'task_writer_count' as default.
+
 Codegen Configuration
 ---------------------
 .. list-table::
@@ -262,6 +281,15 @@ Hive Connector
      - false
      - True if reading the source file column names as lower case, and planner should guarantee
      - the input column name and filter is also lower case to achive case-insensitive read..    
+   * - max-coalesced-bytes
+     - integer
+     - 512KB
+     - Maximum size in bytes to coalesce requests to be fetched in a single request.
+   * - max-coalesced-distance-bytes
+     - integer
+     - 128MB
+     - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
+
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
