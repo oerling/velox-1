@@ -98,15 +98,15 @@ class MmapAllocator : public MemoryAllocator {
   int64_t freeNonContiguous(Allocation& allocation) override;
 
   bool allocateContiguous(
-      MachinePageCount maxPages,
+      MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
       ReservationCallback reservationCB = nullptr,
-      MachinePageCount numPages = 0) override {
+      MachinePageCount maxPages = 0) override {
     bool result;
     stats_.recordAllocate(numPages * AllocationTraits::kPageSize, 1, [&]() {
       result = allocateContiguousImpl(
-          maxPages, collateral, allocation, reservationCB, numPages);
+          numPages, collateral, allocation, reservationCB, maxPages);
     });
     return result;
   }
@@ -340,11 +340,11 @@ class MmapAllocator : public MemoryAllocator {
   };
 
   bool allocateContiguousImpl(
-      MachinePageCount maxPages,
+      MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
       ReservationCallback reservationCB,
-      MachinePageCount numPages);
+      MachinePageCount maxPages);
 
   void freeContiguousImpl(ContiguousAllocation& allocation);
 

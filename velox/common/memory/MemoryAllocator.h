@@ -227,32 +227,33 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// function returns the actual freed bytes.
   virtual int64_t freeNonContiguous(Allocation& allocation) = 0;
 
-  /// Makes a contiguous mmap of 'numPages'. Advises away the required number of
-  /// free pages so as not to have resident size exceed the capacity if capacity
-  /// is bounded. Returns false if sufficient free pages do not exist.
-  /// 'collateral' and 'allocation' are freed and unmapped or advised away to
-  /// provide pages to back the new 'allocation'. This will always succeed if
-  /// collateral and allocation together cover the new size of allocation.
-  /// 'allocation' is newly mapped and hence zeroed. The contents of
-  /// 'allocation' and 'collateral' are freed in all cases, also if the
-  /// allocation fails. 'reservationCB' is used in the same way as allocate
-  /// does. It may throw and the end state will be consistent, with no new
-  /// allocation and 'allocation' and 'collateral' cleared.
+  /// Makes a contiguous mmap of 'numPages' or 'maxPages'. 'maxPages' defaults
+  /// to 'numPages'.  Advises away the required number of free pages so as not
+  /// to have resident size exceed the capacity if capacity is bounded. Returns
+  /// false if sufficient free pages do not exist. 'collateral' and 'allocation'
+  /// are freed and unmapped or advised away to provide pages to back the new
+  /// 'allocation'. This will always succeed if collateral and allocation
+  /// together cover the new size of allocation. 'allocation' is newly mapped
+  /// and hence zeroed. The contents of 'allocation' and 'collateral' are freed
+  /// in all cases, also if the allocation fails. 'reservationCB' is used in the
+  /// same way as allocate does. It may throw and the end state will be
+  /// consistent, with no new allocation and 'allocation' and 'collateral'
+  /// cleared.
   ///
   /// NOTE: - 'collateral' and passed in 'allocation' are guaranteed
-  /// to be freed.  If 'initialNumPages' is non-0, 'numPages' worth of
+  /// to be freed.  If 'maxPages' is non-0, 'maxPages' worth of
   /// address space is mapped but the utilization in the allocator and
-  /// pool is incremented by 'initialNumPages'. This allows reserving
+  /// pool is incremented by 'numPages'. This allows reserving
   /// a large range of addresses for use with huge pages without
   /// declaring the whole range as held by the query. The reservation
   /// will be increased as and if addresses in the range are used. See
-  /// growContiguous().  - Throws if allocation exceeds capacity.
+  /// growContiguous().
   virtual bool allocateContiguous(
       MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
       ReservationCallback reservationCB = nullptr,
-      MachinePageCount initialNumPages = 0) = 0;
+      MachinePageCount maxPages = 0) = 0;
 
   /// Frees contiguous 'allocation'. 'allocation' is empty on return.
   virtual void freeContiguous(ContiguousAllocation& allocation) = 0;

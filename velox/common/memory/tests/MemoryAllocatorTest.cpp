@@ -487,7 +487,7 @@ TEST_P(MemoryAllocatorTest, allocationClass1) {
   EXPECT_EQ(allocation.runAt(1).data(), pages + 15 * kPageSize);
 
   Allocation moved(std::move(allocation));
-  ASSERT_TRUE(allocation.empty());
+  ASSERT_TRUE(allocation.empty()); // NOLINT
   EXPECT_EQ(allocation.numRuns(), 0);
   EXPECT_EQ(allocation.numPages(), 0);
   EXPECT_EQ(moved.numRuns(), 3);
@@ -519,10 +519,10 @@ TEST_P(MemoryAllocatorTest, allocationClass2) {
   {
     Allocation movedAllocation = std::move(*allocation);
     ASSERT_TRUE(allocation->empty());
-    ASSERT_TRUE(!movedAllocation.empty());
+    ASSERT_TRUE(!movedAllocation.empty()); // NOLINT
     *allocation = std::move(movedAllocation);
     ASSERT_TRUE(!allocation->empty());
-    ASSERT_TRUE(movedAllocation.empty());
+    ASSERT_TRUE(movedAllocation.empty()); // NOLINT
   }
   ASSERT_DEATH(allocation.reset(), "");
   instance_->freeNonContiguous(*allocation);
@@ -545,7 +545,7 @@ TEST_P(MemoryAllocatorTest, allocationClass2) {
     ASSERT_EQ(movedAllocation.pool(), pool_.get());
     *allocation = std::move(movedAllocation);
     ASSERT_TRUE(!allocation->empty());
-    ASSERT_TRUE(movedAllocation.empty());
+    ASSERT_TRUE(movedAllocation.empty()); // NOLINT
     ASSERT_EQ(allocation->pool(), pool_.get());
   }
   ASSERT_THROW(allocation->setPool(pool_.get()), VeloxRuntimeError);
@@ -984,9 +984,9 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   ContiguousAllocation large;
   // Exceeds capacity.
   EXPECT_FALSE(instance_->allocateContiguous(
-      kCapacityPages, nullptr, large, nullptr, kInitialLarge * 2));
+      kInitialLarge * 2, nullptr, large, nullptr, kCapacityPages));
   EXPECT_TRUE(instance_->allocateContiguous(
-      kCapacityPages, nullptr, large, nullptr, kInitialLarge));
+      kInitialLarge, nullptr, large, nullptr, kCapacityPages));
   EXPECT_FALSE(instance_->growContiguous(kMinGrow, large));
   freeSmall(kMinGrow);
   EXPECT_TRUE(instance_->growContiguous(kMinGrow, large));
@@ -1252,10 +1252,10 @@ TEST_P(MemoryAllocatorTest, contiguousAllocation) {
   {
     ContiguousAllocation movedAllocation = std::move(*allocation);
     ASSERT_TRUE(allocation->empty());
-    ASSERT_TRUE(!movedAllocation.empty());
+    ASSERT_TRUE(!movedAllocation.empty()); // NOLINT
     *allocation = std::move(movedAllocation);
     ASSERT_TRUE(!allocation->empty());
-    ASSERT_TRUE(movedAllocation.empty());
+    ASSERT_TRUE(movedAllocation.empty()); // NOLINT
   }
   ASSERT_DEATH(allocation.reset(), "");
   instance_->freeContiguous(*allocation);
@@ -1272,10 +1272,10 @@ TEST_P(MemoryAllocatorTest, contiguousAllocation) {
   {
     ContiguousAllocation movedAllocation = std::move(*allocation);
     ASSERT_TRUE(allocation->empty());
-    ASSERT_TRUE(!movedAllocation.empty());
+    ASSERT_TRUE(!movedAllocation.empty()); // NOLINT
     ASSERT_EQ(movedAllocation.pool(), pool_.get());
     *allocation = std::move(movedAllocation);
-    ASSERT_TRUE(!allocation->empty());
+    ASSERT_TRUE(!allocation->empty()); // NOLINT
     ASSERT_TRUE(movedAllocation.empty());
     ASSERT_EQ(allocation->pool(), pool_.get());
   }

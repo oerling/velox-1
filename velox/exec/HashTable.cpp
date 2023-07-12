@@ -927,7 +927,8 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
   std::fill(
       buildPartitionBounds_.begin(),
       buildPartitionBounds_.begin() + buildPartitionBounds_.capacity(),
-      std::numeric_limits<int32_t>::max());
+      std::numeric_limits<PartitionBoundIndexType>::max());
+
   // The partitioning is in terms of ranges of tag vector index. The stride is
   // different depending on kInterleaveRows.
   int64_t tagIndexEnd = sizeMask_ + 1;
@@ -943,6 +944,11 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
           (capacity_ / numPartitions) * i,
           folly::hardware_destructive_interference_size);
     }
+    // Bounds must always be positive
+    VELOX_CHECK_GE(
+        buildPartitionBounds_[i],
+        0,
+        "Turn on VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND to avoid integer overflow in buildPartitionBounds_");
   }
   buildPartitionBounds_.back() = sizeMask_ + 1;
   std::vector<std::shared_ptr<AsyncSource<bool>>> partitionSteps;
@@ -1007,14 +1013,17 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
 namespace {
 // Returns an index into 'buildPartitionBounds_' given an index into tags of the
 // HashTable.
-int32_t
-findPartition(int32_t index, const int32_t* bounds, int32_t numPartitions) {
+int32_t findPartition(
+    PartitionBoundIndexType index,
+    const PartitionBoundIndexType* bounds,
+    int32_t numPartitions) {
   // The partition bounds are padded to batch size.
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  auto indexVector = xsimd::batch<int32_t>::broadcast(index);
+  constexpr int32_t kBatch = xsimd::batch<PartitionBoundIndexType>::size;
+  auto indexVector = xsimd::batch<PartitionBoundIndexType>::broadcast(index);
   for (auto i = 1; i < numPartitions; i += kBatch) {
-    uint8_t bits = simd::toBitMask(
-        indexVector < xsimd::batch<int32_t>::load_unaligned(bounds + i));
+    auto bits = simd::toBitMask(
+        indexVector <
+        xsimd::batch<PartitionBoundIndexType>::load_unaligned(bounds + i));
     if (bits) {
       return i + __builtin_ctz(bits) - 1;
     }
@@ -1036,7 +1045,8 @@ void HashTable<ignoreNullKeys>::partitionRows(
     hashRows(folly::Range<char**>(rows.data(), numRows), true, hashes);
     VELOX_DCHECK_EQ(
         0,
-        buildPartitionBounds_.capacity() % xsimd::batch<int32_t>::size,
+        buildPartitionBounds_.capacity() %
+            xsimd::batch<PartitionBoundIndexType>::size,
         "partition bounds must be padded to SIMD width");
     for (auto i = 0; i < numRows; ++i) {
       auto index = tagVectorOffset(hashes[i]);
@@ -1197,10 +1207,10 @@ FOLLY_ALWAYS_INLINE void HashTable<ignoreNullKeys>::buildFullProbe(
     uint64_t hash,
     char* inserted,
     bool extraCheck,
-    int32_t partitionBegin,
-    int32_t partitionEnd,
+    PartitionBoundIndexType partitionBegin,
+    PartitionBoundIndexType partitionEnd,
     std::vector<char*>* FOLLY_NULLABLE overflows) {
-  auto insertFn = [&](int32_t /*row*/, int32_t index) {
+  auto insertFn = [&](int32_t /*row*/, PartitionBoundIndexType index) {
     if (index < partitionBegin || index >= partitionEnd) {
       overflows->push_back(inserted);
       return nullptr;
@@ -1251,8 +1261,8 @@ void HashTable<ignoreNullKeys>::insertForJoin(
     char** groups,
     uint64_t* hashes,
     int32_t numGroups,
-    int32_t partitionBegin,
-    int32_t partitionEnd,
+    PartitionBoundIndexType partitionBegin,
+    PartitionBoundIndexType partitionEnd,
     std::vector<char*>* overflow) {
   // The insertable rows are in the table, all get put in the hash
   // table or array.

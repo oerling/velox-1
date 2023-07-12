@@ -674,7 +674,6 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     }
     int32_t rowsInRun = (iter.endOfRun - iter.rowBegin) / rowSize;
     toSkip -= rowsInRun;
-    auto numRuns = 1;
     ++iter.allocationIndex;
     auto range = rows_.rangeAt(iter.allocationIndex);
     iter.endOfRun = range.data() + range.size();

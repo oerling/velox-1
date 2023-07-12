@@ -110,13 +110,13 @@ bool MallocAllocator::allocateNonContiguous(
 }
 
 bool MallocAllocator::allocateContiguousImpl(
-    MachinePageCount maxPages,
+    MachinePageCount numPages,
     Allocation* collateral,
     ContiguousAllocation& allocation,
     ReservationCallback reservationCB,
-    MachinePageCount numPages) {
-  if (numPages == 0) {
-    numPages = maxPages;
+    MachinePageCount maxPages) {
+  if (maxPages == 0) {
+    maxPages = numPages;
   } else {
     VELOX_CHECK_LE(numPages, maxPages);
   }
