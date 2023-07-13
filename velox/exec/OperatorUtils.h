@@ -160,15 +160,18 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
     vector_size_t size,
     memory::MemoryPool* pool);
 
-/// Projects children of 'src' row vector to 'dest' row vector according to
-/// 'projections' and 'mapping'. 'size' specifies number of projected rows in
-/// 'dest'.
+/// Projects children of 'src' row vector to 'dest' row vector
+/// according to 'projections' and 'mapping'. 'size' specifies number
+/// of projected rows in 'dest'. If 'state' is given, it is used to
+/// deduplicate dictionary merging when applying the same dictionary
+/// over more than one identical set of indices.
 void projectChildren(
     const RowVectorPtr& dest,
     const RowVectorPtr& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,
-    const BufferPtr& mapping);
+    const BufferPtr& mapping,
+    WrapState* state = nullptr);
 
 /// Overload of the above function that takes reference to const vector of
 /// VectorPtr as 'src' argument, instead of row vector.
@@ -177,6 +180,7 @@ void projectChildren(
     const std::vector<VectorPtr>& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,
-    const BufferPtr& mapping);
+    const BufferPtr& mapping,
+    WrapState* state = nullptr);
 
 } // namespace facebook::velox::exec

@@ -209,14 +209,14 @@ RowVectorPtr Operator::fillOutput(
       identityProjections_,
       size,
       wrapResults ? mapping : nullptr,
-      state);
+      &state);
   projectChildren(
       output,
       results_,
       resultProjections_,
       size,
       wrapResults ? mapping : nullptr),
-      state;
+      &state;
   return output;
 }
 

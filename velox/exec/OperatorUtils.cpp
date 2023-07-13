@@ -468,7 +468,7 @@ void projectChildren(
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
-    WrapState* state = nullptr) {
+    WrapState* state) {
   projectChildren(dest, src->children(), projections, size, mapping, state);
 }
 
@@ -478,7 +478,7 @@ void projectChildren(
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
-    WrapState* state = nullptr) {
+    WrapState* state) {
   for (const auto& projection : projections) {
     dest->childAt(projection.outputChannel) = state
         ? wrapOne(size, mapping, src[projection.inputChannel], nullptr, *state)
