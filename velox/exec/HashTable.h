@@ -22,7 +22,8 @@
 #include "velox/exec/VectorHasher.h"
 
 namespace facebook::velox::exec {
-
+#define  VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
+  
 #ifdef VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
 using PartitionBoundIndexType = int64_t;
 #else
