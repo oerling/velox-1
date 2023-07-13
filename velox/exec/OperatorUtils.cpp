@@ -468,7 +468,7 @@ void projectChildren(
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
-		     WrapState* state = nullptr) {
+    WrapState* state = nullptr) {
   projectChildren(dest, src->children(), projections, size, mapping, state);
 }
 
@@ -478,11 +478,11 @@ void projectChildren(
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
-		     WrapState* state = nullptr) {
+    WrapState* state = nullptr) {
   for (const auto& projection : projections) {
-    dest->childAt(projection.outputChannel) =
-      state ? wrapOne(size, mapping, src[projection.inputChannel], nullptr, *state)
-      : wrapChild(size, mapping, src[projection.inputChannel]);
+    dest->childAt(projection.outputChannel) = state
+        ? wrapOne(size, mapping, src[projection.inputChannel], nullptr, *state)
+        : wrapChild(size, mapping, src[projection.inputChannel]);
   }
 }
 } // namespace facebook::velox::exec
