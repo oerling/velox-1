@@ -22,8 +22,8 @@
 #include "velox/exec/VectorHasher.h"
 
 namespace facebook::velox::exec {
-#define  VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
-  
+#define VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
+
 #ifdef VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
 using PartitionBoundIndexType = int64_t;
 #else
@@ -325,15 +325,6 @@ class HashTable : public BaseHashTable {
 #else
   static constexpr bool kTrackLoads = true;
 #endif
-  // If true, tags and pointers to payload are interleaved (16x8 bit
-  // tags, 16*48bit pointers) like in F14. If false, tags and pointers
-  // are stored in separate arrays (like absl Swiss table). Join
-  // tables that miss frequently and have tags but not tags and
-  // pointers fitting in cache may benefit from
-  // non-interleaved. Interleaved tables are slightly smaller and are
-  // more local since half the time the tag and corresponding payload
-  // pointer are in the same cache line.
-  static constexpr bool kInterleaveRows = true;
 
   // size of a group of 16 tags and 16 48-bit pointers to the
   // corresponding rows. Applies to interleaved mode.
@@ -717,8 +708,7 @@ class HashTable : public BaseHashTable {
   // Returns the offset of the next tag vector from 'offset'. Wraps around at
   // the end of the table.
   int32_t nextTagVectorOffset(int32_t offset) const {
-    return sizeMask_ &
-        (offset + (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector)));
+    return sizeMask_ & (offset + kTagRowGroupSize);
   }
 
   TagVector loadTags(int32_t tagIndex) const {
@@ -728,14 +718,11 @@ class HashTable : public BaseHashTable {
   // Returns the row pointer for the 'tagIndex'th tag in the tag vector at
   // offset 'tagVectorOffset'.
   char* row(int32_t tagVectorOffset, int32_t tagIndex) const {
-    if (kInterleaveRows) {
-      return reinterpret_cast<char*>(
-          kPointerMask &
-          *reinterpret_cast<uint64_t*>(
-              tags_ + tagVectorOffset + sizeof(TagVector) +
-              kBytesInPointer * tagIndex));
-    }
-    return table_[tagVectorOffset + tagIndex];
+    return reinterpret_cast<char*>(
+        kPointerMask &
+        *reinterpret_cast<uint64_t*>(
+            tags_ + tagVectorOffset + sizeof(TagVector) +
+            kBytesInPointer * tagIndex));
   }
 
   void incrementTagLoad() const {

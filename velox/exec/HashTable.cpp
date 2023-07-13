@@ -299,25 +299,22 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
     char* row) {
   if (hashMode_ != HashMode::kArray) {
     tags_[index] = hashTag(hash);
-    if (kInterleaveRows) {
-      // The pointer is in slot (index - start_of_group) after the
-      // tags. We first get the base address of the tag/pointer
-      // group. We add the size of the tags. Then we add pointer size
-      // * index of the tag in the tags vector. This is the address of
-      // a 6 byte pointer to the row.
-      int groupOffset = index & ~(kTagRowGroupSize - 1);
-      uint64_t* pointer = reinterpret_cast<uint64_t*>(
-          tags_ + sizeof(TagVector) + groupOffset +
-          (kBytesInPointer * (index - groupOffset)));
+    // The pointer is in slot (index - start_of_group) after the
+    // tags. We first get the base address of the tag/pointer
+    // group. We add the size of the tags. Then we add pointer size
+    // * index of the tag in the tags vector. This is the address of
+    // a 6 byte pointer to the row.
+    int groupOffset = index & ~(kTagRowGroupSize - 1);
+    uint64_t* pointer = reinterpret_cast<uint64_t*>(
+        tags_ + sizeof(TagVector) + groupOffset +
+        (kBytesInPointer * (index - groupOffset)));
 
-      // We store 48 bits, preserving the high 16 bits of the word, which belong
-      // to the next pointer.
-      auto previous = *pointer & ~kPointerMask;
-      *pointer = reinterpret_cast<uint64_t>(row) | previous;
-      return;
-    }
+    // We store 48 bits, preserving the high 16 bits of the word, which belong
+    // to the next pointer.
+    auto previous = *pointer & ~kPointerMask;
+    *pointer = reinterpret_cast<uint64_t>(row) | previous;
+    return;
   }
-  table_[index] = row;
 }
 
 template <bool ignoreNullKeys>
@@ -740,46 +737,25 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   VELOX_CHECK_GT(size, 0);
   capacity_ = size;
   numTombstones_ = 0;
-  if (kInterleaveRows) {
-    sizeMask_ = (capacity_ * sizeof(void*)) - 1;
-    sizeBits_ = __builtin_popcountll(sizeMask_);
-    tagOffsetMask_ = sizeMask_ & ~(kTagRowGroupSize - 1);
-  } else {
-    sizeMask_ = capacity_ - 1;
-    sizeBits_ = __builtin_popcountll(sizeMask_);
-    VELOX_CHECK_LE(
-        sizeBits_, 31, "Exceeding signed int range for hash table indices");
-    tagOffsetMask_ = sizeMask_ & ~(sizeof(TagVector) - 1);
-  }
+  sizeMask_ = (capacity_ * sizeof(void*)) - 1;
+  sizeBits_ = __builtin_popcountll(sizeMask_);
+  tagOffsetMask_ = sizeMask_ & ~(kTagRowGroupSize - 1);
   constexpr auto kPageSize = memory::AllocationTraits::kPageSize;
-  if (kInterleaveRows) {
-    // The total size is 8 bytes per slot, in groups of 16 slots
-    // with 16 bytes of tags and 16 * 6 bytes of pointers and a
-    // padding of 16 bytes to round up the cache line.
-    auto numPages = bits::roundUp(size * sizeof(char*), kPageSize) / kPageSize;
-    rows_->pool()->allocateContiguous(numPages, tableAllocation_);
-    tags_ = tableAllocation_.data<uint8_t>();
-    table_ = nullptr;
-    memset(tags_, 0, capacity_ * sizeof(char*));
-  } else {
-    // The total size is 9 bytes per slot, 8 in the pointers table and 1 in the
-    // tags table.
-    auto numPages = bits::roundUp(capacity_ * 9, kPageSize) / kPageSize;
-    rows_->pool()->allocateContiguous(numPages, tableAllocation_);
-
-    table_ = tableAllocation_.data<char*>();
-    tags_ = reinterpret_cast<uint8_t*>(table_ + size);
-    memset(tags_, 0, capacity_);
-    // Not strictly necessary to clear 'table_' but more debuggable.
-    memset(table_, 0, capacity_ * sizeof(char*));
-  }
+  // The total size is 8 bytes per slot, in groups of 16 slots
+  // with 16 bytes of tags and 16 * 6 bytes of pointers and a
+  // padding of 16 bytes to round up the cache line.
+  auto numPages = bits::roundUp(size * sizeof(char*), kPageSize) / kPageSize;
+  rows_->pool()->allocateContiguous(numPages, tableAllocation_);
+  tags_ = tableAllocation_.data<uint8_t>();
+  table_ = nullptr;
+  memset(tags_, 0, capacity_ * sizeof(char*));
 }
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::clear() {
   rows_->clear();
   if (hashMode_ != HashMode::kArray && tags_) {
-    memset(tags_, 0, kInterleaveRows ? capacity_ * sizeof(char*) : capacity_);
+    memset(tags_, 0, capacity_ * sizeof(char*));
   }
   if (table_) {
     memset(table_, 0, sizeof(char*) * capacity_);
@@ -929,21 +905,13 @@ void HashTable<ignoreNullKeys>::parallelJoinBuild() {
       buildPartitionBounds_.begin() + buildPartitionBounds_.capacity(),
       std::numeric_limits<PartitionBoundIndexType>::max());
 
-  // The partitioning is in terms of ranges of tag vector index. The stride is
-  // different depending on kInterleaveRows.
+  // The partitioning is in terms of ranges of tag vector index.
   int64_t tagIndexEnd = sizeMask_ + 1;
   for (auto i = 0; i < numPartitions; ++i) {
-    if (kInterleaveRows) {
-      // The bounds are the closes tag/row pointer group bound, always cache
-      // line aligned.
-      buildPartitionBounds_[i] = bits::roundUp(
-          ((sizeMask_ + 1) / numPartitions) * i, kTagRowGroupSize);
-    } else {
-      // The bounds are rounded up to cache line size.
-      buildPartitionBounds_[i] = bits::roundUp(
-          (capacity_ / numPartitions) * i,
-          folly::hardware_destructive_interference_size);
-    }
+    // The bounds are the closes tag/row pointer group bound, always cache
+    // line aligned.
+    buildPartitionBounds_[i] =
+        bits::roundUp(((sizeMask_ + 1) / numPartitions) * i, kTagRowGroupSize);
     // Bounds must always be positive
     VELOX_CHECK_GE(
         buildPartitionBounds_[i],
@@ -1127,13 +1095,10 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
           int freeOffset = __builtin_ctz(free);
           tags_[tagIndex + freeOffset] = BaseHashTable::hashTag(hash);
           char** pointer;
-          if (kInterleaveRows) {
-            pointer = reinterpret_cast<char**>(
-                tags_ + tagIndex + sizeof(TagVector) +
-                kBytesInPointer * freeOffset);
-          } else {
-            pointer = table_ + tagIndex + freeOffset;
-          }
+          pointer = reinterpret_cast<char**>(
+              tags_ + tagIndex + sizeof(TagVector) +
+              kBytesInPointer * freeOffset);
+
           __builtin_prefetch(pointer);
           pointers[j - base] = pointer;
         } else {
@@ -1143,20 +1108,14 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
       for (auto j = base; j < batchEnd; ++j) {
         auto pointer = pointers[j - base];
         if (pointer) {
-          if (kInterleaveRows) {
-            auto previous =
-                reinterpret_cast<uint64_t>(*pointer) & ~kPointerMask;
-            *pointer = reinterpret_cast<char*>(
-                previous | reinterpret_cast<uint64_t>(groups[j]));
-          } else {
-            *pointer = groups[j];
-          }
+          auto previous = reinterpret_cast<uint64_t>(*pointer) & ~kPointerMask;
+          *pointer = reinterpret_cast<char*>(
+              previous | reinterpret_cast<uint64_t>(groups[j]));
           continue;
         }
         // The place in the table was not determined on the first loop. Loop
         // until finding a free tag.
-        auto hash = hashes[j] +
-            (kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector));
+        auto hash = hashes[j] + (kTagRowGroupSize);
         auto tagIndex = tagVectorOffset(hash);
         auto tagsInTable = BaseHashTable::loadTags(tags_, tagIndex);
         for (;;) {
@@ -1943,8 +1902,7 @@ void HashTable<ignoreNullKeys>::checkConsistency() const {
   }
   uint64_t numEmpty = 0;
   uint64_t numTombstone = 0;
-  constexpr int32_t kSpacing =
-      kInterleaveRows ? kTagRowGroupSize : sizeof(TagVector);
+  constexpr int32_t kSpacing = kTagRowGroupSize;
   for (auto start = 0; start < sizeMask_; start += kSpacing) {
     for (auto i = start; i < start + sizeof(TagVector); ++i) {
       if (tags_[i] == ProbeState::kTombstoneTag) {
