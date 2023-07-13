@@ -39,19 +39,19 @@ class CastExprTest : public functions::test::CastBaseTest {
   }
 
   void setCastIntByTruncate(bool value) {
-    queryCtx_->setConfigOverridesUnsafe({
-        {core::QueryConfig::kCastIntByTruncate, std::to_string(value)},
+    queryCtx_->testingOverrideConfigUnsafe({
+        {core::QueryConfig::kCastToIntByTruncate, std::to_string(value)},
     });
   }
 
   void setCastMatchStructByName(bool value) {
-    queryCtx_->setConfigOverridesUnsafe({
+    queryCtx_->testingOverrideConfigUnsafe({
         {core::QueryConfig::kCastMatchStructByName, std::to_string(value)},
     });
   }
 
   void setTimezone(const std::string& value) {
-    queryCtx_->setConfigOverridesUnsafe({
+    queryCtx_->testingOverrideConfigUnsafe({
         {core::QueryConfig::kSessionTimezone, value},
         {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
     });
@@ -140,7 +140,9 @@ class CastExprTest : public functions::test::CastBaseTest {
       std::vector<std::optional<TFrom>> input,
       std::vector<std::optional<TTo>> expectedResult,
       bool expectFailure = false,
-      bool tryCast = false) {
+      bool tryCast = false,
+      const TypePtr& fromType = CppToType<TFrom>::create(),
+      const TypePtr& toType = CppToType<TTo>::create()) {
     std::vector<TFrom> rawInput(input.size());
     for (auto index = 0; index < input.size(); index++) {
       if (input[index].has_value()) {
@@ -148,7 +150,7 @@ class CastExprTest : public functions::test::CastBaseTest {
       }
     }
     // Create input vector using values and nulls
-    auto inputVector = makeFlatVector(rawInput);
+    auto inputVector = makeFlatVector(rawInput, fromType);
 
     for (auto index = 0; index < input.size(); index++) {
       if (!input[index].has_value()) {
@@ -167,7 +169,7 @@ class CastExprTest : public functions::test::CastBaseTest {
     // run try cast and get the result vector
     auto result =
         evaluate(castFunction + "(c0 as " + typeString + ")", rowVector);
-    auto expected = makeNullableFlatVector<TTo>(expectedResult);
+    auto expected = makeNullableFlatVector<TTo>(expectedResult, toType);
     assertEqualVectors(expected, result);
   }
 
@@ -307,12 +309,12 @@ TEST_F(CastExprTest, timestampToString) {
 }
 
 TEST_F(CastExprTest, dateToTimestamp) {
-  testCast<Date, Timestamp>(
+  testCast<int32_t, Timestamp>(
       "timestamp",
       {
-          Date(0),
-          Date(10957),
-          Date(14557),
+          0,
+          10957,
+          14557,
           std::nullopt,
       },
       {
@@ -320,11 +322,15 @@ TEST_F(CastExprTest, dateToTimestamp) {
           Timestamp(946684800, 0),
           Timestamp(1257724800, 0),
           std::nullopt,
-      });
+      },
+      false,
+      false,
+      DATE(),
+      TIMESTAMP());
 }
 
 TEST_F(CastExprTest, timestampToDate) {
-  testCast<Timestamp, Date>(
+  testCast<Timestamp, int32_t>(
       "date",
       {
           Timestamp(0, 0),
@@ -333,11 +339,15 @@ TEST_F(CastExprTest, timestampToDate) {
           std::nullopt,
       },
       {
-          Date(0),
-          Date(10957),
-          Date(14557),
+          0,
+          10957,
+          14557,
           std::nullopt,
-      });
+      },
+      false,
+      false,
+      TIMESTAMP(),
+      DATE());
 }
 
 TEST_F(CastExprTest, timestampInvalid) {
@@ -401,33 +411,40 @@ TEST_F(CastExprTest, date) {
       "1920-01-02",
       std::nullopt,
   };
-  std::vector<std::optional<Date>> result{
-      Date(0),
-      Date(18262),
-      Date(60577),
-      Date(-5),
-      Date(-57604),
-      Date(-18262),
+  std::vector<std::optional<int32_t>> result{
+      0,
+      18262,
+      60577,
+      -5,
+      -57604,
+      -18262,
       std::nullopt,
   };
 
-  testCast<std::string, Date>("date", input, result);
+  testCast<std::string, int32_t>(
+      "date", input, result, false, false, VARCHAR(), DATE());
 
   setCastIntByTruncate(true);
-  testCast<std::string, Date>("date", input, result);
+  testCast<std::string, int32_t>(
+      "date", input, result, false, false, VARCHAR(), DATE());
 }
 
 TEST_F(CastExprTest, invalidDate) {
-  testCast<int8_t, Date>("date", {12}, {Date(0)}, true);
-  testCast<int16_t, Date>("date", {1234}, {Date(0)}, true);
-  testCast<int32_t, Date>("date", {1234}, {Date(0)}, true);
-  testCast<int64_t, Date>("date", {1234}, {Date(0)}, true);
+  testCast<int8_t, int32_t>("date", {12}, {0}, true, false, TINYINT(), DATE());
+  testCast<int16_t, int32_t>(
+      "date", {1234}, {0}, true, false, SMALLINT(), DATE());
+  testCast<int32_t, int32_t>(
+      "date", {1234}, {0}, true, false, INTEGER(), DATE());
+  testCast<int64_t, int32_t>(
+      "date", {1234}, {0}, true, false, BIGINT(), DATE());
 
-  testCast<float, Date>("date", {12.99}, {Date(0)}, true);
-  testCast<double, Date>("date", {12.99}, {Date(0)}, true);
+  testCast<float, int32_t>("date", {12.99}, {0}, true, false, REAL(), DATE());
+  testCast<double, int32_t>(
+      "date", {12.99}, {0}, true, false, DOUBLE(), DATE());
 
   // Parsing an ill-formated date.
-  testCast<std::string, Date>("date", {"2012-Oct-23"}, {Date(0)}, true);
+  testCast<std::string, int32_t>(
+      "date", {"2012-Oct-23"}, {0}, true, false, VARCHAR(), DATE());
 }
 
 TEST_F(CastExprTest, truncateVsRound) {
@@ -805,6 +822,35 @@ TEST_F(CastExprTest, toString) {
   ASSERT_EQ("cast((a) as ARRAY<VARCHAR>)", exprSet.exprs()[1]->toString());
 }
 
+TEST_F(CastExprTest, decimalToDouble) {
+  // short to short, scale up.
+  auto shortFlat = makeNullableShortDecimalFlatVector(
+      {-999999999999999999, -3, 0, 55, 999999999999999999, std::nullopt},
+      DECIMAL(18, 18));
+  testComplexCast(
+      "c0",
+      shortFlat,
+      makeNullableFlatVector<double>(
+          {-0.999999999999999999,
+           -0.000000000000000003,
+           0,
+           0.000000000000000055,
+           0.999999999999999999,
+           std::nullopt}));
+  auto longFlat = makeNullableLongDecimalFlatVector(
+      {DecimalUtil::kLongDecimalMin,
+       0,
+       DecimalUtil::kLongDecimalMax,
+       HugeInt::build(0xffff, 0xffffffffffffffff),
+       std::nullopt},
+      DECIMAL(38, 5));
+  testComplexCast(
+      "c0",
+      longFlat,
+      makeNullableFlatVector<double>(
+          {-1e33, 0, 1e33, 1.2089258196146293E19, std::nullopt}));
+}
+
 TEST_F(CastExprTest, decimalToDecimal) {
   // short to short, scale up.
   auto shortFlat =
@@ -889,11 +935,11 @@ TEST_F(CastExprTest, decimalToDecimal) {
   testComplexCast(
       "c0",
       makeNullableLongDecimalFlatVector(
-          {buildInt128(-2, 200),
-           buildInt128(-1, 300),
-           buildInt128(0, 400),
-           buildInt128(1, 1),
-           buildInt128(10, 100),
+          {HugeInt::build(-2, 200),
+           HugeInt::build(-1, 300),
+           HugeInt::build(0, 400),
+           HugeInt::build(1, 1),
+           HugeInt::build(10, 100),
            std::nullopt},
           DECIMAL(23, 8)),
       makeNullableShortDecimalFlatVector(
@@ -911,14 +957,14 @@ TEST_F(CastExprTest, decimalToDecimal) {
       testComplexCast(
           "c0",
           makeNullableLongDecimalFlatVector(
-              {UnscaledLongDecimal::max().unscaledValue()}, DECIMAL(38, 0)),
+              {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 0)),
           makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
       "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38,1)");
   VELOX_ASSERT_THROW(
       testComplexCast(
           "c0",
           makeNullableLongDecimalFlatVector(
-              {UnscaledLongDecimal::min().unscaledValue()}, DECIMAL(38, 0)),
+              {DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0)),
           makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
       "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
 }
@@ -933,8 +979,8 @@ TEST_F(CastExprTest, integerToDecimal) {
 TEST_F(CastExprTest, castInTry) {
   // Test try(cast(array(varchar) as array(bigint))) whose input vector is
   // wrapped in dictinary encoding. The row of ["2a"] should trigger an error
-  // during casting and the try expression should turn this error into a null at
-  // this row.
+  // during casting and the try expression should turn this error into a null
+  // at this row.
   auto input = makeRowVector({makeNullableArrayVector<StringView>(
       {{{"1"_sv}}, {{"2a"_sv}}, std::nullopt, std::nullopt})});
   auto expected = makeNullableArrayVector<int64_t>(
@@ -1056,8 +1102,8 @@ TEST_F(CastExprTest, castAsCall) {
 }
 
 namespace {
-/// Wraps input in a constant encoding that repeats the first element and then
-/// in dictionary that reverses the order of rows.
+/// Wraps input in a constant encoding that repeats the first element and
+/// then in dictionary that reverses the order of rows.
 class TestingDictionaryOverConstFunction : public exec::VectorFunction {
  public:
   TestingDictionaryOverConstFunction() {}

@@ -316,7 +316,8 @@ std::unique_ptr<exec::Aggregate> makeApproxMostFrequentAggregate(
   }
 }
 
-bool registerApproxMostFrequent(const std::string& name) {
+exec::AggregateRegistrationResult registerApproxMostFrequent(
+    const std::string& name) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
   for (const auto& valueType :
        {"tinyint", "smallint", "integer", "bigint", "varchar"}) {
@@ -330,13 +331,15 @@ bool registerApproxMostFrequent(const std::string& name) {
             .argumentType("bigint")
             .build());
   }
-  exec::registerAggregateFunction(
+  return exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
           core::AggregationNode::Step step,
           const std::vector<TypePtr>&,
-          const TypePtr& resultType) -> std::unique_ptr<exec::Aggregate> {
+          const TypePtr& resultType,
+          const core::QueryConfig& /*config*/)
+          -> std::unique_ptr<exec::Aggregate> {
         auto& valueType = exec::isPartialOutput(step)
             ? resultType->childAt(2)->childAt(0)
             : resultType->childAt(0);
@@ -347,7 +350,6 @@ bool registerApproxMostFrequent(const std::string& name) {
             name,
             valueType);
       });
-  return true;
 }
 
 } // namespace

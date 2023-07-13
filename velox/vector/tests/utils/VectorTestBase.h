@@ -194,25 +194,25 @@ class VectorTestBase {
     return vectorMaker_.allNullFlatVector<T>(size);
   }
 
-  FlatVectorPtr<UnscaledShortDecimal> makeShortDecimalFlatVector(
+  FlatVectorPtr<int64_t> makeShortDecimalFlatVector(
       const std::vector<int64_t>& unscaledValues,
       const TypePtr& type) {
     return vectorMaker_.shortDecimalFlatVector(unscaledValues, type);
   }
 
-  FlatVectorPtr<UnscaledLongDecimal> makeLongDecimalFlatVector(
+  FlatVectorPtr<int128_t> makeLongDecimalFlatVector(
       const std::vector<int128_t>& unscaledValues,
       const TypePtr& type) {
     return vectorMaker_.longDecimalFlatVector(unscaledValues, type);
   }
 
-  FlatVectorPtr<UnscaledShortDecimal> makeNullableShortDecimalFlatVector(
+  FlatVectorPtr<int64_t> makeNullableShortDecimalFlatVector(
       const std::vector<std::optional<int64_t>>& unscaledValues,
       const TypePtr& type) {
     return vectorMaker_.shortDecimalFlatVectorNullable(unscaledValues, type);
   }
 
-  FlatVectorPtr<UnscaledLongDecimal> makeNullableLongDecimalFlatVector(
+  FlatVectorPtr<int128_t> makeNullableLongDecimalFlatVector(
       const std::vector<std::optional<int128_t>>& unscaledValues,
       const TypePtr& type) {
     return vectorMaker_.longDecimalFlatVectorNullable(unscaledValues, type);
@@ -244,9 +244,7 @@ class VectorTestBase {
 
   // Create an ArrayVector<ROW> from nested std::vectors of variants.
   // Example:
-  //   auto arrayVector = makeArrayOfRowVector(
-  //     ROW({INTEGER(), VARCHAR()}),
-  //     {
+  //   auto arrayVector = makeArrayOfRowVector({
   //       {variant::row({1, "red"}), variant::row({1, "blue"})},
   //       {},
   //       {variant::row({3, "green"})},
@@ -450,8 +448,9 @@ class VectorTestBase {
   //   });
   template <typename T>
   ArrayVectorPtr makeNullableArrayVector(
-      const std::vector<std::optional<std::vector<std::optional<T>>>>& data) {
-    return vectorMaker_.arrayVectorNullable<T>(data);
+      const std::vector<std::optional<std::vector<std::optional<T>>>>& data,
+      const TypePtr& arrayType = ARRAY(CppToType<T>::create())) {
+    return vectorMaker_.arrayVectorNullable<T>(data, arrayType);
   }
 
   template <typename T>
@@ -460,9 +459,10 @@ class VectorTestBase {
       std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
       std::function<T(vector_size_t /* idx */)> valueAt,
       std::function<bool(vector_size_t /* row */)> isNullAt = nullptr,
-      std::function<bool(vector_size_t /* idx */)> valueIsNullAt = nullptr) {
+      std::function<bool(vector_size_t /* idx */)> valueIsNullAt = nullptr,
+      const TypePtr& arrayType = ARRAY(CppToType<T>::create())) {
     return vectorMaker_.arrayVector<T>(
-        size, sizeAt, valueAt, isNullAt, valueIsNullAt);
+        size, sizeAt, valueAt, isNullAt, valueIsNullAt, arrayType);
   }
 
   template <typename T>
@@ -471,8 +471,10 @@ class VectorTestBase {
       std::function<vector_size_t(vector_size_t /* row */)> sizeAt,
       std::function<T(vector_size_t /* row */, vector_size_t /* idx */)>
           valueAt,
-      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr) {
-    return vectorMaker_.arrayVector<T>(size, sizeAt, valueAt, isNullAt);
+      std::function<bool(vector_size_t /*row */)> isNullAt = nullptr,
+      const TypePtr& arrayType = ARRAY(CppToType<T>::create())) {
+    return vectorMaker_.arrayVector<T>(
+        size, sizeAt, valueAt, isNullAt, arrayType);
   }
 
   // Convenience function to create vector from a base vector.
