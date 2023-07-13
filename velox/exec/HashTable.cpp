@@ -315,6 +315,7 @@ void HashTable<ignoreNullKeys>::storeRowPointer(
     *pointer = reinterpret_cast<uint64_t>(row) | previous;
     return;
   }
+  table_[index] = row;
 }
 
 template <bool ignoreNullKeys>
