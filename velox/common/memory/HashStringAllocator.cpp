@@ -541,9 +541,10 @@ void HashStringAllocator::ensureAvailable(int32_t bytes, Position& position) {
   position = finishWrite(stream, 0).first;
 }
 
-void HashStringAllocator::checkConsistency() const {
+int64_t HashStringAllocator::checkConsistency() const {
   uint64_t numFree = 0;
   uint64_t freeBytes = 0;
+  int64_t allocatedBytes = 0;
   for (auto i = 0; i < pool_.numRanges(); ++i) {
     auto topRange = pool_.rangeAt(i);
     const auto kHugePageSize = memory::AllocationTraits::kHugePageSize;
@@ -586,6 +587,9 @@ void HashStringAllocator::checkConsistency() const {
           // continue header is readable and not free.
           auto continued = header->nextContinued();
           VELOX_CHECK(!continued->isFree());
+          allocatedBytes += header->size() - sizeof(void*);
+        } else {
+          allocatedBytes += header->size();
         }
         previousFree = header->isFree();
         header = reinterpret_cast<Header*>(header->end());
@@ -614,22 +618,12 @@ void HashStringAllocator::checkConsistency() const {
 
   VELOX_CHECK_EQ(numInFreeList, numFree_);
   VELOX_CHECK_EQ(bytesInFreeList, freeBytes_);
+  return allocatedBytes;
 }
 
 void HashStringAllocator::checkEmpty() const {
-  for (auto i = 0; i < kNumFreeLists - 1; ++i) {
-    VELOX_CHECK(free_[i].empty());
-  }
-  auto numRanges = pool_.numRanges();
-  int32_t numFree = 0;
-  for (auto* item = free_[kNumFreeLists - 1].next();
-       item != &free_[kNumFreeLists - 1];
-       item = item->next()) {
-    ++numFree;
-    VELOX_CHECK_NULL(headerOf(item)->next());
-  }
-  VELOX_CHECK_EQ(numFree, numRanges);
-  checkConsistency();
+  VELOX_CHECK_EQ(0, sizeFromPool_);
+  VELOX_CHECK_EQ(0, checkConsistency());
 }
 
 } // namespace facebook::velox
