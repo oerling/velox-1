@@ -187,6 +187,19 @@ class RowContainer {
             pool,
             ContainerRowSerde::instance()) {}
 
+  ~RowContainer();
+
+  /// makes 'this' share the string allocator of 'other'. This is
+  /// needed in unspilling, when aggregates are read from the original
+  /// container and added to a different RowContainer for merging. The
+  /// same aggregate functions are used for both reading the existing
+  /// unspilled data and for aggregating the merge. Because these are
+  /// the same aggregates, these need the same allocator for their
+  /// variable length data.
+  void shareStringsWith(RowContainer& other) {
+    stringAllocator_ = other.stringAllocator_;
+  }
+  
   static int32_t combineAlignments(int32_t a, int32_t b);
 
   // 'keyTypes' gives the type of the key of each row. For a group by,
@@ -266,7 +279,7 @@ class RowContainer {
       int32_t columnIndex);
 
   HashStringAllocator& stringAllocator() {
-    return stringAllocator_;
+    return *stringAllocator_;
   }
 
   // Returns the number of used rows in 'this'. This is the number of
@@ -577,7 +590,7 @@ class RowContainer {
       uint64_t* FOLLY_NONNULL result);
 
   uint64_t allocatedBytes() const {
-    return rows_.allocatedBytes() + stringAllocator_.retainedSize();
+    return rows_.allocatedBytes() + stringAllocator_->retainedSize();
   }
 
   // Returns the number of fixed size rows that can be allocated
@@ -586,7 +599,7 @@ class RowContainer {
   std::pair<uint64_t, uint64_t> freeSpace() const {
     return std::make_pair<uint64_t, uint64_t>(
         rows_.freeBytes() / fixedRowSize_ + numFreeRows_,
-        stringAllocator_.freeSpace());
+        stringAllocator_->freeSpace());
   }
 
   // Returns the average size of rows in bytes stored in this container.
@@ -616,7 +629,7 @@ class RowContainer {
   }
 
   memory::MemoryPool* FOLLY_NONNULL pool() const {
-    return stringAllocator_.pool();
+    return stringAllocator_->pool();
   }
 
   // Returns the types of all non-aggregate columns of 'this', keys first.
@@ -633,7 +646,7 @@ class RowContainer {
   }
 
   const HashStringAllocator& stringAllocator() const {
-    return stringAllocator_;
+    return *stringAllocator_;
   }
 
   // Checks that row and free row counts match and that free list
@@ -760,8 +773,8 @@ class RowContainer {
     }
     *reinterpret_cast<T*>(row + offset) = decoded.valueAt<T>(index);
     if constexpr (std::is_same_v<T, StringView>) {
-      RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
-      stringAllocator_.copyMultipart(row, offset);
+      RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
+      stringAllocator_->copyMultipart(row, offset);
     }
   }
 
@@ -774,8 +787,8 @@ class RowContainer {
     using T = typename TypeTraits<Kind>::NativeType;
     *reinterpret_cast<T*>(group + offset) = decoded.valueAt<T>(index);
     if constexpr (std::is_same_v<T, StringView>) {
-      RowSizeTracker tracker(group[rowSizeOffset_], stringAllocator_);
-      stringAllocator_.copyMultipart(group, offset);
+      RowSizeTracker tracker(group[rowSizeOffset_], *stringAllocator_);
+      stringAllocator_->copyMultipart(group, offset);
     }
   }
 
@@ -1137,7 +1150,7 @@ class RowContainer {
   uint64_t numFreeRows_ = 0;
 
   memory::AllocationPool rows_;
-  HashStringAllocator stringAllocator_;
+  std::shared_ptr<HashStringAllocator> stringAllocator_;
 
   // Partition number for each row. Used only in parallel hash join build.
   std::unique_ptr<RowPartitions> partitions_;

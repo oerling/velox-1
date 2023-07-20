@@ -199,7 +199,11 @@ class ApproxDistinctAggregate : public exec::Aggregate {
         });
   }
 
-  void destroy(folly::Range<char**> /*groups*/) override {}
+  void destroy(folly::Range<char**> groups) override {
+    for (auto group : groups) {
+      value<HllAccumulator>(group)->~HllAccumulator();
+    }
+  }
 
   void addRawInput(
       char** groups,

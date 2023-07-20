@@ -874,7 +874,8 @@ bool GroupingSet::getOutputWithSpill(
         false,
         &pool_,
         ContainerRowSerde::instance());
-
+    mergeRows_->shareStringsWith(*table_->rows());
+    
     initializeAggregates(aggregates_, *mergeRows_);
 
     // Take ownership of the rows and free the hash table. The table will not be
@@ -1061,6 +1062,7 @@ void GroupingSet::toIntermediate(
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
+    intermediateRows_->stringAllocator().checkEmpty();
   }
   tempVectors_.clear();
 }

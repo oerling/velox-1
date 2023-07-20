@@ -323,6 +323,7 @@ HashStringAllocator::allocate(int32_t size, bool exactSize) {
     VELOX_CHECK_GT(header->size(), 0);
   }
 
+  checkConsistency();
   return header;
 }
 
@@ -603,6 +604,21 @@ void HashStringAllocator::checkConsistency() const {
 
   VELOX_CHECK_EQ(numInFreeList, numFree_);
   VELOX_CHECK_EQ(bytesInFreeList, freeBytes_);
+}
+
+void HashStringAllocator::checkEmpty() const {
+  for (auto i = 0; i < kNumFreeLists - 1; ++i) {
+    VELOX_CHECK(free_[i].empty());
+  }
+  auto numRanges = pool_.numRanges();
+  int32_t numFree = 0;
+  for (auto* item = free_[kNumFreeLists - 1].next(); item != &free_[kNumFreeLists - 1];
+       item = item ->next()) {
+    ++numFree;
+    VELOX_CHECK_NULL(headerOf(item)->next());
+  }
+  VELOX_CHECK_EQ(numFree, numRanges);
+  checkConsistency();
 }
 
 } // namespace facebook::velox

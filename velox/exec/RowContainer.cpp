@@ -115,7 +115,7 @@ RowContainer::RowContainer(
       isJoinBuild_(isJoinBuild),
       hasNormalizedKeys_(hasNormalizedKeys),
       rows_(pool),
-      stringAllocator_(pool),
+      stringAllocator_(std::make_shared<HashStringAllocator>(pool)),
       serde_(serde) {
   // Compute the layout of the payload row.  The row has keys, null
   // flags, accumulators, dependent fields. All fields are fixed
@@ -236,6 +236,11 @@ RowContainer::RowContainer(
   }
 }
 
+
+RowContainer::~RowContainer() {
+    clear();
+}
+
 char* RowContainer::newRow() {
   char* row;
   VELOX_DCHECK(
@@ -302,7 +307,7 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
           if (!isNullAt(row, column.nullByte(), column.nullMask())) {
             StringView view = valueAt<StringView>(row, column.offset());
             if (!view.isInline()) {
-              stringAllocator_.free(HashStringAllocator::headerOf(view.data()));
+              stringAllocator_->free(HashStringAllocator::headerOf(view.data()));
             }
           }
         }
@@ -423,11 +428,11 @@ void RowContainer::storeComplexType(
     row[nullByte] |= nullMask;
     return;
   }
-  RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
-  ByteStream stream(&stringAllocator_, false, false);
-  auto position = stringAllocator_.newWrite(stream);
+  RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
+  ByteStream stream(stringAllocator_.get(), false, false);
+  auto position = stringAllocator_->newWrite(stream);
   serde_.serialize(*decoded.base(), decoded.index(index), stream);
-  stringAllocator_.finishWrite(stream, 0);
+  stringAllocator_->finishWrite(stream, 0);
   valueAt<StringView>(row, offset) =
       StringView(reinterpret_cast<char*>(position.position), stream.size());
 }
@@ -545,22 +550,24 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
-  if (usesExternalMemory_) {
+  constexpr bool checksFrees = true;
+  bool sharesStrings = !stringAllocator_.unique();
+  if (checksFrees || sharesStrings || usesExternalMemory_) {
     constexpr int32_t kBatch = 1000;
     std::vector<char*> rows(kBatch);
 
     RowContainerIterator iter;
-    for (;;) {
-      int64_t numRows = listRows(&iter, kBatch, rows.data());
-      if (!numRows) {
-        break;
+    while (auto numRows = listRows(&iter, kBatch, rows.data())) {
+	eraseRows(folly::Range<char**>(rows.data(), numRows));
       }
-      auto rowsData = folly::Range<char**>(rows.data(), numRows);
-      freeAggregates(rowsData);
-    }
   }
   rows_.clear();
-  stringAllocator_.clear();
+  if (!sharesStrings) {
+    if (checksFrees) {
+      stringAllocator_->checkEmpty();
+    }
+    stringAllocator_->clear();
+  }
   numRows_ = 0;
   numRowsWithNormalizedKey_ = 0;
   normalizedKeySize_ = originalNormalizedKeySize_;
@@ -620,7 +627,7 @@ std::optional<int64_t> RowContainer::estimateRowSize() const {
   }
   int64_t freeBytes = rows_.freeBytes() + fixedRowSize_ * numFreeRows_;
   int64_t usedSize = rows_.allocatedBytes() - freeBytes +
-      stringAllocator_.retainedSize() - stringAllocator_.freeSpace();
+      stringAllocator_->retainedSize() - stringAllocator_->freeSpace();
   int64_t rowSize = usedSize / numRows_;
   VELOX_CHECK_GT(
       rowSize, 0, "Estimated row size of the RowContainer must be positive.");
@@ -635,7 +642,7 @@ int64_t RowContainer::sizeIncrement(
   constexpr int32_t kAllocUnit = memory::AllocationTraits::kHugePageSize;
   int32_t needRows = std::max<int64_t>(0, numRows - numFreeRows_);
   int64_t needBytes =
-      std::max<int64_t>(0, variableLengthBytes - stringAllocator_.freeSpace());
+      std::max<int64_t>(0, variableLengthBytes - stringAllocator_->freeSpace());
   return bits::roundUp(needRows * fixedRowSize_, kAllocUnit) +
       bits::roundUp(needBytes, kAllocUnit);
 }

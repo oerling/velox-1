@@ -105,6 +105,8 @@ struct MapAccumulator {
   }
 
   void free(HashStringAllocator& allocator) {
+    using KeysType = decltype(keys);
+    keys.~KeysType();
     values.free(&allocator);
   }
 };

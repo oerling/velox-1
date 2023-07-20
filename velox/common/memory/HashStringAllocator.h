@@ -345,6 +345,9 @@ class HashStringAllocator : public StreamArena {
   // Headers. Throws when detects corruption.
   void checkConsistency() const;
 
+  void checkEmpty() const;
+
+  
  private:
   static constexpr int32_t kUnitSize = 16 * memory::AllocationTraits::kPageSize;
   static constexpr int32_t kMinContiguous = 48;
