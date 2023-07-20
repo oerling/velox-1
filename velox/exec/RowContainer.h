@@ -199,7 +199,7 @@ class RowContainer {
   void shareStringsWith(RowContainer& other) {
     stringAllocator_ = other.stringAllocator_;
   }
-  
+
   static int32_t combineAlignments(int32_t a, int32_t b);
 
   // 'keyTypes' gives the type of the key of each row. For a group by,

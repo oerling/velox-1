@@ -875,7 +875,7 @@ bool GroupingSet::getOutputWithSpill(
         &pool_,
         ContainerRowSerde::instance());
     mergeRows_->shareStringsWith(*table_->rows());
-    
+
     initializeAggregates(aggregates_, *mergeRows_);
 
     // Take ownership of the rows and free the hash table. The table will not be

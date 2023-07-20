@@ -612,8 +612,9 @@ void HashStringAllocator::checkEmpty() const {
   }
   auto numRanges = pool_.numRanges();
   int32_t numFree = 0;
-  for (auto* item = free_[kNumFreeLists - 1].next(); item != &free_[kNumFreeLists - 1];
-       item = item ->next()) {
+  for (auto* item = free_[kNumFreeLists - 1].next();
+       item != &free_[kNumFreeLists - 1];
+       item = item->next()) {
     ++numFree;
     VELOX_CHECK_NULL(headerOf(item)->next());
   }

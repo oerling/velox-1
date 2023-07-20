@@ -304,7 +304,9 @@ void SortedAggregations::extractValues(
     aggregate.function->destroy(groups);
     // Overwrite empty groups over the destructed groups to keep the container
     // in a well formed state.
-    aggregate.function->initializeNewGroups(groups.data(), folly::Range<const int32_t*>(iota(groups.size(), temp), groups.size()));
+    aggregate.function->initializeNewGroups(
+        groups.data(),
+        folly::Range<const int32_t*>(iota(groups.size(), temp), groups.size()));
   }
 }
 

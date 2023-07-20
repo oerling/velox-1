@@ -934,7 +934,9 @@ struct MinMaxByNStringViewAccumulator {
     return StringView(start, size);
   }
 
-  static void free(std::optional<StringView> value, HashStringAllocator& allocator) {
+  static void free(
+      std::optional<StringView> value,
+      HashStringAllocator& allocator) {
     if (value.has_value() && !value->isInline()) {
       auto* header = HashStringAllocator::headerOf(value->data());
       allocator.free(header);

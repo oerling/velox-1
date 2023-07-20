@@ -236,9 +236,8 @@ RowContainer::RowContainer(
   }
 }
 
-
 RowContainer::~RowContainer() {
-    clear();
+  clear();
 }
 
 char* RowContainer::newRow() {
@@ -307,7 +306,8 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
           if (!isNullAt(row, column.nullByte(), column.nullMask())) {
             StringView view = valueAt<StringView>(row, column.offset());
             if (!view.isInline()) {
-              stringAllocator_->free(HashStringAllocator::headerOf(view.data()));
+              stringAllocator_->free(
+                  HashStringAllocator::headerOf(view.data()));
             }
           }
         }
@@ -558,8 +558,8 @@ void RowContainer::clear() {
 
     RowContainerIterator iter;
     while (auto numRows = listRows(&iter, kBatch, rows.data())) {
-	eraseRows(folly::Range<char**>(rows.data(), numRows));
-      }
+      eraseRows(folly::Range<char**>(rows.data(), numRows));
+    }
   }
   rows_.clear();
   if (!sharesStrings) {
