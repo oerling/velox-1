@@ -334,7 +334,6 @@ HashStringAllocator::allocate(int32_t size, bool exactSize) {
     VELOX_CHECK_GT(header->size(), 0);
   }
 
-  checkConsistency();
   return header;
 }
 
