@@ -111,7 +111,7 @@ TEST_F(HashStringAllocatorTest, allocate) {
       allocator_->checkConsistency();
     }
   }
-  allocator_->checkEmpty(); 
+  allocator_->checkEmpty();
   // We allow for some free overhead for free lists after all is freed.
   EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 250);
 }
