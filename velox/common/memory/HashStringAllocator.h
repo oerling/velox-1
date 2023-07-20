@@ -344,8 +344,6 @@ class HashStringAllocator : public StreamArena {
   /// builds.
   void checkEmpty() const;
 
-  void checkEmpty() const;
-
  private:
   static constexpr int32_t kUnitSize = 16 * memory::AllocationTraits::kPageSize;
   static constexpr int32_t kMinContiguous = 48;
