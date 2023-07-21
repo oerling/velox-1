@@ -1147,9 +1147,8 @@ TEST_F(RowContainerTest, shareAndClear) {
   auto rowContainer = std::make_unique<RowContainer>(types, pool_.get());
   auto row = rowContainer->newRow();
   auto offset = rowContainer->columnAt(0).offset();
-  *valueAt<StringView>(row, offset) =
-      StringView(
-          rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
+  *valueAt<StringView>(row, offset) = StringView(
+      rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
 
   auto second = std::make_unique<RowContainer>(
       types,
@@ -1164,24 +1163,23 @@ TEST_F(RowContainerTest, shareAndClear) {
       rowContainer.get());
 
   auto secondRow = second->newRow();
-    *valueAt<StringView>(secondRow, offset) =
-      StringView(
-          rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
+  *valueAt<StringView>(secondRow, offset) = StringView(
+      rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
 
-    // Both containers have each one string in the shared stringAllocator().
-    EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
+  // Both containers have each one string in the shared stringAllocator().
+  EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
 
-    auto extra = second->stringAllocator().allocate(kLength);
+  auto extra = second->stringAllocator().allocate(kLength);
 
-    rowContainer.reset();
-    
-    // Now there is the string from second and the extra string in the allocator.
-    EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
+  rowContainer.reset();
 
-    // The second deletes its rows but the allocator is now singly
-    // referenced but not empty because of 'extra'.
-    EXPECT_THROW(second->clear(), VeloxException);
-    second->stringAllocator().free(extra);
+  // Now there is the string from second and the extra string in the allocator.
+  EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
 
-    second->clear();
+  // The second deletes its rows but the allocator is now singly
+  // referenced but not empty because of 'extra'.
+  EXPECT_THROW(second->clear(), VeloxException);
+  second->stringAllocator().free(extra);
+
+  second->clear();
 }
