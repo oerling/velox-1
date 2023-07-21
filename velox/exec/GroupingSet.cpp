@@ -873,7 +873,7 @@ bool GroupingSet::getOutputWithSpill(
         false,
         false,
         &pool_,
-						table_->rows());
+        table_->rows());
 
     initializeAggregates(aggregates_, *mergeRows_);
 

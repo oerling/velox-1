@@ -117,7 +117,7 @@ RowContainer::RowContainer(
       rows_(pool),
       stringAllocator_(
           shareStringsWith ? shareStringsWith->stringAllocator_
-	  : std::make_shared<HashStringAllocator>(pool)) {
+                           : std::make_shared<HashStringAllocator>(pool)) {
   // Compute the layout of the payload row.  The row has keys, null
   // flags, accumulators, dependent fields. All fields are fixed
   // width. If variable width data is referenced, this is done with
