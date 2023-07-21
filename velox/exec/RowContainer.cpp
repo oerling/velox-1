@@ -108,7 +108,6 @@ RowContainer::RowContainer(
     bool hasProbedFlag,
     bool hasNormalizedKeys,
     memory::MemoryPool* pool,
-    const RowSerde& serde,
     RowContainer* shareStringsWith)
     : keyTypes_(keyTypes),
       nullableKeys_(nullableKeys),
@@ -118,8 +117,7 @@ RowContainer::RowContainer(
       rows_(pool),
       stringAllocator_(
           shareStringsWith ? shareStringsWith->stringAllocator_
-                           : std::make_shared<HashStringAllocator>(pool)),
-      serde_(serde) {
+	  : std::make_shared<HashStringAllocator>(pool)) {
   // Compute the layout of the payload row.  The row has keys, null
   // flags, accumulators, dependent fields. All fields are fixed
   // width. If variable width data is referenced, this is done with
@@ -432,10 +430,10 @@ void RowContainer::storeComplexType(
     return;
   }
   RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
-  ByteStream stream(stringAllocator_.get(), false, false);
-  auto position = stringAllocator_->newWrite(stream);
-  serde_.serialize(*decoded.base(), decoded.index(index), stream);
-  stringAllocator_->finishWrite(stream, 0);
+  ByteStream stream(&stringAllocator_, false, false);
+  auto position = stringAllocator_.newWrite(stream);
+  ContainerRowSerde::serialize(*decoded.base(), decoded.index(index), stream);
+  stringAllocator_.finishWrite(stream, 0);
   valueAt<StringView>(row, offset) =
       StringView(reinterpret_cast<char*>(position.position), stream.size());
 }
@@ -461,7 +459,7 @@ int RowContainer::compareComplexType(
 
   ByteStream stream;
   prepareRead(row, offset, stream);
-  return serde_.compare(stream, decoded, index, flags);
+  return ContainerRowSerde::compare(stream, decoded, index, flags);
 }
 
 int32_t RowContainer::compareStringAsc(StringView left, StringView right) {
@@ -484,7 +482,7 @@ int32_t RowContainer::compareComplexType(
   ByteStream rightStream;
   prepareRead(left, leftOffset, leftStream);
   prepareRead(right, rightOffset, rightStream);
-  return serde_.compare(leftStream, rightStream, type, flags);
+  return ContainerRowSerde::compare(leftStream, rightStream, type, flags);
 }
 
 int32_t RowContainer::compareComplexType(
@@ -526,7 +524,7 @@ void RowContainer::hashTyped(
           Kind == TypeKind::MAP) {
         ByteStream in;
         prepareRead(row, offset, in);
-        hash = serde_.hash(in, type);
+        hash = ContainerRowSerde::hash(in, type);
       } else {
         hash = folly::hasher<T>()(valueAt<T>(row, offset));
       }

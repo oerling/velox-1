@@ -184,8 +184,7 @@ class RowContainer {
             false, // isJoinBuild
             false, // hasProbedFlag
             false, // hasNormalizedKey
-            pool,
-            ContainerRowSerde::instance()) {}
+            pool) {}
 
   ~RowContainer();
 
@@ -203,10 +202,11 @@ class RowContainer {
   // allowed. 'hasProbedFlag' indicates that an extra bit is reserved
   // for a probed state of a full or right outer
   // join. 'hasNormalizedKey' specifies that an extra word is left
-  // below each row for a normalized key that collapses all parts into
-  // one word for faster comparison. The bulk allocation is done from
-  // 'allocator'.  'serde_' is used for serializing complex type
-  // values into the container. If 'shareStringsWith' is given, 'this'
+  // below each row for a normalized key that collapses all parts
+  // into one word for faster comparison. The bulk allocation is done
+  // from 'allocator'. ContainerRowSerde is used for serializing complex
+  // type values into the container.
+  /// If 'shareStringsWith' is given, 'this'
   // shares 'stringAllocator_' with the given RowContainer. this is
   // needed for spilling where the same aggregates are used for
   // reading one container and merging into another.
@@ -220,7 +220,6 @@ class RowContainer {
       bool hasProbedFlag,
       bool hasNormalizedKey,
       memory::MemoryPool* FOLLY_NONNULL pool,
-      const RowSerde& serde,
       RowContainer* shareStringsWith = nullptr);
 
   // Allocates a new row and initializes possible aggregates to null.
@@ -1048,8 +1047,7 @@ class RowContainer {
         result->setNull(resultIndex, true);
       } else {
         prepareRead(row, offset, stream);
-        ContainerRowSerde::instance().deserialize(
-            stream, resultIndex, result.get());
+        ContainerRowSerde::deserialize(stream, resultIndex, result.get());
       }
     }
   }
@@ -1147,8 +1145,6 @@ class RowContainer {
 
   // Partition number for each row. Used only in parallel hash join build.
   std::unique_ptr<RowPartitions> partitions_;
-
-  const RowSerde& serde_;
 
   int alignment_ = 1;
 };
