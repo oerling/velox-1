@@ -15,12 +15,14 @@
  */
 #pragma once
 
+#include "velox/common/base/Portability.h"
 #include "velox/common/memory/MemoryAllocator.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
 #include "velox/exec/VectorHasher.h"
 
 namespace facebook::velox::exec {
+#define VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
 
 #ifdef VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
 using PartitionBoundIndexType = int64_t;
@@ -297,11 +299,6 @@ class BaseHashTable {
 #endif
   }
 
-  /// Loads the payload row pointer corresponding to the tag at 'index'.
-  static char* loadRow(char** table, int32_t index) {
-    return table[index];
-  }
-
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
 
@@ -321,6 +318,17 @@ class ProbeState;
 template <bool ignoreNullKeys>
 class HashTable : public BaseHashTable {
  public:
+  // Enables debug stats for collisions. Should be false for normal operation.
+#ifdef NDEBUG
+  static constexpr bool kTrackLoads = false;
+#else
+  static constexpr bool kTrackLoads = true;
+#endif
+
+  // size of a group of 16 tags and 16 48-bit pointers to the
+  // corresponding rows. Applies to interleaved mode.
+  static constexpr uint64_t kTagRowGroupSize = 128;
+
   // Can be used for aggregation or join. An aggregation hash table
   // can also double as a join build side. 'isJoinBuild' is true if
   // this is a build side. 'allowDuplicates' is false for a build side if
@@ -370,8 +378,6 @@ class HashTable : public BaseHashTable {
         minTableSizeForParallelJoinBuild,
         pool);
   }
-
-  virtual ~HashTable() override = default;
 
   void groupProbe(HashLookup& lookup) override;
 
@@ -491,6 +497,10 @@ class HashTable : public BaseHashTable {
   }
 
  private:
+  // When interleaving tags ad pointers we store 48 bits per pointer.
+  static constexpr int32_t kBytesInPointer = 6;
+  static constexpr uint64_t kPointerMask = bits::lowMask(8 * kBytesInPointer);
+
   // Returns the number of entries after which the table gets rehashed.
   static uint64_t rehashSize(int64_t size) {
     // This implements the F14 load factor: Resize if less than 1/8 unoccupied.
@@ -601,6 +611,13 @@ class HashTable : public BaseHashTable {
   // Assigns a partition to each row of 'subtable' in RowPartitions of
   // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the
   // normalized key of each row below the row in its container.
+  void partitionRows(
+      HashTable<ignoreNullKeys>& subtable,
+      uint8_t numPartitions);
+
+  // Assigns a partition to each row of 'subtable' in RowPartitions of
+  // subtable's RowContainer. If 'hashMode_' is kNormalizedKeys, records the
+  // normalized key of each row below the row in its container.
   void partitionRows(HashTable<ignoreNullKeys>& subtable);
 
   // Calculates hashes for 'rows' and returns them in 'hashes'. If
@@ -621,8 +638,14 @@ class HashTable : public BaseHashTable {
 
   bool compareKeys(const char* group, const char* inserted);
 
-  template <bool isJoin>
+  template <bool isJoin, bool isNormalizedKey = false>
   void fullProbe(HashLookup& lookup, ProbeState& state, bool extraCheck);
+
+  // Shortcut path for group by with normalized keys.
+  void groupNormalizedKeyProbe(HashLookup& lookup);
+
+  // Array probe with SIMD.
+  void arrayJoinProbe(HashLookup& lookup);
 
   // Shortcut for probe with normalized keys.
   void joinNormalizedKeyProbe(HashLookup& lookup);
@@ -663,6 +686,50 @@ class HashTable : public BaseHashTable {
     return isJoinBuild_ ? 0 : 50;
   }
 
+  // Returns the offset in bytes of the tag word for 'hash'. The offset is
+  // from 'tags_'.
+  int32_t tagVectorOffset(uint64_t hash) const {
+    return hash & tagOffsetMask_;
+  }
+
+  // Returns the offset of the next tag vector from 'offset'. Wraps around at
+  // the end of the table.
+  int32_t nextTagVectorOffset(int32_t offset) const {
+    return sizeMask_ & (offset + kTagRowGroupSize);
+  }
+
+  TagVector loadTags(int32_t tagIndex) const {
+    return BaseHashTable::loadTags(tags_, tagIndex);
+  }
+
+  // Returns the row pointer for the 'tagIndex'th tag in the tag vector at
+  // offset 'tagVectorOffset'.
+  char* row(int32_t tagVectorOffset, int32_t tagIndex) const {
+    return reinterpret_cast<char*>(
+        kPointerMask &
+        *reinterpret_cast<uint64_t*>(
+            tags_ + tagVectorOffset + sizeof(TagVector) +
+            kBytesInPointer * tagIndex));
+  }
+
+  void incrementTagLoad() const {
+    if (kTrackLoads) {
+      ++numTagLoad_;
+    }
+  }
+
+  void incrementRowLoad() const {
+    if (kTrackLoads) {
+      ++numRowLoad_;
+    }
+  }
+
+  void incrementHit() const {
+    if (kTrackLoads) {
+      ++numHit_;
+    }
+  }
+
   // The min table size in row to trigger parallel join table build.
   const uint32_t minTableSizeForParallelJoinBuild_;
 
@@ -674,6 +741,10 @@ class HashTable : public BaseHashTable {
   // many threads can set this.
   std::atomic<bool> hasDuplicates_{false};
 
+  // True if tombstones need to be checked. An erase from a group with no
+  // empties makes a tombstone.
+  bool hasTombstones_{false};
+
   // Offset of next row link for join build side, 0 if none. Copied
   // from 'rows_'.
   int32_t nextOffset_;
@@ -682,6 +753,11 @@ class HashTable : public BaseHashTable {
   memory::ContiguousAllocation tableAllocation_;
   int64_t capacity_{0};
   int64_t sizeMask_{0};
+  // Mask to and to hash number to get offset of the corresponding
+  // tag vector from the start of the tag vectors array. For
+  // interleaved mode, the offset is in the combined tags/row pointers
+  // array.
+  int64_t tagOffsetMask_{0};
   int64_t numDistinct_{0};
   /// Counts the number of tombstone table slots.
   int64_t numTombstones_{0};
@@ -691,6 +767,21 @@ class HashTable : public BaseHashTable {
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.
   std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> otherTables_;
+  // Statistics maintained if kTrackCollisions is set.
+
+  // Number of times a row is looked up or inserted.
+  mutable tsan_atomic<int64_t> numProbe_{0};
+
+  // Number of times a word of 16 tags is accessed. at least once per probe.
+  mutable tsan_atomic<int64_t> numTagLoad_{0};
+
+  // Number of times a row of payload is accessed. At leadst once per hit.
+  mutable tsan_atomic<int64_t> numRowLoad_{0};
+
+  // Number of times a match is found.
+  mutable tsan_atomic<int64_t> numHit_{0};
+
+  friend class ProbeState;
 
   // Bounds of independently buildable index ranges in the table. The
   // range of partition i starts at [i] and ends at [i +1]. Bounds are multiple
