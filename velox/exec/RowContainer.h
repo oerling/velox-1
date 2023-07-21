@@ -189,17 +189,6 @@ class RowContainer {
 
   ~RowContainer();
 
-  /// makes 'this' share the string allocator of 'other'. This is
-  /// needed in unspilling, when aggregates are read from the original
-  /// container and added to a different RowContainer for merging. The
-  /// same aggregate functions are used for both reading the existing
-  /// unspilled data and for aggregating the merge. Because these are
-  /// the same aggregates, these need the same allocator for their
-  /// variable length data.
-  void shareStringsWith(RowContainer& other) {
-    stringAllocator_ = other.stringAllocator_;
-  }
-
   static int32_t combineAlignments(int32_t a, int32_t b);
 
   // 'keyTypes' gives the type of the key of each row. For a group by,
@@ -214,10 +203,13 @@ class RowContainer {
   // allowed. 'hasProbedFlag' indicates that an extra bit is reserved
   // for a probed state of a full or right outer
   // join. 'hasNormalizedKey' specifies that an extra word is left
-  // below each row for a normalized key that collapses all parts
-  // into one word for faster comparison. The bulk allocation is done
-  // from 'allocator'.  'serde_' is used for serializing complex
-  // type values into the container.
+  // below each row for a normalized key that collapses all parts into
+  // one word for faster comparison. The bulk allocation is done from
+  // 'allocator'.  'serde_' is used for serializing complex type
+  // values into the container. If 'shareStringsWith' is given, 'this'
+  // shares 'stringAllocator_' with the given RowContainer. this is
+  // needed for spilling where the same aggregates are used for
+  // reading one container and merging into another.
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
       bool nullableKeys,
@@ -228,7 +220,8 @@ class RowContainer {
       bool hasProbedFlag,
       bool hasNormalizedKey,
       memory::MemoryPool* FOLLY_NONNULL pool,
-      const RowSerde& serde);
+      const RowSerde& serde,
+      RowContainer* shareStringsWith = nullptr);
 
   // Allocates a new row and initializes possible aggregates to null.
   char* FOLLY_NONNULL newRow();

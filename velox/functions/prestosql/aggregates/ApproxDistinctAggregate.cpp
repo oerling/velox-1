@@ -201,7 +201,8 @@ class ApproxDistinctAggregate : public exec::Aggregate {
 
   void destroy(folly::Range<char**> groups) override {
     for (auto group : groups) {
-      value<HllAccumulator>(group)->~HllAccumulator();
+      // All accumulators are default constructed also for nulls.
+      Aggregate::destruct(value<HllAccumulator>(group));
     }
   }
 

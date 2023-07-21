@@ -249,6 +249,13 @@ class Aggregate {
       const std::string& name,
       const std::vector<TypePtr>& argTypes);
 
+  /// Shorthand for directly calling destructor. Used with accumulators that are
+  /// always make with placement new.
+  template <typename T>
+  static void destruct(T* item) {
+    item->~T();
+  }
+
  protected:
   virtual void setAllocatorInternal(HashStringAllocator* allocator);
 

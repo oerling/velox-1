@@ -108,14 +108,17 @@ RowContainer::RowContainer(
     bool hasProbedFlag,
     bool hasNormalizedKeys,
     memory::MemoryPool* pool,
-    const RowSerde& serde)
+    const RowSerde& serde,
+    RowContainer* shareStringsWith)
     : keyTypes_(keyTypes),
       nullableKeys_(nullableKeys),
       accumulators_(accumulators),
       isJoinBuild_(isJoinBuild),
       hasNormalizedKeys_(hasNormalizedKeys),
       rows_(pool),
-      stringAllocator_(std::make_shared<HashStringAllocator>(pool)),
+      stringAllocator_(
+          shareStringsWith ? shareStringsWith->stringAllocator_
+                           : std::make_shared<HashStringAllocator>(pool)),
       serde_(serde) {
   // Compute the layout of the payload row.  The row has keys, null
   // flags, accumulators, dependent fields. All fields are fixed
