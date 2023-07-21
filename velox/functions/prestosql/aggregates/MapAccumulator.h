@@ -18,7 +18,6 @@
 #include <folly/container/F14Map.h>
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/exec/AddressableNonNullValueList.h"
-#include "velox/exec/Aggregate.h"
 #include "velox/exec/Strings.h"
 #include "velox/functions/prestosql/aggregates/ValueList.h"
 #include "velox/vector/ComplexVector.h"
@@ -106,7 +105,7 @@ struct MapAccumulator {
   }
 
   void free(HashStringAllocator& allocator) {
-    exec::Aggregate::destruct(&keys);
+    std::destroy_at(&keys);
     values.free(&allocator);
   }
 };

@@ -20,6 +20,8 @@
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/Operator.h"
 
+DECLARE_bool(velox_check_row_container_free);
+
 namespace facebook::velox::exec {
 namespace {
 template <TypeKind Kind>
@@ -266,8 +268,11 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
     auto rows = folly::Range<char**>(&row, 1);
     freeVariableWidthFields(rows);
     freeAggregates(rows);
+  } else if (rowSizeOffset_ != 0 && FLAGS_velox_check_row_container_free) {
+    // Set string views to empty so that clear() will not hit uninited data. The
+    // fastest way is to set the whole row to 0.
+    memset(row, 0, fixedRowSize_);
   }
-
   if (!nullOffsets_.empty()) {
     memcpy(
         row + nullByte(nullOffsets_[0]),
@@ -295,6 +300,7 @@ void RowContainer::eraseRows(folly::Range<char**> rows) {
 }
 
 void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
+  const bool checkFrees = FLAGS_velox_check_row_container_free;
   for (auto i = 0; i < types_.size(); ++i) {
     switch (typeKinds_[i]) {
       case TypeKind::VARCHAR:
@@ -309,6 +315,9 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
             if (!view.isInline()) {
               stringAllocator_->free(
                   HashStringAllocator::headerOf(view.data()));
+              if (checkFrees) {
+                valueAt<StringView>(row, column.offset()) = StringView();
+              }
             }
           }
         }
@@ -430,10 +439,10 @@ void RowContainer::storeComplexType(
     return;
   }
   RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
-  ByteStream stream(&stringAllocator_, false, false);
-  auto position = stringAllocator_.newWrite(stream);
+  ByteStream stream(stringAllocator_.get(), false, false);
+  auto position = stringAllocator_->newWrite(stream);
   ContainerRowSerde::serialize(*decoded.base(), decoded.index(index), stream);
-  stringAllocator_.finishWrite(stream, 0);
+  stringAllocator_->finishWrite(stream, 0);
   valueAt<StringView>(row, offset) =
       StringView(reinterpret_cast<char*>(position.position), stream.size());
 }
@@ -551,12 +560,11 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
-  constexpr bool checksFrees = true;
+  const bool checksFrees = FLAGS_velox_check_row_container_free;
   bool sharesStrings = !stringAllocator_.unique();
   if (checksFrees || sharesStrings || usesExternalMemory_) {
     constexpr int32_t kBatch = 1000;
     std::vector<char*> rows(kBatch);
-
     RowContainerIterator iter;
     while (auto numRows = listRows(&iter, kBatch, rows.data())) {
       eraseRows(folly::Range<char**>(rows.data(), numRows));

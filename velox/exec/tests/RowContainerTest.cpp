@@ -17,6 +17,8 @@
 #include "velox/exec/VectorHasher.h"
 #include "velox/exec/tests/utils/RowContainerTestBase.h"
 
+DECLARE_bool(velox_check_row_container_free);
+
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
@@ -1127,4 +1129,59 @@ TEST_F(RowContainerTest, probedFlag) {
       makeNullableFlatVector<bool>(
           {true, true, true, true, std::nullopt, true}),
       result);
+}
+
+template <typename T>
+inline T* valueAt(char* row, int32_t offset) {
+  return reinterpret_cast<T*>(row + offset);
+}
+
+TEST_F(RowContainerTest, shareAndClear) {
+  auto initial = FLAGS_velox_check_row_container_free;
+  FLAGS_velox_check_row_container_free = true;
+  auto g = folly::makeGuard(
+      [&]() { FLAGS_velox_check_row_container_free = initial; });
+
+  std::vector<TypePtr> types = {VARCHAR()};
+  static constexpr int32_t kLength = 1000;
+  auto rowContainer = std::make_unique<RowContainer>(types, pool_.get());
+  auto row = rowContainer->newRow();
+  auto offset = rowContainer->columnAt(0).offset();
+  *valueAt<StringView>(row, offset) =
+      StringView(
+          rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
+
+  auto second = std::make_unique<RowContainer>(
+      types,
+      true,
+      std::vector<Accumulator>(),
+      std::vector<TypePtr>(),
+      false,
+      false,
+      false,
+      false,
+      pool_.get(),
+      rowContainer.get());
+
+  auto secondRow = second->newRow();
+    *valueAt<StringView>(secondRow, offset) =
+      StringView(
+          rowContainer->stringAllocator().allocate(kLength)->begin(), kLength);
+
+    // Both containers have each one string in the shared stringAllocator().
+    EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
+
+    auto extra = second->stringAllocator().allocate(kLength);
+
+    rowContainer.reset();
+    
+    // Now there is the string from second and the extra string in the allocator.
+    EXPECT_EQ(2 * kLength, second->stringAllocator().checkConsistency());
+
+    // The second deletes its rows but the allocator is now singly
+    // referenced but not empty because of 'extra'.
+    EXPECT_THROW(second->clear(), VeloxException);
+    second->stringAllocator().free(extra);
+
+    second->clear();
 }

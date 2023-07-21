@@ -800,7 +800,7 @@ struct MinMaxByNAccumulator {
   }
 
   void free(HashStringAllocator* /*allocator*/) {
-    exec::Aggregate::destruct(&topPairs);
+    std::destroy_at(&topPairs);
   }
 };
 
@@ -910,7 +910,7 @@ struct MinMaxByNStringViewAccumulator {
       free(pair.second, *allocator);
       base.topPairs.pop();
     }
-    exec::Aggregate::destruct(&base);
+    std::destroy_at(&base);
   }
 
  private:
@@ -1067,7 +1067,7 @@ struct MinMaxByNComplexTypeAccumulator {
       }
       base.topPairs.pop();
     }
-    exec::Aggregate::destruct(&base);
+    std::destroy_at(&base);
   }
 
  private:

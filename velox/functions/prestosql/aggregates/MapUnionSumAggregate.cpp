@@ -275,7 +275,7 @@ class MapUnionSumAggregate : public exec::Aggregate {
           value<AccumulatorType>(group)->strings.free(*allocator_);
         }
       }
-      Aggregate::destruct(value<AccumulatorType>(group));
+      std::destroy_at(value<AccumulatorType>(group));
     }
   }
 
