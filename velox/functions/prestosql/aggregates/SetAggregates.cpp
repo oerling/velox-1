@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/SetAccumulator.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
-#include "velox/functions/prestosql/aggregates/SetAccumulator.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::aggregate::prestosql {
@@ -28,7 +28,7 @@ class SetBaseAggregate : public exec::Aggregate {
   explicit SetBaseAggregate(const TypePtr& resultType)
       : exec::Aggregate(resultType) {}
 
-  using AccumulatorType = typename SetAccumulatorTypeTraits<T>::AccumulatorType;
+  using AccumulatorType = SetAccumulator<T>;
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(AccumulatorType);
@@ -181,6 +181,48 @@ class SetAggAggregate : public SetBaseAggregate<T> {
       : SetBaseAggregate<T>(resultType) {}
 
   using Base = SetBaseAggregate<T>;
+
+  bool supportsToIntermediate() const override {
+    return true;
+  }
+
+  void toIntermediate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      VectorPtr& result) const override {
+    const auto& elements = args[0];
+
+    const auto numRows = rows.size();
+
+    // Convert input to a single-entry array.
+
+    // Set nulls for rows not present in 'rows'.
+    auto* pool = Base::allocator_->pool();
+    BufferPtr nulls = allocateNulls(numRows, pool);
+    memcpy(
+        nulls->asMutable<uint64_t>(),
+        rows.asRange().bits(),
+        bits::nbytes(numRows));
+
+    // Set offsets to 0, 1, 2, 3...
+    BufferPtr offsets = allocateOffsets(numRows, pool);
+    auto* rawOffsets = offsets->asMutable<vector_size_t>();
+    std::iota(rawOffsets, rawOffsets + numRows, 0);
+
+    // Set sizes to 1.
+    BufferPtr sizes = allocateSizes(numRows, pool);
+    auto* rawSizes = sizes->asMutable<vector_size_t>();
+    std::fill(rawSizes, rawSizes + numRows, 1);
+
+    result = std::make_shared<ArrayVector>(
+        pool,
+        ARRAY(elements->type()),
+        nulls,
+        numRows,
+        offsets,
+        sizes,
+        BaseVector::loadedVectorShared(elements));
+  }
 
   void addRawInput(
       char** groups,

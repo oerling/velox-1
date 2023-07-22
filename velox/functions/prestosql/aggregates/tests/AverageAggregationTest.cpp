@@ -378,7 +378,7 @@ TEST_F(AverageAggregationTest, decimalAccumulator) {
 }
 
 TEST_F(AverageAggregationTest, avgDecimal) {
-  auto shortDecimal = makeNullableShortDecimalFlatVector(
+  auto shortDecimal = makeNullableFlatVector<int64_t>(
       {1'000, 2'000, 3'000, 4'000, 5'000, std::nullopt}, DECIMAL(10, 1));
   // Short decimal aggregation
   testAggregations(
@@ -386,11 +386,12 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeShortDecimalFlatVector({3'000}, DECIMAL(10, 1))})});
+      {makeRowVector(
+          {makeNullableFlatVector<int64_t>({3'000}, DECIMAL(10, 1))})});
 
   // Long decimal aggregation
   testAggregations(
-      {makeRowVector({makeNullableLongDecimalFlatVector(
+      {makeRowVector({makeNullableFlatVector<int128_t>(
           {HugeInt::build(10, 100),
            HugeInt::build(10, 200),
            HugeInt::build(10, 300),
@@ -401,16 +402,17 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeLongDecimalFlatVector(
-          {HugeInt::build(10, 300)}, DECIMAL(23, 4))})});
+      {makeRowVector({makeFlatVector(
+          std::vector<int128_t>{HugeInt::build(10, 300)}, DECIMAL(23, 4))})});
   // Round-up average.
   testAggregations(
-      {makeRowVector({makeNullableShortDecimalFlatVector(
-          {100, 400, 510}, DECIMAL(3, 2))})},
+      {makeRowVector(
+          {makeFlatVector<int64_t>({100, 400, 510}, DECIMAL(3, 2))})},
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeShortDecimalFlatVector({337}, DECIMAL(3, 2))})});
+      {makeRowVector(
+          {makeFlatVector(std::vector<int64_t>{337}, DECIMAL(3, 2))})});
 
   // The total sum overflows the max int128_t limit.
   std::vector<int128_t> rawVector;
@@ -418,21 +420,22 @@ TEST_F(AverageAggregationTest, avgDecimal) {
     rawVector.push_back(DecimalUtil::kLongDecimalMax);
   }
   testAggregations(
-      {makeRowVector({makeLongDecimalFlatVector(rawVector, DECIMAL(38, 0))})},
+      {makeRowVector({makeFlatVector<int128_t>(rawVector, DECIMAL(38, 0))})},
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeLongDecimalFlatVector(
-          {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 0))})});
+      {makeRowVector({makeFlatVector(
+          std::vector<int128_t>{DecimalUtil::kLongDecimalMax},
+          DECIMAL(38, 0))})});
   // The total sum underflows the min int128_t limit.
   rawVector.clear();
-  auto underFlowTestResult =
-      makeLongDecimalFlatVector({DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0));
+  auto underFlowTestResult = makeFlatVector(
+      std::vector<int128_t>{DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0));
   for (int i = 0; i < 10; ++i) {
     rawVector.push_back(DecimalUtil::kLongDecimalMin);
   }
   testAggregations(
-      {makeRowVector({makeLongDecimalFlatVector(rawVector, DECIMAL(38, 0))})},
+      {makeRowVector({makeFlatVector<int128_t>(rawVector, DECIMAL(38, 0))})},
       {},
       {"avg(c0)"},
       {},
@@ -445,7 +448,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
     rawVector.push_back(DecimalUtil::kLongDecimalMin);
   }
   AssertQueryBuilder assertQueryBuilder(createAvgAggPlanNode(
-      {makeLongDecimalFlatVector(rawVector, DECIMAL(38, 0))}, true));
+      {makeFlatVector<int128_t>(rawVector, DECIMAL(38, 0))}, true));
   auto result = assertQueryBuilder.copyResults(pool());
 
   auto actualResult = result->childAt(0)->asFlatVector<int128_t>();
@@ -460,7 +463,8 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeShortDecimalFlatVector({100}, DECIMAL(3, 2))})});
+      {makeRowVector(
+          {makeFlatVector(std::vector<int64_t>{100}, DECIMAL(3, 2))})});
 
   auto newSize = shortDecimal->size() * 2;
   auto indices = makeIndices(newSize, [&](int row) { return row / 2; });
@@ -472,50 +476,51 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({makeShortDecimalFlatVector({3'000}, DECIMAL(10, 1))})});
+      {makeRowVector(
+          {makeFlatVector(std::vector<int64_t>{3'000}, DECIMAL(10, 1))})});
 
   // Decimal average aggregation with multiple groups.
   auto inputRows = {
       makeRowVector(
           {makeNullableFlatVector<int32_t>({1, 1}),
-           makeShortDecimalFlatVector({37220, 53450}, DECIMAL(5, 2))}),
+           makeFlatVector<int64_t>({37220, 53450}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({2, 2}),
-           makeShortDecimalFlatVector({10410, 9250}, DECIMAL(5, 2))}),
+           makeFlatVector<int64_t>({10410, 9250}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({3, 3}),
-           makeShortDecimalFlatVector({-12783, 0}, DECIMAL(5, 2))}),
+           makeFlatVector<int64_t>({-12783, 0}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({1, 2}),
-           makeShortDecimalFlatVector({23178, 41093}, DECIMAL(5, 2))}),
+           makeFlatVector<int64_t>({23178, 41093}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({2, 3}),
-           makeShortDecimalFlatVector({-10023, 5290}, DECIMAL(5, 2))}),
+           makeFlatVector<int64_t>({-10023, 5290}, DECIMAL(5, 2))}),
   };
 
   auto expectedResult = {
       makeRowVector(
           {makeNullableFlatVector<int32_t>({1}),
-           makeShortDecimalFlatVector({37949}, DECIMAL(5, 2))}),
+           makeFlatVector(std::vector<int64_t>{37949}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({2}),
-           makeShortDecimalFlatVector({12683}, DECIMAL(5, 2))}),
+           makeFlatVector(std::vector<int64_t>{12683}, DECIMAL(5, 2))}),
       makeRowVector(
           {makeNullableFlatVector<int32_t>({3}),
-           makeShortDecimalFlatVector({-2498}, DECIMAL(5, 2))})};
+           makeFlatVector(std::vector<int64_t>{-2498}, DECIMAL(5, 2))})};
 
   testAggregations(inputRows, {"c0"}, {"avg(c1)"}, expectedResult);
 }
 
 TEST_F(AverageAggregationTest, avgDecimalWithMultipleRowVectors) {
   auto inputRows = {
-      makeRowVector({makeShortDecimalFlatVector({100, 200}, DECIMAL(5, 2))}),
-      makeRowVector({makeShortDecimalFlatVector({300, 400}, DECIMAL(5, 2))}),
-      makeRowVector({makeShortDecimalFlatVector({500, 600}, DECIMAL(5, 2))}),
+      makeRowVector({makeFlatVector<int64_t>({100, 200}, DECIMAL(5, 2))}),
+      makeRowVector({makeFlatVector<int64_t>({300, 400}, DECIMAL(5, 2))}),
+      makeRowVector({makeFlatVector<int64_t>({500, 600}, DECIMAL(5, 2))}),
   };
 
-  auto expectedResult = {
-      makeRowVector({makeShortDecimalFlatVector({350}, DECIMAL(5, 2))})};
+  auto expectedResult = {makeRowVector(
+      {makeFlatVector(std::vector<int64_t>{350}, DECIMAL(5, 2))})};
 
   testAggregations(inputRows, {}, {"avg(c0)"}, expectedResult);
 }
@@ -527,6 +532,83 @@ TEST_F(AverageAggregationTest, constantVectorOverflow) {
                   .singleAggregation({}, {"avg(c0)"})
                   .planNode();
   assertQuery(plan, "SELECT 1073741824");
+}
+
+TEST_F(AverageAggregationTest, companionFunctionsWithNonFlatAndLazyInputs) {
+  auto testFunction = [this](const std::string& functionName) {
+    auto indices = makeIndices({0, 1, 2, 3, 4});
+    VectorPtr row = makeRowVector(
+        {BaseVector::wrapInDictionary(
+             nullptr,
+             indices,
+             5,
+             makeFlatVector<double>({1.0, 2.0, 3.0, 4.0, 5.0})),
+         makeFlatVector<int64_t>({1, 1, 1, 1, 1})});
+    // rowInDict is a Dictionary(Row(Dictionary(Flat), Flat)) vector.
+    auto rowInDict = BaseVector::wrapInDictionary(nullptr, indices, 5, row);
+
+    auto sumVector = std::make_shared<LazyVector>(
+        pool(),
+        DOUBLE(),
+        5,
+        std::make_unique<velox::test::SimpleVectorLoader>([&](auto /*rows*/) {
+          return makeFlatVector<double>({1.0, 2.0, 3.0, 4.0, 5.0});
+        }));
+    // row2 is a Row(Lazy(Flat), Constant(Flat)) vector.
+    VectorPtr row2 = makeRowVector({
+        sumVector,
+        BaseVector::wrapInDictionary(
+            nullptr,
+            indices,
+            5,
+            BaseVector::wrapInConstant(5, 0, makeFlatVector<int64_t>({1, 2}))),
+    });
+    auto key = makeFlatVector<bool>({true, false, true, false, true});
+    auto input = makeRowVector({key, rowInDict, row2});
+
+    // Test non-global aggregations.
+    auto expected = makeRowVector(
+        {makeFlatVector<bool>({false, true}),
+         makeFlatVector<double>({3.0, 3.0}),
+         makeFlatVector<double>({3.0, 3.0})});
+    testAggregations(
+        {input},
+        {"c0"},
+        {fmt::format("{}_merge_extract_double(c1)", functionName),
+         fmt::format("{}_merge_extract_double(c2)", functionName)},
+        {expected});
+    testAggregations(
+        {input},
+        {"c0"},
+        {fmt::format("{}_merge(c1)", functionName),
+         fmt::format("{}_merge(c2)", functionName)},
+        {"c0",
+         fmt::format("{}_extract_double(a0)", functionName),
+         fmt::format("{}_extract_double(a1)", functionName)},
+        {expected});
+
+    // Test global aggregations.
+    expected = makeRowVector(
+        {makeFlatVector<double>(std::vector<double>{3.0}),
+         makeFlatVector<double>(std::vector<double>{3.0})});
+    testAggregations(
+        {input},
+        {},
+        {fmt::format("{}_merge_extract_double(c1)", functionName),
+         fmt::format("{}_merge_extract_double(c2)", functionName)},
+        {expected});
+    testAggregations(
+        {input},
+        {},
+        {fmt::format("{}_merge(c1)", functionName),
+         fmt::format("{}_merge(c2)", functionName)},
+        {fmt::format("{}_extract_double(a0)", functionName),
+         fmt::format("{}_extract_double(a1)", functionName)},
+        {expected});
+  };
+
+  testFunction("avg");
+  testFunction("simple_avg");
 }
 
 } // namespace

@@ -57,18 +57,6 @@ TEST(TestReader, testWriterVersions) {
       "future - 99", writerVersionToString(static_cast<WriterVersion>(99)));
 }
 
-TEST(TestReader, testCompressionNames) {
-  EXPECT_EQ("none", compressionKindToString(CompressionKind_NONE));
-  EXPECT_EQ("zlib", compressionKindToString(CompressionKind_ZLIB));
-  EXPECT_EQ("snappy", compressionKindToString(CompressionKind_SNAPPY));
-  EXPECT_EQ("lzo", compressionKindToString(CompressionKind_LZO));
-  EXPECT_EQ("lz4", compressionKindToString(CompressionKind_LZ4));
-  EXPECT_EQ("zstd", compressionKindToString(CompressionKind_ZSTD));
-  EXPECT_EQ(
-      "unknown - 99",
-      compressionKindToString(static_cast<CompressionKind>(99)));
-}
-
 std::unique_ptr<BufferedInput> createFileBufferedInput(
     const std::string& path,
     memory::MemoryPool& pool) {
@@ -1134,7 +1122,7 @@ TEST(TestReader, testUpcastBoolean) {
           HiveTypeParser().parse("struct<col0:int>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
-  AllocationPool allocPool(defaultPool.get());
+  memory::AllocationPool allocPool(defaultPool.get());
   StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
       TypeWithId::create(reqType),
@@ -1183,7 +1171,7 @@ TEST(TestReader, testUpcastIntDirect) {
 
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
-  AllocationPool allocPool(defaultPool.get());
+  memory::AllocationPool allocPool(defaultPool.get());
   StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
       TypeWithId::create(reqType),
@@ -1249,7 +1237,7 @@ TEST(TestReader, testUpcastIntDict) {
           HiveTypeParser().parse("struct<col0:bigint>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
-  AllocationPool allocPool(defaultPool.get());
+  memory::AllocationPool allocPool(defaultPool.get());
   StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
       TypeWithId::create(reqType),
@@ -1303,7 +1291,7 @@ TEST(TestReader, testUpcastFloat) {
           HiveTypeParser().parse("struct<col0:double>"));
   ColumnSelector cs(reqType, rowType);
   EXPECT_CALL(streams, getColumnSelectorProxy()).WillRepeatedly(Return(&cs));
-  AllocationPool allocPool(defaultPool.get());
+  memory::AllocationPool allocPool(defaultPool.get());
   StreamLabels labels(allocPool);
   std::unique_ptr<ColumnReader> reader = ColumnReader::build(
       TypeWithId::create(reqType),

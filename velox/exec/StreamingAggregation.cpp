@@ -96,7 +96,7 @@ StreamingAggregation::StreamingAggregation(
   std::vector<Accumulator> accumulators;
   accumulators.reserve(aggregates_.size());
   for (auto& aggregate : aggregates_) {
-    accumulators.push_back(aggregate.get());
+    accumulators.push_back(Accumulator{aggregate.get()});
   }
 
   rows_ = std::make_unique<RowContainer>(
@@ -108,8 +108,7 @@ StreamingAggregation::StreamingAggregation(
       false,
       false,
       false,
-      pool(),
-      ContainerRowSerde::instance());
+      pool());
 
   for (auto i = 0; i < aggregates_.size(); ++i) {
     aggregates_[i]->setAllocator(&rows_->stringAllocator());

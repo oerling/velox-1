@@ -180,14 +180,14 @@ class CastExprTest : public functions::test::CastBaseTest {
     testComplexCast(
         "c0",
         input,
-        makeShortDecimalFlatVector(
+        makeFlatVector<int64_t>(
             {-300, -200, -100, 0, 5'500, 6'900, 7'200}, DECIMAL(6, 2)));
 
     // integer to long decimal
     testComplexCast(
         "c0",
         input,
-        makeLongDecimalFlatVector(
+        makeFlatVector<int128_t>(
             {-30'000'000'000,
              -20'000'000'000,
              -10'000'000'000,
@@ -203,7 +203,7 @@ class CastExprTest : public functions::test::CastBaseTest {
         testComplexCast(
             "c0",
             makeFlatVector<T>(std::vector<T>{std::numeric_limits<T>::min()}),
-            makeShortDecimalFlatVector({0}, DECIMAL(3, 1))),
+            makeFlatVector(std::vector<int64_t>{0}, DECIMAL(3, 1))),
         fmt::format(
             "Cannot cast {} '{}' to DECIMAL(3,1)",
             CppToType<T>::name,
@@ -212,23 +212,20 @@ class CastExprTest : public functions::test::CastBaseTest {
         testComplexCast(
             "c0",
             makeFlatVector<T>(std::vector<T>{-100}),
-            makeShortDecimalFlatVector({0}, DECIMAL(17, 16))),
+            makeFlatVector(std::vector<int64_t>{0}, DECIMAL(17, 16))),
         fmt::format(
             "Cannot cast {} '-100' to DECIMAL(17,16)", CppToType<T>::name));
     VELOX_ASSERT_THROW(
         testComplexCast(
             "c0",
             makeFlatVector<T>(std::vector<T>{100}),
-            makeShortDecimalFlatVector({0}, DECIMAL(17, 16))),
+            makeFlatVector(std::vector<int64_t>{0}, DECIMAL(17, 16))),
         fmt::format(
             "Cannot cast {} '100' to DECIMAL(17,16)", CppToType<T>::name));
   }
 };
 
 TEST_F(CastExprTest, basics) {
-  // Testing non-null or error cases
-  const std::vector<std::optional<int32_t>> ii = {1, 2, 3, 100, -100};
-  const std::vector<std::optional<double>> oo = {1.0, 2.0, 3.0, 100.0, -100.0};
   testCast<int32_t, double>(
       "double", {1, 2, 3, 100, -100}, {1.0, 2.0, 3.0, 100.0, -100.0});
   testCast<int32_t, std::string>(
@@ -236,23 +233,25 @@ TEST_F(CastExprTest, basics) {
   testCast<std::string, int8_t>(
       "tinyint", {"1", "2", "3", "100", "-100"}, {1, 2, 3, 100, -100});
   testCast<double, int>(
-      "int", {1.888, 2.5, 3.6, 100.44, -100.101}, {2, 3, 4, 100, -100});
+      "int",
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {2, 3, 4, 100, -100, 1, -2});
   testCast<double, double>(
       "double",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<double, std::string>(
       "string",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {"1.888", "2.5", "3.6", "100.44", "-100.101"});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {"1.888", "2.5", "3.6", "100.44", "-100.101", "1.0", "-2.0"});
   testCast<double, double>(
       "double",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<double, float>(
       "float",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<bool, std::string>("string", {true, false}, {"true", "false"});
 }
 
@@ -330,18 +329,36 @@ TEST_F(CastExprTest, dateToTimestamp) {
 }
 
 TEST_F(CastExprTest, timestampToDate) {
+  setTimezone("");
+  std::vector<std::optional<Timestamp>> inputTimestamps = {
+      Timestamp(0, 0),
+      Timestamp(946684800, 0),
+      Timestamp(1257724800, 0),
+      std::nullopt,
+  };
+
   testCast<Timestamp, int32_t>(
       "date",
-      {
-          Timestamp(0, 0),
-          Timestamp(946684800, 0),
-          Timestamp(1257724800, 0),
-          std::nullopt,
-      },
+      inputTimestamps,
       {
           0,
           10957,
           14557,
+          std::nullopt,
+      },
+      false,
+      false,
+      TIMESTAMP(),
+      DATE());
+
+  setTimezone("America/Los_Angeles");
+  testCast<Timestamp, int32_t>(
+      "date",
+      inputTimestamps,
+      {
+          -1,
+          10956,
+          14556,
           std::nullopt,
       },
       false,
@@ -694,7 +711,9 @@ TEST_F(CastExprTest, arrayCast) {
   // Cast array<double> -> array<varchar>.
   {
     auto valueAtString = [valueAt](vector_size_t row, vector_size_t idx) {
-      return StringView::makeInline(folly::to<std::string>(valueAt(row, idx)));
+      // Add .0 at the end since folly outputs 1.0 -> 1
+      return StringView::makeInline(
+          folly::to<std::string>(valueAt(row, idx)) + ".0");
     };
     auto expected = makeArrayVector<StringView>(
         kVectorSize, sizeAt, valueAtString, nullEvery(3));
@@ -824,7 +843,7 @@ TEST_F(CastExprTest, toString) {
 
 TEST_F(CastExprTest, decimalToDouble) {
   // short to short, scale up.
-  auto shortFlat = makeNullableShortDecimalFlatVector(
+  auto shortFlat = makeNullableFlatVector<int64_t>(
       {-999999999999999999, -3, 0, 55, 999999999999999999, std::nullopt},
       DECIMAL(18, 18));
   testComplexCast(
@@ -837,7 +856,7 @@ TEST_F(CastExprTest, decimalToDouble) {
            0.000000000000000055,
            0.999999999999999999,
            std::nullopt}));
-  auto longFlat = makeNullableLongDecimalFlatVector(
+  auto longFlat = makeNullableFlatVector<int128_t>(
       {DecimalUtil::kLongDecimalMin,
        0,
        DecimalUtil::kLongDecimalMax,
@@ -854,39 +873,39 @@ TEST_F(CastExprTest, decimalToDouble) {
 TEST_F(CastExprTest, decimalToDecimal) {
   // short to short, scale up.
   auto shortFlat =
-      makeShortDecimalFlatVector({-3, -2, -1, 0, 55, 69, 72}, DECIMAL(2, 2));
+      makeFlatVector<int64_t>({-3, -2, -1, 0, 55, 69, 72}, DECIMAL(2, 2));
   testComplexCast(
       "c0",
       shortFlat,
-      makeShortDecimalFlatVector(
+      makeFlatVector<int64_t>(
           {-300, -200, -100, 0, 5'500, 6'900, 7'200}, DECIMAL(4, 4)));
 
   // short to short, scale down.
   testComplexCast(
       "c0",
       shortFlat,
-      makeShortDecimalFlatVector({0, 0, 0, 0, 6, 7, 7}, DECIMAL(4, 1)));
+      makeFlatVector<int64_t>({0, 0, 0, 0, 6, 7, 7}, DECIMAL(4, 1)));
 
   // long to short, scale up.
   auto longFlat =
-      makeLongDecimalFlatVector({-201, -109, 0, 105, 208}, DECIMAL(20, 2));
+      makeFlatVector<int128_t>({-201, -109, 0, 105, 208}, DECIMAL(20, 2));
   testComplexCast(
       "c0",
       longFlat,
-      makeShortDecimalFlatVector(
+      makeFlatVector<int64_t>(
           {-201'000, -109'000, 0, 105'000, 208'000}, DECIMAL(10, 5)));
 
   // long to short, scale down.
   testComplexCast(
       "c0",
       longFlat,
-      makeShortDecimalFlatVector({-20, -11, 0, 11, 21}, DECIMAL(10, 1)));
+      makeFlatVector<int64_t>({-20, -11, 0, 11, 21}, DECIMAL(10, 1)));
 
   // long to long, scale up.
   testComplexCast(
       "c0",
       longFlat,
-      makeLongDecimalFlatVector(
+      makeFlatVector<int128_t>(
           {-20'100'000'000, -10'900'000'000, 0, 10'500'000'000, 20'800'000'000},
           DECIMAL(20, 10)));
 
@@ -894,13 +913,13 @@ TEST_F(CastExprTest, decimalToDecimal) {
   testComplexCast(
       "c0",
       longFlat,
-      makeLongDecimalFlatVector({-20, -11, 0, 11, 21}, DECIMAL(20, 1)));
+      makeFlatVector<int128_t>({-20, -11, 0, 11, 21}, DECIMAL(20, 1)));
 
   // short to long, scale up.
   testComplexCast(
       "c0",
       shortFlat,
-      makeLongDecimalFlatVector(
+      makeFlatVector<int128_t>(
           {-3'000'000'000,
            -2'000'000'000,
            -1'000'000'000,
@@ -913,14 +932,13 @@ TEST_F(CastExprTest, decimalToDecimal) {
   // short to long, scale down.
   testComplexCast(
       "c0",
-      makeShortDecimalFlatVector(
-          {-20'500, -190, 12'345, 19'999}, DECIMAL(6, 4)),
-      makeLongDecimalFlatVector({-21, 0, 12, 20}, DECIMAL(20, 1)));
+      makeFlatVector<int64_t>({-20'500, -190, 12'345, 19'999}, DECIMAL(6, 4)),
+      makeFlatVector<int128_t>({-21, 0, 12, 20}, DECIMAL(20, 1)));
 
   // NULLs and overflow.
-  longFlat = makeNullableLongDecimalFlatVector(
+  longFlat = makeNullableFlatVector<int128_t>(
       {-20'000, -1'000'000, 10'000, std::nullopt}, DECIMAL(20, 3));
-  auto expectedShort = makeNullableShortDecimalFlatVector(
+  auto expectedShort = makeNullableFlatVector<int64_t>(
       {-200'000, std::nullopt, 100'000, std::nullopt}, DECIMAL(6, 4));
 
   // Throws exception if CAST fails.
@@ -934,7 +952,7 @@ TEST_F(CastExprTest, decimalToDecimal) {
   // long to short, big numbers.
   testComplexCast(
       "c0",
-      makeNullableLongDecimalFlatVector(
+      makeNullableFlatVector<int128_t>(
           {HugeInt::build(-2, 200),
            HugeInt::build(-1, 300),
            HugeInt::build(0, 400),
@@ -942,7 +960,7 @@ TEST_F(CastExprTest, decimalToDecimal) {
            HugeInt::build(10, 100),
            std::nullopt},
           DECIMAL(23, 8)),
-      makeNullableShortDecimalFlatVector(
+      makeNullableFlatVector<int64_t>(
           {-368934881474,
            -184467440737,
            0,
@@ -956,16 +974,16 @@ TEST_F(CastExprTest, decimalToDecimal) {
   VELOX_ASSERT_THROW(
       testComplexCast(
           "c0",
-          makeNullableLongDecimalFlatVector(
+          makeNullableFlatVector<int128_t>(
               {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 0)),
-          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+          makeNullableFlatVector<int128_t>({0}, DECIMAL(38, 1))),
       "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38,1)");
   VELOX_ASSERT_THROW(
       testComplexCast(
           "c0",
-          makeNullableLongDecimalFlatVector(
+          makeNullableFlatVector<int128_t>(
               {DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0)),
-          makeNullableLongDecimalFlatVector({0}, DECIMAL(38, 1))),
+          makeNullableFlatVector<int128_t>({0}, DECIMAL(38, 1))),
       "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
 }
 

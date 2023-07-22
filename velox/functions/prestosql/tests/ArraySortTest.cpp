@@ -532,6 +532,57 @@ TEST_F(ArraySortTest, wellFormedVectors) {
       arrayVec->elements()->size());
 }
 
+TEST_F(ArraySortTest, lambda) {
+  auto data = makeRowVector({makeNullableArrayVector<std::string>({
+      {"abc123", "abc", std::nullopt, "abcd"},
+      {std::nullopt, "x", "xyz123", "xyz"},
+  })});
+
+  auto sortedAsc = makeNullableArrayVector<std::string>({
+      {"abc", "abcd", "abc123", std::nullopt},
+      {"x", "xyz", "xyz123", std::nullopt},
+  });
+
+  auto sortedDesc = makeNullableArrayVector<std::string>({
+      {"abc123", "abcd", "abc", std::nullopt},
+      {"xyz123", "xyz", "x", std::nullopt},
+  });
+
+  auto testAsc = [&](const std::string& name, const std::string& lambdaExpr) {
+    SCOPED_TRACE(name);
+    SCOPED_TRACE(lambdaExpr);
+    auto result = evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data);
+    assertEqualVectors(sortedAsc, result);
+  };
+
+  auto testDesc = [&](const std::string& name, const std::string& lambdaExpr) {
+    SCOPED_TRACE(name);
+    SCOPED_TRACE(lambdaExpr);
+    auto result = evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data);
+    assertEqualVectors(sortedDesc, result);
+  };
+
+  // Different ways to sort by length ascending.
+  testAsc("array_sort", "x -> length(x)");
+  testAsc("array_sort_desc", "x -> length(x) * -1");
+  testAsc(
+      "array_sort",
+      "(x, y) -> if(length(x) < length(y), -1, if(length(x) > length(y), 1, 0))");
+  testAsc(
+      "array_sort",
+      "(x, y) -> if(length(x) < length(y), -1, if(length(x) = length(y), 0, 1))");
+
+  // Different ways to sort by length descending.
+  testDesc("array_sort", "x -> length(x) * -1");
+  testDesc("array_sort_desc", "x -> length(x)");
+  testDesc(
+      "array_sort",
+      "(x, y) -> if(length(x) < length(y), 1, if(length(x) > length(y), -1, 0))");
+  testDesc(
+      "array_sort",
+      "(x, y) -> if(length(x) < length(y), 1, if(length(x) = length(y), 0, -1))");
+}
+
 VELOX_INSTANTIATE_TEST_SUITE_P(
     ArraySortTest,
     ArraySortTest,

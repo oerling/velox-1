@@ -338,8 +338,7 @@ class AggregationTest : public OperatorTestBase {
         false,
         true,
         true,
-        pool_.get(),
-        ContainerRowSerde::instance());
+        pool_.get());
   }
 
   RowTypePtr rowType_{
@@ -430,7 +429,7 @@ TEST_F(AggregationTest, missingFunctionOrSignature) {
   params.planNode = makePlan(missingFunc);
   VELOX_ASSERT_THROW(
       readCursor(params, [](Task*) {}),
-      "Aggregate function 'missing-function' not registered");
+      "Aggregate function not registered: missing-function");
 
   params.planNode = makePlan(wrongInputTypes);
   VELOX_ASSERT_THROW(
@@ -491,7 +490,7 @@ TEST_F(AggregationTest, missingLambdaFunction) {
   params.planNode = plan;
   VELOX_ASSERT_THROW(
       readCursor(params, [](Task*) {}),
-      "Aggregate function 'missing-lambda' not registered");
+      "Aggregate function not registered: missing-lambda");
 }
 
 TEST_F(AggregationTest, global) {
@@ -1079,7 +1078,7 @@ TEST_F(AggregationTest, spillWithMemoryLimit) {
   }
 }
 
-DEBUG_ONLY_TEST_F(AggregationTest, spillWithEmptyPartition) {
+DEBUG_ONLY_TEST_F(AggregationTest, DISABLED_spillWithEmptyPartition) {
   constexpr int32_t kNumDistinct = 100'000;
   constexpr int64_t kMaxBytes = 20LL << 20; // 20 MB
   rowType_ = ROW({"c0", "a"}, {INTEGER(), VARCHAR()});

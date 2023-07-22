@@ -107,16 +107,14 @@ RowContainer::RowContainer(
     bool isJoinBuild,
     bool hasProbedFlag,
     bool hasNormalizedKeys,
-    memory::MemoryPool* pool,
-    const RowSerde& serde)
+    memory::MemoryPool* pool)
     : keyTypes_(keyTypes),
       nullableKeys_(nullableKeys),
-      accumulators_(accumulators),
       isJoinBuild_(isJoinBuild),
+      accumulators_(accumulators),
       hasNormalizedKeys_(hasNormalizedKeys),
       rows_(pool),
-      stringAllocator_(pool),
-      serde_(serde) {
+      stringAllocator_(pool) {
   // Compute the layout of the payload row.  The row has keys, null
   // flags, accumulators, dependent fields. All fields are fixed
   // width. If variable width data is referenced, this is done with
@@ -237,10 +235,9 @@ RowContainer::RowContainer(
 }
 
 char* RowContainer::newRow() {
-  char* row;
-  VELOX_DCHECK(
-      !partitions_, "Rows may not be added after partitions() has been called");
+  VELOX_DCHECK(mutable_, "Can't add row into an immutable row container");
   ++numRows_;
+  char* row;
   if (firstFreeRow_) {
     row = firstFreeRow_;
     VELOX_CHECK(bits::isBitSet(row, freeFlagOffset_));
@@ -426,7 +423,7 @@ void RowContainer::storeComplexType(
   RowSizeTracker tracker(row[rowSizeOffset_], stringAllocator_);
   ByteStream stream(&stringAllocator_, false, false);
   auto position = stringAllocator_.newWrite(stream);
-  serde_.serialize(*decoded.base(), decoded.index(index), stream);
+  ContainerRowSerde::serialize(*decoded.base(), decoded.index(index), stream);
   stringAllocator_.finishWrite(stream, 0);
   valueAt<StringView>(row, offset) =
       StringView(reinterpret_cast<char*>(position.position), stream.size());
@@ -453,7 +450,7 @@ int RowContainer::compareComplexType(
 
   ByteStream stream;
   prepareRead(row, offset, stream);
-  return serde_.compare(stream, decoded, index, flags);
+  return ContainerRowSerde::compare(stream, decoded, index, flags);
 }
 
 int32_t RowContainer::compareStringAsc(StringView left, StringView right) {
@@ -476,7 +473,7 @@ int32_t RowContainer::compareComplexType(
   ByteStream rightStream;
   prepareRead(left, leftOffset, leftStream);
   prepareRead(right, rightOffset, rightStream);
-  return serde_.compare(leftStream, rightStream, type, flags);
+  return ContainerRowSerde::compare(leftStream, rightStream, type, flags);
 }
 
 int32_t RowContainer::compareComplexType(
@@ -518,7 +515,7 @@ void RowContainer::hashTyped(
           Kind == TypeKind::MAP) {
         ByteStream in;
         prepareRead(row, offset, in);
-        hash = serde_.hash(in, type);
+        hash = ContainerRowSerde::hash(in, type);
       } else {
         hash = folly::hasher<T>()(valueAt<T>(row, offset));
       }
@@ -618,7 +615,7 @@ std::optional<int64_t> RowContainer::estimateRowSize() const {
   if (numRows_ == 0) {
     return std::nullopt;
   }
-  int64_t freeBytes = rows_.availableInRun() + fixedRowSize_ * numFreeRows_;
+  int64_t freeBytes = rows_.freeBytes() + fixedRowSize_ * numFreeRows_;
   int64_t usedSize = rows_.allocatedBytes() - freeBytes +
       stringAllocator_.retainedSize() - stringAllocator_.freeSpace();
   int64_t rowSize = usedSize / numRows_;
@@ -630,8 +627,9 @@ std::optional<int64_t> RowContainer::estimateRowSize() const {
 int64_t RowContainer::sizeIncrement(
     vector_size_t numRows,
     int64_t variableLengthBytes) const {
-  constexpr int32_t kAllocUnit =
-      AllocationPool::kMinPages * memory::AllocationTraits::kPageSize;
+  // Small containers can grow in smaller units but for spilling the practical
+  // minimum increment is a huge page.
+  constexpr int32_t kAllocUnit = memory::AllocationTraits::kHugePageSize;
   int32_t needRows = std::max<int64_t>(0, numRows - numFreeRows_);
   int64_t needBytes =
       std::max<int64_t>(0, variableLengthBytes - stringAllocator_.freeSpace());
@@ -648,9 +646,9 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     VELOX_DCHECK_EQ(0, iter.allocationIndex);
     iter.normalizedKeysLeft = numRowsWithNormalizedKey_;
     iter.normalizedKeySize = originalNormalizedKeySize_;
-    auto run = rows_.allocationAt(0)->runAt(0);
-    iter.rowBegin = run.data<char>();
-    iter.endOfRun = iter.rowBegin + run.numBytes();
+    auto range = rows_.rangeAt(0);
+    iter.rowBegin = range.data();
+    iter.endOfRun = iter.rowBegin + range.size();
   }
   if (iter.rowNumber + numRows >= numRows_) {
     iter.rowNumber = numRows_;
@@ -673,22 +671,10 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
     }
     int32_t rowsInRun = (iter.endOfRun - iter.rowBegin) / rowSize;
     toSkip -= rowsInRun;
-    auto numRuns = rows_.allocationAt(iter.allocationIndex)->numRuns();
-    if (iter.runIndex >= numRuns - 1) {
-      ++iter.allocationIndex;
-      iter.runIndex = 0;
-    } else {
-      ++iter.runIndex;
-    }
-    auto run = rows_.allocationAt(iter.allocationIndex)->runAt(iter.runIndex);
-    if (iter.allocationIndex == rows_.numSmallAllocations() - 1 &&
-        iter.runIndex ==
-            rows_.allocationAt(iter.allocationIndex)->numRuns() - 1) {
-      iter.endOfRun = run.data<char>() + rows_.currentOffset();
-    } else {
-      iter.endOfRun = run.data<char>() + run.numBytes();
-    }
-    iter.rowBegin = run.data<char>();
+    ++iter.allocationIndex;
+    auto range = rows_.rangeAt(iter.allocationIndex);
+    iter.endOfRun = range.data() + range.size();
+    iter.rowBegin = range.data();
   }
   if (iter.normalizedKeysLeft) {
     iter.normalizedKeysLeft -= numRows;
@@ -696,28 +682,30 @@ void RowContainer::skip(RowContainerIterator& iter, int32_t numRows) {
   iter.rowNumber += numRows;
 }
 
-RowPartitions& RowContainer::partitions() {
-  if (!partitions_) {
-    partitions_ = std::make_unique<RowPartitions>(numRows_, *rows_.pool());
-  }
-  return *partitions_;
+std::unique_ptr<RowPartitions> RowContainer::createRowPartitions(
+    memory::MemoryPool& pool) {
+  VELOX_CHECK(
+      mutable_, "Can only create RowPartitions once from a row container");
+  mutable_ = false;
+  return std::make_unique<RowPartitions>(numRows_, pool);
 }
 
 int32_t RowContainer::listPartitionRows(
     RowContainerIterator& iter,
     uint8_t partition,
     int32_t maxRows,
+    const RowPartitions& rowPartitions,
     char** result) {
-  if (!numRows_) {
+  VELOX_CHECK(
+      !mutable_, "Can't list partition rows from a mutable row container");
+  VELOX_CHECK_EQ(
+      rowPartitions.size(), numRows_, "All rows must have a partition");
+  if (numRows_ == 0) {
     return 0;
   }
-  VELOX_CHECK(
-      partitions_, "partitions() must be called before listPartitionRows()");
-  VELOX_CHECK_EQ(
-      partitions_->size(), numRows_, "All rows must have a partition");
-  auto partitionNumberVector = xsimd::batch<uint8_t>::broadcast(partition);
-  auto& allocation = partitions_->allocation();
-  auto numRuns = allocation.numRuns();
+  const auto partitionNumberVector =
+      xsimd::batch<uint8_t>::broadcast(partition);
+  const auto& allocation = rowPartitions.allocation();
   int32_t numResults = 0;
   while (numResults < maxRows && iter.rowNumber < numRows_) {
     constexpr int32_t kBatch = xsimd::batch<uint8_t>::size;

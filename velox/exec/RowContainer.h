@@ -36,7 +36,7 @@ class Accumulator {
       int32_t alignment,
       std::function<void(folly::Range<char**> groups)> destroyFunction);
 
-  Accumulator(Aggregate* aggregate);
+  explicit Accumulator(Aggregate* aggregate);
 
   bool isFixedSize() const;
 
@@ -67,7 +67,6 @@ using normalized_key_t = uint64_t;
 
 struct RowContainerIterator {
   int32_t allocationIndex = 0;
-  int32_t runIndex = 0;
   int32_t rowOffset = 0;
   // Number of unvisited entries that are prefixed by an uint64_t for
   // normalized key. Set in listRows() on first call.
@@ -77,7 +76,7 @@ struct RowContainerIterator {
   // Ordinal position of 'currentRow' in RowContainer.
   int32_t rowNumber{0};
   char* FOLLY_NULLABLE rowBegin{nullptr};
-  // First byte after the end of the PageRun containing 'currentRow'.
+  // First byte after the end of the range containing 'currentRow'.
   char* FOLLY_NULLABLE endOfRun{nullptr};
 
   // Returns the current row, skipping a possible normalized key below the first
@@ -185,8 +184,7 @@ class RowContainer {
             false, // isJoinBuild
             false, // hasProbedFlag
             false, // hasNormalizedKey
-            pool,
-            ContainerRowSerde::instance()) {}
+            pool) {}
 
   static int32_t combineAlignments(int32_t a, int32_t b);
 
@@ -204,7 +202,7 @@ class RowContainer {
   // join. 'hasNormalizedKey' specifies that an extra word is left
   // below each row for a normalized key that collapses all parts
   // into one word for faster comparison. The bulk allocation is done
-  // from 'allocator'.  'serde_' is used for serializing complex
+  // from 'allocator'. ContainerRowSerde is used for serializing complex
   // type values into the container.
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
@@ -215,8 +213,7 @@ class RowContainer {
       bool isJoinBuild,
       bool hasProbedFlag,
       bool hasNormalizedKey,
-      memory::MemoryPool* FOLLY_NONNULL pool,
-      const RowSerde& serde);
+      memory::MemoryPool* FOLLY_NONNULL pool);
 
   // Allocates a new row and initializes possible aggregates to null.
   char* FOLLY_NONNULL newRow();
@@ -406,69 +403,56 @@ class RowContainer {
       char* FOLLY_NONNULL* FOLLY_NONNULL rows) {
     int32_t count = 0;
     uint64_t totalBytes = 0;
-    VELOX_CHECK_EQ(rows_.numLargeAllocations(), 0);
-    auto numAllocations = rows_.numSmallAllocations();
-    if (iter->allocationIndex == 0 && iter->runIndex == 0 &&
-        iter->rowOffset == 0) {
+    auto numAllocations = rows_.numRanges();
+    if (iter->allocationIndex == 0 && iter->rowOffset == 0) {
       iter->normalizedKeysLeft = numRowsWithNormalizedKey_;
       iter->normalizedKeySize = originalNormalizedKeySize_;
     }
     int32_t rowSize = fixedRowSize_ +
         (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
     for (auto i = iter->allocationIndex; i < numAllocations; ++i) {
-      auto allocation = rows_.allocationAt(i);
-      auto numRuns = allocation->numRuns();
-      for (auto runIndex = iter->runIndex; runIndex < numRuns; ++runIndex) {
-        memory::Allocation::PageRun run = allocation->runAt(runIndex);
-        auto* data =
-            run.data<char>() + memory::alignmentPadding(run.data(), alignment_);
-        int64_t limit;
-        if (i == numAllocations - 1 && runIndex == rows_.currentRunIndex()) {
-          limit = rows_.currentOffset();
-        } else {
-          limit = run.numPages() * memory::AllocationTraits::kPageSize;
+      auto range = rows_.rangeAt(i);
+      auto* data =
+          range.data() + memory::alignmentPadding(range.data(), alignment_);
+      auto limit = range.size();
+      auto row = iter->rowOffset;
+      while (row + rowSize <= limit) {
+        rows[count++] = data + row +
+            (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
+        VELOX_DCHECK_EQ(
+            reinterpret_cast<uintptr_t>(rows[count - 1]) % alignment_, 0);
+        row += rowSize;
+        auto newTotalBytes = totalBytes + rowSize;
+        if (--iter->normalizedKeysLeft == 0) {
+          rowSize -= originalNormalizedKeySize_;
         }
-        auto row = iter->rowOffset;
-        while (row + rowSize <= limit) {
-          rows[count++] = data + row +
-              (iter->normalizedKeysLeft > 0 ? originalNormalizedKeySize_ : 0);
-          VELOX_DCHECK_EQ(
-              reinterpret_cast<uintptr_t>(rows[count - 1]) % alignment_, 0);
-          row += rowSize;
-          auto newTotalBytes = totalBytes + rowSize;
-          if (--iter->normalizedKeysLeft == 0) {
-            rowSize -= originalNormalizedKeySize_;
-          }
-          if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
+        if (bits::isBitSet(rows[count - 1], freeFlagOffset_)) {
+          --count;
+          continue;
+        }
+        if constexpr (probeType == ProbeType::kNotProbed) {
+          if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
             --count;
             continue;
           }
-          if constexpr (probeType == ProbeType::kNotProbed) {
-            if (bits::isBitSet(rows[count - 1], probedFlagOffset_)) {
-              --count;
-              continue;
-            }
-          }
-          if constexpr (probeType == ProbeType::kProbed) {
-            if (not(bits::isBitSet(rows[count - 1], probedFlagOffset_))) {
-              --count;
-              continue;
-            }
-          }
-          totalBytes = newTotalBytes;
-          if (rowSizeOffset_) {
-            totalBytes += variableRowSize(rows[count - 1]);
-          }
-          if (count == maxRows || totalBytes > maxBytes) {
-            iter->rowOffset = row;
-            iter->runIndex = runIndex;
-            iter->allocationIndex = i;
-            return count;
+        }
+        if constexpr (probeType == ProbeType::kProbed) {
+          if (not(bits::isBitSet(rows[count - 1], probedFlagOffset_))) {
+            --count;
+            continue;
           }
         }
-        iter->rowOffset = 0;
+        totalBytes = newTotalBytes;
+        if (rowSizeOffset_) {
+          totalBytes += variableRowSize(rows[count - 1]);
+        }
+        if (count == maxRows || totalBytes > maxBytes) {
+          iter->rowOffset = row;
+          iter->allocationIndex = i;
+          return count;
+        }
       }
-      iter->runIndex = 0;
+      iter->rowOffset = 0;
     }
     iter->allocationIndex = std::numeric_limits<int32_t>::max();
     return count;
@@ -599,7 +583,7 @@ class RowContainer {
   // reserved storage for variable length data.
   std::pair<uint64_t, uint64_t> freeSpace() const {
     return std::make_pair<uint64_t, uint64_t>(
-        rows_.availableInRun() / fixedRowSize_ + numFreeRows_,
+        rows_.freeBytes() / fixedRowSize_ + numFreeRows_,
         stringAllocator_.freeSpace());
   }
 
@@ -659,25 +643,31 @@ class RowContainer {
     return (row[nullByte] & nullMask) != 0;
   }
 
-  /// Retrieves rows from 'iterator' whose partition equals
-  /// 'partition'. Writes up to 'maxRows' pointers to the rows in
-  /// 'result'. Returns the number of rows retrieved, 0 when no more
-  /// rows are found. 'iterator' is expected to be in initial state
-  /// on first call.
+  /// Creates a container to store a partition number for each row in this row
+  /// container. This is used by parallel join build which is responsible for
+  /// filling this. This function also marks this row container as immutable
+  /// after this call, we expect the user only call this once.
+  std::unique_ptr<RowPartitions> createRowPartitions(memory::MemoryPool& pool);
+
+  /// Retrieves rows from 'iterator' whose partition equals 'partition'. Writes
+  /// up to 'maxRows' pointers to the rows in 'result'. 'rowPartitions' contains
+  /// the partition number of each row in this container. The function returns
+  /// the number of rows retrieved, 0 when no more rows are found. 'iterator' is
+  /// expected to be in initial state on first call.
   int32_t listPartitionRows(
       RowContainerIterator& iterator,
       uint8_t partition,
       int32_t maxRows,
+      const RowPartitions& rowPartitions,
       char* FOLLY_NONNULL* FOLLY_NONNULL result);
-
-  /// Returns a container with a partition number for each row. This
-  /// is created on first use. The caller is responsible for filling
-  /// this.
-  RowPartitions& partitions();
 
   /// Advances 'iterator' by 'numRows'. The current row after skip is
   /// in iter.currentRow(). This is null if past end. Public for testing.
   void skip(RowContainerIterator& iterator, int32_t numRows);
+
+  bool testingMutable() const {
+    return mutable_;
+  }
 
  private:
   // Offset of the pointer to the next free row on a free row.
@@ -1056,8 +1046,7 @@ class RowContainer {
         result->setNull(resultIndex, true);
       } else {
         prepareRead(row, offset, stream);
-        ContainerRowSerde::instance().deserialize(
-            stream, resultIndex, result.get());
+        ContainerRowSerde::deserialize(stream, resultIndex, result.get());
       }
     }
   }
@@ -1104,6 +1093,12 @@ class RowContainer {
 
   const std::vector<TypePtr> keyTypes_;
   const bool nullableKeys_;
+  const bool isJoinBuild_;
+
+  // Indicates if we can add new row to this row container. It is set to false
+  // after user calls 'getRowPartitions()' to create 'rowPartitions' object for
+  // parallel join build.
+  bool mutable_{true};
 
   std::vector<Accumulator> accumulators_;
 
@@ -1112,7 +1107,6 @@ class RowContainer {
   // to 'typeKinds_' and 'rowColumns_'.
   std::vector<TypePtr> types_;
   std::vector<TypeKind> typeKinds_;
-  const bool isJoinBuild_;
   int32_t nextOffset_ = 0;
   // Bit position of null bit  in the row. 0 if no null flag. Order is keys,
   // accumulators, dependent.
@@ -1150,13 +1144,8 @@ class RowContainer {
   char* FOLLY_NULLABLE firstFreeRow_ = nullptr;
   uint64_t numFreeRows_ = 0;
 
-  AllocationPool rows_;
+  memory::AllocationPool rows_;
   HashStringAllocator stringAllocator_;
-
-  // Partition number for each row. Used only in parallel hash join build.
-  std::unique_ptr<RowPartitions> partitions_;
-
-  const RowSerde& serde_;
 
   int alignment_ = 1;
 };

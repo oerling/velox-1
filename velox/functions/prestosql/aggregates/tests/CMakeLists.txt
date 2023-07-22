@@ -14,7 +14,6 @@
 
 add_executable(
   velox_aggregates_test
-  AddressableNonNullValueListTest.cpp
   AggregationFunctionRegTest.cpp
   ApproxDistinctTest.cpp
   ApproxMostFrequentTest.cpp
@@ -29,6 +28,7 @@ add_executable(
   CountAggregationTest.cpp
   CountIfAggregationTest.cpp
   CovarianceAggregationTest.cpp
+  EntropyAggregationTest.cpp
   HistogramTest.cpp
   Main.cpp
   MapAccumulatorTest.cpp

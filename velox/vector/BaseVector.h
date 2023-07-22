@@ -546,7 +546,7 @@ class BaseVector {
     return this;
   }
 
-  static VectorPtr loadedVectorShared(VectorPtr);
+  static VectorPtr loadedVectorShared(VectorPtr vector);
 
   virtual const BufferPtr& values() const {
     VELOX_UNSUPPORTED("Only flat vectors have a values buffer");
@@ -742,6 +742,10 @@ class BaseVector {
     }
     containsLazyAndIsWrapped_ = true;
     return true;
+  }
+
+  void clearContainingLazyAndWrapped() {
+    containsLazyAndIsWrapped_ = false;
   }
 
   bool memoDisabled() const {
