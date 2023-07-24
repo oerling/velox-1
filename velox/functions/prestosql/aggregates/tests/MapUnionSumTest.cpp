@@ -25,7 +25,12 @@ namespace facebook::velox::aggregate::test {
 
 namespace {
 
-class MapUnionSumTest : public AggregationTestBase {};
+class MapUnionSumTest : public AggregationTestBase {
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    FLAGS_velox_row_container_check_free = true;
+  }
+};
 
 TEST_F(MapUnionSumTest, global) {
   auto data = makeRowVector({

@@ -19,6 +19,8 @@
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
+DECLARE_bool(velox_row_container_check_free);
+
 namespace facebook::velox::exec::test {
 class AssertQueryBuilder;
 }
@@ -231,6 +233,9 @@ class AggregationTestBase : public exec::test::OperatorTestBase {
       vector_size_t rawInput2Size);
 
   bool allowInputShuffle_{false};
+
+  // Saves flags for duration of the fixture.
+  gflags::FlagSaver saveFlags_;
 };
 
 } // namespace facebook::velox::functions::aggregate::test

@@ -122,7 +122,7 @@ DEFINE_bool(
 DEFINE_bool(velox_memory_use_hugepages, true, "Use explicit huge pages");
 
 DEFINE_bool(
-    velox_check_row_container_free,
+    velox_row_container_check_free,
     false,
-    "Check that variable length data in RowContainers is cleared when "
-    "clearing the row");
+    "Check that variable length data in RowContainers is freed when "
+    "freeing the row");

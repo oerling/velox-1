@@ -309,6 +309,7 @@ std::string asSql(bool value) {
 void MinMaxByAggregationTestBase::SetUp() {
   AggregationTestBase::SetUp();
   AggregationTestBase::disallowInputShuffle();
+  FLAGS_velox_row_container_check_free;
 
   for (const TypeKind type : kSupportedTypes) {
     switch (type) {

@@ -29,6 +29,11 @@ class ApproxDistinctTest : public AggregationTestBase {
   static const std::vector<std::string> kFruits;
   static const std::vector<std::string> kVegetables;
 
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    FLAGS_velox_row_container_check_free = true;
+  }
+  
   void testGlobalAgg(
       const VectorPtr& values,
       double maxStandardError,
