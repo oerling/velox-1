@@ -82,7 +82,7 @@ constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 /// node pool that corresponds to the plan node from which the operator is
 /// created. Operator and node pools are owned by the Task via 'childPools_'.
 ///
-/// The query pool is created from IMemoryManager::getChild() as a child of a
+/// The query pool is created from MemoryManager::getChild() as a child of a
 /// singleton root pool object (system pool). There is only one system pool for
 /// a velox process. Hence each query pool objects forms a subtree rooted from
 /// the system pool.
@@ -95,7 +95,7 @@ constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 ///
 /// NOTE: for the users that integrate at expression evaluation level, we don't
 /// need to build the memory pool hierarchy as described above. Users can either
-/// create a single memory pool from IMemoryManager::getChild() to share with
+/// create a single memory pool from MemoryManager::getChild() to share with
 /// all the concurrent expression evaluations or create one dedicated memory
 /// pool for each expression evaluation if they need per-expression memory quota
 /// enforcement.
@@ -189,7 +189,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   virtual MemoryPool* parent() const;
 
   /// Returns the root of this memory pool.
-  virtual MemoryPool* root();
+  virtual MemoryPool* root() const;
 
   /// Returns the number of child memory pools.
   virtual uint64_t getChildCount() const;
@@ -870,7 +870,9 @@ class MemoryPoolImpl : public MemoryPool {
 
   FOLLY_ALWAYS_INLINE std::string toStringLocked() const {
     std::stringstream out;
-    out << "Memory Pool[" << name_ << " " << kindString(kind_) << " "
+    out << "Memory Pool[" << name_ << " " << kindString(kind_) << " root["
+        << root()->name() << "] parent["
+        << (isRoot() ? "null" : parent_->name()) << "] "
         << MemoryAllocator::kindString(allocator_->kind())
         << (trackUsage_ ? " track-usage" : " no-usage-track")
         << (threadSafe_ ? " thread-safe" : " non-thread-safe") << "]<";

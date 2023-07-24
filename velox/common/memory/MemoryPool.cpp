@@ -240,12 +240,12 @@ MemoryPool* MemoryPool::parent() const {
   return parent_.get();
 }
 
-MemoryPool* MemoryPool::root() {
-  MemoryPool* root = this;
-  while (root->parent_ != nullptr) {
-    root = root->parent_.get();
+MemoryPool* MemoryPool::root() const {
+  const MemoryPool* pool = this;
+  while (pool->parent_ != nullptr) {
+    pool = pool->parent_.get();
   }
-  return root;
+  return const_cast<MemoryPool*>(pool);
 }
 
 uint64_t MemoryPool::getChildCount() const {
@@ -853,7 +853,7 @@ std::string MemoryPoolImpl::capExceedingMessage(
   VELOX_CHECK_NULL(parent_);
 
   std::stringstream out;
-  out << "\n" << errorMessage << "\n";
+  out << errorMessage << "\n";
   if (FLAGS_velox_suppress_memory_capacity_exceeding_error_message) {
     return out.str();
   }

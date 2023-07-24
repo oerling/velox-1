@@ -873,7 +873,7 @@ bool GroupingSet::getOutputWithSpill(
         false,
         false,
         &pool_,
-        ContainerRowSerde::instance());
+        table_->rows()->stringAllocatorShared());
 
     initializeAggregates(aggregates_, *mergeRows_);
 
@@ -978,11 +978,11 @@ void GroupingSet::abandonPartialAggregation() {
       allSupportToIntermediate_ = false;
     }
   }
-  if (!allSupportToIntermediate_) {
-    VELOX_CHECK_EQ(table_->rows()->numRows(), 0)
-    intermediateRows_ = table_->moveRows();
-    intermediateRows_->clear();
-  }
+
+  VELOX_CHECK_EQ(table_->rows()->numRows(), 0)
+  intermediateRows_ = table_->moveRows();
+  intermediateRows_->clear();
+
   table_ = nullptr;
 }
 
@@ -1001,7 +1001,7 @@ void GroupingSet::toIntermediate(
   masks_.addInput(input, activeRows_);
 
   result->resize(numRows);
-  if (intermediateRows_) {
+  if (!allSupportToIntermediate_) {
     intermediateGroups_.resize(numRows);
     for (auto i = 0; i < numRows; ++i) {
       intermediateGroups_[i] = intermediateRows_->newRow();
@@ -1021,6 +1021,13 @@ void GroupingSet::toIntermediate(
     VELOX_CHECK(aggregateVector.unique());
     aggregateVector->resize(input->size());
     const auto& rows = getSelectivityVector(i);
+
+    if (function->supportsToIntermediate()) {
+      populateTempVectors(i, input);
+      function->toIntermediate(rows, tempVectors_, aggregateVector);
+      continue;
+    }
+
     // Check if mask is false for all rows.
     if (!rows.hasSelections()) {
       // The aggregate produces its initial state for all
@@ -1042,10 +1049,6 @@ void GroupingSet::toIntermediate(
 
     populateTempVectors(i, input);
 
-    if (function->supportsToIntermediate()) {
-      function->toIntermediate(rows, tempVectors_, aggregateVector);
-      continue;
-    }
     function->initializeNewGroups(
         intermediateGroups_.data(), intermediateRowNumbers_);
 
@@ -1061,6 +1064,7 @@ void GroupingSet::toIntermediate(
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
+    intermediateRows_->stringAllocator().checkEmpty();
   }
   tempVectors_.clear();
 }

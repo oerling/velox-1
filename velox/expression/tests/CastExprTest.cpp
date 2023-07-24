@@ -226,9 +226,6 @@ class CastExprTest : public functions::test::CastBaseTest {
 };
 
 TEST_F(CastExprTest, basics) {
-  // Testing non-null or error cases
-  const std::vector<std::optional<int32_t>> ii = {1, 2, 3, 100, -100};
-  const std::vector<std::optional<double>> oo = {1.0, 2.0, 3.0, 100.0, -100.0};
   testCast<int32_t, double>(
       "double", {1, 2, 3, 100, -100}, {1.0, 2.0, 3.0, 100.0, -100.0});
   testCast<int32_t, std::string>(
@@ -236,23 +233,25 @@ TEST_F(CastExprTest, basics) {
   testCast<std::string, int8_t>(
       "tinyint", {"1", "2", "3", "100", "-100"}, {1, 2, 3, 100, -100});
   testCast<double, int>(
-      "int", {1.888, 2.5, 3.6, 100.44, -100.101}, {2, 3, 4, 100, -100});
+      "int",
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {2, 3, 4, 100, -100, 1, -2});
   testCast<double, double>(
       "double",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<double, std::string>(
       "string",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {"1.888", "2.5", "3.6", "100.44", "-100.101"});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {"1.888", "2.5", "3.6", "100.44", "-100.101", "1.0", "-2.0"});
   testCast<double, double>(
       "double",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<double, float>(
       "float",
-      {1.888, 2.5, 3.6, 100.44, -100.101},
-      {1.888, 2.5, 3.6, 100.44, -100.101});
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0},
+      {1.888, 2.5, 3.6, 100.44, -100.101, 1.0, -2.0});
   testCast<bool, std::string>("string", {true, false}, {"true", "false"});
 }
 
@@ -330,18 +329,36 @@ TEST_F(CastExprTest, dateToTimestamp) {
 }
 
 TEST_F(CastExprTest, timestampToDate) {
+  setTimezone("");
+  std::vector<std::optional<Timestamp>> inputTimestamps = {
+      Timestamp(0, 0),
+      Timestamp(946684800, 0),
+      Timestamp(1257724800, 0),
+      std::nullopt,
+  };
+
   testCast<Timestamp, int32_t>(
       "date",
-      {
-          Timestamp(0, 0),
-          Timestamp(946684800, 0),
-          Timestamp(1257724800, 0),
-          std::nullopt,
-      },
+      inputTimestamps,
       {
           0,
           10957,
           14557,
+          std::nullopt,
+      },
+      false,
+      false,
+      TIMESTAMP(),
+      DATE());
+
+  setTimezone("America/Los_Angeles");
+  testCast<Timestamp, int32_t>(
+      "date",
+      inputTimestamps,
+      {
+          -1,
+          10956,
+          14556,
           std::nullopt,
       },
       false,
@@ -694,7 +711,9 @@ TEST_F(CastExprTest, arrayCast) {
   // Cast array<double> -> array<varchar>.
   {
     auto valueAtString = [valueAt](vector_size_t row, vector_size_t idx) {
-      return StringView::makeInline(folly::to<std::string>(valueAt(row, idx)));
+      // Add .0 at the end since folly outputs 1.0 -> 1
+      return StringView::makeInline(
+          folly::to<std::string>(valueAt(row, idx)) + ".0");
     };
     auto expected = makeArrayVector<StringView>(
         kVectorSize, sizeAt, valueAtString, nullEvery(3));

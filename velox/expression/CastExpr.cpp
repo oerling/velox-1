@@ -39,13 +39,26 @@ namespace {
 std::string makeErrorMessage(
     const BaseVector& input,
     vector_size_t row,
-    const TypePtr& toType) {
+    const TypePtr& toType,
+    const std::string& details = "") {
   return fmt::format(
-      "Failed to cast from {} to {}: {}.",
+      "Failed to cast from {} to {}: {}. {}",
       input.type()->toString(),
       toType->toString(),
-      input.toString(row));
+      input.toString(row),
+      details);
 }
+
+std::exception_ptr makeBadCastException(
+    const TypePtr& resultType,
+    const BaseVector& input,
+    vector_size_t row,
+    const std::string& errorDetails) {
+  return std::make_exception_ptr(VeloxUserError(
+      std::current_exception(),
+      makeErrorMessage(input, row, resultType, errorDetails),
+      false));
+};
 
 /// The per-row level Kernel
 /// @tparam ToKind The cast target type
@@ -56,10 +69,27 @@ std::string makeErrorMessage(
 template <TypeKind ToKind, TypeKind FromKind, bool Truncate>
 void applyCastKernel(
     vector_size_t row,
+    EvalCtx& context,
     const SimpleVector<typename TypeTraits<FromKind>::NativeType>* input,
     FlatVector<typename TypeTraits<ToKind>::NativeType>* result) {
-  auto output =
-      util::Converter<ToKind, void, Truncate>::cast(input->valueAt(row));
+  auto inputRowValue = input->valueAt(row);
+
+  // Optimize empty input strings casting by avoiding throwing exceptions.
+  if constexpr (
+      FromKind == TypeKind::VARCHAR || FromKind == TypeKind::VARBINARY) {
+    if constexpr (
+        TypeTraits<ToKind>::isPrimitiveType &&
+        TypeTraits<ToKind>::isFixedWidth) {
+      if (inputRowValue.size() == 0) {
+        context.setVeloxExceptionError(
+            row,
+            makeBadCastException(result->type(), *input, row, "Empty string"));
+        return;
+      }
+    }
+  }
+
+  auto output = util::Converter<ToKind, void, Truncate>::cast(inputRowValue);
 
   if constexpr (ToKind == TypeKind::VARCHAR || ToKind == TypeKind::VARBINARY) {
     // Write the result output to the output vector
@@ -118,6 +148,32 @@ VectorPtr castFromDate(
   }
 }
 
+template <bool adjustForTimeZone>
+void castTimestampToDate(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    FlatVector<int32_t>* resultFlatVector,
+    const date::time_zone* timeZone = nullptr) {
+  static const int32_t kSecsPerDay{86'400};
+  auto inputVector = input.as<SimpleVector<Timestamp>>();
+  context.applyToSelectedNoThrow(rows, [&](int row) {
+    auto input = inputVector->valueAt(row);
+    if constexpr (adjustForTimeZone) {
+      input.toTimezone(*timeZone);
+    }
+    auto seconds = input.getSeconds();
+    if (seconds >= 0 || seconds % kSecsPerDay == 0) {
+      resultFlatVector->set(row, seconds / kSecsPerDay);
+    } else {
+      // For division with negatives, minus 1 to compensate the discarded
+      // fractional part. e.g. -1/86'400 yields 0, yet it should be
+      // considered as -1 day.
+      resultFlatVector->set(row, seconds / kSecsPerDay - 1);
+    }
+  });
+}
+
 VectorPtr castToDate(
     const SelectivityVector& rows,
     const BaseVector& input,
@@ -145,20 +201,15 @@ VectorPtr castToDate(
       return castResult;
     }
     case TypeKind::TIMESTAMP: {
-      auto* inputVector = input.as<SimpleVector<Timestamp>>();
-      static const int32_t kSecsPerDay{86'400};
-      context.applyToSelectedNoThrow(rows, [&](int row) {
-        auto input = inputVector->valueAt(row);
-        auto seconds = input.getSeconds();
-        if (seconds >= 0 || seconds % kSecsPerDay == 0) {
-          resultFlatVector->set(row, seconds / kSecsPerDay);
-        } else {
-          // For division with negatives, minus 1 to compensate the discarded
-          // fractional part. e.g. -1/86'400 yields 0, yet it should be
-          // considered as -1 day.
-          resultFlatVector->set(row, seconds / kSecsPerDay - 1);
-        }
-      });
+      const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
+      auto sessionTzName = queryConfig.sessionTimezone();
+      if (queryConfig.adjustTimestampToTimezone() && !sessionTzName.empty()) {
+        auto* timeZone = date::locate_zone(sessionTzName);
+        castTimestampToDate<true>(
+            rows, input, context, resultFlatVector, timeZone);
+      } else {
+        castTimestampToDate<false>(rows, input, context, resultFlatVector);
+      }
       return castResult;
     }
     default:
@@ -253,51 +304,45 @@ void applyCastPrimitives(
   auto* inputSimpleVector = input.as<SimpleVector<From>>();
 
   const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
+  auto& resultType = resultFlatVector->type();
+
+  auto setVeloxError = [&](vector_size_t row, const std::string& details) {
+    context.setVeloxExceptionError(
+        row, makeBadCastException(resultType, input, row, details));
+  };
+
+  auto setError = [&](vector_size_t row, const std::string& details) {
+    context.setError(
+        row, makeBadCastException(resultType, input, row, details));
+  };
 
   if (!queryConfig.isCastToIntByTruncate()) {
     context.applyToSelectedNoThrow(rows, [&](int row) {
       try {
-        // Passing a false truncate flag
-        applyCastKernel<ToKind, FromKind, false>(
-            row, inputSimpleVector, resultFlatVector);
-      } catch (const VeloxRuntimeError& re) {
-        VELOX_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            re.message());
+        applyCastKernel<ToKind, FromKind, false /*truncate*/>(
+            row, context, inputSimpleVector, resultFlatVector);
+
       } catch (const VeloxUserError& ue) {
-        VELOX_USER_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            ue.message());
+        setVeloxError(row, ue.message());
       } catch (const std::exception& e) {
-        VELOX_USER_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            e.what());
+        setError(row, e.what());
       }
     });
   } else {
     context.applyToSelectedNoThrow(rows, [&](int row) {
       try {
-        // Passing a true truncate flag
-        applyCastKernel<ToKind, FromKind, true>(
-            row, inputSimpleVector, resultFlatVector);
-      } catch (const VeloxRuntimeError& re) {
-        VELOX_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            re.message());
+        applyCastKernel<ToKind, FromKind, true /*truncate*/>(
+            row, context, inputSimpleVector, resultFlatVector);
       } catch (const VeloxUserError& ue) {
-        VELOX_USER_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            ue.message());
+        setVeloxError(row, ue.message());
       } catch (const std::exception& e) {
-        VELOX_USER_FAIL(
-            makeErrorMessage(input, row, resultFlatVector->type()) + " " +
-            e.what());
+        setError(row, e.what());
       }
     });
   }
 
-  // If we're converting to a TIMESTAMP, check if we need to adjust the current
-  // GMT timezone to the user provided session timezone.
+  // If we're converting to a TIMESTAMP, check if we need to adjust the
+  // current GMT timezone to the user provided session timezone.
   if constexpr (ToKind == TypeKind::TIMESTAMP) {
     // If user explicitly asked us to adjust the timezone.
     if (queryConfig.adjustTimestampToTimezone()) {

@@ -18,6 +18,23 @@
 
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_GCS
+#include "velox/connectors/hive/storage_adapters/gcs/RegisterGCSFileSystem.h" // @manual
+#endif
+#ifdef VELOX_ENABLE_HDFS3
+#include "velox/connectors/hive/storage_adapters/hdfs/RegisterHdfsFileSystem.h" // @manual
+#endif
+#ifdef VELOX_ENABLE_S3
+#include "velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h" // @manual
+#endif
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
+#include "velox/dwio/dwrf/writer/Writer.h"
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_PARQUET
+#include "velox/dwio/parquet/RegisterParquetReader.h" // @manual
+#include "velox/dwio/parquet/RegisterParquetWriter.h" // @manual
+#endif
 #include "velox/expression/FieldReference.h"
 
 #include <boost/lexical_cast.hpp>
@@ -63,6 +80,30 @@ std::unique_ptr<core::PartitionFunction> HivePartitionFunctionSpec::create(
                                  : bucketToPartition_,
       channels_,
       constValues_);
+}
+
+void HiveConnectorFactory::initialize() {
+  static bool once = []() {
+    dwio::common::WriteFileDataSink::registerLocalFileFactory();
+    dwrf::registerDwrfReaderFactory();
+    dwrf::registerDwrfWriterFactory();
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_PARQUET
+    parquet::registerParquetReaderFactory();
+    parquet::registerParquetWriterFactory();
+#endif
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_S3
+    filesystems::registerS3FileSystem();
+#endif
+#ifdef VELOX_ENABLE_HDFS3
+    filesystems::registerHdfsFileSystem();
+#endif
+#ifdef VELOX_ENABLE_GCS
+    filesystems::registerGCSFileSystem();
+#endif
+    return true;
+  }();
 }
 
 std::string HivePartitionFunctionSpec::toString() const {
