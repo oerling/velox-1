@@ -33,7 +33,7 @@ class ApproxDistinctTest : public AggregationTestBase {
     AggregationTestBase::SetUp();
     FLAGS_velox_row_container_check_free = true;
   }
-  
+
   void testGlobalAgg(
       const VectorPtr& values,
       double maxStandardError,
