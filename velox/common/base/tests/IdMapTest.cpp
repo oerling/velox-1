@@ -117,6 +117,13 @@ class IdMapTest : public testing::Test {
         mapInfo.timeToDropValue(), f14Info.timeToDropValue());
   }
 
+  void expect4(int64_t n1, int64_t n2, int64_t n3, int64_t n4, xsimd::batch<int64_t> data) {
+    auto ptr = reinterpret_cast<int64_t*>(&data);
+    EXPECT_EQ(n1, ptr[0]);
+    EXPECT_EQ(n2, ptr[1]);
+    EXPECT_EQ(n3, ptr[2]);
+    EXPECT_EQ(n4, ptr[3]);
+  }
   std::shared_ptr<memory::MemoryPool> root_;
   std::shared_ptr<memory::MemoryPool> pool_;
 };
@@ -127,4 +134,23 @@ TEST_F(IdMapTest, basic) {
   testCase(10000, 2500);
   testCase(1000000, 1000000);
   testCase(5000000, 1000000);
+}
+
+TEST_F(IdMapTest, zerosAndMasks) {
+  BigintIdMap map(1024, *pool_);
+  int64_t zeros[4] = {0, 0, 0, 0};
+  int64_t oneZero[4] = {1, 0, 2, 3};
+
+  // All lanes disabled makes all 0.
+  expect4(0, 0, 0, 0, map.makeIds(xsimd::load_unaligned(oneZero), 0));
+
+  // Last lane is on, gets first id 1.
+  expect4(0, 0, 0, 1, map.makeIds(xsimd::load_unaligned(oneZero), 8));
+
+  // All lanes are on, the zero gets the next id (2) and the non-zeros get 3 and 4.
+  expect4(2, 1, 3, 1, map.makeIds(xsimd::load_unaligned(oneZero)));
+
+  // All zeros gets 1 for the active lanes and 0 for inactive.
+  expect4(1, 0, 1, 0, map.makeIds(xsimd::load_unaligned(allZero), 5));
+
 }
