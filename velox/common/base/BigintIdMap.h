@@ -39,14 +39,16 @@ class BigintIdMap {
       pool_.free(table_, byteSize_);
     }
   }
-  
+
   xsimd::batch<int64_t> makeIds(
       xsimd::batch<int64_t> x,
       uint8_t mask = kAllSet) {
     auto ready = xsimd::batch<int64_t>::broadcast(1);
-    xsimd::batch_bool<int64_t> zeroVector = x == xsimd::broadcast<int64_t>(kEmptyMarker);
+    xsimd::batch_bool<int64_t> zeroVector =
+        x == xsimd::broadcast<int64_t>(kEmptyMarker);
     if (mask != kAllSet) {
-      zeroVector = zeroVector | simd::fromBitMask<int64_t, int64_t>(kAllSet & mask);
+      zeroVector =
+          zeroVector | simd::fromBitMask<int64_t, int64_t>(kAllSet & mask);
     }
     if (simd::toBitMask(zeroVector) == kAllSet) {
       return ready;
@@ -133,7 +135,8 @@ class BigintIdMap {
     auto hash = simd::reinterpretBatch<uint64_t>(
         simd::reinterpretBatch<uint32_t>(values) *
         simd::reinterpretBatch<uint32_t>(multiplier));
-    auto indices = simd::reinterpretBatch<int64_t>(((hash >> 32) ^ hash) & sizeMask_);
+    auto indices =
+        simd::reinterpretBatch<int64_t>(((hash >> 32) ^ hash) & sizeMask_);
     return indices + indices + indices;
   }
 

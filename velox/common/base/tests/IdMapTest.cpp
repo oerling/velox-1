@@ -106,11 +106,11 @@ class IdMapTest : public testing::Test {
           map.makeIds(xsimd::batch<int64_t>::load_unaligned(data.data() + i));
       auto idsArray = reinterpret_cast<int64_t*>(&ids);
       for (auto j = 0; j < 4; ++j) {
-	auto reference = f14.id(data[i + j]);
+        auto reference = f14.id(data[i + j]);
         EXPECT_EQ(reference, idsArray[j]);
-	if (reference != idsArray[j]) {
-	  break;
-	}
+        if (reference != idsArray[j]) {
+          break;
+        }
       }
     }
     return std::make_pair<float, float>(
@@ -127,5 +127,4 @@ TEST_F(IdMapTest, basic) {
   testCase(10000, 2500);
   testCase(1000000, 1000000);
   testCase(5000000, 1000000);
-
 }

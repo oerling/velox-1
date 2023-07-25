@@ -51,6 +51,8 @@ void BigintIdMap::resize(int32_t newCapacity) {
 
 } // namespace facebook::velox
 
-xsimd::batch<int64_t> __ids(facebook::velox::BigintIdMap& m, xsimd::batch<int64_t> v) {
+xsimd::batch<int64_t> __ids(
+    facebook::velox::BigintIdMap& m,
+    xsimd::batch<int64_t> v) {
   return m.makeIds(v);
 }

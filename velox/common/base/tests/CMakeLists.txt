@@ -42,10 +42,7 @@ target_link_libraries(
   gtest_main
   pthread)
 
-add_executable(
-  velox_id_map_test
-  IdMapTest.cpp
-)
+add_executable(velox_id_map_test IdMapTest.cpp)
 
 add_test(velox_id_map_test velox_id_map_test)
 
@@ -60,7 +57,6 @@ target_link_libraries(
   gtest
   gtest_main
   pthread)
-
 
 add_executable(velox_memcpy_meter Memcpy.cpp)
 target_link_libraries(velox_memcpy_meter velox_common_base pthread)
