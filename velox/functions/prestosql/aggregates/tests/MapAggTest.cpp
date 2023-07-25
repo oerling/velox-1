@@ -29,7 +29,6 @@ class MapAggTest : public AggregationTestBase {
   void SetUp() override {
     AggregationTestBase::SetUp();
     allowInputShuffle();
-    FLAGS_velox_row_container_check_free = true;
   }
 };
 
