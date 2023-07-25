@@ -27,6 +27,7 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
   void SetUp() override {
     aggregate::test::AggregationTestBase::SetUp();
     registerAggregateFunctions("spark_");
+    FLAGS_velox_row_container_check_free = false;
   }
 
   template <typename T>
