@@ -51,6 +51,7 @@ add_test(velox_id_map_test velox_id_map_test)
 
 target_link_libraries(
   velox_id_map_test
+  velox_id_map
   velox_common_base
   velox_memory
   Boost::headers
