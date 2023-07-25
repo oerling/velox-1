@@ -55,15 +55,3 @@ target_link_libraries(
   fmt::fmt
   gflags::gflags)
 
-add_library(
-  velox_common_base
-  BitUtil.cpp
-  Counters.cpp
-  Fs.cpp
-  RandomUtil.cpp
-  RawVector.cpp
-  RuntimeMetrics.cpp
-  SimdUtil.cpp
-  StatsReporter.cpp
-  SuccinctPrinter.cpp)
-
