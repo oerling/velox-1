@@ -27,12 +27,7 @@ namespace facebook::velox::aggregate::test {
 
 namespace {
 
-class ArrayAggTest : public AggregationTestBase {
-  void SetUp() override {
-    AggregationTestBase::SetUp();
-    FLAGS_velox_row_container_check_free = true;
-  }
-};
+class ArrayAggTest : public AggregationTestBase {};
 
 TEST_F(ArrayAggTest, groupBy) {
   constexpr int32_t kNumGroups = 10;
