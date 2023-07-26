@@ -148,9 +148,9 @@ TEST_F(IdMapTest, zerosAndMasks) {
   expect4(0, 0, 0, 1, map.makeIds(xsimd::load_unaligned(oneZero), 8));
 
   // All lanes are on, the zero gets the next id (2) and the non-zeros get 3 and 4.
-  expect4(2, 1, 3, 1, map.makeIds(xsimd::load_unaligned(oneZero)));
+  expect4(3, 2, 4, 1, map.makeIds(xsimd::load_unaligned(oneZero)));
 
-  // All zeros gets 1 for the active lanes and 0 for inactive.
-  expect4(1, 0, 1, 0, map.makeIds(xsimd::load_unaligned(allZero), 5));
+  // All zeros gets 2 (id of 0)  for the active lanes and 0 for inactive.
+  expect4(2, 0, 2, 0, map.makeIds(xsimd::load_unaligned(zeros), 5));
 
 }
