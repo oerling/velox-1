@@ -65,7 +65,7 @@ class BigintIdMap {
     if (FOLLY_UNLIKELY(emptyMarkerMask)) {
       // The zeros on active lanes get zeroId_.
       if (!emptyId_ && (emptyMarkerMask & mask)) {
-	// Assign an id to kEmptyMarker when it first occurs on an active lane.
+        // Assign an id to kEmptyMarker when it first occurs on an active lane.
         emptyId_ = ++lastId_;
         emptyBatch_ = xsimd::broadcast(static_cast<int64_t>(emptyId_));
       }
@@ -160,7 +160,8 @@ class BigintIdMap {
   // Rehashes 'this' to a size of 'newCapacity'.
   void resize(int32_t newCapacity);
 
-  // Returns the hashed position of 'value'. This is an index of int32_t if asInt is true and a byte index otherwise.
+  // Returns the hashed position of 'value'. This is an index of int32_t if
+  // asInt is true and a byte index otherwise.
   int64_t index(int64_t value, bool asInt) {
     uint32_t high = kMultHigh * (static_cast<uint64_t>(value) >> 32);
     uint32_t low = kMultLow * static_cast<uint32_t>(value);
@@ -179,7 +180,6 @@ class BigintIdMap {
     return indices + indices + indices;
   }
 
-
   memory::MemoryPool& pool_;
 
   // Counter for assigning ids to values.
@@ -188,10 +188,11 @@ class BigintIdMap {
   // Id for value == kEmptyMarker
   int32_t emptyId_{0};
 
-  //  emptyId_ in all lanes. 
+  //  emptyId_ in all lanes.
   xsimd::batch<int64_t> emptyBatch_;
 
-  // Entries, 12 bytes per entry, 8 first are the value, the next 4 are its assigned id.
+  // Entries, 12 bytes per entry, 8 first are the value, the next 4 are its
+  // assigned id.
   char* table_{nullptr};
 
   // Number of 12 byte entries in 'table_'.
