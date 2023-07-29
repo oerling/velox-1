@@ -397,4 +397,3 @@ TEST_F(SimdUtilTest, memEqual) {
 }
 
 } // namespace
- 

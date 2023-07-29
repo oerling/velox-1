@@ -50,7 +50,7 @@ class BigintIdMap {
     // 0 is the id for a non-active lane.
     xsimd::batch_bool<int64_t> activeLanes;
     if (FOLLY_UNLIKELY(mask != kAllSet)) {
-      if (!mask) {
+      if (FOLLY_UNLIKELY(!mask)) {
         return xsimd::broadcast<int64_t>(0);
       }
       activeLanes = simd::fromBitMask<int64_t, int64_t>(mask);
@@ -80,7 +80,7 @@ class BigintIdMap {
            emptyBatch_);
       activeLanes = activeLanes & ~emptyMarkerVector;
     }
-    if (!simd::toBitMask(activeLanes)) {
+    if (FOLLY_UNLIKELY(!simd::toBitMask(activeLanes))) {
       return ready;
     }
 
@@ -95,7 +95,7 @@ class BigintIdMap {
         reinterpret_cast<const int64_t*>(table_) + 1,
         indices);
     uint16_t matches = simd::toBitMask(matchVector | ~activeLanes);
-    if (matches == simd::allSetBitMask<int64_t>()) {
+    if (matches == kAllSet) {
       return ready & kLow32;
     }
     // Store the indices and the values to look up in memory.
@@ -105,12 +105,12 @@ class BigintIdMap {
     auto indexArray = reinterpret_cast<int64_t*>(&indexVector);
     auto dataArray = reinterpret_cast<int64_t*>(&dataVector);
     auto resultArray = reinterpret_cast<int64_t*>(&resultVector);
-    matches ^= kAllSet;
-    while (matches) {
-      auto index = bits::getAndClearLastSetBit(matches);
+    uint16_t misses = matches ^ kAllSet;
+    while (misses) {
+      auto index = bits::getAndClearLastSetBit(misses);
       int32_t byteOffset = 4 * (indexArray[index]);
       for (;;) {
-        auto value = *reinterpret_cast<int64_t*>(table_ + byteOffset);
+        auto value = *valuePtr(table_ + byteOffset);
         if (value == kEmptyMarker) {
           *reinterpret_cast<int64_t*>(table_ + byteOffset) = dataArray[index];
           resultArray[index] =
@@ -119,8 +119,8 @@ class BigintIdMap {
           break;
         }
         if (value == dataArray[index]) {
-          resultArray[index] =
-              *reinterpret_cast<int32_t*>(table_ + byteOffset + 8);
+          resultArray[index] = *reinterpret_cast<int32_t*>(
+              table_ + byteOffset + sizeof(int64_t));
           break;
         }
         byteOffset += kEntrySize;
@@ -160,13 +160,13 @@ class BigintIdMap {
   // Rehashes 'this' to a size of 'newCapacity'.
   void resize(int32_t newCapacity);
 
-  // Returns the hashed position of 'value'. This is an index of int32_t if
-  // asInt is true and a byte index otherwise.
-  int64_t index(int64_t value, bool asInt) {
+  // Returns the hashed position of 'value' as a
+  // an index into an array of 12 byte entries. The function  is the same as indices()  for a single value. The difference is that indices returns distances in 4 byte words and this returns them i 
+      .int64_t indexOfEntry(int64_t value) {
     uint32_t high = kMultHigh * (static_cast<uint64_t>(value) >> 32);
     uint32_t low = kMultLow * static_cast<uint32_t>(value);
     auto entry = ((high ^ low) & sizeMask_);
-    return asInt ? entry * 3 : entry;
+    return entry;
   }
 
   xsimd::batch<int64_t> makeIndices(xsimd::batch<int64_t> values) {

@@ -37,7 +37,7 @@ void BigintIdMap::resize(int32_t newCapacity) {
     if (*ptr == kEmptyMarker) {
       continue;
     }
-    auto newIndex = index(*ptr, false);
+    auto newIndex = indexOfEntry(*ptr);
     auto newPtr = valuePtr(table_, newIndex);
     while (*newPtr != kEmptyMarker) {
       newIndex = (newIndex + 1) & sizeMask_;
@@ -50,9 +50,3 @@ void BigintIdMap::resize(int32_t newCapacity) {
 }
 
 } // namespace facebook::velox
-
-xsimd::batch<int64_t> __ids(
-    facebook::velox::BigintIdMap& m,
-    xsimd::batch<int64_t> v) {
-  return m.makeIds(v);
-}
