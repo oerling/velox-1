@@ -178,11 +178,11 @@ class BigintIdMap {
 
     // Store the indices and the values to look up in memory.
     // Look at the next 12 byte entry.
-    auto indexVector = indices + 3;
-    auto dataVector = x;
+    volatile auto indexVector = indices + 3;
+    volatile auto dataVector = x;
     auto resultVector = ready;
-    auto indexArray = reinterpret_cast<int64_t*>(&indexVector);
-    auto dataArray = reinterpret_cast<int64_t*>(&dataVector);
+    auto indexArray = reinterpret_cast<volatile int64_t*>(&indexVector);
+    auto dataArray = reinterpret_cast<volatile int64_t*>(&dataVector);
     auto resultArray = reinterpret_cast<int64_t*>(&resultVector);
     uint16_t misses = matches ^ kAllSet;
     while (misses) {
@@ -208,7 +208,7 @@ class BigintIdMap {
         }
       }
     }
-    return xsimd::load_unaligned(resultArray);
+    return xsimd::load_unaligned(reinterpret_cast<int64_t*>(&resultVector));
   }
 
  private:
