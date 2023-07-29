@@ -60,7 +60,6 @@ void AggregationTestBase::SetUp() {
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(kHiveConnectorId, nullptr);
   connector::registerConnector(hiveConnector);
-  FLAGS_velox_row_container_check_free = true;
 }
 
 void AggregationTestBase::TearDown() {
