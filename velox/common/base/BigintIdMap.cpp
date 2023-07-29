@@ -15,10 +15,13 @@
  */
 
 #include "velox/common/base/BigintIdMap.h"
+#include "velox/common/base/Exceptions.h"
+
 namespace facebook::velox {
 
-void BigintIdMap::makeTable(int32_t capacity) {
-  byteSize_ = capacity * kEntrySize + 4;
+void BigintIdMap::makeTable(int64_t capacity) {
+  VELOX_CHECK_LE(capacity, kMaxCapacity);
+  byteSize_ = capacity * kEntrySize + kReadPadding;
   table_ = reinterpret_cast<char*>(pool_.allocate(byteSize_));
   memset(table_, 0, byteSize_);
   capacity_ = capacity;
@@ -27,7 +30,9 @@ void BigintIdMap::makeTable(int32_t capacity) {
   maxEntries_ = capacity_ - capacity_ / 4;
 }
 
-void BigintIdMap::resize(int32_t newCapacity) {
+void BigintIdMap::resize(int64_t newCapacity) {
+  VELOX_CHECK_LE(newCapacity, kMaxCapacity);
+
   auto oldCapacity = capacity_;
   auto oldTable = table_;
   auto oldByteSize = byteSize_;

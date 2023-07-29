@@ -47,6 +47,16 @@ class F14IdMap {
     return set_.insert(item).first->second;
   }
 
+  int64_t findId(int64_t value) {
+        std::pair<int64_t, int32_t> item(
+        value, static_cast<int32_t>(set_.size() + 1));
+	auto it = set_.find(item);
+	if (it == set_.end()) {
+	  return BigintIdMap::kNotFound;
+	}
+	return it->second;
+  }
+  
  private:
   folly::F14FastSet<std::pair<int64_t, int32_t>, IdMapHasher, IdMapComparer>
       set_;
@@ -103,10 +113,10 @@ class IdMapTest : public testing::Test {
     }
     for (auto i = 0; i + 4 <= data.size(); i += 4) {
       auto ids =
-          map.makeIds(xsimd::batch<int64_t>::load_unaligned(data.data() + i));
+          map.findIds(xsimd::batch<int64_t>::load_unaligned(data.data() + i));
       auto idsArray = reinterpret_cast<int64_t*>(&ids);
       for (auto j = 0; j < 4; ++j) {
-        auto reference = f14.id(data[i + j]);
+        auto reference = f14.findId(data[i + j]);
         EXPECT_EQ(reference, idsArray[j]);
         if (reference != idsArray[j]) {
           break;
@@ -142,6 +152,8 @@ TEST_F(IdMapTest, basic) {
 }
 
 TEST_F(IdMapTest, zerosAndMasks) {
+  constexpr int64_t kNotFound = BigintIdMap::kNotFound;
+
   BigintIdMap map(1024, *pool_);
   int64_t zeros[4] = {0, 0, 0, 0};
   int64_t oneZero[4] = {1, 0, 2, 3};
@@ -155,7 +167,67 @@ TEST_F(IdMapTest, zerosAndMasks) {
   // All lanes are on, the zero gets the next id (2) and the non-zeros get 3
   // and 4.
   expect4(3, 2, 4, 1, map.makeIds(xsimd::load_unaligned(oneZero)));
+  expect4(3, 2, 4, 1, map.findIds(xsimd::load_unaligned(oneZero)));
 
   // All zeros gets 2 (id of 0)  for the active lanes and 0 for inactive.
   expect4(2, 0, 2, 0, map.makeIds(xsimd::load_unaligned(zeros), 5));
+
+  expect4(2, 2, 2, 2, map.findIds(xsimd::load_unaligned(zeros)));
+  
+  
+  BigintIdMap mapWithNoZero(1024, *pool_);
+  // We insert the same values and mask out the 0.
+  expect4(1, 0, 2, 3, mapWithNoZero.makeIds(xsimd::load_unaligned(oneZero), 13));
+  expect4(kNotFound, kNotFound, kNotFound, kNotFound, mapWithNoZero.findIds(xsimd::load_unaligned(zeros)));
+  
+  // Zero for inactive, not found for active.
+  expect4(kNotFound, 0, kNotFound, 0, mapWithNoZero.findIds(xsimd::load_unaligned(zeros), 5));
+
+  int64_t mix[4] = {10, 1, 0, 2};
+  expect4(kNotFound, 1, kNotFound, 2, mapWithNoZero.findIds(xsimd::load_unaligned(mix)));
+
+  expect4(kNotFound, 0, kNotFound, 0, mapWithNoZero.findIds(xsimd::load_unaligned(mix), 5));
+}
+
+TEST_F(IdMapTest, collisions) {
+  constexpr int64_t kNotFound = BigintIdMap::kNotFound;
+  // We check the found and not found stay the same as the table gets filled
+  F14IdMap reference(32);
+  BigintIdMap map(8, *pool_);
+  std::vector<int64_t> data;
+  for (auto i = 0; i < 2048; ++i) {
+    data.push_back((i + 1) * 0xfeedda7a58ff1e00); 
+  }
+  // Add an empty marker.
+  data[1333] = 0;
+  for (auto fill = 0; fill < data.size(); fill += 4) {
+    // Check that data not inserted is not found.
+    for (auto i = fill; i < data.size(); i += 4) {
+      expect4(kNotFound, kNotFound, kNotFound, kNotFound, map.findIds(xsimd::load_unaligned(data.data() + i)));
+      for (auto j = 0; j < 4; j++) {
+	EXPECT_EQ(kNotFound, reference.findId(data[i + j]));
+      }
+    }
+
+    // Add a group of 4 new entries.
+    auto ids = map.makeIds(xsimd::load_unaligned(data.data() + fill));
+        for (auto j = 0; j < 4; ++j) {
+
+	  // If there is a zero added, add it to 'reference' before the other values to match the special treatment of empty marker.
+	  if (data[fill + j] == 0) {
+	    reference.id(0);
+	  }
+	}
+	  for (auto j = 0; j < 4; ++j) {
+      EXPECT_EQ(reference.id(data[fill + j]), reinterpret_cast<int64_t*>(&ids)[j]);
+    }
+
+    // Check that all inserted is still found.
+    for (auto i = 0; i <= fill; i += 4) {
+      auto ids = map.findIds(xsimd::load_unaligned(data.data() + i));
+      for (auto j =0; j < 4; ++j) {
+	EXPECT_EQ(reference.findId(data[i + j]), reinterpret_cast<int64_t*>(&ids)[j]);
+      }
+    }
+  }
 }

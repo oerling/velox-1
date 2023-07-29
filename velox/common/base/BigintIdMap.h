@@ -26,12 +26,18 @@ namespace facebook::velox {
 /// A map that assigns consecutive int32_t ids to arbitrary int64_t values.
 class BigintIdMap {
  public:
+  static constexpr int64_t kNotFound = ~0L;
   static constexpr int64_t kEmptyMarker = 0;
-  static constexpr int32_t kAllSet = bits::lowMask(xsimd::batch<int64_t>::size);
-
+  static constexpr int64_t kMaxCapacity = 1 << 30; // 1G entries, 12GB
+  
   BigintIdMap(int32_t capacity, memory::MemoryPool& pool) : pool_(pool) {
-    makeTable(bits::nextPowerOfTwo(capacity));
+    makeTable(std::max<int32_t>(8, bits::nextPowerOfTwo(capacity)));
   }
+
+  BigintIdMap(const BigintIdMap& other) = delete;
+  BigintIdMap(BigintIdMap&& other) = delete;
+  void operator =(const BigintIdMap& other) = delete;
+  void operator =(BigintIdMap&& other) = delete;
 
   ~BigintIdMap() {
     if (table_) {
@@ -47,7 +53,6 @@ class BigintIdMap {
   xsimd::batch<int64_t> makeIds(
       xsimd::batch<int64_t> x,
       uint8_t mask = kAllSet) {
-    // 0 is the id for a non-active lane.
     xsimd::batch_bool<int64_t> activeLanes;
     if (FOLLY_UNLIKELY(mask != kAllSet)) {
       if (FOLLY_UNLIKELY(!mask)) {
@@ -57,38 +62,30 @@ class BigintIdMap {
     } else {
       activeLanes = x == x; // All true.
     }
+    // 0 is the id for a non-active lane.
     auto ready = xsimd::batch<int64_t>::broadcast(0);
-    xsimd::batch_bool<int64_t> emptyMarkerVector =
-        x == xsimd::broadcast<int64_t>(kEmptyMarker);
 
+    auto emptyMarkerVector = x == xsimd::broadcast<int64_t>(kEmptyMarker);
     auto emptyMarkerMask = simd::toBitMask(emptyMarkerVector);
     if (FOLLY_UNLIKELY(emptyMarkerMask)) {
-      // The zeros on active lanes get zeroId_.
       if (!emptyId_ && (emptyMarkerMask & mask)) {
         // Assign an id to kEmptyMarker when it first occurs on an active lane.
         emptyId_ = ++lastId_;
         emptyBatch_ = xsimd::broadcast(static_cast<int64_t>(emptyId_));
       }
-      // 'ready' is all 0. Now, we OR emptyId_ to the lanes that are
-      // both active and zero. We rely on batch_bool having the same
-      // layout as a regular batch with all bits set for true. We
-      // store and reload with interpret_cast because xsimd has no
-      // conversion betwee batch_bool and batch.
-      xsimd::batch_bool<int64_t> temp = emptyMarkerVector & activeLanes;
-      ready = ready |
-          (xsimd::load_unaligned(reinterpret_cast<int64_t*>(&temp)) &
-           emptyBatch_);
+      ready =
+          setLanes(ready, emptyMarkerVector & activeLanes, emptyBatch_, false);
       activeLanes = activeLanes & ~emptyMarkerVector;
-    }
-    if (FOLLY_UNLIKELY(!simd::toBitMask(activeLanes))) {
-      return ready;
+      if (FOLLY_UNLIKELY(!simd::toBitMask(activeLanes))) {
+        return ready;
+      }
     }
 
     auto indices = makeIndices(x);
     auto data = simd::maskGather<int64_t, int64_t, 4>(
         ready, activeLanes, reinterpret_cast<const int64_t*>(table_), indices);
 
-    auto matchVector = x == data;
+    auto matchVector = (x == data) & activeLanes;
     ready = simd::maskGather<int64_t, int64_t, 4>(
         ready,
         matchVector,
@@ -108,18 +105,18 @@ class BigintIdMap {
     uint16_t misses = matches ^ kAllSet;
     while (misses) {
       auto index = bits::getAndClearLastSetBit(misses);
-      int32_t byteOffset = 4 * (indexArray[index]);
+      int64_t byteOffset = 4 * indexArray[index];
       for (;;) {
-        auto value = *valuePtr(table_ + byteOffset);
+        auto value = *reinterpret_cast<int64_t*>(table_ + byteOffset);
         if (value == kEmptyMarker) {
           *reinterpret_cast<int64_t*>(table_ + byteOffset) = dataArray[index];
           resultArray[index] =
-              *reinterpret_cast<int32_t*>(table_ + byteOffset + 8) = ++lastId_;
+              *reinterpret_cast<uint32_t*>(table_ + byteOffset + 8) = ++lastId_;
           ++numEntries_;
           break;
         }
         if (value == dataArray[index]) {
-          resultArray[index] = *reinterpret_cast<int32_t*>(
+          resultArray[index] = *reinterpret_cast<uint32_t*>(
               table_ + byteOffset + sizeof(int64_t));
           break;
         }
@@ -135,16 +132,100 @@ class BigintIdMap {
     return xsimd::load_unaligned(resultArray) & kLow32;
   }
 
+  xsimd::batch<int64_t> findIds(
+      xsimd::batch<int64_t> x,
+      uint8_t mask = kAllSet) {
+    xsimd::batch_bool<int64_t> activeLanes;
+    if (FOLLY_UNLIKELY(mask != kAllSet)) {
+      if (FOLLY_UNLIKELY(!mask)) {
+        return xsimd::broadcast<int64_t>(0);
+      }
+      activeLanes = simd::fromBitMask<int64_t, int64_t>(mask);
+    } else {
+      activeLanes = x == x; // All true.
+    }
+    auto ready = xsimd::batch<int64_t>::broadcast(0);
+
+    xsimd::batch_bool<int64_t> emptyMarkerVector =
+        x == xsimd::broadcast<int64_t>(kEmptyMarker);
+    auto emptyMarkerMask = simd::toBitMask(emptyMarkerVector);
+    if (FOLLY_UNLIKELY(emptyMarkerMask)) {
+      ready = setLanes(ready, emptyMarkerVector & activeLanes, emptyBatch_);
+      activeLanes = activeLanes & ~emptyMarkerVector;
+      if (FOLLY_UNLIKELY(!simd::toBitMask(activeLanes))) {
+        return ready;
+      }
+    }
+
+    auto indices = makeIndices(x);
+    auto data = simd::maskGather<int64_t, int64_t, 4>(
+        ready, activeLanes, reinterpret_cast<const int64_t*>(table_), indices);
+
+    auto missVector = (data == kEmptyMarker) & activeLanes;
+    auto matchVector = (x == data) & activeLanes;
+    ready = simd::maskGather<int64_t, int64_t, 4>(
+        ready,
+        matchVector,
+        reinterpret_cast<const int64_t*>(table_) + 1,
+        indices);
+    // Clear the high bits of the loaded words.
+    ready = setLanes(ready, matchVector, ready & kLow32);
+    ready = setLanes(ready, missVector, xsimd::broadcast(kNotFound));
+    uint16_t matches = simd::toBitMask(matchVector | ~activeLanes | missVector);
+    if (matches == kAllSet) {
+      return ready;
+    }
+
+    // Store the indices and the values to look up in memory.
+    // Look at the next 12 byte entry.
+    auto indexVector = indices + 3;
+    auto dataVector = x;
+    auto resultVector = ready;
+    auto indexArray = reinterpret_cast<int64_t*>(&indexVector);
+    auto dataArray = reinterpret_cast<int64_t*>(&dataVector);
+    auto resultArray = reinterpret_cast<int64_t*>(&resultVector);
+    uint16_t misses = matches ^ kAllSet;
+    while (misses) {
+      auto index = bits::getAndClearLastSetBit(misses);
+      int64_t byteOffset = 4 * (indexArray[index]);
+      if (UNLIKELY(byteOffset >= limit_)) {
+        byteOffset = 0;
+      }
+      for (;;) {
+        auto value = *reinterpret_cast<int64_t*>(table_ + byteOffset);
+        if (value == kEmptyMarker) {
+          resultArray[index] = kNotFound;
+          break;
+        }
+        if (value == dataArray[index]) {
+          resultArray[index] = *reinterpret_cast<uint32_t*>(
+              table_ + byteOffset + sizeof(int64_t));
+          break;
+        }
+        byteOffset += kEntrySize;
+        if (byteOffset >= limit_) {
+          byteOffset = 0;
+        }
+      }
+    }
+    return xsimd::load_unaligned(resultArray);
+  }
+
  private:
+  static constexpr int32_t kAllSet = bits::lowMask(xsimd::batch<int64_t>::size);
   static constexpr int32_t kEntrySize = sizeof(int64_t) + sizeof(int32_t);
   static constexpr int64_t kLow32 = (1L << 32) - 1;
+  
+  // Number of bytes past end of last entry that may get read. The last id is
+  // accessed with a width of 8.
+  static constexpr int32_t kReadPadding = 4;
 
   // Constants for hash calculation.
   static constexpr uint64_t kMultLow = 1971049UL;
   static constexpr uint64_t kMultHigh = 1470709UL;
 
   // Allocates a new table.
-  void makeTable(int32_t capacity);
+  void makeTable(int64_t capacity);
 
   // Returns the pointer to the value of the 'i'th entry in 'table'.
   int64_t* valuePtr(void* table, int32_t i) {
@@ -158,15 +239,34 @@ class BigintIdMap {
   }
 
   // Rehashes 'this' to a size of 'newCapacity'.
-  void resize(int32_t newCapacity);
+  void resize(int64_t newCapacity);
 
   // Returns the hashed position of 'value' as a
-  // an index into an array of 12 byte entries. The function  is the same as indices()  for a single value. The difference is that indices returns distances in 4 byte words and this returns them i 
-      .int64_t indexOfEntry(int64_t value) {
+  // an index into an array of 12 byte entries. The function  is the same as
+  // indices()  for a single value. The difference is that indices returns
+  // distances in 4 byte words and this returns them i
+  int64_t indexOfEntry(int64_t value) {
     uint32_t high = kMultHigh * (static_cast<uint64_t>(value) >> 32);
     uint32_t low = kMultLow * static_cast<uint32_t>(value);
     auto entry = ((high ^ low) & sizeMask_);
     return entry;
+  }
+
+  // Sets the lanes of 'target' to the lanes of 'source' selected
+  // by 'mask'. Returns the result. If 'needsClear' is false, the
+  // set lanes of 'target' are assumed to be zero.
+
+  inline xsimd::batch<int64_t> setLanes(
+      xsimd::batch<int64_t> target,
+      xsimd::batch_bool<int64_t> mask,
+      xsimd::batch<int64_t> source,
+      bool needsClear = true) {
+    auto temp = mask;
+    auto maskAsInt64 = xsimd::load_unaligned(reinterpret_cast<int64_t*>(&temp));
+    if (!needsClear) {
+      return target | (maskAsInt64 & source);
+    }
+    return (target & ~maskAsInt64) | (maskAsInt64 & source);
   }
 
   xsimd::batch<int64_t> makeIndices(xsimd::batch<int64_t> values) {
@@ -188,8 +288,9 @@ class BigintIdMap {
   // Id for value == kEmptyMarker
   int32_t emptyId_{0};
 
-  //  emptyId_ in all lanes.
-  xsimd::batch<int64_t> emptyBatch_;
+  //  emptyId_ in all lanes. kNotFound in all lanes if empty marker does not
+  //  occur as an entry.
+  xsimd::batch<int64_t> emptyBatch_{xsimd::broadcast(kNotFound)};
 
   // Entries, 12 bytes per entry, 8 first are the value, the next 4 are its
   // assigned id.
