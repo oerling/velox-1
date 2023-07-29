@@ -48,15 +48,15 @@ class F14IdMap {
   }
 
   int64_t findId(int64_t value) {
-        std::pair<int64_t, int32_t> item(
+    std::pair<int64_t, int32_t> item(
         value, static_cast<int32_t>(set_.size() + 1));
-	auto it = set_.find(item);
-	if (it == set_.end()) {
-	  return BigintIdMap::kNotFound;
-	}
-	return it->second;
+    auto it = set_.find(item);
+    if (it == set_.end()) {
+      return BigintIdMap::kNotFound;
+    }
+    return it->second;
   }
-  
+
  private:
   folly::F14FastSet<std::pair<int64_t, int32_t>, IdMapHasher, IdMapComparer>
       set_;
@@ -173,20 +173,40 @@ TEST_F(IdMapTest, zerosAndMasks) {
   expect4(2, 0, 2, 0, map.makeIds(xsimd::load_unaligned(zeros), 5));
 
   expect4(2, 2, 2, 2, map.findIds(xsimd::load_unaligned(zeros)));
-  
-  
+
   BigintIdMap mapWithNoZero(1024, *pool_);
   // We insert the same values and mask out the 0.
-  expect4(1, 0, 2, 3, mapWithNoZero.makeIds(xsimd::load_unaligned(oneZero), 13));
-  expect4(kNotFound, kNotFound, kNotFound, kNotFound, mapWithNoZero.findIds(xsimd::load_unaligned(zeros)));
-  
+  expect4(
+      1, 0, 2, 3, mapWithNoZero.makeIds(xsimd::load_unaligned(oneZero), 13));
+  expect4(
+      kNotFound,
+      kNotFound,
+      kNotFound,
+      kNotFound,
+      mapWithNoZero.findIds(xsimd::load_unaligned(zeros)));
+
   // Zero for inactive, not found for active.
-  expect4(kNotFound, 0, kNotFound, 0, mapWithNoZero.findIds(xsimd::load_unaligned(zeros), 5));
+  expect4(
+      kNotFound,
+      0,
+      kNotFound,
+      0,
+      mapWithNoZero.findIds(xsimd::load_unaligned(zeros), 5));
 
   int64_t mix[4] = {10, 1, 0, 2};
-  expect4(kNotFound, 1, kNotFound, 2, mapWithNoZero.findIds(xsimd::load_unaligned(mix)));
+  expect4(
+      kNotFound,
+      1,
+      kNotFound,
+      2,
+      mapWithNoZero.findIds(xsimd::load_unaligned(mix)));
 
-  expect4(kNotFound, 0, kNotFound, 0, mapWithNoZero.findIds(xsimd::load_unaligned(mix), 5));
+  expect4(
+      kNotFound,
+      0,
+      kNotFound,
+      0,
+      mapWithNoZero.findIds(xsimd::load_unaligned(mix), 5));
 }
 
 TEST_F(IdMapTest, collisions) {
@@ -196,37 +216,44 @@ TEST_F(IdMapTest, collisions) {
   BigintIdMap map(8, *pool_);
   std::vector<int64_t> data;
   for (auto i = 0; i < 2048; ++i) {
-    data.push_back((i + 1) * 0xfeedda7a58ff1e00); 
+    data.push_back((i + 1) * 0xfeedda7a58ff1e00);
   }
   // Add an empty marker.
   data[1333] = 0;
   for (auto fill = 0; fill < data.size(); fill += 4) {
     // Check that data not inserted is not found.
     for (auto i = fill; i < data.size(); i += 4) {
-      expect4(kNotFound, kNotFound, kNotFound, kNotFound, map.findIds(xsimd::load_unaligned(data.data() + i)));
+      expect4(
+          kNotFound,
+          kNotFound,
+          kNotFound,
+          kNotFound,
+          map.findIds(xsimd::load_unaligned(data.data() + i)));
       for (auto j = 0; j < 4; j++) {
-	EXPECT_EQ(kNotFound, reference.findId(data[i + j]));
+        EXPECT_EQ(kNotFound, reference.findId(data[i + j]));
       }
     }
 
     // Add a group of 4 new entries.
     auto ids = map.makeIds(xsimd::load_unaligned(data.data() + fill));
-        for (auto j = 0; j < 4; ++j) {
-
-	  // If there is a zero added, add it to 'reference' before the other values to match the special treatment of empty marker.
-	  if (data[fill + j] == 0) {
-	    reference.id(0);
-	  }
-	}
-	  for (auto j = 0; j < 4; ++j) {
-      EXPECT_EQ(reference.id(data[fill + j]), reinterpret_cast<int64_t*>(&ids)[j]);
+    for (auto j = 0; j < 4; ++j) {
+      // If there is a zero added, add it to 'reference' before the other values
+      // to match the special treatment of empty marker.
+      if (data[fill + j] == 0) {
+        reference.id(0);
+      }
+    }
+    for (auto j = 0; j < 4; ++j) {
+      EXPECT_EQ(
+          reference.id(data[fill + j]), reinterpret_cast<int64_t*>(&ids)[j]);
     }
 
     // Check that all inserted is still found.
     for (auto i = 0; i <= fill; i += 4) {
       auto ids = map.findIds(xsimd::load_unaligned(data.data() + i));
-      for (auto j =0; j < 4; ++j) {
-	EXPECT_EQ(reference.findId(data[i + j]), reinterpret_cast<int64_t*>(&ids)[j]);
+      for (auto j = 0; j < 4; ++j) {
+        EXPECT_EQ(
+            reference.findId(data[i + j]), reinterpret_cast<int64_t*>(&ids)[j]);
       }
     }
   }

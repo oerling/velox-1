@@ -29,15 +29,15 @@ class BigintIdMap {
   static constexpr int64_t kNotFound = ~0L;
   static constexpr int64_t kEmptyMarker = 0;
   static constexpr int64_t kMaxCapacity = 1 << 30; // 1G entries, 12GB
-  
+
   BigintIdMap(int32_t capacity, memory::MemoryPool& pool) : pool_(pool) {
     makeTable(std::max<int32_t>(8, bits::nextPowerOfTwo(capacity)));
   }
 
   BigintIdMap(const BigintIdMap& other) = delete;
   BigintIdMap(BigintIdMap&& other) = delete;
-  void operator =(const BigintIdMap& other) = delete;
-  void operator =(BigintIdMap&& other) = delete;
+  void operator=(const BigintIdMap& other) = delete;
+  void operator=(BigintIdMap&& other) = delete;
 
   ~BigintIdMap() {
     if (table_) {
@@ -215,7 +215,7 @@ class BigintIdMap {
   static constexpr int32_t kAllSet = bits::lowMask(xsimd::batch<int64_t>::size);
   static constexpr int32_t kEntrySize = sizeof(int64_t) + sizeof(int32_t);
   static constexpr int64_t kLow32 = (1L << 32) - 1;
-  
+
   // Number of bytes past end of last entry that may get read. The last id is
   // accessed with a width of 8.
   static constexpr int32_t kReadPadding = 4;
