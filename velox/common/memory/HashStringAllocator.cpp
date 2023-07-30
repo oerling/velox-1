@@ -202,7 +202,8 @@ void HashStringAllocator::newSlab() {
   // size. checkConsistency() knows how to deal with either.
   VELOX_CHECK(
       pool_.freeBytes() == 0 ||
-      (pool_.freeBytes() & (memory::AllocationTraits::kHugePageSize - 1)) == 0,
+          (pool_.freeBytes() & (memory::AllocationTraits::kHugePageSize - 1)) ==
+              0,
       "Expecting no or full huge pages free in pool_ after newslab");
   auto available = needed - sizeof(Header) - kSimdPadding;
 

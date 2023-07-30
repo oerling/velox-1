@@ -80,7 +80,9 @@ class HashStringAllocatorTest : public testing::Test {
   std::string randomString(int32_t size = 0) {
     std::string result;
     result.resize(
-		  size != 0 ? size : 20 + (rand32() % 10 > 8 ? rand32() % 200 : 1000 + rand32() % 1000));
+        size != 0 ? size
+                  : 20 +
+                (rand32() % 10 > 8 ? rand32() % 200 : 1000 + rand32() % 1000));
     for (auto i = 0; i < result.size(); ++i) {
       result[i] = 32 + (rand32() % 96);
     }
@@ -181,14 +183,15 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
 
   allocator_->checkConsistency();
 
-  std::vector<int32_t> sizes= {50000, 100000, 200000, 1000000, 3000000, 5000000}; 
+  std::vector<int32_t> sizes = {
+      50000, 100000, 200000, 1000000, 3000000, 5000000};
   for (auto size : sizes) {
     auto largeString = randomString(size);
 
     auto start = allocator_->newWrite(stream);
     stream.appendStringPiece(folly::StringPiece(largeString));
     allocator_->finishWrite(stream, 0);
-    
+
     HSA::prepareRead(start.header, stream);
     std::string copy;
     copy.resize(largeString.size());
