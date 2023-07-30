@@ -1110,7 +1110,7 @@ class RowContainer {
   // Free any aggregates associated with the 'rows'.
   void freeAggregates(folly::Range<char**> rows);
 
-  const bool checkFree_ = false;
+  const bool checkFree_ = true;
 
   const std::vector<TypePtr> keyTypes_;
   const bool nullableKeys_;
