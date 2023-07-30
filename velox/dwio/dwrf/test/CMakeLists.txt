@@ -343,6 +343,8 @@ target_link_libraries(
 
 add_executable(velox_dwrf_e2e_filter_test E2EFilterTest.cpp)
 add_test(velox_dwrf_e2e_filter_test velox_dwrf_e2e_filter_test)
+gtest_add_tests(velox_dwrf_e2e_filter_test "" AUTO)
+
 
 target_link_libraries(
   velox_dwrf_e2e_filter_test
