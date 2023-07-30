@@ -388,12 +388,15 @@ TEST_F(SimdUtilTest, memEqual) {
   EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 17));
   EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 32));
   EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 33));
+
+  // Make data at 67 not equal.
   data.y[67] = 0;
   EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 67));
   EXPECT_FALSE(simd::memEqualUnsafe(data.x, data.y, 68));
+
+  // Redo the test offset by 1 to test unaligned.
   EXPECT_TRUE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 66));
-  EXPECT_FALSE(simd::memEqualUnsafe(data.x, data.y, 67));
-  EXPECT_TRUE(simd::memEqualUnsafe(data.x, data.y, 66));
+  EXPECT_FALSE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 67));
 }
 
 } // namespace
