@@ -1719,7 +1719,14 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
     }
   }
   numDistinct_ -= numRows;
-  rows_->eraseRows(rows);
+  if (!otherTables_.empty()) {
+    for (auto& other : otherTables_) {
+      other->rows()->eraseRows(rows, true);
+    }
+    rows_->eraseRows(rows, true);
+  } else {
+    rows_->eraseRows(rows);
+  }
 }
 
 template <bool ignoreNullKeys>

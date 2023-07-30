@@ -16,6 +16,7 @@
 
 #include "velox/exec/RowContainer.h"
 
+#include "velox/common/base/RawVector.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/Operator.h"
@@ -283,14 +284,14 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
   return row;
 }
 
-  void RowContainer::eraseRows(folly::Range<char**> rows, bool membersOnly) {
-    if (membersOnly) {
-      raw_vector localRows;
-      localRows.resize(rows.size());
-      auto size = pickMemberRows(rows, localRows.data());
-      rows = folly::Range<char**>(localRows.data(), size);
-    }
-    freeVariableWidthFields(rows);
+void RowContainer::eraseRows(folly::Range<char**> rows, bool membersOnly) {
+  raw_vector<char*> localRows;
+  if (membersOnly) {
+    localRows.resize(rows.size());
+    auto size = pickMemberRows(rows, localRows.data());
+    rows = folly::Range<char**>(localRows.data(), size);
+  }
+  freeVariableWidthFields(rows);
   freeAggregates(rows);
   numRows_ -= rows.size();
   for (auto* row : rows) {
@@ -302,36 +303,50 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
   numFreeRows_ += rows.size();
 }
 
-  int32_t RowContainer::pickmemberRows(folly::Range<char**> rows, char** result) {
-    
-    raw_vector<folly::Range<char**>> ranges ranges;
-    ranges.resize(rows_.numRanges());
-    for (auto i = 0; i < rows_.numRanges; ++i) {
-      ranges[i] = rows_.rangeAt(i);
-    }
-    std::sort(ranges.begin(), ranges.end(), [](const auto& left, const auto& right) { return left.data() < right.data(); });
-    raw_vector<uint64_t> starts;
-    raw_vector<uint64_t> sizes;
-    starts.reserve(ranges.size());
-    sizes.reserve(ranges.size());
-    for (auto& range : ranges) {
-      starts.push_back(reinterpret_cast<uintptr_t>(range.data()));
-      sizes.push_back(range.size());
-    }
-    int32_t numHits = 0;
-    for (auto row : rows) {
-      auto it = std::lower_bound(starts.begin(). starts.end(), reinterpret_cast<uintptr_t>(row));
-      if (it == starts.end()) {
-	comtinue;
-      }
-      auto index = it - starts.begin();
-      if (*it + sizes[index] > row) {
+int32_t RowContainer::pickMemberRows(folly::Range<char**> rows, char** result) {
+  raw_vector<folly::Range<char*>> ranges;
+  ranges.resize(rows_.numRanges());
+  for (auto i = 0; i < rows_.numRanges(); ++i) {
+    ranges[i] = rows_.rangeAt(i);
+  }
+  std::sort(
+      ranges.begin(), ranges.end(), [](const auto& left, const auto& right) {
+        return left.data() < right.data();
+      });
+  raw_vector<uint64_t> starts;
+  raw_vector<uint64_t> sizes;
+  starts.reserve(ranges.size());
+  sizes.reserve(ranges.size());
+  for (auto& range : ranges) {
+    starts.push_back(reinterpret_cast<uintptr_t>(range.data()));
+    sizes.push_back(range.size());
+  }
+  int32_t numHits = 0;
+  for (auto row : rows) {
+    auto address = reinterpret_cast<uintptr_t>(row);
+    auto it = std::lower_bound(
+			       starts.begin(), starts.end(), address);
+    if (it == starts.end()) {
+      if (address >= starts.back() && address < starts.back() + sizes.back()) {
 	result[numHits++] = row;
       }
+      continue;
     }
-    return numHits;
+    auto index = it - starts.begin();
+    if (address == starts[index]) {
+	result[numHits++] = row;
+	continue;
+    }
+    if (index == 0) {
+      continue;
+    }
+    if (it[-1] + sizes[index - 1] > address) {
+      result[numHits++] = row;
+    }
   }
- 
+  return numHits;
+}
+
 void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
   for (auto i = 0; i < types_.size(); ++i) {
     switch (typeKinds_[i]) {

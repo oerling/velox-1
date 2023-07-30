@@ -251,10 +251,10 @@ class RowContainer {
   // variable length data. If 'membersOnly' is true, skips rows that are not
   // n 'this'. This may occur, mostly in tests, when removing content from join
   // build sides with many RowContainers.
-  void eraseRows(folly::Range<char**> rows, bool membersOnly);
+  void eraseRows(folly::Range<char**> rows, bool membersOnly = false);
 
   // Copies elements of 'rows'where the char* points to a row inside 'this'  to 'result' and returns the number copied.
-  int32_t pickmemberRows(folly::Range<char**> rows, char** result);
+  int32_t pickMemberRows(folly::Range<char**> rows, char** result);
   
   void incrementRowSize(char* FOLLY_NONNULL row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);

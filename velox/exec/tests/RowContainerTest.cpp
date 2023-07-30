@@ -1177,18 +1177,35 @@ TEST_F(RowContainerTest, mixedFree) {
   auto data1 = makeRowContainer({SMALLINT()}, dependent);
   auto data2 = makeRowContainer({SMALLINT()}, dependent);
   std::vector<char*> rows;
+
+  // We put every second row in one container and every second in the other. 
   for (auto i = 0; i < 100'000; ++i) {
     rows.push_back(data1->newRow());
     rows.push_back(data2->newRow());
   }
+
+  // We add some bad rows that are in neither container.
   for (auto i = 0; i < kNumBad; ++i) {
     rows.push_back(reinterpret_cast<char*>(i));
     rows.push_back(reinterpret_cast<char*>((1UL << 48) + i));
   }
-  data1->eraseRows(rows, true);
+
+  // We check that the containers correctly identify their own rows.
+  std::vector<char*> result(rows.size());
+  EXPECT_EQ(kNumRows, data1->pickMemberRows(folly::Range<char**>(rows.data(), rows.size()), result.data()));
+  for (auto i = 0; i < kNumRows * 2; i += 2) {
+    ASSERT_EQ(rows[i], result[i / 2]);
+  }
+  EXPECT_EQ(kNumRows, data2->pickMemberRows(folly::Range<char**>(rows.data(), rows.size()), result.data()));
+  for (auto i = 1; i < kNumRows * 2; i += 2) {
+    ASSERT_EQ(rows[i], result[i / 2]);
+  }
+
+  // We erase all rows from both containers and check there are no corruptions.
+  data1->eraseRows(folly::Range<char**>(rows.data(), rows.size()), true);
+  data2->eraseRows(folly::Range<char**>(rows.data(), rows.size()), true);
   EXPECT_EQ(0, data1->numRows());
   EXPECT_EQ(0, data2->numRows());
-  data2->eraseRows(rows, true);
-  data2->checkConsistency();
   data1->checkConsistency();
+  data2->checkConsistency();
 }
