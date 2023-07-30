@@ -1719,8 +1719,11 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
     }
   }
   numDistinct_ -= numRows;
-  rows_->eraseRows(rows);
-}
+  if (!otherTables_.empty()) {
+  } else {
+    rows_->eraseRows(rows);
+  }
+  }
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::checkConsistency() const {

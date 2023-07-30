@@ -1169,3 +1169,26 @@ TEST_F(RowContainerTest, probedFlag) {
           {true, true, true, true, std::nullopt, true}),
       result);
 }
+
+TEST_F(RowContainerTest, mixedFree) {
+  constexpr int32_t kNumRows = 100'000;
+  constexpr int32_t kNumBad = 100;
+  std::vector<TypePtr> dependent = {VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR()};
+  auto data1 = makeRowContainer({SMALLINT()}, dependent);
+  auto data2 = makeRowContainer({SMALLINT()}, dependent);
+  std::vector<char*> rows;
+  for (auto i = 0; i < 100'000; ++i) {
+    rows.push_back(data1->newRow());
+    rows.push_back(data2->newRow());
+  }
+  for (auto i = 0; i < kNumBad; ++i) {
+    rows.push_back(reinterpret_cast<char*>(i));
+    rows.push_back(reinterpret_cast<char*>((1UL << 48) + i));
+  }
+  data1->eraseRows(rows, true);
+  EXPECT_EQ(0, data1->numRows());
+  EXPECT_EQ(0, data2->numRows());
+  data2->eraseRows(rows, true);
+  data2->checkConsistency();
+  data1->checkConsistency();
+}
