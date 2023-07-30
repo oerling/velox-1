@@ -530,6 +530,7 @@ TEST_F(RowContainerTest, types) {
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), kNumRows);
   EXPECT_EQ(data->listRows(&iter, kNumRows, rows.data()), 0);
 
+  data->checkConsistency();
   checkSizes(rows, *data);
   SelectivityVector allRows(kNumRows);
   for (auto column = 0; column < batch->childrenSize(); ++column) {

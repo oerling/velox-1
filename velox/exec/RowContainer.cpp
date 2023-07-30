@@ -348,6 +348,9 @@ void RowContainer::checkConsistency() {
   }
   VELOX_CHECK_EQ(numFree, numFreeRows_);
   VELOX_CHECK_EQ(allocatedRows, numRows_);
+  if (stringAllocator_) {
+    stringAllocator_->checkConsistency();
+  }
 }
 
 void RowContainer::freeAggregates(folly::Range<char**> rows) {
