@@ -52,7 +52,7 @@ add_test(
   COMMAND velox_aggregates_test
   WORKING_DIRECTORY .)
 
-gtest_add_tests(velox_aggregates_test "" AUTO)
+gtest_discover_tests(velox_aggregates_test)
 
 target_link_libraries(
   velox_aggregates_test

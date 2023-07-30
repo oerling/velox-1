@@ -97,14 +97,14 @@ add_test(
   NAME velox_exec_test
   COMMAND velox_exec_test
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-gtest_add_tests(velox_exec_test "" AUTO)
+gtest_discover_tests(velox_exec_test)
 
 
 add_test(
   NAME velox_exec_infra_test
   COMMAND velox_exec_infra_test
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-gtest_add_tests(velox_exec_infra_test "" AUTO)
+gtest_discover_tests(velox_exec_infra_test)
 
 target_link_libraries(
   velox_exec_test
