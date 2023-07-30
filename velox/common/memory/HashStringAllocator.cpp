@@ -192,23 +192,20 @@ HashStringAllocator::finishWrite(ByteStream& stream, int32_t numReserveBytes) {
   return {startPosition_, currentPosition};
 }
 
-void HashStringAllocator::newSlab(int32_t size) {
+void HashStringAllocator::newSlab() {
   constexpr int32_t kSimdPadding = simd::kPadding - sizeof(Header);
-  char* run = nullptr;
-  uint64_t available = 0;
-  int32_t needed = std::max<int32_t>(
-      bits::roundUp(
-          size + 2 * sizeof(Header) + kSimdPadding,
-          memory::AllocationTraits::kPageSize),
-      kUnitSize);
-  auto pagesNeeded = memory::AllocationTraits::numPages(needed);
-  // All large allocations are made standalone in pool().
-  VELOX_CHECK_LE(pagesNeeded, pool()->largestSizeClass());
-  if (pool_.allocatedBytes() >= pool_.hugePageThreshold()) {
-    needed = memory::AllocationTraits::kHugePageSize;
-  }
-  run = pool_.allocateFixed(needed);
-  available = needed - sizeof(Header) - kSimdPadding;
+  int64_t needed = pool_.allocatedBytes() >= pool_.hugePageThreshold()
+      ? memory::AllocationTraits::kHugePageSize
+      : kUnitSize;
+  auto run = pool_.allocateFixed(needed);
+  // We check we got exactly the requested amount or a multiple of huge page
+  // size. checkConsistency() knows how to deal with either.
+  VELOX_CHECK(
+      pool_.freeBytes() == 0 ||
+          (pool_.freeBytes() & (memory::AllocationTraits::kHugePageSize - 1)) ==
+              0,
+      "Expecting no or full huge pages free in pool_ after newslab");
+  auto available = needed - sizeof(Header) - kSimdPadding;
 
   VELOX_CHECK_NOT_NULL(run);
   VELOX_CHECK_GT(available, 0);
@@ -328,7 +325,7 @@ HashStringAllocator::allocate(int32_t size, bool exactSize) {
   }
   auto header = allocateFromFreeLists(size, exactSize, exactSize);
   if (!header) {
-    newSlab(size);
+    newSlab();
     header = allocateFromFreeLists(size, exactSize, exactSize);
     VELOX_CHECK(header != nullptr);
     VELOX_CHECK_GT(header->size(), 0);
