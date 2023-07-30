@@ -324,18 +324,17 @@ int32_t RowContainer::pickMemberRows(folly::Range<char**> rows, char** result) {
   int32_t numHits = 0;
   for (auto row : rows) {
     auto address = reinterpret_cast<uintptr_t>(row);
-    auto it = std::lower_bound(
-			       starts.begin(), starts.end(), address);
+    auto it = std::lower_bound(starts.begin(), starts.end(), address);
     if (it == starts.end()) {
       if (address >= starts.back() && address < starts.back() + sizes.back()) {
-	result[numHits++] = row;
+        result[numHits++] = row;
       }
       continue;
     }
     auto index = it - starts.begin();
     if (address == starts[index]) {
-	result[numHits++] = row;
-	continue;
+      result[numHits++] = row;
+      continue;
     }
     if (index == 0) {
       continue;

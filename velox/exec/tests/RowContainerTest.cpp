@@ -1173,12 +1173,23 @@ TEST_F(RowContainerTest, probedFlag) {
 TEST_F(RowContainerTest, mixedFree) {
   constexpr int32_t kNumRows = 100'000;
   constexpr int32_t kNumBad = 100;
-  std::vector<TypePtr> dependent = {VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR(), VARCHAR()};
+  std::vector<TypePtr> dependent = {
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR(),
+      VARCHAR()};
   auto data1 = makeRowContainer({SMALLINT()}, dependent);
   auto data2 = makeRowContainer({SMALLINT()}, dependent);
   std::vector<char*> rows;
 
-  // We put every second row in one container and every second in the other. 
+  // We put every second row in one container and every second in the other.
   for (auto i = 0; i < 100'000; ++i) {
     rows.push_back(data1->newRow());
     rows.push_back(data2->newRow());
@@ -1192,11 +1203,17 @@ TEST_F(RowContainerTest, mixedFree) {
 
   // We check that the containers correctly identify their own rows.
   std::vector<char*> result(rows.size());
-  EXPECT_EQ(kNumRows, data1->pickMemberRows(folly::Range<char**>(rows.data(), rows.size()), result.data()));
+  EXPECT_EQ(
+      kNumRows,
+      data1->pickMemberRows(
+          folly::Range<char**>(rows.data(), rows.size()), result.data()));
   for (auto i = 0; i < kNumRows * 2; i += 2) {
     ASSERT_EQ(rows[i], result[i / 2]);
   }
-  EXPECT_EQ(kNumRows, data2->pickMemberRows(folly::Range<char**>(rows.data(), rows.size()), result.data()));
+  EXPECT_EQ(
+      kNumRows,
+      data2->pickMemberRows(
+          folly::Range<char**>(rows.data(), rows.size()), result.data()));
   for (auto i = 1; i < kNumRows * 2; i += 2) {
     ASSERT_EQ(rows[i], result[i / 2]);
   }

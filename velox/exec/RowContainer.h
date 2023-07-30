@@ -253,9 +253,10 @@ class RowContainer {
   // build sides with many RowContainers.
   void eraseRows(folly::Range<char**> rows, bool membersOnly = false);
 
-  // Copies elements of 'rows'where the char* points to a row inside 'this'  to 'result' and returns the number copied.
+  // Copies elements of 'rows'where the char* points to a row inside 'this'  to
+  // 'result' and returns the number copied.
   int32_t pickMemberRows(folly::Range<char**> rows, char** result);
-  
+
   void incrementRowSize(char* FOLLY_NONNULL row, uint64_t bytes) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(row + rowSizeOffset_);
     uint64_t size = *ptr + bytes;
