@@ -194,10 +194,6 @@ HashStringAllocator::finishWrite(ByteStream& stream, int32_t numReserveBytes) {
 
 void HashStringAllocator::newSlab() {
   constexpr int32_t kSimdPadding = simd::kPadding - sizeof(Header);
-          (pool_.freeBytes() & (memory::AllocationTraits::kHugePageSize - 1)) ==
-              0,
-      "Expecting no or full huge pages free in pool_ after newslab");
-=======
   const int64_t needed = pool_.allocatedBytes() >= pool_.hugePageThreshold()
       ? memory::AllocationTraits::kHugePageSize
       : kUnitSize;
