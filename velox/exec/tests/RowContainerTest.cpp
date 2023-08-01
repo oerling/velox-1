@@ -1202,25 +1202,26 @@ TEST_F(RowContainerTest, mixedFree) {
   }
 
   // We check that the containers correctly identify their own rows.
-  std::vector<char*> result(rows.size());
-  EXPECT_EQ(
+  std::vector<char*> result1(rows.size());
+  std::vector<char*> result2(rows.size());
+  ASSERT_EQ(
       kNumRows,
-      data1->pickMemberRows(
-          folly::Range<char**>(rows.data(), rows.size()), result.data()));
+      data1->findRows(
+          folly::Range<char**>(rows.data(), rows.size()), result1.data()));
   for (auto i = 0; i < kNumRows * 2; i += 2) {
-    ASSERT_EQ(rows[i], result[i / 2]);
+    ASSERT_EQ(rows[i], result1[i / 2]);
   }
-  EXPECT_EQ(
+  ASSERT_EQ(
       kNumRows,
-      data2->pickMemberRows(
-          folly::Range<char**>(rows.data(), rows.size()), result.data()));
+      data2->findRows(
+          folly::Range<char**>(rows.data(), rows.size()), result2.data()));
   for (auto i = 1; i < kNumRows * 2; i += 2) {
-    ASSERT_EQ(rows[i], result[i / 2]);
+    ASSERT_EQ(rows[i], result2[i / 2]);
   }
 
   // We erase all rows from both containers and check there are no corruptions.
-  data1->eraseRows(folly::Range<char**>(rows.data(), rows.size()), true);
-  data2->eraseRows(folly::Range<char**>(rows.data(), rows.size()), true);
+  data1->eraseRows(folly::Range<char**>(result1.data(), kNumRows));
+  data2->eraseRows(folly::Range<char**>(result2.data(), kNumRows));
   EXPECT_EQ(0, data1->numRows());
   EXPECT_EQ(0, data2->numRows());
   data1->checkConsistency();
