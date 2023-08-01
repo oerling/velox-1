@@ -1174,17 +1174,17 @@ TEST_F(RowContainerTest, mixedFree) {
   constexpr int32_t kNumRows = 100'000;
   constexpr int32_t kNumBad = 100;
   std::vector<TypePtr> dependent = {
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR(),
-      VARCHAR()};
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP(),
+      TIMESTAMP()};
   auto data1 = makeRowContainer({SMALLINT()}, dependent);
   auto data2 = makeRowContainer({SMALLINT()}, dependent);
   std::vector<char*> rows;

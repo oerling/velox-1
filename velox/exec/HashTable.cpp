@@ -1720,10 +1720,16 @@ void HashTable<ignoreNullKeys>::eraseWithHashes(
   }
   numDistinct_ -= numRows;
   if (!otherTables_.empty()) {
+    raw_vector<char*> rowsInContainer;
+    rowsInContainer.resize(rows.size());
     for (auto& other : otherTables_) {
-      other->rows()->eraseRows(rows, true);
+      auto numInContainer =
+          other->rows()->findRows(rows, rowsInContainer.data());
+      other->rows()->eraseRows(
+          folly::Range(rowsInContainer.data(), numInContainer));
     }
-    rows_->eraseRows(rows, true);
+    auto numInContainer = rows_->findRows(rows, rowsInContainer.data());
+    rows_->eraseRows(folly::Range(rowsInContainer.data(), numInContainer));
   } else {
     rows_->eraseRows(rows);
   }

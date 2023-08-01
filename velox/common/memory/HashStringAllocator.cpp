@@ -194,17 +194,20 @@ HashStringAllocator::finishWrite(ByteStream& stream, int32_t numReserveBytes) {
 
 void HashStringAllocator::newSlab() {
   constexpr int32_t kSimdPadding = simd::kPadding - sizeof(Header);
-  int64_t needed = pool_.allocatedBytes() >= pool_.hugePageThreshold()
-      ? memory::AllocationTraits::kHugePageSize
-      : kUnitSize;
-  auto run = pool_.allocateFixed(needed);
-  // We check we got exactly the requested amount or a multiple of huge page
-  // size. checkConsistency() knows how to deal with either.
-  VELOX_CHECK(
-      pool_.freeBytes() == 0 ||
           (pool_.freeBytes() & (memory::AllocationTraits::kHugePageSize - 1)) ==
               0,
       "Expecting no or full huge pages free in pool_ after newslab");
+=======
+  const int64_t needed = pool_.allocatedBytes() >= pool_.hugePageThreshold()
+      ? memory::AllocationTraits::kHugePageSize
+      : kUnitSize;
+  auto run = pool_.allocateFixed(needed);
+  // We check we got exactly the requested amount. checkConsistency()
+  // depends on slabs made here coinciding with ranges from
+  // AllocationPool::rangeAt(). Sometimes the last range can be
+  // several huge pages for severl huge page sized arenas but
+  // checkConsistency() can interpret that.
+  VELOX_CHECK_EQ(0, pool_.freeBytes());
   auto available = needed - sizeof(Header) - kSimdPadding;
 
   VELOX_CHECK_NOT_NULL(run);
