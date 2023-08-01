@@ -284,13 +284,7 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
   return row;
 }
 
-void RowContainer::eraseRows(folly::Range<char**> rows, bool membersOnly) {
-  raw_vector<char*> localRows;
-  if (membersOnly) {
-    localRows.resize(rows.size());
-    auto size = pickMemberRows(rows, localRows.data());
-    rows = folly::Range<char**>(localRows.data(), size);
-  }
+void RowContainer::eraseRows(folly::Range<char**> rows) {
   freeVariableWidthFields(rows);
   freeAggregates(rows);
   numRows_ -= rows.size();
@@ -303,11 +297,7 @@ void RowContainer::eraseRows(folly::Range<char**> rows, bool membersOnly) {
   numFreeRows_ += rows.size();
 }
 
-<<<<<<< HEAD
-int32_t RowContainer::pickMemberRows(folly::Range<char**> rows, char** result) {
-=======
 int32_t RowContainer::findRows(folly::Range<char**> rows, char** result) {
->>>>>>> main
   raw_vector<folly::Range<char*>> ranges;
   ranges.resize(rows_.numRanges());
   for (auto i = 0; i < rows_.numRanges(); ++i) {
@@ -325,48 +315,29 @@ int32_t RowContainer::findRows(folly::Range<char**> rows, char** result) {
     starts.push_back(reinterpret_cast<uintptr_t>(range.data()));
     sizes.push_back(range.size());
   }
-<<<<<<< HEAD
-  int32_t numHits = 0;
-=======
   int32_t numRows = 0;
->>>>>>> main
   for (auto row : rows) {
     auto address = reinterpret_cast<uintptr_t>(row);
     auto it = std::lower_bound(starts.begin(), starts.end(), address);
     if (it == starts.end()) {
       if (address >= starts.back() && address < starts.back() + sizes.back()) {
-<<<<<<< HEAD
-        result[numHits++] = row;
-=======
         result[numRows++] = row;
->>>>>>> main
       }
       continue;
     }
     auto index = it - starts.begin();
     if (address == starts[index]) {
-<<<<<<< HEAD
-      result[numHits++] = row;
-=======
       result[numRows++] = row;
->>>>>>> main
       continue;
     }
     if (index == 0) {
       continue;
     }
     if (it[-1] + sizes[index - 1] > address) {
-<<<<<<< HEAD
-      result[numHits++] = row;
-    }
-  }
-  return numHits;
-=======
       result[numRows++] = row;
     }
   }
   return numRows;
->>>>>>> main
 }
 
 void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
