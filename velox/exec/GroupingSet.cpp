@@ -1079,7 +1079,7 @@ void GroupingSet::toIntermediate(
     if (intermediateRows_->checkFree()) {
       intermediateRows_->stringAllocator().checkEmpty();
     }
-    }
+  }
 
   // It's unnecessary to call function->clear() to reset the internal states of
   // aggregation functions because toIntermediate() is already called at the end

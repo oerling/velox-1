@@ -690,7 +690,7 @@ class RowContainer {
   bool checkFree() const {
     return checkFree_;
   }
-  
+
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
