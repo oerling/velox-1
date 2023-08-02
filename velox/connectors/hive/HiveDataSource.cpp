@@ -20,11 +20,14 @@
 #include <unordered_map>
 
 #include "velox/common/caching/AsyncDataCache.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/common/CachedBufferedInput.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
+
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+#include "velox/connectors/hive/HiveConnectorSplit.h"
+#endif
 
 namespace facebook::velox::connector::hive {
 
@@ -566,11 +569,6 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   auto& fileType = reader_->rowType();
 
-  std::vector<std::string> columnNames = fileType->names();
-  std::unordered_map<std::string, size_t> columnIndex;
-  for (int i = 0; i < columnNames.size(); ++i) {
-    columnIndex[columnNames[i]] = i;
-  }
   std::vector<TypePtr> columnTypes = fileType->children();
   for (int i = 0; i < readerOutputType_->size(); i++) {
     auto fieldName = readerOutputType_->nameOf(i);
@@ -595,7 +593,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     } else {
       // We know the fieldName exists in the file, make the type at that
       // position match what we expect in the output.
-      columnTypes[columnIndex[fieldName]] = readerOutputType_->childAt(i);
+      columnTypes[fileType->getChildIdx(fieldName)] =
+          readerOutputType_->childAt(i);
       scanChildSpec->setConstantValue(nullptr);
     }
   }
@@ -623,7 +622,8 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   }
   scanSpec_->resetCachedValues(false);
   configureRowReaderOptions(
-      rowReaderOpts_, ROW(std::move(columnNames), std::move(columnTypes)));
+      rowReaderOpts_,
+      ROW(std::vector<std::string>(fileType->names()), std::move(columnTypes)));
   rowReader_ = createRowReader(rowReaderOpts_);
 }
 

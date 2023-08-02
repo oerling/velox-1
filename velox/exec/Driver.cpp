@@ -69,10 +69,9 @@ std::optional<Spiller::Config> DriverCtx::makeSpillConfig(
       queryConfig.minSpillRunSize(),
       task->queryCtx()->spillExecutor(),
       queryConfig.spillableReservationGrowthPct(),
-      HashBitRange(
-          queryConfig.spillStartPartitionBit(),
-          queryConfig.spillStartPartitionBit() +
-              queryConfig.spillPartitionBits()),
+      queryConfig.spillStartPartitionBit(),
+      queryConfig.joinSpillPartitionBits(),
+      queryConfig.aggregationSpillPartitionBits(),
       queryConfig.maxSpillLevel(),
       queryConfig.testingSpillPct());
 }
@@ -632,6 +631,7 @@ void Driver::close() {
 }
 
 void Driver::closeByTask() {
+  VELOX_CHECK(isOnThread());
   VELOX_CHECK(isTerminated());
   addStatsToTask();
   for (auto& op : operators_) {

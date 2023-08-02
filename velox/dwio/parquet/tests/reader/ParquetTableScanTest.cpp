@@ -24,6 +24,10 @@
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 
+#ifndef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+#include "velox/connectors/hive/HiveConfig.h"
+#endif
+
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
@@ -273,7 +277,7 @@ TEST_F(ParquetTableScanTest, map) {
   auto vector = makeMapVector<StringView, StringView>({{{"name", "gluten"}}});
 
   loadData(
-      getExampleFilePath("type1.parquet"),
+      getExampleFilePath("types.parquet"),
       ROW({"map"}, {MAP(VARCHAR(), VARCHAR())}),
       makeRowVector(
           {"map"},
@@ -288,7 +292,7 @@ TEST_F(ParquetTableScanTest, map) {
 TEST_F(ParquetTableScanTest, singleRowStruct) {
   auto vector = makeArrayVector<int32_t>({{}});
   loadData(
-      getExampleFilePath("single-row-struct.parquet"),
+      getExampleFilePath("single_row_struct.parquet"),
       ROW({"s"}, {ROW({"a", "b"}, {BIGINT(), BIGINT()})}),
       makeRowVector(
           {"s"},
@@ -304,7 +308,7 @@ TEST_F(ParquetTableScanTest, DISABLED_array) {
   auto vector = makeArrayVector<int32_t>({{1, 2, 3}});
 
   loadData(
-      getExampleFilePath("old-repeated-int.parquet"),
+      getExampleFilePath("old_repeated_int.parquet"),
       ROW({"repeatedInt"}, {ARRAY(INTEGER())}),
       makeRowVector(
           {"repeatedInt"},
@@ -322,7 +326,7 @@ TEST_F(ParquetTableScanTest, DISABLED_optArrayReqEle) {
   auto vector = makeArrayVector<StringView>({});
 
   loadData(
-      getExampleFilePath("part-0.parquet"),
+      getExampleFilePath("array_0.parquet"),
       ROW({"_1"}, {ARRAY(VARCHAR())}),
       makeRowVector(
           {"_1"},
@@ -343,7 +347,7 @@ TEST_F(ParquetTableScanTest, DISABLED_reqArrayReqEle) {
   auto vector = makeArrayVector<StringView>({});
 
   loadData(
-      getExampleFilePath("part-1.parquet"),
+      getExampleFilePath("array_1.parquet"),
       ROW({"_1"}, {ARRAY(VARCHAR())}),
       makeRowVector(
           {"_1"},
@@ -364,7 +368,7 @@ TEST_F(ParquetTableScanTest, DISABLED_reqArrayOptEle) {
   auto vector = makeArrayVector<StringView>({});
 
   loadData(
-      getExampleFilePath("part-2.parquet"),
+      getExampleFilePath("array_2.parquet"),
       ROW({"_1"}, {ARRAY(VARCHAR())}),
       makeRowVector(
           {"_1"},
@@ -385,7 +389,7 @@ TEST_F(ParquetTableScanTest, DISABLED_reqArrayLegacy) {
   auto vector = makeArrayVector<StringView>({});
 
   loadData(
-      getExampleFilePath("part-3.parquet"),
+      getExampleFilePath("array_3.parquet"),
       ROW({"_1"}, {ARRAY(VARCHAR())}),
       makeRowVector(
           {"_1"},
@@ -436,9 +440,8 @@ TEST_F(ParquetTableScanTest, readAsLowerCase) {
   };
   auto result = readCursor(params, addSplits);
   ASSERT_TRUE(waitForTaskCompletion(result.first->task().get()));
-  auto vector = makeFlatVector<int64_t>({0, 1});
-  auto expected = makeRowVector({"a"}, {vector});
-  assertEqualResults(result.second, {expected});
+  assertEqualResults(
+      result.second, {makeRowVector({"a"}, {makeFlatVector<int64_t>({0, 1})})});
 }
 
 int main(int argc, char** argv) {

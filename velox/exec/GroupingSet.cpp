@@ -842,9 +842,10 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
-        // Spill up to 8 partitions based on bits starting from 29th of the hash
-        // number. Any from one to three bits would do.
-        spillConfig_->hashBitRange,
+        HashBitRange(
+            spillConfig_->startPartitionBit,
+            spillConfig_->startPartitionBit +
+                spillConfig_->aggregationPartitionBits),
         rows->keyTypes().size(),
         std::vector<CompareFlags>(),
         spillConfig_->filePath,
@@ -1058,7 +1059,6 @@ void GroupingSet::toIntermediate(
       std::fill(firstGroup_.begin(), firstGroup_.end(), intermediateGroups_[0]);
       function->extractAccumulators(
           firstGroup_.data(), intermediateGroups_.size(), &aggregateVector);
-      function->clear();
       continue;
     }
 
@@ -1074,12 +1074,16 @@ void GroupingSet::toIntermediate(
         intermediateGroups_.data(),
         intermediateGroups_.size(),
         &aggregateVector);
-    function->clear();
   }
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
   }
+
+  // It's unnecessary to call function->clear() to reset the internal states of
+  // aggregation functions because toIntermediate() is already called at the end
+  // of HashAggregation::getOutput(). When toIntermediate() is called, the
+  // aggregaiton function instances won't be reused after it returns.
   tempVectors_.clear();
 }
 
