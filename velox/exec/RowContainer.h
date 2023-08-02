@@ -687,6 +687,10 @@ class RowContainer {
     return mutable_;
   }
 
+  bool checkFree() const {
+    return checkFree_;
+  }
+  
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
@@ -1109,7 +1113,7 @@ class RowContainer {
   // Free any aggregates associated with the 'rows'.
   void freeAggregates(folly::Range<char**> rows);
 
-  const bool checkFree_ = true;
+  const bool checkFree_ = false;
 
   const std::vector<TypePtr> keyTypes_;
   const bool nullableKeys_;
