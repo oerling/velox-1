@@ -166,10 +166,11 @@ class VeloxRunner {
       options.useMmapArena = true;
       options.mmapArenaCapacityRatio = 1;
 
-      auto allocator = std::make_shared<memory::MmapAllocator>(options);
-      allocator_ = std::make_shared<cache::AsyncDataCache>(
-          allocator, memoryBytes, nullptr);
+      allocator_ = std::make_shared<memory::MmapAllocator>(options);
       memory::MemoryAllocator::setDefaultInstance(allocator_.get());
+
+      cache_ = cache::AsyncDataCache::create(allocator_.get(), nullptr);
+      cache::AsyncDataCache::setInstance(cache_.get());
     }
     rootPool_ = memory::defaultMemoryManager().addRootPool("velox_sql");
 
@@ -181,7 +182,7 @@ class VeloxRunner {
     aggregate::prestosql::registerAllAggregateFunctions();
     parse::registerTypeResolver();
     filesystems::registerLocalFileSystem();
-    parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+    parquet::registerParquetReaderFactory();
     dwrf::registerDwrfReaderFactory();
     exec::Exchange::registerLocalExchangeSource();
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
@@ -201,7 +202,7 @@ class VeloxRunner {
         executor_.get(),
         config_,
         std::move(connectorConfigs),
-        memory::MemoryAllocator::getInstance(),
+        cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild("schemaCtxPool"),
         spillExecutor_,
         "schema");
@@ -213,9 +214,10 @@ class VeloxRunner {
         schemaQueryCtx_->getConnectorConfig(kHiveConnectorId),
         std::make_unique<SimpleExpressionEvaluator>(
             schemaQueryCtx_.get(), schemaPool_.get()),
-        schemaQueryCtx_->allocator(),
+        schemaQueryCtx_->cache(),
         "scan_for_schema",
         "schema",
+	"N/a",
         0);
 
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
@@ -267,6 +269,7 @@ class VeloxRunner {
       assignments[projectedName] = std::make_shared<HiveColumnHandle>(
           columnName,
           HiveColumnHandle::ColumnType::kRegular,
+          rowType->childAt(i),
           rowType->childAt(i));
     }
     return std::make_shared<core::TableScanNode>(
@@ -403,7 +406,7 @@ class VeloxRunner {
         executor_.get(),
         config_,
         std::move(connectorConfigs),
-        memory::MemoryAllocator::getInstance(),
+        cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
         spillExecutor_,
         fmt::format("query_{}", queryCounter_));
@@ -580,6 +583,7 @@ class VeloxRunner {
   }
 
   std::shared_ptr<memory::MemoryAllocator> allocator_;
+  std::shared_ptr<cache::AsyncDataCache> cache_;
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> optimizerPool_;
   std::shared_ptr<memory::MemoryPool> schemaPool_;

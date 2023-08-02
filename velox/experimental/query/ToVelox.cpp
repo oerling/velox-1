@@ -346,9 +346,9 @@ core::PlanNodePtr Optimization::makeOrderBy(
 
   source.fragment.planNode = std::make_shared<core::PartitionedOutputNode>(
       idGenerator_.next(),
+      core::PartitionedOutputNode::Kind::kPartitioned,
       std::vector<core::TypedExprPtr>{},
       1,
-      false,
       false,
       std::make_shared<core::GatherPartitionFunctionSpec>(),
       localMerge->outputType(),
@@ -489,9 +489,11 @@ core::PlanNodePtr Optimization::makeFragment(
       }
       source.fragment.planNode = std::make_shared<core::PartitionedOutputNode>(
           nextId(*op),
+          distribution.isBroadcast
+              ? core::PartitionedOutputNode::Kind::kBroadcast
+              : core::PartitionedOutputNode::Kind::kPartitioned,
           keys,
           (keys.empty()) ? 1 : options_.numWorkers,
-          distribution.isBroadcast,
           false,
           std::move(partitionFunctionFactory),
           makeOutputType(repartition->columns()),
@@ -518,7 +520,8 @@ core::PlanNodePtr Optimization::makeFragment(
             std::make_shared<connector::hive::HiveColumnHandle>(
                 column->name(),
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
-                toTypePtr(column->value().type));
+                toTypePtr(column->value().type),
+		toTypePtr(column->value().type));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
           nextId(*op), makeOutputType(scan->columns()), handle, assignments);

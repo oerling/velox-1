@@ -138,10 +138,6 @@ class HiveTableHandle : public ConnectorTableHandle {
     return remainingFilter_;
   }
 
-  const std::string& tableName() const {
-    return tableName_;
-  }
-  
   // Schema of the table.  Need this for reading TEXTFILE.
   const RowTypePtr& dataColumns() const {
     return dataColumns_;
