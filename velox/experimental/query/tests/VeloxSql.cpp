@@ -30,6 +30,7 @@
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/experimental/query/LocalRunner.h"
 #include "velox/experimental/query/LocalSchema.h"
 #include "velox/experimental/query/Plan.h"
@@ -41,8 +42,6 @@
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
-#include "velox/exec/tests/utils/LocalExchangeSource.h"
-
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -187,7 +186,8 @@ class VeloxRunner {
     filesystems::registerLocalFileSystem();
     parquet::registerParquetReaderFactory();
     dwrf::registerDwrfReaderFactory();
-    exec::ExchangeSource::registerFactory(exec::test::createLocalExchangeSource);
+    exec::ExchangeSource::registerFactory(
+        exec::test::createLocalExchangeSource);
 
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
@@ -221,7 +221,7 @@ class VeloxRunner {
         schemaQueryCtx_->cache(),
         "scan_for_schema",
         "schema",
-	"N/a",
+        "N/a",
         0);
 
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
@@ -435,7 +435,8 @@ class VeloxRunner {
     auto context =
         std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
     facebook::verax::queryCtx() = context.get();
-    exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), optimizerPool_.get());
+    exec::SimpleExpressionEvaluator evaluator(
+        queryCtx.get(), optimizerPool_.get());
     try {
       facebook::verax::Schema veraxSchema("test", schema_.get());
       facebook::verax::Optimization opt(

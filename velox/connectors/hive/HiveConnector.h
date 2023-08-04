@@ -106,8 +106,8 @@ class HiveConnectorFactory : public ConnectorFactory {
 };
 
 class HiveHadoop2ConnectorFactory : public HiveConnectorFactory {
- public: 
- HiveHadoop2ConnectorFactory()
+ public:
+  HiveHadoop2ConnectorFactory()
       : HiveConnectorFactory(kHiveHadoop2ConnectorName) {}
 };
 

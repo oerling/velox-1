@@ -522,7 +522,7 @@ core::PlanNodePtr Optimization::makeFragment(
                 column->name(),
                 connector::hive::HiveColumnHandle::ColumnType::kRegular,
                 toTypePtr(column->value().type),
-		toTypePtr(column->value().type));
+                toTypePtr(column->value().type));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
           nextId(*op), makeOutputType(scan->columns()), handle, assignments);
