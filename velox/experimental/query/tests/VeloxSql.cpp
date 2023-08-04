@@ -34,6 +34,7 @@
 #include "velox/experimental/query/LocalSchema.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/VeloxHistory.h"
+#include "velox/expression/Expr.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/QueryPlanner.h"
@@ -212,7 +213,7 @@ class VeloxRunner {
         schemaPool_.get(),
         schemaRootPool_.get(),
         schemaQueryCtx_->getConnectorConfig(kHiveConnectorId),
-        std::make_unique<SimpleExpressionEvaluator>(
+        std::make_unique<exec::SimpleExpressionEvaluator>(
             schemaQueryCtx_.get(), schemaPool_.get()),
         schemaQueryCtx_->cache(),
         "scan_for_schema",
@@ -431,7 +432,7 @@ class VeloxRunner {
     auto context =
         std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
     facebook::verax::queryCtx() = context.get();
-    SimpleExpressionEvaluator evaluator(queryCtx.get(), optimizerPool_.get());
+    exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), optimizerPool_.get());
     try {
       facebook::verax::Schema veraxSchema("test", schema_.get());
       facebook::verax::Optimization opt(
