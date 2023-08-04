@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/HashPartitionFunction.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"

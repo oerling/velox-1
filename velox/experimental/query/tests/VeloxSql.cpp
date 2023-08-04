@@ -41,6 +41,8 @@
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
+
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -185,7 +187,8 @@ class VeloxRunner {
     filesystems::registerLocalFileSystem();
     parquet::registerParquetReaderFactory();
     dwrf::registerDwrfReaderFactory();
-    exec::Exchange::registerLocalExchangeSource();
+    exec::ExchangeSource::registerFactory(exec::test::createLocalExchangeSource);
+
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
 

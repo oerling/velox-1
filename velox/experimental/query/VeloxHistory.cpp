@@ -15,7 +15,7 @@
  */
 
 #include "velox/experimental/query/VeloxHistory.h"
-
+#include "velox/connectors/hive/TableHandle.h"
 namespace facebook::verax {
 
 using namespace facebook::velox::exec;
