@@ -592,7 +592,10 @@ void GroupingSet::destroyGlobalAggregations() {
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
     auto& function = aggregates_[i].function;
     auto groups = lookup_->hits.data();
-    function->destroy(folly::Range(groups, 1));
+    if (function->accumulatorUsesExternalMemory()) {
+      auto groups = lookup_->hits.data();
+      function->destroy(folly::Range(groups, 1));
+    }
   }
 }
 
