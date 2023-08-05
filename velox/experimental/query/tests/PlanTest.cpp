@@ -26,6 +26,7 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/expression/Expr.h"
 
 DEFINE_string(
     data_path,
@@ -55,7 +56,7 @@ class PlanTest : public testing::Test {
     filesystems::registerLocalFileSystem();
     if (!registered) {
       registered = true;
-      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+      parquet::registerParquetReaderFactory();
     }
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);
