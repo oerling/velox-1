@@ -30,7 +30,7 @@
 
 DEFINE_string(
     data_path,
-    "/home/oerling/tpch100pqsnlinks",
+    "",
     "Path to directory for TPC-H files");
 
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
