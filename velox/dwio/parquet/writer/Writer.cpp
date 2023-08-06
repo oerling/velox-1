@@ -16,9 +16,9 @@
 
 #include "velox/vector/arrow/Bridge.h"
 
-#include <arrow/c/bridge.h> // @manual
-#include <arrow/table.h> // @manual
-#include <parquet/arrow/writer.h> // @manual
+#include <arrow/c/bridge.h>
+#include <arrow/table.h>
+#include <parquet/arrow/writer.h>
 #include "velox/dwio/parquet/writer/Writer.h"
 
 namespace facebook::velox::parquet {
@@ -259,6 +259,10 @@ void Writer::close() {
   PARQUET_THROW_NOT_OK(stream_->Close());
 
   arrowContext_->stagingChunks.clear();
+}
+
+void Writer::abort() {
+  VELOX_NYI("abort function for Parquet writer is not supported yet");
 }
 
 parquet::WriterOptions getParquetOptions(

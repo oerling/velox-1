@@ -421,6 +421,8 @@ void HashAggregation::noMoreInput() {
   groupingSet_->noMoreInput();
   recordSpillStats();
   Operator::noMoreInput();
+  // Release the extra reserved memory right after processing all the inputs.
+  pool()->release();
 }
 
 bool HashAggregation::isFinished() {
@@ -456,5 +458,9 @@ void HashAggregation::close() {
 
   output_ = nullptr;
   groupingSet_.reset();
+}
+
+void HashAggregation::abort() {
+  close();
 }
 } // namespace facebook::velox::exec

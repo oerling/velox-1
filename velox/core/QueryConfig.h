@@ -185,12 +185,11 @@ class QueryConfig {
   /// spilled files.
   static constexpr const char* kMinSpillRunSize = "min_spill_run_size";
 
+  static constexpr const char* kSpillCompressionKind =
+      "spill_compression_codec";
+
   static constexpr const char* kSpillStartPartitionBit =
       "spiller_start_partition_bit";
-
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  static constexpr const char* kSpillPartitionBits = "spiller_partition_bits";
-#endif
 
   static constexpr const char* kJoinSpillPartitionBits =
       "join_spiller_partition_bits";
@@ -383,14 +382,6 @@ class QueryConfig {
     return get<int32_t>(kMaxSpillLevel, 4);
   }
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  int32_t spillPartitionBits() const {
-    constexpr int32_t kDefaultBits = 2;
-    constexpr int32_t kMaxBits = 3;
-    return std::min(kMaxBits, get<int32_t>(kSpillPartitionBits, kDefaultBits));
-  }
-#endif
-
   /// Returns the start partition bit which is used with
   /// 'kJoinSpillPartitionBits' or 'kAggregationSpillPartitionBits' together to
   /// calculate the spilling partition number for join spill or aggregation
@@ -432,6 +423,10 @@ class QueryConfig {
   uint64_t minSpillRunSize() const {
     constexpr uint64_t kDefaultMinSpillRunSize = 256 << 20; // 256MB.
     return get<uint64_t>(kMinSpillRunSize, kDefaultMinSpillRunSize);
+  }
+
+  std::string spillCompressionKind() const {
+    return get<std::string>(kSpillCompressionKind, "none");
   }
 
   /// Returns the spillable memory reservation growth percentage of the previous

@@ -591,6 +591,7 @@ void GroupingSet::destroyGlobalAggregations() {
   }
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
     auto& function = aggregates_[i].function;
+    auto groups = lookup_->hits.data();
     if (function->accumulatorUsesExternalMemory()) {
       auto groups = lookup_->hits.data();
       function->destroy(folly::Range(groups, 1));
@@ -851,6 +852,7 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         spillConfig_->filePath,
         spillConfig_->maxFileSize,
         spillConfig_->minSpillRunSize,
+        spillConfig_->compressionKind,
         Spiller::spillPool(),
         spillConfig_->executor);
   }
@@ -1078,6 +1080,9 @@ void GroupingSet::toIntermediate(
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
+    if (intermediateRows_->checkFree()) {
+      intermediateRows_->stringAllocator().checkEmpty();
+    }
   }
 
   // It's unnecessary to call function->clear() to reset the internal states of
