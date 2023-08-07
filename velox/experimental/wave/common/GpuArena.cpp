@@ -289,8 +289,8 @@ GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator)
 WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
   auto result = firstFreeBuffer_;
   if (!result) {
-    allBuffers_.emplace_back();
-    auto buffers = allBuffers_.back().get();
+    allBuffers_.push_back(std::make_unique<Buffers>());
+    auto* buffers = allBuffers_.back().get();
     for (int32_t i = (sizeof(*buffers) / sizeof(Buffer)) - 1; i >= 0; --i) {
       buffers->buffers[i].ptr_ = firstFreeBuffer_;
       firstFreeBuffer_ = &buffers->buffers[i];
@@ -298,6 +298,7 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
     result = firstFreeBuffer_;
   }
   firstFreeBuffer_ = reinterpret_cast<Buffer*>(result->ptr_);
+  result->arena_ = this;
   result->ptr_ = ptr;
   result->size_ = size;
   return result;
@@ -330,6 +331,7 @@ WaveBufferPtr GpuArena::allocate(uint64_t bytes) {
 void GpuArena::free(Buffer* buffer) {
   const uint64_t addressU64 = reinterpret_cast<uint64_t>(buffer->ptr_);
   VELOX_CHECK_EQ(0, buffer->referenceCount_);
+  VELOX_CHECK_EQ(0, buffer->pinCount_);
   std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(!arenas_.empty());
 

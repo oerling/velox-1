@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
+#pragma once
 
+#include <cuda_runtime.h>
+
+/// Utilities header to include in Cuda code for Velox Wave. Do not combine with
+/// Velox *.h.n
 namespace facebook::velox::wave {
 
-void Buffer::release() {
-  if (referenceCount_.fetch_sub(1) == 1) {
-    arena_->free(this);
-  }
-}
+void cudaCheck(cudaError_t err, const char* file, int line);
 
-} // namespace facebook::velox::wave
+#define CUDA_CHECK(e) ::facebook::velox::wave::cudaCheck(e, __FILE__, __LINE__)
+
+  template <typename T, typename U>
+  constexpr inline T roundUp(T value, U factor) {
+    return (value + (factor - 1)) / factor * factor;
+  }
+
+  struct StreamImpl {
+    cudaStream_t stream;
+  };
+}

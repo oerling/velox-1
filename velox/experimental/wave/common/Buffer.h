@@ -16,6 +16,7 @@
 
 #pragma once
 #include <boost/intrusive_ptr.hpp>
+#include "velox/common/base/Exceptions.h"
 
 namespace facebook::velox::wave {
 
@@ -30,6 +31,28 @@ class GpuArena;
 /// Buffer free list.
 class Buffer {
  public:
+  template <typename T>
+  T* as() {
+    reinterpret_cast<T*>(ptr_);
+  }
+
+  size_t size() const {
+    return size_;
+  }
+  
+  void pin() {
+    ++pinCount_;
+  }
+
+  bool unpin() {
+    VELOX_DCHECK_LT(0, pinCount_);
+    --pinCount_;
+  }
+
+  bool isPinned() const {
+    return 0 == pinCount_;
+  }
+
   void addRef() {
     referenceCount_.fetch_add(1);
   }
@@ -46,13 +69,13 @@ class Buffer {
 
   // Pointer to device/universal memory. If 'referenceCount_' is 0, this is the
   // host pointer to the next  free Buffer in 'arena_'.
-  void* ptr_;
+  void* ptr_{nullptr};
 
-  // Byte size of memory held by 'ptt'. Undefined if 'referenceCount_' is 0.
+  // Byte size of memory held by 'ptr_'. Undefined if 'referenceCount_' is 0.
   int64_t size_{0};
 
   // The containeing arena.
-  GpuArena* arena_;
+  GpuArena* arena_{nullptr};
 
   friend class GpuArena;
 };

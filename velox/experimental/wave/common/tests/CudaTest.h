@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
+#include "velox/experimental/wave/common/Cuda.h"
+
+
+/// Sample header for testing Cuda.h
 
 namespace facebook::velox::wave {
 
-void Buffer::release() {
-  if (referenceCount_.fetch_sub(1) == 1) {
-    arena_->free(this);
-  }
-}
+class TestStream : public Stream {
+ public:
+  // Queues a kernel to add 1 to numbers[0...size - 1].
+  void addOne(int32_t* numbers, int size);
+};
 
 } // namespace facebook::velox::wave

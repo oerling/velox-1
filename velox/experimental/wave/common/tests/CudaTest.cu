@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
+
+#include "velox/experimental/wave/common/tests/CudaTest.h"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
+
 
 namespace facebook::velox::wave {
 
-void Buffer::release() {
-  if (referenceCount_.fetch_sub(1) == 1) {
-    arena_->free(this);
+  __global__ void addOneKernel(int32_t* numbers, int32_t size) {
+    auto index = blockDim.x * blockIdx.x + threadIdx.x;
+    if (index < size) {
+      ++numbers[index];
+    }
   }
+  
+void TestStream::addOne(int32_t* numbers, int32_t size) {
+  auto numBlocks = roundUp(size, 256) / 256;
+  addOneKernel<<<numBlocks, 256, 0, stream->stream>>>(numbers, size);
 }
 
-} // namespace facebook::velox::wave
+
+}

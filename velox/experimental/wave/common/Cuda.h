@@ -23,30 +23,33 @@
 namespace facebook::velox::wave {
 
 struct Device {
+  Device(int32_t id) : deviceId(id) {}
+
   int32_t deviceId;
 };
 
 /// Checks that the machine has the right capability and returns a Device
 /// struct. If 'preferredId' is given tries to return  a Device on that device
 /// id.
-Device initDevice(int32_t preferredId = -1);
+Device* getDevice(int32_t preferredId = -1);
+  /// Binds subsequent Cuda operations of the calling thread to 'device'.
+  void setDevice(Device* device);
 
-/// Returns universal address space memory.
-void MallocManaged(size_t bytes);
-
+  struct StreamImpl;
+  
 struct Stream {
+  
+  Stream();
   virtual ~Stream();
-
-  std::unique_ptr<Stream> create(Device* device);
 
   /// Waits  until the stream is completed.
   void wait();
 
   /// Enqueus a prefetch. Prefetches to host if 'device' is nullptr, otherwise
   /// to 'device'.
-  void prefetchAsync(Device* device, void* address, size_t size);
-
-  void* stream;
+  void prefetch(Device* device, void* address, size_t size);
+  std::unique_ptr<StreamImpl> stream;
+  
 };
 
 // Abstract class wrapping device or universal address memory allocation.

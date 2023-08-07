@@ -120,7 +120,7 @@ class GpuArena {
 
   void free(Buffer* buffer);
 
-  const std::map<uint64_t, std::shared_ptr<GpuSlab>>& arenas() const {
+  const std::map<uint64_t, std::shared_ptr<GpuSlab>>& slabs() const {
     return arenas_;
   }
 
