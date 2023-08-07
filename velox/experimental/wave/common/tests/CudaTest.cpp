@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/common/tests/CudaTest.h"
 #include <gtest/gtest.h>
 #include "velox/common/base/BitUtil.h"
 #include "velox/experimental/wave/common/GpuArena.h"
-#include "velox/experimental/wave/common/tests/CudaTest.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
@@ -36,7 +36,8 @@ class CudaTest : public testing::Test {
 TEST_F(CudaTest, stream) {
   constexpr int32_t kSize = 1000000;
   TestStream stream;
-  auto ints = reinterpret_cast<int32_t*>(allocator_->allocate(kSize * sizeof(int32_t)));
+  auto ints =
+      reinterpret_cast<int32_t*>(allocator_->allocate(kSize * sizeof(int32_t)));
   for (auto i = 0; i < kSize; ++i) {
     ints[i] = i;
   }

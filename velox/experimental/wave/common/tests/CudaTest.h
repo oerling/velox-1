@@ -16,7 +16,6 @@
 
 #include "velox/experimental/wave/common/Cuda.h"
 
-
 /// Sample header for testing Cuda.h
 
 namespace facebook::velox::wave {

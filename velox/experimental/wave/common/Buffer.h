@@ -39,7 +39,7 @@ class Buffer {
   size_t size() const {
     return size_;
   }
-  
+
   void pin() {
     ++pinCount_;
   }

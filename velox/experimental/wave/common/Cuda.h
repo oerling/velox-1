@@ -32,13 +32,12 @@ struct Device {
 /// struct. If 'preferredId' is given tries to return  a Device on that device
 /// id.
 Device* getDevice(int32_t preferredId = -1);
-  /// Binds subsequent Cuda operations of the calling thread to 'device'.
-  void setDevice(Device* device);
+/// Binds subsequent Cuda operations of the calling thread to 'device'.
+void setDevice(Device* device);
 
-  struct StreamImpl;
-  
+struct StreamImpl;
+
 struct Stream {
-  
   Stream();
   virtual ~Stream();
 
@@ -49,7 +48,6 @@ struct Stream {
   /// to 'device'.
   void prefetch(Device* device, void* address, size_t size);
   std::unique_ptr<StreamImpl> stream;
-  
 };
 
 // Abstract class wrapping device or universal address memory allocation.
