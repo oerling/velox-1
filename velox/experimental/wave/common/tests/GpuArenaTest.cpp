@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/common/GpuArena.h"
-#include "velox/common/base/BitUtil.h"
-#include <gtest/gtest.h>
 #include <folly/Random.h>
+#include <gtest/gtest.h>
+#include "velox/common/base/BitUtil.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
 class TestingGpuAllocator : public GpuAllocator {
-public:
+ public:
   void* allocate(size_t bytes) override {
     return malloc(bytes);
   }
@@ -33,7 +32,6 @@ public:
     ::free(ptr);
   }
 };
-
 
 class GpuArenaTest : public testing::Test {
  public:
@@ -92,8 +90,10 @@ TEST_F(GpuArenaTest, slab) {
 
   // 1 KB upper bound
   const uint64_t kAllocUpperBound = 1l << 10;
-  std::unique_ptr<GpuSlab> arena =
-    std::make_unique<GpuSlab>(allocator_->allocate(kArenaCapacityBytes), kArenaCapacityBytes, allocator_.get());
+  std::unique_ptr<GpuSlab> arena = std::make_unique<GpuSlab>(
+      allocator_->allocate(kArenaCapacityBytes),
+      kArenaCapacityBytes,
+      allocator_.get());
   memset(arena->address(), 0x00, kArenaCapacityBytes);
 
   std::unordered_map<uint64_t, uint64_t> allocations;
@@ -129,7 +129,6 @@ TEST_F(GpuArenaTest, slab) {
   }
   EXPECT_TRUE(arena->checkConsistency());
 }
-
 
 TEST_F(GpuArenaTest, buffers) {
   auto arena = std::make_unique<GpuArena>(1 << 20, allocator_.get());
