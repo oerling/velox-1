@@ -16,9 +16,9 @@
 
 #pragma once
 
+#include <glog/logging.h>
 #include <string>
 #include "folly/GLog.h"
-#include <glog/logging.h>
 
 #define VELOX_WAVE_LOG_PREFIX "WAVE"
 #define VELOX_WAVE_LOG(severity) LOG(severity) << VELOX_WAVE_LOG_PREFIX
@@ -26,6 +26,6 @@
   FB_LOG_EVERY_MS(severity, ms) << VELOX_WAVE_LOG_PREFIX
 
 namespace facebook::velox::wave {
-  /// Throws a VeloxException with 'message'.
+/// Throws a VeloxException with 'message'.
 void waveError(const std::string& message);
-}
+} // namespace facebook::velox::wave

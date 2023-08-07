@@ -51,11 +51,11 @@ struct Stream {
 
 // Abstract class wrapping device or universal address memory allocation.
 class GpuAllocator {
-public:
+ public:
   virtual void* allocate(size_t bytes) = 0;
   virtual void free(void* ptr, size_t bytes) = 0;
 };
 
-  GpuAllocator* getAllocator(Device* device);
-  
+GpuAllocator* getAllocator(Device* device);
+
 } // namespace facebook::velox::wave

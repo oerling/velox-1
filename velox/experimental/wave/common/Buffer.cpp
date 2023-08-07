@@ -22,9 +22,9 @@
 namespace facebook::velox::wave {
 
 void Buffer::release() {
-    if (referenceCount_.fetch_sub(1) == 1) {
-      arena_->free(this);
-    }
+  if (referenceCount_.fetch_sub(1) == 1) {
+    arena_->free(this);
   }
- 
 }
+
+} // namespace facebook::velox::wave

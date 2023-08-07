@@ -19,17 +19,18 @@
 
 namespace facebook::velox::wave {
 
-  class GpuArena;
-  
-  /// Each area of device or universal memory in Wave has a unique
-  /// host side control block with reference and pin counts. If
-  /// unpinned, the memory is not currently accessed by a kernel and
-  /// can be moved. When moving, it suffices to update the pointer in
-  /// Buffer. These are managed via WaveBufferPtr. When the reference count goes to 0, the memory is returned to 'arena' and the Buffer is added to the Buffer free list. 
+class GpuArena;
+
+/// Each area of device or universal memory in Wave has a unique
+/// host side control block with reference and pin counts. If
+/// unpinned, the memory is not currently accessed by a kernel and
+/// can be moved. When moving, it suffices to update the pointer in
+/// Buffer. These are managed via WaveBufferPtr. When the reference count goes
+/// to 0, the memory is returned to 'arena' and the Buffer is added to the
+/// Buffer free list.
 class Buffer {
  public:
-
-    void addRef() {
+  void addRef() {
     referenceCount_.fetch_add(1);
   }
 
@@ -40,12 +41,11 @@ class Buffer {
   void release();
 
  private:
-
-
   std::atomic<int32_t> referenceCount_{0};
   std::atomic<int32_t> pinCount_{0};
 
-  // Pointer to device/universal memory. If 'referenceCount_' is 0, this is the host pointer to the next  free Buffer in 'arena_'.
+  // Pointer to device/universal memory. If 'referenceCount_' is 0, this is the
+  // host pointer to the next  free Buffer in 'arena_'.
   void* ptr_;
 
   // Byte size of memory held by 'ptt'. Undefined if 'referenceCount_' is 0.
@@ -57,7 +57,7 @@ class Buffer {
   friend class GpuArena;
 };
 
- using WaveBufferPtr = boost::intrusive_ptr<Buffer>;
+using WaveBufferPtr = boost::intrusive_ptr<Buffer>;
 
 static inline void intrusive_ptr_add_ref(Buffer* buffer) {
   buffer->addRef();
@@ -67,6 +67,4 @@ static inline void intrusive_ptr_release(Buffer* buffer) {
   buffer->release();
 }
 
-}
-
-
+} // namespace facebook::velox::wave
