@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
+#include <cuda_runtime.h>
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/Exception.h"
-
-
-#include <cuda_runtime.h>
 
 namespace facebook::velox::wave {
 

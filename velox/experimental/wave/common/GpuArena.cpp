@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-#include "velox/common/memory/MmapArena.h"
-
-#include <sys/mman.h>
+#include "velox/experimental/wave/common/GpuArena.h"
+#include <sstream>
 #include "velox/common/base/BitUtil.h"
-#include "velox/common/memory/Memory.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/common/base/SuccinctPrinter.h"
+#include "velox/experimental/wave/common/Exception.h"
 
 namespace facebook::velox::wave {
 
@@ -26,7 +27,7 @@ uint64_t GpuSlab::roundBytes(uint64_t bytes) {
   return bits::nextPowerOfTwo(bytes);
 }
 
-GpuSlab::GpuSlab(void* ptr, size_t capacityBytes)
+GpuSlab::GpuSlab(void* ptr, size_t capacityBytes, GpuAllocator* allocator)
     : address_(reinterpret_cast<uint8_t*>(ptr)),
       byteSize_(capacityBytes),
       allocator_(allocator) {
@@ -35,7 +36,7 @@ GpuSlab::GpuSlab(void* ptr, size_t capacityBytes)
 }
 
 GpuSlab::~GpuSlab() {
-  allocator->free(address_, byteSize_);
+  allocator_->free(address_, byteSize_);
 }
 
 void* GpuSlab::allocate(uint64_t bytes) {
@@ -47,7 +48,7 @@ void* GpuSlab::allocate(uint64_t bytes) {
   // First match in the list that can give this many bytes
   auto lookupItr = freeLookup_.lower_bound(bytes);
   if (lookupItr == freeLookup_.end()) {
-    VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
+    VELOX_WAVE_LOG_EVERY_MS(WARNING, 1000)
         << "Cannot find a free block that is large enough to allocate " << bytes
         << " bytes. Current arena freeBytes " << freeBytes_ << " & lookup table"
         << freeLookupStr();
@@ -72,8 +73,6 @@ void GpuSlab::free(void* address, uint64_t bytes) {
     return;
   }
   bytes = roundBytes(bytes);
-
-  ::madvise(address, bytes, MADV_DONTNEED);
   freeBytes_ += bytes;
 
   const auto curAddr = reinterpret_cast<uint64_t>(address);
@@ -251,6 +250,19 @@ bool GpuSlab::checkConsistency() const {
   return numErrors == 0;
 }
 
+std::string GpuSlab::freeLookupStr() {
+  std::stringstream lookupStr;
+  for (auto itr = freeLookup_.begin(); itr != freeLookup_.end(); ++itr) {
+    lookupStr << "\n{" << itr->first << "->[";
+    for (auto itrInner = itr->second.begin(); itrInner != itr->second.end();
+         itrInner++) {
+      lookupStr << *itrInner << ", ";
+    }
+    lookupStr << "]}\n";
+  }
+  return lookupStr.str();
+}
+
 std::string GpuSlab::toString() const {
   return fmt::format(
       "GpuSlab[byteSize[{}] address[{}] freeBytes[{}] freeList[{}]]]",
@@ -261,13 +273,15 @@ std::string GpuSlab::toString() const {
 }
 
 GpuArena::Buffers::Buffers() {
-  memset(&buffers, 0, sizeof(buffers));
+  memset(&buffers[0], 0, sizeof(buffers));
 }
 
 GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator)
-    : singleArenaCapacity_(singleArenaCapacity) {
-  void* ptr = allocator->allocate(singleArenaCapacity);
-  auto arena = std::make_shared<GpuSlab>(ptr, singleArenaCapacity);
+    : singleArenaCapacity_(singleArenaCapacity), allocator_(allocator) {
+  auto arena = std::make_shared<GpuSlab>(
+      allocator_->allocate(singleArenaCapacity),
+      singleArenaCapacity,
+      allocator_);
   arenas_.emplace(reinterpret_cast<uint64_t>(arena->address()), arena);
   currentArena_ = arena;
 }
@@ -283,14 +297,15 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
     }
     result = firstFreeBuffer_;
   }
-  firstFreeBuffer_ = reinterpret_cast<Buffer*>(result->ptr);
-  result->ptr = ptr;
-  result->size = size;
+  firstFreeBuffer_ = reinterpret_cast<Buffer*>(result->ptr_);
+  result->ptr_ = ptr;
+  result->size_ = size;
   return result;
 }
 
-void* GpuArena::allocate(uint64_t bytes) {
+WaveBufferPtr GpuArena::allocate(uint64_t bytes) {
   bytes = GpuSlab::roundBytes(bytes);
+  std::lock_guard<std::mutex> l(mutex_);
   auto* result = currentArena_->allocate(bytes);
   if (result != nullptr) {
     return getBuffer(result, bytes);
@@ -299,24 +314,39 @@ void* GpuArena::allocate(uint64_t bytes) {
   // If first allocation fails we create a new GpuSlab for another attempt. If
   // it ever fails again then it means requested bytes is larger than a single
   // GpuSlab's capacity. No further attempts will happen.
-  auto newArena = std::make_shared<GpuSlab>(singleArenaCapacity_);
+  auto newArena = std::make_shared<GpuSlab>(
+      allocator_->allocate(singleArenaCapacity_),
+      singleArenaCapacity_,
+      allocator_);
   arenas_.emplace(reinterpret_cast<uint64_t>(newArena->address()), newArena);
   currentArena_ = newArena;
-  return currentArena_->allocate(bytes);
+  result = currentArena_->allocate(bytes);
+  if (result) {
+    return getBuffer(result, bytes);
+  }
+  VELOX_FAIL("Failed to allocate {} bytes of universal address space", bytes);
 }
 
-void GpuArena::free(void* address, uint64_t bytes) {
+void GpuArena::free(Buffer* buffer) {
+  const uint64_t addressU64 = reinterpret_cast<uint64_t>(buffer->ptr_);
+  VELOX_CHECK_EQ(0, buffer->referenceCount_);
+  std::lock_guard<std::mutex> l(mutex_);
   VELOX_CHECK(!arenas_.empty());
-  const uint64_t addressU64 = reinterpret_cast<uint64_t>(address);
+
   auto iter = arenas_.lower_bound(addressU64);
   if (iter == arenas_.end() || iter->first != addressU64) {
     VELOX_CHECK(iter != arenas_.begin());
     --iter;
-    VELOX_CHECK_GE(iter->first + singleArenaCapacity_, addressU64 + bytes);
+    VELOX_CHECK_GE(
+        iter->first + singleArenaCapacity_, addressU64 + buffer->size_);
   }
-  iter->second->free(address, bytes);
+  iter->second->free(buffer->ptr_, buffer->size_);
   if (iter->second->empty() && iter->second != currentArena_) {
     arenas_.erase(iter);
   }
+  buffer->ptr_ = firstFreeBuffer_;
+  buffer->size_ = 0;
+  firstFreeBuffer_ = buffer;
 }
+
 } // namespace facebook::velox::wave

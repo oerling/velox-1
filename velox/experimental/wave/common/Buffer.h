@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#pragma once;
-
+#pragma once
 #include <boost/intrusive_ptr.hpp>
 
 namespace facebook::velox::wave {

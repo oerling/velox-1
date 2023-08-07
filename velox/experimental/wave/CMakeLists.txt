@@ -13,9 +13,4 @@
 # limitations under the License.
 
 
-add_library(velox_wave GpuArena.cpp Operator.cpp)
-  
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
-
+  add_subdirectory(common)
