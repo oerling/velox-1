@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(velox_wave_common GpuArena.cpp  Cuda.cu Exception.cpp)
+add_library(velox_wave_common GpuArena.cpp Cuda.cu Exception.cpp)
 
-set_target_properties(velox_wave_common PROPERTIES CUDA_ARCHITECTURES
-                                                           native)
+set_target_properties(velox_wave_common PROPERTIES CUDA_ARCHITECTURES native)
 
-							 target_link_libraries(velox_wave_common velox_exception velox_common_base)
+target_link_libraries(velox_wave_common velox_exception velox_common_base)
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
-
-
