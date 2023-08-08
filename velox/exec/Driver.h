@@ -242,7 +242,7 @@ struct DriverCtx {
   /// Builds the spill config for the operator with specified 'operatorId'.
   std::optional<Spiller::Config> makeSpillConfig(int32_t operatorId) const;
 };
-
+  
 class Driver : public std::enable_shared_from_this<Driver> {
  public:
   static void enqueue(std::shared_ptr<Driver> instance);
@@ -368,7 +368,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;
-
+  
   friend struct DriverFactory;
 };
 
@@ -378,6 +378,16 @@ using OperatorSupplier = std::function<
 using Consumer = std::function<BlockingReason(RowVectorPtr, ContinueFuture*)>;
 using ConsumerSupplier = std::function<Consumer()>;
 
+  struct DriverFactory;
+  using   AdaptDriverFunction = std::function<bool(
+					     const DriverFactory& factory,
+					       Driver& driver)>;
+
+  struct DriverAdapter {
+    std::string label;
+    AdaptDriverFunction adaptDriver;
+  };
+  
 struct DriverFactory {
   std::vector<std::shared_ptr<const core::PlanNode>> planNodes;
   /// Function that will generate the final operator of a driver being
@@ -416,6 +426,8 @@ struct DriverFactory {
       std::shared_ptr<ExchangeClient> exchangeClient,
       std::function<int(int pipelineId)> numDrivers);
 
+  static void registerAdapter(DriverAdapter adapter);
+  
   bool supportsSingleThreadedExecution() const {
     return !needsPartitionedOutput() && !needsExchangeClient() &&
         !needsLocalExchange();
@@ -472,6 +484,8 @@ struct DriverFactory {
   /// Returns plan node IDs for which Nested Loop Join Bridges must be created
   /// based on this pipeline.
   std::vector<core::PlanNodeId> needsNestedLoopJoinBridges() const;
+
+  static std::vector<AlternateDriverFactory> alternates;
 };
 
 // Begins and ends a section where a thread is running but not
