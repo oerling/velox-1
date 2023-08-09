@@ -46,10 +46,13 @@ namespace facebook::velox::wave {
   void addDynamicFilter(
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
-  
-  
 
-    std::
+  private:
+  
+    // Wave operators replacing 'cpuOperators_' on GPU path. 
+    std::vector<std::unique_ptr<Operator>> operators_;
+    // The replaced Operators from the Driver. Can be used for a CPU fallback.
+    std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
   };
   
 }
