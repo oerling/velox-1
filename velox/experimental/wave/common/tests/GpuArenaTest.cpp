@@ -137,7 +137,20 @@ TEST_F(GpuArenaTest, buffers) {
     buffers.push_back(arena->allocate(1024));
   }
   EXPECT_EQ(5, arena->slabs().size());
-
+  // We clear some of the first allocated buffers.
+  buffers.erase(buffers.begin(), buffers.begin() + 2300);
+  EXPECT_EQ(3, arena->slabs().size());
+  // Allocate some more. Check that slabs  with unuused capacity get used before making new ones.
+  for (auto i = 0; i < 100; ++i) {
+    buffers.push_back(arena->allocate(1024));
+  }
+  EXPECT_EQ(3, arena->slabs().size());
+  for (auto i = 0; i < 500; ++i) {
+    buffers.push_back(arena->allocate(1024));
+  }
+  EXPECT_EQ(4, arena->slabs().size());
+  
+  // We clear all and expect one arena to be left at the end.
   buffers.clear();
   EXPECT_EQ(1, arena->slabs().size());
 }

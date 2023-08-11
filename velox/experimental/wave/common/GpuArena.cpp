@@ -311,7 +311,17 @@ WaveBufferPtr GpuArena::allocate(uint64_t bytes) {
   if (result != nullptr) {
     return getBuffer(result, bytes);
   }
-
+  for (auto pair : arenas_) {
+    if (pair.second == currentArena_ || pair.second->freeBytes() < bytes) {
+      continue;
+    }
+    result = pair.second->allocate(bytes);
+    if (result) {
+      currentArena_ = pair.second;
+      return getBuffer(result, bytes);
+    }
+  }
+  
   // If first allocation fails we create a new GpuSlab for another attempt. If
   // it ever fails again then it means requested bytes is larger than a single
   // GpuSlab's capacity. No further attempts will happen.
