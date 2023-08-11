@@ -148,7 +148,7 @@ class GpuArena {
   // Capacity in bytes for a single GpuSlab managed by this.
   const uint64_t singleArenaCapacity_;
 
-GpuAllocator* const allocator_;
+  GpuAllocator* const allocator_;
 
   // A sorted list of GpuSlab by its initial address
   std::map<uint64_t, std::shared_ptr<GpuSlab>> arenas_;
