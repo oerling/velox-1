@@ -16,6 +16,7 @@
 
 #pragma once
 #include "velox/vector/BaseVector.h"
+#include "velox/experimental/wave/common/Buffer.h"
 
 namespace facebook::velox::wave {
 
@@ -35,6 +36,7 @@ namespace facebook::velox::wave {
 class Vector {
  public:
   // Constructs a vector. Resize can be used to create buffers for a given size.
+  Vector(TypePtr type, GpuArena* arena);
   Vector(TypePtr type, GpuArena* arena) : type_(type), arena_(arena) {}
 
   const TypePtr& type() const {
@@ -58,6 +60,15 @@ class Vector {
   // with a selected size.
   void reset();
 
+  /// Marks that the buffers have results pending and have no defined content.
+  void startCompute();
+
+  /// Indicates that values of buffers are defined. Triggers arrived callbacks. 
+  void arrived();
+
+  // Inidcates that there is no present or planned compute that relies on values of 'this', so that buffers can be reused.
+  void fullyConsumed();
+  
   Vector& childAt(int32_t index) {
     return *children_[index];
   }
@@ -66,9 +77,9 @@ class Vector {
   /// empty, 'callback' is called when all fields of 'this' have a value.
   void onArrival(
       const std::vector<Subfield>& subfields,
-      std::function<void()> claaback); );
+      std::function<void()> callback);
 
-  // Informs the producer that the consumer no longer references'ths' or
+  // Informs the producer that the consumer no longer references'this' or
   // children.
   void consumed();
 
@@ -106,10 +117,11 @@ class Vector {
   // map from key to index in 'children_' for flat maps with numeric keys.
   std::shared_ptr<folly::F14FastMap<uint64_t, int32_t>> numericKeys_;
 
-  // Count of children presently being computed. For a leaf vector, this goes
-  // from 1 to 0 when the value arrives.
-  std::atomic<int32_t> numPendingChildren_{0};
+  // Serializes ready callback registration and activation.
+  std::mutex readyMutex_;
 
+  std::vector<ReadyCallback> readyCallbacks
+  
   ArrivedCallback arrived_;
 
   // Count of children that have a value but have not been fully consumed by

@@ -1,3 +1,5 @@
+
+
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -14,24 +16,11 @@
  * limitations under the License.
  */
 
-#pragma once
+#include "velox/experimental/wave/vector/Vector.h"
 
 namespace facebook::velox::wave {
 
-
-  /// Linear operator pipeline. Sets up a DAG of channel dependencies and advances it.
-class Driver {
- public:
-  Driver(const std::vector<exec::Operator*>& source);
-  ~Driver();
-
-  static std::shared_ptr<Driver> from
- private:
   
-  std::vector<std::unique_ptr<Operator> operators_;
-  
-  std::unique_ptr<GpuArena> arena_;
-};
 
 }
 

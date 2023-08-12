@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "velox/experimental/wave/common/Cuda.h"
+#include "velox/experimental/wave/vector/Vector.h"
 
 namespace facebook::velox::wave {
 

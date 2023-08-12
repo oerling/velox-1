@@ -21,8 +21,8 @@
 
 namespace facebook::velox::wave {
 
-  class WaveOperator : public exec::Operator {
-    WaveOperator(
+  class WaveDriver : public exec::SourceOperator {
+    WaveDriver(
       int32_t operatorId,
       exec::DriverCtx* driverCtx,
       std::vector<exec::Operator*> operators);
