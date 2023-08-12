@@ -36,8 +36,17 @@ class Buffer {
     reinterpret_cast<T*>(ptr_);
   }
 
+  size_t capacity() const {
+    return capacity_;
+  }
+
   size_t size() const {
     return size_;
+  }
+
+  void setSize(size_t newSize) {
+    VELOX_DCHECK_LE(newSize, capacity_);
+    size_ = newSize;
   }
 
   void pin() {
@@ -46,11 +55,11 @@ class Buffer {
 
   bool unpin() {
     VELOX_DCHECK_LT(0, pinCount_);
-    --pinCount_;
+    return --pinCount_ == 0;
   }
 
   bool isPinned() const {
-    return 0 == pinCount_;
+    return 0 != pinCount_;
   }
 
   void addRef() {
@@ -64,7 +73,12 @@ class Buffer {
   void release();
 
  private:
+  // Number of WaveBufferPtrs referencing 'this'.
   std::atomic<int32_t> referenceCount_{0};
+
+  // Number of pins. Incremented when passing to a kernel, decremented
+  // when the kernel returns. If 0 pins, o compute is proceeding and
+  // the memory owned by 'this' can be moved.
   std::atomic<int32_t> pinCount_{0};
 
   // Pointer to device/universal memory. If 'referenceCount_' is 0, this is the
@@ -72,6 +86,9 @@ class Buffer {
   void* ptr_{nullptr};
 
   // Byte size of memory held by 'ptr_'. Undefined if 'referenceCount_' is 0.
+  int64_t capacity_{0};
+
+  // Number of bytes used. Must be <= 'capacity_'.
   int64_t size_{0};
 
   // The containeing arena.

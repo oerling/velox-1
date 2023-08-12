@@ -23,7 +23,7 @@
 namespace facebook::velox::wave {
 
 struct Device {
-  Device(int32_t id) : deviceId(id) {}
+  explicit Device(int32_t id) : deviceId(id) {}
 
   int32_t deviceId;
 };
@@ -53,7 +53,15 @@ struct Stream {
 // Abstract class wrapping device or universal address memory allocation.
 class GpuAllocator {
  public:
+  virtual ~GpuAllocator() = default;
+
+  // Returns a pointer to at least 'bytes' of universal or device memory,
+  // depending on specific allocator. The size can be rounded up. The alignment
+  // is to 8 bytes.
   virtual void* allocate(size_t bytes) = 0;
+
+  /// Frees a pointer from allocate(). 'size' must correspond to the size given
+  /// to allocate(). A Memory must be freed to the same allocator it came from.
   virtual void free(void* ptr, size_t bytes) = 0;
 };
 

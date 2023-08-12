@@ -40,8 +40,13 @@ class GpuSlab {
 
   ~GpuSlab();
 
-  void* allocate(uint64_t bytes);
+  // Returns an address for at least 'bytes' of memory inside this slab, nullptr
+  // if there is no contiguous run of at least 'bytes'.
+  void* FOLLY_NULLABLE allocate(uint64_t bytes);
+
+  /// Frees an area returned by allocate().
   void free(void* address, uint64_t bytes);
+
   void* address() const {
     return reinterpret_cast<void*>(address_);
   }
@@ -147,6 +152,7 @@ class GpuArena {
 
   // Capacity in bytes for a single GpuSlab managed by this.
   const uint64_t singleArenaCapacity_;
+
   GpuAllocator* const allocator_;
 
   // A sorted list of GpuSlab by its initial address

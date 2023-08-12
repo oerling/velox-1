@@ -177,11 +177,9 @@ void GpuSlab::removeFreeBlock(std::map<uint64_t, uint64_t>::iterator& iter) {
 
 bool GpuSlab::checkConsistency() const {
   uint64_t numErrors = 0;
-  uint64_t bytes = 0;
   auto arenaEndAddress = reinterpret_cast<uint64_t>(address_) + byteSize_;
   auto iter = freeList_.begin();
   auto end = freeList_.end();
-  uint8_t* current = reinterpret_cast<uint8_t*>(address_);
   int64_t freeListTotalBytes = 0;
   while (iter != end) {
     // Lookup list should contain the address
@@ -209,7 +207,7 @@ bool GpuSlab::checkConsistency() const {
     // Verify next free block not overlapping
     auto next = std::next(iter);
     if (next != end && blockEndAddress > next->first) {
-      LOG(WARNING)
+      LOG(ERROR)
           << "GpuSlab::checkConsistency(): freeList_ out of sync: Overlapping"
              " blocks {addr:"
           << iter->first << ", size:" << iter->second
@@ -223,15 +221,16 @@ bool GpuSlab::checkConsistency() const {
 
   // Check consistency of lookup list
   int64_t freeLookupTotalBytes = 0;
-  for (auto iter = freeLookup_.begin(); iter != freeLookup_.end(); iter++) {
-    if (iter->second.empty()) {
-      LOG(WARNING)
+  for (auto freeIter = freeLookup_.begin(); freeIter != freeLookup_.end();
+       freeIter++) {
+    if (freeIter->second.empty()) {
+      LOG(ERROR)
           << "GpuSlab::checkConsistency(): freeLookup_ out of sync: Empty "
              "address list for size "
-          << iter->first;
+          << freeIter->first;
       numErrors++;
     }
-    freeLookupTotalBytes += (iter->first * iter->second.size());
+    freeLookupTotalBytes += (freeIter->first * freeIter->second.size());
   }
 
   // Check consistency of freeList_ and freeLookup_ in terms of bytes
@@ -301,6 +300,7 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
   result->arena_ = this;
   result->ptr_ = ptr;
   result->size_ = size;
+  result->capacity_ = size;
   return result;
 }
 
@@ -310,6 +310,16 @@ WaveBufferPtr GpuArena::allocate(uint64_t bytes) {
   auto* result = currentArena_->allocate(bytes);
   if (result != nullptr) {
     return getBuffer(result, bytes);
+  }
+  for (auto pair : arenas_) {
+    if (pair.second == currentArena_ || pair.second->freeBytes() < bytes) {
+      continue;
+    }
+    result = pair.second->allocate(bytes);
+    if (result) {
+      currentArena_ = pair.second;
+      return getBuffer(result, bytes);
+    }
   }
 
   // If first allocation fails we create a new GpuSlab for another attempt. If
@@ -348,6 +358,7 @@ void GpuArena::free(Buffer* buffer) {
   }
   buffer->ptr_ = firstFreeBuffer_;
   buffer->size_ = 0;
+  buffer->capacity_ = 0;
   firstFreeBuffer_ = buffer;
 }
 

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include "velox/experimental/wave/common/Cuda.h"
 
 /// Sample header for testing Cuda.h

@@ -14,24 +14,22 @@
  * limitations under the License.
  */
 
-
-#include "velox/experimental/wave/common/tests/CudaTest.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
-
+#include "velox/experimental/wave/common/tests/CudaTest.h"
 
 namespace facebook::velox::wave {
 
-  __global__ void addOneKernel(int32_t* numbers, int32_t size) {
-    auto index = blockDim.x * blockIdx.x + threadIdx.x;
-    if (index < size) {
-      ++numbers[index];
-    }
+__global__ void addOneKernel(int32_t* numbers, int32_t size) {
+  auto index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (index < size) {
+    ++numbers[index];
   }
-  
+}
+
 void TestStream::addOne(int32_t* numbers, int32_t size) {
   auto numBlocks = roundUp(size, 256) / 256;
   addOneKernel<<<numBlocks, 256, 0, stream->stream>>>(numbers, size);
+  CUDA_CHECK(cudaGetLastError());
 }
 
-
-}
+} // namespace facebook::velox::wave
