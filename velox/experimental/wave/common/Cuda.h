@@ -15,8 +15,9 @@
  */
 
 #pragma once
-#include <memory>
 
+#include <memory>
+#include <functional>
 /// Contains wrappers for common Cuda objects. Wave does not directly
 /// include Cuda headers because of interference with BitUtils.h and
 /// SimdUtils.h.
@@ -37,7 +38,8 @@ void setDevice(Device* device);
 
 struct StreamImpl;
 
-struct Stream {
+  class Stream {
+public:
   Stream();
   virtual ~Stream();
 
@@ -47,7 +49,12 @@ struct Stream {
   /// Enqueus a prefetch. Prefetches to host if 'device' is nullptr, otherwise
   /// to 'device'.
   void prefetch(Device* device, void* address, size_t size);
-  std::unique_ptr<StreamImpl> stream;
+
+    /// Adds a callback to be invoked after pending processing is done.
+  void addCallback(std::function<void()> callback);
+  
+protected:
+  std::unique_ptr<StreamImpl> stream_;
 };
 
 // Abstract class wrapping device or universal address memory allocation.

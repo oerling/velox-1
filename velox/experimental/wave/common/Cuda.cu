@@ -61,21 +61,40 @@ void setDevice(Device* device) {
 }
 
 Stream::Stream() {
-  stream = std::make_unique<StreamImpl>();
-  CUDA_CHECK(cudaStreamCreate(&stream->stream));
+  stream_ = std::make_unique<StreamImpl>();
+  CUDA_CHECK(cudaStreamCreate(&stream_->stream));
 }
 
 Stream::~Stream() {
-  cudaStreamDestroy(stream->stream);
+  cudaStreamDestroy(stream_->stream);
 }
 
 void Stream::wait() {
-  CUDA_CHECK(cudaStreamSynchronize(stream->stream));
+  CUDA_CHECK(cudaStreamSynchronize(stream_->stream));
 }
 
 void Stream::prefetch(Device* device, void* ptr, size_t size) {
   CUDA_CHECK(cudaMemPrefetchAsync(
-      ptr, size, device ? device->deviceId : cudaCpuDeviceId, stream->stream));
+      ptr, size, device ? device->deviceId : cudaCpuDeviceId, stream_->stream));
+}
+
+namespace {
+struct CallbackData {
+  CallbackData(std::function<void()> callback)
+    : callback(std::move(callback)) {};
+  std::function<void()> callback;
+};
+
+  void readyCallback(void* voidData) {
+    std::unique_ptr<CallbackData>  data(reinterpret_cast<CallbackData*>(voidData));
+    data->callback();
+  }
+} // namespace
+
+void Stream::addCallback(std::function<void()> callback) {
+  auto cdata = new CallbackData(std::move(callback));
+  CUDA_CHECK(
+	     cudaLaunchHostFunc(stream_->stream, readyCallback, cdata));
 }
 
 } // namespace facebook::velox::wave

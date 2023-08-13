@@ -20,6 +20,10 @@
 
 namespace facebook::velox::wave {
 
+    Vector(TypePtr type, GpuArena* arena) : type_(type), arena_(arena) {
+
+    }
+
   
 
 }

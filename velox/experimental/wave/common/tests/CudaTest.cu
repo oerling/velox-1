@@ -28,7 +28,7 @@ __global__ void addOneKernel(int32_t* numbers, int32_t size) {
 
 void TestStream::addOne(int32_t* numbers, int32_t size) {
   auto numBlocks = roundUp(size, 256) / 256;
-  addOneKernel<<<numBlocks, 256, 0, stream->stream>>>(numbers, size);
+  addOneKernel<<<numBlocks, 256, 0, stream_->stream>>>(numbers, size);
   CUDA_CHECK(cudaGetLastError());
 }
 

@@ -15,11 +15,38 @@
  */
 
 #pragma once
-#include "velox/vector/BaseVector.h"
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::wave {
 
+/// Specifies the computed state of a Vector.
+enum class uint8_t VectorState {
+  // Compute not possible, prerequisites not computed.
+  kNoValue,
+  // Buffers and size have a definite values.
+  kValue,
+  // Compute in progress, buffers and size undefined.
+  kPending,
+  // Computable but not in progress, buffers may not exist. Call load() to flip
+  // the state to kPending or kValue.
+  kLazy
+};
+
+  class Loader {
+    virtual ~Loader() = default;
+
+    virtual load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
+
+    /// Notifies 'this' that a load should load, in ddition to the requested rows,  all rows above the last position given in the load indeices.
+    void loadTailOnLoad() {
+      loadTail_ = true;
+    }
+
+  protected:
+    bool loadTail_{false};
+  }
+  
 /// Represents a vector of device side intermediate results. Vector is
 /// a host side only structure, the WaveBufferPtrs own the device
 /// memory. Unlike Velox vectors, these are statically owned by Wave
@@ -60,14 +87,22 @@ class Vector {
   // with a selected size.
   void reset();
 
+  VectorState state() const {
+    return state_;
+  }
+  
   /// Marks that the buffers have results pending and have no defined content.
   void startCompute();
 
-  /// Indicates that values of buffers are defined. Triggers arrived callbacks. 
+  /// Indicates that values of buffers are defined. Triggers arrived callbacks.
   void arrived();
 
-  // Inidcates that there is no present or planned compute that relies on values of 'this', so that buffers can be reused.
+  // Indicates that there is no present or planned compute that relies on values
+  // of 'this', so that buffers can be reused.
   void fullyConsumed();
+
+  /// Starts computation for a kLazy state vector.
+  void load();
   
   Vector& childAt(int32_t index) {
     return *children_[index];
@@ -120,8 +155,12 @@ class Vector {
   // Serializes ready callback registration and activation.
   std::mutex readyMutex_;
 
-  std::vector<ReadyCallback> readyCallbacks
+  VectorState state_;
+
+  std::unique_ptr<Loader> loader_;
   
+  std::vector<ReadyCallback> readyCallbacks;
+
   ArrivedCallback arrived_;
 
   // Count of children that have a value but have not been fully consumed by
