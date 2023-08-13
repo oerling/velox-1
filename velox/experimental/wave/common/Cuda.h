@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <memory>
 #include <functional>
+#include <memory>
 /// Contains wrappers for common Cuda objects. Wave does not directly
 /// include Cuda headers because of interference with BitUtils.h and
 /// SimdUtils.h.
@@ -38,8 +38,8 @@ void setDevice(Device* device);
 
 struct StreamImpl;
 
-  class Stream {
-public:
+class Stream {
+ public:
   Stream();
   virtual ~Stream();
 
@@ -50,13 +50,45 @@ public:
   /// to 'device'.
   void prefetch(Device* device, void* address, size_t size);
 
-    /// Adds a callback to be invoked after pending processing is done.
+  /// Adds a callback to be invoked after pending processing is done.
   void addCallback(std::function<void()> callback);
-  
-protected:
+
+ protected:
   std::unique_ptr<StreamImpl> stream_;
+
+  friend class Event;
 };
 
+
+struct EventImpl;
+
+/// Wrapper on Cuda Event.
+class Event {
+ public:
+  Event(bool withTime = false);
+
+  ~Event();
+  
+  ///  Recirds event on 'stream'. This must be called before other member functions.
+  void record(Stream&);
+
+  /// Calling host thread waits  for work recorded by 'this' to complete.
+  void wait();
+
+  /// 'stream' will wait for the work recorded by 'this' to complete before
+  /// executing work enqueued after this call to wait()..
+  void wait(Stream& stream);
+
+  /// Returns time in ms betweene 'this' and an earlier 'start'. Both events must enable timing.
+  float elapsedTime(const Event& start) const;
+  
+ private:
+  std::unique_ptr<EventImpl> event_;
+  const bool hasTiming_;
+  bool recorded_{false};
+};
+
+  
 // Abstract class wrapping device or universal address memory allocation.
 class GpuAllocator {
  public:

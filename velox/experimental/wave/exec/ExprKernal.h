@@ -62,17 +62,24 @@ struct ExprInstruction {
 ///
 enum class ErrorCode : int32_t { kOk, kDivZero };
 
-/// Contains a error code and a instruction/lane where it occurred. Multiple
+/// Contains a result row count and error code and a instruction/lane where it occurred. Multiple
 /// lanes can overwrite this without serialization. Different fields may come
 /// from different errors. The host will piece together some plausible message
 /// from this, though.
-struct ErrorReturn {
+struct BlockStatus {
+  int32_t numRows{0};
+  int32_t * rowMapping{nullptr};
   ErrorCode code{kOk};
   int32_t instruction{-1};
   int32_t lane{-1};
 };
 
 struct ThreadBlockInstructions {
+
+  // Optional input status. This is used when chaining multiple kernels one after the other on a stream without intervening host code. If contains an error, the error is copied to the status of this and execution returns.  If no error, this contains a row count and an optional row number mapping to apply to input.
+  BlockStatus* inputStatus{nullptr};
+  BlockStatus* outputStatus{nullptr};
+  
   // Offset of first operand (lane 0 in thread block) from index 0 of operand
   // arrays.
   int32_t begin;

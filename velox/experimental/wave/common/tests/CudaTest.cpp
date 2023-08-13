@@ -16,6 +16,8 @@
 
 #include <iostream>
 
+#include <folly/init/Init.h>
+
 #include <gtest/gtest.h>
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Semaphore.h"
@@ -23,6 +25,25 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/CudaTest.h"
+
+DEFINE_int32(num_streams, 0, "Number of paralll streams");
+DEFINE_int32(op_size, 0, "Size of invoke kernel (ints read and written)");
+DEFINE_int32(
+    num_ops,
+    0,
+    "Number of consecutive kernel executions on each stream");
+DEFINE_bool(
+    use_callbacks,
+    false,
+    "Queue a host callback after each kernel execution");
+DEFINE_bool(
+    sync_streams,
+    false,
+    "Use events to syncronize all parallel streams before calling the next kernel on each stream.");
+DEFINE_bool(
+    prefetch,
+    true,
+    "Use prefetch to move unified memory to device at start and to host at end");
 
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
@@ -34,129 +55,186 @@ class CudaTest : public testing::Test {
     setDevice(device_);
     allocator_ = getAllocator(device_);
   }
-  Device* device_;
-  GpuAllocator* allocator_;
-};
 
-TEST_F(CudaTest, stream) {
-  constexpr int32_t kSize = 1000000;
-  TestStream stream;
-  auto ints =
-      reinterpret_cast<int32_t*>(allocator_->allocate(kSize * sizeof(int32_t)));
-  for (auto i = 0; i < kSize; ++i) {
-    ints[i] = i;
-  }
-  stream.prefetch(device_, ints, kSize * sizeof(int32_t));
-  stream.addOne(ints, kSize);
-  stream.prefetch(nullptr, ints, kSize * sizeof(int32_t));
-  stream.wait();
-  for (auto i = 0; i < kSize; ++i) {
-    ASSERT_EQ(ints[i], i + 1);
-  }
-  allocator_->free(ints, sizeof(int32_t) * kSize);
-}
+  void streamTest(
+      int32_t numStreams,
+      int32_t numOps,
+      int32_t opSize,
+      bool prefetch,
+      bool useCallbacks,
+      bool syncStreams) {
+    int32_t firstNotify = useCallbacks ? 1 : numOps - 1;
+    constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+    std::vector<std::unique_ptr<TestStream>> streams;
+    std::vector<std::unique_ptr<Event>> events;
+    std::vector<int32_t*> ints;
+    std::mutex mutex;
+    int32_t initValues[16] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    auto initVector = xsimd::load_unaligned(&initValues[0]);
+    auto increment = xsimd::broadcast<int32_t>(1);
+    std::vector<int64_t> delay;
+    delay.reserve(numStreams * (numOps + 2));
 
-TEST_F(CudaTest, callback) {
-  // Makes several parallel streams and enqueues a series of kernel and host
-  // function invocations on each. Records the latency at every host function
-  // invocation. Finally waits for all the host function to be invoked.
-  constexpr int32_t kSize = 1024 * 1024;
-  constexpr int32_t kNumStreams = 10;
-  constexpr int32_t kNumOps = 10;
-  constexpr int32_t kFirstNotify = kNumOps - 1;
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  std::vector<std::unique_ptr<TestStream>> streams;
-  std::vector<int32_t*> ints;
-  std::mutex mutex;
-  int32_t initValues[16] = {
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-  auto initVector = xsimd::load_unaligned(&initValues[0]);
-  auto increment = xsimd::broadcast<int32_t>(1);
-  std::vector<int64_t> delay;
-  delay.reserve(kNumStreams * (kNumOps + 2));
-
-  auto start = getCurrentTimeMicro();
-  for (auto i = 0; i < kNumStreams; ++i) {
-    streams.push_back(std::make_unique<TestStream>());
-    ints.push_back(reinterpret_cast<int32_t*>(
-        allocator_->allocate(kSize * sizeof(int32_t))));
-    auto last = ints.back();
-    auto data = initVector;
-    for (auto i = 0; i < kSize; i += kBatch) {
-      data.store_unaligned(last + i);
-      data += increment;
-    }
-  }
-  for (auto i = 0; i < kNumStreams; ++i) {
-    streams[i]->addCallback([&]() {
-      auto d = getCurrentTimeMicro() - start;
-      {
-        std::lock_guard<std::mutex> l(mutex);
-        delay.push_back(d);
+    auto start = getCurrentTimeMicro();
+    for (auto i = 0; i < numStreams; ++i) {
+      streams.push_back(std::make_unique<TestStream>());
+      ints.push_back(reinterpret_cast<int32_t*>(
+          allocator_->allocate(opSize * sizeof(int32_t))));
+      auto last = ints.back();
+      auto data = initVector;
+      for (auto i = 0; i < opSize; i += kBatch) {
+        data.store_unaligned(last + i);
+        data += increment;
       }
-    });
-    streams[i]->prefetch(device_, ints[i], kSize * sizeof(int32_t));
-  }
-
-  Semaphore sem(0);
-  for (auto counter = 0; counter < kNumOps; ++counter) {
-    for (auto i = 0; i < kNumStreams; ++i) {
-      streams[i]->addOne(ints[i], kSize);
-      if (counter == 0 || counter >= kFirstNotify) {
-	streams[i]->addCallback([&]() {
+    }
+    for (auto i = 0; i < numStreams; ++i) {
+      streams[i]->addCallback([&]() {
         auto d = getCurrentTimeMicro() - start;
         {
           std::lock_guard<std::mutex> l(mutex);
           delay.push_back(d);
         }
-        sem.release();
       });
+      if (prefetch) {
+        streams[i]->prefetch(device_, ints[i], opSize * sizeof(int32_t));
       }
-	if (counter == kNumOps - 1) {
-        streams[i]->prefetch(nullptr, ints[i], kSize * sizeof(int32_t));
+    }
+
+    Semaphore sem(0);
+    for (auto counter = 0; counter < numOps; ++counter) {
+      if (counter > 0 && syncStreams) {
+        waitEach(streams, events);
+      }
+      for (auto i = 0; i < numStreams; ++i) {
+        streams[i]->addOne(ints[i], opSize);
+        if (counter == 0 || counter >= firstNotify) {
+          streams[i]->addCallback([&]() {
+            auto d = getCurrentTimeMicro() - start;
+            {
+              std::lock_guard<std::mutex> l(mutex);
+              delay.push_back(d);
+            }
+            sem.release();
+          });
+        }
+        if (counter == numOps - 1) {
+          if (prefetch) {
+            streams[i]->prefetch(nullptr, ints[i], opSize * sizeof(int32_t));
+          }
+        }
+      }
+      if (syncStreams && counter < numOps - 1) {
+        recordEach(streams, events);
+      }
+    }
+    // Destroy the streams while items pending. Items should finish.
+    streams.clear();
+    for (auto i = 0; i < numStreams * (numOps + 1 - firstNotify); ++i) {
+      sem.acquire();
+    }
+    for (auto i = 0; i < numStreams; ++i) {
+      auto* array = ints[i];
+      auto data = initVector + numOps;
+      xsimd::batch_bool<int32_t> error;
+      error = error ^ error;
+      for (auto j = 0; j < opSize; j += kBatch) {
+        error = error | (data != xsimd::load_unaligned(array + j));
+        data += increment;
+      }
+      ASSERT_EQ(0, simd::toBitMask(error));
+      delay.push_back(getCurrentTimeMicro() - start);
+    }
+    for (auto i = 0; i < numStreams; ++i) {
+      allocator_->free(ints[i], sizeof(int32_t) * opSize);
+    }
+    std::cout << "Delays: ";
+    int32_t counter = 0;
+    for (auto d : delay) {
+      std::cout << d << " ";
+      if (++counter % numStreams == 0) {
+        std::cout << std::endl;
+      }
+    }
+    std::cout << std::endl;
+    float toDeviceMicros = delay[(2 * numStreams) - 1] - delay[0];
+    float inDeviceMicros =
+        delay[delay.size() - numStreams - 1] - delay[numStreams * 2 - 1];
+    float toHostMicros = delay.back() - delay[delay.size() - numStreams];
+    float gbSize =
+        (sizeof(int32_t) * numStreams * static_cast<float>(opSize)) / (1 << 30);
+    std::cout << "to device= " << toDeviceMicros << "us ("
+              << gbSize / (toDeviceMicros / 1000000) << " GB/s)" << std::endl;
+    std::cout << "In device (ex. first pass): " << inDeviceMicros << "us ("
+              << gbSize * (numOps - 1) / (inDeviceMicros / 1000000) << " GB/s)"
+              << std::endl;
+    std::cout << "to host= " << toHostMicros << "us ("
+              << gbSize / (toHostMicros / 1000000) << " GB/s)" << std::endl;
+  }
+
+  void recordEach(
+      std::vector<std::unique_ptr<TestStream>>& streams,
+      std::vector<std::unique_ptr<Event>>& events) {
+    for (auto& stream : streams) {
+      events.push_back(std::make_unique<Event>());
+      events.back()->record(*stream);
+    }
+  }
+
+  // Every stream waits for every event recorded on each stream in the previous
+  // call to recordEach.
+  void waitEach(
+      std::vector<std::unique_ptr<TestStream>>& streams,
+      std::vector<std::unique_ptr<Event>>& events) {
+    auto firstEvent = events.size() - streams.size();
+    for (auto& stream : streams) {
+      for (auto eventIndex = firstEvent; eventIndex < events.size();
+           ++eventIndex) {
+        events[eventIndex]->wait(*stream);
       }
     }
   }
-  // Destroy the streams while items pending. Items should finish.
-  streams.clear();
-  for (auto i = 0; i < kNumStreams * (kNumOps + 1 - kFirstNotify); ++i) {
-    sem.acquire();
+  Device* device_;
+  GpuAllocator* allocator_;
+};
+
+TEST_F(CudaTest, stream) {
+  constexpr int32_t opSize = 1000000;
+  TestStream stream;
+  auto ints = reinterpret_cast<int32_t*>(
+      allocator_->allocate(opSize * sizeof(int32_t)));
+  for (auto i = 0; i < opSize; ++i) {
+    ints[i] = i;
   }
-  for (auto i = 0; i < kNumStreams; ++i) {
-    auto* array = ints[i];
-    auto data = initVector + kNumOps;
-    xsimd::batch_bool<int32_t> error;
-    error = error ^ error;
-    for (auto j = 0; j < kSize; j += kBatch) {
-      error = error | (data != xsimd::load_unaligned(array + j));
-      data += increment;
-    }
-    ASSERT_EQ(0, simd::toBitMask(error));
-    delay.push_back(getCurrentTimeMicro() - start);
+  stream.prefetch(device_, ints, opSize * sizeof(int32_t));
+  stream.addOne(ints, opSize);
+  stream.prefetch(nullptr, ints, opSize * sizeof(int32_t));
+  stream.wait();
+  for (auto i = 0; i < opSize; ++i) {
+    ASSERT_EQ(ints[i], i + 1);
   }
-  for (auto i = 0; i < kNumStreams; ++i) {
-    allocator_->free(ints[i], sizeof(int32_t) * kSize);
+  allocator_->free(ints, sizeof(int32_t) * opSize);
+}
+
+TEST_F(CudaTest, callback) {
+  streamTest(10, 10, 1024 * 1024, true, false, false);
+}
+
+TEST_F(CudaTest, custom) {
+  if (FLAGS_num_streams == 0) {
+    return;
   }
-  std::cout << "Delays: ";
-  int32_t counter = 0;
-  for (auto d : delay) {
-    std::cout << d << " ";
-    if (++counter % kNumStreams == 0) {
-      std::cout << std::endl;
-    }
-  }
-  std::cout << std::endl;
-  float toDeviceMicros = delay[(2 * kNumStreams) - 1] - delay[0];
-  float inDeviceMicros =
-      delay[delay.size() - kNumStreams - 1] - delay[kNumStreams * 2 - 1];
-  float toHostMicros = delay.back() - delay[delay.size() - kNumStreams];
-  float gbSize =
-    (sizeof(int32_t) * kNumStreams * static_cast<float>(kSize)) / (1 << 30);
-  std::cout << "to device= " << toDeviceMicros << "us ("
-            << gbSize / (toDeviceMicros / 1000000) << " GB/s)" << std::endl;
-  std::cout << "In device (ex. first pass): " << inDeviceMicros << "us ("
-            << gbSize * (kNumOps - 1) / (inDeviceMicros / 1000000) << " GB/s)"
-            << std::endl;
-  std::cout << "to host= " << toHostMicros << "us ("
-            << gbSize / (toHostMicros / 1000000) << " GB/s)" << std::endl;
+  streamTest(
+      FLAGS_num_streams,
+      FLAGS_num_ops,
+      FLAGS_op_size,
+      FLAGS_prefetch,
+      FLAGS_use_callbacks,
+      FLAGS_sync_streams);
+}
+
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(); 
+  folly::init(&argc, &argv);
+  return RUN_ALL_TESTS();
 }
