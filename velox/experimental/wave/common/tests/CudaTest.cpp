@@ -62,7 +62,8 @@ TEST_F(CudaTest, callback) {
   // invocation. Finally waits for all the host function to be invoked.
   constexpr int32_t kSize = 1024 * 1024;
   constexpr int32_t kNumStreams = 10;
-  constexpr int32_t kNumOps = 5;
+  constexpr int32_t kNumOps = 10;
+  constexpr int32_t kFirstNotify = kNumOps - 1;
   constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
   std::vector<std::unique_ptr<TestStream>> streams;
   std::vector<int32_t*> ints;
@@ -101,7 +102,8 @@ TEST_F(CudaTest, callback) {
   for (auto counter = 0; counter < kNumOps; ++counter) {
     for (auto i = 0; i < kNumStreams; ++i) {
       streams[i]->addOne(ints[i], kSize);
-      streams[i]->addCallback([&]() {
+      if (counter == 0 || counter >= kFirstNotify) {
+	streams[i]->addCallback([&]() {
         auto d = getCurrentTimeMicro() - start;
         {
           std::lock_guard<std::mutex> l(mutex);
@@ -109,14 +111,15 @@ TEST_F(CudaTest, callback) {
         }
         sem.release();
       });
-      if (counter == kNumOps - 1) {
+      }
+	if (counter == kNumOps - 1) {
         streams[i]->prefetch(nullptr, ints[i], kSize * sizeof(int32_t));
       }
     }
   }
   // Destroy the streams while items pending. Items should finish.
   streams.clear();
-  for (auto i = 0; i < kNumStreams * kNumOps; ++i) {
+  for (auto i = 0; i < kNumStreams * (kNumOps + 1 - kFirstNotify); ++i) {
     sem.acquire();
   }
   for (auto i = 0; i < kNumStreams; ++i) {
@@ -143,12 +146,17 @@ TEST_F(CudaTest, callback) {
     }
   }
   std::cout << std::endl;
-  float toDeviceMicros = delay[(2 * kNumStreams) - 1] - delay[kNumStreams - 1];
+  float toDeviceMicros = delay[(2 * kNumStreams) - 1] - delay[0];
+  float inDeviceMicros =
+      delay[delay.size() - kNumStreams - 1] - delay[kNumStreams * 2 - 1];
   float toHostMicros = delay.back() - delay[delay.size() - kNumStreams];
   float gbSize =
-      sizeof(int32_t) * kNumStreams * static_cast<float>(kSize) / (1 << 30);
+    (sizeof(int32_t) * kNumStreams * static_cast<float>(kSize)) / (1 << 30);
   std::cout << "to device= " << toDeviceMicros << "us ("
             << gbSize / (toDeviceMicros / 1000000) << " GB/s)" << std::endl;
+  std::cout << "In device (ex. first pass): " << inDeviceMicros << "us ("
+            << gbSize * (kNumOps - 1) / (inDeviceMicros / 1000000) << " GB/s)"
+            << std::endl;
   std::cout << "to host= " << toHostMicros << "us ("
             << gbSize / (toHostMicros / 1000000) << " GB/s)" << std::endl;
 }
