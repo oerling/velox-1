@@ -21,63 +21,59 @@
 
 namespace facebook::velox::wave {
 
-  struct Channel {
-    int32_t id;
-    WaveVectorPtr vector;
-  };
+struct Channel {
+  int32_t id;
+  WaveVectorPtr vector;
+};
 
-  struc InputGroup {
-    // Input may be received at different times for different
-    // channels. Indicates which inputs should be received first,
-    // e.g. given a choice, a group by wants the grouping keys before
-    // the aggregate arguments because computing the groups can start
-    // before the aggregate arguments arrive. A lower value indicates
-    // earlier preferred receipt. For a projection all values will be
-    // 0 if all the expressions are independent. Channels that common
-    // subexpressions depend on might be preferred before other
-    // channels. All the channels in the group must be received though before the computation can start.
-    int32_t precedence;
-    std::vector<ChannelIndex> channels;
-  };
+struc InputGroup {
+  // Input may be received at different times for different
+  // channels. Indicates which inputs should be received first,
+  // e.g. given a choice, a group by wants the grouping keys before
+  // the aggregate arguments because computing the groups can start
+  // before the aggregate arguments arrive. A lower value indicates
+  // earlier preferred receipt. For a projection all values will be
+  // 0 if all the expressions are independent. Channels that common
+  // subexpressions depend on might be preferred before other
+  // channels. All the channels in the group must be received though before the
+  // computation can start.
+  int32_t precedence;
+  std::vector<ChannelIndex> channels;
+};
 
-  
-  enm class DropletStatus {
-    kDone;
-    kMore,
-    kError
-  };
-  
-  /// The result of a droplet execution.
-  struct Result {
-    DropletStatus Status;
-    int32_t numRows;
-  };
-  
-  /// Common fields in Wave kernel launch.
-  struct Droplet {
-    int16_t op;
-    Result* result;
-  };
+enm class DropletStatus {
+  kDone;
+  kMore, kError
+};
 
-  class DropletStream : public Stream {
-    virtual start(Droplet** droplets, 
-  };
-  
-  };
-  
-  struct Wave {
+/// The result of a droplet execution.
+struct Result {
+  DropletStatus Status;
+  int32_t numRows;
+};
+
+/// Common fields in Wave kernel launch.
+struct Droplet {
+  int16_t op;
+  Result* result;
+};
+
+class DropletStream : public Stream {
+    virtual start(Droplet** droplets,
+};
+
+}; // namespace facebook::velox::wave
+
+struct Wave {
     int64_t sequence;
     Span<Droplet*> dropets;
     Span<Channel> Channels;
     Span<Channel> identityChannels;
-  };
-  
-
+};
 
 struct Dependent {
-  int64_t sequence;
-  int32_t numMissing;
-  span<Channel*> channels;
-  std::function<void(Dependent*)> activate;
+    int64_t sequence;
+    int32_t numMissing;
+    span<Channel*> channels;
+    std::function<void(Dependent*)> activate;
 }
-

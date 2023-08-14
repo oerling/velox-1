@@ -242,7 +242,7 @@ struct DriverCtx {
   /// Builds the spill config for the operator with specified 'operatorId'.
   std::optional<Spiller::Config> makeSpillConfig(int32_t operatorId) const;
 };
-  
+
 class Driver : public std::enable_shared_from_this<Driver> {
  public:
   static void enqueue(std::shared_ptr<Driver> instance);
@@ -369,7 +369,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;
-  
+
   friend struct DriverFactory;
 };
 
@@ -379,16 +379,15 @@ using OperatorSupplier = std::function<
 using Consumer = std::function<BlockingReason(RowVectorPtr, ContinueFuture*)>;
 using ConsumerSupplier = std::function<Consumer()>;
 
-  struct DriverFactory;
-  using   AdaptDriverFunction = std::function<bool(
-					     const DriverFactory& factory,
-					       Driver& driver)>;
+struct DriverFactory;
+using AdaptDriverFunction =
+    std::function<bool(const DriverFactory& factory, Driver& driver)>;
 
-  struct DriverAdapter {
-    std::string label;
-    AdaptDriverFunction adaptDriver;
-  };
-  
+struct DriverAdapter {
+  std::string label;
+  AdaptDriverFunction adaptDriver;
+};
+
 struct DriverFactory {
   std::vector<std::shared_ptr<const core::PlanNode>> planNodes;
   /// Function that will generate the final operator of a driver being
@@ -428,7 +427,7 @@ struct DriverFactory {
       std::function<int(int pipelineId)> numDrivers);
 
   static void registerAdapter(DriverAdapter adapter);
-  
+
   bool supportsSingleThreadedExecution() const {
     return !needsPartitionedOutput() && !needsExchangeClient() &&
         !needsLocalExchange();

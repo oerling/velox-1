@@ -16,12 +16,6 @@
 
 #include "velox/experimental/wave/Driver.h"
 
-namespace facebook::velox::wave {
+namespace facebook::velox::wave {}
 
-
-
-}
-
-class Driver {
-
-}
+class Driver {}

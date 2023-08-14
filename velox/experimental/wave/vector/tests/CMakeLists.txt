@@ -19,7 +19,8 @@ set_target_properties(velox_wave_vector_test PROPERTIES CUDA_ARCHITECTURES
 
 add_test(veloxwave__vector_test velox_wave_vector_test)
 
-target_link_libraries(velox_wave_vector_test
+target_link_libraries(
+  velox_wave_vector_test
   velox_wave_vector
   velox_type
   velox_vector
@@ -39,5 +40,3 @@ target_link_libraries(velox_wave_vector_test
   glog::glog
   fmt::fmt
   ${FILESYSTEM})
-
-

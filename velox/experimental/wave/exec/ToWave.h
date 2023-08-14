@@ -16,17 +16,13 @@
 
 #pragma once
 
-#include "velox/experimental/wave/Operator.h"
+#include "velox/exec/FilterProject.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/Values.h"
-#include "velox/exec/FilterProject.h"
-
+#include "velox/experimental/wave/Operator.h"
 
 namespace facebook::velox::wave {
 
-  std::shared_ptr<exec::Driver> toWave(exec::Driver& driver);
-  
+std::shared_ptr<exec::Driver> toWave(exec::Driver& driver);
 
 }
-
-

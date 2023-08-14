@@ -15,10 +15,4 @@
  * limitations under the License.
  */
 
-
-
-namespace facebook::velox::wave {
-
-  
-
-}
+namespace facebook::velox::wave {}

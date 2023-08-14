@@ -32,9 +32,8 @@ else {
 }
 }
 
-  bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
-  auto operators = driver->operators();
-  for (auto first = 0; first < operators_.size(); ++first)
+bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
+    auto operators = driver->operators();
+    for (auto first = 0; first < operators_.size(); ++first)
 }
-
-}  
+}

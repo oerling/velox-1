@@ -38,16 +38,12 @@ enum class OpCode {
   kNE
 };
 
-  
-  struct Operand {
-    const void* base;
-    const int32_t* indices;
-    bool constant;
-  };
+struct Operand {
+  const void* base;
+  const int32_t* indices;
+  bool constant;
+};
 
-
-
- 
 struct ExprInstruction {
   BinaryOpCode op;
   Operand* left;
@@ -63,24 +59,27 @@ struct ExprInstruction {
 ///
 enum class ErrorCode : int32_t { kOk, kDivZero };
 
-/// Contains a result row count and error code and a instruction/lane where it occurred. Multiple
-/// lanes can overwrite this without serialization. Different fields may come
-/// from different errors. The host will piece together some plausible message
-/// from this, though.
+/// Contains a result row count and error code and a instruction/lane where it
+/// occurred. Multiple lanes can overwrite this without serialization. Different
+/// fields may come from different errors. The host will piece together some
+/// plausible message from this, though.
 struct BlockStatus {
   int32_t numRows{0};
-  int32_t * rowMapping{nullptr};
+  int32_t* rowMapping{nullptr};
   ErrorCode code{kOk};
   int32_t instruction{-1};
   int32_t lane{-1};
 };
 
 struct ThreadBlockProgram {
-
-  // Optional input status. This is used when chaining multiple kernels one after the other on a stream without intervening host code. If contains an error, the error is copied to the status of this and execution returns.  If no error, this contains a row count and an optional row number mapping to apply to input.
+  // Optional input status. This is used when chaining multiple kernels one
+  // after the other on a stream without intervening host code. If contains an
+  // error, the error is copied to the status of this and execution returns.  If
+  // no error, this contains a row count and an optional row number mapping to
+  // apply to input.
   BlockStatus* inputStatus{nullptr};
   BlockStatus* outputStatus{nullptr};
-  
+
   // Offset of first operand (lane 0 in thread block) from index 0 of operand
   // arrays.
   int32_t begin;
@@ -92,10 +91,9 @@ struct ThreadBlockProgram {
   ErrorReturn* error;
 };
 
- class ExprStream : public Stream {
+class ExprStream : public Stream {
  public:
-   void call(Stream* alias, int32_t numBlocks, ThreadBlockProgram* program);
-  };
- 
+  void call(Stream* alias, int32_t numBlocks, ThreadBlockProgram* program);
+};
 
 } // namespace facebook::velox::wave

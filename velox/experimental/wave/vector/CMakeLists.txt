@@ -16,12 +16,8 @@ add_library(velox_wave_vector GpuArena.cpp Buffer.cpp Cuda.cu Exception.cpp)
 
 set_target_properties(velox_wave_vector PROPERTIES CUDA_ARCHITECTURES native)
 
-target_link_libraries(velox_wave_vector velox_exception velox_common velox_exec_base)
+target_link_libraries(velox_wave_vector velox_exception velox_common
+                      velox_exec_base)
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
-
-
-
-
-

@@ -16,13 +16,13 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/Wave.h"
 #include "velox/exec/Operator.h"
+#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
-  class WaveDriver : public exec::SourceOperator {
-    WaveDriver(
+class WaveDriver : public exec::SourceOperator {
+  WaveDriver(
       int32_t operatorId,
       exec::DriverCtx* driverCtx,
       std::vector<exec::Operator*> operators);
@@ -47,12 +47,11 @@ namespace facebook::velox::wave {
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
-  private:
-  
-    // Wave operators replacing 'cpuOperators_' on GPU path. 
-    std::vector<std::unique_ptr<Operator>> operators_;
-    // The replaced Operators from the Driver. Can be used for a CPU fallback.
-    std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
-  };
-  
-}
+ private:
+  // Wave operators replacing 'cpuOperators_' on GPU path.
+  std::vector<std::unique_ptr<Operator>> operators_;
+  // The replaced Operators from the Driver. Can be used for a CPU fallback.
+  std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
+};
+
+} // namespace facebook::velox::wave

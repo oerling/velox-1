@@ -24,18 +24,20 @@ namespace facebook::velox::wave {
 
 class BlockTestStream : public Stream {
  public:
-
   /// In each block of 256 bools in bools[i], counts the number of
   /// true and writes the indices of true lanes into the corresponding
   /// indices[i]. Stors the number of true values to sizes[i].
-  void testBoolToIndices(int32_t numBlocks, uint8_t** flags, int32_t** indices, int32_t* sizes, int64_t* times);
+  void testBoolToIndices(
+      int32_t numBlocks,
+      uint8_t** flags,
+      int32_t** indices,
+      int32_t* sizes,
+      int64_t* times);
 
-  /// Sorts 'rows'[i] using ids[i] as keys and stores the sorted order in 'result[i]'. 
-  //void dedup(int32_t numBlocks, uint16_t** ids, uint16_t** rows, uint16_t** resultRows);
-
+  /// Sorts 'rows'[i] using ids[i] as keys and stores the sorted order in
+  /// 'result[i]'.
+  // void dedup(int32_t numBlocks, uint16_t** ids, uint16_t** rows, uint16_t**
+  // resultRows);
 };
 
 } // namespace facebook::velox::wave
-
-
-

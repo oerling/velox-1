@@ -20,15 +20,12 @@
 
 namespace facebook::velox::wave {
 
-  class Filter : public Operator {
-  public:
-    Filter(RowTypePtr inputType, exec::ExprSet exprSet);
+class Filter : public Operator {
+ public:
+  Filter(RowTypePtr inputType, exec::ExprSet exprSet);
 
-  private:
-    std::vector<Subfield> input_;
-    
-    
-  };
+ private:
+  std::vector<Subfield> input_;
+};
 
-}
-
+} // namespace facebook::velox::wave

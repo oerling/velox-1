@@ -33,20 +33,21 @@ enum class uint8_t VectorState {
   kLazy
 };
 
-  class Loader {
-    virtual ~Loader() = default;
+class Loader {
+  virtual ~Loader() = default;
 
-    virtual load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
+  virtual load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
 
-    /// Notifies 'this' that a load should load, in ddition to the requested rows,  all rows above the last position given in the load indeices.
-    void loadTailOnLoad() {
-      loadTail_ = true;
-    }
-
-  protected:
-    bool loadTail_{false};
+  /// Notifies 'this' that a load should load, in ddition to the requested rows,
+  /// all rows above the last position given in the load indeices.
+  void loadTailOnLoad() {
+    loadTail_ = true;
   }
-  
+
+ protected:
+  bool loadTail_{false};
+}
+
 /// Represents a vector of device side intermediate results. Vector is
 /// a host side only structure, the WaveBufferPtrs own the device
 /// memory. Unlike Velox vectors, these are statically owned by Wave
@@ -90,7 +91,7 @@ class Vector {
   VectorState state() const {
     return state_;
   }
-  
+
   /// Marks that the buffers have results pending and have no defined content.
   void startCompute();
 
@@ -103,7 +104,7 @@ class Vector {
 
   /// Starts computation for a kLazy state vector.
   void load();
-  
+
   Vector& childAt(int32_t index) {
     return *children_[index];
   }
@@ -158,7 +159,7 @@ class Vector {
   VectorState state_;
 
   std::unique_ptr<Loader> loader_;
-  
+
   std::vector<ReadyCallback> readyCallbacks;
 
   ArrivedCallback arrived_;

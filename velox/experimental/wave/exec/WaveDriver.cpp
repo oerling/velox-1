@@ -1,6 +1,5 @@
 
 
-
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -21,15 +20,12 @@
 
 namespace facebook::velox::wave {
 
-  RowVectorPtr WaveOperator::getOutput() override {
-    if (!runnable_) {
-      return nullptr;
-    }
-    
+RowVectorPtr WaveOperator::getOutput() override {
+  if (!runnable_) {
     return nullptr;
   }
 
-
-
-  
+  return nullptr;
 }
+
+} // namespace facebook::velox::wave

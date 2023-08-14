@@ -53,7 +53,7 @@ class Values : public SourceOperator {
   int32_t roundsLeft() const {
     return roundsLeft_;
   }
-  
+
  private:
   std::vector<RowVectorPtr> values_;
   int32_t current_ = 0;

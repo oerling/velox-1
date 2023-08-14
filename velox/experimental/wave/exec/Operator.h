@@ -38,7 +38,8 @@ class Operator {
   virtual void advance();
   virtual void fullyConsumed();
 
-  // Returns number of bytes tied up in completed or ongoing speculative execution.
+  // Returns number of bytes tied up in completed or ongoing speculative
+  // execution.
   virtual int32_t speculativeSize() const {
     return 0;
   }
@@ -47,8 +48,7 @@ class Operator {
     VELOX_UNSUPPOTED();
   }
 
-
-protected:
+ protected:
   bool isFilter_{false};
 
   bool isExpanding_{false};
@@ -57,12 +57,6 @@ protected:
 
   TypePtr outputType_;
   std::unique_ptr<Vector> output_;
-
-
 };
-  
-}
 
-
-
-
+} // namespace facebook::velox::wave

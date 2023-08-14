@@ -14,12 +14,12 @@
 
 add_executable(velox_wave_exec_test FilterProjectTest.cpp)
 
-set_target_properties(velox_wave_exec_test PROPERTIES CUDA_ARCHITECTURES
-                                                        native)
+set_target_properties(velox_wave_exec_test PROPERTIES CUDA_ARCHITECTURES native)
 
 add_test(velox_wave_exec_test velox_wave_exec_test)
 
-target_link_libraries(velox_wave_exec_test
+target_link_libraries(
+  velox_wave_exec_test
   velox_aggregates
   velox_dwio_common
   velox_dwio_common_exception
