@@ -72,6 +72,8 @@ class Event {
   ///  functions.
   void record(Stream&);
 
+  bool query() const;
+
   /// Calling host thread waits  for work recorded by 'this' to complete.
   void wait();
 

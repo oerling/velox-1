@@ -120,6 +120,15 @@ void Event::wait() {
   CUDA_CHECK(cudaEventSynchronize(event_->event));
 }
 
+bool Event::query() const {
+  auto rc = cudaEventQuery(event_->event);
+  if (rc == ::cudaErrorNotReady) {
+    return false;
+  }
+  CUDA_CHECK(rc);
+  return true;
+}
+
 void Event::wait(Stream& stream) {
   CUDA_CHECK(cudaStreamWaitEvent(stream.stream_->stream, event_->event));
 }
