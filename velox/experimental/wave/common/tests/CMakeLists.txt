@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_wave_common_test GpuArenaTest.cpp CudaTest.cpp CudaTest.cu)
+add_executable(velox_wave_common_test GpuArenaTest.cpp CudaTest.cpp CudaTest.cu BlockTest.cpp BlockTest.cu)
 
 set_target_properties(velox_wave_common_test PROPERTIES CUDA_ARCHITECTURES
                                                         native)
@@ -27,4 +27,5 @@ target_link_libraries(
   gtest
   gtest_main
   gflags::gflags
+  glog::glog
   Folly::folly)

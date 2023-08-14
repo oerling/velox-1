@@ -22,7 +22,18 @@ namespace facebook::velox::wave {
 
 class Operator {
  public:
-  exec::BlockingReason isBlocked
+  virtual exec::BlockingReason isBlocked(exec::ContinueFuture& future);
+
+  /// True if may reduce cardinality without duplicating input rows.
+  bool isFilter() {
+    return isFilter_;
+  }
+
+  /// True if a single input can produce zero to multiple outputs.
+  bool isExpanding() const {
+    return isExpanding_;
+  }
+
   virtual bool canAdvance();
   virtual void advance();
   virtual void fullyConsumed();
@@ -35,14 +46,19 @@ class Operator {
   virtual int32_t dropSpeculative() {
     VELOX_UNSUPPOTED();
   }
-  std::vector<InputGroup> needsInput(); 
-  
- protected:
+
+
+protected:
+  bool isFilter_{false};
+
+  bool isExpanding_{false};
+
   std::vector<exec::IdentityProjection> identityProjections_;
+
   TypePtr outputType_;
   std::unique_ptr<Vector> output_;
-  std::unique_ptr<Stream> streamNoShared_;
-  std::unique_ptr<Stream> streamWithShared_;
+
+
 };
   
 }

@@ -23,15 +23,6 @@
 /// and .cu.
 namespace facebook::velox::wave {
 
-/// Addressing mode for vector operands
-enum class AddressingMode uint8_t { kFlat = 0, kConstant = 2, kIndirect = 4 };
-
-struct Operand {
-  addressingMode mode_;
-  const void* values;
-  const int32_t* indices;
-};
-
 enum class ScalarType {};
 enum class OpCode {
   kPlus,
@@ -47,10 +38,20 @@ enum class OpCode {
   kNE
 };
 
+  
+  struct Operand {
+    const void* base;
+    const int32_t* indices;
+    bool constant;
+  };
+
+
+
+ 
 struct ExprInstruction {
   BinaryOpCode op;
-  Operand left;
-  Operand right;
+  Operand* left;
+  Operand* right;
   void* result;
   // If set, apply operation to lanes where there is a non-zero byte in this.
   const uint8_t* predicate;
@@ -74,7 +75,7 @@ struct BlockStatus {
   int32_t lane{-1};
 };
 
-struct ThreadBlockInstructions {
+struct ThreadBlockProgram {
 
   // Optional input status. This is used when chaining multiple kernels one after the other on a stream without intervening host code. If contains an error, the error is copied to the status of this and execution returns.  If no error, this contains a row count and an optional row number mapping to apply to input.
   BlockStatus* inputStatus{nullptr};
@@ -90,5 +91,11 @@ struct ThreadBlockInstructions {
   ExprInstruction* instructions;
   ErrorReturn* error;
 };
+
+ class ExprStream : public Stream {
+ public:
+   void call(Stream* alias, int32_t numBlocks, ThreadBlockProgram* program);
+  };
+ 
 
 } // namespace facebook::velox::wave
