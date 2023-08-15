@@ -19,11 +19,24 @@
 #include <cstdint>
 #include "velox/experimental/wave/common/Cuda.h"
 
-/// Header with instructions for expression evaluation. Included by both .cpp
-/// and .cu.
+/// Wave common instruction set. Instructions run a thread block wide
+/// and offer common operations like arithmetic, conditionals,
+/// filters, hash lookups, etc. Several vectorized operators can fuse
+/// into one instruction stream. Instruction streams may use shared
+/// memory depending on the instruction mix. The shared memory is to
+/// be allocated dynamically at kernel invocation.
 namespace facebook::velox::wave {
 
-enum class ScalarType {};
+/// Mixed with opcode to switch between instantiations of instructions for
+/// different types.
+enum class ScalarType {
+  kInt32,
+  kInt64,
+  kReal,
+  kDouble,
+  kString,
+};
+
 enum class OpCode {
   kPlus,
   kMinus,
@@ -36,62 +49,91 @@ enum class OpCode {
   kGT,
   kGTE,
   kNE
+
+      kFlagsToIndices,
+  kProjectIndices
 };
 
-struct Operand {
-  const void* base;
-  const int32_t* indices;
-  bool constant;
-};
-
-struct ExprInstruction {
-  BinaryOpCode op;
+struct IBinary {
   Operand* left;
   Operand* right;
-  void* result;
+  Operand* result;
   // If set, apply operation to lanes where there is a non-zero byte in this.
-  const uint8_t* predicate;
+  Operand* predicate;
   // If true, inverts the meaning of 'predicate', so that the operation is
-  // perfformed on lanes with a zero byte bit.
-  bool invert;
+  // perfformed on lanes with a zero byte bit. Xored with predicate[idx].
+  uint8_t invert;
+};
+
+struct IFilter {
+  Operand* flags;
+  Operand* indices;
+};
+
+struct IWrap {
+  // The indices to wrap on top of 'columns'.
+  Operand* indices;
+
+  // Number of items in 'columns', 'targetColumns', 'nuwIndices',
+  // 'mayShareIndices'.
+  int32_t numColumns;
+
+  // The columns to wrap.
+  Operand** columns;
+  // The post wrap columns. If the original is not wrapped, these
+  // have the base of original and indices to wrap and posssibly new
+  // nulls from 'newNulls'. If the original is wrapped and
+  // newIndices has[i] is non-nullptr, the combined indices from the
+  // existing wrap and 'indices are stored in
+  // 'newIndices'. 'newIndices[i]' is the indices of
+  // targetColumn[i]. If 'newIndices[i]' is nullptr, the new indices
+  // overwrite the indices in 'column[i]' and the indices are
+  // referenced from targetColunns[i]'.
+  Operand** targetColumns;
+
+  Operand** newIndices;
+
+  // If mayShareIndices[i]' is an index of a previous entry in 'columns' and
+  // columns[mayshareIndices[i]] shares indices of columns[i], then
+  // targetColumns[i] has indices of targetColumn[mayShareIndices[i]]. If the
+  // wrappings were not the same, indices are obtained from newIndices[i].
+  int32_t mayShareIndices;
+} struct Instruction {
+  OpCode op;
+  union {
+    IBinary binary;
+    IFilter filter;
+    IWrap wrap;
+  } _;
 };
 
 ///
-enum class ErrorCode : int32_t { kOk, kDivZero };
+enum class ErrorCode : int32_t {
+  // All operations completed.
+  kOk,
 
-/// Contains a result row count and error code and a instruction/lane where it
-/// occurred. Multiple lanes can overwrite this without serialization. Different
-/// fields may come from different errors. The host will piece together some
-/// plausible message from this, though.
+  // Catchall for runtime errors.
+  kError };
+
+/// Contains a count of active lanes and a per lane error code.
 struct BlockStatus {
   int32_t numRows{0};
-  int32_t* rowMapping{nullptr};
-  ErrorCode code{kOk};
-  int32_t instruction{-1};
-  int32_t lane{-1};
+  ErrorCode errors[kBlockSize];
 };
 
 struct ThreadBlockProgram {
-  // Optional input status. This is used when chaining multiple kernels one
-  // after the other on a stream without intervening host code. If contains an
-  // error, the error is copied to the status of this and execution returns.  If
-  // no error, this contains a row count and an optional row number mapping to
-  // apply to input.
-  BlockStatus* inputStatus{nullptr};
-  BlockStatus* outputStatus{nullptr};
-
+  BlockStatus* status;
+  // Shared memory needed for block. The kernel is launched with max of this
+  // across the ThreadBlockPrograms.
+  int32_t sharedMemorySize{0};
   // Offset of first operand (lane 0 in thread block) from index 0 of operand
   // arrays.
   int32_t begin;
-  // Number of lanes. If greater than blockDim.x, each lane runs loops with a
-  // stride of blockDim.x.
-  int32_t numRows;
   int32_t numInstructions;
-  ExprInstruction* instructions;
-  ErrorReturn* error;
+  ExprInstruction** instructions;
 };
 
-class ExprStream : public Stream {
+class WaveStream : public Stream {
  public:
   void call(Stream* alias, int32_t numBlocks, ThreadBlockProgram* program);
 };

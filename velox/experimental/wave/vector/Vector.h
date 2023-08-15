@@ -16,6 +16,7 @@
 
 #pragma once
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/vector/Operand.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::wave {
@@ -39,7 +40,7 @@ class Loader {
   virtual load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
 
   /// Notifies 'this' that a load should load, in ddition to the requested rows,
-  /// all rows above the last position given in the load indeices.
+  /// all rows above the last position given in the load indices.
   void loadTailOnLoad() {
     loadTail_ = true;
   }
@@ -180,13 +181,18 @@ class Vector {
 
   // Nulls buffer, nullptr if no nulls.
   WaveBufferPtr nulls_;
-
-  // In dictionary encoding, a single level of indices over 'values'. There are
-  // no dictionaries over dictionaries.
+  // An Operand struct for every kBlockSize  values.
+  // If dictionary or if wrapped in a selection, vector of indices into
+  // 'values'.
   WaveBufferPtr indices_;
 
-  // If non-null, bit mask with for nulls added by the dictionary.
-  WaveBufferPtr dictionaryNulls_;
+  // Thread block level sizes.
+
+  // Thread block level pointers inside 'indices_'. the ith entry is nullptr if
+  // the ith thread block has no row number mapping (all rows pass or none
+  // pass).
+  WaveBufferPtr operandSizes_;
+  WaveBufferPtr operandIndices_;
 
   WaveBufferPtr lengths_;
   WaveBufferPtr offsets_;
