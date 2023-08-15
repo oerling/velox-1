@@ -126,9 +126,9 @@ struct ThreadBlockProgram {
   // Shared memory needed for block. The kernel is launched with max of this
   // across the ThreadBlockPrograms.
   int32_t sharedMemorySize{0};
-  // Offset of first operand (lane 0 in thread block) from index 0 of operand
-  // arrays.
-  int32_t begin;
+
+  // blockIdx.x of the first thread block running this program. Multiple adjacent blocks may run the same program.
+  int32_t blockBase;
   int32_t numInstructions;
   ExprInstruction** instructions;
 };
