@@ -16,7 +16,8 @@ __global__ void boolToIndices(uint8_t** bools, int32_t** indices, int32_t* sizes
     int32_t idx = blockIdx.x;
 // Start cycle timer
     clock_t start = clock();
-    boolBlockToIndices<256>(idx * 256, bools[idx], indices[idx], sizes + idx, smem);
+    uint8_t* blockBools = bools[idx];
+    boolBlockToIndices<256>([&]() {return blockBools[threadIdx.x];}, idx * 256, indices[idx], smem, sizes [idx]);
     clock_t stop = clock();
 	  if (threadIdx.x == 0) {
 	    times[idx] = (start > stop) ? start - stop : stop - start;

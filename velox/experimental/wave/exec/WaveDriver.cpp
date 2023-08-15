@@ -20,7 +20,7 @@
 
 namespace facebook::velox::wave {
 
-RowVectorPtr WaveOperator::getOutput() override {
+RowVectorPtr WaveDriver::getOutput() override {
   if (!runnable_) {
     return nullptr;
   }

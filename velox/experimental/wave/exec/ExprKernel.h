@@ -50,8 +50,8 @@ enum class OpCode {
   kGTE,
   kNE
 
-      kFlagsToIndices,
-  kProjectIndices
+  kFilter,
+  kWrap
 };
 
 struct IBinary {
@@ -122,14 +122,11 @@ struct BlockStatus {
 };
 
 struct ThreadBlockProgram {
-  BlockStatus* status;
   // Shared memory needed for block. The kernel is launched with max of this
   // across the ThreadBlockPrograms.
   int32_t sharedMemorySize{0};
-
-  // blockIdx.x of the first thread block running this program. Multiple adjacent blocks may run the same program.
-  int32_t blockBase;
   int32_t numInstructions;
+
   ExprInstruction** instructions;
 };
 
