@@ -575,8 +575,8 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
   }
 
   driver->init(std::move(ctx), std::move(operators));
-  for (auto& adapter : adapters_) {
-    if (adapter.adaptDriver(*this, *driver)) {
+  for (auto& adapter : adapters) {
+    if (adapter.adapt(*this, *driver)) {
       break;
     }
   }

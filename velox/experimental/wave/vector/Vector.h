@@ -21,11 +21,10 @@
 
 namespace facebook::velox::wave {
 
-
 class Loader {
   virtual ~Loader() = default;
 
-  virtual load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
+  virtual void load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
 
   /// Notifies 'this' that a load should load, in ddition to the requested rows,
   /// all rows above the last position given in the load indices.
@@ -35,7 +34,7 @@ class Loader {
 
  protected:
   bool loadTail_{false};
-}
+};
 
 /// Represents a vector of device side intermediate results. Vector is
 /// a host side only structure, the WaveBufferPtrs own the device
@@ -46,7 +45,6 @@ class Loader {
 class Vector {
  public:
   // Constructs a vector. Resize can be used to create buffers for a given size.
-  Vector(TypePtr type, GpuArena* arena);
   Vector(TypePtr type, GpuArena* arena);
 
   const TypePtr& type() const {
@@ -64,7 +62,7 @@ class Vector {
   }
 
   // Makes sure there is space for nulls. Initial value is undefined.
-  ensureNulls();
+  void ensureNulls();
 
   // Frees all allocated buffers. resize() can be used to populate the buffers
   // with a selected size.
@@ -88,15 +86,17 @@ class Vector {
   GpuArena* arena_;
 
   // Type of the content.
-  typePtr type_;
+  TypePtr type_;
   TypeKind kind_;
 
   // Encoding. FLAT, CONSTANT, DICTIONARY, ROW, ARRAY, MAP are possible values.
-  VectorEncoding::SIMPLE encoding_;
+  VectorEncoding::Simple encoding_;
 
   std::unique_ptr<Loader> loader_;
 
   Vector* parent{nullptr};
+
+  vector_size_t size_{0};
 
   // Values array, cast to pod type or StringView
   WaveBufferPtr values_;
@@ -111,13 +111,13 @@ class Vector {
   // Thread block level sizes. For each kBlockSize values, contains
   // one int16_t that indicates how many of 'values' or 'indices' have
   // a value.
-  WaveBuffferPtr blockSizes_;
+  WaveBufferPtr blockSizes_;
   // Thread block level pointers inside 'indices_'. the ith entry is nullptr if
   // the ith thread block has no row number mapping (all rows pass or none
   // pass).
-  WaveBufferPtr operandSizes_;
-  WaveBufferPtr operandIndices_;
+  WaveBufferPtr blockIndices_;
 
+  // Lengths and offsets for array/map elements.
   WaveBufferPtr lengths_;
   WaveBufferPtr offsets_;
 
@@ -126,7 +126,7 @@ class Vector {
 };
 
 struct WaveReleaser {
-  WaveReleaser(WaveBufferPtr buffer) : buffer(td::move(buffer)) {}
+  WaveReleaser(WaveBufferPtr buffer) : buffer(std::move(buffer)) {}
 
   void release() {
     buffer.reset();
@@ -138,9 +138,9 @@ struct WaveReleaser {
 // A BufferView for velox::BaseVector for a view on universal memory.
 class WaveBufferView : public BufferView<WaveReleaser> {
   static BufferPtr create(WaveBufferPtr buffer) {
-    WaveReleaseer releaser(buffer);
-    returnBufferView<WaveReleaser>::create(
-        buffer->as<uint8_t>(), buffer->capacity(), .WaveReleaser(buffer));
+    WaveReleaser releaser(buffer);
+    return BufferView<WaveReleaser>::create(
+        buffer->as<uint8_t>(), buffer->capacity(), WaveReleaser(buffer));
   }
 };
 
