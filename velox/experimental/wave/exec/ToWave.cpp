@@ -19,9 +19,9 @@
 
 namespace facebook::velox::wave {
 
-std::unique_ptr<Operator> toWaveOperator(const exec::Operator* op) {
-  auto name = op->stats().operatorType;
-    if (name == 'Values") {
+std::unique_ptr<Operator> toWaveOperator(exec::Operator* op) {
+  auto& name = op->stats().rlock()->operatorType;
+    if (name == "Values") {
 }
 else if (name == "FilterProject") {
 }
@@ -31,7 +31,7 @@ else {
 }
 
 bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
-    auto& operators = driver->mutableOperators();
+    auto& operators = driver.mutableOperators();
     auto& nodes = factory.planNodes;
     for (auto first = 0; first < operators_.size(); ++first) {
 
@@ -44,7 +44,7 @@ bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
   
 
 void registerWave() {
-  DriverAdapter waveAdapter {"Wave", waveDriverAdapter};
+  exec::DriverAdapter waveAdapter {"Wave", waveDriverAdapter};
   exec::registerDriverAdapter(waveAdapter);
 }
 }

@@ -18,7 +18,8 @@
 
 namespace facebook::velox::wave {
 
-template typename<T> __device inline T opFunc_kPlus(T left, T right) {
+template <typename T>
+__device__ inline T opFunc_kPlus(T left, T right) {
   return left + right;
 }
 
@@ -31,54 +32,61 @@ __device__ inline void binaryOpKernel(
     BlockStatus* status) {}
 
 __device__ void filterKernel(
-    const Filter& filter,
+    const IFilter& filter,
     int32_t blockBase,
     char* shared,
     int32_t& numRows) {
-  auto* flagop = filter.flags;
+  auto* flags = filter.flags;
   if (flags->nulls) {
     boolBlockToIndices<kBlockSize>(
-        [&]() {
+        [&]() -> uint8_t {
           return threadIdx.x >= numRows
               ? 0
               : flatValue<uint8_t>(flags->base, blockBase) &
                   flatValue<uint8_t>(flags->nulls, blockBase);
         },
         blockBase,
-        filter->indices + blockBase,
+        filter.indices + blockBase,
         shared,
         numRows);
   } else {
     boolBlockToIndices<kBlockSize>(
-        [&]() {
+        [&]() -> uint8_t {
           return threadIdx.x >= numRows
               ? 0
               : flatValue<uint8_t>(flags->base, blockBase);
         },
         blockBase,
-        filter->indices + blockBase,
+        filter.indices + blockBase,
         shared,
         numRows);
   }
 }
 
-__device__ void wrapKernel(IWrap& wrap, int32_t blockBase, char* shared) {}
+__device__ void wrapKernel(IWrap& wrap, int32_t blockBase, int32_t& numRows) {}
+
 #define OP_MIX(op, t) \
   static_cast<OpCode>(static_cast<int32_t>(t) + 8 * static_cast<int32_t>(op))
 
-#define BINARY_TYPES(opCode, OP)                                      \
-  case OP_MIX(OpCode, ScalarType::kInt32):              \
-    binaryOpKernel<int32_t>(                                      \
-        [](auto left, auto right) {return left OP right; }, instruction->_.IBinary, shared, status); \
+#define BINARY_TYPES(opCode, OP)                             \
+  case OP_MIX(opCode, ScalarType::kInt32):                   \
+    binaryOpKernel<int32_t>(                                 \
+        [](auto left, auto right) { return left OP right; }, \
+        instruction->_.binary,                               \
+        blockBase,                                           \
+        shared,                                              \
+        status);                                             \
     break;
 
 __global__ void waveBaseKernel(
     ThreadBlockProgram** programs,
     int32_t* baseIndices,
     BlockStatus* blockStatusArray) {
-  extern __shared__ __align__(alignof(ScanAlgorithm::TempStorage)) char smem[];
+  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+  extern __shared__ __align__(
+      alignof(typename ScanAlgorithm::TempStorage)) char shared[];
   auto* program = programs[blockIdx.x];
-  auto* status = blockStatusArray[blockIdx.x];
+  auto* status = &blockStatusArray[blockIdx.x];
   int32_t blockBase = blockIdx.x - baseIndices[blockIdx.x];
   for (auto i = 0; i < program->numInstructions; ++i) {
     auto instruction = program->instructions[i];
@@ -87,8 +95,8 @@ __global__ void waveBaseKernel(
         filterKernel(instruction->_.filter, blockBase, shared, status->numRows);
         break;
 
-      case kWrap:
-        wrapKernel(instruction->_.IWrap, blockBase, status->numRows);
+      case OpCode::kWrap:
+        wrapKernel(instruction->_.wrap, blockBase, status->numRows);
         break;
 
         BINARY_TYPES(OpCode::kPlus, +);

@@ -74,7 +74,7 @@ struct IBinary {
 
 struct IFilter {
   Operand* flags;
-  Operand* indices;
+  int32_t* indices;
 };
 
 struct IWrap {
@@ -108,7 +108,7 @@ struct IWrap {
 };
 
 struct Instruction {
-  OpCode op;
+  OpCode opCode;
   union {
     IBinary binary;
     IFilter filter;
