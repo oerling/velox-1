@@ -128,17 +128,20 @@ class Vector {
 struct WaveReleaser {
   WaveReleaser(WaveBufferPtr buffer) : buffer(std::move(buffer)) {}
 
-  void release() {
+  void addRef() const {}
+
+  void release() const {
     buffer.reset();
   }
 
-  WaveBufferPtr buffer;
+  // BufferView inlines the releaser as const, hence this must have const
+  // methods but must mutate the controlled object.
+  mutable WaveBufferPtr buffer;
 };
 
-// A BufferView for velox::BaseVector for a view on universal memory.
+// A BufferView for velox::BaseVector for a view on unified memory.
 class WaveBufferView : public BufferView<WaveReleaser> {
   static BufferPtr create(WaveBufferPtr buffer) {
-    WaveReleaser releaser(buffer);
     return BufferView<WaveReleaser>::create(
         buffer->as<uint8_t>(), buffer->capacity(), WaveReleaser(buffer));
   }

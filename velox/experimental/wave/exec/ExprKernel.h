@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include "velox/experimental/wave/common/Cuda.h"
+#include "velox/experimental/wave/vector/Operand.h"
 
 /// Wave common instruction set. Instructions run a thread block wide
 /// and offer common operations like arithmetic, conditionals,
@@ -37,7 +38,16 @@ enum class ScalarType {
   kString,
 };
 
+/// Opcodes for common instruction set. First all instructions that
+/// do not have operand type variants, then all the ones that
+/// do. For type templated instructions, the case label is opcode *
+/// numTypes + type, so these must be last in oredr not to conflict.
 enum class OpCode {
+  // First all OpCodes that have no operand type specialization.
+  kFilter = 0,
+  kWrap,
+
+  // From here, only OpCodes that have variants for scalar types.
   kPlus,
   kMinus,
   kTimes,
@@ -45,13 +55,10 @@ enum class OpCode {
   kEquals,
   kLT,
   kLTE,
-  ,
   kGT,
   kGTE,
-  kNE
+  kNE,
 
-  kFilter,
-  kWrap
 };
 
 struct IBinary {
@@ -98,7 +105,9 @@ struct IWrap {
   // targetColumns[i] has indices of targetColumn[mayShareIndices[i]]. If the
   // wrappings were not the same, indices are obtained from newIndices[i].
   int32_t mayShareIndices;
-} struct Instruction {
+};
+
+struct Instruction {
   OpCode op;
   union {
     IBinary binary;
@@ -113,7 +122,8 @@ enum class ErrorCode : int32_t {
   kOk,
 
   // Catchall for runtime errors.
-  kError };
+  kError
+};
 
 /// Contains a count of active lanes and a per lane error code.
 struct BlockStatus {
@@ -127,7 +137,7 @@ struct ThreadBlockProgram {
   int32_t sharedMemorySize{0};
   int32_t numInstructions;
 
-  ExprInstruction** instructions;
+  Instruction** instructions;
 };
 
 class WaveStream : public Stream {

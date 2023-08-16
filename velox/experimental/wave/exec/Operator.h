@@ -17,12 +17,13 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/experimental/wave/vector/Vector.h"
 
 namespace facebook::velox::wave {
 
 class Operator {
  public:
-  virtual exec::BlockingReason isBlocked(exec::ContinueFuture& future);
+  virtual exec::BlockingReason isBlocked(ContinueFuture& future);
 
   /// True if may reduce cardinality without duplicating input rows.
   bool isFilter() {
@@ -45,7 +46,7 @@ class Operator {
   }
 
   virtual int32_t dropSpeculative() {
-    VELOX_UNSUPPOTED();
+    VELOX_UNSUPPORTED();
   }
 
  protected:

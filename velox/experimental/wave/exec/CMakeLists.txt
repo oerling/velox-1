@@ -16,8 +16,9 @@ add_library(velox_wave_exec ExprKernel.cu ToWave.cpp)
 
 set_target_properties(velox_wave_exec PROPERTIES CUDA_ARCHITECTURES native)
 
-target_link_libraries(velox_wave_exec wave_common velox_exception velox_common
-                      velox_exec_base)
-if(${VELOX_BUILD_TESTING})
+target_link_libraries(velox_wave_exec velox_wave_common velox_exception velox_common_base
+                      velox_exec)
+
+		    if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()

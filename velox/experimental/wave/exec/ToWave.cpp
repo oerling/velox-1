@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-#pragma once
-
 #include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {

@@ -27,15 +27,21 @@ __device__ inline T& flatValue(void* base, int32_t blockBase) {
 }
 
 __device__ inline bool isNull(Operand* op, int32_t blockBase) {
-  return operand->nulls == nullptr || !operand->nulls[blockBase + threadIdx.x];
+  return op->nulls == nullptr || !op->nulls[blockBase + threadIdx.x];
 }
 
-template <T>
+template <typename T>
 __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
   int32_t index = (threadIdx.x + blockBase) & op->indexMask;
-  void* base = op->isShared ? shared : op->base;
+  void* base = op->sharedOffset != Operand::kGlobal ? shared + op->sharedOffset : op->base;
+  if (auto indicesInOp = op->indices) {
+    auto indices = indicesInOp[blockBase / kBlockSize];
+    if (indices) {
+      index = indices[index];
+    }
+  }
   return reinterpret_cast<const T*>(
-      base)[op->indices ? op->indices[index] : index];
+      base)[index];
 }
 
 template <typename T>

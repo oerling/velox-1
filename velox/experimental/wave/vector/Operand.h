@@ -34,8 +34,13 @@ constexpr int32_t kBlockSize = 256;
 
 
  struct Operand {
-  int32_t indexMask{~0};
+   static constexpr uint16_t kGlobal = ~0;
 
+   int32_t indexMask{~0};
+
+   // If != !0, this indicates that instead of base, we use the thread block's shared memry base + 'sharedOffset'.
+   uint16_t sharedOffset{kGlobal};
+   
   // Array of flat base values. Cast to pod type or StringView.
   void* base;
 
@@ -46,11 +51,7 @@ constexpr int32_t kBlockSize = 256;
    int32_t** indices;
 
   // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for consistency with Velox.
-  uint8_t nulls;
-
-  // Number of values filled in from start of the thread block. The test for each lane for
-  // being active is 'threadIdx.x < size[blockIdx.x]'.
-  int16_t* size;
+   uint8_t* nulls{nullptr};
 };
 
 } // namespace facebook::velox::wave

@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/exec/Operator.h"
-#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
@@ -29,12 +28,12 @@ class WaveDriver : public exec::SourceOperator {
 
   RowVectorPtr getOutput() override;
 
-  exec::BlockingReason isBlocked(exec::ContinueFuture* future) override {
+  exec::BlockingReason isBlocked(ContinueFuture* future) override {
     if (blockingFuture_.valid()) {
       *future = std::move(blockingFuture_);
       return blockingReason_;
     }
-    return BlockingReason::kNotBlocked;
+    return exec::BlockingReason::kNotBlocked;
   }
 
   bool isFinished() override;
@@ -48,10 +47,14 @@ class WaveDriver : public exec::SourceOperator {
       const std::shared_ptr<common::Filter>& filter) override;
 
  private:
+  ContinueFuture blockingFuture_;
+  exec::BlockingReason blockingReason_;
+  
   // Wave operators replacing 'cpuOperators_' on GPU path.
   std::vector<std::unique_ptr<Operator>> operators_;
   // The replaced Operators from the Driver. Can be used for a CPU fallback.
   std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
+  bool canAddDynamicFilter_{false};
 };
 
 } // namespace facebook::velox::wave
