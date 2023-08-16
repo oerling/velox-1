@@ -72,6 +72,8 @@ class Event {
   ///  functions.
   void record(Stream&);
 
+  /// Returns true if the work captured by 'this' is complete. Throws for Cuda
+  /// error.
   bool query() const;
 
   /// Calling host thread waits  for work recorded by 'this' to complete.

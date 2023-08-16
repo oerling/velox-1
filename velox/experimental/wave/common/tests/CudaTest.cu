@@ -22,7 +22,7 @@ namespace facebook::velox::wave {
 __global__ void addOneKernel(int32_t* numbers, int32_t size, int32_t stride) {
   auto index = blockDim.x * blockIdx.x + threadIdx.x;
   for (; index < size; index += stride) {
-    ++numbers[index];  
+    ++numbers[index];
   }
 }
 
@@ -35,7 +35,8 @@ void TestStream::addOne(int32_t* numbers, int32_t size) {
     stride = kWidth;
     numBlocks = kWidth / kBlockSize;
   }
-  addOneKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(numbers, size, stride);
+  addOneKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride);
   CUDA_CHECK(cudaGetLastError());
 }
 

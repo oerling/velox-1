@@ -22,14 +22,17 @@
 
 namespace facebook::velox::wave {
 
-  template <int32_t blockSize, cub::BlockScanAlgorithm Algorithm = cub::BLOCK_SCAN_RAKING, typename Getter>
+template <
+    int32_t blockSize,
+    cub::BlockScanAlgorithm Algorithm = cub::BLOCK_SCAN_RAKING,
+    typename Getter>
 __device__ inline void boolBlockToIndices(
-					  Getter getter,
-					  int32_t start,
-					  int32_t* indices,
-					  void* shmem,
-					  int32_t& size) {
-    typedef cub::BlockScan<int, blockSize, Algorithm> BlockScanT;
+    Getter getter,
+    int32_t start,
+    int32_t* indices,
+    void* shmem,
+    int32_t& size) {
+  typedef cub::BlockScan<int, blockSize, Algorithm> BlockScanT;
 
   auto* temp = reinterpret_cast<typename BlockScanT::TempStorage*>(shmem);
   int data[1];
@@ -46,7 +49,5 @@ __device__ inline void boolBlockToIndices(
     size = aggregate;
   }
 }
-
-
 
 } // namespace facebook::velox::wave

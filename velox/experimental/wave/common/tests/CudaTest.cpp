@@ -39,7 +39,7 @@ DEFINE_bool(
 DEFINE_bool(
     sync_streams,
     false,
-    "Use events to syncronize all parallel streams before calling the next kernel on each stream.");
+    "Use events to synchronize all parallel streams before calling the next kernel on each stream.");
 DEFINE_bool(
     prefetch,
     true,

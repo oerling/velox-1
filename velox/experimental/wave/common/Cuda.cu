@@ -137,6 +137,9 @@ void Event::wait(Stream& stream) {
 /// enable timing.
 float Event::elapsedTime(const Event& start) const {
   float ms;
+  if (!hasTiming_ || !start.hasTiming_) {
+    waveError("Event timing not enabled");
+  }
   CUDA_CHECK(cudaEventElapsedTime(&ms, start.event_->event, event_->event));
   return ms;
 }
