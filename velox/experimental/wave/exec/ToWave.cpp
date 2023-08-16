@@ -33,7 +33,21 @@ else {
 }
 
 bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
-    auto operators = driver->operators();
-    for (auto first = 0; first < operators_.size(); ++first)
+    auto& operators = driver->mutableOperators();
+    auto& nodes = factory.planNodes;
+    for (auto first = 0; first < operators_.size(); ++first) {
+
+    }
+}
+  bool makeWaveDriver(const DriverFactory& factory, Driver& driver) {
+  }
+  
+
+  
+
+void registerWave() {
+  DriverAdapter waveAdapter {"Wave", waveDriverAdapter};
+  exec::registerDriverAdapter(waveAdapter);
+}
 }
 }

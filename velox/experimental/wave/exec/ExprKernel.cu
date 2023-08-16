@@ -20,20 +20,39 @@ namespace facebook::velox::wave {
 
 
   template typename<T>
-  func_kPlus(T left, T right) {
+__device inline T opFunc_kPlus(T left, T right) {
   return left + right;
 }
 
+  template <typename T, typename OpFunc>
+  __device__ inline void binaryOpKernel(OpFunc func, IBinaryOp& op, int32_t blockBase, char* shared, BlockStatus* status) {
+}
   
-  template <typename T>
-
   __device__ void filterKernel(const Filter& filter, int32_t blockBase, char* shared, int32_t& numRows) {
     auto* flagop = filter.flags;
-  }
-  
+    if (flags->nulls) {
+      boolBlockToIndices<kBlockSize>(
+				     [&]() { return threadIdx.x >= numRows ? 0 : flatValue<uint8_t>(flags->base, blockBase) & flatValue<uint8_t>(flags->nulls, blockBase); },
+				     blockBase, filter->indices + blockBase, shared, numRows);
+    } else {
+      boolBlockToIndices<kBlockSize>(
+				     [&]() { return threadIdx.x >= numRows ? 0 : flatValue<uint8_t>(flags->base, blockBase); },
+				     blockBase, filter->indices + blockBase, shared, numRows);
 
+    }
+}
+
+  __device__ void wrapKernel(IWrap& wrap, int32_t blockBase, char* shared) {
+  }
+#define OP_MIX(op, t) \
+  static_cast<OpCode>(static_cast<int32_t>(t) + 8 *static_cast<int32_t>(op))
   
-  __global__ void waveBaseKernel(ThreadBlockProgram** programs, int32_t* baseIndices, BlockStatus* blockStatusArray) {
+#define BINARY_TYPES(opName) \
+  case OP_MIX(OpCode::##opName, ScalarType::kInt32):				\
+  binaryOpKernel<int32_t>(opFunc_##opname, instruction->_.IBinary, shared, status); break; \
+
+
+__global__ void waveBaseKernel(ThreadBlockProgram** programs, int32_t* baseIndices, BlockStatus* blockStatusArray) {
   extern __shared__ __align__(alignof(ScanAlgorithm::TempStorage)) char smem[];
   auto* program = programs[blockIdx.x];
   auto* status = blockStatusArray[blockIdx.x];
@@ -42,9 +61,16 @@ namespace facebook::velox::wave {
     auto instruction = program->instructions[i];
     switch (instruction->opCode) {
     case OpCode::kFilter:
-      filterKernel(instruction->_.filter, blockBase, shared, control->numRows);
+      filterKernel(instruction->_.filter, blockBase, shared, status->numRows);
+      break;
+
+    case kWrap: 
+      wrapKernel(instruction->_.IWrap, blockBase, status->numRows);
+      break;
+
+      BINARY_TYPES(kPlus);
     }
   }
   }
   
-  } // namespace facebook::velox::wave
+} // namespace facebook::velox::wave

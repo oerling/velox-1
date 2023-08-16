@@ -575,7 +575,7 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
   }
 
   driver->init(std::move(ctx), std::move(operators));
-  for (auto& adapter : adapters) {
+  for (auto& adapter : adapters_) {
     if (adapter.adaptDriver(*this, *driver)) {
       break;
     }
@@ -629,11 +629,4 @@ std::vector<core::PlanNodeId> DriverFactory::needsNestedLoopJoinBridges()
 
   return planNodeIds;
 }
-// static
-static void registerAdapter(DriverAdapter alternate) {
-  adapters.push_back(std::move(adapter));
-}
-
-// static
-std::vector<DriverAdapter::DriverAdapter> adapters;
 } // namespace facebook::velox::exec

@@ -16,22 +16,31 @@
 
 #pragma once
 
-
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 
-
 namespace facebook::velox::wave {
 
-__device__ inline bool isNull(Operand* op, int32_t base) {
-  return operand->nulls == nullptr || !operand->nulls[base + threadIdx.x];
+template <typename T>
+__device__ inline T& flatValue(void* base, int32_t blockBase) {
+  return reinterpret_cast<T*>(base)[blockBase + threadIdx.x];
 }
 
-template<T>
+__device__ inline bool isNull(Operand* op, int32_t blockBase) {
+  return operand->nulls == nullptr || !operand->nulls[blockBase + threadIdx.x];
+}
+
+template <T>
 __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
   int32_t index = (threadIdx.x + blockBase) & op->indexMask;
   void* base = op->isShared ? shared : op->base;
-  return reinterpret_cast<const T*>(base)[op->indices ? op->indices[index] : index];
+  return reinterpret_cast<const T*>(
+      base)[op->indices ? op->indices[index] : index];
 }
-    
+
+template <typename T>
+T& flatResult(Operand* op, int32_t blockBase) {
+  reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
 }
+
+} // namespace facebook::velox::wave

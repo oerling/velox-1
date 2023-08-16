@@ -19,10 +19,12 @@
 #include "velox/exec/FilterProject.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/Values.h"
-#include "velox/experimental/wave/Operator.h"
+#include "velox/experimental/wave/exec/Operator.h"
 
 namespace facebook::velox::wave {
 
 std::shared_ptr<exec::Driver> toWave(exec::Driver& driver);
 
+  void registerWave();
+  
 }

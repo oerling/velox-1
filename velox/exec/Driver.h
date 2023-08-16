@@ -366,6 +366,11 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   std::vector<std::unique_ptr<Operator>> operators_;
 
+  /// Exposes Operators for customization by DriverAdapter.
+  std::vector<std::unique_ptr<Operator>>& mutableOperators() {
+    return operators_;
+  }
+  
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;
@@ -385,7 +390,7 @@ using AdaptDriverFunction =
 
 struct DriverAdapter {
   std::string label;
-  AdaptDriverFunction adaptDriver;
+  AdaptDriverFunction adapt;
 };
 
 struct DriverFactory {
@@ -485,7 +490,7 @@ struct DriverFactory {
   /// based on this pipeline.
   std::vector<core::PlanNodeId> needsNestedLoopJoinBridges() const;
 
-  static std::vector<AlternateDriverFactory> alternates;
+  static std::vector<DriverAdapter> adapters;
 };
 
 // Begins and ends a section where a thread is running but not
