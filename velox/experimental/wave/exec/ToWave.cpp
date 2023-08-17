@@ -17,12 +17,25 @@
 
 #include "velox/experimental/wave/exec/ToWave.h"
 
+
 namespace facebook::velox::wave {
 
-std::unique_ptr<Operator> toWaveOperator(exec::Operator* op) {
+  
+
+  void CompileState::addValues(exec::Values) {
+    
+  };
+
+
+  bool CompileState::addFilter(exec::Expr* expr) {
+
+  }
+
+  void  CompileState::addOperator(exec::Operator* op) {
   auto& name = op->stats().rlock()->operatorType;
     if (name == "Values") {
-}
+      addValues(reinterpret_cast<exec::Values>(op);
+    }
 else if (name == "FilterProject") {
 }
 else {

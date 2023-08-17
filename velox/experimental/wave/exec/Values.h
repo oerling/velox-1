@@ -19,6 +19,7 @@
 
 namespace facebook::velox::wave {
 
-class Values : public Operator {};
+class Values : public Operator {
+};
 
 } // namespace facebook::velox::wave

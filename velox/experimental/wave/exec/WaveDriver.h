@@ -20,11 +20,17 @@
 
 namespace facebook::velox::wave {
 
+
+  using SubfieldMap =   std::unordered_map < std::string, std::unique_ptr<Subfield>;
+
+  
 class WaveDriver : public exec::SourceOperator {
   WaveDriver(
       int32_t operatorId,
       exec::DriverCtx* driverCtx,
-      std::vector<exec::Operator*> operators);
+      std::vector<std::unique_ptr<Operator> waveOperators,
+      std::vector<exec::Operator*> cpuOperators,
+	     SubfieldMap subfields);
 
   RowVectorPtr getOutput() override;
 
@@ -49,7 +55,10 @@ class WaveDriver : public exec::SourceOperator {
  private:
   ContinueFuture blockingFuture_;
   exec::BlockingReason blockingReason_;
-  
+
+  // Dedupped Subfields. Handed over by CompileState.
+SubfieldMap subfields_;
+
   // Wave operators replacing 'cpuOperators_' on GPU path.
   std::vector<std::unique_ptr<Operator>> operators_;
   // The replaced Operators from the Driver. Can be used for a CPU fallback.

@@ -20,7 +20,18 @@
 
 namespace facebook::velox::wave {
 
-RowVectorPtr WaveDriver::getOutput() override {
+  WaveDriver::WaveDriver(
+      int32_t operatorId,
+      exec::DriverCtx* driverCtx,
+      std::vector<std::unique_ptr<Operator> waveOperators,
+      std::vector<exec::Operator*> cpuOperators,
+	     SubfieldMap subfields)
+    : exec::Operator(operatorId, driverCtx,),
+      operators_(std::move(waveOperators)),
+      cpuOperators_(std::move(cpuOperators)),
+      subfields_(std::move(subfields)) {}
+												 
+  RowVectorPtr WaveDriver::getOutput() override {
   if (!runnable_) {
     return nullptr;
   }

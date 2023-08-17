@@ -58,6 +58,10 @@ class Operator {
 
   TypePtr outputType_;
   std::unique_ptr<Vector> output_;
+
+  /// The stream that produces each subfield. More than  one can be produced by the same stream.
+  std::F14FastMap<Subfield*, std::shared_ptr<Stream> fieldStreams;
+
 };
 
 } // namespace facebook::velox::wave
