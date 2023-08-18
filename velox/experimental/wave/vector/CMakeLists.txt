@@ -13,6 +13,3 @@
 # limitations under the License.
 
 add_library(velox_wave_vector Vector.cpp)
-
-
-

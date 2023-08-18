@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/exec/Values.h"
+
 namespace facebook::velox::wave {
+
 Values::Values(CompileState& state, core::ValuesNode& values)
-  : Operator(state, values.outputType()),
-    values_(values.values()), roundsLeft_(values.repeatTimes()) {
+    : Operator(state, values.outputType()),
+      values_(values.values()),
+      roundsLeft_(values.repeatTimes()) {
   definesSubfields(outputType_);
 }
 
-  
-  
-}
-
+} // namespace facebook::velox::wave

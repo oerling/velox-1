@@ -30,17 +30,19 @@ constexpr int32_t kBlockSize = 256;
 /// index of the thread block. This is blockIdx.x * blockDim.x if all
 /// thread blocks run the same instructions. When the blocks run
 /// different instruction streams, the base is (blockIdx.x - <index of
-/// first block with this instruction stream>) * blockDim.x. We also have a shared memory pointer to thread block shared memory. Some operands may come from thread block shared memory.
+/// first block with this instruction stream>) * blockDim.x. We also have a
+/// shared memory pointer to thread block shared memory. Some operands may come
+/// from thread block shared memory.
 
+struct Operand {
+  static constexpr uint16_t kGlobal = ~0;
 
- struct Operand {
-   static constexpr uint16_t kGlobal = ~0;
+  int32_t indexMask{~0};
 
-   int32_t indexMask{~0};
+  // If != !0, this indicates that instead of base, we use the thread block's
+  // shared memry base + 'sharedOffset'.
+  uint16_t sharedOffset{kGlobal};
 
-   // If != !0, this indicates that instead of base, we use the thread block's shared memry base + 'sharedOffset'.
-   uint16_t sharedOffset{kGlobal};
-   
   // Array of flat base values. Cast to pod type or StringView.
   void* base;
 
@@ -48,10 +50,11 @@ constexpr int32_t kBlockSize = 256;
   // blockIdx - idx of first bllock wit this instruction
   // stream. Different thread blocks may or may not have indices for
   // a given operand.
-   int32_t** indices;
+  int32_t** indices;
 
-  // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for consistency with Velox.
-   uint8_t* nulls{nullptr};
+  // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for
+  // consistency with Velox.
+  uint8_t* nulls{nullptr};
 };
 
 } // namespace facebook::velox::wave

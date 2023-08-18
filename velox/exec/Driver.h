@@ -370,7 +370,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   std::vector<std::unique_ptr<Operator>>& mutableOperators() {
     return operators_;
   }
-  
+
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;

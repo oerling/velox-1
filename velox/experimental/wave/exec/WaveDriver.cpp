@@ -20,33 +20,31 @@
 
 namespace facebook::velox::wave {
 
-  WaveDriver::WaveDriver(
-      int32_t operatorId,
-      exec::DriverCtx* driverCtx,
-      std::vector<std::unique_ptr<Operator> waveOperators,
-      std::vector<exec::Operator*> cpuOperators,
-	     SubfieldMap subfields)
-    : exec::Operator(operatorId, driverCtx,),
+WaveDriver::WaveDriver(
+    int32_t operatorId,
+    exec::DriverCtx* driverCtx,
+    std::vector < std::unique_ptr<Operator> waveOperators,
+    std::vector<exec::Operator*> cpuOperators,
+    SubfieldMap subfields)
+    : exec::Operator(operatorId, driverCtx, ),
       operators_(std::move(waveOperators)),
       cpuOperators_(std::move(cpuOperators)),
       subfields_(std::move(subfields)) {}
-												 
-  RowVectorPtr WaveDriver::getOutput() override {
+
+RowVectorPtr WaveDriver::getOutput() override {
   if (!runnable_) {
     return nullptr;
   }
 
   return nullptr;
 }
-  std::string WaveDriver::toString() const override {
-    std::stringstream out;
-    out << "{Wave" << std::endl;
-    for (auto& op : operators_) {
-      out << op->toString() << std::endl;
-    }
-    return out.str();
+std::string WaveDriver::toString() const override {
+  std::stringstream out;
+  out << "{Wave" << std::endl;
+  for (auto& op : operators_) {
+    out << op->toString() << std::endl;
   }
+  return out.str();
+}
 
-
-  
 } // namespace facebook::velox::wave

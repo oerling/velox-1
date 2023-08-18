@@ -18,7 +18,7 @@
 
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/vector/Vector.h"
-#include "velox/experimental/wave/wave/Wave.h"
+#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
@@ -53,6 +53,8 @@ class Operator {
   }
   
   virtual std::string toString() const = 0;
+
+  void definesSubfields(CompileState& state, const TypePtr& type);
 
 protected:
   bool isFilter_{false};

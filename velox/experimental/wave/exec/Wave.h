@@ -16,7 +16,6 @@
 
 #pragma once
 
-
 #include "velox/experimental/wave/exec/Wave.h"
 
 #include "velox/experimental/wave/exec/ExprKernel.h"
