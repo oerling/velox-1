@@ -30,7 +30,7 @@ class CompileState {
   // Wave equivalents. Returns true if the Driver was changed.
   bool compile();
 
-  common::Subfield* toSubfield(const exec::Expr&);
+  common::Subfield* toSubfield(const exec::Expr& expr);
 
   common::Subfield* toSubfield(const std::string& name);
 
@@ -40,7 +40,21 @@ class CompileState {
       const TypePtr& type,
       const std::string& label = "");
 
- private:
+  Value toValue(const exec::Expr& expr);
+
+  AbstractOperand* addIdentityProjections(
+    Value value,
+    Program* definedIn);
+  AbstractOperand* findCurrentValue(Value value);
+  AbstractOperand* addExpr(const exec::Expr& expr); 
+
+void addExprSet(
+    const exec::ExprSet& set,
+    int32_t begin,
+    int32_t end);
+  
+private:
+
   // The operator and output operand where the Value is first defined.
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> definedBy_;
 
@@ -60,7 +74,7 @@ class CompileState {
   std::vector < std::unique_ptr<AbstractOperand>> operands_;
 
   // The Wave operators generated so far.
-  std::vector<std::unique_ptr<Operator>> operators;
+  std::vector<std::unique_ptr<Operator>> operators_;
 
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;

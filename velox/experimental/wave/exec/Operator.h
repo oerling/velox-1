@@ -58,6 +58,15 @@ class Operator {
 
   void definesSubfields(CompileState& state, const TypePtr& type, const std::string& parentPath = "");
 
+  /// Returns the operand if this is defined by 'this'.
+  AbstractOperand* defines(Value value) {
+    auto it = defines_.find(value);
+    if (it == defines_.end()) {
+      return nullptr;
+    }
+    return it->second;
+  }
+  
  protected:
   bool isFilter_{false};
 

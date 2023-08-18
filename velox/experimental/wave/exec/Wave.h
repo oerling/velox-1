@@ -31,9 +31,9 @@ namespace facebook::velox::wave {
 // subfield. Subfield between operators, Expr inside  an Expr.
 struct Value {
   Value() = default;
-  Value(exec::Expr* expr) : expr(expr), subfield(nullptr) {}
+  Value(const exec::Expr* expr) : expr(expr), subfield(nullptr) {}
 
-  Value(common::Subfield* subfield) : expr(nullptr), subfield(subfield) {}
+  Value(const common::Subfield* subfield) : expr(nullptr), subfield(subfield) {}
   ~Value() = default;
 
   bool operator==(const Value& other) {
