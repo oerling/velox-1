@@ -38,5 +38,15 @@ namespace facebook::velox::wave {
 
   return nullptr;
 }
+  std::string WaveDriver::toString() const override {
+    std::stringstream out;
+    out << "{Wave" << std::endl;
+    for (auto& op : operators_) {
+      out << op->toString() << std::endl;
+    }
+    return out.str();
+  }
 
+
+  
 } // namespace facebook::velox::wave

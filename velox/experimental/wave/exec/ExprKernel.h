@@ -90,7 +90,7 @@ struct IWrap {
   // The post wrap columns. If the original is not wrapped, these
   // have the base of original and indices to wrap and posssibly new
   // nulls from 'newNulls'. If the original is wrapped and
-  // newIndices has[i] is non-nullptr, the combined indices from the
+  // newIndices[i] is non-nullptr, the combined indices from the
   // existing wrap and 'indices are stored in
   // 'newIndices'. 'newIndices[i]' is the indices of
   // targetColumn[i]. If 'newIndices[i]' is nullptr, the new indices

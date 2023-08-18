@@ -18,11 +18,14 @@
 
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/vector/Vector.h"
+#include "velox/experimental/wave/wave/Wave.h"
 
 namespace facebook::velox::wave {
 
 class Operator {
  public:
+  Operator(CompileState& state, const TypePtr& outputType);
+
   virtual exec::BlockingReason isBlocked(ContinueFuture& future);
 
   /// True if may reduce cardinality without duplicating input rows.
@@ -36,32 +39,48 @@ class Operator {
   }
 
   virtual bool canAdvance();
+
   virtual void advance();
-  virtual void fullyConsumed();
 
-  // Returns number of bytes tied up in completed or ongoing speculative
-  // execution.
-  virtual int32_t speculativeSize() const {
-    return 0;
+  AbstractOperand* defined(Value value);
+  
+  // If 'this' is a cardinality change (filter, join, unnest...),
+  // returns the instruction where the projected through columns get
+  // wrapped. Columns that need to be accessed through the change are
+  // added here.
+  virtual AbstractWrap* findWrap() const {
+    return nullptr;
   }
+  
+  virtual std::string toString() const = 0;
 
-  virtual int32_t dropSpeculative() {
-    VELOX_UNSUPPORTED();
-  }
-
- protected:
+protected:
   bool isFilter_{false};
 
   bool isExpanding_{false};
 
-  std::vector<exec::IdentityProjection> identityProjections_;
-
   TypePtr outputType_;
-  std::unique_ptr<Vector> output_;
 
-  /// The stream that produces each subfield. More than  one can be produced by the same stream.
-  std::F14FastMap<Subfield*, std::shared_ptr<Stream> fieldStreams;
+  // The operands that are first defined here.
+  folly::F14FastMap<Value, AbstractOperand*> defines_;
 
+  // The operand for values that are projected through 'this'.
+    folly::F14FastMap<Value, AbstractOperand*> projects_;
+
+  std::vector < std::shared_ptr<Program> programs_;
+
+  // Executable instances of 'this'. A Driver may instantiate multiple
+  // executable instances to processs consecutive input batches in parallel.
+  std::vector<ThreadBlockProgram*> executables_;
+
+  // Buffers containing unified memory for 'executables_' and all instructions,
+  // operands etc. referenced from these.  This does not include buffers for
+  // intermediate results.
+  std::vector<WaveBufferPtr> executableMemory_;
+
+  /// The wave that produces each subfield. More than  one subfield can be produced by
+  /// the same wave.
+  std::F14FastMap < Subfield*, std::shared_ptr<Wave> fieldToWave_;
 };
 
 } // namespace facebook::velox::wave

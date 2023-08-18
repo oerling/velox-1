@@ -20,6 +20,13 @@
 namespace facebook::velox::wave {
 
 class Values : public Operator {
+public:
+  Values(CompileState& state, core::ValuesNode& values);
+
+private:
+    std::vector<RowVectorPtr> values_;
+  int32_t current_ = 0;
+  size_t roundsLeft_ = 1;
 };
 
 } // namespace facebook::velox::wave

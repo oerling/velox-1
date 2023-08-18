@@ -52,6 +52,8 @@ class WaveDriver : public exec::SourceOperator {
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
+  std::string toString() const override;
+  
  private:
   ContinueFuture blockingFuture_;
   exec::BlockingReason blockingReason_;

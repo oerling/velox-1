@@ -19,30 +19,7 @@
 #include "velox/exec/Operator.h"
 #include "velox/experimental/wave/exec/Operator.h"
 
-
 namespace facebook::velox::wave {
-
-using SubfieldMap =   std::unordered_map < std::string, std::unique_ptr<Subfield>;
-  
-// A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
-// subfield. Subfield between operators, Expr inside  an Expr.
-struct Value {
-  exec::Expr* expr;
-  Subfield* subfield;
-};
-
-struct ValueHasher {
-  size_t operator()(const Value& value) const {}
-};
-
-struct ValueComparer {
-  bool operator()(const Value& left, const value& right) const {}
-};
-
-struct Program {
-  std::vector < std::unique_ptr<Instruction> code;
-  std::unordered_map<Value, Operand*> valueToOperand;
-};
 
 class CompileState {
  public:
@@ -50,18 +27,40 @@ class CompileState {
   // Replaces sequences of Operators in the Driver given at construction with
   // Wave equivalents. Returns true if the Driver was changed.
   bool compile();
+  Subfield* toSubfield(const Expr&);
 
- private:
+  Subfield* toSubfield(const std::string& name);
+
+private:
+  AbstractOperand* newOperand(AbstractOperand& other);
+  AbstractOperand* newOperand(const TypePtr& type, const std::string& label = "");
+// The operator and output operand where the Value is first defined.
+  folly::F14FastMap<Value, AbstractOperand*> definedBy_;
+
+  // The Operand where Value is available after all projections placed to date.
+
+  folly::F14FastMap<Value, AbstractOperand*> projectedTo_;
+
+  folly::F14FastMap<AbstractOperand*, std::shared_ptr<Program>> definedIn_;
+  
+  // The programs that cam be added to. Any programs from previous operators
+  // after which there is no cardinality change or shuffle.
+  folly::F14FastMap<Value, std::shared_ptr<Program>> openPrograms_;
+
   const exec::DriverFactory& driverFactory_;
-  // if a column/expression  has a single instruction stream that produces it,
-  // this is the stream. A cardinality change closes this.
-  std::
-      unordered_map<Value, std::shared_ptr<Program, ValueHasher, ValueComparer>>
-          columnPrograms_;
   SubfieldMap subfields_;
+
+  // All AbstractOperands. Handed off to WaveDriver after plan conversion.
+  std::vector<std::unique_ptr<AbstractOperand> operands_; 
 
   // The Wave operators generated so far.
   std::vector<Operator> operators;
+
+  // The program being generated.
+  std::shared_ptr<Program> currentProgram_;
+  
+  // Sequence number for operands.
+  int32_t operandCounter_{0};
 };
 
 /// Registers adapter to add Wave operators to Drivers.

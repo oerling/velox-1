@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -15,4 +14,14 @@
  * limitations under the License.
  */
 
-namespace facebook::velox::wave {}
+namespace facebook::velox::wave {
+Values::Values(CompileState& state, core::ValuesNode& values)
+  : Operator(state, values.outputType()),
+    values_(values.values()), roundsLeft_(values.repeatTimes()) {
+  definesSubfields(outputType_);
+}
+
+  
+  
+}
+
