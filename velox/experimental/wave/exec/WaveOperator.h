@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/Wave.h"
-#include "velox/experimental/wave/vector/Vector.h"
 
 namespace facebook::velox::wave {
 
