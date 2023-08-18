@@ -15,14 +15,17 @@
  */
 
 #pragma once
-#include "velox/experimental/wave/exec/Operator.h"
+#include "velox/core/PlanNode.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {
 
-class Values : public Operator {
+class Values : public WaveOperator {
  public:
-  Values(CompileState& state, core::ValuesNode& values);
+  Values(CompileState& state, const core::ValuesNode& values);
 
+  std::string toString() const override;
+  
  private:
   std::vector<RowVectorPtr> values_;
   int32_t current_ = 0;

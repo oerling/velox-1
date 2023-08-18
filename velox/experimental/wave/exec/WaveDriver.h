@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/exec/Operator.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {
 
@@ -24,11 +25,13 @@ using SubfieldMap =
     folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
 class WaveDriver : public exec::SourceOperator {
+public:
   WaveDriver(
-      int32_t operatorId,
-      exec::DriverCtx* driverCtx,
-      std::vector<std::unique_ptr<Operator>> waveOperators,
-      std::vector<exec::Operator*> cpuOperators,
+    exec::DriverCtx* driverCtx,
+    RowTypePtr outputType,
+    core::PlanNodeId planNodeId,
+    int32_t operatorId,
+    std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       SubfieldMap subfields,
       std::vector<std::unique_ptr<AbstractOperand>> operands);
 
@@ -52,6 +55,10 @@ class WaveDriver : public exec::SourceOperator {
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
+  void setReplaced(std::vector<std::unique_ptr<exec::Operator>> original) {
+    cpuOperators_ = std::move(original);
+  }
+  
   std::string toString() const override;
 
  private:

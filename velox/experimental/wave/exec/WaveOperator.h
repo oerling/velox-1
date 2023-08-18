@@ -17,18 +17,15 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/Wave.h"
-#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/vector/Vector.h"
 
 namespace facebook::velox::wave {
 
   class CompileState;
   
-class Operator {
+class WaveOperator {
  public:
-  Operator(CompileState& state, const TypePtr& outputType);
-
-  virtual exec::BlockingReason isBlocked(ContinueFuture& future);
+  WaveOperator(CompileState& state, const TypePtr& outputType);
 
   /// True if may reduce cardinality without duplicating input rows.
   bool isFilter() {

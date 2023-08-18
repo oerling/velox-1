@@ -553,7 +553,7 @@ class Operator : public BaseRuntimeStatWriter {
       VELOX_CHECK(op_->nonReclaimableSection_);
       op_->nonReclaimableSection_ = false;
     }
-
+    
    private:
     Operator* const op_;
   };

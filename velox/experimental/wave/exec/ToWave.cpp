@@ -16,19 +16,22 @@
  */
 
 #include "velox/experimental/wave/exec/ToWave.h"
-#include "velox/expression/FieldReference.h"
+#include "velox/experimental/wave/exec/Values.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
+
 #include "velox/expression/ConstantExpr.h"
+#include "velox/expression/FieldReference.h"
 
 namespace facebook::velox::wave {
 
 using exec::Expr;
 
-  common::Subfield* CompileState::toSubfield(const Expr& expr) {
+common::Subfield* CompileState::toSubfield(const Expr& expr) {
   std::string name = expr.toString();
   return toSubfield(name);
 }
 
-  common::Subfield* CompileState::toSubfield(const std::string& name) {
+common::Subfield* CompileState::toSubfield(const std::string& name) {
   auto it = subfields_.find(name);
   if (it == subfields_.end()) {
     auto field = std::make_unique<common::Subfield>(name);
@@ -47,7 +50,7 @@ bool isField(const Expr& expr) {
   return false;
 }
 
-  Value CompileState::toValue(const Expr& expr) {
+Value CompileState::toValue(const Expr& expr) {
   if (isField(expr)) {
     auto* subfield = toSubfield(expr);
     return Value(subfield);
@@ -55,12 +58,14 @@ bool isField(const Expr& expr) {
   return Value(&expr);
 }
 
-  AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
+AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
   operands_.push_back(std::make_unique<AbstractOperand>(other));
   return operands_.back().get();
 }
 
-  AbstractOperand* CompileState::newOperand(const TypePtr& type, const std::string& label) {
+AbstractOperand* CompileState::newOperand(
+    const TypePtr& type,
+    const std::string& label) {
   operands_.push_back(
       std::make_unique<AbstractOperand>(operandCounter_++, type, ""));
   auto op = operands_.back().get();
@@ -81,24 +86,24 @@ AbstractOperand* CompileState::addIdentityProjections(
     }
     if (auto wrap = operators_[i]->findWrap()) {
       if (operators_[i]->isExpanding()) {
-	auto newResult = newOperand(*result);
-	wrap->addWrap(result, newResult);
-	result = newResult;
+        auto newResult = newOperand(*result);
+        wrap->addWrap(result, newResult);
+        result = newResult;
       } else {
-	wrap->addWrap(result);
+        wrap->addWrap(result);
       }
     }
   }
-  }
+}
 
-  AbstractOperand* CompileState::findCurrentValue(Value value) {
+AbstractOperand* CompileState::findCurrentValue(Value value) {
   auto it = projectedTo_.find(value);
   if (it == projectedTo_.end()) {
     auto originIt = definedBy_.find(value);
     if (originIt == definedBy_.end()) {
       return nullptr;
     }
-    
+
     auto& program = definedIn_[originIt->second];
     VELOX_CHECK(program);
     return addIdentityProjections(value, program.get());
@@ -135,7 +140,6 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   auto result = newOperand(expr.type(), "r");
   currentProgram_->instructions_.push_back(std::make_unique<AbstractBinary>(
       opCode.value(),
-      expr.type(),
       addExpr(*expr.inputs()[0]),
       addExpr(*expr.inputs()[1]),
       result));
@@ -143,60 +147,75 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
 }
 
 void CompileState::addExprSet(
-    const exec::ExprSet& set,
+    const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end) {
   for (auto i = begin; i < end; ++i) {
-    auto& fields = set.exprAt(i)->distinctFields();
+    addExpr(*exprSet.exprs()[i]);
   }
 }
 
-  bool CompileState::addOperator(exec::Operator* op, int32_t& nodeIndex) {
+bool CompileState::addOperator(
+    exec::Operator* op,
+    int32_t& nodeIndex,
+    RowTypePtr& outputType) {
   auto& name = op->stats().rlock()->operatorType;
   if (name == "Values") {
-  operators_.push_back(
-		       std::make_unique<Values>(this, reinterpret_cast <core::ValuesNode>(factory_.planNodes[nodeIndex])));
+    operators_.push_back(std::make_unique<Values>(
+						  *this,
+        *reinterpret_cast<const core::ValuesNode*>(
+            driverFactory_.planNodes[nodeIndex].get())));
+    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+    return true;
   } else {
-      return nullptr;
+    return false;
   }
-  }
+}
 
-
-  bool CompileState::compile() {
-      auto& operators = driver_.mutableOperators();
-  auto& nodes = factory_.planNodes;
+bool CompileState::compile() {
+  auto operators = driver_.operators();
+  auto& nodes = driverFactory_.planNodes;
 
   int32_t first = 0;
   int32_t operatorIndex = 0;
   int32_t nodeIndex = 0;
+  RowTypePtr outputType;
   for (; operatorIndex < operators_.size(); ++operatorIndex) {
-    if (!addOperator(operators[operatorIndex], nodeIndex)) {
+    if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
+    ++nodeIndex;
   }
   if (operators_.empty()) {
     return false;
   }
-  std::vector<std::unique_ptr<exec::Operator>> replaced;
-  for (auto i = first; i < operatorIndex; ++i) {
-    replaced.push_back(std::move(operators[i]));
-  }
-  operators.erase(operators.begin(), operators.begin() + replaced.size());
-  auto driver = std::make_unique<WaveDriver>(head->id(), head->driverCtx(), std::move(operators_), std::move(replaced), std::move(subfields), std::move(operands_)); 
-  std::vector<std::unique_ptr<exec::Operator>> added;
-  added.push_ack(std::move(driver));
-  mutableOperators.insert(mutableOperators.begin(), added.begin(), added.end());
-  }
 
-bool waveDriverAdapter(const exec::DriverFactory& factory, exec::Driver& driver) {
+  auto waveOpUnique = std::make_unique<WaveDriver>(
+      driver_.driverCtx(),
+      outputType,
+      operators[first]->planNodeId(),
+      operators[first]->operatorId(),
+      std::move(operators_),
+      std::move(subfields_),
+      std::move(operands_));
+  auto waveOp = waveOpUnique.get();
+  std::vector<std::unique_ptr<exec::Operator>> added;
+  added.push_back(std::move(waveOpUnique));
+  auto replaced = driverFactory_.replaceOperators(
+      driver_, first, operatorIndex, std::move(added));
+  waveOp->setReplaced(std::move(replaced));
+  return true;
+}
+
+bool waveDriverAdapter(
+    const exec::DriverFactory& factory,
+    exec::Driver& driver) {
   CompileState state(factory, driver);
   return state.compile();
 }
 
-  
 void registerWave() {
   exec::DriverAdapter waveAdapter{"Wave", waveDriverAdapter};
-  exec::registerDriverAdapter(waveAdapter);
+  exec::DriverFactory::registerAdapter(waveAdapter);
 }
-}
-}
+} // namespace facebook::velox::wave

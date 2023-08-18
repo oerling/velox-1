@@ -26,6 +26,8 @@ struct AbstractOperand {
 };
 
 struct AbstractInstruction {
+  AbstractInstruction(OpCode opCode) : opCode(opCode) {}
+  
   OpCode opCode;
 };
 
@@ -49,6 +51,9 @@ struct AbstractWrap : public AbstractInstruction {
 };
 
 struct AbstractBinary : public AbstractInstruction {
+  AbstractBinary(OpCode opCode, AbstractOperand* left,AbstractOperand* right, AbstractOperand* result)
+    : AbstractInstruction(opCode), left(left), right(right), result(result) {}
+
   AbstractOperand* left;
   AbstractOperand* right;
   AbstractOperand* result;

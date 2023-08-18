@@ -318,6 +318,8 @@ class Driver : public std::enable_shared_from_this<Driver> {
     return blockingReason_;
   }
 
+  BlockingReason blockingReason_{BlockingReason::kNotBlocked};
+
  private:
   Driver() = default;
 
@@ -366,14 +368,11 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   std::vector<std::unique_ptr<Operator>> operators_;
 
-  /// Exposes Operators for customization by DriverAdapter.
-  std::vector<std::unique_ptr<Operator>>& mutableOperators() {
-    return operators_;
-  }
-
-  BlockingReason blockingReason_{BlockingReason::kNotBlocked};
-
   bool trackOperatorCpuUsage_;
+
+  // Indicates that a DriverAdapter can rearrange Operators. Set to false at end
+  // of DriverFactory::createDriver().
+  bool isAdaptable_{true};
 
   friend struct DriverFactory;
 };
@@ -430,6 +429,16 @@ struct DriverFactory {
       std::unique_ptr<DriverCtx> ctx,
       std::shared_ptr<ExchangeClient> exchangeClient,
       std::function<int(int pipelineId)> numDrivers);
+
+  /// Replaces operators at indices 'begin' to 'end - 1' with
+  /// 'replaceWith, in the Driver being created.  Sets operator ids to be
+  /// consecutive after the replace. May only be called from inside a
+  /// DriverAdapter. Returns the replaced Operators.
+  std::vector<std::unique_ptr<Operator>> replaceOperators(
+      Driver& driver,
+      int32_t begin,
+      int32_t end,
+      std::vector<std::unique_ptr<Operator>> replaceWith) const;
 
   static void registerAdapter(DriverAdapter adapter);
 

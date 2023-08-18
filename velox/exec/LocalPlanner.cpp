@@ -580,7 +580,39 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
       break;
     }
   }
+  driver->isAdaptable_ = false;
   return driver;
+}
+
+std::vector<std::unique_ptr<Operator>> DriverFactory::replaceOperators(
+    Driver& driver,
+    int32_t begin,
+    int32_t end,
+    std::vector<std::unique_ptr<Operator>> replaceWith) const {
+  VELOX_CHECK(driver.isAdaptable_);
+  std::vector<std::unique_ptr<exec::Operator>> replaced;
+  for (auto i = begin; i < end; ++i) {
+    replaced.push_back(std::move(driver.operators_[i]));
+  }
+
+  driver.operators_.erase(
+      driver.operators_.begin(), driver.operators_.begin() + replaced.size());
+
+  // Insert the replacement at the place of the erase. Do manually because
+  // insert() is not good with unique pointers.
+  driver.operators_.resize(driver.operators_.size() + replaceWith.size());
+  for (auto i = driver.operators_.size() - 1; i >= begin; --i) {
+    driver.operators_[i] = std::move(driver.operators_[i - replaceWith.size()]);
+  }
+  for (auto i = 0; i < replaceWith.size(); ++i) {
+    driver.operators_[i + begin] = std::move(replaceWith[i]);
+  }
+
+  // Set the ids to be consecutive.
+  for (auto i = 0; i < driver.operators_.size(); ++i) {
+    driver.operators_[i]->stats().wlock()->operatorId = i;
+  }
+  return replaced;
 }
 
 std::vector<core::PlanNodeId> DriverFactory::needsHashJoinBridges() const {

@@ -14,17 +14,17 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/Operator.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {
 
-Operator::Operator(CompileState& state, const TypePtr& type)
+  WaveOperator::WaveOperator(CompileState& state, const TypePtr& type)
     : outputType_(type) {
   definesSubfields(state, outputType_);
 }
 
-void Operator::definesSubfields(
+void WaveOperator::definesSubfields(
     CompileState& state,
     const TypePtr& type,
     const std::string& parentPath) {

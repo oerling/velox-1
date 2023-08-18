@@ -18,13 +18,18 @@
 
 #include "velox/exec/Operator.h"
 #include "velox/expression/Expr.h"
-#include "velox/experimental/wave/exec/Operator.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {
 
+using SubfieldMap =
+    folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
+
+  
 class CompileState {
  public:
-  CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver);
+  CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
+    : driverFactory_(driverFactory), driver_(driver) {}
 
   // Replaces sequences of Operators in the Driver given at construction with
   // Wave equivalents. Returns true if the Driver was changed.
@@ -55,6 +60,8 @@ void addExprSet(
   
 private:
 
+  bool addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
+  
   // The operator and output operand where the Value is first defined.
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> definedBy_;
 
@@ -68,13 +75,14 @@ private:
   folly::F14FastMap<Value, std::shared_ptr<Program>, ValueHasher, ValueComparer> openPrograms_;
 
   const exec::DriverFactory& driverFactory_;
+  exec::Driver& driver_;
   SubfieldMap subfields_;
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
   std::vector < std::unique_ptr<AbstractOperand>> operands_;
 
   // The Wave operators generated so far.
-  std::vector<std::unique_ptr<Operator>> operators_;
+  std::vector<std::unique_ptr<WaveOperator>> operators_;
 
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;

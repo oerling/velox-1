@@ -18,11 +18,15 @@
 
 namespace facebook::velox::wave {
 
-Values::Values(CompileState& state, core::ValuesNode& values)
-    : Operator(state, values.outputType()),
+Values::Values(CompileState& state, const core::ValuesNode& values)
+  : WaveOperator(state, values.outputType()),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {
   definesSubfields(state, outputType_);
+}
+
+std::string Values::toString() const {
+  return "Values";
 }
 
 } // namespace facebook::velox::wave

@@ -16,11 +16,11 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/Operator.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {
 
-class Filter : public Operator {
+class Filter : public WaveOperator {
  public:
   Filter(RowTypePtr inputType, exec::ExprSet exprSet);
 

@@ -21,17 +21,18 @@
 namespace facebook::velox::wave {
 
 WaveDriver::WaveDriver(
-    int32_t operatorId,
     exec::DriverCtx* driverCtx,
-    std::vector < std::unique_ptr<Operator> waveOperators,
-    std::vector<exec::Operator*> cpuOperators,
+    RowTypePtr outputType,
+    core::PlanNodeId planNodeId,
+    int32_t operatorId,
+    std::vector < std::unique_ptr<wave::Operator> waveOperators,
     SubfieldMap subfields,
     std::vector<std::unique_ptr<AbstractOperand>> operands)
     : exec::Operator(
           driverCtx,
-          cpuOperators.back()->outputType(),
-          cpuOperators[0]->operatorId(),
-          cpuOperators[0]->planNodeId(),
+          outputType,
+	  operatorId,
+	  planNodeId,
           "Wave"),
       operators_(std::move(waveOperators)),
       cpuOperators_(std::move(cpuOperators)),
