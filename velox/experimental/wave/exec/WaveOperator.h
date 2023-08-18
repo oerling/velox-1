@@ -37,11 +37,6 @@ class WaveOperator {
     return isExpanding_;
   }
 
-  virtual bool canAdvance();
-
-  virtual void advance();
-
-  AbstractOperand* defined(Value value);
 
   // If 'this' is a cardinality change (filter, join, unnest...),
   // returns the instruction where the projected through columns get

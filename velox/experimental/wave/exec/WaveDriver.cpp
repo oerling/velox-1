@@ -1,5 +1,3 @@
-
-
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -16,7 +14,9 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/WaveOperator.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 
 namespace facebook::velox::wave {
 
@@ -25,31 +25,27 @@ WaveDriver::WaveDriver(
     RowTypePtr outputType,
     core::PlanNodeId planNodeId,
     int32_t operatorId,
-    std::vector < std::unique_ptr<wave::Operator> waveOperators,
+    std::vector < std::unique_ptr<WaveOperator>> waveOperators,
     SubfieldMap subfields,
     std::vector<std::unique_ptr<AbstractOperand>> operands)
-    : exec::Operator(
+    : exec::SourceOperator(
           driverCtx,
           outputType,
 	  operatorId,
 	  planNodeId,
           "Wave"),
-      operators_(std::move(waveOperators)),
-      cpuOperators_(std::move(cpuOperators)),
+      waveOperators_(std::move(waveOperators)),
       subfields_(std::move(subfields)),
       operands_(std::move(operands)) {}
 
-RowVectorPtr WaveDriver::getOutput() override {
-  if (!runnable_) {
-    return nullptr;
-  }
-
+RowVectorPtr WaveDriver::getOutput()  {
   return nullptr;
 }
-std::string WaveDriver::toString() const override {
+
+  std::string WaveDriver::toString() const  {
   std::stringstream out;
   out << "{Wave" << std::endl;
-  for (auto& op : operators_) {
+  for (auto& op : waveOperators_) {
     out << op->toString() << std::endl;
   }
   return out.str();

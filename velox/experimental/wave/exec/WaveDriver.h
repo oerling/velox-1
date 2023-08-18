@@ -45,15 +45,10 @@ public:
     return exec::BlockingReason::kNotBlocked;
   }
 
-  bool isFinished() override;
-
-  bool canAddDynamicFilter() const override {
-    return canAddDynamicFilter_;
+  bool isFinished() {
+    return finished_;
   }
 
-  void addDynamicFilter(
-      column_index_t outputChannel,
-      const std::shared_ptr<common::Filter>& filter) override;
 
   void setReplaced(std::vector<std::unique_ptr<exec::Operator>> original) {
     cpuOperators_ = std::move(original);
@@ -65,9 +60,10 @@ public:
   ContinueFuture blockingFuture_;
   exec::BlockingReason blockingReason_;
 
+  bool finished_{false};
 
   // Wave operators replacing 'cpuOperators_' on GPU path.
-  std::vector<std::unique_ptr<Operator>> operators_;
+  std::vector<std::unique_ptr<WaveOperator>> waveOperators_;
   // The replaced Operators from the Driver. Can be used for a CPU fallback.
   std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
   // Dedupped Subfields. Handed over by CompileState.
