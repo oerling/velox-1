@@ -661,4 +661,13 @@ std::vector<core::PlanNodeId> DriverFactory::needsNestedLoopJoinBridges()
 
   return planNodeIds;
 }
+
+// static
+void DriverFactory::registerAdapter(DriverAdapter adapter) {
+  adapters.push_back(std::move(adapter));
+}
+
+// static
+std::vector<DriverAdapter> DriverFactory::adapters;
+
 } // namespace facebook::velox::exec
