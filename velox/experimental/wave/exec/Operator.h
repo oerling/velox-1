@@ -16,9 +16,9 @@
 
 #pragma once
 
+#include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/vector/Vector.h"
-#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
@@ -43,7 +43,7 @@ class Operator {
   virtual void advance();
 
   AbstractOperand* defined(Value value);
-  
+
   // If 'this' is a cardinality change (filter, join, unnest...),
   // returns the instruction where the projected through columns get
   // wrapped. Columns that need to be accessed through the change are
@@ -51,12 +51,12 @@ class Operator {
   virtual AbstractWrap* findWrap() const {
     return nullptr;
   }
-  
+
   virtual std::string toString() const = 0;
 
   void definesSubfields(CompileState& state, const TypePtr& type);
 
-protected:
+ protected:
   bool isFilter_{false};
 
   bool isExpanding_{false};
@@ -67,7 +67,7 @@ protected:
   folly::F14FastMap<Value, AbstractOperand*> defines_;
 
   // The operand for values that are projected through 'this'.
-    folly::F14FastMap<Value, AbstractOperand*> projects_;
+  folly::F14FastMap<Value, AbstractOperand*> projects_;
 
   std::vector < std::shared_ptr<Program> programs_;
 
@@ -80,8 +80,8 @@ protected:
   // intermediate results.
   std::vector<WaveBufferPtr> executableMemory_;
 
-  /// The wave that produces each subfield. More than  one subfield can be produced by
-  /// the same wave.
+  /// The wave that produces each subfield. More than  one subfield can be
+  /// produced by the same wave.
   std::F14FastMap < Subfield*, std::shared_ptr<Wave> fieldToWave_;
 };
 
