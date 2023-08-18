@@ -20,15 +20,17 @@
 
 namespace facebook::velox::wave {
 
-using SubfieldMap = std::unordered_map < std::string, std::unique_ptr<Subfield>;
+using SubfieldMap =
+    folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
 class WaveDriver : public exec::SourceOperator {
   WaveDriver(
       int32_t operatorId,
       exec::DriverCtx* driverCtx,
-      std::vector < std::unique_ptr<Operator> waveOperators,
+      std::vector<std::unique_ptr<Operator>> waveOperators,
       std::vector<exec::Operator*> cpuOperators,
-      SubfieldMap subfields);
+      SubfieldMap subfields,
+      std::vector<std::unique_ptr<AbstractOperand>> operands);
 
   RowVectorPtr getOutput() override;
 
@@ -56,13 +58,15 @@ class WaveDriver : public exec::SourceOperator {
   ContinueFuture blockingFuture_;
   exec::BlockingReason blockingReason_;
 
-  // Dedupped Subfields. Handed over by CompileState.
-  SubfieldMap subfields_;
 
   // Wave operators replacing 'cpuOperators_' on GPU path.
   std::vector<std::unique_ptr<Operator>> operators_;
   // The replaced Operators from the Driver. Can be used for a CPU fallback.
   std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
+  // Dedupped Subfields. Handed over by CompileState.
+  SubfieldMap subfields_;
+
+  std::vector<std::unique_ptr<AbstractOperand>> operands_;
   bool canAddDynamicFilter_{false};
 };
 

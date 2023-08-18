@@ -17,46 +17,50 @@
 #pragma once
 
 #include "velox/exec/Operator.h"
+#include "velox/expression/Expr.h"
 #include "velox/experimental/wave/exec/Operator.h"
 
 namespace facebook::velox::wave {
 
 class CompileState {
  public:
-  CompileState(const exec::DriverFactory& driverFactory exec::Driver& driver);
+  CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver);
+
   // Replaces sequences of Operators in the Driver given at construction with
   // Wave equivalents. Returns true if the Driver was changed.
   bool compile();
-  Subfield* toSubfield(const Expr&);
 
-  Subfield* toSubfield(const std::string& name);
+  common::Subfield* toSubfield(const exec::Expr&);
 
- private:
-  AbstractOperand* newOperand(AbstractOperand& other);
+  common::Subfield* toSubfield(const std::string& name);
+
+    AbstractOperand* newOperand(AbstractOperand& other);
+
   AbstractOperand* newOperand(
       const TypePtr& type,
       const std::string& label = "");
+
+ private:
   // The operator and output operand where the Value is first defined.
-  folly::F14FastMap<Value, AbstractOperand*> definedBy_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> definedBy_;
 
   // The Operand where Value is available after all projections placed to date.
-
-  folly::F14FastMap<Value, AbstractOperand*> projectedTo_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> projectedTo_;
 
   folly::F14FastMap<AbstractOperand*, std::shared_ptr<Program>> definedIn_;
 
   // The programs that cam be added to. Any programs from previous operators
   // after which there is no cardinality change or shuffle.
-  folly::F14FastMap<Value, std::shared_ptr<Program>> openPrograms_;
+  folly::F14FastMap<Value, std::shared_ptr<Program>, ValueHasher, ValueComparer> openPrograms_;
 
   const exec::DriverFactory& driverFactory_;
   SubfieldMap subfields_;
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
-  std::vector < std::unique_ptr<AbstractOperand> operands_;
+  std::vector < std::unique_ptr<AbstractOperand>> operands_;
 
   // The Wave operators generated so far.
-  std::vector<Operator> operators;
+  std::vector<std::unique_ptr<Operator>> operators;
 
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;

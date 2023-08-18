@@ -25,11 +25,18 @@ WaveDriver::WaveDriver(
     exec::DriverCtx* driverCtx,
     std::vector < std::unique_ptr<Operator> waveOperators,
     std::vector<exec::Operator*> cpuOperators,
-    SubfieldMap subfields)
-    : exec::Operator(operatorId, driverCtx, ),
+    SubfieldMap subfields,
+    std::vector<std::unique_ptr<AbstractOperand>> operands)
+    : exec::Operator(
+          driverCtx,
+          cpuOperators.back()->outputType(),
+          cpuOperators[0]->operatorId(),
+          cpuOperators[0]->planNodeId(),
+          "Wave"),
       operators_(std::move(waveOperators)),
       cpuOperators_(std::move(cpuOperators)),
-      subfields_(std::move(subfields)) {}
+      subfields_(std::move(subfields)),
+      operands_(std::move(operands)) {}
 
 RowVectorPtr WaveDriver::getOutput() override {
   if (!runnable_) {

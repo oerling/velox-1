@@ -17,22 +17,11 @@
 
 #include "velox/experimental/wave/exec/ToWave.h"
 
-using Exec::Expr;
-;
-
 namespace facebook::velox::wave {
 
-void CompileState::addValues(exec::Values& values) {
-  auto operator= std::make_unique<Values>(this, reinterpret_cast < values);
-};
+using exec::Expr;
 
-bool CompileState::addFilter(exec::Expr* expr) {}
-
-bool worthBoundary(const Expr& expr) {
-  return false;
-}
-
-Subfield* CompileState::toSubfield(const Expr&) {
+  common::Subfield* CompileState::toSubfield(const Expr& expr) {
   std::string name = expr.toString();
   auto it = subfields_.find(name);
   if (it == subfields_.end()) {
@@ -76,14 +65,15 @@ AbstractOperand* newOperand(AbstractOperand& other) {
 }
 
 AbstractOperand* newOperand(const TypePtr& type, const std::string& label) {
-  operands_.push_back(std::make_unique<AbstractOperand>());
+  operands_.push_back(
+      std::make_unique<AbstractOperand>(operandCounter_++, type, ""));
   auto op = operands_.back().get();
-  op->type = type;
-  op->sequence_ = operandCounter_++;
   return op;
 }
 
-Operand* CompileState::addIdentityProjections(Value value, Program* definedIn) {
+AbstractOperand* CompileState::addIdentityProjections(
+    Value value,
+    Program* definedIn) {
   Operand* result = nullptr;
   for (auto i = 0; i < operators_.size(); ++i) {
     if (auto operand = operators[i]->defines(value)) {
@@ -105,7 +95,7 @@ Operand* CompileState::addIdentityProjections(Value value, Program* definedIn) {
   }
 }
 
-Operand* findCurrentValue(Value value) {
+AbstractOperand* findCurrentValue(Value value) {
   auto it = projectedTo_.find(value);
   if (it == projectedTo_.end()) {
     auto originIt = definedIn_.find(value);
@@ -162,24 +152,50 @@ void CompileState::addExprSet(
   }
 }
 
-void CompileState::addOperator(exec::Operator* op) {
+  bool CompileState::addOperator(exec::Operator* op, int32_t& nodeIndex) {
   auto& name = op->stats().rlock()->operatorType;
   if (name == "Values") {
-      addValues(reinterpret_cast<exec::Values>(op);
+  operators_.push_back(
+		       std::make_unique<Values>(this, reinterpret_cast <core::ValuesNode>(factory_.planNodes[nodeIndex])));
   } else if (name == "FilterProject") {
   } else {
       return nullptr;
   }
-}
-
-bool waveDriverAdapter(exec::DriverFactory& factory, exec::Driver& driver) {
-  auto& operators = driver.mutableOperators();
-  auto& nodes = factory.planNodes;
-  for (auto first = 0; first < operators_.size(); ++first) {
   }
-}
-bool makeWaveDriver(const DriverFactory& factory, Driver& driver) {}
 
+
+  bool CompileState::compile() {
+      auto& operators = driver_.mutableOperators();
+  auto& nodes = factory_.planNodes;
+
+  int32_t first = 0;
+  int32_t operatorIndex = 0;
+  int32_t nodeIndex = 0;
+  for (; operatorIndex < operators_.size(); ++operatorIndex) {
+    if (!addOperator(operators[operatorIndex], nodeIndex)) {
+      break;
+    }
+  }
+  if (operators_.empty()) {
+    return false;
+  }
+  std::vector<std::unique_ptr<exec::Operator>> replaced;
+  for (auto i = first; i < operatorIndex; ++i) {
+    replaced.push_back(std::move(operators[i]));
+  }
+  operators.erase(operators.begin(), operators.begin() + replaced.size());
+  auto driver = std::make_unique<WaveDriver>(head->id(), head->driverCtx(), std::move(operators_), std::move(replaced), std::move(subfields), std::move(operands_)); 
+  std::vector<std::unique_ptr<exec::Operator>> added;
+  added.push_ack(std::move(driver));
+  mutableOperators.insert(mutableOperators.begin(), added.begin(), added.end());
+  }
+
+bool waveDriverAdapter(const exec::DriverFactory& factory, exec::Driver& driver) {
+  CompileState state(factory, driver);
+  return state.compile();
+}
+
+  
 void registerWave() {
   exec::DriverAdapter waveAdapter{"Wave", waveDriverAdapter};
   exec::registerDriverAdapter(waveAdapter);

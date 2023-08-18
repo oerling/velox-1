@@ -1,5 +1,6 @@
 
 
+#include "velox/type/Type.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 
 namespace facebook::velox::wave {
@@ -7,9 +8,12 @@ namespace facebook::velox::wave {
 /// side ThreadBlockProgram right before execution.
 
 struct AbstractOperand {
-  AbstractOperand(int32_t id, TypePtr type, std::string label)
+  AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
+  const int32_t id;
+
+  //Operand type.
   TypePtr type;
 
   // Label for debugging, e.g. column name or Expr::toString output.

@@ -22,6 +22,8 @@
 
 namespace facebook::velox::wave {
 
+  class CompileState;
+  
 class Operator {
  public:
   Operator(CompileState& state, const TypePtr& outputType);
@@ -54,7 +56,7 @@ class Operator {
 
   virtual std::string toString() const = 0;
 
-  void definesSubfields(CompileState& state, const TypePtr& type);
+  void definesSubfields(CompileState& state, const TypePtr& type, const std::string& parentPath = "");
 
  protected:
   bool isFilter_{false};
@@ -64,12 +66,12 @@ class Operator {
   TypePtr outputType_;
 
   // The operands that are first defined here.
-  folly::F14FastMap<Value, AbstractOperand*> defines_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> defines_;
 
   // The operand for values that are projected through 'this'.
-  folly::F14FastMap<Value, AbstractOperand*> projects_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> projects_;
 
-  std::vector < std::shared_ptr<Program> programs_;
+  std::vector < std::shared_ptr<Program>> programs_;
 
   // Executable instances of 'this'. A Driver may instantiate multiple
   // executable instances to processs consecutive input batches in parallel.
@@ -82,7 +84,7 @@ class Operator {
 
   /// The wave that produces each subfield. More than  one subfield can be
   /// produced by the same wave.
-  std::F14FastMap < Subfield*, std::shared_ptr<Wave> fieldToWave_;
+  folly::F14FastMap <common:: Subfield*, std::shared_ptr<Wave>> fieldToWave_;
 };
 
 } // namespace facebook::velox::wave

@@ -15,7 +15,7 @@
  */
 
 #pragma once
-#include "velox/experimental/wave/Operator.h"
+#include "velox/experimental/wave/exec/Operator.h"
 
 namespace facebook::velox::wave {
 

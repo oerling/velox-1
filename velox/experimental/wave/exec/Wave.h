@@ -16,48 +16,117 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/Wave.h"
+#include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/expression/Expr.h"
+#include "velox/type/Subfield.h"
 
+#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
+
+#include <folly/hash/Hash.h>
 
 namespace facebook::velox::wave {
 
 // A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
 // subfield. Subfield between operators, Expr inside  an Expr.
 struct Value {
+  Value() = default;
   Value(exec::Expr* expr) : expr(expr), subfield(nullptr) {}
 
-  Value(Subfield* subfield) : expr(nullptr), subfield(subfield) {}
+  Value(common::Subfield* subfield) : expr(nullptr), subfield(subfield) {}
+  ~Value() = default;
 
-  const exec::Expr* const expr;
-  const Subfield* const subfield;
+  bool operator==(const Value& other) {
+    return expr == other.expr && subfield == other.subfield;
+  }
+
+  const exec::Expr* expr;
+  const common::Subfield* subfield;
 };
 
 struct ValueHasher {
-  size_t operator()(const Value& value) const {}
+  size_t operator()(const Value& value) const {
+    return folly::hasher<uint64_t>()(
+               reinterpret_cast<uintptr_t>(value.subfield)) ^
+        folly::hasher<uint64_t>()(reinterpret_cast<uintptr_t>(value.expr));
+  }
 };
 
 struct ValueComparer {
-  bool operator()(const Value& left, const value& right) const {}
+  bool operator()(const Value& left, const Value& right) const {
+    return left.expr == right.expr && left.subfield == right.subfield;
+  }
 };
+
+} // namespace facebook::velox::wave
+namespace folly {
+template <>
+struct hasher<::facebook::velox::wave::Value> {
+  size_t operator()(const ::facebook::velox::wave::Value value) const {
+    return folly::hasher<uint64_t>()(
+               reinterpret_cast<uintptr_t>(value.subfield)) ^
+        folly::hasher<uint64_t>()(reinterpret_cast<uintptr_t>(value.expr));
+  }
+};
+} // namespace folly
+
+namespace facebook::velox::wave {
 
 class Wave;
 
+struct BufferReference {
+  // Ordinal of the instruction that assigns a value to the Operand.
+  int32_t insruction;
+  // Offset of Operand struct in the executable image.
+  int32_t offset;
+};
+
 class Program {
-  // places the code and related structures in 'arena'.
+ public:
+  void add(std::unique_ptr<AbstractInstruction> instruction) {
+    instructions_.push_back(std::move(instruction));
+  }
+
+  // Initialized executableImage and relocation infromation and places for
+  // parameters.
   void prepareForDevice(GpuArena& arena);
 
-  void prepareBuffers(GpuArena& arena, int32_t numRows, Wave& wave);
+  ThreadBlockProgram* instantiate(GpuArena& arena);
 
-  const std::vector<Operand*> dependsOn() const {
+  // Patches device side 'instance' to reference newly allocated buffers for up
+  // to 'numRows' of result data starting at instruction at 'continuePoint'.
+  void setBuffers(
+      ThreadBlockProgram* instance,
+      int32_t continuePoint,
+      int32_t numRows);
+
+  const std::vector<Value>& dependsOn() const {
     return dependsOn_;
   }
-  Operand* findOperand(const Value& value){};
 
-  std::vector<Value> dependsOn;
-  folly::F14FastMap<Value, Operand*> produces;
+  AbstractOperand* findOperand(const Value& value) {
+    return nullptr;
+  }
 
-  std::vector<std::unique_ptr<AbstractInstruction>> code;
+  std::vector<Value> dependsOn_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> produces_;
+  std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
+
+  // Relocation info.The first int is the offset of a pointer in the executable
+  // representation .The secon is the offset it points to inside the
+  // representation.
+  std::vector<std::pair<int32_t, int32_t>> relocation_;
+
+  // FDescribes the places in the executable image that need a WaveBuffer's
+  // address to be patched in before execution.
+  std::vector<BufferReference> buffers;
+  // Bytes to copy to device. The relocations and buffer reference patches given
+  // in 'relocations_' and 'buffers_' must be applied to the image before
+  // starting a kernel interpreting the image.
+  std::vector<uint64_t> executableImage_;
+
+  // The size of the device side contiguous memory for 'this'.
+  int32_t sizeOnDevice_{0};
 };
 
 class Wave {

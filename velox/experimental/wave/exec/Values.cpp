@@ -22,7 +22,7 @@ Values::Values(CompileState& state, core::ValuesNode& values)
     : Operator(state, values.outputType()),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {
-  definesSubfields(outputType_);
+  definesSubfields(state, outputType_);
 }
 
 } // namespace facebook::velox::wave
