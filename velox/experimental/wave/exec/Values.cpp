@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/Values.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 
 namespace facebook::velox::wave {
 
@@ -25,7 +26,45 @@ Values::Values(CompileState& state, const core::ValuesNode& values)
   definesSubfields(state, outputType_);
 }
 
-std::string Values::toString() const {
+  int32_t Values::canAdvance() {
+    if (current_ < values_.size()) {
+      return values_[current_]->size();
+    }
+    if (roundsLeft_) {
+      return values_[0]->size();
+    }
+    return 0;
+  }
+
+  std::unique_ptr<Executable> getExecutable(GpuArena& arena, folly::Range<int32_t*> operands) {
+    auto result = std::make_unique<Executable>(nullptr, folly::Range<int32_t*>(nullptr, 0), operands);  
+  }
+  
+  void schedule(WaveStream& stream, int32_t maxRows) {
+    RowVectorPtr data;
+    if (current_ == values_.size()) {
+      if (roundsLeft_) {
+	current_ = 1;
+	data = values_[0];
+	--roundsLeft_;
+      }
+    } else {
+      data = values_[current_++];
+    }
+    VELOX_CHECK_LE(data->size(), maxRows);
+
+    stream.startWave();
+    auto executable = makeExecutable(driver_->arena());
+    for (auto i = 0; i < subfields_.size(); ++i) {
+    
+    Values::copyToDevice(RowVectorPtr data) {
+    for (auto i = 0; i < subfields_.size(); ++i) {
+      
+    }
+  }
+
+
+  std::string Values::toString() const {
   return "Values";
 }
 

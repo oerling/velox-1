@@ -17,6 +17,8 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/experimental/wave/exec/OperandSet.h"
+
 #include "velox/expression/Expr.h"
 #include "velox/type/Subfield.h"
 
@@ -74,6 +76,12 @@ namespace facebook::velox::wave {
 
 class Wave;
 
+  /// Bit set of operand ids.
+  struct OperandSet {
+
+  };
+
+  
 struct BufferReference {
   // Ordinal of the instruction that assigns a value to the Operand.
   int32_t insruction;
@@ -81,6 +89,41 @@ struct BufferReference {
   int32_t offset;
 };
 
+  struct Transfer {
+    void* from;
+    void* to;
+    size_t size;
+
+    // True if each bit in 'from' widens to a byte in 'to'.
+    bool bitToByte{false};
+    
+    // For a host to device transfer, this is the operand to record the target address and size.
+    OperandId operand{kNoOperand};
+  };
+  
+  /// Describes running a program on n consecutive thread blocks. The program can be nulllptr if this represents data movement only.
+  struct Executable {
+    std::unique_ptr<Executable> create(std::shared_ptr<Program> program, int32_t numRows, GpuArena& arena);
+
+    /// Creates a data transfer. The ranges to transfer are associated to this by addTransfer().
+    stdd::unique_ptr<Executable> createTransfer(OperandSet outputOperands, folly::Range<Transfer*> transfers, GpuArena& arena);
+
+    ThreadBlockProgram* program;
+
+    // All device side memory. Instructions, operands, everything except buffers for input/intermediate/output buffers.
+    WaveBufferPtr deviceData;
+
+    // Operand ids for inputs.
+    OperandSet inputOperands;
+
+    // Operand ids for outputs.
+    OperandSet outputOperands; 
+    
+    // Unified memory Operand structs. First input, then output. the instructions in 'program' reference these. 
+    Operand* operands;
+  };
+  
+  
 class Program {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -91,7 +134,7 @@ class Program {
   // parameters.
   void prepareForDevice(GpuArena& arena);
 
-  ThreadBlockProgram* instantiate(GpuArena& arena);
+  std::unique_ptr<Executable> instantiate(GpuArena& arena);
 
   // Patches device side 'instance' to reference newly allocated buffers for up
   // to 'numRows' of result data starting at instruction at 'continuePoint'.
@@ -130,22 +173,34 @@ class Program {
   int32_t sizeOnDevice_{0};
 };
 
+  using std::shared_ptr<Program> ProgramPtr;
+
+
 class Wave {
  public:
   Wave(GpuArena& arena);
 
-  /// Adds program and reserves space for maxRows of output.
-  void addProgram(Program*, int32_t maxRows);
+    /// Adds 'executable' and reserves space for maxRows of intermediate and output.
+  void addExecutable(Executable*, int32_t maxRows);
 
   // Returns Event for syncing with the arrival of 'this'.
   Event* event() {}
 
   void start(Stream* stream);
 
+  static std::unique_ptr<Stream> getStream();
+  
  private:
+  static std::mutex eventMutex_;
+  static std::vector<std::unique_ptr<Event>> eventsForReuse_;
+  std::vector<std::unique_ptr<Stream>> streamsForReuse_;
+  
   GpuArena& arena_;
   Stream* stream_;
 
+  // Set of operands that get a value on arrival.
+  OperandSet operands_;
+  
   // Event recorded on 'stream_' right after kernel launch.
   std::unique_ptr<Event> event_;
 
@@ -156,4 +211,16 @@ class Wave {
   ThreadBlockProgram** programs_;
 };
 
+  /// Represents consecutive data dependent kernel launches. May be serialized on Events of previous waves or queued on the same Stream if depending on single previous Wave.
+  class WaveStream {
+  public:
+
+    void startFront();
+    // Binds operands of each program to inputs from pending programs and if depending on more than one Wave, adds dependency via events. Each program [i]is dimensioned to have  sizes[i] max intermediates/results.
+    void startWave(folly::Range<Executable*> programs, folly::Rage<int32_t*> sizes);
+
+  private:
+    std::vector<std::vector<std::unique_ptr<Wave>>> fronts_;
+  };
+  
 } // namespace facebook::velox::wave

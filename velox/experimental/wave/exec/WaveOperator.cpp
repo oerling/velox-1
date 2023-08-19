@@ -35,6 +35,8 @@ void WaveOperator::definesSubfields(
         auto& child = row.childAt(i);
         auto name = row.nameOf(i);
         auto field = state.toSubfield(name);
+	subfields_.push_back(field);
+	types_.push_back(child);
         defines_[Value(field)] = state.newOperand(child, name);
       }
     }

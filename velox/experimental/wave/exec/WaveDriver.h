@@ -31,6 +31,7 @@ class WaveDriver : public exec::SourceOperator {
       RowTypePtr outputType,
       core::PlanNodeId planNodeId,
       int32_t operatorId,
+      std::unique_ptr<GpuArena> arena,
       std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       SubfieldMap subfields,
       std::vector<std::unique_ptr<AbstractOperand>> operands);
@@ -53,9 +54,15 @@ class WaveDriver : public exec::SourceOperator {
     cpuOperators_ = std::move(original);
   }
 
+  GpuArena& arena() const {
+    return *arena_;
+  }
+
   std::string toString() const override;
 
  private:
+  std::unique_ptr<GpuArena> arena_;
+
   ContinueFuture blockingFuture_;
   exec::BlockingReason blockingReason_;
 
@@ -67,9 +74,16 @@ class WaveDriver : public exec::SourceOperator {
   std::vector<std::unique_ptr<exec::Operator>> cpuOperators_;
   // Dedupped Subfields. Handed over by CompileState.
   SubfieldMap subfields_;
-
+  // Operands handed over by compilation.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
-  bool canAddDynamicFilter_{false};
+
+  // The set of currently pending kernel DAGs for this WaveDriver. If
+  // the source operator can produce multiple consecutive batches
+  // before the batch is executed to completion, multiple such batches
+  // can be on device independently of each other. This is bounded by
+  // device memory and the speed at which the source can produce new
+  // batches.
+  std::vector<std::unique_ptr<WaveStream>> executions_;
 };
 
 } // namespace facebook::velox::wave

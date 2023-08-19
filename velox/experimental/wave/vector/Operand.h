@@ -23,7 +23,10 @@ namespace facebook::velox::wave {
 
 // Normal thread block size for Wave kernels
 constexpr int32_t kBlockSize = 256;
+  using OperandId = int32_t;
 
+  constexpr OperandId kNoOperand = ~0;
+  
 /// Describes an operand for a Wave kernel instruction. The same
 /// insttruction is interpreted by multiple thread blocks in the
 /// kernel invocation. When accessing an operand, we have the base
@@ -37,6 +40,11 @@ constexpr int32_t kBlockSize = 256;
 struct Operand {
   static constexpr uint16_t kGlobal = ~0;
 
+  // Unique ordinal number within a WaveDriver. Waves computing
+  // operands use this id to indicate which Operands are ready on
+  // arrival.
+  OperandId id;
+  
   int32_t indexMask{~0};
 
   // If != !0, this indicates that instead of base, we use the thread block's

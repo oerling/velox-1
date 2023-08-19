@@ -16,11 +16,13 @@
  */
 
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/exec/FilterProject.h"
 #include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
-
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
+
+DEFINE_int64(velox_wave_arena_unit_size, 1 << 30, "Per Driver GPU memory size");
 
 namespace facebook::velox::wave {
 
@@ -155,21 +157,46 @@ void CompileState::addExprSet(
   }
 }
 
+void CompileState::addFilterProject(exec::Operator* op) {
+  auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
+  auto data = filterProject->exprsAndProjection();
+  VELOX_CHECK(!data.hasFilter);
+  std::vector<programPtr>
+}
+
+  bool CompileState::reserveMemory() {
+  if (arena_) {
+    return true;
+  }
+  auto allocator = GpuAllocator(getDevice());
+  arena_ = std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
+  return true;
+}
+
 bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
     RowTypePtr& outputType) {
   auto& name = op->stats().rlock()->operatorType;
   if (name == "Values") {
+    if (!reserveMemory()) {
+      return false;
+    }
     operators_.push_back(std::make_unique<Values>(
         *this,
         *reinterpret_cast<const core::ValuesNode*>(
             driverFactory_.planNodes[nodeIndex].get())));
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
     return true;
+  } else if (name == "FilterProject") {
+    if (!reserveMemory()) {
+      return false;
+    }
+    addFilterProject(op);
   } else {
     return false;
   }
+  return true;
 }
 
 bool CompileState::compile() {
@@ -195,6 +222,7 @@ bool CompileState::compile() {
       outputType,
       operators[first]->planNodeId(),
       operators[first]->operatorId(),
+      std::move(arena_),
       std::move(operators_),
       std::move(subfields_),
       std::move(operands_));

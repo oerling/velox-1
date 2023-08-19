@@ -14,28 +14,15 @@
  * limitations under the License.
  */
 
-#pragma once
-#include "velox/core/PlanNode.h"
-#include "velox/experimental/wave/exec/WaveOperator.h"
 
+
+#include "velox/experimental/wave/exec/Wave.h"
 namespace facebook::velox::wave {
+  std::mutex Wave::eventMutex:;
 
-class Values : public WaveOperator {
- public:
-  Values(CompileState& state, const core::ValuesNode& values);
-
-  int32_t canAdvance() override;
-
-  void schedule(WaveStream& stream, int32_t maxRows = 0) override;
-  
-  std::string toString() const override;
+  std::vector<std::unique_ptr<Event>> eventsForReuse;
 
 
   
- private:
-  std::vector<RowVectorPtr> values_;
-  int32_t current_ = 0;
-  size_t roundsLeft_ = 1;
-};
+}
 
-} // namespace facebook::velox::wave

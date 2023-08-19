@@ -25,6 +25,7 @@ WaveDriver::WaveDriver(
     RowTypePtr outputType,
     core::PlanNodeId planNodeId,
     int32_t operatorId,
+    std::unique_ptr<GpuArena> arena,
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     SubfieldMap subfields,
     std::vector<std::unique_ptr<AbstractOperand>> operands)
@@ -34,9 +35,14 @@ WaveDriver::WaveDriver(
           operatorId,
           planNodeId,
           "Wave"),
+      arena_(std::move(arena)),
       waveOperators_(std::move(waveOperators)),
       subfields_(std::move(subfields)),
-      operands_(std::move(operands)) {}
+      operands_(std::move(operands)) {
+  for (auto* op : waveOperators_) {
+    op->setDriver(this);
+  }
+}
 
 RowVectorPtr WaveDriver::getOutput() {
   return nullptr;
