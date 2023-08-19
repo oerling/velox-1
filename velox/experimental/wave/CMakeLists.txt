@@ -14,4 +14,3 @@
 
 add_subdirectory(common)
 add_subdirectory(exec)
-add_subdirectory(vector)
