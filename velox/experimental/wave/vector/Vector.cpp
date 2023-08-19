@@ -18,6 +18,23 @@
 
 namespace facebook::velox::wave {
 
-Vector(TypePtr type, GpuArena* arena) : type_(type), arena_(arena) {}
 
+  WaveVector::resize(vector_size_t size) {
+    if (size > size_) {
+      int64_t bytes = type_->cppSizeInBytes() * size;
+      if (!values_ || bytes > values_->capacity()) {
+	values = arena_.allocate(bytes);
+      }
+      if (nullable) {
+	if (!nulls_ || nulls_->capacity() < size) {
+	  nulls_ = arena_.allocate(size);
+	}
+      } else {
+	nulls_.reset();
+      }
+      size_ = size;
+    }
+  }
+  
+  
 } // namespace facebook::velox::wave
