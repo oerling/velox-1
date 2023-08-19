@@ -162,7 +162,7 @@ bool CompileState::addOperator(
   auto& name = op->stats().rlock()->operatorType;
   if (name == "Values") {
     operators_.push_back(std::make_unique<Values>(
-						  *this,
+        *this,
         *reinterpret_cast<const core::ValuesNode*>(
             driverFactory_.planNodes[nodeIndex].get())));
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();

@@ -19,7 +19,7 @@
 namespace facebook::velox::wave {
 
 Values::Values(CompileState& state, const core::ValuesNode& values)
-  : WaveOperator(state, values.outputType()),
+    : WaveOperator(state, values.outputType()),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {
   definesSubfields(state, outputType_);
