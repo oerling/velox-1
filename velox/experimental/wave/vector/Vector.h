@@ -42,10 +42,10 @@ class Loader {
 /// operators and represent their last computed output. Buffers may be
 /// shared between these, as with Velox vectors. the values in buffers
 /// become well defined on return of the kernel that computes these.
-class Vector {
+class WaveVector {
  public:
   // Constructs a vector. Resize can be used to create buffers for a given size.
-  Vector(TypePtr type, GpuArena* arena);
+  WaveVector(TypePtr type, GpuArena* arena);
 
   const TypePtr& type() const {
     return type_;
@@ -71,7 +71,7 @@ class Vector {
   /// Starts computation for a kLazy state vector.
   void load();
 
-  Vector& childAt(int32_t index) {
+  WaveVector& childAt(int32_t index) {
     return *children_[index];
   }
 
@@ -93,8 +93,6 @@ class Vector {
   VectorEncoding::Simple encoding_;
 
   std::unique_ptr<Loader> loader_;
-
-  Vector* parent{nullptr};
 
   vector_size_t size_{0};
 
@@ -122,7 +120,7 @@ class Vector {
   WaveBufferPtr offsets_;
 
   // Members of a array/map/struct vector.
-  std::vector<std::unique_ptr<Vector>> children_;
+  std::vector<std::unique_ptr<WaveVector>> children_;
 };
 
 struct WaveReleaser {

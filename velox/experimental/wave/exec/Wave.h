@@ -76,12 +76,9 @@ namespace facebook::velox::wave {
 
 class Wave;
 
-  /// Bit set of operand ids.
-  struct OperandSet {
+/// Bit set of operand ids.
+struct OperandSet {};
 
-  };
-
-  
 struct BufferReference {
   // Ordinal of the instruction that assigns a value to the Operand.
   int32_t insruction;
@@ -89,41 +86,61 @@ struct BufferReference {
   int32_t offset;
 };
 
-  struct Transfer {
-    void* from;
-    void* to;
-    size_t size;
+struct Transfer {
+  void* from;
+  void* to;
+  size_t size;
 
-    // True if each bit in 'from' widens to a byte in 'to'.
-    bool bitToByte{false};
-    
-    // For a host to device transfer, this is the operand to record the target address and size.
-    OperandId operand{kNoOperand};
-  };
-  
-  /// Describes running a program on n consecutive thread blocks. The program can be nulllptr if this represents data movement only.
-  struct Executable {
-    std::unique_ptr<Executable> create(std::shared_ptr<Program> program, int32_t numRows, GpuArena& arena);
+  // True if each bit in 'from' widens to a byte in 'to'.
+  bool bitToByte{false};
 
-    /// Creates a data transfer. The ranges to transfer are associated to this by addTransfer().
-    stdd::unique_ptr<Executable> createTransfer(OperandSet outputOperands, folly::Range<Transfer*> transfers, GpuArena& arena);
+  // For a host to device transfer, this is the operand to record the target
+  // address and size.
+  OperandId operand{kNoOperand};
+};
 
-    ThreadBlockProgram* program;
+/// Describes running a program on n consecutive thread blocks. The program can
+/// be nulllptr if this represents data movement only.
+struct Executable {
+  std::unique_ptr<Executable>
+  create(std::shared_ptr<Program> program, int32_t numRows, GpuArena& arena);
 
-    // All device side memory. Instructions, operands, everything except buffers for input/intermediate/output buffers.
-    WaveBufferPtr deviceData;
+  /// Creates a data transfer. The ranges to transfer are associated to this by
+  /// addTransfer().
+  stdd::unique_ptr<Executable> createTransfer(
+      OperandSet outputOperands,
+      folly::Range<Transfer*> transfers,
+      GpuArena& arena);
 
-    // Operand ids for inputs.
-    OperandSet inputOperands;
+  ThreadBlockProgram* program;
 
-    // Operand ids for outputs.
-    OperandSet outputOperands; 
-    
-    // Unified memory Operand structs. First input, then output. the instructions in 'program' reference these. 
-    Operand* operands;
-  };
-  
-  
+  // All device side memory. Instructions, operands, everything except buffers
+  // for input/intermediate/output buffers.
+  WaveBufferPtr deviceData;
+
+  // Operand ids for inputs.
+  OperandSet inputOperands;
+
+  // Operand ids for outputs.
+  OperandSet outputOperands;
+
+  // Unified memory Operand structs. First input, then output. the instructions
+  // in 'program' reference these. The device side memory is referenced as raw
+  // pointers and its ownership is managed by 'intermediates' and 'output'
+  // below.
+  Operand* operands;
+
+  // Backing memory for intermediate Operands. Free when 'this' arrives. If
+  // scheduling follow up work that is synchronized with arrival of 'this', the
+  // intermediates can be moved to the dependent executable at time of
+  // scheduling.
+  std::vector<std::unique_ptr<WaveVector>> intermediates;
+
+  // Backing device memory   for 'output' Can be moved to intermediates or
+  // output of a dependent executables.
+  std::vector<std::unique_ptr<WaveVector>> output;
+};
+
 class Program {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -173,14 +190,14 @@ class Program {
   int32_t sizeOnDevice_{0};
 };
 
-  using std::shared_ptr<Program> ProgramPtr;
-
+using std::shared_ptr<Program> ProgramPtr;
 
 class Wave {
  public:
   Wave(GpuArena& arena);
 
-    /// Adds 'executable' and reserves space for maxRows of intermediate and output.
+  /// Adds 'executable' and reserves space for maxRows of intermediate and
+  /// output.
   void addExecutable(Executable*, int32_t maxRows);
 
   // Returns Event for syncing with the arrival of 'this'.
@@ -189,18 +206,19 @@ class Wave {
   void start(Stream* stream);
 
   static std::unique_ptr<Stream> getStream();
-  
+
  private:
   static std::mutex eventMutex_;
   static std::vector<std::unique_ptr<Event>> eventsForReuse_;
   std::vector<std::unique_ptr<Stream>> streamsForReuse_;
-  
+
   GpuArena& arena_;
   Stream* stream_;
 
-  // Set of operands that get a value on arrival.
-  OperandSet operands_;
-  
+  // Set of operands that get a value on arrival. Union of output operands of
+  // constitutent Executables.
+  OperandSet outputOperands_;
+
   // Event recorded on 'stream_' right after kernel launch.
   std::unique_ptr<Event> event_;
 
@@ -211,16 +229,23 @@ class Wave {
   ThreadBlockProgram** programs_;
 };
 
-  /// Represents consecutive data dependent kernel launches. May be serialized on Events of previous waves or queued on the same Stream if depending on single previous Wave.
-  class WaveStream {
-  public:
+/// Represents consecutive data dependent kernel launches. May be serialized on
+/// Events of previous waves or queued on the same Stream if depending on single
+/// previous Wave.
+class WaveStream {
+ public:
+  WaveStream(GpuArena& arena) : arena_(arena) {}
+  void startFront();
+  // Binds operands of each program to inputs from pending programs and if
+  // depending on more than one Wave, adds dependency via events. Each program
+  // [i]is dimensioned to have  sizes[i] max intermediates/results.
+  void startWave(
+      folly::Range<Executable*> programs,
+      folly::Rage<int32_t*> sizes);
 
-    void startFront();
-    // Binds operands of each program to inputs from pending programs and if depending on more than one Wave, adds dependency via events. Each program [i]is dimensioned to have  sizes[i] max intermediates/results.
-    void startWave(folly::Range<Executable*> programs, folly::Rage<int32_t*> sizes);
+ private:
+  GpuArena& arena_;
+  std::vector<std::vector<std::unique_ptr<Wave>>> fronts_;
+};
 
-  private:
-    std::vector<std::vector<std::unique_ptr<Wave>>> fronts_;
-  };
-  
 } // namespace facebook::velox::wave
