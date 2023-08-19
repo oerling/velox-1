@@ -97,8 +97,7 @@ class OperandSet {
   std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 
-
- inline bool OperandSet::operator==(const OperandSet& other) const {
+inline bool OperandSet::operator==(const OperandSet& other) const {
   // The sets are equal if they have the same bits set. Trailing words of zeros
   // do not count.
   auto l1 = bits_.size();

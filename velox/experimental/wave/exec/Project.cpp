@@ -16,9 +16,4 @@
 
 #include "velox/experimental/wave/exec/Project.h"
 
-namespace facebook::velox::wave {
-
-  
-
-
-}
+namespace facebook::velox::wave {}

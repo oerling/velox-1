@@ -45,7 +45,6 @@ WaveDriver::WaveDriver(
 }
 
 RowVectorPtr WaveDriver::getOutput() {
-  
   return nullptr;
 }
 

@@ -56,9 +56,9 @@ class CompileState {
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
 
-  void     addFilterProject(exec::Operator* op);
+  void addFilterProject(exec::Operator* op);
   bool reserveMemory();
-  
+
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>

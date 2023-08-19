@@ -18,21 +18,25 @@
 
 namespace facebook::velox::wave {
 
-    std::unique_ptr<Executable>  vectorsToDevice(folly::Range<const BaseVector**> source, folly::Range<OperandId> ids, , WaveStream& stream) {
-  }
+std::unique_ptr<Executable> vectorsToDevice(
+    folly::Range<const BaseVector**> source,
+    folly::Range<OperandId> ids,
+    ,
+    WaveStream& stream) {}
 
-  void allocateBuffers(
+void allocateBuffers(
     GpuArena& arena,
     vector_size_t size,
     const TypePtr& type,
     bool nullable,
-    Operand& operand) {
+    Operand& operand) {}
 
-  }
+// Patches the position 'ofet' in 'code' to be a new uninitialized device array
+// of int32_t of at least 'size' elements.
+void allocateIndirection(
+    GpuArena& arena,
+    vector_size_t size,
+    const WaveBufferPtr& code,
+    int32_t offset);
 
-  // Patches the position 'ofet' in 'code' to be a new uninitialized device array of int32_t of at least 'size' elements.
-  void allocateIndirection(GpuArena& arena, vector_size_t size, const WaveBufferPtr& code, int32_t offset);
-
-  
-}
-
+} // namespace facebook::velox::wave

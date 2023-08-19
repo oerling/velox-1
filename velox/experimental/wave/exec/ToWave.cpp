@@ -164,12 +164,13 @@ void CompileState::addFilterProject(exec::Operator* op) {
   std::vector<programPtr>
 }
 
-  bool CompileState::reserveMemory() {
+bool CompileState::reserveMemory() {
   if (arena_) {
     return true;
   }
   auto allocator = GpuAllocator(getDevice());
-  arena_ = std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
+  arena_ =
+      std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
   return true;
 }
 

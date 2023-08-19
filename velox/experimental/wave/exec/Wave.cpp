@@ -14,15 +14,10 @@
  * limitations under the License.
  */
 
-
-
 #include "velox/experimental/wave/exec/Wave.h"
 namespace facebook::velox::wave {
-  std::mutex Wave::eventMutex:;
+std::mutex Wave::eventMutex:;
 
-  std::vector<std::unique_ptr<Event>> eventsForReuse;
+std::vector<std::unique_ptr<Event>> eventsForReuse;
 
-
-  
-}
-
+} // namespace facebook::velox::wave

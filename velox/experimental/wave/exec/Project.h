@@ -18,15 +18,15 @@
 
 namespace facebook::velox::wave {
 
-  class Project : public WaveOperator {
-  public:
-    Project(CompileState& state, RowTypePtr outputType. std::vector<ProgramPtr> programs)
-      : WaveOperator(state, outputType),
-      programs_(std::move(programs)) {}
-      
-      private:
-    std::vector<std::shared_ptr<Program>> programs_;
-  };
+class Project : public WaveOperator {
+ public:
+  Project(
+      CompileState& state,
+      RowTypePtr outputType.std::vector<ProgramPtr> programs)
+      : WaveOperator(state, outputType), programs_(std::move(programs)) {}
 
-}
+ private:
+  std::vector<std::shared_ptr<Program>> programs_;
+};
 
+} // namespace facebook::velox::wave

@@ -66,7 +66,7 @@ class FilterProject : public Operator {
   Export exprsAndProjection() const {
     return Export{exprs_.get(), hasFilter_, &resultProjections_};
   }
-  
+
  private:
   // Tests if 'numProcessedRows_' equals to the length of input_ and clears
   // outstanding references to input_ if done. Returns true if getOutput

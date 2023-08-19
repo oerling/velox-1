@@ -61,7 +61,6 @@ class FilterProjectTest : public OperatorTestBase {
           {BIGINT(), INTEGER(), SMALLINT(), DOUBLE()})};
 };
 
-
 TEST_F(FilterProjectTest, project) {
   std::vector<RowVectorPtr> vectors;
   for (int32_t i = 0; i < 10; ++i) {

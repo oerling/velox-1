@@ -27,11 +27,9 @@ class Values : public WaveOperator {
   int32_t canAdvance() override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
-  
+
   std::string toString() const override;
 
-
-  
  private:
   std::vector<RowVectorPtr> values_;
   int32_t current_ = 0;

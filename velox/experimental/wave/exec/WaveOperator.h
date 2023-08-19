@@ -22,9 +22,9 @@
 namespace facebook::velox::wave {
 
 class CompileState;
-  class WaveDriver;
+class WaveDriver;
 
-  class WaveOperator {
+class WaveOperator {
  public:
   WaveOperator(CompileState& state, const TypePtr& outputType);
 
@@ -46,23 +46,21 @@ class CompileState;
     return nullptr;
   }
 
+  virtual int32_t canAdvance() {
+    return 0;
+  }
 
-    virtual int32_t canAdvance() {
-      return 0;
-    }
+  /// Adds processing for 'this' to 'stream'. If 'maxRows' is given,
+  /// then this is the maximum number of intermediates/result rows
+  /// this can produce. If not given, this defaults to the 'stream's
+  /// current result row count. If the stream is pending and the
+  /// count is not known, then this defaults to the max cardinality
+  /// of the pending work. If the work has arrived, this can be the
+  /// actual cardinality. The first schedule() of each 'stream '
+  /// must specify this count. This is the number returned by
+  /// canAdvance() for a source WaveOperator.
+  virtual void schedule(WaveStream& stream, int32_t maxRows = 0) 0;
 
-    
-    /// Adds processing for 'this' to 'stream'. If 'maxRows' is given,
-    /// then this is the maximum number of intermediates/result rows
-    /// this can produce. If not given, this defaults to the 'stream's
-    /// current result row count. If the stream is pending and the
-    /// count is not known, then this defaults to the max cardinality
-    /// of the pending work. If the work has arrived, this can be the
-    /// actual cardinality. The first schedule() of each 'stream '
-    /// must specify this count. This is the number returned by
-    /// canAdvance() for a source WaveOperator.
-    virtual void schedule(WaveStream& stream, int32_t maxRows = 0) 0;
- 
   virtual std::string toString() const = 0;
 
   void definesSubfields(
@@ -79,22 +77,22 @@ class CompileState;
     return it->second;
   }
 
-    setDriver(WaveDriver* driver) {
-      driver_ = driver;
-    }
-    
+  setDriver(WaveDriver* driver) {
+    driver_ = driver;
+  }
+
  protected:
-    WaveDriver* driver_{nullptr};
-    
+  WaveDriver* driver_{nullptr};
+
   // The Subfields that are produced. Different ones can arrive at
   // different times on different waves. In this list, ordered in
   // depth first preorder of outputType_. Top struct not listed,
   // struct columns have the parent before the children.
-  std::vector<const common::Subfield*> subfields_; 
+  std::vector<const common::Subfield*> subfields_;
 
-    // Pairwise type for each subfield.
-    std::vector<TypePtr> types_;
-    bool isFilter_{false};
+  // Pairwise type for each subfield.
+  std::vector<TypePtr> types_;
+  bool isFilter_{false};
 
   bool isExpanding_{false};
 
