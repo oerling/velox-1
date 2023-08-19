@@ -25,7 +25,7 @@ class Values : public WaveOperator {
   Values(CompileState& state, const core::ValuesNode& values);
 
   std::string toString() const override;
-  
+
  private:
   std::vector<RowVectorPtr> values_;
   int32_t current_ = 0;

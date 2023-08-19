@@ -25,13 +25,13 @@ using SubfieldMap =
     folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
 class WaveDriver : public exec::SourceOperator {
-public:
+ public:
   WaveDriver(
-    exec::DriverCtx* driverCtx,
-    RowTypePtr outputType,
-    core::PlanNodeId planNodeId,
-    int32_t operatorId,
-    std::vector<std::unique_ptr<WaveOperator>> waveOperators,
+      exec::DriverCtx* driverCtx,
+      RowTypePtr outputType,
+      core::PlanNodeId planNodeId,
+      int32_t operatorId,
+      std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       SubfieldMap subfields,
       std::vector<std::unique_ptr<AbstractOperand>> operands);
 
@@ -49,11 +49,10 @@ public:
     return finished_;
   }
 
-
   void setReplaced(std::vector<std::unique_ptr<exec::Operator>> original) {
     cpuOperators_ = std::move(original);
   }
-  
+
   std::string toString() const override;
 
  private:

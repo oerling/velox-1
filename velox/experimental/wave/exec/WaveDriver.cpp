@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/WaveOperator.h"
-#include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {
 
@@ -25,24 +25,24 @@ WaveDriver::WaveDriver(
     RowTypePtr outputType,
     core::PlanNodeId planNodeId,
     int32_t operatorId,
-    std::vector < std::unique_ptr<WaveOperator>> waveOperators,
+    std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     SubfieldMap subfields,
     std::vector<std::unique_ptr<AbstractOperand>> operands)
     : exec::SourceOperator(
           driverCtx,
           outputType,
-	  operatorId,
-	  planNodeId,
+          operatorId,
+          planNodeId,
           "Wave"),
       waveOperators_(std::move(waveOperators)),
       subfields_(std::move(subfields)),
       operands_(std::move(operands)) {}
 
-RowVectorPtr WaveDriver::getOutput()  {
+RowVectorPtr WaveDriver::getOutput() {
   return nullptr;
 }
 
-  std::string WaveDriver::toString() const  {
+std::string WaveDriver::toString() const {
   std::stringstream out;
   out << "{Wave" << std::endl;
   for (auto& op : waveOperators_) {

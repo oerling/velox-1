@@ -20,8 +20,8 @@
 
 namespace facebook::velox::wave {
 
-  class CompileState;
-  
+class CompileState;
+
 class WaveOperator {
  public:
   WaveOperator(CompileState& state, const TypePtr& outputType);
@@ -36,7 +36,6 @@ class WaveOperator {
     return isExpanding_;
   }
 
-
   // If 'this' is a cardinality change (filter, join, unnest...),
   // returns the instruction where the projected through columns get
   // wrapped. Columns that need to be accessed through the change are
@@ -47,7 +46,10 @@ class WaveOperator {
 
   virtual std::string toString() const = 0;
 
-  void definesSubfields(CompileState& state, const TypePtr& type, const std::string& parentPath = "");
+  void definesSubfields(
+      CompileState& state,
+      const TypePtr& type,
+      const std::string& parentPath = "");
 
   /// Returns the operand if this is defined by 'this'.
   AbstractOperand* defines(Value value) {
@@ -57,7 +59,7 @@ class WaveOperator {
     }
     return it->second;
   }
-  
+
  protected:
   bool isFilter_{false};
 
@@ -66,12 +68,14 @@ class WaveOperator {
   TypePtr outputType_;
 
   // The operands that are first defined here.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> defines_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
+      defines_;
 
   // The operand for values that are projected through 'this'.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> projects_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
+      projects_;
 
-  std::vector < std::shared_ptr<Program>> programs_;
+  std::vector<std::shared_ptr<Program>> programs_;
 
   // Executable instances of 'this'. A Driver may instantiate multiple
   // executable instances to processs consecutive input batches in parallel.
@@ -84,7 +88,7 @@ class WaveOperator {
 
   /// The wave that produces each subfield. More than  one subfield can be
   /// produced by the same wave.
-  folly::F14FastMap <common:: Subfield*, std::shared_ptr<Wave>> fieldToWave_;
+  folly::F14FastMap<common::Subfield*, std::shared_ptr<Wave>> fieldToWave_;
 };
 
 } // namespace facebook::velox::wave

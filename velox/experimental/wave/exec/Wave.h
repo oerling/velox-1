@@ -109,7 +109,8 @@ class Program {
   }
 
   std::vector<Value> dependsOn_;
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer> produces_;
+  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
+      produces_;
   std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
 
   // Relocation info.The first int is the offset of a pointer in the executable

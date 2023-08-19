@@ -16,10 +16,9 @@
 
 #pragma once
 
+#include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
-#include "velox/experimental/wave/exec/ExprKernel.h"
-
 
 namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a device
@@ -31,7 +30,7 @@ struct AbstractOperand {
 
   const int32_t id;
 
-  //Operand type.
+  // Operand type.
   TypePtr type;
 
   // Label for debugging, e.g. column name or Expr::toString output.
@@ -43,7 +42,7 @@ struct AbstractOperand {
 
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode) : opCode(opCode) {}
-  
+
   OpCode opCode;
 };
 
@@ -67,8 +66,12 @@ struct AbstractWrap : public AbstractInstruction {
 };
 
 struct AbstractBinary : public AbstractInstruction {
-  AbstractBinary(OpCode opCode, AbstractOperand* left,AbstractOperand* right, AbstractOperand* result)
-    : AbstractInstruction(opCode), left(left), right(right), result(result) {}
+  AbstractBinary(
+      OpCode opCode,
+      AbstractOperand* left,
+      AbstractOperand* right,
+      AbstractOperand* result)
+      : AbstractInstruction(opCode), left(left), right(right), result(result) {}
 
   AbstractOperand* left;
   AbstractOperand* right;
