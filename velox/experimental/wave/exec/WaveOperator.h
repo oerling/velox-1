@@ -17,7 +17,7 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/Wave.h"
-#include "velox/experimental/wave/vector/Vector.h"
+#include "velox/experimental/wave/vector/WaveVector.h"
 
 namespace facebook::velox::wave {
 
@@ -46,6 +46,7 @@ class WaveOperator {
     return nullptr;
   }
 
+  /// Returns how many rows of output are available from 'this'. Source operators and cardinality increasing operators must return a correct answer if they are ready to produce data. Others should return 0. 
   virtual int32_t canAdvance() {
     return 0;
   }
@@ -59,7 +60,7 @@ class WaveOperator {
   /// actual cardinality. The first schedule() of each 'stream '
   /// must specify this count. This is the number returned by
   /// canAdvance() for a source WaveOperator.
-  virtual void schedule(WaveStream& stream, int32_t maxRows = 0) 0;
+  virtual void schedule(WaveStream& stream, int32_t maxRows = 0) = 0;
 
   virtual std::string toString() const = 0;
 
@@ -77,7 +78,7 @@ class WaveOperator {
     return it->second;
   }
 
-  setDriver(WaveDriver* driver) {
+  void setDriver(WaveDriver* driver) {
     driver_ = driver;
   }
 
@@ -92,6 +93,10 @@ class WaveOperator {
 
   // Pairwise type for each subfield.
   std::vector<TypePtr> types_;
+
+  // the execution time set of OperandIds.
+  OperandSet outputIds_;
+
   bool isFilter_{false};
 
   bool isExpanding_{false};

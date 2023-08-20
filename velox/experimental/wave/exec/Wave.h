@@ -24,9 +24,7 @@
 
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
-
-#include <folly/hash/Hash.h>
-
+#include "velox/experimental/wave/vector/WaveVector.h"
 namespace facebook::velox::wave {
 
 // A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
@@ -38,7 +36,7 @@ struct Value {
   Value(const common::Subfield* subfield) : expr(nullptr), subfield(subfield) {}
   ~Value() = default;
 
-  bool operator==(const Value& other) {
+  bool operator==(const Value& other) const {
     return expr == other.expr && subfield == other.subfield;
   }
 
@@ -56,28 +54,10 @@ struct ValueHasher {
 
 struct ValueComparer {
   bool operator()(const Value& left, const Value& right) const {
-    return left.expr == right.expr && left.subfield == right.subfield;
+    return left == right;
   }
 };
-
-} // namespace facebook::velox::wave
-namespace folly {
-template <>
-struct hasher<::facebook::velox::wave::Value> {
-  size_t operator()(const ::facebook::velox::wave::Value value) const {
-    return folly::hasher<uint64_t>()(
-               reinterpret_cast<uintptr_t>(value.subfield)) ^
-        folly::hasher<uint64_t>()(reinterpret_cast<uintptr_t>(value.expr));
-  }
-};
-} // namespace folly
-
-namespace facebook::velox::wave {
-
 class Wave;
-
-/// Bit set of operand ids.
-struct OperandSet {};
 
 struct BufferReference {
   // Ordinal of the instruction that assigns a value to the Operand.
@@ -87,17 +67,23 @@ struct BufferReference {
 };
 
 struct Transfer {
-  void* from;
+  Transfer(const void* from, void* to, size_t size, bool bitsToBytes = false)
+      : from(from), to(to), size(size), bitsToBytes(bitsToBytes) {
+    VELOX_CHECK(!bitsToBytes, "Nulls not supported");
+  }
+
+  const void* from;
   void* to;
+  // Transfer size in bytes. If bitsToBytes is set, the size in 'from' is in
+  // bits and and in bytes for 'to';.
   size_t size;
 
   // True if each bit in 'from' widens to a byte in 'to'.
-  bool bitToByte{false};
-
-  // For a host to device transfer, this is the operand to record the target
-  // address and size.
-  OperandId operand{kNoOperand};
+  bool bitsToBytes;
 };
+
+class WaveStream;
+class Program;
 
 /// Describes running a program on n consecutive thread blocks. The program can
 /// be nulllptr if this represents data movement only.
@@ -107,12 +93,14 @@ struct Executable {
 
   /// Creates a data transfer. The ranges to transfer are associated to this by
   /// addTransfer().
-  stdd::unique_ptr<Executable> createTransfer(
+  static void startTransfer(
       OperandSet outputOperands,
-      folly::Range<Transfer*> transfers,
-      GpuArena& arena);
+      WaveBufferPtr operands,
+      std::vector<WaveVectorPtr> outputVectors,
+      std::vector<Transfer> transfers,
+      WaveStream& stream);
 
-  ThreadBlockProgram* program;
+  ThreadBlockProgram* program{nullptr};
 
   // All device side memory. Instructions, operands, everything except buffers
   // for input/intermediate/output buffers.
@@ -190,7 +178,8 @@ class Program {
   int32_t sizeOnDevice_{0};
 };
 
-using std::shared_ptr<Program> ProgramPtr;
+using ProgramPtr = std::shared_ptr<Program>;
+;
 
 class Wave {
  public:
@@ -240,8 +229,12 @@ class WaveStream {
   // depending on more than one Wave, adds dependency via events. Each program
   // [i]is dimensioned to have  sizes[i] max intermediates/results.
   void startWave(
-      folly::Range<Executable*> programs,
-      folly::Rage<int32_t*> sizes);
+      folly::Range<Executable**> programs,
+      folly::Range<int32_t*> sizes);
+
+  GpuArena& arena() {
+    return arena_;
+  }
 
  private:
   GpuArena& arena_;

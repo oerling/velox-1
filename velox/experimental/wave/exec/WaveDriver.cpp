@@ -39,7 +39,7 @@ WaveDriver::WaveDriver(
       waveOperators_(std::move(waveOperators)),
       subfields_(std::move(subfields)),
       operands_(std::move(operands)) {
-  for (auto* op : waveOperators_) {
+  for (auto& op : waveOperators_) {
     op->setDriver(this);
   }
 }

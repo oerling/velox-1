@@ -16,4 +16,8 @@
 
 #include "velox/experimental/wave/exec/Project.h"
 
-namespace facebook::velox::wave {}
+namespace facebook::velox::wave {
+
+  void Project::schedule(WaveStream& stream, int32_t maxRows) {}
+
+} // namespace facebook::velox::wave

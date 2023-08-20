@@ -161,14 +161,14 @@ void CompileState::addFilterProject(exec::Operator* op) {
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   auto data = filterProject->exprsAndProjection();
   VELOX_CHECK(!data.hasFilter);
-  std::vector<programPtr>
+  std::vector<ProgramPtr> programs;
 }
 
 bool CompileState::reserveMemory() {
   if (arena_) {
     return true;
   }
-  auto allocator = GpuAllocator(getDevice());
+  auto* allocator = getAllocator(getDevice());
   arena_ =
       std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
   return true;

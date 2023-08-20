@@ -16,12 +16,14 @@
 
 #pragma once
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/vector/Operand.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::wave {
 
 class Loader {
+ public:
   virtual ~Loader() = default;
 
   virtual void load(WaveBufferPtr indexBuffer, int32_t begin, int32_t end) = 0;
@@ -44,8 +46,15 @@ class Loader {
 /// become well defined on return of the kernel that computes these.
 class WaveVector {
  public:
+  static std::unique_ptr<WaveVector> create(
+      const TypePtr& type,
+      GpuArena& arena) {
+    return std::make_unique<WaveVector>(type, arena);
+  }
+
   // Constructs a vector. Resize can be used to create buffers for a given size.
-  WaveVector(TypePtr type, GpuArena* arena);
+  WaveVector(const TypePtr& type, GpuArena& arena)
+      : type_(type), arena_(&arena) {}
 
   const TypePtr& type() const {
     return type_;
@@ -55,7 +64,7 @@ class WaveVector {
     return size_;
   }
 
-  void resize();
+  void resize(vector_size_t sie, bool nullable = true);
 
   bool mayHaveNulls() const {
     return nulls_ != nullptr;
@@ -75,22 +84,38 @@ class WaveVector {
     return *children_[index];
   }
 
+  template <typename T>
+  T* values() {
+    return values_->as<T>();
+  }
+
+  uint8_t* nulls() {
+    if (nulls_) {
+      return nulls_->as<uint8_t>();
+    }
+    return nullptr;
+  }
+
   /// Returns a Velox vector giving a view on device side data. The device
   /// buffers stay live while referenced by Velox.
   VectorPtr toVelox();
 
+  /// Sets 'operand' to point to the buffers of 'this'.
+  void toOperand(Operand* operand) const;
+
   std::string toString() const;
 
  private:
-  // The arena for allocating buffers.
-  GpuArena* arena_;
-
   // Type of the content.
   TypePtr type_;
   TypeKind kind_;
 
-  // Encoding. FLAT, CONSTANT, DICTIONARY, ROW, ARRAY, MAP are possible values.
+  // Encoding. FLAT, CONSTANT, DICTIONARY, ROW, ARRAY, MAP are possible
+  // values.
   VectorEncoding::Simple encoding_;
+
+  // The arena for allocating buffers.
+  GpuArena* arena_;
 
   std::unique_ptr<Loader> loader_;
 
@@ -110,8 +135,8 @@ class WaveVector {
   // one int16_t that indicates how many of 'values' or 'indices' have
   // a value.
   WaveBufferPtr blockSizes_;
-  // Thread block level pointers inside 'indices_'. the ith entry is nullptr if
-  // the ith thread block has no row number mapping (all rows pass or none
+  // Thread block level pointers inside 'indices_'. the ith entry is nullptr
+  // if the ith thread block has no row number mapping (all rows pass or none
   // pass).
   WaveBufferPtr blockIndices_;
 
@@ -122,6 +147,8 @@ class WaveVector {
   // Members of a array/map/struct vector.
   std::vector<std::unique_ptr<WaveVector>> children_;
 };
+
+using WaveVectorPtr = std::unique_ptr<WaveVector>;
 
 struct WaveReleaser {
   WaveReleaser(WaveBufferPtr buffer) : buffer(std::move(buffer)) {}

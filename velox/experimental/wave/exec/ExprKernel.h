@@ -139,10 +139,21 @@ struct ThreadBlockProgram {
 
   Instruction** instructions;
 };
-
-class WaveStream : public Stream {
+/// A stream for invoking ExprKernel.
+class WaveKernelStream : public Stream {
  public:
-  void call(Stream* alias, int32_t numBlocks, ThreadBlockProgram* program);
+  /// Enqueus an invocation of ExprKernel for 'numBlocks' blocks. 'programs[i]'
+  /// is the program for blockIdx.x == i. 'blockIdx.x - baseIndices[i] is the
+  /// starting index for the TB in its set of peer TBs all running the same
+  /// program. 'status' is set to the return status of the corresponding TB.
+  /// 'sharedSize' is the per TB bytes shared memory to be reserved at launch.
+  void call(
+      Stream* alias,
+      int32_t numBlocks,
+      ThreadBlockProgram** programs,
+      int32_t* bases,
+      BlockStatus* status,
+      int32_t sharedSize);
 };
 
 } // namespace facebook::velox::wave

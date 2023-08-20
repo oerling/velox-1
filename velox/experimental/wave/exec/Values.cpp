@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/Values.h"
+#include "velox/experimental/wave/exec/Vectors.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 
 namespace facebook::velox::wave {
@@ -26,46 +27,42 @@ Values::Values(CompileState& state, const core::ValuesNode& values)
   definesSubfields(state, outputType_);
 }
 
-int32_t Values::canAdvance() {
-  if (current_ < values_.size()) {
-    return values_[current_]->size();
-  }
-  if (roundsLeft_) {
-    return values_[0]->size();
-  }
-  return 0;
-}
-
-std::unique_ptr<Executable> getExecutable(
-    GpuArena& arena,
-    folly::Range<int32_t*> operands) {
-  auto result = std::make_unique<Executable>(
-      nullptr, folly::Range<int32_t*>(nullptr, 0), operands);
-}
-
-void schedule(WaveStream& stream, int32_t maxRows) {
-  RowVectorPtr data;
-  if (current_ == values_.size()) {
+  int32_t Values::canAdvance() {
+    if (current_ < values_.size()) {
+      return values_[current_]->size();
+    }
     if (roundsLeft_) {
-      current_ = 1;
-      data = values_[0];
-      --roundsLeft_;
+      return values_[0]->size();
     }
-  } else {
-    data = values_[current_++];
+    return 0;
   }
-  VELOX_CHECK_LE(data->size(), maxRows);
 
-  stream.startWave();
-  auto executable = makeExecutable(driver_->arena());
-  for (auto i = 0; i < subfields_.size(); ++i) {
-    Values::copyToDevice(RowVectorPtr data) {
-      for (auto i = 0; i < subfields_.size(); ++i) {
+
+  
+  void Values::schedule(WaveStream& stream, int32_t maxRows) {
+    RowVectorPtr data;
+    if (current_ == values_.size()) {
+      if (roundsLeft_) {
+	current_ = 1;
+	data = values_[0];
+	--roundsLeft_;
       }
+    } else {
+      data = values_[current_++];
     }
+    VELOX_CHECK_LE(data->size(), maxRows);
 
-    std::string Values::toString() const {
-      return "Values";
+
+    std::vector<const BaseVector*> sources;
+    for (auto i = 0; i < subfields_.size(); ++i) {
+      sources.push_back(data->childAt(i).get());
     }
+    vectorsToDevice(folly::Range(sources.data(), sources.size()), outputIds_, stream);
+  }
 
-  } // namespace facebook::velox::wave
+
+  std::string Values::toString() const {
+  return "Values";
+}
+
+} // namespace facebook::velox::wave

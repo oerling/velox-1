@@ -20,14 +20,15 @@
 #include "velox/common/base/BitUtil.h"
 
 namespace facebook::velox::wave {
-
+  using OperandId = int32_t;
+  
 /// Set of OperandId . Uses the id() as an index into a bitmap.
 class OperandSet {
  public:
   /// True if id of 'object' is in 'this'.
-  bool contains(PlanObjectConstPtr object) const {
-    return object->id() < bits_.size() * 64 &&
-        velox::bits::isBitSet(bits_.data(), object->id());
+  bool contains(int32_t id) const {
+    return id < bits_.size() * 64 &&
+        velox::bits::isBitSet(bits_.data(), id);
   }
 
   bool operator==(const OperandSet& other) const;
@@ -45,7 +46,7 @@ class OperandSet {
   }
 
   /// Inserts id of 'object'.
-  void add(operandId id) {
+  void add(OperandId id) {
     ensureSize(id);
     velox::bits::setBit(bits_.data(), id);
   }
@@ -82,6 +83,10 @@ class OperandSet {
         bits_.data(), 0, bits_.size() * 64, [&](auto i) { func(i); });
   }
 
+  size_t size() const {
+    return bits::countBits(bits_.data(), 0, sizeof(bits_[0]) * 8 * bits_.size());
+  }
+  
  private:
   void ensureSize(int32_t id) {
     ensureWords(velox::bits::nwords(id + 1));
@@ -94,9 +99,20 @@ class OperandSet {
   }
 
   // A one bit corresponds to the id of each member.
-  std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
+  std::vector<uint64_t> bits_;
 };
 
+  template <typename V>
+inline bool isZero(const V& bits, size_t begin, size_t end) {
+  for (size_t i = begin; i < end; ++i) {
+    if (bits[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+  
 inline bool OperandSet::operator==(const OperandSet& other) const {
   // The sets are equal if they have the same bits set. Trailing words of zeros
   // do not count.

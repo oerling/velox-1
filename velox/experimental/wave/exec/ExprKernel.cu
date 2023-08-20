@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/WaveCore.cuh"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 namespace facebook::velox::wave {
 
@@ -103,5 +104,10 @@ __global__ void waveBaseKernel(
     }
   }
 }
+
+  void WaveKernelStream::call(Stream* alias, int32_t numBlocks, ThreadBlockProgram** programs, int32_t* baseIndices, BlockStatus* status, int32_t sharedSize) {
+    waveBaseKernel<<<numBlocks, kBlockSize, sharedSize, alias ? alias->stream()->stream : stream()->stream>>>(programs, baseIndices, status);
+ }
+
 
 } // namespace facebook::velox::wave

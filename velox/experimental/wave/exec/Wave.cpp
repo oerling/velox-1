@@ -16,8 +16,18 @@
 
 #include "velox/experimental/wave/exec/Wave.h"
 namespace facebook::velox::wave {
-std::mutex Wave::eventMutex:;
+std::mutex Wave::eventMutex_;
+  std::vector<std::unique_ptr<Event>> Wave::eventsForReuse_;
 
-std::vector<std::unique_ptr<Event>> eventsForReuse;
+  void Executable::startTransfer(
+      OperandSet outputOperands,
+      WaveBufferPtr operands,
+      std::vector<WaveVectorPtr> outputVectors,
+      std::vector<Transfer> transfers,
+      WaveStream& stream) {
+    auto exe = std::make_unique<Executable>();
+}
 
+
+  
 } // namespace facebook::velox::wave

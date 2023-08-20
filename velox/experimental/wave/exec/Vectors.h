@@ -15,29 +15,35 @@
  */
 #pragma once
 
+
 #include "velox/experimental/wave/exec/Wave.h"
-#include "velox/experimental/wave/vector/Op[Opernd.h"
+#include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/experimental/wave/exec/OperandSet.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::wave {
 
-//
+  void vectorsToDevice(
+      folly::Range<const BaseVector**> source,
+      const OperandSet& ids,
+      WaveStream& stream);
 
-std::unique_ptr<Executable> vectorsToDevice(
-    folly::Range<const BaseVector**> source,
-    folly::Range<OperandId> ids,
-    ,
-    WaveStream& stream) {}
+WaveVectorPtr allocateWaveVector(const BaseVector* source, GpuArena& arena);
 
-void allocateBuffers(
-    GpuArena& arena,
-    vector_size_t size,
-    const TypePtr& type,
-    bool nullable,
-    Operand& operand);
+  void ensureWaveVector(WaveVectorPtr& waveVector, const BaseVector* vector, GpuArena& arena);
 
-// Patches the position 'ofet' in 'code' to be a new uninitialized device array
-// of int32_t of at least 'size' elements.
+/// Allocates or resizes WaveVectors / Operands given types, size and
+/// nullability.
+void ensureVectors(
+    folly::Range<vector_size_t*> sizes,
+    const std::vector<TypePtr>& types,
+    folly::Range<bool*> nullable,
+    std::vector<WaveVectorPtr> vectors,
+    folly::Range<Operand*> operands,
+    GpuArena& arena);
+
+// Patches the position at 'offset' in 'code' to be a new uninitialized device
+// array of int32_t of at least 'size' elements.
 void allocateIndirection(
     GpuArena& arena,
     vector_size_t size,

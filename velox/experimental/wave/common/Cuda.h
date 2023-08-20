@@ -53,6 +53,10 @@ class Stream {
   /// Adds a callback to be invoked after pending processing is done.
   void addCallback(std::function<void()> callback);
 
+  auto stream() const {
+    return stream_.get();
+  }
+  
  protected:
   std::unique_ptr<StreamImpl> stream_;
 
