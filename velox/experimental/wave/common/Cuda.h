@@ -56,7 +56,7 @@ class Stream {
   auto stream() const {
     return stream_.get();
   }
-  
+
  protected:
   std::unique_ptr<StreamImpl> stream_;
 

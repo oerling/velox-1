@@ -27,41 +27,38 @@ Values::Values(CompileState& state, const core::ValuesNode& values)
   definesSubfields(state, outputType_);
 }
 
-  int32_t Values::canAdvance() {
-    if (current_ < values_.size()) {
-      return values_[current_]->size();
-    }
+int32_t Values::canAdvance() {
+  if (current_ < values_.size()) {
+    return values_[current_]->size();
+  }
+  if (roundsLeft_) {
+    return values_[0]->size();
+  }
+  return 0;
+}
+
+void Values::schedule(WaveStream& stream, int32_t maxRows) {
+  RowVectorPtr data;
+  if (current_ == values_.size()) {
     if (roundsLeft_) {
-      return values_[0]->size();
+      current_ = 1;
+      data = values_[0];
+      --roundsLeft_;
     }
-    return 0;
+  } else {
+    data = values_[current_++];
   }
+  VELOX_CHECK_LE(data->size(), maxRows);
 
-
-  
-  void Values::schedule(WaveStream& stream, int32_t maxRows) {
-    RowVectorPtr data;
-    if (current_ == values_.size()) {
-      if (roundsLeft_) {
-	current_ = 1;
-	data = values_[0];
-	--roundsLeft_;
-      }
-    } else {
-      data = values_[current_++];
-    }
-    VELOX_CHECK_LE(data->size(), maxRows);
-
-
-    std::vector<const BaseVector*> sources;
-    for (auto i = 0; i < subfields_.size(); ++i) {
-      sources.push_back(data->childAt(i).get());
-    }
-    vectorsToDevice(folly::Range(sources.data(), sources.size()), outputIds_, stream);
+  std::vector<const BaseVector*> sources;
+  for (auto i = 0; i < subfields_.size(); ++i) {
+    sources.push_back(data->childAt(i).get());
   }
+  vectorsToDevice(
+      folly::Range(sources.data(), sources.size()), outputIds_, stream);
+}
 
-
-  std::string Values::toString() const {
+std::string Values::toString() const {
   return "Values";
 }
 

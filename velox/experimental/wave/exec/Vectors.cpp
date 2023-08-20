@@ -60,8 +60,8 @@ void ensureVectors(
   for (auto i = 0; i < operands.size(); ++i) {
     vector_size_t size = sizes.size() > i ? sizes[i] : sizes.back();
     bool isNullable = nullable.empty() ? true
-        : nullable.size() > i        ? nullable[i]
-                                  : nullable.back();
+        : nullable.size() > i          ? nullable[i]
+                                       : nullable.back();
     ensureWaveVector(vectors[i], types[i], size, isNullable, arena);
     vectors[i]->toOperand(&operands[i]);
   }
@@ -104,39 +104,40 @@ void transferVector(
     }
   }
 }
-  
-void vectorsToDevice(
-      folly::Range<const BaseVector**> source,
-      const OperandSet& ids,
-      WaveStream& stream) {
 
+void vectorsToDevice(
+    folly::Range<const BaseVector**> source,
+    const OperandSet& ids,
+    WaveStream& stream) {
   std::vector<Transfer> transfers;
-    int64_t bytes = 0;
-    std::vector<Operand> operandVector;
-    std::vector<WaveVectorPtr> waveVectors;
-    auto& arena = stream.arena();
-    for (auto i = 0; i < source.size(); ++i) {
-      transferVector(
-		     source[i],
-		     i, 
-		     transfers,
-		     waveVectors,
-		     operandVector,
-		     arena,
-		     bytes);
-    }
-    auto operands = arena.allocate<Operand>(operandVector.size());
-    memcpy(operands->as<Operand>(), operandVector.data(), operandVector.size() * sizeof(Operand));
-    operandVector.clear();
-    Executable::startTransfer(ids, std::move(operands), std::move(waveVectors),std::move(transfers), stream);
+  int64_t bytes = 0;
+  std::vector<Operand> operandVector;
+  std::vector<WaveVectorPtr> waveVectors;
+  auto& arena = stream.arena();
+  for (auto i = 0; i < source.size(); ++i) {
+    transferVector(
+        source[i], i, transfers, waveVectors, operandVector, arena, bytes);
+  }
+  auto operands = arena.allocate<Operand>(operandVector.size());
+  memcpy(
+      operands->as<Operand>(),
+      operandVector.data(),
+      operandVector.size() * sizeof(Operand));
+  operandVector.clear();
+  Executable::startTransfer(
+      ids,
+      std::move(operands),
+      std::move(waveVectors),
+      std::move(transfers),
+      stream);
 }
 
-  // Patches the position 'ofet' in 'code' to be a new uninitialized device
-  // array of int32_t of at least 'size' elements.
-  void allocateIndirection(
-      GpuArena & arena,
-      vector_size_t size,
-      const WaveBufferPtr& code,
-      int32_t offset);
+// Patches the position 'ofet' in 'code' to be a new uninitialized device
+// array of int32_t of at least 'size' elements.
+void allocateIndirection(
+    GpuArena& arena,
+    vector_size_t size,
+    const WaveBufferPtr& code,
+    int32_t offset);
 
 } // namespace facebook::velox::wave

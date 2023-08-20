@@ -20,15 +20,14 @@
 #include "velox/common/base/BitUtil.h"
 
 namespace facebook::velox::wave {
-  using OperandId = int32_t;
-  
+using OperandId = int32_t;
+
 /// Set of OperandId . Uses the id() as an index into a bitmap.
 class OperandSet {
  public:
   /// True if id of 'object' is in 'this'.
   bool contains(int32_t id) const {
-    return id < bits_.size() * 64 &&
-        velox::bits::isBitSet(bits_.data(), id);
+    return id < bits_.size() * 64 && velox::bits::isBitSet(bits_.data(), id);
   }
 
   bool operator==(const OperandSet& other) const;
@@ -84,9 +83,10 @@ class OperandSet {
   }
 
   size_t size() const {
-    return bits::countBits(bits_.data(), 0, sizeof(bits_[0]) * 8 * bits_.size());
+    return bits::countBits(
+        bits_.data(), 0, sizeof(bits_[0]) * 8 * bits_.size());
   }
-  
+
  private:
   void ensureSize(int32_t id) {
     ensureWords(velox::bits::nwords(id + 1));
@@ -102,7 +102,7 @@ class OperandSet {
   std::vector<uint64_t> bits_;
 };
 
-  template <typename V>
+template <typename V>
 inline bool isZero(const V& bits, size_t begin, size_t end) {
   for (size_t i = begin; i < end; ++i) {
     if (bits[i]) {
@@ -112,7 +112,6 @@ inline bool isZero(const V& bits, size_t begin, size_t end) {
   return true;
 }
 
-  
 inline bool OperandSet::operator==(const OperandSet& other) const {
   // The sets are equal if they have the same bits set. Trailing words of zeros
   // do not count.

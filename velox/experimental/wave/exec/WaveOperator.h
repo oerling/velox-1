@@ -46,7 +46,9 @@ class WaveOperator {
     return nullptr;
   }
 
-  /// Returns how many rows of output are available from 'this'. Source operators and cardinality increasing operators must return a correct answer if they are ready to produce data. Others should return 0. 
+  /// Returns how many rows of output are available from 'this'. Source
+  /// operators and cardinality increasing operators must return a correct
+  /// answer if they are ready to produce data. Others should return 0.
   virtual int32_t canAdvance() {
     return 0;
   }

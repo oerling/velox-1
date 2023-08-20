@@ -15,22 +15,24 @@
  */
 #pragma once
 
-
+#include "velox/experimental/wave/exec/OperandSet.h"
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
-#include "velox/experimental/wave/exec/OperandSet.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::wave {
 
-  void vectorsToDevice(
-      folly::Range<const BaseVector**> source,
-      const OperandSet& ids,
-      WaveStream& stream);
+void vectorsToDevice(
+    folly::Range<const BaseVector**> source,
+    const OperandSet& ids,
+    WaveStream& stream);
 
 WaveVectorPtr allocateWaveVector(const BaseVector* source, GpuArena& arena);
 
-  void ensureWaveVector(WaveVectorPtr& waveVector, const BaseVector* vector, GpuArena& arena);
+void ensureWaveVector(
+    WaveVectorPtr& waveVector,
+    const BaseVector* vector,
+    GpuArena& arena);
 
 /// Allocates or resizes WaveVectors / Operands given types, size and
 /// nullability.

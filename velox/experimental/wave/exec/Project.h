@@ -22,11 +22,12 @@ class Project : public WaveOperator {
  public:
   Project(
       CompileState& state,
-      RowTypePtr outputType, std::vector<ProgramPtr> programs)
+      RowTypePtr outputType,
+      std::vector<ProgramPtr> programs)
       : WaveOperator(state, outputType), programs_(std::move(programs)) {}
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
-  
+
  private:
   std::vector<ProgramPtr> programs_;
 };
