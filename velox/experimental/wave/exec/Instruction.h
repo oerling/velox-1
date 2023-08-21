@@ -42,7 +42,8 @@ struct AbstractOperand {
   // Vector with constant value, else nullptr.
   VectorPtr constant;
 
-  // True if bits in nulls or boolean values are as a bit field. Need widening to byte on device.
+  // True if bits in nulls or boolean values are as a bit field. Need widening
+  // to byte on device.
   bool flagsAsBits{false};
 };
 

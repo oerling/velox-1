@@ -31,8 +31,8 @@ WaveStream::~WaveStream() {
 std::mutex WaveStream::reserveMutex_;
 std::vector<std::unique_ptr<Stream>> WaveStream::streamsForReuse_;
 std::vector<std::unique_ptr<Event>> WaveStream::eventsForReuse_;
-  bool WaveStream::exitInited_{false};
-  
+bool WaveStream::exitInited_{false};
+
 Stream* WaveStream::newStream() {
   auto stream = streamFromReserve();
   auto id = streams_.size();
@@ -43,12 +43,12 @@ Stream* WaveStream::newStream() {
   return result;
 }
 
-  // static
-  void WaveStream::clearReusable() {
-    streamsForReuse_.clear();
-    eventsForReuse_.clear();
-  }
-  
+// static
+void WaveStream::clearReusable() {
+  streamsForReuse_.clear();
+  eventsForReuse_.clear();
+}
+
 // static
 std::unique_ptr<Stream> WaveStream::streamFromReserve() {
   std::lock_guard<std::mutex> l(reserveMutex_);
@@ -57,7 +57,7 @@ std::unique_ptr<Stream> WaveStream::streamFromReserve() {
     if (!exitInited_) {
       // Register handler for clearing resources after first call of API.
       exitInited_ = true;
-    atexit(WaveStream::clearReusable);
+      atexit(WaveStream::clearReusable);
     }
 
     return result;

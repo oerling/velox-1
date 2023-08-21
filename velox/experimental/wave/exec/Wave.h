@@ -67,7 +67,7 @@ struct BufferReference {
 
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
-    : from(from), to(to), size(size) {}
+      : from(from), to(to), size(size) {}
 
   const void* from;
   void* to;
@@ -271,7 +271,7 @@ class WaveStream {
   static bool exitInited_;
 
   static void clearReusable();
-  
+
   GpuArena& arena_;
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
   std::vector<std::unique_ptr<Executable>> executables_;
