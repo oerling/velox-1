@@ -88,7 +88,7 @@ __global__ void waveBaseKernel(
       alignof(typename ScanAlgorithm::TempStorage)) char shared[];
   auto* program = programs[blockIdx.x];
   auto* status = &blockStatusArray[blockIdx.x];
-  int32_t blockBase = blockIdx.x - baseIndices[blockIdx.x];
+  int32_t blockBase = (blockIdx.x - baseIndices[blockIdx.x]) * kBlockIndex;
   for (auto i = 0; i < program->numInstructions; ++i) {
     auto instruction = program->instructions[i];
     switch (instruction->opCode) {
