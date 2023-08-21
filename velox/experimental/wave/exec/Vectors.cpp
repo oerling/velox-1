@@ -88,9 +88,10 @@ void transferVector(
   if (values) {
     auto rawValues = values->as<char>();
     if (source->typeKind() == TypeKind::BOOLEAN) {
+      auto bytes = bits::nbytes(source->size());
       transfers.emplace_back(
-          rawValues, waveVectors[index]->values<char>(), source->size(), true);
-      totalBytes += source->size();
+			     rawValues, waveVectors[index]->values<char>(), bytes);
+      totalBytes += bytes;
     } else {
       auto bytes = source->size() * source->type()->cppSizeInBytes();
       transfers.emplace_back(
@@ -98,9 +99,10 @@ void transferVector(
       totalBytes += bytes;
     }
     if (rawNulls) {
+      auto bytes = bits::nbytes(source->size());
       transfers.emplace_back(
-          rawNulls, waveVectors[index]->nulls(), source->size(), true);
-      totalBytes += source->size();
+          rawNulls, waveVectors[index]->nulls(), bytes);
+      totalBytes += bytes;
     }
   }
 }

@@ -31,7 +31,8 @@ WaveStream::~WaveStream() {
 std::mutex WaveStream::reserveMutex_;
 std::vector<std::unique_ptr<Stream>> WaveStream::streamsForReuse_;
 std::vector<std::unique_ptr<Event>> WaveStream::eventsForReuse_;
-
+  bool WaveStream::exitInited_{false};
+  
 Stream* WaveStream::newStream() {
   auto stream = streamFromReserve();
   auto id = streams_.size();
@@ -42,11 +43,24 @@ Stream* WaveStream::newStream() {
   return result;
 }
 
+  // static
+  void WaveStream::clearReusable() {
+    streamsForReuse_.clear();
+    eventsForReuse_.clear();
+  }
+  
 // static
 std::unique_ptr<Stream> WaveStream::streamFromReserve() {
   std::lock_guard<std::mutex> l(reserveMutex_);
   if (streamsForReuse_.empty()) {
-    return std::make_unique<Stream>();
+    auto result = std::make_unique<Stream>();
+    if (!exitInited_) {
+      // Register handler for clearing resources after first call of API.
+      exitInited_ = true;
+    atexit(WaveStream::clearReusable);
+    }
+
+    return result;
   }
   auto item = std::move(streamsForReuse_.back());
   streamsForReuse_.pop_back();
@@ -82,6 +96,17 @@ void WaveStream::releaseEvent(std::unique_ptr<Event>&& event) {
   eventsForReuse_.push_back(std::move(event));
 }
 
+namespace {
+// Copies from pageable host to unified address. Multithreaded memcpy is
+// probably best.
+void copyData(std::vector<Transfer>& transfers) {
+  // TODO: Put memcpys or ppieces of them on AsyncSource if large enough.
+  for (auto& transfer : transfers) {
+    ::memcpy(transfer.to, transfer.from, transfer.size);
+  }
+}
+} // namespace
+
 void Executable::startTransfer(
     OperandSet outputOperands,
     WaveBufferPtr&& operands,
@@ -89,11 +114,13 @@ void Executable::startTransfer(
     std::vector<Transfer>&& transfers,
     WaveStream& waveStream) {
   auto exe = std::make_unique<Executable>();
+  exe->outputOperands = outputOperands;
   exe->output = std::move(outputVectors);
   exe->transfers = std::move(transfers);
   exe->deviceData = operands;
   exe->operands = operands->as<Operand>();
   exe->outputOperands = outputOperands;
+  copyData(exe->transfers);
   auto* device = waveStream.device();
   waveStream.installExecutables(
       folly::Range(&exe, 1),
@@ -114,7 +141,9 @@ void WaveStream::installExecutables(
       OperandSetHasher,
       OperandSetComparer>
       dependences;
-  for (auto& exe : executables) {
+  for (auto& exeUnique : executables) {
+    executables_.push_back(std::move(exeUnique));
+    auto exe = executables_.back().get();
     VELOX_CHECK(exe->stream == nullptr);
     OperandSet streamSet;
     exe->inputOperands.forEach([&](int32_t id) {
@@ -127,10 +156,10 @@ void WaveStream::installExecutables(
         streamSet.add(sid);
       }
     });
-    dependences[streamSet].push_back(exe.get());
+    dependences[streamSet].push_back(exe);
     exe->outputOperands.forEach([&](int32_t id) {
       VELOX_CHECK_EQ(0, operandToExecutable_.count(id));
-      operandToExecutable_[id] = exe.get();
+      operandToExecutable_[id] = exe;
     });
   }
 
@@ -178,15 +207,14 @@ bool WaveStream::isArrived(
       return;
     }
     auto streamId = reinterpret_cast<uintptr_t>(exe->stream->userData());
-    if (lastEvent_[streamId]) {
-      if (lastEvent_[streamId]->query()) {
-        return;
-      }
-      waitSet.add(streamId);
-    } else {
+    if (!lastEvent_[streamId]) {
       lastEvent_[streamId] = newEvent();
-      waitSet.add(streamId);
+      lastEvent_[streamId]->record(*exe->stream);
     }
+    if (lastEvent_[streamId]->query()) {
+      return;
+    }
+    waitSet.add(streamId);
   });
   if (waitSet.empty()) {
     return true;

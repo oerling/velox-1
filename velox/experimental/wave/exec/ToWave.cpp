@@ -61,7 +61,8 @@ Value CompileState::toValue(const Expr& expr) {
 }
 
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
-  operands_.push_back(std::make_unique<AbstractOperand>(other));
+  auto newOp = std::make_unique<AbstractOperand>(other, operandCounter_++);
+  operands_.push_back(std::move(newOp));
   return operands_.back().get();
 }
 

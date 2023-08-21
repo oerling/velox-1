@@ -50,6 +50,7 @@ void WaveVector::toOperand(Operand* operand) const {
   if (encoding_ == VectorEncoding::Simple::FLAT) {
     operand->indexMask = ~0;
     operand->base = values_->as<int64_t>();
+    operand->base = nulls_ ? nulls_->as<uint8_t>() : nullptr;
     operand->indices = nullptr;
   } else {
     VELOX_UNSUPPORTED();
@@ -74,15 +75,13 @@ static VectorPtr toVeloxTyped(
     valuesView = WaveBufferView::create(values);
   }
 
-  auto vec = std::make_shared<FlatVector<T>>(
+  return std::make_shared<FlatVector<T>>(
       pool,
       type,
       std::move(nullsView),
       size,
       std::move(valuesView),
       std::vector<BufferPtr>());
-
-  return vec;
 }
 
 VectorPtr WaveVector::toVelox(memory::MemoryPool* pool) {

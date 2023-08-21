@@ -40,11 +40,6 @@ constexpr OperandId kNoOperand = ~0;
 struct Operand {
   static constexpr uint16_t kGlobal = ~0;
 
-  // Unique ordinal number within a WaveDriver. Waves computing
-  // operands use this id to indicate which Operands are ready on
-  // arrival.
-  OperandId id;
-
   int32_t indexMask{~0};
 
   // If != !0, this indicates that instead of base, we use the thread block's

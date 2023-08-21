@@ -37,7 +37,9 @@ void WaveOperator::definesSubfields(
         auto field = state.toSubfield(name);
         subfields_.push_back(field);
         types_.push_back(child);
-        defines_[Value(field)] = state.newOperand(child, name);
+	auto operand = state.newOperand(child, name);
+	outputIds_.add(operand->id);
+        defines_[Value(field)] = operand;
       }
     }
       // TODO:Add cases for nested types.

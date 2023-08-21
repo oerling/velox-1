@@ -66,19 +66,13 @@ struct BufferReference {
 };
 
 struct Transfer {
-  Transfer(const void* from, void* to, size_t size, bool bitsToBytes = false)
-      : from(from), to(to), size(size), bitsToBytes(bitsToBytes) {
-    VELOX_CHECK(!bitsToBytes, "Nulls not supported");
-  }
+  Transfer(const void* from, void* to, size_t size)
+    : from(from), to(to), size(size) {}
 
   const void* from;
   void* to;
-  // Transfer size in bytes. If bitsToBytes is set, the size in 'from' is in
-  // bits and and in bytes for 'to';.
+  // Transfer size in bytes.
   size_t size;
-
-  // True if each bit in 'from' widens to a byte in 'to'.
-  bool bitsToBytes;
 };
 
 class WaveStream;
@@ -274,7 +268,10 @@ class WaveStream {
   static std::mutex reserveMutex_;
   static std::vector<std::unique_ptr<Event>> eventsForReuse_;
   static std::vector<std::unique_ptr<Stream>> streamsForReuse_;
+  static bool exitInited_;
 
+  static void clearReusable();
+  
   GpuArena& arena_;
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
   std::vector<std::unique_ptr<Executable>> executables_;

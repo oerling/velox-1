@@ -48,6 +48,7 @@ RowVectorPtr WaveDriver::getOutput() {
   for (;;) {
     startMore();
     if (streams_.empty()) {
+      finished_ = true;
       return nullptr;
     }
     auto& lastSet = waveOperators_.back()->outputIds();
@@ -85,7 +86,7 @@ RowVectorPtr WaveDriver::makeResult(
     VELOX_CHECK_NOT_NULL(exe);
     auto ordinal = exe->outputOperands.ordinal(id);
     auto waveVector = std::move(exe->output[ordinal]);
-    children[nthChild++] = waveVector->toVelox(operatorCtx_->pool());
+    result->childAt(nthChild++) = waveVector->toVelox(operatorCtx_->pool());
   });
   return result;
 }

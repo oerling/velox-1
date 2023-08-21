@@ -28,6 +28,9 @@ struct AbstractOperand {
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
+  AbstractOperand(const AbstractOperand& other, int32_t id)
+      : id(id), type(other.type), label(other.label) {}
+
   const int32_t id;
 
   // Operand type.
@@ -38,6 +41,9 @@ struct AbstractOperand {
 
   // Vector with constant value, else nullptr.
   VectorPtr constant;
+
+  // True if bits in nulls or boolean values are as a bit field. Need widening to byte on device.
+  bool flagsAsBits{false};
 };
 
 struct AbstractInstruction {
