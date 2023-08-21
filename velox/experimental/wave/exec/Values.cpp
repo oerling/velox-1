@@ -24,7 +24,6 @@ Values::Values(CompileState& state, const core::ValuesNode& values)
     : WaveOperator(state, values.outputType()),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {
-  definesSubfields(state, outputType_);
 }
 
 int32_t Values::canAdvance() {

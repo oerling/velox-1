@@ -77,7 +77,7 @@ class WaveDriver : public exec::SourceOperator {
 
   std::unique_ptr<GpuArena> arena_;
 
-  ContinueFuture blockingFuture_;
+  ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
   exec::BlockingReason blockingReason_;
 
   bool finished_{false};

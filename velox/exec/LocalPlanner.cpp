@@ -601,7 +601,7 @@ std::vector<std::unique_ptr<Operator>> DriverFactory::replaceOperators(
   // Insert the replacement at the place of the erase. Do manually because
   // insert() is not good with unique pointers.
   driver.operators_.resize(driver.operators_.size() + replaceWith.size());
-  for (auto i = driver.operators_.size() - 1; i >= begin; --i) {
+  for (int32_t i = driver.operators_.size() - 1; i >= begin + replaceWith.size(); --i) {
     driver.operators_[i] = std::move(driver.operators_[i - replaceWith.size()]);
   }
   for (auto i = 0; i < replaceWith.size(); ++i) {

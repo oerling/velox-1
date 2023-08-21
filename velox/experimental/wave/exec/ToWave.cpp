@@ -208,7 +208,7 @@ bool CompileState::compile() {
   int32_t operatorIndex = 0;
   int32_t nodeIndex = 0;
   RowTypePtr outputType;
-  for (; operatorIndex < operators_.size(); ++operatorIndex) {
+  for (; operatorIndex < operators.size(); ++operatorIndex) {
     if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }

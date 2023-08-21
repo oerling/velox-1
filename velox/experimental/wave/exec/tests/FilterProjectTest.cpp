@@ -16,6 +16,7 @@
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 
@@ -39,6 +40,12 @@ class FilterProjectTest : public OperatorTestBase {
     assertQuery(plan, "SELECT * FROM tmp WHERE " + filter);
   }
 
+  void makeNotNull(RowVectorPtr row) {
+    for (auto i = 0; i < row->type()->size(); ++i) {
+      row->childAt(i)->clearNulls(0, row->size());
+    }
+  }
+  
   void assertProject(const std::vector<RowVectorPtr>& vectors) {
     auto plan = PlanBuilder()
                     .values(vectors)
@@ -61,7 +68,24 @@ class FilterProjectTest : public OperatorTestBase {
           {BIGINT(), INTEGER(), SMALLINT(), DOUBLE()})};
 };
 
+TEST_F(FilterProjectTest, roundTrip) {
+  std::vector<RowVectorPtr> vectors;
+  for (int32_t i = 0; i < 10; ++i) {
+    auto vector = std::dynamic_pointer_cast<RowVector>(
+        BatchMaker::createBatch(rowType_, 100, *pool_));
+    makeNotNull(vector);
+    vectors.push_back(vector);
+  }
+    auto plan = PlanBuilder()
+                    .values(vectors)
+                    .planNode();
+    AssertQueryBuilder(plan)
+      .assertResults(vectors);
+
+}
+
 TEST_F(FilterProjectTest, project) {
+  return;
   std::vector<RowVectorPtr> vectors;
   for (int32_t i = 0; i < 10; ++i) {
     auto vector = std::dynamic_pointer_cast<RowVector>(

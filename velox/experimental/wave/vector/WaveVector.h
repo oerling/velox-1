@@ -54,7 +54,7 @@ class WaveVector {
 
   // Constructs a vector. Resize can be used to create buffers for a given size.
   WaveVector(const TypePtr& type, GpuArena& arena)
-      : type_(type), arena_(&arena) {}
+    : type_(type), kind_(type_->kind()), arena_(&arena) {}
 
   const TypePtr& type() const {
     return type_;
@@ -112,7 +112,7 @@ class WaveVector {
 
   // Encoding. FLAT, CONSTANT, DICTIONARY, ROW, ARRAY, MAP are possible
   // values.
-  VectorEncoding::Simple encoding_;
+  VectorEncoding::Simple encoding_{VectorEncoding::Simple::FLAT};
 
   // The arena for allocating buffers.
   GpuArena* arena_;
