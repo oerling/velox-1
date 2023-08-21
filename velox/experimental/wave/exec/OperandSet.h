@@ -64,7 +64,7 @@ class OperandSet {
   /// Returns the number of ids below 'id'.
   int32_t ordinal(int32_t id) {
     return bits::countBits(bits_.data(), 0, id);
-  }  
+  }
 
   /// Returns true if 'this' is a subset of 'super'.
   bool isSubset(const OperandSet& super) const;

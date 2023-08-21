@@ -33,7 +33,7 @@ class Values : public WaveOperator {
     VELOX_CHECK_LT(0, current_);
     return values_[current_ - 1]->size();
   }
-  
+
   std::string toString() const override;
 
  private:

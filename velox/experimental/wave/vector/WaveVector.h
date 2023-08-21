@@ -166,7 +166,7 @@ struct WaveReleaser {
 
 // A BufferView for velox::BaseVector for a view on unified memory.
 class WaveBufferView : public BufferView<WaveReleaser> {
-public:
+ public:
   static BufferPtr create(WaveBufferPtr buffer) {
     return BufferView<WaveReleaser>::create(
         buffer->as<uint8_t>(), buffer->capacity(), WaveReleaser(buffer));

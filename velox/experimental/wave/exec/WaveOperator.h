@@ -31,7 +31,7 @@ class WaveOperator {
   const RowTypePtr& outputType() const {
     return outputType_;
   }
-  
+
   /// True if may reduce cardinality without duplicating input rows.
   bool isFilter() {
     return isFilter_;

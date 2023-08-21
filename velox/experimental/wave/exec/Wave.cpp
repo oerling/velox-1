@@ -207,7 +207,7 @@ bool WaveStream::isArrived(
       return true;
     }
     std::this_thread::sleep_for(std::chrono::microseconds(sleepMicro));
-    elapsed = getCurrentTimeMicro() -start;
+    elapsed = getCurrentTimeMicro() - start;
   }
   return false;
 }

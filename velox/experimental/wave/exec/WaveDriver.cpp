@@ -50,64 +50,66 @@ RowVectorPtr WaveDriver::getOutput() {
     if (streams_.empty()) {
       return nullptr;
     }
-    auto& lastSet  = waveOperators_.back()->outputIds();
+    auto& lastSet = waveOperators_.back()->outputIds();
     for (auto i = 0; i < streams_.size(); ++i) {
       auto stream = streams_[i].get();
       if (stream->isArrived(lastSet)) {
-	auto result = makeResult(*stream, lastSet);
-	if (streamAtEnd(*stream)) {
-	  streams_.erase(streams_.begin() + i);
-	}
-	return result;
+        auto result = makeResult(*stream, lastSet);
+        if (streamAtEnd(*stream)) {
+          streams_.erase(streams_.begin() + i);
+        }
+        return result;
       }
     }
   }
 }
 
-  bool WaveDriver::streamAtEnd(WaveStream& stream) {
-    return true;
-  }
-  RowVectorPtr WaveDriver::makeResult(WaveStream& stream, const OperandSet& lastSet) {
-    auto& last = *waveOperators_.back();
-    auto& rowType = last.outputType();
-    std::vector<VectorPtr> children (rowType->size());
-    auto result = std::make_shared<RowVector>(
-					 operatorCtx_->pool(),
-					 rowType,
-					 BufferPtr(nullptr),
-					 last.outputSize(),
-					 std::move(children));
-    int32_t nthChild = 0;
-    lastSet.forEach([&](int32_t id) {
-      auto exe = stream.operandExecutable(id);
-      VELOX_CHECK_NOT_NULL(exe);
-      auto ordinal = exe->outputOperands.ordinal(id);
-      auto waveVector = std::move(exe->output[ordinal]);
-      children[nthChild++] = waveVector->toVelox(operatorCtx_->pool());
-    });
-    return result;
-  }
-  
-  void WaveDriver::  startMore() {
-    auto rows = waveOperators_[0]->canAdvance();
-    if (!rows) {
-      return;
-    }
-    streams_.push_back(std::make_unique<WaveStream>(*arena_));
-    auto& stream = *streams_.back();
-    for (auto i = 0; i < waveOperators_.size(); ++i) {
-      waveOperators_[i]->schedule(stream, rows);
-    }
-    prefetchReturn(stream);
-  }
+bool WaveDriver::streamAtEnd(WaveStream& stream) {
+  return true;
+}
+RowVectorPtr WaveDriver::makeResult(
+    WaveStream& stream,
+    const OperandSet& lastSet) {
+  auto& last = *waveOperators_.back();
+  auto& rowType = last.outputType();
+  std::vector<VectorPtr> children(rowType->size());
+  auto result = std::make_shared<RowVector>(
+      operatorCtx_->pool(),
+      rowType,
+      BufferPtr(nullptr),
+      last.outputSize(),
+      std::move(children));
+  int32_t nthChild = 0;
+  lastSet.forEach([&](int32_t id) {
+    auto exe = stream.operandExecutable(id);
+    VELOX_CHECK_NOT_NULL(exe);
+    auto ordinal = exe->outputOperands.ordinal(id);
+    auto waveVector = std::move(exe->output[ordinal]);
+    children[nthChild++] = waveVector->toVelox(operatorCtx_->pool());
+  });
+  return result;
+}
 
-  void WaveDriver::prefetchReturn(WaveStream& stream) {
-    // Schedule return buffers from last op to be on host side. 
-    auto& last = waveOperators_.back();
-    auto& ids = last->outputIds();
+void WaveDriver::startMore() {
+  auto rows = waveOperators_[0]->canAdvance();
+  if (!rows) {
+    return;
   }
-  
-  std::string WaveDriver::toString() const {
+  streams_.push_back(std::make_unique<WaveStream>(*arena_));
+  auto& stream = *streams_.back();
+  for (auto i = 0; i < waveOperators_.size(); ++i) {
+    waveOperators_[i]->schedule(stream, rows);
+  }
+  prefetchReturn(stream);
+}
+
+void WaveDriver::prefetchReturn(WaveStream& stream) {
+  // Schedule return buffers from last op to be on host side.
+  auto& last = waveOperators_.back();
+  auto& ids = last->outputIds();
+}
+
+std::string WaveDriver::toString() const {
   std::stringstream out;
   out << "{Wave" << std::endl;
   for (auto& op : waveOperators_) {
@@ -116,5 +118,4 @@ RowVectorPtr WaveDriver::getOutput() {
   return out.str();
 }
 
-  
 } // namespace facebook::velox::wave

@@ -74,7 +74,7 @@ static VectorPtr toVeloxTyped(
     valuesView = WaveBufferView::create(values);
   }
 
-  auto vec =  std::make_shared<FlatVector<T>>(
+  auto vec = std::make_shared<FlatVector<T>>(
       pool,
       type,
       std::move(nullsView),

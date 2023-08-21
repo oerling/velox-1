@@ -84,8 +84,11 @@ struct Transfer {
 class WaveStream;
 class Program;
 
-/// Represents a kernel or data transfer. Many executables can be in one kernel launch on different thread blocks. Owns the output and intermediate memory for the thread block program or data transfer this represents. Has a WaveStream level unique id for each output column.
-/// be nulllptr if this represents data movement only.
+/// Represents a kernel or data transfer. Many executables can be in one kernel
+/// launch on different thread blocks. Owns the output and intermediate memory
+/// for the thread block program or data transfer this represents. Has a
+/// WaveStream level unique id for each output column. be nulllptr if this
+/// represents data movement only.
 struct Executable {
   std::unique_ptr<Executable>
   create(std::shared_ptr<Program> program, int32_t numRows, GpuArena& arena);
@@ -131,11 +134,10 @@ struct Executable {
   std::vector<Transfer> transfers;
 
   // The stream on which this is enqueued. Set by
-  // WaveStream::installExecutables(). Cleared after the kernel containing this is seen to realize dependent event.
+  // WaveStream::installExecutables(). Cleared after the kernel containing this
+  // is seen to realize dependent event.
   Stream* stream{nullptr};
 
-
-  
   // Function for returning 'this' to a pool of reusable executables kept by an
   // operator. The function is expected to move the Executable from the
   // std::unique_ptr. Otherwise the Executable will be freed by reset of the
@@ -194,8 +196,7 @@ class Program {
 
 using ProgramPtr = std::shared_ptr<Program>;
 
-
-/// Represents consecutive data dependent kernel launches. 
+/// Represents consecutive data dependent kernel launches.
 class WaveStream {
  public:
   WaveStream(GpuArena& arena) : arena_(arena) {}
@@ -227,31 +228,42 @@ class WaveStream {
   /// enqueued or a stream on which an event wait for multiple
   /// prerequisites is enqueued for executables with more than one
   /// prerequisite. 'launch' is responsible for enqueuing the actual
-  /// kernel or data transfer and marking which stream it went to with markLaunch(). Takes ownership of 'executables', which are moved
-  /// out of the unique_ptrs.
+  /// kernel or data transfer and marking which stream it went to with
+  /// markLaunch(). Takes ownership of 'executables', which are moved out of the
+  /// unique_ptrs.
   void installExecutables(
       folly::Range<std::unique_ptr<Executable>*> executables,
       std::function<void(Stream*, folly::Range<Executable**>)> launch);
 
-  /// The callback from installExecutables must call this to establish relation of stream and executable before returning. Normally, the executable is launched on the stream given to the callback. In some cases the launch may decide to use different streams for different executables and have these depend on the first stream.
+  /// The callback from installExecutables must call this to establish relation
+  /// of stream and executable before returning. Normally, the executable is
+  /// launched on the stream given to the callback. In some cases the launch may
+  /// decide to use different streams for different executables and have these
+  /// depend on the first stream.
   void markLaunch(Stream& stream, Executable& executable) {
     executable.stream = &stream;
   }
 
-  
-  // Retuns true if all executables needed to cover 'ids' have arrived. if 'sleepMicro' is default, returns immediately if not arrived. Otherwise sleeps 'leepMicros' and rechecks until complete or until 'timeoutMicro' us have elapsed. timeout 0 means wait indefinitely.
-  bool isArrived(const OperandSet& ids, int32_t sleepMicro = -1, int32_t timeoutMicro = 0);
-  
+  // Retuns true if all executables needed to cover 'ids' have arrived. if
+  // 'sleepMicro' is default, returns immediately if not arrived. Otherwise
+  // sleeps 'leepMicros' and rechecks until complete or until 'timeoutMicro' us
+  // have elapsed. timeout 0 means wait indefinitely.
+  bool isArrived(
+      const OperandSet& ids,
+      int32_t sleepMicro = -1,
+      int32_t timeoutMicro = 0);
+
   Device* device() const {
     return getDevice();
   }
-  /// Returns a new stream, assigns it an id and keeps it owned by 'this'. The Stream will be returned to the static pool of streams on destruction of 'this'.
+  /// Returns a new stream, assigns it an id and keeps it owned by 'this'. The
+  /// Stream will be returned to the static pool of streams on destruction of
+  /// 'this'.
   Stream* newStream();
-  
+
   static std::unique_ptr<Stream> streamFromReserve();
   static void releaseStream(std::unique_ptr<Stream>&& stream);
 
-  
  private:
   Event* newEvent();
 
@@ -267,12 +279,15 @@ class WaveStream {
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
   std::vector<std::unique_ptr<Executable>> executables_;
 
-  // Currently active streams, each at the position given by its stream->userData().
+  // Currently active streams, each at the position given by its
+  // stream->userData().
   std::vector<std::unique_ptr<Stream>> streams_;
-  // The most recent event recorded on the pairwise corresponding element of 'streams_'.
+  // The most recent event recorded on the pairwise corresponding element of
+  // 'streams_'.
   std::vector<Event*> lastEvent_;
-  
-  //all events recorded on any stream. Events, once seen realized, are moved back to reserve from here.
+
+  // all events recorded on any stream. Events, once seen realized, are moved
+  // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
 };
 

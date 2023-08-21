@@ -57,15 +57,16 @@ class Stream {
     return stream_.get();
   }
 
-  /// Mutable reference to arbitrary non-owned user data. Can be used for tagging streams when scheduling.
+  /// Mutable reference to arbitrary non-owned user data. Can be used for
+  /// tagging streams when scheduling.
   void*& userData() {
     return userData_;
   }
-  
+
  protected:
   std::unique_ptr<StreamImpl> stream_;
   void* userData_{nullptr};
-  
+
   friend class Event;
 };
 
