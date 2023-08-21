@@ -149,20 +149,30 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   return result;
 }
 
-void CompileState::addExprSet(
+  std::vector<ProgramPtr> CompileState::addExprSet(
     const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end) {
+  auto& exprs = exprSet.exprs();
+  
   for (auto i = begin; i < end; ++i) {
-    addExpr(*exprSet.exprs()[i]);
+    auto previous = currentProgram_.get();
+    auto op = addExpr(*exprs()[i]);
+    defines_[Value(exprs[i].get())] =  op;
+    if (currentProgram_.get() != previous) {
+      newPrograms.push_back(std::move(currentProgram_));.
+    }
   }
+  return newPrograms;
 }
 
-void CompileState::addFilterProject(exec::Operator* op) {
+  void CompileState::addFilterProject(exec::Operator* op, RowTypePtr outputType, int32_t& nodeIndex) {
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   auto data = filterProject->exprsAndProjection();
   VELOX_CHECK(!data.hasFilter);
   std::vector<ProgramPtr> programs;
+  auto programs = addExprSet(data.exprSet, 0, data.exprSet.exprs().size());
+  operaters_.push_back(std::make_unique<project>(*this, outputType, programs);
 }
 
 bool CompileState::reserveMemory() {
@@ -194,7 +204,8 @@ bool CompileState::addOperator(
     if (!reserveMemory()) {
       return false;
     }
-    addFilterProject(op);
+        outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+	addFilterProject(op, outputType, nodeIndex);
   } else {
     return false;
   }

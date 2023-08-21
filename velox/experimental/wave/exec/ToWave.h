@@ -50,7 +50,7 @@ class CompileState {
   AbstractOperand* findCurrentValue(Value value);
   AbstractOperand* addExpr(const exec::Expr& expr);
 
-  void addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
+  std::vector<ProgramPtr> addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
 
  private:
   bool
