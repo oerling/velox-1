@@ -23,8 +23,7 @@ namespace facebook::velox::wave {
 Values::Values(CompileState& state, const core::ValuesNode& values)
     : WaveOperator(state, values.outputType()),
       values_(values.values()),
-      roundsLeft_(values.repeatTimes()) {
-}
+      roundsLeft_(values.repeatTimes()) {}
 
 int32_t Values::canAdvance() {
   if (current_ < values_.size()) {

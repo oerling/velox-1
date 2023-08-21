@@ -15,8 +15,8 @@
  */
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
-#include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 
@@ -45,7 +45,7 @@ class FilterProjectTest : public OperatorTestBase {
       row->childAt(i)->clearNulls(0, row->size());
     }
   }
-  
+
   void assertProject(const std::vector<RowVectorPtr>& vectors) {
     auto plan = PlanBuilder()
                     .values(vectors)
@@ -76,12 +76,8 @@ TEST_F(FilterProjectTest, roundTrip) {
     makeNotNull(vector);
     vectors.push_back(vector);
   }
-    auto plan = PlanBuilder()
-                    .values(vectors)
-                    .planNode();
-    AssertQueryBuilder(plan)
-      .assertResults(vectors);
-
+  auto plan = PlanBuilder().values(vectors).planNode();
+  AssertQueryBuilder(plan).assertResults(vectors);
 }
 
 TEST_F(FilterProjectTest, project) {
