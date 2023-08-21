@@ -366,7 +366,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   std::vector<std::unique_ptr<Operator>> operators_;
 
-    BlockingReason blockingReason_{BlockingReason::kNotBlocked};
+  BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;
 
