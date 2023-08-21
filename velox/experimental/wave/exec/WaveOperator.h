@@ -26,8 +26,12 @@ class WaveDriver;
 
 class WaveOperator {
  public:
-  WaveOperator(CompileState& state, const TypePtr& outputType);
+  WaveOperator(CompileState& state, const RowTypePtr& outputType);
 
+  const RowTypePtr& outputType() const {
+    return outputType_;
+  }
+  
   /// True if may reduce cardinality without duplicating input rows.
   bool isFilter() {
     return isFilter_;
@@ -84,6 +88,15 @@ class WaveOperator {
     driver_ = driver;
   }
 
+  // Returns the number of non-filtered out result rows. The actual result rows
+  // may be non-contiguous in the result vectors and may need indirection to
+  // access, as seen in output operands of the corresponding executables.
+  virtual vector_size_t outputSize() const = 0;
+
+  const OperandSet& outputIds() const {
+    return outputIds_;
+  }
+
  protected:
   WaveDriver* driver_{nullptr};
 
@@ -103,7 +116,7 @@ class WaveOperator {
 
   bool isExpanding_{false};
 
-  TypePtr outputType_;
+  RowTypePtr outputType_;
 
   // The operands that are first defined here.
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
@@ -117,16 +130,14 @@ class WaveOperator {
 
   // Executable instances of 'this'. A Driver may instantiate multiple
   // executable instances to processs consecutive input batches in parallel.
-  std::vector<ThreadBlockProgram*> executables_;
+  // these are handed off to WaveStream for running, so reside here only when
+  // not enqueued to run.
+  std::vector<std::unique_ptr<Executable>> executables_;
 
   // Buffers containing unified memory for 'executables_' and all instructions,
   // operands etc. referenced from these.  This does not include buffers for
   // intermediate results.
   std::vector<WaveBufferPtr> executableMemory_;
-
-  /// The wave that produces each subfield. More than  one subfield can be
-  /// produced by the same wave.
-  folly::F14FastMap<common::Subfield*, std::shared_ptr<Wave>> fieldToWave_;
 };
 
 } // namespace facebook::velox::wave

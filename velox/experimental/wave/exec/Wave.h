@@ -57,7 +57,6 @@ struct ValueComparer {
     return left == right;
   }
 };
-class Wave;
 
 struct BufferReference {
   // Ordinal of the instruction that assigns a value to the Operand.
@@ -85,7 +84,7 @@ struct Transfer {
 class WaveStream;
 class Program;
 
-/// Describes running a program on n consecutive thread blocks. The program can
+/// Represents a kernel or data transfer. Many executables can be in one kernel launch on different thread blocks. Owns the output and intermediate memory for the thread block program or data transfer this represents. Has a WaveStream level unique id for each output column.
 /// be nulllptr if this represents data movement only.
 struct Executable {
   std::unique_ptr<Executable>
@@ -95,9 +94,9 @@ struct Executable {
   /// addTransfer().
   static void startTransfer(
       OperandSet outputOperands,
-      WaveBufferPtr operands,
-      std::vector<WaveVectorPtr> outputVectors,
-      std::vector<Transfer> transfers,
+      WaveBufferPtr&& operands,
+      std::vector<WaveVectorPtr>&& outputVectors,
+      std::vector<Transfer>&& transfers,
       WaveStream& stream);
 
   ThreadBlockProgram* program{nullptr};
@@ -122,11 +121,26 @@ struct Executable {
   // scheduling follow up work that is synchronized with arrival of 'this', the
   // intermediates can be moved to the dependent executable at time of
   // scheduling.
-  std::vector<std::unique_ptr<WaveVector>> intermediates;
+  std::vector<WaveVectorPtr> intermediates;
 
   // Backing device memory   for 'output' Can be moved to intermediates or
   // output of a dependent executables.
-  std::vector<std::unique_ptr<WaveVector>> output;
+  std::vector<WaveVectorPtr> output;
+
+  // If this represents data transfer, the ranges to transfer.
+  std::vector<Transfer> transfers;
+
+  // The stream on which this is enqueued. Set by
+  // WaveStream::installExecutables(). Cleared after the kernel containing this is seen to realize dependent event.
+  Stream* stream{nullptr};
+
+
+  
+  // Function for returning 'this' to a pool of reusable executables kept by an
+  // operator. The function is expected to move the Executable from the
+  // std::unique_ptr. Otherwise the Executable will be freed by reset of the
+  // unique_ptr.
+  std::function<void(std::unique_ptr<Executable>&)> releaser;
 };
 
 class Program {
@@ -179,52 +193,15 @@ class Program {
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
-;
 
-class Wave {
- public:
-  Wave(GpuArena& arena);
 
-  /// Adds 'executable' and reserves space for maxRows of intermediate and
-  /// output.
-  void addExecutable(Executable*, int32_t maxRows);
-
-  // Returns Event for syncing with the arrival of 'this'.
-  Event* event() {}
-
-  void start(Stream* stream);
-
-  static std::unique_ptr<Stream> getStream();
-
- private:
-  static std::mutex eventMutex_;
-  static std::vector<std::unique_ptr<Event>> eventsForReuse_;
-  std::vector<std::unique_ptr<Stream>> streamsForReuse_;
-
-  GpuArena& arena_;
-  Stream* stream_;
-
-  // Set of operands that get a value on arrival. Union of output operands of
-  // constitutent Executables.
-  OperandSet outputOperands_;
-
-  // Event recorded on 'stream_' right after kernel launch.
-  std::unique_ptr<Event> event_;
-
-  // At start, errors are clear and row counts are input row counts. On return,
-  // errors are set and the output row count of each block may be set if this
-  // has cardinality change.
-  BlockStatus* statuses;
-  ThreadBlockProgram** programs_;
-};
-
-/// Represents consecutive data dependent kernel launches. May be serialized on
-/// Events of previous waves or queued on the same Stream if depending on single
-/// previous Wave.
+/// Represents consecutive data dependent kernel launches. 
 class WaveStream {
  public:
   WaveStream(GpuArena& arena) : arena_(arena) {}
-  void startFront();
+
+  ~WaveStream();
+
   // Binds operands of each program to inputs from pending programs and if
   // depending on more than one Wave, adds dependency via events. Each program
   // [i]is dimensioned to have  sizes[i] max intermediates/results.
@@ -236,9 +213,67 @@ class WaveStream {
     return arena_;
   }
 
+  Executable* operandExecutable(OperandId id) {
+    auto it = operandToExecutable_.find(id);
+    if (it == operandToExecutable_.end()) {
+      return nullptr;
+    }
+    return it->second;
+  }
+
+  /// Determines the prerequisites for each of 'executables' and calls
+  /// 'launch' for each group of executables with the same
+  /// dependencies. 'launch' gets a stream where the prerequisites are
+  /// enqueued or a stream on which an event wait for multiple
+  /// prerequisites is enqueued for executables with more than one
+  /// prerequisite. 'launch' is responsible for enqueuing the actual
+  /// kernel or data transfer and marking which stream it went to with markLaunch(). Takes ownership of 'executables', which are moved
+  /// out of the unique_ptrs.
+  void installExecutables(
+      folly::Range<std::unique_ptr<Executable>*> executables,
+      std::function<void(Stream*, folly::Range<Executable**>)> launch);
+
+  /// The callback from installExecutables must call this to establish relation of stream and executable before returning. Normally, the executable is launched on the stream given to the callback. In some cases the launch may decide to use different streams for different executables and have these depend on the first stream.
+  void markLaunch(Stream& stream, Executable& executable) {
+    executable.stream = &stream;
+  }
+
+  
+  // Retuns true if all executables needed to cover 'ids' have arrived. if 'sleepMicro' is default, returns immediately if not arrived. Otherwise sleeps 'leepMicros' and rechecks until complete or until 'timeoutMicro' us have elapsed. timeout 0 means wait indefinitely.
+  bool isArrived(const OperandSet& ids, int32_t sleepMicro = -1, int32_t timeoutMicro = 0);
+  
+  Device* device() const {
+    return getDevice();
+  }
+  /// Returns a new stream, assigns it an id and keeps it owned by 'this'. The Stream will be returned to the static pool of streams on destruction of 'this'.
+  Stream* newStream();
+  
+  static std::unique_ptr<Stream> streamFromReserve();
+  static void releaseStream(std::unique_ptr<Stream>&& stream);
+
+  
  private:
+  Event* newEvent();
+
+  static std::unique_ptr<Event> eventFromReserve();
+  static void releaseEvent(std::unique_ptr<Event>&& event);
+
+  // Preallocated Streams and Events.
+  static std::mutex reserveMutex_;
+  static std::vector<std::unique_ptr<Event>> eventsForReuse_;
+  static std::vector<std::unique_ptr<Stream>> streamsForReuse_;
+
   GpuArena& arena_;
-  std::vector<std::vector<std::unique_ptr<Wave>>> fronts_;
+  folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
+  std::vector<std::unique_ptr<Executable>> executables_;
+
+  // Currently active streams, each at the position given by its stream->userData().
+  std::vector<std::unique_ptr<Stream>> streams_;
+  // The most recent event recorded on the pairwise corresponding element of 'streams_'.
+  std::vector<Event*> lastEvent_;
+  
+  //all events recorded on any stream. Events, once seen realized, are moved back to reserve from here.
+  folly::F14FastSet<Event*> allEvents_;
 };
 
 } // namespace facebook::velox::wave

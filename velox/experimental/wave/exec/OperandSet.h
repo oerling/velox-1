@@ -32,7 +32,18 @@ class OperandSet {
 
   bool operator==(const OperandSet& other) const;
 
-  size_t hash() const;
+  /// Returns hash code depending on set bits. The allocated size does not
+  /// affect the hash, only set bits. Works with == to allow use as a key of
+  /// hash table.
+  size_t hash() const {
+    size_t result = 0;
+    for (auto word : bits_) {
+      if (word) {
+        result ^= word;
+      }
+      return result * 121 ^ (result >> 9);
+    }
+  }
 
   // True if no members.
   bool empty() const {
@@ -49,6 +60,11 @@ class OperandSet {
     ensureSize(id);
     velox::bits::setBit(bits_.data(), id);
   }
+
+  /// Returns the number of ids below 'id'.
+  int32_t ordinal(int32_t id) {
+    return bits::countBits(bits_.data(), 0, id);
+  }  
 
   /// Returns true if 'this' is a subset of 'super'.
   bool isSubset(const OperandSet& super) const;
@@ -145,4 +161,15 @@ inline bool OperandSet::isSubset(const OperandSet& super) const {
   return true;
 }
 
+struct OperandSetHasher {
+  size_t operator()(const OperandSet& set) const {
+    return set.hash();
+  }
+};
+
+struct OperandSetComparer {
+  bool operator()(const OperandSet& left, const OperandSet& right) const {
+    return left == right;
+  }
+};
 } // namespace facebook::velox::wave

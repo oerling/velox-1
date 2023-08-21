@@ -61,6 +61,20 @@ class WaveDriver : public exec::SourceOperator {
   std::string toString() const override;
 
  private:
+  // True if all output from 'stream' is fetched.
+  bool streamAtEnd(WaveStream& stream);
+
+  // Makes a RowVector from the result buffers of the last stage of executables
+  // in 'stream'.
+  RowVectorPtr makeResult(WaveStream& stream, const OperandSet& outputIds);
+
+  // Starts another WaveStream if the source operator indicates it has more data
+  // and there is space in the arena.
+  void startMore();
+
+  // Enqueus a prefetch from device to host for the buffers of output vectors.
+  void prefetchReturn(WaveStream& stream);
+
   std::unique_ptr<GpuArena> arena_;
 
   ContinueFuture blockingFuture_;
@@ -83,7 +97,7 @@ class WaveDriver : public exec::SourceOperator {
   // can be on device independently of each other. This is bounded by
   // device memory and the speed at which the source can produce new
   // batches.
-  std::vector<std::unique_ptr<WaveStream>> executions_;
+  std::vector<std::unique_ptr<WaveStream>> streams_;
 };
 
 } // namespace facebook::velox::wave

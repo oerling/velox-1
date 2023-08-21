@@ -98,7 +98,7 @@ class WaveVector {
 
   /// Returns a Velox vector giving a view on device side data. The device
   /// buffers stay live while referenced by Velox.
-  VectorPtr toVelox();
+  VectorPtr toVelox(memory::MemoryPool* pool);
 
   /// Sets 'operand' to point to the buffers of 'this'.
   void toOperand(Operand* operand) const;
@@ -166,6 +166,7 @@ struct WaveReleaser {
 
 // A BufferView for velox::BaseVector for a view on unified memory.
 class WaveBufferView : public BufferView<WaveReleaser> {
+public:
   static BufferPtr create(WaveBufferPtr buffer) {
     return BufferView<WaveReleaser>::create(
         buffer->as<uint8_t>(), buffer->capacity(), WaveReleaser(buffer));

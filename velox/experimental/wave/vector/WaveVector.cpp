@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::wave {
 
@@ -53,6 +54,40 @@ void WaveVector::toOperand(Operand* operand) const {
   } else {
     VELOX_UNSUPPORTED();
   }
+}
+
+template <TypeKind kind>
+static VectorPtr toVeloxTyped(
+    vector_size_t size,
+    velox::memory::MemoryPool* pool,
+    const TypePtr& type,
+    const WaveBufferPtr& values,
+    const WaveBufferPtr& nulls) {
+  using T = typename TypeTraits<kind>::NativeType;
+
+  BufferPtr nullsView;
+  if (nulls) {
+    nullsView = WaveBufferView::create(nulls);
+  }
+  BufferPtr valuesView;
+  if (values) {
+    valuesView = WaveBufferView::create(values);
+  }
+
+  auto vec =  std::make_shared<FlatVector<T>>(
+      pool,
+      type,
+      std::move(nullsView),
+      size,
+      std::move(valuesView),
+      std::vector<BufferPtr>());
+
+  return vec;
+}
+
+VectorPtr WaveVector::toVelox(memory::MemoryPool* pool) {
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
+      toVeloxTyped, type_->kind(), size_, pool, type_, values_, nulls_);
 }
 
 } // namespace facebook::velox::wave
