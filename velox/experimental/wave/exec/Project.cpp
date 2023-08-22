@@ -18,29 +18,26 @@
 
 namespace facebook::velox::wave {
 
-
-
-    
-
-
-   
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
   for (auto& level : levels_) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
-    for auto i = 0; i < level.size(); ++i) {
-    auto* program = level[i];
-    exes[i] = program->executable(); 
+    for
+      auto i = 0;
+    i < level.size(); ++i) {
+      auto* program = level[i];
+      exes[i] = program->executable();
+    }
+    auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
+    stream.installExecutables(
+        range, [&](Stream* out, folly::Range<Executable**> exes) {
+          auto control = makeControl(stream, out, exes, blocksPerExe);
+        });
   }
-  auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize; 
-  stream.installExecutables(range, [&](Stream* out, folly::Range<Executable**> exes) {
-    auto control = makeControl(stream, out, exes, blocksPerExe);
-  });
-}
 
-  void Project::finalize()  {
+  void Project::finalize() {
     for (auto& level : levels_) {
       for (auto& program : level) {
-	program->prepareForDevice(state.arena());
+        program->prepareForDevice(state.arena());
       }
     }
   }

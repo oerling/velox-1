@@ -310,6 +310,4 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 
 void Program::prepareForDevice(GpuArena& arena) {}
 
-
-
 } // namespace facebook::velox::wave

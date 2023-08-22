@@ -102,7 +102,7 @@ class WaveOperator {
   /// e.g. making executable images of Programs since their content
   /// and dependences will no longer change.
   virtual void finalize() {}
-  
+
  protected:
   WaveDriver* driver_{nullptr};
 

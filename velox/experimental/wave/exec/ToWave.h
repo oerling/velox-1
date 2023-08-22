@@ -50,11 +50,12 @@ class CompileState {
   AbstractOperand* findCurrentValue(Value value);
   AbstractOperand* addExpr(const exec::Expr& expr);
 
-  std::vector<ProgramPtr> addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
+  std::vector<ProgramPtr>
+  addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
   GpuArena& arena() const {
     return *arena_;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -69,7 +70,10 @@ class CompileState {
   // dependences are from the same open program, add the instruction
   // to that. If Only one of the programs is mutable, ad the
   // instruction to that.
-  void addInstruction(std::unique_ptr<Instruction> instruction, const AbstractOperand* result, const std::vector<Program*>& inputs);
+  void addInstruction(
+      std::unique_ptr<Instruction> instruction,
+      const AbstractOperand* result,
+      const std::vector<Program*>& inputs);
 
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
@@ -92,7 +96,7 @@ class CompileState {
   SubfieldMap subfields_;
 
   std::vector<ProgramPtr> allPrograms;
-  
+
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
 

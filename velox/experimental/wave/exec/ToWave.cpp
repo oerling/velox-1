@@ -183,10 +183,9 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   auto result = newOperand(expr.type(), "r");
   auto leftOp = addExpr(*expr.inputs()[0]);
   auto rightOp = addExpr(*expr.inputs()[1]);
-  auto instruction = std::make_unique<AbstractBinary>(
-						      opCode.value(), leftOp, rightOp, result);
-  auto leftProgram =
-    definedIn_[leftOp];
+  auto instruction =
+      std::make_unique<AbstractBinary>(opCode.value(), leftOp, rightOp, result);
+  auto leftProgram = definedIn_[leftOp];
   auto rightProgram = definedIn_[rightOp];
   std::vector<Program*> sources;
   if (leftProgram) {
@@ -202,17 +201,18 @@ std::vector<AbstractOperand*> CompileState::addExprSet(
     const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end) {
-      auto& exprs = exprSet.exprs();
-      std::vector<AbstractOperand*> result; 
-      for (auto i = begin; i < end; ++i) {
-        result.push_back(addExpr(*exprs[i]));
-      }
-      return result;
+  auto& exprs = exprSet.exprs();
+  std::vector<AbstractOperand*> result;
+  for (auto i = begin; i < end; ++i) {
+    result.push_back(addExpr(*exprs[i]));
+  }
+  return result;
 }
-      return newPrograms;
+return newPrograms;
 }
-std::vector<std::vector<Program*>> CompileState::makeLevels(int32_t startIndex) {
-  std::vector<std::vector<Program*>>  levels;
+std::vector<std::vector<Program*>> CompileState::makeLevels(
+    int32_t startIndex) {
+  std::vector<std::vector<Program*>> levels;
   folly::F14FastSet<Program*> toAdd;
   for (auto i = 0; i < allPrograms.size(); ++i) {
     toAdd.insert(allPrograms.get());
@@ -220,16 +220,16 @@ std::vector<std::vector<Program*>> CompileState::makeLevels(int32_t startIndex) 
   while (!toAdd.empty()) {
     std::vector<Prograrm*> level;
     for (auto& program : toAdd) {
-      auto& depends = program-.dependsOn();
+      auto& depends = program -.dependsOn();
       auto independent = true;
       for (auto& d : depends) {
-	if (toAdd.count(d)) {
-	  independent = false;
-	  break;
-	}
+        if (toAdd.count(d)) {
+          independent = false;
+          break;
+        }
       }
       if (independent) {
-	level.push_back(program);
+        level.push_back(program);
       }
     }
     for (auto added : level) {
@@ -250,7 +250,8 @@ void CompileState::addFilterProject(
   int32_t numPrograms = allPrograms_.size();
   auto operands = addExprSet(data.exprSet, 0, data.exprSet.exprs().size());
   auto levels = makeLevels(numPrograms);
-  operaters_.push_back(std::make_unique<project>(*this, outputType, operands, levels));
+  operaters_.push_back(
+      std::make_unique<project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
