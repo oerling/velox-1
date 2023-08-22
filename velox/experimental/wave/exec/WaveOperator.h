@@ -97,6 +97,12 @@ class WaveOperator {
     return outputIds_;
   }
 
+  /// Called once on each Operator, fiest to last, after no more
+  /// Operators will be added to the WaveDriver plan. Can be used for
+  /// e.g. making executable images of Programs since their content
+  /// and dependences will no longer change.
+  virtual void finalize() {}
+  
  protected:
   WaveDriver* driver_{nullptr};
 

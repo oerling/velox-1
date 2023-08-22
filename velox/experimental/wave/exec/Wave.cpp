@@ -19,7 +19,8 @@
 namespace facebook::velox::wave {
 
 WaveStream::~WaveStream() {
-  for (auto& stream : streams_) {
+  // Must wait for device side work to stop before freeing buffers.
+  !!for (auto& stream : streams_) {
     releaseStream(std::move(stream));
   }
   for (auto& event : allEvents_) {
@@ -239,5 +240,76 @@ bool WaveStream::isArrived(
   }
   return false;
 }
+
+LaunchControl* WaveStream::prepareProgramLaunch(
+    int32_t key,
+    folly::Range<Executable**> exes,
+    int32_t blocksPerExe,
+    Stream* stream) {
+  //  First calculate total size.
+  // 3 int arrays: blockBase, programIdx, numParams.
+  int32_t size = exes.size() * 3 * sizeof(int32_t) * blocksPerExe;
+  // Arrays of pointers. program, actualParams,  paramCopy.
+  size += exes.size() * sizeof(void*) * blocksPerExe * 3;
+  // Exe dependent sizes for parameters.
+  int32_t numTotalOps = 0;
+  for (auto& exe : exes) {
+    int numOps = exe->inputOperands.size() + exe->intermediates.size() +
+        exe->outputOperands.size();
+    numTotalOps += numOps * blocksPerExe;
+    size += numOps * (sizeof(Operand) + sizeof(void*));
+  }
+  buffer = extraData_[key];
+  if (!buffer || buffer->capacity() < size) {
+    buffer = arena_.allocate(size);
+    extraData_[key] = buffer;
+  }
+  LaunchControl control;
+  // Now we fill in the various arrays and put their start addresses in
+  // 'control'.
+  auto start = buffer->as<int32_t>();
+  int32_t numBlocks = exes.size() * blocksPerExe;
+  control.blockBase = start;
+  control.programIdx = start + numBlocks;
+  control.numParams = start + numBlocks * 2;
+  int32_t offset = bits::roundUp(numBlocks * 12, 8);
+  void** start8 = buffer->as<void*>() + (start8 / 8) control.program =
+                      reinterpret_cast<ThreadBlockProgram**>(start8);
+  control.actualOperands = reinterpret_cast<Operand***>(start8 + numBlocks);
+  control.operandCopies =
+      reinterpret_cast<Operand**>(start8 + numBlocks + numAllOperands);
+  int32_t fill = 0;
+  for (auto exeIdx = 0; exeIdx < exes.size(); ++exeIdx) {
+    int32_t numParams = exe->inputOperands.size() + exe->intermediates.size() +
+        exe->outputOperands.size();
+    // We get the actual input operands for the exe from the exes this depends
+    // on and repeat them for each TB.
+    paramTemp_.resize(numParams);
+    int32_t nth = 0;
+    exe->inputOperands.forEach([&](int32_t id) {
+      inputExe = operandToExecutable_[id];
+      paramTemp[nth++] = inputExe->outputParams[id];
+    });
+    for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
+      control.blockBase[fill] = exeIdx * blocksPerExe;
+      control.programIdx[fill] = exeIdx;
+      control.numParams = numParams;
+      control.program[fill] = exe->program;
+      control.actualParams[fill] = paramFill;
+      control.paramSpace[fill] = numParams * sizeof(Operand);
+      memcpy(
+          control.actualParams + actualFill,
+          paramTemp_.data(),
+          numParams * sizeof(void*));
+      operandCopies += numParams * sizeof(Operand);
+      paramAddress += numParams * sizeof(Operand);
+      ++fill;
+    }
+  }
+}
+
+void Program::prepareForDevice(GpuArena& arena) {}
+
+
 
 } // namespace facebook::velox::wave

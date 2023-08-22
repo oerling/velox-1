@@ -121,6 +121,46 @@ std::optional<OpCode> binaryOpCode(const Expr& expr) {
   return std::nullopt;
 }
 
+std::shared_ptr<Program> newProgram() {
+  program = std::make_shared > Program > ();
+  allprograms_.push_back(program);
+  return program;
+}
+
+void CompileState::addInstruction(
+    std::unique_ptr<Instruction> instruction,
+    AbstractOperand* result,
+    std::vector<Program*> inputs) {
+  Program* common = nullptr;
+  bool many = false;
+  for (auto* program : sources) {
+    if (!program->isMutable()) {
+      continue;
+    }
+    if (!common && program->isMutable()) {
+      common = program;
+    } else if (common == program) {
+      continue;
+    } else {
+      many = true;
+      break;
+    }
+  }
+  Program* program;
+  if (!common || many) {
+    program = common;
+  } else {
+    program = newProgram();
+  }
+  for (source : sources) {
+    if (source != program) {
+      program->addSource(source);
+    }
+  }
+  program->add(std::move(instruction));
+  definedIn_[result] = program;
+}
+
 AbstractOperand* CompileState::addExpr(const Expr& expr) {
   auto value = toValue(expr);
   auto current = findCurrentValue(value);
@@ -141,38 +181,76 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
     VELOX_UNSUPPORTED("Expr not supported: {}", expr.toString());
   }
   auto result = newOperand(expr.type(), "r");
-  currentProgram_->instructions_.push_back(std::make_unique<AbstractBinary>(
-      opCode.value(),
-      addExpr(*expr.inputs()[0]),
-      addExpr(*expr.inputs()[1]),
-      result));
-  return result;
+  auto leftOp = addExpr(*expr.inputs()[0]);
+  auto rightOp = addExpr(*expr.inputs()[1]);
+  auto instruction = std::make_unique<AbstractBinary>(
+						      opCode.value(), leftOp, rightOp, result);
+  auto leftProgram =
+    definedIn_[leftOp];
+  auto rightProgram = definedIn_[rightOp];
+  std::vector<Program*> sources;
+  if (leftProgram) {
+    sources.push_back(leftProgram.get());
+  }
+  if (rightProgram) {
+    sources.push_back(rightProgram.get());
+  }
+  addInstruction(std::move(instruction), result, sources);
 }
 
-  std::vector<ProgramPtr> CompileState::addExprSet(
+std::vector<AbstractOperand*> CompileState::addExprSet(
     const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end) {
-  auto& exprs = exprSet.exprs();
-  
-  for (auto i = begin; i < end; ++i) {
-    auto previous = currentProgram_.get();
-    auto op = addExpr(*exprs()[i]);
-    defines_[Value(exprs[i].get())] =  op;
-    if (currentProgram_.get() != previous) {
-      newPrograms.push_back(std::move(currentProgram_));.
-    }
+      auto& exprs = exprSet.exprs();
+      std::vector<AbstractOperand*> result; 
+      for (auto i = begin; i < end; ++i) {
+        result.push_back(addExpr(*exprs[i]));
+      }
+      return result;
+}
+      return newPrograms;
+}
+std::vector<std::vector<Program*>> CompileState::makeLevels(int32_t startIndex) {
+  std::vector<std::vector<Program*>>  levels;
+  folly::F14FastSet<Program*> toAdd;
+  for (auto i = 0; i < allPrograms.size(); ++i) {
+    toAdd.insert(allPrograms.get());
   }
-  return newPrograms;
+  while (!toAdd.empty()) {
+    std::vector<Prograrm*> level;
+    for (auto& program : toAdd) {
+      auto& depends = program-.dependsOn();
+      auto independent = true;
+      for (auto& d : depends) {
+	if (toAdd.count(d)) {
+	  independent = false;
+	  break;
+	}
+      }
+      if (independent) {
+	level.push_back(program);
+      }
+    }
+    for (auto added : level) {
+      toAdd.erase(added);
+    }
+    levels.push_back(std::move(level));
+  }
+  return levels;
 }
 
-  void CompileState::addFilterProject(exec::Operator* op, RowTypePtr outputType, int32_t& nodeIndex) {
+void CompileState::addFilterProject(
+    exec::Operator* op,
+    RowTypePtr outputType,
+    int32_t& nodeIndex) {
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   auto data = filterProject->exprsAndProjection();
   VELOX_CHECK(!data.hasFilter);
-  std::vector<ProgramPtr> programs;
-  auto programs = addExprSet(data.exprSet, 0, data.exprSet.exprs().size());
-  operaters_.push_back(std::make_unique<project>(*this, outputType, programs);
+  int32_t numPrograms = allPrograms_.size();
+  auto operands = addExprSet(data.exprSet, 0, data.exprSet.exprs().size());
+  auto levels = makeLevels(numPrograms);
+  operaters_.push_back(std::make_unique<project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -204,8 +282,8 @@ bool CompileState::addOperator(
     if (!reserveMemory()) {
       return false;
     }
-        outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-	addFilterProject(op, outputType, nodeIndex);
+    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+    addFilterProject(op, outputType, nodeIndex);
   } else {
     return false;
   }

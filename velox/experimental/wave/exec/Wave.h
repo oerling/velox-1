@@ -139,13 +139,27 @@ struct Executable {
   std::function<void(std::unique_ptr<Executable>&)> releaser;
 };
 
-class Program {
+/// Describes a sequence of instructions. This is first a compile
+/// time representation when a plan is being transformed. Multiple
+/// operators can contribute code to a single program, allowing for
+/// some operator fusion. At execution time, the Program produces
+/// Executables, which are bound to actual input and scheduled on a
+/// WaveStream.
+class Program : public std::shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
     instructions_.push_back(std::move(instruction));
   }
 
-  // Initialized executableImage and relocation infromation and places for
+  void addSource(Program* source) {
+    if (std::find(
+            dependsOn_.begin(), dependsOn_.end(, source) != dependsOn_.end())) {
+      return;
+    }
+    dependsOn_.push_back(source);
+  }
+
+  // Initializes executableImage and relocation infromation and places for
   // parameters.
   void prepareForDevice(GpuArena& arena);
 
@@ -158,25 +172,30 @@ class Program {
       int32_t continuePoint,
       int32_t numRows);
 
-  const std::vector<Value>& dependsOn() const {
-    return dependsOn_;
+  /// True if instructions can be added.
+  bool isMutable() const {
+    return isMutable_;
   }
 
-  AbstractOperand* findOperand(const Value& value) {
-    return nullptr;
+  /// Disallows adding instructions to 'this'. For example, a program in an
+  /// operator before a cardinality chaning operator cannot get more
+  /// instructions from code after the cardinality change.
+  void freeze() {
+    isMutable_ = false;
   }
 
-  std::vector<Value> dependsOn_;
+  std::vector<Program*> dependsOn_;
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
       produces_;
   std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
+  bool isMutable_{true};
 
   // Relocation info.The first int is the offset of a pointer in the executable
   // representation .The secon is the offset it points to inside the
   // representation.
   std::vector<std::pair<int32_t, int32_t>> relocation_;
 
-  // FDescribes the places in the executable image that need a WaveBuffer's
+  // Describes the places in the executable image that need a WaveBuffer's
   // address to be patched in before execution.
   std::vector<BufferReference> buffers;
   // Bytes to copy to device. The relocations and buffer reference patches given
@@ -258,6 +277,19 @@ class WaveStream {
   static std::unique_ptr<Stream> streamFromReserve();
   static void releaseStream(std::unique_ptr<Stream>&& stream);
 
+  /// Takes ownership of 'buffer' and keeps it until return of all kernels. Used
+  /// for keeping working memory passed to kernels live for the duration.
+  void addExtraData(int32_t key, WaveBufferPtr buffer) {
+    extraData_[key] = std::move(buffer);
+  }
+  /// Makes a parameter block for multiple program launch. Sends the data to the
+  /// device on 'stream'
+  LaunchControl* prepareProgramLaunch(
+      int32_t key,
+      folly::Range<Executable**> exes,
+      int32_t blocksPerExe,
+      Stream* stream);
+
  private:
   Event* newEvent();
 
@@ -286,6 +318,37 @@ class WaveStream {
   // all events recorded on any stream. Events, once seen realized, are moved
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
+
+  folly::F14FastMap<int32_t, WaveBufferPtr> extraData_;
+};
+
+/// Describes all the control data for launching a kernel executing
+/// ThreadBlockPrograms. This is a single piece of unified memory with several
+/// arrays with one entry per thread block. The arrays are passsed as parameters
+/// to the kernel call.
+struct LaunchControl {
+  /// The first thread block with the program.
+  int32_t* blockBase;
+  // The ordinal of the program. All blocks with the same program have the same
+  // number here.
+  int32_t* programIdx;
+
+  // The TB program for each TB.
+  ThreadBlockProgram** programs;
+
+  // Number of params for each TB.
+  int32_t* numParams_;
+
+  // Pointer to array of Operand addresses in executions this one depends on.
+  // Each TB has a Operand** with 'numParams' Operand*s to get the params.
+  Operand*** actualOperands;
+
+  // For each TB, an array of Operand where the Operands forma 'actualOperands'
+  // are copied.
+  Operand** operandCopies;
+
+  // Storage for all the above in a contiguous unified memory piece.
+  WaveBufferPtr deviceData;
 };
 
 } // namespace facebook::velox::wave
