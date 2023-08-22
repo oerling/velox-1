@@ -210,7 +210,7 @@ std::vector<AbstractOperand*> CompileState::addExprSet(
   return result;
 }
 
-  std::vector<std::vector<Program*>> CompileState::makeLevels(
+std::vector<std::vector<Program*>> CompileState::makeLevels(
     int32_t startIndex) {
   std::vector<std::vector<Program*>> levels;
   folly::F14FastSet<Program*> toAdd;

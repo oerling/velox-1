@@ -19,7 +19,8 @@
 namespace facebook::velox::wave {
 
 WaveStream::~WaveStream() {
-  // TODO: wait for device side work to finish before freeing associated memory owned by exes and buffers in 'this'.
+  // TODO: wait for device side work to finish before freeing associated memory
+  // owned by exes and buffers in 'this'.
   for (auto& stream : streams_) {
     releaseStream(std::move(stream));
   }
