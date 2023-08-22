@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 /// Types for device side access to device vectors. Separate header
 /// independent of Velox headers, included for both host and device
 /// side files.

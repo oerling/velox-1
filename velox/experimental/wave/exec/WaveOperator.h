@@ -28,6 +28,8 @@ class WaveOperator {
  public:
   WaveOperator(CompileState& state, const RowTypePtr& outputType);
 
+  virtual ~WaveOperator() = default;
+
   const RowTypePtr& outputType() const {
     return outputType_;
   }

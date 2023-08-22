@@ -33,15 +33,15 @@ __device__ inline bool isNull(Operand* op, int32_t blockBase) {
 template <typename T>
 __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
   int32_t index = (threadIdx.x + blockBase) & op->indexMask;
-  void* base = op->sharedOffset != Operand::kGlobal ? shared + op->sharedOffset : op->base;
+  void* base = op->sharedOffset != Operand::kGlobal ? shared + op->sharedOffset
+                                                    : op->base;
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
       index = indices[index];
     }
   }
-  return reinterpret_cast<const T*>(
-      base)[index];
+  return reinterpret_cast<const T*>(base)[index];
 }
 
 template <typename T>

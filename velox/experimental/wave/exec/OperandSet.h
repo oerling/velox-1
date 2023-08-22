@@ -42,7 +42,6 @@ class OperandSet {
         result ^= word;
       }
       return result * 121 ^ (result >> 9);
-    }
   }
 
   // True if no members.

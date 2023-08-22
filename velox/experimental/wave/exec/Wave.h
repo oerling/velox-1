@@ -25,6 +25,7 @@
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
+
 namespace facebook::velox::wave {
 
 // A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
@@ -139,13 +140,7 @@ struct Executable {
   std::function<void(std::unique_ptr<Executable>&)> releaser;
 };
 
-/// Describes a sequence of instructions. This is first a compile
-/// time representation when a plan is being transformed. Multiple
-/// operators can contribute code to a single program, allowing for
-/// some operator fusion. At execution time, the Program produces
-/// Executables, which are bound to actual input and scheduled on a
-/// WaveStream.
-class Program : public std::shared_from_this<Program> {
+class Program {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
     instructions_.push_back(std::move(instruction));

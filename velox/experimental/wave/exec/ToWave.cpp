@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
@@ -97,6 +96,7 @@ AbstractOperand* CompileState::addIdentityProjections(
       }
     }
   }
+  return result;
 }
 
 AbstractOperand* CompileState::findCurrentValue(Value value) {
@@ -111,6 +111,7 @@ AbstractOperand* CompileState::findCurrentValue(Value value) {
     VELOX_CHECK(program);
     return addIdentityProjections(value, program.get());
   }
+  return it->second;
 }
 
 std::optional<OpCode> binaryOpCode(const Expr& expr) {
@@ -208,9 +209,8 @@ std::vector<AbstractOperand*> CompileState::addExprSet(
   }
   return result;
 }
-return newPrograms;
-}
-std::vector<std::vector<Program*>> CompileState::makeLevels(
+
+  std::vector<std::vector<Program*>> CompileState::makeLevels(
     int32_t startIndex) {
   std::vector<std::vector<Program*>> levels;
   folly::F14FastSet<Program*> toAdd;
@@ -283,6 +283,7 @@ bool CompileState::addOperator(
     if (!reserveMemory()) {
       return false;
     }
+
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
     addFilterProject(op, outputType, nodeIndex);
   } else {

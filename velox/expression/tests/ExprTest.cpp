@@ -24,12 +24,13 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/expression/CoalesceExpr.h"
 #include "velox/expression/ConjunctExpr.h"
 #include "velox/expression/ConstantExpr.h"
+#include "velox/expression/SwitchExpr.h"
 #include "velox/functions/Udf.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
-
 #include "velox/parse/Expressions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
@@ -4070,6 +4071,64 @@ TEST_F(ExprTest, extractSubfields) {
       "transform(c2, c0 -> reduce(c0, 0, (c0, c2) -> c0 + c2, c0 -> c0 + c1[1]) + c0[1])",
       {"c1[1]", "c2"});
 }
+auto makeRow = [](const std::string& fieldName) {
+  return fmt::format(
+      "cast(row_constructor(1) as struct({} BOOLEAN))", fieldName);
+};
 
+TEST_F(ExprTest, switchRowInputTypesAreTheSame) {
+  assertErrorSimplified(
+      fmt::format("switch(c0, {},  {})", makeRow("f1"), makeRow("f2")),
+      makeFlatVector<bool>(1),
+      "Else clause of a SWITCH statement must have the same type as 'then' clauses. Expected ROW<f1:BOOLEAN>, but got ROW<f2:BOOLEAN>.");
+
+  assertErrorSimplified(
+      fmt::format("if(c0, {},  {})", makeRow("f1"), makeRow("f2")),
+      {makeFlatVector<bool>(1)},
+      "Else clause of a SWITCH statement must have the same type as 'then' clauses. Expected ROW<f1:BOOLEAN>, but got ROW<f2:BOOLEAN>.");
+
+  {
+    auto condition = compileExpression("c0", {ROW({"c0"}, {BOOLEAN()})});
+    auto thenBranch = compileExpression(makeRow("f1"), {});
+    auto elseBranch = compileExpression(makeRow("f1"), {});
+    try {
+      exec::SwitchExpr switchExpr(
+          ROW({"c0"}, {BOOLEAN()}),
+          {condition->expr(0), thenBranch->expr(0), elseBranch->expr(0)},
+          false);
+      EXPECT_TRUE(false) << "Expected an error";
+    } catch (VeloxException& e) {
+      EXPECT_EQ(
+          "Switch expression type different than then clause. Expected ROW<f1:BOOLEAN> but got Actual ROW<c0:BOOLEAN>.",
+          e.message());
+    }
+  }
+}
+
+TEST_F(ExprTest, coalesceRowInputTypesAreTheSame) {
+  auto makeRow = [](const std::string& fieldName) {
+    return fmt::format(
+        "cast(row_constructor(1) as struct({} BOOLEAN))", fieldName);
+  };
+
+  assertErrorSimplified(
+      fmt::format("coalesce({},  {})", makeRow("f1"), makeRow("f2")),
+      makeFlatVector<bool>(1),
+      "Inputs to coalesce must have the same type. Expected ROW<f1:BOOLEAN>, but got ROW<f2:BOOLEAN>.");
+
+  {
+    auto expr1 = compileExpression(makeRow("f1"), {});
+    auto expr2 = compileExpression(makeRow("f1"), {});
+    try {
+      exec::CoalesceExpr coalesceExpr(
+          ROW({"c0"}, {BOOLEAN()}), {expr1->expr(0), expr2->expr(0)}, false);
+      EXPECT_TRUE(false) << "Expected an error";
+    } catch (VeloxException& e) {
+      EXPECT_EQ(
+          "Coalesce expression type different than its inputs. Expected ROW<f1:BOOLEAN> but got Actual ROW<c0:BOOLEAN>.",
+          e.message());
+    }
+  }
+}
 } // namespace
 } // namespace facebook::velox::test

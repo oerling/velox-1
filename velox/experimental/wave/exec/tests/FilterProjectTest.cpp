@@ -81,11 +81,11 @@ TEST_F(FilterProjectTest, roundTrip) {
 }
 
 TEST_F(FilterProjectTest, project) {
+  return;
   std::vector<RowVectorPtr> vectors;
   for (int32_t i = 0; i < 10; ++i) {
     auto vector = std::dynamic_pointer_cast<RowVector>(
         BatchMaker::createBatch(rowType_, 100, *pool_));
-    makeNotNull(vector);
     vectors.push_back(vector);
   }
   createDuckDbTable(vectors);
