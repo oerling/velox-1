@@ -15,31 +15,40 @@
  */
 
 #include "velox/experimental/wave/exec/Project.h"
-
+#include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/Wave.h"
 namespace facebook::velox::wave {
 
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
   for (auto& level : levels_) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
-    for
-      auto i = 0;
-    i < level.size(); ++i) {
+    for (auto i = 0; i < level.size(); ++i) {
       auto* program = level[i];
-      exes[i] = program->executable();
+      exes[i] = program->getExecutable(maxRows);
     }
     auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
+    auto* data = exes.data();
+    auto range = folly::Range(data, data + exes.size());
     stream.installExecutables(
         range, [&](Stream* out, folly::Range<Executable**> exes) {
-          auto control = makeControl(stream, out, exes, blocksPerExe);
+          auto control = stream.prepareProgramLaunch(
+              id_, maxRows, exes, blocksPerExe, out);
         });
   }
+}
 
-  void Project::finalize() {
-    for (auto& level : levels_) {
-      for (auto& program : level) {
-        program->prepareForDevice(state.arena());
-      }
+void Project::finalize(CompileState& state) {
+  for (auto& level : levels_) {
+    for (auto& program : level) {
+      program->prepareForDevice(state.arena());
     }
   }
+}
+
+vector_size_t Project::outputSize(WaveStream& stream) const {
+  auto& control = stream.launchControls(id_);
+  VELOX_CHECK(!control.empty());
+  return control[0]->inputRows;
+}
 
 } // namespace facebook::velox::wave

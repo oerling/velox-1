@@ -17,6 +17,7 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/exec/FilterProject.h"
 #include "velox/experimental/wave/exec/Values.h"
+#include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
@@ -109,7 +110,7 @@ AbstractOperand* CompileState::findCurrentValue(Value value) {
 
     auto& program = definedIn_[originIt->second];
     VELOX_CHECK(program);
-    return addIdentityProjections(value, program.get());
+    return addIdentityProjections(value, program);
   }
   return it->second;
 }
@@ -122,19 +123,19 @@ std::optional<OpCode> binaryOpCode(const Expr& expr) {
   return std::nullopt;
 }
 
-std::shared_ptr<Program> newProgram() {
-  program = std::make_shared > Program > ();
-  allprograms_.push_back(program);
-  return program;
+Program* CompileState::newProgram() {
+  auto program = std::make_shared<Program>();
+  allPrograms_.push_back(program);
+  return program.get();
 }
 
 void CompileState::addInstruction(
-    std::unique_ptr<Instruction> instruction,
+    std::unique_ptr<AbstractInstruction> instruction,
     AbstractOperand* result,
     std::vector<Program*> inputs) {
   Program* common = nullptr;
   bool many = false;
-  for (auto* program : sources) {
+  for (auto* program : inputs) {
     if (!program->isMutable()) {
       continue;
     }
@@ -153,7 +154,7 @@ void CompileState::addInstruction(
   } else {
     program = newProgram();
   }
-  for (source : sources) {
+  for (auto source : inputs) {
     if (source != program) {
       program->addSource(source);
     }
@@ -170,8 +171,7 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   }
 
   if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
-    std::string name = expr.name();
-    return currentProgram_->findOperand(Value(&expr));
+    VELOX_FAIL("Should have been defined");
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
     VELOX_UNSUPPORTED("No constants");
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
@@ -190,10 +190,10 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   auto rightProgram = definedIn_[rightOp];
   std::vector<Program*> sources;
   if (leftProgram) {
-    sources.push_back(leftProgram.get());
+    sources.push_back(leftProgram);
   }
   if (rightProgram) {
-    sources.push_back(rightProgram.get());
+    sources.push_back(rightProgram);
   }
   addInstruction(std::move(instruction), result, sources);
 }
@@ -214,13 +214,13 @@ std::vector<std::vector<Program*>> CompileState::makeLevels(
     int32_t startIndex) {
   std::vector<std::vector<Program*>> levels;
   folly::F14FastSet<Program*> toAdd;
-  for (auto i = 0; i < allPrograms.size(); ++i) {
-    toAdd.insert(allPrograms.get());
+  for (auto i = 0; i < allPrograms_.size(); ++i) {
+    toAdd.insert(allPrograms_[i].get());
   }
   while (!toAdd.empty()) {
-    std::vector<Prograrm*> level;
+    std::vector<Program*> level;
     for (auto& program : toAdd) {
-      auto& depends = program -.dependsOn();
+      auto& depends = program->dependsOn();
       auto independent = true;
       for (auto& d : depends) {
         if (toAdd.count(d)) {
@@ -248,10 +248,10 @@ void CompileState::addFilterProject(
   auto data = filterProject->exprsAndProjection();
   VELOX_CHECK(!data.hasFilter);
   int32_t numPrograms = allPrograms_.size();
-  auto operands = addExprSet(data.exprSet, 0, data.exprSet.exprs().size());
+  auto operands = addExprSet(*data.exprs, 0, data.exprs->exprs().size());
   auto levels = makeLevels(numPrograms);
-  operaters_.push_back(
-      std::make_unique<project>(*this, outputType, operands, levels));
+  operators_.push_back(std::make_unique<Project>(
+      *this, outputType, operands, levels, 1 + operators_.size()));
 }
 
 bool CompileState::reserveMemory() {
@@ -308,6 +308,9 @@ bool CompileState::compile() {
   }
   if (operators_.empty()) {
     return false;
+  }
+  for (auto& op : operators_) {
+    op->finalize(*this);
   }
 
   auto waveOpUnique = std::make_unique<WaveDriver>(

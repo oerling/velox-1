@@ -40,6 +40,7 @@ constexpr OperandId kNoOperand = ~0;
 /// from thread block shared memory.
 
 struct Operand {
+  static constexpr int32_t kPointersInOperand = 4;
   static constexpr uint16_t kGlobal = ~0;
 
   int32_t indexMask{~0};

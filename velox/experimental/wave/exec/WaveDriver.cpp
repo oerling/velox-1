@@ -78,7 +78,7 @@ RowVectorPtr WaveDriver::makeResult(
       operatorCtx_->pool(),
       rowType,
       BufferPtr(nullptr),
-      last.outputSize(),
+      last.outputSize(stream),
       std::move(children));
   int32_t nthChild = 0;
   lastSet.forEach([&](int32_t id) {

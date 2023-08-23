@@ -44,14 +44,23 @@ class CompileState {
       const TypePtr& type,
       const std::string& label = "");
 
+  Program* newProgram();
+
   Value toValue(const exec::Expr& expr);
 
   AbstractOperand* addIdentityProjections(Value value, Program* definedIn);
   AbstractOperand* findCurrentValue(Value value);
   AbstractOperand* addExpr(const exec::Expr& expr);
 
-  std::vector<ProgramPtr>
+  void addInstruction(
+      std::unique_ptr<AbstractInstruction> instruction,
+      AbstractOperand* result,
+      std::vector<Program*> inputs);
+
+  std::vector<AbstractOperand*>
   addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
+  std::vector<std::vector<Program*>> makeLevels(int32_t startIndex);
+
   GpuArena& arena() const {
     return *arena_;
   }
@@ -60,7 +69,11 @@ class CompileState {
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
 
-  void addFilterProject(exec::Operator* op);
+void addFilterProject(
+    exec::Operator* op,
+    RowTypePtr outputType,
+    int32_t& nodeIndex);
+
   bool reserveMemory();
 
   // Adds 'instruction' to the suitable program and records the result
@@ -86,16 +99,11 @@ class CompileState {
 
   folly::F14FastMap<AbstractOperand*, Program*> definedIn_;
 
-  // The programs that cam be added to. Any programs from previous operators
-  // after which there is no cardinality change or shuffle.
-  folly::F14FastMap<Value, std::shared_ptr<Program>, ValueHasher, ValueComparer>
-      openPrograms_;
-
   const exec::DriverFactory& driverFactory_;
   exec::Driver& driver_;
   SubfieldMap subfields_;
 
-  std::vector<ProgramPtr> allPrograms;
+  std::vector<ProgramPtr> allPrograms_;
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;

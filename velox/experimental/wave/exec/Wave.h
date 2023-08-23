@@ -61,7 +61,7 @@ struct ValueComparer {
 
 struct BufferReference {
   // Ordinal of the instruction that assigns a value to the Operand.
-  int32_t insruction;
+  int32_t instruction;
   // Offset of Operand struct in the executable image.
   int32_t offset;
 };
@@ -140,15 +140,19 @@ struct Executable {
   std::function<void(std::unique_ptr<Executable>&)> releaser;
 };
 
-class Program {
+class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
     instructions_.push_back(std::move(instruction));
   }
 
+  const std::vector<Program*>& dependsOn() const {
+    return dependsOn_;
+  }
+
   void addSource(Program* source) {
-    if (std::find(
-            dependsOn_.begin(), dependsOn_.end(, source) != dependsOn_.end())) {
+    if (std::find(dependsOn_.begin(), dependsOn_.end(), source) !=
+        dependsOn_.end()) {
       return;
     }
     dependsOn_.push_back(source);
@@ -166,6 +170,12 @@ class Program {
       ThreadBlockProgram* instance,
       int32_t continuePoint,
       int32_t numRows);
+
+  std::unique_ptr<Executable> getExecutable(int32_t maxRows);
+
+  ThreadBlockProgram* threadBlockProgram() {
+    return threadBlockProgram_;
+  }
 
   /// True if instructions can be added.
   bool isMutable() const {
@@ -185,6 +195,9 @@ class Program {
   std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
   bool isMutable_{true};
 
+  // Owns device side 'threadBlockProgram_'
+  WaveBufferPtr deviceData_;
+
   // Relocation info.The first int is the offset of a pointer in the executable
   // representation .The secon is the offset it points to inside the
   // representation.
@@ -198,11 +211,16 @@ class Program {
   // starting a kernel interpreting the image.
   std::vector<uint64_t> executableImage_;
 
+  // Device resident program.
+  ThreadBlockProgram* threadBlockProgram_;
+
   // The size of the device side contiguous memory for 'this'.
   int32_t sizeOnDevice_{0};
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
+
+struct LaunchControl;
 
 /// Represents consecutive data dependent kernel launches.
 class WaveStream {
@@ -277,14 +295,27 @@ class WaveStream {
   void addExtraData(int32_t key, WaveBufferPtr buffer) {
     extraData_[key] = std::move(buffer);
   }
-  /// Makes a parameter block for multiple program launch. Sends the data to the
-  /// device on 'stream'
+  /// Makes a parameter block for multiple program launch. Sends the
+  /// data to the device on 'stream' Keeps the record associated with
+  /// 'key'. The record contains return status blocks for errors and
+  /// row counts. The LaunchControl is in host memory, the arrays
+  /// referenced from it are in unified memory, owned by
+  /// LaunchControl. 'key' identifies the issuing
+  /// WaveOperator. 'inputRows' is the logical number of input rows,
+  /// not all TBs are necessarily full. 'exes' are the programs
+  /// launched together, e.g. different exprs on different
+  /// columns. 'blocks{PerExe' is the number of TBs running each exe. 'stream' enqueus the data transfer.
   LaunchControl* prepareProgramLaunch(
       int32_t key,
+      int32_t inputRows,
       folly::Range<Executable**> exes,
       int32_t blocksPerExe,
       Stream* stream);
 
+  const std::vector<std::unique_ptr<LaunchControl >>& launchControls(int32_t key) {
+    return launchControl_[key];
+  }
+  
  private:
   Event* newEvent();
 
@@ -314,34 +345,45 @@ class WaveStream {
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
 
+  // invocation record with return status blocks for programs. Used for getting errors and filter cardinalities on return of  specific exes.
+  folly::F14FastMap<int32_t, std::vector<std::unique_ptr<LaunchControl>>> launchControl_;
+
   folly::F14FastMap<int32_t, WaveBufferPtr> extraData_;
+  std::vector<void*> paramTemp_;
 };
 
 /// Describes all the control data for launching a kernel executing
 /// ThreadBlockPrograms. This is a single piece of unified memory with several
 /// arrays with one entry per thread block. The arrays are passsed as parameters
-/// to the kernel call.
+/// to the kernel call. The layout is:
+  ///
+  //// Array of block bases, one per TB. Array of exe indices, one per
+  //// TB. Arrray of ThreadBlockProgram, one per exe. Number of input
+  //// operands, one per exe. Array of Operand pointers, one array per
+  //// exe. Arrray of non input Operands,. The operands array of each
+  //// exe points here.  This is filled in by host to refer to
+  //// WaveVectors in each exe. Array of TB return status blocks, one
+  //// per TB.
 struct LaunchControl {
+  int32_t key;
+
+  int32_t inputRows;
+
   /// The first thread block with the program.
   int32_t* blockBase;
   // The ordinal of the program. All blocks with the same program have the same
   // number here.
   int32_t* programIdx;
 
-  // The TB program for each TB.
+  // The TB program for each exe.
   ThreadBlockProgram** programs;
 
-  // Number of params for each TB.
-  int32_t* numParams_;
-
-  // Pointer to array of Operand addresses in executions this one depends on.
-  // Each TB has a Operand** with 'numParams' Operand*s to get the params.
-  Operand*** actualOperands;
-
-  // For each TB, an array of Operand where the Operands forma 'actualOperands'
-  // are copied.
-  Operand** operandCopies;
-
+  // For each exe, the start of the array of Operand*. Instructions reference operands via offset in this array.//
+  Operand*** operands;
+  
+  // the status return block for each TB.
+  BlockStatus* status; 
+  
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
 };

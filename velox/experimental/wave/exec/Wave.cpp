@@ -242,73 +242,97 @@ bool WaveStream::isArrived(
   return false;
 }
 
+template <typename T, typename U>
+    T  addBytes(U* p, int32_t bytes) {
+  return reinterpret_cast<T>(reinterpret_cast<uintptr_t>(p) + bytes);
+}
+
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
+    int32_t inputRows,
     folly::Range<Executable**> exes,
     int32_t blocksPerExe,
     Stream* stream) {
+  static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
+
   //  First calculate total size.
-  // 3 int arrays: blockBase, programIdx, numParams.
-  int32_t size = exes.size() * 3 * sizeof(int32_t) * blocksPerExe;
-  // Arrays of pointers. program, actualParams,  paramCopy.
-  size += exes.size() * sizeof(void*) * blocksPerExe * 3;
+  // 2 int arrays: blockBase, programIdx.
+  int32_t numBlocks = exes.size() * blocksPerExe;
+  int32_t size = 2 * numBlocks * sizeof(int32_t);
+  auto exeOffset = size;
+  // 2 pointers per exe: TB program and start of its param array.
+  size += exes.size() * sizeof(void*) * 2;
+  auto operandOffset = size;
   // Exe dependent sizes for parameters.
   int32_t numTotalOps = 0;
   for (auto& exe : exes) {
-    int numOps = exe->inputOperands.size() + exe->intermediates.size() +
-        exe->outputOperands.size();
-    numTotalOps += numOps * blocksPerExe;
-    size += numOps * (sizeof(Operand) + sizeof(void*));
+    markLaunch(*stream, *exe);
+    int32_t numIn = exe->inputOperands.size();
+    int numOps = numIn + exe->intermediates.size() + exe->outputOperands.size();
+    numTotalOps += numOps;
+    size += numOps * sizeof(void*) + (numOps - numIn) * sizeof(Operand);
   }
-  buffer = extraData_[key];
-  if (!buffer || buffer->capacity() < size) {
-    buffer = arena_.allocate(size);
-    extraData_[key] = buffer;
-  }
-  LaunchControl control;
+  auto statusOffset = size;
+  //  Pointer to return block for each tB.
+  size += numBlocks * (sizeof(void*) + sizeof(BlockStatus));
+
+  auto buffer = arena_.allocate<char>(size);
+
+  auto controlUnique = std::make_unique<LaunchControl>();
+  auto& control = *controlUnique;
+
+  control.key = key;
+  control.inputRows = inputRows;
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
   auto start = buffer->as<int32_t>();
-  int32_t numBlocks = exes.size() * blocksPerExe;
   control.blockBase = start;
   control.programIdx = start + numBlocks;
-  control.numParams = start + numBlocks * 2;
-  int32_t offset = bits::roundUp(numBlocks * 12, 8);
-  void** start8 = buffer->as<void*>() + (start8 / 8) control.program =
-                      reinterpret_cast<ThreadBlockProgram**>(start8);
-  control.actualOperands = reinterpret_cast<Operand***>(start8 + numBlocks);
-  control.operandCopies =
-      reinterpret_cast<Operand**>(start8 + numBlocks + numAllOperands);
   int32_t fill = 0;
+  Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
+  Operand* operandArrayBegin =
+      addBytes<Operand*>(operandPtrBegin, numTotalOps * sizeof(void*));
+  control.status = addBytes<BlockStatus*>(start, statusOffset);
   for (auto exeIdx = 0; exeIdx < exes.size(); ++exeIdx) {
-    int32_t numParams = exe->inputOperands.size() + exe->intermediates.size() +
-        exe->outputOperands.size();
+    auto exe = exes[exeIdx];
+    int32_t numIn = exe->inputOperands.size();
+    int32_t numLocal = exe->intermediates.size() + exe->outputOperands.size();
+    control.programs[exeIdx] = exe->program;
+    control.operands[exeIdx] = operandPtrBegin;
     // We get the actual input operands for the exe from the exes this depends
-    // on and repeat them for each TB.
-    paramTemp_.resize(numParams);
-    int32_t nth = 0;
+    // on
     exe->inputOperands.forEach([&](int32_t id) {
-      inputExe = operandToExecutable_[id];
-      paramTemp[nth++] = inputExe->outputParams[id];
+      auto* inputExe = operandToExecutable_[id];
+      int32_t ordinal = inputExe->outputOperands.ordinal(id);
+      *operandPtrBegin = &inputExe->operands[ordinal];
+      ++operandPtrBegin;
     });
+    // We install the intermediates and outputs from the WaveVectors in the exe.
+    for (auto& vec : exe->intermediates) {
+      *operandPtrBegin = operandArrayBegin;
+      vec->toOperand(operandArrayBegin);
+      ++operandPtrBegin;
+      ++operandArrayBegin;
+    }
+    for (auto& vec : exe->output) {
+      *operandPtrBegin = operandArrayBegin;
+      vec->toOperand(operandArrayBegin);
+      ++operandPtrBegin;
+      ++operandArrayBegin;
+    }
+    control.programs[exeIdx] = exe->program;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
       control.blockBase[fill] = exeIdx * blocksPerExe;
       control.programIdx[fill] = exeIdx;
-      control.numParams = numParams;
-      control.program[fill] = exe->program;
-      control.actualParams[fill] = paramFill;
-      control.paramSpace[fill] = numParams * sizeof(Operand);
-      memcpy(
-          control.actualParams + actualFill,
-          paramTemp_.data(),
-          numParams * sizeof(void*));
-      operandCopies += numParams * sizeof(Operand);
-      paramAddress += numParams * sizeof(Operand);
-      ++fill;
     }
   }
+  control.deviceData = std::move(buffer);
+  launchControl_[key].push_back(std::move(controlUnique));
+  return &control;
 }
 
 void Program::prepareForDevice(GpuArena& arena) {}
+
+std::unique_ptr<Executable> Program::getExecutable(int32_t maxRows) {}
 
 } // namespace facebook::velox::wave

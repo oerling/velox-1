@@ -90,10 +90,12 @@ class WaveOperator {
     driver_ = driver;
   }
 
-  // Returns the number of non-filtered out result rows. The actual result rows
-  // may be non-contiguous in the result vectors and may need indirection to
-  // access, as seen in output operands of the corresponding executables.
-  virtual vector_size_t outputSize() const = 0;
+  // Returns the number of non-filtered out result rows in the invocation inside
+  // 'stream'. 'this' must have had schedule() called with the same stream and
+  // the stream must have arrived. The actual result rows may be non-contiguous
+  // in the result vectors and may need indirection to access, as seen in output
+  // operands of the corresponding executables.
+  virtual vector_size_t outputSize(WaveStream& stream) const = 0;
 
   const OperandSet& outputIds() const {
     return outputIds_;
@@ -103,7 +105,7 @@ class WaveOperator {
   /// Operators will be added to the WaveDriver plan. Can be used for
   /// e.g. making executable images of Programs since their content
   /// and dependences will no longer change.
-  virtual void finalize() {}
+  virtual void finalize(CompileState& state) {}
 
  protected:
   WaveDriver* driver_{nullptr};
