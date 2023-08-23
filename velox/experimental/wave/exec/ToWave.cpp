@@ -76,8 +76,7 @@ AbstractOperand* CompileState::newOperand(
 }
 
 AbstractOperand* CompileState::addIdentityProjections(
-    Value value,
-    Program* definedIn) {
+    Value value) {
   AbstractOperand* result = nullptr;
   for (auto i = 0; i < operators_.size(); ++i) {
     if (auto operand = operators_[i]->defines(value)) {
@@ -107,17 +106,14 @@ AbstractOperand* CompileState::findCurrentValue(Value value) {
     if (originIt == definedBy_.end()) {
       return nullptr;
     }
-
-    auto& program = definedIn_[originIt->second];
-    VELOX_CHECK(program);
-    return addIdentityProjections(value, program);
+    return addIdentityProjections(value);
   }
   return it->second;
 }
 
 std::optional<OpCode> binaryOpCode(const Expr& expr) {
   auto& name = expr.name();
-  if (name == "PLUS") {
+  if (name == "plus") {
     return OpCode::kPlus;
   }
   return std::nullopt;
@@ -132,7 +128,7 @@ Program* CompileState::newProgram() {
 void CompileState::addInstruction(
     std::unique_ptr<AbstractInstruction> instruction,
     AbstractOperand* result,
-    std::vector<Program*> inputs) {
+    const std::vector<Program*>& inputs) {
   Program* common = nullptr;
   bool many = false;
   for (auto* program : inputs) {
@@ -149,7 +145,7 @@ void CompileState::addInstruction(
     }
   }
   Program* program;
-  if (!common || many) {
+  if (common && !many) {
     program = common;
   } else {
     program = newProgram();
@@ -292,6 +288,17 @@ bool CompileState::addOperator(
   return true;
 }
 
+  bool isProjectedThrough(
+			const std::vector<exec::IdentityProjection>& projectedThrough,  int32_t i) {
+    for (auto& projection : projectedThrough) {
+      if (projection.outputChannel == i) {
+	return true;
+      }
+    }
+      return false;
+}
+
+
 bool CompileState::compile() {
   auto operators = driver_.operators();
   auto& nodes = driverFactory_.planNodes;
@@ -304,7 +311,15 @@ bool CompileState::compile() {
     if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
-    ++nodeIndex;
+    auto& identity = operators[operatorIndex]->identityProjections();
+    for (auto i = 0; i < outputType->size(); ++i) {
+      Value value = Value(toSubfield(outputType->nameOf(i)));
+      if (isProjectedThrough(identity, i)) {
+	continue;
+      }
+      auto operand = operators_.back()->defines(value);
+      definedBy_[value] = operand;
+    }
   }
   if (operators_.empty()) {
     return false;

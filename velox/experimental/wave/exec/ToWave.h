@@ -48,14 +48,14 @@ class CompileState {
 
   Value toValue(const exec::Expr& expr);
 
-  AbstractOperand* addIdentityProjections(Value value, Program* definedIn);
+  AbstractOperand* addIdentityProjections(Value value);
   AbstractOperand* findCurrentValue(Value value);
   AbstractOperand* addExpr(const exec::Expr& expr);
 
   void addInstruction(
       std::unique_ptr<AbstractInstruction> instruction,
       AbstractOperand* result,
-      std::vector<Program*> inputs);
+      const std::vector<Program*>& inputs);
 
   std::vector<AbstractOperand*>
   addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);

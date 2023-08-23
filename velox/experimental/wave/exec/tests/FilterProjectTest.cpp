@@ -65,7 +65,7 @@ class FilterProjectTest : public OperatorTestBase {
 
   std::shared_ptr<const RowType> rowType_{
       ROW({"c0", "c1", "c2", "c3"},
-          {BIGINT(), INTEGER(), SMALLINT(), DOUBLE()})};
+          {BIGINT(), BIGINT(), SMALLINT(), DOUBLE()})};
 };
 
 TEST_F(FilterProjectTest, roundTrip) {
