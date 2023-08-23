@@ -59,13 +59,6 @@ struct ValueComparer {
   }
 };
 
-struct BufferReference {
-  // Ordinal of the instruction that assigns a value to the Operand.
-  int32_t instruction;
-  // Offset of Operand struct in the executable image.
-  int32_t offset;
-};
-
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
       : from(from), to(to), size(size) {}
@@ -174,7 +167,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::unique_ptr<Executable> getExecutable(int32_t maxRows);
 
   ThreadBlockProgram* threadBlockProgram() {
-    return threadBlockProgram_;
+    return program_;
   }
 
   /// True if instructions can be added.
@@ -195,27 +188,25 @@ class Program : public std::enable_shared_from_this<Program> {
   std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
   bool isMutable_{true};
 
+  // Adds 'op' to 'input' if it is not produced by one in 'local'
+  void markInput(AbstractOperand* op);
+  // Adds 'op' to 'local_'
+  void markResult(AbstractOperand* op);
+
+  OperandIndex operandIndex(AbstractOperand* op) const;
+
+
+  // Input Operand  to offset in operands array.
+  folly::F14FastMap<AbstractOperand*, int32_t> input_;
+
+  // Local/output Operand offset in operands array.
+  folly::F14FastMap<AbstractOperand*, int32_t> local_;
+
   // Owns device side 'threadBlockProgram_'
   WaveBufferPtr deviceData_;
 
-  // Relocation info.The first int is the offset of a pointer in the executable
-  // representation .The secon is the offset it points to inside the
-  // representation.
-  std::vector<std::pair<int32_t, int32_t>> relocation_;
-
-  // Describes the places in the executable image that need a WaveBuffer's
-  // address to be patched in before execution.
-  std::vector<BufferReference> buffers;
-  // Bytes to copy to device. The relocations and buffer reference patches given
-  // in 'relocations_' and 'buffers_' must be applied to the image before
-  // starting a kernel interpreting the image.
-  std::vector<uint64_t> executableImage_;
-
   // Device resident program.
-  ThreadBlockProgram* threadBlockProgram_;
-
-  // The size of the device side contiguous memory for 'this'.
-  int32_t sizeOnDevice_{0};
+  ThreadBlockProgram* program_;
 };
 
 using ProgramPtr = std::shared_ptr<Program>;

@@ -331,8 +331,82 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   return &control;
 }
 
-void Program::prepareForDevice(GpuArena& arena) {}
+  ScalarType typeKindCode(TypeKind kind) {
+    switch (kind) {
+    case TypeKind::BIGINT: return ScalarType::kInt64;
+    default: VELOX_UNSUPPORTED("Bad TypeKind {}", kind);
+    }
+  }
+  
+void Program::prepareForDevice(GpuArena& arena) {
+  int32_t codeSize = 0;
+  int32_t sharedMemorySize = 0;
+  for (auto& instruction : instructions_)
+    switch (instruction->opCode) {
+    case OpCode::kPlus: {
+      auto& bin =instruction->as<AbstractBinary>();
+      markInput(bin.left);
+      markInput(bin.right);
+      markResult(bin.result);
+      markInput(bin.predicate);
+      codeSize += sizeof(Instruction);
+      break;
+    }
+    default:
+      VELOX_UNSUPPORTED("OpCode {}", instruction->opCode);
+    }
+  auto buffer = arena.allocate<char>(codeSize + instructions_.size() * sizeof(void*) + sizeof(ThreadBlockProgram));
+  program_ = buffer->as<ThreadBlockProgram>();
+  auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
+  program_->sharedMemorySize = sharedMemorySize;
+  program_->numInstructions = instructions_.size();
+  program_->instructions = instructionArray;
+  Instruction* space = addBytes<Instruction*>(program_, instructions_.size() * sizeof(void*));
+  for (auto& instruction : instructions_) {
+    *instructionArray = space;
+    ++instructionArray;
+    switch(instruction->opCode) {
+    case OpCode::kPlus: {
+      auto& bin  = instruction->as<AbstractBinary>();
+      auto typeCode = typeKindCode(bin.left->type->kind());
+      // Comstructed on host, no vtable.
+      space->opCode = OP_MIX(instruction->opCode, typeCode);
+      new(&space->_.binary) IBinary();
+      space->_.binary.left = operandIndex(bin.left);
+      space->_.binary.right = operandIndex(bin.right);
+      space->_.binary.result = operandIndex(bin.result);
+      ++space;
+    }
+    default: VELOX_UNSUPPORTED("Bad OpCode");
+    }
+  }
+}
 
+  OperandIndex Program::operandIndex(AbstractOperand* op) const {
+    auto it = input_.find(op);
+    if (it != input_.end()) {
+      return it->second;
+    }
+    it = local_.find(op);
+    if (it == local_.end()) {
+      VELOX_FAIL("Bad operand, offset not known");
+    }
+    return it->second + input_.size();
+  }
+
+  void Program::markInput(AbstractOperand* op) {
+    if (!local_.count(op)) {
+      input_[op] = input_.size();
+    }
+  }
+
+  void Program::markResult(AbstractOperand* op) {
+    if (local_.count(op)) {
+      local_[op] = local_.size();
+    }
+  }
+
+  
 std::unique_ptr<Executable> Program::getExecutable(int32_t maxRows) {}
 
 } // namespace facebook::velox::wave
