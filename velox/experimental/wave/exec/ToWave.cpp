@@ -16,8 +16,8 @@
 
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/exec/FilterProject.h"
-#include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/Project.h"
+#include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
@@ -75,8 +75,7 @@ AbstractOperand* CompileState::newOperand(
   return op;
 }
 
-AbstractOperand* CompileState::addIdentityProjections(
-    Value value) {
+AbstractOperand* CompileState::addIdentityProjections(Value value) {
   AbstractOperand* result = nullptr;
   for (auto i = 0; i < operators_.size(); ++i) {
     if (auto operand = operators_[i]->defines(value)) {
@@ -288,16 +287,16 @@ bool CompileState::addOperator(
   return true;
 }
 
-  bool isProjectedThrough(
-			const std::vector<exec::IdentityProjection>& projectedThrough,  int32_t i) {
-    for (auto& projection : projectedThrough) {
-      if (projection.outputChannel == i) {
-	return true;
-      }
+bool isProjectedThrough(
+    const std::vector<exec::IdentityProjection>& projectedThrough,
+    int32_t i) {
+  for (auto& projection : projectedThrough) {
+    if (projection.outputChannel == i) {
+      return true;
     }
-      return false;
+  }
+  return false;
 }
-
 
 bool CompileState::compile() {
   auto operators = driver_.operators();
@@ -315,7 +314,7 @@ bool CompileState::compile() {
     for (auto i = 0; i < outputType->size(); ++i) {
       Value value = Value(toSubfield(outputType->nameOf(i)));
       if (isProjectedThrough(identity, i)) {
-	continue;
+        continue;
       }
       auto operand = operators_.back()->defines(value);
       definedBy_[value] = operand;

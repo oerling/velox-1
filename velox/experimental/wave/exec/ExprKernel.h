@@ -66,9 +66,10 @@ enum class OpCode {
 
 using OperandIndex = uint16_t;
 constexpr OperandIndex kEmpty = ~0;
-  // operand indices above this are offsets into TB shared memory arrays. The value to use is the item at blockIx.x.
-  constexpr OperandIndex kMinSharedMemIndex = 0x8000;
-  
+// operand indices above this are offsets into TB shared memory arrays. The
+// value to use is the item at blockIx.x.
+constexpr OperandIndex kMinSharedMemIndex = 0x8000;
+
 struct IBinary {
   OperandIndex left;
   OperandIndex right;

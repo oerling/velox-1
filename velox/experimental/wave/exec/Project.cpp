@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Wave.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
+
 namespace facebook::velox::wave {
 
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
@@ -24,7 +26,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
     for (auto i = 0; i < level.size(); ++i) {
       auto* program = level[i];
-      exes[i] = program->getExecutable(maxRows);
+      exes[i] = program->getExecutable(maxRows, driver_->operands());
     }
     auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
     auto* data = exes.data();

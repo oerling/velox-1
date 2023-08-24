@@ -15,12 +15,18 @@
  */
 
 #include "velox/experimental/wave/exec/Wave.h"
+#include "velox/experimental/wave/exec/Vectors.h"
 
 namespace facebook::velox::wave {
 
 WaveStream::~WaveStream() {
   // TODO: wait for device side work to finish before freeing associated memory
   // owned by exes and buffers in 'this'.
+  for (auto& exe : executables_) {
+    if (exe->releaser) {
+      exe->releaser(exe);
+    }
+  }
   for (auto& stream : streams_) {
     releaseStream(std::move(stream));
   }
@@ -243,7 +249,7 @@ bool WaveStream::isArrived(
 }
 
 template <typename T, typename U>
-    T  addBytes(U* p, int32_t bytes) {
+T addBytes(U* p, int32_t bytes) {
   return reinterpret_cast<T>(reinterpret_cast<uintptr_t>(p) + bytes);
 }
 
@@ -331,82 +337,149 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   return &control;
 }
 
-  ScalarType typeKindCode(TypeKind kind) {
-    switch (kind) {
-    case TypeKind::BIGINT: return ScalarType::kInt64;
-    default: VELOX_UNSUPPORTED("Bad TypeKind {}", kind);
-    }
+ScalarType typeKindCode(TypeKind kind) {
+  switch (kind) {
+    case TypeKind::BIGINT:
+      return ScalarType::kInt64;
+    default:
+      VELOX_UNSUPPORTED("Bad TypeKind {}", kind);
   }
-  
+}
+
 void Program::prepareForDevice(GpuArena& arena) {
   int32_t codeSize = 0;
   int32_t sharedMemorySize = 0;
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
-    case OpCode::kPlus: {
-      auto& bin =instruction->as<AbstractBinary>();
-      markInput(bin.left);
-      markInput(bin.right);
-      markResult(bin.result);
-      markInput(bin.predicate);
-      codeSize += sizeof(Instruction);
-      break;
+      case OpCode::kPlus: {
+        auto& bin = instruction->as<AbstractBinary>();
+        markInput(bin.left);
+        markInput(bin.right);
+        markResult(bin.result);
+        markInput(bin.predicate);
+        codeSize += sizeof(Instruction);
+        break;
+      }
+      default:
+        VELOX_UNSUPPORTED("OpCode {}", instruction->opCode);
     }
-    default:
-      VELOX_UNSUPPORTED("OpCode {}", instruction->opCode);
-    }
-  auto buffer = arena.allocate<char>(codeSize + instructions_.size() * sizeof(void*) + sizeof(ThreadBlockProgram));
+  sortSlots();
+  arena_ = &arena;
+  auto buffer = arena.allocate<char>(
+      codeSize + instructions_.size() * sizeof(void*) +
+      sizeof(ThreadBlockProgram));
   program_ = buffer->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
   program_->sharedMemorySize = sharedMemorySize;
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
-  Instruction* space = addBytes<Instruction*>(program_, instructions_.size() * sizeof(void*));
+  Instruction* space =
+      addBytes<Instruction*>(program_, instructions_.size() * sizeof(void*));
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;
-    switch(instruction->opCode) {
-    case OpCode::kPlus: {
-      auto& bin  = instruction->as<AbstractBinary>();
-      auto typeCode = typeKindCode(bin.left->type->kind());
-      // Comstructed on host, no vtable.
-      space->opCode = OP_MIX(instruction->opCode, typeCode);
-      new(&space->_.binary) IBinary();
-      space->_.binary.left = operandIndex(bin.left);
-      space->_.binary.right = operandIndex(bin.right);
-      space->_.binary.result = operandIndex(bin.result);
-      ++space;
-    }
-    default: VELOX_UNSUPPORTED("Bad OpCode");
+    switch (instruction->opCode) {
+      case OpCode::kPlus: {
+        auto& bin = instruction->as<AbstractBinary>();
+        auto typeCode = typeKindCode(bin.left->type->kind());
+        // Comstructed on host, no vtable.
+        space->opCode = OP_MIX(instruction->opCode, typeCode);
+        new (&space->_.binary) IBinary();
+        space->_.binary.left = operandIndex(bin.left);
+        space->_.binary.right = operandIndex(bin.right);
+        space->_.binary.result = operandIndex(bin.result);
+        ++space;
+      }
+      default:
+        VELOX_UNSUPPORTED("Bad OpCode");
     }
   }
 }
 
-  OperandIndex Program::operandIndex(AbstractOperand* op) const {
-    auto it = input_.find(op);
-    if (it != input_.end()) {
-      return it->second;
+  void Program::sortSlots() {
+    // Assigns offsets to input and local/output slots so that all
+    // input is first and output next and within input and output, the
+    // slots are ordered with lower operand id first. So, if inputs
+    // are slots 88 and 22 and outputs are 77 and 33, then the
+    // complete order is 22, 88, 33, 77.
+    std::vector<AbstractOperand*> ids;
+    for (auto& pair : input_) {
+      ids.push_back(pair.first);
     }
-    it = local_.find(op);
-    if (it == local_.end()) {
-      VELOX_FAIL("Bad operand, offset not known");
+    std::sort(ids.begin(), ids.end(), [](AbstractOperand*& left, AbstractOperand*& right) {
+      return left->id < right->id;
+    });
+    for (auto i =0; i < ids.size(); ++i) {
+      input_[ids[i]] = i;
     }
-    return it->second + input_.size();
+    ids.clear();
+    for (auto& pair : local_) {
+      ids.push_back(pair.first);
+    }
+    std::sort(ids.begin(), ids.end(), [](AbstractOperand*& left, AbstractOperand*& right) {
+      return left->id < right->id;
+    });
+    for (auto i =0; i < ids.size(); ++i) {
+      local_[ids[i]] = i + input_.size();
+    }
   }
-
-  void Program::markInput(AbstractOperand* op) {
-    if (!local_.count(op)) {
-      input_[op] = input_.size();
-    }
-  }
-
-  void Program::markResult(AbstractOperand* op) {
-    if (local_.count(op)) {
-      local_[op] = local_.size();
-    }
-  }
-
   
-std::unique_ptr<Executable> Program::getExecutable(int32_t maxRows) {}
+OperandIndex Program::operandIndex(AbstractOperand* op) const {
+  auto it = input_.find(op);
+  if (it != input_.end()) {
+    return it->second;
+  }
+  it = local_.find(op);
+  if (it == local_.end()) {
+    VELOX_FAIL("Bad operand, offset not known");
+  }
+  return it->second + input_.size();
+}
 
+void Program::markInput(AbstractOperand* op) {
+  if (!local_.count(op)) {
+    input_[op] = input_.size();
+  }
+}
+
+void Program::markResult(AbstractOperand* op) {
+  if (!local_.count(op)) {
+    local_[op] = local_.size();
+  }
+}
+
+std::unique_ptr<Executable> Program::getExecutable(
+    int32_t maxRows,
+    const std::vector<std::unique_ptr<AbstractOperand>>& operands) {
+  std::unique_ptr<Executable> exe;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (!prepared_.empty()) {
+      exe = std::move(prepared_.back());
+      prepared_.pop_back();
+    }
+  }
+  if (!exe) {
+    exe = std::make_unique<Executable>();
+    exe->program = program_;
+    for (auto& pair : input_) {
+      exe->inputOperands.add(pair.first->id);
+    }
+    for (auto& pair : local_) {
+      exe->outputOperands.add(pair.second);
+      exe->programShared = shared_from_this();
+    }
+    exe->output.resize(local_.size());
+    exe->releaser = [](std::unique_ptr<Executable>& ptr) {
+      auto program = ptr->programShared.get();
+      program->releaseExe(std::move(ptr));
+    };
+  }
+  // We have an exe, whether new or reused. Check the vectors.
+  int32_t nth = 0;
+  exe->outputOperands.forEach([&](int32_t id) {
+    ensureWaveVector(exe->output[nth], operands[id]->type, maxRows, true, *arena_);
+    ++nth;
+  });
+}
 } // namespace facebook::velox::wave

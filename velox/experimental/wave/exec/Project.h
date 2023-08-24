@@ -25,21 +25,21 @@ class Project : public WaveOperator {
       RowTypePtr outputType,
       std::vector<AbstractOperand*> operands,
       std::vector<std::vector<Program*>> levels,
-	  int32_t operatorId)
-    : WaveOperator(state, outputType), levels_(std::move(levels)), id_(operatorId) {}
+      int32_t operatorId)
+      : WaveOperator(state, outputType),
+        levels_(std::move(levels)),
+        id_(operatorId) {}
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   vector_size_t outputSize(WaveStream& stream) const override;
-  
+
   void finalize(CompileState& state) override;
 
-  
-  
   std::string toString() const override {
     return "Project";
   }
-  
+
  private:
   std::vector<std::vector<Program*>> levels_;
   int32_t id_;
