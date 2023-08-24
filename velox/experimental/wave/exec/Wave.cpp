@@ -302,8 +302,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   control.programIdx = start + numBlocks;
   control.programs = addBytes<ThreadBlockProgram**>(
       control.programIdx, numBlocks * sizeof(int32_t));
-  control.operands = addBytes<Operand***>(
-					  control.programs, exes.size() * sizeof(void*));
+  control.operands =
+      addBytes<Operand***>(control.programs, exes.size() * sizeof(void*));
   int32_t fill = 0;
   Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
   Operand* operandArrayBegin =
@@ -399,8 +399,8 @@ void Program::prepareForDevice(GpuArena& arena) {
   program_->sharedMemorySize = sharedMemorySize;
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
-  Instruction* space =
-      addBytes<Instruction*>(instructionArray, instructions_.size() * sizeof(void*));
+  Instruction* space = addBytes<Instruction*>(
+      instructionArray, instructions_.size() * sizeof(void*));
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;

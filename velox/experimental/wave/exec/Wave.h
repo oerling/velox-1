@@ -111,8 +111,6 @@ struct Executable {
   // Unified memory Operand structs for intermediates/outputs. These
   // are a contiguous array of Operand in LaunchControl of 'this'
 
-
-
   Operand* operands;
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
