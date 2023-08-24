@@ -61,7 +61,7 @@ class WaveDriver : public exec::SourceOperator {
   const std::vector<std::unique_ptr<AbstractOperand>>& operands() {
     return operands_;
   }
-  
+
   std::string toString() const override;
 
  private:

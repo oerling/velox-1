@@ -90,11 +90,11 @@ struct Executable {
       std::vector<Transfer>&& transfers,
       WaveStream& stream);
 
-  // The Program this is an invocationn of. nullptr if 'this' represents a data transfer.
+  // The Program this is an invocationn of. nullptr if 'this' represents a data
+  // transfer.
   std::shared_ptr<Program> programShared;
 
   ThreadBlockProgram* program{nullptr};
-
 
   // Device memory if not owned by 'programShared_'.
   WaveBufferPtr deviceData;
@@ -185,7 +185,7 @@ class Program : public std::enable_shared_from_this<Program> {
     prepared_.push_back(std::move(exe));
   }
 
-private:
+ private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
   folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
@@ -198,7 +198,7 @@ private:
   // Adds 'op' to 'local_'
   void markResult(AbstractOperand* op);
   void sortSlots();
-  
+
   OperandIndex operandIndex(AbstractOperand* op) const;
 
   // Input Operand  to offset in operands array.

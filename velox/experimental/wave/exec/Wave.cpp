@@ -396,34 +396,40 @@ void Program::prepareForDevice(GpuArena& arena) {
   }
 }
 
-  void Program::sortSlots() {
-    // Assigns offsets to input and local/output slots so that all
-    // input is first and output next and within input and output, the
-    // slots are ordered with lower operand id first. So, if inputs
-    // are slots 88 and 22 and outputs are 77 and 33, then the
-    // complete order is 22, 88, 33, 77.
-    std::vector<AbstractOperand*> ids;
-    for (auto& pair : input_) {
-      ids.push_back(pair.first);
-    }
-    std::sort(ids.begin(), ids.end(), [](AbstractOperand*& left, AbstractOperand*& right) {
-      return left->id < right->id;
-    });
-    for (auto i =0; i < ids.size(); ++i) {
-      input_[ids[i]] = i;
-    }
-    ids.clear();
-    for (auto& pair : local_) {
-      ids.push_back(pair.first);
-    }
-    std::sort(ids.begin(), ids.end(), [](AbstractOperand*& left, AbstractOperand*& right) {
-      return left->id < right->id;
-    });
-    for (auto i =0; i < ids.size(); ++i) {
-      local_[ids[i]] = i + input_.size();
-    }
+void Program::sortSlots() {
+  // Assigns offsets to input and local/output slots so that all
+  // input is first and output next and within input and output, the
+  // slots are ordered with lower operand id first. So, if inputs
+  // are slots 88 and 22 and outputs are 77 and 33, then the
+  // complete order is 22, 88, 33, 77.
+  std::vector<AbstractOperand*> ids;
+  for (auto& pair : input_) {
+    ids.push_back(pair.first);
   }
-  
+  std::sort(
+      ids.begin(),
+      ids.end(),
+      [](AbstractOperand*& left, AbstractOperand*& right) {
+        return left->id < right->id;
+      });
+  for (auto i = 0; i < ids.size(); ++i) {
+    input_[ids[i]] = i;
+  }
+  ids.clear();
+  for (auto& pair : local_) {
+    ids.push_back(pair.first);
+  }
+  std::sort(
+      ids.begin(),
+      ids.end(),
+      [](AbstractOperand*& left, AbstractOperand*& right) {
+        return left->id < right->id;
+      });
+  for (auto i = 0; i < ids.size(); ++i) {
+    local_[ids[i]] = i + input_.size();
+  }
+}
+
 OperandIndex Program::operandIndex(AbstractOperand* op) const {
   auto it = input_.find(op);
   if (it != input_.end()) {
@@ -478,7 +484,8 @@ std::unique_ptr<Executable> Program::getExecutable(
   // We have an exe, whether new or reused. Check the vectors.
   int32_t nth = 0;
   exe->outputOperands.forEach([&](int32_t id) {
-    ensureWaveVector(exe->output[nth], operands[id]->type, maxRows, true, *arena_);
+    ensureWaveVector(
+        exe->output[nth], operands[id]->type, maxRows, true, *arena_);
     ++nth;
   });
 }
