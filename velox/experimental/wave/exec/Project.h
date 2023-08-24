@@ -24,7 +24,7 @@ class Project : public WaveOperator {
       CompileState& state,
       RowTypePtr outputType,
       std::vector<AbstractOperand*> operands,
-      std::vector<std::vector<Program*>> levels)
+      std::vector<std::vector<ProgramPtr>> levels)
       : WaveOperator(state, outputType), levels_(std::move(levels)) {}
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
@@ -38,7 +38,7 @@ class Project : public WaveOperator {
   }
 
  private:
-  std::vector<std::vector<Program*>> levels_;
+  std::vector<std::vector<ProgramPtr>> levels_;
 };
 
 } // namespace facebook::velox::wave

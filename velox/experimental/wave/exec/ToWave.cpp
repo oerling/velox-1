@@ -205,15 +205,15 @@ std::vector<AbstractOperand*> CompileState::addExprSet(
   return result;
 }
 
-std::vector<std::vector<Program*>> CompileState::makeLevels(
+std::vector<std::vector<ProgramPtr>> CompileState::makeLevels(
     int32_t startIndex) {
-  std::vector<std::vector<Program*>> levels;
+  std::vector<std::vector<ProgramPtr>> levels;
   folly::F14FastSet<Program*> toAdd;
   for (auto i = 0; i < allPrograms_.size(); ++i) {
     toAdd.insert(allPrograms_[i].get());
   }
   while (!toAdd.empty()) {
-    std::vector<Program*> level;
+    std::vector<ProgramPtr> level;
     for (auto& program : toAdd) {
       auto& depends = program->dependsOn();
       auto independent = true;
@@ -224,7 +224,7 @@ std::vector<std::vector<Program*>> CompileState::makeLevels(
         }
       }
       if (independent) {
-        level.push_back(program);
+        level.push_back(program->shared_from_this());
       }
     }
     for (auto added : level) {

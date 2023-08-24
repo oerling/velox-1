@@ -59,7 +59,7 @@ class CompileState {
 
   std::vector<AbstractOperand*>
   addExprSet(const exec::ExprSet& set, int32_t begin, int32_t end);
-  std::vector<std::vector<Program*>> makeLevels(int32_t startIndex);
+  std::vector<std::vector<ProgramPtr>> makeLevels(int32_t startIndex);
 
   GpuArena& arena() const {
     return *arena_;
