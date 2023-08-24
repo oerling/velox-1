@@ -316,7 +316,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     for (auto i = 0; i < blocksPerExe; ++i) {
       auto status = &control.status[i];
       status->numRows =
-          i == blocksPerExe - 1 ? blocksPerExe % kBlockSize : kBlockSize;
+          i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
   } else {
     control.status = nullptr;

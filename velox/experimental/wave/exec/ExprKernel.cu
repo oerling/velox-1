@@ -32,7 +32,10 @@ __device__ inline void binaryOpKernel(
     int32_t blockBase,
     char* shared,
     BlockStatus* status) {
-  flatResult<T>(operands, op.result, blockBase, shared) = func(
+    if (threadIdx.x >= status->numRows) {
+    return;
+}
+flatResult<T>(operands, op.result, blockBase, shared) = func(
       getOperand<T>(operands, op.left, blockBase, shared),
       getOperand<T>(operands, op.left, blockBase, shared));
 }

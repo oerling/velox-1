@@ -126,7 +126,7 @@ struct Instruction {
 };
 
 ///
-enum class ErrorCode : int32_t {
+enum class ErrorCode : uint8_t {
   // All operations completed.
   kOk = 0,
 
