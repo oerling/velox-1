@@ -258,12 +258,14 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t inputRows,
     folly::Range<Executable**> exes,
     int32_t blocksPerExe,
+    bool initStatus,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
+  int32_t shared = 0;
 
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
-  int32_t numBlocks = exes.size() * blocksPerExe;
+  int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   auto exeOffset = size;
   // 2 pointers per exe: TB program and start of its param array.
@@ -273,15 +275,18 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t numTotalOps = 0;
   for (auto& exe : exes) {
     markLaunch(*stream, *exe);
+    shared = std::max(shared, exe->programShared->sharedMemorySize());
     int32_t numIn = exe->inputOperands.size();
     int numOps = numIn + exe->intermediates.size() + exe->outputOperands.size();
     numTotalOps += numOps;
     size += numOps * sizeof(void*) + (numOps - numIn) * sizeof(Operand);
   }
-  auto statusOffset = size;
-  //  Pointer to return block for each tB.
-  size += numBlocks * (sizeof(void*) + sizeof(BlockStatus));
-
+  int32_t statusOffset = 0;
+  if (initStatus) {
+    statusOffset = size;
+    //  Pointer to return block for each tB.
+    size += blocksPerExe * sizeof(BlockStatus);
+  }
   auto buffer = arena_.allocate<char>(size);
 
   auto controlUnique = std::make_unique<LaunchControl>();
@@ -289,6 +294,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 
   control.key = key;
   control.inputRows = inputRows;
+  control.sharedMemorySize = shared;
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
   auto start = buffer->as<int32_t>();
@@ -298,7 +304,23 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
   Operand* operandArrayBegin =
       addBytes<Operand*>(operandPtrBegin, numTotalOps * sizeof(void*));
-  control.status = addBytes<BlockStatus*>(start, statusOffset);
+  if (initStatus) {
+    // If the launch produces new statuses (as opposed to updating status of a
+    // previous launch), there is an array with a status for each TB. If there
+    // are multiple exes, they all share the same error codes. A launch can have
+    // a single cardinality change, which will update the row counts in each TB.
+    // Writing errors is not serialized but each lane with at least one error
+    // will show one error.
+    control.status = addBytes<BlockStatus*>(start, statusOffset);
+    memset(control.status, 0, blocksPerExe * sizeof(BlockStatus));
+    for (auto i = 0; i < blocksPerExe; ++i) {
+      auto status = &control.status[i];
+      status->numRows =
+          i == blocksPerExe - 1 ? blocksPerExe % kBlockSize : kBlockSize;
+    }
+  } else {
+    control.status = nullptr;
+  }
   for (auto exeIdx = 0; exeIdx < exes.size(); ++exeIdx) {
     auto exe = exes[exeIdx];
     int32_t numIn = exe->inputOperands.size();
@@ -389,6 +411,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         space->_.binary.right = operandIndex(bin.right);
         space->_.binary.result = operandIndex(bin.result);
         ++space;
+        break;
       }
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
@@ -439,10 +462,13 @@ OperandIndex Program::operandIndex(AbstractOperand* op) const {
   if (it == local_.end()) {
     VELOX_FAIL("Bad operand, offset not known");
   }
-  return it->second + input_.size();
+  return it->second;
 }
 
 void Program::markInput(AbstractOperand* op) {
+  if (!op) {
+    return;
+  }
   if (!local_.count(op)) {
     input_[op] = input_.size();
   }

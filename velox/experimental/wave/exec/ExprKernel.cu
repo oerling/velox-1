@@ -100,7 +100,7 @@ __global__ void waveBaseKernel(
   int programIndex = programIndices[blockIdx.x];
   auto* program = programs[programIndex];
   auto* operands = programOperands[programIndex];
-  auto* status = &blockStatusArray[blockIdx.x];
+  auto* status = &blockStatusArray[blockIdx.x - baseIndices[blockIdx.x]];
   int32_t blockBase = (blockIdx.x - baseIndices[blockIdx.x]) * blockDim.x;
   for (auto i = 0; i < program->numInstructions; ++i) {
     auto instruction = program->instructions[i];

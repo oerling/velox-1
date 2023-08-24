@@ -110,6 +110,16 @@ void WaveDriver::prefetchReturn(WaveStream& stream) {
   auto& ids = last->outputIds();
 }
 
+LaunchControl* WaveDriver::inputControl(WaveStream& stream, int32_t operatorId) {
+  VELOX_CHECK_LT(0, operatorId, "Op 0 has no input control");
+  for (auto i = operatorId- 1; i >= 0; --i) {
+    if (i == 0 || waveOperators_[i]->isFilter() || waveOperators_[i]->isExpanding()) {
+      return stream.launchControls(i).back().get();
+    }
+  }
+  VELOX_FAIL();
+}
+
 std::string WaveDriver::toString() const {
   std::stringstream out;
   out << "{Wave" << std::endl;

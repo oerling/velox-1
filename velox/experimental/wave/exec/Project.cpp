@@ -33,8 +33,18 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     auto range = folly::Range(data, data + exes.size());
     stream.installExecutables(
         range, [&](Stream* out, folly::Range<Executable**> exes) {
+	  auto inputControl = driver_->inputControl(stream, id_);
           auto control = stream.prepareProgramLaunch(
-              id_, maxRows, exes, blocksPerExe, out);
+						     id_, maxRows, exes, blocksPerExe, false, out);
+          reinterpret_cast<WaveKernelStream*>(out)->call(
+              out,
+              exes.size() * blocksPerExe,
+              control->blockBase,
+              control->programIdx,
+              control->programs,
+              control->operands,
+              inputControl->status,
+              control->sharedMemorySize);
         });
   }
 }

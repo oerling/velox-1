@@ -108,6 +108,9 @@ class WaveOperator {
   virtual void finalize(CompileState& state) {}
 
  protected:
+  // Sequence number in WaveOperator sequence inside WaveDriver. IUsed to label  states of different oprators in WaveStream.
+  int32_t id_;
+
   WaveDriver* driver_{nullptr};
 
   // The Subfields that are produced. Different ones can arrive at

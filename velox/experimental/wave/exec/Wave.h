@@ -185,6 +185,9 @@ class Program : public std::enable_shared_from_this<Program> {
     prepared_.push_back(std::move(exe));
   }
 
+  int32_t sharedMemorySize() const {
+    return sharedMemorySize_;
+  }
  private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
@@ -213,6 +216,7 @@ class Program : public std::enable_shared_from_this<Program> {
   // Device resident program.
   ThreadBlockProgram* program_;
 
+  int32_t sharedMemorySize_{0};
   // Serializes 'prepared_'. Access on WaveStrea, is single threaded but sharing
   // Programs across WaveDrivers makes sense, so make the preallocated resource
   // thread safe.
@@ -315,6 +319,7 @@ class WaveStream {
       int32_t inputRows,
       folly::Range<Executable**> exes,
       int32_t blocksPerExe,
+      bool initstatus,
       Stream* stream);
 
   const std::vector<std::unique_ptr<LaunchControl>>& launchControls(
@@ -392,7 +397,8 @@ struct LaunchControl {
 
   // the status return block for each TB.
   BlockStatus* status;
-
+  int32_t sharedMemorySize{0};
+  
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
 };

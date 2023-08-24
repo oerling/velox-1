@@ -246,7 +246,7 @@ void CompileState::addFilterProject(
   auto operands = addExprSet(*data.exprs, 0, data.exprs->exprs().size());
   auto levels = makeLevels(numPrograms);
   operators_.push_back(std::make_unique<Project>(
-      *this, outputType, operands, levels, 1 + operators_.size()));
+      *this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -263,7 +263,7 @@ bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
     RowTypePtr& outputType) {
-  auto& name = op->stats().rlock()->operatorType;
+  auto& name = op->operatorType();
   if (name == "Values") {
     if (!reserveMemory()) {
       return false;
