@@ -245,8 +245,8 @@ void CompileState::addFilterProject(
   int32_t numPrograms = allPrograms_.size();
   auto operands = addExprSet(*data.exprs, 0, data.exprs->exprs().size());
   auto levels = makeLevels(numPrograms);
-  operators_.push_back(std::make_unique<Project>(
-      *this, outputType, operands, levels));
+  operators_.push_back(
+      std::make_unique<Project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {

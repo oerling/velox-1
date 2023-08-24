@@ -62,9 +62,11 @@ class WaveDriver : public exec::SourceOperator {
     return operands_;
   }
 
-  /// Returns the control block with thread block level sizes and statuses for input of  operator with id 'operator'. This is te control for the source or previous cardinality change.
+  /// Returns the control block with thread block level sizes and statuses for
+  /// input of  operator with id 'operator'. This is te control for the source
+  /// or previous cardinality change.
   LaunchControl* inputControl(WaveStream& stream, int32_t operatorId);
-  
+
   std::string toString() const override;
 
  private:

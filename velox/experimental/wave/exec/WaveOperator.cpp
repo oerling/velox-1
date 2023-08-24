@@ -20,7 +20,7 @@
 namespace facebook::velox::wave {
 
 WaveOperator::WaveOperator(CompileState& state, const RowTypePtr& type)
-  : id_(state.numOperators()), outputType_(type) {
+    : id_(state.numOperators()), outputType_(type) {
   definesSubfields(state, outputType_);
 }
 

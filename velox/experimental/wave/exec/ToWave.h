@@ -68,7 +68,7 @@ class CompileState {
   int numOperators() const {
     return operators_.size();
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);

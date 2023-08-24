@@ -25,8 +25,7 @@ class Project : public WaveOperator {
       RowTypePtr outputType,
       std::vector<AbstractOperand*> operands,
       std::vector<std::vector<Program*>> levels)
-      : WaveOperator(state, outputType),
-        levels_(std::move(levels)) {}
+      : WaveOperator(state, outputType), levels_(std::move(levels)) {}
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 

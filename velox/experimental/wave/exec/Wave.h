@@ -188,6 +188,7 @@ class Program : public std::enable_shared_from_this<Program> {
   int32_t sharedMemorySize() const {
     return sharedMemorySize_;
   }
+
  private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
@@ -398,7 +399,7 @@ struct LaunchControl {
   // the status return block for each TB.
   BlockStatus* status;
   int32_t sharedMemorySize{0};
-  
+
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
 };
