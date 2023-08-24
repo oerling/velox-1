@@ -228,7 +228,7 @@ std::vector<std::vector<ProgramPtr>> CompileState::makeLevels(
       }
     }
     for (auto added : level) {
-      toAdd.erase(added);
+      toAdd.erase(added.get());
     }
     levels.push_back(std::move(level));
   }

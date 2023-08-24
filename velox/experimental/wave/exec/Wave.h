@@ -108,10 +108,11 @@ struct Executable {
   // Operand ids for outputs.
   OperandSet outputOperands;
 
-  // Unified memory Operand structs. First input, then output. the instructions
-  // in 'program' reference these. The device side memory is referenced as raw
-  // pointers and its ownership is managed by 'intermediates' and 'output'
-  // below.
+  // Unified memory Operand structs for intermediates/outputs. These
+  // are a contiguous array of Operand in LaunchControl of 'this'
+
+
+
   Operand* operands;
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
@@ -363,7 +364,6 @@ class WaveStream {
       launchControl_;
 
   folly::F14FastMap<int32_t, WaveBufferPtr> extraData_;
-  std::vector<void*> paramTemp_;
 };
 
 /// Describes all the control data for launching a kernel executing

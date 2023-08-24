@@ -300,6 +300,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   auto start = buffer->as<int32_t>();
   control.blockBase = start;
   control.programIdx = start + numBlocks;
+  control.programs = addBytes<ThreadBlockProgram**>(
+      control.programIdx, numBlocks * sizeof(int32_t));
+  control.operands = addBytes<Operand***>(
+					  control.programs, exes.size() * sizeof(void*));
   int32_t fill = 0;
   Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
   Operand* operandArrayBegin =
@@ -336,6 +340,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++operandPtrBegin;
     });
     // We install the intermediates and outputs from the WaveVectors in the exe.
+    exe->operands = operandArrayBegin;
     for (auto& vec : exe->intermediates) {
       *operandPtrBegin = operandArrayBegin;
       vec->toOperand(operandArrayBegin);
@@ -348,7 +353,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++operandPtrBegin;
       ++operandArrayBegin;
     }
-    control.programs[exeIdx] = exe->program;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
       control.blockBase[fill] = exeIdx * blocksPerExe;
       control.programIdx[fill] = exeIdx;
@@ -387,16 +391,16 @@ void Program::prepareForDevice(GpuArena& arena) {
     }
   sortSlots();
   arena_ = &arena;
-  auto buffer = arena.allocate<char>(
+  deviceData_ = arena.allocate<char>(
       codeSize + instructions_.size() * sizeof(void*) +
       sizeof(ThreadBlockProgram));
-  program_ = buffer->as<ThreadBlockProgram>();
+  program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
   program_->sharedMemorySize = sharedMemorySize;
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
   Instruction* space =
-      addBytes<Instruction*>(program_, instructions_.size() * sizeof(void*));
+      addBytes<Instruction*>(instructionArray, instructions_.size() * sizeof(void*));
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;
@@ -493,13 +497,13 @@ std::unique_ptr<Executable> Program::getExecutable(
   }
   if (!exe) {
     exe = std::make_unique<Executable>();
+    exe->programShared = shared_from_this();
     exe->program = program_;
     for (auto& pair : input_) {
       exe->inputOperands.add(pair.first->id);
     }
     for (auto& pair : local_) {
-      exe->outputOperands.add(pair.second);
-      exe->programShared = shared_from_this();
+      exe->outputOperands.add(pair.first->id);
     }
     exe->output.resize(local_.size());
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
@@ -514,5 +518,6 @@ std::unique_ptr<Executable> Program::getExecutable(
         exe->output[nth], operands[id]->type, maxRows, true, *arena_);
     ++nth;
   });
+  return exe;
 }
 } // namespace facebook::velox::wave

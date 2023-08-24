@@ -41,13 +41,8 @@ constexpr OperandId kNoOperand = ~0;
 
 struct Operand {
   static constexpr int32_t kPointersInOperand = 4;
-  static constexpr uint16_t kGlobal = ~0;
 
   int32_t indexMask{~0};
-
-  // If != !0, this indicates that instead of base, we use the thread block's
-  // shared memry base + 'sharedOffset'.
-  uint16_t sharedOffset{kGlobal};
 
   // Array of flat base values. Cast to pod type or StringView.
   void* base;
