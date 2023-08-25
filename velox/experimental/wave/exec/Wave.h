@@ -196,7 +196,7 @@ class Program : public std::enable_shared_from_this<Program> {
   const folly::F14FastMap<AbstractOperand*, int32_t>& localAndOutput() const {
     return local_;
   }
-  
+
  private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;

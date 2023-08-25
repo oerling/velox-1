@@ -40,7 +40,9 @@ class FilterProjectTest : public OperatorTestBase {
     assertQuery(plan, "SELECT * FROM tmp WHERE " + filter);
   }
 
-  void makeNotNull(RowVectorPtr row, int64_t mod = std::numeric_limits<int64_t>::max()) {
+  void makeNotNull(
+      RowVectorPtr row,
+      int64_t mod = std::numeric_limits<int64_t>::max()) {
     for (auto i = 0; i < row->type()->size(); ++i) {
       auto child = row->childAt(i);
       if (auto ints = child->as<FlatVector<int64_t>>()) {
@@ -51,7 +53,6 @@ class FilterProjectTest : public OperatorTestBase {
       child->clearNulls(0, row->size());
     }
   }
-
 
   void assertProject(const std::vector<RowVectorPtr>& vectors) {
     auto plan = PlanBuilder()

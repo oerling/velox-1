@@ -512,7 +512,7 @@ std::unique_ptr<Executable> Program::getExecutable(
       program->releaseExe(std::move(ptr));
     };
 
-  }  // We have an exe, whether new or reused. Check the vectors.
+  } // We have an exe, whether new or reused. Check the vectors.
   int32_t nth = 0;
   exe->outputOperands.forEach([&](int32_t id) {
     ensureWaveVector(

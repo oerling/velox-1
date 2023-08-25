@@ -40,7 +40,7 @@ class Project : public WaveOperator {
   const OperandSet& syncSet() const override {
     return computedSet_;
   }
-  
+
  private:
   std::vector<std::vector<ProgramPtr>> levels_;
   OperandSet computedSet_;

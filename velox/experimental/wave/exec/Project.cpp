@@ -54,8 +54,8 @@ void Project::finalize(CompileState& state) {
     for (auto& program : level) {
       program->prepareForDevice(state.arena());
       for (auto& pair : program->localAndOutput()) {
-	computedSet_.add(pair.first->id);
-	}
+        computedSet_.add(pair.first->id);
+      }
     }
   }
 }
