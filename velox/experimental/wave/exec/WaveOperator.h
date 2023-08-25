@@ -125,6 +125,7 @@ class WaveOperator {
   int32_t operatorId() const {
     return id_;
   }
+
  protected:
   // Sequence number in WaveOperator sequence inside WaveDriver. IUsed to label
   // states of different oprators in WaveStream.
