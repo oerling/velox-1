@@ -37,33 +37,61 @@ WaveDriver::WaveDriver(
           planNodeId,
           "Wave"),
       arena_(std::move(arena)),
-      waveOperators_(std::move(waveOperators)),
       resultOrder_(std::move(resultOrder)),
       subfields_(std::move(subfields)),
       operands_(std::move(operands)) {
-  for (auto& op : waveOperators_) {
+  VELOX_CHECK(!waveOperators.empty());
+  pipelines_.emplace_back();
+  for (auto& op : waveOperators) {
     op->setDriver(this);
+    if (!op->isStreaming()) {
+      pipelines_.emplace_back();
+    }
+    pipelines_.back().operators.push_back(std::move(op));
   }
 }
 
 RowVectorPtr WaveDriver::getOutput() {
   for (;;) {
     startMore();
-    if (streams_.empty()) {
+    bool running = false;
+    for (int i = pipelines_.size() - 1; i >= 0; --i) {
+      if (pipelines_[i].streams.empty()) {
+        continue;
+      }
+      auto& op = *pipelines_[i].operators.back();
+      auto& lastSet = op.syncSet();
+      auto& streams = pipelines_[i].streams;
+      for (auto it = streams.begin(); it != streams.end();) {
+        auto& stream = *it;
+        if (!stream->isArrived(lastSet)) {
+          ++it;
+          continue;
+        }
+        RowVectorPtr result;
+        if (i + 1 < pipelines_.size()) {
+          pipelines_[i + 1].operators[0]->enqueue(
+              makeWaveResult(op.outputType(), *stream, lastSet));
+        } else {
+          result = makeResult(*stream, lastSet);
+        }
+        if (streamAtEnd(*stream)) {
+          it = streams.erase(it);
+        } else {
+          ++it;
+        }
+        if (result) {
+          return result;
+        }
+      }
+      if (i + 1 < pipelines_.size()) {
+        pipelines_[i + 1].operators[0]->flush();
+      }
+      running = true;
+    }
+    if (!running) {
       finished_ = true;
       return nullptr;
-    }
-    auto* last = waveOperators_.back().get();
-    auto& lastSet = last->syncSet();
-    for (auto i = 0; i < streams_.size(); ++i) {
-      auto stream = streams_[i].get();
-      if (stream->isArrived(lastSet)) {
-        auto result = makeResult(*stream, last->outputIds());
-        if (streamAtEnd(*stream)) {
-          streams_.erase(streams_.begin() + i);
-        }
-        return result;
-      }
     }
   }
 }
@@ -71,10 +99,26 @@ RowVectorPtr WaveDriver::getOutput() {
 bool WaveDriver::streamAtEnd(WaveStream& stream) {
   return true;
 }
+
+WaveVectorPtr WaveDriver::makeWaveResult(
+    const TypePtr& rowType,
+    WaveStream& stream,
+    const OperandSet& lastSet) {
+  auto result = WaveVector::create(rowType, *arena_);
+  int32_t nthChild = 0;
+  lastSet.forEach([&](int32_t id) {
+    auto exe = stream.operandExecutable(id);
+    VELOX_CHECK_NOT_NULL(exe);
+    auto ordinal = exe->outputOperands.ordinal(id);
+    result->setChildAt(nthChild++, std::move(exe->output[ordinal]));
+  });
+  return result;
+}
+
 RowVectorPtr WaveDriver::makeResult(
     WaveStream& stream,
     const OperandSet& lastSet) {
-  auto& last = *waveOperators_.back();
+  auto& last = *pipelines_.back().operators.back();
   auto& rowType = last.outputType();
   std::vector<VectorPtr> children(rowType->size());
   auto result = std::make_shared<RowVector>(
@@ -95,42 +139,53 @@ RowVectorPtr WaveDriver::makeResult(
 }
 
 void WaveDriver::startMore() {
-  auto rows = waveOperators_[0]->canAdvance();
-  if (!rows) {
-    return;
+  for (int i = 0; i < pipelines_.size(); ++i) {
+    auto& ops = pipelines_[i].operators;
+    if (auto rows = ops[0]->canAdvance()) {
+      auto stream = std::make_unique<WaveStream>(*arena_);
+      for (auto& op : ops) {
+        op->schedule(*stream, rows);
+      }
+      if (i == pipelines_.size() - 1) {
+        prefetchReturn(*stream);
+      }
+      pipelines_[i].streams.push_back(std::move(stream));
+      break;
+    }
   }
-  streams_.push_back(std::make_unique<WaveStream>(*arena_));
-  auto& stream = *streams_.back();
-  for (auto i = 0; i < waveOperators_.size(); ++i) {
-    waveOperators_[i]->schedule(stream, rows);
-  }
-  prefetchReturn(stream);
 }
 
 void WaveDriver::prefetchReturn(WaveStream& stream) {
   // Schedule return buffers from last op to be on host side.
-  auto& last = waveOperators_.back();
-  auto& ids = last->outputIds();
 }
 
 LaunchControl* WaveDriver::inputControl(
     WaveStream& stream,
     int32_t operatorId) {
-  VELOX_CHECK_LT(0, operatorId, "Op 0 has no input control");
-  for (auto i = operatorId - 1; i >= 0; --i) {
-    if (i == 0 || waveOperators_[i]->isFilter() ||
-        waveOperators_[i]->isExpanding()) {
-      return stream.launchControls(i).back().get();
+  for (auto& pipeline : pipelines_) {
+    if (operatorId > pipeline.operators.back()->operatorId()) {
+      continue;
+    }
+    operatorId -= pipeline.operators[0]->operatorId();
+    VELOX_CHECK_LT(0, operatorId, "Op 0 has no input control");
+    for (auto i = operatorId - 1; i >= 0; --i) {
+      if (i == 0 || pipeline.operators[i]->isFilter() ||
+          pipeline.operators[i]->isExpanding()) {
+        return stream.launchControls(i).back().get();
+      }
     }
   }
   VELOX_FAIL();
 }
 
 std::string WaveDriver::toString() const {
-  std::stringstream out;
+  std::ostringstream out;
   out << "{Wave" << std::endl;
-  for (auto& op : waveOperators_) {
-    out << op->toString() << std::endl;
+  for (auto& pipeline : pipelines_) {
+    out << "{Pipeline" << std::endl;
+    for (auto& op : pipeline.operators) {
+      out << op->toString() << std::endl;
+    }
   }
   return out.str();
 }

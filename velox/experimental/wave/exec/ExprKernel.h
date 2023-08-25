@@ -131,7 +131,9 @@ enum class ErrorCode : uint8_t {
   kOk = 0,
 
   // Catchall for runtime errors.
-  kError
+  kError,
+
+  kInsuffcientMemory,
 };
 
 /// Contains a count of active lanes and a per lane error code.

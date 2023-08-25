@@ -69,6 +69,10 @@ class CompileState {
     return operators_.size();
   }
 
+  GpuArena& arena() {
+    return *arena_;
+  }
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);

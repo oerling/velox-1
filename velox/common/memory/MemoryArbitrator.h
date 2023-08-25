@@ -43,9 +43,9 @@ class MemoryArbitrator {
   struct Config {
     /// The string kind of this memory arbitrator.
     ///
-    /// NOTE: the arbitrator will only be created if its kind is set explicitly.
-    /// Otherwise MemoryArbitrator::create returns a nullptr.
-    std::string kind;
+    /// NOTE: If kind is not set, a noop arbitrator is created which grants the
+    /// maximum capacity to each newly created memory pool.
+    std::string kind{};
 
     /// The total memory capacity in bytes of all the running queries.
     ///
@@ -102,7 +102,7 @@ class MemoryArbitrator {
   /// nullptr, and the memory arbitration function is disabled.
   static std::unique_ptr<MemoryArbitrator> create(const Config& config);
 
-  virtual std::string kind() = 0;
+  virtual std::string kind() const = 0;
 
   uint64_t capacity() const {
     return capacity_;

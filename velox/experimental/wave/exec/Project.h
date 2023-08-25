@@ -27,6 +27,10 @@ class Project : public WaveOperator {
       std::vector<std::vector<ProgramPtr>> levels)
       : WaveOperator(state, outputType), levels_(std::move(levels)) {}
 
+  bool isStreaming() const override {
+    return true;
+  }
+
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   vector_size_t outputSize(WaveStream& stream) const override;

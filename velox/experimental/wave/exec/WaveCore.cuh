@@ -16,8 +16,9 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/Block.cuh"
-#include "velox/experimental/wave/exec/ExprKernel.h"
+#include <cuda_runtime.h> // @manual
+
+#include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
   
