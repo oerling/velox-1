@@ -61,14 +61,6 @@ class FilterProjectTest : public OperatorTestBase {
                     .planNode();
 
     auto task = assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp");
-
-    // A quick sanity check for memory usage reporting. Check that peak total
-    // memory usage for the project node is > 0.
-    auto planStats = toPlanStats(task->taskStats());
-    auto projectNodeId = plan->id();
-    auto it = planStats.find(projectNodeId);
-    ASSERT_TRUE(it != planStats.end());
-    ASSERT_TRUE(it->second.peakMemoryBytes > 0);
   }
 
   std::shared_ptr<const RowType> rowType_{

@@ -51,7 +51,11 @@ __device__ inline T& flatResult(Operand** operands, OperandIndex opIdx,  int32_t
   if (opIdx >= kMinSharedMemIndex) {
     return reinterpret_cast<T*>(shared  + opIdx - kMinSharedMemIndex)[threadIdx.x];
   }
-  return reinterpret_cast<T*>(operands[opIdx]->base)[blockBase + threadIdx.x];
+  auto* op = operands[opIdx];
+  if (op->nulls) {
+    op->nulls[blockBase + threadIdx.x] = kNotNull;
+}
+return reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
 }
 
 } // namespace facebook::velox::wave
