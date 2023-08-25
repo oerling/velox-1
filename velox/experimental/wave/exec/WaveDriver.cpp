@@ -27,6 +27,7 @@ WaveDriver::WaveDriver(
     int32_t operatorId,
     std::unique_ptr<GpuArena> arena,
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
+    std::vector<OperandId> resultOrder,
     SubfieldMap subfields,
     std::vector<std::unique_ptr<AbstractOperand>> operands)
     : exec::SourceOperator(
@@ -37,6 +38,7 @@ WaveDriver::WaveDriver(
           "Wave"),
       arena_(std::move(arena)),
       waveOperators_(std::move(waveOperators)),
+      resultOrder_(std::move(resultOrder)),
       subfields_(std::move(subfields)),
       operands_(std::move(operands)) {
   for (auto& op : waveOperators_) {
@@ -51,11 +53,12 @@ RowVectorPtr WaveDriver::getOutput() {
       finished_ = true;
       return nullptr;
     }
-    auto& lastSet = waveOperators_.back()->outputIds();
+    auto* last = waveOperators_.back().get();
+    auto& lastSet = last->syncSet();
     for (auto i = 0; i < streams_.size(); ++i) {
       auto stream = streams_[i].get();
       if (stream->isArrived(lastSet)) {
-        auto result = makeResult(*stream, lastSet);
+        auto result = makeResult(*stream, last->outputIds());
         if (streamAtEnd(*stream)) {
           streams_.erase(streams_.begin() + i);
         }
@@ -81,13 +84,13 @@ RowVectorPtr WaveDriver::makeResult(
       last.outputSize(stream),
       std::move(children));
   int32_t nthChild = 0;
-  lastSet.forEach([&](int32_t id) {
+  for (auto id : resultOrder_) {
     auto exe = stream.operandExecutable(id);
     VELOX_CHECK_NOT_NULL(exe);
     auto ordinal = exe->outputOperands.ordinal(id);
     auto waveVector = std::move(exe->output[ordinal]);
     result->childAt(nthChild++) = waveVector->toVelox(operatorCtx_->pool());
-  });
+  };
   return result;
 }
 

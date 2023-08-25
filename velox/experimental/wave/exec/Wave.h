@@ -90,6 +90,12 @@ struct Executable {
       std::vector<Transfer>&& transfers,
       WaveStream& stream);
 
+  // Clear state to prepare for reuse.
+  void reuse() {
+    operands = nullptr;
+    stream = nullptr;
+  }
+
   // The Program this is an invocationn of. nullptr if 'this' represents a data
   // transfer.
   std::shared_ptr<Program> programShared;
@@ -110,7 +116,6 @@ struct Executable {
 
   // Unified memory Operand structs for intermediates/outputs. These
   // are a contiguous array of Operand in LaunchControl of 'this'
-
   Operand* operands;
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
@@ -188,6 +193,10 @@ class Program : public std::enable_shared_from_this<Program> {
     return sharedMemorySize_;
   }
 
+  const folly::F14FastMap<AbstractOperand*, int32_t>& localAndOutput() const {
+    return local_;
+  }
+  
  private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;

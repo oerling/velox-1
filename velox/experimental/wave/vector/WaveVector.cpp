@@ -50,7 +50,7 @@ void WaveVector::toOperand(Operand* operand) const {
   if (encoding_ == VectorEncoding::Simple::FLAT) {
     operand->indexMask = ~0;
     operand->base = values_->as<int64_t>();
-    operand->base = nulls_ ? nulls_->as<uint8_t>() : nullptr;
+    operand->nulls = nulls_ ? nulls_->as<uint8_t>() : nullptr;
     operand->indices = nullptr;
   } else {
     VELOX_UNSUPPORTED();

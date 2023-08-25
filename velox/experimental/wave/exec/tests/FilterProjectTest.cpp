@@ -40,11 +40,18 @@ class FilterProjectTest : public OperatorTestBase {
     assertQuery(plan, "SELECT * FROM tmp WHERE " + filter);
   }
 
-  void makeNotNull(RowVectorPtr row) {
+  void makeNotNull(RowVectorPtr row, int64_t mod = std::numeric_limits<int64_t>::max()) {
     for (auto i = 0; i < row->type()->size(); ++i) {
-      row->childAt(i)->clearNulls(0, row->size());
+      auto child = row->childAt(i);
+      if (auto ints = child->as<FlatVector<int64_t>>()) {
+        for (auto i = 0; i < child->size(); ++i) {
+          ints->set(i, ints->valueAt(i) % mod);
+        }
+      }
+      child->clearNulls(0, row->size());
     }
   }
+
 
   void assertProject(const std::vector<RowVectorPtr>& vectors) {
     auto plan = PlanBuilder()
@@ -85,6 +92,7 @@ TEST_F(FilterProjectTest, project) {
   for (int32_t i = 0; i < 10; ++i) {
     auto vector = std::dynamic_pointer_cast<RowVector>(
         BatchMaker::createBatch(rowType_, 100, *pool_));
+    makeNotNull(vector, 1000000000);
     vectors.push_back(vector);
   }
   createDuckDbTable(vectors);

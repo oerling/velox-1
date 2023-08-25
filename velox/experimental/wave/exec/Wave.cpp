@@ -508,10 +508,11 @@ std::unique_ptr<Executable> Program::getExecutable(
     exe->output.resize(local_.size());
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
       auto program = ptr->programShared.get();
+      ptr->reuse();
       program->releaseExe(std::move(ptr));
     };
-  }
-  // We have an exe, whether new or reused. Check the vectors.
+
+  }  // We have an exe, whether new or reused. Check the vectors.
   int32_t nth = 0;
   exe->outputOperands.forEach([&](int32_t id) {
     ensureWaveVector(

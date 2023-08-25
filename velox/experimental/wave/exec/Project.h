@@ -37,8 +37,13 @@ class Project : public WaveOperator {
     return "Project";
   }
 
+  const OperandSet& syncSet() const override {
+    return computedSet_;
+  }
+  
  private:
   std::vector<std::vector<ProgramPtr>> levels_;
+  OperandSet computedSet_;
 };
 
 } // namespace facebook::velox::wave
