@@ -39,9 +39,9 @@ constexpr OperandId kNoOperand = ~0;
 /// shared memory pointer to thread block shared memory. Some operands may come
 /// from thread block shared memory.
 
-  constexpr uint8_t kNull = 0;
-  constexpr uint8_t kNotNull = 255;
-  
+constexpr uint8_t kNull = 0;
+constexpr uint8_t kNotNull = 255;
+
 struct Operand {
   static constexpr int32_t kPointersInOperand = 4;
 

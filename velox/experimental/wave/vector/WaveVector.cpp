@@ -15,8 +15,8 @@
  */
 
 #include "velox/experimental/wave/vector/WaveVector.h"
-#include "velox/vector/FlatVector.h"
 #include "velox/common/base/SimdUtil.h"
+#include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::wave {
 
@@ -61,7 +61,7 @@ void WaveVector::toOperand(Operand* operand) const {
 void toBits(uint64_t* words, int32_t numBytes) {
   auto data = reinterpret_cast<uint8_t*>(words);
   auto zero = xsimd::broadcast<uint8_t>(0);
-  for (auto i = 0; i < numBytes; i +=   xsimd::batch<uint8_t>::size) {
+  for (auto i = 0; i < numBytes; i += xsimd::batch<uint8_t>::size) {
     auto flags = xsimd::batch<uint8_t>::load_unaligned(data) != zero;
     uint32_t bits = simd::toBitMask(flags);
     reinterpret_cast<uint32_t*>(words)[i / sizeof(flags)] = bits;
