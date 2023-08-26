@@ -17,8 +17,9 @@
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/memory/MallocAllocator.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/dwio/common/DataSink.h"
+#include "velox/dwio/common/FileSink.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -42,18 +43,22 @@ void OperatorTestBase::registerVectorSerde() {
 }
 
 OperatorTestBase::~OperatorTestBase() {
+  // Wait for all the tasks to be deleted.
+  exec::test::waitForAllTasksToBeDeleted();
   // Revert to default process-wide MemoryAllocator.
   memory::MemoryAllocator::setDefaultInstance(nullptr);
 }
 
 void OperatorTestBase::SetUpTestCase() {
+  memory::MemoryArbitrator::registerAllFactories();
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   TestValue::enable();
 }
 
 void OperatorTestBase::TearDownTestCase() {
-  Task::testingWaitForAllTasksToBeDeleted();
+  waitForAllTasksToBeDeleted();
+  memory::MemoryArbitrator::unregisterAllFactories();
 }
 
 void OperatorTestBase::SetUp() {
@@ -62,7 +67,7 @@ void OperatorTestBase::SetUp() {
   }
   driverExecutor_ = std::make_unique<folly::CPUThreadPoolExecutor>(3);
   ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(3);
-  allocator_ = memory::MemoryAllocator::createDefaultInstance();
+  allocator_ = std::make_shared<memory::MallocAllocator>(8L << 30);
   if (!asyncDataCache_) {
     asyncDataCache_ = cache::AsyncDataCache::create(allocator_.get());
     cache::AsyncDataCache::setInstance(asyncDataCache_.get());
@@ -72,7 +77,7 @@ void OperatorTestBase::SetUp() {
 
 void OperatorTestBase::TearDown() {
   if (asyncDataCache_ != nullptr) {
-    asyncDataCache_->prepareShutdown();
+    asyncDataCache_->shutdown();
   }
 }
 
@@ -172,7 +177,7 @@ core::TypedExprPtr OperatorTestBase::parseExpr(
 
   // Wait for the task to go.
   task.reset();
-  Task::testingWaitForAllTasksToBeDeleted();
+  waitForAllTasksToBeDeleted();
 
   // If a spilling directory was set, ensure it was removed after the task is
   // gone.

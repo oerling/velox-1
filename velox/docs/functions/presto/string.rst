@@ -70,6 +70,13 @@ String Functions
 
     Removes leading whitespace from string.
 
+.. function:: ltrim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the beginning of the ``string``. ::
+
+        SELECT ltrim('test', 't'); -- est
+        SELECT ltrim('tetris', 'te'); -- ris
+
 .. function:: replace(string, search) -> varchar
 
     Removes all instances of ``search`` from ``string``.
@@ -98,6 +105,13 @@ String Functions
 
     Removes trailing whitespace from string.
 
+.. function:: rtrim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the end of the ``string``. ::
+
+        SELECT rtrim('test', 't'); -- tes
+        SELECT rtrim('test...', '.'); -- test
+
 .. function:: split(string, delimiter) -> array(string)
 
     Splits ``string`` on ``delimiter`` and returns an array.
@@ -116,6 +130,17 @@ String Functions
 
     Field indexes start with 1. If the index is larger than the number of fields,
     then null is returned.
+
+.. function:: split_to_map(string, entryDelimiter, keyValueDelimiter) -> map<varchar, varchar>
+
+    Splits ``string`` by ``entryDelimiter`` and ``keyValueDelimiter`` and returns a map.
+    ``entryDelimiter`` splits ``string`` into key-value pairs. ``keyValueDelimiter`` splits
+    each pair into key and value. Note that ``entryDelimiter`` and ``keyValueDelimiter`` are
+    interpreted literally, i.e., as full string matches.
+
+    entryDelimiter and keyValueDelimiter must not be empty and must not be the same.
+
+    Raises an error if there are duplicate keys.
 
 .. function:: strpos(string, substring) -> bigint
 
@@ -160,6 +185,13 @@ String Functions
 .. function:: trim(string) -> varchar
 
     Removes starting and ending whitespaces from ``string``.
+
+.. function:: trim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the beginning and end of the ``string``. ::
+
+        SELECT trim('test', 't'); -- es
+        SELECT trim('.t.e.s.t.', '.t'); -- e.s
 
 .. function:: upper(string) -> varchar
 

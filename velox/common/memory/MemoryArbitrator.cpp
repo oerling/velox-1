@@ -16,38 +16,149 @@
 
 #include "velox/common/memory/MemoryArbitrator.h"
 
+#include <utility>
+
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/SharedArbitrator.h"
 
 namespace facebook::velox::memory {
-std::string MemoryArbitrator::kindString(Kind kind) {
-  switch (kind) {
-    case Kind::kNoOp:
-      return "NOOP";
-    case Kind::kShared:
-      return "SHARED";
-    default:
-      return fmt::format("UNKNOWN: {}", static_cast<int>(kind));
+
+namespace {
+class FactoryRegistry {
+ public:
+  void registerFactory(
+      const std::string& kind,
+      MemoryArbitrator::Factory factory) {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_USER_CHECK(
+        map_.find(kind) == map_.end(),
+        "Arbitrator factory for kind {} already registered",
+        kind)
+    map_[kind] = std::move(factory);
   }
+
+  MemoryArbitrator::Factory& getFactory(const std::string& kind) {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_USER_CHECK(
+        map_.find(kind) != map_.end(),
+        "Arbitrator factory for kind {} not registered",
+        kind)
+    return map_[kind];
+  }
+
+  bool unregisterFactory(const std::string& kind) {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_USER_CHECK(
+        map_.find(kind) != map_.end(),
+        "Arbitrator factory for kind {} not registered",
+        kind)
+    return map_.erase(kind);
+  }
+
+ private:
+  std::mutex mutex_;
+  std::unordered_map<std::string, MemoryArbitrator::Factory> map_;
+};
+
+FactoryRegistry& arbitratorFactories() {
+  static FactoryRegistry registry;
+  return registry;
 }
 
-std::ostream& operator<<(
-    std::ostream& out,
-    const MemoryArbitrator::Kind& kind) {
-  out << MemoryArbitrator::kindString(kind);
-  return out;
-}
+// Used to enforce the fixed query memory isolation across running queries.
+// When a memory pool exceeds the fixed capacity limit, the query just
+// fails with memory capacity exceeded error without arbitration. This is
+// used to match the current memory isolation behavior adopted by
+// Prestissimo.
+//
+// TODO: deprecate this legacy policy with kShared policy for Prestissimo
+// later.
+class NoopArbitrator : public MemoryArbitrator {
+ public:
+  explicit NoopArbitrator(const Config& config) : MemoryArbitrator(config) {
+    VELOX_CHECK(config.kind.empty());
+    if (capacity_ != kMaxMemory) {
+      LOG(WARNING) << "Query memory capacity[" << succinctBytes(capacity_)
+                   << "] is set for " << kind()
+                   << " arbitrator which has no capacity enforcement";
+    }
+  }
+
+  std::string kind() const override {
+    return "NOOP";
+  }
+
+  // Noop arbitrator has no memory capacity limit so no operation needed for
+  // memory pool capacity reserve.
+  void reserveMemory(MemoryPool* pool, uint64_t /*unused*/) override {
+    pool->grow(pool->maxCapacity());
+  }
+
+  // Noop arbitrator has no memory capacity limit so no operation needed for
+  // memory pool capacity release.
+  void releaseMemory(MemoryPool* /*unused*/) override {
+    // No-op
+  }
+
+  // Noop arbitrator has no memory capacity limit so no operation needed for
+  // memory pool capacity grow.
+  bool growMemory(
+      MemoryPool* /*unused*/,
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
+    return false;
+  }
+
+  // Noop arbitrator has no memory capacity limit so no operation needed for
+  // memory pool capacity shrink.
+  uint64_t shrinkMemory(
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
+    return 0;
+  }
+
+  Stats stats() const override {
+    Stats stats;
+    stats.maxCapacityBytes = kMaxMemory;
+    return stats;
+  }
+
+  std::string toString() const override {
+    return fmt::format(
+        "ARBIRTATOR[{} CAPACITY[{}]]",
+        kind(),
+        capacity_ == kMaxMemory ? "UNLIMITED" : succinctBytes(capacity_));
+  }
+};
+
+} // namespace
 
 std::unique_ptr<MemoryArbitrator> MemoryArbitrator::create(
     const Config& config) {
-  switch (config.kind) {
-    case Kind::kNoOp:
-      return nullptr;
-    case Kind::kShared:
-      return std::make_unique<SharedArbitrator>(config);
-    default:
-      VELOX_UNREACHABLE(kindString(config.kind));
+  if (config.kind.empty()) {
+    // if kind is not set, return noop arbitrator.
+    return std::make_unique<NoopArbitrator>(config);
   }
+  auto& factory = arbitratorFactories().getFactory(config.kind);
+  return factory(config);
+}
+
+void MemoryArbitrator::registerFactory(
+    const std::string& kind,
+    MemoryArbitrator::Factory factory) {
+  arbitratorFactories().registerFactory(kind, std::move(factory));
+}
+
+void MemoryArbitrator::unregisterFactory(const std::string& kind) {
+  arbitratorFactories().unregisterFactory(kind);
+}
+
+void MemoryArbitrator::registerAllFactories() {
+  SharedArbitrator::registerFactory();
+}
+
+void MemoryArbitrator::unregisterAllFactories() {
+  SharedArbitrator::unregisterFactory();
 }
 
 std::unique_ptr<MemoryReclaimer> MemoryReclaimer::create() {
@@ -93,7 +204,7 @@ uint64_t MemoryReclaimer::reclaim(MemoryPool* pool, uint64_t targetBytes) {
   return reclaimedBytes;
 }
 
-void MemoryReclaimer::abort(MemoryPool* pool) {
+void MemoryReclaimer::abort(MemoryPool* pool, const std::exception_ptr& error) {
   if (pool->kind() == MemoryPool::Kind::kLeaf) {
     VELOX_UNSUPPORTED(
         "Don't support to abort a leaf memory pool {}", pool->name());
@@ -104,7 +215,7 @@ void MemoryReclaimer::abort(MemoryPool* pool) {
     // root first.
     auto* reclaimer = child->reclaimer();
     if (reclaimer != nullptr) {
-      reclaimer->abort(child);
+      reclaimer->abort(child, error);
     }
     return true;
   });

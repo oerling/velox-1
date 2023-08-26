@@ -13,12 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include <string>
-
-namespace facebook::velox::functions::window {
-void registerBigintNthValue(const std::string& name);
-
-void registerIntegerNthValue(const std::string& name);
-} // namespace facebook::velox::functions::window
+#if __has_include("simdjson/singleheader/simdjson.h")
+#include "simdjson/singleheader/simdjson.h"
+#else
+#include "simdjson.h"
+#endif

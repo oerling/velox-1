@@ -200,6 +200,10 @@ class QueryConfig {
   static constexpr const char* kSpillableReservationGrowthPct =
       "spillable_reservation_growth_pct";
 
+  /// If true, array_agg() aggregation function will ignore nulls in the input.
+  static constexpr const char* kPrestoArrayAggIgnoreNulls =
+      "presto.array_agg.ignore_nulls";
+
   /// If false, size function returns null for null input.
   static constexpr const char* kSparkLegacySizeOfNull =
       "spark.legacy_size_of_null";
@@ -245,7 +249,7 @@ class QueryConfig {
   }
 
   int32_t abandonPartialAggregationMinRows() const {
-    return get<int32_t>(kAbandonPartialAggregationMinRows, 10000);
+    return get<int32_t>(kAbandonPartialAggregationMinRows, 100'000);
   }
 
   int32_t abandonPartialAggregationMinPct() const {
@@ -441,6 +445,10 @@ class QueryConfig {
   bool sparkLegacySizeOfNull() const {
     constexpr bool kDefault{true};
     return get<bool>(kSparkLegacySizeOfNull, kDefault);
+  }
+
+  bool prestoArrayAggIgnoreNulls() const {
+    return get<bool>(kPrestoArrayAggIgnoreNulls, false);
   }
 
   int64_t sparkBloomFilterExpectedNumItems() const {

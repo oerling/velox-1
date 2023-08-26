@@ -540,7 +540,7 @@ void Task::start(
     uint32_t maxDrivers,
     uint32_t concurrentSplitGroups) {
   facebook::velox::process::ThreadDebugInfo threadDebugInfo{
-      .queryId_ = self->queryCtx()->queryId()};
+      self->queryCtx()->queryId(), self->taskId_};
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(threadDebugInfo);
   try {
     VELOX_CHECK_GE(
@@ -1894,7 +1894,8 @@ ContinueFuture Task::taskCompletionFuture(uint64_t maxWaitMicros) {
   // If 'this' is running, the future is realized on timeout or when
   // this no longer is running.
   if (not isRunningLocked()) {
-    return ContinueFuture();
+    return makeFinishFutureLocked(
+        fmt::format("Task::taskCompletionFuture {}", taskId_).data());
   }
   auto [promise, future] = makeVeloxContinuePromiseContract(
       fmt::format("Task::taskCompletionFuture {}", taskId_));
@@ -1960,7 +1961,8 @@ std::string Task::toJsonString() const {
   folly::dynamic driverObj = folly::dynamic::object;
   int index = 0;
   for (auto& driver : drivers_) {
-    driverObj[std::to_string(index++)] = driver ? driver->toString() : "null";
+    driverObj[std::to_string(index++)] =
+        driver ? driver->toJsonString() : "null";
   }
   obj["drivers"] = driverObj;
 
@@ -1972,7 +1974,7 @@ std::string Task::toJsonString() const {
 
   folly::dynamic exchangeClients = folly::dynamic::object;
   for (const auto& [id, client] : exchangeClientByPlanNode_) {
-    exchangeClients[id] = client->toString();
+    exchangeClients[id] = client->toJsonString();
   }
   obj["exchangeClientByPlanNode"] = exchangeClients;
 
@@ -2341,6 +2343,7 @@ void Task::createExchangeClient(
   // Low-water mark for filling the exchange queue is 1/2 of the per worker
   // buffer size of the producers.
   exchangeClients_[pipelineId] = std::make_shared<ExchangeClient>(
+      taskId_,
       destination_,
       addExchangeClientPool(planNodeId, pipelineId),
       queryCtx()->queryConfig().maxExchangeBufferSize());
@@ -2375,29 +2378,6 @@ std::shared_ptr<SpillOperatorGroup> Task::getSpillOperatorGroupLocked(
       planNodeId,
       splitGroupId);
   return group;
-}
-
-// static
-void Task::testingWaitForAllTasksToBeDeleted(uint64_t maxWaitUs) {
-  const uint64_t numCreatedTasks = Task::numCreatedTasks();
-  uint64_t numDeletedTasks = Task::numDeletedTasks();
-  uint64_t waitUs = 0;
-  while (numCreatedTasks > numDeletedTasks) {
-    constexpr uint64_t kWaitInternalUs = 1'000;
-    std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
-    waitUs += kWaitInternalUs;
-    numDeletedTasks = Task::numDeletedTasks();
-    if (waitUs >= maxWaitUs) {
-      break;
-    }
-  }
-  VELOX_CHECK_EQ(
-      numDeletedTasks,
-      numCreatedTasks,
-      "{} tasks have been created while only {} have been deleted after waiting for {} us",
-      numCreatedTasks,
-      numDeletedTasks,
-      waitUs);
 }
 
 void Task::testingVisitDrivers(const std::function<void(Driver*)>& callback) {
@@ -2439,14 +2419,18 @@ uint64_t Task::MemoryReclaimer::reclaim(
   return memory::MemoryReclaimer::reclaim(pool, targetBytes);
 }
 
-void Task::MemoryReclaimer::abort(memory::MemoryPool* pool) {
+void Task::MemoryReclaimer::abort(
+    memory::MemoryPool* pool,
+    const std::exception_ptr& error) {
   auto task = ensureTask();
   if (FOLLY_UNLIKELY(task == nullptr)) {
     return;
   }
   VELOX_CHECK_EQ(task->pool()->name(), pool->name());
-  task->requestAbort().wait();
-  memory::MemoryReclaimer::abort(pool);
+  task->setError(error);
+  // Set timeout to zero to infinite wait until task completes.
+  task->taskCompletionFuture(0).wait();
+  memory::MemoryReclaimer::abort(pool, error);
 }
 
 } // namespace facebook::velox::exec

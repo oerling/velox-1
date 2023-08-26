@@ -29,7 +29,7 @@ Generic Configuration
        average row size is known and preferred_output_batch_bytes is used to compute the number of output rows.
    * - abandon_partial_aggregation_min_rows
      - integer
-     - 10000
+     - 100,000
      - Min number of rows when we check if a partial aggregation is not reducing the cardinality well and might be
        a subject to being abandoned.
    * - abandon_partial_aggregation_min_pct
@@ -379,6 +379,21 @@ Hive Connector
      - string
      -
      - The GCS service account configuration as json string.
+
+Presto-specific Configuration
+----------------------------
+.. list-table::
+   :widths: 20 10 10 70
+   :header-rows: 1
+
+   * - Property Name
+     - Type
+     - Default Value
+     - Description
+   * - presto.array_agg.ignore_nulls
+     - bool
+     - false
+     - If true, ``array_agg`` function ignores null inputs.
 
 Spark-specific Configuration
 ----------------------------

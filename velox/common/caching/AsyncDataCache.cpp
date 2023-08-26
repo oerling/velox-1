@@ -541,13 +541,20 @@ AsyncDataCache** AsyncDataCache::getInstancePtr() {
   return &cache_;
 }
 
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
 void AsyncDataCache::prepareShutdown() {
   for (auto& shard : shards_) {
-    shard->prepareShutdown();
+    shard->shutdown();
+  }
+}
+#endif
+void AsyncDataCache::shutdown() {
+  for (auto& shard : shards_) {
+    shard->shutdown();
   }
 }
 
-void CacheShard::prepareShutdown() {
+void CacheShard::shutdown() {
   entries_.clear();
   freeEntries_.clear();
 }
@@ -645,8 +652,10 @@ bool AsyncDataCache::makeSpace(
 
 void AsyncDataCache::backoff(int32_t counter) {
   size_t seed = folly::hasher<uint16_t>()(++backoffCounter_);
-  auto usec = (seed & 0xfff) * (counter & 0x1f);
-  VLOG(1) << "Backoff in allocation contention for " << usec << " us.";
+  const auto usec = (seed & 0xfff) * (counter & 0x1f);
+  LOG_EVERY_N(INFO, 1000) << "Backoff in allocation contention for " << usec
+                          << " us.";
+
   std::this_thread::sleep_for(std::chrono::microseconds(usec)); // NOLINT
 }
 

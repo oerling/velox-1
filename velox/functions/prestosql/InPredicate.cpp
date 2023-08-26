@@ -19,6 +19,8 @@
 namespace facebook::velox::functions {
 namespace {
 
+// Read from innermost vector of type SimpleVector<U> and return vector<T>
+// Results are de-duped
 template <typename T, typename U = T>
 std::optional<std::pair<std::vector<T>, bool>> toValues(
     const std::vector<exec::VectorFunctionArg>& inputArgs) {
@@ -91,12 +93,13 @@ std::pair<std::unique_ptr<common::Filter>, bool> createBigintValuesFilter(
   return {common::createBigintValues(values, nullAllowed), false};
 }
 
-// Cast double to Int64 and reuse Int64 filters
+// For double, cast double to Int64 and reuse Int64 filters
+// For float, cast float to Int32 and promote to Int64
 template <typename T>
 std::pair<std::unique_ptr<common::Filter>, bool>
 createFloatingPointValuesFilter(
     const std::vector<exec::VectorFunctionArg>& inputArgs) {
-  auto valuesPair = toValues<double, T>(inputArgs);
+  auto valuesPair = toValues<T, T>(inputArgs);
   if (!valuesPair.has_value()) {
     return {nullptr, false};
   }
@@ -113,19 +116,55 @@ createFloatingPointValuesFilter(
 
   if (values.size() == 1) {
     return {
-        std::make_unique<common::FloatingPointRange<double>>(
+        std::make_unique<common::FloatingPointRange<T>>(
             values[0], false, false, values[0], false, false, nullAllowed),
         false};
   }
 
   std::vector<int64_t> intValues(values.size());
   for (size_t i = 0; i < values.size(); ++i) {
-    if (values[i] == double{}) {
-      values[i] = 0;
+    if constexpr (std::is_same_v<T, float>) {
+      if (values[i] == float{}) {
+        values[i] = 0;
+      }
+      intValues[i] = reinterpret_cast<const int32_t&>(
+          values[i]); // silently promote to int64
+    } else {
+      if (values[i] == double{}) {
+        values[i] = 0;
+      }
+      intValues[i] = reinterpret_cast<const int64_t&>(values[i]);
     }
-    intValues[i] = reinterpret_cast<const int64_t&>(values[i]);
   }
   return {common::createBigintValues(intValues, nullAllowed), false};
+}
+
+// See createBigintValuesFilter.
+template <typename T>
+std::pair<std::unique_ptr<common::Filter>, bool> createHugeintValuesFilter(
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  auto valuesPair = toValues<int128_t, T>(inputArgs);
+  if (!valuesPair.has_value()) {
+    return {nullptr, false};
+  }
+
+  const auto& values = valuesPair.value().first;
+  bool nullAllowed = valuesPair.value().second;
+
+  if (values.empty() && nullAllowed) {
+    return {nullptr, true};
+  }
+  VELOX_USER_CHECK(
+      !values.empty(),
+      "IN predicate expects at least one non-null value in the in-list");
+  if (values.size() == 1) {
+    return {
+        std::make_unique<common::HugeintRange>(
+            values[0], values[0], nullAllowed),
+        false};
+  }
+
+  return {common::createHugeintValues(values, nullAllowed), false};
 }
 
 // See createBigintValuesFilter.
@@ -170,6 +209,9 @@ class InPredicate : public exec::VectorFunction {
     std::pair<std::unique_ptr<common::Filter>, bool> filter;
 
     switch (inListType->childAt(0)->kind()) {
+      case TypeKind::HUGEINT:
+        filter = createHugeintValuesFilter<int128_t>(inputArgs);
+        break;
       case TypeKind::BIGINT:
         filter = createBigintValuesFilter<int64_t>(inputArgs);
         break;
@@ -181,6 +223,9 @@ class InPredicate : public exec::VectorFunction {
         break;
       case TypeKind::TINYINT:
         filter = createBigintValuesFilter<int8_t>(inputArgs);
+        break;
+      case TypeKind::REAL:
+        filter = createFloatingPointValuesFilter<float>(inputArgs);
         break;
       case TypeKind::DOUBLE:
         filter = createFloatingPointValuesFilter<double>(inputArgs);
@@ -219,6 +264,11 @@ class InPredicate : public exec::VectorFunction {
       VectorPtr& result) const override {
     const auto& input = args[0];
     switch (input->typeKind()) {
+      case TypeKind::HUGEINT:
+        applyTyped<int128_t>(rows, input, context, result, [&](int128_t value) {
+          return filter_->testInt128(value);
+        });
+        break;
       case TypeKind::BIGINT:
         applyTyped<int64_t>(rows, input, context, result, [&](int64_t value) {
           return filter_->testInt64(value);
@@ -237,6 +287,19 @@ class InPredicate : public exec::VectorFunction {
       case TypeKind::TINYINT:
         applyTyped<int8_t>(rows, input, context, result, [&](int8_t value) {
           return filter_->testInt64(value);
+        });
+        break;
+      case TypeKind::REAL:
+        applyTyped<float>(rows, input, context, result, [&](float value) {
+          auto* derived =
+              dynamic_cast<common::FloatingPointRange<float>*>(filter_.get());
+          if (derived) {
+            return filter_->testFloat(value);
+          }
+          if (value == float{}) {
+            value = 0;
+          }
+          return filter_->testInt64(reinterpret_cast<const int32_t&>(value));
         });
         break;
       case TypeKind::DOUBLE:
@@ -283,6 +346,7 @@ class InPredicate : public exec::VectorFunction {
           "varchar",
           "varbinary",
           "double",
+          "real",
           "date"}) {
       signatures.emplace_back(exec::FunctionSignatureBuilder()
                                   .returnType("boolean")
@@ -295,6 +359,22 @@ class InPredicate : public exec::VectorFunction {
                                   .argumentType("array(unknown)")
                                   .build());
     }
+    signatures.emplace_back(
+        exec::FunctionSignatureBuilder()
+            .returnType("boolean")
+            .integerVariable("precision")
+            .integerVariable("scale")
+            .argumentType("DECIMAL(precision, scale)")
+            .argumentType("array(DECIMAL(precision, scale))")
+            .build());
+    signatures.emplace_back(exec::FunctionSignatureBuilder()
+                                .returnType("boolean")
+                                .integerVariable("precision")
+                                .integerVariable("scale")
+                                .argumentType("DECIMAL(precision, scale)")
+                                .argumentType("array(unknown)")
+                                .build());
+
     return signatures;
   }
 

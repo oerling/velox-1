@@ -52,7 +52,10 @@ VectorPtr CastExpr::castFromDate(
           writer.resize(output.size());
           std::memcpy(writer.data(), output.data(), output.size());
           writer.finalize();
-        } catch (const VeloxUserError& ue) {
+        } catch (const VeloxException& ue) {
+          if (!ue.isUserError()) {
+            throw;
+          }
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, toType) + " " + ue.message());
         } catch (const std::exception& e) {
@@ -104,7 +107,10 @@ VectorPtr CastExpr::castToDate(
         try {
           auto inputString = inputVector->valueAt(row);
           resultFlatVector->set(row, DATE()->toDays(inputString));
-        } catch (const VeloxUserError& ue) {
+        } catch (const VeloxException& ue) {
+          if (!ue.isUserError()) {
+            throw;
+          }
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, DATE()) + " " + ue.message());
         } catch (const std::exception& e) {
@@ -153,6 +159,16 @@ void propagateErrorsOrSetNulls(
   }
 }
 } // namespace
+
+#define VELOX_DYNAMIC_DECIMAL_TYPE_DISPATCH(       \
+    TEMPLATE_FUNC, decimalTypePtr, ...)            \
+  [&]() {                                          \
+    if (decimalTypePtr->isLongDecimal()) {         \
+      return TEMPLATE_FUNC<int128_t>(__VA_ARGS__); \
+    } else {                                       \
+      return TEMPLATE_FUNC<int64_t>(__VA_ARGS__);  \
+    }                                              \
+  }()
 
 VectorPtr CastExpr::applyMap(
     const SelectivityVector& rows,
@@ -500,14 +516,15 @@ void CastExpr::applyPeeled(
     result = applyDecimal<int64_t>(rows, input, context, fromType, toType);
   } else if (toType->isLongDecimal()) {
     result = applyDecimal<int128_t>(rows, input, context, fromType, toType);
-  } else if (fromType->isDecimal() && toType->isDouble()) {
-    if (fromType->isShortDecimal()) {
-      result =
-          applyDecimalToDoubleCast<int64_t>(rows, input, context, fromType);
-    } else if (fromType->isLongDecimal()) {
-      result =
-          applyDecimalToDoubleCast<int128_t>(rows, input, context, fromType);
-    }
+  } else if (fromType->isDecimal()) {
+    result = VELOX_DYNAMIC_DECIMAL_TYPE_DISPATCH(
+        applyDecimalToPrimitiveCast,
+        fromType,
+        rows,
+        input,
+        context,
+        fromType,
+        toType);
   } else {
     switch (toType->kind()) {
       case TypeKind::MAP:
