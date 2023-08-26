@@ -21,7 +21,7 @@
 #include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
-  
+
 template <typename T>
 __device__ inline T& flatValue(void* base, int32_t blockBase) {
   return reinterpret_cast<T*>(base)[blockBase + threadIdx.x];
@@ -32,12 +32,17 @@ __device__ inline bool isNull(Operand* op, int32_t blockBase) {
 }
 
 template <typename T>
-__device__ inline T getOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase, char* shared) {
+__device__ inline T getOperand(
+    Operand** operands,
+    OperandIndex opIdx,
+    int32_t blockBase,
+    char* shared) {
   if (opIdx > kMinSharedMemIndex) {
-    return reinterpret_cast<T*>(shared + opIdx - kMinSharedMemIndex)[blockIdx.x];
+    return reinterpret_cast<T*>(
+        shared + opIdx - kMinSharedMemIndex)[blockIdx.x];
   }
   auto op = operands[opIdx];
-int32_t index = (threadIdx.x + blockBase) & op->indexMask;
+  int32_t index = (threadIdx.x + blockBase) & op->indexMask;
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
@@ -48,15 +53,41 @@ int32_t index = (threadIdx.x + blockBase) & op->indexMask;
 }
 
 template <typename T>
-__device__ inline T& flatResult(Operand** operands, OperandIndex opIdx,  int32_t blockBase, char* shared) {
+__device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
+  return getOperand<T>(&op, 0, blockBase, shared);
+}
+
+template <typename T>
+__device__ inline T value(Operand* op, int index) {
+  if (auto indicesInOp = op->indices) {
+    auto indices = indicesInOp[0];
+    if (indices) {
+      index = indices[index];
+    }
+  }
+  return reinterpret_cast<const T*>(op->base)[index];
+}
+
+template <typename T>
+__device__ inline T& flatResult(
+    Operand** operands,
+    OperandIndex opIdx,
+    int32_t blockBase,
+    char* shared) {
   if (opIdx >= kMinSharedMemIndex) {
-    return reinterpret_cast<T*>(shared  + opIdx - kMinSharedMemIndex)[threadIdx.x];
+    return reinterpret_cast<T*>(
+        shared + opIdx - kMinSharedMemIndex)[threadIdx.x];
   }
   auto* op = operands[opIdx];
   if (op->nulls) {
     op->nulls[blockBase + threadIdx.x] = kNotNull;
+  }
+  return reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
 }
-return reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
+
+template <typename T>
+__device__ inline T& flatResult(Operand* op, int32_t blockBase) {
+  return flatResult<T>(&op, 0, blockBase, nullptr);
 }
 
 } // namespace facebook::velox::wave

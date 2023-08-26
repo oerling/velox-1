@@ -103,7 +103,7 @@ struct Executable {
   ThreadBlockProgram* program{nullptr};
 
   // Device memory if not owned by 'programShared_'.
-  WaveBufferPtr deviceData;
+  std::vector<WaveBufferPtr> deviceData;
 
   // Operand ids for inputs.
   OperandSet inputOperands;
@@ -161,7 +161,7 @@ class Program : public std::enable_shared_from_this<Program> {
     dependsOn_.push_back(source);
   }
 
-  // Initializes executableImage and relocation infromation and places for
+  // Initializes executableImage and relocation information and places for
   // parameters.
   void prepareForDevice(GpuArena& arena);
 

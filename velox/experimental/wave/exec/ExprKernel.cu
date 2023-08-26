@@ -35,23 +35,24 @@ __device__ inline void binaryOpKernel(
     int32_t blockBase,
     char* shared,
     BlockStatus* status) {
-    if (threadIdx.x >= status->numRows) {
+  if (threadIdx.x >= status->numRows) {
     return;
-}
-flatResult<T>(operands, op.result, blockBase, shared) = func(
-      getOperand<T>(operands, op.left, blockBase, shared),
+  }
+  flatResult<T>(operands, op.result, blockBase, shared) = func(
+
+       getOperand<T>(operands, op.left, blockBase, shared),
       getOperand<T>(operands, op.right, blockBase, shared));
 }
 
 __device__ void filterKernel(
     const IFilter& filter,
-        Operand** operands,
+    Operand** operands,
     int32_t blockBase,
     char* shared,
     int32_t& numRows) {
   auto* flags = operands[filter.flags];
   auto* indices = operands[filter.indices];
-if (flags->nulls) {
+  if (flags->nulls) {
     boolBlockToIndices<kBlockSize>(
         [&]() -> uint8_t {
           return threadIdx.x >= numRows
@@ -60,7 +61,7 @@ if (flags->nulls) {
                   flatValue<uint8_t>(flags->nulls, blockBase);
         },
         blockBase,
-	reinterpret_cast<int32_t*>(indices->base) + blockBase,
+        reinterpret_cast<int32_t*>(indices->base) + blockBase,
         shared,
         numRows);
   } else {
@@ -112,7 +113,12 @@ __global__ void waveBaseKernel(
     auto instruction = program->instructions[i];
     switch (instruction->opCode) {
       case OpCode::kFilter:
-        filterKernel(instruction->_.filter, operands, blockBase, shared, status->numRows);
+        filterKernel(
+            instruction->_.filter,
+            operands,
+            blockBase,
+            shared,
+            status->numRows);
         break;
 
       case OpCode::kWrap:
@@ -138,7 +144,7 @@ void WaveKernelStream::call(
       kBlockSize,
       sharedSize,
       alias ? alias->stream()->stream : stream()->stream>>>(
-							    bases, programIdx, programs, operands, status);
+      bases, programIdx, programs, operands, status);
 }
 
 } // namespace facebook::velox::wave
