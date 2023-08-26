@@ -96,9 +96,7 @@ class Encoder {
 class Writer {
  public:
   Writer(int32_t stripeSize)
-      : 
-        stripeSize_(stripeSize),
-        pool_(memory::addDefaultLeafMemoryPool()) {}
+      : stripeSize_(stripeSize), pool_(memory::addDefaultLeafMemoryPool()) {}
 
   /// Appends a batch of data.
   void append(RowVectorPtr data);

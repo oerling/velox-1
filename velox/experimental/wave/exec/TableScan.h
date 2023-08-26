@@ -22,5 +22,3 @@
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
-
-
