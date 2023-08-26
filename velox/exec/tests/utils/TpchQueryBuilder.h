@@ -79,6 +79,9 @@ class TpchQueryBuilder {
   /// by column name and take the first columnPct percent.
   TpchPlan getIoMeterPlan(int columnPct) const;
 
+  /// Returns a plan that recodes 'table into Wave in memory format.
+  TpchPlan getWaveRecodePlan(const std::string& table) const;  
+
   /// Get the TPC-H table names present.
   static const std::vector<std::string>& getTableNames();
 
