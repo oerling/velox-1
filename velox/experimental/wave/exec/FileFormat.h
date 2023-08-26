@@ -22,23 +22,25 @@
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave {
 
-enum Encoding { kFlat, kBits, kDict };
+enum Encoding { kFlat, kDict };
 
 struct Column {
+  TypeKind kind;
   Encoding encoding;
   // Number of encoded values.
-  int32_t numValues;
+  int32_t numValues{0};
+
   // Distinct values in kDict.
   std::shared_ptr<Column> alphabet;
+
   // Encoded lengths for strings in 'data' if type is varchar and encoding is
   // kFlat.
   std::unique_ptr<Column> lengths;
+
   // Width of bit packed encoding.
   int8_t bitWidth;
-  // Byte size of encoded data in 'data'.
-  int32_t numBytes;
 
-  BufferPtr data;
+  BufferPtr values;
 };
 
 struct Stripe {
@@ -52,9 +54,11 @@ class StringSet {
   StringSet(memory::MemoryPool* pool) : pool_(pool) {}
 
   StringView add(StringView data);
-  std::unique_ptr<Column> column();
+  std::unique_ptr<Column> toColumn();
 
  private:
+  int64_t totalSize_{0};
+  int32_t maxLength_{0};
   std::vector<int32_t> lengths_;
   std::vector<BufferPtr> buffers_;
   memory::MemoryPool* pool_;
@@ -62,32 +66,48 @@ class StringSet {
 
 class Encoder {
  public:
-  Encoder(memory::MemoryPool* pool) : dictStrings_(pool), allStrings_(pool) {}
+  Encoder(memory::MemoryPool* pool)
+      : pool_(pool), dictStrings_(pool), allStrings_(pool) {}
   // Adds data.
   void append(VectorPtr data);
 
   // Retrieves the data added so far as an encoded column.
-  std::unique_ptr<Column> column();
+  std::unique_ptr<Column> toColumn();
 
  private:
+
+
   template <TypeKind kind>
   void appendTyped(VectorPtr data);
 
   template <typename T>
   void add(T data);
 
+  int64_t flatSize();
+  int64_t dictSize();
+
+  memory::MemoryPool* pool_;
+  TypeKind kind_{TypeKind::UNKNOWN};
+  int32_t count_{0};
   // Distincts for either int64_t or double.
   folly::F14FastMap<uint64_t, int32_t> ints_;
   // Distincts for strings.
   folly::F14FastMap<StringView, int32_t> strings_;
   // Values as indices into dicts.
   std::vector<int32_t> indices_;
+
+  std::vector<uint64_t> dictInts_;
   // The fixed width values as direct.
   std::vector<uint64_t> direct_;
   // True if too many distinct values for dict.
   bool abandonDict_{false};
+  uint64_t max_{0};
   // longest string, if string type.
-  int32_t maxLength{0};
+  int32_t maxLength_{0};
+  // Total bytes in distinct strings.
+  int64_t dictBytes_{0};
+  // Total string bytes without dict.
+  int32_t totalStringBytes_{0};
 
   StringSet dictStrings_;
   StringSet allStrings_;
