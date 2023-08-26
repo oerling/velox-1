@@ -75,8 +75,6 @@ class Encoder {
   std::unique_ptr<Column> toColumn();
 
  private:
-
-
   template <TypeKind kind>
   void appendTyped(VectorPtr data);
 
