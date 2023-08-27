@@ -17,14 +17,20 @@
 #include <iostream>
 
 #include <folly/init/Init.h>
-
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <gtest/gtest.h>
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Semaphore.h"
+#include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/SimdUtil.h"
+#include "velox/buffer/Buffer.h"
+#include "velox/common/memory/MemoryPool.h"
+#include "velox/common/memory/MmapAllocator.h"
+#include "velox/common/memory/Memory.h"
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/CudaTest.h"
+#include "velox/experimental/wave/common/tests/BlockTest.h"
 
 DEFINE_int32(num_streams, 0, "Number of paralll streams");
 DEFINE_int32(op_size, 0, "Size of invoke kernel (ints read and written)");
@@ -44,9 +50,129 @@ DEFINE_bool(
     prefetch,
     true,
     "Use prefetch to move unified memory to device at start and to host at end");
+DEFINE_int32(num_threads, 1, "Threads in reduce test");
+DEFINE_int64(working_size, 100000000, "Bytes in flight per thread");
+DEFINE_int32(num_columns, 10, "Columns in reduce test");
+DEFINE_int32(num_rows, 100000, "Batch size in reduce test");
+DEFINE_int32(num_batches, 100, "Batches in reduce test");
+
 
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
+
+// Dataset for data transfer test.
+struct DataBatch {
+  std::vector<BufferPtr> columns;
+  // Sum of the int64s in buffers. Numbers below the size() of each are added up.
+  int64_t sum{0};
+  int64_t byteSize;
+  int64_t dataSize;
+};
+
+/// Base class modeling processing a batch of data. Inits, continues and tests for ready.
+struct ProcessBatchBase {
+  // Starts processing 'batch'. Use isReady() to check for result.
+  virtual void init(DataBatch* data, GpuArena* arena, folly::CPUThreadPoolExecutor* executor) {
+    data_ = data;
+    arena_ = arena;
+    executor_ = executor;
+    sums_.resize(data->columns.size());
+    numRows_ = data_->columns[0]->size() / sizeof(int64_t);
+    numBlocks_ = bits::roundUp(numRows_, 256) / 256;
+    result_ = arena->allocate<int64_t>(data_->columns.size() * numBlocks_);
+
+  }
+
+  DataBatch* batch() {
+    return data_;
+  }
+  // Returns true if ready and sets 'result'. Returns false if pending. If 'wait' is true, blocks until ready.
+  virtual bool isReady(int64_t& result, bool wait) = 0;
+
+
+protected:
+  Device* device_{getDevice()};
+  DataBatch* data_{nullptr};
+  int32_t numBlocks_;
+  int32_t numRows_;
+
+  GpuArena* arena_{nullptr};
+  folly::CPUThreadPoolExecutor* executor_{nullptr};
+  std::vector<WaveBufferPtr> deviceBuffers_;
+  std::vector<int64_t*> deviceArrays_;
+  std::vector<int64_t> sums_;
+  WaveBufferPtr result_;
+  int64_t sum_{0};
+  std::vector<std::unique_ptr<BlockTestStream>> streams_;
+  std::vector<std::unique_ptr<Event>> events_;
+  Semaphore sem_{0};
+  int32_t toAcquire_{0};
+};
+
+class ProcessUnifiedN : public ProcessBatchBase {
+public:
+  void init(DataBatch* data, GpuArena* arena, folly::CPUThreadPoolExecutor* executor) override {
+    ProcessBatchBase::init(data, arena, executor);
+    
+    deviceBuffers_.resize(data->columns.size());
+    streams_.resize(deviceBuffers_.size());
+    events_.resize(deviceBuffers_.size());
+    toAcquire_ = data->columns.size();
+    for (auto i = 0; i < data_->columns.size(); ++i) {
+      deviceBuffers_[i] = arena->allocate<char>(data_->columns[i]->size());
+      executor_->add([i, this]() {
+	setDevice(device_);
+	simd::memcpy(deviceBuffers_[i]->as<char>(), data_->columns[i]->as<char>(), data_->columns[i]->size());
+	streams_[i] = std::make_unique<BlockTestStream>();
+	streams_[i]->prefetch(device_, deviceBuffers_[i]->as<char>(), data_->columns[i]->size());
+	auto resultIndex = i * numBlocks_;
+	streams_[i]->testSum64(numBlocks_, deviceBuffers_[i]->as<int64_t>(), result_->as<int64_t>() + resultIndex);
+	events_[i] = std::make_unique<Event>();
+	events_[i]->record(*streams_[i]);
+	sem_.release();
+      });
+    }
+  }
+
+  bool isReady(int64_t& result, bool wait) override {
+    if (toAcquire_) {
+      if (wait) {
+	while (toAcquire_) {
+	  sem_.acquire();
+	  --toAcquire_;
+	}
+      } else {
+	while (toAcquire_) {
+	  if (sem_.count() == 0) {
+	    return false;
+	  }
+	  sem_.acquire();
+	  --toAcquire_;
+	  
+	}
+      }
+      
+    }
+    for (auto i = 0; i < events_.size(); ++i) {
+      if (wait) {
+	events_[i]->wait();
+      } else {
+	if (!events_[i]->query()) {
+	  return false;
+	}
+      }
+    }
+    int64_t sum = 0;
+    for (auto i = 0; i < data_->columns.size() * numBlocks_; ++i) {
+      sum += result_->as<int64_t>()[i];
+    }
+    result = sum;
+    return true;
+  }
+
+
+};
+
 
 class CudaTest : public testing::Test {
  protected:
@@ -56,6 +182,21 @@ class CudaTest : public testing::Test {
     allocator_ = getAllocator(device_);
   }
 
+  void setupMemory(
+		   int64_t capacity = 16UL << 30) {
+    memory::MemoryManagerOptions options;
+    options.capacity = capacity;
+    memory::MmapAllocator::Options opts{(uint64_t)options.capacity};
+    mmapAllocator_ = std::make_shared<memory::MmapAllocator>(opts);
+    memory::MemoryAllocator::setDefaultInstance(mmapAllocator_.get());
+
+    options.allocator = mmapAllocator_.get();
+    manager_ = std::make_shared<memory::MemoryManager>(options);
+  }
+
+  
+
+  
   void streamTest(
       int32_t numStreams,
       int32_t numOps,
@@ -194,8 +335,106 @@ class CudaTest : public testing::Test {
       }
     }
   }
+
+  void createData(int32_t numBatches, int32_t numColumns, int32_t numRows) {
+    batchPool_ = memory::addDefaultLeafMemoryPool();
+  int32_t sequence = 1;
+  for (auto i = 0; i < numBatches; ++i) {
+      auto batch = std::make_unique<DataBatch>();
+      for (auto j = 0; j < numColumns; ++j) {
+	auto buffer = AlignedBuffer::allocate<int64_t>(numRows, batchPool_.get(), sequence);
+	batch->byteSize += buffer->capacity();
+	batch->dataSize += buffer->size();
+	batch->columns.push_back(buffer);
+	batch->sum += numRows * sequence;
+	++sequence;
+      }
+    }
+  }
+
+  DataBatch* getBatch() {
+    auto number = ++batchIndex_;
+    if (number > batches_.size()) {
+      return nullptr;
+    }
+    return batches_[number - 1].get();
+  }
+  
+  // 
+  void processBatches(int64_t workingSize, GpuArena* arena, std::function<std::unique_ptr<ProcessBatchBase>()> factory) {
+    int64_t pendingSize = 0;
+    std::deque<std::unique_ptr<ProcessBatchBase>> work;
+    for (;;) {
+      int64_t result;
+      auto * batch = getBatch();
+      if (!batch) {
+	for (auto& item : work) {
+	  item->isReady(result, true);
+	  EXPECT_EQ(item->batch()->sum, result);
+	  processedBytes_ += item->batch()->dataSize;
+	  pendingSize -= item->batch()->byteSize;
+	  item.reset();
+	}
+	return;
+      }
+      if (pendingSize > workingSize) {
+	work.front()->isReady(result, true);
+	pendingSize -= work.front()->batch()->byteSize;
+	processedBytes_+= work.front()->batch()->dataSize;
+	EXPECT_EQ(result, work.front()->batch()->sum);
+	work.pop_front();
+      }
+      auto item = factory();
+      item->init(batch, arena, executor_.get());
+      pendingSize += batch->byteSize;
+      work.push_back(std::move(item));
+      if (work.front()->isReady(result, false)) {
+	EXPECT_EQ(result, work.front()->batch()->sum);
+	pendingSize -= work.front()->batch()->byteSize;
+	processedBytes_+= work.front()->batch()->dataSize;
+	work.pop_front();
+      }
+    }
+  }
+
+  static std::unique_ptr<ProcessBatchBase> makeWork(){
+    std::unique_ptr<ProcessBatchBase> ptr;
+    ptr.reset(new ProcessUnifiedN());
+    return ptr;
+  }
+
+  
+  float reduceTest(int32_t numThreads, int64_t workingSize){
+      std::vector<std::thread> threads;
+  threads.reserve(numThreads);
+  auto start = getCurrentTimeMicro();
+  processedBytes_ = 0;
+  batchIndex_ = 0;
+  auto factory = makeWork;  for (int32_t i = 0; i < numThreads; ++i) {
+    threads.push_back(std::thread([&]() {
+      auto arena = std::make_unique<GpuArena>(100 << 20, allocator_);
+      processBatches(workingSize, arena.get(), factory);
+    }));
+  }
+    for (auto& thread : threads) {
+    thread.join();
+  }
+
+    auto time = getCurrentTimeMicro()  - start;
+    float gbs = (processedBytes_ / 1024.0) / time;
+    std::cout << time << "us " << gbs << " GB/s" << std::endl;
+    return gbs;
+  }
+
+  std::shared_ptr<memory::MemoryPool> batchPool_;
+std::vector<std::unique_ptr<DataBatch>> batches_;
+  std::atomic<int32_t> batchIndex_{0};
+  std::atomic<int64_t> processedBytes_{0};
   Device* device_;
   GpuAllocator* allocator_;
+  std::shared_ptr<memory::MemoryManager> manager_;
+  std::shared_ptr<memory::MmapAllocator> mmapAllocator_;
+  std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
 };
 
 TEST_F(CudaTest, stream) {
@@ -214,6 +453,8 @@ TEST_F(CudaTest, stream) {
     ASSERT_EQ(ints[i], i + 1);
   }
   allocator_->free(ints, sizeof(int32_t) * opSize);
+  
+  
 }
 
 TEST_F(CudaTest, callback) {
@@ -231,6 +472,19 @@ TEST_F(CudaTest, custom) {
       FLAGS_prefetch,
       FLAGS_use_callbacks,
       FLAGS_sync_streams);
+}
+
+TEST_F(CudaTest, copyReduce) {
+  setupMemory();
+  if (FLAGS_num_streams == 0) {
+    return;
+  }
+  executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(64);
+  createData(	     FLAGS_num_batches,
+		     FLAGS_num_columns, FLAGS_num_rows);
+  reduceTest(
+	     FLAGS_num_threads,
+	     FLAGS_working_size);
 }
 
 int main(int argc, char** argv) {

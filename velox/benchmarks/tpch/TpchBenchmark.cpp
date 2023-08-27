@@ -1,4 +1,4 @@
-/*
+bv/*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -237,6 +237,9 @@ class TpchBenchmark {
           cache::AsyncDataCache::create(allocator_.get(), std::move(ssdCache));
       cache::AsyncDataCache::setInstance(cache_.get());
       memory::MemoryAllocator::setDefaultInstance(allocator_.get());
+  memory::MemoryManagerOptions mmOptions;
+  mmOptions.capacity = memoryBytes;
+memory::MemoryManager::getInstance(mmOptions);
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();

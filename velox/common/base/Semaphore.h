@@ -55,7 +55,12 @@ class Semaphore {
     }
   }
 
- private:
+  int32_t count() {
+    std::lock_guard<std::mutex> l(mutex_);
+    return count_;
+  }
+
+private:
   std::mutex mutex_;
   std::condition_variable cv_;
   volatile int32_t count_;
