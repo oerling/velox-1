@@ -95,16 +95,17 @@ struct RunStats {
   int32_t workPerThread{0};
   float gbs{0};
   float resultClocks{0};
-
+  int32_t copyPerThread{0};
+  
   std::string toString() const {
-    fmt::format(
-        "{} GB/s {} {}x{} rows {} on thread, {} threads",
+    return fmt::format(
+        "{} GB/s {} {}x{} rows {} on thread, {} threads copy={}",
         gbs,
         mode,
         numColumns,
         numRows,
         workPerThread,
-        numThreads);
+        numThreads, copyPerThread);
   }
 };
 
@@ -112,6 +113,7 @@ struct RunStats {
 /// for ready.
 class ProcessBatchBase {
  public:
+  virtual ~ProcessBatchBase() = default;
   // Starts processing 'batch'. Use isReady() to check for result.
   virtual void init(
       DataBatch* data,
@@ -313,6 +315,8 @@ class ProcessDeviceCoalesced : public ProcessBatchBase {
     hostResult_ =
         hostArena->allocate<int64_t>(data_->columns.size() * numBlocks_);
     streams_.resize(1);
+    streams_[0] = std::make_unique<BlockTestStream>();
+
     events_.resize(1);
     int64_t total = 0;
     for (auto i = 0; i < data_->columns.size(); ++i) {
@@ -352,9 +356,9 @@ class ProcessDeviceCoalesced : public ProcessBatchBase {
           compute_->as<int64_t>(),
           result_->as<int64_t>());
       streams_[0]->deviceToHostAsync(
-          result_->as<int64_t>(),
           hostResult_->as<int64_t>(),
-          numBlocks_ * sizeof(int64_t));
+          result_->as<int64_t>(),
+          data_->columns.size() * numBlocks_ * sizeof(int64_t));
       events_[0] = std::make_unique<Event>();
       events_[0]->record(*streams_[0]);
       syncSem_.release();
@@ -373,16 +377,16 @@ class ProcessDeviceCoalesced : public ProcessBatchBase {
         syncSem_.acquire();
         --toAcquire_;
       }
-      if (wait) {
-        events_[0]->wait();
-      } else {
-        if (!events_[0]->query()) {
-          return false;
-        }
+    }
+    if (wait) {
+      events_[0]->wait();
+    } else {
+      if (!events_[0]->query()) {
+        return false;
       }
     }
     int64_t sum = 0;
-    auto resultPtr = result_->as<int64_t>();
+    auto resultPtr = hostResult_->as<int64_t>();
     auto numResults = data_->columns.size() * numBlocks_;
     for (auto i = 0; i < numResults; ++i) {
       sum += resultPtr[i];
@@ -437,6 +441,16 @@ class CudaTest : public testing::Test {
 
     options.allocator = mmapAllocator_.get();
     manager_ = &memory::MemoryManager::getInstance(options);
+  }
+
+  void waitFinish() {
+    if (executor_) {
+      executor_->join();
+    }
+    if (globalSyncExecutor) {
+      globalSyncExecutor->join();
+      globalSyncExecutor = nullptr;
+    }
   }
 
   void streamTest(
@@ -579,7 +593,10 @@ class CudaTest : public testing::Test {
   }
 
   void createData(int32_t numBatches, int32_t numColumns, int32_t numRows) {
-    batchPool_ = memory::addDefaultLeafMemoryPool();
+    batches_.clear();
+    if (!batchPool_) {
+      batchPool_ = memory::addDefaultLeafMemoryPool();
+    }
     int32_t sequence = 1;
     for (auto i = 0; i < numBatches; ++i) {
       auto batch = std::make_unique<DataBatch>();
@@ -658,6 +675,8 @@ class CudaTest : public testing::Test {
       ptr.reset(new ProcessUnifiedCudaCopy());
     } else if (mode == "devicecoalesced") {
       ptr.reset(new ProcessDeviceCoalesced());
+    } else {
+      VELOX_FAIL("Bad mode {}", mode);
     }
     return ptr;
   }
@@ -676,12 +695,18 @@ class CudaTest : public testing::Test {
     constexpr int64_t kArenaQuantum = 512 << 20;
     for (int32_t i = 0; i < numThreads; ++i) {
       threads.push_back(std::thread([&]() {
-        auto unifiedArena =
-            std::make_unique<GpuArena>(kArenaQuantum, allocator_);
-        auto deviceArena = std::make_unique<GpuArena>(
-            kArenaQuantum, getDeviceAllocator(getDevice()));
-        auto hostArena = std::make_unique<GpuArena>(
-            kArenaQuantum, getHostAllocator(getDevice()));
+        std::unique_ptr<GpuArena> unifiedArena;
+        std::unique_ptr<GpuArena> deviceArena;
+        std::unique_ptr<GpuArena> hostArena;
+        if (mode == "devicecoalesced") {
+          deviceArena = std::make_unique<GpuArena>(
+              kArenaQuantum, getDeviceAllocator(getDevice()));
+          hostArena = std::make_unique<GpuArena>(
+              kArenaQuantum, getHostAllocator(getDevice()));
+
+        } else {
+          unifiedArena = std::make_unique<GpuArena>(kArenaQuantum, allocator_);
+        }
         processBatches(
             workingSize,
             unifiedArena.get(),
@@ -702,7 +727,8 @@ class CudaTest : public testing::Test {
     stats.gbs = gbs;
     return gbs;
   }
-
+  std::shared_ptr<memory::MmapAllocator> mmapAllocator_;
+  memory::MemoryManager* manager_{nullptr};
   std::shared_ptr<memory::MemoryPool> batchPool_;
   std::vector<std::unique_ptr<DataBatch>> batches_;
   std::atomic<int32_t> batchIndex_{0};
@@ -711,8 +737,6 @@ class CudaTest : public testing::Test {
   GpuAllocator* allocator_;
   GpuAllocator* deviceAllocator_;
   GpuAllocator* hostAllocator_;
-  memory::MemoryManager* manager_{nullptr};
-  std::shared_ptr<memory::MmapAllocator> mmapAllocator_;
   std::unique_ptr<folly::CPUThreadPoolExecutor> executor_;
   std::vector<RunStats> stats_;
 };
@@ -760,18 +784,25 @@ TEST_F(CudaTest, copyReduce) {
   executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(64);
   createData(
       FLAGS_num_batches, FLAGS_num_columns, bits::roundUp(FLAGS_num_rows, 256));
-  std::vector<std::string> modes = {"unified", "device", "devicecoalesce"};
+  std::vector<std::string> modes = {"unified", "device", "devicecoalesced"};
   bool any = false;
   for (auto& mode : modes) {
     if (FLAGS_mode == "all" || FLAGS_mode == mode) {
       any = true;
       RunStats stats;
+      stats.mode = mode;
+      stats.numColumns = batches_[0]->columns.size();
+      stats.numRows = batches_[0]->columns[0]->size() / sizeof(int64_t);
+      stats.numThreads = FLAGS_num_threads;
+      stats.workPerThread = FLAGS_working_size / batches_[0]->dataSize;
       reduceTest(mode, FLAGS_num_threads, FLAGS_working_size, stats);
+      std::cout << stats.toString() << std::endl;
     }
   }
   if (!any) {
     FAIL() << "Bad mode " << FLAGS_mode;
   }
+  waitFinish();
 }
 
 TEST_F(CudaTest, reduceMatrix) {
@@ -780,17 +811,18 @@ TEST_F(CudaTest, reduceMatrix) {
     return;
   }
 
-  std::vector<std::string> modes = {"unified", "device", "devicecoalesce"};
-  std::vector<int32_t> batchMBValues = {10, 100, 500};
-  std::vector<int32_t> numThreadsValues = {1, 2, 4};
-  std::vector<int32_t> workPerThreadValues = {1, 2, 4, 8};
-  std::vector<int32_t> numColumnsValues = {2, 5, 10, 100, 300};
+  std::vector<std::string> modes = {/*"unified", "device",*/ "devicecoalesced"};
+  std::vector<int32_t> batchMBValues = {30, 100};
+  std::vector<int32_t> numThreadsValues = {1 /*, 2, 3 */};
+  std::vector<int32_t> workPerThreadValues = {2, 4};
+  std::vector<int32_t> numColumnsValues = {10, 100, 300};
+  std::vector<int32_t> copyPerThreadValues = {300000, 1000000};
   setupMemory((kTestGB + 1) << 30);
   executor_ = std::make_unique<folly::CPUThreadPoolExecutor>(64);
-  for (auto batchMB :  batchMBValues) {
+  for (auto batchMB : batchMBValues) {
     for (auto numColumns : numColumnsValues) {
       auto numBatches = (kTestGB << 30) / (batchMB << 20);
-      auto batchSize = (kTestGB << 30) / numBatches;
+      auto batchSize = (kTestGB << 30) / numBatches / 2;
       auto columnSize = batchSize / numColumns;
       auto numRows = bits::roundUp(columnSize / sizeof(int64_t), kBlockSize);
       batches_.clear();
@@ -799,17 +831,26 @@ TEST_F(CudaTest, reduceMatrix) {
         auto workSize =
             workPerThread * batches_[0]->columns[0]->size() * numColumns;
         for (auto numThreads : numThreadsValues) {
-          for (auto& mode : modes) {
-            stats_.emplace_back();
-            auto& run = stats_.back();
-            run.mode = mode;
-            run.numThreads = numThreads;
-            run.workPerThread = workPerThread;
-            run.numColumns = numColumns;
-            run.numRows = numRows;
-            reduceTest(mode, numThreads, workSize, run);
-          }
-        }
+	  for (auto& mode : modes) {
+	    if (batchMB <= 10 && numColumns > 10 && mode != "devicecoalesced") {
+	      continue;
+	    }
+	    std::vector<int32_t> zero = {0};
+	    auto& copySizes = mode == "devicecoalesced" ? copyPerThreadValues : zero;
+	    for (auto copy : copySizes) {
+	      stats_.emplace_back();
+	      auto& run = stats_.back();
+	      run.mode = mode;
+	      run.numThreads = numThreads;
+	      run.workPerThread = workPerThread;
+	      run.numColumns = numColumns;
+	      run.numRows = numRows;
+	      run.copyPerThread = copy;
+	      reduceTest(mode, numThreads, workSize, run);
+	      std::cout << run.toString() << std::endl;
+	    }
+	  }
+	  }
       }
     }
   }
@@ -822,6 +863,7 @@ TEST_F(CudaTest, reduceMatrix) {
   for (auto& stats : stats_) {
     std::cout << stats.toString() << std::endl;
   }
+  waitFinish();
 }
 
 int main(int argc, char** argv) {
