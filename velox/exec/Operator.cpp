@@ -135,6 +135,11 @@ std::unique_ptr<JoinBridge> Operator::joinBridgeFromPlanNode(
   return nullptr;
 }
 
+void Operator::initialize() {
+  VELOX_CHECK(!initialized_);
+  initialized_ = true;
+}
+
 // static
 OperatorSupplier Operator::operatorSupplierFromPlanNode(
     const core::PlanNodePtr& planNode) {
@@ -429,6 +434,8 @@ void OperatorStats::add(const OperatorStats& other) {
 
   finishTiming.add(other.finishTiming);
 
+  backgroundTiming.add(other.backgroundTiming);
+
   memoryStats.add(other.memoryStats);
 
   for (const auto& [name, stats] : other.runtimeStats) {
@@ -465,6 +472,8 @@ void OperatorStats::clear() {
   blockedWallNanos = 0;
 
   finishTiming.clear();
+
+  backgroundTiming.clear();
 
   memoryStats.clear();
 
