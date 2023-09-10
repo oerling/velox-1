@@ -377,10 +377,13 @@ TEST_F(E2EFilterTest, flatMap) {
   constexpr auto kColumns =
       "long_val:bigint,"
       "long_vals:map<tinyint,bigint>,"
+      "string_vals:map<string,string>,"
       "struct_vals:map<varchar,struct<v1:bigint, v2:float>>,"
       "array_vals:map<tinyint,array<int>>";
-  flatMapColumns_ = {"long_vals", "struct_vals", "array_vals"};
+  flatMapColumns_ = {"long_vals", "string_vals", "struct_vals", "array_vals"};
   auto customize = [this] {
+    dataSetBuilder_->makeMapStringValues(Subfield("string_vals"));
+    dataSetBuilder_->makeUniformMapKeys(Subfield("string_vals"));
     dataSetBuilder_->makeUniformMapKeys(Subfield("struct_vals"));
   };
   int numCombinations = 5;
