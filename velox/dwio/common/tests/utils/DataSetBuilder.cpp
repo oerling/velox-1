@@ -239,39 +239,36 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
     const common::Subfield& field) {
   for (auto& batch : *batches_) {
     auto* map = dwio::common::getChildBySubfield(batch.get(), field)
-      ->asUnchecked<MapVector>();
+                    ->asUnchecked<MapVector>();
     auto keyKind = map->type()->childAt(0)->kind();
     auto valueKind = map->type()->childAt(1)->kind();
     auto size = map->mapKeys()->size();
     if (keyKind == TypeKind::VARCHAR) {
       if (auto keys = map->mapKeys()->as<FlatVector<StringView>>()) {
-	for (auto i = 0; i < size; ++i) {
-	  if (!keys->isNullAt(i) && i % 3 == 0) {
-	    std::string str = keys->valueAt(i);
-	    str += "----123456789";
-	    keys->set(i, StringView(str));
-	  }
-	}
+        for (auto i = 0; i < size; ++i) {
+          if (!keys->isNullAt(i) && i % 3 == 0) {
+            std::string str = keys->valueAt(i);
+            str += "----123456789";
+            keys->set(i, StringView(str));
+          }
+        }
       }
     }
     if (valueKind == TypeKind::VARCHAR) {
       if (auto values = map->mapValues()->as<FlatVector<StringView>>()) {
-	for (auto i = 0; i < size; ++i) {
-	  if (!values->isNullAt(i) && i % 3 == 0) {
-	    std::string str = values->valueAt(i);
-	    str += "----123456789";
-	    values->set(i, StringView(str));
-	  }
-	}
+        for (auto i = 0; i < size; ++i) {
+          if (!values->isNullAt(i) && i % 3 == 0) {
+            std::string str = values->valueAt(i);
+            str += "----123456789";
+            values->set(i, StringView(str));
+          }
+        }
       }
     }
   }
   return *this;
 }
 
-
-
-  
 std::unique_ptr<std::vector<RowVectorPtr>> DataSetBuilder::build() {
   return std::move(batches_);
 }
