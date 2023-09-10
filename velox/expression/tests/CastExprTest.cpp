@@ -33,6 +33,16 @@ namespace {
 constexpr float kInf = std::numeric_limits<float>::infinity();
 constexpr float kNan = std::numeric_limits<float>::quiet_NaN();
 
+namespace {
+auto createCopy(const VectorPtr& input) {
+  VectorPtr result;
+  SelectivityVector rows(input->size());
+  BaseVector::ensureWritable(rows, input->type(), input->pool(), result);
+  result->copy(input.get(), rows, nullptr);
+  return result;
+}
+} // namespace
+
 class CastExprTest : public functions::test::CastBaseTest {
  protected:
   CastExprTest() {
@@ -86,7 +96,7 @@ class CastExprTest : public functions::test::CastBaseTest {
         expected->type(),
         nullOnFailure);
     exec::ExprSet exprSet({castExpr}, &execCtx_);
-
+    auto copy = createCopy(data);
     const auto size = data->size();
     SelectivityVector rows(size);
     std::vector<VectorPtr> result(1);
@@ -95,6 +105,9 @@ class CastExprTest : public functions::test::CastBaseTest {
       exprSet.eval(rows, evalCtx, result);
 
       assertEqualVectors(expected, result[0]);
+
+      // Make sure the input vector does not change.
+      assertEqualVectors(data, copy);
     }
 
     // Test constant input.
@@ -103,8 +116,13 @@ class CastExprTest : public functions::test::CastBaseTest {
       const auto index = size - 1;
       auto constantData = BaseVector::wrapInConstant(size, index, data);
       auto constantRow = makeRowVector({constantData});
+      auto localCopy = createCopy(constantRow);
       exec::EvalCtx evalCtx(&execCtx_, &exprSet, constantRow.get());
       exprSet.eval(rows, evalCtx, result);
+
+      // Make sure the input vector does not change.
+      assertEqualVectors(constantRow, localCopy);
+      assertEqualVectors(data, copy);
 
       assertEqualVectors(
           BaseVector::wrapInConstant(size, index, expected), result[0]);
@@ -123,6 +141,9 @@ class CastExprTest : public functions::test::CastBaseTest {
       exec::ExprSet dictionaryExprSet({dictionaryCastExpr}, &execCtx_);
       exec::EvalCtx evalCtx(&execCtx_, &dictionaryExprSet, rowVector.get());
       dictionaryExprSet.eval(rows, evalCtx, result);
+
+      // Make sure the input vector does not change.
+      assertEqualVectors(data, copy);
 
       auto indices = functions::test::makeIndicesInReverse(size, pool());
       assertEqualVectors(wrapInDictionary(indices, size, expected), result[0]);
@@ -236,7 +257,7 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<int64_t>({0, tooSmall}, DECIMAL(10, 0)),
             makeFlatVector<NativeType>(0, 0)),
         fmt::format(
-            "Failed to cast from DECIMAL(10,0) to {}: -2147483649. Out of bounds.",
+            "Cannot cast DECIMAL(10, 0) '-2147483649' to {}. Out of bounds.",
             TypeTraits<KIND>::name));
 
     VELOX_ASSERT_THROW(
@@ -245,7 +266,7 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<int128_t>({0, tooSmall}, DECIMAL(19, 0)),
             makeFlatVector<NativeType>(0, 0)),
         fmt::format(
-            "Failed to cast from DECIMAL(19,0) to {}: -2147483649. Out of bounds.",
+            "Cannot cast DECIMAL(19, 0) '-2147483649' to {}. Out of bounds.",
             TypeTraits<KIND>::name));
 
     VELOX_ASSERT_THROW(
@@ -254,7 +275,7 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<int64_t>({0, tooBig}, DECIMAL(10, 0)),
             makeFlatVector<NativeType>(0, 0)),
         fmt::format(
-            "Failed to cast from DECIMAL(10,0) to {}: 2147483648. Out of bounds.",
+            "Cannot cast DECIMAL(10, 0) '2147483648' to {}. Out of bounds.",
             TypeTraits<KIND>::name));
 
     VELOX_ASSERT_THROW(
@@ -263,7 +284,7 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<int128_t>({0, tooBig}, DECIMAL(19, 0)),
             makeFlatVector<NativeType>(0, 0)),
         fmt::format(
-            "Failed to cast from DECIMAL(19,0) to {}: 2147483648. Out of bounds.",
+            "Cannot cast DECIMAL(19, 0) '2147483648' to {}. Out of bounds.",
             TypeTraits<KIND>::name));
   }
 
@@ -295,6 +316,7 @@ class CastExprTest : public functions::test::CastBaseTest {
 
   template <typename T>
   void testDecimalToIntegralCasts() {
+    setCastIntByTruncate(false);
     auto shortFlat = makeNullableFlatVector<int64_t>(
         {-300,
          -260,
@@ -355,6 +377,41 @@ class CastExprTest : public functions::test::CastBaseTest {
              69,
              72,
              std::nullopt}));
+
+    setCastIntByTruncate(true);
+    testComplexCast(
+        "c0",
+        shortFlat,
+        makeNullableFlatVector<T>(
+            {-3,
+             -2 /*-2.6 truncated to -2*/,
+             -2 /*-2.3 truncated to -2*/,
+             -2,
+             -1,
+             0,
+             55,
+             57 /*57.49 truncated to 57*/,
+             57 /*57.55 truncated to 57*/,
+             69,
+             72,
+             std::nullopt}));
+
+    testComplexCast(
+        "c0",
+        longFlat,
+        makeNullableFlatVector<T>(
+            {-3,
+             -2 /*-2.55 truncated to -2*/,
+             -2 /*-2.45 truncated to -2*/,
+             -2,
+             -1,
+             0,
+             55,
+             55 /* 55.49 truncated to 55*/,
+             55 /* 55.99 truncated to 55*/,
+             69,
+             72,
+             std::nullopt}));
   }
 
   template <typename T>
@@ -389,7 +446,7 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<T>(std::vector<T>{std::numeric_limits<T>::min()}),
             makeFlatVector(std::vector<int64_t>{0}, DECIMAL(3, 1))),
         fmt::format(
-            "Cannot cast {} '{}' to DECIMAL(3,1)",
+            "Cannot cast {} '{}' to DECIMAL(3, 1)",
             CppToType<T>::name,
             std::to_string(std::numeric_limits<T>::min())));
     VELOX_ASSERT_THROW(
@@ -398,14 +455,14 @@ class CastExprTest : public functions::test::CastBaseTest {
             makeFlatVector<T>(std::vector<T>{-100}),
             makeFlatVector(std::vector<int64_t>{0}, DECIMAL(17, 16))),
         fmt::format(
-            "Cannot cast {} '-100' to DECIMAL(17,16)", CppToType<T>::name));
+            "Cannot cast {} '-100' to DECIMAL(17, 16)", CppToType<T>::name));
     VELOX_ASSERT_THROW(
         testComplexCast(
             "c0",
             makeFlatVector<T>(std::vector<T>{100}),
             makeFlatVector(std::vector<int64_t>{0}, DECIMAL(17, 16))),
         fmt::format(
-            "Cannot cast {} '100' to DECIMAL(17,16)", CppToType<T>::name));
+            "Cannot cast {} '100' to DECIMAL(17, 16)", CppToType<T>::name));
   }
 };
 
@@ -682,6 +739,8 @@ TEST_F(CastExprTest, primitiveInvalidCornerCases) {
     // Invalid strings.
     testCast<std::string, int8_t>("tinyint", {"1234567"}, {0}, true);
     testCast<std::string, int8_t>("tinyint", {"1.2"}, {0}, true);
+    testCast<std::string, int8_t>("tinyint", {"1.23444"}, {0}, true);
+    testCast<std::string, int8_t>("tinyint", {".2355"}, {0}, true);
     testCast<std::string, int8_t>("tinyint", {"1a"}, {0}, true);
     testCast<std::string, int8_t>("tinyint", {""}, {0}, true);
     testCast<std::string, int32_t>("integer", {"1'234'567"}, {0}, true);
@@ -716,7 +775,6 @@ TEST_F(CastExprTest, primitiveInvalidCornerCases) {
   {
     // Invalid strings.
     testCast<std::string, int8_t>("tinyint", {"1234567"}, {0}, true);
-    testCast<std::string, int8_t>("tinyint", {"1.2"}, {0}, true);
     testCast<std::string, int8_t>("tinyint", {"1a"}, {0}, true);
     testCast<std::string, int8_t>("tinyint", {""}, {0}, true);
     testCast<std::string, int32_t>("integer", {"1'234'567"}, {0}, true);
@@ -800,6 +858,17 @@ TEST_F(CastExprTest, primitiveValidCornerCases) {
   setCastIntByTruncate(true);
   // To integer.
   {
+    // Valid strings.
+    testCast<std::string, int8_t>("tinyint", {"1.2"}, {1}, false);
+    testCast<std::string, int8_t>("tinyint", {"1.23444"}, {1}, false);
+    testCast<std::string, int8_t>("tinyint", {".2355"}, {0}, false);
+    testCast<std::string, int8_t>("tinyint", {"-1.8"}, {-1}, false);
+    testCast<std::string, int8_t>("tinyint", {"1."}, {1}, false);
+    testCast<std::string, int8_t>("tinyint", {"-1."}, {-1}, false);
+    testCast<std::string, int8_t>("tinyint", {"0."}, {0}, false);
+    testCast<std::string, int8_t>("tinyint", {"."}, {0}, false);
+    testCast<std::string, int8_t>("tinyint", {"-."}, {0}, false);
+
     testCast<int32_t, int8_t>("tinyint", {1234567}, {-121}, false);
     testCast<int32_t, int8_t>("tinyint", {-1234567}, {121}, false);
     testCast<double, int8_t>("tinyint", {12345.67}, {57}, false);
@@ -929,9 +998,14 @@ TEST_F(CastExprTest, errorHandling) {
        "  122",
        "",
        "-12-3",
-       "125.5",
        "1234",
        "-129",
+       "1.1.1",
+       "1..",
+       "1.abc",
+       "..",
+       "-..",
+       "125.5",
        "127",
        "-128"},
       {std::nullopt,
@@ -944,6 +1018,11 @@ TEST_F(CastExprTest, errorHandling) {
        std::nullopt,
        std::nullopt,
        std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       125,
        127,
        -128},
       false,
@@ -1034,7 +1113,7 @@ TEST_F(CastExprTest, mapCast) {
                 nullEvery(3),
                 nullEvery(7)),
             false),
-        "Failed to cast from BIGINT to TIMESTAMP: 0. Conversion to Timestamp is not supported");
+        "Cannot cast BIGINT '0' to TIMESTAMP. Conversion to Timestamp is not supported");
 
     testComplexCast(
         "c0",
@@ -1090,6 +1169,7 @@ TEST_F(CastExprTest, mapCast) {
   {
     auto data = makeRowVector(
         {makeMapVector<StringView, StringView>({{{"1", "2"}}, {{"", "1"}}})});
+    auto copy = createCopy(data);
     auto result1 = evaluate("try_cast(c0 as map(int, int))", data);
     auto result2 = evaluate("try(cast(c0 as map(int, int)))", data);
     ASSERT_FALSE(result1->isNullAt(0));
@@ -1098,12 +1178,16 @@ TEST_F(CastExprTest, mapCast) {
     ASSERT_FALSE(result2->isNullAt(0));
     ASSERT_TRUE(result2->isNullAt(1));
     ASSERT_THROW(evaluate("cast(c0 as map(int, int)", data), VeloxException);
+
+    // Make sure the input vector does not change.
+    assertEqualVectors(data, copy);
   }
 
   {
     auto result = evaluate(
         "try_cast(map(array_constructor('1'), array_constructor(''))  as map(int, int))",
         makeRowVector({makeFlatVector<int32_t>({1, 2})}));
+
     ASSERT_TRUE(result->isNullAt(0));
     ASSERT_TRUE(result->isNullAt(1));
   }
@@ -1172,6 +1256,7 @@ TEST_F(CastExprTest, arrayCast) {
   {
     auto data =
         makeRowVector({makeArrayVector<StringView>({{"1", "2"}, {"", "1"}})});
+    auto copy = createCopy(data);
     auto result1 = evaluate("try_cast(c0 as bigint[])", data);
     auto result2 = evaluate("try(cast(c0 as bigint[]))", data);
 
@@ -1181,6 +1266,9 @@ TEST_F(CastExprTest, arrayCast) {
     assertEqualVectors(result2, expected);
 
     ASSERT_THROW(evaluate("cast(c0 as bigint[])", data), VeloxException);
+
+    // Make sure the input vector does not change.
+    assertEqualVectors(data, copy);
   }
 
   {
@@ -1447,7 +1535,7 @@ TEST_F(CastExprTest, decimalToDecimal) {
   // Throws exception if CAST fails.
   VELOX_ASSERT_THROW(
       testComplexCast("c0", longFlat, expectedShort),
-      "Cannot cast DECIMAL '-1000.000' to DECIMAL(6,4)");
+      "Cannot cast DECIMAL '-1000.000' to DECIMAL(6, 4)");
 
   // nullOnFailure is true.
   testComplexCast("c0", longFlat, expectedShort, true);
@@ -1480,14 +1568,14 @@ TEST_F(CastExprTest, decimalToDecimal) {
           makeNullableFlatVector<int128_t>(
               {DecimalUtil::kLongDecimalMax}, DECIMAL(38, 0)),
           makeNullableFlatVector<int128_t>({0}, DECIMAL(38, 1))),
-      "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38,1)");
+      "Cannot cast DECIMAL '99999999999999999999999999999999999999' to DECIMAL(38, 1)");
   VELOX_ASSERT_THROW(
       testComplexCast(
           "c0",
           makeNullableFlatVector<int128_t>(
               {DecimalUtil::kLongDecimalMin}, DECIMAL(38, 0)),
           makeNullableFlatVector<int128_t>({0}, DECIMAL(38, 1))),
-      "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38,1)");
+      "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38, 1)");
 }
 
 TEST_F(CastExprTest, integerToDecimal) {
@@ -1818,6 +1906,24 @@ TEST_F(CastExprTest, tryCastDoesNotHideInputsAndExistingErrors) {
       ASSERT_TRUE(result->isNullAt(2));
     }
   }
+}
+
+TEST_F(CastExprTest, lazyInput) {
+  auto lazy =
+      vectorMaker_.lazyFlatVector<int64_t>(5, [](auto row) { return row; });
+  auto indices = makeIndices({0, 1, 2, 3, 4});
+  auto dictionary = BaseVector::wrapInDictionary(nullptr, indices, 5, lazy);
+  dictionary->loadedVector();
+  auto data = makeRowVector(
+      {dictionary,
+       makeNullableFlatVector<int64_t>(
+           {std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt})});
+
+  evaluate("cast(switch(gt(c0, c1), c1, c0) as double)", data);
 }
 } // namespace
 } // namespace facebook::velox::test

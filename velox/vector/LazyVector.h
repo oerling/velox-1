@@ -111,6 +111,8 @@ class VectorLoader {
 // top-level vector.
 class LazyVector : public BaseVector {
  public:
+  static constexpr const char* kCpuNanos = "dataSourceLazyCpuNanos";
+  static constexpr const char* kWallNanos = "dataSourceLazyWallNanos";
   LazyVector(
       velox::memory::MemoryPool* pool,
       TypePtr type,
@@ -268,6 +270,8 @@ class LazyVector : public BaseVector {
       const SelectivityVector& rows,
       DecodedVector& decoded,
       SelectivityVector& baseRows);
+
+  void validate(const VectorValidateOptions& options) const override;
 
  private:
   static void ensureLoadedRowsImpl(

@@ -764,7 +764,7 @@ class TableWriteTest : public HiveConnectorTestBase {
     // Read data from bucketed file on disk into 'rowVector'.
     core::PlanNodeId scanNodeId;
     auto plan = PlanBuilder()
-                    .tableScan(tableSchema_)
+                    .tableScan(tableSchema_, {}, "", tableSchema_)
                     .capturePlanNodeId(scanNodeId)
                     .planNode();
     const auto resultVector =
@@ -1343,6 +1343,23 @@ TEST_P(AllTableWriterTest, constantVectors) {
       "SELECT * FROM tmp");
 
   verifyTableWriterOutput(outputDirectory->path);
+}
+
+TEST_P(AllTableWriterTest, emptyInput) {
+  auto outputDirectory = TempDirectoryPath::create();
+  auto vector = makeConstantVector(0);
+  auto op = createInsertPlan(
+      PlanBuilder().values({vector}),
+      rowType_,
+      outputDirectory->path,
+      partitionedBy_,
+      bucketProperty_,
+      compressionKind_,
+      getNumWriters(),
+      connector::hive::LocationHandle::TableType::kNew,
+      commitStrategy_);
+
+  assertQuery(op, "SELECT 0");
 }
 
 TEST_P(AllTableWriterTest, commitStrategies) {

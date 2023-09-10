@@ -71,9 +71,11 @@ void SelectiveStructColumnReaderBase::next(
     auto& childSpecs = scanSpec_->children();
     for (auto& childSpec : childSpecs) {
       VELOX_CHECK(childSpec->isConstant());
-      auto channel = childSpec->channel();
-      resultRowVector->childAt(channel) =
-          BaseVector::wrapInConstant(numValues, 0, childSpec->constantValue());
+      if (childSpec->projectOut()) {
+        auto channel = childSpec->channel();
+        resultRowVector->childAt(channel) = BaseVector::wrapInConstant(
+            numValues, 0, childSpec->constantValue());
+      }
     }
     return;
   }
@@ -321,7 +323,7 @@ void SelectiveStructColumnReaderBase::getValues(
   }
   if (nullsInReadRange_) {
     auto readerNulls = nullsInReadRange_->as<uint64_t>();
-    auto nulls = resultRow->mutableNulls(rows.size())->asMutable<uint64_t>();
+    auto* nulls = resultRow->mutableNulls(rows.size())->asMutable<uint64_t>();
     for (size_t i = 0; i < rows.size(); ++i) {
       bits::setBit(nulls, i, bits::isBitSet(readerNulls, rows[i]));
     }

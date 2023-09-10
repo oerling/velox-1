@@ -344,6 +344,14 @@ bool isFlat(const BaseVector& vector) {
       encoding == VectorEncoding::Simple::CONSTANT);
 }
 
+inline void checkResultInternalState(VectorPtr& result) {
+#ifndef NDEBUG
+  if (result != nullptr) {
+    result->validate();
+  }
+#endif
+}
+
 } // namespace
 
 template <typename EvalArg>
@@ -763,6 +771,7 @@ void Expr::eval(
   if (supportsFlatNoNullsFastPath_ && context.throwOnError() &&
       context.inputFlatNoNulls() && rows.countSelected() < 1'000) {
     evalFlatNoNulls(rows, context, result, parentExprSet);
+    checkResultInternalState(result);
     return;
   }
 
@@ -775,6 +784,7 @@ void Expr::eval(
 
   if (!rows.hasSelections()) {
     checkOrSetEmptyResult(type(), context.pool(), result);
+    checkResultInternalState(result);
     return;
   }
 
@@ -818,10 +828,12 @@ void Expr::eval(
 
   if (inputs_.empty()) {
     evalAll(rows, context, result);
+    checkResultInternalState(result);
     return;
   }
 
   evalEncodings(rows, context, result);
+  checkResultInternalState(result);
 }
 
 template <typename TEval>
@@ -1633,13 +1645,19 @@ common::Subfield extractSubfield(
   std::vector<std::unique_ptr<common::Subfield::PathElement>> path;
   for (;;) {
     if (auto* ref = expr->as<FieldReference>()) {
-      path.push_back(
-          std::make_unique<common::Subfield::NestedField>(ref->name()));
+      const auto& name = ref->name();
+      // When the field name is empty string, it typically means that the field
+      // name was not set in the parent type.
+      if (name == "") {
+        expr = expr->inputs()[0].get();
+        continue;
+      }
+      path.push_back(std::make_unique<common::Subfield::NestedField>(name));
       if (!ref->inputs().empty()) {
         expr = ref->inputs()[0].get();
         continue;
       }
-      if (shadowedNames.count(ref->name()) > 0) {
+      if (shadowedNames.count(name) > 0) {
         return {};
       }
       std::reverse(path.begin(), path.end());

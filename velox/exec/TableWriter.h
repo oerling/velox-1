@@ -109,6 +109,8 @@ class TableWriter : public Operator {
     return BlockingReason::kNotBlocked;
   }
 
+  void initialize() override;
+
   void addInput(RowVectorPtr input) override;
 
   void noMoreInput() override {
@@ -125,7 +127,7 @@ class TableWriter : public Operator {
 
   void close() override {
     if (!closed_) {
-      if (dataSink_) {
+      if (dataSink_ != nullptr) {
         dataSink_->close();
       }
       closed_ = true;

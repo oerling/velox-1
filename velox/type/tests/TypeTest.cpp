@@ -185,7 +185,7 @@ TEST(TypeTest, intervalYearMonth) {
 
 TEST(TypeTest, shortDecimal) {
   auto shortDecimal = DECIMAL(10, 5);
-  EXPECT_EQ(shortDecimal->toString(), "DECIMAL(10,5)");
+  EXPECT_EQ(shortDecimal->toString(), "DECIMAL(10, 5)");
   EXPECT_EQ(shortDecimal->size(), 0);
   EXPECT_THROW(shortDecimal->childAt(0), std::invalid_argument);
   EXPECT_EQ(shortDecimal->kind(), TypeKind::BIGINT);
@@ -218,7 +218,7 @@ TEST(TypeTest, shortDecimal) {
 
 TEST(TypeTest, longDecimal) {
   auto longDecimal = DECIMAL(30, 5);
-  EXPECT_EQ(longDecimal->toString(), "DECIMAL(30,5)");
+  EXPECT_EQ(longDecimal->toString(), "DECIMAL(30, 5)");
   EXPECT_EQ(longDecimal->size(), 0);
   EXPECT_THROW(longDecimal->childAt(0), std::invalid_argument);
   EXPECT_EQ(longDecimal->kind(), TypeKind::HUGEINT);
@@ -352,6 +352,7 @@ TEST(TypeTest, map) {
 }
 
 TEST(TypeTest, row) {
+  VELOX_ASSERT_THROW(ROW({{"a", nullptr}}), "Child types cannot be null");
   auto row0 = ROW({{"a", INTEGER()}, {"b", ROW({{"a", BIGINT()}})}});
   auto rowInner = row0->childAt(1);
   EXPECT_EQ(row0->toString(), "ROW<a:INTEGER,b:ROW<a:BIGINT>>");
@@ -397,16 +398,16 @@ TEST(TypeTest, row) {
   }
 
   auto row1 =
-      ROW({{"a,b", INTEGER()}, {"my \"column\"", ROW({{"#1", BIGINT()}})}});
+      ROW({{"a,b", INTEGER()}, {R"(my "column")", ROW({{"#1", BIGINT()}})}});
   EXPECT_EQ(
       row1->toString(),
-      "ROW<\"a,b\":INTEGER,\"my \"\"column\"\"\":ROW<\"#1\":BIGINT>>");
+      R"(ROW<"a,b":INTEGER,"my ""column""":ROW<"#1":BIGINT>>)");
   EXPECT_EQ(row1->nameOf(0), "a,b");
-  EXPECT_EQ(row1->nameOf(1), "my \"column\"");
-  EXPECT_EQ(row1->childAt(1)->toString(), "ROW<\"#1\":BIGINT>");
+  EXPECT_EQ(row1->nameOf(1), R"(my "column")");
+  EXPECT_EQ(row1->childAt(1)->toString(), R"(ROW<"#1":BIGINT>)");
 
   auto row2 = ROW({{"", INTEGER()}});
-  EXPECT_EQ(row2->toString(), "ROW<\"\":INTEGER>");
+  EXPECT_EQ(row2->toString(), R"(ROW<"":INTEGER>)");
   EXPECT_EQ(row2->nameOf(0), "");
 
   VELOX_ASSERT_THROW(createScalarType(TypeKind::ROW), "not a scalar type");

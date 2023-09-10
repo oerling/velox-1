@@ -13,6 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <fmt/core.h>
+#include <sstream>
+#include <string>
 
 #pragma once
 
@@ -23,9 +26,7 @@ struct CompareFlags {
   // NoStop: The compare doesn't stop at null.
   // StopAtNull: The compare returns std::nullopt if null is encountered in rhs
   // or lhs.
-  // StopAtRhsNull: The compare returns std::nullopt only if null encountered on
-  // the right hand side; return false, if it is on the left hand side.
-  enum class NullHandlingMode { NoStop, StopAtNull, StopAtRhsNull };
+  enum class NullHandlingMode { NoStop, StopAtNull };
 
   // This flag will be ignored if nullHandlingMode is true.
   bool nullsFirst = true;
@@ -38,8 +39,28 @@ struct CompareFlags {
   NullHandlingMode nullHandlingMode = NullHandlingMode::NoStop;
 
   bool mayStopAtNull() {
-    return nullHandlingMode == CompareFlags::NullHandlingMode::StopAtNull ||
-        nullHandlingMode == CompareFlags::NullHandlingMode::StopAtRhsNull;
+    return nullHandlingMode == CompareFlags::NullHandlingMode::StopAtNull;
+  }
+
+  static std::string nullHandlingModeToStr(NullHandlingMode mode) {
+    switch (mode) {
+      case CompareFlags::NullHandlingMode::NoStop:
+        return "NoStop";
+      case CompareFlags::NullHandlingMode::StopAtNull:
+        return "StopAtNull";
+      default:
+        return fmt::format(
+            "Unknown Null Handling mode {}", static_cast<int>(mode));
+    }
+  }
+
+  std::string toString() const {
+    return fmt::format(
+        "[NullFirst[{}] Ascending[{}] EqualsOnly[{}] NullHandleMode[{}]]",
+        nullsFirst,
+        ascending,
+        equalsOnly,
+        nullHandlingModeToStr(nullHandlingMode));
   }
 };
 

@@ -19,11 +19,8 @@
 
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveConnector.h"
-#include "velox/expression/ExprToSubfieldFilter.h"
-
-#ifndef VELOX_ENABLE_BACKWARD_COMPATIBILITY
 #include "velox/connectors/hive/HiveDataSource.h"
-#endif
+#include "velox/expression/ExprToSubfieldFilter.h"
 
 namespace facebook::velox::connector::hive {
 namespace {
@@ -322,7 +319,7 @@ TEST_F(HiveConnectorTest, extractFiltersFromRemainingFilter) {
   // Change these once HUGEINT filter merge is fixed.
   ASSERT_TRUE(remaining);
   ASSERT_EQ(
-      remaining->toString(), "not(lt(ROW[\"c2\"],cast 0 as DECIMAL(20,0)))");
+      remaining->toString(), "not(lt(ROW[\"c2\"],cast 0 as DECIMAL(20, 0)))");
 }
 
 } // namespace

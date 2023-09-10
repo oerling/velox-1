@@ -133,6 +133,11 @@ class MaxAggregate : public MinMaxAggregate<T> {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
+    // Re-enable pushdown for TIMESTAMP after
+    // https://github.com/facebookincubator/velox/issues/6297 is fixed.
+    if (args[0]->typeKind() == TypeKind::TIMESTAMP) {
+      mayPushdown = false;
+    }
     if (mayPushdown && args[0]->isLazy()) {
       BaseAggregate::template pushdown<MinMaxHook<T, false>>(
           groups, rows, args[0]);
@@ -213,6 +218,11 @@ class MinAggregate : public MinMaxAggregate<T> {
       const SelectivityVector& rows,
       const std::vector<VectorPtr>& args,
       bool mayPushdown) override {
+    // Re-enable pushdown for TIMESTAMP after
+    // https://github.com/facebookincubator/velox/issues/6297 is fixed.
+    if (args[0]->typeKind() == TypeKind::TIMESTAMP) {
+      mayPushdown = false;
+    }
     if (mayPushdown && args[0]->isLazy()) {
       BaseAggregate::template pushdown<MinMaxHook<T, true>>(
           groups, rows, args[0]);
@@ -320,7 +330,7 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
 
     uint64_t* rawNulls = nullptr;
     if ((*result)->mayHaveNulls()) {
-      BufferPtr nulls = (*result)->mutableNulls((*result)->size());
+      BufferPtr& nulls = (*result)->mutableNulls((*result)->size());
       rawNulls = nulls->asMutable<uint64_t>();
     }
 
@@ -891,8 +901,7 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
           const TypePtr& resultType,
           const core::QueryConfig& /*config*/)
           -> std::unique_ptr<exec::Aggregate> {
-        const bool nAgg = (argTypes.size() == 2) ||
-            (argTypes.size() == 1 && argTypes[0]->size() == 2);
+        const bool nAgg = !resultType->equivalent(*argTypes[0]);
 
         if (nAgg) {
           // We have either 2 arguments: T, bigint (partial aggregation)
@@ -947,9 +956,14 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
               return std::make_unique<TNumeric<Timestamp>>(resultType);
             case TypeKind::HUGEINT:
               return std::make_unique<TNumeric<int128_t>>(resultType);
+            case TypeKind::VARBINARY:
+              [[fallthrough]];
             case TypeKind::VARCHAR:
+              [[fallthrough]];
             case TypeKind::ARRAY:
+              [[fallthrough]];
             case TypeKind::MAP:
+              [[fallthrough]];
             case TypeKind::ROW:
               return std::make_unique<TNonNumeric>(inputType);
             default:

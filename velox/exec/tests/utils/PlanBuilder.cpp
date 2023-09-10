@@ -66,9 +66,15 @@ typename TypeTraits<ToKind>::NativeType cast(const variant& v) {
 PlanBuilder& PlanBuilder::tableScan(
     const RowTypePtr& outputType,
     const std::vector<std::string>& subfieldFilters,
-    const std::string& remainingFilter) {
+    const std::string& remainingFilter,
+    const RowTypePtr& dataColumns) {
   return tableScan(
-      "hive_table", outputType, {}, subfieldFilters, remainingFilter);
+      "hive_table",
+      outputType,
+      {},
+      subfieldFilters,
+      remainingFilter,
+      dataColumns);
 }
 
 PlanBuilder& PlanBuilder::tableScan(
@@ -76,7 +82,8 @@ PlanBuilder& PlanBuilder::tableScan(
     const RowTypePtr& outputType,
     const std::unordered_map<std::string, std::string>& columnAliases,
     const std::vector<std::string>& subfieldFilters,
-    const std::string& remainingFilter) {
+    const std::string& remainingFilter,
+    const RowTypePtr& dataColumns) {
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
   std::unordered_map<std::string, core::TypedExprPtr> typedMapping;
@@ -101,12 +108,15 @@ PlanBuilder& PlanBuilder::tableScan(
              type,
              type)});
   }
+
+  const RowTypePtr& parseType = dataColumns ? dataColumns : outputType;
+
   SubfieldFilters filters;
   filters.reserve(subfieldFilters.size());
   core::QueryCtx queryCtx;
   exec::SimpleExpressionEvaluator evaluator(&queryCtx, pool_);
   for (const auto& filter : subfieldFilters) {
-    auto filterExpr = parseExpr(filter, outputType, options_, pool_);
+    auto filterExpr = parseExpr(filter, parseType, options_, pool_);
     auto [subfield, subfieldFilter] =
         exec::toSubfieldFilter(filterExpr, &evaluator);
 
@@ -126,9 +136,8 @@ PlanBuilder& PlanBuilder::tableScan(
 
   core::TypedExprPtr remainingFilterExpr;
   if (!remainingFilter.empty()) {
-    remainingFilterExpr =
-        parseExpr(remainingFilter, outputType, options_, pool_)
-            ->rewriteInputNames(typedMapping);
+    remainingFilterExpr = parseExpr(remainingFilter, parseType, options_, pool_)
+                              ->rewriteInputNames(typedMapping);
   }
 
   auto tableHandle = std::make_shared<HiveTableHandle>(
@@ -137,7 +146,7 @@ PlanBuilder& PlanBuilder::tableScan(
       true,
       std::move(filters),
       remainingFilterExpr,
-      nullptr);
+      dataColumns);
   return tableScan(outputType, tableHandle, assignments);
 }
 
@@ -696,6 +705,26 @@ PlanBuilder& PlanBuilder::groupId(
   return *this;
 }
 
+namespace {
+core::PlanNodePtr createLocalMergeNode(
+    const core::PlanNodeId& id,
+    const std::vector<std::string>& keys,
+    std::vector<core::PlanNodePtr> sources,
+    memory::MemoryPool* pool) {
+  const auto& inputType = sources[0]->outputType();
+  auto [sortingKeys, sortingOrders] =
+      parseOrderByClauses(keys, inputType, pool);
+
+  return std::make_shared<core::LocalMergeNode>(
+      id, std::move(sortingKeys), std::move(sortingOrders), std::move(sources));
+}
+} // namespace
+
+PlanBuilder& PlanBuilder::localMerge(const std::vector<std::string>& keys) {
+  planNode_ = createLocalMergeNode(nextPlanNodeId(), keys, {planNode_}, pool_);
+  return *this;
+}
+
 PlanBuilder& PlanBuilder::localMerge(
     const std::vector<std::string>& keys,
     std::vector<core::PlanNodePtr> sources) {
@@ -703,13 +732,8 @@ PlanBuilder& PlanBuilder::localMerge(
   VELOX_CHECK_GE(
       sources.size(), 1, "localMerge() requires at least one source");
 
-  const auto& inputType = sources[0]->outputType();
-  auto [sortingKeys, sortingOrders] =
-      parseOrderByClauses(keys, inputType, pool_);
-
-  planNode_ = std::make_shared<core::LocalMergeNode>(
-      nextPlanNodeId(), sortingKeys, sortingOrders, std::move(sources));
-
+  planNode_ =
+      createLocalMergeNode(nextPlanNodeId(), keys, std::move(sources), pool_);
   return *this;
 }
 

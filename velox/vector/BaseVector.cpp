@@ -71,7 +71,7 @@ void BaseVector::ensureNullsCapacity(
   auto fill = setNotNull ? bits::kNotNull : bits::kNull;
   // Ensure the size of nulls_ is always at least as large as length_.
   auto size = std::max(minimumSize, length_);
-  if (nulls_ && nulls_->isMutable()) {
+  if (nulls_ && !nulls_->isView() && nulls_->unique()) {
     if (nulls_->capacity() < bits::nbytes(size)) {
       AlignedBuffer::reallocate<bool>(&nulls_, size, fill);
     }
@@ -849,6 +849,16 @@ void BaseVector::reuseNulls() {
 void BaseVector::prepareForReuse() {
   reuseNulls();
   this->resetDataDependentFlags(nullptr);
+}
+
+void BaseVector::validate(const VectorValidateOptions& options) const {
+  if (nulls_ != nullptr) {
+    auto bytes = byteSize<bool>(size());
+    VELOX_CHECK_GE(nulls_->size(), bytes);
+  }
+  if (options.callback) {
+    options.callback(*this);
+  }
 }
 
 namespace {

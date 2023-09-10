@@ -479,6 +479,7 @@ VectorPtr CastExpr::applyDecimal(
             rows, input, context, fromType, toType, castResult);
         break;
       }
+      [[fallthrough]];
     }
     default:
       VELOX_UNSUPPORTED(
@@ -599,6 +600,10 @@ void CastExpr::apply(
     auto peeledEncoding = PeeledEncoding::peel(
         {input}, *nonNullRows, localDecoded, true, peeledVectors);
     VELOX_CHECK_EQ(peeledVectors.size(), 1);
+    if (peeledVectors[0]->isLazy()) {
+      peeledVectors[0] =
+          peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
+    }
     auto newRows =
         peeledEncoding->translateToInnerRows(*nonNullRows, newRowsHolder);
     // Save context and set the peel.
@@ -671,7 +676,8 @@ TypePtr CastCallToSpecialForm::resolveType(
 ExprPtr CastCallToSpecialForm::constructSpecialForm(
     const TypePtr& type,
     std::vector<ExprPtr>&& compiledChildren,
-    bool trackCpuUsage) {
+    bool trackCpuUsage,
+    const core::QueryConfig& /*config*/) {
   VELOX_CHECK_EQ(
       compiledChildren.size(),
       1,
@@ -689,7 +695,8 @@ TypePtr TryCastCallToSpecialForm::resolveType(
 ExprPtr TryCastCallToSpecialForm::constructSpecialForm(
     const TypePtr& type,
     std::vector<ExprPtr>&& compiledChildren,
-    bool trackCpuUsage) {
+    bool trackCpuUsage,
+    const core::QueryConfig& /*config*/) {
   VELOX_CHECK_EQ(
       compiledChildren.size(),
       1,

@@ -68,6 +68,11 @@ TableWriter::TableWriter(
   }
 
   mappedType_ = ROW(std::move(names), std::move(types));
+}
+
+void TableWriter::initialize() {
+  Operator::initialize();
+  VELOX_CHECK_NULL(dataSink_);
   createDataSink();
 }
 
@@ -98,9 +103,6 @@ void TableWriter::addInput(RowVectorPtr input) {
       mappedChildren,
       input->getNullCount());
 
-  if (!dataSink_) {
-    createDataSink();
-  }
   dataSink_->appendData(mappedInput);
   numWrittenRows_ += input->size();
   updateWrittenBytes();
@@ -139,7 +141,7 @@ RowVectorPtr TableWriter::getOutput() {
             pool(), 1, false /*isNull*/, BIGINT(), numWrittenRows_)});
   }
 
-  std::vector<std::string> fragments = dataSink_->finish();
+  const std::vector<std::string> fragments = dataSink_->finish();
 
   vector_size_t numOutputRows = fragments.size() + 1;
 

@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cstdint>
+#include <optional>
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/functions/lib/CheckDuplicateKeys.h"
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/vector/tests/TestingDictionaryArrayElementsFunction.h"
 
@@ -260,4 +263,136 @@ TEST_F(MapFromEntriesTest, outputSizeIsBoundBySelectedRows) {
   exprSet.eval(rows, evalCtx, results);
 
   ASSERT_EQ(results[0]->size(), 2);
+}
+
+TEST_F(MapFromEntriesTest, rowsWithNullsNotPassedToCheckDuplicateKey) {
+  auto innerRowVector = makeRowVector(
+      {makeNullableFlatVector<int32_t>({std::nullopt, 2, 3, 4}),
+       makeNullableFlatVector<int32_t>({1, 2, 3, 4})});
+
+  auto offsets = makeIndices({0, 2});
+  auto sizes = makeIndices({2, 2});
+
+  auto arrayVector = std::make_shared<ArrayVector>(
+      pool(),
+      ARRAY(ROW({INTEGER(), INTEGER()})),
+      nullptr,
+      2,
+      offsets,
+      sizes,
+      innerRowVector);
+  ASSERT_NO_THROW(
+      evaluate("try(map_from_entries(c0))", makeRowVector({arrayVector})));
+}
+
+TEST_F(MapFromEntriesTest, arrayOfDictionaryRowOfNulls) {
+  RowVectorPtr rowVector =
+      makeRowVector({makeFlatVector<int32_t>(0), makeFlatVector<int32_t>(0)});
+  rowVector->resize(4);
+  for (int i = 0; i < rowVector->size(); i++) {
+    rowVector->setNull(i, true);
+  }
+
+  EXPECT_EQ(rowVector->childAt(0)->size(), 0);
+  EXPECT_EQ(rowVector->childAt(1)->size(), 0);
+
+  auto indices = makeIndices({0, 1, 2, 3});
+
+  auto dictionary =
+      BaseVector::wrapInDictionary(nullptr, indices, 4, rowVector);
+
+  auto offsets = makeIndices({0, 2});
+  auto sizes = makeIndices({2, 2});
+
+  auto arrayVector = std::make_shared<ArrayVector>(
+      pool(),
+      ARRAY(ROW({INTEGER(), INTEGER()})),
+      nullptr,
+      2,
+      offsets,
+      sizes,
+      dictionary);
+  VectorPtr result =
+      evaluate("try(map_from_entries(c0))", makeRowVector({arrayVector}));
+  for (int i = 0; i < result->size(); i++) {
+    EXPECT_TRUE(result->isNullAt(i));
+  }
+}
+
+TEST_F(MapFromEntriesTest, arrayOfConstantRowOfNulls) {
+  RowVectorPtr rowVector =
+      makeRowVector({makeFlatVector<int32_t>(0), makeFlatVector<int32_t>(0)});
+  rowVector->resize(1);
+  rowVector->setNull(0, true);
+
+  EXPECT_EQ(rowVector->childAt(0)->size(), 0);
+  EXPECT_EQ(rowVector->childAt(1)->size(), 0);
+
+  VectorPtr rowVectorConstant = BaseVector::wrapInConstant(4, 0, rowVector);
+
+  auto offsets = makeIndices({0, 2});
+  auto sizes = makeIndices({2, 2});
+
+  auto arrayVector = std::make_shared<ArrayVector>(
+      pool(),
+      ARRAY(ROW({INTEGER(), INTEGER()})),
+      nullptr,
+      2,
+      offsets,
+      sizes,
+      rowVectorConstant);
+  VectorPtr result =
+      evaluate("try(map_from_entries(c0))", makeRowVector({arrayVector}));
+  for (int i = 0; i < result->size(); i++) {
+    EXPECT_TRUE(result->isNullAt(i));
+  }
+}
+
+TEST_F(MapFromEntriesTest, arrayOfConstantNotNulls) {
+  RowVectorPtr rowVector = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2}), makeFlatVector<int32_t>({3, 4})});
+  rowVector->resize(1);
+  rowVector->setNull(0, false);
+
+  VectorPtr rowVectorConstant = BaseVector::wrapInConstant(4, 0, rowVector);
+  {
+    auto offsets = makeIndices({0, 2});
+    auto sizes = makeIndices({2, 2});
+
+    auto arrayVector = std::make_shared<ArrayVector>(
+        pool(),
+        ARRAY(ROW({INTEGER(), INTEGER()})),
+        nullptr,
+        2,
+        offsets,
+        sizes,
+        rowVectorConstant);
+
+    // will fail due to duplicate key.
+    VectorPtr result =
+        evaluate("try(map_from_entries(c0))", makeRowVector({arrayVector}));
+    for (int i = 0; i < result->size(); i++) {
+      EXPECT_TRUE(result->isNullAt(i));
+    }
+  }
+
+  {
+    auto offsets = makeIndices({0, 1});
+    auto sizes = makeIndices({1, 1});
+
+    auto arrayVector = std::make_shared<ArrayVector>(
+        pool(),
+        ARRAY(ROW({INTEGER(), INTEGER()})),
+        nullptr,
+        2,
+        offsets,
+        sizes,
+        rowVectorConstant);
+
+    // will fail due to duplicate key.
+    VectorPtr result =
+        evaluate("map_from_entries(c0)", makeRowVector({arrayVector}));
+    auto expected = makeMapVector<int32_t, int32_t>(
+        {{{1, 2}}, {{1, 2}}, {{1, 2}}, {{1, 2}}});
+  }
 }

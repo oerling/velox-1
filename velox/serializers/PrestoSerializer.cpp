@@ -302,7 +302,7 @@ readNulls(ByteStream* source, vector_size_t size, BaseVector* result) {
     return 0;
   }
 
-  BufferPtr nulls = result->mutableNulls(size);
+  BufferPtr& nulls = result->mutableNulls(size);
   auto rawNulls = nulls->asMutable<uint8_t>();
   auto numBytes = BaseVector::byteSize<bool>(size);
 
@@ -359,6 +359,9 @@ BufferPtr findOrAllocateStringBuffer(
     }
   }
   if (smallestBuffer) {
+    if (smallestBuffer->size() < size) {
+      smallestBuffer->setSize(size);
+    }
     return smallestBuffer;
   }
 

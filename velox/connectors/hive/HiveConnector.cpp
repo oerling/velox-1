@@ -17,11 +17,9 @@
 #include "velox/connectors/hive/HiveConnector.h"
 
 #include "velox/common/base/Fs.h"
-#ifndef VELOX_ENABLE_BACKWARD_COMPATIBILITY
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/connectors/hive/HiveDataSource.h"
-#endif
 #include "velox/connectors/hive/HivePartitionFunction.h"
 // Meta's buck build system needs this check.
 #ifdef VELOX_ENABLE_GCS
@@ -107,7 +105,11 @@ std::unique_ptr<DataSink> HiveConnector::createDataSink(
   VELOX_CHECK_NOT_NULL(
       hiveInsertHandle, "Hive connector expecting hive write handle!");
   return std::make_unique<HiveDataSink>(
-      inputType, hiveInsertHandle, connectorQueryCtx, commitStrategy);
+      inputType,
+      hiveInsertHandle,
+      connectorQueryCtx,
+      commitStrategy,
+      connectorProperties());
 }
 
 std::unique_ptr<core::PartitionFunction> HivePartitionFunctionSpec::create(

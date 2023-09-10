@@ -167,8 +167,7 @@ struct CombinationsFunction {
 
   static constexpr int32_t kMaxCombinationSize = 5;
   static constexpr int64_t kMaxNumberOfCombinations = 100000;
-  /// TODO: Add ability to re-use strings once reuse_strings_from_arg supports
-  /// reusing strings nested within complex types.
+  static constexpr int32_t reuse_strings_from_arg = 0;
 
   int64_t calculateCombinationCount(
       int64_t inputArraySize,
@@ -727,7 +726,7 @@ struct ArrayRemoveFunction {
       const arg_type<Array<Generic<T1>>>& array,
       const arg_type<Generic<T1>>& element) {
     static constexpr CompareFlags kFlags = {
-        false, false, true, CompareFlags::NullHandlingMode::StopAtRhsNull};
+        false, false, true, CompareFlags::NullHandlingMode::StopAtNull};
     std::vector<std::optional<exec::GenericView>> toCopyItems;
     for (const auto& item : array) {
       if (item.has_value()) {

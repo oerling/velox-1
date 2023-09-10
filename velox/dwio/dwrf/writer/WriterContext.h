@@ -66,7 +66,7 @@ class WriterContext : public CompressionBufferPool {
         handler_{std::move(handler)} {
     const bool forceLowMemoryMode{getConfig(Config::FORCE_LOW_MEMORY_MODE)};
     const bool disableLowMemoryMode{getConfig(Config::DISABLE_LOW_MEMORY_MODE)};
-    DWIO_ENSURE(!(forceLowMemoryMode && disableLowMemoryMode));
+    VELOX_CHECK(!(forceLowMemoryMode && disableLowMemoryMode));
     checkLowMemoryMode_ = !forceLowMemoryMode && !disableLowMemoryMode;
     if (forceLowMemoryMode) {
       setLowMemoryMode();
@@ -76,8 +76,10 @@ class WriterContext : public CompressionBufferPool {
     }
     validateConfigs();
     VLOG(2) << fmt::format("Compression config: {}", compression_);
-    compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
-        *generalPool_, compressionBlockSize_ + PAGE_HEADER_SIZE);
+    if (compression_ != common::CompressionKind_NONE) {
+      compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
+          *generalPool_, compressionBlockSize_ + PAGE_HEADER_SIZE);
+    }
   }
 
   bool hasStream(const DwrfStreamIdentifier& stream) const {
@@ -104,8 +106,8 @@ class WriterContext : public CompressionBufferPool {
   // flush policy evaluation and would be more accurate after flush.
   std::unique_ptr<BufferedOutputStream> newStream(
       const DwrfStreamIdentifier& stream) {
-    DWIO_ENSURE(
-        !hasStream(stream), "Stream already exists ", stream.toString());
+    VELOX_CHECK(
+        !hasStream(stream), "Stream already exists: {}", stream.toString());
 
     streams_.emplace(
         std::piecewise_construct,
@@ -176,7 +178,7 @@ class WriterContext : public CompressionBufferPool {
   }
 
   void suppressStream(const DwrfStreamIdentifier& stream) {
-    DWIO_ENSURE(hasStream(stream));
+    VELOX_CHECK(hasStream(stream));
     auto& collector = streams_.at(stream);
     collector.suppress();
   }
@@ -273,15 +275,15 @@ class WriterContext : public CompressionBufferPool {
 
   std::unique_ptr<dwio::common::DataBuffer<char>> getBuffer(
       uint64_t size) override {
-    DWIO_ENSURE_NOT_NULL(compressionBuffer_);
-    DWIO_ENSURE_GE(compressionBuffer_->size(), size);
+    VELOX_CHECK_NOT_NULL(compressionBuffer_);
+    VELOX_CHECK_GE(compressionBuffer_->size(), size);
     return std::move(compressionBuffer_);
   }
 
   void returnBuffer(
       std::unique_ptr<dwio::common::DataBuffer<char>> buffer) override {
-    DWIO_ENSURE_NOT_NULL(buffer);
-    DWIO_ENSURE(!compressionBuffer_);
+    VELOX_CHECK_NOT_NULL(buffer);
+    VELOX_CHECK_NULL(compressionBuffer_);
     compressionBuffer_ = std::move(buffer);
   }
 
@@ -534,11 +536,11 @@ class WriterContext : public CompressionBufferPool {
       case TypeKind::INVALID:
         FOLLY_FALLTHROUGH;
       default:
-        VELOX_FAIL(fmt::format(
+        VELOX_FAIL(
             "Unexpected type kind {} encountered when building "
             "physical size aggregator for node {}.",
             type.type()->toString(),
-            type.id()));
+            type.id());
     }
   }
 
@@ -578,6 +580,10 @@ class WriterContext : public CompressionBufferPool {
       selectivityVector_->resize(size);
     }
     return *selectivityVector_;
+  }
+
+  dwio::common::DataBuffer<char>* testingCompressionBuffer() const {
+    return compressionBuffer_.get();
   }
 
  private:
@@ -658,19 +664,15 @@ class WriterContext : public CompressionBufferPool {
 
   CpuWallTiming flushTiming_{};
 
-  template <typename TestType>
-  friend class WriterEncodingIndexTest;
   friend class IntegerColumnWriterDirectEncodingIndexTest;
   friend class StringColumnWriterDictionaryEncodingIndexTest;
   friend class StringColumnWriterDirectEncodingIndexTest;
-  VELOX_FRIEND_TEST(TestWriterContext, GetIntDictionaryEncoder);
-  VELOX_FRIEND_TEST(TestWriterContext, RemoveIntDictionaryEncoderForNode);
   // TODO: remove once writer code is consolidated
   template <typename TestType>
   friend class WriterEncodingIndexTest2;
-  friend class IntegerColumnWriterDirectEncodingIndexTest2;
-  friend class StringColumnWriterDictionaryEncodingIndexTest2;
-  friend class StringColumnWriterDirectEncodingIndexTest2;
+
+  VELOX_FRIEND_TEST(TestWriterContext, GetIntDictionaryEncoder);
+  VELOX_FRIEND_TEST(TestWriterContext, RemoveIntDictionaryEncoderForNode);
 };
 
 } // namespace facebook::velox::dwrf

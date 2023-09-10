@@ -28,7 +28,7 @@ namespace {
 BlockingReason fromStateToBlockingReason(HashBuild::State state) {
   switch (state) {
     case HashBuild::State::kRunning:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case HashBuild::State::kFinish:
       return BlockingReason::kNotBlocked;
     case HashBuild::State::kWaitForSpill:
@@ -201,6 +201,7 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
   if (spillPartition == nullptr) {
     spillGroup_->addOperator(
         *this,
+        operatorCtx_->driver()->shared_from_this(),
         [&](const std::vector<Operator*>& operators) { runSpill(operators); });
   } else {
     spillInputReader_ = spillPartition->createReader();
@@ -850,9 +851,12 @@ void HashBuild::ensureTableFits(uint64_t numRows) {
     return;
   }
 
+  // TODO: add spilling support here in case of threshold triggered spilling.
+#if 0
   // NOTE: the memory arbitrator must have spilled everything from this hash
   // build operator and all its peers.
   VELOX_CHECK(spiller_->isAllSpilled());
+#endif
 
   // Throw a memory cap exceeded error to fail this query.
   VELOX_MEM_POOL_CAP_EXCEEDED(fmt::format(
@@ -975,7 +979,7 @@ BlockingReason HashBuild::isBlocked(ContinueFuture* future) {
       }
       break;
     case State::kWaitForBuild:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForProbe:
       if (!future_.valid()) {
         setRunning();
@@ -1025,11 +1029,11 @@ void HashBuild::checkStateTransition(State state) {
       }
       break;
     case State::kWaitForBuild:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForSpill:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForProbe:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kFinish:
       VELOX_CHECK_EQ(state_, State::kRunning);
       break;

@@ -273,7 +273,8 @@ void RowVector::copyRanges(
     if (rawNulls_) {
       auto* rawNulls = mutableRawNulls();
       for (auto& r : ranges) {
-        bits::fillBits(rawNulls, r.targetIndex, r.count, bits::kNotNull);
+        bits::fillBits(
+            rawNulls, r.targetIndex, r.targetIndex + r.count, bits::kNotNull);
       }
     }
     auto* rowSource = source->loadedVector()->as<RowVector>();
@@ -525,6 +526,15 @@ void ArrayVectorBase::copyRangesImpl(
   }
 }
 
+void RowVector::validate(const VectorValidateOptions& options) const {
+  BaseVector::validate(options);
+  for (auto& child : children_) {
+    if (child != nullptr) {
+      child->validate(options);
+    }
+  }
+}
+
 void ArrayVectorBase::checkRanges() const {
   std::unordered_map<vector_size_t, vector_size_t> seenElements;
   seenElements.reserve(size());
@@ -552,6 +562,40 @@ void ArrayVectorBase::checkRanges() const {
   }
 }
 
+void ArrayVectorBase::validateArrayVectorBase(
+    const VectorValidateOptions& options,
+    vector_size_t minChildVectorSize) const {
+  BaseVector::validate(options);
+  auto bufferByteSize = byteSize<vector_size_t>(BaseVector::length_);
+  VELOX_CHECK_GE(sizes_->size(), bufferByteSize);
+  VELOX_CHECK_GE(offsets_->size(), bufferByteSize);
+  for (auto i = 0; i < BaseVector::length_; ++i) {
+    const bool isNull =
+        BaseVector::rawNulls_ && bits::isBitNull(BaseVector::rawNulls_, i);
+    if (isNull || rawSizes_[i] == 0) {
+      continue;
+    }
+    // Verify index for a non-null position. It must be >= 0 and < size of the
+    // base vector.
+    VELOX_CHECK_GE(
+        rawSizes_[i],
+        0,
+        "ArrayVectorBase size must be greater than zero. Index: {}.",
+        i);
+    VELOX_CHECK_GE(
+        rawOffsets_[i],
+        0,
+        "ArrayVectorBase offset must be greater than zero. Index: {}.",
+        i)
+    VELOX_CHECK_LT(
+        rawOffsets_[i] + rawSizes_[i] - 1,
+        minChildVectorSize,
+        "ArrayVectorBase must only point to indices within the base "
+        "vector's size. Index: {}.",
+        i);
+  }
+}
+
 namespace {
 
 struct IndexRange {
@@ -573,10 +617,7 @@ std::optional<int32_t> compareArrays(
   for (auto i = 0; i < compareSize; ++i) {
     auto result =
         left.compare(&right, leftRange.begin + i, rightRange.begin + i, flags);
-    if ((flags.nullHandlingMode == CompareFlags::NullHandlingMode::StopAtNull ||
-         flags.nullHandlingMode ==
-             CompareFlags::NullHandlingMode::StopAtRhsNull) &&
-        !result.has_value()) {
+    if (flags.mayStopAtNull() && !result.has_value()) {
       // Null is encountered.
       return std::nullopt;
     }
@@ -601,10 +642,7 @@ std::optional<int32_t> compareArrays(
   auto compareSize = std::min(leftRange.size(), rightRange.size());
   for (auto i = 0; i < compareSize; ++i) {
     auto result = left.compare(&right, leftRange[i], rightRange[i], flags);
-    if ((flags.nullHandlingMode == CompareFlags::NullHandlingMode::StopAtNull ||
-         flags.nullHandlingMode ==
-             CompareFlags::NullHandlingMode::StopAtRhsNull) &&
-        !result.has_value()) {
+    if (flags.mayStopAtNull() && !result.has_value()) {
       // Null is encountered.
       return std::nullopt;
     }
@@ -796,6 +834,11 @@ VectorPtr ArrayVector::slice(vector_size_t offset, vector_size_t length) const {
       elements_);
 }
 
+void ArrayVector::validate(const VectorValidateOptions& options) const {
+  ArrayVectorBase::validateArrayVectorBase(options, elements_->size());
+  elements_->validate(options);
+}
+
 std::optional<int32_t> MapVector::compare(
     const BaseVector* other,
     vector_size_t index,
@@ -838,10 +881,7 @@ std::optional<int32_t> MapVector::compare(
       compareArrays(*keys_, *otherMap->keys_, leftIndices, rightIndices, flags);
   VELOX_DCHECK(result.has_value(), "keys can not have null");
 
-  if ((flags.nullHandlingMode == CompareFlags::NullHandlingMode::StopAtNull ||
-       flags.nullHandlingMode ==
-           CompareFlags::NullHandlingMode::StopAtRhsNull) &&
-      !result.has_value()) {
+  if (flags.mayStopAtNull() && !result.has_value()) {
     return std::nullopt;
   }
 
@@ -1059,6 +1099,13 @@ VectorPtr MapVector::slice(vector_size_t offset, vector_size_t length) const {
       sliceBuffer(*INTEGER(), sizes_, offset, length, pool_),
       keys_,
       values_);
+}
+
+void MapVector::validate(const VectorValidateOptions& options) const {
+  ArrayVectorBase::validateArrayVectorBase(
+      options, std::min(keys_->size(), values_->size()));
+  keys_->validate(options);
+  values_->validate(options);
 }
 
 } // namespace velox

@@ -259,6 +259,10 @@ class Driver : public std::enable_shared_from_this<Driver> {
   /// operator must produce data that will be returned to caller.
   RowVectorPtr next(std::shared_ptr<BlockingState>& blockingState);
 
+  /// Invoked to initialize the operators from this driver once on its first
+  /// execution.
+  void initializeOperators();
+
   bool isOnThread() const {
     return state_.isOnThread();
   }
@@ -318,6 +322,10 @@ class Driver : public std::enable_shared_from_this<Driver> {
     return blockingReason_;
   }
 
+  static std::shared_ptr<Driver> testingCreate() {
+    return std::shared_ptr<Driver>(new Driver());
+  }
+
  private:
   Driver() = default;
 
@@ -351,7 +359,18 @@ class Driver : public std::enable_shared_from_this<Driver> {
         : nullptr;
   }
 
+  // Adjusts 'timing' by removing the lazy load wall and CPU times
+  // accrued since last time timing information was recorded for
+  // 'op'. The accrued lazy load times are credited to the source
+  // operator of 'this'. The per-operator runtimeStats for lazy load
+  // are left in place to reflect which operator triggered the load
+  // but these do not bias the op's timing.
+  CpuWallTiming processLazyTiming(Operator& op, const CpuWallTiming& timing);
+
   std::unique_ptr<DriverCtx> ctx_;
+
+  bool operatorsInitialized_{false};
+
   std::atomic_bool closed_{false};
 
   // Set via Task and serialized by Task's mutex.

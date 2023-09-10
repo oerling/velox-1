@@ -52,6 +52,17 @@ class VectorPool;
 class BaseVector;
 using VectorPtr = std::shared_ptr<BaseVector>;
 
+// Set of options that validate() accepts.
+struct VectorValidateOptions {
+  // If set to true then an unloaded lazy vector is loaded and validate is
+  // called on the loaded vector. NOTE: loading a vector is non-trivial and
+  // can modify how it's handled by downstream code-paths.
+  bool loadLazy = false;
+
+  // Any optional checks you want to execute on the vector.
+  std::function<void(const BaseVector&)> callback;
+};
+
 /**
  * Base class for all columnar-based vectors of any type.
  */
@@ -175,12 +186,14 @@ class BaseVector {
     return rawNulls_;
   }
 
+  // Ensures that nulls are writable (mutable and single referenced for
+  // BaseVector::length_).
   uint64_t* mutableRawNulls() {
     ensureNulls();
     return const_cast<uint64_t*>(rawNulls_);
   }
 
-  virtual BufferPtr mutableNulls(vector_size_t size) {
+  BufferPtr& mutableNulls(vector_size_t size) {
     ensureNullsCapacity(size);
     return nulls_;
   }
@@ -754,6 +767,11 @@ class BaseVector {
     memoDisabled_ = true;
   }
 
+  /// Used to check internal state of a vector like sizes of the buffers,
+  /// enclosed child vectors, values in indices. Currently, its only used in
+  /// debug builds to check the result of expressions and some interim results.
+  virtual void validate(const VectorValidateOptions& options = {}) const;
+
  protected:
   /// Returns a brief summary of the vector. The default implementation includes
   /// encoding, type, number of rows and number of nulls.
@@ -766,6 +784,8 @@ class BaseVector {
   /*
    * Allocates or reallocates nulls_ with at least the given size if nulls_
    * hasn't been allocated yet or has been allocated with a smaller capacity.
+   * Ensures that nulls are writable (mutable and single referenced for
+   * minimumSize).
    */
   void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
 
@@ -773,11 +793,6 @@ class BaseVector {
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {
     DCHECK(thisNull || otherNull);
     switch (flags.nullHandlingMode) {
-      case CompareFlags::NullHandlingMode::StopAtRhsNull:
-        if (!otherNull) {
-          return false;
-        }
-        [[fallthrough]];
       case CompareFlags::NullHandlingMode::StopAtNull:
         return std::nullopt;
       case CompareFlags::NullHandlingMode::NoStop:

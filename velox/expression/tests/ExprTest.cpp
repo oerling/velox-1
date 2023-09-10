@@ -76,13 +76,20 @@ class ExprTest : public testing::Test, public VectorTestBase {
     return parsed;
   }
 
+  // T can be ExprSet or ExprSetSimplified.
+  template <typename T = exec::ExprSet>
+  std::unique_ptr<T> compileExpression(const core::TypedExprPtr& expr) {
+    std::vector<core::TypedExprPtr> expressions = {expr};
+    return std::make_unique<T>(std::move(expressions), execCtx_.get());
+  }
+
+  // T can be ExprSet or ExprSetSimplified.
   template <typename T = exec::ExprSet>
   std::unique_ptr<T> compileExpression(
       const std::string& expr,
       const RowTypePtr& rowType) {
-    std::vector<core::TypedExprPtr> expressions = {
-        parseExpression(expr, rowType)};
-    return std::make_unique<T>(std::move(expressions), execCtx_.get());
+    auto parsedExpression = parseExpression(expr, rowType);
+    return compileExpression<T>(parsedExpression);
   }
 
   std::unique_ptr<exec::ExprSet> compileMultiple(
@@ -2856,14 +2863,14 @@ TEST_F(ExprTest, castExceptionContext) {
       makeFlatVector<std::string>({"1a"}),
       "cast((c0) as BIGINT)",
       "Same as context.",
-      "Failed to cast from VARCHAR to BIGINT: 1a. Non-whitespace character found after end of conversion: \"a\"");
+      "Cannot cast VARCHAR '1a' to BIGINT. Non-whitespace character found after end of conversion: \"a\"");
 
   assertError(
       "cast(c0 as timestamp)",
       makeFlatVector(std::vector<int8_t>{1}),
       "cast((c0) as TIMESTAMP)",
       "Same as context.",
-      "Failed to cast from TINYINT to TIMESTAMP: 1. Conversion to Timestamp is not supported");
+      "Cannot cast TINYINT '1' to TIMESTAMP. Conversion to Timestamp is not supported");
 }
 
 TEST_F(ExprTest, switchExceptionContext) {
@@ -4157,6 +4164,29 @@ auto makeRow = [](const std::string& fieldName) {
       "cast(row_constructor(1) as struct({} BOOLEAN))", fieldName);
 };
 
+TEST_F(ExprTest, extractSubfieldsWithDereference) {
+  // Tests extracting subfields from expressions using DeferenceTypedExpr to
+  // access fields without the field names initialized (all empty string).  In
+  // this case, the field's parent should be extracted.
+  std::vector<core::TypedExprPtr> expr = {
+      std::make_shared<core::DereferenceTypedExpr>(
+          REAL(),
+          std::make_shared<core::FieldAccessTypedExpr>(
+              ROW({{"", DOUBLE()}, {"", REAL()}, {"", BIGINT()}}),
+              std::make_shared<core::InputTypedExpr>(ROW(
+                  {{"c0",
+                    ROW({{"", DOUBLE()}, {"", REAL()}, {"", BIGINT()}})}})),
+              "c0"),
+          1)};
+
+  auto exprSet =
+      std::make_unique<exec::ExprSet>(std::move(expr), execCtx_.get());
+  auto subfields = exprSet->expr(0)->extractSubfields();
+
+  ASSERT_EQ(subfields.size(), 1);
+  ASSERT_EQ(subfields[0].toString(), "c0");
+}
+
 TEST_F(ExprTest, switchRowInputTypesAreTheSame) {
   assertErrorSimplified(
       fmt::format("switch(c0, {},  {})", makeRow("f1"), makeRow("f2")),
@@ -4209,6 +4239,89 @@ TEST_F(ExprTest, coalesceRowInputTypesAreTheSame) {
           "Coalesce expression type different than its inputs. Expected ROW<f1:BOOLEAN> but got Actual ROW<c0:BOOLEAN>.",
           e.message());
     }
+  }
+
+  {
+    // Check that operator==() of CallTypedExpr, FieldAccessTypedExpr,
+    // ConcatTypedExpr, and LambdaTypedExpr returns false when result types are
+    // different.
+    auto call1 = std::make_shared<const core::CallTypedExpr>(
+        ROW({"row_field0"}, {BIGINT()}),
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(BIGINT(), "c0")},
+        "foo");
+    auto call2 = std::make_shared<const core::CallTypedExpr>(
+        ROW({""}, {BIGINT()}),
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(BIGINT(), "c0")},
+        "foo");
+    ASSERT_FALSE(*call1 == *call2);
+
+    auto fieldAccess1 = std::make_shared<const core::FieldAccessTypedExpr>(
+        ROW({"row_field0"}, {BIGINT()}), "c0");
+    auto fieldAccess2 = std::make_shared<const core::FieldAccessTypedExpr>(
+        ROW({""}, {BIGINT()}), "c0");
+    ASSERT_FALSE(*fieldAccess1 == *fieldAccess2);
+
+    auto concat1 = std::make_shared<const core::ConcatTypedExpr>(
+        std::vector<std::string>{"row_field0"},
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(
+                BIGINT(), "c0")});
+    auto concat2 = std::make_shared<const core::ConcatTypedExpr>(
+        std::vector<std::string>{""},
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(
+                BIGINT(), "c0")});
+    ASSERT_FALSE(*concat1 == *concat2);
+
+    auto lambda1 = std::make_shared<const core::LambdaTypedExpr>(
+        ROW({"c0"}, {BIGINT()}), call1);
+    auto lambda2 = std::make_shared<const core::LambdaTypedExpr>(
+        ROW({"c0"}, {BIGINT()}), call2);
+    ASSERT_FALSE(*lambda1 == *lambda2);
+  }
+
+  {
+    // cast(concat(c0) as row(row_field0)).row_field0 + coalesce(c1,
+    // concat(c0)).row_field0. The result type of the first concat is
+    // Row<"":bigint> while the result type of the second concat is
+    // Row<"row_field0":bigint>. This is a valid expression, so the expression
+    // compilation should not throw in this situation.
+    core::TypedExprPtr concat = std::make_shared<const core::ConcatTypedExpr>(
+        std::vector<std::string>{"row_field0"},
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(
+                BIGINT(), "c0")});
+    core::TypedExprPtr coalesce = std::make_shared<const core::CallTypedExpr>(
+        ROW({"row_field0"}, {BIGINT()}),
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(
+                ROW({"row_field0"}, {BIGINT()}), "c1"),
+            concat},
+        "coalesce");
+    core::TypedExprPtr dereference =
+        std::make_shared<const core::FieldAccessTypedExpr>(
+            BIGINT(), coalesce, "row_field0");
+    core::TypedExprPtr concat2 = std::make_shared<const core::ConcatTypedExpr>(
+        std::vector<std::string>{""},
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<const core::FieldAccessTypedExpr>(
+                BIGINT(), "c0")});
+    ASSERT_FALSE(*concat == *concat2);
+    core::TypedExprPtr cast = std::make_shared<const core::CallTypedExpr>(
+        ROW({"row_field0"}, {BIGINT()}),
+        std::vector<core::TypedExprPtr>{concat2},
+        "cast");
+    core::TypedExprPtr dereference2 =
+        std::make_shared<const core::FieldAccessTypedExpr>(
+            BIGINT(), cast, "row_field0");
+    core::TypedExprPtr plus = std::make_shared<const core::CallTypedExpr>(
+        BIGINT(),
+        std::vector<core::TypedExprPtr>{dereference2, dereference},
+        "plus");
+
+    ASSERT_NO_THROW(compileExpression(plus));
   }
 }
 } // namespace

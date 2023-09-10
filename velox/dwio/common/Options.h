@@ -75,6 +75,10 @@ class SerDeOptions {
   uint8_t escapeChar;
   bool isEscaped;
 
+  inline static const std::string kFieldDelim{"field.delim"};
+  inline static const std::string kCollectionDelim{"collection.delim"};
+  inline static const std::string kMapKeyDelim{"mapkey.delim"};
+
   explicit SerDeOptions(
       uint8_t fieldDelim = '\1',
       uint8_t collectionDelim = '\2',
@@ -119,6 +123,7 @@ class RowReaderOptions {
   std::function<void(
       facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
       keySelectionCallback_;
+  bool eagerFirstStripeLoad = true;
 
  public:
   RowReaderOptions() noexcept
@@ -197,6 +202,24 @@ class RowReaderOptions {
    */
   bool getPreloadStripe() const {
     return preloadStripe;
+  }
+
+  /*
+   * Will load the first stripe on RowReader creation, if true.
+   * This behavior is already happening in DWRF, but isn't desired for some use
+   * cases. So this flag allows us to turn it off.
+   */
+  void setEagerFirstStripeLoad(bool load) {
+    eagerFirstStripeLoad = load;
+  }
+
+  /*
+   * Will load the first stripe on RowReader creation, if true.
+   * This behavior is already happening in DWRF, but isn't desired for some use
+   * cases. So this flag allows us to turn it off.
+   */
+  bool getEagerFirstStripeLoad() const {
+    return eagerFirstStripeLoad;
   }
 
   // For flat map, return flat vector representation
