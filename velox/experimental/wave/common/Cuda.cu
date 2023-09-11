@@ -66,7 +66,7 @@ class CudaHostAllocator : public GpuAllocator {
   }
 
   void free(void* ptr, size_t /*size*/) override {
-    cudaFree(ptr);
+    cudaFreeHost(ptr);
   };
 };
 
