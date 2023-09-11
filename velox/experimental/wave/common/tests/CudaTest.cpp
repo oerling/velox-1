@@ -447,7 +447,7 @@ class CudaTest : public testing::Test {
       return;
     }
     inited = true;
-      memory::MemoryManagerOptions options;
+    memory::MemoryManagerOptions options;
     options.capacity = capacity;
     memory::MmapAllocator::Options opts{(uint64_t)options.capacity};
     mmapAllocator_ = std::make_shared<memory::MmapAllocator>(opts);
@@ -842,7 +842,7 @@ TEST_F(CudaTest, reduceMatrix) {
 
   std::vector<std::string> modes = {/*"unified", "device",*/ "devicecoalesced"};
   std::vector<int32_t> batchMBValues = {30, 100};
-  std::vector<int32_t> numThreadsValues = {1 , 2, 3};
+  std::vector<int32_t> numThreadsValues = {1, 2, 3};
   std::vector<int32_t> workPerThreadValues = {2, 4};
   std::vector<int32_t> numColumnsValues = {10, 100, 300};
   std::vector<int32_t> copyPerThreadValues = {300000, 1000000};

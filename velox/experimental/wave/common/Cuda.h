@@ -146,10 +146,9 @@ GpuAllocator* getAllocator(Device* device);
 // Returns an allocator that produces device memory on current device.
 GpuAllocator* getDeviceAllocator(Device* device);
 
-  /// Returns an allocator that produces pinned host memory.
-  GpuAllocator* getHostAllocator(Device* device);
+/// Returns an allocator that produces pinned host memory.
+GpuAllocator* getHostAllocator(Device* device);
 
-  
 class GpuAllocator::Deleter {
  public:
   Deleter() = default;

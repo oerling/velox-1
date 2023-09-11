@@ -60,7 +60,7 @@ class Semaphore {
     return count_;
   }
 
-private:
+ private:
   std::mutex mutex_;
   std::condition_variable cv_;
   volatile int32_t count_;
