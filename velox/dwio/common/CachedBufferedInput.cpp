@@ -302,6 +302,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
         cache_(cache),
         ioStats_(std::move(ioStats)),
         groupId_(groupId) {
+    requests_.reserve(requests.size());
     for (auto& request : requests) {
       size_ += request->size;
       requests_.push_back(std::move(*request));
