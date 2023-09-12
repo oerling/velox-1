@@ -240,7 +240,7 @@ struct DriverCtx {
       const std::string& operatorType);
 
   /// Builds the spill config for the operator with specified 'operatorId'.
-  std::optional<Spiller::Config> makeSpillConfig(int32_t operatorId) const;
+  std::optional<common::SpillConfig> makeSpillConfig(int32_t operatorId) const;
 };
 
 class Driver : public std::enable_shared_from_this<Driver> {
@@ -358,14 +358,6 @@ class Driver : public std::enable_shared_from_this<Driver> {
         ? std::make_unique<DeltaCpuWallTimer<F>>(std::move(func))
         : nullptr;
   }
-
-  // Adjusts 'timing' by removing the lazy load wall and CPU times
-  // accrued since last time timing information was recorded for
-  // 'op'. The accrued lazy load times are credited to the source
-  // operator of 'this'. The per-operator runtimeStats for lazy load
-  // are left in place to reflect which operator triggered the load
-  // but these do not bias the op's timing.
-  CpuWallTiming processLazyTiming(Operator& op, const CpuWallTiming& timing);
 
   std::unique_ptr<DriverCtx> ctx_;
 

@@ -279,8 +279,8 @@ TEST_F(E2EFilterTest, timestamp) {
       "timestamp_val:timestamp,"
       "long_val:bigint",
       [&]() {},
-      false,
-      {"long_val"},
+      true,
+      {"long_val", "timestamp_val"},
       20,
       true,
       true);
