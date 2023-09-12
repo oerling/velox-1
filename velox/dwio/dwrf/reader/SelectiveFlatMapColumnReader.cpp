@@ -580,7 +580,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
       }
       if (child->encoding() == VectorEncoding::Simple::DICTIONARY) {
         childIndices_.resize(children_.size());
-        childIndices_[i] = child->wrapInfo()->as<int32_t>();
+        childIndices_[i] = child->wrapInfo()->template as<int32_t>();
         childRawValues_[i] = child->valueVector()->valuesAsVoid();
       } else if (child->encoding() == VectorEncoding::Simple::FLAT) {
         childRawValues_[i] = childValues_[i]->valuesAsVoid();

@@ -73,6 +73,7 @@ class E2EFilterTest : public E2EFilterTestBase {
                                : (++flushCounter % flushEveryNBatches_ == 0);
       });
     };
+
     auto sink = std::make_unique<MemorySink>(
         200 * 1024 * 1024,
         dwio::common::FileSink::Options{.pool = leafPool_.get()});
@@ -140,6 +141,9 @@ class E2EFilterTest : public E2EFilterTestBase {
         flatmapNodeIdsAsStruct_[child->id()] = mapFlatColsStructKeys[i];
       }
       config->set(dwrf::Config::FLATTEN_MAP, true);
+      config->set(dwrf::Config::MAP_FLAT_DISABLE_DICT_ENCODING, false);
+      config->set(dwrf::Config::MAP_FLAT_DISABLE_DICT_ENCODING_STRING, false);
+
       config->set<const std::vector<uint32_t>>(
           dwrf::Config::MAP_FLAT_COLS, mapFlatCols);
       config->set<const std::vector<std::vector<std::string>>>(
@@ -275,8 +279,8 @@ TEST_F(E2EFilterTest, timestamp) {
       "timestamp_val:timestamp,"
       "long_val:bigint",
       [&]() {},
-      false,
-      {"long_val"},
+      true,
+      {"long_val", "timestamp_val"},
       20,
       true,
       true);
@@ -382,9 +386,9 @@ TEST_F(E2EFilterTest, flatMap) {
       "array_vals:map<tinyint,array<int>>";
   flatMapColumns_ = {"long_vals", "string_vals", "struct_vals", "array_vals"};
   auto customize = [this] {
-    dataSetBuilder_->makeMapStringValues(Subfield("string_vals"));
     dataSetBuilder_->makeUniformMapKeys(Subfield("string_vals"));
     dataSetBuilder_->makeUniformMapKeys(Subfield("struct_vals"));
+    dataSetBuilder_->makeMapStringValues(Subfield("string_vals"));
   };
   int numCombinations = 5;
 #if defined(__has_feature)

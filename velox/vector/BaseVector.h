@@ -157,6 +157,14 @@ class BaseVector {
     return rawNulls_ ? bits::isBitNull(rawNulls_, idx) : false;
   }
 
+  /// Returns true if value at specified index is null or contains null.
+  /// Primitive type values can be null, but cannot contain nulls. Arrays, maps
+  /// and structs can be null and can contains nulls. Non-null array may contain
+  /// one or more elements that are null or contain nulls themselves. Non-null
+  /// maps may contain one more entry with key or value that's null or contains
+  /// null. Non-null struct may contain a field that's null or contains null.
+  virtual bool containsNullAt(vector_size_t idx) const = 0;
+
   std::optional<vector_size_t> getNullCount() const {
     return nullCount_;
   }
@@ -267,9 +275,12 @@ class BaseVector {
     return compare(other, index, otherIndex, CompareFlags()).value();
   }
 
-  // Returns < 0 if 'this' at 'index' is less than 'other' at 'otherIndex', 0 if
-  // equal and > 0 otherwise. If flags.nullHandlingMode is not NoStop, the
-  // function may returns std::nullopt if null encountered.
+  /// When CompareFlags is ASCENDING, returns < 0 if 'this' at 'index' is less
+  /// than 'other' at 'otherIndex', 0 if equal and > 0 otherwise.
+  /// When CompareFlags is DESCENDING, returns < 0 if 'this' at 'index' is
+  /// larger than 'other' at 'otherIndex', 0 if equal and < 0 otherwise. If
+  /// flags.nullHandlingMode is not NoStop, the function may returns
+  /// std::nullopt if null encountered.
   virtual std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
@@ -772,23 +783,6 @@ class BaseVector {
   /// debug builds to check the result of expressions and some interim results.
   virtual void validate(const VectorValidateOptions& options = {}) const;
 
- protected:
-  /// Returns a brief summary of the vector. The default implementation includes
-  /// encoding, type, number of rows and number of nulls.
-  ///
-  /// For example,
-  ///     [FLAT INTEGER: 3 elements, no nulls]
-  ///     [DICTIONARY INTEGER: 5 elements, 1 nulls]
-  virtual std::string toSummaryString() const;
-
-  /*
-   * Allocates or reallocates nulls_ with at least the given size if nulls_
-   * hasn't been allocated yet or has been allocated with a smaller capacity.
-   * Ensures that nulls are writable (mutable and single referenced for
-   * minimumSize).
-   */
-  void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
-
   FOLLY_ALWAYS_INLINE static std::optional<int32_t>
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {
     DCHECK(thisNull || otherNull);
@@ -813,6 +807,23 @@ class BaseVector {
     VELOX_UNREACHABLE(
         "The function should be called only if one of the inputs is null");
   }
+
+ protected:
+  /// Returns a brief summary of the vector. The default implementation includes
+  /// encoding, type, number of rows and number of nulls.
+  ///
+  /// For example,
+  ///     [FLAT INTEGER: 3 elements, no nulls]
+  ///     [DICTIONARY INTEGER: 5 elements, 1 nulls]
+  virtual std::string toSummaryString() const;
+
+  /*
+   * Allocates or reallocates nulls_ with at least the given size if nulls_
+   * hasn't been allocated yet or has been allocated with a smaller capacity.
+   * Ensures that nulls are writable (mutable and single referenced for
+   * minimumSize).
+   */
+  void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
 
   void ensureNulls() {
     ensureNullsCapacity(length_, true);
