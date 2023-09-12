@@ -242,10 +242,28 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
                     ->asUnchecked<MapVector>();
     auto keyKind = map->type()->childAt(0)->kind();
     auto valueKind = map->type()->childAt(1)->kind();
+    auto offsets = map->rawOffsets();
+    auto sizes = map->rawSizes();
+    int32_t nextOffset = offsets[0];
+    int32_t offsetIndex = 0;
+    int32_t nullCounter = 0;
+    auto mapSize = map->size();
     auto size = map->mapKeys()->size();
     if (keyKind == TypeKind::VARCHAR) {
       if (auto keys = map->mapKeys()->as<FlatVector<StringView>>()) {
         for (auto i = 0; i < size; ++i) {
+          if (i == nextOffset) {
+            // The first key of every map is fixed. The first value is limited
+            // cardinality so that at least one column of flat map comes out as
+            // dict.
+            std::string str = "dictEncodedValue";
+            keys->set(i, StringView(str));
+            ++offsetIndex;
+            if (offsetIndex < mapSize) {
+              nextOffset = offsets[offsetIndex];
+            }
+            continue;
+          }
           if (!keys->isNullAt(i) && i % 3 == 0) {
             std::string str = keys->valueAt(i);
             str += "----123456789";
@@ -256,7 +274,21 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
     }
     if (valueKind == TypeKind::VARCHAR) {
       if (auto values = map->mapValues()->as<FlatVector<StringView>>()) {
+        offsetIndex = 0;
+        nextOffset = offsets[0];
         for (auto i = 0; i < size; ++i) {
+          if (i == nextOffset) {
+            std::string str = fmt::format("dictEncoded{}", i % 3);
+            values->set(i, StringView(str));
+            if (nullCounter++ % 4 == 0) {
+              values->setNull(i, true);
+            }
+            ++offsetIndex;
+            if (offsetIndex < mapSize) {
+              nextOffset = offsets[offsetIndex];
+            }
+            continue;
+          }
           if (!values->isNullAt(i) && i % 3 == 0) {
             std::string str = values->valueAt(i);
             str += "----123456789";
