@@ -244,10 +244,20 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
     auto valueKind = map->type()->childAt(1)->kind();
     auto offsets = map->rawOffsets();
     auto sizes = map->rawSizes();
-    int32_t nextOffset = offsets[0];
     int32_t offsetIndex = 0;
-    int32_t nullCounter = 0;
     auto mapSize = map->size();
+    auto getNextOffset = [&]() {
+      while (offsetIndex < mapSize) {
+        if (offsets[offsetIndex] != 0) {
+          return offsets[offsetIndex++];
+        }
+        ++offsetIndex;
+      }
+      return 0;
+    };
+
+    int32_t nextOffset = offsets[0];
+    int32_t nullCounter = 0;
     auto size = map->mapKeys()->size();
     if (keyKind == TypeKind::VARCHAR) {
       if (auto keys = map->mapKeys()->as<FlatVector<StringView>>()) {
@@ -258,10 +268,7 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
             // dict.
             std::string str = "dictEncodedValue";
             keys->set(i, StringView(str));
-            ++offsetIndex;
-            if (offsetIndex < mapSize) {
-              nextOffset = offsets[offsetIndex];
-            }
+            nextOffset = getNextOffset();
             continue;
           }
           if (!keys->isNullAt(i) && i % 3 == 0) {
@@ -283,10 +290,7 @@ DataSetBuilder& DataSetBuilder::makeMapStringValues(
             if (nullCounter++ % 4 == 0) {
               values->setNull(i, true);
             }
-            ++offsetIndex;
-            if (offsetIndex < mapSize) {
-              nextOffset = offsets[offsetIndex];
-            }
+            nextOffset = getNextOffset();
             continue;
           }
           if (!values->isNullAt(i) && i % 3 == 0) {
