@@ -259,7 +259,9 @@ class BooleanRleDecoder : public ByteRleDecoder {
       const EncodingKey& ek)
       : ByteRleDecoder{std::move(input), ek},
         remainingBits{0},
-        reversedLastByte{0} {}
+        reversedLastByte{0} {
+    MTRT(BooleanRleDecoder);
+  }
 
   ~BooleanRleDecoder() override = default;
 

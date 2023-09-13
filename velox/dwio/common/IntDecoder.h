@@ -43,7 +43,9 @@ class IntDecoder {
         bufferEnd(bufferStart),
         useVInts(useVInts),
         numBytes(numBytes),
-        bigEndian(bigEndian) {}
+        bigEndian(bigEndian) {
+    MTRT(IntDecoder);
+  }
 
   // Constructs for use in Parquet /Alphawhere the buffer is always preloaded.
   IntDecoder(const char* FOLLY_NONNULL start, const char* FOLLY_NONNULL end)

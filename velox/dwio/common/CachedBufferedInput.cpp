@@ -50,6 +50,7 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
     id = TrackingId(si->getId());
   }
   VELOX_CHECK_LE(region.offset + region.length, fileSize_);
+  TPSH(requests_);
   requests_.emplace_back(
       RawFileCacheKey{fileNum_, region.offset}, region.length, id);
   if (tracker_) {
@@ -198,10 +199,12 @@ void CachedBufferedInput::load(const LogType) {
               part->ssdPin.clear();
             }
             if (!part->ssdPin.empty()) {
+	      TPSH(ssdLoad);
               ssdLoad.push_back(part);
               continue;
             }
           }
+	  TPSH(storageLoad);
           storageLoad.push_back(part);
         }
       }
@@ -305,6 +308,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
     requests_.reserve(requests.size());
     for (auto& request : requests) {
       size_ += request->size;
+      TPSH(requests_);
       requests_.push_back(std::move(*request));
     }
   }
@@ -350,6 +354,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
   static std::vector<RawFileCacheKey> makeKeys(
       std::vector<CacheRequest*>& requests) {
     std::vector<RawFileCacheKey> keys;
+    MTRN(requests.size(), sizeof(keys[0]));
     keys.reserve(requests.size());
     for (auto& request : requests) {
       keys.push_back(request->key);
@@ -359,6 +364,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
 
   std::vector<int32_t> makeSizes(std::vector<CacheRequest*> requests) {
     std::vector<int32_t> sizes;
+    MTRN(sizeof(sizes[0]), requests_.size());
     sizes.reserve(requests.size());
     for (auto& request : requests) {
       sizes.push_back(request->size);

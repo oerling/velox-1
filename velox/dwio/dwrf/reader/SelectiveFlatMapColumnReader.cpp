@@ -554,6 +554,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
       return false;
     }
     initKeyValues();
+    MTRN(children_.size(), 64 + (rows.size() / 60));
     childRawNulls_.resize(children_.size());
     childRawValues_.resize(children_.size());
     inMap_.resize(children_.size());

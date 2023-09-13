@@ -20,9 +20,11 @@
 
 namespace facebook::velox {
 #define MTRT(t) MTRACK(sizeof(t))
-#define MTRN(t, n) MTRACK(sizeof(t) * (n))
+#define MTRN(t, n) MTRACK((t) * (n))
 #define MTRACK(n) facebook::velox::mtrack(__FILE__, __LINE__, n)
-
+#define TPSH(v) \
+  {if (v.capacity() <= v.size() + 1) {mtrack(__FILE__, __LINE__, sizeof(v[0]) * v.capacity() * 2); } }
+  
   void mtrack(const char* file, int line, long bytes);
     
   

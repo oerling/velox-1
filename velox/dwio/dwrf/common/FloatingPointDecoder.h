@@ -29,7 +29,9 @@ class FloatingPointDecoder {
  public:
   FloatingPointDecoder(
       std::unique_ptr<dwio::common::SeekableInputStream>&& input)
-      : input_(std::move(input)) {}
+      : input_(std::move(input)) {
+    MTRN(1, sizeof(*this));
+  }
 
   TData readValue() {
     if (bufferEnd_ - bufferStart_ >= sizeof(TData)) {

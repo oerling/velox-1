@@ -34,6 +34,7 @@ DwrfData::DwrfData(
       encodingKey.forKind(proto::Stream_Kind_PRESENT),
       streamLabels.label(),
       false);
+  MTRT(DwrfData);
   if (stream) {
     notNullDecoder_ = createBooleanRleDecoder(std::move(stream), encodingKey);
   }

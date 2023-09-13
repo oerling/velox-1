@@ -48,7 +48,9 @@ CacheInputStream::CacheInputStream(
       tracker_(std::move(tracker)),
       trackingId_(trackingId),
       groupId_(groupId),
-      loadQuantum_(loadQuantum) {}
+      loadQuantum_(loadQuantum) {
+  MTRT(CacheInputStream);
+}
 
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   if (position_ >= region_.length) {
@@ -186,6 +188,7 @@ void CacheInputStream::loadSync(Region region) {
       uint64_t usec = 0;
       {
         MicrosecondTimer timer(&usec);
+	MTRN(sizeof(wait), 1);
         std::move(wait).via(&exec).wait();
       }
       ioStats_->queryThreadIoLatency().increment(usec);

@@ -38,6 +38,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
     DWIO_ENSURE(
         decompressor_ || decrypter_,
         "one of decompressor or decryptor is required");
+    MTRT(PagedInputStream);
   }
 
   bool Next(const void** data, int32_t* size) override;
