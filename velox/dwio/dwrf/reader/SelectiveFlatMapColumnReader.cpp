@@ -301,9 +301,6 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
         rawSizes[i] = 0;
 
         if (!returnReaderNulls_) {
-          if (!rawResultNulls_) {
-            mutableNulls(rows.size());
-          }
           bits::setNull(rawResultNulls_, i);
         }
 
@@ -404,7 +401,6 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
       int32_t columnIdx) {
     auto pitch = children_.size();
     auto rowColumns = rowColumnBits_.data();
-    int32_t nthRow = 0;
     auto selectedPresent = selected & inMap;
     while (selectedPresent) {
       int32_t row = __builtin_ctzll(selectedPresent);
@@ -557,7 +553,8 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     	if (childRawNulls_.empty()) {
 MTRN(children_.size(), 64 + (rows.size() / 60));
 }
-childRawNulls_.resize(children_.size());
+    assert(!children_.empty());
+    childRawNulls_.resize(children_.size());
     childRawValues_.resize(children_.size());
     inMap_.resize(children_.size());
     if (!childIndices_.empty()) {
@@ -568,12 +565,10 @@ childRawNulls_.resize(children_.size());
       selectedInMap.setValid(row, true);
     }
     int32_t totalChildValues = 0;
-    bool nullsInValues = false;
     rowColumnBits_.resize(bits::nwords(rows.size() * children_.size()));
     std::fill(rowColumnBits_.begin(), rowColumnBits_.end(), 0);
     nullsInChildValues_ = false;
     for (auto i = 0; i < children_.size(); ++i) {
-      auto* key = children_[i];
       auto& data = static_cast<const DwrfData&>(children_[i]->formatData());
       inMap_[i] = data.inMap();
       auto& child = childValues_[i];
@@ -641,6 +636,7 @@ childRawNulls_.resize(children_.size());
     if (!keyValues_.empty()) {
       return;
     }
+    assert(!children_.empty());
     keyValues_.resize(children_.size());
     if constexpr (std::is_same_v<T, StringView>) {
       int32_t strKeySize = 0;

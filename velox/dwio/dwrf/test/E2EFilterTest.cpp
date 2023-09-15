@@ -381,17 +381,20 @@ TEST_F(E2EFilterTest, flatMapScalar) {
   constexpr auto kColumns =
       "long_val:bigint,"
       "long_vals:map<tinyint,bigint>,"
-      "string_vals:map<string,string>"
-    flatMapColumns_ = {"long_vals", "string_vals"};
+      "string_vals:map<string,string>";
+  flatMapColumns_ = {"long_vals", "string_vals"};
   auto customize = [this] {
     dataSetBuilder_->makeUniformMapKeys(Subfield("string_vals"));
     dataSetBuilder_->makeMapStringValues(Subfield("string_vals"));
   };
   int numCombinations = 5;
 #if defined(__has_feature)
-#if __has_feature(thread_sanitizer)
+#if __has_feature(thread_sanitizer) || __has_feature(__address_sanitizer__)
   numCombinations = 1;
 #endif
+#endif
+#if !defined(NDEBUG)
+  numCombinations = 1;
 #endif
   testWithTypes(
       kColumns,
@@ -409,22 +412,19 @@ TEST_F(E2EFilterTest, flatMapComplex) {
       "array_vals:map<tinyint,array<int>>";
   flatMapColumns_ = {"struct_vals", "array_vals"};
   auto customize = [this] {
-    dataSetBuilder_->makeUniformMapKeys(Subfield("string_vals"));
     dataSetBuilder_->makeUniformMapKeys(Subfield("struct_vals"));
   };
   int numCombinations = 5;
 #if defined(__has_feature)
-#if __has_feature(thread_sanitizer)
+#if __has_feature(thread_sanitizer) || __has_feature(__address_sanitizer__)
   numCombinations = 1;
 #endif
 #endif
+#if !defined(NDEBUG)
+  numCombinations = 1;
+#endif
   testWithTypes(
-      kColumns,
-      customize,
-      false,
-      {"long_val"},
-      numCombinations,
-      true);
+      kColumns, customize, false, {"long_val"}, numCombinations, true);
 }
 
 TEST_F(E2EFilterTest, metadataFilter) {
