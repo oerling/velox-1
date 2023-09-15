@@ -106,7 +106,8 @@ class CachedBufferedInput : public BufferedInput {
 
   std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier* FOLLY_NULLABLE si) override;
+      const StreamIdentifier* FOLLY_NULLABLE si = nullptr,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr) override;
 
   void load(const LogType) override;
 

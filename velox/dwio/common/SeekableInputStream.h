@@ -40,15 +40,22 @@ class PositionProvider {
   std::vector<uint64_t>::const_iterator end_;
 };
 
-/**
- * A subclass of Google's ZeroCopyInputStream that supports seek.
+  enum class StreamType : uint8_t {kGeneric, kCache, kArray, kFile, kPaged };
+  
+/* A subclass of Google's ZeroCopyInputStream that supports seek.
  * By extending Google's class, we get the ability to pass it directly
  * to the protobuf readers.
  */
 class SeekableInputStream : public google::protobuf::io::ZeroCopyInputStream {
  public:
+  SeekableInputStream(StreamType type) : type_(type) {}
+
   ~SeekableInputStream() override = default;
 
+  StreamType type() const {
+    return type_;
+  }
+  
   virtual void seekToPosition(PositionProvider& position) = 0;
 
   virtual std::string getName() const = 0;
@@ -58,6 +65,14 @@ class SeekableInputStream : public google::protobuf::io::ZeroCopyInputStream {
   virtual size_t positionSize() = 0;
 
   void readFully(char* buffer, size_t bufferSize);
+
+  /// Releases held resources but does not free the stream. For
+  /// example, releases cache pins or file handles. Called before
+  /// placing the stream in a pool of reusable preallocated resources.
+  virtual void clear() {};
+      
+protected:
+  const StreamType type_;
 };
 
 /**

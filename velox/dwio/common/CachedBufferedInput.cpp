@@ -39,7 +39,8 @@ using memory::MemoryAllocator;
 
 std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
     Region region,
-    const StreamIdentifier* si = nullptr) {
+    const StreamIdentifier* si,
+    std::unique_ptr<SeekableInputStream> reuse) {
   if (region.length == 0) {
     return std::make_unique<SeekableArrayInputStream>(
         static_cast<const char*>(nullptr), 0);
@@ -56,16 +57,31 @@ std::unique_ptr<SeekableInputStream> CachedBufferedInput::enqueue(
   if (tracker_) {
     tracker_->recordReference(id, region.length, fileNum_, groupId_);
   }
-  auto stream = std::make_unique<CacheInputStream>(
-      this,
-      ioStats_.get(),
-      region,
-      input_,
-      fileNum_,
-      tracker_,
-      id,
-      groupId_,
-      options_.loadQuantum());
+  std::unique_ptr<CacheInputStream> stream;
+  if (reuse && reuse->type() == StreamType::kCache) {
+    stream.reset(reinterpret_cast<CacheInputStream*>(reuse.release()));
+    stream->reset(
+        this,
+        ioStats_.get(),
+        region,
+        input_,
+        fileNum_,
+        tracker_,
+        id,
+        groupId_,
+        options_.loadQuantum());
+  } else {
+    stream = std::make_unique<CacheInputStream>(
+        this,
+        ioStats_.get(),
+        region,
+        input_,
+        fileNum_,
+        tracker_,
+        id,
+        groupId_,
+        options_.loadQuantum());
+  }
   requests_.back().stream = stream.get();
   return stream;
 }
@@ -199,12 +215,12 @@ void CachedBufferedInput::load(const LogType) {
               part->ssdPin.clear();
             }
             if (!part->ssdPin.empty()) {
-	      TPSH(ssdLoad);
+              TPSH(ssdLoad);
               ssdLoad.push_back(part);
               continue;
             }
           }
-	  TPSH(storageLoad);
+          TPSH(storageLoad);
           storageLoad.push_back(part);
         }
       }

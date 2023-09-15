@@ -118,11 +118,14 @@ class StripeStreams {
    * @param streamId stream identifier object
    * @param throwIfNotFound fail if a stream is required and not found
    * @return the new stream
+   * If 'reuse' is given and is the same type as would be returned, then it may
+   * be reinitialized and returned. Oterwise it will be deleted.
    */
   virtual std::unique_ptr<dwio::common::SeekableInputStream> getStream(
       const DwrfStreamIdentifier& si,
       std::string_view label,
-      bool throwIfNotFound) const = 0;
+      bool throwIfNotFound,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr) const = 0;
 
   /// Get the integer dictionary data for the given node and sequence.
   ///
@@ -258,6 +261,7 @@ class StripeStreamsImpl : public StripeStreamsBase {
         provider_(provider),
         stripeIndex_{stripeIndex},
         readPlanLoaded_{false} {
+    readerPool_ = getReaderPool(opts_->scanId(), &readState->readerBase->getMemoryPool());
     loadStreams();
   }
 
@@ -331,7 +335,8 @@ class StripeStreamsImpl : public StripeStreamsBase {
   std::unique_ptr<dwio::common::SeekableInputStream> getStream(
       const DwrfStreamIdentifier& si,
       std::string_view label,
-      bool throwIfNotFound) const override;
+      bool throwIfNotFound,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr) const override;
 
   uint32_t visitStreamsOfNode(
       uint32_t node,

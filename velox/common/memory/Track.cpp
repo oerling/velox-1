@@ -17,6 +17,9 @@
 #include "velox/common/memory/Track.h"
 #include <folly/container/F14Map.h>
 #include <iostream>
+#include <gflags/gflags.h>
+
+DEFINE_bool(trace_malloc, false, "Count selected allocations");
 
 namespace facebook::velox {
 
@@ -46,10 +49,14 @@ std::mutex trackMutex;
 folly::F14FastMap<MKey, MCounts, MKeyHasher, MKeyComparer> tracked;
 
 void mtrack(const char* file, int32_t line, int64_t bytes) {
-  std::lock_guard<std::mutex> l(trackMutex);
+  if (!FLAGS_trace_malloc) {
+    return;
+  }
   MKey key;
   key.file = file;
   key.line = line;
+
+  std::lock_guard<std::mutex> l(trackMutex);
   auto it = tracked.find(key);
   if (it == tracked.end()) {
     MCounts counts = MCounts{1, bytes};

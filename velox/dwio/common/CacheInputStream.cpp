@@ -39,7 +39,7 @@ CacheInputStream::CacheInputStream(
     TrackingId trackingId,
     uint64_t groupId,
     int32_t loadQuantum)
-    : bufferedInput_(bufferedInput),
+  : SeekableInputStream(StreamType::kCache), bufferedInput_(bufferedInput),
       cache_(bufferedInput_->cache()),
       ioStats_(ioStats),
       input_(std::move(input)),
@@ -52,6 +52,29 @@ CacheInputStream::CacheInputStream(
   MTRT(CacheInputStream);
 }
 
+  void CacheInputStream::reset(
+      CachedBufferedInput* cache,
+      IoStatistics* ioStats,
+      const velox::common::Region& region,
+      std::shared_ptr<ReadFileInputStream> input,
+      uint64_t fileNum,
+      std::shared_ptr<cache::ScanTracker> tracker,
+      cache::TrackingId trackingId,
+      uint64_t groupId,
+      int32_t loadQuantum) {
+    cache_ = bufferedInput_->cache();
+    ioStats_ = ioStats;
+	input_= std::move(input);
+	region_ = region;
+	fileNum_ = fileNum;
+	tracker_ = std::move(tracker);
+	trackingId_ = trackingId,
+	  groupId_ = groupId;
+	loadQuantum_ = loadQuantum;
+	pin_.clear();
+  }
+
+  
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
   if (position_ >= region_.length) {
     *size = 0;

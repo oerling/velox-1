@@ -174,6 +174,7 @@ class HiveDataSource : public DataSource {
   cache::AsyncDataCache* const cache_{nullptr};
   const std::string& scanId_;
   folly::Executor* executor_;
+  std::shared_ptr<dwio::common::ScanReusableData> reusable_;
 };
 
 } // namespace facebook::velox::connector::hive

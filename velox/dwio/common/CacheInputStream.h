@@ -40,6 +40,17 @@ class CacheInputStream : public SeekableInputStream {
       uint64_t groupId,
       int32_t loadQuantum);
 
+  void reset(
+      CachedBufferedInput* cache,
+      IoStatistics* ioStats,
+      const velox::common::Region& region,
+      std::shared_ptr<ReadFileInputStream> input,
+      uint64_t fileNum,
+      std::shared_ptr<cache::ScanTracker> tracker,
+      cache::TrackingId trackingId,
+      uint64_t groupId,
+      int32_t loadQuantum);
+
   bool Next(const void** data, int* size) override;
   void BackUp(int count) override;
   bool Skip(int count) override;
@@ -96,6 +107,10 @@ class CacheInputStream : public SeekableInputStream {
     noRetention_ = true;
   }
 
+  void clear() override {
+    pin_.clear();
+  }
+  
  private:
   // Ensures that the current position is covered by 'pin_'.
   void loadPosition();
@@ -110,19 +125,19 @@ class CacheInputStream : public SeekableInputStream {
       cache::AsyncDataCacheEntry& entry);
 
   CachedBufferedInput* const bufferedInput_;
-  cache::AsyncDataCache* const cache_;
+  cache::AsyncDataCache* cache_;
   IoStatistics* ioStats_;
   std::shared_ptr<ReadFileInputStream> input_;
   // The region of 'input' 'this' ranges over.
-  const velox::common::Region region_;
-  const uint64_t fileNum_;
+  velox::common::Region region_;
+  uint64_t fileNum_;
   std::shared_ptr<cache::ScanTracker> tracker_;
-  const cache::TrackingId trackingId_;
-  const uint64_t groupId_;
+  cache::TrackingId trackingId_;
+  uint64_t groupId_;
 
   // Maximum number of bytes read from 'input' at a time. This gives the maximum
   // pin_.entry()->size().
-  const int32_t loadQuantum_;
+  int32_t loadQuantum_;
 
   // Handle of cache entry.
   cache::CachePin pin_;

@@ -67,15 +67,18 @@ class BufferedInput {
     return input_->getName();
   }
 
-  // The previous API was taking a vector of regions
-  // Now we allow callers to enqueue region any time/place
-  // and we do final load into buffer in 2 steps (enqueue....load)
-  // 'si' allows tracking which streams actually get read. This may control
-  // read-ahead and caching for BufferedInput implementations supporting
-  // these.
+  // The previous API was taking a vector of regions Now we allow
+  // callers to enqueue region any time/place and we do final load
+  // into buffer in 2 steps (enqueue....load) 'si' allows tracking
+  // which streams actually get read. This may control read-ahead and
+  // caching for BufferedInput implementations supporting
+  // these. 'reuse' is reused and returned if it is non-nullptr and of
+  // the right type, otherwise a new stream is made and 'reuse'
+  // deleted.
   virtual std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier* FOLLY_NULLABLE si = nullptr);
+      const StreamIdentifier* FOLLY_NULLABLE si = nullptr,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr);
 
   // load all regions to be read in an optimized way (IO efficiency)
   virtual void load(const LogType);

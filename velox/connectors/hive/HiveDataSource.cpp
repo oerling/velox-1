@@ -537,6 +537,7 @@ HiveDataSource::HiveDataSource(
   readerOpts_.setFileSchema(hiveTableHandle->dataColumns());
   rowReaderOpts_.setScanSpec(scanSpec_);
   rowReaderOpts_.setMetadataFilter(metadataFilter_);
+  rowReaderOpts_.setScanId(scanId_);
 
   ioStats_ = std::make_shared<dwio::common::IoStatistics>();
 }
@@ -682,6 +683,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       rowReaderOpts_,
       ROW(std::vector<std::string>(fileType->names()), std::move(columnTypes)));
   rowReader_ = createRowReader(rowReaderOpts_);
+  reusable_ = rowReader_->getReusable(scanId_, pool_);
 }
 
 std::optional<RowVectorPtr> HiveDataSource::next(
@@ -817,10 +819,12 @@ void HiveDataSource::setFromDataSource(
   scanSpec_ = std::move(source->scanSpec_);
   reader_ = std::move(source->reader_);
   rowReader_ = std::move(source->rowReader_);
+  pool_ = source->pool_;
   // New io will be accounted on the stats of 'source'. Add the existing
   // balance to that.
   source->ioStats_->merge(*ioStats_);
   ioStats_ = std::move(source->ioStats_);
+  reusable_ = source->reusable_;
 }
 
 int64_t HiveDataSource::estimatedRowSize() {

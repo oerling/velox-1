@@ -52,6 +52,16 @@ SelectiveColumnReader::SelectiveColumnReader(
       scanSpec_(&scanSpec),
       requestedType_(requestedType) {}
 
+void SelectiveColumnReader::reset(
+    dwio::common::FormatParams& params,
+    velox::common::ScanSpec& scanSpec,
+    std::shared_ptr<const dwio::common::TypeWithId> type) {
+  VELOX_CHECK(&memoryPool_ == &params.pool());
+  fileType_ = type;
+  formatData_->reset(params, type, scanSpec);
+	scanSpec_ = &scanSpec;
+}
+  
 void SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsContext& context,

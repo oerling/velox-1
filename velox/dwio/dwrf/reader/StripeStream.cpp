@@ -274,9 +274,11 @@ StripeStreamsImpl::getStreamIdentifiers() const {
 std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
     const DwrfStreamIdentifier& si,
     std::string_view label,
-    bool /* throwIfNotFound*/) const {
+    bool /* throwIfNotFound*/,
+    std::unique_ptr<SeekableInputStream> reuse) const {
   // if not found, return an empty {}
   const auto& info = getStreamInfo(si, false /* throwIfNotFound */);
+  std::unique_ptr<SeekableInputStream> reusedPagedInput;
   if (!info.valid()) { // Stream not found.
     return {};
   }
@@ -306,7 +308,7 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
   return readState_->readerBase->createDecompressedStream(
       std::move(streamRead),
       streamDebugInfo,
-      getDecrypter(si.encodingKey().node()));
+      getDecrypter(si.encodingKey().node()), reusedPagedInput) ;
 }
 
 uint32_t StripeStreamsImpl::visitStreamsOfNode(

@@ -50,6 +50,57 @@ DwrfData::DwrfData(
       false);
 }
 
+void DwrfData::reset(
+    FormatParams& params,
+    const std::shared_ptr<const dwio::common::TypeWithId>& type,
+    ScanSpec& spec) {
+  auto* dwrfParams = reinterpret_cast<DwrfParams*>(&params);
+  nodeType_ = std::move(type);
+  flatMapContext_ = params.flatMapContext();
+  auto& stripe = params.stripe();
+  rowsPerRowGroup_ = stripe.rowsPerRowGroup();
+  EncodingKey encodingKey =
+      EncodingKey{nodeType_->id(), flatMapContext_.sequence};
+
+  std::unique_ptr<dwio::common::SeekableInputStream> nullStream;
+  if (notNullDecoder_) {
+    nullStream = notNullDecoder_->moveStream();
+  }
+  nullStream = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_PRESENT),
+      streamLabels.label(),
+      false,
+      std::move(nullStream));
+  if (nullStream) {
+    if (notNullDecoder_) {
+      notNullDecoder_->reset(std::move(nullStream), encodingKey);
+    } else {
+      notNullDecoder_ =
+          createBooleanRleDecoder(std::move(nullStream), encodingKey);
+    }
+  }
+
+  // We always initialize indexStream_ because indices are needed as
+  // soon as there is a single filter that can trigger row group skips
+  // anywhere in the reader tree. This is not known at construct time
+  // because the first filter can come from a hash join or other run
+  // time pushdown.
+  indexStream_ = stripe.getStream(
+      encodingKey.forKind(proto::Stream_Kind_ROW_INDEX),
+      streamLabels.label(),
+      false,
+      std::move(indexStream_));
+}
+
+void DwrfData::clear() {
+  if (indexStream_) {
+    indexStream_->clear();
+  }
+  if (notNullDecoder_) {
+    notNullDecoder_->clear();
+  }
+}
+
 uint64_t DwrfData::skipNulls(uint64_t numValues, bool /*nullsOnly*/) {
   if (!notNullDecoder_ && !flatMapContext_.inMapDecoder) {
     return numValues;

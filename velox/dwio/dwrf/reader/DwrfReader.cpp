@@ -94,6 +94,34 @@ DwrfRowReader::DwrfRowReader(
       std::vector<FetchStatus>(numberOfStripes, FetchStatus::NOT_STARTED));
 }
 
+  
+  folly::Synchronized<
+    std::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusable>>>
+  DwrfReader::reuse_;
+
+  std::shared_ptr<dwio::common::ScanReusableData> DwrfReader::getReusable(
+    const std::string& scanId,
+    memory::MemoryPool* pool) {
+    return reusable_.withWLock([&](auto& reuse) -> auto {
+      auto key = std::make_pair<std::string_view, memory::MemoryPool*>(scanId, pool);
+      auto it = reuse.find(key);
+    if (it == reuse.end()) {
+      auto newData = std::make_shared<DwrfReusableData>(
+							scanId, pool, unhookReusable);
+      reuse[newData->key()] = newData;
+      return newData;
+    }
+    std::shared_ptr<DwrfReusableData> data = it->second.lock();
+    if (!data) {
+      data = std::make_shared<DwrfReusableData>(
+          scanId, unregisterTracker, loadQuantum);
+      reuse[data->key()] = data;
+    }
+    return data;
+  });
+}
+
+
 uint64_t DwrfRowReader::seekToRow(uint64_t rowNumber) {
   // Empty file
   if (isEmptyFile()) {

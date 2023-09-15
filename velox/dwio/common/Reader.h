@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/Mutation.h"
@@ -30,6 +31,33 @@
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::dwio::common {
+
+/// An abstract class for reusable pieces of table scan for a particular query
+/// and result memory pool. Useful if reading thousands of columns with frequent
+/// construction of new reader trees with near identical column readers, streams
+/// and decoders. The precise contents depend on the file format.
+class ScanReusableData {
+ public:
+  ScanReusableData(
+      const std::string& id,
+      memory::MemoryPool* pool,
+      std::function<void(ScanReusableData*)> freeFunc)
+      : scanId_(id), pool_(pool), freeFunc_(freeFunc) {}
+
+  virtual ~ScanReusableData() {
+    freeFunc_(this);
+  }
+
+  std::pair<std::string_view, memory::MemoryPool*> key() {
+    return std::make_pair<std::string_view, memory::MemoryPool*>(
+        scanId_, nullptr);
+  }
+
+ protected:
+  const std::string scanId_;
+  memory::MemoryPool* pool_;
+  std::function<void(ScanReusableData*)> freeFunc_;
+};
 
 /**
  * Abstract row reader interface.
@@ -145,6 +173,16 @@ class RowReader {
   static VectorPtr projectColumns(
       const VectorPtr& input,
       const velox::common::ScanSpec&);
+
+  /// Returns a container for reusable data for the scan given by
+  /// 'scanId' and 'pool'. Allows consecutive and parallel initialized
+  /// readers of one scan to recycle parts. No-op for non-supporting
+  /// file formats.
+  virtual std::shared_ptr<ScanReusableData> getReusableData(
+      const std::string scanId,
+      memory::MemoryPool* pool) {
+    return nullptr;
+  }
 };
 
 /**

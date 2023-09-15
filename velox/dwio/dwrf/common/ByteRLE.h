@@ -110,6 +110,14 @@ class ByteRleDecoder {
 
   virtual ~ByteRleDecoder() = default;
 
+  void reset(      std::unique_ptr<dwio::common::SeekableInputStream> input,
+		   const EncodingKey& ek) {
+    VELOX_CHECK(cleared);
+    cleared = false;
+    inputStream = std::move(input);
+    encodingKey = ek; 
+  }
+  
   /**
    * Seek to a specific row group.
    */
@@ -199,6 +207,22 @@ class ByteRleDecoder {
     }
   }
 
+  std::unique_ptr<SeekableInputStream> moveStream() {
+    return std::move(inputStream);
+  }
+
+  void clear() {
+    cleared = true;
+    if (inputStream) {
+      inputStream->clear();
+    }
+    remainingValues = 0;
+    value = 0;
+    bufferStart = nullptr;
+    bufferEnd = nullptr;
+    repeating = false;
+  }
+  
  protected:
   void nextBuffer();
 
@@ -221,6 +245,7 @@ class ByteRleDecoder {
     }
   }
 
+  bool cleared{false};
   std::unique_ptr<dwio::common::SeekableInputStream> inputStream;
   size_t remainingValues;
   char value;
@@ -265,6 +290,11 @@ class BooleanRleDecoder : public ByteRleDecoder {
 
   ~BooleanRleDecoder() override = default;
 
+  void reset(      std::unique_ptr<dwio::common::SeekableInputStream> input,
+		   const EncodingKey& ek) {
+    ByteRleDecoder::reset(std::move(input), ek);
+  }
+  
   void seekToRowGroup(
       dwio::common::PositionProvider& positionProvider) override;
 
@@ -341,7 +371,14 @@ class BooleanRleDecoder : public ByteRleDecoder {
       }
     }
   }
-
+  void clear() {
+    ByteRleDecoder::clear();
+    remainingBits = 0;
+    reversedLastByte = 0;
+    buffer = 0;
+    bits.clear();
+  }
+  
  protected:
   size_t remainingBits;
   uint8_t reversedLastByte;

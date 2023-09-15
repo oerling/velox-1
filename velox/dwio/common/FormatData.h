@@ -26,11 +26,23 @@
 
 namespace facebook::velox::dwio::common {
 
+  class FormatParams;
+  
 /// Interface base class for format-specific state in common between different
 /// file format readers.
 class FormatData {
  public:
+
+  // Reuses 'this', reinitializing from 'params'. Equivalent to destruct and placement construct but reuses contained objects like decoders.
+  virtual void reset(FormatParams& params, const std::shared_ptr<const dwio::common::TypeWithId>& type, velox::common::ScanSpec& spec) {
+    VELOX_UNSUPPORTED();
+  }
+
   virtual ~FormatData() = default;
+
+  /// Releases held resources like cache pins or files. Called before
+  /// placing the corresponding reader in a pool for reuse.
+  virtual void clear() {}
 
   template <typename T>
   T& as() {

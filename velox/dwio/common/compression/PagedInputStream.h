@@ -29,7 +29,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       std::unique_ptr<Decompressor> decompressor,
       const dwio::common::encryption::Decrypter* decrypter,
       const std::string& streamDebugInfo)
-      : input_(std::move(inStream)),
+    : SeekableInputStream(StreamType::kPaged), input_(std::move(inStream)),
         pool_(memPool),
         inputBuffer_(pool_),
         decompressor_{std::move(decompressor)},
@@ -73,7 +73,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       std::unique_ptr<SeekableInputStream> inStream,
       memory::MemoryPool& memPool,
       const std::string& streamDebugInfo)
-      : input_(std::move(inStream)),
+    : SeekableInputStream(StreamType::kPaged), input_(std::move(inStream)),
         pool_(memPool),
         inputBuffer_(pool_),
         decompressor_{nullptr},

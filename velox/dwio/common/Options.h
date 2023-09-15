@@ -124,7 +124,10 @@ class RowReaderOptions {
       facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
       keySelectionCallback_;
   bool eagerFirstStripeLoad = true;
+  // Id identifying the table scan. Same as the id for ScanTracker.
+  std::string scanId_;
 
+  
  public:
   RowReaderOptions() noexcept
       : dataStart(0),
@@ -336,6 +339,14 @@ class RowReaderOptions {
 
   const std::shared_ptr<folly::Executor>& getIOExecutor() const {
     return ioExecutor_;
+  }
+
+  void setScanId(const std::string id) {
+    scanId_ = id;
+  }
+
+  const std::string& scanId() {
+    return scanId_;
   }
 };
 

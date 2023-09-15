@@ -130,6 +130,15 @@ class SelectiveColumnReader {
 
   virtual ~SelectiveColumnReader() = default;
 
+  /// Reuses 'this'. Equivalent to destruct and placement construct
+  /// but reuses and resets contained objects like formatData_ and
+  /// decoders. 'requestedType is expected to be the same as at
+  /// construction.
+  virtual void reset (
+      dwio::common::FormatParams& params,
+      velox::common::ScanSpec& scanSpec,
+      std::shared_ptr<const dwio::common::TypeWithId> type);
+
   dwio::common::FormatData& formatData() const {
     return *formatData_;
   }
