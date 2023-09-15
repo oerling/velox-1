@@ -301,9 +301,6 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
         rawSizes[i] = 0;
 
         if (!returnReaderNulls_) {
-          if (!rawResultNulls_) {
-            mutableNulls(rows.size());
-          }
           bits::setNull(rawResultNulls_, i);
         }
 
