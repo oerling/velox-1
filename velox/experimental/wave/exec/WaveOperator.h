@@ -30,6 +30,10 @@ class WaveOperator {
 
   virtual ~WaveOperator() = default;
 
+  virtual exec::BlockingReason isBlocked(exec::ContinueFuture& future) {
+    return exec::BlockingReason::kNotBlocked;
+  }
+  
   const RowTypePtr& outputType() const {
     return outputType_;
   }

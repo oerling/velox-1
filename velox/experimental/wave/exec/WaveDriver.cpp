@@ -143,6 +143,10 @@ RowVectorPtr WaveDriver::makeResult(
 void WaveDriver::startMore() {
   for (int i = 0; i < pipelines_.size(); ++i) {
     auto& ops = pipelines_[i].operators;
+    blockingReason_ =ops[0]->isBlocked(continueFuture_);
+    if (blockingReason_ != exec::BlockingReason::kNotBlocked) {
+      return nullptr;
+    }
     if (auto rows = ops[0]->canAdvance()) {
       auto stream = std::make_unique<WaveStream>(*arena_);
       for (auto& op : ops) {
