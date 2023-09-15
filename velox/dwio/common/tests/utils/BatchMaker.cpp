@@ -429,6 +429,16 @@ VectorPtr createScalarMapKeys(
       std::vector<BufferPtr>{});
 }
 
+  std::string randomString(int32_t maxLength,     std::mt19937& gen) {
+    std::string str;
+    auto len = (Random::rand32(gen) % maxLength) + 1;
+    str.resize(len);
+    for (auto i = 0;i < len; ++i) {
+      str[i] = 'A' + Random::rand32(0, 24, gen);
+    }
+    return str;
+  }
+  
 VectorPtr createBinaryMapKeys(
     const TypePtr& type,
     const vector_size_t* lengths,
@@ -436,54 +446,41 @@ VectorPtr createBinaryMapKeys(
     size_t totalKeys,
     MemoryPool& pool,
     std::mt19937& gen) {
-  BufferPtr values = AlignedBuffer::allocate<StringView>(totalKeys, &pool);
-  auto* valuesPtr = values->asMutable<StringView>();
+  //Make random string keys for a map. Find the largest map size and
+  //make 3 x that many distinct keys. Then fill each map with unique
+  //random picks from this pool. A previous version allocated a buffer
+  //for each map, resulting in string vectors with 25K buffers. These
+  //break tests because they take too long to check for consistency.
+  auto values = AlignedBuffer::allocate<StringView>(totalKeys, &pool, StringView());
+  auto keys = std::make_shared<FlatVector<StringView>>(
+						       &pool, type, BufferPtr(nullptr), totalKeys, values, std::vector<BufferPtr>{});
 
-  std::vector<BufferPtr> buffers;
-  size_t keyIndex = 0;
 
-  for (size_t i = 0; i < totalMaps; i++) {
-    size_t keyCount = lengths[i];
-
-    size_t bufSize = 0;
-    std::vector<int64_t> stringLengths(keyCount);
-    for (size_t j = 0; j < keyCount; ++j) {
-      auto len = Random::rand32(0, 10, gen) + 1;
-      stringLengths[j] = len;
-      bufSize += len;
+  int32_t maxSize = 0;
+  for (auto i = 0; i < totalMaps; i++) {
+    maxSize = std::max<int32_t>(maxSize, lengths[i]);
+  }
+  maxSize *= 3;
+  folly::F14FastSet<std::string> allKeys;
+  while (allKeys.size() < maxSize) {
+    std::string key = randomString(14, gen);
+    allKeys.insert(key);
+  }
+  int32_t offset = 0;
+  for (auto i = 0; i < totalMaps; ++i) {
+    auto keyCount = lengths[i];
+    std::vector<std::string> deck;
+    deck.reserve(allKeys.size());
+    for (auto& s : allKeys) {
+      deck.push_back(s);
     }
-
-    BufferPtr buf = AlignedBuffer::allocate<char>(bufSize, &pool);
-    buffers.push_back(buf);
-    auto* bufPtr = buf->asMutable<char>();
-    auto fillBuffer = [&bufPtr, &gen](size_t start, size_t end) {
-      for (size_t k = start; k < end; ++k) {
-        bufPtr[k] = 'a' + Random::rand32(0, 26, gen);
-      }
-    };
-
-    fillBuffer(0, bufSize);
-
-    std::unordered_set<std::string> existing(keyCount);
-
-    size_t offset = 0;
     for (size_t j = 0; j < keyCount; ++j) {
-      auto len = stringLengths[j];
-      auto str = std::string(bufPtr + offset, len);
-      while (existing.find(str) != existing.end()) {
-        fillBuffer(offset, offset + len);
-        str = std::string(bufPtr + offset, len);
-      }
-      existing.insert(str);
-
-      valuesPtr[keyIndex] = StringView(bufPtr + offset, len);
-      keyIndex++;
-      offset += len;
+      auto n = Random::rand32(gen) % deck.size();
+      keys->set(offset++, StringView(deck[n]));
+      deck.erase(deck.begin() + n);
     }
   }
-
-  return std::make_shared<FlatVector<StringView>>(
-      &pool, type, BufferPtr(nullptr), totalKeys, values, std::move(buffers));
+  return keys;
 }
 
 VectorPtr createMapKeys(
