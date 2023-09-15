@@ -429,16 +429,16 @@ VectorPtr createScalarMapKeys(
       std::vector<BufferPtr>{});
 }
 
-  std::string randomString(int32_t maxLength,     std::mt19937& gen) {
-    std::string str;
-    auto len = (Random::rand32(gen) % maxLength) + 1;
-    str.resize(len);
-    for (auto i = 0;i < len; ++i) {
-      str[i] = 'A' + Random::rand32(0, 24, gen);
-    }
-    return str;
+std::string randomString(int32_t maxLength, std::mt19937& gen) {
+  std::string str;
+  auto len = (Random::rand32(gen) % maxLength) + 1;
+  str.resize(len);
+  for (auto i = 0; i < len; ++i) {
+    str[i] = 'A' + Random::rand32(0, 24, gen);
   }
-  
+  return str;
+}
+
 VectorPtr createBinaryMapKeys(
     const TypePtr& type,
     const vector_size_t* lengths,
@@ -446,15 +446,20 @@ VectorPtr createBinaryMapKeys(
     size_t totalKeys,
     MemoryPool& pool,
     std::mt19937& gen) {
-  //Make random string keys for a map. Find the largest map size and
-  //make 3 x that many distinct keys. Then fill each map with unique
-  //random picks from this pool. A previous version allocated a buffer
-  //for each map, resulting in string vectors with 25K buffers. These
-  //break tests because they take too long to check for consistency.
-  auto values = AlignedBuffer::allocate<StringView>(totalKeys, &pool, StringView());
+  // Make random string keys for a map. Find the largest map size and
+  // make 3 x that many distinct keys. Then fill each map with unique
+  // random picks from this pool. A previous version allocated a buffer
+  // for each map, resulting in string vectors with 25K buffers. These
+  // break tests because they take too long to check for consistency.
+  auto values =
+      AlignedBuffer::allocate<StringView>(totalKeys, &pool, StringView());
   auto keys = std::make_shared<FlatVector<StringView>>(
-						       &pool, type, BufferPtr(nullptr), totalKeys, values, std::vector<BufferPtr>{});
-
+      &pool,
+      type,
+      BufferPtr(nullptr),
+      totalKeys,
+      values,
+      std::vector<BufferPtr>{});
 
   int32_t maxSize = 0;
   for (auto i = 0; i < totalMaps; i++) {
