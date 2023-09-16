@@ -51,13 +51,15 @@ DwrfData::DwrfData(
 }
 
 void DwrfData::reset(
-    FormatParams& params,
+		     dwio::common::FormatParams& params,
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
-    ScanSpec& spec) {
+    common::ScanSpec& spec) {
   auto* dwrfParams = reinterpret_cast<DwrfParams*>(&params);
   nodeType_ = std::move(type);
-  flatMapContext_ = params.flatMapContext();
-  auto& stripe = params.stripe();
+  flatMapContext_ = dwrfParams->flatMapContext_;
+  auto* streamLabels = &dwrfParams->streamLabels_;
+  auto& stripe = dwrfParams->stripeStreams_;
+  
   rowsPerRowGroup_ = stripe.rowsPerRowGroup();
   EncodingKey encodingKey =
       EncodingKey{nodeType_->id(), flatMapContext_.sequence};
@@ -68,7 +70,7 @@ void DwrfData::reset(
   }
   nullStream = stripe.getStream(
       encodingKey.forKind(proto::Stream_Kind_PRESENT),
-      streamLabels.label(),
+      streamLabels->label(),
       false,
       std::move(nullStream));
   if (nullStream) {
@@ -78,6 +80,8 @@ void DwrfData::reset(
       notNullDecoder_ =
           createBooleanRleDecoder(std::move(nullStream), encodingKey);
     }
+  } else {
+    notNullDecoder_.reset();
   }
 
   // We always initialize indexStream_ because indices are needed as
@@ -87,7 +91,7 @@ void DwrfData::reset(
   // time pushdown.
   indexStream_ = stripe.getStream(
       encodingKey.forKind(proto::Stream_Kind_ROW_INDEX),
-      streamLabels.label(),
+      streamLabels->label(),
       false,
       std::move(indexStream_));
 }

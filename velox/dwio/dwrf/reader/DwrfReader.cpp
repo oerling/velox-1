@@ -96,10 +96,17 @@ DwrfRowReader::DwrfRowReader(
 
   
   folly::Synchronized<
-    std::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusable>>>
+    folly::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusableData>>>
   DwrfReader::reuse_;
 
-  std::shared_ptr<dwio::common::ScanReusableData> DwrfReader::getReusable(
+  std::shared_ptr<dwio::common::ScanReusableData> DwrfReader::getReusableData(
+    const std::string& scanId,
+    memory::MemoryPool* pool) {
+    return getDwrfReusable();
+  }
+
+  // static
+  std::shared_ptr<dwio::common::DwrfReusableData> DwrfReader::getDwrfReusable(
     const std::string& scanId,
     memory::MemoryPool* pool) {
     return reusable_.withWLock([&](auto& reuse) -> auto {

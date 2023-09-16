@@ -345,7 +345,7 @@ class RowReaderOptions {
     scanId_ = id;
   }
 
-  const std::string& scanId() {
+  const std::string& scanId() const {
     return scanId_;
   }
 };

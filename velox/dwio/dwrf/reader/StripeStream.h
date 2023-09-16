@@ -20,6 +20,7 @@
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/dwrf/common/Common.h"
+#include "velox/dwio/dwrf/reader/DwrfReusableData.h"
 #include "velox/dwio/dwrf/reader/StreamLabels.h"
 #include "velox/dwio/dwrf/reader/StripeDictionaryCache.h"
 #include "velox/dwio/dwrf/reader/StripeReaderBase.h"
@@ -125,7 +126,8 @@ class StripeStreams {
       const DwrfStreamIdentifier& si,
       std::string_view label,
       bool throwIfNotFound,
-      std::unique_ptr<SeekableInputStream> reuse = nullptr) const = 0;
+      std::unique_ptr<dwio::common::SeekableInputStream> reuse =
+          nullptr) const = 0;
 
   /// Get the integer dictionary data for the given node and sequence.
   ///
@@ -260,8 +262,10 @@ class StripeStreamsImpl : public StripeStreamsBase {
         stripeStart_{stripeStart},
         provider_(provider),
         stripeIndex_{stripeIndex},
-        readPlanLoaded_{false} {
-    readerPool_ = getReaderPool(opts_->scanId(), &readState->readerBase->getMemoryPool());
+        readPlanLoaded_{false},
+        reusable_{getReusable(
+            opts_.scanId(),
+            &readState->readerBase->getMemoryPool())} {
     loadStreams();
   }
 
@@ -336,7 +340,8 @@ class StripeStreamsImpl : public StripeStreamsBase {
       const DwrfStreamIdentifier& si,
       std::string_view label,
       bool throwIfNotFound,
-      std::unique_ptr<SeekableInputStream> reuse = nullptr) const override;
+      std::unique_ptr<dwio::common::SeekableInputStream> reuse =
+          nullptr) const override;
 
   uint32_t visitStreamsOfNode(
       uint32_t node,
@@ -375,6 +380,13 @@ class StripeStreamsImpl : public StripeStreamsBase {
         ? std::addressof(handler.getEncryptionProvider(nodeId))
         : nullptr;
   }
+
+  static std::shared_ptr<DwrfReusableData> getReusable(
+      const std::string& scanId,
+      memory::MemoryPool* pool);
+
+ protected:
+  std::shared_ptr<DwrfReusableData> reusable_;
 };
 
 /**

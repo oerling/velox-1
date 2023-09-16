@@ -21,6 +21,7 @@
 #include "velox/dwio/common/exception/Exception.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/dwio/dwrf/common/wrap/coded-stream-wrapper.h"
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/reader/StripeStream.h"
 
 namespace facebook::velox::dwrf {
@@ -102,6 +103,12 @@ BufferPtr readDict(
   return dictionaryBuffer;
 }
 } // namespace
+//  static
+std::shared_ptr<DwrfReusableData> StripeStreamsImpl::getReusable(
+    const std::string& scanId,
+    memory::MemoryPool* pool) {
+  return DwrfRowReader::getDwrfReusable(scanId, pool);
+}
 
 std::function<BufferPtr()>
 StripeStreamsBase::getIntDictionaryInitializerForNode(
@@ -275,10 +282,10 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
     const DwrfStreamIdentifier& si,
     std::string_view label,
     bool /* throwIfNotFound*/,
-    std::unique_ptr<SeekableInputStream> reuse) const {
+    std::unique_ptr<dwio::common::SeekableInputStream> reuse) const {
   // if not found, return an empty {}
   const auto& info = getStreamInfo(si, false /* throwIfNotFound */);
-  std::unique_ptr<SeekableInputStream> reusedPagedInput;
+  std::unique_ptr<dwio::common::SeekableInputStream> reusedPagedInput;
   if (!info.valid()) { // Stream not found.
     return {};
   }
@@ -308,7 +315,8 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
   return readState_->readerBase->createDecompressedStream(
       std::move(streamRead),
       streamDebugInfo,
-      getDecrypter(si.encodingKey().node()), reusedPagedInput) ;
+      getDecrypter(si.encodingKey().node()),
+      reusedPagedInput);
 }
 
 uint32_t StripeStreamsImpl::visitStreamsOfNode(

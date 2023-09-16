@@ -115,7 +115,7 @@ class ByteRleDecoder {
     VELOX_CHECK(cleared);
     cleared = false;
     inputStream = std::move(input);
-    encodingKey = ek; 
+    encodingKey_ = ek; 
   }
   
   /**
@@ -207,7 +207,7 @@ class ByteRleDecoder {
     }
   }
 
-  std::unique_ptr<SeekableInputStream> moveStream() {
+  std::unique_ptr<dwio::common::SeekableInputStream> moveStream() {
     return std::move(inputStream);
   }
 

@@ -123,8 +123,9 @@ class DwrfRowReader : public StrideIndexProvider,
 
 
   // Returns a set of reusable items for readers in 'scanId' with result pool 'pool'.
-  std::shared_ptr<ScanReusableData> (const std::string& scanId, memory::MemoryPool* pool);
+  std::shared_ptr<dwio::common::ScanReusableData> getReusableData(const std::string& scanId, memory::MemoryPool* pool) override;
 
+  static   std::shared_ptr<DwrfReusableData> getDwrfReusable(const std::string& scanId, memory::MemoryPool* pool);
   
  private:
   // Represents the status of a stripe being fetched.
@@ -236,16 +237,14 @@ class DwrfRowReader : public StrideIndexProvider,
       VectorPtr& result);
   
   static folly::Synchronized<
-    std::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusable>>>
-  reuse_;
+    folly::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusableData>>>
+  reusable_;
 
   static
-void unhookReusable(DwrfReusable* reusable) {
-    auto id = reusable->key();
-    reusable_.withWLock([&](auto& reusable) { reusable_.erase(id()); });
+  void unhookReusable(dwio::common::ScanReusableData* data) {
+    auto id = data->key();
+    reusable_.withWLock([&](auto& reusable) { reusable.erase(id); });
 }
-};
-
 };
 
 class DwrfReader : public dwio::common::Reader {

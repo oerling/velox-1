@@ -25,12 +25,17 @@
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/Mutation.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::dwio::common {
+
+struct ReaderSet {
+  std::vector < std::unique_ptr<SelectiveColumnReader>> readers;
+};
 
 /// An abstract class for reusable pieces of table scan for a particular query
 /// and result memory pool. Useful if reading thousands of columns with frequent
@@ -54,9 +59,14 @@ class ScanReusableData {
   }
 
  protected:
+  // Serializes any get/release.
+  std::mutex mutex_;
+
   const std::string scanId_;
   memory::MemoryPool* pool_;
   std::function<void(ScanReusableData*)> freeFunc_;
+  // Reusable readers, indexed on TypeKind.
+  std::vector<ReaderSet> readers_;
 };
 
 /**
@@ -179,7 +189,7 @@ class RowReader {
   /// readers of one scan to recycle parts. No-op for non-supporting
   /// file formats.
   virtual std::shared_ptr<ScanReusableData> getReusableData(
-      const std::string scanId,
+      const std::string& scanId,
       memory::MemoryPool* pool) {
     return nullptr;
   }

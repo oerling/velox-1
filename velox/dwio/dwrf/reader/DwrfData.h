@@ -39,7 +39,7 @@ class DwrfData : public dwio::common::FormatData {
       const StreamLabels& streamLabels,
       FlatMapContext flatMapContext);
 
-  void reset(FormatParams& params, const std::shared_ptr<const dwio::common::TypeWithId>& type, ScanSpec& spec) override;
+  void reset(dwio::common::FormatParams& params, const std::shared_ptr<const dwio::common::TypeWithId>& type, common::ScanSpec& spec) override;
 
   void clear() override;
   
@@ -101,7 +101,7 @@ class DwrfData : public dwio::common::FormatData {
   }
 
   memory::MemoryPool& memoryPool_;
-  const std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
+  std::shared_ptr<const dwio::common::TypeWithId> nodeType_;
   FlatMapContext flatMapContext_;
   std::unique_ptr<ByteRleDecoder> notNullDecoder_;
   std::unique_ptr<dwio::common::SeekableInputStream> indexStream_;
@@ -152,6 +152,8 @@ class DwrfParams : public dwio::common::FormatParams {
   StripeStreams& stripeStreams_;
   FlatMapContext flatMapContext_;
   const StreamLabels& streamLabels_;
+
+  friend class DwrfData;
 };
 
 inline RleVersion convertRleVersion(proto::ColumnEncoding_Kind kind) {
