@@ -39,7 +39,7 @@ class SelectiveStructColumnReaderBase
         rowsPerRowGroup_(formatData_->rowsPerRowGroup().value()) {
     VELOX_CHECK_EQ(fileType_->id(), dataType->id(), "working on the same node");
   }
-
+  
   void seekTo(vector_size_t offset, bool readsNullsOnly) override;
 
   void seekToRowGroup(uint32_t index) override {
@@ -86,6 +86,18 @@ struct SelectiveStructColumnReader : SelectiveStructColumnReaderBase {
       common::ScanSpec& scanSpec,
       bool isRoot = false);
 
+
+  ~SelectiveStructColumnReader() override {
+    auto reusable = formatData_->as<DwrfData>().dwrfReusable();
+    if (reusable) {
+      for (auto& child : childrenOwned_) {
+	if (child) {
+	  reusable->releaseColumnReader(std::move(child));
+	}
+      }
+    }
+  }
+  
  private:
   void addChild(std::unique_ptr<SelectiveColumnReader> child) {
     children_.push_back(child.get());

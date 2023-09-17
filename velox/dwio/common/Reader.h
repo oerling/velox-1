@@ -30,45 +30,9 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
+#include "velox/dwio/common/ScanReusableData.h"
 
 namespace facebook::velox::dwio::common {
-
-struct ReaderSet {
-  std::vector<std::unique_ptr<SelectiveColumnReader>> readers;
-};
-
-/// An abstract class for reusable pieces of table scan for a particular query
-/// and result memory pool. Useful if reading thousands of columns with frequent
-/// construction of new reader trees with near identical column readers, streams
-/// and decoders. The precise contents depend on the file format.
-class ScanReusableData {
- public:
-  ScanReusableData(
-      const std::string& id,
-      memory::MemoryPool* pool,
-      std::function<void(ScanReusableData*)> freeFunc)
-      : scanId_(id), pool_(pool), freeFunc_(freeFunc) {}
-
-  virtual ~ScanReusableData() {
-    freeFunc_(this);
-  }
-
-  std::pair<std::string_view, memory::MemoryPool*> key() {
-    auto* temp = pool_;
-    return std::make_pair<std::string_view, memory::MemoryPool*>(
-        scanId_, std::move(temp));
-  }
-
- protected:
-  // Serializes any get/release.
-  std::mutex mutex_;
-
-  const std::string scanId_;
-  memory::MemoryPool* pool_;
-  std::function<void(ScanReusableData*)> freeFunc_;
-  // Reusable readers, indexed on TypeKind.
-  std::vector<ReaderSet> readers_;
-};
 
 /**
  * Abstract row reader interface.

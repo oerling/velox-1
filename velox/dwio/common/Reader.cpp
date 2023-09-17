@@ -53,5 +53,5 @@ VectorPtr RowReader::projectColumns(
       input->size(),
       std::move(children));
 }
-
+  
 } // namespace facebook::velox::dwio::common

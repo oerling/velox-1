@@ -27,6 +27,7 @@ DwrfData::DwrfData(
     FlatMapContext flatMapContext)
     : memoryPool_(stripe.getMemoryPool()),
       nodeType_(std::move(nodeType)),
+      reusable_(stripe.reusableData()),
       flatMapContext_(std::move(flatMapContext)),
       rowsPerRowGroup_{stripe.rowsPerRowGroup()} {
   EncodingKey encodingKey{nodeType_->id(), flatMapContext_.sequence};

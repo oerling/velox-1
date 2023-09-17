@@ -171,6 +171,11 @@ class StripeStreams {
 
   // Number of rows per row group. Last row group may have fewer rows.
   virtual uint32_t rowsPerRowGroup() const = 0;
+
+  virtual std::unique_ptr<dwio::common::SelectiveColumnReader> getColumnReader(
+      TypeKind kind) const = 0;
+
+  virtual const std::shared_ptr<DwrfReusableData> reusableData() const = 0;
 };
 
 class StripeStreamsBase : public StripeStreams {
@@ -355,6 +360,12 @@ class StripeStreamsImpl : public StripeStreamsBase {
 
   uint32_t rowsPerRowGroup() const override {
     return readState_->readerBase->getFooter().rowIndexStride();
+  }
+  std::unique_ptr<dwio::common::SelectiveColumnReader> getColumnReader(
+      TypeKind kind) const override;
+
+  const std::shared_ptr<DwrfReusableData> reusableData() const override {
+    return reusable_;
   }
 
  private:

@@ -146,6 +146,14 @@ class SelectiveColumnReader {
   /// Returns list of child readers, empty for leaf readers.
   virtual const std::vector<SelectiveColumnReader*>& children() const;
 
+  // Unhooks children and returns the owning pointers. May be used for recording
+  // child readers of composite readers for reuse at destruction. Reuse of
+  // children will not be possible if not implemented.
+  virtual std::vector<std::unique_ptr<SelectiveColumnReader>>
+  releaseChildren() {
+    return {};
+  }
+
   /**
    * Read the next group of values into a RowVector.
    * @param numValues the number of values to read

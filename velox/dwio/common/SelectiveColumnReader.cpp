@@ -60,6 +60,32 @@ void SelectiveColumnReader::reset(
   fileType_ = type;
   formatData_->reset(params, type, scanSpec);
   scanSpec_ = &scanSpec;
+  readOffset_ = 0;
+  numParentNulls_ = 0;
+  parentNullsRecordedTo_ = 0;
+  inputRows_ = RowSet();
+  outputRows_.resize(0);
+  vector_size_t numOutConfirmed_ = 0;
+  valueRows_.resize(0);
+  uint64_t* FOLLY_NULLABLE rawResultNulls_ = nullptr;
+  BufferPtr values_;
+  // Writable content in 'values'
+  void* FOLLY_NULLABLE rawValues_ = nullptr;
+  numValues_ = 0;
+  valueSize_ = kNoValueSize;
+  mayGetValues_ = false;
+  isTopLevel_ = false;
+  outerNonNullRows_.resize(0);
+  innerNonNullRows_.resize(0);
+  rawStringBuffer_ = nullptr;
+  bool mayUseStreamBuffer_ = false;
+  returnReaderNulls_ = false;
+  rawStringSize_ = 0;
+  rawStringUsed_ = 0;
+  anyNulls_ = false;
+  allNull_ = false;
+  initTimeClocks_ = 0;
+  scanState_ = ScanState();
 }
 
 void SelectiveColumnReader::filterRowGroups(

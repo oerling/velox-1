@@ -97,6 +97,11 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
           requestedType, dataType, params, scanSpec);
     case TypeKind::REAL:
       if (requestedType->type()->kind() == TypeKind::REAL) {
+	auto reuse = params.stripeStreams().getColumnReader(TypeKind::REAL);
+	if (reuse) {
+	  reuse->reset(params, scanSpec, dataType); 
+	  return reuse;
+	}
         return std::make_unique<
             SelectiveFloatingPointColumnReader<float, float>>(
             requestedType->type(), dataType, params, scanSpec);

@@ -23,6 +23,7 @@
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/Filter.h"
+#include "velox/dwio/common/ScanReusableData.h"
 
 namespace facebook::velox::dwio::common {
 
@@ -141,6 +142,10 @@ class FormatData {
   /// child.
   virtual bool parentNullsInLeaves() const {
     return false;
+  }
+
+  virtual std::shared_ptr<ScanReusableData> reusableData() const {
+    return nullptr;
   }
 };
 
