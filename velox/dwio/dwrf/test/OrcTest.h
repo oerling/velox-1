@@ -45,7 +45,9 @@ class MockStripeStreams : public StripeStreams {
   std::unique_ptr<dwio::common::SeekableInputStream> getStream(
       const DwrfStreamIdentifier& si,
       std::string_view /* unused */,
-      bool throwIfNotFound) const override {
+      bool throwIfNotFound,
+      std::unique_ptr<dwio::common::SeekableInputStream> reuse =
+          nullptr) const override {
     return std::unique_ptr<dwio::common::SeekableInputStream>(getStreamProxy(
         si.encodingKey().node(),
         static_cast<proto::Stream_Kind>(si.kind()),

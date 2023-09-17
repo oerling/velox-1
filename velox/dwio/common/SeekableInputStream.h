@@ -40,7 +40,14 @@ class PositionProvider {
   std::vector<uint64_t>::const_iterator end_;
 };
 
-enum class StreamType : uint8_t { kGeneric, kCache, kArray, kFile, kPaged };
+enum class StreamType : uint8_t {
+  kGeneric,
+  kCache,
+  kArray,
+  kFile,
+  kPaged,
+  kTesting
+};
 
 /* A subclass of Google's ZeroCopyInputStream that supports seek.
  * By extending Google's class, we get the ability to pass it directly

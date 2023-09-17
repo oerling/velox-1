@@ -683,7 +683,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       rowReaderOpts_,
       ROW(std::vector<std::string>(fileType->names()), std::move(columnTypes)));
   rowReader_ = createRowReader(rowReaderOpts_);
-  reusable_ = rowReader_->getReusable(scanId_, pool_);
+  reusable_ = rowReader_->getReusableData(scanId_, pool_);
 }
 
 std::optional<RowVectorPtr> HiveDataSource::next(

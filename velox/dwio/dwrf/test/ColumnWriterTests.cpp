@@ -97,7 +97,8 @@ class TestStripeStreams : public StripeStreamsBase {
   std::unique_ptr<SeekableInputStream> getStream(
       const DwrfStreamIdentifier& si,
       std::string_view /* label */,
-      bool throwIfNotFound) const override {
+      bool throwIfNotFound,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr) const override {
     const DataBufferHolder* stream = nullptr;
     if (context_.hasStream(si)) {
       stream = std::addressof(context_.getStream(si));

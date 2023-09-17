@@ -934,7 +934,7 @@ class TestingSeekableInputStream : public SeekableInputStream {
       const char* data,
       uint64_t length,
       uint64_t blockSize)
-      : data_(data), length_(length), blockSize_(blockSize) {}
+    : SeekableInputStream(StreamType::kTesting), data_(data), length_(length), blockSize_(blockSize) {}
 
   bool Next(const void** data, int32_t* size) override {
     if (position_ >= length_) {
