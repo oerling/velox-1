@@ -265,7 +265,7 @@ class StripeStreamsImpl : public StripeStreamsBase {
         readPlanLoaded_{false},
         reusable_{getReusable(
             opts_.scanId(),
-            &readState->readerBase->getMemoryPool())} {
+            &readState_->readerBase->getMemoryPool())} {
     loadStreams();
   }
 
