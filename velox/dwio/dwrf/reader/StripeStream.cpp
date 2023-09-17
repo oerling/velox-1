@@ -18,6 +18,7 @@
 #include <folly/container/F14Set.h>
 
 #include "velox/common/base/BitSet.h"
+#include "velox/dwio/common/compression/PagedInputStream.h"
 #include "velox/dwio/common/exception/Exception.h"
 #include "velox/dwio/dwrf/common/DecoderUtil.h"
 #include "velox/dwio/dwrf/common/wrap/coded-stream-wrapper.h"
@@ -27,6 +28,7 @@
 namespace facebook::velox::dwrf {
 
 using dwio::common::LogType;
+using dwio::common::StreamType;
 using dwio::common::TypeWithId;
 
 namespace {
@@ -285,14 +287,21 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
     std::unique_ptr<dwio::common::SeekableInputStream> reuse) const {
   // if not found, return an empty {}
   const auto& info = getStreamInfo(si, false /* throwIfNotFound */);
-  std::unique_ptr<dwio::common::SeekableInputStream> reusedPagedInput;
   if (!info.valid()) { // Stream not found.
     return {};
   }
 
+  std::unique_ptr<dwio::common::SeekableInputStream> pagedReuse;
+  if (reuse && reuse->type() == StreamType::kPaged) {
+    pagedReuse = std::move(reuse);
+    reuse = reinterpret_cast<dwio::common::compression::PagedInputStream*>(
+                pagedReuse.get())
+                ->moveInput();
+  }
+
   std::unique_ptr<dwio::common::SeekableInputStream> streamRead;
   if (isIndexStream(si.kind())) {
-    streamRead = getIndexStreamFromCache(info);
+    streamRead = getIndexStreamFromCache(info, std::move(reuse));
   }
 
   if (!streamRead) {
@@ -303,7 +312,8 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
                                  : &readState_->readerBase->getBufferedInput())
             ->enqueue(
                 {info.getOffset() + stripeStart_, info.getLength(), label},
-                &si);
+                &si,
+                std::move(reuse));
   }
 
   if (!streamRead) {
@@ -316,7 +326,7 @@ std::unique_ptr<dwio::common::SeekableInputStream> StripeStreamsImpl::getStream(
       std::move(streamRead),
       streamDebugInfo,
       getDecrypter(si.encodingKey().node()),
-      reusedPagedInput);
+      std::move(pagedReuse));
 }
 
 uint32_t StripeStreamsImpl::visitStreamsOfNode(
@@ -344,11 +354,13 @@ bool StripeStreamsImpl::getUseVInts(const DwrfStreamIdentifier& si) const {
 
 std::unique_ptr<dwio::common::SeekableInputStream>
 StripeStreamsImpl::getIndexStreamFromCache(
-    const StreamInformation& info) const {
+    const StreamInformation& info,
+    std::unique_ptr<dwio::common::SeekableInputStream> reuse) const {
   std::unique_ptr<dwio::common::SeekableInputStream> indexStream;
   auto& metadataCache = readState_->readerBase->getMetadataCache();
   if (metadataCache) {
-    auto indexBase = metadataCache->get(StripeCacheMode::INDEX, stripeIndex_);
+    auto indexBase = metadataCache->get(
+        StripeCacheMode::INDEX, stripeIndex_, std::move(reuse));
     if (indexBase) {
       auto offset = info.getOffset();
       auto length = info.getLength();

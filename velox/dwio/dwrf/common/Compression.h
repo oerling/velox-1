@@ -95,7 +95,8 @@ static std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
     uint64_t bufferSize,
     memory::MemoryPool& pool,
     const std::string& streamDebugInfo,
-    const dwio::common::encryption::Decrypter* decryptr = nullptr) {
+    const dwio::common::encryption::Decrypter* decryptr = nullptr,
+    std::unique_ptr<dwio::common::SeekableInputStream> reuse = nullptr) {
   const CompressionOptions& options = getDwrfOrcDecompressionOptions();
   return createDecompressor(
       kind,
@@ -104,7 +105,10 @@ static std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
       pool,
       options,
       streamDebugInfo,
-      decryptr);
+      decryptr,
+      false,
+      0,
+      std::move(reuse));
 }
 
 } // namespace facebook::velox::dwrf

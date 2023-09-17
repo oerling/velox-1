@@ -31,7 +31,8 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       const std::string& streamDebugInfo,
       bool useRawDecompression = false,
       size_t compressedLength = 0)
-    : SeekableInputStream(StreamType::kPaged), input_(std::move(inStream)),
+      : SeekableInputStream(StreamType::kPaged),
+        input_(std::move(inStream)),
         pool_(memPool),
         inputBuffer_(pool_),
         decompressor_{std::move(decompressor)},
@@ -45,6 +46,41 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
         !useRawDecompression || compressedLength > 0,
         "For raw decompression, compressedLength should be greater than zero");
 
+    if (useRawDecompression) {
+      state_ = State::START;
+      remainingLength_ = compressedLength;
+    }
+  }
+
+  void reset(
+      std::unique_ptr<SeekableInputStream> inStream,
+      memory::MemoryPool& memPool,
+      std::unique_ptr<Decompressor> decompressor,
+      const dwio::common::encryption::Decrypter* decrypter,
+      const std::string& streamDebugInfo,
+      bool useRawDecompression = false,
+      size_t compressedLength = 0) {
+    VELOX_CHECK(&pool_ == &memPool);
+    decompressor_ = std::move(decompressor);
+    decrypter_ = decrypter, streamDebugInfo_ = streamDebugInfo;
+    DWIO_ENSURE(
+        decompressor_ || decrypter_,
+        "one of decompressor or decryptor is required");
+    DWIO_ENSURE(
+        !useRawDecompression || compressedLength > 0,
+        "For raw decompression, compressedLength should be greater than zero");
+    // Clear all state to post-construction values.
+    lastHeaderOffset_ = 0;
+    bytesReturnedAtLastHeaderOffset_ = 0;
+    state_ = State::HEADER;
+    outputBufferPtr_ = nullptr;
+    outputBufferLength_ = 0;
+    remainingLength_ = 0;
+    inputBufferStart_ = nullptr;
+    inputBufferPtr_ = nullptr;
+    inputBufferPtrEnd_ = nullptr;
+    bytesReturned_ = 0;
+    lastWindowSize_ = 0;
     if (useRawDecompression) {
       state_ = State::START;
       remainingLength_ = compressedLength;
@@ -77,6 +113,11 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
     return 2;
   }
 
+  // Returns  underlying input for reuse.
+  std::unique_ptr<SeekableInputStream> moveInput() {
+    return std::move(input_);
+  }
+
  protected:
   // Special constructor used by ZlibDecompressionStream
   PagedInputStream(
@@ -85,7 +126,8 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       const std::string& streamDebugInfo,
       bool useRawDecompression = false,
       size_t compressedLength = 0)
-    : SeekableInputStream(StreamType::kPaged), input_(std::move(inStream)),
+      : SeekableInputStream(StreamType::kPaged),
+        input_(std::move(inStream)),
         pool_(memPool),
         inputBuffer_(pool_),
         decompressor_{nullptr},
@@ -172,7 +214,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
 
  private:
   // Stream Debug Info
-  const std::string streamDebugInfo_;
+  std::string streamDebugInfo_;
 };
 
 } // namespace facebook::velox::dwio::common::compression

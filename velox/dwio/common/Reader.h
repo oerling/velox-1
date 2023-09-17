@@ -54,8 +54,9 @@ class ScanReusableData {
   }
 
   std::pair<std::string_view, memory::MemoryPool*> key() {
+    auto* temp = pool_;
     return std::make_pair<std::string_view, memory::MemoryPool*>(
-        scanId_, nullptr);
+								 scanId_, std::move(temp));
   }
 
  protected:

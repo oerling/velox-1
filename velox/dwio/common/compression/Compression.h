@@ -106,7 +106,8 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
     const std::string& streamDebugInfo,
     const dwio::common::encryption::Decrypter* decryptr = nullptr,
     bool useRawDecompression = false,
-    size_t compressedLength = 0);
+    size_t compressedLength = 0,
+    std::unique_ptr<dwio::common::SeekableInputStream> reuse = nullptr);
 
 /**
  * Create a compressor for the given compression kind.

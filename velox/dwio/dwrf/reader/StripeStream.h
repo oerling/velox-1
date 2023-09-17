@@ -371,7 +371,8 @@ class StripeStreamsImpl : public StripeStreamsBase {
   }
 
   std::unique_ptr<dwio::common::SeekableInputStream> getIndexStreamFromCache(
-      const StreamInformation& info) const;
+      const StreamInformation& info,
+      std::unique_ptr<dwio::common::SeekableInputStream> reuse = nullptr) const;
 
   const dwio::common::encryption::Decrypter* getDecrypter(
       uint32_t nodeId) const {

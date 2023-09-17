@@ -395,7 +395,7 @@ bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
         ZlibDecompressor::streamDebugInfo_);
     prepareOutputBuffer(getUncompressedLength(inputBufferPtr_, availSize));
 
-    reset();
+    ZlibDecompressor::reset();
     zstream_.next_in =
         reinterpret_cast<Bytef*>(const_cast<char*>(inputBufferPtr_));
     zstream_.avail_in = folly::to<uInt>(availSize);
@@ -501,7 +501,8 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
     const std::string& streamDebugInfo,
     const Decrypter* decrypter,
     bool useRawDecompression,
-    size_t compressedLength) {
+    size_t compressedLength,
+    std::unique_ptr<SeekableInputStream> reuse) {
   std::unique_ptr<Decompressor> decompressor;
   switch (static_cast<int64_t>(kind)) {
     case CompressionKind::CompressionKind_NONE:
@@ -562,6 +563,18 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
       break;
     default:
       DWIO_RAISE("Unknown compression codec ", kind);
+  }
+  if (reuse) {
+    VELOX_CHECK_EQ(reuse->type(), StreamType::kPaged);
+    reinterpret_cast<PagedInputStream*>(reuse.get())->reset(
+      std::move(input),
+      pool,
+      std::move(decompressor),
+      decrypter,
+      streamDebugInfo,
+      useRawDecompression,
+      compressedLength);
+    return reuse;
   }
   return std::make_unique<PagedInputStream>(
       std::move(input),

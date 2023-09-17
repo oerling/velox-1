@@ -97,20 +97,21 @@ DwrfRowReader::DwrfRowReader(
   
   folly::Synchronized<
     folly::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusableData>>>
-  DwrfReader::reuse_;
+  DwrfRowReader::reusable_;
 
-  std::shared_ptr<dwio::common::ScanReusableData> DwrfReader::getReusableData(
+  std::shared_ptr<dwio::common::ScanReusableData> DwrfRowReader::getReusableData(
     const std::string& scanId,
     memory::MemoryPool* pool) {
-    return getDwrfReusable();
+    return getDwrfReusable(scanId, pool);
   }
 
   // static
-  std::shared_ptr<dwio::common::DwrfReusableData> DwrfReader::getDwrfReusable(
+  std::shared_ptr<DwrfReusableData> DwrfRowReader::getDwrfReusable(
     const std::string& scanId,
     memory::MemoryPool* pool) {
     return reusable_.withWLock([&](auto& reuse) -> auto {
-      auto key = std::make_pair<std::string_view, memory::MemoryPool*>(scanId, pool);
+      memory::MemoryPool* p = pool;
+      auto key = std::make_pair<std::string_view, memory::MemoryPool*>(scanId, std::move(p));
       auto it = reuse.find(key);
     if (it == reuse.end()) {
       auto newData = std::make_shared<DwrfReusableData>(
@@ -121,7 +122,7 @@ DwrfRowReader::DwrfRowReader(
     std::shared_ptr<DwrfReusableData> data = it->second.lock();
     if (!data) {
       data = std::make_shared<DwrfReusableData>(
-          scanId, unregisterTracker, loadQuantum);
+						scanId, pool, unhookReusable);
       reuse[data->key()] = data;
     }
     return data;

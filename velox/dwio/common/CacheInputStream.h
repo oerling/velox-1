@@ -69,20 +69,7 @@ class CacheInputStream : public SeekableInputStream {
   /// that begins and ends at the exact start and end of the
   /// serialization. Reading these from cache requires an exactly
   /// delimited stream.
-  std::unique_ptr<CacheInputStream> clone() {
-    auto copy = std::make_unique<CacheInputStream>(
-        bufferedInput_,
-        ioStats_,
-        region_,
-        input_,
-        fileNum_,
-        tracker_,
-        trackingId_,
-        groupId_,
-        loadQuantum_);
-    copy->position_ = position_;
-    return copy;
-  }
+  std::unique_ptr<CacheInputStream> clone(std::unique_ptr<CacheInputStream> reuse = nullptr);
 
   /// Sets the stream to range over a window that starts at the current position
   /// and is 'remainingBytes' bytes in size. 'remainingBytes' must be <=
@@ -124,7 +111,7 @@ class CacheInputStream : public SeekableInputStream {
       velox::common::Region region,
       cache::AsyncDataCacheEntry& entry);
 
-  CachedBufferedInput* const bufferedInput_;
+  CachedBufferedInput* bufferedInput_;
   cache::AsyncDataCache* cache_;
   IoStatistics* ioStats_;
   std::shared_ptr<ReadFileInputStream> input_;

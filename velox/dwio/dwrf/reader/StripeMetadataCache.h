@@ -58,7 +58,7 @@ class StripeMetadataCache {
 
   std::unique_ptr<dwio::common::SeekableInputStream> get(
       StripeCacheMode mode,
-      uint64_t stripeIndex) const {
+      uint64_t stripeIndex, std::unique_ptr<dwio::common::SeekableInputStream> reuse = nullptr) const {
     auto index = getIndex(mode, stripeIndex);
     if (index != INVALID_INDEX) {
       auto offset = offsets_[index];
@@ -66,9 +66,13 @@ class StripeMetadataCache {
         return std::make_unique<dwio::common::SeekableArrayInputStream>(
             buffer_->data() + offset, offsets_[index + 1] - offset);
       } else {
-        auto clone =
+	std::unique_ptr<dwio::common::CacheInputStream> clone;
+	if (reuse && reuse->type() == dwio::common::StreamType::kCache) {
+	  clone.reset(reinterpret_cast<dwio::common::CacheInputStream*>(reuse.release()));
+	}
+        clone =
             reinterpret_cast<dwio::common::CacheInputStream*>(input_.get())
-                ->clone();
+	  ->clone(std::move(clone));
         clone->Skip(offset);
         clone->setRemainingBytes(offsets_[index + 1] - offset);
         return clone;
