@@ -10,8 +10,11 @@ namespace facebook::velox::dwrf {
 
 class DwrfReusableData : public dwio::common::ScanReusableData {
  public:
-  DwrfReusableData(const std::string id, memory::MemoryPool* pool, std::function<void(dwio::common::ScanReusableData*)> freeFunc)
-    : ScanReusableData(id, pool, freeFunc) {}
+  DwrfReusableData(
+      const std::string id,
+      memory::MemoryPool* pool,
+      std::function<void(dwio::common::ScanReusableData*)> freeFunc)
+      : ScanReusableData(id, pool, freeFunc) {}
 
   template <typename T>
   std::unique_ptr<T> getReader(TypeKind kind) {

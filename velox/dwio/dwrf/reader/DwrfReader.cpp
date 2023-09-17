@@ -109,7 +109,7 @@ std::shared_ptr<dwio::common::ScanReusableData> DwrfRowReader::getReusableData(
 std::shared_ptr<DwrfReusableData> DwrfRowReader::getDwrfReusable(
     const std::string& scanId,
     memory::MemoryPool* pool) {
-  return reusable_.withWLock([&](auto& reuse) -> auto {
+  return reusable_.withWLock([&](auto& reuse) -> auto{
     memory::MemoryPool* p = pool;
     auto key = std::make_pair<std::string_view, memory::MemoryPool*>(
         scanId, std::move(p));
