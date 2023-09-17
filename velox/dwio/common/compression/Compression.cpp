@@ -566,14 +566,15 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
   }
   if (reuse) {
     VELOX_CHECK_EQ(reuse->type(), StreamType::kPaged);
-    reinterpret_cast<PagedInputStream*>(reuse.get())->reset(
-      std::move(input),
-      pool,
-      std::move(decompressor),
-      decrypter,
-      streamDebugInfo,
-      useRawDecompression,
-      compressedLength);
+    reinterpret_cast<PagedInputStream*>(reuse.get())
+        ->reset(
+            std::move(input),
+            pool,
+            std::move(decompressor),
+            decrypter,
+            streamDebugInfo,
+            useRawDecompression,
+            compressedLength);
     return reuse;
   }
   return std::make_unique<PagedInputStream>(

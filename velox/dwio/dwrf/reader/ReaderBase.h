@@ -204,14 +204,16 @@ class ReaderBase {
       std::unique_ptr<dwio::common::SeekableInputStream> compressed,
       const std::string& streamDebugInfo,
       const dwio::common::encryption::Decrypter* decrypter = nullptr,
-      std::unique_ptr<dwio::common::SeekableInputStream> reuse = nullptr) const {
+      std::unique_ptr<dwio::common::SeekableInputStream> reuse =
+          nullptr) const {
     return createDecompressor(
         getCompressionKind(),
         std::move(compressed),
         getCompressionBlockSize(),
         pool_,
         streamDebugInfo,
-        decrypter, std::move(reuse));
+        decrypter,
+        std::move(reuse));
   }
 
   template <typename T>

@@ -16,8 +16,8 @@
 
 #include "velox/common/memory/Track.h"
 #include <folly/container/F14Map.h>
-#include <iostream>
 #include <gflags/gflags.h>
+#include <iostream>
 
 DEFINE_bool(trace_malloc, false, "Count selected allocations");
 

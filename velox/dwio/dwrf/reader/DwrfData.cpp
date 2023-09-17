@@ -51,7 +51,7 @@ DwrfData::DwrfData(
 }
 
 void DwrfData::reset(
-		     dwio::common::FormatParams& params,
+    dwio::common::FormatParams& params,
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     common::ScanSpec& spec) {
   auto* dwrfParams = reinterpret_cast<DwrfParams*>(&params);
@@ -59,7 +59,7 @@ void DwrfData::reset(
   flatMapContext_ = dwrfParams->flatMapContext_;
   auto* streamLabels = &dwrfParams->streamLabels_;
   auto& stripe = dwrfParams->stripeStreams_;
-  
+
   rowsPerRowGroup_ = stripe.rowsPerRowGroup();
   EncodingKey encodingKey =
       EncodingKey{nodeType_->id(), flatMapContext_.sequence};

@@ -121,12 +121,16 @@ class DwrfRowReader : public StrideIndexProvider,
 
   int64_t nextReadSize(uint64_t size) override;
 
+  // Returns a set of reusable items for readers in 'scanId' with result pool
+  // 'pool'.
+  std::shared_ptr<dwio::common::ScanReusableData> getReusableData(
+      const std::string& scanId,
+      memory::MemoryPool* pool) override;
 
-  // Returns a set of reusable items for readers in 'scanId' with result pool 'pool'.
-  std::shared_ptr<dwio::common::ScanReusableData> getReusableData(const std::string& scanId, memory::MemoryPool* pool) override;
+  static std::shared_ptr<DwrfReusableData> getDwrfReusable(
+      const std::string& scanId,
+      memory::MemoryPool* pool);
 
-  static   std::shared_ptr<DwrfReusableData> getDwrfReusable(const std::string& scanId, memory::MemoryPool* pool);
-  
  private:
   // Represents the status of a stripe being fetched.
   enum class FetchStatus { NOT_STARTED, IN_PROGRESS, FINISHED, ERROR };
@@ -235,16 +239,16 @@ class DwrfRowReader : public StrideIndexProvider,
       uint64_t rowsToRead,
       const dwio::common::Mutation*,
       VectorPtr& result);
-  
-  static folly::Synchronized<
-    folly::F14FastMap<std::pair<std::string_view, memory::MemoryPool*>, std::weak_ptr<DwrfReusableData>>>
-  reusable_;
 
-  static
-  void unhookReusable(dwio::common::ScanReusableData* data) {
+  static folly::Synchronized<folly::F14FastMap<
+      std::pair<std::string_view, memory::MemoryPool*>,
+      std::weak_ptr<DwrfReusableData>>>
+      reusable_;
+
+  static void unhookReusable(dwio::common::ScanReusableData* data) {
     auto id = data->key();
     reusable_.withWLock([&](auto& reusable) { reusable.erase(id); });
-}
+  }
 };
 
 class DwrfReader : public dwio::common::Reader {

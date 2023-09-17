@@ -59,9 +59,9 @@ void SelectiveColumnReader::reset(
   VELOX_CHECK(&memoryPool_ == &params.pool());
   fileType_ = type;
   formatData_->reset(params, type, scanSpec);
-	scanSpec_ = &scanSpec;
+  scanSpec_ = &scanSpec;
 }
-  
+
 void SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsContext& context,

@@ -127,7 +127,6 @@ class RowReaderOptions {
   // Id identifying the table scan. Same as the id for ScanTracker.
   std::string scanId_;
 
-  
  public:
   RowReaderOptions() noexcept
       : dataStart(0),

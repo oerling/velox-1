@@ -34,7 +34,7 @@
 namespace facebook::velox::dwio::common {
 
 struct ReaderSet {
-  std::vector < std::unique_ptr<SelectiveColumnReader>> readers;
+  std::vector<std::unique_ptr<SelectiveColumnReader>> readers;
 };
 
 /// An abstract class for reusable pieces of table scan for a particular query
@@ -56,7 +56,7 @@ class ScanReusableData {
   std::pair<std::string_view, memory::MemoryPool*> key() {
     auto* temp = pool_;
     return std::make_pair<std::string_view, memory::MemoryPool*>(
-								 scanId_, std::move(temp));
+        scanId_, std::move(temp));
   }
 
  protected:

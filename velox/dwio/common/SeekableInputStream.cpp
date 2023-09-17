@@ -70,7 +70,9 @@ SeekableArrayInputStream::SeekableArrayInputStream(
     const unsigned char* values,
     uint64_t size,
     uint64_t blkSize)
-  : SeekableInputStream(StreamType::kArray), data(reinterpret_cast<const char*>(values)), dataRead{nullptr} {
+    : SeekableInputStream(StreamType::kArray),
+      data(reinterpret_cast<const char*>(values)),
+      dataRead{nullptr} {
   length = size;
   position = 0;
   blockSize = blkSize == 0 ? length : blkSize;
@@ -80,7 +82,7 @@ SeekableArrayInputStream::SeekableArrayInputStream(
     const char* values,
     uint64_t size,
     uint64_t blkSize)
-  : SeekableInputStream(StreamType::kArray), data(values), dataRead{nullptr} {
+    : SeekableInputStream(StreamType::kArray), data(values), dataRead{nullptr} {
   length = size;
   position = 0;
   blockSize = blkSize == 0 ? length : blkSize;
@@ -90,7 +92,10 @@ SeekableArrayInputStream::SeekableArrayInputStream(
     std::unique_ptr<char[]> values,
     uint64_t size,
     uint64_t blkSize)
-  : SeekableInputStream(StreamType::kArray), ownedData(std::move(values)), data(ownedData.get()), dataRead{nullptr} {
+    : SeekableInputStream(StreamType::kArray),
+      ownedData(std::move(values)),
+      data(ownedData.get()),
+      dataRead{nullptr} {
   length = size;
   position = 0;
   blockSize = blkSize == 0 ? length : blkSize;
@@ -99,7 +104,7 @@ SeekableArrayInputStream::SeekableArrayInputStream(
 SeekableArrayInputStream::SeekableArrayInputStream(
     std::function<std::tuple<const char*, uint64_t>()> read,
     uint64_t blkSize)
-  : SeekableInputStream(StreamType::kArray), data(nullptr), dataRead{read} {
+    : SeekableInputStream(StreamType::kArray), data(nullptr), dataRead{read} {
   position = 0;
   length = 0;
   blockSize = blkSize;
@@ -191,7 +196,8 @@ SeekableFileInputStream::SeekableFileInputStream(
     memory::MemoryPool& _pool,
     LogType logType,
     uint64_t _blockSize)
-  : SeekableInputStream(StreamType::kFile), pool(_pool),
+    : SeekableInputStream(StreamType::kFile),
+      pool(_pool),
       input(std::move(input)),
       logType(logType),
       start(offset),

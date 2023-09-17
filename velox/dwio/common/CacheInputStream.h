@@ -69,7 +69,8 @@ class CacheInputStream : public SeekableInputStream {
   /// that begins and ends at the exact start and end of the
   /// serialization. Reading these from cache requires an exactly
   /// delimited stream.
-  std::unique_ptr<CacheInputStream> clone(std::unique_ptr<CacheInputStream> reuse = nullptr);
+  std::unique_ptr<CacheInputStream> clone(
+      std::unique_ptr<CacheInputStream> reuse = nullptr);
 
   /// Sets the stream to range over a window that starts at the current position
   /// and is 'remainingBytes' bytes in size. 'remainingBytes' must be <=
@@ -97,7 +98,7 @@ class CacheInputStream : public SeekableInputStream {
   void clear() override {
     pin_.clear();
   }
-  
+
  private:
   // Ensures that the current position is covered by 'pin_'.
   void loadPosition();

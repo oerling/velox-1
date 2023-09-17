@@ -39,10 +39,13 @@ class DwrfData : public dwio::common::FormatData {
       const StreamLabels& streamLabels,
       FlatMapContext flatMapContext);
 
-  void reset(dwio::common::FormatParams& params, const std::shared_ptr<const dwio::common::TypeWithId>& type, common::ScanSpec& spec) override;
+  void reset(
+      dwio::common::FormatParams& params,
+      const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      common::ScanSpec& spec) override;
 
   void clear() override;
-  
+
   void readNulls(
       vector_size_t numValues,
       const uint64_t* FOLLY_NULLABLE incomingNulls,

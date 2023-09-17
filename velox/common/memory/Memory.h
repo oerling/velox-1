@@ -28,7 +28,6 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
-#include "velox/common/memory/Track.h"
 #include <velox/common/base/Exceptions.h>
 #include "folly/CPortability.h"
 #include "folly/GLog.h"
@@ -40,6 +39,7 @@
 #include "velox/common/memory/Allocation.h"
 #include "velox/common/memory/MemoryAllocator.h"
 #include "velox/common/memory/MemoryPool.h"
+#include "velox/common/memory/Track.h"
 
 DECLARE_bool(velox_memory_leak_check_enabled);
 DECLARE_bool(velox_memory_pool_debug_enabled);
