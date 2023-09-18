@@ -25,12 +25,12 @@
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/Mutation.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/common/ScanReusableData.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
-#include "velox/dwio/common/ScanReusableData.h"
 
 namespace facebook::velox::dwio::common {
 

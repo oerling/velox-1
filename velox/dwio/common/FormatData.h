@@ -18,12 +18,12 @@
 
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
+#include "velox/dwio/common/ScanReusableData.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/Filter.h"
-#include "velox/dwio/common/ScanReusableData.h"
 
 namespace facebook::velox::dwio::common {
 

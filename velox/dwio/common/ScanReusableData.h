@@ -16,15 +16,12 @@
 
 #pragma once
 
-#include  <vector>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 #include "velox/common/memory/MemoryPool.h"
 #include "velox/type/Type.h"
-
-
-
 
 namespace facebook::velox::dwio::common {
 
@@ -58,7 +55,7 @@ class ScanReusableData {
 
   std::unique_ptr<SelectiveColumnReader> getColumnReader(TypeKind kind);
 
-    void releaseColumnReader(std::unique_ptr<SelectiveColumnReader> reader);
+  void releaseColumnReader(std::unique_ptr<SelectiveColumnReader> reader);
 
  protected:
   // Serializes any get/release.
@@ -71,7 +68,4 @@ class ScanReusableData {
   std::vector<ReaderSet> readers_;
 };
 
-
-}
-
-
+} // namespace facebook::velox::dwio::common

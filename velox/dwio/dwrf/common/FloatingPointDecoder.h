@@ -42,11 +42,11 @@ class FloatingPointDecoder {
   void clear() {
     input_->clear();
   }
-  
+
   std::unique_ptr<SeekableInputStream> moveStream() {
     return std::move(input_);
   }
-  
+
   TData readValue() {
     if (bufferEnd_ - bufferStart_ >= sizeof(TData)) {
       TData value = *reinterpret_cast<const TData*>(bufferStart_);

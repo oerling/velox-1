@@ -96,14 +96,15 @@ class DwrfData : public dwio::common::FormatData {
     return *index_;
   }
 
-  std::shared_ptr<dwio::common::ScanReusableData> reusableData() const override  {
+  std::shared_ptr<dwio::common::ScanReusableData> reusableData()
+      const override {
     return std::static_pointer_cast<dwio::common::ScanReusableData>(reusable_);
   }
 
   DwrfReusableData* dwrfReusable() const {
     return reusable_.get();
   }
-  
+
  private:
   static std::vector<uint64_t> toPositionsInner(
       const proto::RowIndexEntry& entry) {

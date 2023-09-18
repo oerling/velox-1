@@ -55,7 +55,7 @@ class SelectiveFloatingPointColumnReader
     SelectiveColumnReader::clear();
     decoder_.clear();
   }
-  
+
   void seekToRowGroup(uint32_t index) override {
     base::seekToRowGroup(index);
     auto positionsProvider = this->formatData_->seekToRowGroup(index);

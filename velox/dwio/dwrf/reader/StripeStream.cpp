@@ -112,13 +112,14 @@ std::shared_ptr<DwrfReusableData> StripeStreamsImpl::getReusable(
   return DwrfRowReader::getDwrfReusable(scanId, pool);
 }
 
-  std::unique_ptr<dwio::common::SelectiveColumnReader> StripeStreamsImpl::getColumnReader(TypeKind kind) const {
-    if (!reusable_) {
-      return nullptr;
-    }
-    return reusable_->getColumnReader(kind);
+std::unique_ptr<dwio::common::SelectiveColumnReader>
+StripeStreamsImpl::getColumnReader(TypeKind kind) const {
+  if (!reusable_) {
+    return nullptr;
   }
-  
+  return reusable_->getColumnReader(kind);
+}
+
 std::function<BufferPtr()>
 StripeStreamsBase::getIntDictionaryInitializerForNode(
     const EncodingKey& ek,

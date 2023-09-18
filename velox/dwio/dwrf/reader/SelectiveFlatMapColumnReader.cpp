@@ -247,14 +247,13 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     auto reusable = formatData_->as<DwrfData>().dwrfReusable();
     if (reusable) {
       for (auto& node : keyNodes_) {
-	if (node.reader) {
-	  reusable->releaseColumnReader(std::move(node.reader));
-	}
+        if (node.reader) {
+          reusable->releaseColumnReader(std::move(node.reader));
+        }
       }
     }
   }
 
-  
   bool useBulkPath() const override {
     return false;
   }
