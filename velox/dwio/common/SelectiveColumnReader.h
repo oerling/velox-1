@@ -139,6 +139,9 @@ class SelectiveColumnReader {
       velox::common::ScanSpec& scanSpec,
       std::shared_ptr<const dwio::common::TypeWithId> type);
 
+  /// Releases cache pins or other shared resources. Called before adding 'this' to a reusable pool.
+  virtual void clear();
+
   dwio::common::FormatData& formatData() const {
     return *formatData_;
   }

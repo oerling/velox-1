@@ -88,6 +88,10 @@ void SelectiveColumnReader::reset(
   scanState_ = ScanState();
 }
 
+  void SelectiveColumnReader::clear() {
+    formatData_->clear();
+  }
+  
 void SelectiveColumnReader::filterRowGroups(
     uint64_t rowGroupSize,
     const dwio::common::StatsContext& context,

@@ -162,6 +162,11 @@ class FormatParams {
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       const velox::common::ScanSpec& scanSpec) = 0;
 
+  template <typename T>
+  T& as() {
+    return *reinterpret_cast<T*>(this);
+  }
+
   memory::MemoryPool& pool() {
     return pool_;
   }

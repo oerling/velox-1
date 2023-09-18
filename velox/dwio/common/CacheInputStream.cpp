@@ -238,7 +238,11 @@ void CacheInputStream::loadSync(Region region) {
     } else {
       // Hit memory cache.
       if (!entry->getAndClearFirstUseFlag()) {
-        ioStats_->ramHit().increment(entry->size());
+        if (window_.has_value()) {
+          ioStats_->ramHit().increment(window_.value().length);
+        } else {
+          ioStats_->ramHit().increment(entry->size());
+        }
       }
       return;
     }

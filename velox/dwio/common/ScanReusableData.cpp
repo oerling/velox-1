@@ -40,6 +40,7 @@ void ScanReusableData::releaseColumnReader(
   auto index = static_cast<int32_t>(kind);
   switch (kind) {
     case TypeKind::REAL: {
+      reader->clear();
       std::lock_guard<std::mutex> l(mutex_);
       if (readers_.size() <= index) {
         readers_.resize(index + 1);

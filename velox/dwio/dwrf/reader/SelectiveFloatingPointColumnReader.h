@@ -37,6 +37,25 @@ class SelectiveFloatingPointColumnReader
       DwrfParams& params,
       common::ScanSpec& scanSpec);
 
+  void reset(
+      dwio::common::FormatParams& params,
+      velox::common::ScanSpec& scanSpec,
+      std::shared_ptr<const dwio::common::TypeWithId> type) {
+    SelectiveColumnReader::reset(params, scanSpec, type);
+    auto& dwrfParams = params.as<DwrfParams>();
+    decoder_.reset(dwrfParams.stripeStreams().getStream(
+        EncodingKey{this->fileType_->id(), dwrfParams.flatMapContext().sequence}
+            .forKind(proto::Stream_Kind_DATA),
+        dwrfParams.streamLabels().label(),
+        true,
+        decoder_.moveStream()));
+  }
+
+  void clear() override {
+    SelectiveColumnReader::clear();
+    decoder_.clear();
+  }
+  
   void seekToRowGroup(uint32_t index) override {
     base::seekToRowGroup(index);
     auto positionsProvider = this->formatData_->seekToRowGroup(index);

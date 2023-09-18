@@ -33,6 +33,20 @@ class FloatingPointDecoder {
     MTRN(1, sizeof(*this));
   }
 
+  void reset(std::unique_ptr<dwio::common::SeekableInputStream> input) {
+    input_ = std::move(input);
+    bufferStart_ = nullptr;
+    bufferEnd_ = nullptr;
+  }
+
+  void clear() {
+    input_->clear();
+  }
+  
+  std::unique_ptr<SeekableInputStream> moveStream() {
+    return std::move(input_);
+  }
+  
   TData readValue() {
     if (bufferEnd_ - bufferStart_ >= sizeof(TData)) {
       TData value = *reinterpret_cast<const TData*>(bufferStart_);
