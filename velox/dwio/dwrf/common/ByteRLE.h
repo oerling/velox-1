@@ -110,7 +110,10 @@ class ByteRleDecoder {
 
   virtual ~ByteRleDecoder() = default;
 
-  void reset(
+  /// Resets this to state that would exist after construction with
+  /// the given parameters. clear() must have been called
+  /// first. Supports reuse without extra allocation.
+  virtual void reset(
       std::unique_ptr<dwio::common::SeekableInputStream> input,
       const EncodingKey& ek) {
     VELOX_CHECK(cleared);
@@ -212,7 +215,8 @@ class ByteRleDecoder {
     return std::move(inputStream);
   }
 
-  void clear() {
+  /// Releases possible cache pins and other shared state. Called before putting 'this' in reserve waiting for reuse.
+  virtual void clear() {
     cleared = true;
     if (inputStream) {
       inputStream->clear();
@@ -293,7 +297,7 @@ class BooleanRleDecoder : public ByteRleDecoder {
 
   void reset(
       std::unique_ptr<dwio::common::SeekableInputStream> input,
-      const EncodingKey& ek) {
+      const EncodingKey& ek) override {
     ByteRleDecoder::reset(std::move(input), ek);
   }
 
@@ -373,7 +377,8 @@ class BooleanRleDecoder : public ByteRleDecoder {
       }
     }
   }
-  void clear() {
+
+  void clear() override {
     ByteRleDecoder::clear();
     remainingBits = 0;
     reversedLastByte = 0;
