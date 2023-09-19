@@ -393,9 +393,6 @@ TEST_F(E2EFilterTest, flatMapScalar) {
   numCombinations = 1;
 #endif
 #endif
-#if !defined(NDEBUG)
-  numCombinations = 1;
-#endif
   testWithTypes(
       kColumns,
       customize,
