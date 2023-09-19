@@ -334,6 +334,29 @@ VectorPtr BaseVector::createInternal(
   }
 }
 
+// static
+void BaseVector::setNulls(
+    uint64_t* rawNulls,
+    const folly::Range<const CopyRange*>& ranges,
+    bool isNull) {
+  const auto nullBits = isNull ? bits::kNull : bits::kNotNull;
+  applyToEachRange(
+      ranges, [&](auto targetIndex, auto /*sourceIndex*/, auto count) {
+        bits::fillBits(rawNulls, targetIndex, targetIndex + count, nullBits);
+      });
+}
+
+// static
+void BaseVector::copyNulls(
+    uint64_t* targetRawNulls,
+    const uint64_t* sourceRawNulls,
+    const folly::Range<const CopyRange*>& ranges) {
+  applyToEachRange(ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+    bits::copyBits(
+        sourceRawNulls, sourceIndex, targetRawNulls, targetIndex, count);
+  });
+}
+
 void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
   VELOX_CHECK(isNullsWritable());
   VELOX_CHECK(length_ >= rows.end());
@@ -726,25 +749,21 @@ VectorPtr BaseVector::transpose(BufferPtr indices, VectorPtr&& source) {
 bool isLazyNotLoaded(const BaseVector& vector) {
   switch (vector.encoding()) {
     case VectorEncoding::Simple::LAZY:
-      if (!vector.as<LazyVector>()->isLoaded()) {
+      if (!vector.asUnchecked<LazyVector>()->isLoaded()) {
         return true;
       }
 
       // Lazy Vectors may wrap lazy vectors (e.g. nested Rows) so we need to go
       // deeper.
-      return isLazyNotLoaded(*vector.as<LazyVector>()->loadedVector());
+      return isLazyNotLoaded(*vector.asUnchecked<LazyVector>()->loadedVector());
     case VectorEncoding::Simple::DICTIONARY:
     case VectorEncoding::Simple::SEQUENCE:
       return isLazyNotLoaded(*vector.valueVector());
     case VectorEncoding::Simple::CONSTANT:
       return vector.valueVector() ? isLazyNotLoaded(*vector.valueVector())
                                   : false;
-    case VectorEncoding::Simple::ROW: {
-      const auto& children = vector.as<RowVector>()->children();
-      return std::any_of(children.begin(), children.end(), [](auto it) {
-        return it != nullptr && isLazyNotLoaded(*it);
-      });
-    }
+    case VectorEncoding::Simple::ROW:
+      return vector.asUnchecked<RowVector>()->containsLazyNotLoaded();
     default:
       return false;
   }

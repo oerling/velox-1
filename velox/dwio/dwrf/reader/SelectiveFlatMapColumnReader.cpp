@@ -22,6 +22,8 @@
 
 namespace facebook::velox::dwrf {
 
+bool noFastPath = false;
+
 namespace {
 
 template <typename T>
@@ -290,7 +292,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     auto* nulls =
         nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
 
-    if (fastPath(offsets, sizes, rows, nulls, result)) {
+    if (!noFastPath && fastPath(offsets, sizes, rows, nulls, result)) {
       return;
     }
     auto* rawOffsets = offsets->template asMutable<vector_size_t>();
@@ -583,11 +585,20 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
       } else if (child->encoding() == VectorEncoding::Simple::FLAT) {
         childRawValues_[i] = childValues_[i]->valuesAsVoid();
       } else if (child->encoding() == VectorEncoding::Simple::CONSTANT) {
-        childRawValues_[i] = child->valuesAsVoid();
-        childIndices_.resize(children_.size());
         if (zeros_.size() < rows.size()) {
           zeros_.resize(rows.size());
         }
+        childRawValues_[i] = child->valuesAsVoid();
+        if (childValues_[i]->isNullAt(0)) {
+          // There are at least rows worth of zero words, so this can serve as
+          // an all null bitmap.
+          childRawNulls_[i] = reinterpret_cast<const uint64_t*>(zeros_.data());
+        } else {
+          childRawNulls_[i] = nullptr;
+        }
+        childIndices_.resize(children_.size());
+        // Every null is redirected to row 0, which is valuesAsVoid of constant
+        // vector.
         childIndices_[i] = zeros_.data();
       } else {
         VELOX_FAIL(
