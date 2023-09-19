@@ -2910,3 +2910,64 @@ TEST_F(VectorTest, containsNullAtStructs) {
   EXPECT_TRUE(data->containsNullAt(4));
   EXPECT_FALSE(data->containsNullAt(5));
 }
+
+TEST_F(VectorTest, defragment) {
+  constexpr int32_t kSize = 1000;
+  auto original = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::create(VARCHAR(), kSize, pool()));
+  int64_t totalBytes = 0;
+  for (auto i = 0; i < kSize; ++i) {
+    std::string str;
+    str.resize((i % 20) * 1000);
+    totalBytes += str.size();
+    original->set(i, StringView(str));
+  }
+  auto strings = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*original));
+  auto reference = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*strings));
+  test::assertEqualVectors(reference, strings);
+  strings->defragmentStrings();
+  test::assertEqualVectors(reference, strings);
+
+  // Set some to null and see that the buffer space gets cleared.
+  strings = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*original));
+  int64_t freed = 0;
+  for (auto i = 0; i < kSize; i += 2) {
+    freed += strings->valueAt(i).size();
+    strings->setNull(i, true);
+  }
+  reference = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*strings));
+  strings->defragmentStrings();
+  test::assertEqualVectors(reference, strings);
+  EXPECT_EQ(strings->stringBuffers()[0]->size(), totalBytes - freed);
+
+  // We splice every second value to be physically equal to the next. Defragment
+  // is expected to keep physically equal StringViews equal.
+  strings = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*original));
+  freed = 0;
+  StringView* rawValues = const_cast<StringView*>(
+      reinterpret_cast<const StringView*>(strings->rawValues()));
+  for (auto i = 0; i < kSize; i += 2) {
+    if (i % 4 == 0) {
+      freed += strings->valueAt(i).size();
+      rawValues[i] = rawValues[i + 1];
+    } else {
+      // We make the string at i a leading substring of the next string. The defrag will keep these separate.
+      auto s1 = rawValues[i];
+      auto s2 = rawValues[i + 1];
+      if (s2.size() > s1.size() && s1.size() > StringView::kInlineSize + 1) {
+	rawValues[i] = StringView(s2.data(), s1.size());
+	freed += s2.size() - s1.size();
+      }
+    }
+  }
+  reference = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::copy(*strings));
+  strings->defragmentStrings();
+  test::assertEqualVectors(reference, strings);
+  EXPECT_EQ(strings->stringBuffers()[0]->size(), totalBytes - freed);
+}

@@ -549,5 +549,64 @@ void FlatVector<StringView>::validate(
   }
 }
 
+template <>
+void FlatVector<StringView>::defragmentStrings() {
+  if (!values_) {
+    return;
+  }
+  VELOX_CHECK(values_->isMutable(), "defragmentStrings requires a mutable a vector");
+  if (stringBuffers_.empty()) {
+    return;
+  }
+  // Maps from string to first row where occurs.
+  folly::F14FastMap<const char*, int32_t> dataToRow;
+  // Maps from non first row where a string occurs to first row.
+  folly::F14FastMap<int32_t, int32_t> rowToRow;
+  int64_t total = 0;
+  for (auto i = 0; i < BaseVector::length_; ++i) {
+    if (isNullAt(i) || rawValues_[i].isInline()) {
+      continue;
+    }
+    auto data = rawValues_[i].data();
+    auto size = rawValues_[i].size();
+    auto it = dataToRow.find(data);
+    if (it != dataToRow.end() && rawValues_[it->second].size() >= size) {
+      // If a string occurs on a previous row and the occurrence is long enough, then the copy will keep the StringViews sharing out of line data.
+      rowToRow[i] = it->second;
+    } else {
+      total += rawValues_[i].size();
+      dataToRow[data] = i;
+    }
+  }
+  if (total == 0) {
+    stringBuffers_.clear();
+    return;
+  }
+  auto buffer = AlignedBuffer::allocate<char>(total, pool_);
+  buffer->setSize(total);
+  char* rawBuffer = buffer->asMutable<char>();
+  int64_t fill = 0;
+  for (auto i = 0; i < BaseVector::length_; ++i) {
+    if (isNullAt(i) || rawValues_[i].isInline()) {
+      continue;
+    }
+    size_t size = rawValues_[i].size();
+      auto data = rawValues_[i].data();
+    auto it = dataToRow.find(data);
+    if (it != dataToRow.end()) {
+      rawValues_[i] = StringView(rawBuffer + fill, size);
+      memcpy(rawBuffer + fill, data, size);
+      fill += size;
+    } else {
+      auto rowIt = rowToRow.find(i);
+      VELOX_CHECK(rowIt != rowToRow.end());
+      rawValues_[i] = StringView(rawValues_[rowIt->second].data(), rawValues_[i].size());
+    }
+  }
+  stringBuffers_.resize(1);
+  stringBuffers_[0] = buffer;
+  return;
+}
+
 } // namespace velox
 } // namespace facebook

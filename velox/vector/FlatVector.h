@@ -444,6 +444,11 @@ class FlatVector final : public SimpleVector<T> {
     }
   }
 
+  /// Consolidates many 'stringBuffers_' into one if there are more than one buffers for backing StringViews. Throws if T is not StringView.
+  void defragmentStrings() {
+    VELOX_FAIL("defragmentStrings applies only to FlatVector<StringView>");
+  }
+  
  private:
   void copyValuesAndNulls(
       const BaseVector* source,
@@ -500,6 +505,10 @@ void FlatVector<StringView>::setNoCopy(
     const vector_size_t idx,
     const StringView& value);
 
+template <>
+void FlatVector<StringView>::defragmentStrings();
+
+  
 template <>
 void FlatVector<bool>::set(vector_size_t idx, bool value);
 
