@@ -16,6 +16,8 @@
 
 #include "velox/functions/remote/server/RemoteFunctionService.h"
 #include "velox/expression/Expr.h"
+#include "velox/functions/remote/if/GetSerde.h"
+#include "velox/type/fbhive/HiveTypeParser.h"
 #include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::functions {
@@ -24,7 +26,13 @@ namespace {
 std::string getFunctionName(
     const std::string& prefix,
     const std::string& functionName) {
-  return fmt::format("{}.{}", prefix, functionName);
+  return prefix.empty() ? functionName
+                        : fmt::format("{}.{}", prefix, functionName);
+}
+
+TypePtr deserializeType(const std::string& input) {
+  // Use hive type parser/serializer.
+  return type::fbhive::HiveTypeParser().parse(input);
 }
 
 RowTypePtr deserializeArgTypes(const std::vector<std::string>& argTypes) {
@@ -36,7 +44,7 @@ RowTypePtr deserializeArgTypes(const std::vector<std::string>& argTypes) {
   typeNames.reserve(argCount);
 
   for (size_t i = 0; i < argCount; ++i) {
-    argumentTypes.emplace_back(Type::create(folly::parseJson(argTypes[i])));
+    argumentTypes.emplace_back(deserializeType(argTypes[i]));
     typeNames.emplace_back(fmt::format("c{}", i));
   }
   return ROW(std::move(typeNames), std::move(argumentTypes));
@@ -62,7 +70,10 @@ void RemoteFunctionServiceHandler::invokeFunction(
     remote::RemoteFunctionResponse& response,
     std::unique_ptr<remote::RemoteFunctionRequest> request) {
   const auto& functionHandle = request->get_remoteFunctionHandle();
-  LOG(INFO) << "Got a request for '" << functionHandle.get_name() << "'.";
+  const auto& inputs = request->get_inputs();
+
+  LOG(INFO) << "Got a request for '" << functionHandle.get_name()
+            << "': " << inputs.get_rowCount() << " input rows.";
 
   if (!request->get_throwOnError()) {
     VELOX_NYI("throwOnError not implemented yet on remote server.");
@@ -70,11 +81,13 @@ void RemoteFunctionServiceHandler::invokeFunction(
 
   // Deserialize types and data.
   auto inputType = deserializeArgTypes(functionHandle.get_argumentTypes());
-  auto outputType =
-      Type::create(folly::parseJson(functionHandle.get_returnType()));
+  auto outputType = deserializeType(functionHandle.get_returnType());
+
+  auto serdeFormat = inputs.get_pageFormat();
+  auto serde = getSerde(serdeFormat);
 
   auto inputVector =
-      IOBufToRowVector(request->get_inputs().get_payload(), inputType, *pool_);
+      IOBufToRowVector(inputs.get_payload(), inputType, *pool_, serde.get());
 
   // Execute the expression.
   const vector_size_t numRows = inputVector->size();
@@ -100,8 +113,9 @@ void RemoteFunctionServiceHandler::invokeFunction(
 
   auto result = response.result_ref();
   result->rowCount_ref() = outputRowVector->size();
-  result->pageFormat_ref() = remote::PageFormat::PRESTO_PAGE;
-  result->payload_ref() = rowVectorToIOBuf(outputRowVector, rows.end(), *pool_);
+  result->pageFormat_ref() = serdeFormat;
+  result->payload_ref() =
+      rowVectorToIOBuf(outputRowVector, rows.end(), *pool_, serde.get());
 }
 
 } // namespace facebook::velox::functions

@@ -32,6 +32,8 @@ class HashProbe : public Operator {
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::HashJoinNode>& hashJoinNode);
 
+  void initialize() override;
+
   bool needsInput() const override {
     if (state_ == ProbeOperatorState::kFinish || noMoreInput_ ||
         noMoreSpillInput_ || input_ != nullptr) {
@@ -64,7 +66,7 @@ class HashProbe : public Operator {
     return false;
   }
 
-  void close() override;
+  void abort() override;
 
   void clearDynamicFilters() override;
 
@@ -218,6 +220,8 @@ class HashProbe : public Operator {
   // next hash table from the spilled data.
   void noMoreInputInternal();
 
+  void recordSpillStats();
+
   // Returns the index of the 'match' column in the output for semi project
   // joins.
   VectorPtr& matchColumn() const {
@@ -295,6 +299,14 @@ class HashProbe : public Operator {
 
   // Indicates whether there was no input. Used for right semi join project.
   bool noInput_{true};
+
+  // Indicates whether to skip probe input data processing or not. It only
+  // applies for a specific set of join types (see skipProbeOnEmptyBuild()), and
+  // the build table is empty and the probe input is read from non-spilled
+  // source. This ensures the hash probe operator keeps running until all the
+  // probe input from the sources have been processed. It prevents the exchange
+  // hanging problem at the producer side caused by the early query finish.
+  bool skipInput_{false};
 
   // Indicates whether there are rows with null join keys on the build
   // side. Used by anti and left semi project join.
@@ -544,9 +556,6 @@ class HashProbe : public Operator {
   // previously spilled data. It is used to read the probe inputs from the
   // corresponding spilled data on disk.
   std::unique_ptr<UnorderedStreamReader<BatchStream>> spillInputReader_;
-
-  // Used to read the probe inputs from 'spillInputReader_'.
-  RowVectorPtr spillInput_;
 
   // Sets to true after read all the probe inputs from 'spillInputReader_'.
   bool noMoreSpillInput_{false};

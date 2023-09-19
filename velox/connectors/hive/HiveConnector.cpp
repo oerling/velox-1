@@ -17,7 +17,27 @@
 #include "velox/connectors/hive/HiveConnector.h"
 
 #include "velox/common/base/Fs.h"
+#include "velox/connectors/hive/HiveConfig.h"
+#include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_GCS
+#include "velox/connectors/hive/storage_adapters/gcs/RegisterGCSFileSystem.h" // @manual
+#endif
+#ifdef VELOX_ENABLE_HDFS3
+#include "velox/connectors/hive/storage_adapters/hdfs/RegisterHdfsFileSystem.h" // @manual
+#endif
+#ifdef VELOX_ENABLE_S3
+#include "velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h" // @manual
+#endif
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
+#include "velox/dwio/dwrf/writer/Writer.h"
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_PARQUET
+#include "velox/dwio/parquet/RegisterParquetReader.h" // @manual
+#include "velox/dwio/parquet/RegisterParquetWriter.h" // @manual
+#endif
 #include "velox/expression/FieldReference.h"
 
 #include <boost/lexical_cast.hpp>
@@ -26,12 +46,11 @@
 using namespace facebook::velox::exec;
 using namespace facebook::velox::dwrf;
 
-DEFINE_int32(
-    num_file_handle_cache,
-    20'000,
-    "Max number of file handles to cache.");
-
 namespace facebook::velox::connector::hive {
+
+int32_t numCachedFileHandles(const Config* properties) {
+  return properties ? HiveConfig::numCacheFileHandles(properties) : 20'000;
+}
 
 HiveConnector::HiveConnector(
     const std::string& id,
@@ -41,14 +60,103 @@ HiveConnector::HiveConnector(
       fileHandleFactory_(
           std::make_unique<
               SimpleLRUCache<std::string, std::shared_ptr<FileHandle>>>(
-              FLAGS_num_file_handle_cache),
-          std::make_unique<FileHandleGenerator>(std::move(properties))),
-      executor_(executor) {}
+              numCachedFileHandles(properties.get())),
+          std::make_unique<FileHandleGenerator>(properties)),
+      executor_(executor) {
+  LOG(INFO) << "Hive connector " << connectorId() << " created with maximum of "
+            << numCachedFileHandles(properties.get())
+            << " cached file handles.";
+}
+
+std::unique_ptr<DataSource> HiveConnector::createDataSource(
+    const RowTypePtr& outputType,
+    const std::shared_ptr<ConnectorTableHandle>& tableHandle,
+    const std::unordered_map<
+        std::string,
+        std::shared_ptr<connector::ColumnHandle>>& columnHandles,
+    ConnectorQueryCtx* connectorQueryCtx) {
+  dwio::common::ReaderOptions options(connectorQueryCtx->memoryPool());
+  options.setMaxCoalesceBytes(
+      HiveConfig::maxCoalescedBytes(connectorQueryCtx->config()));
+  options.setMaxCoalesceDistance(
+      HiveConfig::maxCoalescedDistanceBytes(connectorQueryCtx->config()));
+  options.setFileColumnNamesReadAsLowerCase(
+      HiveConfig::isFileColumnNamesReadAsLowerCase(
+          connectorQueryCtx->config()));
+  options.setUseColumnNamesForColumnMapping(
+      HiveConfig::isOrcUseColumnNames(connectorQueryCtx->config()));
+
+  return std::make_unique<HiveDataSource>(
+      outputType,
+      tableHandle,
+      columnHandles,
+      &fileHandleFactory_,
+      connectorQueryCtx->expressionEvaluator(),
+      connectorQueryCtx->cache(),
+      connectorQueryCtx->scanId(),
+      executor_,
+      options);
+}
+
+std::unique_ptr<DataSink> HiveConnector::createDataSink(
+    RowTypePtr inputType,
+    std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
+    ConnectorQueryCtx* connectorQueryCtx,
+    CommitStrategy commitStrategy) {
+  auto hiveInsertHandle = std::dynamic_pointer_cast<HiveInsertTableHandle>(
+      connectorInsertTableHandle);
+  VELOX_CHECK_NOT_NULL(
+      hiveInsertHandle, "Hive connector expecting hive write handle!");
+  return std::make_unique<HiveDataSink>(
+      inputType,
+      hiveInsertHandle,
+      connectorQueryCtx,
+      commitStrategy,
+      connectorProperties());
+}
 
 std::unique_ptr<core::PartitionFunction> HivePartitionFunctionSpec::create(
     int numPartitions) const {
+  std::vector<int> bucketToPartitions;
+  if (bucketToPartition_.empty()) {
+    // NOTE: if hive partition function spec doesn't specify bucket to partition
+    // mapping, then we do round-robin mapping based on the actual number of
+    // partitions.
+    bucketToPartitions.resize(numBuckets_);
+    for (int bucket = 0; bucket < numBuckets_; ++bucket) {
+      bucketToPartitions[bucket] = bucket % numPartitions;
+    }
+  }
   return std::make_unique<velox::connector::hive::HivePartitionFunction>(
-      numBuckets_, bucketToPartition_, channels_, constValues_);
+      numBuckets_,
+      bucketToPartition_.empty() ? std::move(bucketToPartitions)
+                                 : bucketToPartition_,
+      channels_,
+      constValues_);
+}
+
+void HiveConnectorFactory::initialize() {
+  static bool once = []() {
+    dwio::common::registerFileSinks();
+    dwrf::registerDwrfReaderFactory();
+    dwrf::registerDwrfWriterFactory();
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_PARQUET
+    parquet::registerParquetReaderFactory();
+    parquet::registerParquetWriterFactory();
+#endif
+// Meta's buck build system needs this check.
+#ifdef VELOX_ENABLE_S3
+    filesystems::registerS3FileSystem();
+#endif
+#ifdef VELOX_ENABLE_HDFS3
+    filesystems::registerHdfsFileSystem();
+#endif
+#ifdef VELOX_ENABLE_GCS
+    filesystems::registerGCSFileSystem();
+#endif
+    return true;
+  }();
 }
 
 std::string HivePartitionFunctionSpec::toString() const {

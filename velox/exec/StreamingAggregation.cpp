@@ -81,7 +81,8 @@ StreamingAggregation::StreamingAggregation(
         aggregate.call->name(),
         aggregationNode->step(),
         argTypes,
-        aggResultType));
+        aggResultType,
+        driverCtx->queryConfig()));
     args_.push_back(channels);
     constantArgs_.push_back(constants);
   }
@@ -95,7 +96,7 @@ StreamingAggregation::StreamingAggregation(
   std::vector<Accumulator> accumulators;
   accumulators.reserve(aggregates_.size());
   for (auto& aggregate : aggregates_) {
-    accumulators.push_back(aggregate.get());
+    accumulators.push_back(Accumulator{aggregate.get()});
   }
 
   rows_ = std::make_unique<RowContainer>(
@@ -107,8 +108,7 @@ StreamingAggregation::StreamingAggregation(
       false,
       false,
       false,
-      pool(),
-      ContainerRowSerde::instance());
+      pool());
 
   for (auto i = 0; i < aggregates_.size(); ++i) {
     aggregates_[i]->setAllocator(&rows_->stringAllocator());
@@ -123,11 +123,7 @@ StreamingAggregation::StreamingAggregation(
 }
 
 void StreamingAggregation::close() {
-  for (int32_t i = 0; i < aggregates_.size(); ++i) {
-    if (aggregates_[i]->accumulatorUsesExternalMemory()) {
-      aggregates_[i]->destroy(folly::Range(groups_.data(), groups_.size()));
-    }
-  }
+  rows_->clear();
   Operator::close();
 }
 

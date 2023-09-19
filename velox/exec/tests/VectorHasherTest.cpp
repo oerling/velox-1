@@ -265,6 +265,35 @@ TEST_F(VectorHasherTest, nullConstant) {
   }
 }
 
+TEST_F(VectorHasherTest, unknown) {
+  auto hasher = exec::VectorHasher::create(UNKNOWN(), 1);
+  auto vector = vectorMaker_->allNullFlatVector<UnknownValue>(100);
+
+  // Test hashing without mixing.
+  raw_vector<uint64_t> hashes(100);
+  std::fill(hashes.begin(), hashes.end(), 0);
+  hasher->decode(*vector, oddRows_);
+  hasher->hash(oddRows_, false, hashes);
+  for (int32_t i = 0; i < 100; i++) {
+    EXPECT_EQ(hashes[i], (i % 2 == 0) ? 0 : exec::VectorHasher::kNullHash)
+        << "at " << i;
+  }
+
+  hasher->decode(*vector, allRows_);
+  hasher->hash(allRows_, false, hashes);
+  for (int32_t i = 0; i < 100; i++) {
+    EXPECT_EQ(hashes[i], exec::VectorHasher::kNullHash) << "at " << i;
+  }
+
+  // Test mixing.
+  std::iota(hashes.begin(), hashes.end(), 0);
+  hasher->hash(allRows_, true, hashes);
+  for (int32_t i = 0; i < 100; i++) {
+    auto expected = bits::hashMix(i, exec::VectorHasher::kNullHash);
+    EXPECT_EQ(hashes[i], expected) << "at " << i;
+  }
+}
+
 TEST_F(VectorHasherTest, dictionary) {
   auto hasher = exec::VectorHasher::create(BIGINT(), 1);
 
@@ -450,11 +479,11 @@ TEST_F(VectorHasherTest, integerIds) {
 
 TEST_F(VectorHasherTest, dateIds) {
   auto vector = BaseVector::create(DATE(), 100, pool_.get());
-  auto* dates = vector->as<FlatVector<Date>>();
+  auto* dates = vector->as<FlatVector<int32_t>>();
   static constexpr int32_t kMin = std::numeric_limits<int32_t>::min();
   dates->setNull(0, true);
   for (auto i = 0; i < 99; ++i) {
-    dates->set(i + 1, Date(kMin + i * 10));
+    dates->set(i + 1, kMin + i * 10);
   }
   auto hasher = exec::VectorHasher::create(DATE(), 1);
   raw_vector<uint64_t> hashes(dates->size());
@@ -492,7 +521,7 @@ TEST_F(VectorHasherTest, dateIds) {
   for (auto count = 0; count < 1000; ++count) {
     vector_size_t index = 0;
     for (int64_t value = count * 100; value < count * 100 + 100; ++value) {
-      dates->set(index++, Date(value));
+      dates->set(index++, value);
     }
     hasher->decode(*vector, rows);
     hasher->computeValueIds(rows, hashes);

@@ -28,10 +28,13 @@ add_executable(
   CountAggregationTest.cpp
   CountIfAggregationTest.cpp
   CovarianceAggregationTest.cpp
+  EntropyAggregationTest.cpp
   HistogramTest.cpp
   Main.cpp
+  MapAccumulatorTest.cpp
   MinMaxByAggregationTest.cpp
   MinMaxTest.cpp
+  MultiMapAggTest.cpp
   PrestoHasherTest.cpp
   SetAggTest.cpp
   SetUnionTest.cpp
@@ -39,9 +42,11 @@ add_executable(
   MapAggTest.cpp
   MapUnionAggregationTest.cpp
   MapUnionSumTest.cpp
+  ReduceAggTest.cpp
   ValueListTest.cpp
   VarianceAggregationTest.cpp
-  MaxSizeForStatsTest.cpp)
+  MaxSizeForStatsTest.cpp
+  SumDataSizeForStatsTest.cpp)
 
 add_test(
   NAME velox_aggregates_test
@@ -62,6 +67,7 @@ target_link_libraries(
   velox_functions_prestosql
   velox_functions_lib
   velox_hive_connector
+  velox_simple_aggregate
   velox_type
   velox_vector_fuzzer
   gflags::gflags

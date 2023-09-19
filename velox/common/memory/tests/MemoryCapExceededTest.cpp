@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/common/memory/MallocAllocator.h"
+#include "velox/common/memory/Memory.h"
+#include "velox/common/memory/MmapAllocator.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
-#include <gmock/gmock.h>
+#include <re2/re2.h>
 
 DECLARE_bool(velox_suppress_memory_capacity_exceeding_error_message);
 
@@ -39,6 +42,21 @@ class MemoryCapExceededTest : public OperatorTestBase,
   }
 };
 
+namespace {
+bool someLineMatches(const std::string& text, const std::string& pattern) {
+  std::stringstream in;
+  in << text;
+  std::string line;
+  auto exp = fmt::format(".*{}.*", pattern);
+  while (std::getline(in, line)) {
+    if (RE2::FullMatch(line, exp)) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
 TEST_P(MemoryCapExceededTest, singleDriver) {
   // Executes a plan with a single driver thread and query memory limit that
   // forces it to throw MEM_CAP_EXCEEDED exception. Verifies that the error
@@ -50,14 +68,15 @@ TEST_P(MemoryCapExceededTest, singleDriver) {
   // We look for these lines separately, since their order can change (not sure
   // why).
   std::vector<std::string> expectedTexts = {
-      "Exceeded memory pool cap of 5.00MB when requesting 2.00MB"};
+      "Exceeded memory pool cap of 5.00MB with max 5.00MB when requesting "
+      "2.00MB, memory manager cap is UNLIMITED, requestor "
+      "'op.2.0.0.Aggregation' with current usage 3.70MB"};
   std::vector<std::string> expectedDetailedTexts = {
       "node.1 usage 1.00MB peak 1.00MB",
       "op.1.0.0.FilterProject usage 12.00KB peak 12.00KB",
       "node.2 usage 4.00MB peak 4.00MB",
-      "op.2.0.0.Aggregation usage 3.77MB peak 3.77MB",
-      "Top 2 leaf memory pool usages:",
-      "Failed memory pool: op.2.0.0.Aggregation: 3.77MB"};
+      "op.2.0.0.Aggregation usage 3.70MB peak 3.70MB",
+      "Top 2 leaf memory pool usages:"};
 
   std::vector<RowVectorPtr> data;
   for (auto i = 0; i < 100; ++i) {
@@ -97,7 +116,7 @@ TEST_P(MemoryCapExceededTest, singleDriver) {
     for (const auto& expectedText : expectedDetailedTexts) {
       LOG(ERROR) << expectedText;
       if (!GetParam()) {
-        ASSERT_TRUE(errorMessage.find(expectedText) != std::string::npos)
+        ASSERT_TRUE(someLineMatches(errorMessage, expectedText))
             << "Expected error message to contain '" << expectedText
             << "', but received '" << errorMessage << "'.";
       } else {
@@ -151,7 +170,7 @@ TEST_P(MemoryCapExceededTest, multipleDrivers) {
   } catch (const VeloxException& e) {
     const auto errorMessage = e.message();
     if (!GetParam()) {
-      ASSERT_TRUE(errorMessage.find(expectedText) != std::string::npos)
+      ASSERT_TRUE(someLineMatches(errorMessage, expectedText))
           << "Expected error message to contain '" << expectedText
           << "', but received '" << errorMessage << "'.";
     } else {
@@ -162,76 +181,74 @@ TEST_P(MemoryCapExceededTest, multipleDrivers) {
   }
 }
 
-TEST_P(MemoryCapExceededTest, memoryManagerCapacityExeededError) {
+TEST_P(MemoryCapExceededTest, allocatorCapacityExceededError) {
   // Executes a plan with no memory pool capacity limit but very small memory
   // manager's limit.
-  memory::IMemoryManager::Options options{.capacity = 1 << 20};
-  memory::MemoryManager manager{options};
+  std::vector<std::pair<
+      std::shared_ptr<memory::MemoryAllocator>,
+      std::vector<std::string>>>
+      allocatorExpectations;
+  allocatorExpectations.push_back(std::pair{
+      std::make_shared<memory::MallocAllocator>(64LL << 20),
+      std::vector<std::string>{
+          "allocateContiguous failed with .* pages",
+          "unlimited max capacity unlimited capacity used .* available .*",
+          ".* reservation .used .*MB, reserved .*MB, min 0B. counters",
+          "allocs .*, frees .*, reserves .*, releases .*, collisions .*"}});
+  const memory::MmapAllocator::Options options = {.capacity = 64LL << 20};
+  allocatorExpectations.push_back(std::pair{
+      std::make_shared<memory::MmapAllocator>(options),
+      std::vector<std::string>{
+          "allocateContiguous failed with .* pages",
+          "unlimited max capacity unlimited capacity used .* available .*",
+          ".* reservation .used .*MB, reserved .*MB, min .*B. counters",
+          ".*, frees .*, reserves .*, releases .*, collisions .*"}});
+  for (auto& allocExp : allocatorExpectations) {
+    memory::MemoryManager manager(
+        {.capacity = (int64_t)allocExp.first->capacity(),
+         .allocator = allocExp.first.get()});
 
-  vector_size_t size = 1'024;
-  // This limit ensures that only the Aggregation Operator fails.
-  constexpr int64_t kMaxBytes = 5LL << 20; // 5MB
-  // We look for these lines separately, since their order can change (not sure
-  // why).
-  std::vector<std::string> expectedTexts = {
-      "Exceeded memory manager cap of 1.00MB when requesting 368.00KB, memory pool cap is 5.00MB"};
-  std::vector<std::string> expectedDetailedTexts = {
-      "node.2 usage 1.00MB peak 2.00MB",
-      "op.2.0.0.Aggregation usage 1012.00KB peak 1.35MB",
-      "node.1 usage 1.00MB peak 1.00MB",
-      "op.1.0.0.FilterProject usage 12.00KB peak 12.00KB",
-      "Top 2 leaf memory pool usages:",
-      "op.2.0.0.Aggregation usage 1012.00KB peak 1.35MB",
-      "op.1.0.0.FilterProject usage 12.00KB peak 12.00KB",
-      "Failed memory pool: op.2.0.0.Aggregation: 1012.00KB"};
+    vector_size_t size = 1'024;
+    // This limit ensures that only the Aggregation Operator fails.
+    constexpr int64_t kMaxBytes = 128LL << 20; // 128MB
 
-  std::vector<RowVectorPtr> data;
-  for (auto i = 0; i < 100; ++i) {
-    data.push_back(makeRowVector({
-        makeFlatVector<int64_t>(
-            size, [&i](auto row) { return row + (i * 1000); }),
-        makeFlatVector<int64_t>(size, [](auto row) { return row + 3; }),
-    }));
-  }
-
-  // Plan created to allow multiple operators to show up in the top 3 memory
-  // usage list in the error message.
-  auto plan = PlanBuilder()
-                  .values(data)
-                  .project({"c0", "c0 + c1"})
-                  .singleAggregation({"c0"}, {"sum(p1)"})
-                  .orderBy({"c0"}, false)
-                  .planNode();
-  auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  queryCtx->testingOverrideMemoryPool(
-      manager.addRootPool(queryCtx->queryId(), kMaxBytes));
-  CursorParameters params;
-  params.planNode = plan;
-  params.queryCtx = queryCtx;
-  params.maxDrivers = 1;
-  try {
-    readCursor(params, [](Task*) {});
-    FAIL() << "Expected a MEM_CAP_EXCEEDED RuntimeException.";
-  } catch (const VeloxException& e) {
-    const auto errorMessage = e.message();
-    for (const auto& expectedText : expectedTexts) {
-      ASSERT_TRUE(errorMessage.find(expectedText) != std::string::npos)
-          << "Expected error message to contain '" << expectedText
-          << "', but received '" << errorMessage << "'.";
+    std::vector<RowVectorPtr> data;
+    for (auto i = 0; i < 10000; ++i) {
+      data.push_back(makeRowVector({
+          makeFlatVector<int64_t>(
+              size, [&i](auto row) { return row + (i * 1000); }),
+          makeFlatVector<int64_t>(size, [](auto row) { return row + 3; }),
+      }));
     }
-    for (const auto& expectedText : expectedDetailedTexts) {
-      if (!GetParam()) {
-        ASSERT_TRUE(errorMessage.find(expectedText) != std::string::npos)
+
+    // Plan created to allow multiple operators to show up in the top 3 memory
+    // usage list in the error message.
+    auto plan = PlanBuilder()
+                    .values(data)
+                    .project({"c0", "c0 + c1"})
+                    .singleAggregation({"c0"}, {"sum(p1)"})
+                    .orderBy({"c0"}, false)
+                    .planNode();
+    auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+    queryCtx->testingOverrideMemoryPool(
+        manager.addRootPool(queryCtx->queryId(), kMaxBytes));
+    CursorParameters params;
+    params.planNode = plan;
+    params.queryCtx = queryCtx;
+    params.maxDrivers = 1;
+    try {
+      readCursor(params, [](Task*) {});
+      FAIL() << "Expected a MEM_CAP_EXCEEDED RuntimeException.";
+    } catch (const VeloxException& e) {
+      const auto errorMessage = e.message();
+      for (const auto& expectedText : allocExp.second) {
+        ASSERT_TRUE(someLineMatches(errorMessage, expectedText))
             << "Expected error message to contain '" << expectedText
-            << "', but received '" << errorMessage << "'.";
-      } else {
-        ASSERT_TRUE(errorMessage.find(expectedText) == std::string::npos)
-            << "Unexpected error message to contain '" << expectedText
             << "', but received '" << errorMessage << "'.";
       }
     }
+    waitForAllTasksToBeDeleted();
   }
-  Task::testingWaitForAllTasksToBeDeleted();
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

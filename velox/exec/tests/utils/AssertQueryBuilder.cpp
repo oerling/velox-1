@@ -64,6 +64,14 @@ AssertQueryBuilder& AssertQueryBuilder::config(
   return *this;
 }
 
+AssertQueryBuilder& AssertQueryBuilder::configs(
+    const std::unordered_map<std::string, std::string>& values) {
+  for (auto& entry : values) {
+    configs_[entry.first] = entry.second;
+  }
+  return *this;
+}
+
 AssertQueryBuilder& AssertQueryBuilder::connectorConfig(
     const std::string& connectorId,
     const std::string& key,
@@ -208,10 +216,18 @@ AssertQueryBuilder::readCursor() {
   VELOX_CHECK_NOT_NULL(params_.planNode);
 
   if (!configs_.empty() || !connectorConfigs_.empty()) {
-    if (!params_.queryCtx) {
+    if (params_.queryCtx == nullptr) {
       // NOTE: the destructor of 'executor_' will wait for all the async task
       // activities to finish on AssertQueryBuilder dtor.
-      params_.queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+      static std::atomic<uint64_t> cursorQueryId{0};
+      params_.queryCtx = std::make_shared<core::QueryCtx>(
+          executor_.get(),
+          std::unordered_map<std::string, std::string>{},
+          std::unordered_map<std::string, std::shared_ptr<Config>>{},
+          cache::AsyncDataCache::getInstance(),
+          nullptr,
+          nullptr,
+          fmt::format("TaskCursorQuery_{}", cursorQueryId++));
     }
   }
   if (!configs_.empty()) {

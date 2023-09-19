@@ -15,11 +15,12 @@
  */
 #include "velox/functions/sparksql/Register.h"
 
+#include "velox/expression/RegisterSpecialForm.h"
 #include "velox/functions/lib/IsNull.h"
 #include "velox/functions/lib/Re2Functions.h"
 #include "velox/functions/lib/RegistrationHelpers.h"
+#include "velox/functions/prestosql/DateTimeFunctions.h"
 #include "velox/functions/prestosql/JsonFunctions.h"
-#include "velox/functions/prestosql/Rand.h"
 #include "velox/functions/prestosql/StringFunctions.h"
 #include "velox/functions/sparksql/ArraySort.h"
 #include "velox/functions/sparksql/Bitwise.h"
@@ -69,8 +70,12 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
 
 namespace sparksql {
 
+void registerAllSpecialFormGeneralFunctions() {
+  exec::registerFunctionCallToSpecialForms();
+}
+
 void registerFunctions(const std::string& prefix) {
-  registerFunction<RandFunction, double>({prefix + "rand"});
+  registerAllSpecialFormGeneralFunctions();
 
   // Register size functions
   registerSize(prefix + "size");
@@ -81,7 +86,14 @@ void registerFunctions(const std::string& prefix) {
   // Register string functions.
   registerFunction<sparksql::ChrFunction, Varchar, int64_t>({prefix + "chr"});
   registerFunction<AsciiFunction, int32_t, Varchar>({prefix + "ascii"});
-
+  registerFunction<sparksql::LPadFunction, Varchar, Varchar, int32_t, Varchar>(
+      {prefix + "lpad"});
+  registerFunction<sparksql::RPadFunction, Varchar, Varchar, int32_t, Varchar>(
+      {prefix + "rpad"});
+  registerFunction<sparksql::LPadFunction, Varchar, Varchar, int32_t>(
+      {prefix + "lpad"});
+  registerFunction<sparksql::RPadFunction, Varchar, Varchar, int32_t>(
+      {prefix + "rpad"});
   registerFunction<sparksql::SubstrFunction, Varchar, Varchar, int32_t>(
       {prefix + "substring"});
   registerFunction<
@@ -104,6 +116,10 @@ void registerFunctions(const std::string& prefix) {
       Varbinary,
       int32_t,
       int32_t>({prefix + "overlay"});
+
+  registerFunction<sparksql::LeftFunction, Varchar, Varchar, int32_t>(
+      {prefix + "left"});
+
   exec::registerStatefulVectorFunction(
       prefix + "instr", instrSignatures(), makeInstr);
   exec::registerStatefulVectorFunction(
@@ -128,7 +144,13 @@ void registerFunctions(const std::string& prefix) {
   exec::registerStatefulVectorFunction(
       prefix + "hash", hashSignatures(), makeHash);
   exec::registerStatefulVectorFunction(
+      prefix + "hash_with_seed", hashWithSeedSignatures(), makeHashWithSeed);
+  exec::registerStatefulVectorFunction(
       prefix + "xxhash64", xxhash64Signatures(), makeXxHash64);
+  exec::registerStatefulVectorFunction(
+      prefix + "xxhash64_with_seed",
+      xxhash64WithSeedSignatures(),
+      makeXxHash64WithSeed);
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map, prefix + "map");
 
   // Register 'in' functions.
@@ -166,6 +188,9 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<RTrimFunction, Varchar, Varchar, Varchar>(
       {prefix + "rtrim"});
 
+  registerFunction<TranslateFunction, Varchar, Varchar, Varchar, Varchar>(
+      {prefix + "translate"});
+
   // Register array sort functions.
   exec::registerStatefulVectorFunction(
       prefix + "array_sort", arraySortSignatures(), makeArraySort);
@@ -175,6 +200,8 @@ void registerFunctions(const std::string& prefix) {
   // Register date functions.
   registerFunction<YearFunction, int32_t, Timestamp>({prefix + "year"});
   registerFunction<YearFunction, int32_t, Date>({prefix + "year"});
+  registerFunction<WeekFunction, int32_t, Timestamp>({prefix + "week_of_year"});
+  registerFunction<WeekFunction, int32_t, Date>({prefix + "week_of_year"});
 
   registerFunction<UnixTimestampFunction, int64_t>({prefix + "unix_timestamp"});
 
@@ -189,6 +216,23 @@ void registerFunctions(const std::string& prefix) {
       {prefix + "make_date"});
 
   registerFunction<LastDayFunction, Date, Date>({prefix + "last_day"});
+
+  registerFunction<DateAddFunction, Date, Date, int32_t>({prefix + "date_add"});
+  registerFunction<DateSubFunction, Date, Date, int32_t>({prefix + "date_sub"});
+
+  registerFunction<DayFunction, int64_t, Timestamp>(
+      {prefix + "day", prefix + "dayofmonth"});
+  registerFunction<DayFunction, int64_t, Date>(
+      {prefix + "day", prefix + "dayofmonth"});
+  registerFunction<DayOfYearFunction, int64_t, Timestamp>(
+      {prefix + "doy", prefix + "dayofyear"});
+  registerFunction<DayOfYearFunction, int64_t, Date>(
+      {prefix + "doy", prefix + "dayofyear"});
+
+  registerFunction<DayOfWeekFunction, int32_t, Timestamp>(
+      {prefix + "dow", prefix + "dayofweek"});
+  registerFunction<DayOfWeekFunction, int32_t, Date>(
+      {prefix + "dow", prefix + "dayofweek"});
 
   // Register bloom filter function
   registerFunction<BloomFilterMightContainFunction, bool, Varbinary, int64_t>(

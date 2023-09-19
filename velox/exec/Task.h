@@ -74,6 +74,8 @@ class Task : public std::enable_shared_from_this<Task> {
 
   std::string toString() const;
 
+  std::string toJsonString() const;
+
   /// Returns universally unique identifier of the task.
   const std::string& uuid() const {
     return uuid_;
@@ -221,10 +223,6 @@ class Task : public std::enable_shared_from_this<Task> {
   ///         false if noMoreBuffers was previously set to true.
   ///         false if buffer was not found for a given task.
   bool updateOutputBuffers(int numBuffers, bool noMoreBuffers);
-
-  /// TODO: deprecate this API after Prestissimo switches to use
-  /// updateOutputBuffers.
-  bool updateBroadcastOutputBuffers(int numBuffers, bool noMoreBuffers);
 
   /// Returns true if state is 'running'.
   bool isRunning() const;
@@ -593,12 +591,6 @@ class Task : public std::enable_shared_from_this<Task> {
     return numDriversInPartitionedOutput_ > 0;
   }
 
-  /// Invoked to wait for all the tasks created by the test to be deleted.
-  ///
-  /// NOTE: it is assumed that there is no more task to be created after or
-  /// during this wait call. This is for testing purpose for now.
-  static void testingWaitForAllTasksToBeDeleted(uint64_t maxWaitUs = 3'000'000);
-
   /// Invoked to run provided 'callback' on each alive driver of the task.
   void testingVisitDrivers(const std::function<void(Driver*)>& callback);
 
@@ -668,7 +660,8 @@ class Task : public std::enable_shared_from_this<Task> {
 
     uint64_t reclaim(memory::MemoryPool* pool, uint64_t targetBytes) override;
 
-    void abort(memory::MemoryPool* pool) override;
+    void abort(memory::MemoryPool* pool, const std::exception_ptr& error)
+        override;
 
    private:
     explicit MemoryReclaimer(const std::shared_ptr<Task>& task) : task_(task) {

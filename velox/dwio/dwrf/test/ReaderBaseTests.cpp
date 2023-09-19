@@ -22,7 +22,7 @@
 #include "velox/dwio/dwrf/reader/StripeReaderBase.h"
 #include "velox/dwio/dwrf/test/OrcTest.h"
 #include "velox/dwio/dwrf/utils/ProtoUtils.h"
-#include "velox/dwio/type/fbhive/HiveTypeParser.h"
+#include "velox/type/fbhive/HiveTypeParser.h"
 
 using namespace ::testing;
 using namespace facebook::velox::dwio::common;
@@ -31,7 +31,7 @@ using namespace facebook::velox::dwio::common::encryption::test;
 using namespace facebook::velox::dwrf;
 using namespace facebook::velox::dwrf::encryption;
 using namespace facebook::velox::memory;
-using namespace facebook::velox::dwio::type::fbhive;
+using namespace facebook::velox::type::fbhive;
 
 void addStats(
     ProtoWriter& writer,
@@ -57,9 +57,10 @@ class EncryptedStatsTest : public Test {
     // fake post script
     proto::PostScript ps;
     ps.set_compression(
-        static_cast<proto::CompressionKind>(context.compression));
-    if (context.compression != CompressionKind::CompressionKind_NONE) {
-      ps.set_compressionblocksize(context.compressionBlockSize);
+        static_cast<proto::CompressionKind>(context.compression()));
+    if (context.compression() !=
+        facebook::velox::common::CompressionKind::CompressionKind_NONE) {
+      ps.set_compressionblocksize(context.compressionBlockSize());
     }
 
     // fake footer
@@ -173,7 +174,7 @@ std::unique_ptr<ReaderBase> createCorruptedFileReader(
     uint64_t footerLen,
     uint32_t cacheLen) {
   auto pool = facebook::velox::memory::addDefaultLeafMemoryPool();
-  MemorySink sink{*pool, 1024};
+  MemorySink sink{1024, {.pool = pool.get()}};
   DataBufferHolder holder{*pool, 1024, 0, DEFAULT_PAGE_GROW_RATIO, &sink};
   BufferedOutputStream output{holder};
 
@@ -205,7 +206,7 @@ std::unique_ptr<ReaderBase> createCorruptedFileReader(
 
   sink.write(std::move(buf));
   auto readFile = std::make_shared<facebook::velox::InMemoryReadFile>(
-      std::string_view(sink.getData(), sink.size()));
+      std::string_view(sink.data(), sink.size()));
   return std::make_unique<ReaderBase>(
       *pool, std::make_unique<BufferedInput>(readFile, *pool));
 }

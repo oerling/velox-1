@@ -50,6 +50,11 @@ String Functions
 
     Returns the length of ``string`` in characters.
 
+.. function:: levenshtein_distance(string_1, string_2) -> bigint
+
+    Returns the Levenshtein edit distance of 2 strings. I.e. the minimum number of single-character edits
+    (insertions, deletions or substitutions) needed to convert ``string_1`` to ``string_2``.
+
 .. function:: lower(string) -> varchar
 
     Converts ``string`` to lowercase.
@@ -64,6 +69,13 @@ String Functions
 .. function:: ltrim(string) -> varchar
 
     Removes leading whitespace from string.
+
+.. function:: ltrim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the beginning of the ``string``. ::
+
+        SELECT ltrim('test', 't'); -- est
+        SELECT ltrim('tetris', 'te'); -- ris
 
 .. function:: replace(string, search) -> varchar
 
@@ -93,6 +105,13 @@ String Functions
 
     Removes trailing whitespace from string.
 
+.. function:: rtrim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the end of the ``string``. ::
+
+        SELECT rtrim('test', 't'); -- tes
+        SELECT rtrim('test...', '.'); -- test
+
 .. function:: split(string, delimiter) -> array(string)
 
     Splits ``string`` on ``delimiter`` and returns an array.
@@ -111,6 +130,17 @@ String Functions
 
     Field indexes start with 1. If the index is larger than the number of fields,
     then null is returned.
+
+.. function:: split_to_map(string, entryDelimiter, keyValueDelimiter) -> map<varchar, varchar>
+
+    Splits ``string`` by ``entryDelimiter`` and ``keyValueDelimiter`` and returns a map.
+    ``entryDelimiter`` splits ``string`` into key-value pairs. ``keyValueDelimiter`` splits
+    each pair into key and value. Note that ``entryDelimiter`` and ``keyValueDelimiter`` are
+    interpreted literally, i.e., as full string matches.
+
+    entryDelimiter and keyValueDelimiter must not be empty and must not be the same.
+
+    Raises an error if there are duplicate keys.
 
 .. function:: strpos(string, substring) -> bigint
 
@@ -155,6 +185,13 @@ String Functions
 .. function:: trim(string) -> varchar
 
     Removes starting and ending whitespaces from ``string``.
+
+.. function:: trim(string, chars) -> varchar
+
+    Removes the longest substring containing only characters in ``chars`` from the beginning and end of the ``string``. ::
+
+        SELECT trim('test', 't'); -- es
+        SELECT trim('.t.e.s.t.', '.t'); -- e.s
 
 .. function:: upper(string) -> varchar
 

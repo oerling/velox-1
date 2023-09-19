@@ -18,16 +18,16 @@
 
 #include "velox/common/time/Timer.h"
 #include "velox/dwio/common/BufferedInput.h"
-#include "velox/dwio/common/DataSink.h"
+#include "velox/dwio/common/FileSink.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/dwio/common/tests/utils/DataSetBuilder.h"
 #include "velox/dwio/common/tests/utils/FilterGenerator.h"
-#include "velox/dwio/type/fbhive/HiveTypeParser.h"
 #include "velox/type/Filter.h"
 #include "velox/type/Subfield.h"
+#include "velox/type/fbhive/HiveTypeParser.h"
 #include "velox/vector/FlatVector.h"
 
 #include <gtest/gtest.h>

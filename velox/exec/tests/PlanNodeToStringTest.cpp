@@ -183,12 +183,17 @@ TEST_F(PlanNodeToStringTest, aggregation) {
   auto plan = PlanBuilder()
                   .values({data_})
                   .partialAggregation(
-                      {}, {"sum(c0) AS a", "avg(c1) AS b", "min(c2) AS c"})
+                      {},
+                      {"sum(c0) AS a",
+                       "avg(c1) AS b",
+                       "min(c2) AS c",
+                       "count(distinct c1)"})
                   .planNode();
 
   ASSERT_EQ("-- Aggregation\n", plan->toString());
   ASSERT_EQ(
-      "-- Aggregation[PARTIAL a := sum(ROW[\"c0\"]), b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"])] -> a:BIGINT, b:ROW<\"\":DOUBLE,\"\":BIGINT>, c:BIGINT\n",
+      "-- Aggregation[PARTIAL a := sum(ROW[\"c0\"]), b := avg(ROW[\"c1\"]), c := min(ROW[\"c2\"]), a3 := count(ROW[\"c1\"]) distinct] "
+      "-> a:BIGINT, b:ROW<\"\":DOUBLE,\"\":BIGINT>, c:BIGINT, a3:BIGINT\n",
       plan->toString(true, false));
 
   // Global aggregation with masks.
@@ -212,12 +217,14 @@ TEST_F(PlanNodeToStringTest, aggregation) {
   // Group-by aggregation.
   plan = PlanBuilder()
              .values({data_})
-             .singleAggregation({"c0"}, {"sum(c1) AS a", "avg(c2) AS b"})
+             .singleAggregation(
+                 {"c0"}, {"sum(c1) AS a", "avg(c2) AS b", "count(distinct c2)"})
              .planNode();
 
   ASSERT_EQ("-- Aggregation\n", plan->toString());
   ASSERT_EQ(
-      "-- Aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]), b := avg(ROW[\"c2\"])] -> c0:SMALLINT, a:BIGINT, b:DOUBLE\n",
+      "-- Aggregation[SINGLE [c0] a := sum(ROW[\"c1\"]), b := avg(ROW[\"c2\"]), a2 := count(ROW[\"c2\"]) distinct] "
+      "-> c0:SMALLINT, a:BIGINT, b:DOUBLE, a2:BIGINT\n",
       plan->toString(true, false));
 
   // Group-by aggregation with masks.
@@ -506,7 +513,10 @@ TEST_F(PlanNodeToStringTest, localPartition) {
       "-- LocalPartition[REPARTITION HASH(c0)] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
       plan->toString(true, false));
 
-  plan = PlanBuilder().values({data_}).localPartition({}).planNode();
+  plan = PlanBuilder()
+             .values({data_})
+             .localPartition(std::vector<std::string>{})
+             .planNode();
 
   ASSERT_EQ("-- LocalPartition\n", plan->toString());
   ASSERT_EQ(
@@ -527,7 +537,7 @@ TEST_F(PlanNodeToStringTest, partitionedOutput) {
 
   ASSERT_EQ("-- PartitionedOutput\n", plan->toString());
   ASSERT_EQ(
-      "-- PartitionedOutput[HASH(c0) 4] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
+      "-- PartitionedOutput[partitionFunction: HASH(c0) with 4 partitions] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
       plan->toString(true, false));
 
   plan = PlanBuilder().values({data_}).partitionedOutputBroadcast().planNode();
@@ -551,7 +561,7 @@ TEST_F(PlanNodeToStringTest, partitionedOutput) {
 
   ASSERT_EQ("-- PartitionedOutput\n", plan->toString());
   ASSERT_EQ(
-      "-- PartitionedOutput[HASH(c1, c2) 5 replicate nulls and any] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
+      "-- PartitionedOutput[partitionFunction: HASH(c1, c2) with 5 partitions replicate nulls and any] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
       plan->toString(true, false));
 
   auto hiveSpec = std::make_shared<connector::hive::HivePartitionFunctionSpec>(
@@ -566,7 +576,7 @@ TEST_F(PlanNodeToStringTest, partitionedOutput) {
              .planNode();
   ASSERT_EQ("-- PartitionedOutput\n", plan->toString());
   ASSERT_EQ(
-      "-- PartitionedOutput[HIVE((1, 2) buckets: 4) 2] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
+      "-- PartitionedOutput[partitionFunction: HIVE((1, 2) buckets: 4) with 2 partitions] -> c0:SMALLINT, c1:INTEGER, c2:BIGINT\n",
       plan->toString(true, false));
 }
 
@@ -651,7 +661,7 @@ TEST_F(PlanNodeToStringTest, decimalConstant) {
                   .planNode();
 
   ASSERT_EQ(
-      "-- Project[expressions: (a:VARCHAR, ROW[\"a\"]), (p1:DECIMAL(4,3), 1.234)] -> a:VARCHAR, p1:DECIMAL(4,3)\n",
+      "-- Project[expressions: (a:VARCHAR, ROW[\"a\"]), (p1:DECIMAL(4, 3), 1.234)] -> a:VARCHAR, p1:DECIMAL(4, 3)\n",
       plan->toString(true));
 }
 
@@ -691,6 +701,7 @@ TEST_F(PlanNodeToStringTest, window) {
 }
 
 TEST_F(PlanNodeToStringTest, rowNumber) {
+  // Emit row number.
   auto plan =
       PlanBuilder().tableScan(ROW({"a"}, {VARCHAR()})).rowNumber({}).planNode();
 
@@ -699,6 +710,16 @@ TEST_F(PlanNodeToStringTest, rowNumber) {
       "-- RowNumber[] -> a:VARCHAR, row_number:BIGINT\n",
       plan->toString(true, false));
 
+  // Dont' emit row number.
+  plan = PlanBuilder()
+             .tableScan(ROW({"a"}, {VARCHAR()}))
+             .rowNumber({}, std::nullopt, false)
+             .planNode();
+
+  ASSERT_EQ("-- RowNumber\n", plan->toString());
+  ASSERT_EQ("-- RowNumber[] -> a:VARCHAR\n", plan->toString(true, false));
+
+  // Emit row number.
   plan = PlanBuilder()
              .tableScan(ROW({"a", "b"}, {BIGINT(), VARCHAR()}))
              .rowNumber({"a", "b"})
@@ -709,6 +730,18 @@ TEST_F(PlanNodeToStringTest, rowNumber) {
       "-- RowNumber[partition by (a, b)] -> a:BIGINT, b:VARCHAR, row_number:BIGINT\n",
       plan->toString(true, false));
 
+  // Don't emit row number.
+  plan = PlanBuilder()
+             .tableScan(ROW({"a", "b"}, {BIGINT(), VARCHAR()}))
+             .rowNumber({"a", "b"}, std::nullopt, false)
+             .planNode();
+
+  ASSERT_EQ("-- RowNumber\n", plan->toString());
+  ASSERT_EQ(
+      "-- RowNumber[partition by (a, b)] -> a:BIGINT, b:VARCHAR\n",
+      plan->toString(true, false));
+
+  // Emit row number.
   plan = PlanBuilder()
              .tableScan(ROW({"a", "b"}, {BIGINT(), VARCHAR()}))
              .rowNumber({"b"}, 10)
@@ -717,6 +750,17 @@ TEST_F(PlanNodeToStringTest, rowNumber) {
   ASSERT_EQ("-- RowNumber\n", plan->toString());
   ASSERT_EQ(
       "-- RowNumber[partition by (b) limit 10] -> a:BIGINT, b:VARCHAR, row_number:BIGINT\n",
+      plan->toString(true, false));
+
+  // Don't emit row number.
+  plan = PlanBuilder()
+             .tableScan(ROW({"a", "b"}, {BIGINT(), VARCHAR()}))
+             .rowNumber({"b"}, 10, false)
+             .planNode();
+
+  ASSERT_EQ("-- RowNumber\n", plan->toString());
+  ASSERT_EQ(
+      "-- RowNumber[partition by (b) limit 10] -> a:BIGINT, b:VARCHAR\n",
       plan->toString(true, false));
 }
 

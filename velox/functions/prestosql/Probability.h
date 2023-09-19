@@ -15,8 +15,14 @@
  */
 #pragma once
 
+#include <boost/math/distributions/laplace.hpp>
 #include "boost/math/distributions/beta.hpp"
 #include "boost/math/distributions/binomial.hpp"
+#include "boost/math/distributions/cauchy.hpp"
+#include "boost/math/distributions/chi_squared.hpp"
+#include "boost/math/distributions/fisher_f.hpp"
+#include "boost/math/distributions/gamma.hpp"
+#include "boost/math/distributions/poisson.hpp"
 #include "velox/common/base/Exceptions.h"
 #include "velox/functions/Macros.h"
 
@@ -88,6 +94,131 @@ struct BinomialCDFFunction {
 
     boost::math::binomial_distribution<> dist(numOfTrials, successProb);
     result = boost::math::cdf(dist, value);
+  }
+};
+
+template <typename T>
+struct CauchyCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void
+  call(double& result, double median, double scale, double value) {
+    static constexpr double kInf = std::numeric_limits<double>::infinity();
+    static constexpr double kDoubleMax = std::numeric_limits<double>::max();
+
+    if (std::isnan(median) || std::isnan(value)) {
+      result = std::numeric_limits<double>::quiet_NaN();
+    } else if (median == kInf || median == kDoubleMax) {
+      result = 0.0;
+    } else if (scale == kInf) {
+      result = 0.5;
+    } else if (value == kInf) {
+      result = 1.0;
+    } else {
+      VELOX_USER_CHECK_GE(scale, 0, "scale must be greater than 0");
+
+      boost::math::cauchy_distribution<> dist(median, scale);
+      result = boost::math::cdf(dist, value);
+    }
+  }
+};
+
+template <typename T>
+struct GammaCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void
+  call(double& result, double shape, double scale, double value) {
+    static constexpr double kInf = std::numeric_limits<double>::infinity();
+
+    VELOX_USER_CHECK_GE(value, 0, "value must be greater than, or equal to, 0");
+    VELOX_USER_CHECK_GT(shape, 0, "shape must be greater than 0");
+    VELOX_USER_CHECK_GT(scale, 0, "scale must be greater than 0");
+
+    if (scale == kInf && value == kInf) {
+      result = 1.0;
+    } else if (shape == kInf || scale == kInf) {
+      result = 0.0;
+    } else if (value == kInf) {
+      result = 1.0;
+    } else {
+      boost::math::gamma_distribution<> gammaDist(shape, scale);
+      result = boost::math::cdf(gammaDist, value);
+    }
+  }
+};
+
+template <typename T>
+struct LaplaceCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+  FOLLY_ALWAYS_INLINE void
+  call(double& result, double location, double scale, double x) {
+    if (std::isnan(location) || std::isnan(scale) || std::isnan(x)) {
+      result = std::numeric_limits<double>::quiet_NaN();
+    } else {
+      VELOX_USER_CHECK_GT(scale, 0, "scale must be greater than 0");
+      boost::math::laplace_distribution<> laplaceDist(location, scale);
+      result = boost::math::cdf(laplaceDist, x);
+    }
+  }
+};
+
+template <typename T>
+struct InverseBetaCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(double& result, double a, double b, double p) {
+    static constexpr double kInf = std::numeric_limits<double>::infinity();
+
+    VELOX_USER_CHECK(
+        (p >= 0) && (p <= 1) && (p != kInf),
+        "p must be in the interval [0, 1]");
+    VELOX_USER_CHECK((a > 0) && (a != kInf), "a must be > 0");
+    VELOX_USER_CHECK((b > 0) && (b != kInf), "b must be > 0");
+
+    boost::math::beta_distribution<> dist(a, b);
+    result = boost::math::quantile(dist, p);
+  }
+};
+
+template <typename T>
+struct ChiSquaredCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(double& result, double df, double value) {
+    VELOX_USER_CHECK_GT(df, 0, "df must be greater than 0");
+    VELOX_USER_CHECK_GE(value, 0, "value must non-negative");
+
+    boost::math::chi_squared_distribution<> dist(df);
+    result = boost::math::cdf(dist, value);
+  }
+};
+
+template <typename T>
+struct FCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void
+  call(double& result, double df1, double df2, double value) {
+    VELOX_USER_CHECK_GE(value, 0, "value must non-negative");
+    VELOX_USER_CHECK_GT(df1, 0, "numerator df must be greater than 0");
+    VELOX_USER_CHECK_GT(df2, 0, "denominator df must be greater than 0");
+
+    boost::math::fisher_f_distribution<> dist(df1, df2);
+    result = boost::math::cdf(dist, value);
+  }
+};
+
+template <typename T>
+struct PoissonCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(double& result, double lambda, int64_t value) {
+    VELOX_USER_CHECK_GE(value, 0, "value must be a non-negative integer");
+    VELOX_USER_CHECK_GT(lambda, 0, "lambda must be greater than 0");
+
+    boost::math::poisson_distribution<double> poisson(lambda);
+    result = boost::math::cdf(poisson, value);
   }
 };
 

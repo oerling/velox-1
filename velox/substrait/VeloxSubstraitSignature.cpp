@@ -19,9 +19,8 @@
 
 namespace facebook::velox::substrait {
 
-std::string VeloxSubstraitSignature::toSubstraitSignature(
-    const TypeKind typeKind) {
-  switch (typeKind) {
+std::string VeloxSubstraitSignature::toSubstraitSignature(const TypePtr& type) {
+  switch (type->kind()) {
     case TypeKind::BOOLEAN:
       return "bool";
     case TypeKind::TINYINT:
@@ -29,6 +28,9 @@ std::string VeloxSubstraitSignature::toSubstraitSignature(
     case TypeKind::SMALLINT:
       return "i16";
     case TypeKind::INTEGER:
+      if (type->isDate()) {
+        return "date";
+      }
       return "i32";
     case TypeKind::BIGINT:
       return "i64";
@@ -42,8 +44,6 @@ std::string VeloxSubstraitSignature::toSubstraitSignature(
       return "vbin";
     case TypeKind::TIMESTAMP:
       return "ts";
-    case TypeKind::DATE:
-      return "date";
     case TypeKind::ARRAY:
       return "list";
     case TypeKind::MAP:
@@ -55,7 +55,7 @@ std::string VeloxSubstraitSignature::toSubstraitSignature(
     default:
       VELOX_UNSUPPORTED(
           "Substrait type signature conversion not supported for type {}.",
-          mapTypeKindToName(typeKind));
+          mapTypeKindToName(type->kind()));
   }
 }
 
@@ -68,7 +68,7 @@ std::string VeloxSubstraitSignature::toSubstraitSignature(
   std::vector<std::string> substraitTypeSignatures;
   substraitTypeSignatures.reserve(arguments.size());
   for (const auto& type : arguments) {
-    substraitTypeSignatures.emplace_back(toSubstraitSignature(type->kind()));
+    substraitTypeSignatures.emplace_back(toSubstraitSignature(type));
   }
   return functionName + ":" + folly::join("_", substraitTypeSignatures);
 }

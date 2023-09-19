@@ -52,11 +52,8 @@ class TransformKeysFunction : public exec::VectorFunction {
         flatMap->mapKeys(), flatMap->mapValues()};
     auto numKeys = flatMap->mapKeys()->size();
 
-    SelectivityVector finalSelection;
-    if (!context.isFinalSelection()) {
-      finalSelection = toElementRows<MapVector>(
-          numKeys, *context.finalSelection(), flatMap.get());
-    }
+    SelectivityVector validRowsInReusedResult =
+        toElementRows<MapVector>(numKeys, rows, flatMap.get());
 
     VectorPtr transformedKeys;
 
@@ -74,7 +71,7 @@ class TransformKeysFunction : public exec::VectorFunction {
 
       entry.callable->apply(
           keyRows,
-          finalSelection,
+          &validRowsInReusedResult,
           wrapCapture,
           &context,
           lambdaArgs,
@@ -82,10 +79,13 @@ class TransformKeysFunction : public exec::VectorFunction {
           &transformedKeys);
     }
 
+    // Set nulls for rows not present in 'rows'.
+    BufferPtr newNulls = addNullsForUnselectedRows(flatMap, rows);
+
     auto localResult = std::make_shared<MapVector>(
         flatMap->pool(),
         outputType,
-        flatMap->nulls(),
+        std::move(newNulls),
         flatMap->size(),
         flatMap->offsets(),
         flatMap->sizes(),

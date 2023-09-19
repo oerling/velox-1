@@ -289,12 +289,18 @@ std::shared_ptr<const Type> ReaderBase::convertType(
     case TypeKind::SMALLINT:
     case TypeKind::INTEGER:
     case TypeKind::BIGINT:
+    case TypeKind::HUGEINT:
+      if (type.format() == DwrfFormat::kOrc &&
+          type.getOrcPtr()->kind() == proto::orc::Type_Kind_DECIMAL) {
+        return DECIMAL(
+            type.getOrcPtr()->precision(), type.getOrcPtr()->scale());
+      }
+      [[fallthrough]];
     case TypeKind::REAL:
     case TypeKind::DOUBLE:
     case TypeKind::VARCHAR:
     case TypeKind::VARBINARY:
     case TypeKind::TIMESTAMP:
-    case TypeKind::DATE:
       return createScalarType(type.kind());
     case TypeKind::ARRAY:
       return ARRAY(convertType(

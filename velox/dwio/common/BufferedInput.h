@@ -43,7 +43,7 @@ class BufferedInput {
         pool_{pool},
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
-        allocPool_{std::make_unique<AllocationPool>(&pool)} {}
+        allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(
       std::shared_ptr<ReadFileInputStream> input,
@@ -54,7 +54,7 @@ class BufferedInput {
         pool_(pool),
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
-        allocPool_{std::make_unique<AllocationPool>(&pool)} {}
+        allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(BufferedInput&&) = default;
   virtual ~BufferedInput() = default;
@@ -74,7 +74,7 @@ class BufferedInput {
   // read-ahead and caching for BufferedInput implementations supporting
   // these.
   virtual std::unique_ptr<SeekableInputStream> enqueue(
-      Region region,
+      velox::common::Region region,
       const StreamIdentifier* FOLLY_NULLABLE si = nullptr);
 
   // load all regions to be read in an optimized way (IO efficiency)
@@ -122,6 +122,12 @@ class BufferedInput {
     return std::make_unique<BufferedInput>(input_, pool_);
   }
 
+  std::unique_ptr<SeekableInputStream> loadCompleteFile() {
+    auto stream = enqueue({0, input_->getLength()});
+    load(dwio::common::LogType::FILE);
+    return stream;
+  }
+
   const std::shared_ptr<ReadFile>& getReadFile() const {
     return input_->getReadFile();
   }
@@ -146,10 +152,10 @@ class BufferedInput {
  private:
   uint64_t maxMergeDistance_;
   std::optional<bool> wsVRLoad_;
-  std::unique_ptr<AllocationPool> allocPool_;
+  std::unique_ptr<memory::AllocationPool> allocPool_;
 
   // Regions enqueued for reading
-  std::vector<Region> regions_;
+  std::vector<velox::common::Region> regions_;
 
   // Offsets in the file to which the corresponding Region belongs
   std::vector<uint64_t> offsets_;
@@ -170,33 +176,22 @@ class BufferedInput {
       uint64_t length,
       std::optional<size_t> i = std::nullopt) const;
 
-  void readRegion(
-      const Region& region,
-      const LogType logType,
-      std::function<void(void* FOLLY_NONNULL, uint64_t, uint64_t, LogType)>
-          action) {
+  folly::Range<char*> allocate(const velox::common::Region& region) {
     // Save the file offset and the buffer to which we'll read it
     offsets_.push_back(region.offset);
     buffers_.emplace_back(
         allocPool_->allocateFixed(region.length), region.length);
-
-    // action is required
-    DWIO_ENSURE_NOT_NULL(action);
-    action(buffers_.back().data(), region.length, region.offset, logType);
+    return folly::Range<char*>(buffers_.back().data(), region.length);
   }
 
   bool useVRead() const;
   void sortRegions();
   void mergeRegions();
 
-  // we either load data parallelly or sequentially according to flag
-  void loadWithAction(
-      const LogType logType,
-      std::function<void(void* FOLLY_NONNULL, uint64_t, uint64_t, LogType)>
-          action);
-
   // tries and merges WS read regions into one
-  bool tryMerge(Region& first, const Region& second);
+  bool tryMerge(
+      velox::common::Region& first,
+      const velox::common::Region& second);
 };
 
 } // namespace facebook::velox::dwio::common

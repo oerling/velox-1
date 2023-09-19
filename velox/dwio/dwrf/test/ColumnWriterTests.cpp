@@ -58,11 +58,11 @@ class MockStreamInformation : public StreamInformation {
   }
 
   uint32_t getNode() const override {
-    return streamIdentifier_.encodingKey().node;
+    return streamIdentifier_.encodingKey().node();
   }
 
   uint32_t getSequence() const override {
-    return streamIdentifier_.encodingKey().sequence;
+    return streamIdentifier_.encodingKey().sequence();
   }
 
   MOCK_CONST_METHOD0(getOffset, uint64_t());
@@ -106,8 +106,8 @@ class TestStripeStreams : public StripeStreamsBase {
       if (throwIfNotFound) {
         DWIO_RAISE(fmt::format(
             "stream (node = {}, seq = {}, column = {}, kind = {}) not found",
-            si.encodingKey().node,
-            si.encodingKey().sequence,
+            si.encodingKey().node(),
+            si.encodingKey().sequence(),
             si.column(),
             si.kind()));
       } else {
@@ -123,9 +123,9 @@ class TestStripeStreams : public StripeStreamsBase {
     buffers_.push_back(std::move(buf));
 
     return createDecompressor(
-        context_.compression,
+        context_.compression(),
         std::move(compressed),
-        context_.compressionBlockSize,
+        context_.compressionBlockSize(),
         getMemoryPool(),
         si.toString());
   }
@@ -133,7 +133,7 @@ class TestStripeStreams : public StripeStreamsBase {
   const proto::ColumnEncoding& getEncoding(
       const EncodingKey& ek) const override {
     for (auto& enc : footer_.encoding()) {
-      if (ek.node == enc.node() && ek.sequence == enc.sequence()) {
+      if (ek.node() == enc.node() && ek.sequence() == enc.sequence()) {
         return enc;
       }
     }
@@ -145,7 +145,7 @@ class TestStripeStreams : public StripeStreamsBase {
       std::function<void(const StreamInformation&)> visitor) const override {
     uint32_t count = 0;
     context_.iterateUnSuppressedStreams([&](auto& pair) {
-      if (pair.first.encodingKey().node == node) {
+      if (pair.first.encodingKey().node() == node) {
         visitor(MockStreamInformation(pair.first));
         ++count;
       }
@@ -338,7 +338,7 @@ void testDataTypeWriter(
     auto typeWithId = TypeWithId::create(rowType);
     auto reqType = typeWithId->childAt(0);
 
-    AllocationPool allocPool(pool.get());
+    memory::AllocationPool allocPool(pool.get());
     StreamLabels labels(allocPool);
     auto reader = ColumnReader::build(
         reqType,
@@ -424,10 +424,10 @@ TEST(ColumnWriterTests, TestTimestampBoundaryValuesWriter) {
   std::vector<std::optional<Timestamp>> data;
   for (int64_t i = 0; i < ITERATIONS; ++i) {
     if (i & 1) {
-      Timestamp ts(INT64_MAX, MAX_NANOS);
+      Timestamp ts(Timestamp::kMaxSeconds, MAX_NANOS);
       data.emplace_back(ts);
     } else {
-      Timestamp ts(MIN_SECONDS, MAX_NANOS);
+      Timestamp ts(Timestamp::kMinSeconds, MAX_NANOS);
       data.emplace_back(ts);
     }
     data.emplace_back();
@@ -438,11 +438,8 @@ TEST(ColumnWriterTests, TestTimestampBoundaryValuesWriter) {
 TEST(ColumnWriterTests, TestTimestampMixedWriter) {
   std::vector<std::optional<Timestamp>> data;
   for (int64_t i = 0; i < ITERATIONS; ++i) {
-    int64_t seconds = static_cast<int64_t>(Random::rand64());
-    if (seconds < MIN_SECONDS) {
-      seconds = MIN_SECONDS;
-    }
-    int64_t nanos = Random::rand32(0, MAX_NANOS + 1);
+    int64_t seconds = Random::rand64(Timestamp::kMaxSeconds);
+    int64_t nanos = Random::rand32(MAX_NANOS + 1);
     Timestamp ts(seconds, nanos);
     data.emplace_back(ts);
     // Add null value
@@ -461,16 +458,6 @@ void verifyInvalidTimestamp(int64_t seconds, int64_t nanos) {
   data.emplace_back(ts);
   EXPECT_THROW(
       testDataTypeWriter(TIMESTAMP(), data), exception::LoggedException);
-}
-
-TEST(ColumnWriterTests, TestTimestampInvalidWriter) {
-  // Nanos invalid range.
-  verifyInvalidTimestamp(ITERATIONS, UINT64_MAX);
-  verifyInvalidTimestamp(ITERATIONS, MAX_NANOS + 1);
-
-  // Seconds invalid range.
-  verifyInvalidTimestamp(INT64_MIN, 0);
-  verifyInvalidTimestamp(MIN_SECONDS - 1, MAX_NANOS);
 }
 
 TEST(ColumnWriterTests, TestTimestampNullWriter) {
@@ -882,13 +869,13 @@ void testMapWriter(
           uniqueKeys.cend(),
           std::back_inserter(uniqueKeysString),
           [](const auto& e) { return folly::to<std::string>(e); });
-      ASSERT_EQ(writerDataTypeWithId->column, 0);
+      ASSERT_EQ(writerDataTypeWithId->column(), 0);
       config->set(Config::MAP_FLAT_COLS_STRUCT_KEYS, {uniqueKeysString});
-      structReaderContext[writerDataTypeWithId->id] = uniqueKeysString;
+      structReaderContext[writerDataTypeWithId->id()] = uniqueKeysString;
     }
 
     config->set(Config::FLATTEN_MAP, true);
-    config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column});
+    config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column()});
     config->set(
         Config::MAP_FLAT_DISABLE_DICT_ENCODING, disableDictionaryEncoding);
 
@@ -938,7 +925,7 @@ void testMapWriter(
       TestStripeStreams streams(
           context, sf, rowType, &pool, returnFlatVector, structReaderContext);
       auto pool = addDefaultLeafMemoryPool();
-      AllocationPool allocPool(pool.get());
+      memory::AllocationPool allocPool(pool.get());
       StreamLabels labels(allocPool);
       const auto reader =
           ColumnReader::build(dataTypeWithId, dataTypeWithId, streams, labels);
@@ -977,10 +964,10 @@ void testMapWriter(
 
     context.nextStripe();
 
-    auto valueNodeId = dataTypeWithId->childAt(1)->id;
+    auto valueNodeId = dataTypeWithId->childAt(1)->id();
     auto streamCount = 0;
     context.iterateUnSuppressedStreams([&](auto& pair) {
-      if (pair.first.encodingKey().node == valueNodeId) {
+      if (pair.first.encodingKey().node() == valueNodeId) {
         ++streamCount;
       }
     });
@@ -991,7 +978,7 @@ void testMapWriter(
 
     streamCount = 0;
     context.iterateUnSuppressedStreams([&](auto& pair) {
-      if (pair.first.encodingKey().node == valueNodeId) {
+      if (pair.first.encodingKey().node() == valueNodeId) {
         ++streamCount;
       }
     });
@@ -1035,12 +1022,12 @@ void testMapWriterRow(
     uniqueKeysString.push_back(folly::to<std::string>(i));
   }
 
-  ASSERT_EQ(writerDataTypeWithId->column, 0);
+  ASSERT_EQ(writerDataTypeWithId->column(), 0);
   config->set(Config::MAP_FLAT_COLS_STRUCT_KEYS, {uniqueKeysString});
-  structReaderContext[writerDataTypeWithId->id] = uniqueKeysString;
+  structReaderContext[writerDataTypeWithId->id()] = uniqueKeysString;
 
   config->set(Config::FLATTEN_MAP, true);
-  config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column});
+  config->set(Config::MAP_FLAT_COLS, {writerDataTypeWithId->column()});
   config->set(
       Config::MAP_FLAT_DISABLE_DICT_ENCODING, disableDictionaryEncoding);
 
@@ -1073,7 +1060,7 @@ void testMapWriterRow(
       TestStripeStreams streams(
           context, sf, rowType, &pool, returnFlatVector, structReaderContext);
       auto pool = addDefaultLeafMemoryPool();
-      AllocationPool allocPool(pool.get());
+      memory::AllocationPool allocPool(pool.get());
       StreamLabels labels(allocPool);
       const auto reader =
           ColumnReader::build(dataTypeWithId, dataTypeWithId, streams, labels);
@@ -1106,10 +1093,10 @@ void testMapWriterRow(
 
     context.nextStripe();
 
-    auto valueNodeId = dataTypeWithId->childAt(1)->id;
+    auto valueNodeId = dataTypeWithId->childAt(1)->id();
     auto streamCount = 0;
     context.iterateUnSuppressedStreams([&](auto& pair) {
-      if (pair.first.encodingKey().node == valueNodeId) {
+      if (pair.first.encodingKey().node() == valueNodeId) {
         ++streamCount;
       }
     });
@@ -1120,7 +1107,7 @@ void testMapWriterRow(
 
     streamCount = 0;
     context.iterateUnSuppressedStreams([&](auto& pair) {
-      if (pair.first.encodingKey().node == valueNodeId) {
+      if (pair.first.encodingKey().node() == valueNodeId) {
         ++streamCount;
       }
     });
@@ -1473,6 +1460,51 @@ TEST(ColumnWriterTests, TestMapWriterBigBatch) {
       /* useFlatMap */ true);
 }
 
+TEST(ColumnWriterTests, TestMapWriterUnalignedKeyValueCount) {
+  auto pool = addDefaultLeafMemoryPool();
+  VectorMaker maker(pool.get());
+  auto keys = maker.flatVector<int64_t>(11, folly::identity);
+  auto values = maker.flatVector<int64_t>(12, folly::identity);
+  auto offsets = allocateIndices(3, pool.get());
+  auto sizes = allocateIndices(3, pool.get());
+
+  for (int i = 0; i < 3; ++i) {
+    offsets->asMutable<vector_size_t>()[i] = 3 * i;
+    sizes->asMutable<vector_size_t>()[i] = 3;
+  }
+  auto batch = std::make_shared<MapVector>(
+      pool.get(),
+      MAP(BIGINT(), BIGINT()),
+      nullptr,
+      3,
+      offsets,
+      sizes,
+      keys,
+      values);
+  testMapWriter<int64_t, int64_t>(*pool, batch, false);
+  testMapWriter<int64_t, int64_t>(*pool, batch, true);
+
+  for (int i = 0; i < 3; ++i) {
+    offsets->asMutable<vector_size_t>()[i] = 4 * i;
+    sizes->asMutable<vector_size_t>()[i] = 4;
+  }
+  batch = std::make_shared<MapVector>(
+      pool.get(),
+      MAP(BIGINT(), BIGINT()),
+      nullptr,
+      3,
+      offsets,
+      sizes,
+      keys,
+      values);
+  ASSERT_THROW(
+      (testMapWriter<int64_t, int64_t>(*pool, batch, false)),
+      exception::LoggedException);
+  ASSERT_THROW(
+      (testMapWriter<int64_t, int64_t>(*pool, batch, true)),
+      exception::LoggedException);
+}
+
 TEST(ColumnWriterTests, TestStructKeysConfigSerializationDeserialization) {
   const std::vector<std::vector<std::string>> columns{
       {"1.45", "hi, you;", "29102819", "1e-4"},
@@ -1496,7 +1528,8 @@ std::unique_ptr<DwrfReader> getDwrfReader(
     config->set(Config::MAP_FLAT_COLS, {0});
   }
 
-  auto sink = std::make_unique<MemorySink>(leafPool, 2 * 1024 * 1024);
+  auto sink = std::make_unique<MemorySink>(
+      2 * 1024 * 1024, dwio::common::FileSink::Options{.pool = &leafPool});
   auto sinkPtr = sink.get();
 
   dwrf::WriterOptions options;
@@ -1512,7 +1545,7 @@ std::unique_ptr<DwrfReader> getDwrfReader(
   writer.write(batch);
   writer.close();
 
-  std::string_view data(sinkPtr->getData(), sinkPtr->size());
+  std::string_view data(sinkPtr->data(), sinkPtr->size());
   ReaderOptions readerOpts{&leafPool};
   return std::make_unique<DwrfReader>(
       readerOpts,
@@ -2035,7 +2068,7 @@ struct IntegerColumnWriterTypedTestCase {
       }
 
       auto reqType = TypeWithId::create(rowType)->childAt(0);
-      AllocationPool allocPool(pool.get());
+      memory::AllocationPool allocPool(pool.get());
       StreamLabels labels(allocPool);
       auto columnReader =
           ColumnReader::build(reqType, reqType, streams, labels);
@@ -3269,7 +3302,7 @@ struct StringColumnWriterTestCase {
       }
 
       auto reqType = TypeWithId::create(rowType)->childAt(0);
-      AllocationPool allocPool(pool.get());
+      memory::AllocationPool allocPool(pool.get());
       StreamLabels labels(allocPool);
       auto columnReader =
           ColumnReader::build(reqType, reqType, streams, labels);
@@ -4341,7 +4374,7 @@ struct DictColumnWriterTestCase {
         .WillRepeatedly(Return(0));
     auto rowTypeWithId = TypeWithId::create(rowType);
     auto reqType = rowTypeWithId->childAt(0);
-    AllocationPool allocPool(pool.get());
+    memory::AllocationPool allocPool(pool.get());
     StreamLabels labels(allocPool);
     auto reader = ColumnReader::build(reqType, reqType, streams, labels);
     VectorPtr out;

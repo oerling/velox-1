@@ -90,11 +90,10 @@ TEST_F(ComparisonsTest, betweenVarchar) {
 
 TEST_F(ComparisonsTest, betweenDate) {
   auto parseDate = [](const std::string& dateStr) {
-    Date returnDate;
-    parseTo(dateStr, returnDate);
-    return returnDate;
+    return DATE()->toDays(dateStr);
   };
-  std::vector<std::tuple<Date, bool>> testData = {
+
+  std::vector<std::tuple<int32_t, bool>> testData = {
       {parseDate("2019-05-01"), false},
       {parseDate("2019-06-01"), true},
       {parseDate("2019-07-01"), true},
@@ -104,11 +103,32 @@ TEST_F(ComparisonsTest, betweenDate) {
 
   auto result = evaluate<SimpleVector<bool>>(
       "c0 between cast(\'2019-06-01\' as date) and cast(\'2020-06-01\' as date)",
-      makeRowVector({makeFlatVector<Date, 0>(testData)}));
+      makeRowVector({makeFlatVector<int32_t, 0>(testData, DATE())}));
 
   for (int i = 0; i < testData.size(); ++i) {
     EXPECT_EQ(result->valueAt(i), std::get<1>(testData[i])) << "at " << i;
   }
+}
+
+TEST_F(ComparisonsTest, betweenTimestamp) {
+  using util::fromTimestampString;
+
+  const auto between = [&](std::optional<std::string> s) {
+    auto expr =
+        "c0 between cast(\'2019-02-28 10:00:00.500\' as timestamp) and"
+        " cast(\'2019-02-28 10:00:00.600\' as timestamp)";
+    if (s.has_value()) {
+      return evaluateOnce<bool>(
+          expr, std::optional(fromTimestampString((StringView)s.value())));
+    }
+    return evaluateOnce<bool>(expr, std::optional<Timestamp>());
+  };
+
+  EXPECT_EQ(std::nullopt, between(std::nullopt));
+  EXPECT_FALSE(between("2019-02-28 10:00:00.000").value());
+  EXPECT_TRUE(between("2019-02-28 10:00:00.500").value());
+  EXPECT_TRUE(between("2019-02-28 10:00:00.600").value());
+  EXPECT_FALSE(between("2019-02-28 10:00:00.650").value());
 }
 
 TEST_F(ComparisonsTest, betweenDecimal) {
@@ -119,14 +139,14 @@ TEST_F(ComparisonsTest, betweenDecimal) {
     test::assertEqualVectors(expectedResult, actual);
   };
 
-  auto shortFlat = makeNullableShortDecimalFlatVector(
+  auto shortFlat = makeNullableFlatVector<int64_t>(
       {100, 250, 300, 500, std::nullopt}, DECIMAL(3, 2));
   auto expectedResult =
       makeNullableFlatVector<bool>({false, true, true, false, std::nullopt});
 
   runAndCompare("c0 between 2.00 and 3.00", shortFlat, expectedResult);
 
-  auto longFlat = makeNullableLongDecimalFlatVector(
+  auto longFlat = makeNullableFlatVector<int128_t>(
       {100, 250, 300, 500, std::nullopt}, DECIMAL(20, 2));
 
   runAndCompare(
@@ -138,7 +158,7 @@ TEST_F(ComparisonsTest, betweenDecimal) {
   VELOX_ASSERT_THROW(
       runAndCompare("c0 between 2.00 and 3.00", longFlat, expectedResult),
       "Scalar function signature is not supported: "
-      "between(DECIMAL(20,2), DECIMAL(3,2), DECIMAL(3,2)).");
+      "between(DECIMAL(20, 2), DECIMAL(3, 2), DECIMAL(3, 2)).");
 }
 
 TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
@@ -148,9 +168,9 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeShortDecimalFlatVector({100, 200, 300, 400}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({100, 200, 300, 400}, DECIMAL(5, 1)),
           makeConstant((int64_t)100, 4, DECIMAL(5, 1)),
-          makeShortDecimalFlatVector({500, 200, 500, 110}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({500, 200, 500, 110}, DECIMAL(5, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -158,8 +178,8 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeShortDecimalFlatVector({100, 200, 300, 400}, DECIMAL(5, 1)),
-          makeShortDecimalFlatVector({100, 100, 100, 200}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({100, 200, 300, 400}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({100, 100, 100, 200}, DECIMAL(5, 1)),
           makeConstant((int64_t)300, 4, DECIMAL(5, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
@@ -168,9 +188,9 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeShortDecimalFlatVector({100, 200, 300, 400}, DECIMAL(5, 1)),
-          makeShortDecimalFlatVector({100, 120, 130, 350}, DECIMAL(5, 1)),
-          makeShortDecimalFlatVector({150, 200, 310, 370}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({100, 200, 300, 400}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({100, 120, 130, 350}, DECIMAL(5, 1)),
+          makeFlatVector<int64_t>({150, 200, 310, 370}, DECIMAL(5, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -180,13 +200,13 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
       {
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeShortDecimalFlatVector({100, 200, 300, 400}, DECIMAL(5, 1))),
+              makeFlatVector<int64_t>({100, 200, 300, 400}, DECIMAL(5, 1))),
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeShortDecimalFlatVector({100, 120, 130, 350}, DECIMAL(5, 1))),
+              makeFlatVector<int64_t>({100, 120, 130, 350}, DECIMAL(5, 1))),
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeShortDecimalFlatVector({150, 200, 310, 370}, DECIMAL(5, 1))),
+              makeFlatVector<int64_t>({150, 200, 310, 370}, DECIMAL(5, 1))),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -194,10 +214,10 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeShortDecimalFlatVector({100, 200, 300, 400}, DECIMAL(5, 1)),
-          makeNullableShortDecimalFlatVector(
+          makeFlatVector<int64_t>({100, 200, 300, 400}, DECIMAL(5, 1)),
+          makeNullableFlatVector<int64_t>(
               {100, std::nullopt, 130, 350}, DECIMAL(5, 1)),
-          makeNullableShortDecimalFlatVector(
+          makeNullableFlatVector<int64_t>(
               {150, 200, std::nullopt, 370}, DECIMAL(5, 1)),
       },
       makeNullableFlatVector<bool>({true, std::nullopt, std::nullopt, false}));
@@ -208,9 +228,9 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({100, 200, 300, 400}, DECIMAL(30, 1)),
           makeConstant(HugeInt::build(0, 100), 4, DECIMAL(30, 1)),
-          makeLongDecimalFlatVector({500, 200, 500, 110}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({500, 200, 500, 110}, DECIMAL(30, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -218,8 +238,8 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(30, 1)),
-          makeLongDecimalFlatVector({100, 100, 100, 200}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({100, 200, 300, 400}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({100, 100, 100, 200}, DECIMAL(30, 1)),
           makeConstant(HugeInt::build(0, 300), 4, DECIMAL(30, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
@@ -228,9 +248,9 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(30, 1)),
-          makeLongDecimalFlatVector({100, 120, 130, 350}, DECIMAL(30, 1)),
-          makeLongDecimalFlatVector({150, 200, 310, 370}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({100, 200, 300, 400}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({100, 120, 130, 350}, DECIMAL(30, 1)),
+          makeFlatVector<int128_t>({150, 200, 310, 370}, DECIMAL(30, 1)),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -240,13 +260,13 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
       {
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(30, 1))),
+              makeFlatVector<int128_t>({100, 200, 300, 400}, DECIMAL(30, 1))),
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeLongDecimalFlatVector({100, 120, 130, 350}, DECIMAL(30, 1))),
+              makeFlatVector<int128_t>({100, 120, 130, 350}, DECIMAL(30, 1))),
           wrapInDictionary(
               makeIndices({0, 1, 2, 3}),
-              makeLongDecimalFlatVector({150, 200, 310, 370}, DECIMAL(30, 1))),
+              makeFlatVector<int128_t>({150, 200, 310, 370}, DECIMAL(30, 1))),
       },
       makeFlatVector<bool>({true, true, true, false}));
 
@@ -254,10 +274,10 @@ TEST_F(ComparisonsTest, betweenDecimalNonConstantVectors) {
   testBetweenExpr(
       "c0 between c1 and c2",
       {
-          makeLongDecimalFlatVector({100, 200, 300, 400}, DECIMAL(30, 1)),
-          makeNullableLongDecimalFlatVector(
+          makeFlatVector<int128_t>({100, 200, 300, 400}, DECIMAL(30, 1)),
+          makeNullableFlatVector<int128_t>(
               {100, std::nullopt, 130, 350}, DECIMAL(30, 1)),
-          makeNullableLongDecimalFlatVector(
+          makeNullableFlatVector<int128_t>(
               {150, 200, std::nullopt, 370}, DECIMAL(30, 1)),
       },
       makeNullableFlatVector<bool>({true, std::nullopt, std::nullopt, false}));
@@ -273,9 +293,9 @@ TEST_F(ComparisonsTest, eqNeqDecimal) {
   };
 
   std::vector<VectorPtr> inputs = {
-      makeNullableShortDecimalFlatVector(
+      makeNullableFlatVector<int64_t>(
           {1, std::nullopt, 3, -3, std::nullopt, 4}, DECIMAL(10, 5)),
-      makeNullableShortDecimalFlatVector(
+      makeNullableFlatVector<int64_t>(
           {1, 2, 3, -3, std::nullopt, 5}, DECIMAL(10, 5))};
   // Equal on decimals.
   auto expected = makeNullableFlatVector<bool>(
@@ -283,7 +303,7 @@ TEST_F(ComparisonsTest, eqNeqDecimal) {
   runAndCompare(inputs, expected, "=");
 
   std::vector<VectorPtr> inputsLong = {
-      makeNullableLongDecimalFlatVector(
+      makeNullableFlatVector<int128_t>(
           {DecimalUtil::kLongDecimalMin,
            std::nullopt,
            DecimalUtil::kLongDecimalMax,
@@ -291,7 +311,7 @@ TEST_F(ComparisonsTest, eqNeqDecimal) {
            std::nullopt,
            4},
           DECIMAL(30, 5)),
-      makeNullableLongDecimalFlatVector(
+      makeNullableFlatVector<int128_t>(
           {DecimalUtil::kLongDecimalMin,
            std::nullopt,
            DecimalUtil::kLongDecimalMax,
@@ -307,16 +327,16 @@ TEST_F(ComparisonsTest, eqNeqDecimal) {
   runAndCompare(inputsLong, expected, "!=");
   // Test with different data types.
   inputs = {
-      makeShortDecimalFlatVector({1}, DECIMAL(10, 5)),
-      makeShortDecimalFlatVector({1}, DECIMAL(10, 4))};
+      makeFlatVector(std::vector<int64_t>{1}, DECIMAL(10, 5)),
+      makeFlatVector(std::vector<int64_t>{1}, DECIMAL(10, 4))};
   VELOX_ASSERT_THROW(
       runAndCompare(inputs, expected, "="),
       "Scalar function signature is not supported: "
-      "eq(DECIMAL(10,5), DECIMAL(10,4))");
+      "eq(DECIMAL(10, 5), DECIMAL(10, 4))");
   VELOX_ASSERT_THROW(
       runAndCompare(inputs, expected, "!="),
       "Scalar function signature is not supported: "
-      "neq(DECIMAL(10,5), DECIMAL(10,4))");
+      "neq(DECIMAL(10, 5), DECIMAL(10, 4))");
 }
 
 TEST_F(ComparisonsTest, gtLtDecimal) {
@@ -329,9 +349,9 @@ TEST_F(ComparisonsTest, gtLtDecimal) {
 
   // Short Decimals test.
   std::vector<VectorPtr> shortDecimalInputs = {
-      makeNullableShortDecimalFlatVector(
+      makeNullableFlatVector<int64_t>(
           {1, std::nullopt, 3, -3, std::nullopt, 4}, DECIMAL(10, 5)),
-      makeNullableShortDecimalFlatVector(
+      makeNullableFlatVector<int64_t>(
           {0, 2, 3, -5, std::nullopt, 5}, DECIMAL(10, 5))};
   auto expectedGtLt = makeNullableFlatVector<bool>(
       {true, std::nullopt, false, true, std::nullopt, false});
@@ -346,7 +366,7 @@ TEST_F(ComparisonsTest, gtLtDecimal) {
 
   // Long Decimals test.
   std::vector<VectorPtr> longDecimalsInputs = {
-      makeNullableLongDecimalFlatVector(
+      makeNullableFlatVector<int128_t>(
           {DecimalUtil::kLongDecimalMax,
            std::nullopt,
            3,
@@ -354,7 +374,7 @@ TEST_F(ComparisonsTest, gtLtDecimal) {
            std::nullopt,
            4},
           DECIMAL(38, 5)),
-      makeNullableLongDecimalFlatVector(
+      makeNullableFlatVector<int128_t>(
           {DecimalUtil::kLongDecimalMax - 1,
            2,
            3,

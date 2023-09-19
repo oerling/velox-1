@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_library(velox_hive_config OBJECT HiveConfig.cpp)
+
+target_link_libraries(velox_hive_config velox_exception)
+
 add_library(
   velox_hive_connector OBJECT
   FileHandle.cpp
@@ -24,12 +28,22 @@ add_library(
   TableHandle.cpp)
 
 target_link_libraries(
-  velox_hive_connector velox_connector velox_dwio_dwrf_reader
-  velox_dwio_dwrf_writer velox_file velox_hive_partition_function)
+  velox_hive_connector
+  velox_connector
+  velox_dwio_catalog_fbhive
+  velox_dwio_dwrf_reader
+  velox_dwio_dwrf_writer
+  velox_dwio_parquet_reader
+  velox_dwio_parquet_writer
+  velox_file
+  velox_hive_partition_function
+  velox_s3fs
+  velox_hdfs
+  velox_gcs)
 
 add_library(velox_hive_partition_function HivePartitionFunction.cpp)
 
-target_link_libraries(velox_hive_partition_function velox_core)
+target_link_libraries(velox_hive_partition_function velox_core velox_exec)
 
 add_subdirectory(storage_adapters)
 

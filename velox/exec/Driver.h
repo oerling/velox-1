@@ -20,8 +20,10 @@
 #include <memory>
 
 #include "velox/common/future/VeloxPromise.h"
+#include "velox/common/process/ThreadDebugInfo.h"
 #include "velox/common/time/CpuWallTimer.h"
 #include "velox/connectors/Connector.h"
+#include "velox/core/PlanFragment.h"
 #include "velox/core/PlanNode.h"
 #include "velox/core/QueryCtx.h"
 #include "velox/exec/Spiller.h"
@@ -90,7 +92,7 @@ std::ostream& operator<<(std::ostream& out, const StopReason& reason);
 // suspended, off thread or blocked.
 struct ThreadState {
   // The thread currently running this.
-  std::atomic<std::thread::id> thread{};
+  std::atomic<std::thread::id> thread{std::thread::id()};
   // The tid of 'thread'. Allows finding the thread in a debugger.
   std::atomic<int32_t> tid{0};
   // True if queued on an executor but not on thread.
@@ -123,23 +125,34 @@ struct ThreadState {
     thread = std::thread::id(); // no thread.
     tid = 0;
   }
+
+  std::string toJsonString() const {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["onThread"] = std::to_string(isOnThread());
+    obj["tid"] = tid.load();
+    obj["isTerminated"] = isTerminated.load();
+    obj["isEnqueued"] = isEnqueued.load();
+    obj["hasBlockingFuture"] = hasBlockingFuture;
+    obj["isSuspended"] = isSuspended;
+    return folly::toPrettyJson(obj);
+  }
 };
 
 enum class BlockingReason {
   kNotBlocked,
   kWaitForConsumer,
   kWaitForSplit,
-  /// Some operators can get blocked due to the producer(s) (they are currently
-  /// waiting data from) not having anything produced. Used by LocalExchange,
-  /// LocalMergeExchange, Exchange and MergeExchange operators.
+  /// Some operators can get blocked due to the producer(s) (they are
+  /// currently waiting data from) not having anything produced. Used by
+  /// LocalExchange, LocalMergeExchange, Exchange and MergeExchange operators.
   kWaitForProducer,
   kWaitForJoinBuild,
   /// For a build operator, it is blocked waiting for the probe operators to
-  /// finish probing before build the next hash table from one of the previously
-  /// spilled partition data.
-  /// For a probe operator, it is blocked waiting for all its peer probe
-  /// operators to finish probing before notifying the build operators to build
-  /// the next hash table from the previously spilled data.
+  /// finish probing before build the next hash table from one of the
+  /// previously spilled partition data. For a probe operator, it is blocked
+  /// waiting for all its peer probe operators to finish probing before
+  /// notifying the build operators to build the next hash table from the
+  /// previously spilled data.
   kWaitForJoinProbe,
   /// Used by MergeJoin operator, indicating that it was blocked by the right
   /// side input being unavailable.
@@ -175,14 +188,14 @@ class BlockingState {
     return reason_;
   }
 
-  /// Moves out the blocking future stored inside. Can be called only once. Used
-  /// in single-threaded execution.
+  /// Moves out the blocking future stored inside. Can be called only once.
+  /// Used in single-threaded execution.
   ContinueFuture future() {
     return std::move(future_);
   }
 
-  /// Returns total number of drivers process wide that are currently in blocked
-  /// state.
+  /// Returns total number of drivers process wide that are currently in
+  /// blocked state.
   static uint64_t numBlockedDrivers() {
     return numBlockedDrivers_;
   }
@@ -212,6 +225,7 @@ struct DriverCtx {
 
   std::shared_ptr<Task> task;
   Driver* driver;
+  facebook::velox::process::ThreadDebugInfo threadDebugInfo;
 
   explicit DriverCtx(
       std::shared_ptr<Task> _task,
@@ -227,17 +241,17 @@ struct DriverCtx {
       const std::string& operatorType);
 
   /// Builds the spill config for the operator with specified 'operatorId'.
-  std::optional<Spiller::Config> makeSpillConfig(int32_t operatorId) const;
+  std::optional<common::SpillConfig> makeSpillConfig(int32_t operatorId) const;
 };
 
 class Driver : public std::enable_shared_from_this<Driver> {
  public:
   static void enqueue(std::shared_ptr<Driver> instance);
 
-  /// Run the pipeline until it produces a batch of data or gets blocked. Return
-  /// the data produced or nullptr if pipeline finished processing and will not
-  /// produce more data. Return nullptr and set 'blockingState' if pipeline got
-  /// blocked.
+  /// Run the pipeline until it produces a batch of data or gets blocked.
+  /// Return the data produced or nullptr if pipeline finished processing and
+  /// will not produce more data. Return nullptr and set 'blockingState' if
+  /// pipeline got blocked.
   ///
   /// This API supports execution of a Task synchronously in the caller's
   /// thread. The caller must use either this API or 'enqueue', but not both.
@@ -245,6 +259,10 @@ class Driver : public std::enable_shared_from_this<Driver> {
   /// return any data from Operator::getOutput(). When using 'next', the last
   /// operator must produce data that will be returned to caller.
   RowVectorPtr next(std::shared_ptr<BlockingState>& blockingState);
+
+  /// Invoked to initialize the operators from this driver once on its first
+  /// execution.
+  void initializeOperators();
 
   bool isOnThread() const {
     return state_.isOnThread();
@@ -262,7 +280,8 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   void initializeOperatorStats(std::vector<OperatorStats>& stats);
 
-  void addStatsToTask();
+  // Close operators and add operator stats to the task.
+  void closeOperators();
 
   // Returns true if all operators between the source and 'aggregation' are
   // order-preserving and do not increase cardinality.
@@ -284,7 +303,9 @@ class Driver : public std::enable_shared_from_this<Driver> {
   // Returns a list of all operators.
   std::vector<Operator*> operators() const;
 
-  std::string toString();
+  std::string toString() const;
+
+  std::string toJsonString() const;
 
   DriverCtx* driverCtx() const {
     return ctx_.get();
@@ -300,6 +321,10 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   BlockingReason blockingReason() const {
     return blockingReason_;
+  }
+
+  static std::shared_ptr<Driver> testingCreate() {
+    return std::shared_ptr<Driver>(new Driver());
   }
 
  private:
@@ -326,8 +351,8 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   /// If 'trackOperatorCpuUsage_' is true, returns initialized timer object to
   /// track cpu and wall time of an operation. Returns null otherwise.
-  /// The delta CpuWallTiming object would be passes to 'func' upon destruction
-  /// of the timer.
+  /// The delta CpuWallTiming object would be passes to 'func' upon
+  /// destruction of the timer.
   template <typename F>
   std::unique_ptr<DeltaCpuWallTimer<F>> createDeltaCpuWallTimer(F&& func) {
     return trackOperatorCpuUsage_
@@ -335,7 +360,18 @@ class Driver : public std::enable_shared_from_this<Driver> {
         : nullptr;
   }
 
+  // Adjusts 'timing' by removing the lazy load wall and CPU times
+  // accrued since last time timing information was recorded for
+  // 'op'. The accrued lazy load times are credited to the source
+  // operator of 'this'. The per-operator runtimeStats for lazy load
+  // are left in place to reflect which operator triggered the load
+  // but these do not bias the op's timing.
+  CpuWallTiming processLazyTiming(Operator& op, const CpuWallTiming& timing);
+
   std::unique_ptr<DriverCtx> ctx_;
+
+  bool operatorsInitialized_{false};
+
   std::atomic_bool closed_{false};
 
   // Set via Task and serialized by Task's mutex.
@@ -343,8 +379,9 @@ class Driver : public std::enable_shared_from_this<Driver> {
 
   // Timer used to track down the time we are sitting in the driver queue.
   size_t queueTimeStartMicros_{0};
-  // Index of the current operator to run (or the 1st one if we haven't started
-  // yet). Used to determine which operator's queueTime we should update.
+  // Index of the current operator to run (or the 1st one if we haven't
+  // started yet). Used to determine which operator's queueTime we should
+  // update.
   size_t curOpIndex_{0};
 
   std::vector<std::unique_ptr<Operator>> operators_;
@@ -352,6 +389,10 @@ class Driver : public std::enable_shared_from_this<Driver> {
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
 
   bool trackOperatorCpuUsage_;
+
+  // Indicates that a DriverAdapter can rearrange Operators. Set to false at end
+  // of DriverFactory::createDriver().
+  bool isAdaptable_{true};
 
   friend struct DriverFactory;
 };
@@ -361,6 +402,16 @@ using OperatorSupplier = std::function<
 
 using Consumer = std::function<BlockingReason(RowVectorPtr, ContinueFuture*)>;
 using ConsumerSupplier = std::function<Consumer()>;
+
+struct DriverFactory;
+using AdaptDriverFunction =
+    std::function<bool(const DriverFactory& factory, Driver& driver)>;
+
+struct DriverAdapter {
+  std::string label;
+  std::function<void(const core::PlanFragment&)> inspect;
+  AdaptDriverFunction adapt;
+};
 
 struct DriverFactory {
   std::vector<std::shared_ptr<const core::PlanNode>> planNodes;
@@ -382,15 +433,15 @@ struct DriverFactory {
   std::shared_ptr<const core::PlanNode> consumerNode;
   /// True if the drivers in this pipeline use grouped execution strategy.
   bool groupedExecution{false};
-  /// True if 'planNodes' contains a source node for the task, e.g. TableScan or
-  /// Exchange.
+  /// True if 'planNodes' contains a source node for the task, e.g. TableScan
+  /// or Exchange.
   bool inputDriver{false};
   /// True if 'planNodes' contains a sync node for the task, e.g.
   /// PartitionedOutput.
   bool outputDriver{false};
-  /// Contains node ids for which Hash Join Bridges connect ungrouped execution
-  /// and grouped execution and must be created in ungrouped execution pipeline
-  /// and skipped in grouped execution pipeline.
+  /// Contains node ids for which Hash Join Bridges connect ungrouped
+  /// execution and grouped execution and must be created in ungrouped
+  /// execution pipeline and skipped in grouped execution pipeline.
   folly::F14FastSet<core::PlanNodeId> mixedExecutionModeHashJoinNodeIds;
   /// Same as 'mixedExecutionModeHashJoinNodeIds' but for Nested Loop Joins.
   folly::F14FastSet<core::PlanNodeId> mixedExecutionModeNestedLoopJoinNodeIds;
@@ -399,6 +450,18 @@ struct DriverFactory {
       std::unique_ptr<DriverCtx> ctx,
       std::shared_ptr<ExchangeClient> exchangeClient,
       std::function<int(int pipelineId)> numDrivers);
+
+  /// Replaces operators at indices 'begin' to 'end - 1' with
+  /// 'replaceWith, in the Driver being created.  Sets operator ids to be
+  /// consecutive after the replace. May only be called from inside a
+  /// DriverAdapter. Returns the replaced Operators.
+  std::vector<std::unique_ptr<Operator>> replaceOperators(
+      Driver& driver,
+      int32_t begin,
+      int32_t end,
+      std::vector<std::unique_ptr<Operator>> replaceWith) const;
+
+  static void registerAdapter(DriverAdapter adapter);
 
   bool supportsSingleThreadedExecution() const {
     return !needsPartitionedOutput() && !needsExchangeClient() &&
@@ -437,8 +500,8 @@ struct DriverFactory {
     return std::nullopt;
   }
 
-  /// Returns LocalPartition plan node ID if the pipeline gets data from a local
-  /// exchange.
+  /// Returns LocalPartition plan node ID if the pipeline gets data from a
+  /// local exchange.
   std::optional<core::PlanNodeId> needsLocalExchange() const {
     VELOX_CHECK(!planNodes.empty());
     if (auto exchangeNode =
@@ -449,13 +512,15 @@ struct DriverFactory {
     return std::nullopt;
   }
 
-  /// Returns plan node IDs for which Hash Join Bridges must be created based on
-  /// this pipeline.
+  /// Returns plan node IDs for which Hash Join Bridges must be created based
+  /// on this pipeline.
   std::vector<core::PlanNodeId> needsHashJoinBridges() const;
 
   /// Returns plan node IDs for which Nested Loop Join Bridges must be created
   /// based on this pipeline.
   std::vector<core::PlanNodeId> needsNestedLoopJoinBridges() const;
+
+  static std::vector<DriverAdapter> adapters;
 };
 
 // Begins and ends a section where a thread is running but not

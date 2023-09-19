@@ -17,6 +17,7 @@
 
 #include "velox/exec/AggregateInfo.h"
 #include "velox/exec/AggregationMasks.h"
+#include "velox/exec/DistinctAggregations.h"
 #include "velox/exec/HashTable.h"
 #include "velox/exec/SortedAggregations.h"
 #include "velox/exec/Spiller.h"
@@ -35,7 +36,8 @@ class GroupingSet {
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
-      const Spiller::Config* spillConfig,
+      const common::SpillConfig* spillConfig,
+      uint32_t* numSpillRuns,
       tsan_atomic<bool>* nonReclaimableSection,
       OperatorCtx* operatorCtx);
 
@@ -96,8 +98,11 @@ class GroupingSet {
   void spill(int64_t targetRows, int64_t targetBytes);
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
-  Spiller::Stats spilledStats() const {
-    return spiller_ != nullptr ? spiller_->stats() : Spiller::Stats{};
+  std::optional<SpillStats> spilledStats() const {
+    if (spiller_ == nullptr) {
+      return std::nullopt;
+    }
+    return spiller_->stats();
   }
 
   /// Returns the hashtable stats.
@@ -190,9 +195,11 @@ class GroupingSet {
   // groups.
   void extractSpillResult(const RowVectorPtr& result);
 
-  // Return a list of accumulators for 'aggregates_' plus one more accumulator
-  // for 'sortedAggregations_'.
-  std::vector<Accumulator> accumulators();
+  // Return a list of accumulators for 'aggregates_', plus one more accumulator
+  // for 'sortedAggregations_', and one for each 'distinctAggregations_'.  When
+  // 'excludeToIntermediate' is true, skip the functions that support
+  // 'toIntermediate'.
+  std::vector<Accumulator> accumulators(bool excludeToIntermediate);
 
   std::vector<column_index_t> keyChannels_;
 
@@ -207,6 +214,7 @@ class GroupingSet {
   std::vector<AggregateInfo> aggregates_;
   AggregationMasks masks_;
   std::unique_ptr<SortedAggregations> sortedAggregations_;
+  std::vector<std::unique_ptr<DistinctAggregations>> distinctAggregations_;
 
   const bool ignoreNullKeys_;
 
@@ -214,7 +222,9 @@ class GroupingSet {
   // If it is zero, then there is no such limit.
   const uint64_t spillMemoryThreshold_;
 
-  const Spiller::Config* const spillConfig_; // Not owned.
+  const common::SpillConfig* const spillConfig_;
+
+  uint32_t* const numSpillRuns_;
 
   // Indicates if this grouping set and the associated hash aggregation operator
   // is under non-reclaimable execution section or not.
@@ -235,7 +245,7 @@ class GroupingSet {
   // Used to allocate memory for a single row accumulating results of global
   // aggregation
   HashStringAllocator stringAllocator_;
-  AllocationPool rows_;
+  memory::AllocationPool rows_;
   const bool isAdaptive_;
 
   bool noMoreInput_{false};

@@ -19,8 +19,83 @@
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/SortedAggregations.h"
 #include "velox/exec/Task.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
+
+namespace {
+std::vector<core::LambdaTypedExprPtr> extractLambdaInputs(
+    const core::AggregationNode::Aggregate& aggregate) {
+  std::vector<core::LambdaTypedExprPtr> lambdas;
+  for (const auto& arg : aggregate.call->inputs()) {
+    if (auto lambda =
+            std::dynamic_pointer_cast<const core::LambdaTypedExpr>(arg)) {
+      lambdas.push_back(lambda);
+    }
+  }
+
+  return lambdas;
+}
+
+std::vector<TypePtr> populateAggregateInputs(
+    const core::AggregationNode::Aggregate& aggregate,
+    const RowType& inputType,
+    AggregateInfo& info,
+    memory::MemoryPool* pool) {
+  auto& channels = info.inputs;
+  auto& constants = info.constantInputs;
+  std::vector<TypePtr> argTypes;
+  for (const auto& arg : aggregate.call->inputs()) {
+    argTypes.push_back(arg->type());
+    if (auto field =
+            dynamic_cast<const core::FieldAccessTypedExpr*>(arg.get())) {
+      channels.push_back(inputType.getChildIdx(field->name()));
+      constants.push_back(nullptr);
+    } else if (
+        auto constant =
+            dynamic_cast<const core::ConstantTypedExpr*>(arg.get())) {
+      channels.push_back(kConstantChannel);
+      constants.push_back(constant->toConstantVector(pool));
+    } else if (
+        auto lambda = dynamic_cast<const core::LambdaTypedExpr*>(arg.get())) {
+      for (const auto& name : lambda->signature()->names()) {
+        if (auto captureIndex = inputType.getChildIdxIfExists(name)) {
+          channels.push_back(captureIndex.value());
+          constants.push_back(nullptr);
+        }
+      }
+    } else {
+      VELOX_FAIL(
+          "Expression must be field access, constant, or lambda: {}",
+          arg->toString());
+    }
+  }
+
+  return argTypes;
+}
+
+void verifyIntermediateInputs(
+    const std::string& name,
+    const std::vector<TypePtr>& types) {
+  VELOX_USER_CHECK_GE(
+      types.size(),
+      1,
+      "Intermediate aggregates must have at least one argument: {}",
+      name);
+  VELOX_USER_CHECK_NE(
+      types[0]->kind(),
+      TypeKind::FUNCTION,
+      "First argument of an intermediate aggregate cannot be a lambda: {}",
+      name);
+  for (auto i = 1; i < types.size(); ++i) {
+    VELOX_USER_CHECK_EQ(
+        types[i]->kind(),
+        TypeKind::FUNCTION,
+        "Non-first argument of an intermediate aggregate must be a lambda: {}",
+        name);
+  }
+}
+} // namespace
 
 HashAggregation::HashAggregation(
     int32_t operatorId,
@@ -38,8 +113,8 @@ HashAggregation::HashAggregation(
               ? driverCtx->makeSpillConfig(operatorId)
               : std::nullopt),
       isPartialOutput_(isPartialOutput(aggregationNode->step())),
-      isDistinct_(aggregationNode->aggregates().empty()),
       isGlobal_(aggregationNode->groupingKeys().empty()),
+      isDistinct_(!isGlobal_ && aggregationNode->aggregates().empty()),
       maxExtendedPartialAggregationMemoryUsage_(
           driverCtx->queryConfig().maxExtendedPartialAggregationMemoryUsage()),
       maxPartialAggregationMemoryUsage_(
@@ -67,34 +142,21 @@ HashAggregation::HashAggregation(
   std::vector<AggregateInfo> aggregateInfos;
   aggregateInfos.reserve(numAggregates);
 
-  std::vector<std::unique_ptr<Aggregate>> aggregates;
-  aggregates.reserve(numAggregates);
+  std::shared_ptr<core::ExpressionEvaluator> expressionEvaluator;
+
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode->aggregates()[i];
 
     AggregateInfo info;
+    info.distinct = aggregate.distinct;
+    auto argTypes =
+        populateAggregateInputs(aggregate, inputType->asRow(), info, pool());
 
-    auto& channels = info.inputs;
-    auto& constants = info.constantInputs;
-    std::vector<TypePtr> argTypes;
-    for (const auto& arg : aggregate.call->inputs()) {
-      argTypes.push_back(arg->type());
-      channels.push_back(exprToChannel(arg.get(), inputType));
-      if (channels.back() == kConstantChannel) {
-        auto constant = dynamic_cast<const core::ConstantTypedExpr*>(arg.get());
-        constants.push_back(constant->toConstantVector(pool()));
-      } else {
-        constants.push_back(nullptr);
-      }
-    }
     if (isRawInput(aggregationNode->step())) {
       info.intermediateType =
           Aggregate::intermediateType(aggregate.call->name(), argTypes);
     } else {
-      VELOX_CHECK_EQ(
-          argTypes.size(),
-          1,
-          "Intermediate aggregates must have a single argument");
+      verifyIntermediateInputs(aggregate.call->name(), argTypes);
       info.intermediateType = argTypes[0];
     }
     // Setup aggregation mask: convert the Variable Reference name to the
@@ -107,7 +169,22 @@ HashAggregation::HashAggregation(
 
     const auto& resultType = outputType_->childAt(numHashers + i);
     info.function = Aggregate::create(
-        aggregate.call->name(), aggregationNode->step(), argTypes, resultType);
+        aggregate.call->name(),
+        aggregationNode->step(),
+        argTypes,
+        resultType,
+        driverCtx->queryConfig());
+
+    auto lambdas = extractLambdaInputs(aggregate);
+    if (!lambdas.empty()) {
+      if (expressionEvaluator == nullptr) {
+        expressionEvaluator = std::make_shared<SimpleExpressionEvaluator>(
+            operatorCtx_->execCtx()->queryCtx(),
+            operatorCtx_->execCtx()->pool());
+      }
+      info.function->setLambdaExpressions(lambdas, expressionEvaluator);
+    }
+
     info.output = numHashers + i;
 
     // Sorting keys and orders.
@@ -120,18 +197,12 @@ HashAggregation::HashAggregation(
       info.sortingKeys.push_back(exprToChannel(key.get(), inputType));
     }
 
-    if (numSortingKeys > 0) {
-      VELOX_USER_CHECK_NULL(
-          aggregate.mask,
-          "Aggregations over sorted inputs with masks are not supported yet");
-    }
-
     aggregateInfos.emplace_back(std::move(info));
   }
 
-  // Check that aggregate result type match the output type
-  for (auto i = 0; i < aggregates.size(); i++) {
-    const auto& aggResultType = aggregates[i]->resultType();
+  // Check that aggregate result type match the output type.
+  for (auto i = 0; i < aggregateInfos.size(); i++) {
+    const auto& aggResultType = aggregateInfos[i].function->resultType();
     const auto& expectedType = outputType_->childAt(numHashers + i);
     VELOX_CHECK(
         aggResultType->kindEquals(expectedType),
@@ -156,6 +227,7 @@ HashAggregation::HashAggregation(
       isPartialOutput_,
       isRawInput(aggregationNode->step()),
       spillConfig_.has_value() ? &spillConfig_.value() : nullptr,
+      &numSpillRuns_,
       &nonReclaimableSection_,
       operatorCtx_.get());
 }
@@ -178,18 +250,8 @@ void HashAggregation::addInput(RowVectorPtr input) {
   }
   groupingSet_->addInput(input, mayPushdown_);
   numInputRows_ += input->size();
-  {
-    const auto hashTableStats = groupingSet_->hashTableStats();
-    auto lockedStats = stats_.wlock();
-    lockedStats->runtimeStats["hashtable.capacity"] =
-        RuntimeMetric(hashTableStats.capacity);
-    lockedStats->runtimeStats["hashtable.numRehashes"] =
-        RuntimeMetric(hashTableStats.numRehashes);
-    lockedStats->runtimeStats["hashtable.numDistinct"] =
-        RuntimeMetric(hashTableStats.numDistinct);
-    lockedStats->runtimeStats["hashtable.numTombstones"] =
-        RuntimeMetric(hashTableStats.numTombstones);
-  }
+
+  updateRuntimeStats();
 
   // NOTE: we should not trigger partial output flush in case of global
   // aggregation as the final aggregator will handle it the same way as the
@@ -217,13 +279,41 @@ void HashAggregation::addInput(RowVectorPtr input) {
   }
 }
 
-void HashAggregation::recordSpillStats() {
-  const auto spillStats = groupingSet_->spilledStats();
+void HashAggregation::updateRuntimeStats() {
+  // Report range sizes and number of distinct values for the group-by keys.
+  const auto& hashers = groupingSet_->hashLookup().hashers;
+  uint64_t asRange;
+  uint64_t asDistinct;
+  const auto hashTableStats = groupingSet_->hashTableStats();
+
   auto lockedStats = stats_.wlock();
-  lockedStats->spilledBytes = spillStats.spilledBytes;
-  lockedStats->spilledRows = spillStats.spilledRows;
-  lockedStats->spilledPartitions = spillStats.spilledPartitions;
-  lockedStats->spilledFiles = spillStats.spilledFiles;
+  auto& runtimeStats = lockedStats->runtimeStats;
+
+  for (auto i = 0; i < hashers.size(); i++) {
+    hashers[i]->cardinality(0, asRange, asDistinct);
+    if (asRange != VectorHasher::kRangeTooLarge) {
+      runtimeStats[fmt::format("rangeKey{}", i)] = RuntimeMetric(asRange);
+    }
+    if (asDistinct != VectorHasher::kRangeTooLarge) {
+      runtimeStats[fmt::format("distinctKey{}", i)] = RuntimeMetric(asDistinct);
+    }
+  }
+
+  runtimeStats["hashtable.capacity"] = RuntimeMetric(hashTableStats.capacity);
+  runtimeStats["hashtable.numRehashes"] =
+      RuntimeMetric(hashTableStats.numRehashes);
+  runtimeStats["hashtable.numDistinct"] =
+      RuntimeMetric(hashTableStats.numDistinct);
+  runtimeStats["hashtable.numTombstones"] =
+      RuntimeMetric(hashTableStats.numTombstones);
+}
+
+void HashAggregation::recordSpillStats() {
+  const auto spillStatsOr = groupingSet_->spilledStats();
+  if (!spillStatsOr.has_value()) {
+    return;
+  }
+  Operator::recordSpillStats(spillStatsOr.value());
 }
 
 void HashAggregation::prepareOutput(vector_size_t size) {
@@ -375,8 +465,10 @@ RowVectorPtr HashAggregation::getOutput() {
 
 void HashAggregation::noMoreInput() {
   groupingSet_->noMoreInput();
-  recordSpillStats();
   Operator::noMoreInput();
+  recordSpillStats();
+  // Release the extra reserved memory right after processing all the inputs.
+  pool()->release();
 }
 
 bool HashAggregation::isFinished() {
@@ -412,5 +504,9 @@ void HashAggregation::close() {
 
   output_ = nullptr;
   groupingSet_.reset();
+}
+
+void HashAggregation::abort() {
+  close();
 }
 } // namespace facebook::velox::exec

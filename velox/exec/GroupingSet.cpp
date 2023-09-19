@@ -55,7 +55,8 @@ GroupingSet::GroupingSet(
     bool ignoreNullKeys,
     bool isPartial,
     bool isRawInput,
-    const Spiller::Config* spillConfig,
+    const common::SpillConfig* spillConfig,
+    uint32_t* numSpillRuns,
     tsan_atomic<bool>* nonReclaimableSection,
     OperatorCtx* operatorCtx)
     : preGroupedKeyChannels_(std::move(preGroupedKeys)),
@@ -70,6 +71,7 @@ GroupingSet::GroupingSet(
                                 ->queryConfig()
                                 .aggregationSpillMemoryThreshold()),
       spillConfig_(spillConfig),
+      numSpillRuns_(numSpillRuns),
       nonReclaimableSection_(nonReclaimableSection),
       stringAllocator_(operatorCtx->pool()),
       rows_(operatorCtx->pool()),
@@ -99,13 +101,34 @@ GroupingSet::GroupingSet(
   std::vector<AggregateInfo*> sortedAggs;
   for (auto& aggregate : aggregates_) {
     if (!aggregate.sortingKeys.empty()) {
+      VELOX_USER_CHECK(
+          !isPartial_,
+          "Partial aggregations over sorted inputs are not supported");
+
+      VELOX_USER_CHECK(
+          !aggregate.distinct,
+          "Aggregations over sorted unique values are not supported yet");
+
       sortedAggs.push_back(&aggregate);
+      continue;
     }
   }
 
   if (!sortedAggs.empty()) {
     sortedAggregations_ =
         std::make_unique<SortedAggregations>(sortedAggs, inputType, &pool_);
+  }
+
+  for (auto& aggregate : aggregates_) {
+    if (aggregate.distinct) {
+      VELOX_USER_CHECK(
+          !isPartial_,
+          "Partial aggregations over distinct inputs are not supported");
+      distinctAggregations_.emplace_back(
+          DistinctAggregations::create({&aggregate}, inputType, &pool_));
+    } else {
+      distinctAggregations_.push_back(nullptr);
+    }
   }
 }
 
@@ -118,7 +141,7 @@ GroupingSet::~GroupingSet() {
 std::unique_ptr<GroupingSet> GroupingSet::createForMarkDistinct(
     const RowTypePtr& inputType,
     std::vector<std::unique_ptr<VectorHasher>>&& hashers,
-    OperatorCtx* FOLLY_NONNULL operatorCtx,
+    OperatorCtx* operatorCtx,
     tsan_atomic<bool>* nonReclaimableSection) {
   return std::make_unique<GroupingSet>(
       inputType,
@@ -129,6 +152,7 @@ std::unique_ptr<GroupingSet> GroupingSet::createForMarkDistinct(
       /*isPartial*/ false,
       /*isRawInput*/ false,
       /*spillConfig*/ nullptr,
+      /*numSpillRuns*/ nullptr,
       nonReclaimableSection,
       operatorCtx);
 };
@@ -227,12 +251,24 @@ void GroupingSet::addInputForActiveRows(
       continue;
     }
 
+    const auto& rows = getSelectivityVector(i);
+
+    if (aggregates_[i].distinct) {
+      if (!newGroups.empty()) {
+        distinctAggregations_[i]->initializeNewGroups(groups, newGroups);
+      }
+
+      if (rows.hasSelections()) {
+        distinctAggregations_[i]->addInput(groups, input, rows);
+      }
+      continue;
+    }
+
     auto& function = aggregates_[i].function;
     if (!newGroups.empty()) {
       function->initializeNewGroups(groups, newGroups);
     }
 
-    const auto& rows = getSelectivityVector(i);
     // Check is mask is false for all rows.
     if (!rows.hasSelections()) {
       continue;
@@ -274,10 +310,15 @@ namespace {
 
 void initializeAggregates(
     const std::vector<AggregateInfo>& aggregates,
-    RowContainer& rows) {
+    RowContainer& rows,
+    bool excludeToIntermediate) {
   const auto numKeys = rows.keyTypes().size();
-  for (auto i = 0; i < aggregates.size(); ++i) {
-    auto& function = aggregates[i].function;
+  int i = 0;
+  for (auto& aggregate : aggregates) {
+    auto& function = aggregate.function;
+    if (excludeToIntermediate && function->supportsToIntermediate()) {
+      continue;
+    }
     function->setAllocator(&rows.stringAllocator());
 
     const auto rowColumn = rows.columnAt(numKeys + i);
@@ -286,19 +327,29 @@ void initializeAggregates(
         rowColumn.nullByte(),
         rowColumn.nullMask(),
         rows.rowSizeOffset());
+    ++i;
   }
 }
 } // namespace
 
-std::vector<Accumulator> GroupingSet::accumulators() {
+std::vector<Accumulator> GroupingSet::accumulators(bool excludeToIntermediate) {
   std::vector<Accumulator> accumulators;
   accumulators.reserve(aggregates_.size());
   for (auto& aggregate : aggregates_) {
-    accumulators.push_back(aggregate.function.get());
+    if (!excludeToIntermediate ||
+        !aggregate.function->supportsToIntermediate()) {
+      accumulators.push_back(Accumulator{aggregate.function.get()});
+    }
   }
 
   if (sortedAggregations_ != nullptr) {
     accumulators.push_back(sortedAggregations_->accumulator());
+  }
+
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      accumulators.push_back(aggregation->accumulator());
+    }
   }
   return accumulators;
 }
@@ -306,25 +357,42 @@ std::vector<Accumulator> GroupingSet::accumulators() {
 void GroupingSet::createHashTable() {
   if (ignoreNullKeys_) {
     table_ = HashTable<true>::createForAggregation(
-        std::move(hashers_), accumulators(), &pool_);
+        std::move(hashers_), accumulators(false), &pool_);
   } else {
     table_ = HashTable<false>::createForAggregation(
-        std::move(hashers_), accumulators(), &pool_);
+        std::move(hashers_), accumulators(false), &pool_);
   }
 
   RowContainer& rows = *table_->rows();
-  initializeAggregates(aggregates_, rows);
+  initializeAggregates(aggregates_, rows, false);
+
+  auto numColumns = rows.keyTypes().size() + aggregates_.size();
 
   if (sortedAggregations_) {
     sortedAggregations_->setAllocator(&rows.stringAllocator());
 
-    const auto rowColumn =
-        rows.columnAt(rows.keyTypes().size() + aggregates_.size());
+    const auto rowColumn = rows.columnAt(numColumns);
     sortedAggregations_->setOffsets(
         rowColumn.offset(),
         rowColumn.nullByte(),
         rowColumn.nullMask(),
         rows.rowSizeOffset());
+
+    ++numColumns;
+  }
+
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      aggregation->setAllocator(&rows.stringAllocator());
+
+      const auto rowColumn = rows.columnAt(numColumns);
+      aggregation->setOffsets(
+          rowColumn.offset(),
+          rowColumn.nullByte(),
+          rowColumn.nullMask(),
+          rows.rowSizeOffset());
+      ++numColumns;
+    }
   }
 
   lookup_ = std::make_unique<HashLookup>(table_->hashers());
@@ -393,6 +461,26 @@ void GroupingSet::initializeGlobalAggregation() {
         RowContainer::combineAlignments(accumulator.alignment(), alignment);
   }
 
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      auto accumulator = aggregation->accumulator();
+
+      offset = bits::roundUp(offset, accumulator.alignment());
+
+      aggregation->setAllocator(&stringAllocator_);
+      aggregation->setOffsets(
+          offset,
+          RowContainer::nullByte(nullOffset),
+          RowContainer::nullMask(nullOffset),
+          rowSizeOffset);
+
+      offset += accumulator.fixedWidthSize();
+      ++nullOffset;
+      alignment =
+          RowContainer::combineAlignments(accumulator.alignment(), alignment);
+    }
+  }
+
   lookup_->hits[0] = rows_.allocateFixed(offset, alignment);
   const auto singleGroup = std::vector<vector_size_t>{0};
   for (auto& aggregate : aggregates_) {
@@ -401,6 +489,12 @@ void GroupingSet::initializeGlobalAggregation() {
 
   if (sortedAggregations_) {
     sortedAggregations_->initializeNewGroups(lookup_->hits.data(), singleGroup);
+  }
+
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      aggregation->initializeNewGroups(lookup_->hits.data(), singleGroup);
+    }
   }
 
   globalAggregationInitialized_ = true;
@@ -427,6 +521,11 @@ void GroupingSet::addGlobalAggregationInput(
 
     // Check is mask is false for all rows.
     if (!rows.hasSelections()) {
+      continue;
+    }
+
+    if (aggregates_[i].distinct) {
+      distinctAggregations_[i]->addSingleGroupInput(group, input, rows);
       continue;
     }
 
@@ -479,6 +578,12 @@ bool GroupingSet::getGlobalAggregationOutput(
     sortedAggregations_->extractValues(folly::Range(groups, 1), result);
   }
 
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      aggregation->extractValues(folly::Range(groups, 1), result);
+    }
+  }
+
   iterator.allocationIndex = std::numeric_limits<int32_t>::max();
   return true;
 }
@@ -489,6 +594,7 @@ void GroupingSet::destroyGlobalAggregations() {
   }
   for (int32_t i = 0; i < aggregates_.size(); ++i) {
     auto& function = aggregates_[i].function;
+    auto groups = lookup_->hits.data();
     if (function->accumulatorUsesExternalMemory()) {
       auto groups = lookup_->hits.data();
       function->destroy(folly::Range(groups, 1));
@@ -544,9 +650,6 @@ bool GroupingSet::getOutput(
     if (table_) {
       table_->clear();
     }
-    if (remainingInput_) {
-      addRemainingInput();
-    }
     return false;
   }
   extractGroups(folly::Range<char**>(groups, numGroups), result);
@@ -583,6 +686,12 @@ void GroupingSet::extractGroups(
 
   if (sortedAggregations_) {
     sortedAggregations_->extractValues(groups, result);
+  }
+
+  for (const auto& aggregation : distinctAggregations_) {
+    if (aggregation != nullptr) {
+      aggregation->extractValues(groups, result);
+    }
   }
 }
 
@@ -673,16 +782,22 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   }
 
   if (!tableIncrement && freeRows > input->size() &&
-      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes)) {
+      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes * 2)) {
     // Enough free rows for input rows and enough variable length free
-    // space for the flat size of the whole vector. If outOfLineBytes
-    // is 0 there is no need for variable length space.
+    // space for double the flat size of the whole vector. If
+    // outOfLineBytes is 0 there is no need for variable length
+    // space. Double the flat size is a stopgap because the real
+    // increase can be higher, specially with aggregates that have stl
+    // or folly containers. Make a way to raise the reservation in the
+    // spill protected section instead.
     return;
   }
-  // If there is variable length data we take the flat size of the
-  // input as a cap on the new variable length data needed.
+  // If there is variable length data we take double the flat size of
+  // the input as a cap on the new variable length data needed. Same
+  // condition as in first check. Completely arbitrary. Allow growth
+  // in spill protected area instead.
   auto increment =
-      rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes : 0) +
+      rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes * 2 : 0) +
       tableIncrement;
   // There must be at least 2x the increment in reservation.
   if (pool_.availableReservation() > 2 * increment) {
@@ -731,17 +846,21 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
-        // Spill up to 8 partitions based on bits starting from 29th of the hash
-        // number. Any from one to three bits would do.
-        spillConfig_->hashBitRange,
+        HashBitRange(
+            spillConfig_->startPartitionBit,
+            spillConfig_->startPartitionBit +
+                spillConfig_->aggregationPartitionBits),
         rows->keyTypes().size(),
         std::vector<CompareFlags>(),
         spillConfig_->filePath,
         spillConfig_->maxFileSize,
+        spillConfig_->writeBufferSize,
         spillConfig_->minSpillRunSize,
-        Spiller::spillPool(),
+        spillConfig_->compressionKind,
+        Spiller::pool(),
         spillConfig_->executor);
   }
+  ++(*numSpillRuns_);
   spiller_->spill(targetRows, targetBytes);
   if (table_->rows()->numRows() == 0) {
     table_->clear();
@@ -761,16 +880,16 @@ bool GroupingSet::getOutputWithSpill(
     mergeRows_ = std::make_unique<RowContainer>(
         keyTypes,
         !ignoreNullKeys_,
-        accumulators(),
+        accumulators(false),
         std::vector<TypePtr>(),
         false,
         false,
         false,
         false,
         &pool_,
-        ContainerRowSerde::instance());
+        table_->rows()->stringAllocatorShared());
 
-    initializeAggregates(aggregates_, *mergeRows_);
+    initializeAggregates(aggregates_, *mergeRows_, false);
 
     // Take ownership of the rows and free the hash table. The table will not be
     // needed for producing spill output.
@@ -826,9 +945,7 @@ bool GroupingSet::mergeNext(int32_t batchSize, const RowVectorPtr& result) {
   }
 }
 
-void GroupingSet::initializeRow(
-    SpillMergeStream& keys,
-    char* FOLLY_NONNULL row) {
+void GroupingSet::initializeRow(SpillMergeStream& keys, char* row) {
   for (auto i = 0; i < keyChannels_.size(); ++i) {
     mergeRows_->store(keys.decoded(i), keys.currentIndex(), mergeState_, i);
   }
@@ -850,7 +967,7 @@ void GroupingSet::extractSpillResult(const RowVectorPtr& result) {
   mergeRows_->clear();
 }
 
-void GroupingSet::updateRow(SpillMergeStream& input, char* FOLLY_NONNULL row) {
+void GroupingSet::updateRow(SpillMergeStream& input, char* row) {
   if (input.currentIndex() >= mergeSelection_.size()) {
     mergeSelection_.resize(bits::roundUp(input.currentIndex() + 1, 64));
     mergeSelection_.clearAll();
@@ -873,12 +990,21 @@ void GroupingSet::abandonPartialAggregation() {
       allSupportToIntermediate_ = false;
     }
   }
-  if (!allSupportToIntermediate_) {
-    VELOX_CHECK_EQ(table_->rows()->numRows(), 0)
-    intermediateRows_ = table_->moveRows();
-    intermediateRows_->clear();
-  }
-  table_ = nullptr;
+
+  VELOX_CHECK_EQ(table_->rows()->numRows(), 0);
+  intermediateRows_ = std::make_unique<RowContainer>(
+      table_->rows()->keyTypes(),
+      !ignoreNullKeys_,
+      accumulators(true),
+      std::vector<TypePtr>(),
+      false,
+      false,
+      false,
+      false,
+      &pool_,
+      table_->rows()->stringAllocatorShared());
+  initializeAggregates(aggregates_, *intermediateRows_, true);
+  table_.reset();
 }
 
 void GroupingSet::toIntermediate(
@@ -896,7 +1022,7 @@ void GroupingSet::toIntermediate(
   masks_.addInput(input, activeRows_);
 
   result->resize(numRows);
-  if (intermediateRows_) {
+  if (!allSupportToIntermediate_) {
     intermediateGroups_.resize(numRows);
     for (auto i = 0; i < numRows; ++i) {
       intermediateGroups_[i] = intermediateRows_->newRow();
@@ -916,6 +1042,20 @@ void GroupingSet::toIntermediate(
     VELOX_CHECK(aggregateVector.unique());
     aggregateVector->resize(input->size());
     const auto& rows = getSelectivityVector(i);
+
+    if (function->supportsToIntermediate()) {
+      populateTempVectors(i, input);
+      VELOX_DCHECK(aggregateVector);
+      function->toIntermediate(rows, tempVectors_, aggregateVector);
+      continue;
+    }
+
+    // Initialize all groups, even if we only need just one, to make sure bulk
+    // free (intermediateRows_->eraseRows) is safe. It is not legal to free a
+    // group that hasn't been initialized.
+    function->initializeNewGroups(
+        intermediateGroups_.data(), intermediateRowNumbers_);
+
     // Check if mask is false for all rows.
     if (!rows.hasSelections()) {
       // The aggregate produces its initial state for all
@@ -923,26 +1063,14 @@ void GroupingSet::toIntermediate(
       // element of flat result. This is most often a null but for
       // example count produces a zero, so we use the per-aggregate
       // functions.
-      function->initializeNewGroups(
-          intermediateGroups_.data(),
-          folly::Range<const vector_size_t*>(
-              intermediateRowNumbers_.data(), 1));
       firstGroup_.resize(numRows);
       std::fill(firstGroup_.begin(), firstGroup_.end(), intermediateGroups_[0]);
       function->extractAccumulators(
           firstGroup_.data(), intermediateGroups_.size(), &aggregateVector);
-      function->clear();
       continue;
     }
 
     populateTempVectors(i, input);
-
-    if (function->supportsToIntermediate()) {
-      function->toIntermediate(rows, tempVectors_, aggregateVector);
-      continue;
-    }
-    function->initializeNewGroups(
-        intermediateGroups_.data(), intermediateRowNumbers_);
 
     function->addRawInput(
         intermediateGroups_.data(), rows, tempVectors_, false);
@@ -951,12 +1079,19 @@ void GroupingSet::toIntermediate(
         intermediateGroups_.data(),
         intermediateGroups_.size(),
         &aggregateVector);
-    function->clear();
   }
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
+    if (intermediateRows_->checkFree()) {
+      intermediateRows_->stringAllocator().checkEmpty();
+    }
   }
+
+  // It's unnecessary to call function->clear() to reset the internal states of
+  // aggregation functions because toIntermediate() is already called at the end
+  // of HashAggregation::getOutput(). When toIntermediate() is called, the
+  // aggregaiton function instances won't be reused after it returns.
   tempVectors_.clear();
 }
 

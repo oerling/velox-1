@@ -15,17 +15,20 @@
  */
 #pragma once
 
-#include "velox/common/caching/SsdFile.h" // Needed by presto_cpp
-#include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/HiveDataSource.h"
-#include "velox/dwio/common/DataSink.h"
+#include "velox/connectors/Connector.h"
+#include "velox/connectors/hive/FileHandle.h"
+#include "velox/core/PlanNode.h"
+
+namespace facebook::velox::dwio::common {
+class DataSink;
+class DataSource;
+} // namespace facebook::velox::dwio::common
 
 namespace facebook::velox::connector::hive {
 
 class HiveConnector : public Connector {
  public:
-  explicit HiveConnector(
+  HiveConnector(
       const std::string& id,
       std::shared_ptr<const Config> properties,
       folly::Executor* FOLLY_NULLABLE executor);
@@ -40,20 +43,7 @@ class HiveConnector : public Connector {
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) override {
-    return std::make_unique<HiveDataSource>(
-        outputType,
-        tableHandle,
-        columnHandles,
-        &fileHandleFactory_,
-        connectorQueryCtx->memoryPool(),
-        connectorQueryCtx->expressionEvaluator(),
-        connectorQueryCtx->allocator(),
-        connectorQueryCtx->scanId(),
-        HiveConfig::isFileColumnNamesReadAsLowerCase(
-            connectorQueryCtx->config()),
-        executor_);
-  }
+      ConnectorQueryCtx* connectorQueryCtx) override;
 
   bool supportsSplitPreload() override {
     return true;
@@ -63,14 +53,7 @@ class HiveConnector : public Connector {
       RowTypePtr inputType,
       std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
       ConnectorQueryCtx* connectorQueryCtx,
-      CommitStrategy commitStrategy) override final {
-    auto hiveInsertHandle = std::dynamic_pointer_cast<HiveInsertTableHandle>(
-        connectorInsertTableHandle);
-    VELOX_CHECK_NOT_NULL(
-        hiveInsertHandle, "Hive connector expecting hive write handle!");
-    return std::make_unique<HiveDataSink>(
-        inputType, hiveInsertHandle, connectorQueryCtx, commitStrategy);
-  }
+      CommitStrategy commitStrategy) override final;
 
   folly::Executor* FOLLY_NULLABLE executor() const override {
     return executor_;
@@ -97,14 +80,14 @@ class HiveConnectorFactory : public ConnectorFactory {
   static constexpr const char* FOLLY_NONNULL kHiveHadoop2ConnectorName =
       "hive-hadoop2";
 
-  HiveConnectorFactory() : ConnectorFactory(kHiveConnectorName) {
-    dwio::common::LocalFileSink::registerFactory();
-  }
+  HiveConnectorFactory() : ConnectorFactory(kHiveConnectorName) {}
 
-  HiveConnectorFactory(const char* FOLLY_NONNULL connectorName)
-      : ConnectorFactory(connectorName) {
-    dwio::common::LocalFileSink::registerFactory();
-  }
+  explicit HiveConnectorFactory(const char* FOLLY_NONNULL connectorName)
+      : ConnectorFactory(connectorName) {}
+
+  /// Register HiveConnector components such as Dwrf, Parquet readers and
+  /// writers and FileSystems.
+  void initialize() override;
 
   std::shared_ptr<Connector> newConnector(
       const std::string& id,
@@ -131,6 +114,24 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
         bucketToPartition_(std::move(bucketToPartition)),
         channels_(std::move(channels)),
         constValues_(std::move(constValues)) {}
+
+  /// The constructor without 'bucketToPartition' input is used in case that
+  /// we don't know the actual number of partitions until we create the
+  /// partition function instance. The hive partition function spec then builds
+  /// a bucket to partition map based on the actual number of partitions with
+  /// round-robin partitioning scheme to create the function instance. For
+  /// instance, when we create the local partition node with hive bucket
+  /// function to support multiple table writer drivers, we don't know the the
+  /// actual number of table writer drivers until start the task.
+  HivePartitionFunctionSpec(
+      int numBuckets,
+      std::vector<column_index_t> channels,
+      std::vector<VectorPtr> constValues)
+      : HivePartitionFunctionSpec(
+            numBuckets,
+            {},
+            std::move(channels),
+            std::move(constValues)) {}
 
   std::unique_ptr<core::PartitionFunction> create(
       int numPartitions) const override;

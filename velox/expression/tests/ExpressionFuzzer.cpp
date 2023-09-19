@@ -180,10 +180,11 @@ bool isDeterministic(
   try {
     if (auto vectorFunctionSignatures =
             exec::getVectorFunctionSignatures(functionName)) {
+      core::QueryConfig config({});
       for (const auto& signature : *vectorFunctionSignatures) {
         if (exec::SignatureBinder(*signature, argTypes).tryBind()) {
           if (auto vectorFunction =
-                  exec::getVectorFunction(functionName, argTypes, {})) {
+                  exec::getVectorFunction(functionName, argTypes, {}, config)) {
             return vectorFunction->isDeterministic();
           }
         }
@@ -855,8 +856,8 @@ core::TypedExprPtr ExpressionFuzzer::generateExpression(
     }
   }
   if (!expression) {
-    LOG(INFO) << "Couldn't find a proper function to return '"
-              << returnType->toString() << "'. Returning a constant instead.";
+    VLOG(1) << "Couldn't find a proper function to return '"
+            << returnType->toString() << "'. Returning a constant instead.";
     return generateArgConstant(returnType);
   }
   expressionBank_.insert(expression);

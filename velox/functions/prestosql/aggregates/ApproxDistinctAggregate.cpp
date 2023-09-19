@@ -199,7 +199,9 @@ class ApproxDistinctAggregate : public exec::Aggregate {
         });
   }
 
-  void destroy(folly::Range<char**> /*groups*/) override {}
+  void destroy(folly::Range<char**> groups) override {
+    destroyAccumulators<HllAccumulator>(groups);
+  }
 
   void addRawInput(
       char** groups,
@@ -314,7 +316,7 @@ class ApproxDistinctAggregate : public exec::Aggregate {
 
     uint64_t* rawNulls = nullptr;
     if (result->mayHaveNulls()) {
-      BufferPtr nulls = result->mutableNulls(result->size());
+      BufferPtr& nulls = result->mutableNulls(result->size());
       rawNulls = nulls->asMutable<uint64_t>();
     }
 
@@ -445,7 +447,9 @@ exec::AggregateRegistrationResult registerApproxDistinct(
       [name, hllAsFinalResult, hllAsRawInput](
           core::AggregationNode::Step /*step*/,
           const std::vector<TypePtr>& argTypes,
-          const TypePtr& resultType) -> std::unique_ptr<exec::Aggregate> {
+          const TypePtr& resultType,
+          const core::QueryConfig& /*config*/)
+          -> std::unique_ptr<exec::Aggregate> {
         TypePtr type = argTypes[0]->isVarbinary() ? BIGINT() : argTypes[0];
         return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
             createApproxDistinct,

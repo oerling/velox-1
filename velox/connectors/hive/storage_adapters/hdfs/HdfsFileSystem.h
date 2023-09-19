@@ -41,9 +41,6 @@ struct HdfsServiceEndpoint {
  * Internally you can use hdfsBuilderConfSetStr to configure the client
  */
 class HdfsFileSystem : public FileSystem {
- private:
-  static std::string_view kScheme;
-
  public:
   explicit HdfsFileSystem(
       const std::shared_ptr<const Config>& config,
@@ -93,11 +90,11 @@ class HdfsFileSystem : public FileSystem {
       const std::string_view filePath,
       const Config* config);
 
+  static std::string_view kScheme;
+
  protected:
   class Impl;
   std::shared_ptr<Impl> impl_;
 };
 
-// Register the HDFS.
-void registerHdfsFileSystem();
 } // namespace facebook::velox::filesystems

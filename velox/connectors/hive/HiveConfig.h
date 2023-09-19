@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include <folly/Optional.h>
+#include <optional>
 #include <string>
 
 namespace facebook::velox {
@@ -39,7 +39,8 @@ class HiveConfig {
   static constexpr const char* kInsertExistingPartitionsBehavior =
       "insert_existing_partitions_behavior";
 
-  /// Maximum number of partitions per a single table writer instance.
+  /// Maximum number of (bucketed) partitions per a single table writer
+  /// instance.
   static constexpr const char* kMaxPartitionsPerWriters =
       "max_partitions_per_writers";
 
@@ -79,9 +80,31 @@ class HiveConfig {
   static constexpr const char* kS3IamRoleSessionName =
       "hive.s3.iam-role-session-name";
 
+  // The GCS storage endpoint server.
+  static constexpr const char* kGCSEndpoint = "hive.gcs.endpoint";
+
+  // The GCS storage scheme, https for default credentials.
+  static constexpr const char* kGCSScheme = "hive.gcs.scheme";
+
+  // The GCS service account configuration as json string
+  static constexpr const char* kGCSCredentials = "hive.gcs.credentials";
+
+  // Map table field names to file field names using names, not indices.
+  static constexpr const char* kOrcUseColumnNames = "hive.orc.use-column-names";
+
   // Read the source file column name as lower case.
   static constexpr const char* kFileColumnNamesReadAsLowerCase =
       "file_column_names_read_as_lower_case";
+
+  // Set the max coalesce bytes for a request.
+  static constexpr const char* kMaxCoalescedBytes = "max-coalesced-bytes";
+
+  // Set the max coalesce distance bytes for combining requests.
+  static constexpr const char* kMaxCoalescedDistanceBytes =
+      "max-coalesced-distance-bytes";
+
+  /// Maximum number of entries in the file handle cache.
+  static constexpr const char* kNumCacheFileHandles = "num_cached_file_handles";
 
   static InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const Config* config);
@@ -108,7 +131,21 @@ class HiveConfig {
 
   static std::string s3IAMRoleSessionName(const Config* config);
 
+  static std::string gcsEndpoint(const Config* config);
+
+  static std::string gcsScheme(const Config* config);
+
+  static std::string gcsCredentials(const Config* config);
+
+  static bool isOrcUseColumnNames(const Config* config);
+
   static bool isFileColumnNamesReadAsLowerCase(const Config* config);
+
+  static int64_t maxCoalescedBytes(const Config* config);
+
+  static int32_t maxCoalescedDistanceBytes(const Config* config);
+
+  static int32_t numCacheFileHandles(const Config* config);
 };
 
 } // namespace facebook::velox::connector::hive

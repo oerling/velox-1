@@ -33,7 +33,7 @@ TEST_F(PartitionIdGeneratorTest, consecutiveIdsSingleKey) {
   auto input = makeRowVector(
       {makeFlatVector<StringView>(numPartitions * 3, [&](auto row) {
         return StringView::makeInline(
-            Date(18000 + row % numPartitions).toString());
+            DATE()->toString(18000 + row % numPartitions));
       })});
 
   raw_vector<uint64_t> ids;
@@ -56,7 +56,7 @@ TEST_F(PartitionIdGeneratorTest, consecutiveIdsMultipleKeys) {
       makeFlatVector<StringView>(
           1'000,
           [&](auto row) {
-            return StringView::makeInline(Date(18000 + row % 5).toString());
+            return StringView::makeInline(DATE()->toString(18000 + row % 5));
           }),
       makeFlatVector<int32_t>(1'000, [&](auto row) { return row % 17; }),
   });
@@ -111,7 +111,7 @@ TEST_F(PartitionIdGeneratorTest, stableIdsMultipleKeys) {
       makeFlatVector<StringView>(
           size,
           [](auto row) {
-            return StringView::makeInline(Date(18000 + row % 3).toString());
+            return StringView::makeInline(DATE()->toString(18000 + row % 3));
           }),
       makeFlatVector<int32_t>(size, [](auto row) { return row % 7; }),
   });
@@ -124,7 +124,7 @@ TEST_F(PartitionIdGeneratorTest, stableIdsMultipleKeys) {
       makeFlatVector<StringView>(
           size,
           [](auto row) {
-            return StringView::makeInline(Date(18000 + row % 5).toString());
+            return StringView::makeInline(DATE()->toString(18000 + row % 5));
           }),
       makeFlatVector<int32_t>(size, [](auto row) { return row % 17; }),
   });
@@ -187,6 +187,63 @@ TEST_F(PartitionIdGeneratorTest, limitOfPartitionNumber) {
   VELOX_ASSERT_THROW(
       idGenerator.run(input, ids),
       fmt::format("Exceeded limit of {} distinct partitions.", maxPartitions));
+}
+
+TEST_F(PartitionIdGeneratorTest, supportedPartitionKeyTypes) {
+  // Test on supported key types.
+  {
+    PartitionIdGenerator idGenerator(
+        ROW({
+            VARCHAR(),
+            BOOLEAN(),
+            VARBINARY(),
+            TINYINT(),
+            SMALLINT(),
+            INTEGER(),
+            BIGINT(),
+        }),
+        {0, 1, 2, 3, 4, 5, 6},
+        100,
+        pool());
+
+    auto input = makeRowVector({
+        makeNullableFlatVector<StringView>(
+            {"Left", std::nullopt, "Right"}, VARCHAR()),
+        makeNullableFlatVector<bool>({true, false, std::nullopt}),
+        makeFlatVector<StringView>(
+            {"proton", "neutron", "electron"}, VARBINARY()),
+        makeNullableFlatVector<int8_t>({1, 2, std::nullopt}),
+        makeNullableFlatVector<int16_t>({1, 2, std::nullopt}),
+        makeNullableFlatVector<int32_t>({1, std::nullopt, 2}),
+        makeNullableFlatVector<int64_t>({std::nullopt, 1, 2}),
+    });
+
+    raw_vector<uint64_t> ids;
+    idGenerator.run(input, ids);
+
+    EXPECT_TRUE(ids[0] == 0);
+    EXPECT_TRUE(ids[1] == 1);
+    EXPECT_TRUE(ids[2] == 2);
+  }
+
+  // Test unsupported partition key types.
+  {
+    auto input = makeRowVector({
+        makeConstant<float>(1.0, 1),
+        makeConstant<double>(1.0, 1),
+        makeConstant<Timestamp>(Timestamp::fromMillis(1639426440000), 1),
+        makeArrayVector<int32_t>({{1, 2, 3}}),
+        makeMapVector<int16_t, int16_t>({{{1, 2}}}),
+    });
+
+    for (column_index_t i = 1; i < input->childrenSize(); i++) {
+      VELOX_ASSERT_THROW(
+          PartitionIdGenerator(asRowType(input->type()), {i}, 100, pool()),
+          fmt::format(
+              "Unsupported partition type: {}.",
+              input->childAt(i)->type()->toString()));
+    }
+  }
 }
 
 } // namespace facebook::velox::connector::hive

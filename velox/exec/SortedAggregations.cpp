@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/SortedAggregations.h"
+#include "velox/common/base/RawVector.h"
 
 namespace facebook::velox::exec {
 
@@ -36,7 +37,7 @@ struct RowPointers {
     }
 
     stream.appendOne(reinterpret_cast<uintptr_t>(row));
-    currentBlock = allocator.finishWrite(stream, 1024);
+    currentBlock = allocator.finishWrite(stream, 1024).second;
 
     ++size;
   }
@@ -82,6 +83,10 @@ SortedAggregations::SortedAggregations(
     for (auto sortingKey : aggregate->sortingKeys) {
       VELOX_USER_CHECK_NE(sortingKey, kConstantChannel);
       allInputs.insert(sortingKey);
+    }
+
+    if (aggregate->mask) {
+      allInputs.insert(aggregate->mask.value());
     }
   }
 
@@ -210,6 +215,30 @@ void SortedAggregations::sortSingleGroup(
 std::vector<VectorPtr> SortedAggregations::extractSingleGroup(
     std::vector<char*>& groupRows,
     const AggregateInfo& aggregate) {
+  const auto numGroups = groupRows.size();
+
+  std::vector<vector_size_t> rowNumbers;
+  if (aggregate.mask) {
+    FlatVectorPtr<bool> mask = BaseVector::create<FlatVector<bool>>(
+        BOOLEAN(), numGroups, inputData_->pool());
+    inputData_->extractColumn(
+        groupRows.data(),
+        numGroups,
+        inputMapping_[aggregate.mask.value()],
+        mask);
+
+    rowNumbers.reserve(numGroups);
+    for (auto i = 0; i < numGroups; ++i) {
+      if (!mask->isNullAt(i) && mask->valueAt(i)) {
+        rowNumbers.push_back(i);
+      }
+    }
+
+    if (rowNumbers.empty()) {
+      return {};
+    }
+  }
+
   const auto numInputs = aggregate.inputs.size();
   std::vector<VectorPtr> inputVectors(numInputs);
   for (auto i = 0; i < numInputs; ++i) {
@@ -217,12 +246,20 @@ std::vector<VectorPtr> SortedAggregations::extractSingleGroup(
       inputVectors[i] = aggregate.constantInputs[i];
     } else {
       const auto columnIndex = inputMapping_[aggregate.inputs[i]];
+      const auto numRows = aggregate.mask ? rowNumbers.size() : numGroups;
       inputVectors[i] = BaseVector::create(
-          inputData_->keyTypes()[columnIndex],
-          groupRows.size(),
-          inputData_->pool());
-      inputData_->extractColumn(
-          groupRows.data(), groupRows.size(), columnIndex, inputVectors[i]);
+          inputData_->keyTypes()[columnIndex], numRows, inputData_->pool());
+      if (aggregate.mask) {
+        inputData_->extractColumn(
+            groupRows.data(),
+            folly::Range(rowNumbers.data(), rowNumbers.size()),
+            columnIndex,
+            0, // resultOffset
+            inputVectors[i]);
+      } else {
+        inputData_->extractColumn(
+            groupRows.data(), numGroups, columnIndex, inputVectors[i]);
+      }
     }
   }
 
@@ -234,6 +271,7 @@ void SortedAggregations::extractValues(
     const RowVectorPtr& result) {
   // TODO Identify aggregates with same order by and sort once.
 
+  raw_vector<int32_t> temp;
   SelectivityVector rows;
   for (auto i = 0; i < aggregates_.size(); ++i) {
     const auto& aggregate = *aggregates_[i];
@@ -248,8 +286,12 @@ void SortedAggregations::extractValues(
       // TODO Process group rows in batches to avoid creating very large input
       // vectors.
       auto inputVectors = extractSingleGroup(groupRows, aggregate);
+      if (inputVectors.empty()) {
+        // Mask must be false for all 'groupRows'.
+        continue;
+      }
 
-      rows.resize(groupRows.size());
+      rows.resize(inputVectors[0]->size());
       aggregate.function->addSingleGroupRawInput(
           group, rows, inputVectors, false);
     }
@@ -260,6 +302,11 @@ void SortedAggregations::extractValues(
     // Release memory back to HashStringAllocator to allow next aggregate to
     // re-use it.
     aggregate.function->destroy(groups);
+    // Overwrite empty groups over the destructed groups to keep the container
+    // in a well formed state.
+    aggregate.function->initializeNewGroups(
+        groups.data(),
+        folly::Range<const int32_t*>(iota(groups.size(), temp), groups.size()));
   }
 }
 

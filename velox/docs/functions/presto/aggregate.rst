@@ -23,11 +23,13 @@ General Aggregate Functions
 
 .. function:: array_agg(x) -> array<[same as input]>
 
-    Returns an array created from the input ``x`` elements.
+    Returns an array created from the input ``x`` elements. Ignores null
+    inputs if :doc:`presto.array_agg.ignore_nulls <../../configs>` is set
+    to false.
 
 .. function:: avg(x) -> double|real
 
-    Returns the average (arithmetic mean) of all input values.
+    Returns the average (arithmetic mean) of all non-null input values.
     When x is of type REAL, the result type is REAL.
     For all other input types, the result type is DOUBLE.
 
@@ -56,6 +58,19 @@ General Aggregate Functions
 
     Returns the number of ``TRUE`` input values.
     This function is equivalent to ``count(CASE WHEN x THEN 1 END)``.
+
+.. function:: entropy(c) -> double
+
+    Returns the log-2 entropy of count input-values.
+
+    .. math::
+
+        \mathrm{entropy}(c) = \sum_i \left[ {c_i \over \sum_j [c_j]} \log_2\left({\sum_j [c_j] \over c_i}\right) \right].
+
+    ``c`` must be a ``integer`` column of non-negative values.
+
+    The function ignores any ``NULL`` count. If the sum of non-``NULL`` counts is 0,
+    it returns 0.
 
 .. function:: every(boolean) -> boolean
 
@@ -87,15 +102,87 @@ General Aggregate Functions
 
     Returns the maximum value of all input values.
 
+.. function:: max(x, n) -> array<[same as x]>
+
+    Returns ``n`` largest values of all input values of ``x``.
+
 .. function:: min(x) -> [same as input]
 
     Returns the minimum value of all input values.
 
+.. function:: min(x, n) -> array<[same as x]>
+
+    Returns ``n`` smallest values of all input values of ``x``.
+
+.. function:: multimap_agg(key, value) -> map(K,array(V))
+
+    Returns a multimap created from the input ``key`` / ``value`` pairs.
+    Each key can be associated with multiple values.
+
+.. function:: reduce_agg(inputValue T, initialState S, inputFunction(S,T,S), combineFunction(S,S,S)) -> S
+
+    Reduces all non-NULL input values into a single value. ``inputFunction``
+    will be invoked for each non-NULL input value. If all inputs are NULL, the
+    result is NULL. In addition to taking the input value, ``inputFunction``
+    takes the current state, initially ``initialState``, and returns the new state.
+    ``combineFunction`` will be invoked to combine two states into a new state.
+    The final state is returned. Throws an error if ``initialState`` is NULL or
+    ``inputFunction`` or ``combineFunction`` returns a NULL.
+
+    Note that reduce_agg doesn't support evaluation over sorted inputs.::
+
+        -- Compute sum (for illustration purposes only; use SUM aggregate function in production queries).
+        SELECT id, reduce_agg(value, 0, (a, b) -> a + b, (a, b) -> a + b)
+        FROM (
+            VALUES
+                (1, 2),
+                (1, 3),
+                (1, 4),
+                (2, 20),
+                (2, 30),
+                (2, 40)
+        ) AS t(id, value)
+        GROUP BY id;
+        -- (1, 9)
+        -- (2, 90)
+
+        -- Compute product.
+        SELECT id, reduce_agg(value, 1, (a, b) -> a * b, (a, b) -> a * b)
+        FROM (
+            VALUES
+                (1, 2),
+                (1, 3),
+                (1, 4),
+                (2, 20),
+                (2, 30),
+                (2, 40)
+        ) AS t(id, value)
+        GROUP BY id;
+        -- (1, 24)
+        -- (2, 24000)
+
+        -- Compute avg (for illustration purposes only; use AVG aggregate function in production queries).
+        SELECT id, sum_and_count.sum / sum_and_count.count FROM (
+          SELECT id, reduce_agg(value, CAST(row(0, 0) AS row(sum double, count bigint)),
+            (s, x) -> CAST(row(s.sum + x, s.count + 1) AS row(sum double, count bigint)),
+            (s, s2) -> CAST(row(s.sum + s2.sum, s.count + s2.count) AS row(sum double, count bigint))) AS sum_and_count
+          FROM (
+               VALUES
+                   (1, 2),
+                   (1, 3),
+                   (1, 4),
+                   (2, 20),
+                   (2, 30),
+                   (2, 40)
+           ) AS t(id, value)
+           GROUP BY id
+        );
+        -- (1, 3.0)
+        -- (2, 30.0)
+
 .. function:: set_agg(x) -> array<[same as input]>
 
     Returns an array created from the distinct input ``x`` elements.
-
-    Supported types of ``x`` are: TINYINT, SMALLINT, INTEGER, BIGINT, VARCHAR.
 
 .. function:: set_union(array(T)) -> array(T)
 
@@ -111,8 +198,6 @@ General Aggregate Functions
         ) AS t(elements);
 
     Returns ARRAY[1, 2, 3, 4]
-
-    Supported types are: TINYINT, SMALLINT, INTEGER, BIGINT, VARCHAR.
 
 .. function:: sum(x) -> [same as input]
 
@@ -327,3 +412,7 @@ Miscellaneous
 .. function:: max_data_size_for_stats(x) -> bigint
 
     Returns an estimate of the the maximum in-memory size in bytes of ``x``.
+
+.. function:: sum_data_size_for_stats(x) -> bigint
+
+    Returns an estimate of the sum of in-memory size in bytes of ``x``.

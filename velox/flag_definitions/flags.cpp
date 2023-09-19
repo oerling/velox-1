@@ -16,21 +16,6 @@
 
 #include <gflags/gflags.h>
 
-// Used in velox/builder/SimpleVectorBuilder.cpp
-
-DEFINE_int32(
-    max_block_value_set_length,
-    5,
-    "Max entries per column that the block meta-record stores for pre-flight "
-    "filtering optimization");
-
-// Used in velox/common/memory/Memory.cpp
-
-DEFINE_int32(
-    memory_usage_aggregation_interval_millis,
-    2,
-    "Interval to compute aggregate memory usage for all nodes");
-
 // Used in velox/common/memory/MappedMemory.cpp
 
 DEFINE_int32(
@@ -101,6 +86,11 @@ DEFINE_bool(
     false,
     "If true, check fails on any memory leaks in memory pool and memory manager");
 
+DEFINE_bool(
+    velox_memory_pool_debug_enabled,
+    false,
+    "If true, 'MemoryPool' will be running in debug mode to track the allocation and free call sites to detect the source of memory leak for testing purpose");
+
 // TODO: deprecate this after solves all the use cases that can cause
 // significant performance regression by memory usage tracking.
 DEFINE_bool(
@@ -113,3 +103,5 @@ DEFINE_bool(
     false,
     "If true, suppress the verbose error message in memory capacity exceeded "
     "exception. This is only used by test to control the test error output size");
+
+DEFINE_bool(velox_memory_use_hugepages, true, "Use explicit huge pages");

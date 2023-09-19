@@ -71,33 +71,68 @@ class JsonFunctionsTest : public functions::test::FunctionBaseTest {
     return makeNullableFlatVector<StringView>({s}, JSON());
   }
 
+  std::pair<VectorPtr, VectorPtr> makeVectors(std::optional<std::string> json) {
+    std::optional<StringView> s = json.has_value()
+        ? std::make_optional(StringView(json.value()))
+        : std::nullopt;
+    return {
+        makeNullableFlatVector<StringView>({s}, JSON()),
+        makeNullableFlatVector<StringView>({s}, VARCHAR())};
+  }
+
   std::optional<bool> isJsonScalar(std::optional<std::string> json) {
-    return evaluateOnce<bool>(
-        "is_json_scalar(c0)", makeRowVector({makeJsonVector(json)}));
+    auto [jsonVector, varcharVector] = makeVectors(json);
+    auto jsonResult =
+        evaluateOnce<bool>("is_json_scalar(c0)", makeRowVector({jsonVector}));
+    auto varcharResult = evaluateOnce<bool>(
+        "is_json_scalar(c0)", makeRowVector({varcharVector}));
+
+    EXPECT_EQ(jsonResult, varcharResult);
+    return jsonResult;
   }
 
   std::optional<int64_t> jsonArrayLength(std::optional<std::string> json) {
-    return evaluateOnce<int64_t>(
-        "json_array_length(c0)", makeRowVector({makeJsonVector(json)}));
+    auto [jsonVector, varcharVector] = makeVectors(json);
+    auto jsonResult = evaluateOnce<int64_t>(
+        "json_array_length(c0)", makeRowVector({jsonVector}));
+    auto varcharResult = evaluateOnce<int64_t>(
+        "json_array_length(c0)", makeRowVector({varcharVector}));
+
+    EXPECT_EQ(jsonResult, varcharResult);
+    return jsonResult;
   }
 
   template <typename T>
   std::optional<bool> jsonArrayContains(
       std::optional<std::string> json,
       std::optional<T> value) {
-    return evaluateOnce<bool>(
+    auto [jsonVector, varcharVector] = makeVectors(json);
+    auto valueVector = makeNullableFlatVector<T>({value});
+
+    auto jsonResult = evaluateOnce<bool>(
         "json_array_contains(c0, c1)",
-        makeRowVector(
-            {makeJsonVector(json), makeNullableFlatVector<T>({value})}));
+        makeRowVector({jsonVector, valueVector}));
+    auto varcharResult = evaluateOnce<bool>(
+        "json_array_contains(c0, c1)",
+        makeRowVector({varcharVector, valueVector}));
+
+    EXPECT_EQ(jsonResult, varcharResult);
+    return jsonResult;
   }
 
   std::optional<int64_t> jsonSize(
       std::optional<std::string> json,
       const std::string& path) {
-    return evaluateOnce<int64_t>(
-        "json_size(c0, c1)",
-        makeRowVector(
-            {makeJsonVector(json), makeFlatVector<std::string>({path})}));
+    auto [jsonVector, varcharVector] = makeVectors(json);
+    auto pathVector = makeFlatVector<std::string>({path});
+
+    auto jsonResult = evaluateOnce<int64_t>(
+        "json_size(c0, c1)", makeRowVector({jsonVector, pathVector}));
+    auto varcharResult = evaluateOnce<int64_t>(
+        "json_size(c0, c1)", makeRowVector({varcharVector, pathVector}));
+
+    EXPECT_EQ(jsonResult, varcharResult);
+    return jsonResult;
   }
 };
 
@@ -220,16 +255,18 @@ TEST_F(JsonFunctionsTest, jsonParse) {
 
 TEST_F(JsonFunctionsTest, isJsonScalarSignatures) {
   auto signatures = getSignatureStrings("is_json_scalar");
-  ASSERT_EQ(1, signatures.size());
+  ASSERT_EQ(2, signatures.size());
 
   ASSERT_EQ(1, signatures.count("(json) -> boolean"));
+  ASSERT_EQ(1, signatures.count("(varchar) -> boolean"));
 }
 
 TEST_F(JsonFunctionsTest, jsonArrayLengthSignatures) {
   auto signatures = getSignatureStrings("json_array_length");
-  ASSERT_EQ(1, signatures.size());
+  ASSERT_EQ(2, signatures.size());
 
   ASSERT_EQ(1, signatures.count("(json) -> bigint"));
+  ASSERT_EQ(1, signatures.count("(varchar) -> bigint"));
 }
 
 TEST_F(JsonFunctionsTest, jsonExtractScalarSignatures) {
@@ -242,19 +279,25 @@ TEST_F(JsonFunctionsTest, jsonExtractScalarSignatures) {
 
 TEST_F(JsonFunctionsTest, jsonArrayContainsSignatures) {
   auto signatures = getSignatureStrings("json_array_contains");
-  ASSERT_EQ(4, signatures.size());
+  ASSERT_EQ(8, signatures.size());
 
   ASSERT_EQ(1, signatures.count("(json,varchar) -> boolean"));
   ASSERT_EQ(1, signatures.count("(json,bigint) -> boolean"));
   ASSERT_EQ(1, signatures.count("(json,double) -> boolean"));
   ASSERT_EQ(1, signatures.count("(json,boolean) -> boolean"));
+
+  ASSERT_EQ(1, signatures.count("(varchar,varchar) -> boolean"));
+  ASSERT_EQ(1, signatures.count("(varchar,bigint) -> boolean"));
+  ASSERT_EQ(1, signatures.count("(varchar,double) -> boolean"));
+  ASSERT_EQ(1, signatures.count("(varchar,boolean) -> boolean"));
 }
 
 TEST_F(JsonFunctionsTest, jsonSizeSignatures) {
   auto signatures = getSignatureStrings("json_size");
-  ASSERT_EQ(1, signatures.size());
+  ASSERT_EQ(2, signatures.size());
 
   ASSERT_EQ(1, signatures.count("(json,varchar) -> bigint"));
+  ASSERT_EQ(1, signatures.count("(varchar,varchar) -> bigint"));
 }
 
 TEST_F(JsonFunctionsTest, isJsonScalar) {
@@ -326,9 +369,14 @@ false, false, false, false, false, false, true, false, false, false, false])",
 true, true, true, true, true, true, true, true, true, true, true])",
           false),
       false);
+
+  // Test errors of getting the specified type of json value.
+  // Error code is "INCORRECT_TYPE".
+  EXPECT_EQ(jsonArrayContains<bool>(R"([truet])", false), false);
+  EXPECT_EQ(jsonArrayContains<bool>(R"([truet, false])", false), true);
 }
 
-TEST_F(JsonFunctionsTest, jsonArrayContainsInt) {
+TEST_F(JsonFunctionsTest, jsonArrayContainsBigint) {
   EXPECT_EQ(jsonArrayContains<int64_t>(R"([])", 0), false);
   EXPECT_EQ(jsonArrayContains<int64_t>(R"([1.2, 2.3, 3.4])", 2), false);
   EXPECT_EQ(jsonArrayContains<int64_t>(R"([1.2, 2.0, 3.4])", 2), false);
@@ -361,6 +409,16 @@ TEST_F(JsonFunctionsTest, jsonArrayContainsInt) {
           R"([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])",
           23),
       false);
+  EXPECT_EQ(jsonArrayContains<int64_t>(R"([92233720368547758071])", -9), false);
+
+  // Test errors of getting the specified type of json value.
+  // Error code is "INCORRECT_TYPE".
+  EXPECT_EQ(jsonArrayContains<int64_t>(R"([-9223372036854775809])", -9), false);
+  EXPECT_EQ(
+      jsonArrayContains<int64_t>(R"([-9223372036854775809,-9])", -9), true);
+  // Error code is "NUMBER_ERROR".
+  EXPECT_EQ(jsonArrayContains<int64_t>(R"([01])", 4), false);
+  EXPECT_EQ(jsonArrayContains<int64_t>(R"([01, 4])", 4), true);
 }
 
 TEST_F(JsonFunctionsTest, jsonArrayContainsDouble) {
@@ -398,6 +456,11 @@ TEST_F(JsonFunctionsTest, jsonArrayContainsDouble) {
           R"([1.2, 2.3, 3.4, 4.5, 1.2, 2.3, 3.4, 4.5, 1.2, 2.3, 3.4, 4.5, 1.2, 2.3, 3.4, 4.5, 1.2, 2.3, 3.4, 4.5])",
           4.3),
       false);
+
+  // Test errors of getting the specified type of json value.
+  // Error code is "NUMBER_ERROR".
+  EXPECT_EQ(jsonArrayContains<double>(R"([9.6E400])", 4.2), false);
+  EXPECT_EQ(jsonArrayContains<double>(R"([9.6E400,4.2])", 4.2), true);
 }
 
 TEST_F(JsonFunctionsTest, jsonArrayContainsString) {
@@ -495,10 +558,10 @@ TEST_F(JsonFunctionsTest, jsonExtract) {
   };
 
   EXPECT_EQ(
-      "{\"x\":{\"a\":1,\"b\":2}}",
+      "{\"x\": {\"a\" : 1, \"b\" : 2} }",
       jsonExtract("{\"x\": {\"a\" : 1, \"b\" : 2} }", "$"));
   EXPECT_EQ(
-      "{\"a\":1,\"b\":2}",
+      "{\"a\" : 1, \"b\" : 2}",
       jsonExtract("{\"x\": {\"a\" : 1, \"b\" : 2} }", "$.x"));
   EXPECT_EQ("1", jsonExtract("{\"x\": {\"a\" : 1, \"b\" : 2} }", "$.x.a"));
   EXPECT_EQ(
@@ -506,7 +569,7 @@ TEST_F(JsonFunctionsTest, jsonExtract) {
   EXPECT_EQ(
       "3", jsonExtract("{\"x\": {\"a\" : 1, \"b\" : [2, 3]} }", "$.x.b[1]"));
   EXPECT_EQ("2", jsonExtract("[1,2,3]", "$[1]"));
-  EXPECT_EQ(std::nullopt, jsonExtract("[1,null,3]", "$[1]"));
+  EXPECT_EQ("null", jsonExtract("[1,null,3]", "$[1]"));
   EXPECT_EQ(std::nullopt, jsonExtract("INVALID_JSON", "$"));
   VELOX_ASSERT_THROW(jsonExtract("{\"\":\"\"}", ""), "Invalid JSON path");
 

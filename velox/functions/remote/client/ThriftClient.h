@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <thrift/perf/cpp2/util/Util.h>
+#include <folly/io/async/EventBase.h>
 #include "velox/functions/remote/if/gen-cpp2/RemoteFunctionServiceAsyncClient.h"
 
 namespace facebook::velox::functions {
@@ -25,6 +25,7 @@ using RemoteFunctionClient =
     apache::thrift::Client<remote::RemoteFunctionService>;
 
 std::unique_ptr<RemoteFunctionClient> getThriftClient(
-    folly::SocketAddress location);
+    folly::SocketAddress location,
+    folly::EventBase* eventBase);
 
 } // namespace facebook::velox::functions

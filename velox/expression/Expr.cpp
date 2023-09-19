@@ -21,7 +21,10 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/SuccinctPrinter.h"
+#include "velox/common/process/ThreadDebugInfo.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/core/Expressions.h"
+#include "velox/expression/CastExpr.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/ExprCompiler.h"
@@ -37,6 +40,19 @@ DEFINE_bool(
     false,
     "Whether to overwrite queryCtx and force the "
     "use of simplified expression evaluation path.");
+
+DEFINE_bool(
+    velox_experimental_save_input_on_fatal_signal,
+    false,
+    "This is an experimental flag only to be used for debugging "
+    "purposes. If set to true, serializes the input vector data and "
+    "all the SQL expressions in the ExprSet that is currently "
+    "executing, whenever a fatal signal is encountered. Enabling "
+    "this flag makes the signal handler async signal unsafe, so it "
+    "should only be used for debugging purposes. The vector and SQLs "
+    "are serialized to files in directories specified by either "
+    "'velox_save_input_on_expression_any_failure_path' or "
+    "'velox_save_input_on_expression_system_failure_path'");
 
 namespace facebook::velox::exec {
 
@@ -187,66 +203,104 @@ bool Expr::allSupportFlatNoNullsFastPath(
   return true;
 }
 
+void Expr::clearMetaData() {
+  metaDataComputed_ = false;
+  for (auto child : inputs_) {
+    child->clearMetaData();
+  }
+  propagatesNulls_ = false;
+  distinctFields_.clear();
+  multiplyReferencedFields_.clear();
+  hasConditionals_ = false;
+  deterministic_ = true;
+  sameAsParentDistinctFields_ = false;
+}
+
 void Expr::computeMetadata() {
-  // Sets propagatesNulls_ if a null in any of the columns this
-  // depends on makes the Expr null. If the set of fields
-  // null-propagating arguments depend on is a superset of the fields
-  // non null-propagating arguments depend on and the function itself
-  // has default null behavior, then the Expr propagates nulls.  Sets
-  // isDeterministic to false if some subtree is
-  // non-deterministic. Sets 'distinctFields_' to be the union of
-  // 'distinctFields_' of inputs. If one of the inputs has the
-  // identical set of distinct fields, then the input's distinct
-  // fields are set to empty.
-  bool isNullPropagatingFunction = false;
-  if (isSpecialForm()) {
-    // 'propagatesNulls_' will be adjusted after inputs are processed.
-    propagatesNulls_ = true;
-    deterministic_ = true;
-  } else if (vectorFunction_) {
-    deterministic_ = vectorFunction_->isDeterministic();
-    isNullPropagatingFunction = vectorFunction_->isDefaultNullBehavior();
-    propagatesNulls_ = isNullPropagatingFunction;
+  if (metaDataComputed_) {
+    return;
   }
 
-  std::vector<FieldReference*> nullPropagatingFields;
-  std::vector<FieldReference*> nonNullPropagatingFields;
-  std::unordered_set<FieldReference*> ignore;
+  // Compute metadata for all the inputs.
   for (auto& input : inputs_) {
-    // Skip computing for inputs already marked as multiply referenced as they
-    // would have it computed already.
-    if (!input->isMultiplyReferenced_) {
-      input->computeMetadata();
-    }
+    input->computeMetadata();
+  }
+
+  // (1) Compute deterministic_.
+  // An expression is deterministic if it is a deterministic function call or a
+  // special form, and all its inputs are also deterministic.
+  if (vectorFunction_) {
+    deterministic_ = vectorFunction_->isDeterministic();
+  } else {
+    VELOX_CHECK(isSpecialForm());
+    deterministic_ = true;
+  }
+
+  for (auto& input : inputs_) {
     deterministic_ &= input->deterministic_;
-    if (!input->distinctFields_.empty()) {
-      if (!isNullPropagatingFunction) {
-        propagatesNulls_ &= input->propagatesNulls_;
-      } else if (input->propagatesNulls_) {
-        mergeFields(nullPropagatingFields, ignore, input->distinctFields_);
-      } else {
-        mergeFields(nonNullPropagatingFields, ignore, input->distinctFields_);
-      }
-    }
+  }
+
+  // (2) Compute distinctFields_ and multiplyReferencedFields_.
+  for (auto& input : inputs_) {
     mergeFields(
         distinctFields_, multiplyReferencedFields_, input->distinctFields_);
   }
-  if (isSpecialForm()) {
-    propagatesNulls_ = propagatesNulls();
-  } else if (isNullPropagatingFunction) {
-    propagatesNulls_ =
-        isSubsetOfFields(nonNullPropagatingFields, nullPropagatingFields);
-  } else {
-    propagatesNulls_ = false;
+
+  if (is<FieldReference>() && inputs_.empty()) {
+    distinctFields_.resize(1);
+    distinctFields_[0] = this->as<FieldReference>();
   }
-  for (auto& input : inputs_) {
-    if (!input->isMultiplyReferenced_ &&
-        isSameFields(distinctFields_, input->distinctFields_)) {
-      input->distinctFields_.clear();
+
+  // (3) Compute propagatesNulls_.
+  // propagatesNulls_ is true iff a null in any of the columns this
+  // depends on makes the Expr null.
+  if (isSpecialForm() && !is<ConstantExpr>() && !is<FieldReference>() &&
+      !is<CastExpr>()) {
+    as<SpecialForm>()->computePropagatesNulls();
+  } else {
+    if (vectorFunction_ && !vectorFunction_->isDefaultNullBehavior()) {
+      propagatesNulls_ = false;
+    } else {
+      // Logic for handling default-null vector functions.
+      // cast, constant and fieldReference expressions act as vector functions
+      // with default null behavior.
+
+      // If the function has default null behavior, the Expr propagates nulls if
+      // the set of fields null-propagating arguments depend on is a superset of
+      // the fields non null-propagating arguments depend on.
+      std::unordered_set<FieldReference*> nullPropagating, nonNullPropagating;
+      for (auto& input : inputs_) {
+        if (input->propagatesNulls_) {
+          nullPropagating.insert(
+              input->distinctFields_.begin(), input->distinctFields_.end());
+        } else {
+          nonNullPropagating.insert(
+              input->distinctFields_.begin(), input->distinctFields_.end());
+        }
+      }
+
+      // propagatesNulls_ is true if nonNullPropagating is subset of
+      // nullPropagating.
+      propagatesNulls_ = true;
+      for (auto* field : nonNullPropagating) {
+        if (!nullPropagating.count(field)) {
+          propagatesNulls_ = false;
+          break;
+        }
+      }
     }
   }
 
+  for (auto& input : inputs_) {
+    if (isSameFields(distinctFields_, input->distinctFields_)) {
+      input->sameAsParentDistinctFields_ = true;
+    }
+  }
+
+  // (5) Compute hasConditionals_.
   hasConditionals_ = hasConditionals(this);
+
+  metaDataComputed_ = true;
 }
 
 namespace {
@@ -272,7 +326,7 @@ void rethrowFirstError(
 // has errors, throws the first error in 'argumentErrors' scoped to 'rows'.
 // Otherwise sets 'errors()' of 'context' to the union of the errors. This is
 // used after all arguments of a function call have been evaluated and
-// we decide on whether to throw or what errors to leave in 'context'  for  the
+// we decide on whether to throw or what errors to leave in 'context' for the
 // caller.
 void mergeOrThrowArgumentErrors(
     const SelectivityVector& rows,
@@ -289,7 +343,7 @@ void mergeOrThrowArgumentErrors(
 }
 
 // Returns true if vector is a LazyVector that hasn't been loaded yet or
-// is not dictionary, sequence or constant encoded.
+// is not dictionary or constant encoded.
 bool isFlat(const BaseVector& vector) {
   auto encoding = vector.encoding();
   if (encoding == VectorEncoding::Simple::LAZY) {
@@ -300,9 +354,16 @@ bool isFlat(const BaseVector& vector) {
     encoding = vector.loadedVector()->encoding();
   }
   return !(
-      encoding == VectorEncoding::Simple::SEQUENCE ||
       encoding == VectorEncoding::Simple::DICTIONARY ||
       encoding == VectorEncoding::Simple::CONSTANT);
+}
+
+inline void checkResultInternalState(VectorPtr& result) {
+#ifndef NDEBUG
+  if (result != nullptr) {
+    result->validate();
+  }
+#endif
 }
 
 } // namespace
@@ -724,6 +785,7 @@ void Expr::eval(
   if (supportsFlatNoNullsFastPath_ && context.throwOnError() &&
       context.inputFlatNoNulls() && rows.countSelected() < 1'000) {
     evalFlatNoNulls(rows, context, result, parentExprSet);
+    checkResultInternalState(result);
     return;
   }
 
@@ -736,6 +798,7 @@ void Expr::eval(
 
   if (!rows.hasSelections()) {
     checkOrSetEmptyResult(type(), context.pool(), result);
+    checkResultInternalState(result);
     return;
   }
 
@@ -766,7 +829,7 @@ void Expr::eval(
   if (!hasConditionals_ || distinctFields_.size() == 1 ||
       shouldEvaluateSharedSubexp()) {
     // Load lazy vectors if any.
-    for (const auto& field : distinctFields_) {
+    for (auto* field : distinctFields_) {
       context.ensureFieldLoaded(field->index(context), rows);
     }
   } else if (!propagatesNulls_) {
@@ -779,10 +842,12 @@ void Expr::eval(
 
   if (inputs_.empty()) {
     evalAll(rows, context, result);
+    checkResultInternalState(result);
     return;
   }
 
   evalEncodings(rows, context, result);
+  checkResultInternalState(result);
 }
 
 template <typename TEval>
@@ -793,7 +858,7 @@ void Expr::evaluateSharedSubexpr(
     TEval eval) {
   // Captures the inputs referenced by distinctFields_.
   std::vector<const BaseVector*> expressionInputFields;
-  for (const auto& field : distinctFields_) {
+  for (auto* field : distinctFields_) {
     expressionInputFields.push_back(
         context.getField(field->index(context)).get());
   }
@@ -882,18 +947,22 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
   }
 
   // Prepare the rows and vectors to peel.
+
+  // Use finalSelection to generate peel to ensure those rows can be translated
+  // and ensure consistent peeling across multiple calls to this expression if
+  // its a shared subexpression.
   const auto& rowsToPeel =
       context.isFinalSelection() ? rows : *context.finalSelection();
   auto numFields = context.row()->childrenSize();
   std::vector<VectorPtr> vectorsToPeel;
   vectorsToPeel.reserve(distinctFields_.size());
-  for (const auto& field : distinctFields_) {
+  for (auto* field : distinctFields_) {
     auto fieldIndex = field->index(context);
     assert(fieldIndex >= 0 && fieldIndex < numFields);
     auto fieldVector = context.getField(fieldIndex);
     if (fieldVector->isConstantEncoding()) {
       // Make sure constant encoded fields are loaded
-      fieldVector = context.ensureFieldLoaded(fieldIndex, rows);
+      fieldVector = context.ensureFieldLoaded(fieldIndex, rowsToPeel);
     }
     vectorsToPeel.push_back(fieldVector);
   }
@@ -931,8 +1000,11 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
 
   // If the expression depends on one dictionary, results are cacheable.
   bool mayCache = distinctFields_.size() == 1 &&
-      VectorEncoding::isDictionary(context.wrapEncoding());
+      VectorEncoding::isDictionary(context.wrapEncoding()) &&
+      !peeledVectors[0]->memoDisabled();
 
+  common::testutil::TestValue::adjust(
+      "facebook::velox::exec::Expr::peelEncodings::mayCache", &mayCache);
   return {newRows, finalRowsHolder.get(), mayCache};
 }
 
@@ -940,9 +1012,9 @@ void Expr::evalEncodings(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
-  if (deterministic_ && !distinctFields_.empty()) {
+  if (deterministic_ && !skipFieldDependentOptimizations()) {
     bool hasFlat = false;
-    for (const auto& field : distinctFields_) {
+    for (auto* field : distinctFields_) {
       if (isFlat(*context.getField(field->index(context)))) {
         hasFlat = true;
         break;
@@ -1079,9 +1151,9 @@ void Expr::evalWithNulls(
     return;
   }
 
-  if (propagatesNulls_) {
+  if (propagatesNulls_ && !skipFieldDependentOptimizations()) {
     bool mayHaveNulls = false;
-    for (const auto& field : distinctFields_) {
+    for (auto* field : distinctFields_) {
       const auto& vector = context.getField(field->index(context));
       if (isLazyNotLoaded(*vector)) {
         continue;
@@ -1093,7 +1165,7 @@ void Expr::evalWithNulls(
       }
     }
 
-    if (mayHaveNulls && !distinctFields_.empty()) {
+    if (mayHaveNulls) {
       LocalSelectivityVector nonNullHolder(context);
       if (removeSureNulls(rows, context, nonNullHolder)) {
         ScopedVarSetter noMoreNulls(context.mutableNullsPruned(), true);
@@ -1273,7 +1345,6 @@ inline bool isPeelable(VectorEncoding::Simple encoding) {
   switch (encoding) {
     case VectorEncoding::Simple::CONSTANT:
     case VectorEncoding::Simple::DICTIONARY:
-    case VectorEncoding::Simple::SEQUENCE:
       return true;
     default:
       return false;
@@ -1580,6 +1651,94 @@ bool Expr::isConstant() const {
   return true;
 }
 
+namespace {
+
+common::Subfield extractSubfield(
+    const Expr* expr,
+    const folly::F14FastMap<std::string, int32_t>& shadowedNames) {
+  std::vector<std::unique_ptr<common::Subfield::PathElement>> path;
+  for (;;) {
+    if (auto* ref = expr->as<FieldReference>()) {
+      const auto& name = ref->name();
+      // When the field name is empty string, it typically means that the field
+      // name was not set in the parent type.
+      if (name == "") {
+        expr = expr->inputs()[0].get();
+        continue;
+      }
+      path.push_back(std::make_unique<common::Subfield::NestedField>(name));
+      if (!ref->inputs().empty()) {
+        expr = ref->inputs()[0].get();
+        continue;
+      }
+      if (shadowedNames.count(name) > 0) {
+        return {};
+      }
+      std::reverse(path.begin(), path.end());
+      return common::Subfield(std::move(path));
+    }
+    if (!expr->vectorFunction()) {
+      return {};
+    }
+    auto* subscript =
+        dynamic_cast<const Subscript*>(expr->vectorFunction().get());
+    if (!subscript || !subscript->canPushdown()) {
+      return {};
+    }
+    auto* index = expr->inputs()[1]->as<ConstantExpr>();
+    if (!index) {
+      return {};
+    }
+    switch (index->value()->typeKind()) {
+      case TypeKind::TINYINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int8_t>>()->value()));
+        break;
+      case TypeKind::SMALLINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int16_t>>()->value()));
+        break;
+      case TypeKind::INTEGER:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int32_t>>()->value()));
+        break;
+      case TypeKind::BIGINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int64_t>>()->value()));
+        break;
+      case TypeKind::VARCHAR:
+        path.push_back(std::make_unique<common::Subfield::StringSubscript>(
+            index->value()->as<ConstantVector<StringView>>()->value()));
+        break;
+      default:
+        return {};
+    }
+    expr = expr->inputs()[0].get();
+  }
+}
+
+} // namespace
+
+void Expr::extractSubfieldsImpl(
+    folly::F14FastMap<std::string, int32_t>* shadowedNames,
+    std::vector<common::Subfield>* subfields) const {
+  auto subfield = extractSubfield(this, *shadowedNames);
+  if (subfield.valid()) {
+    subfields->push_back(std::move(subfield));
+    return;
+  }
+  for (auto& input : inputs_) {
+    input->extractSubfieldsImpl(shadowedNames, subfields);
+  }
+}
+
+std::vector<common::Subfield> Expr::extractSubfields() const {
+  folly::F14FastMap<std::string, int32_t> shadowedNames;
+  std::vector<common::Subfield> subfields;
+  extractSubfieldsImpl(&shadowedNames, &subfields);
+  return subfields;
+}
+
 ExprSet::ExprSet(
     const std::vector<core::TypedExprPtr>& sources,
     core::ExecCtx* execCtx,
@@ -1671,6 +1830,50 @@ std::string ExprSet::toString(bool compact) const {
   return out.str();
 }
 
+namespace {
+void printInputAndExprs(
+    const BaseVector* vector,
+    const std::vector<std::shared_ptr<Expr>>& exprs) {
+  const char* basePath =
+      FLAGS_velox_save_input_on_expression_any_failure_path.c_str();
+  if (strlen(basePath) == 0) {
+    basePath = FLAGS_velox_save_input_on_expression_system_failure_path.c_str();
+  }
+  if (strlen(basePath) == 0) {
+    return;
+  }
+  // Persist vector to disk
+  try {
+    auto dataPathOpt = common::generateTempFilePath(basePath, "vector");
+    if (!dataPathOpt.has_value()) {
+      return;
+    }
+    saveVectorToFile(vector, dataPathOpt.value().c_str());
+    LOG(ERROR) << "Input vector data: " << dataPathOpt.value();
+  } catch (std::exception& e) {
+    LOG(ERROR) << "Error serializing Input vector data: " << e.what();
+  }
+
+  try {
+    std::stringstream allSql;
+    for (int i = 0; i < exprs.size(); ++i) {
+      if (i > 0) {
+        allSql << ", ";
+      }
+      allSql << exprs[i]->toSql();
+    }
+    auto sqlPathOpt = common::generateTempFilePath(basePath, "allExprSql");
+    if (!sqlPathOpt.has_value()) {
+      return;
+    }
+    saveStringToFile(allSql.str(), sqlPathOpt.value().c_str());
+    LOG(ERROR) << "SQL expression: " << sqlPathOpt.value();
+  } catch (std::exception& e) {
+    LOG(ERROR) << "Error serializing SQL expression: " << e.what();
+  }
+}
+} // namespace
+
 void ExprSet::eval(
     int32_t begin,
     int32_t end,
@@ -1692,6 +1895,24 @@ void ExprSet::eval(
   // needs all rows for "b".
   for (const auto& field : multiplyReferencedFields_) {
     context.ensureFieldLoaded(field->index(context), rows);
+  }
+
+  if (FLAGS_velox_experimental_save_input_on_fatal_signal) {
+    auto other = process::GetThreadDebugInfo();
+    process::ThreadDebugInfo debugInfo;
+    if (other) {
+      debugInfo.queryId_ = other->queryId_;
+      debugInfo.taskId_ = other->taskId_;
+    }
+    debugInfo.callback_ = [&]() {
+      printInputAndExprs(context.row(), this->exprs());
+    };
+    process::ScopedThreadDebugInfo scopedDebugInfo(debugInfo);
+
+    for (int32_t i = begin; i < end; ++i) {
+      exprs_[i]->eval(rows, context, result[i], this);
+    }
+    return;
   }
 
   for (int32_t i = begin; i < end; ++i) {

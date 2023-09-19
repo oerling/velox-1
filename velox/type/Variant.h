@@ -46,9 +46,6 @@ template <>
 struct VariantEquality<TypeKind::TIMESTAMP>;
 
 template <>
-struct VariantEquality<TypeKind::DATE>;
-
-template <>
 struct VariantEquality<TypeKind::ARRAY>;
 
 template <>
@@ -211,7 +208,6 @@ class variant {
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::VARCHAR);
   // VARBINARY conflicts with VARCHAR, so we don't gen these methods
   // VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::VARBINARY);
-  VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::DATE)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::TIMESTAMP)
   VELOX_VARIANT_SCALAR_MEMBERS(TypeKind::UNKNOWN)
 #undef VELOX_VARIANT_SCALAR_MEMBERS
@@ -263,13 +259,6 @@ class variant {
             input}};
   }
 
-  static variant date(const Date& input) {
-    return {
-        TypeKind::DATE,
-        new
-        typename detail::VariantTypeTraits<TypeKind::DATE>::stored_type{input}};
-  }
-
   template <class T>
   static variant opaque(const std::shared_ptr<T>& input) {
     VELOX_CHECK(input.get(), "Can't create a variant of nullptr opaque type");
@@ -285,7 +274,31 @@ class variant {
     return {TypeKind::OPAQUE, new detail::OpaqueCapsule{type, input}};
   }
 
+  static inline void verifyArrayElements(const std::vector<variant>& inputs) {
+    if (!inputs.empty()) {
+      auto elementTypeKind = TypeKind::UNKNOWN;
+      // Find the typeKind from the first non-null element.
+      int i = 0;
+      for (; i < inputs.size(); ++i) {
+        if (!inputs[i].isNull()) {
+          elementTypeKind = inputs[i].kind();
+          break;
+        }
+      }
+      // Verify that the remaining non-null elements match.
+      for (; i < inputs.size(); ++i) {
+        if (!inputs[i].isNull()) {
+          VELOX_CHECK_EQ(
+              elementTypeKind,
+              inputs[i].kind(),
+              "All array elements must be of the same kind");
+        }
+      }
+    }
+  }
+
   static variant array(const std::vector<variant>& inputs) {
+    verifyArrayElements(inputs);
     return {
         TypeKind::ARRAY,
         new typename detail::VariantTypeTraits<TypeKind::ARRAY>::stored_type{
@@ -293,6 +306,7 @@ class variant {
   }
 
   static variant array(std::vector<variant>&& inputs) {
+    verifyArrayElements(inputs);
     return {
         TypeKind::ARRAY,
         new typename detail::VariantTypeTraits<TypeKind::ARRAY>::stored_type{
@@ -607,7 +621,6 @@ struct VariantConverter {
         return convert<TypeKind::VARCHAR, ToKind>(value);
       case TypeKind::VARBINARY:
         return convert<TypeKind::VARBINARY, ToKind>(value);
-      case TypeKind::DATE:
       case TypeKind::TIMESTAMP:
       case TypeKind::HUGEINT:
         // Default date/timestamp conversion is prone to errors and implicit

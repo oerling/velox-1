@@ -24,6 +24,8 @@
 #include "velox/type/TimestampConversion.h"
 #include "velox/type/Type.h"
 
+DECLARE_bool(experimental_enable_legacy_cast);
+
 namespace facebook::velox::util {
 
 template <TypeKind KIND, typename = void, bool TRUNCATE = false>
@@ -54,10 +56,6 @@ struct Converter<TypeKind::BOOLEAN> {
 
   static T cast(const std::string& v) {
     return folly::to<T>(v);
-  }
-
-  static T cast(const Date&) {
-    VELOX_UNSUPPORTED("Conversion of Date to Boolean is not supported");
   }
 
   static T cast(const Timestamp&) {
@@ -97,6 +95,8 @@ struct Converter<
 
       // Setting negative flag
       bool negative = false;
+      // Setting decimalPoint flag
+      bool decimalPoint = false;
       if (v[0] == '-') {
         if (len == 1) {
           VELOX_USER_FAIL("Cannot cast an '-' string to an integral value.");
@@ -106,10 +106,19 @@ struct Converter<
       }
       if (negative) {
         for (; index < len; index++) {
+          // Truncate the decimal
+          if (!decimalPoint && v[index] == '.') {
+            decimalPoint = true;
+            if (++index == len) {
+              break;
+            }
+          }
           if (!std::isdigit(v[index])) {
             VELOX_USER_FAIL("Encountered a non-digit character");
           }
-          result = result * 10 - (v[index] - '0');
+          if (!decimalPoint) {
+            result = result * 10 - (v[index] - '0');
+          }
           // Overflow check
           if (result > 0) {
             VELOX_USER_FAIL("Value is too large for type");
@@ -117,10 +126,19 @@ struct Converter<
         }
       } else {
         for (; index < len; index++) {
+          // Truncate the decimal
+          if (!decimalPoint && v[index] == '.') {
+            decimalPoint = true;
+            if (++index == len) {
+              break;
+            }
+          }
           if (!std::isdigit(v[index])) {
             VELOX_USER_FAIL("Encountered a non-digit character");
           }
-          result = result * 10 + (v[index] - '0');
+          if (!decimalPoint) {
+            result = result * 10 + (v[index] - '0');
+          }
           // Overflow check
           if (result < 0) {
             VELOX_USER_FAIL("Value is too large for type");
@@ -133,38 +151,26 @@ struct Converter<
   }
 
   static T cast(folly::StringPiece v) {
-    try {
-      if constexpr (TRUNCATE) {
-        return convertStringToInt(v);
-      } else {
-        return folly::to<T>(v);
-      }
-    } catch (const std::exception& e) {
-      VELOX_USER_FAIL(e.what());
+    if constexpr (TRUNCATE) {
+      return convertStringToInt(v);
+    } else {
+      return folly::to<T>(v);
     }
   }
 
   static T cast(const StringView& v) {
-    try {
-      if constexpr (TRUNCATE) {
-        return convertStringToInt(folly::StringPiece(v));
-      } else {
-        return folly::to<T>(folly::StringPiece(v));
-      }
-    } catch (const std::exception& e) {
-      VELOX_USER_FAIL(e.what());
+    if constexpr (TRUNCATE) {
+      return convertStringToInt(folly::StringPiece(v));
+    } else {
+      return folly::to<T>(folly::StringPiece(v));
     }
   }
 
   static T cast(const std::string& v) {
-    try {
-      if constexpr (TRUNCATE) {
-        return convertStringToInt(v);
-      } else {
-        return folly::to<T>(v);
-      }
-    } catch (const std::exception& e) {
-      VELOX_USER_FAIL(e.what());
+    if constexpr (TRUNCATE) {
+      return convertStringToInt(v);
+    } else {
+      return folly::to<T>(v);
     }
   }
 
@@ -213,6 +219,9 @@ struct Converter<
       if (std::isnan(v)) {
         return 0;
       }
+      if constexpr (std::is_same_v<T, bool>) {
+        return v != 0;
+      }
       if constexpr (std::is_same_v<T, int128_t>) {
         return std::numeric_limits<int128_t>::max();
       } else if (v > LimitType::maxLimit()) {
@@ -236,6 +245,9 @@ struct Converter<
     if constexpr (TRUNCATE) {
       if (std::isnan(v)) {
         return 0;
+      }
+      if constexpr (std::is_same_v<T, bool>) {
+        return v != 0;
       }
       if constexpr (std::is_same_v<T, int128_t>) {
         return std::numeric_limits<int128_t>::max();
@@ -298,11 +310,7 @@ struct Converter<
 
   template <typename From>
   static T cast(const From& v) {
-    try {
-      return folly::to<T>(v);
-    } catch (const std::exception& e) {
-      VELOX_USER_FAIL(e.what());
-    }
+    return folly::to<T>(v);
   }
 
   static T cast(folly::StringPiece v) {
@@ -353,8 +361,10 @@ struct Converter<
     return static_cast<T>(v);
   }
 
-  static T cast(const Date&) {
-    VELOX_UNSUPPORTED("Conversion of Date to Real or Double is not supported");
+  // Convert large integer to double or float directly, not using folly, as it
+  // might throw 'loss of precision' error.
+  static T cast(const int128_t& v) {
+    return static_cast<T>(v);
   }
 
   static T cast(const Timestamp&) {
@@ -376,10 +386,10 @@ template <bool TRUNCATE>
 struct Converter<TypeKind::VARCHAR, void, TRUNCATE> {
   template <typename T>
   static std::string cast(const T& val) {
-    if constexpr (
-        TRUNCATE && (std::is_same_v<T, double> || std::is_same_v<T, double>)) {
+    if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
       auto stringValue = folly::to<std::string>(val);
-      if (stringValue.find(".") == std::string::npos &&
+      if (!FLAGS_experimental_enable_legacy_cast &&
+          stringValue.find(".") == std::string::npos &&
           isdigit(stringValue[stringValue.length() - 1])) {
         stringValue += ".0";
       }
@@ -398,8 +408,8 @@ struct Converter<TypeKind::VARCHAR, void, TRUNCATE> {
 };
 
 // Allow conversions from string to TIMESTAMP type.
-template <>
-struct Converter<TypeKind::TIMESTAMP> {
+template <bool TRUNCATE>
+struct Converter<TypeKind::TIMESTAMP, void, TRUNCATE> {
   using T = typename TypeTraits<TypeKind::TIMESTAMP>::NativeType;
 
   template <typename From>
@@ -418,46 +428,6 @@ struct Converter<TypeKind::TIMESTAMP> {
 
   static T cast(const std::string& v) {
     return fromTimestampString(v.data(), v.size());
-  }
-
-  static T cast(const Date& d) {
-    static const int64_t kMillisPerDay{86'400'000};
-    return Timestamp::fromMillis(d.days() * kMillisPerDay);
-  }
-};
-
-// Allow conversions from string to DATE type.
-template <bool TRUNCATE>
-struct Converter<TypeKind::DATE, void, TRUNCATE> {
-  using T = typename TypeTraits<TypeKind::DATE>::NativeType;
-  template <typename From>
-  static T cast(const From& /* v */) {
-    VELOX_UNSUPPORTED("Conversion to Date is not supported");
-    return T();
-  }
-
-  static T cast(folly::StringPiece v) {
-    return fromDateString(v.data(), v.size());
-  }
-
-  static T cast(const StringView& v) {
-    return fromDateString(v.data(), v.size());
-  }
-
-  static T cast(const std::string& v) {
-    return fromDateString(v.data(), v.size());
-  }
-
-  static T cast(const Timestamp& t) {
-    static const int32_t kSecsPerDay{86'400};
-    auto seconds = t.getSeconds();
-    if (seconds >= 0 || seconds % kSecsPerDay == 0) {
-      return Date(seconds / kSecsPerDay);
-    }
-    // For division with negatives, minus 1 to compensate the discarded
-    // fractional part. e.g. -1/86'400 yields 0, yet it should be considered as
-    // -1 day.
-    return Date(seconds / kSecsPerDay - 1);
   }
 };
 

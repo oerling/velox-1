@@ -417,7 +417,7 @@ class ApproxPercentileAggregate : public exec::Aggregate {
 
     uint64_t* rawNulls = nullptr;
     if (result->mayHaveNulls()) {
-      BufferPtr nulls = result->mutableNulls(result->size());
+      BufferPtr& nulls = result->mutableNulls(result->size());
       rawNulls = nulls->asMutable<uint64_t>();
     }
 
@@ -773,7 +773,9 @@ exec::AggregateRegistrationResult registerApproxPercentile(
       [name](
           core::AggregationNode::Step step,
           const std::vector<TypePtr>& argTypes,
-          const TypePtr& resultType) -> std::unique_ptr<exec::Aggregate> {
+          const TypePtr& resultType,
+          const core::QueryConfig& /*config*/)
+          -> std::unique_ptr<exec::Aggregate> {
         auto isRawInput = exec::isRawInput(step);
         auto hasWeight =
             argTypes.size() >= 2 && argTypes[1]->kind() == TypeKind::BIGINT;

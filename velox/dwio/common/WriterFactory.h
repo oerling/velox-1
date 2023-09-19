@@ -18,7 +18,7 @@
 
 #include <memory>
 
-#include "velox/dwio/common/DataSink.h"
+#include "velox/dwio/common/FileSink.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/Writer.h"
 
@@ -57,7 +57,7 @@ class WriterFactory {
    * @return writer object
    */
   virtual std::unique_ptr<Writer> createWriter(
-      std::unique_ptr<dwio::common::DataSink> sink,
+      std::unique_ptr<dwio::common::FileSink> sink,
       const dwio::common::WriterOptions& options) = 0;
 
  private:
@@ -86,6 +86,12 @@ bool unregisterWriterFactory(FileFormat format);
  */
 std::shared_ptr<WriterFactory> getWriterFactory(FileFormat format);
 
+/**
+ * Check if a writer factory object exists for a specified file format.
+ * Returns true if there is a registered factory for this format, false
+ * otherwise.
+ * @return true
+ */
 bool hasWriterFactory(FileFormat format);
 
 } // namespace facebook::velox::dwio::common

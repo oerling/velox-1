@@ -21,6 +21,7 @@
 #include <sstream>
 #include <typeindex>
 #include "velox/common/base/Exceptions.h"
+#include "velox/type/TimestampConversion.h"
 
 namespace std {
 template <>
@@ -55,7 +56,6 @@ const std::unordered_map<std::string, TypeKind>& getTypeStringMap() {
       {"VARCHAR", TypeKind::VARCHAR},
       {"VARBINARY", TypeKind::VARBINARY},
       {"TIMESTAMP", TypeKind::TIMESTAMP},
-      {"DATE", TypeKind::DATE},
       {"ARRAY", TypeKind::ARRAY},
       {"MAP", TypeKind::MAP},
       {"ROW", TypeKind::ROW},
@@ -99,7 +99,6 @@ std::string mapTypeKindToName(const TypeKind& typeKind) {
       {TypeKind::VARCHAR, "VARCHAR"},
       {TypeKind::VARBINARY, "VARBINARY"},
       {TypeKind::TIMESTAMP, "TIMESTAMP"},
-      {TypeKind::DATE, "DATE"},
       {TypeKind::ARRAY, "ARRAY"},
       {TypeKind::MAP, "MAP"},
       {TypeKind::ROW, "ROW"},
@@ -216,6 +215,7 @@ void Type::registerSerDe() {
   registry.Register("IntervalDayTimeType", IntervalDayTimeType::deserialize);
   registry.Register(
       "IntervalYearMonthType", IntervalYearMonthType::deserialize);
+  registry.Register("DateType", DateType::deserialize);
 }
 
 std::string ArrayType::toString() const {
@@ -223,7 +223,7 @@ std::string ArrayType::toString() const {
 }
 
 const TypePtr& ArrayType::childAt(uint32_t idx) const {
-  VELOX_USER_CHECK_EQ(idx, 0, "List type should have only one child");
+  VELOX_USER_CHECK_EQ(idx, 0, "Array type should have only one child");
   return elementType();
 }
 
@@ -264,6 +264,17 @@ const TypePtr& MapType::childAt(uint32_t idx) const {
       idx);
 }
 
+const char* MapType::nameOf(uint32_t idx) const {
+  if (idx == 0) {
+    return "key";
+  } else if (idx == 1) {
+    return "value";
+  }
+  VELOX_USER_FAIL(
+      "Map type should have only two children. Tried to get name of child '{}'",
+      idx);
+}
+
 MapType::MapType(TypePtr keyType, TypePtr valueType)
     : keyType_{std::move(keyType)},
       valueType_{std::move(valueType)},
@@ -296,14 +307,32 @@ std::vector<TypeParameter> createTypeParameters(
   }
   return parameters;
 }
+
+// Returns children names index name -> first idx of occurence.
+const folly::F14FastMap<std::string, uint32_t> createdChildrenIndex(
+    const std::vector<std::string>& names) {
+  folly::F14FastMap<std::string, uint32_t> index;
+  index.reserve(names.size());
+  for (uint32_t i = 0; i < names.size(); ++i) {
+    if (index.find(names[i]) == index.end()) {
+      index[names[i]] = i;
+    }
+  }
+  return index;
+}
 } // namespace
 
 RowType::RowType(std::vector<std::string>&& names, std::vector<TypePtr>&& types)
     : names_{std::move(names)},
       children_{std::move(types)},
-      parameters_{createTypeParameters(children_)} {
+      parameters_{createTypeParameters(children_)},
+      // TODO: lazily initialize index on first access instead.
+      childrenIndices_{createdChildrenIndex(names_)} {
   VELOX_USER_CHECK_EQ(
       names_.size(), children_.size(), "Mismatch names/types sizes");
+  for (auto& child : children_) {
+    VELOX_CHECK_NOT_NULL(child, "Child types cannot be null");
+  }
 }
 
 uint32_t RowType::size() const {
@@ -332,19 +361,20 @@ std::string makeFieldNotFoundErrorMessage(
 }
 } // namespace
 
+// Returns type of first child with matching name.
 const TypePtr& RowType::findChild(folly::StringPiece name) const {
-  for (uint32_t i = 0; i < names_.size(); ++i) {
-    if (names_.at(i) == name) {
-      return children_.at(i);
-    }
+  auto idx = getChildIdxIfExists(std::string(name));
+  if (idx) {
+    return children_[*idx];
   }
   VELOX_USER_FAIL(makeFieldNotFoundErrorMessage(name, names_));
 }
 
 bool RowType::containsChild(std::string_view name) const {
-  return std::find(names_.begin(), names_.end(), name) != names_.end();
+  return getChildIdxIfExists(std::string(name)).has_value();
 }
 
+// Returns index of first child with matching name.
 uint32_t RowType::getChildIdx(const std::string& name) const {
   auto index = getChildIdxIfExists(name);
   if (!index.has_value()) {
@@ -355,10 +385,9 @@ uint32_t RowType::getChildIdx(const std::string& name) const {
 
 std::optional<uint32_t> RowType::getChildIdxIfExists(
     const std::string& name) const {
-  for (uint32_t i = 0; i < names_.size(); i++) {
-    if (names_.at(i) == name) {
-      return i;
-    }
+  const auto it = childrenIndices_.find(name);
+  if (it != childrenIndices_.end()) {
+    return it->second;
   }
   return std::nullopt;
 }
@@ -375,7 +404,7 @@ bool RowType::equivalent(const Type& other) const {
     return false;
   }
   for (size_t i = 0; i < size(); ++i) {
-    if (*childAt(i) != *otherTyped.childAt(i)) {
+    if (!childAt(i)->equivalent(*otherTyped.childAt(i))) {
       return false;
     }
   }
@@ -420,6 +449,20 @@ void RowType::printChildren(std::stringstream& ss, std::string_view delimiter)
     ss << ':' << children_.at(i)->toString();
     any = true;
   }
+}
+
+std::shared_ptr<RowType> RowType::unionWith(
+    std::shared_ptr<const RowType> rowType) const {
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  copy(names_.begin(), names_.end(), back_inserter(names));
+  copy(rowType->names_.begin(), rowType->names_.end(), back_inserter(names));
+  copy(children_.begin(), children_.end(), back_inserter(types));
+  copy(
+      rowType->children_.begin(),
+      rowType->children_.end(),
+      back_inserter(types));
+  return std::make_shared<RowType>(std::move(names), std::move(types));
 }
 
 std::string RowType::toString() const {
@@ -648,25 +691,27 @@ std::shared_ptr<const FunctionType> FUNCTION(
       std::move(argumentTypes), std::move(returnType));
 };
 
-#define KOSKI_DEFINE_SCALAR_ACCESSOR(KIND)                   \
+#define VELOX_DEFINE_SCALAR_ACCESSOR(KIND)                   \
   std::shared_ptr<const ScalarType<TypeKind::KIND>> KIND() { \
     return ScalarType<TypeKind::KIND>::create();             \
   }
 
-KOSKI_DEFINE_SCALAR_ACCESSOR(INTEGER);
-KOSKI_DEFINE_SCALAR_ACCESSOR(BOOLEAN);
-KOSKI_DEFINE_SCALAR_ACCESSOR(TINYINT);
-KOSKI_DEFINE_SCALAR_ACCESSOR(SMALLINT);
-KOSKI_DEFINE_SCALAR_ACCESSOR(BIGINT);
-KOSKI_DEFINE_SCALAR_ACCESSOR(REAL);
-KOSKI_DEFINE_SCALAR_ACCESSOR(DOUBLE);
-KOSKI_DEFINE_SCALAR_ACCESSOR(TIMESTAMP);
-KOSKI_DEFINE_SCALAR_ACCESSOR(VARCHAR);
-KOSKI_DEFINE_SCALAR_ACCESSOR(VARBINARY);
-KOSKI_DEFINE_SCALAR_ACCESSOR(DATE);
-KOSKI_DEFINE_SCALAR_ACCESSOR(UNKNOWN);
+VELOX_DEFINE_SCALAR_ACCESSOR(INTEGER);
+VELOX_DEFINE_SCALAR_ACCESSOR(BOOLEAN);
+VELOX_DEFINE_SCALAR_ACCESSOR(TINYINT);
+VELOX_DEFINE_SCALAR_ACCESSOR(SMALLINT);
+VELOX_DEFINE_SCALAR_ACCESSOR(BIGINT);
+VELOX_DEFINE_SCALAR_ACCESSOR(REAL);
+VELOX_DEFINE_SCALAR_ACCESSOR(DOUBLE);
+VELOX_DEFINE_SCALAR_ACCESSOR(TIMESTAMP);
+VELOX_DEFINE_SCALAR_ACCESSOR(VARCHAR);
+VELOX_DEFINE_SCALAR_ACCESSOR(VARBINARY);
 
-#undef KOSKI_DEFINE_SCALAR_ACCESSOR
+#undef VELOX_DEFINE_SCALAR_ACCESSOR
+
+TypePtr UNKNOWN() {
+  return TypeFactory<TypeKind::UNKNOWN>::create();
+}
 
 TypePtr DECIMAL(const uint8_t precision, const uint8_t scale) {
   if (precision <= ShortDecimalType::kMaxPrecision) {
@@ -823,8 +868,6 @@ TypePtr fromKindToScalerType(TypeKind kind) {
       return TIMESTAMP();
     case TypeKind::DOUBLE:
       return DOUBLE();
-    case TypeKind::DATE:
-      return DATE();
     case TypeKind::UNKNOWN:
       return UNKNOWN();
     default:
@@ -910,6 +953,33 @@ std::string IntervalYearMonthType::valueToString(int32_t value) const {
   return oss.str();
 }
 
+std::string DateType::toString(int32_t days) const {
+  // Find the number of seconds for the days_;
+  // Casting 86400 to int64 to handle overflows gracefully.
+  int64_t daySeconds = days * (int64_t)(86400);
+
+  // gmtime is not thread-safe. Make sure to use gmtime_r.
+  std::tm tmValue;
+  VELOX_CHECK_NOT_NULL(
+      gmtime_r((const time_t*)&daySeconds, &tmValue),
+      "Can't convert days to dates: {}",
+      days);
+
+  // return ISO 8601 time format.
+  // %F - equivalent to "%Y-%m-%d" (the ISO 8601 date format)
+  std::ostringstream oss;
+  oss << std::put_time(&tmValue, "%F");
+  return oss.str();
+}
+
+int32_t DateType::toDays(folly::StringPiece in) const {
+  return util::fromDateString(in.data(), in.size());
+}
+
+int32_t DateType::toDays(const char* in, size_t len) const {
+  return util::fromDateString(in, len);
+}
+
 namespace {
 using SingletonTypeMap = std::unordered_map<std::string, TypePtr>;
 
@@ -925,9 +995,9 @@ const SingletonTypeMap& singletonBuiltInTypes() {
       {"VARCHAR", VARCHAR()},
       {"VARBINARY", VARBINARY()},
       {"TIMESTAMP", TIMESTAMP()},
-      {"DATE", DATE()},
       {"INTERVAL DAY TO SECOND", INTERVAL_DAY_TIME()},
       {"INTERVAL YEAR TO MONTH", INTERVAL_YEAR_MONTH()},
+      {"DATE", DATE()},
       {"UNKNOWN", UNKNOWN()},
   };
   return kTypes;

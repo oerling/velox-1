@@ -13,6 +13,7 @@
 # limitations under the License.
 add_library(
   velox_exec
+  AddressableNonNullValueList.cpp
   Aggregate.cpp
   AggregateCompanionAdapter.cpp
   AggregateCompanionSignatures.cpp
@@ -21,9 +22,13 @@ add_library(
   AggregateWindow.cpp
   ArrowStream.cpp
   ContainerRowSerde.cpp
+  DistinctAggregations.cpp
   Driver.cpp
   EnforceSingleRow.cpp
   Exchange.cpp
+  ExchangeClient.cpp
+  ExchangeQueue.cpp
+  ExchangeSource.cpp
   FilterProject.cpp
   GroupId.cpp
   GroupingSet.cpp
@@ -47,17 +52,22 @@ add_library(
   OperatorUtils.cpp
   OrderBy.cpp
   PartitionedOutput.cpp
+  PartitionedOutputBuffer.cpp
   PartitionedOutputBufferManager.cpp
   PlanNodeStats.cpp
   ProbeOperatorState.cpp
   RowContainer.cpp
   RowNumber.cpp
+  SortBuffer.cpp
   SortedAggregations.cpp
+  SortWindowBuild.cpp
   Spill.cpp
   SpillOperatorGroup.cpp
   Spiller.cpp
   StreamingAggregation.cpp
+  Strings.cpp
   TableScan.cpp
+  TableWriteMerge.cpp
   TableWriter.cpp
   Task.cpp
   TopN.cpp
@@ -66,6 +76,7 @@ add_library(
   Values.cpp
   VectorHasher.cpp
   Window.cpp
+  WindowBuild.cpp
   WindowFunction.cpp
   WindowPartition.cpp
   AssignUniqueId.cpp
@@ -81,7 +92,8 @@ target_link_libraries(
   velox_codegen
   velox_common_base
   velox_test_util
-  velox_arrow_bridge)
+  velox_arrow_bridge
+  velox_common_compression)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

@@ -285,7 +285,7 @@ class ArrowStreamNode : public PlanNode {
       : PlanNode(id),
         outputType_(std::move(outputType)),
         arrowStream_(std::move(arrowStream)) {
-    VELOX_CHECK_NOT_NULL(arrowStream_);
+    VELOX_USER_CHECK_NOT_NULL(arrowStream_);
   }
 
   const RowTypePtr& outputType() const override {
@@ -317,7 +317,7 @@ class FilterNode : public PlanNode {
  public:
   FilterNode(const PlanNodeId& id, TypedExprPtr filter, PlanNodePtr source)
       : PlanNode(id), sources_{std::move(source)}, filter_(std::move(filter)) {
-    VELOX_CHECK(
+    VELOX_USER_CHECK(
         filter_->type()->isBoolean(),
         "Filter expression must be of type BOOLEAN. Got {}.",
         filter_->type()->toString());
@@ -475,76 +475,6 @@ class TableScanNode : public PlanNode {
           assignments_;
 };
 
-class TableWriteNode : public PlanNode {
- public:
-  TableWriteNode(
-      const PlanNodeId& id,
-      const RowTypePtr& columns,
-      const std::vector<std::string>& columnNames,
-      const std::shared_ptr<InsertTableHandle>& insertTableHandle,
-      RowTypePtr outputType,
-      connector::CommitStrategy commitStrategy,
-      const PlanNodePtr& source)
-      : PlanNode(id),
-        sources_{source},
-        columns_{columns},
-        columnNames_{columnNames},
-        insertTableHandle_(insertTableHandle),
-        outputType_(std::move(outputType)),
-        commitStrategy_(commitStrategy) {
-    VELOX_CHECK_EQ(columns->size(), columnNames.size());
-    for (const auto& column : columns->names()) {
-      VELOX_CHECK(source->outputType()->containsChild(column));
-    }
-  }
-
-  const std::vector<PlanNodePtr>& sources() const override {
-    return sources_;
-  }
-
-  const RowTypePtr& outputType() const override {
-    return outputType_;
-  }
-
-  // The subset of columns in the output of the source node, potentially in
-  // different order, to write to the table.
-  const RowTypePtr& columns() const {
-    return columns_;
-  }
-
-  // Column names to use when writing the table. This vector is aligned with
-  // 'columns' vector.
-  const std::vector<std::string>& columnNames() const {
-    return columnNames_;
-  }
-
-  const std::shared_ptr<InsertTableHandle>& insertTableHandle() const {
-    return insertTableHandle_;
-  }
-
-  connector::CommitStrategy commitStrategy() const {
-    return commitStrategy_;
-  }
-
-  std::string_view name() const override {
-    return "TableWrite";
-  }
-
-  folly::dynamic serialize() const override;
-
-  static PlanNodePtr create(const folly::dynamic& obj, void* context);
-
- private:
-  void addDetails(std::stringstream& stream) const override;
-
-  const std::vector<PlanNodePtr> sources_;
-  const RowTypePtr columns_;
-  const std::vector<std::string> columnNames_;
-  const std::shared_ptr<InsertTableHandle> insertTableHandle_;
-  const RowTypePtr outputType_;
-  const connector::CommitStrategy commitStrategy_;
-};
-
 class AggregationNode : public PlanNode {
  public:
   enum class Step {
@@ -578,6 +508,10 @@ class AggregationNode : public PlanNode {
     /// A list of sorting orders that goes together with 'sortingKeys'.
     std::vector<SortOrder> sortingOrders;
 
+    /// Boolean indicating whether inputs must be de-duplicated before
+    /// aggregating.
+    bool distinct{false};
+
     folly::dynamic serialize() const;
 
     static Aggregate deserialize(const folly::dynamic& obj, void* context);
@@ -592,53 +526,6 @@ class AggregationNode : public PlanNode {
       const std::vector<Aggregate>& aggregates,
       bool ignoreNullKeys,
       PlanNodePtr source);
-
-// TODO Remove after Prestissimo is updated.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  static std::vector<Aggregate> toAggregates(
-      const std::vector<CallTypedExprPtr>& calls,
-      const std::vector<FieldAccessTypedExprPtr>& aggregateMasks) {
-    std::vector<Aggregate> aggregates;
-    aggregates.reserve(calls.size());
-    for (auto i = 0; i < calls.size(); ++i) {
-      if (i < aggregateMasks.size()) {
-        aggregates.push_back({calls[i], aggregateMasks[i], {}, {}});
-      } else {
-        aggregates.push_back({calls[i], nullptr, {}, {}});
-      }
-    }
-    return aggregates;
-  }
-
-  /**
-   * @param preGroupedKeys A subset of the 'groupingKeys' on which the input is
-   * clustered, i.e. identical sets of values for these keys always appear next
-   * to each other. Can be empty. If contains all the 'groupingKeys', the
-   * aggregation will run in streaming mode.
-   * @param ignoreNullKeys True if rows with at least one null key should be
-   * ignored. Used when group by is a source of a join build side and grouping
-   * keys are join keys.
-   */
-  AggregationNode(
-      const PlanNodeId& id,
-      Step step,
-      const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
-      const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
-      const std::vector<std::string>& aggregateNames,
-      const std::vector<CallTypedExprPtr>& aggregates,
-      const std::vector<FieldAccessTypedExprPtr>& aggregateMasks,
-      bool ignoreNullKeys,
-      PlanNodePtr source)
-      : AggregationNode(
-            id,
-            step,
-            groupingKeys,
-            preGroupedKeys,
-            aggregateNames,
-            toAggregates(aggregates, aggregateMasks),
-            ignoreNullKeys,
-            source) {}
-#endif
 
   const std::vector<PlanNodePtr>& sources() const override {
     return sources_;
@@ -731,6 +618,155 @@ inline std::string mapAggregationStepToName(const AggregationNode::Step& step) {
   ss << step;
   return ss.str();
 }
+
+class TableWriteNode : public PlanNode {
+ public:
+  TableWriteNode(
+      const PlanNodeId& id,
+      const RowTypePtr& columns,
+      const std::vector<std::string>& columnNames,
+      std::shared_ptr<AggregationNode> aggregationNode,
+      std::shared_ptr<InsertTableHandle> insertTableHandle,
+      bool hasPartitioningScheme,
+      RowTypePtr outputType,
+      connector::CommitStrategy commitStrategy,
+      const PlanNodePtr& source)
+      : PlanNode(id),
+        sources_{source},
+        columns_{columns},
+        columnNames_{columnNames},
+        aggregationNode_(std::move(aggregationNode)),
+        insertTableHandle_(std::move(insertTableHandle)),
+        hasPartitioningScheme_(hasPartitioningScheme),
+        outputType_(std::move(outputType)),
+        commitStrategy_(commitStrategy) {
+    VELOX_USER_CHECK_EQ(columns->size(), columnNames.size());
+    for (const auto& column : columns->names()) {
+      VELOX_USER_CHECK(
+          source->outputType()->containsChild(column),
+          "Column {} not found in TableWriter input: {}",
+          column,
+          source->outputType()->toString());
+    }
+  }
+
+  const std::vector<PlanNodePtr>& sources() const override {
+    return sources_;
+  }
+
+  const RowTypePtr& outputType() const override {
+    return outputType_;
+  }
+
+  /// The subset of columns in the output of the source node, potentially in
+  /// different order, to write to the table.
+  const RowTypePtr& columns() const {
+    return columns_;
+  }
+
+  /// Column names to use when writing the table. This vector is aligned with
+  /// 'columns' vector.
+  const std::vector<std::string>& columnNames() const {
+    return columnNames_;
+  }
+
+  const std::shared_ptr<InsertTableHandle>& insertTableHandle() const {
+    return insertTableHandle_;
+  }
+
+  /// Indicates if this table write has specified partitioning scheme. If true,
+  /// the task creates a number of table write operators based on the query
+  /// config 'task_partitioned_writer_count', otherwise based on
+  /// 'task__writer_count'. As for now, this is only true for hive bucketed
+  /// table write.
+  bool hasPartitioningScheme() const {
+    return hasPartitioningScheme_;
+  }
+
+  connector::CommitStrategy commitStrategy() const {
+    return commitStrategy_;
+  }
+
+  /// Optional aggregation node for column statistics collection
+  std::shared_ptr<AggregationNode> aggregationNode() const {
+    return aggregationNode_;
+  }
+
+  std::string_view name() const override {
+    return "TableWrite";
+  }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
+ private:
+  void addDetails(std::stringstream& stream) const override;
+
+  const std::vector<PlanNodePtr> sources_;
+  const RowTypePtr columns_;
+  const std::vector<std::string> columnNames_;
+  const std::shared_ptr<AggregationNode> aggregationNode_;
+  const std::shared_ptr<InsertTableHandle> insertTableHandle_;
+  const bool hasPartitioningScheme_;
+  const RowTypePtr outputType_;
+  const connector::CommitStrategy commitStrategy_;
+};
+
+class TableWriteMergeNode : public PlanNode {
+ public:
+  /// 'outputType' specifies the type to store the metadata of table write
+  /// output which contains the following columns: 'numWrittenRows', 'fragment'
+  /// and 'tableCommitContext'.
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+  TableWriteMergeNode(
+      const PlanNodeId& id,
+      RowTypePtr outputType,
+      PlanNodePtr source)
+      : PlanNode(id),
+        aggregationNode_(nullptr),
+        sources_{std::move(source)},
+        outputType_(std::move(outputType)) {}
+#endif
+
+  TableWriteMergeNode(
+      const PlanNodeId& id,
+      RowTypePtr outputType,
+      std::shared_ptr<AggregationNode> aggregationNode,
+      PlanNodePtr source)
+      : PlanNode(id),
+        aggregationNode_(std::move(aggregationNode)),
+        sources_{std::move(source)},
+        outputType_(std::move(outputType)) {}
+
+  /// Optional aggregation node for column statistics collection
+  std::shared_ptr<AggregationNode> aggregationNode() const {
+    return aggregationNode_;
+  }
+
+  const std::vector<PlanNodePtr>& sources() const override {
+    return sources_;
+  }
+
+  const RowTypePtr& outputType() const override {
+    return outputType_;
+  }
+
+  std::string_view name() const override {
+    return "TableWriteMerge";
+  }
+
+  folly::dynamic serialize() const override;
+
+  static PlanNodePtr create(const folly::dynamic& obj, void* context);
+
+ private:
+  void addDetails(std::stringstream& stream) const override;
+
+  const std::shared_ptr<AggregationNode> aggregationNode_;
+  const std::vector<PlanNodePtr> sources_;
+  const RowTypePtr outputType_;
+};
 
 /// Plan node used to implement aggregations over grouping sets. Duplicates the
 /// aggregation input for each set of grouping keys. The output contains one
@@ -934,7 +970,10 @@ class PartitionFunction {
   /// @param input RowVector to split into partitions.
   /// @param [out] partitions Computed partition numbers for each row in
   /// 'input'.
-  virtual void partition(
+  /// @return Returns partition number in case all rows of 'input' are assigned
+  /// to the same partition. In this case 'partitions' vector is left unchanged.
+  /// Used to optimize round-robin partitioning in local exchange.
+  virtual std::optional<uint32_t> partition(
       const RowVector& input,
       std::vector<uint32_t>& partitions) = 0;
 };
@@ -1061,33 +1100,42 @@ class LocalPartitionNode : public PlanNode {
 
 class PartitionedOutputNode : public PlanNode {
  public:
+  enum class Kind {
+    kPartitioned,
+    kBroadcast,
+    kArbitrary,
+  };
+  static std::string kindString(Kind kind);
+  static Kind stringToKind(std::string str);
+
   PartitionedOutputNode(
       const PlanNodeId& id,
+      Kind kind,
       const std::vector<TypedExprPtr>& keys,
       int numPartitions,
-      bool broadcast,
       bool replicateNullsAndAny,
       PartitionFunctionSpecPtr partitionFunctionSpec,
       RowTypePtr outputType,
       PlanNodePtr source)
       : PlanNode(id),
+        kind_(kind),
         sources_{{std::move(source)}},
         keys_(keys),
         numPartitions_(numPartitions),
-        broadcast_(broadcast),
         replicateNullsAndAny_(replicateNullsAndAny),
         partitionFunctionSpec_(std::move(partitionFunctionSpec)),
         outputType_(std::move(outputType)) {
-    VELOX_CHECK(numPartitions > 0, "numPartitions must be greater than zero");
+    VELOX_USER_CHECK_GT(numPartitions, 0);
     if (numPartitions == 1) {
-      VELOX_CHECK(
+      VELOX_USER_CHECK(
           keys_.empty(),
           "Non-empty partitioning keys require more than one partition");
     }
-    if (broadcast) {
-      VELOX_CHECK(
+    if (!isPartitioned()) {
+      VELOX_USER_CHECK(
           keys_.empty(),
-          "Broadcast partitioning doesn't allow for partitioning keys");
+          "{} partitioning doesn't allow for partitioning keys",
+          kindString(kind_));
     }
   }
 
@@ -1099,9 +1147,23 @@ class PartitionedOutputNode : public PlanNode {
     std::vector<TypedExprPtr> noKeys;
     return std::make_shared<PartitionedOutputNode>(
         id,
+        Kind::kBroadcast,
         noKeys,
         numPartitions,
-        true,
+        false,
+        std::make_shared<GatherPartitionFunctionSpec>(),
+        std::move(outputType),
+        std::move(source));
+  }
+
+  static std::shared_ptr<PartitionedOutputNode>
+  arbitrary(const PlanNodeId& id, RowTypePtr outputType, PlanNodePtr source) {
+    std::vector<TypedExprPtr> noKeys;
+    return std::make_shared<PartitionedOutputNode>(
+        id,
+        Kind::kArbitrary,
+        noKeys,
+        1,
         false,
         std::make_shared<GatherPartitionFunctionSpec>(),
         std::move(outputType),
@@ -1113,9 +1175,9 @@ class PartitionedOutputNode : public PlanNode {
     std::vector<TypedExprPtr> noKeys;
     return std::make_shared<PartitionedOutputNode>(
         id,
+        Kind::kPartitioned,
         noKeys,
         1,
-        false,
         false,
         std::make_shared<GatherPartitionFunctionSpec>(),
         std::move(outputType),
@@ -1142,8 +1204,20 @@ class PartitionedOutputNode : public PlanNode {
     return numPartitions_;
   }
 
+  bool isPartitioned() const {
+    return kind_ == Kind::kPartitioned;
+  }
+
   bool isBroadcast() const {
-    return broadcast_;
+    return kind_ == Kind::kBroadcast;
+  }
+
+  bool isArbitrary() const {
+    return kind_ == Kind::kArbitrary;
+  }
+
+  Kind kind() const {
+    return kind_;
   }
 
   /// Returns true if an arbitrary row and all rows with null keys must be
@@ -1173,14 +1247,20 @@ class PartitionedOutputNode : public PlanNode {
  private:
   void addDetails(std::stringstream& stream) const override;
 
+  const Kind kind_;
   const std::vector<PlanNodePtr> sources_;
   const std::vector<TypedExprPtr> keys_;
   const int numPartitions_;
-  const bool broadcast_;
   const bool replicateNullsAndAny_;
   const PartitionFunctionSpecPtr partitionFunctionSpec_;
   const RowTypePtr outputType_;
 };
+
+FOLLY_ALWAYS_INLINE std::ostream& operator<<(
+    std::ostream& out,
+    const PartitionedOutputNode::Kind kind) {
+  return out << PartitionedOutputNode::kindString(kind);
+}
 
 enum class JoinType {
   // For each row on the left, find all matching rows on the right and return
@@ -1562,8 +1642,8 @@ class OrderByNode : public PlanNode {
         sortingOrders_(sortingOrders),
         isPartial_(isPartial),
         sources_{source} {
-    VELOX_CHECK(!sortingKeys.empty(), "OrderBy must specify sorting keys");
-    VELOX_CHECK_EQ(
+    VELOX_USER_CHECK(!sortingKeys.empty(), "OrderBy must specify sorting keys");
+    VELOX_USER_CHECK_EQ(
         sortingKeys.size(),
         sortingOrders.size(),
         "Number of sorting keys and sorting orders in OrderBy must be the same");
@@ -1628,13 +1708,13 @@ class TopNNode : public PlanNode {
         count_(count),
         isPartial_(isPartial),
         sources_{source} {
-    VELOX_CHECK(!sortingKeys.empty(), "TopN must specify sorting keys");
-    VELOX_CHECK(
-        sortingKeys.size() == sortingOrders.size(),
+    VELOX_USER_CHECK(!sortingKeys.empty(), "TopN must specify sorting keys");
+    VELOX_USER_CHECK_EQ(
+        sortingKeys.size(),
+        sortingOrders.size(),
         "Number of sorting keys and sorting orders in TopN must be the same");
-    VELOX_CHECK(
-        count > 0,
-        "TopN must specify greater than zero number of rows to keep");
+    VELOX_USER_CHECK_GT(
+        count, 0, "TopN must specify greater than zero number of rows to keep");
   }
 
   const std::vector<FieldAccessTypedExprPtr>& sortingKeys() const {
@@ -1695,8 +1775,9 @@ class LimitNode : public PlanNode {
         count_(count),
         isPartial_(isPartial),
         sources_{source} {
-    VELOX_CHECK(
-        count > 0,
+    VELOX_CHECK_GT(
+        count,
+        0,
         "Limit must specify greater than zero number of rows to keep");
   }
 
@@ -1920,6 +2001,12 @@ class WindowNode : public PlanNode {
 
   static BoundType boundTypeFromName(const std::string& name);
 
+  /// Window frames can be ROW or RANGE type.
+  /// Frame bounds can be CURRENT ROW, UNBOUNDED PRECEDING(FOLLOWING)
+  /// and k PRECEDING(FOLLOWING). K could be a constant or column.
+  ///
+  /// k PRECEDING(FOLLOWING) is only supported for ROW frames now.
+  /// k has to be of integer or bigint type.
   struct Frame {
     WindowType type;
     BoundType startType;
@@ -2005,19 +2092,21 @@ class WindowNode : public PlanNode {
 
 /// Optimized version of a WindowNode for a single row_number function with an
 /// optional limit and no sorting.
-/// The output of this node contains all input columns followed by a
+/// The output of this node contains all input columns followed by an optional
 /// 'rowNumberColumnName' BIGINT column.
 class RowNumberNode : public PlanNode {
  public:
   /// @param partitionKeys Partitioning keys. May be empty.
-  /// @param rowNumberColumnName Name of the column containing row numbers.
+  /// @param rowNumberColumnName Optional name of the column containing row
+  /// numbers. If not specified, the output doesn't include 'row number' column.
+  /// This is used when computing partial results.
   /// @param limit Optional per-partition limit. If specified, the number of
   /// rows produced by this node will not exceed this value for any given
   /// partition. Extra rows will be dropped.
   RowNumberNode(
       PlanNodeId id,
       std::vector<FieldAccessTypedExprPtr> partitionKeys,
-      const std::string& rowNumberColumnName,
+      const std::optional<std::string>& rowNumberColumnName,
       std::optional<int32_t> limit,
       PlanNodePtr source);
 
@@ -2035,6 +2124,10 @@ class RowNumberNode : public PlanNode {
 
   std::optional<int32_t> limit() const {
     return limit_;
+  }
+
+  bool generateRowNumber() const {
+    return outputType_->size() > sources_[0]->outputType()->size();
   }
 
   std::string_view name() const override {
