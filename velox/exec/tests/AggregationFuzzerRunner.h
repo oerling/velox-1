@@ -67,10 +67,16 @@ namespace facebook::velox::exec::test {
 
 class AggregationFuzzerRunner {
  public:
-  // TODO: List of the functions that at some point crash or fail and need to
-  // be fixed before we can enable.
+  // List of functions that have known bugs that cause crashes or failures.
   static inline const std::unordered_set<std::string> skipFunctions_ = {
-      "stddev_pop", // https://github.com/facebookincubator/velox/issues/3493
+      // https://github.com/facebookincubator/velox/issues/3493
+      "stddev_pop",
+      // https://github.com/facebookincubator/velox/issues/6344
+      "avg_merge",
+      "avg_merge_extract_double",
+      "avg_merge_extract_real",
+      // Lambda functions are not supported yet.
+      "reduce_agg",
   };
 
   // Functions whose results verification should be skipped. These can be
@@ -93,6 +99,9 @@ class AggregationFuzzerRunner {
           {"approx_percentile_merge", ""},
           {"arbitrary", ""},
           {"array_agg", "array_sort({})"},
+          {"array_agg_partial", "array_sort({})"},
+          {"array_agg_merge", "array_sort({})"},
+          {"array_agg_merge_extract", "array_sort({})"},
           {"set_agg", "array_sort({})"},
           {"set_union", "array_sort({})"},
           {"map_agg", "array_sort(map_keys({}))"},
@@ -100,6 +109,8 @@ class AggregationFuzzerRunner {
           {"map_union_sum", "array_sort(map_keys({}))"},
           {"max_by", ""},
           {"min_by", ""},
+          {"map_union_sum", "array_sort(map_keys({}))"},
+          {"multimap_agg", "transform_values({}, (k, v) -> array_sort(v))"},
           // TODO: Skip result verification of companion functions that return
           // complex types that contain floating-point fields for now, until we
           // fix
@@ -111,6 +122,10 @@ class AggregationFuzzerRunner {
           // Semantically inconsistent functions
           {"skewness", ""},
           {"kurtosis", ""},
+          {"entropy", ""},
+          // https://github.com/facebookincubator/velox/issues/6330
+          {"max_data_size_for_stats", ""},
+          {"sum_data_size_for_stats", ""},
   };
 
   static int run(const std::string& planPath) {

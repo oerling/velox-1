@@ -20,6 +20,7 @@
 #include <unordered_set>
 
 #include <folly/Executor.h>
+#include "velox/common/compression/Compression.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/ErrorTolerance.h"
@@ -74,6 +75,10 @@ class SerDeOptions {
   uint8_t escapeChar;
   bool isEscaped;
 
+  inline static const std::string kFieldDelim{"field.delim"};
+  inline static const std::string kCollectionDelim{"collection.delim"};
+  inline static const std::string kMapKeyDelim{"mapkey.delim"};
+
   explicit SerDeOptions(
       uint8_t fieldDelim = '\1',
       uint8_t collectionDelim = '\2',
@@ -118,6 +123,7 @@ class RowReaderOptions {
   std::function<void(
       facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
       keySelectionCallback_;
+  bool eagerFirstStripeLoad = true;
 
  public:
   RowReaderOptions() noexcept
@@ -196,6 +202,24 @@ class RowReaderOptions {
    */
   bool getPreloadStripe() const {
     return preloadStripe;
+  }
+
+  /*
+   * Will load the first stripe on RowReader creation, if true.
+   * This behavior is already happening in DWRF, but isn't desired for some use
+   * cases. So this flag allows us to turn it off.
+   */
+  void setEagerFirstStripeLoad(bool load) {
+    eagerFirstStripeLoad = load;
+  }
+
+  /*
+   * Will load the first stripe on RowReader creation, if true.
+   * This behavior is already happening in DWRF, but isn't desired for some use
+   * cases. So this flag allows us to turn it off.
+   */
+  bool getEagerFirstStripeLoad() const {
+    return eagerFirstStripeLoad;
   }
 
   // For flat map, return flat vector representation
@@ -366,7 +390,8 @@ class ReaderOptions {
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
   uint64_t directorySizeGuess{kDefaultDirectorySizeGuess};
   uint64_t filePreloadThreshold{kDefaultFilePreloadThreshold};
-  bool fileColumnNamesReadAsLowerCase = false;
+  bool fileColumnNamesReadAsLowerCase{false};
+  bool useColumnNamesForColumnMapping_{false};
 
  public:
   static constexpr int32_t kDefaultLoadQuantum = 8 << 20; // 8MB
@@ -382,10 +407,7 @@ class ReaderOptions {
         fileFormat(FileFormat::UNKNOWN),
         fileSchema(nullptr),
         autoPreloadLength(DEFAULT_AUTO_PRELOAD_SIZE),
-        prefetchMode(PrefetchMode::PREFETCH),
-        fileColumnNamesReadAsLowerCase(false) {
-    // PASS
-  }
+        prefetchMode(PrefetchMode::PREFETCH) {}
 
   ReaderOptions& operator=(const ReaderOptions& other) {
     tailLocation = other.tailLocation;
@@ -403,6 +425,7 @@ class ReaderOptions {
     directorySizeGuess = other.directorySizeGuess;
     filePreloadThreshold = other.filePreloadThreshold;
     fileColumnNamesReadAsLowerCase = other.fileColumnNamesReadAsLowerCase;
+    useColumnNamesForColumnMapping_ = other.useColumnNamesForColumnMapping_;
     maxCoalesceDistance_ = other.maxCoalesceDistance_;
     maxCoalesceBytes_ = other.maxCoalesceBytes_;
     return *this;
@@ -434,13 +457,8 @@ class ReaderOptions {
    * For "dwrf" format, a default schema is derived from the file.
    * For "rc" format, there is no default schema.
    */
-  ReaderOptions& setFileSchema(
-      const std::shared_ptr<const velox::RowType>& schema) {
-    if (schema != nullptr) {
-      fileSchema = schema;
-    } else {
-      fileSchema = nullptr;
-    }
+  ReaderOptions& setFileSchema(const RowTypePtr& schema) {
+    fileSchema = schema;
     return *this;
   }
 
@@ -515,9 +533,13 @@ class ReaderOptions {
     return *this;
   }
 
-  ReaderOptions& setFileColumnNamesReadAsLowerCase(
-      bool fileColumnNamesReadAsLowerCaseMode) {
-    fileColumnNamesReadAsLowerCase = fileColumnNamesReadAsLowerCaseMode;
+  ReaderOptions& setFileColumnNamesReadAsLowerCase(bool flag) {
+    fileColumnNamesReadAsLowerCase = flag;
+    return *this;
+  }
+
+  ReaderOptions& setUseColumnNamesForColumnMapping(bool flag) {
+    useColumnNamesForColumnMapping_ = flag;
     return *this;
   }
 
@@ -594,11 +616,17 @@ class ReaderOptions {
   bool isFileColumnNamesReadAsLowerCase() const {
     return fileColumnNamesReadAsLowerCase;
   }
+
+  bool isUseColumnNamesForColumnMapping() const {
+    return useColumnNamesForColumnMapping_;
+  }
 };
 
 struct WriterOptions {
   TypePtr schema;
   velox::memory::MemoryPool* memoryPool;
+  velox::memory::SetMemoryReclaimer setMemoryReclaimer{nullptr};
+  std::optional<velox::common::CompressionKind> compressionKind;
 };
 
 } // namespace common

@@ -16,9 +16,11 @@
 
 #include "velox/exec/PartitionedOutput.h"
 #include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
 
+namespace detail {
 BlockingReason Destination::advance(
     uint64_t maxBytes,
     const std::vector<vector_size_t>& sizes,
@@ -31,12 +33,12 @@ BlockingReason Destination::advance(
     *atEnd = true;
     return BlockingReason::kNotBlocked;
   }
-  uint32_t adjustedMaxBytes = std::max(
-      PartitionedOutput::kMinDestinationSize,
-      (maxBytes * targetSizePct_) / 100);
+
+  const uint32_t adjustedMaxBytes = (maxBytes * targetSizePct_) / 100;
   if (bytesInCurrent_ >= adjustedMaxBytes) {
     return flush(bufferManager, bufferReleaseFn, future);
   }
+
   auto firstRow = row_;
   for (; row_ < rows_.size(); ++row_) {
     // TODO: add support for serializing partial ranges if the full range is too
@@ -65,7 +67,7 @@ void Destination::serialize(
     vector_size_t end) {
   if (!current_) {
     current_ = std::make_unique<VectorStreamGroup>(pool_);
-    auto rowType = std::dynamic_pointer_cast<const RowType>(output->type());
+    auto rowType = asRowType(output->type());
     vector_size_t numRows = 0;
     for (vector_size_t i = begin; i < end; i++) {
       numRows += rows_[i].size;
@@ -82,6 +84,7 @@ BlockingReason Destination::flush(
   if (!current_) {
     return BlockingReason::kNotBlocked;
   }
+
   // Upper limit of message size with no columns.
   constexpr int32_t kMinMessageSize = 128;
   auto listener = bufferManager.newListener();
@@ -94,16 +97,19 @@ BlockingReason Destination::flush(
   bytesInCurrent_ = 0;
   setTargetSizePct();
 
-  return bufferManager.enqueue(
+  bool blocked = bufferManager.enqueue(
       taskId_,
       destination_,
       std::make_unique<SerializedPage>(stream.getIOBuf(bufferReleaseFn)),
       future);
+  return blocked ? BlockingReason::kWaitForConsumer
+                 : BlockingReason::kNotBlocked;
 }
+} // namespace detail
 
 PartitionedOutput::PartitionedOutput(
     int32_t operatorId,
-    DriverCtx* FOLLY_NONNULL ctx,
+    DriverCtx* ctx,
     const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
     : Operator(
           ctx,
@@ -131,30 +137,39 @@ PartitionedOutput::PartitionedOutput(
       maxBufferedBytes_(ctx->task->queryCtx()
                             ->queryConfig()
                             .maxPartitionedOutputBufferSize()) {
-  if (numDestinations_ == 1 || planNode->isBroadcast()) {
-    VELOX_CHECK(keyChannels_.empty());
-    VELOX_CHECK_NULL(partitionFunction_);
+  if (!planNode->isPartitioned()) {
+    VELOX_USER_CHECK_EQ(numDestinations_, 1);
+  }
+  if (numDestinations_ == 1) {
+    VELOX_USER_CHECK(keyChannels_.empty());
+    VELOX_USER_CHECK_NULL(partitionFunction_);
   }
 }
 
 void PartitionedOutput::initializeInput(RowVectorPtr input) {
   input_ = std::move(input);
-  if (outputChannels_.empty()) {
+  if (outputType_->size() == 0) {
+    output_ = std::make_shared<RowVector>(
+        input_->pool(),
+        outputType_,
+        nullptr /*nulls*/,
+        input_->size(),
+        std::vector<VectorPtr>{});
+  } else if (outputChannels_.empty()) {
     output_ = input_;
   } else {
     std::vector<VectorPtr> outputColumns;
     outputColumns.reserve(outputChannels_.size());
-    for (auto& i : outputChannels_) {
+    for (auto i : outputChannels_) {
       outputColumns.push_back(input_->childAt(i));
     }
 
     output_ = std::make_shared<RowVector>(
         input_->pool(),
         outputType_,
-        input_->nulls(),
+        nullptr /*nulls*/,
         input_->size(),
-        outputColumns,
-        input_->getNullCount());
+        outputColumns);
   }
 }
 
@@ -162,7 +177,8 @@ void PartitionedOutput::initializeDestinations() {
   if (destinations_.empty()) {
     auto taskId = operatorCtx_->taskId();
     for (int i = 0; i < numDestinations_; ++i) {
-      destinations_.push_back(std::make_unique<Destination>(taskId, i, pool()));
+      destinations_.push_back(
+          std::make_unique<detail::Destination>(taskId, i, pool()));
     }
   }
 }
@@ -218,7 +234,7 @@ void PartitionedOutput::addInput(RowVectorPtr input) {
   if (numDestinations_ == 1) {
     destinations_[0]->addRows(IndexRange{0, numInput});
   } else {
-    partitionFunction_->partition(*input_, partitions_);
+    auto singlePartition = partitionFunction_->partition(*input_, partitions_);
     if (replicateNullsAndAny_) {
       collectNullRows();
 
@@ -237,12 +253,21 @@ void PartitionedOutput::addInput(RowVectorPtr input) {
             destination->addRow(i);
           }
         } else {
-          destinations_[partitions_[i]]->addRow(i);
+          if (singlePartition.has_value()) {
+            destinations_[singlePartition.value()]->addRow(i);
+          } else {
+            destinations_[partitions_[i]]->addRow(i);
+          }
         }
       }
     } else {
-      for (vector_size_t i = 0; i < numInput; ++i) {
-        destinations_[partitions_[i]]->addRow(i);
+      if (singlePartition.has_value()) {
+        destinations_[singlePartition.value()]->addRows(
+            IndexRange{0, numInput});
+      } else {
+        for (vector_size_t i = 0; i < numInput; ++i) {
+          destinations_[partitions_[i]]->addRow(i);
+        }
       }
     }
   }
@@ -277,10 +302,16 @@ RowVectorPtr PartitionedOutput::getOutput() {
   }
 
   blockingReason_ = BlockingReason::kNotBlocked;
-  Destination* blockedDestination = nullptr;
+  detail::Destination* blockedDestination = nullptr;
   auto bufferManager = bufferManager_.lock();
   VELOX_CHECK_NOT_NULL(
       bufferManager, "PartitionedOutputBufferManager was already destructed");
+
+  // Limit serialized pages to 1MB.
+  static const uint64_t kMaxPageSize = 1 << 20;
+  const uint64_t maxPageSize = std::max<uint64_t>(
+      kMinDestinationSize,
+      std::min<uint64_t>(kMaxPageSize, maxBufferedBytes_ / numDestinations_));
 
   bool workLeft;
   do {
@@ -288,7 +319,7 @@ RowVectorPtr PartitionedOutput::getOutput() {
     for (auto& destination : destinations_) {
       bool atEnd = false;
       blockingReason_ = destination->advance(
-          maxBufferedBytes_ / destinations_.size(),
+          maxPageSize,
           rowSize_,
           output_,
           *bufferManager,

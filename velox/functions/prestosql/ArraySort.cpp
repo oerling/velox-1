@@ -280,11 +280,8 @@ class ArraySortLambdaFunction : public exec::VectorFunction {
     std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
     auto newNumElements = flatArray->elements()->size();
 
-    SelectivityVector finalSelection;
-    if (!context.isFinalSelection()) {
-      finalSelection = toElementRows<ArrayVector>(
-          newNumElements, *context.finalSelection(), flatArray.get());
-    }
+    SelectivityVector validRowsInReusedResult =
+        toElementRows<ArrayVector>(newNumElements, rows, flatArray.get());
 
     // Compute sorting keys.
     VectorPtr newElements;
@@ -303,7 +300,7 @@ class ArraySortLambdaFunction : public exec::VectorFunction {
 
       entry.callable->apply(
           elementRows,
-          finalSelection,
+          &validRowsInReusedResult,
           wrapCapture,
           &context,
           lambdaArgs,
@@ -317,10 +314,13 @@ class ArraySortLambdaFunction : public exec::VectorFunction {
     auto sortedElements = BaseVector::wrapInDictionary(
         nullptr, indices, newNumElements, flatArray->elements());
 
+    // Set nulls for rows not present in 'rows'.
+    BufferPtr newNulls = addNullsForUnselectedRows(flatArray, rows);
+
     VectorPtr localResult = std::make_shared<ArrayVector>(
         flatArray->pool(),
         flatArray->type(),
-        flatArray->nulls(),
+        std::move(newNulls),
         flatArray->size(),
         flatArray->offsets(),
         flatArray->sizes(),

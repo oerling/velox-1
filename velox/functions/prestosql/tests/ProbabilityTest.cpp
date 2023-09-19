@@ -221,5 +221,155 @@ TEST_F(ProbabilityTest, invBetaCDF) {
   VELOX_ASSERT_THROW(invBetaCDF(3, 5, 1.1), "p must be in the interval [0, 1]");
 }
 
+TEST_F(ProbabilityTest, chiSquaredCDF) {
+  const auto chiSquaredCDF = [&](std::optional<double> df,
+                                 std::optional<double> value) {
+    return evaluateOnce<double>("chi_squared_cdf(c0, c1)", df, value);
+  };
+
+  EXPECT_EQ(chiSquaredCDF(3, 0.0), 0.0);
+  EXPECT_EQ(chiSquaredCDF(3, 1.0), 0.1987480430987992);
+  EXPECT_EQ(chiSquaredCDF(3, 2.5), 0.52470891665697938);
+  EXPECT_EQ(chiSquaredCDF(3, 4), 0.73853587005088939);
+  // Invalid inputs
+  VELOX_ASSERT_THROW(chiSquaredCDF(-3, 0.3), "df must be greater than 0");
+  VELOX_ASSERT_THROW(chiSquaredCDF(3, -10), "value must non-negative");
+}
+
+TEST_F(ProbabilityTest, fCDF) {
+  const auto fCDF = [&](std::optional<double> df1,
+                        std::optional<double> df2,
+                        std::optional<double> value) {
+    return evaluateOnce<double>("f_cdf(c0, c1, c2)", df1, df2, value);
+  };
+
+  EXPECT_EQ(fCDF(2.0, 5.0, 0.0), 0.0);
+  EXPECT_EQ(fCDF(2.0, 5.0, 0.7988), 0.50001145221750731);
+  EXPECT_EQ(fCDF(2.0, 5.0, 3.7797), 0.89999935988961155);
+
+  EXPECT_EQ(fCDF(kDoubleMax, 5.0, 3.7797), 1);
+  EXPECT_EQ(fCDF(1, kDoubleMax, 97.1), 1);
+  EXPECT_EQ(fCDF(82.6, 901.10, kDoubleMax), 1);
+  EXPECT_EQ(fCDF(12.12, 4.2015, kDoubleMin), 0);
+  EXPECT_EQ(fCDF(0.4422, kDoubleMin, 0.697), 7.9148959162596482e-306);
+  EXPECT_EQ(fCDF(kDoubleMin, 50.620, 4), 1);
+  EXPECT_EQ(fCDF(kBigIntMax, 5.0, 3.7797), 0.93256230095450132);
+  EXPECT_EQ(fCDF(76.901, kBigIntMax, 77.97), 1);
+  EXPECT_EQ(fCDF(2.0, 5.0, kBigIntMax), 1);
+
+  EXPECT_EQ(fCDF(2.0, 5.0, std::nullopt), std::nullopt);
+  EXPECT_EQ(fCDF(2.0, std::nullopt, 3.7797), std::nullopt);
+  EXPECT_EQ(fCDF(std::nullopt, 5.0, 3.7797), std::nullopt);
+
+  // Test invalid inputs for df1.
+  VELOX_ASSERT_THROW(fCDF(0, 3, 0.5), "numerator df must be greater than 0");
+  VELOX_ASSERT_THROW(
+      fCDF(kBigIntMin, 5.0, 3.7797), "numerator df must be greater than 0");
+
+  // Test invalid inputs for df2.
+  VELOX_ASSERT_THROW(fCDF(3, 0, 0.5), "denominator df must be greater than 0");
+  VELOX_ASSERT_THROW(
+      fCDF(2.0, kBigIntMin, 3.7797), "denominator df must be greater than 0");
+
+  // Test invalid inputs for value.
+  VELOX_ASSERT_THROW(fCDF(3, 5, -0.1), "value must non-negative");
+  VELOX_ASSERT_THROW(fCDF(2.0, 5.0, kBigIntMin), "value must non-negative");
+
+  // Test a combination of invalid inputs.
+  VELOX_ASSERT_THROW(fCDF(-1.2, 0, -0.1), "value must non-negative");
+  VELOX_ASSERT_THROW(fCDF(1, -kInf, -0.1), "value must non-negative");
+}
+
+TEST_F(ProbabilityTest, laplaceCDF) {
+  const auto laplaceCDF = [&](std::optional<double> location,
+                              std::optional<double> scale,
+                              std::optional<double> x) {
+    return evaluateOnce<double>("laplace_cdf(c0, c1, c2)", location, scale, x);
+  };
+
+  EXPECT_DOUBLE_EQ(0.5, laplaceCDF(0.0, 1.0, 0.0).value());
+  EXPECT_DOUBLE_EQ(0.5, laplaceCDF(5.0, 2.0, 5.0).value());
+  EXPECT_DOUBLE_EQ(0.0, laplaceCDF(5.0, 2.0, -kInf).value());
+  EXPECT_THAT(laplaceCDF(kNan, 1.0, 0.5), IsNan());
+  EXPECT_THAT(laplaceCDF(1.0, 1.0, kNan), IsNan());
+  EXPECT_THAT(laplaceCDF(kInf, 1.0, kNan), IsNan());
+  EXPECT_EQ(std::nullopt, laplaceCDF(std::nullopt, 1.0, 0.5));
+  EXPECT_EQ(std::nullopt, laplaceCDF(1.0, std::nullopt, 0.5));
+  EXPECT_EQ(std::nullopt, laplaceCDF(1.0, 1.0, std::nullopt));
+  EXPECT_EQ(0, laplaceCDF(kDoubleMax, 1.0, 0.5));
+  EXPECT_EQ(0.5, laplaceCDF(1.0, kDoubleMax, 0.5));
+  EXPECT_EQ(1, laplaceCDF(1.0, 1.0, kDoubleMax));
+  EXPECT_NEAR(
+      0.69673467014368329, laplaceCDF(kDoubleMin, 1.0, 0.5).value(), 1e-15);
+  EXPECT_EQ(0, laplaceCDF(1.0, kDoubleMin, 0.5));
+  EXPECT_NEAR(
+      0.18393972058572117, laplaceCDF(1.0, 1.0, kDoubleMin).value(), 1e-15);
+  VELOX_ASSERT_THROW(laplaceCDF(1.0, 0.0, 0.5), "scale must be greater than 0");
+  VELOX_ASSERT_THROW(
+      laplaceCDF(1.0, -1.0, 0.5), "scale must be greater than 0");
+}
+
+TEST_F(ProbabilityTest, poissonCDF) {
+  const auto poissonCDF = [&](std::optional<double> lambda,
+                              std::optional<int64_t> value) {
+    return evaluateOnce<double>("poisson_cdf(c0, c1)", lambda, value);
+  };
+
+  EXPECT_EQ(0.91608205796869657, poissonCDF(3, 5));
+  EXPECT_EQ(0, poissonCDF(kDoubleMax, 3));
+  EXPECT_EQ(1, poissonCDF(3, kBigIntMax));
+  EXPECT_EQ(1, poissonCDF(kDoubleMin, 3));
+  EXPECT_EQ(std::nullopt, poissonCDF(std::nullopt, 1));
+  EXPECT_EQ(std::nullopt, poissonCDF(1, std::nullopt));
+  EXPECT_EQ(std::nullopt, poissonCDF(std::nullopt, std::nullopt));
+  VELOX_ASSERT_THROW(poissonCDF(kNan, 3), "lambda must be greater than 0");
+  VELOX_ASSERT_THROW(poissonCDF(-3, 5), "lambda must be greater than 0");
+  VELOX_ASSERT_THROW(
+      poissonCDF(3, kBigIntMin), "value must be a non-negative integer");
+  VELOX_ASSERT_THROW(
+      poissonCDF(3, -10), "value must be a non-negative integer");
+  EXPECT_THROW(poissonCDF(kInf, 3), VeloxUserError);
+}
+
+TEST_F(ProbabilityTest, gammaCDF) {
+  const auto gammaCDF = [&](std::optional<double> shape,
+                            std::optional<double> scale,
+                            std::optional<double> value) {
+    return evaluateOnce<double>("gamma_cdf(c0, c1, c2)", shape, scale, value);
+  };
+
+  EXPECT_DOUBLE_EQ(0.96675918913720599, gammaCDF(0.5, 3.0, 6.8).value());
+  EXPECT_DOUBLE_EQ(0.50636537728827200, gammaCDF(1.5, 2.0, 2.4).value());
+  EXPECT_DOUBLE_EQ(0.55950671493478754, gammaCDF(5.0, 2.0, 10.0).value());
+  EXPECT_DOUBLE_EQ(0.01751372384616767, gammaCDF(6.5, 3.5, 8.1).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(5.0, 2.0, 100.0).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(5.0, 2.0, 0.0).value());
+  EXPECT_DOUBLE_EQ(0.15085496391539036, gammaCDF(2.5, 1.0, 1.0).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(2.0, kInf, kInf).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(kInf, 3.0, 6.0).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(2.0, kInf, 6.0).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(2.0, 3.0, kInf).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(kDoubleMax, 3.0, 6.0).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(2.0, kDoubleMax, 6.0).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(2.0, 3.0, kDoubleMax).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(kDoubleMin, 3.0, 6.0).value());
+  EXPECT_DOUBLE_EQ(1.0, gammaCDF(2.0, kDoubleMin, 6.0).value());
+  EXPECT_DOUBLE_EQ(0.0, gammaCDF(2.0, 3.0, kDoubleMin).value());
+
+  EXPECT_EQ(std::nullopt, gammaCDF(std::nullopt, 3.0, 6.0));
+  EXPECT_EQ(std::nullopt, gammaCDF(2.0, std::nullopt, 6.0));
+  EXPECT_EQ(std::nullopt, gammaCDF(2.0, 3.0, std::nullopt));
+
+  // invalid inputs
+  VELOX_ASSERT_THROW(gammaCDF(-1.0, 3.0, 6.0), "shape must be greater than 0");
+  VELOX_ASSERT_THROW(gammaCDF(2.0, -1.0, 6.0), "scale must be greater than 0");
+  VELOX_ASSERT_THROW(
+      gammaCDF(2.0, 3.0, -1.0), "value must be greater than, or equal to, 0");
+  VELOX_ASSERT_THROW(gammaCDF(kNan, 3.0, 6.0), "shape must be greater than 0");
+  VELOX_ASSERT_THROW(gammaCDF(2.0, kNan, 6.0), "scale must be greater than 0");
+  VELOX_ASSERT_THROW(
+      gammaCDF(2.0, 3.0, kNan), "value must be greater than, or equal to, 0");
+}
+
 } // namespace
 } // namespace facebook::velox

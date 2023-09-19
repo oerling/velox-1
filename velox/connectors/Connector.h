@@ -17,7 +17,9 @@
 
 #include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/RuntimeMetrics.h"
+#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/ScanTracker.h"
+#include "velox/common/config/SpillConfig.h"
 #include "velox/common/future/VeloxPromise.h"
 #include "velox/core/ExpressionEvaluator.h"
 #include "velox/vector/ComplexVector.h"
@@ -128,6 +130,9 @@ FOLLY_ALWAYS_INLINE std::ostream& operator<<(
 /// Return a commit strategy of the given string encoding.
 CommitStrategy stringToCommitStrategy(const std::string& strategy);
 
+/// Writes data received from table writer operator into different partitions
+/// based on the specific table layout. The actual implementation doesn't need
+/// to be thread-safe.
 class DataSink {
  public:
   virtual ~DataSink() = default;
@@ -136,12 +141,18 @@ class DataSink {
   /// TODO maybe at some point we want to make it async.
   virtual void appendData(RowVectorPtr input) = 0;
 
-  /// Called once after all data has been added via possibly multiple calls to
-  /// appendData(). Could return data in the string form that would be included
-  /// in the output. After calling this function, only close() could be called.
-  virtual std::vector<std::string> finish() const = 0;
+  /// Returns the number of bytes written on disk by this data sink so far.
+  virtual int64_t getCompletedBytes() const {
+    return 0;
+  }
 
-  virtual void close() = 0;
+  /// Called once after all data has been added via possibly multiple calls to
+  /// appendData(). The function returns the metadata of written data in string
+  /// form on success. If 'success' is false, this function aborts any pending
+  /// data processing inside this data sink.
+  ///
+  /// NOTE: we don't expect any appendData() calls on a closed data sink object.
+  virtual std::vector<std::string> close(bool success) = 0;
 };
 
 class DataSource {
@@ -216,23 +227,29 @@ class ConnectorQueryCtx {
   ConnectorQueryCtx(
       memory::MemoryPool* operatorPool,
       memory::MemoryPool* connectorPool,
+      memory::SetMemoryReclaimer setMemoryReclaimer,
       const Config* connectorConfig,
+      const common::SpillConfig* spillConfig,
       std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator,
-      memory::MemoryAllocator* FOLLY_NONNULL allocator,
+      cache::AsyncDataCache* cache,
       const std::string& queryId,
       const std::string& taskId,
       const std::string& planNodeId,
       int driverId)
       : operatorPool_(operatorPool),
         connectorPool_(connectorPool),
+        setMemoryReclaimer_(std::move(setMemoryReclaimer)),
         config_(connectorConfig),
+        spillConfig_(spillConfig),
         expressionEvaluator_(std::move(expressionEvaluator)),
-        allocator_(allocator),
+        cache_(cache),
         scanId_(fmt::format("{}.{}", taskId, planNodeId)),
         queryId_(queryId),
         taskId_(taskId),
         driverId_(driverId),
-        planNodeId_(planNodeId) {}
+        planNodeId_(planNodeId) {
+    VELOX_CHECK_NOT_NULL(connectorConfig);
+  }
 
   /// Returns the associated operator's memory pool which is a leaf kind of
   /// memory pool, used for direct memory allocation use.
@@ -247,18 +264,27 @@ class ConnectorQueryCtx {
     return connectorPool_;
   }
 
-  const Config* FOLLY_NONNULL config() const {
+  /// Returns the callback to set memory pool reclaimer if set. This is used by
+  /// file writer to set memory reclaimer for its internal used memory pools to
+  /// integrate with memory arbitration.
+  const memory::SetMemoryReclaimer& setMemoryReclaimer() const {
+    return setMemoryReclaimer_;
+  }
+
+  const Config* config() const {
     return config_;
+  }
+
+  const common::SpillConfig* getSpillConfig() const {
+    return spillConfig_;
   }
 
   core::ExpressionEvaluator* expressionEvaluator() const {
     return expressionEvaluator_.get();
   }
 
-  // MemoryAllocator for large allocations. Used for caching with
-  // CachedBufferedImput if this implements cache::AsyncDataCache.
-  memory::MemoryAllocator* FOLLY_NONNULL allocator() const {
-    return allocator_;
+  cache::AsyncDataCache* cache() const {
+    return cache_;
   }
 
   // This is a combination of task id and the scan's PlanNodeId. This is an id
@@ -286,11 +312,13 @@ class ConnectorQueryCtx {
   }
 
  private:
-  memory::MemoryPool* operatorPool_;
-  memory::MemoryPool* connectorPool_;
-  const Config* FOLLY_NONNULL config_;
+  memory::MemoryPool* const operatorPool_;
+  memory::MemoryPool* const connectorPool_;
+  const memory::SetMemoryReclaimer setMemoryReclaimer_;
+  const Config* config_;
+  const common::SpillConfig* const spillConfig_;
   std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator_;
-  memory::MemoryAllocator* FOLLY_NONNULL allocator_;
+  cache::AsyncDataCache* cache_;
   const std::string scanId_;
   const std::string queryId_;
   const std::string taskId_;
@@ -327,7 +355,7 @@ class Connector {
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) = 0;
+      ConnectorQueryCtx* connectorQueryCtx) = 0;
 
   // Returns true if addSplit of DataSource can use 'dataSource' from
   // ConnectorSplit in addSplit(). If so, TableScan can preload splits
@@ -356,7 +384,7 @@ class Connector {
   }
 
  private:
-  static void unregisterTracker(cache::ScanTracker* FOLLY_NONNULL tracker);
+  static void unregisterTracker(cache::ScanTracker* tracker);
 
   const std::string id_;
 
@@ -369,9 +397,12 @@ class Connector {
 
 class ConnectorFactory {
  public:
-  explicit ConnectorFactory(const char* FOLLY_NONNULL name) : name_(name) {}
+  explicit ConnectorFactory(const char* name) : name_(name) {}
 
   virtual ~ConnectorFactory() = default;
+
+  // Initialize is called during the factory registration.
+  virtual void initialize() {}
 
   const std::string& connectorName() const {
     return name_;

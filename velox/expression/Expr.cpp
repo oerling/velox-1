@@ -21,6 +21,7 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/SuccinctPrinter.h"
+#include "velox/common/process/ThreadDebugInfo.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/CastExpr.h"
@@ -39,6 +40,19 @@ DEFINE_bool(
     false,
     "Whether to overwrite queryCtx and force the "
     "use of simplified expression evaluation path.");
+
+DEFINE_bool(
+    velox_experimental_save_input_on_fatal_signal,
+    false,
+    "This is an experimental flag only to be used for debugging "
+    "purposes. If set to true, serializes the input vector data and "
+    "all the SQL expressions in the ExprSet that is currently "
+    "executing, whenever a fatal signal is encountered. Enabling "
+    "this flag makes the signal handler async signal unsafe, so it "
+    "should only be used for debugging purposes. The vector and SQLs "
+    "are serialized to files in directories specified by either "
+    "'velox_save_input_on_expression_any_failure_path' or "
+    "'velox_save_input_on_expression_system_failure_path'");
 
 namespace facebook::velox::exec {
 
@@ -342,6 +356,14 @@ bool isFlat(const BaseVector& vector) {
   return !(
       encoding == VectorEncoding::Simple::DICTIONARY ||
       encoding == VectorEncoding::Simple::CONSTANT);
+}
+
+inline void checkResultInternalState(VectorPtr& result) {
+#ifndef NDEBUG
+  if (result != nullptr) {
+    result->validate();
+  }
+#endif
 }
 
 } // namespace
@@ -763,6 +785,7 @@ void Expr::eval(
   if (supportsFlatNoNullsFastPath_ && context.throwOnError() &&
       context.inputFlatNoNulls() && rows.countSelected() < 1'000) {
     evalFlatNoNulls(rows, context, result, parentExprSet);
+    checkResultInternalState(result);
     return;
   }
 
@@ -775,6 +798,7 @@ void Expr::eval(
 
   if (!rows.hasSelections()) {
     checkOrSetEmptyResult(type(), context.pool(), result);
+    checkResultInternalState(result);
     return;
   }
 
@@ -818,10 +842,12 @@ void Expr::eval(
 
   if (inputs_.empty()) {
     evalAll(rows, context, result);
+    checkResultInternalState(result);
     return;
   }
 
   evalEncodings(rows, context, result);
+  checkResultInternalState(result);
 }
 
 template <typename TEval>
@@ -921,6 +947,10 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
   }
 
   // Prepare the rows and vectors to peel.
+
+  // Use finalSelection to generate peel to ensure those rows can be translated
+  // and ensure consistent peeling across multiple calls to this expression if
+  // its a shared subexpression.
   const auto& rowsToPeel =
       context.isFinalSelection() ? rows : *context.finalSelection();
   auto numFields = context.row()->childrenSize();
@@ -932,7 +962,7 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
     auto fieldVector = context.getField(fieldIndex);
     if (fieldVector->isConstantEncoding()) {
       // Make sure constant encoded fields are loaded
-      fieldVector = context.ensureFieldLoaded(fieldIndex, rows);
+      fieldVector = context.ensureFieldLoaded(fieldIndex, rowsToPeel);
     }
     vectorsToPeel.push_back(fieldVector);
   }
@@ -1621,6 +1651,94 @@ bool Expr::isConstant() const {
   return true;
 }
 
+namespace {
+
+common::Subfield extractSubfield(
+    const Expr* expr,
+    const folly::F14FastMap<std::string, int32_t>& shadowedNames) {
+  std::vector<std::unique_ptr<common::Subfield::PathElement>> path;
+  for (;;) {
+    if (auto* ref = expr->as<FieldReference>()) {
+      const auto& name = ref->name();
+      // When the field name is empty string, it typically means that the field
+      // name was not set in the parent type.
+      if (name == "") {
+        expr = expr->inputs()[0].get();
+        continue;
+      }
+      path.push_back(std::make_unique<common::Subfield::NestedField>(name));
+      if (!ref->inputs().empty()) {
+        expr = ref->inputs()[0].get();
+        continue;
+      }
+      if (shadowedNames.count(name) > 0) {
+        return {};
+      }
+      std::reverse(path.begin(), path.end());
+      return common::Subfield(std::move(path));
+    }
+    if (!expr->vectorFunction()) {
+      return {};
+    }
+    auto* subscript =
+        dynamic_cast<const Subscript*>(expr->vectorFunction().get());
+    if (!subscript || !subscript->canPushdown()) {
+      return {};
+    }
+    auto* index = expr->inputs()[1]->as<ConstantExpr>();
+    if (!index) {
+      return {};
+    }
+    switch (index->value()->typeKind()) {
+      case TypeKind::TINYINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int8_t>>()->value()));
+        break;
+      case TypeKind::SMALLINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int16_t>>()->value()));
+        break;
+      case TypeKind::INTEGER:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int32_t>>()->value()));
+        break;
+      case TypeKind::BIGINT:
+        path.push_back(std::make_unique<common::Subfield::LongSubscript>(
+            index->value()->as<ConstantVector<int64_t>>()->value()));
+        break;
+      case TypeKind::VARCHAR:
+        path.push_back(std::make_unique<common::Subfield::StringSubscript>(
+            index->value()->as<ConstantVector<StringView>>()->value()));
+        break;
+      default:
+        return {};
+    }
+    expr = expr->inputs()[0].get();
+  }
+}
+
+} // namespace
+
+void Expr::extractSubfieldsImpl(
+    folly::F14FastMap<std::string, int32_t>* shadowedNames,
+    std::vector<common::Subfield>* subfields) const {
+  auto subfield = extractSubfield(this, *shadowedNames);
+  if (subfield.valid()) {
+    subfields->push_back(std::move(subfield));
+    return;
+  }
+  for (auto& input : inputs_) {
+    input->extractSubfieldsImpl(shadowedNames, subfields);
+  }
+}
+
+std::vector<common::Subfield> Expr::extractSubfields() const {
+  folly::F14FastMap<std::string, int32_t> shadowedNames;
+  std::vector<common::Subfield> subfields;
+  extractSubfieldsImpl(&shadowedNames, &subfields);
+  return subfields;
+}
+
 ExprSet::ExprSet(
     const std::vector<core::TypedExprPtr>& sources,
     core::ExecCtx* execCtx,
@@ -1712,6 +1830,50 @@ std::string ExprSet::toString(bool compact) const {
   return out.str();
 }
 
+namespace {
+void printInputAndExprs(
+    const BaseVector* vector,
+    const std::vector<std::shared_ptr<Expr>>& exprs) {
+  const char* basePath =
+      FLAGS_velox_save_input_on_expression_any_failure_path.c_str();
+  if (strlen(basePath) == 0) {
+    basePath = FLAGS_velox_save_input_on_expression_system_failure_path.c_str();
+  }
+  if (strlen(basePath) == 0) {
+    return;
+  }
+  // Persist vector to disk
+  try {
+    auto dataPathOpt = common::generateTempFilePath(basePath, "vector");
+    if (!dataPathOpt.has_value()) {
+      return;
+    }
+    saveVectorToFile(vector, dataPathOpt.value().c_str());
+    LOG(ERROR) << "Input vector data: " << dataPathOpt.value();
+  } catch (std::exception& e) {
+    LOG(ERROR) << "Error serializing Input vector data: " << e.what();
+  }
+
+  try {
+    std::stringstream allSql;
+    for (int i = 0; i < exprs.size(); ++i) {
+      if (i > 0) {
+        allSql << ", ";
+      }
+      allSql << exprs[i]->toSql();
+    }
+    auto sqlPathOpt = common::generateTempFilePath(basePath, "allExprSql");
+    if (!sqlPathOpt.has_value()) {
+      return;
+    }
+    saveStringToFile(allSql.str(), sqlPathOpt.value().c_str());
+    LOG(ERROR) << "SQL expression: " << sqlPathOpt.value();
+  } catch (std::exception& e) {
+    LOG(ERROR) << "Error serializing SQL expression: " << e.what();
+  }
+}
+} // namespace
+
 void ExprSet::eval(
     int32_t begin,
     int32_t end,
@@ -1733,6 +1895,24 @@ void ExprSet::eval(
   // needs all rows for "b".
   for (const auto& field : multiplyReferencedFields_) {
     context.ensureFieldLoaded(field->index(context), rows);
+  }
+
+  if (FLAGS_velox_experimental_save_input_on_fatal_signal) {
+    auto other = process::GetThreadDebugInfo();
+    process::ThreadDebugInfo debugInfo;
+    if (other) {
+      debugInfo.queryId_ = other->queryId_;
+      debugInfo.taskId_ = other->taskId_;
+    }
+    debugInfo.callback_ = [&]() {
+      printInputAndExprs(context.row(), this->exprs());
+    };
+    process::ScopedThreadDebugInfo scopedDebugInfo(debugInfo);
+
+    for (int32_t i = begin; i < end; ++i) {
+      exprs_[i]->eval(rows, context, result[i], this);
+    }
+    return;
   }
 
   for (int32_t i = begin; i < end; ++i) {

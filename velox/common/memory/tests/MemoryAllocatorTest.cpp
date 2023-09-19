@@ -21,6 +21,7 @@
 #include "velox/common/memory/MmapArena.h"
 #include "velox/common/testutil/TestValue.h"
 
+#include <fstream>
 #include <thread>
 
 #include <folly/Random.h>
@@ -34,6 +35,13 @@ DECLARE_int32(velox_memory_pool_mb);
 using namespace facebook::velox::common::testutil;
 
 namespace facebook::velox::memory {
+namespace {
+// Virtual and resident set size for a process in kPageSize pages.
+struct ProcessSize {
+  int64_t vsize;
+  int64_t rss;
+};
+} // namespace
 
 static constexpr uint64_t kCapacityBytes = 256UL * 1024 * 1024;
 static constexpr MachinePageCount kCapacityPages =
@@ -73,13 +81,19 @@ class MemoryAllocatorTest : public testing::TestWithParam<bool> {
       MemoryAllocator::setDefaultInstance(allocator_.get());
     }
     instance_ = MemoryAllocator::getInstance();
-    memoryManager_ = std::make_unique<MemoryManager>(IMemoryManager::Options{
-        .capacity = kMaxMemory, .allocator = instance_});
+    memoryManager_ = std::make_unique<MemoryManager>(MemoryManagerOptions{
+        .capacity = (int64_t)instance_->capacity(), .allocator = instance_});
     pool_ = memoryManager_->addLeafPool("allocatorTest");
     if (useMmap_) {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMmap);
+      ASSERT_EQ(
+          instance_->toString(),
+          "Memory Allocator[MMAP capacity 64.00KB allocated pages 0 mapped pages 0 external mapped pages 0\n[size 1: 0(0MB) allocated 0 mapped]\n[size 2: 0(0MB) allocated 0 mapped]\n[size 4: 0(0MB) allocated 0 mapped]\n[size 8: 0(0MB) allocated 0 mapped]\n[size 16: 0(0MB) allocated 0 mapped]\n[size 32: 0(0MB) allocated 0 mapped]\n[size 64: 0(0MB) allocated 0 mapped]\n[size 128: 0(0MB) allocated 0 mapped]\n[size 256: 0(0MB) allocated 0 mapped]\n]");
     } else {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMalloc);
+      ASSERT_EQ(
+          instance_->toString(),
+          "Memory Allocator[MALLOC capacity 256.00MB allocated bytes 0 allocated pages 0 mapped pages 0]");
     }
     ASSERT_EQ(
         MemoryAllocator::kindString(static_cast<MemoryAllocator::Kind>(100)),
@@ -103,6 +117,51 @@ class MemoryAllocatorTest : public testing::TestWithParam<bool> {
     EXPECT_GE(result.numPages(), numPages);
     initializeContents(result);
     return true;
+  }
+
+  /// Returns the virtual and resident sizes of the process in 4K pages. Only
+  /// defined for Linux.
+  std::optional<ProcessSize> processSize() {
+#ifdef linux
+    auto pid = getpid();
+    system(
+        fmt::format("ps -eo 'pid,vsize,rss' |grep \"${}\" >/tmp/{}", pid, pid)
+            .c_str());
+    std::ifstream in(fmt::format("/tmp/{}", pid));
+    std::string line;
+    std::getline(in, line);
+    int32_t resultPid;
+    int32_t vsize;
+    int32_t rss;
+    if (sscanf(line.c_str(), "%d %d %d", &resultPid, &vsize, &rss) != 3) {
+      return std::nullopt;
+    }
+    constexpr int64_t kKBInPage = AllocationTraits::kPageSize / 1024;
+    return ProcessSize{vsize / kKBInPage, rss / kKBInPage};
+#else
+    return std::nullopt;
+#endif
+  }
+
+  void checkProcessSize(std::optional<ProcessSize> base, ProcessSize delta) {
+    // RSS and Vsize changes can be rounded up by huge page
+    // size. Whether a range if is backed by huge pages, the RSS
+    // increment for write can be 2MB instead of 4K. Vsize has also
+    // been seen to be rounded up. Generally process size reported by
+    // ps is a close match to mmap/madvise/munmap/writing to memory.
+    const int64_t kMargin = AllocationTraits::numPagesInHugePage();
+    if (!base.has_value()) {
+      return;
+    }
+    // If the initial size could be had, we error out if the current sizes
+    // cannot be had.
+    auto current = processSize().value();
+    auto expected = base.value().vsize + delta.vsize;
+    EXPECT_LE(expected, current.vsize);
+    EXPECT_GE(expected + kMargin, current.vsize);
+    expected = base.value().rss + delta.rss;
+    EXPECT_LE(expected, current.rss);
+    EXPECT_GE(expected + kMargin, current.rss);
   }
 
   void initializeContents(Allocation& alloc) {
@@ -436,7 +495,7 @@ TEST_P(MemoryAllocatorTest, allocationPool) {
 
   {
     auto old = pool.numRanges();
-    auto bytes = pool.availableInRun();
+    auto bytes = pool.testingFreeAddressableBytes();
     pool.allocateFixed(bytes);
     pool.allocateFixed(1);
     ASSERT_EQ(pool.numRanges(), old + 1);
@@ -452,7 +511,7 @@ TEST_P(MemoryAllocatorTest, allocationPool) {
 
   {
     // Leaving 10 bytes room
-    pool.allocateFixed(pool.availableInRun() - 10);
+    pool.allocateFixed(pool.testingFreeAddressableBytes() - 10);
     auto old = pool.numRanges();
     auto buf = pool.allocateFixed(1, 64);
     ASSERT_EQ(reinterpret_cast<uintptr_t>(buf) % 64, 0);
@@ -999,6 +1058,25 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   EXPECT_EQ(
       kCapacityPages - kInitialLarge - 5 * kMinGrow, instance_->numAllocated());
   freeSmall(kCapacityPages);
+}
+
+TEST_P(MemoryAllocatorTest, DISABLED_allocContiguousVsize) {
+  // Works with malloc and mmap allocators where MmapArena is not on.
+  auto initialSize = processSize();
+
+  ContiguousAllocation large;
+  instance_->allocateContiguous(1024, nullptr, large, nullptr, 2048);
+  initializeContents(large);
+  // vsize grows by 2048, rss by 1024
+  checkProcessSize(initialSize, {2048, 1024});
+  instance_->allocateContiguous(4096, nullptr, large, nullptr, 10240);
+  initializeContents(large);
+  checkProcessSize(initialSize, {10240, 4096});
+  instance_->growContiguous(1024, large);
+  initializeContents(large);
+  checkProcessSize(initialSize, {10240, 4096 + 1024});
+  instance_->freeContiguous(large);
+  checkProcessSize(initialSize, {0, 0});
 }
 
 TEST_P(MemoryAllocatorTest, allocateBytes) {

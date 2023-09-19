@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include <folly/Optional.h>
+#include <optional>
 #include <string>
 
 namespace facebook::velox {
@@ -89,6 +89,9 @@ class HiveConfig {
   // The GCS service account configuration as json string
   static constexpr const char* kGCSCredentials = "hive.gcs.credentials";
 
+  // Map table field names to file field names using names, not indices.
+  static constexpr const char* kOrcUseColumnNames = "hive.orc.use-column-names";
+
   // Read the source file column name as lower case.
   static constexpr const char* kFileColumnNamesReadAsLowerCase =
       "file_column_names_read_as_lower_case";
@@ -99,6 +102,9 @@ class HiveConfig {
   // Set the max coalesce distance bytes for combining requests.
   static constexpr const char* kMaxCoalescedDistanceBytes =
       "max-coalesced-distance-bytes";
+
+  /// Maximum number of entries in the file handle cache.
+  static constexpr const char* kNumCacheFileHandles = "num_cached_file_handles";
 
   static InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const Config* config);
@@ -131,11 +137,15 @@ class HiveConfig {
 
   static std::string gcsCredentials(const Config* config);
 
+  static bool isOrcUseColumnNames(const Config* config);
+
   static bool isFileColumnNamesReadAsLowerCase(const Config* config);
 
   static int64_t maxCoalescedBytes(const Config* config);
 
   static int32_t maxCoalescedDistanceBytes(const Config* config);
+
+  static int32_t numCacheFileHandles(const Config* config);
 };
 
 } // namespace facebook::velox::connector::hive

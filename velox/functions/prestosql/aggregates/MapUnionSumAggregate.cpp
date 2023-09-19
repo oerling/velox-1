@@ -276,6 +276,7 @@ class MapUnionSumAggregate : public exec::Aggregate {
         }
       }
     }
+    destroyAccumulators<AccumulatorType>(groups);
   }
 
  private:

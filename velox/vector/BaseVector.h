@@ -52,6 +52,17 @@ class VectorPool;
 class BaseVector;
 using VectorPtr = std::shared_ptr<BaseVector>;
 
+// Set of options that validate() accepts.
+struct VectorValidateOptions {
+  // If set to true then an unloaded lazy vector is loaded and validate is
+  // called on the loaded vector. NOTE: loading a vector is non-trivial and
+  // can modify how it's handled by downstream code-paths.
+  bool loadLazy = false;
+
+  // Any optional checks you want to execute on the vector.
+  std::function<void(const BaseVector&)> callback;
+};
+
 /**
  * Base class for all columnar-based vectors of any type.
  */
@@ -146,6 +157,14 @@ class BaseVector {
     return rawNulls_ ? bits::isBitNull(rawNulls_, idx) : false;
   }
 
+  /// Returns true if value at specified index is null or contains null.
+  /// Primitive type values can be null, but cannot contain nulls. Arrays, maps
+  /// and structs can be null and can contains nulls. Non-null array may contain
+  /// one or more elements that are null or contain nulls themselves. Non-null
+  /// maps may contain one more entry with key or value that's null or contains
+  /// null. Non-null struct may contain a field that's null or contains null.
+  virtual bool containsNullAt(vector_size_t idx) const = 0;
+
   std::optional<vector_size_t> getNullCount() const {
     return nullCount_;
   }
@@ -175,12 +194,14 @@ class BaseVector {
     return rawNulls_;
   }
 
+  // Ensures that nulls are writable (mutable and single referenced for
+  // BaseVector::length_).
   uint64_t* mutableRawNulls() {
     ensureNulls();
     return const_cast<uint64_t*>(rawNulls_);
   }
 
-  virtual BufferPtr mutableNulls(vector_size_t size) {
+  BufferPtr& mutableNulls(vector_size_t size) {
     ensureNullsCapacity(size);
     return nulls_;
   }
@@ -238,8 +259,11 @@ class BaseVector {
       vector_size_t index,
       vector_size_t otherIndex) const {
     static constexpr CompareFlags kEqualValueAtFlags = {
-        false, false, true /*equalOnly*/, false /*stopAtNull**/};
-    // Will always have value because stopAtNull is false.
+        false,
+        false,
+        true /*equalOnly*/,
+        CompareFlags::NullHandlingMode::NoStop /*nullHandlingMode**/};
+    // Will always have value because nullHandlingMode is NoStop.
     return compare(other, index, otherIndex, kEqualValueAtFlags).value() == 0;
   }
 
@@ -251,10 +275,12 @@ class BaseVector {
     return compare(other, index, otherIndex, CompareFlags()).value();
   }
 
-  // Returns < 0 if 'this' at 'index' is less than 'other' at
-  // 'otherIndex', 0 if equal and > 0 otherwise.
-  // If flags.stopAtNull is set, returns std::nullopt if null encountered
-  // whether it's top-level null or inside the data of complex type.
+  /// When CompareFlags is ASCENDING, returns < 0 if 'this' at 'index' is less
+  /// than 'other' at 'otherIndex', 0 if equal and > 0 otherwise.
+  /// When CompareFlags is DESCENDING, returns < 0 if 'this' at 'index' is
+  /// larger than 'other' at 'otherIndex', 0 if equal and < 0 otherwise. If
+  /// flags.nullHandlingMode is not NoStop, the function may returns
+  /// std::nullopt if null encountered.
   virtual std::optional<int32_t> compare(
       const BaseVector* other,
       vector_size_t index,
@@ -345,6 +371,25 @@ class BaseVector {
         nulls_->asMutable<uint64_t>(), idx, bits::kNull ? value : !value);
   }
 
+  struct CopyRange {
+    vector_size_t sourceIndex;
+    vector_size_t targetIndex;
+    vector_size_t count;
+  };
+
+  /// Sets null flags for each row in 'ranges' to 'isNull'.
+  static void setNulls(
+      uint64_t* rawNulls,
+      const folly::Range<const CopyRange*>& ranges,
+      bool isNull);
+
+  /// Copies null flags for each row in 'ranges' from 'sourceRawNulls' to
+  /// 'targetRawNulls'.
+  static void copyNulls(
+      uint64_t* targetRawNulls,
+      const uint64_t* sourceRawNulls,
+      const folly::Range<const CopyRange*>& ranges);
+
   static int32_t
   countNulls(const BufferPtr& nulls, vector_size_t begin, vector_size_t end) {
     return nulls ? bits::countNulls(nulls->as<uint64_t>(), begin, end) : 0;
@@ -358,7 +403,7 @@ class BaseVector {
   // This does not guarantee the existence of the nulls buffer, if using this
   // within BaseVector you still may need to call ensureNulls.
   virtual bool isNullsWritable() const {
-    return !nulls_ || (nulls_->unique() && nulls_->isMutable());
+    return !nulls_ || (nulls_->isMutable());
   }
 
   // Sets null when 'nulls' has null value for a row in 'rows'
@@ -389,19 +434,7 @@ class BaseVector {
   virtual void copy(
       const BaseVector* source,
       const SelectivityVector& rows,
-      const vector_size_t* toSourceRow) {
-    rows.applyToSelected([&](vector_size_t row) {
-      auto sourceRow = toSourceRow ? toSourceRow[row] : row;
-      if (sourceRow >= source->size()) {
-        return;
-      }
-      if (source->isNullAt(sourceRow)) {
-        setNull(row, true);
-      } else {
-        copy(source, row, sourceRow, 1);
-      }
-    });
-  }
+      const vector_size_t* toSourceRow);
 
   // Utility for making a deep copy of a whole vector.
   static VectorPtr copy(const BaseVector& vector) {
@@ -423,11 +456,10 @@ class BaseVector {
     copyRanges(source, folly::Range(&range, 1));
   }
 
-  struct CopyRange {
-    vector_size_t sourceIndex;
-    vector_size_t targetIndex;
-    vector_size_t count;
-  };
+  /// Converts SelectivityVetor into a list of CopyRanges having sourceIndex ==
+  /// targetIndex. Aims to produce as few ranges as possible. If all rows are
+  /// selected, returns a single range.
+  static std::vector<CopyRange> toCopyRanges(const SelectivityVector& rows);
 
   // Copy multiple ranges at once.  This is more efficient than calling `copy`
   // multiple times, especially for ARRAY, MAP, and VARCHAR.
@@ -530,6 +562,9 @@ class BaseVector {
   //
   // Use SelectivityVector::empty() to make the 'result' writable and preserve
   // all current values.
+  //
+  // If 'result' is a lazy vector, then caller needs to ensure it is unique in
+  // order to re-use the loaded vector. Otherwise, a copy would be created.
   static void ensureWritable(
       const SelectivityVector& rows,
       const TypePtr& type,
@@ -707,15 +742,6 @@ class BaseVector {
   /// set.
   virtual void prepareForReuse();
 
-  // True if left and right are the same or if right is
-  // TypeKind::UNKNOWN.  ArrayVector copying may come across unknown
-  // type data for null-only content. Nulls can be transferred between
-  // two unknowns but values cannot be assigned into an unknown 'left'
-  // from a not-unknown 'right'.
-  static bool compatibleKind(TypeKind left, TypeKind right) {
-    return left == right || right == TypeKind::UNKNOWN;
-  }
-
   /// Returns a brief summary of the vector. If 'recursive' is true, includes a
   /// summary of all the layers of encodings starting with the top layer.
   ///
@@ -781,6 +807,10 @@ class BaseVector {
     return true;
   }
 
+  void clearContainingLazyAndWrapped() {
+    containsLazyAndIsWrapped_ = false;
+  }
+
   bool memoDisabled() const {
     return memoDisabled_;
   }
@@ -789,27 +819,20 @@ class BaseVector {
     memoDisabled_ = true;
   }
 
- protected:
-  /// Returns a brief summary of the vector. The default implementation includes
-  /// encoding, type, number of rows and number of nulls.
-  ///
-  /// For example,
-  ///     [FLAT INTEGER: 3 elements, no nulls]
-  ///     [DICTIONARY INTEGER: 5 elements, 1 nulls]
-  virtual std::string toSummaryString() const;
-
-  /*
-   * Allocates or reallocates nulls_ with at least the given size if nulls_
-   * hasn't been allocated yet or has been allocated with a smaller capacity.
-   */
-  void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
+  /// Used to check internal state of a vector like sizes of the buffers,
+  /// enclosed child vectors, values in indices. Currently, its only used in
+  /// debug builds to check the result of expressions and some interim results.
+  virtual void validate(const VectorValidateOptions& options = {}) const;
 
   FOLLY_ALWAYS_INLINE static std::optional<int32_t>
   compareNulls(bool thisNull, bool otherNull, CompareFlags flags) {
     DCHECK(thisNull || otherNull);
-    // Null handling.
-    if (flags.stopAtNull) {
-      return std::nullopt;
+    switch (flags.nullHandlingMode) {
+      case CompareFlags::NullHandlingMode::StopAtNull:
+        return std::nullopt;
+      case CompareFlags::NullHandlingMode::NoStop:
+      default:
+        break;
     }
 
     if (thisNull) {
@@ -825,6 +848,39 @@ class BaseVector {
     VELOX_UNREACHABLE(
         "The function should be called only if one of the inputs is null");
   }
+
+  // Reset data-dependent flags to the "unknown" status. This is needed whenever
+  // a vector is mutated because the modification may invalidate these flags.
+  // Currently, we call this function in BaseVector::ensureWritable() and
+  // BaseVector::prepareForReuse() that are expected to be called before any
+  // vector mutation.
+  //
+  // Per-vector flags are reset to default values. Per-row flags are reset only
+  // at the selected rows. If rows is a nullptr, per-row flags are reset at all
+  // rows.
+  virtual void resetDataDependentFlags(const SelectivityVector* /*rows*/) {
+    nullCount_ = std::nullopt;
+    distinctValueCount_ = std::nullopt;
+    representedByteCount_ = std::nullopt;
+    storageByteCount_ = std::nullopt;
+  }
+
+ protected:
+  /// Returns a brief summary of the vector. The default implementation includes
+  /// encoding, type, number of rows and number of nulls.
+  ///
+  /// For example,
+  ///     [FLAT INTEGER: 3 elements, no nulls]
+  ///     [DICTIONARY INTEGER: 5 elements, 1 nulls]
+  virtual std::string toSummaryString() const;
+
+  /*
+   * Allocates or reallocates nulls_ with at least the given size if nulls_
+   * hasn't been allocated yet or has been allocated with a smaller capacity.
+   * Ensures that nulls are writable (mutable and single referenced for
+   * minimumSize).
+   */
+  void ensureNullsCapacity(vector_size_t minimumSize, bool setNotNull = false);
 
   void ensureNulls() {
     ensureNullsCapacity(length_, true);
@@ -844,22 +900,6 @@ class BaseVector {
 
   BufferPtr sliceNulls(vector_size_t offset, vector_size_t length) const {
     return sliceBuffer(*BOOLEAN(), nulls_, offset, length, pool_);
-  }
-
-  // Reset data-dependent flags to the "unknown" status. This is needed whenever
-  // a vector is mutated because the modification may invalidate these flags.
-  // Currently, we call this function in BaseVector::ensureWritable() and
-  // BaseVector::prepareForReuse() that are expected to be called before any
-  // vector mutation.
-  //
-  // Per-vector flags are reset to default values. Per-row flags are reset only
-  // at the selected rows. If rows is a nullptr, per-row flags are reset at all
-  // rows.
-  virtual void resetDataDependentFlags(const SelectivityVector* /*rows*/) {
-    nullCount_ = std::nullopt;
-    distinctValueCount_ = std::nullopt;
-    representedByteCount_ = std::nullopt;
-    storageByteCount_ = std::nullopt;
   }
 
   const TypePtr type_;
@@ -906,6 +946,32 @@ class BaseVector {
   // don't need to reallocate the result for every batch.
   bool memoDisabled_{false};
 };
+
+/// Loops over rows in 'ranges' and invokes 'func' for each row.
+/// @param TFunc A void function taking two arguments: targetIndex and
+/// sourceIndex.
+template <typename TFunc>
+void applyToEachRow(
+    const folly::Range<const BaseVector::CopyRange*>& ranges,
+    const TFunc& func) {
+  for (const auto& range : ranges) {
+    for (auto i = 0; i < range.count; ++i) {
+      func(range.targetIndex + i, range.sourceIndex + i);
+    }
+  }
+}
+
+/// Loops over 'ranges' and invokes 'func' for each range.
+/// @param TFunc A void function taking 3 arguments: targetIndex, sourceIndex
+/// and count.
+template <typename TFunc>
+void applyToEachRange(
+    const folly::Range<const BaseVector::CopyRange*>& ranges,
+    const TFunc& func) {
+  for (const auto& range : ranges) {
+    func(range.targetIndex, range.sourceIndex, range.count);
+  }
+}
 
 template <>
 uint64_t BaseVector::byteSize<bool>(vector_size_t count);

@@ -142,6 +142,8 @@ class HashStringAllocator : public StreamArena {
       return *reinterpret_cast<Header**>(end() - kContinuedPtrSize);
     }
 
+    std::string toString();
+
    private:
     uint32_t data_;
   };
@@ -323,15 +325,7 @@ class HashStringAllocator : public StreamArena {
   }
 
   // Frees all memory associated with 'this' and leaves 'this' ready for reuse.
-  void clear() {
-    numFree_ = 0;
-    freeBytes_ = 0;
-    freeNonEmpty_ = 0;
-    for (auto i = 0; i < kNumFreeLists; ++i) {
-      new (&free_[i]) CompactDoubleList();
-    }
-    pool_.clear();
-  }
+  void clear();
 
   memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_.pool();
@@ -342,8 +336,21 @@ class HashStringAllocator : public StreamArena {
   }
 
   // Checks the free space accounting and consistency of
-  // Headers. Throws when detects corruption.
-  void checkConsistency() const;
+  // Headers. Throws when detects corruption. Returns the number of allocated
+  // payload bytes, excluding headers, continue links and other overhead.
+  int64_t checkConsistency() const;
+
+  /// Returns 'true' if this is empty. The implementation includes a call to
+  /// checkConsistency() which makes it slow. Do not use in hot paths.
+  bool isEmpty() const;
+
+  /// Throws if 'this' is not empty. Checks consistency of
+  /// 'this'. This is a fast check for RowContainer users freeing the
+  /// variable length data they store. Can be used in non-debug
+  /// builds.
+  void checkEmpty() const;
+
+  std::string toString() const;
 
  private:
   static constexpr int32_t kUnitSize = 16 * memory::AllocationTraits::kPageSize;
@@ -358,13 +365,10 @@ class HashStringAllocator : public StreamArena {
 
   void newRange(int32_t bytes, ByteRange* range, bool contiguous);
 
-  // Adds 'bytes' worth of contiguous space to the free list. This
+  // Adds a new standard size slab to the free list. This
   // grows the footprint in MemoryAllocator but does not allocate
-  // anything yet. Throws if fails to grow. The caller typically knows
-  // a cap on memory to allocate and uses this and freeSpace() to make
-  // sure that there is space to accommodate the expected need before
-  // starting to process a batch of input.
-  void newSlab(int32_t size);
+  // anything yet. Throws if fails to grow.
+  void newSlab();
 
   void removeFromFreeList(Header* FOLLY_NONNULL header) {
     VELOX_CHECK(header->isFree());
@@ -533,10 +537,10 @@ struct AlignedStlAllocator {
 
   static_assert(
       Alignment != 0,
-      "Alignment of AlignmentStlAllocator cannot be 0.");
+      "Alignment of AlignedStlAllocator cannot be 0.");
   static_assert(
       (Alignment & (Alignment - 1)) == 0,
-      "Alignment of AlignmentStlAllocator must be a power of 2.");
+      "Alignment of AlignedStlAllocator must be a power of 2.");
 
   template <class Other>
   struct rebind {

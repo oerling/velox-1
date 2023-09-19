@@ -50,7 +50,7 @@ dwio::common::flatmap::KeyPredicate<T> prepareKeyPredicate(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
     StripeStreams& stripe) {
   auto& cs = stripe.getColumnSelector();
-  const auto expr = cs.getNode(requestedType->id)->getNode().expression;
+  const auto expr = cs.getNode(requestedType->id())->getNode().expression;
   return dwio::common::flatmap::prepareKeyPredicate<T>(expr);
 }
 
@@ -119,14 +119,14 @@ std::vector<KeyNode<T>> getKeyNodes(
   // Load all sub streams.
   // Fetch reader, in map bitmap and key object.
   auto streams = stripe.visitStreamsOfNode(
-      dataValueType->id, [&](const StreamInformation& stream) {
+      dataValueType->id(), [&](const StreamInformation& stream) {
         auto sequence = stream.getSequence();
         // No need to load shared dictionary stream here.
         if (sequence == 0 || processed.count(sequence)) {
           return;
         }
         processed.insert(sequence);
-        EncodingKey seqEk(dataValueType->id, sequence);
+        EncodingKey seqEk(dataValueType->id(), sequence);
         const auto& keyInfo = stripe.getEncoding(seqEk).key();
         auto key = extractKey<T>(keyInfo);
         // Check if we have key filter passed through read schema.
@@ -173,7 +173,7 @@ std::vector<KeyNode<T>> getKeyNodes(
       });
 
   VLOG(1) << "[Flat-Map] Initialized a flat-map column reader for node "
-          << dataType->id << ", keys=" << keyNodes.size()
+          << dataType->id() << ", keys=" << keyNodes.size()
           << ", streams=" << streams;
 
   return keyNodes;
@@ -236,7 +236,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     for (int i = 0; i < keyNodes_.size(); ++i) {
       children_[i] = keyNodes_[i].reader.get();
     }
-    if (auto type = requestedType_->type->childAt(1); type->isRow()) {
+    if (auto type = requestedType_->type()->childAt(1); type->isRow()) {
       for (auto& vec : childValues_) {
         vec = BaseVector::create(type, 0, &memoryPool_);
       }
@@ -289,9 +289,19 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
         AlignedBuffer::allocate<vector_size_t>(rows.size(), &memoryPool_);
     auto* rawOffsets = offsets->template asMutable<vector_size_t>();
     auto* rawSizes = sizes->template asMutable<vector_size_t>();
+    auto* nulls =
+        nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
     vector_size_t totalSize = 0;
     for (vector_size_t i = 0; i < rows.size(); ++i) {
-      if (anyNulls_ && bits::isBitNull(rawResultNulls_, i)) {
+      if (nulls && bits::isBitNull(nulls, rows[i])) {
+        rawSizes[i] = 0;
+
+        if (!returnReaderNulls_) {
+          bits::setNull(rawResultNulls_, i);
+        }
+
+        anyNulls_ = true;
+
         continue;
       }
       int currentRowSize = 0;
@@ -308,19 +318,11 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
         });
         ++currentRowSize;
       }
-      if (currentRowSize > 0) {
-        rawOffsets[i] = totalSize;
-        rawSizes[i] = currentRowSize;
-        totalSize += currentRowSize;
-      } else {
-        if (!rawResultNulls_) {
-          setNulls(AlignedBuffer::allocate<bool>(rows.size(), &memoryPool_));
-        }
-        bits::setNull(rawResultNulls_, i);
-        anyNulls_ = true;
-      }
+      rawOffsets[i] = totalSize;
+      rawSizes[i] = currentRowSize;
+      totalSize += currentRowSize;
     }
-    auto& mapType = requestedType_->type->asMap();
+    auto& mapType = requestedType_->type()->asMap();
     VectorPtr keys =
         BaseVector::create(mapType.keyType(), totalSize, &memoryPool_);
     VectorPtr values =
@@ -373,8 +375,9 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     }
     *result = std::make_shared<MapVector>(
         &memoryPool_,
-        requestedType_->type,
-        anyNulls_ ? resultNulls_ : nullptr,
+        requestedType_->type(),
+        anyNulls_ ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
+                  : nullptr,
         rows.size(),
         std::move(offsets),
         std::move(sizes),
@@ -397,7 +400,7 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> createReader(
     common::ScanSpec& scanSpec) {
   auto& mapColumnIdAsStruct =
       params.stripeStreams().getRowReaderOptions().getMapColumnIdAsStruct();
-  auto it = mapColumnIdAsStruct.find(requestedType->id);
+  auto it = mapColumnIdAsStruct.find(requestedType->id());
   if (it != mapColumnIdAsStruct.end()) {
     return std::make_unique<SelectiveFlatMapAsStructReader<T>>(
         requestedType, dataType, params, scanSpec, it->second);
@@ -415,7 +418,7 @@ createSelectiveFlatMapColumnReader(
     const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
     DwrfParams& params,
     common::ScanSpec& scanSpec) {
-  auto kind = dataType->childAt(0)->type->kind();
+  auto kind = dataType->childAt(0)->type()->kind();
   switch (kind) {
     case TypeKind::TINYINT:
       return createReader<int8_t>(requestedType, dataType, params, scanSpec);

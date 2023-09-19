@@ -185,7 +185,7 @@ TEST(TypeTest, intervalYearMonth) {
 
 TEST(TypeTest, shortDecimal) {
   auto shortDecimal = DECIMAL(10, 5);
-  EXPECT_EQ(shortDecimal->toString(), "DECIMAL(10,5)");
+  EXPECT_EQ(shortDecimal->toString(), "DECIMAL(10, 5)");
   EXPECT_EQ(shortDecimal->size(), 0);
   EXPECT_THROW(shortDecimal->childAt(0), std::invalid_argument);
   EXPECT_EQ(shortDecimal->kind(), TypeKind::BIGINT);
@@ -218,7 +218,7 @@ TEST(TypeTest, shortDecimal) {
 
 TEST(TypeTest, longDecimal) {
   auto longDecimal = DECIMAL(30, 5);
-  EXPECT_EQ(longDecimal->toString(), "DECIMAL(30,5)");
+  EXPECT_EQ(longDecimal->toString(), "DECIMAL(30, 5)");
   EXPECT_EQ(longDecimal->size(), 0);
   EXPECT_THROW(longDecimal->childAt(0), std::invalid_argument);
   EXPECT_EQ(longDecimal->kind(), TypeKind::HUGEINT);
@@ -352,6 +352,7 @@ TEST(TypeTest, map) {
 }
 
 TEST(TypeTest, row) {
+  VELOX_ASSERT_THROW(ROW({{"a", nullptr}}), "Child types cannot be null");
   auto row0 = ROW({{"a", INTEGER()}, {"b", ROW({{"a", BIGINT()}})}});
   auto rowInner = row0->childAt(1);
   EXPECT_EQ(row0->toString(), "ROW<a:INTEGER,b:ROW<a:BIGINT>>");
@@ -397,16 +398,16 @@ TEST(TypeTest, row) {
   }
 
   auto row1 =
-      ROW({{"a,b", INTEGER()}, {"my \"column\"", ROW({{"#1", BIGINT()}})}});
+      ROW({{"a,b", INTEGER()}, {R"(my "column")", ROW({{"#1", BIGINT()}})}});
   EXPECT_EQ(
       row1->toString(),
-      "ROW<\"a,b\":INTEGER,\"my \"\"column\"\"\":ROW<\"#1\":BIGINT>>");
+      R"(ROW<"a,b":INTEGER,"my ""column""":ROW<"#1":BIGINT>>)");
   EXPECT_EQ(row1->nameOf(0), "a,b");
-  EXPECT_EQ(row1->nameOf(1), "my \"column\"");
-  EXPECT_EQ(row1->childAt(1)->toString(), "ROW<\"#1\":BIGINT>");
+  EXPECT_EQ(row1->nameOf(1), R"(my "column")");
+  EXPECT_EQ(row1->childAt(1)->toString(), R"(ROW<"#1":BIGINT>)");
 
   auto row2 = ROW({{"", INTEGER()}});
-  EXPECT_EQ(row2->toString(), "ROW<\"\":INTEGER>");
+  EXPECT_EQ(row2->toString(), R"(ROW<"":INTEGER>)");
   EXPECT_EQ(row2->nameOf(0), "");
 
   VELOX_ASSERT_THROW(createScalarType(TypeKind::ROW), "not a scalar type");
@@ -755,6 +756,8 @@ TEST(TypeTest, unknown) {
   EXPECT_TRUE(unknownArray->containsUnknown());
 
   testTypeSerde(unknownArray);
+
+  ASSERT_EQ(0, unknownArray->elementType()->cppSizeInBytes());
 }
 
 TEST(TypeTest, isVariadicType) {
@@ -793,4 +796,52 @@ TEST(TypeTest, fromKindToScalerType) {
     SCOPED_TRACE(mapTypeKindToName(kind));
     EXPECT_ANY_THROW(fromKindToScalerType(kind));
   }
+}
+
+TEST(TypeTest, rowEquvialentCheckWithChildRowsWithDifferentNames) {
+  std::vector<TypePtr> types;
+  std::vector<TypePtr> typesWithDifferentNames;
+  RowTypePtr childRowType1 =
+      ROW({"a", "b", "c"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType2 =
+      ROW({"d", "e", "f"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType3 =
+      ROW({"x", "y", "z"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType1WithDifferentNames =
+      ROW({"A", "B", "C"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType2WithDifferentNames =
+      ROW({"D", "E", "F"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType3WithDifferentNames =
+      ROW({"X", "Y", "Z"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr rowType =
+      ROW({"A", "B", "C"}, {childRowType1, childRowType2, childRowType3});
+  RowTypePtr rowTypeWithDifferentName =
+      ROW({"a", "b", "c"},
+          {childRowType1WithDifferentNames,
+           childRowType2WithDifferentNames,
+           childRowType3WithDifferentNames});
+  ASSERT_TRUE(rowTypeWithDifferentName->equivalent(*rowType));
+}
+
+TEST(TypeTest, unionWith) {
+  std::vector<TypePtr> types;
+  std::vector<TypePtr> typesWithDifferentNames;
+  RowTypePtr emptyRowType = ROW({}, {});
+  RowTypePtr childRowType1 =
+      ROW({"a", "b", "c"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr childRowType2 =
+      ROW({"d", "e", "f"}, {TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr resultRowType =
+      ROW({"a", "b", "c", "d", "e", "f"},
+          {TINYINT(), VARBINARY(), BIGINT(), TINYINT(), VARBINARY(), BIGINT()});
+  RowTypePtr resultRowType2 =
+      ROW({"a", "b", "c", "a", "b", "c"},
+          {TINYINT(), VARBINARY(), BIGINT(), TINYINT(), VARBINARY(), BIGINT()});
+
+  ASSERT_TRUE(
+      emptyRowType->unionWith(childRowType1)->equivalent(*childRowType1));
+  ASSERT_TRUE(
+      childRowType1->unionWith(childRowType2)->equivalent(*resultRowType));
+  ASSERT_TRUE(
+      childRowType1->unionWith(childRowType1)->equivalent(*resultRowType2));
 }

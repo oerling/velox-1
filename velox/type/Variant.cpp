@@ -16,8 +16,8 @@
 
 #include "velox/type/Variant.h"
 #include <cfloat>
-#include "common/encode/Base64.h"
 #include "folly/json.h"
+#include "velox/common/encode/Base64.h"
 #include "velox/type/DecimalUtil.h"
 #include "velox/type/HugeInt.h"
 
@@ -183,10 +183,6 @@ std::string variant::toJson(const TypePtr& type) const {
     return "null";
   }
 
-  if (type->isDate()) {
-    return '"' + DATE()->toString(value<TypeKind::INTEGER>()) + '"';
-  }
-
   switch (kind_) {
     case TypeKind::MAP: {
       auto& map = value<TypeKind::MAP>();
@@ -252,16 +248,19 @@ std::string variant::toJson(const TypePtr& type) const {
       VELOX_CHECK(type && type->isLongDecimal());
       return DecimalUtil::toString(value<TypeKind::HUGEINT>(), type);
     case TypeKind::TINYINT:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case TypeKind::SMALLINT:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case TypeKind::INTEGER:
-      FOLLY_FALLTHROUGH;
+      if (type->isDate()) {
+        return '"' + DATE()->toString(value<TypeKind::INTEGER>()) + '"';
+      }
+      [[fallthrough]];
     case TypeKind::BIGINT:
       if (type && type->isShortDecimal()) {
         return DecimalUtil::toString(value<TypeKind::BIGINT>(), type);
       }
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case TypeKind::BOOLEAN: {
       auto converted = VariantConverter::convert<TypeKind::VARCHAR>(*this);
       if (converted.isNull()) {
@@ -462,7 +461,7 @@ variant variant::create(const folly::dynamic& variantobj) {
       return variant::map(map);
     }
     case TypeKind::ROW:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case TypeKind::ARRAY: {
       VELOX_USER_CHECK(kind == TypeKind::ARRAY || kind == TypeKind::ROW);
       std::vector<variant> values;

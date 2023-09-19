@@ -20,8 +20,8 @@
 #include "velox/dwio/common/ColumnSelector.h"
 #include "velox/dwio/common/FormatData.h"
 #include "velox/dwio/common/TypeWithId.h"
+#include "velox/dwio/common/compression/Compression.h"
 #include "velox/dwio/dwrf/common/ByteRLE.h"
-#include "velox/dwio/dwrf/common/Compression.h"
 #include "velox/dwio/dwrf/common/RLEv1.h"
 #include "velox/dwio/dwrf/common/wrap/dwrf-proto-wrapper.h"
 #include "velox/dwio/dwrf/reader/EncodingContext.h"
@@ -155,6 +155,9 @@ inline RleVersion convertRleVersion(proto::ColumnEncoding_Kind kind) {
     case proto::ColumnEncoding_Kind_DIRECT:
     case proto::ColumnEncoding_Kind_DICTIONARY:
       return RleVersion_1;
+    case proto::ColumnEncoding_Kind_DIRECT_V2:
+    case proto::ColumnEncoding_Kind_DICTIONARY_V2:
+      return RleVersion_2;
     default:
       DWIO_RAISE("Unknown encoding in convertRleVersion");
   }

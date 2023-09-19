@@ -64,22 +64,15 @@ void LocalExchangeQueue::addProducer() {
 
 void LocalExchangeQueue::noMoreProducers() {
   std::vector<ContinuePromise> consumerPromises;
-  std::vector<ContinuePromise> producerPromises;
   queue_.withWLock([&](auto& queue) {
     VELOX_CHECK(!noMoreProducers_, "noMoreProducers can be called only once");
     noMoreProducers_ = true;
     if (pendingProducers_ == 0) {
       // No more data will be produced.
       consumerPromises = std::move(consumerPromises_);
-
-      if (queue.empty()) {
-        // All data has been consumed.
-        producerPromises = std::move(producerPromises_);
-      }
     }
   });
   notify(consumerPromises);
-  notify(producerPromises);
 }
 
 BlockingReason LocalExchangeQueue::enqueue(
@@ -118,26 +111,20 @@ BlockingReason LocalExchangeQueue::enqueue(
 
 void LocalExchangeQueue::noMoreData() {
   std::vector<ContinuePromise> consumerPromises;
-  std::vector<ContinuePromise> producerPromises;
-  queue_.withWLock([&](auto queue) {
+  queue_.withWLock([&](auto& queue) {
     VELOX_CHECK_GT(pendingProducers_, 0);
     --pendingProducers_;
     if (noMoreProducers_ && pendingProducers_ == 0) {
       consumerPromises = std::move(consumerPromises_);
-      if (queue.empty()) {
-        producerPromises = std::move(producerPromises_);
-      }
     }
   });
   notify(consumerPromises);
-  notify(producerPromises);
 }
 
 BlockingReason LocalExchangeQueue::next(
     ContinueFuture* future,
     memory::MemoryPool* pool,
     RowVectorPtr* data) {
-  std::vector<ContinuePromise> producerPromises;
   std::vector<ContinuePromise> memoryPromises;
   auto blockingReason = queue_.withWLock([&](auto& queue) {
     *data = nullptr;
@@ -158,14 +145,9 @@ BlockingReason LocalExchangeQueue::next(
     memoryPromises =
         memoryManager_->decreaseMemoryUsage((*data)->estimateFlatSize());
 
-    if (noMoreProducers_ && pendingProducers_ == 0 && queue.empty()) {
-      producerPromises = std::move(producerPromises_);
-    }
-
     return BlockingReason::kNotBlocked;
   });
   notify(memoryPromises);
-  notify(producerPromises);
   return blockingReason;
 }
 
@@ -182,25 +164,11 @@ bool LocalExchangeQueue::isFinishedLocked(
   return false;
 }
 
-BlockingReason LocalExchangeQueue::isFinished(ContinueFuture* future) {
-  return queue_.withWLock([&](auto& queue) {
-    if (isFinishedLocked(queue)) {
-      return BlockingReason::kNotBlocked;
-    }
-
-    producerPromises_.emplace_back("LocalExchangeQueue::isFinished");
-    *future = producerPromises_.back().getSemiFuture();
-
-    return BlockingReason::kWaitForConsumer;
-  });
-}
-
 bool LocalExchangeQueue::isFinished() {
   return queue_.withWLock([&](auto& queue) { return isFinishedLocked(queue); });
 }
 
 void LocalExchangeQueue::close() {
-  std::vector<ContinuePromise> producerPromises;
   std::vector<ContinuePromise> consumerPromises;
   std::vector<ContinuePromise> memoryPromises;
   queue_.withWLock([&](auto& queue) {
@@ -214,11 +182,9 @@ void LocalExchangeQueue::close() {
       memoryPromises = memoryManager_->decreaseMemoryUsage(freedBytes);
     }
 
-    producerPromises = std::move(producerPromises_);
     consumerPromises = std::move(consumerPromises_);
     closed_ = true;
   });
-  notify(producerPromises);
   notify(consumerPromises);
   notify(memoryPromises);
 }
@@ -350,36 +316,48 @@ void LocalPartition::addInput(RowVectorPtr input) {
       blockingReasons_.push_back(blockingReason);
       futures_.push_back(std::move(future));
     }
-  } else {
-    partitionFunction_->partition(*input_, partitions_);
+    return;
+  }
 
-    auto numInput = input_->size();
-    auto indexBuffers = allocateIndexBuffers(numPartitions_, numInput, pool());
-    auto rawIndices = getRawIndices(indexBuffers);
-
-    std::vector<vector_size_t> maxIndex(numPartitions_, 0);
-    for (auto i = 0; i < numInput; ++i) {
-      auto partition = partitions_[i];
-      rawIndices[partition][maxIndex[partition]] = i;
-      ++maxIndex[partition];
+  const auto singlePartition =
+      partitionFunction_->partition(*input_, partitions_);
+  if (singlePartition.has_value()) {
+    ContinueFuture future;
+    auto blockingReason =
+        queues_[singlePartition.value()]->enqueue(input_, &future);
+    if (blockingReason != BlockingReason::kNotBlocked) {
+      blockingReasons_.push_back(blockingReason);
+      futures_.push_back(std::move(future));
     }
+    return;
+  }
 
-    for (auto i = 0; i < numPartitions_; i++) {
-      auto partitionSize = maxIndex[i];
-      if (partitionSize == 0) {
-        // Do not enqueue empty partitions.
-        continue;
-      }
-      indexBuffers[i]->setSize(partitionSize * sizeof(vector_size_t));
-      auto partitionData =
-          wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
+  auto numInput = input_->size();
+  auto indexBuffers = allocateIndexBuffers(numPartitions_, numInput, pool());
+  auto rawIndices = getRawIndices(indexBuffers);
 
-      ContinueFuture future;
-      auto reason = queues_[i]->enqueue(partitionData, &future);
-      if (reason != BlockingReason::kNotBlocked) {
-        blockingReasons_.push_back(reason);
-        futures_.push_back(std::move(future));
-      }
+  std::vector<vector_size_t> maxIndex(numPartitions_, 0);
+  for (auto i = 0; i < numInput; ++i) {
+    auto partition = partitions_[i];
+    rawIndices[partition][maxIndex[partition]] = i;
+    ++maxIndex[partition];
+  }
+
+  for (auto i = 0; i < numPartitions_; i++) {
+    auto partitionSize = maxIndex[i];
+    if (partitionSize == 0) {
+      // Do not enqueue empty partitions.
+      continue;
+    }
+    indexBuffers[i]->setSize(partitionSize * sizeof(vector_size_t));
+    auto partitionData =
+        wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
+
+    ContinueFuture future;
+    auto reason = queues_[i]->enqueue(partitionData, &future);
+    if (reason != BlockingReason::kNotBlocked) {
+      blockingReasons_.push_back(reason);
+      futures_.push_back(std::move(future));
     }
   }
 }

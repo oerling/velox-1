@@ -83,6 +83,12 @@ class EvalCtx {
 
   void setError(vector_size_t index, const std::exception_ptr& exceptionPtr);
 
+  // Similar to setError but more performant, should be used when the user knows
+  // for sure that exception_ptr is a velox exception.
+  void setVeloxExceptionError(
+      vector_size_t index,
+      const std::exception_ptr& exceptionPtr);
+
   void setErrors(
       const SelectivityVector& rows,
       const std::exception_ptr& exceptionPtr);
@@ -95,6 +101,12 @@ class EvalCtx {
     rows.template applyToSelected([&](auto row) INLINE_LAMBDA {
       try {
         func(row);
+      } catch (const VeloxException& e) {
+        if (!e.isUserError()) {
+          throw;
+        }
+        // Avoid double throwing.
+        setVeloxExceptionError(row, std::current_exception());
       } catch (const std::exception& e) {
         setError(row, std::current_exception());
       }
@@ -124,6 +136,13 @@ class EvalCtx {
       const SelectivityVector& elementRows,
       const BufferPtr& elementToTopLevelRows,
       ErrorVectorPtr& topLevelErrors);
+
+  // Given a mapping from element rows to top-level rows, set errors in
+  // in the elements as nulls int the top level row.
+  void convertElementErrorsToTopLevelNulls(
+      const SelectivityVector& elementRows,
+      const BufferPtr& elementToTopLevelRows,
+      VectorPtr& result);
 
   void deselectErrors(SelectivityVector& rows) const {
     if (!errors_) {
@@ -232,6 +251,12 @@ class EvalCtx {
       const VectorPtr& localResult,
       const SelectivityVector& rows,
       VectorPtr& result) const {
+#ifndef NDEBUG
+    if (localResult != nullptr) {
+      // Make sure local/temporary vectors have consistent state.
+      localResult->validate();
+    }
+#endif
     if (result && !isFinalSelection() && *finalSelection() != rows) {
       BaseVector::ensureWritable(rows, result->type(), result->pool(), result);
       result->copy(localResult.get(), rows, nullptr);

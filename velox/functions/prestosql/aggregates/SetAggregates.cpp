@@ -182,6 +182,48 @@ class SetAggAggregate : public SetBaseAggregate<T> {
 
   using Base = SetBaseAggregate<T>;
 
+  bool supportsToIntermediate() const override {
+    return true;
+  }
+
+  void toIntermediate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      VectorPtr& result) const override {
+    const auto& elements = args[0];
+
+    const auto numRows = rows.size();
+
+    // Convert input to a single-entry array.
+
+    // Set nulls for rows not present in 'rows'.
+    auto* pool = Base::allocator_->pool();
+    BufferPtr nulls = allocateNulls(numRows, pool);
+    memcpy(
+        nulls->asMutable<uint64_t>(),
+        rows.asRange().bits(),
+        bits::nbytes(numRows));
+
+    // Set offsets to 0, 1, 2, 3...
+    BufferPtr offsets = allocateOffsets(numRows, pool);
+    auto* rawOffsets = offsets->asMutable<vector_size_t>();
+    std::iota(rawOffsets, rawOffsets + numRows, 0);
+
+    // Set sizes to 1.
+    BufferPtr sizes = allocateSizes(numRows, pool);
+    auto* rawSizes = sizes->asMutable<vector_size_t>();
+    std::fill(rawSizes, rawSizes + numRows, 1);
+
+    result = std::make_shared<ArrayVector>(
+        pool,
+        ARRAY(elements->type()),
+        nulls,
+        numRows,
+        offsets,
+        sizes,
+        BaseVector::loadedVectorShared(elements));
+  }
+
   void addRawInput(
       char** groups,
       const SelectivityVector& rows,
@@ -223,6 +265,35 @@ class SetUnionAggregate : public SetBaseAggregate<T> {
 
   using Base = SetBaseAggregate<T>;
 
+  bool supportsToIntermediate() const override {
+    return true;
+  }
+
+  void toIntermediate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      VectorPtr& result) const override {
+    if (rows.isAllSelected()) {
+      result = args[0];
+    } else {
+      auto* pool = SetBaseAggregate<T>::allocator_->pool();
+      const auto numRows = rows.size();
+
+      // Set nulls for rows not present in 'rows'.
+      BufferPtr nulls = allocateNulls(numRows, pool);
+      memcpy(
+          nulls->asMutable<uint64_t>(),
+          rows.asRange().bits(),
+          bits::nbytes(numRows));
+
+      BufferPtr indices = allocateIndices(numRows, pool);
+      auto* rawIndices = indices->asMutable<vector_size_t>();
+      std::iota(rawIndices, rawIndices + numRows, 0);
+      result =
+          BaseVector::wrapInDictionary(nulls, indices, rows.size(), args[0]);
+    }
+  }
+
   void addRawInput(
       char** groups,
       const SelectivityVector& rows,
@@ -261,10 +332,14 @@ std::unique_ptr<exec::Aggregate> create(
       return std::make_unique<Aggregate<double>>(resultType);
     case TypeKind::TIMESTAMP:
       return std::make_unique<Aggregate<Timestamp>>(resultType);
+    case TypeKind::VARBINARY:
+      [[fallthrough]];
     case TypeKind::VARCHAR:
       return std::make_unique<Aggregate<StringView>>(resultType);
     case TypeKind::ARRAY:
+      [[fallthrough]];
     case TypeKind::MAP:
+      [[fallthrough]];
     case TypeKind::ROW:
       return std::make_unique<Aggregate<ComplexType>>(resultType);
     default:

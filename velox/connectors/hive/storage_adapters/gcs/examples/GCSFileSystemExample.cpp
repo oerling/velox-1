@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "connectors/hive/storage_adapters/gcs/GCSFileSystem.h"
 #include "velox/common/file/File.h"
+#include "velox/connectors/hive/storage_adapters/gcs/GCSFileSystem.h"
 #include "velox/core/Config.h"
 
 #include <folly/init/Init.h>
@@ -38,7 +38,6 @@ int main(int argc, char** argv) {
     gflags::ShowUsageWithFlags(argv[0]);
     return 1;
   }
-  filesystems::registerGCSFileSystem();
   filesystems::GCSFileSystem gcfs(newConfiguration());
   gcfs.initializeClient();
   std::cout << "Opening file " << FLAGS_gcs_path << std::endl;

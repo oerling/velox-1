@@ -71,6 +71,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
     }
     int32_t startOffset = 0;
     std::vector<std::unique_ptr<BaseHashTable>> otherTables;
+    uint64_t numRows{0};
     for (auto way = 0; way < numWays; ++way) {
       std::vector<RowVectorPtr> batches;
       std::vector<std::unique_ptr<VectorHasher>> keyHashers;
@@ -79,7 +80,12 @@ class HashTableTest : public testing::TestWithParam<bool> {
             buildType->childAt(channel), channel));
       }
       auto table = HashTable<true>::createForJoin(
-          std::move(keyHashers), dependentTypes, true, false, pool_.get());
+          std::move(keyHashers),
+          dependentTypes,
+          true,
+          false,
+          1'000,
+          pool_.get());
 
       makeRows(size, 1, sequence, buildType, batches);
       copyVectorsToTable(batches, startOffset, table.get());
@@ -87,13 +93,21 @@ class HashTableTest : public testing::TestWithParam<bool> {
       if (!topTable_) {
         topTable_ = std::move(table);
       } else {
+        numRows += table->rows()->numRows();
         otherTables.push_back(std::move(table));
       }
       batches_.insert(batches_.end(), batches.begin(), batches.end());
       startOffset += size;
     }
+    numRows += topTable_->rows()->numRows();
+    const uint64_t estimatedTableSize =
+        topTable_->estimateHashTableSize(numRows);
+    const uint64_t usedMemoryBytes = topTable_->rows()->pool()->currentBytes();
     topTable_->prepareJoinTable(std::move(otherTables), executor_.get());
-    EXPECT_EQ(topTable_->hashMode(), mode);
+    ASSERT_GE(
+        estimatedTableSize,
+        topTable_->rows()->pool()->currentBytes() - usedMemoryBytes);
+    ASSERT_EQ(topTable_->hashMode(), mode);
     LOG(INFO) << "Made table " << describeTable();
     testProbe();
     testEraseEveryN(3);
@@ -452,7 +466,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
     std::vector<std::unique_ptr<VectorHasher>> hashers;
     hashers.push_back(std::make_unique<VectorHasher>(keys->type(), 0));
     auto table = HashTable<false>::createForJoin(
-        std::move(hashers), {BIGINT()}, true, false, pool_.get());
+        std::move(hashers), {BIGINT()}, true, false, 1'000, pool_.get());
     copyVectorsToTable({batch}, 0, table.get());
     table->prepareJoinTable({}, executor_.get());
     ASSERT_EQ(table->hashMode(), mode);
@@ -472,7 +486,10 @@ class HashTableTest : public testing::TestWithParam<bool> {
     ASSERT_EQ(0, table->listNullKeyRows(&iter, rows.size(), rows.data()));
   }
 
-  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> rootPool_{
+      memory::defaultMemoryManager().addRootPool("HashTableTest")};
+  std::shared_ptr<memory::MemoryPool> pool_{
+      rootPool_->addLeafChild("HashTableTest")};
   std::unique_ptr<test::VectorMaker> vectorMaker_{
       std::make_unique<test::VectorMaker>(pool_.get())};
   // Bitmap of positions in batches_ that end up in the table.
@@ -703,7 +720,7 @@ TEST_P(HashTableTest, regularHashingTableSize) {
           std::make_unique<VectorHasher>(type->childAt(channel), channel));
     }
     auto table = HashTable<true>::createForJoin(
-        std::move(keyHashers), {}, true, false, pool_.get());
+        std::move(keyHashers), {}, true, false, 1'000, pool_.get());
     std::vector<RowVectorPtr> batches;
     makeRows(1 << 12, 1, 0, type, batches);
     copyVectorsToTable(batches, 0, table.get());
@@ -782,4 +799,26 @@ TEST(HashTableTest, modeString) {
   ASSERT_EQ(
       "Unknown HashTable mode:100",
       BaseHashTable::modeString(static_cast<BaseHashTable::HashMode>(100)));
+}
+
+/// This tests an issue only seen when the number of unique entries
+/// in the HashTable, crosses over int32 limit. The HashTable::loadTag()
+/// offset argument was int32 and for positions greater than int32 max,
+/// it would seg fault.
+TEST_P(HashTableTest, offsetOverflowLoadTags) {
+  GTEST_SKIP() << "Skipping as it takes long time to converge,"
+                  " re-enable to reproduce the issue";
+  if (GetParam() == true) {
+    return;
+  }
+  auto rowType = ROW({"a"}, {BIGINT()});
+  auto table = createHashTableForAggregation(rowType, rowType->size());
+  table->hashMode();
+  auto lookup = std::make_unique<HashLookup>(table->hashers());
+  auto batchSize = 1 << 25;
+  for (auto i = 0; i < 64; ++i) {
+    std::vector<RowVectorPtr> batches;
+    makeRows(batchSize, 1, i * batchSize, rowType, batches);
+    insertGroups(*batches.back(), *lookup, *table);
+  }
 }

@@ -37,11 +37,12 @@ using namespace facebook::velox::exec::test;
 
 namespace {
 // Returns aggregated spilled stats by 'task'.
-Spiller::Stats spilledStats(const exec::Task& task) {
-  Spiller::Stats spilledStats;
+SpillStats spilledStats(const exec::Task& task) {
+  SpillStats spilledStats;
   auto stats = task.taskStats();
   for (auto& pipeline : stats.pipelineStats) {
     for (auto op : pipeline.operatorStats) {
+      spilledStats.spilledInputBytes += op.spilledInputBytes;
       spilledStats.spilledBytes += op.spilledBytes;
       spilledStats.spilledRows += op.spilledRows;
       spilledStats.spilledPartitions += op.spilledPartitions;
@@ -49,6 +50,14 @@ Spiller::Stats spilledStats(const exec::Task& task) {
     }
   }
   return spilledStats;
+}
+
+void abortPool(memory::MemoryPool* pool) {
+  try {
+    VELOX_FAIL("Manual MemoryPool Abortion");
+  } catch (const VeloxException& error) {
+    pool->abort(std::current_exception());
+  }
 }
 } // namespace
 
@@ -184,13 +193,22 @@ class OrderByTest : public OperatorTestBase {
       params.spillDirectory = spillDirectory->path;
       auto task = assertQueryOrdered(params, duckDbSql, sortingKeys);
       auto inputRows = toPlanStats(task->taskStats()).at(orderById).inputRows;
+      const uint64_t peakSpillMemoryUsage = Spiller::pool()->stats().peakBytes;
+      ASSERT_EQ(Spiller::pool()->stats().currentBytes, 0);
       if (inputRows > 0) {
+        EXPECT_LT(0, spilledStats(*task).spilledInputBytes);
         EXPECT_LT(0, spilledStats(*task).spilledBytes);
         EXPECT_EQ(1, spilledStats(*task).spilledPartitions);
         EXPECT_LT(0, spilledStats(*task).spilledFiles);
         // NOTE: the last input batch won't go spilling.
         EXPECT_GT(inputRows, spilledStats(*task).spilledRows);
+        ASSERT_EQ(Spiller::pool()->stats().currentBytes, 0);
+        if (Spiller::pool()->trackUsage()) {
+          ASSERT_GT(Spiller::pool()->stats().peakBytes, 0);
+          ASSERT_GE(Spiller::pool()->stats().peakBytes, peakSpillMemoryUsage);
+        }
       } else {
+        EXPECT_EQ(0, spilledStats(*task).spilledInputBytes);
         EXPECT_EQ(0, spilledStats(*task).spilledBytes);
       }
       OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
@@ -457,12 +475,27 @@ TEST_F(OrderByTest, spill) {
   params.spillDirectory = spillDirectory->path;
   auto task = assertQueryOrdered(
       params, "SELECT * FROM tmp ORDER BY c0 ASC NULLS LAST", {0});
-  auto stats = task->taskStats().pipelineStats;
-  EXPECT_LT(0, stats[0].operatorStats[1].spilledRows);
-  EXPECT_GT(kNumBatches * kNumRows, stats[0].operatorStats[1].spilledRows);
-  EXPECT_LT(0, stats[0].operatorStats[1].spilledBytes);
-  EXPECT_EQ(1, stats[0].operatorStats[1].spilledPartitions);
-  EXPECT_EQ(2, stats[0].operatorStats[1].spilledFiles);
+  auto stats = task->taskStats().pipelineStats[0].operatorStats[1];
+  ASSERT_GT(stats.spilledRows, 0);
+  ASSERT_LT(stats.spilledRows, kNumBatches * kNumRows);
+  ASSERT_GT(stats.spilledBytes, 0);
+  ASSERT_GT(stats.spilledInputBytes, 0);
+  ASSERT_EQ(stats.spilledPartitions, 1);
+  ASSERT_EQ(stats.spilledFiles, 2);
+  ASSERT_GT(stats.runtimeStats["spillRuns"].count, 0);
+  ASSERT_GT(stats.runtimeStats["spillFillTime"].sum, 0);
+  ASSERT_GT(stats.runtimeStats["spillSortTime"].sum, 0);
+  ASSERT_GT(stats.runtimeStats["spillSerializationTime"].sum, 0);
+  ASSERT_GT(stats.runtimeStats["spillFlushTime"].sum, 0);
+  ASSERT_EQ(
+      stats.runtimeStats["spillSerializationTime"].count,
+      stats.runtimeStats["spillFlushTime"].count);
+  ASSERT_GT(stats.runtimeStats["spillDiskWrites"].sum, 0);
+  ASSERT_GT(stats.runtimeStats["spillWriteTime"].sum, 0);
+  ASSERT_EQ(
+      stats.runtimeStats["spillDiskWrites"].count,
+      stats.runtimeStats["spillWriteTime"].count);
+
   OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
 
@@ -521,6 +554,8 @@ TEST_F(OrderByTest, spillWithMemoryLimit) {
             .assertResults(results);
 
     auto stats = task->taskStats().pipelineStats;
+    ASSERT_EQ(
+        testData.expectSpill, stats[0].operatorStats[1].spilledInputBytes > 0);
     ASSERT_EQ(testData.expectSpill, stats[0].operatorStats[1].spilledBytes > 0);
     OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
   }
@@ -619,7 +654,6 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringInputProcessing) {
             .spillDirectory(tempDirectory->path)
             .config(core::QueryConfig::kSpillEnabled, "true")
             .config(core::QueryConfig::kOrderBySpillEnabled, "true")
-            .config(core::QueryConfig::kSpillPartitionBits, "2")
             .maxDrivers(1)
             .assertResults(expectedResult);
       } else {
@@ -752,7 +786,6 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringReserve) {
         .spillDirectory(tempDirectory->path)
         .config(core::QueryConfig::kSpillEnabled, "true")
         .config(core::QueryConfig::kOrderBySpillEnabled, "true")
-        .config(core::QueryConfig::kSpillPartitionBits, "2")
         .maxDrivers(1)
         .assertResults(expectedResult);
   });
@@ -865,7 +898,6 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringAllocation) {
             .spillDirectory(tempDirectory->path)
             .config(core::QueryConfig::kSpillEnabled, "true")
             .config(core::QueryConfig::kOrderBySpillEnabled, "true")
-            .config(core::QueryConfig::kSpillPartitionBits, "2")
             .maxDrivers(1)
             .assertResults(expectedResult);
       } else {
@@ -986,7 +1018,6 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringOutputProcessing) {
             .spillDirectory(tempDirectory->path)
             .config(core::QueryConfig::kSpillEnabled, "true")
             .config(core::QueryConfig::kOrderBySpillEnabled, "true")
-            .config(core::QueryConfig::kSpillPartitionBits, "2")
             .maxDrivers(1)
             .assertResults(expectedResult);
       } else {
@@ -1100,7 +1131,7 @@ DEBUG_ONLY_TEST_F(OrderByTest, abortDuringOutputProcessing) {
           ASSERT_EQ(
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);
-          VELOX_MEM_POOL_ABORTED(op->pool());
+          VELOX_MEM_POOL_ABORTED("Memory pool aborted");
         })));
 
     std::thread taskThread([&]() {
@@ -1119,15 +1150,15 @@ DEBUG_ONLY_TEST_F(OrderByTest, abortDuringOutputProcessing) {
     testWait.wait(testWaitKey);
     ASSERT_TRUE(op != nullptr);
     auto task = op->testingOperatorCtx()->task();
-    testData.abortFromRootMemoryPool ? queryCtx->pool()->abort()
-                                     : op->pool()->abort();
+    testData.abortFromRootMemoryPool ? abortPool(queryCtx->pool())
+                                     : abortPool(op->pool());
     ASSERT_TRUE(op->pool()->aborted());
     ASSERT_TRUE(queryCtx->pool()->aborted());
     ASSERT_EQ(queryCtx->pool()->currentBytes(), 0);
     driverWait.notify();
     taskThread.join();
     task.reset();
-    Task::testingWaitForAllTasksToBeDeleted();
+    waitForAllTasksToBeDeleted();
   }
 }
 
@@ -1196,7 +1227,7 @@ DEBUG_ONLY_TEST_F(OrderByTest, abortDuringInputgProcessing) {
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);
           // Simulate the memory abort by memory arbitrator.
-          VELOX_MEM_POOL_ABORTED(op->pool());
+          VELOX_MEM_POOL_ABORTED("Memory pool aborted");
         })));
 
     std::thread taskThread([&]() {
@@ -1215,14 +1246,14 @@ DEBUG_ONLY_TEST_F(OrderByTest, abortDuringInputgProcessing) {
     testWait.wait(testWaitKey);
     ASSERT_TRUE(op != nullptr);
     auto task = op->testingOperatorCtx()->task();
-    testData.abortFromRootMemoryPool ? queryCtx->pool()->abort()
-                                     : op->pool()->abort();
+    testData.abortFromRootMemoryPool ? abortPool(queryCtx->pool())
+                                     : abortPool(op->pool());
     ASSERT_TRUE(op->pool()->aborted());
     ASSERT_TRUE(queryCtx->pool()->aborted());
     ASSERT_EQ(queryCtx->pool()->currentBytes(), 0);
     driverWait.notify();
     taskThread.join();
     task.reset();
-    Task::testingWaitForAllTasksToBeDeleted();
+    waitForAllTasksToBeDeleted();
   }
 }

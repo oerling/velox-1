@@ -37,11 +37,13 @@ add_executable(
   ArrayNoneMatchTest.cpp
   ArrayNormalizeTest.cpp
   ArrayPositionTest.cpp
+  ArrayRemoveTest.cpp
   ArraySortTest.cpp
   ArrayShuffleTest.cpp
   ArraysOverlapTest.cpp
   ArraySumTest.cpp
   ArrayTrimTest.cpp
+  ArrayUnionTest.cpp
   BinaryFunctionsTest.cpp
   BitwiseTest.cpp
   CardinalityTest.cpp
@@ -76,10 +78,13 @@ add_executable(
   SliceTest.cpp
   SequenceTest.cpp
   SplitTest.cpp
+  SplitToMapTest.cpp
   StringFunctionsTest.cpp
+  TimestampWithTimeZoneCastTest.cpp
   TransformTest.cpp
   TransformKeysTest.cpp
   TransformValuesTest.cpp
+  TrimFunctionsTest.cpp
   URLFunctionsTest.cpp
   Utf8Test.cpp
   WidthBucketArrayTest.cpp

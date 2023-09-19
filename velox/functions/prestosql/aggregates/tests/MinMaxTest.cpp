@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -39,6 +40,7 @@ class MinMaxTest : public functions::aggregate::test::AggregationTestBase {
   std::vector<RowVectorPtr> fuzzData(const RowTypePtr& rowType) {
     VectorFuzzer::Options options;
     options.vectorSize = 1'000;
+    options.nullRatio = 0.1;
     VectorFuzzer fuzzer(options, pool());
     std::vector<RowVectorPtr> vectors(10);
     for (auto i = 0; i < 10; ++i) {
@@ -49,7 +51,7 @@ class MinMaxTest : public functions::aggregate::test::AggregationTestBase {
 
   template <typename TAgg>
   void doTest(TAgg agg, const TypePtr& inputType) {
-    auto rowType = ROW({"c0", "c1"}, {BIGINT(), inputType});
+    auto rowType = ROW({"c0", "c1", "mask"}, {BIGINT(), inputType, BOOLEAN()});
     auto vectors = fuzzData(rowType);
     createDuckDbTable(vectors);
 
@@ -69,6 +71,19 @@ class MinMaxTest : public functions::aggregate::test::AggregationTestBase {
         {"p0"},
         {agg(c1)},
         fmt::format("SELECT c0 % 10, {} FROM tmp GROUP BY 1", agg(c1)));
+
+    // Masked aggregations.
+    auto maskedAgg = agg(c1) + " filter (where mask)";
+    testAggregations(
+        vectors, {}, {maskedAgg}, fmt::format("SELECT {} FROM tmp", maskedAgg));
+
+    testAggregations(
+        [&](auto& builder) {
+          builder.values(vectors).project({"c0 % 10", "c1", "mask"});
+        },
+        {"p0"},
+        {maskedAgg},
+        fmt::format("SELECT c0 % 10, {} FROM tmp GROUP BY 1", maskedAgg));
 
     // Encodings: use filter to wrap aggregation inputs in a dictionary.
     testAggregations(
@@ -265,4 +280,298 @@ TEST_F(MinMaxTest, maxLongDecimal) {
 TEST_F(MinMaxTest, minLongDecimal) {
   doTest(min, DECIMAL(38, 19));
 }
+
+TEST_F(MinMaxTest, array) {
+  auto data = makeRowVector({
+      makeNullableArrayVector<int64_t>({
+          {1, 2, 3},
+          {std::nullopt, 2},
+          {6, 7, 8},
+      }),
+  });
+
+  auto expected = makeRowVector({
+      makeArrayVector<int64_t>({
+          {1, 2, 3},
+      }),
+      makeArrayVector<int64_t>({
+          {6, 7, 8},
+      }),
+  });
+
+  VELOX_ASSERT_THROW(
+      testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected}),
+      "ARRAY comparison not supported for values that contain nulls");
+
+  data = makeRowVector({
+      makeNullableArrayVector<int64_t>({
+          {1, 2, 3},
+          {3, 2},
+          {6, 7, 8},
+      }),
+  });
+  testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected});
+}
+
+TEST_F(MinMaxTest, map) {
+  auto data = makeRowVector({
+      makeNullableMapVector<int64_t, int64_t>({
+          {{{1, 1}, {2, 2}}},
+          {{{1, 1}, {2, std::nullopt}}},
+          {{{4, 50}}},
+      }),
+  });
+
+  auto expected = makeRowVector({
+      makeMapVector<int64_t, int64_t>({{{1, 1}, {2, 2}}}),
+      makeMapVector<int64_t, int64_t>({{{4, 50}}}),
+  });
+
+  VELOX_ASSERT_THROW(
+      testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected}),
+      "MAP comparison not supported for values that contain nulls");
+
+  data = makeRowVector({
+      makeNullableMapVector<int64_t, int64_t>({
+          {{{1, 1}, {2, 2}}},
+          {{{1, 1}, {2, 3}}},
+          {{{4, 50}}},
+      }),
+  });
+
+  testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected});
+}
+
+TEST_F(MinMaxTest, row) {
+  auto data = makeRowVector({
+      makeRowVector({
+          makeNullableFlatVector<StringView>({
+              "abc"_sv,
+              std::nullopt,
+              "efg"_sv,
+          }),
+      }),
+  });
+
+  auto expected = makeRowVector({
+      makeRowVector({makeFlatVector<StringView>({"abc"_sv})}),
+      makeRowVector({makeFlatVector<StringView>({"efg"_sv})}),
+  });
+
+  VELOX_ASSERT_THROW(
+      testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected}),
+      "ROW comparison not supported for values that contain nulls");
+
+  data = makeRowVector({
+      makeRowVector({
+          makeNullableFlatVector<StringView>({
+              "abc"_sv,
+              "ef"_sv,
+              "efg"_sv,
+          }),
+      }),
+  });
+
+  testAggregations({data}, {}, {"min(c0)", "max(c0)"}, {expected});
+}
+
+class MinMaxNTest : public functions::aggregate::test::AggregationTestBase {
+ protected:
+  void SetUp() override {
+    AggregationTestBase::SetUp();
+    allowInputShuffle();
+  }
+
+  template <typename T>
+  void testNumericGlobal() {
+    auto data = makeRowVector({
+        makeFlatVector<T>({1, 10, 2, 9, 3, 8, 4, 7, 6, 5}),
+    });
+
+    // DuckDB doesn't support min(x, n) or max(x, n) functions.
+
+    auto expected = makeRowVector({
+        makeArrayVector<T>({
+            {1, 2},
+        }),
+        makeArrayVector<T>({
+            {1, 2, 3, 4, 5},
+        }),
+        makeArrayVector<T>({
+            {10, 9, 8},
+        }),
+        makeArrayVector<T>({
+            {10, 9, 8, 7, 6, 5, 4},
+        }),
+    });
+
+    testAggregations(
+        {data},
+        {},
+        {"min(c0, 2)", "min(c0, 5)", "max(c0, 3)", "max(c0, 7)"},
+        {expected});
+
+    // Add some nulls. Expect these to be ignored.
+    data = makeRowVector({
+        makeNullableFlatVector<T>(
+            {1,
+             std::nullopt,
+             10,
+             2,
+             9,
+             std::nullopt,
+             3,
+             8,
+             4,
+             7,
+             6,
+             5,
+             std::nullopt}),
+    });
+
+    testAggregations(
+        {data},
+        {},
+        {"min(c0, 2)", "min(c0, 5)", "max(c0, 3)", "max(c0, 7)"},
+        {expected});
+
+    // Test all null input.
+    data = makeRowVector({
+        makeAllNullFlatVector<T>(100),
+    });
+
+    expected = makeRowVector({
+        makeAllNullArrayVector(1, data->childAt(0)->type()),
+        makeAllNullArrayVector(1, data->childAt(0)->type()),
+        makeAllNullArrayVector(1, data->childAt(0)->type()),
+        makeAllNullArrayVector(1, data->childAt(0)->type()),
+    });
+
+    testAggregations(
+        {data},
+        {},
+        {"min(c0, 2)", "min(c0, 5)", "max(c0, 3)", "max(c0, 7)"},
+        {expected});
+  }
+
+  template <typename T>
+  void testNumericGroupBy() {
+    auto data = makeRowVector({
+        makeFlatVector<int16_t>({1, 2, 1, 1, 2, 2, 1, 2}),
+        makeFlatVector<T>({1, 2, 4, 3, 6, 5, 7, 8}),
+    });
+
+    auto expected = makeRowVector({
+        makeFlatVector<int16_t>({1, 2}),
+        makeArrayVector<T>({
+            {1, 3},
+            {2, 5},
+        }),
+        makeArrayVector<T>({
+            {1, 3, 4, 7},
+            {2, 5, 6, 8},
+        }),
+        makeArrayVector<T>({
+            {7, 4, 3},
+            {8, 6, 5},
+        }),
+        makeArrayVector<T>({
+            {7, 4, 3, 1},
+            {8, 6, 5, 2},
+        }),
+    });
+
+    testAggregations(
+        {data},
+        {"c0"},
+        {"min(c1, 2)", "min(c1, 5)", "max(c1, 3)", "max(c1, 7)"},
+        {expected});
+
+    // Add some nulls. Expect these to be ignored.
+    data = makeRowVector({
+        makeFlatVector<int16_t>({1, 2, 1, 1, 1, 2, 2, 2, 1, 2}),
+        makeNullableFlatVector<T>(
+            {1, 2, std::nullopt, 4, 3, 6, std::nullopt, 5, 7, 8}),
+    });
+
+    testAggregations(
+        {data},
+        {"c0"},
+        {"min(c1, 2)", "min(c1, 5)", "max(c1, 3)", "max(c1, 7)"},
+        {expected});
+
+    // Test all null input.
+    data = makeRowVector({
+        makeFlatVector<int16_t>({1, 2, 1, 1, 1, 2, 2, 2, 1, 2}),
+        makeNullableFlatVector<T>(
+            {std::nullopt,
+             2,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             6,
+             std::nullopt,
+             5,
+             std::nullopt,
+             8}),
+    });
+
+    expected = makeRowVector({
+        makeFlatVector<int16_t>({1, 2}),
+        makeNullableArrayVector<T>({
+            std::nullopt,
+            {{{2, 5}}},
+        }),
+        makeNullableArrayVector<T>({
+            std::nullopt,
+            {{{2, 5, 6, 8}}},
+        }),
+        makeNullableArrayVector<T>({
+            std::nullopt,
+            {{{8, 6, 5}}},
+        }),
+        makeNullableArrayVector<T>({
+            std::nullopt,
+            {{{8, 6, 5, 2}}},
+        }),
+    });
+
+    testAggregations(
+        {data},
+        {"c0"},
+        {"min(c1, 2)", "min(c1, 5)", "max(c1, 3)", "max(c1, 7)"},
+        {expected});
+  }
+};
+
+TEST_F(MinMaxNTest, tinyint) {
+  testNumericGlobal<int8_t>();
+  testNumericGroupBy<int8_t>();
+}
+
+TEST_F(MinMaxNTest, smallint) {
+  testNumericGlobal<int16_t>();
+  testNumericGroupBy<int16_t>();
+}
+
+TEST_F(MinMaxNTest, integer) {
+  testNumericGlobal<int32_t>();
+  testNumericGroupBy<int32_t>();
+}
+
+TEST_F(MinMaxNTest, bigint) {
+  testNumericGlobal<int64_t>();
+  testNumericGroupBy<int64_t>();
+}
+
+TEST_F(MinMaxNTest, real) {
+  testNumericGlobal<float>();
+  testNumericGroupBy<float>();
+}
+
+TEST_F(MinMaxNTest, double) {
+  testNumericGlobal<double>();
+  testNumericGroupBy<double>();
+}
+
 } // namespace

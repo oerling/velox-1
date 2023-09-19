@@ -69,6 +69,10 @@ void FieldReference::evalSpecialForm(
       peeledEncoding = PeeledEncoding::peel(
           {input}, *nonNullRows, localDecoded, true, peeledVectors);
       VELOX_CHECK_NOT_NULL(peeledEncoding);
+      if (peeledVectors[0]->isLazy()) {
+        peeledVectors[0] =
+            peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
+      }
       VELOX_CHECK(peeledVectors[0]->encoding() == VectorEncoding::Simple::ROW);
       row = peeledVectors[0]->as<const RowVector>();
     } else {
@@ -141,6 +145,27 @@ void FieldReference::evalSpecialFormSimplified(
   if (row->mayHaveNulls()) {
     addNulls(rows, row->rawNulls(), context, result);
   }
+}
+
+std::string FieldReference::toString(bool recursive) const {
+  std::stringstream out;
+  if (!inputs_.empty() && recursive) {
+    appendInputs(out);
+    out << ".";
+  }
+  out << name();
+  return out.str();
+}
+
+std::string FieldReference::toSql(
+    std::vector<VectorPtr>* complexConstants) const {
+  std::stringstream out;
+  if (!inputs_.empty()) {
+    appendInputsSql(out, complexConstants);
+    out << ".";
+  }
+  out << "\"" << name() << "\"";
+  return out.str();
 }
 
 } // namespace facebook::velox::exec

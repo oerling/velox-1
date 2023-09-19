@@ -50,11 +50,8 @@ class TransformFunction : public exec::VectorFunction {
     std::vector<VectorPtr> lambdaArgs = {flatArray->elements()};
     auto newNumElements = flatArray->elements()->size();
 
-    SelectivityVector finalSelection;
-    if (!context.isFinalSelection()) {
-      finalSelection = toElementRows<ArrayVector>(
-          newNumElements, *context.finalSelection(), flatArray.get());
-    }
+    SelectivityVector validRowsInReusedResult =
+        toElementRows<ArrayVector>(newNumElements, rows, flatArray.get());
 
     // transformed elements
     VectorPtr newElements;
@@ -73,7 +70,7 @@ class TransformFunction : public exec::VectorFunction {
 
       entry.callable->apply(
           elementRows,
-          finalSelection,
+          &validRowsInReusedResult,
           wrapCapture,
           &context,
           lambdaArgs,
@@ -81,10 +78,13 @@ class TransformFunction : public exec::VectorFunction {
           &newElements);
     }
 
+    // Set nulls for rows not present in 'rows'.
+    BufferPtr newNulls = addNullsForUnselectedRows(flatArray, rows);
+
     VectorPtr localResult = std::make_shared<ArrayVector>(
         flatArray->pool(),
         outputType,
-        flatArray->nulls(),
+        std::move(newNulls),
         flatArray->size(),
         flatArray->offsets(),
         flatArray->sizes(),

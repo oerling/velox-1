@@ -73,7 +73,10 @@ class E2EFilterTest : public E2EFilterTestBase {
                                : (++flushCounter % flushEveryNBatches_ == 0);
       });
     };
-    auto sink = std::make_unique<MemorySink>(*leafPool_, 200 * 1024 * 1024);
+    auto sink = std::make_unique<MemorySink>(
+        200 * 1024 * 1024,
+        dwio::common::FileSink::Options{.pool = leafPool_.get()});
+    ASSERT_TRUE(sink->isBuffered());
     sinkPtr_ = sink.get();
     options.memoryPool = rootPool_.get();
     writer_ = std::make_unique<dwrf::Writer>(std::move(sink), options);
@@ -130,11 +133,11 @@ class E2EFilterTest : public E2EFilterTestBase {
           continue;
         }
         auto& child = schemaWithId->childAt(i);
-        mapFlatCols.push_back(child->column);
+        mapFlatCols.push_back(child->column());
         if (!rowType.childAt(i)->isRow()) {
           continue;
         }
-        flatmapNodeIdsAsStruct_[child->id] = mapFlatColsStructKeys[i];
+        flatmapNodeIdsAsStruct_[child->id()] = mapFlatColsStructKeys[i];
       }
       config->set(dwrf::Config::FLATTEN_MAP, true);
       config->set<const std::vector<uint32_t>>(
@@ -272,15 +275,15 @@ TEST_F(E2EFilterTest, timestamp) {
       "timestamp_val:timestamp,"
       "long_val:bigint",
       [&]() {},
-      false,
-      {"long_val"},
+      true,
+      {"long_val", "timestamp_val"},
       20,
       true,
       true);
 }
 
 TEST_F(E2EFilterTest, listAndMap) {
-  int numCombinations = 10;
+  int numCombinations = 20;
 #if !defined(NDEBUG) || defined(TSAN_BUILD)
   // The test is running slow under dev/debug and TSAN build; reduce the number
   // of combinations to avoid timeout.
@@ -290,7 +293,7 @@ TEST_F(E2EFilterTest, listAndMap) {
       "long_val:bigint,"
       "long_val_2:bigint,"
       "int_val:int,"
-      "array_val:array<struct<array_member: array<int>>>,"
+      "array_val:array<struct<array_member: array<int>, float_val:float, long_val:bigint, string_val:string>>,"
       "map_val:map<bigint,struct<nested_map: map<int, int>>>",
       [&]() {},
       true,
