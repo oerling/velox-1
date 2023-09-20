@@ -487,7 +487,7 @@ VectorPtr createBinaryMapKeys(
   // Copy the data to defragment the buffers created above. Having 25K buffers
   // times out tests due to consistency checks.
   auto result = std::static_pointer_cast<FlatVector<StringView>>(
-      BaseVector::create(VARCHAR(), temp->size(), &pool));
+      BaseVector::create(type, temp->size(), &pool));
   for (auto i = 0; i < temp->size(); ++i) {
     result->set(i, temp->valueAt(i));
   }
