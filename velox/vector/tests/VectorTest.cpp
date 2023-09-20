@@ -1514,6 +1514,88 @@ TEST_F(VectorTest, wrapInConstantWithCopy) {
   }
 }
 
+TEST_F(VectorTest, rowResize) {
+  auto testRowResize = [&](std::vector<VectorPtr> children, bool setNotNull) {
+    auto rowVector = vectorMaker_.rowVector(children);
+    auto oldSize = rowVector->size();
+    auto newSize = oldSize * 2;
+
+    rowVector->resize(newSize, setNotNull);
+
+    EXPECT_EQ(rowVector->size(), newSize);
+
+    for (auto& child : children) {
+      EXPECT_EQ(child->size(), newSize);
+    }
+
+    if (setNotNull) {
+      for (int i = oldSize; i < newSize; i++) {
+        EXPECT_EQ(rowVector->isNullAt(i), !setNotNull);
+        for (auto& child : children) {
+          EXPECT_EQ(child->isNullAt(i), !setNotNull);
+        }
+      }
+    }
+  };
+
+  // FlatVectors.
+  testRowResize(
+      {vectorMaker_.flatVector<int32_t>(10),
+       vectorMaker_.flatVector<int64_t>(10)},
+      false);
+
+  testRowResize(
+      {vectorMaker_.flatVector<int32_t>(10),
+       vectorMaker_.flatVector<double>(10)},
+      true);
+
+  testRowResize({vectorMaker_.flatVector<StringView>(10)}, true);
+  testRowResize({vectorMaker_.flatVector<StringView>(10)}, false);
+
+  // Dictionaries.
+  testRowResize(
+      {BaseVector::wrapInDictionary(
+          nullptr,
+          makeIndices(10, [](auto row) { return row; }),
+          10,
+          BaseVector::wrapInDictionary(
+              nullptr,
+              makeIndices(10, [](auto row) { return row; }),
+              10,
+              vectorMaker_.flatVector<int32_t>(10)))},
+      true);
+
+  // Constants.
+  auto constant = BaseVector::wrapInConstant(
+      10,
+      5,
+      vectorMaker_.arrayVector<int32_t>(
+          10,
+          [](auto row) { return row % 5 + 1; },
+          [](auto row, auto index) { return row * 2 + index; }));
+  testRowResize({constant}, true);
+
+  // Complex Types.
+  testRowResize(
+      {vectorMaker_.arrayVector<int32_t>(
+           10,
+           [](auto row) { return row % 5 + 1; },
+           [](auto row, auto index) { return row * 2 + index; }),
+       vectorMaker_.mapVector<int64_t, double>(
+           10,
+           [](auto row) { return row % 5 + 1; },
+           [](auto /*row*/, auto index) { return index; },
+           [](auto row, auto index) { return row * 2 + index + 0.01; })},
+      true);
+
+  // Resize on lazy children will result in an exception.
+  auto rowWithLazyChild = makeRowVector({vectorMaker_.lazyFlatVector<int32_t>(
+      10,
+      [&](vector_size_t i) { return i % 5; },
+      [](vector_size_t i) { return i % 7 == 0; })});
+  EXPECT_THROW(rowWithLazyChild->resize(20), VeloxException);
+}
+
 TEST_F(VectorTest, wrapConstantInDictionary) {
   // Wrap Constant in Dictionary with no extra nulls. Expect Constant.
   auto indices = makeIndices(10, [](auto row) { return row % 2; });
@@ -2161,17 +2243,22 @@ TEST_F(VectorTest, dictionaryResize) {
   // Check that resize clear indices even if no new allocation happens.
   {
     auto indicesLarge = makeIndices(20, [&](auto row) { return 3; });
+    auto* rawIndices = indicesLarge->as<vector_size_t>();
     auto dictVector = wrapInDictionary(indicesLarge, 10, flatVector);
+
+    // Release reference to 'indicesLarge' to make it single-referenced and
+    // allow reuse in dictVector->resize().
+    indicesLarge.reset();
     dictVector->resize(15);
-    auto* indicesData = indicesLarge->asMutable<vector_size_t>();
+
     for (int i = 0; i < 10; i++) {
-      EXPECT_EQ(indicesData[i], 3);
+      EXPECT_EQ(rawIndices[i], 3);
     }
     for (int i = 10; i < 15; i++) {
-      EXPECT_EQ(indicesData[i], 0);
+      EXPECT_EQ(rawIndices[i], 0);
     }
     for (int i = 15; i < 20; i++) {
-      EXPECT_EQ(indicesData[i], 3);
+      EXPECT_EQ(rawIndices[i], 3);
     }
   }
 }
@@ -2686,17 +2773,19 @@ TEST_F(VectorTest, findDuplicateValue) {
 }
 
 TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
-  auto checkIndices = [&](const auto& indices) {
-    auto* data = indices->template asMutable<vector_size_t>();
-    ASSERT_EQ(data[0], 1);
-    ASSERT_EQ(data[1], 1);
-    ASSERT_EQ(data[2], 0);
-    ASSERT_EQ(data[3], 0);
+  auto checkIndices = [&](const vector_size_t* indices) {
+    ASSERT_EQ(indices[0], 1);
+    ASSERT_EQ(indices[1], 1);
+    ASSERT_EQ(indices[2], 0);
+    ASSERT_EQ(indices[3], 0);
   };
-  // test array.
+
+  // Test array.
   {
     auto offsets = makeIndices({1, 1, 1, 1});
     auto sizes = makeIndices({1, 1, 1, 1});
+
+    auto* rawSizes = sizes->as<vector_size_t>();
 
     auto arrayVector = std::make_shared<ArrayVector>(
         pool(),
@@ -2707,14 +2796,21 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
         sizes,
         makeFlatVector<int64_t>({1, 2, 3, 4}));
 
+    // Release references to 'offsets' and 'sizes' to make them
+    // single-referenced and allow reuse in arrayVector->resize().
+    offsets.reset();
+    sizes.reset();
+
     arrayVector->resize(4);
-    checkIndices(sizes);
+    checkIndices(rawSizes);
   }
 
-  // test map.
+  // Test map.
   {
     auto offsets = makeIndices({1, 1, 1, 1});
     auto sizes = makeIndices({1, 1, 1, 1});
+
+    auto* rawSizes = sizes->as<vector_size_t>();
 
     auto mapVector = std::make_shared<MapVector>(
         pool(),
@@ -2725,8 +2821,14 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
         sizes,
         makeFlatVector<int64_t>({1, 2, 3, 4}),
         makeFlatVector<int64_t>({1, 2, 3, 4}));
+
+    // Release references to 'offsets' and 'sizes' to make them
+    // single-referenced and allow reuse in mapVector->resize().
+    offsets.reset();
+    sizes.reset();
+
     mapVector->resize(4);
-    checkIndices(sizes);
+    checkIndices(rawSizes);
   }
 }
 
@@ -2980,6 +3082,37 @@ TEST_F(VectorTest, containsNullAtStructs) {
   EXPECT_TRUE(data->containsNullAt(3));
   EXPECT_TRUE(data->containsNullAt(4));
   EXPECT_FALSE(data->containsNullAt(5));
+}
+
+TEST_F(VectorTest, mutableValues) {
+  auto vector = makeFlatVector<int64_t>(1'000, [](auto row) { return row; });
+
+  auto* rawValues = vector->rawValues();
+  vector->mutableValues(1'001);
+  ASSERT_EQ(rawValues, vector->rawValues());
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  vector->mutableValues(10'000);
+  ASSERT_NE(rawValues, vector->rawValues());
+  rawValues = vector->rawValues();
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  auto values = vector->mutableValues(2'000);
+  ASSERT_EQ(rawValues, vector->rawValues());
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  vector->mutableValues(500);
+  ASSERT_NE(rawValues, vector->rawValues());
+  rawValues = vector->rawValues();
+  for (auto i = 0; i < 500; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
 }
 
 } // namespace
