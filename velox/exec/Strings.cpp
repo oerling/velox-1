@@ -19,16 +19,22 @@
 namespace facebook::velox::aggregate::prestosql {
 
 StringView Strings::append(StringView value, HashStringAllocator& allocator) {
+  // A string in Strings needs 8 bytes below itself for the last 8
+  // bytes of the previous string, which copied to the next string
+  // when setting a continued pointer. It also needs 8 bytes at its
+  // tail for the same continue pointer to the next.
+  constexpr int32_t kOverhead = HashStringAllocator::Header::kContinuedPtrSize + 8;
   VELOX_DCHECK(!value.isInline());
 
-  maxStringSize = std::max(maxStringSize, value.size());
-
+  maxStringSize = std::max<int32_t>(maxStringSize, value.size());
+  ++numStrings;
+  
   // Request sufficient amount of memory to store the whole string
   // (value.size()) and allow some memory left for bookkeeping (header + link
   // to next block).
   const int32_t requiredBytes =
-      value.size() + HashStringAllocator::Header::kContinuedPtrSize + 8;
-
+    value.size() + kOverhead;
+  const int32_t roundedUpBytes = numStrings > 2 && maxStringSize < 100 ? maxStringSize * 4 + kOverhead : requiredBytes;
   ByteStream stream(&allocator);
   if (firstBlock == nullptr) {
     // Allocate first block.
@@ -42,7 +48,7 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   if (stream.ranges().back().size < requiredBytes) {
     // Not enough space. Allocate new block.
     ByteRange newRange;
-    allocator.newContiguousRange(requiredBytes, &newRange);
+    allocator.newContiguousRange(roundedUpBytes, &newRange);
 
     stream.setRange(newRange);
   }
@@ -52,7 +58,7 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   // Copy the string and return a StringView over the copy.
   char* start = stream.writePosition();
   stream.appendStringPiece(folly::StringPiece(value.data(), value.size()));
-  currentBlock = allocator.finishWrite(stream, maxStringSize * 4).second;
+  currentBlock = allocator.finishWrite(stream, roundedUpBytes).second;
   return StringView(start, value.size());
 }
 
