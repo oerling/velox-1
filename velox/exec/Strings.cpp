@@ -23,18 +23,20 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   // bytes of the previous string, which copied to the next string
   // when setting a continued pointer. It also needs 8 bytes at its
   // tail for the same continue pointer to the next.
-  constexpr int32_t kOverhead = HashStringAllocator::Header::kContinuedPtrSize + 8;
+  constexpr int32_t kOverhead =
+      HashStringAllocator::Header::kContinuedPtrSize + 8;
   VELOX_DCHECK(!value.isInline());
 
   maxStringSize = std::max<int32_t>(maxStringSize, value.size());
   ++numStrings;
-  
+
   // Request sufficient amount of memory to store the whole string
   // (value.size()) and allow some memory left for bookkeeping (header + link
   // to next block).
-  const int32_t requiredBytes =
-    value.size() + kOverhead;
-  const int32_t roundedUpBytes = numStrings > 2 && maxStringSize < 100 ? maxStringSize * 4 + kOverhead : requiredBytes;
+  const int32_t requiredBytes = value.size() + kOverhead;
+  const int32_t roundedUpBytes = numStrings > 2 && maxStringSize < 100
+      ? maxStringSize * 4 + kOverhead
+      : requiredBytes;
   ByteStream stream(&allocator);
   if (firstBlock == nullptr) {
     // Allocate first block.

@@ -28,43 +28,44 @@ class StringsTest : public testing::Test {
     pool_ = memory::addDefaultLeafMemoryPool();
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
   }
-protected:
+
+ protected:
   std::shared_ptr<memory::MemoryPool> pool_;
-  std::unique_ptr<HashStringAllocator> allocator_; 
+  std::unique_ptr<HashStringAllocator> allocator_;
 };
 
-  TEST_F(StringsTest, basic) {
-    constexpr int32_t kOverhead = 16;
-    Strings strings;
-    std::string s13 = "0123456789abc";
-    std::string s16 = "0123456789abcdef";
-    std::string large;
-    large.resize(1000);
-    strings.append(StringView(s13), *allocator_);
-    expectedBytes = 13 + 16;
-    EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
-    strings.append(StringView(s16), *allocator_);
-    expectedBytes += 16 + 16;
-    EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
+TEST_F(StringsTest, basic) {
+  constexpr int32_t kOverhead = 16;
+  Strings strings;
+  std::string s13 = "0123456789abc";
+  std::string s16 = "0123456789abcdef";
+  std::string large;
+  large.resize(1000);
+  strings.append(StringView(s13), *allocator_);
+  expectedBytes = 13 + 16;
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
+  strings.append(StringView(s16), *allocator_);
+  expectedBytes += 16 + 16;
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-    // Now we allocate one more and expect to have 4x16 bytes of payload without more allocation.
-    strings.append(StringView(s16), *allocator_);
-    expectedBytes += kOverhead + 4 * 16;
-    EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
-    strings.append(StringView(s16), *allocator_);
-    strings.append(StringView(s16), *allocator_);
-    strings.append(StringView(s16), *allocator_);
-    EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
+  // Now we allocate one more and expect to have 4x16 bytes of payload without
+  // more allocation.
+  strings.append(StringView(s16), *allocator_);
+  expectedBytes += kOverhead + 4 * 16;
+  EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
+  strings.append(StringView(s16), *allocator_);
+  strings.append(StringView(s16), *allocator_);
+  strings.append(StringView(s16), *allocator_);
+  EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
 
-    strings.append(StringView(large), *allocator_);
-    expectedbytes += kOverhead + large.size();
-    EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
+  strings.append(StringView(large), *allocator_);
+  expectedbytes += kOverhead + large.size();
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-    // If the largest size is much larger than overhead, the next allocation will be a multiple of the allocated size instead.
-    expectedSize += kOverhead 4 * 13
-    strings.append(StringView(s13), *allocator_);
-    EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
-  }
-
+  // If the largest size is much larger than overhead, the next allocation will
+  // be a multiple of the allocated size instead.
+  expectedSize += kOverhead 4 * 13 strings.append(StringView(s13), *allocator_);
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 }
 
+} // namespace
