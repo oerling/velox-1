@@ -40,8 +40,9 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   // under 200, else allocating strings one by one. Allocating singly
   // for over 200 size is fine, the overhead is under 10%.
   const int32_t roundedUpBytes = numStrings <= 2 ? requiredBytes
-    : maxStringSize < 200                    ? maxStringSize * 4 + kOverhead
-    : value.size() * (value.size() < 200 ? 4 : 1) + kOverhead;
+      : maxStringSize < 200
+      ? maxStringSize * 4 + kOverhead
+      : value.size() * (value.size() < 200 ? 4 : 1) + kOverhead;
   ByteStream stream(&allocator);
   if (firstBlock == nullptr) {
     // Allocate first block.
