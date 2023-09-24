@@ -339,7 +339,7 @@ class HashStringAllocator : public StreamArena {
   // sizes will always be fast because all elements of the free list
   // in question will fit.
   static folly::Range<const int32_t*> freeListSizes();
-  
+
   // Checks the free space accounting and consistency of
   // Headers. Throws when detects corruption. Returns the number of allocated
   // payload bytes, excluding headers, continue links and other overhead.
