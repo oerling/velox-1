@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/common/base/HashStringAllocator.h"
+#include "velox/exec/Strings.h"
+#include "velox/common/memory/HashStringAllocator.h"
 
 #include <gtest/gtest.h>
 
@@ -24,47 +25,72 @@ using namespace facebook::velox::aggregate::prestosql;
 namespace {
 
 class StringsTest : public testing::Test {
+ protected:
   void SetUp() override {
     pool_ = memory::addDefaultLeafMemoryPool();
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
   }
 
- protected:
+  // Appends a string and records the string and result for verification.
+  void append(Strings& strings, const std::string& str) {
+    appended_.push_back(str);
+    views_.push_back(strings.append(StringView(str), *allocator_));
+    check();
+  }
+
+  // Checks all appended strings are unchanged.
+  void check() {
+    for (auto i = 0; i < appended_.size(); ++i) {
+      EXPECT_EQ(
+          0,
+          memcmp(appended_[i].data(), views_[i].data(), appended_[i].size()));
+    }
+  }
+
+  std::vector<std::string> appended_;
+  std::vector<StringView> views_;
+
   std::shared_ptr<memory::MemoryPool> pool_;
   std::unique_ptr<HashStringAllocator> allocator_;
 };
 
 TEST_F(StringsTest, basic) {
-  constexpr int32_t kOverhead = 16;
+  // next pointer, 8 leading bytes, and 4 byte header.
+  constexpr int32_t kOverhead = 16 + 4;
   Strings strings;
   std::string s13 = "0123456789abc";
   std::string s16 = "0123456789abcdef";
   std::string large;
   large.resize(1000);
-  strings.append(StringView(s13), *allocator_);
-  expectedBytes = 13 + 16;
+  // Initialize allocator. Start counting cumulative from post-init baseline.
+  allocator_->allocate(24);
+
+  int32_t expectedBytes = allocator_->cumulativeBytes() + 13 + kOverhead - 8;
+  append(strings, StringView(s13));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
-  strings.append(StringView(s16), *allocator_);
-  expectedBytes += 16 + 16;
+
+  expectedBytes += 16 + kOverhead;
+  append(strings, StringView(s16));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
   // Now we allocate one more and expect to have 4x16 bytes of payload without
   // more allocation.
-  strings.append(StringView(s16), *allocator_);
   expectedBytes += kOverhead + 4 * 16;
-  EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
-  strings.append(StringView(s16), *allocator_);
-  strings.append(StringView(s16), *allocator_);
-  strings.append(StringView(s16), *allocator_);
-  EXPECT_EQ(13 + 16 + 16 + 16 + 16 +, allocator_->cumulativeBytes());
+  append(strings, StringView(s16));
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
+  append(strings, StringView(s16));
+  append(strings, StringView(s16));
+  append(strings, StringView(s16));
+  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-  strings.append(StringView(large), *allocator_);
-  expectedbytes += kOverhead + large.size();
+  expectedBytes += kOverhead + large.size();
+  append(strings, StringView(large));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
   // If the largest size is much larger than overhead, the next allocation will
   // be a multiple of the allocated size instead.
-  expectedSize += kOverhead 4 * 13 strings.append(StringView(s13), *allocator_);
+  expectedBytes += kOverhead + 4 * 13;
+  append(strings, StringView(s13));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 }
 
