@@ -55,8 +55,9 @@ class StringsTest : public testing::Test {
 };
 
 TEST_F(StringsTest, basic) {
-  // next pointer, 8 leading bytes, and 4 byte header.
-  constexpr int32_t kOverhead = 16 + 4;
+  constexpr int32_t kHeader = sizeof(HashStringAllocator::Header);
+  // next pointer, 8 leading bytes, and header.
+  constexpr int32_t kOverhead = 16 + kHeader;
   Strings strings;
   std::string s13 = "0123456789abc";
   std::string s16 = "0123456789abcdef";
@@ -64,32 +65,34 @@ TEST_F(StringsTest, basic) {
   large.resize(1000);
   // Initialize allocator. Start counting cumulative from post-init baseline.
   allocator_->allocate(24);
+  auto sizes = HashStringAllocator::freeListSizes();
 
-  int32_t expectedBytes = allocator_->cumulativeBytes() + 13 + kOverhead - 8;
+  int32_t expectedBytes =
+      allocator_->cumulativeBytes() + sizes[0] + kHeader - 8;
   append(strings, StringView(s13));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-  expectedBytes += 16 + kOverhead;
   append(strings, StringView(s16));
+  append(strings, StringView(s16));
+  // 13 + 2 * 16 should fit in the first allocation of 72.
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-  // Now we allocate one more and expect to have 4x16 bytes of payload without
+  // Now we allocate one more and expect to have 8x16 bytes of payload without
   // more allocation.
-  expectedBytes += kOverhead + 4 * 16;
-  append(strings, StringView(s16));
-  EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
-  append(strings, StringView(s16));
-  append(strings, StringView(s16));
-  append(strings, StringView(s16));
+  expectedBytes += sizes[1] + kHeader;
+  for (auto i = 0; i < 7; ++i) {
+    append(strings, StringView(s16));
+  }
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
   expectedBytes += kOverhead + large.size();
   append(strings, StringView(large));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 
-  // If the largest size is much larger than overhead, the next allocation will
-  // be a multiple of the allocated size instead.
-  expectedBytes += kOverhead + 4 * 13;
+  // If the largest size is much larger than overhead, the next
+  // allocation will be a multiple of the allocated size instead. 4 *
+  // 13 + 16 overhead = 68 rounds up to first size.
+  expectedBytes += sizes[0] + kHeader;
   append(strings, StringView(s13));
   EXPECT_EQ(expectedBytes, allocator_->cumulativeBytes());
 }

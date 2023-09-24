@@ -31,32 +31,37 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   ++numStrings;
 
   // Request sufficient amount of memory to store the whole string
-  // (value.size()) and allow some memory left for bookkeeping (header + link
-  // to next block).
+  // (value.size()) and allow some memory left for bookkeeping (8 last from
+  // previous block + link to next block).
   const int32_t requiredBytes = value.size() + kOverhead;
-  // The first 2 are allocated at size. Subsequent ones are allocated
-  // at 4 * the maximum or requested size. Using maximum size if this
-  // is below 200. Else using requested size times 4 if the size is
-  // under 200, else allocating strings one by one. Allocating singly
-  // for over 200 size is fine, the overhead is under 10%.
-  const int32_t roundedUpBytes = numStrings <= 2 ? requiredBytes
-      : maxStringSize < 200
-      ? maxStringSize * 4 + kOverhead
-      : value.size() * (value.size() < 200 ? 4 : 1) + kOverhead;
+  int32_t tail = 0;
   ByteStream stream(&allocator);
   if (firstBlock == nullptr) {
     // Allocate first block.
     currentBlock = allocator.newWrite(stream, requiredBytes);
     firstBlock = currentBlock.header;
+    auto minSize = HashStringAllocator::freeListSizes()[0];
+    tail = requiredBytes < minSize ? minSize - requiredBytes : 0;
   } else {
     allocator.extendWrite(currentBlock, stream);
+    tail = stream.ranges().back().size;
   }
 
   // Check if there is enough space left.
-  if (stream.ranges().back().size <
+  int32_t available = stream.ranges().back().size;
+  if (available <
       value.size() + HashStringAllocator::Header::kContinuedPtrSize) {
     // Not enough space. Allocate new block.
     ByteRange newRange;
+    auto sizes = HashStringAllocator::freeListSizes();
+    int32_t targetBytes = kOverhead +
+        (maxStringSize < 200      ? maxStringSize * 4
+             : value.size() < 200 ? value.size() * 4
+                                  : value.size());
+    int32_t roundedUpBytes = targetBytes < sizes[0] ? sizes[0]
+        : targetBytes < sizes[1]                    ? sizes[1]
+                                                    : targetBytes;
+    tail = roundedUpBytes;
     allocator.newContiguousRange(roundedUpBytes, &newRange);
 
     stream.setRange(newRange);
@@ -71,12 +76,11 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   stream.appendStringPiece(folly::StringPiece(value.data(), value.size()));
   // There will always be at least enough space for the continue
   // pointer so the tail of the string does not get overwritten.
-  currentBlock = allocator
-                     .finishWrite(
-                         stream,
-                         HashStringAllocator::Header::kContinuedPtrSize +
-                             roundedUpBytes - requiredBytes)
-                     .second;
+  currentBlock =
+      allocator
+          .finishWrite(
+              stream, HashStringAllocator::Header::kContinuedPtrSize + tail)
+          .second;
   return StringView(start, value.size());
 }
 
