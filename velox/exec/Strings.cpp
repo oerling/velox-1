@@ -28,7 +28,6 @@ StringView Strings::append(StringView value, HashStringAllocator& allocator) {
   VELOX_DCHECK(!value.isInline());
 
   maxStringSize = std::max<int32_t>(maxStringSize, value.size());
-  ++numStrings;
 
   // Request sufficient amount of memory to store the whole string
   // (value.size()) and allow some memory left for bookkeeping (8 last from
