@@ -28,3 +28,8 @@ add_executable(copy_benchmark CopyBenchmark.cpp)
 
 target_link_libraries(copy_benchmark velox_vector_test_lib Folly::folly
                       ${FOLLY_BENCHMARK})
+
+		    add_executable(contains_null_benchmark ContainsNull.cpp)
+
+target_link_libraries(contains_null_benchmark velox_vector_fuzzer velox_vector_test_lib Folly::folly
+                      ${FOLLY_BENCHMARK})
