@@ -368,6 +368,9 @@ class HashStringAllocator : public StreamArena {
   // exactly 8 ints for simd.
   static int32_t freeListSizes_[HashStringAllocator::kNumFreeLists + 1];
 
+  // The largest size present in each free list.
+  int32_t largestInFreeList_[HashStringAllocator::kNumFreeLists + 1] = {};
+
   void newRange(int32_t bytes, ByteRange* range, bool contiguous);
 
   // Adds a new standard size slab to the free list. This
