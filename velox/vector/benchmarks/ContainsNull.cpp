@@ -23,6 +23,69 @@
 namespace facebook::velox {
 namespace {
 
+
+  /// For each set bit in 'bits' between 'begin' and 'end', sets the corresponding bit in 'result'. The bit position in 'result' is given by 'indices[i]', where i is the position of the set bit in 'bits'.
+  void translateBits(const uint64_t* bits, const vector_size_t* indices, uint64_t* result, raw_vector<vector_size_t>& scratch)
+    scratch.resize(end - begin);
+  auto numBits = simd::indicesOfSetBits(bits, begin, end, scratch.data());
+  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+  for (auto i = 0; i + kBatch < numBits; i += kBatch) {
+    auto n =  i + kBatch > numBits ? numBits - i : kBatch; 
+    auto offsets = simd::maskGather<int32_t, int32_t, sizeof(int32_t)>(xsimd::broadcast<int32_t>(0), leadingMask<int32_t>(n), indices, xsimd::load_unaligned(scrath.data() + i));
+    auto bytes = offsets >> 8;
+    auto bitOffsets = offsets & 7;
+    int32_t* offsetPtr = reinterpret_cast<const int32_t*>(&bytes);
+    int32_t* shiftPtr = reinterpret_cast<const int32_t*>(&bitOffsets);
+    auto resultBytes = reinterpret_cast<uint8_t*>(result);
+    for (auto i = 0; i < n; ++i) {
+      resultBytes[offsetPtr[i]] |= 1 << shiftPtr[i];
+    }
+  }
+
+  
+
+  bool containsNull
+
+
+  template <typename T>
+  class ScratchPtr {
+    ScratchPtr(Scratch& scratch, int32_t size) : scratch_(scratch) {
+      if (scratch_.inUse + 1 < scratch_.scratch.size()) {
+	scratch_.scratch.emplace_back();
+      }
+      scratch_.scratch[scratch.numInUse].resize(sizeof(T) * size);
+      ptr_ = reinterpret_cast<T*>(scratch.scratch[scratch.numInUse].data();
+      ++scratch.inUse;
+    }
+    ~ScractchPtr() {
+      --scratch.inUse;
+    }
+
+      T* get() { return ptr_; }
+    private:
+    Scratch& scratch_;
+    T* ptr_;
+  };
+  
+  struct Scratch {
+    std::vector<raw_vector<int32_t>> scratch;
+    int32_t numInUse{0};
+  };
+
+  
+  
+  bool containsNull(const BaseVector& vector, SelectivityVector& rows, std::vector<raw_vector<int32_t>>& scratch) {
+
+    ScratchPtr<uint64_t> activeLease(scratch, bits::nwords(rows.end()));
+    auto rawNulls = vector.rawNulls();
+    if (rawNulls) {
+      
+    }
+    uint64_t active = activeLease.get();
+    
+  }
+
+  
 class ContainsNull {
  public:
   explicit ContainsNull(const VectorPtr& vector)
