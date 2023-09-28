@@ -40,8 +40,8 @@ class SelectiveFloatingPointColumnReader
   void reset(
       dwio::common::FormatParams& params,
       velox::common::ScanSpec& scanSpec,
-      std::shared_ptr<const dwio::common::TypeWithId> type) {
-    SelectiveColumnReader::reset(params, scanSpec, type);
+      const std::shared_ptr<const dwio::common::TypeWithId>& type) override {
+    base::reset(params, scanSpec, type);
     auto& dwrfParams = params.as<DwrfParams>();
     decoder_.reset(dwrfParams.stripeStreams().getStream(
         EncodingKey{this->fileType_->id(), dwrfParams.flatMapContext().sequence}
@@ -52,7 +52,7 @@ class SelectiveFloatingPointColumnReader
   }
 
   void clear() override {
-    SelectiveColumnReader::clear();
+    base::clear();
     decoder_.clear();
   }
 
@@ -75,6 +75,10 @@ class SelectiveFloatingPointColumnReader
   template <typename TVisitor>
   void readWithVisitor(RowSet rows, TVisitor visitor);
 
+  void check() override {
+    decoder_.check();
+  }
+  
   FloatingPointDecoder<TData, TRequested> decoder_;
 };
 

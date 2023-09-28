@@ -55,7 +55,7 @@ SelectiveColumnReader::SelectiveColumnReader(
 void SelectiveColumnReader::reset(
     dwio::common::FormatParams& params,
     velox::common::ScanSpec& scanSpec,
-    std::shared_ptr<const dwio::common::TypeWithId> type) {
+    const std::shared_ptr<const dwio::common::TypeWithId>& type) {
   VELOX_CHECK(&memoryPool_ == &params.pool());
   fileType_ = type;
   formatData_->reset(params, type, scanSpec);

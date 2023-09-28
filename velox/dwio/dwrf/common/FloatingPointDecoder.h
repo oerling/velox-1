@@ -43,7 +43,7 @@ class FloatingPointDecoder {
     input_->clear();
   }
 
-  std::unique_ptr<SeekableInputStream> moveStream() {
+  std::unique_ptr<dwio::common::SeekableInputStream> moveStream() {
     return std::move(input_);
   }
 
@@ -115,6 +115,10 @@ class FloatingPointDecoder {
     }
   }
 
+  void check() {
+    input_->check();
+  }
+  
  private:
   template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {

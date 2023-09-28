@@ -38,6 +38,8 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
         decompressor_{std::move(decompressor)},
         decrypter_{decrypter},
         streamDebugInfo_{streamDebugInfo} {
+  VELOX_CHECK_NOT_NULL(input_);
+
     DWIO_ENSURE(
         decompressor_ || decrypter_,
         "one of decompressor or decryptor is required");
@@ -51,7 +53,6 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       remainingLength_ = compressedLength;
     }
   }
-
   void reset(
       std::unique_ptr<SeekableInputStream> inStream,
       memory::MemoryPool& memPool,
@@ -59,33 +60,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
       const dwio::common::encryption::Decrypter* decrypter,
       const std::string& streamDebugInfo,
       bool useRawDecompression = false,
-      size_t compressedLength = 0) {
-    VELOX_CHECK(&pool_ == &memPool);
-    decompressor_ = std::move(decompressor);
-    decrypter_ = decrypter, streamDebugInfo_ = streamDebugInfo;
-    DWIO_ENSURE(
-        decompressor_ || decrypter_,
-        "one of decompressor or decryptor is required");
-    DWIO_ENSURE(
-        !useRawDecompression || compressedLength > 0,
-        "For raw decompression, compressedLength should be greater than zero");
-    // Clear all state to post-construction values.
-    lastHeaderOffset_ = 0;
-    bytesReturnedAtLastHeaderOffset_ = 0;
-    state_ = State::HEADER;
-    outputBufferPtr_ = nullptr;
-    outputBufferLength_ = 0;
-    remainingLength_ = 0;
-    inputBufferStart_ = nullptr;
-    inputBufferPtr_ = nullptr;
-    inputBufferPtrEnd_ = nullptr;
-    bytesReturned_ = 0;
-    lastWindowSize_ = 0;
-    if (useRawDecompression) {
-      state_ = State::START;
-      remainingLength_ = compressedLength;
-    }
-  }
+      size_t compressedLength = 0);
 
   bool Next(const void** data, int32_t* size) override;
   void BackUp(int32_t count) override;
@@ -212,6 +187,10 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
   // decrypter
   const dwio::common::encryption::Decrypter* decrypter_;
 
+  void check() override {
+    input_->check();
+  }
+  
  private:
   // Stream Debug Info
   std::string streamDebugInfo_;

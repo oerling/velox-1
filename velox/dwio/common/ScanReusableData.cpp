@@ -17,6 +17,8 @@
 #include "velox/dwio/common/ScanReusableData.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 
+DEFINE_bool(enable_reader_reuse, true, "Allow recycling column reader parts");
+
 namespace facebook::velox::dwio::common {
 
 std::unique_ptr<SelectiveColumnReader> ScanReusableData::getColumnReader(
@@ -37,6 +39,9 @@ std::unique_ptr<SelectiveColumnReader> ScanReusableData::getColumnReader(
 void ScanReusableData::releaseColumnReader(
     std::unique_ptr<SelectiveColumnReader> reader) {
   auto kind = reader->requestedType()->kind();
+  if (!FLAGS_enable_reader_reuse) {
+    return;
+  }
   auto index = static_cast<int32_t>(kind);
   switch (kind) {
     case TypeKind::REAL: {

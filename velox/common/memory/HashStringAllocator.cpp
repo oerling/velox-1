@@ -320,6 +320,11 @@ int32_t HashStringAllocator::freeListSizes_[kNumFreeLists + 1] = {
     std::numeric_limits<int32_t>::max(),
     std::numeric_limits<int32_t>::max()};
 
+// static
+folly::Range<const int32_t*> HashStringAllocator::freeListSizes() {
+  return folly::Range<const int32_t*>(&freeListSizes_[0], kNumFreeLists + 1);
+}
+
 int32_t HashStringAllocator::freeListIndex(int32_t size, uint32_t mask) {
   static_assert(sizeof(freeListSizes_) >= sizeof(xsimd::batch<int32_t>));
   auto vsize = xsimd::broadcast(size);

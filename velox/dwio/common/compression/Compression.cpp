@@ -504,6 +504,7 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
     size_t compressedLength,
     std::unique_ptr<SeekableInputStream> reuse) {
   std::unique_ptr<Decompressor> decompressor;
+  VELOX_CHECK_NOT_NULL(input);
   switch (static_cast<int64_t>(kind)) {
     case CompressionKind::CompressionKind_NONE:
       if (!decrypter) {

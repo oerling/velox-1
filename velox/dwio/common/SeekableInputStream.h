@@ -78,6 +78,9 @@ class SeekableInputStream : public google::protobuf::io::ZeroCopyInputStream {
   /// placing the stream in a pool of reusable preallocated resources.
   virtual void clear(){};
 
+  // Checks consistency.
+  virtual void check() {};
+  
  protected:
   const StreamType type_;
 };

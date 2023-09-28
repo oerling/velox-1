@@ -19,6 +19,7 @@
 #include "velox/dwio/common/FlatMapHelper.h"
 #include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 #include "velox/dwio/dwrf/reader/SelectiveStructColumnReader.h"
+#include "velox/dwio/dwrf/reader/SelectiveFloatingPointColumnReader.h"
 
 namespace facebook::velox::dwrf {
 
@@ -170,8 +171,12 @@ std::vector<KeyNode<T>> getKeyNodes(
                 .keySelectionCallback = nullptr});
         auto reader = SelectiveDwrfReader::build(
             requestedValueType, dataValueType, childParams, *childSpec);
+	auto readerPtr = reader.get();
         keyNodes.emplace_back(
             key, sequence, std::move(reader), std::move(inMapDecoder));
+	if (auto r = dynamic_cast<SelectiveFloatingPointColumnReader<float, float>*>(readerPtr)) {
+	  r->check();
+	}
       });
 
   VLOG(1) << "[Flat-Map] Initialized a flat-map column reader for node "

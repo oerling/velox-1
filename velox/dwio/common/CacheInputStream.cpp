@@ -73,6 +73,17 @@ void CacheInputStream::reset(
   trackingId_ = trackingId, groupId_ = groupId;
   loadQuantum_ = loadQuantum;
   pin_.clear();
+
+  offsetOfRun_ = 0;
+  run_ = nullptr;
+  offsetInRun_ = 0;
+  runIndex_ = -1;
+  runSize_ = 0;
+  position_ = 0;
+  window_ = std::nullopt;
+  prefetchPct_ = 200;
+  prefetchStarted_ = false;
+  noRetention_ = false;
 }
 
 bool CacheInputStream::Next(const void** buffer, int32_t* size) {
@@ -192,10 +203,12 @@ void CacheInputStream::loadSync(Region region) {
   // rawBytesRead is the number of bytes touched. Whether they come
   // from disk, ssd or memory is itemized in different counters. A
   process::TraceContext trace("loadSync");
+  int64_t hitSize = window_.has_value() ? window_.value().length : region.length;
+
   // coalesced read from InputStream removes itself from this count
   // so as not to double count when the individual parts are
   // hit.
-  ioStats_->incRawBytesRead(region.length);
+  ioStats_->incRawBytesRead(hitSize);
   prefetchStarted_ = false;
   do {
     folly::SemiFuture<bool> wait(false);
@@ -238,11 +251,7 @@ void CacheInputStream::loadSync(Region region) {
     } else {
       // Hit memory cache.
       if (!entry->getAndClearFirstUseFlag()) {
-        if (window_.has_value()) {
-          ioStats_->ramHit().increment(window_.value().length);
-        } else {
-          ioStats_->ramHit().increment(entry->size());
-        }
+          ioStats_->ramHit().increment(hitSize);
       }
       return;
     }
