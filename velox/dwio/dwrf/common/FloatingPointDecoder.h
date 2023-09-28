@@ -118,7 +118,7 @@ class FloatingPointDecoder {
   void check() {
     input_->check();
   }
-  
+
  private:
   template <bool hasNulls, typename Visitor>
   void fastPath(const uint64_t* nulls, Visitor& visitor) {

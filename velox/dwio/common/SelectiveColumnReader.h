@@ -144,7 +144,7 @@ class SelectiveColumnReader {
   virtual void clear();
 
   virtual void check() {}
-  
+
   dwio::common::FormatData& formatData() const {
     return *formatData_;
   }

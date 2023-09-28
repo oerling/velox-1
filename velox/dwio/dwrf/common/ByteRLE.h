@@ -215,7 +215,8 @@ class ByteRleDecoder {
     return std::move(inputStream);
   }
 
-  /// Releases possible cache pins and other shared state. Called before putting 'this' in reserve waiting for reuse.
+  /// Releases possible cache pins and other shared state. Called before putting
+  /// 'this' in reserve waiting for reuse.
   virtual void clear() {
     cleared = true;
     if (inputStream) {

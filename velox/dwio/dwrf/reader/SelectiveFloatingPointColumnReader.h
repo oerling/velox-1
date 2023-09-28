@@ -78,7 +78,7 @@ class SelectiveFloatingPointColumnReader
   void check() override {
     decoder_.check();
   }
-  
+
   FloatingPointDecoder<TData, TRequested> decoder_;
 };
 

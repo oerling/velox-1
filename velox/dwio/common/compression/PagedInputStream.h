@@ -38,7 +38,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
         decompressor_{std::move(decompressor)},
         decrypter_{decrypter},
         streamDebugInfo_{streamDebugInfo} {
-  VELOX_CHECK_NOT_NULL(input_);
+    VELOX_CHECK_NOT_NULL(input_);
 
     DWIO_ENSURE(
         decompressor_ || decrypter_,
@@ -196,7 +196,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
   void check() override {
     input_->check();
   }
-  
+
   int64_t pendingSkip_{0};
 
  private:
