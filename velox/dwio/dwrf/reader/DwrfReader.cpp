@@ -135,7 +135,6 @@ uint64_t DwrfRowReader::seekToRow(uint64_t rowNumber) {
     return 0;
   }
 
-  std::unique_lock<std::mutex> lock(prefetchAndSeekMutex_);
   DWIO_ENSURE(
       !prefetchHasOccurred_,
       "Prefetch already called. Currently, seek after prefetch is disallowed in DwrfRowReader");
@@ -509,7 +508,7 @@ DwrfRowReader::FetchResult DwrfRowReader::fetch(uint32_t stripeIndex) {
       options_,
       getReader().getFooter().stripes(stripeIndex).offset(),
       *this,
-      currentStripe);
+      stripeIndex);
 
   auto scanSpec = options_.getScanSpec().get();
   auto requestedType = getColumnSelector().getSchemaWithId();
@@ -571,10 +570,7 @@ DwrfRowReader::FetchResult DwrfRowReader::fetch(uint32_t stripeIndex) {
 
 DwrfRowReader::FetchResult DwrfRowReader::prefetch(uint32_t stripeToFetch) {
   DWIO_ENSURE(stripeToFetch < lastStripe && stripeToFetch >= 0);
-
-  std::unique_lock<std::mutex> lock(prefetchAndSeekMutex_);
   prefetchHasOccurred_ = true;
-  lock.unlock();
 
   VLOG(1) << "Unlocked lock and calling fetch for " << stripeToFetch
           << ", thread " << std::this_thread::get_id();
@@ -596,8 +592,6 @@ void DwrfRowReader::safeFetchNextStripe() {
 }
 
 void DwrfRowReader::startNextStripe() {
-  // This method should only be called synchronously
-  std::unique_lock<std::mutex> lock(startNextStripeMutex_);
   if (newStripeReadyForRead || currentStripe >= lastStripe) {
     return;
   }

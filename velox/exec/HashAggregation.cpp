@@ -309,10 +309,12 @@ void HashAggregation::updateRuntimeStats() {
 }
 
 void HashAggregation::recordSpillStats() {
-  const auto spillStatsOr = groupingSet_->spilledStats();
+  auto spillStatsOr = groupingSet_->spilledStats();
   if (!spillStatsOr.has_value()) {
     return;
   }
+  VELOX_CHECK_EQ(spillStatsOr.value().spillRuns, 0);
+  spillStatsOr.value().spillRuns = numSpillRuns_;
   Operator::recordSpillStats(spillStatsOr.value());
 }
 
@@ -444,13 +446,17 @@ RowVectorPtr HashAggregation::getOutput() {
     return output;
   }
 
-  const auto batchSize =
-      isGlobal_ ? 1 : outputBatchRows(groupingSet_->estimateRowSize());
-
+  const auto& queryConfig = operatorCtx_->driverCtx()->queryConfig();
+  const auto maxOutputRows =
+      isGlobal_ ? 1 : queryConfig.preferredOutputBatchRows();
   // Reuse output vectors if possible.
-  prepareOutput(batchSize);
+  prepareOutput(maxOutputRows);
 
-  bool hasData = groupingSet_->getOutput(batchSize, resultIterator_, output_);
+  bool hasData = groupingSet_->getOutput(
+      maxOutputRows,
+      queryConfig.preferredOutputBatchBytes(),
+      resultIterator_,
+      output_);
   if (!hasData) {
     resultIterator_.reset();
     if (noMoreInput_) {

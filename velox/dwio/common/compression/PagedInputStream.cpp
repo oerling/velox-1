@@ -142,9 +142,21 @@ const char* PagedInputStream::ensureInput(size_t availableInputBytes) {
 }
 
 bool PagedInputStream::Next(const void** data, int32_t* size) {
+  VELOX_CHECK_NOT_NULL(data);
+  skipAllPending();
+  return readOrSkip(data, size);
+}
+
+// Read into `data' if it is not null; otherwise skip some of the pending.
+bool PagedInputStream::readOrSkip(const void** data, int32_t* size) {
+  if (data) {
+    VELOX_CHECK_EQ(pendingSkip_, 0);
+  }
   // if the user pushed back, return them the partial buffer
   if (outputBufferLength_) {
-    *data = outputBufferPtr_;
+    if (data) {
+      *data = outputBufferPtr_;
+    }
     *size = static_cast<int32_t>(outputBufferLength_);
     outputBufferPtr_ += outputBufferLength_;
     bytesReturned_ += outputBufferLength_;
@@ -177,7 +189,9 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
   // if no decompression or decryption is needed, simply adjust the output
   // pointer. Otherwise, make sure we have continuous block
   if (original) {
-    *data = inputBufferPtr_;
+    if (data) {
+      *data = inputBufferPtr_;
+    }
     *size = static_cast<int32_t>(availSize);
     outputBufferPtr_ = inputBufferPtr_ + availSize;
     inputBufferPtr_ += availSize;
@@ -192,7 +206,9 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
         decrypter_->decrypt(folly::StringPiece{input, remainingLength_});
     input = reinterpret_cast<const char*>(decryptionBuffer_->data());
     remainingLength_ = decryptionBuffer_->length();
-    *data = input;
+    if (data) {
+      *data = input;
+    }
     *size = remainingLength_;
     outputBufferPtr_ = input + remainingLength_;
   }
@@ -200,16 +216,25 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
   // perform decompression
   if (state_ == State::START) {
     DWIO_ENSURE_NOT_NULL(decompressor_.get(), "invalid stream state");
-    prepareOutputBuffer(
-        decompressor_->getUncompressedLength(input, remainingLength_));
-    outputBufferLength_ = decompressor_->decompress(
-        input,
-        remainingLength_,
-        outputBuffer_->data(),
-        outputBuffer_->capacity());
-    *data = outputBuffer_->data();
-    *size = static_cast<int32_t>(outputBufferLength_);
-    outputBufferPtr_ = outputBuffer_->data() + outputBufferLength_;
+    DWIO_ENSURE_NOT_NULL(input);
+    auto [decompressedLength, exact] =
+        decompressor_->getDecompressedLength(input, remainingLength_);
+    if (!data && exact && decompressedLength <= pendingSkip_) {
+      *size = decompressedLength;
+      outputBufferPtr_ = nullptr;
+    } else {
+      prepareOutputBuffer(decompressedLength);
+      outputBufferLength_ = decompressor_->decompress(
+          input,
+          remainingLength_,
+          outputBuffer_->data(),
+          outputBuffer_->capacity());
+      if (data) {
+        *data = outputBuffer_->data();
+      }
+      *size = static_cast<int32_t>(outputBufferLength_);
+      outputBufferPtr_ = outputBuffer_->data() + outputBufferLength_;
+    }
     // release decryption buffer
     decryptionBuffer_ = nullptr;
   }
@@ -226,6 +251,14 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
 }
 
 void PagedInputStream::BackUp(int32_t count) {
+  if (pendingSkip_ > 0) {
+    auto len = std::min<int64_t>(count, pendingSkip_);
+    pendingSkip_ -= len;
+    count -= len;
+    if (count == 0) {
+      return;
+    }
+  }
   DWIO_ENSURE(
       outputBufferPtr_ != nullptr,
       "Backup without previous Next in ",
@@ -245,22 +278,26 @@ void PagedInputStream::BackUp(int32_t count) {
   bytesReturned_ -= count;
 }
 
-bool PagedInputStream::Skip(int32_t count) {
-  // this is a stupid implementation for now.
-  // should skip entire blocks without decompressing
-  while (count > 0) {
-    const void* ptr;
+bool PagedInputStream::skipAllPending() {
+  while (pendingSkip_ > 0) {
     int32_t len;
-    if (!Next(&ptr, &len)) {
+    if (!readOrSkip(nullptr, &len)) {
       return false;
     }
-    if (len > count) {
-      BackUp(len - count);
-      count = 0;
+    if (len > pendingSkip_) {
+      auto toBackUp = len - pendingSkip_;
+      pendingSkip_ = 0;
+      BackUp(toBackUp);
     } else {
-      count -= len;
+      pendingSkip_ -= len;
     }
   }
+  return true;
+}
+
+bool PagedInputStream::Skip(int32_t count) {
+  pendingSkip_ += count;
+  // We never use the return value of this function so this is OK.
   return true;
 }
 
@@ -281,7 +318,8 @@ void PagedInputStream::seekToPosition(
   // to the beginning of the last view or last header, whichever is
   // later. If we are returning views into the decompression buffer,
   // we can backup to the beginning of the decompressed buffer
-  auto alreadyRead = bytesReturned_ - bytesReturnedAtLastHeaderOffset_;
+  auto alreadyRead =
+      bytesReturned_ - bytesReturnedAtLastHeaderOffset_ + pendingSkip_;
 
   // outsideOriginalWindow is true if we are returning views into
   // the input stream's buffer and we are seeking below the start of the last
@@ -298,12 +336,12 @@ void PagedInputStream::seekToPosition(
     auto provider = dwio::common::PositionProvider(positions);
     input_->seekToPosition(provider);
     clearDecompressionState();
-    Skip(uncompressedOffset);
+    pendingSkip_ = uncompressedOffset;
   } else {
     if (uncompressedOffset < alreadyRead) {
       BackUp(alreadyRead - uncompressedOffset);
     } else {
-      Skip(uncompressedOffset - alreadyRead);
+      pendingSkip_ += uncompressedOffset - alreadyRead;
     }
   }
 }

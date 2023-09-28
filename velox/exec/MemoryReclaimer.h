@@ -16,23 +16,23 @@
 
 #pragma once
 
-#include "velox/expression/VectorFunction.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/common/memory/MemoryArbitrator.h"
 
-namespace facebook::velox::functions::sparksql {
+namespace facebook::velox::exec {
+/// Provides the default memory reclaimer implementation for velox task
+/// execution.
+class DefaultMemoryReclaimer : public memory::MemoryReclaimer {
+ public:
+  virtual ~DefaultMemoryReclaimer() = default;
 
-inline std::vector<std::shared_ptr<exec::FunctionSignature>>
-equalNullSafeSignatures() {
-  return {exec::FunctionSignatureBuilder()
-              .typeVariable("T")
-              .returnType("boolean")
-              .argumentType("T")
-              .argumentType("T")
-              .build()};
-}
+  static std::unique_ptr<MemoryReclaimer> create();
 
-std::shared_ptr<exec::VectorFunction> makeEqualNullSafe(
-    const std::string& name,
-    const std::vector<exec::VectorFunctionArg>& inputArgs,
-    const core::QueryConfig& config);
+  void enterArbitration() override;
 
-} // namespace facebook::velox::functions::sparksql
+  void leaveArbitration() noexcept override;
+
+ protected:
+  DefaultMemoryReclaimer() = default;
+};
+} // namespace facebook::velox::exec

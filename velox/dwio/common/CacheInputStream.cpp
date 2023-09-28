@@ -203,12 +203,11 @@ void CacheInputStream::loadSync(Region region) {
   // rawBytesRead is the number of bytes touched. Whether they come
   // from disk, ssd or memory is itemized in different counters. A
   process::TraceContext trace("loadSync");
-  int64_t hitSize = window_.has_value() ? window_.value().length : region.length;
 
   // coalesced read from InputStream removes itself from this count
   // so as not to double count when the individual parts are
   // hit.
-  ioStats_->incRawBytesRead(hitSize);
+  ioStats_->incRawBytesRead(region.length);
   prefetchStarted_ = false;
   do {
     folly::SemiFuture<bool> wait(false);
@@ -251,7 +250,7 @@ void CacheInputStream::loadSync(Region region) {
     } else {
       // Hit memory cache.
       if (!entry->getAndClearFirstUseFlag()) {
-          ioStats_->ramHit().increment(hitSize);
+        ioStats_->ramHit().increment(region.length);
       }
       return;
     }
@@ -308,7 +307,7 @@ bool CacheInputStream::loadFromSsd(
     throw;
   }
   pin_ = std::move(pins[0]);
-  ioStats_->ssdRead().increment(entry.size());
+  ioStats_->ssdRead().increment(region.length);
   ioStats_->queryThreadIoLatency().increment(usec);
   entry.setExclusiveToShared();
   return true;
