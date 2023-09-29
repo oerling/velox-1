@@ -15,6 +15,7 @@
  */
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/common/base/Crc.h"
+#include "velox/common/base/RawVector.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/BiasVector.h"
@@ -22,7 +23,6 @@
 #include "velox/vector/DictionaryVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
-#include "velox/common/base/RawVector.h"
 
 namespace facebook::velox::serializer::presto {
 namespace {
@@ -800,7 +800,6 @@ void readRowVector(
 
   const auto& childTypes = type->asRow().children();
   readColumns(source, pool, childTypes, children, useLosslessTimestamp);
-
 
   auto size = source->read<int32_t>();
   // Set the size of the row but do not alter the size of the
@@ -2212,7 +2211,6 @@ void PrestoVectorSerde::deserialize(
         &uncompressedSource, pool, childTypes, children, useLosslessTimestamp);
   }
   scatterStructNulls((*result)->size(), 0, nullptr, nullptr, **result);
-
 }
 
 // static
