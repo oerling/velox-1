@@ -26,8 +26,14 @@ namespace facebook::velox::exec::test {
 using MaterializedRow = std::vector<velox::variant>;
 using DuckDBQueryResult = std::unique_ptr<::duckdb::MaterializedQueryResult>;
 
-// Multiset that compares floating-point values directly.
+/// Multiset that compares floating-point values directly.
 using MaterializedRowMultiset = std::multiset<MaterializedRow>;
+
+/// Converts input 'RowVector' into a list of 'MaterializedRow's.
+std::vector<MaterializedRow> materialize(const RowVectorPtr& vector);
+
+/// Converts a list of 'RowVector's into 'MaterializedRowMultiset'.
+MaterializedRowMultiset materialize(const std::vector<RowVectorPtr>& vectors);
 
 class DuckDbQueryRunner {
  public:
@@ -64,17 +70,6 @@ class DuckDbQueryRunner {
           std::copy(rows.begin(), rows.end(), std::back_inserter(allRows));
         });
     return allRows;
-  }
-
-  // Returns the DuckDB TPC-H Extension Query as string for a given 'queryNo'
-  // Example: queryNo = 1 returns the TPC-H Query1 in the TPC-H Extension
-  std::string getTpchQuery(int queryNo) {
-    auto queryString = ::duckdb::TPCHExtension::GetQuery(queryNo);
-    // Output of GetQuery() has a new line and a semi-colon. These need to be
-    // removed in order to use the query string in a subquery
-    queryString.pop_back(); // remove new line
-    queryString.pop_back(); // remove semi-colon
-    return queryString;
   }
 
   void initializeTpch(double scaleFactor);

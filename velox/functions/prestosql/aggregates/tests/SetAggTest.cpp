@@ -53,9 +53,7 @@ TEST_F(SetAggTest, global) {
   });
 
   expected = makeRowVector({
-      makeNullableArrayVector<int32_t>({
-          {1, 2, 4, 5, 6, 7, std::nullopt},
-      }),
+      makeArrayVectorFromJson<int32_t>({"[1, 2, 4, 5, 6, 7, null]"}),
   });
 
   testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
@@ -66,8 +64,7 @@ TEST_F(SetAggTest, global) {
   });
 
   expected = makeRowVector({
-      makeNullableArrayVector(
-          std::vector<std::vector<std::optional<int32_t>>>{{std::nullopt}}),
+      makeArrayVectorFromJson<int32_t>({"[null]"}),
   });
 
   testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
@@ -112,9 +109,9 @@ TEST_F(SetAggTest, groupBy) {
 
   expected = makeRowVector({
       makeFlatVector<int16_t>({1, 2}),
-      makeNullableArrayVector<int32_t>({
-          {1, std::nullopt},
-          {3, 5, 6, std::nullopt},
+      makeArrayVectorFromJson<int32_t>({
+          "[1, null]",
+          "[3, 5, 6, null]",
       }),
   });
 
@@ -143,9 +140,9 @@ TEST_F(SetAggTest, groupBy) {
 
   expected = makeRowVector({
       makeFlatVector<int16_t>({1, 2}),
-      makeNullableArrayVector<int32_t>({
-          {1, std::nullopt},
-          {std::nullopt},
+      makeArrayVectorFromJson<int32_t>({
+          "[1, null]",
+          "[null]",
       }),
   });
 
