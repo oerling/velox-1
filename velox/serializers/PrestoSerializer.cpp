@@ -645,7 +645,8 @@ void scatterNulls(
     auto bits = reinterpret_cast<char*>(vector.mutableRawNulls());
     bits::scatterBits(oldSize, vector.size(), bits, incomingNulls, bits);
   } else {
-    memcpy(vector.mutableRawNulls(), incomingNulls, bits::nbytes(vector.size()));
+    memcpy(
+        vector.mutableRawNulls(), incomingNulls, bits::nbytes(vector.size()));
   }
 }
 
@@ -663,8 +664,7 @@ void scatterVector(
         auto dictIndices =
             const_cast<vector_size_t*>(vector->wrapInfo()->as<vector_size_t>());
         scatterValues(scatterSize, scatter, dictIndices);
-        scatterNulls(
-            oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
       }
       auto values = vector->valueVector();
       scatterVector(values->size(), 0, nullptr, nullptr, values);
@@ -674,8 +674,7 @@ void scatterVector(
       if (incomingNulls) {
         BaseVector::ensureWritable(
             SelectivityVector::empty(), vector->type(), vector->pool(), vector);
-        scatterNulls(
-            oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
       }
       auto values = vector->valueVector();
       if (values) {
@@ -690,12 +689,10 @@ void scatterVector(
         auto sizes = const_cast<vector_size_t*>(array->rawSizes());
         scatterValues(scatterSize, scatter, offsets);
         scatterValues(scatterSize, scatter, sizes);
-        scatterNulls(
-            oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
       }
       auto elements = array->elements();
-      scatterVector(
-          array->elements()->size(), 0, nullptr, nullptr, elements);
+      scatterVector(array->elements()->size(), 0, nullptr, nullptr, elements);
       break;
     }
     case VectorEncoding::Simple::MAP: {
@@ -705,8 +702,7 @@ void scatterVector(
         auto sizes = const_cast<vector_size_t*>(map->rawSizes());
         scatterValues(scatterSize, scatter, offsets);
         scatterValues(scatterSize, scatter, sizes);
-        scatterNulls(
-            oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
       }
       auto keys = map->mapKeys();
       scatterVector(keys->size(), 0, nullptr, nullptr, keys);
@@ -727,8 +723,7 @@ void scatterVector(
             scatterSize,
             scatter,
             *vector);
-        scatterNulls(
-            oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
       }
       break;
     }
@@ -756,17 +751,9 @@ void scatterStructNulls(
     // the struct even if the struct as nulls.
     if (incomingNulls) {
       scatterVector(
-          row.size(),
-          scatterSize,
-          scatter,
-          incomingNulls,
-          row.childAt(0));
+          row.size(), scatterSize, scatter, incomingNulls, row.childAt(0));
       scatterVector(
-          row.size(),
-          scatterSize,
-          scatter,
-          incomingNulls,
-          row.childAt(1));
+          row.size(), scatterSize, scatter, incomingNulls, row.childAt(1));
       row.resize(size);
       scatterNulls(oldSize, scatterSize, scatter, incomingNulls, row);
     }

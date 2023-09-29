@@ -423,17 +423,19 @@ TEST_P(PrestoSerializerTest, ioBufRoundTrip) {
   VectorFuzzer fuzzer(opts, pool_.get());
   FuzzerGenerator gen;
   gen.seed(1);
-  
+
   const size_t numRounds = 20;
 
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = randRowType(gen);
     if (i == 0) {
-      rowType = ROW({{"i", INTEGER()},
-		     {"r1", ROW({{"i2", INTEGER()},
-				 {"r3", ROW({{"i3", INTEGER()}, {"i4", INTEGER()}})}})}});
-    }		      
-
+      rowType = ROW(
+          {{"i", INTEGER()},
+           {"r1",
+            ROW(
+                {{"i2", INTEGER()},
+                 {"r3", ROW({{"i3", INTEGER()}, {"i4", INTEGER()}})}})}});
+    }
 
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
     auto outputRowVector = IOBufToRowVector(
