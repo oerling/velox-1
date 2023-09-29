@@ -634,8 +634,6 @@ void scatterStructNulls(
 // resized to the new size before calling this.
 void scatterNulls(
     vector_size_t oldSize,
-    vector_size_t scatterSize,
-    const vector_size_t* scatter,
     const uint64_t* incomingNulls,
     BaseVector& vector) {
   bool hasNulls = vector.mayHaveNulls();
@@ -664,7 +662,7 @@ void scatterVector(
         auto dictIndices =
             const_cast<vector_size_t*>(vector->wrapInfo()->as<vector_size_t>());
         scatterValues(scatterSize, scatter, dictIndices);
-        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
       }
       auto values = vector->valueVector();
       scatterVector(values->size(), 0, nullptr, nullptr, values);
@@ -674,7 +672,7 @@ void scatterVector(
       if (incomingNulls) {
         BaseVector::ensureWritable(
             SelectivityVector::empty(), vector->type(), vector->pool(), vector);
-        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
       }
       auto values = vector->valueVector();
       if (values) {
@@ -689,7 +687,7 @@ void scatterVector(
         auto sizes = const_cast<vector_size_t*>(array->rawSizes());
         scatterValues(scatterSize, scatter, offsets);
         scatterValues(scatterSize, scatter, sizes);
-        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
       }
       auto elements = array->elements();
       scatterVector(array->elements()->size(), 0, nullptr, nullptr, elements);
@@ -702,7 +700,7 @@ void scatterVector(
         auto sizes = const_cast<vector_size_t*>(map->rawSizes());
         scatterValues(scatterSize, scatter, offsets);
         scatterValues(scatterSize, scatter, sizes);
-        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
       }
       auto keys = map->mapKeys();
       scatterVector(keys->size(), 0, nullptr, nullptr, keys);
@@ -723,7 +721,7 @@ void scatterVector(
             scatterSize,
             scatter,
             *vector);
-        scatterNulls(oldSize, scatterSize, scatter, incomingNulls, *vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
       }
       break;
     }
@@ -755,7 +753,7 @@ void scatterStructNulls(
       scatterVector(
           row.size(), scatterSize, scatter, incomingNulls, row.childAt(1));
       row.resize(size);
-      scatterNulls(oldSize, scatterSize, scatter, incomingNulls, row);
+      scatterNulls(oldSize, incomingNulls, row);
     }
     return;
   }
@@ -807,7 +805,7 @@ void scatterStructNulls(
   }
   if (incomingNulls) {
     row.resize(size);
-    scatterNulls(oldSize, scatterSize, scatter, incomingNulls, row);
+    scatterNulls(oldSize, incomingNulls, row);
   }
 }
 
