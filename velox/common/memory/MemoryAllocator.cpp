@@ -218,7 +218,7 @@ void* MemoryAllocator::allocateBytes(uint64_t bytes, uint16_t alignment) {
   void* result = nullptr;
   Allocation empty;
   cache()->makeSpace(
-		     AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
+      AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
         freeNonContiguous(evicted);
         result = allocateBytesWithoutRetry(bytes, alignment);
         return result != nullptr;
@@ -233,7 +233,7 @@ void* MemoryAllocator::allocateZeroFilled(uint64_t bytes) {
   void* result = nullptr;
   Allocation empty;
   cache()->makeSpace(
-		     AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
+      AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
         freeNonContiguous(evicted);
         result = allocateZeroFilledWithoutRetry(bytes);
         return result != nullptr;
