@@ -492,7 +492,8 @@ void AsyncDataCacheTest::loadLoop(
                 large)) {
               ++numLargeRetries_;
             }
-	    std::this_thread::sleep_for(std::chrono::microseconds(2000)); // NOLINT
+            std::this_thread::sleep_for(
+                std::chrono::microseconds(2000)); // NOLINT
           }
           const bool injectError = (errorEveryNBatches > 0) &&
               (++errorCounter % errorEveryNBatches == 0);
