@@ -479,7 +479,7 @@ void AsyncDataCacheTest::loadLoop(
             // Many threads will allocate a single large chunk at the
             // same time. Some are expected to fail. All will
             // eventually succeed because whoever gets the allocation
-            // frees it right away.
+            // frees it soon and without deadlocking with others..
             memory::ContiguousAllocation large;
             // Explicitly free 'large' on exit. Do not use MemoryPool for that
             // because we test the allocator's limits, not the pool/memory
@@ -492,6 +492,7 @@ void AsyncDataCacheTest::loadLoop(
                 large)) {
               ++numLargeRetries_;
             }
+	    std::this_thread::sleep_for(std::chrono::microseconds(2000)); // NOLINT
           }
           const bool injectError = (errorEveryNBatches > 0) &&
               (++errorCounter % errorEveryNBatches == 0);
@@ -623,13 +624,13 @@ TEST_F(AsyncDataCacheTest, evictAccounting) {
 
 TEST_F(AsyncDataCacheTest, largeEvict) {
   constexpr int64_t kMaxBytes = 256 << 20;
-  constexpr int32_t kNumThreads = 16;
+  constexpr int32_t kNumThreads = 24;
   FLAGS_velox_exception_user_stacktrace_enabled = false;
   initializeCache(kMaxBytes);
   // Load 10x the max size, inject an allocation of 1/8 the capacity every 4
   // batches.
   runThreads(kNumThreads, [&](int32_t /*i*/) {
-    loadLoop(0, kMaxBytes * 3, 0, 2, kMaxBytes / 4);
+    loadLoop(0, kMaxBytes * 1.2, 0, 1, kMaxBytes / 4);
   });
   if (executor_) {
     executor_->join();
