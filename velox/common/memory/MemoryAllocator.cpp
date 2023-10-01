@@ -169,7 +169,8 @@ bool MemoryAllocator::allocateNonContiguous(
     return allocateNonContiguousWithoutRetry(
         numPages, out, reservationCB, minSizeClass);
   }
-  return cache()->makeSpace(numPages, [&]() {
+  return cache()->makeSpace(numPages, out, [&](Allocation& evicted) {
+    freeNonContiguous(evicted);
     return allocateNonContiguousWithoutRetry(
         numPages, out, reservationCB, minSizeClass);
   });
@@ -185,9 +186,14 @@ bool MemoryAllocator::allocateContiguous(
     return allocateContiguousWithoutRetry(
         numPages, collateral, allocation, reservationCB, maxPages);
   }
-  return cache()->makeSpace(numPages, [&]() {
+  Allocation toFree;
+  if (collateral) {
+    toFree.appendMove(*collateral);
+  }
+  return cache()->makeSpace(numPages, toFree, [&](Allocation& evicted) {
+    freeNonContiguous(evicted);
     return allocateContiguousWithoutRetry(
-        numPages, collateral, allocation, reservationCB, maxPages);
+        numPages, &toFree, allocation, reservationCB, maxPages);
   });
 }
 
@@ -198,7 +204,9 @@ bool MemoryAllocator::growContiguous(
   if (cache() == nullptr) {
     return growContiguousWithoutRetry(increment, allocation, reservationCB);
   }
-  return cache()->makeSpace(increment, [&]() {
+  Allocation empty;
+  return cache()->makeSpace(increment, empty, [&](Allocation& evicted) {
+    freeNonContiguous(evicted);
     return growContiguousWithoutRetry(increment, allocation, reservationCB);
   });
 }
@@ -208,10 +216,13 @@ void* MemoryAllocator::allocateBytes(uint64_t bytes, uint16_t alignment) {
     return allocateBytesWithoutRetry(bytes, alignment);
   }
   void* result = nullptr;
-  cache()->makeSpace(AllocationTraits::numPages(bytes), [&]() {
-    result = allocateBytesWithoutRetry(bytes, alignment);
-    return result != nullptr;
-  });
+  Allocation empty;
+  cache()->makeSpace(
+		     AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
+        freeNonContiguous(evicted);
+        result = allocateBytesWithoutRetry(bytes, alignment);
+        return result != nullptr;
+      });
   return result;
 }
 
@@ -220,10 +231,13 @@ void* MemoryAllocator::allocateZeroFilled(uint64_t bytes) {
     return allocateZeroFilledWithoutRetry(bytes);
   }
   void* result = nullptr;
-  cache()->makeSpace(AllocationTraits::numPages(bytes), [&]() {
-    result = allocateZeroFilledWithoutRetry(bytes);
-    return result != nullptr;
-  });
+  Allocation empty;
+  cache()->makeSpace(
+		     AllocationTraits::numPages(bytes), empty, [&](Allocation& evicted) {
+        freeNonContiguous(evicted);
+        result = allocateZeroFilledWithoutRetry(bytes);
+        return result != nullptr;
+      });
   return result;
 }
 

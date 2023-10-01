@@ -149,10 +149,12 @@ class Cache {
   /// This method should be implemented so that it tries to accommodate the
   /// passed in 'allocate' by freeing up space from 'this' if needed. 'numPages'
   /// is the number of pages 'allocate' tries to allocate.It should return true
-  /// if 'allocate' succeeds, and false otherwise.
+  /// if 'allocate' succeeds, and false otherwise. 'collateral' is an allocation
+  /// that can be freed to make space for the new allocation.
   virtual bool makeSpace(
       memory::MachinePageCount numPages,
-      std::function<bool()> allocate) = 0;
+      Allocation& collateral,
+      std::function<bool(Allocation& evicted)> allocate) = 0;
 
   virtual MemoryAllocator* allocator() const = 0;
 };
@@ -484,6 +486,14 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   Stats stats_;
 
  private:
+  // True if freeing 'allocation' and thereafter allocating 'numPages'
+  // more would exceed capacity. Always false if 'allocation' has is
+  // larger than 'numPages'. This is a point in time reading and may
+  // change at any time. The only definitive way to know if n
+  // allocation succeeds is to try it.
+  bool exceedsCapacity(MachinePageCount numPages, const Allocation& allocation)
+      const;
+
   static std::mutex initMutex_;
   // Singleton instance.
   static std::shared_ptr<MemoryAllocator> instance_;

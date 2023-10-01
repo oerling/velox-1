@@ -548,8 +548,14 @@ class CacheShard {
   // not pinned. This favors first removing older and less frequently
   // used entries. If 'evictAllUnpinned' is true, anything that is
   // not pinned is evicted at first sight. This is for out of memory
-  // emergencies.
-  void evict(uint64_t bytesToFree, bool evictAllUnpinned);
+  // emergencies. If 'acquireBytes' is set, up to this amount is added to
+  // 'allocation'. A smaller amount can be added if not enough evictable data is
+  // found.
+  void evict(
+      uint64_t bytesToFree,
+      bool evictAllUnpinned,
+      int32_t acquirePages = 0,
+      memory::Allocation* allocation = nullptr);
 
   // Removes 'entry' from 'this'. Removes a possible promise from the entry
   // inside the shard mutex and returns it so that it can be realized outside of
@@ -664,7 +670,8 @@ class AsyncDataCache : public memory::Cache {
   /// for memory arbitration to work.
   bool makeSpace(
       memory::MachinePageCount numPages,
-      std::function<bool()> allocate) override;
+      memory::Allocation& collateral,
+      std::function<bool(memory::Allocation& allocation)> allocate) override;
 
   memory::MemoryAllocator* allocator() const override {
     return allocator_;
@@ -761,90 +768,94 @@ class AsyncDataCache : public memory::Cache {
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
-  static AsyncDataCache** getInstancePtr();
+  // True if 'evicted' has more pages than 'numPages' or allocator has space for
+  // numPages - evicted pages of more allocation.
+  bool canTryAllocate(int32_t numPages, const memory::Allocation& evicted) const;
 
-  // Waits a pseudorandom delay times 'counter'.
-  void backoff(int32_t counter);
+    static AsyncDataCache** getInstancePtr();
 
-  memory::MemoryAllocator* const allocator_;
-  std::unique_ptr<SsdCache> ssdCache_;
-  std::vector<std::unique_ptr<CacheShard>> shards_;
-  std::atomic<int32_t> shardCounter_{0};
-  std::atomic<memory::MachinePageCount> cachedPages_{0};
-  // Number of pages that are allocated and not yet loaded or loaded
-  // but not yet hit for the first time.
-  std::atomic<memory::MachinePageCount> prefetchPages_{0};
+    // Waits a pseudorandom delay times 'counter'.
+    void backoff(int32_t counter);
 
-  // Approximate counter of bytes allocated to cover misses. When this
-  // exceeds 'nextSsdScoreSize_' we update the SSD admission criteria.
-  std::atomic<uint64_t> newBytes_{0};
+    memory::MemoryAllocator* const allocator_;
+    std::unique_ptr<SsdCache> ssdCache_;
+    std::vector<std::unique_ptr<CacheShard>> shards_;
+    std::atomic<int32_t> shardCounter_{0};
+    std::atomic<memory::MachinePageCount> cachedPages_{0};
+    // Number of pages that are allocated and not yet loaded or loaded
+    // but not yet hit for the first time.
+    std::atomic<memory::MachinePageCount> prefetchPages_{0};
 
-  // 'newBytes_' value after which SSD admission should be reconsidered.
-  std::atomic<uint64_t> nextSsdScoreSize_{0};
+    // Approximate counter of bytes allocated to cover misses. When this
+    // exceeds 'nextSsdScoreSize_' we update the SSD admission criteria.
+    std::atomic<uint64_t> newBytes_{0};
 
-  // Approximate counter tracking new entries that could be saved to SSD.
-  tsan_atomic<uint64_t> ssdSaveable_{0};
+    // 'newBytes_' value after which SSD admission should be reconsidered.
+    std::atomic<uint64_t> nextSsdScoreSize_{0};
 
-  CacheStats stats_;
+    // Approximate counter tracking new entries that could be saved to SSD.
+    tsan_atomic<uint64_t> ssdSaveable_{0};
 
-  std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
-  // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
-  // busy with write.
-  tsan_atomic<int32_t> numSkippedSaves_{0};
+    CacheStats stats_;
 
-  // Used for pseudorandom backoff after failed allocation
-  // attempts. Serialization with a mutex is not allowed for
-  // allocations, so use backoff.
-  std::atomic<uint16_t> backoffCounter_{0};
+    std::function<void(const AsyncDataCacheEntry&)> verifyHook_;
+    // Count of skipped saves to 'ssdCache_' due to 'ssdCache_' being
+    // busy with write.
+    tsan_atomic<int32_t> numSkippedSaves_{0};
 
-  // Counter of threads competing for allocation in makeSpace(). Used
-  // for setting staggered backoff. Mutexes are not allowed for this.
-  std::atomic<int32_t> numThreadsInAllocate_{0};
-};
+    // Used for pseudorandom backoff after failed allocation
+    // attempts. Serialization with a mutex is not allowed for
+    // allocations, so use backoff.
+    std::atomic<uint16_t> backoffCounter_{0};
 
-// Samples a set of values T from 'numSamples' calls of
-// 'iter'. Returns the value where 'percent' of the samples are less than the
-// returned value.
-template <typename T, typename Next>
-T percentile(Next next, int32_t numSamples, int percent) {
-  std::vector<T> values;
-  values.reserve(numSamples);
-  for (auto i = 0; i < numSamples; ++i) {
-    values.push_back(next());
+    // Counter of threads competing for allocation in makeSpace(). Used
+    // for setting staggered backoff. Mutexes are not allowed for this.
+    std::atomic<int32_t> numThreadsInAllocate_{0};
+  };
+
+  // Samples a set of values T from 'numSamples' calls of
+  // 'iter'. Returns the value where 'percent' of the samples are less than the
+  // returned value.
+  template <typename T, typename Next>
+  T percentile(Next next, int32_t numSamples, int percent) {
+    std::vector<T> values;
+    values.reserve(numSamples);
+    for (auto i = 0; i < numSamples; ++i) {
+      values.push_back(next());
+    }
+    std::sort(values.begin(), values.end());
+    return values.empty() ? 0 : values[(values.size() * percent) / 100];
   }
-  std::sort(values.begin(), values.end());
-  return values.empty() ? 0 : values[(values.size() * percent) / 100];
-}
 
-// Utility function for loading multiple pins with coalesced
-// IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the
-// largest allowed distance in bytes between the end of one entry and
-// the start of the next. If the gap is larger or the next is before
-// the end of the previous, the entries will be fetched separately.
-//
-//'offsetFunc' returns the starting offset of the data in the
-// file given a pin and the pin's index in 'pins'. The pins are expected to be
-// sorted by this offset. 'readFunc' reads from the appropriate media. It gets
-// the 'pins' and the index of the first pin included in the read and the index
-// of the first pin not included. It gets the starting offset of the read and a
-// vector of memory ranges to fill by ReadFile::preadv or a similar
-// function.
-// The caller is responsible for calling setValid on the pins after a successful
-// read.
-//
-// Returns the number of distinct IOs, the number of bytes loaded into pins and
-// the number of extra bytes read.
-CoalesceIoStats readPins(
-    const std::vector<CachePin>& pins,
-    int32_t maxGap,
-    int32_t maxBatch,
-    std::function<uint64_t(int32_t index)> offsetFunc,
-    std::function<void(
-        const std::vector<CachePin>& pins,
-        int32_t begin,
-        int32_t end,
-        uint64_t offset,
-        const std::vector<folly::Range<char*>>& buffers)> readFunc);
+  // Utility function for loading multiple pins with coalesced
+  // IO. 'pins' is a vector of CachePins to fill. 'maxGap' is the
+  // largest allowed distance in bytes between the end of one entry and
+  // the start of the next. If the gap is larger or the next is before
+  // the end of the previous, the entries will be fetched separately.
+  //
+  //'offsetFunc' returns the starting offset of the data in the
+  // file given a pin and the pin's index in 'pins'. The pins are expected to be
+  // sorted by this offset. 'readFunc' reads from the appropriate media. It gets
+  // the 'pins' and the index of the first pin included in the read and the
+  // index of the first pin not included. It gets the starting offset of the
+  // read and a vector of memory ranges to fill by ReadFile::preadv or a similar
+  // function.
+  // The caller is responsible for calling setValid on the pins after a
+  // successful read.
+  //
+  // Returns the number of distinct IOs, the number of bytes loaded into pins
+  // and the number of extra bytes read.
+  CoalesceIoStats readPins(
+      const std::vector<CachePin>& pins,
+      int32_t maxGap,
+      int32_t maxBatch,
+      std::function<uint64_t(int32_t index)> offsetFunc,
+      std::function<void(
+          const std::vector<CachePin>& pins,
+          int32_t begin,
+          int32_t end,
+          uint64_t offset,
+          const std::vector<folly::Range<char*>>& buffers)> readFunc);
 
 } // namespace facebook::velox::cache
 

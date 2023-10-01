@@ -160,6 +160,9 @@ class Allocation {
     return numPages_ == 0;
   }
 
+  /// Moves the runs in 'from' to 'this'. 'from' is empty on return.
+  void appendMove(Allocation& from);
+
   std::string toString() const;
 
  private:
