@@ -513,6 +513,33 @@ TEST_F(VectorMakerTest, arrayOfRowVector) {
   EXPECT_EQ("purple", colorVector->valueAt(4).str());
 }
 
+TEST_F(VectorMakerTest, arrayOfRowVectorFromTuples) {
+  std::vector<std::vector<std::optional<std::tuple<int32_t, std::string>>>>
+      data = {
+          {{{1, "red"}}, {{2, "blue"}}, {{3, "green"}}},
+          {},
+          {std::nullopt},
+          {{{4, "green"}}, {{-5, "purple"}}},
+      };
+
+  auto arrayVector = maker_.arrayOfRowVector(data, ROW({INTEGER(), VARCHAR()}));
+
+  std::vector<vector_size_t> offsets{0, 3, 3, 4};
+  auto elements = maker_.rowVector({
+      maker_.flatVector<int32_t>({1, 2, 3, 0, 4, -5}),
+      maker_.flatVector<std::string>(
+          {"red", "blue", "green", "n/a", "green", "purple"}),
+  });
+  elements->setNull(3, true);
+  auto expected = maker_.arrayVector(offsets, elements);
+
+  ASSERT_EQ(expected->size(), arrayVector->size());
+  ASSERT_EQ(*expected->type(), *arrayVector->type());
+  for (auto i = 0; i < expected->size(); i++) {
+    ASSERT_TRUE(expected->equalValueAt(arrayVector.get(), i, i));
+  }
+}
+
 TEST_F(VectorMakerTest, arrayVectorUsingBaseVector) {
   auto elementsVector = maker_.flatVector<int64_t>({1, 2, 3, 4, 5, 6});
 
@@ -647,6 +674,78 @@ TEST_F(VectorMakerTest, mapVectorStringString) {
 
   EXPECT_EQ("c", keys->valueAt(4));
   EXPECT_EQ("test", values->valueAt(4));
+}
+
+TEST_F(VectorMakerTest, mapVectorFromJson) {
+  auto mapVector = maker_.mapVectorFromJson<int32_t, double>({
+      "null",
+      "{}",
+      "{1: 10.1, 2: 20.2, 3: 30.3}",
+      "{1: 10.1, 2: 20.2, 3: null, 4: 40.4}",
+      "{1: null, 2: null}",
+  });
+
+  MapVector::canonicalize(mapVector);
+
+  EXPECT_EQ(5, mapVector->size());
+  EXPECT_EQ(*MAP(INTEGER(), DOUBLE()), *mapVector->type());
+  EXPECT_TRUE(mapVector->mayHaveNulls());
+
+  auto* keys = mapVector->mapKeys()->as<SimpleVector<int32_t>>();
+  auto* values = mapVector->mapValues()->as<SimpleVector<double>>();
+
+  // Null map.
+  EXPECT_TRUE(mapVector->isNullAt(0));
+
+  // Empty map.
+  EXPECT_FALSE(mapVector->isNullAt(1));
+  EXPECT_EQ(0, mapVector->sizeAt(1));
+
+  // {1: 10.1, 2: 20.2, 3: 30.3}.
+  EXPECT_FALSE(mapVector->isNullAt(2));
+  EXPECT_EQ(3, mapVector->sizeAt(2));
+  EXPECT_EQ(0, mapVector->offsetAt(2));
+
+  for (auto i = 0; i < 3; ++i) {
+    EXPECT_FALSE(keys->isNullAt(i));
+    EXPECT_EQ(i + 1, keys->valueAt(i));
+
+    EXPECT_FALSE(values->isNullAt(i));
+    EXPECT_DOUBLE_EQ((i + 1) * 10.1, values->valueAt(i));
+  }
+
+  // {1: 10.1, 2: 20.2, 3: null, 4: 40.4}.
+  EXPECT_FALSE(mapVector->isNullAt(3));
+  EXPECT_EQ(4, mapVector->sizeAt(3));
+  EXPECT_EQ(3, mapVector->offsetAt(3));
+
+  for (auto i = 0; i < 4; ++i) {
+    auto index = i + 3;
+
+    EXPECT_FALSE(keys->isNullAt(index));
+    EXPECT_EQ(i + 1, keys->valueAt(index));
+
+    if (i == 2) {
+      EXPECT_TRUE(values->isNullAt(index));
+    } else {
+      EXPECT_FALSE(values->isNullAt(index));
+      EXPECT_DOUBLE_EQ((i + 1) * 10.1, values->valueAt(index));
+    }
+  }
+
+  // {1: null, 2: null}.
+  EXPECT_FALSE(mapVector->isNullAt(4));
+  EXPECT_EQ(2, mapVector->sizeAt(4));
+  EXPECT_EQ(7, mapVector->offsetAt(4));
+
+  for (auto i = 0; i < 2; ++i) {
+    auto index = i + 7;
+
+    EXPECT_FALSE(keys->isNullAt(index));
+    EXPECT_EQ(i + 1, keys->valueAt(index));
+
+    EXPECT_TRUE(values->isNullAt(index));
+  }
 }
 
 TEST_F(VectorMakerTest, biasVector) {

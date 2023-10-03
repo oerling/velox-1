@@ -552,13 +552,6 @@ AsyncDataCache** AsyncDataCache::getInstancePtr() {
   return &cache_;
 }
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-void AsyncDataCache::prepareShutdown() {
-  for (auto& shard : shards_) {
-    shard->shutdown();
-  }
-}
-#endif
 void AsyncDataCache::shutdown() {
   for (auto& shard : shards_) {
     shard->shutdown();
