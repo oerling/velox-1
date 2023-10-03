@@ -486,14 +486,6 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   Stats stats_;
 
  private:
-  // True if freeing 'allocation' and thereafter allocating 'numPages'
-  // more would exceed capacity. Always false if 'allocation' has is
-  // larger than 'numPages'. This is a point in time reading and may
-  // change at any time. The only definitive way to know if n
-  // allocation succeeds is to try it.
-  bool exceedsCapacity(MachinePageCount numPages, const Allocation& allocation)
-      const;
-
   static std::mutex initMutex_;
   // Singleton instance.
   static std::shared_ptr<MemoryAllocator> instance_;
