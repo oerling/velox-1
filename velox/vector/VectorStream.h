@@ -138,6 +138,13 @@ class VectorStreamGroup : public StreamArena {
       int32_t numRows,
       const VectorSerde::Options* options = nullptr);
 
+  /// Increments sizes[i] for each ith row in 'range' in 'vector'.
+  static void estimateSerializedSize(
+      VectorPtr vector,
+      IndexRange range,
+      vector_size_t** sizes);
+
+  
   static void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
@@ -149,8 +156,7 @@ class VectorStreamGroup : public StreamArena {
 
   void append(
       const RowVectorPtr& vector,
-      const folly::Range<const vector_stream_t*>& rows);
-
+      const folly::Range<const vector_size_t*>& rows);
   
   void append(const RowVectorPtr& vector);
 

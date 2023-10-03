@@ -123,6 +123,15 @@ void VectorStreamGroup::flush(OutputStream* out) {
 // static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
+    IndexRange range,
+    vector_size_t** sizes) {
+  getVectorSerde()->estimateSerializedSize(vector, range, sizes);
+}
+
+  
+// static
+void VectorStreamGroup::estimateSerializedSize(
+    VectorPtr vector,
     const folly::Range<const IndexRange*>& ranges,
     vector_size_t** sizes) {
   getVectorSerde()->estimateSerializedSize(vector, ranges, sizes);
