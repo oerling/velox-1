@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/vector/VectorStream.h"
+#include "velox/common/base/RawVector.h"
 #include <memory>
 
 namespace facebook::velox {
@@ -39,6 +40,17 @@ getNamedVectorSerdeImpl() {
 
 } // namespace
 
+  void VectorSerde::estimateSerializedSize(
+      VectorPtr vector,
+      IndexRange range,
+      vector_size_t* sizes) {
+    raw_vector<vector_size_t> temp;
+    auto iota =  iota(range.start + range.size, temp) + range.start;
+    estimateSerializedSize(vector, folly::Range<const vector_size_t*>(iota, range.size),
+			   sizes);
+  }
+
+  
 VectorSerde* getVectorSerde() {
   auto serde = getVectorSerdeImpl().get();
   VELOX_CHECK_NOT_NULL(serde, "Vector serde is not registered.");

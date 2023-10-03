@@ -2018,6 +2018,100 @@ void estimateSerializedSizeInt(
   }
 }
 
+void estimateSerializedSizeInt(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& rows,
+    vector_size_t* sizes) {
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::FLAT:
+      if (vector->mayHaveNulls()) {
+	
+      }
+      break;
+    case VectorEncoding::Simple::CONSTANT:
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          estimateConstantSerializedSize,
+          vector->typeKind(),
+          vector,
+          ranges,
+          sizes);
+      break;
+    case VectorEncoding::Simple::DICTIONARY:
+    case VectorEncoding::Simple::SEQUENCE:
+      estimateWrapperSerializedSize(ranges, sizes, vector);
+      break;
+    case VectorEncoding::Simple::BIASED:
+      estimateBiasedSerializedSize(vector, ranges, sizes);
+      break;
+    case VectorEncoding::Simple::ROW: {
+      std::vector<IndexRange> childRanges;
+      std::vector<vector_size_t*> childSizes;
+      for (int32_t i = 0; i < ranges.size(); ++i) {
+        auto begin = ranges[i].begin;
+        auto end = begin + ranges[i].size;
+        for (auto offset = begin; offset < end; ++offset) {
+          *sizes[i] += sizeof(int32_t);
+          if (!vector->isNullAt(offset)) {
+            childRanges.push_back(IndexRange{offset, 1});
+            childSizes.push_back(sizes[i]);
+          }
+        }
+      }
+      auto rowVector = vector->as<RowVector>();
+      auto children = rowVector->children();
+      for (auto& child : children) {
+        if (child) {
+          estimateSerializedSizeInt(
+              child.get(),
+              folly::Range(childRanges.data(), childRanges.size()),
+              childSizes.data());
+        }
+      }
+      break;
+    }
+    case VectorEncoding::Simple::MAP: {
+      auto mapVector = vector->as<MapVector>();
+      std::vector<IndexRange> childRanges;
+      std::vector<vector_size_t*> childSizes;
+      expandRepeatedRanges(
+          mapVector,
+          mapVector->rawOffsets(),
+          mapVector->rawSizes(),
+          ranges,
+          sizes,
+          &childRanges,
+          &childSizes);
+      estimateSerializedSizeInt(
+          mapVector->mapKeys().get(), childRanges, childSizes.data());
+      estimateSerializedSizeInt(
+          mapVector->mapValues().get(), childRanges, childSizes.data());
+      break;
+    }
+    case VectorEncoding::Simple::ARRAY: {
+      auto arrayVector = vector->as<ArrayVector>();
+      std::vector<IndexRange> childRanges;
+      std::vector<vector_size_t*> childSizes;
+      expandRepeatedRanges(
+          arrayVector,
+          arrayVector->rawOffsets(),
+          arrayVector->rawSizes(),
+          ranges,
+          sizes,
+          &childRanges,
+          &childSizes);
+      estimateSerializedSizeInt(
+          arrayVector->elements().get(), childRanges, childSizes.data());
+      break;
+    }
+    case VectorEncoding::Simple::LAZY:
+      estimateSerializedSizeInt(vector->loadedVector(), ranges, sizes);
+      break;
+    default:
+      VELOX_CHECK(false, "Unsupported vector encoding {}", vector->encoding());
+  }
+}
+
+  
 class PrestoVectorSerializer : public VectorSerializer {
  public:
   PrestoVectorSerializer(
@@ -2233,7 +2327,14 @@ class PrestoVectorSerializer : public VectorSerializer {
   std::vector<std::unique_ptr<VectorStream>> streams_;
 };
 } // namespace
+  void PrestoSerde::estimateSerializedSize(
+      VectorPtr vector,
+      folly::Range<const vector_size_t*> rows,
+      vector_size_t* sizes) override {
 
+  }
+
+  
 void PrestoVectorSerde::estimateSerializedSize(
     VectorPtr vector,
     const folly::Range<const IndexRange*>& ranges,

@@ -81,6 +81,22 @@ class VectorSerde {
     virtual ~Options() {}
   };
 
+    /// Adds the serialized size of each ith row of 'vector' to sizes[i]. i ranges
+  /// over 'range'.
+  virtual void estimateSerializedSize(
+      VectorPtr vector,
+      IndexRange range,
+      vector_size_t* sizes);
+
+  /// Adds the serialized size of vector at 'rows[i]' to 'sizes[i]'.
+  virtual void estimateSerializedSize(
+      VectorPtr vector,
+      folly::Range<vector_size_t*> rows, range,
+      vector_size_t* sizes) = 0;
+
+  
+  /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
+  /// '*sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
