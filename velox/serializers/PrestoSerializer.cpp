@@ -781,7 +781,8 @@ void scatterStructNulls(
     row.resize(size);
     scatterNulls(oldSize, incomingNulls, row);
   }
-  // On return of scatter we check that child sizes match the struct size. This is safe also if no scatter.
+  // On return of scatter we check that child sizes match the struct size. This
+  // is safe also if no scatter.
   for (auto i = 0; i < row.childrenSize(); ++i) {
     VELOX_CHECK_EQ(row.childAt(i)->size(), row.size());
   }
