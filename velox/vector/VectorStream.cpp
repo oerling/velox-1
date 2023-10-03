@@ -106,6 +106,12 @@ void VectorStreamGroup::append(
   serializer_->append(vector, ranges);
 }
 
+void VectorStreamGroup::append(
+    const RowVectorPtr& vector,
+    const folly::Range<const vector_size_t*>& rows) {
+  serializer_->append(vector, rows);
+}
+
 void VectorStreamGroup::append(const RowVectorPtr& vector) {
   serializer_->append(vector);
 }

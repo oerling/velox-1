@@ -40,9 +40,20 @@ class VectorSerializer {
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges) = 0;
 
+  virtual void append(
+      const RowVectorPtr& vector,
+      const folly::Range<const vector_size_t*>& rows) {
+    VELOX_UNSUPPORTED();
+  }
+  
   /// Serialize all rows in a vector.
-  void append(const RowVectorPtr& vector);
+      void append(const RowVectorPtr& vector);
 
+  // True if supports append with folly::Range<vector_size_t*>.
+  virtual bool supportsAppendRows() const {
+    return false;
+  }
+      
   /// Returns the maximum serialized size of the data previously added via
   /// 'append' methods. Can be used to allocate buffer of exact or maximum size
   /// before calling 'flush'.
@@ -136,6 +147,11 @@ class VectorStreamGroup : public StreamArena {
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges);
 
+  void append(
+      const RowVectorPtr& vector,
+      const folly::Range<const vector_stream_t*>& rows);
+
+  
   void append(const RowVectorPtr& vector);
 
   // Writes the contents to 'stream' in wire format.
