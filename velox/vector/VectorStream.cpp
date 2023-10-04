@@ -43,11 +43,11 @@ getNamedVectorSerdeImpl() {
   void VectorSerde::estimateSerializedSize(
       VectorPtr vector,
       IndexRange range,
-      vector_size_t* sizes) {
+      vector_size_t* sizes, Scratch& scratch) {
     raw_vector<vector_size_t> temp;
     auto iota =  iota(range.start + range.size, temp) + range.start;
     estimateSerializedSize(vector, folly::Range<const vector_size_t*>(iota, range.size),
-			   sizes);
+			   sizes, scratch);
   }
 
   

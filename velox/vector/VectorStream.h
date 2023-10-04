@@ -38,11 +38,13 @@ class VectorSerializer {
   /// Serialize a subset of rows in a vector.
   virtual void append(
       const RowVectorPtr& vector,
-      const folly::Range<const IndexRange*>& ranges) = 0;
+      const folly::Range<const IndexRange*>& ranges,
+		      Scratch& scratch) = 0;
 
   virtual void append(
       const RowVectorPtr& vector,
-      const folly::Range<const vector_size_t*>& rows) {
+      const folly::Range<const vector_size_t*>& rows,
+		      Scratch& scratch) {
     VELOX_UNSUPPORTED();
   }
   
@@ -86,13 +88,15 @@ class VectorSerde {
   virtual void estimateSerializedSize(
       VectorPtr vector,
       IndexRange range,
-      vector_size_t* sizes);
+      vector_size_t* sizes,
+				      Scratch& scratch);
 
   /// Adds the serialized size of vector at 'rows[i]' to 'sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
       folly::Range<vector_size_t*> rows, range,
-      vector_size_t* sizes) = 0;
+      vector_size_t* sizes,
+      Scratch& scratch) = 0;
 
   
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
@@ -100,7 +104,8 @@ class VectorSerde {
   virtual void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes) = 0;
+      vector_size_t** sizes,
+				      Scratch& scratch) = 0;
 
   virtual std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,

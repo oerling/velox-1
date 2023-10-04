@@ -2021,14 +2021,20 @@ void estimateSerializedSizeInt(
 void estimateSerializedSizeInt(
     const BaseVector* vector,
     const folly::Range<const vector_size_t*>& rows,
-    vector_size_t* sizes) {
+    vector_size_t* sizes,
+    Scratch& scratch) {
   switch (vector->encoding()) {
-    case VectorEncoding::Simple::FLAT:
-      if (vector->mayHaveNulls()) {
+  case VectorEncoding::Simple::FLAT: {
+    auto kind = vector->typeKind();
+    
+    if (vector->mayHaveNulls()) {
+	
+      } else {
 	
       }
       break;
-    case VectorEncoding::Simple::CONSTANT:
+  }
+	case VectorEncoding::Simple::CONSTANT:
       VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
           estimateConstantSerializedSize,
           vector->typeKind(),
@@ -2038,7 +2044,7 @@ void estimateSerializedSizeInt(
       break;
     case VectorEncoding::Simple::DICTIONARY:
     case VectorEncoding::Simple::SEQUENCE:
-      estimateWrapperSerializedSize(ranges, sizes, vector);
+      estimateWrapperSerializedSize(rows, sizes, vector, scratch);
       break;
     case VectorEncoding::Simple::BIASED:
       estimateBiasedSerializedSize(vector, ranges, sizes);
