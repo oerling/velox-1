@@ -554,8 +554,8 @@ class CacheShard {
   void evict(
       uint64_t bytesToFree,
       bool evictAllUnpinned,
-      int32_t acquirePages = 0,
-      memory::Allocation* allocation = nullptr);
+      int32_t pagesToAcquire,
+      memory::Allocation& acquiredAllocation);
 
   // Removes 'entry' from 'this'. Removes a possible promise from the entry
   // inside the shard mutex and returns it so that it can be realized outside of
@@ -665,7 +665,6 @@ class AsyncDataCache : public memory::Cache {
   /// for memory arbitration to work.
   bool makeSpace(
       memory::MachinePageCount numPages,
-      memory::Allocation& collateral,
       std::function<bool(memory::Allocation& allocation)> allocate) override;
 
   memory::MemoryAllocator* allocator() const override {
@@ -763,9 +762,9 @@ class AsyncDataCache : public memory::Cache {
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
-  // True if 'evicted' has more pages than 'numPages' or allocator has space for
-  // numPages - evicted pages of more allocation.
-  bool canTryAllocate(int32_t numPages, const memory::Allocation& evicted)
+  // True if 'acquired' has more pages than 'numPages' or allocator has space for
+  // numPages - acquired pages of more allocation.
+  bool canTryAllocate(int32_t numPages, const memory::Allocation& acquired)
       const;
 
   static AsyncDataCache** getInstancePtr();
