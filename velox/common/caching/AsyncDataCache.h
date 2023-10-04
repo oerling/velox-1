@@ -762,8 +762,8 @@ class AsyncDataCache : public memory::Cache {
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;
 
-  // True if 'acquired' has more pages than 'numPages' or allocator has space for
-  // numPages - acquired pages of more allocation.
+  // True if 'acquired' has more pages than 'numPages' or allocator has space
+  // for numPages - acquired pages of more allocation.
   bool canTryAllocate(int32_t numPages, const memory::Allocation& acquired)
       const;
 
