@@ -548,7 +548,7 @@ class CacheShard {
   // not pinned. This favors first removing older and less frequently
   // used entries. If 'evictAllUnpinned' is true, anything that is
   // not pinned is evicted at first sight. This is for out of memory
-  // emergencies. If 'acquireBytes' is set, up to this amount is added to
+  // emergencies. If 'pagesToAcquire' is set, up to this amount is added to
   // 'allocation'. A smaller amount can be added if not enough evictable data is
   // found.
   void evict(

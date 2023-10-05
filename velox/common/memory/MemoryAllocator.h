@@ -156,7 +156,7 @@ class Cache {
   /// that is exchanged for the new allocation.
   virtual bool makeSpace(
       memory::MachinePageCount numPages,
-      std::function<bool(Allocation& evicted)> allocate) = 0;
+      std::function<bool(Allocation&)> allocate) = 0;
 
   virtual MemoryAllocator* allocator() const = 0;
 };

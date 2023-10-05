@@ -746,6 +746,7 @@ void AsyncDataCache::clear() {
   for (auto& shard : shards_) {
     memory::Allocation acquired;
     shard->evict(std::numeric_limits<int32_t>::max(), true, 0, acquired);
+    VELOX_CHECK(acquired.empty());
   }
 }
 
