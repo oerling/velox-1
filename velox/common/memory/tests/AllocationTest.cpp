@@ -75,7 +75,8 @@ TEST_F(AllocationTest, appendMove) {
   otherAllocation.append(secondBufAddr, kNumPages);
   ASSERT_EQ(otherAllocation.numPages(), kNumPages);
 
-  // 'allocation' gets all the runs of 'otherAllocation' and 'otherAllocation' is left empty.
+  // 'allocation' gets all the runs of 'otherAllocation' and 'otherAllocation'
+  // is left empty.
   allocation.appendMove(otherAllocation);
   ASSERT_EQ(kNumPages * 2, allocation.numPages());
   ASSERT_EQ(0, otherAllocation.numPages());
