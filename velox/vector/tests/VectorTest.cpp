@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <functional>
 #include <optional>
+
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -40,13 +41,18 @@ class TestingLoader : public VectorLoader {
  public:
   explicit TestingLoader(VectorPtr data) : data_(data), rowCounter_(0) {}
 
-  void loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) override {
+  void loadInternal(
+      RowSet rows,
+      ValueHook* hook,
+      vector_size_t resultSize,
+      VectorPtr* result) override {
     if (hook) {
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           applyHook, data_->typeKind(), rows, hook);
       return;
     }
     *result = data_;
+    VELOX_CHECK_GE(data_->size(), resultSize);
     rowCounter_ += rows.size();
   }
 
@@ -2038,6 +2044,7 @@ TEST_F(VectorTest, multipleDictionariesOverLazy) {
       indices,
       size,
       BaseVector::wrapInDictionary(nullptr, indices, size, lazy));
+
   dict->loadedVector();
   for (auto i = 0; i < size; i++) {
     ASSERT_EQ(i, dict->as<SimpleVector<int32_t>>()->valueAt(i));
@@ -3033,5 +3040,26 @@ TEST_F(VectorTest, mutableValues) {
   }
 }
 
+TEST_F(VectorTest, appendNulls) {
+  auto rowVector = makeRowVector({makeFlatVector<int32_t>({0, 1, 2})});
+  ASSERT_EQ(rowVector->size(), 3);
+
+  // Append 0 rows.
+  rowVector->appendNulls(0);
+  ASSERT_EQ(rowVector->size(), 3);
+  test::assertEqualVectors(
+      rowVector, makeRowVector({makeFlatVector<int32_t>({0, 1, 2})}));
+
+  // Append 2 nulls
+  rowVector->appendNulls(2);
+  ASSERT_EQ(rowVector->size(), 5);
+  ASSERT_TRUE(rowVector->isNullAt(3));
+  ASSERT_TRUE(rowVector->isNullAt(4));
+  test::assertEqualVectors(
+      rowVector->childAt(0), makeFlatVector<int32_t>({0, 1, 2}));
+
+  // Append negative.
+  EXPECT_ANY_THROW(rowVector->appendNulls(-1));
+}
 } // namespace
 } // namespace facebook::velox
