@@ -442,6 +442,8 @@ class ArrayVector : public ArrayVectorBase {
 
 class MapVector : public ArrayVectorBase {
  public:
+  static constexpr vector_size_t kKeyNotFound = ~0;
+
   MapVector(const MapVector&) = delete;
   MapVector& operator=(const MapVector&) = delete;
 
@@ -576,6 +578,12 @@ class MapVector : public ArrayVectorBase {
 
   void validate(const VectorValidateOptions& options) const override;
 
+  /// Finds the key given by 'key' and 'keyIndex' in the map at 'mapIndex'. Returns the offset of the found key in mapKeys() or kKeyNotFound if the key does not occur in the map at 'mapIndex'.
+  vector_size_t findKeyAt(vector_size_t mapIndex, baseVector& key, vector_size_t keyIndex) const;
+  
+  // Builds a key lookup structure for the maps between 'begin' and 'end'.
+  void buildKeyLookup(vector_size_t begin, vector_size_t end);
+  
  protected:
   virtual void resetDataDependentFlags(const SelectivityVector* rows) override {
     BaseVector::resetDataDependentFlags(rows);
@@ -583,6 +591,9 @@ class MapVector : public ArrayVectorBase {
   }
 
  private:
+  static constexpr int32_t kGroupSize = xsimd::batch<uint32_t>::size;
+  static constexpr uint32_t kTagMask = 0xff000000;
+
   // Returns true if the keys for map at 'index' are sorted from first
   // to last in the type's collation order.
   bool isSorted(vector_size_t index) const;
@@ -591,6 +602,12 @@ class MapVector : public ArrayVectorBase {
   // get elements in key order in each map.
   BufferPtr elementIndices() const;
 
+  // Hash table for locating keys in maps. The int32_t elements from
+  // rawOffsets_[i] to rawOffsets_[i + rawSizes_[i]] are pairs of 8
+  // bit hash number tags and 24 bit offsets for the key. The offset
+  // is relative to rawOffset_[i] for the ith map.
+  BufferPtr keyHashTable_;
+  
   VectorPtr keys_;
   VectorPtr values_;
   bool sortedKeys_;

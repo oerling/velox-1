@@ -423,9 +423,10 @@ TEST_P(PrestoSerializerTest, ioBufRoundTrip) {
   VectorFuzzer fuzzer(opts, pool_.get());
 
   const size_t numRounds = 20;
-
+  FuzzerGenerator gen;
+  gen.seed(1);
   for (size_t i = 0; i < numRounds; ++i) {
-    auto rowType = fuzzer.randRowType();
+    auto rowType = fuzzer.randRowType(gen);
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
     auto outputRowVector = IOBufToRowVector(
         rowVectorToIOBuf(inputRowVector, *pool_), rowType, *pool_);

@@ -164,7 +164,7 @@ class ExchangeBenchmark : public VectorTestBase {
     std::vector<std::string> aggregates = {"count(1)"};
     auto& rowType = vectors[0]->type()->as<TypeKind::ROW>();
     for (auto i = 1; i < rowType.size(); ++i) {
-      aggregates.push_back(fmt::format("checksum({})", rowType.nameOf(i)));
+      aggregates.push_back(fmt::format("count({})", rowType.nameOf(i)));
     }
     core::PlanNodeId exchangeId;
     auto plan = exec::test::PlanBuilder()
@@ -311,7 +311,7 @@ BENCHMARK(exchangeFlat10k) {
   bm.run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
 }
 
-BENCHMARK_RELATIVE(exchangeFlat50) {
+ BENCHMARK_RELATIVE(exchangeFlat50) {
   bm.run(flat50, FLAGS_width, FLAGS_task_width, flat50Counters);
 }
 

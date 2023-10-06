@@ -1236,5 +1236,90 @@ void MapVector::copyRanges(
   copyRangesImpl(source, ranges, &values_, &keys_);
 }
 
+  void MapVector::hashKeys(const BaseVector& keys, vector_size_t begin, vector_size_t end, uint32_t* result) {
+    switch (keys.typeKind()) {
+    case TypeKind::BIGINT:
+    case TypeKind::INTEGER:
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
+    default:
+      for (auto i = begin; i < end; ++i) {
+	result[i] = keys.hashValueAt(i);
+      }
+    }
+  }
+  
+  vector_size_t MapVector::findKeyAt(vector_size_t mapIndex, baseVector& key, vector_size_t keyIndex) const {
+    auto table = keyHashTable_->as<uint32_t>();
+    const auto offset = rawOffsets_[mapIndex];
+    const auto size = rawSizes_[mapIndex];
+    if (!table) {
+      for (auto i = offset; i < offset + size; ++i) {
+	if (keys_->equalValueAt(key, i, keyIndex)) {
+	  return i;
+	}
+      }
+      return kKeyNotFound;
+    }
+    auto hash = keys.hashValueAt(i); 
+    auto begin = indexToHashTable(offset);
+    auto end = indexToHashTable(offset + size);
+    auto groupIndex = scaleHash(hash);
+    auto numGroups = bits::roundUp(end - begin, kGroupSize) / kGroupSize; 
+    auto lastGroupSize = numGroups * kGroupSize - (end - begin); 
+    for (
+    auto hitIndex = bits::getAndClearLastBit(hits);
+    
+    if (groupIndex == lastGroup && hitIndex >= lastGroupSize) {
+	    break;
+
+  }
+
+
+  // The range of positions in the key lookup array for map 'i'  starts at indexToHashSlot(rawOffsets_[i]) and ends at one below indexToHashSlot(rawOffsets_[i] + rawSizes_[i]. The point is that the hash tables, if over 8 elements, are a little larger than the index range. If the load factor were 100% exactly, the sizes would be the same but the last key inserted would on the average have to seek through half the table, which introduces too much unpredictability.
+  inline int32_t indexToHashSlot(int32_t) {
+    return index + (index >> 3);
+  }
+  
+inline   int32_t scaleHash(uint32_t hash, uint32_t numSlots) {
+    return (static_cast<uint64_t>(hash) * numSlots) >> 32; 
+  }
+  
+  // Inserts each  in 'hashes' into 'table', so that the high bits are a tag of hashes[i] and the low bits are i. A high byte of 0 indicates an unused slot.
+
+  void MapVector::buildKeyLookupSingle(const uint32_t* hashes, int32_t firstKeyIndex, int32_t numhashes, uint32_t* table) {
+    VELOX_CHECK_GT(1 << 24, numHashes);
+    auto firstSlot = indexToHashSlot(firstKeyIndex);
+    auto end = indexToHashSlot(firstKeyIndex + numHashes);
+    auto numSlots = end - firstSlot;
+    int32_t numGroups = bits::roundUp(numSlots, kGroupSize) / kGroupSize;
+    int32_t lastGroupSize = numGroups * kGroupSize - numSlots;
+    for (auto i = 0; i < numHashes; ++i) {
+      int32_t groupIndex = scaleHash(hashes[i], numGroups);
+      auto tagField = hashes[i] & kTagMask;
+      uint32_t tag = tagField == 0 ? 0x01000000 : tagField;
+      auto hashVector = xsimd::broadcast<uint32_t>(hashes[i] & kTagMask);
+      bool found = false;
+      for (auto counter = 0; counter < numGroups; ++counter) {
+	auto keys = xsimd::load_unaligned(table + firstKeyIndex + groupIndex * kGroupSize);
+	uint16_t empty = simd::toBitMask(keys == 0);
+	if (!empty || (groupIndex == lastGroupIndex && __builtin_ctz(hits) >= lastGroupSize) {
+	    continue;
+	  }
+	  auto insertIndex = __builtin_ctz(empty);
+	  table[groupIndex * kGroupSize + emptyOffset] = (hashes[i] & kTagMask) | i;
+	  }
+	  if (
+	}
+      }
+    }
+  }
+
+	    
+  void MapVector::buildKeyLookup(vector_size_t begin, vector_size_t end) {
+
+  }
+
+  
 } // namespace velox
 } // namespace facebook

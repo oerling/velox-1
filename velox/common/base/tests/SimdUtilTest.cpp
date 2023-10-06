@@ -399,4 +399,31 @@ TEST_F(SimdUtilTest, memEqual) {
   EXPECT_FALSE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 67));
 }
 
+int32_t linearSearch(int32_t key, const int32_t* keys, int32_t numKeys) {
+  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
+  for (auto i = 0; i < numKeys; i += kBatch) {
+    int32_t bits = simd::toBitMask(xsimd::load_unaligned(keys + i) == key);
+    if (!bits) {
+      continue;
+    }
+    auto offset = __builtin_ctz(bits);
+    if (offset + i >= numKeys) {
+      return -1;
+    }
+    return i + offset;
+  }
+  return -1;
+}
+
+TEST_F(SimdUtilTest, linear) {
+  constexpr int32_t kSize = 1000;
+  int32_t ints[kSize + 7];
+  for (auto i = 0; i < kSize; ++i) {
+    ints[i] = i;
+  }
+  EXPECT_EQ(100, linearSearch(100, ints, kSize));
+  EXPECT_EQ(-1, linearSearch(1100, ints, kSize));
+  EXPECT_EQ(-1, linearSearch(100, ints, 100));
+}
+
 } // namespace
