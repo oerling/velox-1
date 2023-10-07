@@ -227,8 +227,9 @@ void readValues<Timestamp>(
 }
 
 Timestamp readLosslessTimestamp(ByteStream* source) {
-  int64_t nanos = source->read<int64_t>();
-  return Timestamp::fromNanos(nanos);
+  int64_t seconds = source->read<int64_t>();
+  uint64_t nanos = source->read<uint64_t>();
+  return Timestamp(seconds, nanos);
 }
 
 void readLosslessTimestampValues(
@@ -1207,7 +1208,8 @@ template <>
 void VectorStream::append(folly::Range<const Timestamp*> values) {
   if (useLosslessTimestamp_) {
     for (auto& value : values) {
-      appendOne(value.toNanos());
+      appendOne(value.getSeconds());
+      appendOne(value.getNanos());
     }
   } else {
     for (auto& value : values) {

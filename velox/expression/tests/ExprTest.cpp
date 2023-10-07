@@ -2287,32 +2287,34 @@ TEST_F(ExprTest, subsetOfDictOverLazy) {
   // We have dictionaries over LazyVector. We load for some indices in
   // the top dictionary. The intermediate dictionaries refer to
   // non-loaded items in the base of the LazyVector, including indices
-  // past its end. We check that we end up with one level of
-  // dictionary and no dictionaries that are invalid by through
-  // referring to uninitialized/nonexistent positions.
-  auto base = makeFlatVector<int32_t>(100, [](auto row) { return row; });
+  // past its end. We check that end result is a valid vector.
+
+  auto makeLoaded = [&]() {
+    return makeFlatVector<int32_t>(100, [](auto row) { return row; });
+  };
+
   auto lazy = std::make_shared<LazyVector>(
       execCtx_->pool(),
       INTEGER(),
       1000,
       std::make_unique<test::SimpleVectorLoader>(
-          [base](auto /*size*/) { return base; }));
+          [&](auto /*size*/) { return makeLoaded(); }));
   auto row = makeRowVector({BaseVector::wrapInDictionary(
       nullptr,
       makeIndices(100, [](auto row) { return row; }),
       100,
-
       BaseVector::wrapInDictionary(
           nullptr,
           makeIndices(1000, [](auto row) { return row; }),
           1000,
           lazy))});
 
-  // We expect a single level of dictionary.
   auto result = evaluate("c0", row);
-  EXPECT_EQ(result->encoding(), VectorEncoding::Simple::DICTIONARY);
-  EXPECT_EQ(result->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
-  assertEqualVectors(result, base);
+  assertEqualVectors(result, makeLoaded());
+  // The loader will ensure that the loaded vector size is 1000.
+  auto base =
+      result->as<DictionaryVector<int32_t>>()->valueVector()->loadedVector();
+  EXPECT_EQ(base->size(), 1000);
 }
 
 TEST_F(ExprTest, peeledConstant) {
@@ -3199,7 +3201,7 @@ TEST_F(ExprTest, addNulls) {
   // Test vector that is nullptr.
   {
     VectorPtr vector;
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
     ASSERT_NE(vector, nullptr);
     checkConstantResult(vector);
   }
@@ -3208,7 +3210,7 @@ TEST_F(ExprTest, addNulls) {
   // referenced.
   {
     auto vector = makeNullConstant(TypeKind::BIGINT, kSize - 1);
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
     checkConstantResult(vector);
   }
 
@@ -3217,7 +3219,7 @@ TEST_F(ExprTest, addNulls) {
   {
     auto vector = makeNullConstant(TypeKind::BIGINT, kSize - 1);
     auto another = vector;
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
     ASSERT_EQ(another->size(), kSize - 1);
     checkConstantResult(vector);
   }
@@ -3225,7 +3227,7 @@ TEST_F(ExprTest, addNulls) {
   // Test vector that is a non-null constant vector.
   {
     auto vector = makeConstant<int64_t>(100, kSize - 1);
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
     ASSERT_TRUE(vector->isFlatEncoding());
     ASSERT_EQ(vector->size(), kSize);
     for (auto i = 0; i < kSize - 1; ++i) {
@@ -3249,7 +3251,7 @@ TEST_F(ExprTest, addNulls) {
     VectorPtr vector =
         makeFlatVector<int64_t>(kSize - 1, [](auto row) { return row; });
     auto another = vector;
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
 
     ASSERT_EQ(another->size(), kSize - 1);
     checkResult(vector);
@@ -3259,7 +3261,7 @@ TEST_F(ExprTest, addNulls) {
   {
     VectorPtr vector =
         makeFlatVector<int64_t>(kSize - 1, [](auto row) { return row; });
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), vector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), vector);
 
     checkResult(vector);
   }
@@ -3272,7 +3274,7 @@ TEST_F(ExprTest, addNulls) {
         makeFlatVector<int64_t>(kSize, [](auto row) { return row; });
     auto slicedVector = vector->slice(0, kSize - 1);
     ASSERT_FALSE(slicedVector->values()->isMutable());
-    exec::Expr::addNulls(rows, rawNulls, context, BIGINT(), slicedVector);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), slicedVector);
 
     checkResult(slicedVector);
   }
@@ -3293,7 +3295,7 @@ TEST_F(ExprTest, addNulls) {
         std::vector<VectorPtr>({a, b}));
     row->setNull(kSize - 1, true);
     VectorPtr result = row;
-    exec::Expr::addNulls(rows, rawNulls, context, row->type(), result);
+    exec::EvalCtx::addNulls(rows, rawNulls, context, row->type(), result);
     ASSERT_NE(result.get(), row.get());
     ASSERT_EQ(result->size(), kSize);
     for (int i = 0; i < kSize - 1; ++i) {
@@ -3315,7 +3317,7 @@ TEST_F(ExprTest, addNulls) {
     // Vector of size 2 using only the first two indices of sharedIndices.
     auto wrappedVectorSmaller = BaseVector::wrapInDictionary(
         nullptr, sharedIndices, 2, makeFlatVector<int64_t>({1, 2, 3}));
-    exec::Expr::addNulls(
+    exec::EvalCtx::addNulls(
         SelectivityVector(3),
         rawNulls,
         context,
