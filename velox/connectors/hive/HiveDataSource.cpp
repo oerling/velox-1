@@ -601,7 +601,7 @@ HiveDataSource::HiveDataSource(
     rowReaderOpts_.setSkipRows(folly::to<uint64_t>(skipRowsIt->second));
   }
 
-  ioStats_ = std::make_shared<dwio::common::IoStatistics>();
+  ioStats_ = std::make_shared<io::IoStatistics>();
 }
 
 inline uint8_t parseDelimiter(const std::string& delim) {
@@ -776,7 +776,7 @@ std::optional<RowVectorPtr> HiveDataSource::next(
     auto rowsRemaining = output_->size();
     if (rowsRemaining == 0) {
       // no rows passed the pushed down filters.
-      return RowVector::createEmpty(outputType_, pool_);
+      return getEmptyOutput();
     }
 
     auto rowVector = std::dynamic_pointer_cast<RowVector>(output_);
@@ -791,7 +791,7 @@ std::optional<RowVectorPtr> HiveDataSource::next(
       VELOX_CHECK_LE(rowsRemaining, rowsScanned);
       if (rowsRemaining == 0) {
         // No rows passed the remaining filter.
-        return RowVector::createEmpty(outputType_, pool_);
+        return getEmptyOutput();
       }
 
       if (rowsRemaining < rowVector->size()) {
