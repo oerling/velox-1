@@ -402,6 +402,9 @@ TEST_P(PrestoSerializerTest, encodings) {
   });
 
   testEncodedRoundTrip(data);
+
+  // Test nullable structs and wrapped 
+  
 }
 
 TEST_P(PrestoSerializerTest, lazy) {
