@@ -23,6 +23,36 @@
 
 namespace facebook::velox::functions {
 
+namespace {
+
+std::exception_ptr makeBadSubscriptError() {
+  try {
+    VELOX_USER_FAIL("Array subscript out of bounds");
+  } catch (const std::exception& e) {
+    return std::current_exception();
+  }
+}
+
+std::exception_ptr makeNegativeSubscriptError() {
+  try {
+    VELOX_USER_FAIL("Array subscript is negative.");
+  } catch (const std::exception& e) {
+    return std::current_exception();
+  }
+}
+
+const std::exception_ptr& badSubscriptError() {
+  static std::exception_ptr error = makeBadSubscriptError();
+  return error;
+}
+
+const std::exception_ptr& negativeSubscriptError() {
+  static std::exception_ptr error = makeNegativeSubscriptError();
+  return error;
+}
+
+} // namespace
+
 /// Generic subscript/element_at implementation for both array and map data
 /// types.
 ///
@@ -187,6 +217,9 @@ class SubscriptImpl : public exec::Subscript {
     auto rawSizes = baseArray->rawSizes();
     auto rawOffsets = baseArray->rawOffsets();
 
+    SelectivityVector errorRows;
+    std::exception_ptr error;
+
     // Optimize for constant encoding case.
     if (decodedIndices->isConstantMapping()) {
       vector_size_t adjustedIndex = -1;
@@ -202,9 +235,15 @@ class SubscriptImpl : public exec::Subscript {
       }
 
       if (!allFailed) {
-        context.applyToSelectedNoThrow(rows, [&](auto row) {
-          auto elementIndex =
-              getIndex(adjustedIndex, row, rawSizes, rawOffsets, arrayIndices);
+        rows.applyToSelected([&](auto row) {
+          auto elementIndex = getIndex(
+              adjustedIndex,
+              row,
+              rawSizes,
+              rawOffsets,
+              arrayIndices,
+              errorRows,
+              error);
           rawIndices[row] = elementIndex;
           if (elementIndex == -1) {
             nullsBuilder.setNull(row);
@@ -212,10 +251,16 @@ class SubscriptImpl : public exec::Subscript {
         });
       }
     } else {
-      context.applyToSelectedNoThrow(rows, [&](auto row) {
+      rows.applyToSelected([&](auto row) {
         auto adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(row));
-        auto elementIndex =
-            getIndex(adjustedIndex, row, rawSizes, rawOffsets, arrayIndices);
+        auto elementIndex = getIndex(
+            adjustedIndex,
+            row,
+            rawSizes,
+            rawOffsets,
+            arrayIndices,
+            errorRows,
+            error);
         rawIndices[row] = elementIndex;
         if (elementIndex == -1) {
           nullsBuilder.setNull(row);
@@ -228,6 +273,9 @@ class SubscriptImpl : public exec::Subscript {
     if (baseArray->elements()->size() == 0) {
       return BaseVector::createNullConstant(
           baseArray->elements()->type(), rows.end(), context.pool());
+    }
+    if (error) {
+      context.setErrors(errorRows, error);
     }
 
     return BaseVector::wrapInDictionary(
@@ -262,7 +310,9 @@ class SubscriptImpl : public exec::Subscript {
       vector_size_t row,
       const vector_size_t* rawSizes,
       const vector_size_t* rawOffsets,
-      const vector_size_t* indices) const {
+      const vector_size_t* indices,
+      SelectivityVector& errorRows,
+      std::exception_ptr& error) const {
     auto arraySize = rawSizes[indices[row]];
 
     if (index < 0) {
@@ -274,8 +324,9 @@ class SubscriptImpl : public exec::Subscript {
           index += arraySize;
         }
       } else {
-        VELOX_USER_FAIL("Array subscript is negative.");
+        addError(row, negativeSubscriptError(), error, errorRows);
       }
+      return -1;
     }
 
     // Check if index is within bound.
@@ -283,16 +334,29 @@ class SubscriptImpl : public exec::Subscript {
       // If we allow it, return null.
       if constexpr (allowOutOfBound) {
         return -1;
-      }
-      // Otherwise, throw.
-      else {
-        VELOX_USER_FAIL("Array subscript out of bounds.");
+      } else {
+        addError(row, badSubscriptError(), error, errorRows);
+        return -1;
       }
     }
 
     // Resultant index is the sum of the offset in the input array and the
     // index.
     return rawOffsets[indices[row]] + index;
+  }
+
+  void addError(
+      vector_size_t row,
+      std::exception_ptr newError,
+      std::exception_ptr& error,
+      SelectivityVector& errorRows) const {
+    if (!error) {
+      error = newError;
+    }
+    if (errorRows.size() <= row) {
+      errorRows.resize(row + 1, false);
+    }
+    errorRows.setValid(row, true);
   }
 
   /// Decode arguments and transform result into a dictionaryVector where the
