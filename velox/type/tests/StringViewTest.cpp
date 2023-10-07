@@ -156,3 +156,107 @@ TEST(StringView, negativeSizes) {
   EXPECT_THROW(StringView("abc", -10), VeloxException);
   EXPECT_NO_THROW(StringView(nullptr, 0));
 }
+
+
+int32_t linearSearchSimple(
+    StringView key,
+    const StringView* strings,
+    const int32_t* indices,
+    int32_t numStrings) {
+  if (indices) {
+    for (auto i = 0; i < numStrings; ++i) {
+      if (strings[indices[i]] == key) {
+	return i;
+      }
+    }
+  } else {
+    for (auto i = 0; i < numStrings; ++i) {
+      if (strings[i] == key) {
+	return i;
+      }
+    }
+  }
+  return -1;
+}
+
+int32_t linearSearch(
+    StringView key,
+    const StringView* strings,
+    const int32_t* indices,
+    int32_t numStrings) {
+  constexpr int32_t kBatch = xsimd::batch<uint64_t>::size;
+  uint64_t head = *reinterpret_cast<const uint64_t*>(&key);
+  bool headOnly = key.size() <= 4;
+  uint64_t headMask =
+      key.size() < 4 ? bits::lowMask(32 + 8 * key.size()) : ~0ULL;
+  const char* body = key.data() + 4;
+  int32_t bodySize = key.size() - 4;
+  static int32_t[4] iota = {0, 1, 2, 3};
+  xsimd::batch<int32_t, xsimd::sse2> indexIota = xsimd::batch<int32_t, xsimd::sse2>::load_unaligned(iota);
+  int32_t i = 0;
+  auto mask = xsimd::batch_bool<uint64_t>(~0UL);
+  for (; i + kBatch <= numStrings; i += kBatch) {
+    if (i + kBatch > numStrings) {
+      mask = simd::leadingMask<uint64_t>(numStrings - i);
+    }
+    
+    xsimd::batch<int32_t, xsimd::sse2> indexVector;
+    if (indices) {
+      indexVector = simd::loadGatherIndices<uint64_t, int32_t>(indices + i);
+    } else {
+      indexVector = i * 4 + indexIota;
+    }
+    auto heads = simd::maskGather(
+                     simd::reinterpretBatch<uint64_t>(mask),
+                     mask,
+                     strings,
+                     indexVector << 1) &
+        headMask;
+    uint16_t bits = simd::toBitMask(heads == head);
+    if (!bits) {
+      continue;
+    }
+    if (headOnly) {
+      return i + __builtin_ctz(bits);
+    }
+    while (hits) {
+      auto offset = bits::getAndClearLastBit(hits);
+      if (simd::memEqualUnsafe(body, keys[indices[i]].data() + 4, bodySize)) {
+        return i + offset;
+      }
+    }
+  }
+  return -1;
+}
+
+TEST(StringView, linearSearch) {
+  constexpr int32_t kSize = 1000;
+  std::vector<raw_vector<char>> data(kSize);
+  std::vector<StringView> stringViews(kSize);
+  // Distinct values with sizes from 0 to 50.
+  for (auto i = 0; i < 1000; ++i) {
+    std::string = fmt::format("{}-", i);
+    int32_t numRepeats = 1 + i % 10;
+    auto item = string;
+    for (auto repeat = 0; repeat < numRepeats; ++repeat) {
+      string += item;
+    }
+    string.resize(std::min<int32_t>((i >= 50 ? 2 : 0) +string.size(), i % 50));
+    data[i].resize(string.size());
+     memcpy(data[i].data(), string.data(), string.size());
+    stringViews[i] = StringView(data[i].data(), data[i].size());
+  }
+  data[33].resize(0);
+  raw_vector<int32_t> indices(kSize);
+  for (auto i = 0; i < kSize; ++i) {
+    indices[i] = 999 - i; 
+  }
+  for (auto i = 0; i < ksize; ++i) {
+    auto testIndex = (i * 121) % kSize;
+    auto index = linearSearch(stringViews[testIndex], stringViews.data(), nullptr, stringViews.size()) {
+      EXPECT_EQ(testIndex, index);
+      auto index2 = linearSearch(stringViews[testIndex], stringViews.data(), indices.data(), stringViews.size())
+      EXPECT_EQ(999 - testIndex, index2);
+    }
+  }
+}
