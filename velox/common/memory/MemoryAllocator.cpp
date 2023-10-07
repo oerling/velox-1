@@ -177,12 +177,19 @@ bool MemoryAllocator::allocateNonContiguous(
     return allocateNonContiguousWithoutRetry(
         numPages, out, reservationCB, minSizeClass);
   }
-  return cache()->makeSpace(
+  bool success = cache()->makeSpace(
       pagesToAcquire(numPages, out.numPages()), [&](Allocation& acquired) {
         freeNonContiguous(acquired);
         return allocateNonContiguousWithoutRetry(
             numPages, out, reservationCB, minSizeClass);
       });
+  if (!success) {
+    // There can be a failure where allocation was never called because there
+    // never was a chance based on numAllocated() and capacity(). Make sure old
+    // data is still freed.
+    freeNonContiguous(out);
+  }
+  return success;
 }
 
 bool MemoryAllocator::allocateContiguous(
@@ -197,12 +204,21 @@ bool MemoryAllocator::allocateContiguous(
   }
   auto numCollateralPages =
       allocation.numPages() + (collateral ? collateral->numPages() : 0);
-  return cache()->makeSpace(
+  bool success = cache()->makeSpace(
       pagesToAcquire(numPages, numCollateralPages), [&](Allocation& acquired) {
         freeNonContiguous(acquired);
         return allocateContiguousWithoutRetry(
             numPages, collateral, allocation, reservationCB, maxPages);
       });
+  if (!success) {
+    // never was a chance based on numAllocated() and capacity(). Make sure old
+    // data is still freed.
+    if (collateral) {
+      freeNonContiguous(*collateral);
+    }
+    freeContiguous(allocation);
+  }
+  return success;
 }
 
 bool MemoryAllocator::growContiguous(
