@@ -25,9 +25,17 @@ namespace facebook::velox::functions {
 
 namespace {
 
+std::exception_ptr makeZeroSubscriptError() {
+  try {
+    VELOX_USER_FAIL("SQL array indices start at 1");
+  } catch (const std::exception& e) {
+    return std::current_exception();
+  }
+}
+
 std::exception_ptr makeBadSubscriptError() {
   try {
-    VELOX_USER_FAIL("Array subscript out of bounds");
+    VELOX_USER_FAIL("Array subscript out of bounds.");
   } catch (const std::exception& e) {
     return std::current_exception();
   }
@@ -39,6 +47,11 @@ std::exception_ptr makeNegativeSubscriptError() {
   } catch (const std::exception& e) {
     return std::current_exception();
   }
+}
+
+const std::exception_ptr& zeroSubscriptError() {
+  static std::exception_ptr error = makeZeroSubscriptError();
+  return error;
 }
 
 const std::exception_ptr& badSubscriptError() {
@@ -225,12 +238,10 @@ class SubscriptImpl : public exec::Subscript {
       vector_size_t adjustedIndex = -1;
       bool allFailed = false;
       // If index is invalid, capture the error and mark all rows as failed.
-      try {
-        adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(0));
-      } catch (const VeloxRuntimeError&) {
-        throw;
-      } catch (const std::exception& e) {
-        context.setErrors(rows, std::current_exception());
+      bool isZero = false;
+      adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(0), isZero);
+      if (isZero) {
+        context.setErrors(rows, zeroSubscriptError());
         allFailed = true;
       }
 
@@ -252,7 +263,13 @@ class SubscriptImpl : public exec::Subscript {
       }
     } else {
       rows.applyToSelected([&](auto row) {
-        auto adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(row));
+        auto originalIndex = decodedIndices->valueAt<I>(row);
+        bool isZero = false;
+        auto adjustedIndex = adjustIndex(originalIndex, isZero);
+        if (isZero) {
+          addError(row, zeroSubscriptError(), error, errorRows);
+          return -1;
+        }
         auto elementIndex = getIndex(
             adjustedIndex,
             row,
@@ -275,6 +292,7 @@ class SubscriptImpl : public exec::Subscript {
           baseArray->elements()->type(), rows.end(), context.pool());
     }
     if (error) {
+      errorRows.updateBounds();
       context.setErrors(errorRows, error);
     }
 
@@ -285,12 +303,12 @@ class SubscriptImpl : public exec::Subscript {
   // Normalize indices from 1 or 0-based into always 0-based (according to
   // indexStartsAtOne template parameter - no-op if it's false).
   template <typename I>
-  vector_size_t adjustIndex(I index) const {
+  vector_size_t adjustIndex(I index, bool& isZero) const {
     // If array indices start at 1.
     if constexpr (indexStartsAtOne) {
-      // If it's zero, throw.
       if (UNLIKELY(index == 0)) {
-        VELOX_USER_FAIL("SQL array indices start at 1");
+        isZero = true;
+        return 0;
       }
 
       // If larger than zero, adjust it.
@@ -325,8 +343,8 @@ class SubscriptImpl : public exec::Subscript {
         }
       } else {
         addError(row, negativeSubscriptError(), error, errorRows);
+        return -1;
       }
-      return -1;
     }
 
     // Check if index is within bound.
