@@ -2221,7 +2221,7 @@ void PrestoVectorSerde::deserialize(
   scatterStructNulls((*result)->size(), 0, nullptr, nullptr, **result);
 }
 
-  void testingScatterStructNulls(
+void testingScatterStructNulls(
     vector_size_t size,
     vector_size_t scatterSize,
     const vector_size_t* scatter,
@@ -2229,7 +2229,7 @@ void PrestoVectorSerde::deserialize(
     RowVector& row) {
   scatterStructNulls(size, scatterSize, scatter, incomingNulls, row);
 }
-  
+
 // static
 void PrestoVectorSerde::registerVectorSerde() {
   velox::registerVectorSerde(std::make_unique<PrestoVectorSerde>());
