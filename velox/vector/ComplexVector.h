@@ -578,12 +578,13 @@ class MapVector : public ArrayVectorBase {
 
   void validate(const VectorValidateOptions& options) const override;
 
+  #if 0
   /// Finds the key given by 'key' and 'keyIndex' in the map at 'mapIndex'. Returns the offset of the found key in mapKeys() or kKeyNotFound if the key does not occur in the map at 'mapIndex'.
   vector_size_t findKeyAt(vector_size_t mapIndex, baseVector& key, vector_size_t keyIndex) const;
   
   // Builds a key lookup structure for the maps between 'begin' and 'end'.
   void buildKeyLookup(vector_size_t begin, vector_size_t end);
-  
+  #endif
  protected:
   virtual void resetDataDependentFlags(const SelectivityVector* rows) override {
     BaseVector::resetDataDependentFlags(rows);

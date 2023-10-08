@@ -1236,6 +1236,7 @@ void MapVector::copyRanges(
   copyRangesImpl(source, ranges, &values_, &keys_);
 }
 
+  #if 0
   void MapVector::hashKeys(const BaseVector& keys, vector_size_t begin, vector_size_t end, uint32_t* result) {
     switch (keys.typeKind()) {
     case TypeKind::BIGINT:
@@ -1319,7 +1320,7 @@ inline   int32_t scaleHash(uint32_t hash, uint32_t numSlots) {
   void MapVector::buildKeyLookup(vector_size_t begin, vector_size_t end) {
 
   }
-
+#endif
   
 } // namespace velox
 } // namespace facebook

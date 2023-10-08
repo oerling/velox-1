@@ -16,6 +16,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sstream>
+#include "velox/common/base/RawVector.h"
+#include "velox/common/base/SimdUtil.h"
+#include "velox/common/time/Timer.h"
 #include "velox/type/Type.h"
 
 using namespace facebook::velox;
@@ -157,7 +160,6 @@ TEST(StringView, negativeSizes) {
   EXPECT_NO_THROW(StringView(nullptr, 0));
 }
 
-
 int32_t linearSearchSimple(
     StringView key,
     const StringView* strings,
@@ -166,13 +168,13 @@ int32_t linearSearchSimple(
   if (indices) {
     for (auto i = 0; i < numStrings; ++i) {
       if (strings[indices[i]] == key) {
-	return i;
+        return i;
       }
     }
   } else {
     for (auto i = 0; i < numStrings; ++i) {
       if (strings[i] == key) {
-	return i;
+        return i;
       }
     }
   }
@@ -184,79 +186,141 @@ int32_t linearSearch(
     const StringView* strings,
     const int32_t* indices,
     int32_t numStrings) {
-  constexpr int32_t kBatch = xsimd::batch<uint64_t>::size;
+  constexpr int64_t kBatch = xsimd::batch<uint64_t>::size;
   uint64_t head = *reinterpret_cast<const uint64_t*>(&key);
   bool headOnly = key.size() <= 4;
-  uint64_t headMask =
-      key.size() < 4 ? bits::lowMask(32 + 8 * key.size()) : ~0ULL;
+  bool isInline = key.isInline();
   const char* body = key.data() + 4;
+  uint64_t inlined = reinterpret_cast<const uint64_t*>(&key)[1]; 
   int32_t bodySize = key.size() - 4;
-  static int32_t[4] iota = {0, 1, 2, 3};
-  xsimd::batch<int32_t, xsimd::sse2> indexIota = xsimd::batch<int32_t, xsimd::sse2>::load_unaligned(iota);
-  int32_t i = 0;
-  auto mask = xsimd::batch_bool<uint64_t>(~0UL);
-  for (; i + kBatch <= numStrings; i += kBatch) {
-    if (i + kBatch > numStrings) {
-      mask = simd::leadingMask<uint64_t>(numStrings - i);
-    }
-    
-    xsimd::batch<int32_t, xsimd::sse2> indexVector;
-    if (indices) {
-      indexVector = simd::loadGatherIndices<uint64_t, int32_t>(indices + i);
-    } else {
-      indexVector = i * 4 + indexIota;
-    }
-    auto heads = simd::maskGather(
-                     simd::reinterpretBatch<uint64_t>(mask),
-                     mask,
-                     strings,
-                     indexVector << 1) &
-        headMask;
-    uint16_t bits = simd::toBitMask(heads == head);
-    if (!bits) {
-      continue;
-    }
-    if (headOnly) {
-      return i + __builtin_ctz(bits);
-    }
-    while (hits) {
-      auto offset = bits::getAndClearLastBit(hits);
-      if (simd::memEqualUnsafe(body, keys[indices[i]].data() + 4, bodySize)) {
-        return i + offset;
+  int32_t limit = numStrings & ~(kBatch - 1); // round down to full batches.
+  xsimd::batch<int32_t, xsimd::sse2> indexVector;
+  if (indices) {
+    for (auto i = 0; i< limit; i += kBatch) {
+      indexVector = simd::loadGatherIndices<uint64_t, int32_t>(indices + i)
+          << 1;
+      auto heads = simd::gather(
+                       reinterpret_cast<const uint64_t*>(strings),
+                       indexVector);
+      uint16_t hits = simd::toBitMask(heads == head);
+      if (LIKELY(!hits)) {
+        continue;
+      }
+      if (headOnly) {
+        return i + __builtin_ctz(hits);
+      }
+      while (hits) {
+        auto offset = bits::getAndClearLastSetBit(hits);
+        if (isInline ? inlined == reinterpret_cast<const uint64_t*>(&strings[indices[i + offset]])[1] 
+	    : simd::memEqualUnsafe(
+                body, strings[indices[i + offset]].data() + 4, bodySize)) {
+          return i + offset;
+        }
       }
     }
+    return linearSearchSimple(key, strings, indices + limit, numStrings - limit);
+  } else {
+    static int32_t iota[4] = {0, 2, 4, 6};
+    indexVector = xsimd::batch<int32_t, xsimd::sse2>::load_unaligned(iota);
+    for (auto i = 0; i< limit; i += kBatch, strings += kBatch) {
+      auto heads = simd::gather(
+                       reinterpret_cast<const uint64_t*>(strings),
+                       indexVector) ;
+
+      uint16_t hits = simd::toBitMask(heads == head);
+      if (LIKELY(!hits)) {
+        continue;
+      }
+      if (headOnly) {
+        return i + __builtin_ctz(hits);
+      }
+      while (hits) {
+        auto offset = bits::getAndClearLastSetBit(hits);
+	if (isInline ? inlined == reinterpret_cast<const uint64_t*>(&strings[offset])[1]
+	    : simd::memEqualUnsafe(body, strings[offset].data() + 4, bodySize)) {
+          return i + offset;
+        }
+      }
+    }
+    return linearSearchSimple(key, strings, nullptr, numStrings - limit);
   }
   return -1;
 }
 
 TEST(StringView, linearSearch) {
-  constexpr int32_t kSize = 1000;
+  constexpr int32_t kSize = 1003;
   std::vector<raw_vector<char>> data(kSize);
   std::vector<StringView> stringViews(kSize);
   // Distinct values with sizes from 0 to 50.
   for (auto i = 0; i < 1000; ++i) {
-    std::string = fmt::format("{}-", i);
+    std::string string = fmt::format("{}-", i);
     int32_t numRepeats = 1 + i % 10;
     auto item = string;
     for (auto repeat = 0; repeat < numRepeats; ++repeat) {
       string += item;
     }
-    string.resize(std::min<int32_t>((i >= 50 ? 2 : 0) +string.size(), i % 50));
+    string.resize(std::min<int32_t>((i >= 50 ? 2 : 0) + string.size(), i % 50));
     data[i].resize(string.size());
-     memcpy(data[i].data(), string.data(), string.size());
+    memcpy(data[i].data(), string.data(), string.size());
     stringViews[i] = StringView(data[i].data(), data[i].size());
   }
-  data[33].resize(0);
   raw_vector<int32_t> indices(kSize);
   for (auto i = 0; i < kSize; ++i) {
-    indices[i] = 999 - i; 
+    indices[i] = 999 - i;
   }
-  for (auto i = 0; i < ksize; ++i) {
-    auto testIndex = (i * 121) % kSize;
-    auto index = linearSearch(stringViews[testIndex], stringViews.data(), nullptr, stringViews.size()) {
-      EXPECT_EQ(testIndex, index);
-      auto index2 = linearSearch(stringViews[testIndex], stringViews.data(), indices.data(), stringViews.size())
-      EXPECT_EQ(999 - testIndex, index2);
+
+  uint64_t simdUsec = 0;
+  uint64_t loopUsec = 0;
+  {
+    MicrosecondTimer t(&simdUsec);
+    EXPECT_EQ(
+        -1, linearSearch(stringViews[11], stringViews.data(), nullptr, 10));
+    EXPECT_EQ(
+        -1,
+        linearSearch(
+            stringViews[indices[11]], stringViews.data(), indices.data(), 10));
+    for (auto i = 0; i < kSize; ++i) {
+      auto testIndex = (i * 121) % kSize;
+      auto index = linearSearch(
+          stringViews[testIndex],
+          stringViews.data(),
+          nullptr,
+          stringViews.size());
+      EXPECT_TRUE(stringViews[testIndex] == stringViews[index]);
+      auto index2 = linearSearch(
+          stringViews[testIndex],
+          stringViews.data(),
+          indices.data(),
+          stringViews.size());
+      EXPECT_TRUE(stringViews[testIndex] == stringViews[indices[index2]]);
     }
   }
+  {
+    MicrosecondTimer t(&loopUsec);
+    EXPECT_EQ(
+        -1,
+        linearSearchSimple(stringViews[11], stringViews.data(), nullptr, 10));
+    EXPECT_EQ(
+        -1,
+        linearSearchSimple(
+            stringViews[indices[11]], stringViews.data(), indices.data(), 10));
+    for (auto i = 0; i < kSize; ++i) {
+      auto testIndex = (i * 121) % kSize;
+      auto index = linearSearchSimple(
+          stringViews[testIndex],
+          stringViews.data(),
+          nullptr,
+          stringViews.size());
+      EXPECT_TRUE(stringViews[testIndex] == stringViews[index]);
+      auto index2 = linearSearchSimple(
+          stringViews[testIndex],
+          stringViews.data(),
+          indices.data(),
+          stringViews.size());
+      EXPECT_TRUE(stringViews[testIndex] == stringViews[indices[index2]]);
+    }
+  }
+
+  LOG(INFO) << "StringView search: SIMD: " << simdUsec
+            << " scalar: " << loopUsec;
 }
