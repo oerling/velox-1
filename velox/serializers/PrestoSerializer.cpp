@@ -644,14 +644,15 @@ void scatterVector(
       break;
     }
     case VectorEncoding::Simple::CONSTANT: {
+      auto values = vector->valueVector();
+      if (values) {
+        scatterVector(values->size(), 0, nullptr, nullptr, values);
+      }
+
       if (incomingNulls) {
         BaseVector::ensureWritable(
             SelectivityVector::empty(), vector->type(), vector->pool(), vector);
         scatterNulls(oldSize, incomingNulls, *vector);
-      }
-      auto values = vector->valueVector();
-      if (values) {
-        scatterVector(values->size(), 0, nullptr, nullptr, values);
       }
       break;
     }
@@ -2220,6 +2221,15 @@ void PrestoVectorSerde::deserialize(
   scatterStructNulls((*result)->size(), 0, nullptr, nullptr, **result);
 }
 
+  void testingScatterStructNulls(
+    vector_size_t size,
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    const uint64_t* incomingNulls,
+    RowVector& row) {
+  scatterStructNulls(size, scatterSize, scatter, incomingNulls, row);
+}
+  
 // static
 void PrestoVectorSerde::registerVectorSerde() {
   velox::registerVectorSerde(std::make_unique<PrestoVectorSerde>());
