@@ -499,6 +499,11 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     return bits::roundUp(size, 8 * kMB);
   }
 
+  /// Decrements the count of free calls. Needed to adjust cases where
+  /// a free would be counted twice. May happen in out of capacity
+  /// situations with cache.
+  virtual void decrementNumFrees() {}
+  
  protected:
   static constexpr uint64_t kMB = 1 << 20;
 
@@ -691,6 +696,8 @@ class MemoryPoolImpl : public MemoryPool {
   static void setDebugPoolNameRegex(const std::string& regex) {
     debugPoolNameRegex() = regex;
   }
+
+  void decrementNumFrees() override;
 
  private:
   FOLLY_ALWAYS_INLINE static MemoryPoolImpl* toImpl(MemoryPool* pool) {

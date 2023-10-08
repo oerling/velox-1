@@ -187,7 +187,14 @@ bool MemoryAllocator::allocateNonContiguous(
     // There can be a failure where allocation was never called because there
     // never was a chance based on numAllocated() and capacity(). Make sure old
     // data is still freed.
-    freeNonContiguous(out);
+    if (!out.empty()) {
+      if (out.pool()) {
+	out.pool()->decrementNumFrees(); // Don' count double.
+	auto toFree = std::move(out);
+      } else {
+	freeNonContiguous(out);
+      }
+    }
   }
   return success;
 }
@@ -213,10 +220,21 @@ bool MemoryAllocator::allocateContiguous(
   if (!success) {
     // never was a chance based on numAllocated() and capacity(). Make sure old
     // data is still freed.
-    if (collateral) {
-      freeNonContiguous(*collateral);
+    if (collateral && !collateral->empty()) {
+      if (collateral->pool()) {
+	auto toFree = std::move(*collateral);
+      } else {
+	freeNonContiguous(*collateral);
+      }
     }
-    freeContiguous(allocation);
+    if (!allocation.empty()) {
+      if (allocation.pool()) {
+	allocation.pool()->decrementNumFrees(); // Don't count double.
+	auto toFree = std::move(allocation);
+      } else {
+	freeContiguous(allocation);
+      }
+    }
   }
   return success;
 }
