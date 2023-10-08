@@ -503,7 +503,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// a free would be counted twice. May happen in out of capacity
   /// situations with cache.
   virtual void decrementNumFrees() {}
-  
+
  protected:
   static constexpr uint64_t kMB = 1 << 20;
 

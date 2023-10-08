@@ -189,10 +189,10 @@ bool MemoryAllocator::allocateNonContiguous(
     // data is still freed.
     if (!out.empty()) {
       if (out.pool()) {
-	out.pool()->decrementNumFrees(); // Don' count double.
-	auto toFree = std::move(out);
+        out.pool()->decrementNumFrees(); // Don' count double.
+        auto toFree = std::move(out);
       } else {
-	freeNonContiguous(out);
+        freeNonContiguous(out);
       }
     }
   }
@@ -222,17 +222,17 @@ bool MemoryAllocator::allocateContiguous(
     // data is still freed.
     if (collateral && !collateral->empty()) {
       if (collateral->pool()) {
-	auto toFree = std::move(*collateral);
+        auto toFree = std::move(*collateral);
       } else {
-	freeNonContiguous(*collateral);
+        freeNonContiguous(*collateral);
       }
     }
     if (!allocation.empty()) {
       if (allocation.pool()) {
-	allocation.pool()->decrementNumFrees(); // Don't count double.
-	auto toFree = std::move(allocation);
+        allocation.pool()->decrementNumFrees(); // Don't count double.
+        auto toFree = std::move(allocation);
       } else {
-	freeContiguous(allocation);
+        freeContiguous(allocation);
       }
     }
   }
