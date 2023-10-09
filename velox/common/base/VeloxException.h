@@ -332,8 +332,8 @@ class VeloxRuntimeError final : public VeloxException {
             exceptionName) {}
 };
 
-/// Returns a ference to a thread level counter of Velox error throws.
-int64_t& threadNumThrow();
+/// Returns a reference to a thread level counter of Velox error throws.
+int64_t& threadNumVeloxThrow();
 
 /// Holds a pointer to a function that provides addition context to be
 /// added to the detailed error message in case of an exception.

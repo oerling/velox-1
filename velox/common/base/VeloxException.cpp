@@ -33,7 +33,7 @@ std::exception_ptr toVeloxException(const std::exception_ptr& exceptionPtr) {
   }
 }
 
-int64_t& threadNumThrow() {
+int64_t& threadNumVeloxThrow() {
   thread_local int64_t numThrow;
   return numThrow;
 }
