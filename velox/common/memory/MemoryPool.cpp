@@ -489,11 +489,6 @@ void MemoryPoolImpl::free(void* p, int64_t size) {
   release(alignedSize);
 }
 
-void MemoryPoolImpl::decrementNumFrees() {
-  VELOX_CHECK_EQ(kind_, Kind::kLeaf);
-  --numFrees_;
-}
-
 void MemoryPoolImpl::allocateNonContiguous(
     MachinePageCount numPages,
     Allocation& out,

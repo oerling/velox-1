@@ -188,12 +188,10 @@ bool MemoryAllocator::allocateNonContiguous(
     // never was a chance based on numAllocated() and capacity(). Make sure old
     // data is still freed.
     if (!out.empty()) {
-      if (out.pool()) {
-        out.pool()->decrementNumFrees(); // Don' count double.
-        auto toFree = std::move(out);
-      } else {
-        freeNonContiguous(out);
+      if (reservationCB) {
+        reservationCB(AllocationTraits::pageBytes(out.numPages()), false);
       }
+      freeNonContiguous(out);
     }
   }
   return success;
@@ -220,20 +218,22 @@ bool MemoryAllocator::allocateContiguous(
   if (!success) {
     // never was a chance based on numAllocated() and capacity(). Make sure old
     // data is still freed.
+    int64_t bytes = 0;
+    ;
     if (collateral && !collateral->empty()) {
-      if (collateral->pool()) {
-        auto toFree = std::move(*collateral);
-      } else {
-        freeNonContiguous(*collateral);
+      if (reservationCB) {
+        bytes += AllocationTraits::pageBytes(collateral->numPages());
       }
+      freeNonContiguous(*collateral);
     }
     if (!allocation.empty()) {
-      if (allocation.pool()) {
-        allocation.pool()->decrementNumFrees(); // Don't count double.
-        auto toFree = std::move(allocation);
-      } else {
-        freeContiguous(allocation);
+      if (reservationCB) {
+        bytes += allocation.size();
       }
+      freeContiguous(allocation);
+    }
+    if (bytes) {
+      reservationCB(bytes, false);
     }
   }
   return success;
