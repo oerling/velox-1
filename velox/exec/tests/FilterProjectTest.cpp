@@ -415,6 +415,7 @@ TEST_F(FilterProjectTest, numSilentThrow) {
       {makeFlatVector<int32_t>(100, [&](auto row) { return row; })});
 
   core::PlanNodeId filterId;
+  // Change the plan when /0 error is fixed not to throw.
   auto plan = PlanBuilder()
                   .values({row})
                   .filter("try (c0 / 0) = 1")
