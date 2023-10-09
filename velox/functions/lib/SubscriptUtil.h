@@ -248,12 +248,7 @@ class SubscriptImpl : public exec::Subscript {
       if (!allFailed) {
         rows.applyToSelected([&](auto row) {
           auto elementIndex = getIndex(
-              adjustedIndex,
-              row,
-              rawSizes,
-              rawOffsets,
-              arrayIndices,
-	      context);
+              adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
           rawIndices[row] = elementIndex;
           if (elementIndex == -1) {
             nullsBuilder.setNull(row);
@@ -270,12 +265,7 @@ class SubscriptImpl : public exec::Subscript {
           return -1;
         }
         auto elementIndex = getIndex(
-            adjustedIndex,
-            row,
-            rawSizes,
-            rawOffsets,
-            arrayIndices,
-	    context);
+            adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
         rawIndices[row] = elementIndex;
         if (elementIndex == -1) {
           nullsBuilder.setNull(row);
@@ -323,8 +313,7 @@ class SubscriptImpl : public exec::Subscript {
       const vector_size_t* rawSizes,
       const vector_size_t* rawOffsets,
       const vector_size_t* indices,
-      exec::EvalCtx& context)
-const {
+      exec::EvalCtx& context) const {
     auto arraySize = rawSizes[indices[row]];
 
     if (index < 0) {
