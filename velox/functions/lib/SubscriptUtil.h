@@ -253,8 +253,7 @@ class SubscriptImpl : public exec::Subscript {
               rawSizes,
               rawOffsets,
               arrayIndices,
-              errorRows,
-              error);
+	      context);
           rawIndices[row] = elementIndex;
           if (elementIndex == -1) {
             nullsBuilder.setNull(row);
@@ -264,10 +263,10 @@ class SubscriptImpl : public exec::Subscript {
     } else {
       rows.applyToSelected([&](auto row) {
         auto originalIndex = decodedIndices->valueAt<I>(row);
-        bool isZero = false;
-        auto adjustedIndex = adjustIndex(originalIndex, isZero);
-        if (isZero) {
-          addError(row, zeroSubscriptError(), error, errorRows);
+        bool isZeroSubscriptError = false;
+        auto adjustedIndex = adjustIndex(originalIndex, isZeroSubscriptError);
+        if (isZeroSubscriptError) {
+          context.setError(row, zeroSubscriptError());
           return -1;
         }
         auto elementIndex = getIndex(
@@ -276,8 +275,7 @@ class SubscriptImpl : public exec::Subscript {
             rawSizes,
             rawOffsets,
             arrayIndices,
-            errorRows,
-            error);
+	    context);
         rawIndices[row] = elementIndex;
         if (elementIndex == -1) {
           nullsBuilder.setNull(row);
@@ -290,10 +288,6 @@ class SubscriptImpl : public exec::Subscript {
     if (baseArray->elements()->size() == 0) {
       return BaseVector::createNullConstant(
           baseArray->elements()->type(), rows.end(), context.pool());
-    }
-    if (error) {
-      errorRows.updateBounds();
-      context.setErrors(errorRows, error);
     }
 
     return BaseVector::wrapInDictionary(
@@ -329,8 +323,8 @@ class SubscriptImpl : public exec::Subscript {
       const vector_size_t* rawSizes,
       const vector_size_t* rawOffsets,
       const vector_size_t* indices,
-      SelectivityVector& errorRows,
-      std::exception_ptr& error) const {
+      exec::EvalCtx& context)
+const {
     auto arraySize = rawSizes[indices[row]];
 
     if (index < 0) {
@@ -342,7 +336,7 @@ class SubscriptImpl : public exec::Subscript {
           index += arraySize;
         }
       } else {
-        addError(row, negativeSubscriptError(), error, errorRows);
+        context.setError(row, negativeSubscriptError());
         return -1;
       }
     }
@@ -353,7 +347,7 @@ class SubscriptImpl : public exec::Subscript {
       if constexpr (allowOutOfBound) {
         return -1;
       } else {
-        addError(row, badSubscriptError(), error, errorRows);
+        context.setError(row, badSubscriptError());
         return -1;
       }
     }
@@ -361,20 +355,6 @@ class SubscriptImpl : public exec::Subscript {
     // Resultant index is the sum of the offset in the input array and the
     // index.
     return rawOffsets[indices[row]] + index;
-  }
-
-  void addError(
-      vector_size_t row,
-      std::exception_ptr newError,
-      std::exception_ptr& error,
-      SelectivityVector& errorRows) const {
-    if (!error) {
-      error = newError;
-    }
-    if (errorRows.size() <= row) {
-      errorRows.resize(row + 1, false);
-    }
-    errorRows.setValid(row, true);
   }
 
   /// Decode arguments and transform result into a dictionaryVector where the
