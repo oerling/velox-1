@@ -72,8 +72,6 @@ class DuckDbQueryRunner {
     return allRows;
   }
 
-  void initializeTpch(double scaleFactor);
-
  private:
   ::duckdb::DuckDB db_;
 
@@ -116,14 +114,6 @@ bool waitForTaskCancelled(exec::Task* task, uint64_t maxWaitMicros = 1'000'000);
 bool waitForTaskStateChange(
     exec::Task* task,
     TaskState state,
-    uint64_t maxWaitMicros = 1'000'000);
-
-/// Wait up to maxWaitMicros for all the task drivers to finish. The function
-/// returns true if all the drivers have finished, otherwise false.
-///
-/// NOTE: user must call this on a finished or failed task.
-bool waitForTaskDriversToFinish(
-    exec::Task* task,
     uint64_t maxWaitMicros = 1'000'000);
 
 /// Invoked to wait for all the tasks created by the test to be deleted.

@@ -23,6 +23,7 @@
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/type/Timestamp.h"
+#include "velox/vector/BaseVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/NullsBuilder.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -306,21 +307,26 @@ class VectorLoaderWrap : public VectorLoader {
  public:
   explicit VectorLoaderWrap(VectorPtr vector) : vector_(vector) {}
 
-  void loadInternal(RowSet rowSet, ValueHook* hook, VectorPtr* result)
-      override {
+  void loadInternal(
+      RowSet rowSet,
+      ValueHook* hook,
+      vector_size_t resultSize,
+      VectorPtr* result) override {
     VELOX_CHECK(!hook, "VectorLoaderWrap doesn't support ValueHook");
     SelectivityVector rows(rowSet.back() + 1, false);
     for (auto row : rowSet) {
       rows.setValid(row, true);
     }
     rows.updateBounds();
-    *result = makeEncodingPreservedCopy(rows);
+    *result = makeEncodingPreservedCopy(rows, resultSize);
   }
 
  private:
   // Returns a copy of 'vector_' while retaining dictionary encoding if present.
   // Multiple dictionary layers are collapsed into one.
-  VectorPtr makeEncodingPreservedCopy(SelectivityVector& rows);
+  VectorPtr makeEncodingPreservedCopy(
+      SelectivityVector& rows,
+      vector_size_t vectorSize);
   VectorPtr vector_;
 };
 
@@ -683,6 +689,18 @@ RowVectorPtr VectorFuzzer::fuzzInputRow(const RowTypePtr& rowType) {
   return fuzzRow(rowType, opts_.vectorSize, false);
 }
 
+RowVectorPtr VectorFuzzer::fuzzInputFlatRow(const RowTypePtr& rowType) {
+  std::vector<VectorPtr> children;
+  auto size = static_cast<vector_size_t>(opts_.vectorSize);
+  children.reserve(rowType->size());
+  for (auto i = 0; i < rowType->size(); ++i) {
+    children.emplace_back(fuzzFlat(rowType->childAt(i), size));
+  }
+
+  return std::make_shared<RowVector>(
+      pool_, rowType, nullptr, size, std::move(children));
+}
+
 RowVectorPtr VectorFuzzer::fuzzRow(
     std::vector<VectorPtr>&& children,
     std::vector<std::string> childrenNames,
@@ -917,13 +935,17 @@ RowVectorPtr VectorFuzzer::fuzzRowChildrenToLazy(
       std::move(children));
 }
 
-VectorPtr VectorLoaderWrap::makeEncodingPreservedCopy(SelectivityVector& rows) {
-  VectorPtr result;
+VectorPtr VectorLoaderWrap::makeEncodingPreservedCopy(
+    SelectivityVector& rows,
+    vector_size_t vectorSize) {
   DecodedVector decoded;
   decoded.decode(*vector_, rows, false);
 
   if (decoded.isConstantMapping() || decoded.isIdentityMapping()) {
+    VectorPtr result;
+
     BaseVector::ensureWritable(rows, vector_->type(), vector_->pool(), result);
+    result->resize(vectorSize);
     result->copy(vector_.get(), rows, nullptr);
     return result;
   }
@@ -939,31 +961,37 @@ VectorPtr VectorLoaderWrap::makeEncodingPreservedCopy(SelectivityVector& rows) {
   });
   baseRows.updateBounds();
 
+  VectorPtr baseResult;
   BaseVector::ensureWritable(
-      baseRows, baseVector->type(), vector_->pool(), result);
-  result->copy(baseVector, baseRows, nullptr);
+      baseRows, baseVector->type(), vector_->pool(), baseResult);
+  baseResult->copy(baseVector, baseRows, nullptr);
 
-  BufferPtr indices = allocateIndices(rows.end(), vector_->pool());
+  BufferPtr indices = allocateIndices(vectorSize, vector_->pool());
   auto rawIndices = indices->asMutable<vector_size_t>();
   auto decodedIndices = decoded.indices();
   rows.applyToSelected(
       [&](auto row) { rawIndices[row] = decodedIndices[row]; });
 
   BufferPtr nulls = nullptr;
-  if (decoded.nulls()) {
-    if (!baseRows.hasSelections()) {
-      nulls = allocateNulls(rows.end(), vector_->pool(), bits::kNull);
-    } else {
-      nulls = AlignedBuffer::allocate<bool>(rows.end(), vector_->pool());
-      std::memcpy(
-          nulls->asMutable<uint64_t>(),
-          decoded.nulls(),
-          bits::nbytes(rows.end()));
+  if (decoded.nulls() || vectorSize > rows.end()) {
+    // We fill [rows.end(), vectorSize) with nulls then copy nulls for selected
+    // baseRows.
+    nulls = allocateNulls(vectorSize, vector_->pool(), bits::kNull);
+    if (baseRows.hasSelections()) {
+      if (decoded.nulls()) {
+        std::memcpy(
+            nulls->asMutable<uint64_t>(),
+            decoded.nulls(),
+            bits::nbytes(rows.end()));
+      } else {
+        bits::fillBits(
+            nulls->asMutable<uint64_t>(), 0, rows.end(), bits::kNotNull);
+      }
     }
   }
 
   return BaseVector::wrapInDictionary(
-      std::move(nulls), std::move(indices), rows.end(), result);
+      std::move(nulls), std::move(indices), vectorSize, baseResult);
 }
 
 namespace {

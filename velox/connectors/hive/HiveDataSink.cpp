@@ -397,6 +397,10 @@ int64_t HiveDataSink::getCompletedBytes() const {
   return completedBytes;
 }
 
+int32_t HiveDataSink::numWrittenFiles() const {
+  return writers_.size();
+}
+
 std::vector<std::string> HiveDataSink::close(bool success) {
   closeInternal(!success);
   if (!success) {
@@ -496,7 +500,7 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
   options.memoryPool = connectorQueryCtx_->connectorMemoryPool();
   options.compressionKind = insertTableHandle_->compressionKind();
   options.setMemoryReclaimer = connectorQueryCtx_->setMemoryReclaimer();
-  ioStats_.emplace_back(std::make_shared<dwio::common::IoStatistics>());
+  ioStats_.emplace_back(std::make_shared<io::IoStatistics>());
   auto writer = writerFactory_->createWriter(
       dwio::common::FileSink::create(
           writePath,

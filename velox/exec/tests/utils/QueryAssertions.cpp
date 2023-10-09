@@ -858,12 +858,6 @@ void DuckDbQueryRunner::createTable(
   }
 }
 
-void DuckDbQueryRunner::initializeTpch(double scaleFactor) {
-  db_.LoadExtension<::duckdb::TPCHExtension>();
-  auto query = fmt::format("CALL dbgen(sf={})", scaleFactor);
-  execute(query);
-}
-
 DuckDBQueryResult DuckDbQueryRunner::execute(const std::string& sql) {
   ::duckdb::Connection con(db_);
   // Changing the default null order of NULLS FIRST used by DuckDB. Velox uses
@@ -927,7 +921,7 @@ static bool compareMaterializedRows(
   }
 
   for (auto& it : left) {
-    if (right.count(it) == 0) {
+    if (right.count(it) != left.count(it)) {
       return false;
     }
   }
@@ -936,7 +930,7 @@ static bool compareMaterializedRows(
   // left, check the other way around. E.g., left = {1, 1, 2}, right = {1, 2,
   // 3}.
   for (auto& it : right) {
-    if (left.count(it) == 0) {
+    if (left.count(it) != right.count(it)) {
       return false;
     }
   }
@@ -1277,18 +1271,6 @@ bool waitForTaskStateChange(
   }
 
   return task->state() == state;
-}
-
-bool waitForTaskDriversToFinish(exec::Task* task, uint64_t maxWaitMicros) {
-  VELOX_USER_CHECK(!task->isRunning());
-  uint64_t waitMicros = 0;
-  while ((task->numFinishedDrivers() != task->numTotalDrivers()) &&
-         (waitMicros < maxWaitMicros)) {
-    const uint64_t kWaitMicros = 1000;
-    std::this_thread::sleep_for(std::chrono::microseconds(kWaitMicros));
-    waitMicros += kWaitMicros;
-  }
-  return task->numFinishedDrivers() == task->numTotalDrivers();
 }
 
 void waitForAllTasksToBeDeleted(uint64_t maxWaitUs) {
