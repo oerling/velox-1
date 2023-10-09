@@ -423,6 +423,5 @@ TEST_F(FilterProjectTest, numSilentThrow) {
 
   auto task = AssertQueryBuilder(plan).assertEmptyResults();
   auto planStats = toPlanStats(task->taskStats());
-  ASSERT_EQ(
-      100, planStats.at(filterId).customStats.at("numSilentThrow").sum);
+  ASSERT_EQ(100, planStats.at(filterId).customStats.at("numSilentThrow").sum);
 }
