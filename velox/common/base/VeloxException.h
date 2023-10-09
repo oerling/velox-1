@@ -332,6 +332,11 @@ class VeloxRuntimeError final : public VeloxException {
             exceptionName) {}
 };
 
+int64_t& threadNumThrow() {
+  thread_local int64_t numThrow;
+  return numThrow;
+}
+
 /// Holds a pointer to a function that provides addition context to be
 /// added to the detailed error message in case of an exception.
 struct ExceptionContext {
