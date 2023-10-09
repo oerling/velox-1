@@ -230,9 +230,6 @@ class SubscriptImpl : public exec::Subscript {
     auto rawSizes = baseArray->rawSizes();
     auto rawOffsets = baseArray->rawOffsets();
 
-    SelectivityVector errorRows;
-    std::exception_ptr error;
-
     // Optimize for constant encoding case.
     if (decodedIndices->isConstantMapping()) {
       vector_size_t adjustedIndex = -1;
