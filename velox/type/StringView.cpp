@@ -49,6 +49,7 @@ int32_t StringView::linearSearch(
     const StringView* strings,
     const int32_t* indices,
     int32_t numStrings) {
+#if XSIMD_WITH_AVX2
   constexpr int64_t kBatch = xsimd::batch<uint64_t>::size;
   bool isInline = key.isInline();
   const char* body = key.data() + 4;
@@ -128,5 +129,8 @@ int32_t StringView::linearSearch(
     return linearSearchSimple(key, strings, nullptr, numStrings - limit);
   }
   return -1;
+#else
+  return linearSearchSimple(key, strings, indices, numStrings);
+#endif
 }
 } // namespace facebook::velox
