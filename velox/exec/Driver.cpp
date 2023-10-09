@@ -338,11 +338,11 @@ void Driver::enqueueInternal() {
   queueTimeStartMicros_ = getCurrentTimeMicro();
 }
 
-#define CALL_OPERATOR(call, operator, methodName)                       \
-  try {                                                                 \
-    threadNumVeloxThrow() = 0;                                               \
-    call;                                                               \
-    // Record ignored throws, but not a query terminating throw. \
+#define CALL_OPERATOR(call, operator, methodName) \
+  try {                                           \
+    threadNumVeloxThrow() = 0;                    \
+    call;                                         \
+  // Record ignored throws, but not a query terminating throw. \
   recordSilentThrows(*operator);					\
   } catch (const VeloxException& e) {                                   \
     throw;                                                              \
