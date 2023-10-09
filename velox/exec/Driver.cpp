@@ -340,11 +340,11 @@ void Driver::enqueueInternal() {
 
 // Call an Oprator method. record silenced throws, but not a query
 // terminating throw. Annotate exceptions with Operator info.
-#define CALL_OPERATOR(call, operator, methodName) \
-  try {                                           \
-    threadNumVeloxThrow() = 0;                    \
-    call;                                         \
-  recordSilentThrows(*operator);					\
+#define CALL_OPERATOR(call, operator, methodName)                       \
+  try {                                                                 \
+    threadNumVeloxThrow() = 0;                                          \
+    call;                                                               \
+    recordSilentThrows(*operator);                                      \
   } catch (const VeloxException& e) {                                   \
     throw;                                                              \
   } catch (const std::exception& e) {                                   \
