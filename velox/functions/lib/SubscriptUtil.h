@@ -23,48 +23,11 @@
 
 namespace facebook::velox::functions {
 
-namespace detail {
-
-std::exception_ptr makeZeroSubscriptError() {
-  try {
-    VELOX_USER_FAIL("SQL array indices start at 1");
-  } catch (const std::exception& e) {
-    return std::current_exception();
-  }
-}
-
-std::exception_ptr makeBadSubscriptError() {
-  try {
-    VELOX_USER_FAIL("Array subscript out of bounds.");
-  } catch (const std::exception& e) {
-    return std::current_exception();
-  }
-}
-
-std::exception_ptr makeNegativeSubscriptError() {
-  try {
-    VELOX_USER_FAIL("Array subscript is negative.");
-  } catch (const std::exception& e) {
-    return std::current_exception();
-  }
-}
-
-const std::exception_ptr& zeroSubscriptError() {
-  static std::exception_ptr error = makeZeroSubscriptError();
-  return error;
-}
-
-const std::exception_ptr& badSubscriptError() {
-  static std::exception_ptr error = makeBadSubscriptError();
-  return error;
-}
-
-const std::exception_ptr& negativeSubscriptError() {
-  static std::exception_ptr error = makeNegativeSubscriptError();
-  return error;
-}
-
-} // namespace detail
+// Below functions return a stock instance of each of the possible errors in
+// SubscriptImpl
+const std::exception_ptr& zeroSubscriptError();
+const std::exception_ptr& badSubscriptError();
+const std::exception_ptr& negativeSubscriptError();
 
 /// Generic subscript/element_at implementation for both array and map data
 /// types.
@@ -238,7 +201,7 @@ class SubscriptImpl : public exec::Subscript {
       const auto adjustedIndex =
           adjustIndex(decodedIndices->valueAt<I>(0), isZeroSubscriptError);
       if (isZeroSubscriptError) {
-        context.setErrors(rows, detail::zeroSubscriptError());
+        context.setErrors(rows, zeroSubscriptError());
         allFailed = true;
       }
 
@@ -259,7 +222,7 @@ class SubscriptImpl : public exec::Subscript {
         const auto adjustedIndex =
             adjustIndex(originalIndex, isZeroSubscriptError);
         if (isZeroSubscriptError) {
-          context.setError(row, detail::zeroSubscriptError());
+          context.setError(row, zeroSubscriptError());
           return;
         }
         const auto elementIndex = getIndex(
@@ -323,7 +286,7 @@ class SubscriptImpl : public exec::Subscript {
           index += arraySize;
         }
       } else {
-        context.setError(row, detail::negativeSubscriptError());
+        context.setError(row, negativeSubscriptError());
         return -1;
       }
     }
@@ -334,7 +297,7 @@ class SubscriptImpl : public exec::Subscript {
       if constexpr (allowOutOfBound) {
         return -1;
       } else {
-        context.setError(row, detail::badSubscriptError());
+        context.setError(row, badSubscriptError());
         return -1;
       }
     }
