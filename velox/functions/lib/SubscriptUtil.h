@@ -64,7 +64,7 @@ const std::exception_ptr& negativeSubscriptError() {
   return error;
 }
 
-} // namespace
+} // namespace detail
 
 /// Generic subscript/element_at implementation for both array and map data
 /// types.
@@ -260,7 +260,7 @@ class SubscriptImpl : public exec::Subscript {
             adjustIndex(originalIndex, isZeroSubscriptError);
         if (isZeroSubscriptError) {
           context.setError(row, detail::zeroSubscriptError());
-	  return;
+          return;
         }
         const auto elementIndex = getIndex(
             adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
