@@ -23,7 +23,7 @@
 
 namespace facebook::velox::functions {
 
-namespace {
+namespace detail {
 
 std::exception_ptr makeZeroSubscriptError() {
   try {
@@ -238,7 +238,7 @@ class SubscriptImpl : public exec::Subscript {
       const auto adjustedIndex =
           adjustIndex(decodedIndices->valueAt<I>(0), isZeroSubscriptError);
       if (isZeroSubscriptError) {
-        context.setErrors(rows, zeroSubscriptError());
+        context.setErrors(rows, detail::zeroSubscriptError());
         allFailed = true;
       }
 
@@ -259,8 +259,8 @@ class SubscriptImpl : public exec::Subscript {
         const auto adjustedIndex =
             adjustIndex(originalIndex, isZeroSubscriptError);
         if (isZeroSubscriptError) {
-          context.setError(row, zeroSubscriptError());
-          return -1;
+          context.setError(row, detail::zeroSubscriptError());
+	  return;
         }
         const auto elementIndex = getIndex(
             adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
@@ -323,7 +323,7 @@ class SubscriptImpl : public exec::Subscript {
           index += arraySize;
         }
       } else {
-        context.setError(row, negativeSubscriptError());
+        context.setError(row, detail::negativeSubscriptError());
         return -1;
       }
     }
@@ -334,7 +334,7 @@ class SubscriptImpl : public exec::Subscript {
       if constexpr (allowOutOfBound) {
         return -1;
       } else {
-        context.setError(row, badSubscriptError());
+        context.setError(row, detail::badSubscriptError());
         return -1;
       }
     }
