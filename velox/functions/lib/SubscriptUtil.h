@@ -235,7 +235,8 @@ class SubscriptImpl : public exec::Subscript {
       bool allFailed = false;
       // If index is invalid, capture the error and mark all rows as failed.
       bool isZeroSubscriptError = false;
-      const auto adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(0), isZeroSubscriptError);
+      const auto adjustedIndex =
+          adjustIndex(decodedIndices->valueAt<I>(0), isZeroSubscriptError);
       if (isZeroSubscriptError) {
         context.setErrors(rows, zeroSubscriptError());
         allFailed = true;
@@ -244,7 +245,7 @@ class SubscriptImpl : public exec::Subscript {
       if (!allFailed) {
         rows.applyToSelected([&](auto row) {
           const auto elementIndex = getIndex(
-				       adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
+              adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
           rawIndices[row] = elementIndex;
           if (elementIndex == -1) {
             nullsBuilder.setNull(row);
@@ -255,7 +256,8 @@ class SubscriptImpl : public exec::Subscript {
       rows.applyToSelected([&](auto row) {
         const auto originalIndex = decodedIndices->valueAt<I>(row);
         bool isZeroSubscriptError = false;
-        const auto adjustedIndex = adjustIndex(originalIndex, isZeroSubscriptError);
+        const auto adjustedIndex =
+            adjustIndex(originalIndex, isZeroSubscriptError);
         if (isZeroSubscriptError) {
           context.setError(row, zeroSubscriptError());
           return -1;
