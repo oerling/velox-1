@@ -31,6 +31,9 @@ int32_t fi(int32_t x) {
 
 TEST(ProfilerTest, basic) {
   constexpr int32_t kNumThreads = 10;
+#if !defined(linux)
+  return;
+#endif
   filesystems::registerLocalFileSystem();
   Profiler::start("profilertest");
   std::vector<std::thread> threads;

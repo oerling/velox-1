@@ -116,6 +116,9 @@ void Profiler::threadFunction(std::string task) {
 
 void Profiler::start(const std::string& task) {
   {
+#if !defined(linux)
+    VELOX_FAIL("Profiler is only available for Linux");
+#endif
     std::lock_guard<std::mutex> l(profileMutex_);
     if (profileStarted_) {
       return;
@@ -142,6 +145,10 @@ void Profiler::stop() {
     }
   }
   profileThread_.join();
+  {
+        std::lock_guard<std::mutex> l(profileMutex_);
+    profileStarted_ = false;
+  }
   LOG(INFO) << "Stopped profiling";
 }
 
