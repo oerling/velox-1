@@ -146,7 +146,7 @@ void Profiler::stop() {
   }
   profileThread_.join();
   {
-        std::lock_guard<std::mutex> l(profileMutex_);
+    std::lock_guard<std::mutex> l(profileMutex_);
     profileStarted_ = false;
   }
   LOG(INFO) << "Stopped profiling";
