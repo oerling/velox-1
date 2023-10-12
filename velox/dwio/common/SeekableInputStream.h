@@ -81,6 +81,10 @@ class SeekableInputStream : public google::protobuf::io::ZeroCopyInputStream {
   // Checks consistency.
   virtual void check(){};
 
+  virtual int64_t positionHash() const {
+    return 0;
+  }
+  
  protected:
   const StreamType type_;
 };

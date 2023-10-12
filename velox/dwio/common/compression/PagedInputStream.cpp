@@ -146,6 +146,18 @@ bool PagedInputStream::Next(const void** data, int32_t* size) {
   skipAllPending();
   return readOrSkip(data, size);
 }
+std::unordered_set<int64_t> decompressTrace;
+std::mutex traceMutex;
+
+void PagedInputStream::recordDecompress() {
+  std::lock_guard<std::mutex> l(traceMutex);
+  auto hash = input_->positionHash() + (inputBufferPtrEnd_ - inputBufferPtr_) -
+      remainingLength_;
+  if (decompressTrace.count(hash)) {
+    LOG(INFO) << "bing";
+  }
+  decompressTrace.insert(hash);
+}
 
 // Read into `data' if it is not null; otherwise skip some of the pending.
 bool PagedInputStream::readOrSkip(const void** data, int32_t* size) {
@@ -216,6 +228,7 @@ bool PagedInputStream::readOrSkip(const void** data, int32_t* size) {
   // perform decompression
   if (state_ == State::START) {
     DWIO_ENSURE_NOT_NULL(decompressor_.get(), "invalid stream state");
+    recordDecompress();
     DWIO_ENSURE_NOT_NULL(input);
     auto [decompressedLength, exact] =
         decompressor_->getDecompressedLength(input, remainingLength_);

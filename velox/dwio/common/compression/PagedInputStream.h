@@ -200,6 +200,8 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
   int64_t pendingSkip_{0};
 
  private:
+  void recordDecompress();
+  
   bool skipAllPending();
 
   // Stream Debug Info

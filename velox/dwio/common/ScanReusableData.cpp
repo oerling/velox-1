@@ -17,7 +17,7 @@
 #include "velox/dwio/common/ScanReusableData.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
 
-DEFINE_bool(enable_reader_reuse, true, "Allow recycling column reader parts");
+DEFINE_bool(enable_reader_reuse, false, "Allow recycling column reader parts");
 
 namespace facebook::velox::dwio::common {
 
