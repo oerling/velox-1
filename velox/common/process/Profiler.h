@@ -16,13 +16,19 @@
 
 #include <string>
 #include "velox/common/file/FileSystems.h"
+#include <folly/futures/Future.h>
+#include <folly/futures/Promise.h>
 
 namespace facebook::velox::process {
 
 class Profiler {
  public:
+  /// Starts periodic production of per reports.
   static void start(const std::string& task);
 
+  // Stops profiling background associated threads. Threads are stopped on return. 
+  static void stop();
+  
  private:
   static void copyToResult(int32_t counter, const std::string& task);
   static void makeProfileDir(std::string task);
@@ -32,6 +38,9 @@ class Profiler {
   static std::thread profileThread_;
   static std::mutex profileMutex_;
   static std::shared_ptr<velox::filesystems::FileSystem> fileSystem_;
+  static bool isSleeping_;
+  static bool shouldStop_;
+  static folly::Promise<bool> sleepPromise_;
 };
 
 } // namespace facebook::velox::process
