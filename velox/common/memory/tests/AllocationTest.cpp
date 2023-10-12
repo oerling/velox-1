@@ -28,6 +28,7 @@ namespace facebook::velox::memory {
 class AllocationTest : public testing::Test {
   void SetUp() {
     process::Profiler::start("memtest");
+  }
 };
 
 TEST_F(AllocationTest, basic) {
