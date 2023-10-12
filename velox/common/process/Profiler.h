@@ -30,6 +30,8 @@ class Profiler {
   // return.
   static void stop();
 
+  static bool isRunning();
+  
  private:
   static void copyToResult(int32_t counter, const std::string& task);
   static void makeProfileDir(std::string task);

@@ -27,8 +27,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-DEFINE_string(profile_path, "/tmp", "Path prefix for profiles");
-
 namespace facebook::velox::process {
 
 bool Profiler::profileStarted_;
@@ -48,7 +46,7 @@ void Profiler::copyToResult(int32_t counter, const std::string& task) {
   char* buffer = reinterpret_cast<char*>(malloc(bufferSize));
   auto readSize = ::read(fd, buffer, bufferSize);
   close(fd);
-  auto path = fmt::format("{}/{}/prof-{}", FLAGS_profile_path, task, counter);
+  auto path = fmt::format("{}/prof-{}", task, counter);
   try {
     try {
       fileSystem_->remove(path);
@@ -64,7 +62,7 @@ void Profiler::copyToResult(int32_t counter, const std::string& task) {
 }
 
 void Profiler::makeProfileDir(std::string task) {
-  auto path = fmt::format("{}/{}", FLAGS_profile_path, task);
+  auto path = fmt::format("{}", task);
   try {
     fileSystem_->mkdir(path);
   } catch (const std::exception& e) {
@@ -114,6 +112,13 @@ void Profiler::threadFunction(std::string task) {
   }
 }
 
+  bool Profiler::isRunning() {
+    std::lock_guard<std::mutex> l(profileMutex_);
+    return profileStarted_;
+  }
+
+
+  
 void Profiler::start(const std::string& task) {
   {
 #if !defined(linux)
@@ -125,7 +130,7 @@ void Profiler::start(const std::string& task) {
     }
     profileStarted_ = true;
   }
-  fileSystem_ = velox::filesystems::getFileSystem(FLAGS_profile_path, nullptr);
+  fileSystem_ = velox::filesystems::getFileSystem(task, nullptr);
   if (!fileSystem_) {
     LOG(ERROR) << "Failed to find file system for " << FLAGS_profile_path
                << ". Profiler not started.";

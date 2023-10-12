@@ -37,6 +37,8 @@
 
 using facebook::velox::common::testutil::TestValue;
 
+DEFINE_bool(enable_perf, true, "Monitor with constant backgroun linux perf");
+
 namespace facebook::velox::exec {
 
 namespace {
@@ -246,6 +248,8 @@ std::shared_ptr<Task> Task::create(
   return task;
 }
 
+  void startProfiling(const std::string& path, const std::string& taskId);
+  
 Task::Task(
     const std::string& taskId,
     core::PlanFragment planFragment,
@@ -564,6 +568,9 @@ void Task::start(
   facebook::velox::process::ThreadDebugInfo threadDebugInfo{
       self->queryCtx()->queryId(), self->taskId_, nullptr};
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(threadDebugInfo);
+  if (FLAGS_enable_perf && !self->spillDirectory_.empty()) {
+    startProfiling(self->spillDirectory_, self->taskId_);
+  }
   try {
     VELOX_CHECK_GE(
         maxDrivers,
@@ -2484,4 +2491,21 @@ void Task::MemoryReclaimer::abort(
   memory::MemoryReclaimer::abort(pool, error);
 }
 
+  void Task::startProfiling() {
+    {
+      std::lock_guard<std::mutex> l (mutex_);
+      if (profileDirectory_.empty()) {
+	profileDirectory_ = spillDirectory_;
+	taskStats_.pipelineStats[0].operatorStats.wlock()->addRuntimeStat(statname, RuntimeCounter(1));
+      }
+    }
+  
+    if (Profile::isRunning()) {
+      return;
+    }
+    auto path = fmt::format("{}/profile-{}", profileDirectory_, taskId_);
+    profiler::start(path);
+  }
+
+  
 } // namespace facebook::velox::exec
