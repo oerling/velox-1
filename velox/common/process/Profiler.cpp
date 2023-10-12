@@ -98,7 +98,7 @@ void Profiler::threadFunction(std::string task) {
         auto& executor = folly::QueuedImmediateExecutor::instance();
         std::move(sleepFuture)
             .via(&executor)
-	  .wait((std::chrono::seconds(counter < 2 ? 60 : 300)));
+            .wait((std::chrono::seconds(counter < 2 ? 60 : 300)));
       } catch (std::exception& e) {
       }
     }

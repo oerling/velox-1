@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#include <string>
-#include "velox/common/file/FileSystems.h"
 #include <folly/futures/Future.h>
 #include <folly/futures/Promise.h>
+#include <string>
+#include "velox/common/file/FileSystems.h"
 
 namespace facebook::velox::process {
 
@@ -26,9 +26,10 @@ class Profiler {
   /// Starts periodic production of per reports.
   static void start(const std::string& task);
 
-  // Stops profiling background associated threads. Threads are stopped on return. 
+  // Stops profiling background associated threads. Threads are stopped on
+  // return.
   static void stop();
-  
+
  private:
   static void copyToResult(int32_t counter, const std::string& task);
   static void makeProfileDir(std::string task);
