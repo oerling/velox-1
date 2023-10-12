@@ -18,13 +18,17 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/Memory.h"
+#include "velox/common/process/Profiler.h"
 
 using namespace ::testing;
 using namespace facebook::velox::memory;
 
 namespace facebook::velox::memory {
 
-class AllocationTest : public testing::Test {};
+class AllocationTest : public testing::Test {
+  void SetUp() {
+    process::Profiler::start("memtest");
+};
 
 TEST_F(AllocationTest, basic) {
   ASSERT_EQ(AllocationTraits::numPagesInHugePage(), 512);
