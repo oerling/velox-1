@@ -55,8 +55,10 @@ void Profiler::copyToResult(int32_t counter, const std::string& path) {
     }
     auto out = fileSystem_->openFileForWrite(target);
     out->append(std::string_view(buffer, readSize));
+    LOG(INFO) << "PROFILE: Produced result " << target;
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Error opening/writing " << target << ":" << e.what();
+    LOG(ERROR) << "PROFILE: Error opening/writing " << target << ":"
+               << e.what();
   }
   ::free(buffer);
 }
@@ -65,7 +67,8 @@ void Profiler::makeProfileDir(std::string path) {
   try {
     fileSystem_->mkdir(path);
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to create directory " << path << ":" << e.what();
+    LOG(ERROR) << "PROFILE: Failed to create directory " << path << ":"
+               << e.what();
   }
 }
 
@@ -129,12 +132,13 @@ void Profiler::start(const std::string& path) {
   }
   fileSystem_ = velox::filesystems::getFileSystem(path, nullptr);
   if (!fileSystem_) {
-    LOG(ERROR) << "Failed to find file system for " << path
+    LOG(ERROR) << "PROFILE: Failed to find file system for " << path
                << ". Profiler not started.";
     return;
   }
   makeProfileDir(path);
   atexit(Profiler::stop);
+  LOG(INFO) << "PROFILE: Starting profiling to " << path;
   profileThread_ = std::thread([path]() { threadFunction(path); });
 }
 
