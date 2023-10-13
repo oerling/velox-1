@@ -23,8 +23,8 @@ namespace facebook::velox::process {
 
 class Profiler {
  public:
-  /// Starts periodic production of per reports.
-  static void start(const std::string& task);
+  /// Starts periodic production of perf reports.
+  static void start(const std::string& path);
 
   // Stops profiling background associated threads. Threads are stopped on
   // return.
@@ -33,9 +33,9 @@ class Profiler {
   static bool isRunning();
   
  private:
-  static void copyToResult(int32_t counter, const std::string& task);
-  static void makeProfileDir(std::string task);
-  static void threadFunction(std::string task);
+  static void copyToResult(int32_t counter, const std::string& path);
+  static void makeProfileDir(std::string path);
+  static void threadFunction(std::string path);
 
   static bool profileStarted_;
   static std::thread profileThread_;

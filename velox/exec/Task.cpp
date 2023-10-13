@@ -34,6 +34,7 @@
 #include "velox/experimental/codegen/CodegenLogger.h"
 #endif
 #include "velox/common/testutil/TestValue.h"
+#include "velox/common/process/Profiler.h"
 
 using facebook::velox::common::testutil::TestValue;
 
@@ -246,11 +247,9 @@ std::shared_ptr<Task> Task::create(
       std::move(onError)));
   task->initTaskPool();
   return task;
-}
+}  
 
-  void startProfiling(const std::string& path, const std::string& taskId);
-  
-Task::Task(
+  Task::Task(
     const std::string& taskId,
     core::PlanFragment planFragment,
     int destination,
@@ -568,9 +567,6 @@ void Task::start(
   facebook::velox::process::ThreadDebugInfo threadDebugInfo{
       self->queryCtx()->queryId(), self->taskId_, nullptr};
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(threadDebugInfo);
-  if (FLAGS_enable_perf && !self->spillDirectory_.empty()) {
-    startProfiling(self->spillDirectory_, self->taskId_);
-  }
   try {
     VELOX_CHECK_GE(
         maxDrivers,
@@ -938,6 +934,11 @@ void Task::createDriversLocked(
         firstPipelineDriverIndex += factory->numDrivers;
       }
     }
+  }
+
+  // Start profiling after init of stats and before starting Drivers.
+  if (FLAGS_enable_perf && !self->spillDirectory_.empty()) {
+    self->startProfilingLocked();
   }
 
   // Start all the join bridges before we start driver execution.
@@ -2491,20 +2492,24 @@ void Task::MemoryReclaimer::abort(
   memory::MemoryReclaimer::abort(pool, error);
 }
 
-  void Task::startProfiling() {
-    {
-      std::lock_guard<std::mutex> l (mutex_);
+  void Task::startProfilingLocked() {
       if (profileDirectory_.empty()) {
 	profileDirectory_ = spillDirectory_;
-	taskStats_.pipelineStats[0].operatorStats.wlock()->addRuntimeStat(statname, RuntimeCounter(1));
+	const char* slash = strrchr(profileDirectory_.c_str(), '/');
+	if (!slash) {
+	  LOG(ERROR) << "Spill path not set and profile enabled: " << profileDirectory_;
+	  return;
+	}
+	profileDirectory_.resize(slash - profileDirectory_.c_str());
+	auto statname = fmt::format("profileDir={}", profileDirectory_);
+	taskStats_.pipelineStats[0].operatorStats[0].addRuntimeStat(statname, RuntimeCounter(1));
       }
-    }
   
-    if (Profile::isRunning()) {
+    if (process::Profiler::isRunning()) {
       return;
     }
     auto path = fmt::format("{}/profile-{}", profileDirectory_, taskId_);
-    profiler::start(path);
+    process::Profiler::start(path);
   }
 
   

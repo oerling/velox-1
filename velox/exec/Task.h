@@ -850,7 +850,11 @@ class Task : public std::enable_shared_from_this<Task> {
     }
   };
 
-  void startProfiling();
+  // Starts process::Profiler if profiling enabled. The profile path is named
+  // after the first Task. In Presto on Spark, this identifies the profile with
+  // the query.
+  void startProfilingLocked();
+
   friend class Task::TaskCounter;
 
   // NOTE: keep 'taskCount_' the first member so that it will be the first
@@ -1020,7 +1024,8 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Base spill directory for this task.
   std::string spillDirectory_;
-  // If constant profiling is on, directory to put results in. Derived from 'spillDirectory_'
+  // If constant profiling is on, directory to put results in. Derived from
+  // 'spillDirectory_'
   std::string profileDirectory_;
 };
 

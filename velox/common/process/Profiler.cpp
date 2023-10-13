@@ -37,7 +37,7 @@ bool Profiler::isSleeping_;
 bool Profiler::shouldStop_;
 folly::Promise<bool> Profiler::sleepPromise_;
 
-void Profiler::copyToResult(int32_t counter, const std::string& task) {
+void Profiler::copyToResult(int32_t counter, const std::string& path) {
   int32_t fd = open("/tmp/perf", O_RDONLY);
   if (fd < 0) {
     return;
@@ -46,23 +46,22 @@ void Profiler::copyToResult(int32_t counter, const std::string& task) {
   char* buffer = reinterpret_cast<char*>(malloc(bufferSize));
   auto readSize = ::read(fd, buffer, bufferSize);
   close(fd);
-  auto path = fmt::format("{}/prof-{}", task, counter);
+  auto target = fmt::format("{}/prof-{}", path, counter);
   try {
     try {
-      fileSystem_->remove(path);
+      fileSystem_->remove(target);
     } catch (const std::exception& e) {
       // ignore
     }
-    auto out = fileSystem_->openFileForWrite(path);
+    auto out = fileSystem_->openFileForWrite(target);
     out->append(std::string_view(buffer, readSize));
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Error opening/writing " << path << ":" << e.what();
+    LOG(ERROR) << "Error opening/writing " << target << ":" << e.what();
   }
   ::free(buffer);
 }
 
-void Profiler::makeProfileDir(std::string task) {
-  auto path = fmt::format("{}", task);
+void Profiler::makeProfileDir(std::string path) {
   try {
     fileSystem_->mkdir(path);
   } catch (const std::exception& e) {
@@ -70,9 +69,9 @@ void Profiler::makeProfileDir(std::string task) {
   }
 }
 
-void Profiler::threadFunction(std::string task) {
+void Profiler::threadFunction(std::string path) {
   const int32_t pid = getpid();
-  makeProfileDir(task);
+  makeProfileDir(path);
   for (int32_t counter = 0;; ++counter) {
     std::thread systemThread([&]() {
       system(
@@ -82,7 +81,7 @@ void Profiler::threadFunction(std::string task) {
               "sed --in-place 's/      / /' /tmp/perf; sed --in-place 's/      / /' /tmp/perf; ",
               pid)
               .c_str());
-      copyToResult(counter, task);
+      copyToResult(counter, path);
     });
     folly::SemiFuture<bool> sleepFuture(false);
     {
@@ -119,7 +118,7 @@ void Profiler::threadFunction(std::string task) {
 
 
   
-void Profiler::start(const std::string& task) {
+void Profiler::start(const std::string& path) {
   {
 #if !defined(linux)
     VELOX_FAIL("Profiler is only available for Linux");
@@ -130,15 +129,15 @@ void Profiler::start(const std::string& task) {
     }
     profileStarted_ = true;
   }
-  fileSystem_ = velox::filesystems::getFileSystem(task, nullptr);
+  fileSystem_ = velox::filesystems::getFileSystem(path, nullptr);
   if (!fileSystem_) {
-    LOG(ERROR) << "Failed to find file system for " << FLAGS_profile_path
+    LOG(ERROR) << "Failed to find file system for " << path
                << ". Profiler not started.";
     return;
   }
-  makeProfileDir(task);
+  makeProfileDir(path);
   atexit(Profiler::stop);
-  profileThread_ = std::thread([task]() { threadFunction(task); });
+  profileThread_ = std::thread([path]() { threadFunction(path); });
 }
 
 void Profiler::stop() {
