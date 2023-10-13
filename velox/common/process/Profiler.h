@@ -31,7 +31,7 @@ class Profiler {
   static void stop();
 
   static bool isRunning();
-  
+
  private:
   static void copyToResult(int32_t counter, const std::string& path);
   static void makeProfileDir(std::string path);

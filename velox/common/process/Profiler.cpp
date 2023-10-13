@@ -111,13 +111,11 @@ void Profiler::threadFunction(std::string path) {
   }
 }
 
-  bool Profiler::isRunning() {
-    std::lock_guard<std::mutex> l(profileMutex_);
-    return profileStarted_;
-  }
+bool Profiler::isRunning() {
+  std::lock_guard<std::mutex> l(profileMutex_);
+  return profileStarted_;
+}
 
-
-  
 void Profiler::start(const std::string& path) {
   {
 #if !defined(linux)
