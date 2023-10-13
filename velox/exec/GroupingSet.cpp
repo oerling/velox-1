@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 #include "velox/exec/GroupingSet.h"
-#include "velox/exec/Aggregate.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Task.h"
+
+using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
 
@@ -64,6 +66,7 @@ GroupingSet::GroupingSet(
       isGlobal_(hashers_.empty()),
       isPartial_(isPartial),
       isRawInput_(isRawInput),
+      queryConfig_(&operatorCtx->task()->queryCtx()->queryConfig()),
       aggregates_(std::move(aggregates)),
       masks_(maskChannels(aggregates_)),
       ignoreNullKeys_(ignoreNullKeys),
@@ -75,10 +78,7 @@ GroupingSet::GroupingSet(
       nonReclaimableSection_(nonReclaimableSection),
       stringAllocator_(operatorCtx->pool()),
       rows_(operatorCtx->pool()),
-      isAdaptive_(operatorCtx->task()
-                      ->queryCtx()
-                      ->queryConfig()
-                      .hashAdaptivityEnabled()),
+      isAdaptive_(queryConfig_->hashAdaptivityEnabled()),
       pool_(*operatorCtx->pool()) {
   VELOX_CHECK_NOT_NULL(nonReclaimableSection_);
   VELOX_CHECK(pool_.trackUsage());
@@ -225,6 +225,8 @@ void GroupingSet::noMoreInput() {
   if (sortedAggregations_) {
     sortedAggregations_->noMoreInput();
   }
+
+  ensureOutputFits();
 }
 
 bool GroupingSet::hasSpilled() const {
@@ -251,6 +253,9 @@ void GroupingSet::addInputForActiveRows(
   // associated aggregation operator.
   auto guard = folly::makeGuard([this]() { *nonReclaimableSection_ = false; });
   *nonReclaimableSection_ = true;
+
+  TestValue::adjust(
+      "facebook::velox::exec::GroupingSet::addInputForActiveRows", this);
 
   table_->prepareForProbe(*lookup_, input, activeRows_, ignoreNullKeys_);
   table_->groupProbe(*lookup_);
@@ -649,6 +654,11 @@ bool GroupingSet::getOutput(
     int32_t maxOutputBytes,
     RowContainerIterator& iterator,
     RowVectorPtr& result) {
+  auto guard = folly::makeGuard([this]() { *nonReclaimableSection_ = false; });
+  *nonReclaimableSection_ = true;
+
+  TestValue::adjust("facebook::velox::exec::GroupingSet::getOutput", this);
+
   if (isGlobal_) {
     return getGlobalAggregationOutput(
         maxOutputRows, isPartial_, iterator, result);
@@ -757,22 +767,18 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
   if (isPartial_ || spillConfig_ == nullptr) {
     return;
   }
-  auto numDistinct = table_->numDistinct();
-  if (!numDistinct) {
+  const auto numDistinct = table_->numDistinct();
+  if (numDistinct == 0) {
     // Table is empty. Nothing to spill.
     return;
   }
 
-  auto tableIncrement = table_->hashTableSizeIncrease(input->size());
-
-  auto rows = table_->rows();
-
+  auto* rows = table_->rows();
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
-  auto outOfLineBytes =
+  const auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  auto outOfLineBytesPerRow = outOfLineBytes / numDistinct;
-
-  int64_t flatBytes = input->estimateFlatSize();
+  const auto outOfLineBytesPerRow = outOfLineBytes / numDistinct;
+  const int64_t flatBytes = input->estimateFlatSize();
 
   // Test-only spill path.
   if (spillConfig_->testSpillPct > 0 &&
@@ -798,46 +804,80 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
     return;
   }
 
-  if (!tableIncrement && freeRows > input->size() &&
-      (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes * 2)) {
-    // Enough free rows for input rows and enough variable length free
-    // space for double the flat size of the whole vector. If
-    // outOfLineBytes is 0 there is no need for variable length
-    // space. Double the flat size is a stopgap because the real
-    // increase can be higher, specially with aggregates that have stl
-    // or folly containers. Make a way to raise the reservation in the
-    // spill protected section instead.
-    return;
-  }
-  // If there is variable length data we take double the flat size of
-  // the input as a cap on the new variable length data needed. Same
-  // condition as in first check. Completely arbitrary. Allow growth
-  // in spill protected area instead.
-  auto increment =
+  const auto minReservationBytes =
+      currentUsage * spillConfig_->minSpillableReservationPct / 100;
+  const auto availableReservationBytes = pool_.availableReservation();
+  const auto tableIncrementBytes = table_->hashTableSizeIncrease(input->size());
+  const auto incrementBytes =
       rows->sizeIncrement(input->size(), outOfLineBytes ? flatBytes * 2 : 0) +
-      tableIncrement;
-  // There must be at least 2x the increment in reservation.
-  if (pool_.availableReservation() > 2 * increment) {
-    return;
+      tableIncrementBytes;
+
+  // First to check if we have sufficient minimal memory reservation.
+  if (availableReservationBytes >= minReservationBytes) {
+    if ((tableIncrementBytes == 0) && (freeRows > input->size()) &&
+        (outOfLineBytes == 0 || outOfLineFreeBytes >= flatBytes * 2)) {
+      // Enough free rows for input rows and enough variable length free space
+      // for double the flat size of the whole vector. If outOfLineBytes is 0
+      // there is no need for variable length space. Double the flat size is a
+      // stopgap because the real increase can be higher, specially with
+      // aggregates that have stl or folly containers. Make a way to raise the
+      // reservation in the spill protected section instead.
+      return;
+    }
+
+    // If there is variable length data we take double the flat size of the
+    // input as a cap on the new variable length data needed. Same condition as
+    // in first check. Completely arbitrary. Allow growth in spill protected
+    // area instead.
+    // There must be at least 2x the increment in reservation.
+    if (availableReservationBytes > 2 * incrementBytes) {
+      return;
+    }
   }
-  // Check if can increase reservation. The increment is the larger of
-  // twice the maximum increment from this input and
-  // 'spillableReservationGrowthPct_' of the current reservation.
-  auto targetIncrement = std::max<int64_t>(
-      increment * 2,
+
+  // Check if we can increase reservation. The increment is the larger of twice
+  // the maximum increment from this input and 'spillableReservationGrowthPct_'
+  // of the current memory usage.
+  const auto targetIncrementBytes = std::max<int64_t>(
+      incrementBytes * 2,
       currentUsage * spillConfig_->spillableReservationGrowthPct / 100);
-  if (pool_.maybeReserve(targetIncrement)) {
+  if (pool_.maybeReserve(targetIncrementBytes)) {
     return;
   }
 
   // NOTE: disk spilling use the system disk spilling memory pool instead of
   // the operator memory pool.
-  auto rowsToSpill = std::max<int64_t>(
-      1, targetIncrement / (rows->fixedRowSize() + outOfLineBytesPerRow));
+  const auto rowsToSpill = std::max<int64_t>(
+      1, targetIncrementBytes / (rows->fixedRowSize() + outOfLineBytesPerRow));
   spill(
       std::max<int64_t>(0, numDistinct - rowsToSpill),
       std::max<int64_t>(
           0, outOfLineBytes - (rowsToSpill * outOfLineBytesPerRow)));
+}
+
+void GroupingSet::ensureOutputFits() {
+  // If spilling has already been triggered on this operator, then we don't need
+  // to reserve memory for the output as we can't reclaim much memory from this
+  // operator itself. The output processing can reclaim memory from the other
+  // operator or query through memory arbitration.
+  if (isPartial_ || spillConfig_ == nullptr || hasSpilled()) {
+    return;
+  }
+
+  // Test-only spill path.
+  if (spillConfig_->testSpillPct > 0 &&
+      (folly::hasher<uint64_t>()(++spillTestCounter_)) % 100 <=
+          spillConfig_->testSpillPct) {
+    spill(RowContainerIterator{});
+    return;
+  }
+
+  const uint64_t outputBufferSizeToReserve =
+      queryConfig_->preferredOutputBatchBytes() * 1.2;
+  if (pool_.maybeReserve(outputBufferSizeToReserve)) {
+    return;
+  }
+  spill(RowContainerIterator{});
 }
 
 void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
@@ -859,7 +899,7 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
     }
     VELOX_DCHECK(pool_.trackUsage());
     spiller_ = std::make_unique<Spiller>(
-        Spiller::Type::kAggregate,
+        Spiller::Type::kAggregateInput,
         rows,
         [&](folly::Range<char**> rows) { table_->erase(rows); },
         ROW(std::move(names), std::move(types)),
@@ -870,11 +910,11 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
         rows->keyTypes().size(),
         std::vector<CompareFlags>(),
         spillConfig_->filePath,
-        spillConfig_->maxFileSize,
+        std::numeric_limits<uint64_t>::max(),
         spillConfig_->writeBufferSize,
         spillConfig_->minSpillRunSize,
         spillConfig_->compressionKind,
-        Spiller::pool(),
+        memory::spillMemoryPool(),
         spillConfig_->executor);
   }
   ++(*numSpillRuns_);
@@ -882,6 +922,39 @@ void GroupingSet::spill(int64_t targetRows, int64_t targetBytes) {
   if (table_->rows()->numRows() == 0) {
     table_->clear();
   }
+}
+
+void GroupingSet::spill(const RowContainerIterator& rowIterator) {
+  VELOX_CHECK(!hasSpilled());
+
+  if (table_ == nullptr) {
+    return;
+  }
+
+  auto* rows = table_->rows();
+  auto types = rows->keyTypes();
+  for (const auto& aggregate : aggregates_) {
+    types.push_back(aggregate.intermediateType);
+  }
+  std::vector<std::string> names;
+  for (auto i = 0; i < types.size(); ++i) {
+    names.push_back(fmt::format("s{}", i));
+  }
+  VELOX_CHECK(pool_.trackUsage());
+  spiller_ = std::make_unique<Spiller>(
+      Spiller::Type::kAggregateOutput,
+      rows,
+      [&](folly::Range<char**> rows) { table_->erase(rows); },
+      ROW(std::move(names), std::move(types)),
+      spillConfig_->filePath,
+      spillConfig_->writeBufferSize,
+      spillConfig_->compressionKind,
+      memory::spillMemoryPool(),
+      spillConfig_->executor);
+
+  ++(*numSpillRuns_);
+  spiller_->spill(rowIterator);
+  table_->clear();
 }
 
 bool GroupingSet::getOutputWithSpill(
@@ -917,6 +990,12 @@ bool GroupingSet::getOutputWithSpill(
     nonSpilledRows_ = spiller_->finishSpill();
   }
 
+  // NOTE: we don't expect non-spilled rows if spilling is triggered during the
+  // aggregation output processing.
+  if (spiller_->type() == Spiller::Type::kAggregateOutput) {
+    VELOX_CHECK_EQ(nonSpilledRows_.value().size(), 0);
+  }
+
   if (nonSpilledRowIndex_ < nonSpilledRows_.value().size()) {
     const int32_t numGroups =
         numNonSpilledGroupsToExtract(maxOutputRows, maxOutputBytes);
@@ -929,7 +1008,7 @@ bool GroupingSet::getOutputWithSpill(
   }
 
   while (outputPartition_ < spiller_->state().maxPartitions()) {
-    if (!merge_) {
+    if (merge_ == nullptr) {
       merge_ = spiller_->startMerge(outputPartition_);
     }
     // NOTE: 'merge_' might be nullptr if 'outputPartition_' is empty.
@@ -955,7 +1034,7 @@ size_t GroupingSet::numNonSpilledGroupsToExtract(
   for (; numGroups < maxNumGroups; ++numGroups, ++nextRow) {
     const auto rowSize =
         nonSpilledRowContainer_->rowSize(nonSpilledRows_.value()[nextRow]);
-    if (numGroups > 0 && (totalBytes + rowSize) < maxOutputBytes) {
+    if (numGroups > 0 && (totalBytes + rowSize) >= maxOutputBytes) {
       break;
     }
     totalBytes += rowSize;

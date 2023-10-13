@@ -178,6 +178,10 @@ class TestStripeStreams : public StripeStreamsBase {
     return mockStrideIndexProvider_;
   }
 
+  int64_t stripeRows() const override {
+    VELOX_UNSUPPORTED();
+  }
+
   uint32_t rowsPerRowGroup() const override {
     VELOX_UNSUPPORTED();
   }
@@ -1547,7 +1551,7 @@ std::unique_ptr<DwrfReader> getDwrfReader(
   writer.close();
 
   std::string_view data(sinkPtr->data(), sinkPtr->size());
-  ReaderOptions readerOpts{&leafPool};
+  dwio::common::ReaderOptions readerOpts{&leafPool};
   return std::make_unique<DwrfReader>(
       readerOpts,
       std::make_unique<BufferedInput>(

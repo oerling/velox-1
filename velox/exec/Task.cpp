@@ -264,6 +264,8 @@ Task::Task(
       bufferManager_(PartitionedOutputBufferManager::getInstance()) {}
 
 Task::~Task() {
+  TestValue::adjust("facebook::velox::exec::Task::~Task", this);
+
   try {
     if (hasPartitionedOutput()) {
       if (auto bufferManager = bufferManager_.lock()) {
@@ -346,7 +348,7 @@ std::unique_ptr<memory::MemoryReclaimer> Task::createNodeReclaimer(
   // Sets memory reclaimer for the parent node memory pool on the first child
   // operator construction which has set memory reclaimer.
   return isHashJoinNode ? HashJoinMemoryReclaimer::create()
-                        : memory::MemoryReclaimer::create();
+                        : exec::MemoryReclaimer::create();
 }
 
 std::unique_ptr<memory::MemoryReclaimer> Task::createExchangeClientReclaimer()
@@ -354,7 +356,7 @@ std::unique_ptr<memory::MemoryReclaimer> Task::createExchangeClientReclaimer()
   if (pool()->reclaimer() == nullptr) {
     return nullptr;
   }
-  return DefaultMemoryReclaimer::create();
+  return exec::MemoryReclaimer::create();
 }
 
 std::unique_ptr<memory::MemoryReclaimer> Task::createTaskReclaimer() {
@@ -1775,7 +1777,13 @@ ContinueFuture Task::terminate(TaskState terminalState) {
   for (auto& [planNodeId, splits] : remainingRemoteSplits) {
     auto client = getExchangeClient(planNodeId);
     for (auto& split : splits.first) {
-      addRemoteSplit(planNodeId, split);
+      try {
+        addRemoteSplit(planNodeId, split);
+      } catch (VeloxRuntimeError& ex) {
+        LOG(WARNING)
+            << "Failed to add remaining remote splits during task termination: "
+            << ex.what();
+      }
     }
     if (splits.second) {
       client->noMoreRemoteTasks();
@@ -1954,6 +1962,21 @@ std::string Task::toString() const {
   }
 
   return out.str();
+}
+
+std::string Task::toShortJsonString() const {
+  std::lock_guard<std::mutex> l(mutex_);
+  folly::dynamic obj = folly::dynamic::object;
+  obj["shortId"] = shortId(taskId_);
+  obj["id"] = taskId_;
+  obj["state"] = taskStateString(state_);
+  obj["numRunningDrivers"] = numRunningDrivers_;
+  obj["numTotalDrivers_"] = numTotalDrivers_;
+  obj["numFinishedDrivers"] = numFinishedDrivers_;
+  obj["numThreads"] = numThreads_;
+  obj["terminateRequested_"] = std::to_string(terminateRequested_);
+  obj["pauseRequested_"] = std::to_string(pauseRequested_);
+  return folly::toPrettyJson(obj);
 }
 
 std::string Task::toJsonString() const {
@@ -2424,7 +2447,8 @@ std::unique_ptr<memory::MemoryReclaimer> Task::MemoryReclaimer::create(
 
 uint64_t Task::MemoryReclaimer::reclaim(
     memory::MemoryPool* pool,
-    uint64_t targetBytes) {
+    uint64_t targetBytes,
+    memory::MemoryReclaimer::Stats& stats) {
   auto task = ensureTask();
   if (FOLLY_UNLIKELY(task == nullptr)) {
     return 0;
@@ -2443,7 +2467,7 @@ uint64_t Task::MemoryReclaimer::reclaim(
   if (task->isCancelled()) {
     return 0;
   }
-  return memory::MemoryReclaimer::reclaim(pool, targetBytes);
+  return memory::MemoryReclaimer::reclaim(pool, targetBytes, stats);
 }
 
 void Task::MemoryReclaimer::abort(

@@ -307,6 +307,15 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
       std::vector<VectorPtr>& args,
       VectorPtr& result) const override {
     const auto& input = args[0];
+
+    if (throwOnNestedNulls_) {
+      DecodedVector decoded(*input, rows, true);
+      auto indices = decoded.indices();
+      rows.applyToSelected([&](vector_size_t i) {
+        checkNestedNulls(decoded, indices, i, throwOnNestedNulls_);
+      });
+    }
+
     if (rows.isAllSelected()) {
       result = input;
       return;
@@ -379,7 +388,7 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
     }
 
     rows.applyToSelected([&](vector_size_t i) {
-      if (checkNulls(decoded, i)) {
+      if (checkNestedNulls(decoded, indices, i, throwOnNestedNulls_)) {
         return;
       }
 
@@ -402,7 +411,7 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
     auto baseVector = decoded.base();
 
     if (decoded.isConstantMapping()) {
-      if (checkNulls(decoded, 0)) {
+      if (checkNestedNulls(decoded, indices, 0, throwOnNestedNulls_)) {
         return;
       }
 
@@ -416,7 +425,7 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
 
     auto accumulator = value<SingleValueAccumulator>(group);
     rows.applyToSelected([&](vector_size_t i) {
-      if (checkNulls(decoded, i)) {
+      if (checkNestedNulls(decoded, indices, i, throwOnNestedNulls_)) {
         return;
       }
 
@@ -425,22 +434,6 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
         accumulator->write(baseVector, indices[i], allocator_);
       }
     });
-  }
-
-  bool checkNulls(const DecodedVector& decoded, vector_size_t index) {
-    if (decoded.isNullAt(index)) {
-      return true;
-    }
-
-    if (throwOnNestedNulls_) {
-      VELOX_USER_CHECK(
-          !decoded.base()->containsNullAt(index),
-          fmt::format(
-              "{} comparison not supported for values that contain nulls",
-              mapTypeKindToName(decoded.base()->typeKind())));
-    }
-
-    return false;
   }
 
  private:

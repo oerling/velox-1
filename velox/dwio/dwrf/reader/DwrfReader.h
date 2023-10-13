@@ -92,6 +92,8 @@ class DwrfRowReader : public StrideIndexProvider,
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
     stats.skippedStrides += skippedStrides_;
+    stats.columnReaderStatistics.flattenStringDictionaryValues +=
+        columnReaderStatistics_.flattenStringDictionaryValues;
   }
 
   void resetFilterCaches() override;
@@ -197,6 +199,8 @@ class DwrfRowReader : public StrideIndexProvider,
   // filter. Causes filters to be re-evaluated against stride stats on
   // next stride instead of next stripe.
   bool recomputeStridesToSkip_{false};
+
+  dwio::common::ColumnReaderStatistics columnReaderStatistics_;
 
   // internal methods
 

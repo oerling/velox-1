@@ -165,6 +165,7 @@ std::vector<KeyNode<T>> getKeyNodes(
         DwrfParams childParams(
             stripe,
             labels,
+            params.runtimeStatistics(),
             FlatMapContext{
                 .sequence = sequence,
                 .inMapDecoder = inMapDecoder.get(),
@@ -400,8 +401,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     *result = std::make_shared<MapVector>(
         &memoryPool_,
         requestedType_->type(),
-        anyNulls_ ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
-                  : nullptr,
+        resultNulls(),
         rows.size(),
         std::move(offsets),
         std::move(sizes),
@@ -651,8 +651,7 @@ class SelectiveFlatMapReader : public SelectiveStructColumnReaderBase {
     *result = std::make_shared<MapVector>(
         &memoryPool_,
         requestedType_->type(),
-        anyNulls_ ? (returnReaderNulls_ ? nullsInReadRange_ : resultNulls_)
-                  : nullptr,
+        resultNulls(),
         rows.size(),
         std::move(offsets),
         std::move(sizes),

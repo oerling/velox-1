@@ -23,35 +23,11 @@
 
 namespace facebook::velox::functions {
 
-namespace {
-
-std::exception_ptr makeBadSubscriptError() {
-  try {
-    VELOX_USER_FAIL("Array subscript out of bounds");
-  } catch (const std::exception& e) {
-    return std::current_exception();
-  }
-}
-
-std::exception_ptr makeNegativeSubscriptError() {
-  try {
-    VELOX_USER_FAIL("Array subscript is negative.");
-  } catch (const std::exception& e) {
-    return std::current_exception();
-  }
-}
-
-const std::exception_ptr& badSubscriptError() {
-  static std::exception_ptr error = makeBadSubscriptError();
-  return error;
-}
-
-const std::exception_ptr& negativeSubscriptError() {
-  static std::exception_ptr error = makeNegativeSubscriptError();
-  return error;
-}
-
-} // namespace
+// Below functions return a stock instance of each of the possible errors in
+// SubscriptImpl
+const std::exception_ptr& zeroSubscriptError();
+const std::exception_ptr& badSubscriptError();
+const std::exception_ptr& negativeSubscriptError();
 
 /// Generic subscript/element_at implementation for both array and map data
 /// types.
@@ -217,33 +193,22 @@ class SubscriptImpl : public exec::Subscript {
     auto rawSizes = baseArray->rawSizes();
     auto rawOffsets = baseArray->rawOffsets();
 
-    SelectivityVector errorRows;
-    std::exception_ptr error;
-
     // Optimize for constant encoding case.
     if (decodedIndices->isConstantMapping()) {
-      vector_size_t adjustedIndex = -1;
       bool allFailed = false;
       // If index is invalid, capture the error and mark all rows as failed.
-      try {
-        adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(0));
-      } catch (const VeloxRuntimeError&) {
-        throw;
-      } catch (const std::exception& e) {
-        context.setErrors(rows, std::current_exception());
+      bool isZeroSubscriptError = false;
+      const auto adjustedIndex =
+          adjustIndex(decodedIndices->valueAt<I>(0), isZeroSubscriptError);
+      if (isZeroSubscriptError) {
+        context.setErrors(rows, zeroSubscriptError());
         allFailed = true;
       }
 
       if (!allFailed) {
         rows.applyToSelected([&](auto row) {
-          auto elementIndex = getIndex(
-              adjustedIndex,
-              row,
-              rawSizes,
-              rawOffsets,
-              arrayIndices,
-              errorRows,
-              error);
+          const auto elementIndex = getIndex(
+              adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
           rawIndices[row] = elementIndex;
           if (elementIndex == -1) {
             nullsBuilder.setNull(row);
@@ -252,15 +217,16 @@ class SubscriptImpl : public exec::Subscript {
       }
     } else {
       rows.applyToSelected([&](auto row) {
-        auto adjustedIndex = adjustIndex(decodedIndices->valueAt<I>(row));
-        auto elementIndex = getIndex(
-            adjustedIndex,
-            row,
-            rawSizes,
-            rawOffsets,
-            arrayIndices,
-            errorRows,
-            error);
+        const auto originalIndex = decodedIndices->valueAt<I>(row);
+        bool isZeroSubscriptError = false;
+        const auto adjustedIndex =
+            adjustIndex(originalIndex, isZeroSubscriptError);
+        if (isZeroSubscriptError) {
+          context.setError(row, zeroSubscriptError());
+          return;
+        }
+        const auto elementIndex = getIndex(
+            adjustedIndex, row, rawSizes, rawOffsets, arrayIndices, context);
         rawIndices[row] = elementIndex;
         if (elementIndex == -1) {
           nullsBuilder.setNull(row);
@@ -274,9 +240,6 @@ class SubscriptImpl : public exec::Subscript {
       return BaseVector::createNullConstant(
           baseArray->elements()->type(), rows.end(), context.pool());
     }
-    if (error) {
-      context.setErrors(errorRows, error);
-    }
 
     return BaseVector::wrapInDictionary(
         nullsBuilder.build(), indices, rows.end(), baseArray->elements());
@@ -285,12 +248,12 @@ class SubscriptImpl : public exec::Subscript {
   // Normalize indices from 1 or 0-based into always 0-based (according to
   // indexStartsAtOne template parameter - no-op if it's false).
   template <typename I>
-  vector_size_t adjustIndex(I index) const {
+  vector_size_t adjustIndex(I index, bool& isZeroSubscriptError) const {
     // If array indices start at 1.
     if constexpr (indexStartsAtOne) {
-      // If it's zero, throw.
       if (UNLIKELY(index == 0)) {
-        VELOX_USER_FAIL("SQL array indices start at 1");
+        isZeroSubscriptError = true;
+        return 0;
       }
 
       // If larger than zero, adjust it.
@@ -311,8 +274,7 @@ class SubscriptImpl : public exec::Subscript {
       const vector_size_t* rawSizes,
       const vector_size_t* rawOffsets,
       const vector_size_t* indices,
-      SelectivityVector& errorRows,
-      std::exception_ptr& error) const {
+      exec::EvalCtx& context) const {
     auto arraySize = rawSizes[indices[row]];
 
     if (index < 0) {
@@ -324,9 +286,9 @@ class SubscriptImpl : public exec::Subscript {
           index += arraySize;
         }
       } else {
-        addError(row, negativeSubscriptError(), error, errorRows);
+        context.setError(row, negativeSubscriptError());
+        return -1;
       }
-      return -1;
     }
 
     // Check if index is within bound.
@@ -335,7 +297,7 @@ class SubscriptImpl : public exec::Subscript {
       if constexpr (allowOutOfBound) {
         return -1;
       } else {
-        addError(row, badSubscriptError(), error, errorRows);
+        context.setError(row, badSubscriptError());
         return -1;
       }
     }
@@ -343,20 +305,6 @@ class SubscriptImpl : public exec::Subscript {
     // Resultant index is the sum of the offset in the input array and the
     // index.
     return rawOffsets[indices[row]] + index;
-  }
-
-  void addError(
-      vector_size_t row,
-      std::exception_ptr newError,
-      std::exception_ptr& error,
-      SelectivityVector& errorRows) const {
-    if (!error) {
-      error = newError;
-    }
-    if (errorRows.size() <= row) {
-      errorRows.resize(row + 1, false);
-    }
-    errorRows.setValid(row, true);
   }
 
   /// Decode arguments and transform result into a dictionaryVector where the
