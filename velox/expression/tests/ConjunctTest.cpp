@@ -13,7 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/dwio/common/tests/utils/BatchMaker.h"
+#include <folly/init/Init.h>
+
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
@@ -24,7 +25,6 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-using facebook::velox::test::BatchMaker;
 
 class ConjunctTest : public OperatorTestBase {};
 
@@ -73,4 +73,13 @@ TEST_F(ConjunctTest, constant) {
     assertQuery(
         plan, "select c0, c1, c2, if (c0 < 9, c1 and c2, c1 or c2) from tmp");
   }
+}
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  // Calls common init functions in the necessary order, initializing
+  // singletons, installing proper signal handlers for better debugging
+  // experience, and initialize glog and gflags.
+  folly::init(&argc, &argv);
+  return RUN_ALL_TESTS();
 }
