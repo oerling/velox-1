@@ -51,43 +51,33 @@ TEST_F(ConjunctTest, mixed) {
   // Non-null and nullable
   auto mixedOneNull = makeRowVector(
       {makeFlatVector<int32_t>(18, [](auto row) { return row; }),
-       makeFlatVector<bool>(
-           18,
-           [](auto row) { return row % 3 == 0; }),
+       makeFlatVector<bool>(18, [](auto row) { return row % 3 == 0; }),
        makeFlatVector<bool>(
            18,
            [](auto row) { return (row / 3) % 3 == 0; },
            [](auto row) { return (row / 3) % 3 == 2; })});
-  plan =
-      PlanBuilder()
-          .values({mixedOneNull})
-          .project({"c0", "c1", "c2", "if (c0 <9, c1 and c2, c1 or c2)"})
-          .planNode();
+  plan = PlanBuilder()
+             .values({mixedOneNull})
+             .project({"c0", "c1", "c2", "if (c0 <9, c1 and c2, c1 or c2)"})
+             .planNode();
   createDuckDbTable({mixedOneNull});
 
   assertQuery(
       plan, "select c0, c1, c2, if (c0 < 9, c1 and c2, c1 or c2) from tmp");
 
-
   // Both are non-null
   auto mixedNonNull = makeRowVector(
       {makeFlatVector<int32_t>(18, [](auto row) { return row; }),
-       makeFlatVector<bool>(
-           18,
-           [](auto row) { return row % 3 == 0; }),
-       makeFlatVector<bool>(
-           18,
-           [](auto row) { return (row / 3) % 3 == 0; })});
-  plan =
-      PlanBuilder()
-          .values({mixedNonNull})
-          .project({"c0", "c1", "c2", "if (c0 <9, c1 and c2, c1 or c2)"})
-          .planNode();
+       makeFlatVector<bool>(18, [](auto row) { return row % 3 == 0; }),
+       makeFlatVector<bool>(18, [](auto row) { return (row / 3) % 3 == 0; })});
+  plan = PlanBuilder()
+             .values({mixedNonNull})
+             .project({"c0", "c1", "c2", "if (c0 <9, c1 and c2, c1 or c2)"})
+             .planNode();
   createDuckDbTable({mixedNonNull});
 
   assertQuery(
       plan, "select c0, c1, c2, if (c0 < 9, c1 and c2, c1 or c2) from tmp");
-
 }
 
 TEST_F(ConjunctTest, constant) {
