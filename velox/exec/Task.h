@@ -73,6 +73,10 @@ class Task : public std::enable_shared_from_this<Task> {
     spillDirectory_ = spillDirectory;
   }
 
+  void setProfileDirectoryBase(const std::string& dir) {
+    profileDirectoryBase_ = dir;
+  }
+  
   std::string toString() const;
 
   std::string toJsonString() const;
@@ -1026,6 +1030,7 @@ class Task : public std::enable_shared_from_this<Task> {
   std::string spillDirectory_;
   // If constant profiling is on, directory to put results in. Derived from
   // 'spillDirectory_'
+  std::string profileDirectoryBase_;
   std::string profileDirectory_;
 };
 

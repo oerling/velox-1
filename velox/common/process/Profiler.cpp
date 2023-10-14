@@ -55,7 +55,8 @@ void Profiler::copyToResult(int32_t counter, const std::string& path) {
     }
     auto out = fileSystem_->openFileForWrite(target);
     out->append(std::string_view(buffer, readSize));
-    LOG(INFO) << "PROFILE: Produced result " << target;
+    out->flush();
+    LOG(INFO) << "PROFILE: Produced result " << target << " " << readSize << " bytes";
   } catch (const std::exception& e) {
     LOG(ERROR) << "PROFILE: Error opening/writing " << target << ":"
                << e.what();
@@ -79,9 +80,11 @@ void Profiler::threadFunction(std::string path) {
     std::thread systemThread([&]() {
       system(
           fmt::format(
-              "cd /tmp; perf record --pid {};"
+              "(cd /tmp; perf record --pid {};"
               "perf report --sort symbol > /tmp/perf;"
-              "sed --in-place 's/      / /' /tmp/perf; sed --in-place 's/      / /' /tmp/perf; ",
+              "sed --in-place 's/      / /' /tmp/perf;"
+	      "sed --in-place 's/      / /' /tmp/perf; date) "
+	      ">> /tmp/perftrace 2>>/tmp/perftrace2",
               pid)
               .c_str());
       copyToResult(counter, path);

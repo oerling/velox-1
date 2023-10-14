@@ -269,17 +269,6 @@ Task::Task(
 Task::~Task() {
   TestValue::adjust("facebook::velox::exec::Task::~Task", this);
 
-  try {
-    if (hasPartitionedOutput()) {
-      if (auto bufferManager = bufferManager_.lock()) {
-        bufferManager->removeTask(taskId_);
-      }
-    }
-  } catch (const std::exception& e) {
-    LOG(WARNING) << "Caught exception in Task " << taskId()
-                 << " destructor: " << e.what();
-  }
-
   removeSpillDirectoryIfExists();
 }
 
@@ -937,7 +926,7 @@ void Task::createDriversLocked(
   }
 
   // Start profiling after init of stats and before starting Drivers.
-  if (FLAGS_enable_perf && !self->spillDirectory_.empty()) {
+  if (FLAGS_enable_perf) {
     self->startProfilingLocked();
   }
 
@@ -2493,15 +2482,23 @@ void Task::MemoryReclaimer::abort(
 }
 
 void Task::startProfilingLocked() {
+  if (profileDirectoryBase_.empty()) {
+    return;
+  }
   if (profileDirectory_.empty()) {
-    profileDirectory_ = spillDirectory_;
-    const char* slash = strrchr(profileDirectory_.c_str(), '/');
-    if (!slash) {
-      LOG(ERROR) << "Spill path not set and profile enabled: "
-                 << profileDirectory_;
+    profileDirectory_ = profileDirectoryBase_ + "/velox_profile";
+    auto fs = filesystems::getFileSystem(profileDirectory_, nullptr);
+    if (!fs) {
+      LOG(ERROR) << "PROFILE: No fs for " << profileDirectory_;
       return;
     }
-    profileDirectory_.resize(slash - profileDirectory_.c_str());
+    if (!fs->exists(profileDirectory_)) {
+      try {
+	fs->mkdir(profileDirectory_);
+      } catch(const std::exception& e) {
+	LOG(ERROR) << "PROFILE: Failed to create " << profileDirectory_ << " :" << e.what();
+      }
+    }
     auto statname = fmt::format("profileDir={}", profileDirectory_);
     taskStats_.pipelineStats[0].operatorStats[0].addRuntimeStat(
         statname, RuntimeCounter(1));
