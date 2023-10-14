@@ -299,26 +299,6 @@ void ConjunctExpr::updateResult(
       }
       return;
     default: {
-#if 0
-      bits::forEachSetBit(
-          activeRows->asRange().bits(),
-          activeRows->begin(),
-          activeRows->end(),
-          [&](int32_t row) {
-            if (nulls && bits::isBitNull(nulls, row)) {
-              result->setNull(row, true);
-            } else {
-              bool isTrue = bits::isBitSet(values, row);
-              if (isAnd_ && !isTrue) {
-                result->set(row, false);
-                activeRows->setValid(row, false);
-              } else if (!isAnd_ && isTrue) {
-                result->set(row, true);
-                activeRows->setValid(row, false);
-              }
-            }
-          });
-#else
       uint64_t* resultValues = result->mutableRawValues<uint64_t>();
       uint64_t* resultNulls = nullptr;
       if (nulls || result->mayHaveNulls()) {
@@ -349,7 +329,7 @@ void ConjunctExpr::updateResult(
                   resultNulls ? resultNulls[index] : bits::kNotNull64;
               updateAnd(
                   resultValues[index],
-                  resultNulls[index],
+                  nullWord,
                   activeBits[index],
                   values[index],
                   nulls ? nulls[index] : bits::kNotNull64);
@@ -381,7 +361,7 @@ void ConjunctExpr::updateResult(
                   resultNulls ? resultNulls[index] : bits::kNotNull64;
               updateOr(
                   resultValues[index],
-                  resultNulls[index],
+                  nullWord,
                   activeBits[index],
                   values[index],
                   nulls ? nulls[index] : bits::kNotNull64);
@@ -390,7 +370,6 @@ void ConjunctExpr::updateResult(
               }
             });
       }
-#endif
       activeRows->updateBounds();
     }
   }
