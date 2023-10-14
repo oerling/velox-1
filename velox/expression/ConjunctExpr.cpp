@@ -204,7 +204,6 @@ inline void setTrueForOne(uint64_t& target, uint64_t active, uint64_t source) {
   target |= active & source;
 }
 
-  
 inline void
 setPresentForOne(uint64_t& target, uint64_t active, uint64_t source) {
   target |= active & source;
@@ -230,7 +229,7 @@ inline void updateAnd(
   active &= ~testFalse;
 }
 
-  inline void updateOr(
+inline void updateOr(
     uint64_t& resultValue,
     uint64_t& resultPresent,
     uint64_t& active,
@@ -331,7 +330,8 @@ void ConjunctExpr::updateResult(
             activeRows->begin(),
             activeRows->end(),
             [&](int32_t index, uint64_t mask) {
-              uint64_t nullWord = resultNulls ? resultNulls[index] : bits::kNotNull64;
+              uint64_t nullWord =
+                  resultNulls ? resultNulls[index] : bits::kNotNull64;
               uint64_t activeWord = activeBits[index] & mask;
               updateAnd(
                   resultValues[index],
@@ -342,10 +342,11 @@ void ConjunctExpr::updateResult(
               if (resultNulls) {
                 resultNulls[index] = nullWord;
               }
-              activeBits[index]  &= ~mask | activeWord;
+              activeBits[index] &= ~mask | activeWord;
             },
             [&](int32_t index) {
-              uint64_t nullWord = resultNulls ? resultNulls[index] : bits::kNotNull64;
+              uint64_t nullWord =
+                  resultNulls ? resultNulls[index] : bits::kNotNull64;
               updateAnd(
                   resultValues[index],
                   resultNulls[index],
@@ -361,7 +362,8 @@ void ConjunctExpr::updateResult(
             activeRows->begin(),
             activeRows->end(),
             [&](int32_t index, uint64_t mask) {
-              uint64_t nullWord = resultNulls ? resultNulls[index] : bits::kNotNull64;
+              uint64_t nullWord =
+                  resultNulls ? resultNulls[index] : bits::kNotNull64;
               uint64_t activeWord = activeBits[index] & mask;
               updateOr(
                   resultValues[index],
@@ -372,10 +374,11 @@ void ConjunctExpr::updateResult(
               if (resultNulls) {
                 resultNulls[index] = nullWord;
               }
-              activeBits[index]  &= ~mask | activeWord;
+              activeBits[index] &= ~mask | activeWord;
             },
             [&](int32_t index) {
-              uint64_t nullWord = resultNulls ? resultNulls[index] : bits::kNotNull64;
+              uint64_t nullWord =
+                  resultNulls ? resultNulls[index] : bits::kNotNull64;
               updateOr(
                   resultValues[index],
                   resultNulls[index],

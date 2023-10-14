@@ -25,7 +25,6 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-
 class ConjunctTest : public OperatorTestBase {};
 
 TEST_F(ConjunctTest, mixed) {
@@ -51,7 +50,6 @@ TEST_F(ConjunctTest, mixed) {
 }
 
 TEST_F(ConjunctTest, constant) {
-
   for (auto counter = 0; counter < 9; ++counter) {
     auto allSame = makeRowVector(
         {makeFlatVector<int32_t>(18, [&](auto row) { return row; }),
