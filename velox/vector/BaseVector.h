@@ -39,6 +39,10 @@
 #include "velox/vector/VectorEncoding.h"
 #include "velox/vector/VectorUtil.h"
 
+#ifndef NDEBUG
+#define NDEBUG
+#endif
+
 namespace facebook {
 namespace velox {
 

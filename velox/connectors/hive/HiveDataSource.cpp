@@ -826,7 +826,10 @@ HiveDataSource::createBufferedInput(
       fileHandle.file,
       readerOpts.getMemoryPool(),
       dwio::common::MetricsLog::voidLog(),
-      ioStats_.get());
+      ioStats_.get(),
+      readerOpts.maxCoalesceDistance(),
+      std::nullopt,
+      &readerOpts);
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {

@@ -18,6 +18,7 @@
 
 #include "velox/common/memory/AllocationPool.h"
 #include "velox/dwio/common/SeekableInputStream.h"
+#include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/StreamIdentifier.h"
 
 // Use WS VRead API to load
@@ -35,7 +36,8 @@ class BufferedInput {
       const MetricsLogPtr& metricsLog = MetricsLog::voidLog(),
       IoStatistics* FOLLY_NULLABLE stats = nullptr,
       uint64_t maxMergeDistance = kMaxMergeDistance,
-      std::optional<bool> wsVRLoad = std::nullopt)
+      std::optional<bool> wsVRLoad = std::nullopt,
+      const io::ReaderOptions* options = nullptr)
       : input_{std::make_shared<ReadFileInputStream>(
             std::move(readFile),
             metricsLog,
@@ -43,17 +45,22 @@ class BufferedInput {
         pool_{pool},
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
+	loadQuantum_(options ? options->loadQuantum() : 0),
+	options_(options),
         allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(
       std::shared_ptr<ReadFileInputStream> input,
       memory::MemoryPool& pool,
       uint64_t maxMergeDistance = kMaxMergeDistance,
-      std::optional<bool> wsVRLoad = std::nullopt)
+      std::optional<bool> wsVRLoad = std::nullopt,
+      const io::ReaderOptions* options = nullptr)
       : input_(std::move(input)),
         pool_(pool),
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
+	loadQuantum_(options ? options->loadQuantum() : 0),
+	options_(options),
         allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(BufferedInput&&) = default;
@@ -122,7 +129,7 @@ class BufferedInput {
   // Create a new (clean) instance of BufferedInput sharing the same
   // underlying file and memory pool.  The enqueued regions are NOT copied.
   virtual std::unique_ptr<BufferedInput> clone() const {
-    return std::make_unique<BufferedInput>(input_, pool_);
+    return std::make_unique<BufferedInput>(input_, pool_, maxMergeDistance_, wsVRLoad_, options_);
   }
 
   std::unique_ptr<SeekableInputStream> loadCompleteFile() {
@@ -155,6 +162,8 @@ class BufferedInput {
  private:
   uint64_t maxMergeDistance_;
   std::optional<bool> wsVRLoad_;
+  const int32_t loadQuantum_;
+  const io::ReaderOptions* options_;
   std::unique_ptr<memory::AllocationPool> allocPool_;
 
   // Regions enqueued for reading

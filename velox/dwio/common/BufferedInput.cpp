@@ -83,6 +83,16 @@ std::unique_ptr<SeekableInputStream> BufferedInput::enqueue(
     return ret;
   }
 
+  if (loadQuantum_ && region.length > loadQuantum_ * 1.5) {
+    return std::make_unique<SeekableFileInputStream>(
+        input_,
+        region.offset,
+        region.length,
+        pool_,
+        dwio::common::LogType::FILE,
+        loadQuantum_);
+  }
+
   // push to region pool and give the caller the callback
   regions_.push_back(region);
   return std::make_unique<SeekableArrayInputStream>(
