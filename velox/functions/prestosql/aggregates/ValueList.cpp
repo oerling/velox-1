@@ -68,10 +68,9 @@ void ValueList::appendNonNull(
   bytes_ += stream.size();
 
   // Leave space up to the size appended so far, at least 24 but no more
-      // than 1024.
-          dataCurrent_ =
-              allocator->finishWrite(stream, std::clamp(bytes_, 24, 1024))
-                  .second;
+  // than 1024.
+  dataCurrent_ =
+      allocator->finishWrite(stream, std::clamp(bytes_, 24, 1024)).second;
 }
 
 void ValueList::appendValue(
