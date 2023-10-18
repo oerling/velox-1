@@ -560,7 +560,7 @@ class PlanBuilder {
       core::PartitionFunctionSpecPtr partitionFunctionSpec,
       const std::vector<std::string>& outputLayout = {});
 
-  /// Add a PartitionedOutputNode to broadcast the input data.
+  /// Adds a PartitionedOutputNode to broadcast the input data.
   ///
   /// @param outputLayout Optional output layout in case it is different then
   /// the input. Output columns may appear in different order from the input,
@@ -569,7 +569,11 @@ class PlanBuilder {
   PlanBuilder& partitionedOutputBroadcast(
       const std::vector<std::string>& outputLayout = {});
 
-  /// Add a LocalPartitionNode to hash-partition the input on the specified
+  /// Adds a PartitionedOutputNode to put data into arbitrary buffer.
+  PlanBuilder& partitionedOutputArbitrary(
+      const std::vector<std::string>& outputLayout = {});
+
+  /// Adds a LocalPartitionNode to hash-partition the input on the specified
   /// keys using exec::HashPartitionFunction. Number of partitions is determined
   /// at runtime based on parallelism of the downstream pipeline.
   ///
@@ -722,6 +726,11 @@ class PlanBuilder {
   ///  rows between a + 10 preceding and 10 following)"
   PlanBuilder& window(const std::vector<std::string>& windowFunctions);
 
+  /// Adds WindowNode to compute window functions over pre-sorted inputs.
+  /// All functions must use same partition by and sorting keys and input must
+  /// be already sorted on these.
+  PlanBuilder& streamingWindow(const std::vector<std::string>& windowFunctions);
+
   /// Add a RowNumberNode to compute single row_number window function with an
   /// optional limit and no sorting.
   PlanBuilder& rowNumber(
@@ -850,6 +859,12 @@ class PlanBuilder {
       core::AggregationNode::Step step,
       bool ignoreNullKeys,
       const std::vector<std::vector<TypePtr>>& rawInputTypes);
+
+  /// Create WindowNode based on whether input is sorted and then compute the
+  /// window functions.
+  PlanBuilder& window(
+      const std::vector<std::string>& windowFunctions,
+      bool inputSorted);
 
  protected:
   core::PlanNodePtr planNode_;

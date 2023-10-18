@@ -500,8 +500,6 @@ class AggregationNode : public PlanNode {
     /// Raw input types used to properly identify aggregate function. These
     /// might be different from the input types specified in 'call' when
     /// aggregation step is kIntermediate or kFinal.
-    ///
-    /// Note: not used yet.
     std::vector<TypePtr> rawInputTypes;
 
     /// Optional name of input column to use as a mask. Column type must be
@@ -725,17 +723,6 @@ class TableWriteMergeNode : public PlanNode {
   /// 'outputType' specifies the type to store the metadata of table write
   /// output which contains the following columns: 'numWrittenRows', 'fragment'
   /// and 'tableCommitContext'.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  TableWriteMergeNode(
-      const PlanNodeId& id,
-      RowTypePtr outputType,
-      PlanNodePtr source)
-      : PlanNode(id),
-        aggregationNode_(nullptr),
-        sources_{std::move(source)},
-        outputType_(std::move(outputType)) {}
-#endif
-
   TableWriteMergeNode(
       const PlanNodeId& id,
       RowTypePtr outputType,
@@ -791,25 +778,6 @@ class GroupIdNode : public PlanNode {
 
     folly::dynamic serialize() const;
   };
-
-  /// @param id Plan node ID.
-  /// @param groupingSets A list of grouping key sets. Grouping keys within the
-  /// set must be unique, but grouping keys across sets may repeat.
-  /// @param groupingKeyInfos The names and order of the grouping keys in the
-  /// output.
-  /// @param aggregationInputs Columns that contain inputs to the aggregate
-  /// functions.
-  /// @param groupIdName Name of the column that will contain the grouping set
-  /// ID (a zero based integer).
-  /// @param source Input plan node.
-  /// NOTE: THIS FUNCTION IS DEPRECATED. PLEASE DO NOT USE.
-  GroupIdNode(
-      PlanNodeId id,
-      std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets,
-      std::vector<GroupingKeyInfo> groupingKeyInfos,
-      std::vector<FieldAccessTypedExprPtr> aggregationInputs,
-      std::string groupIdName,
-      PlanNodePtr source);
 
   /// @param id Plan node ID.
   /// @param groupingSets A list of grouping key sets. Grouping keys within the
@@ -2070,7 +2038,28 @@ class WindowNode : public PlanNode {
       std::vector<SortOrder> sortingOrders,
       std::vector<std::string> windowColumnNames,
       std::vector<Function> windowFunctions,
+      bool inputsSorted,
       PlanNodePtr source);
+
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
+  WindowNode(
+      PlanNodeId id,
+      std::vector<FieldAccessTypedExprPtr> partitionKeys,
+      std::vector<FieldAccessTypedExprPtr> sortingKeys,
+      std::vector<SortOrder> sortingOrders,
+      std::vector<std::string> windowColumnNames,
+      std::vector<Function> windowFunctions,
+      PlanNodePtr source)
+      : WindowNode(
+            id,
+            partitionKeys,
+            sortingKeys,
+            sortingOrders,
+            windowColumnNames,
+            windowFunctions,
+            false,
+            source){};
+#endif
 
   const std::vector<PlanNodePtr>& sources() const override {
     return sources_;
@@ -2098,6 +2087,10 @@ class WindowNode : public PlanNode {
     return windowFunctions_;
   }
 
+  bool inputsSorted() const {
+    return inputsSorted_;
+  }
+
   std::string_view name() const override {
     return "Window";
   }
@@ -2115,6 +2108,8 @@ class WindowNode : public PlanNode {
   const std::vector<SortOrder> sortingOrders_;
 
   const std::vector<Function> windowFunctions_;
+
+  const bool inputsSorted_;
 
   const std::vector<PlanNodePtr> sources_;
 
@@ -2147,6 +2142,10 @@ class RowNumberNode : public PlanNode {
 
   const RowTypePtr& outputType() const override {
     return outputType_;
+  }
+
+  bool canSpill(const QueryConfig& queryConfig) const override {
+    return !partitionKeys_.empty() && queryConfig.rowNumberSpillEnabled();
   }
 
   const std::vector<FieldAccessTypedExprPtr>& partitionKeys() const {

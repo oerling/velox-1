@@ -517,14 +517,13 @@ core::PlanNodePtr PlanBuilder::createIntermediateOrFinalAggregation(
     auto name = partialAggregates[i].call->name();
     auto rawInputs = partialAggregates[i].call->inputs();
 
-    std::vector<TypePtr> rawInputTypes;
+    core::AggregationNode::Aggregate aggregate;
     for (auto& rawInput : rawInputs) {
-      rawInputTypes.push_back(rawInput->type());
+      aggregate.rawInputTypes.push_back(rawInput->type());
     }
 
-    core::AggregationNode::Aggregate aggregate;
-
-    auto type = resolveAggregateType(name, step, rawInputTypes, false);
+    auto type =
+        resolveAggregateType(name, step, aggregate.rawInputTypes, false);
     std::vector<core::TypedExprPtr> inputs = {field(numGroupingKeys + i)};
 
     // Add lambda inputs.
@@ -643,8 +642,19 @@ PlanBuilder::AggregatesAndNames PlanBuilder::createAggregateExpressionsAndNames(
     auto untypedExpr = duckdb::parseAggregateExpr(aggregate, options);
 
     core::AggregationNode::Aggregate agg;
+
     agg.call = std::dynamic_pointer_cast<const core::CallTypedExpr>(
         inferTypes(untypedExpr.expr));
+
+    if (step == core::AggregationNode::Step::kPartial ||
+        step == core::AggregationNode::Step::kSingle) {
+      for (const auto& input : agg.call->inputs()) {
+        agg.rawInputTypes.push_back(input->type());
+      }
+    } else {
+      agg.rawInputTypes = rawInputTypes[i];
+    }
+
     if (untypedExpr.maskExpr != nullptr) {
       auto maskExpr =
           std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
@@ -975,6 +985,16 @@ PlanBuilder& PlanBuilder::partitionedOutputBroadcast(
       : extract(planNode_->outputType(), outputLayout);
   planNode_ = core::PartitionedOutputNode::broadcast(
       nextPlanNodeId(), 1, outputType, planNode_);
+  return *this;
+}
+
+PlanBuilder& PlanBuilder::partitionedOutputArbitrary(
+    const std::vector<std::string>& outputLayout) {
+  auto outputType = outputLayout.empty()
+      ? planNode_->outputType()
+      : extract(planNode_->outputType(), outputLayout);
+  planNode_ = core::PartitionedOutputNode::arbitrary(
+      nextPlanNodeId(), outputType, planNode_);
   return *this;
 }
 
@@ -1439,7 +1459,8 @@ bool equalSortOrderList(
 } // namespace
 
 PlanBuilder& PlanBuilder::window(
-    const std::vector<std::string>& windowFunctions) {
+    const std::vector<std::string>& windowFunctions,
+    bool inputSorted) {
   VELOX_CHECK_GT(
       windowFunctions.size(),
       0,
@@ -1520,8 +1541,19 @@ PlanBuilder& PlanBuilder::window(
       sortingOrders,
       windowNames,
       windowNodeFunctions,
+      inputSorted,
       planNode_);
   return *this;
+}
+
+PlanBuilder& PlanBuilder::window(
+    const std::vector<std::string>& windowFunctions) {
+  return window(windowFunctions, false);
+}
+
+PlanBuilder& PlanBuilder::streamingWindow(
+    const std::vector<std::string>& windowFunctions) {
+  return window(windowFunctions, true);
 }
 
 PlanBuilder& PlanBuilder::rowNumber(

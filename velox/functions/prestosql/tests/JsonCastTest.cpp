@@ -383,6 +383,29 @@ TEST_F(JsonCastTest, fromArray) {
   testCast(ARRAY(BIGINT()), JSON(), allNullArray, allNullExpected);
 }
 
+TEST_F(JsonCastTest, fromAllNullOrEmptyArrayOfRows) {
+  // ARRAY(CONSTANT(ROW)) with all null or empty elements.
+  auto elements =
+      BaseVector::createNullConstant(ROW({"c0"}, {VARCHAR()}), 0, pool());
+  auto data = makeArrayVector({0, 0, 0, 0}, elements, {0, 2});
+
+  auto expected = makeNullableFlatVector<JsonNativeType>(
+      {std::nullopt, "[]", std::nullopt, "[]"}, JSON());
+  testCast(data->type(), JSON(), data, expected);
+}
+
+TEST_F(JsonCastTest, fromAllNullOrEmptyMapOfRows) {
+  // MAP(..., CONSTANT(ROW)) with all null or empty elements.
+  auto keys = makeNullConstant(TypeKind::INTEGER, 0);
+  auto values =
+      BaseVector::createNullConstant(ROW({"c0"}, {VARCHAR()}), 0, pool());
+  auto data = makeMapVector({0, 0, 0, 0}, keys, values, {0, 2});
+
+  auto expected = makeNullableFlatVector<JsonNativeType>(
+      {std::nullopt, "{}", std::nullopt, "{}"}, JSON());
+  testCast(data->type(), JSON(), data, expected);
+}
+
 TEST_F(JsonCastTest, fromMap) {
   // Tests map with string keys.
   std::vector<std::vector<Pair<StringView, int64_t>>> mapStringKey{
@@ -999,6 +1022,28 @@ TEST_F(JsonCastTest, toRow) {
   testCast(
       JSON(),
       ROW({"k1", "k2", "k3"}, {BIGINT(), VARCHAR(), BOOLEAN()}),
+      map,
+      makeRowVector({child4, child5, child6}));
+
+  // Use a mix of lower case and upper case JSON keys.
+  map = makeNullableFlatVector<JsonNativeType>(
+      {R"({"K1":123,"k2":"abc","k3":true})"_sv,
+       R"({"K2":"abc","k3":true,"k1":123})"_sv,
+       R"({"k1":123,"k3":true,"K1":456})"_sv,
+       R"({"k4":123,"K5":"abc","k3":false})"_sv,
+       R"({"k1":null,"K3":false})"_sv,
+       R"({"k1":null,"k3":null,"K2":null})"_sv},
+      JSON());
+  testCast(
+      JSON(),
+      ROW({"k1", "k2", "k3"}, {BIGINT(), VARCHAR(), BOOLEAN()}),
+      map,
+      makeRowVector({child4, child5, child6}));
+
+  // Use a mix of lower case and upper case field names in target ROW type.
+  testCast(
+      JSON(),
+      ROW({"K1", "k2", "K3"}, {BIGINT(), VARCHAR(), BOOLEAN()}),
       map,
       makeRowVector({child4, child5, child6}));
 
