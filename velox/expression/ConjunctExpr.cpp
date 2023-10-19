@@ -196,21 +196,22 @@ void ConjunctExpr::maybeReorderInputs() {
 namespace {
 // helper functions for conjuncts operating on values, nulls and active rows a
 // word at a time.
-inline void setFalseForOne(uint64_t& target, uint64_t active, uint64_t source) {
+inline void
+setFalseForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target &= ~active | ~source;
 }
 
-inline void setTrueForOne(uint64_t& target, uint64_t active, uint64_t source) {
+inline void setTrueForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target |= active & source;
 }
 
 inline void
-setPresentForOne(uint64_t& target, uint64_t active, uint64_t source) {
+setPresentForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target |= active & source;
 }
 
 inline void
-setNonPresentForOne(uint64_t& target, uint64_t active, uint64_t source) {
+setNonPresentForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target &= ~active | ~source;
 }
 
@@ -221,11 +222,11 @@ inline void updateAnd(
     uint64_t testValue,
     uint64_t testPresent) {
   auto testFalse = ~testValue & testPresent;
-  setFalseForOne(resultValue, active, testFalse);
-  setPresentForOne(resultPresent, active, testFalse);
+  setFalseForOne(active, testFalse, resultValue);
+  setPresentForOne(active, testFalse, resultPresent);
   auto resultTrue = resultValue & resultPresent;
   setNonPresentForOne(
-      resultPresent, active, resultPresent & resultTrue & ~testPresent);
+      active, resultPresent & resultTrue & ~testPresent, resultPresent);
   active &= ~testFalse;
 }
 
@@ -236,11 +237,11 @@ inline void updateOr(
     uint64_t testValue,
     uint64_t testPresent) {
   auto testTrue = testValue & testPresent;
-  setTrueForOne(resultValue, active, testTrue);
-  setPresentForOne(resultPresent, active, testTrue);
+  setTrueForOne(active, testTrue, resultValue);
+  setPresentForOne(active, testTrue, resultPresent);
   auto resultFalse = ~resultValue & resultPresent;
   setNonPresentForOne(
-      resultPresent, active, resultPresent & resultFalse & ~testPresent);
+      active, resultPresent & resultFalse & ~testPresent, resultPresent);
   active &= ~testTrue;
 }
 
@@ -304,7 +305,7 @@ void ConjunctExpr::updateResult(
       if (nulls || result->mayHaveNulls()) {
         resultNulls = result->mutableRawNulls();
       }
-      auto activeBits = activeRows->asMutableRange().bits();
+      auto* activeBits = activeRows->asMutableRange().bits();
       if (isAnd_) {
         bits::forEachWord(
             activeRows->begin(),
