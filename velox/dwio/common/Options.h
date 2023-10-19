@@ -127,6 +127,11 @@ class RowReaderOptions {
   std::function<void(
       facebook::velox::dwio::common::flatmap::FlatMapKeySelectionStats)>
       keySelectionCallback_;
+
+  // Function to track how much time we spend waiting on IO before reading rows
+  // (in dwrf row reader). todo: encapsulate this and keySelectionCallBack_ in a
+  // struct
+  std::function<void(uint64_t)> blockedOnIoCallback_;
   bool eagerFirstStripeLoad = true;
   uint64_t skipRows_ = 0;
 
@@ -331,6 +336,15 @@ class RowReaderOptions {
     return keySelectionCallback_;
   }
 
+  void setBlockedOnIoCallback(
+      std::function<void(int64_t)> blockedOnIoCallback) {
+    blockedOnIoCallback_ = std::move(blockedOnIoCallback);
+  }
+
+  const std::function<void(int64_t)> getBlockedOnIoCallback() const {
+    return blockedOnIoCallback_;
+  }
+
   void setSkipRows(uint64_t skipRows) {
     skipRows_ = skipRows;
   }
@@ -530,6 +544,8 @@ struct WriterOptions {
   velox::memory::MemoryPool* memoryPool;
   velox::memory::SetMemoryReclaimer setMemoryReclaimer{nullptr};
   std::optional<velox::common::CompressionKind> compressionKind;
+  std::optional<uint64_t> maxStripeSize{std::nullopt};
+  std::optional<uint64_t> maxDictionaryMemory{std::nullopt};
 };
 
 } // namespace common

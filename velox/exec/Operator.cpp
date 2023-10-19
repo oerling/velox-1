@@ -206,26 +206,26 @@ RowVectorPtr Operator::fillOutput(
     wrapResults = false;
   }
 
-  auto output{std::make_shared<RowVector>(
-      operatorCtx_->pool(),
-      outputType_,
-      nullptr,
-      size,
-      std::vector<VectorPtr>(outputType_->size(), nullptr))};
-  output->resize(size);
+  std::vector<VectorPtr> projectedChildren(outputType_->size());
   projectChildren(
-      output,
+      projectedChildren,
       input_,
       identityProjections_,
       size,
       wrapResults ? mapping : nullptr);
   projectChildren(
-      output,
+      projectedChildren,
       results_,
       resultProjections_,
       size,
       wrapResults ? mapping : nullptr);
-  return output;
+
+  return std::make_shared<RowVector>(
+      operatorCtx_->pool(),
+      outputType_,
+      nullptr,
+      size,
+      std::move(projectedChildren));
 }
 
 OperatorStats Operator::stats(bool clear) {
@@ -342,6 +342,15 @@ void Operator::recordSpillStats(const SpillStats& spillStats) {
     lockedStats->addRuntimeStat(
         "spillRuns", RuntimeCounter{static_cast<int64_t>(numSpillRuns_)});
     updateGlobalSpillRunStats(numSpillRuns_);
+  }
+
+  if (spillStats.spillMaxLevelExceededCount != 0) {
+    lockedStats->addRuntimeStat(
+        "exceededMaxSpillLevel",
+        RuntimeCounter{
+            static_cast<int64_t>(spillStats.spillMaxLevelExceededCount)});
+    updateGlobalMaxSpillLevelExceededCount(
+        spillStats.spillMaxLevelExceededCount);
   }
 }
 
