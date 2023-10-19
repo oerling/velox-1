@@ -33,7 +33,7 @@ class Profiler {
   static bool isRunning();
 
  private:
-  static void copyToResult(int32_t counter, const std::string& path);
+  static void copyToResult(int32_t counter, const std::string& path, const std::string* result = nullptr);
   static void makeProfileDir(std::string path);
   static void threadFunction(std::string path);
 

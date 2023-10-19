@@ -30,8 +30,17 @@
 
 namespace facebook::velox::process {
 
-int32_t
-startCmd(std::string command, std::vector<std::string> args, int32_t& fd) {
+int32_t startCmd(
+    std::string command,
+    std::vector<std::string> args,
+    int32_t& fd,
+    const char* dir = nullptr) {
+  if (dir) {
+    if (::chdir(dir) < 0) {
+      LOG(ERROR) << "Failed to cd to " << dir;
+    }
+  }
+
   std::vector<char*> argv;
   argv.push_back(const_cast<char*>(command.c_str()));
   for (auto& a : args) {
@@ -89,9 +98,12 @@ void waitCmd(int32_t pid, int32_t fd, std::string* result = nullptr) {
   }
 }
 
-void execCmd(const std::string& cmd, std::vector<std::string> args) {
+void execCmd(
+    const std::string& cmd,
+    std::vector<std::string> args,
+    const char* dir = nullptr) {
   int32_t fd;
-  auto pid = startCmd(cmd, args, fd);
+  auto pid = startCmd(cmd, args, fd, dir);
   if (!pid) {
     LOG(ERROR) << "PROFILE: Error in exec of " << cmd;
     return;
@@ -107,26 +119,28 @@ bool Profiler::isSleeping_;
 bool Profiler::shouldStop_;
 folly::Promise<bool> Profiler::sleepPromise_;
 
-  void Profiler::copyToResult(int32_t counter, const std::string& path, std::string* data = nullptr) {
-    char* buffer;
-    int32_t resultSize;
-    std::string temp;
-    if (result) {
-      buffer = result->data();
-      resultSize = std::min<int32_t>(result->size(), 400000);
-    } else {
-      int32_t fd = open("/tmp/perf", O_RDONLY);
-      if (fd < 0) {
-	return;
-      }
-      auto bufferSize = 400000;
-      temp.resize(400000);
-      buffer = temp.data();
-      resultSize = ::read(fd, buffer, bufferSize);
-      close(fd);
-      auto target = fmt::format("{}/prof-{}", path, counter);
+void Profiler::copyToResult(
+    int32_t counter,
+    const std::string& path,
+    const std::string* data) {
+  char* buffer;
+  int32_t resultSize;
+  std::string temp;
+  if (data) {
+    buffer = const_cast<char*>(data->data());
+    resultSize = std::min<int32_t>(data->size(), 400000);
+  } else {
+    int32_t fd = open("/tmp/perf", O_RDONLY);
+    if (fd < 0) {
+      return;
     }
+    auto bufferSize = 400000;
+    temp.resize(400000);
+    buffer = temp.data();
+    resultSize = ::read(fd, buffer, bufferSize);
+    close(fd);
   }
+  auto target = fmt::format("{}/prof-{}", path, counter);
   try {
     try {
       fileSystem_->remove(target);
@@ -134,7 +148,7 @@ folly::Promise<bool> Profiler::sleepPromise_;
       // ignore
     }
     auto out = fileSystem_->openFileForWrite(target);
-    out->append(std::string_view(buffer, readSize));
+    out->append(std::string_view(buffer, resultSize));
     out->flush();
     LOG(INFO) << "PROFILE: Produced result " << target << " " << resultSize
               << " bytes";
@@ -157,6 +171,7 @@ void Profiler::threadFunction(std::string path) {
   const int32_t pid = getpid();
   makeProfileDir(path);
   for (int32_t counter = 0;; ++counter) {
+    int32_t perfPid = 0;
     std::thread systemThread([&]() {
 #if 0
       system(
@@ -168,19 +183,21 @@ void Profiler::threadFunction(std::string path) {
 	      ">> /tmp/perftrace 2>>/tmp/perftrace2",
               pid)
               .c_str());
+      copyToResult(counter, path);
+
 #else
       int32_t fd;
-      perfPid =
-          startCmd("perf", {"record", "--pid", fmt::format("{}", pid)}, fd);
+      perfPid = startCmd(
+          "perf", {"record", "--pid", fmt::format("{}", pid)}, fd, "/logs");
       waitCmd(perfPid, fd);
       int32_t reportFd;
       auto reportPid =
-          startCmd("perf", {"report", "--sort", "symbol"}, reportFd);
+          startCmd("perf", {"report", "--sort", "symbol"}, reportFd, "/logs");
       std::string report;
-      waitCmd(reportPid, reportFd, report);
+      waitCmd(reportPid, reportFd, &report);
+      copyToResult(counter, "", &report);
 
 #endif
-      copyToResult(counter, path);
     });
     folly::SemiFuture<bool> sleepFuture(false);
     {
@@ -202,7 +219,8 @@ void Profiler::threadFunction(std::string path) {
       std::lock_guard<std::mutex> l(profileMutex_);
       isSleeping_ = false;
     }
-    system("killall -2 perf");
+    LOG(INFO) << "Signalling perf at " << perfPid;
+    system(fmt::format("kill -2 {}", perfPid).c_str());
     systemThread.join();
     if (shouldStop_) {
       return;
