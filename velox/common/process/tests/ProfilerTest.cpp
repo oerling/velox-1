@@ -35,7 +35,7 @@ TEST(ProfilerTest, basic) {
   return;
 #endif
   filesystems::registerLocalFileSystem();
-  Profiler::start("profilertest");
+  Profiler::start("/tmp/profilertest");
   std::vector<std::thread> threads;
   threads.reserve(kNumThreads);
   std::atomic<int32_t> sum = 0;

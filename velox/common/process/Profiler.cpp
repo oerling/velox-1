@@ -28,12 +28,19 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+DEFINE_string(profile_tmp_dir, "/tmp", "Writable temp for perf.data");
+
 namespace facebook::velox::process {
+
+constexpr int32_t kErrorToStdout = -2;
+constexpr int32_t kMakeErrorPipe = -3;
 
 int32_t startCmd(
     std::string command,
     std::vector<std::string> args,
-    int32_t& fd,
+    int32_t inFd,
+    int32_t& outFd,
+    int32_t& errorFdInOut,
     const char* dir = nullptr) {
   if (dir) {
     if (::chdir(dir) < 0) {
@@ -49,7 +56,13 @@ int32_t startCmd(
   argv.push_back(nullptr);
 
   int fds[2];
+  int errorFds[2];
 
+  if (errorFdInOut == kMakeErrorPipe) {
+    if (pipe(errorFds) < 0) {
+      LOG(FATAL) << "Failed to make error pipe";
+    }
+  }
   if (pipe(fds) == -1) {
     LOG(ERROR) << "Failed to make a pipe";
     return 0;
@@ -60,13 +73,24 @@ int32_t startCmd(
     return 0;
   } else if (pid == 0) {
     // This code runs in the child process.
-    close(fds[0]);
+    if (inFd >= 0) {
+      if (dup2(inFd, STDIN_FILENO) < 0) {
+        LOG(FATAL) << "Failed dup2 for input";
+      }
+    } else {
+      close(fds[0]);
+    }
+    if (errorFdInOut == kMakeErrorPipe) {
+      close(errorFds[0]);
+    }
     int outputFd = fds[1];
-    // Replace the child's stdout and stderr handles with the log file handle:
     if (dup2(outputFd, STDOUT_FILENO) < 0) {
       LOG(FATAL) << "Failed dup2";
     }
-    if (dup2(outputFd, STDERR_FILENO) < 0) {
+    int32_t errorFd = errorFdInOut == kMakeErrorPipe ? errorFds[1]
+        : errorFdInOut == kErrorToStdout             ? fds[1]
+                                                     : errorFdInOut;
+    if (dup2(errorFd, STDERR_FILENO) < 0) {
       LOG(FATAL) << "Failed dup";
       std::exit(1);
     }
@@ -79,21 +103,56 @@ int32_t startCmd(
     std::exit(0);
   }
   close(fds[1]);
-  fd = fds[0];
+  if (errorFdInOut == kMakeErrorPipe) {
+    close(errorFds[1]);
+    errorFdInOut = errorFds[0];
+  }
+  outFd = fds[0];
   return pid;
 }
 
-void waitCmd(int32_t pid, int32_t fd, std::string* result = nullptr) {
+void waitCmd(
+    int32_t pid,
+    int32_t fd,
+    int32_t errorFd,
+    std::string* result = nullptr,
+    std::string* error = nullptr) {
   char buffer[10000];
-  while (auto bytes = read(fd, buffer, sizeof(buffer))) {
-    if (bytes < 0) {
-      LOG(INFO) << "PROFILE: Error reading child";
-      break;
+  for (;;) {
+    if (fd >= 0) {
+      int32_t bytes = read(fd, buffer, sizeof(buffer));
+      if (bytes <= 0) {
+        if (bytes < 0) {
+          LOG(INFO) << "PROFILE: Error reading child";
+        }
+        close(fd);
+        fd = -1;
+      } else {
+        if (result) {
+          *result += std::string(buffer, bytes);
+        } else {
+          LOG(INFO) << "PROFILE: " << std::string(buffer, bytes);
+        }
+      }
     }
-    if (result) {
-      *result += std::string(buffer, bytes);
-    } else {
-      LOG(INFO) << "PROFILE: " << std::string(buffer, bytes);
+    if (errorFd >= 0) {
+      int32_t bytes = read(errorFd, buffer, sizeof(buffer));
+      if (bytes <= 0) {
+        if (bytes < 0) {
+          LOG(INFO) << "PROFILE: Error reading child";
+        }
+        close(errorFd);
+        errorFd = -1;
+      } else {
+        if (error) {
+          *error += std::string(buffer, bytes);
+        } else {
+          LOG(INFO) << "PROFILE: stderr:" << std::string(buffer, bytes);
+        }
+      }
+    }
+    if (fd < 0 && errorFd < 0) {
+      break;
     }
   }
 }
@@ -103,12 +162,13 @@ void execCmd(
     std::vector<std::string> args,
     const char* dir = nullptr) {
   int32_t fd;
-  auto pid = startCmd(cmd, args, fd, dir);
+  int32_t errorFd = kErrorToStdout;
+  auto pid = startCmd(cmd, args, -1, fd, errorFd, dir);
   if (!pid) {
     LOG(ERROR) << "PROFILE: Error in exec of " << cmd;
     return;
   }
-  waitCmd(pid, fd);
+  waitCmd(pid, fd, -1);
 }
 
 bool Profiler::profileStarted_;
@@ -187,15 +247,28 @@ void Profiler::threadFunction(std::string path) {
 
 #else
       int32_t fd;
+      int32_t errorFd = kMakeErrorPipe;
+      auto temp = FLAGS_profile_tmp_dir;
       perfPid = startCmd(
-          "perf", {"record", "--pid", fmt::format("{}", pid)}, fd, "/logs");
-      waitCmd(perfPid, fd);
+          "perf",
+          {"record", "--pid", fmt::format("{}", pid), "-m/--mmap_pages=100"},
+          -1,
+          fd,
+          errorFd,
+          temp.c_str());
       int32_t reportFd;
-      auto reportPid =
-          startCmd("perf", {"report", "--sort", "symbol"}, reportFd, "/logs");
+      auto reportPid = startCmd(
+          "perf",
+          {"report", "--sort", "symbol"},
+          fd,
+          reportFd,
+          errorFd,
+          temp.c_str());
       std::string report;
-      waitCmd(reportPid, reportFd, &report);
-      copyToResult(counter, "", &report);
+      std::string error;
+      waitCmd(reportPid, reportFd, errorFd, &report, &error);
+      LOG(INFO) << "PROFILE: " << error;
+      copyToResult(counter, path, &report);
 
 #endif
     });
