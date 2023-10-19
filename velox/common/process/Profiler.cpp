@@ -251,7 +251,7 @@ void Profiler::threadFunction(std::string path) {
       auto temp = FLAGS_profile_tmp_dir;
       perfPid = startCmd(
           "perf",
-          {"record", "--pid", fmt::format("{}", pid), "-m/--mmap_pages=100"},
+          {"record", "--pid", fmt::format("{}", pid) /*, "-m", "100" */},
           -1,
           fd,
           errorFd,
