@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/process/Profiler.h"
+#include <iostream>
 #include "velox/common/file/File.h"
 
 #include <gflags/gflags.h>
@@ -29,6 +30,75 @@
 
 namespace facebook::velox::process {
 
+int32_t
+startCmd(std::string command, std::vector<std::string> args, int32_t& fd) {
+  std::vector<char*> argv;
+  argv.push_back(const_cast<char*>(command.c_str()));
+  for (auto& a : args) {
+    argv.push_back(const_cast<char*>(a.c_str()));
+  }
+  argv.push_back(nullptr);
+
+  int fds[2];
+
+  if (pipe(fds) == -1) {
+    LOG(ERROR) << "Failed to make a pipe";
+    return 0;
+  }
+  pid_t pid = fork();
+  if (pid < 0) {
+    LOG(ERROR) << "Fork failed";
+    return 0;
+  } else if (pid == 0) {
+    // This code runs in the child process.
+    close(fds[0]);
+    int outputFd = fds[1];
+    // Replace the child's stdout and stderr handles with the log file handle:
+    if (dup2(outputFd, STDOUT_FILENO) < 0) {
+      LOG(FATAL) << "Failed dup2";
+    }
+    if (dup2(outputFd, STDERR_FILENO) < 0) {
+      LOG(FATAL) << "Failed dup";
+      std::exit(1);
+    }
+    if (execvp(argv[0], argv.data()) < 0) {
+      // These messages will actually go to parent.
+      std::cerr << "Failed to exec program " << command << ":" << std::endl;
+      std::perror("execl");
+      std::exit(1);
+    }
+    std::exit(0);
+  }
+  close(fds[1]);
+  fd = fds[0];
+  return pid;
+}
+
+void waitCmd(int32_t pid, int32_t fd, std::string* result = nullptr) {
+  char buffer[10000];
+  while (auto bytes = read(fd, buffer, sizeof(buffer))) {
+    if (bytes < 0) {
+      LOG(INFO) << "PROFILE: Error reading child";
+      break;
+    }
+    if (result) {
+      *result += std::string(buffer, bytes);
+    } else {
+      LOG(INFO) << "PROFILE: " << std::string(buffer, bytes);
+    }
+  }
+}
+
+void execCmd(const std::string& cmd, std::vector<std::string> args) {
+  int32_t fd;
+  auto pid = startCmd(cmd, args, fd);
+  if (!pid) {
+    LOG(ERROR) << "PROFILE: Error in exec of " << cmd;
+    return;
+  }
+  waitCmd(pid, fd);
+}
+
 bool Profiler::profileStarted_;
 std::thread Profiler::profileThread_;
 std::mutex Profiler::profileMutex_;
@@ -37,16 +107,26 @@ bool Profiler::isSleeping_;
 bool Profiler::shouldStop_;
 folly::Promise<bool> Profiler::sleepPromise_;
 
-void Profiler::copyToResult(int32_t counter, const std::string& path) {
-  int32_t fd = open("/tmp/perf", O_RDONLY);
-  if (fd < 0) {
-    return;
+  void Profiler::copyToResult(int32_t counter, const std::string& path, std::string* data = nullptr) {
+    char* buffer;
+    int32_t resultSize;
+    std::string temp;
+    if (result) {
+      buffer = result->data();
+      resultSize = std::min<int32_t>(result->size(), 400000);
+    } else {
+      int32_t fd = open("/tmp/perf", O_RDONLY);
+      if (fd < 0) {
+	return;
+      }
+      auto bufferSize = 400000;
+      temp.resize(400000);
+      buffer = temp.data();
+      resultSize = ::read(fd, buffer, bufferSize);
+      close(fd);
+      auto target = fmt::format("{}/prof-{}", path, counter);
+    }
   }
-  auto bufferSize = 400000;
-  char* buffer = reinterpret_cast<char*>(malloc(bufferSize));
-  auto readSize = ::read(fd, buffer, bufferSize);
-  close(fd);
-  auto target = fmt::format("{}/prof-{}", path, counter);
   try {
     try {
       fileSystem_->remove(target);
@@ -56,12 +136,12 @@ void Profiler::copyToResult(int32_t counter, const std::string& path) {
     auto out = fileSystem_->openFileForWrite(target);
     out->append(std::string_view(buffer, readSize));
     out->flush();
-    LOG(INFO) << "PROFILE: Produced result " << target << " " << readSize << " bytes";
+    LOG(INFO) << "PROFILE: Produced result " << target << " " << resultSize
+              << " bytes";
   } catch (const std::exception& e) {
     LOG(ERROR) << "PROFILE: Error opening/writing " << target << ":"
                << e.what();
   }
-  ::free(buffer);
 }
 
 void Profiler::makeProfileDir(std::string path) {
@@ -78,15 +158,28 @@ void Profiler::threadFunction(std::string path) {
   makeProfileDir(path);
   for (int32_t counter = 0;; ++counter) {
     std::thread systemThread([&]() {
+#if 0
       system(
           fmt::format(
-              "(cd /tmp; perf record --pid {};"
+              "(cd /tmp; (/usr/bin/perf record --pid {} >>/tmp/perfstart.out);"
               "perf report --sort symbol > /tmp/perf;"
               "sed --in-place 's/      / /' /tmp/perf;"
 	      "sed --in-place 's/      / /' /tmp/perf; date) "
 	      ">> /tmp/perftrace 2>>/tmp/perftrace2",
               pid)
               .c_str());
+#else
+      int32_t fd;
+      perfPid =
+          startCmd("perf", {"record", "--pid", fmt::format("{}", pid)}, fd);
+      waitCmd(perfPid, fd);
+      int32_t reportFd;
+      auto reportPid =
+          startCmd("perf", {"report", "--sort", "symbol"}, reportFd);
+      std::string report;
+      waitCmd(reportPid, reportFd, report);
+
+#endif
       copyToResult(counter, path);
     });
     folly::SemiFuture<bool> sleepFuture(false);
