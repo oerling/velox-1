@@ -196,8 +196,7 @@ void ConjunctExpr::maybeReorderInputs() {
 namespace {
 // helper functions for conjuncts operating on values, nulls and active rows a
 // word at a time.
-inline void
-setFalseForOne(uint64_t active, uint64_t source, uint64_t& target) {
+inline void setFalseForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target &= ~active | ~source;
 }
 
