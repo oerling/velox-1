@@ -76,7 +76,7 @@ class Task : public std::enable_shared_from_this<Task> {
   void setProfileDirectoryBase(const std::string& dir) {
     profileDirectoryBase_ = dir;
   }
-  
+
   std::string toString() const;
 
   std::string toJsonString() const;

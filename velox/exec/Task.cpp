@@ -2510,9 +2510,10 @@ void Task::startProfilingLocked() {
     }
     if (!fs->exists(profileDirectory_)) {
       try {
-	fs->mkdir(profileDirectory_);
-      } catch(const std::exception& e) {
-	LOG(ERROR) << "PROFILE: Failed to create " << profileDirectory_ << " :" << e.what();
+        fs->mkdir(profileDirectory_);
+      } catch (const std::exception& e) {
+        LOG(ERROR) << "PROFILE: Failed to create " << profileDirectory_ << " :"
+                   << e.what();
       }
     }
     auto statname = fmt::format("profileDir={}", profileDirectory_);
