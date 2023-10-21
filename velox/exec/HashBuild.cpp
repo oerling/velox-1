@@ -28,7 +28,7 @@ namespace {
 BlockingReason fromStateToBlockingReason(HashBuild::State state) {
   switch (state) {
     case HashBuild::State::kRunning:
-      [[fallthrough]];
+      FOLLY_FALLTHROUGH;
     case HashBuild::State::kFinish:
       return BlockingReason::kNotBlocked;
     case HashBuild::State::kWaitForSpill:
@@ -237,7 +237,7 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
       spillConfig.writeBufferSize,
       spillConfig.minSpillRunSize,
       spillConfig.compressionKind,
-      Spiller::pool(),
+      memory::spillMemoryPool(),
       spillConfig.executor);
 
   const int32_t numPartitions = spiller_->hashBits().numPartitions();
@@ -320,10 +320,6 @@ void HashBuild::addInput(RowVectorPtr input) {
   }
 
   TestValue::adjust("facebook::velox::exec::HashBuild::addInput", this);
-
-  // Prevents the memory arbitrator to reclaim memory from this operator during
-  // the execution belowg.
-  NonReclaimableSection guard(this);
 
   activeRows_.resize(input->size());
   activeRows_.setAll();
@@ -511,8 +507,11 @@ bool HashBuild::reserveMemory(const RowVectorPtr& input) {
       incrementBytes * 2,
       currentUsage * spillConfig_->spillableReservationGrowthPct / 100);
 
-  if (pool()->maybeReserve(targetIncrementBytes)) {
-    return true;
+  {
+    Operator::ReclaimableSectionGuard guard(this);
+    if (pool()->maybeReserve(targetIncrementBytes)) {
+      return true;
+    }
   }
 
   numSpillRows_ = std::max<int64_t>(
@@ -801,7 +800,6 @@ bool HashBuild::finishHashBuild() {
 
   ensureTableFits(numRows);
 
-  NonReclaimableSection guard(this);
   std::vector<std::unique_ptr<BaseHashTable>> otherTables;
   otherTables.reserve(peers.size());
   SpillPartitionSet spillPartitions;
@@ -875,8 +873,11 @@ void HashBuild::ensureTableFits(uint64_t numRows) {
   // NOTE: reserve a bit more memory to consider the extra memory used for
   // parallel table build operation.
   const uint64_t bytesToReserve = table_->estimateHashTableSize(numRows) * 1.1;
-  if (pool()->maybeReserve(bytesToReserve)) {
-    return;
+  {
+    Operator::ReclaimableSectionGuard guard(this);
+    if (pool()->maybeReserve(bytesToReserve)) {
+      return;
+    }
   }
 
   // TODO: add spilling support here in case of threshold triggered spilling.
@@ -958,6 +959,7 @@ void HashBuild::addRuntimeStats() {
   uint64_t asDistinct;
   auto lockedStats = stats_.wlock();
 
+  lockedStats->addInputTiming.add(table_->offThreadBuildTiming());
   for (auto i = 0; i < hashers.size(); i++) {
     hashers[i]->cardinality(0, asRange, asDistinct);
     if (asRange != VectorHasher::kRangeTooLarge) {
@@ -1057,11 +1059,11 @@ void HashBuild::checkStateTransition(State state) {
       }
       break;
     case State::kWaitForBuild:
-      [[fallthrough]];
+      FOLLY_FALLTHROUGH;
     case State::kWaitForSpill:
-      [[fallthrough]];
+      FOLLY_FALLTHROUGH;
     case State::kWaitForProbe:
-      [[fallthrough]];
+      FOLLY_FALLTHROUGH;
     case State::kFinish:
       VELOX_CHECK_EQ(state_, State::kRunning);
       break;
@@ -1097,23 +1099,30 @@ bool HashBuild::testingTriggerSpill() {
       spillConfig()->testSpillPct;
 }
 
+bool HashBuild::canReclaim() const {
+  return Operator::canReclaim() && (spiller_ != nullptr);
+}
+
 void HashBuild::reclaim(
     uint64_t /*unused*/,
     memory::MemoryReclaimer::Stats& stats) {
   VELOX_CHECK(canReclaim());
   auto* driver = operatorCtx_->driver();
+  VELOX_CHECK_NOT_NULL(driver);
 
   TestValue::adjust("facebook::velox::exec::HashBuild::reclaim", this);
 
   // NOTE: a hash build operator is reclaimable if it is in the middle of table
   // build processing and is not under non-reclaimable execution section.
-  if ((state_ != State::kRunning && state_ != State::kWaitForBuild) ||
-      nonReclaimableSection_) {
+  if (nonReclaimableState()) {
     // TODO: reduce the log frequency if it is too verbose.
     ++stats.numNonReclaimableAttempts;
     LOG(WARNING) << "Can't reclaim from hash build operator, state_["
                  << stateName(state_) << "], nonReclaimableSection_["
-                 << nonReclaimableSection_ << "], " << pool()->name();
+                 << nonReclaimableSection_ << "], spiller_["
+                 << (spiller_->finalized() ? "finalized" : "non-finalized")
+                 << "] " << pool()->name()
+                 << ", usage: " << succinctBytes(pool()->currentBytes());
     return;
   }
 
@@ -1125,34 +1134,78 @@ void HashBuild::reclaim(
     HashBuild* buildOp = dynamic_cast<HashBuild*>(op);
     VELOX_CHECK_NOT_NULL(buildOp);
     VELOX_CHECK(buildOp->canReclaim());
-    if ((buildOp->state_ != State::kRunning &&
-         buildOp->state_ != State::kWaitForBuild) ||
-        buildOp->nonReclaimableSection_) {
+    if (buildOp->nonReclaimableState()) {
       // TODO: reduce the log frequency if it is too verbose.
       ++stats.numNonReclaimableAttempts;
       LOG(WARNING) << "Can't reclaim from hash build operator, state_["
                    << stateName(buildOp->state_) << "], nonReclaimableSection_["
-                   << buildOp->nonReclaimableSection_ << "], "
-                   << buildOp->pool()->name();
+                   << nonReclaimableSection_ << "], spiller_["
+                   << (spiller_->finalized() ? "finalized" : "non-finalized")
+                   << "], " << buildOp->pool()->name() << ", usage: "
+                   << succinctBytes(buildOp->pool()->currentBytes());
       return;
     }
   }
 
   std::vector<Spiller::SpillableStats> spillableStats;
   spillableStats.reserve(spiller_->hashBits().numPartitions());
-  // TODO: consider to parallelize this disk spilling processing.
+
+  struct SpillResult {
+    const std::exception_ptr error{nullptr};
+
+    explicit SpillResult(std::exception_ptr _error) : error(_error) {}
+  };
+
+  std::vector<std::shared_ptr<AsyncSource<SpillResult>>> spillTasks;
+  auto* spillExecutor = spillConfig()->executor;
   for (auto* op : operators) {
     HashBuild* buildOp = static_cast<HashBuild*>(op);
     ++buildOp->numSpillRuns_;
-    buildOp->spiller_->fillSpillRuns(spillableStats);
-    // TODO: support fine-grain disk spilling based on 'targetBytes' after
-    // having row container memory compaction support later.
-    buildOp->spiller_->spill();
-    VELOX_CHECK_EQ(buildOp->table_->numDistinct(), 0);
-    buildOp->table_->clear();
-    // Release the minimum reserved memory.
-    op->pool()->release();
+    spillTasks.push_back(std::make_shared<AsyncSource<SpillResult>>(
+        [this, &spillableStats, buildOp]() {
+          try {
+            buildOp->spiller_->fillSpillRuns(spillableStats);
+            buildOp->spiller_->spill();
+            VELOX_CHECK_EQ(buildOp->table_->numDistinct(), 0);
+            buildOp->table_->clear();
+            // Release the minimum reserved memory.
+            buildOp->pool()->release();
+            return std::make_unique<SpillResult>(nullptr);
+          } catch (const std::exception& e) {
+            LOG(ERROR) << "Spill from hash build pool "
+                       << buildOp->pool()->name() << " failed: " << e.what();
+            // The exception is captured and thrown by the caller.
+            return std::make_unique<SpillResult>(std::current_exception());
+          }
+        }));
+    if ((operators.size() > 1) && (spillExecutor != nullptr)) {
+      spillExecutor->add([source = spillTasks.back()]() { source->prepare(); });
+    }
   }
+
+  auto syncGuard = folly::makeGuard([&]() {
+    for (auto& spillTask : spillTasks) {
+      // We consume the result for the pending tasks. This is a cleanup in the
+      // guard and must not throw. The first error is already captured before
+      // this runs.
+      try {
+        spillTask->move();
+      } catch (const std::exception& e) {
+      }
+    }
+  });
+
+  for (auto& spillTask : spillTasks) {
+    const auto result = spillTask->move();
+    if (result->error) {
+      std::rethrow_exception(result->error);
+    }
+  }
+}
+
+bool HashBuild::nonReclaimableState() const {
+  return ((state_ != State::kRunning) && (state_ != State::kWaitForBuild)) ||
+      nonReclaimableSection_ || spiller_->finalized();
 }
 
 void HashBuild::abort() {

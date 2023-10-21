@@ -162,6 +162,10 @@ enum class BlockingReason {
   /// Build operator is blocked waiting for all its peers to stop to run group
   /// spill on all of them.
   kWaitForSpill,
+  /// Some operators (like Table Scan) may run long loops and can 'voluntarily'
+  /// exit them because Task requested to yield or stop or after a certain time.
+  /// This is the blocking reason used in such cases.
+  kYield,
 };
 
 std::string blockingReasonToString(BlockingReason reason);
@@ -227,7 +231,7 @@ struct DriverCtx {
   Driver* driver;
   facebook::velox::process::ThreadDebugInfo threadDebugInfo;
 
-  explicit DriverCtx(
+  DriverCtx(
       std::shared_ptr<Task> _task,
       int _driverId,
       int _pipelineId,
@@ -250,6 +254,7 @@ constexpr const char* kOpMethodNeedsInput = "needsInput";
 constexpr const char* kOpMethodGetOutput = "getOutput";
 constexpr const char* kOpMethodAddInput = "addInput";
 constexpr const char* kOpMethodNoMoreInput = "noMoreInput";
+constexpr const char* kOpMethodIsFinished = "isFinished";
 
 /// Same as the structure below, but does not have atomic members.
 /// Used to return the status from the struct with atomics.

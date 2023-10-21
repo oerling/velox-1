@@ -53,10 +53,68 @@ struct ArrayMinMaxFunction {
   }
 
   template <typename TReturn, typename TInput>
+  bool callForFloatOrDouble(TReturn& out, const TInput& array) {
+    bool hasNull = false;
+    auto it = array.begin();
+
+    // Find the first non-null item (if any)
+    while (it != array.end()) {
+      if (it->has_value()) {
+        break;
+      }
+
+      hasNull = true;
+      ++it;
+    }
+
+    // Return false if end of array is reached without finding a non-null item.
+    if (it == array.end()) {
+      return false;
+    }
+
+    // If first non-null item is NAN, return immediately.
+    auto currentValue = it->value();
+    if (std::isnan(currentValue)) {
+      assign(out, currentValue);
+      return true;
+    }
+
+    ++it;
+    while (it != array.end()) {
+      if (it->has_value()) {
+        auto newValue = it->value();
+        if (std::isnan(newValue)) {
+          assign(out, newValue);
+          return true;
+        }
+        update(currentValue, newValue);
+      } else {
+        hasNull = true;
+      }
+      ++it;
+    }
+
+    // If we found a null, return false. Note that, if we found
+    // a NAN, the function will return at earlier stage as soon as
+    // a NAN is observed.
+    if (hasNull) {
+      return false;
+    }
+
+    assign(out, currentValue);
+    return true;
+  }
+
+  template <typename TReturn, typename TInput>
   FOLLY_ALWAYS_INLINE bool call(TReturn& out, const TInput& array) {
     // Result is null if array is empty.
     if (array.size() == 0) {
       return false;
+    }
+
+    if constexpr (
+        std::is_same_v<TReturn, float> || std::is_same_v<TReturn, double>) {
+      return callForFloatOrDouble(out, array);
     }
 
     if (!array.mayHaveNulls()) {
@@ -607,6 +665,53 @@ struct ArrayTrimFunctionString {
         newItem.setNoCopy(inputArray[i].value());
       } else {
         out.add_null();
+      }
+    }
+  }
+};
+
+template <typename T>
+struct ArrayRemoveNullFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  // Fast path for primitives.
+  template <typename Out, typename In>
+  FOLLY_ALWAYS_INLINE void call(Out& out, const In& inputArray) {
+    for (int i = 0; i < inputArray.size(); ++i) {
+      if (inputArray[i].has_value()) {
+        auto& newItem = out.add_item();
+        newItem = inputArray[i].value();
+      }
+    }
+  }
+
+  // Generic implementation.
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Array<Generic<T1>>>& out,
+      const arg_type<Array<Generic<T1>>>& inputArray) {
+    for (int i = 0; i < inputArray.size(); ++i) {
+      if (inputArray[i].has_value()) {
+        auto& newItem = out.add_item();
+        newItem.copy_from(inputArray[i].value());
+      }
+    }
+  }
+};
+
+template <typename T>
+struct ArrayRemoveNullFunctionString {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
+  // String version that avoids copy of strings.
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Array<Varchar>>& out,
+      const arg_type<Array<Varchar>>& inputArray) {
+    for (int i = 0; i < inputArray.size(); ++i) {
+      if (inputArray[i].has_value()) {
+        auto& newItem = out.add_item();
+        newItem.setNoCopy(inputArray[i].value());
       }
     }
   }

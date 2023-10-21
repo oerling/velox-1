@@ -50,12 +50,10 @@ OperatorCtx::createConnectorQueryCtx(
     const std::string& connectorId,
     const std::string& planNodeId,
     memory::MemoryPool* connectorPool,
-    memory::SetMemoryReclaimer setMemoryReclaimer,
     const common::SpillConfig* spillConfig) const {
   return std::make_shared<connector::ConnectorQueryCtx>(
       pool_,
       connectorPool,
-      std::move(setMemoryReclaimer),
       driverCtx_->task->queryCtx()->getConnectorConfig(connectorId),
       spillConfig,
       std::make_unique<SimpleExpressionEvaluator>(
@@ -196,7 +194,8 @@ static bool isSequence(
 
 RowVectorPtr Operator::fillOutput(
     vector_size_t size,
-    const BufferPtr& mapping) {
+    const BufferPtr& mapping,
+    const std::vector<VectorPtr>& results) {
   bool wrapResults = true;
   if (size == input_->size() &&
       (!mapping || isSequence(mapping->as<vector_size_t>(), 0, size))) {
@@ -206,26 +205,32 @@ RowVectorPtr Operator::fillOutput(
     wrapResults = false;
   }
 
-  auto output{std::make_shared<RowVector>(
-      operatorCtx_->pool(),
-      outputType_,
-      nullptr,
-      size,
-      std::vector<VectorPtr>(outputType_->size(), nullptr))};
-  output->resize(size);
+  std::vector<VectorPtr> projectedChildren(outputType_->size());
   projectChildren(
-      output,
+      projectedChildren,
       input_,
       identityProjections_,
       size,
       wrapResults ? mapping : nullptr);
   projectChildren(
-      output,
-      results_,
+      projectedChildren,
+      results,
       resultProjections_,
       size,
       wrapResults ? mapping : nullptr);
-  return output;
+
+  return std::make_shared<RowVector>(
+      operatorCtx_->pool(),
+      outputType_,
+      nullptr,
+      size,
+      std::move(projectedChildren));
+}
+
+RowVectorPtr Operator::fillOutput(
+    vector_size_t size,
+    const BufferPtr& mapping) {
+  return fillOutput(size, mapping, results_);
 }
 
 OperatorStats Operator::stats(bool clear) {
