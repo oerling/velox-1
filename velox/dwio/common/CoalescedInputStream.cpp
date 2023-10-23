@@ -153,8 +153,6 @@ void CoalescedInputStream::loadSync() {
   ioStats_->queryThreadIoLatency().increment(usec);
 }
 
-
-
 void CoalescedInputStream::loadPosition() {
   auto offset = region_.offset;
   if (!isLoaded_) {
@@ -169,16 +167,16 @@ void CoalescedInputStream::loadPosition() {
           std::move(waitFuture).via(&exec).wait();
         }
         loadedRegion_.offset = region_.offset;
-        loadedRegion_.length =
-            load->getData(region_.offset, data_, tinyData_);
+        loadedRegion_.length = load->getData(region_.offset, data_, tinyData_);
         isLoaded_ = true;
       }
       ioStats_->queryThreadIoLatency().increment(usec);
     }
   }
-    // Check if position outside of loaded bounds.
+  // Check if position outside of loaded bounds.
   if (region_.offset + position_ < loadedRegion_.offset ||
-      region_.offset + position_ >= loadedRegion_.offset + loadedRegion_.length) {
+      region_.offset + position_ >=
+          loadedRegion_.offset + loadedRegion_.length) {
     loadedRegion_.offset = region_.offset + position_;
     loadedRegion_.length = position_ + loadQuantum_ <= region_.length
         ? loadQuantum_
@@ -187,21 +185,21 @@ void CoalescedInputStream::loadPosition() {
   }
 
   auto offsetInEntry = position_ - (loadedRegion_.offset - region_.offset);
-    if (data_.numPages() == 0) {
-      run_ = reinterpret_cast<uint8_t*>(tinyData_.data());
-      runSize_ = tinyData_.size();
-      offsetInRun_ = offsetInEntry;
-      offsetOfRun_ = 0;
-    } else {
-      data_.findRun(offsetInEntry, &runIndex_, &offsetInRun_);
-      offsetOfRun_ = offsetInEntry - offsetInRun_;
-      auto run = data_.runAt(runIndex_);
-      run_ = run.data();
-      runSize_ = run.numPages() * memory::AllocationTraits::kPageSize;
-      if (offsetOfRun_ + runSize_ > loadedRegion_.length) {
-        runSize_ = loadedRegion_.length - offsetOfRun_;
-      }
+  if (data_.numPages() == 0) {
+    run_ = reinterpret_cast<uint8_t*>(tinyData_.data());
+    runSize_ = tinyData_.size();
+    offsetInRun_ = offsetInEntry;
+    offsetOfRun_ = 0;
+  } else {
+    data_.findRun(offsetInEntry, &runIndex_, &offsetInRun_);
+    offsetOfRun_ = offsetInEntry - offsetInRun_;
+    auto run = data_.runAt(runIndex_);
+    run_ = run.data();
+    runSize_ = run.numPages() * memory::AllocationTraits::kPageSize;
+    if (offsetOfRun_ + runSize_ > loadedRegion_.length) {
+      runSize_ = loadedRegion_.length - offsetOfRun_;
     }
+  }
 }
 
 } // namespace facebook::velox::dwio::common

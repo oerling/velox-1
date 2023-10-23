@@ -48,12 +48,15 @@ class CoalescedInputStream : public SeekableInputStream {
   size_t positionSize() override;
 
   // Testing function to access loaded state.
-  void testingData(velox::common::Region&loadedRegion, memory::Allocation*& data, std::string*& tinyData) {
+  void testingData(
+      velox::common::Region& loadedRegion,
+      memory::Allocation*& data,
+      std::string*& tinyData) {
     loadedRegion = loadedRegion_;
     data = &data_;
     tinyData = &tinyData_;
   }
-  
+
  private:
   // Ensures that the current position is covered by 'data_'.
   void loadPosition();
@@ -71,18 +74,18 @@ class CoalescedInputStream : public SeekableInputStream {
   const cache::TrackingId trackingId_;
   const uint64_t groupId_;
 
-
   velox::common::Region loadedRegion_;
 
   // Maximum number of bytes read from 'input' at a time.
   const int32_t loadQuantum_;
 
-  // Allocation with loaded data. Has space for region.length or loadQuantum_ bytes, whichevr is less.
+  // Allocation with loaded data. Has space for region.length or loadQuantum_
+  // bytes, whichevr is less.
   memory::Allocation data_;
 
   // Contains the data if the range is too small for Allocation.
   std::string tinyData_;
-  
+
   // Offset of current run from start of 'data_'
   uint64_t offsetOfRun_;
 
@@ -98,7 +101,7 @@ class CoalescedInputStream : public SeekableInputStream {
   // Position relative to 'region_.offset'.
   uint64_t position_ = 0;
 
-  // 
+  //
   bool isLoaded_{false};
 };
 

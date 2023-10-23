@@ -200,7 +200,7 @@ void SelectiveBufferedInput::readRegion(
     return;
   }
   auto load = std::make_shared<SelectiveCoalescedLoad>(
-						       input_, ioStats_, groupId_, requests, pool_, options_.loadQuantum());
+      input_, ioStats_, groupId_, requests, pool_, options_.loadQuantum());
   allCoalescedLoads_.push_back(load);
   coalescedLoads_.withWLock([&](auto& loads) {
     for (auto& request : requests) {
@@ -241,8 +241,7 @@ void appendRanges(
 }
 } // namespace
 
-std::vector<CachePin> SelectiveCoalescedLoad::loadData(
-    bool isPrefetch)  {
+std::vector<CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
   std::vector<folly::Range<char*>> buffers;
   int64_t lastEnd = requests_[0]->region.offset;
   for (auto& request : requests_) {

@@ -54,14 +54,14 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
       uint64_t groupId,
       std::vector<LoadRequest*> requests,
       memory::MemoryPool& pool,
-			 int32_t loadQuantum)
+      int32_t loadQuantum)
       : CoalescedLoad({}, {}),
         ioStats_(ioStats),
         groupId_(groupId),
         requests_(std::move(requests)),
         input_(std::move(input)),
         pool_(pool),
-	loadQuantum_(loadQuantum) {};
+        loadQuantum_(loadQuantum){};
 
   // Loads the regions. Returns {} since no cache entries are made. The loaded
   // data is retrieved with getData().
@@ -69,10 +69,8 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
 
   // Returns the buffer for 'region' in either 'data' or 'tinyData'. 'region'
   // must match a region given to SelectiveBufferedInput::enqueue().
-  int32_t getData(
-	       int64_t offset,
-      memory::Allocation& data,
-      std::string& tinyData);
+  int32_t
+  getData(int64_t offset, memory::Allocation& data, std::string& tinyData);
 
   const auto& requests() {
     return requests_;
@@ -85,9 +83,8 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
     }
     return size;
   }
-  
-  private:
 
+ private:
   std::shared_ptr<IoStatistics> ioStats_;
   const uint64_t groupId_;
   std::vector<LoadRequest*> requests_;
