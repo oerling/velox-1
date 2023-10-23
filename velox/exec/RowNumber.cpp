@@ -72,8 +72,6 @@ void RowNumber::addInput(RowVectorPtr input) {
   if (table_) {
     ensureInputFits(input);
 
-    NonReclaimableSection guard(this);
-
     if (inputSpiller_ != nullptr) {
       spillInput(input, pool());
       return;
@@ -178,7 +176,7 @@ void RowNumber::restoreNextSpillPartition() {
 }
 
 void RowNumber::ensureInputFits(const RowVectorPtr& input) {
-  if (!spillConfig_.has_value()) {
+  if (!spillEnabled()) {
     // Spilling is disabled.
     return;
   }
@@ -231,8 +229,11 @@ void RowNumber::ensureInputFits(const RowVectorPtr& input) {
   const auto targetIncrementBytes = std::max<int64_t>(
       incrementBytes * 2,
       currentUsage * spillConfig_->spillableReservationGrowthPct / 100);
-  if (pool()->maybeReserve(targetIncrementBytes)) {
-    return;
+  {
+    Operator::ReclaimableSectionGuard guard(this);
+    if (pool()->maybeReserve(targetIncrementBytes)) {
+      return;
+    }
   }
 
   spill();
@@ -257,8 +258,6 @@ RowVectorPtr RowNumber::getOutput() {
     // No partition keys.
     return getOutputForSinglePartition();
   }
-
-  NonReclaimableSection guard(this);
 
   const auto numInput = input_->size();
 
@@ -474,8 +473,8 @@ void RowNumber::spillInput(
 
   const auto numPartitions = spillHashFunction_->numPartitions();
 
-  std::vector<BufferPtr> partitionIndices(numInput);
-  std::vector<vector_size_t*> rawPartitionIndices(numInput);
+  std::vector<BufferPtr> partitionIndices(numPartitions);
+  std::vector<vector_size_t*> rawPartitionIndices(numPartitions);
 
   for (auto i = 0; i < numPartitions; ++i) {
     partitionIndices[i] = allocateIndices(numInput, pool);

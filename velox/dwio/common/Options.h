@@ -21,6 +21,7 @@
 
 #include <folly/Executor.h>
 #include "velox/common/compression/Compression.h"
+#include "velox/common/config/SpillConfig.h"
 #include "velox/common/io/Options.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/dwio/common/ColumnSelector.h"
@@ -31,10 +32,7 @@
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/encryption/Encryption.h"
 
-namespace facebook {
-namespace velox {
-namespace dwio {
-namespace common {
+namespace facebook::velox::dwio::common {
 
 enum class FileFormat {
   UNKNOWN = 0,
@@ -542,13 +540,10 @@ class ReaderOptions : public io::ReaderOptions {
 struct WriterOptions {
   TypePtr schema;
   velox::memory::MemoryPool* memoryPool;
-  velox::memory::SetMemoryReclaimer setMemoryReclaimer{nullptr};
+  const velox::common::SpillConfig* spillConfig{nullptr};
   std::optional<velox::common::CompressionKind> compressionKind;
   std::optional<uint64_t> maxStripeSize{std::nullopt};
   std::optional<uint64_t> maxDictionaryMemory{std::nullopt};
 };
 
-} // namespace common
-} // namespace dwio
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox::dwio::common

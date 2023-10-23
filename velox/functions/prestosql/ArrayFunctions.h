@@ -26,6 +26,8 @@ template <typename TExecCtx, bool isMax>
 struct ArrayMinMaxFunction {
   VELOX_DEFINE_FUNCTION_TYPES(TExecCtx);
 
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
   template <typename T>
   void update(T& currentValue, const T& candidateValue) {
     if constexpr (isMax) {
@@ -45,11 +47,60 @@ struct ArrayMinMaxFunction {
   }
 
   void assign(out_type<Varchar>& out, const arg_type<Varchar>& value) {
-    // TODO: reuse strings once support landed.
-    out.resize(value.size());
-    if (value.size() != 0) {
-      std::memcpy(out.data(), value.data(), value.size());
+    out.setNoCopy(value);
+  }
+
+  template <typename TReturn, typename TInput>
+  bool callForFloatOrDouble(TReturn& out, const TInput& array) {
+    bool hasNull = false;
+    auto it = array.begin();
+
+    // Find the first non-null item (if any)
+    while (it != array.end()) {
+      if (it->has_value()) {
+        break;
+      }
+
+      hasNull = true;
+      ++it;
     }
+
+    // Return false if end of array is reached without finding a non-null item.
+    if (it == array.end()) {
+      return false;
+    }
+
+    // If first non-null item is NAN, return immediately.
+    auto currentValue = it->value();
+    if (std::isnan(currentValue)) {
+      assign(out, currentValue);
+      return true;
+    }
+
+    ++it;
+    while (it != array.end()) {
+      if (it->has_value()) {
+        auto newValue = it->value();
+        if (std::isnan(newValue)) {
+          assign(out, newValue);
+          return true;
+        }
+        update(currentValue, newValue);
+      } else {
+        hasNull = true;
+      }
+      ++it;
+    }
+
+    // If we found a null, return false. Note that, if we found
+    // a NAN, the function will return at earlier stage as soon as
+    // a NAN is observed.
+    if (hasNull) {
+      return false;
+    }
+
+    assign(out, currentValue);
+    return true;
   }
 
   template <typename TReturn, typename TInput>
@@ -57,6 +108,11 @@ struct ArrayMinMaxFunction {
     // Result is null if array is empty.
     if (array.size() == 0) {
       return false;
+    }
+
+    if constexpr (
+        std::is_same_v<TReturn, float> || std::is_same_v<TReturn, double>) {
+      return callForFloatOrDouble(out, array);
     }
 
     if (!array.mayHaveNulls()) {

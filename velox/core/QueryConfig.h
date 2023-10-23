@@ -191,9 +191,17 @@ class QueryConfig {
   /// OrderBy spilling flag, only applies if "spill_enabled" flag is set.
   static constexpr const char* kOrderBySpillEnabled = "order_by_spill_enabled";
 
+  /// If true, the memory arbitrator will reclaim memory from table writer by
+  /// flushing its buffered data to disk.
+  static constexpr const char* kWriterSpillEnabled = "writer_spill_enabled";
+
   /// RowNumber spilling flag, only applies if "spill_enabled" flag is set.
   static constexpr const char* kRowNumberSpillEnabled =
       "row_number_spill_enabled";
+
+  /// TopNRowNumber spilling flag, only applies if "spill_enabled" flag is set.
+  static constexpr const char* kTopNRowNumberSpillEnabled =
+      "topn_row_number_spill_enabled";
 
   /// The max memory that a final aggregation can use before spilling. If it 0,
   /// then there is no limit.
@@ -469,14 +477,26 @@ class QueryConfig {
     return get<bool>(kOrderBySpillEnabled, true);
   }
 
-  /// Returns 'is row_number spilling enabled' flag. Must also check the
+  /// Returns 'is writer spilling enabled' flag. Must also check the
   /// spillEnabled()!
+  bool writerSpillEnabled() const {
+    return get<bool>(kWriterSpillEnabled, true);
+  }
+
+  /// Returns true if spilling is enabled for RowNumber operator. Must also
+  /// check the spillEnabled()!
   bool rowNumberSpillEnabled() const {
     return get<bool>(kRowNumberSpillEnabled, true);
   }
 
-  // Returns a percentage of aggregation or join input batches that
-  // will be forced to spill for testing. 0 means no extra spilling.
+  /// Returns true if spilling is enabled for TopNRowNumber operator. Must also
+  /// check the spillEnabled()!
+  bool topNRowNumberSpillEnabled() const {
+    return get<bool>(kTopNRowNumberSpillEnabled, true);
+  }
+
+  /// Returns a percentage of aggregation or join input batches that will be
+  /// forced to spill for testing. 0 means no extra spilling.
   int32_t testingSpillPct() const {
     return get<int32_t>(kTestingSpillPct, 0);
   }

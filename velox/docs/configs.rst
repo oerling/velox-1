@@ -30,8 +30,7 @@ Generic Configuration
    * - table_scan_getoutput_time_limit_ms
      - integer
      - 5000
-     - TableScan operator will exit getOutput() method after this many milliseconds even if it has no data to return yet.
-     - Zero means 'no time limit'.
+     - TableScan operator will exit getOutput() method after this many milliseconds even if it has no data to return yet. Zero means 'no time limit'.
    * - abandon_partial_aggregation_min_rows
      - integer
      - 100,000
@@ -204,6 +203,14 @@ Spilling
      - boolean
      - true
      - When `spill_enabled` is true, determines whether RowNumber operator can spill to disk under memory pressure.
+   * - topn_row_number_spill_enabled
+     - boolean
+     - true
+     - When `spill_enabled` is true, determines whether TopNRowNumber operator can spill to disk under memory pressure.
+   * - writer_spill_enabled
+     - boolean
+     - true
+     - When `writer_spill_enabled` is true, determines whether TableWriter operator can spill to disk under memory pressure.
    * - aggregation_spill_memory_threshold
      - integer
      - 0
@@ -211,9 +218,7 @@ Spilling
    * - aggregation_spill_all
      - boolean
      - false
-     - If true and spilling has been triggered during the input processing, the spiller will spill all the remaining
-     - in-memory state to disk before output processing. This is to simplify the aggregation query OOM prevention in
-     - output processing stage.
+     - If true and spilling has been triggered during the input processing, the spiller will spill all the remaining in-memory state to disk before output processing. This is to simplify the aggregation query OOM prevention in output processing stage.
    * - join_spill_memory_threshold
      - integer
      - 0
@@ -367,7 +372,10 @@ Hive Connector
      - integer
      - 128MB
      - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
-
+   * - file_writer_flush_threshold_bytes
+     - integer
+     - 96MB
+     - Minimum memory footprint size required to reclaim memory from a file writer by flushing its buffered data to disk.
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
