@@ -19,25 +19,22 @@
 #include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/CoalescedInputStream.h"
 
-DEFINE_int32(
-    cache_prefetch_min_pct,
-    80,
-    "Minimum percentage of actual uses over references to a column for prefetching. No prefetch if > 100");
+DECLARE_int32(
+	      cache_prefetch_min_pct);
 
 using ::facebook::velox::common::Region;
 
 namespace facebook::velox::dwio::common {
 
-using cache::CachePin;
 using cache::CoalescedLoad;
 using cache::ScanTracker;
 using cache::TrackingId;
-using memory::MemoryAllocator;
 
 std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
     Region region,
     const StreamIdentifier* si = nullptr) {
-  if (region.length == 0) {
+
+  VELOX_CHECK(allCoalescedLoads_.empty(), "Should not enqueue after load()");if (region.length == 0) {
     return std::make_unique<SeekableArrayInputStream>(
         static_cast<const char*>(nullptr), 0);
   }
@@ -180,18 +177,11 @@ void SelectiveBufferedInput::makeLoads(
           process::TraceContext trace("Read Ahead");
           pendingLoad->loadOrFuture(nullptr);
         });
-      } else {
-        doneIndices.push_back(i);
       }
-    }
-    // Remove the loads that were complete. There can be done loads if the same
-    // SelectiveBufferedInput has multiple cycles of enqueues and loads.
-    for (int32_t i = doneIndices.size() - 1; i >= 0; --i) {
-      assert(!doneIndices.empty()); // lint
-      allCoalescedLoads_.erase(allCoalescedLoads_.begin() + doneIndices[i]);
     }
   }
 }
+
 
 void SelectiveBufferedInput::readRegion(
     std::vector<LoadRequest*> requests,
@@ -241,13 +231,16 @@ void appendRanges(
 }
 } // namespace
 
-std::vector<CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
+  std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
   std::vector<folly::Range<char*>> buffers;
   int64_t lastEnd = requests_[0]->region.offset;
+  int64_t size = 0;
+  int64_t overread = 0;
   for (auto& request : requests_) {
     auto& region = request->region;
     if (region.offset > lastEnd) {
       buffers.push_back(folly::Range<char*>(nullptr, region.offset - lastEnd));
+      overread += buffers.back().size();
     }
     if (region.length > SelectiveBufferedInput::kTinySize) {
       request->loadSize = std::min<int32_t>(region.length, loadQuantum_);
@@ -260,8 +253,14 @@ std::vector<CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
       buffers.push_back(folly::Range(request->tinyData.data(), region.length));
     }
     lastEnd = region.offset + region.length;
+    size += std::min<int32_t>(loadQuantum_, region.length);
   }
   input_->read(buffers, requests_[0]->region.offset, LogType::FILE);
+  ioStats_->read().increment(size);
+  ioStats_->incRawOverreadBytes(overread);
+  if (isPrefetch) {
+    ioStats_->prefetch().increment(size);
+  }
   return {};
 }
 

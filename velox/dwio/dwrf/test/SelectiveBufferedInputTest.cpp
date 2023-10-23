@@ -1,0 +1,189 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "velox/dwio/common/SelectiveBufferedInput.h"
+#include <folly/Random.h>
+#include <folly/container/F14Map.h>
+#include <folly/executors/IOThreadPoolExecutor.h>
+#include "velox/common/io/IoStatistics.h"
+#include "velox/common/memory/MmapAllocator.h"
+#include "velox/dwio/common/Options.h"
+#include "velox/dwio/dwrf/common/Common.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
+
+#include <gtest/gtest.h>
+
+using namespace facebook::velox;
+using namespace facebook::velox::dwio;
+using namespace facebook::velox::dwio::common;
+using namespace facebook::velox::cache;
+
+using facebook::velox::common::Region;
+
+using memory::MemoryAllocator;
+using IoStatisticsPtr = std::shared_ptr<IoStatistics>;
+
+// Testing stream producing deterministic data. The byte at offset is
+// the low byte of 'seed_' + offset.
+class TestReadFile : public ReadFile {
+ public:
+  TestReadFile(uint64_t seed, uint64_t length, IoStatisticsPtr ioStats)
+      : seed_(seed), length_(length), ioStats_(std::move(ioStats)) {}
+
+  uint64_t size() const override {
+    return length_;
+  }
+
+  std::string_view pread(uint64_t offset, uint64_t length, void* buffer)
+      const override {
+    int fill;
+    uint64_t content = offset + seed_;
+    uint64_t available = std::min(length_ - offset, length);
+    for (fill = 0; fill < (available); ++fill) {
+      reinterpret_cast<char*>(buffer)[fill] = content + fill;
+    }
+    ioStats_->incRawBytesRead(length);
+    return std::string_view(static_cast<const char*>(buffer), fill);
+  }
+
+  // Asserts that 'bytes' is as would be read from 'offset'.
+  void checkData(const void* bytes, uint64_t offset, int32_t size) {
+    for (auto i = 0; i < size; ++i) {
+      char expected = seed_ + offset + i;
+      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i])
+          << " at " << offset + i;
+    }
+  }
+
+  uint64_t memoryUsage() const override {
+    VELOX_NYI();
+  }
+
+  bool shouldCoalesce() const override {
+    VELOX_NYI();
+  }
+
+  std::string getName() const override {
+    return "<TestReadFile>";
+  }
+
+  uint64_t getNaturalReadSize() const override {
+    VELOX_NYI();
+  }
+
+ private:
+  const uint64_t seed_;
+  const uint64_t length_;
+  IoStatisticsPtr ioStats_;
+};
+
+struct TestRegion {
+  int32_t offset;
+  int32_t length;
+};
+
+class SelectiveBufferedInputTest : public testing::Test {
+ protected:
+  static constexpr int32_t kLoadQuantum = 8 << 20;
+
+  void SetUp() override {
+    executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
+    ioStats_ = std::make_shared<IoStatistics>();
+    fileIoStats_ = std::make_shared<IoStatistics>();
+    tracker_ = std::make_shared<cache::ScanTracker>("", nullptr, kLoadQuantum);
+    file_ = std::make_shared<TestReadFile>(11, 100 < 20, fileIoStats_);
+    opts_ = std::make_unique<dwio::common::ReaderOptions>(pool_.get());
+    opts_->setLoadQuantum(kLoadQuantum);
+  }
+
+  void TearDown() override {
+    executor_->join();
+  }
+
+  std::unique_ptr<SelectiveBufferedInput> makeInput() {
+    return std::make_unique<SelectiveBufferedInput>(
+        file_, nullptr, 1, tracker_, 2, ioStats_, executor_.get(), *opts_);
+  }
+
+  // Reads and checks the result of reading ''regions' and checks that this
+  // causes 'numIos' accesses to the file.
+  void testLoads(std::vector<TestRegion> regions, int32_t numIos) {
+    auto count = fileIoStats_->read().count();
+    auto input = makeInput();
+    std::vector<std::unique_ptr<SeekableInputStream>> streams;
+    int32_t counter = 0;
+    for (auto i = 0; i < regions.size(); ++i) {
+      if (regions[i].length > 0) {
+        Region region;
+        region.offset = regions[i].offset;
+        region.length = regions[i].length;
+        StreamIdentifier si(i);
+        streams.push_back(input->enqueue(region, &si));
+      }
+    }
+    input->load(LogType::FILE);
+    for (auto i = 0; i < regions.size(); ++i) {
+      if (regions[i].length > 0) {
+        checkRead(streams[i].get(), regions[i]);
+      }
+    }
+    EXPECT_EQ(count + numIos, fileIoStats_->read().count());
+  }
+
+  void checkRead(SeekableInputStream* stream, TestRegion region) {
+    int32_t size;
+    int32_t totalRead = 0;
+    const void* buffer;
+    while (stream->Next(&buffer, &size)) {
+      file_->checkData(buffer, region.offset + totalRead, size);
+      totalRead += size;
+    }
+    EXPECT_EQ(region.length, totalRead);
+  }
+
+  std::unique_ptr<dwio::common::ReaderOptions> opts_;
+  std::shared_ptr<TestReadFile> file_;
+  std::shared_ptr<cache::ScanTracker> tracker_;
+  std::shared_ptr<IoStatistics> ioStats_;
+  std::shared_ptr<IoStatistics> fileIoStats_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
+  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+};
+
+TEST_F(SelectiveBufferedInputTest, basic) {
+  // All but the last coalesce into one , the last is read in 2 parts.
+  testLoads(
+      {{100, 100},
+       {300, 100},
+       {1000, 7000000},
+       {7004000, 2000000},
+       {20000000, 10000000}},
+      3);
+
+  // The first and the first part of second coalesce, the last part of second is
+  // separate.
+  testLoads({{100, 100}, {1000, 10000000}}, 2);
+
+  // The first is read in two parts, the tail of the first does not coalesce
+  // with the second.
+  testLoads({{1000, 10000000}, {10001000, 1000}}, 3);
+
+  // One large standalone read in 2 parts.
+  testLoads({{1000, 10000000}}, 2);
+
+  // Small standalone read in 1 part.
+  testLoads({{100, 100}}, 1);
+}
