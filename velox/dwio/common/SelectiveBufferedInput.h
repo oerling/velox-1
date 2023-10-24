@@ -157,7 +157,7 @@ class SelectiveBufferedInput : public BufferedInput {
   bool shouldPreload(int32_t numPages = 0) override;
 
   bool shouldPrefetchStripes() const override {
-    return true;
+    return false;
   }
 
   void setNumStripes(int32_t numStripes) override {
