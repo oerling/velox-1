@@ -20,6 +20,7 @@
 #include <unordered_map>
 
 #include "velox/dwio/common/CachedBufferedInput.h"
+#include "velox/dwio/common/SelectiveBufferedInput.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
@@ -799,11 +800,15 @@ HiveDataSource::createBufferedInput(
         executor_,
         readerOpts);
   }
-  return std::make_unique<dwio::common::BufferedInput>(
-      fileHandle.file,
-      readerOpts.getMemoryPool(),
-      dwio::common::MetricsLog::voidLog(),
-      ioStats_.get());
+    return std::make_unique<dwio::common::SelectiveBufferedInput>(
+        fileHandle.file,
+        dwio::common::MetricsLog::voidLog(),
+        fileHandle.uuid.id(),
+        Connector::getTracker(scanId_, readerOpts.loadQuantum()),
+        fileHandle.groupId.id(),
+        ioStats_,
+        executor_,
+        readerOpts);
 }
 
 vector_size_t HiveDataSource::evaluateRemainingFilter(RowVectorPtr& rowVector) {
