@@ -100,6 +100,10 @@ class GroupingSet {
   /// of this will be in a paused state and off thread.
   void spill(int64_t targetRows, int64_t targetBytes);
 
+  /// Spills all the rows in container starting from the offset specified by
+  /// 'rowIterator'.
+  void spill(const RowContainerIterator& rowIterator);
+
   /// Returns the spiller stats including total bytes and rows spilled so far.
   std::optional<SpillStats> spilledStats() const {
     if (spiller_ == nullptr) {
@@ -162,10 +166,14 @@ class GroupingSet {
   // index for this aggregation), otherwise it returns reference to activeRows_.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
-  // Checks if input will fit in the existing memory and increases
-  // reservation if not. If reservation cannot be increased, spills
-  // enough to make 'input' fit.
+  // Checks if input will fit in the existing memory and increases reservation
+  // if not. If reservation cannot be increased, spills enough to make 'input'
+  // fit.
   void ensureInputFits(const RowVectorPtr& input);
+
+  // Reserves memory for output processing. If reservation cannot be increased,
+  // spills enough to make output fit.
+  void ensureOutputFits();
 
   // Copies the grouping keys and aggregates for 'groups' into 'result' If
   // partial output, extracts the intermediate type for aggregates, final result
@@ -235,6 +243,7 @@ class GroupingSet {
   const bool isGlobal_;
   const bool isPartial_;
   const bool isRawInput_;
+  const core::QueryConfig& queryConfig_;
 
   std::vector<AggregateInfo> aggregates_;
   AggregationMasks masks_;
@@ -296,7 +305,7 @@ class GroupingSet {
   // The row with the current merge state, allocated from 'mergeRow_'.
   char* mergeState_ = nullptr;
 
-  // The currently running spill partition in producing spilld output.
+  // The currently running spill partition in producing spilled output.
   int32_t outputPartition_{-1};
 
   // Intermediate vector for passing arguments to aggregate in merging spill.
@@ -310,8 +319,8 @@ class GroupingSet {
   // one.
   bool nextKeyIsEqual_{false};
 
-  // The set of rows that are outside of the spillable hash number
-  // ranges. Used when producing output.
+  // The set of rows that are outside of the spillable hash number ranges. Used
+  // when producing output.
   std::optional<Spiller::SpillRows> nonSpilledRows_;
 
   // Index of first in 'nonSpilledRows_' that has not been added to output.
@@ -325,7 +334,7 @@ class GroupingSet {
   std::unique_ptr<RowContainer> nonSpilledRowContainer_;
 
   // Counts input batches and triggers spilling if folly hash of this % 100 <=
-  // 'testSpillPct_';.
+  // 'spillConfig_->testSpillPct'.
   uint64_t spillTestCounter_{0};
 
   // True if partial aggregation has been given up as non-productive.

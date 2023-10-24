@@ -29,7 +29,10 @@ ScopedContextSaver::~ScopedContextSaver() {
 }
 
 EvalCtx::EvalCtx(core::ExecCtx* execCtx, ExprSet* exprSet, const RowVector* row)
-    : execCtx_(execCtx), exprSet_(exprSet), row_(row) {
+    : execCtx_(execCtx),
+      exprSet_(exprSet),
+      row_(row),
+      cacheEnabled_(execCtx->exprEvalCacheEnabled()) {
   // TODO Change the API to replace raw pointers with non-const references.
   // Sanity check inputs to prevent crashes.
   VELOX_CHECK_NOT_NULL(execCtx);
@@ -47,7 +50,10 @@ EvalCtx::EvalCtx(core::ExecCtx* execCtx, ExprSet* exprSet, const RowVector* row)
 }
 
 EvalCtx::EvalCtx(core::ExecCtx* execCtx)
-    : execCtx_(execCtx), exprSet_(nullptr), row_(nullptr) {
+    : execCtx_(execCtx),
+      exprSet_(nullptr),
+      row_(nullptr),
+      cacheEnabled_(execCtx->exprEvalCacheEnabled()) {
   VELOX_CHECK_NOT_NULL(execCtx);
 }
 
@@ -306,15 +312,14 @@ void EvalCtx::addNulls(
   }
 
   if (result->size() < rows.end()) {
+    BaseVector::ensureWritable(
+        SelectivityVector::empty(), type, context.pool(), result);
     if (result->encoding() == VectorEncoding::Simple::ROW) {
       // Avoid calling resize on all children by adding top level nulls only.
       // We know from the check above that result is unique and isNullsWritable.
       result->asUnchecked<RowVector>()->appendNulls(
           rows.end() - result->size());
     } else {
-      BaseVector::ensureWritable(
-          SelectivityVector::empty(), type, context.pool(), result);
-
       result->resize(rows.end());
     }
   }

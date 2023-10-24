@@ -81,6 +81,8 @@ class EvalCtx {
 
   void restore(ScopedContextSaver& saver);
 
+  // If exceptionPtr is known to be a VeloxException use setVeloxExceptionError
+  // instead.
   void setError(vector_size_t index, const std::exception_ptr& exceptionPtr);
 
   // Similar to setError but more performant, should be used when the user knows
@@ -282,7 +284,7 @@ class EvalCtx {
       const TypePtr& type,
       VectorPtr& result);
 
-  VectorPool& vectorPool() const {
+  VectorPool* vectorPool() const {
     return execCtx_->vectorPool();
   }
 
@@ -309,7 +311,7 @@ class EvalCtx {
       const TypePtr& type,
       VectorPtr& result) {
     BaseVector::ensureWritable(
-        rows, type, execCtx_->pool(), result, &execCtx_->vectorPool());
+        rows, type, execCtx_->pool(), result, execCtx_->vectorPool());
   }
 
   /// Make sure the vector is addressable up to index `size`-1. Initialize all
@@ -319,10 +321,17 @@ class EvalCtx {
     return peeledEncoding_.get();
   }
 
+  /// Returns true if caching in expression evaluation is enabled, such as
+  /// Expr::evalWithMemo.
+  bool cacheEnabled() const {
+    return cacheEnabled_;
+  }
+
  private:
   core::ExecCtx* const FOLLY_NONNULL execCtx_;
   ExprSet* FOLLY_NULLABLE const exprSet_;
   const RowVector* FOLLY_NULLABLE row_;
+  const bool cacheEnabled_;
   bool inputFlatNoNulls_;
 
   // Corresponds 1:1 to children of 'row_'. Set to an inner vector

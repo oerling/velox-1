@@ -377,13 +377,10 @@ TYPED_TEST(TestSerialize, SmallFileBrotli) {
 }
 #endif
 
-#ifdef ARROW_WITH_GZIP
 TYPED_TEST(TestSerialize, SmallFileGzip) {
   ASSERT_NO_FATAL_FAILURE(this->FileSerializeTest(Compression::GZIP));
 }
-#endif
 
-#ifdef ARROW_WITH_LZ4
 TYPED_TEST(TestSerialize, SmallFileLz4) {
   ASSERT_NO_FATAL_FAILURE(this->FileSerializeTest(Compression::LZ4));
 }
@@ -391,7 +388,6 @@ TYPED_TEST(TestSerialize, SmallFileLz4) {
 TYPED_TEST(TestSerialize, SmallFileLz4Hadoop) {
   ASSERT_NO_FATAL_FAILURE(this->FileSerializeTest(Compression::LZ4_HADOOP));
 }
-#endif
 
 TYPED_TEST(TestSerialize, SmallFileZstd) {
   ASSERT_NO_FATAL_FAILURE(this->FileSerializeTest(Compression::ZSTD));

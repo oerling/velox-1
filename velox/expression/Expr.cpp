@@ -999,9 +999,12 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
   }
 
   // If the expression depends on one dictionary, results are cacheable.
-  bool mayCache = distinctFields_.size() == 1 &&
-      VectorEncoding::isDictionary(context.wrapEncoding()) &&
-      !peeledVectors[0]->memoDisabled();
+  bool mayCache = false;
+  if (context.cacheEnabled()) {
+    mayCache = distinctFields_.size() == 1 &&
+        VectorEncoding::isDictionary(context.wrapEncoding()) &&
+        !peeledVectors[0]->memoDisabled();
+  }
 
   common::testutil::TestValue::adjust(
       "facebook::velox::exec::Expr::peelEncodings::mayCache", &mayCache);
@@ -1256,6 +1259,8 @@ void computeIsAsciiForInputs(
         inputValues[index]->type()->kind() == TypeKind::VARCHAR) {
       auto* vector =
           inputValues[index]->template as<SimpleVector<StringView>>();
+
+      VELOX_CHECK(vector);
       vector->computeAndSetIsAscii(rows);
     }
   }
