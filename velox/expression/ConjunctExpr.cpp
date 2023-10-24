@@ -196,37 +196,21 @@ void ConjunctExpr::maybeReorderInputs() {
 namespace {
 // helper functions for conjuncts operating on values, nulls and active rows a
 // word at a time.
-<<<<<<< HEAD
-inline void setFalseForOne(uint64_t& target, uint64_t active, uint64_t source) {
-  target &= ~active | ~source;
-}
-
-inline void setTrueForOne(uint64_t& target, uint64_t active, uint64_t source) {
-=======
 inline void setFalseForOne(uint64_t active, uint64_t source, uint64_t& target) {
   target &= ~active | ~source;
 }
 
 inline void setTrueForOne(uint64_t active, uint64_t source, uint64_t& target) {
->>>>>>> oerling/sel-bi-dev
   target |= active & source;
 }
 
 inline void
-<<<<<<< HEAD
-setPresentForOne(uint64_t& target, uint64_t active, uint64_t source) {
-=======
 setPresentForOne(uint64_t active, uint64_t source, uint64_t& target) {
->>>>>>> oerling/sel-bi-dev
   target |= active & source;
 }
 
 inline void
-<<<<<<< HEAD
-setNonPresentForOne(uint64_t& target, uint64_t active, uint64_t source) {
-=======
 setNonPresentForOne(uint64_t active, uint64_t source, uint64_t& target) {
->>>>>>> oerling/sel-bi-dev
   target &= ~active | ~source;
 }
 
@@ -237,19 +221,11 @@ inline void updateAnd(
     uint64_t testValue,
     uint64_t testPresent) {
   auto testFalse = ~testValue & testPresent;
-<<<<<<< HEAD
-  setFalseForOne(resultValue, active, testFalse);
-  setPresentForOne(resultPresent, active, testFalse);
-  auto resultTrue = resultValue & resultPresent;
-  setNonPresentForOne(
-      resultPresent, active, resultPresent & resultTrue & ~testPresent);
-=======
   setFalseForOne(active, testFalse, resultValue);
   setPresentForOne(active, testFalse, resultPresent);
   auto resultTrue = resultValue & resultPresent;
   setNonPresentForOne(
       active, resultPresent & resultTrue & ~testPresent, resultPresent);
->>>>>>> oerling/sel-bi-dev
   active &= ~testFalse;
 }
 
@@ -260,19 +236,11 @@ inline void updateOr(
     uint64_t testValue,
     uint64_t testPresent) {
   auto testTrue = testValue & testPresent;
-<<<<<<< HEAD
-  setTrueForOne(resultValue, active, testTrue);
-  setPresentForOne(resultPresent, active, testTrue);
-  auto resultFalse = ~resultValue & resultPresent;
-  setNonPresentForOne(
-      resultPresent, active, resultPresent & resultFalse & ~testPresent);
-=======
   setTrueForOne(active, testTrue, resultValue);
   setPresentForOne(active, testTrue, resultPresent);
   auto resultFalse = ~resultValue & resultPresent;
   setNonPresentForOne(
       active, resultPresent & resultFalse & ~testPresent, resultPresent);
->>>>>>> oerling/sel-bi-dev
   active &= ~testTrue;
 }
 
@@ -336,11 +304,7 @@ void ConjunctExpr::updateResult(
       if (nulls || result->mayHaveNulls()) {
         resultNulls = result->mutableRawNulls();
       }
-<<<<<<< HEAD
-      auto activeBits = activeRows->asMutableRange().bits();
-=======
       auto* activeBits = activeRows->asMutableRange().bits();
->>>>>>> oerling/sel-bi-dev
       if (isAnd_) {
         bits::forEachWord(
             activeRows->begin(),
