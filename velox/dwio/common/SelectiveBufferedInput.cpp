@@ -169,7 +169,6 @@ void SelectiveBufferedInput::makeLoads(
         readRegion(ranges, prefetch);
       });
   if (prefetch && executor_) {
-    std::vector<int32_t> doneIndices;
     for (auto i = 0; i < allCoalescedLoads_.size(); ++i) {
       auto& load = allCoalescedLoads_[i];
       if (load->state() == CoalescedLoad::State::kPlanned) {

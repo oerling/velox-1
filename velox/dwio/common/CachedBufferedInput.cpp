@@ -219,6 +219,10 @@ void CachedBufferedInput::makeLoads(
   }
   bool isSsd = !requests[0]->ssdPin.empty();
   int32_t maxDistance = isSsd ? 20000 : options_.maxCoalesceDistance();
+  // If reading densely accessed, coalesce into large for best throughput, if
+  // for sparse, coalesce to quantum to reduce overread. Not all sparse access
+  // is correlated.
+  auto maxCoalesceBytes = prefetch ? options_.maxCoalesceBytes() : options_.loadQuantum();
   std::sort(
       requests.begin(),
       requests.end(),
@@ -248,7 +252,7 @@ void CachedBufferedInput::makeLoads(
         return size;
       },
       [&](int32_t index) {
-        if (coalescedBytes > options_.maxCoalesceBytes()) {
+        if (coalescedBytes > maxCoalesceBytes) {
           coalescedBytes = 0;
           return kNoCoalesce;
         }
@@ -404,7 +408,7 @@ class DwioCoalescedLoad : public DwioCoalescedLoadBase {
     auto stats = cache::readPins(
         pins,
         maxCoalesceDistance_,
-        1000,
+        1000, // Limit coalesce by size, not count.
         [&](int32_t i) { return pins[i].entry()->offset(); },
         [&](const std::vector<CachePin>& /*pins*/,
             int32_t /*begin*/,
