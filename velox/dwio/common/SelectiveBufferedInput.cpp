@@ -31,7 +31,8 @@ using cache::TrackingId;
 
 std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
     Region region,
-    const StreamIdentifier* si = nullptr) {
+    const StreamIdentifier* si = nullptr,
+    std::unique_ptr<SeekableInputStream> reuse) {
   VELOX_CHECK(allCoalescedLoads_.empty(), "Should not enqueue after load()");
   if (region.length == 0) {
     return std::make_unique<SeekableArrayInputStream>(
@@ -134,7 +135,7 @@ void SelectiveBufferedInput::makeLoads(
       requests,
       maxDistance,
       // Break batches up. Better load more short ones i parallel.
-      40,
+      1000,
       [&](int32_t index) { return requests[index]->region.offset; },
       [&](int32_t index) -> int32_t {
         auto size = requests[index]->region.length;

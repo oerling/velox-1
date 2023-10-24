@@ -43,6 +43,7 @@ class PositionProvider {
 enum class StreamType : uint8_t {
   kGeneric,
   kCache,
+  kSelective,
   kArray,
   kFile,
   kPaged,

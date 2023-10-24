@@ -144,7 +144,8 @@ class SelectiveBufferedInput : public BufferedInput {
 
   std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier* FOLLY_NULLABLE si) override;
+      const StreamIdentifier* FOLLY_NULLABLE si,
+      std::unique_ptr<SeekableInputStream> reuse = nullptr) override;
 
   void load(const LogType) override;
 
@@ -157,7 +158,7 @@ class SelectiveBufferedInput : public BufferedInput {
   bool shouldPreload(int32_t numPages = 0) override;
 
   bool shouldPrefetchStripes() const override {
-    return true;
+    return false;
   }
 
   void setNumStripes(int32_t numStripes) override {
