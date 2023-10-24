@@ -22,7 +22,7 @@
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/common/Common.h"
-#include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/dwio/dwrf/test/TestReadFile.h"
 
 #include <gtest/gtest.h>
 
@@ -35,60 +35,6 @@ using facebook::velox::common::Region;
 
 using memory::MemoryAllocator;
 using IoStatisticsPtr = std::shared_ptr<IoStatistics>;
-
-// Testing stream producing deterministic data. The byte at offset is
-// the low byte of 'seed_' + offset.
-class TestReadFile : public ReadFile {
- public:
-  TestReadFile(uint64_t seed, uint64_t length, IoStatisticsPtr ioStats)
-      : seed_(seed), length_(length), ioStats_(std::move(ioStats)) {}
-
-  uint64_t size() const override {
-    return length_;
-  }
-
-  std::string_view pread(uint64_t offset, uint64_t length, void* buffer)
-      const override {
-    int fill;
-    uint64_t content = offset + seed_;
-    uint64_t available = std::min(length_ - offset, length);
-    for (fill = 0; fill < (available); ++fill) {
-      reinterpret_cast<char*>(buffer)[fill] = content + fill;
-    }
-    ioStats_->incRawBytesRead(length);
-    return std::string_view(static_cast<const char*>(buffer), fill);
-  }
-
-  // Asserts that 'bytes' is as would be read from 'offset'.
-  void checkData(const void* bytes, uint64_t offset, int32_t size) {
-    for (auto i = 0; i < size; ++i) {
-      char expected = seed_ + offset + i;
-      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i])
-          << " at " << offset + i;
-    }
-  }
-
-  uint64_t memoryUsage() const override {
-    VELOX_NYI();
-  }
-
-  bool shouldCoalesce() const override {
-    VELOX_NYI();
-  }
-
-  std::string getName() const override {
-    return "<TestReadFile>";
-  }
-
-  uint64_t getNaturalReadSize() const override {
-    VELOX_NYI();
-  }
-
- private:
-  const uint64_t seed_;
-  const uint64_t length_;
-  IoStatisticsPtr ioStats_;
-};
 
 struct TestRegion {
   int32_t offset;
@@ -104,7 +50,7 @@ class SelectiveBufferedInputTest : public testing::Test {
     ioStats_ = std::make_shared<IoStatistics>();
     fileIoStats_ = std::make_shared<IoStatistics>();
     tracker_ = std::make_shared<cache::ScanTracker>("", nullptr, kLoadQuantum);
-    file_ = std::make_shared<TestReadFile>(11, 100 < 20, fileIoStats_);
+    file_ = std::make_shared<TestReadFile>(11, 100 << 20, fileIoStats_);
     opts_ = std::make_unique<dwio::common::ReaderOptions>(pool_.get());
     opts_->setLoadQuantum(kLoadQuantum);
   }
@@ -115,16 +61,22 @@ class SelectiveBufferedInputTest : public testing::Test {
 
   std::unique_ptr<SelectiveBufferedInput> makeInput() {
     return std::make_unique<SelectiveBufferedInput>(
-        file_, nullptr, 1, tracker_, 2, ioStats_, executor_.get(), *opts_);
+        file_,
+        dwio::common::MetricsLog::voidLog(),
+        1,
+        tracker_,
+        2,
+        ioStats_,
+        executor_.get(),
+        *opts_);
   }
 
   // Reads and checks the result of reading ''regions' and checks that this
   // causes 'numIos' accesses to the file.
   void testLoads(std::vector<TestRegion> regions, int32_t numIos) {
-    auto count = fileIoStats_->read().count();
+    auto previous = file_->numIos();
     auto input = makeInput();
     std::vector<std::unique_ptr<SeekableInputStream>> streams;
-    int32_t counter = 0;
     for (auto i = 0; i < regions.size(); ++i) {
       if (regions[i].length > 0) {
         Region region;
@@ -140,9 +92,22 @@ class SelectiveBufferedInputTest : public testing::Test {
         checkRead(streams[i].get(), regions[i]);
       }
     }
-    EXPECT_EQ(count + numIos, fileIoStats_->read().count());
+    EXPECT_EQ(numIos, file_->numIos() - previous);
   }
 
+  // Marks the numStreams first streams as densely read. A large number of references that all end in a read.
+  void makeDense(int32_t numStreams) {
+    for (auto i = 0; i < numStreams; ++i) {
+      StreamIdentifier si(i);
+      auto trackId = TrackingId(si.getId());
+      for (auto counter = 0; counter < 100; ++counter) {
+	tracker_->recordReference(trackId, 1000000, 1, 1);
+	tracker_->recordRead(trackId, 1000000, 1, 1);
+      }
+    }
+  }
+
+  
   void checkRead(SeekableInputStream* stream, TestRegion region) {
     int32_t size;
     int32_t totalRead = 0;
@@ -164,6 +129,7 @@ class SelectiveBufferedInputTest : public testing::Test {
 };
 
 TEST_F(SelectiveBufferedInputTest, basic) {
+  
   // All but the last coalesce into one , the last is read in 2 parts.
   testLoads(
       {{100, 100},
@@ -173,8 +139,10 @@ TEST_F(SelectiveBufferedInputTest, basic) {
        {20000000, 10000000}},
       3);
 
-  // The first and the first part of second coalesce, the last part of second is
-  // separate.
+  // Mark the first 4 ranges as densely accessed.
+  makeDense(4);
+  
+  // The first and first part of second coalesce.
   testLoads({{100, 100}, {1000, 10000000}}, 2);
 
   // The first is read in two parts, the tail of the first does not coalesce
@@ -186,4 +154,8 @@ TEST_F(SelectiveBufferedInputTest, basic) {
 
   // Small standalone read in 1 part.
   testLoads({{100, 100}}, 1);
+
+  // Two small far apart
+  testLoads({{100, 100}, {1000000, 100}}, 2);
+  
 }

@@ -19,8 +19,7 @@
 #include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/CoalescedInputStream.h"
 
-DECLARE_int32(
-	      cache_prefetch_min_pct);
+DECLARE_int32(cache_prefetch_min_pct);
 
 using ::facebook::velox::common::Region;
 
@@ -33,8 +32,8 @@ using cache::TrackingId;
 std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
     Region region,
     const StreamIdentifier* si = nullptr) {
-
-  VELOX_CHECK(allCoalescedLoads_.empty(), "Should not enqueue after load()");if (region.length == 0) {
+  VELOX_CHECK(allCoalescedLoads_.empty(), "Should not enqueue after load()");
+  if (region.length == 0) {
     return std::make_unique<SeekableArrayInputStream>(
         static_cast<const char*>(nullptr), 0);
   }
@@ -89,14 +88,12 @@ int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
 } // namespace
 
 void SelectiveBufferedInput::load(const LogType) {
-  // 'requests_ is cleared on exit.
-  auto requests = std::move(requests_);
   // We loop over access frequency buckets. For example readPct 80
   // will get all streams where 80% or more of the referenced data is
   // actually loaded.
   for (auto readPct : std::vector<int32_t>{80, 50, 20, 0}) {
     std::vector<LoadRequest*> storageLoad;
-    for (auto& request : requests) {
+    for (auto& request : requests_) {
       if (request.processed) {
         continue;
       }
@@ -182,7 +179,6 @@ void SelectiveBufferedInput::makeLoads(
   }
 }
 
-
 void SelectiveBufferedInput::readRegion(
     std::vector<LoadRequest*> requests,
     bool prefetch) {
@@ -208,9 +204,7 @@ std::shared_ptr<SelectiveCoalescedLoad> SelectiveBufferedInput::coalescedLoad(
           return nullptr;
         }
         auto load = std::move(it->second);
-        for (auto* request : load->requests()) {
-          loads.erase(request->stream);
-        }
+        loads.erase(it);
         return load;
       });
 }
@@ -231,7 +225,7 @@ void appendRanges(
 }
 } // namespace
 
-  std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
+std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
   std::vector<folly::Range<char*>> buffers;
   int64_t lastEnd = requests_[0]->region.offset;
   int64_t size = 0;
