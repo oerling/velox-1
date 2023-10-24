@@ -24,8 +24,8 @@
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/dwio/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/common/Common.h"
-#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/dwio/dwrf/test/TestReadFile.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 #include <gtest/gtest.h>
 

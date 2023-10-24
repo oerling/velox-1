@@ -95,19 +95,19 @@ class SelectiveBufferedInputTest : public testing::Test {
     EXPECT_EQ(numIos, file_->numIos() - previous);
   }
 
-  // Marks the numStreams first streams as densely read. A large number of references that all end in a read.
+  // Marks the numStreams first streams as densely read. A large number of
+  // references that all end in a read.
   void makeDense(int32_t numStreams) {
     for (auto i = 0; i < numStreams; ++i) {
       StreamIdentifier si(i);
       auto trackId = TrackingId(si.getId());
       for (auto counter = 0; counter < 100; ++counter) {
-	tracker_->recordReference(trackId, 1000000, 1, 1);
-	tracker_->recordRead(trackId, 1000000, 1, 1);
+        tracker_->recordReference(trackId, 1000000, 1, 1);
+        tracker_->recordRead(trackId, 1000000, 1, 1);
       }
     }
   }
 
-  
   void checkRead(SeekableInputStream* stream, TestRegion region) {
     int32_t size;
     int32_t totalRead = 0;
@@ -129,7 +129,6 @@ class SelectiveBufferedInputTest : public testing::Test {
 };
 
 TEST_F(SelectiveBufferedInputTest, basic) {
-  
   // All but the last coalesce into one , the last is read in 2 parts.
   testLoads(
       {{100, 100},
@@ -141,7 +140,7 @@ TEST_F(SelectiveBufferedInputTest, basic) {
 
   // Mark the first 4 ranges as densely accessed.
   makeDense(4);
-  
+
   // The first and first part of second coalesce.
   testLoads({{100, 100}, {1000, 10000000}}, 2);
 
@@ -157,5 +156,4 @@ TEST_F(SelectiveBufferedInputTest, basic) {
 
   // Two small far apart
   testLoads({{100, 100}, {1000000, 100}}, 2);
-  
 }
