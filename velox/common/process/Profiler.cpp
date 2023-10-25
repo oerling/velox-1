@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/process/Profiler.h"
+#include <fstream>
 #include <iostream>
 #include "velox/common/file/File.h"
 
@@ -26,6 +27,7 @@
 
 #include <fcntl.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 DEFINE_string(profile_tmp_dir, "/tmp", "Writable temp for perf.data");
@@ -179,6 +181,18 @@ bool Profiler::isSleeping_;
 bool Profiler::shouldStop_;
 folly::Promise<bool> Profiler::sleepPromise_;
 
+void testWritable(const std::string& dir) {
+  auto testPath = fmt::format("{}/test", dir);
+  int32_t fd = open(testPath.c_str(), O_RDWR | O_CREAT);
+  if (fd < 0) {
+    LOG(ERROR) << "Can't open " << testPath << " for write"; return;
+  }
+  if (4 != write(fd, "test", 4)) {
+    LOG(ERROR) << "Can't write to " << testPath;
+  }
+  close(fd);
+}
+
 void Profiler::copyToResult(
     int32_t counter,
     const std::string& path,
@@ -190,8 +204,11 @@ void Profiler::copyToResult(
     buffer = const_cast<char*>(data->data());
     resultSize = std::min<int32_t>(data->size(), 400000);
   } else {
-    int32_t fd = open("/tmp/perf", O_RDONLY);
+    testWritable(FLAGS_profile_tmp_dir);
+    auto reportFile = fmt::format("{}/perf", FLAGS_profile_tmp_dir);
+    int32_t fd = open(reportFile.c_str(), O_RDONLY);
     if (fd < 0) {
+      LOG(ERROR) << "PROFILE: << Could not open report file at " << reportFile;
       return;
     }
     auto bufferSize = 400000;
@@ -233,29 +250,31 @@ void Profiler::threadFunction(std::string path) {
   for (int32_t counter = 0;; ++counter) {
     int32_t perfPid = 0;
     std::thread systemThread([&]() {
-#if 0
-      system(
-          fmt::format(
-              "(cd /tmp; (/usr/bin/perf record --pid {} >>/tmp/perfstart.out);"
-              "perf report --sort symbol > /tmp/perf;"
-              "sed --in-place 's/      / /' /tmp/perf;"
-	      "sed --in-place 's/      / /' /tmp/perf; date) "
-	      ">> /tmp/perftrace 2>>/tmp/perftrace2",
-              pid)
-              .c_str());
+#if !defined(WITH_PIPE)
+      system(fmt::format(
+                 "(cd {}; /usr/bin/perf record --pid {};"
+                 "perf report --sort symbol > perf ;"
+                 "sed --in-place 's/      / /' perf;"
+                 "sed --in-place 's/      / /' perf; date) "
+                 ">> {}/perftrace 2>>{}/perftrace2",
+                 FLAGS_profile_tmp_dir,
+                 pid,
+                 FLAGS_profile_tmp_dir,
+                 FLAGS_profile_tmp_dir)
+                 .c_str());
       copyToResult(counter, path);
 
 #else
       int32_t fd;
       int32_t errorFd = kMakeErrorPipe;
-      auto temp = FLAGS_profile_tmp_dir;
+      auto workingDir = FLAGS_profile_tmp_dir;
       perfPid = startCmd(
           "perf",
           {"record", "--pid", fmt::format("{}", pid) /*, "-m", "100" */},
           -1,
           fd,
           errorFd,
-          temp.c_str());
+          workingDir.c_str());
       int32_t reportFd;
       auto reportPid = startCmd(
           "perf",
@@ -263,11 +282,13 @@ void Profiler::threadFunction(std::string path) {
           fd,
           reportFd,
           errorFd,
-          temp.c_str());
+          workingDir.c_str());
       std::string report;
       std::string error;
       waitCmd(reportPid, reportFd, errorFd, &report, &error);
-      LOG(INFO) << "PROFILE: " << error;
+      wait(reportPid);
+      wait(perfPid);
+      LOG(INFO) << "PROFILE: stderr:" << error;
       copyToResult(counter, path, &report);
 
 #endif
@@ -292,8 +313,12 @@ void Profiler::threadFunction(std::string path) {
       std::lock_guard<std::mutex> l(profileMutex_);
       isSleeping_ = false;
     }
-    LOG(INFO) << "Signalling perf at " << perfPid;
+    LOG(INFO) << "PROFILE: Signalling perf at " << perfPid;
+#if WITH_PIPE
     system(fmt::format("kill -2 {}", perfPid).c_str());
+#else
+    system("killall -2 perf");
+#endif
     systemThread.join();
     if (shouldStop_) {
       return;
