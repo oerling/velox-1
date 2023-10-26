@@ -518,7 +518,8 @@ void MemoryPoolImpl::allocateNonContiguous(
         "{} failed with {} pages from {} {}",
         __FUNCTION__,
         numPages,
-        toString(), evictFailureMessage()));
+        toString(),
+        evictFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(out);
   VELOX_CHECK(!out.empty());

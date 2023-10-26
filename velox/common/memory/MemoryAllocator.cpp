@@ -33,7 +33,6 @@ std::string& evictFailureMessage() {
   return message;
 }
 
-  
 std::shared_ptr<MemoryAllocator> MemoryAllocator::instance_;
 MemoryAllocator* MemoryAllocator::customInstance_;
 std::mutex MemoryAllocator::initMutex_;

@@ -512,7 +512,7 @@ struct CacheStats {
 
   // Total size of pinned entries.
   int64_t pinnedBytes{0};
-  
+
   std::shared_ptr<SsdCacheStats> ssdStats = nullptr;
 
   std::string toString() const;
@@ -854,7 +854,7 @@ CoalesceIoStats readPins(
         int32_t end,
         uint64_t offset,
         const std::vector<folly::Range<char*>>& buffers)> readFunc);
-  
+
 } // namespace facebook::velox::cache
 
 template <>
