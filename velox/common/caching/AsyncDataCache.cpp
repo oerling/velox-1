@@ -471,8 +471,12 @@ void CacheShard::updateStats(CacheStats& stats) {
       ++stats.numEmptyEntries;
       continue;
     } else if (entry->isExclusive()) {
+      stats.pinnedBytes +=
+          entry->data().byteSize() + entry->tinyData_.capacity();
       ++stats.numExclusive;
     } else if (entry->isShared()) {
+      stats.pinnedBytes +=
+          entry->data().byteSize() + entry->tinyData_.capacity();
       ++stats.numShared;
     }
     if (entry->isPrefetch_) {
@@ -667,6 +671,8 @@ bool AsyncDataCache::makeSpace(
       sizeMultiplier *= 2;
     }
   }
+  memory::evictFailureMessage() =
+      std::string("After failing to evict from cache state: ") + toString();
   return false;
 }
 
@@ -775,6 +781,7 @@ std::string CacheStats::toString() const {
       // Cache entries
       << "Cache entries: " << numEntries << " read pins: " << numShared
       << " write pins: " << numExclusive
+      << " pinned MB: " << (pinnedBytes >> 20)
       << " num write wait: " << numWaitExclusive
       << " empty entries: " << numEmptyEntries
       << "\n"

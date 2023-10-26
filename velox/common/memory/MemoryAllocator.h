@@ -161,6 +161,11 @@ class Cache {
   virtual MemoryAllocator* allocator() const = 0;
 };
 
+/// Thread local holder for extra context information for cases
+/// where an allocation fails because space could not be cleared in
+/// cache.
+  std::string& evictFailureMessage();
+
 /// This class provides interface for the actual memory allocations from memory
 /// pool. It allocates runs of machine pages from predefined size classes, and
 /// supports both contiguous and non-contiguous memory allocations. An

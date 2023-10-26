@@ -28,6 +28,12 @@ DECLARE_bool(velox_memory_use_hugepages);
 
 namespace facebook::velox::memory {
 
+std::string& evictFailureMessage() {
+  thread_local std::string message;
+  return message;
+}
+
+  
 std::shared_ptr<MemoryAllocator> MemoryAllocator::instance_;
 MemoryAllocator* MemoryAllocator::customInstance_;
 std::mutex MemoryAllocator::initMutex_;
