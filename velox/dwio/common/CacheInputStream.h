@@ -104,8 +104,8 @@ class CacheInputStream : public SeekableInputStream {
       return fileNum_ << 32;
     }
     return (fileNum_ << 32) | (pin_.entry()->key().offset + position_);
-}
-  
+  }
+
  private:
   // Ensures that the current position is covered by 'pin_'.
   void loadPosition();

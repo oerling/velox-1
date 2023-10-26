@@ -462,13 +462,15 @@ TEST_F(BitUtilTest, forEachBit) {
 
 TEST_F(BitUtilTest, hash) {
   std::unordered_map<uint64_t, int32_t> hashes;
-  std::string text = "Forget the night, come live with us in forests of azure, "
-    "for we have constructed pyramids in honor of our escaping...";
+  std::string text =
+      "Forget the night, come live with us in forests of azure, "
+      "for we have constructed pyramids in honor of our escaping...";
   for (int32_t i = 0; i < text.size(); ++i) {
     auto hash = hashBytes(1, text.data(), i);
     if (i < text.size() - 1) {
       ++text[i];
-      // Change the first byte after the hashed range and check that the hash function does not overread its range.
+      // Change the first byte after the hashed range and check that the hash
+      // function does not overread its range.
       EXPECT_EQ(hash, hashBytes(1, text.data(), i));
       --text[i];
     }

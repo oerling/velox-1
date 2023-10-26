@@ -201,7 +201,7 @@ class PagedInputStream : public dwio::common::SeekableInputStream {
 
  private:
   void recordDecompress();
-  
+
   bool skipAllPending();
 
   // Stream Debug Info

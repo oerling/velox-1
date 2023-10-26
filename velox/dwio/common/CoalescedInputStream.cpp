@@ -39,8 +39,8 @@ CoalescedInputStream::CoalescedInputStream(
     TrackingId trackingId,
     uint64_t groupId,
     int32_t loadQuantum)
-  : SeekableInputStream(StreamType::kSelective),
-    bufferedInput_(bufferedInput),
+    : SeekableInputStream(StreamType::kSelective),
+      bufferedInput_(bufferedInput),
       ioStats_(ioStats),
       input_(std::move(input)),
       region_(region),

@@ -16,8 +16,8 @@
 
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/base/Exceptions.h"
-#include "velox/common/process/ProcessBase.h"
 #include "velox/common/base/SimdUtil.h"
+#include "velox/common/process/ProcessBase.h"
 
 namespace facebook::velox::bits {
 
@@ -159,9 +159,7 @@ void scatterBits(
 #endif
 }
 
-
-
-  uint64_t hashBytes(size_t seed, const char* data, size_t size) {
+uint64_t hashBytes(size_t seed, const char* data, size_t size) {
   auto begin = reinterpret_cast<const uint8_t*>(data);
   const uint64_t kMul = 0x9ddfea08eb382d69ULL;
   if (size < 8) {
@@ -185,13 +183,25 @@ void scatterBits(
   if (toGo > 16) {
     a0 = simd::crc32U64(a0, words[0]);
     a1 = simd::crc32U64(a1, words[1]);
-     a2 = simd::crc32U64(a2, loadPartialWord(reinterpret_cast<const uint8_t*>(words + 2), toGo - 16));
+    a2 = simd::crc32U64(
+        a2,
+        loadPartialWord(
+            reinterpret_cast<const uint8_t*>(words + 2), toGo - 16));
   } else if (toGo > 8) {
     a0 = simd::crc32U64(a0, words[0]);
-    a1 = simd::crc32U64(a1, toGo == 16 ? words[1] : loadPartialWord(reinterpret_cast<const uint8_t*>(words + 1), toGo - 8));
+    a1 = simd::crc32U64(
+        a1,
+        toGo == 16
+            ? words[1]
+            : loadPartialWord(
+                  reinterpret_cast<const uint8_t*>(words + 1), toGo - 8));
   } else if (toGo > 0) {
-    a0 = simd::crc32U64(a0, toGo == 8 ? words[0] : loadPartialWord(reinterpret_cast<const uint8_t*>(words), toGo));
+    a0 = simd::crc32U64(
+        a0,
+        toGo == 8
+            ? words[0]
+            : loadPartialWord(reinterpret_cast<const uint8_t*>(words), toGo));
   }
   return a0 ^ ((a1 * kMul)) ^ (a2 * kMul);
-  }
-  } // namespace facebook::velox::bits
+}
+} // namespace facebook::velox::bits

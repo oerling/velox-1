@@ -17,8 +17,8 @@
 #pragma once
 
 #include "velox/common/memory/AllocationPool.h"
-#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/common/SeekableInputStream.h"
 #include "velox/dwio/common/StreamIdentifier.h"
 
 // Use WS VRead API to load
@@ -45,8 +45,8 @@ class BufferedInput {
         pool_{pool},
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
-	loadQuantum_(options ? options->loadQuantum() : 0),
-	options_(options),
+        loadQuantum_(options ? options->loadQuantum() : 0),
+        options_(options),
         allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(
@@ -59,8 +59,8 @@ class BufferedInput {
         pool_(pool),
         maxMergeDistance_{maxMergeDistance},
         wsVRLoad_{wsVRLoad},
-	loadQuantum_(options ? options->loadQuantum() : 0),
-	options_(options),
+        loadQuantum_(options ? options->loadQuantum() : 0),
+        options_(options),
         allocPool_{std::make_unique<memory::AllocationPool>(&pool)} {}
 
   BufferedInput(BufferedInput&&) = default;
@@ -129,7 +129,8 @@ class BufferedInput {
   // Create a new (clean) instance of BufferedInput sharing the same
   // underlying file and memory pool.  The enqueued regions are NOT copied.
   virtual std::unique_ptr<BufferedInput> clone() const {
-    return std::make_unique<BufferedInput>(input_, pool_, maxMergeDistance_, wsVRLoad_, options_);
+    return std::make_unique<BufferedInput>(
+        input_, pool_, maxMergeDistance_, wsVRLoad_, options_);
   }
 
   std::unique_ptr<SeekableInputStream> loadCompleteFile() {
