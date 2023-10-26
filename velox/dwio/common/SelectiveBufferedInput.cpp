@@ -121,6 +121,10 @@ void SelectiveBufferedInput::makeLoads(
   }
   int32_t maxDistance = options_.maxCoalesceDistance();
   auto loadQuantum = options_.loadQuantum();
+  // If reading densely accessed, coalesce into large for best throughput, if
+  // for sparse, coalesce to quantum to reduce overread. Not all sparse access
+  // is correlated.
+  auto maxCoalesceBytes = prefetch ? options_.maxCoalesceBytes() : loadQuantum;
   std::sort(
       requests.begin(),
       requests.end(),
@@ -135,7 +139,7 @@ void SelectiveBufferedInput::makeLoads(
       requests,
       maxDistance,
       // Break batches up. Better load more short ones i parallel.
-      1000,
+      1000, // limit coalesce by size, not count.
       [&](int32_t index) { return requests[index]->region.offset; },
       [&](int32_t index) -> int32_t {
         auto size = requests[index]->region.length;
@@ -147,7 +151,7 @@ void SelectiveBufferedInput::makeLoads(
         return size;
       },
       [&](int32_t index) {
-        if (coalescedBytes > options_.maxCoalesceBytes()) {
+        if (coalescedBytes > maxCoalesceBytes) {
           coalescedBytes = 0;
           return kNoCoalesce;
         }
