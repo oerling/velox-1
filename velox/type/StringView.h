@@ -250,7 +250,6 @@ struct StringView {
       const int32_t* indices,
       int32_t numStrings);
 
- private:
   inline int64_t sizeAndPrefixAsInt64() const {
     return reinterpret_cast<const int64_t*>(this)[0];
   }
@@ -258,6 +257,8 @@ struct StringView {
   inline int64_t inlinedAsInt64() const {
     return reinterpret_cast<const int64_t*>(this)[1];
   }
+
+private:
 
   int32_t prefixAsInt() const {
     return *reinterpret_cast<const int32_t*>(&prefix_);
