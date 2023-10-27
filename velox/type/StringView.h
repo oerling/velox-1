@@ -258,8 +258,7 @@ struct StringView {
     return reinterpret_cast<const int64_t*>(this)[1];
   }
 
-private:
-
+ private:
   int32_t prefixAsInt() const {
     return *reinterpret_cast<const int32_t*>(&prefix_);
   }
