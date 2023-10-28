@@ -13,14 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include "velox/exec/OutputBufferManager.h"
+namespace facebook::velox::filesystems::abfs {
 
-namespace facebook::velox::exec {
+// Register the ABFS filesystem.
+void registerAbfsFileSystem();
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-using PartitionedOutputBufferManager = OutputBufferManager;
-#endif
-
-} // namespace facebook::velox::exec
+} // namespace facebook::velox::filesystems::abfs

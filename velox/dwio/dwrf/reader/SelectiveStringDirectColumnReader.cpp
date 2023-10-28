@@ -23,11 +23,11 @@
 namespace facebook::velox::dwrf {
 
 SelectiveStringDirectColumnReader::SelectiveStringDirectColumnReader(
-    const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(nodeType->type(), params, scanSpec, nodeType) {
-  EncodingKey encodingKey{nodeType->id(), params.flatMapContext().sequence};
+    : SelectiveColumnReader(fileType->type(), fileType, params, scanSpec) {
+  EncodingKey encodingKey{fileType->id(), params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
   RleVersion rleVersion =
       convertRleVersion(stripe.getEncoding(encodingKey).kind());
@@ -230,7 +230,8 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
   // If we haven't read in a buffer yet, or there is not enough data left.  This
   // check is important to make sure the subsequent fast path will have enough
   // data to read.
-  if (!bufferStart_ || bufferEnd_ - bufferStart_ - bytesToSkip_ < 8 * 12) {
+  if (!bufferStart_ ||
+      bufferEnd_ - bufferStart_ - bytesToSkip_ < start + 8 * 12) {
     return false;
   }
   const char* data = bufferStart_ + start + bytesToSkip_;
@@ -240,6 +241,7 @@ inline bool SelectiveStringDirectColumnReader::try8Consecutive(
     bool gt4;
     if (allSmallEnough(lengths, offsets, gt4)) {
       if (gt4) {
+        VELOX_DCHECK_LE(data + offsets[7] + 12, bufferEnd_);
         return try8ConsecutiveSmall<scatter, true>(data, offsets, row);
       } else {
         return try8ConsecutiveSmall<scatter, false>(data, offsets, row);
