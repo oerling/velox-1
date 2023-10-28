@@ -327,10 +327,8 @@ std::string Stats::toString() const {
   return out.str();
 }
 
-  //static 
-void MemoryAllocator::useHugePages(
-				   ContiguousAllocation& data,
-    bool enable) {
+// static
+void MemoryAllocator::useHugePages(ContiguousAllocation& data, bool enable) {
 #ifdef linux
   auto maybeRange = data.hugePageRange();
   if (!maybeRange.has_value()) {

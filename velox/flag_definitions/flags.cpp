@@ -104,5 +104,7 @@ DEFINE_bool(
     "If true, suppress the verbose error message in memory capacity exceeded "
     "exception. This is only used by test to control the test error output size");
 
-DEFINE_bool(velox_memory_use_hugepages_for_hash_tables, true,
-	    "Use explicit huge pages for large containers only");
+DEFINE_bool(
+    velox_memory_use_hugepages_for_hash_tables,
+    true,
+    "Use explicit huge pages for large containers only");

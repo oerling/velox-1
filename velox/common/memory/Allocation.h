@@ -283,7 +283,7 @@ class ContiguousAllocation {
   bool isHugePages() const {
     return isHugePages_;
   }
-  
+
   std::string toString() const;
 
  private:

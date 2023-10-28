@@ -696,7 +696,7 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
       memory::AllocationTraits::numPages(size * tableSlotSize());
   rows_->pool()->allocateContiguous(numPages, tableAllocation_);
   if (velox_memory_use_hugepages_for_hash_tables) {
-      tableAllocation.useHugePages();
+    tableAllocation.useHugePages();
   }
   table_ = tableAllocation_.data<char*>();
   memset(table_, 0, capacity_ * sizeof(char*));
