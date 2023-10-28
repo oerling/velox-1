@@ -697,8 +697,8 @@ void HashTable<ignoreNullKeys>::allocateTables(uint64_t size) {
   const auto numPages =
       memory::AllocationTraits::numPages(size * tableSlotSize());
   rows_->pool()->allocateContiguous(numPages, tableAllocation_);
-  if (velox_memory_use_hugepages_for_hash_tables) {
-    tableAllocation.useHugePages();
+  if (FLAGS_velox_memory_use_hugepages_for_hash_tables) {
+    tableAllocation_.useHugePages();
   }
   table_ = tableAllocation_.data<char*>();
   memset(table_, 0, capacity_ * sizeof(char*));
@@ -1235,8 +1235,8 @@ void HashTable<ignoreNullKeys>::setHashMode(HashMode mode, int32_t numNew) {
     const auto bytes = capacity_ * tableSlotSize();
     const auto numPages = memory::AllocationTraits::numPages(bytes);
     rows_->pool()->allocateContiguous(numPages, tableAllocation_);
-    if (velox_memory_use_hugepages_for_hash_tables) {
-      tableAllocation.useHugePages();
+    if (FLAGS_velox_memory_use_hugepages_for_hash_tables) {
+      tableAllocation_.useHugePages();
     }
     table_ = tableAllocation_.data<char*>();
     memset(table_, 0, bytes);

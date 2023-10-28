@@ -148,8 +148,10 @@ bool MallocAllocator::allocateContiguousImpl(
         freeNonContiguous(*collateral) / AllocationTraits::kPageSize;
   }
   auto numContiguousCollateralPages = allocation.numPages();
-  if (allocation.isHugePages()) {
-    useHugePages(allocation, false);
+  if (numContiguousCollateralPages > 0) {
+    if (allocation.isHugePages()) {
+      useHugePages(allocation, false);
+    }
     if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
       VELOX_MEM_LOG(ERROR) << "munmap got " << folly::errnoStr(errno) << "for "
                            << allocation.data() << ", " << allocation.size();

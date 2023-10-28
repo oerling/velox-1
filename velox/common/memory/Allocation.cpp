@@ -1,4 +1,4 @@
-/*
+ /*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +99,7 @@ void ContiguousAllocation::grow(MachinePageCount increment) {
 void ContiguousAllocation::clear() {
   pool_ = nullptr;
   set(nullptr, 0);
+  isHugePages_ = false;
 }
 
 MachinePageCount ContiguousAllocation::numPages() const {
