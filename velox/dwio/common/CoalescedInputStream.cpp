@@ -78,7 +78,7 @@ void CoalescedInputStream::BackUp(int32_t count) {
   position_ -= unsignedCount;
 }
 
-bool CoalescedInputStream::Skip(int32_t count) {
+bool CoalescedInputStream::SkipInt64(int64_t count) {
   if (count < 0) {
     return false;
   }
@@ -171,10 +171,15 @@ void CoalescedInputStream::loadPosition() {
         isLoaded_ = true;
       }
       ioStats_->queryThreadIoLatency().increment(usec);
+    } else {
+      // Standalone stream, not part of coalesced load.
+      loadedRegion_.offset = 0;
+      loadedRegion_.length = 0;
     }
   }
   // Check if position outside of loaded bounds.
-  if (region_.offset + position_ < loadedRegion_.offset ||
+  if (loadedRegion_.length == 0 ||
+      region_.offset + position_ < loadedRegion_.offset ||
       region_.offset + position_ >=
           loadedRegion_.offset + loadedRegion_.length) {
     loadedRegion_.offset = region_.offset + position_;

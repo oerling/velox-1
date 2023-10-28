@@ -86,20 +86,7 @@ bool CachedBufferedInput::shouldPreload(int32_t numPages) {
                     memory::AllocationTraits::kPageSize) /
         memory::AllocationTraits::kPageSize;
   }
-  auto cachePages = cache_->incrementCachedPages(0);
-  auto allocator = cache_->allocator();
-  auto maxPages = memory::AllocationTraits::numPages(allocator->capacity());
-  auto allocatedPages = allocator->numAllocated();
-  if (numPages < maxPages - allocatedPages) {
-    // There is free space for the read-ahead.
-    return true;
-  }
-  auto prefetchPages = cache_->incrementPrefetchPages(0);
-  if (numPages + prefetchPages < cachePages / 2) {
-    // The planned prefetch plus other prefetches are under half the cache.
-    return true;
-  }
-  return false;
+  return cache_->mayPrefetch(numPages);
 }
 
 namespace {
@@ -321,6 +308,10 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
     return size_;
   }
 
+  bool mayPrefetchLocked() override {
+    return cache_.mayPrefetch(memory::AllocationTraits::numPages(size()));
+  }
+  
   std::string toString() const override {
     int32_t payload = 0;
     assert(!requests_.empty());
@@ -390,7 +381,7 @@ class DwioCoalescedLoad : public DwioCoalescedLoadBase {
       : DwioCoalescedLoadBase(cache, ioStats, groupId, std::move(requests)),
         input_(std::move(input)),
         maxCoalesceDistance_(maxCoalesceDistance) {}
-
+  
   std::vector<CachePin> loadData(bool isPrefetch) override {
     std::vector<CachePin> pins;
     pins.reserve(keys_.size());

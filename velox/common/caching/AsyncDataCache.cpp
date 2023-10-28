@@ -251,6 +251,9 @@ CoalescedLoad::~CoalescedLoad() {
 bool CoalescedLoad::loadOrFuture(folly::SemiFuture<bool>* wait) {
   {
     std::lock_guard<std::mutex> l(mutex_);
+    if (wait == nullptr && state_ == State::kPlanned && !mayPrefetchLocked()) {
+      return true;
+    }
     if (state_ == State::kCancelled || state_ == State::kLoaded) {
       return true;
     }
@@ -740,6 +743,21 @@ CacheStats AsyncDataCache::refreshStats() const {
     stats.ssdStats = std::make_shared<SsdCacheStats>(ssdCache_->stats());
   }
   return stats;
+}
+  bool AsyncDataCache::mayPrefetch(memory::MachinePageCount numPages) {
+  auto cachePages = incrementCachedPages(0);
+  auto maxPages = memory::AllocationTraits::numPages(allocator_->capacity());
+  auto allocatedPages = allocator_->numAllocated();
+  if (numPages < maxPages - allocatedPages) {
+    // There is free space for the read-ahead.
+    return true;
+  }
+  auto prefetchPages = incrementPrefetchPages(0);
+  if (numPages + prefetchPages < cachePages / 2) {
+    // The planned prefetch plus other prefetches are under half the cache.
+    return true;
+  }
+  return false;
 }
 
 void AsyncDataCache::clear() {

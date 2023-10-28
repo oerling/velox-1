@@ -129,7 +129,19 @@ class SelectiveBufferedInputTest : public testing::Test {
 };
 
 TEST_F(SelectiveBufferedInputTest, basic) {
-  // All but the last coalesce into one , the last is read in 2 parts.
+  // The small leading parts coalesce, the 7M and 2M go standalone. the last is
+  // read in 2 parts. This is because these are not yet densely accessed and
+  // thus coalescing only works to load quantum of 8MB.
+  testLoads(
+      {{100, 100},
+       {300, 100},
+       {1000, 7000000},
+       {7004000, 2000000},
+       {20000000, 10000000}},
+      5);
+  // All but the last coalesce into one , the last is read in 2 parts. The
+  // columns are now dense and coalesce goes up to 128MB if gaps are small
+  // enough.
   testLoads(
       {{100, 100},
        {300, 100},

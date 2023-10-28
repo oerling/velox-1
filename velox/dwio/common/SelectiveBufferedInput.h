@@ -30,9 +30,10 @@
 namespace facebook::velox::dwio::common {
 
 struct LoadRequest {
+  LoadRequest() = default;
   LoadRequest(velox::common::Region& _region, cache::TrackingId _trackingId)
       : region(_region), trackingId(_trackingId) {}
-
+  
   velox::common::Region region;
   cache::TrackingId trackingId;
   bool processed{false};
@@ -52,17 +53,30 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
       std::shared_ptr<ReadFileInputStream> input,
       std::shared_ptr<IoStatistics> ioStats,
       uint64_t groupId,
-      std::vector<LoadRequest*> requests,
+      const std::vector<LoadRequest*>& requests,
       memory::MemoryPool& pool,
       int32_t loadQuantum)
       : CoalescedLoad({}, {}),
         ioStats_(ioStats),
         groupId_(groupId),
-        requests_(std::move(requests)),
         input_(std::move(input)),
         pool_(pool),
-        loadQuantum_(loadQuantum){};
+        loadQuantum_(loadQuantum) {
+    requests_.reserve(requests.size());
+    for (auto i = 0; i < requests.size(); ++i) {
+      requests_.push_back(std::move(*requests[i]));
+    }
+  };
 
+  bool mayPrefetchLocked() override {
+    auto bytes = size(); 
+    // A piece of under 4MB that is sure to be needed will be latency bound when loaded so might as well prefetch.
+    if (bytes < 4 << 20) {
+      return true;
+    }
+    return false;
+  }
+  
   // Loads the regions. Returns {} since no cache entries are made. The loaded
   // data is retrieved with getData().
   std::vector<cache::CachePin> loadData(bool isPrefetch) override;
@@ -79,7 +93,7 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
   int64_t size() const override {
     int64_t size = 0;
     for (auto& request : requests_) {
-      size += request->region.length;
+      size += request.region.length;
     }
     return size;
   }
@@ -87,7 +101,7 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
  private:
   std::shared_ptr<IoStatistics> ioStats_;
   const uint64_t groupId_;
-  std::vector<LoadRequest*> requests_;
+  std::vector<LoadRequest> requests_;
   std::shared_ptr<ReadFileInputStream> input_;
   memory::MemoryPool& pool_;
   const int32_t loadQuantum_;
