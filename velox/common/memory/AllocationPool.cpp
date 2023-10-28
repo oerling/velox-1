@@ -120,7 +120,9 @@ void AllocationPool::newRunImpl(MachinePageCount numPages) {
         AllocationTraits::numPagesInHugePage();
     pool_->allocateContiguous(
         pagesToAlloc, largeAlloc, AllocationTraits::numPages(nextSize));
-
+    if (FLAGS_velox_memory_use_hugepages_for_hash_tables) {
+      largeAlloc.useHugePages();
+    }
     auto range = largeAlloc.hugePageRange().value();
     startOfRun_ = range.data();
     bytesInRun_ = range.size();

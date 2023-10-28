@@ -260,7 +260,7 @@ bool MmapAllocator::allocateContiguousImpl(
     numCollateralPages = freeInternal(*collateral);
   }
   const auto numLargeCollateralPages = allocation.numPages();
-  if (numLargeCollateralPages > 0) {
+  if (allocation.isHugePages()) {
     useHugePages(allocation, false);
     if (useMmapArena_) {
       std::lock_guard<std::mutex> l(arenaMutex_);
@@ -384,7 +384,6 @@ bool MmapAllocator::allocateContiguousImpl(
       data,
       AllocationTraits::pageBytes(numPages),
       AllocationTraits::pageBytes(maxPages));
-  useHugePages(allocation, true);
   return true;
 }
 
