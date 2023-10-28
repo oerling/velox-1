@@ -25,6 +25,8 @@
 
 using facebook::velox::common::testutil::TestValue;
 
+DECLARE_bool(velox_memory_use_hugepages_for_hash_tables);
+
 namespace facebook::velox::exec {
 // static
 std::string BaseHashTable::modeString(HashMode mode) {

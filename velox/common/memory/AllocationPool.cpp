@@ -19,6 +19,8 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/MemoryAllocator.h"
 
+DECLARE_bool(velox_memory_use_hugepages_for_hash_tables);
+
 namespace facebook::velox::memory {
 
 folly::Range<char*> AllocationPool::rangeAt(int32_t index) const {
