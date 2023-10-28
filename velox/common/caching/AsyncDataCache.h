@@ -766,9 +766,10 @@ class AsyncDataCache : public memory::Cache {
     return numSkippedSaves_;
   }
 
-  /// Returns true if it is reasonable to prefetch 'numPages' more of prefetched data.
+  /// Returns true if it is reasonable to prefetch 'numPages' more of prefetched
+  /// data.
   bool mayPrefetch(memory::MachinePageCount numPages);
-  
+
  private:
   static constexpr int32_t kNumShards = 4; // Must be power of 2.
   static constexpr int32_t kShardMask = kNumShards - 1;

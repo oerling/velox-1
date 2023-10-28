@@ -311,7 +311,7 @@ class DwioCoalescedLoadBase : public cache::CoalescedLoad {
   bool mayPrefetchLocked() override {
     return cache_.mayPrefetch(memory::AllocationTraits::numPages(size()));
   }
-  
+
   std::string toString() const override {
     int32_t payload = 0;
     assert(!requests_.empty());
@@ -381,7 +381,7 @@ class DwioCoalescedLoad : public DwioCoalescedLoadBase {
       : DwioCoalescedLoadBase(cache, ioStats, groupId, std::move(requests)),
         input_(std::move(input)),
         maxCoalesceDistance_(maxCoalesceDistance) {}
-  
+
   std::vector<CachePin> loadData(bool isPrefetch) override {
     std::vector<CachePin> pins;
     pins.reserve(keys_.size());

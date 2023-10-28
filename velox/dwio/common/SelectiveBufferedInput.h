@@ -33,7 +33,7 @@ struct LoadRequest {
   LoadRequest() = default;
   LoadRequest(velox::common::Region& _region, cache::TrackingId _trackingId)
       : region(_region), trackingId(_trackingId) {}
-  
+
   velox::common::Region region;
   cache::TrackingId trackingId;
   bool processed{false};
@@ -69,14 +69,15 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
   };
 
   bool mayPrefetchLocked() override {
-    auto bytes = size(); 
-    // A piece of under 4MB that is sure to be needed will be latency bound when loaded so might as well prefetch.
+    auto bytes = size();
+    // A piece of under 4MB that is sure to be needed will be latency bound when
+    // loaded so might as well prefetch.
     if (bytes < 4 << 20) {
       return true;
     }
     return false;
   }
-  
+
   // Loads the regions. Returns {} since no cache entries are made. The loaded
   // data is retrieved with getData().
   std::vector<cache::CachePin> loadData(bool isPrefetch) override;

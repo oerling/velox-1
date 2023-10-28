@@ -744,7 +744,7 @@ CacheStats AsyncDataCache::refreshStats() const {
   }
   return stats;
 }
-  bool AsyncDataCache::mayPrefetch(memory::MachinePageCount numPages) {
+bool AsyncDataCache::mayPrefetch(memory::MachinePageCount numPages) {
   auto cachePages = incrementCachedPages(0);
   auto maxPages = memory::AllocationTraits::numPages(allocator_->capacity());
   auto allocatedPages = allocator_->numAllocated();

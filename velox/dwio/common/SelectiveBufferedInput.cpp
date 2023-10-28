@@ -99,7 +99,6 @@ void SelectiveBufferedInput::load(const LogType) {
   // will get all streams where 80% or more of the referenced data is
   // actually loaded.
 
-
   for (auto readPct : std::vector<int32_t>{80, 50, 20, 0}) {
     std::vector<LoadRequest*> storageLoad;
     for (auto& request : requests) {

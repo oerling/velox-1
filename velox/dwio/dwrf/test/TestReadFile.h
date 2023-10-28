@@ -26,9 +26,12 @@ namespace facebook::velox::dwio::common {
 
 // Testing stream producing deterministic data. The byte at offset is
 // the low byte of 'seed_' + offset.
-  class TestReadFile : public velox::ReadFile {
+class TestReadFile : public velox::ReadFile {
  public:
-  TestReadFile(uint64_t seed, uint64_t length, std::shared_ptr<io::IoStatistics> ioStats)
+  TestReadFile(
+      uint64_t seed,
+      uint64_t length,
+      std::shared_ptr<io::IoStatistics> ioStats)
       : seed_(seed), length_(length), ioStats_(std::move(ioStats)) {}
 
   uint64_t size() const override {
@@ -74,7 +77,7 @@ namespace facebook::velox::dwio::common {
   int64_t numIos() const {
     return numIos_;
   }
-  
+
   std::string getName() const override {
     return "<TestReadFile>";
   }
@@ -88,6 +91,6 @@ namespace facebook::velox::dwio::common {
   const uint64_t length_;
   std::shared_ptr<io::IoStatistics> ioStats_;
   mutable std::atomic<int64_t> numIos_{0};
-  };
+};
 
-} // namespace facebook::dwio::common
+} // namespace facebook::velox::dwio::common
