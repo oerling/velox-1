@@ -466,13 +466,15 @@ TEST_F(BitUtilTest, hash) {
       "Forget the night, come live with us in forests of azure, "
       "for we have constructed pyramids in honor of our escaping...";
   for (int32_t i = 0; i < text.size(); ++i) {
-    auto hash = hashBytes(1, text.data(), i);
-    if (i < text.size() - 1) {
-      ++text[i];
+    // starts hashing at unaligned addresses.
+    int32_t offset = i > 3 && i < text.size() - 3 ? i % 3 : 0;
+    auto hash = hashBytes(1, text.data() + offset, i);
+    if (i + offset < text.size() - 1) {
+      ++text[i + offset];
       // Change the first byte after the hashed range and check that the hash
       // function does not overread its range.
-      EXPECT_EQ(hash, hashBytes(1, text.data(), i));
-      --text[i];
+      EXPECT_EQ(hash, hashBytes(1, text.data() + offset, i));
+      --text[i + offset];
     }
     auto it = hashes.find(hash);
     if (it == hashes.end()) {
