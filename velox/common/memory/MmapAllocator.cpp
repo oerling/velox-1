@@ -529,7 +529,8 @@ void MmapAllocator::freeBytes(void* p, uint64_t bytes) noexcept {
 
   ContiguousAllocation allocation;
   allocation.set(p, bytes);
-  if (FLAGS_velox_memory_use_hugepages_always && allocation.hugePageRange().has_value()) {
+  if (FLAGS_velox_memory_use_hugepages_always &&
+      allocation.hugePageRange().has_value()) {
     allocation.isHugePages_ = true;
   }
   freeContiguous(allocation);
