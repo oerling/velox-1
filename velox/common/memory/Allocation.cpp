@@ -1,4 +1,4 @@
- /*
+/*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//#include "velox/common/memory/Allocation.h"
+// #include "velox/common/memory/Allocation.h"
 
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryAllocator.h"
