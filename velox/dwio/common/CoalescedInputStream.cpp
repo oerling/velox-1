@@ -113,7 +113,7 @@ namespace {
 std::vector<folly::Range<char*>>
 makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
   std::vector<folly::Range<char*>> buffers;
-  if (size > SelectiveBufferedInput::kTinySize) {
+  if (data.numPages() > 0) {
     buffers.reserve(data.numRuns());
     uint64_t offsetInRuns = 0;
     for (int i = 0; i < data.numRuns(); ++i) {
@@ -131,7 +131,7 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
 } // namespace
 
 void CoalescedInputStream::loadSync() {
-  if (region_.length < SelectiveBufferedInput::kTinySize) {
+  if (region_.length < SelectiveBufferedInput::kTinySize && data_.numPages() == 0) {
     tinyData_.resize(region_.length);
   } else {
     auto numPages = memory::AllocationTraits::numPages(loadedRegion_.length);
@@ -156,6 +156,7 @@ void CoalescedInputStream::loadSync() {
 void CoalescedInputStream::loadPosition() {
   auto offset = region_.offset;
   if (!isLoaded_) {
+    isLoaded_ = true;
     auto load = bufferedInput_->coalescedLoad(this);
     if (load) {
       folly::SemiFuture<bool> waitFuture(false);
@@ -168,7 +169,6 @@ void CoalescedInputStream::loadPosition() {
         }
         loadedRegion_.offset = region_.offset;
         loadedRegion_.length = load->getData(region_.offset, data_, tinyData_);
-        isLoaded_ = true;
       }
       ioStats_->queryThreadIoLatency().increment(usec);
     } else {
@@ -196,6 +196,9 @@ void CoalescedInputStream::loadPosition() {
     offsetInRun_ = offsetInEntry;
     offsetOfRun_ = 0;
   } else {
+    if (offsetInEntry > data_.numPages() * 4096) {
+      VELOX_FAIL("Bad offset in entry: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}", offsetInEntry, position_, region_.offset, region_.length, loadedRegion_.offset, loadedRegion_.length, data_.numPages());
+    }
     data_.findRun(offsetInEntry, &runIndex_, &offsetInRun_);
     offsetOfRun_ = offsetInEntry - offsetInRun_;
     auto run = data_.runAt(runIndex_);
