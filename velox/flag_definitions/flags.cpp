@@ -105,6 +105,11 @@ DEFINE_bool(
     "exception. This is only used by test to control the test error output size");
 
 DEFINE_bool(
-    velox_memory_use_hugepages_for_hash_tables,
+    velox_memory_use_hugepages,
     true,
     "Use explicit huge pages for large containers only");
+
+DEFINE_bool(
+    velox_memory_use_hugepages_always,
+    false,
+    "Use explicit huge pages for all allocations that are large enough");

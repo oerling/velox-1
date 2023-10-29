@@ -305,5 +305,6 @@ class ContiguousAllocation {
   bool isHugePages_{false};
 
   friend class MemoryAllocator;
+  friend class MmapAllocator;
 };
 } // namespace facebook::velox::memory

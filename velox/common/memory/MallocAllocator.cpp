@@ -19,6 +19,8 @@
 
 #include <sys/mman.h>
 
+DECLARE_bool(velox_memory_use_hugepages_always);
+
 namespace facebook::velox::memory {
 MallocAllocator::MallocAllocator(size_t capacity)
     : kind_(MemoryAllocator::Kind::kMalloc), capacity_(capacity) {}
@@ -210,6 +212,9 @@ bool MallocAllocator::allocateContiguousImpl(
       data,
       AllocationTraits::pageBytes(numPages),
       AllocationTraits::pageBytes(maxPages));
+  if (FLAGS_velox_memory_use_hugepages_always) {
+    allocation.useHugePages();
+  }
   return true;
 }
 
@@ -252,7 +257,9 @@ void MallocAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   if (allocation.empty()) {
     return;
   }
-  useHugePages(allocation, false);
+  if (allocation.isHugePages()) {
+    useHugePages(allocation, false);
+  }
   const auto bytes = allocation.size();
   const auto numPages = allocation.numPages();
   if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
