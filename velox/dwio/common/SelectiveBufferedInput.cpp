@@ -31,8 +31,7 @@ using cache::TrackingId;
 
 std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
     Region region,
-    const StreamIdentifier* si = nullptr,
-    std::unique_ptr<SeekableInputStream> reuse) {
+    const StreamIdentifier* si = nullptr) {
   if (!allCoalescedLoads_.empty()) {
     // Results of previous load are no more available here.
     allCoalescedLoads_.clear();
