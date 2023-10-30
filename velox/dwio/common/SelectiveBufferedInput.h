@@ -68,16 +68,6 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
     }
   };
 
-  bool mayPrefetchLocked() override {
-    auto bytes = size();
-    // A piece of under 4MB that is sure to be needed will be latency bound when
-    // loaded so might as well prefetch.
-    if (bytes < 4 << 20) {
-      return true;
-    }
-    return false;
-  }
-
   // Loads the regions. Returns {} since no cache entries are made. The loaded
   // data is retrieved with getData().
   std::vector<cache::CachePin> loadData(bool isPrefetch) override;
