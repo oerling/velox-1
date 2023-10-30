@@ -131,7 +131,8 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
 } // namespace
 
 void CoalescedInputStream::loadSync() {
-  if (region_.length < SelectiveBufferedInput::kTinySize && data_.numPages() == 0) {
+  if (region_.length < SelectiveBufferedInput::kTinySize &&
+      data_.numPages() == 0) {
     tinyData_.resize(region_.length);
   } else {
     auto numPages = memory::AllocationTraits::numPages(loadedRegion_.length);
@@ -197,7 +198,15 @@ void CoalescedInputStream::loadPosition() {
     offsetOfRun_ = 0;
   } else {
     if (offsetInEntry > data_.numPages() * 4096) {
-      VELOX_FAIL("Bad offset in entry: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}", offsetInEntry, position_, region_.offset, region_.length, loadedRegion_.offset, loadedRegion_.length, data_.numPages());
+      VELOX_FAIL(
+          "Bad offset in entry: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}",
+          offsetInEntry,
+          position_,
+          region_.offset,
+          region_.length,
+          loadedRegion_.offset,
+          loadedRegion_.length,
+          data_.numPages());
     }
     data_.findRun(offsetInEntry, &runIndex_, &offsetInRun_);
     offsetOfRun_ = offsetInEntry - offsetInRun_;
