@@ -19,7 +19,7 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/memory/MemoryAllocator.h"
 
-DECLARE_bool(velox_memory_use_hugepages_for_hash_tables);
+DECLARE_bool(velox_memory_use_hugepages);
 
 namespace facebook::velox::memory {
 
@@ -122,7 +122,7 @@ void AllocationPool::newRunImpl(MachinePageCount numPages) {
         AllocationTraits::numPagesInHugePage();
     pool_->allocateContiguous(
         pagesToAlloc, largeAlloc, AllocationTraits::numPages(nextSize));
-    if (FLAGS_velox_memory_use_hugepages_for_hash_tables) {
+    if (FLAGS_velox_memory_use_hugepages) {
       largeAlloc.useHugePages();
     }
     auto range = largeAlloc.hugePageRange().value();
