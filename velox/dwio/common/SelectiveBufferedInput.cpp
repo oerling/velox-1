@@ -251,7 +251,14 @@ std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
       overread += buffers.back().size();
     }
     if (region.length > SelectiveBufferedInput::kTinySize) {
-      request.loadSize = std::min<int32_t>(region.length, loadQuantum_);
+      if (&request != &requests_.back()) {
+        // Case where request is a little over quantum but is folowed by another
+        // within the max distance. Coalesces and allows reading the region of
+        // max quantum + max distance in one piece.
+        request.loadSize = request.region.length;
+      } else {
+        request.loadSize = std::min<int32_t>(region.length, loadQuantum_);
+      }
       auto numPages = memory::AllocationTraits::numPages(request.loadSize);
       pool_.allocateNonContiguous(numPages, request.data);
       appendRanges(request.data, request.loadSize, buffers);
