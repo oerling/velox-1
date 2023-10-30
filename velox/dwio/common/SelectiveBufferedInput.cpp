@@ -31,7 +31,8 @@ using cache::TrackingId;
 
 std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
     Region region,
-    const StreamIdentifier* si = nullptr) {
+    const StreamIdentifier* si = nullptr,
+    std::unique_ptr<SeekableInputStream> reuse) {
   if (!allCoalescedLoads_.empty()) {
     // Results of previous load are no more available here.
     allCoalescedLoads_.clear();
@@ -244,20 +245,23 @@ std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
   for (auto& request : requests_) {
     auto& region = request.region;
     if (region.offset > lastEnd) {
-      buffers.push_back(folly::Range<char*>(nullptr, reinterpret_cast<char*>(static_cast<uint64_t>(region.offset - lastEnd))));
+      buffers.push_back(folly::Range<char*>(
+          nullptr,
+          reinterpret_cast<char*>(
+              static_cast<uint64_t>(region.offset - lastEnd))));
       overread += buffers.back().size();
     }
     if (region.length > SelectiveBufferedInput::kTinySize) {
       request.loadSize = std::min<int32_t>(region.length, loadQuantum_);
       auto numPages = memory::AllocationTraits::numPages(request.loadSize);
       pool_.allocateNonContiguous(numPages, request.data);
-      appendRanges(request.data, region.length, buffers);
+      appendRanges(request.data, request.loadSize, buffers);
     } else {
       request.loadSize = region.length;
       request.tinyData.resize(region.length);
       buffers.push_back(folly::Range(request.tinyData.data(), region.length));
     }
-    lastEnd = region.offset + region.length;
+    lastEnd = region.offset + request.loadSize;
     size += std::min<int32_t>(loadQuantum_, region.length);
   }
   input_->read(buffers, requests_[0].region.offset, LogType::FILE);
