@@ -159,7 +159,7 @@ void scatterBits(
 #endif
 }
 
-uint64_t hashBytes(size_t seed, const char* data, size_t size) {
+uint64_t hashBytes(uint64_t seed, const char* data, size_t size) {
   auto begin = reinterpret_cast<const uint8_t*>(data);
   const uint64_t kMul = 0x9ddfea08eb382d69ULL;
   if (size < 8) {
