@@ -671,7 +671,7 @@ bool AsyncDataCache::makeSpace(
       sizeMultiplier *= 2;
     }
   }
-  memory::evictFailureMessage() =
+  memory::cacheFailureMessage() =
       std::string("After failing to evict from cache state: ") + toString();
   return false;
 }

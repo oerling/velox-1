@@ -162,9 +162,9 @@ class Cache {
 };
 
 /// Thread local holder for extra context information for cases
-/// where an allocation fails because space could not be cleared in
-/// cache.
-std::string& evictFailureMessage();
+/// where an allocation fails du to a cache related reason, e.g. failure to
+/// evict enough data to make space.
+std::string& cacheFailureMessage();
 
 /// This class provides interface for the actual memory allocations from memory
 /// pool. It allocates runs of machine pages from predefined size classes, and
@@ -392,6 +392,11 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
     isPersistentFailureInjection_ = false;
   }
 
+  /// Returns extra information after returning false from any of the allocate
+  /// functions. The error message is scoped to the most recent call on the
+  /// thread. The message is cleared after return.
+  std::string getAndClearFailureMessage();
+  
  protected:
   explicit MemoryAllocator() = default;
 

@@ -519,7 +519,7 @@ void MemoryPoolImpl::allocateNonContiguous(
         __FUNCTION__,
         numPages,
         toString(),
-        evictFailureMessage()));
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(out);
   VELOX_CHECK(!out.empty());
@@ -571,7 +571,7 @@ void MemoryPoolImpl::allocateContiguous(
         __FUNCTION__,
         numPages,
         toString(),
-        evictFailureMessage()));
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(out);
   VELOX_CHECK(!out.empty());
@@ -604,7 +604,7 @@ void MemoryPoolImpl::growContiguous(
         __FUNCTION__,
         increment,
         toString(),
-        evictFailureMessage()));
+        allocator_->getAndClearFailureMessage()));
   }
   if (FOLLY_UNLIKELY(debugEnabled_)) {
     recordGrowDbg(allocation.data(), allocation.size());

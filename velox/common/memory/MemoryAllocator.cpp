@@ -354,4 +354,11 @@ void MemoryAllocator::useHugePages(
 #endif
 }
 
+std::string MemoryAllocator::getAndClearFailureMessage() {
+  if (cache()) {
+    return std::move(cacheFailureMessage());
+  }
+  return "";
+}
+
 } // namespace facebook::velox::memory
