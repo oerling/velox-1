@@ -455,7 +455,7 @@ class HashJoinBuilder {
       auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
       std::shared_ptr<const core::HashJoinNode> joinNode;
       auto planNode =
-          PlanBuilder(planNodeIdGenerator)
+          PlanBuilder(planNodeIdGenerator, &pool_)
               .values(
                   testData.probeParallelize ? probeVectors_ : allProbeVectors_,
                   testData.probeParallelize)
@@ -2191,6 +2191,10 @@ TEST_P(MultiThreadedHashJoinTest, antiJoin) {
       // should not evaluate filter on those rows and therefore should not
       // fail.
       "t1 / coalesce(u1, 0::integer) is not null",
+      // This filter triggers memory pool allocation at
+      // HashBuild::setupFilterForAntiJoins, which should not be invoked in
+      // operator's constructor.
+      "contains(array[1, 2, NULL], 1)",
   });
   for (const std::string& filter : filters) {
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
@@ -5287,17 +5291,14 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
     ASSERT_EQ(reclaimable, enableSpilling);
     if (enableSpilling) {
       ASSERT_GE(reclaimableBytes, 0);
-      op->reclaim(
-          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-          reclaimerStats_);
     } else {
-      VELOX_ASSERT_THROW(
-          op->reclaim(
-              folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-              reclaimerStats_),
-          "");
       ASSERT_EQ(reclaimableBytes, 0);
     }
+    VELOX_ASSERT_THROW(
+        op->reclaim(
+            folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+            reclaimerStats_),
+        "");
 
     driverWait.notify();
     Task::resume(task);
@@ -5305,7 +5306,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
 
     taskThread.join();
   }
-  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{1});
+  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{0});
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {

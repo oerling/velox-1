@@ -24,6 +24,7 @@
 namespace facebook::velox::dwrf {
 
 using dwio::common::ColumnSelector;
+using dwio::common::ExecutorBarrier;
 using dwio::common::FileFormat;
 using dwio::common::InputStream;
 using dwio::common::ReaderOptions;
@@ -34,6 +35,10 @@ DwrfRowReader::DwrfRowReader(
     const RowReaderOptions& opts)
     : StripeReaderBase(reader),
       options_(opts),
+      executorBarrier_{
+          options_.getDecodingExecutor() ? std::make_unique<ExecutorBarrier>(
+                                               options_.getDecodingExecutor())
+                                         : nullptr},
       columnSelector_{std::make_shared<ColumnSelector>(
           ColumnSelector::apply(opts.getSelector(), reader->getSchema()))} {
   auto& footer = getReader().getFooter();
@@ -253,12 +258,22 @@ void DwrfRowReader::readNext(
     const dwio::common::Mutation* mutation,
     VectorPtr& result) {
   if (!selectiveColumnReader_) {
+    const auto startTime = std::chrono::high_resolution_clock::now();
     // TODO: Move row number appending logic here.  Currently this is done in
     // the wrapper reader.
     VELOX_CHECK(
         mutation == nullptr,
         "Mutation pushdown is only supported in selective reader");
     columnReader_->next(rowsToRead, result);
+    if (executorBarrier_) {
+      executorBarrier_->waitAll();
+    }
+    auto reportDecodingTimeMsMetric = options_.getDecodingTimeMsCallback();
+    if (reportDecodingTimeMsMetric) {
+      auto decodingTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::high_resolution_clock::now() - startTime);
+      reportDecodingTimeMsMetric(decodingTime.count());
+    }
     return;
   }
   if (!options_.getAppendRowNumberColumn()) {
@@ -482,7 +497,7 @@ DwrfRowReader::FetchResult DwrfRowReader::fetch(uint32_t stripeIndex) {
 
   auto scanSpec = options_.getScanSpec().get();
   auto requestedType = getColumnSelector().getSchemaWithId();
-  auto dataType = getReader().getSchemaWithId();
+  auto fileType = getReader().getSchemaWithId();
   FlatMapContext flatMapContext;
   flatMapContext.keySelectionCallback = options_.getKeySelectionCallback();
   memory::AllocationPool pool(&getReader().getMemoryPool());
@@ -492,7 +507,7 @@ DwrfRowReader::FetchResult DwrfRowReader::fetch(uint32_t stripeIndex) {
   if (scanSpec) {
     stripeState.selectiveColumnReader = SelectiveDwrfReader::build(
         requestedType,
-        dataType,
+        fileType,
         stripeStreams,
         streamLabels,
         columnReaderStatistics_,
@@ -503,9 +518,10 @@ DwrfRowReader::FetchResult DwrfRowReader::fetch(uint32_t stripeIndex) {
   } else {
     stripeState.columnReader = ColumnReader::build( // enqueue streams
         requestedType,
-        dataType,
+        fileType,
         stripeStreams,
         streamLabels,
+        executorBarrier_.get(),
         flatMapContext);
   }
   DWIO_ENSURE(

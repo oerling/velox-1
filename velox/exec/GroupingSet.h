@@ -36,6 +36,8 @@ class GroupingSet {
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
+      const std::vector<vector_size_t>& globalGroupingSets,
+      const std::optional<column_index_t>& groupIdChannel,
       const common::SpillConfig* spillConfig,
       uint32_t* numSpillRuns,
       tsan_atomic<bool>* nonReclaimableSection,
@@ -152,8 +154,6 @@ class GroupingSet {
   void addGlobalAggregationInput(const RowVectorPtr& input, bool mayPushdown);
 
   bool getGlobalAggregationOutput(
-      int32_t batchSize,
-      bool isPartial,
       RowContainerIterator& iterator,
       RowVectorPtr& result);
 
@@ -234,6 +234,10 @@ class GroupingSet {
       int32_t maxOutputRows,
       int32_t maxOutputBytes) const;
 
+  bool getDefaultGlobalGroupingSetOutput(
+      RowContainerIterator& iterator,
+      RowVectorPtr& result);
+
   std::vector<column_index_t> keyChannels_;
 
   /// A subset of grouping keys on which the input is clustered.
@@ -252,9 +256,16 @@ class GroupingSet {
 
   const bool ignoreNullKeys_;
 
+  vector_size_t numInputRows_ = 0;
+
   // The maximum memory usage that a final aggregation can hold before spilling.
   // If it is zero, then there is no such limit.
   const uint64_t spillMemoryThreshold_;
+
+  // List of global grouping set numbers, if being used with a GROUPING SET.
+  const std::vector<vector_size_t> globalGroupingSets_;
+  // Column for groupId for a GROUPING SET.
+  std::optional<column_index_t> groupIdChannel_;
 
   const common::SpillConfig* const spillConfig_;
 
