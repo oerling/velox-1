@@ -396,7 +396,7 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// functions. The error message is scoped to the most recent call on the
   /// thread. The message is cleared after return.
   std::string getAndClearFailureMessage();
-  
+
  protected:
   explicit MemoryAllocator() = default;
 
