@@ -28,7 +28,7 @@ DECLARE_bool(velox_memory_use_hugepages);
 
 namespace facebook::velox::memory {
 
-std::string& evictFailureMessage() {
+std::string& cacheFailureMessage() {
   thread_local std::string message;
   return message;
 }
