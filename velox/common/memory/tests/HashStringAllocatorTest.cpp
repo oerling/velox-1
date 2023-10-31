@@ -518,7 +518,7 @@ TEST_F(HashStringAllocatorTest, strings) {
     } else {
       str.resize(24 + (i % 22));
     }
-      for (auto c = 0; c < str.size(); ++c) {
+    for (auto c = 0; c < str.size(); ++c) {
       str[c] = ((c + i) % 64) + 32;
     }
     strings.push_back(str);
@@ -530,7 +530,9 @@ TEST_F(HashStringAllocatorTest, strings) {
   }
   for (auto i = 0; i < strings.size(); ++i) {
     std::string temp;
-    ASSERT_TRUE(StringView(strings[i]) == HashStringAllocator::contiguousString(views[i], temp));
+    ASSERT_TRUE(
+        StringView(strings[i]) ==
+        HashStringAllocator::contiguousString(views[i], temp));
   }
   allocator_->checkConsistency();
 }
