@@ -142,10 +142,15 @@ class PartitionedOutput : public Operator {
   // network MTU of 64K.
   static constexpr uint64_t kMinDestinationSize = 60 * 1024;
 
+  /// Constructs PartitionedOutput. 'noBufferSingle' enables a mode
+  /// where all input is passed directly to a single consumer. This
+  /// optimizes operation upstream of a final limit node so that the
+  /// limit is filled as soon as possible.
   PartitionedOutput(
       int32_t operatorId,
       DriverCtx* ctx,
-      const std::shared_ptr<const core::PartitionedOutputNode>& planNode);
+      const std::shared_ptr<const core::PartitionedOutputNode>& planNode,
+      bool noBufferSingle = false);
 
   void addInput(RowVectorPtr input) override;
 
@@ -215,6 +220,9 @@ class PartitionedOutput : public Operator {
   SelectivityVector nullRows_;
   std::vector<uint32_t> partitions_;
   std::vector<DecodedVector> decodedVectors_;
+
+  // True if this is upstream of final limit and should therefore send data as soon as it is available, without buffering.
+  const bool noBufferSingle_;
 };
 
 } // namespace facebook::velox::exec

@@ -112,7 +112,8 @@ BlockingReason Destination::flush(
 PartitionedOutput::PartitionedOutput(
     int32_t operatorId,
     DriverCtx* ctx,
-    const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
+    const std::shared_ptr<const core::PartitionedOutputNode>& planNode,
+    bool noBufferSingle)
     : Operator(
           ctx,
           planNode->outputType(),
@@ -138,7 +139,11 @@ PartitionedOutput::PartitionedOutput(
       bufferReleaseFn_([task = operatorCtx_->task()]() {}),
       maxBufferedBytes_(ctx->task->queryCtx()
                             ->queryConfig()
-                            .maxPartitionedOutputBufferSize()) {
+                            .maxPartitionedOutputBufferSize()),
+      noBufferSingle_(noBufferSingle) {
+  VELOX_CHECK(
+      !noBufferSingle || numDestinations_ == 1,
+      "noBufferSingle is only allowed  for single destination output");
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }
@@ -342,13 +347,14 @@ RowVectorPtr PartitionedOutput::getOutput() {
     }
   } while (workLeft);
 
-  if (blockedDestination) {
+  if (blockedDestination || noBufferSingle_) {
     // If we are going off-thread, we may as well make the output in
     // progress for other destinations available, unless it is too
     // small to be worth transfer.
     for (auto& destination : destinations_) {
       if (destination.get() == blockedDestination ||
-          destination->serializedBytes() < kMinDestinationSize) {
+          (destination->serializedBytes() < kMinDestinationSize &&
+           !noBufferSingle_)) {
         continue;
       }
       destination->flush(*bufferManager, bufferReleaseFn_, nullptr);
