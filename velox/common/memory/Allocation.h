@@ -280,9 +280,10 @@ class ContiguousAllocation {
   /// Requests huge pages if size is large enough.
   void useHugePages();
 
-  /// Changes the backing memory to regular pages if huge pages are being used. Called before unmapping.
+  /// Changes the backing memory to regular pages if huge pages are being used.
+  /// Called before unmapping.
   void revertHugePages();
- 
+
   bool isHugePages() const {
     return isHugePages_;
   }

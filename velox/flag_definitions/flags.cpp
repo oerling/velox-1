@@ -113,4 +113,3 @@ DEFINE_bool(
     velox_memory_use_hugepages,
     false,
     "Use explicit huge pages for all allocations that are large enough");
-
