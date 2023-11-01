@@ -381,7 +381,7 @@ void LocalPlanner::markMixedJoinBridges(
   }
 }
 
-  bool containsPartialLimit(const core::PlanNode& node) {
+bool containsPartialLimit(const core::PlanNode& node) {
   if (auto* limit = dynamic_cast<const core::LimitNode*>(&node)) {
     return limit->isPartial();
   }

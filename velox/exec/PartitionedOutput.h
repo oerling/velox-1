@@ -221,7 +221,8 @@ class PartitionedOutput : public Operator {
   std::vector<uint32_t> partitions_;
   std::vector<DecodedVector> decodedVectors_;
 
-  // True if this is upstream of final limit and should therefore send data as soon as it is available, without buffering.
+  // True if this is upstream of final limit and should therefore send data as
+  // soon as it is available, without buffering.
   const bool noBufferSingle_;
 };
 

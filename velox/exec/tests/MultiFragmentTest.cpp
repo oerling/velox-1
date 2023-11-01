@@ -1847,29 +1847,28 @@ TEST_F(MultiFragmentTest, partialLimit) {
   core::PlanNodePtr leafPlan;
 
   leafPlan = PlanBuilder()
-    .values(singleRows)
-    .limit(0,10000, true)
-    .partitionedOutput({}, 1)
+                 .values(singleRows)
+                 .limit(0, 10000, true)
+                 .partitionedOutput({}, 1)
                  .planNode();
 
   auto leafTask = makeTask(leafTaskId, leafPlan, 0);
   leafTask->start(1);
 
-  auto rootPlan =
-      PlanBuilder()
-          .exchange(leafPlan->outputType())
-    .limit(0, 100000, false)
-    .planNode();
+  auto rootPlan = PlanBuilder()
+                      .exchange(leafPlan->outputType())
+                      .limit(0, 100000, false)
+                      .planNode();
 
   auto rootTask = AssertQueryBuilder(rootPlan)
-    .split(remoteSplit(leafTaskId))
-    .assertResults(singleRows);
+                      .split(remoteSplit(leafTaskId))
+                      .assertResults(singleRows);
 
   auto stats = rootTask->taskStats();
-  // We check that the PartitionedOutput does not merge the input vectors before sending.
+  // We check that the PartitionedOutput does not merge the input vectors before
+  // sending.
   EXPECT_EQ(100, stats.pipelineStats[0].operatorStats[1].inputVectors);
 }
-
 
 } // namespace
 } // namespace facebook::velox::exec
