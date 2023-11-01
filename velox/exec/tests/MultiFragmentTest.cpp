@@ -1841,7 +1841,7 @@ TEST_F(MultiFragmentTest, earlyTaskFailure) {
 TEST_F(MultiFragmentTest, partialLimit) {
   std::vector<RowVectorPtr> singleRows;
   for (auto i = 0; i < 100; ++i) {
-    singleRows.push_back(makeRowVector({makeFlatVector<int32_t>({100})}));
+    singleRows.push_back(makeRowVector({makeFlatVector<int32_t>({1})}));
   }
   auto leafTaskId = makeTaskId("leaf", 0);
   core::PlanNodePtr leafPlan;
@@ -1866,7 +1866,8 @@ TEST_F(MultiFragmentTest, partialLimit) {
     .assertResults(singleRows);
 
   auto stats = rootTask->taskStats();
-  
+  // We check that the PartitionedOutput does not merge the input vectors before sending.
+  EXPECT_EQ(100, stats.pipelineStats[0].operatorStats[1].inputVectors);
 }
 
 

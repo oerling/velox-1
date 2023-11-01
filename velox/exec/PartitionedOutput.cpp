@@ -347,7 +347,7 @@ RowVectorPtr PartitionedOutput::getOutput() {
     }
   } while (workLeft);
 
-  if (blockedDestination || noBufferSingle_) {
+  if (blockedDestination || (noBufferSingle_ && !noMoreInput_)) {
     // If we are going off-thread, we may as well make the output in
     // progress for other destinations available, unless it is too
     // small to be worth transfer.
