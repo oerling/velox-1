@@ -598,6 +598,9 @@ inline bool HashStringAllocator::storeStringFast(
   if (numFree_ != 1 || free_[kNumFreeLists - 1].empty()) {
     return false;
   }
+  if (numBytes < kMinAlloc) {
+    numBytes = kMinAlloc;
+  }
   auto& freeList = free_[kNumFreeLists - 1];
   auto header = headerOf(freeList.next());
   auto size = header->size();
