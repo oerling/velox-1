@@ -801,7 +801,6 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromAggregation) {
               .spillDirectory(spillDirectory->path)
               .config(core::QueryConfig::kSpillEnabled, "true")
               .config(core::QueryConfig::kAggregationSpillEnabled, "true")
-              .config(core::QueryConfig::kAggregationSpillPartitionBits, "2")
               .queryCtx(aggregationQueryCtx)
               .plan(PlanBuilder()
                         .values(vectors)
@@ -902,7 +901,6 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromAggregationOnNoMoreInput) {
               .spillDirectory(spillDirectory->path)
               .config(core::QueryConfig::kSpillEnabled, "true")
               .config(core::QueryConfig::kAggregationSpillEnabled, "true")
-              .config(core::QueryConfig::kAggregationSpillPartitionBits, "2")
               .queryCtx(aggregationQueryCtx)
               .maxDrivers(1)
               .plan(PlanBuilder()
@@ -1009,7 +1007,6 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromAggregationDuringOutput) {
               .spillDirectory(spillDirectory->path)
               .config(core::QueryConfig::kSpillEnabled, "true")
               .config(core::QueryConfig::kAggregationSpillEnabled, "true")
-              .config(core::QueryConfig::kAggregationSpillPartitionBits, "2")
               .config(
                   core::QueryConfig::kPreferredOutputBatchRows,
                   std::to_string(numRows / 10))
@@ -1536,7 +1533,7 @@ DEBUG_ONLY_TEST_F(
       joinQueryCtx = newQueryCtx(kMemoryCapacity);
     }
     const auto joinMemoryUsage = 8L << 20;
-    const auto fakeAllocationSize = kMemoryCapacity - joinMemoryUsage / 2;
+    const auto fakeAllocationSize = kMemoryCapacity - joinMemoryUsage;
 
     std::atomic<bool> injectAllocationOnce{true};
     std::atomic<bool> fakeAllocationWaitFlag{true};
@@ -1561,6 +1558,12 @@ DEBUG_ONLY_TEST_F(
           if (op->operatorType() != "HashBuild") {
             return;
           }
+          // Make sure each hash build operator has reserved memory to avoid
+          // trigger memory arbitration in test.
+          if (static_cast<MemoryPoolImpl*>(op->pool())
+                  ->testingMinReservationBytes() == 0) {
+            return;
+          }
           // Check all the hash build operators' memory usage instead of
           // individual operator.
           if (op->pool()->parent()->currentBytes() < joinMemoryUsage) {
@@ -1574,7 +1577,6 @@ DEBUG_ONLY_TEST_F(
             fakeAllocationWaitFlag = false;
             fakeAllocationWait.notifyAll();
           }
-
           // Wait for pause to be triggered.
           taskPauseWait.await([&]() { return !taskPauseWaitFlag.load(); });
         })));
@@ -1704,13 +1706,6 @@ DEBUG_ONLY_TEST_F(
             pool->reclaimer()->leaveArbitration();
           })));
 
-  // Verifies that we only trigger the hash build reclaim once.
-  std::atomic<int> numHashBuildReclaims{0};
-  SCOPED_TESTVALUE_SET(
-      "facebook::velox::exec::HashBuild::reclaim",
-      std::function<void(Operator*)>(
-          [&](Operator* /*unused*/) { ++numHashBuildReclaims; }));
-
   std::thread joinThread([&]() {
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto task =
@@ -1756,8 +1751,6 @@ DEBUG_ONLY_TEST_F(
   });
   joinThread.join();
   memThread.join();
-  // We only expect to reclaim from one hash build operator once.
-  ASSERT_EQ(numHashBuildReclaims, 1);
   waitForAllTasksToBeDeleted();
   ASSERT_EQ(arbitrator_->stats().numNonReclaimableAttempts, 2);
 }

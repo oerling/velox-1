@@ -14,8 +14,21 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <gflags/gflags.h>
+#include "velox/serializers/PrestoSerializer.h"
 
-namespace facebook::velox::exec {
-void registerFunctionCallToSpecialForms();
+#include "velox/exec/tests/JoinSpillInputBenchmarkBase.h"
+
+using namespace facebook::velox;
+
+int main(int argc, char* argv[]) {
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  serializer::presto::PrestoVectorSerde::registerVectorSerde();
+  filesystems::registerLocalFileSystem();
+  auto test = std::make_unique<exec::test::JoinSpillInputBenchmarkBase>();
+  test->setUp();
+  test->run();
+  test->printStats();
+  test->cleanup();
+  return 0;
 }
