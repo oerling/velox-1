@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// #include "velox/common/memory/Allocation.h"
-
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryAllocator.h"
 
@@ -120,6 +118,12 @@ std::optional<folly::Range<char*>> ContiguousAllocation::hugePageRange() const {
 void ContiguousAllocation::useHugePages() {
   if (!isHugePages_) {
     MemoryAllocator::useHugePages(*this, true);
+  }
+}
+
+void ContiguousAllocation::revertHugePages() {
+  if (isHugePages_) {
+    MemoryAllocator::useHugePages(*this, false);
   }
 }
 

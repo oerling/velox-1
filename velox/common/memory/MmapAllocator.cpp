@@ -21,7 +21,7 @@
 #include "velox/common/base/Portability.h"
 #include "velox/common/memory/Memory.h"
 
-DECLARE_bool(velox_memory_use_hugepages_always);
+DECLARE_bool(velox_memory_use_hugepages);
 
 namespace facebook::velox::memory {
 MmapAllocator::MmapAllocator(const Options& options)
@@ -263,9 +263,7 @@ bool MmapAllocator::allocateContiguousImpl(
   }
   const auto numLargeCollateralPages = allocation.numPages();
   if (numLargeCollateralPages > 0) {
-    if (allocation.isHugePages()) {
-      useHugePages(allocation, false);
-    }
+    allocation.revertHugePages();
     if (useMmapArena_) {
       std::lock_guard<std::mutex> l(arenaMutex_);
       managedArenas_->free(allocation.data(), allocation.maxSize());
@@ -388,7 +386,7 @@ bool MmapAllocator::allocateContiguousImpl(
       data,
       AllocationTraits::pageBytes(numPages),
       AllocationTraits::pageBytes(maxPages));
-  if (FLAGS_velox_memory_use_hugepages_always) {
+  if (FLAGS_velox_memory_use_hugepages) {
     allocation.useHugePages();
   }
   return true;
@@ -403,9 +401,7 @@ void MmapAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   if (allocation.empty()) {
     return;
   }
-  if (allocation.isHugePages()) {
-    useHugePages(allocation, false);
-  }
+  allocation.revertHugePages();
   if (useMmapArena_) {
     std::lock_guard<std::mutex> l(arenaMutex_);
     managedArenas_->free(allocation.data(), allocation.maxSize());
@@ -529,7 +525,7 @@ void MmapAllocator::freeBytes(void* p, uint64_t bytes) noexcept {
 
   ContiguousAllocation allocation;
   allocation.set(p, bytes);
-  if (FLAGS_velox_memory_use_hugepages_always &&
+  if (FLAGS_velox_memory_use_hugepages &&
       allocation.hugePageRange().has_value()) {
     allocation.isHugePages_ = true;
   }
