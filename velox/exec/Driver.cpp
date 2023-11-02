@@ -143,6 +143,7 @@ std::optional<common::SpillConfig> DriverCtx::makeSpillConfig(
       queryConfig.spillStartPartitionBit(),
       queryConfig.joinSpillPartitionBits(),
       queryConfig.maxSpillLevel(),
+      queryConfig.writerFlushThresholdBytes(),
       queryConfig.testingSpillPct(),
       queryConfig.spillCompressionKind());
 }
@@ -450,8 +451,6 @@ StopReason Driver::runInternal(
     return stop;
   }
 
-  TestValue::adjust("facebook::velox::exec::Driver::runInternal", self.get());
-
   // Update the queued time after entering the Task to ensure the stats have not
   // been deleted.
   if (curOperatorId_ < operators_.size()) {
@@ -479,6 +478,8 @@ StopReason Driver::runInternal(
   try {
     // Invoked to initialize the operators once before driver starts execution.
     self->initializeOperators();
+
+    TestValue::adjust("facebook::velox::exec::Driver::runInternal", self.get());
 
     const int32_t numOperators = operators_.size();
     ContinueFuture future;
