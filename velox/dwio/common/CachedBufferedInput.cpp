@@ -209,7 +209,7 @@ void CachedBufferedInput::makeLoads(
   // If reading densely accessed, coalesce into large for best throughput, if
   // for sparse, coalesce to quantum to reduce overread. Not all sparse access
   // is correlated.
-  auto maxCoalesceBytes =
+  const auto maxCoalesceBytes =
       prefetch ? options_.maxCoalesceBytes() : options_.loadQuantum();
   std::sort(
       requests.begin(),
