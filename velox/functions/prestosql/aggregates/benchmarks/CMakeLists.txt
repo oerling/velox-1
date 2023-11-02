@@ -43,7 +43,6 @@ target_link_libraries(
   ${FOLLY_BENCHMARK}
   gflags::gflags)
 
-
 add_executable(velox_aggregates_reduce_agg_bm SimpleAggregates.cpp)
 
 target_link_libraries(
