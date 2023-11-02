@@ -63,7 +63,10 @@ Spiller::Spiller(
           compressionKind,
           pool,
           executor) {
-  VELOX_CHECK_EQ(type_, Type::kOrderBy);
+  VELOX_CHECK(
+      type_ == Type::kOrderBy || type_ == Type::kAggregateInput,
+      "Unexpected spiller type: {}",
+      type_);
 }
 
 Spiller::Spiller(
@@ -164,7 +167,8 @@ Spiller::Spiller(
   VELOX_CHECK_EQ(container_ == nullptr, type_ == Type::kHashJoinProbe);
   // kOrderBy spiller type must only have one partition.
   VELOX_CHECK(
-      (type_ != Type::kOrderBy && type_ != Type::kAggregateOutput) ||
+      (type_ != Type::kOrderBy && type_ != Type::kAggregateInput &&
+       type_ != Type::kAggregateOutput) ||
       (state_.maxPartitions() == 1));
   spillRuns_.reserve(state_.maxPartitions());
   for (int i = 0; i < state_.maxPartitions(); ++i) {
@@ -240,6 +244,12 @@ class RowContainerSpillMergeStream : public SpillMergeStream {
     if (!rows_.empty()) {
       nextBatch();
     }
+  }
+
+  uint32_t id() const override {
+    // Returns the max uint32_t as the special id for in-memory spill merge
+    // stream.
+    return std::numeric_limits<uint32_t>::max();
   }
 
  private:
@@ -673,9 +683,7 @@ void Spiller::fillSpillRuns(
     constexpr int32_t kHashBatchSize = 4096;
     std::vector<uint64_t> hashes(kHashBatchSize);
     std::vector<char*> rows(kHashBatchSize);
-    VELOX_CHECK((type_ != Type::kOrderBy) || bits_.numPartitions() == 1);
-    const bool isSinglePartition =
-        (type_ == Type::kOrderBy || bits_.numPartitions() == 1);
+    const bool isSinglePartition = bits_.numPartitions() == 1;
     for (;;) {
       auto numRows = container_->listRows(
           &iterator, rows.size(), RowContainer::kUnlimited, rows.data());
