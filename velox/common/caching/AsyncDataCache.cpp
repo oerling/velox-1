@@ -745,16 +745,18 @@ CacheStats AsyncDataCache::refreshStats() const {
   return stats;
 }
 
-  bool AsyncDataCache::mayPrefetch(memory::MachinePageCount numPages) {
-    const auto cachePages = cachedPages_;
-    const auto maxPages = memory::AllocationTraits::numPages(allocator_->capacity());
-    const auto allocatedPages = allocator_->numAllocated();
+bool AsyncDataCache::mayPrefetch(memory::MachinePageCount numPages) {
+  const auto cachePages = cachedPages_;
+  const auto maxPages =
+      memory::AllocationTraits::numPages(allocator_->capacity());
+  const auto allocatedPages = allocator_->numAllocated();
   if (numPages < maxPages - allocatedPages) {
     // There is free space for the read-ahead.
     return true;
   }
   auto prefetchPages = prefetchPages_;
-  // Return true if the planned prefetch plus other prefetches are under half the cache.
+  // Return true if the planned prefetch plus other prefetches are under half
+  // the cache.
   return numPages + prefetchPages < cachePages / 2;
 }
 
