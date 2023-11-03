@@ -1548,3 +1548,41 @@ TEST_F(RowContainerTest, toString) {
       rowContainer->toString(rows[2]),
       "{3, winter, 12, 123.00299835205078, null}");
 }
+
+TEST_F(RowContainerTest, partialWriteComplexTypedRow) {
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>(1, [](auto row) { return row; }),
+       makeFlatVector<std::string>({"non-inline string"}),
+       makeArrayVector<int64_t>({{1, 2, 3, 4, 5}}),
+       makeMapVector<int64_t, int64_t>({{{4, 41}}}),
+       makeRowVector({makeFlatVector<std::string>({"non-inline string"})})});
+
+  auto rowContainer = std::make_unique<RowContainer>(
+      data->type()->asRow().children(), pool_.get());
+
+  std::vector<DecodedVector> decodedVectors;
+  for (auto& vectorPtr : data->children()) {
+    decodedVectors.emplace_back(*vectorPtr);
+  }
+
+  // No write at all.
+  auto row = rowContainer->newRow();
+  rowContainer->initializeFields(row);
+  rowContainer->eraseRows(folly::Range<char**>(&row, 1));
+
+  row = rowContainer->newRow();
+  rowContainer->initializeFields(row);
+  for (auto i = 0; i < decodedVectors.size(); ++i) {
+    rowContainer->store(decodedVectors[i], 0, row, i);
+  }
+  // Partial writes should not break initializeRow for reuse.
+  rowContainer->initializeRow(row, true);
+  rowContainer->initializeFields(row);
+  for (auto i = 0; i < 3; ++i) {
+    rowContainer->store(decodedVectors[i], 0, row, i);
+  }
+  rowContainer->initializeRow(row, true);
+
+  rowContainer->initializeFields(row);
+  rowContainer->eraseRows(folly::Range<char**>(&row, 1));
+}
