@@ -1841,7 +1841,7 @@ TEST_F(MultiFragmentTest, earlyTaskFailure) {
 TEST_F(MultiFragmentTest, partialLimit) {
   std::vector<RowVectorPtr> singleRows;
   for (auto i = 0; i < 100; ++i) {
-    singleRows.push_back(makeRowVector({makeFlatVector<int32_t>({1})}));
+    singleRows.push_back(makeRowVector({makeFlatVector<int32_t>(1)}));
   }
   auto leafTaskId = makeTaskId("leaf", 0);
   core::PlanNodePtr leafPlan;

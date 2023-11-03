@@ -113,7 +113,7 @@ PartitionedOutput::PartitionedOutput(
     int32_t operatorId,
     DriverCtx* ctx,
     const std::shared_ptr<const core::PartitionedOutputNode>& planNode,
-    bool noBufferSingle)
+    bool noBufferSingleDestination)
     : Operator(
           ctx,
           planNode->outputType(),
@@ -140,10 +140,10 @@ PartitionedOutput::PartitionedOutput(
       maxBufferedBytes_(ctx->task->queryCtx()
                             ->queryConfig()
                             .maxPartitionedOutputBufferSize()),
-      noBufferSingle_(noBufferSingle) {
+      noBufferSingleDestination_(noBufferSingleDestination) {
   VELOX_CHECK(
-      !noBufferSingle || numDestinations_ == 1,
-      "noBufferSingle is only allowed  for single destination output");
+      !noBufferSingleDestination || numDestinations_ == 1,
+      "noBufferSingleDestination is only allowed  for single destination output");
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }
@@ -347,18 +347,21 @@ RowVectorPtr PartitionedOutput::getOutput() {
     }
   } while (workLeft);
 
-  if (blockedDestination || (noBufferSingle_ && !noMoreInput_)) {
+  if (blockedDestination) {
     // If we are going off-thread, we may as well make the output in
     // progress for other destinations available, unless it is too
     // small to be worth transfer.
     for (auto& destination : destinations_) {
       if (destination.get() == blockedDestination ||
-          (destination->serializedBytes() < kMinDestinationSize &&
-           !noBufferSingle_)) {
+          destination->serializedBytes() < kMinDestinationSize) {
         continue;
       }
       destination->flush(*bufferManager, bufferReleaseFn_, nullptr);
     }
+    return nullptr;
+  }
+  if (noBufferSingleDestination_ && !noMoreInput_ && destinations_.size() == 1 && destinations_[0]) {
+    destinations_[0]->flush(*bufferManager, bufferReleaseFn_, nullptr);
     return nullptr;
   }
   // All of 'output_' is written into the destinations. We are finishing, hence
