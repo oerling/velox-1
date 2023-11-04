@@ -23,26 +23,27 @@ using namespace facebook::velox;
 TEST(ScratchTest, basic) {
   Scratch scratch;
   {
-    ScratchPtr<int32_t> ints;
-    ScratchPtr<int64_t> longs;
+    ScratchPtr<int32_t> ints(scratch);
+    ScratchPtr<int64_t> longs(scratch);
     auto tempInts = ints.get(1000);
     auto tempLongs = longs.get(2000);
-    std::fill(ints, ints + 1000, -1)
-      std::fill(ints, ints + 2000, -1)
-      EXPECT_EQ(0, scratch.retainedSize());
+    std::fill(tempInts, tempInts + 1000, -1);
+    std::fill(tempLongs, tempLongs + 2000, -1);
+    EXPECT_EQ(0, scratch.retainedSize());
   }
-      EXPECT_EQ(6000, scratch.retainedSize());
-      {
-    ScratchPtr<int32_t> ints;
-    ScratchPtr<int64_t> longs;
+  EXPECT_EQ(6000, scratch.retainedSize());
+  {
+    ScratchPtr<int32_t> ints(scratch);
+    ScratchPtr<int64_t> longs(scratch);
     auto tempLongs = longs.get(2000);
     auto tempInts = ints.get(1000);
-    std::fill(ints, ints + 1000, -1)
-      std::fill(ints, ints + 2000, -1)
-      EXPECT_EQ(0, scratch.retainedSize());
-      }
-      // The scratch vectors were acquired in a different order, so the smaller got resized to the larger size.
-      EXPECT_EQ(8000, scratch.retainedSize());
-      scratch.trim();
-      EXPECT_EQ(0, scratch.retainedSize());
+    std::fill(tempInts, tempInts + 1000, -1);
+    std::fill(tempInts, tempInts + 2000, -1);
+    EXPECT_EQ(0, scratch.retainedSize());
+  }
+  // The scratch vectors were acquired in a different order, so the smaller got
+  // resized to the larger size.
+  EXPECT_EQ(8000, scratch.retainedSize());
+  scratch.trim();
+  EXPECT_EQ(0, scratch.retainedSize());
 }

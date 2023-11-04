@@ -40,6 +40,7 @@ DEFINE_int64(
     32,
     "task-wide buffer in local exchange");
 DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
+DEFINE_int32(dict_pct, 0, "Percentage of columns wrapped in dictionary");
 
 /// Benchmarks repartition/exchange with different batch sizes,
 /// numbers of destinations and data type mixes.  Generates a plan
@@ -68,11 +69,18 @@ struct Counters {
 class ExchangeBenchmark : public VectorTestBase {
  public:
   std::vector<RowVectorPtr>
-  makeRows(RowTypePtr type, int32_t numVectors, int32_t rowsPerVector) {
+  makeRows(RowTypePtr type, int32_t numVectors, int32_t rowsPerVector, int32_t dictPct = 0) {
     std::vector<RowVectorPtr> vectors;
+    BufferPtr indices;
     for (int32_t i = 0; i < numVectors; ++i) {
       auto vector = std::dynamic_pointer_cast<RowVector>(
           BatchMaker::createBatch(type, rowsPerVector, *pool_));
+      if (100 * i / numVectors  > dictPct) {
+	if (!indices) {
+	  indices = makeIndices(vector->size(), [&](auto i){return i}, vector->pool());
+	}
+	vector = BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector);
+      }
       vectors.push_back(vector);
     }
     return vectors;
@@ -375,10 +383,10 @@ int main(int argc, char** argv) {
             MAP(BIGINT(),
                 ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}});
 
-  flat10k = bm.makeRows(flatType, 10, 10000);
-  deep10k = bm.makeRows(deepType, 10, 10000);
-  flat50 = bm.makeRows(flatType, 2000, 50);
-  deep50 = bm.makeRows(deepType, 2000, 50);
+  flat10k = bm.makeRows(flatType, 10, 10000, FLAGS_dict_pct);
+  deep10k = bm.makeRows(deepType, 10, 10000, FLAGS_dict_pct);
+  flat50 = bm.makeRows(flatType, 2000, 50, FLAGS_dict_pct);
+  deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl

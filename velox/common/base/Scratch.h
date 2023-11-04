@@ -20,14 +20,15 @@
 
 /// A utility for reusable scoped temporary scratch areas.
 namespace facebook::velox {
-  /// A collection of temporary scratch vectors.
+/// A collection of temporary scratch vectors.
 class Scratch {
+ public:
   raw_vector<char> get() {
     if (scratch_.empty()) {
       return raw_vector<char>();
     }
     auto temp = std::move(scratch_.back());
-    scratch.pop_back();
+    scratch_.pop_back();
     retainedSize_ -= temp.capacity();
     return temp;
   }
@@ -36,14 +37,15 @@ class Scratch {
     scratch_.push_back(std::move(item));
     retainedSize_ += scratch_.back().capacity();
   }
-  
+
   void trim() {
-    scratch.clear();
+    scratch_.clear();
   }
 
   size_t retainedSize() {
     return retainedSize_;
   }
+
  private:
   std::vector<raw_vector<char>> scratch_;
 
@@ -52,20 +54,21 @@ class Scratch {
   int64_t retainedSize_{0};
 };
 
-  
 /// A scoped lease for a scratch area of T.
 template <typename T>
 class ScratchPtr {
-  ScratchPtr(Scratch& scratch, int32_t size) : scratch_(scratch) {}
+ public:
+  ScratchPtr(Scratch& scratch) : scratch_(scratch) {}
 
   ~ScratchPtr() {
     if (ptr_) {
-      scratch>.release(std::move(data_));}
+      scratch_.release(std::move(data_));
+    }
   }
 
   T* get(int32_t size) {
     data_ = scratch_.get();
-    data_.resize(n * sizeof(T));
+    data_.resize(size * sizeof(T));
     ptr_ = reinterpret_cast<T*>(data_.data());
   }
 
@@ -74,6 +77,5 @@ class ScratchPtr {
   raw_vector<char> data_;
   T* ptr_;
 };
-
 
 } // namespace facebook::velox
