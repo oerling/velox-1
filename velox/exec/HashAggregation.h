@@ -27,6 +27,8 @@ class HashAggregation : public Operator {
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::AggregationNode>& aggregationNode);
 
+  void initialize() override;
+
   void addInput(RowVectorPtr input) override;
 
   RowVectorPtr getOutput() override;
@@ -70,14 +72,24 @@ class HashAggregation : public Operator {
   // 'abandonPartialAggregationMinPct_' % of rows are unique.
   bool abandonPartialAggregationEarly(int64_t numOutput) const;
 
+  RowVectorPtr getDistinctOutput();
+
   // Invoked to record the spilling stats in operator stats after processing all
   // the inputs.
   void recordSpillStats();
+
+  std::shared_ptr<const core::AggregationNode> aggregationNode_;
 
   const bool isPartialOutput_;
   const bool isGlobal_;
   const bool isDistinct_;
   const int64_t maxExtendedPartialAggregationMemoryUsage_;
+  // Minimum number of rows to see before deciding to give up on partial
+  // aggregation.
+  const int32_t abandonPartialAggregationMinRows_;
+  // Min unique rows pct for partial aggregation. If more than this many rows
+  // are unique, the partial aggregation is not worthwhile.
+  const int32_t abandonPartialAggregationMinPct_;
 
   int64_t maxPartialAggregationMemoryUsage_;
   std::unique_ptr<GroupingSet> groupingSet_;
@@ -87,14 +99,6 @@ class HashAggregation : public Operator {
   bool finished_ = false;
   // True if partial aggregation has been found to be non-reducing.
   bool abandonedPartialAggregation_{false};
-
-  // Minimum number of rows to see before deciding to give up on partial
-  // aggregation.
-  const int32_t abandonPartialAggregationMinRows_;
-
-  // Min unique rows pct for partial aggregation. If more than this many rows
-  // are unique, the partial aggregation is not worthwhile.
-  const int32_t abandonPartialAggregationMinPct_;
 
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;

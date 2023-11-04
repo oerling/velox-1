@@ -220,41 +220,6 @@ class ExprTest : public testing::Test, public VectorTestBase {
         valueType, std::move(value));
   }
 
-  // Create LazyVector that produces a flat vector and asserts that is is being
-  // loaded for a specific set of rows.
-  template <typename T>
-  std::shared_ptr<LazyVector> makeLazyFlatVector(
-      vector_size_t size,
-      std::function<T(vector_size_t /*row*/)> valueAt,
-      std::function<bool(vector_size_t /*row*/)> isNullAt,
-      vector_size_t expectedSize,
-      const std::function<vector_size_t(vector_size_t /*index*/)>&
-          expectedRowAt) {
-    return std::make_shared<LazyVector>(
-        execCtx_->pool(),
-        CppToType<T>::create(),
-        size,
-        std::make_unique<SimpleVectorLoader>([=](RowSet rows) {
-          VELOX_CHECK_EQ(rows.size(), expectedSize);
-          for (auto i = 0; i < rows.size(); i++) {
-            VELOX_CHECK_EQ(rows[i], expectedRowAt(i));
-          }
-          return makeFlatVector<T>(size, valueAt, isNullAt);
-        }));
-  }
-
-  VectorPtr wrapInLazyDictionary(VectorPtr vector) {
-    return std::make_shared<LazyVector>(
-        execCtx_->pool(),
-        vector->type(),
-        vector->size(),
-        std::make_unique<SimpleVectorLoader>([=](RowSet /*rows*/) {
-          auto indices =
-              makeIndices(vector->size(), [](auto row) { return row; });
-          return wrapInDictionary(indices, vector->size(), vector);
-        }));
-  }
-
   /// Remove ". Input data: .*" from the 'context'.
   std::string trimInputPath(const std::string& context) {
     auto pos = context.find(". Input data: ");
@@ -2008,7 +1973,7 @@ class NullArrayFunction : public exec::VectorFunction {
       VectorPtr& result) const override {
     // This function returns a vector of all nulls
     BaseVector::ensureWritable(rows, ARRAY(VARCHAR()), context.pool(), result);
-    result->addNulls(nullptr, rows);
+    result->addNulls(rows);
   }
 
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
@@ -3340,6 +3305,43 @@ TEST_P(ParameterizedExprTest, addNulls) {
     EXPECT_EQ(mutableIndices[2], 1);
   }
 
+  // Make sure we dont overwrite the shared values_ buffer of a flatVector
+  {
+    // When the buffer needs to be reduced in size.
+    auto otherVector =
+        makeFlatVector<int64_t>(2 * kSize, [](auto row) { return row; });
+    auto valuesBufferCurrentSize = otherVector->values()->size();
+    VectorPtr input = std::make_shared<FlatVector<int64_t>>(
+        context.pool(),
+        BIGINT(),
+        nullptr,
+        kSize - 1,
+        otherVector->values(),
+        std::vector<BufferPtr>{});
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), input);
+    checkResult(input);
+    ASSERT_EQ(valuesBufferCurrentSize, otherVector->values()->size());
+    ASSERT_NE(input->values(), otherVector->values());
+  }
+
+  {
+    // When the buffer needs to be increased in size.
+    auto otherVector =
+        makeFlatVector<int64_t>(kSize - 1, [](auto row) { return row; });
+    auto valuesBufferCurrentSize = otherVector->values()->size();
+    VectorPtr input = std::make_shared<FlatVector<int64_t>>(
+        context.pool(),
+        BIGINT(),
+        nullptr,
+        kSize - 1,
+        otherVector->values(),
+        std::vector<BufferPtr>{});
+    exec::EvalCtx::addNulls(rows, rawNulls, context, BIGINT(), input);
+    checkResult(input);
+    ASSERT_EQ(valuesBufferCurrentSize, otherVector->values()->size());
+    ASSERT_NE(input->values(), otherVector->values());
+  }
+
   // Verify that when adding nulls to a RowVector outside of its initial size,
   // we ensure that newly added rows outside of the initial size that are not
   // marked as null are still accessible.
@@ -3351,12 +3353,16 @@ TEST_P(ParameterizedExprTest, addNulls) {
     // We do not set null to row three.
     localRows.setValid(4, true);
     localRows.updateBounds();
+    auto nulls = allocateNulls(5, pool());
+    auto* rawNulls = nulls->asMutable<uint64_t>();
+    bits::setNull(rawNulls, 4, true);
     exec::EvalCtx::addNulls(
-        localRows, nullptr, context, rowVector->type(), rowVector);
+        localRows, rawNulls, context, rowVector->type(), rowVector);
     ASSERT_EQ(rowVector->size(), 5);
 
     rowVector->validate();
-    ASSERT_TRUE(rowVector->isNullAt(3));
+    // Unselected row does not need to be marked null, just has to be valid.
+    ASSERT_FALSE(rowVector->isNullAt(3));
   };
 
   {
@@ -4250,7 +4256,7 @@ TEST_P(ParameterizedExprTest, lazyHandlingByDereference) {
   // Ensure FieldReference handles an input which has an encoding over a lazy
   // vector. Trying to access the inner flat vector of an input in the form
   // Row(Dict(Lazy(Row(Flat)))) will ensure an intermediate FieldReference
-  // expression in the tree recieves an input of the form Dict(Lazy(Row(Flat))).
+  // expression in the tree receives an input of the form Dict(Lazy(Row(Flat))).
   auto base = makeRowVector(
       {makeNullableFlatVector<int32_t>({1, std::nullopt, 3, 4, 5})});
   VectorPtr col1 = std::make_shared<LazyVector>(
@@ -4400,6 +4406,80 @@ TEST_P(ParameterizedExprTest, coalesceRowInputTypesAreTheSame) {
         "plus");
 
     ASSERT_NO_THROW(compileExpression(plus));
+  }
+}
+
+TEST_P(ParameterizedExprTest, evaluatesArgumentsOnNonIncreasingSelection) {
+  auto makeLazy = [&](const auto& base, const auto& check) {
+    return std::make_shared<LazyVector>(
+        execCtx_->pool(),
+        base->type(),
+        base->size(),
+        std::make_unique<test::SimpleVectorLoader>([&](auto rows) {
+          check(rows);
+          return base;
+        }));
+  };
+  constexpr int kSize = 300;
+  auto c0 = makeFlatVector<int64_t>(kSize, folly::identity);
+  {
+    SCOPED_TRACE("No eager loading for AND clauses");
+    auto input = makeRowVector({
+        c0,
+        makeLazy(
+            c0,
+            [](auto& rows) {
+              // Only the rows passing c0 % 2 == 0 should be loaded.
+              VELOX_CHECK_EQ(rows.size(), (kSize + 1) / 2);
+              for (auto i : rows) {
+                VELOX_CHECK(i % 2 == 0);
+              }
+            }),
+    });
+    auto actual =
+        evaluate("c0 % 2 == 0 and c1 % 3 == 0 and c1 % 5 == 0", input);
+    auto expected =
+        makeFlatVector<bool>(kSize, [](auto i) { return i % 30 == 0; });
+    assertEqualVectors(expected, actual);
+  }
+  {
+    SCOPED_TRACE("IF inside AND");
+    auto input = makeRowVector({
+        c0,
+        makeLazy(
+            c0,
+            [](auto& rows) {
+              // Only the rows passing c0 % 2 == 0 should be loaded.
+              VELOX_CHECK_EQ(rows.size(), (kSize + 1) / 2);
+              for (auto i : rows) {
+                VELOX_CHECK(i % 2 == 0);
+              }
+            }),
+    });
+    auto actual =
+        evaluate("c0 % 2 == 0 and if (c0 % 3 == 0, c1, -1 * c1) >= 0", input);
+    auto expected =
+        makeFlatVector<bool>(kSize, [](auto i) { return i % 6 == 0; });
+    assertEqualVectors(expected, actual);
+  }
+  {
+    SCOPED_TRACE("AND inside IF");
+    auto input = makeRowVector({
+        c0,
+        makeLazy(
+            c0,
+            [&](auto& rows) {
+              // All rows should be loaded.
+              VELOX_CHECK_EQ(rows.size(), kSize);
+            }),
+    });
+    auto actual = evaluate(
+        "if (c0 % 2 == 0, c1 % 3 == 0 and c1 % 5 == 0, c1 % 7 == 0 and c1 % 11 == 0)",
+        input);
+    auto expected = makeFlatVector<bool>(kSize, [](auto i) {
+      return (i % 2 == 0 && i % 15 == 0) || (i % 2 != 0 && i % 77 == 0);
+    });
+    assertEqualVectors(expected, actual);
   }
 }
 

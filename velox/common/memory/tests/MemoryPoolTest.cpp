@@ -24,6 +24,7 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/common/testutil/TestValue.h"
+#include "velox/exec/SharedArbitrator.h"
 
 DECLARE_bool(velox_memory_leak_check_enabled);
 DECLARE_bool(velox_memory_pool_debug_enabled);
@@ -73,7 +74,7 @@ class MemoryPoolTest : public testing::TestWithParam<TestParam> {
  protected:
   static constexpr uint64_t kDefaultCapacity = 8 * GB; // 8GB
   static void SetUpTestCase() {
-    MemoryArbitrator::registerAllFactories();
+    exec::SharedArbitrator::registerFactory();
     FLAGS_velox_memory_leak_check_enabled = true;
     TestValue::enable();
   }
@@ -3161,7 +3162,7 @@ TEST_P(MemoryPoolTest, maybeReserveFailWithAbort) {
   ASSERT_TRUE(child->aborted());
   ASSERT_TRUE(root->aborted());
   VELOX_ASSERT_THROW(
-      child->maybeReserve(2 * kMaxSize), "This memory pool has been aborted.");
+      child->maybeReserve(2 * kMaxSize), "Manual MemoryPool Abortion");
 }
 
 // Model implementation of a GrowCallback.
@@ -3312,7 +3313,9 @@ TEST_P(MemoryPoolTest, abortAPI) {
       }
       ASSERT_TRUE(rootPool->aborted());
       {
-        abortPool(rootPool.get());
+        VELOX_ASSERT_THROW(
+            abortPool(rootPool.get()),
+            "Trying to set another abort error on an already aborted pool.");
         ASSERT_TRUE(rootPool->aborted());
       }
       ASSERT_TRUE(rootPool->aborted());
@@ -3374,7 +3377,9 @@ TEST_P(MemoryPoolTest, abortAPI) {
           "aggregateAbortAPI", MemoryReclaimer::create());
       ASSERT_TRUE(aggregatePool->aborted());
       {
-        abortPool(aggregatePool.get());
+        VELOX_ASSERT_THROW(
+            abortPool(aggregatePool.get()),
+            "Trying to set another abort error on an already aborted pool.");
         ASSERT_TRUE(aggregatePool->aborted());
         ASSERT_TRUE(leafPool->aborted());
         ASSERT_TRUE(rootPool->aborted());
@@ -3383,7 +3388,9 @@ TEST_P(MemoryPoolTest, abortAPI) {
       ASSERT_TRUE(leafPool->aborted());
       ASSERT_TRUE(rootPool->aborted());
       {
-        abortPool(rootPool.get());
+        VELOX_ASSERT_THROW(
+            abortPool(rootPool.get()),
+            "Trying to set another abort error on an already aborted pool.");
         ASSERT_TRUE(aggregatePool->aborted());
         ASSERT_TRUE(leafPool->aborted());
         ASSERT_TRUE(rootPool->aborted());

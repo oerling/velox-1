@@ -260,10 +260,18 @@ class RowContainer {
     *ptr = std::min<uint64_t>(size, std::numeric_limits<uint32_t>::max());
   }
 
-  // Initialize row. 'reuse' specifies whether the 'row' is reused or
-  // not. If it is reused, it will free memory associated with the row
-  // elsewhere (such as in HashStringAllocator).
-  char* FOLLY_NONNULL initializeRow(char* FOLLY_NONNULL row, bool reuse);
+  /// Initialize row. 'reuse' specifies whether the 'row' is reused or not. If
+  /// it is reused, it will free memory associated with the row elsewhere (such
+  /// as in HashStringAllocator).
+  /// Note: Fields of the row are not zero-initialized. If the row contains
+  /// variable-width fields, the caller must populate these fields by calling
+  /// 'store' or initialize them to zero by calling 'initializeFields'.
+  char* initializeRow(char* row, bool reuse);
+
+  /// Zero out all the fields of the 'row'.
+  void initializeFields(char* row) {
+    ::memset(row, 0, fixedRowSize_);
+  }
 
   // Stores the 'index'th value in 'decoded' into 'row' at
   // 'columnIndex'.
@@ -689,6 +697,14 @@ class RowContainer {
     return checkFree_;
   }
 
+  /// Returns a summary of the container: key types, dependent types, number of
+  /// accumulators and number of rows.
+  std::string toString() const;
+
+  /// Returns a string representation of the specified row in the same format as
+  /// BaseVector::toString(index).
+  std::string toString(const char* row) const;
+
  private:
   // Offset of the pointer to the next free row on a free row.
   static constexpr int32_t kNextFreeOffset = 0;
@@ -953,7 +969,7 @@ class RowContainer {
     }
     if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
         Kind == TypeKind::MAP) {
-      return compareComplexType(row, column.offset(), decoded, index);
+      return compareComplexType(row, column.offset(), decoded, index, flags);
     }
     if (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
       auto result = compareStringAsc(
@@ -962,7 +978,7 @@ class RowContainer {
     }
     auto left = valueAt<T>(row, column.offset());
     auto right = decoded.valueAt<T>(index);
-    auto result = comparePrimitiveAsc(left, right);
+    auto result = SimpleVector<T>::comparePrimitiveAsc(left, right);
     return flags.ascending ? result : result * -1;
   }
 
@@ -1002,7 +1018,7 @@ class RowContainer {
 
     auto leftValue = valueAt<T>(left, leftOffset);
     auto rightValue = valueAt<T>(right, rightOffset);
-    auto result = comparePrimitiveAsc(leftValue, rightValue);
+    auto result = SimpleVector<T>::comparePrimitiveAsc(leftValue, rightValue);
     return flags.ascending ? result : result * -1;
   }
 
@@ -1014,21 +1030,6 @@ class RowContainer {
       RowColumn column,
       CompareFlags flags) {
     return compare<Kind>(left, right, type, column, column, flags);
-  }
-
-  template <typename T>
-  static inline int comparePrimitiveAsc(const T& left, const T& right) {
-    if constexpr (std::is_floating_point<T>::value) {
-      bool isLeftNan = std::isnan(left);
-      bool isRightNan = std::isnan(right);
-      if (isLeftNan) {
-        return isRightNan ? 0 : 1;
-      }
-      if (isRightNan) {
-        return -1;
-      }
-    }
-    return left < right ? -1 : left == right ? 0 : 1;
   }
 
   void storeComplexType(
@@ -1105,7 +1106,44 @@ class RowContainer {
       int32_t rightOffset,
       CompareFlags flags = CompareFlags());
 
-  // Free any variable-width fields associated with the 'rows'.
+  // Free variable-width fields at column `column_index` associated with the
+  // 'rows', and if 'checkFree_' is true, zero out complex-typed field in
+  // 'rows'. `FieldType` is the type of data representation of the fields in
+  // row, and can be one of StringView(represents VARCHAR) and
+  // std::string_view(represents ARRAY, MAP or ROW).
+  template <typename FieldType>
+  void freeVariableWidthFieldsAtColumn(
+      size_t column_index,
+      folly::Range<char**> rows) {
+    static_assert(
+        std::is_same_v<FieldType, StringView> ||
+        std::is_same_v<FieldType, std::string_view>);
+
+    const auto column = columnAt(column_index);
+    for (auto row : rows) {
+      if (isNullAt(row, column.nullByte(), column.nullMask())) {
+        continue;
+      }
+
+      auto& view = valueAt<FieldType>(row, column.offset());
+      if constexpr (std::is_same_v<FieldType, StringView>) {
+        if (view.isInline()) {
+          continue;
+        }
+      } else {
+        if (view.empty()) {
+          continue;
+        }
+      }
+      stringAllocator_->free(HashStringAllocator::headerOf(view.data()));
+      if (checkFree_) {
+        view = FieldType();
+      }
+    }
+  }
+
+  // Free any variable-width fields associated with the 'rows' and zero out
+  // complex-typed field in 'rows'.
   void freeVariableWidthFields(folly::Range<char**> rows);
 
   // Free any aggregates associated with the 'rows'.

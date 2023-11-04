@@ -242,7 +242,8 @@ class E2EWriterTest : public testing::Test {
 
   static common::SpillConfig getSpillConfig(
       int32_t minSpillableReservationPct,
-      int32_t spillableReservationGrowthPct) {
+      int32_t spillableReservationGrowthPct,
+      uint64_t writerFlushThresholdSize = 0) {
     return common::SpillConfig(
         "fakeSpillConfig",
         0,
@@ -254,8 +255,7 @@ class E2EWriterTest : public testing::Test {
         0,
         0,
         0,
-        false,
-        0,
+        writerFlushThresholdSize,
         0,
         "none");
   }
@@ -1532,6 +1532,28 @@ TEST_F(E2EWriterTest, fuzzFlatmap) {
   }
 }
 
+TEST_F(E2EWriterTest, memoryConfigError) {
+  const auto type = ROW(
+      {{"int_val", INTEGER()},
+       {"string_val", VARCHAR()},
+       {"binary_val", VARBINARY()}});
+
+  dwrf::WriterOptions options;
+  options.schema = type;
+  const common::SpillConfig spillConfig = getSpillConfig(10, 20);
+  options.spillConfig = &spillConfig;
+  auto writerPool = memory::defaultMemoryManager().addRootPool(
+      "memoryReclaim", 1L << 30, exec::MemoryReclaimer::create());
+  auto dwrfPool = writerPool->addAggregateChild("writer");
+  auto sinkPool =
+      writerPool->addLeafChild("sink", true, exec::MemoryReclaimer::create());
+  auto sink = std::make_unique<MemorySink>(
+      200 * 1024 * 1024, FileSink::Options{.pool = sinkPool.get()});
+  VELOX_ASSERT_THROW(
+      std::make_unique<dwrf::Writer>(std::move(sink), options, dwrfPool),
+      "nonReclaimableSection_ must be set if writer memory reclaim is enabled");
+}
+
 DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnWrite) {
   const auto type = ROW(
       {{"int_val", INTEGER()},
@@ -1557,9 +1579,11 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnWrite) {
     config->set<uint64_t>(dwrf::Config::STRIPE_SIZE, 1L << 30);
     config->set<uint64_t>(dwrf::Config::MAX_DICTIONARY_SIZE, 1L << 30);
 
+    tsan_atomic<bool> nonReclaimableSection{false};
     dwrf::WriterOptions options;
     options.schema = type;
     options.config = std::move(config);
+    options.nonReclaimableSection = &nonReclaimableSection;
     if (enableReclaim) {
       options.spillConfig = &spillConfig;
     }
@@ -1614,8 +1638,14 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnWrite) {
       ASSERT_EQ(writerPool->capacity(), oldCapacity);
     }
 
-    for (size_t i = 0; i < vectors.size(); ++i) {
-      writer->write(vectors[i]);
+    // Expect a throw if we don't set the non-reclaimable section.
+    VELOX_ASSERT_THROW(writer->write(vectors[0]), "");
+    {
+      exec::NonReclaimableSectionGuard nonReclaimableGuard(
+          &nonReclaimableSection);
+      for (size_t i = 0; i < vectors.size(); ++i) {
+        writer->write(vectors[i]);
+      }
     }
     if (!enableReclaim) {
       ASSERT_FALSE(reservationCalled);
@@ -1663,6 +1693,8 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnFlush) {
     dwrf::WriterOptions options;
     options.schema = type;
     options.config = std::move(config);
+    tsan_atomic<bool> nonReclaimableSection{false};
+    options.nonReclaimableSection = &nonReclaimableSection;
     if (enableReclaim) {
       options.spillConfig = &spillConfig;
     }
@@ -1705,11 +1737,14 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnFlush) {
           ASSERT_FALSE(writer->testingNonReclaimableSection());
         }));
 
-    for (size_t i = 0; i < vectors.size(); ++i) {
-      writer->write(vectors[i]);
+    {
+      exec::NonReclaimableSectionGuard nonReclaimableGuard(
+          &nonReclaimableSection);
+      for (size_t i = 0; i < vectors.size(); ++i) {
+        writer->write(vectors[i]);
+      }
+      writer->flush();
     }
-
-    writer->flush();
     ASSERT_EQ(reservationCalled, enableReclaim);
     writer->close();
   }
@@ -1762,6 +1797,8 @@ TEST_F(E2EWriterTest, memoryReclaimAfterClose) {
     dwrf::WriterOptions options;
     options.schema = type;
     options.config = std::move(config);
+    tsan_atomic<bool> nonReclaimableSection{false};
+    options.nonReclaimableSection = &nonReclaimableSection;
     if (testData.canReclaim) {
       options.spillConfig = &spillConfig;
     }
@@ -1779,8 +1816,12 @@ TEST_F(E2EWriterTest, memoryReclaimAfterClose) {
 
     writer->flush();
 
-    for (size_t i = 0; i < vectors.size(); ++i) {
-      writer->write(vectors[i]);
+    {
+      exec::NonReclaimableSectionGuard nonReclaimableGuard(
+          &nonReclaimableSection);
+      for (size_t i = 0; i < vectors.size(); ++i) {
+        writer->write(vectors[i]);
+      }
     }
 
     if (testData.abort) {
@@ -1803,5 +1844,152 @@ TEST_F(E2EWriterTest, memoryReclaimAfterClose) {
     } else {
       ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
     }
+  }
+}
+
+DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimDuringInit) {
+  const auto type = ROW(
+      {{"int_val", INTEGER()},
+       {"string_val", VARCHAR()},
+       {"binary_val", VARBINARY()}});
+
+  VectorFuzzer fuzzer(
+      {
+          .vectorSize = 1000,
+          .stringLength = 1'000,
+          .stringVariableLength = false,
+      },
+      leafPool_.get());
+
+  const common::SpillConfig spillConfig = getSpillConfig(10, 20);
+  for (const auto& reclaimable : {false, true}) {
+    SCOPED_TRACE(fmt::format("reclaimable {}", reclaimable));
+
+    auto config = std::make_shared<dwrf::Config>();
+    config->set<uint64_t>(dwrf::Config::STRIPE_SIZE, 1L << 30);
+    config->set<uint64_t>(dwrf::Config::MAX_DICTIONARY_SIZE, 1L << 30);
+
+    dwrf::WriterOptions options;
+    options.schema = type;
+    options.config = std::move(config);
+    tsan_atomic<bool> nonReclaimableSection{false};
+    options.nonReclaimableSection = &nonReclaimableSection;
+    if (reclaimable) {
+      options.spillConfig = &spillConfig;
+    }
+    auto writerPool = memory::defaultMemoryManager().addRootPool(
+        "memoryReclaimDuringInit", 1L << 30, exec::MemoryReclaimer::create());
+    auto dwrfPool = writerPool->addAggregateChild("writer");
+    auto sinkPool =
+        writerPool->addLeafChild("sink", true, exec::MemoryReclaimer::create());
+    auto sink = std::make_unique<MemorySink>(
+        200 * 1024 * 1024, FileSink::Options{.pool = sinkPool.get()});
+
+    SCOPED_TESTVALUE_SET(
+        "facebook::velox::memory::MemoryPoolImpl::reserveThreadSafe",
+        std::function<void(MemoryPool*)>([&](MemoryPool* /*unused*/) {
+          uint64_t reclaimableBytes{0};
+          ASSERT_EQ(
+              writerPool->reclaimableBytes(reclaimableBytes), reclaimable);
+
+          memory::MemoryReclaimer::Stats stats;
+          writerPool->reclaim(1L << 30, stats);
+          if (reclaimable) {
+            ASSERT_GE(reclaimableBytes, 0);
+            // We can't reclaim during writer init.
+            ASSERT_EQ(stats.numNonReclaimableAttempts, 1);
+          } else {
+            ASSERT_EQ(reclaimableBytes, 0);
+            ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
+          }
+        }));
+
+    std::unique_ptr<dwrf::Writer> writer;
+    {
+      exec::NonReclaimableSectionGuard nonReclaimableGuard(
+          &nonReclaimableSection);
+      std::thread writerThread([&]() {
+        writer =
+            std::make_unique<dwrf::Writer>(std::move(sink), options, dwrfPool);
+      });
+
+      writerThread.join();
+    }
+    ASSERT_TRUE(writer != nullptr);
+    ASSERT_EQ(writer->canReclaim(), reclaimable);
+    writer->close();
+  }
+}
+
+TEST_F(E2EWriterTest, memoryReclaimThreshold) {
+  const auto type = ROW(
+      {{"int_val", INTEGER()},
+       {"string_val", VARCHAR()},
+       {"binary_val", VARBINARY()}});
+
+  VectorFuzzer fuzzer(
+      {
+          .vectorSize = 1000,
+          .stringLength = 1'000,
+          .stringVariableLength = false,
+      },
+      leafPool_.get());
+  std::vector<VectorPtr> vectors;
+  for (int i = 0; i < 10; ++i) {
+    vectors.push_back(fuzzer.fuzzInputRow(type));
+  }
+  const std::vector<uint64_t> writerFlushThresholdSizes = {0, 1L << 30};
+  for (uint64_t writerFlushThresholdSize : writerFlushThresholdSizes) {
+    SCOPED_TRACE(fmt::format(
+        "writerFlushThresholdSize {}",
+        succinctBytes(writerFlushThresholdSize)));
+
+    const common::SpillConfig spillConfig =
+        getSpillConfig(10, 20, writerFlushThresholdSize);
+    auto config = std::make_shared<dwrf::Config>();
+    config->set<uint64_t>(dwrf::Config::STRIPE_SIZE, 1L << 30);
+    config->set<uint64_t>(dwrf::Config::MAX_DICTIONARY_SIZE, 1L << 30);
+
+    dwrf::WriterOptions options;
+    options.schema = type;
+    options.config = std::move(config);
+    tsan_atomic<bool> nonReclaimableSection{false};
+    options.nonReclaimableSection = &nonReclaimableSection;
+    options.spillConfig = &spillConfig;
+
+    auto writerPool = memory::defaultMemoryManager().addRootPool(
+        "memoryReclaimThreshold", 1L << 30, exec::MemoryReclaimer::create());
+    auto dwrfPool = writerPool->addAggregateChild("writer");
+    auto sinkPool =
+        writerPool->addLeafChild("sink", true, exec::MemoryReclaimer::create());
+    auto sink = std::make_unique<MemorySink>(
+        200 * 1024 * 1024, FileSink::Options{.pool = sinkPool.get()});
+
+    auto writer =
+        std::make_unique<dwrf::Writer>(std::move(sink), options, dwrfPool);
+
+    {
+      exec::NonReclaimableSectionGuard nonReclaimableGuard(
+          &nonReclaimableSection);
+      for (size_t i = 0; i < vectors.size(); ++i) {
+        writer->write(vectors[i]);
+      }
+    }
+
+    uint64_t reclaimableBytes{0};
+    memory::MemoryReclaimer::Stats stats;
+    if (writerFlushThresholdSize == 0) {
+      ASSERT_TRUE(writerPool->reclaimer()->reclaimableBytes(
+          *writerPool, reclaimableBytes));
+      ASSERT_GT(reclaimableBytes, 0);
+      ASSERT_GT(writerPool->reclaim(1L << 30, stats), 0);
+    } else {
+      ASSERT_FALSE(writerPool->reclaimer()->reclaimableBytes(
+          *writerPool, reclaimableBytes));
+      ASSERT_EQ(reclaimableBytes, 0);
+      ASSERT_EQ(writerPool->reclaim(1L << 30, stats), 0);
+    }
+    writer->flush();
+    writer->close();
   }
 }

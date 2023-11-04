@@ -52,11 +52,20 @@ class SortBuffer {
   /// Returns the sorted output rows in batch.
   RowVectorPtr getOutput();
 
+  /// Indicates if this sort buffer can spill or not.
+  bool canSpill() const {
+    return spillConfig_ != nullptr;
+  }
+
   /// Invoked to spill from 'data_' to disk with specified targets.
   ///
   /// NOTE: if either 'targetRows' or 'targetBytes' is zero, then we spill all
   /// the rows from 'data_'.
   void spill(int64_t targetRows, int64_t targetBytes);
+
+  memory::MemoryPool* pool() const {
+    return pool_;
+  }
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
   std::optional<SpillStats> spilledStats() const {

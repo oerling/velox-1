@@ -37,6 +37,9 @@
 #include "velox/functions/sparksql/String.h"
 
 namespace facebook::velox::functions {
+extern void registerElementAtFunction(
+    const std::string& name,
+    bool enableCaching);
 
 static void workAroundRegistrationMacro(const std::string& prefix) {
   // VELOX_REGISTER_VECTOR_FUNCTION must be invoked in the same namespace as the
@@ -54,7 +57,8 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_array_intersect, prefix + "array_intersect");
   // This is the semantics of spark.sql.ansi.enabled = false.
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_element_at, prefix + "element_at");
+  registerElementAtFunction(prefix + "element_at", true);
+
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_map_allow_duplicates, prefix + "map_from_arrays");
   // String functions.
@@ -240,6 +244,8 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<DateDiffFunction, int32_t, Date, Date>(
       {prefix + "datediff"});
   registerFunction<LastDayFunction, Date, Date>({prefix + "last_day"});
+  registerFunction<AddMonthsFunction, Date, Date, int32_t>(
+      {prefix + "add_months"});
 
   registerFunction<DateAddFunction, Date, Date, int32_t>({prefix + "date_add"});
   registerFunction<DateSubFunction, Date, Date, int32_t>({prefix + "date_sub"});

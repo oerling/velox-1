@@ -13,14 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
 
-#include "velox/exec/OutputBufferManager.h"
+#include "velox/exec/tests/AggregateSpillBenchmarkBase.h"
+#include "velox/serializers/PrestoSerializer.h"
 
-namespace facebook::velox::exec {
+#include <gflags/gflags.h>
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-using PartitionedOutputBufferManager = OutputBufferManager;
-#endif
+using namespace facebook::velox;
 
-} // namespace facebook::velox::exec
+int main(int argc, char* argv[]) {
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  serializer::presto::PrestoVectorSerde::registerVectorSerde();
+  filesystems::registerLocalFileSystem();
+  auto test = std::make_unique<exec::test::AggregateSpillBenchmarkBase>();
+  test->setUp();
+  test->run();
+  test->printStats();
+  test->cleanup();
+  return 0;
+}

@@ -14,24 +14,28 @@
  * limitations under the License.
  */
 
-#include <gflags/gflags.h>
-#include <deque>
-
 #include "velox/exec/tests/SpillerBenchmarkBase.h"
 
-using namespace facebook::velox;
-using namespace facebook::velox::common;
-using namespace facebook::velox::exec;
+namespace facebook::velox::exec::test {
+class AggregateSpillBenchmarkBase : public SpillerBenchmarkBase {
+ public:
+  AggregateSpillBenchmarkBase() = default;
 
-int main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-  serializer::presto::PrestoVectorSerde::registerVectorSerde();
-  filesystems::registerLocalFileSystem();
-  auto test =
-      std::make_unique<facebook::velox::exec::test::JoinSpillInputTest>();
-  test->setUp();
-  test->run();
-  test->printStats();
-  test->cleanup();
-  return 0;
-}
+  /// Sets up the test.
+  void setUp() override;
+
+  /// Runs the test.
+  void run() override;
+
+ private:
+  std::unique_ptr<RowContainer> makeRowContainer(
+      const std::vector<TypePtr>& keyTypes,
+      const std::vector<TypePtr>& dependentTypes) const;
+  std::unique_ptr<RowContainer> setupSpillContainer(
+      const RowTypePtr& rowType,
+      uint32_t numKeys) const;
+  void writeSpillData();
+
+  std::unique_ptr<RowContainer> rowContainer_;
+};
+} // namespace facebook::velox::exec::test

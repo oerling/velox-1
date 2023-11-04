@@ -44,20 +44,7 @@ class SortBufferTest : public OperatorTestBase {
 
   common::SpillConfig getSpillConfig(const std::string& spillFilePath) const {
     return common::SpillConfig(
-        spillFilePath,
-        0,
-        0,
-        0,
-        executor_.get(),
-        5,
-        10,
-        0,
-        0,
-        0,
-        false,
-        0,
-        0,
-        "none");
+        spillFilePath, 0, 0, 0, executor_.get(), 5, 10, 0, 0, 0, 0, 0, "none");
   }
 
   const RowTypePtr inputType_ = ROW(
@@ -302,7 +289,6 @@ TEST_F(SortBufferTest, batchOutput) {
         0,
         0,
         0,
-        false,
         0,
         100, //  testSpillPct
         "none");
@@ -316,6 +302,7 @@ TEST_F(SortBufferTest, batchOutput) {
         &numSpillRuns_,
         testData.triggerSpill ? &spillConfig : nullptr,
         0);
+    ASSERT_EQ(sortBuffer->canSpill(), testData.triggerSpill);
 
     const std::shared_ptr<memory::MemoryPool> fuzzerPool =
         memory::addDefaultLeafMemoryPool("VectorFuzzer");
@@ -397,7 +384,6 @@ TEST_F(SortBufferTest, spill) {
         0,
         0,
         0,
-        false,
         0,
         0,
         "none");

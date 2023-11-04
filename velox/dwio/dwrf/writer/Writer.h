@@ -35,6 +35,9 @@ struct WriterOptions {
   std::shared_ptr<const Type> schema;
   velox::memory::MemoryPool* memoryPool;
   const velox::common::SpillConfig* spillConfig{nullptr};
+  // If not null, used by memory arbitration to track if a file writer is under
+  // memory reclaimable section or not.
+  tsan_atomic<bool>* nonReclaimableSection{nullptr};
   /// The default factory allows the writer to construct the default flush
   /// policy with the configs in its ctor.
   std::function<std::unique_ptr<DWRFFlushPolicy>()> flushPolicyFactory;
@@ -137,7 +140,7 @@ class Writer : public dwio::common::Writer {
   bool canReclaim() const;
 
   tsan_atomic<bool>& testingNonReclaimableSection() {
-    return nonReclaimableSection_;
+    return *nonReclaimableSection_;
   }
 
   bool testingClosed() const {
@@ -169,8 +172,8 @@ class Writer : public dwio::common::Writer {
     Writer* const writer_;
   };
 
-  // Sets the memory reclaimer for root memory pool used by this writer.
-  void setMemoryReclaimer(const std::shared_ptr<memory::MemoryPool>& pool);
+  // Sets the memory reclaimers for all the memory pools used by this writer.
+  void setMemoryReclaimers(const std::shared_ptr<memory::MemoryPool>& pool);
 
   // Invoked to ensure sufficient memory to process the given size of input by
   // reserving memory from each of the leaf memory pool. This only applies if we
@@ -203,9 +206,11 @@ class Writer : public dwio::common::Writer {
 
   const std::shared_ptr<const dwio::common::TypeWithId> schema_;
   const common::SpillConfig* const spillConfig_;
+  // If not null, used by memory arbitration to track if this file writer is
+  // under memory reclaimable section or not.
+  tsan_atomic<bool>* const nonReclaimableSection_{nullptr};
   // Indicates if this file writer has been closed or aborted.
   bool closed_{false};
-  tsan_atomic<bool> nonReclaimableSection_{false};
   std::unique_ptr<DWRFFlushPolicy> flushPolicy_;
   std::unique_ptr<LayoutPlanner> layoutPlanner_;
   std::unique_ptr<ColumnWriter> writer_;

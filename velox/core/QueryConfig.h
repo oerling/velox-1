@@ -140,6 +140,12 @@ class QueryConfig {
   static constexpr const char* kAbandonPartialAggregationMinPct =
       "abandon_partial_aggregation_min_pct";
 
+  static constexpr const char* kAbandonPartialTopNRowNumberMinRows =
+      "abandon_partial_topn_row_number_min_rows";
+
+  static constexpr const char* kAbandonPartialTopNRowNumberMinPct =
+      "abandon_partial_topn_row_number_min_pct";
+
   static constexpr const char* kMaxPartitionedOutputBufferSize =
       "max_page_partitioning_buffer_size";
 
@@ -190,6 +196,9 @@ class QueryConfig {
 
   /// OrderBy spilling flag, only applies if "spill_enabled" flag is set.
   static constexpr const char* kOrderBySpillEnabled = "order_by_spill_enabled";
+
+  /// Window spilling flag, only applies if "spill_enabled" flag is set.
+  static constexpr const char* kWindowSpillEnabled = "window_spill_enabled";
 
   /// If true, the memory arbitrator will reclaim memory from table writer by
   /// flushing its buffered data to disk.
@@ -272,6 +281,11 @@ class QueryConfig {
   static constexpr const char* kSpillableReservationGrowthPct =
       "spillable_reservation_growth_pct";
 
+  /// Minimum memory footprint size required to reclaim memory from a file
+  /// writer by flushing its buffered data to disk.
+  static constexpr const char* kWriterFlushThresholdBytes =
+      "writer_flush_threshold_bytes";
+
   /// If true, array_agg() aggregation function will ignore nulls in the input.
   static constexpr const char* kPrestoArrayAggIgnoreNulls =
       "presto.array_agg.ignore_nulls";
@@ -349,6 +363,14 @@ class QueryConfig {
     return get<int32_t>(kAbandonPartialAggregationMinPct, 80);
   }
 
+  int32_t abandonPartialTopNRowNumberMinRows() const {
+    return get<int32_t>(kAbandonPartialTopNRowNumberMinRows, 100'000);
+  }
+
+  int32_t abandonPartialTopNRowNumberMinPct() const {
+    return get<int32_t>(kAbandonPartialTopNRowNumberMinPct, 80);
+  }
+
   uint64_t aggregationSpillMemoryThreshold() const {
     static constexpr uint64_t kDefault = 0;
     return get<uint64_t>(kAggregationSpillMemoryThreshold, kDefault);
@@ -367,7 +389,7 @@ class QueryConfig {
   // Returns the target size for a Task's buffered output. The
   // producer Drivers are blocked when the buffered size exceeds
   // this. The Drivers are resumed when the buffered size goes below
-  // PartitionedOutputBufferManager::kContinuePct % of this.
+  // OutputBufferManager::kContinuePct % of this.
   uint64_t maxPartitionedOutputBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxPartitionedOutputBufferSize, kDefault);
@@ -477,6 +499,12 @@ class QueryConfig {
     return get<bool>(kOrderBySpillEnabled, true);
   }
 
+  /// Returns true if spilling is enabled for Window operator. Must also
+  /// check the spillEnabled()!
+  bool windowSpillEnabled() const {
+    return get<bool>(kWindowSpillEnabled, true);
+  }
+
   /// Returns 'is writer spilling enabled' flag. Must also check the
   /// spillEnabled()!
   bool writerSpillEnabled() const {
@@ -540,6 +568,10 @@ class QueryConfig {
 
   bool aggregationSpillAll() const {
     return get<bool>(kAggregationSpillAll, true);
+  }
+
+  uint64_t writerFlushThresholdBytes() const {
+    return get<uint64_t>(kWriterFlushThresholdBytes, 96L << 20);
   }
 
   uint64_t maxSpillFileSize() const {

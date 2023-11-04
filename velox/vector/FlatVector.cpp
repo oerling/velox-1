@@ -47,7 +47,7 @@ void FlatVector<bool>::set(vector_size_t idx, bool value) {
 }
 
 template <>
-Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size) {
+Buffer* FlatVector<StringView>::getBufferWithSpace(int32_t size) {
   VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
 
   // Check if the last buffer is uniquely referenced and has enough space.
@@ -67,7 +67,7 @@ Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size) {
 }
 
 template <>
-char* FlatVector<StringView>::getRawStringBufferWithSpace(vector_size_t size) {
+char* FlatVector<StringView>::getRawStringBufferWithSpace(int32_t size) {
   Buffer* buffer = getBufferWithSpace(size);
   char* rawBuffer = buffer->asMutable<char>() + buffer->size();
   buffer->setSize(buffer->size() + size);
@@ -281,14 +281,44 @@ void FlatVector<StringView>::copy(
     copyValuesAndNulls(source, rows, toSourceRow);
     acquireSharedStringBuffers(source);
   } else {
+    DecodedVector decoded(*source);
+    uint64_t* rawNulls = const_cast<uint64_t*>(BaseVector::rawNulls_);
+    if (decoded.mayHaveNulls()) {
+      rawNulls = BaseVector::mutableRawNulls();
+    }
+
+    size_t totalBytes = 0;
     rows.applyToSelected([&](vector_size_t row) {
-      auto sourceRow = toSourceRow ? toSourceRow[row] : row;
-      if (source->isNullAt(sourceRow)) {
-        setNull(row, true);
+      const auto sourceRow = toSourceRow ? toSourceRow[row] : row;
+      if (decoded.isNullAt(sourceRow)) {
+        bits::setNull(rawNulls, row);
       } else {
-        set(row, leaf->valueAt(source->wrappedIndex(sourceRow)));
+        if (rawNulls) {
+          bits::clearNull(rawNulls, row);
+        }
+        auto v = decoded.valueAt<StringView>(sourceRow);
+        if (v.isInline()) {
+          rawValues_[row] = v;
+        } else {
+          totalBytes += v.size();
+        }
       }
     });
+
+    if (totalBytes > 0) {
+      auto* buffer = getRawStringBufferWithSpace(totalBytes);
+      rows.applyToSelected([&](vector_size_t row) {
+        const auto sourceRow = toSourceRow ? toSourceRow[row] : row;
+        if (!decoded.isNullAt(sourceRow)) {
+          auto v = decoded.valueAt<StringView>(sourceRow);
+          if (!v.isInline()) {
+            memcpy(buffer, v.data(), v.size());
+            rawValues_[row] = StringView(buffer, v.size());
+            buffer += v.size();
+          }
+        }
+      });
+    }
   }
 
   if (auto stringVector = source->as<SimpleVector<StringView>>()) {

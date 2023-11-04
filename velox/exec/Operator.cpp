@@ -83,9 +83,7 @@ Operator::Operator(
           operatorId,
           driverCtx->pipelineId,
           std::move(planNodeId),
-          std::move(operatorType)}) {
-  maybeSetReclaimer();
-}
+          std::move(operatorType)}) {}
 
 void Operator::maybeSetReclaimer() {
   VELOX_CHECK_NULL(pool()->reclaimer());
@@ -139,7 +137,14 @@ std::unique_ptr<JoinBridge> Operator::joinBridgeFromPlanNode(
 
 void Operator::initialize() {
   VELOX_CHECK(!initialized_);
+  VELOX_CHECK_EQ(
+      pool()->currentBytes(),
+      0,
+      "Unexpected memory usage {} from pool {} before operator init",
+      succinctBytes(pool()->currentBytes()),
+      pool()->name());
   initialized_ = true;
+  maybeSetReclaimer();
 }
 
 // static
@@ -234,14 +239,17 @@ RowVectorPtr Operator::fillOutput(
 }
 
 OperatorStats Operator::stats(bool clear) {
+  OperatorStats stats;
   if (!clear) {
-    return *stats_.rlock();
+    stats = *stats_.rlock();
+  } else {
+    auto lockedStats = stats_.wlock();
+    stats = *lockedStats;
+    lockedStats->clear();
   }
 
-  auto lockedStats = stats_.wlock();
-  OperatorStats ret{*lockedStats};
-  lockedStats->clear();
-  return ret;
+  stats.memoryStats = MemoryStats::memStatsFromPool(pool());
+  return stats;
 }
 
 uint32_t Operator::outputBatchRows(
@@ -589,6 +597,18 @@ uint64_t Operator::MemoryReclaimer::reclaim(
 
   TestValue::adjust(
       "facebook::velox::exec::Operator::MemoryReclaimer::reclaim", pool);
+
+  // NOTE: we can't reclaim memory from an operator which is under
+  // non-reclaimable section.
+  if (op_->nonReclaimableSection_) {
+    // TODO: reduce the log frequency if it is too verbose.
+    ++stats.numNonReclaimableAttempts;
+    LOG(WARNING) << "Can't reclaim from memory pool " << pool->name()
+                 << " which is under non-reclaimable section, memory usage: "
+                 << succinctBytes(pool->currentBytes())
+                 << ", reservation: " << succinctBytes(pool->reservedBytes());
+    return 0;
+  }
 
   op_->reclaim(targetBytes, stats);
   return pool->shrink(targetBytes);

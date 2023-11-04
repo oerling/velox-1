@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/common/memory/SharedArbitrator.h"
+#include "velox/exec/SharedArbitrator.h"
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/testutil/TestValue.h"
@@ -22,7 +22,7 @@
 
 using facebook::velox::common::testutil::TestValue;
 
-namespace facebook::velox::memory {
+namespace facebook::velox::exec {
 
 namespace {
 
@@ -57,7 +57,6 @@ std::string memoryPoolAbortMessage(
       << victim->treeMemoryUsage();
   return out.str();
 }
-
 } // namespace
 
 SharedArbitrator::SharedArbitrator(const MemoryArbitrator::Config& config)
@@ -274,8 +273,13 @@ bool SharedArbitrator::handleOOM(
                          << " to free up memory for requestor "
                          << requestor->name();
   try {
-    VELOX_MEM_POOL_ABORTED(
-        memoryPoolAbortMessage(victim, requestor, targetBytes));
+    if (victim == requestor) {
+      VELOX_MEM_POOL_CAP_EXCEEDED(
+          memoryPoolAbortMessage(victim, requestor, targetBytes));
+    } else {
+      VELOX_MEM_POOL_ABORTED(
+          memoryPoolAbortMessage(victim, requestor, targetBytes));
+    }
   } catch (VeloxRuntimeError& e) {
     abort(victim, std::current_exception());
   }
@@ -409,7 +413,7 @@ uint64_t SharedArbitrator::reclaim(
       }
     } catch (const std::exception& e) {
       VELOX_MEM_LOG(ERROR) << "Failed to reclaim from memory pool "
-                           << pool->name() << ", aborting it!";
+                           << pool->name() << ", aborting it: " << e.what();
       abort(pool, std::current_exception());
       // Free up all the free capacity from the aborted pool as the associated
       // query has failed at this point.
@@ -596,4 +600,4 @@ void SharedArbitrator::registerFactory() {
 void SharedArbitrator::unregisterFactory() {
   MemoryArbitrator::unregisterFactory(kind_);
 }
-} // namespace facebook::velox::memory
+} // namespace facebook::velox::exec

@@ -132,23 +132,23 @@ RowContainer::RowContainer(
       stringAllocator_(
           stringAllocator ? stringAllocator
                           : std::make_shared<HashStringAllocator>(pool)) {
-  // Compute the layout of the payload row.  The row has keys, null
-  // flags, accumulators, dependent fields. All fields are fixed
-  // width. If variable width data is referenced, this is done with
-  // StringView that inlines or points to the data.  The number of
-  // bytes used by each key is determined by keyTypes[i].  Null flags
-  // are one bit per field. If nullableKeys is true there is a null
-  // flag for each key. A null bit for each accumulator and dependent
-  // field follows.  If hasProbedFlag is true, there is an extra bit
-  // to track if the row has been selected by a hash join probe. This
-  // is followed by a free bit which is set if the row is in a free
+  // Compute the layout of the payload row.  The row has keys, null flags,
+  // accumulators, dependent fields. All fields are fixed width. If variable
+  // width data is referenced, this is done with StringView(for VARCHAR) and
+  // std::string_view(for ARRAY, MAP and ROW) pointing to the data (StringView
+  // might inline the data if it's sufficiently small). The number of bytes used
+  // by each key is determined by keyTypes[i]. Null flags are one bit per field.
+  // If nullableKeys is true there is a null flag for each key. A null bit for
+  // each accumulator and dependent field follows.  If hasProbedFlag is true,
+  // there is an extra bit to track if the row has been selected by a hash join
+  // probe. This is followed by a free bit which is set if the row is in a free
   // list. The accumulators come next, with size given by
-  // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow.
-  // These are non-key columns for hash join or order by. If there are variable
-  // length columns or accumulators, i.e. ones that allocate extra space, this
-  // space is tracked by a uint32_t after the dependent columns. If this is a
-  // hash join build side, the pointer to the next row with the same key is
-  // after the optional row size.
+  // Aggregate::accumulatorFixedWidthSize(). Dependent fields follow. These are
+  // non-key columns for hash join or order by. If there are variable length
+  // columns or accumulators, i.e. ones that allocate extra space, this space is
+  // tracked by a uint32_t after the dependent columns. If this is a hash join
+  // build side, the pointer to the next row with the same key is after the
+  // optional row size.
   //
   // In most cases, rows are prefixed with a normalized_key_t at index
   // -1, 8 bytes below the pointer. This space is reserved for a 64
@@ -357,24 +357,16 @@ void RowContainer::freeVariableWidthFields(folly::Range<char**> rows) {
   for (auto i = 0; i < types_.size(); ++i) {
     switch (typeKinds_[i]) {
       case TypeKind::VARCHAR:
-      case TypeKind::VARBINARY:
+      case TypeKind::VARBINARY: {
+        freeVariableWidthFieldsAtColumn<StringView>(i, rows);
+        break;
+      }
       case TypeKind::ROW:
       case TypeKind::ARRAY:
       case TypeKind::MAP: {
-        auto column = columnAt(i);
-        for (auto row : rows) {
-          if (!isNullAt(row, column.nullByte(), column.nullMask())) {
-            StringView view = valueAt<StringView>(row, column.offset());
-            if (!view.isInline()) {
-              stringAllocator_->free(
-                  HashStringAllocator::headerOf(view.data()));
-              if (checkFree_) {
-                valueAt<StringView>(row, column.offset()) = StringView();
-              }
-            }
-          }
-        }
-      } break;
+        freeVariableWidthFieldsAtColumn<std::string_view>(i, rows);
+        break;
+      }
       default:;
     }
   }
@@ -446,16 +438,9 @@ void RowContainer::prepareRead(
     const char* row,
     int32_t offset,
     ByteStream& stream) {
-  auto view = reinterpret_cast<const StringView*>(row + offset);
-  if (view->isInline()) {
-    stream.setRange(ByteRange{
-        const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(view->data())),
-        static_cast<int32_t>(view->size()),
-        0});
-    return;
-  }
+  const auto& view = reinterpret_cast<const std::string_view*>(row + offset);
   // We set 'stream' to range over the ranges that start at the Header
-  // immediately below the first character in the StringView.
+  // immediately below the first character in the std::string_view.
   HashStringAllocator::prepareRead(
       HashStringAllocator::headerOf(view->data()), stream);
 }
@@ -496,8 +481,8 @@ void RowContainer::storeComplexType(
   auto position = stringAllocator_->newWrite(stream);
   ContainerRowSerde::serialize(*decoded.base(), decoded.index(index), stream);
   stringAllocator_->finishWrite(stream, 0);
-  valueAt<StringView>(row, offset) =
-      StringView(reinterpret_cast<char*>(position.position), stream.size());
+  valueAt<std::string_view>(row, offset) = std::string_view(
+      reinterpret_cast<char*>(position.position), stream.size());
 }
 
 //   static
@@ -838,6 +823,46 @@ int32_t RowContainer::listPartitionRows(
     }
   }
   return numResults;
+}
+
+std::string RowContainer::toString() const {
+  std::stringstream out;
+  out << "Keys: ";
+  for (auto i = 0; i < keyTypes_.size(); ++i) {
+    if (i > 0) {
+      out << ", ";
+    }
+    out << keyTypes_[i]->toString();
+  }
+
+  if (types_.size() > keyTypes_.size()) {
+    out << " Dependents: ";
+    for (auto i = keyTypes_.size(); i < types_.size(); ++i) {
+      if (i > keyTypes_.size()) {
+        out << ", ";
+      }
+      out << types_[i]->toString();
+    }
+  }
+
+  if (!accumulators_.empty()) {
+    out << " Num accumulators: " << accumulators_.size();
+  }
+
+  out << " Num rows: " << numRows_;
+  return out.str();
+}
+
+std::string RowContainer::toString(const char* row) const {
+  auto types = types_;
+  auto rowType = ROW(std::move(types));
+  auto vector = BaseVector::create<RowVector>(rowType, 1, pool());
+
+  for (auto i = 0; i < rowType->size(); ++i) {
+    extractColumn(&row, 1, columnAt(i), 0, vector->childAt(i));
+  }
+
+  return vector->toString(0);
 }
 
 RowPartitions::RowPartitions(int32_t numRows, memory::MemoryPool& pool)

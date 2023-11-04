@@ -184,9 +184,11 @@ TEST_F(TopNRowNumberTest, manyPartitions) {
                   size,
                   [](auto row) { return (size - row) * 10; },
                   [](auto row) { return row == 123; }),
-              // Partitioning key.
+              // Partitioning key. Make sure to spread rows from the same
+              // partition across multiple batches to trigger de-dup logic when
+              // reading back spilled data.
               makeFlatVector<int64_t>(
-                  size, [](auto row) { return row / 2; }, nullEvery(7)),
+                  size, [](auto row) { return row % 5'000; }, nullEvery(7)),
           }),
       10);
 
@@ -194,7 +196,7 @@ TEST_F(TopNRowNumberTest, manyPartitions) {
 
   auto spillDirectory = exec::test::TempDirectoryPath::create();
 
-  auto testLimit = [&](auto limit) {
+  auto testLimit = [&](auto limit, size_t outputBatchBytes = 1024) {
     SCOPED_TRACE(fmt::format("Limit: {}", limit));
     core::PlanNodeId topNRowNumberId;
     auto plan = PlanBuilder()
@@ -212,7 +214,9 @@ TEST_F(TopNRowNumberTest, manyPartitions) {
     // Spilling.
     auto task =
         AssertQueryBuilder(plan, duckDbQueryRunner_)
-            .config(core::QueryConfig::kPreferredOutputBatchBytes, "1024")
+            .config(
+                core::QueryConfig::kPreferredOutputBatchBytes,
+                fmt::format("{}", outputBatchBytes))
             .config(core::QueryConfig::kTestingSpillPct, "100")
             .config(core::QueryConfig::kSpillEnabled, "true")
             .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
@@ -231,6 +235,56 @@ TEST_F(TopNRowNumberTest, manyPartitions) {
   testLimit(1);
   testLimit(2);
   testLimit(100);
+
+  testLimit(1, 1);
+}
+
+TEST_F(TopNRowNumberTest, abandonPartialEarly) {
+  auto data = makeRowVector(
+      {"p", "s"},
+      {
+          makeFlatVector<int64_t>(1'000, [](auto row) { return row % 10; }),
+          makeFlatVector<int64_t>(1'000, [](auto row) { return row; }),
+      });
+
+  createDuckDbTable({data});
+
+  core::PlanNodeId topNRowNumberId;
+  auto runPlan = [&](int32_t minRows) {
+    auto plan = PlanBuilder()
+                    .values(split(data, 10))
+                    .topNRowNumber({"p"}, {"s"}, 99, false)
+                    .capturePlanNodeId(topNRowNumberId)
+                    .topNRowNumber({"p"}, {"s"}, 99, true)
+                    .planNode();
+    auto task =
+        AssertQueryBuilder(plan, duckDbQueryRunner_)
+            .config(
+                core::QueryConfig::kAbandonPartialTopNRowNumberMinRows,
+                fmt::format("{}", minRows))
+            .config(core::QueryConfig::kAbandonPartialTopNRowNumberMinPct, "80")
+            .assertResults(
+                "SELECT * FROM (SELECT *, row_number() over (partition by p order by s) as rn FROM tmp) "
+                "WHERE rn <= 99");
+
+    return exec::toPlanStats(task->taskStats());
+  };
+
+  // Partial operator is abandoned after 2 input batches.
+  {
+    auto taskStats = runPlan(100);
+    const auto& stats = taskStats.at(topNRowNumberId);
+    ASSERT_EQ(stats.outputRows, 1'000);
+    ASSERT_EQ(stats.customStats.at("abandonedPartial").sum, 1);
+  }
+
+  // Partial operator continues for all of input.
+  {
+    auto taskStats = runPlan(100'000);
+    const auto& stats = taskStats.at(topNRowNumberId);
+    ASSERT_EQ(stats.outputRows, 990);
+    ASSERT_EQ(stats.customStats.count("abandonedPartial"), 0);
+  }
 }
 
 TEST_F(TopNRowNumberTest, planNodeValidation) {
