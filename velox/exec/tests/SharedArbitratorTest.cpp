@@ -32,6 +32,7 @@
 #include "velox/exec/Driver.h"
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/HashJoinBridge.h"
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/SharedArbitrator.h"
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/Values.h"
@@ -342,6 +343,22 @@ class SharedArbitrationTest : public exec::test::HiveConnectorTestBase {
   RowVectorPtr newVector() {
     VectorFuzzer fuzzer(fuzzerOpts_, pool());
     return fuzzer.fuzzRow(rowType_);
+  }
+
+  std::vector<RowVectorPtr> newVectors(size_t vectorSize, size_t expectedSize) {
+    VectorFuzzer::Options fuzzerOpts;
+    fuzzerOpts.vectorSize = vectorSize;
+    fuzzerOpts.stringVariableLength = false;
+    fuzzerOpts.stringLength = 1024;
+    fuzzerOpts.allowLazyVector = false;
+    VectorFuzzer fuzzer(fuzzerOpts_, pool());
+    uint64_t totalSize{0};
+    std::vector<RowVectorPtr> vectors;
+    while (totalSize < expectedSize) {
+      vectors.push_back(fuzzer.fuzzInputRow(rowType_));
+      totalSize += vectors.back()->estimateFlatSize();
+    }
+    return vectors;
   }
 
   std::shared_ptr<core::QueryCtx> newQueryCtx(
@@ -829,6 +846,31 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromAggregation) {
     memThread.join();
     waitForAllTasksToBeDeleted();
   }
+}
+
+TEST_F(SharedArbitrationTest, reclaimFromDistinctAggregation) {
+  const uint64_t maxQueryCapacity = 20L << 20;
+  std::vector<RowVectorPtr> vectors = newVectors(1024, maxQueryCapacity * 2);
+  createDuckDbTable(vectors);
+  const auto spillDirectory = exec::test::TempDirectoryPath::create();
+  core::PlanNodeId aggrNodeId;
+  std::shared_ptr<core::QueryCtx> queryCtx = newQueryCtx(maxQueryCapacity);
+  auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                  .spillDirectory(spillDirectory->path)
+                  .config(core::QueryConfig::kSpillEnabled, "true")
+                  .config(core::QueryConfig::kAggregationSpillEnabled, "true")
+                  .queryCtx(queryCtx)
+                  .plan(PlanBuilder()
+                            .values(vectors)
+                            .singleAggregation({"c0"}, {})
+                            .capturePlanNodeId(aggrNodeId)
+                            .planNode())
+                  .assertResults("SELECT distinct c0 FROM tmp");
+  auto taskStats = exec::toPlanStats(task->taskStats());
+  auto& planStats = taskStats.at(aggrNodeId);
+  ASSERT_GT(planStats.spilledBytes, 0);
+  task.reset();
+  waitForAllTasksToBeDeleted();
 }
 
 DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromAggregationOnNoMoreInput) {
@@ -2649,6 +2691,84 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, tableFileWriteError) {
           .copyResults(pool()),
       "inject writer error");
 
+  waitForAllTasksToBeDeleted();
+}
+
+DEBUG_ONLY_TEST_F(SharedArbitrationTest, runtimeStats) {
+  const uint64_t memoryCapacity = 128 * MB;
+  setupMemory(memoryCapacity);
+  fuzzerOpts_.vectorSize = 1000;
+  fuzzerOpts_.stringLength = 1024;
+  fuzzerOpts_.stringVariableLength = false;
+  VectorFuzzer fuzzer(fuzzerOpts_, pool());
+  std::vector<RowVectorPtr> vectors;
+  int numRows{0};
+  for (int i = 0; i < 10; ++i) {
+    vectors.push_back(fuzzer.fuzzInputRow(rowType_));
+    numRows += vectors.back()->size();
+  }
+
+  std::atomic<int> outputCount{0};
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::exec::Values::getOutput",
+      std::function<void(const facebook::velox::exec::Values*)>(
+          ([&](const facebook::velox::exec::Values* values) {
+            if (outputCount++ != 5) {
+              return;
+            }
+            const auto fakeAllocationSize =
+                arbitrator_->stats().maxCapacityBytes -
+                values->pool()->capacity() + 1;
+            void* buffer = values->pool()->allocate(fakeAllocationSize);
+            values->pool()->free(buffer, fakeAllocationSize);
+          })));
+
+  const auto spillDirectory = exec::test::TempDirectoryPath::create();
+  const auto outputDirectory = TempDirectoryPath::create();
+  const auto queryCtx = newQueryCtx(memoryCapacity);
+  auto writerPlan =
+      PlanBuilder()
+          .values(vectors)
+          .tableWrite(outputDirectory->path)
+          .singleAggregation(
+              {},
+              {fmt::format("sum({})", TableWriteTraits::rowCountColumnName())})
+          .planNode();
+  {
+    const std::shared_ptr<Task> task =
+        AssertQueryBuilder(duckDbQueryRunner_)
+            .queryCtx(queryCtx)
+            .maxDrivers(1)
+            .spillDirectory(spillDirectory->path)
+            .config(core::QueryConfig::kSpillEnabled, "true")
+            .config(core::QueryConfig::kWriterSpillEnabled, "true")
+            // Set 0 file writer flush threshold to always trigger flush in
+            // test.
+            .config(
+                core::QueryConfig::kWriterFlushThresholdBytes,
+                folly::to<std::string>(0))
+            // Set stripe size to extreme large to avoid writer internal
+            // triggered flush.
+            .connectorConfig(
+                kHiveConnectorId,
+                connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+                folly::to<std::string>("1GB"))
+            .connectorConfig(
+                kHiveConnectorId,
+                connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+                folly::to<std::string>("1GB"))
+            .plan(std::move(writerPlan))
+            .assertResults(fmt::format("SELECT {}", numRows));
+
+    auto stats = task->taskStats().pipelineStats.front().operatorStats;
+    // TableWrite Operator's stripeSize runtime stats would be updated twice:
+    // - Values Operator's memory allocation triggers TableWrite's memory
+    // reclaim, which triggers data flush.
+    // - TableWrite Operator's close would trigger flush.
+    ASSERT_EQ(stats[1].runtimeStats["stripeSize"].count, 2);
+    // Values Operator won't be set stripeSize in its runtimeStats.
+    ASSERT_EQ(stats[0].runtimeStats["stripeSize"].count, 0);
+  }
   waitForAllTasksToBeDeleted();
 }
 
