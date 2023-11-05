@@ -19,6 +19,7 @@
 #include <vector>
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/ByteStream.h"
+#include "velox/common/time/Timer.h"
 #include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
@@ -506,6 +507,11 @@ TEST_P(PrestoSerializerTest, emptyArrayOfRowVector) {
   auto arrayOfRow = vectorMaker_->arrayOfRowVector(ROW({UNKNOWN()}), {{}});
   testRoundTrip(arrayOfRow);
 }
+
+TEST_P(PrestoSerializerTest, timeFlat) {
+  
+}
+
 
 INSTANTIATE_TEST_SUITE_P(
     PrestoSerializerTest,

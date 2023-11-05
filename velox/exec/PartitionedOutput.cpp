@@ -28,7 +28,8 @@ BlockingReason Destination::advance(
     OutputBufferManager& bufferManager,
     const std::function<void()>& bufferReleaseFn,
     bool* atEnd,
-    ContinueFuture* future) {
+    ContinueFuture* future,
+    Scratch& scratch) {
   if (rangeIdx_ >= ranges_.size()) {
     *atEnd = true;
     return BlockingReason::kNotBlocked;
@@ -67,7 +68,9 @@ BlockingReason Destination::advance(
     current_->createStreamTree(rowType, rowsInCurrent_);
   }
   current_->append(
-      output, folly::Range(&rangesToSerialize_[0], rangesToSerialize_.size()));
+      output,
+      folly::Range(&rangesToSerialize_[0], rangesToSerialize_.size()),
+      scratch);
   // Update output state variable.
   if (rangeIdx_ == ranges_.size()) {
     *atEnd = true;
@@ -209,7 +212,8 @@ void PartitionedOutput::estimateRowSizes() {
     VectorStreamGroup::estimateSerializedSize(
         output_->childAt(i),
         folly::Range(topLevelRanges_.data(), numInput),
-        sizePointers_.data());
+        sizePointers_.data(),
+	scratch_);
   }
 }
 
@@ -327,7 +331,8 @@ RowVectorPtr PartitionedOutput::getOutput() {
           *bufferManager,
           bufferReleaseFn_,
           &atEnd,
-          &future_);
+          &future_,
+          scratch_);
       if (blockingReason_ != BlockingReason::kNotBlocked) {
         blockedDestination = destination.get();
         workLeft = false;

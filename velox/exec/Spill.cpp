@@ -236,7 +236,8 @@ uint64_t SpillFileList::write(
           1000,
           &options);
     }
-    batch_->append(rows, indices);
+    Scratch scratch;
+    batch_->append(rows, indices, scratch);
   }
   updateAppendStats(rows->size(), timeUs);
   if (batch_->size() < writeBufferSize_) {

@@ -385,7 +385,7 @@ inline T* addBytes(T* pointer, int32_t bytes) {
 // 'memcpy' implementation that copies at maximum width and unrolls
 // when 'bytes' is constant.
 template <typename A = xsimd::default_arch>
-void memcpy(void* to, const void* from, int32_t bytes, const A& = {});
+inline void memcpy(void* to, const void* from, int32_t bytes, const A& = {});
 
 // memset implementation that writes at maximum width and unrolls for
 // constant values of 'bytes'.

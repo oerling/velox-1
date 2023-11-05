@@ -57,7 +57,8 @@ class Destination {
       OutputBufferManager& bufferManager,
       const std::function<void()>& bufferReleaseFn,
       bool* atEnd,
-      ContinueFuture* future);
+      ContinueFuture* future,
+      Scratch& scratch);
 
   BlockingReason flush(
       OutputBufferManager& bufferManager,
@@ -215,6 +216,7 @@ class PartitionedOutput : public Operator {
   SelectivityVector nullRows_;
   std::vector<uint32_t> partitions_;
   std::vector<DecodedVector> decodedVectors_;
+  Scratch scratch_;
 };
 
 } // namespace facebook::velox::exec

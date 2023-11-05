@@ -15,7 +15,9 @@
  */
 #pragma once
 
+#include <folly/Range.h>
 #include "velox/buffer/Buffer.h"
+#include "velox/common/base/Scratch.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryAllocator.h"
@@ -39,23 +41,23 @@ class VectorSerializer {
   virtual void append(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges,
-		      Scratch& scratch) = 0;
+      Scratch& scratch) = 0;
 
   virtual void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
-		      Scratch& scratch) {
+      Scratch& scratch) {
     VELOX_UNSUPPORTED();
   }
-  
+
   /// Serialize all rows in a vector.
-      void append(const RowVectorPtr& vector);
+  void append(const RowVectorPtr& vector);
 
   // True if supports append with folly::Range<vector_size_t*>.
   virtual bool supportsAppendRows() const {
     return false;
   }
-      
+
   /// Returns the maximum serialized size of the data previously added via
   /// 'append' methods. Can be used to allocate buffer of exact or maximum size
   /// before calling 'flush'.
@@ -83,29 +85,35 @@ class VectorSerde {
     virtual ~Options() {}
   };
 
-    /// Adds the serialized size of each ith row of 'vector' to sizes[i]. i ranges
+#if 0
+  virtual void estimateSerializedSize(
+      VectorPtr vector,
+      const folly::Range<const IndexRange*>& ranges,
+      vector_size_t** sizes, Scratch& scratch) = 0;
+#endif
+
+  /// Adds the serialized size of each ith row of 'vector' to sizes[i]. i ranges
   /// over 'range'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
       IndexRange range,
-      vector_size_t* sizes,
-				      Scratch& scratch);
+      vector_size_t** sizes,
+      Scratch& scratch);
 
   /// Adds the serialized size of vector at 'rows[i]' to 'sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
-      folly::Range<vector_size_t*> rows, range,
+      folly::Range<const vector_size_t*> rows,
       vector_size_t* sizes,
-      Scratch& scratch) = 0;
+      Scratch& scratch){};
 
-  
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
   /// '*sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes,
-				      Scratch& scratch) = 0;
+      Scratch& scratch) = 0;
 
   virtual std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,
@@ -163,22 +171,25 @@ class VectorStreamGroup : public StreamArena {
   static void estimateSerializedSize(
       VectorPtr vector,
       IndexRange range,
-      vector_size_t** sizes);
+      vector_size_t** sizes,
+				     Scratch& scratch);
 
-  
   static void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes);
+      vector_size_t** sizes,
+				     Scratch& scratch);
 
   void append(
       const RowVectorPtr& vector,
-      const folly::Range<const IndexRange*>& ranges);
+      const folly::Range<const IndexRange*>& ranges,
+      Scratch& scratch);
 
   void append(
       const RowVectorPtr& vector,
-      const folly::Range<const vector_size_t*>& rows);
-  
+      const folly::Range<const vector_size_t*>& rows,
+      Scratch& scratch);
+
   void append(const RowVectorPtr& vector);
 
   // Writes the contents to 'stream' in wire format.

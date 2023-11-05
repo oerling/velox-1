@@ -15,10 +15,10 @@
  */
 #pragma once
 
+#include <folly/io/IOBuf.h>
+#include "velox/common/base/Scratch.h"
 #include "velox/common/memory/StreamArena.h"
 #include "velox/type/Type.h"
-
-#include <folly/io/IOBuf.h>
 
 namespace facebook::velox {
 
@@ -197,6 +197,29 @@ class ByteStream {
 
   void skip(int32_t size);
 
+  /// Returns a range of 'size' items of T. If there is no contiguous space in
+  /// 'this', uses 'scratch' to make a temp block that is appended to 'this' in
+  template <typename T>
+  T* getAppendWindow(int32_t size, ScratchPtr<T>& scratchPtr) {
+    int32_t bytes = sizeof(T) * size;
+    if (!current_) {
+      extend(bytes);
+    }
+    auto available = current_->size - current_->position;
+    if (available < 16 && bytes >= 16) {
+      // If there is less than two words of tail, leave them.
+      extend(bytes);
+    }
+    if (available >= bytes) {
+      current_->position += bytes;
+      return reinterpret_cast<T*>(
+          current_->buffer + current_->position - bytes);
+    }
+    // If there is a tail over 16 but not large enough, make a contiguous temp
+    // in scratch.
+    return scratchPtr.get(size);
+  }
+
   template <typename T>
   void append(folly::Range<const T*> values) {
     if (current_->position + sizeof(T) * values.size() > current_->size) {
@@ -217,6 +240,8 @@ class ByteStream {
   }
 
   void appendBool(bool value, int32_t count);
+
+  void appendBits(const uint64_t* vits, int32_t count);
 
   void appendStringPiece(folly::StringPiece value);
 
@@ -273,6 +298,31 @@ class ByteStream {
   // and the last may be partly full. The position in the last range
   // is not necessarily the the end if there has been a seek.
   int32_t lastRangeEnd_{0};
+};
+
+/// A scoped wrapper that provides 'size' T's of writable space in 'stream'.
+/// Normally gives an address into 'stream's buffer but can use 'scratch' to
+/// make a contiguous piece if stream does not have a suitable run.
+template <typename T>
+class AppendWindow {
+ public:
+  AppendWindow(ByteStream& stream, Scratch& scratch)
+      : stream_(stream), scratchPtr_(scratch) {}
+
+  ~AppendWindow() {
+    if (scratchPtr_.hasData()) {
+      stream_.appendStringPiece(StringPiece(
+          scratchPtr_.data().data(), scratchPtr_.data().size() * sizeof(T)));
+    }
+  }
+
+  T* get(int32_t size) {
+    return stream_.getAppendWindow(size, scratchPtr_);
+  }
+
+ private:
+  ByteStream& stream_;
+  ScratchPtr<T> scratchPtr_;
 };
 
 template <>

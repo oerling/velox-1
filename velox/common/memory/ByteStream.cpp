@@ -158,6 +158,38 @@ void ByteStream::appendBool(bool value, int32_t count) {
   }
 }
 
+void ByteStream::appendBits(const uint64_t* bits, int32_t count) {
+  VELOX_DCHECK(isBits_);
+  if (current_ && count <= current_->size - current_->position) {
+    bits::copyBits(
+        bits,
+        0,
+        reinterpret_cast<uint64_t*>(current_->buffer),
+        current_->position,
+        count);
+    current_->position += count;
+    return;
+  }
+  int32_t offset = 0;
+  for (;;) {
+    int32_t bitsFit =
+        std::min(count - offset, current_->size - current_->position);
+    bits::copyBits(
+        bits,
+        offset,
+        reinterpret_cast<uint64_t*>(current_->buffer),
+        current_->position,
+        bitsFit);
+
+    current_->position += bitsFit;
+    offset += bitsFit;
+    if (offset == count) {
+      return;
+    }
+    extend(bits::nbytes(count - offset));
+  }
+}
+
 void ByteStream::appendStringPiece(folly::StringPiece value) {
   const int32_t bytes = value.size();
   int32_t offset = 0;

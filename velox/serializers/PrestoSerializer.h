@@ -46,14 +46,16 @@ class PrestoVectorSerde : public VectorSerde {
   void estimateSerializedSize(
       VectorPtr vector,
       IndexRange range,
-      vector_size_t* sizes) override;
+      vector_size_t** sizes,
+			      Scratch& scratch) override;
 
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
   /// '*sizes[i]'.
   void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes) override;
+      vector_size_t** sizes,
+			      Scratch& scratch) override;
 
   std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,

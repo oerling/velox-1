@@ -16,6 +16,7 @@
 
 #include "velox/common/base/SimdUtil.h"
 #include <folly/Random.h>
+#include "velox/common/time/Timer.h"
 
 #include <gtest/gtest.h>
 
@@ -397,6 +398,43 @@ TEST_F(SimdUtilTest, memEqual) {
   // Redo the test offset by 1 to test unaligned.
   EXPECT_TRUE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 66));
   EXPECT_FALSE(simd::memEqualUnsafe(&data.x[1], &data.y[1], 67));
+}
+TEST_F(SimdUtilTest, memcpyTime) {
+  constexpr int64_t kMaxMove = 128;
+  constexpr int64_t kSize = (128 << 20) + kMaxMove;
+  constexpr uint64_t kSizeMask = (128 << 20) - 1;
+  constexpr int32_t kMoveMask = kMaxMove - 1;
+  constexpr uint64_t kMagic1 = 0x5231871;
+  constexpr uint64_t kMagic3 = 0xfae1;
+  constexpr uint64_t kMagic2 = 0x817952491;
+  std::vector<char> dataV(kSize);
+
+  auto data = dataV.data();
+  uint64_t simd = 0;
+  uint64_t sys = 0;
+  {
+    MicrosecondTimer t(&simd);
+    for (auto ctr = 0; ctr < 100; ++ctr) {
+      for (auto i = 0; i < 10000; ++i) {
+        char* from = data + ((i * kMagic1) & kSizeMask);
+        char* to = data + ((i * kMagic2) & kSizeMask);
+        int32_t size = (i * kMagic3) % kMoveMask;
+        simd::memcpy(to, from, size);
+      }
+    }
+  }
+  {
+    MicrosecondTimer t(&sys);
+    for (auto ctr = 0; ctr < 100; ++ctr) {
+      for (auto i = 0; i < 10000; ++i) {
+        char* from = data + ((i * kMagic1) & kSizeMask);
+        char* to = data + ((i * kMagic2) & kSizeMask);
+        int32_t size = (i * kMagic3) % kMoveMask;
+        ::memcpy(to, from, size);
+      }
+    }
+  }
+  LOG(INFO) << "simd=" << simd << " sys=" << sys;
 }
 
 } // namespace
