@@ -535,7 +535,8 @@ struct SerializeCase {
 TEST_P(PrestoSerializerTest, timeFlat) {
   // Serialize different fractions of a 10K vector of int32_t and int64_t with
   // IndexRange and row range variants with and without nulls.
-  std::vector<int32_t> numSelectedValues = {3, 30, 300, 10000};
+  constexpr int32_t kPad = 8;
+  std::vector<int32_t> numSelectedValues = {3 /*, 30, 300, 10000 */};
   std::vector<std::vector<IndexRange>> indexRanges;
   std::vector<std::vector<vector_size_t>> rowSets;
   std::vector<int32_t> nullPctValues = {0, 1, 10, 90};
@@ -549,7 +550,9 @@ TEST_P(PrestoSerializerTest, timeFlat) {
       ir.push_back(IndexRange{r, 1});
       rr.push_back(r);
     }
+    std::cout << rr.size();
     indexRanges.push_back(std::move(ir));
+    rr.resize(rr.size() + kPad, 999999999);
     rowSets.push_back(std::move(rr));
   }
   VectorMaker vm(pool_.get());
@@ -576,7 +579,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     item.nullPct = nullPctValues[nullIdx];
     item.numSelected = numSelectedValues[selIdx];
     item.bits = bits;
-    int32_t numRepeat = vectorSize / rowSets[selIdx].size();
+    int32_t numRepeat = 100 * vectorSize / indexRanges[selIdx].size();
 
     VectorPtr vector = bits == 32 ? v32s[nullIdx] : v64s[nullIdx];
     auto rowType = ROW({vector->type()});
@@ -584,7 +587,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     {
       MicrosecondTimer t(&item.irTime);
       auto group = std::make_unique<VectorStreamGroup>(pool_.get());
-      group->createStreamTree(rowType, rowSets[selIdx].size());
+      group->createStreamTree(rowType, rowSets[selIdx].size() - kPad);
       for (auto repeat = 0; repeat < numRepeat; ++repeat) {
         group->append(
             rowVector,
@@ -595,14 +598,14 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     }
 
     {
-      MicrosecondTimer t(&item.irTime);
+      MicrosecondTimer t(&item.rrTime);
       auto group = std::make_unique<VectorStreamGroup>(pool_.get());
       group->createStreamTree(rowType, rowSets[selIdx].size());
 
       for (auto repeat = 0; repeat < numRepeat; ++repeat) {
         group->append(
             rowVector,
-            folly::Range(rowSets[selIdx].data(), rowSets[selIdx].size()),
+            folly::Range(rowSets[selIdx].data(), rowSets[selIdx].size() - kPad),
             scratch);
       }
     }

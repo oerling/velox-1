@@ -1689,7 +1689,8 @@ void appendNonNull(
     Scratch& scratch) {
   auto numRows = rows.size();
   ScratchPtr<int32_t> temp(scratch);
-  auto nonNullIndices = temp.get(numRows);
+  vector_size_t localRows[32];
+  auto nonNullIndices = (numRows <= sizeof(localRows) / sizeof(localRows[0])) ? localRows : temp.get(numRows);
   auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNullIndices);
   if constexpr (sizeof(T) == 8) {
     constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
@@ -1732,7 +1733,7 @@ void serializeFlatVector(
     ScratchPtr<uint64_t> scratchPtr(scratch);
     uint64_t* nulls = rows.size() <= sizeof(tempNulls) * 8
         ? tempNulls
-        : scratchPtr.get(bits::nwords(rows.size()));
+      : scratchPtr.get(bits::nwords(rows.size()));
     getNulls(vector->rawNulls(), rows, nulls);
     stream->nulls().appendBits(nulls, rows.size());
     appendNonNull(stream->values(), nulls, rows, rawValues, scratch);
@@ -2541,6 +2542,19 @@ class PrestoVectorSerializer : public VectorSerializer {
       numRows_ += newRows;
       for (int32_t i = 0; i < vector->childrenSize(); ++i) {
         serializeColumn(vector->childAt(i).get(), ranges, streams_[i].get());
+      }
+    }
+  }
+
+  void append(
+      const RowVectorPtr& vector,
+      const folly::Range<const vector_size_t*>& rows,
+      Scratch& scratch) override {
+    auto newRows = rows.size();
+    if (newRows > 0) {
+      numRows_ += newRows;
+      for (int32_t i = 0; i < vector->childrenSize(); ++i) {
+        serializeColumn(vector->childAt(i).get(), rows, streams_[i].get(), scratch);
       }
     }
   }

@@ -206,16 +206,12 @@ class ByteStream {
       extend(bytes);
     }
     auto available = current_->size - current_->position;
-    if (available < 16 && bytes >= 16) {
-      // If there is less than two words of tail, leave them.
-      extend(bytes);
-    }
     if (available >= bytes) {
       current_->position += bytes;
       return reinterpret_cast<T*>(
           current_->buffer + current_->position - bytes);
     }
-    // If there is a tail over 16 but not large enough, make a contiguous temp
+    // If the tail is not large enough, make  temp of the right size
     // in scratch.
     return scratchPtr.get(size);
   }
@@ -312,7 +308,7 @@ class AppendWindow {
   ~AppendWindow() {
     if (scratchPtr_.hasData()) {
       stream_.appendStringPiece(folly::StringPiece(
-          scratchPtr_.data().data(), scratchPtr_.data().size() * sizeof(T)));
+          scratchPtr_.data().data(), scratchPtr_.data().size()));
     }
   }
 

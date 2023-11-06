@@ -73,11 +73,13 @@ class ScratchPtr {
     data_ = scratch_.get();
     data_.resize(size * sizeof(T));
     ptr_ = reinterpret_cast<T*>(data_.data());
+    return ptr_;
   }
 
   bool hasData() const {
     return ptr_ != nullptr;
   }
+
   const raw_vector<char>& data() const {
     return data_;
   }
@@ -85,7 +87,7 @@ class ScratchPtr {
  private:
   Scratch& scratch_;
   raw_vector<char> data_;
-  T* ptr_;
+  T* ptr_{nullptr};
 };
 
 } // namespace facebook::velox
