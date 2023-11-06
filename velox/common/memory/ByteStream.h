@@ -311,7 +311,7 @@ class AppendWindow {
 
   ~AppendWindow() {
     if (scratchPtr_.hasData()) {
-      stream_.appendStringPiece(StringPiece(
+      stream_.appendStringPiece(folly::StringPiece(
           scratchPtr_.data().data(), scratchPtr_.data().size() * sizeof(T)));
     }
   }

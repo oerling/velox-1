@@ -41,13 +41,6 @@ class PrestoVectorSerde : public VectorSerde {
     std::vector<VectorEncoding::Simple> encodings;
   };
 
-  /// Adds the serialized size of each ith row of 'vector' to sizes[i]. i ranges
-  /// over 'range'.
-  void estimateSerializedSize(
-      VectorPtr vector,
-      IndexRange range,
-      vector_size_t** sizes,
-			      Scratch& scratch) override;
 
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
   /// '*sizes[i]'.

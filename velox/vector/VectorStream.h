@@ -85,21 +85,8 @@ class VectorSerde {
     virtual ~Options() {}
   };
 
-#if 0
-  virtual void estimateSerializedSize(
-      VectorPtr vector,
-      const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes, Scratch& scratch) = 0;
-#endif
 
-  /// Adds the serialized size of each ith row of 'vector' to sizes[i]. i ranges
-  /// over 'range'.
-  virtual void estimateSerializedSize(
-      VectorPtr vector,
-      IndexRange range,
-      vector_size_t** sizes,
-      Scratch& scratch);
-
+  
   /// Adds the serialized size of vector at 'rows[i]' to 'sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,

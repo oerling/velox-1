@@ -1326,7 +1326,8 @@ void serializeColumn(
 void serializeColumn(
     const BaseVector* vector,
     const folly::Range<const vector_size_t*>& rows,
-    VectorStream* stream);
+    VectorStream* stream,
+    Scratch& scratch);
 
 void serializeWrapped(
     const BaseVector* vector,
@@ -1599,20 +1600,20 @@ void getNulls(
 template <typename T>
 void maskStore(
     T* destination,
-    xsimd::batch<T> data,
-    xsimd::batch_bool<T> mask,
+    xsimd::batch<T>& data,
+    xsimd::batch_bool<T>& mask,
     int32_t n) {
 #if XSIMD_WITH_AVX2
   if constexpr (sizeof(T) == 8) {
     _mm256_maskstore_epi64(
         reinterpret_cast<long long*>(destination),
-        reinterpret_cast<__m256i>(mask),
-        reinterpret_cast<__m256i>(data));
+        *reinterpret_cast<__m256i*>(&mask),
+        *reinterpret_cast<__m256i*>(&data));
   } else if constexpr (sizeof(T) == 4) {
     _mm256_maskstore_epi32(
         reinterpret_cast<int*>(destination),
-        reinterpret_cast<__m256i>(mask),
-        reinterpret_cast<__m256i>(data));
+        *reinterpret_cast<__m256i*>(&mask),
+        *reinterpret_cast<__m256i*>(&data));
   } else {
 #endif
     for (auto i = 0; i < n; ++i) {
@@ -1724,8 +1725,8 @@ void serializeFlatVector(
   if (!flatVector->mayHaveNulls()) {
     stream->appendNonNull(rows.size());
     AppendWindow<T> window(stream->values(), scratch);
-    int64_t* output = window.get(rows.size());
-    copyWords(output, rows, rows.size(), rawValues);
+    T* output = window.get(rows.size());
+    copyWords(output, rows.data(), rows.size(), rawValues);
   } else {
     uint64_t tempNulls[16];
     ScratchPtr<uint64_t> scratchPtr(scratch);
@@ -1734,7 +1735,7 @@ void serializeFlatVector(
         : scratchPtr.get(bits::nwords(rows.size()));
     getNulls(vector->rawNulls(), rows, nulls);
     stream->nulls().appendBits(nulls, rows.size());
-    appendNonNull(stream->values(), rows, nulls, rawValues);
+    appendNonNull(stream->values(), nulls, rows, rawValues, scratch);
   }
 }
 
@@ -1755,10 +1756,47 @@ void serializeWrapped(
   VELOX_NYI();
 }
 
+template <>
+void serializeFlatVector<TypeKind::UNKNOWN>(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& ranges,
+    VectorStream* stream,
+    Scratch& scratch) {
+  VELOX_NYI();
+}
+
+template <>
+void serializeFlatVector<TypeKind::OPAQUE>(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& ranges,
+    VectorStream* stream,
+    Scratch& scratch) {
+  VELOX_NYI();
+}
+
+template <>
+void serializeFlatVector<TypeKind::VARCHAR>(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& ranges,
+    VectorStream* stream,
+    Scratch& scratch) {
+  VELOX_NYI();
+}
+
+template <>
+void serializeFlatVector<TypeKind::VARBINARY>(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& ranges,
+    VectorStream* stream,
+    Scratch& scratch) {
+  VELOX_NYI();
+}
+
 void serializeTimestampWithTimeZone(
     const RowVector* rowVector,
     const folly::Range<const vector_size_t*>& rows,
-    VectorStream* stream) {
+    VectorStream* stream,
+    Scratch& scratch) {
   VELOX_NYI()
 #if 0
   auto timestamps = rowVector->childAt(0)->as<SimpleVector<int64_t>>();
@@ -1785,13 +1823,18 @@ void serializeRowVector(
   auto rowVector = reinterpret_cast<const RowVector*>(vector);
   ScratchPtr<int32_t> scratchPtr(scratch);
   vector_size_t* childRows;
+  int32_t numChildRows = 0;
   if (isTimestampWithTimeZoneType(vector->type())) {
-    serializeTimestampWithTimeZone(rowVector, rows, stream);
+    serializeTimestampWithTimeZone(rowVector, rows, stream, scratch);
     return;
   }
 
   for (int32_t i = 0; i < rowVector->childrenSize(); ++i) {
-    serializeColumn(rowVector->childAt(i).get(), childRows, stream->childAt(i));
+    serializeColumn(
+        rowVector->childAt(i).get(),
+        folly::Range<vector_size_t*>(childRows, numChildRows),
+        stream->childAt(i),
+        scratch);
   }
 }
 
@@ -2681,17 +2724,13 @@ class PrestoVectorSerializer : public VectorSerializer {
   std::vector<std::unique_ptr<VectorStream>> streams_;
 };
 } // namespace
-void PrestoSerde::estimateSerializedSize(
-    VectorPtr vector,
-    folly::Range<const vector_size_t*> rows,
-    vector_size_t* sizes,
-    Scratch& scratch) override {}
 
 void PrestoVectorSerde::estimateSerializedSize(
     VectorPtr vector,
     const folly::Range<const IndexRange*>& ranges,
-    vector_size_t** sizes) {
-  estimateSerializedSizeInt(vector->loadedVector(), ranges, sizes);
+    vector_size_t** sizes,
+    Scratch& scratch) {
+  estimateSerializedSizeInt(vector->loadedVector(), ranges, sizes, scratch);
 }
 
 std::unique_ptr<VectorSerializer> PrestoVectorSerde::createSerializer(

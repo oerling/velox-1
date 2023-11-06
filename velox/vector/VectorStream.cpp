@@ -139,7 +139,8 @@ void VectorStreamGroup::flush(OutputStream* out) {
   serializer_->flush(out);
 }
 
-// static
+#if 0
+  // static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
     IndexRange range,
@@ -147,7 +148,7 @@ void VectorStreamGroup::estimateSerializedSize(
     Scratch& scratch) {
   getVectorSerde()->estimateSerializedSize(vector, range, sizes, scratch);
 }
-
+#endif
 // static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
