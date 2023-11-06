@@ -18,7 +18,7 @@
 
 #include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
-#include "velox/dwio/common/CoalescedInputStream.h"
+#include "velox/dwio/common/DirectInputStream.h"
 #include "velox/dwio/common/SelectiveBufferedInput.h"
 
 using ::facebook::velox::common::Region;
@@ -29,7 +29,7 @@ using velox::cache::ScanTracker;
 using velox::cache::TrackingId;
 using velox::memory::MemoryAllocator;
 
-CoalescedInputStream::CoalescedInputStream(
+DirectInputStream::DirectInputStream(
     SelectiveBufferedInput* bufferedInput,
     IoStatistics* ioStats,
     const Region& region,
@@ -49,8 +49,8 @@ CoalescedInputStream::CoalescedInputStream(
       groupId_(groupId),
       loadQuantum_(loadQuantum) {}
 
-bool CoalescedInputStream::Next(const void** buffer, int32_t* size) {
-  if (position_ >= region_.length) {
+bool DirectInputStream::Next(const void** buffer, int32_t* size) {
+  if (offsetInRegion_ >= region_.length) {
     *size = 0;
     return false;
   }
@@ -58,11 +58,11 @@ bool CoalescedInputStream::Next(const void** buffer, int32_t* size) {
 
   *buffer = reinterpret_cast<const void**>(run_ + offsetInRun_);
   *size = runSize_ - offsetInRun_;
-  if (position_ + *size > region_.length) {
-    *size = region_.length - position_;
+  if (offsetInRegion_ + *size > region_.length) {
+    *size = region_.length - offsetInRegion_;
   }
   offsetInRun_ += *size;
-  position_ += *size;
+  offsetInRegion_ += *size;
 
   if (tracker_) {
     tracker_->recordRead(trackingId_, *size, fileNum_, groupId_);
@@ -70,41 +70,42 @@ bool CoalescedInputStream::Next(const void** buffer, int32_t* size) {
   return true;
 }
 
-void CoalescedInputStream::BackUp(int32_t count) {
-  DWIO_ENSURE_GE(count, 0, "can't backup negative distances");
+void DirectInputStream::BackUp(int32_t count) {
+  VELOX_CHECK_GE(count, 0, "can't backup negative distances");
 
   uint64_t unsignedCount = static_cast<uint64_t>(count);
-  DWIO_ENSURE(unsignedCount <= offsetInRun_, "Can't backup that much!");
-  position_ -= unsignedCount;
+  VELOX_CHECK(unsignedCount <= offsetInRun_, "Can't backup that much!");
+  offsetInRegion_ -= unsignedCount;
 }
 
-bool CoalescedInputStream::SkipInt64(int64_t count) {
+bool DirectInputStream::SkipInt64(int64_t count) {
   if (count < 0) {
     return false;
   }
-  uint64_t unsignedCount = static_cast<uint64_t>(count);
-  if (unsignedCount + position_ <= region_.length) {
-    position_ += unsignedCount;
+  const uint64_t unsignedCount = static_cast<uint64_t>(count);
+  if (unsignedCount + offsetInRegion_ <= region_.length) {
+    offsetInRegion_ += unsignedCount;
     return true;
   }
-  position_ = region_.length;
+  offsetInRegion_ = region_.length;
   return false;
 }
 
-google::protobuf::int64 CoalescedInputStream::ByteCount() const {
-  return static_cast<google::protobuf::int64>(position_);
+google::protobuf::int64 DirectInputStream::ByteCount() const {
+  return static_cast<google::protobuf::int64>(offsetInRegion_);
 }
 
-void CoalescedInputStream::seekToPosition(PositionProvider& seekPosition) {
-  position_ = seekPosition.next();
+void DirectInputStream::seekToPosition(PositionProvider& seekPosition) {
+  offsetInRegion_ = seekPosition.next();
+  VELOX_CHECK_LE(offsetInRegion_, region_.length);
 }
 
-std::string CoalescedInputStream::getName() const {
+std::string DirectInputStream::getName() const {
   return fmt::format(
-      "CoalescedInputStream {} of {}", position_, region_.length);
+      "DirectInputStream {} of {}", offsetInRegion_, region_.length);
 }
 
-size_t CoalescedInputStream::positionSize() {
+size_t DirectInputStream::positionSize() {
   // not compressed, so only need 1 position (uncompressed position)
   return 1;
 }
@@ -118,7 +119,7 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
     uint64_t offsetInRuns = 0;
     for (int i = 0; i < data.numRuns(); ++i) {
       auto run = data.runAt(i);
-      uint64_t bytes = run.numPages() * memory::AllocationTraits::kPageSize;
+      uint64_t bytes = AllocationTraits::pageBytes(run.numPages());
       uint64_t readSize = std::min(bytes, size - offsetInRuns);
       buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
       offsetInRuns += readSize;
@@ -130,40 +131,39 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
 }
 } // namespace
 
-void CoalescedInputStream::loadSync() {
+void DirectInputStream::loadSync() {
   if (region_.length < SelectiveBufferedInput::kTinySize &&
       data_.numPages() == 0) {
     tinyData_.resize(region_.length);
   } else {
-    auto numPages = memory::AllocationTraits::numPages(loadedRegion_.length);
+    const auto numPages = memory::AllocationTraits::numPages(loadedRegion_.length);
     if (numPages > data_.numPages()) {
       bufferedInput_->pool()->allocateNonContiguous(numPages, data_);
     }
   }
 
-  process::TraceContext trace("CoalescedInputStream::loadSync");
+  process::TraceContext trace("DirectInputStream::loadSync");
 
   ioStats_->incRawBytesRead(loadedRegion_.length);
   auto ranges = makeRanges(loadedRegion_.length, data_, tinyData_);
-  uint64_t usec = 0;
+  uint64_t usecs = 0;
   {
-    MicrosecondTimer timer(&usec);
+    MicrosecondTimer timer(&usecs);
     input_->read(ranges, loadedRegion_.offset, LogType::FILE);
   }
   ioStats_->read().increment(loadedRegion_.length);
   ioStats_->queryThreadIoLatency().increment(usec);
 }
 
-void CoalescedInputStream::loadPosition() {
-  auto offset = region_.offset;
+void DirectInputStream::loadPosition() {
   if (!isLoaded_) {
     isLoaded_ = true;
     auto load = bufferedInput_->coalescedLoad(this);
     if (load) {
       folly::SemiFuture<bool> waitFuture(false);
-      uint64_t usec = 0;
+      uint64_t usecs = 0;
       {
-        MicrosecondTimer timer(&usec);
+        MicrosecondTimer timer(&usecs);
         if (!load->loadOrFuture(&waitFuture)) {
           auto& exec = folly::QueuedImmediateExecutor::instance();
           std::move(waitFuture).via(&exec).wait();
@@ -180,28 +180,28 @@ void CoalescedInputStream::loadPosition() {
   }
   // Check if position outside of loaded bounds.
   if (loadedRegion_.length == 0 ||
-      region_.offset + position_ < loadedRegion_.offset ||
-      region_.offset + position_ >=
+      region_.offset + offsetInRegion_ < loadedRegion_.offset ||
+      region_.offset + offsetInRegion_ >=
           loadedRegion_.offset + loadedRegion_.length) {
-    loadedRegion_.offset = region_.offset + position_;
-    loadedRegion_.length = position_ + loadQuantum_ <= region_.length
+    loadedRegion_.offset = region_.offset + offsetInRegion_;
+    loadedRegion_.length = (offsetInRegion_ + loadQuantum_ <= region_.length)
         ? loadQuantum_
-        : region_.length - position_;
+      : (region_.length - offsetInRegion_);
     loadSync();
   }
 
-  auto offsetInEntry = position_ - (loadedRegion_.offset - region_.offset);
+  auto offsetInData = offsetInRegion_ - (loadedRegion_.offset - region_.offset);
   if (data_.numPages() == 0) {
     run_ = reinterpret_cast<uint8_t*>(tinyData_.data());
     runSize_ = tinyData_.size();
     offsetInRun_ = offsetInEntry;
     offsetOfRun_ = 0;
   } else {
-    if (offsetInEntry > data_.numPages() * 4096) {
+    if (offsetInEntry > AllocationTraits::pageBytes(data_.numPages())) {
       VELOX_FAIL(
           "Bad offset in entry: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}",
           offsetInEntry,
-          position_,
+          offsetInRegion_,
           region_.offset,
           region_.length,
           loadedRegion_.offset,

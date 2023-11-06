@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/common/SelectiveBufferedInput.h"
+#include "velox/dwio/common/DirectBufferedInput.h"
 #include "velox/common/memory/Allocation.h"
 #include "velox/common/process/TraceContext.h"
 #include "velox/dwio/common/CoalescedInputStream.h"
@@ -29,7 +29,7 @@ using cache::CoalescedLoad;
 using cache::ScanTracker;
 using cache::TrackingId;
 
-std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
+std::unique_ptr<SeekableInputStream> DirectBufferedInput::enqueue(
     Region region,
     const StreamIdentifier* si = nullptr) {
   if (!allCoalescedLoads_.empty()) {
@@ -65,13 +65,13 @@ std::unique_ptr<SeekableInputStream> SelectiveBufferedInput::enqueue(
   return stream;
 }
 
-bool SelectiveBufferedInput::isBuffered(
+bool DirectBufferedInput::isBuffered(
     uint64_t /*offset*/,
     uint64_t /*length*/) const {
   return false;
 }
 
-bool SelectiveBufferedInput::shouldPreload(int32_t numPages) {
+bool DirectBufferedInput::shouldPreload(int32_t numPages) {
   return false;
 }
 
@@ -91,7 +91,7 @@ int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
 }
 } // namespace
 
-void SelectiveBufferedInput::load(const LogType) {
+void DirectBufferedInput::load(const LogType) {
   // After load, new requests cannot be merged into pre-load ones.
   auto requests = std::move(requests_);
 
@@ -120,7 +120,7 @@ void SelectiveBufferedInput::load(const LogType) {
   }
 }
 
-void SelectiveBufferedInput::makeLoads(
+void DirectBufferedInput::makeLoads(
     std::vector<LoadRequest*> requests,
     bool prefetch) {
   if (requests.empty() || (requests.size() < 2 && !prefetch)) {
@@ -190,13 +190,13 @@ void SelectiveBufferedInput::makeLoads(
   }
 }
 
-void SelectiveBufferedInput::readRegion(
+void DirectBufferedInput::readRegion(
     std::vector<LoadRequest*> requests,
     bool prefetch) {
   if (requests.empty() || (requests.size() == 1 && !prefetch)) {
     return;
   }
-  auto load = std::make_shared<SelectiveCoalescedLoad>(
+  auto load = std::make_shared<DirectCoalescedLoad>(
       input_, ioStats_, groupId_, requests, pool_, options_.loadQuantum());
   allCoalescedLoads_.push_back(load);
   coalescedLoads_.withWLock([&](auto& loads) {
@@ -206,7 +206,7 @@ void SelectiveBufferedInput::readRegion(
   });
 }
 
-std::shared_ptr<SelectiveCoalescedLoad> SelectiveBufferedInput::coalescedLoad(
+std::shared_ptr<DirectCoalescedLoad> DirectBufferedInput::coalescedLoad(
     const SeekableInputStream* stream) {
   return coalescedLoads_.withWLock(
       [&](auto& loads) -> std::shared_ptr<SelectiveCoalescedLoad> {
@@ -236,7 +236,7 @@ void appendRanges(
 }
 } // namespace
 
-std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
+std::vector<cache::CachePin> DirectCoalescedLoad::loadData(bool isPrefetch) {
   std::vector<folly::Range<char*>> buffers;
   int64_t lastEnd = requests_[0].region.offset;
   int64_t size = 0;
@@ -250,7 +250,7 @@ std::vector<cache::CachePin> SelectiveCoalescedLoad::loadData(bool isPrefetch) {
               static_cast<uint64_t>(region.offset - lastEnd))));
       overread += buffers.back().size();
     }
-    if (region.length > SelectiveBufferedInput::kTinySize) {
+    if (region.length > DirectBufferedInput::kTinySize) {
       request.loadSize = std::min<int32_t>(region.length, loadQuantum_);
       auto numPages = memory::AllocationTraits::numPages(request.loadSize);
       pool_.allocateNonContiguous(numPages, request.data);

@@ -24,12 +24,14 @@
 
 namespace facebook::velox::dwio::common {
 
-class SelectiveBufferedInput;
+class DirectBufferedInput;
 
-class CoalescedInputStream : public SeekableInputStream {
+/// An input sream over possibly coalesced loads. Created by
+/// DirectBufferedInput. Similar to CacheInputStream but does not use cache.
+class DirectInputStream : public SeekableInputStream {
  public:
-  CoalescedInputStream(
-      SelectiveBufferedInput* bufferedInput,
+  DirectInputStream(
+      DirectBufferedInput* bufferedInput,
       IoStatistics* ioStats,
       const velox::common::Region& region,
       std::shared_ptr<ReadFileInputStream> input,
@@ -48,7 +50,7 @@ class CoalescedInputStream : public SeekableInputStream {
   std::string getName() const override;
   size_t positionSize() override;
 
-  // Testing function to access loaded state.
+  /// Testing function to access loaded state.
   void testingData(
       velox::common::Region& loadedRegion,
       memory::Allocation*& data,
@@ -66,8 +68,8 @@ class CoalescedInputStream : public SeekableInputStream {
   void loadSync();
 
   SelectiveBufferedInput* const bufferedInput_;
-  IoStatistics* ioStats_;
-  std::shared_ptr<ReadFileInputStream> input_;
+  IoStatistics* const ioStats_;
+  std::shared_ptr<ReadFileInputStream> const input_;
   // The region of 'input' 'this' ranges over.
   const velox::common::Region region_;
   const uint64_t fileNum_;
@@ -75,35 +77,40 @@ class CoalescedInputStream : public SeekableInputStream {
   const cache::TrackingId trackingId_;
   const uint64_t groupId_;
 
-  velox::common::Region loadedRegion_;
-
   // Maximum number of bytes read from 'input' at a time.
   const int32_t loadQuantum_;
 
+  // The part of 'region_' that is loaded into 'data_'/'tinyData_'. Relative to
+  // file start.
+  velox::common::Region loadedRegion_;
+
   // Allocation with loaded data. Has space for region.length or loadQuantum_
-  // bytes, whichevr is less.
+  // bytes, whichever is less.
   memory::Allocation data_;
 
   // Contains the data if the range is too small for Allocation.
   std::string tinyData_;
 
+  // Pointer  to start of current run in 'entry->data()' or
+  // 'entry->tinyData()'.
+  uint8_t* run_{nullptr};
+
   // Offset of current run from start of 'data_'
   uint64_t offsetOfRun_;
 
-  // Pointer  to start of  current run in 'entry->data()' or
-  // 'entry->tinyData()'.
-  uint8_t* run_{nullptr};
   // Position of stream relative to 'run_'.
   int offsetInRun_{0};
+
   // Index of run in 'data_'
   int runIndex_ = -1;
-  // Number of valid bytes above 'run_'.
+
+  // Number of valid bytes starting at 'run_'
   uint32_t runSize_ = 0;
   // Position relative to 'region_.offset'.
-  uint64_t position_ = 0;
+  uint64_t offsetInRegion_ = 0;
 
-  //
-  bool isLoaded_{false};
+  // Set to true when data is first loaded.
+  bool loaded_{false};
 };
 
 } // namespace facebook::velox::dwio::common

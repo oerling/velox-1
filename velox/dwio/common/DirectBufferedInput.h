@@ -36,20 +36,21 @@ struct LoadRequest {
 
   velox::common::Region region;
   cache::TrackingId trackingId;
-  bool processed{false};
+  /bool processed{false};
 
-  const SeekableInputStream* FOLLY_NONNULL stream;
+  const SeekableInputStream*  stream;
 
-  // Buffers to be handed to 'stream' after load.
+  /// Buffers to be handed to 'stream' after load.
   memory::Allocation data;
   std::string tinyData;
   // Number of bytes in 'data/tinyData'.
   int32_t loadSize{0};
 };
 
-class SelectiveCoalescedLoad : public cache::CoalescedLoad {
+  /// Represents planned loads that should be performed as a single IO.
+  class DirectCoalescedLoad : public cache::CoalescedLoad {
  public:
-  SelectiveCoalescedLoad(
+  DirectCoalescedLoad(
       std::shared_ptr<ReadFileInputStream> input,
       std::shared_ptr<IoStatistics> ioStats,
       uint64_t groupId,
@@ -90,17 +91,17 @@ class SelectiveCoalescedLoad : public cache::CoalescedLoad {
   }
 
  private:
-  std::shared_ptr<IoStatistics> ioStats_;
+  std::shared_ptr<IoStatistics> const ioStats_;
   const uint64_t groupId_;
-  std::vector<LoadRequest> requests_;
-  std::shared_ptr<ReadFileInputStream> input_;
-  memory::MemoryPool& pool_;
   const int32_t loadQuantum_;
+  std::shared_ptr<ReadFileInputStream> const input_;
+  memory::MemoryPool& pool_;
+  std::vector<LoadRequest> requests_;
 };
 
 class SelectiveBufferedInput : public BufferedInput {
  public:
-  static constexpr int32_t kTinySize = 2000;
+  static constexpr int32_t kTinySize = 2'000;
 
   SelectiveBufferedInput(
       std::shared_ptr<ReadFile> readFile,
@@ -115,7 +116,6 @@ class SelectiveBufferedInput : public BufferedInput {
             std::move(readFile),
             readerOptions.getMemoryPool(),
             metricsLog),
-
         fileNum_(fileNum),
         tracker_(std::move(tracker)),
         groupId_(groupId),
@@ -124,22 +124,6 @@ class SelectiveBufferedInput : public BufferedInput {
         fileSize_(input_->getLength()),
         options_(readerOptions) {}
 
-  SelectiveBufferedInput(
-      std::shared_ptr<ReadFileInputStream> input,
-      uint64_t fileNum,
-      std::shared_ptr<cache::ScanTracker> tracker,
-      uint64_t groupId,
-      std::shared_ptr<IoStatistics> ioStats,
-      folly::Executor* FOLLY_NULLABLE executor,
-      const io::ReaderOptions& readerOptions)
-      : BufferedInput(std::move(input), readerOptions.getMemoryPool()),
-        fileNum_(fileNum),
-        tracker_(std::move(tracker)),
-        groupId_(groupId),
-        ioStats_(std::move(ioStats)),
-        executor_(executor),
-        fileSize_(input_->getLength()),
-        options_(readerOptions) {}
 
   ~SelectiveBufferedInput() override {
     for (auto& load : allCoalescedLoads_) {
@@ -149,9 +133,9 @@ class SelectiveBufferedInput : public BufferedInput {
 
   std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier* FOLLY_NULLABLE si) override;
+      const StreamIdentifier*  sid) override;
 
-  void load(const LogType) override;
+  void load(const LogType /*unused*/) override;
 
   bool isBuffered(uint64_t offset, uint64_t length) const override;
 
@@ -166,7 +150,7 @@ class SelectiveBufferedInput : public BufferedInput {
   }
 
   void setNumStripes(int32_t numStripes) override {
-    auto stats = tracker_->fileGroupStats();
+    auto* stats = tracker_->fileGroupStats();
     if (stats) {
       stats->recordFile(fileNum_, groupId_, numStripes);
     }
@@ -192,11 +176,25 @@ class SelectiveBufferedInput : public BufferedInput {
     return executor_;
   }
 
-  int64_t prefetchSize() const override {
-    return prefetchSize_;
-  }
-
  private:
+  SelectiveBufferedInput(
+      std::shared_ptr<ReadFileInputStream> input,
+      uint64_t fileNum,
+      std::shared_ptr<cache::ScanTracker> tracker,
+      uint64_t groupId,
+      std::shared_ptr<IoStatistics> ioStats,
+      folly::Executor* FOLLY_NULLABLE executor,
+      const io::ReaderOptions& readerOptions)
+      : BufferedInput(std::move(input), readerOptions.getMemoryPool()),
+        fileNum_(fileNum),
+        tracker_(std::move(tracker)),
+        groupId_(groupId),
+        ioStats_(std::move(ioStats)),
+        executor_(executor),
+        fileSize_(input_->getLength()),
+        options_(readerOptions) {}
+
+  
   // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
   // is true, starts background loading.
   void makeLoads(std::vector<LoadRequest*> requests, bool prefetch);
@@ -226,7 +224,6 @@ class SelectiveBufferedInput : public BufferedInput {
   std::vector<std::shared_ptr<cache::CoalescedLoad>> allCoalescedLoads_;
 
   const uint64_t fileSize_;
-  int64_t prefetchSize_{0};
   io::ReaderOptions options_;
 };
 
