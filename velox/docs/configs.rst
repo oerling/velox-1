@@ -223,12 +223,6 @@ Spilling
      - integer
      - 0
      - Maximum amount of memory in bytes that a final aggregation can use before spilling. 0 means unlimited.
-   * - aggregation_spill_all
-     - boolean
-     - false
-     - If true and spilling has been triggered during the input processing, the spiller will spill all the remaining
-       in-memory state to disk before output processing. This is to simplify the aggregation query OOM prevention in
-       output processing stage.
    * - join_spill_memory_threshold
      - integer
      - 0
@@ -237,6 +231,10 @@ Spilling
      - integer
      - 0
      - Maximum amount of memory in bytes that an order by can use before spilling. 0 means unlimited.
+   * - writer_flush_threshold_bytes
+     - integer
+     - 96MB
+     - Minimum memory footprint size required to reclaim memory from a file writer by flushing its buffered data to disk.
    * - min_spillable_reservation_pct
      - integer
      - 5
@@ -290,12 +288,7 @@ Spilling
      - integer
      - 2
      - The number of bits (N) used to calculate the spilling partition number for hash join and RowNumber: 2 ^ N. At the moment the maximum
-       value is 3, meaning we only support up to 8-way spill partitioning.
-   * - aggregation_spiller_partition_bits
-     - integer
-     - 0
-     - The number of bits (N) used to calculate the spilling partition number for hash aggregation: 2 ^ N. At the moment the
-       maximum value is 3, meaning we only support up to 8-way spill partitioning.
+       value is 3, meaning we only support up to 8-way spill partitioning.ing.
    * - testing.spill_pct
      - integer
      - 0
@@ -382,10 +375,6 @@ Hive Connector
      - integer
      - 128MB
      - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
-   * - file_writer_flush_threshold_bytes
-     - integer
-     - 96MB
-     - Minimum memory footprint size required to reclaim memory from a file writer by flushing its buffered data to disk.
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

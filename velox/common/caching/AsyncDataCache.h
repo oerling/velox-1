@@ -510,6 +510,10 @@ struct CacheStats {
   // lifetime for entries in cache.
   int64_t sumEvictScore{0};
 
+  // Total size of shared/exclusive pinned entries.
+  int64_t sharedPinnedBytes{0};
+  int64_t exclusivePinnedBytes{0};
+
   std::shared_ptr<SsdCacheStats> ssdStats = nullptr;
 
   std::string toString() const;
@@ -692,7 +696,9 @@ class AsyncDataCache : public memory::Cache {
 
   CacheStats refreshStats() const;
 
-  std::string toString() const;
+  /// If 'details' is true, returns the stats of the backing memory allocator
+  /// and ssd cache. Otherwise, only returns the cache stats.
+  std::string toString(bool details = true) const;
 
   memory::MachinePageCount incrementCachedPages(int64_t pages) {
     // The counter is unsigned and the increment is signed.

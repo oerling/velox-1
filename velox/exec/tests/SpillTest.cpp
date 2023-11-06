@@ -304,6 +304,14 @@ class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
         prevGStats.spillSortTimeUs + stats.spillSortTimeUs,
         newGStats.spillSortTimeUs);
 
+    // Verifies the spill file id
+    for (auto& partitionNum : state_->spilledPartitionSet()) {
+      const auto spilledFileIds = state_->testingSpilledFileIds(partitionNum);
+      uint32_t expectedFileId{0};
+      for (auto spilledFileId : spilledFileIds) {
+        ASSERT_EQ(spilledFileId, expectedFileId++);
+      }
+    }
     std::vector<std::string> spilledFiles = state_->testingSpilledFilePaths();
     std::unordered_set<std::string> spilledFileSet(
         spilledFiles.begin(), spilledFiles.end());
@@ -591,7 +599,7 @@ TEST_P(SpillTest, spillPartitionSet) {
     rng.seed(iter);
     int numBatches = 2 * (1 + folly::Random::rand32(rng) % 16);
     setupSpillState(
-        iter % 2 ? 1 : kGB, numPartitions, numBatches, numRowsPerBatch);
+        iter % 2 ? 1 : kGB, 0, numPartitions, numBatches, numRowsPerBatch);
     numBatchesPerPartition += numBatches;
     for (int i = 0; i < numPartitions; ++i) {
       const SpillPartitionId id(0, i);
@@ -652,7 +660,7 @@ TEST_P(SpillTest, spillPartitionSpilt) {
     batches.reserve(numBatches);
 
     const int numRowsPerBatch = 50;
-    setupSpillState(seed % 2 ? 1 : kGB, 1, numBatches, numRowsPerBatch);
+    setupSpillState(seed % 2 ? 1 : kGB, 0, 1, numBatches, numRowsPerBatch);
     const SpillPartitionId id(0, 0);
 
     auto spillPartition =
@@ -693,7 +701,7 @@ TEST_P(SpillTest, spillPartitionSpilt) {
 TEST_P(SpillTest, nonExistSpillFileOnDeletion) {
   const int32_t numRowsPerBatch = 50;
   std::vector<RowVectorPtr> batches;
-  setupSpillState(kGB, 1, 2, numRowsPerBatch);
+  setupSpillState(kGB, 0, 1, 2, numRowsPerBatch);
   // Delete the tmp dir to verify the spill file deletion error won't fail the
   // test.
   tempDir_.reset();

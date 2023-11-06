@@ -25,17 +25,11 @@
 #include "velox/vector/arrow/Bridge.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
 
+namespace facebook::velox::test {
 namespace {
-
-using namespace facebook::velox;
 
 void mockSchemaRelease(ArrowSchema*) {}
 void mockArrayRelease(ArrowArray*) {}
-
-void exportToArrow(const TypePtr& type, ArrowSchema& out) {
-  auto pool = &facebook::velox::memory::deprecatedSharedLeafPool();
-  exportToArrow(BaseVector::create(type, 0, pool), out);
-}
 
 class ArrowBridgeArrayExportTest : public testing::Test {
  protected:
@@ -43,29 +37,11 @@ class ArrowBridgeArrayExportTest : public testing::Test {
   void testFlatVector(
       const std::vector<std::optional<T>>& inputData,
       const TypePtr& type = CppToType<T>::create()) {
-    const bool isString =
-        std::is_same_v<T, StringView> or std::is_same_v<T, std::string>;
-
     auto flatVector = vectorMaker_.flatVectorNullable(inputData, type);
     ArrowArray arrowArray;
-    exportToArrow(flatVector, arrowArray, pool_.get());
+    velox::exportToArrow(flatVector, arrowArray, pool_.get());
 
-    size_t nullCount =
-        std::count(inputData.begin(), inputData.end(), std::nullopt);
-    EXPECT_EQ(inputData.size(), arrowArray.length);
-    EXPECT_EQ(nullCount, arrowArray.null_count);
-    EXPECT_EQ(0, arrowArray.offset);
-    EXPECT_EQ(0, arrowArray.n_children);
-
-    EXPECT_EQ(nullptr, arrowArray.children);
-    EXPECT_EQ(nullptr, arrowArray.dictionary);
-
-    // Validate array contents.
-    if constexpr (isString) {
-      validateStringArray(inputData, arrowArray);
-    } else {
-      validateNumericalArray(inputData, arrowArray);
-    }
+    validateArray(inputData, arrowArray);
 
     arrowArray.release(&arrowArray);
     EXPECT_EQ(nullptr, arrowArray.release);
@@ -73,19 +49,87 @@ class ArrowBridgeArrayExportTest : public testing::Test {
   }
 
   template <typename T>
+  void testArrayVector(const T& inputData) {
+    auto arrayVector = vectorMaker_.arrayVectorNullable(inputData);
+    ArrowArray arrowArray;
+    velox::exportToArrow(arrayVector, arrowArray, pool_.get());
+
+    validateListArray(inputData, arrowArray);
+
+    arrowArray.release(&arrowArray);
+    EXPECT_EQ(nullptr, arrowArray.release);
+    EXPECT_EQ(nullptr, arrowArray.private_data);
+  }
+
+  // Construct and test a constant vector based on a scalar value.
+  template <typename T>
+  void testConstant(
+      const T& input,
+      size_t vectorSize = 1000,
+      const TypePtr& type = CppToType<T>::create()) {
+    VectorPtr vector = BaseVector::createConstant(
+        type, variant(input), vectorSize, pool_.get());
+    testConstantVector<true /*isScalar*/, T>(vector, input);
+  }
+
+  // Test arrow conversion based on a constant vector already constructed.
+  template <bool isScalar, typename T, typename TInput>
+  void testConstantVector(
+      const VectorPtr& constantVector,
+      const TInput& input) {
+    ArrowArray arrowArray;
+    velox::exportToArrow(constantVector, arrowArray, pool_.get());
+    validateConstant<isScalar, T>(
+        input,
+        constantVector->size(),
+        constantVector->mayHaveNulls(),
+        arrowArray);
+
+    arrowArray.release(&arrowArray);
+    EXPECT_EQ(nullptr, arrowArray.release);
+    EXPECT_EQ(nullptr, arrowArray.private_data);
+  }
+
+  // Helper functions for verification.
+
+  template <typename T>
+  void validateArray(
+      const std::vector<std::optional<T>>& inputData,
+      const ArrowArray& arrowArray) {
+    const bool isString =
+        std::is_same_v<T, StringView> or std::is_same_v<T, std::string>;
+
+    EXPECT_EQ(inputData.size(), arrowArray.length);
+    EXPECT_EQ(0, arrowArray.offset);
+    EXPECT_EQ(0, arrowArray.n_children);
+
+    EXPECT_EQ(nullptr, arrowArray.children);
+    EXPECT_EQ(nullptr, arrowArray.dictionary);
+    EXPECT_NE(nullptr, arrowArray.release);
+
+    bool isNullLayout = validateNulls(inputData, arrowArray);
+    if (isNullLayout) {
+      return;
+    }
+
+    // Validate array contents.
+    if constexpr (isString) {
+      validateStringArray(inputData, arrowArray);
+    } else {
+      validateNumericalArray(inputData, arrowArray);
+    }
+  }
+
+  template <typename T>
   void validateNumericalArray(
       const std::vector<std::optional<T>>& inputData,
       const ArrowArray& arrowArray) {
     ASSERT_EQ(2, arrowArray.n_buffers); // null and values buffers.
+    ASSERT_NE(nullptr, arrowArray.buffers);
 
     const uint64_t* nulls = static_cast<const uint64_t*>(arrowArray.buffers[0]);
     const T* values = static_cast<const T*>(arrowArray.buffers[1]);
 
-    if (arrowArray.null_count == 0) {
-      EXPECT_EQ(nulls, nullptr);
-    } else {
-      EXPECT_NE(nulls, nullptr);
-    }
     EXPECT_NE(values, nullptr);
 
     for (size_t i = 0; i < inputData.size(); ++i) {
@@ -102,7 +146,7 @@ class ArrowBridgeArrayExportTest : public testing::Test {
               inputData[i],
               bits::isBitSet(reinterpret_cast<const uint64_t*>(values), i));
         } else {
-          EXPECT_EQ(inputData[i], values[i]);
+          EXPECT_EQ(inputData[i], values[i]) << "mismatch at index " << i;
         }
       }
     }
@@ -113,16 +157,12 @@ class ArrowBridgeArrayExportTest : public testing::Test {
       const std::vector<std::optional<T>>& inputData,
       const ArrowArray& arrowArray) {
     ASSERT_EQ(3, arrowArray.n_buffers); // null, values, and offsets buffers.
+    ASSERT_NE(nullptr, arrowArray.buffers);
 
     const uint64_t* nulls = static_cast<const uint64_t*>(arrowArray.buffers[0]);
     const char* values = static_cast<const char*>(arrowArray.buffers[2]);
     const int32_t* offsets = static_cast<const int32_t*>(arrowArray.buffers[1]);
 
-    if (arrowArray.null_count == 0) {
-      EXPECT_EQ(nulls, nullptr);
-    } else {
-      EXPECT_NE(nulls, nullptr);
-    }
     EXPECT_NE(values, nullptr);
     EXPECT_NE(offsets, nullptr);
 
@@ -141,6 +181,122 @@ class ArrowBridgeArrayExportTest : public testing::Test {
                 offsets[i + 1] - offsets[i]));
       }
     }
+  }
+
+  // Validate nulls and returns whether this array uses Arrow's Null Layout.
+  template <typename T>
+  bool validateNulls(
+      const std::vector<std::optional<T>>& inputData,
+      const ArrowArray& arrowArray) {
+    size_t nullCount =
+        std::count(inputData.begin(), inputData.end(), std::nullopt);
+    if (arrowArray.null_count != -1) {
+      EXPECT_EQ(nullCount, arrowArray.null_count);
+    }
+
+    // If every element is null, check if it's using arrow's Null Layout.
+    if (!inputData.empty() && (nullCount == inputData.size())) {
+      // TODO: FlatVectors containing only null values are not generating Null
+      // Layout today. Need to fix that before uncommenting these checks.
+      // EXPECT_EQ(arrowArray.buffers, nullptr);
+      // EXPECT_EQ(arrowArray.children, nullptr);
+      // EXPECT_EQ(arrowArray.n_buffers, 0);
+      // EXPECT_EQ(arrowArray.n_children, 0);
+      return true;
+    }
+
+    if (arrowArray.null_count == 0) {
+      EXPECT_EQ(arrowArray.buffers[0], nullptr);
+    } else {
+      EXPECT_NE(arrowArray.buffers[0], nullptr);
+    }
+    return false;
+  }
+
+  template <typename T>
+  void validateListArray(
+      const std::vector<std::optional<std::vector<std::optional<T>>>>&
+          inputData,
+      const ArrowArray& arrowArray) {
+    const bool isString =
+        std::is_same_v<T, StringView> or std::is_same_v<T, std::string>;
+
+    EXPECT_EQ(inputData.size(), arrowArray.length);
+    EXPECT_EQ(0, arrowArray.offset);
+    EXPECT_EQ(1, arrowArray.n_children);
+
+    EXPECT_NE(nullptr, arrowArray.children);
+    EXPECT_EQ(nullptr, arrowArray.dictionary);
+    EXPECT_NE(nullptr, arrowArray.release);
+
+    validateNulls(inputData, arrowArray);
+
+    std::vector<std::optional<T>> flattenedData;
+    for (const auto& item : inputData) {
+      if (item) {
+        flattenedData.insert(flattenedData.end(), item->begin(), item->end());
+      }
+    }
+
+    // Validate offsets.
+    auto* offsets = static_cast<const vector_size_t*>(arrowArray.buffers[1]);
+    vector_size_t offset = 0;
+
+    for (size_t i = 0; i < inputData.size(); ++i) {
+      if (inputData[i]) {
+        EXPECT_EQ(offset, offsets[i]);
+        offset += inputData[i]->size();
+      }
+    }
+    EXPECT_EQ(offset, offsets[inputData.size()]); // validate last offset.
+
+    // Validate child array contents.
+    auto* childArray = arrowArray.children[0];
+
+    if constexpr (isString) {
+      validateStringArray(flattenedData, *childArray);
+    } else {
+      validateNumericalArray(flattenedData, *childArray);
+    }
+  }
+
+  template <bool isScalar, typename T, typename TInput>
+  void validateConstant(
+      const TInput& inputData,
+      size_t vectorSize,
+      bool isNullConstant,
+      const ArrowArray& arrowArray) {
+    using TRunEnds = int32_t;
+
+    // Validate base REE array.
+    EXPECT_EQ(vectorSize, arrowArray.length);
+    if (isNullConstant) {
+      EXPECT_EQ(vectorSize, arrowArray.null_count);
+    } else {
+      EXPECT_EQ(0, arrowArray.null_count);
+    }
+    EXPECT_EQ(0, arrowArray.offset);
+    EXPECT_EQ(0, arrowArray.n_buffers);
+    EXPECT_EQ(nullptr, arrowArray.buffers);
+    EXPECT_EQ(nullptr, arrowArray.dictionary);
+    EXPECT_NE(nullptr, arrowArray.release);
+
+    // Validate children.
+    EXPECT_EQ(2, arrowArray.n_children); // run_ends and values children.
+    EXPECT_NE(nullptr, arrowArray.children);
+
+    const auto& runEnds = *arrowArray.children[0];
+    const auto& values = *arrowArray.children[1];
+
+    // Validate values.
+    if constexpr (isScalar) {
+      validateArray<T>({inputData}, values);
+    } else {
+      validateListArray<T>({{{inputData}}}, values);
+    }
+
+    // Validate run ends - single run of the vector size.
+    validateArray<TRunEnds>({vectorSize}, runEnds);
   }
 
   ArrowSchema makeArrowSchema(const char* format) {
@@ -186,6 +342,10 @@ class ArrowBridgeArrayExportTest : public testing::Test {
     return ans;
   }
 
+  void exportToArrow(const TypePtr& type, ArrowSchema& out) {
+    velox::exportToArrow(BaseVector::create(type, 0, pool_.get()), out);
+  }
+
   // Boiler plate structures required by vectorMaker.
   std::shared_ptr<core::QueryCtx> queryCtx_{std::make_shared<core::QueryCtx>()};
   std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
@@ -200,7 +360,7 @@ TEST_F(ArrowBridgeArrayExportTest, flatNotNull) {
     // Make sure that ArrowArray is correctly acquiring ownership, even after
     // the initial vector shared_ptr is gone.
     auto flatVector = vectorMaker_.flatVector(inputData);
-    exportToArrow(flatVector, arrowArray, pool_.get());
+    velox::exportToArrow(flatVector, arrowArray, pool_.get());
   }
 
   EXPECT_EQ(inputData.size(), arrowArray.length);
@@ -352,7 +512,7 @@ TEST_F(ArrowBridgeArrayExportTest, rowVector) {
   });
 
   ArrowArray arrowArray;
-  exportToArrow(vector, arrowArray, pool_.get());
+  velox::exportToArrow(vector, arrowArray, pool_.get());
 
   EXPECT_EQ(col1.size(), arrowArray.length);
   EXPECT_EQ(0, arrowArray.null_count);
@@ -389,7 +549,7 @@ TEST_F(ArrowBridgeArrayExportTest, rowVectorNullable) {
   vector->setNullCount(3);
 
   ArrowArray arrowArray;
-  exportToArrow(vector, arrowArray, pool_.get());
+  velox::exportToArrow(vector, arrowArray, pool_.get());
 
   EXPECT_EQ(col1.size(), arrowArray.length);
   EXPECT_EQ(3, arrowArray.null_count);
@@ -417,7 +577,7 @@ TEST_F(ArrowBridgeArrayExportTest, rowVectorNullable) {
 
 TEST_F(ArrowBridgeArrayExportTest, rowVectorEmpty) {
   ArrowArray arrowArray;
-  exportToArrow(vectorMaker_.rowVector({}), arrowArray, pool_.get());
+  velox::exportToArrow(vectorMaker_.rowVector({}), arrowArray, pool_.get());
   EXPECT_EQ(0, arrowArray.n_children);
   EXPECT_EQ(1, arrowArray.n_buffers);
   EXPECT_EQ(nullptr, arrowArray.children);
@@ -447,7 +607,23 @@ void validateOffsets(
   }
 }
 
+template <typename T>
+using TArrayContainer =
+    std::vector<std::optional<std::vector<std::optional<T>>>>;
+
 TEST_F(ArrowBridgeArrayExportTest, arraySimple) {
+  TArrayContainer<int64_t> data1 = {{{1, 2, 3}}, {{4, 5}}};
+  testArrayVector(data1);
+
+  TArrayContainer<int64_t> data2 = {
+      {{1, 2, 3}}, std::nullopt, {{4, std::nullopt, 5}}};
+  testArrayVector(data2);
+
+  TArrayContainer<StringView> data3 = {{{"a", "b", "c"}}, {{"d", "e"}}};
+  testArrayVector(data3);
+}
+
+TEST_F(ArrowBridgeArrayExportTest, arrayCrossValidate) {
   auto vec = vectorMaker_.arrayVector<int64_t>({{1, 2, 3}, {4, 5}});
   auto array = toArrow(vec, pool_.get());
   ASSERT_OK(array->ValidateFull());
@@ -655,17 +831,42 @@ TEST_F(ArrowBridgeArrayExportTest, dictionaryNested) {
   EXPECT_EQ(values.Value(2), 3);
 }
 
+TEST_F(ArrowBridgeArrayExportTest, constants) {
+  testConstant((int64_t)987654321);
+  testConstant((int32_t)1234);
+  testConstant((float)44.3);
+  testConstant(true);
+  testConstant(StringView("inlined"));
+
+  // Null constant.
+  VectorPtr vector =
+      BaseVector::createNullConstant(TINYINT(), 2048, pool_.get());
+  testConstantVector<true, int8_t>(
+      vector, std::vector<std::optional<int8_t>>{std::nullopt});
+}
+
+TEST_F(ArrowBridgeArrayExportTest, constantComplex) {
+  auto innerArray =
+      vectorMaker_.arrayVector<int64_t>({{1, 2, 3}, {4, 5}, {6, 7, 8, 9}});
+
+  // Wrap around different indices.
+  VectorPtr vector = BaseVector::wrapInConstant(100, 1, innerArray);
+  testConstantVector<false, int64_t>(
+      vector, std::vector<std::optional<int64_t>>{4, 5});
+
+  vector = BaseVector::wrapInConstant(100, 0, innerArray);
+  testConstantVector<false, int64_t>(
+      vector, std::vector<std::optional<int64_t>>{1, 2, 3});
+}
+
 TEST_F(ArrowBridgeArrayExportTest, unsupported) {
   ArrowArray arrowArray;
   VectorPtr vector;
 
   // Timestamps.
   vector = vectorMaker_.flatVectorNullable<Timestamp>({});
-  EXPECT_THROW(exportToArrow(vector, arrowArray, pool_.get()), VeloxException);
-
-  // Constant encoding.
-  vector = BaseVector::createConstant(INTEGER(), variant(10), 10, pool_.get());
-  EXPECT_THROW(exportToArrow(vector, arrowArray, pool_.get()), VeloxException);
+  EXPECT_THROW(
+      velox::exportToArrow(vector, arrowArray, pool_.get()), VeloxException);
 }
 
 class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
@@ -1033,8 +1234,8 @@ class ArrowBridgeArrayImportTest : public ArrowBridgeArrayExportTest {
       EXPECT_FALSE(schema.release);
       EXPECT_FALSE(data.release);
     }
-    exportToArrow(vec, schema);
-    exportToArrow(vec, data, pool_.get());
+    velox::exportToArrow(vec, schema);
+    velox::exportToArrow(vec, data, pool_.get());
     ASSERT_OK_AND_ASSIGN(auto arrowType, arrow::ImportType(&schema));
     ASSERT_OK_AND_ASSIGN(auto array2, arrow::ImportArray(&data, arrowType));
     ASSERT_OK(array2->ValidateFull());
@@ -1298,3 +1499,4 @@ TEST_F(ArrowBridgeArrayImportAsOwnerTest, releaseCalled) {
 }
 
 } // namespace
+} // namespace facebook::velox::test

@@ -394,7 +394,7 @@ VectorPtr CastExpr::applyRow(
     if (matchNotFound) {
       // Create a vector for null for this child
       context.ensureWritable(rows, toChildType, outputChild);
-      outputChild->addNulls(nullptr, rows);
+      outputChild->addNulls(rows);
     } else {
       const auto& inputChild = input->children()[fromChildrenIndex];
       if (toChildType == inputChild->type()) {
@@ -451,6 +451,10 @@ VectorPtr CastExpr::applyDecimal(
 
   // toType is a decimal
   switch (fromType->kind()) {
+    case TypeKind::BOOLEAN:
+      applyIntToDecimalCastKernel<bool, toDecimalType>(
+          rows, input, context, toType, castResult);
+      break;
     case TypeKind::TINYINT:
       applyIntToDecimalCastKernel<int8_t, toDecimalType>(
           rows, input, context, toType, castResult);

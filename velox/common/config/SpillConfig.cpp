@@ -27,9 +27,8 @@ SpillConfig::SpillConfig(
     int32_t _spillableReservationGrowthPct,
     uint8_t _startPartitionBit,
     uint8_t _joinPartitionBits,
-    uint8_t _aggregationPartitionBits,
-    bool _aggregationSpillAll,
     int32_t _maxSpillLevel,
+    uint64_t _writerFlushThresholdSize,
     int32_t _testSpillPct,
     const std::string& _compressionKind)
     : filePath(_filePath),
@@ -43,9 +42,8 @@ SpillConfig::SpillConfig(
       spillableReservationGrowthPct(_spillableReservationGrowthPct),
       startPartitionBit(_startPartitionBit),
       joinPartitionBits(_joinPartitionBits),
-      aggregationPartitionBits(_aggregationPartitionBits),
-      aggregationSpillAll(_aggregationSpillAll),
       maxSpillLevel(_maxSpillLevel),
+      writerFlushThresholdSize(_writerFlushThresholdSize),
       testSpillPct(_testSpillPct),
       compressionKind(common::stringToCompressionKind(_compressionKind)) {
   VELOX_USER_CHECK_GE(
