@@ -38,7 +38,8 @@ class UnsafeRowVectorSerializer : public VectorSerializer {
 
   void append(
       const RowVectorPtr& vector,
-      const folly::Range<const IndexRange*>& ranges, Scratch& /*scratch*/) override {
+      const folly::Range<const IndexRange*>& ranges,
+      Scratch& /*scratch*/) override {
     size_t totalSize = 0;
     row::UnsafeRowFast unsafeRow(vector);
     if (auto fixedRowSize =

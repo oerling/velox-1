@@ -41,7 +41,7 @@ getNamedVectorSerdeImpl() {
 
 } // namespace
 
-  #if 0
+#if 0
 void VectorSerde::estimateSerializedSize(
     VectorPtr vector,
     IndexRange range,
@@ -56,7 +56,7 @@ void VectorSerde::estimateSerializedSize(
       scratch);
 }
 #endif
-  
+
 VectorSerde* getVectorSerde() {
   auto serde = getVectorSerdeImpl().get();
   VELOX_CHECK_NOT_NULL(serde, "Vector serde is not registered.");
@@ -121,13 +121,14 @@ void VectorStreamGroup::createStreamTree(
 void VectorStreamGroup::append(
     const RowVectorPtr& vector,
     const folly::Range<const IndexRange*>& ranges,
-			       Scratch& scratch) {
+    Scratch& scratch) {
   serializer_->append(vector, ranges, scratch);
 }
 
 void VectorStreamGroup::append(
     const RowVectorPtr& vector,
-    const folly::Range<const vector_size_t*>& rows, Scratch& scratch) {
+    const folly::Range<const vector_size_t*>& rows,
+    Scratch& scratch) {
   serializer_->append(vector, rows, scratch);
 }
 
@@ -154,7 +155,7 @@ void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
     const folly::Range<const IndexRange*>& ranges,
     vector_size_t** sizes,
-					       Scratch& scratch) {
+    Scratch& scratch) {
   getVectorSerde()->estimateSerializedSize(vector, ranges, sizes, scratch);
 }
 

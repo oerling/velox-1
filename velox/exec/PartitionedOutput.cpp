@@ -213,7 +213,7 @@ void PartitionedOutput::estimateRowSizes() {
         output_->childAt(i),
         folly::Range(topLevelRanges_.data(), numInput),
         sizePointers_.data(),
-	scratch_);
+        scratch_);
   }
 }
 

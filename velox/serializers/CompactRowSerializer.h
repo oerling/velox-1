@@ -28,7 +28,7 @@ class CompactRowVectorSerde : public VectorSerde {
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes,
-			      Scratch& scratch) override;
+      Scratch& scratch) override;
 
   // This method is not used in production code. It is only used to
   // support round-trip tests for deserialization.

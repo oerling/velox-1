@@ -25,7 +25,7 @@ class Scratch {
  public:
   Scratch() = default;
   Scratch(const Scratch& other) = delete;
-  void operator =(const Scratch& other) = delete;
+  void operator=(const Scratch& other) = delete;
   raw_vector<char> get() {
     if (scratch_.empty()) {
       return raw_vector<char>();
@@ -81,7 +81,7 @@ class ScratchPtr {
   const raw_vector<char>& data() const {
     return data_;
   }
-  
+
  private:
   Scratch& scratch_;
   raw_vector<char> data_;

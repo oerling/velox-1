@@ -622,8 +622,6 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   }
 }
 
-
-
 INSTANTIATE_TEST_SUITE_P(
     PrestoSerializerTest,
     PrestoSerializerTest,

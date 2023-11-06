@@ -68,18 +68,23 @@ struct Counters {
 
 class ExchangeBenchmark : public VectorTestBase {
  public:
-  std::vector<RowVectorPtr>
-  makeRows(RowTypePtr type, int32_t numVectors, int32_t rowsPerVector, int32_t dictPct = 0) {
+  std::vector<RowVectorPtr> makeRows(
+      RowTypePtr type,
+      int32_t numVectors,
+      int32_t rowsPerVector,
+      int32_t dictPct = 0) {
     std::vector<RowVectorPtr> vectors;
     BufferPtr indices;
     for (int32_t i = 0; i < numVectors; ++i) {
       auto vector = std::dynamic_pointer_cast<RowVector>(
           BatchMaker::createBatch(type, rowsPerVector, *pool_));
-      if (100 * i / numVectors  > dictPct) {
-	if (!indices) {
-	  indices = makeIndices(vector->size(), [&](auto i){return i}, vector->pool());
-	}
-	vector = BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector);
+      if (100 * i / numVectors > dictPct) {
+        if (!indices) {
+          indices = makeIndices(
+              vector->size(), [&](auto i) { return i }, vector->pool());
+        }
+        vector = BaseVector::wrapInDictionary(
+            nullptr, indices, vector->size(), vector);
       }
       vectors.push_back(vector);
     }
