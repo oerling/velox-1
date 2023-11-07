@@ -376,16 +376,14 @@ void BaseVector::copyNulls(
 }
 
 void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
+  if (bits == nullptr || !rows.hasSelections()) {
+    return;
+  }
   VELOX_CHECK(isNullsWritable());
   VELOX_CHECK(length_ >= rows.end());
   ensureNulls();
   auto target = nulls_->asMutable<uint64_t>();
   const uint64_t* selected = rows.asRange().bits();
-  if (!bits) {
-    // A 1 in rows makes a 0 in nulls.
-    bits::andWithNegatedBits(target, selected, rows.begin(), rows.end());
-    return;
-  }
   // A 0 in bits with a 1 in rows makes a 0 in nulls.
   bits::forEachWord(
       rows.begin(),
@@ -398,13 +396,27 @@ void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
       });
 }
 
-void BaseVector::clearNulls(const SelectivityVector& rows) {
+void BaseVector::addNulls(const SelectivityVector& nullRows) {
+  if (!nullRows.hasSelections()) {
+    return;
+  }
+  VELOX_CHECK(isNullsWritable());
+  VELOX_CHECK(length_ >= nullRows.end());
+  ensureNulls();
+  auto target = nulls_->asMutable<uint64_t>();
+  const uint64_t* selected = nullRows.asRange().bits();
+  // A 1 in rows makes a 0 in nulls.
+  bits::andWithNegatedBits(target, selected, nullRows.begin(), nullRows.end());
+  return;
+}
+
+void BaseVector::clearNulls(const SelectivityVector& nonNullRows) {
   VELOX_CHECK(isNullsWritable());
   if (!nulls_) {
     return;
   }
 
-  if (rows.isAllSelected() && rows.end() == length_) {
+  if (nonNullRows.isAllSelected() && nonNullRows.end() == length_) {
     nulls_ = nullptr;
     rawNulls_ = nullptr;
     nullCount_ = 0;
@@ -414,9 +426,9 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
   auto rawNulls = nulls_->asMutable<uint64_t>();
   bits::orBits(
       rawNulls,
-      rows.asRange().bits(),
-      std::min(length_, rows.begin()),
-      std::min(length_, rows.end()));
+      nonNullRows.asRange().bits(),
+      std::min(length_, nonNullRows.begin()),
+      std::min(length_, nonNullRows.end()));
   nullCount_ = std::nullopt;
 }
 
@@ -688,36 +700,21 @@ void BaseVector::copy(
     const BaseVector* source,
     const SelectivityVector& rows,
     const vector_size_t* toSourceRow) {
-  // Check if there are rows that do not exist in 'source'. Remove these from
-  // 'ranges'.
-  // TODO Update the callers and remove this logic.
-
+  if (!rows.hasSelections()) {
+    return;
+  }
   std::vector<CopyRange> ranges;
   if (toSourceRow == nullptr) {
-    if (source->size() < rows.end()) {
-      SelectivityVector trimmedRows = rows;
-      trimmedRows.setValidRange(source->size(), rows.end(), false);
-      trimmedRows.updateBounds();
-
-      ranges = toCopyRanges(trimmedRows);
-    } else {
-      ranges = toCopyRanges(rows);
-    }
+    VELOX_CHECK_GE(source->size(), rows.end());
+    ranges = toCopyRanges(rows);
   } else {
     ranges.reserve(rows.end());
     rows.applyToSelected([&](vector_size_t row) {
       const auto sourceRow = toSourceRow[row];
-      if (sourceRow >= source->size()) {
-        return;
-      }
+      VELOX_DCHECK_GT(source->size(), sourceRow);
       ranges.push_back({sourceRow, row, 1});
     });
   }
-
-  if (ranges.empty()) {
-    return;
-  }
-
   copyRanges(source, ranges);
 }
 

@@ -181,15 +181,7 @@ class HashStringAllocator : public StreamArena {
 
   // Copies a StringView at 'offset' in 'group' to storage owned by
   // the hash table. Updates the StringView.
-  void copy(char* FOLLY_NONNULL group, int32_t offset) {
-    StringView* string = reinterpret_cast<StringView*>(group + offset);
-    if (string->isInline()) {
-      return;
-    }
-    auto data = pool_.allocateFixed(string->size());
-    memcpy(data, string->data(), string->size());
-    *string = StringView(data, string->size());
-  }
+  void copy(char* FOLLY_NONNULL group, int32_t offset);
 
   // Copies a StringView at 'offset' in 'group' to storage owned by
   // 'this'. Updates the StringView. A large string may be copied into
@@ -199,23 +191,7 @@ class HashStringAllocator : public StreamArena {
   // data. StringViews written by this are to be read with
   // contiguousString(). This is nearly always zero copy but will
   // accommodate the odd extra large string.
-  void copyMultipart(char* FOLLY_NONNULL group, int32_t offset) {
-    auto string = reinterpret_cast<StringView*>(group + offset);
-    if (string->isInline()) {
-      return;
-    }
-    auto numBytes = string->size();
-
-    // Write the string as non-contiguous chunks.
-    ByteStream stream(this, false, false);
-    auto position = newWrite(stream, numBytes);
-    stream.appendStringPiece(folly::StringPiece(string->data(), numBytes));
-    finishWrite(stream, 0);
-
-    // The stringView has a pointer to the first byte and the total
-    // size. Read with contiguousString().
-    *string = StringView(reinterpret_cast<char*>(position.position), numBytes);
-  }
+  void copyMultipart(char* FOLLY_NONNULL group, int32_t offset);
 
   // Returns a contiguous view on 'view', where 'view' comes from
   // copyMultipart(). Uses 'storage' to own a possible temporary
@@ -335,11 +311,6 @@ class HashStringAllocator : public StreamArena {
     return cumulativeBytes_;
   }
 
-  // Returns the starting sizes of free lists. Allocating one of these
-  // sizes will always be fast because all elements of the free list
-  // in question will fit.
-  static folly::Range<const int32_t*> freeListSizeClasses();
-
   // Checks the free space accounting and consistency of
   // Headers. Throws when detects corruption. Returns the number of allocated
   // payload bytes, excluding headers, continue links and other overhead.
@@ -355,28 +326,12 @@ class HashStringAllocator : public StreamArena {
   /// builds.
   void checkEmpty() const;
 
-  // Returns the cumulative number of free list items allocations have looked at
-  // and skipped because too small.
-  int64_t numFreeListNoFit() const {
-    return numFreeListNoFit_;
-  }
-
   std::string toString() const;
 
  private:
   static constexpr int32_t kUnitSize = 16 * memory::AllocationTraits::kPageSize;
   static constexpr int32_t kMinContiguous = 48;
-  static constexpr int32_t kNumFreeLists = 10;
-
-  // different sizes have different free lists. Sizes below first size
-  // go to freeLists_[0]. Sizes >= freeListSize_[i] go to freeLists_[i
-  // + 1]. The sizes match the size progression for growing F14
-  // containers. Static array of multiple of 8 ints for simd.
-  static int32_t freeListSizes_[HashStringAllocator::kNumFreeLists + 7];
-
-  // The largest size present in each free list. This is updated when freing and
-  // when failing to find a large enough block in the free list in question.
-  int32_t largestInFreeList_[HashStringAllocator::kNumFreeLists] = {};
+  static constexpr int32_t kNumFreeLists = kMaxAlloc - kMinAlloc + 2;
 
   void newRange(int32_t bytes, ByteRange* range, bool contiguous);
 
@@ -385,15 +340,7 @@ class HashStringAllocator : public StreamArena {
   // anything yet. Throws if fails to grow.
   void newSlab();
 
-  void removeFromFreeList(Header* FOLLY_NONNULL header) {
-    VELOX_CHECK(header->isFree());
-    header->clearFree();
-    auto index = freeListIndex(header->size());
-    reinterpret_cast<CompactDoubleList*>(header->begin())->remove();
-    if (free_[index].empty()) {
-      freeNonEmpty_ &= ~(1 << index);
-    }
-  }
+  void removeFromFreeList(Header* FOLLY_NONNULL header);
 
   /// Allocates a block of specified size. If exactSize is false, the block may
   /// be smaller or larger. Checks free list before allocating new memory.
@@ -422,16 +369,14 @@ class HashStringAllocator : public StreamArena {
   // blocks would be below minimum size.
   void freeRestOfBlock(Header* FOLLY_NONNULL header, int32_t keepBytes);
 
-  // Returns the free list index for 'size'. Masks out empty sizes that can be
-  // given by 'mask'. If 'mask' excludes all free lists, returns >
-  // kNumFreeLists.
-  int32_t freeListIndex(int32_t size, uint32_t mask = ~0);
+  // Returns the free list index for 'size'.
+  int32_t freeListIndex(int size);
 
   // Circular list of free blocks.
   CompactDoubleList free_[kNumFreeLists];
 
   // Bitmap with a 1 if the corresponding list in 'free_' is not empty.
-  int32_t freeNonEmpty_{0};
+  uint64_t freeNonEmpty_[bits::nwords(kNumFreeLists)]{};
 
   // Count of elements in 'free_'. This is 0 when all free_[i].next() ==
   // &free_[i].
@@ -459,10 +404,6 @@ class HashStringAllocator : public StreamArena {
 
   // Sum of sizes in 'allocationsFromPool_'.
   int64_t sizeFromPool_{0};
-
-  // Count of times a free list item was skipped because it did not fit
-  // requested size.
-  int64_t numFreeListNoFit_{0};
 };
 
 // Utility for keeping track of allocation between two points in

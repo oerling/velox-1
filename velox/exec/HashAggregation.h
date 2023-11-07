@@ -72,9 +72,13 @@ class HashAggregation : public Operator {
   // 'abandonPartialAggregationMinPct_' % of rows are unique.
   bool abandonPartialAggregationEarly(int64_t numOutput) const;
 
+  RowVectorPtr getDistinctOutput();
+
   // Invoked to record the spilling stats in operator stats after processing all
   // the inputs.
   void recordSpillStats();
+
+  void updateEstimatedOutputRowSize();
 
   std::shared_ptr<const core::AggregationNode> aggregationNode_;
 
@@ -82,23 +86,26 @@ class HashAggregation : public Operator {
   const bool isGlobal_;
   const bool isDistinct_;
   const int64_t maxExtendedPartialAggregationMemoryUsage_;
+  // Minimum number of rows to see before deciding to give up on partial
+  // aggregation.
+  const int32_t abandonPartialAggregationMinRows_;
+  // Min unique rows pct for partial aggregation. If more than this many rows
+  // are unique, the partial aggregation is not worthwhile.
+  const int32_t abandonPartialAggregationMinPct_;
 
   int64_t maxPartialAggregationMemoryUsage_;
   std::unique_ptr<GroupingSet> groupingSet_;
+
+  // Size of a single output row estimated using
+  // 'groupingSet_->estimateRowSize()'. If spilling, this value is set to max
+  // 'groupingSet_->estimateRowSize()' across all accumulated data set.
+  std::optional<int64_t> estimatedOutputRowSize_;
 
   bool partialFull_ = false;
   bool newDistincts_ = false;
   bool finished_ = false;
   // True if partial aggregation has been found to be non-reducing.
   bool abandonedPartialAggregation_{false};
-
-  // Minimum number of rows to see before deciding to give up on partial
-  // aggregation.
-  const int32_t abandonPartialAggregationMinRows_;
-
-  // Min unique rows pct for partial aggregation. If more than this many rows
-  // are unique, the partial aggregation is not worthwhile.
-  const int32_t abandonPartialAggregationMinPct_;
 
   RowContainerIterator resultIterator_;
   bool pushdownChecked_ = false;
