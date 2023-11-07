@@ -696,7 +696,9 @@ int64_t HashStringAllocator::checkConsistency() const {
     VELOX_CHECK_EQ(hasData, listNonEmpty);
     for (auto free = free_[i].next(); free != &free_[i]; free = free->next()) {
       ++numInFreeList;
-      VELOX_CHECK(free->next()->previous() == free, "free list previous link inconsistent");
+      VELOX_CHECK(
+          free->next()->previous() == free,
+          "free list previous link inconsistent");
       auto size = headerOf(free)->size();
       VELOX_CHECK_GE(size, kMinAlloc);
       if (size - kMinAlloc < kNumFreeLists - 1) {
