@@ -522,48 +522,46 @@ inline bool HashStringAllocator::storeStringFast(
     const char* bytes,
     int32_t numBytes,
     char* destination) {
-  if (numBytes < kMinAlloc) {
-    numBytes = kMinAlloc;
-  }
-
+  auto roundedBytes = std::max(numBytes, kMinAlloc);
   Header* header = nullptr;
   if (free_[kNumFreeLists - 1].empty()) {
-    if (numBytes >= kMaxAlloc) {
+    if (roundedBytes >= kMaxAlloc) {
       return false;
     }
-    auto index = freeListIndex(numBytes);
+    auto index = freeListIndex(roundedBytes);
     auto available = bits::findFirstBit(freeNonEmpty_, index, kNumFreeLists);
     if (available < 0) {
       return false;
     }
-    header = allocateFromFreeList(numBytes, true, true, available);
+    header = allocateFromFreeList(roundedBytes, true, true, available);
     VELOX_CHECK_NOT_NULL(header);
   } else {
     auto& freeList = free_[kNumFreeLists - 1];
     header = headerOf(freeList.next());
     auto size = header->size();
-    if (numBytes > size) {
-    return false;
+    if (roundedBytes > size) {
+      return false;
     }
-    const auto spaceTaken = numBytes + sizeof(Header);
-    if (size - spaceTaken >= kMaxAlloc) {
+    const auto spaceTaken = roundedBytes + sizeof(Header);
+    if (size - spaceTaken > kMaxAlloc) {
       // The entry after allocation stays in the largest free list.
       // The size at the end of the block is changed in place.
       reinterpret_cast<int32_t*>(header->end())[-1] -= spaceTaken;
-      auto freeHeader =
-        new (header->begin() + numBytes) Header(header->size() - spaceTaken);
-    freeHeader->setFree();
-    header->clearFree();
-    memcpy(freeHeader->begin(), header->begin(), sizeof(CompactDoubleList));
-    freeList.updateNext(
-        reinterpret_cast<CompactDoubleList*>(freeHeader->begin()));
-    header->setSize(numBytes);
-    freeBytes_ -= spaceTaken;
-    cumulativeBytes_ += numBytes;
-  } else {
-      header = allocateFromFreeList(numBytes, true, true, kNumFreeLists - 1);
-      if (header) {
-	return false;
+      auto freeHeader = new (header->begin() + roundedBytes)
+          Header(header->size() - spaceTaken);
+      freeHeader->setFree();
+      header->clearFree();
+      memcpy(freeHeader->begin(), header->begin(), sizeof(CompactDoubleList));
+      freeList.nextMoved(
+          reinterpret_cast<CompactDoubleList*>(freeHeader->begin()));
+      header->setSize(roundedBytes);
+      freeBytes_ -= spaceTaken;
+      cumulativeBytes_ += roundedBytes;
+    } else {
+      header =
+          allocateFromFreeList(roundedBytes, true, true, kNumFreeLists - 1);
+      if (!header) {
+        return false;
       }
     }
   }
@@ -698,6 +696,7 @@ int64_t HashStringAllocator::checkConsistency() const {
     VELOX_CHECK_EQ(hasData, listNonEmpty);
     for (auto free = free_[i].next(); free != &free_[i]; free = free->next()) {
       ++numInFreeList;
+      VELOX_CHECK(free->next()->previous() == free, "free list previous link inconsistent");
       auto size = headerOf(free)->size();
       VELOX_CHECK_GE(size, kMinAlloc);
       if (size - kMinAlloc < kNumFreeLists - 1) {
