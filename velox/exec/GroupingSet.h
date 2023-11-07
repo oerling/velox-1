@@ -76,7 +76,10 @@ class GroupingSet {
 
   uint64_t allocatedBytes() const;
 
-  void resetPartial();
+  /// Resets the hash table inside the grouping set when partial aggregation
+  /// is full or reclaims memory from distinct aggregation after it has received
+  /// all the inputs.
+  void resetTable();
 
   /// Returns true if 'this' should start producing partial
   /// aggregation results. Checks the memory consumption against
@@ -89,6 +92,14 @@ class GroupingSet {
   /// Returns the count of the hash table, if any.
   int64_t numDistinct() const {
     return table_ ? table_->numDistinct() : 0;
+  }
+
+  /// Returns number of global grouping sets rows if there is default output.
+  std::optional<vector_size_t> numDefaultGlobalGroupingSetRows() const {
+    if (hasDefaultGlobalGroupingSetOutput()) {
+      return globalGroupingSets_.size();
+    }
+    return std::nullopt;
   }
 
   const HashLookup& hashLookup() const;
@@ -135,9 +146,19 @@ class GroupingSet {
   /// single input row. Passes grouping keys through.
   void toIntermediate(const RowVectorPtr& input, RowVectorPtr& result);
 
+  /// Returns default global grouping sets output if there are no input rows.
+  /// The default global grouping set output is a single row per global grouping
+  /// set with the groupId key and the default aggregate value.
+  /// This function can also be used with distinct aggregations.
+  bool getDefaultGlobalGroupingSetOutput(
+      RowContainerIterator& iterator,
+      RowVectorPtr& result);
+
   memory::MemoryPool& testingPool() const {
     return pool_;
   }
+
+  std::optional<int64_t> estimateOutputRowSize() const;
 
  private:
   bool isDistinct() const {
@@ -157,6 +178,13 @@ class GroupingSet {
   bool getGlobalAggregationOutput(
       RowContainerIterator& iterator,
       RowVectorPtr& result);
+
+  // If there are global grouping sets, then returns if they have default
+  // output in case no input rows were received.
+  bool hasDefaultGlobalGroupingSetOutput() const {
+    return noMoreInput_ && numInputRows_ == 0 && !globalGroupingSets_.empty() &&
+        isRawInput_;
+  }
 
   void createHashTable();
 
@@ -191,13 +219,24 @@ class GroupingSet {
       int32_t maxOutputBytes,
       const RowVectorPtr& result);
 
-  // Reads rows from the current spilled partition until producing a batch of
-  // final results in 'result'. Returns false and leaves 'result' empty when
-  // the partition is fully read. 'maxOutputRows' and 'maxOutputBytes' specify
-  // the max number of output rows and bytes in 'result'.
+  // Reads from spilled rows until producing a batch of final results in
+  // 'result'. Returns false and leaves 'result' empty when the spilled data is
+  // fully read. 'maxOutputRows' and 'maxOutputBytes' specify the max number of
+  // output rows and bytes in 'result'.
   bool mergeNext(
       int32_t maxOutputRows,
       int32_t maxOutputBytes,
+      const RowVectorPtr& result);
+
+  // Reads from spilled rows for group by with aggregates.
+  bool mergeNextWithAggregates(
+      int32_t maxOutputRows,
+      int32_t maxOutputBytes,
+      const RowVectorPtr& result);
+
+  // Reads from spilled rows for group by without aggregates.
+  bool mergeNextWithoutAggregates(
+      int32_t maxOutputRows,
       const RowVectorPtr& result);
 
   // Initializes a new row in 'mergeRows' with the keys from the
@@ -226,10 +265,6 @@ class GroupingSet {
   // 'excludeToIntermediate' is true, skip the functions that support
   // 'toIntermediate'.
   std::vector<Accumulator> accumulators(bool excludeToIntermediate);
-
-  bool getDefaultGlobalGroupingSetOutput(
-      RowContainerIterator& iterator,
-      RowVectorPtr& result);
 
   std::vector<column_index_t> keyChannels_;
 
@@ -288,12 +323,12 @@ class GroupingSet {
 
   bool noMoreInput_{false};
 
-  /// In case of partial streaming aggregation, the input vector passed to
-  /// addInput(). A set of rows that belong to the last group of pre-grouped
-  /// keys need to be processed after flushing the hash table and accumulators.
+  // In case of partial streaming aggregation, the input vector passed to
+  // addInput(). A set of rows that belong to the last group of pre-grouped
+  // keys need to be processed after flushing the hash table and accumulators.
   RowVectorPtr remainingInput_;
 
-  /// First row in remainingInput_ that needs to be processed.
+  // First row in remainingInput_ that needs to be processed.
   vector_size_t firstRemainingRow_;
 
   // The value of mayPushdown flag specified in addInput() for the
