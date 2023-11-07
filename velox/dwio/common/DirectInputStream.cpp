@@ -19,7 +19,7 @@
 #include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
 #include "velox/dwio/common/DirectInputStream.h"
-#include "velox/dwio/common/SelectiveBufferedInput.h"
+#include "velox/dwio/common/DirectBufferedInput.h"
 
 using ::facebook::velox::common::Region;
 
@@ -30,7 +30,7 @@ using velox::cache::TrackingId;
 using velox::memory::MemoryAllocator;
 
 DirectInputStream::DirectInputStream(
-    SelectiveBufferedInput* bufferedInput,
+    DirectBufferedInput* bufferedInput,
     IoStatistics* ioStats,
     const Region& region,
     std::shared_ptr<ReadFileInputStream> input,
@@ -119,7 +119,7 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
     uint64_t offsetInRuns = 0;
     for (int i = 0; i < data.numRuns(); ++i) {
       auto run = data.runAt(i);
-      uint64_t bytes = AllocationTraits::pageBytes(run.numPages());
+      uint64_t bytes = memory::AllocationTraits::pageBytes(run.numPages());
       uint64_t readSize = std::min(bytes, size - offsetInRuns);
       buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
       offsetInRuns += readSize;
@@ -132,7 +132,7 @@ makeRanges(size_t size, memory::Allocation& data, std::string& tinyData) {
 } // namespace
 
 void DirectInputStream::loadSync() {
-  if (region_.length < SelectiveBufferedInput::kTinySize &&
+  if (region_.length < DirectBufferedInput::kTinySize &&
       data_.numPages() == 0) {
     tinyData_.resize(region_.length);
   } else {
@@ -152,12 +152,12 @@ void DirectInputStream::loadSync() {
     input_->read(ranges, loadedRegion_.offset, LogType::FILE);
   }
   ioStats_->read().increment(loadedRegion_.length);
-  ioStats_->queryThreadIoLatency().increment(usec);
+  ioStats_->queryThreadIoLatency().increment(usecs);
 }
 
 void DirectInputStream::loadPosition() {
-  if (!isLoaded_) {
-    isLoaded_ = true;
+  if (!loaded_) {
+    loaded_ = true;
     auto load = bufferedInput_->coalescedLoad(this);
     if (load) {
       folly::SemiFuture<bool> waitFuture(false);
@@ -171,7 +171,7 @@ void DirectInputStream::loadPosition() {
         loadedRegion_.offset = region_.offset;
         loadedRegion_.length = load->getData(region_.offset, data_, tinyData_);
       }
-      ioStats_->queryThreadIoLatency().increment(usec);
+      ioStats_->queryThreadIoLatency().increment(usecs);
     } else {
       // Standalone stream, not part of coalesced load.
       loadedRegion_.offset = 0;
@@ -194,13 +194,13 @@ void DirectInputStream::loadPosition() {
   if (data_.numPages() == 0) {
     run_ = reinterpret_cast<uint8_t*>(tinyData_.data());
     runSize_ = tinyData_.size();
-    offsetInRun_ = offsetInEntry;
+    offsetInRun_ = offsetInData;
     offsetOfRun_ = 0;
   } else {
-    if (offsetInEntry > AllocationTraits::pageBytes(data_.numPages())) {
+    if (offsetInData > memory::AllocationTraits::pageBytes(data_.numPages())) {
       VELOX_FAIL(
-          "Bad offset in entry: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}",
-          offsetInEntry,
+          "Bad offset in data: {} position = {} region = {}, {} loadedRegion = {}, {}, numPages={}",
+          offsetInData,
           offsetInRegion_,
           region_.offset,
           region_.length,
@@ -208,11 +208,11 @@ void DirectInputStream::loadPosition() {
           loadedRegion_.length,
           data_.numPages());
     }
-    data_.findRun(offsetInEntry, &runIndex_, &offsetInRun_);
-    offsetOfRun_ = offsetInEntry - offsetInRun_;
+    data_.findRun(offsetInData, &runIndex_, &offsetInRun_);
+    offsetOfRun_ = offsetInData - offsetInRun_;
     auto run = data_.runAt(runIndex_);
     run_ = run.data();
-    runSize_ = run.numPages() * memory::AllocationTraits::kPageSize;
+    runSize_ = memory::AllocationTraits::pageBytes(run.numPages());
     if (offsetOfRun_ + runSize_ > loadedRegion_.length) {
       runSize_ = loadedRegion_.length - offsetOfRun_;
     }

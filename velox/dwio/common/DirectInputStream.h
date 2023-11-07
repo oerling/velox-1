@@ -67,7 +67,7 @@ class DirectInputStream : public SeekableInputStream {
   // Synchronously sets 'data_' to cover loadedRegion_'.
   void loadSync();
 
-  SelectiveBufferedInput* const bufferedInput_;
+  DirectBufferedInput* const bufferedInput_;
   IoStatistics* const ioStats_;
   std::shared_ptr<ReadFileInputStream> const input_;
   // The region of 'input' 'this' ranges over.

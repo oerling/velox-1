@@ -36,7 +36,7 @@ struct LoadRequest {
 
   velox::common::Region region;
   cache::TrackingId trackingId;
-  /bool processed{false};
+  bool processed{false};
 
   const SeekableInputStream*  stream;
 
@@ -61,8 +61,8 @@ struct LoadRequest {
         ioStats_(ioStats),
         groupId_(groupId),
         input_(std::move(input)),
-        pool_(pool),
-        loadQuantum_(loadQuantum) {
+	loadQuantum_(loadQuantum),
+        pool_(pool) {
     requests_.reserve(requests.size());
     for (auto i = 0; i < requests.size(); ++i) {
       requests_.push_back(std::move(*requests[i]));
@@ -93,17 +93,17 @@ struct LoadRequest {
  private:
   std::shared_ptr<IoStatistics> const ioStats_;
   const uint64_t groupId_;
-  const int32_t loadQuantum_;
   std::shared_ptr<ReadFileInputStream> const input_;
+  const int32_t loadQuantum_;
   memory::MemoryPool& pool_;
   std::vector<LoadRequest> requests_;
 };
 
-class SelectiveBufferedInput : public BufferedInput {
+class DirectBufferedInput : public BufferedInput {
  public:
   static constexpr int32_t kTinySize = 2'000;
 
-  SelectiveBufferedInput(
+  DirectBufferedInput(
       std::shared_ptr<ReadFile> readFile,
       const MetricsLogPtr& metricsLog,
       uint64_t fileNum,
@@ -124,60 +124,9 @@ class SelectiveBufferedInput : public BufferedInput {
         fileSize_(input_->getLength()),
         options_(readerOptions) {}
 
-
-  ~SelectiveBufferedInput() override {
-    for (auto& load : allCoalescedLoads_) {
-      load->cancel();
-    }
-  }
-
-  std::unique_ptr<SeekableInputStream> enqueue(
-      velox::common::Region region,
-      const StreamIdentifier*  sid) override;
-
-  void load(const LogType /*unused*/) override;
-
-  bool isBuffered(uint64_t offset, uint64_t length) const override;
-
-  /// Schedules load of 'region' on 'executor_'. Fails silently if no memory or
-  /// if shouldPreload() is false.
-  bool prefetch(velox::common::Region region);
-
-  bool shouldPreload(int32_t numPages = 0) override;
-
-  bool shouldPrefetchStripes() const override {
-    return false;
-  }
-
-  void setNumStripes(int32_t numStripes) override {
-    auto* stats = tracker_->fileGroupStats();
-    if (stats) {
-      stats->recordFile(fileNum_, groupId_, numStripes);
-    }
-  }
-
-  virtual std::unique_ptr<BufferedInput> clone() const override {
-    return std::make_unique<SelectiveBufferedInput>(
-        input_, fileNum_, tracker_, groupId_, ioStats_, executor_, options_);
-  }
-
-  memory::MemoryPool* pool() {
-    return &pool_;
-  }
-
-  // Returns the CoalescedLoad that contains the correlated loads for
-  // 'stream' or nullptr if none. Returns nullptr on all but first
-  // call for 'stream' since the load is to be triggered by the first
-  // access.
-  std::shared_ptr<SelectiveCoalescedLoad> coalescedLoad(
-      const SeekableInputStream* FOLLY_NONNULL stream);
-
-  folly::Executor* FOLLY_NULLABLE executor() const override {
-    return executor_;
-  }
-
- private:
-  SelectiveBufferedInput(
+protected:
+  /// Constructor used by clone(). 
+  DirectBufferedInput(
       std::shared_ptr<ReadFileInputStream> input,
       uint64_t fileNum,
       std::shared_ptr<cache::ScanTracker> tracker,
@@ -194,7 +143,55 @@ class SelectiveBufferedInput : public BufferedInput {
         fileSize_(input_->getLength()),
         options_(readerOptions) {}
 
-  
+public:
+  ~DirectBufferedInput() override {
+    for (auto& load : allCoalescedLoads_) {
+      load->cancel();
+    }
+  }
+
+  std::unique_ptr<SeekableInputStream> enqueue(
+      velox::common::Region region,
+      const StreamIdentifier*  sid) override;
+
+  void load(const LogType /*unused*/) override;
+
+  bool isBuffered(uint64_t offset, uint64_t length) const override;
+
+  bool shouldPreload(int32_t numPages = 0) override;
+
+  bool shouldPrefetchStripes() const override {
+    return false;
+  }
+
+  void setNumStripes(int32_t numStripes) override {
+    auto* stats = tracker_->fileGroupStats();
+    if (stats) {
+      stats->recordFile(fileNum_, groupId_, numStripes);
+    }
+  }
+
+  virtual std::unique_ptr<BufferedInput> clone() const override {
+    return std::make_unique<DirectBufferedInput>(
+        input_, fileNum_, tracker_, groupId_, ioStats_, executor_, options_);
+  }
+
+  memory::MemoryPool* pool() {
+    return &pool_;
+  }
+
+  /// Returns the CoalescedLoad that contains the correlated loads for
+  /// 'stream' or nullptr if none. Returns nullptr on all but first
+  /// call for 'stream' since the load is to be triggered by the first
+  /// access.
+  std::shared_ptr<DirectCoalescedLoad> coalescedLoad(
+      const SeekableInputStream* FOLLY_NONNULL stream);
+
+  folly::Executor* FOLLY_NULLABLE executor() const override {
+    return executor_;
+  }
+
+ private:
   // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
   // is true, starts background loading.
   void makeLoads(std::vector<LoadRequest*> requests, bool prefetch);
@@ -217,7 +214,7 @@ class SelectiveBufferedInput : public BufferedInput {
   // Coalesced loads spanning multiple streams in one IO.
   folly::Synchronized<folly::F14FastMap<
       const SeekableInputStream*,
-      std::shared_ptr<SelectiveCoalescedLoad>>>
+      std::shared_ptr<DirectCoalescedLoad>>>
       coalescedLoads_;
 
   // Distinct coalesced loads in 'coalescedLoads_'.

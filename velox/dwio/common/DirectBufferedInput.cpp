@@ -17,7 +17,7 @@
 #include "velox/dwio/common/DirectBufferedInput.h"
 #include "velox/common/memory/Allocation.h"
 #include "velox/common/process/TraceContext.h"
-#include "velox/dwio/common/CoalescedInputStream.h"
+#include "velox/dwio/common/DirectInputStream.h"
 
 DECLARE_int32(cache_prefetch_min_pct);
 
@@ -31,7 +31,7 @@ using cache::TrackingId;
 
 std::unique_ptr<SeekableInputStream> DirectBufferedInput::enqueue(
     Region region,
-    const StreamIdentifier* si = nullptr) {
+    const StreamIdentifier* sid = nullptr) {
   if (!allCoalescedLoads_.empty()) {
     // Results of previous load are no more available here.
     allCoalescedLoads_.clear();
@@ -43,15 +43,15 @@ std::unique_ptr<SeekableInputStream> DirectBufferedInput::enqueue(
   }
 
   TrackingId id;
-  if (si) {
-    id = TrackingId(si->getId());
+  if (sid) {
+    id = TrackingId(sid->getId());
   }
   VELOX_CHECK_LE(region.offset + region.length, fileSize_);
   requests_.emplace_back(region, id);
   if (tracker_) {
     tracker_->recordReference(id, region.length, fileNum_, groupId_);
   }
-  auto stream = std::make_unique<CoalescedInputStream>(
+  auto stream = std::make_unique<DirectInputStream>(
       this,
       ioStats_.get(),
       region,
@@ -180,7 +180,6 @@ void DirectBufferedInput::makeLoads(
     for (auto i = 0; i < allCoalescedLoads_.size(); ++i) {
       auto& load = allCoalescedLoads_[i];
       if (load->state() == CoalescedLoad::State::kPlanned) {
-        prefetchSize_ += load->size();
         executor_->add([pendingLoad = load]() {
           process::TraceContext trace("Read Ahead");
           pendingLoad->loadOrFuture(nullptr);
@@ -209,7 +208,7 @@ void DirectBufferedInput::readRegion(
 std::shared_ptr<DirectCoalescedLoad> DirectBufferedInput::coalescedLoad(
     const SeekableInputStream* stream) {
   return coalescedLoads_.withWLock(
-      [&](auto& loads) -> std::shared_ptr<SelectiveCoalescedLoad> {
+      [&](auto& loads) -> std::shared_ptr<DirectCoalescedLoad> {
         auto it = loads.find(stream);
         if (it == loads.end()) {
           return nullptr;
@@ -272,7 +271,7 @@ std::vector<cache::CachePin> DirectCoalescedLoad::loadData(bool isPrefetch) {
   return {};
 }
 
-int32_t SelectiveCoalescedLoad::getData(
+int32_t DirectCoalescedLoad::getData(
     int64_t offset,
 
     memory::Allocation& data,

@@ -21,7 +21,7 @@
 
 #include "velox/dwio/common/CachedBufferedInput.h"
 #include "velox/dwio/common/ReaderFactory.h"
-#include "velox/dwio/common/SelectiveBufferedInput.h"
+#include "velox/dwio/common/DirectBufferedInput.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
 
@@ -804,7 +804,7 @@ HiveDataSource::createBufferedInput(
         executor_,
         readerOpts);
   }
-  return std::make_unique<dwio::common::SelectiveBufferedInput>(
+  return std::make_unique<dwio::common::DirectBufferedInput>(
       fileHandle.file,
       dwio::common::MetricsLog::voidLog(),
       fileHandle.uuid.id(),

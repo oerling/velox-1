@@ -491,7 +491,7 @@ target_link_libraries(
   fmt::fmt)
 
 add_executable(velox_dwio_cache_test CacheInputTest.cpp
-                                     SelectiveBufferedInputTest.cpp)
+                                     DirectBufferedInputTest.cpp)
 
 add_test(velox_dwio_cache_test velox_dwio_cache_test)
 

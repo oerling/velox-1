@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/dwio/common/SelectiveBufferedInput.h"
+#include "velox/dwio/common/DirectBufferedInput.h"
 #include <folly/Random.h>
 #include <folly/container/F14Map.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
@@ -41,7 +41,7 @@ struct TestRegion {
   int32_t length;
 };
 
-class SelectiveBufferedInputTest : public testing::Test {
+class DirectBufferedInputTest : public testing::Test {
  protected:
   static constexpr int32_t kLoadQuantum = 8 << 20;
 
@@ -59,8 +59,8 @@ class SelectiveBufferedInputTest : public testing::Test {
     executor_->join();
   }
 
-  std::unique_ptr<SelectiveBufferedInput> makeInput() {
-    return std::make_unique<SelectiveBufferedInput>(
+  std::unique_ptr<DirectBufferedInput> makeInput() {
+    return std::make_unique<DirectBufferedInput>(
         file_,
         dwio::common::MetricsLog::voidLog(),
         1,
@@ -128,7 +128,7 @@ class SelectiveBufferedInputTest : public testing::Test {
   std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
 };
 
-TEST_F(SelectiveBufferedInputTest, basic) {
+TEST_F(DirectBufferedInputTest, basic) {
   // The small leading parts coalesce, the 7M and 2M go standalone. the last is
   // read in 2 parts. This is because these are not yet densely accessed and
   // thus coalescing only works to load quantum of 8MB.
