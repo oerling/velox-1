@@ -38,7 +38,7 @@ struct LoadRequest {
   cache::TrackingId trackingId;
   bool processed{false};
 
-  const SeekableInputStream*  stream;
+  const SeekableInputStream* stream;
 
   /// Buffers to be handed to 'stream' after load.
   memory::Allocation data;
@@ -47,8 +47,8 @@ struct LoadRequest {
   int32_t loadSize{0};
 };
 
-  /// Represents planned loads that should be performed as a single IO.
-  class DirectCoalescedLoad : public cache::CoalescedLoad {
+/// Represents planned loads that should be performed as a single IO.
+class DirectCoalescedLoad : public cache::CoalescedLoad {
  public:
   DirectCoalescedLoad(
       std::shared_ptr<ReadFileInputStream> input,
@@ -61,7 +61,7 @@ struct LoadRequest {
         ioStats_(ioStats),
         groupId_(groupId),
         input_(std::move(input)),
-	loadQuantum_(loadQuantum),
+        loadQuantum_(loadQuantum),
         pool_(pool) {
     requests_.reserve(requests.size());
     for (auto i = 0; i < requests.size(); ++i) {
@@ -124,8 +124,7 @@ class DirectBufferedInput : public BufferedInput {
         fileSize_(input_->getLength()),
         options_(readerOptions) {}
 
-protected:
-  /// Constructor used by clone(). 
+  /// Constructor used by clone().
   DirectBufferedInput(
       std::shared_ptr<ReadFileInputStream> input,
       uint64_t fileNum,
@@ -143,16 +142,15 @@ protected:
         fileSize_(input_->getLength()),
         options_(readerOptions) {}
 
-public:
   ~DirectBufferedInput() override {
-    for (auto& load : allCoalescedLoads_) {
+    for (auto& load : coalescedLoads_) {
       load->cancel();
     }
   }
 
   std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier*  sid) override;
+      const StreamIdentifier* sid) override;
 
   void load(const LogType /*unused*/) override;
 
@@ -187,26 +185,27 @@ public:
   std::shared_ptr<DirectCoalescedLoad> coalescedLoad(
       const SeekableInputStream* FOLLY_NONNULL stream);
 
-  folly::Executor* FOLLY_NULLABLE executor() const override {
+  folly::Executor* executor() const override {
     return executor_;
   }
 
  private:
-  // Sorts requests and makes CoalescedLoads for nearby requests. If 'prefetch'
-  // is true, starts background loading.
-  void makeLoads(std::vector<LoadRequest*> requests, bool prefetch);
+  // Sorts requests and makes CoalescedLoads for nearby requests. If
+  // 'shouldPrefetch' is true, starts background loading.
+  void makeLoads(std::vector<LoadRequest*> requests, bool shouldPrefetch);
 
   // Makes a CoalescedLoad for 'requests' to be read together, coalescing
-  // IO is appropriate. If 'prefetch' is set, schedules the CoalescedLoad
+  // IO if appropriate. If 'prefetch' is set, schedules the CoalescedLoad
   // on 'executor_'. Links the CoalescedLoad  to all CacheInputStreams that it
   // concerns.
   void readRegion(std::vector<LoadRequest*> requests, bool prefetch);
 
   const uint64_t fileNum_;
-  std::shared_ptr<cache::ScanTracker> tracker_;
+  std::shared_ptr<cache::ScanTracker> const tracker_;
   const uint64_t groupId_;
-  std::shared_ptr<IoStatistics> ioStats_;
+  std::shared_ptr<IoStatistics> const ioStats_;
   folly::Executor* const FOLLY_NULLABLE executor_;
+  const uint64_t fileSize_;
 
   // Regions that are candidates for loading.
   std::vector<LoadRequest> requests_;
@@ -215,12 +214,11 @@ public:
   folly::Synchronized<folly::F14FastMap<
       const SeekableInputStream*,
       std::shared_ptr<DirectCoalescedLoad>>>
-      coalescedLoads_;
+      streamToCoalescedLoad_;
 
   // Distinct coalesced loads in 'coalescedLoads_'.
-  std::vector<std::shared_ptr<cache::CoalescedLoad>> allCoalescedLoads_;
+  std::vector<std::shared_ptr<cache::CoalescedLoad>> coalescedLoads_;
 
-  const uint64_t fileSize_;
   io::ReaderOptions options_;
 };
 

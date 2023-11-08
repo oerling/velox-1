@@ -138,7 +138,7 @@ TEST_F(DirectBufferedInputTest, basic) {
        {1000, 7000000},
        {7004000, 2000000},
        {20000000, 10000000}},
-      5);
+      4);
   // All but the last coalesce into one , the last is read in 2 parts. The
   // columns are now dense and coalesce goes up to 128MB if gaps are small
   // enough.

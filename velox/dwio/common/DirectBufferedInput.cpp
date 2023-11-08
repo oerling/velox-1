@@ -32,10 +32,10 @@ using cache::TrackingId;
 std::unique_ptr<SeekableInputStream> DirectBufferedInput::enqueue(
     Region region,
     const StreamIdentifier* sid = nullptr) {
-  if (!allCoalescedLoads_.empty()) {
+  if (!coalescedLoads_.empty()) {
     // Results of previous load are no more available here.
-    allCoalescedLoads_.clear();
-    coalescedLoads_.wlock()->clear();
+    coalescedLoads_.clear();
+    streamToCoalescedLoad_.wlock()->clear();
   }
   if (region.length == 0) {
     return std::make_unique<SeekableArrayInputStream>(
@@ -77,7 +77,8 @@ bool DirectBufferedInput::shouldPreload(int32_t numPages) {
 
 namespace {
 
-bool isPrefetchPct(int32_t pct) {
+  // True if the percentage is high enough to warrant prefetch.
+bool isPrefetchablePct(int32_t pct) {
   return pct >= FLAGS_cache_prefetch_min_pct;
 }
 
@@ -91,7 +92,7 @@ int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
 }
 } // namespace
 
-void DirectBufferedInput::load(const LogType) {
+  void DirectBufferedInput::load(const LogType /*unused*/) {
   // After load, new requests cannot be merged into pre-load ones.
   auto requests = std::move(requests_);
 
@@ -106,7 +107,7 @@ void DirectBufferedInput::load(const LogType) {
         continue;
       }
       cache::TrackingData trackingData;
-      bool prefetchAnyway = request.trackingId.empty() ||
+      const bool prefetchAnyway = request.trackingId.empty() ||
           request.trackingId.id() == StreamIdentifier::sequentialFile().id_;
       if (!prefetchAnyway && tracker_) {
         trackingData = tracker_->trackingData(request.trackingId);
@@ -116,22 +117,23 @@ void DirectBufferedInput::load(const LogType) {
         storageLoad.push_back(&request);
       }
     }
-    makeLoads(std::move(storageLoad), isPrefetchPct(readPct));
+    makeLoads(std::move(storageLoad), isPrefetchablePct(readPct));
   }
 }
 
 void DirectBufferedInput::makeLoads(
     std::vector<LoadRequest*> requests,
-    bool prefetch) {
-  if (requests.empty() || (requests.size() < 2 && !prefetch)) {
+    bool shouldPrefetch) {
+  if (requests.empty() || (requests.size() < 2 && !shouldPrefetch)) {
+    // A single request has no other requests to coalesce with and is not eligibale to prefetch. This will be loded by itself on first use.
     return;
   }
-  int32_t maxDistance = options_.maxCoalesceDistance();
-  auto loadQuantum = options_.loadQuantum();
+  const int32_t maxDistance = options_.maxCoalesceDistance();
+  const auto loadQuantum = options_.loadQuantum();
   // If reading densely accessed, coalesce into large for best throughput, if
   // for sparse, coalesce to quantum to reduce overread. Not all sparse access
   // is correlated.
-  auto maxCoalesceBytes = prefetch ? options_.maxCoalesceBytes() : loadQuantum;
+  const auto maxCoalesceBytes = shouldPrefetch ? options_.maxCoalesceBytes() : loadQuantum;
   std::sort(
       requests.begin(),
       requests.end(),
@@ -174,11 +176,11 @@ void DirectBufferedInput::makeLoads(
           uint64_t /*offset*/,
           const std::vector<LoadRequest*>& ranges) {
         ++numNewLoads;
-        readRegion(ranges, prefetch);
+        readRegion(ranges, shouldPrefetch);
       });
-  if (prefetch && executor_) {
-    for (auto i = 0; i < allCoalescedLoads_.size(); ++i) {
-      auto& load = allCoalescedLoads_[i];
+  if (shouldPrefetch && executor_) {
+    for (auto i = 0; i < coalescedLoads_.size(); ++i) {
+      auto& load = coalescedLoads_[i];
       if (load->state() == CoalescedLoad::State::kPlanned) {
         executor_->add([pendingLoad = load]() {
           process::TraceContext trace("Read Ahead");
@@ -197,8 +199,8 @@ void DirectBufferedInput::readRegion(
   }
   auto load = std::make_shared<DirectCoalescedLoad>(
       input_, ioStats_, groupId_, requests, pool_, options_.loadQuantum());
-  allCoalescedLoads_.push_back(load);
-  coalescedLoads_.withWLock([&](auto& loads) {
+  coalescedLoads_.push_back(load);
+  streamToCoalescedLoad_.withWLock([&](auto& loads) {
     for (auto& request : requests) {
       loads[request->stream] = load;
     }
@@ -207,7 +209,7 @@ void DirectBufferedInput::readRegion(
 
 std::shared_ptr<DirectCoalescedLoad> DirectBufferedInput::coalescedLoad(
     const SeekableInputStream* stream) {
-  return coalescedLoads_.withWLock(
+  return streamToCoalescedLoad_.withWLock(
       [&](auto& loads) -> std::shared_ptr<DirectCoalescedLoad> {
         auto it = loads.find(stream);
         if (it == loads.end()) {
@@ -227,7 +229,7 @@ void appendRanges(
   uint64_t offsetInRuns = 0;
   for (int i = 0; i < allocation.numRuns(); ++i) {
     auto run = allocation.runAt(i);
-    uint64_t bytes = run.numPages() * memory::AllocationTraits::kPageSize;
+    uint64_t bytes = memory::AllocationTraits::pageBytes(run.numPages());
     uint64_t readSize = std::min(bytes, length - offsetInRuns);
     buffers.push_back(folly::Range<char*>(run.data<char>(), readSize));
     offsetInRuns += readSize;
