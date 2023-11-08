@@ -18,8 +18,8 @@
 
 #include "velox/common/process/TraceContext.h"
 #include "velox/common/time/Timer.h"
-#include "velox/dwio/common/DirectInputStream.h"
 #include "velox/dwio/common/DirectBufferedInput.h"
+#include "velox/dwio/common/DirectInputStream.h"
 
 using ::facebook::velox::common::Region;
 
@@ -136,7 +136,8 @@ void DirectInputStream::loadSync() {
       data_.numPages() == 0) {
     tinyData_.resize(region_.length);
   } else {
-    const auto numPages = memory::AllocationTraits::numPages(loadedRegion_.length);
+    const auto numPages =
+        memory::AllocationTraits::numPages(loadedRegion_.length);
     if (numPages > data_.numPages()) {
       bufferedInput_->pool()->allocateNonContiguous(numPages, data_);
     }
@@ -186,7 +187,7 @@ void DirectInputStream::loadPosition() {
     loadedRegion_.offset = region_.offset + offsetInRegion_;
     loadedRegion_.length = (offsetInRegion_ + loadQuantum_ <= region_.length)
         ? loadQuantum_
-      : (region_.length - offsetInRegion_);
+        : (region_.length - offsetInRegion_);
     loadSync();
   }
 

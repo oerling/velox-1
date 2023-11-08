@@ -20,8 +20,8 @@
 #include <unordered_map>
 
 #include "velox/dwio/common/CachedBufferedInput.h"
-#include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/common/DirectBufferedInput.h"
+#include "velox/dwio/common/ReaderFactory.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
 

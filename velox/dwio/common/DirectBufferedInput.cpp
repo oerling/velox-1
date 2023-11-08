@@ -65,9 +65,8 @@ std::unique_ptr<SeekableInputStream> DirectBufferedInput::enqueue(
   return stream;
 }
 
-bool DirectBufferedInput::isBuffered(
-    uint64_t /*offset*/,
-    uint64_t /*length*/) const {
+bool DirectBufferedInput::isBuffered(uint64_t /*offset*/, uint64_t /*length*/)
+    const {
   return false;
 }
 
@@ -77,7 +76,7 @@ bool DirectBufferedInput::shouldPreload(int32_t numPages) {
 
 namespace {
 
-  // True if the percentage is high enough to warrant prefetch.
+// True if the percentage is high enough to warrant prefetch.
 bool isPrefetchablePct(int32_t pct) {
   return pct >= FLAGS_cache_prefetch_min_pct;
 }
@@ -92,7 +91,7 @@ int32_t adjustedReadPct(const cache::TrackingData& trackingData) {
 }
 } // namespace
 
-  void DirectBufferedInput::load(const LogType /*unused*/) {
+void DirectBufferedInput::load(const LogType /*unused*/) {
   // After load, new requests cannot be merged into pre-load ones.
   auto requests = std::move(requests_);
 
@@ -125,7 +124,8 @@ void DirectBufferedInput::makeLoads(
     std::vector<LoadRequest*> requests,
     bool shouldPrefetch) {
   if (requests.empty() || (requests.size() < 2 && !shouldPrefetch)) {
-    // A single request has no other requests to coalesce with and is not eligibale to prefetch. This will be loded by itself on first use.
+    // A single request has no other requests to coalesce with and is not
+    // eligibale to prefetch. This will be loded by itself on first use.
     return;
   }
   const int32_t maxDistance = options_.maxCoalesceDistance();
@@ -133,7 +133,8 @@ void DirectBufferedInput::makeLoads(
   // If reading densely accessed, coalesce into large for best throughput, if
   // for sparse, coalesce to quantum to reduce overread. Not all sparse access
   // is correlated.
-  const auto maxCoalesceBytes = shouldPrefetch ? options_.maxCoalesceBytes() : loadQuantum;
+  const auto maxCoalesceBytes =
+      shouldPrefetch ? options_.maxCoalesceBytes() : loadQuantum;
   std::sort(
       requests.begin(),
       requests.end(),
