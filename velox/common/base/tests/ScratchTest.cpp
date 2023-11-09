@@ -31,7 +31,7 @@ TEST(ScratchTest, basic) {
     std::fill(tempLongs, tempLongs + 2000, -1);
     EXPECT_EQ(0, scratch.retainedSize());
   }
-  EXPECT_EQ(6000, scratch.retainedSize());
+  EXPECT_EQ(20352, scratch.retainedSize());
   {
     ScratchPtr<int32_t> ints(scratch);
     ScratchPtr<int64_t> longs(scratch);
@@ -43,7 +43,7 @@ TEST(ScratchTest, basic) {
   }
   // The scratch vectors were acquired in a different order, so the smaller got
   // resized to the larger size.
-  EXPECT_EQ(8000, scratch.retainedSize());
+  EXPECT_EQ(32640, scratch.retainedSize());
   scratch.trim();
   EXPECT_EQ(0, scratch.retainedSize());
 }

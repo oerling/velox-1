@@ -85,12 +85,14 @@ class VectorSerde {
     virtual ~Options() {}
   };
 
-  /// Adds the serialized size of vector at 'rows[i]' to 'sizes[i]'.
+  /// Adds the serialized size of vector at 'rows[i]' to '*sizes[i]'.
   virtual void estimateSerializedSize(
       VectorPtr vector,
       folly::Range<const vector_size_t*> rows,
-      vector_size_t* sizes,
-      Scratch& scratch){};
+      vector_size_t** sizes,
+      Scratch& scratch){
+    VELOX_UNSUPPORTED();
+  }
 
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
   /// '*sizes[i]'.
@@ -155,7 +157,7 @@ class VectorStreamGroup : public StreamArena {
   /// Increments sizes[i] for each ith row in 'range' in 'vector'.
   static void estimateSerializedSize(
       VectorPtr vector,
-      IndexRange range,
+      folly::Range<const vector_size_t*> rows,
       vector_size_t** sizes,
       Scratch& scratch);
 

@@ -41,21 +41,6 @@ getNamedVectorSerdeImpl() {
 
 } // namespace
 
-#if 0
-void VectorSerde::estimateSerializedSize(
-    VectorPtr vector,
-    IndexRange range,
-    vector_size_t* sizes,
-    Scratch& scratch) {
-  raw_vector<vector_size_t> temp;
-  const vector_size_t* numbers = iota(range.begin + range.size, temp) + range.begin;
-  estimateSerializedSize(
-      vector,
-      folly::Range<const vector_size_t*>(numbers, range.size),
-      sizes,
-      scratch);
-}
-#endif
 
 VectorSerde* getVectorSerde() {
   auto serde = getVectorSerdeImpl().get();
@@ -140,16 +125,14 @@ void VectorStreamGroup::flush(OutputStream* out) {
   serializer_->flush(out);
 }
 
-#if 0
   // static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
-    IndexRange range,
+    folly::Range<const vector_size_t*> rows,
     vector_size_t** sizes,
     Scratch& scratch) {
-  getVectorSerde()->estimateSerializedSize(vector, range, sizes, scratch);
+  getVectorSerde()->estimateSerializedSize(vector, rows, sizes, scratch);
 }
-#endif
 // static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,

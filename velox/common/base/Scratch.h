@@ -43,6 +43,7 @@ class Scratch {
 
   void trim() {
     scratch_.clear();
+    retainedSize_ = 0;
   }
 
   size_t retainedSize() {
