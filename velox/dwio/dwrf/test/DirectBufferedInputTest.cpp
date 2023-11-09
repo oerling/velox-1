@@ -129,9 +129,9 @@ class DirectBufferedInputTest : public testing::Test {
 };
 
 TEST_F(DirectBufferedInputTest, basic) {
-  // The small leading parts coalesce, the 7M and 2M go standalone. the last is
-  // read in 2 parts. This is because these are not yet densely accessed and
-  // thus coalescing only works to load quantum of 8MB.
+  // The small leading parts coalesce with the the 7M.  The 2M goes standalone.
+  // the last is read in 2 parts. This is because these are not yet densely
+  // accessed and thus coalescing only works to load quantum of 8MB.
   testLoads(
       {{100, 100},
        {300, 100},
@@ -139,6 +139,7 @@ TEST_F(DirectBufferedInputTest, basic) {
        {7004000, 2000000},
        {20000000, 10000000}},
       4);
+
   // All but the last coalesce into one , the last is read in 2 parts. The
   // columns are now dense and coalesce goes up to 128MB if gaps are small
   // enough.
@@ -168,4 +169,15 @@ TEST_F(DirectBufferedInputTest, basic) {
 
   // Two small far apart
   testLoads({{100, 100}, {1000000, 100}}, 2);
+  // The two coalesce because the first fits within load quantum + max coalesce
+  // distance.
+  testLoads({{1000, 8500000}, {8510000, 1000000}}, 1);
+
+  // The two coalesce because the first fits within load quantum + max coalesce
+  // distance. The tail of the second does not coalesce.
+  testLoads({{1000, 8500000}, {8510000, 8400000}}, 2);
+
+  // The first reads in 2 parts and does not coalesce to the second, which reads
+  // in one part.
+  testLoads({{1000, 9000000}, {9010000, 1000000}}, 3);
 }
