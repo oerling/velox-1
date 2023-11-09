@@ -430,6 +430,12 @@ xsimd::batch<T, A> reinterpretBatch(xsimd::batch<U, A>, const A& = {});
 template <typename A = xsimd::default_arch>
 inline bool memEqualUnsafe(const void* x, const void* y, int32_t size);
 
+// Compares memory at 'x' and 'y' and returns true if 'size' leading bytes are
+// equal. Does not access memory outside of the operands.
+template <typename A = xsimd::default_arch>
+inline bool memEqual(const void* x, const void* y, int32_t size);
+
+  
 } // namespace facebook::velox::simd
 
 #include "velox/common/base/SimdUtil-inl.h"
