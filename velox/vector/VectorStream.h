@@ -90,7 +90,7 @@ class VectorSerde {
       VectorPtr vector,
       folly::Range<const vector_size_t*> rows,
       vector_size_t** sizes,
-      Scratch& scratch){
+      Scratch& scratch) {
     VELOX_UNSUPPORTED();
   }
 

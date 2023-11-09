@@ -1405,9 +1405,10 @@ inline bool memEqual(const void* x, const void* y, int32_t size) {
     } while (size >= kBatch);
     if (size > 0) {
       return toBitMask(
-                 xsimd::batch<uint8_t, A>::load_unaligned(left + size - kBatch) ==
-                 xsimd::batch<uint8_t, A>::load_unaligned(right + size - kBatch)) ==
-          allSetBitMask<uint8_t, A>();
+                 xsimd::batch<uint8_t, A>::load_unaligned(
+                     left + size - kBatch) ==
+                 xsimd::batch<uint8_t, A>::load_unaligned(
+                     right + size - kBatch)) == allSetBitMask<uint8_t, A>();
     }
     return true;
   }

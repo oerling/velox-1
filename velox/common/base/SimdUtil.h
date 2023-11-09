@@ -435,7 +435,6 @@ inline bool memEqualUnsafe(const void* x, const void* y, int32_t size);
 template <typename A = xsimd::default_arch>
 inline bool memEqual(const void* x, const void* y, int32_t size);
 
-  
 } // namespace facebook::velox::simd
 
 #include "velox/common/base/SimdUtil-inl.h"

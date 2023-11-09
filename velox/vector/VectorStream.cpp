@@ -41,7 +41,6 @@ getNamedVectorSerdeImpl() {
 
 } // namespace
 
-
 VectorSerde* getVectorSerde() {
   auto serde = getVectorSerdeImpl().get();
   VELOX_CHECK_NOT_NULL(serde, "Vector serde is not registered.");
@@ -125,7 +124,7 @@ void VectorStreamGroup::flush(OutputStream* out) {
   serializer_->flush(out);
 }
 
-  // static
+// static
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
     folly::Range<const vector_size_t*> rows,

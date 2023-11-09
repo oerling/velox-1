@@ -55,7 +55,6 @@ class PrestoVectorSerde : public VectorSerde {
       vector_size_t** sizes,
       Scratch& scratch) override;
 
-  
   std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,
       int32_t numRows,

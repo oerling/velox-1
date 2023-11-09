@@ -2353,7 +2353,7 @@ void estimateSerializedSizeInt(
       VELOX_CHECK(false, "Unsupported vector encoding {}", vector->encoding());
   }
 }
-  
+
 void estimateWrapperSerializedSize(
     const folly::Range<const vector_size_t*>& rows,
     vector_size_t** sizes,
@@ -2761,7 +2761,7 @@ void PrestoVectorSerde::estimateSerializedSize(
     Scratch& scratch) {
   estimateSerializedSizeInt(vector->loadedVector(), rows, sizes, scratch);
 }
-  
+
 std::unique_ptr<VectorSerializer> PrestoVectorSerde::createSerializer(
     RowTypePtr type,
     int32_t numRows,
