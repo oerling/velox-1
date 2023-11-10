@@ -422,17 +422,16 @@ inline void translate(
   for (; i + kBatch < size; i += kBatch) {
     simd::gather<int32_t, int32_t, sizeof(int32_t), A>(
         indices, xsimd::load_unaligned(data + i))
-      .store_unaligned(output + i);
+        .store_unaligned(output + i);
   }
   if (i < size) {
     const auto numLeft = size - i;
     auto mask = simd::leadingMask<int32_t>(numLeft);
-    const auto values =
-        simd::maskGather<int32_t, int32_t, sizeof(int32_t), A>(
-            xsimd::broadcast<int32_t>(0),
-            mask,
-            indices,
-            xsimd::load_unaligned(data + i));
+    const auto values = simd::maskGather<int32_t, int32_t, sizeof(int32_t), A>(
+        xsimd::broadcast<int32_t>(0),
+        mask,
+        indices,
+        xsimd::load_unaligned(data + i));
     storeLeading<int32_t, A>(output + i, mask, values, numLeft);
   }
 }

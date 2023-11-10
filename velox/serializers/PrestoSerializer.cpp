@@ -1752,7 +1752,6 @@ void getNulls(
   }
 }
 
-
 template <typename T, int32_t extraScale = 1>
 void copyWords(
     T* destination,
