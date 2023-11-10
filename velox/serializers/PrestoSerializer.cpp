@@ -1752,37 +1752,6 @@ void getNulls(
   }
 }
 
-// Stores 'data' into 'destination' for the lanes in 'mask'. 'mask' is expected
-// to specify contiguous lower lanes of 'batch'. For non-SIMD cases, 'mask' is
-// not used but rather the number of leading lanes of 'batch' to store is given
-// by 'n'.
-template <typename T>
-void maskStore(
-    T* destination,
-    xsimd::batch<T>& data,
-    xsimd::batch_bool<T>& mask,
-    int32_t n) {
-#if XSIMD_WITH_AVX2
-  if constexpr (sizeof(T) == 8) {
-    _mm256_maskstore_epi64(
-        reinterpret_cast<long long*>(destination),
-        *reinterpret_cast<__m256i*>(&mask),
-        *reinterpret_cast<__m256i*>(&data));
-  } else if constexpr (sizeof(T) == 4) {
-    _mm256_maskstore_epi32(
-        reinterpret_cast<int*>(destination),
-        *reinterpret_cast<__m256i*>(&mask),
-        *reinterpret_cast<__m256i*>(&data));
-  } else {
-#endif
-    for (auto i = 0; i < n; ++i) {
-      reinterpret_cast<T*>(destination)[i] =
-          *reinterpret_cast<const T*>(&data)[i];
-    }
-#if XSIMD_WITH_AVX2
-  }
-#endif
-}
 
 template <typename T, int32_t extraScale = 1>
 void copyWords(
