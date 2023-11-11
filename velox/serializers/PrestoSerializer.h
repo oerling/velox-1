@@ -54,6 +54,7 @@ class PrestoVectorSerde : public VectorSerde {
   void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const vector_size_t*> rows,
+      const SerializationWrappers* wrappers,
       vector_size_t** sizes,
       Scratch& scratch) override;
 

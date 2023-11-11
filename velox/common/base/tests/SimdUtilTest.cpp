@@ -210,6 +210,43 @@ TEST_F(SimdUtilTest, gatherBits) {
   EXPECT_FALSE(bits::isBitSet(&bits, N - 1));
 }
 
+TEST_F(SimdUtilTest, translate) {
+  constexpr int32_t kMaxSize = 100;
+  std::vector<int32_t> data32(kMaxSize);
+  std::vector<int64_t> data64(kMaxSize);
+  std::vector<int32_t> indices(kMaxSize);
+  constexpr int64_t kMagic = 0x4fe12LU;
+  // indices are scattered over 0..kMaxSize - 1.
+  for (auto i = 0; i < kMaxSize; ++ i) {
+    indices[i] = ((i * kMagic) & 0xffffff) % indices.size();
+    data32[i] = i;
+    data64[i] = static_cast<int64_t>(i) << 32;
+  }
+  for (auto size = 1; size < kMaxSize; ++size) {
+    std::vector<int32_t> result32(kMaxSize + 1, -1);
+    simd::translate(
+        folly::Range<const int32_t*>(data32.data(), size),
+        indices.data(),
+        result32.data());
+    for (auto i = 0; i < size; ++i) {
+      EXPECT_EQ(data32[indices[i]], result32[i]);
+    }
+    // See that there is no write past 'size'.
+    EXPECT_EQ(-1, result32[size]);
+
+    std::vector<int64_t> result64(kMaxSize + 1, -1);
+    simd::translate(
+        folly::Range<const int64_t*>(data64.data(), size),
+        indices.data(),
+        result64.data());
+    for (auto i = 0; i < size; ++i) {
+      EXPECT_EQ(data64[indices[i]], result64[i]);
+    }
+    // See that there is no write past 'size'.
+    EXPECT_EQ(-1, result64[size]);
+  }
+}
+
 namespace {
 
 // Find elements that satisfy a condition and pack them to the left.

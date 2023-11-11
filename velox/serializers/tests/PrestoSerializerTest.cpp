@@ -657,6 +657,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
         group->append(
             rowVector,
             folly::Range(rowSets[selIdx].data(), rowSets[selIdx].size() - kPad),
+	    nullptr,
             scratch);
       }
     }

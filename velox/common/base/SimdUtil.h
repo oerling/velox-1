@@ -380,23 +380,23 @@ xsimd::batch<T, A> setAll(T value, const A& = {}) {
 // to specify contiguous lower lanes of 'batch'. For non-SIMD cases, 'mask' is
 // not used but rather the number of leading lanes of 'batch' to store is given
 // by 'n'.
-template <typename T>
+template <typename T, typename A = xsimd::default_arch>
 inline void storeLeading(
-    T* destination,
-    xsimd::batch<T>& data,
-    xsimd::batch_bool<T>& mask,
-    int32_t n) {
+			 const xsimd::batch<T, A>& data,
+			 const xsimd::batch_bool<T, A>& mask,
+    int32_t n,
+			     T* destination) {
 #if XSIMD_WITH_AVX2
   if constexpr (sizeof(T) == 8) {
     _mm256_maskstore_epi64(
         reinterpret_cast<long long*>(destination),
-        *reinterpret_cast<__m256i*>(&mask),
-        *reinterpret_cast<__m256i*>(&data));
+        *reinterpret_cast<const __m256i*>(&mask),
+        *reinterpret_cast<const __m256i*>(&data));
   } else if constexpr (sizeof(T) == 4) {
     _mm256_maskstore_epi32(
         reinterpret_cast<int*>(destination),
-        *reinterpret_cast<__m256i*>(&mask),
-        *reinterpret_cast<__m256i*>(&data));
+        *reinterpret_cast<const __m256i*>(&mask),
+        *reinterpret_cast<const __m256i*>(&data));
   } else {
 #endif
     for (auto i = 0; i < n; ++i) {
@@ -408,34 +408,34 @@ inline void storeLeading(
 #endif
 }
 
-/// Translates 'rows' through 'indices' and stores the result to'output'.
+/// Translates 'input' through 'indices' and stores the result to'output'. 'input' and 'output' may be the same.
 /// 'output[i] = indices[rows[i]]'.
-template <typename A = xsimd::default_arch>
+  template <typename TData, typename TIndex, typename A = xsimd::default_arch>
 inline void translate(
-    folly::Range<const int32_t*> rows,
-    const int32_t* indices,
-    int32_t* output) {
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  const auto size = rows.size();
-  auto data = rows.data();
+    folly::Range<const TData*> input,
+    const TIndex* indices,
+    TData* output) {
+  constexpr int32_t kBatch = xsimd::batch<TData>::size;
+  const auto size = input.size();
+  auto data = input.data();
   int32_t i = 0;
   for (; i + kBatch < size; i += kBatch) {
-    simd::gather<int32_t, int32_t, sizeof(int32_t), A>(
-        indices, xsimd::load_unaligned(data + i))
+    simd::gather<TData, TIndex>(
+						  data, loadGatherIndices<TData, TIndex>(indices + i))
         .store_unaligned(output + i);
   }
   if (i < size) {
     const auto numLeft = size - i;
-    auto mask = simd::leadingMask<int32_t>(numLeft);
-    const auto values = simd::maskGather<int32_t, int32_t, sizeof(int32_t), A>(
-        xsimd::broadcast<int32_t>(0),
+    auto mask = simd::leadingMask<TData>(numLeft);
+    const auto values = simd::maskGather<TData, TIndex>(
+        xsimd::broadcast<TData>(0),
         mask,
-        indices,
-        xsimd::load_unaligned(data + i));
-    storeLeading<int32_t, A>(output + i, mask, values, numLeft);
+        data,
+        loadGatherIndices<TData, TIndex>(indices + i));
+    storeLeading<TData, A>(values, mask, numLeft, output + i);
   }
 }
-
+  
 // Adds 'bytes' bytes to an address of arbitrary type.
 template <typename T>
 inline T* addBytes(T* pointer, int32_t bytes) {
