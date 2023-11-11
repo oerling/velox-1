@@ -158,12 +158,13 @@ void ByteStream::appendBool(bool value, int32_t count) {
   }
 }
 
-void ByteStream::appendBits(const uint64_t* bits, int32_t count) {
+  void ByteStream::appendBits(const uint64_t* bits, int32_t begin, int32_t end) {
   VELOX_DCHECK(isBits_);
+  auto count = end - begin;
   if (current_ && count <= current_->size - current_->position) {
     bits::copyBits(
         bits,
-        0,
+        begin,
         reinterpret_cast<uint64_t*>(current_->buffer),
         current_->position,
         count);
@@ -176,7 +177,7 @@ void ByteStream::appendBits(const uint64_t* bits, int32_t count) {
         std::min(count - offset, current_->size - current_->position);
     bits::copyBits(
         bits,
-        offset,
+        begin + offset,
         reinterpret_cast<uint64_t*>(current_->buffer),
         current_->position,
         bitsFit);

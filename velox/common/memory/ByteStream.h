@@ -237,7 +237,7 @@ class ByteStream {
 
   void appendBool(bool value, int32_t count);
 
-  void appendBits(const uint64_t* vits, int32_t count);
+  void appendBits(const uint64_t* vits, int32_t begin, int32_t end);
 
   void appendStringPiece(folly::StringPiece value);
 

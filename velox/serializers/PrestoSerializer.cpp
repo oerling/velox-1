@@ -1198,6 +1198,48 @@ class VectorStream {
     lengths_.appendOne<int32_t>(totalLength_);
   }
 
+  appendNullBits(const uint64_t* bits, int32_t begin, int32_t end) {
+    const int32_t numOnes = bits::countBits(bits, begin, end);
+    const auto numZeros = (end - begin) - numOnes;
+    if (numZeros && nonNullCount_ && nullCount_ == 0) {
+      nulls_.appendBool(false, nonNullCount_);
+    }
+    nullCount_ += numZeros;
+    nonNullCount_ += numOnes;
+    const auto numWords = bits::nwords(end - begin);
+    // The polarity of nulls is reverse in wire format. We reverse the nulls and then put them back.
+    for (auto i 0; i < numWords; ++i) {
+      const_cast<uint64_t*>(nulls)[i] = ~nulls[i];
+    }
+    nulls_.appendBits(nulls, begin, end);
+    for (auto i 0; i < numWords; ++i) {
+      const_cast<uint64_t*>(nulls)[i] = ~nulls[i];
+    }
+    
+  }
+  
+  // Appends a zero length for each null bit and a length from lengthFunc(row) for non-nulls in rows.
+  template <typename LengthFunc>
+  void appendLengths(const uint64_t* nulls, folly::Range<const vector_size_t*> rows, LengthFunc lengthFunc) {
+    if (!nulls) {
+      appendnonNull(rows.size());
+      for (auto i = 0; i < numRows; ++i) {
+	appendLength(lengthFunc(rows[i]));
+      }
+    } else {
+      appendNulls(nulls, 0, rows.size());
+      for (auto i = 0; i < numRows; ++i) {
+	if (bits::isBitSet(nulls, i)) {
+	  appendLength(lengthFunc(rows[i]));
+	} else {
+	  appendLength(0);
+	}
+      }
+    }
+  }
+
+
+  
   template <typename T>
   void append(folly::Range<const T*> values) {
     values_.append(values);
