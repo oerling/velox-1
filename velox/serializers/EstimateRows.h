@@ -19,7 +19,7 @@ void estimateFlatSerializedSize(
     ScratchPtr<uint64_t> nullsHolder(scratch);
     ScratchPtr<int32_t> nonNullsHolder(scratch);
     auto nulls = nullsHolder.get(bits::nwords(numRows));
-    getNulls(rawNulls, rows, nulls);
+    gatherBits(rawNulls, rows, nulls);
     auto nonNulls = nonNullsHolder.get(numRows);
     const auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNulls);
     for (int32_t i = 0; i < numNonNull; ++i) {
@@ -45,7 +45,7 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
   ScratchPtr<int32_t> nonNullsHolder(scratch);
   if (rawNulls) {
     auto nulls = nullsHolder.get(bits::nwords(numRows));
-    getNulls(rawNulls, rows, nulls);
+    gatherBits(rawNulls, rows, nulls);
     auto* mutableNonNulls = nonNullsHolder.get(numRows);
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableNonNulls);
     nonNullRows = mutableNonNulls;
@@ -199,7 +199,7 @@ void estimateSerializedSizeInt(
       int32_t numInner = numRows;
       if (vector->mayHaveNulls()) {
         auto nulls = nullsHolder.get(bits::nwords(numRows));
-        getNulls(vector->rawNulls(), rows, nulls);
+        gatherBits(vector->rawNulls(), rows, nulls);
         auto mutableInnerRows = innerRowsHolder.get(numRows);
         numInner = simd::indicesOfSetBits(nulls, 0, numRows, mutableInnerRows);
         innerRows = mutableInnerRows;
@@ -248,23 +248,30 @@ void estimateSerializedSizeInt(
       break;
     }
     case VectorEncoding::Simple::ARRAY: {
-#if 0
       auto arrayVector = vector->as<ArrayVector>();
-      ScratchPtr ranges(scratch);
-!!      std::vector<IndexRange> childRanges;
-      std::vector<vector_size_t*> childSizes;
-      expandRepeatedRanges(
-          arrayVector,
+      ScratchPtr<IndexRange> rangeHolder(scratch);
+      ScratchPtr<vector_size_t*> sizesHolder(scratch);
+      const auto numRanges = rowsToRanges(
+          rows,
+          arrayVector->rawNulls(),
           arrayVector->rawOffsets(),
           arrayVector->rawSizes(),
-          ranges,
           sizes,
-          &childRanges,
-          &childSizes);
+          rangeHolder,
+          &sizesHolder,
+          nullptr,
+          scratch);
       estimateSerializedSizeInt(
-				arrayVector->elements().get(), childRanges, childSizes.data(), scratch);
+          arrayVector->elements().get(),
+          folly::Range<const IndexRange*>(rangeHolder.get(), numRanges),
+          sizesHolder.get(),
+          scratch);
+      estimateSerializedSizeInt(
+          arrayVector->elements().get(),
+          folly::Range<const IndexRange*>(rangeHolder.get(), numRanges),
+          sizesHolder.get(),
+          scratch);
       break;
-#endif
     }
     case VectorEncoding::Simple::LAZY:
       estimateSerializedSizeInt(vector->loadedVector(), rows, sizes, scratch);

@@ -1838,7 +1838,6 @@ void serializeEncodedColumn(
   }
 }
 
-  
 void expandRepeatedRanges(
     const BaseVector* vector,
     const vector_size_t* rawOffsets,
@@ -2472,6 +2471,14 @@ void testingScatterStructNulls(
 
 // static
 void PrestoVectorSerde::registerVectorSerde() {
+  auto toByte = [](int32_t number, int32_t bit) {
+    return static_cast<uint64_t>(bits::isBitSet(&number, bit)) << (bit * 8);
+  };
+  for (auto i = 0; i < 256; ++i) {
+    bitsToBytesMap[i] = toByte(i, 0) | toByte(i, 1) | toByte(i, 2) |
+        toByte(i, 3) | toByte(i, 4)
+    | toByte(i, 5) | toByte(i, 6) | toByte(i, 7);
+  }
   velox::registerVectorSerde(std::make_unique<PrestoVectorSerde>());
 }
 

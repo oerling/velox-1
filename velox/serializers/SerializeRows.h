@@ -1,6 +1,6 @@
 
 
-void getNulls(
+void gatherBits(
     const uint64_t* bits,
     folly::Range<const vector_size_t*> rows,
     uint64_t* result) {
@@ -52,7 +52,7 @@ int32_t rowsToRanges(
   if (rawNulls) {
     ScratchPtr<uint64_t> nullsHolder(scratch);
     auto* nulls = nullsHolder.get(rows.size());
-    getNulls(rawNulls, rows, nulls);
+    gatherBits(rawNulls, rows, nulls);
     if (stream) {
       stream->appendLengths(nulls, rows, [&](auto row) { return sizes[row]; });
     }
@@ -179,7 +179,29 @@ void appendNonNull(
   }
 }
 
-//*** Serialization functions on range of indices
+void appendStrings(
+    const uint64_t* nulls,
+    folly::Range<const vector_size_t*> rows,
+    const StringView* views,
+    VectorStream* stream,
+    Scratch& scratch) {
+  stream->appendLengths(
+      nulls, rows, [&](auto row) { return views[row].size(); });
+  auto innerRows = rows.data();
+  int32_t numInnerRows = rows.size();
+  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
+  if (nulls) {
+    auto mutableInner = innerRowsHolder.get(rows.size());
+    numInnerRows = simd::indicesOfSetBits(nulls, 0, rows.size(), mutableInner);
+    innerRows = mutableInner;
+  }
+  for (auto i = 0; i < numInnerRows; ++i) {
+    auto& view = views[innerRows[i]];
+    stream->values().appendStringPiece(
+        folly::StringPiece(view.data(), view.size()));
+  }
+}
+
 template <TypeKind kind>
 void serializeFlatVector(
     const BaseVector* vector,
@@ -190,6 +212,16 @@ void serializeFlatVector(
   auto flatVector = reinterpret_cast<const FlatVector<T>*>(vector);
   auto rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
+    if (std::is_same_v<T, StringView>) {
+      appendStrings(
+          nullptr,
+          rows,
+          reinterpret_cast<const StringView*>(rawValues),
+          stream,
+          scratch);
+      return;
+    }
+
     stream->appendNonNull(rows.size());
     AppendWindow<T> window(stream->values(), scratch);
     T* output = window.get(rows.size());
@@ -200,19 +232,73 @@ void serializeFlatVector(
     uint64_t* nulls = rows.size() <= sizeof(tempNulls) * 8
         ? tempNulls
         : scratchPtr.get(bits::nwords(rows.size()));
-    getNulls(vector->rawNulls(), rows, nulls);
-    stream->nulls().appendBits(nulls, 0, rows.size());
+    gatherBits(vector->rawNulls(), rows, nulls);
+    if (std::is_same_v<T, StringView>) {
+      appendStrings(
+          nulls,
+          rows,
+          reinterpret_cast<const StringView*>(rawValues),
+          stream,
+          scratch);
+      return;
+    }
+    stream->appendNulls(nulls, 0, rows.size());
     appendNonNull(stream->values(), nulls, rows, rawValues, scratch);
   }
 }
 
+uint64_t bitsToBytesMap[256];
+
+uint64_t bitsToBytes(uint8_t byte) {
+  return bitsToBytesMap[byte];
+}
+
+
 template <>
 void serializeFlatVector<TypeKind::BOOLEAN>(
     const BaseVector* vector,
-    const folly::Range<const vector_size_t*>& ranges,
+    const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_NYI();
+  auto flatVector = reinterpret_cast<const FlatVector<bool>*>(vector);
+  auto rawValues = flatVector->rawValues();
+  uint64_t smallBits[16];
+  uint64_t* valueBits = smallBits;
+  ScratchPtr<uint64_t> bitsHolder(scratch);
+  int32_t numValueBits;
+  if (!flatVector->mayHaveNulls()) {
+    stream->appendNonNull(rows.size());
+    if (rows.size() > sizeof(smallBits) * 8) {
+      valueBits = bitsHolder.get(bits::nwords(rows.size()));
+    }
+    gatherBits(reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
+    numValueBits = rows.size();
+  } else {
+    uint64_t* nulls = rows.size() <= sizeof(smallBits) * 8
+        ? smallBits
+        : bitsHolder.get(bits::nwords(rows.size()));
+    gatherBits(vector->rawNulls(), rows, nulls);
+    stream->appendNulls(nulls, 0, rows.size());
+    ScratchPtr<vector_size_t> nonNullsHolder(scratch);
+    auto nonNulls = nonNullsHolder.get(rows.size());
+    numValueBits = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNulls);
+    valueBits = nulls;
+    gatherBits(
+	       reinterpret_cast<const uint64_t*>(rawValues),
+        folly::Range<const vector_size_t*>(nonNulls, numValueBits),
+	       valueBits);
+  }
+  AppendWindow<uint8_t> window(stream->values(), scratch);
+  uint8_t* output = window.get(numValueBits);
+  const auto numBytes = bits::nbytes(numValueBits);
+  for (auto i = 0; i < numBytes; ++i) {
+    uint64_t word = bitsToBytes(reinterpret_cast<uint8_t*>(valueBits)[i]);
+    if (i < numBytes - 1) {
+      reinterpret_cast<uint64_t*>(output)[i] = word;
+    } else {
+      memcpy(output + i * 8, &word, numValueBits - i * 8);
+    }
+  }
 }
 
 void serializeWrapped(
@@ -301,7 +387,7 @@ void serializeRowVector(
   auto numInnerRows = rows.size();
   if (auto rawNulls = vector->rawNulls()) {
     auto nulls = nullsHolder.get(rows.size());
-    getNulls(rawNulls, rows, nulls);
+    gatherBits(rawNulls, rows, nulls);
     stream->appendLengths(nulls, rows, [](int32_t) { return 1; });
     auto* mutableInnerRows = innerRowsHolder.get(rows.size());
     numInnerRows =
@@ -347,34 +433,28 @@ void serializeMapVector(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_NYI();
-#if 0
-  auto mapVector = dynamic_cast<const MapVector*>(vector);
-  auto rawSizes = mapVector->rawSizes();
-  auto rawOffsets = mapVector->rawOffsets();
-  std::vector<IndexRange> childRanges;
-  childRanges.reserve(ranges.size());
-  for (int32_t i = 0; i < ranges.size(); ++i) {
-    int32_t begin = ranges[i].begin;
-    int32_t end = begin + ranges[i].size;
-    for (int32_t offset = begin; offset < end; ++offset) {
-      if (mapVector->isNullAt(offset)) {
-        stream->appendNull();
-      } else {
-        stream->appendNonNull();
-        auto size = rawSizes[offset];
-        stream->appendLength(size);
-        if (size > 0) {
-          childRanges.emplace_back<IndexRange>({rawOffsets[offset], size});
-        }
-      }
-    }
-  }
-  serializeColumn(mapVector->mapKeys().get(), childRanges, stream->childAt(0));
-  serializeColumn(
-      mapVector->mapValues().get(), childRanges, stream->childAt(1));
+  auto mapVector = reinterpret_cast<const MapVector*>(vector);
 
-#endif
+  ScratchPtr<IndexRange> rangesHolder(scratch);
+  int32_t numRanges = rowsToRanges(
+      rows,
+      mapVector->rawNulls(),
+      mapVector->rawOffsets(),
+      mapVector->rawSizes(),
+      nullptr,
+      rangesHolder,
+      nullptr,
+      stream,
+      scratch);
+
+  serializeColumn(
+      mapVector->mapKeys().get(),
+      folly::Range<const IndexRange*>(rangesHolder.get(), numRanges),
+      stream->childAt(0));
+  serializeColumn(
+      mapVector->mapValues().get(),
+      folly::Range<const IndexRange*>(rangesHolder.get(), numRanges),
+      stream->childAt(0));
 }
 
 template <TypeKind kind>

@@ -410,7 +410,7 @@ inline void storeLeading(
 
 /// Translates 'input' through 'indices' and stores the result to'output'. 'input' and 'output' may be the same.
 /// 'output[i] = indices[rows[i]]'.
-  template <typename TData, typename TIndex, typename A = xsimd::default_arch>
+  template <typename TData, typename TIndex, int32_t multiplier = 1, typename A = xsimd::default_arch>
 inline void translate(
     folly::Range<const TData*> input,
     const TIndex* indices,
@@ -420,18 +420,27 @@ inline void translate(
   auto data = input.data();
   int32_t i = 0;
   for (; i + kBatch < size; i += kBatch) {
+    auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
+    if constexpr (multiplier != 1) {
+      indexBatch = indexBatch *  multiplier;
+    }
     simd::gather<TData, TIndex>(
-						  data, loadGatherIndices<TData, TIndex>(indices + i))
+						  data, indexBatch)
         .store_unaligned(output + i);
   }
   if (i < size) {
     const auto numLeft = size - i;
     auto mask = simd::leadingMask<TData>(numLeft);
+    auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
+    if constexpr (multiplier != 1) {
+      indexBatch = indexBatch *  multiplier;
+    }
+
     const auto values = simd::maskGather<TData, TIndex>(
         xsimd::broadcast<TData>(0),
         mask,
         data,
-        loadGatherIndices<TData, TIndex>(indices + i));
+        indexBatch);
     storeLeading<TData, A>(values, mask, numLeft, output + i);
   }
 }
