@@ -81,7 +81,7 @@ class ScratchPtr {
     VELOX_DCHECK_NOT_NULL(ptr_);
     return ptr_;
   }
-  
+
   bool hasData() const {
     return ptr_ != nullptr;
   }

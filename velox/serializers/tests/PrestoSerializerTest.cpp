@@ -93,19 +93,22 @@ class PrestoSerializerTest
       raw_vector<vector_size_t*> sizes(indexRanges.value().size());
       std::fill(sizes.begin(), sizes.end(), &sizeEstimate);
       serde_->estimateSerializedSize(
-				     rowVector, indexRanges.value(), sizes.data(), scratch);
+          rowVector, indexRanges.value(), sizes.data(), scratch);
       serializer->append(rowVector, indexRanges.value(), scratch);
     } else if (rows.has_value()) {
       raw_vector<vector_size_t*> sizes(rows.value().size());
       std::fill(sizes.begin(), sizes.end(), &sizeEstimate);
       serde_->estimateSerializedSize(
-				     rowVector, rows.value(), nullptr, sizes.data(), scratch);
+          rowVector, rows.value(), nullptr, sizes.data(), scratch);
       serializer->append(rowVector, rows.value(), nullptr, scratch);
     } else {
       vector_size_t* sizes = &sizeEstimate;
       IndexRange range{0, rowVector->size()};
       serde_->estimateSerializedSize(
-				     rowVector, folly::Range<const IndexRange*>(&range, 1), &sizes, scratch);
+          rowVector,
+          folly::Range<const IndexRange*>(&range, 1),
+          &sizes,
+          scratch);
       serializer->append(rowVector);
     }
     auto size = serializer->maxSerializedSize();
@@ -211,7 +214,7 @@ class PrestoSerializerTest
   }
 
   void testSerializeRows(
-			 const RowVectorPtr& rowVector,
+      const RowVectorPtr& rowVector,
       BufferPtr indices,
       const serializer::presto::PrestoVectorSerde::PrestoOptions*
           serdeOptions) {
@@ -595,12 +598,26 @@ TEST_P(PrestoSerializerTest, roundTrip) {
       VectorFuzzer::Options::TimestampPrecision::kMilliSeconds;
   opts.nullRatio = 0.1;
   VectorFuzzer fuzzer(opts, pool_.get());
+  VectorFuzzer::Options nonNullOpts;
+  nonNullOpts.timestampPrecision =
+      VectorFuzzer::Options::TimestampPrecision::kMilliSeconds;
+  nonNullOpts.nullRatio = 0;
+  VectorFuzzer nonNullFuzzer(nonNullOpts, pool_.get());
 
   const size_t numRounds = 20;
 
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
-    auto inputRowVector = fuzzer.fuzzInputRow(rowType);
+    if (i < 2) {
+      rowType = ROW(
+          {{"i", BIGINT()},
+           {"s1", VARCHAR()},
+           {"B1", BOOLEAN()},
+           {"r", ROW({{"i2", INTEGER()}, {"s2", VARCHAR()}})}});
+    }
+
+    auto inputRowVector = (i % 2 == 0) ? fuzzer.fuzzInputRow(rowType)
+                                       : nonNullFuzzer.fuzzInputRow(rowType);
     testRoundTrip(inputRowVector);
   }
 }

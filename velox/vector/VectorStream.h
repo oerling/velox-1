@@ -35,14 +35,16 @@ struct IndexRange {
 
 struct SerializationWrappers {
   static constexpr int32_t kNotWrapped = -1;
-  // The unique wrappers that occur in a RowVector given to append(). Each element has a value for each row in the RowVector. The pointers typically refer to dictionary indices buffers of dictionary encoded inputs.
+  // The unique wrappers that occur in a RowVector given to append(). Each
+  // element has a value for each row in the RowVector. The pointers typically
+  // refer to dictionary indices buffers of dictionary encoded inputs.
   std::vector<vector_size_t*> uniqueWrappers;
-		      
-  // An index into uniqueWrappers for each child of a RowVector given to append(). kNotWrapped if the child in question is not wrapped.
+
+  // An index into uniqueWrappers for each child of a RowVector given to
+  // append(). kNotWrapped if the child in question is not wrapped.
   raw_vector<int32_t> wrapIndex;
 };
 
-  
 class VectorSerializer {
  public:
   virtual ~VectorSerializer() = default;

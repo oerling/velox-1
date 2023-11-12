@@ -2476,8 +2476,8 @@ void PrestoVectorSerde::registerVectorSerde() {
   };
   for (auto i = 0; i < 256; ++i) {
     bitsToBytesMap[i] = toByte(i, 0) | toByte(i, 1) | toByte(i, 2) |
-        toByte(i, 3) | toByte(i, 4)
-    | toByte(i, 5) | toByte(i, 6) | toByte(i, 7);
+        toByte(i, 3) | toByte(i, 4) | toByte(i, 5) | toByte(i, 6) |
+        toByte(i, 7);
   }
   velox::registerVectorSerde(std::make_unique<PrestoVectorSerde>());
 }

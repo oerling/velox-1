@@ -382,10 +382,10 @@ xsimd::batch<T, A> setAll(T value, const A& = {}) {
 // by 'n'.
 template <typename T, typename A = xsimd::default_arch>
 inline void storeLeading(
-			 const xsimd::batch<T, A>& data,
-			 const xsimd::batch_bool<T, A>& mask,
+    const xsimd::batch<T, A>& data,
+    const xsimd::batch_bool<T, A>& mask,
     int32_t n,
-			     T* destination) {
+    T* destination) {
 #if XSIMD_WITH_AVX2
   if constexpr (sizeof(T) == 8) {
     _mm256_maskstore_epi64(
@@ -408,9 +408,13 @@ inline void storeLeading(
 #endif
 }
 
-/// Translates 'input' through 'indices' and stores the result to'output'. 'input' and 'output' may be the same.
-/// 'output[i] = indices[rows[i]]'.
-  template <typename TData, typename TIndex, int32_t multiplier = 1, typename A = xsimd::default_arch>
+/// Translates 'input' through 'indices' and stores the result to'output'.
+/// 'input' and 'output' may be the same. 'output[i] = indices[rows[i]]'.
+template <
+    typename TData,
+    typename TIndex,
+    int32_t multiplier = 1,
+    typename A = xsimd::default_arch>
 inline void translate(
     folly::Range<const TData*> input,
     const TIndex* indices,
@@ -422,29 +426,24 @@ inline void translate(
   for (; i + kBatch < size; i += kBatch) {
     auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
     if constexpr (multiplier != 1) {
-      indexBatch = indexBatch *  multiplier;
+      indexBatch = indexBatch * multiplier;
     }
-    simd::gather<TData, TIndex>(
-						  data, indexBatch)
-        .store_unaligned(output + i);
+    simd::gather<TData, TIndex>(data, indexBatch).store_unaligned(output + i);
   }
   if (i < size) {
     const auto numLeft = size - i;
     auto mask = simd::leadingMask<TData>(numLeft);
     auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
     if constexpr (multiplier != 1) {
-      indexBatch = indexBatch *  multiplier;
+      indexBatch = indexBatch * multiplier;
     }
 
     const auto values = simd::maskGather<TData, TIndex>(
-        xsimd::broadcast<TData>(0),
-        mask,
-        data,
-        indexBatch);
+        xsimd::broadcast<TData>(0), mask, data, indexBatch);
     storeLeading<TData, A>(values, mask, numLeft, output + i);
   }
 }
-  
+
 // Adds 'bytes' bytes to an address of arbitrary type.
 template <typename T>
 inline T* addBytes(T* pointer, int32_t bytes) {

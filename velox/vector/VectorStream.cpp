@@ -141,9 +141,10 @@ void VectorStreamGroup::estimateSerializedSize(
     const SerializationWrappers* wrappers,
     vector_size_t** sizes,
     Scratch& scratch) {
-  getVectorSerde()->estimateSerializedSize(vector, rows, wrappers, sizes, scratch);
+  getVectorSerde()->estimateSerializedSize(
+      vector, rows, wrappers, sizes, scratch);
 }
-  
+
 // static
 void VectorStreamGroup::read(
     ByteStream* source,

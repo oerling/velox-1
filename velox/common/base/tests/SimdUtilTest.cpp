@@ -217,7 +217,7 @@ TEST_F(SimdUtilTest, translate) {
   std::vector<int32_t> indices(kMaxSize);
   constexpr int64_t kMagic = 0x4fe12LU;
   // indices are scattered over 0..kMaxSize - 1.
-  for (auto i = 0; i < kMaxSize; ++ i) {
+  for (auto i = 0; i < kMaxSize; ++i) {
     indices[i] = ((i * kMagic) & 0xffffff) % indices.size();
     data32[i] = i;
     data64[i] = static_cast<int64_t>(i) << 32;

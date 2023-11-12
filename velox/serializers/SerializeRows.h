@@ -253,7 +253,6 @@ uint64_t bitsToBytes(uint8_t byte) {
   return bitsToBytesMap[byte];
 }
 
-
 template <>
 void serializeFlatVector<TypeKind::BOOLEAN>(
     const BaseVector* vector,
@@ -284,9 +283,9 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
     numValueBits = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNulls);
     valueBits = nulls;
     gatherBits(
-	       reinterpret_cast<const uint64_t*>(rawValues),
+        reinterpret_cast<const uint64_t*>(rawValues),
         folly::Range<const vector_size_t*>(nonNulls, numValueBits),
-	       valueBits);
+        valueBits);
   }
   AppendWindow<uint8_t> window(stream->values(), scratch);
   uint8_t* output = window.get(numValueBits);
