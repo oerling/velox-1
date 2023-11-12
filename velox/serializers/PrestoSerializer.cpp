@@ -1077,6 +1077,11 @@ class CountingOutputStream : public OutputStream {
   std::streampos pos_{0};
 };
 
+raw_vector<uint64_t>& threadTempNulls() {
+  thread_local raw_vector<uint64_t> temp;
+  return temp;
+}
+
 // Appendable container for serialized values. To append a value at a
 // time, call appendNull or appendNonNull first. Then call
 // appendLength if the type has a length. A null value has a length of
@@ -1198,48 +1203,53 @@ class VectorStream {
     lengths_.appendOne<int32_t>(totalLength_);
   }
 
-  appendNullBits(const uint64_t* bits, int32_t begin, int32_t end) {
-    const int32_t numOnes = bits::countBits(bits, begin, end);
+  void appendNulls(const uint64_t* nulls, int32_t begin, int32_t end) {
+    const int32_t numOnes = bits::countBits(nulls, begin, end);
     const auto numZeros = (end - begin) - numOnes;
+    if (numZeros == 0 && nullCount_ == 0) {
+      nonNullCount_ += numOnes;
+      return;
+    }
     if (numZeros && nonNullCount_ && nullCount_ == 0) {
       nulls_.appendBool(false, nonNullCount_);
     }
     nullCount_ += numZeros;
     nonNullCount_ += numOnes;
     const auto numWords = bits::nwords(end - begin);
-    // The polarity of nulls is reverse in wire format. We reverse the nulls and then put them back.
-    for (auto i 0; i < numWords; ++i) {
-      const_cast<uint64_t*>(nulls)[i] = ~nulls[i];
+    // The polarity of nulls is reverse in wire format.
+    auto& tempNulls = threadTempNulls();
+    tempNulls.resize(numWords);
+    for (auto i = 0; i < numWords; ++i) {
+      tempNulls[i] = ~nulls[i];
     }
-    nulls_.appendBits(nulls, begin, end);
-    for (auto i 0; i < numWords; ++i) {
-      const_cast<uint64_t*>(nulls)[i] = ~nulls[i];
-    }
-    
+    nulls_.appendBits(tempNulls.data(), begin, end);
   }
-  
-  // Appends a zero length for each null bit and a length from lengthFunc(row) for non-nulls in rows.
+
+  // Appends a zero length for each null bit and a length from lengthFunc(row)
+  // for non-nulls in rows.
   template <typename LengthFunc>
-  void appendLengths(const uint64_t* nulls, folly::Range<const vector_size_t*> rows, LengthFunc lengthFunc) {
+  void appendLengths(
+      const uint64_t* nulls,
+      folly::Range<const vector_size_t*> rows,
+      LengthFunc lengthFunc) {
+    const auto numRows = rows.size();
     if (!nulls) {
-      appendnonNull(rows.size());
+      appendNonNull(numRows);
       for (auto i = 0; i < numRows; ++i) {
-	appendLength(lengthFunc(rows[i]));
+        appendLength(lengthFunc(rows[i]));
       }
     } else {
-      appendNulls(nulls, 0, rows.size());
+      appendNulls(nulls, 0, numRows);
       for (auto i = 0; i < numRows; ++i) {
-	if (bits::isBitSet(nulls, i)) {
-	  appendLength(lengthFunc(rows[i]));
-	} else {
-	  appendLength(0);
-	}
+        if (bits::isBitSet(nulls, i)) {
+          appendLength(lengthFunc(rows[i]));
+        } else {
+          appendLength(0);
+        }
       }
     }
   }
 
-
-  
   template <typename T>
   void append(folly::Range<const T*> values) {
     values_.append(values);
@@ -1767,6 +1777,67 @@ void serializeColumn(
 }
 #include "SerializeRows.h"
 
+template <TypeKind Kind>
+void serializeConstantColumn(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream) {
+  for (const auto& range : ranges) {
+    stream->appendNonNull(range.size);
+  }
+
+  std::vector<IndexRange> newRanges;
+  newRanges.push_back({0, 1});
+  serializeConstantVector<Kind>(vector, newRanges, stream->childAt(0));
+}
+
+template <TypeKind Kind>
+void serializeDictionaryColumn(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream) {
+  using T = typename KindToFlatVector<Kind>::WrapperType;
+
+  auto dictionaryVector = dynamic_cast<const DictionaryVector<T>*>(vector);
+  VELOX_CHECK_NULL(
+      dictionaryVector->nulls(),
+      "Cannot serialize dictionary vector with nulls");
+
+  std::vector<IndexRange> childRanges;
+  childRanges.push_back({0, dictionaryVector->valueVector()->size()});
+  serializeColumn(
+      dictionaryVector->valueVector().get(), childRanges, stream->childAt(0));
+
+  const BufferPtr& indices = dictionaryVector->indices();
+  auto* rawIndices = indices->as<vector_size_t>();
+  for (const auto& range : ranges) {
+    stream->appendNonNull(range.size);
+    stream->append<int32_t>(folly::Range(&rawIndices[range.begin], range.size));
+  }
+}
+
+void serializeEncodedColumn(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream) {
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::CONSTANT:
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          serializeConstantColumn, vector->typeKind(), vector, ranges, stream);
+      break;
+    case VectorEncoding::Simple::DICTIONARY:
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          serializeDictionaryColumn,
+          vector->typeKind(),
+          vector,
+          ranges,
+          stream);
+      break;
+    default:
+      serializeColumn(vector, ranges, stream);
+  }
+}
+
   
 void expandRepeatedRanges(
     const BaseVector* vector,
@@ -2029,7 +2100,7 @@ void estimateSerializedSizeInt(
   }
 }
 
-  #include "EstimateRows.h"
+#include "EstimateRows.h"
 
 class PrestoVectorSerializer : public VectorSerializer {
  public:
