@@ -38,7 +38,9 @@ class raw_vector {
 
   ~raw_vector() {
     if (data_) {
-      freeData(data_);
+      T* toFree = nullptr;
+      std::swap(toFree, data_);
+      freeData(toFree);
     }
   }
 
@@ -151,7 +153,7 @@ class raw_vector {
 
  private:
   // Adds 'bytes' to the address 'pointer'.
-  inline T* addBytes(T* pointer, int32_t bytes) {
+  static inline T* addBytes(T* pointer, int32_t bytes) {
     return reinterpret_cast<T*>(reinterpret_cast<uint64_t>(pointer) + bytes);
   }
 
@@ -173,8 +175,8 @@ class raw_vector {
     return addBytes(ptr, simd::kPadding);
   }
 
-  void freeData(T* data) {
-    if (data_) {
+  static void freeData(T* data) {
+    if (data) {
       ::free(addBytes(data, -simd::kPadding));
     }
   }

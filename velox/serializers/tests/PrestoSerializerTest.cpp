@@ -754,6 +754,29 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   }
 }
 
+TEST_P(PrestoSerializerTest, typeMismatch) {
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3}),
+      makeFlatVector<std::string>({"a", "b", "c"}),
+  });
+
+  std::ostringstream out;
+  serialize(data, &out, nullptr);
+  auto serialized = out.str();
+
+  // Too many columns to deserialize.
+  VELOX_ASSERT_THROW(
+      deserialize(ROW({BIGINT(), VARCHAR(), BOOLEAN()}), serialized, nullptr),
+      "Number of columns in serialized data doesn't match "
+      "number of columns requested for deserialization");
+
+  // Wrong types of columns.
+  VELOX_ASSERT_THROW(
+      deserialize(ROW({BIGINT(), DOUBLE()}), serialized, nullptr),
+      "Serialized encoding is not compatible with requested type: DOUBLE. "
+      "Expected LONG_ARRAY. Got VARIABLE_WIDTH.");
+}
+
 INSTANTIATE_TEST_SUITE_P(
     PrestoSerializerTest,
     PrestoSerializerTest,

@@ -137,7 +137,7 @@ Expression Evaluation Configuration
      - bool
      - false
      - Enables legacy CAST semantics if set to true. CAST(timestamp AS varchar) uses 'T' as separator between date and
-       time (instead of a space).
+       time (instead of a space), and the year part is not padded.
    * - cast_match_struct_by_name
      - bool
      - false
@@ -389,6 +389,11 @@ Hive Connector
      - integer
      - 128MB
      - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
+   * - num_cached_file_handles
+     - integer
+     - 20000
+     - Maximum number of entries in the file handle cache. The value must be non-negative. Zero value
+       indicates infinite cache capacity.
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
