@@ -117,11 +117,14 @@ class ByteStream {
     lastRangeEnd_ = ranges_.back().size;
   }
 
-  void setRange(ByteRange range) {
+  /// Sets 'this' to range over 'range'. If this is for purposes of writing,
+  /// lastWrittenPosition specifies the end of any pre-existing content in
+  /// 'range'.
+  void setRange(ByteRange range, int32_t lastWrittenPosition) {
     ranges_.resize(1);
     ranges_[0] = range;
     current_ = ranges_.data();
-    lastRangeEnd_ = ranges_[0].size;
+    lastRangeEnd_ = lastWrittenPosition;
   }
 
   const std::vector<ByteRange>& ranges() const {

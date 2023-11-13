@@ -49,7 +49,7 @@ std::atomic<int32_t> SpillFile::ordinalCounter_;
 void SpillInput::next(bool /*throwIfPastEnd*/) {
   int32_t readBytes = std::min(input_->size() - offset_, buffer_->capacity());
   VELOX_CHECK_LT(0, readBytes, "Reading past end of spill file");
-  setRange({buffer_->asMutable<uint8_t>(), readBytes, 0});
+  setRange({buffer_->asMutable<uint8_t>(), readBytes, 0}, readBytes);
   input_->pread(offset_, readBytes, buffer_->asMutable<char>());
   offset_ += readBytes;
 }

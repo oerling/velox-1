@@ -30,16 +30,23 @@ class StreamArena {
 
   virtual ~StreamArena() = default;
 
-  /// Sets range to the request 'bytes' of writable memory owned by 'this'.
-  /// We allocate non-contiguous memory to store range bytes if requested
-  /// 'bytes' is equal or less than the largest class page size. Otherwise, we
-  /// allocate from contiguous memory.
-  virtual void newRange(int32_t bytes, ByteRange* range);
+  /// Sets range to the request 'bytes' of writable memory owned by
+  /// 'this'.  We allocate non-contiguous memory to store range bytes
+  /// if requested 'bytes' is equal or less than the largest class
+  /// page size. Otherwise, we allocate from contiguous
+  /// memory. 'range' is set to point to the allocated memory. If
+  /// 'lastRange' is non-nullptr, it is the last range of the stream
+  /// to which we are adding the new range. 'lastRange' is nullptr if
+  /// adding the first range to a stream. The memory is stays owned by
+  /// 'this' in all cases.
+  virtual void newRange(int32_t bytes, ByteRange* lastRange, ByteRange* range);
 
   /// sets 'range' to point to a small piece of memory owned by this. These
   /// always come from the heap. The use case is for headers that may change
-  /// length based on data properties, not for bulk data.
-  virtual void newTinyRange(int32_t bytes, ByteRange* range);
+  /// length based on data properties, not for bulk data. See 'newRange' for the
+  /// meaning of 'lastRange'.
+  virtual void
+  newTinyRange(int32_t bytes, ByteRange* lastRange, ByteRange* range);
 
   /// Returns the Total size in bytes held by all Allocations.
   virtual size_t size() const {
