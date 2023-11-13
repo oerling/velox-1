@@ -26,6 +26,8 @@ class Scratch {
   Scratch() = default;
   Scratch(const Scratch& other) = delete;
   void operator=(const Scratch& other) = delete;
+
+  /// Returns the next reusable scratch vector or makes a new one.
   raw_vector<char> get() {
     if (scratch_.empty()) {
       return raw_vector<char>();
@@ -71,7 +73,8 @@ class ScratchPtr {
   }
 
   T* get(int32_t size) {
-    data_ = scratch_.get();
+    VELOX_CHECK(data_.empty());
+    data_ = std::move(scratch_.get());
     data_.resize(size * sizeof(T));
     ptr_ = reinterpret_cast<T*>(data_.data());
     return ptr_;

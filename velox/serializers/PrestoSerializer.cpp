@@ -1203,26 +1203,34 @@ class VectorStream {
     lengths_.appendOne<int32_t>(totalLength_);
   }
 
-  void appendNulls(const uint64_t* nulls, int32_t begin, int32_t end) {
-    const int32_t numOnes = bits::countBits(nulls, begin, end);
-    const auto numZeros = (end - begin) - numOnes;
-    if (numZeros == 0 && nullCount_ == 0) {
-      nonNullCount_ += numOnes;
+  void appendNulls(const uint64_t* nulls, int32_t begin, int32_t end, int32_t numNonNull) {
+    VELOX_DCHECK_EQ(numNonNull, bits::countBits(nulls, begin, end));
+    const auto numNulls = (end - begin) - numNonNull;
+    if (numNulls == 0 && nullCount_ == 0) {
+      nonNullCount_ += numNonNull;
       return;
     }
-    if (numZeros && nonNullCount_ && nullCount_ == 0) {
+    if (numNulls > 0 && nonNullCount_ && nullCount_ == 0) {
       nulls_.appendBool(false, nonNullCount_);
     }
-    nullCount_ += numZeros;
-    nonNullCount_ += numOnes;
-    const auto numWords = bits::nwords(end - begin);
-    // The polarity of nulls is reverse in wire format.
-    auto& tempNulls = threadTempNulls();
-    tempNulls.resize(numWords);
-    for (auto i = 0; i < numWords; ++i) {
-      tempNulls[i] = ~nulls[i];
+    nullCount_ += numNulls;
+    nonNullCount_ += numNonNull;
+    const auto numRows = end - begin;
+    const int32_t firstWord = begin >> 6;
+    const int32_t firstBit = begin & 63;
+    const auto numWords = bits::nwords(numRows + firstBit);
+    // The polarity of nulls is reverse in wire format. Make an inverted copy.
+    uint64_t smallNulls[16];
+    uint64_t* invertedNulls = smallNulls;
+    if (numWords > sizeof(smallNulls) / sizeof(smallNulls[0])) {
+      auto& tempNulls = threadTempNulls();
+      tempNulls.resize(numWords + 1);
+      invertedNulls = tempNulls.data();
     }
-    nulls_.appendBits(tempNulls.data(), begin, end);
+    for (auto i = 0; i < numWords; ++i) {
+      invertedNulls[i] = ~nulls[i + firstWord];
+    }
+    nulls_.appendBits(invertedNulls, firstBit, firstBit + numRows);
   }
 
   // Appends a zero length for each null bit and a length from lengthFunc(row)
@@ -1231,6 +1239,7 @@ class VectorStream {
   void appendLengths(
       const uint64_t* nulls,
       folly::Range<const vector_size_t*> rows,
+      int32_t numNonNull,
       LengthFunc lengthFunc) {
     const auto numRows = rows.size();
     if (!nulls) {
@@ -1239,7 +1248,7 @@ class VectorStream {
         appendLength(lengthFunc(rows[i]));
       }
     } else {
-      appendNulls(nulls, 0, numRows);
+      appendNulls(nulls, 0, numRows, numNonNull);
       for (auto i = 0; i < numRows; ++i) {
         if (bits::isBitSet(nulls, i)) {
           appendLength(lengthFunc(rows[i]));

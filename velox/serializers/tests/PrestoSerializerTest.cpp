@@ -219,7 +219,9 @@ class PrestoSerializerTest
       const serializer::presto::PrestoVectorSerde::PrestoOptions*
           serdeOptions) {
     std::ostringstream out;
-    serialize(rowVector, &out, serdeOptions);
+    auto rows = folly::Range<const vector_size_t*>(
+        indices->as<vector_size_t>(), indices->size() / sizeof(vector_size_t));
+    serialize(rowVector, &out, serdeOptions, std::nullopt, rows);
 
     auto rowType = asRowType(rowVector->type());
     auto deserialized = deserialize(rowType, out.str(), serdeOptions);
@@ -613,7 +615,15 @@ TEST_P(PrestoSerializerTest, roundTrip) {
           {{"i", BIGINT()},
            {"s1", VARCHAR()},
            {"B1", BOOLEAN()},
-           {"r", ROW({{"i2", INTEGER()}, {"s2", VARCHAR()}})}});
+           {"r",
+            ROW(
+                {{"i2", INTEGER()},
+                 {"s2", VARCHAR()},
+		 {"ma2", MAP(VARBINARY(), TIMESTAMP()) },
+                 {"t1", TINYINT()},
+                 {"sm2", SMALLINT()},
+		 {"tst", TIMESTAMP()},
+		 {"ar", ARRAY(INTEGER())}})}});
     }
 
     auto inputRowVector = (i % 2 == 0) ? fuzzer.fuzzInputRow(rowType)

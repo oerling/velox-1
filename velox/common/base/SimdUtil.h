@@ -408,38 +408,29 @@ inline void storeLeading(
 #endif
 }
 
-/// Translates 'input' through 'indices' and stores the result to'output'.
-/// 'input' and 'output' may be the same. 'output[i] = indices[rows[i]]'.
+/// Stores elements of 'input' selected by 'indices' into 'output'. output[i] = input[indices[i]].
+// Indices and output may be the same.
 template <
     typename TData,
     typename TIndex,
-    int32_t multiplier = 1,
     typename A = xsimd::default_arch>
 inline void translate(
-    folly::Range<const TData*> input,
-    const TIndex* indices,
+		      const TData* input,
+		      folly::Range<const TIndex*> indices,
     TData* output) {
   constexpr int32_t kBatch = xsimd::batch<TData>::size;
-  const auto size = input.size();
-  auto data = input.data();
+  const auto size = indices.size();
   int32_t i = 0;
   for (; i + kBatch < size; i += kBatch) {
-    auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
-    if constexpr (multiplier != 1) {
-      indexBatch = indexBatch * multiplier;
-    }
-    simd::gather<TData, TIndex>(data, indexBatch).store_unaligned(output + i);
+    auto indexBatch = loadGatherIndices<TData, TIndex>(indices.data() + i);
+    simd::gather<TData, TIndex>(input, indexBatch).store_unaligned(output + i);
   }
   if (i < size) {
     const auto numLeft = size - i;
     auto mask = simd::leadingMask<TData>(numLeft);
-    auto indexBatch = loadGatherIndices<TData, TIndex>(indices + i);
-    if constexpr (multiplier != 1) {
-      indexBatch = indexBatch * multiplier;
-    }
-
+    auto indexBatch = loadGatherIndices<TData, TIndex>(indices.data() + i);
     const auto values = simd::maskGather<TData, TIndex>(
-        xsimd::broadcast<TData>(0), mask, data, indexBatch);
+        xsimd::broadcast<TData>(0), mask, input, indexBatch);
     storeLeading<TData, A>(values, mask, numLeft, output + i);
   }
 }

@@ -225,8 +225,8 @@ TEST_F(SimdUtilTest, translate) {
   for (auto size = 1; size < kMaxSize; ++size) {
     std::vector<int32_t> result32(kMaxSize + 1, -1);
     simd::translate(
-        folly::Range<const int32_t*>(data32.data(), size),
-        indices.data(),
+		    data32.data(),
+		    folly::Range<const int32_t*>(indices.data(), size),
         result32.data());
     for (auto i = 0; i < size; ++i) {
       EXPECT_EQ(data32[indices[i]], result32[i]);
@@ -236,8 +236,8 @@ TEST_F(SimdUtilTest, translate) {
 
     std::vector<int64_t> result64(kMaxSize + 1, -1);
     simd::translate(
-        folly::Range<const int64_t*>(data64.data(), size),
-        indices.data(),
+		    data64.data(),
+		    folly::Range<const int32_t*>(indices.data(), size),
         result64.data());
     for (auto i = 0; i < size; ++i) {
       EXPECT_EQ(data64[indices[i]], result64[i]);
