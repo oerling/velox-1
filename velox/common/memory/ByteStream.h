@@ -23,7 +23,6 @@
 #include <folly/io/IOBuf.h>
 #include <memory>
 
-
 namespace facebook::velox {
 
 struct ByteRange {

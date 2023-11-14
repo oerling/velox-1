@@ -274,7 +274,6 @@ void ByteStream::appendStringView(StringView value) {
 }
 
 void ByteStream::appendStringView(std::string_view value) {
-
   const int32_t bytes = value.size();
   int32_t offset = 0;
   for (;;) {

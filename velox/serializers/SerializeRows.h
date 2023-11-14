@@ -331,7 +331,7 @@ void appendStrings(
   for (auto i = 0; i < numInnerRows; ++i) {
     auto& view = views[rows[innerRows[i]]];
     stream->values().appendStringView(
-	    std::string_view(view.data(), view.size()));
+        std::string_view(view.data(), view.size()));
   }
 }
 
