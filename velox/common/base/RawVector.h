@@ -45,9 +45,12 @@ class raw_vector {
   }
 
   // Constructs  a copy of 'other'. See operator=. 'data_' must be copied.
-  raw_vector(const raw_vector<T>& other) {
+  raw_vector(const raw_vector<T>& other) = delete;
+#if 0
+{
     *this = other;
   }
+#endif
 
   raw_vector(raw_vector<T>&& other) noexcept {
     *this = std::move(other);
@@ -55,7 +58,9 @@ class raw_vector {
 
   // Moves 'other' to this, leaves 'other' empty, as after default
   // construction.
-  void operator=(const raw_vector<T>& other) {
+  void operator=(const raw_vector<T>& other) = delete; 
+#if 0
+{
     resize(other.size());
     if (other.data_) {
       memcpy(
@@ -64,6 +69,7 @@ class raw_vector {
           bits::roundUp(size_ * sizeof(T), simd::kPadding));
     }
   }
+#endif
 
   void operator=(raw_vector<T>&& other) noexcept {
     data_ = other.data_;
