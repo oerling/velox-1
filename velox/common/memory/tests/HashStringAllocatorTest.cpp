@@ -116,7 +116,7 @@ TEST_F(HashStringAllocatorTest, headerToString) {
   ByteStream stream(allocator_.get());
   auto h4 = allocator_->newWrite(stream).header;
   std::string data(123'456, 'x');
-  stream.appendStringPiece(folly::StringPiece(data.data(), data.size()));
+  stream.appendStringView(data);
   allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(h4->toString(), "|multipart| size: 123 [64913, 58436]");
@@ -168,7 +168,7 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
   auto start = allocator_->newWrite(stream);
 
   // Write a short string.
-  stream.appendStringPiece(folly::StringPiece("abc"));
+  stream.appendStringView(std::string_view("abc"));
   auto [firstStart, firstFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(start.header, firstStart.header);
@@ -177,8 +177,8 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
   // Replace short string with a long string that uses two bytes short of
   // available space.
   allocator_->extendWrite(start, stream);
-  auto longString = std::string(start.header->size() - 2, 'x');
-  stream.appendStringPiece(folly::StringPiece(longString));
+  std::string longString(start.header->size() - 2, 'x');
+  stream.appendStringView(longString);
   auto [longStart, longFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(start.header, longStart.header);
@@ -186,7 +186,7 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
 
   // Append another string after the long string.
   allocator_->extendWrite(longFinish, stream);
-  stream.appendStringPiece(folly::StringPiece("abc"));
+  stream.appendStringView(std::string_view("abc"));
   auto [appendStart, appendFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_NE(appendStart.header, longFinish.header);
@@ -196,7 +196,7 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
 
   // Replace last string.
   allocator_->extendWrite(appendStart, stream);
-  stream.appendStringPiece(folly::StringPiece("abcd"));
+  stream.appendStringView(std::string_view("abcd"));
   auto [replaceStart, replaceFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(appendStart.header, replaceStart.header);
@@ -205,15 +205,15 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
       replaceStart.offset() + 4);
 
   // Read back long and short strings.
-  HSA::prepareRead(longStart.header, stream);
+  auto inputStream = HSA::prepareRead(longStart.header);
 
   std::string copy;
   copy.resize(longString.size());
-  stream.readBytes(copy.data(), copy.size());
+  inputStream.readBytes(copy.data(), copy.size());
   ASSERT_EQ(copy, longString);
 
   copy.resize(4);
-  stream.readBytes(copy.data(), 4);
+  inputStream.readBytes(copy.data(), 4);
   ASSERT_EQ(copy, "abcd");
 
   allocator_->checkConsistency();
@@ -224,13 +224,13 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
     auto largeString = randomString(size);
 
     auto start = allocator_->newWrite(stream);
-    stream.appendStringPiece(folly::StringPiece(largeString));
+    stream.appendStringView(largeString);
     allocator_->finishWrite(stream, 0);
 
-    HSA::prepareRead(start.header, stream);
+    auto inStream = HSA::prepareRead(start.header);
     std::string copy;
     copy.resize(largeString.size());
-    stream.readBytes(copy.data(), copy.size());
+    inStream.readBytes(copy.data(), copy.size());
     ASSERT_EQ(copy, largeString);
     allocator_->checkConsistency();
   }
@@ -263,7 +263,7 @@ TEST_F(HashStringAllocatorTest, multipart) {
         EXPECT_EQ(
             data[i].start.header, HSA::headerOf(stream.ranges()[0].buffer));
       }
-      stream.appendStringPiece(folly::StringPiece(chars.data(), chars.size()));
+      stream.appendStringView(chars);
       auto reserve = rand32() % 100;
       data[i].current = allocator_->finishWrite(stream, reserve).second;
       data[i].reference.insert(
@@ -310,10 +310,10 @@ TEST_F(HashStringAllocatorTest, rewrite) {
     stream.appendOne(67890LL);
     position = allocator_->finishWrite(stream, 0).second;
     EXPECT_EQ(3 * sizeof(int64_t), HSA::offset(header, position));
-    HSA::prepareRead(header, stream);
-    EXPECT_EQ(123456789012345LL, stream.read<int64_t>());
-    EXPECT_EQ(12345LL, stream.read<int64_t>());
-    EXPECT_EQ(67890LL, stream.read<int64_t>());
+    auto inStream = HSA::prepareRead(header);
+    EXPECT_EQ(123456789012345LL, inStream.read<int64_t>());
+    EXPECT_EQ(12345LL, inStream.read<int64_t>());
+    EXPECT_EQ(67890LL, inStream.read<int64_t>());
   }
   // The stream contains 3 int64_t's.
   auto end = HSA::seek(header, 3 * sizeof(int64_t));

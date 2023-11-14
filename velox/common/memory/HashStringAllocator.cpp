@@ -123,7 +123,7 @@ void HashStringAllocator::freeToPool(void* ptr, size_t size) {
 }
 
 // static
-void HashStringAllocator::prepareRead(const Header* begin, ByteStream& stream) {
+ByteInputStream HashStringAllocator::prepareRead(const Header* begin) {
   std::vector<ByteRange> ranges;
   auto header = const_cast<Header*>(begin);
   for (;;) {
@@ -134,7 +134,7 @@ void HashStringAllocator::prepareRead(const Header* begin, ByteStream& stream) {
     }
     header = header->nextContinued();
   }
-  stream.resetInput(std::move(ranges));
+  return ByteInputStream(std::move(ranges));
 }
 
 HashStringAllocator::Position HashStringAllocator::newWrite(
@@ -289,8 +289,7 @@ StringView HashStringAllocator::contiguousString(
     return view;
   }
 
-  ByteStream stream;
-  prepareRead(headerOf(view.data()), stream);
+  auto stream = prepareRead(headerOf(view.data()));
   storage.resize(view.size());
   stream.readBytes(storage.data(), view.size());
   return StringView(storage);
@@ -325,7 +324,7 @@ void HashStringAllocator::removeFromFreeList(Header* header) {
 HashStringAllocator::Header* FOLLY_NULLABLE
 HashStringAllocator::allocate(int32_t size, bool exactSize) {
   if (size > kMaxAlloc && exactSize) {
-    VELOX_CHECK(size <= Header::kSizeMask);
+    VELOX_CHECK_LE(size, Header::kSizeMask);
     auto header =
         reinterpret_cast<Header*>(allocateFromPool(size + sizeof(Header)));
     new (header) Header(size);
@@ -582,7 +581,7 @@ void HashStringAllocator::copyMultipartNoInline(
   // Write the string as non-contiguous chunks.
   ByteStream stream(this, false, false);
   auto position = newWrite(stream, numBytes);
-  stream.appendStringPiece(folly::StringPiece(string->data(), numBytes));
+  stream.appendStringView(*string);
   finishWrite(stream, 0);
 
   // The stringView has a pointer to the first byte and the total

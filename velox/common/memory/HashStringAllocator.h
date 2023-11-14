@@ -63,7 +63,7 @@ class HashStringAllocator : public StreamArena {
     static constexpr uint32_t kArenaEnd = 0xf0aeab0d;
 
     explicit Header(uint32_t size) : data_(size) {
-      VELOX_CHECK(size <= kSizeMask);
+      VELOX_CHECK_LE(size, kSizeMask);
     }
 
     bool isContinued() const {
@@ -115,7 +115,7 @@ class HashStringAllocator : public StreamArena {
     }
 
     void setSize(int32_t size) {
-      VELOX_CHECK(size <= kSizeMask);
+      VELOX_CHECK_LE(size, kSizeMask);
       data_ = size | (data_ & ~kSizeMask);
     }
 
@@ -237,11 +237,9 @@ class HashStringAllocator : public StreamArena {
         1;
   }
 
-  // Sets 'stream' to range over the data in the range of 'header' and
+  // Returns ByteInputStream over the data in the range of 'header' and
   // possible continuation ranges.
-  static void prepareRead(
-      const Header* FOLLY_NONNULL header,
-      ByteStream& stream);
+  static ByteInputStream prepareRead(const Header* header);
 
   // Returns the number of payload bytes between 'header->begin()' and
   // 'position'.

@@ -124,14 +124,12 @@ class PrestoSerializerTest
     }
   }
 
-  std::unique_ptr<ByteStream> toByteStream(const std::string& input) {
-    auto byteStream = std::make_unique<ByteStream>();
+  ByteInputStream toByteStream(const std::string& input) {
     ByteRange byteRange{
         reinterpret_cast<uint8_t*>(const_cast<char*>(input.data())),
         (int32_t)input.length(),
         0};
-    byteStream->resetInput({byteRange});
-    return byteStream;
+    return ByteInputStream({byteRange});
   }
 
   RowVectorPtr deserialize(
@@ -143,7 +141,7 @@ class PrestoSerializerTest
     auto paramOptions = getParamSerdeOptions(serdeOptions);
     RowVectorPtr result;
     serde_->deserialize(
-        byteStream.get(), pool_.get(), rowType, &result, 0, &paramOptions);
+        &byteStream, pool_.get(), rowType, &result, 0, &paramOptions);
     return result;
   }
 
@@ -193,12 +191,7 @@ class PrestoSerializerTest
     for (auto i = 0; i < serialized.size(); ++i) {
       auto byteStream = toByteStream(serialized[i]);
       serde_->deserialize(
-          byteStream.get(),
-          pool_.get(),
-          rowType,
-          &result,
-          offset,
-          &paramOptions);
+          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
       offset = result->size();
     }
 
@@ -276,12 +269,7 @@ class PrestoSerializerTest
     for (auto i = 0; i < 3; ++i) {
       auto byteStream = toByteStream(serialized);
       serde_->deserialize(
-          byteStream.get(),
-          pool_.get(),
-          rowType,
-          &result,
-          offset,
-          &paramOptions);
+          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
       offset = result->size();
     }
 
@@ -430,16 +418,11 @@ TEST_P(PrestoSerializerTest, multiPage) {
   for (int i = 0; i < testVectors.size(); i++) {
     RowVectorPtr& vec = testVectors[i];
     serde_->deserialize(
-        byteStream.get(),
-        pool_.get(),
-        rowType,
-        &deserialized,
-        0,
-        &paramOptions);
+        &byteStream, pool_.get(), rowType, &deserialized, 0, &paramOptions);
     if (i < testVectors.size() - 1) {
-      ASSERT_FALSE(byteStream->atEnd());
+      ASSERT_FALSE(byteStream.atEnd());
     } else {
-      ASSERT_TRUE(byteStream->atEnd());
+      ASSERT_TRUE(byteStream.atEnd());
     }
     assertEqualVectors(deserialized, vec);
     deserialized->validate({});

@@ -315,8 +315,8 @@ void appendStrings(
     });
     for (auto i = 0; i < rows.size(); ++i) {
       auto& view = views[rows[i]];
-      stream->values().appendStringPiece(
-          folly::StringPiece(view.data(), view.size()));
+      stream->values().appendStringView(
+          std::string_view(view.data(), view.size()));
     }
     return;
   }
@@ -330,8 +330,8 @@ void appendStrings(
       nulls, rows, numInnerRows, [&](auto row) { return views[row].size(); });
   for (auto i = 0; i < numInnerRows; ++i) {
     auto& view = views[rows[innerRows[i]]];
-    stream->values().appendStringPiece(
-        folly::StringPiece(view.data(), view.size()));
+    stream->values().appendStringView(
+	    std::string_view(view.data(), view.size()));
   }
 }
 
