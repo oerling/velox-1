@@ -81,7 +81,7 @@ class Scratch {
       items_ = newItems;
       capacity_ = newCapacity;
     }
-    fill_ = std::min(fill_, capacity_);
+    fill_ = std::min(fill_, newCapacity);
   }
 
   Item* items_{nullptr};
