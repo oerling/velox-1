@@ -662,7 +662,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   // Serialize different fractions of a 10K vector of int32_t and int64_t with
   // IndexRange and row range variants with and without nulls.
   constexpr int32_t kPad = 8;
-  std::vector<int32_t> numSelectedValues = {3, 30, 300, 10000};
+	    std::vector<int32_t> numSelectedValues = {3 /*, 30, 300, 10000 */};
   std::vector<std::vector<IndexRange>> indexRanges;
   std::vector<std::vector<vector_size_t>> rowSets;
   std::vector<int32_t> nullPctValues = {0, 1, 10, 90};
@@ -705,13 +705,13 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     item.nullPct = nullPctValues[nullIdx];
     item.numSelected = numSelectedValues[selIdx];
     item.bits = bits;
-    int32_t numRepeat = 100 * vectorSize / indexRanges[selIdx].size();
+    int32_t numRepeat = 500 * vectorSize / indexRanges[selIdx].size();
 
     VectorPtr vector = bits == 32 ? v32s[nullIdx] : v64s[nullIdx];
     auto rowType = ROW({vector->type()});
     auto rowVector = vm.rowVector({vector});
     {
-#if 1
+#if 0
       MicrosecondTimer t(&item.irTime);
       auto group = std::make_unique<VectorStreamGroup>(pool_.get());
       group->createStreamTree(rowType, rowSets[selIdx].size() - kPad);

@@ -1203,19 +1203,29 @@ class VectorStream {
     lengths_.appendOne<int32_t>(totalLength_);
   }
 
-  void appendNulls(const uint64_t* nulls, int32_t begin, int32_t end, int32_t numNonNull) {
+  void appendNulls(
+      const uint64_t* nulls,
+      int32_t begin,
+      int32_t end,
+      int32_t numNonNull) {
     VELOX_DCHECK_EQ(numNonNull, bits::countBits(nulls, begin, end));
-    const auto numNulls = (end - begin) - numNonNull;
+    const auto numRows = end - begin;
+    const auto numNulls = numRows - numNonNull;
     if (numNulls == 0 && nullCount_ == 0) {
       nonNullCount_ += numNonNull;
       return;
     }
-    if (numNulls > 0 && nonNullCount_ && nullCount_ == 0) {
+    if (UNLIKELY(numNulls > 0 && nonNullCount_ > 0 && nullCount_ == 0)) {
+      // There were only non-nulls up until now. Add the bits for them.
       nulls_.appendBool(false, nonNullCount_);
     }
     nullCount_ += numNulls;
     nonNullCount_ += numNonNull;
-    const auto numRows = end - begin;
+    if (LIKELY(end <= 64)) {
+      uint64_t inverted = ~nulls[0];
+      nulls_.appendBits(&inverted, begin, end);
+      return;
+    }
     const int32_t firstWord = begin >> 6;
     const int32_t firstBit = begin & 63;
     const auto numWords = bits::nwords(numRows + firstBit);
