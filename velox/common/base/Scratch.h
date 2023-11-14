@@ -122,7 +122,7 @@ class ScratchPtr {
     VELOX_CHECK(data_.empty());
     data_ = std::move(scratch_->get());
     data_.resize(size * sizeof(T));
-    
+
     ptr_ = reinterpret_cast<T*>(data_.data());
     return ptr_;
   }

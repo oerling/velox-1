@@ -59,7 +59,8 @@ int32_t rowsToRanges(
     auto* mutableInnerRows = innerRowsHolder.get(numRows);
     numInner = simd::indicesOfSetBits(nulls, 0, numRows, mutableNonNullRows);
     if (stream) {
-      stream->appendLengths(nulls, rows, numInner, [&](auto row) { return sizes[row]; });
+      stream->appendLengths(
+          nulls, rows, numInner, [&](auto row) { return sizes[row]; });
     }
     simd::translate(
         rows.data(),
@@ -238,7 +239,7 @@ void copyWordsWithRows(
 
 template <typename T>
 void appendNonNull(
-		   VectorStream* stream,
+    VectorStream* stream,
     const uint64_t* nulls,
     folly::Range<const vector_size_t*> rows,
     const T* values,
@@ -295,8 +296,9 @@ void appendStrings(
     VectorStream* stream,
     Scratch& scratch) {
   if (!nulls) {
-    stream->appendLengths(
-			  nullptr, rows, rows.size(), [&](auto row) { return views[row].size(); });
+    stream->appendLengths(nullptr, rows, rows.size(), [&](auto row) {
+      return views[row].size();
+    });
     for (auto i = 0; i < rows.size(); ++i) {
       auto& view = views[rows[i]];
       stream->values().appendStringPiece(
@@ -310,7 +312,8 @@ void appendStrings(
   auto mutableInner = innerRowsHolder.get(rows.size());
   numInnerRows = simd::indicesOfSetBits(nulls, 0, rows.size(), mutableInner);
   innerRows = mutableInner;
-  stream->appendLengths(nulls, rows, numInnerRows, [&](auto row) { return views[row].size(); });
+  stream->appendLengths(
+      nulls, rows, numInnerRows, [&](auto row) { return views[row].size(); });
   for (auto i = 0; i < numInnerRows; ++i) {
     auto& view = views[rows[innerRows[i]]];
     stream->values().appendStringPiece(
@@ -529,7 +532,8 @@ void serializeRowVector(
         mutableInnerRows);
     innerRows = mutableInnerRows;
   } else {
-    stream->appendLengths(nullptr, rows, rows.size(), [](int32_t) { return 1; });
+    stream->appendLengths(
+        nullptr, rows, rows.size(), [](int32_t) { return 1; });
   }
   for (int32_t i = 0; i < rowVector->childrenSize(); ++i) {
     serializeColumn(

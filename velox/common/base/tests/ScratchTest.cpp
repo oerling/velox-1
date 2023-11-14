@@ -64,4 +64,3 @@ TEST(ScratchTest, large) {
   }
   EXPECT_EQ(0, scratch.retainedSize());
 }
-

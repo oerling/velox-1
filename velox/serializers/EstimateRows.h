@@ -39,22 +39,22 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
   auto strings = static_cast<const FlatVector<StringView>*>(vector);
   auto rawNulls = strings->rawNulls();
   auto rawValues = strings->rawValues();
-    if (!rawNulls) {
-      for (auto i = 0; i < rows.size(); ++i) {
-	*sizes[i] += rawValues[rows[i]].size();
-      }
-    } else {
-      ScratchPtr<uint64_t> nullsHolder(scratch);
-      ScratchPtr<int32_t> nonNullsHolder(scratch);
-      auto nulls = nullsHolder.get(bits::nwords(numRows));
-      gatherBits(rawNulls, rows, nulls);
-      auto* nonNulls = nonNullsHolder.get(numRows);
-      auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNulls);
-      
-      for (int32_t i = 0; i < numNonNull; ++i) {
-	*sizes[nonNulls[i]] += rawValues[rows[nonNulls[i]]].size();
-      }
+  if (!rawNulls) {
+    for (auto i = 0; i < rows.size(); ++i) {
+      *sizes[i] += rawValues[rows[i]].size();
     }
+  } else {
+    ScratchPtr<uint64_t> nullsHolder(scratch);
+    ScratchPtr<int32_t> nonNullsHolder(scratch);
+    auto nulls = nullsHolder.get(bits::nwords(numRows));
+    gatherBits(rawNulls, rows, nulls);
+    auto* nonNulls = nonNullsHolder.get(numRows);
+    auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNulls);
+
+    for (int32_t i = 0; i < numNonNull; ++i) {
+      *sizes[nonNulls[i]] += rawValues[rows[nonNulls[i]]].size();
+    }
+  }
 }
 
 template <>
@@ -164,8 +164,8 @@ void estimateSerializedSizeInt(
   }
   switch (vector->encoding()) {
     case VectorEncoding::Simple::FLAT: {
-            VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
-					       estimateFlatSerializedSize,
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          estimateFlatSerializedSize,
           vector->typeKind(),
           vector,
           rows,
@@ -206,7 +206,10 @@ void estimateSerializedSizeInt(
         for (auto i = 0; i < numInner; ++i) {
           innerSizes[i] = sizes[mutableInnerRows[i]];
         }
-	simd::translate(rows.data(), folly::Range<const vector_size_t*>(mutableInnerRows, numInner), mutableInnerRows);
+        simd::translate(
+            rows.data(),
+            folly::Range<const vector_size_t*>(mutableInnerRows, numInner),
+            mutableInnerRows);
         innerRows = mutableInnerRows;
       }
       auto rowVector = vector->as<RowVector>();
@@ -237,7 +240,7 @@ void estimateSerializedSizeInt(
           nullptr,
           scratch);
       if (numRanges == 0) {
-	return;
+        return;
       }
       estimateSerializedSizeInt(
           mapVector->mapKeys().get(),
@@ -266,7 +269,7 @@ void estimateSerializedSizeInt(
           nullptr,
           scratch);
       if (numRanges == 0) {
-	return;
+        return;
       }
       estimateSerializedSizeInt(
           arrayVector->elements().get(),

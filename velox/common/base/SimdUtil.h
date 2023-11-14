@@ -408,15 +408,13 @@ inline void storeLeading(
 #endif
 }
 
-/// Stores elements of 'input' selected by 'indices' into 'output'. output[i] = input[indices[i]].
+/// Stores elements of 'input' selected by 'indices' into 'output'. output[i] =
+/// input[indices[i]].
 // Indices and output may be the same.
-template <
-    typename TData,
-    typename TIndex,
-    typename A = xsimd::default_arch>
+template <typename TData, typename TIndex, typename A = xsimd::default_arch>
 inline void translate(
-		      const TData* input,
-		      folly::Range<const TIndex*> indices,
+    const TData* input,
+    folly::Range<const TIndex*> indices,
     TData* output) {
   constexpr int32_t kBatch = xsimd::batch<TData>::size;
   const auto size = indices.size();
