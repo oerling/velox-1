@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-
-
 void estimateSerializedSizeInt(
     const BaseVector* vector,
     const folly::Range<const vector_size_t*>& rows,

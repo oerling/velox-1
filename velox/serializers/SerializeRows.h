@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 void gatherBits(
     const uint64_t* bits,
     folly::Range<const vector_size_t*> rows,
