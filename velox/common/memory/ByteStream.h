@@ -376,8 +376,6 @@ class ByteStream {
 
   void appendBits(const uint64_t* vits, int32_t begin, int32_t end);
 
-  void appendStringPiece(folly::StringPiece value);
-
   void appendStringView(StringView value);
 
   void appendStringView(std::string_view value);
@@ -448,7 +446,7 @@ class AppendWindow {
 
   ~AppendWindow() {
     if (scratchPtr_.hasData()) {
-      stream_.appendStringPiece(folly::StringPiece(
+      stream_.appendStringView(std::string_view(
           scratchPtr_.data().data(), scratchPtr_.data().size()));
     }
   }
