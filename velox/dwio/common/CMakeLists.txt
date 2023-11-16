@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+add_subdirectory(compression)
 add_subdirectory(encryption)
 add_subdirectory(exception)
 
@@ -27,17 +28,21 @@ add_library(
   BufferedInput.cpp
   CachedBufferedInput.cpp
   CacheInputStream.cpp
+  DirectBufferedInput.cpp
+  DirectInputStream.cpp
   ColumnSelector.cpp
-  DataSink.cpp
+  DataBufferHolder.cpp
   DecoderUtil.cpp
   DirectDecoder.cpp
   DwioMetricsLog.cpp
+  ExecutorBarrier.cpp
+  FileSink.cpp
   FlatMapHelper.cpp
   InputStream.cpp
   IntDecoder.cpp
-  IoStatistics.cpp
   MetadataFilter.cpp
   Options.cpp
+  OutputStream.cpp
   Range.cpp
   Reader.cpp
   ReaderFactory.cpp
@@ -50,7 +55,10 @@ add_library(
   SeekableInputStream.cpp
   TypeUtils.cpp
   TypeWithId.cpp
-  WriterFactory.cpp)
+  Writer.cpp
+  WriterFactory.cpp
+  SortingWriter.cpp
+  SortingWriter.h)
 
 target_include_directories(velox_dwio_common PRIVATE ${Protobuf_INCLUDE_DIRS})
 
@@ -58,12 +66,14 @@ target_link_libraries(
   velox_dwio_common
   velox_buffer
   velox_caching
+  velox_common_io
   velox_common_compression
   velox_dwio_common_encryption
   velox_dwio_common_exception
   velox_exception
   velox_expression
   velox_memory
+  velox_exec
   Boost::regex
   Folly::folly
   glog::glog)

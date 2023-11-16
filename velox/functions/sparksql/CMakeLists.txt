@@ -16,7 +16,9 @@ add_library(
   velox_functions_spark
   ArraySort.cpp
   Bitwise.cpp
-  CompareFunctionsNullSafe.cpp
+  Comparisons.cpp
+  DecimalArithmetic.cpp
+  DecimalCompare.cpp
   Hash.cpp
   In.cpp
   LeastGreatest.cpp
@@ -27,7 +29,8 @@ add_library(
   RegisterCompare.cpp
   Size.cpp
   SplitFunctions.cpp
-  String.cpp)
+  String.cpp
+  UnscaledValueFunction.cpp)
 
 # GCC 12 has a bug where it does not respect "pragma ignore" directives and ends
 # up failing compilation in an openssl header included by a hash-related

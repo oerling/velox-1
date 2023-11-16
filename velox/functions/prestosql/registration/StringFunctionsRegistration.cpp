@@ -17,6 +17,7 @@
 #include "velox/functions/lib/Re2Functions.h"
 #include "velox/functions/prestosql/RegexpReplace.h"
 #include "velox/functions/prestosql/SplitPart.h"
+#include "velox/functions/prestosql/SplitToMap.h"
 #include "velox/functions/prestosql/StringFunctions.h"
 
 namespace facebook::velox::functions {
@@ -39,6 +40,15 @@ void registerSimpleFunctions(const std::string& prefix) {
       {prefix + "levenshtein_distance"});
   registerFunction<LengthFunction, int64_t, Varchar>({prefix + "length"});
 
+  // Length for varbinary have different semantics.
+  registerFunction<LengthVarbinaryFunction, int64_t, Varbinary>(
+      {prefix + "length"});
+
+  registerFunction<StartsWithFunction, bool, Varchar, Varchar>(
+      {prefix + "starts_with"});
+  registerFunction<EndsWithFunction, bool, Varchar, Varchar>(
+      {prefix + "ends_with"});
+
   registerFunction<SubstrFunction, Varchar, Varchar, int64_t>(
       {prefix + "substr"});
   registerFunction<SubstrFunction, Varchar, Varchar, int64_t, int64_t>(
@@ -52,8 +62,13 @@ void registerSimpleFunctions(const std::string& prefix) {
       {prefix + "split_part"});
 
   registerFunction<TrimFunction, Varchar, Varchar>({prefix + "trim"});
+  registerFunction<TrimFunction, Varchar, Varchar, Varchar>({prefix + "trim"});
   registerFunction<LTrimFunction, Varchar, Varchar>({prefix + "ltrim"});
+  registerFunction<LTrimFunction, Varchar, Varchar, Varchar>(
+      {prefix + "ltrim"});
   registerFunction<RTrimFunction, Varchar, Varchar>({prefix + "rtrim"});
+  registerFunction<RTrimFunction, Varchar, Varchar, Varchar>(
+      {prefix + "rtrim"});
 
   registerFunction<LPadFunction, Varchar, Varchar, int64_t, Varchar>(
       {prefix + "lpad"});
@@ -78,6 +93,12 @@ void registerStringFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_lower, prefix + "lower");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_upper, prefix + "upper");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_split, prefix + "split");
+  registerFunction<
+      SplitToMapFunction,
+      Map<Varchar, Varchar>,
+      Varchar,
+      Varchar,
+      Varchar>({prefix + "split_to_map"});
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat, prefix + "concat");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_replace, prefix + "replace");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_reverse, prefix + "reverse");

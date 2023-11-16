@@ -29,7 +29,10 @@ ScopedContextSaver::~ScopedContextSaver() {
 }
 
 EvalCtx::EvalCtx(core::ExecCtx* execCtx, ExprSet* exprSet, const RowVector* row)
-    : execCtx_(execCtx), exprSet_(exprSet), row_(row) {
+    : execCtx_(execCtx),
+      exprSet_(exprSet),
+      row_(row),
+      cacheEnabled_(execCtx->exprEvalCacheEnabled()) {
   // TODO Change the API to replace raw pointers with non-const references.
   // Sanity check inputs to prevent crashes.
   VELOX_CHECK_NOT_NULL(execCtx);
@@ -47,7 +50,10 @@ EvalCtx::EvalCtx(core::ExecCtx* execCtx, ExprSet* exprSet, const RowVector* row)
 }
 
 EvalCtx::EvalCtx(core::ExecCtx* execCtx)
-    : execCtx_(execCtx), exprSet_(nullptr), row_(nullptr) {
+    : execCtx_(execCtx),
+      exprSet_(nullptr),
+      row_(nullptr),
+      cacheEnabled_(execCtx->exprEvalCacheEnabled()) {
   VELOX_CHECK_NOT_NULL(execCtx);
 }
 
@@ -219,11 +225,13 @@ void EvalCtx::convertElementErrorsToTopLevelNulls(
     return;
   }
 
+  auto rawNulls = result->mutableRawNulls();
+
   const auto* rawElementToTopLevelRows =
       elementToTopLevelRows->as<vector_size_t>();
   elementRows.applyToSelected([&](auto row) {
     if (errors_->isIndexInRange(row) && !errors_->isNullAt(row)) {
-      result->setNull(rawElementToTopLevelRows[row], true);
+      bits::setNull(rawNulls, rawElementToTopLevelRows[row], true);
     }
   });
 }
@@ -269,6 +277,108 @@ VectorPtr EvalCtx::ensureFieldLoaded(
   }
 
   return field;
+}
+
+// Utility function used to extend the size of a complex Vector by wrapping it
+// in a dictionary with identity mapping for existing rows.
+// Note: If targetSize < the current size of the vector, then the result will
+// have the same size as the input vector.
+VectorPtr extendSizeByWrappingInDictionary(
+    VectorPtr& vector,
+    vector_size_t targetSize,
+    EvalCtx& context) {
+  auto currentSize = vector->size();
+  targetSize = std::max(targetSize, currentSize);
+  VELOX_DCHECK(
+      !vector->type()->isPrimitiveType(), "Only used for complex types.");
+  BufferPtr indices = allocateIndices(targetSize, context.pool());
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  // Only fill in indices for existing rows in the vector.
+  std::iota(rawIndices, rawIndices + currentSize, 0);
+  // A nulls buffer is required otherwise wrapInDictionary() can return a
+  // constant. Moreover, nulls will eventually be added, so it's not wasteful.
+  auto nulls = allocateNulls(targetSize, context.pool());
+  return BaseVector::wrapInDictionary(
+      std::move(nulls), std::move(indices), targetSize, std::move(vector));
+}
+
+// Utility function used to resize a primitive type vector while ensuring that
+// the result has all unique and writable buffers.
+void resizePrimitiveTypeVectors(
+    VectorPtr& vector,
+    vector_size_t targetSize,
+    EvalCtx& context) {
+  VELOX_DCHECK(
+      vector->type()->isPrimitiveType(), "Only used for primitive types.");
+  auto currentSize = vector->size();
+  LocalSelectivityVector extraRows(context, targetSize);
+  extraRows->setValidRange(0, currentSize, false);
+  extraRows->setValidRange(currentSize, targetSize, true);
+  extraRows->updateBounds();
+  BaseVector::ensureWritable(
+      *extraRows, vector->type(), context.pool(), vector);
+}
+
+// static
+void EvalCtx::addNulls(
+    const SelectivityVector& rows,
+    const uint64_t* rawNulls,
+    EvalCtx& context,
+    const TypePtr& type,
+    VectorPtr& result) {
+  // If there's no `result` yet, return a NULL ContantVector.
+  if (!result) {
+    result = BaseVector::createNullConstant(type, rows.end(), context.pool());
+    return;
+  }
+
+  // If result is already a NULL ConstantVector, resize the vector if necessary,
+  // or do nothing otherwise.
+  if (result->isConstantEncoding() && result->isNullAt(0)) {
+    if (result->size() < rows.end()) {
+      if (result.unique()) {
+        result->resize(rows.end());
+      } else {
+        result =
+            BaseVector::createNullConstant(type, rows.end(), context.pool());
+      }
+    }
+    return;
+  }
+
+  auto currentSize = result->size();
+  auto targetSize = rows.end();
+  if (!result.unique() || !result->isNullsWritable()) {
+    if (result->type()->isPrimitiveType()) {
+      if (currentSize < targetSize) {
+        resizePrimitiveTypeVectors(result, targetSize, context);
+      } else {
+        BaseVector::ensureWritable(
+            SelectivityVector::empty(), type, context.pool(), result);
+      }
+    } else {
+      result = extendSizeByWrappingInDictionary(result, targetSize, context);
+    }
+  } else if (currentSize < targetSize) {
+    VELOX_DCHECK(
+        !result->isConstantEncoding(),
+        "Should have been handled in code-path for !isNullsWritable()");
+    if (VectorEncoding::isDictionary(result->encoding())) {
+      // We can just resize the dictionary layer in-place. It also ensures
+      // indices buffer is unique after resize.
+      result->resize(targetSize);
+    } else {
+      if (result->type()->isPrimitiveType()) {
+        // A flat vector can still have a shared values_ buffer so we ensure all
+        // its buffers are unique while resizing.
+        resizePrimitiveTypeVectors(result, targetSize, context);
+      } else {
+        result = extendSizeByWrappingInDictionary(result, targetSize, context);
+      }
+    }
+  }
+
+  result->addNulls(rawNulls, rows);
 }
 
 ScopedFinalSelectionSetter::ScopedFinalSelectionSetter(

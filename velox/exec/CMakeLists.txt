@@ -43,6 +43,7 @@ add_library(
   LocalPartition.cpp
   LocalPlanner.cpp
   MarkDistinct.cpp
+  MemoryReclaimer.cpp
   Merge.cpp
   MergeJoin.cpp
   MergeSource.cpp
@@ -52,16 +53,21 @@ add_library(
   OperatorUtils.cpp
   OrderBy.cpp
   PartitionedOutput.cpp
-  PartitionedOutputBufferManager.cpp
+  OutputBuffer.cpp
+  OutputBufferManager.cpp
   PlanNodeStats.cpp
   ProbeOperatorState.cpp
   RowContainer.cpp
   RowNumber.cpp
+  SharedArbitrator.cpp
+  SortBuffer.cpp
   SortedAggregations.cpp
+  SortWindowBuild.cpp
   Spill.cpp
   SpillOperatorGroup.cpp
   Spiller.cpp
   StreamingAggregation.cpp
+  StreamingWindowBuild.cpp
   Strings.cpp
   TableScan.cpp
   TableWriteMerge.cpp
@@ -73,6 +79,7 @@ add_library(
   Values.cpp
   VectorHasher.cpp
   Window.cpp
+  WindowBuild.cpp
   WindowFunction.cpp
   WindowPartition.cpp
   AssignUniqueId.cpp
@@ -88,7 +95,8 @@ target_link_libraries(
   # velox_codegen
   velox_common_base
   velox_test_util
-  velox_arrow_bridge)
+  velox_arrow_bridge
+  velox_common_compression)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

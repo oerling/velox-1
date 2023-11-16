@@ -55,25 +55,40 @@ NestedLoopJoinProbe::NestedLoopJoinProbe(
           joinNode->id(),
           "NestedLoopJoinProbe"),
       outputBatchSize_{outputBatchRows()},
-      joinType_(joinNode->joinType()) {
-  auto probeType = joinNode->sources()[0]->outputType();
-  auto buildType = joinNode->sources()[1]->outputType();
+      joinNode_(joinNode),
+      joinType_(joinNode_->joinType()) {
+  auto probeType = joinNode_->sources()[0]->outputType();
+  auto buildType = joinNode_->sources()[1]->outputType();
   identityProjections_ = extractProjections(probeType, outputType_);
   buildProjections_ = extractProjections(buildType, outputType_);
+}
 
-  if (joinNode->joinCondition() != nullptr) {
+void NestedLoopJoinProbe::initialize() {
+  Operator::initialize();
+
+  VELOX_CHECK(joinNode_ != nullptr);
+  if (joinNode_->joinCondition() != nullptr) {
     initializeFilter(
-        joinNode->joinCondition(),
-        joinNode->sources()[0]->outputType(),
-        joinNode->sources()[1]->outputType());
+        joinNode_->joinCondition(),
+        joinNode_->sources()[0]->outputType(),
+        joinNode_->sources()[1]->outputType());
   }
+
+  joinNode_.reset();
 }
 
 BlockingReason NestedLoopJoinProbe::isBlocked(ContinueFuture* future) {
   switch (state_) {
     case ProbeOperatorState::kRunning:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case ProbeOperatorState::kFinish:
+      return BlockingReason::kNotBlocked;
+    case ProbeOperatorState::kWaitForPeers:
+      if (future_.valid()) {
+        *future = std::move(future_);
+        return BlockingReason::kWaitForJoinProbe;
+      }
+      setState(ProbeOperatorState::kFinish);
       return BlockingReason::kNotBlocked;
     case ProbeOperatorState::kWaitForBuild: {
       VELOX_CHECK(!buildVectors_.has_value());
@@ -120,7 +135,8 @@ void NestedLoopJoinProbe::addInput(RowVectorPtr input) {
 }
 
 RowVectorPtr NestedLoopJoinProbe::getOutput() {
-  if (isFinished()) {
+  if (state_ == ProbeOperatorState::kFinish ||
+      state_ == ProbeOperatorState::kWaitForPeers) {
     return nullptr;
   }
   RowVectorPtr output{nullptr};
@@ -222,7 +238,7 @@ RowVectorPtr NestedLoopJoinProbe::getMismatchedOutput(
     BufferPtr& unmatchedMapping,
     const std::vector<IdentityProjection>& projections,
     const std::vector<IdentityProjection>& nullProjections) {
-  if (matched.isAllSelected()) {
+  if (matched.isAllSelected() || joinCondition_ == nullptr) {
     return nullptr;
   }
 
@@ -236,14 +252,16 @@ RowVectorPtr NestedLoopJoinProbe::getMismatchedOutput(
   }
   VELOX_CHECK_GT(numUnmatched, 0);
 
-  auto output =
-      BaseVector::create<RowVector>(outputType_, numUnmatched, pool());
-  projectChildren(output, data, projections, numUnmatched, unmatchedMapping);
-  for (auto projection : nullProjections) {
-    output->childAt(projection.outputChannel) = BaseVector::createNullConstant(
-        outputType_->childAt(projection.outputChannel), output->size(), pool());
+  std::vector<VectorPtr> projectedChildren(outputType_->size());
+  projectChildren(
+      projectedChildren, data, projections, numUnmatched, unmatchedMapping);
+  for (auto [_, outputChannel] : nullProjections) {
+    VELOX_CHECK_GT(projectedChildren.size(), outputChannel);
+    projectedChildren[outputChannel] = BaseVector::createNullConstant(
+        outputType_->childAt(outputChannel), numUnmatched, pool());
   }
-  return output;
+  return std::make_shared<RowVector>(
+      pool(), outputType_, nullptr, numUnmatched, std::move(projectedChildren));
 }
 
 void NestedLoopJoinProbe::finishProbeInput() {
@@ -278,13 +296,13 @@ void NestedLoopJoinProbe::beginBuildMismatch() {
   std::vector<ContinuePromise> promises;
   std::vector<std::shared_ptr<Driver>> peers;
   if (!operatorCtx_->task()->allPeersFinished(
-          planNodeId(), operatorCtx_->driver(), nullptr, promises, peers)) {
-    setState(ProbeOperatorState::kFinish);
+          planNodeId(), operatorCtx_->driver(), &future_, promises, peers)) {
+    VELOX_CHECK(future_.valid());
+    setState(ProbeOperatorState::kWaitForPeers);
     return;
   }
 
   lastProbe_ = true;
-  VELOX_CHECK(promises.empty());
   // From now on, buildIndex_ is used to indexing into buildMismatched_
   VELOX_CHECK_EQ(buildIndex_, 0);
   for (auto& peer : peers) {
@@ -298,6 +316,9 @@ void NestedLoopJoinProbe::beginBuildMismatch() {
   peers.clear();
   for (auto& matched : buildMatched_) {
     matched.updateBounds();
+  }
+  for (auto& promise : promises) {
+    promise.setValue();
   }
 }
 
@@ -348,8 +369,6 @@ RowVectorPtr NestedLoopJoinProbe::getCrossProduct(
   const auto numOutputRows = probeCnt * buildSize;
   const bool probeCntChanged = (probeCnt != numPrevProbedRows_);
   numPrevProbedRows_ = probeCnt;
-  auto output =
-      BaseVector::create<RowVector>(outputType, numOutputRows, pool());
 
   auto rawProbeIndices =
       initializeRowNumberMapping(probeIndices_, numOutputRows, pool());
@@ -371,15 +390,22 @@ RowVectorPtr NestedLoopJoinProbe::getCrossProduct(
     }
   }
 
+  std::vector<VectorPtr> projectedChildren(outputType->size());
   projectChildren(
-      output, input_, probeProjections, numOutputRows, probeIndices_);
+      projectedChildren,
+      input_,
+      probeProjections,
+      numOutputRows,
+      probeIndices_);
   projectChildren(
-      output,
+      projectedChildren,
       buildVectors_.value()[buildIndex_],
       buildProjections,
       numOutputRows,
       buildIndices_);
-  return output;
+
+  return std::make_shared<RowVector>(
+      pool(), outputType, nullptr, numOutputRows, std::move(projectedChildren));
 }
 
 bool NestedLoopJoinProbe::advanceProbeRows(vector_size_t probeCnt) {
@@ -454,17 +480,27 @@ RowVectorPtr NestedLoopJoinProbe::doMatch(vector_size_t probeCnt) {
   if (numOutputRows == 0) {
     return nullptr;
   }
-  auto output =
-      BaseVector::create<RowVector>(outputType_, numOutputRows, pool());
+
+  std::vector<VectorPtr> projectedChildren(outputType_->size());
   projectChildren(
-      output, input_, identityProjections_, numOutputRows, probeOutMapping_);
+      projectedChildren,
+      input_,
+      identityProjections_,
+      numOutputRows,
+      probeOutMapping_);
   projectChildren(
-      output,
+      projectedChildren,
       buildVectors_.value()[buildIndex_],
       buildProjections_,
       numOutputRows,
       buildOutMapping_);
-  return output;
+
+  return std::make_shared<RowVector>(
+      pool(),
+      outputType_,
+      nullptr,
+      numOutputRows,
+      std::move(projectedChildren));
 }
 
 } // namespace facebook::velox::exec

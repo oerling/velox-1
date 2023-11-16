@@ -17,7 +17,7 @@
 #include "velox/exec/SimpleAggregateAdapter.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/tests/SimpleAggregateFunctionsRegistration.h"
-#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
 
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
@@ -183,6 +183,7 @@ TEST_F(SimpleArrayAggAggregationTest, numbers) {
       {inputVectors},
       {},
       {"simple_array_agg(c2)", "simple_array_agg(c3)"},
+      {"array_sort(a0)", "array_sort(a1)"},
       {expected});
 
   expected = makeRowVector(
@@ -196,6 +197,7 @@ TEST_F(SimpleArrayAggAggregationTest, numbers) {
       {inputVectors},
       {"c0"},
       {"simple_array_agg(c2)", "simple_array_agg(c3)"},
+      {"c0", "array_sort(a0)", "array_sort(a1)"},
       {expected});
 
   expected = makeRowVector(
@@ -209,6 +211,7 @@ TEST_F(SimpleArrayAggAggregationTest, numbers) {
       {inputVectors},
       {"c1"},
       {"simple_array_agg(c2)", "simple_array_agg(c3)"},
+      {"c1", "array_sort(a0)", "array_sort(a1)"},
       {expected});
 
   inputVectors = makeRowVector({makeNullableFlatVector<int64_t>(
@@ -248,6 +251,7 @@ TEST_F(SimpleArrayAggAggregationTest, nestedArray) {
       {inputVectors},
       {"c0"},
       {"simple_array_agg(c1)", "simple_array_agg(c2)"},
+      {"c0", "array_sort(a0)", "array_sort(a1)"},
       {expected});
 
   expected = makeRowVector(
@@ -269,7 +273,78 @@ TEST_F(SimpleArrayAggAggregationTest, nestedArray) {
       {inputVectors},
       {},
       {"simple_array_agg(c1)", "simple_array_agg(c2)"},
+      {"array_sort(a0)", "array_sort(a1)"},
       {expected});
+}
+
+TEST_F(SimpleArrayAggAggregationTest, trackRowSize) {
+  core::QueryConfig queryConfig({});
+  auto testTractRowSize = [&](core::AggregationNode::Step step,
+                              const VectorPtr& input,
+                              bool testGlobal) {
+    auto fn = Aggregate::create(
+        "simple_array_agg",
+        isPartialOutput(step) ? core::AggregationNode::Step::kPartial
+                              : core::AggregationNode::Step::kSingle,
+        std::vector<TypePtr>{BIGINT()},
+        ARRAY(BIGINT()),
+        queryConfig);
+
+    HashStringAllocator stringAllocator{pool()};
+    memory::AllocationPool allocationPool{pool()};
+    fn->setAllocator(&stringAllocator);
+
+    int32_t rowSizeOffset = bits::nbytes(1);
+    int32_t offset = rowSizeOffset + sizeof(uint32_t);
+    offset = bits::roundUp(offset, fn->accumulatorAlignmentSize());
+    fn->setOffsets(
+        offset,
+        RowContainer::nullByte(0),
+        RowContainer::nullMask(0),
+        rowSizeOffset);
+
+    // Make two groups for odd and even rows.
+    auto size = input->size();
+    std::vector<char> group1(offset + fn->accumulatorFixedWidthSize());
+    std::vector<char> group2(offset + fn->accumulatorFixedWidthSize());
+    std::vector<char*> groups(size);
+    for (auto i = 0; i < size; ++i) {
+      groups[i] = i % 2 == 0 ? group1.data() : group2.data();
+    }
+
+    std::vector<vector_size_t> indices{0, 1};
+    fn->initializeNewGroups(groups.data(), indices);
+
+    SelectivityVector rows{size};
+    if (isRawInput(step)) {
+      if (testGlobal) {
+        fn->addSingleGroupRawInput(group1.data(), rows, {input}, false);
+      } else {
+        fn->addRawInput(groups.data(), rows, {input}, false);
+      }
+    } else {
+      if (testGlobal) {
+        fn->addSingleGroupIntermediateResults(
+            group1.data(), rows, {input}, false);
+      } else {
+        fn->addIntermediateResults(groups.data(), rows, {input}, false);
+      }
+    }
+
+    VELOX_CHECK_GT(*reinterpret_cast<int32_t*>(groups[0] + rowSizeOffset), 0);
+    if (!testGlobal) {
+      VELOX_CHECK_GT(*reinterpret_cast<int32_t*>(groups[1] + rowSizeOffset), 0);
+    }
+  };
+
+  auto rawInput = makeFlatVector<int64_t>({1, 2, 3, 4, 5});
+  testTractRowSize(core::AggregationNode::Step::kPartial, rawInput, true);
+  testTractRowSize(core::AggregationNode::Step::kPartial, rawInput, false);
+
+  auto intermediate =
+      makeArrayVector<int64_t>({{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}});
+  testTractRowSize(core::AggregationNode::Step::kFinal, intermediate, true);
+  testTractRowSize(core::AggregationNode::Step::kFinal, intermediate, false);
 }
 
 // A testing aggregation function that counts the number of nulls in inputs.
@@ -335,7 +410,8 @@ class CountNullsAggregate {
   using AccumulatorType = Accumulator;
 };
 
-bool registerSimpleCountNullsAggregate(const std::string& name) {
+exec::AggregateRegistrationResult registerSimpleCountNullsAggregate(
+    const std::string& name) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
       exec::AggregateFunctionSignatureBuilder()
           .returnType("bigint")
@@ -343,7 +419,7 @@ bool registerSimpleCountNullsAggregate(const std::string& name) {
           .argumentType("double")
           .build()};
 
-  exec::registerAggregateFunction(
+  return exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -357,7 +433,6 @@ bool registerSimpleCountNullsAggregate(const std::string& name) {
         return std::make_unique<SimpleAggregateAdapter<CountNullsAggregate>>(
             resultType);
       });
-  return true;
 }
 
 void registerSimpleCountNullsAggregate() {

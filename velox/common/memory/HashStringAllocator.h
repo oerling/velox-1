@@ -142,6 +142,8 @@ class HashStringAllocator : public StreamArena {
       return *reinterpret_cast<Header**>(end() - kContinuedPtrSize);
     }
 
+    std::string toString();
+
    private:
     uint32_t data_;
   };
@@ -202,17 +204,7 @@ class HashStringAllocator : public StreamArena {
     if (string->isInline()) {
       return;
     }
-    auto numBytes = string->size();
-
-    // Write the string as non-contiguous chunks.
-    ByteStream stream(this, false, false);
-    auto position = newWrite(stream, numBytes);
-    stream.appendStringPiece(folly::StringPiece(string->data(), numBytes));
-    finishWrite(stream, 0);
-
-    // The stringView has a pointer to the first byte and the total
-    // size. Read with contiguousString().
-    *string = StringView(reinterpret_cast<char*>(position.position), numBytes);
+    copyMultipartNoInline(group, offset);
   }
 
   // Returns a contiguous view on 'view', where 'view' comes from
@@ -245,11 +237,9 @@ class HashStringAllocator : public StreamArena {
         1;
   }
 
-  // Sets 'stream' to range over the data in the range of 'header' and
+  // Returns ByteInputStream over the data in the range of 'header' and
   // possible continuation ranges.
-  static void prepareRead(
-      const Header* FOLLY_NONNULL header,
-      ByteStream& stream);
+  static ByteInputStream prepareRead(const Header* header);
 
   // Returns the number of payload bytes between 'header->begin()' and
   // 'position'.
@@ -338,22 +328,22 @@ class HashStringAllocator : public StreamArena {
   // payload bytes, excluding headers, continue links and other overhead.
   int64_t checkConsistency() const;
 
+  /// Returns 'true' if this is empty. The implementation includes a call to
+  /// checkConsistency() which makes it slow. Do not use in hot paths.
+  bool isEmpty() const;
+
   /// Throws if 'this' is not empty. Checks consistency of
   /// 'this'. This is a fast check for RowContainer users freeing the
   /// variable length data they store. Can be used in non-debug
   /// builds.
   void checkEmpty() const;
 
+  std::string toString() const;
+
  private:
   static constexpr int32_t kUnitSize = 16 * memory::AllocationTraits::kPageSize;
   static constexpr int32_t kMinContiguous = 48;
-  static constexpr int32_t kNumFreeLists = 7;
-
-  // different sizes have different free lists. Sizes below first size go to
-  // freeLists_[0]. Sizes >= freeListSize_[i] go to freeLists_[i + 1]. The sizes
-  // match the size progression for growing F14 containers. Static array of
-  // exactly 8 ints for simd.
-  static int32_t freeListSizes_[HashStringAllocator::kNumFreeLists + 1];
+  static constexpr int32_t kNumFreeLists = kMaxAlloc - kMinAlloc + 2;
 
   void newRange(int32_t bytes, ByteRange* range, bool contiguous);
 
@@ -362,15 +352,7 @@ class HashStringAllocator : public StreamArena {
   // anything yet. Throws if fails to grow.
   void newSlab();
 
-  void removeFromFreeList(Header* FOLLY_NONNULL header) {
-    VELOX_CHECK(header->isFree());
-    header->clearFree();
-    auto index = freeListIndex(header->size());
-    reinterpret_cast<CompactDoubleList*>(header->begin())->remove();
-    if (free_[index].empty()) {
-      freeNonEmpty_ &= ~(1 << index);
-    }
-  }
+  void removeFromFreeList(Header* FOLLY_NONNULL header);
 
   /// Allocates a block of specified size. If exactSize is false, the block may
   /// be smaller or larger. Checks free list before allocating new memory.
@@ -399,16 +381,19 @@ class HashStringAllocator : public StreamArena {
   // blocks would be below minimum size.
   void freeRestOfBlock(Header* FOLLY_NONNULL header, int32_t keepBytes);
 
-  // Returns the free list index for 'size'. Masks out empty sizes that can be
-  // given by 'mask'. If 'mask' excludes all free lists, returns >
-  // kNumFreeLists.
-  int32_t freeListIndex(int32_t size, uint32_t mask = ~0);
+  void copyMultipartNoInline(char* FOLLY_NONNULL group, int32_t offset);
+  // Fast path for storing a string as a single part. Returns true if succeeded,
+  // has no effect if returns false.
+  bool storeStringFast(const char* bytes, int32_t size, char* destination);
+
+  // Returns the free list index for 'size'.
+  int32_t freeListIndex(int size);
 
   // Circular list of free blocks.
   CompactDoubleList free_[kNumFreeLists];
 
   // Bitmap with a 1 if the corresponding list in 'free_' is not empty.
-  int32_t freeNonEmpty_{0};
+  uint64_t freeNonEmpty_[bits::nwords(kNumFreeLists)]{};
 
   // Count of elements in 'free_'. This is 0 when all free_[i].next() ==
   // &free_[i].

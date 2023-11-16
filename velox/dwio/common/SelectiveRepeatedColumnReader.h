@@ -43,9 +43,9 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
       std::shared_ptr<const dwio::common::TypeWithId> type)
       : SelectiveColumnReader(
             requestedType,
+            std::move(type),
             params,
-            scanSpec,
-            std::move(type)) {}
+            scanSpec) {}
 
   /// Reads 'numLengths' next lengths into 'result'. If 'nulls' is
   /// non-null, each kNull bit signifies a null with a length of 0 to
@@ -62,7 +62,7 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
 
   // Compute the offsets and lengths based on the current filtered rows passed
   // in.
-  void makeOffsetsAndSizes(RowSet rows);
+  void makeOffsetsAndSizes(RowSet rows, ArrayVectorBase&);
 
   // Creates a struct if '*result' is empty and 'type' is a row.
   void prepareStructResult(
@@ -77,16 +77,17 @@ class SelectiveRepeatedColumnReader : public SelectiveColumnReader {
   // in subclasses.
   RowSet applyFilter(RowSet rows);
 
-  std::vector<int32_t> allLengths_;
+  void setResultNulls(BaseVector& result);
+
+  BufferPtr allLengthsHolder_;
+  vector_size_t* allLengths_;
   RowSet nestedRows_;
   raw_vector<vector_size_t> nestedRowsHolder_;
-  BufferPtr offsets_;
-  BufferPtr sizes_;
-  // The position in the child readers that corresponds to the
-  // position in the length stream. The child readers can be behind if
-  // the last parents were null, so that the child stream was only
-  // read up to the last position corresponding to
-  // the last non-null parent.
+
+  // The position in the child readers that corresponds to the position in the
+  // length stream. The child readers can be behind if the last parents were
+  // null, so that the child stream was only read up to the last position
+  // corresponding to the last non-null parent.
   vector_size_t childTargetReadOffset_ = 0;
   std::vector<SelectiveColumnReader*> children_;
 };
@@ -95,7 +96,7 @@ class SelectiveListColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveListColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec);
 
@@ -121,7 +122,7 @@ class SelectiveMapColumnReader : public SelectiveRepeatedColumnReader {
  public:
   SelectiveMapColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& dataType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec);
 

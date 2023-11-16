@@ -184,11 +184,19 @@ VectorPtr BatchMaker::createVector<TypeKind::HUGEINT>(
     MemoryPool& pool,
     std::mt19937& gen,
     std::function<bool(vector_size_t /*index*/)> isNullAt) {
+  int bitsToMove = 0;
+  // Generate proper bits of random value for LongDecimalType tests.
+  if (type->isLongDecimal()) {
+    auto [precision, scale] = getDecimalPrecisionScale(*type);
+    // Round up if the bit number is not the multiples of 8 (1 byte).
+    bitsToMove = 128 - ceil(log2(std::pow(10, precision)) / 8) * 8;
+  }
   return createScalar<int128_t>(
       size,
       gen,
-      [&gen]() {
-        return HugeInt::build(Random::rand32(gen), Random::rand32(gen));
+      [&gen, bitsToMove]() {
+        return HugeInt::build(Random::rand64(gen), Random::rand64(gen)) >>
+            bitsToMove;
       },
       pool,
       isNullAt,
@@ -482,8 +490,16 @@ VectorPtr createBinaryMapKeys(
     }
   }
 
-  return std::make_shared<FlatVector<StringView>>(
+  auto temp = std::make_shared<FlatVector<StringView>>(
       &pool, type, BufferPtr(nullptr), totalKeys, values, std::move(buffers));
+  // Copy the data to defragment the buffers created above. Having 25K buffers
+  // times out tests due to consistency checks.
+  auto result = std::static_pointer_cast<FlatVector<StringView>>(
+      BaseVector::create(type, temp->size(), &pool));
+  for (auto i = 0; i < temp->size(); ++i) {
+    result->set(i, temp->valueAt(i));
+  }
+  return result;
 }
 
 VectorPtr createMapKeys(

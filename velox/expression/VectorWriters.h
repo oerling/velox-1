@@ -277,8 +277,10 @@ struct VectorWriter<Row<T...>> : public VectorWriterBase {
 
   void ensureSize(size_t size) override {
     if (size > rowVector_->size()) {
+      // Note order is important here, we resize children first to ensure
+      // data_ is cached and are not reset when rowVector resizes them.
+      resizeVectorWriters<0>(size);
       rowVector_->resize(size, /*setNotNull*/ false);
-      resizeVectorWriters<0>(rowVector_->size());
     }
   }
 
@@ -487,12 +489,14 @@ struct VectorWriter<std::shared_ptr<T>> : public VectorWriterBase {
   vector_t* vector_;
 };
 
-template <typename T>
-struct VectorWriter<Generic<T>> : public VectorWriterBase {
+template <typename T, bool comparable, bool orderable>
+struct VectorWriter<Generic<T, comparable, orderable>>
+    : public VectorWriterBase {
   using exec_out_t = GenericWriter;
   using vector_t = BaseVector;
 
-  VectorWriter<Generic<T>>() : writer_{castWriter_, castType_, offset_} {}
+  VectorWriter<Generic<T, comparable, orderable>>()
+      : writer_{castWriter_, castType_, offset_} {}
 
   void setOffset(vector_size_t offset) override {
     offset_ = offset;
@@ -559,10 +563,22 @@ struct VectorWriter<Generic<T>> : public VectorWriterBase {
     if (!isSet) {
       commitNull();
     } else {
-      VELOX_DCHECK(
-          castWriter_,
-          "Impossible to commit a non-null value if generic writer was never casted");
-      castWriter_->commit(isSet);
+      // It is possible that the writer hasn't been casted when commit(true) is
+      // called. This can happen when this generic writer is a child writer of a
+      // complex-type writer, i.e., array, map, or row writers, and the previous
+      // writing threw right after the parent's add_item was called. In this
+      // case, when the next writing calls the parent's add_item(), add_item()
+      // calls commitMostRecentChildItem() with the needsCommit_ (or
+      // keyNeedsCommit_ and valueNeedsCommit_) flag being true. So it will call
+      // commit(true) on the child writer even if the child writer is generic
+      // and hasn't been casted yet. In this situation, commitNull() should have
+      // been called on the parent writer at the row of the exception before
+      // add_item() is called for the next row. commitNull() of the parent
+      // writer resets length_ to 0, so we don't need to commit anything here
+      // from the last writing.
+      if (castType_) {
+        castWriter_->commit(isSet);
+      }
     }
   }
 
@@ -694,10 +710,10 @@ struct VectorWriter<DynamicRow, void> : public VectorWriterBase {
 
   void ensureSize(size_t size) override {
     if (size > rowVector_->size()) {
-      rowVector_->resize(size, /*setNotNull*/ false);
       for (int i = 0; i < writer_.childrenCount_; ++i) {
         writer_.childrenWriters_[i]->ensureSize(size);
       }
+      rowVector_->resize(size, /*setNotNull*/ false);
     }
   }
 

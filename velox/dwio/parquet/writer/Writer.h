@@ -18,14 +18,17 @@
 
 #include "velox/common/compression/Compression.h"
 #include "velox/dwio/common/DataBuffer.h"
-#include "velox/dwio/common/DataSink.h"
+#include "velox/dwio/common/FileSink.h"
 #include "velox/dwio/common/FlushPolicy.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/Writer.h"
 #include "velox/dwio/common/WriterFactory.h"
+#include "velox/dwio/parquet/writer/arrow/util/Compression.h"
 #include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox::parquet {
+
+using facebook::velox::parquet::arrow::util::CodecOptions;
 
 class ArrowDataBufferSink;
 
@@ -94,6 +97,7 @@ struct WriterOptions {
   // The default factory allows the writer to construct the default flush
   // policy with the configs in its ctor.
   std::function<std::unique_ptr<DefaultFlushPolicy>()> flushPolicyFactory;
+  std::shared_ptr<CodecOptions> codecOptions;
 };
 
 // Writes Velox vectors into  a DataSink using Arrow Parquet writer.
@@ -104,12 +108,12 @@ class Writer : public dwio::common::Writer {
   // temporary memory. 'properties' specifies Parquet-specific
   // options.
   Writer(
-      std::unique_ptr<dwio::common::DataSink> sink,
+      std::unique_ptr<dwio::common::FileSink> sink,
       const WriterOptions& options,
       std::shared_ptr<memory::MemoryPool> pool);
 
   Writer(
-      std::unique_ptr<dwio::common::DataSink> sink,
+      std::unique_ptr<dwio::common::FileSink> sink,
       const WriterOptions& options);
 
   ~Writer() override = default;
@@ -129,6 +133,8 @@ class Writer : public dwio::common::Writer {
   // live until destruction of 'this'.
   void close() override;
 
+  void abort() override;
+
  private:
   // Pool for 'stream_'.
   std::shared_ptr<memory::MemoryPool> pool_;
@@ -147,7 +153,7 @@ class ParquetWriterFactory : public dwio::common::WriterFactory {
   ParquetWriterFactory() : WriterFactory(dwio::common::FileFormat::PARQUET) {}
 
   std::unique_ptr<dwio::common::Writer> createWriter(
-      std::unique_ptr<dwio::common::DataSink> sink,
+      std::unique_ptr<dwio::common::FileSink> sink,
       const dwio::common::WriterOptions& options) override;
 };
 

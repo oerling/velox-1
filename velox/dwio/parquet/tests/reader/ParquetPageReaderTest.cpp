@@ -15,16 +15,14 @@
  */
 
 #include "velox/dwio/parquet/reader/PageReader.h"
-#include "velox/dwio/parquet/reader/ParquetReader.h"
-#include "velox/dwio/parquet/tests/ParquetReaderTestBase.h"
+#include "velox/dwio/parquet/tests/ParquetTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 using namespace facebook::velox::dwio::common;
-using namespace facebook::velox::dwio::parquet;
 using namespace facebook::velox::parquet;
 
-class ParquetPageReaderTest : public ParquetReaderTestBase {};
+class ParquetPageReaderTest : public ParquetTestBase {};
 
 namespace {
 auto defaultPool = memory::addDefaultLeafMemoryPool();
@@ -105,4 +103,12 @@ TEST_F(ParquetPageReaderTest, corruptedPageHeader) {
       headerSize);
 
   EXPECT_THROW(pageReader->readPageHeader(), VeloxException);
+}
+
+TEST(CompressionOptionsTest, testCompressionOptions) {
+  auto options = getParquetDecompressionOptions(
+      facebook::velox::common::CompressionKind_ZLIB);
+  EXPECT_EQ(
+      options.format.zlib.windowBits,
+      dwio::common::compression::Compressor::PARQUET_ZLIB_WINDOW_BITS);
 }

@@ -36,7 +36,10 @@ class GroupingSet {
       bool ignoreNullKeys,
       bool isPartial,
       bool isRawInput,
-      const Spiller::Config* spillConfig,
+      const std::vector<vector_size_t>& globalGroupingSets,
+      const std::optional<column_index_t>& groupIdChannel,
+      const common::SpillConfig* spillConfig,
+      uint32_t* numSpillRuns,
       tsan_atomic<bool>* nonReclaimableSection,
       OperatorCtx* operatorCtx);
 
@@ -62,15 +65,21 @@ class GroupingSet {
   bool hasOutput();
 
   /// Called if partial aggregation has reached memory limit or if hasOutput()
-  /// returns true.
+  /// returns true. 'maxOutputRows' and 'maxOutputBytes' specify the max number
+  /// of rows/bytes to return in 'result' respectively. The function stops
+  /// producing output if it exceeds either limit.
   bool getOutput(
-      int32_t batchSize,
+      int32_t maxOutputRows,
+      int32_t maxOutputBytes,
       RowContainerIterator& iterator,
       RowVectorPtr& result);
 
   uint64_t allocatedBytes() const;
 
-  void resetPartial();
+  /// Resets the hash table inside the grouping set when partial aggregation
+  /// is full or reclaims memory from distinct aggregation after it has received
+  /// all the inputs.
+  void resetTable();
 
   /// Returns true if 'this' should start producing partial
   /// aggregation results. Checks the memory consumption against
@@ -85,21 +94,33 @@ class GroupingSet {
     return table_ ? table_->numDistinct() : 0;
   }
 
+  /// Returns number of global grouping sets rows if there is default output.
+  std::optional<vector_size_t> numDefaultGlobalGroupingSetRows() const {
+    if (hasDefaultGlobalGroupingSetOutput()) {
+      return globalGroupingSets_.size();
+    }
+    return std::nullopt;
+  }
+
   const HashLookup& hashLookup() const;
 
-  /// Spills content until under 'targetRows' and under 'targetBytes'
-  /// of out of line data are left. If targetRows is 0, spills
-  /// everything and physically frees the data in the
-  /// 'table_->rows()'. This leaves 'table_' initialized and 'this'
-  /// ready to accumulate more input. This is called by ensureInputFits
-  /// or by external memory management. In the latter case, the Driver
-  /// of this will be in a paused state and off thread.
-  void spill(int64_t targetRows, int64_t targetBytes);
+  /// Spills all the rows in container.
+  void spill();
+
+  /// Spills all the rows in container starting from the offset specified by
+  /// 'rowIterator'.
+  void spill(const RowContainerIterator& rowIterator);
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
-  Spiller::Stats spilledStats() const {
-    return spiller_ != nullptr ? spiller_->stats() : Spiller::Stats{};
+  std::optional<SpillStats> spilledStats() const {
+    if (spiller_ == nullptr) {
+      return std::nullopt;
+    }
+    return spiller_->stats();
   }
+
+  /// Returns true if spilling has triggered on this grouping set.
+  bool hasSpilled() const;
 
   /// Returns the hashtable stats.
   HashTableStats hashTableStats() const {
@@ -119,10 +140,25 @@ class GroupingSet {
   /// single input row. Passes grouping keys through.
   void toIntermediate(const RowVectorPtr& input, RowVectorPtr& result);
 
-  /// Returns an estimate of the average row size.
-  std::optional<int64_t> estimateRowSize() const;
+  /// Returns default global grouping sets output if there are no input rows.
+  /// The default global grouping set output is a single row per global grouping
+  /// set with the groupId key and the default aggregate value.
+  /// This function can also be used with distinct aggregations.
+  bool getDefaultGlobalGroupingSetOutput(
+      RowContainerIterator& iterator,
+      RowVectorPtr& result);
+
+  memory::MemoryPool& testingPool() const {
+    return pool_;
+  }
+
+  std::optional<int64_t> estimateOutputRowSize() const;
 
  private:
+  bool isDistinct() const {
+    return aggregates_.empty();
+  }
+
   void addInputForActiveRows(const RowVectorPtr& input, bool mayPushdown);
 
   void addRemainingInput();
@@ -134,10 +170,15 @@ class GroupingSet {
   void addGlobalAggregationInput(const RowVectorPtr& input, bool mayPushdown);
 
   bool getGlobalAggregationOutput(
-      int32_t batchSize,
-      bool isPartial,
       RowContainerIterator& iterator,
       RowVectorPtr& result);
+
+  // If there are global grouping sets, then returns if they have default
+  // output in case no input rows were received.
+  bool hasDefaultGlobalGroupingSetOutput() const {
+    return noMoreInput_ && numInputRows_ == 0 && !globalGroupingSets_.empty() &&
+        isRawInput_;
+  }
 
   void createHashTable();
 
@@ -148,10 +189,14 @@ class GroupingSet {
   // index for this aggregation), otherwise it returns reference to activeRows_.
   const SelectivityVector& getSelectivityVector(size_t aggregateIndex) const;
 
-  // Checks if input will fit in the existing memory and increases
-  // reservation if not. If reservation cannot be increased, spills
-  // enough to make 'input' fit.
+  // Checks if input will fit in the existing memory and increases reservation
+  // if not. If reservation cannot be increased, spills enough to make 'input'
+  // fit.
   void ensureInputFits(const RowVectorPtr& input);
+
+  // Reserves memory for output processing. If reservation cannot be increased,
+  // spills enough to make output fit.
+  void ensureOutputFits();
 
   // Copies the grouping keys and aggregates for 'groups' into 'result' If
   // partial output, extracts the intermediate type for aggregates, final result
@@ -160,18 +205,36 @@ class GroupingSet {
 
   // Produces output in if spilling has occurred. First produces data
   // from non-spilled partitions, then merges spill runs and unspilled data
-  // form spilled partitions. Returns nullptr when at end. 'batchSize' specifies
-  // the max number of output rows in 'result'.
-  bool getOutputWithSpill(int32_t batchSize, const RowVectorPtr& result);
+  // form spilled partitions. Returns nullptr when at end. 'maxOutputRows' and
+  // 'maxOutputBytes' specifies the max number of output rows and bytes in
+  // 'result'.
+  bool getOutputWithSpill(
+      int32_t maxOutputRows,
+      int32_t maxOutputBytes,
+      const RowVectorPtr& result);
 
-  // Reads rows from the current spilled partition until producing a batch of
-  // final results in 'result'. Returns false and leaves 'result' empty when
-  // the partition is fully read. 'batchSize' specifies the max number of output
-  // rows in 'result'.
-  bool mergeNext(int32_t batchSize, const RowVectorPtr& result);
+  // Reads from spilled rows until producing a batch of final results in
+  // 'result'. Returns false and leaves 'result' empty when the spilled data is
+  // fully read. 'maxOutputRows' and 'maxOutputBytes' specify the max number of
+  // output rows and bytes in 'result'.
+  bool mergeNext(
+      int32_t maxOutputRows,
+      int32_t maxOutputBytes,
+      const RowVectorPtr& result);
+
+  // Reads from spilled rows for group by with aggregates.
+  bool mergeNextWithAggregates(
+      int32_t maxOutputRows,
+      int32_t maxOutputBytes,
+      const RowVectorPtr& result);
+
+  // Reads from spilled rows for group by without aggregates.
+  bool mergeNextWithoutAggregates(
+      int32_t maxOutputRows,
+      const RowVectorPtr& result);
 
   // Initializes a new row in 'mergeRows' with the keys from the
-  // current element from 'keys'. Accumulators are left in the initial
+  // current element from 'stream'. Accumulators are left in the initial
   // state with no data accumulated. This is called each time a new
   // key is received from a merge of spilled data. After this
   // updateRow() is called on the same element and on every subsequent
@@ -180,11 +243,14 @@ class GroupingSet {
   // accumulated and we have a new key, we produce the output and
   // clear 'mergeRows_' with extractSpillResult() and only then do
   // initializeRow().
-  void initializeRow(SpillMergeStream& keys, char* row);
+  void initializeRow(SpillMergeStream& stream, char* row);
 
   // Updates the accumulators in 'row' with the intermediate type data from
   // 'keys'. This is called for each row received from a merge of spilled data.
   void updateRow(SpillMergeStream& keys, char* row);
+
+  // Returns a RowType of the spilled data.
+  RowTypePtr makeSpillType() const;
 
   // Copies the finalized state from 'mergeRows' to 'result' and clears
   // 'mergeRows'. Used for producing a batch of results when aggregating spilled
@@ -206,6 +272,7 @@ class GroupingSet {
   const bool isGlobal_;
   const bool isPartial_;
   const bool isRawInput_;
+  const core::QueryConfig& queryConfig_;
 
   std::vector<AggregateInfo> aggregates_;
   AggregationMasks masks_;
@@ -214,11 +281,20 @@ class GroupingSet {
 
   const bool ignoreNullKeys_;
 
+  vector_size_t numInputRows_ = 0;
+
   // The maximum memory usage that a final aggregation can hold before spilling.
   // If it is zero, then there is no such limit.
   const uint64_t spillMemoryThreshold_;
 
-  const Spiller::Config* const spillConfig_; // Not owned.
+  // List of global grouping set numbers, if being used with a GROUPING SET.
+  const std::vector<vector_size_t> globalGroupingSets_;
+  // Column for groupId for a GROUPING SET.
+  std::optional<column_index_t> groupIdChannel_;
+
+  const common::SpillConfig* const spillConfig_;
+
+  uint32_t* const numSpillRuns_;
 
   // Indicates if this grouping set and the associated hash aggregation operator
   // is under non-reclaimable execution section or not.
@@ -244,12 +320,12 @@ class GroupingSet {
 
   bool noMoreInput_{false};
 
-  /// In case of partial streaming aggregation, the input vector passed to
-  /// addInput(). A set of rows that belong to the last group of pre-grouped
-  /// keys need to be processed after flushing the hash table and accumulators.
+  // In case of partial streaming aggregation, the input vector passed to
+  // addInput(). A set of rows that belong to the last group of pre-grouped
+  // keys need to be processed after flushing the hash table and accumulators.
   RowVectorPtr remainingInput_;
 
-  /// First row in remainingInput_ that needs to be processed.
+  // First row in remainingInput_ that needs to be processed.
   vector_size_t firstRemainingRow_;
 
   // The value of mayPushdown flag specified in addInput() for the
@@ -265,9 +341,6 @@ class GroupingSet {
   // The row with the current merge state, allocated from 'mergeRow_'.
   char* mergeState_ = nullptr;
 
-  // The currently running spill partition in producing spilld output.
-  int32_t outputPartition_{-1};
-
   // Intermediate vector for passing arguments to aggregate in merging spill.
   std::vector<VectorPtr> mergeArgs_;
 
@@ -275,26 +348,11 @@ class GroupingSet {
   // to merge.
   SelectivityVector mergeSelection_;
 
-  // True if 'merge_' indicates that the next key is the same as the current
-  // one.
-  bool nextKeyIsEqual_{false};
-
-  // The set of rows that are outside of the spillable hash number
-  // ranges. Used when producing output.
-  std::optional<Spiller::SpillRows> nonSpilledRows_;
-
-  // Index of first in 'nonSpilledRows_' that has not been added to output.
-  size_t nonSpilledIndex_ = 0;
-
   // Pool of the OperatorCtx. Used for spilling.
   memory::MemoryPool& pool_;
 
-  // The RowContainer of 'table_' is moved here before freeing
-  // 'table_' when starting to read spill output.
-  std::unique_ptr<RowContainer> rowsWhileReadingSpill_;
-
   // Counts input batches and triggers spilling if folly hash of this % 100 <=
-  // 'testSpillPct_';.
+  // 'spillConfig_->testSpillPct'.
   uint64_t spillTestCounter_{0};
 
   // True if partial aggregation has been given up as non-productive.

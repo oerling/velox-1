@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "folly/Executor.h"
+#include "folly/synchronization/Baton.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/dwrf/reader/SelectiveDwrfReader.h"
 
@@ -91,6 +93,8 @@ class DwrfRowReader : public StrideIndexProvider,
   void updateRuntimeStats(
       dwio::common::RuntimeStatistics& stats) const override {
     stats.skippedStrides += skippedStrides_;
+    stats.columnReaderStatistics.flattenStringDictionaryValues +=
+        columnReaderStatistics_.flattenStringDictionaryValues;
   }
 
   void resetFilterCaches() override;
@@ -112,11 +116,21 @@ class DwrfRowReader : public StrideIndexProvider,
   // columns.
   void startNextStripe();
 
+  void safeFetchNextStripe();
+
+  std::optional<std::vector<PrefetchUnit>> prefetchUnits() override;
+
   int64_t nextRowNumber() override;
 
   int64_t nextReadSize(uint64_t size) override;
 
  private:
+  // Represents the status of a stripe being fetched.
+  enum class FetchStatus { NOT_STARTED, IN_PROGRESS, FINISHED, ERROR };
+
+  FetchResult fetch(uint32_t stripeIndex);
+  FetchResult prefetch(uint32_t stripeToFetch);
+
   // footer
   std::vector<uint64_t> firstRowOfStripe;
   mutable std::shared_ptr<const dwio::common::TypeWithId> selectedSchema;
@@ -125,13 +139,43 @@ class DwrfRowReader : public StrideIndexProvider,
   uint64_t previousRow;
   uint32_t firstStripe;
   uint32_t currentStripe;
-  uint32_t lastStripe; // the stripe AFTER the last one
+  // The the stripe AFTER the last one that should be read. e.g. if the highest
+  // stripe in the RowReader's bounds is 3, then stripeCeiling is 4.
+  uint32_t stripeCeiling;
   uint64_t currentRowInStripe;
-  bool newStripeLoaded;
+  bool newStripeReadyForRead;
   uint64_t rowsInCurrentStripe;
   uint64_t strideIndex_;
   std::shared_ptr<StripeDictionaryCache> stripeDictionaryCache_;
   dwio::common::RowReaderOptions options_;
+  std::shared_ptr<folly::Executor> executor_;
+
+  struct PrefetchedStripeState {
+    bool preloaded;
+    std::unique_ptr<ColumnReader> columnReader;
+    std::unique_ptr<dwio::common::SelectiveColumnReader> selectiveColumnReader;
+    std::shared_ptr<StripeDictionaryCache> stripeDictionaryCache;
+  };
+
+  // stripeLoadStatuses_ and prefetchedStripeStates_ will never be acquired
+  // simultaneously on the same thread.
+  // Key is stripe index
+  folly::Synchronized<folly::F14FastMap<uint32_t, PrefetchedStripeState>>
+      prefetchedStripeStates_;
+
+  // Indicates the status of load requests. The ith element in
+  // stripeLoadStatuses_ represents the status of the ith stripe.
+  folly::Synchronized<std::vector<FetchStatus>> stripeLoadStatuses_;
+
+  // Currently, seek logic relies on reloading the stripe every time the row is
+  // seeked to, even if the row was present in the already loaded stripe. This
+  // is a temporary flag to disable seek on a reader which has already
+  // prefetched, until we implement a good way to support both.
+  std::atomic<bool> prefetchHasOccurred_{false};
+
+  // Used to indicate which stripes are finished loading. If stripeLoadBatons[i]
+  // is posted, it means the ith stripe has finished loading
+  std::vector<std::unique_ptr<folly::Baton<>>> stripeLoadBatons_;
 
   // column selector
   std::shared_ptr<dwio::common::ColumnSelector> columnSelector_;
@@ -145,10 +189,12 @@ class DwrfRowReader : public StrideIndexProvider,
   // Number of skipped strides.
   int64_t skippedStrides_{0};
 
-  // Set to true after clearing filter caches, i.e.  adding a dynamic
+  // Set to true after clearing filter caches, i.e. adding a dynamic
   // filter. Causes filters to be re-evaluated against stride stats on
   // next stride instead of next stripe.
   bool recomputeStridesToSkip_{false};
+
+  dwio::common::ColumnReaderStatistics columnReaderStatistics_;
 
   // internal methods
 
@@ -162,7 +208,7 @@ class DwrfRowReader : public StrideIndexProvider,
   }
 
   bool isEmptyFile() const {
-    return (lastStripe == 0);
+    return (stripeCeiling == firstStripe);
   }
 
   void checkSkipStrides(uint64_t strideSize);
@@ -295,6 +341,11 @@ class DwrfReader : public dwio::common::Reader {
   static std::unique_ptr<DwrfReader> create(
       std::unique_ptr<dwio::common::BufferedInput> input,
       const dwio::common::ReaderOptions& options);
+
+ private:
+  // Ensures that files column names match the ones from the table schema using
+  // column indices.
+  void updateColumnNamesFromTableSchema();
 
  private:
   std::shared_ptr<ReaderBase> readerBase_;

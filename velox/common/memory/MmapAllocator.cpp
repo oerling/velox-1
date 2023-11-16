@@ -56,17 +56,21 @@ bool MmapAllocator::allocateNonContiguousWithoutRetry(
     Allocation& out,
     ReservationCallback reservationCB,
     MachinePageCount minSizeClass) {
-  const int64_t numFreed = freeInternal(out);
+  const MachinePageCount numFreed = freeInternal(out);
+  const auto bytesFreed = AllocationTraits::pageBytes(numFreed);
   if (numFreed != 0) {
     numAllocated_.fetch_sub(numFreed);
   }
   if (numPages == 0) {
+    if ((bytesFreed != 0) && (reservationCB != nullptr)) {
+      reservationCB(bytesFreed, false);
+    }
     return true;
   }
   const SizeMix mix = allocationSize(numPages, minSizeClass);
   if (testingHasInjectedFailure(InjectedFailure::kCap)) {
-    if ((numFreed != 0) && (reservationCB != nullptr)) {
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
+    if ((bytesFreed != 0) && (reservationCB != nullptr)) {
+      reservationCB(bytesFreed, false);
     }
     return false;
   }
@@ -74,19 +78,19 @@ bool MmapAllocator::allocateNonContiguousWithoutRetry(
   if (numAllocated_ + mix.totalPages > capacity_) {
     VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
         << "Exceeding memory allocator limit when allocate " << mix.totalPages
-        << " pages with capacity of " << capacity_;
-    if ((numFreed != 0) && (reservationCB != nullptr)) {
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
+        << " pages with capacity of " << capacity_ << " pages";
+    if ((bytesFreed != 0) && (reservationCB != nullptr)) {
+      reservationCB(bytesFreed, false);
     }
     return false;
   }
   if (numAllocated_.fetch_add(mix.totalPages) + mix.totalPages > capacity_) {
     VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
         << "Exceeded memory allocator limit when allocate " << mix.totalPages
-        << " pages with capacity of " << capacity_;
+        << " pages with capacity of " << capacity_ << " pages";
     numAllocated_.fetch_sub(mix.totalPages);
-    if ((numFreed != 0) && (reservationCB != nullptr)) {
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
+    if ((bytesFreed != 0) && (reservationCB != nullptr)) {
+      reservationCB(bytesFreed, false);
     }
     return false;
   }
@@ -102,7 +106,7 @@ bool MmapAllocator::allocateNonContiguousWithoutRetry(
           << "Exceeded memory reservation limit when reserve " << numNeededPages
           << " new pages when allocate " << mix.totalPages << " pages";
       numAllocated_.fetch_sub(mix.totalPages);
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
+      reservationCB(bytesFreed, false);
       std::rethrow_exception(std::current_exception());
     }
   }
@@ -155,10 +159,10 @@ bool MmapAllocator::allocateNonContiguousWithoutRetry(
 }
 
 bool MmapAllocator::ensureEnoughMappedPages(int32_t newMappedNeeded) {
-  std::lock_guard<std::mutex> l(sizeClassBalanceMutex_);
   if (testingHasInjectedFailure(InjectedFailure::kMadvise)) {
     return false;
   }
+  std::lock_guard<std::mutex> l(sizeClassBalanceMutex_);
   const auto totalMaps =
       numMapped_.fetch_add(newMappedNeeded) + newMappedNeeded;
   if (totalMaps <= capacity_) {
@@ -269,12 +273,17 @@ bool MmapAllocator::allocateContiguousImpl(
     }
     allocation.clear();
   }
+  const auto totalCollateralPages =
+      numCollateralPages + numLargeCollateralPages;
+  const auto totalCollateralBytes =
+      AllocationTraits::pageBytes(totalCollateralPages);
   if (numPages == 0) {
+    if (totalCollateralBytes != 0 && reservationCB != nullptr) {
+      reservationCB(totalCollateralBytes, false);
+    }
     return true;
   }
 
-  const auto totalCollateralPages =
-      numCollateralPages + numLargeCollateralPages;
   const auto numCollateralUnmap = numLargeCollateralPages;
   const int64_t newPages = numPages - totalCollateralPages;
   if (reservationCB != nullptr) {
@@ -283,14 +292,15 @@ bool MmapAllocator::allocateContiguousImpl(
     } catch (const std::exception& e) {
       VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
           << "Exceeded memory reservation limit when reserve " << newPages
-          << " new pages when allocate " << numPages << " pages";
+          << " new pages when allocate " << numPages
+          << " pages, error: " << e.what();
       numAllocated_ -= totalCollateralPages;
       numMapped_ -= numCollateralUnmap;
       numExternalMapped_ -= numCollateralUnmap;
 
       // We failed to grow by 'newPages. So we record the freeing off the whole
       // collateral and the unmap of former 'allocation'.
-      reservationCB(AllocationTraits::pageBytes(totalCollateralPages), false);
+      reservationCB(totalCollateralBytes, false);
       std::rethrow_exception(std::current_exception());
     }
   }
@@ -323,7 +333,7 @@ bool MmapAllocator::allocateContiguousImpl(
     VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
         << "Exceeded memory allocator limit when allocate " << newPages
         << " new pages for total allocation of " << numPages
-        << " pages, the memory allocator capacity is " << capacity_;
+        << " pages, the memory allocator capacity is " << capacity_ << " pages";
     rollbackAllocation(0);
     return false;
   }
@@ -420,7 +430,7 @@ bool MmapAllocator::growContiguousWithoutRetry(
     VELOX_MEM_LOG_EVERY_MS(WARNING, 1000)
         << "Exceeded memory allocator limit when adding " << increment
         << " new pages for total allocation of " << allocation.numPages()
-        << " pages, the memory allocator capacity is " << capacity_;
+        << " pages, the memory allocator capacity is " << capacity_ << " pages";
     numAllocated_ -= increment;
     if (reservationCB != nullptr) {
       reservationCB(AllocationTraits::pageBytes(increment), false);
@@ -616,20 +626,23 @@ std::string MmapAllocator::SizeClass::toString() const {
   int count = 0;
   int mappedCount = 0;
   int mappedFreeCount = 0;
-  for (int i = 0; i < pageBitmapSize_; ++i) {
-    count += __builtin_popcountll(pageAllocated_[i]);
-    mappedCount += __builtin_popcountll(pageMapped_[i]);
-    mappedFreeCount +=
-        __builtin_popcountll(~pageAllocated_[i] & pageMapped_[i]);
-  }
-  auto mb = (AllocationTraits::pageBytes(count * unitSize_)) >> 20;
-  out << "[size " << unitSize_ << ": " << count << "(" << mb << "MB) allocated "
-      << mappedCount << " mapped";
-  if (mappedFreeCount != numMappedFreePages_) {
-    out << "Mismatched count of mapped free pages "
-        << ". Actual= " << mappedFreeCount
-        << " vs recorded= " << numMappedFreePages_
-        << ". Total mapped=" << mappedCount;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    for (int i = 0; i < pageBitmapSize_; ++i) {
+      count += __builtin_popcountll(pageAllocated_[i]);
+      mappedCount += __builtin_popcountll(pageMapped_[i]);
+      mappedFreeCount +=
+          __builtin_popcountll(~pageAllocated_[i] & pageMapped_[i]);
+    }
+    auto mb = (AllocationTraits::pageBytes(count * unitSize_)) >> 20;
+    out << "[size " << unitSize_ << ": " << count << "(" << mb
+        << "MB) allocated " << mappedCount << " mapped";
+    if (mappedFreeCount != numMappedFreePages_) {
+      out << "Mismatched count of mapped free pages "
+          << ". Actual= " << mappedFreeCount
+          << " vs recorded= " << numMappedFreePages_
+          << ". Total mapped=" << mappedCount;
+    }
   }
   out << "]";
   return out.str();
@@ -976,13 +989,14 @@ bool MmapAllocator::useMalloc(uint64_t bytes) {
 
 std::string MmapAllocator::toString() const {
   std::stringstream out;
-  out << "[Memory capacity " << capacity_ << " allocated " << numAllocated_
-      << " mapped " << numMapped_ << " external mapped " << numExternalMapped_
-      << std::endl;
+  out << "Memory Allocator[" << kindString(kind_) << " capacity "
+      << ((capacity_ == kMaxMemory) ? "UNLIMITED" : succinctBytes(capacity_))
+      << " allocated pages " << numAllocated_ << " mapped pages " << numMapped_
+      << " external mapped pages " << numExternalMapped_ << std::endl;
   for (auto& sizeClass : sizeClasses_) {
     out << sizeClass->toString() << std::endl;
   }
-  out << "]" << std::endl;
+  out << "]";
   return out.str();
 }
 

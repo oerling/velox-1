@@ -32,7 +32,7 @@ class FloatingPointColumnReader
 
   FloatingPointColumnReader(
       const TypePtr& requestedType,
-      std::shared_ptr<const dwio::common::TypeWithId> dataType,
+      std::shared_ptr<const dwio::common::TypeWithId> fileType,
       ParquetParams& params,
       common::ScanSpec& scanSpec);
 
@@ -49,6 +49,7 @@ class FloatingPointColumnReader
       override {
     using T = FloatingPointColumnReader<TData, TRequested>;
     this->template readCommon<T>(offset, rows, incomingNulls);
+    this->readOffset_ += rows.back() + 1;
   }
 
   template <typename TVisitor>
@@ -58,12 +59,12 @@ class FloatingPointColumnReader
 template <typename TData, typename TRequested>
 FloatingPointColumnReader<TData, TRequested>::FloatingPointColumnReader(
     const TypePtr& requestedType,
-    std::shared_ptr<const dwio::common::TypeWithId> dataType,
+    std::shared_ptr<const dwio::common::TypeWithId> fileType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)
     : dwio::common::SelectiveFloatingPointColumnReader<TData, TRequested>(
           requestedType,
-          std::move(dataType),
+          std::move(fileType),
           params,
           scanSpec) {}
 
@@ -79,7 +80,6 @@ void FloatingPointColumnReader<TData, TRequested>::readWithVisitor(
     RowSet rows,
     TVisitor visitor) {
   this->formatData_->template as<ParquetData>().readWithVisitor(visitor);
-  this->readOffset_ += rows.back() + 1;
 }
 
 } // namespace facebook::velox::parquet

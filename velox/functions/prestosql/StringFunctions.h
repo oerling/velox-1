@@ -153,10 +153,39 @@ struct TrimFunctionBase {
     stringImpl::trimUnicodeWhiteSpace<leftTrim, rightTrim>(result, input);
   }
 
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      const arg_type<Varchar>& trimCharacters) {
+    if (stringCore::isAscii(trimCharacters.data(), trimCharacters.size())) {
+      callAscii(result, input, trimCharacters);
+    } else {
+      VELOX_UNSUPPORTED(
+          "trim functions with custom trim characters and non-ASCII inputs are not supported yet");
+    }
+  }
+
   FOLLY_ALWAYS_INLINE void callAscii(
       out_type<Varchar>& result,
       const arg_type<Varchar>& input) {
-    stringImpl::trimAsciiWhiteSpace<leftTrim, rightTrim>(result, input);
+    stringImpl::trimAscii<leftTrim, rightTrim>(
+        result, input, stringImpl::isAsciiWhiteSpace);
+  }
+
+  FOLLY_ALWAYS_INLINE void callAscii(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& input,
+      const arg_type<Varchar>& trimCharacters) {
+    const auto numChars = trimCharacters.size();
+    const auto* chars = trimCharacters.data();
+    stringImpl::trimAscii<leftTrim, rightTrim>(result, input, [&](char c) {
+      for (auto i = 0; i < numChars; ++i) {
+        if (c == chars[i]) {
+          return true;
+        }
+      }
+      return false;
+    });
   }
 };
 
@@ -180,6 +209,51 @@ struct LengthFunction {
 
   FOLLY_ALWAYS_INLINE void callAscii(int64_t& result, const StringView& input) {
     result = stringImpl::length<true>(input);
+  }
+};
+
+/// Returns number of bytes in the specified varbinary.
+template <typename T>
+struct LengthVarbinaryFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(int64_t& result, const StringView& input) {
+    result = input.size();
+  }
+};
+
+template <typename T>
+struct StartsWithFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<bool>& result,
+      const arg_type<Varchar>& x,
+      const arg_type<Varchar>& y) {
+    if (x.size() < y.size()) {
+      result = false;
+      return;
+    }
+
+    result = (memcmp(x.data(), y.data(), y.size()) == 0);
+  }
+};
+
+template <typename T>
+struct EndsWithFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<bool>& result,
+      const arg_type<Varchar>& x,
+      const arg_type<Varchar>& y) {
+    if (x.size() < y.size()) {
+      result = false;
+      return;
+    }
+
+    result =
+        (memcmp(x.data() + (x.size() - y.size()), y.data(), y.size()) == 0);
   }
 };
 

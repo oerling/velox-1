@@ -99,7 +99,7 @@ class ExchangeBenchmark : public VectorTestBase {
       leafTaskIds.push_back(leafTaskId);
       auto leafTask = makeTask(leafTaskId, leafPlan, counter);
       tasks.push_back(leafTask);
-      Task::start(leafTask, taskWidth);
+      leafTask->start(taskWidth);
     }
 
     core::PlanNodePtr finalAggPlan;
@@ -117,7 +117,7 @@ class ExchangeBenchmark : public VectorTestBase {
           exec::Split(std::make_shared<exec::RemoteConnectorSplit>(taskId)));
       auto task = makeTask(taskId, finalAggPlan, i);
       tasks.push_back(task);
-      Task::start(task, taskWidth);
+      task->start(taskWidth);
       addRemoteSplits(task, leafTaskIds);
     }
 
@@ -246,7 +246,7 @@ class ExchangeBenchmark : public VectorTestBase {
       int64_t maxMemory = kMaxMemory) {
     auto configCopy = configSettings_;
     auto queryCtx = std::make_shared<core::QueryCtx>(
-        executor_.get(), std::move(configCopy));
+        executor_.get(), core::QueryConfig(std::move(configCopy)));
     queryCtx->testingOverrideMemoryPool(
         memory::defaultMemoryManager().addRootPool(
             queryCtx->queryId(), maxMemory));

@@ -19,9 +19,12 @@
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/io/IoStatistics.h"
+#include "velox/common/io/Options.h"
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/dwio/common/CachedBufferedInput.h"
 #include "velox/dwio/dwrf/common/Common.h"
+#include "velox/dwio/dwrf/test/TestReadFile.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 #include <gtest/gtest.h>
@@ -34,60 +37,6 @@ using facebook::velox::common::Region;
 
 using memory::MemoryAllocator;
 using IoStatisticsPtr = std::shared_ptr<IoStatistics>;
-
-// Testing stream producing deterministic data. The byte at offset is
-// the low byte of 'seed_' + offset.
-class TestReadFile : public ReadFile {
- public:
-  TestReadFile(uint64_t seed, uint64_t length, IoStatisticsPtr ioStats)
-      : seed_(seed), length_(length), ioStats_(std::move(ioStats)) {}
-
-  uint64_t size() const override {
-    return length_;
-  }
-
-  std::string_view pread(uint64_t offset, uint64_t length, void* buffer)
-      const override {
-    int fill;
-    uint64_t content = offset + seed_;
-    uint64_t available = std::min(length_ - offset, length);
-    for (fill = 0; fill < (available); ++fill) {
-      reinterpret_cast<char*>(buffer)[fill] = content + fill;
-    }
-    ioStats_->incRawBytesRead(length);
-    return std::string_view(static_cast<const char*>(buffer), fill);
-  }
-
-  // Asserts that 'bytes' is as would be read from 'offset'.
-  void checkData(const void* bytes, uint64_t offset, int32_t size) {
-    for (auto i = 0; i < size; ++i) {
-      char expected = seed_ + offset + i;
-      ASSERT_EQ(expected, reinterpret_cast<const char*>(bytes)[i])
-          << " at " << offset + i;
-    }
-  }
-
-  uint64_t memoryUsage() const override {
-    VELOX_NYI();
-  }
-
-  bool shouldCoalesce() const override {
-    VELOX_NYI();
-  }
-
-  std::string getName() const override {
-    return "<TestReadFile>";
-  }
-
-  uint64_t getNaturalReadSize() const override {
-    VELOX_NYI();
-  }
-
- private:
-  const uint64_t seed_;
-  const uint64_t length_;
-  IoStatisticsPtr ioStats_;
-};
 
 class CacheTest : public testing::Test {
  protected:
@@ -112,10 +61,10 @@ class CacheTest : public testing::Test {
     executor_->join();
     auto ssdCache = cache_->ssdCache();
     if (ssdCache) {
-      ssdCache->deleteFiles();
+      ssdCache->testingDeleteFiles();
     }
     if (cache_) {
-      cache_->prepareShutdown();
+      cache_->shutdown();
     }
   }
 
@@ -207,9 +156,7 @@ class CacheTest : public testing::Test {
       fileIds_.push_back(lease);
       fileIds_.push_back(groupLease);
       auto stream = std::make_shared<TestReadFile>(
-          lease.id(),
-          1UL << 63,
-          std::make_shared<dwio::common::IoStatistics>());
+          lease.id(), 1UL << 63, std::make_shared<io::IoStatistics>());
       pathToInput_[lease.id()] = stream;
       return stream;
     }
@@ -237,7 +184,7 @@ class CacheTest : public testing::Test {
         groupId,
         ioStats,
         executor_.get(),
-        ReaderOptions(pool_.get()));
+        io::ReaderOptions(pool_.get()));
     data->file = readFile.get();
     for (auto i = 0; i < numColumns; ++i) {
       int32_t streamIndex = i * (kMaxStreams / numColumns);
@@ -348,7 +295,7 @@ class CacheTest : public testing::Test {
     auto tracker = std::make_shared<ScanTracker>(
         "testTracker",
         nullptr,
-        dwio::common::ReaderOptions::kDefaultLoadQuantum,
+        io::ReaderOptions::kDefaultLoadQuantum,
         groupStats_);
     std::vector<std::unique_ptr<StripeData>> stripes;
     uint64_t fileId;
@@ -452,7 +399,7 @@ TEST_F(CacheTest, window) {
   auto tracker = std::make_shared<ScanTracker>(
       "testTracker",
       nullptr,
-      dwio::common::ReaderOptions::kDefaultLoadQuantum,
+      io::ReaderOptions::kDefaultLoadQuantum,
       groupStats_);
   uint64_t fileId;
   uint64_t groupId;
@@ -466,7 +413,7 @@ TEST_F(CacheTest, window) {
       groupId,
       ioStats_,
       executor_.get(),
-      ReaderOptions(pool_.get()));
+      io::ReaderOptions(pool_.get()));
   auto begin = 4 * kMB;
   auto end = 17 * kMB;
   auto stream = input->read(begin, end - begin, LogType::TEST);
@@ -494,6 +441,7 @@ TEST_F(CacheTest, window) {
   auto clone = cacheInput->clone();
   clone->Skip(100);
   clone->setRemainingBytes(kMB);
+  auto previousRead = ioStats_->rawBytesRead();
   EXPECT_TRUE(clone->Next(&buffer, &size));
   // Half MB minus the 100 bytes skipped above should be left in the first load
   // quantum of 8MB.
@@ -502,6 +450,7 @@ TEST_F(CacheTest, window) {
   EXPECT_EQ(kMB / 2 + 100, size);
   // There should be no more data in the window.
   EXPECT_FALSE(clone->Next(&buffer, &size));
+  EXPECT_EQ(kMB, ioStats_->rawBytesRead() - previousRead);
 }
 
 TEST_F(CacheTest, bufferedInput) {
@@ -611,7 +560,7 @@ TEST_F(CacheTest, ssdThreads) {
   // We read 4 files on 8 threads. Threads 0 and 1 read file 0, 2 and 3 read
   // file 1 etc. Each tread reads its file 4 times.
   for (int i = 0; i < kNumThreads; ++i) {
-    stats.push_back(std::make_shared<dwio::common::IoStatistics>());
+    stats.push_back(std::make_shared<io::IoStatistics>());
     threads.push_back(std::thread([i, this, threadStats = stats.back()]() {
       for (auto counter = 0; counter < 4; ++counter) {
         readLoop(
@@ -678,7 +627,7 @@ class FileWithReadAhead {
   std::unique_ptr<CachedBufferedInput> bufferedInput_;
   std::unique_ptr<SeekableInputStream> stream_;
   std::shared_ptr<TestReadFile> file_;
-  ReaderOptions options_;
+  io::ReaderOptions options_;
 };
 
 TEST_F(CacheTest, readAhead) {
@@ -700,7 +649,7 @@ TEST_F(CacheTest, readAhead) {
   // current cache entry of each file is consumed.
 
   for (int threadIndex = 0; threadIndex < kNumThreads; ++threadIndex) {
-    stats.push_back(std::make_shared<dwio::common::IoStatistics>());
+    stats.push_back(std::make_shared<io::IoStatistics>());
     threads.push_back(std::thread([threadIndex,
                                    this,
                                    threadStats = stats.back()]() {

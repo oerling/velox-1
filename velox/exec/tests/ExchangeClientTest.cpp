@@ -16,7 +16,8 @@
 #include <gtest/gtest.h>
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/Exchange.h"
-#include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/OutputBufferManager.h"
+#include "velox/exec/Task.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -36,7 +37,7 @@ class ExchangeClientTest : public testing::Test,
       velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
     }
 
-    bufferManager_ = PartitionedOutputBufferManager::getInstance().lock();
+    bufferManager_ = OutputBufferManager::getInstance().lock();
   }
 
   std::unique_ptr<SerializedPage> toSerializedPage(const RowVectorPtr& vector) {
@@ -53,14 +54,12 @@ class ExchangeClientTest : public testing::Test,
 
   std::shared_ptr<Task> makeTask(
       const std::string& taskId,
-      const core::PlanNodePtr& planNode,
-      int destination) {
+      const core::PlanNodePtr& planNode) {
     auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     queryCtx->testingOverrideMemoryPool(
         memory::defaultMemoryManager().addRootPool(queryCtx->queryId()));
-    core::PlanFragment planFragment{planNode};
     return Task::create(
-        taskId, std::move(planFragment), destination, std::move(queryCtx));
+        taskId, core::PlanFragment{planNode}, 0, std::move(queryCtx));
   }
 
   int32_t enqueue(
@@ -70,9 +69,9 @@ class ExchangeClientTest : public testing::Test,
     auto page = toSerializedPage(data);
     const auto pageSize = page->size();
     ContinueFuture unused;
-    auto blockingReason =
+    auto blocked =
         bufferManager_->enqueue(taskId, destination, std::move(page), &unused);
-    VELOX_CHECK(blockingReason == BlockingReason::kNotBlocked);
+    VELOX_CHECK(!blocked);
     return pageSize;
   }
 
@@ -80,12 +79,41 @@ class ExchangeClientTest : public testing::Test,
     for (auto i = 0; i < numPages; ++i) {
       bool atEnd;
       ContinueFuture future;
-      auto page = client.next(&atEnd, &future);
-      ASSERT_TRUE(page != nullptr);
+      auto pages = client.next(1, &atEnd, &future);
+      ASSERT_EQ(1, pages.size());
     }
   }
 
-  std::shared_ptr<PartitionedOutputBufferManager> bufferManager_;
+  static void addSources(ExchangeQueue& queue, int32_t numSources) {
+    {
+      std::lock_guard<std::mutex> l(queue.mutex());
+      for (auto i = 0; i < numSources; ++i) {
+        queue.addSourceLocked();
+      }
+    }
+    queue.noMoreSources();
+  }
+
+  static void enqueue(
+      ExchangeQueue& queue,
+      std::unique_ptr<SerializedPage> page) {
+    std::vector<ContinuePromise> promises;
+    {
+      std::lock_guard<std::mutex> l(queue.mutex());
+      queue.enqueueLocked(std::move(page), promises);
+    }
+    for (auto& promise : promises) {
+      promise.setValue();
+    }
+  }
+
+  static std::unique_ptr<SerializedPage> makePage(uint64_t size) {
+    auto ioBuf = folly::IOBuf::create(size);
+    ioBuf->append(size);
+    return std::make_unique<SerializedPage>(std::move(ioBuf));
+  }
+
+  std::shared_ptr<OutputBufferManager> bufferManager_;
 };
 
 TEST_F(ExchangeClientTest, nonVeloxCreateExchangeSourceException) {
@@ -95,7 +123,7 @@ TEST_F(ExchangeClientTest, nonVeloxCreateExchangeSourceException) {
         throw std::runtime_error("Testing error");
       });
 
-  ExchangeClient client(1, pool(), ExchangeClient::kDefaultMaxQueuedBytes);
+  ExchangeClient client("t", 1, pool(), ExchangeClient::kDefaultMaxQueuedBytes);
   VELOX_ASSERT_THROW(
       client.addRemoteTaskId("task.1.2.3"),
       "Failed to create ExchangeSource: Testing error. Task ID: task.1.2.3.");
@@ -104,7 +132,7 @@ TEST_F(ExchangeClientTest, nonVeloxCreateExchangeSourceException) {
   VELOX_ASSERT_THROW(
       client.addRemoteTaskId(std::string(1024, 'x')),
       "Failed to create ExchangeSource: Testing error. "
-      "Task ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.");
+      "Task ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.");
 }
 
 TEST_F(ExchangeClientTest, stats) {
@@ -119,12 +147,13 @@ TEST_F(ExchangeClientTest, stats) {
                   .partitionedOutput({"c0"}, 100)
                   .planNode();
   auto taskId = "local://t1";
-  auto task = makeTask(taskId, plan, 17);
+  auto task = makeTask(taskId, plan);
 
   bufferManager_->initializeTask(
       task, core::PartitionedOutputNode::Kind::kPartitioned, 100, 16);
 
-  ExchangeClient client(17, pool(), ExchangeClient::kDefaultMaxQueuedBytes);
+  ExchangeClient client(
+      "t", 17, pool(), ExchangeClient::kDefaultMaxQueuedBytes);
   client.addRemoteTaskId(taskId);
 
   // Enqueue 3 pages.
@@ -136,19 +165,103 @@ TEST_F(ExchangeClientTest, stats) {
     pageBytes.push_back(pageSize);
   }
 
-  // ExchangeSource should have fetched first page and placed it into the queue.
-  // Once we fetch this page from the queue, the ExchangeSource will go fetch
-  // the remaining 2 pages.
-
   fetchPages(client, 3);
 
   auto stats = client.stats();
-  EXPECT_EQ(pageBytes[1] + pageBytes[2], stats.at("peakBytes").sum);
+  EXPECT_EQ(totalBytes, stats.at("peakBytes").sum);
   EXPECT_EQ(data.size(), stats.at("numReceivedPages").sum);
   EXPECT_EQ(totalBytes / data.size(), stats.at("averageReceivedPageBytes").sum);
 
   task->requestCancel();
   bufferManager_->removeTask(taskId);
+}
+
+// Test scenario where fetching data from all sources at once would exceed queue
+// size. Verify that ExchangeClient is fetching data only from a few sources at
+// a time to avoid exceeding the limit.
+TEST_F(ExchangeClientTest, flowControl) {
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>(10'000, [](auto row) { return row; }),
+  });
+
+  auto page = toSerializedPage(data);
+
+  // Set limit at 3.5 pages.
+  ExchangeClient client("flow.control", 17, pool(), page->size() * 3.5);
+
+  auto plan = test::PlanBuilder()
+                  .values({data})
+                  .partitionedOutput({"c0"}, 100)
+                  .planNode();
+  // Make 10 tasks.
+  std::vector<std::shared_ptr<Task>> tasks;
+  for (auto i = 0; i < 10; ++i) {
+    auto taskId = fmt::format("local://t{}", i);
+    auto task = makeTask(taskId, plan);
+
+    bufferManager_->initializeTask(
+        task, core::PartitionedOutputNode::Kind::kPartitioned, 100, 16);
+
+    // Enqueue 3 pages.
+    for (auto j = 0; j < 3; ++j) {
+      enqueue(taskId, 17, data);
+    }
+
+    tasks.push_back(task);
+    client.addRemoteTaskId(taskId);
+  }
+
+  fetchPages(client, 3 * tasks.size());
+
+  auto stats = client.stats();
+  EXPECT_LE(stats.at("peakBytes").sum, page->size() * 4);
+  EXPECT_EQ(30, stats.at("numReceivedPages").sum);
+  EXPECT_EQ(page->size(), stats.at("averageReceivedPageBytes").sum);
+
+  for (auto& task : tasks) {
+    task->requestCancel();
+    bufferManager_->removeTask(task->taskId());
+  }
+}
+
+TEST_F(ExchangeClientTest, multiPageFetch) {
+  ExchangeClient client("test", 17, pool(), 1 << 20);
+
+  bool atEnd;
+  ContinueFuture future;
+  auto pages = client.next(1, &atEnd, &future);
+  ASSERT_EQ(0, pages.size());
+  ASSERT_FALSE(atEnd);
+
+  const auto& queue = client.queue();
+  addSources(*queue, 1);
+
+  for (auto i = 0; i < 10; ++i) {
+    enqueue(*queue, makePage(1'000 + i));
+  }
+
+  // Fetch one page.
+  pages = client.next(1, &atEnd, &future);
+  ASSERT_EQ(1, pages.size());
+  ASSERT_FALSE(atEnd);
+
+  // Fetch multiple pages. Each page is slightly larger than 1K bytes, hence,
+  // only 4 pages fit.
+  pages = client.next(5'000, &atEnd, &future);
+  ASSERT_EQ(4, pages.size());
+  ASSERT_FALSE(atEnd);
+
+  // Fetch the rest of the pages.
+  pages = client.next(10'000, &atEnd, &future);
+  ASSERT_EQ(5, pages.size());
+  ASSERT_FALSE(atEnd);
+
+  // Signal no-more-data.
+  enqueue(*queue, nullptr);
+
+  pages = client.next(10'000, &atEnd, &future);
+  ASSERT_EQ(0, pages.size());
+  ASSERT_TRUE(atEnd);
 }
 
 } // namespace

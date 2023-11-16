@@ -99,8 +99,7 @@ class SerializeBenchmark {
 
     auto copy = BaseVector::create(rowType, data->size(), pool());
 
-    ByteStream in;
-    HashStringAllocator::prepareRead(position.header, in);
+    auto in = HashStringAllocator::prepareRead(position.header);
     for (auto i = 0; i < data->size(); ++i) {
       exec::ContainerRowSerde::deserialize(in, i, copy.get());
     }
@@ -261,6 +260,16 @@ SERDE_BENCHMARKS(
         BIGINT(), BIGINT(), BIGINT(), DOUBLE(), DOUBLE(), DOUBLE(), DOUBLE(),
         DOUBLE(), DOUBLE(), DOUBLE(), DOUBLE(), BIGINT(), BIGINT(),
     }));
+
+BENCHMARK(decimalsSerialize) {
+  SerializeBenchmark benchmark;
+  benchmark.serializeUnsafe(ROW({BIGINT(), DECIMAL(12, 2), DECIMAL(38, 18)}));
+}
+
+BENCHMARK(decimalsDeserialize) {
+  SerializeBenchmark benchmark;
+  benchmark.deserializeUnsafe(ROW({BIGINT(), DECIMAL(12, 2), DECIMAL(38, 18)}));
+}
 
 SERDE_BENCHMARKS(strings1, ROW({BIGINT(), VARCHAR()}));
 

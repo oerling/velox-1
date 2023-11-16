@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/dwio/common/tests/utils/BatchMaker.h"
+
 #include "velox/exec/tests/SimpleAggregateFunctionsRegistration.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
@@ -32,13 +32,27 @@ class ArrayAggTest : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-
     registerSimpleArrayAggAggregate("simple_array_agg");
+  }
+
+  RowVectorPtr fuzzFlat(const RowTypePtr& rowType, size_t size) {
+    VectorFuzzer::Options options;
+    options.vectorSize = size;
+    VectorFuzzer fuzzer(options, pool());
+    return fuzzer.fuzzInputFlatRow(rowType);
   }
 };
 
+std::unordered_map<std::string, std::string> makeConfig(bool ignoreNulls) {
+  if (ignoreNulls) {
+    return {{"presto.array_agg.ignore_nulls", "true"}};
+  }
+  return {};
+}
+
 TEST_F(ArrayAggTest, groupBy) {
-  auto testFunction = [this](const std::string& functionName) {
+  auto testFunction = [this](
+                          const std::string& functionName, bool ignoreNulls) {
     constexpr int32_t kNumGroups = 10;
     std::vector<RowVectorPtr> batches;
     // We make 10 groups. each with 10 arrays. Each array consists of n
@@ -46,16 +60,20 @@ TEST_F(ArrayAggTest, groupBy) {
     // expected result is that there is, for each key, an array of 100
     // elements with, for key k, batch[k[, batch[k + 10], ... batch[k +
     // 90], repeated 10 times.
-    batches.push_back(std::static_pointer_cast<RowVector>(
-        velox::test::BatchMaker::createBatch(
-            ROW({"c0", "a"}, {INTEGER(), ARRAY(VARCHAR())}), 100, *pool_)));
+    batches.push_back(
+        fuzzFlat(ROW({"c0", "a"}, {INTEGER(), ARRAY(VARCHAR())}), 100));
     // We divide the rows into 10 groups.
     auto keys = batches[0]->childAt(0)->as<FlatVector<int32_t>>();
+    auto values = batches[0]->childAt(1)->as<ArrayVector>();
     for (auto i = 0; i < keys->size(); ++i) {
       if (i % 10 == 0) {
         keys->setNull(i, true);
       } else {
         keys->set(i, i % kNumGroups);
+      }
+
+      if (i % 7 == 0) {
+        values->setNull(i, true);
       }
     }
     // We make 10 repeats of the first batch.
@@ -64,24 +82,45 @@ TEST_F(ArrayAggTest, groupBy) {
     }
 
     createDuckDbTable(batches);
+    auto filter = ignoreNulls ? "filter (where a is not null)" : "";
     testAggregations(
         batches,
         {"c0"},
-        {"array_agg(a)"},
-        "SELECT c0, array_agg(a) FROM tmp GROUP BY c0");
+        {fmt::format("{}(a)", functionName)},
+        {"c0", "array_sort(a0)"},
+        fmt::format(
+            "SELECT c0, array_sort(array_agg(a) {}) FROM tmp GROUP BY c0",
+            filter),
+        makeConfig(ignoreNulls));
+    testAggregationsWithCompanion(
+        batches,
+        [](auto& /*builder*/) {},
+        {"c0"},
+        {fmt::format("{}(a)", functionName)},
+        {{ARRAY(VARCHAR())}},
+        {"c0", "array_sort(a0)"},
+        fmt::format(
+            "SELECT c0, array_sort(array_agg(a) {}) FROM tmp GROUP BY c0",
+            filter),
+        makeConfig(ignoreNulls));
 
     // Having one function supporting toIntermediate and one does not, make sure
-    // the row container is recreated with only the function wihtout
+    // the row container is recreated with only the function without
     // toIntermediate support.
     testAggregations(
         batches,
         {"c0"},
         {fmt::format("{}(a)", functionName), "max(c0)"},
-        "SELECT c0, array_agg(a), max(c0) FROM tmp GROUP BY c0");
+        {"c0", "array_sort(a0)", "a1"},
+        fmt::format(
+            "SELECT c0, array_sort(array_agg(a) {}), max(c0) FROM tmp GROUP BY c0",
+            filter),
+        makeConfig(ignoreNulls));
   };
 
-  testFunction("array_agg");
-  testFunction("simple_array_agg");
+  testFunction("array_agg", true);
+  testFunction("array_agg", false);
+  testFunction("simple_array_agg", false);
 }
 
 TEST_F(ArrayAggTest, sortedGroupBy) {
@@ -148,6 +187,23 @@ TEST_F(ArrayAggTest, sortedGroupBy) {
             "SELECT c0, array_agg(c1 ORDER BY c2 DESC, c3), sum(c1) "
             " FROM tmp GROUP BY 1");
 
+    // Multiple sorted aggregations with same sorting keys.
+    plan = PlanBuilder()
+               .values({data})
+               .singleAggregation(
+                   {"c0"},
+                   {
+                       fmt::format("{}(c1 ORDER BY c3)", functionName),
+                       fmt::format("{}(c2 ORDER BY c3)", functionName),
+                       "sum(c1)",
+                   })
+               .planNode();
+
+    AssertQueryBuilder(plan, duckDbQueryRunner_)
+        .assertResults(
+            "SELECT c0, array_agg(c1 ORDER BY c3), array_agg(c2 ORDER BY c3), sum(c1) "
+            " FROM tmp GROUP BY 1");
+
     // Sorted aggregation with mask.
     plan = PlanBuilder()
                .values({data})
@@ -172,34 +228,71 @@ TEST_F(ArrayAggTest, sortedGroupBy) {
 }
 
 TEST_F(ArrayAggTest, global) {
-  auto testFunction = [this](const std::string& functionName) {
+  auto testFunction = [this](
+                          const std::string& functionName, bool ignoreNulls) {
     vector_size_t size = 10;
 
     std::vector<RowVectorPtr> vectors = {makeRowVector({makeFlatVector<int32_t>(
         size, [](vector_size_t row) { return row * 2; }, nullEvery(3))})};
 
     createDuckDbTable(vectors);
+    auto filter = ignoreNulls ? "filter (where c0 is not null)" : "";
     testAggregations(
         vectors,
         {},
         {fmt::format("{}(c0)", functionName)},
-        "SELECT array_agg(c0) FROM tmp");
+        {"array_sort(a0)"},
+        fmt::format("SELECT array_sort(array_agg(c0) {}) FROM tmp", filter),
+        makeConfig(ignoreNulls));
+    testAggregationsWithCompanion(
+        vectors,
+        [](auto& /*builder*/) {},
+        {},
+        {fmt::format("{}(c0)", functionName)},
+        {{INTEGER()}},
+        {"array_sort(a0)"},
+        fmt::format("SELECT array_sort(array_agg(c0) {}) FROM tmp", filter),
+        makeConfig(ignoreNulls));
   };
 
-  testFunction("array_agg");
-  testFunction("simple_array_agg");
+  testFunction("array_agg", true);
+  testFunction("array_agg", false);
+  testFunction("simple_array_agg", false);
 }
 
 TEST_F(ArrayAggTest, globalNoData) {
-  auto testFunction = [this](const std::string& functionName) {
+  auto testFunction = [this](
+                          const std::string& functionName, bool ignoreNulls) {
     auto data = makeRowVector(ROW({"c0"}, {INTEGER()}), 0);
-
     testAggregations(
         {data}, {}, {fmt::format("{}(c0)", functionName)}, "SELECT null");
+
+    std::vector<RowVectorPtr> allNulls = {
+        makeRowVector({makeFlatVector<int32_t>(
+            10, [](vector_size_t row) { return row; }, nullEvery(1))})};
+    auto filter = ignoreNulls ? "filter (where c0 is not null)" : "";
+
+    createDuckDbTable(allNulls);
+    testAggregations(
+        allNulls,
+        {},
+        {fmt::format("{}(c0)", functionName)},
+        fmt::format("SELECT array_agg(c0) {} FROM tmp", filter),
+        makeConfig(ignoreNulls));
+    testAggregationsWithCompanion(
+        allNulls,
+        [](auto& /*builder*/) {},
+        {},
+        {fmt::format("{}(c0)", functionName)},
+        {{INTEGER()}},
+        {"array_sort(a0)"},
+        fmt::format("SELECT array_sort(array_agg(c0) {}) FROM tmp", filter),
+        makeConfig(ignoreNulls));
   };
 
-  testFunction("array_agg");
-  testFunction("simple_array_agg");
+  testFunction("array_agg", true);
+  testFunction("array_agg", false);
+  testFunction("simple_array_agg", false);
 }
 
 TEST_F(ArrayAggTest, sortedGlobal) {
@@ -338,19 +431,6 @@ TEST_F(ArrayAggTest, sortedGlobalWithMask) {
   testFunction("simple_array_agg");
 }
 
-namespace {
-std::vector<RowVectorPtr> split(const RowVectorPtr& data) {
-  const auto numRows = data->size();
-  VELOX_CHECK_GE(numRows, 2);
-
-  const auto n = numRows / 2;
-  return {
-      std::dynamic_pointer_cast<RowVector>(data->slice(0, n)),
-      std::dynamic_pointer_cast<RowVector>(data->slice(n, numRows - n)),
-  };
-}
-} // namespace
-
 TEST_F(ArrayAggTest, mask) {
   auto testFunction = [this](const std::string& functionName) {
     // Global aggregation with all-false mask.
@@ -359,6 +439,8 @@ TEST_F(ArrayAggTest, mask) {
         makeConstant(false, 5),
     });
 
+    // TODO: Add support for FILTER in testAggregationsWithCompanion() and test
+    // queries with companion functions.
     testAggregations(
         split(data),
         {},
@@ -375,6 +457,7 @@ TEST_F(ArrayAggTest, mask) {
         split(data),
         {},
         {fmt::format("{}(c0) FILTER (WHERE c1)", functionName)},
+        {"array_sort(a0)"},
         "SELECT [1, 3, 5]");
 
     // Group-by with all-false mask.
@@ -401,6 +484,7 @@ TEST_F(ArrayAggTest, mask) {
         split(data),
         {"c0"},
         {fmt::format("{}(c1) FILTER (WHERE c2)", functionName)},
+        {"c0", "array_sort(a0)"},
         "VALUES (10, [1, 3]), (20, [5])");
   };
 

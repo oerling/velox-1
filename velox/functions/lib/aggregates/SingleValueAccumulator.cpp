@@ -40,8 +40,7 @@ void SingleValueAccumulator::read(const VectorPtr& vector, vector_size_t index)
     const {
   VELOX_CHECK_NOT_NULL(start_.header);
 
-  ByteStream stream;
-  HashStringAllocator::prepareRead(start_.header, stream);
+  auto stream = HashStringAllocator::prepareRead(start_.header);
   exec::ContainerRowSerde::deserialize(stream, index, vector.get());
 }
 
@@ -49,20 +48,21 @@ bool SingleValueAccumulator::hasValue() const {
   return start_.header != nullptr;
 }
 
-int32_t SingleValueAccumulator::compare(
+std::optional<int32_t> SingleValueAccumulator::compare(
     const DecodedVector& decoded,
-    vector_size_t index) const {
+    vector_size_t index,
+    CompareFlags compareFlags) const {
   VELOX_CHECK_NOT_NULL(start_.header);
 
-  ByteStream stream;
-  HashStringAllocator::prepareRead(start_.header, stream);
-  return exec::ContainerRowSerde::compare(
-      stream, decoded, index, {true, true, false});
+  auto stream = HashStringAllocator::prepareRead(start_.header);
+  return exec::ContainerRowSerde::compareWithNulls(
+      stream, decoded, index, compareFlags);
 }
 
 void SingleValueAccumulator::destroy(HashStringAllocator* allocator) {
   if (start_.header != nullptr) {
     allocator->free(start_.header);
+    start_.header = nullptr;
   }
 }
 

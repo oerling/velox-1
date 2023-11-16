@@ -94,15 +94,18 @@ class HashJoinBridgeTest : public testing::Test,
   }
 
   SpillFiles makeFakeSpillFiles(int32_t numFiles) {
+    static uint32_t fakeFileId{0};
     SpillFiles files;
     files.reserve(numFiles);
     for (int32_t i = 0; i < numFiles; ++i) {
       files.push_back(std::make_unique<SpillFile>(
+          fakeFileId++,
           rowType_,
           1,
           std::vector<CompareFlags>({}),
           tempDir_->path + "/Spill",
-          *pool_));
+          common::CompressionKind_NONE,
+          pool_.get()));
       // Create a fake file to avoid too many exception logs in test when spill
       // file deletion fails.
       createFile(files.back()->testingFilePath());
@@ -482,6 +485,33 @@ TEST_P(HashJoinBridgeTest, multiThreading) {
     for (auto& th : proberThreads) {
       th.join();
     }
+  }
+}
+
+TEST(HashJoinBridgeTest, isHashBuildMemoryPool) {
+  auto root =
+      memory::defaultMemoryManager().addRootPool("isHashBuildMemoryPool");
+  struct {
+    std::string poolName;
+    bool expectedHashBuildPool;
+
+    std::string debugString() const {
+      return fmt::format(
+          "poolName: {}, expectedHashBuildPool: {}",
+          poolName,
+          expectedHashBuildPool);
+    }
+  } testSettings[] = {
+      {"HashBuild", true},
+      {"HashBuildd", false},
+      {"hHashBuild", true},
+      {"hHashProbe", false},
+      {"HashProbe", false},
+      {"HashProbeh", false}};
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+    const auto pool = root->addLeafChild(testData.poolName);
+    ASSERT_EQ(isHashBuildMemoryPool(*pool), testData.expectedHashBuildPool);
   }
 }
 

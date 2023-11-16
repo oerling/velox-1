@@ -17,6 +17,7 @@
 
 #include "velox/exec/HashTable.h"
 #include "velox/exec/JoinBridge.h"
+#include "velox/exec/MemoryReclaimer.h"
 #include "velox/exec/Spill.h"
 
 namespace facebook::velox::exec {
@@ -135,16 +136,23 @@ class HashJoinBridge : public JoinBridge {
 bool isLeftNullAwareJoinWithFilter(
     const std::shared_ptr<const core::HashJoinNode>& joinNode);
 
-class HashJoinMemoryReclaimer final : public memory::MemoryReclaimer {
+class HashJoinMemoryReclaimer final : public MemoryReclaimer {
  public:
   static std::unique_ptr<memory::MemoryReclaimer> create() {
     return std::unique_ptr<memory::MemoryReclaimer>(
         new HashJoinMemoryReclaimer());
   }
 
-  uint64_t reclaim(memory::MemoryPool* pool, uint64_t targetBytes) final;
+  uint64_t reclaim(
+      memory::MemoryPool* pool,
+      uint64_t targetBytes,
+      memory::MemoryReclaimer::Stats& stats) final;
 
  private:
   HashJoinMemoryReclaimer() : MemoryReclaimer() {}
 };
+
+/// Returns true if 'pool' is a hash build operator's memory pool. The check is
+/// currently based on the pool name.
+bool isHashBuildMemoryPool(const memory::MemoryPool& pool);
 } // namespace facebook::velox::exec

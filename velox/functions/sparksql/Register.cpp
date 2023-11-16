@@ -15,15 +15,16 @@
  */
 #include "velox/functions/sparksql/Register.h"
 
+#include "velox/expression/RegisterSpecialForm.h"
 #include "velox/functions/lib/IsNull.h"
 #include "velox/functions/lib/Re2Functions.h"
 #include "velox/functions/lib/RegistrationHelpers.h"
+#include "velox/functions/prestosql/DateTimeFunctions.h"
 #include "velox/functions/prestosql/JsonFunctions.h"
-#include "velox/functions/prestosql/Rand.h"
 #include "velox/functions/prestosql/StringFunctions.h"
+#include "velox/functions/sparksql/ArrayMinMaxFunction.h"
 #include "velox/functions/sparksql/ArraySort.h"
 #include "velox/functions/sparksql/Bitwise.h"
-#include "velox/functions/sparksql/CompareFunctionsNullSafe.h"
 #include "velox/functions/sparksql/DateTimeFunctions.h"
 #include "velox/functions/sparksql/Hash.h"
 #include "velox/functions/sparksql/In.h"
@@ -34,8 +35,12 @@
 #include "velox/functions/sparksql/RegisterCompare.h"
 #include "velox/functions/sparksql/Size.h"
 #include "velox/functions/sparksql/String.h"
+#include "velox/functions/sparksql/UnscaledValueFunction.h"
 
 namespace facebook::velox::functions {
+extern void registerElementAtFunction(
+    const std::string& name,
+    bool enableCaching);
 
 static void workAroundRegistrationMacro(const std::string& prefix) {
   // VELOX_REGISTER_VECTOR_FUNCTION must be invoked in the same namespace as the
@@ -53,7 +58,8 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_array_intersect, prefix + "array_intersect");
   // This is the semantics of spark.sql.ansi.enabled = false.
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_element_at, prefix + "element_at");
+  registerElementAtFunction(prefix + "element_at", true);
+
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_map_allow_duplicates, prefix + "map_from_arrays");
   // String functions.
@@ -69,8 +75,34 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
 
 namespace sparksql {
 
+void registerAllSpecialFormGeneralFunctions() {
+  exec::registerFunctionCallToSpecialForms();
+}
+
+namespace {
+template <typename T>
+inline void registerArrayMinMaxFunctions(const std::string& prefix) {
+  registerFunction<ArrayMinFunction, T, Array<T>>({prefix + "array_min"});
+  registerFunction<ArrayMaxFunction, T, Array<T>>({prefix + "array_max"});
+}
+
+inline void registerArrayMinMaxFunctions(const std::string& prefix) {
+  registerArrayMinMaxFunctions<int8_t>(prefix);
+  registerArrayMinMaxFunctions<int16_t>(prefix);
+  registerArrayMinMaxFunctions<int32_t>(prefix);
+  registerArrayMinMaxFunctions<int64_t>(prefix);
+  registerArrayMinMaxFunctions<int128_t>(prefix);
+  registerArrayMinMaxFunctions<float>(prefix);
+  registerArrayMinMaxFunctions<double>(prefix);
+  registerArrayMinMaxFunctions<bool>(prefix);
+  registerArrayMinMaxFunctions<Varchar>(prefix);
+  registerArrayMinMaxFunctions<Timestamp>(prefix);
+  registerArrayMinMaxFunctions<Date>(prefix);
+}
+} // namespace
+
 void registerFunctions(const std::string& prefix) {
-  registerFunction<RandFunction, double>({prefix + "rand"});
+  registerAllSpecialFormGeneralFunctions();
 
   // Register size functions
   registerSize(prefix + "size");
@@ -119,6 +151,8 @@ void registerFunctions(const std::string& prefix) {
       prefix + "instr", instrSignatures(), makeInstr);
   exec::registerStatefulVectorFunction(
       prefix + "length", lengthSignatures(), makeLength);
+  registerFunction<SubstringIndexFunction, Varchar, Varchar, Varchar, int32_t>(
+      {prefix + "substring_index"});
 
   registerFunction<Md5Function, Varchar, Varbinary>({prefix + "md5"});
   registerFunction<Sha1HexStringFunction, Varchar, Varbinary>(
@@ -151,10 +185,6 @@ void registerFunctions(const std::string& prefix) {
   // Register 'in' functions.
   registerIn(prefix);
 
-  // Compare nullsafe functions
-  exec::registerStatefulVectorFunction(
-      prefix + "equalnullsafe", equalNullSafeSignatures(), makeEqualNullSafe);
-
   // These vector functions are only accessible via the
   // VELOX_REGISTER_VECTOR_FUNCTION macro, which must be invoked in the same
   // namespace as the function definition.
@@ -186,6 +216,9 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<TranslateFunction, Varchar, Varchar, Varchar, Varchar>(
       {prefix + "translate"});
 
+  registerFunction<ConvFunction, Varchar, Varchar, int32_t, int32_t>(
+      {prefix + "conv"});
+
   // Register array sort functions.
   exec::registerStatefulVectorFunction(
       prefix + "array_sort", arraySortSignatures(), makeArraySort);
@@ -195,6 +228,8 @@ void registerFunctions(const std::string& prefix) {
   // Register date functions.
   registerFunction<YearFunction, int32_t, Timestamp>({prefix + "year"});
   registerFunction<YearFunction, int32_t, Date>({prefix + "year"});
+  registerFunction<WeekFunction, int32_t, Timestamp>({prefix + "week_of_year"});
+  registerFunction<WeekFunction, int32_t, Date>({prefix + "week_of_year"});
 
   registerFunction<UnixTimestampFunction, int64_t>({prefix + "unix_timestamp"});
 
@@ -207,12 +242,40 @@ void registerFunctions(const std::string& prefix) {
       Varchar>({prefix + "unix_timestamp", prefix + "to_unix_timestamp"});
   registerFunction<MakeDateFunction, Date, int32_t, int32_t, int32_t>(
       {prefix + "make_date"});
-
+  registerFunction<DateDiffFunction, int32_t, Date, Date>(
+      {prefix + "datediff"});
   registerFunction<LastDayFunction, Date, Date>({prefix + "last_day"});
+  registerFunction<AddMonthsFunction, Date, Date, int32_t>(
+      {prefix + "add_months"});
+
+  registerFunction<DateAddFunction, Date, Date, int32_t>({prefix + "date_add"});
+  registerFunction<DateSubFunction, Date, Date, int32_t>({prefix + "date_sub"});
+
+  registerFunction<DayFunction, int32_t, Date>(
+      {prefix + "day", prefix + "dayofmonth"});
+  registerFunction<DayOfYearFunction, int32_t, Date>(
+      {prefix + "doy", prefix + "dayofyear"});
+
+  registerFunction<DayOfWeekFunction, int32_t, Timestamp>(
+      {prefix + "dow", prefix + "dayofweek"});
+  registerFunction<DayOfWeekFunction, int32_t, Date>(
+      {prefix + "dow", prefix + "dayofweek"});
+
+  registerFunction<QuarterFunction, int32_t, Date>({prefix + "quarter"});
+
+  registerFunction<MonthFunction, int32_t, Date>({prefix + "month"});
 
   // Register bloom filter function
   registerFunction<BloomFilterMightContainFunction, bool, Varbinary, int64_t>(
       {prefix + "might_contain"});
+
+  registerArrayMinMaxFunctions(prefix);
+
+  // Register decimal vector functions.
+  exec::registerVectorFunction(
+      prefix + "unscaled_value",
+      unscaledValueSignatures(),
+      makeUnscaledValue());
 }
 
 } // namespace sparksql

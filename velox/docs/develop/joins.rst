@@ -139,6 +139,8 @@ parallel building of the hash table where the operator that finishes building
 its table last is responsible for merging it with all the other hash tables
 before making the hash table available over the JoinBridge.
 
+.. _DynamicFilterPushdown:
+
 Dynamic Filter Pushdown
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -195,7 +197,7 @@ the join is executed using broadcast or partitioned strategy has no effect on
 the join execution itself. The only difference is that broadcast execution
 allows for dynamic filter pushdown while partitioned execution does not.
 
-PartitionedOutput operator and PartitionedOutputBufferManager support
+PartitionedOutput operator and OutputBufferManager support
 broadcasting the results of the plan evaluation. This functionality is enabled
 by setting boolean flag "broadcast" in the PartitionedOutputNode to true.
 

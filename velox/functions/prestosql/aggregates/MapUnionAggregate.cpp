@@ -26,6 +26,35 @@ class MapUnionAggregate : public MapAggregateBase<K> {
   explicit MapUnionAggregate(TypePtr resultType)
       : MapAggregateBase<K>(resultType) {}
 
+  bool supportsToIntermediate() const override {
+    return true;
+  }
+
+  void toIntermediate(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      VectorPtr& result) const override {
+    if (rows.isAllSelected()) {
+      result = args[0];
+    } else {
+      auto* pool = MapAggregateBase<K>::allocator_->pool();
+      const auto numRows = rows.size();
+
+      // Set nulls for rows not present in 'rows'.
+      BufferPtr nulls = allocateNulls(numRows, pool);
+      memcpy(
+          nulls->asMutable<uint64_t>(),
+          rows.asRange().bits(),
+          bits::nbytes(numRows));
+
+      BufferPtr indices = allocateIndices(numRows, pool);
+      auto* rawIndices = indices->asMutable<vector_size_t>();
+      std::iota(rawIndices, rawIndices + numRows, 0);
+      result =
+          BaseVector::wrapInDictionary(nulls, indices, rows.size(), args[0]);
+    }
+  }
+
   void addRawInput(
       char** groups,
       const SelectivityVector& rows,
@@ -44,7 +73,10 @@ class MapUnionAggregate : public MapAggregateBase<K> {
   }
 };
 
-exec::AggregateRegistrationResult registerMapUnion(const std::string& name) {
+} // namespace
+
+exec::AggregateRegistrationResult registerMapUnionAggregate(
+    const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
       exec::AggregateFunctionSignatureBuilder()
           .typeVariable("K")
@@ -54,6 +86,7 @@ exec::AggregateRegistrationResult registerMapUnion(const std::string& name) {
           .argumentType("map(K,V)")
           .build()};
 
+  auto name = prefix + kMapUnion;
   return exec::registerAggregateFunction(
       name,
       std::move(signatures),
@@ -71,12 +104,6 @@ exec::AggregateRegistrationResult registerMapUnion(const std::string& name) {
 
         return createMapAggregate<MapUnionAggregate>(resultType);
       });
-}
-
-} // namespace
-
-void registerMapUnionAggregate(const std::string& prefix) {
-  registerMapUnion(prefix + kMapUnion);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

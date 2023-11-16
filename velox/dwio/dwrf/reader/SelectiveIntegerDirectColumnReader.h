@@ -29,16 +29,16 @@ class SelectiveIntegerDirectColumnReader
 
   SelectiveIntegerDirectColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      std::shared_ptr<const dwio::common::TypeWithId> dataType,
+      std::shared_ptr<const dwio::common::TypeWithId> fileType,
       DwrfParams& params,
       uint32_t numBytes,
       common::ScanSpec& scanSpec)
       : SelectiveIntegerColumnReader(
-            requestedType->type,
+            requestedType->type(),
             params,
             scanSpec,
-            std::move(dataType)) {
-    EncodingKey encodingKey{fileType_->id, params.flatMapContext().sequence};
+            std::move(fileType)) {
+    EncodingKey encodingKey{fileType_->id(), params.flatMapContext().sequence};
     auto data = encodingKey.forKind(proto::Stream_Kind_DATA);
     auto& stripe = params.stripeStreams();
     bool dataVInts = stripe.getUseVInts(data);
@@ -92,7 +92,6 @@ template <typename ColumnVisitor>
 void SelectiveIntegerDirectColumnReader::readWithVisitor(
     RowSet rows,
     ColumnVisitor visitor) {
-  vector_size_t numRows = rows.back() + 1;
   if (format == velox::dwrf::DwrfFormat::kDwrf) {
     decodeWithVisitor<dwio::common::DirectDecoder<true>>(ints.get(), visitor);
   } else {
@@ -121,7 +120,6 @@ void SelectiveIntegerDirectColumnReader::readWithVisitor(
           "SelectiveIntegerDirectColumnReader::readWithVisitor get int128_t");
     }
   }
-  readOffset_ += numRows;
 }
 
 } // namespace facebook::velox::dwrf

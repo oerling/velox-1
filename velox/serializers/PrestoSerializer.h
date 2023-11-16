@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 #pragma once
+
 #include "velox/common/base/Crc.h"
 #include "velox/common/compression/Compression.h"
 #include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::serializer::presto {
+
 class PrestoVectorSerde : public VectorSerde {
  public:
   // Input options that the serializer recognizes.
@@ -38,6 +40,7 @@ class PrestoVectorSerde : public VectorSerde {
     bool useLosslessTimestamp{false};
     common::CompressionKind compressionKind{
         common::CompressionKind::CompressionKind_NONE};
+    std::vector<VectorEncoding::Simple> encodings;
   };
 
   void estimateSerializedSize(
@@ -46,27 +49,54 @@ class PrestoVectorSerde : public VectorSerde {
       vector_size_t** sizes) override;
 
   std::unique_ptr<VectorSerializer> createSerializer(
-      std::shared_ptr<const RowType> type,
+      RowTypePtr type,
       int32_t numRows,
       StreamArena* streamArena,
       const Options* options) override;
 
-  /// Serializes a RowVector with a constant children.
-  void serializeConstants(
+  /// Serializes a flat RowVector with possibly encoded children. Preserves
+  /// first level of encodings. Dictionary vectors must not have nulls added by
+  /// the dictionary.
+  ///
+  /// Used for testing.
+  void serializeEncoded(
       const RowVectorPtr& vector,
       StreamArena* streamArena,
       const Options* options,
       OutputStream* out);
 
+  bool supportsAppendInDeserialize() const override {
+    return true;
+  }
+
   void deserialize(
-      ByteStream* source,
+      ByteInputStream* source,
       velox::memory::MemoryPool* pool,
-      std::shared_ptr<const RowType> type,
-      std::shared_ptr<RowVector>* result,
+      RowTypePtr type,
+      RowVectorPtr* result,
+      const Options* options) override {
+    return deserialize(source, pool, type, result, 0, options);
+  }
+
+  void deserialize(
+      ByteInputStream* source,
+      velox::memory::MemoryPool* pool,
+      RowTypePtr type,
+      RowVectorPtr* result,
+      vector_size_t resultOffset,
       const Options* options) override;
 
   static void registerVectorSerde();
 };
+
+// Testing function for nested encodings. See comments in scatterStructNulls().
+void testingScatterStructNulls(
+    vector_size_t size,
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    const uint64_t* incomingNulls,
+    RowVector& row,
+    vector_size_t rowOffset);
 
 class PrestoOutputStreamListener : public OutputStreamListener {
  public:

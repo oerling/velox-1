@@ -13,22 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/expression/RegisterSpecialForm.h"
 #include "velox/functions/Registerer.h"
 #include "velox/functions/lib/IsNull.h"
 #include "velox/functions/prestosql/Cardinality.h"
 
 namespace facebook::velox::functions {
+extern void registerSubscriptFunction(
+    const std::string& name,
+    bool enableCaching);
+extern void registerElementAtFunction(
+    const std::string& name,
+    bool enableCaching);
 
 // Special form functions don't have any prefix.
 void registerAllSpecialFormGeneralFunctions() {
+  exec::registerFunctionCallToSpecialForms();
   VELOX_REGISTER_VECTOR_FUNCTION(udf_in, "in");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat_row, "row_constructor");
   registerIsNullFunction("is_null");
 }
 
 void registerGeneralFunctions(const std::string& prefix) {
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_element_at, prefix + "element_at");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_subscript, prefix + "subscript");
+  registerSubscriptFunction(prefix + "subscript", true);
+  registerElementAtFunction(prefix + "element_at", true);
+
   VELOX_REGISTER_VECTOR_FUNCTION(udf_transform, prefix + "transform");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_reduce, prefix + "reduce");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_filter, prefix + "filter");

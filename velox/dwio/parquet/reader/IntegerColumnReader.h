@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/dwio/common/SelectiveIntegerColumnReader.h"
-#include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
 
@@ -25,18 +24,18 @@ class IntegerColumnReader : public dwio::common::SelectiveIntegerColumnReader {
  public:
   IntegerColumnReader(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      std::shared_ptr<const dwio::common::TypeWithId> dataType,
+      std::shared_ptr<const dwio::common::TypeWithId> fileType,
       ParquetParams& params,
       common::ScanSpec& scanSpec)
       : SelectiveIntegerColumnReader(
-            requestedType->type,
+            requestedType->type(),
             params,
             scanSpec,
-            std::move(dataType)) {}
+            std::move(fileType)) {}
 
   bool hasBulkPath() const override {
-    return !this->fileType().type->isLongDecimal() &&
-        ((this->fileType().type->isShortDecimal())
+    return !this->fileType().type()->isLongDecimal() &&
+        ((this->fileType().type()->isShortDecimal())
              ? formatData_->as<ParquetData>().hasDictionary()
              : true);
   }
@@ -53,24 +52,35 @@ class IntegerColumnReader : public dwio::common::SelectiveIntegerColumnReader {
     return numValues;
   }
 
+  void getValues(RowSet rows, VectorPtr* result) override {
+    auto& fileType = static_cast<const ParquetTypeWithId&>(*fileType_);
+    auto logicalType = fileType.logicalType_;
+    if (logicalType.has_value() && logicalType.value().__isset.INTEGER &&
+        !logicalType.value().INTEGER.isSigned) {
+      getUnsignedIntValues(rows, requestedType_, result);
+    } else {
+      getIntValues(rows, requestedType_, result);
+    }
+  }
+
   void read(
       vector_size_t offset,
       RowSet rows,
       const uint64_t* /*incomingNulls*/) override {
     auto& data = formatData_->as<ParquetData>();
     VELOX_WIDTH_DISPATCH(
-        parquetSizeOfIntKind(fileType_->type->kind()),
+        parquetSizeOfIntKind(fileType_->type()->kind()),
         prepareRead,
         offset,
         rows,
         nullptr);
     readCommon<IntegerColumnReader>(rows);
+    readOffset_ += rows.back() + 1;
   }
 
   template <typename ColumnVisitor>
   void readWithVisitor(RowSet rows, ColumnVisitor visitor) {
     formatData_->as<ParquetData>().readWithVisitor(visitor);
-    readOffset_ += rows.back() + 1;
   }
 };
 

@@ -54,7 +54,7 @@ BaseVector::BaseVector(
 
   if (nulls_) {
     int32_t bytes = byteSize<bool>(length_);
-    VELOX_CHECK(nulls_->capacity() >= bytes);
+    VELOX_CHECK_GE(nulls_->capacity(), bytes);
     if (nulls_->size() < bytes) {
       // Set the size so that values get preserved by resize. Do not
       // set if already large enough, so that it is safe to take a
@@ -70,8 +70,8 @@ void BaseVector::ensureNullsCapacity(
     bool setNotNull) {
   auto fill = setNotNull ? bits::kNotNull : bits::kNull;
   // Ensure the size of nulls_ is always at least as large as length_.
-  auto size = std::max(minimumSize, length_);
-  if (nulls_ && nulls_->isMutable()) {
+  auto size = std::max<vector_size_t>(minimumSize, length_);
+  if (nulls_ && !nulls_->isView() && nulls_->unique()) {
     if (nulls_->capacity() < bits::nbytes(size)) {
       AlignedBuffer::reallocate<bool>(&nulls_, size, fill);
     }
@@ -90,7 +90,7 @@ void BaseVector::ensureNullsCapacity(
       memcpy(
           newNulls->asMutable<char>(),
           nulls_->as<char>(),
-          byteSize<bool>(std::min(length_, size)));
+          byteSize<bool>(std::min<vector_size_t>(length_, size)));
     }
     nulls_ = std::move(newNulls);
     rawNulls_ = nulls_->as<uint64_t>();
@@ -105,7 +105,7 @@ uint64_t BaseVector::byteSize<bool>(vector_size_t count) {
 void BaseVector::resize(vector_size_t size, bool setNotNull) {
   if (nulls_) {
     auto bytes = byteSize<bool>(size);
-    if (length_ < size || !nulls_->isMutable()) {
+    if (length_ < size || nulls_->isView()) {
       ensureNullsCapacity(size, setNotNull);
     }
     nulls_->setSize(bytes);
@@ -249,6 +249,25 @@ VectorPtr BaseVector::wrapInConstant(
       addConstant, kind, length, index, std::move(vector), copyBase);
 }
 
+std::optional<bool> BaseVector::equalValueAt(
+    const BaseVector* other,
+    vector_size_t index,
+    vector_size_t otherIndex,
+    CompareFlags::NullHandlingMode nullHandlingMode) const {
+  const CompareFlags compareFlags = {
+      .nullsFirst = false,
+      .ascending = false,
+      .equalsOnly = true,
+      .nullHandlingMode = nullHandlingMode};
+  std::optional<int32_t> result =
+      compare(other, index, otherIndex, compareFlags);
+  if (result.has_value()) {
+    return result.value() == 0;
+  }
+
+  return std::nullopt;
+}
+
 template <TypeKind kind>
 static VectorPtr createEmpty(
     vector_size_t size,
@@ -284,10 +303,9 @@ VectorPtr BaseVector::createInternal(
     case TypeKind::ROW: {
       std::vector<VectorPtr> children;
       auto rowType = type->as<TypeKind::ROW>();
-      // Children are reserved the parent size but are set to 0 elements.
+      // Children are reserved the parent size and accessible for those rows.
       for (int32_t i = 0; i < rowType.size(); ++i) {
         children.push_back(create(rowType.childAt(i), size, pool));
-        children.back()->resize(0);
       }
       return std::make_shared<RowVector>(
           pool, type, nullptr, size, std::move(children));
@@ -334,17 +352,38 @@ VectorPtr BaseVector::createInternal(
   }
 }
 
+// static
+void BaseVector::setNulls(
+    uint64_t* rawNulls,
+    const folly::Range<const CopyRange*>& ranges,
+    bool isNull) {
+  const auto nullBits = isNull ? bits::kNull : bits::kNotNull;
+  applyToEachRange(
+      ranges, [&](auto targetIndex, auto /*sourceIndex*/, auto count) {
+        bits::fillBits(rawNulls, targetIndex, targetIndex + count, nullBits);
+      });
+}
+
+// static
+void BaseVector::copyNulls(
+    uint64_t* targetRawNulls,
+    const uint64_t* sourceRawNulls,
+    const folly::Range<const CopyRange*>& ranges) {
+  applyToEachRange(ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+    bits::copyBits(
+        sourceRawNulls, sourceIndex, targetRawNulls, targetIndex, count);
+  });
+}
+
 void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
+  if (bits == nullptr || !rows.hasSelections()) {
+    return;
+  }
   VELOX_CHECK(isNullsWritable());
-  VELOX_CHECK(length_ >= rows.end());
+  VELOX_CHECK_GE(length_, rows.end());
   ensureNulls();
   auto target = nulls_->asMutable<uint64_t>();
   const uint64_t* selected = rows.asRange().bits();
-  if (!bits) {
-    // A 1 in rows makes a 0 in nulls.
-    bits::andWithNegatedBits(target, selected, rows.begin(), rows.end());
-    return;
-  }
   // A 0 in bits with a 1 in rows makes a 0 in nulls.
   bits::forEachWord(
       rows.begin(),
@@ -357,13 +396,27 @@ void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
       });
 }
 
-void BaseVector::clearNulls(const SelectivityVector& rows) {
+void BaseVector::addNulls(const SelectivityVector& nullRows) {
+  if (!nullRows.hasSelections()) {
+    return;
+  }
+  VELOX_CHECK(isNullsWritable());
+  VELOX_CHECK_GE(length_, nullRows.end());
+  ensureNulls();
+  auto target = nulls_->asMutable<uint64_t>();
+  const uint64_t* selected = nullRows.asRange().bits();
+  // A 1 in rows makes a 0 in nulls.
+  bits::andWithNegatedBits(target, selected, nullRows.begin(), nullRows.end());
+  return;
+}
+
+void BaseVector::clearNulls(const SelectivityVector& nonNullRows) {
   VELOX_CHECK(isNullsWritable());
   if (!nulls_) {
     return;
   }
 
-  if (rows.isAllSelected() && rows.end() == length_) {
+  if (nonNullRows.isAllSelected() && nonNullRows.end() == length_) {
     nulls_ = nullptr;
     rawNulls_ = nullptr;
     nullCount_ = 0;
@@ -373,9 +426,9 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
   auto rawNulls = nulls_->asMutable<uint64_t>();
   bits::orBits(
       rawNulls,
-      rows.asRange().bits(),
-      std::min(length_, rows.begin()),
-      std::min(length_, rows.end()));
+      nonNullRows.asRange().bits(),
+      std::min<vector_size_t>(length_, nonNullRows.begin()),
+      std::min<vector_size_t>(length_, nonNullRows.end()));
   nullCount_ = std::nullopt;
 }
 
@@ -415,21 +468,20 @@ void BaseVector::resizeIndices(
     vector_size_t size,
     velox::memory::MemoryPool* pool,
     BufferPtr* indices,
-    const vector_size_t** raw,
-    std::optional<vector_size_t> initialValue) {
-  if (indices->get() && indices->get()->isMutable()) {
-    auto newByteSize = byteSize<vector_size_t>(size);
-    if (indices->get()->size() < newByteSize) {
-      AlignedBuffer::reallocate<vector_size_t>(indices, size, initialValue);
+    const vector_size_t** raw) {
+  const auto newNumBytes = byteSize<vector_size_t>(size);
+  if (indices->get() && !indices->get()->isView() && indices->get()->unique()) {
+    if (indices->get()->size() < newNumBytes) {
+      AlignedBuffer::reallocate<vector_size_t>(indices, size, 0);
     }
   } else {
-    auto newIndices =
-        AlignedBuffer::allocate<vector_size_t>(size, pool, initialValue);
+    auto newIndices = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
     if (indices->get()) {
       auto dst = newIndices->asMutable<vector_size_t>();
       auto src = indices->get()->as<vector_size_t>();
-      auto len = std::min(indices->get()->size(), size * sizeof(vector_size_t));
-      memcpy(dst, src, len);
+      auto numCopyBytes =
+          std::min<vector_size_t>(indices->get()->size(), newNumBytes);
+      memcpy(dst, src, numCopyBytes);
     }
     *indices = newIndices;
   }
@@ -506,7 +558,7 @@ std::string BaseVector::toString(
 
 void BaseVector::ensureWritable(const SelectivityVector& rows) {
   auto newSize = std::max<vector_size_t>(rows.end(), length_);
-  if (nulls_ && !(nulls_->unique() && nulls_->isMutable())) {
+  if (nulls_ && !nulls_->isMutable()) {
     BufferPtr newNulls = AlignedBuffer::allocate<bool>(newSize, pool_);
     auto rawNewNulls = newNulls->asMutable<uint64_t>();
     memcpy(rawNewNulls, rawNulls_, bits::nbytes(length_));
@@ -536,10 +588,7 @@ void BaseVector::ensureWritable(
   auto resultType = result->type();
   bool isUnknownType = resultType->containsUnknown();
   if (result->encoding() == VectorEncoding::Simple::LAZY) {
-    // TODO Figure out how to allow memory reuse for a newly loaded vector.
-    // LazyVector holds a reference to loaded vector, hence, unique() check
-    // below will never pass.
-    VELOX_NYI();
+    result = BaseVector::loadedVectorShared(result);
   }
   if (result.unique() && !isUnknownType) {
     switch (result->encoding()) {
@@ -621,6 +670,54 @@ VectorPtr BaseVector::createConstant(
       newConstant, value.kind(), type, value, size, pool);
 }
 
+// static
+std::vector<BaseVector::CopyRange> BaseVector::toCopyRanges(
+    const SelectivityVector& rows) {
+  if (rows.isAllSelected()) {
+    return {{0, 0, rows.size()}};
+  }
+
+  std::vector<BaseVector::CopyRange> ranges;
+  ranges.reserve(rows.end());
+
+  vector_size_t prevRow = rows.begin();
+  auto bits = rows.asRange().bits();
+  bits::forEachUnsetBit(bits, rows.begin(), rows.end(), [&](vector_size_t row) {
+    if (row > prevRow) {
+      ranges.push_back({prevRow, prevRow, row - prevRow});
+    }
+    prevRow = row + 1;
+  });
+
+  if (rows.end() > prevRow) {
+    ranges.push_back({prevRow, prevRow, rows.end() - prevRow});
+  }
+
+  return ranges;
+}
+
+void BaseVector::copy(
+    const BaseVector* source,
+    const SelectivityVector& rows,
+    const vector_size_t* toSourceRow) {
+  if (!rows.hasSelections()) {
+    return;
+  }
+  std::vector<CopyRange> ranges;
+  if (toSourceRow == nullptr) {
+    VELOX_CHECK_GE(source->size(), rows.end());
+    ranges = toCopyRanges(rows);
+  } else {
+    ranges.reserve(rows.end());
+    rows.applyToSelected([&](vector_size_t row) {
+      const auto sourceRow = toSourceRow[row];
+      VELOX_DCHECK_GT(source->size(), sourceRow);
+      ranges.push_back({sourceRow, row, 1});
+    });
+  }
+  copyRanges(source, ranges);
+}
+
 namespace {
 
 template <TypeKind kind>
@@ -643,7 +740,7 @@ VectorPtr BaseVector::createNullConstant(
 }
 
 // static
-VectorPtr BaseVector::loadedVectorShared(VectorPtr vector) {
+const VectorPtr& BaseVector::loadedVectorShared(const VectorPtr& vector) {
   if (vector->encoding() != VectorEncoding::Simple::LAZY) {
     // If 'vector' is a wrapper, we load any wrapped LazyVector.
     vector->loadedVector();
@@ -666,25 +763,21 @@ VectorPtr BaseVector::transpose(BufferPtr indices, VectorPtr&& source) {
 bool isLazyNotLoaded(const BaseVector& vector) {
   switch (vector.encoding()) {
     case VectorEncoding::Simple::LAZY:
-      if (!vector.as<LazyVector>()->isLoaded()) {
+      if (!vector.asUnchecked<LazyVector>()->isLoaded()) {
         return true;
       }
 
       // Lazy Vectors may wrap lazy vectors (e.g. nested Rows) so we need to go
       // deeper.
-      return isLazyNotLoaded(*vector.as<LazyVector>()->loadedVector());
+      return isLazyNotLoaded(*vector.asUnchecked<LazyVector>()->loadedVector());
     case VectorEncoding::Simple::DICTIONARY:
     case VectorEncoding::Simple::SEQUENCE:
       return isLazyNotLoaded(*vector.valueVector());
     case VectorEncoding::Simple::CONSTANT:
       return vector.valueVector() ? isLazyNotLoaded(*vector.valueVector())
                                   : false;
-    case VectorEncoding::Simple::ROW: {
-      const auto& children = vector.as<RowVector>()->children();
-      return std::any_of(children.begin(), children.end(), [](auto it) {
-        return it != nullptr && isLazyNotLoaded(*it);
-      });
-    }
+    case VectorEncoding::Simple::ROW:
+      return vector.asUnchecked<RowVector>()->containsLazyNotLoaded();
     default:
       return false;
   }
@@ -748,6 +841,12 @@ void BaseVector::flattenVector(VectorPtr& vector) {
       BaseVector::flattenVector(mapVector->mapValues());
       return;
     }
+    case VectorEncoding::Simple::LAZY: {
+      auto loadedVector =
+          vector->asUnchecked<LazyVector>()->loadedVectorShared();
+      BaseVector::flattenVector(loadedVector);
+      return;
+    }
     default:
       BaseVector::ensureWritable(
           SelectivityVector::empty(), vector->type(), vector->pool(), vector);
@@ -768,7 +867,7 @@ void BaseVector::reuseNulls() {
   // Check nulls buffer. Keep the buffer if singly-referenced and mutable and
   // there is at least one null bit set. Reset otherwise.
   if (nulls_) {
-    if (nulls_->unique() && nulls_->isMutable()) {
+    if (nulls_->isMutable()) {
       if (0 == BaseVector::countNulls(nulls_, length_)) {
         nulls_ = nullptr;
         rawNulls_ = nullptr;
@@ -783,6 +882,16 @@ void BaseVector::reuseNulls() {
 void BaseVector::prepareForReuse() {
   reuseNulls();
   this->resetDataDependentFlags(nullptr);
+}
+
+void BaseVector::validate(const VectorValidateOptions& options) const {
+  if (nulls_ != nullptr) {
+    auto bytes = byteSize<bool>(size());
+    VELOX_CHECK_GE(nulls_->size(), bytes);
+  }
+  if (options.callback) {
+    options.callback(*this);
+  }
 }
 
 namespace {

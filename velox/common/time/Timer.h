@@ -19,15 +19,16 @@
 #include <folly/chrono/Hardware.h>
 #include <atomic>
 #include <chrono>
+#include <optional>
 
 namespace facebook::velox {
 
-// Measures the time between construction and destruction with
-// std::chrono::steady_clock and increments a user-supplied counter
-// with the elapsed time in microseconds.
+/// Measures the time between construction and destruction with
+/// std::chrono::steady_clock and increments a user-supplied counter with the
+/// elapsed time in microseconds.
 class MicrosecondTimer {
  public:
-  explicit MicrosecondTimer(uint64_t* FOLLY_NONNULL timer) : timer_(timer) {
+  explicit MicrosecondTimer(uint64_t* timer) : timer_(timer) {
     start_ = std::chrono::steady_clock::now();
   }
 
@@ -40,12 +41,12 @@ class MicrosecondTimer {
 
  private:
   std::chrono::steady_clock::time_point start_;
-  uint64_t* FOLLY_NONNULL timer_;
+  uint64_t* timer_;
 };
 
-// Measures the time between construction and destruction with
-// CPU clock counter (rdtsc on X86) and increments a user-supplied counter
-// with the cycle count.
+/// Measures the time between construction and destruction with CPU clock
+/// counter (rdtsc on X86) and increments a user-supplied counter with the cycle
+/// count.
 class ClockTimer {
  public:
   explicit ClockTimer(uint64_t& total)
@@ -64,15 +65,36 @@ class ClockTimer {
   }
 
  private:
-  uint64_t* FOLLY_NULLABLE total_{nullptr};
-  std::atomic<uint64_t>* FOLLY_NULLABLE atomicTotal_{nullptr};
+  uint64_t* total_{nullptr};
+  std::atomic<uint64_t>* atomicTotal_{nullptr};
   uint64_t start_;
 };
 
-// Returns the current epoch time in milliseconds.
+/// Returns the current epoch time in milliseconds.
 size_t getCurrentTimeMs();
 
-// Returns the current epoch time in microseconds.
+/// Returns the current epoch time in microseconds.
 size_t getCurrentTimeMicro();
+
+#ifndef NDEBUG
+// Used to override the current time for testing purposes.
+class ScopedTestTime {
+ public:
+  ScopedTestTime();
+  ~ScopedTestTime();
+
+  void setCurrentTestTimeMs(size_t currentTimeMs);
+  void setCurrentTestTimeMicro(size_t currentTimeUs);
+
+  static std::optional<size_t> getCurrentTestTimeMs();
+  static std::optional<size_t> getCurrentTestTimeMicro();
+
+ private:
+  // Used to verify only one instance of ScopedTestTime exists at a time.
+  static bool enabled_;
+  // The overridden value of current time only.
+  static std::optional<size_t> testTimeUs_;
+};
+#endif
 
 } // namespace facebook::velox

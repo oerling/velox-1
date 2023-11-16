@@ -404,9 +404,11 @@ PlanNodePtr toVeloxPlan(
           BIGINT(), call->inputs(), call->name());
     }
     std::vector<TypedExprPtr> fieldInputs;
+    std::vector<TypePtr> rawInputTypes;
 
     for (auto& input : call->inputs()) {
       projections.push_back(input);
+      rawInputTypes.push_back(input->type());
 
       if (auto field =
               std::dynamic_pointer_cast<const FieldAccessTypedExpr>(input)) {
@@ -421,13 +423,15 @@ PlanNodePtr toVeloxPlan(
     }
 
     auto aggName = translateAggregateName(call->name());
-    aggregates.push_back(
-
-			 {std::make_shared<CallTypedExpr>(
-							  call->type(), fieldInputs, aggName),
-         nullptr,
-         {},
-         {}});
+    aggregates.push_back({
+        std::make_shared<CallTypedExpr>(
+            call->type(), fieldInputs, aggName),
+        rawInputTypes,
+        nullptr, // mask
+        {}, // sortingKeys
+        {} // sortingOrders
+    });
+>>>>>>> main
   }
 
   std::vector<FieldAccessTypedExprPtr> groupingKeys;
