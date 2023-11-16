@@ -251,6 +251,10 @@ void copyWordsWithRows(
   simd::storeLeading(last, mask, numIndices - i, destination + i);
 }
 
+int32_t nts;
+int32_t ntsn;
+
+
 template <typename T>
 void appendNonNull(
     VectorStream* stream,
@@ -276,8 +280,12 @@ void appendNonNull(
   }
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
   ByteStream& out = stream->values();
+  if (std::is_same_v<T, Timestamp>) {
+    nts += rows.size();
+    ntsn +=  rows.size() - numNonNull;
+  }
+
   if constexpr (sizeof(T) == 8) {
-    constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
     AppendWindow<int64_t> window(out, scratch);
     int64_t* output = window.get(numNonNull);
     copyWordsWithRows(
@@ -287,7 +295,6 @@ void appendNonNull(
         numNonNull,
         reinterpret_cast<const int64_t*>(values));
   } else if constexpr (sizeof(T) == 4) {
-    constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
     AppendWindow<int32_t> window(out, scratch);
     int32_t* output = window.get(numNonNull);
     copyWordsWithRows(

@@ -352,6 +352,9 @@ void read(
     VectorPtr& result,
     vector_size_t resultOffset,
     bool useLosslessTimestamp) {
+  if (std::is_same_v<T, Timestamp>) {
+    LOG(INFO) << "bing";
+  }
   const int32_t size = source->read<int32_t>();
   result->resize(resultOffset + size);
 
