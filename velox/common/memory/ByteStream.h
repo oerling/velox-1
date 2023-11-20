@@ -294,7 +294,6 @@ class ByteStream {
     return lastRangeEnd_;
   }
 
-
   /// Returns a range of 'size' items of T. If there is no contiguous space in
   /// 'this', uses 'scratch' to make a temp block that is appended to 'this' in
   template <typename T>

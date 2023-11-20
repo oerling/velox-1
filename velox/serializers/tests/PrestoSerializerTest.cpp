@@ -594,22 +594,24 @@ TEST_P(PrestoSerializerTest, roundTrip) {
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
     if (i < 2) {
-      rowType = ROW(
-          {{"i", BIGINT()},
-           {"s1", VARCHAR()},
-           {"B1", BOOLEAN()}
+      rowType = ROW({
+        {"i", BIGINT()}, {"s1", VARCHAR()}, {
+          "B1", BOOLEAN()
+        }
 #if 1
-           ,{"r",
-            ROW(
-                {{"i2", INTEGER()},
-                 {"s2", VARCHAR()},
-                 {"ma2", MAP(VARBINARY(), TIMESTAMP())},
-                 {"t1", TINYINT()},
-                 {"sm2", SMALLINT()},
-                 {"tst", TIMESTAMP()},
-                 {"ar", ARRAY(INTEGER())}})}
+        , {
+          "r",
+              ROW(
+                  {{"i2", INTEGER()},
+                   {"s2", VARCHAR()},
+                   {"ma2", MAP(VARBINARY(), TIMESTAMP())},
+                   {"t1", TINYINT()},
+                   {"sm2", SMALLINT()},
+                   {"tst", TIMESTAMP()},
+                   {"ar", ARRAY(INTEGER())}})
+        }
 #endif
-	   });
+      });
     }
 
     auto inputRowVector = (i % 2 == 0) ? fuzzer.fuzzInputRow(rowType)

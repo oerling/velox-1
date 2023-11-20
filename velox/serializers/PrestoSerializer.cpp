@@ -1100,7 +1100,7 @@ class VectorStream {
         nulls_(streamArena, true, true),
         lengths_(streamArena),
         values_(streamArena),
-	isLongDecimal_(type_->isLongDecimal()) {
+        isLongDecimal_(type_->isLongDecimal()) {
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
       return;
@@ -1393,7 +1393,7 @@ class VectorStream {
   bool isLongDecimal() const {
     return isLongDecimal_;
   }
-  
+
  private:
   const TypePtr type_;
   const std::optional<VectorEncoding::Simple> encoding_;
