@@ -93,14 +93,19 @@ int32_t rowsToRanges(
     sizesOut = sizesHolder->get(numInner);
   }
   auto ranges = rangesHolder.get(numInner);
+  int32_t fill = 0;
   for (auto i = 0; i < numInner; ++i) {
-    if (sizesOut) {
-      sizesOut[i] = sizesPtr[nonNullRows[i]];
+    if (sizes[innerRows[i]] == 0) {
+      continue;
     }
-    ranges[i].begin = offsets[innerRows[i]];
-    ranges[i].size = sizes[innerRows[i]];
+    if (sizesOut) {
+      sizesOut[fill] = sizesPtr[rawNulls ? nonNullRows[i] : i];
+    }
+    ranges[fill].begin = offsets[innerRows[i]];
+    ranges[fill].size = sizes[innerRows[i]];
+    ++fill;
   }
-  return numInner;
+  return fill;
 }
 
 template <typename T>
@@ -108,7 +113,15 @@ void copyWords(
     T* destination,
     const int32_t* indices,
     int32_t numIndices,
-    const T* values) {
+    const T* values,
+    bool isLongDecimal = false) {
+  if (std::is_same_v<T, int128_t> && isLongDecimal) {
+    for (auto i = 0; i < numIndices; ++i) {
+      reinterpret_cast<int128_t*>(destination)[i] = toJavaDecimalValue(
+          reinterpret_cast<const int128_t*>(values)[indices[i]]);
+    }
+    return;
+  }
   for (auto i = 0; i < numIndices; ++i) {
     destination[i] = values[indices[i]];
   }
@@ -119,7 +132,8 @@ void copyWords(
     int64_t* destination,
     const int32_t* indices,
     int32_t numIndices,
-    const int64_t* values) {
+    const int64_t* values,
+    bool /*isLongDecimal*/) {
   constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
   int32_t i = 0;
   for (; i + kBatch < numIndices; i += kBatch) {
@@ -141,7 +155,8 @@ void copyWords(
     int32_t* destination,
     const int32_t* indices,
     int32_t numIndices,
-    const int32_t* values) {
+    const int32_t* values,
+    bool /*isLongDecimal*/) {
   int32_t i = 0;
   constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
   for (; i + kBatch < numIndices; i += kBatch) {
@@ -164,7 +179,15 @@ void copyWordsWithRows(
     const int32_t* rows,
     const int32_t* indices,
     int32_t numIndices,
-    const T* values) {
+    const T* values,
+    bool isLongDecimal = false) {
+  if (std::is_same_v<T, int128_t> && isLongDecimal) {
+    for (auto i = 0; i < numIndices; ++i) {
+      reinterpret_cast<int128_t*>(destination)[i] = toJavaDecimalValue(
+          reinterpret_cast<const int128_t*>(values)[rows[indices[i]]]);
+    }
+    return;
+  }
   for (auto i = 0; i < numIndices; ++i) {
     destination[i] = values[rows[indices[i]]];
   }
@@ -176,7 +199,8 @@ void copyWordsWithRows(
     const int32_t* rows,
     const int32_t* indices,
     int32_t numIndices,
-    const int64_t* values) {
+    const int64_t* values,
+    bool /*isLongDecimal*/) {
   constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
   constexpr int32_t kDoubleBatch = xsimd::batch<int32_t>::size;
   int32_t i = 0;
@@ -231,7 +255,8 @@ void copyWordsWithRows(
     const int32_t* rows,
     const int32_t* indices,
     int32_t numIndices,
-    const int32_t* values) {
+    const int32_t* values,
+    bool /*isLongDecimal*/) {
   int32_t i = 0;
   constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
   for (; i + kBatch < numIndices; i += kBatch) {
@@ -250,10 +275,6 @@ void copyWordsWithRows(
       xsimd::broadcast<int32_t>(0), mask, values, indexVector);
   simd::storeLeading(last, mask, numIndices - i, destination + i);
 }
-
-int32_t nts;
-int32_t ntsn;
-
 
 template <typename T>
 void appendNonNull(
@@ -280,10 +301,6 @@ void appendNonNull(
   }
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
   ByteStream& out = stream->values();
-  if (std::is_same_v<T, Timestamp>) {
-    nts += rows.size();
-    ntsn +=  rows.size() - numNonNull;
-  }
 
   if constexpr (sizeof(T) == 8) {
     AppendWindow<int64_t> window(out, scratch);
@@ -306,7 +323,13 @@ void appendNonNull(
   } else {
     AppendWindow<T> window(out, scratch);
     T* output = window.get(numNonNull);
-    copyWordsWithRows(output, rows.data(), nonNullIndices, numNonNull, values);
+    copyWordsWithRows(
+        output,
+        rows.data(),
+        nonNullIndices,
+        numNonNull,
+        values,
+        stream->isLongDecimal());
   }
 }
 
@@ -342,6 +365,30 @@ void appendStrings(
   }
 }
 
+void appendTimestamps(
+    const uint64_t* nulls,
+    folly::Range<const vector_size_t*> rows,
+    const Timestamp* timestamps,
+    VectorStream* stream,
+    Scratch& scratch) {
+  if (!nulls) {
+    stream->appendNonNull(rows.size());
+    for (auto i = 0; i < rows.size(); ++i) {
+      auto& ts = timestamps[rows[i]];
+      stream->appendOne(ts);
+    }
+    return;
+  }
+  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
+  auto nonNullRows = innerRowsHolder.get(rows.size());
+  auto numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNullRows);
+  stream->appendNulls(nulls, 0, rows.size(), numNonNull);
+  for (auto i = 0; i < numNonNull; ++i) {
+    auto& ts = timestamps[rows[nonNullRows[i]]];
+    stream->appendOne(ts);
+  }
+}
+
 template <TypeKind kind>
 void serializeFlatVector(
     const BaseVector* vector,
@@ -352,6 +399,16 @@ void serializeFlatVector(
   auto flatVector = reinterpret_cast<const FlatVector<T>*>(vector);
   auto rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
+    if (std::is_same_v<T, Timestamp>) {
+      appendTimestamps(
+          nullptr,
+          rows,
+          reinterpret_cast<const Timestamp*>(rawValues),
+          stream,
+          scratch);
+      return;
+    }
+
     if (std::is_same_v<T, StringView>) {
       appendStrings(
           nullptr,
@@ -365,7 +422,8 @@ void serializeFlatVector(
     stream->appendNonNull(rows.size());
     AppendWindow<T> window(stream->values(), scratch);
     T* output = window.get(rows.size());
-    copyWords(output, rows.data(), rows.size(), rawValues);
+    copyWords(
+        output, rows.data(), rows.size(), rawValues, stream->isLongDecimal());
   } else {
     uint64_t tempNulls[16];
     ScratchPtr<uint64_t> scratchPtr(scratch);
@@ -373,6 +431,15 @@ void serializeFlatVector(
         ? tempNulls
         : scratchPtr.get(bits::nwords(rows.size()));
     gatherBits(vector->rawNulls(), rows, nulls);
+    if (std::is_same_v<T, Timestamp>) {
+      appendTimestamps(
+          nulls,
+          rows,
+          reinterpret_cast<const Timestamp*>(rawValues),
+          stream,
+          scratch);
+      return;
+    }
     if (std::is_same_v<T, StringView>) {
       appendStrings(
           nulls,
@@ -490,10 +557,14 @@ void serializeWrapped(
 template <>
 void serializeFlatVector<TypeKind::UNKNOWN>(
     const BaseVector* vector,
-    const folly::Range<const vector_size_t*>& ranges,
+    const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_NYI();
+  VELOX_CHECK_NOT_NULL(vector->rawNulls());
+  for (auto i = 0; i < rows.size(); ++i) {
+    VELOX_DCHECK(vector->isNullAt(rows[i]));
+    stream->appendNull();
+  }
 }
 
 template <>

@@ -126,6 +126,9 @@ void estimateWrapperSerializedSize(
       }
     }
   }
+  if (numInner == 0) {
+    return;
+  }
   estimateSerializedSizeInt(
       wrapped,
       folly::Range<const vector_size_t*>(innerRows, numInner),

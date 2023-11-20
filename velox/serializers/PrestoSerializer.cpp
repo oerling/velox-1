@@ -352,9 +352,6 @@ void read(
     VectorPtr& result,
     vector_size_t resultOffset,
     bool useLosslessTimestamp) {
-  if (std::is_same_v<T, Timestamp>) {
-    LOG(INFO) << "bing";
-  }
   const int32_t size = source->read<int32_t>();
   result->resize(resultOffset + size);
 
@@ -1102,7 +1099,8 @@ class VectorStream {
         useLosslessTimestamp_(useLosslessTimestamp),
         nulls_(streamArena, true, true),
         lengths_(streamArena),
-        values_(streamArena) {
+        values_(streamArena),
+	isLongDecimal_(type_->isLongDecimal()) {
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
       return;
@@ -1392,6 +1390,10 @@ class VectorStream {
     }
   }
 
+  bool isLongDecimal() const {
+    return isLongDecimal_;
+  }
+  
  private:
   const TypePtr type_;
   const std::optional<VectorEncoding::Simple> encoding_;
@@ -1408,6 +1410,7 @@ class VectorStream {
   ByteStream lengths_;
   ByteStream values_;
   std::vector<std::unique_ptr<VectorStream>> children_;
+  const bool isLongDecimal_;
 };
 
 template <>
@@ -1456,7 +1459,7 @@ template <>
 void VectorStream::append(folly::Range<const int128_t*> values) {
   for (auto& value : values) {
     int128_t val = value;
-    if (type_->isLongDecimal()) {
+    if (isLongDecimal_) {
       val = toJavaDecimalValue(value);
     }
     values_.append<int128_t>(folly::Range(&val, 1));

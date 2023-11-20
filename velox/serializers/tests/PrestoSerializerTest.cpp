@@ -597,8 +597,9 @@ TEST_P(PrestoSerializerTest, roundTrip) {
       rowType = ROW(
           {{"i", BIGINT()},
            {"s1", VARCHAR()},
-           {"B1", BOOLEAN()},
-           {"r",
+           {"B1", BOOLEAN()}
+#if 1
+           ,{"r",
             ROW(
                 {{"i2", INTEGER()},
                  {"s2", VARCHAR()},
@@ -606,7 +607,9 @@ TEST_P(PrestoSerializerTest, roundTrip) {
                  {"t1", TINYINT()},
                  {"sm2", SMALLINT()},
                  {"tst", TIMESTAMP()},
-                 {"ar", ARRAY(INTEGER())}})}});
+                 {"ar", ARRAY(INTEGER())}})}
+#endif
+	   });
     }
 
     auto inputRowVector = (i % 2 == 0) ? fuzzer.fuzzInputRow(rowType)
