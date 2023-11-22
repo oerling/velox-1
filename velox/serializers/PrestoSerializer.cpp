@@ -1224,7 +1224,7 @@ class VectorStream {
     nonNullCount_ += numNonNull;
     if (LIKELY(end <= 64)) {
       uint64_t inverted = ~nulls[0];
-      nulls_.appendBits(&inverted, begin, end);
+      nulls_.appendBitsFresh(&inverted, begin, end);
       return;
     }
     const int32_t firstWord = begin >> 6;
@@ -1241,7 +1241,7 @@ class VectorStream {
     for (auto i = 0; i < numWords; ++i) {
       invertedNulls[i] = ~nulls[i + firstWord];
     }
-    nulls_.appendBits(invertedNulls, firstBit, firstBit + numRows);
+    nulls_.appendBitsFresh(invertedNulls, firstBit, firstBit + numRows);
   }
 
   // Appends a zero length for each null bit and a length from lengthFunc(row)

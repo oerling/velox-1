@@ -127,6 +127,7 @@ void copyWords(
   }
 }
 
+#if 0
 template <>
 void copyWords(
     int64_t* destination,
@@ -172,6 +173,7 @@ void copyWords(
       simd::loadGatherIndices<int32_t, int32_t>(indices + i));
   simd::storeLeading(last, mask, numIndices - i, destination + i);
 }
+#endif
 
 template <typename T>
 void copyWordsWithRows(
@@ -181,6 +183,10 @@ void copyWordsWithRows(
     int32_t numIndices,
     const T* values,
     bool isLongDecimal = false) {
+  if (!indices) {
+    copyWords(destination, rows, numIndices, values, isLongDecimal);
+    return;
+  }
   if (std::is_same_v<T, int128_t> && isLongDecimal) {
     for (auto i = 0; i < numIndices; ++i) {
       reinterpret_cast<int128_t*>(destination)[i] = toJavaDecimalValue(
@@ -192,7 +198,7 @@ void copyWordsWithRows(
     destination[i] = values[rows[indices[i]]];
   }
 }
-
+#if 0
 template <>
 void copyWordsWithRows(
     int64_t* destination,
@@ -275,7 +281,7 @@ void copyWordsWithRows(
       xsimd::broadcast<int32_t>(0), mask, values, indexVector);
   simd::storeLeading(last, mask, numIndices - i, destination + i);
 }
-
+#endif
 template <typename T>
 void appendNonNull(
     VectorStream* stream,
@@ -290,14 +296,14 @@ void appendNonNull(
   int32_t numNonNull;
   if (LIKELY(numRows <= 8)) {
     uint8_t nullsByte = *reinterpret_cast<const uint8_t*>(nulls);
-    nonNullIndices = simd::byteSetBits(nullsByte);
     numNonNull = __builtin_popcount(nullsByte);
+    nonNullIndices = numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
     auto mutableIndices = (numRows <= sizeof(localRows) / sizeof(localRows[0]))
         ? localRows
         : temp.get(numRows);
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableIndices);
-    nonNullIndices = mutableIndices;
+    nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
   ByteStream& out = stream->values();
@@ -305,6 +311,8 @@ void appendNonNull(
   if constexpr (sizeof(T) == 8) {
     AppendWindow<int64_t> window(out, scratch);
     int64_t* output = window.get(numNonNull);
+    if (numNonNull ==numRows) {
+    }
     copyWordsWithRows(
         output,
         rows.data(),

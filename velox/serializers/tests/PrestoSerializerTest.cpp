@@ -593,26 +593,6 @@ TEST_P(PrestoSerializerTest, roundTrip) {
 
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
-    if (i < 2) {
-      rowType = ROW({
-        {"i", BIGINT()}, {"s1", VARCHAR()}, {
-          "B1", BOOLEAN()
-        }
-#if 1
-        , {
-          "r",
-              ROW(
-                  {{"i2", INTEGER()},
-                   {"s2", VARCHAR()},
-                   {"ma2", MAP(VARBINARY(), TIMESTAMP())},
-                   {"t1", TINYINT()},
-                   {"sm2", SMALLINT()},
-                   {"tst", TIMESTAMP()},
-                   {"ar", ARRAY(INTEGER())}})
-        }
-#endif
-      });
-    }
 
     auto inputRowVector = (i % 2 == 0) ? fuzzer.fuzzInputRow(rowType)
                                        : nonNullFuzzer.fuzzInputRow(rowType);
@@ -650,7 +630,11 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   // Serialize different fractions of a 10K vector of int32_t and int64_t with
   // IndexRange and row range variants with and without nulls.
   constexpr int32_t kPad = 8;
-  std::vector<int32_t> numSelectedValues = {3 /*, 30, 300, 10000 */};
+  std::vector<int32_t> numSelectedValues = {3
+#if ALL_CASES
+    , 30, 300, 10000
+#endif
+  };
   std::vector<std::vector<IndexRange>> indexRanges;
   std::vector<std::vector<vector_size_t>> rowSets;
   std::vector<int32_t> nullPctValues = {0, 1, 10, 90};
@@ -699,7 +683,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     auto rowType = ROW({vector->type()});
     auto rowVector = vm.rowVector({vector});
     {
-#if 0
+#if ALL_CASES
       MicrosecondTimer t(&item.irTime);
       auto group = std::make_unique<VectorStreamGroup>(pool_.get());
       group->createStreamTree(rowType, rowSets[selIdx].size() - kPad);

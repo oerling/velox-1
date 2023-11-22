@@ -334,7 +334,28 @@ class ByteStream {
 
   void appendBool(bool value, int32_t count);
 
-  void appendBits(const uint64_t* vits, int32_t begin, int32_t end);
+  // A fast path for appending bits into pre-cleared buffers after first extend.
+  inline void
+  appendBitsFresh(const uint64_t* bits, int32_t begin, int32_t end) {
+    const auto position = current_->position;
+    if (begin == 0 && end <= 56) {
+      const auto available = current_->size - position;
+      if (available > 56) {
+        const auto offset = position & 7;
+        uint64_t* buffer =
+            reinterpret_cast<uint64_t*>(current_->buffer + (position >> 3));
+	const auto mask = bits::lowMask(offset);
+        *buffer = (*buffer & mask) | (bits[0] << offset);
+	current_->position += end;
+        return;
+      }
+    }
+    appendBits(bits, begin, end);
+  }
+
+  // Writes 'bits' from bit positions begin..end to the current position of
+  // 'this'. Extends 'this' if writing past end.
+  void appendBits(const uint64_t* bits, int32_t begin, int32_t end);
 
   void appendStringView(StringView value);
 

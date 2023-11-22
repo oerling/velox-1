@@ -102,7 +102,7 @@ class ScratchPtr {
     *this = std::move(other);
   }
 
-  ~ScratchPtr() {
+  inline ~ScratchPtr() {
     if (ptr_) {
       scratch_->release(std::move(data_));
     }
