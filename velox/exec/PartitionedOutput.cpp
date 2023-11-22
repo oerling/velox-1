@@ -75,7 +75,7 @@ BlockingReason Destination::advance(
   if (rangeIdx_ == ranges_.size()) {
     *atEnd = true;
   }
-  if (shouldFlush) {
+  if (shouldFlush || (eagerFlush_ && rowsInCurrent_ > 0)) {
     return flush(bufferManager, bufferReleaseFn, future);
   }
   return BlockingReason::kNotBlocked;
@@ -115,7 +115,8 @@ BlockingReason Destination::flush(
 PartitionedOutput::PartitionedOutput(
     int32_t operatorId,
     DriverCtx* ctx,
-    const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
+    const std::shared_ptr<const core::PartitionedOutputNode>& planNode,
+    bool eagerFlush)
     : Operator(
           ctx,
           planNode->outputType(),
@@ -141,7 +142,8 @@ PartitionedOutput::PartitionedOutput(
       bufferReleaseFn_([task = operatorCtx_->task()]() {}),
       maxBufferedBytes_(ctx->task->queryCtx()
                             ->queryConfig()
-                            .maxPartitionedOutputBufferSize()) {
+                            .maxPartitionedOutputBufferSize()),
+      eagerFlush_(eagerFlush) {
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }
@@ -182,8 +184,8 @@ void PartitionedOutput::initializeDestinations() {
   if (destinations_.empty()) {
     auto taskId = operatorCtx_->taskId();
     for (int i = 0; i < numDestinations_; ++i) {
-      destinations_.push_back(
-          std::make_unique<detail::Destination>(taskId, i, pool()));
+      destinations_.push_back(std::make_unique<detail::Destination>(
+          taskId, i, pool(), eagerFlush_));
     }
   }
 }

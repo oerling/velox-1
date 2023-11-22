@@ -25,8 +25,6 @@ using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
 namespace {
-constexpr int32_t kLogEveryN = 32;
-
 #define CHECK_NOT_FINALIZED() \
   VELOX_CHECK(!finalized_, "Spiller has been finalized")
 
@@ -40,11 +38,13 @@ Spiller::Spiller(
     RowTypePtr rowType,
     int32_t numSortingKeys,
     const std::vector<CompareFlags>& sortCompareFlags,
-    const std::string& path,
+    common::GetSpillDirectoryPathCB getSpillDirPathCb,
+    const std::string& fileNamePrefix,
     uint64_t writeBufferSize,
     common::CompressionKind compressionKind,
     memory::MemoryPool* pool,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const std::unordered_map<std::string, std::string>& writeFileOptions)
     : Spiller(
           type,
           container,
@@ -52,12 +52,14 @@ Spiller::Spiller(
           HashBitRange{},
           numSortingKeys,
           sortCompareFlags,
-          path,
+          getSpillDirPathCb,
+          fileNamePrefix,
           std::numeric_limits<uint64_t>::max(),
           writeBufferSize,
           compressionKind,
           pool,
-          executor) {
+          executor,
+          writeFileOptions) {
   VELOX_CHECK(
       type_ == Type::kOrderBy || type_ == Type::kAggregateInput,
       "Unexpected spiller type: {}",
@@ -70,11 +72,13 @@ Spiller::Spiller(
     Type type,
     RowContainer* container,
     RowTypePtr rowType,
-    const std::string& path,
+    common::GetSpillDirectoryPathCB getSpillDirPathCb,
+    const std::string& fileNamePrefix,
     uint64_t writeBufferSize,
     common::CompressionKind compressionKind,
     memory::MemoryPool* pool,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const std::unordered_map<std::string, std::string>& writeFileOptions)
     : Spiller(
           type,
           container,
@@ -82,12 +86,14 @@ Spiller::Spiller(
           HashBitRange{},
           0,
           {},
-          path,
+          getSpillDirPathCb,
+          fileNamePrefix,
           std::numeric_limits<uint64_t>::max(),
           writeBufferSize,
           compressionKind,
           pool,
-          executor) {
+          executor,
+          writeFileOptions) {
   VELOX_CHECK_EQ(
       type,
       Type::kAggregateOutput,
@@ -101,12 +107,14 @@ Spiller::Spiller(
     Type type,
     RowTypePtr rowType,
     HashBitRange bits,
-    const std::string& path,
+    common::GetSpillDirectoryPathCB getSpillDirPathCb,
+    const std::string& fileNamePrefix,
     uint64_t targetFileSize,
     uint64_t writeBufferSize,
     common::CompressionKind compressionKind,
     memory::MemoryPool* pool,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const std::unordered_map<std::string, std::string>& writeFileOptions)
     : Spiller(
           type,
           nullptr,
@@ -114,12 +122,14 @@ Spiller::Spiller(
           bits,
           0,
           {},
-          path,
+          getSpillDirPathCb,
+          fileNamePrefix,
           targetFileSize,
           writeBufferSize,
           compressionKind,
           pool,
-          executor) {
+          executor,
+          writeFileOptions) {
   VELOX_CHECK_EQ(
       type_,
       Type::kHashJoinProbe,
@@ -132,12 +142,14 @@ Spiller::Spiller(
     RowContainer* container,
     RowTypePtr rowType,
     HashBitRange bits,
-    const std::string& path,
+    common::GetSpillDirectoryPathCB getSpillDirPathCb,
+    const std::string& fileNamePrefix,
     uint64_t targetFileSize,
     uint64_t writeBufferSize,
     common::CompressionKind compressionKind,
     memory::MemoryPool* pool,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const std::unordered_map<std::string, std::string>& writeFileOptions)
     : Spiller(
           type,
           container,
@@ -145,12 +157,14 @@ Spiller::Spiller(
           bits,
           0,
           {},
-          path,
+          getSpillDirPathCb,
+          fileNamePrefix,
           targetFileSize,
           writeBufferSize,
           compressionKind,
           pool,
-          executor) {
+          executor,
+          writeFileOptions) {
   VELOX_CHECK_EQ(
       type_,
       Type::kHashJoinBuild,
@@ -165,12 +179,14 @@ Spiller::Spiller(
     HashBitRange bits,
     int32_t numSortingKeys,
     const std::vector<CompareFlags>& sortCompareFlags,
-    const std::string& path,
+    common::GetSpillDirectoryPathCB getSpillDirPathCb,
+    const std::string& fileNamePrefix,
     uint64_t targetFileSize,
     uint64_t writeBufferSize,
     common::CompressionKind compressionKind,
     memory::MemoryPool* pool,
-    folly::Executor* executor)
+    folly::Executor* executor,
+    const std::unordered_map<std::string, std::string>& writeFileOptions)
     : type_(type),
       container_(container),
       executor_(executor),
@@ -178,7 +194,8 @@ Spiller::Spiller(
       bits_(bits),
       rowType_(std::move(rowType)),
       state_(
-          path,
+          getSpillDirPathCb,
+          fileNamePrefix,
           bits.numPartitions(),
           numSortingKeys,
           sortCompareFlags,
@@ -186,7 +203,8 @@ Spiller::Spiller(
           writeBufferSize,
           compressionKind,
           pool_,
-          &stats_) {
+          &stats_,
+          writeFileOptions) {
   TestValue::adjust(
       "facebook::velox::exec::Spiller", const_cast<HashBitRange*>(&bits_));
 
@@ -432,12 +450,12 @@ void Spiller::runSpill() {
 
 void Spiller::updateSpillFillTime(uint64_t timeUs) {
   stats_.wlock()->spillFillTimeUs += timeUs;
-  updateGlobalSpillFillTime(timeUs);
+  common::updateGlobalSpillFillTime(timeUs);
 }
 
 void Spiller::updateSpillSortTime(uint64_t timeUs) {
   stats_.wlock()->spillSortTimeUs += timeUs;
-  updateGlobalSpillSortTime(timeUs);
+  common::updateGlobalSpillSortTime(timeUs);
 }
 
 bool Spiller::needSort() const {
@@ -622,7 +640,7 @@ std::string Spiller::typeName(Type type) {
   }
 }
 
-SpillStats Spiller::stats() const {
+common::SpillStats Spiller::stats() const {
   return stats_.copy();
 }
 } // namespace facebook::velox::exec

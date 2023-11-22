@@ -139,7 +139,8 @@ void SortWindowBuild::setupSpiller() {
       inputType_,
       spillCompareFlags_.size(),
       spillCompareFlags_,
-      spillConfig_->filePath,
+      spillConfig_->getSpillDirPathCb,
+      spillConfig_->fileNamePrefix,
       spillConfig_->writeBufferSize,
       spillConfig_->compressionKind,
       memory::spillMemoryPool(),
@@ -234,8 +235,8 @@ void SortWindowBuild::loadNextPartitionFromSpill() {
 
     bool newPartition = false;
     if (!sortedRows_.empty()) {
-      CompareFlags compareFlags;
-      compareFlags.equalsOnly = true;
+      CompareFlags compareFlags =
+          CompareFlags::equality(CompareFlags::NullHandlingMode::kNullAsValue);
 
       for (auto i = 0; i < numPartitionKeys_; ++i) {
         if (data_->compare(

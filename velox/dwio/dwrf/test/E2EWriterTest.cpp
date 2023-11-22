@@ -16,8 +16,8 @@
 
 #include <folly/Random.h>
 #include <random>
+#include "velox/common/base/SpillConfig.h"
 #include "velox/common/base/tests/GTestUtils.h"
-#include "velox/common/config/SpillConfig.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/Statistics.h"
@@ -244,7 +244,9 @@ class E2EWriterTest : public testing::Test {
       int32_t minSpillableReservationPct,
       int32_t spillableReservationGrowthPct,
       uint64_t writerFlushThresholdSize = 0) {
+    static const std::string emptySpillFolder = "";
     return common::SpillConfig(
+        [&]() -> const std::string& { return emptySpillFolder; },
         "fakeSpillConfig",
         0,
         0,

@@ -15,8 +15,8 @@
  */
 #pragma once
 
+#include "velox/common/base/SpillConfig.h"
 #include "velox/common/compression/Compression.h"
-#include "velox/common/config/SpillConfig.h"
 #include "velox/exec/HashBitRange.h"
 #include "velox/exec/RowContainer.h"
 
@@ -51,44 +51,56 @@ class Spiller {
       RowTypePtr rowType,
       int32_t numSortingKeys,
       const std::vector<CompareFlags>& sortCompareFlags,
-      const std::string& path,
+      common::GetSpillDirectoryPathCB getSpillDirPathCb,
+      const std::string& fileNamePrefix,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
       memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      const std::unordered_map<std::string, std::string>& writeFileOptions =
+          {});
 
   Spiller(
       Type type,
       RowContainer* container,
       RowTypePtr rowType,
-      const std::string& path,
+      common::GetSpillDirectoryPathCB getSpillDirPathCb,
+      const std::string& fileNamePrefix,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
       memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      const std::unordered_map<std::string, std::string>& writeFileOptions =
+          {});
 
   Spiller(
       Type type,
       RowTypePtr rowType,
       HashBitRange bits,
-      const std::string& path,
+      common::GetSpillDirectoryPathCB getSpillDirPathCb,
+      const std::string& fileNamePrefix,
       uint64_t targetFileSize,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
       memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      const std::unordered_map<std::string, std::string>& writeFileOptions =
+          {});
 
   Spiller(
       Type type,
       RowContainer* container,
       RowTypePtr rowType,
       HashBitRange bits,
-      const std::string& path,
+      common::GetSpillDirectoryPathCB getSpillDirPathCb,
+      const std::string& fileNamePrefix,
       uint64_t targetFileSize,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
       memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      const std::unordered_map<std::string, std::string>& writeFileOptions =
+          {});
 
   Type type() const {
     return type_;
@@ -177,7 +189,7 @@ class Spiller {
     return finalized_;
   }
 
-  SpillStats stats() const;
+  common::SpillStats stats() const;
 
   std::string toString() const;
 
@@ -189,12 +201,14 @@ class Spiller {
       HashBitRange bits,
       int32_t numSortingKeys,
       const std::vector<CompareFlags>& sortCompareFlags,
-      const std::string& path,
+      common::GetSpillDirectoryPathCB getSpillDirPathCb,
+      const std::string& fileNamePrefix,
       uint64_t targetFileSize,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
       memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      const std::unordered_map<std::string, std::string>& writeFileOptions);
 
   // Invoked to spill. If 'startRowIter' is not null, then we only spill rows
   // from row container starting at the offset pointed by 'startRowIter'.
@@ -299,7 +313,7 @@ class Spiller {
   // spillMergeStreamOverRows().
   bool finalized_{false};
 
-  folly::Synchronized<SpillStats> stats_;
+  folly::Synchronized<common::SpillStats> stats_;
   SpillState state_;
 
   // Collects the rows to spill for each partition.
