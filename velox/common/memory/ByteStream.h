@@ -344,9 +344,9 @@ class ByteStream {
         const auto offset = position & 7;
         uint64_t* buffer =
             reinterpret_cast<uint64_t*>(current_->buffer + (position >> 3));
-	const auto mask = bits::lowMask(offset);
+        const auto mask = bits::lowMask(offset);
         *buffer = (*buffer & mask) | (bits[0] << offset);
-	current_->position += end;
+        current_->position += end;
         return;
       }
     }

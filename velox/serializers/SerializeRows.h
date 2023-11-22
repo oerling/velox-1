@@ -297,7 +297,8 @@ void appendNonNull(
   if (LIKELY(numRows <= 8)) {
     uint8_t nullsByte = *reinterpret_cast<const uint8_t*>(nulls);
     numNonNull = __builtin_popcount(nullsByte);
-    nonNullIndices = numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
+    nonNullIndices =
+        numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
     auto mutableIndices = (numRows <= sizeof(localRows) / sizeof(localRows[0]))
         ? localRows
@@ -311,7 +312,7 @@ void appendNonNull(
   if constexpr (sizeof(T) == 8) {
     AppendWindow<int64_t> window(out, scratch);
     int64_t* output = window.get(numNonNull);
-    if (numNonNull ==numRows) {
+    if (numNonNull == numRows) {
     }
     copyWordsWithRows(
         output,
