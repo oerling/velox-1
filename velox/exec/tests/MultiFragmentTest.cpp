@@ -153,7 +153,8 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     auto size = vector->size();
     auto range = IndexRange{0, size};
     data->createStreamTree(asRowType(vector->type()), size);
-    data->append(vector, folly::Range(&range, 1));
+    Scratch scratch;
+    data->append(vector, folly::Range(&range, 1), scratch);
     auto listener = bufferManager_->newListener();
     IOBufOutputStream stream(*pool(), listener.get(), data->size());
     data->flush(&stream);

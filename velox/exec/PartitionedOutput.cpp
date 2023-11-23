@@ -30,36 +30,27 @@ BlockingReason Destination::advance(
     bool* atEnd,
     ContinueFuture* future,
     Scratch& scratch) {
-  if (rangeIdx_ >= ranges_.size()) {
+  if (rowIdx_ >= rows_.size()) {
     *atEnd = true;
     return BlockingReason::kNotBlocked;
   }
 
+  const auto firstRow = rowIdx_;
   const uint32_t adjustedMaxBytes = (maxBytes * targetSizePct_) / 100;
   if (bytesInCurrent_ >= adjustedMaxBytes) {
     return flush(bufferManager, bufferReleaseFn, future);
   }
 
-  // Collect ranges to serialize.
-  rangesToSerialize_.clear();
+  // Collect rows to serialize.
   bool shouldFlush = false;
-  while (rangeIdx_ < ranges_.size() && !shouldFlush) {
-    auto& currRange = ranges_[rangeIdx_];
-    auto startRow = rowsInCurrentRange_;
-    for (; rowsInCurrentRange_ < currRange.size && !shouldFlush;
-         rowsInCurrentRange_++) {
-      ++rowsInCurrent_;
-      bytesInCurrent_ += sizes[currRange.begin + rowsInCurrentRange_];
-      shouldFlush = bytesInCurrent_ >= adjustedMaxBytes ||
+  while (rowIdx_ < rows_.size() && !shouldFlush) {
+    bytesInCurrent_ += sizes[rowIdx_];
+    ++rowIdx_;
+    ++rowsInCurrent_;
+    shouldFlush = bytesInCurrent_ >= adjustedMaxBytes ||
           rowsInCurrent_ >= targetNumRows_;
-    }
-    rangesToSerialize_.push_back(
-        {currRange.begin + startRow, rowsInCurrentRange_ - startRow});
-    if (rowsInCurrentRange_ == currRange.size) {
-      rowsInCurrentRange_ = 0;
-      rangeIdx_++;
-    }
   }
+
 
   // Serialize
   if (!current_) {
@@ -69,10 +60,11 @@ BlockingReason Destination::advance(
   }
   current_->append(
       output,
-      folly::Range(&rangesToSerialize_[0], rangesToSerialize_.size()),
+      folly::Range(&rows_[firstRow], rowIdx_ - firstRow),
+      nullptr,
       scratch);
   // Update output state variable.
-  if (rangeIdx_ == ranges_.size()) {
+  if (rowIdx_ == rows_.size()) {
     *atEnd = true;
   }
   if (shouldFlush || (eagerFlush_ && rowsInCurrent_ > 0)) {
@@ -192,12 +184,7 @@ void PartitionedOutput::initializeDestinations() {
 
 void PartitionedOutput::initializeSizeBuffers() {
   auto numInput = input_->size();
-  if (numInput > topLevelRanges_.size()) {
-    vector_size_t numOld = topLevelRanges_.size();
-    topLevelRanges_.resize(numInput);
-    for (auto i = numOld; i < numInput; ++i) {
-      topLevelRanges_[i] = IndexRange{i, 1};
-    }
+  if (numInput > rowSize_.size()) {
     rowSize_.resize(numInput);
     sizePointers_.resize(numInput);
     // Set all the size pointers since 'rowSize_' may have been reallocated.
@@ -210,10 +197,13 @@ void PartitionedOutput::initializeSizeBuffers() {
 void PartitionedOutput::estimateRowSizes() {
   auto numInput = input_->size();
   std::fill(rowSize_.begin(), rowSize_.end(), 0);
+  raw_vector<vector_size_t> storage;
+  auto numbers = iota(numInput, storage);
   for (int i = 0; i < output_->childrenSize(); ++i) {
     VectorStreamGroup::estimateSerializedSize(
         output_->childAt(i),
-        folly::Range(topLevelRanges_.data(), numInput),
+        folly::Range(numbers, numInput),
+	nullptr,
         sizePointers_.data(),
         scratch_);
   }

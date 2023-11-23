@@ -60,31 +60,30 @@ struct Counters {
   int64_t bytes{0};
   int64_t rows{0};
   int64_t usec{0};
-
+  int64_t repartitionNanos{0};
+  
   std::string toString() {
-    return fmt::format("{} MB/s", (bytes / (1024 * 1024.0)) / (usec / 1.0e6));
+    return fmt::format("{} MB/s repartition={}", (bytes / (1024 * 1024.0)) / (usec / 1.0e6), succinctNanos(repartitionNanos));
   }
 };
 
 class ExchangeBenchmark : public VectorTestBase {
  public:
-  std::vector<RowVectorPtr> makeRows(
-      RowTypePtr type,
-      int32_t numVectors,
-      int32_t rowsPerVector,
-      int32_t dictPct = 0) {
+  std::vector<RowVectorPtr>
+  makeRows(RowTypePtr type, int32_t numVectors, int32_t rowsPerVector, int32_t dictPct = 0) {
     std::vector<RowVectorPtr> vectors;
     BufferPtr indices;
     for (int32_t i = 0; i < numVectors; ++i) {
       auto vector = std::dynamic_pointer_cast<RowVector>(
           BatchMaker::createBatch(type, rowsPerVector, *pool_));
-      if (100 * i / numVectors > dictPct) {
-        if (!indices) {
-          indices = makeIndices(
-              vector->size(), [&](auto i) { return i }, vector->pool());
-        }
-        vector = BaseVector::wrapInDictionary(
-            nullptr, indices, vector->size(), vector);
+      auto width = vector->childrenSize();
+      for (auto child = 0; child < width; ++child) {
+	if (100 * child / width  > dictPct) {
+	  if (!indices) {
+	    indices = makeIndices(vector->size(), [&](auto i){return i; });
+	  }
+	  vector->childAt(child) = BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector->childAt(child));
+	}
       }
       vectors.push_back(vector);
     }
@@ -149,10 +148,15 @@ class ExchangeBenchmark : public VectorTestBase {
         .assertResults(expected);
     auto elapsed = getCurrentTimeMicro() - startMicros;
     int64_t bytes = 0;
+    int64_t repartitionNanos = 0;
     for (auto& task : tasks) {
       auto stats = task->taskStats();
       for (auto& pipeline : stats.pipelineStats) {
         for (auto& op : pipeline.operatorStats) {
+          if (op.operatorType == "PartitionedOutput") {
+            repartitionNanos += op.addInputTiming.cpuNanos + op.getOutputTiming.cpuNanos;
+          }
+
           if (op.operatorType == "Exchange") {
             bytes += op.rawInputBytes;
           }
@@ -163,6 +167,7 @@ class ExchangeBenchmark : public VectorTestBase {
     counters.bytes += bytes;
     counters.rows += width * vectors.size() * vectors[0]->size();
     counters.usec += elapsed;
+    counters.repartitionNanos = repartitionNanos;
   }
 
   void runLocal(
