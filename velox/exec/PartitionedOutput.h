@@ -104,7 +104,7 @@ class Destination {
   uint64_t bytesInCurrent_{0};
   // Number of rows serialized in 'current_'
   vector_size_t rowsInCurrent_{0};
-  std::vector<vector_size_t> rows_;
+  raw_vector<vector_size_t> rows_;
 
   // First index of 'rows_' that is not appended to 'current_'.
   vector_size_t rowIdx_{0};

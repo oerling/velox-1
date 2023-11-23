@@ -75,8 +75,10 @@ class Scratch {
     if (newCapacity > capacity_) {
       Item* newItems =
           reinterpret_cast<Item*>(::malloc(sizeof(Item) * newCapacity));
-      memcpy(newItems, items_, fill_ * sizeof(Item));
-      memset(newItems + fill_, 0, (newCapacity - fill_) * sizeof(Item));
+      if (fill_ > 0) { 
+	memcpy(newItems, items_, fill_ * sizeof(Item));
+      }
+	memset(newItems + fill_, 0, (newCapacity - fill_) * sizeof(Item));
       free(items_);
       items_ = newItems;
       capacity_ = newCapacity;
@@ -120,7 +122,7 @@ class ScratchPtr {
 
   T* get(int32_t size) {
     VELOX_CHECK(data_.empty());
-    data_ = std::move(scratch_->get());
+    data_ = scratch_->get();
     data_.resize(size * sizeof(T));
 
     ptr_ = reinterpret_cast<T*>(data_.data());
