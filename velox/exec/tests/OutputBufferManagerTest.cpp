@@ -93,7 +93,9 @@ class OutputBufferManagerTest : public testing::Test {
         std::dynamic_pointer_cast<const RowType>(vector->type()), size);
     Scratch scratch;
     data->append(
-		 std::dynamic_pointer_cast<RowVector>(vector), folly::Range(&range, 1), scratch);
+        std::dynamic_pointer_cast<RowVector>(vector),
+        folly::Range(&range, 1),
+        scratch);
     auto listener = bufferManager_->newListener();
     IOBufOutputStream stream(*pool_, listener.get(), data->size());
     data->flush(&stream);

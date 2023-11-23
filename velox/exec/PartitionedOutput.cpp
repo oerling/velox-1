@@ -47,10 +47,9 @@ BlockingReason Destination::advance(
     bytesInCurrent_ += sizes[rowIdx_];
     ++rowIdx_;
     ++rowsInCurrent_;
-    shouldFlush = bytesInCurrent_ >= adjustedMaxBytes ||
-          rowsInCurrent_ >= targetNumRows_;
+    shouldFlush =
+        bytesInCurrent_ >= adjustedMaxBytes || rowsInCurrent_ >= targetNumRows_;
   }
-
 
   // Serialize
   if (!current_) {
@@ -203,7 +202,7 @@ void PartitionedOutput::estimateRowSizes() {
     VectorStreamGroup::estimateSerializedSize(
         output_->childAt(i),
         folly::Range(numbers, numInput),
-	nullptr,
+        nullptr,
         sizePointers_.data(),
         scratch_);
   }

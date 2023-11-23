@@ -179,7 +179,7 @@ class MaxSizeForStatsAggregate
         vector,
         folly::Range(elementIndices_.data(), elementIndices_.size()),
         elementSizePtrs_.data(),
-					     scratch);
+        scratch);
   }
 
   void doUpdateSingleGroup(

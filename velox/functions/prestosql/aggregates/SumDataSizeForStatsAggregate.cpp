@@ -159,7 +159,7 @@ class SumDataSizeForStatsAggregate
         vector,
         folly::Range(rowIndices_.data(), rowIndices_.size()),
         rowSizePtrs_.data(),
-					     scratch);
+        scratch);
   }
 
   void doUpdateSingleGroup(

@@ -61,16 +61,22 @@ struct Counters {
   int64_t rows{0};
   int64_t usec{0};
   int64_t repartitionNanos{0};
-  
+
   std::string toString() {
-    return fmt::format("{} MB/s repartition={}", (bytes / (1024 * 1024.0)) / (usec / 1.0e6), succinctNanos(repartitionNanos));
+    return fmt::format(
+        "{} MB/s repartition={}",
+        (bytes / (1024 * 1024.0)) / (usec / 1.0e6),
+        succinctNanos(repartitionNanos));
   }
 };
 
 class ExchangeBenchmark : public VectorTestBase {
  public:
-  std::vector<RowVectorPtr>
-  makeRows(RowTypePtr type, int32_t numVectors, int32_t rowsPerVector, int32_t dictPct = 0) {
+  std::vector<RowVectorPtr> makeRows(
+      RowTypePtr type,
+      int32_t numVectors,
+      int32_t rowsPerVector,
+      int32_t dictPct = 0) {
     std::vector<RowVectorPtr> vectors;
     BufferPtr indices;
     for (int32_t i = 0; i < numVectors; ++i) {
@@ -78,12 +84,13 @@ class ExchangeBenchmark : public VectorTestBase {
           BatchMaker::createBatch(type, rowsPerVector, *pool_));
       auto width = vector->childrenSize();
       for (auto child = 0; child < width; ++child) {
-	if (100 * child / width  > dictPct) {
-	  if (!indices) {
-	    indices = makeIndices(vector->size(), [&](auto i){return i; });
-	  }
-	  vector->childAt(child) = BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector->childAt(child));
-	}
+        if (100 * child / width > dictPct) {
+          if (!indices) {
+            indices = makeIndices(vector->size(), [&](auto i) { return i; });
+          }
+          vector->childAt(child) = BaseVector::wrapInDictionary(
+              nullptr, indices, vector->size(), vector->childAt(child));
+        }
       }
       vectors.push_back(vector);
     }
@@ -154,7 +161,8 @@ class ExchangeBenchmark : public VectorTestBase {
       for (auto& pipeline : stats.pipelineStats) {
         for (auto& op : pipeline.operatorStats) {
           if (op.operatorType == "PartitionedOutput") {
-            repartitionNanos += op.addInputTiming.cpuNanos + op.getOutputTiming.cpuNanos;
+            repartitionNanos +=
+                op.addInputTiming.cpuNanos + op.getOutputTiming.cpuNanos;
           }
 
           if (op.operatorType == "Exchange") {
