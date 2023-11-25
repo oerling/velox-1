@@ -47,3 +47,20 @@ TEST(ScratchTest, basic) {
   scratch.trim();
   EXPECT_EQ(0, scratch.retainedSize());
 }
+
+TEST(ScratchTest, large) {
+  Scratch scratch;
+  std::vector<ScratchPtr<int32_t>> pointers;
+  for (auto i = 0; i < 100; ++i) {
+    pointers.emplace_back(scratch);
+    pointers.back().get(1000);
+  }
+  pointers.clear();
+  // 100 times 1000 bytes returned.
+  EXPECT_LT(100'000, scratch.retainedSize());
+  for (auto i = 0; i < 100; ++i) {
+    pointers.emplace_back(scratch);
+    pointers.back().get(1000);
+  }
+  EXPECT_EQ(0, scratch.retainedSize());
+}
