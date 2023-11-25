@@ -608,7 +608,7 @@ TEST_F(HashStringAllocatorTest, sizeAndPosition) {
   // The last write extends the size.
   EXPECT_EQ(kUnitSize * 11 - 100, stream.size());
 }
-  
+
 TEST_F(HashStringAllocatorTest, storeStringFast) {
   allocator_->allocate(HashStringAllocator::kMinAlloc);
   std::string s(allocator_->freeSpace() + sizeof(void*), 'x');

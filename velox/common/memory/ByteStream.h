@@ -89,8 +89,8 @@ class OStreamOutputStream : public OutputStream {
   std::ostream* out_;
 };
 
-  class ByteStream;
-  
+class ByteStream;
+
 /// Read-only stream over one or more byte buffers.
 class ByteInputStream {
  protected:
@@ -108,8 +108,8 @@ class ByteInputStream {
   /// not copy buffers. 'this' remains valid as long as 'stream' is
   /// live and unchanged.
   ByteInputStream(const ByteStream& stream);
-  
-    /// Disable copy constructor.
+
+  /// Disable copy constructor.
   ByteInputStream(const ByteInputStream&) = delete;
 
   /// Disable copy assignment operator.
@@ -240,8 +240,8 @@ class ByteStream {
     ranges_[0] = range;
     current_ = ranges_.data();
     lastRangeEnd_ = lastWrittenPosition;
-      }
-  
+  }
+
   const std::vector<ByteRange>& ranges() const {
     return ranges_;
   }
