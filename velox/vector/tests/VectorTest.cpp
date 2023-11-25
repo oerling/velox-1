@@ -752,10 +752,10 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
   }
 
-  void prepareInput(ByteStream* input, std::string& string) {
+  ByteInputStream prepareInput(std::string& string) {
     // Put 'string' in 'input' in many pieces.
+    const int32_t size = string.size();
     std::vector<ByteRange> ranges;
-    int32_t size = string.size();
     for (int32_t i = 0; i < 10; ++i) {
       int32_t start = i * (size / 10);
       int32_t end = (i == 9) ? size : (i + 1) * (size / 10);
@@ -764,7 +764,8 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
       ranges.back().size = end - start;
       ranges.back().position = 0;
     }
-    input->resetInput(std::move(ranges));
+
+    return ByteInputStream(std::move(ranges));
   }
 
   void checkSizes(
@@ -868,11 +869,10 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     auto evenString = evenStream.str();
     checkSizes(source.get(), evenSizes, evenString);
 
-    ByteStream input;
-    prepareInput(&input, evenString);
+    auto evenInput = prepareInput(evenString);
 
     RowVectorPtr resultRow;
-    VectorStreamGroup::read(&input, pool_.get(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(&evenInput, pool_.get(), sourceRowType, &resultRow);
     VectorPtr result = resultRow->childAt(0);
     switch (source->encoding()) {
       case VectorEncoding::Simple::FLAT:
@@ -899,9 +899,9 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
 
     auto oddString = oddStream.str();
-    prepareInput(&input, oddString);
+    auto oddInput = prepareInput(oddString);
 
-    VectorStreamGroup::read(&input, pool_.get(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(&oddInput, pool_.get(), sourceRowType, &resultRow);
     result = resultRow->childAt(0);
     for (int32_t i = 0; i < oddIndices.size(); ++i) {
       EXPECT_TRUE(result->equalValueAt(source.get(), i, oddIndices[i].begin))
@@ -3234,20 +3234,20 @@ TEST_F(VectorTest, primitiveTypeNullEqual) {
   auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
     return base
         ->equalValueAt(
-            other.get(), i, j, CompareFlags::NullHandlingMode::NoStop)
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
         .value();
   };
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return base->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::StopAtNull);
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
   };
 
   // No null compare.
   ASSERT_TRUE(equalNoStop(0, 0));
   ASSERT_TRUE(equalStopAtNull(0, 0).value());
 
-  // Null compare in NoStop mode.
+  // Null compare in NullAsValue mode.
   ASSERT_FALSE(equalNoStop(1, 1));
   ASSERT_FALSE(equalNoStop(2, 2));
 
@@ -3264,13 +3264,13 @@ TEST_F(VectorTest, complexTypeNullEqual) {
   auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
     return base
         ->equalValueAt(
-            other.get(), i, j, CompareFlags::NullHandlingMode::NoStop)
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
         .value();
   };
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return base->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::StopAtNull);
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
   };
 
   // No null compare, [0, 1] vs [0, 1].
@@ -3281,7 +3281,7 @@ TEST_F(VectorTest, complexTypeNullEqual) {
   ASSERT_FALSE(equalNoStop(2, 2));
   ASSERT_FALSE(equalStopAtNull(2, 2).value());
 
-  // Null compare in NoStop mode, [2, 2] vs [2, null].
+  // Null compare in NullAsValue mode, [2, 2] vs [2, null].
   ASSERT_FALSE(equalNoStop(1, 1));
 
   // Null compare in StopAtNull mode, [2, 2] vs [2, null].
@@ -3305,13 +3305,13 @@ TEST_F(VectorTest, dictionaryNullEqual) {
   auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
     return dictVector
         ->equalValueAt(
-            other.get(), i, j, CompareFlags::NullHandlingMode::NoStop)
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
         .value();
   };
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return dictVector->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::StopAtNull);
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
   };
 
   for (vector_size_t i = 0; i < 2; ++i) {
@@ -3323,7 +3323,7 @@ TEST_F(VectorTest, dictionaryNullEqual) {
     ASSERT_FALSE(equalNoStop(2 + i * baseVectorSize, 2));
     ASSERT_FALSE(equalStopAtNull(2 + i * baseVectorSize, 2).value());
 
-    // Null compare in NoStop mode, [2, 2] vs [2, null].
+    // Null compare in NullAsValue mode, [2, 2] vs [2, null].
     ASSERT_FALSE(equalNoStop(1 + i * baseVectorSize, 1));
 
     // Null compare in StopAtNull mode, [2, 2] vs [2, null].
@@ -3345,20 +3345,20 @@ TEST_F(VectorTest, constantNullEqual) {
   auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
     return constantVector
         ->equalValueAt(
-            other.get(), i, j, CompareFlags::NullHandlingMode::NoStop)
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
         .value();
   };
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return constantVector->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::StopAtNull);
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
   };
 
   // No null compare, [2, null] vs [0, 1], [2, null] vs [1, 2].
   ASSERT_FALSE(equalNoStop(0, 0));
   ASSERT_FALSE(equalStopAtNull(0, 2).value());
 
-  // Null compare in NoStop mode, [2, null] vs [2, null].
+  // Null compare in NullAsValue mode, [2, null] vs [2, null].
   ASSERT_TRUE(equalNoStop(0, 1));
 
   // Null compare in StopAtNull mode, [2, null] vs [2, null].

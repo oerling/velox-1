@@ -66,9 +66,10 @@ std::function<void(Task* task)> makeAddSplit(
 }
 
 // Returns aggregated spilled stats by build and probe operators from 'task'.
-std::pair<SpillStats, SpillStats> taskSpilledStats(const exec::Task& task) {
-  SpillStats buildStats;
-  SpillStats probeStats;
+std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
+    const exec::Task& task) {
+  common::SpillStats buildStats;
+  common::SpillStats probeStats;
   auto stats = task.taskStats();
   for (auto& pipeline : stats.pipelineStats) {
     for (auto op : pipeline.operatorStats) {
@@ -3590,10 +3591,12 @@ TEST_F(HashJoinTest, semiProjectWithFilter) {
 
     plan = makePlan(false /*nullAware*/, filter);
 
+    // DuckDB Exists operator returns NULL when u0 or t0 is NULL. We exclude
+    // these values.
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
         .planNode(plan)
         .referenceQuery(fmt::format(
-            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE u0 = t0 AND {}) FROM t",
+            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE (u0 is not null OR t0 is not null) AND u0 = t0 AND {}) FROM t",
             filter))
         .injectSpill(false)
         .run();
@@ -6104,7 +6107,7 @@ TEST_F(HashJoinTest, exceededMaxSpillLevel) {
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
   const int exceededMaxSpillLevelCount =
-      globalSpillStats().spillMaxLevelExceededCount;
+      common::globalSpillStats().spillMaxLevelExceededCount;
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
       .numDrivers(1)
       .planNode(plan)
@@ -6125,7 +6128,7 @@ TEST_F(HashJoinTest, exceededMaxSpillLevel) {
       })
       .run();
   ASSERT_EQ(
-      globalSpillStats().spillMaxLevelExceededCount,
+      common::globalSpillStats().spillMaxLevelExceededCount,
       exceededMaxSpillLevelCount + 4);
 }
 } // namespace

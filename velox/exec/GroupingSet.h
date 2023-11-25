@@ -112,7 +112,7 @@ class GroupingSet {
   void spill(const RowContainerIterator& rowIterator);
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
-  std::optional<SpillStats> spilledStats() const {
+  std::optional<common::SpillStats> spilledStats() const {
     if (spiller_ == nullptr) {
       return std::nullopt;
     }
@@ -248,6 +248,9 @@ class GroupingSet {
   // Updates the accumulators in 'row' with the intermediate type data from
   // 'keys'. This is called for each row received from a merge of spilled data.
   void updateRow(SpillMergeStream& keys, char* row);
+
+  // Returns a RowType of the spilled data.
+  RowTypePtr makeSpillType() const;
 
   // Copies the finalized state from 'mergeRows' to 'result' and clears
   // 'mergeRows'. Used for producing a batch of results when aggregating spilled

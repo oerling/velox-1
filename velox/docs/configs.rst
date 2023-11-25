@@ -394,6 +394,19 @@ Hive Connector
      - 20000
      - Maximum number of entries in the file handle cache. The value must be non-negative. Zero value
        indicates infinite cache capacity.
+   * - file_handle_cache_enabled
+     - bool
+     - true
+     - Enables caching of file handles if true. Disables caching if false. File handle cache should be
+       disabled if files are not immutable, i.e. file content may change while file path stays the same.
+   * - sort_writer_max_output_rows
+     - integer
+     - 1024
+     - Maximum number of rows for sort writer in one batch of output. This is to limit the memory usage of sort writer.
+   * - sort_writer_max_output_bytes
+     - integer
+     - 10MB
+     - Maximum bytes for sort writer in one batch of output. This is to limit the memory usage of sort writer.
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -188,7 +188,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         ascending,
         makeError));
     constexpr int32_t kNumRows = 5'000;
-    const auto prevGStats = globalSpillStats();
+    const auto prevGStats = common::globalSpillStats();
 
     setupSpillData(
         rowType_, numKeys_, kNumRows, numDuplicates, [&](RowVectorPtr rows) {
@@ -259,7 +259,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     ASSERT_GT(stats.spillSerializationTimeUs, 0);
     ASSERT_GT(stats.spillDiskWrites, 0);
 
-    const auto newGStats = globalSpillStats();
+    const auto newGStats = common::globalSpillStats();
     ASSERT_EQ(
         prevGStats.spilledFiles + stats.spilledFiles, newGStats.spilledFiles);
     ASSERT_EQ(
@@ -468,6 +468,11 @@ class SpillerTest : public exec::test::RowContainerTestBase {
       uint64_t writeBufferSize,
       uint64_t minSpillRunSize,
       bool makeError) {
+    static const std::string kBadSpillDirPath = "/bad/path";
+    common::GetSpillDirectoryPathCB badSpillDirCb =
+        [&]() -> const std::string& { return kBadSpillDirPath; };
+    common::GetSpillDirectoryPathCB tempSpillDirCb =
+        [&]() -> const std::string& { return tempDirPath_->path; };
     stats_.clear();
 
     if (type_ == Spiller::Type::kHashJoinProbe) {
@@ -476,7 +481,8 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           type_,
           rowType_,
           hashBits_,
-          makeError ? "/bad/path" : tempDirPath_->path,
+          makeError ? badSpillDirCb : tempSpillDirCb,
+          "prefix",
           targetFileSize,
           writeBufferSize,
           compressionKind_,
@@ -493,7 +499,8 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           rowType_,
           rowContainer_->keyTypes().size(),
           compareFlags_,
-          makeError ? "/bad/path" : tempDirPath_->path,
+          makeError ? badSpillDirCb : tempSpillDirCb,
+          "prefix",
           writeBufferSize,
           compressionKind_,
           pool_.get(),
@@ -503,7 +510,8 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           type_,
           rowContainer_.get(),
           rowType_,
-          makeError ? "/bad/path" : tempDirPath_->path,
+          makeError ? badSpillDirCb : tempSpillDirCb,
+          "prefix",
           writeBufferSize,
           compressionKind_,
           pool_.get(),
@@ -515,7 +523,8 @@ class SpillerTest : public exec::test::RowContainerTestBase {
           rowContainer_.get(),
           rowType_,
           hashBits_,
-          makeError ? "/bad/path" : tempDirPath_->path,
+          makeError ? badSpillDirCb : tempSpillDirCb,
+          "prefix",
           targetFileSize,
           writeBufferSize,
           compressionKind_,
@@ -705,7 +714,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     // them by partition.
     std::vector<std::unique_ptr<Spiller>> spillers;
     for (int iter = 0; iter < numSpillers; ++iter) {
-      const auto prevGStats = globalSpillStats();
+      const auto prevGStats = common::globalSpillStats();
       setupSpillData(
           rowType_,
           numKeys_,
@@ -784,7 +793,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
         ASSERT_EQ(stats.spillFillTimeUs, 0);
       }
 
-      const auto newGStats = globalSpillStats();
+      const auto newGStats = common::globalSpillStats();
       ASSERT_EQ(
           prevGStats.spilledFiles + stats.spilledFiles, newGStats.spilledFiles);
       ASSERT_EQ(
@@ -822,7 +831,7 @@ class SpillerTest : public exec::test::RowContainerTestBase {
     verifyNonSortedSpillData(
         std::move(spillers), spillPartitionNumSet, inputsByPartition);
     // Spilled file stats should be updated after finalizing spiller.
-    ASSERT_GT(globalSpillStats().spilledFiles, 0);
+    ASSERT_GT(common::globalSpillStats().spilledFiles, 0);
   }
 
   void verifyNonSortedSpillData(
@@ -1306,40 +1315,3 @@ VELOX_INSTANTIATE_TEST_SUITE_P(
     SpillerTest,
     AggregationOutputOnly,
     testing::ValuesIn(AggregationOutputOnly::getTestParams()));
-
-TEST(SpillerTest, stats) {
-  SpillStats sumStats;
-  EXPECT_EQ(0, sumStats.spilledRows);
-  EXPECT_EQ(0, sumStats.spilledInputBytes);
-  EXPECT_EQ(0, sumStats.spilledBytes);
-  EXPECT_EQ(0, sumStats.spilledPartitions);
-  EXPECT_EQ(0, sumStats.spilledFiles);
-
-  SpillStats stats;
-  stats.spilledRows = 10;
-  stats.spilledInputBytes = 200;
-  stats.spilledBytes = 100;
-  stats.spilledPartitions = 2;
-  stats.spilledFiles = 3;
-
-  sumStats += stats;
-  EXPECT_EQ(stats.spilledRows, sumStats.spilledRows);
-  EXPECT_EQ(stats.spilledInputBytes, sumStats.spilledInputBytes);
-  EXPECT_EQ(stats.spilledBytes, sumStats.spilledBytes);
-  EXPECT_EQ(stats.spilledPartitions, sumStats.spilledPartitions);
-  EXPECT_EQ(stats.spilledFiles, sumStats.spilledFiles);
-
-  sumStats += stats;
-  EXPECT_EQ(2 * stats.spilledRows, sumStats.spilledRows);
-  EXPECT_EQ(2 * stats.spilledInputBytes, sumStats.spilledInputBytes);
-  EXPECT_EQ(2 * stats.spilledBytes, sumStats.spilledBytes);
-  EXPECT_EQ(2 * stats.spilledPartitions, sumStats.spilledPartitions);
-  EXPECT_EQ(2 * stats.spilledFiles, sumStats.spilledFiles);
-
-  sumStats += stats;
-  EXPECT_EQ(3 * stats.spilledRows, sumStats.spilledRows);
-  EXPECT_EQ(3 * stats.spilledInputBytes, sumStats.spilledInputBytes);
-  EXPECT_EQ(3 * stats.spilledBytes, sumStats.spilledBytes);
-  EXPECT_EQ(3 * stats.spilledPartitions, sumStats.spilledPartitions);
-  EXPECT_EQ(3 * stats.spilledFiles, sumStats.spilledFiles);
-}

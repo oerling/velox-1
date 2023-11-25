@@ -233,7 +233,8 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
       table_->rows(),
       tableType_,
       std::move(hashBits),
-      spillConfig.filePath,
+      spillConfig.getSpillDirPathCb,
+      spillConfig.fileNamePrefix,
       spillConfig.maxFileSize,
       spillConfig.writeBufferSize,
       spillConfig.compressionKind,
@@ -829,7 +830,7 @@ void HashBuild::recordSpillStats() {
     Operator::recordSpillStats(spillStats);
   } else if (exceededMaxSpillLevelLimit_) {
     exceededMaxSpillLevelLimit_ = false;
-    SpillStats spillStats;
+    common::SpillStats spillStats;
     spillStats.spillMaxLevelExceededCount = 1;
     Operator::recordSpillStats(spillStats);
   }
