@@ -61,12 +61,20 @@ struct Counters {
   int64_t rows{0};
   int64_t usec{0};
   int64_t repartitionNanos{0};
+  int64_t exchangeNanos{0};
+  int64_t exchangeRows{0};
+  int64_t exchangeBatches{0};
 
   std::string toString() {
+    if (exchangeBatches == 0) {
+      return "N/A";
+    }
     return fmt::format(
-        "{} MB/s repartition={}",
-        (bytes / (1024 * 1024.0)) / (usec / 1.0e6),
-        succinctNanos(repartitionNanos));
+        "{}/s repartition={} exchange={} exchange batch={}",
+        succinctBytes(bytes / (usec / 1.0e6)),
+        succinctNanos(repartitionNanos),
+        succinctNanos(exchangeNanos),
+        exchangeRows / exchangeBatches);
   }
 };
 
@@ -105,6 +113,7 @@ class ExchangeBenchmark : public VectorTestBase {
     assert(!vectors.empty());
     configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
         fmt::format("{}", FLAGS_exchange_buffer_mb << 20);
+    auto iteration = ++iteration_;
     std::vector<std::shared_ptr<Task>> tasks;
     std::vector<std::string> leafTaskIds;
     auto leafPlan = exec::test::PlanBuilder()
@@ -114,7 +123,7 @@ class ExchangeBenchmark : public VectorTestBase {
 
     auto startMicros = getCurrentTimeMicro();
     for (int32_t counter = 0; counter < width; ++counter) {
-      auto leafTaskId = makeTaskId("leaf", counter);
+      auto leafTaskId = makeTaskId(iteration, "leaf", counter);
       leafTaskIds.push_back(leafTaskId);
       auto leafTask = makeTask(leafTaskId, leafPlan, counter);
       tasks.push_back(leafTask);
@@ -131,7 +140,7 @@ class ExchangeBenchmark : public VectorTestBase {
 
     std::vector<exec::Split> finalAggSplits;
     for (int i = 0; i < width; i++) {
-      auto taskId = makeTaskId("final-agg", i);
+      auto taskId = makeTaskId(iteration, "final-agg", i);
       finalAggSplits.push_back(
           exec::Split(std::make_shared<exec::RemoteConnectorSplit>(taskId)));
       auto task = makeTask(taskId, finalAggPlan, i);
@@ -156,6 +165,9 @@ class ExchangeBenchmark : public VectorTestBase {
     auto elapsed = getCurrentTimeMicro() - startMicros;
     int64_t bytes = 0;
     int64_t repartitionNanos = 0;
+    int64_t exchangeNanos = 0;
+    int64_t exchangeBatches = 0;
+    int64_t exchangeRows = 0;
     for (auto& task : tasks) {
       auto stats = task->taskStats();
       for (auto& pipeline : stats.pipelineStats) {
@@ -163,10 +175,12 @@ class ExchangeBenchmark : public VectorTestBase {
           if (op.operatorType == "PartitionedOutput") {
             repartitionNanos +=
                 op.addInputTiming.cpuNanos + op.getOutputTiming.cpuNanos;
-          }
-
-          if (op.operatorType == "Exchange") {
+          } else if (op.operatorType == "Exchange") {
             bytes += op.rawInputBytes;
+            exchangeRows += op.outputPositions;
+            exchangeBatches += op.outputVectors;
+            exchangeNanos +=
+                op.addInputTiming.cpuNanos + op.getOutputTiming.cpuNanos;
           }
         }
       }
@@ -175,7 +189,10 @@ class ExchangeBenchmark : public VectorTestBase {
     counters.bytes += bytes;
     counters.rows += width * vectors.size() * vectors[0]->size();
     counters.usec += elapsed;
-    counters.repartitionNanos = repartitionNanos;
+    counters.repartitionNanos += repartitionNanos;
+    counters.exchangeNanos += exchangeNanos;
+    counters.exchangeRows += exchangeRows;
+    counters.exchangeBatches += exchangeBatches;
   }
 
   void runLocal(
@@ -260,8 +277,9 @@ class ExchangeBenchmark : public VectorTestBase {
  private:
   static constexpr int64_t kMaxMemory = 6UL << 30; // 6GB
 
-  static std::string makeTaskId(const std::string& prefix, int num) {
-    return fmt::format("local://{}-{}", prefix, num);
+  static std::string
+  makeTaskId(int32_t iteration, const std::string& prefix, int num) {
+    return fmt::format("local://{}-{}-{}", iteration, prefix, num);
   }
 
   std::shared_ptr<Task> makeTask(
@@ -318,7 +336,11 @@ class ExchangeBenchmark : public VectorTestBase {
   }
 
   std::unordered_map<std::string, std::string> configSettings_;
+  // Serial number to differentiate consecutive benchmark repeats.
+  static int32_t iteration_;
 };
+
+int32_t ExchangeBenchmark::iteration_;
 
 ExchangeBenchmark bm;
 
@@ -326,12 +348,14 @@ std::vector<RowVectorPtr> flat10k;
 std::vector<RowVectorPtr> deep10k;
 std::vector<RowVectorPtr> flat50;
 std::vector<RowVectorPtr> deep50;
+std::vector<RowVectorPtr> struct1k;
 
 Counters flat10kCounters;
 Counters deep10kCounters;
 Counters flat50Counters;
 Counters deep50Counters;
 Counters localFlat10kCounters;
+Counters struct1kCounters;
 
 BENCHMARK(exchangeFlat10k) {
   bm.run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
@@ -347,6 +371,9 @@ BENCHMARK(exchangeDeep10k) {
 
 BENCHMARK_RELATIVE(exchangeDeep50) {
   bm.run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
+}
+BENCHMARK(exchangeStruct1K) {
+  bm.run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
 }
 
 BENCHMARK(localFlat10k) {
@@ -391,6 +418,18 @@ int main(int argc, char** argv) {
   }
   auto flatType = ROW(std::move(flatNames), std::move(flatTypes));
 
+  auto structType = ROW(
+      {{"k", BIGINT()},
+       {"r1",
+        ROW(
+            {{"k2", BIGINT()},
+             {"r2",
+              ROW(
+                  {{"i1", BIGINT()},
+                   {"i2", BIGINT()},
+                   {"r3}, ROW({{s3", VARCHAR()},
+                   {"i5", INTEGER()}})}})}});
+
   auto deepType = ROW(
       {{"c0", BIGINT()},
        {"long_array_val", ARRAY(ARRAY(BIGINT()))},
@@ -405,6 +444,7 @@ int main(int argc, char** argv) {
   deep10k = bm.makeRows(deepType, 10, 10000, FLAGS_dict_pct);
   flat50 = bm.makeRows(flatType, 2000, 50, FLAGS_dict_pct);
   deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
+  struct1k = bm.makeRows(structType, 1000, FLAGS_dict_pct);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl

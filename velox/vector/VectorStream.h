@@ -57,6 +57,13 @@ class VectorSerializer {
 
   virtual void append(
       const RowVectorPtr& vector,
+      const folly::Range<const IndexRange*>& ranges) {
+    Scratch scratch;
+    append(vector, ranges, scratch);
+  }
+
+  virtual void append(
+      const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
       const SerializationWrappers* wrappers,
       Scratch& scratch) {
@@ -213,6 +220,13 @@ class VectorStreamGroup : public StreamArena {
       const folly::Range<const IndexRange*>& ranges,
       Scratch& scratch);
 
+  void append(
+	      const RowVectorPtr& vector,
+	      const folly::Range<const IndexRange*>& ranges) {
+    Scratch scratch;
+    append(vector, ranges, scratch);
+  }
+  
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,

@@ -127,7 +127,7 @@ void ByteInputStream::readBytes(uint8_t* bytes, int32_t size) {
   for (;;) {
     int32_t available = current_->size - current_->position;
     int32_t numUsed = std::min(available, size);
-    memcpy(bytes + offset, current_->buffer + current_->position, numUsed);
+    simd::memcpy(bytes + offset, current_->buffer + current_->position, numUsed);
     offset += numUsed;
     size -= numUsed;
     current_->position += numUsed;
@@ -248,7 +248,7 @@ void ByteStream::appendStringView(std::string_view value) {
   for (;;) {
     const int32_t bytesFit =
         std::min(bytes - offset, current_->size - current_->position);
-    ::memcpy(
+    simd::memcpy(
         current_->buffer + current_->position, value.data() + offset, bytesFit);
     current_->position += bytesFit;
     offset += bytesFit;
