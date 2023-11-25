@@ -27,6 +27,8 @@ add_executable(
   ScopedLockTest.cpp
   SemaphoreTest.cpp
   SimdUtilTest.cpp
+  SpillConfigTest.cpp
+  SpillStatsTest.cpp
   StatsReporterTest.cpp
   SuccinctPrinterTest.cpp)
 

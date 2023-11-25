@@ -133,6 +133,11 @@ Expression Evaluation Configuration
      - false
      - Whether to track CPU usage for individual expressions (supported by call and cast expressions). Can be expensive
        when processing small batches, e.g. < 10K rows.
+   * - legacy_cast
+     - bool
+     - false
+     - Enables legacy CAST semantics if set to true. CAST(timestamp AS varchar) uses 'T' as separator between date and
+       time (instead of a space), and the year part is not padded.
    * - cast_match_struct_by_name
      - bool
      - false
@@ -384,6 +389,24 @@ Hive Connector
      - integer
      - 128MB
      - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
+   * - num_cached_file_handles
+     - integer
+     - 20000
+     - Maximum number of entries in the file handle cache. The value must be non-negative. Zero value
+       indicates infinite cache capacity.
+   * - file_handle_cache_enabled
+     - bool
+     - true
+     - Enables caching of file handles if true. Disables caching if false. File handle cache should be
+       disabled if files are not immutable, i.e. file content may change while file path stays the same.
+   * - sort_writer_max_output_rows
+     - integer
+     - 1024
+     - Maximum number of rows for sort writer in one batch of output. This is to limit the memory usage of sort writer.
+   * - sort_writer_max_output_bytes
+     - integer
+     - 10MB
+     - Maximum bytes for sort writer in one batch of output. This is to limit the memory usage of sort writer.
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

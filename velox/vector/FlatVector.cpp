@@ -89,18 +89,7 @@ void FlatVector<StringView>::prepareForReuse() {
     rawValues_ = nullptr;
   }
 
-  // Check string buffers. Keep at most one singly-referenced buffer if it is
-  // not too large.
-  if (!stringBuffers_.empty()) {
-    auto& firstBuffer = stringBuffers_.front();
-    if (firstBuffer->isMutable() &&
-        firstBuffer->capacity() <= kMaxStringSizeForReuse) {
-      firstBuffer->setSize(0);
-      setStringBuffers({firstBuffer});
-    } else {
-      clearStringBuffers();
-    }
-  }
+  keepAtMostOneStringBuffer();
 
   // Clear the StringViews to avoid referencing freed memory.
   if (rawValues_) {
@@ -336,7 +325,7 @@ void FlatVector<StringView>::copy(
       if (!asciiInfo.isAllAscii()) {
         invalidateIsAscii();
       } else {
-        asciiInfo.asciiSetRows().deselect(rows);
+        asciiInfo.writeLockedAsciiComputedRows()->deselect(rows);
       }
     }
   }

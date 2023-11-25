@@ -66,9 +66,10 @@ std::function<void(Task* task)> makeAddSplit(
 }
 
 // Returns aggregated spilled stats by build and probe operators from 'task'.
-std::pair<SpillStats, SpillStats> taskSpilledStats(const exec::Task& task) {
-  SpillStats buildStats;
-  SpillStats probeStats;
+std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
+    const exec::Task& task) {
+  common::SpillStats buildStats;
+  common::SpillStats probeStats;
   auto stats = task.taskStats();
   for (auto& pipeline : stats.pipelineStats) {
     for (auto op : pipeline.operatorStats) {
@@ -838,6 +839,16 @@ class HashJoinTest : public HiveConnectorTestBase {
         joinNode->sources()[1],
         joinNode->sources()[0],
         joinNode->outputType());
+  }
+
+  static void reclaimAndRestoreCapacity(
+      const Operator* op,
+      uint64_t targetBytes,
+      memory::MemoryReclaimer::Stats& reclaimerStats) {
+    const auto oldCapacity = op->pool()->capacity();
+    op->pool()->reclaim(targetBytes, reclaimerStats);
+    dynamic_cast<memory::MemoryPoolImpl*>(op->pool())
+        ->testingSetCapacity(oldCapacity);
   }
 
   const int32_t numDrivers_;
@@ -3580,10 +3591,12 @@ TEST_F(HashJoinTest, semiProjectWithFilter) {
 
     plan = makePlan(false /*nullAware*/, filter);
 
+    // DuckDB Exists operator returns NULL when u0 or t0 is NULL. We exclude
+    // these values.
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
         .planNode(plan)
         .referenceQuery(fmt::format(
-            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE u0 = t0 AND {}) FROM t",
+            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE (u0 is not null OR t0 is not null) AND u0 = t0 AND {}) FROM t",
             filter))
         .injectSpill(false)
         .run();
@@ -4933,7 +4946,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
     SCOPED_TRACE(testData.debugString());
 
     auto tempDirectory = exec::test::TempDirectoryPath::create();
-    auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+    auto queryPool = memory::defaultMemoryManager().addRootPool(
+        "", kMaxBytes, memory::MemoryReclaimer::create());
 
     core::PlanNodeId probeScanId;
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5034,9 +5048,13 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
     }
 
     if (testData.expectedReclaimable) {
-      op->reclaim(
+      reclaimAndRestoreCapacity(
+          op,
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
           reclaimerStats_);
+      ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
+      ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+      reclaimerStats_.reset();
       ASSERT_EQ(op->pool()->currentBytes(), 0);
     } else {
       VELOX_ASSERT_THROW(
@@ -5075,7 +5093,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   createDuckDbTable("u", buildVectors);
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
-  auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+  auto queryPool = memory::defaultMemoryManager().addRootPool(
+      "", kMaxBytes, memory::MemoryReclaimer::create());
 
   core::PlanNodeId probeScanId;
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5163,9 +5182,14 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   ASSERT_TRUE(reclaimable);
   ASSERT_GT(reclaimableBytes, 0);
 
-  op->reclaim(
-      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(), reclaimerStats_);
+  reclaimAndRestoreCapacity(
+      op,
+      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+      reclaimerStats_);
+  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   ASSERT_EQ(op->pool()->currentBytes(), 0);
+  reclaimerStats_.reset();
 
   driverWait.notify();
   Task::resume(task);
@@ -5328,7 +5352,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
   for (const auto enableSpilling : enableSpillings) {
     SCOPED_TRACE(fmt::format("enableSpilling {}", enableSpilling));
     auto tempDirectory = exec::test::TempDirectoryPath::create();
-    auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+    auto queryPool = memory::defaultMemoryManager().addRootPool(
+        "", kMaxBytes, memory::MemoryReclaimer::create());
 
     core::PlanNodeId probeScanId;
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5410,9 +5435,12 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
     if (enableSpilling) {
       ASSERT_GT(reclaimableBytes, 0);
       const auto usedMemoryBytes = op->pool()->currentBytes();
-      op->reclaim(
+      reclaimAndRestoreCapacity(
+          op,
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
           reclaimerStats_);
+      ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+      ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       // No reclaim as the operator has started output processing.
       ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
     } else {
@@ -5429,7 +5457,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
 
     taskThread.join();
   }
-  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{1});
+  ASSERT_EQ(reclaimerStats_.numNonReclaimableAttempts, 1);
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
@@ -5450,7 +5478,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   createDuckDbTable("u", buildVectors);
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
-  auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+  auto queryPool = memory::defaultMemoryManager().addRootPool(
+      "", kMaxBytes, memory::MemoryReclaimer::create());
 
   core::PlanNodeId probeScanId;
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5549,8 +5578,13 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   ASSERT_GT(reclaimableBytes, 0);
 
   const auto usedMemoryBytes = op->pool()->currentBytes();
-  op->reclaim(
-      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(), reclaimerStats_);
+  reclaimerStats_.reset();
+  reclaimAndRestoreCapacity(
+      op,
+      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+      reclaimerStats_);
+  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   // No reclaim as the build operator is not in building table state.
   ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
 
@@ -5559,7 +5593,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   task.reset();
 
   taskThread.join();
-  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{1});
+  ASSERT_EQ(reclaimerStats_.numNonReclaimableAttempts, 1);
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringOutputProcessing) {
@@ -6073,7 +6107,7 @@ TEST_F(HashJoinTest, exceededMaxSpillLevel) {
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
   const int exceededMaxSpillLevelCount =
-      globalSpillStats().spillMaxLevelExceededCount;
+      common::globalSpillStats().spillMaxLevelExceededCount;
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
       .numDrivers(1)
       .planNode(plan)
@@ -6094,7 +6128,7 @@ TEST_F(HashJoinTest, exceededMaxSpillLevel) {
       })
       .run();
   ASSERT_EQ(
-      globalSpillStats().spillMaxLevelExceededCount,
+      common::globalSpillStats().spillMaxLevelExceededCount,
       exceededMaxSpillLevelCount + 4);
 }
 } // namespace

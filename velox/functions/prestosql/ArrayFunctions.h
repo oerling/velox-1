@@ -160,7 +160,8 @@ struct ArrayJoinFunction {
 
   template <typename C>
   void writeValue(out_type<velox::Varchar>& result, const C& value) {
-    result += util::Converter<TypeKind::VARCHAR, void, false>::cast(value);
+    result +=
+        util::Converter<TypeKind::VARCHAR, void, false, false>::cast(value);
   }
 
   template <typename C>
@@ -840,8 +841,8 @@ struct ArrayRemoveFunction {
       out_type<Array<Generic<T1>>>& out,
       const arg_type<Array<Generic<T1>>>& array,
       const arg_type<Generic<T1>>& element) {
-    static constexpr CompareFlags kFlags = {
-        false, false, true, CompareFlags::NullHandlingMode::StopAtNull};
+    static constexpr CompareFlags kFlags =
+        CompareFlags::equality(CompareFlags::NullHandlingMode::kStopAtNull);
     std::vector<std::optional<exec::GenericView>> toCopyItems;
     for (const auto& item : array) {
       if (item.has_value()) {

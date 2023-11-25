@@ -17,6 +17,7 @@
 #include <folly/Random.h>
 #include <gtest/gtest.h>
 #include <vector>
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
@@ -91,14 +92,12 @@ class PrestoSerializerTest
     }
   }
 
-  std::unique_ptr<ByteStream> toByteStream(const std::string& input) {
-    auto byteStream = std::make_unique<ByteStream>();
+  ByteInputStream toByteStream(const std::string& input) {
     ByteRange byteRange{
         reinterpret_cast<uint8_t*>(const_cast<char*>(input.data())),
         (int32_t)input.length(),
         0};
-    byteStream->resetInput({byteRange});
-    return byteStream;
+    return ByteInputStream({byteRange});
   }
 
   RowVectorPtr deserialize(
@@ -110,7 +109,7 @@ class PrestoSerializerTest
     auto paramOptions = getParamSerdeOptions(serdeOptions);
     RowVectorPtr result;
     serde_->deserialize(
-        byteStream.get(), pool_.get(), rowType, &result, &paramOptions);
+        &byteStream, pool_.get(), rowType, &result, 0, &paramOptions);
     return result;
   }
 
@@ -139,6 +138,32 @@ class PrestoSerializerTest
     auto rowType = asRowType(rowVector->type());
     auto deserialized = deserialize(rowType, out.str(), serdeOptions);
     assertEqualVectors(deserialized, rowVector);
+
+    if (rowVector->size() < 3) {
+      return;
+    }
+
+    // Split input into 3 batches. Serialize each separately. Then, deserialize
+    // all into one vector.
+    auto splits = split(rowVector, 3);
+    std::vector<std::string> serialized;
+    for (const auto& split : splits) {
+      std::ostringstream out;
+      serialize(split, &out, serdeOptions);
+      serialized.push_back(out.str());
+    }
+
+    auto paramOptions = getParamSerdeOptions(serdeOptions);
+    RowVectorPtr result;
+    vector_size_t offset = 0;
+    for (auto i = 0; i < serialized.size(); ++i) {
+      auto byteStream = toByteStream(serialized[i]);
+      serde_->deserialize(
+          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
+      offset = result->size();
+    }
+
+    assertEqualVectors(result, rowVector);
   }
 
   void serializeEncoded(
@@ -164,9 +189,10 @@ class PrestoSerializerTest
           nullptr) {
     std::ostringstream out;
     serializeEncoded(data, &out, serdeOptions);
+    const auto serialized = out.str();
 
     auto rowType = asRowType(data->type());
-    auto deserialized = deserialize(rowType, out.str(), serdeOptions);
+    auto deserialized = deserialize(rowType, serialized, serdeOptions);
 
     assertEqualVectors(data, deserialized);
 
@@ -174,6 +200,24 @@ class PrestoSerializerTest
       VELOX_CHECK_EQ(
           data->childAt(i)->encoding(), deserialized->childAt(i)->encoding());
     }
+
+    // Deserialize 3 times while appending to a single vector.
+    auto paramOptions = getParamSerdeOptions(serdeOptions);
+    RowVectorPtr result;
+    vector_size_t offset = 0;
+    for (auto i = 0; i < 3; ++i) {
+      auto byteStream = toByteStream(serialized);
+      serde_->deserialize(
+          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
+      offset = result->size();
+    }
+
+    auto expected = BaseVector::create(data->type(), data->size() * 3, pool());
+    for (auto i = 0; i < 3; ++i) {
+      expected->copy(data.get(), data->size() * i, 0, data->size());
+    }
+
+    assertEqualVectors(expected, result);
   }
 
   std::unique_ptr<serializer::presto::PrestoVectorSerde> serde_;
@@ -313,11 +357,11 @@ TEST_P(PrestoSerializerTest, multiPage) {
   for (int i = 0; i < testVectors.size(); i++) {
     RowVectorPtr& vec = testVectors[i];
     serde_->deserialize(
-        byteStream.get(), pool_.get(), rowType, &deserialized, &paramOptions);
+        &byteStream, pool_.get(), rowType, &deserialized, 0, &paramOptions);
     if (i < testVectors.size() - 1) {
-      ASSERT_FALSE(byteStream->atEnd());
+      ASSERT_FALSE(byteStream.atEnd());
     } else {
-      ASSERT_TRUE(byteStream->atEnd());
+      ASSERT_TRUE(byteStream.atEnd());
     }
     assertEqualVectors(deserialized, vec);
     deserialized->validate({});
@@ -439,7 +483,7 @@ TEST_P(PrestoSerializerTest, scatterEncoded) {
   inner->children()[3] =
       BaseVector::wrapInConstant(numNonNull, 3, inner->childAt(3));
   serializer::presto::testingScatterStructNulls(
-      row->size(), row->size(), nullptr, nullptr, *row);
+      row->size(), row->size(), nullptr, nullptr, *row, 0);
 }
 
 TEST_P(PrestoSerializerTest, lazy) {
@@ -492,6 +536,29 @@ TEST_P(PrestoSerializerTest, emptyArrayOfRowVector) {
   // The value of nullCount_ + nonNullCount_ of the inner RowVector is 0.
   auto arrayOfRow = makeArrayOfRowVector(ROW({UNKNOWN()}), {{}});
   testRoundTrip(arrayOfRow);
+}
+
+TEST_P(PrestoSerializerTest, typeMismatch) {
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3}),
+      makeFlatVector<std::string>({"a", "b", "c"}),
+  });
+
+  std::ostringstream out;
+  serialize(data, &out, nullptr);
+  auto serialized = out.str();
+
+  // Too many columns to deserialize.
+  VELOX_ASSERT_THROW(
+      deserialize(ROW({BIGINT(), VARCHAR(), BOOLEAN()}), serialized, nullptr),
+      "Number of columns in serialized data doesn't match "
+      "number of columns requested for deserialization");
+
+  // Wrong types of columns.
+  VELOX_ASSERT_THROW(
+      deserialize(ROW({BIGINT(), DOUBLE()}), serialized, nullptr),
+      "Serialized encoding is not compatible with requested type: DOUBLE. "
+      "Expected LONG_ARRAY. Got VARIABLE_WIDTH.");
 }
 
 INSTANTIATE_TEST_SUITE_P(

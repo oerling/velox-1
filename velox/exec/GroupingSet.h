@@ -104,21 +104,15 @@ class GroupingSet {
 
   const HashLookup& hashLookup() const;
 
-  /// Spills content until under 'targetRows' and under 'targetBytes'
-  /// of out of line data are left. If targetRows is 0, spills
-  /// everything and physically frees the data in the
-  /// 'table_->rows()'. This leaves 'table_' initialized and 'this'
-  /// ready to accumulate more input. This is called by ensureInputFits
-  /// or by external memory management. In the latter case, the Driver
-  /// of this will be in a paused state and off thread.
-  void spill(int64_t targetRows, int64_t targetBytes);
+  /// Spills all the rows in container.
+  void spill();
 
   /// Spills all the rows in container starting from the offset specified by
   /// 'rowIterator'.
   void spill(const RowContainerIterator& rowIterator);
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
-  std::optional<SpillStats> spilledStats() const {
+  std::optional<common::SpillStats> spilledStats() const {
     if (spiller_ == nullptr) {
       return std::nullopt;
     }
@@ -254,6 +248,9 @@ class GroupingSet {
   // Updates the accumulators in 'row' with the intermediate type data from
   // 'keys'. This is called for each row received from a merge of spilled data.
   void updateRow(SpillMergeStream& keys, char* row);
+
+  // Returns a RowType of the spilled data.
+  RowTypePtr makeSpillType() const;
 
   // Copies the finalized state from 'mergeRows' to 'result' and clears
   // 'mergeRows'. Used for producing a batch of results when aggregating spilled

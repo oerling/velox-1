@@ -254,10 +254,10 @@ void HashProbe::maybeSetupSpillInput(
           spillInputPartitionIds_.begin()->partitionBitOffset(),
           spillInputPartitionIds_.begin()->partitionBitOffset() +
               spillConfig.joinPartitionBits),
-      spillConfig.filePath,
+      spillConfig.getSpillDirPathCb,
+      spillConfig.fileNamePrefix,
       spillConfig.maxFileSize,
       spillConfig.writeBufferSize,
-      spillConfig.minSpillRunSize,
       spillConfig.compressionKind,
       memory::spillMemoryPool(),
       spillConfig.executor);

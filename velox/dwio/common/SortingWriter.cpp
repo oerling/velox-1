@@ -20,34 +20,42 @@ namespace facebook::velox::dwio::common {
 
 SortingWriter::SortingWriter(
     std::unique_ptr<Writer> writer,
-    std::unique_ptr<exec::SortBuffer> sortBuffer)
+    std::unique_ptr<exec::SortBuffer> sortBuffer,
+    uint32_t maxOutputRowsConfig,
+    uint64_t maxOutputBytesConfig)
     : outputWriter_(std::move(writer)),
+      maxOutputRowsConfig_(maxOutputRowsConfig),
+      maxOutputBytesConfig_(maxOutputBytesConfig),
       sortPool_(sortBuffer->pool()),
       canReclaim_(sortBuffer->canSpill()),
       sortBuffer_(std::move(sortBuffer)) {
+  VELOX_CHECK_GT(maxOutputRowsConfig_, 0);
+  VELOX_CHECK_GT(maxOutputBytesConfig_, 0);
   if (sortPool_->parent()->reclaimer() != nullptr) {
     sortPool_->setReclaimer(MemoryReclaimer::create(this));
   }
+  setState(State::kRunning);
 }
 
 void SortingWriter::write(const VectorPtr& data) {
+  checkRunning();
   sortBuffer_->addInput(data);
 }
 
 void SortingWriter::flush() {
+  checkRunning();
   outputWriter_->flush();
 }
 
 void SortingWriter::close() {
-  if (setClose()) {
-    return;
-  }
+  setState(State::kClosed);
 
   sortBuffer_->noMoreInput();
-  RowVectorPtr output = sortBuffer_->getOutput();
+  const auto maxOutputBatchRows = outputBatchRows();
+  RowVectorPtr output = sortBuffer_->getOutput(maxOutputBatchRows);
   while (output != nullptr) {
     outputWriter_->write(output);
-    output = sortBuffer_->getOutput();
+    output = sortBuffer_->getOutput(maxOutputBatchRows);
   }
   sortBuffer_.reset();
   sortPool_->release();
@@ -55,18 +63,11 @@ void SortingWriter::close() {
 }
 
 void SortingWriter::abort() {
-  if (setClose()) {
-    return;
-  }
+  setState(State::kAborted);
+
   sortBuffer_.reset();
   sortPool_->release();
   outputWriter_->abort();
-}
-
-bool SortingWriter::setClose() {
-  const bool closed = closed_;
-  closed_ = true;
-  return closed;
 }
 
 bool SortingWriter::canReclaim() const {
@@ -80,10 +81,10 @@ uint64_t SortingWriter::reclaim(
     return 0;
   }
 
-  if (closed_) {
-    LOG(WARNING) << "Can't reclaim from a closed or aborted hive sort writer: "
-                 << sortPool_->name() << ", used memory: "
-                 << succinctBytes(sortPool_->currentBytes())
+  if (!isRunning()) {
+    LOG(WARNING) << "Can't reclaim from a not running hive sort writer pool: "
+                 << sortPool_->name() << ", state: " << state()
+                 << "used memory: " << succinctBytes(sortPool_->currentBytes())
                  << ", reserved memory: "
                  << succinctBytes(sortPool_->reservedBytes());
     ++stats.numNonReclaimableAttempts;
@@ -91,9 +92,25 @@ uint64_t SortingWriter::reclaim(
   }
   VELOX_CHECK_NOT_NULL(sortBuffer_);
 
-  sortBuffer_->spill(0, 0);
-  sortPool_->release();
-  return sortPool_->shrink(targetBytes);
+  auto reclaimBytes = memory::MemoryReclaimer::run(
+      [&]() {
+        sortBuffer_->spill();
+        sortPool_->release();
+        return sortPool_->shrink(targetBytes);
+      },
+      stats);
+
+  return reclaimBytes;
+}
+
+uint32_t SortingWriter::outputBatchRows() {
+  uint32_t estimatedMaxOutputRows = UINT_MAX;
+  if (sortBuffer_->estimateOutputRowSize().has_value() &&
+      sortBuffer_->estimateOutputRowSize().value() != 0) {
+    estimatedMaxOutputRows =
+        maxOutputBytesConfig_ / sortBuffer_->estimateOutputRowSize().value();
+  }
+  return std::min(estimatedMaxOutputRows, maxOutputRowsConfig_);
 }
 
 std::unique_ptr<memory::MemoryReclaimer> SortingWriter::MemoryReclaimer::create(

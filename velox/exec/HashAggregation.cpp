@@ -516,6 +516,10 @@ void HashAggregation::reclaim(
   VELOX_CHECK(canReclaim());
   VELOX_CHECK(!nonReclaimableSection_);
 
+  if (groupingSet_ == nullptr) {
+    return;
+  }
+
   updateEstimatedOutputRowSize();
 
   if (noMoreInput_) {
@@ -544,7 +548,7 @@ void HashAggregation::reclaim(
   } else {
     // TODO: support fine-grain disk spilling based on 'targetBytes' after
     // having row container memory compaction support later.
-    groupingSet_->spill(0, targetBytes);
+    groupingSet_->spill();
   }
   VELOX_CHECK_EQ(groupingSet_->numRows(), 0);
   VELOX_CHECK_EQ(groupingSet_->numDistinct(), 0);
