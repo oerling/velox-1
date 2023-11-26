@@ -372,6 +372,7 @@ BENCHMARK(exchangeDeep10k) {
 BENCHMARK_RELATIVE(exchangeDeep50) {
   bm.run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
 }
+
 BENCHMARK(exchangeStruct1K) {
   bm.run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
 }
@@ -419,7 +420,7 @@ int main(int argc, char** argv) {
   auto flatType = ROW(std::move(flatNames), std::move(flatTypes));
 
   auto structType = ROW(
-      {{"k", BIGINT()},
+      {{"c0", BIGINT()},
        {"r1",
         ROW(
             {{"k2", BIGINT()},
@@ -428,7 +429,10 @@ int main(int argc, char** argv) {
                   {{"i1", BIGINT()},
                    {"i2", BIGINT()},
                    {"r3}, ROW({{s3", VARCHAR()},
-                   {"i5", INTEGER()}})}})}});
+                   {"i5", INTEGER()},
+                   {"d5", DOUBLE()},
+                   {"b5", BOOLEAN()},
+                   {"a5", ARRAY(TINYINT())}})}})}});
 
   auto deepType = ROW(
       {{"c0", BIGINT()},
@@ -444,13 +448,14 @@ int main(int argc, char** argv) {
   deep10k = bm.makeRows(deepType, 10, 10000, FLAGS_dict_pct);
   flat50 = bm.makeRows(flatType, 2000, 50, FLAGS_dict_pct);
   deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
-  struct1k = bm.makeRows(structType, 1000, FLAGS_dict_pct);
+  struct1k = bm.makeRows(structType, 100, 1000, FLAGS_dict_pct);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl
             << "flat50: " << flat50Counters.toString() << std::endl
             << "deep10k: " << deep10kCounters.toString() << std::endl
-            << "deep50: " << deep50Counters.toString() << std::endl;
+            << "deep50: " << deep50Counters.toString() << std::endl
+            << "struct1k: " << struct1kCounters.toString() << std::endl;
   return 0;
   return 0;
 }
