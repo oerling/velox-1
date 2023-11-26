@@ -469,7 +469,8 @@ void projectChildren(
     int32_t size,
     const BufferPtr& mapping,
     WrapState* state) {
-  projectChildren(projectedChildren, src->children(), projections, size, mapping, state);
+  projectChildren(
+      projectedChildren, src->children(), projections, size, mapping, state);
 }
 
 void projectChildren(

@@ -218,14 +218,14 @@ RowVectorPtr Operator::fillOutput(
       identityProjections_,
       size,
       wrapResults ? mapping : nullptr,
-		 &state);
+      &state);
   projectChildren(
       projectedChildren,
       results,
       resultProjections_,
       size,
       wrapResults ? mapping : nullptr,
-		 &state);
+      &state);
 
   return std::make_shared<RowVector>(
       operatorCtx_->pool(),

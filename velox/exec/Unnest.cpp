@@ -169,7 +169,11 @@ RowVectorPtr Unnest::generateOutput(
   std::vector<VectorPtr> outputs(outputType_->size());
   for (const auto& projection : identityProjections_) {
     outputs[projection.outputChannel] = wrapOne(
-						numElements, repeatedIndices, input_->childAt(projection.inputChannel), nullptr, repeatedState);
+        numElements,
+        repeatedIndices,
+        input_->childAt(projection.inputChannel),
+        nullptr,
+        repeatedState);
   }
 
   // Create unnest columns.
