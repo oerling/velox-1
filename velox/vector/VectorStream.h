@@ -221,12 +221,12 @@ class VectorStreamGroup : public StreamArena {
       Scratch& scratch);
 
   void append(
-	      const RowVectorPtr& vector,
-	      const folly::Range<const IndexRange*>& ranges) {
+      const RowVectorPtr& vector,
+      const folly::Range<const IndexRange*>& ranges) {
     Scratch scratch;
     append(vector, ranges, scratch);
   }
-  
+
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,

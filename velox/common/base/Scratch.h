@@ -75,10 +75,10 @@ class Scratch {
     if (newCapacity > capacity_) {
       Item* newItems =
           reinterpret_cast<Item*>(::malloc(sizeof(Item) * newCapacity));
-      if (fill_ > 0) { 
-	memcpy(newItems, items_, fill_ * sizeof(Item));
+      if (fill_ > 0) {
+        memcpy(newItems, items_, fill_ * sizeof(Item));
       }
-	memset(newItems + fill_, 0, (newCapacity - fill_) * sizeof(Item));
+      memset(newItems + fill_, 0, (newCapacity - fill_) * sizeof(Item));
       free(items_);
       items_ = newItems;
       capacity_ = newCapacity;

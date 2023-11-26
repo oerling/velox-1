@@ -842,23 +842,29 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
 
     Scratch scratch;
     VectorStreamGroup::estimateSerializedSize(
-					      source, evenIndices, evenSizePointers.data(), scratch);
+        source, evenIndices, evenSizePointers.data(), scratch);
     VectorStreamGroup::estimateSerializedSize(
-					      source, oddIndices, oddSizePointers.data(), scratch);
+        source, oddIndices, oddSizePointers.data(), scratch);
     even.append(
-		sourceRow, folly::Range(evenIndices.data(), evenIndices.size() / 2), scratch);
+        sourceRow,
+        folly::Range(evenIndices.data(), evenIndices.size() / 2),
+        scratch);
     even.append(
         sourceRow,
         folly::Range(
             &evenIndices[evenIndices.size() / 2],
-            evenIndices.size() - evenIndices.size() / 2), scratch);
+            evenIndices.size() - evenIndices.size() / 2),
+        scratch);
     odd.append(
-	       sourceRow, folly::Range(oddIndices.data(), oddIndices.size() / 2), scratch);
+        sourceRow,
+        folly::Range(oddIndices.data(), oddIndices.size() / 2),
+        scratch);
     odd.append(
         sourceRow,
         folly::Range(
             &oddIndices[oddIndices.size() / 2],
-            oddIndices.size() - oddIndices.size() / 2), scratch);
+            oddIndices.size() - oddIndices.size() / 2),
+        scratch);
 
     std::stringstream evenStream;
     std::stringstream oddStream;
