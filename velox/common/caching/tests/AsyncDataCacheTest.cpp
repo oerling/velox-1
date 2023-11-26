@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
+#include "folly/experimental/EventCount.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/SsdCache.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MmapAllocator.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 #include <folly/executors/IOThreadPoolExecutor.h>
@@ -27,11 +30,11 @@
 #include <gtest/gtest.h>
 
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 
 using namespace facebook::velox;
 using namespace facebook::velox::cache;
+using namespace facebook::velox::common::testutil;
 
 using facebook::velox::memory::MemoryAllocator;
 
@@ -62,6 +65,10 @@ class AsyncDataCacheTest : public testing::Test {
  protected:
   static constexpr int32_t kNumFiles = 100;
 
+  static void SetUpTestCase() {
+    TestValue::enable();
+  }
+
   void SetUp() override {
     filesystems::registerLocalFileSystem();
   }
@@ -80,6 +87,12 @@ class AsyncDataCacheTest : public testing::Test {
   }
 
   void initializeCache(uint64_t maxBytes, int64_t ssdBytes = 0) {
+    if (cache_ != nullptr) {
+      cache_->shutdown();
+    }
+    cache_.reset();
+    allocator_.reset();
+
     std::unique_ptr<SsdCache> ssdCache;
     if (ssdBytes > 0) {
       // tmpfs does not support O_DIRECT, so turn this off for testing.
@@ -97,12 +110,6 @@ class AsyncDataCacheTest : public testing::Test {
           executor(),
           ssdBytes / 20);
     }
-
-    if (cache_ != nullptr) {
-      cache_->shutdown();
-    }
-    cache_.reset();
-    allocator_.reset();
 
     memory::MmapAllocator::Options options;
     options.capacity = maxBytes;
@@ -144,11 +151,16 @@ class AsyncDataCacheTest : public testing::Test {
   // loading. Stops after loading 'loadBytes' worth of entries. If
   // 'errorEveryNBatches' is non-0, every nth load batch will have a
   // bad read and wil be dropped. The entries of the failed batch read
-  // will still be accessed one by one.
+  // will still be accessed one by one. If 'largeEveryNBatches' is
+  // non-0, allocates and freees a single allocation of 'largeBytes'
+  // every so many batches. This creates extra memory pressure, as
+  // happens when allocating large hash tables in queries.
   void loadLoop(
       int64_t startOffset,
       int64_t loadBytes,
-      int32_t errorEveryNBatches = 0);
+      int32_t errorEveryNBatches = 0,
+      int32_t largeEveryNBatches = 0,
+      int32_t largeBytes = 0);
 
   // Calls func on 'numThreads' in parallel.
   template <typename Func>
@@ -223,6 +235,7 @@ class AsyncDataCacheTest : public testing::Test {
   std::shared_ptr<AsyncDataCache> cache_;
   std::vector<StringIdLease> filenames_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
+  int32_t numLargeRetries_{0};
 };
 
 class TestingCoalescedLoad : public CoalescedLoad {
@@ -445,11 +458,14 @@ void AsyncDataCacheTest::loadBatch(
 void AsyncDataCacheTest::loadLoop(
     int64_t startOffset,
     int64_t loadBytes,
-    int32_t errorEveryNBatches) {
+    int32_t errorEveryNBatches,
+    int32_t largeEveryNBatches,
+    int32_t largeAllocSize) {
   const int64_t maxOffset =
       std::max<int64_t>(100'000, (startOffset + loadBytes) / filenames_.size());
   int64_t skippedBytes = 0;
   int32_t errorCounter = 0;
+  int32_t largeCounter = 0;
   std::vector<Request> batch;
   for (auto i = 0; i < filenames_.size(); ++i) {
     const auto fileNum = filenames_[i].id();
@@ -464,6 +480,27 @@ void AsyncDataCacheTest::loadLoop(
       batch.emplace_back(offset, size);
       if (batch.size() >= 8) {
         for (;;) {
+          if (largeEveryNBatches > 0 &&
+              largeCounter++ % largeEveryNBatches == 0) {
+            // Many threads will allocate a single large chunk at the
+            // same time. Some are expected to fail. All will
+            // eventually succeed because whoever gets the allocation
+            // frees it soon and without deadlocking with others..
+            memory::ContiguousAllocation large;
+            // Explicitly free 'large' on exit. Do not use MemoryPool for that
+            // because we test the allocator's limits, not the pool/memory
+            // manager  limits.
+            auto guard =
+                folly::makeGuard([&]() { allocator_->freeContiguous(large); });
+            while (!allocator_->allocateContiguous(
+                memory::AllocationTraits::numPages(largeAllocSize),
+                nullptr,
+                large)) {
+              ++numLargeRetries_;
+            }
+            std::this_thread::sleep_for(
+                std::chrono::microseconds(2000)); // NOLINT
+          }
           const bool injectError = (errorEveryNBatches > 0) &&
               (++errorCounter % errorEveryNBatches == 0);
           loadBatch(fileNum, batch, injectError);
@@ -563,6 +600,54 @@ TEST_F(AsyncDataCacheTest, replace) {
   EXPECT_GE(
       kMaxBytes / memory::AllocationTraits::kPageSize,
       cache_->incrementCachedPages(0));
+}
+
+TEST_F(AsyncDataCacheTest, evictAccounting) {
+  constexpr int64_t kMaxBytes = 64 << 20;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
+  initializeCache(kMaxBytes);
+  auto memoryManager =
+      std::make_unique<memory::MemoryManager>(memory::MemoryManagerOptions{
+          .capacity = (int64_t)allocator_->capacity(),
+          .trackDefaultUsage = true,
+          .allocator = allocator_.get()});
+  auto pool = memoryManager->addLeafPool("test");
+
+  // We make allocations that we exchange for larger ones later. This will evict
+  // cache. We check that the evictions are not counted on the pool even if they
+  // occur as a result of action on the pool.
+  memory::Allocation allocation;
+  memory::ContiguousAllocation large;
+  pool->allocateNonContiguous(1200, allocation);
+  pool->allocateContiguous(1200, large);
+  EXPECT_EQ(memory::AllocationTraits::kPageSize * 2400, pool->currentBytes());
+  loadLoop(0, kMaxBytes * 1.1);
+  pool->allocateNonContiguous(2400, allocation);
+  pool->allocateContiguous(2400, large);
+  EXPECT_EQ(memory::AllocationTraits::kPageSize * 4800, pool->currentBytes());
+  auto stats = cache_->refreshStats();
+  EXPECT_LT(0, stats.numEvict);
+}
+
+TEST_F(AsyncDataCacheTest, largeEvict) {
+  constexpr int64_t kMaxBytes = 256 << 20;
+  constexpr int32_t kNumThreads = 24;
+  FLAGS_velox_exception_user_stacktrace_enabled = false;
+  initializeCache(kMaxBytes);
+  // Load 10x the max size, inject an allocation of 1/8 the capacity every 4
+  // batches.
+  runThreads(kNumThreads, [&](int32_t /*i*/) {
+    loadLoop(0, kMaxBytes * 1.2, 0, 1, kMaxBytes / 4);
+  });
+  if (executor_) {
+    executor_->join();
+  }
+  auto stats = cache_->refreshStats();
+  EXPECT_LT(0, stats.numEvict);
+  EXPECT_GE(
+      kMaxBytes / memory::AllocationTraits::kPageSize,
+      cache_->incrementCachedPages(0));
+  LOG(INFO) << "Reties after failed evict: " << numLargeRetries_;
 }
 
 TEST_F(AsyncDataCacheTest, outOfCapacity) {
@@ -700,3 +785,281 @@ TEST_F(AsyncDataCacheTest, invalidSsdPath) {
           "Ssd path '{}' does not start with '/' that points to local file system.",
           testPath));
 }
+
+TEST_F(AsyncDataCacheTest, cacheStats) {
+  CacheStats stats;
+  stats.tinySize = 234;
+  stats.largeSize = 1024;
+  stats.tinyPadding = 23;
+  stats.largePadding = 1344;
+  stats.numEntries = 100;
+  stats.numExclusive = 20;
+  stats.numShared = 30;
+  stats.sharedPinnedBytes = 10 << 20;
+  stats.exclusivePinnedBytes = 10 << 20;
+  stats.numEmptyEntries = 20;
+  stats.numPrefetch = 30;
+  stats.prefetchBytes = 100;
+  stats.numHit = 46;
+  stats.hitBytes = 1374;
+  stats.numNew = 2041;
+  stats.numEvict = 463;
+  stats.numEvictChecks = 348;
+  stats.numWaitExclusive = 244;
+  stats.allocClocks = 1320;
+  stats.sumEvictScore = 123;
+  ASSERT_EQ(
+      stats.toString(),
+      "Cache size: 2.56KB tinySize: 257B large size: 2.31KB\n"
+      "Cache entries: 100 read pins: 30 write pins: 20 pinned shared: 10.00MB pinned exclusive: 10.00MB\n"
+      " num write wait: 244 empty entries: 20\n"
+      "Cache access miss: 2041 hit: 46 hit bytes: 1.34KB eviction: 463 eviction checks: 348\n"
+      "Prefetch entries: 30 bytes: 100B\n"
+      "Alloc Megaclocks 0");
+
+  constexpr uint64_t kRamBytes = 32 << 20;
+  constexpr uint64_t kSsdBytes = 512UL << 20;
+  initializeCache(kRamBytes, kSsdBytes);
+  const std::string expectedDetailedCacheOutput =
+      "AsyncDataCache:\n"
+      "Cache size: 0B tinySize: 0B large size: 0B\n"
+      "Cache entries: 0 read pins: 0 write pins: 0 pinned shared: 0B pinned exclusive: 0B\n"
+      " num write wait: 0 empty entries: 0\n"
+      "Cache access miss: 0 hit: 0 hit bytes: 0B eviction: 0 eviction checks: 0\n"
+      "Prefetch entries: 0 bytes: 0B\n"
+      "Alloc Megaclocks 0\n"
+      "Allocated pages: 0 cached pages: 0\n"
+      "Backing: Memory Allocator[MMAP capacity 16.00KB allocated pages 0 mapped pages 0 external mapped pages 0\n"
+      "[size 1: 0(0MB) allocated 0 mapped]\n"
+      "[size 2: 0(0MB) allocated 0 mapped]\n"
+      "[size 4: 0(0MB) allocated 0 mapped]\n"
+      "[size 8: 0(0MB) allocated 0 mapped]\n"
+      "[size 16: 0(0MB) allocated 0 mapped]\n"
+      "[size 32: 0(0MB) allocated 0 mapped]\n"
+      "[size 64: 0(0MB) allocated 0 mapped]\n"
+      "[size 128: 0(0MB) allocated 0 mapped]\n"
+      "[size 256: 0(0MB) allocated 0 mapped]\n"
+      "]\n"
+      "SSD: Ssd cache IO: Write 0MB read 0MB Size 0GB Occupied 0GB0K entries.\n"
+      "GroupStats: <dummy FileGroupStats>";
+  ASSERT_EQ(cache_->toString(), expectedDetailedCacheOutput);
+  ASSERT_EQ(cache_->toString(true), expectedDetailedCacheOutput);
+  const std::string expectedShortCacheOutput =
+      "AsyncDataCache:\n"
+      "Cache size: 0B tinySize: 0B large size: 0B\n"
+      "Cache entries: 0 read pins: 0 write pins: 0 pinned shared: 0B pinned exclusive: 0B\n"
+      " num write wait: 0 empty entries: 0\n"
+      "Cache access miss: 0 hit: 0 hit bytes: 0B eviction: 0 eviction checks: 0\n"
+      "Prefetch entries: 0 bytes: 0B\n"
+      "Alloc Megaclocks 0\n"
+      "Allocated pages: 0 cached pages: 0\n";
+  ASSERT_EQ(cache_->toString(false), expectedShortCacheOutput);
+}
+
+TEST_F(AsyncDataCacheTest, shrinkCache) {
+  constexpr uint64_t kRamBytes = 128UL << 20;
+  constexpr uint64_t kSsdBytes = 512UL << 20;
+  constexpr int kTinyDataSize = AsyncDataCacheEntry::kTinyDataSize - 1;
+  const int numEntries{10};
+  constexpr int kLargeDataSize = kTinyDataSize * 2;
+  ASSERT_LE(numEntries * (kTinyDataSize + kLargeDataSize), kRamBytes);
+
+  std::vector<RawFileCacheKey> tinyCacheKeys;
+  std::vector<RawFileCacheKey> largeCacheKeys;
+  std::vector<StringIdLease> fileLeases;
+  for (int i = 0; i < numEntries; ++i) {
+    fileLeases.emplace_back(
+        StringIdLease(fileIds(), fmt::format("shrinkCacheFile{}", i)));
+    tinyCacheKeys.emplace_back(RawFileCacheKey{fileLeases.back().id(), 0});
+    largeCacheKeys.emplace_back(
+        RawFileCacheKey{fileLeases.back().id(), kLargeDataSize});
+  }
+
+  struct {
+    bool shrinkAll;
+    bool hasSsd;
+    bool releaseAll;
+
+    std::string debugString() const {
+      return fmt::format(
+          "shrinkAll {}, hasSsd {}, releaseAll {}",
+          shrinkAll,
+          hasSsd,
+          releaseAll);
+    }
+  } testSettings[] = {
+      {true, false, false},
+      {true, true, false},
+      {true, false, true},
+      {true, true, true},
+      {false, false, true},
+      {false, true, true},
+      {false, false, false},
+      {false, true, false}};
+
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+
+    initializeCache(kRamBytes, testData.hasSsd ? kSsdBytes : 0);
+    std::vector<CachePin> pins;
+    for (int i = 0; i < numEntries; ++i) {
+      auto tinyPin = cache_->findOrCreate(tinyCacheKeys[i], kTinyDataSize);
+      ASSERT_FALSE(tinyPin.empty());
+      ASSERT_TRUE(tinyPin.entry()->tinyData() != nullptr);
+      ASSERT_TRUE(tinyPin.entry()->data().empty());
+      ASSERT_FALSE(tinyPin.entry()->isPrefetch());
+      ASSERT_FALSE(tinyPin.entry()->ssdSaveable());
+      pins.push_back(std::move(tinyPin));
+      auto largePin = cache_->findOrCreate(largeCacheKeys[i], kLargeDataSize);
+      ASSERT_FALSE(largePin.entry()->tinyData() != nullptr);
+      ASSERT_FALSE(largePin.entry()->data().empty());
+      ASSERT_FALSE(largePin.entry()->isPrefetch());
+      ASSERT_FALSE(largePin.entry()->ssdSaveable());
+      pins.push_back(std::move(largePin));
+    }
+    auto stats = cache_->refreshStats();
+    ASSERT_EQ(stats.numEntries, numEntries * 2);
+    ASSERT_EQ(stats.numEmptyEntries, 0);
+    ASSERT_EQ(stats.numExclusive, numEntries * 2);
+    ASSERT_EQ(stats.numEvict, 0);
+    ASSERT_EQ(stats.numHit, 0);
+    ASSERT_EQ(stats.tinySize, kTinyDataSize * numEntries);
+    ASSERT_EQ(stats.largeSize, kLargeDataSize * numEntries);
+    ASSERT_EQ(stats.sharedPinnedBytes, 0);
+    ASSERT_GE(
+        stats.exclusivePinnedBytes,
+        (kTinyDataSize + kLargeDataSize) * numEntries);
+    ASSERT_EQ(stats.prefetchBytes, 0);
+    ASSERT_EQ(stats.numPrefetch, 0);
+
+    const auto numMappedPagesBeforeShrink = allocator_->numMapped();
+    ASSERT_GT(numMappedPagesBeforeShrink, 0);
+
+    // Everything gets pinged in memory.
+    VELOX_ASSERT_THROW(cache_->shrink(0), "");
+    ASSERT_EQ(cache_->shrink(testData.shrinkAll ? kRamBytes : 1), 0);
+
+    if (!testData.releaseAll) {
+      for (auto& pin : pins) {
+        pin.entry()->setExclusiveToShared();
+      }
+      pins.clear();
+      if (testData.shrinkAll) {
+        ASSERT_GE(
+            cache_->shrink(kRamBytes),
+            (kLargeDataSize + kTinyDataSize) * numEntries);
+      } else {
+        ASSERT_GE(cache_->shrink(2 * kTinyDataSize), kTinyDataSize);
+      }
+    } else {
+      pins.clear();
+      // We expect everything has been freed.
+      ASSERT_EQ(
+          cache_->shrink(testData.shrinkAll ? kRamBytes : 2 * kTinyDataSize),
+          0);
+    }
+    stats = cache_->refreshStats();
+    const auto numMappedPagesAfterShrink = allocator_->numMapped();
+    if (testData.shrinkAll || testData.releaseAll) {
+      ASSERT_EQ(stats.numEntries, 0);
+      ASSERT_EQ(stats.numEmptyEntries, 2 * numEntries);
+      ASSERT_EQ(stats.numExclusive, 0);
+      ASSERT_EQ(stats.numEvict, 2 * numEntries);
+      ASSERT_EQ(stats.numHit, 0);
+      ASSERT_EQ(stats.tinySize, 0);
+      ASSERT_EQ(stats.largeSize, 0);
+      ASSERT_EQ(stats.sharedPinnedBytes, 0);
+      ASSERT_GE(stats.exclusivePinnedBytes, 0);
+      ASSERT_EQ(stats.prefetchBytes, 0);
+      ASSERT_EQ(stats.numPrefetch, 0);
+      if (testData.shrinkAll) {
+        ASSERT_EQ(numMappedPagesAfterShrink, 0);
+      } else {
+        ASSERT_LT(numMappedPagesAfterShrink, numMappedPagesBeforeShrink);
+      }
+    } else {
+      ASSERT_LT(stats.numEntries, 2 * numEntries);
+      ASSERT_GT(stats.numEntries, 0);
+      ASSERT_GE(stats.numEmptyEntries, 1);
+      ASSERT_EQ(stats.numExclusive, 0);
+      ASSERT_GE(stats.numEvict, 1);
+      ASSERT_EQ(stats.numHit, 0);
+      ASSERT_GT(stats.tinySize, 0);
+      ASSERT_GT(stats.largeSize, 0);
+      ASSERT_EQ(stats.sharedPinnedBytes, 0);
+      ASSERT_GE(stats.exclusivePinnedBytes, 0);
+      ASSERT_EQ(stats.prefetchBytes, 0);
+      ASSERT_EQ(stats.numPrefetch, 0);
+      ASSERT_LT(numMappedPagesAfterShrink, numMappedPagesBeforeShrink);
+    }
+  }
+}
+
+DEBUG_ONLY_TEST_F(AsyncDataCacheTest, shrinkWithSsdWrite) {
+  constexpr uint64_t kRamBytes = 128UL << 20;
+  constexpr uint64_t kSsdBytes = 512UL << 20;
+  constexpr int kDataSize = 4096;
+  initializeCache(kRamBytes, kSsdBytes);
+  const int numEntries{10};
+  std::vector<CachePin> cachePins;
+  uint64_t offset = 0;
+  for (int i = 0; i < numEntries; ++i) {
+    cachePins.push_back(newEntry(offset, kDataSize));
+    offset += kDataSize;
+  }
+  for (auto& pin : cachePins) {
+    pin.entry()->setExclusiveToShared();
+  }
+
+  std::atomic_bool writeStartFlag{false};
+  folly::EventCount writeStartWait;
+  std::atomic_bool writeWaitFlag{true};
+  folly::EventCount writeWait;
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::cache::SsdCache::write",
+      std::function<void(const SsdCache*)>(([&](const SsdCache* cache) {
+        writeStartFlag = true;
+        writeStartWait.notifyAll();
+        writeWait.await([&]() { return !writeWaitFlag.load(); });
+      })));
+
+  // Starts a write thread running at background.
+  std::thread ssdWriteThread([&]() {
+    cache_->ssdCache()->startWrite();
+    cache_->saveToSsd();
+  });
+
+  // Wait for the write thread to start, and block it while do cache shrink.
+  writeStartWait.await([&]() { return writeStartFlag.load(); });
+  ASSERT_TRUE(cache_->ssdCache()->writeInProgress());
+
+  cachePins.clear();
+  cache_->shrink(kRamBytes);
+  auto stats = cache_->refreshStats();
+  // Shrink can only reclaim some entries but not all as some of the cache
+  // entries have been pickup for ssd write which is not evictable.
+  ASSERT_LT(stats.numEntries, numEntries);
+  ASSERT_GT(stats.numEmptyEntries, 0);
+  ASSERT_GT(stats.numEvict, 0);
+  ASSERT_GT(stats.numShared, 0);
+  ASSERT_EQ(stats.numExclusive, 0);
+  ASSERT_EQ(stats.numWaitExclusive, 0);
+
+  // Wait for write to complete.
+  writeWaitFlag = false;
+  writeWait.notifyAll();
+  ssdWriteThread.join();
+  while (cache_->ssdCache()->writeInProgress()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // NOLINT
+  }
+
+  stats = cache_->refreshStats();
+  ASSERT_GT(stats.numEntries, stats.numEmptyEntries);
+
+  ASSERT_GT(cache_->shrink(kRamBytes), 0);
+  stats = cache_->refreshStats();
+  ASSERT_EQ(stats.numEntries, 0);
+  ASSERT_EQ(stats.numEmptyEntries, numEntries);
+}
+
+// TODO: add concurrent fuzzer test.

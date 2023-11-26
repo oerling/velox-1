@@ -26,6 +26,8 @@ add_executable(
   ScopedLockTest.cpp
   SemaphoreTest.cpp
   SimdUtilTest.cpp
+  SpillConfigTest.cpp
+  SpillStatsTest.cpp
   StatsReporterTest.cpp
   SuccinctPrinterTest.cpp)
 
@@ -34,6 +36,7 @@ add_test(velox_base_test velox_base_test)
 target_link_libraries(
   velox_base_test
   PRIVATE velox_common_base
+          velox_time
           velox_exception
           velox_temp_path
           Boost::filesystem

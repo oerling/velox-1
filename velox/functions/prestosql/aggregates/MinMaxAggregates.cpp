@@ -17,6 +17,7 @@
 #include <limits>
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/AggregationHook.h"
+#include "velox/functions/lib/CheckNestedNulls.h"
 #include "velox/functions/lib/aggregates/SimpleNumericAggregate.h"
 #include "velox/functions/lib/aggregates/SingleValueAccumulator.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
@@ -280,8 +281,10 @@ const T MinAggregate<T>::kInitialValue_ = MinMaxTrait<T>::max();
 
 class NonNumericMinMaxAggregateBase : public exec::Aggregate {
  public:
-  explicit NonNumericMinMaxAggregateBase(const TypePtr& resultType)
-      : exec::Aggregate(resultType) {}
+  explicit NonNumericMinMaxAggregateBase(
+      const TypePtr& resultType,
+      bool throwOnNestedNulls)
+      : exec::Aggregate(resultType), throwOnNestedNulls_(throwOnNestedNulls) {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(SingleValueAccumulator);
@@ -305,6 +308,16 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
       std::vector<VectorPtr>& args,
       VectorPtr& result) const override {
     const auto& input = args[0];
+
+    if (throwOnNestedNulls_) {
+      DecodedVector decoded(*input, rows, true);
+      auto indices = decoded.indices();
+      rows.applyToSelected([&](vector_size_t i) {
+        velox::functions::checkNestedNulls(
+            decoded, indices, i, throwOnNestedNulls_);
+      });
+    }
+
     if (rows.isAllSelected()) {
       result = input;
       return;
@@ -377,9 +390,11 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
     }
 
     rows.applyToSelected([&](vector_size_t i) {
-      if (decoded.isNullAt(i)) {
+      if (velox::functions::checkNestedNulls(
+              decoded, indices, i, throwOnNestedNulls_)) {
         return;
       }
+
       auto accumulator = value<SingleValueAccumulator>(groups[i]);
       if (!accumulator->hasValue() ||
           compareTest(compare(accumulator, decoded, i))) {
@@ -399,8 +414,8 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
     auto baseVector = decoded.base();
 
     if (decoded.isConstantMapping()) {
-      if (decoded.isNullAt(0)) {
-        // nothing to do; all values are nulls
+      if (velox::functions::checkNestedNulls(
+              decoded, indices, 0, throwOnNestedNulls_)) {
         return;
       }
 
@@ -414,21 +429,28 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
 
     auto accumulator = value<SingleValueAccumulator>(group);
     rows.applyToSelected([&](vector_size_t i) {
-      if (decoded.isNullAt(i)) {
+      if (velox::functions::checkNestedNulls(
+              decoded, indices, i, throwOnNestedNulls_)) {
         return;
       }
+
       if (!accumulator->hasValue() ||
           compareTest(compare(accumulator, decoded, i))) {
         accumulator->write(baseVector, indices[i], allocator_);
       }
     });
   }
+
+ private:
+  const bool throwOnNestedNulls_;
 };
 
 class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
  public:
-  explicit NonNumericMaxAggregate(const TypePtr& resultType)
-      : NonNumericMinMaxAggregateBase(resultType) {}
+  explicit NonNumericMaxAggregate(
+      const TypePtr& resultType,
+      bool throwOnNestedNulls)
+      : NonNumericMinMaxAggregateBase(resultType, throwOnNestedNulls) {}
 
   void addRawInput(
       char** groups,
@@ -469,8 +491,10 @@ class NonNumericMaxAggregate : public NonNumericMinMaxAggregateBase {
 
 class NonNumericMinAggregate : public NonNumericMinMaxAggregateBase {
  public:
-  explicit NonNumericMinAggregate(const TypePtr& resultType)
-      : NonNumericMinMaxAggregateBase(resultType) {}
+  explicit NonNumericMinAggregate(
+      const TypePtr& resultType,
+      bool throwOnNestedNulls)
+      : NonNumericMinMaxAggregateBase(resultType, throwOnNestedNulls) {}
 
   void addRawInput(
       char** groups,
@@ -535,12 +559,19 @@ struct MinMaxNAccumulator {
   }
 
   void checkAndSetN(DecodedVector& decodedN, vector_size_t row) {
-    VELOX_USER_CHECK(
-        !decodedN.isNullAt(row),
-        "second argument of max/min must be a positive integer");
+    // Skip null N.
+    if (decodedN.isNullAt(row)) {
+      return;
+    }
+
     const auto newN = decodedN.valueAt<int64_t>(row);
     VELOX_USER_CHECK_GT(
         newN, 0, "second argument of max/min must be a positive integer");
+
+    VELOX_USER_CHECK_LE(
+        newN,
+        10'000,
+        "second argument of max/min must be less than or equal to 10000");
 
     if (n) {
       VELOX_USER_CHECK_EQ(
@@ -610,7 +641,7 @@ class MinMaxNAggregateBase : public exec::Aggregate {
     decodedN_.decode(*args[1], rows);
 
     rows.applyToSelected([&](vector_size_t i) {
-      if (decodedValue_.isNullAt(i)) {
+      if (decodedValue_.isNullAt(i) || decodedN_.isNullAt(i)) {
         return;
       }
 
@@ -650,7 +681,8 @@ class MinMaxNAggregateBase : public exec::Aggregate {
 
     auto tracker = trackRowSize(group);
     rows.applyToSelected([&](vector_size_t i) {
-      if (!decodedValue_.isNullAt(i)) {
+      // Skip null value or N.
+      if (!decodedValue_.isNullAt(i) && !decodedN_.isNullAt(i)) {
         addRawInput(group, i);
       }
     });
@@ -875,7 +907,7 @@ template <
 exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                           .typeVariable("T")
+                           .orderableTypeVariable("T")
                            .returnType("T")
                            .intermediateType("T")
                            .argumentType("T")
@@ -902,6 +934,7 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
           const core::QueryConfig& /*config*/)
           -> std::unique_ptr<exec::Aggregate> {
         const bool nAgg = !resultType->equivalent(*argTypes[0]);
+        const bool throwOnNestedNulls = velox::exec::isRawInput(step);
 
         if (nAgg) {
           // We have either 2 arguments: T, bigint (partial aggregation)
@@ -959,13 +992,14 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
             case TypeKind::VARBINARY:
               [[fallthrough]];
             case TypeKind::VARCHAR:
-              [[fallthrough]];
+              return std::make_unique<TNonNumeric>(inputType, false);
             case TypeKind::ARRAY:
               [[fallthrough]];
             case TypeKind::MAP:
               [[fallthrough]];
             case TypeKind::ROW:
-              return std::make_unique<TNonNumeric>(inputType);
+              return std::make_unique<TNonNumeric>(
+                  inputType, throwOnNestedNulls);
             default:
               VELOX_CHECK(
                   false,

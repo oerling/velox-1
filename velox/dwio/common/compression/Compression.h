@@ -17,9 +17,7 @@
 #pragma once
 
 #include "velox/common/compression/Compression.h"
-#include "velox/dwio/common/OutputStream.h"
 #include "velox/dwio/common/SeekableInputStream.h"
-#include "velox/dwio/common/compression/CompressionBufferPool.h"
 #include "velox/dwio/common/encryption/Encryption.h"
 
 namespace facebook::velox::dwio::common::compression {
@@ -46,14 +44,14 @@ class Compressor {
 class Decompressor {
  public:
   explicit Decompressor(uint64_t blockSize, const std::string& streamDebugInfo)
-      : blockSize_{blockSize}, streamDebugInfo_{streamDebugInfo} {}
+      : blockSize_{static_cast<int64_t>(blockSize)},
+        streamDebugInfo_{streamDebugInfo} {}
 
   virtual ~Decompressor() = default;
 
-  virtual uint64_t getUncompressedLength(
-      const char* /* unused */,
-      uint64_t /* unused */) const {
-    return blockSize_;
+  virtual std::pair<int64_t, bool /* Is the size exact? */>
+  getDecompressedLength(const char* /* src */, uint64_t /* srcLength */) const {
+    return {blockSize_, false};
   }
 
   virtual uint64_t decompress(
@@ -63,7 +61,7 @@ class Decompressor {
       uint64_t destLength) = 0;
 
  protected:
-  uint64_t blockSize_;
+  int64_t blockSize_;
   const std::string streamDebugInfo_;
 };
 
@@ -82,6 +80,10 @@ struct CompressionOptions {
     struct {
       int32_t compressionLevel;
     } zstd;
+
+    struct {
+      bool isHadoopFrameFormat;
+    } lz4_lzo;
   } format;
 
   uint32_t compressionThreshold;
@@ -111,18 +113,10 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
 /**
  * Create a compressor for the given compression kind.
  * @param kind The compression type to implement
- * @param bufferPool Pool for compression buffer
- * @param bufferHolder Buffer holder that handles buffer allocation and
- * collection
- * @param pageHeaderSize Header size of compressed block
  * @param options The compression options to use
  */
-std::unique_ptr<BufferedOutputStream> createCompressor(
+std::unique_ptr<Compressor> createCompressor(
     facebook::velox::common::CompressionKind kind,
-    CompressionBufferPool& bufferPool,
-    DataBufferHolder& bufferHolder,
-    uint8_t pageHeaderSize,
-    const CompressionOptions& options,
-    const dwio::common::encryption::Encrypter* encrypter = nullptr);
+    const CompressionOptions& options);
 
 } // namespace facebook::velox::dwio::common::compression

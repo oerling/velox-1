@@ -16,12 +16,16 @@
 
 #pragma once
 
-#include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
-#include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
-#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
+
+namespace facebook::velox::dwio::common {
+
+class SelectiveColumnReader;
+class BufferedInput;
+
+} // namespace facebook::velox::dwio::common
 
 namespace facebook::velox::parquet {
 
@@ -64,6 +68,11 @@ class ParquetRowReader : public dwio::common::RowReader {
     return true;
   }
 
+  // Checks if the specific row group is buffered.
+  // Returns false if the row group is not loaded into buffer
+  // or the buffered data has been evicted.
+  bool isRowGroupBuffered(int32_t rowGroupIndex) const;
+
  private:
   // Compares row group  metadata to filters in ScanSpec in options of
   // ReaderBase and determines the set of row groups to scan.
@@ -94,6 +103,8 @@ class ParquetRowReader : public dwio::common::RowReader {
   std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
 
   RowTypePtr requestedType_;
+
+  dwio::common::ColumnReaderStatistics columnReaderStats_;
 };
 
 /// Implements the reader interface for Parquet.

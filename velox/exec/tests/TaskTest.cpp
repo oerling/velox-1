@@ -21,13 +21,14 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Values.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::common::testutil;
@@ -519,6 +520,15 @@ TEST_F(TaskTest, wrongPlanNodeForSplit) {
       0,
       std::make_shared<core::QueryCtx>(driverExecutor_.get()));
 
+  ASSERT_EQ(
+      task->toString(), "{Task task-1 (task-1)Plan: -- Project\n\n drivers:\n");
+  ASSERT_EQ(
+      task->toJsonString(),
+      "{\n  \"concurrentSplitGroups\": 1,\n  \"drivers\": {},\n  \"exchangeClientByPlanNode\": {},\n  \"groupedPartitionedOutput\": false,\n  \"id\": \"task-1\",\n  \"noMoreOutputBuffers\": false,\n  \"numDriversPerSplitGroup\": 0,\n  \"numDriversUngrouped\": 0,\n  \"numFinishedDrivers\": 0,\n  \"numRunningDrivers\": 0,\n  \"numRunningSplitGroups\": 0,\n  \"numThreads\": 0,\n  \"numTotalDrivers_\": 0,\n  \"onThreadSince\": \"0\",\n  \"partitionedOutputConsumed\": false,\n  \"plan\": \"-- Project\\n\",\n  \"shortId\": \"task-1\",\n  \"state\": \"Running\",\n  \"terminateRequested_\": \"0\"\n}");
+  ASSERT_EQ(
+      task->toShortJsonString(),
+      "{\n  \"id\": \"task-1\",\n  \"numFinishedDrivers\": 0,\n  \"numRunningDrivers\": 0,\n  \"numThreads\": 0,\n  \"numTotalDrivers_\": 0,\n  \"pauseRequested_\": \"0\",\n  \"shortId\": \"task-1\",\n  \"state\": \"Running\",\n  \"terminateRequested_\": \"0\"\n}");
+
   // Add split for the source node.
   task->addSplit("0", exec::Split(folly::copy(connectorSplit)));
 
@@ -915,12 +925,12 @@ TEST_F(TaskTest, updateBroadCastOutputBuffers) {
                   .project({"c0 % 10"})
                   .partitionedOutputBroadcast({})
                   .planFragment();
-  auto bufferManager = PartitionedOutputBufferManager::getInstance().lock();
+  auto bufferManager = OutputBufferManager::getInstance().lock();
   {
     auto task = Task::create(
         "t0", plan, 0, std::make_shared<core::QueryCtx>(driverExecutor_.get()));
 
-    task->start(task, 1, 1);
+    task->start(1, 1);
 
     ASSERT_TRUE(task->updateOutputBuffers(10, true /*noMoreBuffers*/));
 
@@ -934,7 +944,7 @@ TEST_F(TaskTest, updateBroadCastOutputBuffers) {
     auto task = Task::create(
         "t1", plan, 0, std::make_shared<core::QueryCtx>(driverExecutor_.get()));
 
-    task->start(task, 1, 1);
+    task->start(1, 1);
 
     ASSERT_TRUE(task->updateOutputBuffers(5, false));
     ASSERT_TRUE(task->updateOutputBuffers(10, false));
@@ -1299,10 +1309,109 @@ TEST_F(TaskTest, driverCreationMemoryAllocationCheck) {
         std::make_shared<core::QueryCtx>());
     if (singleThreadExecution) {
       VELOX_ASSERT_THROW(
-          Task::start(badTask, 1), "Unexpected memory pool allocations");
+          badTask->start(1), "Unexpected memory pool allocations");
     } else {
       VELOX_ASSERT_THROW(badTask->next(), "Unexpected memory pool allocations");
     }
   }
+}
+
+TEST_F(TaskTest, spillDirectoryLifecycleManagement) {
+  // Marks the spill directory as not already created and ensures that the Task
+  // handles creating it on first use and eventually deleting it on destruction.
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>(1'000, [](auto row) { return row % 300; }),
+      makeFlatVector<int64_t>(1'000, [](auto row) { return row; }),
+  });
+
+  core::PlanNodeId aggrNodeId;
+  const auto plan = PlanBuilder()
+                        .values({data})
+                        .singleAggregation({"c0"}, {"sum(c1)"}, {})
+                        .capturePlanNodeId(aggrNodeId)
+                        .planNode();
+  CursorParameters params;
+  params.planNode = plan;
+  params.queryCtx = std::make_shared<core::QueryCtx>(driverExecutor_.get());
+  params.queryCtx->testingOverrideConfigUnsafe(
+      {{core::QueryConfig::kSpillEnabled, "true"},
+       {core::QueryConfig::kAggregationSpillEnabled, "true"},
+       {core::QueryConfig::kTestingSpillPct, "100"}});
+  params.maxDrivers = 1;
+
+  auto cursor = std::make_unique<TaskCursor>(params);
+  std::shared_ptr<Task> task = cursor->task();
+  auto rootTempDir = exec::test::TempDirectoryPath::create();
+  auto tmpDirectoryPath =
+      rootTempDir->path + "/spillDirectoryLifecycleManagement";
+  task->setSpillDirectory(tmpDirectoryPath, false);
+
+  while (cursor->moveNext()) {
+  }
+  ASSERT_TRUE(waitForTaskCompletion(task.get(), 5'000'000));
+  EXPECT_EQ(exec::TaskState::kFinished, task->state());
+  auto taskStats = exec::toPlanStats(task->taskStats());
+  auto& stats = taskStats.at(aggrNodeId);
+  ASSERT_GT(stats.spilledRows, 0);
+  cursor.reset(); // ensure 'task' has no other shared pointer.
+  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
+}
+
+TEST_F(TaskTest, spillDirNotCreated) {
+  // Verify that no spill directory is created if spilling is not engaged.
+  const std::vector<RowVectorPtr> probeVectors = {makeRowVector(
+      {"t_c0", "t_c1"},
+      {
+          makeFlatVector<int64_t>({1, 2, 3, 4}),
+          makeFlatVector<int64_t>({10, 20, 30, 40}),
+      })};
+
+  const std::vector<RowVectorPtr> buildVectors = {makeRowVector(
+      {"u_c0"},
+      {
+          makeFlatVector<int64_t>({0, 1, 3, 5}),
+      })};
+
+  core::PlanNodeId hashJoinNodeId;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  CursorParameters params;
+  // We use a hash join here as a Spiller object is created upfront which helps
+  // us ensure that the directory creation is delayed till spilling is executed.
+  params.planNode = PlanBuilder(planNodeIdGenerator)
+                        .values(probeVectors, true)
+                        .hashJoin(
+                            {"t_c0"},
+                            {"u_c0"},
+                            PlanBuilder(planNodeIdGenerator)
+                                .values(buildVectors, true)
+                                .planNode(),
+                            "",
+                            {"t_c0", "t_c1", "u_c0"})
+                        .capturePlanNodeId(hashJoinNodeId)
+                        .planNode();
+  params.queryCtx = std::make_shared<core::QueryCtx>(driverExecutor_.get());
+  params.queryCtx->testingOverrideConfigUnsafe(
+      {{core::QueryConfig::kSpillEnabled, "true"},
+       {core::QueryConfig::kJoinSpillEnabled, "true"},
+       {core::QueryConfig::kTestingSpillPct, "0"}});
+  params.maxDrivers = 1;
+
+  auto cursor = std::make_unique<TaskCursor>(params);
+  auto* task = cursor->task().get();
+  auto rootTempDir = exec::test::TempDirectoryPath::create();
+  auto tmpDirectoryPath = rootTempDir->path + "/spillDirNotCreated";
+  task->setSpillDirectory(tmpDirectoryPath, false);
+
+  while (cursor->moveNext()) {
+  }
+  ASSERT_TRUE(waitForTaskCompletion(task, 5'000'000));
+  EXPECT_EQ(exec::TaskState::kFinished, task->state());
+  auto taskStats = exec::toPlanStats(task->taskStats());
+  auto& stats = taskStats.at(hashJoinNodeId);
+  ASSERT_EQ(stats.spilledRows, 0);
+  // Check for spill folder without destroying the Task object to ensure its
+  // destructor has not removed the directory if it was created earlier.
+  auto fs = filesystems::getFileSystem(tmpDirectoryPath, nullptr);
+  EXPECT_FALSE(fs->exists(tmpDirectoryPath));
 }
 } // namespace facebook::velox::exec::test

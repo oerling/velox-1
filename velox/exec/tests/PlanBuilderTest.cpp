@@ -33,6 +33,15 @@ class PlanBuilderTest : public testing::Test,
   }
 };
 
+TEST_F(PlanBuilderTest, invalidSourceNode) {
+  VELOX_ASSERT_THROW(
+      PlanBuilder().project({"c0 > 5"}).planNode(),
+      "Project cannot be the source node");
+  VELOX_ASSERT_THROW(
+      PlanBuilder().filter({"c0 > 5"}).planNode(),
+      "Filter cannot be the source node");
+}
+
 TEST_F(PlanBuilderTest, duplicateSubfield) {
   VELOX_ASSERT_THROW(
       PlanBuilder(pool_.get())
@@ -106,7 +115,7 @@ TEST_F(PlanBuilderTest, windowFunctionCall) {
           .planNode()
           ->toString(true, false),
       "-- Window[partition by [a] order by [b ASC NULLS LAST] "
-      "d := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
+      "d := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW inputsSorted [0]] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, d:BIGINT\n");
 
   VELOX_CHECK_EQ(
@@ -116,7 +125,7 @@ TEST_F(PlanBuilderTest, windowFunctionCall) {
           .planNode()
           ->toString(true, false),
       "-- Window[partition by [a] order by [] "
-      "d := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
+      "d := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW inputsSorted [0]] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, d:BIGINT\n");
 
   VELOX_CHECK_EQ(
@@ -126,7 +135,7 @@ TEST_F(PlanBuilderTest, windowFunctionCall) {
           .planNode()
           ->toString(true, false),
       "-- Window[partition by [] order by [] "
-      "w0 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
+      "w0 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW inputsSorted [0]] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, w0:BIGINT\n");
 
   VELOX_ASSERT_THROW(
@@ -175,7 +184,7 @@ TEST_F(PlanBuilderTest, windowFrame) {
       "d7 := window1(ROW[\"c\"]) ROWS between CURRENT ROW and UNBOUNDED FOLLOWING, "
       "d8 := window1(ROW[\"c\"]) RANGE between CURRENT ROW and UNBOUNDED FOLLOWING, "
       "d9 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and UNBOUNDED FOLLOWING, "
-      "d10 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and UNBOUNDED FOLLOWING] "
+      "d10 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and UNBOUNDED FOLLOWING inputsSorted [0]] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, d1:BIGINT, d2:BIGINT, d3:BIGINT, d4:BIGINT, "
       "d5:BIGINT, d6:BIGINT, d7:BIGINT, d8:BIGINT, d9:BIGINT, d10:BIGINT\n");
 

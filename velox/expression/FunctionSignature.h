@@ -43,7 +43,9 @@ class SignatureVariable {
       std::string name,
       std::optional<std::string> constraint,
       ParameterType type,
-      bool knownTypesOnly = false);
+      bool knownTypesOnly = false,
+      bool orderableTypesOnly = false,
+      bool comparableTypesOnly = false);
 
   const std::string& name() const {
     return name_;
@@ -58,6 +60,16 @@ class SignatureVariable {
     return knownTypesOnly_;
   }
 
+  bool orderableTypesOnly() const {
+    VELOX_USER_CHECK(isTypeParameter());
+    return orderableTypesOnly_;
+  }
+
+  bool comparableTypesOnly() const {
+    VELOX_USER_CHECK(isTypeParameter());
+    return comparableTypesOnly_;
+  }
+
   bool isTypeParameter() const {
     return type_ == ParameterType::kTypeParameter;
   }
@@ -69,24 +81,40 @@ class SignatureVariable {
   bool operator==(const SignatureVariable& rhs) const {
     return type_ == rhs.type_ && name_ == rhs.name_ &&
         constraint_ == rhs.constraint_ &&
-        knownTypesOnly_ == rhs.knownTypesOnly_;
+        knownTypesOnly_ == rhs.knownTypesOnly_ &&
+        orderableTypesOnly_ == rhs.orderableTypesOnly_ &&
+        comparableTypesOnly_ == rhs.comparableTypesOnly_;
   }
 
  private:
   const std::string name_;
   const std::string constraint_;
   const ParameterType type_;
-  // This property only applies to type variables and indicates if the type
-  // can bind to unknown or not.
+  // The following properties apply only to type variables and indicate whether
+  // the type can bind only to known, orderable or comparable types.
   bool knownTypesOnly_ = false;
+  bool orderableTypesOnly_ = false;
+  bool comparableTypesOnly_ = false;
 };
 
 // Base type (e.g. map) and optional parameters (e.g. K, V).
-// All parameters must be of the same ParameterType.
 class TypeSignature {
  public:
-  TypeSignature(std::string baseName, std::vector<TypeSignature> parameters)
-      : baseName_{std::move(baseName)}, parameters_{std::move(parameters)} {}
+  /// @param baseName The base name of the type. Could describe a concrete type
+  /// name (e.g. map, bigint, double), or a variable (e.g. K, V).
+  /// @param parameters The optional parameters for the type. For example, the
+  /// signature "map(K, V)" would have two parameters, "K", and "V". All
+  /// parameters must be of the same ParameterType.
+  /// @param rowFieldName if this type signature is a field of another parent
+  /// row type, it can optionally have a name. E.g. `row(id bigint)` would have
+  /// "id" set as rowFieldName in the "bigint" parameter.
+  TypeSignature(
+      std::string baseName,
+      std::vector<TypeSignature> parameters,
+      std::optional<std::string> rowFieldName = std::nullopt)
+      : baseName_{std::move(baseName)},
+        parameters_{std::move(parameters)},
+        rowFieldName_(rowFieldName) {}
 
   const std::string& baseName() const {
     return baseName_;
@@ -96,15 +124,24 @@ class TypeSignature {
     return parameters_;
   }
 
+  const std::optional<std::string>& rowFieldName() const {
+    return rowFieldName_;
+  }
+
   std::string toString() const;
 
   bool operator==(const TypeSignature& rhs) const {
-    return baseName_ == rhs.baseName_ && parameters_ == rhs.parameters_;
+    return baseName_ == rhs.baseName_ && parameters_ == rhs.parameters_ &&
+        rowFieldName_ == rhs.rowFieldName_;
   }
 
  private:
   const std::string baseName_;
   const std::vector<TypeSignature> parameters_;
+
+  // If this object is a field of another parent row type, it can optionally
+  // have a name, e.g, `row(id bigint)`
+  std::optional<std::string> rowFieldName_;
 };
 
 class FunctionSignature {
@@ -223,16 +260,21 @@ inline void addVariable(
 
 /// Parses a string into TypeSignature. The format of the string is type name,
 /// optionally followed by type parameters enclosed in parenthesis.
+///
 /// Examples:
 ///     - bigint
 ///     - double
 ///     - array(T)
 ///     - map(K,V)
-///     - row(bigint,array(tinyint),T)
+///     - row(named bigint,array(tinyint),T)
 ///     - function(S,T,R)
+///
+/// Row fields are allowed to be named or anonymous, e.g. "row(foo bigint)" or
+/// "row(bigint)"
 TypeSignature parseTypeSignature(const std::string& signature);
 
 /// Convenience class for creating FunctionSignature instances.
+///
 /// Example of usage:
 ///     - signature of "concat" function: varchar... -> varchar
 ///
@@ -258,12 +300,18 @@ class FunctionSignatureBuilder {
     return *this;
   }
 
-  FunctionSignatureBuilder& knownTypeVariable(const std::string& name) {
-    addVariable(
-        variables_,
-        SignatureVariable(name, "", ParameterType::kTypeParameter, true));
+  FunctionSignatureBuilder& variable(const SignatureVariable& variable) {
+    addVariable(variables_, variable);
     return *this;
   }
+
+  FunctionSignatureBuilder& knownTypeVariable(const std::string& name);
+
+  /// Orderable implies comparable, this method would enable
+  /// comparableTypesOnly_ too.
+  FunctionSignatureBuilder& orderableTypeVariable(const std::string& name);
+
+  FunctionSignatureBuilder& comparableTypeVariable(const std::string& name);
 
   FunctionSignatureBuilder& integerVariable(
       const std::string& name,
@@ -326,13 +374,15 @@ class AggregateFunctionSignatureBuilder {
     return *this;
   }
 
-  AggregateFunctionSignatureBuilder& knownTypeVariable(
-      const std::string& name) {
-    addVariable(
-        variables_,
-        SignatureVariable(name, "", ParameterType::kTypeParameter, true));
-    return *this;
-  }
+  AggregateFunctionSignatureBuilder& knownTypeVariable(const std::string& name);
+
+  /// Orderable implies comparable, this method would enable
+  /// comparableTypesOnly_ too.
+  AggregateFunctionSignatureBuilder& orderableTypeVariable(
+      const std::string& name);
+
+  AggregateFunctionSignatureBuilder& comparableTypeVariable(
+      const std::string& name);
 
   AggregateFunctionSignatureBuilder& integerVariable(
       const std::string& name,

@@ -54,7 +54,7 @@ BaseVector::BaseVector(
 
   if (nulls_) {
     int32_t bytes = byteSize<bool>(length_);
-    VELOX_CHECK(nulls_->capacity() >= bytes);
+    VELOX_CHECK_GE(nulls_->capacity(), bytes);
     if (nulls_->size() < bytes) {
       // Set the size so that values get preserved by resize. Do not
       // set if already large enough, so that it is safe to take a
@@ -70,7 +70,7 @@ void BaseVector::ensureNullsCapacity(
     bool setNotNull) {
   auto fill = setNotNull ? bits::kNotNull : bits::kNull;
   // Ensure the size of nulls_ is always at least as large as length_.
-  auto size = std::max(minimumSize, length_);
+  auto size = std::max<vector_size_t>(minimumSize, length_);
   if (nulls_ && !nulls_->isView() && nulls_->unique()) {
     if (nulls_->capacity() < bits::nbytes(size)) {
       AlignedBuffer::reallocate<bool>(&nulls_, size, fill);
@@ -90,7 +90,7 @@ void BaseVector::ensureNullsCapacity(
       memcpy(
           newNulls->asMutable<char>(),
           nulls_->as<char>(),
-          byteSize<bool>(std::min(length_, size)));
+          byteSize<bool>(std::min<vector_size_t>(length_, size)));
     }
     nulls_ = std::move(newNulls);
     rawNulls_ = nulls_->as<uint64_t>();
@@ -275,6 +275,21 @@ VectorPtr BaseVector::wrapInConstant(
       addConstant, kind, length, index, std::move(vector), copyBase);
 }
 
+std::optional<bool> BaseVector::equalValueAt(
+    const BaseVector* other,
+    vector_size_t index,
+    vector_size_t otherIndex,
+    CompareFlags::NullHandlingMode nullHandlingMode) const {
+  const CompareFlags compareFlags = CompareFlags::equality(nullHandlingMode);
+  std::optional<int32_t> result =
+      compare(other, index, otherIndex, compareFlags);
+  if (result.has_value()) {
+    return result.value() == 0;
+  }
+
+  return std::nullopt;
+}
+
 template <TypeKind kind>
 static VectorPtr createEmpty(
     vector_size_t size,
@@ -310,10 +325,9 @@ VectorPtr BaseVector::createInternal(
     case TypeKind::ROW: {
       std::vector<VectorPtr> children;
       auto rowType = type->as<TypeKind::ROW>();
-      // Children are reserved the parent size but are set to 0 elements.
+      // Children are reserved the parent size and accessible for those rows.
       for (int32_t i = 0; i < rowType.size(); ++i) {
         children.push_back(create(rowType.childAt(i), size, pool));
-        children.back()->resize(0);
       }
       return std::make_shared<RowVector>(
           pool, type, nullptr, size, std::move(children));
@@ -384,16 +398,14 @@ void BaseVector::copyNulls(
 }
 
 void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
+  if (bits == nullptr || !rows.hasSelections()) {
+    return;
+  }
   VELOX_CHECK(isNullsWritable());
-  VELOX_CHECK(length_ >= rows.end());
+  VELOX_CHECK_GE(length_, rows.end());
   ensureNulls();
   auto target = nulls_->asMutable<uint64_t>();
   const uint64_t* selected = rows.asRange().bits();
-  if (!bits) {
-    // A 1 in rows makes a 0 in nulls.
-    bits::andWithNegatedBits(target, selected, rows.begin(), rows.end());
-    return;
-  }
   // A 0 in bits with a 1 in rows makes a 0 in nulls.
   bits::forEachWord(
       rows.begin(),
@@ -406,13 +418,27 @@ void BaseVector::addNulls(const uint64_t* bits, const SelectivityVector& rows) {
       });
 }
 
-void BaseVector::clearNulls(const SelectivityVector& rows) {
+void BaseVector::addNulls(const SelectivityVector& nullRows) {
+  if (!nullRows.hasSelections()) {
+    return;
+  }
+  VELOX_CHECK(isNullsWritable());
+  VELOX_CHECK_GE(length_, nullRows.end());
+  ensureNulls();
+  auto target = nulls_->asMutable<uint64_t>();
+  const uint64_t* selected = nullRows.asRange().bits();
+  // A 1 in rows makes a 0 in nulls.
+  bits::andWithNegatedBits(target, selected, nullRows.begin(), nullRows.end());
+  return;
+}
+
+void BaseVector::clearNulls(const SelectivityVector& nonNullRows) {
   VELOX_CHECK(isNullsWritable());
   if (!nulls_) {
     return;
   }
 
-  if (rows.isAllSelected() && rows.end() == length_) {
+  if (nonNullRows.isAllSelected() && nonNullRows.end() == length_) {
     nulls_ = nullptr;
     rawNulls_ = nullptr;
     nullCount_ = 0;
@@ -422,9 +448,9 @@ void BaseVector::clearNulls(const SelectivityVector& rows) {
   auto rawNulls = nulls_->asMutable<uint64_t>();
   bits::orBits(
       rawNulls,
-      rows.asRange().bits(),
-      std::min(length_, rows.begin()),
-      std::min(length_, rows.end()));
+      nonNullRows.asRange().bits(),
+      std::min<vector_size_t>(length_, nonNullRows.begin()),
+      std::min<vector_size_t>(length_, nonNullRows.end()));
   nullCount_ = std::nullopt;
 }
 
@@ -464,21 +490,20 @@ void BaseVector::resizeIndices(
     vector_size_t size,
     velox::memory::MemoryPool* pool,
     BufferPtr* indices,
-    const vector_size_t** raw,
-    std::optional<vector_size_t> initialValue) {
-  if (indices->get() && !indices->get()->isView()) {
-    auto newByteSize = byteSize<vector_size_t>(size);
-    if (indices->get()->size() < newByteSize) {
-      AlignedBuffer::reallocate<vector_size_t>(indices, size, initialValue);
+    const vector_size_t** raw) {
+  const auto newNumBytes = byteSize<vector_size_t>(size);
+  if (indices->get() && !indices->get()->isView() && indices->get()->unique()) {
+    if (indices->get()->size() < newNumBytes) {
+      AlignedBuffer::reallocate<vector_size_t>(indices, size, 0);
     }
   } else {
-    auto newIndices =
-        AlignedBuffer::allocate<vector_size_t>(size, pool, initialValue);
+    auto newIndices = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
     if (indices->get()) {
       auto dst = newIndices->asMutable<vector_size_t>();
       auto src = indices->get()->as<vector_size_t>();
-      auto len = std::min(indices->get()->size(), size * sizeof(vector_size_t));
-      memcpy(dst, src, len);
+      auto numCopyBytes =
+          std::min<vector_size_t>(indices->get()->size(), newNumBytes);
+      memcpy(dst, src, numCopyBytes);
     }
     *indices = newIndices;
   }
@@ -697,36 +722,21 @@ void BaseVector::copy(
     const BaseVector* source,
     const SelectivityVector& rows,
     const vector_size_t* toSourceRow) {
-  // Check if there are rows that do not exist in 'source'. Remove these from
-  // 'ranges'.
-  // TODO Update the callers and remove this logic.
-
+  if (!rows.hasSelections()) {
+    return;
+  }
   std::vector<CopyRange> ranges;
   if (toSourceRow == nullptr) {
-    if (source->size() < rows.end()) {
-      SelectivityVector trimmedRows = rows;
-      trimmedRows.setValidRange(source->size(), rows.end(), false);
-      trimmedRows.updateBounds();
-
-      ranges = toCopyRanges(trimmedRows);
-    } else {
-      ranges = toCopyRanges(rows);
-    }
+    VELOX_CHECK_GE(source->size(), rows.end());
+    ranges = toCopyRanges(rows);
   } else {
     ranges.reserve(rows.end());
     rows.applyToSelected([&](vector_size_t row) {
       const auto sourceRow = toSourceRow[row];
-      if (sourceRow >= source->size()) {
-        return;
-      }
+      VELOX_DCHECK_GT(source->size(), sourceRow);
       ranges.push_back({sourceRow, row, 1});
     });
   }
-
-  if (ranges.empty()) {
-    return;
-  }
-
   copyRanges(source, ranges);
 }
 
@@ -752,7 +762,7 @@ VectorPtr BaseVector::createNullConstant(
 }
 
 // static
-VectorPtr BaseVector::loadedVectorShared(VectorPtr vector) {
+const VectorPtr& BaseVector::loadedVectorShared(const VectorPtr& vector) {
   if (vector->encoding() != VectorEncoding::Simple::LAZY) {
     // If 'vector' is a wrapper, we load any wrapped LazyVector.
     vector->loadedVector();

@@ -110,6 +110,14 @@ struct MemoryManagerOptions {
   /// The minimal memory capacity to transfer out of or into a memory pool
   /// during the memory arbitration.
   uint64_t memoryPoolTransferCapacity{32 << 20};
+
+  /// Provided by the query system to validate the state after a memory pool
+  /// enters arbitration if not null. For instance, Prestissimo provides
+  /// callback to check if a memory arbitration request is issued from a driver
+  /// thread, then the driver should be put in suspended state to avoid the
+  /// potential deadlock when reclaim memory from the task of the request memory
+  /// pool.
+  MemoryArbitrationStateCheckCB arbitrationStateCheckCb{nullptr};
 };
 
 /// 'MemoryManager' is responsible for managing the memory pools. For now, users
@@ -213,7 +221,7 @@ class MemoryManager {
   const uint16_t alignment_;
   const bool checkUsageLeak_;
   const bool debugEnabled_;
-  // The destruction callback set for the allocated  root memory pools which are
+  // The destruction callback set for the allocated root memory pools which are
   // tracked by 'pools_'. It is invoked on the root pool destruction and removes
   // the pool from 'pools_'.
   const MemoryPoolImpl::DestructionCallback poolDestructionCb_;
@@ -242,6 +250,12 @@ std::shared_ptr<MemoryPool> addDefaultLeafMemoryPool(
 /// TODO: deprecate this API after all the use cases are able to manage the
 /// lifecycle of the allocated memory pools properly.
 MemoryPool& deprecatedSharedLeafPool();
+
+/// Returns the system-wide memory pool for spilling memory usage.
+memory::MemoryPool* spillMemoryPool();
+
+/// Returns true if the provided 'pool' is the spilling memory pool.
+bool isSpillMemoryPool(memory::MemoryPool* pool);
 
 FOLLY_ALWAYS_INLINE int32_t alignmentPadding(void* address, int32_t alignment) {
   auto extra = reinterpret_cast<uintptr_t>(address) % alignment;

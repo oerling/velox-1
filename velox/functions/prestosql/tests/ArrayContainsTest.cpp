@@ -15,6 +15,7 @@
  */
 
 #include <optional>
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
 using namespace facebook::velox;
@@ -190,28 +191,16 @@ TEST_F(ArrayContainsTest, booleanWithNulls) {
 }
 
 TEST_F(ArrayContainsTest, row) {
-  std::vector<std::vector<variant>> data = {
-      {
-          variant::row({1, "red"}),
-          variant::row({2, "blue"}),
-          variant::row({3, "green"}),
-      },
-      {
-          variant::row({2, "blue"}),
-          variant(TypeKind::ROW), // null
-          variant::row({5, "green"}),
-      },
-      {},
-      {
-          variant::row({1, "yellow"}),
-          variant::row({2, "blue"}),
-          variant::row({4, "green"}),
-          variant::row({5, "purple"}),
-      },
-  };
+  std::vector<std::vector<std::optional<std::tuple<int32_t, std::string>>>>
+      data = {
+          {{{1, "red"}}, {{2, "blue"}}, {{3, "green"}}},
+          {{{2, "blue"}}, std::nullopt, {{5, "green"}}},
+          {},
+          {{{1, "yellow"}}, {{2, "blue"}}, {{4, "green"}}, {{5, "purple"}}},
+      };
 
   auto rowType = ROW({INTEGER(), VARCHAR()});
-  auto arrayVector = makeArrayOfRowVector(rowType, data);
+  auto arrayVector = makeArrayOfRowVector(data, rowType);
 
   auto testContains = [&](int32_t n,
                           const char* color,
@@ -328,4 +317,61 @@ TEST_F(ArrayContainsTest, dictionaryEncodingElements) {
   testContainsConstantKey(arrayVector, {3, 4, 5}, {true, true});
 }
 
+TEST_F(ArrayContainsTest, arrayCheckNulls) {
+  const auto baseVector = makeArrayVectorFromJson<int32_t>({
+      "[1, 1]",
+      "[2, 2]",
+      "[3, null]",
+      "[4, 4]",
+      "[5, 5]",
+      "[6, 6]",
+  });
+  const auto data = makeArrayVector({0, 3}, baseVector);
+  auto contains = [&](const std::string& search) {
+    const auto searchBase = makeArrayVectorFromJson<int32_t>({search});
+    const auto searchConstant =
+        BaseVector::wrapInConstant(data->size(), 0, searchBase);
+    const auto result =
+        evaluate("contains(c0, c1)", makeRowVector({data, searchConstant}));
+    return result->asFlatVector<bool>()->valueAt(0);
+  };
+
+  static const std::string kErrorMessage =
+      "contains does not support arrays with elements that contain null";
+  // No null equal.
+  ASSERT_FALSE(contains("[7, null]"));
+  // Null equal, [3, null] vs [3, 3].
+  VELOX_ASSERT_THROW(contains("[3, 3]"), kErrorMessage);
+  // Null equal, [6, 6] vs [6, null].
+  VELOX_ASSERT_THROW(contains("[6, null]"), kErrorMessage);
+}
+
+TEST_F(ArrayContainsTest, rowCheckNulls) {
+  const auto baseVector = makeRowVector({
+      makeNullableFlatVector<int32_t>({1, 2, 3, 4, 5, 6}),
+      makeNullableFlatVector<int32_t>({1, 2, std::nullopt, 4, 5, 6}),
+  });
+  const auto data = makeArrayVector({0, 3}, baseVector);
+
+  auto contains = [&](const std::vector<std::optional<int32_t>>& search) {
+    const auto searchBase = makeRowVector({
+        makeNullableFlatVector<int32_t>({search.at(0)}),
+        makeNullableFlatVector<int32_t>({search.at(1)}),
+    });
+    const auto searchConstant =
+        BaseVector::wrapInConstant(data->size(), 0, searchBase);
+    const auto result =
+        evaluate("contains(c0, c1)", makeRowVector({data, searchConstant}));
+    return result->asFlatVector<bool>()->valueAt(0);
+  };
+
+  static const std::string kErrorMessage =
+      "contains does not support arrays with elements that contain null";
+  // No null equal.
+  ASSERT_FALSE(contains({7, std::nullopt}));
+  // Null equal, (3, null) vs (3, 3).
+  VELOX_ASSERT_THROW(contains({3, 3}), kErrorMessage);
+  // Null equal, (6, 6) vs (6, null).
+  VELOX_ASSERT_THROW(contains({6, std::nullopt}), kErrorMessage);
+}
 } // namespace

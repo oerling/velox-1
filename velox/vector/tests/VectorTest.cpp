@@ -16,16 +16,20 @@
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <cstdint>
 #include <functional>
 #include <optional>
+
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/DecodedVector.h"
+#include "velox/vector/DictionaryVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/LazyVector.h"
+#include "velox/vector/SelectivityVector.h"
 #include "velox/vector/SimpleVector.h"
 #include "velox/vector/TypeAliases.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -40,13 +44,18 @@ class TestingLoader : public VectorLoader {
  public:
   explicit TestingLoader(VectorPtr data) : data_(data), rowCounter_(0) {}
 
-  void loadInternal(RowSet rows, ValueHook* hook, VectorPtr* result) override {
+  void loadInternal(
+      RowSet rows,
+      ValueHook* hook,
+      vector_size_t resultSize,
+      VectorPtr* result) override {
     if (hook) {
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           applyHook, data_->typeKind(), rows, hook);
       return;
     }
     *result = data_;
+    VELOX_CHECK_GE(data_->size(), resultSize);
     rowCounter_ += rows.size();
   }
 
@@ -743,10 +752,10 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
   }
 
-  void prepareInput(ByteStream* input, std::string& string) {
+  ByteInputStream prepareInput(std::string& string) {
     // Put 'string' in 'input' in many pieces.
+    const int32_t size = string.size();
     std::vector<ByteRange> ranges;
-    int32_t size = string.size();
     for (int32_t i = 0; i < 10; ++i) {
       int32_t start = i * (size / 10);
       int32_t end = (i == 9) ? size : (i + 1) * (size / 10);
@@ -755,7 +764,8 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
       ranges.back().size = end - start;
       ranges.back().position = 0;
     }
-    input->resetInput(std::move(ranges));
+
+    return ByteInputStream(std::move(ranges));
   }
 
   void checkSizes(
@@ -859,11 +869,10 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     auto evenString = evenStream.str();
     checkSizes(source.get(), evenSizes, evenString);
 
-    ByteStream input;
-    prepareInput(&input, evenString);
+    auto evenInput = prepareInput(evenString);
 
     RowVectorPtr resultRow;
-    VectorStreamGroup::read(&input, pool_.get(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(&evenInput, pool_.get(), sourceRowType, &resultRow);
     VectorPtr result = resultRow->childAt(0);
     switch (source->encoding()) {
       case VectorEncoding::Simple::FLAT:
@@ -890,9 +899,9 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
 
     auto oddString = oddStream.str();
-    prepareInput(&input, oddString);
+    auto oddInput = prepareInput(oddString);
 
-    VectorStreamGroup::read(&input, pool_.get(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(&oddInput, pool_.get(), sourceRowType, &resultRow);
     result = resultRow->childAt(0);
     for (int32_t i = 0; i < oddIndices.size(); ++i) {
       EXPECT_TRUE(result->equalValueAt(source.get(), i, oddIndices[i].begin))
@@ -1049,6 +1058,25 @@ TEST_F(VectorTest, row) {
       BaseVector::createNullConstant(baseRow->type(), 50, pool_.get());
   testCopy(allNull, numIterations_);
   testSlices(allNull);
+  // created from BaseVector::Create()
+  baseRow = BaseVector::create(baseRow->type(), vectorSize_, pool());
+  testCopy(baseRow, numIterations_);
+  testSlices(baseRow);
+
+  // Check child accessors throws.
+  auto rowVector = baseRow->as<RowVector>();
+  EXPECT_NO_THROW(rowVector->childAt(1)->size());
+  EXPECT_NO_THROW(rowVector->childAt(1)->resize(vectorSize_));
+
+  EXPECT_THROW(rowVector->childAt(3)->size(), VeloxRuntimeError);
+  VELOX_ASSERT_THROW(
+      rowVector->childAt(3)->size(),
+      "Trying to access non-existing child in RowVector:");
+
+  EXPECT_THROW(rowVector->childAt(3)->resize(vectorSize_), VeloxRuntimeError);
+  VELOX_ASSERT_THROW(
+      rowVector->childAt(3)->resize(vectorSize_),
+      "Trying to access non-existing child in RowVector:");
 }
 
 TEST_F(VectorTest, array) {
@@ -1514,6 +1542,91 @@ TEST_F(VectorTest, wrapInConstantWithCopy) {
   }
 }
 
+TEST_F(VectorTest, rowResize) {
+  auto testRowResize = [&](const VectorPtr& vector, bool setNotNull) {
+    auto rowVector = vector->as<RowVector>();
+    for (auto& child : rowVector->children()) {
+      VELOX_CHECK(child.unique());
+    }
+    auto oldSize = rowVector->size();
+    auto newSize = oldSize * 2;
+
+    rowVector->resize(newSize, setNotNull);
+
+    EXPECT_EQ(rowVector->size(), newSize);
+
+    for (auto& child : rowVector->children()) {
+      EXPECT_EQ(child->size(), newSize);
+    }
+
+    if (setNotNull) {
+      for (int i = oldSize; i < newSize; i++) {
+        EXPECT_EQ(rowVector->isNullAt(i), !setNotNull);
+        for (auto& child : rowVector->children()) {
+          EXPECT_EQ(child->isNullAt(i), !setNotNull);
+        }
+      }
+    }
+  };
+
+  // FlatVectors.
+  auto rowVector =
+      makeRowVector({makeFlatVector<int32_t>(10), makeFlatVector<int64_t>(10)});
+  testRowResize(rowVector, bits::kNull);
+
+  rowVector =
+      makeRowVector({makeFlatVector<int32_t>(10), makeFlatVector<double>(10)});
+  testRowResize(rowVector, bits::kNotNull);
+
+  rowVector = makeRowVector({makeFlatVector<StringView>(10)});
+  testRowResize(rowVector, bits::kNotNull);
+  rowVector = makeRowVector({makeFlatVector<StringView>(10)});
+  testRowResize(rowVector, bits::kNull);
+
+  // Dictionaries.
+  rowVector = makeRowVector({BaseVector::wrapInDictionary(
+      nullptr,
+      makeIndices(10, [](auto row) { return row; }),
+      10,
+      BaseVector::wrapInDictionary(
+          nullptr,
+          makeIndices(10, [](auto row) { return row; }),
+          10,
+          makeFlatVector<int32_t>(10)))});
+  testRowResize(rowVector, bits::kNotNull);
+
+  // Constants.
+  rowVector = makeRowVector({BaseVector::wrapInConstant(
+      10,
+      5,
+      makeArrayVector<int32_t>(
+          10,
+          [](auto row) { return row % 5 + 1; },
+          [](auto row, auto index) { return row * 2 + index; }))});
+  testRowResize(rowVector, bits::kNotNull);
+
+  // Complex Types.
+  rowVector = makeRowVector(
+      {makeArrayVector<int32_t>(
+           10,
+           [](auto row) { return row % 5 + 1; },
+           [](auto row, auto index) { return row * 2 + index; }),
+       makeMapVector<int32_t, int64_t>(
+           10,
+           [](auto row) { return row % 5; },
+           [](auto row) { return row % 7; },
+           [](auto row) { return row % 5; },
+           nullEvery(9))});
+  testRowResize(rowVector, bits::kNotNull);
+
+  // Resize on lazy children will result in an exception.
+  auto rowWithLazyChild = makeRowVector({makeLazyFlatVector<int32_t>(
+      10,
+      [&](vector_size_t i) { return i % 5; },
+      [](vector_size_t i) { return i % 7 == 0; })});
+  EXPECT_THROW(rowWithLazyChild->resize(20), VeloxException);
+}
+
 TEST_F(VectorTest, wrapConstantInDictionary) {
   // Wrap Constant in Dictionary with no extra nulls. Expect Constant.
   auto indices = makeIndices(10, [](auto row) { return row % 2; });
@@ -1619,6 +1732,23 @@ TEST_F(VectorTest, resizeStringAsciiness) {
   ASSERT_TRUE(stringVector->isAscii(rows).value());
   stringVector->resize(2);
   ASSERT_FALSE(stringVector->isAscii(rows));
+}
+
+TEST_F(VectorTest, resizeZeroString) {
+  auto vector = makeFlatVector<std::string>(
+      {"This is a string",
+       "This is another string",
+       "This is the third string"});
+  ASSERT_EQ(1, vector->stringBuffers().size());
+  ASSERT_LT(0, vector->stringBuffers()[0]->size());
+
+  const auto capacity = vector->stringBuffers()[0]->capacity();
+  ASSERT_GT(capacity, 0);
+
+  vector->resize(0);
+  ASSERT_EQ(1, vector->stringBuffers().size());
+  ASSERT_EQ(0, vector->stringBuffers()[0]->size());
+  ASSERT_EQ(capacity, vector->stringBuffers()[0]->capacity());
 }
 
 TEST_F(VectorTest, copyNoRows) {
@@ -2038,6 +2168,7 @@ TEST_F(VectorTest, multipleDictionariesOverLazy) {
       indices,
       size,
       BaseVector::wrapInDictionary(nullptr, indices, size, lazy));
+
   dict->loadedVector();
   for (auto i = 0; i < size; i++) {
     ASSERT_EQ(i, dict->as<SimpleVector<int32_t>>()->valueAt(i));
@@ -2163,17 +2294,22 @@ TEST_F(VectorTest, dictionaryResize) {
   // Check that resize clear indices even if no new allocation happens.
   {
     auto indicesLarge = makeIndices(20, [&](auto row) { return 3; });
+    auto* rawIndices = indicesLarge->as<vector_size_t>();
     auto dictVector = wrapInDictionary(indicesLarge, 10, flatVector);
+
+    // Release reference to 'indicesLarge' to make it single-referenced and
+    // allow reuse in dictVector->resize().
+    indicesLarge.reset();
     dictVector->resize(15);
-    auto* indicesData = indicesLarge->asMutable<vector_size_t>();
+
     for (int i = 0; i < 10; i++) {
-      EXPECT_EQ(indicesData[i], 3);
+      EXPECT_EQ(rawIndices[i], 3);
     }
     for (int i = 10; i < 15; i++) {
-      EXPECT_EQ(indicesData[i], 0);
+      EXPECT_EQ(rawIndices[i], 0);
     }
     for (int i = 15; i < 20; i++) {
-      EXPECT_EQ(indicesData[i], 3);
+      EXPECT_EQ(rawIndices[i], 3);
     }
   }
 }
@@ -2688,17 +2824,19 @@ TEST_F(VectorTest, findDuplicateValue) {
 }
 
 TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
-  auto checkIndices = [&](const auto& indices) {
-    auto* data = indices->template asMutable<vector_size_t>();
-    ASSERT_EQ(data[0], 1);
-    ASSERT_EQ(data[1], 1);
-    ASSERT_EQ(data[2], 0);
-    ASSERT_EQ(data[3], 0);
+  auto checkIndices = [&](const vector_size_t* indices) {
+    ASSERT_EQ(indices[0], 1);
+    ASSERT_EQ(indices[1], 1);
+    ASSERT_EQ(indices[2], 0);
+    ASSERT_EQ(indices[3], 0);
   };
-  // test array.
+
+  // Test array.
   {
     auto offsets = makeIndices({1, 1, 1, 1});
     auto sizes = makeIndices({1, 1, 1, 1});
+
+    auto* rawSizes = sizes->as<vector_size_t>();
 
     auto arrayVector = std::make_shared<ArrayVector>(
         pool(),
@@ -2709,14 +2847,21 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
         sizes,
         makeFlatVector<int64_t>({1, 2, 3, 4}));
 
+    // Release references to 'offsets' and 'sizes' to make them
+    // single-referenced and allow reuse in arrayVector->resize().
+    offsets.reset();
+    sizes.reset();
+
     arrayVector->resize(4);
-    checkIndices(sizes);
+    checkIndices(rawSizes);
   }
 
-  // test map.
+  // Test map.
   {
     auto offsets = makeIndices({1, 1, 1, 1});
     auto sizes = makeIndices({1, 1, 1, 1});
+
+    auto* rawSizes = sizes->as<vector_size_t>();
 
     auto mapVector = std::make_shared<MapVector>(
         pool(),
@@ -2727,8 +2872,14 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
         sizes,
         makeFlatVector<int64_t>({1, 2, 3, 4}),
         makeFlatVector<int64_t>({1, 2, 3, 4}));
+
+    // Release references to 'offsets' and 'sizes' to make them
+    // single-referenced and allow reuse in mapVector->resize().
+    offsets.reset();
+    sizes.reset();
+
     mapVector->resize(4);
-    checkIndices(sizes);
+    checkIndices(rawSizes);
   }
 }
 
@@ -2748,6 +2899,26 @@ TEST_F(VectorTest, getRawStringBufferWithSpace) {
   auto expected = makeFlatVector<StringView>(
       {"ee", "I'm replace 123456789", "rryy", "12345678901234"});
   test::assertEqualVectors(expected, vector);
+
+  // Use up all but 5 bytes in the 'lastBuffer', then ask for buffer with at
+  // least 6 bytes of space. Expect a fairly large new buffer.
+  lastBuffer->setSize(lastBuffer->capacity() - 5);
+  rawBuffer = vector->getRawStringBufferWithSpace(6);
+  ASSERT_EQ(vector->stringBuffers().size(), 2);
+
+  lastBuffer = vector->stringBuffers().back();
+  ASSERT_EQ(6, lastBuffer->size());
+  ASSERT_EQ(49056, lastBuffer->capacity());
+
+  // Use up all bytes in 'lastBuffer, then ask for buffer with exactly one byte
+  // of space. Expect a small new buffer.
+  lastBuffer->setSize(lastBuffer->capacity());
+
+  rawBuffer = vector->getRawStringBufferWithSpace(1, true /*exactSize*/);
+  ASSERT_EQ(vector->stringBuffers().size(), 3);
+  lastBuffer = vector->stringBuffers().back();
+  ASSERT_EQ(1, lastBuffer->size());
+  ASSERT_EQ(32, lastBuffer->capacity());
 }
 
 TEST_F(VectorTest, getRawStringBufferWithSpaceNoExistingBuffer) {
@@ -2786,8 +2957,29 @@ SelectivityVector toSelectivityVector(
   rows.updateBounds();
   return rows;
 }
-
 } // namespace
+
+TEST_F(VectorTest, mutableIndices) {
+  // Ensure that DictionaryVector::mutableIndices always returns a new indices
+  // buffer if its not unique.
+  auto flatVector = makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8});
+  auto indices = makeIndices(8, [](auto row) { return row % 2; });
+  auto vector = BaseVector::wrapInDictionary(nullptr, indices, 8, flatVector);
+  ASSERT_EQ(vector->encoding(), VectorEncoding::Simple::DICTIONARY);
+  auto dictionary = vector->as<DictionaryVector<int64_t>>();
+
+  auto mutableIndices = dictionary->mutableIndices(1);
+  ASSERT_NE(indices.get(), mutableIndices.get());
+  auto mutableIndicesPtr = mutableIndices.get();
+  // Reset the ptr so we can get the same indices when calling mutableIndices.
+  mutableIndices.reset();
+  auto mutableIndicesAgain = dictionary->mutableIndices(1);
+  ASSERT_EQ(mutableIndicesPtr, mutableIndicesAgain.get());
+
+  // Ensure that mutable indices are different.
+  mutableIndices = dictionary->mutableIndices(1);
+  ASSERT_NE(mutableIndices.get(), mutableIndicesAgain.get());
+}
 
 TEST_F(VectorTest, toCopyRanges) {
   SelectivityVector rows(10);
@@ -2982,6 +3174,240 @@ TEST_F(VectorTest, containsNullAtStructs) {
   EXPECT_TRUE(data->containsNullAt(3));
   EXPECT_TRUE(data->containsNullAt(4));
   EXPECT_FALSE(data->containsNullAt(5));
+}
+
+TEST_F(VectorTest, mutableValues) {
+  auto vector = makeFlatVector<int64_t>(1'000, [](auto row) { return row; });
+
+  auto* rawValues = vector->rawValues();
+  vector->mutableValues(1'001);
+  ASSERT_EQ(rawValues, vector->rawValues());
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  vector->mutableValues(10'000);
+  ASSERT_NE(rawValues, vector->rawValues());
+  rawValues = vector->rawValues();
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  auto values = vector->mutableValues(2'000);
+  ASSERT_EQ(rawValues, vector->rawValues());
+  for (auto i = 0; i < 1'000; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+
+  vector->mutableValues(500);
+  ASSERT_NE(rawValues, vector->rawValues());
+  rawValues = vector->rawValues();
+  for (auto i = 0; i < 500; ++i) {
+    EXPECT_EQ(rawValues[i], i);
+  }
+}
+
+TEST_F(VectorTest, appendNulls) {
+  auto rowVector = makeRowVector({makeFlatVector<int32_t>({0, 1, 2})});
+  ASSERT_EQ(rowVector->size(), 3);
+
+  // Append 0 rows.
+  rowVector->appendNulls(0);
+  ASSERT_EQ(rowVector->size(), 3);
+  test::assertEqualVectors(
+      rowVector, makeRowVector({makeFlatVector<int32_t>({0, 1, 2})}));
+
+  // Append 2 nulls
+  rowVector->appendNulls(2);
+  ASSERT_EQ(rowVector->size(), 5);
+  ASSERT_TRUE(rowVector->isNullAt(3));
+  ASSERT_TRUE(rowVector->isNullAt(4));
+  test::assertEqualVectors(
+      rowVector->childAt(0), makeFlatVector<int32_t>({0, 1, 2}));
+
+  // Append negative.
+  EXPECT_ANY_THROW(rowVector->appendNulls(-1));
+}
+
+TEST_F(VectorTest, primitiveTypeNullEqual) {
+  auto base = makeNullableFlatVector<int32_t>({1, 2, std::nullopt});
+  auto other = makeNullableFlatVector<int32_t>({1, std::nullopt, 1});
+
+  auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
+    return base
+        ->equalValueAt(
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
+        .value();
+  };
+
+  auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
+    return base->equalValueAt(
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+  };
+
+  // No null compare.
+  ASSERT_TRUE(equalNoStop(0, 0));
+  ASSERT_TRUE(equalStopAtNull(0, 0).value());
+
+  // Null compare in NullAsValue mode.
+  ASSERT_FALSE(equalNoStop(1, 1));
+  ASSERT_FALSE(equalNoStop(2, 2));
+
+  // Null compare in StopAtNull mode.
+  ASSERT_FALSE(equalStopAtNull(1, 1).has_value());
+  ASSERT_FALSE(equalStopAtNull(2, 2).has_value());
+}
+
+TEST_F(VectorTest, complexTypeNullEqual) {
+  auto base =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, 2]", "[2, null]"});
+  auto other =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, null]", "[1, 2]"});
+  auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
+    return base
+        ->equalValueAt(
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
+        .value();
+  };
+
+  auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
+    return base->equalValueAt(
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+  };
+
+  // No null compare, [0, 1] vs [0, 1].
+  ASSERT_TRUE(equalNoStop(0, 0));
+  ASSERT_TRUE(equalStopAtNull(0, 0).value());
+
+  // No null compare, [2, null] vs [1, 2].
+  ASSERT_FALSE(equalNoStop(2, 2));
+  ASSERT_FALSE(equalStopAtNull(2, 2).value());
+
+  // Null compare in NullAsValue mode, [2, 2] vs [2, null].
+  ASSERT_FALSE(equalNoStop(1, 1));
+
+  // Null compare in StopAtNull mode, [2, 2] vs [2, null].
+  ASSERT_FALSE(equalStopAtNull(1, 1).has_value());
+}
+
+TEST_F(VectorTest, dictionaryNullEqual) {
+  auto base =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, 2]", "[2, null]"});
+  auto other =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, null]", "[1, 2]"});
+  auto baseVectorSize = base->size();
+  auto kTopLevelVectorSize = baseVectorSize * 2;
+  BufferPtr indices = test::makeIndices(
+      kTopLevelVectorSize,
+      [&](vector_size_t i) { return i % baseVectorSize; },
+      pool_.get());
+  auto dictVector =
+      BaseVector::wrapInDictionary(nullptr, indices, kTopLevelVectorSize, base);
+
+  auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
+    return dictVector
+        ->equalValueAt(
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
+        .value();
+  };
+
+  auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
+    return dictVector->equalValueAt(
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+  };
+
+  for (vector_size_t i = 0; i < 2; ++i) {
+    // No null compare, [0, 1] vs [0, 1].
+    ASSERT_TRUE(equalNoStop(i * baseVectorSize, 0));
+    ASSERT_TRUE(equalStopAtNull(i * baseVectorSize, 0).value());
+
+    // No null compare, [2, null] vs [1. 2].
+    ASSERT_FALSE(equalNoStop(2 + i * baseVectorSize, 2));
+    ASSERT_FALSE(equalStopAtNull(2 + i * baseVectorSize, 2).value());
+
+    // Null compare in NullAsValue mode, [2, 2] vs [2, null].
+    ASSERT_FALSE(equalNoStop(1 + i * baseVectorSize, 1));
+
+    // Null compare in StopAtNull mode, [2, 2] vs [2, null].
+    ASSERT_FALSE(equalStopAtNull(1 + i * baseVectorSize, 1).has_value());
+  }
+}
+
+TEST_F(VectorTest, constantNullEqual) {
+  auto base =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, 2]", "[2, null]"});
+  auto other =
+      makeArrayVectorFromJson<int32_t>({"[0, 1]", "[2, null]", "[1, 2]"});
+  auto baseVectorSize = base->size();
+  auto kTopLevelVectorSize = baseVectorSize * 2;
+  // [2, null]
+  auto constantVector =
+      BaseVector::wrapInConstant(kTopLevelVectorSize, 2, base);
+
+  auto equalNoStop = [&](vector_size_t i, vector_size_t j) {
+    return constantVector
+        ->equalValueAt(
+            other.get(), i, j, CompareFlags::NullHandlingMode::kNullAsValue)
+        .value();
+  };
+
+  auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
+    return constantVector->equalValueAt(
+        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+  };
+
+  // No null compare, [2, null] vs [0, 1], [2, null] vs [1, 2].
+  ASSERT_FALSE(equalNoStop(0, 0));
+  ASSERT_FALSE(equalStopAtNull(0, 2).value());
+
+  // Null compare in NullAsValue mode, [2, null] vs [2, null].
+  ASSERT_TRUE(equalNoStop(0, 1));
+
+  // Null compare in StopAtNull mode, [2, null] vs [2, null].
+  ASSERT_FALSE(equalStopAtNull(0, 1).has_value());
+}
+
+TEST_F(VectorTest, dictionaryLoadedVectorRemoveLazy) {
+  auto makeTestVector = [&]() {
+    auto lazy = makeLazyFlatVector<int64_t>(3, [&](auto row) { return row; });
+    auto dictVector =
+        BaseVector::wrapInDictionary(nullptr, makeIndices({0, 1, 2}), 3, lazy);
+    return dictVector;
+  };
+
+  {
+    auto vector = makeTestVector();
+    vector->loadedVector();
+    EXPECT_FALSE(
+        vector->as<DictionaryVector<int64_t>>()->valueVector()->isLazy());
+  }
+
+  {
+    auto vector = makeTestVector();
+    LazyVector::ensureLoadedRows(vector, SelectivityVector(3));
+    EXPECT_FALSE(
+        vector->as<DictionaryVector<int64_t>>()->valueVector()->isLazy());
+  }
+
+  {
+    auto vector = makeRowVector({makeTestVector()});
+    vector->loadedVector();
+    EXPECT_FALSE(vector->as<RowVector>()
+                     ->childAt(0)
+                     ->as<DictionaryVector<int64_t>>()
+                     ->valueVector()
+                     ->isLazy());
+  }
+
+  {
+    auto vector = makeRowVector({makeTestVector()});
+    LazyVector::ensureLoadedRows(vector, SelectivityVector(3));
+    EXPECT_FALSE(vector->as<RowVector>()
+                     ->childAt(0)
+                     ->as<DictionaryVector<int64_t>>()
+                     ->valueVector()
+                     ->isLazy());
+  }
 }
 
 } // namespace

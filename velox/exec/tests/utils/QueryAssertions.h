@@ -17,17 +17,23 @@
 #include "velox/core/PlanNode.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/utils/Cursor.h"
-#include "velox/external/duckdb/duckdb.hpp"
-#include "velox/external/duckdb/tpch/include/tpch-extension.hpp"
 #include "velox/vector/ComplexVector.h"
+
+#include <duckdb.hpp> // @manual
 
 namespace facebook::velox::exec::test {
 
 using MaterializedRow = std::vector<velox::variant>;
 using DuckDBQueryResult = std::unique_ptr<::duckdb::MaterializedQueryResult>;
 
-// Multiset that compares floating-point values directly.
+/// Multiset that compares floating-point values directly.
 using MaterializedRowMultiset = std::multiset<MaterializedRow>;
+
+/// Converts input 'RowVector' into a list of 'MaterializedRow's.
+std::vector<MaterializedRow> materialize(const RowVectorPtr& vector);
+
+/// Converts a list of 'RowVector's into 'MaterializedRowMultiset'.
+MaterializedRowMultiset materialize(const std::vector<RowVectorPtr>& vectors);
 
 class DuckDbQueryRunner {
  public:
@@ -41,7 +47,7 @@ class DuckDbQueryRunner {
 
   MaterializedRowMultiset execute(
       const std::string& sql,
-      const std::shared_ptr<const RowType>& resultRowType) {
+      const RowTypePtr& resultRowType) {
     MaterializedRowMultiset allRows;
     execute(
         sql,
@@ -55,7 +61,7 @@ class DuckDbQueryRunner {
 
   std::vector<MaterializedRow> executeOrdered(
       const std::string& sql,
-      const std::shared_ptr<const RowType>& resultRowType) {
+      const RowTypePtr& resultRowType) {
     std::vector<MaterializedRow> allRows;
     execute(
         sql,
@@ -66,25 +72,12 @@ class DuckDbQueryRunner {
     return allRows;
   }
 
-  // Returns the DuckDB TPC-H Extension Query as string for a given 'queryNo'
-  // Example: queryNo = 1 returns the TPC-H Query1 in the TPC-H Extension
-  std::string getTpchQuery(int queryNo) {
-    auto queryString = ::duckdb::TPCHExtension::GetQuery(queryNo);
-    // Output of GetQuery() has a new line and a semi-colon. These need to be
-    // removed in order to use the query string in a subquery
-    queryString.pop_back(); // remove new line
-    queryString.pop_back(); // remove semi-colon
-    return queryString;
-  }
-
-  void initializeTpch(double scaleFactor);
-
  private:
   ::duckdb::DuckDB db_;
 
   void execute(
       const std::string& sql,
-      const std::shared_ptr<const RowType>& resultRowType,
+      const RowTypePtr& resultRowType,
       std::function<void(std::vector<MaterializedRow>&)> resultCallback);
 };
 
@@ -121,14 +114,6 @@ bool waitForTaskCancelled(exec::Task* task, uint64_t maxWaitMicros = 1'000'000);
 bool waitForTaskStateChange(
     exec::Task* task,
     TaskState state,
-    uint64_t maxWaitMicros = 1'000'000);
-
-/// Wait up to maxWaitMicros for all the task drivers to finish. The function
-/// returns true if all the drivers have finished, otherwise false.
-///
-/// NOTE: user must call this on a finished or failed task.
-bool waitForTaskDriversToFinish(
-    exec::Task* task,
     uint64_t maxWaitMicros = 1'000'000);
 
 /// Invoked to wait for all the tasks created by the test to be deleted.
@@ -170,13 +155,13 @@ void assertEmptyResults(const std::vector<RowVectorPtr>& results);
 
 void assertResults(
     const std::vector<RowVectorPtr>& results,
-    const std::shared_ptr<const RowType>& resultType,
+    const RowTypePtr& resultType,
     const std::string& duckDbSql,
     DuckDbQueryRunner& duckDbQueryRunner);
 
 void assertResultsOrdered(
     const std::vector<RowVectorPtr>& results,
-    const std::shared_ptr<const RowType>& resultType,
+    const RowTypePtr& resultType,
     const std::string& duckDbSql,
     DuckDbQueryRunner& duckDbQueryRunner,
     const std::vector<uint32_t>& sortingKeys);
@@ -217,7 +202,8 @@ bool assertEqualResults(
     const std::vector<RowVectorPtr>& actual);
 
 bool assertEqualResults(
-    const MaterializedRowMultiset& expected,
+    const MaterializedRowMultiset& expectedRows,
+    const TypePtr& expectedRowType,
     const std::vector<RowVectorPtr>& actual);
 
 /// Ensure both datasets have the same type and number of rows.

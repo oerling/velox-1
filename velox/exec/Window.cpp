@@ -16,6 +16,7 @@
 #include "velox/exec/Window.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/SortWindowBuild.h"
+#include "velox/exec/StreamingWindowBuild.h"
 #include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
@@ -29,12 +30,24 @@ Window::Window(
           windowNode->outputType(),
           operatorId,
           windowNode->id(),
-          "Window"),
-      numInputColumns_(windowNode->sources()[0]->outputType()->size()),
-      windowBuild_(std::make_unique<SortWindowBuild>(windowNode, pool())),
+          "Window",
+          windowNode->canSpill(driverCtx->queryConfig())
+              ? driverCtx->makeSpillConfig(operatorId)
+              : std::nullopt),
+      numInputColumns_(windowNode->inputType()->size()),
       windowNode_(windowNode),
       currentPartition_(nullptr),
-      stringAllocator_(pool()) {}
+      stringAllocator_(pool()) {
+  auto* spillConfig =
+      spillConfig_.has_value() ? &spillConfig_.value() : nullptr;
+  if (windowNode->inputsSorted()) {
+    windowBuild_ = std::make_unique<StreamingWindowBuild>(
+        windowNode, pool(), spillConfig, &nonReclaimableSection_);
+  } else {
+    windowBuild_ = std::make_unique<SortWindowBuild>(
+        windowNode, pool(), spillConfig, &nonReclaimableSection_);
+  }
+}
 
 void Window::initialize() {
   Operator::initialize();
@@ -135,6 +148,26 @@ void Window::addInput(RowVectorPtr input) {
   numRows_ += input->size();
 }
 
+void Window::reclaim(
+    uint64_t targetBytes,
+    memory::MemoryReclaimer::Stats& stats) {
+  VELOX_CHECK(canReclaim());
+  VELOX_CHECK(!nonReclaimableSection_);
+
+  if (noMoreInput_) {
+    ++stats.numNonReclaimableAttempts;
+    // TODO Add support for spilling after noMoreInput().
+    LOG(WARNING)
+        << "Can't reclaim from window operator which has started producing output: "
+        << pool()->name()
+        << ", usage: " << succinctBytes(pool()->currentBytes())
+        << ", reservation: " << succinctBytes(pool()->reservedBytes());
+    return;
+  }
+
+  windowBuild_->spill();
+}
+
 void Window::createPeerAndFrameBuffers() {
   // TODO: This computation needs to be revised. It only takes into account
   // the input columns size. We need to also account for the output columns.
@@ -163,11 +196,11 @@ void Window::createPeerAndFrameBuffers() {
 
 void Window::noMoreInput() {
   Operator::noMoreInput();
-  // No data.
-  if (numRows_ == 0) {
-    return;
-  }
   windowBuild_->noMoreInput();
+
+  if (auto spillStats = windowBuild_->spilledStats()) {
+    recordSpillStats(spillStats.value());
+  }
 }
 
 void Window::callResetPartition() {
@@ -499,14 +532,8 @@ RowVectorPtr Window::getOutput() {
   }
 
   auto numOutputRows = std::min(numRowsPerOutput_, numRowsLeft);
-  auto result = std::dynamic_pointer_cast<RowVector>(
-      BaseVector::create(outputType_, numOutputRows, operatorCtx_->pool()));
-
-  for (int i = numInputColumns_; i < outputType_->size(); i++) {
-    auto output = BaseVector::create(
-        outputType_->childAt(i), numOutputRows, operatorCtx_->pool());
-    result->childAt(i) = output;
-  }
+  auto result = BaseVector::create<RowVector>(
+      outputType_, numOutputRows, operatorCtx_->pool());
 
   // Compute the output values of window functions.
   auto numResultRows = callApplyLoop(numOutputRows, result);

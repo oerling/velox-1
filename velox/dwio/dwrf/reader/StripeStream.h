@@ -164,6 +164,8 @@ class StripeStreams {
    */
   virtual const StrideIndexProvider& getStrideIndexProvider() const = 0;
 
+  virtual int64_t stripeRows() const = 0;
+
   // Number of rows per row group. Last row group may have fewer rows.
   virtual uint32_t rowsPerRowGroup() const = 0;
 };
@@ -203,17 +205,17 @@ class StripeStreamsBase : public StripeStreams {
 struct StripeReadState {
   std::shared_ptr<ReaderBase> readerBase;
   dwio::common::BufferedInput* stripeInput;
-  const proto::StripeFooter* footer;
+  const proto::StripeFooter* stripeFooter;
   const encryption::DecryptionHandler& handler;
 
   StripeReadState(
       std::shared_ptr<ReaderBase> readerBase,
       dwio::common::BufferedInput* stripeInput,
-      const proto::StripeFooter* footer,
+      const proto::StripeFooter* stripeFooter,
       const encryption::DecryptionHandler& handler)
       : readerBase{std::move(readerBase)},
         stripeInput{stripeInput},
-        footer{footer},
+        stripeFooter{stripeFooter},
         handler{handler} {}
 };
 
@@ -226,6 +228,7 @@ class StripeStreamsImpl : public StripeStreamsBase {
   const dwio::common::ColumnSelector& selector_;
   const dwio::common::RowReaderOptions& opts_;
   const uint64_t stripeStart_;
+  const int64_t stripeNumberOfRows_;
   const StrideIndexProvider& provider_;
   const uint32_t stripeIndex_;
   bool readPlanLoaded_;
@@ -243,11 +246,14 @@ class StripeStreamsImpl : public StripeStreamsBase {
       decryptedEncodings_;
 
  public:
+  static constexpr int64_t kUnknownStripeRows = -1;
+
   StripeStreamsImpl(
       std::shared_ptr<StripeReadState> readState,
       const dwio::common::ColumnSelector& selector,
       const dwio::common::RowReaderOptions& opts,
       uint64_t stripeStart,
+      int64_t stripeNumberOfRows,
       const StrideIndexProvider& provider,
       uint32_t stripeIndex)
       : StripeStreamsBase{&readState->readerBase->getMemoryPool()},
@@ -255,6 +261,7 @@ class StripeStreamsImpl : public StripeStreamsBase {
         selector_{selector},
         opts_{opts},
         stripeStart_{stripeStart},
+        stripeNumberOfRows_{stripeNumberOfRows},
         provider_(provider),
         stripeIndex_{stripeIndex},
         readPlanLoaded_{false} {
@@ -266,12 +273,14 @@ class StripeStreamsImpl : public StripeStreamsBase {
       const dwio::common::ColumnSelector& selector,
       const dwio::common::RowReaderOptions& opts,
       uint64_t stripeStart,
+      int64_t stripeNumberOfRows,
       const StrideIndexProvider& provider,
       uint32_t stripeIndex)
       : StripeStreamsBase{&reader.getReader().getMemoryPool()},
         selector_{selector},
         opts_{opts},
         stripeStart_{stripeStart},
+        stripeNumberOfRows_{stripeNumberOfRows},
         provider_(provider),
         stripeIndex_{stripeIndex},
         readPlanLoaded_{false} {
@@ -302,7 +311,7 @@ class StripeStreamsImpl : public StripeStreamsBase {
       const EncodingKey& ek) const override {
     auto index = encodings_.find(ek);
     if (index != encodings_.end()) {
-      return readState_->footer->encoding(index->second);
+      return readState_->stripeFooter->encoding(index->second);
     }
     auto enc = decryptedEncodings_.find(ek);
     DWIO_ENSURE(
@@ -341,6 +350,11 @@ class StripeStreamsImpl : public StripeStreamsBase {
 
   const StrideIndexProvider& getStrideIndexProvider() const override {
     return provider_;
+  }
+
+  int64_t stripeRows() const override {
+    VELOX_CHECK_NE(stripeNumberOfRows_, kUnknownStripeRows);
+    return stripeNumberOfRows_;
   }
 
   uint32_t rowsPerRowGroup() const override {

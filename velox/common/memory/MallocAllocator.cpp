@@ -50,10 +50,11 @@ bool MallocAllocator::allocateNonContiguousWithoutRetry(
     try {
       reservationCB(bytesToAllocate, true);
     } catch (std::exception& e) {
-      VELOX_MEM_LOG(WARNING) << "Failed to reserve " << bytesToAllocate
-                             << " bytes for non-contiguous allocation of "
-                             << numPages << " pages, then release "
-                             << freedBytes << " bytes from the old allocation";
+      VELOX_MEM_LOG(WARNING)
+          << "Failed to reserve " << succinctBytes(bytesToAllocate)
+          << " for non-contiguous allocation of " << numPages
+          << " pages, then release " << succinctBytes(freedBytes)
+          << " from the old allocation";
       // If the new memory reservation fails, we need to release the memory
       // reservation of the freed memory of previously allocation.
       reservationCB(freedBytes, false);
@@ -65,22 +66,28 @@ bool MallocAllocator::allocateNonContiguousWithoutRetry(
   std::vector<void*> pages;
   pages.reserve(mix.numSizes);
   for (int32_t i = 0; i < mix.numSizes; ++i) {
-    // Trigger allocation failure by breaking out the loop.
-    if (testingHasInjectedFailure(InjectedFailure::kAllocate)) {
-      break;
-    }
     MachinePageCount numSizeClassPages =
         mix.sizeCounts[i] * sizeClassSizes_[mix.sizeIndices[i]];
-    void* ptr;
-    stats_.recordAllocate(
-        AllocationTraits::pageBytes(sizeClassSizes_[mix.sizeIndices[i]]),
-        mix.sizeCounts[i],
-        [&]() {
-          ptr = ::malloc(
-              AllocationTraits::pageBytes(numSizeClassPages)); // NOLINT
-        });
+    void* ptr = nullptr;
+    // Trigger allocation failure by skipping malloc
+    if (!testingHasInjectedFailure(InjectedFailure::kAllocate)) {
+      stats_.recordAllocate(
+          AllocationTraits::pageBytes(sizeClassSizes_[mix.sizeIndices[i]]),
+          mix.sizeCounts[i],
+          [&]() {
+            ptr = ::malloc(
+                AllocationTraits::pageBytes(numSizeClassPages)); // NOLINT
+          });
+    }
     if (ptr == nullptr) {
       // Failed to allocate memory from memory.
+      const auto errorMsg = fmt::format(
+          "Malloc failed to allocate {} of memory while allocating for "
+          "non-contiguous allocation of {} pages",
+          succinctBytes(AllocationTraits::pageBytes(numSizeClassPages)),
+          numPages);
+      VELOX_MEM_LOG(WARNING) << errorMsg;
+      setAllocatorFailureMessage(errorMsg);
       break;
     }
     pages.emplace_back(ptr);
@@ -97,8 +104,9 @@ bool MallocAllocator::allocateNonContiguousWithoutRetry(
     if (reservationCB != nullptr) {
       VELOX_MEM_LOG(WARNING)
           << "Failed to allocate memory for non-contiguous allocation of "
-          << numPages << " pages, then release " << bytesToAllocate + freedBytes
-          << " bytes of memory reservation including the old gallocation";
+          << numPages << " pages, then release "
+          << succinctBytes(bytesToAllocate + freedBytes)
+          << " of memory reservation including the old allocation";
       reservationCB(bytesToAllocate + freedBytes, false);
     }
     decrementUsage(totalBytes);
@@ -185,8 +193,8 @@ bool MallocAllocator::allocateContiguousImpl(
       VELOX_MEM_LOG(WARNING)
           << "Failed to reserve " << AllocationTraits::pageBytes(numNeededPages)
           << " bytes for contiguous allocation of " << numPages
-          << " pages, then release " << totalCollateralBytes
-          << " bytes from the old allocations";
+          << " pages, then release " << succinctBytes(totalCollateralBytes)
+          << " from the old allocations";
       reservationCB(totalCollateralBytes, false);
       decrementUsage(totalBytes);
       std::rethrow_exception(std::current_exception());
@@ -219,6 +227,19 @@ int64_t MallocAllocator::freeNonContiguous(Allocation& allocation) {
     Allocation::PageRun run = allocation.runAt(i);
     numFreed += run.numPages();
     void* ptr = run.data();
+    // Check if ptr was split into multiple PageRuns.
+    while (i + 1 < allocation.numRuns()) {
+      Allocation::PageRun nextRun = allocation.runAt(i + 1);
+      void* nextPtr = nextRun.data();
+      // NOTE: std::malloc will not return two allocated buffers which are
+      // contiguous in memory space.
+      if (static_cast<char*>(nextPtr) - static_cast<char*>(ptr) !=
+          AllocationTraits::pageBytes(numFreed)) {
+        break;
+      }
+      numFreed += nextRun.numPages();
+      ++i;
+    }
     {
       std::lock_guard<std::mutex> l(mallocsMutex_);
       const auto ret = mallocs_.erase(ptr);
@@ -254,7 +275,8 @@ void MallocAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
   const auto numPages = allocation.numPages();
   if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
     VELOX_MEM_LOG(ERROR) << "Error for munmap(" << allocation.data() << ", "
-                         << bytes << "): '" << folly::errnoStr(errno) << "'";
+                         << succinctBytes(bytes) << "): '"
+                         << folly::errnoStr(errno) << "'";
   }
   numMapped_.fetch_sub(numPages);
   numAllocated_.fetch_sub(numPages);
@@ -274,6 +296,14 @@ bool MallocAllocator::growContiguousWithoutRetry(
     reservationCB(AllocationTraits::pageBytes(increment), true);
   }
   if (!incrementUsage(AllocationTraits::pageBytes(increment))) {
+    const auto errorMsg = fmt::format(
+        "Exceeded memory allocator limit when allocating {} new pages for "
+        "total allocation of {} pages, the memory allocator capacity is"
+        " {} pages",
+        increment,
+        allocation.numPages(),
+        capacity_);
+    setAllocatorFailureMessage(errorMsg);
     if (reservationCB != nullptr) {
       reservationCB(AllocationTraits::pageBytes(increment), false);
     }
@@ -304,8 +334,8 @@ void* MallocAllocator::allocateBytesWithoutRetry(
   void* result = (alignment > kMinAlignment) ? ::aligned_alloc(alignment, bytes)
                                              : ::malloc(bytes);
   if (FOLLY_UNLIKELY(result == nullptr)) {
-    VELOX_MEM_LOG(ERROR) << "Failed to allocateBytes " << bytes
-                         << " bytes with " << alignment << " alignment";
+    VELOX_MEM_LOG(ERROR) << "Failed to allocateBytes " << succinctBytes(bytes)
+                         << " with " << alignment << " alignment";
   }
   return result;
 }
@@ -316,8 +346,8 @@ void* MallocAllocator::allocateZeroFilledWithoutRetry(uint64_t bytes) {
   }
   void* result = std::calloc(1, bytes);
   if (FOLLY_UNLIKELY(result == nullptr)) {
-    VELOX_MEM_LOG(ERROR) << "Failed to allocateZeroFilled " << bytes
-                         << " bytes";
+    VELOX_MEM_LOG(ERROR) << "Failed to allocateZeroFilled "
+                         << succinctBytes(bytes);
   }
   return result;
 }

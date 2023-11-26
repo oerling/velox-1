@@ -23,10 +23,10 @@ namespace facebook::velox::dwrf {
 using namespace dwio::common;
 
 SelectiveTimestampColumnReader::SelectiveTimestampColumnReader(
-    const std::shared_ptr<const TypeWithId>& nodeType,
+    const std::shared_ptr<const TypeWithId>& fileType,
     DwrfParams& params,
     common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(nodeType->type(), params, scanSpec, nodeType) {
+    : SelectiveColumnReader(fileType->type(), fileType, params, scanSpec) {
   EncodingKey encodingKey{fileType_->id(), params.flatMapContext().sequence};
   auto& stripe = params.stripeStreams();
   version_ = convertRleVersion(stripe.getEncoding(encodingKey).kind());
@@ -72,6 +72,13 @@ void SelectiveTimestampColumnReader::read(
   VELOX_CHECK(
       !scanSpec_->valueHook(),
       "Selective reader for TIMESTAMP doesn't support aggregation pushdown yet");
+  if (!resultNulls_ || !resultNulls_->unique() ||
+      resultNulls_->capacity() * 8 < rows.size()) {
+    // Make sure a dedicated resultNulls_ is allocated with enough capacity as
+    // RleDecoder always assumes it is available.
+    resultNulls_ = AlignedBuffer::allocate<bool>(rows.size(), &memoryPool_);
+    rawResultNulls_ = resultNulls_->asMutable<uint64_t>();
+  }
   bool isDense = rows.back() == rows.size() - 1;
   if (isDense) {
     readHelper<true>(scanSpec_->filter(), rows);

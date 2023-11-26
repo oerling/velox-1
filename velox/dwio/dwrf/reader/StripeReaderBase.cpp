@@ -29,9 +29,9 @@ bool StripeReaderBase::fetchStripe(uint32_t index, bool& preload) {
     VLOG(1) << "Stripe data already fetched at index: " << index;
     return false;
   }
-  auto& footer = reader_->getFooter();
-  DWIO_ENSURE_LT(index, footer.stripesSize(), "invalid stripe index");
-  auto stripe = footer.stripes(index);
+  auto& fileFooter = reader_->getFooter();
+  DWIO_ENSURE_LT(index, fileFooter.stripesSize(), "invalid stripe index");
+  auto stripe = fileFooter.stripes(index);
   auto& cache = reader_->getMetadataCache();
 
   uint64_t offset = stripe.offset();
@@ -96,6 +96,10 @@ bool StripeReaderBase::fetchStripe(uint32_t index, bool& preload) {
 
   prefetchedStripes_.wlock()->operator[](index) = prefetchedStripeBase;
 
+  // refresh stripe encryption key if necessary
+  loadEncryptionKeys(index, stripeFooter);
+  lastStripeIndex_ = index;
+
   return true;
 }
 
@@ -105,36 +109,40 @@ StripeInformationWrapper StripeReaderBase::loadStripe(
     uint32_t index,
     bool& preload /* load the whole stripe if true*/) {
   DWIO_ENSURE(canLoad_);
-  auto& footer = reader_->getFooter();
-  DWIO_ENSURE_LT(index, footer.stripesSize(), "invalid stripe index");
-  auto stripe = footer.stripes(index);
+  auto& fileFooter = reader_->getFooter();
+  DWIO_ENSURE_LT(index, fileFooter.stripesSize(), "invalid stripe index");
+  auto stripe = fileFooter.stripes(index);
 
   fetchStripe(index, preload);
-  prefetchedStripes_.withWLock([&](auto& prefetchedStripes) {
-    auto prefetchedStatesIt = prefetchedStripes.find(index);
-    DWIO_ENSURE(prefetchedStatesIt != prefetchedStripes.end());
-    auto prefetchedStripeBase = prefetchedStatesIt->second;
-    footer_ = prefetchedStripeBase->footer;
-    stripeInput_ = std::move(prefetchedStripeBase->stripeInput);
-    // refresh stripe encryption key if necessary
-    loadEncryptionKeys(index);
-    lastStripeIndex_ = index;
-  });
+  auto prefetchedStripeBase =
+      prefetchedStripes_.withRLock([&](auto& prefetchedStripes) {
+        auto prefetchedStatesIt = prefetchedStripes.find(index);
+        DWIO_ENSURE(prefetchedStatesIt != prefetchedStripes.end());
+        return prefetchedStatesIt->second;
+      });
 
+  stripeFooter_ = prefetchedStripeBase->footer;
+  stripeInput_ = std::move(prefetchedStripeBase->stripeInput);
   return stripe;
 }
 
-void StripeReaderBase::loadEncryptionKeys(uint32_t index) {
+void StripeReaderBase::loadEncryptionKeys(
+    uint32_t index,
+    proto::StripeFooter* stripeFooter) {
+  if (stripeFooter == nullptr) {
+    stripeFooter = stripeFooter_;
+  }
   if (!handler_->isEncrypted()) {
     return;
   }
 
   DWIO_ENSURE_EQ(
-      footer_->encryptiongroups_size(), handler_->getEncryptionGroupCount());
-  auto& footer = reader_->getFooter();
-  DWIO_ENSURE_LT(index, footer.stripesSize(), "invalid stripe index");
+      stripeFooter->encryptiongroups_size(),
+      handler_->getEncryptionGroupCount());
+  auto& fileFooter = reader_->getFooter();
+  DWIO_ENSURE_LT(index, fileFooter.stripesSize(), "invalid stripe index");
 
-  auto stripe = footer.stripes(index);
+  auto stripe = fileFooter.stripes(index);
   // If current stripe has keys, load these keys.
   if (stripe.keyMetadataSize() > 0) {
     handler_->setKeys(stripe.keyMetadata());
@@ -152,7 +160,7 @@ void StripeReaderBase::loadEncryptionKeys(uint32_t index) {
     if (!isSequentialRead) {
       uint32_t prevIndex = index - 1;
       while (true) {
-        auto prev = footer.stripes(prevIndex);
+        auto prev = fileFooter.stripes(prevIndex);
         if (prev.keyMetadataSize() > 0) {
           handler_->setKeys(prev.keyMetadata());
           break;

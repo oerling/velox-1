@@ -47,7 +47,7 @@ struct AllocationTraits {
   }
 
   /// Returns the round up page bytes.
-  FOLLY_ALWAYS_INLINE static MachinePageCount roundUpPageBytes(uint64_t bytes) {
+  FOLLY_ALWAYS_INLINE static uint64_t roundUpPageBytes(uint64_t bytes) {
     return bits::roundUp(bytes, kPageSize);
   }
 
@@ -160,6 +160,9 @@ class Allocation {
     return numPages_ == 0;
   }
 
+  /// Moves the runs in 'from' to 'this'. 'from' is empty on return.
+  void appendMove(Allocation& from);
+
   std::string toString() const;
 
  private:
@@ -168,7 +171,7 @@ class Allocation {
     VELOX_CHECK(numPages_ != 0 || pool_ == nullptr);
   }
 
-  void append(uint8_t* address, int32_t numPages);
+  void append(uint8_t* address, uint32_t numPages);
 
   void clear() {
     runs_.clear();
@@ -189,6 +192,8 @@ class Allocation {
   VELOX_FRIEND_TEST(MemoryAllocatorTest, allocationClass1);
   VELOX_FRIEND_TEST(MemoryAllocatorTest, allocationClass2);
   VELOX_FRIEND_TEST(AllocationTest, append);
+  VELOX_FRIEND_TEST(AllocationTest, appendMove);
+  VELOX_FRIEND_TEST(AllocationTest, multiplePageRuns);
 };
 
 /// Represents a run of contiguous pages that do not belong to any size class.

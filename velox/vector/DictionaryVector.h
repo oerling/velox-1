@@ -15,10 +15,9 @@
  */
 #pragma once
 
+#include <folly/container/F14Map.h>
 #include <memory>
 #include <type_traits>
-
-#include <folly/container/F14Map.h>
 
 #include "velox/common/base/SimdUtil.h"
 #include "velox/vector/LazyVector.h"
@@ -131,15 +130,7 @@ class DictionaryVector : public SimpleVector<T> {
   }
 
   BufferPtr mutableIndices(vector_size_t size) {
-    // TODO: change this to isMutable(). See
-    // https://github.com/facebookincubator/velox/issues/6562.
-    if (indices_ && !indices_->isView() &&
-        indices_->capacity() >= size * sizeof(vector_size_t)) {
-      return indices_;
-    }
-
-    indices_ = AlignedBuffer::allocate<vector_size_t>(size, BaseVector::pool_);
-    rawIndices_ = indices_->as<vector_size_t>();
+    BaseVector::resizeIndices(size, BaseVector::pool_, &indices_, &rawIndices_);
     return indices_;
   }
 
@@ -214,7 +205,8 @@ class DictionaryVector : public SimpleVector<T> {
   /// If setNotNull is false then the values and isNull is undefined.
   void resize(vector_size_t size, bool setNotNull = true) override {
     if (size > BaseVector::length_) {
-      this->resizeIndices(size, &indices_, &rawIndices_);
+      BaseVector::resizeIndices(
+          size, BaseVector::pool(), &indices_, &rawIndices_);
       this->clearIndices(indices_, BaseVector::length_, size);
     }
 

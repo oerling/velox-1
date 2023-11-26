@@ -497,6 +497,11 @@ class AggregationNode : public PlanNode {
     /// Function name and input column names.
     CallTypedExprPtr call;
 
+    /// Raw input types used to properly identify aggregate function. These
+    /// might be different from the input types specified in 'call' when
+    /// aggregation step is kIntermediate or kFinal.
+    std::vector<TypePtr> rawInputTypes;
+
     /// Optional name of input column to use as a mask. Column type must be
     /// BOOLEAN.
     FieldAccessTypedExprPtr mask;
@@ -524,6 +529,27 @@ class AggregationNode : public PlanNode {
       const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
       const std::vector<std::string>& aggregateNames,
       const std::vector<Aggregate>& aggregates,
+      bool ignoreNullKeys,
+      PlanNodePtr source);
+
+  /// @param globalGroupingSets Group IDs of the global grouping sets produced
+  /// by the preceding GroupId node
+  /// @param groupId Group ID key produced by the preceding GroupId node. Must
+  /// be set if globalGroupingSets is not empty. Must not be set otherwise. Must
+  /// be one of the groupingKeys.
+
+  /// GlobalGroupingSets and groupId trigger special handling when the input
+  /// data set is empty (no rows). In that case, aggregation generates a single
+  /// row with the default global aggregate value per global grouping set.
+  AggregationNode(
+      const PlanNodeId& id,
+      Step step,
+      const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
+      const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
+      const std::vector<std::string>& aggregateNames,
+      const std::vector<Aggregate>& aggregates,
+      const std::vector<vector_size_t>& globalGroupingSets,
+      const std::optional<FieldAccessTypedExprPtr>& groupId,
       bool ignoreNullKeys,
       PlanNodePtr source);
 
@@ -559,18 +585,19 @@ class AggregationNode : public PlanNode {
     return ignoreNullKeys_;
   }
 
+  const std::vector<vector_size_t>& globalGroupingSets() const {
+    return globalGroupingSets_;
+  }
+
+  std::optional<FieldAccessTypedExprPtr> groupId() const {
+    return groupId_;
+  }
+
   std::string_view name() const override {
     return "Aggregation";
   }
 
-  bool canSpill(const QueryConfig& queryConfig) const override {
-    // NOTE: as for now, we don't allow spilling for distinct aggregation
-    // (https://github.com/facebookincubator/velox/issues/3263) and pre-grouped
-    // aggregation (https://github.com/facebookincubator/velox/issues/3264). We
-    // will add support later to re-enable.
-    return (isFinal() || isSingle()) && !(aggregates().empty()) &&
-        preGroupedKeys().empty() && queryConfig.aggregationSpillEnabled();
-  }
+  bool canSpill(const QueryConfig& queryConfig) const override;
 
   bool isFinal() const {
     return step_ == Step::kFinal;
@@ -593,6 +620,10 @@ class AggregationNode : public PlanNode {
   const std::vector<std::string> aggregateNames_;
   const std::vector<Aggregate> aggregates_;
   const bool ignoreNullKeys_;
+
+  std::optional<FieldAccessTypedExprPtr> groupId_;
+  std::vector<vector_size_t> globalGroupingSets_;
+
   const std::vector<PlanNodePtr> sources_;
   const RowTypePtr outputType_;
 };
@@ -692,6 +723,10 @@ class TableWriteNode : public PlanNode {
     return aggregationNode_;
   }
 
+  bool canSpill(const QueryConfig& queryConfig) const override {
+    return queryConfig.writerSpillEnabled();
+  }
+
   std::string_view name() const override {
     return "TableWrite";
   }
@@ -718,17 +753,6 @@ class TableWriteMergeNode : public PlanNode {
   /// 'outputType' specifies the type to store the metadata of table write
   /// output which contains the following columns: 'numWrittenRows', 'fragment'
   /// and 'tableCommitContext'.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  TableWriteMergeNode(
-      const PlanNodeId& id,
-      RowTypePtr outputType,
-      PlanNodePtr source)
-      : PlanNode(id),
-        aggregationNode_(nullptr),
-        sources_{std::move(source)},
-        outputType_(std::move(outputType)) {}
-#endif
-
   TableWriteMergeNode(
       const PlanNodeId& id,
       RowTypePtr outputType,
@@ -788,6 +812,7 @@ class GroupIdNode : public PlanNode {
   /// @param id Plan node ID.
   /// @param groupingSets A list of grouping key sets. Grouping keys within the
   /// set must be unique, but grouping keys across sets may repeat.
+  /// Note: groupingSets are specified using output column names.
   /// @param groupingKeyInfos The names and order of the grouping keys in the
   /// output.
   /// @param aggregationInputs Columns that contain inputs to the aggregate
@@ -797,7 +822,7 @@ class GroupIdNode : public PlanNode {
   /// @param source Input plan node.
   GroupIdNode(
       PlanNodeId id,
-      std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets,
+      std::vector<std::vector<std::string>> groupingSets,
       std::vector<GroupingKeyInfo> groupingKeyInfos,
       std::vector<FieldAccessTypedExprPtr> aggregationInputs,
       std::string groupIdName,
@@ -811,8 +836,7 @@ class GroupIdNode : public PlanNode {
     return sources_;
   }
 
-  const std::vector<std::vector<FieldAccessTypedExprPtr>>& groupingSets()
-      const {
+  const std::vector<std::vector<std::string>>& groupingSets() const {
     return groupingSets_;
   }
 
@@ -845,7 +869,12 @@ class GroupIdNode : public PlanNode {
 
   const std::vector<PlanNodePtr> sources_;
   const RowTypePtr outputType_;
-  const std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets_;
+
+  // Specifies groupingSets with output column names.
+  // This allows for the case when a single input column could map
+  // to multiple output columns which are used in separate grouping sets.
+  const std::vector<std::vector<std::string>> groupingSets_;
+
   const std::vector<GroupingKeyInfo> groupingKeyInfos_;
   const std::vector<FieldAccessTypedExprPtr> aggregationInputs_;
   const std::string groupIdName_;
@@ -1701,21 +1730,7 @@ class TopNNode : public PlanNode {
       const std::vector<SortOrder>& sortingOrders,
       int32_t count,
       bool isPartial,
-      const PlanNodePtr& source)
-      : PlanNode(id),
-        sortingKeys_(sortingKeys),
-        sortingOrders_(sortingOrders),
-        count_(count),
-        isPartial_(isPartial),
-        sources_{source} {
-    VELOX_USER_CHECK(!sortingKeys.empty(), "TopN must specify sorting keys");
-    VELOX_USER_CHECK_EQ(
-        sortingKeys.size(),
-        sortingOrders.size(),
-        "Number of sorting keys and sorting orders in TopN must be the same");
-    VELOX_USER_CHECK_GT(
-        count, 0, "TopN must specify greater than zero number of rows to keep");
-  }
+      const PlanNodePtr& source);
 
   const std::vector<FieldAccessTypedExprPtr>& sortingKeys() const {
     return sortingKeys_;
@@ -2039,6 +2054,7 @@ class WindowNode : public PlanNode {
       std::vector<SortOrder> sortingOrders,
       std::vector<std::string> windowColumnNames,
       std::vector<Function> windowFunctions,
+      bool inputsSorted,
       PlanNodePtr source);
 
   const std::vector<PlanNodePtr>& sources() const override {
@@ -2049,6 +2065,18 @@ class WindowNode : public PlanNode {
   /// with the output columns of each window function.
   const RowTypePtr& outputType() const override {
     return outputType_;
+  }
+
+  bool canSpill(const QueryConfig& queryConfig) const override {
+    // No partitioning keys means the whole input is one big partition. In this
+    // case, spilling is not helpful because we need to have a full partition in
+    // memory to produce results.
+    return !partitionKeys_.empty() && !inputsSorted_ &&
+        queryConfig.windowSpillEnabled();
+  }
+
+  const RowTypePtr& inputType() const {
+    return sources_[0]->outputType();
   }
 
   const std::vector<FieldAccessTypedExprPtr>& partitionKeys() const {
@@ -2065,6 +2093,10 @@ class WindowNode : public PlanNode {
 
   const std::vector<Function>& windowFunctions() const {
     return windowFunctions_;
+  }
+
+  bool inputsSorted() const {
+    return inputsSorted_;
   }
 
   std::string_view name() const override {
@@ -2084,6 +2116,8 @@ class WindowNode : public PlanNode {
   const std::vector<SortOrder> sortingOrders_;
 
   const std::vector<Function> windowFunctions_;
+
+  const bool inputsSorted_;
 
   const std::vector<PlanNodePtr> sources_;
 
@@ -2116,6 +2150,10 @@ class RowNumberNode : public PlanNode {
 
   const RowTypePtr& outputType() const override {
     return outputType_;
+  }
+
+  bool canSpill(const QueryConfig& queryConfig) const override {
+    return !partitionKeys_.empty() && queryConfig.rowNumberSpillEnabled();
   }
 
   const std::vector<FieldAccessTypedExprPtr>& partitionKeys() const {
@@ -2207,6 +2245,9 @@ class MarkDistinctNode : public PlanNode {
 class TopNRowNumberNode : public PlanNode {
  public:
   /// @param partitionKeys Partitioning keys. May be empty.
+  /// @param sortingKeys Sorting keys. May not be empty and may not intersect
+  /// with 'partitionKeys'.
+  /// @param sortingOrders Sorting orders, one per sorting key.
   /// @param rowNumberColumnName Optional name of the column containing row
   /// numbers. If not specified, the output doesn't include 'row number' column.
   /// This is used when computing partial results.
@@ -2228,6 +2269,14 @@ class TopNRowNumberNode : public PlanNode {
 
   const RowTypePtr& outputType() const override {
     return outputType_;
+  }
+
+  bool canSpill(const QueryConfig& queryConfig) const override {
+    return !partitionKeys_.empty() && queryConfig.topNRowNumberSpillEnabled();
+  }
+
+  const RowTypePtr& inputType() const {
+    return sources_[0]->outputType();
   }
 
   const std::vector<FieldAccessTypedExprPtr>& partitionKeys() const {

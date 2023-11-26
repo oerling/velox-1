@@ -19,9 +19,9 @@
 #include <chrono>
 
 #include "velox/common/file/File.h"
+#include "velox/common/io/IoStatistics.h"
 #include "velox/dwio/common/Closeable.h"
 #include "velox/dwio/common/DataBuffer.h"
-#include "velox/dwio/common/IoStatistics.h"
 #include "velox/dwio/common/MetricsLog.h"
 
 namespace facebook::velox {
@@ -29,6 +29,7 @@ class Config;
 }
 
 namespace facebook::velox::dwio::common {
+using namespace facebook::velox::io;
 
 /// An abstract interface for providing a file write sink to different storage
 /// system backends.
@@ -151,10 +152,6 @@ class WriteFileSink final : public FileSink {
 class LocalFileSink : public FileSink {
  public:
   LocalFileSink(const std::string& name, const Options& options);
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  LocalFileSink(const std::string& name, MetricsLogPtr metricLogger)
-      : LocalFileSink(name, {.metricLogger = std::move(metricLogger)}) {}
-#endif
 
   ~LocalFileSink() override {
     destroy();

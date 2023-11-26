@@ -189,6 +189,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"       Input: 2000 rows \\(.+\\), Raw Input: 20480 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 20"},
        {"          dataSourceWallNanos [ ]* sum: .+, count: 1, min: .+, max: .+"},
        {"          dynamicFiltersAccepted[ ]* sum: 1, count: 1, min: 1, max: 1"},
+       {"          flattenStringDictionaryValues [ ]* sum: 0, count: 1, min: 0, max: 0"},
        {"          ioWaitNanos      [ ]* sum: .+, count: .+ min: .+, max: .+"},
        {"          localReadBytes      [ ]* sum: 0B, count: 1, min: 0B, max: 0B"},
        {"          numLocalRead        [ ]* sum: 0, count: 1, min: 0, max: 0"},
@@ -210,6 +211,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"          skippedSplits       [ ]* sum: 0, count: 1, min: 0, max: 0"},
        {"          skippedStrides      [ ]* sum: 0, count: 1, min: 0, max: 0"},
        {"          storageReadBytes    [ ]* sum: .+, count: 1, min: .+, max: .+"},
+       {"          totalRemainingFilterTime\\s+sum: .+, count: .+, min: .+, max: .+"},
        {"          totalScanTime       [ ]* sum: .+, count: .+, min: .+, max: .+"},
        {"    -- Project\\[expressions: \\(u_c0:INTEGER, ROW\\[\"c0\"\\]\\), \\(u_c1:BIGINT, ROW\\[\"c1\"\\]\\)\\] -> u_c0:INTEGER, u_c1:BIGINT"},
        {"       Output: 100 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: 0B, Memory allocations: .+, Threads: 1"},
@@ -278,6 +280,7 @@ TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
          {"  -- TableScan\\[table: hive_table\\] -> c0:BIGINT, c1:INTEGER, c2:SMALLINT, c3:REAL, c4:DOUBLE, c5:VARCHAR"},
          {"     Input: 10000 rows \\(.+\\), Output: 10000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 1"},
          {"        dataSourceWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
+         {"        flattenStringDictionaryValues [ ]* sum: 0, count: 1, min: 0, max: 0"},
          {"        ioWaitNanos      [ ]* sum: .+, count: .+ min: .+, max: .+"},
          {"        localReadBytes   [ ]* sum: 0B, count: 1, min: 0B, max: 0B"},
          {"        numLocalRead     [ ]* sum: 0, count: 1, min: 0, max: 0"},
@@ -300,6 +303,7 @@ TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
          {"        skippedSplits    [ ]* sum: 0, count: 1, min: 0, max: 0"},
          {"        skippedStrides   [ ]* sum: 0, count: 1, min: 0, max: 0"},
          {"        storageReadBytes [ ]* sum: .+, count: 1, min: .+, max: .+"},
+         {"        totalRemainingFilterTime\\s+sum: .+, count: .+, min: .+, max: .+"},
          {"        totalScanTime    [ ]* sum: .+, count: .+, min: .+, max: .+"}});
   }
 }

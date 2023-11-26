@@ -297,7 +297,10 @@ class ReduceAgg : public exec::Aggregate {
     // Do not evaluate on null input.
     SelectivityVector remainingRows = rows;
     if (input->mayHaveNulls()) {
-      remainingRows.deselectNulls(input->rawNulls(), 0, rows.size());
+      DecodedVector decoded(*input, rows);
+      if (auto* rawNulls = decoded.nulls()) {
+        remainingRows.deselectNulls(rawNulls, rows.begin(), rows.end());
+      }
     }
 
     const auto& lambda = initializeInputLambda();
@@ -783,7 +786,7 @@ class ReduceAgg : public exec::Aggregate {
 
 } // namespace
 
-void registerReduceAgg(const std::string& prefix) {
+exec::AggregateRegistrationResult registerReduceAgg(const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
       exec::AggregateFunctionSignatureBuilder()
           .typeVariable("T")
@@ -798,7 +801,7 @@ void registerReduceAgg(const std::string& prefix) {
 
   const std::string name = prefix + kReduceAgg;
 
-  exec::registerAggregateFunction(
+  return exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](

@@ -34,7 +34,8 @@ MemoryManager::MemoryManager(const MemoryManagerOptions& options)
           {.kind = options.arbitratorKind,
            .capacity = std::min(options.queryMemoryCapacity, options.capacity),
            .memoryPoolInitCapacity = options.memoryPoolInitCapacity,
-           .memoryPoolTransferCapacity = options.memoryPoolTransferCapacity})),
+           .memoryPoolTransferCapacity = options.memoryPoolTransferCapacity,
+           .arbitrationStateCheckCb = options.arbitrationStateCheckCb})),
       alignment_(std::max(MemoryAllocator::kMinAlignment, options.alignment)),
       checkUsageLeak_(options.checkUsageLeak),
       debugEnabled_(options.debugEnabled),
@@ -239,5 +240,14 @@ std::shared_ptr<MemoryPool> addDefaultLeafMemoryPool(
 
 MemoryPool& deprecatedSharedLeafPool() {
   return defaultMemoryManager().deprecatedSharedLeafPool();
+}
+
+memory::MemoryPool* spillMemoryPool() {
+  static auto pool = memory::addDefaultLeafMemoryPool("_sys.spilling");
+  return pool.get();
+}
+
+bool isSpillMemoryPool(memory::MemoryPool* pool) {
+  return pool == spillMemoryPool();
 }
 } // namespace facebook::velox::memory

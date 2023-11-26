@@ -15,6 +15,8 @@
 set(TEST_LINK_LIBS
     velox_dwio_common_test_utils
     velox_vector_test_lib
+    velox_exec_test_lib
+    velox_temp_path
     gtest
     gtest_main
     gmock
@@ -23,6 +25,7 @@ set(TEST_LINK_LIBS
     ${FILESYSTEM})
 
 add_subdirectory(reader)
+add_subdirectory(writer)
 add_subdirectory(thrift)
 
 add_executable(velox_dwio_parquet_tpch_test ParquetTpchTest.cpp)
@@ -36,5 +39,7 @@ target_link_libraries(
   velox_exec_test_lib
   velox_exec
   velox_hive_connector
+  velox_tpch_connector
   velox_aggregates
+  velox_tpch_gen
   ${TEST_LINK_LIBS})

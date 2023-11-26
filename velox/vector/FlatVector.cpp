@@ -47,7 +47,9 @@ void FlatVector<bool>::set(vector_size_t idx, bool value) {
 }
 
 template <>
-Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size) {
+Buffer* FlatVector<StringView>::getBufferWithSpace(
+    int32_t size,
+    bool exactSize) {
   VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
 
   // Check if the last buffer is uniquely referenced and has enough space.
@@ -59,7 +61,7 @@ Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size) {
   }
 
   // Allocate a new buffer.
-  int32_t newSize = std::max(kInitialStringSize, size);
+  const int32_t newSize = exactSize ? size : std::max(kInitialStringSize, size);
   BufferPtr newBuffer = AlignedBuffer::allocate<char>(newSize, pool());
   newBuffer->setSize(0);
   addStringBuffer(newBuffer);
@@ -67,8 +69,10 @@ Buffer* FlatVector<StringView>::getBufferWithSpace(vector_size_t size) {
 }
 
 template <>
-char* FlatVector<StringView>::getRawStringBufferWithSpace(vector_size_t size) {
-  Buffer* buffer = getBufferWithSpace(size);
+char* FlatVector<StringView>::getRawStringBufferWithSpace(
+    int32_t size,
+    bool exactSize) {
+  Buffer* buffer = getBufferWithSpace(size, exactSize);
   char* rawBuffer = buffer->asMutable<char>() + buffer->size();
   buffer->setSize(buffer->size() + size);
   return rawBuffer;
@@ -85,18 +89,7 @@ void FlatVector<StringView>::prepareForReuse() {
     rawValues_ = nullptr;
   }
 
-  // Check string buffers. Keep at most one singly-referenced buffer if it is
-  // not too large.
-  if (!stringBuffers_.empty()) {
-    auto& firstBuffer = stringBuffers_.front();
-    if (firstBuffer->isMutable() &&
-        firstBuffer->capacity() <= kMaxStringSizeForReuse) {
-      firstBuffer->setSize(0);
-      setStringBuffers({firstBuffer});
-    } else {
-      clearStringBuffers();
-    }
-  }
+  keepAtMostOneStringBuffer();
 
   // Clear the StringViews to avoid referencing freed memory.
   if (rawValues_) {
@@ -281,14 +274,44 @@ void FlatVector<StringView>::copy(
     copyValuesAndNulls(source, rows, toSourceRow);
     acquireSharedStringBuffers(source);
   } else {
+    DecodedVector decoded(*source);
+    uint64_t* rawNulls = const_cast<uint64_t*>(BaseVector::rawNulls_);
+    if (decoded.mayHaveNulls()) {
+      rawNulls = BaseVector::mutableRawNulls();
+    }
+
+    size_t totalBytes = 0;
     rows.applyToSelected([&](vector_size_t row) {
-      auto sourceRow = toSourceRow ? toSourceRow[row] : row;
-      if (source->isNullAt(sourceRow)) {
-        setNull(row, true);
+      const auto sourceRow = toSourceRow ? toSourceRow[row] : row;
+      if (decoded.isNullAt(sourceRow)) {
+        bits::setNull(rawNulls, row);
       } else {
-        set(row, leaf->valueAt(source->wrappedIndex(sourceRow)));
+        if (rawNulls) {
+          bits::clearNull(rawNulls, row);
+        }
+        auto v = decoded.valueAt<StringView>(sourceRow);
+        if (v.isInline()) {
+          rawValues_[row] = v;
+        } else {
+          totalBytes += v.size();
+        }
       }
     });
+
+    if (totalBytes > 0) {
+      auto* buffer = getRawStringBufferWithSpace(totalBytes);
+      rows.applyToSelected([&](vector_size_t row) {
+        const auto sourceRow = toSourceRow ? toSourceRow[row] : row;
+        if (!decoded.isNullAt(sourceRow)) {
+          auto v = decoded.valueAt<StringView>(sourceRow);
+          if (!v.isInline()) {
+            memcpy(buffer, v.data(), v.size());
+            rawValues_[row] = StringView(buffer, v.size());
+            buffer += v.size();
+          }
+        }
+      });
+    }
   }
 
   if (auto stringVector = source->as<SimpleVector<StringView>>()) {
@@ -296,13 +319,13 @@ void FlatVector<StringView>::copy(
       setIsAscii(ascii.value(), rows);
     } else {
       // ASCII-ness for the 'rows' is not known.
-      ensureIsAsciiCapacity(rows.end());
+      ensureIsAsciiCapacity();
       // If we arent All ascii, then invalidate
       // because the remaining selected rows might be ascii
       if (!asciiInfo.isAllAscii()) {
         invalidateIsAscii();
       } else {
-        asciiInfo.asciiSetRows().deselect(rows);
+        asciiInfo.writeLockedAsciiComputedRows()->deselect(rows);
       }
     }
   }

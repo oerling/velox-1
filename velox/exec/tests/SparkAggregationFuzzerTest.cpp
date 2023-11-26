@@ -19,7 +19,8 @@
 #include <gtest/gtest.h>
 #include <unordered_set>
 
-#include "velox/exec/tests/AggregationFuzzerRunner.h"
+#include "velox/exec/tests/utils/AggregationFuzzerRunner.h"
+#include "velox/exec/tests/utils/DuckQueryRunner.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 
 DEFINE_int64(
@@ -37,7 +38,7 @@ DEFINE_string(
 
 int main(int argc, char** argv) {
   facebook::velox::functions::aggregate::sparksql::registerAggregateFunctions(
-      "");
+      "", false);
 
   ::testing::InitGoogleTest(&argc, argv);
 
@@ -56,26 +57,26 @@ int main(int argc, char** argv) {
   // doesn't depend on the order of inputs. If such transformation exists, it
   // can be specified to be used for results verification. If no transformation
   // is specified, results are not verified.
-  std::unordered_map<std::string, std::string> customVerificationFunctions = {
-      {"last", ""},
-      {"last_ignore_null", ""},
-      {"first", ""},
-      {"first_ignore_null", ""},
-      // TODO: Skip result verification of companion functions that return
-      // complex types that contain floating-point fields for now, until we
-      // fix test utilities in QueryAssertions to tolerate floating-point
-      // imprecision in complex types.
-      // https://github.com/facebookincubator/velox/issues/4481
-      {"avg_partial", ""},
-      {"avg_merge", ""},
-      {"max_by", ""},
-      {"min_by", ""}};
+  std::unordered_map<
+      std::string,
+      std::shared_ptr<facebook::velox::exec::test::ResultVerifier>>
+      customVerificationFunctions = {
+          {"last", nullptr},
+          {"last_ignore_null", nullptr},
+          {"first", nullptr},
+          {"first_ignore_null", nullptr},
+          {"max_by", nullptr},
+          {"min_by", nullptr}};
 
   size_t initialSeed = FLAGS_seed == 0 ? std::time(nullptr) : FLAGS_seed;
-  return facebook::velox::exec::test::AggregationFuzzerRunner::runFuzzer(
-      FLAGS_only,
-      initialSeed,
-      std::nullopt,
-      skipFunctions,
-      customVerificationFunctions);
+  auto duckQueryRunner =
+      std::make_unique<facebook::velox::exec::test::DuckQueryRunner>();
+
+  using Runner = facebook::velox::exec::test::AggregationFuzzerRunner;
+
+  Runner::Options options;
+  options.onlyFunctions = FLAGS_only;
+  options.skipFunctions = skipFunctions;
+  options.customVerificationFunctions = customVerificationFunctions;
+  return Runner::run(initialSeed, std::move(duckQueryRunner), options);
 }

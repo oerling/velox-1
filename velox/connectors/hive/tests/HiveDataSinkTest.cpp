@@ -37,17 +37,62 @@ constexpr const char* kHiveConnectorId = "test-hive";
 class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
  protected:
   void SetUp() override {
+    HiveConnectorTestBase::SetUp();
     Type::registerSerDe();
     HiveSortingColumn::registerSerDe();
     HiveBucketProperty::registerSerDe();
 
     rowType_ =
-        ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
-            {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()});
+        ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
+            {BIGINT(),
+             INTEGER(),
+             SMALLINT(),
+             REAL(),
+             DOUBLE(),
+             VARCHAR(),
+             BOOLEAN()});
+
+    setupMemoryPools();
+
+    spillExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(
+        std::thread::hardware_concurrency());
+  }
+
+  std::unique_ptr<SpillConfig> getSpillConfig(
+      const std::string& spillPath,
+      uint64_t writerFlushThreshold) {
+    return std::make_unique<SpillConfig>(
+        [&]() -> const std::string& { return spillPath; },
+        "",
+        0,
+        0,
+        0,
+        spillExecutor_.get(),
+        10,
+        20,
+        0,
+        0,
+        0,
+        writerFlushThreshold,
+        0,
+        "none");
+  }
+
+  void setupMemoryPools() {
+    connectorQueryCtx_.reset();
+    connectorPool_.reset();
+    opPool_.reset();
+    root_.reset();
+
+    root_ = memory::defaultMemoryManager().addRootPool(
+        "HiveDataSinkTest", 1L << 30, exec::MemoryReclaimer::create());
+    opPool_ = root_->addLeafChild("operator");
+    connectorPool_ =
+        root_->addAggregateChild("connector", exec::MemoryReclaimer::create());
+
     connectorQueryCtx_ = std::make_unique<connector::ConnectorQueryCtx>(
         opPool_.get(),
         connectorPool_.get(),
-        nullptr,
         connectorConfig_.get(),
         nullptr,
         nullptr,
@@ -56,37 +101,44 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         "task.HiveDataSinkTest",
         "planNodeId.HiveDataSinkTest",
         0);
-
-    auto hiveConnector =
-        connector::getConnectorFactory(
-            connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr);
-    connector::registerConnector(std::move(hiveConnector));
   }
 
   std::shared_ptr<connector::hive::HiveInsertTableHandle>
   createHiveInsertTableHandle(
       const RowTypePtr& outputRowType,
-      const std::string& outputDirectoryPath) {
+      const std::string& outputDirectoryPath,
+      dwio::common::FileFormat fileFormat = dwio::common::FileFormat::DWRF,
+      const std::vector<std::string>& partitionedBy = {},
+      const std::shared_ptr<connector::hive::HiveBucketProperty>&
+          bucketProperty = nullptr) {
     return makeHiveInsertTableHandle(
         outputRowType->names(),
         outputRowType->children(),
-        {},
-        nullptr,
+        partitionedBy,
+        bucketProperty,
         makeLocationHandle(
             outputDirectoryPath,
             std::nullopt,
             connector::hive::LocationHandle::TableType::kNew),
-        dwio::common::FileFormat::DWRF,
+        fileFormat,
         CompressionKind::CompressionKind_ZSTD);
   }
 
   std::shared_ptr<HiveDataSink> createDataSink(
       const RowTypePtr& rowType,
-      const std::string& outputDirectoryPath) {
+      const std::string& outputDirectoryPath,
+      dwio::common::FileFormat fileFormat = dwio::common::FileFormat::DWRF,
+      const std::vector<std::string>& partitionedBy = {},
+      const std::shared_ptr<connector::hive::HiveBucketProperty>&
+          bucketProperty = nullptr) {
     return std::make_shared<HiveDataSink>(
         rowType,
-        createHiveInsertTableHandle(rowType, outputDirectoryPath),
+        createHiveInsertTableHandle(
+            rowType,
+            outputDirectoryPath,
+            fileFormat,
+            partitionedBy,
+            bucketProperty),
         connectorQueryCtx_.get(),
         CommitStrategy::kNoCommit,
         connectorConfig_);
@@ -111,19 +163,27 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         fmt::format("SELECT * FROM tmp"));
   }
 
+  void setConnectorConfig(
+      std::unordered_map<std::string, std::string> connectorConfig) {
+    connectorConfig_ =
+        std::make_shared<core::MemConfig>(std::move(connectorConfig));
+  }
+
+  void setConnectorQueryContext(
+      std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx) {
+    connectorQueryCtx_ = std::move(connectorQueryCtx);
+  }
+
   const std::shared_ptr<memory::MemoryPool> pool_ =
       memory::addDefaultLeafMemoryPool();
-  const std::shared_ptr<memory::MemoryPool> root_ =
-      memory::defaultMemoryManager().addRootPool("HiveDataSinkTest");
-  const std::shared_ptr<memory::MemoryPool> opPool_ =
-      root_->addLeafChild("operator");
-  const std::shared_ptr<memory::MemoryPool> connectorPool_ =
-      root_->addAggregateChild("connector");
-  const std::shared_ptr<const Config> connectorConfig_{
-      std::make_unique<core::MemConfig>()};
 
+  std::shared_ptr<memory::MemoryPool> root_;
+  std::shared_ptr<memory::MemoryPool> opPool_;
+  std::shared_ptr<memory::MemoryPool> connectorPool_;
   RowTypePtr rowType_;
   std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx_;
+  std::shared_ptr<Config> connectorConfig_{std::make_unique<core::MemConfig>()};
+  std::unique_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
 };
 
 TEST_F(HiveDataSinkTest, hiveSortingColumn) {
@@ -482,6 +542,298 @@ TEST_F(HiveDataSinkTest, abort) {
     VELOX_ASSERT_THROW(
         dataSink->appendData(vectors.back()),
         "Hive data sink hash been aborted");
+  }
+}
+
+TEST_F(HiveDataSinkTest, memoryReclaim) {
+  VectorFuzzer::Options options;
+  options.vectorSize = 500;
+  VectorFuzzer fuzzer(options, pool());
+  std::vector<RowVectorPtr> vectors;
+  const int numBatches{10};
+  for (int i = 0; i < numBatches; ++i) {
+    vectors.push_back(fuzzer.fuzzInputRow(rowType_));
+  }
+
+  struct {
+    dwio::common::FileFormat format;
+    bool sortWriter;
+    bool writerSpillEnabled;
+    uint64_t writerFlushThreshold;
+    bool expectedWriterReclaimEnabled;
+    bool expectedWriterReclaimed;
+
+    std::string debugString() const {
+      return fmt::format(
+          "format: {}, sortWriter: {}, writerSpillEnabled: {}, writerFlushThreshold: {}, expectedWriterReclaimEnabled: {}, expectedWriterReclaimed: {}",
+          format,
+          sortWriter,
+          writerSpillEnabled,
+          succinctBytes(writerFlushThreshold),
+          expectedWriterReclaimEnabled,
+          expectedWriterReclaimed);
+    }
+  } testSettings[] = {
+    {dwio::common::FileFormat::DWRF, true, true, 1 << 30, true, true},
+    {dwio::common::FileFormat::DWRF, true, true, 1, true, true},
+    {dwio::common::FileFormat::DWRF, true, false, 1 << 30, false, false},
+    {dwio::common::FileFormat::DWRF, true, false, 1, false, false},
+    {dwio::common::FileFormat::DWRF, false, true, 1 << 30, true, false},
+    {dwio::common::FileFormat::DWRF, false, true, 1, true, true},
+    {dwio::common::FileFormat::DWRF, false, false, 1 << 30, false, false},
+    {dwio::common::FileFormat::DWRF, false, false, 1, false, false},
+  // Add Parquet with https://github.com/facebookincubator/velox/issues/5560
+#if 0
+      {dwio::common::FileFormat::PARQUET, true, true, 1 << 30, false, false},
+      {dwio::common::FileFormat::PARQUET, true, true, 1, false, false},
+      {dwio::common::FileFormat::PARQUET, true, false, 1 << 30, false, false},
+      {dwio::common::FileFormat::PARQUET, true, false, 1, false, false},
+      {dwio::common::FileFormat::PARQUET, false, true, 1 << 30, false, false},
+      {dwio::common::FileFormat::PARQUET, false, true, 1, false, false},
+      {dwio::common::FileFormat::PARQUET, false, false, 1 << 30, false, false},
+      {dwio::common::FileFormat::PARQUET, false, false, 1, false, false}
+#endif
+  };
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+    setupMemoryPools();
+
+    const auto outputDirectory = TempDirectoryPath::create();
+    std::shared_ptr<HiveBucketProperty> bucketProperty;
+    std::vector<std::string> partitionBy;
+    if (testData.sortWriter) {
+      partitionBy = {"c6"};
+      bucketProperty = std::make_shared<HiveBucketProperty>(
+          HiveBucketProperty::Kind::kHiveCompatible,
+          4,
+          std::vector<std::string>{"c0"},
+          std::vector<TypePtr>{BIGINT()},
+          std::vector<std::shared_ptr<const HiveSortingColumn>>{
+              std::make_shared<HiveSortingColumn>(
+                  "c1", core::SortOrder{false, false})});
+    }
+    std::shared_ptr<TempDirectoryPath> spillDirectory;
+    std::unique_ptr<SpillConfig> spillConfig;
+    if (testData.writerSpillEnabled) {
+      spillDirectory = exec::test::TempDirectoryPath::create();
+      spillConfig =
+          getSpillConfig(spillDirectory->path, testData.writerFlushThreshold);
+      auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
+          opPool_.get(),
+          connectorPool_.get(),
+          connectorConfig_.get(),
+          spillConfig.get(),
+          nullptr,
+          nullptr,
+          "query.HiveDataSinkTest",
+          "task.HiveDataSinkTest",
+          "planNodeId.HiveDataSinkTest",
+          0);
+      setConnectorQueryContext(std::move(connectorQueryCtx));
+    } else {
+      auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
+          opPool_.get(),
+          connectorPool_.get(),
+          connectorConfig_.get(),
+          nullptr,
+          nullptr,
+          nullptr,
+          "query.HiveDataSinkTest",
+          "task.HiveDataSinkTest",
+          "planNodeId.HiveDataSinkTest",
+          0);
+      setConnectorQueryContext(std::move(connectorQueryCtx));
+    }
+
+    auto dataSink = createDataSink(
+        rowType_,
+        outputDirectory->path,
+        testData.format,
+        partitionBy,
+        bucketProperty);
+    auto* hiveDataSink = static_cast<HiveDataSink*>(dataSink.get());
+    ASSERT_EQ(
+        hiveDataSink->canReclaim(), testData.expectedWriterReclaimEnabled);
+    for (int i = 0; i < numBatches; ++i) {
+      dataSink->appendData(vectors[i]);
+    }
+    memory::MemoryReclaimer::Stats stats;
+    uint64_t reclaimableBytes;
+    if (testData.expectedWriterReclaimed) {
+      ASSERT_TRUE(root_->reclaimableBytes(reclaimableBytes));
+      ASSERT_GT(reclaimableBytes, 0);
+      ASSERT_GT(root_->reclaim(256L << 20, stats), 0);
+      ASSERT_GT(stats.reclaimExecTimeUs, 0);
+      ASSERT_GT(stats.reclaimedBytes, 0);
+      // We expect dwrf writer set numNonReclaimableAttempts counter.
+      ASSERT_LE(stats.numNonReclaimableAttempts, 1);
+    } else {
+      ASSERT_FALSE(root_->reclaimableBytes(reclaimableBytes));
+      ASSERT_EQ(reclaimableBytes, 0);
+      ASSERT_EQ(root_->reclaim(256L << 20, stats), 0);
+      ASSERT_EQ(stats.reclaimExecTimeUs, 0);
+      ASSERT_EQ(stats.reclaimedBytes, 0);
+      if (testData.expectedWriterReclaimEnabled) {
+        if (testData.sortWriter) {
+          ASSERT_GE(stats.numNonReclaimableAttempts, 1);
+        } else {
+          ASSERT_EQ(stats.numNonReclaimableAttempts, 1);
+        }
+      } else {
+        ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
+      }
+    }
+    const auto results = dataSink->close(true);
+    ASSERT_GE(results.size(), 1);
+  }
+}
+
+TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
+  VectorFuzzer::Options options;
+  options.vectorSize = 500;
+  VectorFuzzer fuzzer(options, pool());
+  std::vector<RowVectorPtr> vectors;
+  const int numBatches{10};
+  for (int i = 0; i < numBatches; ++i) {
+    vectors.push_back(fuzzer.fuzzInputRow(rowType_));
+  }
+
+  struct {
+    dwio::common::FileFormat format;
+    bool sortWriter;
+    bool writerSpillEnabled;
+    bool close;
+    bool expectedWriterReclaimEnabled;
+
+    std::string debugString() const {
+      return fmt::format(
+          "format: {}, sortWriter: {}, writerSpillEnabled: {}, close: {}, expectedWriterReclaimEnabled: {}",
+          format,
+          sortWriter,
+          writerSpillEnabled,
+          close,
+          expectedWriterReclaimEnabled);
+    }
+  } testSettings[] = {
+      {dwio::common::FileFormat::DWRF, true, true, true, true},
+      {dwio::common::FileFormat::DWRF, true, false, true, false},
+      {dwio::common::FileFormat::DWRF, true, true, false, true},
+      {dwio::common::FileFormat::DWRF, true, false, false, false},
+      {dwio::common::FileFormat::DWRF, false, true, true, true},
+      {dwio::common::FileFormat::DWRF, false, false, true, false},
+      {dwio::common::FileFormat::DWRF, false, true, false, true},
+      {dwio::common::FileFormat::DWRF, false, false, false, false}
+      // Add parquet file format after fix
+      // https://github.com/facebookincubator/velox/issues/5560
+  };
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+
+    std::unordered_map<std::string, std::string> connectorConfig;
+    // Always allow memory reclaim from the file writer/
+    connectorConfig.emplace(
+        "file_writer_flush_threshold_bytes", folly::to<std::string>(0));
+    // Avoid internal the stripe flush while data write.
+    connectorConfig.emplace("orc_optimized_writer_max_stripe_size", "1GB");
+    connectorConfig.emplace(
+        "orc_optimized_writer_max_dictionary_memory", "1GB");
+
+    setConnectorConfig(connectorConfig);
+
+    const auto outputDirectory = TempDirectoryPath::create();
+    std::shared_ptr<HiveBucketProperty> bucketProperty;
+    std::vector<std::string> partitionBy;
+    if (testData.sortWriter) {
+      partitionBy = {"c6"};
+      bucketProperty = std::make_shared<HiveBucketProperty>(
+          HiveBucketProperty::Kind::kHiveCompatible,
+          4,
+          std::vector<std::string>{"c0"},
+          std::vector<TypePtr>{BIGINT()},
+          std::vector<std::shared_ptr<const HiveSortingColumn>>{
+              std::make_shared<HiveSortingColumn>(
+                  "c1", core::SortOrder{false, false})});
+    }
+    std::shared_ptr<TempDirectoryPath> spillDirectory;
+    std::unique_ptr<SpillConfig> spillConfig;
+    if (testData.writerSpillEnabled) {
+      spillDirectory = exec::test::TempDirectoryPath::create();
+      spillConfig = getSpillConfig(spillDirectory->path, 0);
+      auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
+          opPool_.get(),
+          connectorPool_.get(),
+          connectorConfig_.get(),
+          spillConfig.get(),
+          nullptr,
+          nullptr,
+          "query.HiveDataSinkTest",
+          "task.HiveDataSinkTest",
+          "planNodeId.HiveDataSinkTest",
+          0);
+      setConnectorQueryContext(std::move(connectorQueryCtx));
+    } else {
+      auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
+          opPool_.get(),
+          connectorPool_.get(),
+          connectorConfig_.get(),
+          nullptr,
+          nullptr,
+          nullptr,
+          "query.HiveDataSinkTest",
+          "task.HiveDataSinkTest",
+          "planNodeId.HiveDataSinkTest",
+          0);
+      setConnectorQueryContext(std::move(connectorQueryCtx));
+    }
+
+    auto dataSink = createDataSink(
+        rowType_,
+        outputDirectory->path,
+        testData.format,
+        partitionBy,
+        bucketProperty);
+    auto* hiveDataSink = static_cast<HiveDataSink*>(dataSink.get());
+    ASSERT_EQ(
+        hiveDataSink->canReclaim(), testData.expectedWriterReclaimEnabled);
+
+    for (int i = 0; i < numBatches; ++i) {
+      dataSink->appendData(vectors[i]);
+    }
+    if (testData.close) {
+      const auto results = dataSink->close(true);
+      ASSERT_GE(results.size(), 1);
+    } else {
+      const auto results = dataSink->close(false);
+      ASSERT_TRUE(results.empty());
+    }
+
+    memory::MemoryReclaimer::Stats stats;
+    uint64_t reclaimableBytes;
+    if (testData.expectedWriterReclaimEnabled) {
+      ASSERT_TRUE(root_->reclaimableBytes(reclaimableBytes));
+      if (testData.close) {
+        // NOTE: file writer might not release all the memory on close
+        // immediately.
+        ASSERT_GE(reclaimableBytes, 0);
+      } else {
+        ASSERT_EQ(reclaimableBytes, 0);
+      }
+    } else {
+      ASSERT_FALSE(root_->reclaimableBytes(reclaimableBytes));
+      ASSERT_EQ(reclaimableBytes, 0);
+    }
+    ASSERT_EQ(root_->reclaim(1L << 30, stats), 0);
+    ASSERT_EQ(stats.reclaimExecTimeUs, 0);
+    ASSERT_EQ(stats.reclaimedBytes, 0);
+    if (testData.expectedWriterReclaimEnabled) {
+      if (testData.sortWriter) {
+        ASSERT_GE(stats.numNonReclaimableAttempts, 1);
+      } else {
+        ASSERT_EQ(stats.numNonReclaimableAttempts, 1);
+      }
+    } else {
+      ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
+    }
   }
 }
 } // namespace

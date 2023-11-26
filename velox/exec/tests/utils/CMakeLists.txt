@@ -20,6 +20,7 @@ add_library(
   velox_exec_test_lib
   AssertQueryBuilder.cpp
   Cursor.cpp
+  DuckQueryRunner.cpp
   HiveConnectorTestBase.cpp
   LocalExchangeSource.cpp
   OperatorTestBase.cpp
@@ -27,7 +28,9 @@ add_library(
   QueryAssertions.cpp
   SumNonPODAggregate.cpp
   TpchQueryBuilder.cpp
-  VectorTestUtil.cpp)
+  VectorTestUtil.cpp
+  PortUtil.cpp
+  PrestoQueryRunner.cpp)
 
 target_link_libraries(
   velox_exec_test_lib
@@ -47,4 +50,12 @@ target_link_libraries(
   velox_tpch_connector
   velox_presto_serializer
   velox_functions_prestosql
-  velox_aggregates)
+  velox_aggregates
+  cpr::cpr
+  velox_type_parser
+  Folly::folly)
+
+add_library(velox_aggregation_fuzzer AggregationFuzzer.cpp)
+
+target_link_libraries(velox_aggregation_fuzzer velox_type velox_vector_fuzzer
+                      velox_exec_test_lib velox_expression_test_utility)

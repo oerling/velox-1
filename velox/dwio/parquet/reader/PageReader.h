@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <arrow/util/rle_encoding.h>
 #include "velox/common/compression/Compression.h"
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
@@ -26,7 +25,8 @@
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/dwio/parquet/reader/RleBpDataDecoder.h"
 #include "velox/dwio/parquet/reader/StringDecoder.h"
-#include "velox/vector/BaseVector.h"
+
+#include <arrow/util/rle_encoding.h>
 
 namespace facebook::velox::parquet {
 
@@ -38,12 +38,12 @@ class PageReader {
   PageReader(
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
-      ParquetTypeWithIdPtr nodeType,
+      ParquetTypeWithIdPtr fileType,
       thrift::CompressionCodec::type codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
-        type_(std::move(nodeType)),
+        type_(std::move(fileType)),
         maxRepeat_(type_->maxRepeat_),
         maxDefine_(type_->maxDefine_),
         isTopLevel_(maxRepeat_ == 0 && maxDefine_ <= 1),
@@ -67,45 +67,6 @@ class PageReader {
         codec_(codec),
         chunkSize_(chunkSize),
         nullConcatenation_(pool_) {}
-
-  common::CompressionKind ThriftCodecToCompressionKind(
-      thrift::CompressionCodec::type codec) const {
-    switch (codec) {
-      case thrift::CompressionCodec::UNCOMPRESSED:
-        return common::CompressionKind::CompressionKind_NONE;
-        break;
-      case thrift::CompressionCodec::SNAPPY:
-        return common::CompressionKind::CompressionKind_SNAPPY;
-        break;
-      case thrift::CompressionCodec::GZIP:
-        return common::CompressionKind::CompressionKind_GZIP;
-        break;
-      case thrift::CompressionCodec::LZO:
-        return common::CompressionKind::CompressionKind_LZO;
-        break;
-      case thrift::CompressionCodec::LZ4:
-        return common::CompressionKind::CompressionKind_LZ4;
-        break;
-      case thrift::CompressionCodec::ZSTD:
-        return common::CompressionKind::CompressionKind_ZSTD;
-        break;
-      case thrift::CompressionCodec::LZ4_RAW:
-        return common::CompressionKind::CompressionKind_LZ4;
-      default:
-        VELOX_UNSUPPORTED(
-            "Unsupported compression type: " +
-            facebook::velox::parquet::thrift::to_string(codec));
-        break;
-    }
-  }
-
-  static const dwio::common::compression::CompressionOptions
-  getParquetDecompressionOptions() {
-    dwio::common::compression::CompressionOptions options;
-    options.format.zlib.windowBits =
-        dwio::common::compression::Compressor::PARQUET_ZLIB_WINDOW_BITS;
-    return options;
-  }
 
   /// Advances 'numRows' top level rows.
   void skip(int64_t numRows);
@@ -236,6 +197,8 @@ class PageReader {
   // from current position. Copies data into 'copy' if the range
   // straddles buffers. Allocates or resizes 'copy' as needed.
   const char* FOLLY_NONNULL readBytes(int32_t size, BufferPtr& copy);
+
+  common::CompressionKind thriftCodecToCompressionKind();
 
   // Decompresses data starting at 'pageData_', consuming 'compressedsize' and
   // producing up to 'uncompressedSize' bytes. The start of the decoding
@@ -515,6 +478,22 @@ class PageReader {
   std::unique_ptr<BooleanDecoder> booleanDecoder_;
   // Add decoders for other encodings here.
 };
+
+FOLLY_ALWAYS_INLINE dwio::common::compression::CompressionOptions
+getParquetDecompressionOptions(common::CompressionKind kind) {
+  dwio::common::compression::CompressionOptions options;
+
+  if (kind == common::CompressionKind_ZLIB ||
+      kind == common::CompressionKind_GZIP) {
+    options.format.zlib.windowBits =
+        dwio::common::compression::Compressor::PARQUET_ZLIB_WINDOW_BITS;
+  } else if (
+      kind == common::CompressionKind_LZ4 ||
+      kind == common::CompressionKind_LZO) {
+    options.format.lz4_lzo.isHadoopFrameFormat = true;
+  }
+  return options;
+}
 
 template <typename Visitor>
 void PageReader::readWithVisitor(Visitor& visitor) {

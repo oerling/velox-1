@@ -430,7 +430,11 @@ void* MemoryPoolImpl::allocate(int64_t size) {
   if (FOLLY_UNLIKELY(buffer == nullptr)) {
     release(alignedSize);
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} bytes from {}", __FUNCTION__, size, toString()));
+        "{} failed with {} from {} {}",
+        __FUNCTION__,
+        succinctBytes(size),
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(buffer, size);
   return buffer;
@@ -445,11 +449,12 @@ void* MemoryPoolImpl::allocateZeroFilled(int64_t numEntries, int64_t sizeEach) {
   if (FOLLY_UNLIKELY(buffer == nullptr)) {
     release(alignedSize);
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} entries and {} bytes each from {}",
+        "{} failed with {} entries and {} each from {} {}",
         __FUNCTION__,
         numEntries,
-        sizeEach,
-        toString()));
+        succinctBytes(sizeEach),
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(buffer, size);
   return buffer;
@@ -464,11 +469,12 @@ void* MemoryPoolImpl::reallocate(void* p, int64_t size, int64_t newSize) {
   if (FOLLY_UNLIKELY(newP == nullptr)) {
     release(alignedNewSize);
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} new bytes and {} old bytes from {}",
+        "{} failed with new {} and old {} from {} {}",
         __FUNCTION__,
-        newSize,
-        size,
-        toString()));
+        succinctBytes(newSize),
+        succinctBytes(size),
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(newP, newSize);
   if (p != nullptr) {
@@ -512,7 +518,11 @@ void MemoryPoolImpl::allocateNonContiguous(
           minSizeClass)) {
     VELOX_CHECK(out.empty());
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} pages from {}", __FUNCTION__, numPages, toString()));
+        "{} failed with {} pages from {} {}",
+        __FUNCTION__,
+        numPages,
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(out);
   VELOX_CHECK(!out.empty());
@@ -560,7 +570,11 @@ void MemoryPoolImpl::allocateContiguous(
           maxPages)) {
     VELOX_CHECK(out.empty());
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} pages from {}", __FUNCTION__, numPages, toString()));
+        "{} failed with {} pages from {} {}",
+        __FUNCTION__,
+        numPages,
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   DEBUG_RECORD_ALLOC(out);
   VELOX_CHECK(!out.empty());
@@ -589,10 +603,11 @@ void MemoryPoolImpl::growContiguous(
             }
           })) {
     VELOX_MEM_ALLOC_ERROR(fmt::format(
-        "{} failed with {} pages from {}",
+        "{} failed with {} pages from {} {}",
         __FUNCTION__,
         increment,
-        toString()));
+        toString(),
+        allocator_->getAndClearFailureMessage()));
   }
   if (FOLLY_UNLIKELY(debugEnabled_)) {
     recordGrowDbg(allocation.data(), allocation.size());
@@ -763,13 +778,15 @@ bool MemoryPoolImpl::maybeIncrementReservation(uint64_t size) {
 
 bool MemoryPoolImpl::maybeIncrementReservationLocked(uint64_t size) {
   if (isRoot()) {
-    if (aborted()) {
-      // This memory pool has been aborted by the memory arbitrator. Abort to
-      // prevent this pool from triggering memory arbitration. The associated
-      // query should also abort soon.
-      VELOX_MEM_POOL_ABORTED("This memory pool has been aborted.");
-    }
-    if (reservationBytes_ + size > capacity_) {
+    checkIfAborted();
+
+    // NOTE: we allow memory pool to overuse its memory during the memory
+    // arbitration process. The memory arbitration process itself needs to
+    // ensure the the memory pool usage of the memory pool is within the
+    // capacity limit after the arbitration operation completes.
+    if (FOLLY_UNLIKELY(
+            (reservationBytes_ + size > capacity_) &&
+            !underMemoryArbitration())) {
       return false;
     }
   }
@@ -913,11 +930,13 @@ bool MemoryPoolImpl::reclaimableBytes(uint64_t& reclaimableBytes) const {
   return reclaimer()->reclaimableBytes(*this, reclaimableBytes);
 }
 
-uint64_t MemoryPoolImpl::reclaim(uint64_t targetBytes) {
+uint64_t MemoryPoolImpl::reclaim(
+    uint64_t targetBytes,
+    memory::MemoryReclaimer::Stats& stats) {
   if (reclaimer() == nullptr) {
     return 0;
   }
-  return reclaimer()->reclaim(this, targetBytes);
+  return reclaimer()->reclaim(this, targetBytes, stats);
 }
 
 void MemoryPoolImpl::enterArbitration() {
@@ -979,8 +998,23 @@ void MemoryPoolImpl::abort(const std::exception_ptr& error) {
   if (reclaimer() == nullptr) {
     VELOX_FAIL("Can't abort the memory pool {} without reclaimer", name_);
   }
-  aborted_ = true;
+  setAbortError(error);
   reclaimer()->abort(this, error);
+}
+
+void MemoryPoolImpl::setAbortError(const std::exception_ptr& error) {
+  VELOX_CHECK(
+      !aborted_,
+      "Trying to set another abort error on an already aborted pool.");
+  abortError_ = error;
+  aborted_ = true;
+}
+
+void MemoryPoolImpl::checkIfAborted() const {
+  if (FOLLY_UNLIKELY(aborted())) {
+    VELOX_CHECK_NOT_NULL(abortError_);
+    std::rethrow_exception(abortError_);
+  }
 }
 
 void MemoryPoolImpl::testingSetCapacity(int64_t bytes) {

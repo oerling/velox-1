@@ -105,9 +105,11 @@ struct MinMaxByNAccumulator {
   }
 
   void checkAndSetN(DecodedVector& decodedN, vector_size_t row) {
-    VELOX_USER_CHECK(
-        !decodedN.isNullAt(row),
-        "third argument of max_by/min_by must be a positive integer");
+    // Skip null N.
+    if (decodedN.isNullAt(row)) {
+      return;
+    }
+
     const auto newN = decodedN.valueAt<int64_t>(row);
     VELOX_USER_CHECK_GT(
         newN, 0, "third argument of max_by/min_by must be a positive integer");
@@ -666,11 +668,11 @@ class MinMaxByNAggregate : public exec::Aggregate {
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
       override {
     auto rowVector = (*result)->as<RowVector>();
+    rowVector->resize(numGroups);
+
     auto nVector = rowVector->childAt(0);
     auto comparisonArray = rowVector->childAt(1)->as<ArrayVector>();
     auto valueArray = rowVector->childAt(2)->as<ArrayVector>();
-
-    resizeRowVectorAndChildren(*rowVector, numGroups);
 
     auto* rawNs = nVector->as<FlatVector<int64_t>>()->mutableRawValues();
 
@@ -738,7 +740,7 @@ class MinMaxByNAggregate : public exec::Aggregate {
     decodedN_.decode(*args[2], rows);
 
     rows.applyToSelected([&](vector_size_t i) {
-      if (decodedComparison_.isNullAt(i)) {
+      if (decodedComparison_.isNullAt(i) || decodedN_.isNullAt(i)) {
         return;
       }
 
@@ -777,7 +779,7 @@ class MinMaxByNAggregate : public exec::Aggregate {
     validateN(args[2], rows, accumulator);
 
     rows.applyToSelected([&](vector_size_t i) {
-      if (!decodedComparison_.isNullAt(i)) {
+      if (!decodedComparison_.isNullAt(i) && !decodedN_.isNullAt(i)) {
         addRawInput(group, i);
       }
     });
@@ -1105,7 +1107,7 @@ exec::AggregateRegistrationResult registerMinMaxBy(const std::string& name) {
   // V, C -> row(V, C) -> V.
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
                            .typeVariable("V")
-                           .typeVariable("C")
+                           .orderableTypeVariable("C")
                            .returnType("V")
                            .intermediateType("row(V,C)")
                            .argumentType("V")
@@ -1157,31 +1159,11 @@ exec::AggregateRegistrationResult registerMinMaxBy(const std::string& name) {
             (argTypes.size() == 1 && argTypes[0]->size() == 3);
 
         if (nAgg) {
-          if (isRawInput) {
-            // Input is: V, C, BIGINT.
-            return createNArg<NAggregate>(
-                resultType, argTypes[0], argTypes[1], errorMessage);
-          } else {
-            // Input is: ROW(BIGINT, ARRAY(C), ARRAY(V)).
-            const auto& rowType = argTypes[0];
-            const auto& compareType = rowType->childAt(1)->childAt(0);
-            const auto& valueType = rowType->childAt(2)->childAt(0);
-            return createNArg<NAggregate>(
-                resultType, valueType, compareType, errorMessage);
-          }
+          return createNArg<NAggregate>(
+              resultType, argTypes[0], argTypes[1], errorMessage);
         } else {
-          if (isRawInput) {
-            // Input is: V, C.
-            return create<Aggregate, Comparator, isMaxFunc>(
-                resultType, argTypes[0], argTypes[1], errorMessage);
-          } else {
-            // Input is: ROW(V, C).
-            const auto& rowType = argTypes[0];
-            const auto& valueType = rowType->childAt(0);
-            const auto& compareType = rowType->childAt(1);
-            return create<Aggregate, Comparator, isMaxFunc>(
-                resultType, valueType, compareType, errorMessage);
-          }
+          return create<Aggregate, Comparator, isMaxFunc>(
+              resultType, argTypes[0], argTypes[1], errorMessage, true);
         }
       });
 }

@@ -28,7 +28,7 @@ int32_t compare(
       true, // nullsFirst
       true, // ascending
       false, // equalsOnly
-      CompareFlags::NullHandlingMode::StopAtNull};
+      CompareFlags::NullHandlingMode::kStopAtNull};
 
   auto result = accumulator->compare(decoded, index, kCompareFlags);
   VELOX_USER_CHECK(
@@ -38,5 +38,4 @@ int32_t compare(
           mapTypeKindToName(decoded.base()->typeKind())));
   return result.value();
 }
-
 } // namespace facebook::velox::aggregate::prestosql

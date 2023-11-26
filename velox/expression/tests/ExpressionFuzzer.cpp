@@ -26,8 +26,8 @@
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/ReverseSignatureBinder.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
-#include "velox/expression/tests/ArgumentTypeFuzzer.h"
 #include "velox/expression/tests/ExpressionFuzzer.h"
+#include "velox/expression/tests/utils/ArgumentTypeFuzzer.h"
 
 DEFINE_int32(steps, 10, "Number of expressions to generate and execute.");
 
@@ -287,7 +287,7 @@ bool isSupportedSignature(const exec::FunctionSignature& signature) {
   // Not supporting lambda functions, or functions using decimal and
   // timestamp with time zone types.
   return !(
-      useTypeName(signature, "function") ||
+      useTypeName(signature, "opaque") || useTypeName(signature, "function") ||
       useTypeName(signature, "long_decimal") ||
       useTypeName(signature, "short_decimal") ||
       useTypeName(signature, "decimal") ||

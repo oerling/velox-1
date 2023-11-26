@@ -463,24 +463,24 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
 }
 
 void projectChildren(
-    const RowVectorPtr& dest,
+    std::vector<VectorPtr>& projectedChildren,
     const RowVectorPtr& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
     WrapState* state) {
-  projectChildren(dest, src->children(), projections, size, mapping, state);
+  projectChildren(projectedChildren, src->children(), projections, size, mapping, state);
 }
 
 void projectChildren(
-    const RowVectorPtr& dest,
+    std::vector<VectorPtr>& projectedChildren,
     const std::vector<VectorPtr>& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,
     const BufferPtr& mapping,
     WrapState* state) {
   for (const auto& projection : projections) {
-    dest->childAt(projection.outputChannel) = state
+    projectedChildren[projection.outputChannel] = state
         ? wrapOne(size, mapping, src[projection.inputChannel], nullptr, *state)
         : wrapChild(size, mapping, src[projection.inputChannel]);
   }

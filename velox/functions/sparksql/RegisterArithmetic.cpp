@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 #include "velox/functions/sparksql/RegisterArithmetic.h"
+#include "velox/functions/lib/CheckedArithmetic.h"
 #include "velox/functions/lib/RegistrationHelpers.h"
 #include "velox/functions/prestosql/Arithmetic.h"
-#include "velox/functions/prestosql/CheckedArithmetic.h"
 #include "velox/functions/sparksql/Arithmetic.h"
 #include "velox/functions/sparksql/Rand.h"
 
@@ -90,6 +90,9 @@ void registerArithmeticFunctions(const std::string& prefix) {
   registerFunction<sparksql::Log2Function, double, double>({prefix + "log2"});
   registerFunction<sparksql::Log10Function, double, double>({prefix + "log10"});
   registerRandFunctions(prefix);
+
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_mul, prefix + "multiply");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_div, prefix + "divide");
 }
 
 } // namespace facebook::velox::functions::sparksql

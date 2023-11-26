@@ -57,7 +57,8 @@ class OrderBy : public Operator {
     return finished_;
   }
 
-  void reclaim(uint64_t targetBytes) override;
+  void reclaim(uint64_t targetBytes, memory::MemoryReclaimer::Stats& stats)
+      override;
 
   void abort() override;
 
@@ -68,5 +69,6 @@ class OrderBy : public Operator {
 
   std::unique_ptr<SortBuffer> sortBuffer_;
   bool finished_ = false;
+  uint32_t maxOutputRows_;
 };
 } // namespace facebook::velox::exec

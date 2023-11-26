@@ -166,7 +166,7 @@ folly::Range<vector_size_t*> initializeRowNumberMapping(
 /// deduplicate dictionary merging when applying the same dictionary
 /// over more than one identical set of indices.
 void projectChildren(
-    const RowVectorPtr& dest,
+    std::vector<VectorPtr>& projectedChildren,
     const RowVectorPtr& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,
@@ -176,7 +176,7 @@ void projectChildren(
 /// Overload of the above function that takes reference to const vector of
 /// VectorPtr as 'src' argument, instead of row vector.
 void projectChildren(
-    const RowVectorPtr& dest,
+    std::vector<VectorPtr>& projectedChildren,
     const std::vector<VectorPtr>& src,
     const std::vector<IdentityProjection>& projections,
     int32_t size,

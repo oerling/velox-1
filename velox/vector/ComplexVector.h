@@ -22,7 +22,6 @@
 #include <folly/hash/Hash.h>
 #include <glog/logging.h>
 
-#include <velox/vector/BaseVector.h>
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/LazyVector.h"
@@ -110,14 +109,27 @@ class RowVector : public BaseVector {
     return childrenSize_;
   }
 
+  // Resize a row vector by adding trailing nulls to the top level row without
+  // resizing children.
+  // Caller should ensure that the vector is unique before calling this method.
+  void appendNulls(vector_size_t numberOfRows);
+
   /// Get the child vector at a given offset.
   VectorPtr& childAt(column_index_t index) {
-    VELOX_USER_CHECK_LT(index, childrenSize_);
+    VELOX_CHECK_LT(
+        index,
+        childrenSize_,
+        "Trying to access non-existing child in RowVector: {}",
+        toString());
     return children_[index];
   }
 
   const VectorPtr& childAt(column_index_t index) const {
-    VELOX_USER_CHECK_LT(index, childrenSize_);
+    VELOX_CHECK_LT(
+        index,
+        childrenSize_,
+        "Trying to access non-existing child in RowVector: {}",
+        toString());
     return children_[index];
   }
 
@@ -191,6 +203,17 @@ class RowVector : public BaseVector {
   void updateContainsLazyNotLoaded() const;
 
   void validate(const VectorValidateOptions& options) const override;
+
+  /// Only calls BaseVector::resize and doesnt resize the children.
+  /// This function is present for backwards compatibility,
+  /// until the few places that require it are migrated over.
+  void unsafeResize(vector_size_t newSize, bool setNotNull = true);
+
+  /// Resizes the parent row container and also recursively resizes the
+  /// children. Note that this function will throw if the children are not
+  /// uniquely referenced by the parent when increasing the size.
+  /// Note : If the child is null, then it will stay null after the resize.
+  void resize(vector_size_t newSize, bool setNotNull = true) override;
 
  private:
   vector_size_t childSize() const {
@@ -266,17 +289,19 @@ struct ArrayVectorBase : BaseVector {
   }
 
   BufferPtr mutableOffsets(size_t size) {
-    return ensureIndices(offsets_, rawOffsets_, size);
+    BaseVector::resizeIndices(size, pool_, &offsets_, &rawOffsets_);
+    return offsets_;
   }
 
   BufferPtr mutableSizes(size_t size) {
-    return ensureIndices(sizes_, rawSizes_, size);
+    BaseVector::resizeIndices(size, pool_, &sizes_, &rawSizes_);
+    return sizes_;
   }
 
   void resize(vector_size_t size, bool setNotNull = true) override {
     if (BaseVector::length_ < size) {
-      resizeIndices(size, &offsets_, &rawOffsets_);
-      resizeIndices(size, &sizes_, &rawSizes_);
+      BaseVector::resizeIndices(size, pool_, &offsets_, &rawOffsets_);
+      BaseVector::resizeIndices(size, pool_, &sizes_, &rawSizes_);
       clearIndices(sizes_, length_, size);
       // No need to clear offset indices since we set sizes to 0.
     }
@@ -333,19 +358,6 @@ struct ArrayVectorBase : BaseVector {
   void validateArrayVectorBase(
       const VectorValidateOptions& options,
       vector_size_t minChildVectorSize) const;
-
- private:
-  BufferPtr
-  ensureIndices(BufferPtr& buf, const vector_size_t*& raw, vector_size_t size) {
-    // TODO: change this to isMutable(). See
-    // https://github.com/facebookincubator/velox/issues/6562.
-    if (buf && !buf->isView() &&
-        buf->capacity() >= size * sizeof(vector_size_t)) {
-      return buf;
-    }
-    resizeIndices(size, &buf, &raw, 0);
-    return buf;
-  }
 
  protected:
   BufferPtr offsets_;

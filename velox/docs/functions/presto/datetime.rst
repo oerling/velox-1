@@ -1,6 +1,58 @@
 =====================================
-Date and Time Functions
+Date and Time Functions and Operators
 =====================================
+
+Date and Time Operators
+-----------------------
+
+.. list-table::
+   :widths: 15 60 25
+   :header-rows: 1
+
+   * - Operator
+     - Example
+     - Result
+   * - ``*``
+     - ``interval '1' second * 2``
+     - ``0 00:00:02.000``
+   * - ``*``
+     - ``2 * interval '1' second``
+     - ``0 00:00:02.000``
+   * - ``*``
+     - ``interval '1' second * 0.001``
+     - ``0 00:00:00.001``
+   * - ``*``
+     - ``0.001 * interval '1' second``
+     - ``0 00:00:00.001``
+   * - ``/``
+     - ``interval '15' second / 1.5``
+     - ``0 00:00:10.000``
+
+.. function:: multiply(interval day to second, x) -> interval day to second
+
+    Returns the result of multiplying ``interval day to second`` by ``x``.
+    ``x`` can be a bigint or double. Returns ``0`` when ``x`` is NaN. Returns
+    ``106751991167 07:12:55.807`` when ``x`` is infinity or when the
+    multiplication overflow in positive. Returns ``-106751991167 07:12:55.808``
+    when ``x`` is -infinity or when the multiplication overflow in negiative.
+
+.. function:: multiply(x, interval day to second) -> interval day to second
+
+    Returns the result of multiplying ``x`` by ``interval day to second``.
+    Same as ``multiply(interval day to second, x)``.
+
+.. function:: divide(interval day to second, x) -> interval day to second
+
+    Returns the result of ``interval day to second`` divided by ``x``. ``x`` is
+    a double. Returns ``0`` when ``x`` is NaN or is infinity. Returns
+    ``106751991167 07:12:55.807`` when ``x`` is ``0.0`` and
+    ``interval day to second`` is not ``0``, or when the division overflows in
+    positive. Returns ``-106751991167 07:12:55.808`` when ``x`` is ``-0.0`` and
+    ``interval day to second`` is not ``0``, or when the division overflows in
+    negiative.
+
+Date and Time Functions
+-----------------------
 
 .. function:: current_date() -> date
 
@@ -240,3 +292,48 @@ arbitrary large timestamps.
 .. function:: yow(x) -> bigint
 
     This is an alias for :func:`year_of_week`.
+
+.. _presto-time-zones:
+
+Time Zones
+----------
+
+Velox has full support for time zone rules, which are needed to perform date/time
+calculations correctly. Typically, the session time zone is used for temporal
+calculations. This is the time zone of the client computer that submits the query, if
+available. Otherwise, it is the time zone of the server running the Presto coordinator.
+
+Queries that operate with time zones that follow daylight saving can produce unexpected
+results. For example, if we run the following query in the `America/Los Angeles` time
+zone: ::
+
+        SELECT date_add('hour', 24, cast('2014-03-08 09:00:00' as timestamp));
+        -- 2014-03-09 10:00:00.000
+
+The timestamp appears to only advance 23 hours. This is because on March 9th clocks in
+`America/Los Angeles` are turned forward 1 hour, so March 9th only has 23 hours. To
+advance the day part of the timestamp, use the `day` unit instead: ::
+
+        SELECT date_add('day', 1, cast('2014-03-08 09:00:00' as timestamp));
+        -- 2014-03-09 09:00:00.000
+
+This works because the :func:`date_add` function treats the timestamp as list of fields, adds
+the value to the specified field and then rolls any overflow into the next higher field.
+
+Time zones are also necessary for parsing and printing timestamps. Queries that use this
+functionality can also produce unexpected results. For example, on the same machine: ::
+
+        SELECT cast('2014-03-09 02:30:00' as timestamp);
+
+The above query causes an error because there was no 2:30 AM on March 9th in
+`America/Los_Angeles` due to a daylight saving time transition.
+
+Similarly, the following query has two possible outcomes due to a daylight saving time
+transition: ::
+
+        SELECT cast('2014-11-02 01:30:00' as timestamp);
+        -- 2014-11-02 08:30:00.000
+
+It can be interpreted as `2014-11-02 01:30:00 PDT`, or `2014-11-02 01:30:00 PST`, which are
+`2014-11-02 08:30:00 UTC` or `2014-11-02 09:30:00 UTC` respectively. The former one is
+picked to be consistent with Presto.

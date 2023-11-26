@@ -255,8 +255,12 @@ class ConstantVector final : public SimpleVector<T> {
     return index_;
   }
 
-  void resize(vector_size_t size, bool setNotNull = true) override {
-    BaseVector::length_ = size;
+  void resize(vector_size_t newSize, bool /*setNotNull*/ = true) override {
+    BaseVector::length_ = newSize;
+    if constexpr (std::is_same_v<T, StringView>) {
+      SimpleVector<StringView>::resizeIsAsciiIfNotEmpty(
+          newSize, SimpleVector<StringView>::getAllIsAscii());
+    }
   }
 
   VectorPtr slice(vector_size_t /*offset*/, vector_size_t length)
@@ -286,6 +290,10 @@ class ConstantVector final : public SimpleVector<T> {
     } else {
       return isNullAt(idx);
     }
+  }
+
+  void addNulls(const SelectivityVector& /*rows*/) override {
+    VELOX_FAIL("addNulls not supported");
   }
 
   std::optional<int32_t> compare(
@@ -367,7 +375,8 @@ class ConstantVector final : public SimpleVector<T> {
 
     isNull_ = valueVector_->isNullAt(index_);
     BaseVector::distinctValueCount_ = isNull_ ? 0 : 1;
-    BaseVector::nullCount_ = isNull_ ? BaseVector::length_ : 0;
+    const vector_size_t vectorSize = BaseVector::length_;
+    BaseVector::nullCount_ = isNull_ ? vectorSize : 0;
     if (valueVector_->isScalar()) {
       auto simple = valueVector_->loadedVector()->as<SimpleVector<T>>();
       isNull_ = simple->isNullAt(index_);

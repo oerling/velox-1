@@ -22,18 +22,22 @@ add_executable(
   ColumnSelectorTests.cpp
   DataBufferTests.cpp
   DecoderUtilTest.cpp
+  ExecutorBarrierTest.cpp
   LocalFileSinkTest.cpp
   LoggedExceptionTest.cpp
   RangeTests.cpp
   ReadFileInputStreamTests.cpp
+  ReaderTest.cpp
   RetryTests.cpp
   TestBufferedInput.cpp
-  TypeTests.cpp)
+  TypeTests.cpp
+  WriterTest.cpp)
 add_test(velox_dwio_common_test velox_dwio_common_test)
 target_link_libraries(
   velox_dwio_common_test
   velox_dwio_common_test_utils
   velox_temp_path
+  velox_vector_test_lib
   Boost::regex
   velox_link_libs
   Folly::folly
@@ -72,7 +76,8 @@ target_link_libraries(
   ZLIB::ZLIB
   ${TEST_LINK_LIBS})
 
-if(VELOX_ENABLE_ARROW)
+if(VELOX_ENABLE_ARROW AND VELOX_ENABLE_BENCHMARKS)
+  add_subdirectory(Lemire/FastPFor)
   add_executable(velox_dwio_common_bitpack_decoder_benchmark
                  BitPackDecoderBenchmark.cpp)
 
@@ -80,6 +85,11 @@ if(VELOX_ENABLE_ARROW)
                          PRIVATE -Wno-deprecated-declarations)
 
   target_link_libraries(
-    velox_dwio_common_bitpack_decoder_benchmark velox_dwio_common arrow duckdb
-    Folly::folly ${FOLLY_BENCHMARK})
+    velox_dwio_common_bitpack_decoder_benchmark
+    velox_dwio_common
+    arrow
+    velox_fastpforlib
+    duckdb_static
+    Folly::folly
+    ${FOLLY_BENCHMARK})
 endif()
