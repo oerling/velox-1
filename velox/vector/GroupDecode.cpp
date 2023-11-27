@@ -20,21 +20,17 @@
 
 namespace facebook::velox {
 
-void  GroupDecode::decode(const RowVector& row) {
+void GroupDecode::decode(const RowVector& row) {
   auto& children = row.children();
   raw_vector<vector_size_t*> wrappers;
-  
+
   for (auto i = 0; i < numChildren; ++i) {
     const BaseVector* child = children[i].get();
-    if (child->encoding() == VectorEncoding::Simple::DICTIONARY && child->rawNulls()) {
+    if (child->encoding() == VectorEncoding::Simple::DICTIONARY &&
+        child->rawNulls()) {
       auto& indices = child->wrapInfo();
-      
+
     } else {
-      
     }
-    
   }
-  
 }
-
-

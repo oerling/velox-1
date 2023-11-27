@@ -23,7 +23,8 @@ namespace facebook::velox {
 
 /// Set of vectors sharing a wrapper.
 struct WrapGroup {
-  /// The indices that wrap columns in this group. nullptr if the columns are not wrapped.
+  /// The indices that wrap columns in this group. nullptr if the columns are
+  /// not wrapped.
   vector_size_t* indices;
 
   /// The indices of columns in this group.
@@ -32,7 +33,8 @@ struct WrapGroup {
   /// The data wrapped by 'indices'. 1:1 with 'columnIndices'.
   raw_vector<BaseVector*> valueVectors;
 
-  /// If any of 'valueVectors' is a wrapper, there is one child group per distinct wrapper.
+  /// If any of 'valueVectors' is a wrapper, there is one child group per
+  /// distinct wrapper.
   std::vector<WrapGroup> children;
 };
 
