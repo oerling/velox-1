@@ -16,6 +16,7 @@
 
 #include "velox/common/base/SimdUtil.h"
 #include <folly/Random.h>
+#include "velox/common/base/RawVector.h"
 #include "velox/common/time/Timer.h"
 
 #include <gtest/gtest.h>
@@ -210,11 +211,11 @@ TEST_F(SimdUtilTest, gatherBits) {
   EXPECT_FALSE(bits::isBitSet(&bits, N - 1));
 }
 
-TEST_F(SimdUtilTest, translate) {
+TEST_F(SimdUtilTest, transpose) {
   constexpr int32_t kMaxSize = 100;
   std::vector<int32_t> data32(kMaxSize);
   std::vector<int64_t> data64(kMaxSize);
-  std::vector<int32_t> indices(kMaxSize);
+  raw_vector<int32_t> indices(kMaxSize);
   constexpr int64_t kMagic = 0x4fe12LU;
   // indices are scattered over 0..kMaxSize - 1.
   for (auto i = 0; i < kMaxSize; ++i) {
@@ -224,7 +225,7 @@ TEST_F(SimdUtilTest, translate) {
   }
   for (auto size = 1; size < kMaxSize; ++size) {
     std::vector<int32_t> result32(kMaxSize + 1, -1);
-    simd::translate(
+    simd::transpose(
         data32.data(),
         folly::Range<const int32_t*>(indices.data(), size),
         result32.data());
@@ -235,7 +236,7 @@ TEST_F(SimdUtilTest, translate) {
     EXPECT_EQ(-1, result32[size]);
 
     std::vector<int64_t> result64(kMaxSize + 1, -1);
-    simd::translate(
+    simd::transpose(
         data64.data(),
         folly::Range<const int32_t*>(indices.data(), size),
         result64.data());
