@@ -2102,7 +2102,8 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
   if (!flatVector->mayHaveNulls()) {
     stream->appendNonNull(rows.size());
     valueBits = bitsHolder.get(bits::nwords(rows.size()));
-    simd::gatherBits(reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
+    simd::gatherBits(
+        reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
     numValueBits = rows.size();
   } else {
     uint64_t* nulls = bitsHolder.get(bits::nwords(rows.size()));
@@ -2399,7 +2400,6 @@ void serializeColumn(
       serializeWrapped(vector, rows, stream, scratch);
   }
 }
-
 
 template <TypeKind Kind>
 void serializeConstantColumn(
@@ -2925,7 +2925,7 @@ void estimateSerializedSizeInt(
       int32_t numInner = numRows;
       if (vector->mayHaveNulls()) {
         auto nulls = nullsHolder.get(bits::nwords(numRows));
-	simd::gatherBits(vector->rawNulls(), rows, nulls);
+        simd::gatherBits(vector->rawNulls(), rows, nulls);
         auto mutableInnerRows = innerRowsHolder.get(numRows);
         numInner = simd::indicesOfSetBits(nulls, 0, numRows, mutableInnerRows);
         innerSizes = innerSizesHolder.get(numInner);

@@ -139,8 +139,7 @@ void VectorStreamGroup::estimateSerializedSize(
     folly::Range<const vector_size_t*> rows,
     vector_size_t** sizes,
     Scratch& scratch) {
-  getVectorSerde()->estimateSerializedSize(
-      vector, rows, sizes, scratch);
+  getVectorSerde()->estimateSerializedSize(vector, rows, sizes, scratch);
 }
 
 // static

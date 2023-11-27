@@ -33,7 +33,7 @@ struct IndexRange {
   vector_size_t size;
 };
 
-  class VectorSerializer {
+class VectorSerializer {
  public:
   virtual ~VectorSerializer() = default;
 

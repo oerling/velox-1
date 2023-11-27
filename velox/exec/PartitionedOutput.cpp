@@ -58,9 +58,7 @@ BlockingReason Destination::advance(
     current_->createStreamTree(rowType, rowsInCurrent_);
   }
   current_->append(
-      output,
-      folly::Range(&rows_[firstRow], rowIdx_ - firstRow),
-      scratch);
+      output, folly::Range(&rows_[firstRow], rowIdx_ - firstRow), scratch);
   // Update output state variable.
   if (rowIdx_ == rows_.size()) {
     *atEnd = true;
