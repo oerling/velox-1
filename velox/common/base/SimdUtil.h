@@ -410,9 +410,11 @@ inline void storeLeading(
 
 /// Stores elements of 'input' selected by 'indices' into 'output'. output[i] =
 /// input[indices[i]].
-// Indices and output may be the same.
+// Indices and output may be the same. May overread indices but will not
+// dereference indices that are not in range. Writes exactly indices.size()
+// elements of 'output'.
 template <typename TData, typename TIndex, typename A = xsimd::default_arch>
-inline void translate(
+inline void transpose(
     const TData* input,
     folly::Range<const TIndex*> indices,
     TData* output) {
@@ -432,6 +434,14 @@ inline void translate(
     storeLeading<TData, A>(values, mask, numLeft, output + i);
   }
 }
+
+/// Gathers the bit from 'bits' for each bit offset in 'indices'. Stores the
+/// result in 'result'. Writes one byte of 'result' for each 8 bits. If the last
+/// byte is not full the trailing bits are undefined.
+void gatherBits(
+    const uint64_t* bits,
+    folly::Range<const int32_t*> indices,
+    uint64_t* result);
 
 // Adds 'bytes' bytes to an address of arbitrary type.
 template <typename T>

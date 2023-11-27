@@ -60,7 +60,6 @@ BlockingReason Destination::advance(
   current_->append(
       output,
       folly::Range(&rows_[firstRow], rowIdx_ - firstRow),
-      nullptr,
       scratch);
   // Update output state variable.
   if (rowIdx_ == rows_.size()) {

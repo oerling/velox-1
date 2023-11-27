@@ -1827,7 +1827,7 @@ int32_t rowsToRanges(
   if (rawNulls) {
     ScratchPtr<uint64_t, 4> nullsHolder(scratch);
     auto* nulls = nullsHolder.get(bits::nwords(rows.size()));
-    gatherBits(rawNulls, rows, nulls);
+    simd::gatherBits(rawNulls, rows, nulls);
     auto* mutableNonNullRows = nonNullHolder.get(numRows);
     auto* mutableInnerRows = innerRowsHolder.get(numRows);
     numInner = simd::indicesOfSetBits(nulls, 0, numRows, mutableNonNullRows);
@@ -1835,7 +1835,7 @@ int32_t rowsToRanges(
       stream->appendLengths(
           nulls, rows, numInner, [&](auto row) { return sizes[row]; });
     }
-    simd::translate(
+    simd::transpose(
         rows.data(),
         folly::Range<const vector_size_t*>(mutableNonNullRows, numInner),
         mutableInnerRows);
@@ -2060,7 +2060,7 @@ void serializeFlatVector(
   }
   ScratchPtr<uint64_t, 4> nullsHolder(scratch);
   uint64_t* nulls = nullsHolder.get(bits::nwords(rows.size()));
-  gatherBits(vector->rawNulls(), rows, nulls);
+  simd::gatherBits(vector->rawNulls(), rows, nulls);
   if (std::is_same_v<T, Timestamp>) {
     appendTimestamps(
         nulls,
@@ -2102,21 +2102,21 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
   if (!flatVector->mayHaveNulls()) {
     stream->appendNonNull(rows.size());
     valueBits = bitsHolder.get(bits::nwords(rows.size()));
-    gatherBits(reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
+    simd::gatherBits(reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
     numValueBits = rows.size();
   } else {
     uint64_t* nulls = bitsHolder.get(bits::nwords(rows.size()));
-    gatherBits(vector->rawNulls(), rows, nulls);
+    simd::gatherBits(vector->rawNulls(), rows, nulls);
     ScratchPtr<vector_size_t, 64> nonNullsHolder(scratch);
     auto nonNulls = nonNullsHolder.get(rows.size());
     numValueBits = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNulls);
     stream->appendNulls(nulls, 0, rows.size(), numValueBits);
     valueBits = nulls;
-    simd::translate(
+    simd::transpose(
         rows.data(),
         folly::Range<const vector_size_t*>(nonNulls, numValueBits),
         nonNulls);
-    gatherBits(
+    simd::gatherBits(
         reinterpret_cast<const uint64_t*>(rawValues),
         folly::Range<const vector_size_t*>(nonNulls, numValueBits),
         valueBits);
@@ -2153,7 +2153,7 @@ void serializeWrapped(
     // Dictionary with no nulls.
     auto* indices = vector->wrapInfo()->as<vector_size_t>();
     wrapped = vector->valueVector().get();
-    simd::translate(indices, rows, innerRows);
+    simd::transpose(indices, rows, innerRows);
     numInner = numRows;
   } else {
     wrapped = vector->wrappedVector();
@@ -2240,12 +2240,12 @@ void serializeRowVector(
   auto numInnerRows = rows.size();
   if (auto rawNulls = vector->rawNulls()) {
     auto nulls = nullsHolder.get(bits::nwords(rows.size()));
-    gatherBits(rawNulls, rows, nulls);
+    simd::gatherBits(rawNulls, rows, nulls);
     auto* mutableInnerRows = innerRowsHolder.get(rows.size());
     numInnerRows =
         simd::indicesOfSetBits(nulls, 0, rows.size(), mutableInnerRows);
     stream->appendLengths(nulls, rows, numInnerRows, [](int32_t) { return 1; });
-    simd::translate(
+    simd::transpose(
         rows.data(),
         folly::Range<const vector_size_t*>(mutableInnerRows, numInnerRows),
         mutableInnerRows);
@@ -2742,7 +2742,7 @@ void estimateFlatSerializedSize(
     ScratchPtr<uint64_t, 4> nullsHolder(scratch);
     ScratchPtr<int32_t, 64> nonNullsHolder(scratch);
     auto nulls = nullsHolder.get(bits::nwords(numRows));
-    gatherBits(rawNulls, rows, nulls);
+    simd::gatherBits(rawNulls, rows, nulls);
     auto nonNulls = nonNullsHolder.get(numRows);
     const auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNulls);
     for (int32_t i = 0; i < numNonNull; ++i) {
@@ -2770,7 +2770,7 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
     ScratchPtr<uint64_t, 4> nullsHolder(scratch);
     ScratchPtr<int32_t, 64> nonNullsHolder(scratch);
     auto nulls = nullsHolder.get(bits::nwords(numRows));
-    gatherBits(rawNulls, rows, nulls);
+    simd::gatherBits(rawNulls, rows, nulls);
     auto* nonNulls = nonNullsHolder.get(numRows);
     auto numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, nonNulls);
 
@@ -2824,7 +2824,7 @@ void estimateWrapperSerializedSize(
     // Dictionary with no nulls.
     auto* indices = wrapper->wrapInfo()->as<vector_size_t>();
     wrapped = wrapper->valueVector().get();
-    simd::translate(indices, rows, innerRows);
+    simd::transpose(indices, rows, innerRows);
   } else {
     wrapped = wrapper->wrappedVector();
     for (int32_t i = 0; i < rows.size(); ++i) {
@@ -2925,14 +2925,14 @@ void estimateSerializedSizeInt(
       int32_t numInner = numRows;
       if (vector->mayHaveNulls()) {
         auto nulls = nullsHolder.get(bits::nwords(numRows));
-        gatherBits(vector->rawNulls(), rows, nulls);
+	simd::gatherBits(vector->rawNulls(), rows, nulls);
         auto mutableInnerRows = innerRowsHolder.get(numRows);
         numInner = simd::indicesOfSetBits(nulls, 0, numRows, mutableInnerRows);
         innerSizes = innerSizesHolder.get(numInner);
         for (auto i = 0; i < numInner; ++i) {
           innerSizes[i] = sizes[mutableInnerRows[i]];
         }
-        simd::translate(
+        simd::transpose(
             rows.data(),
             folly::Range<const vector_size_t*>(mutableInnerRows, numInner),
             mutableInnerRows);
@@ -3057,7 +3057,6 @@ class PrestoVectorSerializer : public VectorSerializer {
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
-      const SerializationWrappers* wrappers,
       Scratch& scratch) override {
     auto newRows = rows.size();
     if (newRows > 0) {
@@ -3260,7 +3259,6 @@ void PrestoVectorSerde::estimateSerializedSize(
 void PrestoVectorSerde::estimateSerializedSize(
     VectorPtr vector,
     const folly::Range<const vector_size_t*> rows,
-    const SerializationWrappers* wrappers,
     vector_size_t** sizes,
     Scratch& scratch) {
   estimateSerializedSizeInt(vector->loadedVector(), rows, sizes, scratch);

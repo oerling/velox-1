@@ -112,9 +112,8 @@ void VectorStreamGroup::append(
 void VectorStreamGroup::append(
     const RowVectorPtr& vector,
     const folly::Range<const vector_size_t*>& rows,
-    const SerializationWrappers* wrappers,
     Scratch& scratch) {
-  serializer_->append(vector, rows, wrappers, scratch);
+  serializer_->append(vector, rows, scratch);
 }
 
 void VectorStreamGroup::append(const RowVectorPtr& vector) {
@@ -138,11 +137,10 @@ void VectorStreamGroup::estimateSerializedSize(
 void VectorStreamGroup::estimateSerializedSize(
     VectorPtr vector,
     folly::Range<const vector_size_t*> rows,
-    const SerializationWrappers* wrappers,
     vector_size_t** sizes,
     Scratch& scratch) {
   getVectorSerde()->estimateSerializedSize(
-      vector, rows, wrappers, sizes, scratch);
+      vector, rows, sizes, scratch);
 }
 
 // static

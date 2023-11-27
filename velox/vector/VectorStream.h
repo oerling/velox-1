@@ -33,19 +33,7 @@ struct IndexRange {
   vector_size_t size;
 };
 
-struct SerializationWrappers {
-  static constexpr int32_t kNotWrapped = -1;
-  // The unique wrappers that occur in a RowVector given to append(). Each
-  // element has a value for each row in the RowVector. The pointers typically
-  // refer to dictionary indices buffers of dictionary encoded inputs.
-  std::vector<vector_size_t*> uniqueWrappers;
-
-  // An index into uniqueWrappers for each child of a RowVector given to
-  // append(). kNotWrapped if the child in question is not wrapped.
-  raw_vector<int32_t> wrapIndex;
-};
-
-class VectorSerializer {
+  class VectorSerializer {
  public:
   virtual ~VectorSerializer() = default;
 
@@ -65,7 +53,6 @@ class VectorSerializer {
   virtual void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
-      const SerializationWrappers* wrappers,
       Scratch& scratch) {
     VELOX_UNSUPPORTED();
   }
@@ -109,7 +96,6 @@ class VectorSerde {
   virtual void estimateSerializedSize(
       VectorPtr vector,
       folly::Range<const vector_size_t*> rows,
-      const SerializationWrappers* wrappers,
       vector_size_t** sizes,
       Scratch& scratch) {
     VELOX_UNSUPPORTED();
@@ -205,7 +191,6 @@ class VectorStreamGroup : public StreamArena {
   static void estimateSerializedSize(
       VectorPtr vector,
       folly::Range<const vector_size_t*> rows,
-      const SerializationWrappers* wrappers,
       vector_size_t** sizes,
       Scratch& scratch);
 
@@ -230,7 +215,6 @@ class VectorStreamGroup : public StreamArena {
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
-      const SerializationWrappers* wrappers,
       Scratch& scratch);
 
   void append(const RowVectorPtr& vector);
