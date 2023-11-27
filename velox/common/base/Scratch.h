@@ -102,7 +102,7 @@ class Scratch {
 /// no allocation will ever take place. The inline storage is padded
 /// with a trailer of simd::kPadding bytes to allow writing at full
 /// SIMD width at the end of the area.
-template <typename T, int32_t inlineSize = 1>
+template <typename T, int32_t inlineSize = 0>
 class ScratchPtr {
  public:
   ScratchPtr(Scratch& scratch) : scratch_(&scratch) {}
