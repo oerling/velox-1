@@ -125,6 +125,7 @@ class ScratchPtr {
   /// be called once per lifetime.
   T* get(int32_t size) {
     VELOX_CHECK_NULL(ptr_);
+    size_ = size;
     if (size <= inlineSize) {
       ptr_ = inline_;
       return ptr_;
@@ -141,20 +142,18 @@ class ScratchPtr {
     return ptr_;
   }
 
-  bool hasData() const {
-    return ptr_ != nullptr;
+  /// Returns the size of the previous get(int32_t).
+  int32_t size() const {
+    return size_;
   }
 
-  const raw_vector<char>& data() const {
-    return data_;
-  }
-
- private:
+private:
   Scratch* scratch_{nullptr};
   raw_vector<char> data_;
   T* ptr_{nullptr};
+  int32_t size_{0};
   T inline_[inlineSize];
-  char padding_[simd::kPadding];
+  char padding_[inlineSize == 0 ? 0 : simd::kPadding];
 };
 
 } // namespace facebook::velox

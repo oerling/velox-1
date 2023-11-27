@@ -103,8 +103,8 @@ void estimateWrapperSerializedSize(
     vector_size_t** sizes,
     const BaseVector* wrapper,
     Scratch& scratch) {
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
-  ScratchPtr<vector_size_t*> innerSizesHolder(scratch);
+  ScratchPtr<vector_size_t, 1> innerRowsHolder(scratch);
+  ScratchPtr<vector_size_t*, 1> innerSizesHolder(scratch);
   const int32_t numRows = rows.size();
   int32_t numInner = 0;
   auto innerRows = innerRowsHolder.get(numRows);
@@ -207,9 +207,9 @@ void estimateSerializedSizeInt(
       estimateBiasedSerializedSize(vector, rows, sizes, scratch);
       break;
     case VectorEncoding::Simple::ROW: {
-      ScratchPtr<vector_size_t> innerRowsHolder(scratch);
-      ScratchPtr<vector_size_t*> innerSizesHolder(scratch);
-      ScratchPtr<uint64_t> nullsHolder(scratch);
+      ScratchPtr<vector_size_t, 1> innerRowsHolder(scratch);
+      ScratchPtr<vector_size_t*, 1> innerSizesHolder(scratch);
+      ScratchPtr<uint64_t, 1> nullsHolder(scratch);
       auto* innerRows = rows.data();
       auto* innerSizes = sizes;
       const auto numRows = rows.size();

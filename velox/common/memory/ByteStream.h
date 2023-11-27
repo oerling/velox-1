@@ -393,9 +393,9 @@ class AppendWindow {
       : stream_(stream), scratchPtr_(scratch) {}
 
   ~AppendWindow() {
-    if (scratchPtr_.hasData()) {
+    if (scratchPtr_.size()) {
       stream_.appendStringView(std::string_view(
-          scratchPtr_.data().data(), scratchPtr_.data().size()));
+						reinterpret_cast<const char*>(scratchPtr_.get()), scratchPtr_.size() * sizeof(T)));
     }
   }
 

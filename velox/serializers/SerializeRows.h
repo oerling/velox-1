@@ -159,7 +159,7 @@ void appendNonNull(
     const T* values,
     Scratch& scratch) {
   auto numRows = rows.size();
-  ScratchPtr<int32_t, 64> temp(scratch);
+  ScratchPtr<int32_t, 64> nonNullHolder(scratch);
   const int32_t* nonNullIndices;
   int32_t numNonNull;
   if (LIKELY(numRows <= 8)) {
@@ -168,7 +168,7 @@ void appendNonNull(
     nonNullIndices =
         numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
-    auto mutableIndices = temp.get(numRows);
+    auto mutableIndices = nonNullHolder.get(numRows);
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableIndices);
     nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
@@ -384,7 +384,7 @@ void serializeWrapped(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
+  ScratchPtr<vector_size_t, 1> innerRowsHolder(scratch);
   const int32_t numRows = rows.size();
   int32_t numInner = 0;
   auto innerRows = innerRowsHolder.get(numRows);
