@@ -441,7 +441,7 @@ inline void transpose(
 void gatherBits(
     const uint64_t* bits,
     folly::Range<const vector_size_t*> rows,
-    uint64_t* result); 
+    uint64_t* result);
 
 // Adds 'bytes' bytes to an address of arbitrary type.
 template <typename T>

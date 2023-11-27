@@ -19,7 +19,7 @@
 
 namespace facebook::velox::simd {
 
-  void gatherBits(
+void gatherBits(
     const uint64_t* bits,
     folly::Range<const vector_size_t*> rows,
     uint64_t* result) {
@@ -46,7 +46,7 @@ namespace facebook::velox::simd {
         simd::gather8Bits(bits, xsimd::load_unaligned(indices + i), bitsLeft);
   }
 }
-  
+
 namespace detail {
 
 alignas(kPadding) int32_t byteSetBits[256][8];
