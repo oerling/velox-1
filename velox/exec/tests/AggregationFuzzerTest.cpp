@@ -450,8 +450,7 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
         std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(args[1]);
     VELOX_CHECK_NOT_NULL(field);
     auto errorVector =
-        input->childAt(input->type()->asRow().getChildIdx(field->name()))
-            ->as<SimpleVector<double>>();
+        input->childAt(field->name())->as<SimpleVector<double>>();
     return errorVector->valueAt(0);
   }
 
@@ -505,7 +504,7 @@ int main(int argc, char** argv) {
   // Calls common init functions in the necessary order, initializing
   // singletons, installing proper signal handlers for better debugging
   // experience, and initialize glog and gflags.
-  folly::init(&argc, &argv);
+  folly::Init init(&argc, &argv);
 
   size_t initialSeed = FLAGS_seed == 0 ? std::time(nullptr) : FLAGS_seed;
 

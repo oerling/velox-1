@@ -1084,6 +1084,14 @@ TEST_F(VectorTest, row) {
   VELOX_ASSERT_THROW(
       rowVector->childAt(3)->resize(vectorSize_),
       "Trying to access non-existing child in RowVector:");
+
+  ASSERT_EQ(
+      rowVector->childAt("parent_bigint").get(), rowVector->childAt(0).get());
+  ASSERT_EQ(
+      rowVector->childAt("parent_row").get(), rowVector->childAt(1).get());
+  VELOX_ASSERT_THROW(
+      rowVector->childAt("foo"),
+      "Field not found: foo. Available fields are: parent_bigint, parent_row.");
 }
 
 TEST_F(VectorTest, array) {
@@ -3412,6 +3420,117 @@ TEST_F(VectorTest, dictionaryLoadedVectorRemoveLazy) {
                      ->as<DictionaryVector<int64_t>>()
                      ->valueVector()
                      ->isLazy());
+  }
+}
+
+template <typename T>
+FlatVectorPtr<T> makeFlatNullValues(
+    vector_size_t size,
+    const TypePtr& type,
+    BufferPtr nulls,
+    memory::MemoryPool* pool) {
+  return std::make_shared<FlatVector<T>>(
+      pool,
+      type,
+      nulls,
+      size,
+      nullptr, // values
+      std::vector<BufferPtr>{});
+}
+
+TEST_F(VectorTest, flatAllNulls) {
+  // Create FlatVector of all nulls with null values buffer.
+  vector_size_t size = 1'000;
+
+  VELOX_ASSERT_THROW(
+      makeFlatNullValues<int64_t>(
+          size, BIGINT(), allocateNulls(size, pool()), pool()),
+      "FlatVector with null values buffer must have all rows set to null")
+
+  auto nulls = allocateNulls(size, pool(), bits::kNull);
+
+  // BIGINT.
+  {
+    auto flat = makeFlatNullValues<int64_t>(size, BIGINT(), nulls, pool());
+
+    for (auto i = 0; i < size; ++i) {
+      ASSERT_TRUE(flat->isNullAt(i));
+    }
+
+    // Change some rows to non-null.
+    flat->set(7, 123LL);
+    ASSERT_FALSE(flat->isNullAt(7));
+    ASSERT_EQ(123LL, flat->valueAt(7));
+
+    for (auto i = 0; i < size; ++i) {
+      if (i != 7) {
+        ASSERT_TRUE(flat->isNullAt(i));
+      }
+    }
+  }
+
+  // BOOLEAN.
+  {
+    auto flat = makeFlatNullValues<bool>(size, BIGINT(), nulls, pool());
+
+    for (auto i = 0; i < size; ++i) {
+      ASSERT_TRUE(flat->isNullAt(i));
+    }
+
+    // Change some rows to non-null.
+    flat->set(7, true);
+    ASSERT_FALSE(flat->isNullAt(7));
+    ASSERT_EQ(true, flat->valueAt(7));
+
+    flat->set(11, false);
+    ASSERT_FALSE(flat->isNullAt(11));
+    ASSERT_EQ(false, flat->valueAt(11));
+
+    for (auto i = 0; i < size; ++i) {
+      if (i != 7 && i != 11) {
+        ASSERT_TRUE(flat->isNullAt(i));
+      }
+    }
+  }
+
+  // VARCHAR with set.
+  {
+    auto flat = makeFlatNullValues<StringView>(size, VARCHAR(), nulls, pool());
+
+    for (auto i = 0; i < size; ++i) {
+      ASSERT_TRUE(flat->isNullAt(i));
+    }
+
+    // Change some rows to non-null.
+    flat->set(7, "Testing is time consuming");
+    ASSERT_FALSE(flat->isNullAt(7));
+    ASSERT_EQ("Testing is time consuming", flat->valueAt(7).str());
+
+    for (auto i = 0; i < size; ++i) {
+      if (i != 7) {
+        ASSERT_TRUE(flat->isNullAt(i));
+      }
+    }
+  }
+
+  // VARCHAR with setNoCopy.
+  {
+    auto flat = makeFlatNullValues<StringView>(size, VARCHAR(), nulls, pool());
+
+    for (auto i = 0; i < size; ++i) {
+      ASSERT_TRUE(flat->isNullAt(i));
+    }
+
+    // Change some rows to non-null.
+    flat->setNoCopy(7, "Short");
+    ASSERT_FALSE(flat->isNullAt(7));
+    ASSERT_EQ("Short", flat->valueAt(7).str());
+
+    for (auto i = 0; i < size; ++i) {
+      if (i != 7) {
+        ASSERT_TRUE(flat->isNullAt(i));
+      }
+    }
   }
 }
 
