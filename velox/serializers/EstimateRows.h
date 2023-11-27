@@ -30,8 +30,8 @@ void estimateFlatSerializedSize(
   const auto numRows = rows.size();
   if (vector->mayHaveNulls()) {
     auto rawNulls = vector->rawNulls();
-    ScratchPtr<uint64_t> nullsHolder(scratch);
-    ScratchPtr<int32_t> nonNullsHolder(scratch);
+    ScratchPtr<uint64_t, 4> nullsHolder(scratch);
+    ScratchPtr<int32_t, 64> nonNullsHolder(scratch);
     auto nulls = nullsHolder.get(bits::nwords(numRows));
     gatherBits(rawNulls, rows, nulls);
     auto nonNulls = nonNullsHolder.get(numRows);
@@ -58,8 +58,8 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
       *sizes[i] += rawValues[rows[i]].size();
     }
   } else {
-    ScratchPtr<uint64_t> nullsHolder(scratch);
-    ScratchPtr<int32_t> nonNullsHolder(scratch);
+    ScratchPtr<uint64_t, 4> nullsHolder(scratch);
+    ScratchPtr<int32_t, 64> nonNullsHolder(scratch);
     auto nulls = nullsHolder.get(bits::nwords(numRows));
     gatherBits(rawNulls, rows, nulls);
     auto* nonNulls = nonNullsHolder.get(numRows);

@@ -20,7 +20,9 @@
 
 /// A utility for reusable scoped temporary scratch areas.
 namespace facebook::velox {
-/// A collection of temporary scratch vectors.
+
+/// A collection of temporary reusable scratch vectors. The vectors are accessed
+/// via the ScratchPtr scoped lease. The vectors are padded so that their last element can be written at full SIMD width, as with raw_vector.
 class Scratch {
  public:
   using Item = raw_vector<char>;
@@ -94,41 +96,45 @@ class Scratch {
   int64_t retainedSize_{0};
 };
 
-/// A scoped lease for a scratch area of T.
-template <typename T>
+/// A scoped lease for a scratch area of T. For scratch areas <=
+/// 'inlineSize' the scratch area is inlined, typically on stack, and
+/// no allocation will ever take place. The inline storage is padded
+/// with a trailer of simd::kPadding bytes to allow writing at full
+/// SIMD width at the end of the area.
+template <typename T, int32_t inlineSize = 1>
 class ScratchPtr {
  public:
   ScratchPtr(Scratch& scratch) : scratch_(&scratch) {}
 
-  ScratchPtr(ScratchPtr&& other) {
-    *this = std::move(other);
-  }
+  ScratchPtr(const ScratchPtr& other) = delete;
+  ScratchPtr(ScratchPtr&& other) = delete;
 
   inline ~ScratchPtr() {
-    if (ptr_) {
+    if (data_.data()) {
       scratch_->release(std::move(data_));
     }
   }
 
-  ScratchPtr(const ScratchPtr& other) = delete;
-
-  void operator=(ScratchPtr&& other) {
-    scratch_ = other.scratch_;
-    data_ = std::move(other.data_);
-    other.ptr_ = nullptr;
-  }
-
+  void operator=(ScratchPtr&& other) = delete;
   void operator=(const ScratchPtr& other) = delete;
 
+  /// Returns a writable pointer to at least 'size' uninitialized
+  /// elements of T. The last element is followed by simd::kPadding
+  /// bytes to allow a full width SIMD store for any element. This may
+  /// be called once per lifetime.
   T* get(int32_t size) {
-    VELOX_CHECK(data_.empty());
+    VELOX_CHECK_NULL(ptr_);
+    if (size <= inlineSize) {
+      ptr_ = inline_;
+      return ptr_;
+    }
     data_ = scratch_->get();
     data_.resize(size * sizeof(T));
-
     ptr_ = reinterpret_cast<T*>(data_.data());
     return ptr_;
   }
 
+  /// Returns the pointer returned by a previous get(int32_t).
   T* get() const {
     VELOX_DCHECK_NOT_NULL(ptr_);
     return ptr_;
@@ -146,6 +152,8 @@ class ScratchPtr {
   Scratch* scratch_{nullptr};
   raw_vector<char> data_;
   T* ptr_{nullptr};
+  T inline_[inlineSize];
+  char padding_[simd::kPadding];
 };
 
 } // namespace facebook::velox

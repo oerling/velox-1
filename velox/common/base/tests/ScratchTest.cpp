@@ -46,21 +46,29 @@ TEST(ScratchTest, basic) {
   EXPECT_EQ(32640, scratch.retainedSize());
   scratch.trim();
   EXPECT_EQ(0, scratch.retainedSize());
+  {
+    ScratchPtr<int32_t, 10> ints(scratch);
+    // The size is the inline size, nothing gets returned to 'scratch'.
+    auto temp = ints.get(10);
+    temp[0] = 1;
+  }
+  EXPECT_EQ(0, scratch.retainedSize());
 }
 
 TEST(ScratchTest, large) {
+  constexpr int32_t kSize = 100;
   Scratch scratch;
-  std::vector<ScratchPtr<int32_t>> pointers;
-  for (auto i = 0; i < 100; ++i) {
-    pointers.emplace_back(scratch);
-    pointers.back().get(1000);
+  std::vector<std::unique_ptr<ScratchPtr<int32_t>>> pointers;
+  for (auto i = 0; i < kSize; ++i) {
+    pointers.push_back(std::make_unique<ScratchPtr<int32_t>>(scratch));
+    pointers.back()->get(1000);
   }
   pointers.clear();
   // 100 times 1000 bytes returned.
   EXPECT_LT(100'000, scratch.retainedSize());
-  for (auto i = 0; i < 100; ++i) {
-    pointers.emplace_back(scratch);
-    pointers.back().get(1000);
+  for (auto i = 0; i < kSize; ++i) {
+    pointers.push_back(std::make_unique<ScratchPtr<int32_t>>(scratch));
+    pointers.back()->get(1000);
   }
   EXPECT_EQ(0, scratch.retainedSize());
 }

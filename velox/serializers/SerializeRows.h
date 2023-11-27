@@ -63,11 +63,11 @@ int32_t rowsToRanges(
   auto* innerRows = rows.data();
   auto* nonNullRows = innerRows;
   int32_t numInner = rows.size();
-  ScratchPtr<vector_size_t> nonNullHolder(scratch);
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
+  ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
+  ScratchPtr<vector_size_t, 64> innerRowsHolder(scratch);
   if (rawNulls) {
-    ScratchPtr<uint64_t> nullsHolder(scratch);
-    auto* nulls = nullsHolder.get(rows.size());
+    ScratchPtr<uint64_t, 4> nullsHolder(scratch);
+    auto* nulls = nullsHolder.get(bits::nwords(rows.size()));
     gatherBits(rawNulls, rows, nulls);
     auto* mutableNonNullRows = nonNullHolder.get(numRows);
     auto* mutableInnerRows = innerRowsHolder.get(numRows);
@@ -127,54 +127,6 @@ void copyWords(
   }
 }
 
-#if 0
-template <>
-void copyWords(
-    int64_t* destination,
-    const int32_t* indices,
-    int32_t numIndices,
-    const int64_t* values,
-    bool /*isLongDecimal*/) {
-  constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
-  int32_t i = 0;
-  for (; i + kBatch < numIndices; i += kBatch) {
-    simd::gather<int64_t, int32_t>(
-        values, simd::loadGatherIndices<int64_t, int32_t>(indices + i))
-        .store_unaligned(destination + i);
-  }
-  auto mask = simd::leadingMask<int64_t>(numIndices - i);
-  auto last = simd::maskGather<int64_t, int32_t>(
-      xsimd::broadcast<int64_t>(0),
-      mask,
-      values,
-      simd::loadGatherIndices<int64_t, int32_t>(indices + i));
-  simd::storeLeading(last, mask, numIndices - i, destination + i);
-}
-
-template <>
-void copyWords(
-    int32_t* destination,
-    const int32_t* indices,
-    int32_t numIndices,
-    const int32_t* values,
-    bool /*isLongDecimal*/) {
-  int32_t i = 0;
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  for (; i + kBatch < numIndices; i += kBatch) {
-    simd::gather<int32_t, int32_t>(
-        values, simd::loadGatherIndices<int32_t, int32_t>(indices + i))
-        .store_unaligned(destination + i);
-  }
-  auto mask = simd::leadingMask<int32_t>(numIndices - i);
-  auto last = simd::maskGather<int32_t, int32_t>(
-      xsimd::broadcast<int32_t>(0),
-      mask,
-      values,
-      simd::loadGatherIndices<int32_t, int32_t>(indices + i));
-  simd::storeLeading(last, mask, numIndices - i, destination + i);
-}
-#endif
-
 template <typename T>
 void copyWordsWithRows(
     T* destination,
@@ -198,90 +150,7 @@ void copyWordsWithRows(
     destination[i] = values[rows[indices[i]]];
   }
 }
-#if 0
-template <>
-void copyWordsWithRows(
-    int64_t* destination,
-    const int32_t* rows,
-    const int32_t* indices,
-    int32_t numIndices,
-    const int64_t* values,
-    bool /*isLongDecimal*/) {
-  constexpr int32_t kBatch = xsimd::batch<int64_t>::size;
-  constexpr int32_t kDoubleBatch = xsimd::batch<int32_t>::size;
-  int32_t i = 0;
-  for (; i + kDoubleBatch < numIndices; i += kDoubleBatch) {
-    auto indexVector = simd::gather<int32_t, int32_t>(
-        rows, simd::loadGatherIndices<int32_t, int32_t>(indices + i));
-    simd::gather<int64_t, int32_t>(
-        values,
-        simd::loadGatherIndices<int64_t, int32_t>(
-            reinterpret_cast<int32_t*>(&indexVector)))
-        .store_unaligned(destination + i);
-    simd::gather<int64_t, int32_t>(
-        values,
-        simd::loadGatherIndices<int64_t, int32_t>(
-            reinterpret_cast<int32_t*>(&indexVector) + kBatch))
-        .store_unaligned(destination + i + kBatch);
-  }
-  int32_t numLeft = numIndices - i;
-  auto indexMask = simd::leadingMask<int32_t>(numLeft);
-  auto indexVector = simd::maskGather<int32_t, int32_t>(
-      xsimd::broadcast<int32_t>(0),
-      indexMask,
-      rows,
-      simd::loadGatherIndices<int32_t, int32_t>(indices + i));
-  int32_t indexVectorOffset = 0;
-  if (numLeft >= kBatch) {
-    simd::gather<int64_t, int32_t>(
-        values,
-        simd::loadGatherIndices<int64_t, int32_t>(
-            reinterpret_cast<int32_t*>(&indexVector)))
-        .store_unaligned(destination + i);
-    numLeft -= kBatch;
-    i += kBatch;
-    indexVectorOffset = kBatch;
-  }
 
-  if (numLeft > 0) {
-    auto mask = simd::leadingMask<int64_t>(numLeft);
-    auto last = simd::maskGather<int64_t, int32_t>(
-        xsimd::broadcast<int64_t>(0),
-        mask,
-        values,
-        simd::loadGatherIndices<int64_t, int32_t>(
-            reinterpret_cast<int32_t*>(&indexVector) + indexVectorOffset));
-    simd::storeLeading(last, mask, numLeft, destination + i);
-  }
-}
-
-template <>
-void copyWordsWithRows(
-    int32_t* destination,
-    const int32_t* rows,
-    const int32_t* indices,
-    int32_t numIndices,
-    const int32_t* values,
-    bool /*isLongDecimal*/) {
-  int32_t i = 0;
-  constexpr int32_t kBatch = xsimd::batch<int32_t>::size;
-  for (; i + kBatch < numIndices; i += kBatch) {
-    auto indexVector = simd::gather<int32_t, int32_t>(
-        rows, simd::loadGatherIndices<int32_t, int32_t>(indices + i));
-    simd::gather<int32_t, int32_t>(values, indexVector)
-        .store_unaligned(destination + i);
-  }
-  auto mask = simd::leadingMask<int32_t>(numIndices - i);
-  auto indexVector = simd::maskGather<int32_t, int32_t>(
-      xsimd::broadcast<int32_t>(0),
-      mask,
-      rows,
-      simd::loadGatherIndices<int32_t, int32_t>(indices + i));
-  auto last = simd::maskGather<int32_t, int32_t>(
-      xsimd::broadcast<int32_t>(0), mask, values, indexVector);
-  simd::storeLeading(last, mask, numIndices - i, destination + i);
-}
-#endif
 template <typename T>
 void appendNonNull(
     VectorStream* stream,
@@ -290,8 +159,7 @@ void appendNonNull(
     const T* values,
     Scratch& scratch) {
   auto numRows = rows.size();
-  ScratchPtr<int32_t> temp(scratch);
-  vector_size_t localRows[32];
+  ScratchPtr<int32_t, 64> temp(scratch);
   const int32_t* nonNullIndices;
   int32_t numNonNull;
   if (LIKELY(numRows <= 8)) {
@@ -300,9 +168,7 @@ void appendNonNull(
     nonNullIndices =
         numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
-    auto mutableIndices = (numRows <= sizeof(localRows) / sizeof(localRows[0]))
-        ? localRows
-        : temp.get(numRows);
+    auto mutableIndices = temp.get(numRows);
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableIndices);
     nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
@@ -359,16 +225,16 @@ void appendStrings(
     }
     return;
   }
-  auto innerRows = rows.data();
-  int32_t numInnerRows = rows.size();
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
-  auto mutableInner = innerRowsHolder.get(rows.size());
-  numInnerRows = simd::indicesOfSetBits(nulls, 0, rows.size(), mutableInner);
-  innerRows = mutableInner;
+  auto nonNull = rows.data();
+  int32_t numNonNull = rows.size();
+  ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
+  auto mutableNonNull = nonNullHolder.get(rows.size());
+  numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), mutableNonNull);
+  nonNull = mutableNonNull;
   stream->appendLengths(
-      nulls, rows, numInnerRows, [&](auto row) { return views[row].size(); });
-  for (auto i = 0; i < numInnerRows; ++i) {
-    auto& view = views[rows[innerRows[i]]];
+      nulls, rows, numNonNull, [&](auto row) { return views[row].size(); });
+  for (auto i = 0; i < numNonNull; ++i) {
+    auto& view = views[rows[nonNull[i]]];
     stream->values().appendStringView(
         std::string_view(view.data(), view.size()));
   }
@@ -383,18 +249,16 @@ void appendTimestamps(
   if (!nulls) {
     stream->appendNonNull(rows.size());
     for (auto i = 0; i < rows.size(); ++i) {
-      auto& ts = timestamps[rows[i]];
-      stream->appendOne(ts);
+      stream->appendOne(timestamps[rows[i]]);
     }
     return;
   }
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
-  auto nonNullRows = innerRowsHolder.get(rows.size());
+  ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
+  auto nonNullRows = nonNullHolder.get(rows.size());
   auto numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNullRows);
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
   for (auto i = 0; i < numNonNull; ++i) {
-    auto& ts = timestamps[rows[nonNullRows[i]]];
-    stream->appendOne(ts);
+    stream->appendOne(timestamps[rows[nonNullRows[i]]]);
   }
 }
 
@@ -433,34 +297,32 @@ void serializeFlatVector(
     T* output = window.get(rows.size());
     copyWords(
         output, rows.data(), rows.size(), rawValues, stream->isLongDecimal());
-  } else {
-    uint64_t tempNulls[16];
-    ScratchPtr<uint64_t> scratchPtr(scratch);
-    uint64_t* nulls = rows.size() <= sizeof(tempNulls) * 8
-        ? tempNulls
-        : scratchPtr.get(bits::nwords(rows.size()));
-    gatherBits(vector->rawNulls(), rows, nulls);
-    if (std::is_same_v<T, Timestamp>) {
-      appendTimestamps(
-          nulls,
-          rows,
-          reinterpret_cast<const Timestamp*>(rawValues),
-          stream,
-          scratch);
-      return;
-    }
-    if (std::is_same_v<T, StringView>) {
-      appendStrings(
-          nulls,
-          rows,
-          reinterpret_cast<const StringView*>(rawValues),
-          stream,
-          scratch);
-      return;
-    }
-    appendNonNull(stream, nulls, rows, rawValues, scratch);
+    return;
   }
+  ScratchPtr<uint64_t, 4> nullsHolder(scratch);
+  uint64_t* nulls = nullsHolder.get(bits::nwords(rows.size()));
+  gatherBits(vector->rawNulls(), rows, nulls);
+  if (std::is_same_v<T, Timestamp>) {
+    appendTimestamps(
+		     nulls,
+		     rows,
+		     reinterpret_cast<const Timestamp*>(rawValues),
+		     stream,
+		     scratch);
+    return;
+  }
+  if (std::is_same_v<T, StringView>) {
+    appendStrings(
+		  nulls,
+		  rows,
+		  reinterpret_cast<const StringView*>(rawValues),
+		  stream,
+		  scratch);
+    return;
+  }
+  appendNonNull(stream, nulls, rows, rawValues, scratch);
 }
+
 
 uint64_t bitsToBytesMap[256];
 
@@ -476,23 +338,18 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
     Scratch& scratch) {
   auto flatVector = reinterpret_cast<const FlatVector<bool>*>(vector);
   auto rawValues = flatVector->rawValues<uint64_t*>();
-  uint64_t smallBits[16];
-  uint64_t* valueBits = smallBits;
-  ScratchPtr<uint64_t> bitsHolder(scratch);
+  ScratchPtr<uint64_t, 4> bitsHolder(scratch);
+  uint64_t* valueBits;
   int32_t numValueBits;
   if (!flatVector->mayHaveNulls()) {
     stream->appendNonNull(rows.size());
-    if (rows.size() > sizeof(smallBits) * 8) {
-      valueBits = bitsHolder.get(bits::nwords(rows.size()));
-    }
+    valueBits = bitsHolder.get(bits::nwords(rows.size()));
     gatherBits(reinterpret_cast<const uint64_t*>(rawValues), rows, valueBits);
     numValueBits = rows.size();
   } else {
-    uint64_t* nulls = rows.size() <= sizeof(smallBits) * 8
-        ? smallBits
-        : bitsHolder.get(bits::nwords(rows.size()));
+    uint64_t* nulls = bitsHolder.get(bits::nwords(rows.size()));
     gatherBits(vector->rawNulls(), rows, nulls);
-    ScratchPtr<vector_size_t> nonNullsHolder(scratch);
+    ScratchPtr<vector_size_t, 64> nonNullsHolder(scratch);
     auto nonNulls = nonNullsHolder.get(rows.size());
     numValueBits = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNulls);
     stream->appendNulls(nulls, 0, rows.size(), numValueBits);
@@ -506,6 +363,10 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
         folly::Range<const vector_size_t*>(nonNulls, numValueBits),
         valueBits);
   }
+  // 'valueBits' contains the non-null bools to be appended to the
+  // stream. The wire format has a byte for each bit. Every full byte
+  // is appended as a word. The partial byte is translated to a word
+  // and its low bytes are appended.
   AppendWindow<uint8_t> window(stream->values(), scratch);
   uint8_t* output = window.get(numValueBits);
   const auto numBytes = bits::nbytes(numValueBits);
@@ -582,7 +443,7 @@ void serializeFlatVector<TypeKind::OPAQUE>(
     const folly::Range<const vector_size_t*>& ranges,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_NYI();
+  VELOX_UNSUPPORTED();
 }
 
 void serializeTimestampWithTimeZone(
@@ -609,19 +470,18 @@ void serializeRowVector(
     VectorStream* stream,
     Scratch& scratch) {
   auto rowVector = reinterpret_cast<const RowVector*>(vector);
-  ScratchPtr<int32_t> scratchPtr(scratch);
   vector_size_t* childRows;
   int32_t numChildRows = 0;
   if (isTimestampWithTimeZoneType(vector->type())) {
     serializeTimestampWithTimeZone(rowVector, rows, stream, scratch);
     return;
   }
-  ScratchPtr<uint64_t> nullsHolder(scratch);
-  ScratchPtr<vector_size_t> innerRowsHolder(scratch);
+  ScratchPtr<uint64_t, 4> nullsHolder(scratch);
+  ScratchPtr<vector_size_t, 64> innerRowsHolder(scratch);
   auto innerRows = rows.data();
   auto numInnerRows = rows.size();
   if (auto rawNulls = vector->rawNulls()) {
-    auto nulls = nullsHolder.get(rows.size());
+    auto nulls = nullsHolder.get(bits::nwords(rows.size()));
     gatherBits(rawNulls, rows, nulls);
     auto* mutableInnerRows = innerRowsHolder.get(rows.size());
     numInnerRows =
@@ -736,31 +596,7 @@ void serializeBiasVector(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_NYI()
-#if 0
-  auto biasVector = dynamic_cast<const BiasVector<T>*>(vector);
-  if (!vector->mayHaveNulls()) {
-    for (int32_t i = 0; i < ranges.size(); ++i) {
-      stream->appendNonNull(ranges[i].size);
-      int32_t end = ranges[i].begin + ranges[i].size;
-      for (int32_t offset = ranges[i].begin; offset < end; ++offset) {
-        stream->appendOne(biasVector->valueAtFast(offset));
-      }
-    }
-  } else {
-    for (int32_t i = 0; i < ranges.size(); ++i) {
-      int32_t end = ranges[i].begin + ranges[i].size;
-      for (int32_t offset = ranges[i].begin; offset < end; ++offset) {
-        if (biasVector->isNullAt(offset)) {
-          stream->appendNull();
-          continue;
-        }
-        stream->appendNonNull();
-        stream->appendOne(biasVector->valueAtFast(offset));
-      }
-    }
-  }
-#endif
+  VELOX_UNSUPPORTED()
 }
 
 void serializeColumn(
@@ -789,24 +625,7 @@ void serializeColumn(
       break;
     case VectorEncoding::Simple::BIASED:
       VELOX_UNSUPPORTED();
-#if 0
-      switch (vector->typeKind()) {
-        case TypeKind::SMALLINT:
-          serializeBiasVector<int16_t>(vector, rows, stream, scratch);
-          break;
-        case TypeKind::INTEGER:
-          serializeBiasVector<int32_t>(vector, rows, stream, scratch);
-          break;
-      case TypeKind::BIGINT:
-          serializeBiasVector<int64_t>(vector, rows, stream, scratch);
-          break;
-        default:
-          throw std::invalid_argument("Invalid biased vector type");
-      }
-      break;
-#endif
-
-    case VectorEncoding::Simple::ROW:
+  case VectorEncoding::Simple::ROW:
       serializeRowVector(vector, rows, stream, scratch);
       break;
     case VectorEncoding::Simple::ARRAY:
