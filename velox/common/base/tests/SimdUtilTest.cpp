@@ -209,6 +209,17 @@ TEST_F(SimdUtilTest, gatherBits) {
     EXPECT_EQ(bits::isBitSet(&bits, i), bits::isBitSet(data, vindex.get(i)));
   }
   EXPECT_FALSE(bits::isBitSet(&bits, N - 1));
+
+  uint64_t source = 0x123456789abcdefLU;
+  raw_vector<int32_t> bitIndices;
+  uint64_t result = 0;
+  for (auto i = 61; i >= 0; i -= 2) {
+    bitIndices.push_back(i);
+  }
+  simd::gatherBits(&source, folly::Range<int32_t*>(bitIndices.data(), bitIndices.size()), &result);
+  for (auto i = 0; i < bitIndices.size(); ++i) {
+    EXPECT_EQ(bits::isBitSet(&source, bitIndices[i]), bits::isBitSet(&result, i));
+  }
 }
 
 TEST_F(SimdUtilTest, transpose) {
@@ -247,7 +258,7 @@ TEST_F(SimdUtilTest, transpose) {
     EXPECT_EQ(-1, result64[size]);
   }
 }
-
+  
 namespace {
 
 // Find elements that satisfy a condition and pack them to the left.

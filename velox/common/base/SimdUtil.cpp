@@ -21,10 +21,10 @@ namespace facebook::velox::simd {
 
 void gatherBits(
     const uint64_t* bits,
-    folly::Range<const vector_size_t*> rows,
+    folly::Range<const int32_t*> indexRange,
     uint64_t* result) {
-  auto size = rows.size();
-  auto indices = rows.data();
+  auto size = indexRange.size();
+  auto indices = indexRange.data();
   uint8_t* resultPtr = reinterpret_cast<uint8_t*>(result);
   if (LIKELY(size < 5)) {
     uint8_t smallResult = 0;

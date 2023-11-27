@@ -440,7 +440,7 @@ inline void transpose(
 /// byte is not full the trailing bits are undefined.
 void gatherBits(
     const uint64_t* bits,
-    folly::Range<const vector_size_t*> rows,
+    folly::Range<const int32_t*> indices,
     uint64_t* result);
 
 // Adds 'bytes' bytes to an address of arbitrary type.
