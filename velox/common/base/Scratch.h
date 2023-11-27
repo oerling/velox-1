@@ -22,7 +22,8 @@
 namespace facebook::velox {
 
 /// A collection of temporary reusable scratch vectors. The vectors are accessed
-/// via the ScratchPtr scoped lease. The vectors are padded so that their last element can be written at full SIMD width, as with raw_vector.
+/// via the ScratchPtr scoped lease. The vectors are padded so that their last
+/// element can be written at full SIMD width, as with raw_vector.
 class Scratch {
  public:
   using Item = raw_vector<char>;

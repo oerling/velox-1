@@ -304,25 +304,24 @@ void serializeFlatVector(
   gatherBits(vector->rawNulls(), rows, nulls);
   if (std::is_same_v<T, Timestamp>) {
     appendTimestamps(
-		     nulls,
-		     rows,
-		     reinterpret_cast<const Timestamp*>(rawValues),
-		     stream,
-		     scratch);
+        nulls,
+        rows,
+        reinterpret_cast<const Timestamp*>(rawValues),
+        stream,
+        scratch);
     return;
   }
   if (std::is_same_v<T, StringView>) {
     appendStrings(
-		  nulls,
-		  rows,
-		  reinterpret_cast<const StringView*>(rawValues),
-		  stream,
-		  scratch);
+        nulls,
+        rows,
+        reinterpret_cast<const StringView*>(rawValues),
+        stream,
+        scratch);
     return;
   }
   appendNonNull(stream, nulls, rows, rawValues, scratch);
 }
-
 
 uint64_t bitsToBytesMap[256];
 
@@ -625,7 +624,7 @@ void serializeColumn(
       break;
     case VectorEncoding::Simple::BIASED:
       VELOX_UNSUPPORTED();
-  case VectorEncoding::Simple::ROW:
+    case VectorEncoding::Simple::ROW:
       serializeRowVector(vector, rows, stream, scratch);
       break;
     case VectorEncoding::Simple::ARRAY:
