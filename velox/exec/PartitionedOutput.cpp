@@ -199,7 +199,6 @@ void PartitionedOutput::estimateRowSizes() {
     VectorStreamGroup::estimateSerializedSize(
         output_->childAt(i),
         folly::Range(numbers, numInput),
-        nullptr,
         sizePointers_.data(),
         scratch_);
   }
