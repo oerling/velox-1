@@ -147,7 +147,7 @@ class ScratchPtr {
     return size_;
   }
 
-private:
+ private:
   Scratch* scratch_{nullptr};
   raw_vector<char> data_;
   T* ptr_{nullptr};
