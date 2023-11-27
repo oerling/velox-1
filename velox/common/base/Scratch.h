@@ -102,7 +102,7 @@ class Scratch {
 /// no allocation will ever take place. The inline storage is padded
 /// with a trailer of simd::kPadding bytes to allow writing at full
 /// SIMD width at the end of the area.
-template <typename T, int32_t inlineSize = 1>
+template <typename T, int32_t inlineSize = 0>
 class ScratchPtr {
  public:
   ScratchPtr(Scratch& scratch) : scratch_(&scratch) {}
@@ -125,6 +125,7 @@ class ScratchPtr {
   /// be called once per lifetime.
   T* get(int32_t size) {
     VELOX_CHECK_NULL(ptr_);
+    size_ = size;
     if (size <= inlineSize) {
       ptr_ = inline_;
       return ptr_;
@@ -141,20 +142,18 @@ class ScratchPtr {
     return ptr_;
   }
 
-  bool hasData() const {
-    return ptr_ != nullptr;
-  }
-
-  const raw_vector<char>& data() const {
-    return data_;
+  /// Returns the size of the previous get(int32_t).
+  int32_t size() const {
+    return size_;
   }
 
  private:
   Scratch* scratch_{nullptr};
   raw_vector<char> data_;
   T* ptr_{nullptr};
+  int32_t size_{0};
   T inline_[inlineSize];
-  char padding_[simd::kPadding];
+  char padding_[inlineSize == 0 ? 0 : simd::kPadding];
 };
 
 } // namespace facebook::velox
