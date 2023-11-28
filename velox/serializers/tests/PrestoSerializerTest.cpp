@@ -99,8 +99,8 @@ class PrestoSerializerTest
       raw_vector<vector_size_t*> sizes(rows.value().size());
       std::fill(sizes.begin(), sizes.end(), &sizeEstimate);
       serde_->estimateSerializedSize(
-          rowVector, rows.value(), nullptr, sizes.data(), scratch);
-      serializer->append(rowVector, rows.value(), nullptr, scratch);
+          rowVector, rows.value(), sizes.data(), scratch);
+      serializer->append(rowVector, rows.value(), scratch);
     } else {
       vector_size_t* sizes = &sizeEstimate;
       IndexRange range{0, rowVector->size()};
@@ -710,7 +710,6 @@ TEST_P(PrestoSerializerTest, timeFlat) {
         group->append(
             rowVector,
             folly::Range(rowSets[selIdx].data(), rowSets[selIdx].size() - kPad),
-            nullptr,
             scratch);
       }
     }

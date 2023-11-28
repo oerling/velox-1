@@ -277,7 +277,7 @@ TEST_F(SimdUtilTest, translate) {
   }
   for (auto size = 1; size < kMaxSize; ++size) {
     std::vector<int32_t> result32(kMaxSize + 1, -1);
-    simd::translate(
+    simd::transpose(
         data32.data(),
         folly::Range<const int32_t*>(indices.data(), size),
         result32.data());
@@ -288,7 +288,7 @@ TEST_F(SimdUtilTest, translate) {
     EXPECT_EQ(-1, result32[size]);
 
     std::vector<int64_t> result64(kMaxSize + 1, -1);
-    simd::translate(
+    simd::transpose(
         data64.data(),
         folly::Range<const int32_t*>(indices.data(), size),
         result64.data());
