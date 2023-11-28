@@ -60,7 +60,6 @@ GroupingSet::GroupingSet(
     const std::vector<vector_size_t>& globalGroupingSets,
     const std::optional<column_index_t>& groupIdChannel,
     const common::SpillConfig* spillConfig,
-    uint32_t* numSpillRuns,
     tsan_atomic<bool>* nonReclaimableSection,
     OperatorCtx* operatorCtx)
     : preGroupedKeyChannels_(std::move(preGroupedKeys)),
@@ -78,7 +77,6 @@ GroupingSet::GroupingSet(
       globalGroupingSets_(globalGroupingSets),
       groupIdChannel_(groupIdChannel),
       spillConfig_(spillConfig),
-      numSpillRuns_(numSpillRuns),
       nonReclaimableSection_(nonReclaimableSection),
       stringAllocator_(operatorCtx->pool()),
       rows_(operatorCtx->pool()),
@@ -158,7 +156,6 @@ std::unique_ptr<GroupingSet> GroupingSet::createForMarkDistinct(
       /*globalGroupingSets*/ std::vector<vector_size_t>{},
       /*groupIdColumn*/ std::nullopt,
       /*spillConfig*/ nullptr,
-      /*numSpillRuns*/ nullptr,
       nonReclaimableSection,
       operatorCtx);
 };
@@ -225,10 +222,6 @@ void GroupingSet::noMoreInput() {
   // producing output as we don't support to spill during that stage as for now.
   if (hasSpilled()) {
     spill();
-  }
-
-  if (sortedAggregations_) {
-    sortedAggregations_->noMoreInput();
   }
 
   ensureOutputFits();
@@ -976,7 +969,6 @@ void GroupingSet::spill() {
         memory::spillMemoryPool(),
         spillConfig_->executor);
   }
-  ++(*numSpillRuns_);
   spiller_->spill();
   if (sortedAggregations_) {
     sortedAggregations_->clear();
@@ -1004,7 +996,6 @@ void GroupingSet::spill(const RowContainerIterator& rowIterator) {
       memory::spillMemoryPool(),
       spillConfig_->executor);
 
-  ++(*numSpillRuns_);
   spiller_->spill(rowIterator);
   table_->clear();
 }
@@ -1040,9 +1031,10 @@ bool GroupingSet::getOutputWithSpill(
     }
 
     VELOX_CHECK_EQ(table_->rows()->numRows(), 0);
-    spiller_->finalizeSpill();
 
-    merge_ = spiller_->startMerge();
+    VELOX_CHECK_NULL(merge_);
+    auto spillPartition = spiller_->finishSpill();
+    merge_ = spillPartition.createOrderedReader();
   }
   VELOX_CHECK_EQ(spiller_->state().maxPartitions(), 1);
   if (merge_ == nullptr) {

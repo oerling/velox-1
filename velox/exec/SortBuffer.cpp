@@ -26,21 +26,18 @@ SortBuffer::SortBuffer(
     const std::vector<CompareFlags>& sortCompareFlags,
     velox::memory::MemoryPool* pool,
     tsan_atomic<bool>* nonReclaimableSection,
-    uint32_t* numSpillRuns,
     const common::SpillConfig* spillConfig,
     uint64_t spillMemoryThreshold)
     : input_(input),
       sortCompareFlags_(sortCompareFlags),
       pool_(pool),
       nonReclaimableSection_(nonReclaimableSection),
-      numSpillRuns_(numSpillRuns),
       spillConfig_(spillConfig),
       spillMemoryThreshold_(spillMemoryThreshold) {
   VELOX_CHECK_GE(input_->size(), sortCompareFlags_.size());
   VELOX_CHECK_GT(sortCompareFlags_.size(), 0);
   VELOX_CHECK_EQ(sortColumnIndices.size(), sortCompareFlags_.size());
   VELOX_CHECK_NOT_NULL(nonReclaimableSection_);
-  VELOX_CHECK_NOT_NULL(numSpillRuns_);
 
   std::vector<TypePtr> sortedColumnTypes;
   std::vector<TypePtr> nonSortedColumnTypes;
@@ -138,11 +135,9 @@ void SortBuffer::noMoreInput() {
 
     // Finish spill, and we shouldn't get any rows from non-spilled partition as
     // there is only one hash partition for SortBuffer.
-    spiller_->finalizeSpill();
-    VELOX_CHECK_LE(spiller_->stats().spilledPartitions, 1);
-
     VELOX_CHECK_NULL(spillMerger_);
-    spillMerger_ = spiller_->startMerge();
+    auto spillPartition = spiller_->finishSpill();
+    spillMerger_ = spillPartition.createOrderedReader();
   }
 }
 
@@ -172,7 +167,6 @@ void SortBuffer::spill() {
   }
   updateEstimatedOutputRowSize();
 
-  ++(*numSpillRuns_);
   if (spiller_ == nullptr) {
     spiller_ = std::make_unique<Spiller>(
         Spiller::Type::kOrderBy,
