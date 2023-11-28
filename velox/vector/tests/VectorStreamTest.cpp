@@ -23,8 +23,7 @@ class MockVectorSerde : public VectorSerde {
   void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes,
-      Scratch& scratch) override {}
+      vector_size_t** sizes) override {}
 
   std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,

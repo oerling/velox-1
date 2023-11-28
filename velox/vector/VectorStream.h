@@ -107,8 +107,18 @@ class VectorSerde {
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes,
-      Scratch& scratch) = 0;
+      Scratch& scratch) {
+    VELOX_UNSUPPORTED();
+  }
 
+  virtual void estimateSerializedSize(
+      VectorPtr vector,
+      const folly::Range<const IndexRange*>& ranges,
+      vector_size_t** sizes) {
+    Scratch scratch;
+    estimateSerializedSize(vector, ranges, sizes, scratch);
+  }
+  
   virtual std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,
       int32_t numRows,

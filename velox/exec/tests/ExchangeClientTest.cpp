@@ -41,12 +41,11 @@ class ExchangeClientTest : public testing::Test,
   }
 
   std::unique_ptr<SerializedPage> toSerializedPage(const RowVectorPtr& vector) {
-    Scratch scratch;
     auto data = std::make_unique<VectorStreamGroup>(pool());
     auto size = vector->size();
     auto range = IndexRange{0, size};
     data->createStreamTree(asRowType(vector->type()), size);
-    data->append(vector, folly::Range(&range, 1), scratch);
+    data->append(vector, folly::Range(&range, 1));
     auto listener = bufferManager_->newListener();
     IOBufOutputStream stream(*pool(), listener.get(), data->size());
     data->flush(&stream);

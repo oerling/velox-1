@@ -57,7 +57,6 @@ TEST(RawVectorTest, resize) {
 }
 
 TEST(RawVectorTest, copyAndMove) {
-#if 0
   raw_vector<int32_t> ints(1000);
   // a raw_vector is intentionally not initialized.
   memset(ints.data(), 11, ints.size() * sizeof(int32_t));
@@ -75,7 +74,6 @@ TEST(RawVectorTest, copyAndMove) {
           intsMoved.data(),
           intsCopy.data(),
           intsCopy.size() * sizeof(int32_t)));
-#endif
 }
 
 TEST(RawVectorTest, iota) {
