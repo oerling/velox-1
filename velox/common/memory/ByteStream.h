@@ -261,25 +261,6 @@ class ByteStream {
     return lastRangeEnd_;
   }
 
-  /// Returns a range of 'size' items of T. If there is no contiguous space in
-  /// 'this', uses 'scratch' to make a temp block that is appended to 'this' in
-  template <typename T>
-  T* getAppendWindow(int32_t size, ScratchPtr<T>& scratchPtr) {
-    int32_t bytes = sizeof(T) * size;
-    if (!current_) {
-      extend(bytes);
-    }
-    auto available = current_->size - current_->position;
-    if (available >= bytes) {
-      current_->position += bytes;
-      return reinterpret_cast<T*>(
-          current_->buffer + current_->position - bytes);
-    }
-    // If the tail is not large enough, make  temp of the right size
-    // in scratch.
-    return scratchPtr.get(size);
-  }
-
   template <typename T>
   void append(folly::Range<const T*> values) {
     if (current_->position + sizeof(T) * values.size() > current_->size) {
@@ -307,6 +288,7 @@ class ByteStream {
     const auto position = current_->position;
     if (begin == 0 && end <= 56) {
       const auto available = current_->size - position;
+      // There must be 8 bytes writable. If available is 56, there are 7, so >.
       if (available > 56) {
         const auto offset = position & 7;
         uint64_t* buffer =
@@ -347,6 +329,25 @@ class ByteStream {
   std::string toString() const;
 
  private:
+  /// Returns a range of 'size' items of T. If there is no contiguous space in
+  /// 'this', uses 'scratch' to make a temp block that is appended to 'this' in
+  template <typename T>
+  T* getAppendWindow(int32_t size, ScratchPtr<T>& scratchPtr) {
+    const int32_t bytes = sizeof(T) * size;
+    if (!current_) {
+      extend(bytes);
+    }
+    auto available = current_->size - current_->position;
+    if (available >= bytes) {
+      current_->position += bytes;
+      return reinterpret_cast<T*>(
+          current_->buffer + current_->position - bytes);
+    }
+    // If the tail is not large enough, make  temp of the right size
+    // in scratch.
+    return scratchPtr.get(size);
+  }
+
   void extend(int32_t bytes);
 
   int32_t newRangeSize(int32_t bytes) const;
@@ -381,6 +382,8 @@ class ByteStream {
   // and the last may be partly full. The position in the last range
   // is not necessarily the the end if there has been a seek.
   int32_t lastRangeEnd_{0};
+  template <typename T>
+  friend class AppendWindow;
 };
 
 /// A scoped wrapper that provides 'size' T's of writable space in 'stream'.
