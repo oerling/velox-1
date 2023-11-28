@@ -398,6 +398,8 @@ std::unique_ptr<Spiller::SpillStatus> Spiller::writeSpill(int32_t partition) {
 }
 
 void Spiller::runSpill() {
+  ++stats_.wlock()->spillRuns;
+
   std::vector<std::shared_ptr<AsyncSource<SpillStatus>>> writes;
   for (auto partition = 0; partition < spillRuns_.size(); ++partition) {
     VELOX_CHECK(
@@ -532,6 +534,14 @@ void Spiller::finishSpill(SpillPartitionSet& partitionSet) {
   }
 }
 
+SpillPartition Spiller::finishSpill() {
+  VELOX_CHECK_EQ(state_.maxPartitions(), 1);
+  VELOX_CHECK(state_.isPartitionSpilled(0));
+
+  finalizeSpill();
+  return SpillPartition(SpillPartitionId{bits_.begin(), 0}, state_.files(0));
+}
+
 void Spiller::finalizeSpill() {
   CHECK_NOT_FINALIZED();
   finalized_ = true;
@@ -541,30 +551,6 @@ void Spiller::finalizeSpill() {
       state_.finishWrite(partition);
     }
   }
-}
-
-std::unique_ptr<TreeOfLosers<SpillMergeStream>> Spiller::startMerge() {
-  CHECK_FINALIZED();
-
-  VELOX_CHECK_EQ(state_.maxPartitions(), 1);
-  // We expect the spilled data are sorted for sort merge read except
-  // 'kAggregateOutput' type which is used during the aggregation output
-  // processing. The latter only only has one merge stream with one row per each
-  // distinct aggregation group. Hence, we don't need to sort in that case.
-  if (type_ != Type::kAggregateOutput) {
-    VELOX_CHECK(
-        needSort(), "Can't sort merge the unsorted spill data: {}", toString());
-  }
-
-  auto merger = state_.startMerge(0, spillMergeStreamOverRows(0));
-  if (merger != nullptr && type_ == Type::kAggregateOutput) {
-    VELOX_CHECK_EQ(
-        merger->numStreams(),
-        1,
-        "{} spiller can only have one merge stream",
-        typeName(type_));
-  }
-  return merger;
 }
 
 void Spiller::fillSpillRuns(const RowContainerIterator* startRowIter) {
