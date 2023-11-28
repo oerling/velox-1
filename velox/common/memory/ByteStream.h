@@ -107,7 +107,7 @@ class ByteInputStream {
   /// Constructs 'this' to range over 'stream's current content. Does
   /// not copy buffers. 'this' remains valid as long as 'stream' is
   /// live and unchanged.
-  ByteInputStream(const ByteStream& stream);
+  explicit ByteInputStream(const ByteStream& stream);
 
   /// Disable copy constructor.
   ByteInputStream(const ByteInputStream&) = delete;

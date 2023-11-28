@@ -38,7 +38,12 @@ class StreamArena {
   /// 'lastRange' is non-nullptr, it is the last range of the stream
   /// to which we are adding the new range. 'lastRange' is nullptr if
   /// adding the first range to a stream. The memory is stays owned by
-  /// 'this' in all cases.
+  /// 'this' in all cases. Used by HashStringAllocator when extending
+  /// a multipart entry. The previously last part has its last 8 bytes
+  /// moved to the next part and gets a pointer to the next part as
+  /// its last 8 bytes. When extending, we need to update the entry so
+  /// that the next pointer is not seen when reading the content and
+  /// is also not counted in the payload size of the multipart entry.
   virtual void newRange(int32_t bytes, ByteRange* lastRange, ByteRange* range);
 
   /// sets 'range' to point to a small piece of memory owned by this. These
