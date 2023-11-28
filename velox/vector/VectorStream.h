@@ -118,7 +118,7 @@ class VectorSerde {
     Scratch scratch;
     estimateSerializedSize(vector, ranges, sizes, scratch);
   }
-  
+
   virtual std::unique_ptr<VectorSerializer> createSerializer(
       RowTypePtr type,
       int32_t numRows,
@@ -218,7 +218,6 @@ class VectorStreamGroup : public StreamArena {
     estimateSerializedSize(vector, ranges, sizes, scratch);
   }
 
-  
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges,
