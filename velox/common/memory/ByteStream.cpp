@@ -209,16 +209,6 @@ void ByteStream::appendBool(bool value, int32_t count) {
 void ByteStream::appendBits(const uint64_t* bits, int32_t begin, int32_t end) {
   VELOX_DCHECK(isBits_);
   int32_t count = end - begin;
-  if (count <= current_->size - current_->position) {
-    bits::copyBits(
-        bits,
-        begin,
-        reinterpret_cast<uint64_t*>(current_->buffer),
-        current_->position,
-        count);
-    current_->position += count;
-    return;
-  }
   int32_t offset = 0;
   for (;;) {
     int32_t bitsFit =
