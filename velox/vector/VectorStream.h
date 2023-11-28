@@ -210,6 +210,15 @@ class VectorStreamGroup : public StreamArena {
       vector_size_t** sizes,
       Scratch& scratch);
 
+  static inline void estimateSerializedSize(
+      VectorPtr vector,
+      const folly::Range<const IndexRange*>& ranges,
+      vector_size_t** sizes) {
+    Scratch scratch;
+    estimateSerializedSize(vector, ranges, sizes, scratch);
+  }
+
+  
   void append(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges,
