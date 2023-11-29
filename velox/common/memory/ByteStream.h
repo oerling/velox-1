@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <folly/io/IOBuf.h>
+#include "velox/common/base/Scratch.h"
 #include "velox/common/memory/StreamArena.h"
 #include "velox/type/Type.h"
 
@@ -89,8 +91,6 @@ class OStreamOutputStream : public OutputStream {
   std::ostream* out_;
 };
 
-class ByteStream;
-
 /// Read-only stream over one or more byte buffers.
 class ByteInputStream {
  protected:
@@ -103,11 +103,6 @@ class ByteInputStream {
     VELOX_CHECK(!ranges_.empty());
     current_ = &ranges_[0];
   }
-
-  /// Constructs 'this' to range over 'stream's current content. Does
-  /// not copy buffers. 'this' remains valid as long as 'stream' is
-  /// live and unchanged.
-  explicit ByteInputStream(const ByteStream& stream);
 
   /// Disable copy constructor.
   ByteInputStream(const ByteInputStream&) = delete;
@@ -290,6 +285,30 @@ class ByteStream {
 
   void appendBool(bool value, int32_t count);
 
+  // A fast path for appending bits into pre-cleared buffers after first extend.
+  inline void
+  appendBitsFresh(const uint64_t* bits, int32_t begin, int32_t end) {
+    const auto position = current_->position;
+    if (begin == 0 && end <= 56) {
+      const auto available = current_->size - position;
+      // There must be 8 bytes writable. If available is 56, there are 7, so >.
+      if (available > 56) {
+        const auto offset = position & 7;
+        uint64_t* buffer =
+            reinterpret_cast<uint64_t*>(current_->buffer + (position >> 3));
+        const auto mask = bits::lowMask(offset);
+        *buffer = (*buffer & mask) | (bits[0] << offset);
+        current_->position += end;
+        return;
+      }
+    }
+    appendBits(bits, begin, end);
+  }
+
+  // Writes 'bits' from bit positions begin..end to the current position of
+  // 'this'. Extends 'this' if writing past end.
+  void appendBits(const uint64_t* bits, int32_t begin, int32_t end);
+
   void appendStringView(StringView value);
 
   void appendStringView(std::string_view value);
@@ -310,9 +329,31 @@ class ByteStream {
     return allocatedBytes_;
   }
 
+  /// Returns a ByteInputStream to range over the current content of 'this'. The result is valid as long as 'this' is live and not changed. 
+  ByteInputStream inputStream() const;
+   
   std::string toString() const;
 
  private:
+  /// Returns a range of 'size' items of T. If there is no contiguous space in
+  /// 'this', uses 'scratch' to make a temp block that is appended to 'this' in
+  template <typename T>
+  T* getAppendWindow(int32_t size, ScratchPtr<T>& scratchPtr) {
+    const int32_t bytes = sizeof(T) * size;
+    if (!current_) {
+      extend(bytes);
+    }
+    auto available = current_->size - current_->position;
+    if (available >= bytes) {
+      current_->position += bytes;
+      return reinterpret_cast<T*>(
+          current_->buffer + current_->position - bytes);
+    }
+    // If the tail is not large enough, make  temp of the right size
+    // in scratch.
+    return scratchPtr.get(size);
+  }
+
   void extend(int32_t bytes);
 
   int32_t newRangeSize(int32_t bytes) const;
@@ -347,6 +388,35 @@ class ByteStream {
   // and the last may be partly full. The position in the last range
   // is not necessarily the the end if there has been a seek.
   mutable int32_t lastRangeEnd_{0};
+
+  template <typename T>
+  friend class AppendWindow;
+};
+
+/// A scoped wrapper that provides 'size' T's of writable space in 'stream'.
+/// Normally gives an address into 'stream's buffer but can use 'scratch' to
+/// make a contiguous piece if stream does not have a suitable run.
+template <typename T>
+class AppendWindow {
+ public:
+  AppendWindow(ByteStream& stream, Scratch& scratch)
+      : stream_(stream), scratchPtr_(scratch) {}
+
+  ~AppendWindow() {
+    if (scratchPtr_.size()) {
+      stream_.appendStringView(std::string_view(
+          reinterpret_cast<const char*>(scratchPtr_.get()),
+          scratchPtr_.size() * sizeof(T)));
+    }
+  }
+
+  T* get(int32_t size) {
+    return stream_.getAppendWindow(size, scratchPtr_);
+  }
+
+ private:
+  ByteStream& stream_;
+  ScratchPtr<T> scratchPtr_;
 };
 
 template <>
