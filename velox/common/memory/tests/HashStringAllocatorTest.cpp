@@ -585,7 +585,7 @@ TEST_F(HashStringAllocatorTest, sizeAndPosition) {
     stream.seekp(start);
     EXPECT_EQ(start, stream.tellp());
     EXPECT_EQ(kUnitSize * 10, stream.size());
-    ByteInputStream input(stream);
+    ByteInputStream input = stream.inputStream();
     input.seekp(start);
     EXPECT_EQ(kUnitSize * 10 - start, input.remainingSize());
     for (auto c = 0; c < 10; ++c) {
@@ -595,7 +595,7 @@ TEST_F(HashStringAllocatorTest, sizeAndPosition) {
     // Overwrite the bytes just read.
     stream.seekp(start);
     stream.appendStringView(std::string_view(allChars.data(), 100));
-    input = ByteInputStream(stream);
+    input = stream.inputStream();
     input.seekp(start);
     for (auto c = 0; c < 100; ++c) {
       uint8_t byte = input.readByte();
