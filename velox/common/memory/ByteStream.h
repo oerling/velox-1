@@ -329,9 +329,10 @@ class ByteStream {
     return allocatedBytes_;
   }
 
-  /// Returns a ByteInputStream to range over the current content of 'this'. The result is valid as long as 'this' is live and not changed. 
+  /// Returns a ByteInputStream to range over the current content of 'this'. The
+  /// result is valid as long as 'this' is live and not changed.
   ByteInputStream inputStream() const;
-   
+
   std::string toString() const;
 
  private:
