@@ -2394,17 +2394,16 @@ void PrestoVectorSerde::serializeEncoded(
 
 namespace {
 bool hasNestedStructs(const TypePtr& type) {
-  if (type->size() == 0) {
-    return false;
-  }
-  if (type->kind() == TypeKind::ROW) {
+  if (type->isRow()) {
     return true;
   }
-  for (auto i = 0; i < type->size(); ++i) {
-    if (hasNestedStructs(type->childAt(i))) {
-      return true;
-    }
+  if (type->isArray()) {
+    return hasNestedStructs(type->childAt(0));
   }
+  if (type->isMap()) {
+    return hasNestedStructs(type->childAt(0)) || hasNestedStructs(type->childAt(1));
+  }
+  return false;
 }
 
 bool hasNestedStructs(const std::vector<TypePtr>& types) {
