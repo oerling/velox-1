@@ -2401,7 +2401,8 @@ bool hasNestedStructs(const TypePtr& type) {
     return hasNestedStructs(type->childAt(0));
   }
   if (type->isMap()) {
-    return hasNestedStructs(type->childAt(0)) || hasNestedStructs(type->childAt(1));
+    return hasNestedStructs(type->childAt(0)) ||
+        hasNestedStructs(type->childAt(1));
   }
   return false;
 }
