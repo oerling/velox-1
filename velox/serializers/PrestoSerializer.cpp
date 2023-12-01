@@ -2392,6 +2392,7 @@ void PrestoVectorSerde::serializeEncoded(
       ->flushEncoded(vector, out);
 }
 
+namespace {
 bool hasNestedStructs(const TypePtr& type) {
   if (type->size() == 0) {
     return false;
@@ -2450,6 +2451,7 @@ void readTopColumns(
       nullptr,
       0);
 }
+} // namespace
 
 void PrestoVectorSerde::deserialize(
     ByteInputStream* source,
