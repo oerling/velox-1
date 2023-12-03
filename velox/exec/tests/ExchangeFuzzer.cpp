@@ -40,7 +40,7 @@ DEFINE_uint64(seed, 0, "Seed, 0 means random");
 
 DEFINE_int32(steps, 10, "Number of plans to generate and test.");
 
-DEFINE_int32(duration_sec, 60, "Run duration in seconds");
+DEFINE_int32(duration_sec, 0, "Run duration in seconds");
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -59,6 +59,13 @@ class ExchangeFuzzer : public VectorTestBase {
       int32_t exchangeBufferBytes,
       int32_t batchBytes) {
     assert(!vectors.empty());
+    auto iteration = ++iteration_;
+    LOG(INFO) << "Iteration " << iteration << " shuffl " << sourceWidth << "x"
+              << targetWidth << " drivers=" << taskWidth << " Type "
+              << vectors.front()->type()->toString()
+              << " output buffer=" << outputBufferBytes
+              << " exchange buffer=" << exchangeBufferBytes
+              << " target batch=" << batchBytes;
     configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
         fmt::format("{}", outputBufferBytes);
     configSettings_[core::QueryConfig::kMaxExchangeBufferSize] =
@@ -66,7 +73,6 @@ class ExchangeFuzzer : public VectorTestBase {
     configSettings_[core::QueryConfig::kPreferredOutputBatchBytes] =
         fmt::format("{}", batchBytes);
 
-    auto iteration = ++iteration_;
     auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
     std::vector<std::string> aggregates;
     std::vector<std::vector<TypePtr>> rawInputTypes;
@@ -93,11 +99,12 @@ class ExchangeFuzzer : public VectorTestBase {
     }
 
     std::vector<std::string> partialAggTaskIds;
-    auto partialAggPlan = exec::test::PlanBuilder()
-                              .exchange(leafPlan->outputType())
-                              .partialAggregation({}, makeAggregates(rowType))
-                              .partitionedOutput({}, 1)
-                              .planNode();
+    auto partialAggPlan =
+        exec::test::PlanBuilder()
+            .exchange(leafPlan->outputType())
+            .partialAggregation({}, makeAggregates(rowType, 1))
+            .partitionedOutput({}, 1)
+            .planNode();
 
     std::vector<exec::Split> partialAggSplits;
     for (int i = 0; i < targetWidth; i++) {
@@ -110,11 +117,13 @@ class ExchangeFuzzer : public VectorTestBase {
       addRemoteSplits(task, leafTaskIds);
     }
 
-    auto plan =
-        exec::test::PlanBuilder()
-            .exchange(partialAggPlan->outputType())
-            .finalAggregation({}, makeAggregates(rowType), rawInputTypes)
-            .planNode();
+    auto plan = exec::test::PlanBuilder()
+                    .exchange(partialAggPlan->outputType())
+                    .finalAggregation(
+                        {},
+                        makeAggregates(*partialAggPlan->outputType(), 0),
+                        rawInputTypes)
+                    .planNode();
 
     exec::test::AssertQueryBuilder(plan)
         .splits(partialAggSplits)
@@ -151,7 +160,7 @@ class ExchangeFuzzer : public VectorTestBase {
       options_.normalizeMapKeys = fuzzer_.coinToss(0.95);
       options_.timestampPrecision =
           static_cast<VectorFuzzer::Options::TimestampPrecision>(randInt(0, 3));
-      options_.allowLazyVector = true;
+      options_.allowLazyVector = false;
 
       fuzzer_.setOptions(options_);
       auto row = fuzzer_.fuzzInputRow(rowType);
@@ -161,7 +170,7 @@ class ExchangeFuzzer : public VectorTestBase {
       std::vector<RowVectorPtr> vectors;
 
       vectors.push_back(row);
-      auto numRows = FLAGS_shuffle_size / bytesPerRow;
+      auto maxBatch = std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow);
 
       while (shuffleSize < FLAGS_shuffle_size) {
         if (fuzzer_.coinToss(0.2)) {
@@ -170,23 +179,23 @@ class ExchangeFuzzer : public VectorTestBase {
           // Sometimes 1.0, so all null.
           options_.nullRatio = randInt(1, 10) / 10.0;
         }
-        options_.vectorSize =
-            (FLAGS_shuffle_size / bytesPerRow) * randInt(1, 1000);
+        options_.vectorSize = randInt(1, maxBatch);
         fuzzer_.setOptions(options_);
 
         auto newRow = fuzzer_.fuzzInputRow(rowType);
         vectors.push_back(newRow);
-        auto newSize = newRow->estimateFlatSize();
+        auto newSize =
+            newRow->estimateFlatSize() * sourceWidth * FLAGS_task_width;
         shuffleSize += newSize;
       }
       runOne(
           vectors,
-          outputSize,
-          exchangeSize,
-          batchSize,
           sourceWidth,
           targetWidth,
-          FLAGS_task_width);
+          FLAGS_task_width,
+          outputSize,
+          exchangeSize,
+          batchSize);
 
       if (FLAGS_duration_sec == 0 && FLAGS_steps &&
           counter + 1 >= FLAGS_steps) {
@@ -222,7 +231,7 @@ class ExchangeFuzzer : public VectorTestBase {
     auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
     auto plan = exec::test::PlanBuilder()
                     .values(vectors, true)
-                    .partialAggregation({}, makeAggregates(rowType))
+                    .partialAggregation({}, makeAggregates(rowType, 1))
                     .localPartition({})
                     .finalAggregation()
                     .planNode();
@@ -230,9 +239,9 @@ class ExchangeFuzzer : public VectorTestBase {
         pool_.get());
   }
 
-  std::vector<std::string> makeAggregates(const RowType& row) {
+  std::vector<std::string> makeAggregates(const RowType& row, int firstColumn) {
     std::vector<std::string> aggregates;
-    for (auto i = 1; i < row.size(); ++i) {
+    for (auto i = firstColumn; i < row.size(); ++i) {
       aggregates.push_back(fmt::format("checksum({})", row.nameOf(i)));
     }
     return aggregates;
