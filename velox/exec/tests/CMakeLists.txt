@@ -231,12 +231,14 @@ add_executable(velox_join_fuzzer_test JoinFuzzerTest.cpp)
 
 target_link_libraries(velox_join_fuzzer_test velox_join_fuzzer gtest gtest_main)
 
-add_executable(velox_exchange_fuzzer_test ExchanngeFuzzerTest.cpp)
+add_executable(velox_exchange_fuzzer_test ExchangeFuzzer.cpp)
 
 target_link_libraries(
   velox_exchange_fuzzer_test
+  velox_exec_test_lib
   velox_aggregates
   velox_vector_test_lib
+  velox_vector_fuzzer
   gtest
   gtest
   gtest_main)
