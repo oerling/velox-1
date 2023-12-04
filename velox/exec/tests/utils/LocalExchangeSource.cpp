@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
+#include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/OutputBufferManager.h"
-#include <folly/executors/IOThreadPoolExecutor.h>
 
 namespace facebook::velox::exec::test {
 namespace {
@@ -71,107 +71,106 @@ class LocalExchangeSource : public exec::ExchangeSource {
     static std::mutex resultCallbackMutex;
     // Since this lambda may outlive 'this', we need to capture a
     // shared_ptr to the current object (self).
-    auto resultCallback = [self,
-                           requestedSequence,
-                           buffers,
-			   hasBeenCalled,
-                           this](
-                              std::vector<std::unique_ptr<folly::IOBuf>> data,
-                              int64_t sequence) {
-      {
-        std::lock_guard<std::mutex>l(resultCallbackMutex);
-        // This is  called when data is found and when this times out. Only the
-        // first of the two runs the body of the function.
-        if (*hasBeenCalled) {
-          return;
-        }
-        *hasBeenCalled = true;
-      }
-      if (data.empty()) {
-	LOG(INFO) << "bing";
-	VeloxPromise<Response> requestPromise;
-	{
-	  std::lock_guard<std::mutex> l(queue_->mutex());
-	  requestPending_ = false;
-	  requestPromise = std::move(promise_);
-	}
-	if (!requestPromise.isFulfilled()) {
-	  requestPromise.setValue(Response{0, false});
-	}
-	return;
-      }
-      if (requestedSequence > sequence) {
-        VLOG(2) << "Receives earlier sequence than requested: task " << taskId_
-                << ", destination " << destination_ << ", requested "
-                << sequence << ", received " << requestedSequence;
-        int64_t nExtra = requestedSequence - sequence;
-        VELOX_CHECK(nExtra < data.size());
-        data.erase(data.begin(), data.begin() + nExtra);
-        sequence = requestedSequence;
-      }
-      std::vector<std::unique_ptr<SerializedPage>> pages;
-      bool atEnd = false;
-      int64_t totalBytes = 0;
-      for (auto& inputPage : data) {
-        if (!inputPage) {
-          atEnd = true;
-          // Keep looping, there could be extra end markers.
-          continue;
-        }
-        totalBytes += inputPage->length();
-        inputPage->unshare();
-        pages.push_back(std::make_unique<SerializedPage>(std::move(inputPage)));
-        inputPage = nullptr;
-      }
-      numPages_ += pages.size();
-      totalBytes_ += totalBytes;
-
-      try {
-        common::testutil::TestValue::adjust(
-            "facebook::velox::exec::test::LocalExchangeSource", &numPages_);
-      } catch (const std::exception& e) {
-        queue_->setError(e.what());
-        checkSetRequestPromise();
-        return;
-      }
-
-      int64_t ackSequence;
-      VeloxPromise<Response> requestPromise;
-      {
-        std::vector<ContinuePromise> queuePromises;
-        {
-          std::lock_guard<std::mutex> l(queue_->mutex());
-          requestPending_ = false;
-          requestPromise = std::move(promise_);
-          for (auto& page : pages) {
-            queue_->enqueueLocked(std::move(page), queuePromises);
+    auto resultCallback =
+        [self, requestedSequence, buffers, hasBeenCalled, this](
+            std::vector<std::unique_ptr<folly::IOBuf>> data, int64_t sequence) {
+          {
+            std::lock_guard<std::mutex> l(resultCallbackMutex);
+            // This is  called when data is found and when this times out. Only
+            // the first of the two runs the body of the function.
+            if (*hasBeenCalled) {
+              return;
+            }
+            *hasBeenCalled = true;
           }
-          if (atEnd) {
-            queue_->enqueueLocked(nullptr, queuePromises);
-            atEnd_ = true;
+          if (data.empty()) {
+            LOG(INFO) << "bing";
+            VeloxPromise<Response> requestPromise;
+            {
+              std::lock_guard<std::mutex> l(queue_->mutex());
+              requestPending_ = false;
+              requestPromise = std::move(promise_);
+            }
+            if (!requestPromise.isFulfilled()) {
+              requestPromise.setValue(Response{0, false});
+            }
+            return;
           }
-          ackSequence = sequence_ = sequence + pages.size();
-        }
-        for (auto& promise : queuePromises) {
-          promise.setValue();
-        }
-      }
-      // Outside of queue mutex.
-      if (atEnd_) {
-        buffers->deleteResults(taskId_, destination_);
-      } else {
-        buffers->acknowledge(taskId_, destination_, ackSequence);
-      }
+          if (requestedSequence > sequence) {
+            VLOG(2) << "Receives earlier sequence than requested: task "
+                    << taskId_ << ", destination " << destination_
+                    << ", requested " << sequence << ", received "
+                    << requestedSequence;
+            int64_t nExtra = requestedSequence - sequence;
+            VELOX_CHECK(nExtra < data.size());
+            data.erase(data.begin(), data.begin() + nExtra);
+            sequence = requestedSequence;
+          }
+          std::vector<std::unique_ptr<SerializedPage>> pages;
+          bool atEnd = false;
+          int64_t totalBytes = 0;
+          for (auto& inputPage : data) {
+            if (!inputPage) {
+              atEnd = true;
+              // Keep looping, there could be extra end markers.
+              continue;
+            }
+            totalBytes += inputPage->length();
+            inputPage->unshare();
+            pages.push_back(
+                std::make_unique<SerializedPage>(std::move(inputPage)));
+            inputPage = nullptr;
+          }
+          numPages_ += pages.size();
+          totalBytes_ += totalBytes;
 
-      if (!requestPromise.isFulfilled()) {
-        requestPromise.setValue(Response{totalBytes, atEnd_});
-      }
-    };
+          try {
+            common::testutil::TestValue::adjust(
+                "facebook::velox::exec::test::LocalExchangeSource", &numPages_);
+          } catch (const std::exception& e) {
+            queue_->setError(e.what());
+            checkSetRequestPromise();
+            return;
+          }
+
+          int64_t ackSequence;
+          VeloxPromise<Response> requestPromise;
+          {
+            std::vector<ContinuePromise> queuePromises;
+            {
+              std::lock_guard<std::mutex> l(queue_->mutex());
+              requestPending_ = false;
+              requestPromise = std::move(promise_);
+              for (auto& page : pages) {
+                queue_->enqueueLocked(std::move(page), queuePromises);
+              }
+              if (atEnd) {
+                queue_->enqueueLocked(nullptr, queuePromises);
+                atEnd_ = true;
+              }
+              ackSequence = sequence_ = sequence + pages.size();
+            }
+            for (auto& promise : queuePromises) {
+              promise.setValue();
+            }
+          }
+          // Outside of queue mutex.
+          if (atEnd_) {
+            buffers->deleteResults(taskId_, destination_);
+          } else {
+            buffers->acknowledge(taskId_, destination_, ackSequence);
+          }
+
+          if (!requestPromise.isFulfilled()) {
+            requestPromise.setValue(Response{totalBytes, atEnd_});
+          }
+        };
     timeoutExecutor()->getEventBase()->scheduleAt(
         [resultCallback, requestedSequence]() {
           resultCallback({}, requestedSequence);
         },
-        std::chrono::steady_clock::now() + std::chrono::seconds(maxWaitSeconds));
+        std::chrono::steady_clock::now() +
+            std::chrono::seconds(maxWaitSeconds));
 
     buffers->getData(
         taskId_, destination_, maxBytes, sequence_, resultCallback);

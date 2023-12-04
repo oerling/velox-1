@@ -50,7 +50,7 @@ class ExchangeFuzzer : public VectorTestBase {
  public:
   ExchangeFuzzer() : fuzzer_(options_, pool_.get()) {}
 
-  bool  runOne(
+  bool runOne(
       std::vector<RowVectorPtr>& vectors,
       int32_t sourceWidth,
       int32_t targetWidth,
@@ -127,8 +127,8 @@ class ExchangeFuzzer : public VectorTestBase {
 
     try {
       exec::test::AssertQueryBuilder(plan)
-        .splits(partialAggSplits)
-        .assertResults(expected);
+          .splits(partialAggSplits)
+          .assertResults(expected);
     } catch (const std::exception& e) {
       LOG(ERROR) << "Terminating with error: " << e.what();
       return false;
@@ -196,15 +196,15 @@ class ExchangeFuzzer : public VectorTestBase {
       }
 
       if (!runOne(
-          vectors,
-          sourceWidth,
-          targetWidth,
-          FLAGS_task_width,
-          outputSize,
-          exchangeSize,
-          batchSize)) {
-	LOG(INFO) << "Terminating with error";
-	exit(1);
+              vectors,
+              sourceWidth,
+              targetWidth,
+              FLAGS_task_width,
+              outputSize,
+              exchangeSize,
+              batchSize)) {
+        LOG(INFO) << "Terminating with error";
+        exit(1);
       }
 
       if (FLAGS_duration_sec == 0 && FLAGS_steps &&
@@ -219,7 +219,8 @@ class ExchangeFuzzer : public VectorTestBase {
       LOG(INFO) << "Seed = " << newSeed;
       seed(newSeed);
     }
-    LOG(INFO) << "Finishing after " << iteration_ << " cases, " << (getCurrentTimeMicro() - start) / 1000000 << "s";
+    LOG(INFO) << "Finishing after " << iteration_ << " cases, "
+              << (getCurrentTimeMicro() - start) / 1000000 << "s";
   }
 
   void seed(size_t seed) {
