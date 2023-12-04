@@ -348,8 +348,10 @@ int32_t ByteStream::newRangeSize(int32_t bytes) const {
 }
 
 ByteInputStream ByteStream::inputStream() const {
+  VELOX_CHECK(!ranges_.empty());
   updateEnd();
   auto rangeCopy = ranges_;
+  rangeCopy.back().size = lastRangeEnd_;
   return ByteInputStream(std::move(rangeCopy));
 }
 
