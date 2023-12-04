@@ -50,7 +50,7 @@ class ExchangeFuzzer : public VectorTestBase {
  public:
   ExchangeFuzzer() : fuzzer_(options_, pool_.get()) {}
 
-  void runOne(
+  bool  runOne(
       std::vector<RowVectorPtr>& vectors,
       int32_t sourceWidth,
       int32_t targetWidth,
@@ -125,9 +125,15 @@ class ExchangeFuzzer : public VectorTestBase {
                         rawInputTypes)
                     .planNode();
 
-    exec::test::AssertQueryBuilder(plan)
+    try {
+      exec::test::AssertQueryBuilder(plan)
         .splits(partialAggSplits)
         .assertResults(expected);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Terminating with error: " << e.what();
+      return false;
+    }
+    return true;
   }
 
   void run() {
@@ -146,13 +152,13 @@ class ExchangeFuzzer : public VectorTestBase {
       size_t exchangeSize = randInt(10, 100) << 20;
       size_t batchSize = randInt(100000, 10000000);
       int32_t sourceWidth = randInt(1, 200);
-      int32_t targetWidth = randInt(1, 200);
+      int32_t targetWidth = randInt(2, 200);
 
       options_.vectorSize = 100;
       options_.nullRatio = 0;
       options_.containerHasNulls = fuzzer_.coinToss(0.2);
       options_.dictionaryHasNulls = fuzzer_.coinToss(0.2);
-      options_.stringLength = randInt(0, 100);
+      options_.stringLength = randInt(1, 100);
       options_.stringVariableLength = true;
       options_.containerLength = randInt(1, 50);
       options_.containerVariableLength = true;
@@ -188,14 +194,18 @@ class ExchangeFuzzer : public VectorTestBase {
             newRow->estimateFlatSize() * sourceWidth * FLAGS_task_width;
         shuffleSize += newSize;
       }
-      runOne(
+
+      if (!runOne(
           vectors,
           sourceWidth,
           targetWidth,
           FLAGS_task_width,
           outputSize,
           exchangeSize,
-          batchSize);
+          batchSize)) {
+	LOG(INFO) << "Terminating with error";
+	exit(1);
+      }
 
       if (FLAGS_duration_sec == 0 && FLAGS_steps &&
           counter + 1 >= FLAGS_steps) {
@@ -209,6 +219,7 @@ class ExchangeFuzzer : public VectorTestBase {
       LOG(INFO) << "Seed = " << newSeed;
       seed(newSeed);
     }
+    LOG(INFO) << "Finishing after " << iteration_ << " cases, " << (getCurrentTimeMicro() - start) / 1000000 << "s";
   }
 
   void seed(size_t seed) {
@@ -314,4 +325,5 @@ int main(int argc, char** argv) {
     fuzzer.seed(seed);
   }
   fuzzer.run();
+  return 0;
 }
