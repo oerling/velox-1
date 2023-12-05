@@ -631,13 +631,10 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   // IndexRange and row range variants with and without nulls.
   constexpr int32_t kPad = 8;
   std::vector<int32_t> numSelectedValues = {
-    3
-#if ALL_CASES
-    ,
+    3 ,
     30,
     300,
     10000
-#endif
   };
   std::vector<std::vector<IndexRange>> indexRanges;
   std::vector<std::vector<vector_size_t>> rowSets;
@@ -681,13 +678,12 @@ TEST_P(PrestoSerializerTest, timeFlat) {
     item.nullPct = nullPctValues[nullIdx];
     item.numSelected = numSelectedValues[selIdx];
     item.bits = bits;
-    int32_t numRepeat = 500 * vectorSize / indexRanges[selIdx].size();
+    int32_t numRepeat = 100 * vectorSize / indexRanges[selIdx].size();
 
     VectorPtr vector = bits == 32 ? v32s[nullIdx] : v64s[nullIdx];
     auto rowType = ROW({vector->type()});
     auto rowVector = vm.rowVector({vector});
     {
-#if ALL_CASES
       MicrosecondTimer t(&item.irTime);
       auto group = std::make_unique<VectorStreamGroup>(pool_.get());
       group->createStreamTree(rowType, rowSets[selIdx].size() - kPad);
@@ -698,7 +694,6 @@ TEST_P(PrestoSerializerTest, timeFlat) {
                 indexRanges[selIdx].data(), indexRanges[selIdx].size()),
             scratch);
       }
-#endif
     }
 
     {
