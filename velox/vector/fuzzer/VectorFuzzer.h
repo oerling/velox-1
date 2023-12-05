@@ -127,7 +127,7 @@ class VectorFuzzer {
 
     /// maximum size of array/map wrapped inside constant.
     std::optional<int32_t> maxConstantContainerSize;
-    
+
     /// If true, generated map keys are normalized (unique and not-null).
     bool normalizeMapKeys{true};
 

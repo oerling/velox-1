@@ -2053,7 +2053,7 @@ void estimateSerializedSizeInt(
   switch (vector->encoding()) {
     case VectorEncoding::Simple::FLAT:
       if (ranges.size() > 41000) {
-	LOG(INFO) << "bing";
+        LOG(INFO) << "bing";
       }
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
           estimateFlatSerializedSize,

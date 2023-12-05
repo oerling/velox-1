@@ -17,6 +17,7 @@
 #include <boost/random/uniform_int_distribution.hpp>
 #include <folly/init/Init.h>
 
+#include "velox/common/memory/MmapAllocator.h"
 #include "velox/core/QueryConfig.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -28,8 +29,6 @@
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
-#include "velox/common/memory/MmapAllocator.h"
-
 
 DEFINE_int32(max_width, 16, "Number of parties in shuffle");
 DEFINE_int32(task_width, 4, "Number of threads in each task in shuffle");
@@ -176,7 +175,8 @@ class ExchangeFuzzer : public VectorTestBase {
       std::vector<RowVectorPtr> vectors;
 
       vectors.push_back(row);
-      auto maxBatch = std::min<int32_t>(10000, std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow));
+      auto maxBatch = std::min<int32_t>(
+          10000, std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow));
 
       while (shuffleSize < FLAGS_shuffle_size) {
         if (fuzzer_.coinToss(0.2)) {
