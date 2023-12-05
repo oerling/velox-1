@@ -1984,12 +1984,9 @@ void appendStrings(
     }
     return;
   }
-  auto nonNull = rows.data();
-  int32_t numNonNull = rows.size();
   ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
-  auto mutableNonNull = nonNullHolder.get(rows.size());
-  numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), mutableNonNull);
-  nonNull = mutableNonNull;
+  auto nonNull = nonNullHolder.get(rows.size());
+  auto numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNull);
   stream->appendLengths(
       nulls, rows, numNonNull, [&](auto row) { return views[row].size(); });
   for (auto i = 0; i < numNonNull; ++i) {
@@ -2028,7 +2025,7 @@ void serializeFlatVector(
     VectorStream* stream,
     Scratch& scratch) {
   using T = typename TypeTraits<kind>::NativeType;
-  auto flatVector = reinterpret_cast<const FlatVector<T>*>(vector);
+  auto flatVector = vector->asUnchecked<FlatVector<T>>();
   auto rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
     if (std::is_same_v<T, Timestamp>) {
@@ -2355,7 +2352,7 @@ void serializeBiasVector(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  VELOX_UNSUPPORTED()
+  VELOX_UNSUPPORTED();
 }
 
 void serializeColumn(
@@ -2663,7 +2660,7 @@ void estimateSerializedSizeInt(
         }
       }
       auto rowVector = vector->as<RowVector>();
-      auto children = rowVector->children();
+      auto& children = rowVector->children();
       for (auto& child : children) {
         if (child) {
           estimateSerializedSizeInt(
@@ -2939,7 +2936,7 @@ void estimateSerializedSizeInt(
         innerRows = mutableInnerRows;
       }
       auto rowVector = vector->as<RowVector>();
-      auto children = rowVector->children();
+      auto& children = rowVector->children();
       for (auto& child : children) {
         if (child) {
           estimateSerializedSizeInt(
@@ -2997,11 +2994,6 @@ void estimateSerializedSizeInt(
       if (numRanges == 0) {
         return;
       }
-      estimateSerializedSizeInt(
-          arrayVector->elements().get(),
-          folly::Range<const IndexRange*>(rangeHolder.get(), numRanges),
-          sizesHolder.get(),
-          scratch);
       estimateSerializedSizeInt(
           arrayVector->elements().get(),
           folly::Range<const IndexRange*>(rangeHolder.get(), numRanges),
