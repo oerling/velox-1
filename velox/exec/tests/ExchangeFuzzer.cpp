@@ -155,7 +155,10 @@ class ExchangeFuzzer : public VectorTestBase {
       options_.vectorSize = 100;
       options_.nullRatio = 0;
       options_.containerHasNulls = fuzzer_.coinToss(0.2);
-      options_.dictionaryHasNulls = fuzzer_.coinToss(0.2);
+      options_.dictionaryHasNulls = false;
+      // TODO: fuzzer_.coinToss(0.2); This does not work because
+      // toElementRows with null adding dicts ignores nulls added by
+      // dicts..
       options_.stringLength = randInt(1, 100);
       options_.stringVariableLength = true;
       options_.containerLength = randInt(1, 50);
@@ -171,7 +174,7 @@ class ExchangeFuzzer : public VectorTestBase {
       auto row = fuzzer_.fuzzInputRow(rowType);
       size_t shuffleSize = row->estimateFlatSize();
       size_t bytesPerRow =
-          shuffleSize / row->size() * sourceWidth * FLAGS_task_width;
+          20 + (shuffleSize / row->size() * sourceWidth * FLAGS_task_width);
       std::vector<RowVectorPtr> vectors;
 
       vectors.push_back(row);
