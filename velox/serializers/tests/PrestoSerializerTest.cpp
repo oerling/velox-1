@@ -630,12 +630,7 @@ TEST_P(PrestoSerializerTest, timeFlat) {
   // Serialize different fractions of a 10K vector of int32_t and int64_t with
   // IndexRange and row range variants with and without nulls.
   constexpr int32_t kPad = 8;
-  std::vector<int32_t> numSelectedValues = {
-    3 ,
-    30,
-    300,
-    10000
-  };
+  std::vector<int32_t> numSelectedValues = {3, 30, 300, 10000};
   std::vector<std::vector<IndexRange>> indexRanges;
   std::vector<std::vector<vector_size_t>> rowSets;
   std::vector<int32_t> nullPctValues = {0, 1, 10, 90};
