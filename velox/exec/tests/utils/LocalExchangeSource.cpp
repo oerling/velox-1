@@ -84,7 +84,6 @@ class LocalExchangeSource : public exec::ExchangeSource {
             *hasBeenCalled = true;
           }
           if (data.empty()) {
-            LOG(INFO) << "bing";
             VeloxPromise<Response> requestPromise;
             {
               std::lock_guard<std::mutex> l(queue_->mutex());

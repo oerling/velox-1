@@ -28,14 +28,13 @@
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
+#include "velox/common/memory/MmapAllocator.h"
 
-DEFINE_int32(width, 16, "Number of parties in shuffle");
+
+DEFINE_int32(max_width, 16, "Number of parties in shuffle");
 DEFINE_int32(task_width, 4, "Number of threads in each task in shuffle");
-
-DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
-DEFINE_int32(dict_pct, 0, "Percentage of columns wrapped in dictionary");
-
 DEFINE_int64(shuffle_size, 4UL << 30, "Shuffle data volume in each step");
+DEFINE_int32(max_buffer_mb, 20, "Max buffer size for output/exchange per task");
 DEFINE_uint64(seed, 0, "Seed, 0 means random");
 
 DEFINE_int32(steps, 10, "Number of plans to generate and test.");
@@ -148,11 +147,11 @@ class ExchangeFuzzer : public VectorTestBase {
       allTypes.insert(allTypes.end(), types.begin(), types.end());
       allNames.insert(allNames.end(), names.begin(), names.end());
       auto rowType = ROW(std::move(allNames), std::move(allTypes));
-      size_t outputSize = randInt(10, 100) << 20;
-      size_t exchangeSize = randInt(10, 100) << 20;
+      size_t outputSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
+      size_t exchangeSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
       size_t batchSize = randInt(100000, 10000000);
-      int32_t sourceWidth = randInt(1, 200);
-      int32_t targetWidth = randInt(2, 200);
+      int32_t sourceWidth = randInt(1, FLAGS_max_width);
+      int32_t targetWidth = randInt(2, FLAGS_max_width);
 
       options_.vectorSize = 100;
       options_.nullRatio = 0;
@@ -162,7 +161,8 @@ class ExchangeFuzzer : public VectorTestBase {
       options_.stringVariableLength = true;
       options_.containerLength = randInt(1, 50);
       options_.containerVariableLength = true;
-      options_.complexElementsMaxSize = 100000;
+      options_.complexElementsMaxSize = 20000;
+      options_.maxConstantContainerSize = 2;
       options_.normalizeMapKeys = fuzzer_.coinToss(0.95);
       options_.timestampPrecision =
           static_cast<VectorFuzzer::Options::TimestampPrecision>(randInt(0, 3));
@@ -176,7 +176,7 @@ class ExchangeFuzzer : public VectorTestBase {
       std::vector<RowVectorPtr> vectors;
 
       vectors.push_back(row);
-      auto maxBatch = std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow);
+      auto maxBatch = std::min<int32_t>(10000, std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow));
 
       while (shuffleSize < FLAGS_shuffle_size) {
         if (fuzzer_.coinToss(0.2)) {
@@ -206,6 +206,11 @@ class ExchangeFuzzer : public VectorTestBase {
         LOG(INFO) << "Terminating with error";
         exit(1);
       }
+      LOG(INFO) << "Memory after run="
+                << succinctBytes(memory::AllocationTraits::pageBytes(
+                       memory::MemoryManager::getInstance()
+                           .allocator()
+                           .numAllocated()));
 
       if (FLAGS_duration_sec == 0 && FLAGS_steps &&
           counter + 1 >= FLAGS_steps) {
@@ -310,6 +315,17 @@ int32_t ExchangeFuzzer::iteration_;
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
+  memory::MmapAllocator::Options options;
+  options.capacity = 20UL << 30;
+  options.useMmapArena = true;
+  options.mmapArenaCapacityRatio = 1;
+
+  auto allocator = std::make_shared<memory::MmapAllocator>(options);
+  memory::MemoryAllocator::setDefaultInstance(allocator.get());
+  memory::MemoryManager::getInstance(memory::MemoryManagerOptions{
+      .capacity = static_cast<int64_t>(options.capacity),
+      .allocator = allocator.get()});
+
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
