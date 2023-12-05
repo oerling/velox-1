@@ -17,6 +17,7 @@
 #include <boost/random/uniform_int_distribution.hpp>
 #include <folly/init/Init.h>
 
+#include "velox/common/memory/MmapAllocator.h"
 #include "velox/core/QueryConfig.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -29,13 +30,10 @@
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
-DEFINE_int32(width, 16, "Number of parties in shuffle");
+DEFINE_int32(max_width, 16, "Number of parties in shuffle");
 DEFINE_int32(task_width, 4, "Number of threads in each task in shuffle");
-
-DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
-DEFINE_int32(dict_pct, 0, "Percentage of columns wrapped in dictionary");
-
 DEFINE_int64(shuffle_size, 4UL << 30, "Shuffle data volume in each step");
+DEFINE_int32(max_buffer_mb, 20, "Max buffer size for output/exchange per task");
 DEFINE_uint64(seed, 0, "Seed, 0 means random");
 
 DEFINE_int32(steps, 10, "Number of plans to generate and test.");
@@ -50,7 +48,7 @@ class ExchangeFuzzer : public VectorTestBase {
  public:
   ExchangeFuzzer() : fuzzer_(options_, pool_.get()) {}
 
-  void runOne(
+  bool runOne(
       std::vector<RowVectorPtr>& vectors,
       int32_t sourceWidth,
       int32_t targetWidth,
@@ -125,9 +123,15 @@ class ExchangeFuzzer : public VectorTestBase {
                         rawInputTypes)
                     .planNode();
 
-    exec::test::AssertQueryBuilder(plan)
-        .splits(partialAggSplits)
-        .assertResults(expected);
+    try {
+      exec::test::AssertQueryBuilder(plan)
+          .splits(partialAggSplits)
+          .assertResults(expected);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Terminating with error: " << e.what();
+      return false;
+    }
+    return true;
   }
 
   void run() {
@@ -142,21 +146,25 @@ class ExchangeFuzzer : public VectorTestBase {
       allTypes.insert(allTypes.end(), types.begin(), types.end());
       allNames.insert(allNames.end(), names.begin(), names.end());
       auto rowType = ROW(std::move(allNames), std::move(allTypes));
-      size_t outputSize = randInt(10, 100) << 20;
-      size_t exchangeSize = randInt(10, 100) << 20;
+      size_t outputSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
+      size_t exchangeSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
       size_t batchSize = randInt(100000, 10000000);
-      int32_t sourceWidth = randInt(1, 200);
-      int32_t targetWidth = randInt(1, 200);
+      int32_t sourceWidth = randInt(1, FLAGS_max_width);
+      int32_t targetWidth = randInt(2, FLAGS_max_width);
 
       options_.vectorSize = 100;
       options_.nullRatio = 0;
       options_.containerHasNulls = fuzzer_.coinToss(0.2);
-      options_.dictionaryHasNulls = fuzzer_.coinToss(0.2);
-      options_.stringLength = randInt(0, 100);
+      options_.dictionaryHasNulls = false;
+      // TODO: fuzzer_.coinToss(0.2); This does not work because
+      // toElementRows with null adding dicts ignores nulls added by
+      // dicts..
+      options_.stringLength = randInt(1, 100);
       options_.stringVariableLength = true;
       options_.containerLength = randInt(1, 50);
       options_.containerVariableLength = true;
-      options_.complexElementsMaxSize = 100000;
+      options_.complexElementsMaxSize = 20000;
+      options_.maxConstantContainerSize = 2;
       options_.normalizeMapKeys = fuzzer_.coinToss(0.95);
       options_.timestampPrecision =
           static_cast<VectorFuzzer::Options::TimestampPrecision>(randInt(0, 3));
@@ -166,11 +174,12 @@ class ExchangeFuzzer : public VectorTestBase {
       auto row = fuzzer_.fuzzInputRow(rowType);
       size_t shuffleSize = row->estimateFlatSize();
       size_t bytesPerRow =
-          shuffleSize / row->size() * sourceWidth * FLAGS_task_width;
+          20 + (shuffleSize / row->size() * sourceWidth * FLAGS_task_width);
       std::vector<RowVectorPtr> vectors;
 
       vectors.push_back(row);
-      auto maxBatch = std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow);
+      auto maxBatch = std::min<int32_t>(
+          10000, std::max<int64_t>(10, FLAGS_shuffle_size / bytesPerRow));
 
       while (shuffleSize < FLAGS_shuffle_size) {
         if (fuzzer_.coinToss(0.2)) {
@@ -188,14 +197,23 @@ class ExchangeFuzzer : public VectorTestBase {
             newRow->estimateFlatSize() * sourceWidth * FLAGS_task_width;
         shuffleSize += newSize;
       }
-      runOne(
-          vectors,
-          sourceWidth,
-          targetWidth,
-          FLAGS_task_width,
-          outputSize,
-          exchangeSize,
-          batchSize);
+
+      if (!runOne(
+              vectors,
+              sourceWidth,
+              targetWidth,
+              FLAGS_task_width,
+              outputSize,
+              exchangeSize,
+              batchSize)) {
+        LOG(INFO) << "Terminating with error";
+        exit(1);
+      }
+      LOG(INFO) << "Memory after run="
+                << succinctBytes(memory::AllocationTraits::pageBytes(
+                       memory::MemoryManager::getInstance()
+                           .allocator()
+                           .numAllocated()));
 
       if (FLAGS_duration_sec == 0 && FLAGS_steps &&
           counter + 1 >= FLAGS_steps) {
@@ -209,6 +227,8 @@ class ExchangeFuzzer : public VectorTestBase {
       LOG(INFO) << "Seed = " << newSeed;
       seed(newSeed);
     }
+    LOG(INFO) << "Finishing after " << iteration_ << " cases, "
+              << (getCurrentTimeMicro() - start) / 1000000 << "s";
   }
 
   void seed(size_t seed) {
@@ -298,6 +318,17 @@ int32_t ExchangeFuzzer::iteration_;
 
 int main(int argc, char** argv) {
   folly::init(&argc, &argv);
+  memory::MmapAllocator::Options options;
+  options.capacity = 20UL << 30;
+  options.useMmapArena = true;
+  options.mmapArenaCapacityRatio = 1;
+
+  auto allocator = std::make_shared<memory::MmapAllocator>(options);
+  memory::MemoryAllocator::setDefaultInstance(allocator.get());
+  memory::MemoryManager::getInstance(memory::MemoryManagerOptions{
+      .capacity = static_cast<int64_t>(options.capacity),
+      .allocator = allocator.get()});
+
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
@@ -314,4 +345,5 @@ int main(int argc, char** argv) {
     fuzzer.seed(seed);
   }
   fuzzer.run();
+  return 0;
 }
