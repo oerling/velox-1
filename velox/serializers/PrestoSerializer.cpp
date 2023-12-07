@@ -323,12 +323,8 @@ void readDecimalValues(
 
 vector_size_t sizeWithIncomingNulls(
     vector_size_t size,
-    const uint64_t* incomingNulls,
     int32_t numIncomingNulls) {
-  if (!incomingNulls) {
-    return size;
-  }
-  return numIncomingNulls;
+  return numIncomingNulls == 0 ? size : numIncomingNulls;
 }
 
 vector_size_t readNulls(
@@ -355,7 +351,7 @@ vector_size_t readNulls(
 
   const bool noPriorNulls = (result.rawNulls() == nullptr);
   const auto numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
 
   // Allocate one extra byte in case we cannot use bits from the current last
   // partial byte.
@@ -407,7 +403,7 @@ void read(
     int32_t numIncomingNulls) {
   const int32_t size = source->read<int32_t>();
   const auto numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
   result->resize(resultOffset + numNewValues);
 
   auto flatResult = result->asFlatVector<T>();
@@ -458,7 +454,7 @@ void read<StringView>(
     int32_t numIncomingNulls) {
   const int32_t size = source->read<int32_t>();
   const int32_t numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
 
   result->resize(resultOffset + numNewValues);
 
@@ -518,7 +514,7 @@ void readConstantVector(
     int32_t numIncomingNulls) {
   const auto size = source->read<int32_t>();
   const int32_t numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
   readColumns(
@@ -561,7 +557,7 @@ void readDictionaryVector(
     int32_t numIncomingNulls) {
   const auto size = source->read<int32_t>();
   const int32_t numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
 
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
@@ -639,7 +635,7 @@ void readArrayVector(
 
   const vector_size_t size = source->read<int32_t>();
   const auto numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
   arrayVector->resize(resultOffset + numNewValues);
   arrayVector->setElements(children[0]);
 
@@ -700,7 +696,7 @@ void readMapVector(
 
   const vector_size_t size = source->read<int32_t>();
   const vector_size_t numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
   mapVector->resize(resultOffset + numNewValues);
   mapVector->setKeysAndValues(children[0], children[1]);
 
@@ -829,7 +825,7 @@ void readRowVector(
 
   const auto size = source->read<int32_t>();
   const auto numNewValues =
-      sizeWithIncomingNulls(size, incomingNulls, numIncomingNulls);
+      sizeWithIncomingNulls(size, numIncomingNulls);
   row->resize(resultOffset + numNewValues);
   // Read and discard the offsets. The number of offsets is not affected by
   // incomingNulls.
