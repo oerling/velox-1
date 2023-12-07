@@ -1169,7 +1169,7 @@ class VectorStream {
   }
 
   void initializeHeader(std::string_view name, StreamArena& streamArena) {
-    streamArena.newTinyRange(50, &header_);
+    streamArena.newTinyRange(50, nullptr, &header_);
     header_.size = name.size() + sizeof(int32_t);
     *reinterpret_cast<int32_t*>(header_.buffer) = name.size();
     memcpy(header_.buffer + sizeof(int32_t), &name[0], name.size());
@@ -1322,9 +1322,9 @@ class VectorStream {
   int32_t totalLength_{0};
   bool hasLengths_{false};
   ByteRange header_;
-  ByteStream nulls_;
-  ByteStream lengths_;
-  ByteStream values_;
+  ByteOutputStream nulls_;
+  ByteOutputStream lengths_;
+  ByteOutputStream values_;
   std::vector<std::unique_ptr<VectorStream>> children_;
 };
 
