@@ -53,12 +53,12 @@ class HashTableTest : public testing::TestWithParam<bool>,
 
   void testCycle(
       BaseHashTable::HashMode mode,
-      int32_t size,
-      int32_t numWays,
+      int64_t size,
+      int64_t numWays,
       TypePtr buildType,
-      int32_t numKeys) {
+      int64_t numKeys) {
     std::vector<TypePtr> dependentTypes;
-    int32_t sequence = 0;
+    int64_t sequence = 0;
     isInTable_.resize(
         bits::nwords(numWays * size),
         static_cast<const std::vector<
@@ -74,7 +74,7 @@ class HashTableTest : public testing::TestWithParam<bool>,
         }
       }
     }
-    int32_t startOffset = 0;
+    int64_t startOffset = 0;
     std::vector<std::unique_ptr<BaseHashTable>> otherTables;
     uint64_t numRows{0};
     for (auto way = 0; way < numWays; ++way) {
@@ -120,17 +120,17 @@ class HashTableTest : public testing::TestWithParam<bool>,
   // Inserts and deletes rows in a HashTable, similarly to a group by
   // that periodically spills a fraction of the groups.
   void testGroupBySpill(
-      int32_t size,
+      int64_t size,
       TypePtr tableType,
-      int32_t numKeys,
-      int32_t batchSize = 1000,
-      int32_t eraseSize = 500) {
-    int32_t sequence = 0;
+      int64_t numKeys,
+      int64_t batchSize = 1000,
+      int64_t eraseSize = 500) {
+    int64_t sequence = 0;
     std::vector<RowVectorPtr> batches;
     auto table = createHashTableForAggregation(tableType, numKeys);
     auto lookup = std::make_unique<HashLookup>(table->hashers());
     std::vector<char*> allInserted;
-    int32_t numErased = 0;
+    int64_t numErased = 0;
     // We insert 1000 and delete 500.
     for (auto round = 0; round < size; round += batchSize) {
       makeRows(batchSize, 1, sequence, tableType, batches);
@@ -143,10 +143,10 @@ class HashTableTest : public testing::TestWithParam<bool>,
       table->erase(folly::Range<char**>(&allInserted[numErased], eraseSize));
       numErased += eraseSize;
     }
-    int32_t batchStart = 0;
+    int64_t batchStart = 0;
     // We loop over the keys one more time. The first half will be all
     // new rows, the second half will be hits of existing ones.
-    int32_t row = 0;
+    int64_t row = 0;
     for (auto i = 0; i < batches.size(); ++i) {
       insertGroups(*batches[0], *lookup, *table);
       for (; row < batchStart + batchSize; ++row) {
@@ -191,7 +191,7 @@ class HashTableTest : public testing::TestWithParam<bool>,
     auto& hashers = table.hashers();
     auto mode = table.hashMode();
     bool rehash = false;
-    for (int32_t i = 0; i < hashers.size(); ++i) {
+    for (int64_t i = 0; i < hashers.size(); ++i) {
       auto key = input.childAt(hashers[i]->channel());
       hashers[i]->decode(*key, rows);
       if (mode != BaseHashTable::HashMode::kHash) {
@@ -234,11 +234,11 @@ class HashTableTest : public testing::TestWithParam<bool>,
 
   void copyVectorsToTable(
       const std::vector<RowVectorPtr>& batches,
-      int32_t tableOffset,
+      int64_t tableOffset,
       BaseHashTable* table) {
-    int32_t batchSize = batches[0]->size();
+    int64_t batchSize = batches[0]->size();
     raw_vector<uint64_t> dummy(batchSize);
-    int32_t batchOffset = 0;
+    int64_t batchOffset = 0;
     rowOfKey_.resize(tableOffset + batchSize * batches.size());
     auto rowContainer = table->rows();
     auto& hashers = table->hashers();
@@ -279,10 +279,10 @@ class HashTableTest : public testing::TestWithParam<bool>,
 
     auto size = batchSize * batches.size();
     auto powerOfTwo = bits::nextPowerOfTwo(size);
-    int32_t mask = powerOfTwo - 1;
-    int32_t position = 0;
-    int32_t delta = 1;
-    int32_t numInserted = 0;
+    int64_t mask = powerOfTwo - 1;
+    int64_t position = 0;
+    int64_t delta = 1;
+    int64_t numInserted = 0;
     auto nextOffset = rowContainer->nextOffset();
 
     // We insert values in a geometric skip order. 1, 2, 4, 7,
@@ -315,7 +315,7 @@ class HashTableTest : public testing::TestWithParam<bool>,
   // based on 'sequence'. If 'sequence' is incremented by 'size'
   // between the next call will not overlap with the results of the
   // previous one.
-  VectorPtr makeVector(TypePtr type, int32_t size, int32_t sequence) {
+  VectorPtr makeVector(TypePtr type, int64_t size, int64_t sequence) {
     switch (type->kind()) {
       case TypeKind::BIGINT:
         return makeFlatVector<int64_t>(
@@ -353,9 +353,9 @@ class HashTableTest : public testing::TestWithParam<bool>,
   }
 
   void makeRows(
-      int32_t batchSize,
-      int32_t numBatches,
-      int32_t sequence,
+      int64_t batchSize,
+      int64_t numBatches,
+      int64_t sequence,
       TypePtr buildType,
       std::vector<RowVectorPtr>& batches) {
     for (auto i = 0; i < numBatches; ++i) {
@@ -372,9 +372,9 @@ class HashTableTest : public testing::TestWithParam<bool>,
     auto mode = topTable_->hashMode();
     SelectivityInfo hashTime;
     SelectivityInfo probeTime;
-    int32_t numHashed = 0;
-    int32_t numProbed = 0;
-    int32_t numHit = 0;
+    int64_t numHashed = 0;
+    int64_t numProbed = 0;
+    int64_t numHit = 0;
     auto& hashers = topTable_->hashers();
     VectorHasher::ScratchMemory scratchMemory;
     for (auto batchIndex = 0; batchIndex < batches_.size(); ++batchIndex) {
@@ -401,7 +401,7 @@ class HashTableTest : public testing::TestWithParam<bool>,
         lookup->rows.resize(rows.size());
         std::iota(lookup->rows.begin(), lookup->rows.end(), 0);
       } else {
-        constexpr int32_t kPadding = simd::kPadding / sizeof(int32_t);
+        constexpr int64_t kPadding = simd::kPadding / sizeof(int64_t);
         lookup->rows.resize(bits::roundUp(rows.size() + kPadding, kPadding));
         auto numRows = simd::indicesOfSetBits(
             rows.asRange().bits(), 0, batch->size(), lookup->rows.data());
@@ -438,9 +438,9 @@ class HashTableTest : public testing::TestWithParam<bool>,
   }
 
   // Erases every strideth non-erased item in the hash table.
-  void testEraseEveryN(int32_t stride) {
+  void testEraseEveryN(int64_t stride) {
     std::vector<char*> toErase;
-    int32_t counter = 0;
+    int64_t counter = 0;
     for (auto i = 0; i < rowOfKey_.size(); ++i) {
       if (rowOfKey_[i] && ++counter % stride == 0) {
         toErase.push_back(rowOfKey_[i]);
@@ -497,7 +497,7 @@ class HashTableTest : public testing::TestWithParam<bool>,
   // Percentage of keys inserted into the table. This is for measuring
   // joins that miss the table part of the time. Used in initializing
   // 'isInTable_'.
-  int32_t insertPct_ = 100;
+  int64_t insertPct_ = 100;
   // Spacing between consecutive generated keys. Affects whether
   // Vectorhashers make ranges or ids of distinct values.
   int64_t keySpacing_ = 1;
@@ -527,8 +527,8 @@ TEST_P(HashTableTest, int2SparseArray) {
 
 TEST_P(HashTableTest, int2SparseNormalized) {
   auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
-  keySpacing_ = 1000;
-  testCycle(BaseHashTable::HashMode::kNormalizedKey, 10000, 2, type, 2);
+  keySpacing_ = 1;
+  testCycle(BaseHashTable::HashMode::kNormalizedKey, (224 * (1<< 20) - 1) / 1024, 1024, type, 1);
 }
 
 TEST_P(HashTableTest, int2SparseNormalizedMostMiss) {
@@ -623,7 +623,7 @@ TEST_P(HashTableTest, bestWithReserveOverflow) {
   SelectivityVector rows(data->size());
   raw_vector<uint64_t> valueIds(data->size());
 
-  for (int32_t i = 0; i < numKeys; ++i) {
+  for (int64_t i = 0; i < numKeys; ++i) {
     bool ok = table->hashers()[i]->computeValueIds(rows, valueIds);
     ASSERT_TRUE(ok);
   }
@@ -792,8 +792,8 @@ TEST(HashTableTest, modeString) {
 }
 
 /// This tests an issue only seen when the number of unique entries
-/// in the HashTable, crosses over int32 limit. The HashTable::loadTag()
-/// offset argument was int32 and for positions greater than int32 max,
+/// in the HashTable, crosses over int64 limit. The HashTable::loadTag()
+/// offset argument was int64 and for positions greater than int64 max,
 /// it would seg fault.
 TEST_P(HashTableTest, offsetOverflowLoadTags) {
   GTEST_SKIP() << "Skipping as it takes long time to converge,"
