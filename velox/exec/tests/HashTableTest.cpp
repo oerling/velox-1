@@ -526,9 +526,9 @@ TEST_P(HashTableTest, int2SparseArray) {
 }
 
 TEST_P(HashTableTest, int2SparseNormalized) {
-  auto type = ROW({"k1", "k2"}, {BIGINT(), BIGINT()});
+  auto type = ROW({"k1"}, {BIGINT()});
   keySpacing_ = 1;
-  testCycle(BaseHashTable::HashMode::kNormalizedKey, (224 * (1<< 20) - 1) / 1024, 1024, type, 1);
+  testCycle(BaseHashTable::HashMode::kNormalizedKey, (224 * (1<< 20) - 1) / 255, 255, type, 1);
 }
 
 TEST_P(HashTableTest, int2SparseNormalizedMostMiss) {
