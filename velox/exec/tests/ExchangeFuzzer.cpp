@@ -287,11 +287,11 @@ class ExchangeFuzzer : public VectorTestBase {
     int32_t numVectors;
     in >> numVectors;
 
-        char newLine;
-	do {
-	  in.read(&newLine, 1);
-	} while(newLine != 10);
-	
+    char newLine;
+    do {
+      in.read(&newLine, 1);
+    } while (newLine != 10);
+
     std::vector<RowVectorPtr> vectors;
     for (auto i = 0; i < numVectors; ++i) {
       auto vector = restoreVector(in, pool_.get());
@@ -332,8 +332,9 @@ class ExchangeFuzzer : public VectorTestBase {
     for (auto& vector : vectors) {
       saveVector(*vector, out);
     }
-    LOG(INFO) << "Saved repro. To replay, do velox_exchange_fuzzer_test --replay "
-              << filePath;
+    LOG(INFO)
+        << "Saved repro. To replay, do velox_exchange_fuzzer_test --replay "
+        << filePath;
   }
 
   static constexpr int64_t kMaxMemory = 6UL << 30; // 6GB
