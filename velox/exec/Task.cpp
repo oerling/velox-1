@@ -824,9 +824,9 @@ void Task::resume(std::shared_ptr<Task> self) {
     // Setting pause requested must be atomic with the resuming so that
     // suspended sections do not go back on thread during resume.
     self->pauseRequested_ = false;
-    if (self->exception_ == nullptr) {
+    if (self->isRunningLocked()) {
       for (auto& driver : self->drivers_) {
-        if (driver) {
+        if (driver != nullptr) {
           if (driver->state().isSuspended) {
             // The Driver will come on thread in its own time as long as
             // the cancel flag is reset. This check needs to be inside 'mutex_'.
@@ -2285,7 +2285,7 @@ StopReason Task::enter(ThreadState& state, uint64_t nowMicros) {
   if (state.isOnThread()) {
     return StopReason::kAlreadyOnThread;
   }
-  auto reason = shouldStopLocked();
+  const auto reason = shouldStopLocked();
   if (reason == StopReason::kTerminate) {
     state.isTerminated = true;
   }
@@ -2573,7 +2573,7 @@ uint64_t Task::MemoryReclaimer::reclaim(
   }
   VELOX_CHECK(paused || maxWaitMs != 0);
   if (!paused) {
-    REPORT_ADD_STAT_VALUE(kCounterMemoryReclaimWaitTimeoutCount, 1);
+    RECORD_METRIC_VALUE(kMetricMemoryReclaimWaitTimeoutCount, 1);
     VELOX_FAIL(
         "Memory reclaim failed to wait for task {} to pause after {} with max timeout {}",
         task->taskId(),
@@ -2582,8 +2582,8 @@ uint64_t Task::MemoryReclaimer::reclaim(
   }
 
   stats.reclaimWaitTimeUs += reclaimWaitTimeUs;
-  REPORT_ADD_HISTOGRAM_VALUE(
-      kCounterMemoryReclaimWaitTimeMs, reclaimWaitTimeUs / 1'000);
+  RECORD_HISTOGRAM_METRIC_VALUE(
+      kMetricMemoryReclaimWaitTimeMs, reclaimWaitTimeUs / 1'000);
 
   // Don't reclaim from a cancelled task as it will terminate soon.
   if (task->isCancelled()) {
