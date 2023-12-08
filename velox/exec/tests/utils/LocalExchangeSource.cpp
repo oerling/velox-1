@@ -159,7 +159,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
             requestPromise.setValue(Response{totalBytes, atEnd_});
           }
         };
-folly::EventBaseManager::get()->getEventBase()->scheduleAt(
+    folly::EventBaseManager::get()->getEventBase()->scheduleAt(
         [resultCallback, requestedSequence]() {
           resultCallback({}, requestedSequence);
         },
