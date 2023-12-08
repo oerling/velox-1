@@ -21,11 +21,6 @@
 namespace facebook::velox::exec::test {
 namespace {
 
-folly::IOThreadPoolExecutor* timeoutExecutor() {
-  static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(10);
-  return executor.get();
-}
-
 class LocalExchangeSource : public exec::ExchangeSource {
  public:
   LocalExchangeSource(
@@ -164,7 +159,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
             requestPromise.setValue(Response{totalBytes, atEnd_});
           }
         };
-    timeoutExecutor()->getEventBase()->scheduleAt(
+folly::EventBaseManager::get()->getEventBase()->scheduleAt(
         [resultCallback, requestedSequence]() {
           resultCallback({}, requestedSequence);
         },
