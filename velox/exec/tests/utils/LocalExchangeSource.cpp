@@ -22,7 +22,7 @@ namespace facebook::velox::exec::test {
 namespace {
 
 folly::IOThreadPoolExecutor* timeoutExecutor() {
-  static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(1);
+  static auto executor = std::make_unique<folly::IOThreadPoolExecutor>(10);
   return executor.get();
 }
 
