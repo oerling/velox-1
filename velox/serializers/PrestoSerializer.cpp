@@ -1932,7 +1932,7 @@ void appendNonNull(
     nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
-  ByteStream& out = stream->values();
+  ByteOutputStream& out = stream->values();
 
   if constexpr (sizeof(T) == 8) {
     AppendWindow<int64_t> window(out, scratch);
