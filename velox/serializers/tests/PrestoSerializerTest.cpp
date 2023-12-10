@@ -60,8 +60,11 @@ class PrestoSerializerTest
     const bool useLosslessTimestamp =
         serdeOptions == nullptr ? false : serdeOptions->useLosslessTimestamp;
     common::CompressionKind kind = GetParam();
+    const bool nullsFirst =
+        serdeOptions == nullptr ? false : serdeOptions->nullsFirst;
     serializer::presto::PrestoVectorSerde::PrestoOptions paramOptions{
-        useLosslessTimestamp, kind};
+      useLosslessTimestamp, kind, nullsFirst};
+
     return paramOptions;
   }
 
@@ -478,7 +481,10 @@ TEST_P(PrestoSerializerTest, roundTrip) {
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
-    testRoundTrip(inputRowVector);
+    serializer::presto::PrestoVectorSerde::PrestoOptions prestoOpts;
+    // Test every second with struct nulls first.
+    prestoOpts.nullsFirst = i % 2 == 1;
+    testRoundTrip(inputRowVector, &prestoOpts);
   }
 }
 
