@@ -28,7 +28,7 @@ namespace facebook::velox::serializer::presto {
 
 using SerdeOpts = PrestoVectorSerde::PrestoOptions;
 
-  namespace {
+namespace {
 constexpr int8_t kCompressedBitMask = 1;
 constexpr int8_t kEncryptedBitMask = 2;
 constexpr int8_t kCheckSumBitMask = 4;
@@ -516,8 +516,7 @@ void readConstantVector(
   const int32_t numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
-  readColumns(
-      source, pool, childTypes, children, 0, opts, nullptr, 0);
+  readColumns(source, pool, childTypes, children, 0, opts, nullptr, 0);
   VELOX_CHECK_EQ(1, children[0]->size());
 
   auto constantVector =
@@ -559,8 +558,7 @@ void readDictionaryVector(
 
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
-  readColumns(
-      source, pool, childTypes, children, 0, opts, nullptr, 0);
+  readColumns(source, pool, childTypes, children, 0, opts, nullptr, 0);
 
   // Read indices.
   BufferPtr indices = allocateIndices(numNewValues, pool);
@@ -787,17 +785,22 @@ void readRowVector(
     return;
   }
   BufferPtr combinedNulls;
-    const uint64_t* childNulls = incomingNulls;
-    int32_t numChildNulls = numIncomingNulls;
+  const uint64_t* childNulls = incomingNulls;
+  int32_t numChildNulls = numIncomingNulls;
   if (opts.nullsFirst) {
     const auto size = source->read<int32_t>();
     const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
     row->resize(resultOffset + numNewValues);
     readNulls(
-	      source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
+        source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
     if (row->rawNulls()) {
       combinedNulls = AlignedBuffer::allocate<bool>(numNewValues, pool);
-      bits::copyBits(row->rawNulls(), resultOffset, combinedNulls->asMutable<uint64_t>(), 0, numNewValues);
+      bits::copyBits(
+          row->rawNulls(),
+          resultOffset,
+          combinedNulls->asMutable<uint64_t>(),
+          0,
+          numNewValues);
       childNulls = combinedNulls->as<uint64_t>();
       numChildNulls = numNewValues;
     }
@@ -807,22 +810,22 @@ void readRowVector(
     // struct combined with nulls of enclosing structs.
     if (structNulls) {
       if (incomingNulls) {
-	combinedNulls = AlignedBuffer::allocate<bool>(numIncomingNulls, pool);
-	bits::scatterBits(
-			  numStructNulls,
-			  numIncomingNulls,
-			  reinterpret_cast<const char*>(structNulls),
-			  incomingNulls,
-			  combinedNulls->asMutable<char>());
-	childNulls = combinedNulls->as<uint64_t>();
-	numChildNulls = numIncomingNulls;
+        combinedNulls = AlignedBuffer::allocate<bool>(numIncomingNulls, pool);
+        bits::scatterBits(
+            numStructNulls,
+            numIncomingNulls,
+            reinterpret_cast<const char*>(structNulls),
+            incomingNulls,
+            combinedNulls->asMutable<char>());
+        childNulls = combinedNulls->as<uint64_t>();
+        numChildNulls = numIncomingNulls;
       } else {
-	childNulls = structNulls;
-	numChildNulls = numStructNulls;
+        childNulls = structNulls;
+        numChildNulls = numStructNulls;
       }
     }
   }
-    const int32_t numChildren = source->read<int32_t>();
+  const int32_t numChildren = source->read<int32_t>();
   auto& children = row->children();
 
   const auto& childTypes = type->asRow().children();
@@ -843,7 +846,7 @@ void readRowVector(
     // incomingNulls.
     source->skip((size + 1) * sizeof(int32_t));
     readNulls(
-	      source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
+        source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
   }
 }
 
@@ -1206,7 +1209,7 @@ class VectorStream {
       : type_(type),
         encoding_{encoding},
         useLosslessTimestamp_(opts.useLosslessTimestamp),
-	nullsFirst_(opts.nullsFirst),
+        nullsFirst_(opts.nullsFirst),
         nulls_(streamArena, true, true),
         lengths_(streamArena),
         values_(streamArena) {
@@ -1220,22 +1223,14 @@ class VectorStream {
         case VectorEncoding::Simple::CONSTANT: {
           initializeHeader(kRLE, *streamArena);
           children_.emplace_back(std::make_unique<VectorStream>(
-              type_,
-              std::nullopt,
-              streamArena,
-              initialNumRows,
-              opts));
+              type_, std::nullopt, streamArena, initialNumRows, opts));
           return;
         }
         case VectorEncoding::Simple::DICTIONARY: {
           initializeHeader(kDictionary, *streamArena);
           values_.startWrite(initialNumRows * 4);
           children_.emplace_back(std::make_unique<VectorStream>(
-              type_,
-              std::nullopt,
-              streamArena,
-              initialNumRows,
-              opts));
+              type_, std::nullopt, streamArena, initialNumRows, opts));
           return;
         }
         default:;
@@ -1370,20 +1365,20 @@ class VectorStream {
           return;
         }
 
-	if (nullsFirst_) {
-	  writeInt32(out, nullCount_ + nonNullCount_);
-	  flushNulls(out);
-	}
+        if (nullsFirst_) {
+          writeInt32(out, nullCount_ + nonNullCount_);
+          flushNulls(out);
+        }
         writeInt32(out, children_.size());
         for (auto& child : children_) {
           child->flush(out);
         }
-	if (!nullsFirst_) {
-	  writeInt32(out, nullCount_ + nonNullCount_);
-	  lengths_.flush(out);
-	  flushNulls(out);
-	}
-	return;
+        if (!nullsFirst_) {
+          writeInt32(out, nullCount_ + nonNullCount_);
+          lengths_.flush(out);
+          flushNulls(out);
+        }
+        return;
 
       case TypeKind::ARRAY:
         children_[0]->flush(out);
@@ -2386,11 +2381,7 @@ std::unique_ptr<VectorSerializer> PrestoVectorSerde::createSerializer(
     const Options* options) {
   auto prestoOptions = toPrestoOptions(options);
   return std::make_unique<PrestoVectorSerializer>(
-      type,
-      prestoOptions.encodings,
-      numRows,
-      streamArena,
-      prestoOptions);
+      type, prestoOptions.encodings, numRows, streamArena, prestoOptions);
 }
 
 void PrestoVectorSerde::serializeEncoded(
@@ -2451,18 +2442,12 @@ void readTopColumns(
     structNullsMap() = std::make_unique<StructNullsMap>();
     Scratch scratch;
     auto position = source.tellp();
-    readStructNullsColumns(&source, childTypes, opts.useLosslessTimestamp, scratch);
+    readStructNullsColumns(
+        &source, childTypes, opts.useLosslessTimestamp, scratch);
     source.seekp(position);
   }
   readColumns(
-      &source,
-      pool,
-      childTypes,
-      children,
-      resultOffset,
-      opts,
-      nullptr,
-      0);
+      &source, pool, childTypes, children, resultOffset, opts, nullptr, 0);
 }
 } // namespace
 
@@ -2517,8 +2502,7 @@ void PrestoVectorSerde::deserialize(
           common::codecTypeToCompressionKind(codec->type())));
 
   if (!needCompression(*codec)) {
-    readTopColumns(
-        *source, type, pool, *result, resultOffset, prestoOptions);
+    readTopColumns(*source, type, pool, *result, resultOffset, prestoOptions);
   } else {
     auto compressBuf = folly::IOBuf::create(compressedSize);
     source->readBytes(compressBuf->writableData(), compressedSize);
@@ -2529,12 +2513,7 @@ void PrestoVectorSerde::deserialize(
     ByteInputStream uncompressedSource({byteRange});
 
     readTopColumns(
-        uncompressedSource,
-        type,
-        pool,
-        *result,
-        resultOffset,
-        prestoOptions);
+        uncompressedSource, type, pool, *result, resultOffset, prestoOptions);
   }
 }
 

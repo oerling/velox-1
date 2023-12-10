@@ -30,9 +30,10 @@ class PrestoVectorSerde : public VectorSerde {
     PrestoOptions(
         bool _useLosslessTimestamp,
         common::CompressionKind _compressionKind,
-		  bool nullsFirst = false)
+        bool nullsFirst = false)
         : useLosslessTimestamp(_useLosslessTimestamp),
-          compressionKind(_compressionKind), nullsFirst(nullsFirst)  {}
+          compressionKind(_compressionKind),
+          nullsFirst(nullsFirst) {}
 
     // Currently presto only supports millisecond precision and the serializer
     // converts velox native timestamp to that resulting in loss of precision.
@@ -48,7 +49,6 @@ class PrestoVectorSerde : public VectorSerde {
     /// single pass reading of in spilling. TODO: Make Presto also
     /// serialize nulls before columns of structs.
     bool nullsFirst{false};
-
   };
 
   void estimateSerializedSize(

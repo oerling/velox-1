@@ -174,7 +174,7 @@ uint64_t SpillWriter::write(
     MicrosecondTimer timer(&timeUs);
     if (batch_ == nullptr) {
       serializer::presto::PrestoVectorSerde::PrestoOptions options = {
-	kDefaultUseLosslessTimestamp, compressionKind_, true};
+          kDefaultUseLosslessTimestamp, compressionKind_, true};
       batch_ = std::make_unique<VectorStreamGroup>(pool_);
       batch_->createStreamTree(
           std::static_pointer_cast<const RowType>(rows->type()),

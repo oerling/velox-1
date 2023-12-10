@@ -63,7 +63,7 @@ class PrestoSerializerTest
     const bool nullsFirst =
         serdeOptions == nullptr ? false : serdeOptions->nullsFirst;
     serializer::presto::PrestoVectorSerde::PrestoOptions paramOptions{
-      useLosslessTimestamp, kind, nullsFirst};
+        useLosslessTimestamp, kind, nullsFirst};
 
     return paramOptions;
   }
