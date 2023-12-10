@@ -1922,12 +1922,16 @@ void appendNonNull(
   const int32_t* nonNullIndices;
   int32_t numNonNull;
   if (LIKELY(numRows <= 8)) {
+    // Short batches need extra optimization. The set bits are prematerialized.
     uint8_t nullsByte = *reinterpret_cast<const uint8_t*>(nulls);
     numNonNull = __builtin_popcount(nullsByte);
     nonNullIndices =
         numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
     auto mutableIndices = nonNullHolder.get(numRows);
+    // Convert null flags to indices. This is much faster than checking bits one
+    // by one, several bits per clock specially if mostly null or non-null. Even
+    // worst case of half nulls is more than one row per clock.
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableIndices);
     nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
@@ -1937,8 +1941,6 @@ void appendNonNull(
   if constexpr (sizeof(T) == 8) {
     AppendWindow<int64_t> window(out, scratch);
     int64_t* output = window.get(numNonNull);
-    if (numNonNull == numRows) {
-    }
     copyWordsWithRows(
         output,
         rows.data(),
