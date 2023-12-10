@@ -247,7 +247,7 @@ void GroupingSet::addInputForActiveRows(
   TestValue::adjust(
       "facebook::velox::exec::GroupingSet::addInputForActiveRows", this);
 
-  table_->prepareForProbe(*lookup_, input, activeRows_, ignoreNullKeys_);
+  table_->prepareForGroupProbe(*lookup_, input, activeRows_, ignoreNullKeys_);
   table_->groupProbe(*lookup_);
   masks_.addInput(input, activeRows_);
 
@@ -900,8 +900,10 @@ void GroupingSet::ensureInputFits(const RowVectorPtr& input) {
       return;
     }
   }
-
-  spill();
+  LOG(WARNING) << "Failed to reserve " << succinctBytes(targetIncrementBytes)
+               << " for memory pool " << pool_.name()
+               << ", usage: " << succinctBytes(pool_.currentBytes())
+               << ", reservation: " << succinctBytes(pool_.reservedBytes());
 }
 
 void GroupingSet::ensureOutputFits() {
@@ -929,7 +931,11 @@ void GroupingSet::ensureOutputFits() {
       return;
     }
   }
-  spill(RowContainerIterator{});
+  LOG(WARNING) << "Failed to reserve "
+               << succinctBytes(outputBufferSizeToReserve)
+               << " for memory pool " << pool_.name()
+               << ", usage: " << succinctBytes(pool_.currentBytes())
+               << ", reservation: " << succinctBytes(pool_.reservedBytes());
 }
 
 RowTypePtr GroupingSet::makeSpillType() const {
