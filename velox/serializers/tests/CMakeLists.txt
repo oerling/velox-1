@@ -29,9 +29,7 @@ target_link_libraries(
   gflags::gflags
   glog::glog)
 
-add_executable(
-  velox_serializer_benchmark
-  SerializerBenchmark.cpp)
+add_executable(velox_serializer_benchmark SerializerBenchmark.cpp)
 
 target_link_libraries(
   velox_serializer_benchmark
