@@ -189,6 +189,7 @@ class ExchangeFuzzer : public VectorTestBase {
       allNames.insert(allNames.end(), names.begin(), names.end());
       auto rowType = ROW(std::move(allNames), std::move(allTypes));
       Params params;
+      params.numDriversPerTask = FLAGS_drivers_per_task;
       params.outputBufferBytes = randInt(4, std::max(5, FLAGS_max_buffer_mb))
           << 20;
       params.exchangeBufferBytes = randInt(4, std::max(5, FLAGS_max_buffer_mb))
