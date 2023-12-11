@@ -59,56 +59,73 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::test;
 
+/// Generates random data and runs this through repartition and
+/// exchange. Varies numbers of sources and destinations, batch and
+/// buffer sizes. Checks that dataset checksum is preserved over remote
+/// shuffle. Supports saving and replaying generated test cases.
 class ExchangeFuzzer : public VectorTestBase {
  public:
+  static constexpr int64_t kMaxMemory = 6UL << 30; // 6GB
+
+  /// Parameters for one test case.
+  struct Params {
+    int32_t numSourceTasks;
+    int32_t numDestinationTasks;
+    int32_t numDriversPerTask;
+    int32_t outputBufferBytes;
+    int32_t exchangeBufferBytes;
+
+    /// target size of batch to produce in receiving exchange.
+    int32_t batchBytes;
+  };
+
   ExchangeFuzzer() : fuzzer_(options_, pool_.get()) {}
 
-  bool runOne(
-      std::vector<RowVectorPtr>& vectors,
-      int32_t numSourceTasks,
-      int32_t numDestinationTasks,
-      int32_t numDriversPerTask,
-      int32_t outputBufferBytes,
-      int32_t exchangeBufferBytes,
-      int32_t batchBytes) {
-    assert(!vectors.empty());
+  /// Runs one test case, checks result and saves repro on failure.
+  bool runOne(const std::vector<RowVectorPtr>& vectors, Params params) {
+    VELOX_CHECK(!vectors.empty());
     auto iteration = ++iteration_;
-    LOG(INFO) << "Iteration " << iteration << " shuffl " << numSourceTasks
-              << "x" << numDestinationTasks << " drivers=" << numDriversPerTask
-              << " Type " << vectors.front()->type()->toString()
-              << " output buffer=" << outputBufferBytes
-              << " exchange buffer=" << exchangeBufferBytes
-              << " target batch=" << batchBytes;
+    LOG(INFO) << "Iteration " << iteration << " shuffle "
+              << params.numSourceTasks << "x" << params.numDestinationTasks
+              << " drivers=" << params.numDriversPerTask << " Type "
+              << vectors.front()->type()->toString()
+              << " output buffer=" << params.outputBufferBytes
+              << " exchange buffer=" << params.exchangeBufferBytes
+              << " target batch=" << params.batchBytes;
     configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
-        fmt::format("{}", outputBufferBytes);
+        fmt::format("{}", params.outputBufferBytes);
     configSettings_[core::QueryConfig::kMaxExchangeBufferSize] =
-        fmt::format("{}", exchangeBufferBytes);
+        fmt::format("{}", params.exchangeBufferBytes);
     configSettings_[core::QueryConfig::kPreferredOutputBatchBytes] =
-        fmt::format("{}", batchBytes);
+        fmt::format("{}", params.batchBytes);
 
-    auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
+    const auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
     std::vector<std::string> aggregates;
     std::vector<std::vector<TypePtr>> rawInputTypes;
+
+    // make a checksum aggregate for all but the partitioning key.
     for (auto i = 1; i < rowType.size(); ++i) {
       rawInputTypes.push_back({rowType.childAt(i)});
     }
     auto expected = expectedChecksums(
-        vectors, rawInputTypes, numSourceTasks * numDriversPerTask);
+        vectors,
+        rawInputTypes,
+        params.numSourceTasks * params.numDriversPerTask);
 
     std::vector<std::shared_ptr<Task>> tasks;
 
     std::vector<std::string> leafTaskIds;
     auto leafPlan = exec::test::PlanBuilder()
                         .values(vectors, true)
-                        .partitionedOutput({"c0"}, numDestinationTasks)
+                        .partitionedOutput({"c0"}, params.numDestinationTasks)
                         .planNode();
 
-    for (int32_t counter = 0; counter < numSourceTasks; ++counter) {
+    for (int32_t counter = 0; counter < params.numSourceTasks; ++counter) {
       auto leafTaskId = makeTaskId(iteration, "leaf", counter);
       leafTaskIds.push_back(leafTaskId);
       auto leafTask = makeTask(leafTaskId, leafPlan, counter);
       tasks.push_back(leafTask);
-      leafTask->start(numDriversPerTask);
+      leafTask->start(params.numDriversPerTask);
     }
 
     std::vector<std::string> partialAggTaskIds;
@@ -120,13 +137,13 @@ class ExchangeFuzzer : public VectorTestBase {
             .planNode();
 
     std::vector<exec::Split> partialAggSplits;
-    for (int i = 0; i < numDestinationTasks; i++) {
+    for (int i = 0; i < params.numDestinationTasks; i++) {
       auto taskId = makeTaskId(iteration, "partial-agg", i);
       partialAggSplits.push_back(
           exec::Split(std::make_shared<exec::RemoteConnectorSplit>(taskId)));
       auto task = makeTask(taskId, partialAggPlan, i);
       tasks.push_back(task);
-      task->start(numDriversPerTask);
+      task->start(params.numDriversPerTask);
       addRemoteSplits(task, leafTaskIds);
     }
 
@@ -151,19 +168,14 @@ class ExchangeFuzzer : public VectorTestBase {
         LOG(INFO) << "No replay saved since --replay is specified";
         return false;
       }
-      saveRepro(
-          vectors,
-          numSourceTasks,
-          numDestinationTasks,
-          numDriversPerTask,
-          outputBufferBytes,
-          exchangeBufferBytes,
-          batchBytes);
+      saveRepro(vectors, params);
       return false;
     }
     return true;
   }
 
+  /// Runs multiple test cases up to first failure. Duration is either in
+  /// --duratin_sec or --steps.
   void run() {
     auto start = getCurrentTimeMicro();
     for (auto counter = 0;; ++counter) {
@@ -176,11 +188,14 @@ class ExchangeFuzzer : public VectorTestBase {
       allTypes.insert(allTypes.end(), types.begin(), types.end());
       allNames.insert(allNames.end(), names.begin(), names.end());
       auto rowType = ROW(std::move(allNames), std::move(allTypes));
-      size_t outputSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
-      size_t exchangeSize = randInt(4, std::max(5, FLAGS_max_buffer_mb)) << 20;
-      size_t batchSize = randInt(100000, 10000000);
-      int32_t numSourceTasks = randInt(1, FLAGS_max_tasks_per_stage);
-      int32_t numDestinationTasks = randInt(2, FLAGS_max_tasks_per_stage);
+      Params params;
+      params.outputBufferBytes = randInt(4, std::max(5, FLAGS_max_buffer_mb))
+          << 20;
+      params.exchangeBufferBytes = randInt(4, std::max(5, FLAGS_max_buffer_mb))
+          << 20;
+      params.batchBytes = randInt(100000, 10000000);
+      params.numSourceTasks = randInt(1, FLAGS_max_tasks_per_stage);
+      params.numDestinationTasks = randInt(2, FLAGS_max_tasks_per_stage);
 
       options_.vectorSize = 100;
       options_.nullRatio = 0;
@@ -211,7 +226,7 @@ class ExchangeFuzzer : public VectorTestBase {
       auto row = fuzzer_.fuzzInputRow(rowType);
       size_t shuffleBytes = row->estimateFlatSize();
       size_t shufledBytesPerRow = 20 +
-          (shuffleBytes / row->size() * numSourceTasks *
+          (shuffleBytes / row->size() * params.numSourceTasks *
            FLAGS_drivers_per_task);
       std::vector<RowVectorPtr> vectors;
 
@@ -232,19 +247,12 @@ class ExchangeFuzzer : public VectorTestBase {
 
         auto newRow = fuzzer_.fuzzInputRow(rowType);
         vectors.push_back(newRow);
-        auto newSize = newRow->estimateFlatSize() * numSourceTasks *
+        auto newSize = newRow->estimateFlatSize() * params.numSourceTasks *
             FLAGS_drivers_per_task;
         shuffleBytes += newSize;
       }
 
-      if (!runOne(
-              vectors,
-              numSourceTasks,
-              numDestinationTasks,
-              FLAGS_drivers_per_task,
-              outputSize,
-              exchangeSize,
-              batchSize)) {
+      if (!runOne(vectors, params)) {
         LOG(INFO) << "Terminating with error";
         exit(1);
       }
@@ -272,18 +280,13 @@ class ExchangeFuzzer : public VectorTestBase {
 
   bool replay() {
     std::ifstream in(FLAGS_replay);
-    int32_t numSourceTasks;
-    int32_t numDestinationTasks;
-    int32_t numDriversPerTask;
-    int32_t outputBufferBytes;
-    int32_t exchangeBufferBytes;
-    int32_t batchBytes;
-    in >> numSourceTasks;
-    in >> numDestinationTasks;
-    in >> numDriversPerTask;
-    in >> outputBufferBytes;
-    in >> exchangeBufferBytes;
-    in >> batchBytes;
+    Params params;
+    in >> params.numSourceTasks;
+    in >> params.numDestinationTasks;
+    in >> params.numDriversPerTask;
+    in >> params.outputBufferBytes;
+    in >> params.exchangeBufferBytes;
+    in >> params.batchBytes;
     int32_t numVectors;
     in >> numVectors;
 
@@ -297,16 +300,10 @@ class ExchangeFuzzer : public VectorTestBase {
       auto vector = restoreVector(in, pool_.get());
       vectors.push_back(std::dynamic_pointer_cast<RowVector>(vector));
     }
-    return runOne(
-        vectors,
-        numSourceTasks,
-        numDestinationTasks,
-        numDriversPerTask,
-        outputBufferBytes,
-        exchangeBufferBytes,
-        batchBytes);
+    return runOne(vectors, params);
   }
 
+  /// Sets an initial seed for run().
   void seed(size_t seed) {
     currentSeed_ = seed;
     fuzzer_.reSeed(seed);
@@ -314,22 +311,15 @@ class ExchangeFuzzer : public VectorTestBase {
   }
 
  private:
-  void saveRepro(
-      std::vector<RowVectorPtr>& vectors,
-      int32_t numSourceTasks,
-      int32_t numDestinationTasks,
-      int32_t numDriversPerTask,
-      int32_t outputBufferBytes,
-      int32_t exchangeBufferBytes,
-      int32_t batchBytes) {
+  void saveRepro(const std::vector<RowVectorPtr>& vectors, Params params) {
     auto filePath =
         fmt::format("{}/exchange_fuzzer_repro.{}", FLAGS_repro_path, getpid());
     std::ofstream out(filePath, std::ofstream::binary);
-    out << numSourceTasks << " " << numDestinationTasks << " "
-        << numDriversPerTask << " " << outputBufferBytes << " "
-        << exchangeBufferBytes << " " << batchBytes << " " << vectors.size()
-        << std::endl;
-    for (auto& vector : vectors) {
+    out << params.numSourceTasks << " " << params.numDestinationTasks << " "
+        << params.numDriversPerTask << " " << params.outputBufferBytes << " "
+        << params.exchangeBufferBytes << " " << params.batchBytes << " "
+        << vectors.size() << std::endl;
+    for (const auto& vector : vectors) {
       saveVector(*vector, out);
     }
     LOG(INFO)
@@ -337,17 +327,16 @@ class ExchangeFuzzer : public VectorTestBase {
         << filePath;
   }
 
-  static constexpr int64_t kMaxMemory = 6UL << 30; // 6GB
-
   int64_t randInt(int64_t min, int64_t max) {
     return boost::random::uniform_int_distribution<int64_t>(min, max)(rng_);
   }
 
+  // Returns a row of checksums for all non-first columns.
   RowVectorPtr expectedChecksums(
       std::vector<RowVectorPtr> vectors,
       const std::vector<std::vector<TypePtr>>& rawInputTypes,
       int32_t width) {
-    auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
+    const auto& rowType = vectors.front()->type()->as<TypeKind::ROW>();
     auto plan = exec::test::PlanBuilder()
                     .values(vectors, true)
                     .partialAggregation({}, makeAggregates(rowType, 1))
@@ -395,7 +384,7 @@ class ExchangeFuzzer : public VectorTestBase {
   void addRemoteSplits(
       std::shared_ptr<Task> task,
       const std::vector<std::string>& remoteTaskIds) {
-    for (auto& taskId : remoteTaskIds) {
+    for (const auto& taskId : remoteTaskIds) {
       auto split =
           exec::Split(std::make_shared<RemoteConnectorSplit>(taskId), -1);
       task->addSplit("0", std::move(split));
@@ -440,11 +429,11 @@ int main(int argc, char** argv) {
     return fuzzer.replay() ? 0 : 1;
   }
   if (FLAGS_seed != 0) {
-    LOG(INFO) << "Initial seed = " << FLAGS_seed;
+    LOG(INFO) << "Starting  from user supplied seed " << FLAGS_seed;
     fuzzer.seed(FLAGS_seed);
   } else {
     size_t seed = getCurrentTimeMicro();
-    LOG(INFO) << "Starting seed = " << seed;
+    LOG(INFO) << "Generating initial seed " << seed;
     fuzzer.seed(seed);
   }
   fuzzer.run();
