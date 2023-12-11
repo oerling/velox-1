@@ -186,8 +186,7 @@ class SumDataSizeForStatsAggregate
 
 } // namespace
 
-exec::AggregateRegistrationResult registerSumDataSizeForStatsAggregate(
-    const std::string& prefix) {
+void registerSumDataSizeForStatsAggregate(const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
 
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
@@ -198,7 +197,7 @@ exec::AggregateRegistrationResult registerSumDataSizeForStatsAggregate(
                            .build());
 
   auto name = prefix + kSumDataSizeForStats;
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](

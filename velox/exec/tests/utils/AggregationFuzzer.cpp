@@ -182,7 +182,7 @@ class AggregationFuzzer {
     VectorFuzzer::Options opts;
     opts.vectorSize = FLAGS_batch_size;
     opts.stringVariableLength = true;
-    opts.stringLength = 100;
+    opts.stringLength = 4'000;
     opts.nullRatio = FLAGS_null_ratio;
     opts.timestampPrecision = timestampPrecision;
     return opts;
@@ -484,7 +484,7 @@ AggregationFuzzer::AggregationFuzzer(
       if (!signature->variables().empty()) {
         bool skip = false;
         std::unordered_set<std::string> typeVariables;
-        for (auto& [name, variable] : signature->variables()) {
+        for (auto& [variableName, variable] : signature->variables()) {
           if (variable.isIntegerParameter()) {
             LOG(WARNING) << "Skipping generic function signature: " << name
                          << signature->toString();
@@ -492,7 +492,7 @@ AggregationFuzzer::AggregationFuzzer(
             break;
           }
 
-          typeVariables.insert(name);
+          typeVariables.insert(variableName);
         }
         if (skip) {
           continue;

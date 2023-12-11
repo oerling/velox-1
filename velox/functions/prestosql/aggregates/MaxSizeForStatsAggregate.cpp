@@ -206,8 +206,7 @@ class MaxSizeForStatsAggregate
 
 } // namespace
 
-exec::AggregateRegistrationResult registerMaxDataSizeForStatsAggregate(
-    const std::string& prefix) {
+void registerMaxDataSizeForStatsAggregate(const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
 
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
@@ -218,7 +217,7 @@ exec::AggregateRegistrationResult registerMaxDataSizeForStatsAggregate(
                            .build());
 
   auto name = prefix + kMaxSizeForStats;
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
