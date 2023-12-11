@@ -323,7 +323,7 @@ class ExchangeFuzzer : public VectorTestBase {
     for (const auto& vector : vectors) {
       saveVector(*vector, out);
     }
-    LOG(INFO)
+    LOG(ERROR)
         << "Saved repro. To replay, do velox_exchange_fuzzer_test --replay "
         << filePath;
   }
