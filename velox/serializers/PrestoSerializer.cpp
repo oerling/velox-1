@@ -2522,7 +2522,7 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
       }
     }
     *(sizes[i]) +=
-        bytes + bits::nbytes(ranges[i].size) + 4 * (ranges[i].size - numNulls);
+        bytes + bits::nbytes(numNulls) + 4 * numNulls;
   }
 }
 
