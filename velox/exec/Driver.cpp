@@ -23,7 +23,6 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Operator.h"
-#include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 
 using facebook::velox::common::testutil::TestValue;
@@ -151,7 +150,8 @@ std::optional<common::SpillConfig> DriverCtx::makeSpillConfig(
       queryConfig.maxSpillLevel(),
       queryConfig.writerFlushThresholdBytes(),
       queryConfig.testingSpillPct(),
-      queryConfig.spillCompressionKind());
+      queryConfig.spillCompressionKind(),
+      queryConfig.spillFileCreateConfig());
 }
 
 std::atomic_uint64_t BlockingState::numBlockedDrivers_{0};

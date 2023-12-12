@@ -645,13 +645,14 @@ class SharedArbitrationTest : public exec::test::HiveConnectorTestBase {
               .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
               // Set stripe size to extreme large to avoid writer internal
               // triggered flush.
-              .connectorConfig(
+              .connectorSessionProperty(
                   kHiveConnectorId,
-                  connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+                  connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
                   "1GB")
-              .connectorConfig(
+              .connectorSessionProperty(
                   kHiveConnectorId,
-                  connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+                  connector::hive::HiveConfig::
+                      kOrcWriterMaxDictionaryMemorySession,
                   "1GB")
               .queryCtx(queryCtx)
               .maxDrivers(numDrivers)
@@ -2637,13 +2638,13 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, tableWriteSpillUseMoreMemory) {
           .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
           // Set stripe size to extreme large to avoid writer internal triggered
           // flush.
-          .connectorConfig(
+          .connectorSessionProperty(
               kHiveConnectorId,
-              connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+              connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
               "1GB")
-          .connectorConfig(
+          .connectorSessionProperty(
               kHiveConnectorId,
-              connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+              connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
               "1GB")
           .plan(std::move(writerPlan))
           .copyResults(pool()),
@@ -2730,13 +2731,13 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, tableWriteReclaimOnClose) {
       .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
       // Set stripe size to extreme large to avoid writer internal triggered
       // flush.
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+          connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
           "1GB")
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
           "1GB")
       .plan(std::move(writerPlan))
       .assertResults(fmt::format("SELECT {}", numRows));
@@ -2793,13 +2794,13 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, tableFileWriteError) {
           .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
           // Set stripe size to extreme large to avoid writer internal triggered
           // flush.
-          .connectorConfig(
+          .connectorSessionProperty(
               kHiveConnectorId,
-              connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+              connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
               "1GB")
-          .connectorConfig(
+          .connectorSessionProperty(
               kHiveConnectorId,
-              connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+              connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
               "1GB")
           .plan(std::move(writerPlan))
           .copyResults(pool()),
@@ -2934,13 +2935,14 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, runtimeStats) {
             .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
             // Set stripe size to extreme large to avoid writer internal
             // triggered flush.
-            .connectorConfig(
+            .connectorSessionProperty(
                 kHiveConnectorId,
-                connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+                connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
                 "1GB")
-            .connectorConfig(
+            .connectorSessionProperty(
                 kHiveConnectorId,
-                connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+                connector::hive::HiveConfig::
+                    kOrcWriterMaxDictionaryMemorySession,
                 "1GB")
             .plan(std::move(writerPlan))
             .assertResults(fmt::format("SELECT {}", numRows));
@@ -3298,13 +3300,13 @@ DEBUG_ONLY_TEST_F(SharedArbitrationTest, reclaimFromNonReclaimableTableWriter) {
       .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
       // Set large stripe and dictionary size thresholds to avoid writer
       // internal stripe flush.
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+          connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
           "1GB")
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
           "1GB")
       .plan(std::move(writerPlan))
       .assertResults(fmt::format("SELECT {}", numRows));
@@ -3388,13 +3390,13 @@ DEBUG_ONLY_TEST_F(
       .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
       // Set large stripe and dictionary size thresholds to avoid writer
       // internal stripe flush.
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+          connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
           "1GB")
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
           "1GB")
       .plan(std::move(writerPlan))
       .assertResults(fmt::format("SELECT {}", numRows));
@@ -3477,13 +3479,13 @@ DEBUG_ONLY_TEST_F(
       .config(core::QueryConfig::kWriterFlushThresholdBytes, "0")
       // Set large stripe and dictionary size thresholds to avoid writer
       // internal stripe flush.
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxStripeSize,
+          connector::hive::HiveConfig::kOrcWriterMaxStripeSizeSession,
           "1GB")
-      .connectorConfig(
+      .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemory,
+          connector::hive::HiveConfig::kOrcWriterMaxDictionaryMemorySession,
           "1GB")
       .plan(std::move(writerPlan))
       .assertResults(fmt::format("SELECT {}", numRows));
@@ -3818,6 +3820,8 @@ TEST_F(SharedArbitrationTest, concurrentArbitration) {
       runHashJoinTask(vectors, nullptr, numDrivers, false).data;
   const auto expectedOrderResult =
       runOrderByTask(vectors, nullptr, numDrivers, false).data;
+  const auto expectedRowNumberResult =
+      runRowNumberTask(vectors, nullptr, numDrivers, false).data;
   const auto expectedTopNResult =
       runTopNTask(vectors, nullptr, numDrivers, false).data;
 
@@ -3868,6 +3872,14 @@ TEST_F(SharedArbitrationTest, concurrentArbitration) {
             task = runOrderByTask(
                        vectors, queryCtx, numDrivers, true, expectedOrderResult)
                        .task;
+          } else if ((i % 4) == 2) {
+            task = runRowNumberTask(
+                       vectors,
+                       queryCtx,
+                       numDrivers,
+                       true,
+                       expectedRowNumberResult)
+                       .task;
           } else {
             task = runTopNTask(
                        vectors, queryCtx, numDrivers, true, expectedTopNResult)
@@ -3881,7 +3893,6 @@ TEST_F(SharedArbitrationTest, concurrentArbitration) {
           }
         }
 
-        // TODO: Add RowNumber task after fixing its spiller bug.
         std::lock_guard<std::mutex> l(mutex);
         if (folly::Random().oneIn(3)) {
           zombieTasks.emplace_back(std::move(task));
