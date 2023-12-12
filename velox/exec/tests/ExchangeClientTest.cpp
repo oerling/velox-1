@@ -305,7 +305,7 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 #endif
-  
+
   const auto& queue = client.queue();
   for (auto i = 0; i < 10; ++i) {
     enqueue(*queue, makePage(1'000 + i));
