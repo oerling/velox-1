@@ -2494,7 +2494,8 @@ void estimateFlatSerializedSize(
     for (int32_t i = 0; i < ranges.size(); ++i) {
       auto end = ranges[i].begin + ranges[i].size;
       auto numValues = bits::countBits(rawNulls, ranges[i].begin, end);
-      *(sizes[i]) += numValues * valueSize + bits::nbytes(ranges[i].size);
+      *(sizes[i]) +=
+          numValues * valueSize + bits::nbytes(ranges[i].size - numValues);
     }
   } else {
     for (int32_t i = 0; i < ranges.size(); ++i) {

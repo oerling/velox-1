@@ -451,7 +451,7 @@ AggregationFuzzer::AggregationFuzzer(
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, nullptr);
+          ->newConnector(kHiveConnectorId, std::make_shared<core::MemConfig>());
   connector::registerConnector(hiveConnector);
 
   seed(initialSeed);
@@ -1393,6 +1393,9 @@ bool isTableScanSupported(const TypePtr& type) {
     return false;
   }
   if (type->kind() == TypeKind::UNKNOWN) {
+    return false;
+  }
+  if (type->kind() == TypeKind::HUGEINT) {
     return false;
   }
 
