@@ -45,16 +45,6 @@ class LocalExchangeSource : public exec::ExchangeSource {
     auto promise = VeloxPromise<Response>("LocalExchangeSource::request");
     auto future = promise.getSemiFuture();
 
-    if (numRequests_ % 2 == 0) {
-      {
-        std::lock_guard<std::mutex> l(queue_->mutex());
-        requestPending_ = false;
-      }
-      // Simulate no-data.
-      promise.setValue(Response{0, false});
-      return future;
-    }
-
     promise_ = std::move(promise);
 
     auto buffers = OutputBufferManager::getInstance().lock();
@@ -79,6 +69,9 @@ class LocalExchangeSource : public exec::ExchangeSource {
             *hasBeenCalled = true;
           }
           if (data.empty()) {
+            common::testutil::TestValue::adjust(
+                "facebook::velox::exec::test::LocalExchangeSource::timeout",
+                this);
             VeloxPromise<Response> requestPromise;
             {
               std::lock_guard<std::mutex> l(queue_->mutex());
@@ -159,12 +152,14 @@ class LocalExchangeSource : public exec::ExchangeSource {
             requestPromise.setValue(Response{totalBytes, atEnd_});
           }
         };
-    folly::EventBaseManager::get()->getEventBase()->scheduleAt(
-        [resultCallback, requestedSequence]() {
+
+    // Call the callback in any case after timeout.
+    auto& exec = folly::QueuedImmediateExecutor::instance();
+    std::move(folly::futures::sleep(std::chrono::seconds(maxWaitSeconds)))
+        .via(&exec)
+        .thenValue([resultCallback, requestedSequence](auto /*ignore*/) {
           resultCallback({}, requestedSequence);
-        },
-        std::chrono::steady_clock::now() +
-            std::chrono::seconds(maxWaitSeconds));
+        });
 
     buffers->getData(
         taskId_, destination_, maxBytes, sequence_, resultCallback);
