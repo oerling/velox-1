@@ -2639,7 +2639,8 @@ void estimateFlatSerializedSizeVarcharOrVarbinary(
         bytes += sizeof(int32_t) + rawValues[offset].size();
       }
     }
-    *(sizes[i]) += bytes + bits::nbytes(numNulls) + 4 * numNulls;
+    *(sizes[i]) +=
+        bytes + bits::nbytes(ranges[i].size) + 4 * (ranges[i].size - numNulls);
   }
 }
 
