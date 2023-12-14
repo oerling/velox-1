@@ -16,6 +16,7 @@
 #pragma once
 
 #include <boost/math/distributions/laplace.hpp>
+#include <boost/math/distributions/weibull.hpp>
 #include "boost/math/distributions/beta.hpp"
 #include "boost/math/distributions/binomial.hpp"
 #include "boost/math/distributions/cauchy.hpp"
@@ -72,9 +73,10 @@ template <typename T>
 struct BinomialCDFFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  template <typename TValue>
   FOLLY_ALWAYS_INLINE void
-  call(double& result, int64_t numOfTrials, double successProb, int64_t value) {
-    static constexpr int64_t kInf = std::numeric_limits<int64_t>::max();
+  call(double& result, TValue numOfTrials, double successProb, TValue value) {
+    static constexpr TValue kInf = std::numeric_limits<TValue>::max();
 
     VELOX_USER_CHECK(
         (successProb >= 0) && (successProb <= 1),
@@ -213,12 +215,37 @@ template <typename T>
 struct PoissonCDFFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(double& result, double lambda, int64_t value) {
+  template <typename TValue>
+  FOLLY_ALWAYS_INLINE void call(double& result, double lambda, TValue value) {
     VELOX_USER_CHECK_GE(value, 0, "value must be a non-negative integer");
     VELOX_USER_CHECK_GT(lambda, 0, "lambda must be greater than 0");
 
     boost::math::poisson_distribution<double> poisson(lambda);
     result = boost::math::cdf(poisson, value);
+  }
+};
+
+template <typename T>
+struct WeibullCDFFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void
+  call(double& result, double a, double b, double value) {
+    static constexpr double kInf = std::numeric_limits<double>::infinity();
+
+    VELOX_USER_CHECK_GT(a, 0, "a must be greater than 0");
+    VELOX_USER_CHECK_GT(b, 0, "b must be greater than 0");
+
+    if (std::isnan(value)) {
+      result = std::numeric_limits<double>::quiet_NaN();
+    } else if (b == kInf) {
+      result = 0.0;
+    } else if (a == kInf || value == kInf) {
+      result = 1.0;
+    } else {
+      boost::math::weibull_distribution<> dist(a, b);
+      result = boost::math::cdf(dist, value);
+    }
   }
 };
 

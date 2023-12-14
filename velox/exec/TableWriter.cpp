@@ -30,7 +30,10 @@ TableWriter::TableWriter(
           tableWriteNode->outputType(),
           operatorId,
           tableWriteNode->id(),
-          "TableWrite"),
+          "TableWrite",
+          tableWriteNode->canSpill(driverCtx->queryConfig())
+              ? driverCtx->makeSpillConfig(operatorId)
+              : std::nullopt),
       driverCtx_(driverCtx),
       connectorPool_(driverCtx_->task->addConnectorPoolLocked(
           planNodeId(),
@@ -41,6 +44,7 @@ TableWriter::TableWriter(
       insertTableHandle_(
           tableWriteNode->insertTableHandle()->connectorInsertTableHandle()),
       commitStrategy_(tableWriteNode->commitStrategy()) {
+  setConnectorMemoryReclaimer();
   if (tableWriteNode->outputType()->size() == 1) {
     VELOX_USER_CHECK_NULL(tableWriteNode->aggregationNode());
   } else {
@@ -55,7 +59,10 @@ TableWriter::TableWriter(
   const auto& connectorId = tableWriteNode->insertTableHandle()->connectorId();
   connector_ = connector::getConnector(connectorId);
   connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
-      connectorId, planNodeId(), connectorPool_);
+      connectorId,
+      planNodeId(),
+      connectorPool_,
+      spillConfig_.has_value() ? &(spillConfig_.value()) : nullptr);
 
   auto names = tableWriteNode->columnNames();
   auto types = tableWriteNode->columns()->children();
@@ -74,6 +81,9 @@ void TableWriter::initialize() {
   Operator::initialize();
   VELOX_CHECK_NULL(dataSink_);
   createDataSink();
+  if (aggregation_ != nullptr) {
+    aggregation_->initialize();
+  }
 }
 
 void TableWriter::createDataSink() {
@@ -82,6 +92,27 @@ void TableWriter::createDataSink() {
       insertTableHandle_,
       connectorQueryCtx_.get(),
       commitStrategy_);
+}
+
+void TableWriter::abortDataSink() {
+  VELOX_CHECK(!closed_);
+  auto abortGuard = folly::makeGuard([this]() { closed_ = true; });
+  if (dataSink_ != nullptr) {
+    try {
+      dataSink_->abort();
+    } catch (const std::exception& e) {
+      LOG(WARNING) << "Failed to abort data sink from table writer: "
+                   << toString() << ", error: " << e.what();
+    }
+  }
+}
+
+std::vector<std::string> TableWriter::closeDataSink() {
+  // We only expect closeDataSink called once.
+  VELOX_CHECK(!closed_);
+  VELOX_CHECK_NOT_NULL(dataSink_);
+  auto closeGuard = folly::makeGuard([this]() { closed_ = true; });
+  return dataSink_->close();
 }
 
 void TableWriter::addInput(RowVectorPtr input) {
@@ -105,10 +136,17 @@ void TableWriter::addInput(RowVectorPtr input) {
 
   dataSink_->appendData(mappedInput);
   numWrittenRows_ += input->size();
-  updateWrittenBytes();
+  updateStats(dataSink_->stats());
 
   if (aggregation_ != nullptr) {
     aggregation_->addInput(input);
+  }
+}
+
+void TableWriter::noMoreInput() {
+  Operator::noMoreInput();
+  if (aggregation_ != nullptr) {
+    aggregation_->noMoreInput();
   }
 }
 
@@ -128,7 +166,8 @@ RowVectorPtr TableWriter::getOutput() {
   }
 
   finished_ = true;
-  updateWrittenBytes();
+  const std::vector<std::string> fragments = closeDataSink();
+  updateStats(dataSink_->stats());
 
   if (outputType_->size() == 1) {
     // NOTE: this is for non-prestissimo use cases.
@@ -141,12 +180,10 @@ RowVectorPtr TableWriter::getOutput() {
             pool(), 1, false /*isNull*/, BIGINT(), numWrittenRows_)});
   }
 
-  const std::vector<std::string> fragments = dataSink_->finish();
-
-  vector_size_t numOutputRows = fragments.size() + 1;
+  const vector_size_t numOutputRows = fragments.size() + 1;
 
   // Page layout:
-  // row     fragments     context    [partition]    [stats]
+  // row     fragments     context    [partition]     [stats]
   // X         null          X        [null]          [null]
   // null       X            X        [null]          [null]
   // null       X            X        [null]          [null]
@@ -204,10 +241,105 @@ std::string TableWriter::createTableCommitContext(bool lastOutput) {
   // clang-format on
 }
 
-void TableWriter::updateWrittenBytes() {
-  const auto writtenBytes = dataSink_->getCompletedBytes();
-  auto lockedStats = stats_.wlock();
-  lockedStats->physicalWrittenBytes = writtenBytes;
+void TableWriter::updateStats(const connector::DataSink::Stats& stats) {
+  {
+    auto lockedStats = stats_.wlock();
+    lockedStats->physicalWrittenBytes = stats.numWrittenBytes;
+    if (!closed_) {
+      // NOTE: the other stats is only set when hive data sink is closed.
+      VELOX_CHECK_EQ(stats.numWrittenFiles, 0);
+      VELOX_CHECK(stats.spillStats.empty());
+      return;
+    }
+    lockedStats->addRuntimeStat(
+        "numWrittenFiles", RuntimeCounter(stats.numWrittenFiles));
+  }
+  if (!stats.spillStats.empty()) {
+    recordSpillStats(stats.spillStats);
+  }
+}
+
+void TableWriter::close() {
+  if (!closed_) {
+    // Abort the data sink if the query has already failed and no need for
+    // regular close.
+    abortDataSink();
+  }
+  if (aggregation_ != nullptr) {
+    aggregation_->close();
+  }
+}
+
+void TableWriter::setConnectorMemoryReclaimer() {
+  VELOX_CHECK_NOT_NULL(connectorPool_);
+  if (connectorPool_->parent()->reclaimer() != nullptr) {
+    connectorPool_->setReclaimer(TableWriter::ConnectorReclaimer::create(
+        operatorCtx_->driverCtx(), this, spillConfig_.has_value()));
+  }
+}
+
+std::unique_ptr<memory::MemoryReclaimer>
+TableWriter::ConnectorReclaimer::create(
+    DriverCtx* driverCtx,
+    Operator* op,
+    bool canReclaim) {
+  return std::unique_ptr<memory::MemoryReclaimer>(
+      new TableWriter::ConnectorReclaimer(
+          driverCtx->driver->shared_from_this(), op, canReclaim));
+}
+
+bool TableWriter::ConnectorReclaimer::reclaimableBytes(
+    const memory::MemoryPool& pool,
+    uint64_t& reclaimableBytes) const {
+  reclaimableBytes = 0;
+  if (!canReclaim_) {
+    return false;
+  }
+  std::shared_ptr<Driver> driver = ensureDriver();
+  if (FOLLY_UNLIKELY(driver == nullptr)) {
+    return false;
+  }
+  return memory::MemoryReclaimer::reclaimableBytes(pool, reclaimableBytes);
+}
+
+uint64_t TableWriter::ConnectorReclaimer::reclaim(
+    memory::MemoryPool* pool,
+    uint64_t targetBytes,
+    uint64_t maxWaitMs,
+    memory::MemoryReclaimer::Stats& stats) {
+  if (!canReclaim_) {
+    return 0;
+  }
+  std::shared_ptr<Driver> driver = ensureDriver();
+  if (FOLLY_UNLIKELY(driver == nullptr)) {
+    return 0;
+  }
+  VELOX_CHECK(
+      !driver->state().isOnThread() || driver->state().isSuspended ||
+      driver->state().isTerminated);
+  VELOX_CHECK(driver->task()->pauseRequested());
+
+  auto* writer = dynamic_cast<TableWriter*>(op_);
+  if (writer->closed_) {
+    // TODO: reduce the log frequency if it is too verbose.
+    ++stats.numNonReclaimableAttempts;
+    LOG(WARNING) << "Can't reclaim from a closed writer connector pool: "
+                 << pool->name()
+                 << ", memory usage: " << succinctBytes(pool->currentBytes());
+    return 0;
+  }
+
+  if (writer->dataSink_ == nullptr) {
+    // TODO: reduce the log frequency if it is too verbose.
+    ++stats.numNonReclaimableAttempts;
+    LOG(WARNING)
+        << "Can't reclaim from a writer connector pool which hasn't initialized yet: "
+        << pool->name()
+        << ", memory usage: " << succinctBytes(pool->currentBytes());
+    return 0;
+  }
+  RuntimeStatWriterScopeGuard opStatsGuard(op_);
+  return memory::MemoryReclaimer::reclaim(pool, targetBytes, maxWaitMs, stats);
 }
 
 // static

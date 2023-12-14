@@ -20,6 +20,8 @@
 
 namespace facebook::velox::parquet {
 
+class ParquetTypeWithId;
+
 namespace {
 PageReader* FOLLY_NULLABLE readLeafRepDefs(
     dwio::common::SelectiveColumnReader* FOLLY_NONNULL reader,
@@ -98,31 +100,33 @@ void enqueueChildren(
 void ensureRepDefs(
     dwio::common::SelectiveColumnReader& reader,
     int32_t numTop) {
-  auto& nodeType =
+  auto& fileType =
       *reinterpret_cast<const ParquetTypeWithId*>(&reader.fileType());
   // Check that this is a direct child of the root struct.
-  if (nodeType.parent() && !nodeType.parent()->parent()) {
+  if (fileType.parent() && !fileType.parent()->parent()) {
     skipUnreadLengthsAndNulls(reader);
     readLeafRepDefs(&reader, numTop, true);
   }
 }
 
 MapColumnReader::MapColumnReader(
-    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)
     : dwio::common::SelectiveMapColumnReader(
           requestedType,
-          requestedType,
+          fileType,
           params,
           scanSpec) {
+  DWIO_ENSURE_EQ(fileType_->id(), fileType->id(), "working on the same node");
   auto& keyChildType = requestedType->childAt(0);
   auto& elementChildType = requestedType->childAt(1);
-  keyReader_ =
-      ParquetColumnReader::build(keyChildType, params, *scanSpec.children()[0]);
+  keyReader_ = ParquetColumnReader::build(
+      keyChildType, fileType_->childAt(0), params, *scanSpec.children()[0]);
   elementReader_ = ParquetColumnReader::build(
-      elementChildType, params, *scanSpec.children()[1]);
-  reinterpret_cast<const ParquetTypeWithId*>(requestedType.get())
+      elementChildType, fileType_->childAt(1), params, *scanSpec.children()[1]);
+  reinterpret_cast<const ParquetTypeWithId*>(fileType.get())
       ->makeLevelInfo(levelInfo_);
   children_ = {keyReader_.get(), elementReader_.get()};
 }
@@ -216,18 +220,19 @@ void MapColumnReader::filterRowGroups(
 }
 
 ListColumnReader::ListColumnReader(
-    std::shared_ptr<const dwio::common::TypeWithId> requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)
     : dwio::common::SelectiveListColumnReader(
           requestedType,
-          requestedType,
+          fileType,
           params,
           scanSpec) {
   auto& childType = requestedType->childAt(0);
-  child_ =
-      ParquetColumnReader::build(childType, params, *scanSpec.children()[0]);
-  reinterpret_cast<const ParquetTypeWithId*>(requestedType.get())
+  child_ = ParquetColumnReader::build(
+      childType, fileType_->childAt(0), params, *scanSpec.children()[0]);
+  reinterpret_cast<const ParquetTypeWithId*>(fileType.get())
       ->makeLevelInfo(levelInfo_);
   children_ = {child_.get()};
 }

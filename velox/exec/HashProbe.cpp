@@ -59,14 +59,18 @@ void extractColumns(
     folly::Range<char**> rows,
     folly::Range<const IdentityProjection*> projections,
     memory::MemoryPool* pool,
-    const RowVectorPtr& result) {
+    const std::vector<TypePtr>& resultTypes,
+    std::vector<VectorPtr>& resultVectors) {
+  VELOX_CHECK_EQ(resultTypes.size(), resultVectors.size())
   for (auto projection : projections) {
-    auto& child = result->childAt(projection.outputChannel);
+    const auto resultChannel = projection.outputChannel;
+    VELOX_CHECK_LT(resultChannel, resultVectors.size())
+
+    auto& child = resultVectors[resultChannel];
     // TODO: Consider reuse of complex types.
     if (!child || !BaseVector::isVectorWritable(child) ||
         !child->isFlatEncoding()) {
-      child = BaseVector::create(
-          result->type()->childAt(projection.outputChannel), rows.size(), pool);
+      child = BaseVector::create(resultTypes[resultChannel], rows.size(), pool);
     }
     child->resize(rows.size());
     table->rows()->extractColumn(
@@ -125,7 +129,12 @@ HashProbe::HashProbe(
       filterResult_(1),
       outputTableRows_(outputBatchSize_) {
   VELOX_CHECK_NOT_NULL(joinBridge_);
+}
 
+void HashProbe::initialize() {
+  Operator::initialize();
+
+  VELOX_CHECK(hashers_.empty());
   hashers_ = createVectorHashers(probeType_, joinNode_->leftKeys());
 
   const auto numKeys = hashers_.size();
@@ -134,6 +143,7 @@ HashProbe::HashProbe(
     keyChannels_.push_back(hasher->channel());
   }
 
+  VELOX_CHECK_NULL(lookup_);
   lookup_ = std::make_unique<HashLookup>(hashers_);
   auto buildType = joinNode_->sources()[1]->outputType();
   auto tableType = makeTableType(buildType.get(), joinNode_->rightKeys());
@@ -223,7 +233,7 @@ void HashProbe::maybeSetupSpillInput(
     VELOX_CHECK(iter != spillPartitionSet_.end());
     auto partition = std::move(iter->second);
     VELOX_CHECK_EQ(partition->id(), restoredPartitionId.value());
-    spillInputReader_ = partition->createReader();
+    spillInputReader_ = partition->createUnorderedReader(pool());
     spillPartitionSet_.erase(iter);
   }
 
@@ -236,7 +246,6 @@ void HashProbe::maybeSetupSpillInput(
   // If 'spillInputPartitionIds_' is not empty, then we set up a spiller to
   // spill the incoming probe inputs.
   const auto& spillConfig = spillConfig_.value();
-  ++numSpillRuns_;
   spiller_ = std::make_unique<Spiller>(
       Spiller::Type::kHashJoinProbe,
       probeType_,
@@ -244,12 +253,14 @@ void HashProbe::maybeSetupSpillInput(
           spillInputPartitionIds_.begin()->partitionBitOffset(),
           spillInputPartitionIds_.begin()->partitionBitOffset() +
               spillConfig.joinPartitionBits),
-      spillConfig.filePath,
+      spillConfig.getSpillDirPathCb,
+      spillConfig.fileNamePrefix,
       spillConfig.maxFileSize,
-      spillConfig.minSpillRunSize,
+      spillConfig.writeBufferSize,
       spillConfig.compressionKind,
-      Spiller::pool(),
-      spillConfig.executor);
+      memory::spillMemoryPool(),
+      spillConfig.executor,
+      spillConfig.fileCreateConfig);
   // Set the spill partitions to the corresponding ones at the build side. The
   // hash probe operator itself won't trigger any spilling.
   spiller_->setPartitionsSpilled(toPartitionNumSet(spillInputPartitionIds_));
@@ -382,11 +393,13 @@ void HashProbe::spillInput(RowVectorPtr& input) {
   const auto numInput = input->size();
   prepareInputIndicesBuffers(
       input->size(), spiller_->state().spilledPartitionSet());
-  spillHashFunction_->partition(*input, spillPartitions_);
+  const auto singlePartition =
+      spillHashFunction_->partition(*input, spillPartitions_);
 
   vector_size_t numNonSpillingInput = 0;
   for (auto row = 0; row < numInput; ++row) {
-    const auto partition = spillPartitions_[row];
+    const auto partition = singlePartition.has_value() ? singlePartition.value()
+                                                       : spillPartitions_[row];
     if (!spiller_->isSpilled(partition)) {
       rawNonSpillInputIndicesBuffer_[numNonSpillingInput++] = row;
       continue;
@@ -398,8 +411,8 @@ void HashProbe::spillInput(RowVectorPtr& input) {
   }
 
   // Ensure vector are lazy loaded before spilling.
-  for (int32_t i = 0; i < input_->childrenSize(); ++i) {
-    input_->childAt(i)->loadedVector();
+  for (int32_t i = 0; i < input->childrenSize(); ++i) {
+    input->childAt(i)->loadedVector();
   }
 
   for (int32_t partition = 0; partition < numSpillInputs_.size(); ++partition) {
@@ -516,7 +529,9 @@ void HashProbe::addInput(RowVectorPtr input) {
   }
   input_ = std::move(input);
 
-  if (input_->size() > 0) {
+  const auto numInput = input_->size();
+
+  if (numInput > 0) {
     noInput_ = false;
   }
 
@@ -565,28 +580,9 @@ void HashProbe::addInput(RowVectorPtr input) {
   if (!hasDecoded) {
     decodeAndDetectNonNullKeys();
   }
-
   activeRows_ = nonNullInputRows_;
-  lookup_->hashes.resize(input_->size());
-  auto mode = table_->hashMode();
-  auto& buildHashers = table_->hashers();
-  for (auto i = 0; i < keyChannels_.size(); ++i) {
-    if (mode != BaseHashTable::HashMode::kHash) {
-      auto key = input_->childAt(keyChannels_[i]);
-      buildHashers[i]->lookupValueIds(
-          *key, activeRows_, scratchMemory_, lookup_->hashes);
-    } else {
-      hashers_[i]->hash(activeRows_, i > 0, lookup_->hashes);
-    }
-  }
-  lookup_->rows.clear();
-  if (activeRows_.isAllSelected()) {
-    lookup_->rows.resize(activeRows_.size());
-    std::iota(lookup_->rows.begin(), lookup_->rows.end(), 0);
-  } else {
-    activeRows_.applyToSelected(
-        [&](auto row) { lookup_->rows.push_back(row); });
-  }
+
+  table_->prepareForJoinProbe(*lookup_.get(), input_, activeRows_, false);
 
   passingInputRowsInitialized_ = false;
   if (isLeftJoin(joinType_) || isFullJoin(joinType_) || isAntiJoin(joinType_) ||
@@ -595,7 +591,6 @@ void HashProbe::addInput(RowVectorPtr input) {
     // including rows without a match in the output. Also, make sure to
     // initialize all 'hits' to nullptr as HashTable::joinProbe will only
     // process activeRows_.
-    auto numInput = input_->size();
     auto& hits = lookup_->hits;
     hits.resize(numInput);
     std::fill(hits.data(), hits.data() + numInput, nullptr);
@@ -705,7 +700,8 @@ void HashProbe::fillOutput(vector_size_t size) {
         folly::Range<char**>(outputTableRows_.data(), size),
         tableOutputProjections_,
         pool(),
-        output_);
+        outputType_->children(),
+        output_->children());
   }
 }
 
@@ -749,7 +745,8 @@ RowVectorPtr HashProbe::getBuildSideOutput() {
       folly::Range<char**>(outputTableRows_.data(), numOut),
       tableOutputProjections_,
       pool(),
-      output_);
+      outputType_->children(),
+      output_->children());
 
   if (isRightSemiProjectJoin(joinType_)) {
     // Populate 'match' column.
@@ -928,7 +925,10 @@ RowVectorPtr HashProbe::getOutput() {
           folly::Range(outputTableRows_.data(), outputTableRows_.size()));
     }
 
-    if (!numOut) {
+    // We are done processing the input batch if there are no more joined rows
+    // to process and the NoMatchDetector isn't carrying forward a row that
+    // still needs to be written to the output.
+    if (!numOut && !noMatchDetector_.hasLastMissedRow()) {
       input_ = nullptr;
       return nullptr;
     }
@@ -964,13 +964,10 @@ RowVectorPtr HashProbe::getOutput() {
 }
 
 void HashProbe::fillFilterInput(vector_size_t size) {
-  if (!filterInput_) {
-    filterInput_ = BaseVector::create<RowVector>(filterInputType_, 1, pool());
-  }
-  filterInput_->resize(size);
+  std::vector<VectorPtr> filterColumns(filterInputType_->size());
   for (auto projection : filterInputProjections_) {
     ensureLoadedIfNotAtEnd(projection.inputChannel);
-    filterInput_->childAt(projection.outputChannel) = wrapChild(
+    filterColumns[projection.outputChannel] = wrapChild(
         size, outputRowMapping_, input_->childAt(projection.inputChannel));
   }
 
@@ -979,7 +976,11 @@ void HashProbe::fillFilterInput(vector_size_t size) {
       folly::Range<char**>(outputTableRows_.data(), size),
       filterTableProjections_,
       pool(),
-      filterInput_);
+      filterInputType_->children(),
+      filterColumns);
+
+  filterInput_ = std::make_shared<RowVector>(
+      pool(), filterInputType_, nullptr, size, std::move(filterColumns));
 }
 
 void HashProbe::prepareFilterRowsForNullAwareJoin(
@@ -1211,9 +1212,9 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
         rawOutputProbeRowMapping[numPassed++] = rawOutputProbeRowMapping[i];
       }
     }
-    if (results_.atEnd()) {
-      noMatchDetector_.finish(addMiss);
-    }
+
+    noMatchDetector_.finishIteration(
+        addMiss, results_.atEnd(), outputTableRows_.size() - numPassed);
   } else if (isLeftSemiFilterJoin(joinType_)) {
     auto addLastMatch = [&](auto row) {
       outputTableRows_[numPassed] = nullptr;
@@ -1298,9 +1299,9 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
         noMatchDetector_.advance(probeRow, filterPassed(i), addMiss);
       }
     }
-    if (results_.atEnd()) {
-      noMatchDetector_.finish(addMiss);
-    }
+
+    noMatchDetector_.finishIteration(
+        addMiss, results_.atEnd(), outputTableRows_.size() - numPassed);
   } else {
     for (auto i = 0; i < numRows; ++i) {
       if (filterPassed(i)) {
@@ -1429,6 +1430,7 @@ void HashProbe::abort() {
   output_.reset();
   nonSpillInputIndicesBuffer_.reset();
   spillInputIndicesBuffers_.clear();
+  spillInputReader_.reset();
 }
 
 } // namespace facebook::velox::exec

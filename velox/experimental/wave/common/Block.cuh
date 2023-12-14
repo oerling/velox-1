@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <cub/block/block_scan.cuh>
 #include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
 
 /// Utilities for  booleans and indices and thread blocks.
 
@@ -51,14 +51,8 @@ __device__ inline void boolBlockToIndices(
   }
 }
 
-template <
-    int32_t blockSize,
-  typename T,
-  typename Getter>
-__device__ inline void blockSum(
-    Getter getter,
-    void* shmem,
-    T* result) {
+template <int32_t blockSize, typename T, typename Getter>
+__device__ inline void blockSum(Getter getter, void* shmem, T* result) {
   typedef cub::BlockReduce<T, blockSize> BlockReduceT;
 
   auto* temp = reinterpret_cast<typename BlockReduceT::TempStorage*>(shmem);
@@ -71,6 +65,4 @@ __device__ inline void blockSum(
   }
 }
 
-  
-  
 } // namespace facebook::velox::wave

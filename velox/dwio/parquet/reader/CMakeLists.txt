@@ -31,8 +31,8 @@ target_link_libraries(
   velox_dwio_parquet_thrift
   velox_type
   velox_dwio_common
+  velox_dwio_common_compression
   fmt::fmt
-  parquet
   arrow
   Snappy::snappy
   thrift

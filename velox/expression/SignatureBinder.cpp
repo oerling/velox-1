@@ -78,6 +78,22 @@ std::optional<int64_t> tryResolveLongLiteral(
   return integerVariablesBindings.at(variable);
 }
 
+// If the parameter is a named field from a row, ensure the names are
+// compatible. For example:
+//
+// > row(bigint) - binds any row with bigint as field.
+// > row(foo bigint) - only binds rows where bigint field is named foo.
+bool checkNamedRowField(
+    const TypeSignature& signature,
+    const TypePtr& actualType,
+    size_t idx) {
+  if (signature.rowFieldName().has_value() &&
+      (*signature.rowFieldName() != asRowType(actualType)->nameOf(idx))) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 bool SignatureBinder::tryBind() {
@@ -165,6 +181,14 @@ bool SignatureBinderBase::tryBind(
       return false;
     }
 
+    if (variable.orderableTypesOnly() && !actualType->isOrderable()) {
+      return false;
+    }
+
+    if (variable.comparableTypesOnly() && !actualType->isComparable()) {
+      return false;
+    }
+
     typeVariablesBindings_[baseName] = actualType;
     return true;
   }
@@ -183,6 +207,7 @@ bool SignatureBinderBase::tryBind(
   if (params.size() != actualType->parameters().size()) {
     return false;
   }
+
   for (auto i = 0; i < params.size(); i++) {
     const auto& actualParameter = actualType->parameters()[i];
     switch (actualParameter.kind) {
@@ -193,6 +218,10 @@ bool SignatureBinderBase::tryBind(
         }
         break;
       case TypeParameterKind::kType:
+        if (!checkNamedRowField(params[i], actualType, i)) {
+          return false;
+        }
+
         if (!tryBind(params[i], actualParameter.type)) {
           return false;
         }

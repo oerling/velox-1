@@ -365,6 +365,64 @@ TEST_F(QueryAssertionsTest, nullDecimalValue) {
       "Types of expected and actual results do not match");
 }
 
+TEST_F(QueryAssertionsTest, valuesMismatch) {
+  auto test = makeRowVector({
+      makeFlatVector<int64_t>({10, 20}, DECIMAL(12, 2)),
+  });
+  createDuckDbTable({test});
+
+  // The expected values should be off by 1.
+  auto plan = PlanBuilder().values({test}).project({"c0"}).planNode();
+  EXPECT_NONFATAL_FAILURE(
+      assertQuery(plan, "SELECT c0 + 1 FROM tmp"),
+      "Expected 2, got 2\n"
+      "2 extra rows, 2 missing rows\n"
+      "2 of extra rows:\n\t"
+      "0.10\n\t"
+      "0.20\n\n"
+      "2 of missing rows:\n\t"
+      "1.10\n\t"
+      "1.20");
+}
+
+TEST_F(QueryAssertionsTest, noExpectedRows) {
+  auto actual = makeRowVector({
+      makeFlatVector(std::vector<int64_t>{4000}, DECIMAL(6, 2)),
+  });
+  createDuckDbTable({actual});
+
+  auto expected = makeRowVector({
+      makeFlatVector<int64_t>({}, BIGINT()),
+  });
+  auto plan = PlanBuilder().values({actual}).project({"c0"}).planNode();
+  EXPECT_NONFATAL_FAILURE(
+      assertQuery(plan, expected),
+      "Expected 0, got 1\n"
+      "1 extra rows, 0 missing rows\n"
+      "1 of extra rows:\n\t"
+      "40.00\n\n"
+      "0 of missing rows:");
+}
+
+TEST_F(QueryAssertionsTest, noActualRows) {
+  auto actual = makeRowVector({
+      makeFlatVector<int64_t>({}, BIGINT()),
+  });
+  createDuckDbTable({actual});
+
+  auto expected = makeRowVector({
+      makeFlatVector(std::vector<int64_t>{1000}, DECIMAL(6, 2)),
+  });
+  auto plan = PlanBuilder().values({actual}).project({"c0"}).planNode();
+  EXPECT_NONFATAL_FAILURE(
+      assertQuery(plan, expected),
+      "Expected 1, got 0\n"
+      "0 extra rows, 1 missing rows\n"
+      "0 of extra rows:\n\n"
+      "1 of missing rows:\n\t"
+      "10.00");
+}
+
 TEST_F(QueryAssertionsTest, nullVariant) {
   auto input = makeRowVector(
       {makeNullableArrayVector<int64_t>(
@@ -391,6 +449,47 @@ TEST_F(QueryAssertionsTest, nullVariant) {
        makeNullConstant(TypeKind::DOUBLE, 10)})});
   createDuckDbTable({input});
   plan = PlanBuilder().values({input}).planNode();
+  assertQuery(plan, "SELECT * FROM tmp");
+}
+
+TEST_F(QueryAssertionsTest, varbinary) {
+  auto data = makeRowVector({makeFlatVector<std::string>(
+      {"Short string", "Longer strings...", "abc"}, VARBINARY())});
+
+  auto rowType = asRowType(data->type());
+
+  createDuckDbTable({data});
+
+  auto duckResult = duckDbQueryRunner_.execute("SELECT * FROM tmp", rowType);
+  ASSERT_EQ(duckResult.size(), data->size());
+  ASSERT_EQ(duckResult.begin()->begin()->kind(), TypeKind::VARBINARY);
+  ASSERT_TRUE(assertEqualResults(duckResult, rowType, {data}));
+
+  auto plan = PlanBuilder().values({data}).planNode();
+  assertQuery(plan, "SELECT * FROM tmp");
+}
+
+TEST_F(QueryAssertionsTest, intervalDayTime) {
+  // INTERVAL_DAY_TIME needs special handling as it is a logical (vs physical)
+  // type mapping to BIGINT. Tests its use as a FLAT vector and in a MAP
+  // serialized to DuckDB to cover the specialized code-paths.
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>({5, 10, 15, 0}, INTERVAL_DAY_TIME())});
+
+  createDuckDbTable({data});
+  auto plan = PlanBuilder().values({data}).planNode();
+  assertQuery(plan, "SELECT * FROM tmp");
+
+  data = makeRowVector({makeMapVectorFromJson<int64_t, double>(
+      {"null",
+       "{1: 1.1, 2: null}",
+       "{}",
+       "{3: 3.3, 4: 4.4, 5: 5.5}",
+       "null",
+       "{6: null}"},
+      MAP(INTERVAL_DAY_TIME(), DOUBLE()))});
+  createDuckDbTable({data});
+  plan = PlanBuilder().values({data}).planNode();
   assertQuery(plan, "SELECT * FROM tmp");
 }
 

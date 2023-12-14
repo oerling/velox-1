@@ -86,7 +86,6 @@ GpuAllocator* getHostAllocator(Device* /*device*/) {
   return allocator;
 }
 
-
 // Always returns device 0.
 Device* getDevice(int32_t /*preferredDevice*/) {
   static Device device(0);

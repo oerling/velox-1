@@ -33,6 +33,15 @@ class PlanBuilderTest : public testing::Test,
   }
 };
 
+TEST_F(PlanBuilderTest, invalidSourceNode) {
+  VELOX_ASSERT_THROW(
+      PlanBuilder().project({"c0 > 5"}).planNode(),
+      "Project cannot be the source node");
+  VELOX_ASSERT_THROW(
+      PlanBuilder().filter({"c0 > 5"}).planNode(),
+      "Filter cannot be the source node");
+}
+
 TEST_F(PlanBuilderTest, duplicateSubfield) {
   VELOX_ASSERT_THROW(
       PlanBuilder(pool_.get())
@@ -115,7 +124,7 @@ TEST_F(PlanBuilderTest, windowFunctionCall) {
           .window({"window1(c) over (partition by a) as d"})
           .planNode()
           ->toString(true, false),
-      "-- Window[partition by [a] order by [] "
+      "-- Window[partition by [a] "
       "d := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, d:BIGINT\n");
 
@@ -125,8 +134,7 @@ TEST_F(PlanBuilderTest, windowFunctionCall) {
           .window({"window1(c) over ()"})
           .planNode()
           ->toString(true, false),
-      "-- Window[partition by [] order by [] "
-      "w0 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
+      "-- Window[w0 := window1(ROW[\"c\"]) RANGE between UNBOUNDED PRECEDING and CURRENT ROW] "
       "-> a:VARCHAR, b:BIGINT, c:BIGINT, w0:BIGINT\n");
 
   VELOX_ASSERT_THROW(

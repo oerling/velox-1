@@ -42,22 +42,29 @@ int genericToBitMask(xsimd::batch_bool<T, A> mask) {
 }
 
 template <typename T, typename A>
-xsimd::batch_bool<T, A> fromBitMaskImpl(int mask) {
-  static const auto kMemo = ({
-    constexpr int N = xsimd::batch_bool<T, A>::size;
+struct FromBitMask {
+  FromBitMask() {
     static_assert(N <= 8);
-    std::array<xsimd::batch_bool<T, A>, (1 << N)> memo;
     for (int i = 0; i < (1 << N); ++i) {
       bool tmp[N];
       for (int bit = 0; bit < N; ++bit) {
         tmp[bit] = (i & (1 << bit)) ? true : false;
       }
-      memo[i] = xsimd::batch_bool<T, A>::load_unaligned(tmp);
+      memo_[i] = xsimd::batch_bool<T, A>::load_unaligned(tmp);
     }
-    memo;
-  });
-  return kMemo[mask];
-}
+  }
+
+  xsimd::batch_bool<T, A> operator[](size_t i) const {
+    return memo_[i];
+  }
+
+ private:
+  static constexpr int N = xsimd::batch_bool<T, A>::size;
+  xsimd::batch_bool<T, A> memo_[1 << N];
+};
+
+extern const FromBitMask<int32_t, xsimd::default_arch> fromBitMask32;
+extern const FromBitMask<int64_t, xsimd::default_arch> fromBitMask64;
 
 template <typename T, typename A>
 struct BitMask<T, A, 1> {
@@ -132,9 +139,10 @@ struct BitMask<T, A, 4> {
     return genericToBitMask(mask);
   }
 
-  static xsimd::batch_bool<T, A> fromBitMask(int mask, const A&) {
-    return UNLIKELY(mask == kAllSet) ? xsimd::batch_bool<T, A>(true)
-                                     : fromBitMaskImpl<T, A>(mask);
+  static xsimd::batch_bool<T, A> fromBitMask(
+      int mask,
+      const xsimd::default_arch&) {
+    return fromBitMask32[mask];
   }
 };
 
@@ -158,9 +166,10 @@ struct BitMask<T, A, 8> {
     return genericToBitMask(mask);
   }
 
-  static xsimd::batch_bool<T, A> fromBitMask(int mask, const A&) {
-    return UNLIKELY(mask == kAllSet) ? xsimd::batch_bool<T, A>(true)
-                                     : fromBitMaskImpl<T, A>(mask);
+  static xsimd::batch_bool<T, A> fromBitMask(
+      int mask,
+      const xsimd::default_arch&) {
+    return fromBitMask64[mask];
   }
 };
 
@@ -242,19 +251,72 @@ int32_t indicesOfSetBits(
   return result - originalResult;
 }
 
+namespace detail {
+
 template <typename T, typename A>
-xsimd::batch_bool<T, A> leadingMask(int n, const A&) {
-  constexpr int N = xsimd::batch_bool<T, A>::size;
-  static const auto kMemo = ({
-    std::array<xsimd::batch_bool<T, A>, N> memo;
+struct LeadingMask {
+  LeadingMask() {
     bool tmp[N]{};
     for (int i = 0; i < N; ++i) {
-      memo[i] = xsimd::batch_bool<T, A>::load_unaligned(tmp);
+      memo_[i] = xsimd::batch_bool<T, A>::load_unaligned(tmp);
       tmp[i] = true;
     }
-    memo;
-  });
-  return LIKELY(n >= N) ? xsimd::batch_bool<T, A>(true) : kMemo[n];
+    memo_[N] = xsimd::batch_bool<T, A>::load_unaligned(tmp);
+  }
+
+  xsimd::batch_bool<T, A> operator[](size_t i) const {
+    return memo_[i];
+  }
+
+ private:
+  static constexpr int N = xsimd::batch_bool<T, A>::size;
+  xsimd::batch_bool<T, A> memo_[N + 1];
+};
+
+extern const LeadingMask<int32_t, xsimd::default_arch> leadingMask32;
+extern const LeadingMask<int64_t, xsimd::default_arch> leadingMask64;
+
+template <typename T, typename A>
+xsimd::batch_bool<T, xsimd::default_arch> leadingMask(int i, const A&);
+
+template <>
+inline xsimd::batch_bool<int32_t, xsimd::default_arch> leadingMask(
+    int i,
+    const xsimd::default_arch&) {
+  return leadingMask32[i];
+}
+
+template <>
+inline xsimd::batch_bool<float, xsimd::default_arch> leadingMask(
+    int i,
+    const xsimd::default_arch&) {
+  return reinterpret_cast<
+      xsimd::batch_bool<float, xsimd::default_arch>::register_type>(
+      leadingMask32[i].data);
+}
+
+template <>
+inline xsimd::batch_bool<int64_t, xsimd::default_arch> leadingMask(
+    int i,
+    const xsimd::default_arch&) {
+  return leadingMask64[i];
+}
+
+template <>
+inline xsimd::batch_bool<double, xsimd::default_arch> leadingMask(
+    int i,
+    const xsimd::default_arch&) {
+  return reinterpret_cast<
+      xsimd::batch_bool<double, xsimd::default_arch>::register_type>(
+      leadingMask64[i].data);
+}
+
+} // namespace detail
+
+template <typename T, typename A>
+xsimd::batch_bool<T, A> leadingMask(int n, const A& arch) {
+  constexpr int N = xsimd::batch_bool<T, A>::size;
+  return detail::leadingMask<T, A>(std::min(n, N), arch);
 }
 
 namespace detail {
@@ -294,7 +356,7 @@ inline bool copyNextWord(void*& to, const void*& from, int32_t& bytes) {
 } // namespace detail
 
 template <typename A>
-void memcpy(void* to, const void* from, int32_t bytes, const A& arch) {
+inline void memcpy(void* to, const void* from, int32_t bytes, const A& arch) {
   while (bytes >= batchByteSize(arch)) {
     if (!detail::copyNextWord<xsimd::batch<int8_t, A>, A>(to, from, bytes)) {
       return;
@@ -860,6 +922,48 @@ uint8_t gather8Bits(
     const A& arch) {
   return detail::gather8BitsImpl(bits, vindex, numIndices, arch);
 }
+
+namespace detail {
+
+template <typename T, typename A>
+xsimd::batch<T, A> genericMaskLoad(
+    const T* addr,
+    xsimd::batch_bool<T, A> mask) {
+  return xsimd::select<T, A>(
+      mask, xsimd::load_unaligned<A, T>(addr), xsimd::broadcast<T, A>(0));
+}
+
+template <typename T, typename A>
+struct MaskLoad<T, A, 4> {
+  static xsimd::batch<T, A>
+  apply(const T* addr, xsimd::batch_bool<T, A> mask, const xsimd::generic&) {
+    return genericMaskLoad(addr, mask);
+  }
+
+#if XSIMD_WITH_AVX2
+  static xsimd::batch<T, A>
+  apply(const T* addr, xsimd::batch_bool<T, A> mask, const xsimd::avx2&) {
+    return _mm256_maskload_epi32(addr, mask);
+  }
+#endif
+};
+
+template <typename T, typename A>
+struct MaskLoad<T, A, 8> {
+  static xsimd::batch<T, A>
+  apply(const T* addr, xsimd::batch_bool<T, A> mask, const xsimd::generic&) {
+    return genericMaskLoad(addr, mask);
+  }
+
+#if XSIMD_WITH_AVX2
+  static xsimd::batch<T, A>
+  apply(const T* addr, xsimd::batch_bool<T, A> mask, const xsimd::avx2&) {
+    return _mm256_maskload_epi64(addr, mask);
+  }
+#endif
+};
+
+} // namespace detail
 
 namespace detail {
 

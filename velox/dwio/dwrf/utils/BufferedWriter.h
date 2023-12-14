@@ -49,7 +49,7 @@ class BufferedWriter {
   }
 
   ~BufferedWriter() {
-    VELOX_CHECK(empty() && closed_, toString());
+    VELOX_CHECK(empty(), toString());
   }
 
   void add(T t) {
@@ -81,6 +81,14 @@ class BufferedWriter {
     VELOX_CHECK(!closed_);
     const auto cleanup = folly::makeGuard([this]() { closed_ = true; });
     flush();
+  }
+
+  /// Invoked to abort this buffered write on error. It closes the buffered
+  /// writer without flushing pending buffers.
+  void abort() {
+    VELOX_CHECK(!closed_);
+    pos_ = 0;
+    closed_ = true;
   }
 
   std::string toString() const {

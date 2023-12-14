@@ -64,6 +64,9 @@ class Window : public Operator {
     return noMoreInput_ && numRows_ == numProcessedRows_;
   }
 
+  void reclaim(uint64_t targetBytes, memory::MemoryReclaimer::Stats& stats)
+      override;
+
  private:
   // Used for k preceding/following frames. Index is the column index if k is a
   // column. value is used to read column values from the column index when k
@@ -122,7 +125,10 @@ class Window : public Operator {
   // Computes the result vector for a single output block. The result
   // consists of all the input columns followed by the results of the
   // window function.
-  void callApplyLoop(vector_size_t numOutputRows, const RowVectorPtr& result);
+  // @return The number of rows processed in the loop.
+  vector_size_t callApplyLoop(
+      vector_size_t numOutputRows,
+      const RowVectorPtr& result);
 
   // Converts WindowNode::Frame to Window::WindowFrame.
   WindowFrame createWindowFrame(
@@ -150,7 +156,7 @@ class Window : public Operator {
 
   // WindowBuild is used to store input rows and return WindowPartitions
   // for the processing.
-  const std::unique_ptr<WindowBuild> windowBuild_;
+  std::unique_ptr<WindowBuild> windowBuild_;
 
   // The cached window plan node used for window function initialization. It is
   // reset after the initialization.
@@ -168,6 +174,7 @@ class Window : public Operator {
   // WindowFunction is the base API implemented by all the window functions.
   // The functions are ordered by their positions in the output columns.
   std::vector<std::unique_ptr<exec::WindowFunction>> windowFunctions_;
+
   // Vector of WindowFrames corresponding to each windowFunction above.
   // It represents the frame spec for the function computation.
   std::vector<WindowFrame> windowFrames_;

@@ -42,6 +42,7 @@
 
 DECLARE_bool(velox_memory_leak_check_enabled);
 DECLARE_bool(velox_memory_pool_debug_enabled);
+DECLARE_bool(velox_enable_memory_usage_track_in_default_memory_pool);
 
 namespace facebook::velox::memory {
 #define VELOX_MEM_LOG_PREFIX "[MEM] "
@@ -77,6 +78,10 @@ struct MemoryManagerOptions {
   /// capacity for system usage.
   int64_t queryMemoryCapacity{kMaxMemory};
 
+  /// If true, enable memory usage tracking in the default memory pool.
+  bool trackDefaultUsage{
+      FLAGS_velox_enable_memory_usage_track_in_default_memory_pool};
+
   /// If true, check the memory pool and usage leaks on destruction.
   ///
   /// TODO: deprecate this flag after all the existing memory leak use cases
@@ -87,6 +92,9 @@ struct MemoryManagerOptions {
   /// allocation and free call stacks to detect the source of memory leak for
   /// testing purpose.
   bool debugEnabled{FLAGS_velox_memory_pool_debug_enabled};
+
+  /// Terminates the process and generates a core file on an allocation failure
+  bool coreOnAllocationFailureEnabled{false};
 
   /// Specifies the backing memory allocator.
   MemoryAllocator* allocator{MemoryAllocator::getInstance()};
@@ -106,13 +114,18 @@ struct MemoryManagerOptions {
   /// during the memory arbitration.
   uint64_t memoryPoolTransferCapacity{32 << 20};
 
-  /// If true, handle the memory arbitration failure by aborting the memory
-  /// pool with most capacity and retry the memory arbitration, otherwise we
-  /// simply fails the memory arbitration requestor itself. This helps the
-  /// distributed query execution use case such as Prestissimo that fail the
-  /// same query on all the workers instead of a random victim query which
-  /// happens to trigger the failed memory arbitration.
-  bool retryArbitrationFailure{true};
+  /// Specifies the max time to wait for memory reclaim by arbitration. The
+  /// memory reclaim might fail if the max wait time has exceeded. If it is
+  /// zero, then there is no timeout. The default is 5 mins.
+  uint64_t memoryReclaimWaitMs{300'000};
+
+  /// Provided by the query system to validate the state after a memory pool
+  /// enters arbitration if not null. For instance, Prestissimo provides
+  /// callback to check if a memory arbitration request is issued from a driver
+  /// thread, then the driver should be put in suspended state to avoid the
+  /// potential deadlock when reclaim memory from the task of the request memory
+  /// pool.
+  MemoryArbitrationStateCheckCB arbitrationStateCheckCb{nullptr};
 };
 
 /// 'MemoryManager' is responsible for managing the memory pools. For now, users
@@ -129,12 +142,6 @@ class MemoryManager {
   /// the process singleton manager will be initialized.
   FOLLY_EXPORT static MemoryManager& getInstance(
       const MemoryManagerOptions& options = MemoryManagerOptions{});
-
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  FOLLY_EXPORT static MemoryManager& getInstance(
-      const MemoryManagerOptions& options,
-      bool ensureCapacity);
-#endif
 
   /// Returns the memory capacity of this memory manager which puts a hard cap
   /// on memory usage, and any allocation that exceeds this capacity throws.
@@ -191,8 +198,10 @@ class MemoryManager {
 
   MemoryArbitrator* arbitrator();
 
-  /// Returns debug string of this memory manager.
-  std::string toString() const;
+  /// Returns debug string of this memory manager. If 'detail' is true, it
+  /// returns the detailed tree memory usage from all the top level root memory
+  /// pools.
+  std::string toString(bool detail = false) const;
 
   /// Returns the memory manger's internal default root memory pool for testing
   /// purpose.
@@ -222,7 +231,8 @@ class MemoryManager {
   const uint16_t alignment_;
   const bool checkUsageLeak_;
   const bool debugEnabled_;
-  // The destruction callback set for the allocated  root memory pools which are
+  const bool coreOnAllocationFailureEnabled_;
+  // The destruction callback set for the allocated root memory pools which are
   // tracked by 'pools_'. It is invoked on the root pool destruction and removes
   // the pool from 'pools_'.
   const MemoryPoolImpl::DestructionCallback poolDestructionCb_;
@@ -251,6 +261,12 @@ std::shared_ptr<MemoryPool> addDefaultLeafMemoryPool(
 /// TODO: deprecate this API after all the use cases are able to manage the
 /// lifecycle of the allocated memory pools properly.
 MemoryPool& deprecatedSharedLeafPool();
+
+/// Returns the system-wide memory pool for spilling memory usage.
+memory::MemoryPool* spillMemoryPool();
+
+/// Returns true if the provided 'pool' is the spilling memory pool.
+bool isSpillMemoryPool(memory::MemoryPool* pool);
 
 FOLLY_ALWAYS_INLINE int32_t alignmentPadding(void* address, int32_t alignment) {
   auto extra = reinterpret_cast<uintptr_t>(address) % alignment;

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 #include "velox/exec/TableScan.h"
+#include "velox/common/testutil/TestValue.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
-DEFINE_int32(split_preload_per_driver, 2, "Prefetch split metadata");
+using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
 
@@ -43,9 +44,12 @@ TableScan::TableScan(
           driverCtx_->driverId,
           operatorType(),
           tableHandle_->connectorId())),
-      readBatchSize_(driverCtx_->task->queryCtx()
-                         ->queryConfig()
-                         .preferredOutputBatchRows()) {
+      maxSplitPreloadPerDriver_(
+          driverCtx_->queryConfig().maxSplitPreloadPerDriver()),
+      readBatchSize_(driverCtx_->queryConfig().preferredOutputBatchRows()),
+      maxReadBatchSize_(driverCtx_->queryConfig().maxOutputBatchRows()),
+      getOutputTimeLimitMs_(
+          driverCtx_->queryConfig().tableScanGetOutputTimeLimitMs()) {
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 
@@ -54,8 +58,26 @@ RowVectorPtr TableScan::getOutput() {
     return nullptr;
   }
 
+  const auto startTimeMs = getCurrentTimeMs();
   for (;;) {
     if (needNewSplit_) {
+      // Check if our Task needs us to yield or we've been running for too long
+      // w/o producing a result. In this case we return with the Yield blocking
+      // reason and an already fulfilled future.
+      if (this->driverCtx_->task->shouldStop() != StopReason::kNone or
+          (getOutputTimeLimitMs_ != 0 and
+           (getCurrentTimeMs() - startTimeMs) >= getOutputTimeLimitMs_)) {
+        blockingReason_ = BlockingReason::kYield;
+        blockingFuture_ = ContinueFuture{folly::Unit{}};
+        // A point for test code injection.
+        TestValue::adjust(
+            "facebook::velox::exec::TableScan::getOutput::bail", this);
+        return nullptr;
+      }
+
+      // A point for test code injection.
+      TestValue::adjust("facebook::velox::exec::TableScan::getOutput", this);
+
       exec::Split split;
       blockingReason_ = driverCtx_->task->getSplitOrFuture(
           driverCtx_->splitGroupId,
@@ -130,6 +152,8 @@ RowVectorPtr TableScan::getOutput() {
         // unique_ptr will be nullptr if there was a cancellation.
         numReadyPreloadedSplits_ += connectorSplit->dataSource->hasValue();
         auto preparedDataSource = connectorSplit->dataSource->move();
+        stats_.wlock()->getOutputTiming.add(
+            connectorSplit->dataSource->prepareTiming());
         if (!preparedDataSource) {
           // There must be a cancellation.
           VELOX_CHECK(operatorCtx_->task()->isCancelled());
@@ -160,7 +184,13 @@ RowVectorPtr TableScan::getOutput() {
          },
          &debugString_});
 
-    auto dataOptional = dataSource_->next(readBatchSize_, blockingFuture_);
+    int readBatchSize = readBatchSize_;
+    if (maxFilteringRatio_ > 0) {
+      readBatchSize = std::min(
+          maxReadBatchSize_,
+          static_cast<int>(readBatchSize / maxFilteringRatio_));
+    }
+    auto dataOptional = dataSource_->next(readBatchSize, blockingFuture_);
     checkPreload();
 
     {
@@ -182,6 +212,11 @@ RowVectorPtr TableScan::getOutput() {
       if (data) {
         if (data->size() > 0) {
           lockedStats->addInputVector(data->estimateFlatSize(), data->size());
+          constexpr int kMaxSelectiveBatchSizeMultiplier = 4;
+          maxFilteringRatio_ = std::max(
+              {maxFilteringRatio_,
+               1.0 * data->size() / readBatchSize,
+               1.0 / kMaxSelectiveBatchSizeMultiplier});
           return data;
         }
         continue;
@@ -244,13 +279,13 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
 
 void TableScan::checkPreload() {
   auto executor = connector_->executor();
-  if (FLAGS_split_preload_per_driver == 0 || !executor ||
+  if (maxSplitPreloadPerDriver_ == 0 || !executor ||
       !connector_->supportsSplitPreload()) {
     return;
   }
   if (dataSource_->allPrefetchIssued()) {
     maxPreloadedSplits_ = driverCtx_->task->numDrivers(driverCtx_->driver) *
-        FLAGS_split_preload_per_driver;
+        maxSplitPreloadPerDriver_;
     if (!splitPreloader_) {
       splitPreloader_ =
           [executor, this](std::shared_ptr<connector::ConnectorSplit> split) {

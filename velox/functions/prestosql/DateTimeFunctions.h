@@ -401,7 +401,7 @@ struct DatePlusIntervalDayTime {
 };
 
 template <typename T>
-struct TimestampMinusIntervalDayTime {
+struct TimestampMinusFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE void call(
@@ -409,6 +409,60 @@ struct TimestampMinusIntervalDayTime {
       const arg_type<Timestamp>& a,
       const arg_type<Timestamp>& b) {
     result = a.toMillis() - b.toMillis();
+  }
+};
+
+template <typename T>
+struct TimestampPlusIntervalDayTime {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Timestamp>& result,
+      const arg_type<Timestamp>& a,
+      const arg_type<IntervalDayTime>& b)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
+    result = Timestamp::fromMillisNoError(a.toMillis() + b);
+  }
+};
+
+template <typename T>
+struct IntervalDayTimePlusTimestamp {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Timestamp>& result,
+      const arg_type<IntervalDayTime>& a,
+      const arg_type<Timestamp>& b)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
+    result = Timestamp::fromMillisNoError(a + b.toMillis());
+  }
+};
+
+template <typename T>
+struct TimestampMinusIntervalDayTime {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<Timestamp>& result,
+      const arg_type<Timestamp>& a,
+      const arg_type<IntervalDayTime>& b)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
+    result = Timestamp::fromMillisNoError(a.toMillis() - b);
   }
 };
 
@@ -646,7 +700,6 @@ inline std::optional<DateTimeUnit> fromDateTimeUnitString(
   if (unit == kYear) {
     return DateTimeUnit::kYear;
   }
-  // TODO Add support for "week".
   if (throwIfInvalid) {
     VELOX_UNSUPPORTED("Unsupported datetime unit: {}", unitString);
   }
@@ -1017,7 +1070,7 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
       int64_t& result,
       const arg_type<Varchar>& unitString,
       const arg_type<Timestamp>& timestamp1,
@@ -1046,10 +1099,9 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
     } else {
       result = diffTimestamp(unit, timestamp1, timestamp2);
     }
-    return true;
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
       int64_t& result,
       const arg_type<Varchar>& unitString,
       const arg_type<Date>& date1,
@@ -1059,15 +1111,14 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
         : getDateUnit(unitString, true).value();
 
     result = diffDate(unit, date1, date2);
-    return true;
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
       int64_t& result,
       const arg_type<Varchar>& unitString,
       const arg_type<TimestampWithTimezone>& timestamp1,
       const arg_type<TimestampWithTimezone>& timestamp2) {
-    return call(
+    call(
         result,
         unitString,
         this->toTimestamp(timestamp1),
@@ -1198,16 +1249,43 @@ struct FormatDateTimeFunction {
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
-      out_type<Varchar>& result,
-      const arg_type<Timestamp>& timestamp,
+  FOLLY_ALWAYS_INLINE void ensureFormatter(
       const arg_type<Varchar>& formatString) {
     if (!isConstFormat_) {
       jodaDateTime_ = buildJodaDateTimeFormatter(
           std::string_view(formatString.data(), formatString.size()));
     }
+  }
 
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<Timestamp>& timestamp,
+      const arg_type<Varchar>& formatString) {
+    ensureFormatter(formatString);
+
+    // TODO: We should give dateTimeFormatter a sink/ostream to prevent the
+    // copy.
     auto formattedResult = jodaDateTime_->format(timestamp, sessionTimeZone_);
+    auto resultSize = formattedResult.size();
+    result.resize(resultSize);
+    if (resultSize != 0) {
+      std::memcpy(result.data(), formattedResult.data(), resultSize);
+    }
+    return true;
+  }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Varchar>& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      const arg_type<Varchar>& formatString) {
+    ensureFormatter(formatString);
+
+    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    Timestamp timestamp = Timestamp::fromMillis(milliseconds);
+    int16_t timeZoneId = *timestampWithTimezone.template at<1>();
+    auto* timezonePtr = date::locate_zone(util::getTimeZoneName(timeZoneId));
+
+    auto formattedResult = jodaDateTime_->format(timestamp, timezonePtr);
     auto resultSize = formattedResult.size();
     result.resize(resultSize);
     if (resultSize != 0) {

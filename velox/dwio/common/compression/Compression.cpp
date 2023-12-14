@@ -15,10 +15,9 @@
  */
 
 #include "velox/dwio/common/compression/Compression.h"
-
 #include "velox/common/compression/LzoDecompressor.h"
+#include "velox/dwio/common/IntCodecCommon.h"
 #include "velox/dwio/common/compression/PagedInputStream.h"
-#include "velox/dwio/common/compression/PagedOutputStream.h"
 
 #include <folly/logging/xlog.h>
 #include <lz4.h>
@@ -113,7 +112,9 @@ class ZlibDecompressor : public Decompressor {
  public:
   explicit ZlibDecompressor(
       uint64_t blockSize,
-      const std::string& streamDebugInfo);
+      int windowBits,
+      const std::string& streamDebugInfo,
+      bool izGzip = false);
   ~ZlibDecompressor() override;
 
   uint64_t decompress(
@@ -137,7 +138,9 @@ class ZlibDecompressor : public Decompressor {
 
 ZlibDecompressor::ZlibDecompressor(
     uint64_t blockSize,
-    const std::string& streamDebugInfo)
+    int windowBits,
+    const std::string& streamDebugInfo,
+    bool isGzip)
     : Decompressor{blockSize, streamDebugInfo} {
   zstream_.next_in = Z_NULL;
   zstream_.avail_in = 0;
@@ -146,7 +149,12 @@ ZlibDecompressor::ZlibDecompressor(
   zstream_.opaque = Z_NULL;
   zstream_.next_out = Z_NULL;
   zstream_.avail_out = folly::to<uInt>(blockSize);
-  auto result = inflateInit2(&zstream_, -15);
+  int zlibWindowBits = windowBits;
+  constexpr int GZIP_DETECT_CODE = 32;
+  if (isGzip) {
+    zlibWindowBits = zlibWindowBits | GZIP_DETECT_CODE;
+  }
+  const auto result = inflateInit2(&zstream_, zlibWindowBits);
   DWIO_ENSURE_EQ(
       result,
       Z_OK,
@@ -185,14 +193,160 @@ uint64_t ZlibDecompressor::decompress(
   return destLength - zstream_.avail_out;
 }
 
-class LzoDecompressor : public Decompressor {
+class LzoAndLz4DecompressorCommon : public Decompressor {
+ public:
+  explicit LzoAndLz4DecompressorCommon(
+      uint64_t blockSize,
+      const CompressionKind& kind,
+      bool isHadoopFrameFormat,
+      const std::string& streamDebugInfo)
+      : Decompressor{blockSize, streamDebugInfo},
+        kind_(kind),
+        isHadoopFrameFormat_(isHadoopFrameFormat) {}
+
+  uint64_t decompress(
+      const char* src,
+      uint64_t srcLength,
+      char* dest,
+      uint64_t destLength) override;
+
+  virtual uint64_t decompressInternal(
+      const char* src,
+      uint64_t srcLength,
+      char* dest,
+      uint64_t destLength) = 0;
+
+ protected:
+  CompressionKind kind_;
+  // When compressor creates multiple compressed blocks, this will be
+  // 'true', e.g., parquet uses this, whereas dwrf/orc creates single
+  // compressed block.
+  bool isHadoopFrameFormat_;
+};
+
+uint64_t LzoAndLz4DecompressorCommon::decompress(
+    const char* src,
+    uint64_t srcLength,
+    char* dest,
+    uint64_t destLength) {
+  if (!isHadoopFrameFormat_) {
+    return decompressInternal(src, srcLength, dest, destLength);
+  }
+
+  // For parquet, the format could be frame format, try to decompress that
+  // format.
+  uint32_t decompressedTotalSize = 0;
+  auto* inputPtr = src;
+  auto* outPtr = dest;
+  uint64_t compressedSize = srcLength;
+  auto uncompressedSize = destLength;
+
+  while (compressedSize > 0) {
+    DWIO_ENSURE_GE(
+        compressedSize,
+        dwio::common::INT_BYTE_SIZE,
+        "{} decompression failed, input len is too small: {}",
+        kind_,
+        compressedSize);
+
+    uint32_t decompressedBlockSize =
+        folly::Endian::big(folly::loadUnaligned<uint32_t>(inputPtr));
+    inputPtr += dwio::common::INT_BYTE_SIZE;
+    compressedSize -= dwio::common::INT_BYTE_SIZE;
+    uint32_t remainingOutputSize = uncompressedSize - decompressedTotalSize;
+
+    DWIO_ENSURE_GE(
+        remainingOutputSize,
+        decompressedBlockSize,
+        "{} decompression failed, remainingOutputSize is less than "
+        "decompressedBlockSize, remainingOutputSize: {}, "
+        "decompressedBlockSize: {}",
+        kind_,
+        remainingOutputSize,
+        decompressedBlockSize);
+
+    if (compressedSize <= 0) {
+      break;
+    }
+
+    do {
+      // Check that input length should not be negative.
+      DWIO_ENSURE_GE(
+          compressedSize,
+          dwio::common::INT_BYTE_SIZE,
+          "{} decompression failed, input len is too small: {}",
+          kind_,
+          compressedSize);
+      // Read the length of the next lz4/lzo compressed block.
+      uint32_t compressedBlockSize =
+          folly::Endian::big(folly::loadUnaligned<uint32_t>(inputPtr));
+      inputPtr += dwio::common::INT_BYTE_SIZE;
+      compressedSize -= dwio::common::INT_BYTE_SIZE;
+
+      if (compressedBlockSize == 0) {
+        continue;
+      }
+
+      DWIO_ENSURE_LE(
+          compressedBlockSize,
+          compressedSize,
+          "{} decompression failed, compressedBlockSize is greater than compressedSize, "
+          "compressedBlockSize: {}, compressedSize: {}",
+          kind_,
+          compressedBlockSize,
+          compressedSize);
+
+      // Decompress this block.
+      remainingOutputSize = uncompressedSize - decompressedTotalSize;
+      uint64_t decompressedSize = -1;
+      decompressedSize = decompressInternal(
+          inputPtr,
+          static_cast<int32_t>(compressedBlockSize),
+          outPtr,
+          static_cast<int32_t>(remainingOutputSize));
+
+      DWIO_ENSURE_EQ(
+          decompressedSize,
+          remainingOutputSize,
+          "{} decompression failed, decompressedSize is not equal to remainingOutputSize, "
+          "decompressedSize: {}, remainingOutputSize: {}",
+          kind_,
+          decompressedSize,
+          remainingOutputSize);
+
+      outPtr += decompressedSize;
+      inputPtr += compressedBlockSize;
+      compressedSize -= compressedBlockSize;
+      decompressedBlockSize -= decompressedSize;
+      decompressedTotalSize += decompressedSize;
+    } while (decompressedBlockSize > 0);
+  }
+
+  DWIO_ENSURE_EQ(
+      decompressedTotalSize,
+      uncompressedSize,
+      "{} decompression failed, decompressedTotalSize is not equal to uncompressedSize, "
+      "decompressedTotalSize: {}, uncompressedSize: {}",
+      kind_,
+      decompressedTotalSize,
+      uncompressedSize);
+
+  return decompressedTotalSize;
+}
+
+class LzoDecompressor : public LzoAndLz4DecompressorCommon {
  public:
   explicit LzoDecompressor(
       uint64_t blockSize,
+      bool isHadoopFrameFormat,
       const std::string& streamDebugInfo)
-      : Decompressor{blockSize, streamDebugInfo} {}
+      : LzoAndLz4DecompressorCommon{
+            blockSize,
+            velox::common::CompressionKind_LZO,
+            isHadoopFrameFormat,
+            streamDebugInfo} {}
 
-  uint64_t decompress(
+  uint64_t decompressInternal(
       const char* src,
       uint64_t srcLength,
       char* dest,
@@ -202,21 +356,26 @@ class LzoDecompressor : public Decompressor {
   }
 };
 
-class Lz4Decompressor : public Decompressor {
+class Lz4Decompressor : public LzoAndLz4DecompressorCommon {
  public:
   explicit Lz4Decompressor(
       uint64_t blockSize,
+      bool isHadoopFrameFormat,
       const std::string& streamDebugInfo)
-      : Decompressor{blockSize, streamDebugInfo} {}
+      : LzoAndLz4DecompressorCommon{
+            blockSize,
+            velox::common::CompressionKind_LZ4,
+            isHadoopFrameFormat,
+            streamDebugInfo} {}
 
-  uint64_t decompress(
+  uint64_t decompressInternal(
       const char* src,
       uint64_t srcLength,
       char* dest,
       uint64_t destLength) override;
 };
 
-uint64_t Lz4Decompressor::decompress(
+uint64_t Lz4Decompressor::decompressInternal(
     const char* src,
     uint64_t srcLength,
     char* dest,
@@ -232,6 +391,9 @@ uint64_t Lz4Decompressor::decompress(
   return static_cast<uint64_t>(result);
 }
 
+// NOTE: We do not keep `ZSTD_DCtx' around on purpose, because if we keep it
+// around, in flat map column reader we have hundreds of thousands of
+// decompressors at same time and causing OOM.
 class ZstdDecompressor : public Decompressor {
  public:
   explicit ZstdDecompressor(
@@ -245,8 +407,9 @@ class ZstdDecompressor : public Decompressor {
       char* dest,
       uint64_t destLength) override;
 
-  uint64_t getUncompressedLength(const char* src, uint64_t srcLength)
-      const override;
+  std::pair<int64_t, bool> getDecompressedLength(
+      const char* src,
+      uint64_t srcLength) const override;
 };
 
 uint64_t ZstdDecompressor::decompress(
@@ -264,7 +427,7 @@ uint64_t ZstdDecompressor::decompress(
   return ret;
 }
 
-uint64_t ZstdDecompressor::getUncompressedLength(
+std::pair<int64_t, bool> ZstdDecompressor::getDecompressedLength(
     const char* src,
     uint64_t srcLength) const {
   auto uncompressedLength = ZSTD_getFrameContentSize(src, srcLength);
@@ -272,14 +435,14 @@ uint64_t ZstdDecompressor::getUncompressedLength(
   // bound
   if (uncompressedLength == ZSTD_CONTENTSIZE_UNKNOWN ||
       uncompressedLength == ZSTD_CONTENTSIZE_ERROR) {
-    return blockSize_;
+    return {blockSize_, false};
   }
   DWIO_ENSURE_LE(
       uncompressedLength,
       blockSize_,
       "Insufficient buffer size. Info: ",
       streamDebugInfo_);
-  return uncompressedLength;
+  return {uncompressedLength, true};
 }
 
 class SnappyDecompressor : public Decompressor {
@@ -295,8 +458,9 @@ class SnappyDecompressor : public Decompressor {
       char* dest,
       uint64_t destLength) override;
 
-  uint64_t getUncompressedLength(const char* src, uint64_t srcLength)
-      const override;
+  std::pair<int64_t, bool> getDecompressedLength(
+      const char* src,
+      uint64_t srcLength) const override;
 };
 
 uint64_t SnappyDecompressor::decompress(
@@ -304,7 +468,7 @@ uint64_t SnappyDecompressor::decompress(
     uint64_t srcLength,
     char* dest,
     uint64_t destLength) {
-  auto length = getUncompressedLength(src, srcLength);
+  auto [length, _] = getDecompressedLength(src, srcLength);
   DWIO_ENSURE_GE(destLength, length);
   DWIO_ENSURE(
       snappy::RawUncompress(src, srcLength, dest),
@@ -313,23 +477,24 @@ uint64_t SnappyDecompressor::decompress(
   return length;
 }
 
-uint64_t SnappyDecompressor::getUncompressedLength(
+std::pair<int64_t, bool> SnappyDecompressor::getDecompressedLength(
     const char* src,
     uint64_t srcLength) const {
   size_t uncompressedLength;
   // in the case when decompression size is not available, return the upper
   // bound
   if (!snappy::GetUncompressedLength(src, srcLength, &uncompressedLength)) {
-    return blockSize_;
+    return {blockSize_, false};
   }
   DWIO_ENSURE_LE(
       uncompressedLength,
       blockSize_,
       "Insufficient buffer size. Info: ",
       streamDebugInfo_);
-  return uncompressedLength;
+  return {uncompressedLength, true};
 }
 
+// TODO: Is this really needed?
 class ZlibDecompressionStream : public PagedInputStream,
                                 private ZlibDecompressor {
  public:
@@ -337,18 +502,27 @@ class ZlibDecompressionStream : public PagedInputStream,
       std::unique_ptr<dwio::common::SeekableInputStream> inStream,
       uint64_t blockSize,
       MemoryPool& pool,
-      const std::string& streamDebugInfo)
-      : PagedInputStream{std::move(inStream), pool, streamDebugInfo},
-        ZlibDecompressor{blockSize, streamDebugInfo} {}
+      int windowBits,
+      const std::string& streamDebugInfo,
+      bool isGzip = false,
+      bool useRawDecompression = false,
+      size_t compressedLength = 0)
+      : PagedInputStream{std::move(inStream), pool, streamDebugInfo, useRawDecompression, compressedLength},
+        ZlibDecompressor{blockSize, windowBits, streamDebugInfo, isGzip} {}
   ~ZlibDecompressionStream() override = default;
 
-  bool Next(const void** data, int32_t* size) override;
+  bool readOrSkip(const void** data, int32_t* size) override;
 };
 
-bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
+bool ZlibDecompressionStream::readOrSkip(const void** data, int32_t* size) {
+  if (data) {
+    VELOX_CHECK_EQ(pendingSkip_, 0);
+  }
   // if the user pushed back, return them the partial buffer
   if (outputBufferLength_) {
-    *data = outputBufferPtr_;
+    if (data) {
+      *data = outputBufferPtr_;
+    }
     *size = static_cast<int32_t>(outputBufferLength_);
     outputBufferPtr_ += outputBufferLength_;
     bytesReturned_ += outputBufferLength_;
@@ -368,7 +542,9 @@ bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
       static_cast<size_t>(inputBufferPtrEnd_ - inputBufferPtr_),
       remainingLength_);
   if (state_ == State::ORIGINAL) {
-    *data = inputBufferPtr_;
+    if (data) {
+      *data = inputBufferPtr_;
+    }
     *size = static_cast<int32_t>(availSize);
     outputBufferPtr_ = inputBufferPtr_ + availSize;
     outputBufferLength_ = 0;
@@ -380,7 +556,8 @@ bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
         getName(),
         " Info: ",
         ZlibDecompressor::streamDebugInfo_);
-    prepareOutputBuffer(getUncompressedLength(inputBufferPtr_, availSize));
+    prepareOutputBuffer(
+        getDecompressedLength(inputBufferPtr_, availSize).first);
 
     reset();
     zstream_.next_in =
@@ -419,7 +596,9 @@ bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
       }
     } while (result != Z_STREAM_END);
     *size = static_cast<int32_t>(blockSize_ - zstream_.avail_out);
-    *data = outputBufferPtr_;
+    if (data) {
+      *data = outputBufferPtr_;
+    }
     outputBufferLength_ = 0;
     outputBufferPtr_ += *size;
   }
@@ -432,36 +611,25 @@ bool ZlibDecompressionStream::Next(const void** data, int32_t* size) {
 
 } // namespace
 
-std::unique_ptr<BufferedOutputStream> createCompressor(
+std::unique_ptr<Compressor> createCompressor(
     CompressionKind kind,
-    CompressionBufferPool& bufferPool,
-    DataBufferHolder& bufferHolder,
-    uint32_t compressionThreshold,
-    int32_t zlibCompressionLevel,
-    int32_t zstdCompressionLevel,
-    uint8_t pageHeaderSize,
-    const Encrypter* encrypter) {
-  std::unique_ptr<Compressor> compressor;
+    const CompressionOptions& options) {
   switch (kind) {
     case CompressionKind::CompressionKind_NONE:
-      if (!encrypter) {
-        return std::make_unique<BufferedOutputStream>(bufferHolder);
-      }
-      // compressor remain as nullptr
-      break;
+      return nullptr;
     case CompressionKind::CompressionKind_ZLIB: {
-      compressor = std::make_unique<ZlibCompressor>(zlibCompressionLevel);
       XLOG_FIRST_N(INFO, 1) << fmt::format(
           "Initialized zlib compressor with compression level {}",
-          zlibCompressionLevel);
-      break;
+          options.format.zlib.compressionLevel);
+      return std::make_unique<ZlibCompressor>(
+          options.format.zlib.compressionLevel);
     }
     case CompressionKind::CompressionKind_ZSTD: {
-      compressor = std::make_unique<ZstdCompressor>(zstdCompressionLevel);
       XLOG_FIRST_N(INFO, 1) << fmt::format(
           "Initialized zstd compressor with compression level {}",
-          zstdCompressionLevel);
-      break;
+          options.format.zstd.compressionLevel);
+      return std::make_unique<ZstdCompressor>(
+          options.format.zstd.compressionLevel);
     }
     case CompressionKind::CompressionKind_SNAPPY:
     case CompressionKind::CompressionKind_LZO:
@@ -470,13 +638,7 @@ std::unique_ptr<BufferedOutputStream> createCompressor(
       VELOX_UNSUPPORTED(
           "Unsupported compression type: {}", compressionKindToString(kind));
   }
-  return std::make_unique<PagedOutputStream>(
-      bufferPool,
-      bufferHolder,
-      compressionThreshold,
-      pageHeaderSize,
-      std::move(compressor),
-      encrypter);
+  return nullptr;
 }
 
 std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
@@ -484,8 +646,11 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
     std::unique_ptr<dwio::common::SeekableInputStream> input,
     uint64_t blockSize,
     MemoryPool& pool,
+    const CompressionOptions& options,
     const std::string& streamDebugInfo,
-    const Decrypter* decrypter) {
+    const Decrypter* decrypter,
+    bool useRawDecompression,
+    size_t compressedLength) {
   std::unique_ptr<Decompressor> decompressor;
   switch (static_cast<int64_t>(kind)) {
     case CompressionKind::CompressionKind_NONE:
@@ -499,22 +664,50 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
         // When file is not encrypted, we can use zlib streaming codec to avoid
         // copying data
         return std::make_unique<ZlibDecompressionStream>(
-            std::move(input), blockSize, pool, streamDebugInfo);
+            std::move(input),
+            blockSize,
+            pool,
+            options.format.zlib.windowBits,
+            streamDebugInfo,
+            false,
+            useRawDecompression,
+            compressedLength);
       }
-      decompressor =
-          std::make_unique<ZlibDecompressor>(blockSize, streamDebugInfo);
+      decompressor = std::make_unique<ZlibDecompressor>(
+          blockSize, options.format.zlib.windowBits, streamDebugInfo, false);
+      break;
+    case CompressionKind::CompressionKind_GZIP:
+      if (!decrypter) {
+        // When file is not encrypted, we can use zlib streaming codec to avoid
+        // copying data
+        return std::make_unique<ZlibDecompressionStream>(
+            std::move(input),
+            blockSize,
+            pool,
+            options.format.zlib.windowBits,
+            streamDebugInfo,
+            true,
+            useRawDecompression,
+            compressedLength);
+      }
+      decompressor = std::make_unique<ZlibDecompressor>(
+          blockSize, options.format.zlib.windowBits, streamDebugInfo, true);
       break;
     case CompressionKind::CompressionKind_SNAPPY:
       decompressor =
           std::make_unique<SnappyDecompressor>(blockSize, streamDebugInfo);
       break;
     case CompressionKind::CompressionKind_LZO:
-      decompressor =
-          std::make_unique<LzoDecompressor>(blockSize, streamDebugInfo);
+      decompressor = std::make_unique<LzoDecompressor>(
+          blockSize,
+          options.format.lz4_lzo.isHadoopFrameFormat,
+          streamDebugInfo);
       break;
     case CompressionKind::CompressionKind_LZ4:
-      decompressor =
-          std::make_unique<Lz4Decompressor>(blockSize, streamDebugInfo);
+      decompressor = std::make_unique<Lz4Decompressor>(
+          blockSize,
+          options.format.lz4_lzo.isHadoopFrameFormat,
+          streamDebugInfo);
       break;
     case CompressionKind::CompressionKind_ZSTD:
       decompressor =
@@ -528,7 +721,9 @@ std::unique_ptr<dwio::common::SeekableInputStream> createDecompressor(
       pool,
       std::move(decompressor),
       decrypter,
-      streamDebugInfo);
+      streamDebugInfo,
+      useRawDecompression,
+      compressedLength);
 }
 
 } // namespace facebook::velox::dwio::common::compression

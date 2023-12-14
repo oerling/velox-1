@@ -113,10 +113,10 @@ TEST_F(HashStringAllocatorTest, headerToString) {
 
   ASSERT_NO_THROW(allocator_->toString());
 
-  ByteStream stream(allocator_.get());
+  ByteOutputStream stream(allocator_.get());
   auto h4 = allocator_->newWrite(stream).header;
   std::string data(123'456, 'x');
-  stream.appendStringPiece(folly::StringPiece(data.data(), data.size()));
+  stream.appendStringView(data);
   allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(h4->toString(), "|multipart| size: 123 [64913, 58436]");
@@ -164,11 +164,11 @@ TEST_F(HashStringAllocatorTest, allocateLarge) {
 }
 
 TEST_F(HashStringAllocatorTest, finishWrite) {
-  ByteStream stream(allocator_.get());
+  ByteOutputStream stream(allocator_.get());
   auto start = allocator_->newWrite(stream);
 
   // Write a short string.
-  stream.appendStringPiece(folly::StringPiece("abc"));
+  stream.appendStringView(std::string_view("abc"));
   auto [firstStart, firstFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(start.header, firstStart.header);
@@ -177,8 +177,8 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
   // Replace short string with a long string that uses two bytes short of
   // available space.
   allocator_->extendWrite(start, stream);
-  auto longString = std::string(start.header->size() - 2, 'x');
-  stream.appendStringPiece(folly::StringPiece(longString));
+  std::string longString(start.header->size() - 2, 'x');
+  stream.appendStringView(longString);
   auto [longStart, longFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(start.header, longStart.header);
@@ -186,7 +186,7 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
 
   // Append another string after the long string.
   allocator_->extendWrite(longFinish, stream);
-  stream.appendStringPiece(folly::StringPiece("abc"));
+  stream.appendStringView(std::string_view("abc"));
   auto [appendStart, appendFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_NE(appendStart.header, longFinish.header);
@@ -196,7 +196,7 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
 
   // Replace last string.
   allocator_->extendWrite(appendStart, stream);
-  stream.appendStringPiece(folly::StringPiece("abcd"));
+  stream.appendStringView(std::string_view("abcd"));
   auto [replaceStart, replaceFinish] = allocator_->finishWrite(stream, 0);
 
   ASSERT_EQ(appendStart.header, replaceStart.header);
@@ -205,15 +205,15 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
       replaceStart.offset() + 4);
 
   // Read back long and short strings.
-  HSA::prepareRead(longStart.header, stream);
+  auto inputStream = HSA::prepareRead(longStart.header);
 
   std::string copy;
   copy.resize(longString.size());
-  stream.readBytes(copy.data(), copy.size());
+  inputStream.readBytes(copy.data(), copy.size());
   ASSERT_EQ(copy, longString);
 
   copy.resize(4);
-  stream.readBytes(copy.data(), 4);
+  inputStream.readBytes(copy.data(), 4);
   ASSERT_EQ(copy, "abcd");
 
   allocator_->checkConsistency();
@@ -224,13 +224,13 @@ TEST_F(HashStringAllocatorTest, finishWrite) {
     auto largeString = randomString(size);
 
     auto start = allocator_->newWrite(stream);
-    stream.appendStringPiece(folly::StringPiece(largeString));
+    stream.appendStringView(largeString);
     allocator_->finishWrite(stream, 0);
 
-    HSA::prepareRead(start.header, stream);
+    auto inStream = HSA::prepareRead(start.header);
     std::string copy;
     copy.resize(largeString.size());
-    stream.readBytes(copy.data(), copy.size());
+    inStream.readBytes(copy.data(), copy.size());
     ASSERT_EQ(copy, largeString);
     allocator_->checkConsistency();
   }
@@ -246,7 +246,7 @@ TEST_F(HashStringAllocatorTest, multipart) {
         continue;
       }
       auto chars = randomString();
-      ByteStream stream(allocator_.get());
+      ByteOutputStream stream(allocator_.get());
       if (data[i].start.header) {
         if (rand32() % 5) {
           // 4/5 of cases append to the end.
@@ -263,7 +263,7 @@ TEST_F(HashStringAllocatorTest, multipart) {
         EXPECT_EQ(
             data[i].start.header, HSA::headerOf(stream.ranges()[0].buffer));
       }
-      stream.appendStringPiece(folly::StringPiece(chars.data(), chars.size()));
+      stream.appendStringView(chars);
       auto reserve = rand32() % 100;
       data[i].current = allocator_->finishWrite(stream, reserve).second;
       data[i].reference.insert(
@@ -285,8 +285,39 @@ TEST_F(HashStringAllocatorTest, multipart) {
   allocator_->checkConsistency();
 }
 
+TEST_F(HashStringAllocatorTest, mixedMultipart) {
+  // Create multi-part allocation with a mix of block allocated from Arena and
+  // MemoryPool.
+
+  const std::string shortString(25, 'x');
+  const std::string extraLongString(5'000, 'y');
+
+  ByteOutputStream stream(allocator_.get());
+
+  auto start = allocator_->newWrite(stream);
+  stream.appendStringView(shortString);
+  auto current = allocator_->finishWrite(stream, 0);
+
+  allocator_->extendWrite(current.second, stream);
+
+  ByteRange range;
+  allocator_->newContiguousRange(extraLongString.size(), &range);
+  stream.setRange(range, 0);
+
+  stream.appendStringView(extraLongString);
+  current = allocator_->finishWrite(stream, 0);
+
+  allocator_->extendWrite(current.second, stream);
+  stream.appendStringView(shortString);
+  allocator_->finishWrite(stream, 0);
+
+  allocator_->free(start.header);
+
+  allocator_->checkConsistency();
+}
+
 TEST_F(HashStringAllocatorTest, rewrite) {
-  ByteStream stream(allocator_.get());
+  ByteOutputStream stream(allocator_.get());
   auto header = allocator_->allocate(5);
   EXPECT_EQ(16, header->size()); // Rounds up to kMinAlloc.
   HSA::Position current = HSA::Position::atOffset(header, 0);
@@ -310,10 +341,10 @@ TEST_F(HashStringAllocatorTest, rewrite) {
     stream.appendOne(67890LL);
     position = allocator_->finishWrite(stream, 0).second;
     EXPECT_EQ(3 * sizeof(int64_t), HSA::offset(header, position));
-    HSA::prepareRead(header, stream);
-    EXPECT_EQ(123456789012345LL, stream.read<int64_t>());
-    EXPECT_EQ(12345LL, stream.read<int64_t>());
-    EXPECT_EQ(67890LL, stream.read<int64_t>());
+    auto inStream = HSA::prepareRead(header);
+    EXPECT_EQ(123456789012345LL, inStream.read<int64_t>());
+    EXPECT_EQ(12345LL, inStream.read<int64_t>());
+    EXPECT_EQ(67890LL, inStream.read<int64_t>());
   }
   // The stream contains 3 int64_t's.
   auto end = HSA::seek(header, 3 * sizeof(int64_t));
@@ -472,6 +503,151 @@ TEST_F(HashStringAllocatorTest, externalLeak) {
 
   allocator.reset();
   EXPECT_EQ(initialBytes, pool->currentBytes());
+}
+
+TEST_F(HashStringAllocatorTest, freeLists) {
+  constexpr int kSize = 100'000;
+  constexpr int kSmall = 17;
+  constexpr int kMedium = kSmall + 1;
+  constexpr int kLarge = 128;
+  std::vector<HashStringAllocator::Header*> allocations;
+  for (int i = 0; i < 2 * kSize; ++i) {
+    allocations.push_back(allocator_->allocate(i < kSize ? kMedium : kSmall));
+    allocations.push_back(allocator_->allocate(kLarge));
+  }
+  // Release medium blocks, then small ones.
+  for (int i = 0; i < allocations.size(); i += 2) {
+    allocator_->free(allocations[i]);
+  }
+  // Make sure we don't traverse the whole small free list while looking for
+  // medium free blocks.
+  auto t0 = std::chrono::steady_clock::now();
+  for (int i = 0; i < kSize; ++i) {
+    allocator_->allocate(kSmall + 1);
+  }
+  ASSERT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(30));
+}
+
+TEST_F(HashStringAllocatorTest, strings) {
+  constexpr uint64_t kMagic1 = 0x133788a07;
+  constexpr uint64_t kMagic2 = 0xe7ababe11e;
+  std::vector<std::string> strings;
+  std::vector<StringView> views;
+  for (auto i = 0; i < 20000; ++i) {
+    std::string str;
+    auto freeBytes = allocator_->freeSpace();
+    if (freeBytes > 20 && freeBytes < 120) {
+      // Target the next allocation to take all of the last free block.
+      str.resize(freeBytes - 15);
+    } else {
+      if (i % 11 == 0) {
+        str.resize((i * kMagic1) % 6001);
+      } else {
+        str.resize(24 + (i % 22));
+      }
+    }
+    for (auto c = 0; c < str.size(); ++c) {
+      str[c] = ((c + i) % 64) + 32;
+    }
+    if (i > 0 && i % 3 == 0) {
+      auto freeIdx = ((i * kMagic2) % views.size());
+      if (!strings[freeIdx].empty()) {
+        strings[freeIdx].clear();
+        allocator_->free(HashStringAllocator::headerOf(views[i].data()));
+      }
+    }
+    strings.push_back(str);
+    views.push_back(StringView(str.data(), str.size()));
+    allocator_->copyMultipart(reinterpret_cast<char*>(&views[i]), 0);
+    if (i % 10 == 0) {
+      allocator_->checkConsistency();
+    }
+  }
+  for (auto i = 0; i < strings.size(); ++i) {
+    if (strings[i].empty()) {
+      continue;
+    }
+    std::string temp;
+    ASSERT_TRUE(
+        StringView(strings[i]) ==
+        HashStringAllocator::contiguousString(views[i], temp));
+  }
+  allocator_->checkConsistency();
+}
+
+TEST_F(HashStringAllocatorTest, sizeAndPosition) {
+  // We make a stream consisting of multiple non-contiguous ranges
+  // and verify that it is writable and appendable and that its
+  // size() always reflects the number of written bytes, excluding
+  // any overheads.
+
+  // First, we make a free list to make sure things are multipart.
+  constexpr int32_t kUnitSize = 256;
+  std::vector<HashStringAllocator::Header*> pieces;
+  for (auto i = 0; i < 100; ++i) {
+    pieces.push_back(allocator_->allocate(kUnitSize + 30));
+  }
+  for (auto i = 0; i < pieces.size(); i += 2) {
+    allocator_->free(pieces[i]);
+  }
+
+  // We write each nth character of stream to be  n % kunitSize.
+  std::string allChars;
+  allChars.resize(kUnitSize);
+  for (auto i = 0; i < kUnitSize; ++i) {
+    allChars[i] = i;
+  }
+
+  ByteOutputStream stream(allocator_.get());
+  auto position = allocator_->newWrite(stream, 20);
+  // Nothing written yet.
+  EXPECT_EQ(0, stream.size());
+  for (auto i = 0; i < 10; ++i) {
+    stream.appendStringView(allChars);
+    // We check that the size reflects the payload size after each write.
+    EXPECT_EQ((i + 1) * kUnitSize, stream.size());
+  }
+  // We expect a multipart allocation.
+  EXPECT_TRUE(position.header->isContinued());
+  EXPECT_EQ(kUnitSize * 10, stream.tellp());
+
+  // we check and rewrite different offsets in the stream, not to pass past end.
+  for (auto start = 90; start < kUnitSize * 9; start += 125) {
+    stream.seekp(start);
+    EXPECT_EQ(start, stream.tellp());
+    EXPECT_EQ(kUnitSize * 10, stream.size());
+    ByteInputStream input = stream.inputStream();
+    input.seekp(start);
+    EXPECT_EQ(kUnitSize * 10 - start, input.remainingSize());
+    for (auto c = 0; c < 10; ++c) {
+      uint8_t byte = input.readByte();
+      EXPECT_EQ(byte, (start + c) % kUnitSize);
+    }
+    // Overwrite the bytes just read.
+    stream.seekp(start);
+    stream.appendStringView(std::string_view(allChars.data(), 100));
+    input = stream.inputStream();
+    input.seekp(start);
+    for (auto c = 0; c < 100; ++c) {
+      uint8_t byte = input.readByte();
+      EXPECT_EQ(byte, c % kUnitSize);
+    }
+  }
+  EXPECT_EQ(kUnitSize * 10, stream.size());
+  stream.seekp(kUnitSize * 10 - 100);
+  stream.appendStringView(allChars);
+  // The last write extends the size.
+  EXPECT_EQ(kUnitSize * 11 - 100, stream.size());
+}
+
+TEST_F(HashStringAllocatorTest, storeStringFast) {
+  allocator_->allocate(HashStringAllocator::kMinAlloc);
+  std::string s(allocator_->freeSpace() + sizeof(void*), 'x');
+  StringView sv(s);
+  allocator_->copyMultipart(reinterpret_cast<char*>(&sv), 0);
+  ASSERT_NE(sv.data(), s.data());
+  ASSERT_EQ(sv, StringView(s));
+  allocator_->checkConsistency();
 }
 
 } // namespace

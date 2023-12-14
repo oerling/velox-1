@@ -59,19 +59,19 @@ TEST_P(BufferedWriterTest, Basic) {
           expectedFlushedBytes);
     }
   } testSettings[] = {
-      {{1, 1, 0}, true, 2},
+      {{1, 1, 0}, false, 2},
       {{1, 0, 1}, true, 2},
-      {{0, 1, 1, 0}, true, 2},
+      {{0, 1, 1, 0}, false, 2},
       {{0, 1, 0, 1}, true, 2},
-      {{0, 1024}, true, 1024},
-      {{1024}, true, 1024},
-      {{1024, 0}, true, 1024},
+      {{0, 1024}, false, 1024},
+      {{1024}, false, 1024},
+      {{1024, 0}, false, 1024},
       {{1024, 0, 1}, true, 1025},
-      {{1024, 0, 1, 0}, true, 1025},
+      {{1024, 0, 1, 0}, false, 1025},
       {{1024, 1023}, true, 2047},
-      {{1024, 1024}, true, 2048},
-      {{1024, 0, 1024}, true, 2048},
-      {{1024, 0, 1024, 0, 0}, true, 2048},
+      {{1024, 1024}, false, 2048},
+      {{1024, 0, 1024}, false, 2048},
+      {{1024, 0, 1024, 0, 0}, false, 2048},
 
       {{1, 1, 0, -1}, false, 2},
       {{1, 0, 1, -1}, false, 2},
@@ -218,16 +218,47 @@ TEST_P(BufferedWriterTest, closeTest) {
     writer = std::make_unique<BufferedWriter<char, WriteFn>>(
         *pool_, bufferSize, writeFn);
   } else {
-    writer = std::make_unique<BufferedWriter<char, WriteFn>>(
-        *pool_, bufferSize, writeFn);
+    writer = std::make_unique<BufferedWriter<char, WriteFn>>(*buffer, writeFn);
   }
   writer->add('a');
   ASSERT_EQ(
       writer->toString(),
       "BufferedWriter[pos[1] capacity[1024] closed[false]]");
   writer->close();
+  ASSERT_EQ(flushCount, 1);
   // Verify all the calls on a closed object throw.
   VELOX_ASSERT_THROW(writer->close(), "");
+  VELOX_ASSERT_THROW(writer->abort(), "");
+  VELOX_ASSERT_THROW(writer->add('a'), "");
+  VELOX_ASSERT_THROW(writer->flush(), "");
+}
+
+TEST_P(BufferedWriterTest, abortTest) {
+  const int bufferSize = 1024;
+  std::unique_ptr<dwio::common::DataBuffer<char>> buffer;
+  if (!usePool_) {
+    buffer =
+        std::make_unique<dwio::common::DataBuffer<char>>(*pool_, bufferSize);
+  }
+  size_t flushCount{0};
+  auto writeFn = [&](char* buf, size_t size) { flushCount += size; };
+  std::unique_ptr<BufferedWriter<char, WriteFn>> writer;
+  if (usePool_) {
+    writer = std::make_unique<BufferedWriter<char, WriteFn>>(
+        *pool_, bufferSize, writeFn);
+  } else {
+    writer = std::make_unique<BufferedWriter<char, WriteFn>>(*buffer, writeFn);
+  }
+  writer->add('a');
+  ASSERT_EQ(
+      writer->toString(),
+      "BufferedWriter[pos[1] capacity[1024] closed[false]]");
+  writer->abort();
+  // Verify nothing has been flushed on abort.
+  ASSERT_EQ(flushCount, 0);
+  // Verify all the calls on an abort object throw.
+  VELOX_ASSERT_THROW(writer->close(), "");
+  VELOX_ASSERT_THROW(writer->abort(), "");
   VELOX_ASSERT_THROW(writer->add('a'), "");
   VELOX_ASSERT_THROW(writer->flush(), "");
 }

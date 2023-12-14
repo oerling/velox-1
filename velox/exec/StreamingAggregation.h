@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/exec/Aggregate.h"
+#include "velox/exec/AggregateInfo.h"
 #include "velox/exec/AggregationMasks.h"
 #include "velox/exec/Operator.h"
 
@@ -29,6 +30,8 @@ class StreamingAggregation : public Operator {
       int32_t operatorId,
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::AggregationNode>& aggregationNode);
+
+  void initialize() override;
 
   void addInput(RowVectorPtr input) override;
 
@@ -71,13 +74,14 @@ class StreamingAggregation : public Operator {
   /// Maximum number of rows in the output batch.
   const uint32_t outputBatchSize_;
 
+  // Used at initialize() and gets reset() afterward.
+  std::shared_ptr<const core::AggregationNode> aggregationNode_;
+
   const core::AggregationNode::Step step_;
 
   std::vector<column_index_t> groupingKeys_;
-  std::vector<std::unique_ptr<Aggregate>> aggregates_;
+  std::vector<AggregateInfo> aggregates_;
   std::unique_ptr<AggregationMasks> masks_;
-  std::vector<std::vector<column_index_t>> args_;
-  std::vector<std::vector<VectorPtr>> constantArgs_;
   std::vector<DecodedVector> decodedKeys_;
 
   // Storage of grouping keys and accumulators.

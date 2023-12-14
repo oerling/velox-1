@@ -13,13 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/core/PlanNode.h"
+#include <folly/container/F14Set.h>
+
 #include "velox/common/encode/Base64.h"
+#include "velox/core/PlanNode.h"
 #include "velox/vector/VectorSaver.h"
 
 namespace facebook::velox::core {
 
 namespace {
+
+void appendComma(int32_t i, std::stringstream& sql) {
+  if (i > 0) {
+    sql << ", ";
+  }
+}
+
 std::vector<PlanNodePtr> deserializeSources(
     const folly::dynamic& obj,
     void* context) {
@@ -76,8 +85,7 @@ RowTypePtr getAggregationOutputType(
   std::vector<TypePtr> types;
 
   for (auto& key : groupingKeys) {
-    auto field =
-        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(key);
+    auto field = TypedExprs::asFieldAccess(key);
     VELOX_CHECK(field, "Grouping key must be a field reference");
     names.push_back(field->name());
     types.push_back(field->type());
@@ -90,6 +98,7 @@ RowTypePtr getAggregationOutputType(
 
   return std::make_shared<RowType>(std::move(names), std::move(types));
 }
+
 } // namespace
 
 AggregationNode::AggregationNode(
@@ -99,6 +108,8 @@ AggregationNode::AggregationNode(
     const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
     const std::vector<std::string>& aggregateNames,
     const std::vector<Aggregate>& aggregates,
+    const std::vector<vector_size_t>& globalGroupingSets,
+    const std::optional<FieldAccessTypedExprPtr>& groupId,
     bool ignoreNullKeys,
     PlanNodePtr source)
     : PlanNode(id),
@@ -108,6 +119,8 @@ AggregationNode::AggregationNode(
       aggregateNames_(aggregateNames),
       aggregates_(aggregates),
       ignoreNullKeys_(ignoreNullKeys),
+      groupId_(groupId),
+      globalGroupingSets_(globalGroupingSets),
       sources_{source},
       outputType_(getAggregationOutputType(
           groupingKeys_,
@@ -134,16 +147,53 @@ AggregationNode::AggregationNode(
         "Pre-grouped key must be one of the grouping keys: {}.",
         key->name());
   }
+
+  if (groupId_.has_value()) {
+    VELOX_USER_CHECK_GT(
+        groupingKeyNames.count(groupId_.value()->name()),
+        0,
+        "GroupId key {} must be one of the grouping keys",
+        groupId_.value()->name());
+
+    VELOX_USER_CHECK(
+        !globalGroupingSets_.empty(),
+        "GroupId key {} must have global grouping sets",
+        groupId_.value()->name());
+  }
+
+  if (!globalGroupingSets_.empty()) {
+    VELOX_USER_CHECK(
+        groupId_.has_value(), "Global grouping sets require GroupId key");
+  }
 }
+
+AggregationNode::AggregationNode(
+    const PlanNodeId& id,
+    Step step,
+    const std::vector<FieldAccessTypedExprPtr>& groupingKeys,
+    const std::vector<FieldAccessTypedExprPtr>& preGroupedKeys,
+    const std::vector<std::string>& aggregateNames,
+    const std::vector<Aggregate>& aggregates,
+    bool ignoreNullKeys,
+    PlanNodePtr source)
+    : AggregationNode(
+          id,
+          step,
+          groupingKeys,
+          preGroupedKeys,
+          aggregateNames,
+          aggregates,
+          {},
+          std::nullopt,
+          ignoreNullKeys,
+          source) {}
 
 namespace {
 void addFields(
     std::stringstream& stream,
     const std::vector<FieldAccessTypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
-    if (i > 0) {
-      stream << ", ";
-    }
+    appendComma(i, stream);
     stream << keys[i]->name();
   }
 }
@@ -151,15 +201,10 @@ void addFields(
 void addKeys(std::stringstream& stream, const std::vector<TypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
     const auto& expr = keys[i];
-    if (i > 0) {
-      stream << ", ";
-    }
-    if (auto field =
-            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr)) {
+    appendComma(i, stream);
+    if (auto field = TypedExprs::asFieldAccess(expr)) {
       stream << field->name();
-    } else if (
-        auto constant =
-            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(expr)) {
+    } else if (auto constant = TypedExprs::asConstant(expr)) {
       stream << constant->toString();
     } else {
       stream << expr->toString();
@@ -172,16 +217,32 @@ void addSortingKeys(
     const std::vector<SortOrder>& sortingOrders,
     std::stringstream& stream) {
   for (auto i = 0; i < sortingKeys.size(); ++i) {
-    if (i > 0) {
-      stream << ", ";
-    }
+    appendComma(i, stream);
     stream << sortingKeys[i]->name() << " " << sortingOrders[i].toString();
   }
 }
 } // namespace
 
+bool AggregationNode::canSpill(const QueryConfig& queryConfig) const {
+  // TODO: Add spilling for aggregations over distinct inputs.
+  // https://github.com/facebookincubator/velox/issues/7454
+  for (const auto& aggregate : aggregates_) {
+    if (aggregate.distinct) {
+      return false;
+    }
+  }
+  // TODO: add spilling for pre-grouped aggregation later:
+  // https://github.com/facebookincubator/velox/issues/3264
+  return (isFinal() || isSingle()) && preGroupedKeys().empty() &&
+      queryConfig.aggregationSpillEnabled();
+}
+
 void AggregationNode::addDetails(std::stringstream& stream) const {
   stream << stepName(step_) << " ";
+
+  if (isPreGrouped()) {
+    stream << "STREAMING ";
+  }
 
   if (!groupingKeys_.empty()) {
     stream << "[";
@@ -190,9 +251,7 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
   }
 
   for (auto i = 0; i < aggregateNames_.size(); ++i) {
-    if (i > 0) {
-      stream << ", ";
-    }
+    appendComma(i, stream);
     const auto& aggregate = aggregates_[i];
     stream << aggregateNames_[i] << " := " << aggregate.call->toString();
     if (aggregate.distinct) {
@@ -207,6 +266,15 @@ void AggregationNode::addDetails(std::stringstream& stream) const {
       stream << " ORDER BY ";
       addSortingKeys(aggregate.sortingKeys, aggregate.sortingOrders, stream);
     }
+  }
+
+  if (!globalGroupingSets_.empty()) {
+    stream << " global group IDs: [ " << folly::join(", ", globalGroupingSets_)
+           << " ]";
+  }
+
+  if (groupId_.has_value()) {
+    stream << " Group Id key: " << groupId_.value()->name();
   }
 }
 
@@ -253,6 +321,14 @@ folly::dynamic AggregationNode::serialize() const {
     obj["aggregates"].push_back(aggregate.serialize());
   }
 
+  obj["globalGroupingSets"] = folly::dynamic::array;
+  for (const auto& globalGroup : globalGroupingSets_) {
+    obj["globalGroupingSets"].push_back(globalGroup);
+  }
+
+  if (groupId_.has_value()) {
+    obj["groupId"] = ISerializable::serialize(groupId_.value());
+  }
   obj["ignoreNullKeys"] = ignoreNullKeys_;
   return obj;
 }
@@ -296,6 +372,7 @@ std::vector<SortOrder> deserializeSortingOrders(const folly::dynamic& array) {
 folly::dynamic AggregationNode::Aggregate::serialize() const {
   folly::dynamic obj = folly::dynamic::object();
   obj["call"] = call->serialize();
+  obj["rawInputTypes"] = ISerializable::serialize(rawInputTypes);
   if (mask) {
     obj["mask"] = mask->serialize();
   }
@@ -310,6 +387,8 @@ AggregationNode::Aggregate AggregationNode::Aggregate::deserialize(
     const folly::dynamic& obj,
     void* context) {
   auto call = ISerializable::deserialize<CallTypedExpr>(obj["call"]);
+  auto rawInputTypes =
+      ISerializable::deserialize<std::vector<Type>>(obj["rawInputTypes"]);
   FieldAccessTypedExprPtr mask;
   if (obj.count("mask")) {
     mask = ISerializable::deserialize<FieldAccessTypedExpr>(obj["mask"]);
@@ -318,7 +397,12 @@ AggregationNode::Aggregate AggregationNode::Aggregate::deserialize(
   auto sortingOrders = deserializeSortingOrders(obj["sortingOrders"]);
   bool distinct = obj["distinct"].asBool();
   return {
-      call, mask, std::move(sortingKeys), std::move(sortingOrders), distinct};
+      call,
+      rawInputTypes,
+      mask,
+      std::move(sortingKeys),
+      std::move(sortingOrders),
+      distinct};
 }
 
 // static
@@ -334,6 +418,17 @@ PlanNodePtr AggregationNode::create(const folly::dynamic& obj, void* context) {
     aggregates.push_back(Aggregate::deserialize(aggregate, context));
   }
 
+  std::vector<vector_size_t> globalGroupingSets;
+  for (const auto& globalSet : obj["globalGroupingSets"]) {
+    globalGroupingSets.push_back(globalSet.asInt());
+  }
+
+  std::optional<FieldAccessTypedExprPtr> groupId;
+  if (obj.count("groupId")) {
+    groupId = ISerializable::deserialize<FieldAccessTypedExpr>(
+        obj["groupId"], context);
+  }
+
   return std::make_shared<AggregationNode>(
       deserializePlanNodeId(obj),
       stepFromName(obj["step"].asString()),
@@ -341,8 +436,109 @@ PlanNodePtr AggregationNode::create(const folly::dynamic& obj, void* context) {
       preGroupedKeys,
       aggregateNames,
       aggregates,
+      globalGroupingSets,
+      groupId,
       obj["ignoreNullKeys"].asBool(),
       deserializeSingleSource(obj, context));
+}
+
+namespace {
+RowTypePtr getExpandOutputType(
+    const std::vector<std::vector<TypedExprPtr>>& projections,
+    std::vector<std::string> names) {
+  VELOX_USER_CHECK(!names.empty());
+  VELOX_USER_CHECK(!projections.empty());
+  VELOX_USER_CHECK_GT(names.size(), 0);
+  VELOX_USER_CHECK_GT(projections.size(), 0);
+
+  for (int32_t i = 0; i < projections.size(); i++) {
+    VELOX_USER_CHECK_EQ(names.size(), projections[i].size());
+  }
+
+  std::vector<TypePtr> types;
+  types.reserve(names.size());
+  for (const auto& projection : projections[0]) {
+    types.push_back(projection->type());
+  }
+
+  folly::F14FastSet<std::string> uniqueNames;
+  for (const auto& name : names) {
+    auto result = uniqueNames.insert(name);
+    VELOX_USER_CHECK(
+        result.second,
+        "Found duplicate column name in Expand plan node: {}.",
+        name);
+  }
+
+  return ROW(std::move(names), std::move(types));
+}
+} // namespace
+
+ExpandNode::ExpandNode(
+    PlanNodeId id,
+    std::vector<std::vector<TypedExprPtr>> projections,
+    std::vector<std::string> names,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      sources_{source},
+      outputType_(getExpandOutputType(projections, std::move(names))),
+      projections_(std::move(projections)) {
+  const auto& projectionNames = outputType_->names();
+  const auto numColumns = projectionNames.size();
+  const auto numRows = projections_.size();
+
+  for (const auto& rowProjection : projections_) {
+    for (const auto& columnProjection : rowProjection) {
+      VELOX_USER_CHECK(
+          TypedExprs::isFieldAccess(columnProjection) ||
+              TypedExprs::isConstant(columnProjection),
+          "Unsupported projection expression in Expand plan node. Expected field reference or constant. Got: {} ",
+          columnProjection->toString());
+    }
+  }
+
+  for (int i = 0; i < numColumns; ++i) {
+    const auto& type = outputType_->childAt(i);
+    for (int j = 1; j < numRows; ++j) {
+      VELOX_USER_CHECK(
+          projections_[j][i]->type()->equivalent(*type),
+          "The projections type does not match across different rows in the same column. Got: {}, {}",
+          projections_[j][i]->type()->toString(),
+          type->toString());
+    }
+  }
+}
+
+void ExpandNode::addDetails(std::stringstream& stream) const {
+  for (auto i = 0; i < projections_.size(); ++i) {
+    appendComma(i, stream);
+    stream << "[";
+    addKeys(stream, projections_[i]);
+    stream << "]";
+  }
+}
+
+folly::dynamic ExpandNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["projections"] = ISerializable::serialize(projections_);
+  obj["names"] = ISerializable::serialize(outputType_->names());
+
+  return obj;
+}
+
+// static
+PlanNodePtr ExpandNode::create(const folly::dynamic& obj, void* context) {
+  auto source = deserializeSingleSource(obj, context);
+  auto names =
+      ISerializable::deserialize<std::vector<std::string>>(obj["names"]);
+  auto projections =
+      ISerializable::deserialize<std::vector<std::vector<ITypedExpr>>>(
+          obj["projections"], context);
+  return std::make_shared<ExpandNode>(
+      deserializePlanNodeId(obj),
+      std::move(projections),
+      std::move(names),
+      std::move(source));
 }
 
 namespace {
@@ -376,12 +572,13 @@ RowTypePtr getGroupIdOutputType(
 
   return ROW(std::move(names), std::move(types));
 }
+
 } // namespace
 
 GroupIdNode::GroupIdNode(
     PlanNodeId id,
-    std::vector<std::vector<FieldAccessTypedExprPtr>> groupingSets,
-    std::vector<GroupIdNode::GroupingKeyInfo> groupingKeyInfos,
+    std::vector<std::vector<std::string>> groupingSets,
+    std::vector<GroupingKeyInfo> groupingKeyInfos,
     std::vector<FieldAccessTypedExprPtr> aggregationInputs,
     std::string groupIdName,
     PlanNodePtr source)
@@ -395,7 +592,7 @@ GroupIdNode::GroupIdNode(
       groupingKeyInfos_(std::move(groupingKeyInfos)),
       aggregationInputs_(std::move(aggregationInputs)),
       groupIdName_(std::move(groupIdName)) {
-  VELOX_CHECK_GE(
+  VELOX_USER_CHECK_GE(
       groupingSets_.size(),
       2,
       "GroupIdNode requires two or more grouping sets.");
@@ -403,11 +600,12 @@ GroupIdNode::GroupIdNode(
 
 void GroupIdNode::addDetails(std::stringstream& stream) const {
   for (auto i = 0; i < groupingSets_.size(); ++i) {
-    if (i > 0) {
-      stream << ", ";
-    }
+    appendComma(i, stream);
     stream << "[";
-    addFields(stream, groupingSets_[i]);
+    for (auto j = 0; j < groupingSets_[i].size(); j++) {
+      appendComma(j, stream);
+      stream << groupingSets_[i][j];
+    }
     stream << "]";
   }
 }
@@ -434,14 +632,16 @@ folly::dynamic GroupIdNode::serialize() const {
 // static
 PlanNodePtr GroupIdNode::create(const folly::dynamic& obj, void* context) {
   auto source = deserializeSingleSource(obj, context);
-  auto groupingSets = ISerializable::deserialize<
-      std::vector<std::vector<FieldAccessTypedExpr>>>(obj["groupingSets"]);
   std::vector<GroupingKeyInfo> groupingKeyInfos;
   for (const auto& info : obj["groupingKeyInfos"]) {
     groupingKeyInfos.push_back(
         {info["output"].asString(),
          ISerializable::deserialize<FieldAccessTypedExpr>(info["input"])});
   }
+
+  auto groupingSets =
+      ISerializable::deserialize<std::vector<std::vector<std::string>>>(
+          obj["groupingSets"]);
   return std::make_shared<GroupIdNode>(
       deserializePlanNodeId(obj),
       std::move(groupingSets),
@@ -516,9 +716,7 @@ void ProjectNode::addDetails(std::stringstream& stream) const {
   stream << "expressions: ";
   for (auto i = 0; i < projections_.size(); i++) {
     auto& projection = projections_[i];
-    if (i > 0) {
-      stream << ", ";
-    }
+    appendComma(i, stream);
     stream << "(" << names_[i] << ":" << projection->type()->toString() << ", "
            << projection->toString() << ")";
   }
@@ -1105,12 +1303,14 @@ WindowNode::WindowNode(
     std::vector<SortOrder> sortingOrders,
     std::vector<std::string> windowColumnNames,
     std::vector<Function> windowFunctions,
+    bool inputsSorted,
     PlanNodePtr source)
     : PlanNode(std::move(id)),
       partitionKeys_(std::move(partitionKeys)),
       sortingKeys_(std::move(sortingKeys)),
       sortingOrders_(std::move(sortingOrders)),
       windowFunctions_(std::move(windowFunctions)),
+      inputsSorted_(inputsSorted),
       sources_{std::move(source)},
       outputType_(getWindowOutputType(
           sources_[0]->outputType(),
@@ -1124,27 +1324,45 @@ WindowNode::WindowNode(
       sortingKeys_.size(),
       sortingOrders_.size(),
       "Number of sorting keys must be equal to the number of sorting orders");
+
+  std::unordered_set<std::string> keyNames;
+  for (const auto& key : partitionKeys_) {
+    VELOX_USER_CHECK(
+        keyNames.insert(key->name()).second,
+        "Partitioning keys must be unique. Found duplicate key: {}",
+        key->name());
+  }
+
+  for (const auto& key : sortingKeys_) {
+    VELOX_USER_CHECK(
+        keyNames.insert(key->name()).second,
+        "Sorting keys must be unique and not overlap with partitioning keys. Found duplicate key: {}",
+        key->name());
+  }
 }
 
 void WindowNode::addDetails(std::stringstream& stream) const {
-  stream << "partition by [";
-  if (!partitionKeys_.empty()) {
-    addFields(stream, partitionKeys_);
+  if (inputsSorted_) {
+    stream << "STREAMING ";
   }
-  stream << "] ";
 
-  stream << "order by [";
-  addSortingKeys(sortingKeys_, sortingOrders_, stream);
-  stream << "] ";
+  if (!partitionKeys_.empty()) {
+    stream << "partition by [";
+    addFields(stream, partitionKeys_);
+    stream << "] ";
+  }
 
-  auto numInputCols = sources_[0]->outputType()->size();
-  auto numOutputCols = outputType_->size();
-  for (auto i = numInputCols; i < numOutputCols; i++) {
-    if (i >= numInputCols + 1) {
-      stream << ", ";
-    }
-    stream << outputType_->names()[i] << " := ";
-    addWindowFunction(stream, windowFunctions_[i - numInputCols]);
+  if (!sortingKeys_.empty()) {
+    stream << "order by [";
+    addSortingKeys(sortingKeys_, sortingOrders_, stream);
+    stream << "] ";
+  }
+
+  const auto numInputs = inputType()->size();
+  for (auto i = 0; i < windowFunctions_.size(); i++) {
+    appendComma(i, stream);
+    stream << outputType_->names()[i + numInputs] << " := ";
+    addWindowFunction(stream, windowFunctions_[i]);
   }
 }
 
@@ -1262,6 +1480,7 @@ folly::dynamic WindowNode::serialize() const {
     windowNames.push_back(outputType_->nameOf(i));
   }
   obj["names"] = ISerializable::serialize(windowNames);
+  obj["inputsSorted"] = inputsSorted_;
 
   return obj;
 }
@@ -1281,6 +1500,8 @@ PlanNodePtr WindowNode::create(const folly::dynamic& obj, void* context) {
 
   auto windowNames = deserializeStrings(obj["names"]);
 
+  auto inputsSorted = obj["inputsSorted"].asBool();
+
   return std::make_shared<WindowNode>(
       deserializePlanNodeId(obj),
       partitionKeys,
@@ -1288,6 +1509,7 @@ PlanNodePtr WindowNode::create(const folly::dynamic& obj, void* context) {
       sortingOrders,
       windowNames,
       functions,
+      inputsSorted,
       source);
 }
 
@@ -1449,6 +1671,23 @@ TopNRowNumberNode::TopNRowNumberNode(
       sortingKeys_.size(),
       0,
       "Number of sorting keys must be greater than zero");
+
+  VELOX_USER_CHECK_GT(limit, 0, "Limit must be greater than zero");
+
+  std::unordered_set<std::string> keyNames;
+  for (const auto& key : partitionKeys_) {
+    VELOX_USER_CHECK(
+        keyNames.insert(key->name()).second,
+        "Partitioning keys must be unique. Found duplicate key: {}",
+        key->name());
+  }
+
+  for (const auto& key : sortingKeys_) {
+    VELOX_USER_CHECK(
+        keyNames.insert(key->name()).second,
+        "Sorting keys must be unique and not overlap with partitioning keys. Found duplicate key: {}",
+        key->name());
+  }
 }
 
 void TopNRowNumberNode::addDetails(std::stringstream& stream) const {
@@ -1779,6 +2018,36 @@ PlanNodePtr PartitionedOutputNode::create(
       deserializeSingleSource(obj, context));
 }
 
+TopNNode::TopNNode(
+    const PlanNodeId& id,
+    const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
+    const std::vector<SortOrder>& sortingOrders,
+    int32_t count,
+    bool isPartial,
+    const PlanNodePtr& source)
+    : PlanNode(id),
+      sortingKeys_(sortingKeys),
+      sortingOrders_(sortingOrders),
+      count_(count),
+      isPartial_(isPartial),
+      sources_{source} {
+  VELOX_USER_CHECK(!sortingKeys.empty(), "TopN must specify sorting keys");
+  VELOX_USER_CHECK_EQ(
+      sortingKeys.size(),
+      sortingOrders.size(),
+      "Number of sorting keys and sorting orders in TopN must be the same");
+  VELOX_USER_CHECK_GT(
+      count, 0, "TopN must specify greater than zero number of rows to keep");
+  folly::F14FastSet<std::string> sortingKeyNames;
+  for (const auto& sortingKey : sortingKeys_) {
+    auto result = sortingKeyNames.insert(sortingKey->name());
+    VELOX_USER_CHECK(
+        result.second,
+        "TopN must specify unique sorting keys. Found duplicate key: {}",
+        *result.first);
+  }
+}
+
 void TopNNode::addDetails(std::stringstream& stream) const {
   if (isPartial_) {
     stream << "PARTIAL ";
@@ -1940,6 +2209,7 @@ void PlanNode::registerSerDe() {
   registry.Register("AssignUniqueIdNode", AssignUniqueIdNode::create);
   registry.Register("EnforceSingleRowNode", EnforceSingleRowNode::create);
   registry.Register("ExchangeNode", ExchangeNode::create);
+  registry.Register("ExpandNode", ExpandNode::create);
   registry.Register("FilterNode", FilterNode::create);
   registry.Register("GroupIdNode", GroupIdNode::create);
   registry.Register("HashJoinNode", HashJoinNode::create);

@@ -14,13 +14,8 @@
 
 add_library(velox_exception Exceptions.cpp VeloxException.cpp Exceptions.h)
 target_link_libraries(
-  velox_exception
-  velox_flag_definitions
-  velox_process
-  glog::glog
-  Folly::folly
-  fmt::fmt
-  gflags::gflags)
+  velox_exception PUBLIC velox_flag_definitions velox_process Folly::folly
+                         fmt::fmt gflags::gflags glog::glog)
 
 add_library(
   velox_common_base
@@ -31,10 +26,15 @@ add_library(
   RawVector.cpp
   RuntimeMetrics.cpp
   SimdUtil.cpp
+  SpillConfig.cpp
+  SpillStats.cpp
   StatsReporter.cpp
   SuccinctPrinter.cpp)
 
-target_link_libraries(velox_common_base velox_exception velox_process xsimd)
+target_link_libraries(
+  velox_common_base
+  PUBLIC velox_exception Folly::folly fmt::fmt xsimd
+  PRIVATE velox_common_compression velox_process velox_test_util glog::glog)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

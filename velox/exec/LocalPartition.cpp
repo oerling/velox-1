@@ -64,22 +64,15 @@ void LocalExchangeQueue::addProducer() {
 
 void LocalExchangeQueue::noMoreProducers() {
   std::vector<ContinuePromise> consumerPromises;
-  std::vector<ContinuePromise> producerPromises;
   queue_.withWLock([&](auto& queue) {
     VELOX_CHECK(!noMoreProducers_, "noMoreProducers can be called only once");
     noMoreProducers_ = true;
     if (pendingProducers_ == 0) {
       // No more data will be produced.
       consumerPromises = std::move(consumerPromises_);
-
-      if (queue.empty()) {
-        // All data has been consumed.
-        producerPromises = std::move(producerPromises_);
-      }
     }
   });
   notify(consumerPromises);
-  notify(producerPromises);
 }
 
 BlockingReason LocalExchangeQueue::enqueue(
@@ -118,26 +111,20 @@ BlockingReason LocalExchangeQueue::enqueue(
 
 void LocalExchangeQueue::noMoreData() {
   std::vector<ContinuePromise> consumerPromises;
-  std::vector<ContinuePromise> producerPromises;
   queue_.withWLock([&](auto& queue) {
     VELOX_CHECK_GT(pendingProducers_, 0);
     --pendingProducers_;
     if (noMoreProducers_ && pendingProducers_ == 0) {
       consumerPromises = std::move(consumerPromises_);
-      if (queue.empty()) {
-        producerPromises = std::move(producerPromises_);
-      }
     }
   });
   notify(consumerPromises);
-  notify(producerPromises);
 }
 
 BlockingReason LocalExchangeQueue::next(
     ContinueFuture* future,
     memory::MemoryPool* pool,
     RowVectorPtr* data) {
-  std::vector<ContinuePromise> producerPromises;
   std::vector<ContinuePromise> memoryPromises;
   auto blockingReason = queue_.withWLock([&](auto& queue) {
     *data = nullptr;
@@ -158,14 +145,9 @@ BlockingReason LocalExchangeQueue::next(
     memoryPromises =
         memoryManager_->decreaseMemoryUsage((*data)->estimateFlatSize());
 
-    if (noMoreProducers_ && pendingProducers_ == 0 && queue.empty()) {
-      producerPromises = std::move(producerPromises_);
-    }
-
     return BlockingReason::kNotBlocked;
   });
   notify(memoryPromises);
-  notify(producerPromises);
   return blockingReason;
 }
 
@@ -182,25 +164,11 @@ bool LocalExchangeQueue::isFinishedLocked(
   return false;
 }
 
-BlockingReason LocalExchangeQueue::isFinished(ContinueFuture* future) {
-  return queue_.withWLock([&](auto& queue) {
-    if (isFinishedLocked(queue)) {
-      return BlockingReason::kNotBlocked;
-    }
-
-    producerPromises_.emplace_back("LocalExchangeQueue::isFinished");
-    *future = producerPromises_.back().getSemiFuture();
-
-    return BlockingReason::kWaitForConsumer;
-  });
-}
-
 bool LocalExchangeQueue::isFinished() {
   return queue_.withWLock([&](auto& queue) { return isFinishedLocked(queue); });
 }
 
 void LocalExchangeQueue::close() {
-  std::vector<ContinuePromise> producerPromises;
   std::vector<ContinuePromise> consumerPromises;
   std::vector<ContinuePromise> memoryPromises;
   queue_.withWLock([&](auto& queue) {
@@ -214,11 +182,9 @@ void LocalExchangeQueue::close() {
       memoryPromises = memoryManager_->decreaseMemoryUsage(freedBytes);
     }
 
-    producerPromises = std::move(producerPromises_);
     consumerPromises = std::move(consumerPromises_);
     closed_ = true;
   });
-  notify(producerPromises);
   notify(consumerPromises);
   notify(memoryPromises);
 }
@@ -295,13 +261,12 @@ LocalPartition::LocalPartition(
 
 namespace {
 std::vector<BufferPtr> allocateIndexBuffers(
-    int numBuffers,
-    vector_size_t size,
+    const std::vector<vector_size_t>& sizes,
     memory::MemoryPool* pool) {
   std::vector<BufferPtr> indexBuffers;
-  indexBuffers.reserve(numBuffers);
-  for (auto i = 0; i < numBuffers; i++) {
-    indexBuffers.emplace_back(allocateIndices(size, pool));
+  indexBuffers.reserve(sizes.size());
+  for (auto size : sizes) {
+    indexBuffers.push_back(allocateIndices(size, pool));
   }
   return indexBuffers;
 }
@@ -341,11 +306,9 @@ void LocalPartition::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
 
-  input_ = std::move(input);
-
   if (numPartitions_ == 1) {
     ContinueFuture future;
-    auto blockingReason = queues_[0]->enqueue(input_, &future);
+    auto blockingReason = queues_[0]->enqueue(input, &future);
     if (blockingReason != BlockingReason::kNotBlocked) {
       blockingReasons_.push_back(blockingReason);
       futures_.push_back(std::move(future));
@@ -354,11 +317,11 @@ void LocalPartition::addInput(RowVectorPtr input) {
   }
 
   const auto singlePartition =
-      partitionFunction_->partition(*input_, partitions_);
+      partitionFunction_->partition(*input, partitions_);
   if (singlePartition.has_value()) {
     ContinueFuture future;
     auto blockingReason =
-        queues_[singlePartition.value()]->enqueue(input_, &future);
+        queues_[singlePartition.value()]->enqueue(input, &future);
     if (blockingReason != BlockingReason::kNotBlocked) {
       blockingReasons_.push_back(blockingReason);
       futures_.push_back(std::move(future));
@@ -366,11 +329,15 @@ void LocalPartition::addInput(RowVectorPtr input) {
     return;
   }
 
-  auto numInput = input_->size();
-  auto indexBuffers = allocateIndexBuffers(numPartitions_, numInput, pool());
+  const auto numInput = input->size();
+  std::vector<vector_size_t> maxIndex(numPartitions_, 0);
+  for (auto i = 0; i < numInput; ++i) {
+    ++maxIndex[partitions_[i]];
+  }
+  auto indexBuffers = allocateIndexBuffers(maxIndex, pool());
   auto rawIndices = getRawIndices(indexBuffers);
 
-  std::vector<vector_size_t> maxIndex(numPartitions_, 0);
+  std::fill(maxIndex.begin(), maxIndex.end(), 0);
   for (auto i = 0; i < numInput; ++i) {
     auto partition = partitions_[i];
     rawIndices[partition][maxIndex[partition]] = i;
@@ -383,9 +350,8 @@ void LocalPartition::addInput(RowVectorPtr input) {
       // Do not enqueue empty partitions.
       continue;
     }
-    indexBuffers[i]->setSize(partitionSize * sizeof(vector_size_t));
     auto partitionData =
-        wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
+        wrapChildren(input, partitionSize, std::move(indexBuffers[i]));
 
     ContinueFuture future;
     auto reason = queues_[i]->enqueue(partitionData, &future);

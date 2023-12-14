@@ -15,8 +15,9 @@
  */
 #pragma once
 
-#include <folly/Optional.h>
+#include <optional>
 #include <string>
+#include "velox/core/Config.h"
 
 namespace facebook::velox {
 class Config;
@@ -36,17 +37,24 @@ class HiveConfig {
       InsertExistingPartitionsBehavior behavior);
 
   /// Behavior on insert into existing partitions.
-  static constexpr const char* kInsertExistingPartitionsBehavior =
+  static constexpr const char* kInsertExistingPartitionsBehaviorSession =
       "insert_existing_partitions_behavior";
+  static constexpr const char* kInsertExistingPartitionsBehavior =
+      "insert-existing-partitions-behavior";
 
   /// Maximum number of (bucketed) partitions per a single table writer
   /// instance.
+  // TODO: remove hive_orc_use_column_names since it doesn't exist in presto,
+  // right now this is only used for testing.
   static constexpr const char* kMaxPartitionsPerWriters =
+      "max-partitions-per-writers";
+  static constexpr const char* kMaxPartitionsPerWritersSession =
       "max_partitions_per_writers";
 
   /// Whether new data can be inserted into an unpartition table.
   /// Velox currently does not support appending data to existing partitions.
-  static constexpr const char* kImmutablePartitions = "immutable_partitions";
+  static constexpr const char* kImmutablePartitions =
+      "hive.immutable-partitions";
 
   /// Virtual addressing is used for AWS S3 and is the default
   /// (path-style-access is false). Path access style is used for some on-prem
@@ -80,67 +88,132 @@ class HiveConfig {
   static constexpr const char* kS3IamRoleSessionName =
       "hive.s3.iam-role-session-name";
 
-  // The GCS storage endpoint server.
+  /// The GCS storage endpoint server.
   static constexpr const char* kGCSEndpoint = "hive.gcs.endpoint";
 
-  // The GCS storage scheme, https for default credentials.
+  /// The GCS storage scheme, https for default credentials.
   static constexpr const char* kGCSScheme = "hive.gcs.scheme";
 
-  // The GCS service account configuration as json string
+  /// The GCS service account configuration as json string
   static constexpr const char* kGCSCredentials = "hive.gcs.credentials";
 
-  // Read the source file column name as lower case.
+  /// Maps table field names to file field names using names, not indices.
+  // TODO: remove hive_orc_use_column_names since it doesn't exist in presto,
+  // right now this is only used for testing.
+  static constexpr const char* kOrcUseColumnNames = "hive.orc.use-column-names";
+  static constexpr const char* kOrcUseColumnNamesSession =
+      "hive_orc_use_column_names";
+
+  /// Reads the source file column name as lower case.
   static constexpr const char* kFileColumnNamesReadAsLowerCase =
+      "file-column-names-read-as-lower-case";
+  static constexpr const char* kFileColumnNamesReadAsLowerCaseSession =
       "file_column_names_read_as_lower_case";
 
-  // Set the max coalesce bytes for a request.
+  /// Sets the max coalesce bytes for a request.
   static constexpr const char* kMaxCoalescedBytes = "max-coalesced-bytes";
 
-  // Set the max coalesce distance bytes for combining requests.
+  /// Sets the max coalesce distance bytes for combining requests.
   static constexpr const char* kMaxCoalescedDistanceBytes =
       "max-coalesced-distance-bytes";
 
   /// Maximum number of entries in the file handle cache.
   static constexpr const char* kNumCacheFileHandles = "num_cached_file_handles";
 
-  static InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
-      const Config* config);
+  /// Enable file handle cache.
+  static constexpr const char* kEnableFileHandleCache =
+      "file-handle-cache-enabled";
 
-  static uint32_t maxPartitionsPerWriters(const Config* config);
+  /// Maximum stripe size in orc writer.
+  static constexpr const char* kOrcWriterMaxStripeSize =
+      "hive.orc.writer.stripe-max-size";
+  static constexpr const char* kOrcWriterMaxStripeSizeSession =
+      "orc_optimized_writer_max_stripe_size";
 
-  static bool immutablePartitions(const Config* config);
+  /// Maximum dictionary memory that can be used in orc writer.
+  static constexpr const char* kOrcWriterMaxDictionaryMemory =
+      "hive.orc.writer.dictionary-max-memory";
+  static constexpr const char* kOrcWriterMaxDictionaryMemorySession =
+      "orc_optimized_writer_max_dictionary_memory";
 
-  static bool s3UseVirtualAddressing(const Config* config);
+  /// Maximum number of rows for sort writer in one batch of output.
+  static constexpr const char* kSortWriterMaxOutputRows =
+      "sort-writer-max-output-rows";
+  static constexpr const char* kSortWriterMaxOutputRowsSession =
+      "sort_writer_max_output_rows";
 
-  static std::string s3GetLogLevel(const Config* config);
+  /// Maximum bytes for sort writer in one batch of output.
+  static constexpr const char* kSortWriterMaxOutputBytes =
+      "sort-writer-max-output-bytes";
+  static constexpr const char* kSortWriterMaxOutputBytesSession =
+      "sort_writer_max_output_bytes";
 
-  static bool s3UseSSL(const Config* config);
+  InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
+      const Config* session) const;
 
-  static bool s3UseInstanceCredentials(const Config* config);
+  uint32_t maxPartitionsPerWriters(const Config* session) const;
 
-  static std::string s3Endpoint(const Config* config);
+  bool immutablePartitions() const;
 
-  static std::optional<std::string> s3AccessKey(const Config* config);
+  bool s3UseVirtualAddressing() const;
 
-  static std::optional<std::string> s3SecretKey(const Config* config);
+  std::string s3GetLogLevel() const;
 
-  static std::optional<std::string> s3IAMRole(const Config* config);
+  bool s3UseSSL() const;
 
-  static std::string s3IAMRoleSessionName(const Config* config);
+  bool s3UseInstanceCredentials() const;
 
-  static std::string gcsEndpoint(const Config* config);
+  std::string s3Endpoint() const;
 
-  static std::string gcsScheme(const Config* config);
+  std::optional<std::string> s3AccessKey() const;
 
-  static std::string gcsCredentials(const Config* config);
+  std::optional<std::string> s3SecretKey() const;
 
-  static bool isFileColumnNamesReadAsLowerCase(const Config* config);
+  std::optional<std::string> s3IAMRole() const;
 
-  static int64_t maxCoalescedBytes(const Config* config);
+  std::string s3IAMRoleSessionName() const;
 
-  static int32_t maxCoalescedDistanceBytes(const Config* config);
+  std::string gcsEndpoint() const;
 
-  static int32_t numCacheFileHandles(const Config* config);
+  std::string gcsScheme() const;
+
+  std::string gcsCredentials() const;
+
+  bool isOrcUseColumnNames(const Config* session) const;
+
+  bool isFileColumnNamesReadAsLowerCase(const Config* session) const;
+
+  int64_t maxCoalescedBytes() const;
+
+  int32_t maxCoalescedDistanceBytes() const;
+
+  int32_t numCacheFileHandles() const;
+
+  bool isFileHandleCacheEnabled() const;
+
+  uint64_t fileWriterFlushThresholdBytes() const;
+
+  uint64_t getOrcWriterMaxStripeSize(const Config* session) const;
+
+  uint64_t getOrcWriterMaxDictionaryMemory(const Config* session) const;
+
+  uint32_t sortWriterMaxOutputRows(const Config* session) const;
+
+  uint64_t sortWriterMaxOutputBytes(const Config* session) const;
+
+  HiveConfig(std::shared_ptr<const Config> config) {
+    VELOX_CHECK_NOT_NULL(
+        config, "Config is null for HiveConfig initialization");
+    config_ = std::move(config);
+    // TODO: add sanity check
+  }
+
+  const std::shared_ptr<const Config>& config() const {
+    return config_;
+  }
+
+ private:
+  std::shared_ptr<const Config> config_;
 };
 
 } // namespace facebook::velox::connector::hive

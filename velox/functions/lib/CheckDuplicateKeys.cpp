@@ -21,6 +21,9 @@ void checkDuplicateKeys(
     const MapVectorPtr& mapVector,
     const SelectivityVector& rows,
     exec::EvalCtx& context) {
+  if (rows.end() == 0) {
+    return;
+  }
   static const char* kDuplicateKey = "Duplicate map keys ({}) are not allowed";
 
   MapVector::canonicalize(mapVector);
@@ -29,6 +32,9 @@ void checkDuplicateKeys(
   auto sizes = mapVector->rawSizes();
   auto mapKeys = mapVector->mapKeys();
   context.applyToSelectedNoThrow(rows, [&](auto row) {
+    if (mapVector->isNullAt(row)) {
+      return;
+    }
     auto offset = offsets[row];
     auto size = sizes[row];
     for (auto i = 1; i < size; i++) {

@@ -22,6 +22,7 @@
 
 #include <folly/FixedString.h>
 #include <folly/String.h>
+#include <folly/Synchronized.h>
 #include <folly/container/F14Map.h>
 #include <folly/hash/Hash.h>
 #include <glog/logging.h>
@@ -46,33 +47,46 @@ struct SimpleVectorStats {
 };
 
 struct AsciiInfo {
-  bool& isAllAscii() {
-    return *isAllAscii_;
+  /// Returns true if ascii was processed for all rows and false otherwise.
+  bool isAllAscii() const {
+    return isAllAscii_;
   }
 
-  SelectivityVector& asciiSetRows() {
-    return *asciiSetRows_;
+  /// Sets isAllAscii boolean flag.
+  void setIsAllAscii(bool f) {
+    isAllAscii_ = f;
   }
 
-  const bool& isAllAscii() const {
-    return *isAllAscii_;
+  /// Returns locked for read bit vector with bits set for rows where ascii was
+  /// processed.
+  auto readLockedAsciiComputedRows() const {
+    return asciiComputedRows_.rlock();
   }
 
-  const SelectivityVector& asciiSetRows() const {
-    return *asciiSetRows_;
+  /// Returns locked for write bit vector with bits set for rows where ascii was
+  /// processed.
+  auto writeLockedAsciiComputedRows() {
+    return asciiComputedRows_.wlock();
   }
 
-  // isAllAscii_ and asciiSetRows_ are thread local because input vectors can be
-  // shared across threads, hence this make their mutation thread safe.
-  // Those are the only two fields that are allowed to mutated in the expression
-  // eval inputs vectors.
+  /// Returns upgradable locked bit vector with bits set for rows where ascii
+  /// was processed.
+  auto upgradableLockedAsciiComputedRows() {
+    return asciiComputedRows_.ulock();
+  }
 
-  // True is all strings in asciiSetRows_ are ASCII.
-  folly::ThreadLocal<bool> isAllAscii_{[] { return new bool(false); }};
+ private:
+  // isAllAscii_ and asciiComputedRows_ are thread-safe because input vectors
+  // can be shared across threads, hence this make their mutation thread safe.
+  // Those are the only two fields that are allowed to be mutated in the
+  // expression eval inputs vectors.
 
-  // If T is StringView, store set of rows
-  // where we have computed asciiness. A set bit means the row was processed.
-  folly::ThreadLocal<SelectivityVector> asciiSetRows_;
+  // True is all strings in asciiComputedRows_ are ASCII.
+  std::atomic_bool isAllAscii_{false};
+
+  // If T is StringView, store set of rows where we have computed asciiness.
+  // A set bit means the row was processed.
+  folly::Synchronized<SelectivityVector> asciiComputedRows_;
 };
 
 // This class abstracts over various Columnar Storage Formats such that Velox
@@ -149,6 +163,10 @@ class SimpleVector : public BaseVector {
     return {flags.ascending ? result : result * -1};
   }
 
+  void validate(const VectorValidateOptions& options) const override {
+    BaseVector::validate(options);
+  }
+
   /**
    * @return the hash of the value at the given index in this vector
    */
@@ -222,14 +240,15 @@ class SimpleVector : public BaseVector {
       const SelectivityVector& rows,
       const vector_size_t* rowMappings = nullptr) const {
     VELOX_CHECK(rows.hasSelections())
-    if (asciiInfo.asciiSetRows().hasSelections()) {
+    auto rlockedAsciiComputedRows{asciiInfo.readLockedAsciiComputedRows()};
+    if (rlockedAsciiComputedRows->hasSelections()) {
       if (rowMappings) {
         bool isSubset = rows.template testSelected([&](auto row) {
-          return asciiInfo.asciiSetRows().isValid(rowMappings[row]);
+          return rlockedAsciiComputedRows->isValid(rowMappings[row]);
         });
         return isSubset ? std::optional(asciiInfo.isAllAscii()) : std::nullopt;
       }
-      if (rows.isSubset(asciiInfo.asciiSetRows())) {
+      if (rows.isSubset(*rlockedAsciiComputedRows)) {
         return asciiInfo.isAllAscii();
       }
     }
@@ -244,8 +263,9 @@ class SimpleVector : public BaseVector {
   typename std::enable_if_t<std::is_same_v<U, StringView>, std::optional<bool>>
   isAscii(vector_size_t index) const {
     VELOX_CHECK_GE(index, 0)
-    if (asciiInfo.asciiSetRows().size() > index &&
-        asciiInfo.asciiSetRows().isValid(index)) {
+    auto rlockedAsciiComputedRows{asciiInfo.readLockedAsciiComputedRows()};
+    if (index < rlockedAsciiComputedRows->size() &&
+        rlockedAsciiComputedRows->isValid(index)) {
       return asciiInfo.isAllAscii();
     }
     return std::nullopt;
@@ -256,10 +276,10 @@ class SimpleVector : public BaseVector {
   template <typename U = T>
   typename std::enable_if_t<std::is_same_v<U, StringView>, bool>
   computeAndSetIsAscii(const SelectivityVector& rows) {
-    if (rows.isSubset(asciiInfo.asciiSetRows())) {
+    if (rows.isSubset(*asciiInfo.readLockedAsciiComputedRows())) {
       return asciiInfo.isAllAscii();
     }
-    ensureIsAsciiCapacity(rows.end());
+    ensureIsAsciiCapacity();
     bool isAllAscii = true;
     rows.template applyToSelected([&](auto row) {
       if (!isNullAt(row)) {
@@ -270,13 +290,14 @@ class SimpleVector : public BaseVector {
     });
 
     // Set isAllAscii flag, it will unset if we encounter any utf.
-    if (!asciiInfo.asciiSetRows().hasSelections()) {
-      asciiInfo.isAllAscii() = isAllAscii;
+    auto wlockedAsciiComputedRows = asciiInfo.writeLockedAsciiComputedRows();
+    if (!wlockedAsciiComputedRows->hasSelections()) {
+      asciiInfo.setIsAllAscii(isAllAscii);
     } else {
-      asciiInfo.isAllAscii() &= isAllAscii;
+      asciiInfo.setIsAllAscii(asciiInfo.isAllAscii() & isAllAscii);
     }
 
-    asciiInfo.asciiSetRows().select(rows);
+    wlockedAsciiComputedRows->select(rows);
     return asciiInfo.isAllAscii();
   }
 
@@ -284,8 +305,8 @@ class SimpleVector : public BaseVector {
   template <typename U = T>
   typename std::enable_if_t<std::is_same_v<U, StringView>, void>
   invalidateIsAscii() {
-    asciiInfo.asciiSetRows().clearAll();
-    asciiInfo.isAllAscii() = false;
+    asciiInfo.writeLockedAsciiComputedRows()->clearAll();
+    asciiInfo.setIsAllAscii(false);
   }
 
   /// Explicitly set asciness.
@@ -293,31 +314,76 @@ class SimpleVector : public BaseVector {
   typename std::enable_if_t<std::is_same_v<U, StringView>, void> setIsAscii(
       bool ascii,
       const SelectivityVector& rows) {
-    ensureIsAsciiCapacity(rows.end());
-    if (asciiInfo.asciiSetRows().hasSelections() &&
-        !asciiInfo.asciiSetRows().isSubset(rows)) {
-      asciiInfo.isAllAscii() &= ascii;
+    ensureIsAsciiCapacity();
+    auto wlockedAsciiComputedRows = asciiInfo.writeLockedAsciiComputedRows();
+    if (wlockedAsciiComputedRows->hasSelections() &&
+        !wlockedAsciiComputedRows->isSubset(rows)) {
+      asciiInfo.setIsAllAscii(asciiInfo.isAllAscii() & ascii);
     } else {
-      asciiInfo.isAllAscii() = ascii;
+      asciiInfo.setIsAllAscii(ascii);
     }
 
-    asciiInfo.asciiSetRows().select(rows);
+    wlockedAsciiComputedRows->select(rows);
   }
 
   template <typename U = T>
   typename std::enable_if_t<std::is_same_v<U, StringView>, void> setAllIsAscii(
       bool ascii) {
-    ensureIsAsciiCapacity(length_);
-    asciiInfo.isAllAscii() = ascii;
-    asciiInfo.asciiSetRows().setAll();
+    ensureIsAsciiCapacity();
+    asciiInfo.setIsAllAscii(ascii);
+    asciiInfo.writeLockedAsciiComputedRows()->setAll();
+  }
+
+  template <typename U = T>
+  typename std::enable_if_t<std::is_same_v<U, StringView>, bool> getAllIsAscii()
+      const {
+    return asciiInfo.isAllAscii();
+  }
+
+  /// Provides const access to asciiInfo. Used for tests only.
+  template <typename U = T>
+  typename std::enable_if_t<std::is_same_v<U, StringView>, const AsciiInfo&>
+  testGetAsciiInfo() const {
+    return asciiInfo;
+  }
+
+  static int comparePrimitiveAsc(const T& left, const T& right) {
+    if constexpr (std::is_floating_point<T>::value) {
+      bool isLeftNan = std::isnan(left);
+      bool isRightNan = std::isnan(right);
+      if (isLeftNan) {
+        return isRightNan ? 0 : 1;
+      }
+      if (isRightNan) {
+        return -1;
+      }
+    }
+    return left < right ? -1 : left == right ? 0 : 1;
   }
 
  protected:
   template <typename U = T>
   typename std::enable_if_t<std::is_same_v<U, StringView>, void>
-  ensureIsAsciiCapacity(vector_size_t size) {
-    if (asciiInfo.asciiSetRows().size() < size) {
-      asciiInfo.asciiSetRows().resize(size, false);
+  ensureIsAsciiCapacity() {
+    auto ulockedAsciiComputedRows{
+        asciiInfo.upgradableLockedAsciiComputedRows()};
+    if (ulockedAsciiComputedRows->size() < length_) {
+      ulockedAsciiComputedRows.moveFromUpgradeToWrite()->resize(length_, false);
+    }
+  }
+
+  /// Ensure asciiInfo is of the correct size. But only if it is not empty.
+  template <typename U = T>
+  typename std::enable_if_t<std::is_same_v<U, StringView>, void>
+  resizeIsAsciiIfNotEmpty(vector_size_t size, bool newAscii) {
+    auto ulockedAsciiComputedRows{
+        asciiInfo.upgradableLockedAsciiComputedRows()};
+    if (ulockedAsciiComputedRows->hasSelections()) {
+      if (ulockedAsciiComputedRows->size() < size) {
+        ulockedAsciiComputedRows.moveFromUpgradeToWrite()->resize(
+            size, newAscii);
+        asciiInfo.setIsAllAscii(asciiInfo.isAllAscii() & newAscii);
+      }
     }
   }
 
@@ -347,21 +413,6 @@ class SimpleVector : public BaseVector {
         sizeof(T));
   }
 
- protected:
-  int comparePrimitiveAsc(const T& left, const T& right) const {
-    if constexpr (std::is_floating_point<T>::value) {
-      bool isLeftNan = std::isnan(left);
-      bool isRightNan = std::isnan(right);
-      if (isLeftNan) {
-        return isRightNan ? 0 : 1;
-      }
-      if (isRightNan) {
-        return -1;
-      }
-    }
-    return left < right ? -1 : left == right ? 0 : 1;
-  }
-
   virtual void resetDataDependentFlags(const SelectivityVector* rows) override {
     BaseVector::resetDataDependentFlags(rows);
     isSorted_ = std::nullopt;
@@ -369,11 +420,9 @@ class SimpleVector : public BaseVector {
 
     if constexpr (std::is_same_v<T, StringView>) {
       if (rows) {
-        asciiInfo.asciiSetRows().deselect(*rows);
-
+        asciiInfo.writeLockedAsciiComputedRows()->deselect(*rows);
       } else {
-        asciiInfo.asciiSetRows().clearAll();
-        asciiInfo.isAllAscii() = false;
+        invalidateIsAscii();
       }
     }
   }
@@ -387,7 +436,11 @@ class SimpleVector : public BaseVector {
 
   std::conditional_t<std::is_same_v<T, StringView>, AsciiInfo, int> asciiInfo;
   SimpleVectorStats<T> stats_;
-}; // namespace velox
+};
+
+template <>
+void SimpleVector<StringView>::validate(
+    const VectorValidateOptions& options) const;
 
 template <>
 inline std::optional<int32_t> SimpleVector<ComplexType>::compare(

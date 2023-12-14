@@ -15,15 +15,16 @@
  */
 
 #include "velox/dwio/parquet/reader/StringColumnReader.h"
-#include "velox/dwio/common/BufferUtil.h"
+
+#include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 
 namespace facebook::velox::parquet {
 
 StringColumnReader::StringColumnReader(
-    const std::shared_ptr<const dwio::common::TypeWithId>& nodeType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     ParquetParams& params,
     common::ScanSpec& scanSpec)
-    : SelectiveColumnReader(nodeType->type(), params, scanSpec, nodeType) {}
+    : SelectiveColumnReader(fileType->type(), fileType, params, scanSpec) {}
 
 uint64_t StringColumnReader::skip(uint64_t numValues) {
   formatData_->skip(numValues);
@@ -132,13 +133,7 @@ void StringColumnReader::getValues(RowSet rows, VectorPtr* result) {
     compactScalarValues<int32_t, int32_t>(rows, false);
 
     *result = std::make_shared<DictionaryVector<StringView>>(
-        &memoryPool_,
-        !anyNulls_               ? nullptr
-            : returnReaderNulls_ ? nullsInReadRange_
-                                 : resultNulls_,
-        numValues_,
-        dictionaryValues,
-        values_);
+        &memoryPool_, resultNulls(), numValues_, dictionaryValues, values_);
     return;
   }
   rawStringBuffer_ = nullptr;

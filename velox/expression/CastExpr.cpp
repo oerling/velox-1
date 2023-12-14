@@ -103,14 +103,14 @@ VectorPtr CastExpr::castToDate(
   switch (fromType->kind()) {
     case TypeKind::VARCHAR: {
       auto* inputVector = input.as<SimpleVector<StringView>>();
+      const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
+      auto isIso8601 = queryConfig.isIso8601();
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         try {
           auto inputString = inputVector->valueAt(row);
-          resultFlatVector->set(row, DATE()->toDays(inputString));
-        } catch (const VeloxException& ue) {
-          if (!ue.isUserError()) {
-            throw;
-          }
+          resultFlatVector->set(
+              row, util::castFromDateString(inputString, isIso8601));
+        } catch (const VeloxUserError& ue) {
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, DATE()) + " " + ue.message());
         } catch (const std::exception& e) {
@@ -394,7 +394,7 @@ VectorPtr CastExpr::applyRow(
     if (matchNotFound) {
       // Create a vector for null for this child
       context.ensureWritable(rows, toChildType, outputChild);
-      outputChild->addNulls(nullptr, rows);
+      outputChild->addNulls(rows);
     } else {
       const auto& inputChild = input->children()[fromChildrenIndex];
       if (toChildType == inputChild->type()) {
@@ -451,6 +451,10 @@ VectorPtr CastExpr::applyDecimal(
 
   // toType is a decimal
   switch (fromType->kind()) {
+    case TypeKind::BOOLEAN:
+      applyIntToDecimalCastKernel<bool, toDecimalType>(
+          rows, input, context, toType, castResult);
+      break;
     case TypeKind::TINYINT:
       applyIntToDecimalCastKernel<int8_t, toDecimalType>(
           rows, input, context, toType, castResult);
@@ -497,18 +501,58 @@ void CastExpr::applyPeeled(
     const TypePtr& fromType,
     const TypePtr& toType,
     VectorPtr& result) {
-  if (castFromOperator_ || castToOperator_) {
-    VELOX_CHECK_NE(
-        fromType,
-        toType,
+  auto castFromOperator = getCastOperator(fromType);
+  if (castFromOperator && !castFromOperator->isSupportedToType(toType)) {
+    VELOX_USER_FAIL(
+        "Cannot cast {} to {}.", fromType->toString(), toType->toString());
+  }
+
+  auto castToOperator = getCastOperator(toType);
+  if (castToOperator && !castToOperator->isSupportedFromType(fromType)) {
+    VELOX_USER_FAIL(
+        "Cannot cast {} to {}.", fromType->toString(), toType->toString());
+  }
+
+  if (castFromOperator || castToOperator) {
+    VELOX_USER_CHECK(
+        *fromType != *toType,
         "Attempting to cast from {} to itself.",
         fromType->toString());
 
-    if (castToOperator_) {
-      castToOperator_->castTo(input, context, rows, toType, result);
+    auto applyCustomCast = [&]() {
+      if (castToOperator) {
+        castToOperator->castTo(input, context, rows, toType, result);
+      } else {
+        castFromOperator->castFrom(input, context, rows, toType, result);
+      }
+    };
+
+    if (setNullInResultAtError()) {
+      // This can be optimized by passing setNullInResultAtError() to castTo and
+      // castFrom operations.
+
+      ErrorVectorPtr oldErrors;
+      context.swapErrors(oldErrors);
+
+      applyCustomCast();
+
+      if (context.errors()) {
+        auto errors = context.errors();
+        auto rawNulls = result->mutableRawNulls();
+
+        rows.applyToSelected([&](auto row) {
+          if (errors->isIndexInRange(row) && !errors->isNullAt(row)) {
+            bits::setNull(rawNulls, row, true);
+          }
+        });
+      };
+      // Restore original state.
+      context.swapErrors(oldErrors);
+
     } else {
-      castFromOperator_->castFrom(input, context, rows, toType, result);
+      applyCustomCast();
     }
+
   } else if (fromType->isDate()) {
     result = castFromDate(rows, input, context, toType);
   } else if (toType->isDate()) {
@@ -518,14 +562,26 @@ void CastExpr::applyPeeled(
   } else if (toType->isLongDecimal()) {
     result = applyDecimal<int128_t>(rows, input, context, fromType, toType);
   } else if (fromType->isDecimal()) {
-    result = VELOX_DYNAMIC_DECIMAL_TYPE_DISPATCH(
-        applyDecimalToPrimitiveCast,
-        fromType,
-        rows,
-        input,
-        context,
-        fromType,
-        toType);
+    switch (toType->kind()) {
+      case TypeKind::VARCHAR:
+        result = VELOX_DYNAMIC_DECIMAL_TYPE_DISPATCH(
+            applyDecimalToVarcharCast,
+            fromType,
+            rows,
+            input,
+            context,
+            fromType);
+        break;
+      default:
+        result = VELOX_DYNAMIC_DECIMAL_TYPE_DISPATCH(
+            applyDecimalToPrimitiveCast,
+            fromType,
+            rows,
+            input,
+            context,
+            fromType,
+            toType);
+    }
   } else {
     switch (toType->kind()) {
       case TypeKind::MAP:
@@ -592,28 +648,29 @@ void CastExpr::apply(
     applyPeeled(
         *nonNullRows, *decoded->base(), context, fromType, toType, localResult);
   } else {
-    ScopedContextSaver saver;
-    LocalSelectivityVector newRowsHolder(*context.execCtx());
+    withContextSaver([&](ContextSaver& saver) {
+      LocalSelectivityVector newRowsHolder(*context.execCtx());
 
-    LocalDecodedVector localDecoded(context);
-    std::vector<VectorPtr> peeledVectors;
-    auto peeledEncoding = PeeledEncoding::peel(
-        {input}, *nonNullRows, localDecoded, true, peeledVectors);
-    VELOX_CHECK_EQ(peeledVectors.size(), 1);
-    if (peeledVectors[0]->isLazy()) {
-      peeledVectors[0] =
-          peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
-    }
-    auto newRows =
-        peeledEncoding->translateToInnerRows(*nonNullRows, newRowsHolder);
-    // Save context and set the peel.
-    context.saveAndReset(saver, *nonNullRows);
-    context.setPeeledEncoding(peeledEncoding);
-    applyPeeled(
-        *newRows, *peeledVectors[0], context, fromType, toType, localResult);
+      LocalDecodedVector localDecoded(context);
+      std::vector<VectorPtr> peeledVectors;
+      auto peeledEncoding = PeeledEncoding::peel(
+          {input}, *nonNullRows, localDecoded, true, peeledVectors);
+      VELOX_CHECK_EQ(peeledVectors.size(), 1);
+      if (peeledVectors[0]->isLazy()) {
+        peeledVectors[0] =
+            peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
+      }
+      auto newRows =
+          peeledEncoding->translateToInnerRows(*nonNullRows, newRowsHolder);
+      // Save context and set the peel.
+      context.saveAndReset(saver, *nonNullRows);
+      context.setPeeledEncoding(peeledEncoding);
+      applyPeeled(
+          *newRows, *peeledVectors[0], context, fromType, toType, localResult);
 
-    localResult = context.getPeeledEncoding()->wrap(
-        toType, context.pool(), localResult, *nonNullRows);
+      localResult = context.getPeeledEncoding()->wrap(
+          toType, context.pool(), localResult, *nonNullRows);
+    });
   }
   context.moveOrCopyResult(localResult, *nonNullRows, result);
   context.releaseVector(localResult);
@@ -621,7 +678,7 @@ void CastExpr::apply(
   // If there are nulls in input, add nulls to the result at the same rows.
   VELOX_CHECK_NOT_NULL(result);
   if (rawNulls) {
-    Expr::addNulls(
+    EvalCtx::addNulls(
         rows, nonNullRows->asRange().bits(), context, toType, result);
   }
 }
@@ -666,6 +723,23 @@ std::string CastExpr::toSql(std::vector<VectorPtr>* complexConstants) const {
   toTypeSql(type_, out);
   out << ")";
   return out.str();
+}
+
+CastOperatorPtr CastExpr::getCastOperator(const TypePtr& type) {
+  const auto* key = type->name();
+
+  auto it = castOperators_.find(key);
+  if (it != castOperators_.end()) {
+    return it->second;
+  }
+
+  auto castOperator = getCustomTypeCastOperator(key);
+  if (castOperator == nullptr) {
+    return nullptr;
+  }
+
+  castOperators_.emplace(key, castOperator);
+  return castOperator;
 }
 
 TypePtr CastCallToSpecialForm::resolveType(

@@ -83,6 +83,8 @@ struct Scope {
   // Deduplicatable ITypedExprs. Only applies within the one scope.
   ExprDedupMap visited;
 
+  std::vector<TypedExprPtr> rewrittenExpressions;
+
   Scope(std::vector<std::string>&& _locals, Scope* _parent, ExprSet* _exprSet)
       : locals(_locals), parent(_parent), exprSet(_exprSet) {}
 
@@ -391,12 +393,15 @@ ExprPtr compileRewrittenExpression(
         trackCpuUsage);
   } else if (auto cast = dynamic_cast<const core::CastTypedExpr*>(expr.get())) {
     VELOX_CHECK(!compiledInputs.empty());
-    auto castExpr = std::make_shared<CastExpr>(
-        resultType,
-        std::move(compiledInputs[0]),
-        trackCpuUsage,
-        cast->nullOnFailure());
-    result = castExpr;
+    if (FOLLY_UNLIKELY(*resultType == *compiledInputs[0]->type())) {
+      result = compiledInputs[0];
+    } else {
+      result = std::make_shared<CastExpr>(
+          resultType,
+          std::move(compiledInputs[0]),
+          trackCpuUsage,
+          cast->nullOnFailure());
+    }
   } else if (auto call = dynamic_cast<const core::CallTypedExpr*>(expr.get())) {
     if (auto specialForm = getSpecialForm(
             config,
@@ -521,6 +526,9 @@ ExprPtr compileExpression(
     const std::unordered_set<std::string>& flatteningCandidates,
     bool enableConstantFolding) {
   auto rewritten = rewriteExpression(expr);
+  if (rewritten.get() != expr.get()) {
+    scope->rewrittenExpressions.push_back(rewritten);
+  }
   return compileRewrittenExpression(
       rewritten == nullptr ? expr : rewritten,
       scope,

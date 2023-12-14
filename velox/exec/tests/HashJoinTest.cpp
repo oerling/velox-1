@@ -66,9 +66,10 @@ std::function<void(Task* task)> makeAddSplit(
 }
 
 // Returns aggregated spilled stats by build and probe operators from 'task'.
-std::pair<SpillStats, SpillStats> taskSpilledStats(const exec::Task& task) {
-  SpillStats buildStats;
-  SpillStats probeStats;
+std::pair<common::SpillStats, common::SpillStats> taskSpilledStats(
+    const exec::Task& task) {
+  common::SpillStats buildStats;
+  common::SpillStats probeStats;
   auto stats = task.taskStats();
   for (auto& pipeline : stats.pipelineStats) {
     for (auto op : pipeline.operatorStats) {
@@ -107,10 +108,11 @@ void verifyTaskSpilledRuntimeStats(const exec::Task& task, bool expectedSpill) {
           ASSERT_EQ(op.runtimeStats["spillDiskWrites"].count, 0);
           ASSERT_EQ(op.runtimeStats["spillWriteTime"].count, 0);
         } else {
-          ASSERT_GT(op.runtimeStats["spillRuns"].count, 0);
           if (op.operatorType == "HashBuild") {
+            ASSERT_GT(op.runtimeStats["spillRuns"].count, 0);
             ASSERT_GT(op.runtimeStats["spillFillTime"].sum, 0);
           } else {
+            ASSERT_EQ(op.runtimeStats["spillRuns"].count, 0);
             ASSERT_EQ(op.runtimeStats["spillFillTime"].sum, 0);
           }
           ASSERT_EQ(op.runtimeStats["spillSortTime"].sum, 0);
@@ -455,7 +457,7 @@ class HashJoinBuilder {
       auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
       std::shared_ptr<const core::HashJoinNode> joinNode;
       auto planNode =
-          PlanBuilder(planNodeIdGenerator)
+          PlanBuilder(planNodeIdGenerator, &pool_)
               .values(
                   testData.probeParallelize ? probeVectors_ : allProbeVectors_,
                   testData.probeParallelize)
@@ -586,6 +588,9 @@ class HashJoinBuilder {
       config(core::QueryConfig::kSpillEnabled, "true");
       config(core::QueryConfig::kMaxSpillLevel, std::to_string(maxSpillLevel));
       config(core::QueryConfig::kJoinSpillEnabled, "true");
+      // Disable write buffering to ease test verification. For example, we want
+      // many spilled vectors in a spilled file to trigger recursive spilling.
+      config(core::QueryConfig::kSpillWriteBufferSize, std::to_string(0));
       config(core::QueryConfig::kTestingSpillPct, "100");
     } else if (spillMemoryThreshold_ != 0) {
       spillDirectory = exec::test::TempDirectoryPath::create();
@@ -619,6 +624,9 @@ class HashJoinBuilder {
     SCOPED_TRACE(
         injectSpill ? fmt::format("With Max Spill Level: {}", maxSpillLevel)
                     : "Without Spill");
+    ASSERT_EQ(memory::spillMemoryPool()->stats().currentBytes, 0);
+    const uint64_t peakSpillMemoryUsage =
+        memory::spillMemoryPool()->stats().peakBytes;
     auto task = builder.assertResults(referenceQuery_);
     const auto statsPair = taskSpilledStats(*task);
     if (injectSpill) {
@@ -637,6 +645,12 @@ class HashJoinBuilder {
           ASSERT_EQ(maxHashBuildSpillLevel(*task), maxSpillLevel);
         }
         verifyTaskSpilledRuntimeStats(*task, true);
+      }
+      if (statsPair.first.spilledBytes > 0 &&
+          memory::spillMemoryPool()->trackUsage()) {
+        ASSERT_GT(memory::spillMemoryPool()->stats().peakBytes, 0);
+        ASSERT_GE(
+            memory::spillMemoryPool()->stats().peakBytes, peakSpillMemoryUsage);
       }
       // NOTE: if 'spillDirectory_' is not empty and spill threshold is not
       // set, the test might trigger spilling by its own.
@@ -657,8 +671,8 @@ class HashJoinBuilder {
     if (testVerifier_ != nullptr) {
       testVerifier_(task, injectSpill);
     }
-
     OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
+    ASSERT_EQ(memory::spillMemoryPool()->stats().currentBytes, 0);
   }
 
   VectorFuzzer::Options fuzzerOpts_;
@@ -828,12 +842,23 @@ class HashJoinTest : public HiveConnectorTestBase {
         joinNode->outputType());
   }
 
+  static void reclaimAndRestoreCapacity(
+      const Operator* op,
+      uint64_t targetBytes,
+      memory::MemoryReclaimer::Stats& reclaimerStats) {
+    const auto oldCapacity = op->pool()->capacity();
+    op->pool()->reclaim(targetBytes, 0, reclaimerStats);
+    dynamic_cast<memory::MemoryPoolImpl*>(op->pool())
+        ->testingSetCapacity(oldCapacity);
+  }
+
   const int32_t numDrivers_;
 
   // The default left and right table types used for test.
   RowTypePtr probeType_;
   RowTypePtr buildType_;
 
+  memory::MemoryReclaimer::Stats reclaimerStats_;
   friend class HashJoinBuilder;
 };
 
@@ -2176,6 +2201,10 @@ TEST_P(MultiThreadedHashJoinTest, antiJoin) {
       // should not evaluate filter on those rows and therefore should not
       // fail.
       "t1 / coalesce(u1, 0::integer) is not null",
+      // This filter triggers memory pool allocation at
+      // HashBuild::setupFilterForAntiJoins, which should not be invoked in
+      // operator's constructor.
+      "contains(array[1, 2, NULL], 1)",
   });
   for (const std::string& filter : filters) {
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
@@ -3563,10 +3592,12 @@ TEST_F(HashJoinTest, semiProjectWithFilter) {
 
     plan = makePlan(false /*nullAware*/, filter);
 
+    // DuckDB Exists operator returns NULL when u0 or t0 is NULL. We exclude
+    // these values.
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
         .planNode(plan)
         .referenceQuery(fmt::format(
-            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE u0 = t0 AND {}) FROM t",
+            "SELECT t0, t1, EXISTS (SELECT * FROM u WHERE (u0 is not null OR t0 is not null) AND u0 = t0 AND {}) FROM t",
             filter))
         .injectSpill(false)
         .run();
@@ -3785,7 +3816,7 @@ TEST_F(HashJoinTest, memory) {
   params.queryCtx = std::make_shared<core::QueryCtx>(driverExecutor_.get());
   auto [taskCursor, rows] = readCursor(params, [](Task*) {});
   EXPECT_GT(3'500, params.queryCtx->pool()->stats().numAllocs);
-  EXPECT_GT(7'500'000, params.queryCtx->pool()->stats().cumulativeBytes);
+  EXPECT_GT(18'000'000, params.queryCtx->pool()->stats().cumulativeBytes);
 }
 
 TEST_F(HashJoinTest, lazyVectors) {
@@ -4092,16 +4123,15 @@ TEST_F(HashJoinTest, dynamicFilters) {
     assignments["b"] = regularColumn("c1", BIGINT());
 
     core::PlanNodeId probeScanId;
-    auto op =
-        PlanBuilder(planNodeIdGenerator, pool_.get())
-            .tableScan(
-                scanOutputType,
-                makeTableHandle(common::test::SubfieldFiltersBuilder().build()),
-                assignments)
-            .capturePlanNodeId(probeScanId)
-            .hashJoin({"a"}, {"u_c0"}, buildSide, "", {"a", "b", "u_c1"})
-            .project({"a", "b + 1", "b + u_c1"})
-            .planNode();
+    auto op = PlanBuilder(planNodeIdGenerator, pool_.get())
+                  .startTableScan()
+                  .outputType(scanOutputType)
+                  .assignments(assignments)
+                  .endTableScan()
+                  .capturePlanNodeId(probeScanId)
+                  .hashJoin({"a"}, {"u_c0"}, buildSide, "", {"a", "b", "u_c1"})
+                  .project({"a", "b + 1", "b + u_c1"})
+                  .planNode();
 
     HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
         .planNode(std::move(op))
@@ -4848,8 +4878,6 @@ TEST_F(HashJoinTest, dynamicFilterOnPartitionKey) {
           .partitionKey("k", "0")
           .build();
   auto outputType = ROW({"n1_0", "n1_1"}, {BIGINT(), BIGINT()});
-  std::shared_ptr<connector::hive::HiveTableHandle> tableHandle =
-      makeTableHandle();
   ColumnHandleMap assignments = {
       {"n1_0", regularColumn("c0", BIGINT())},
       {"n1_1", partitionKey("k", BIGINT())}};
@@ -4858,7 +4886,10 @@ TEST_F(HashJoinTest, dynamicFilterOnPartitionKey) {
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
   auto op =
       PlanBuilder(planNodeIdGenerator)
-          .tableScan(outputType, tableHandle, assignments)
+          .startTableScan()
+          .outputType(outputType)
+          .assignments(assignments)
+          .endTableScan()
           .capturePlanNodeId(probeScanId)
           .hashJoin(
               {"n1_1"},
@@ -4916,7 +4947,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
     SCOPED_TRACE(testData.debugString());
 
     auto tempDirectory = exec::test::TempDirectoryPath::create();
-    auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+    auto queryPool = memory::defaultMemoryManager().addRootPool(
+        "", kMaxBytes, memory::MemoryReclaimer::create());
 
     core::PlanNodeId probeScanId;
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5017,11 +5049,19 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
     }
 
     if (testData.expectedReclaimable) {
-      op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32());
+      reclaimAndRestoreCapacity(
+          op,
+          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+          reclaimerStats_);
+      ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
+      ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+      reclaimerStats_.reset();
       ASSERT_EQ(op->pool()->currentBytes(), 0);
     } else {
       VELOX_ASSERT_THROW(
-          op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32()),
+          op->reclaim(
+              folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+              reclaimerStats_),
           "");
     }
 
@@ -5030,6 +5070,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
 
     taskThread.join();
   }
+  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{});
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
@@ -5037,7 +5078,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   const int32_t numBuildVectors = 3;
   std::vector<RowVectorPtr> buildVectors;
   for (int32_t i = 0; i < numBuildVectors; ++i) {
-    const size_t size = i == 0 ? 100 : 40000;
+    const size_t size = i == 0 ? 1 : 1'000;
     VectorFuzzer fuzzer({.vectorSize = size}, pool());
     buildVectors.push_back(fuzzer.fuzzRow(buildType_));
   }
@@ -5045,7 +5086,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   const int32_t numProbeVectors = 3;
   std::vector<RowVectorPtr> probeVectors;
   for (int32_t i = 0; i < numProbeVectors; ++i) {
-    VectorFuzzer fuzzer({.vectorSize = 1000}, pool());
+    VectorFuzzer fuzzer({.vectorSize = 1'000}, pool());
     probeVectors.push_back(fuzzer.fuzzRow(probeType_));
   }
 
@@ -5053,9 +5094,9 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   createDuckDbTable("u", buildVectors);
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
-  auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+  auto queryPool = memory::defaultMemoryManager().addRootPool(
+      "", kMaxBytes, memory::MemoryReclaimer::create());
 
-  core::PlanNodeId probeScanId;
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
   auto plan = PlanBuilder(planNodeIdGenerator)
                   .values(probeVectors, false)
@@ -5070,11 +5111,11 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
                   .planNode();
 
   folly::EventCount driverWait;
-  auto driverWaitKey = driverWait.prepareWait();
+  std::atomic_bool driverWaitFlag{true};
   folly::EventCount testWait;
-  auto testWaitKey = testWait.prepareWait();
+  std::atomic_bool testWaitFlag{true};
 
-  Operator* op;
+  Operator* op{nullptr};
   SCOPED_TESTVALUE_SET(
       "facebook::velox::exec::Driver::runInternal::addInput",
       std::function<void(Operator*)>(([&](Operator* testOp) {
@@ -5091,22 +5132,27 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
       std::function<void(memory::MemoryPoolImpl*)>(
           ([&](memory::MemoryPoolImpl* pool) {
             ASSERT_TRUE(op != nullptr);
-            const std::string re(".*HashBuild");
-            if (!RE2::FullMatch(pool->name(), re)) {
+            if (!isHashBuildMemoryPool(*pool)) {
+              return;
+            }
+            ASSERT_TRUE(op->canReclaim());
+            if (op->pool()->currentBytes() == 0) {
+              // We skip trigger memory reclaim when the hash table is empty on
+              // memory reservation.
               return;
             }
             if (!injectOnce.exchange(false)) {
               return;
             }
-            ASSERT_TRUE(op->canReclaim());
             uint64_t reclaimableBytes{0};
             const bool reclaimable = op->reclaimableBytes(reclaimableBytes);
             ASSERT_TRUE(reclaimable);
             ASSERT_GT(reclaimableBytes, 0);
             auto* driver = op->testingOperatorCtx()->driver();
             SuspendedSection suspendedSection(driver);
-            testWait.notify();
-            driverWait.wait(driverWaitKey);
+            testWaitFlag = false;
+            testWait.notifyAll();
+            driverWait.await([&]() { return !driverWaitFlag.load(); });
           })));
 
   std::thread taskThread([&]() {
@@ -5129,11 +5175,10 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
         .run();
   });
 
-  testWait.wait(testWaitKey);
+  testWait.await([&]() { return !testWaitFlag.load(); });
   ASSERT_TRUE(op != nullptr);
   auto task = op->testingOperatorCtx()->task();
-  auto taskPauseWait = task->requestPause();
-  taskPauseWait.wait();
+  task->requestPause().wait();
 
   uint64_t reclaimableBytes{0};
   const bool reclaimable = op->reclaimableBytes(reclaimableBytes);
@@ -5141,10 +5186,16 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   ASSERT_TRUE(reclaimable);
   ASSERT_GT(reclaimableBytes, 0);
 
-  op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32());
+  reclaimAndRestoreCapacity(
+      op,
+      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+      reclaimerStats_);
+  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   ASSERT_EQ(op->pool()->currentBytes(), 0);
 
-  driverWait.notify();
+  driverWaitFlag = false;
+  driverWait.notifyAll();
   Task::resume(task);
   task.reset();
 
@@ -5265,13 +5316,14 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
     ASSERT_EQ(reclaimable, enableSpilling);
     if (enableSpilling) {
       ASSERT_GE(reclaimableBytes, 0);
-      op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32());
     } else {
-      VELOX_ASSERT_THROW(
-          op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32()),
-          "");
       ASSERT_EQ(reclaimableBytes, 0);
     }
+    VELOX_ASSERT_THROW(
+        op->reclaim(
+            folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+            reclaimerStats_),
+        "");
 
     driverWait.notify();
     Task::resume(task);
@@ -5279,6 +5331,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
 
     taskThread.join();
   }
+  ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{0});
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
@@ -5302,7 +5355,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
   for (const auto enableSpilling : enableSpillings) {
     SCOPED_TRACE(fmt::format("enableSpilling {}", enableSpilling));
     auto tempDirectory = exec::test::TempDirectoryPath::create();
-    auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+    auto queryPool = memory::defaultMemoryManager().addRootPool(
+        "", kMaxBytes, memory::MemoryReclaimer::create());
 
     core::PlanNodeId probeScanId;
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5384,13 +5438,20 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
     if (enableSpilling) {
       ASSERT_GT(reclaimableBytes, 0);
       const auto usedMemoryBytes = op->pool()->currentBytes();
-      op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32());
+      reclaimAndRestoreCapacity(
+          op,
+          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+          reclaimerStats_);
+      ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+      ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       // No reclaim as the operator has started output processing.
       ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
     } else {
       ASSERT_EQ(reclaimableBytes, 0);
       VELOX_ASSERT_THROW(
-          op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32()),
+          op->reclaim(
+              folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+              reclaimerStats_),
           "");
     }
 
@@ -5399,6 +5460,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
 
     taskThread.join();
   }
+  ASSERT_EQ(reclaimerStats_.numNonReclaimableAttempts, 1);
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
@@ -5419,7 +5481,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   createDuckDbTable("u", buildVectors);
 
   auto tempDirectory = exec::test::TempDirectoryPath::create();
-  auto queryPool = memory::defaultMemoryManager().addRootPool("", kMaxBytes);
+  auto queryPool = memory::defaultMemoryManager().addRootPool(
+      "", kMaxBytes, memory::MemoryReclaimer::create());
 
   core::PlanNodeId probeScanId;
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -5458,7 +5521,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
         SuspendedSection suspendedSection(driver);
         auto taskPauseWait = task->requestPause();
         taskPauseWait.wait();
-        op->reclaim(0);
+        op->reclaim(0, reclaimerStats_);
         Task::resume(task);
       })));
 
@@ -5518,7 +5581,13 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   ASSERT_GT(reclaimableBytes, 0);
 
   const auto usedMemoryBytes = op->pool()->currentBytes();
-  op->reclaim(folly::Random::oneIn(2) ? 0 : folly::Random::rand32());
+  reclaimerStats_.reset();
+  reclaimAndRestoreCapacity(
+      op,
+      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+      reclaimerStats_);
+  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   // No reclaim as the build operator is not in building table state.
   ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
 
@@ -5527,6 +5596,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   task.reset();
 
   taskThread.join();
+  ASSERT_EQ(reclaimerStats_.numNonReclaimableAttempts, 1);
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringOutputProcessing) {
@@ -5844,5 +5914,224 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashProbeAbortDuringInputProcessing) {
     task.reset();
     waitForAllTasksToBeDeleted();
   }
+}
+
+TEST_F(HashJoinTest, leftJoinWithMissAtEndOfBatch) {
+  // Tests some cases where the row at the end of an output batch fails the
+  // filter.
+  auto probeVectors = std::vector<RowVectorPtr>{makeRowVector(
+      {"t_k1", "t_k2"},
+      {makeFlatVector<int32_t>(20, [](auto row) { return 1 + row % 2; }),
+       makeFlatVector<int32_t>(20, [](auto row) { return row; })})};
+  auto buildVectors = std::vector<RowVectorPtr>{
+      makeRowVector({"u_k1"}, {makeFlatVector<int32_t>({1, 2})})};
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", {buildVectors});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+
+  auto test = [&](const std::string& filter) {
+    auto plan = PlanBuilder(planNodeIdGenerator)
+                    .values(probeVectors, true)
+                    .hashJoin(
+                        {"t_k1"},
+                        {"u_k1"},
+                        PlanBuilder(planNodeIdGenerator)
+                            .values(buildVectors, true)
+                            .planNode(),
+                        filter,
+                        {"t_k1", "u_k1"},
+                        core::JoinType::kLeft)
+                    .planNode();
+
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .planNode(plan)
+        .injectSpill(false)
+        .checkSpillStats(false)
+        .spillMemoryThreshold(1)
+        .maxSpillLevel(0)
+        .numDrivers(1)
+        .config(
+            core::QueryConfig::kPreferredOutputBatchRows, std::to_string(10))
+        .referenceQuery(fmt::format(
+            "SELECT t_k1, u_k1 from t left join u on t_k1 = u_k1 and {}",
+            filter))
+        .run();
+  };
+
+  // Alternate rows pass this filter and last row of a batch fails.
+  test("t_k1=1");
+
+  // All rows fail this filter.
+  test("t_k1=5");
+
+  // All rows in the second batch pass this filter.
+  test("t_k2 > 9");
+}
+
+TEST_F(HashJoinTest, leftJoinWithMissAtEndOfBatchMultipleBuildMatches) {
+  // Tests some cases where the row at the end of an output batch fails the
+  // filter and there are multiple matches with the build side..
+  auto probeVectors = std::vector<RowVectorPtr>{makeRowVector(
+      {"t_k1", "t_k2"},
+      {makeFlatVector<int32_t>(10, [](auto row) { return 1 + row % 2; }),
+       makeFlatVector<int32_t>(10, [](auto row) { return row; })})};
+  auto buildVectors = std::vector<RowVectorPtr>{
+      makeRowVector({"u_k1"}, {makeFlatVector<int32_t>({1, 2, 1, 2})})};
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", {buildVectors});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+
+  auto test = [&](const std::string& filter) {
+    auto plan = PlanBuilder(planNodeIdGenerator)
+                    .values(probeVectors, true)
+                    .hashJoin(
+                        {"t_k1"},
+                        {"u_k1"},
+                        PlanBuilder(planNodeIdGenerator)
+                            .values(buildVectors, true)
+                            .planNode(),
+                        filter,
+                        {"t_k1", "u_k1"},
+                        core::JoinType::kLeft)
+                    .planNode();
+
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .planNode(plan)
+        .injectSpill(false)
+        .checkSpillStats(false)
+        .spillMemoryThreshold(1)
+        .maxSpillLevel(0)
+        .numDrivers(1)
+        .config(
+            core::QueryConfig::kPreferredOutputBatchRows, std::to_string(10))
+        .referenceQuery(fmt::format(
+            "SELECT t_k1, u_k1 from t left join u on t_k1 = u_k1 and {}",
+            filter))
+        .run();
+  };
+
+  // In this case the rows with t_k2 = 4 appear at the end of the first batch,
+  // meaning the last rows in that output batch are misses, and don't get added.
+  // The rows with t_k2 = 8 appear in the second batch so only one row is
+  // written, meaning there is space in the second output batch for the miss
+  // with tk_2 = 4 to get written.
+  test("t_k2 != 4 and t_k2 != 8");
+}
+
+DEBUG_ONLY_TEST_F(HashJoinTest, minSpillableMemoryReservation) {
+  constexpr int64_t kMaxBytes = 1LL << 30; // 1GB
+  VectorFuzzer fuzzer({.vectorSize = 1000}, pool());
+  const int32_t numBuildVectors = 10;
+  std::vector<RowVectorPtr> buildVectors;
+  for (int32_t i = 0; i < numBuildVectors; ++i) {
+    buildVectors.push_back(fuzzer.fuzzInputRow(buildType_));
+  }
+  const int32_t numProbeVectors = 5;
+  std::vector<RowVectorPtr> probeVectors;
+  for (int32_t i = 0; i < numProbeVectors; ++i) {
+    probeVectors.push_back(fuzzer.fuzzInputRow(probeType_));
+  }
+
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", buildVectors);
+
+  core::PlanNodeId probeScanId;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .values(probeVectors, false)
+                  .hashJoin(
+                      {"t_k1"},
+                      {"u_k1"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .values(buildVectors, false)
+                          .planNode(),
+                      "",
+                      concat(probeType_->names(), buildType_->names()))
+                  .planNode();
+
+  for (int32_t minSpillableReservationPct : {5, 50, 100}) {
+    SCOPED_TRACE(fmt::format(
+        "minSpillableReservationPct: {}", minSpillableReservationPct));
+
+    SCOPED_TESTVALUE_SET(
+        "facebook::velox::exec::HashBuild::addInput",
+        std::function<void(exec::HashBuild*)>(([&](exec::HashBuild* hashBuild) {
+          memory::MemoryPool* pool = hashBuild->pool();
+          const auto availableReservationBytes = pool->availableReservation();
+          const auto currentUsedBytes = pool->currentBytes();
+          // Verifies we always have min reservation after ensuring the input.
+          ASSERT_GE(
+              availableReservationBytes,
+              currentUsedBytes * minSpillableReservationPct / 100);
+        })));
+
+    auto tempDirectory = exec::test::TempDirectoryPath::create();
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .numDrivers(numDrivers_)
+        .planNode(plan)
+        .injectSpill(false)
+        .spillDirectory(tempDirectory->path)
+        .referenceQuery(
+            "SELECT t_k1, t_k2, t_v1, u_k1, u_k2, u_v1 FROM t, u WHERE t.t_k1 = u.u_k1")
+        .run();
+  }
+}
+
+TEST_F(HashJoinTest, exceededMaxSpillLevel) {
+  constexpr int64_t kMaxBytes = 1LL << 30; // 1GB
+  VectorFuzzer fuzzer({.vectorSize = 1000}, pool());
+  const int32_t numBuildVectors = 10;
+  std::vector<RowVectorPtr> buildVectors;
+  for (int32_t i = 0; i < numBuildVectors; ++i) {
+    buildVectors.push_back(fuzzer.fuzzRow(buildType_));
+  }
+  const int32_t numProbeVectors = 5;
+  std::vector<RowVectorPtr> probeVectors;
+  for (int32_t i = 0; i < numProbeVectors; ++i) {
+    probeVectors.push_back(fuzzer.fuzzRow(probeType_));
+  }
+
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", buildVectors);
+
+  core::PlanNodeId probeScanId;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .values(probeVectors, false)
+                  .hashJoin(
+                      {"t_k1"},
+                      {"u_k1"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .values(buildVectors, false)
+                          .planNode(),
+                      "",
+                      concat(probeType_->names(), buildType_->names()))
+                  .planNode();
+
+  auto tempDirectory = exec::test::TempDirectoryPath::create();
+  const int exceededMaxSpillLevelCount =
+      common::globalSpillStats().spillMaxLevelExceededCount;
+  HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+      .numDrivers(1)
+      .planNode(plan)
+      .injectSpill(false)
+      // Always trigger spilling.
+      .spillMemoryThreshold(1)
+      .maxSpillLevel(0)
+      .spillDirectory(tempDirectory->path)
+      .referenceQuery(
+          "SELECT t_k1, t_k2, t_v1, u_k1, u_k2, u_v1 FROM t, u WHERE t.t_k1 = u.u_k1")
+      .verifier([&](const std::shared_ptr<Task>& task, bool /*unused*/) {
+        auto joinStats = task->taskStats()
+                             .pipelineStats.back()
+                             .operatorStats.back()
+                             .runtimeStats;
+        ASSERT_EQ(joinStats["exceededMaxSpillLevel"].sum, 4);
+        ASSERT_EQ(joinStats["exceededMaxSpillLevel"].count, 4);
+      })
+      .run();
+  ASSERT_EQ(
+      common::globalSpillStats().spillMaxLevelExceededCount,
+      exceededMaxSpillLevelCount + 4);
 }
 } // namespace

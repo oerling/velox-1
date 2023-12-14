@@ -40,7 +40,9 @@ class WriterBase {
 
   virtual void abort() {
     writerSink_ = nullptr;
-    context_ = nullptr;
+    if (context_ != nullptr) {
+      context_->abort();
+    }
     if (sink_) {
       sink_->close();
       sink_ = nullptr;
@@ -80,6 +82,8 @@ class WriterBase {
         context_->getMemoryPool(MemoryUsageCategory::OUTPUT_STREAM),
         context_->getConfigs());
   }
+
+  void initBuffers();
 
   WriterContext& getContext() {
     DWIO_ENSURE_NOT_NULL(context_);

@@ -16,20 +16,27 @@
 
 #pragma once
 
-#include <thrift/protocol/TCompactProtocol.h> //@manual
-#include "velox/common/base/RawVector.h"
 #include "velox/dwio/common/BufferUtil.h"
-#include "velox/dwio/common/BufferedInput.h"
-#include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/parquet/reader/PageReader.h"
 #include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
-#include "velox/dwio/parquet/thrift/ThriftTransport.h"
+
+namespace facebook::velox::common {
+class ScanSpec;
+} // namespace facebook::velox::common
+
+namespace facebook::velox::dwio::common {
+class BufferedInput;
+} // namespace facebook::velox::dwio::common
 
 namespace facebook::velox::parquet {
+
 class ParquetParams : public dwio::common::FormatParams {
  public:
-  ParquetParams(memory::MemoryPool& pool, const thrift::FileMetaData& metaData)
-      : FormatParams(pool), metaData_(metaData) {}
+  ParquetParams(
+      memory::MemoryPool& pool,
+      dwio::common::ColumnReaderStatistics& stats,
+      const thrift::FileMetaData& metaData)
+      : FormatParams(pool, stats), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       const common::ScanSpec& scanSpec) override;

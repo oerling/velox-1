@@ -19,8 +19,8 @@
 #include "velox/common/caching/FileIds.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/caching/SsdCache.h"
+#include "velox/common/io/IoStatistics.h"
 #include "velox/dwio/common/InputStream.h"
-#include "velox/dwio/common/IoStatistics.h"
 #include "velox/dwio/common/SeekableInputStream.h"
 
 namespace facebook::velox::dwio::common {
@@ -42,7 +42,7 @@ class CacheInputStream : public SeekableInputStream {
 
   bool Next(const void** data, int* size) override;
   void BackUp(int count) override;
-  bool Skip(int count) override;
+  bool SkipInt64(int64_t count) override;
   google::protobuf::int64 ByteCount() const override;
   void seekToPosition(PositionProvider& position) override;
   std::string getName() const override;

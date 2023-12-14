@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/exec/Operator.h"
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Driver.h"
@@ -49,11 +51,13 @@ std::shared_ptr<connector::ConnectorQueryCtx>
 OperatorCtx::createConnectorQueryCtx(
     const std::string& connectorId,
     const std::string& planNodeId,
-    memory::MemoryPool* connectorPool) const {
+    memory::MemoryPool* connectorPool,
+    const common::SpillConfig* spillConfig) const {
   return std::make_shared<connector::ConnectorQueryCtx>(
       pool_,
       connectorPool,
-      driverCtx_->task->queryCtx()->getConnectorConfig(connectorId),
+      driverCtx_->task->queryCtx()->connectorSessionProperties(connectorId),
+      spillConfig,
       std::make_unique<SimpleExpressionEvaluator>(
           execCtx()->queryCtx(), execCtx()->pool()),
       driverCtx_->task->queryCtx()->cache(),
@@ -69,7 +73,7 @@ Operator::Operator(
     int32_t operatorId,
     std::string planNodeId,
     std::string operatorType,
-    std::optional<Spiller::Config> spillConfig)
+    std::optional<common::SpillConfig> spillConfig)
     : operatorCtx_(std::make_unique<OperatorCtx>(
           driverCtx,
           planNodeId,
@@ -81,9 +85,7 @@ Operator::Operator(
           operatorId,
           driverCtx->pipelineId,
           std::move(planNodeId),
-          std::move(operatorType)}) {
-  maybeSetReclaimer();
-}
+          std::move(operatorType)}) {}
 
 void Operator::maybeSetReclaimer() {
   VELOX_CHECK_NULL(pool()->reclaimer());
@@ -137,7 +139,14 @@ std::unique_ptr<JoinBridge> Operator::joinBridgeFromPlanNode(
 
 void Operator::initialize() {
   VELOX_CHECK(!initialized_);
+  VELOX_CHECK_EQ(
+      pool()->currentBytes(),
+      0,
+      "Unexpected memory usage {} from pool {} before operator init",
+      succinctBytes(pool()->currentBytes()),
+      pool()->name());
   initialized_ = true;
+  maybeSetReclaimer();
 }
 
 // static
@@ -192,7 +201,8 @@ static bool isSequence(
 
 RowVectorPtr Operator::fillOutput(
     vector_size_t size,
-    const BufferPtr& mapping) {
+    const BufferPtr& mapping,
+    const std::vector<VectorPtr>& results) {
   bool wrapResults = true;
   if (size == input_->size() &&
       (!mapping || isSequence(mapping->as<vector_size_t>(), 0, size))) {
@@ -202,37 +212,46 @@ RowVectorPtr Operator::fillOutput(
     wrapResults = false;
   }
 
-  auto output{std::make_shared<RowVector>(
-      operatorCtx_->pool(),
-      outputType_,
-      nullptr,
-      size,
-      std::vector<VectorPtr>(outputType_->size(), nullptr))};
-  output->resize(size);
+  std::vector<VectorPtr> projectedChildren(outputType_->size());
   projectChildren(
-      output,
+      projectedChildren,
       input_,
       identityProjections_,
       size,
       wrapResults ? mapping : nullptr);
   projectChildren(
-      output,
-      results_,
+      projectedChildren,
+      results,
       resultProjections_,
       size,
       wrapResults ? mapping : nullptr);
-  return output;
+
+  return std::make_shared<RowVector>(
+      operatorCtx_->pool(),
+      outputType_,
+      nullptr,
+      size,
+      std::move(projectedChildren));
+}
+
+RowVectorPtr Operator::fillOutput(
+    vector_size_t size,
+    const BufferPtr& mapping) {
+  return fillOutput(size, mapping, results_);
 }
 
 OperatorStats Operator::stats(bool clear) {
+  OperatorStats stats;
   if (!clear) {
-    return *stats_.rlock();
+    stats = *stats_.rlock();
+  } else {
+    auto lockedStats = stats_.wlock();
+    stats = *lockedStats;
+    lockedStats->clear();
   }
 
-  auto lockedStats = stats_.wlock();
-  OperatorStats ret{*lockedStats};
-  lockedStats->clear();
-  return ret;
+  stats.memoryStats = MemoryStats::memStatsFromPool(pool());
+  return stats;
 }
 
 uint32_t Operator::outputBatchRows(
@@ -276,7 +295,7 @@ void Operator::recordBlockingTime(uint64_t start, BlockingReason reason) {
       fmt::format("blocked{}Times", blockReason), RuntimeCounter(1));
 }
 
-void Operator::recordSpillStats(const SpillStats& spillStats) {
+void Operator::recordSpillStats(const common::SpillStats& spillStats) {
   VELOX_CHECK(noMoreInput_);
   auto lockedStats = stats_.wlock();
   lockedStats->spilledInputBytes += spillStats.spilledInputBytes;
@@ -334,10 +353,20 @@ void Operator::recordSpillStats(const SpillStats& spillStats) {
                 Timestamp::kNanosecondsInMicrosecond),
             RuntimeCounter::Unit::kNanos});
   }
-  if (numSpillRuns_ != 0) {
+  if (spillStats.spillRuns != 0) {
     lockedStats->addRuntimeStat(
-        "spillRuns", RuntimeCounter{static_cast<int64_t>(numSpillRuns_)});
-    updateGlobalSpillRunStats(numSpillRuns_);
+        "spillRuns",
+        RuntimeCounter{static_cast<int64_t>(spillStats.spillRuns)});
+    common::updateGlobalSpillRunStats(spillStats.spillRuns);
+  }
+
+  if (spillStats.spillMaxLevelExceededCount != 0) {
+    lockedStats->addRuntimeStat(
+        "exceededMaxSpillLevel",
+        RuntimeCounter{
+            static_cast<int64_t>(spillStats.spillMaxLevelExceededCount)});
+    common::updateGlobalMaxSpillLevelExceededCount(
+        spillStats.spillMaxLevelExceededCount);
   }
 }
 
@@ -434,6 +463,8 @@ void OperatorStats::add(const OperatorStats& other) {
 
   finishTiming.add(other.finishTiming);
 
+  backgroundTiming.add(other.backgroundTiming);
+
   memoryStats.add(other.memoryStats);
 
   for (const auto& [name, stats] : other.runtimeStats) {
@@ -471,6 +502,8 @@ void OperatorStats::clear() {
 
   finishTiming.clear();
 
+  backgroundTiming.clear();
+
   memoryStats.clear();
 
   runtimeStats.clear();
@@ -491,26 +524,28 @@ std::unique_ptr<memory::MemoryReclaimer> Operator::MemoryReclaimer::create(
 }
 
 void Operator::MemoryReclaimer::enterArbitration() {
-  std::shared_ptr<Driver> driver = ensureDriver();
-  // The driver must be alive as the operator is still under memory arbitration
-  // processing.
-  VELOX_CHECK_NOT_NULL(driver);
-  if (FOLLY_UNLIKELY(
-          !driver->state().isOnThread() ||
-          (std::this_thread::get_id() != driver->state().thread))) {
-    // NOTE: some memory arbitration are triggered from non-driver execution
-    // context such as async streaming shuffle, table scan prefetch etc. And
-    // those async operations might execute in parallel with the driver threads.
-    // Therefore, it is possible that driver is not on the thread or the
-    // arbitration thread is not the current running driver thread. If memory
-    // arbitration is triggered in non-driver context, then we can't and also
-    // don't need to enter driver suspension state which only applies for driver
-    // thread so that the task pause operation can wait for all driver threads
-    // to stop. We only need to guarantee that such async operations won't
-    // mutate the operator state.g
+  DriverThreadContext* driverThreadCtx = driverThreadContext();
+  if (FOLLY_UNLIKELY(driverThreadCtx == nullptr)) {
+    // Skips the driver suspension handling if this memory arbitration request
+    // is not issued from a driver thread. For example, async streaming shuffle
+    // and table scan prefetch execution path might initiate memory arbitration
+    // request from non-driver thread.
     return;
   }
-  if (driver->task()->enterSuspended(driver->state()) != StopReason::kNone) {
+
+  Driver* const runningDriver = driverThreadCtx->driverCtx.driver;
+  if (auto opDriver = ensureDriver()) {
+    // NOTE: the current running driver might not be the driver of the operator
+    // that requests memory arbitration. The reason is that an operator might
+    // extend the buffer allocated from the other operator either from the same
+    // or different drivers. But they must be from the same task.
+    VELOX_CHECK_EQ(
+        runningDriver->task()->taskId(),
+        opDriver->task()->taskId(),
+        "The current running driver and the request driver must be from the same task");
+  }
+  if (runningDriver->task()->enterSuspended(runningDriver->state()) !=
+      StopReason::kNone) {
     // There is no need for arbitration if the associated task has already
     // terminated.
     VELOX_FAIL("Terminate detected when entering suspension");
@@ -518,17 +553,20 @@ void Operator::MemoryReclaimer::enterArbitration() {
 }
 
 void Operator::MemoryReclaimer::leaveArbitration() noexcept {
-  std::shared_ptr<Driver> driver = ensureDriver();
-  // The driver must be alive as the operator is still under memory arbitration
-  // processing.
-  VELOX_CHECK_NOT_NULL(driver);
-  if (FOLLY_UNLIKELY(
-          !driver->state().isOnThread() ||
-          (std::this_thread::get_id() != driver->state().thread))) {
-    // NOTE: see the comment in enterArbitration.
+  DriverThreadContext* driverThreadCtx = driverThreadContext();
+  if (FOLLY_UNLIKELY(driverThreadCtx == nullptr)) {
+    // Skips the driver suspension handling if this memory arbitration request
+    // is not issued from a driver thread.
     return;
   }
-  driver->task()->leaveSuspended(driver->state());
+  Driver* const runningDriver = driverThreadCtx->driverCtx.driver;
+  if (auto opDriver = ensureDriver()) {
+    VELOX_CHECK_EQ(
+        runningDriver->task()->taskId(),
+        opDriver->task()->taskId(),
+        "The current running driver and the request driver must be from the same task");
+  }
+  runningDriver->task()->leaveSuspended(runningDriver->state());
 }
 
 bool Operator::MemoryReclaimer::reclaimableBytes(
@@ -545,7 +583,9 @@ bool Operator::MemoryReclaimer::reclaimableBytes(
 
 uint64_t Operator::MemoryReclaimer::reclaim(
     memory::MemoryPool* pool,
-    uint64_t targetBytes) {
+    uint64_t targetBytes,
+    uint64_t /*unused*/,
+    memory::MemoryReclaimer::Stats& stats) {
   std::shared_ptr<Driver> driver = ensureDriver();
   if (FOLLY_UNLIKELY(driver == nullptr)) {
     return 0;
@@ -562,8 +602,29 @@ uint64_t Operator::MemoryReclaimer::reclaim(
   TestValue::adjust(
       "facebook::velox::exec::Operator::MemoryReclaimer::reclaim", pool);
 
-  op_->reclaim(targetBytes);
-  return pool->shrink(targetBytes);
+  // NOTE: we can't reclaim memory from an operator which is under
+  // non-reclaimable section.
+  if (op_->nonReclaimableSection_) {
+    // TODO: reduce the log frequency if it is too verbose.
+    ++stats.numNonReclaimableAttempts;
+    RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
+    LOG(WARNING) << "Can't reclaim from memory pool " << pool->name()
+                 << " which is under non-reclaimable section, memory usage: "
+                 << succinctBytes(pool->currentBytes())
+                 << ", reservation: " << succinctBytes(pool->reservedBytes());
+    return 0;
+  }
+
+  RuntimeStatWriterScopeGuard opStatsGuard(op_);
+
+  auto reclaimBytes = memory::MemoryReclaimer::run(
+      [&]() {
+        op_->reclaim(targetBytes, stats);
+        return pool->shrink(targetBytes);
+      },
+      stats);
+
+  return reclaimBytes;
 }
 
 void Operator::MemoryReclaimer::abort(

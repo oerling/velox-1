@@ -144,18 +144,20 @@ core::PlanNodePtr SubstraitVeloxPlanConverter::toVeloxPlan(
     const auto& aggFunction = measure.measure();
     auto funcName = substraitParser_->findVeloxFunction(
         functionMap_, aggFunction.function_reference());
+
     std::vector<core::TypedExprPtr> aggParams;
     aggParams.reserve(aggFunction.arguments().size());
     for (const auto& arg : aggFunction.arguments()) {
       aggParams.emplace_back(
           exprConverter_->toVeloxExpr(arg.value(), inputType));
     }
-    auto aggVeloxType = toVeloxType(
-        substraitParser_->parseType(aggFunction.output_type())->type);
+    auto aggVeloxType = substraitParser_->parseType(aggFunction.output_type());
     auto aggExpr = std::make_shared<const core::CallTypedExpr>(
         aggVeloxType, std::move(aggParams), funcName);
+    std::vector<TypePtr> rawInputTypes = SubstraitParser::getInputTypes(
+        findFunction(aggFunction.function_reference()));
     aggregates.emplace_back(
-        core::AggregationNode::Aggregate{aggExpr, mask, {}, {}});
+        core::AggregationNode::Aggregate{aggExpr, rawInputTypes, mask, {}, {}});
   }
 
   bool ignoreNullKeys = false;
@@ -369,11 +371,7 @@ core::PlanNodePtr SubstraitVeloxPlanConverter::toVeloxPlan(
     for (const auto& name : baseSchema.names()) {
       colNameList.emplace_back(name);
     }
-    auto substraitTypeList = substraitParser_->parseNamedStruct(baseSchema);
-    veloxTypeList.reserve(substraitTypeList.size());
-    for (const auto& substraitType : substraitTypeList) {
-      veloxTypeList.emplace_back(toVeloxType(substraitType->type));
-    }
+    veloxTypeList = substraitParser_->parseNamedStruct(baseSchema);
   }
 
   // Parse local files

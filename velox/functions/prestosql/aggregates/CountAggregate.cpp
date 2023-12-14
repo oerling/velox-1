@@ -15,8 +15,10 @@
  */
 #include "velox/common/base/Exceptions.h"
 #include "velox/expression/FunctionSignature.h"
+#include "velox/functions/lib/aggregates/SumAggregateBase.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
-#include "velox/functions/prestosql/aggregates/SumAggregate.h"
+
+using namespace facebook::velox::functions::aggregate;
 
 namespace facebook::velox::aggregate::prestosql {
 
@@ -146,7 +148,9 @@ class CountAggregate : public SimpleNumericAggregate<bool, int64_t, int64_t> {
   DecodedVector decodedIntermediate_;
 };
 
-exec::AggregateRegistrationResult registerCount(const std::string& name) {
+} // namespace
+
+void registerCountAggregate(const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
       exec::AggregateFunctionSignatureBuilder()
           .returnType("bigint")
@@ -160,7 +164,8 @@ exec::AggregateRegistrationResult registerCount(const std::string& name) {
           .build(),
   };
 
-  return exec::registerAggregateFunction(
+  auto name = prefix + kCount;
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -173,12 +178,6 @@ exec::AggregateRegistrationResult registerCount(const std::string& name) {
             argTypes.size(), 1, "{} takes at most one argument", name);
         return std::make_unique<CountAggregate>();
       });
-}
-
-} // namespace
-
-void registerCountAggregate(const std::string& prefix) {
-  registerCount(prefix + kCount);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

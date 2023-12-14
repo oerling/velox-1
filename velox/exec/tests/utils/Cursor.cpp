@@ -21,6 +21,25 @@
 
 namespace facebook::velox::exec::test {
 
+bool waitForTaskDriversToFinish(exec::Task* task, uint64_t maxWaitMicros) {
+  VELOX_USER_CHECK(!task->isRunning());
+  uint64_t waitMicros = 0;
+  while ((task->numFinishedDrivers() != task->numTotalDrivers()) &&
+         (waitMicros < maxWaitMicros)) {
+    const uint64_t kWaitMicros = 1000;
+    std::this_thread::sleep_for(std::chrono::microseconds(kWaitMicros));
+    waitMicros += kWaitMicros;
+  }
+
+  if (task->numFinishedDrivers() != task->numTotalDrivers()) {
+    LOG(ERROR) << "Timed out waiting for all drivers of task " << task->taskId()
+               << " to finish. Finished drivers: " << task->numFinishedDrivers()
+               << ". Total drivers: " << task->numTotalDrivers();
+  }
+
+  return task->numFinishedDrivers() == task->numTotalDrivers();
+}
+
 exec::BlockingReason TaskQueue::enqueue(
     RowVectorPtr vector,
     velox::ContinueFuture* future) {
@@ -123,12 +142,17 @@ TaskCursor::TaskCursor(const CursorParameters& params)
     static std::atomic<uint64_t> cursorQueryId{0};
     queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(),
-        std::unordered_map<std::string, std::string>{},
+        core::QueryConfig({}),
         std::unordered_map<std::string, std::shared_ptr<Config>>{},
         cache::AsyncDataCache::getInstance(),
         nullptr,
         nullptr,
         fmt::format("TaskCursorQuery_{}", cursorQueryId++));
+  }
+
+  if (!params.queryConfigs.empty()) {
+    auto configCopy = params.queryConfigs;
+    queryCtx->testingOverrideConfigUnsafe(std::move(configCopy));
   }
 
   queue_ = std::make_shared<TaskQueue>(params.bufferedBytes);
@@ -147,9 +171,10 @@ TaskCursor::TaskCursor(const CursorParameters& params)
       params.destination,
       std::move(queryCtx),
       // consumer
-      [queue](RowVectorPtr vector, velox::ContinueFuture* future) {
-        if (!vector) {
-          return queue->enqueue(nullptr, future);
+      [queue, copyResult = params.copyResult](
+          RowVectorPtr vector, velox::ContinueFuture* future) {
+        if (!vector || !copyResult) {
+          return queue->enqueue(vector, future);
         }
         // Make sure to load lazy vector if not loaded already.
         for (auto& child : vector->children()) {
@@ -185,7 +210,7 @@ TaskCursor::TaskCursor(const CursorParameters& params)
 void TaskCursor::start() {
   if (!started_) {
     started_ = true;
-    exec::Task::start(task_, maxDrivers_, numConcurrentSplitGroups_);
+    task_->start(maxDrivers_, numConcurrentSplitGroups_);
     queue_->setNumProducers(numSplitGroups_ * task_->numOutputDrivers());
   }
 }
@@ -194,6 +219,9 @@ bool TaskCursor::moveNext() {
   start();
   current_ = queue_->dequeue();
   if (task_->error()) {
+    // Wait for all task drivers to finish to avoid destroying the executor_
+    // before task_ finished using it and causing a crash.
+    waitForTaskDriversToFinish(task_.get());
     std::rethrow_exception(task_->error());
   }
   if (!current_) {

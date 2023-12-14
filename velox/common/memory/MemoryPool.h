@@ -56,6 +56,9 @@ class MemoryManager;
 
 constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 
+/// Sets the memory reclaimer to the provided memory pool.
+using SetMemoryReclaimer = std::function<void(MemoryPool*)>;
+
 /// This class provides the memory allocation interfaces for a query execution.
 /// Each query execution entity creates a dedicated memory pool object. The
 /// memory pool objects from a query are organized as a tree with four levels
@@ -157,6 +160,10 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     /// If true, tracks the allocation and free call stacks to detect the source
     /// of memory leak for testing purpose.
     bool debugEnabled{FLAGS_velox_memory_pool_debug_enabled};
+
+    /// Terminates the process and generates a core file on an allocation
+    /// failure
+    bool coreOnAllocationFailureEnabled{false};
   };
 
   /// Constructs a named memory pool with specified 'name', 'parent' and 'kind'.
@@ -403,9 +410,14 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// with specified reclaim target bytes. If 'targetBytes' is zero, then it
   /// tries to reclaim all the reclaimable memory from the memory pool. It is
   /// noop if the reclaimer is not set, otherwise invoke the reclaimer's
-  /// corresponding method. The function returns the actually freed capacity
-  /// from the root of this memory pool.
-  virtual uint64_t reclaim(uint64_t targetBytes) = 0;
+  /// corresponding method. If not zero, 'maxWaitMs' specifies the max time in
+  /// milliseconds to wait for reclaim. The memory reclaim might fail if exceeds
+  /// the timeout. The function returns the actually freed capacity from the
+  /// root of this memory pool.
+  virtual uint64_t reclaim(
+      uint64_t targetBytes,
+      uint64_t maxWaitMs,
+      memory::MemoryReclaimer::Stats& stats) = 0;
 
   /// Invoked by the memory arbitrator to abort a root memory pool. The function
   /// forwards the request to the corresponding query object to abort its
@@ -423,6 +435,8 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   struct Stats {
     /// The current memory usage.
     uint64_t currentBytes{0};
+    /// The current reserved memory.
+    uint64_t reservedBytes{0};
     /// The peak memory usage.
     uint64_t peakBytes{0};
     /// The accumulative memory usage.
@@ -454,11 +468,11 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
 
     std::string toString() const;
 
-    /// Returns true if the current bytes is zero.
+    /// Returns true if the current and reserved bytes are zero.
     /// Note that peak or cumulative bytes might be non-zero and we are still
     /// empty at this moment.
     bool empty() const {
-      return currentBytes == 0;
+      return currentBytes == 0 && reservedBytes == 0;
     }
   };
 
@@ -519,6 +533,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   const bool threadSafe_;
   const bool checkUsageLeak_;
   const bool debugEnabled_;
+  const bool coreOnAllocationFailureEnabled_;
 
   /// Indicates if the memory pool has been aborted by the memory arbitrator or
   /// not.
@@ -526,6 +541,8 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// NOTE: this flag is only set for a root memory pool if it has memory
   /// reclaimer. We process a query abort request from the root memory pool.
   std::atomic<bool> aborted_{false};
+  /// Saves the aborted error exception which is only set if 'aborted_' is true.
+  std::exception_ptr abortError_{nullptr};
 
   mutable folly::SharedMutex poolMutex_;
   // NOTE: we use raw pointer instead of weak pointer here to minimize
@@ -534,6 +551,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   std::unordered_map<std::string, std::weak_ptr<MemoryPool>> children_;
 
   friend class TestMemoryReclaimer;
+  friend class MemoryReclaimer;
 };
 
 std::ostream& operator<<(std::ostream& out, MemoryPool::Kind kind);
@@ -623,7 +641,10 @@ class MemoryPoolImpl : public MemoryPool {
 
   bool reclaimableBytes(uint64_t& reclaimableBytes) const override;
 
-  uint64_t reclaim(uint64_t targetBytes) override;
+  uint64_t reclaim(
+      uint64_t targetBytes,
+      uint64_t maxWaitMs,
+      memory::MemoryReclaimer::Stats& stats) override;
 
   uint64_t shrink(uint64_t targetBytes = 0) override;
 
@@ -669,6 +690,10 @@ class MemoryPoolImpl : public MemoryPool {
 
   MemoryAllocator* testingAllocator() const {
     return allocator_;
+  }
+
+  uint64_t testingMinReservationBytes() const {
+    return minReservationBytes_;
   }
 
   /// Structure to store allocation details in debug mode.
@@ -867,6 +892,13 @@ class MemoryPoolImpl : public MemoryPool {
     }
   }
 
+  void setAbortError(const std::exception_ptr& error);
+
+  // Check if this memory pool has been aborted. If already aborted, we rethrow
+  // the preserved abort error to prevent this pool from triggering additional
+  // memory arbitration. The associated query should also abort soon.
+  void checkIfAborted() const;
+
   Stats statsLocked() const;
 
   FOLLY_ALWAYS_INLINE std::string toStringLocked() const {
@@ -877,8 +909,8 @@ class MemoryPoolImpl : public MemoryPool {
         << MemoryAllocator::kindString(allocator_->kind())
         << (trackUsage_ ? " track-usage" : " no-usage-track")
         << (threadSafe_ ? " thread-safe" : " non-thread-safe") << "]<";
-    if (maxCapacity_ != kMaxMemory) {
-      out << "max capacity " << succinctBytes(maxCapacity_) << " ";
+    if (maxCapacity() != kMaxMemory) {
+      out << "max capacity " << succinctBytes(maxCapacity()) << " ";
     } else {
       out << "unlimited max capacity ";
     }
@@ -941,6 +973,8 @@ class MemoryPoolImpl : public MemoryPool {
   // memory pool destruction. We only check this if debug mode of this memory
   // pool is enabled.
   void leakCheckDbg();
+
+  void handleAllocationFailure(const std::string& failureMessage);
 
   MemoryManager* const manager_;
   MemoryAllocator* const allocator_;

@@ -16,8 +16,11 @@
 #include "gtest/gtest.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/FieldReference.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/types/JsonType.h"
+#include "velox/parse/Expressions.h"
+#include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
@@ -28,6 +31,18 @@ class ExprCompilerTest : public testing::Test,
  protected:
   void SetUp() override {
     functions::prestosql::registerAllScalarFunctions();
+  }
+
+  static void SetUpTestCase() {
+    parse::registerTypeResolver();
+    functions::prestosql::registerAllScalarFunctions();
+  }
+
+  core::TypedExprPtr makeTypedExpr(
+      const std::string& text,
+      const RowTypePtr& rowType) {
+    auto untyped = parse::parseExpr(text, {});
+    return core::Expressions::inferTypes(untyped, rowType, execCtx_->pool());
   }
 
   core::TypedExprPtr andCall(
@@ -273,6 +288,48 @@ TEST_F(ExprCompilerTest, customTypeConstant) {
 
   auto exprSet = compile(expression);
   ASSERT_EQ("[1, 2, 3]:JSON", compile(expression)->toString());
+}
+
+TEST_F(ExprCompilerTest, rewrites) {
+  auto rowType = ROW({"c0", "c1"}, {ARRAY(VARCHAR()), BIGINT()});
+  auto arraySortSql =
+      "array_sort(c0, (x, y) -> if(length(x) < length(y), -1, if(length(x) > length(y), 1, 0)))";
+
+  ASSERT_NO_THROW(std::make_unique<ExprSet>(
+      std::vector<core::TypedExprPtr>{
+          makeTypedExpr(arraySortSql, rowType),
+          makeTypedExpr("c1 + 5", rowType),
+      },
+      execCtx_.get()));
+}
+
+TEST_F(ExprCompilerTest, eliminateUnnecessaryCast) {
+  auto exprSet =
+      compile(makeTypedExpr("cast(c0 as BIGINT)", ROW({{"c0", BIGINT()}})));
+  ASSERT_EQ(exprSet->size(), 1);
+  ASSERT_TRUE(dynamic_cast<const FieldReference*>(exprSet->expr(0).get()));
+}
+
+TEST_F(ExprCompilerTest, lambdaExpr) {
+  // Ensure that metadata computation correctly pulls in distinct fields from
+  // captured columns.
+
+  // Case 1: Standalone Expression
+  auto exprSet = compile(makeTypedExpr(
+      "find_first_index(c0, (x) -> (x = c1))",
+      ROW({"c0", "c1"}, {ARRAY(VARCHAR()), VARCHAR()})));
+  ASSERT_EQ(exprSet->size(), 1);
+  auto distinctFields = exprSet->expr(0)->distinctFields();
+  ASSERT_EQ(distinctFields.size(), 2);
+
+  // Case 2: Shared expression where the metadata is recomputed.
+  exprSet = compile(makeTypedExpr(
+      "if (find_first_index(c0, (x) -> (x = c1)) - 1 = 0, null::bigint, "
+      "find_first_index(c0, (x) -> (x = c1)) - 1)",
+      ROW({"c0", "c1"}, {ARRAY(VARCHAR()), VARCHAR()})));
+  ASSERT_EQ(exprSet->size(), 1);
+  distinctFields = exprSet->expr(0)->distinctFields();
+  ASSERT_EQ(distinctFields.size(), 2);
 }
 
 } // namespace facebook::velox::exec::test

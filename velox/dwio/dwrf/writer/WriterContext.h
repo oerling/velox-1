@@ -43,44 +43,9 @@ class WriterContext : public CompressionBufferPool {
       std::shared_ptr<memory::MemoryPool> pool,
       const dwio::common::MetricsLogPtr& metricLogger =
           dwio::common::MetricsLog::voidLog(),
-      std::unique_ptr<encryption::EncryptionHandler> handler = nullptr)
-      : config_{config},
-        pool_{std::move(pool)},
-        dictionaryPool_{pool_->addLeafChild(".dictionary")},
-        outputStreamPool_{pool_->addLeafChild(".compression")},
-        generalPool_{pool_->addLeafChild(".general")},
-        indexEnabled_{getConfig(Config::CREATE_INDEX)},
-        indexStride_{getConfig(Config::ROW_INDEX_STRIDE)},
-        compression_{getConfig(Config::COMPRESSION)},
-        compressionBlockSize_{getConfig(Config::COMPRESSION_BLOCK_SIZE)},
-        shareFlatMapDictionaries_{getConfig(Config::MAP_FLAT_DICT_SHARE)},
-        stripeSizeFlushThreshold_{getConfig(Config::STRIPE_SIZE)},
-        dictionarySizeFlushThreshold_{getConfig(Config::MAX_DICTIONARY_SIZE)},
-        streamSizeAboveThresholdCheckEnabled_{
-            getConfig(Config::STREAM_SIZE_ABOVE_THRESHOLD_CHECK_ENABLED)},
-        rawDataSizePerBatch_{getConfig(Config::RAW_DATA_SIZE_PER_BATCH)},
-        // Currently logging with no metadata. Might consider populating
-        // metadata with dwio::common::request::AccessDescriptor upstream and
-        // pass down the metric log.
-        metricLogger_{metricLogger},
-        handler_{std::move(handler)} {
-    const bool forceLowMemoryMode{getConfig(Config::FORCE_LOW_MEMORY_MODE)};
-    const bool disableLowMemoryMode{getConfig(Config::DISABLE_LOW_MEMORY_MODE)};
-    VELOX_CHECK(!(forceLowMemoryMode && disableLowMemoryMode));
-    checkLowMemoryMode_ = !forceLowMemoryMode && !disableLowMemoryMode;
-    if (forceLowMemoryMode) {
-      setLowMemoryMode();
-    }
-    if (handler_ == nullptr) {
-      handler_ = std::make_unique<encryption::EncryptionHandler>();
-    }
-    validateConfigs();
-    VLOG(2) << fmt::format("Compression config: {}", compression_);
-    if (compression_ != common::CompressionKind_NONE) {
-      compressionBuffer_ = std::make_unique<dwio::common::DataBuffer<char>>(
-          *generalPool_, compressionBlockSize_ + PAGE_HEADER_SIZE);
-    }
-  }
+      std::unique_ptr<encryption::EncryptionHandler> handler = nullptr);
+
+  ~WriterContext() override;
 
   bool hasStream(const DwrfStreamIdentifier& stream) const {
     return streams_.find(stream) != streams_.end();
@@ -223,6 +188,13 @@ class WriterContext : public CompressionBufferPool {
     return pool_->maxCapacity();
   }
 
+  /// Returns the available memory reservations aggregated from all the memory
+  /// pools.
+  int64_t availableMemoryReservation() const;
+
+  /// Releases unused memory reservation aggregated from all the memory pools.
+  void releaseMemoryReservation();
+
   const encryption::EncryptionHandler& getEncryptionHandler() const {
     return *handler_;
   }
@@ -273,6 +245,8 @@ class WriterContext : public CompressionBufferPool {
     }
   }
 
+  void initBuffer();
+
   std::unique_ptr<dwio::common::DataBuffer<char>> getBuffer(
       uint64_t size) override {
     VELOX_CHECK_NOT_NULL(compressionBuffer_);
@@ -288,12 +262,12 @@ class WriterContext : public CompressionBufferPool {
   }
 
   void incrementNodeSize(uint32_t node, uint64_t size) {
-    nodeSize[node] += size;
+    nodeSize_[node] += size;
   }
 
   uint64_t getNodeSize(uint32_t node) {
-    if (nodeSize.count(node) > 0) {
-      return nodeSize[node];
+    if (nodeSize_.count(node) > 0) {
+      return nodeSize_[node];
     }
     return 0;
   }
@@ -343,13 +317,25 @@ class WriterContext : public CompressionBufferPool {
         getConfig(Config::COMPRESSION_BLOCK_SIZE_EXTEND_RATIO));
   }
 
-  // The additional memory usage of writers during flush typically comes from
-  // flushing remaining data to output buffer, or all of it in the case of
-  // dictionary encoding. In either case, the maximal memory consumption is
-  // O(k * raw data size). The actual coefficient k can differ
-  // from encoding to encoding, and thus should be schema aware.
+  /// The additional memory usage of writers during flush typically comes from
+  /// flushing remaining data to output buffer, or all of it in the case of
+  /// dictionary encoding. In either case, the maximal memory consumption is
+  /// O(k * raw data size). The actual coefficient k can differ
+  /// from encoding to encoding, and thus should be schema aware.
   size_t getEstimatedFlushOverhead(size_t dataRawSize) const {
     return ceil(flushOverheadRatioTracker_.getEstimatedRatio() * dataRawSize);
+  }
+
+  /// We currently use previous stripe raw size as the proxy for the expected
+  /// stripe raw size. For the first stripe, we are more conservative about
+  /// flush overhead memory unless we know otherwise, e.g. perhaps from
+  /// encoding DB work.
+  /// This can be fitted linearly just like flush overhead or perhaps
+  /// figured out from the schema.
+  /// This can be simplified with Slice::estimateMemory().
+  size_t estimateNextWriteSize(size_t numRows) const {
+    // This is 0 for first slice. We are assuming reasonable input for now.
+    return folly::to<size_t>(ceil(getAverageRowSize() * numRows));
   }
 
   bool checkLowMemoryMode() const {
@@ -582,6 +568,8 @@ class WriterContext : public CompressionBufferPool {
     return *selectivityVector_;
   }
 
+  void abort();
+
   dwio::common::DataBuffer<char>* testingCompressionBuffer() const {
     return compressionBuffer_.get();
   }
@@ -643,7 +631,7 @@ class WriterContext : public CompressionBufferPool {
   std::unique_ptr<velox::SelectivityVector> selectivityVector_;
 
   std::unique_ptr<encryption::EncryptionHandler> handler_;
-  folly::F14FastMap<uint32_t, uint64_t> nodeSize;
+  folly::F14FastMap<uint32_t, uint64_t> nodeSize_;
   CompressionRatioTracker compressionRatioTracker_;
   FlushOverheadRatioTracker flushOverheadRatioTracker_;
   // This might not be the best idea if client actually sends batches

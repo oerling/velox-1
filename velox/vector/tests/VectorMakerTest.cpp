@@ -19,6 +19,7 @@
 #include "velox/common/base/VeloxException.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using facebook::velox::test::VectorMaker;
@@ -231,7 +232,7 @@ TEST_F(VectorMakerTest, arrayVector) {
   EXPECT_EQ(9, arrayVector->offsetAt(4));
 
   // Validate actual vector elements.
-  auto elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
+  auto* elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
 
   EXPECT_FALSE(elementsVector->mayHaveNulls());
 
@@ -261,7 +262,7 @@ TEST_F(VectorMakerTest, arrayVectorString) {
   EXPECT_EQ(4, arrayVector->offsetAt(1));
 
   // Validate actual vector elements.
-  auto elementsVector = arrayVector->elements()->asFlatVector<StringView>();
+  auto* elementsVector = arrayVector->elements()->asFlatVector<StringView>();
 
   EXPECT_FALSE(elementsVector->mayHaveNulls());
 
@@ -305,7 +306,7 @@ TEST_F(VectorMakerTest, nullableArrayVector) {
   EXPECT_EQ(8, arrayVector->offsetAt(4));
 
   // Validate actual vector elements.
-  auto elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
+  auto* elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
 
   EXPECT_TRUE(elementsVector->mayHaveNulls());
 
@@ -370,7 +371,7 @@ TEST_F(VectorMakerTest, arrayVectorWithNulls) {
   }
 
   // Validate actual vector elements.
-  auto elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
+  auto* elementsVector = arrayVector->elements()->asFlatVector<int64_t>();
   EXPECT_FALSE(elementsVector->mayHaveNulls());
 
   vector_size_t idx = 0;
@@ -379,6 +380,139 @@ TEST_F(VectorMakerTest, arrayVectorWithNulls) {
       EXPECT_EQ(i, elementsVector->valueAt(idx++));
     }
   }
+}
+
+TEST_F(VectorMakerTest, arrayVectorFromJson) {
+  auto arrayVector = maker_.arrayVectorFromJson<int32_t>({
+      "null",
+      "[]",
+      "[1, 2, 3]",
+      "[1, 2, null, 4]",
+      "[null, null]",
+  });
+
+  EXPECT_EQ(*arrayVector->type(), *ARRAY(INTEGER()));
+  EXPECT_TRUE(arrayVector->mayHaveNulls());
+
+  EXPECT_EQ(5, arrayVector->size());
+
+  auto* elements = arrayVector->elements()->as<FlatVector<int32_t>>();
+  EXPECT_TRUE(elements->mayHaveNulls());
+
+  // Null array.
+  EXPECT_TRUE(arrayVector->isNullAt(0));
+
+  // Empty array.
+  EXPECT_FALSE(arrayVector->isNullAt(1));
+  EXPECT_EQ(0, arrayVector->sizeAt(1));
+
+  // [1, 2, 3].
+  EXPECT_FALSE(arrayVector->isNullAt(2));
+  EXPECT_EQ(3, arrayVector->sizeAt(2));
+  EXPECT_EQ(0, arrayVector->offsetAt(2));
+
+  for (auto i = 0; i < 3; ++i) {
+    EXPECT_FALSE(elements->isNullAt(i));
+    EXPECT_EQ(i + 1, elements->valueAt(i));
+  }
+
+  // [1, 2, null, 4].
+  EXPECT_FALSE(arrayVector->isNullAt(3));
+  EXPECT_EQ(4, arrayVector->sizeAt(3));
+  EXPECT_EQ(3, arrayVector->offsetAt(3));
+
+  for (auto i = 0; i < 4; ++i) {
+    auto index = 3 + i;
+    if (i == 2) {
+      EXPECT_TRUE(elements->isNullAt(index));
+    } else {
+      EXPECT_FALSE(elements->isNullAt(index));
+      EXPECT_EQ(i + 1, elements->valueAt(index));
+    }
+  }
+
+  // [null, null].
+  EXPECT_FALSE(arrayVector->isNullAt(4));
+  EXPECT_EQ(2, arrayVector->sizeAt(4));
+  EXPECT_EQ(7, arrayVector->offsetAt(4));
+
+  for (auto i = 0; i < 2; ++i) {
+    EXPECT_TRUE(elements->isNullAt(7 + i));
+  }
+
+  auto dates = maker_.arrayVectorFromJson<int32_t>(
+      {
+          "null",
+          "[]",
+          "[1, 2, 3]",
+          "[1, 2, null, 4]",
+          "[null, null]",
+      },
+      ARRAY(DATE()));
+
+  EXPECT_EQ(*dates->type(), *ARRAY(DATE()));
+  EXPECT_TRUE(dates->mayHaveNulls());
+  EXPECT_EQ(5, dates->size());
+
+  for (auto i = 0; i < 5; ++i) {
+    EXPECT_TRUE(dates->equalValueAt(arrayVector.get(), i, i));
+  }
+}
+
+TEST_F(VectorMakerTest, nestedArrayVectorFromJson) {
+  auto arrayVector = maker_.nestedArrayVectorFromJson<int32_t>(
+      {"[[1, 2], [2, 3, 4], [null, 7]]",
+       "[[1, 3, 7, 9], []]",
+       "[]",
+       "[null]",
+       "[[1, 2, null], [], null]",
+       "null",
+       "[[1,2,3],[],[4,5]]"});
+
+  VectorPtr expectedVector = maker_.arrayVectorNullable<int32_t>({
+      {{1, 2}},
+      {{2, 3, 4}},
+      {{std::nullopt, 7}},
+      {{1, 3, 7, 9}},
+      {{}},
+      {{std::nullopt}},
+      {{1, 2, std::nullopt}},
+      {{}},
+      std::nullopt,
+      {{1, 2, 3}},
+      {{}},
+      {{4, 5}},
+  });
+
+  VectorPtr elementsOfArrayVector = arrayVector->elements();
+
+  EXPECT_EQ(*arrayVector->elements()->type(), *ARRAY(INTEGER()));
+  EXPECT_TRUE(arrayVector->elements()->mayHaveNulls());
+
+  auto rowOfArrays = arrayVector->elements();
+
+  // 7 rows in array of arrays
+  EXPECT_EQ(7, arrayVector->size());
+
+  EXPECT_EQ(3, arrayVector->sizeAt(0));
+  EXPECT_EQ(2, arrayVector->sizeAt(1));
+
+  // Empty inner array
+  EXPECT_EQ(0, arrayVector->sizeAt(2));
+  EXPECT_FALSE(arrayVector->isNullAt(2));
+
+  // inner array with null
+  EXPECT_EQ(1, arrayVector->sizeAt(3));
+  EXPECT_FALSE(arrayVector->isNullAt(3));
+
+  EXPECT_EQ(3, arrayVector->sizeAt(4));
+
+  EXPECT_EQ(0, arrayVector->sizeAt(5));
+  EXPECT_TRUE(arrayVector->isNullAt(5));
+
+  EXPECT_EQ(3, arrayVector->sizeAt(6));
+
+  test::assertEqualVectors(expectedVector, elementsOfArrayVector);
 }
 
 TEST_F(VectorMakerTest, arrayOfRowVector) {
@@ -412,7 +546,7 @@ TEST_F(VectorMakerTest, arrayOfRowVector) {
   EXPECT_EQ(3, arrayVector->offsetAt(2));
 
   // Validate actual vector elements.
-  auto elementsVector = arrayVector->elements()->as<RowVector>();
+  auto* elementsVector = arrayVector->elements()->as<RowVector>();
 
   EXPECT_FALSE(elementsVector->mayHaveNulls());
   EXPECT_EQ(5, elementsVector->size());
@@ -434,6 +568,33 @@ TEST_F(VectorMakerTest, arrayOfRowVector) {
   EXPECT_EQ("green", colorVector->valueAt(2).str());
   EXPECT_EQ("green", colorVector->valueAt(3).str());
   EXPECT_EQ("purple", colorVector->valueAt(4).str());
+}
+
+TEST_F(VectorMakerTest, arrayOfRowVectorFromTuples) {
+  std::vector<std::vector<std::optional<std::tuple<int32_t, std::string>>>>
+      data = {
+          {{{1, "red"}}, {{2, "blue"}}, {{3, "green"}}},
+          {},
+          {std::nullopt},
+          {{{4, "green"}}, {{-5, "purple"}}},
+      };
+
+  auto arrayVector = maker_.arrayOfRowVector(data, ROW({INTEGER(), VARCHAR()}));
+
+  std::vector<vector_size_t> offsets{0, 3, 3, 4};
+  auto elements = maker_.rowVector({
+      maker_.flatVector<int32_t>({1, 2, 3, 0, 4, -5}),
+      maker_.flatVector<std::string>(
+          {"red", "blue", "green", "n/a", "green", "purple"}),
+  });
+  elements->setNull(3, true);
+  auto expected = maker_.arrayVector(offsets, elements);
+
+  ASSERT_EQ(expected->size(), arrayVector->size());
+  ASSERT_EQ(*expected->type(), *arrayVector->type());
+  for (auto i = 0; i < expected->size(); i++) {
+    ASSERT_TRUE(expected->equalValueAt(arrayVector.get(), i, i));
+  }
 }
 
 TEST_F(VectorMakerTest, arrayVectorUsingBaseVector) {
@@ -570,6 +731,78 @@ TEST_F(VectorMakerTest, mapVectorStringString) {
 
   EXPECT_EQ("c", keys->valueAt(4));
   EXPECT_EQ("test", values->valueAt(4));
+}
+
+TEST_F(VectorMakerTest, mapVectorFromJson) {
+  auto mapVector = maker_.mapVectorFromJson<int32_t, double>({
+      "null",
+      "{}",
+      "{1: 10.1, 2: 20.2, 3: 30.3}",
+      "{1: 10.1, 2: 20.2, 3: null, 4: 40.4}",
+      "{1: null, 2: null}",
+  });
+
+  MapVector::canonicalize(mapVector);
+
+  EXPECT_EQ(5, mapVector->size());
+  EXPECT_EQ(*MAP(INTEGER(), DOUBLE()), *mapVector->type());
+  EXPECT_TRUE(mapVector->mayHaveNulls());
+
+  auto* keys = mapVector->mapKeys()->as<SimpleVector<int32_t>>();
+  auto* values = mapVector->mapValues()->as<SimpleVector<double>>();
+
+  // Null map.
+  EXPECT_TRUE(mapVector->isNullAt(0));
+
+  // Empty map.
+  EXPECT_FALSE(mapVector->isNullAt(1));
+  EXPECT_EQ(0, mapVector->sizeAt(1));
+
+  // {1: 10.1, 2: 20.2, 3: 30.3}.
+  EXPECT_FALSE(mapVector->isNullAt(2));
+  EXPECT_EQ(3, mapVector->sizeAt(2));
+  EXPECT_EQ(0, mapVector->offsetAt(2));
+
+  for (auto i = 0; i < 3; ++i) {
+    EXPECT_FALSE(keys->isNullAt(i));
+    EXPECT_EQ(i + 1, keys->valueAt(i));
+
+    EXPECT_FALSE(values->isNullAt(i));
+    EXPECT_DOUBLE_EQ((i + 1) * 10.1, values->valueAt(i));
+  }
+
+  // {1: 10.1, 2: 20.2, 3: null, 4: 40.4}.
+  EXPECT_FALSE(mapVector->isNullAt(3));
+  EXPECT_EQ(4, mapVector->sizeAt(3));
+  EXPECT_EQ(3, mapVector->offsetAt(3));
+
+  for (auto i = 0; i < 4; ++i) {
+    auto index = i + 3;
+
+    EXPECT_FALSE(keys->isNullAt(index));
+    EXPECT_EQ(i + 1, keys->valueAt(index));
+
+    if (i == 2) {
+      EXPECT_TRUE(values->isNullAt(index));
+    } else {
+      EXPECT_FALSE(values->isNullAt(index));
+      EXPECT_DOUBLE_EQ((i + 1) * 10.1, values->valueAt(index));
+    }
+  }
+
+  // {1: null, 2: null}.
+  EXPECT_FALSE(mapVector->isNullAt(4));
+  EXPECT_EQ(2, mapVector->sizeAt(4));
+  EXPECT_EQ(7, mapVector->offsetAt(4));
+
+  for (auto i = 0; i < 2; ++i) {
+    auto index = i + 7;
+
+    EXPECT_FALSE(keys->isNullAt(index));
+    EXPECT_EQ(i + 1, keys->valueAt(index));
+
+    EXPECT_TRUE(values->isNullAt(index));
+  }
 }
 
 TEST_F(VectorMakerTest, biasVector) {

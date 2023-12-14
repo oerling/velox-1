@@ -17,6 +17,8 @@
 
 #include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/RuntimeMetrics.h"
+#include "velox/common/base/SpillConfig.h"
+#include "velox/common/base/SpillStats.h"
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/future/VeloxPromise.h"
@@ -129,25 +131,38 @@ FOLLY_ALWAYS_INLINE std::ostream& operator<<(
 /// Return a commit strategy of the given string encoding.
 CommitStrategy stringToCommitStrategy(const std::string& strategy);
 
+/// Writes data received from table writer operator into different partitions
+/// based on the specific table layout. The actual implementation doesn't need
+/// to be thread-safe.
 class DataSink {
  public:
+  struct Stats {
+    uint64_t numWrittenBytes{0};
+    uint32_t numWrittenFiles{0};
+    common::SpillStats spillStats;
+
+    bool empty() const;
+
+    std::string toString() const;
+  };
+
   virtual ~DataSink() = default;
 
   /// Add the next data (vector) to be written. This call is blocking.
   /// TODO maybe at some point we want to make it async.
   virtual void appendData(RowVectorPtr input) = 0;
 
-  /// Returns the number of bytes written on disk by this data sink so far.
-  virtual int64_t getCompletedBytes() const {
-    return 0;
-  }
+  /// Returns the stats of this data sink.
+  virtual Stats stats() const = 0;
 
   /// Called once after all data has been added via possibly multiple calls to
-  /// appendData(). Could return data in the string form that would be included
-  /// in the output. After calling this function, only close() could be called.
-  virtual std::vector<std::string> finish() const = 0;
+  /// appendData(). The function returns the metadata of written data in string
+  /// form. We don't expect any appendData() calls on a closed data sink object.
+  virtual std::vector<std::string> close() = 0;
 
-  virtual void close() = 0;
+  /// Called to abort this data sink object and we don't expect any appendData()
+  /// calls on an aborted data sink object.
+  virtual void abort() = 0;
 };
 
 class DataSource {
@@ -222,7 +237,8 @@ class ConnectorQueryCtx {
   ConnectorQueryCtx(
       memory::MemoryPool* operatorPool,
       memory::MemoryPool* connectorPool,
-      const Config* connectorConfig,
+      const Config* sessionProperties,
+      const common::SpillConfig* spillConfig,
       std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator,
       cache::AsyncDataCache* cache,
       const std::string& queryId,
@@ -231,14 +247,17 @@ class ConnectorQueryCtx {
       int driverId)
       : operatorPool_(operatorPool),
         connectorPool_(connectorPool),
-        config_(connectorConfig),
+        sessionProperties_(sessionProperties),
+        spillConfig_(spillConfig),
         expressionEvaluator_(std::move(expressionEvaluator)),
         cache_(cache),
         scanId_(fmt::format("{}.{}", taskId, planNodeId)),
         queryId_(queryId),
         taskId_(taskId),
         driverId_(driverId),
-        planNodeId_(planNodeId) {}
+        planNodeId_(planNodeId) {
+    VELOX_CHECK_NOT_NULL(sessionProperties);
+  }
 
   /// Returns the associated operator's memory pool which is a leaf kind of
   /// memory pool, used for direct memory allocation use.
@@ -253,8 +272,12 @@ class ConnectorQueryCtx {
     return connectorPool_;
   }
 
-  const Config* FOLLY_NONNULL config() const {
-    return config_;
+  const Config* sessionProperties() const {
+    return sessionProperties_;
+  }
+
+  const common::SpillConfig* spillConfig() const {
+    return spillConfig_;
   }
 
   core::ExpressionEvaluator* expressionEvaluator() const {
@@ -290,9 +313,10 @@ class ConnectorQueryCtx {
   }
 
  private:
-  memory::MemoryPool* operatorPool_;
-  memory::MemoryPool* connectorPool_;
-  const Config* FOLLY_NONNULL config_;
+  memory::MemoryPool* const operatorPool_;
+  memory::MemoryPool* const connectorPool_;
+  const Config* const sessionProperties_;
+  const common::SpillConfig* const spillConfig_;
   std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator_;
   cache::AsyncDataCache* cache_;
   const std::string scanId_;
@@ -304,10 +328,7 @@ class ConnectorQueryCtx {
 
 class Connector {
  public:
-  explicit Connector(
-      const std::string& id,
-      std::shared_ptr<const Config> properties)
-      : id_(id), properties_(std::move(properties)) {}
+  explicit Connector(const std::string& id) : id_(id) {}
 
   virtual ~Connector() = default;
 
@@ -315,8 +336,8 @@ class Connector {
     return id_;
   }
 
-  const std::shared_ptr<const Config>& connectorProperties() const {
-    return properties_;
+  virtual const std::shared_ptr<const Config>& connectorConfig() const {
+    VELOX_NYI("connectorConfig is not supported yet");
   }
 
   // Returns true if this connector would accept a filter dynamically generated
@@ -331,7 +352,7 @@ class Connector {
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) = 0;
+      ConnectorQueryCtx* connectorQueryCtx) = 0;
 
   // Returns true if addSplit of DataSource can use 'dataSource' from
   // ConnectorSplit in addSplit(). If so, TableScan can preload splits
@@ -360,20 +381,18 @@ class Connector {
   }
 
  private:
-  static void unregisterTracker(cache::ScanTracker* FOLLY_NONNULL tracker);
+  static void unregisterTracker(cache::ScanTracker* tracker);
 
   const std::string id_;
 
   static folly::Synchronized<
       std::unordered_map<std::string_view, std::weak_ptr<cache::ScanTracker>>>
       trackers_;
-
-  const std::shared_ptr<const Config> properties_;
 };
 
 class ConnectorFactory {
  public:
-  explicit ConnectorFactory(const char* FOLLY_NONNULL name) : name_(name) {}
+  explicit ConnectorFactory(const char* name) : name_(name) {}
 
   virtual ~ConnectorFactory() = default;
 
@@ -386,7 +405,7 @@ class ConnectorFactory {
 
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
-      std::shared_ptr<const Config> properties,
+      std::shared_ptr<const Config> config,
       folly::Executor* FOLLY_NULLABLE executor = nullptr) = 0;
 
  private:

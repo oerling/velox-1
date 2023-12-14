@@ -35,8 +35,11 @@ using ColumnHandleMap =
 class HiveConnectorTestBase : public OperatorTestBase {
  public:
   HiveConnectorTestBase();
+
   void SetUp() override;
   void TearDown() override;
+
+  void resetHiveConnector(const std::shared_ptr<const Config>& config);
 
   void writeToFile(const std::string& filePath, RowVectorPtr vector);
 

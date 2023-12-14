@@ -16,6 +16,7 @@
 #include "velox/parse/Expressions.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/Expressions.h"
+#include "velox/exec/Aggregate.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/functions/FunctionRegistry.h"
 #include "velox/type/Type.h"
@@ -48,8 +49,8 @@ TypePtr resolveTypeImpl(
 namespace {
 std::shared_ptr<const core::CastTypedExpr> makeTypedCast(
     const TypePtr& type,
-    const std::vector<TypedExprPtr>& inputs) {
-  return std::make_shared<const core::CastTypedExpr>(type, inputs, false);
+    const TypedExprPtr& input) {
+  return std::make_shared<const core::CastTypedExpr>(type, input, false);
 }
 
 std::vector<TypePtr> implicitCastTargets(const TypePtr& type) {
@@ -99,7 +100,7 @@ std::vector<TypedExprPtr> genImplicitCasts(const TypedExprPtr& typedExpr) {
   std::vector<TypedExprPtr> implicitCasts;
   implicitCasts.reserve(targetTypes.size());
   for (auto targetType : targetTypes) {
-    implicitCasts.emplace_back(makeTypedCast(targetType, {typedExpr}));
+    implicitCasts.emplace_back(makeTypedCast(targetType, typedExpr));
   }
   return implicitCasts;
 }
@@ -320,35 +321,60 @@ TypedExprPtr Expressions::resolveLambdaExpr(
       signature, inferTypes(body, lambdaRow, pool));
 }
 
+namespace {
+bool isLambdaSignature(
+    const exec::FunctionSignature* signature,
+    const std::shared_ptr<const CallExpr>& callExpr) {
+  if (!hasLambdaArgument(*signature)) {
+    return false;
+  }
+
+  const auto numArguments = callExpr->getInputs().size();
+
+  if (numArguments != signature->argumentTypes().size()) {
+    return false;
+  }
+
+  bool match = true;
+  for (auto i = 0; i < numArguments; ++i) {
+    if (auto lambda = dynamic_cast<const core::LambdaExpr*>(
+            callExpr->getInputs()[i].get())) {
+      const auto numLambdaInputs = lambda->inputNames().size();
+      const auto& argumentType = signature->argumentTypes()[i];
+      if (!isLambdaArgument(argumentType, numLambdaInputs)) {
+        match = false;
+        break;
+      }
+    }
+  }
+
+  return match;
+}
+
+const exec::FunctionSignature* findLambdaSignature(
+    const std::vector<std::shared_ptr<exec::AggregateFunctionSignature>>&
+        signatures,
+    const std::shared_ptr<const CallExpr>& callExpr) {
+  const exec::FunctionSignature* matchingSignature = nullptr;
+  for (const auto& signature : signatures) {
+    if (isLambdaSignature(signature.get(), callExpr)) {
+      VELOX_CHECK_NULL(
+          matchingSignature,
+          "Cannot resolve ambiguous lambda function signatures for {}.",
+          callExpr->getFunctionName());
+      matchingSignature = signature.get();
+    }
+  }
+
+  return matchingSignature;
+}
+
 const exec::FunctionSignature* findLambdaSignature(
     const std::vector<const exec::FunctionSignature*>& signatures,
     const std::shared_ptr<const CallExpr>& callExpr) {
   const exec::FunctionSignature* matchingSignature = nullptr;
   for (const auto& signature : signatures) {
-    if (!hasLambdaArgument(*signature)) {
-      continue;
-    }
-
-    const auto numArguments = callExpr->getInputs().size();
-
-    if (numArguments != signature->argumentTypes().size()) {
-      continue;
-    }
-
-    bool match = true;
-    for (auto i = 0; i < numArguments; ++i) {
-      const auto& argumentType = signature->argumentTypes()[i];
-      if (auto lambda = dynamic_cast<const core::LambdaExpr*>(
-              callExpr->getInputs()[i].get())) {
-        const auto numLambdaInputs = lambda->inputNames().size();
-        if (!isLambdaArgument(argumentType, numLambdaInputs)) {
-          match = false;
-          break;
-        }
-      }
-    }
-
-    if (match) {
+    if (isLambdaSignature(signature, callExpr)) {
       VELOX_CHECK_NULL(
           matchingSignature,
           "Cannot resolve ambiguous lambda function signatures for {}.",
@@ -360,18 +386,36 @@ const exec::FunctionSignature* findLambdaSignature(
   return matchingSignature;
 }
 
+// Assumes no overlap in function names between scalar and aggregate functions,
+// i.e. 'foo' is either a scalar or aggregate function.
+const exec::FunctionSignature* findLambdaSignature(
+    const std::shared_ptr<const CallExpr>& callExpr) {
+  // Look for a scalar lambda function.
+  auto allSignatures = getFunctionSignatures();
+  auto it = allSignatures.find(callExpr->getFunctionName());
+
+  if (it != allSignatures.end()) {
+    return findLambdaSignature(it->second, callExpr);
+  }
+
+  // Look for an aggregate lambda function.
+  if (auto signatures =
+          exec::getAggregateFunctionSignatures(callExpr->getFunctionName())) {
+    return findLambdaSignature(signatures.value(), callExpr);
+  }
+
+  return nullptr;
+}
+
+} // namespace
+
 // static
 TypedExprPtr Expressions::tryResolveCallWithLambdas(
     const std::shared_ptr<const CallExpr>& callExpr,
     const TypePtr& inputRow,
     memory::MemoryPool* pool) {
-  auto allSignatures = getFunctionSignatures();
-  auto it = allSignatures.find(callExpr->getFunctionName());
-  if (it == allSignatures.end()) {
-    return nullptr;
-  }
+  auto signature = findLambdaSignature(callExpr);
 
-  auto signature = findLambdaSignature(it->second, callExpr);
   if (signature == nullptr) {
     return nullptr;
   }

@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
+#include <folly/executors/IOThreadPoolExecutor.h>
 #include "velox/common/testutil/TestValue.h"
-#include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/OutputBufferManager.h"
 
 namespace facebook::velox::exec::test {
 namespace {
@@ -29,10 +30,6 @@ class LocalExchangeSource : public exec::ExchangeSource {
       memory::MemoryPool* pool)
       : ExchangeSource(taskId, destination, queue, pool) {}
 
-  bool supportsFlowControlV2() const override {
-    return true;
-  }
-
   bool shouldRequestLocked() override {
     if (atEnd_) {
       return false;
@@ -42,38 +39,50 @@ class LocalExchangeSource : public exec::ExchangeSource {
 
   folly::SemiFuture<Response> request(
       uint32_t maxBytes,
-      uint32_t /*maxWaitSeconds*/) override {
+      uint32_t maxWaitSeconds) override {
     ++numRequests_;
 
     auto promise = VeloxPromise<Response>("LocalExchangeSource::request");
     auto future = promise.getSemiFuture();
 
-    if (numRequests_ % 2 == 0) {
-      {
-        std::lock_guard<std::mutex> l(queue_->mutex());
-        requestPending_ = false;
-      }
-      // Simulate no-data.
-      promise.setValue(Response{0, false});
-      return future;
-    }
-
     promise_ = std::move(promise);
 
-    auto buffers = PartitionedOutputBufferManager::getInstance().lock();
-    VELOX_CHECK_NOT_NULL(buffers, "invalid PartitionedOutputBufferManager");
+    auto buffers = OutputBufferManager::getInstance().lock();
+    VELOX_CHECK_NOT_NULL(buffers, "invalid OutputBufferManager");
     VELOX_CHECK(requestPending_);
     auto requestedSequence = sequence_;
     auto self = shared_from_this();
-    buffers->getData(
-        taskId_,
-        destination_,
-        maxBytes,
-        sequence_,
-        // Since this lambda may outlive 'this', we need to capture a
-        // shared_ptr to the current object (self).
-        [self, requestedSequence, buffers, this](
+    auto hasBeenCalled = std::make_shared<bool>(false);
+    static std::mutex resultCallbackMutex;
+    // Since this lambda may outlive 'this', we need to capture a
+    // shared_ptr to the current object (self).
+    auto resultCallback =
+        [self, requestedSequence, buffers, hasBeenCalled, this](
             std::vector<std::unique_ptr<folly::IOBuf>> data, int64_t sequence) {
+          {
+            std::lock_guard<std::mutex> l(resultCallbackMutex);
+            // This is  called when data is found and when this times out. Only
+            // the first of the two runs the body of the function.
+            if (*hasBeenCalled) {
+              return;
+            }
+            *hasBeenCalled = true;
+          }
+          if (data.empty()) {
+            common::testutil::TestValue::adjust(
+                "facebook::velox::exec::test::LocalExchangeSource::timeout",
+                this);
+            VeloxPromise<Response> requestPromise;
+            {
+              std::lock_guard<std::mutex> l(queue_->mutex());
+              requestPending_ = false;
+              requestPromise = std::move(promise_);
+            }
+            if (!requestPromise.isFulfilled()) {
+              requestPromise.setValue(Response{0, false});
+            }
+            return;
+          }
           if (requestedSequence > sequence) {
             VLOG(2) << "Receives earlier sequence than requested: task "
                     << taskId_ << ", destination " << destination_
@@ -142,7 +151,21 @@ class LocalExchangeSource : public exec::ExchangeSource {
           if (!requestPromise.isFulfilled()) {
             requestPromise.setValue(Response{totalBytes, atEnd_});
           }
+        };
+
+    // Call the callback in any case after timeout. 'future' returned
+    // from this will be realized with no error but empty data. Also,
+    // the future is a SemiFuture, so setting a timeout on the future
+    // in this function is not possible.
+    auto& exec = folly::QueuedImmediateExecutor::instance();
+    std::move(folly::futures::sleep(std::chrono::seconds(maxWaitSeconds)))
+        .via(&exec)
+        .thenValue([resultCallback, requestedSequence](auto /*ignore*/) {
+          resultCallback({}, requestedSequence);
         });
+
+    buffers->getData(
+        taskId_, destination_, maxBytes, sequence_, resultCallback);
 
     return future;
   }
@@ -150,7 +173,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
   void close() override {
     checkSetRequestPromise();
 
-    auto buffers = PartitionedOutputBufferManager::getInstance().lock();
+    auto buffers = OutputBufferManager::getInstance().lock();
     buffers->deleteResults(taskId_, destination_);
   }
 
@@ -158,6 +181,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
     return {
         {"localExchangeSource.numPages", numPages_},
         {"localExchangeSource.totalBytes", totalBytes_},
+        {ExchangeClient::kBackgroundCpuTimeMs, 123},
     };
   }
 
@@ -177,8 +201,8 @@ class LocalExchangeSource : public exec::ExchangeSource {
   }
 
   // Records the total number of pages fetched from sources.
-  int64_t numPages_{0};
-  uint64_t totalBytes_{0};
+  std::atomic<int64_t> numPages_{0};
+  std::atomic<uint64_t> totalBytes_{0};
   VeloxPromise<Response> promise_{VeloxPromise<Response>::makeEmpty()};
   int32_t numRequests_{0};
 };
@@ -193,6 +217,8 @@ std::unique_ptr<ExchangeSource> createLocalExchangeSource(
   if (strncmp(taskId.c_str(), "local://", 8) == 0) {
     return std::make_unique<LocalExchangeSource>(
         taskId, destination, std::move(queue), pool);
+  } else if (strncmp(taskId.c_str(), "bad://", 6) == 0) {
+    throw std::runtime_error("Testing error");
   }
   return nullptr;
 }

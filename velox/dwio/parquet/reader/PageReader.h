@@ -16,15 +16,17 @@
 
 #pragma once
 
-#include <arrow/util/rle_encoding.h>
+#include "velox/common/compression/Compression.h"
 #include "velox/dwio/common/BitConcatenation.h"
 #include "velox/dwio/common/DirectDecoder.h"
 #include "velox/dwio/common/SelectiveColumnReader.h"
+#include "velox/dwio/common/compression/Compression.h"
 #include "velox/dwio/parquet/reader/BooleanDecoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/dwio/parquet/reader/RleBpDataDecoder.h"
 #include "velox/dwio/parquet/reader/StringDecoder.h"
-#include "velox/vector/BaseVector.h"
+
+#include <arrow/util/rle_encoding.h>
 
 namespace facebook::velox::parquet {
 
@@ -36,12 +38,12 @@ class PageReader {
   PageReader(
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
-      ParquetTypeWithIdPtr nodeType,
+      ParquetTypeWithIdPtr fileType,
       thrift::CompressionCodec::type codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
-        type_(std::move(nodeType)),
+        type_(std::move(fileType)),
         maxRepeat_(type_->maxRepeat_),
         maxDefine_(type_->maxDefine_),
         isTopLevel_(maxRepeat_ == 0 && maxDefine_ <= 1),
@@ -74,14 +76,14 @@ class PageReader {
   /// levels.
   void decodeRepDefs(int32_t numTopLevelRows);
 
-  /// Returns lengths and/or nulls   from 'begin' to 'end' for the level of
+  /// Returns lengths and/or nulls from 'begin' to 'end' for the level of
   /// 'info' using 'mode'. 'maxItems' is the maximum number of nulls and lengths
   /// to produce. 'lengths' is only filled for mode kList. 'nulls' is filled
   /// from bit position 'nullsStartIndex'. Returns the number of lengths/nulls
   /// filled.
   int32_t getLengthsAndNulls(
       LevelMode mode,
-      const ::parquet::internal::LevelInfo& info,
+      const arrow::LevelInfo& info,
       int32_t begin,
       int32_t end,
       int32_t maxItems,
@@ -196,10 +198,12 @@ class PageReader {
   // straddles buffers. Allocates or resizes 'copy' as needed.
   const char* FOLLY_NONNULL readBytes(int32_t size, BufferPtr& copy);
 
+  common::CompressionKind thriftCodecToCompressionKind();
+
   // Decompresses data starting at 'pageData_', consuming 'compressedsize' and
-  // producing up to 'uncompressedSize' bytes. The The start of the decoding
-  // result is returned. an intermediate copy may be made in 'uncompresseddata_'
-  const char* FOLLY_NONNULL uncompressData(
+  // producing up to 'uncompressedSize' bytes. The start of the decoding
+  // result is returned. an intermediate copy may be made in 'decompresseddata_'
+  const char* FOLLY_NONNULL decompressData(
       const char* FOLLY_NONNULL pageData,
       uint32_t compressedSize,
       uint32_t uncompressedSize);
@@ -352,8 +356,8 @@ class PageReader {
   // Decoder for single bit definition levels. the arrow decoders are used for
   // multibit levels pending fixing RleBpDecoder for the case.
   std::unique_ptr<RleBpDecoder> defineDecoder_;
-  std::unique_ptr<arrow::util::RleDecoder> repeatDecoder_;
-  std::unique_ptr<arrow::util::RleDecoder> wideDefineDecoder_;
+  std::unique_ptr<::arrow::util::RleDecoder> repeatDecoder_;
+  std::unique_ptr<::arrow::util::RleDecoder> wideDefineDecoder_;
 
   // True for a leaf column for which repdefs are loaded for the whole column
   // chunk. This is typically the leaftmost leaf of a list. Other leaves under
@@ -405,10 +409,10 @@ class PageReader {
   // Copy of data if data straddles buffer boundary.
   BufferPtr pageBuffer_;
 
-  // Uncompressed data for the page. Rep-def-data in V1, data alone in V2.
-  BufferPtr uncompressedData_;
+  // decompressed data for the page. Rep-def-data in V1, data alone in V2.
+  BufferPtr decompressedData_;
 
-  // First byte of uncompressed encoded data. Contains the encoded data as a
+  // First byte of decompressed encoded data. Contains the encoded data as a
   // contiguous run of bytes.
   const char* FOLLY_NULLABLE pageData_{nullptr};
 
@@ -462,7 +466,7 @@ class PageReader {
   dwio::common::BitConcatenation nullConcatenation_;
 
   // LevelInfo for reading nulls for the leaf column 'this' represents.
-  ::parquet::internal::LevelInfo leafInfo_;
+  arrow::LevelInfo leafInfo_;
 
   // Base values of dictionary when reading a string dictionary.
   VectorPtr dictionaryValues_;
@@ -474,6 +478,22 @@ class PageReader {
   std::unique_ptr<BooleanDecoder> booleanDecoder_;
   // Add decoders for other encodings here.
 };
+
+FOLLY_ALWAYS_INLINE dwio::common::compression::CompressionOptions
+getParquetDecompressionOptions(common::CompressionKind kind) {
+  dwio::common::compression::CompressionOptions options;
+
+  if (kind == common::CompressionKind_ZLIB ||
+      kind == common::CompressionKind_GZIP) {
+    options.format.zlib.windowBits =
+        dwio::common::compression::Compressor::PARQUET_ZLIB_WINDOW_BITS;
+  } else if (
+      kind == common::CompressionKind_LZ4 ||
+      kind == common::CompressionKind_LZO) {
+    options.format.lz4_lzo.isHadoopFrameFormat = true;
+  }
+  return options;
+}
 
 template <typename Visitor>
 void PageReader::readWithVisitor(Visitor& visitor) {

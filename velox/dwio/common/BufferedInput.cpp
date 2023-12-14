@@ -60,7 +60,16 @@ void BufferedInput::load(const LogType logType) {
   } else {
     for (const auto& region : regions_) {
       auto allocated = allocate(region);
-      input_->read(allocated.data(), allocated.size(), region.offset, logType);
+      uint64_t usec = 0;
+      {
+        MicrosecondTimer timer(&usec);
+        input_->read(
+            allocated.data(), allocated.size(), region.offset, logType);
+      }
+      if (auto* stats = input_->getStats()) {
+        stats->read().increment(region.length);
+        stats->queryThreadIoLatency().increment(usec);
+      }
     }
   }
 
@@ -88,7 +97,13 @@ std::unique_ptr<SeekableInputStream> BufferedInput::enqueue(
       // Save "i", the position in which this region was enqueued. This will
       // help faster lookup using enqueuedToBufferOffset_ later.
       [region, this, i = regions_.size() - 1]() {
-        return readInternal(region.offset, region.length, i);
+        auto result = readInternal(region.offset, region.length, i);
+        VELOX_CHECK(
+            std::get<1>(result) != MAX_UINT64,
+            "Fail to read region offset={} length={}",
+            region.offset,
+            region.length);
+        return result;
       });
 }
 

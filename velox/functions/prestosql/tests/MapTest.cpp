@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <optional>
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
@@ -56,6 +57,36 @@ TEST_F(MapTest, someNulls) {
 
   auto result = evaluate("map(c0, c1)", makeRowVector({keys, values}));
   assertEqualVectors(expectedMap, result);
+}
+
+TEST_F(MapTest, nullWithNonZeroSizes) {
+  auto keys = makeArrayVectorFromJson<int32_t>({
+      "[1, 2, 3]",
+      "[1, 2]",
+      "[1, 2, 3]",
+  });
+
+  auto values = makeArrayVectorFromJson<int64_t>({
+      "[10, 20, 30]",
+      "[11, 21]",
+      "[12, 22, 32]",
+  });
+
+  // Set null for one of the rows. Also, set offset and size for the row to
+  // values that exceed the size of the 'elements' vector.
+  keys->setNull(1, true);
+  keys->setOffsetAndSize(1, 100, 10);
+  values->setNull(1, true);
+  values->setOffsetAndSize(1, 100, 10);
+
+  auto result = evaluate("map(c0, c1)", makeRowVector({keys, values}));
+
+  auto expected = makeMapVectorFromJson<int32_t, int64_t>({
+      "{1: 10, 2: 20, 3: 30}",
+      "null",
+      "{1: 12, 2: 22, 3: 32}",
+  });
+  assertEqualVectors(expected, result);
 }
 
 TEST_F(MapTest, partiallyPopulated) {
@@ -374,6 +405,19 @@ TEST_F(MapTest, rowsWithNullsNotPassedToCheckDuplicateKey) {
   auto values = makeNullableArrayVector<int32_t>({{1, 2}, {1, 2}});
 
   ASSERT_NO_THROW(evaluate("try(map(c0, c1))", makeRowVector({keys, values})));
+}
+
+TEST_F(MapTest, nestedNullInKeys) {
+  auto inputWithNestedNulls = makeNullableNestedArrayVector<int32_t>(
+      {{{{{1, std::nullopt}}, {{5, 6}}, std::nullopt}},
+       {{{{
+             3,
+         }},
+         {{7, 8}},
+         std::nullopt}}});
+  VELOX_ASSERT_THROW(
+      evaluate("map(c0, c0)", makeRowVector({inputWithNestedNulls})),
+      "map key cannot be indeterminate");
 }
 
 } // namespace

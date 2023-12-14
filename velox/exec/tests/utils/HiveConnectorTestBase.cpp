@@ -33,7 +33,10 @@ void HiveConnectorTestBase::SetUp() {
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
+          ->newConnector(
+              kHiveConnectorId,
+              std::make_shared<core::MemConfig>(),
+              ioExecutor_.get());
   connector::registerConnector(hiveConnector);
 }
 
@@ -43,6 +46,16 @@ void HiveConnectorTestBase::TearDown() {
   ioExecutor_.reset();
   connector::unregisterConnector(kHiveConnectorId);
   OperatorTestBase::TearDown();
+}
+
+void HiveConnectorTestBase::resetHiveConnector(
+    const std::shared_ptr<const Config>& config) {
+  connector::unregisterConnector(kHiveConnectorId);
+  auto hiveConnector =
+      connector::getConnectorFactory(
+          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
+  connector::registerConnector(hiveConnector);
 }
 
 void HiveConnectorTestBase::writeToFile(

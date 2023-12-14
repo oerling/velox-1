@@ -77,16 +77,9 @@ void VectorHasher::hashValues(
     rows.applyToSelected([&](vector_size_t row) {
       result[row] = mix ? bits::hashMix(result[row], hash) : hash;
     });
-  } else if (decoded_.isIdentityMapping()) {
-    rows.applyToSelected([&](vector_size_t row) {
-      if (decoded_.isNullAt(row)) {
-        result[row] = mix ? bits::hashMix(result[row], kNullHash) : kNullHash;
-        return;
-      }
-      auto hash = hashOne<Kind>(decoded_, row);
-      result[row] = mix ? bits::hashMix(result[row], hash) : hash;
-    });
-  } else {
+  } else if (
+      !decoded_.isIdentityMapping() &&
+      rows.countSelected() > decoded_.base()->size()) {
     cachedHashes_.resize(decoded_.base()->size());
     std::fill(cachedHashes_.begin(), cachedHashes_.end(), kNullHash);
     rows.applyToSelected([&](vector_size_t row) {
@@ -100,6 +93,15 @@ void VectorHasher::hashValues(
         hash = hashOne<Kind>(decoded_, row);
         cachedHashes_[baseIndex] = hash;
       }
+      result[row] = mix ? bits::hashMix(result[row], hash) : hash;
+    });
+  } else {
+    rows.applyToSelected([&](vector_size_t row) {
+      if (decoded_.isNullAt(row)) {
+        result[row] = mix ? bits::hashMix(result[row], kNullHash) : kNullHash;
+        return;
+      }
+      auto hash = hashOne<Kind>(decoded_, row);
       result[row] = mix ? bits::hashMix(result[row], hash) : hash;
     });
   }
@@ -378,8 +380,7 @@ void VectorHasher::lookupValueIdsTyped(
     const DecodedVector& decoded,
     SelectivityVector& rows,
     raw_vector<uint64_t>& hashes,
-    uint64_t* result,
-    bool noNulls) const {
+    uint64_t* result) const {
   using T = typename TypeTraits<Kind>::NativeType;
   if (decoded.isConstantMapping()) {
     if (decoded.isNullAt(rows.begin())) {
@@ -399,9 +400,9 @@ void VectorHasher::lookupValueIdsTyped(
       });
     }
   } else if (decoded.isIdentityMapping()) {
-    if (Kind == TypeKind::BIGINT && isRange_ && noNulls) {
+    if (Kind == TypeKind::BIGINT && isRange_) {
       lookupIdsRangeSimd<int64_t>(decoded, rows, result);
-    } else if (Kind == TypeKind::INTEGER && isRange_ && noNulls) {
+    } else if (Kind == TypeKind::INTEGER && isRange_) {
       lookupIdsRangeSimd<int32_t>(decoded, rows, result);
     } else {
       rows.applyToSelected([&](vector_size_t row) INLINE_LAMBDA {
@@ -508,8 +509,7 @@ void VectorHasher::lookupValueIds(
     const BaseVector& values,
     SelectivityVector& rows,
     ScratchMemory& scratchMemory,
-    raw_vector<uint64_t>& result,
-    bool noNulls) const {
+    raw_vector<uint64_t>& result) const {
   scratchMemory.decoded.decode(values, rows);
   VALUE_ID_TYPE_DISPATCH(
       lookupValueIdsTyped,
@@ -517,8 +517,7 @@ void VectorHasher::lookupValueIds(
       scratchMemory.decoded,
       rows,
       scratchMemory.hashes,
-      result.data(),
-      noNulls);
+      result.data());
 }
 
 void VectorHasher::hash(
@@ -573,7 +572,7 @@ void VectorHasher::analyzeValue(StringView value) {
   auto data = value.data();
   if (!rangeOverflow_) {
     if (size > kStringASRangeMaxSize) {
-      rangeOverflow_ = true;
+      setRangeOverflow();
     } else {
       int64_t number = stringAsNumber(data, size);
       updateRange(number);
@@ -585,7 +584,7 @@ void VectorHasher::analyzeValue(StringView value) {
     auto pair = uniqueValues_.insert(unique);
     if (pair.second) {
       if (uniqueValues_.size() > kMaxDistinct) {
-        distinctOverflow_ = true;
+        setDistinctOverflow();
         return;
       }
       copyStringToLocal(&*pair.first);
@@ -599,7 +598,7 @@ void VectorHasher::copyStringToLocal(const UniqueValue* unique) {
     return;
   }
   if (distinctStringsBytes_ > kMaxDistinctStringsBytes) {
-    distinctOverflow_ = true;
+    setDistinctOverflow();
     return;
   }
   if (uniqueValuesStorage_.empty()) {
@@ -619,6 +618,18 @@ void VectorHasher::copyStringToLocal(const UniqueValue* unique) {
   memcpy(str->data() + start, reinterpret_cast<char*>(unique->data()), size);
   const_cast<UniqueValue*>(unique)->setData(
       reinterpret_cast<int64_t>(str->data() + start));
+}
+
+void VectorHasher::setDistinctOverflow() {
+  distinctOverflow_ = true;
+  uniqueValues_.clear();
+  uniqueValuesStorage_.clear();
+  distinctStringsBytes_ = 0;
+}
+
+void VectorHasher::setRangeOverflow() {
+  rangeOverflow_ = true;
+  hasRange_ = false;
 }
 
 std::unique_ptr<common::Filter> VectorHasher::getFilter(
@@ -731,7 +742,7 @@ void VectorHasher::cardinality(
   if (!hasRange_ || rangeOverflow_) {
     asRange = kRangeTooLarge;
   } else if (__builtin_sub_overflow(max_, min_, &signedRange)) {
-    rangeOverflow_ = true;
+    setRangeOverflow();
     asRange = kRangeTooLarge;
   } else if (signedRange < kMaxRange) {
     // We check that after the extension by reservePct the range of max - min
@@ -746,7 +757,7 @@ void VectorHasher::cardinality(
     extendRange(type_->kind(), reservePct, min, max);
     asRange = (max - min) + 2;
   } else {
-    rangeOverflow_ = true;
+    setRangeOverflow();
     asRange = kRangeTooLarge;
   }
   if (distinctOverflow_) {
@@ -819,8 +830,7 @@ void VectorHasher::merge(const VectorHasher& other) {
     min_ = std::min(min_, other.min_);
     max_ = std::max(max_, other.max_);
   } else {
-    hasRange_ = false;
-    rangeOverflow_ = true;
+    setRangeOverflow();
   }
   if (!distinctOverflow_ && !other.distinctOverflow_) {
     // Unique values can be merged without dispatch on type. All the
@@ -833,16 +843,20 @@ void VectorHasher::merge(const VectorHasher& other) {
       uniqueValues_.insert(value);
     }
   } else {
-    distinctOverflow_ = true;
+    setDistinctOverflow();
   }
 }
 
 std::string VectorHasher::toString() const {
   std::stringstream out;
-  out << "<VectorHasher type=" << type_->toString() << "  isRange_=" << isRange_
-      << " rangeSize= " << rangeSize_ << " min=" << min_ << " max=" << max_
-      << " multiplier=" << multiplier_
-      << " numDistinct=" << uniqueValues_.size() << ">";
+  out << "VectorHasher channel: " << channel_ << " " << type_->toString()
+      << " multiplier: " << multiplier_;
+  if (isRange_) {
+    out << " range size " << rangeSize_ << ": [" << min_ << ", " << max_ << "]";
+  }
+  if (!distinctOverflow_) {
+    out << " numDistinct: " << uniqueValues_.size();
+  }
   return out.str();
 }
 

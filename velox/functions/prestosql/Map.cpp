@@ -19,6 +19,9 @@
 
 namespace facebook::velox::functions {
 namespace {
+static const char* kNullKeyErrorMessage = "map key cannot be null";
+static const char* kIndeterminateKeyErrorMessage =
+    "map key cannot be indeterminate";
 
 template <bool AllowDuplicateKeys>
 class MapFunction : public exec::VectorFunction {
@@ -40,8 +43,19 @@ class MapFunction : public exec::VectorFunction {
 
     static const char* kArrayLengthsMismatch =
         "Key and value arrays must be the same length";
-    static const char* kNullKey = "map key cannot be null";
+    auto checkNullsInKey =
+        [&](const auto& keysElements, auto offset, auto size) {
+          for (auto i = 0; i < size; ++i) {
+            VELOX_USER_CHECK(
+                !keysElements->isNullAt(offset + i), kNullKeyErrorMessage);
 
+            VELOX_USER_CHECK(
+                !keysElements->containsNullAt(offset + i),
+                "{}: {}",
+                kIndeterminateKeyErrorMessage,
+                keysElements->toString(offset + i));
+          }
+        };
     // When context.throwOnError is false, some rows will be marked as
     // 'failed'. These rows should not be processed further. 'remainingRows'
     // will contain a subset of 'rows' that have passed all the checks (e.g.
@@ -59,21 +73,21 @@ class MapFunction : public exec::VectorFunction {
 
       // Verify there are no null keys.
       auto keysElements = keysArray->elements();
-      if (keysElements->mayHaveNulls()) {
+      if (keysElements->mayHaveNulls() ||
+          keysElements->mayHaveNullsRecursive()) {
         context.applyToSelectedNoThrow(rows, [&](auto row) {
           auto offset = keysArray->offsetAt(row);
           auto size = keysArray->sizeAt(row);
-          for (auto i = 0; i < size; ++i) {
-            VELOX_USER_CHECK(!keysElements->isNullAt(offset + i), kNullKey);
-          }
+          checkNullsInKey(keysElements, offset, size);
         });
       }
+
       context.deselectErrors(*remainingRows);
 
       auto mapVector = std::make_shared<MapVector>(
           context.pool(),
           outputType,
-          nullptr,
+          keysArray->nulls(),
           rows.end(),
           keysArray->offsets(),
           keysArray->sizes(),
@@ -104,10 +118,9 @@ class MapFunction : public exec::VectorFunction {
       std::iota(sortedIndices.begin(), sortedIndices.end(), keysOffset);
       keysElements->sortIndices(sortedIndices, CompareFlags());
       try {
-        if (keysElements->mayHaveNulls()) {
-          for (auto i = 0; i < numKeys; ++i) {
-            VELOX_USER_CHECK(!keysElements->isNullAt(keysOffset + i), kNullKey);
-          }
+        if (keysElements->mayHaveNulls() ||
+            keysElements->mayHaveNullsRecursive()) {
+          checkNullsInKey(keysElements, keysOffset, numKeys);
         }
 
         if constexpr (!AllowDuplicateKeys) {
@@ -186,13 +199,12 @@ class MapFunction : public exec::VectorFunction {
 
       // Verify there are no null keys.
       auto keysElements = keysArray->elements();
-      if (keysElements->mayHaveNulls()) {
+      if (keysElements->mayHaveNulls() ||
+          keysElements->mayHaveNullsRecursive()) {
         context.applyToSelectedNoThrow(*remainingRows, [&](auto row) {
           auto offset = keysArray->offsetAt(keyIndices[row]);
           auto size = keysArray->sizeAt(keyIndices[row]);
-          for (auto i = 0; i < size; ++i) {
-            VELOX_USER_CHECK(!keysElements->isNullAt(offset + i), kNullKey);
-          }
+          checkNullsInKey(keysElements, offset, size);
         });
         context.deselectErrors(*remainingRows);
       }
@@ -294,6 +306,14 @@ class MapFunction : public exec::VectorFunction {
       return false;
     }
     for (auto row = 0; row < keys->size(); ++row) {
+      if (keys->isNullAt(row)) {
+        continue;
+      }
+
+      if (values->isNullAt(row)) {
+        return false;
+      }
+
       if (keys->offsetAt(row) != values->offsetAt(row) ||
           keys->sizeAt(row) != values->sizeAt(row)) {
         return false;

@@ -42,7 +42,7 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   /// Temporary API to indicate whether 'request(maxBytes, maxWaitSeconds)' API
   /// is supported.
   virtual bool supportsFlowControlV2() const {
-    return false;
+    VELOX_UNREACHABLE();
   }
 
   /// Returns true if there is no request to the source pending or if
@@ -91,7 +91,9 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
   /// once it received enough data.
   virtual void close() = 0;
 
-  /// Returns runtime statistics.
+  // Returns runtime statistics. ExchangeSource is expected to report
+  // background CPU time by including a runtime metric named
+  // ExchangeClient::kBackgroundCpuTimeMs.
   virtual folly::F14FastMap<std::string, int64_t> stats() const = 0;
 
   virtual std::string toString() {

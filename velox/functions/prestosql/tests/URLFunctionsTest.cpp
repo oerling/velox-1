@@ -16,32 +16,31 @@
 #include <gmock/gmock.h>
 #include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 
-using string_t = std::string;
-
 namespace facebook::velox {
 
 namespace {
 class URLFunctionsTest : public functions::test::FunctionBaseTest {
  protected:
   void validate(
-      const string_t& url,
-      const string_t& expectedProtocol,
-      const string_t& expectedHost,
-      const string_t& expectedPath,
-      const string_t& expectedFragment,
-      const string_t& expectedQuery,
+      const std::string& url,
+      const std::optional<std::string>& expectedProtocol,
+      const std::optional<std::string>& expectedHost,
+      const std::optional<std::string>& expectedPath,
+      const std::optional<std::string>& expectedFragment,
+      const std::optional<std::string>& expectedQuery,
       const std::optional<int32_t> expectedPort) {
-    const auto extractFn = [&](const string_t& fn,
-                               const std::optional<string_t>& a) {
-      return evaluateOnce<string_t>(fmt::format("url_extract_{}(c0)", fn), a);
+    const auto extractFn = [&](const std::string& fn,
+                               const std::optional<std::string>& a) {
+      return evaluateOnce<std::string>(
+          fmt::format("url_extract_{}(c0)", fn), a);
     };
 
-    const auto extractPort = [&](const std::optional<string_t>& a) {
+    const auto extractPort = [&](const std::optional<std::string>& a) {
       return evaluateOnce<int64_t>("url_extract_port(c0)", a);
     };
 
     EXPECT_EQ(extractFn("protocol", url), expectedProtocol);
-    EXPECT_EQ(extractFn("host", url).value(), expectedHost);
+    EXPECT_EQ(extractFn("host", url), expectedHost);
     EXPECT_EQ(extractFn("path", url), expectedPath);
     EXPECT_EQ(extractFn("fragment", url), expectedFragment);
     EXPECT_EQ(extractFn("query", url), expectedQuery);
@@ -98,7 +97,51 @@ TEST_F(URLFunctionsTest, validateURL) {
       "",
       "",
       std::nullopt);
-  validate("foo", "", "", "", "", "", std::nullopt);
+  validate(
+      "https://www.ucu.edu.uy/agenda/evento/%%UCUrlCompartir%%",
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt);
+  validate("foo", "", "", "foo", "", "", std::nullopt);
+  validate(
+      "foo ",
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt);
+  validate(
+      "IC6S!8hGVRpo+!,yTaJEy/$RUZpqcr",
+      "",
+      "",
+      "IC6S!8hGVRpo !,yTaJEy/$RUZpqcr",
+      "",
+      "",
+      std::nullopt);
+}
+
+TEST_F(URLFunctionsTest, extractPath) {
+  const auto extractPath = [&](const std::optional<std::string>& url) {
+    return evaluateOnce<std::string>("url_extract_path(c0)", url);
+  };
+
+  EXPECT_EQ(
+      "/media/set/Books and Magazines.php",
+      extractPath(
+          "https://www.cnn.com/media/set/Books%20and%20Magazines.php?foo=bar"));
+
+  EXPECT_EQ(
+      "java-net@java.sun.com", extractPath("mailto:java-net@java.sun.com"));
+  EXPECT_EQ(
+      std::nullopt,
+      extractPath("https://www.ucu.edu.uy/agenda/evento/%%UCUrlCompartir%%"));
+  EXPECT_EQ("foo", extractPath("foo"));
+  EXPECT_EQ(std::nullopt, extractPath("BAD URL!"));
+  EXPECT_EQ("", extractPath("http://www.yahoo.com"));
 }
 
 TEST_F(URLFunctionsTest, extractParameter) {
