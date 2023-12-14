@@ -307,10 +307,7 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
     }
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
-<<<<<<< HEAD
-=======
   ASSERT_LT(counter, kMaxIters);
->>>>>>> main
 #endif
 
   const auto& queue = client.queue();
