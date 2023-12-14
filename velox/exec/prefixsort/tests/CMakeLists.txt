@@ -11,12 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(
-  velox_presto_serializer PrestoSerializer.cpp UnsafeRowSerializer.cpp
-                          CompactRowSerializer.cpp)
+add_executable(velox_exec_prefixsort_test PrefixSortAlgorithmTest.cpp)
 
-target_link_libraries(velox_presto_serializer velox_vector velox_row_fast)
+add_test(
+  NAME velox_exec_prefixsort_test
+  COMMAND velox_exec_prefixsort_test
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+set_tests_properties(velox_exec_prefixsort_test PROPERTIES TIMEOUT 3000)
+
+target_link_libraries(velox_exec_prefixsort_test velox_vector_test_lib)

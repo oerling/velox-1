@@ -11,12 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(
-  velox_presto_serializer PrestoSerializer.cpp UnsafeRowSerializer.cpp
-                          CompactRowSerializer.cpp)
-
-target_link_libraries(velox_presto_serializer velox_vector velox_row_fast)
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+add_executable(velox_prefix_sort_algorithm_benchmark
+               PrefixSortAlgorithmBenchmark.cpp)
+target_link_libraries(velox_prefix_sort_algorithm_benchmark
+                      velox_vector_test_lib ${FOLLY_BENCHMARK})
