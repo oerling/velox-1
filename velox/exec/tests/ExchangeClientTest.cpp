@@ -295,14 +295,10 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
 
 #ifndef NDEBUG
   // Wait until all sources have timed out at least once.
-<<<<<<< HEAD
-  for (;;) {
-=======
   constexpr int32_t kMaxIters =
       3 * kNumSources * ExchangeClient::kDefaultMaxWaitSeconds;
   int32_t counter = 0;
   for (; counter < kMaxIters; ++counter) {
->>>>>>> main
     {
       std::lock_guard<std::mutex> l(mutex);
       if (sourcesWithTimeout.size() == kNumSources) {
