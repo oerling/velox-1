@@ -153,7 +153,10 @@ class LocalExchangeSource : public exec::ExchangeSource {
           }
         };
 
-    // Call the callback in any case after timeout.
+    // Call the callback in any case after timeout. 'future' returned
+    // from this will be realized with no error but empty data. Also,
+    // the future is a SemiFuture, so setting a timeout on the future
+    // in this function is not possible.
     auto& exec = folly::QueuedImmediateExecutor::instance();
     std::move(folly::futures::sleep(std::chrono::seconds(maxWaitSeconds)))
         .via(&exec)
