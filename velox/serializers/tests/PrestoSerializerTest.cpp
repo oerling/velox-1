@@ -117,7 +117,7 @@ class PrestoSerializerTest
     }
     auto size = serializer->maxSerializedSize();
     LOG(INFO) << "Size=" << size << " estimate=" << sizeEstimate << " "
-              << (100 * sizeEstimate) / size << "%";
+              << (100L * sizeEstimate) / (1 + size) << "%";
     facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
     OStreamOutputStream out(output, &listener);
     serializer->flush(&out);
