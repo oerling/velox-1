@@ -57,6 +57,7 @@ class SortBufferTest : public OperatorTestBase {
         0,
         0,
         0,
+        0,
         "none");
   }
 
@@ -75,9 +76,7 @@ class SortBufferTest : public OperatorTestBase {
 
   const int64_t maxBytes_ = 20LL << 20; // 20 MB
   const std::shared_ptr<memory::MemoryPool> rootPool_{
-      memory::MemoryManager::getInstance()->addRootPool(
-          "SortBufferTest",
-          maxBytes_)};
+      memory::memoryManager()->addRootPool("SortBufferTest", maxBytes_)};
   const std::shared_ptr<memory::MemoryPool> pool_{
       rootPool_->addLeafChild("SortBufferTest", maxBytes_)};
   const std::shared_ptr<folly::Executor> executor_{
@@ -238,7 +237,7 @@ TEST_F(SortBufferTest, DISABLED_randomData) {
         &nonReclaimableSection_);
 
     const std::shared_ptr<memory::MemoryPool> fuzzerPool =
-        memory::MemoryManager::getInstance()->addLeafPool("VectorFuzzer");
+        memory::memoryManager()->addLeafPool("VectorFuzzer");
 
     std::vector<RowVectorPtr> inputVectors;
     inputVectors.reserve(3);
@@ -298,6 +297,7 @@ TEST_F(SortBufferTest, batchOutput) {
         0,
         0,
         0,
+        0,
         100, //  testSpillPct
         "none");
     auto sortBuffer = std::make_unique<SortBuffer>(
@@ -311,7 +311,7 @@ TEST_F(SortBufferTest, batchOutput) {
     ASSERT_EQ(sortBuffer->canSpill(), testData.triggerSpill);
 
     const std::shared_ptr<memory::MemoryPool> fuzzerPool =
-        memory::MemoryManager::getInstance()->addLeafPool("VectorFuzzer");
+        memory::memoryManager()->addLeafPool("VectorFuzzer");
 
     std::vector<RowVectorPtr> inputVectors;
     inputVectors.reserve(testData.numInputRows.size());
@@ -395,6 +395,7 @@ TEST_F(SortBufferTest, spill) {
         0,
         0,
         0,
+        0,
         "none");
     auto sortBuffer = std::make_unique<SortBuffer>(
         inputType_,
@@ -406,7 +407,7 @@ TEST_F(SortBufferTest, spill) {
         testData.spillMemoryThreshold);
 
     const std::shared_ptr<memory::MemoryPool> fuzzerPool =
-        memory::MemoryManager::getInstance()->addLeafPool("spillSource");
+        memory::memoryManager()->addLeafPool("spillSource");
     VectorFuzzer fuzzer({.vectorSize = 1024}, fuzzerPool.get());
     uint64_t totalNumInput = 0;
 
@@ -449,7 +450,7 @@ TEST_F(SortBufferTest, spill) {
 
 TEST_F(SortBufferTest, emptySpill) {
   const std::shared_ptr<memory::MemoryPool> fuzzerPool =
-      memory::MemoryManager::getInstance()->addLeafPool("emptySpillSource");
+      memory::memoryManager()->addLeafPool("emptySpillSource");
 
   for (bool hasPostSpillData : {false, true}) {
     SCOPED_TRACE(fmt::format("hasPostSpillData {}", hasPostSpillData));
