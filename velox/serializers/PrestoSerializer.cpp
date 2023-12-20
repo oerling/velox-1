@@ -530,7 +530,7 @@ void readConstantVector(
     }
     result->resize(resultOffset + numNewValues);
 
-    SelectivityVector rows(resultOffset + size, false);
+    SelectivityVector rows(resultOffset + numNewValues, false);
     rows.setValidRange(resultOffset, resultOffset + numNewValues, true);
     rows.updateBounds();
 
@@ -778,7 +778,7 @@ void readRowVector(
     const SerdeOpts& opts,
     const uint64_t* incomingNulls,
     int32_t numIncomingNulls) {
-  auto* row = result->as<RowVector>();
+  auto* row = result->asUnchecked<RowVector>();
   if (isTimestampWithTimeZoneType(type)) {
     readTimestampWithTimeZone(
         source, pool, row, resultOffset, incomingNulls, numIncomingNulls);
