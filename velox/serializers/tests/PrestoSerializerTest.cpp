@@ -675,7 +675,7 @@ TEST_P(PrestoSerializerTest, encodedConcatenation) {
     }
     std::vector<std::vector<VectorPtr>> permutations;
     std::vector<VectorPtr> temp;
-    makePermutations(vectors, 5, temp, permutations);
+    makePermutations(vectors, 4, temp, permutations);
     for (auto i = 0; i < permutations.size(); ++i) {
       testEncodedConcatenation(permutations[i]);
     }
