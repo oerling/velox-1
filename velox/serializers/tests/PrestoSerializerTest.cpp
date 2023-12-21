@@ -242,7 +242,12 @@ class PrestoSerializerTest
     auto paramOptions = getParamSerdeOptions(serdeOptions);
 
     for (const auto& child : rowVector->children()) {
-      paramOptions.encodings.push_back(child->encoding());
+      auto encoding = child->encoding();
+      if (encoding == VectorEncoding::Simple::DICTIONARY && child->rawNulls()) {
+        paramOptions.encodings.push_back(VectorEncoding::Simple::FLAT);
+      } else {
+        paramOptions.encodings.push_back(encoding);
+      }
     }
 
     serde_->serializeEncoded(rowVector, &arena, &paramOptions, &out);
@@ -283,6 +288,67 @@ class PrestoSerializerTest
     }
 
     assertEqualVectors(expected, result);
+  }
+
+  void makePermutations(
+      const std::vector<VectorPtr>& vectors,
+      int32_t size,
+      std::vector<VectorPtr>& items,
+      std::vector<std::vector<VectorPtr>>& result) {
+    if (size == items.size()) {
+      result.push_back(items);
+      return;
+    }
+    for (const auto& vector : vectors) {
+      items.push_back(vector);
+      makePermutations(vectors, size, items, result);
+      items.pop_back();
+    }
+  }
+
+  // tests combining encodings in serialization and deserialization. Serializes
+  // each of 'vectors' with encoding, then reads them back into a single vector.
+  void testEncodedConcatenation(
+      std::vector<VectorPtr>& vectors,
+      const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
+          nullptr) {
+    std::vector<std::string> pieces;
+    auto rowType = ROW({{"f", vectors[0]->type()}});
+    auto concatenation = BaseVector::create(rowType, 0, pool_.get());
+    auto arena = std::make_unique<StreamArena>(pool_.get());
+    auto paramOptions = getParamSerdeOptions(serdeOptions);
+    auto serializer =
+        serde_->createSerializer(rowType, 10, arena.get(), &paramOptions);
+
+    for (const auto& vector : vectors) {
+      auto data = makeRowVector({"f"}, {vector});
+      concatenation->append(data.get());
+      std::ostringstream out;
+      serializeEncoded(data, &out, nullptr);
+      pieces.push_back(out.str());
+      serializer->append(data);
+    }
+    facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
+    std::ostringstream allOut;
+    OStreamOutputStream allOutStream(&allOut, &listener);
+    serializer->flush(&allOutStream);
+
+    auto allDeserialized = deserialize(rowType, allOut.str(), serdeOptions);
+    assertEqualVectors(allDeserialized, concatenation);
+    RowVectorPtr deserialized =
+        BaseVector::create<RowVector>(rowType, 0, pool_.get());
+    for (auto& piece : pieces) {
+      auto byteStream = toByteStream(piece);
+      auto paramOptions = getParamSerdeOptions(serdeOptions);
+      serde_->deserialize(
+          &byteStream,
+          pool_.get(),
+          rowType,
+          &deserialized,
+          deserialized->size(),
+          &paramOptions);
+    }
+    assertEqualVectors(concatenation, deserialized);
   }
 
   std::unique_ptr<serializer::presto::PrestoVectorSerde> serde_;
@@ -570,6 +636,49 @@ TEST_P(PrestoSerializerTest, encodedRoundtrip) {
     auto rowType = fuzzer.randRowType();
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
     testEncodedRoundTrip(inputRowVector);
+  }
+}
+
+TEST_P(PrestoSerializerTest, encodedConcatenation) {
+  // Slow test, run only for no compression.
+  if (GetParam() != common::CompressionKind::CompressionKind_NONE) {
+    return;
+  }
+
+  std::vector<TypePtr> types = {ROW({{"s0", VARCHAR()}}), VARCHAR()};
+  VectorFuzzer::Options nonNullOpts{.nullRatio = 0};
+  VectorFuzzer nonNullFuzzer(nonNullOpts, pool_.get());
+  VectorFuzzer::Options nullOpts{.nullRatio = 1};
+  VectorFuzzer nullFuzzer(nullOpts, pool_.get());
+  VectorFuzzer::Options mixedOpts{.nullRatio = 0.5};
+  VectorFuzzer mixedFuzzer(mixedOpts, pool_.get());
+  for (const auto& type : types) {
+    auto flatNull = nullFuzzer.fuzzFlat(type, 12);
+    auto flatNonNull = nonNullFuzzer.fuzzFlat(type, 13);
+
+    std::vector<VectorPtr> vectors = {
+        nullFuzzer.fuzzConstant(type, 10),
+        nonNullFuzzer.fuzzConstant(type, 11),
+        flatNonNull,
+        flatNull,
+        nonNullFuzzer.fuzzDictionary(flatNonNull),
+        nonNullFuzzer.fuzzDictionary(flatNull),
+        nullFuzzer.fuzzDictionary(flatNull)};
+    if (type->isRow()) {
+      auto& rowType = type->as<TypeKind::ROW>();
+      auto row = makeRowVector(
+          {rowType.nameOf(0)},
+          {nonNullFuzzer.fuzzConstant(rowType.childAt(0), 14)});
+      row->setNull(2, true);
+      row->setNull(10, true);
+      vectors.push_back(row);
+    }
+    std::vector<std::vector<VectorPtr>> permutations;
+    std::vector<VectorPtr> temp;
+    makePermutations(vectors, 5, temp, permutations);
+    for (auto i = 0; i < permutations.size(); ++i) {
+      testEncodedConcatenation(permutations[i]);
+    }
   }
 }
 

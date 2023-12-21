@@ -524,7 +524,9 @@ void readConstantVector(
   if (resultOffset == 0 && !incomingNulls) {
     result = std::move(constantVector);
   } else {
-    if (!incomingNulls && constantVector->equalValueAt(result.get(), 0, 0)) {
+    if (!incomingNulls &&
+        result->encoding() == VectorEncoding::Simple::CONSTANT &&
+        constantVector->equalValueAt(result.get(), 0, 0)) {
       result->resize(resultOffset + numNewValues);
       return;
     }
@@ -934,6 +936,12 @@ void readColumns(
           numIncomingNulls);
     } else {
       checkTypeEncoding(encoding, columnType);
+      if (columnResult != nullptr &&
+          (columnResult->encoding() == VectorEncoding::Simple::CONSTANT ||
+           columnResult->encoding() == VectorEncoding::Simple::DICTIONARY)) {
+        BaseVector::ensureWritable(
+            SelectivityVector::empty(), types[i], pool, columnResult);
+      }
       const auto it = readers.find(columnType->kind());
       VELOX_CHECK(
           it != readers.end(),
@@ -3185,8 +3193,13 @@ class PrestoVectorSerializer : public VectorSerializer {
     if (newRows > 0) {
       numRows_ += newRows;
       for (int32_t i = 0; i < vector->childrenSize(); ++i) {
-        serializeEncodedColumn(
-            vector->childAt(i).get(), ranges, streams_[i].get());
+        auto child = vector->childAt(i).get();
+        if (child->encoding() == VectorEncoding::Simple::DICTIONARY &&
+            child->rawNulls()) {
+          serializeColumn(child, ranges, streams_[i].get());
+        } else {
+          serializeEncodedColumn(child, ranges, streams_[i].get());
+        }
       }
     }
   }
