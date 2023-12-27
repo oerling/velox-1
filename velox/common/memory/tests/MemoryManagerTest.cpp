@@ -127,28 +127,28 @@ class FakeTestArbitrator : public MemoryArbitrator {
       : MemoryArbitrator(
             {.kind = config.kind,
              .capacity = config.capacity,
-             .memoryPoolInitCapacity = config.memoryPoolInitCapacity,
              .memoryPoolTransferCapacity = config.memoryPoolTransferCapacity}) {
   }
 
-  void reserveMemory(MemoryPool* pool, uint64_t bytes) override {
+  uint64_t growCapacity(MemoryPool* /*unused*/, uint64_t /*unused*/) override {
     VELOX_NYI();
   }
 
-  void releaseMemory(MemoryPool* pool) override {
+  bool growCapacity(
+      MemoryPool* /*unused*/,
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
     VELOX_NYI();
   }
 
-  bool growMemory(
-      MemoryPool* pool,
-      const std::vector<std::shared_ptr<MemoryPool>>& candidatePools,
-      uint64_t targetBytes) override {
+  uint64_t shrinkCapacity(MemoryPool* /*unused*/, uint64_t /*unused*/)
+      override {
     VELOX_NYI();
   }
 
-  uint64_t shrinkMemory(
-      const std::vector<std::shared_ptr<MemoryPool>>& pools,
-      uint64_t targetBytes) override {
+  uint64_t shrinkCapacity(
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
     VELOX_NYI();
   }
 
@@ -282,10 +282,10 @@ TEST_F(MemoryManagerTest, defaultMemoryManager) {
   ASSERT_EQ(managerB.numPools(), 3);
   ASSERT_EQ(
       managerA.toString(),
-      "Memory Manager[capacity UNLIMITED alignment 64B usedBytes 0B number of pools 3\nList of root pools:\n\t__default_root__\n\tdefault_root_0\nMemory Allocator[MALLOC capacity UNLIMITED allocated bytes 0 allocated pages 0 mapped pages 0]\nARBIRTATOR[NOOP CAPACITY[UNLIMITED]]]");
+      "Memory Manager[capacity UNLIMITED alignment 64B usedBytes 0B number of pools 3\nList of root pools:\n\t__default_root__\n\tdefault_root_0\n\trefcount 2\nMemory Allocator[MALLOC capacity UNLIMITED allocated bytes 0 allocated pages 0 mapped pages 0]\nARBIRTATOR[NOOP CAPACITY[UNLIMITED]]]");
   ASSERT_EQ(
       managerB.toString(),
-      "Memory Manager[capacity UNLIMITED alignment 64B usedBytes 0B number of pools 3\nList of root pools:\n\t__default_root__\n\tdefault_root_0\nMemory Allocator[MALLOC capacity UNLIMITED allocated bytes 0 allocated pages 0 mapped pages 0]\nARBIRTATOR[NOOP CAPACITY[UNLIMITED]]]");
+      "Memory Manager[capacity UNLIMITED alignment 64B usedBytes 0B number of pools 3\nList of root pools:\n\t__default_root__\n\tdefault_root_0\n\trefcount 2\nMemory Allocator[MALLOC capacity UNLIMITED allocated bytes 0 allocated pages 0 mapped pages 0]\nARBIRTATOR[NOOP CAPACITY[UNLIMITED]]]");
   child1.reset();
   EXPECT_EQ(
       kSharedPoolCount + 1, managerA.testingDefaultRoot().getChildCount());
