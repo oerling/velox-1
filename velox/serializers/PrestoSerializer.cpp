@@ -2824,6 +2824,7 @@ void estimateWrapperSerializedSize(
     auto* indices = wrapper->wrapInfo()->as<vector_size_t>();
     wrapped = wrapper->valueVector().get();
     simd::transpose(indices, rows, innerRows);
+    numInner = numRows;
   } else {
     wrapped = wrapper->wrappedVector();
     for (int32_t i = 0; i < rows.size(); ++i) {
