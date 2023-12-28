@@ -168,11 +168,12 @@ class PrestoSerializerTest
     std::vector<VectorPtr> newChildren = children;
     auto indices = test::makeIndicesInReverse(row->size(), row->pool());
     for (auto& child : newChildren) {
-      child = BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, row->size(), child);
+      child = BaseVector::wrapInDictionary(
+          BufferPtr(nullptr), indices, row->size(), child);
     }
     return makeRowVector(newChildren);
   }
-  
+
   void testRoundTrip(
       VectorPtr vector,
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
