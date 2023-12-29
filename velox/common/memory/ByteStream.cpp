@@ -351,17 +351,18 @@ int32_t ByteOutputStream::newRangeSize(int32_t bytes) const {
 }
 
 void ByteOutputStream::ensureSpace(int32_t bytes) {
-  auto available = current_->size - current_->position;
-  auto toGo = bytes - available;
-  auto rangeIdx = current_ - ranges_.data();
-  auto position = current_->position;
-  while (toGo > 0) {
+  const auto available = current_->size - current_->position;
+  int64_t toExtend = bytes - available;
+  const auto originalRangeIdx = current_ - ranges_.data();
+  const auto originalPosition = current_->position;
+  while (toExtend > 0) {
     current_->position = current_->size;
-    extend(toGo);
-    toGo -= current_->size;
+    extend(toExtend);
+    toExtend -= current_->size;
   }
-  current_ = &ranges_[rangeIdx];
-  current_->position = position;
+  // Restore original position.
+  current_ = &ranges_[originalRangeIdx];
+  current_->position = originalPosition;
 }
 
 ByteInputStream ByteOutputStream::inputStream() const {
