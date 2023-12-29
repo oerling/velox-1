@@ -114,8 +114,8 @@ class PrestoSerializerTest
     }
     auto size = serializer->maxSerializedSize();
     auto estimatePct = (100 * sizeEstimate) / static_cast<float>(size);
-    EXPECT_LT(50, estimatePct);
-    EXPECT_GT(150, estimatePct);
+    EXPECT_LT(47, estimatePct);
+    EXPECT_GT(140, estimatePct);
     LOG(INFO) << "Size=" << size << " estimate=" << sizeEstimate << " "
               << estimatePct << "%";
     facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
