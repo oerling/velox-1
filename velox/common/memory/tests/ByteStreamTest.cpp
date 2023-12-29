@@ -359,7 +359,7 @@ TEST_F(ByteStreamTest, appendWindow) {
     // We check that there is no allocation at exit of AppendWindow block.k
     EXPECT_EQ(arena->pool()->currentBytes(), bytes);
   }
-    std::stringstream stringStream;
+  std::stringstream stringStream;
   OStreamOutputStream out(&stringStream);
   stream.flush(&out);
   EXPECT_EQ(0, memcmp(stringStream.str().data(), words.data(), words.size()));
