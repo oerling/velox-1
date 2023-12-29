@@ -116,8 +116,11 @@ class PrestoSerializerTest
       serializer->append(rowVector);
     }
     auto size = serializer->maxSerializedSize();
+    auto estimatePct = (100.0 * sizeEstimate) / static_cast<float>(size + 1);
+    EXPECT_LT(47, estimatePct);
+    EXPECT_GT(140, estimatePct);
     LOG(INFO) << "Size=" << size << " estimate=" << sizeEstimate << " "
-              << (100L * sizeEstimate) / (1 + size) << "%";
+              << estimatePct << "%";
     facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
     OStreamOutputStream out(output, &listener);
     serializer->flush(&out);
@@ -161,6 +164,17 @@ class PrestoSerializerTest
     std::vector<VectorPtr> childVectors = {a, b, c};
 
     return makeRowVector(childVectors);
+  }
+
+  RowVectorPtr wrapChildren(const RowVectorPtr& row) {
+    auto children = row->children();
+    std::vector<VectorPtr> newChildren = children;
+    auto indices = test::makeIndicesInReverse(row->size(), row->pool());
+    for (auto& child : newChildren) {
+      child = BaseVector::wrapInDictionary(
+          BufferPtr(nullptr), indices, row->size(), child);
+    }
+    return makeRowVector(newChildren);
   }
 
   void testRoundTrip(
@@ -208,6 +222,8 @@ class PrestoSerializerTest
         (rowVector->size() - 1) / 2, [&](auto row) { return (row * 2) + 1; });
     testSerializeRows(rowVector, even, serdeOptions);
     testSerializeRows(rowVector, odd, serdeOptions);
+    auto wrappedRowVector = wrapChildren(rowVector);
+    testSerializeRows(wrappedRowVector, odd, serdeOptions);
   }
 
   void testSerializeRows(
