@@ -58,8 +58,7 @@ class E2EWriterTest : public testing::Test {
   }
 
   E2EWriterTest() {
-    rootPool_ =
-        memory::MemoryManager::getInstance()->addRootPool("E2EWriterTest");
+    rootPool_ = memory::memoryManager()->addRootPool("E2EWriterTest");
     leafPool_ = rootPool_->addLeafChild("leaf");
   }
 
@@ -246,6 +245,7 @@ class E2EWriterTest : public testing::Test {
     static const std::string emptySpillFolder = "";
     return common::SpillConfig(
         [&]() -> const std::string& { return emptySpillFolder; },
+        [&](uint64_t) {},
         "fakeSpillConfig",
         0,
         0,
@@ -253,6 +253,7 @@ class E2EWriterTest : public testing::Test {
         nullptr,
         minSpillableReservationPct,
         spillableReservationGrowthPct,
+        0,
         0,
         0,
         0,
@@ -378,7 +379,7 @@ TEST_F(E2EWriterTest, FlatMapDictionaryEncoding) {
   // Start with a size larger than stride to cover splitting into
   // strides. Continue with smaller size for faster test.
   size_t size = 1100;
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -418,7 +419,7 @@ TEST_F(E2EWriterTest, MaxFlatMapKeys) {
   const uint32_t keyLimit = 2000;
   const auto randomStart = Random::rand32(100);
 
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
   b::row row;
   for (int32_t i = 0; i < keyLimit; ++i) {
     row.push_back(b::pair{randomStart + i, Random::rand64()});
@@ -449,8 +450,7 @@ TEST_F(E2EWriterTest, PresentStreamIsSuppressedOnFlatMap) {
 
   const auto randomStart = Random::rand32(100);
 
-  auto pool =
-      facebook::velox::memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = facebook::velox::memory::memoryManager()->addLeafPool();
   b::row row;
   row.push_back(b::pair{randomStart, Random::rand64()});
 
@@ -499,7 +499,7 @@ TEST_F(E2EWriterTest, TooManyFlatMapKeys) {
   const uint32_t keyLimit = 2000;
   const auto randomStart = Random::rand32(100);
 
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
   b::row row;
   for (int32_t i = 0; i < (keyLimit + 1); ++i) {
     row.push_back(b::pair{randomStart + i, Random::rand64()});
@@ -526,7 +526,7 @@ TEST_F(E2EWriterTest, TooManyFlatMapKeys) {
 }
 
 TEST_F(E2EWriterTest, FlatMapBackfill) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
 
   using keyType = int32_t;
   using valueType = int32_t;
@@ -589,7 +589,7 @@ void testFlatMapWithNulls(
     bool firstRowNotNull,
     bool enableFlatmapDictionaryEncoding = false,
     bool shareDictionary = false) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
 
   using keyType = int32_t;
   using valueType = int32_t;
@@ -657,7 +657,7 @@ TEST_F(E2EWriterTest, FlatMapWithNullsSharedDict) {
 }
 
 TEST_F(E2EWriterTest, FlatMapEmpty) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
 
   using keyType = int32_t;
   using valueType = int32_t;
@@ -856,8 +856,7 @@ TEST_F(E2EWriterTest, PartialStride) {
 }
 
 TEST_F(E2EWriterTest, OversizeRows) {
-  auto pool =
-      facebook::velox::memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = facebook::velox::memory::memoryManager()->addLeafPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -895,8 +894,7 @@ TEST_F(E2EWriterTest, OversizeRows) {
 }
 
 TEST_F(E2EWriterTest, OversizeBatches) {
-  auto pool =
-      facebook::velox::memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = facebook::velox::memory::memoryManager()->addLeafPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -944,8 +942,7 @@ TEST_F(E2EWriterTest, OversizeBatches) {
 }
 
 TEST_F(E2EWriterTest, OverflowLengthIncrements) {
-  auto pool =
-      facebook::velox::memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = facebook::velox::memory::memoryManager()->addLeafPool();
 
   HiveTypeParser parser;
   auto type = parser.parse(
@@ -1355,7 +1352,7 @@ VectorPtr createKeys(
 }
 
 TEST_F(E2EWriterTest, fuzzSimple) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
   auto type = ROW({
       {"bool_val", BOOLEAN()},
       {"byte_val", TINYINT()},
@@ -1404,7 +1401,7 @@ TEST_F(E2EWriterTest, fuzzSimple) {
 }
 
 TEST_F(E2EWriterTest, fuzzComplex) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
   auto type = ROW({
       {"array", ARRAY(REAL())},
       {"map", MAP(INTEGER(), DOUBLE())},
@@ -1459,7 +1456,7 @@ TEST_F(E2EWriterTest, fuzzComplex) {
 }
 
 TEST_F(E2EWriterTest, fuzzFlatmap) {
-  auto pool = memory::MemoryManager::getInstance()->addLeafPool();
+  auto pool = memory::memoryManager()->addLeafPool();
   auto type = ROW({
       {"flatmap1", MAP(INTEGER(), REAL())},
       {"flatmap2", MAP(VARCHAR(), ARRAY(REAL()))},
@@ -1556,7 +1553,7 @@ TEST_F(E2EWriterTest, memoryConfigError) {
   options.schema = type;
   const common::SpillConfig spillConfig = getSpillConfig(10, 20);
   options.spillConfig = &spillConfig;
-  auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+  auto writerPool = memory::memoryManager()->addRootPool(
       "memoryReclaim", 1L << 30, exec::MemoryReclaimer::create());
   auto dwrfPool = writerPool->addAggregateChild("writer");
   auto sinkPool =
@@ -1601,7 +1598,7 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnWrite) {
     if (enableReclaim) {
       options.spillConfig = &spillConfig;
     }
-    auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+    auto writerPool = memory::memoryManager()->addRootPool(
         "memoryReclaim", 1L << 30, exec::MemoryReclaimer::create());
     auto dwrfPool = writerPool->addAggregateChild("writer");
     auto sinkPool =
@@ -1717,7 +1714,7 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimOnFlush) {
     if (enableReclaim) {
       options.spillConfig = &spillConfig;
     }
-    auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+    auto writerPool = memory::memoryManager()->addRootPool(
         "memoryReclaim", 1L << 30, exec::MemoryReclaimer::create());
     auto dwrfPool = writerPool->addAggregateChild("writer");
     auto sinkPool =
@@ -1821,7 +1818,7 @@ TEST_F(E2EWriterTest, memoryReclaimAfterClose) {
     if (testData.canReclaim) {
       options.spillConfig = &spillConfig;
     }
-    auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+    auto writerPool = memory::memoryManager()->addRootPool(
         "memoryReclaim", 1L << 30, exec::MemoryReclaimer::create());
     auto dwrfPool = writerPool->addAggregateChild("writer");
     auto sinkPool =
@@ -1901,7 +1898,7 @@ DEBUG_ONLY_TEST_F(E2EWriterTest, memoryReclaimDuringInit) {
     if (reclaimable) {
       options.spillConfig = &spillConfig;
     }
-    auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+    auto writerPool = memory::memoryManager()->addRootPool(
         "memoryReclaimDuringInit", 1L << 30, exec::MemoryReclaimer::create());
     auto dwrfPool = writerPool->addAggregateChild("writer");
     auto sinkPool =
@@ -1983,7 +1980,7 @@ TEST_F(E2EWriterTest, memoryReclaimThreshold) {
     options.nonReclaimableSection = &nonReclaimableSection;
     options.spillConfig = &spillConfig;
 
-    auto writerPool = memory::MemoryManager::getInstance()->addRootPool(
+    auto writerPool = memory::memoryManager()->addRootPool(
         "memoryReclaimThreshold", 1L << 30, exec::MemoryReclaimer::create());
     auto dwrfPool = writerPool->addAggregateChild("writer");
     auto sinkPool =
