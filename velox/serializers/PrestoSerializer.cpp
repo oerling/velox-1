@@ -1110,7 +1110,7 @@ void readRowVectorStructNulls(
   auto numNonNull = valueCount(source, size, scratch, &nullsCopy);
   if (size != numNonNull) {
     (*structNullsMap())[streamPos] =
-      std::pair<raw_vector<uint64_t>, int32_t>(std::move(nullsCopy), size);
+        std::pair<raw_vector<uint64_t>, int32_t>(std::move(nullsCopy), size);
   }
 }
 
