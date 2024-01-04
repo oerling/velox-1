@@ -152,7 +152,7 @@ FOLLY_ALWAYS_INLINE bool needCompression(const folly::io::Codec& codec) {
 }
 
 using StructNullsMap =
-    folly::F14FastMap<int64_t, std::pair<std::vector<uint64_t>, int32_t>>;
+    folly::F14FastMap<int64_t, std::pair<raw_vector<uint64_t>, int32_t>>;
 
 auto& structNullsMap() {
   thread_local std::unique_ptr<StructNullsMap> map;
@@ -967,7 +967,7 @@ vector_size_t valueCount(
     ByteInputStream* source,
     vector_size_t size,
     Scratch& scratch,
-    std::vector<uint64_t>* copy = nullptr) {
+    raw_vector<uint64_t>* copy = nullptr) {
   if (source->readByte() == 0) {
     return size;
   }
@@ -1106,11 +1106,11 @@ void readRowVectorStructNulls(
   // Read and discard the offsets. The number of offsets is not affected by
   // nulls.
   source->skip((size + 1) * sizeof(int32_t));
-  std::vector<uint64_t> nullsCopy;
+  raw_vector<uint64_t> nullsCopy;
   auto numNonNull = valueCount(source, size, scratch, &nullsCopy);
   if (size != numNonNull) {
     (*structNullsMap())[streamPos] =
-        std::pair<std::vector<uint64_t>, int32_t>(std::move(nullsCopy), size);
+      std::pair<raw_vector<uint64_t>, int32_t>(std::move(nullsCopy), size);
   }
 }
 
