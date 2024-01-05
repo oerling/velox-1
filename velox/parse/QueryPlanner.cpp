@@ -431,7 +431,6 @@ PlanNodePtr toVeloxPlan(
         {}, // sortingKeys
         {} // sortingOrders
     });
->>>>>>> main
   }
 
   std::vector<FieldAccessTypedExprPtr> groupingKeys;

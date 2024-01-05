@@ -19,6 +19,7 @@
 #include "velox/exec/TaskStats.h"
 #include "velox/experimental/query/ExecutablePlan.h"
 #include "velox/experimental/query/Plan.h"
+#include "velox/connectors/hive/TableHandle.h"
 
 namespace facebook::verax {
 

@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/HashPartitionFunction.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -273,7 +274,7 @@ core::PlanNodePtr Optimization::makeAggregation(
           toTypePtr(op.columns()[numKeys + i]->value().type),
           projections.toFieldRefs<core::TypedExprPtr>(aggregate->args()),
           aggregate->name());
-      aggregates.push_back({call, mask, {}, {}});
+      aggregates.push_back({call, mask, {}, {}, false});
     } else {
       auto call = std::make_shared<core::CallTypedExpr>(
           toTypePtr(op.columns()[numKeys + i]->value().type),
@@ -282,7 +283,7 @@ core::PlanNodePtr Optimization::makeAggregation(
                   toTypePtr(aggregate->intermediateType()),
                   aggregateNames.back())},
           aggregate->name());
-      aggregates.push_back({call, mask, {}, {}});
+      aggregates.push_back({call, mask, {}, {}, false});
     }
   }
   auto keys = projections.toFieldRefs(op.grouping);
