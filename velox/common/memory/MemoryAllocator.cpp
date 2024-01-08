@@ -50,10 +50,6 @@ std::string getAndClearCacheFailureMessage() {
   return errMsg;
 }
 
-std::shared_ptr<MemoryAllocator> MemoryAllocator::instance_;
-MemoryAllocator* MemoryAllocator::customInstance_;
-std::mutex MemoryAllocator::initMutex_;
-
 std::string MemoryAllocator::kindString(Kind kind) {
   switch (kind) {
     case Kind::kMalloc:
@@ -146,8 +142,7 @@ void MemoryAllocator::alignmentCheck(
 MachinePageCount MemoryAllocator::roundUpToSizeClassSize(
     size_t bytes,
     const std::vector<MachinePageCount>& sizes) {
-  auto pages = bits::roundUp(bytes, AllocationTraits::kPageSize) /
-      AllocationTraits::kPageSize;
+  auto pages = AllocationTraits::numPages(bytes);
   VELOX_CHECK_LE(pages, sizes.back());
   return *std::lower_bound(sizes.begin(), sizes.end(), pages);
 }
@@ -357,33 +352,4 @@ std::string MemoryAllocator::getAndClearFailureMessage() {
   }
   return allocatorErrMsg;
 }
-
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-MemoryAllocator* MemoryAllocator::getInstance() {
-  std::lock_guard<std::mutex> l(initMutex_);
-  if (customInstance_ != nullptr) {
-    return customInstance_;
-  }
-  if (instance_ != nullptr) {
-    return instance_.get();
-  }
-  instance_ = createDefaultInstance();
-  return instance_.get();
-}
-
-void MemoryAllocator::setDefaultInstance(MemoryAllocator* instance) {
-  std::lock_guard<std::mutex> l(initMutex_);
-  customInstance_ = instance;
-}
-
-std::shared_ptr<MemoryAllocator> MemoryAllocator::createDefaultInstance() {
-  return std::make_shared<MallocAllocator>(kMaxMemory);
-}
-
-void MemoryAllocator::testingDestroyInstance() {
-  std::lock_guard<std::mutex> l(initMutex_);
-  instance_ = nullptr;
-}
-#endif
-
 } // namespace facebook::velox::memory

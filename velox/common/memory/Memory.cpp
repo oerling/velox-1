@@ -22,8 +22,7 @@ DECLARE_int32(velox_memory_num_shared_leaf_pools);
 
 namespace facebook::velox::memory {
 namespace {
-static constexpr std::string_view kDefaultRootName{"__default_root__"};
-static constexpr std::string_view kDefaultLeafName("__default_leaf__");
+constexpr std::string_view kSysRootName{"__sys_root__"};
 
 std::mutex& instanceMutex() {
   static std::mutex kMutex;
@@ -38,19 +37,14 @@ std::unique_ptr<MemoryManager>& instance() {
 
 std::shared_ptr<MemoryAllocator> createAllocator(
     const MemoryManagerOptions& options) {
-  if (options.allocator != nullptr) {
-    return options.allocator->shared_from_this();
-  }
   if (options.useMmapAllocator) {
     MmapAllocator::Options mmapOptions;
-    mmapOptions.capacity =
-        std::min(options.allocatorCapacity, options.capacity);
+    mmapOptions.capacity = options.allocatorCapacity;
     mmapOptions.useMmapArena = options.useMmapArena;
     mmapOptions.mmapArenaCapacityRatio = options.mmapArenaCapacityRatio;
     return std::make_shared<MmapAllocator>(mmapOptions);
   } else {
-    return std::make_shared<MallocAllocator>(
-        std::min(options.allocatorCapacity, options.capacity));
+    return std::make_shared<MallocAllocator>(options.allocatorCapacity);
   }
 }
 
@@ -58,14 +52,14 @@ std::unique_ptr<MemoryArbitrator> createArbitrator(
     const MemoryManagerOptions& options) {
   // TODO: consider to reserve a small amount of memory to compensate for the
   // non-reclaimable cache memory which are pinned by query accesses if enabled.
-  const auto arbitratorCapacity =
-      std::min(options.queryMemoryCapacity, options.arbitratorCapacity);
   return MemoryArbitrator::create(
       {.kind = options.arbitratorKind,
-       .capacity = std::min(arbitratorCapacity, options.allocatorCapacity),
+       .capacity =
+           std::min(options.arbitratorCapacity, options.allocatorCapacity),
        .memoryPoolTransferCapacity = options.memoryPoolTransferCapacity,
        .memoryReclaimWaitMs = options.memoryReclaimWaitMs,
-       .arbitrationStateCheckCb = options.arbitrationStateCheckCb});
+       .arbitrationStateCheckCb = options.arbitrationStateCheckCb,
+       .checkUsageLeak = options.checkUsageLeak});
 }
 } // namespace
 
@@ -83,7 +77,7 @@ MemoryManager::MemoryManager(const MemoryManagerOptions& options)
       }),
       defaultRoot_{std::make_shared<MemoryPoolImpl>(
           this,
-          std::string(kDefaultRootName),
+          std::string(kSysRootName),
           MemoryPool::Kind::kAggregate,
           nullptr,
           nullptr,
@@ -98,10 +92,11 @@ MemoryManager::MemoryManager(const MemoryManagerOptions& options)
               .debugEnabled = options.debugEnabled,
               .coreOnAllocationFailureEnabled =
                   options.coreOnAllocationFailureEnabled})},
-      spillPool_{addLeafPool("_sys.spilling")} {
+      spillPool_{addLeafPool("__sys_spilling__")} {
   VELOX_CHECK_NOT_NULL(allocator_);
   VELOX_CHECK_NOT_NULL(arbitrator_);
   VELOX_USER_CHECK_GE(capacity(), 0);
+  VELOX_CHECK_GE(allocator_->capacity(), arbitrator_->capacity());
   MemoryAllocator::alignmentCheck(0, alignment_);
   defaultRoot_->grow(defaultRoot_->maxCapacity());
   const size_t numSharedPools =
@@ -114,12 +109,18 @@ MemoryManager::MemoryManager(const MemoryManagerOptions& options)
 }
 
 MemoryManager::~MemoryManager() {
-  if (checkUsageLeak_) {
-    VELOX_CHECK_EQ(
+  if (pools_.size() != 0) {
+    const auto errMsg = fmt::format(
+        "pools_.size() != 0 ({} vs {}). There are unexpected alive memory "
+        "pools allocated by user on memory manager destruction:\n{}",
         pools_.size(),
         0,
-        "There are unexpected alive memory pools allocated by user on memory manager destruction:\n{}",
         toString(true));
+    if (checkUsageLeak_) {
+      VELOX_FAIL(errMsg);
+    } else {
+      LOG(ERROR) << errMsg;
+    }
   }
 }
 
