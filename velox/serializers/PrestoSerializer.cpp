@@ -525,7 +525,7 @@ void readConstantVector(
     result = std::move(constantVector);
   } else {
     if (!incomingNulls &&
-	opts.nullsFirst && // TODO remove when removing scatter nulls pass.
+        opts.nullsFirst && // TODO remove when removing scatter nulls pass.
         result->encoding() == VectorEncoding::Simple::CONSTANT &&
         constantVector->equalValueAt(result.get(), 0, 0)) {
       result->resize(resultOffset + numNewValues);
