@@ -23,6 +23,7 @@
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/HashJoinBridge.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/TableScan.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -3141,6 +3142,62 @@ TEST_P(MultiThreadedHashJoinTest, noSpillLevelLimit) {
       .run();
 }
 
+// Verify that dynamic filter pushed down from null-aware right semi project
+// join into table scan doesn't filter out nulls.
+TEST_F(HashJoinTest, nullAwareRightSemiProjectOverScan) {
+  auto probe = makeRowVector(
+      {"t0"},
+      {
+          makeNullableFlatVector<int32_t>({1, std::nullopt, 2}),
+      });
+
+  auto build = makeRowVector(
+      {"u0"},
+      {
+          makeNullableFlatVector<int32_t>({1, 2, 3, std::nullopt}),
+      });
+
+  std::shared_ptr<TempFilePath> probeFile = TempFilePath::create();
+  writeToFile(probeFile->path, {probe});
+
+  std::shared_ptr<TempFilePath> buildFile = TempFilePath::create();
+  writeToFile(buildFile->path, {build});
+
+  createDuckDbTable("t", {probe});
+  createDuckDbTable("u", {build});
+
+  core::PlanNodeId probeScanId;
+  core::PlanNodeId buildScanId;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .tableScan(asRowType(probe->type()))
+                  .capturePlanNodeId(probeScanId)
+                  .hashJoin(
+                      {"t0"},
+                      {"u0"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(asRowType(build->type()))
+                          .capturePlanNodeId(buildScanId)
+                          .planNode(),
+                      "",
+                      {"u0", "match"},
+                      core::JoinType::kRightSemiProject,
+                      true /*nullAware*/)
+                  .planNode();
+
+  SplitInput splitInput = {
+      {probeScanId, {exec::Split(makeHiveConnectorSplit(probeFile->path))}},
+      {buildScanId, {exec::Split(makeHiveConnectorSplit(buildFile->path))}},
+  };
+
+  HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+      .planNode(plan)
+      .inputSplits(splitInput)
+      .checkSpillStats(false)
+      .referenceQuery("SELECT u0, u0 IN (SELECT t0 FROM t) FROM u")
+      .run();
+}
+
 TEST_F(HashJoinTest, duplicateJoinKeys) {
   auto leftVectors = makeBatches(3, [&](int32_t /*unused*/) {
     return makeRowVector({
@@ -4673,6 +4730,90 @@ TEST_F(HashJoinTest, dynamicFiltersWithSkippedSplits) {
           .run();
     }
   }
+}
+
+TEST_F(HashJoinTest, dynamicFiltersAppliedToPreloadedSplits) {
+  vector_size_t size = 1000;
+  const int32_t numSplits = 5;
+
+  std::vector<RowVectorPtr> probeVectors;
+  probeVectors.reserve(numSplits);
+
+  // Prepare probe side table.
+  std::vector<std::shared_ptr<TempFilePath>> tempFiles;
+  std::vector<exec::Split> probeSplits;
+  for (int32_t i = 0; i < numSplits; ++i) {
+    auto rowVector = makeRowVector(
+        {"p0", "p1"},
+        {
+            makeFlatVector<int64_t>(
+                size, [&](auto row) { return (row + 1) * (i + 1); }),
+            makeFlatVector<int64_t>(size, [&](auto /*row*/) { return i; }),
+        });
+    probeVectors.push_back(rowVector);
+    tempFiles.push_back(TempFilePath::create());
+    writeToFile(tempFiles.back()->path, rowVector);
+    auto split = HiveConnectorSplitBuilder(tempFiles.back()->path)
+                     .partitionKey("p1", std::to_string(i))
+                     .build();
+    probeSplits.push_back(exec::Split(split));
+  }
+
+  auto outputType = ROW({"p0", "p1"}, {BIGINT(), BIGINT()});
+  ColumnHandleMap assignments = {
+      {"p0", regularColumn("p0", BIGINT())},
+      {"p1", partitionKey("p1", BIGINT())}};
+  createDuckDbTable("p", probeVectors);
+
+  // Prepare build side table.
+  std::vector<RowVectorPtr> buildVectors{
+      makeRowVector({"b0"}, {makeFlatVector<int64_t>({0, numSplits})})};
+  createDuckDbTable("b", buildVectors);
+
+  // Executing the join with p1=b0, we expect a dynamic filter for p1 to prune
+  // the entire file/split. There are total of five splits, and all except the
+  // first one are expected to be pruned. The result 'preloadedSplits' > 1
+  // confirms the successful push of dynamic filters to the preloading data
+  // source.
+  core::PlanNodeId probeScanId;
+  core::PlanNodeId joinNodeId;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  auto op =
+      PlanBuilder(planNodeIdGenerator)
+          .startTableScan()
+          .outputType(outputType)
+          .assignments(assignments)
+          .endTableScan()
+          .capturePlanNodeId(probeScanId)
+          .hashJoin(
+              {"p1"},
+              {"b0"},
+              PlanBuilder(planNodeIdGenerator).values(buildVectors).planNode(),
+              "",
+              {"p0"},
+              core::JoinType::kInner)
+          .capturePlanNodeId(joinNodeId)
+          .project({"p0"})
+          .planNode();
+  HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+      .planNode(std::move(op))
+      .config(core::QueryConfig::kMaxSplitPreloadPerDriver, "3")
+      .injectSpill(false)
+      .inputSplits({{probeScanId, probeSplits}})
+      .referenceQuery("select p.p0 from p, b where b.b0 = p.p1")
+      .checkSpillStats(false)
+      .verifier([&](const std::shared_ptr<Task>& task, bool /*hasSpill*/) {
+        auto planStats = toPlanStats(task->taskStats());
+        auto getStatSum = [&](const core::PlanNodeId& id,
+                              const std::string& name) {
+          return planStats.at(id).customStats.at(name).sum;
+        };
+        ASSERT_EQ(1, getStatSum(joinNodeId, "dynamicFiltersProduced"));
+        ASSERT_EQ(1, getStatSum(probeScanId, "dynamicFiltersAccepted"));
+        ASSERT_EQ(4, getStatSum(probeScanId, "skippedSplits"));
+        ASSERT_LT(1, getStatSum(probeScanId, "preloadedSplits"));
+      })
+      .run();
 }
 
 // Verify the size of the join output vectors when projecting build-side

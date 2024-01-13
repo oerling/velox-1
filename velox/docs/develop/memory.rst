@@ -121,7 +121,7 @@ Memory Manager
     :align: center
     :alt: Memory Manager
 
-The memory manager is created on server startup with provided
+The memory manager is created on server startup with the provided
 *MemoryManagerOption*. It creates a memory allocator instance to manage the
 physical memory allocations for both query memory allocated through memory pool
 and cache memory allocated through the file cache. It ensures the total
@@ -170,8 +170,8 @@ significant memory usage during a system operation, and eventually the memory
 allocator guarantees the actual allocated memory are within the system memory
 limit no matter if it is for system operation or for user query execution. In
 practice, we shall reserve some space from the memory allocator to compensate
-for such system memory usage. We can do that by configuring a smaller query
-memory limit (*MemoryManagerOptions::arbitratorCapacity*) than system memory
+for such system memory usage. We can do that by configuring the query
+memory limit (*MemoryManagerOptions::arbitratorCapacity*) to be smaller than the system memory
 limit (*MemoryManagerOptions::allocatorCapacity*) (refer to `OOM prevention section <#server-oom-prevention>`_
 for detail).
 
@@ -205,18 +205,18 @@ Here is the code block from Prestissimo that initializes the Velox memory system
      ...
    }
 
-* L6: set the memory allocator capacity (system memory limit) from
-  Prestissimo system config
-* L7: set the memory allocator type from Prestissimo system config. If
+* L5: set the memory allocator capacity (system memory limit) from
+  the Prestissimo system config
+* L6: set the memory allocator type from the Prestissimo system config. If
   *useMmapAllocator* is true, we use *MmapAllocator*, otherwise use
   *MallocAllocator*. `Memory Allocator section <#memory-allocator>`_ describes these two
   types of allocators
-* L9: set the memory arbitrator kind from the Prestissimo system config.
+* L8: set the memory arbitrator kind from the Prestissimo system config.
   Currently, we only support the *“SHARED”* arbitrator kind (see `memory arbitrator section <#memory-arbitrator>`_).
   *“NOOP”* arbitrator kind will be deprecated soon (`#8220 <https://github.com/facebookincubator/velox/issues/8220>`_)
-* L11: set the memory arbitrator capacity (query memory limit) from
+* L10: set the memory arbitrator capacity (query memory limit) from the
   Prestissimo system config
-* L14: creates the process-wide memory manager which creates memory
+* L13: creates the process-wide memory manager which creates memory
   allocator and arbitrator inside based on MemoryManagerOptions initialized from previous steps
 * L15-19: creates the file cache if it is enabled in Prestissimo system
   config
@@ -362,7 +362,7 @@ The implementation of MemoryPool::incrementReservationThreadSafe:
       expects a query memory capacity exceeded exception thrown and the memory
       allocation fails
 
-#. Call *MemoryPool::maybeIncrementReservationLocked* to try to increment the
+#. Call *MemoryPool::maybeIncrementReservation* to try to increment the
    reservation and check the result:
 
    a. For a non-root memory pool, this should always succeed as we only check
@@ -512,12 +512,11 @@ related methods are used in the memory arbitration and reclaim process.
   /// corresponding method.
   virtual void MemoryPool::leaveArbitration();
 
-  /// Returns how many bytes is reclaimable from this memory pool. The function
-  /// true if we can reclaim memory from this memory pool, and returns the number
-  /// of reclaimable bytes in 'bytes'. Otherwise returns false. The function
-  /// returns false if if 'reclaimer_' is not set, otherwise invoke the
-  /// reclaimer's corresponding method.
-  virtual bool MemoryPool::reclaimableBytes(uint64_t& bytes) const;
+  /// Function estimates the number of reclaimable bytes and returns in
+  /// 'reclaimableBytes'. If the 'reclaimer' is not set, the function returns
+  /// std::nullopt. Otherwise, it will invoke the corresponding method of the
+  /// reclaimer.
+  virtual std::optional<uint64_t> reclaimableBytes() const = 0;
 
   /// Invoked by the memory arbitrator to reclaim memory from this memory pool
   /// with specified reclaim target bytes. If 'targetBytes' is zero, then it
@@ -721,7 +720,7 @@ defines *MmapAllocator::SizeClass* data structure (similar to the one used in
 `Umbra <https://db.in.tum.de/~freitag/papers/p29-neumann-cidr20.pdf>`_) to manage the non-contiguous allocation. A *SizeClass* object provides
 allocation of a fixed size buffer (class page) which is a power of 2 of a
 machine page size. *MMapAllocator* creates 9 different *SizeClass* objects with
-class page size ranging from 1 machine page (4KB) to 512 machine pages (1MB).
+class page size ranging from 1 machine page (4KB) to 256 machine pages (1MB).
 To allocate a large number of machines pages, *MmapAllocator* calls
 &MemoryAllocator::allocationSize* to build the allocation plan
 (*MemoryAllocator::SizeMix*) which consists of a list of chosen *SizeClass* objects
