@@ -591,7 +591,7 @@ void readDictionaryVector(
         bits::nbytes(numIncomingNulls));
   }
   auto dictionaryVector = BaseVector::wrapInDictionary(
-      incomingNullsBuffer, indices, size, children[0]);
+      incomingNullsBuffer, indices, numNewValues, children[0]);
   if (resultOffset == 0) {
     result = std::move(dictionaryVector);
   } else {
@@ -1206,6 +1206,42 @@ raw_vector<uint64_t>& threadTempNulls() {
   thread_local raw_vector<uint64_t> temp;
   return temp;
 }
+class VectorStream;
+
+void serializeColumn(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream);
+
+void serializeColumn(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& rows,
+    VectorStream* stream,
+    Scratch& scratch);
+
+struct VectorValueSetEntry {
+  const BaseVector* vector;
+  vector_size_t index;
+};
+
+struct VectorValueSetHasher {
+  size_t operator()(const VectorValueSetEntry& entry) const {
+    return entry.vector->hashValueAt(entry.index);
+  }
+};
+
+struct VectorValueSetComparer {
+  bool operator()(
+      const VectorValueSetEntry& left,
+      const VectorValueSetEntry& right) const {
+    return left.vector->equalValueAt(right.vector, left.index, right.index);
+  }
+};
+
+using VectorValueSet = folly::F14FastSet<
+    VectorValueSetEntry,
+    VectorValueSetHasher,
+    VectorValueSetComparer>;
 
 // Appendable container for serialized values. To append a value at a
 // time, call appendNull or appendNonNull first. Then call
@@ -1226,7 +1262,8 @@ class VectorStream {
         nulls_(streamArena, true, true),
         lengths_(streamArena),
         values_(streamArena),
-        isLongDecimal_(type_->isLongDecimal()) {
+        isLongDecimal_(type_->isLongDecimal()),
+        streamArena_(streamArena) {
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
       return;
@@ -1300,6 +1337,13 @@ class VectorStream {
   }
 
   void appendNull() {
+    if (UNLIKELY(runLengths_.size() > 0)) {
+    // This may be called to add an extra null from dictionary
+    // wrappers. if so, must flatten. This is simpler than adding a
+    // null to the distincts. Reconsider when adding dictionary
+    // preserving.
+      ensureFlat();
+    }
     if (nonNullCount_ && nullCount_ == 0) {
       nulls_.appendBool(false, nonNullCount_);
     }
@@ -1398,6 +1442,51 @@ class VectorStream {
     append(folly::Range(&value, 1));
   }
 
+  /// Flattens contents from 'distincts_' and related. This happens
+  /// when we preserve constants and find that we need a flat encoding
+  /// instead. This clears 'distincts_' and related members.
+  void ensureFlat() {
+    if (distincts_ == nullptr) {
+      return;
+    }
+    vector_size_t size = 0;
+    for (auto run : runLengths_) {
+      size += run;
+    }
+    raw_vector<vector_size_t> indices(size);
+    int32_t fill = 0;
+    for (auto i = 0; i < runLengths_.size(); ++i) {
+      std::fill(
+          indices.begin() + fill,
+          indices.begin() + fill + runLengths_[i],
+          indices_[i]);
+      fill += runLengths_[i];
+    }
+    auto distincts = std::move(distincts_);
+    Scratch scratch;
+    serializeColumn(
+        distincts.get(),
+        folly::Range<const vector_size_t*>(indices.data(), indices.size()),
+        this,
+        scratch);
+    clearDistincts();
+  }
+
+  bool mayAppendConstant() const {
+    return nonNullCount_ == 0 && nullCount_ == 0;
+  }
+
+  /// Adds 'repeats' repeats of 'vector's constant value in a constant/dictionary
+  /// encodable way. May only be called if mayAppendConstant() is true;
+  void appendConstant(
+      const BaseVector& vector,
+      vector_size_t repeats) {
+    VELOX_DCHECK(mayAppendConstant());
+    VELOX_DCHECK_EQ(vector.encoding(), VectorEncoding::Simple::CONSTANT);
+    indices_.push_back(addDistinctValue(vector, vector.wrappedIndex(0)));
+    runLengths_.push_back(repeats);
+  }
+
   VectorStream* childAt(int32_t index) {
     return children_[index].get();
   }
@@ -1419,6 +1508,10 @@ class VectorStream {
 
   // Writes out the accumulated contents. Does not change the state.
   void flush(OutputStream* out) {
+    if (distincts_) {
+      setEncodingByDistincts();
+    }
+
     out->write(reinterpret_cast<char*>(header_.buffer), header_.size);
 
     if (encoding_.has_value()) {
@@ -1519,8 +1612,86 @@ class VectorStream {
   }
 
  private:
+  // Adds a value to 'distincts_'. Returns the index of an existing value if
+  // there is one, otherwise adds the value and returns the index of the added
+  // value.
+  vector_size_t addDistinctValue(
+      const BaseVector& vector,
+      vector_size_t index) {
+    auto it = distinctSet_.find(VectorValueSetEntry{&vector, index});
+    if (it != distinctSet_.end()) {
+      return it->index;
+    }
+    int32_t newIndex;
+    if (distincts_ == nullptr) {
+      distincts_ = BaseVector::create(vector.type(), 1, streamArena_->pool());
+      newIndex = 0;
+    } else {
+      newIndex = distincts_->size();
+      distincts_->resize(newIndex + 1);
+    }
+    distincts_->copy(vector.wrappedVector(), newIndex, index, 1);
+    distinctSet_.insert(VectorValueSetEntry{distincts_.get(), newIndex});
+    return newIndex;
+  }
+
+  void setEncodingByDistincts() {
+    if (distincts_ == nullptr) {
+      return;
+    }
+    SerdeOpts opts;
+    opts.useLosslessTimestamp = useLosslessTimestamp_;
+    opts.nullsFirst = nullsFirst_;
+    for (auto run : runLengths_) {
+      nonNullCount_ += run;
+    }
+
+    if (distincts_->size() == 1) {
+      initializeHeader(kRLE, *streamArena_);
+      children_.clear();
+      children_.emplace_back(std::make_unique<VectorStream>(
+          type_, std::nullopt, streamArena_, 1, opts));
+      Scratch scratch;
+      vector_size_t zero = 0;
+      serializeColumn(
+          distincts_.get(),
+          folly::Range<const vector_size_t*>(&zero, 1),
+          children_[0].get(),
+          scratch);
+      encoding_ = VectorEncoding::Simple::CONSTANT;
+    } else {
+      initializeHeader(kDictionary, *streamArena_);
+      children_.clear();
+      children_.emplace_back(std::make_unique<VectorStream>(
+          type_, std::nullopt, streamArena_, distincts_->size(), opts));
+      IndexRange range = IndexRange{0, distincts_->size()};
+      serializeColumn(
+          distincts_.get(),
+          folly::Range<const IndexRange*>(&range, 1),
+          children_[0].get());
+      encoding_ = VectorEncoding::Simple::DICTIONARY;
+      if (values_.ranges().empty()) {
+	values_.startWrite(indices_.size() * sizeof(indices_[0]));
+      }
+      for (auto i = 0; i < runLengths_.size(); ++i) {
+        auto index = indices_[i];
+        for (auto counter = 0; counter < runLengths_[i]; ++counter) {
+          appendOne<int32_t>(index);
+        }
+      }
+    }
+    clearDistincts();
+  }
+
+  void clearDistincts() {
+    distincts_ = nullptr;
+    distinctSet_.clear();
+    indices_.clear();
+    runLengths_.clear();
+  }
+
   const TypePtr type_;
-  const std::optional<VectorEncoding::Simple> encoding_;
+  std::optional<VectorEncoding::Simple> encoding_ = std::nullopt;
   /// Indicates whether to serialize timestamps with nanosecond precision.
   /// If false, they are serialized with millisecond precision which is
   /// compatible with presto.
@@ -1536,6 +1707,20 @@ class VectorStream {
   ByteOutputStream values_;
   std::vector<std::unique_ptr<VectorStream>> children_;
   const bool isLongDecimal_;
+
+  StreamArena* const streamArena_;
+
+  // Container for distinct values in encoding preserving serialization.
+  VectorPtr distincts_;
+
+  // Hash table for lookup into 'distincts_'.
+  VectorValueSet distinctSet_;
+
+  // Indices into 'distincts_' for encoding preserving serialization.
+  raw_vector<vector_size_t> indices_;
+
+  // Number of repeats for the pairwise corresponding element in 'indices_'.
+  raw_vector<vector_size_t> runLengths_;
 };
 
 template <>
@@ -1668,17 +1853,6 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
     }
   }
 }
-
-void serializeColumn(
-    const BaseVector* vector,
-    const folly::Range<const IndexRange*>& ranges,
-    VectorStream* stream);
-
-void serializeColumn(
-    const BaseVector* vector,
-    const folly::Range<const vector_size_t*>& rows,
-    VectorStream* stream,
-    Scratch& scratch);
 
 void serializeWrapped(
     const BaseVector* vector,
@@ -1885,12 +2059,21 @@ void serializeColumn(
     const BaseVector* vector,
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
-  switch (vector->encoding()) {
+  auto encoding = vector->encoding();
+  if (encoding != VectorEncoding::Simple::CONSTANT) {
+    stream->ensureFlat();
+  }
+
+  switch (encoding) {
     case VectorEncoding::Simple::FLAT:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
           serializeFlatVector, vector->typeKind(), vector, ranges, stream);
       break;
     case VectorEncoding::Simple::CONSTANT:
+      if (stream->mayAppendConstant()) {
+        stream->appendConstant(*vector, rangesTotalSize(ranges));
+        return;
+      }
       VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
           serializeConstantVector, vector->typeKind(), vector, ranges, stream);
       break;
@@ -2487,7 +2670,11 @@ void serializeColumn(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  switch (vector->encoding()) {
+  auto encoding = vector->encoding();
+  if (encoding != VectorEncoding::Simple::CONSTANT) {
+    stream->ensureFlat();
+  }
+  switch (encoding) {
     case VectorEncoding::Simple::FLAT:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
           serializeFlatVector,
@@ -2498,6 +2685,10 @@ void serializeColumn(
           scratch);
       break;
     case VectorEncoding::Simple::CONSTANT:
+      if (stream->mayAppendConstant()) {
+        stream->appendConstant(*vector, rows.size());
+        return;
+      }
       VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
           serializeConstantVector,
           vector->typeKind(),

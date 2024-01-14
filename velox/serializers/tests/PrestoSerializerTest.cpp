@@ -342,8 +342,20 @@ class PrestoSerializerTest
     auto paramOptions = getParamSerdeOptions(serdeOptions);
     auto serializer =
         serde_->createSerializer(rowType, 10, arena.get(), &paramOptions);
-
-    for (const auto& vector : vectors) {
+    VectorEncoding::Simple expectEncoding = VectorEncoding::Simple::CONSTANT;
+    for (auto i = 0; i < vectors.size(); ++i) {
+      const auto& vector = vectors[i];
+      // If the same constant repeats all the time, the expected
+      // encoding is constant. If different constants alternate, the
+      // expected encoding is dictionary. If non-constants occur, the
+      // expected encoding is the encoding of the wrapped vector,
+      // i.e. flat, row, etc.
+      if (vector->encoding() != VectorEncoding::Simple::CONSTANT) {
+	expectEncoding = vector->wrappedVector()->encoding();
+      } else if (expectEncoding == VectorEncoding::Simple::CONSTANT &&
+		 i > 0 && vector != vectors[i - 1]) {
+	expectEncoding = VectorEncoding::Simple::DICTIONARY;
+      }
       auto data = makeRowVector({"f"}, {vector});
       concatenation->append(data.get());
       std::ostringstream out;
@@ -358,6 +370,7 @@ class PrestoSerializerTest
 
     auto allDeserialized = deserialize(rowType, allOut.str(), serdeOptions);
     assertEqualVectors(allDeserialized, concatenation);
+    ASSERT_EQ(expectEncoding, allDeserialized->childAt(0)->encoding());
     RowVectorPtr deserialized =
         BaseVector::create<RowVector>(rowType, 0, pool_.get());
     for (auto& piece : pieces) {
