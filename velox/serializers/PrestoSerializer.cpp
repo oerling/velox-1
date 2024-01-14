@@ -592,7 +592,7 @@ void readDictionaryVector(
         bits::nbytes(numIncomingNulls));
   }
   auto dictionaryVector = BaseVector::wrapInDictionary(
-      incomingNullsBuffer, indices, size, children[0]);
+      incomingNullsBuffer, indices, numNewValues, children[0]);
   if (resultOffset == 0) {
     result = std::move(dictionaryVector);
   } else {
