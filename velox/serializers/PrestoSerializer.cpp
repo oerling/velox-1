@@ -1338,10 +1338,10 @@ class VectorStream {
 
   void appendNull() {
     if (UNLIKELY(runLengths_.size() > 0)) {
-    // This may be called to add an extra null from dictionary
-    // wrappers. if so, must flatten. This is simpler than adding a
-    // null to the distincts. Reconsider when adding dictionary
-    // preserving.
+      // This may be called to add an extra null from dictionary
+      // wrappers. if so, must flatten. This is simpler than adding a
+      // null to the distincts. Reconsider when adding dictionary
+      // preserving.
       ensureFlat();
     }
     if (nonNullCount_ && nullCount_ == 0) {
@@ -1476,11 +1476,10 @@ class VectorStream {
     return nonNullCount_ == 0 && nullCount_ == 0;
   }
 
-  /// Adds 'repeats' repeats of 'vector's constant value in a constant/dictionary
-  /// encodable way. May only be called if mayAppendConstant() is true;
-  void appendConstant(
-      const BaseVector& vector,
-      vector_size_t repeats) {
+  /// Adds 'repeats' repeats of 'vector's constant value in a
+  /// constant/dictionary encodable way. May only be called if
+  /// mayAppendConstant() is true;
+  void appendConstant(const BaseVector& vector, vector_size_t repeats) {
     VELOX_DCHECK(mayAppendConstant());
     VELOX_DCHECK_EQ(vector.encoding(), VectorEncoding::Simple::CONSTANT);
     indices_.push_back(addDistinctValue(vector, vector.wrappedIndex(0)));
@@ -1671,7 +1670,7 @@ class VectorStream {
           children_[0].get());
       encoding_ = VectorEncoding::Simple::DICTIONARY;
       if (values_.ranges().empty()) {
-	values_.startWrite(indices_.size() * sizeof(indices_[0]));
+        values_.startWrite(indices_.size() * sizeof(indices_[0]));
       }
       for (auto i = 0; i < runLengths_.size(); ++i) {
         auto index = indices_[i];

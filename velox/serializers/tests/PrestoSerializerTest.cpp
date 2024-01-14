@@ -351,10 +351,11 @@ class PrestoSerializerTest
       // expected encoding is the encoding of the wrapped vector,
       // i.e. flat, row, etc.
       if (vector->encoding() != VectorEncoding::Simple::CONSTANT) {
-	expectEncoding = vector->wrappedVector()->encoding();
-      } else if (expectEncoding == VectorEncoding::Simple::CONSTANT &&
-		 i > 0 && vector != vectors[i - 1]) {
-	expectEncoding = VectorEncoding::Simple::DICTIONARY;
+        expectEncoding = vector->wrappedVector()->encoding();
+      } else if (
+          expectEncoding == VectorEncoding::Simple::CONSTANT && i > 0 &&
+          vector != vectors[i - 1]) {
+        expectEncoding = VectorEncoding::Simple::DICTIONARY;
       }
       auto data = makeRowVector({"f"}, {vector});
       concatenation->append(data.get());
