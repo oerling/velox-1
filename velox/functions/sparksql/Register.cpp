@@ -41,6 +41,7 @@
 #include "velox/functions/sparksql/UnscaledValueFunction.h"
 #include "velox/functions/sparksql/specialforms/DecimalRound.h"
 #include "velox/functions/sparksql/specialforms/MakeDecimal.h"
+#include "velox/functions/sparksql/specialforms/SparkCastExpr.h"
 
 namespace facebook::velox::functions {
 extern void registerElementAtFunction(
@@ -72,7 +73,6 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   // String functions.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_concat, prefix + "concat");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_lower, prefix + "lower");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_replace, prefix + "replace");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_upper, prefix + "upper");
   // Logical.
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, prefix + "not");
@@ -90,6 +90,10 @@ void registerAllSpecialFormGeneralFunctions() {
   exec::registerFunctionCallToSpecialForm(
       DecimalRoundCallToSpecialForm::kRoundDecimal,
       std::make_unique<DecimalRoundCallToSpecialForm>());
+  registerFunctionCallToSpecialForm(
+      "cast", std::make_unique<SparkCastCallToSpecialForm>());
+  registerFunctionCallToSpecialForm(
+      "try_cast", std::make_unique<SparkTryCastCallToSpecialForm>());
 }
 
 namespace {
@@ -239,6 +243,11 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<ConvFunction, Varchar, Varchar, int32_t, int32_t>(
       {prefix + "conv"});
 
+  registerFunction<ReplaceFunction, Varchar, Varchar, Varchar>(
+      {prefix + "replace"});
+  registerFunction<ReplaceFunction, Varchar, Varchar, Varchar, Varchar>(
+      {prefix + "replace"});
+
   // Register array sort functions.
   exec::registerStatefulVectorFunction(
       prefix + "array_sort", arraySortSignatures(), makeArraySort);
@@ -286,6 +295,9 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<MonthFunction, int32_t, Date>({prefix + "month"});
 
   registerFunction<NextDayFunction, Date, Date, Varchar>({prefix + "next_day"});
+
+  registerFunction<GetTimestampFunction, Timestamp, Varchar, Varchar>(
+      {prefix + "get_timestamp"});
 
   // Register bloom filter function
   registerFunction<BloomFilterMightContainFunction, bool, Varbinary, int64_t>(

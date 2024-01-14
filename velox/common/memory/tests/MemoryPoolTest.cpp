@@ -137,7 +137,7 @@ class MemoryPoolTest : public testing::TestWithParam<TestParam> {
   MemoryReclaimer::Stats stats_;
 };
 
-TEST_P(MemoryPoolTest, Ctor) {
+TEST_P(MemoryPoolTest, ctor) {
   constexpr uint16_t kAlignment = 64;
   setupMemory({.alignment = 64, .allocatorCapacity = kDefaultCapacity});
   MemoryManager& manager = *getMemoryManager();
@@ -203,7 +203,7 @@ TEST_P(MemoryPoolTest, Ctor) {
       "Memory pool rootWithZeroMaxCapacity max capacity can't be zero");
 }
 
-TEST_P(MemoryPoolTest, AddChild) {
+TEST_P(MemoryPoolTest, addChild) {
   MemoryManager& manager = *getMemoryManager();
   auto root = manager.addRootPool("root");
   ASSERT_EQ(root->parent(), nullptr);
@@ -227,6 +227,18 @@ TEST_P(MemoryPoolTest, AddChild) {
   ASSERT_EQ(root->getChildCount(), 1);
   childOne = root->addLeafChild("child_one", isLeafThreadSafe_);
   ASSERT_EQ(root->getChildCount(), 2);
+  ASSERT_EQ(root->treeMemoryUsage(), "root usage 0B reserved 0B peak 0B\n");
+  ASSERT_EQ(root->treeMemoryUsage(true), "root usage 0B reserved 0B peak 0B\n");
+  const std::string treeUsageWithEmptyPool = root->treeMemoryUsage(false);
+  ASSERT_THAT(
+      treeUsageWithEmptyPool,
+      testing::HasSubstr("root usage 0B reserved 0B peak 0B\n"));
+  ASSERT_THAT(
+      treeUsageWithEmptyPool,
+      testing::HasSubstr("child_one usage 0B reserved 0B peak 0B\n"));
+  ASSERT_THAT(
+      treeUsageWithEmptyPool,
+      testing::HasSubstr("child_two usage 0B reserved 0B peak 0B\n"));
 }
 
 TEST_P(MemoryPoolTest, dropChild) {
@@ -1784,9 +1796,9 @@ TEST_P(MemoryPoolTest, contiguousAllocateGrowExceedMemoryPoolLimit) {
   ASSERT_EQ(allocation.numPages(), kMaxNumPages / 2);
 }
 
-TEST_P(MemoryPoolTest, badNonContiguousAllocation) {
+TEST_P(MemoryPoolTest, nonContiguousAllocationBounds) {
   auto manager = getMemoryManager();
-  auto pool = manager->addLeafPool("badNonContiguousAllocation");
+  auto pool = manager->addLeafPool("nonContiguousAllocationBounds");
   Allocation allocation;
   // Bad zero page allocation size.
   ASSERT_THROW(pool->allocateNonContiguous(0, allocation), VeloxRuntimeError);
@@ -1794,10 +1806,15 @@ TEST_P(MemoryPoolTest, badNonContiguousAllocation) {
   // Set the num of pages to allocate exceeds one PageRun limit.
   constexpr MachinePageCount kNumPages =
       Allocation::PageRun::kMaxPagesInRun + 1;
-  ASSERT_THROW(
-      pool->allocateNonContiguous(kNumPages, allocation), VeloxRuntimeError);
+  pool->allocateNonContiguous(kNumPages, allocation);
+  ASSERT_GE(allocation.numPages(), kNumPages);
+  pool->freeNonContiguous(allocation);
   pool->allocateNonContiguous(kNumPages - 1, allocation);
   ASSERT_GE(allocation.numPages(), kNumPages - 1);
+  pool->freeNonContiguous(allocation);
+  pool->allocateNonContiguous(
+      Allocation::PageRun::kMaxPagesInRun * 2, allocation);
+  ASSERT_GE(allocation.numPages(), Allocation::PageRun::kMaxPagesInRun * 2);
   pool->freeNonContiguous(allocation);
 }
 
@@ -2795,9 +2812,7 @@ TEST_P(MemoryPoolTest, reclaimAPIsWithDefaultReclaimer) {
       }
     }
     for (auto& pool : pools) {
-      uint64_t reclaimableBytes{100};
-      ASSERT_FALSE(pool->reclaimableBytes(reclaimableBytes));
-      ASSERT_EQ(reclaimableBytes, 0);
+      ASSERT_FALSE(pool->reclaimableBytes().has_value());
       ASSERT_EQ(pool->reclaim(0, 0, stats_), 0);
       ASSERT_EQ(pool->reclaim(100, 0, stats_), 0);
       ASSERT_EQ(pool->reclaim(kMaxMemory, 0, stats_), 0);

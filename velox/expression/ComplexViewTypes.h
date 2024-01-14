@@ -673,8 +673,12 @@ class ArrayView {
         "efficient to use the standard iterator interface.");
   }
 
-  const BaseVector* elementsVector() const {
+  const BaseVector* elementsVectorBase() const {
     return reader_->baseVector();
+  }
+
+  bool isFlatElements() const {
+    return reader_->decoded_.isIdentityMapping();
   }
 
   vector_size_t offset() const {
@@ -682,7 +686,7 @@ class ArrayView {
   }
 
   TypeKind elementKind() const {
-    return elementsVector()->typeKind();
+    return elementsVectorBase()->typeKind();
   }
 
  private:
@@ -1126,7 +1130,7 @@ class GenericView {
     // If its a primitive type, then the casted reader always exists at
     // castReaders_[0], and is set in Vector readers.
     if constexpr (SimpleTypeTrait<ToType>::isPrimitiveType) {
-      return static_cast<VectorReader<ToType>*>(castReaders_[0].get())
+      return reinterpret_cast<VectorReader<ToType>*>(castReaders_[0].get())
           ->
           operator[](index_);
     } else {
