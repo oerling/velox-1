@@ -151,23 +151,6 @@ FOLLY_ALWAYS_INLINE bool needCompression(const folly::io::Codec& codec) {
   return codec.type() != folly::io::CodecType::NO_COMPRESSION;
 }
 
-using StructNullsMap =
-    folly::F14FastMap<int64_t, std::pair<raw_vector<uint64_t>, int32_t>>;
-
-auto& structNullsMap() {
-  thread_local std::unique_ptr<StructNullsMap> map;
-  return map;
-}
-
-std::pair<const uint64_t*, int32_t> getStructNulls(int64_t position) {
-  auto& map = structNullsMap();
-  auto it = map->find(position);
-  if (it == map->end()) {
-    return {nullptr, 0};
-  }
-  return {it->second.first.data(), it->second.second};
-}
-
 template <typename T>
 void readValues(
     ByteInputStream* source,
@@ -324,24 +307,26 @@ void readDecimalValues(
   }
 }
 
-vector_size_t sizeWithIncomingNulls(
+  ///****
+  vector_size_t sizeWithIncomingNulls(
     vector_size_t size,
     int32_t numIncomingNulls) {
   return numIncomingNulls == 0 ? size : numIncomingNulls;
 }
+ 
 
 vector_size_t readNulls(
     ByteInputStream* source,
     vector_size_t size,
-    BaseVector& result,
     vector_size_t resultOffset,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+			    BaseVector& result) {
   VELOX_DCHECK_LE(
       result.size(), resultOffset + (incomingNulls ? numIncomingNulls : size));
   if (source->readByte() == 0) {
     if (incomingNulls) {
-      auto rawNulls = result.mutableRawNulls();
+      auto* rawNulls = result.mutableRawNulls();
       bits::copyBits(
           incomingNulls, 0, rawNulls, resultOffset, numIncomingNulls);
     } else {
@@ -352,12 +337,12 @@ vector_size_t readNulls(
         : 0;
   }
 
-  const bool noPriorNulls = (result.rawNulls() == nullptr);
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
 
   // Allocate one extra byte in case we cannot use bits from the current last
   // partial byte.
   BufferPtr& nulls = result.mutableNulls(resultOffset + numNewValues + 8);
+  const bool noPriorNulls = (result.rawNulls() == nullptr);
   if (noPriorNulls) {
     bits::fillBits(
         nulls->asMutable<uint64_t>(), 0, resultOffset, bits::kNotNull);
@@ -397,12 +382,14 @@ template <typename T>
 void read(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result,
+
+	  ) {
   const int32_t size = source->read<int32_t>();
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
   result->resize(resultOffset + numNewValues);
@@ -468,8 +455,9 @@ void read<StringView>(
       *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) = lastOffset;
       continue;
     }
-    lastOffset = *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) =
+    lastOffset =
         source->read<int32_t>();
+    *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) = lastOffset;
   }
   readNulls(
       source, size, *flatResult, resultOffset, incomingNulls, numIncomingNulls);
