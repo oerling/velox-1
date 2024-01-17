@@ -189,6 +189,10 @@ class PartitionedOutput : public Operator {
 
   void initializeSizeBuffers();
 
+
+  // Considers data in 'output_->childAt(i)' and replaces it with a constant or 
+  void maybeEncode(column_index_t i);
+
   void estimateRowSizes();
 
   /// Collect all rows with null keys into nullRows_.
@@ -220,6 +224,9 @@ class PartitionedOutput : public Operator {
   std::vector<uint32_t> partitions_;
   std::vector<DecodedVector> decodedVectors_;
   Scratch scratch_;
+  // Index of columns in 'output_' that can be checked for encoding.
+  std::vector<column_index_t> encodingCandidates_;
+  DecodedVector tempDecoded_;
 };
 
 } // namespace facebook::velox::exec

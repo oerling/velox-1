@@ -175,8 +175,84 @@ void PartitionedOutput::initializeInput(RowVectorPtr input) {
         input_->size(),
         outputColumns);
   }
+  if (output_->size() > 1  /* && !encodingCandidates_.empty()*/) {
+    rows_.resize(output_->size());
+    rows_.setAll();
+    for (auto i : encodingCandidates_) {
+      maybeEncode(i);
+    }
+  }
+				      
 }
 
+  template<TypeKind Kind>
+  bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
+  using T = typename KindToFlatVector<Kind>::WrapperType;
+  auto flat = vector.asUnchecked<FlatVector<T>>();
+  auto rawValues = flat->rawValues();
+  T first = rawValues[0];
+  for (auto i = 1; i < size; ++i) {
+    if (first != rawValues[i]) {
+      return false;
+    }
+  }
+  return true;
+  }
+  
+  void PartitionedOutput::maybeEncode(column_index_t i) {
+    auto& column = output_->childAt(i);
+    if (column->typeKind() == TypeKind::BOOLEAN) {
+      return;
+    }
+    if (column->encoding() == VectorEncoding::Simple::CONSTANT) {
+      return;
+    }
+    // If there is a null, values will either not all be the same or all be null, which can just as well be serialized as flat.
+    if( column->isNullAt(0)) {
+      return;
+    }
+    // Quick return if first and last are different.
+    if (!column->equalValueAt(column.get(), 0, rows_.end() - 1)) {
+      return;
+    }
+
+    tempDecoded_.decode(*column, rows_);
+    auto indices = tempDecoded_.indices();
+    if (indices) {
+      auto first = indices[0];
+      for (auto i = 1; i < rows_.end(); ++i) {
+	if (indices[i] != first) { 
+	  if (tempDecoded_.isNullAt(i)) {
+	    return;
+	  }
+	  if (!tempDecoded_.base()->equalValueAt(tempDecoded_.base(), first, indices[i])) {
+	    return;
+	  }
+	}
+      }
+      column = BaseVector::wrapInConstant(rows_.end(), 0, column);
+      return;
+    }
+    if (column->mayHaveNulls()) {
+      return;
+    }
+    if (column->encoding() == VectorEncoding::Simple::FLAT) {
+      if (VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
+						 isAllSameFlat, column->typeKind(), *column, rows_.end() - 1)) {
+	return;
+      }
+    } else {
+      for (auto i = 1; i < rows_.end() - 1; ++i) {
+	if (!column->equalValueAt(column.get(), 0, i)) {
+	  return;
+	}
+      }
+    }
+
+    column = BaseVector::wrapInConstant(rows_.end(), 0, column);
+  }
+
+  
 void PartitionedOutput::initializeDestinations() {
   if (destinations_.empty()) {
     auto taskId = operatorCtx_->taskId();
