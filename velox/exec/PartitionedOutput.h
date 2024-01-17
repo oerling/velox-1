@@ -189,8 +189,7 @@ class PartitionedOutput : public Operator {
 
   void initializeSizeBuffers();
 
-
-  // Considers data in 'output_->childAt(i)' and replaces it with a constant or 
+  // Considers data in 'output_->childAt(i)' and replaces it with a constant or
   void maybeEncode(column_index_t i);
 
   void estimateRowSizes();
