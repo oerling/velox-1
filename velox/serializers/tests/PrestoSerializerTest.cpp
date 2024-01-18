@@ -657,9 +657,9 @@ TEST_P(PrestoSerializerTest, encodedRoundtrip) {
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
-    serializer::presto::PrestoVectorSerde::PrestoOptions opts;
-    opts.nullsFirst = true;
-    testEncodedRoundTrip(inputRowVector, &opts);
+    serializer::presto::PrestoVectorSerde::PrestoOptions serdeOpts;
+    serdeOpts.nullsFirst = true;
+    testEncodedRoundTrip(inputRowVector, &serdeOpts);
   }
 }
 
