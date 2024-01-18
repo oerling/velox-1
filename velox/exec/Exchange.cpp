@@ -114,7 +114,16 @@ RowVectorPtr Exchange::getOutput() {
     while (!inputStream.atEnd()) {
       getSerde()->deserialize(
           &inputStream, pool(), outputType_, &result_, resultOffset);
+      const auto newRows = result_->size() - resultOffset;
       resultOffset = result_->size();
+      int32_t constantRows = 0;
+      for (auto i = 0; i < result_->childrenSize(); ++i) {
+	auto& column = result_->childAt(i);
+	if (column->encoding () == VectorEncoding::Simple::CONSTANT) {
+          auto lockedStats = stats_.wlock();
+	  lockedStats->addRuntimeStat("constantRows", RuntimeCounter(newRows));
+	}
+      }
     }
   }
 
