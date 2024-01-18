@@ -350,10 +350,10 @@ vector_size_t readNulls(
 
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
 
+  const bool noPriorNulls = (result.rawNulls() == nullptr);
   // Allocate one extra byte in case we cannot use bits from the current last
   // partial byte.
   BufferPtr& nulls = result.mutableNulls(resultOffset + numNewValues + 8);
-  const bool noPriorNulls = (result.rawNulls() == nullptr);
   if (noPriorNulls) {
     bits::fillBits(
         nulls->asMutable<uint64_t>(), 0, resultOffset, bits::kNotNull);
