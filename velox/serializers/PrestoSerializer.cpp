@@ -3283,7 +3283,7 @@ class PrestoVectorSerializer : public VectorSerializer {
   void appendEncoded(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges) {
-      const auto newRows = rangesTotalSize(ranges);
+    const auto newRows = rangesTotalSize(ranges);
     if (newRows > 0) {
       numRows_ += newRows;
       for (int32_t i = 0; i < vector->childrenSize(); ++i) {
