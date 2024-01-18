@@ -178,7 +178,7 @@ void PartitionedOutput::initializeInput(RowVectorPtr input) {
   if (output_->size() > 1 /* && !encodingCandidates_.empty()*/) {
     rows_.resize(output_->size());
     rows_.setAll();
-    for (auto i : encodingCandidates_) {
+    for (auto i = 0; i < output_->childrenSize(); ++i) {
       maybeEncode(i);
     }
   }
@@ -199,7 +199,7 @@ bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
 }
 
 void PartitionedOutput::maybeEncode(column_index_t i) {
-  auto& column = output_->childAt(i);
+  auto& column = BaseVector::loadedVectorShared(output_->childAt(i));
   if (column->typeKind() == TypeKind::BOOLEAN) {
     return;
   }
@@ -217,8 +217,8 @@ void PartitionedOutput::maybeEncode(column_index_t i) {
   }
 
   tempDecoded_.decode(*column, rows_);
-  auto indices = tempDecoded_.indices();
-  if (indices) {
+  if (!tempDecoded_.isIdentityMapping()) {
+    auto indices = tempDecoded_.indices();
     auto first = indices[0];
     for (auto i = 1; i < rows_.end(); ++i) {
       if (indices[i] != first) {
@@ -231,14 +231,14 @@ void PartitionedOutput::maybeEncode(column_index_t i) {
         }
       }
     }
-    column = BaseVector::wrapInConstant(rows_.end(), 0, column);
+    output_->childAt(i) = BaseVector::wrapInConstant(rows_.end(), 0, column);
     return;
   }
   if (column->mayHaveNulls()) {
     return;
   }
   if (column->encoding() == VectorEncoding::Simple::FLAT) {
-    if (VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
+    if (!VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
             isAllSameFlat, column->typeKind(), *column, rows_.end() - 1)) {
       return;
     }
@@ -250,7 +250,7 @@ void PartitionedOutput::maybeEncode(column_index_t i) {
     }
   }
 
-  column = BaseVector::wrapInConstant(rows_.end(), 0, column);
+  output_->childAt(i) = BaseVector::wrapInConstant(rows_.end(), 0, column);
 }
 
 void PartitionedOutput::initializeDestinations() {
