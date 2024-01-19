@@ -1519,10 +1519,18 @@ class VectorStream {
 
   // Writes out the accumulated contents. Does not change the state.
   void flush(OutputStream* out) {
+    ++numFlushes_;
     if (distincts_) {
       setEncodingByDistincts();
+    } else {
+      if (!isFlushed_) {
+        totalNonNull_ += nonNullCount_;
+        if (type_->kind() == TypeKind::VARCHAR) {
+          maxDistinctStrings_ = totalNonNull_ / (numFlushes_ + 1) / 3;
+        }
+      }
     }
-
+    isFlushed_ = true;
     out->write(reinterpret_cast<char*>(header_.buffer), header_.size);
 
     if (encoding_.has_value()) {
@@ -1623,7 +1631,8 @@ class VectorStream {
     return isLongDecimal_;
   }
 
-  /// Sets 'this' to post-construction state. Sizes streams to reserve previous size worth of space if 'reservePreviousSize' is true.
+  /// Sets 'this' to post-construction state. Sizes streams to reserve previous
+  /// size worth of space if 'reservePreviousSize' is true.
   void clear(bool reservePreviousSize = true) {
     nonNullCount_ = 0;
     nullCount_ = 0;
@@ -1633,20 +1642,82 @@ class VectorStream {
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
+    disableDict_ = numAbandonDict_ > numFlushes_ / 10;
     clearDistincts();
     for (auto& child : children_) {
       child->clear();
     }
   }
 
-  
+  inline bool appendDictionaryString(
+      const BaseVector& vector,
+      vector_size_t i) {
+    if (disableDict_ || maxDistinctStrings_ == 0) {
+      return false;
+    }
+    if (distincts_ != nullptr || (nullCount_ == 0 && nonNullCount_ == 0)) {
+      vector_size_t dictIndex = addDistinctValue(vector, i);
+      if (!indices_.empty() && indices_.back() == dictIndex) {
+        ++runLengths_.back();
+      } else {
+        indices_.push_back(dictIndex);
+        runLengths_.push_back(1);
+      }
+    }
+    if (distinctStrings_.size() > maxDistinctStrings_) {
+      ++numAbandonDict_;
+      ensureFlat();
+      disableDict_ = true;
+    }
+    return true;
+  }
+
  private:
+  static constexpr int32_t kNoNullIndex = -1;
+
   // Adds a value to 'distincts_'. Returns the index of an existing value if
   // there is one, otherwise adds the value and returns the index of the added
   // value.
   vector_size_t addDistinctValue(
       const BaseVector& vector,
       vector_size_t index) {
+    if (LIKELY(vector.typeKind() == TypeKind::VARCHAR)) {
+      StringView string;
+      bool isNull = vector.isNullAt(index);
+      if (UNLIKELY(isNull)) {
+        if (nullIndex_ != kNoNullIndex) {
+          return nullIndex_;
+        }
+      } else {
+        if (LIKELY(vector.encoding() == VectorEncoding::Simple::FLAT)) {
+          string = vector.asUnchecked<FlatVector<StringView>>()->valueAt(index);
+        } else {
+          string =
+	    vector.asUnchecked < ConstantVector<StringView>>()->valueAt(0);
+        }
+        auto it = distinctStrings_.find(string);
+        if (it != distinctStrings_.end()) {
+          return it->second;
+        }
+      }
+      int32_t newIndex;
+      if (distincts_ == nullptr) {
+        distincts_ = BaseVector::create(vector.type(), 1, streamArena_->pool());
+        newIndex = 0;
+      } else {
+        newIndex = distincts_->size();
+        distincts_->resize(newIndex + 1);
+      }
+      distincts_->copy(vector.wrappedVector(), newIndex, index, 1);
+      if (isNull) {
+        nullIndex_ = newIndex;
+      } else {
+        distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
+                             ->valueAt(newIndex)] = newIndex;
+      }
+      return newIndex;
+    }
+
     auto it = distinctSet_.find(VectorValueSetEntry{&vector, index});
     if (it != distinctSet_.end()) {
       return it->index;
@@ -1681,6 +1752,7 @@ class VectorStream {
       children_.emplace_back(std::make_unique<VectorStream>(
           type_, std::nullopt, streamArena_, 1, opts));
       Scratch scratch;
+      ++totalDistincts_;
       vector_size_t zero = 0;
       serializeColumn(
           distincts_.get(),
@@ -1702,6 +1774,7 @@ class VectorStream {
       if (values_.ranges().empty()) {
         values_.startWrite(indices_.size() * sizeof(indices_[0]));
       }
+      totalDistincts_ += distincts_->size();
       for (auto i = 0; i < runLengths_.size(); ++i) {
         auto index = indices_[i];
         for (auto counter = 0; counter < runLengths_[i]; ++counter) {
@@ -1712,10 +1785,10 @@ class VectorStream {
     clearDistincts();
   }
 
-  
   void clearDistincts() {
     distincts_ = nullptr;
     distinctSet_.clear();
+    distinctStrings_.clear();
     indices_.clear();
     runLengths_.clear();
   }
@@ -1743,8 +1816,13 @@ class VectorStream {
   // Container for distinct values in encoding preserving serialization.
   VectorPtr distincts_;
 
-  // Hash table for lookup into 'distincts_'.
+  // Hash table for lookup into 'distincts_' for non-string types.
   VectorValueSet distinctSet_;
+
+  // Lookup into 'distincts_' for strings.
+  folly::F14FastMap<StringView, int32_t> distinctStrings_;
+
+  int32_t nullIndex_ = kNoNullIndex;
 
   // Indices into 'distincts_' for encoding preserving serialization.
   raw_vector<vector_size_t> indices_;
@@ -1752,14 +1830,25 @@ class VectorStream {
   // Number of repeats for the pairwise corresponding element in 'indices_'.
   raw_vector<vector_size_t> runLengths_;
 
-  // Number of produced batches. If the batch size is greater than lifetime distincts, then dictionary encoding is an option.
+  // Number of produced batches. If the batch size is greater than lifetime
+  // distincts, then dictionary encoding is an option.
   int64_t numFlushes_{0};
-  
-  // Bloom filter tracking number of distinct values across lifetime.
-  raw_vector<uint64_t> bloom_;
 
-  // Number of written values across all flushes and clears.
-  int64_t totalWritten_{0};
+  // Number of written non-null values across all flushes and clears.
+  int64_t totalNonNull_{0};
+
+  // Sum of distinct values across non-flat encoding flushes.
+  int64_t totalDistincts_{0};
+
+  // Number of distinct strings after which we switch to flat from dictionary.
+  int32_t maxDistinctStrings_{0};
+
+  // Number of times strings are too many for dictionarizing.
+  int32_t numAbandonDict_{0};
+
+  bool disableDict_{false};
+
+  bool isFlushed_{false};
 };
 
 template <>
