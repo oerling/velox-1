@@ -1610,6 +1610,23 @@ class VectorStream {
     return isLongDecimal_;
   }
 
+  /// Sets 'this' to post-construction state. Sizes streams to reserve previous size worth of space if 'reservePreviousSize' is true.
+  void clear(bool reservePreviousSize = true) {
+    nonNullCount_ = 0;
+    nullCount_ = 0;
+    totalLength_ = 0;
+    if (hasLengths_) {
+      lengths_.startWrite(lengths_.size());
+    }
+    nulls_.startWrite(nulls_.size());
+    values_.startWrite(values_.size());
+    clearDistincts();
+    for (auto& child : children_) {
+      child->clear();
+    }
+  }
+
+  
  private:
   // Adds a value to 'distincts_'. Returns the index of an existing value if
   // there is one, otherwise adds the value and returns the index of the added
@@ -1682,6 +1699,7 @@ class VectorStream {
     clearDistincts();
   }
 
+  
   void clearDistincts() {
     distincts_ = nullptr;
     distinctSet_.clear();
@@ -1720,6 +1738,15 @@ class VectorStream {
 
   // Number of repeats for the pairwise corresponding element in 'indices_'.
   raw_vector<vector_size_t> runLengths_;
+
+  // Number of produced batches. If the batch size is greater than lifetime distincts, then dictionary encoding is an option.
+  int64_t numFlushes_{0};
+  
+  // Bloom filter tracking number of distinct values across lifetime.
+  raw_vector<uint64_t> bloom_;
+
+  // Number of written values across all flushes and clears.
+  int64_t totalWritten_{0};
 };
 
 template <>

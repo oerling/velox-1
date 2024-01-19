@@ -76,10 +76,19 @@ class VectorSerializer {
   /// size_t size = maxSerializedSize();
   /// OutputStream* stream = allocateBuffer(size);
   /// flush(stream);
+  /// clear();
+  /// append again after clear() if clear is supported.
   virtual size_t maxSerializedSize() const = 0;
 
   /// Write serialized data to 'stream'.
   virtual void flush(OutputStream* stream) = 0;
+
+  /// Resets 'this' to post construction state. Reserves space in
+  /// constituent streams to match previous utilization if
+  /// 'reservePreviousSize' is true.
+  virtual void clear(bool reservePreviousSize = true) {
+    VELOX_NOT_SUPPORTED("clear");
+  }
 };
 
 class VectorSerde {
