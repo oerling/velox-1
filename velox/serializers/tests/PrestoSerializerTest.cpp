@@ -360,7 +360,7 @@ class PrestoSerializerTest
       auto data = makeRowVector({"f"}, {vector});
       concatenation->append(data.get());
       std::ostringstream out;
-      serializeEncoded(data, &out, nullptr);
+      serializeEncoded(data, &out, &paramOptions);
       pieces.push_back(out.str());
       serializer->append(data);
     }
@@ -369,14 +369,13 @@ class PrestoSerializerTest
     OStreamOutputStream allOutStream(&allOut, &listener);
     serializer->flush(&allOutStream);
 
-    auto allDeserialized = deserialize(rowType, allOut.str(), serdeOptions);
+    auto allDeserialized = deserialize(rowType, allOut.str(), &paramOptions);
     assertEqualVectors(allDeserialized, concatenation);
     ASSERT_EQ(expectEncoding, allDeserialized->childAt(0)->encoding());
     RowVectorPtr deserialized =
         BaseVector::create<RowVector>(rowType, 0, pool_.get());
     for (auto& piece : pieces) {
       auto byteStream = toByteStream(piece);
-      auto paramOptions = getParamSerdeOptions(serdeOptions);
       serde_->deserialize(
           &byteStream,
           pool_.get(),
@@ -669,10 +668,12 @@ TEST_P(PrestoSerializerTest, encodedRoundtrip) {
 
   const size_t numRounds = 200;
 
+  serializer::presto::PrestoVectorSerde::PrestoOptions serdeOpts;
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
-    testEncodedRoundTrip(inputRowVector);
+    serdeOpts.nullsFirst = i % 2 == 0;
+    testEncodedRoundTrip(inputRowVector, &serdeOpts);
   }
 }
 
@@ -713,8 +714,10 @@ TEST_P(PrestoSerializerTest, encodedConcatenation) {
     std::vector<std::vector<VectorPtr>> permutations;
     std::vector<VectorPtr> temp;
     makePermutations(vectors, 4, temp, permutations);
+    serializer::presto::PrestoVectorSerde::PrestoOptions opts;
     for (auto i = 0; i < permutations.size(); ++i) {
-      testEncodedConcatenation(permutations[i]);
+      opts.nullsFirst = i % 2 == 0;
+      testEncodedConcatenation(permutations[i], &opts);
     }
   }
 }
