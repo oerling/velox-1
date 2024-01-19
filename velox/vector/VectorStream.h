@@ -87,7 +87,7 @@ class VectorSerializer {
   /// constituent streams to match previous utilization if
   /// 'reservePreviousSize' is true.
   virtual void clear(bool reservePreviousSize = true) {
-    VELOX_NOT_SUPPORTED("clear");
+    VELOX_UNSUPPORTED("clear");
   }
 };
 

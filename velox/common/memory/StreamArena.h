@@ -65,7 +65,7 @@ class StreamArena {
   /// 
   virtual void clear() {
     allocations_.clear();
-    pool_->free(allocation_);
+    pool_->freeNonContiguous(allocation_);
     currentRun_ = 0;
     currentOffset_ = 0;
     largeAllocations_.clear();
