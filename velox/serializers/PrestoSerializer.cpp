@@ -94,10 +94,6 @@ bool isCompressedBitSet(int8_t codec) {
   return (codec & kCompressedBitMask) == kCompressedBitMask;
 }
 
-bool isEncryptedBit(int8_t codec) {
-  return (codec & kEncryptedBitMask) == kEncryptedBitMask;
-}
-
 bool isChecksumBitSet(int8_t codec) {
   return (codec & kCheckSumBitMask) == kCheckSumBitMask;
 }
@@ -135,7 +131,7 @@ std::string_view typeToEncodingName(const TypePtr& type) {
     case TypeKind::UNKNOWN:
       return "BYTE_ARRAY";
     default:
-      throw std::runtime_error("Unknown type kind");
+      VELOX_FAIL("Unknown type kind: {}", static_cast<int>(type->kind()));
   }
 }
 
@@ -149,23 +145,6 @@ PrestoVectorSerde::PrestoOptions toPrestoOptions(
 
 FOLLY_ALWAYS_INLINE bool needCompression(const folly::io::Codec& codec) {
   return codec.type() != folly::io::CodecType::NO_COMPRESSION;
-}
-
-using StructNullsMap =
-    folly::F14FastMap<int64_t, std::pair<raw_vector<uint64_t>, int32_t>>;
-
-auto& structNullsMap() {
-  thread_local std::unique_ptr<StructNullsMap> map;
-  return map;
-}
-
-std::pair<const uint64_t*, int32_t> getStructNulls(int64_t position) {
-  auto& map = structNullsMap();
-  auto it = map->find(position);
-  if (it == map->end()) {
-    return {nullptr, 0};
-  }
-  return {it->second.first.data(), it->second.second};
 }
 
 template <typename T>
@@ -324,24 +303,37 @@ void readDecimalValues(
   }
 }
 
+/// When deserializing vectors under row vectors that introduce
+/// nulls, the child vector must have a gap at the place where a
+/// parent RowVector has a null. So, if there is a parent RowVector
+/// that adds a null, 'incomingNulls' is the bitmap where a null
+/// denotes a null in the parent RowVector(s). 'numIncomingNulls' is
+/// the number of bits in this bitmap, i.e. the number of rows in
+/// the parentRowVector. 'size' is the size of the child vector
+/// being deserialized. This size does not include rows where a
+/// parent RowVector has nulls.
 vector_size_t sizeWithIncomingNulls(
     vector_size_t size,
     int32_t numIncomingNulls) {
   return numIncomingNulls == 0 ? size : numIncomingNulls;
 }
 
+// Fills the nulls of 'result' from the serialized nulls in
+// 'source'. Adds nulls from 'incomingNulls' so that the null flags
+// gets padded with extra nulls where a parent RowVector has a
+// null. Returns the number of nulls in the result.
 vector_size_t readNulls(
     ByteInputStream* source,
     vector_size_t size,
-    BaseVector& result,
     vector_size_t resultOffset,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    BaseVector& result) {
   VELOX_DCHECK_LE(
       result.size(), resultOffset + (incomingNulls ? numIncomingNulls : size));
   if (source->readByte() == 0) {
     if (incomingNulls) {
-      auto rawNulls = result.mutableRawNulls();
+      auto* rawNulls = result.mutableRawNulls();
       bits::copyBits(
           incomingNulls, 0, rawNulls, resultOffset, numIncomingNulls);
     } else {
@@ -352,9 +344,9 @@ vector_size_t readNulls(
         : 0;
   }
 
-  const bool noPriorNulls = (result.rawNulls() == nullptr);
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
 
+  const bool noPriorNulls = (result.rawNulls() == nullptr);
   // Allocate one extra byte in case we cannot use bits from the current last
   // partial byte.
   BufferPtr& nulls = result.mutableNulls(resultOffset + numNewValues + 8);
@@ -397,19 +389,19 @@ template <typename T>
 void read(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   const int32_t size = source->read<int32_t>();
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
   result->resize(resultOffset + numNewValues);
 
   auto flatResult = result->asFlatVector<T>();
   auto nullCount = readNulls(
-      source, size, *flatResult, resultOffset, incomingNulls, numIncomingNulls);
+      source, size, resultOffset, incomingNulls, numIncomingNulls, *flatResult);
 
   BufferPtr values = flatResult->mutableValues(resultOffset + numNewValues);
   if constexpr (std::is_same_v<T, Timestamp>) {
@@ -447,12 +439,12 @@ template <>
 void read<StringView>(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   const int32_t size = source->read<int32_t>();
   const int32_t numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
 
@@ -468,11 +460,11 @@ void read<StringView>(
       *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) = lastOffset;
       continue;
     }
-    lastOffset = *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) =
-        source->read<int32_t>();
+    lastOffset = source->read<int32_t>();
+    *reinterpret_cast<int32_t*>(&rawValues[resultOffset + i]) = lastOffset;
   }
   readNulls(
-      source, size, *flatResult, resultOffset, incomingNulls, numIncomingNulls);
+      source, size, resultOffset, incomingNulls, numIncomingNulls, *flatResult);
 
   const int32_t dataSize = source->read<int32_t>();
   if (dataSize == 0) {
@@ -495,28 +487,28 @@ void read<StringView>(
 
 void readColumns(
     ByteInputStream* source,
-    velox::memory::MemoryPool* pool,
     const std::vector<TypePtr>& types,
-    std::vector<VectorPtr>& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls);
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    std::vector<VectorPtr>& result);
 
 void readConstantVector(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   const auto size = source->read<int32_t>();
   const int32_t numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
-  readColumns(source, pool, childTypes, children, 0, opts, nullptr, 0);
+  readColumns(source, childTypes, 0, nullptr, 0, pool, opts, children);
   VELOX_CHECK_EQ(1, children[0]->size());
 
   auto constantVector =
@@ -525,6 +517,7 @@ void readConstantVector(
     result = std::move(constantVector);
   } else {
     if (!incomingNulls &&
+        opts.nullsFirst && // TODO remove when removing scatter nulls pass.
         result->encoding() == VectorEncoding::Simple::CONSTANT &&
         constantVector->equalValueAt(result.get(), 0, 0)) {
       result->resize(resultOffset + numNewValues);
@@ -549,18 +542,18 @@ void readConstantVector(
 void readDictionaryVector(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   const auto size = source->read<int32_t>();
   const int32_t numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
 
   std::vector<TypePtr> childTypes = {type};
   std::vector<VectorPtr> children{BaseVector::create(type, 0, pool)};
-  readColumns(source, pool, childTypes, children, 0, opts, nullptr, 0);
+  readColumns(source, childTypes, 0, nullptr, 0, pool, opts, children);
 
   // Read indices.
   BufferPtr indices = allocateIndices(numNewValues, pool);
@@ -609,12 +602,12 @@ void readDictionaryVector(
 void readArrayVector(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   ArrayVector* arrayVector = result->as<ArrayVector>();
 
   const auto resultElementsOffset = arrayVector->elements()->size();
@@ -623,13 +616,13 @@ void readArrayVector(
   std::vector<VectorPtr> children{arrayVector->elements()};
   readColumns(
       source,
-      pool,
       childTypes,
-      children,
       resultElementsOffset,
-      opts,
       nullptr,
-      0);
+      0,
+      pool,
+      opts,
+      children);
 
   const vector_size_t size = source->read<int32_t>();
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
@@ -656,34 +649,34 @@ void readArrayVector(
   readNulls(
       source,
       size,
-      *arrayVector,
       resultOffset,
       incomingNulls,
-      numIncomingNulls);
+      numIncomingNulls,
+      *arrayVector);
 }
 
 void readMapVector(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   MapVector* mapVector = result->as<MapVector>();
   const auto resultElementsOffset = mapVector->mapKeys()->size();
   std::vector<TypePtr> childTypes = {type->childAt(0), type->childAt(1)};
   std::vector<VectorPtr> children{mapVector->mapKeys(), mapVector->mapValues()};
   readColumns(
       source,
-      pool,
       childTypes,
-      children,
       resultElementsOffset,
-      opts,
       nullptr,
-      0);
+      0,
+      pool,
+      opts,
+      children);
 
   int32_t hashTableSize = source->read<int32_t>();
   if (hashTableSize != -1) {
@@ -715,7 +708,7 @@ void readMapVector(
   }
 
   readNulls(
-      source, size, *mapVector, resultOffset, incomingNulls, numIncomingNulls);
+      source, size, resultOffset, incomingNulls, numIncomingNulls, *mapVector);
 }
 
 int64_t packTimestampWithTimeZone(int64_t timestamp, int16_t timezone) {
@@ -743,12 +736,12 @@ void readTimestampWithTimeZone(
   read<int64_t>(
       source,
       BIGINT(),
-      pool,
-      timestamps,
       resultOffset,
-      opts,
       incomingNulls,
-      numIncomingNulls);
+      numIncomingNulls,
+      pool,
+      opts,
+      timestamps);
 
   auto rawTimestamps = timestamps->asFlatVector<int64_t>()->mutableRawValues();
 
@@ -771,15 +764,318 @@ void readTimestampWithTimeZone(
   }
 }
 
+template <typename T>
+void scatterValues(
+    int32_t numValues,
+    const vector_size_t* indices,
+    T* data,
+    vector_size_t offset) {
+  for (auto index = numValues - 1; index >= 0; --index) {
+    const auto destination = indices[index];
+    if (destination == offset + index) {
+      break;
+    }
+    data[destination] = data[offset + index];
+  }
+}
+
+template <TypeKind kind>
+void scatterFlatValues(
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    BaseVector& vector,
+    vector_size_t offset) {
+  using T = typename TypeTraits<kind>::NativeType;
+  auto* values = vector.asUnchecked<FlatVector<T>>()->mutableRawValues();
+  scatterValues(scatterSize, scatter, values, offset);
+}
+
+template <>
+void scatterFlatValues<TypeKind::BOOLEAN>(
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    BaseVector& vector,
+    vector_size_t offset) {
+  auto* values = const_cast<uint64_t*>(vector.values()->as<uint64_t>());
+
+  for (auto index = scatterSize - 1; index >= 0; --index) {
+    const auto destination = scatter[index];
+    if (destination == offset + index) {
+      break;
+    }
+    bits::setBit(values, destination, bits::isBitSet(values, offset + index));
+  }
+}
+
+void scatterStructNulls(
+    vector_size_t size,
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    const uint64_t* incomingNulls,
+    RowVector& row,
+    vector_size_t rowOffset);
+
+// Scatters existing nulls and adds 'incomingNulls' to the gaps. 'oldSize' is
+// the number of valid bits in the nulls of 'vector'. 'vector' must have been
+// resized to the new size before calling this.
+void scatterNulls(
+    vector_size_t oldSize,
+    const uint64_t* incomingNulls,
+    BaseVector& vector) {
+  const bool hasNulls = vector.mayHaveNulls();
+  const auto size = vector.size();
+
+  if (hasNulls) {
+    auto* bits = reinterpret_cast<char*>(vector.mutableRawNulls());
+    bits::scatterBits(oldSize, size, bits, incomingNulls, bits);
+  } else {
+    ::memcpy(vector.mutableRawNulls(), incomingNulls, bits::nbytes(size));
+  }
+}
+
+// Scatters all rows in 'vector' starting from 'offset'. All these rows are
+// expected to be non-null before this call. vector[offset + i] is copied into
+// vector[offset + scatter[i]] for all i in [0, scatterSize). The gaps are
+// filled with nulls. scatter[i] >= i for all i. scatter[i] >= scatter[j] for
+// all i and j.
+//
+// @param size Size of the 'vector' after scatter. Includes trailing nulls.
+// @param scatterSize Number of rows to scatter, starting from 'offset'.
+// @param scatter Destination row numbers. A total of 'scatterSize' entries.
+// @param incomingNulls A bitmap representation of the 'scatter' covering 'size'
+// rows. First 'offset' bits should be kNotNull.
+// @param vector Vector to modify.
+// @param offset First row to scatter.
+void scatterVector(
+    int32_t size,
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    const uint64_t* incomingNulls,
+    VectorPtr& vector,
+    vector_size_t offset) {
+  const auto oldSize = vector->size();
+  if (scatter != nullptr && scatterSize > 0) {
+    // 'scatter' should have an entry for every row in 'vector' starting from
+    // 'offset'.
+    VELOX_CHECK_EQ(vector->size(), scatterSize + offset);
+
+    // The new vector size should cover all 'scatter' destinations and
+    // trailing nulls.
+    VELOX_CHECK_GE(size, scatter[scatterSize - 1] + 1);
+  }
+
+  if (vector->encoding() == VectorEncoding::Simple::ROW) {
+    vector->asUnchecked<RowVector>()->unsafeResize(size);
+  } else {
+    vector->resize(size);
+  }
+
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::DICTIONARY: {
+      VELOX_CHECK_EQ(0, offset, "Result offset is not supported yet")
+      if (incomingNulls != nullptr) {
+        auto* dictIndices =
+            const_cast<vector_size_t*>(vector->wrapInfo()->as<vector_size_t>());
+        scatterValues(scatterSize, scatter, dictIndices, 0);
+        scatterNulls(oldSize, incomingNulls, *vector);
+      }
+      auto values = vector->valueVector();
+      scatterVector(values->size(), 0, nullptr, nullptr, values, 0);
+      break;
+    }
+    case VectorEncoding::Simple::CONSTANT: {
+      VELOX_CHECK_EQ(0, offset, "Result offset is not supported yet")
+      auto values = vector->valueVector();
+      if (values != nullptr) {
+        scatterVector(values->size(), 0, nullptr, nullptr, values, 0);
+      }
+
+      if (incomingNulls) {
+        BaseVector::ensureWritable(
+            SelectivityVector::empty(), vector->type(), vector->pool(), vector);
+        scatterNulls(oldSize, incomingNulls, *vector);
+      }
+      break;
+    }
+    case VectorEncoding::Simple::ARRAY: {
+      auto* array = vector->asUnchecked<ArrayVector>();
+      if (incomingNulls) {
+        auto offsets = const_cast<vector_size_t*>(array->rawOffsets());
+        auto sizes = const_cast<vector_size_t*>(array->rawSizes());
+        scatterValues(scatterSize, scatter, offsets, offset);
+        scatterValues(scatterSize, scatter, sizes, offset);
+        scatterNulls(oldSize, incomingNulls, *vector);
+      }
+      // Find the offset from which 'new' array elements start assuming that
+      // array elements are written in order.
+      vector_size_t elementOffset = 0;
+      for (auto i = offset - 1; i >= 0; --i) {
+        if (!array->isNullAt(i)) {
+          elementOffset = array->offsetAt(i) + array->sizeAt(i);
+          break;
+        }
+      }
+      auto elements = array->elements();
+      scatterVector(
+          elements->size(), 0, nullptr, nullptr, elements, elementOffset);
+      break;
+    }
+    case VectorEncoding::Simple::MAP: {
+      auto* map = vector->asUnchecked<MapVector>();
+      if (incomingNulls) {
+        auto offsets = const_cast<vector_size_t*>(map->rawOffsets());
+        auto sizes = const_cast<vector_size_t*>(map->rawSizes());
+        scatterValues(scatterSize, scatter, offsets, offset);
+        scatterValues(scatterSize, scatter, sizes, offset);
+        scatterNulls(oldSize, incomingNulls, *vector);
+      }
+      // Find out the offset from which 'new' map keys and values start assuming
+      // that map elements are written in order.
+      vector_size_t elementOffset = 0;
+      for (auto i = offset - 1; i >= 0; --i) {
+        if (!map->isNullAt(i)) {
+          elementOffset = map->offsetAt(i) + map->sizeAt(i);
+          break;
+        }
+      }
+      auto keys = map->mapKeys();
+      scatterVector(keys->size(), 0, nullptr, nullptr, keys, elementOffset);
+      auto values = map->mapValues();
+      scatterVector(values->size(), 0, nullptr, nullptr, values, elementOffset);
+      break;
+    }
+    case VectorEncoding::Simple::ROW: {
+      auto* row = vector->asUnchecked<RowVector>();
+      scatterStructNulls(row->size(), 0, nullptr, nullptr, *row, offset);
+      break;
+    }
+    case VectorEncoding::Simple::FLAT: {
+      if (incomingNulls != nullptr) {
+        VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
+            scatterFlatValues,
+            vector->typeKind(),
+            scatterSize,
+            scatter,
+            *vector,
+            offset);
+        scatterNulls(oldSize, incomingNulls, *vector);
+      }
+      break;
+    }
+    default:
+      VELOX_FAIL("Unsupported encoding in scatter: {}", vector->encoding());
+  }
+}
+
+// A RowVector with nulls is serialized with children having a value
+// only for rows where the struct is non-null. After deserializing,
+// we do an extra traversal to add gaps into struct members where
+// the containing struct is null. As we go down the struct tree, we
+// merge child struct nulls into the nulls from enclosing structs so
+// that the leaves only get scattered once, considering all nulls
+// from all enclosing structs.
+void scatterStructNulls(
+    vector_size_t size,
+    vector_size_t scatterSize,
+    const vector_size_t* scatter,
+    const uint64_t* incomingNulls,
+    RowVector& row,
+    vector_size_t rowOffset) {
+  const auto oldSize = row.size();
+  if (isTimestampWithTimeZoneType(row.type())) {
+    // The timestamp with tz case is special. The child vectors are aligned with
+    // the struct even if the struct has nulls.
+    if (incomingNulls != nullptr) {
+      scatterVector(
+          size, scatterSize, scatter, incomingNulls, row.childAt(0), rowOffset);
+      scatterVector(
+          size, scatterSize, scatter, incomingNulls, row.childAt(1), rowOffset);
+      row.unsafeResize(size);
+      scatterNulls(oldSize, incomingNulls, row);
+    }
+    return;
+  }
+
+  const uint64_t* childIncomingNulls = incomingNulls;
+  const vector_size_t* childScatter = scatter;
+  auto childScatterSize = scatterSize;
+  raw_vector<vector_size_t> innerScatter;
+  raw_vector<uint64_t> childIncomingNullsVector;
+  if (auto* rawNulls = row.rawNulls()) {
+    innerScatter.resize(size);
+    if (incomingNulls == nullptr) {
+      childIncomingNulls = rawNulls;
+      if (rowOffset > 0) {
+        childIncomingNullsVector.resize(bits::nwords(size));
+        auto* newNulls = childIncomingNullsVector.data();
+        ::memcpy(newNulls, rawNulls, bits::nbytes(size));
+
+        // Fill in first 'rowOffset' bits with kNotNull to avoid scattering
+        // nulls for pre-existing rows.
+        bits::fillBits(newNulls, 0, rowOffset, bits::kNotNull);
+        childIncomingNulls = newNulls;
+      }
+      childScatterSize = simd::indicesOfSetBits(
+          rawNulls, rowOffset, size, innerScatter.data());
+    } else {
+      childIncomingNullsVector.resize(bits::nwords(size));
+      auto* newNulls = childIncomingNullsVector.data();
+      bits::scatterBits(
+          row.size(),
+          size,
+          reinterpret_cast<const char*>(rawNulls),
+          incomingNulls,
+          reinterpret_cast<char*>(newNulls));
+
+      // Fill in first 'rowOffset' bits with kNotNull to avoid scattering nulls
+      // for pre-existing rows.
+      bits::fillBits(newNulls, 0, rowOffset, bits::kNotNull);
+      childIncomingNulls = newNulls;
+      childScatterSize = simd::indicesOfSetBits(
+          childIncomingNulls, rowOffset, size, innerScatter.data());
+    }
+    childScatter = innerScatter.data();
+  }
+  for (auto i = 0; i < row.childrenSize(); ++i) {
+    auto& child = row.childAt(i);
+    if (child->encoding() == VectorEncoding::Simple::ROW) {
+      scatterStructNulls(
+          size,
+          childScatterSize,
+          childScatter,
+          childIncomingNulls,
+          *child->asUnchecked<RowVector>(),
+          rowOffset);
+    } else {
+      scatterVector(
+          size,
+          childScatterSize,
+          childScatter,
+          childIncomingNulls,
+          row.childAt(i),
+          rowOffset);
+    }
+  }
+  if (incomingNulls) {
+    row.unsafeResize(size);
+    scatterNulls(oldSize, incomingNulls, row);
+  }
+  // On return of scatter we check that child sizes match the struct size. This
+  // is safe also if no scatter.
+  for (auto i = 0; i < row.childrenSize(); ++i) {
+    VELOX_CHECK_EQ(row.childAt(i)->size(), row.size());
+  }
+}
+
 void readRowVector(
     ByteInputStream* source,
     const TypePtr& type,
-    velox::memory::MemoryPool* pool,
-    VectorPtr& result,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    VectorPtr& result) {
   auto* row = result->asUnchecked<RowVector>();
   if (isTimestampWithTimeZoneType(type)) {
     readTimestampWithTimeZone(
@@ -794,7 +1090,7 @@ void readRowVector(
     const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
     row->resize(resultOffset + numNewValues);
     readNulls(
-        source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
+        source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
     if (row->rawNulls()) {
       combinedNulls = AlignedBuffer::allocate<bool>(numNewValues, pool);
       bits::copyBits(
@@ -806,26 +1102,6 @@ void readRowVector(
       childNulls = combinedNulls->as<uint64_t>();
       numChildNulls = numNewValues;
     }
-  } else {
-    auto [structNulls, numStructNulls] = getStructNulls(source->tellp());
-    // childNulls is the nulls added to the children, i.e. the nulls of this
-    // struct combined with nulls of enclosing structs.
-    if (structNulls) {
-      if (incomingNulls) {
-        combinedNulls = AlignedBuffer::allocate<bool>(numIncomingNulls, pool);
-        bits::scatterBits(
-            numStructNulls,
-            numIncomingNulls,
-            reinterpret_cast<const char*>(structNulls),
-            incomingNulls,
-            combinedNulls->asMutable<char>());
-        childNulls = combinedNulls->as<uint64_t>();
-        numChildNulls = numIncomingNulls;
-      } else {
-        childNulls = structNulls;
-        numChildNulls = numStructNulls;
-      }
-    }
   }
   const int32_t numChildren = source->read<int32_t>();
   auto& children = row->children();
@@ -833,22 +1109,24 @@ void readRowVector(
   const auto& childTypes = type->asRow().children();
   readColumns(
       source,
-      pool,
       childTypes,
-      children,
       resultOffset,
-      opts,
       childNulls,
-      numChildNulls);
+      numChildNulls,
+      pool,
+      opts,
+      children);
   if (!opts.nullsFirst) {
     const auto size = source->read<int32_t>();
-    const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
-    row->resize(resultOffset + numNewValues);
+    // Set the size of the row but do not alter the size of the
+    // children. The children get adjusted in a separate pass over the
+    // data. The parent and child size MUST be separate until the second pass.
+    row->BaseVector::resize(resultOffset + size);
     // Read and discard the offsets. The number of offsets is not affected by
     // incomingNulls.
     source->skip((size + 1) * sizeof(int32_t));
     readNulls(
-        source, size, *result, resultOffset, incomingNulls, numIncomingNulls);
+        source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
   }
 }
 
@@ -861,7 +1139,7 @@ std::string readLengthPrefixedString(ByteInputStream* source) {
 }
 
 void checkTypeEncoding(std::string_view encoding, const TypePtr& type) {
-  auto kindEncoding = typeToEncodingName(type);
+  const auto kindEncoding = typeToEncodingName(type);
   VELOX_USER_CHECK(
       encoding == kindEncoding,
       "Serialized encoding is not compatible with requested type: {}. Expected {}. Got {}.",
@@ -872,24 +1150,24 @@ void checkTypeEncoding(std::string_view encoding, const TypePtr& type) {
 
 void readColumns(
     ByteInputStream* source,
-    velox::memory::MemoryPool* pool,
     const std::vector<TypePtr>& types,
-    std::vector<VectorPtr>& results,
     vector_size_t resultOffset,
-    const SerdeOpts& opts,
     const uint64_t* incomingNulls,
-    int32_t numIncomingNulls) {
+    int32_t numIncomingNulls,
+    velox::memory::MemoryPool* pool,
+    const SerdeOpts& opts,
+    std::vector<VectorPtr>& results) {
   static const std::unordered_map<
       TypeKind,
       std::function<void(
           ByteInputStream * source,
           const TypePtr& type,
-          velox::memory::MemoryPool* pool,
-          VectorPtr& result,
           vector_size_t resultOffset,
-          const SerdeOpts& opts,
           const uint64_t* incomingNulls,
-          int32_t numIncomingNulls)>>
+          int32_t numIncomingNulls,
+          velox::memory::MemoryPool* pool,
+          const SerdeOpts& opts,
+          VectorPtr& result)>>
       readers = {
           {TypeKind::BOOLEAN, &read<bool>},
           {TypeKind::TINYINT, &read<int8_t>},
@@ -918,22 +1196,22 @@ void readColumns(
       readConstantVector(
           source,
           columnType,
-          pool,
-          columnResult,
           resultOffset,
-          opts,
           incomingNulls,
-          numIncomingNulls);
+          numIncomingNulls,
+          pool,
+          opts,
+          columnResult);
     } else if (encoding == kDictionary) {
       readDictionaryVector(
           source,
           columnType,
-          pool,
-          columnResult,
           resultOffset,
-          opts,
           incomingNulls,
-          numIncomingNulls);
+          numIncomingNulls,
+          pool,
+          opts,
+          columnResult);
     } else {
       checkTypeEncoding(encoding, columnType);
       if (columnResult != nullptr &&
@@ -951,217 +1229,12 @@ void readColumns(
       it->second(
           source,
           columnType,
-          pool,
-          columnResult,
           resultOffset,
-          opts,
           incomingNulls,
-          numIncomingNulls);
-    }
-  }
-}
-
-// Reads nulls into 'scratch' and returns count of non-nulls. If 'copy' is
-// given, returns the null bits in 'copy'.
-vector_size_t valueCount(
-    ByteInputStream* source,
-    vector_size_t size,
-    Scratch& scratch,
-    raw_vector<uint64_t>* copy = nullptr) {
-  if (source->readByte() == 0) {
-    return size;
-  }
-  ScratchPtr<uint64_t, 16> nullsHolder(scratch);
-  auto rawNulls = nullsHolder.get(bits::nwords(size));
-  auto numBytes = bits::nbytes(size);
-  source->readBytes(rawNulls, numBytes);
-  bits::reverseBits(reinterpret_cast<uint8_t*>(rawNulls), numBytes);
-  bits::negate(reinterpret_cast<char*>(rawNulls), numBytes * 8);
-  if (copy) {
-    copy->resize(bits::nwords(size));
-    memcpy(copy->data(), rawNulls, numBytes);
-  }
-  return bits::countBits(rawNulls, 0, size);
-}
-
-template <typename T>
-void readStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  const int32_t size = source->read<int32_t>();
-  auto numValues = valueCount(source, size, scratch);
-
-  if constexpr (std::is_same_v<T, Timestamp>) {
-    source->skip(
-        numValues *
-        (useLosslessTimestamp ? sizeof(Timestamp) : sizeof(uint64_t)));
-    return;
-  }
-  source->skip(numValues * sizeof(T));
-}
-
-template <>
-void readStructNulls<StringView>(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool /*useLosslessTimestamp*/,
-    Scratch& scratch) {
-  const int32_t size = source->read<int32_t>();
-  source->skip(size * sizeof(int32_t));
-  valueCount(source, size, scratch);
-  const int32_t dataSize = source->read<int32_t>();
-  source->skip(dataSize);
-}
-
-void readStructNullsColumns(
-    ByteInputStream* source,
-    const std::vector<TypePtr>& types,
-    bool useLoasslessTimestamp,
-    Scratch& scratch);
-
-void readConstantVectorStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  const auto size = source->read<int32_t>();
-  std::vector<TypePtr> childTypes = {type};
-  readStructNullsColumns(source, childTypes, useLosslessTimestamp, scratch);
-}
-
-void readDictionaryVectorStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  const auto size = source->read<int32_t>();
-  std::vector<TypePtr> childTypes = {type};
-  readStructNullsColumns(source, childTypes, useLosslessTimestamp, scratch);
-
-  // Skip indices.
-  source->skip(sizeof(int32_t) * size);
-
-  // Skip 3 * 8 bytes of 'instance id'. Velox doesn't use 'instance id' for
-  // dictionary vectors.
-  source->skip(24);
-}
-
-void readArrayVectorStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  std::vector<TypePtr> childTypes = {type->childAt(0)};
-  readStructNullsColumns(source, childTypes, useLosslessTimestamp, scratch);
-
-  const vector_size_t size = source->read<int32_t>();
-
-  source->skip((size + 1) * sizeof(int32_t));
-  valueCount(source, size, scratch);
-}
-
-void readMapVectorStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  std::vector<TypePtr> childTypes = {type->childAt(0), type->childAt(1)};
-  readStructNullsColumns(source, childTypes, useLosslessTimestamp, scratch);
-
-  int32_t hashTableSize = source->read<int32_t>();
-  if (hashTableSize != -1) {
-    // Skip over serialized hash table from Presto wire format.
-    source->skip(hashTableSize * sizeof(int32_t));
-  }
-
-  const vector_size_t size = source->read<int32_t>();
-
-  source->skip((1 + size) * sizeof(int32_t));
-  valueCount(source, size, scratch);
-}
-
-void readTimestampWithTimeZoneStructNulls(
-    ByteInputStream* source,
-    Scratch& scratch) {
-  readStructNulls<int64_t>(source, BIGINT(), false, scratch);
-}
-
-void readRowVectorStructNulls(
-    ByteInputStream* source,
-    const TypePtr& type,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  if (isTimestampWithTimeZoneType(type)) {
-    readTimestampWithTimeZoneStructNulls(source, scratch);
-    return;
-  }
-  auto streamPos = source->tellp();
-  const int32_t numChildren = source->read<int32_t>();
-  const auto& childTypes = type->asRow().children();
-  readStructNullsColumns(source, childTypes, useLosslessTimestamp, scratch);
-
-  const auto size = source->read<int32_t>();
-  // Read and discard the offsets. The number of offsets is not affected by
-  // nulls.
-  source->skip((size + 1) * sizeof(int32_t));
-  raw_vector<uint64_t> nullsCopy;
-  auto numNonNull = valueCount(source, size, scratch, &nullsCopy);
-  if (size != numNonNull) {
-    (*structNullsMap())[streamPos] =
-        std::pair<raw_vector<uint64_t>, int32_t>(std::move(nullsCopy), size);
-  }
-}
-
-void readStructNullsColumns(
-    ByteInputStream* source,
-    const std::vector<TypePtr>& types,
-    bool useLosslessTimestamp,
-    Scratch& scratch) {
-  static const std::unordered_map<
-      TypeKind,
-      std::function<void(
-          ByteInputStream * source,
-          const TypePtr& type,
-          bool useLosslessTimestamp,
-          Scratch& scratch)>>
-      readers = {
-          {TypeKind::BOOLEAN, &readStructNulls<bool>},
-          {TypeKind::TINYINT, &readStructNulls<int8_t>},
-          {TypeKind::SMALLINT, &readStructNulls<int16_t>},
-          {TypeKind::INTEGER, &readStructNulls<int32_t>},
-          {TypeKind::BIGINT, &readStructNulls<int64_t>},
-          {TypeKind::HUGEINT, &readStructNulls<int128_t>},
-          {TypeKind::REAL, &readStructNulls<float>},
-          {TypeKind::DOUBLE, &readStructNulls<double>},
-          {TypeKind::TIMESTAMP, &readStructNulls<Timestamp>},
-          {TypeKind::VARCHAR, &readStructNulls<StringView>},
-          {TypeKind::VARBINARY, &readStructNulls<StringView>},
-          {TypeKind::ARRAY, &readArrayVectorStructNulls},
-          {TypeKind::MAP, &readMapVectorStructNulls},
-          {TypeKind::ROW, &readRowVectorStructNulls},
-          {TypeKind::UNKNOWN, &readStructNulls<UnknownValue>}};
-
-  for (int32_t i = 0; i < types.size(); ++i) {
-    const auto& columnType = types[i];
-
-    const auto encoding = readLengthPrefixedString(source);
-    if (encoding == kRLE) {
-      readConstantVectorStructNulls(
-          source, columnType, useLosslessTimestamp, scratch);
-    } else if (encoding == kDictionary) {
-      readDictionaryVectorStructNulls(
-          source, columnType, useLosslessTimestamp, scratch);
-    } else {
-      checkTypeEncoding(encoding, columnType);
-      const auto it = readers.find(columnType->kind());
-      VELOX_CHECK(
-          it != readers.end(),
-          "Column reader for type {} is missing",
-          columnType->kindName());
-
-      it->second(source, columnType, useLosslessTimestamp, scratch);
+          numIncomingNulls,
+          pool,
+          opts,
+          columnResult);
     }
   }
 }
@@ -1208,9 +1281,9 @@ raw_vector<uint64_t>& threadTempNulls() {
 }
 
 // Appendable container for serialized values. To append a value at a
-// time, call appendNull or appendNonNull first. Then call
-// appendLength if the type has a length. A null value has a length of
-// 0. Then call appendValue if the value was not null.
+// time, call appendNull or appendNonNull first. Then call appendLength if the
+// type has a length. A null value has a length of 0. Then call appendValue if
+// the value was not null.
 class VectorStream {
  public:
   VectorStream(
@@ -1220,20 +1293,20 @@ class VectorStream {
       int32_t initialNumRows,
       const SerdeOpts& opts)
       : type_(type),
-        encoding_{encoding},
+        isLongDecimal_(type_->isLongDecimal()),
+        encoding_(encoding),
         useLosslessTimestamp_(opts.useLosslessTimestamp),
         nullsFirst_(opts.nullsFirst),
         nulls_(streamArena, true, true),
         lengths_(streamArena),
-        values_(streamArena),
-        isLongDecimal_(type_->isLongDecimal()) {
+        values_(streamArena) {
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
       return;
     }
 
-    if (encoding.has_value()) {
-      switch (encoding.value()) {
+    if (encoding_.has_value()) {
+      switch (encoding_.value()) {
         case VectorEncoding::Simple::CONSTANT: {
           initializeHeader(kRLE, *streamArena);
           children_.emplace_back(std::make_unique<VectorStream>(
@@ -1247,7 +1320,8 @@ class VectorStream {
               type_, std::nullopt, streamArena, initialNumRows, opts));
           return;
         }
-        default:;
+        default:
+          break;
       }
     }
 
@@ -1286,7 +1360,7 @@ class VectorStream {
         lengths_.startWrite(initialNumRows * sizeof(vector_size_t));
         values_.startWrite(initialNumRows * 10);
         break;
-      default:;
+      default:
         values_.startWrite(initialNumRows * 4);
         break;
     }
@@ -1296,7 +1370,7 @@ class VectorStream {
     streamArena.newTinyRange(50, nullptr, &header_);
     header_.size = name.size() + sizeof(int32_t);
     *reinterpret_cast<int32_t*>(header_.buffer) = name.size();
-    memcpy(header_.buffer + sizeof(int32_t), &name[0], name.size());
+    ::memcpy(header_.buffer + sizeof(int32_t), &name[0], name.size());
   }
 
   void appendNull() {
@@ -1311,7 +1385,7 @@ class VectorStream {
   }
 
   void appendNonNull(int32_t count = 1) {
-    if (nullCount_) {
+    if (nullCount_ > 0) {
       nulls_.appendBool(false, count);
     }
     nonNullCount_ += count;
@@ -1334,17 +1408,19 @@ class VectorStream {
       nonNullCount_ += numNonNull;
       return;
     }
-    if (UNLIKELY(numNulls > 0 && nonNullCount_ > 0 && nullCount_ == 0)) {
+    if (FOLLY_UNLIKELY(numNulls > 0 && nonNullCount_ > 0 && nullCount_ == 0)) {
       // There were only non-nulls up until now. Add the bits for them.
       nulls_.appendBool(false, nonNullCount_);
     }
     nullCount_ += numNulls;
     nonNullCount_ += numNonNull;
-    if (LIKELY(end <= 64)) {
-      uint64_t inverted = ~nulls[0];
+
+    if (FOLLY_LIKELY(end <= 64)) {
+      const uint64_t inverted = ~nulls[0];
       nulls_.appendBitsFresh(&inverted, begin, end);
       return;
     }
+
     const int32_t firstWord = begin >> 6;
     const int32_t firstBit = begin & 63;
     const auto numWords = bits::nwords(numRows + firstBit);
@@ -1371,7 +1447,7 @@ class VectorStream {
       int32_t numNonNull,
       LengthFunc lengthFunc) {
     const auto numRows = rows.size();
-    if (!nulls) {
+    if (nulls == nullptr) {
       appendNonNull(numRows);
       for (auto i = 0; i < numRows; ++i) {
         appendLength(lengthFunc(rows[i]));
@@ -1402,7 +1478,7 @@ class VectorStream {
     return children_[index].get();
   }
 
-  auto& values() {
+  ByteOutputStream& values() {
     return values_;
   }
 
@@ -1440,7 +1516,8 @@ class VectorStream {
           writeInt64(out, unused);
           return;
         }
-        default:;
+        default:
+          break;
       }
     }
 
@@ -1520,6 +1597,7 @@ class VectorStream {
 
  private:
   const TypePtr type_;
+  const bool isLongDecimal_;
   const std::optional<VectorEncoding::Simple> encoding_;
   /// Indicates whether to serialize timestamps with nanosecond precision.
   /// If false, they are serialized with millisecond precision which is
@@ -1535,7 +1613,6 @@ class VectorStream {
   ByteOutputStream lengths_;
   ByteOutputStream values_;
   std::vector<std::unique_ptr<VectorStream>> children_;
-  const bool isLongDecimal_;
 };
 
 template <>
@@ -1597,8 +1674,8 @@ void serializeFlatVector(
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
   using T = typename TypeTraits<kind>::NativeType;
-  auto flatVector = dynamic_cast<const FlatVector<T>*>(vector);
-  auto rawValues = flatVector->rawValues();
+  auto* flatVector = dynamic_cast<const FlatVector<T>*>(vector);
+  auto* rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
     for (auto& range : ranges) {
       stream->appendNonNull(range.size);
@@ -1608,7 +1685,7 @@ void serializeFlatVector(
     int32_t firstNonNull = -1;
     int32_t lastNonNull = -1;
     for (int32_t i = 0; i < ranges.size(); ++i) {
-      int32_t end = ranges[i].begin + ranges[i].size;
+      const int32_t end = ranges[i].begin + ranges[i].size;
       for (int32_t offset = ranges[i].begin; offset < end; ++offset) {
         if (flatVector->isNullAt(offset)) {
           stream->appendNull();
@@ -1685,10 +1762,10 @@ void serializeWrapped(
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
   std::vector<IndexRange> newRanges;
-  bool mayHaveNulls = vector->mayHaveNulls();
+  const bool mayHaveNulls = vector->mayHaveNulls();
   const BaseVector* wrapped = vector->wrappedVector();
   for (int32_t i = 0; i < ranges.size(); ++i) {
-    auto end = ranges[i].begin + ranges[i].size;
+    const auto end = ranges[i].begin + ranges[i].size;
     for (int32_t offset = ranges[i].begin; offset < end; ++offset) {
       if (mayHaveNulls && vector->isNullAt(offset)) {
         // The wrapper added a null.
@@ -1699,7 +1776,7 @@ void serializeWrapped(
         stream->appendNull();
         continue;
       }
-      auto innerIndex = vector->wrappedIndex(offset);
+      const auto innerIndex = vector->wrappedIndex(offset);
       newRanges.push_back(IndexRange{innerIndex, 1});
     }
   }
@@ -1833,11 +1910,12 @@ void serializeConstantVector(
     VectorStream* stream) {
   using T = typename KindToFlatVector<kind>::WrapperType;
   auto constVector = dynamic_cast<const ConstantVector<T>*>(vector);
-  if (constVector->valueVector()) {
+  if (constVector->valueVector() != nullptr) {
     serializeWrapped(constVector, ranges, stream);
     return;
   }
-  int32_t count = rangesTotalSize(ranges);
+
+  const int32_t count = rangesTotalSize(ranges);
   if (vector->isNullAt(0)) {
     for (int32_t i = 0; i < count; ++i) {
       stream->appendNull();
@@ -1845,7 +1923,7 @@ void serializeConstantVector(
     return;
   }
 
-  T value = constVector->valueAtFast(0);
+  const T value = constVector->valueAtFast(0);
   for (int32_t i = 0; i < count; ++i) {
     stream->appendNonNull();
     stream->appendOne(value);
@@ -1906,7 +1984,9 @@ void serializeColumn(
           serializeBiasVector<int64_t>(vector, ranges, stream);
           break;
         default:
-          throw std::invalid_argument("Invalid biased vector type");
+          VELOX_FAIL(
+              "Invalid biased vector type {}",
+              static_cast<int>(vector->encoding()));
       }
       break;
     case VectorEncoding::Simple::ROW:
@@ -2100,20 +2180,22 @@ void appendStrings(
     const StringView* views,
     VectorStream* stream,
     Scratch& scratch) {
-  if (!nulls) {
+  if (nulls == nullptr) {
     stream->appendLengths(nullptr, rows, rows.size(), [&](auto row) {
       return views[row].size();
     });
     for (auto i = 0; i < rows.size(); ++i) {
-      auto& view = views[rows[i]];
+      const auto& view = views[rows[i]];
       stream->values().appendStringView(
           std::string_view(view.data(), view.size()));
     }
     return;
   }
+
   ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
-  auto nonNull = nonNullHolder.get(rows.size());
-  auto numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNull);
+  auto* nonNull = nonNullHolder.get(rows.size());
+  const auto numNonNull =
+      simd::indicesOfSetBits(nulls, 0, rows.size(), nonNull);
   stream->appendLengths(
       nulls, rows, numNonNull, [&](auto row) { return views[row].size(); });
   for (auto i = 0; i < numNonNull; ++i) {
@@ -2129,16 +2211,18 @@ void appendTimestamps(
     const Timestamp* timestamps,
     VectorStream* stream,
     Scratch& scratch) {
-  if (!nulls) {
+  if (nulls == nullptr) {
     stream->appendNonNull(rows.size());
     for (auto i = 0; i < rows.size(); ++i) {
       stream->appendOne(timestamps[rows[i]]);
     }
     return;
   }
+
   ScratchPtr<vector_size_t, 64> nonNullHolder(scratch);
-  auto nonNullRows = nonNullHolder.get(rows.size());
-  auto numNonNull = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNullRows);
+  auto* nonNullRows = nonNullHolder.get(rows.size());
+  const auto numNonNull =
+      simd::indicesOfSetBits(nulls, 0, rows.size(), nonNullRows);
   stream->appendNulls(nulls, 0, rows.size(), numNonNull);
   for (auto i = 0; i < numNonNull; ++i) {
     stream->appendOne(timestamps[rows[nonNullRows[i]]]);
@@ -2152,8 +2236,8 @@ void serializeFlatVector(
     VectorStream* stream,
     Scratch& scratch) {
   using T = typename TypeTraits<kind>::NativeType;
-  auto flatVector = vector->asUnchecked<FlatVector<T>>();
-  auto rawValues = flatVector->rawValues();
+  auto* flatVector = vector->asUnchecked<FlatVector<T>>();
+  auto* rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
     if (std::is_same_v<T, Timestamp>) {
       appendTimestamps(
@@ -2182,6 +2266,7 @@ void serializeFlatVector(
         output, rows.data(), rows.size(), rawValues, stream->isLongDecimal());
     return;
   }
+
   ScratchPtr<uint64_t, 4> nullsHolder(scratch);
   uint64_t* nulls = nullsHolder.get(bits::nwords(rows.size()));
   simd::gatherBits(vector->rawNulls(), rows, nulls);
@@ -2218,8 +2303,8 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
     const folly::Range<const vector_size_t*>& rows,
     VectorStream* stream,
     Scratch& scratch) {
-  auto flatVector = reinterpret_cast<const FlatVector<bool>*>(vector);
-  auto rawValues = flatVector->rawValues<uint64_t*>();
+  auto* flatVector = reinterpret_cast<const FlatVector<bool>*>(vector);
+  auto* rawValues = flatVector->rawValues<uint64_t*>();
   ScratchPtr<uint64_t, 4> bitsHolder(scratch);
   uint64_t* valueBits;
   int32_t numValueBits;
@@ -2233,7 +2318,7 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
     uint64_t* nulls = bitsHolder.get(bits::nwords(rows.size()));
     simd::gatherBits(vector->rawNulls(), rows, nulls);
     ScratchPtr<vector_size_t, 64> nonNullsHolder(scratch);
-    auto nonNulls = nonNullsHolder.get(rows.size());
+    auto* nonNulls = nonNullsHolder.get(rows.size());
     numValueBits = simd::indicesOfSetBits(nulls, 0, rows.size(), nonNulls);
     stream->appendNulls(nulls, 0, rows.size(), numValueBits);
     valueBits = nulls;
@@ -2246,6 +2331,7 @@ void serializeFlatVector<TypeKind::BOOLEAN>(
         folly::Range<const vector_size_t*>(nonNulls, numValueBits),
         valueBits);
   }
+
   // 'valueBits' contains the non-null bools to be appended to the
   // stream. The wire format has a byte for each bit. Every full byte
   // is appended as a word. The partial byte is translated to a word
@@ -2271,7 +2357,7 @@ void serializeWrapped(
   ScratchPtr<vector_size_t, 1> innerRowsHolder(scratch);
   const int32_t numRows = rows.size();
   int32_t numInner = 0;
-  auto innerRows = innerRowsHolder.get(numRows);
+  auto* innerRows = innerRowsHolder.get(numRows);
   const BaseVector* wrapped;
   if (vector->encoding() == VectorEncoding::Simple::DICTIONARY &&
       !vector->rawNulls()) {
@@ -3148,11 +3234,11 @@ class PrestoVectorSerializer : public VectorSerializer {
       const SerdeOpts& opts)
       : streamArena_(streamArena),
         codec_(common::compressionKindToCodec(opts.compressionKind)) {
-    auto types = rowType->children();
-    auto numTypes = types.size();
+    const auto types = rowType->children();
+    const auto numTypes = types.size();
     streams_.resize(numTypes);
-    for (int i = 0; i < numTypes; i++) {
-      std::optional<VectorEncoding::Simple> encoding = std::nullopt;
+    for (int i = 0; i < numTypes; ++i) {
+      std::optional<VectorEncoding::Simple> encoding;
       if (!encodings.empty()) {
         encoding = encodings[i];
       }
@@ -3165,12 +3251,13 @@ class PrestoVectorSerializer : public VectorSerializer {
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges,
       Scratch& scratch) override {
-    auto newRows = rangesTotalSize(ranges);
-    if (newRows > 0) {
-      numRows_ += newRows;
-      for (int32_t i = 0; i < vector->childrenSize(); ++i) {
-        serializeColumn(vector->childAt(i).get(), ranges, streams_[i].get());
-      }
+    const auto numNewRows = rangesTotalSize(ranges);
+    if (numNewRows == 0) {
+      return;
+    }
+    numRows_ += numNewRows;
+    for (int32_t i = 0; i < vector->childrenSize(); ++i) {
+      serializeColumn(vector->childAt(i).get(), ranges, streams_[i].get());
     }
   }
 
@@ -3178,20 +3265,21 @@ class PrestoVectorSerializer : public VectorSerializer {
       const RowVectorPtr& vector,
       const folly::Range<const vector_size_t*>& rows,
       Scratch& scratch) override {
-    auto newRows = rows.size();
-    if (newRows > 0) {
-      numRows_ += newRows;
-      for (int32_t i = 0; i < vector->childrenSize(); ++i) {
-        serializeColumn(
-            vector->childAt(i).get(), rows, streams_[i].get(), scratch);
-      }
+    const auto numNewRows = rows.size();
+    if (numNewRows == 0) {
+      return;
+    }
+    numRows_ += numNewRows;
+    for (int32_t i = 0; i < vector->childrenSize(); ++i) {
+      serializeColumn(
+          vector->childAt(i).get(), rows, streams_[i].get(), scratch);
     }
   }
 
   void appendEncoded(
       const RowVectorPtr& vector,
       const folly::Range<const IndexRange*>& ranges) {
-    auto newRows = rangesTotalSize(ranges);
+    const auto newRows = rangesTotalSize(ranges);
     if (newRows > 0) {
       numRows_ += newRows;
       for (int32_t i = 0; i < vector->childrenSize(); ++i) {
@@ -3368,6 +3456,7 @@ class PrestoVectorSerializer : public VectorSerializer {
 
   StreamArena* const streamArena_;
   const std::unique_ptr<folly::io::Codec> codec_;
+
   int32_t numRows_{0};
   std::vector<std::unique_ptr<VectorStream>> streams_;
 };
@@ -3394,7 +3483,7 @@ std::unique_ptr<VectorSerializer> PrestoVectorSerde::createSerializer(
     int32_t numRows,
     StreamArena* streamArena,
     const Options* options) {
-  auto prestoOptions = toPrestoOptions(options);
+  const auto prestoOptions = toPrestoOptions(options);
   return std::make_unique<PrestoVectorSerializer>(
       type, prestoOptions.encodings, numRows, streamArena, prestoOptions);
 }
@@ -3410,31 +3499,7 @@ void PrestoVectorSerde::serializeEncoded(
   static_cast<PrestoVectorSerializer*>(serializer.get())
       ->flushEncoded(vector, out);
 }
-
 namespace {
-bool hasNestedStructs(const TypePtr& type) {
-  if (type->isRow()) {
-    return true;
-  }
-  if (type->isArray()) {
-    return hasNestedStructs(type->childAt(0));
-  }
-  if (type->isMap()) {
-    return hasNestedStructs(type->childAt(0)) ||
-        hasNestedStructs(type->childAt(1));
-  }
-  return false;
-}
-
-bool hasNestedStructs(const std::vector<TypePtr>& types) {
-  for (auto& child : types) {
-    if (hasNestedStructs(child)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void readTopColumns(
     ByteInputStream& source,
     const RowTypePtr& type,
@@ -3451,18 +3516,12 @@ void readTopColumns(
       "Number of columns in serialized data doesn't match "
       "number of columns requested for deserialization");
 
-  auto guard = folly::makeGuard([&]() { structNullsMap().reset(); });
-
-  if (!opts.nullsFirst && hasNestedStructs(childTypes)) {
-    structNullsMap() = std::make_unique<StructNullsMap>();
-    Scratch scratch;
-    auto position = source.tellp();
-    readStructNullsColumns(
-        &source, childTypes, opts.useLosslessTimestamp, scratch);
-    source.seekp(position);
-  }
   readColumns(
-      &source, pool, childTypes, children, resultOffset, opts, nullptr, 0);
+      &source, childTypes, resultOffset, nullptr, 0, pool, opts, children);
+  if (!opts.nullsFirst) {
+    scatterStructNulls(
+        result->size(), 0, nullptr, nullptr, *result, resultOffset);
+  }
 }
 } // namespace
 
