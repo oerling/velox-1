@@ -654,11 +654,11 @@ TEST_P(PrestoSerializerTest, encodedRoundtrip) {
 
   const size_t numRounds = 200;
 
+  serializer::presto::PrestoVectorSerde::PrestoOptions serdeOpts;
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();
     auto inputRowVector = fuzzer.fuzzInputRow(rowType);
-    serializer::presto::PrestoVectorSerde::PrestoOptions serdeOpts;
-    serdeOpts.nullsFirst = true;
+    serdeOpts.nullsFirst = i % 2 == 0;
     testEncodedRoundTrip(inputRowVector, &serdeOpts);
   }
 }
@@ -700,9 +700,9 @@ TEST_P(PrestoSerializerTest, encodedConcatenation) {
     std::vector<std::vector<VectorPtr>> permutations;
     std::vector<VectorPtr> temp;
     makePermutations(vectors, 4, temp, permutations);
+    serializer::presto::PrestoVectorSerde::PrestoOptions opts;
     for (auto i = 0; i < permutations.size(); ++i) {
-      serializer::presto::PrestoVectorSerde::PrestoOptions opts;
-      opts.nullsFirst = true;
+      opts.nullsFirst = i % 2 == 0;
       testEncodedConcatenation(permutations[i], &opts);
     }
   }
