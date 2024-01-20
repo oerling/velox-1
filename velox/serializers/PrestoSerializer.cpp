@@ -1649,10 +1649,23 @@ class VectorStream {
     }
   }
 
+  bool mayTryDictionary() const {
+    return !disableDict_;
+  }
+
   inline bool appendDictionaryString(
       const BaseVector& vector,
       vector_size_t i) {
     if (disableDict_ || maxDistinctStrings_ == 0) {
+      if (vector.isNullAt(i)) {
+        appendNull();
+      } else {
+        StringView string =
+            vector.asUnchecked<FlatVector<StringView>>()->valueAt(i);
+        appendNonNull(1);
+        appendLength(string.size());
+        appendOne(string);
+      }
       return false;
     }
     if (distincts_ != nullptr || (nullCount_ == 0 && nonNullCount_ == 0)) {
@@ -1692,8 +1705,7 @@ class VectorStream {
         if (LIKELY(vector.encoding() == VectorEncoding::Simple::FLAT)) {
           string = vector.asUnchecked<FlatVector<StringView>>()->valueAt(index);
         } else {
-          string =
-	    vector.asUnchecked < ConstantVector<StringView>>()->valueAt(0);
+          string = vector.asUnchecked<ConstantVector<StringView>>()->valueAt(0);
         }
         auto it = distinctStrings_.find(string);
         if (it != distinctStrings_.end()) {
@@ -1910,7 +1922,15 @@ void serializeFlatVector(
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
   using T = typename TypeTraits<kind>::NativeType;
-  auto* flatVector = dynamic_cast<const FlatVector<T>*>(vector);
+  auto* flatVector = vector->asUnchecked<const FlatVector<T>>();
+  if (std::is_same_v<T, StringView> && stream->mayTryDictionary()) {
+    for (auto range : ranges) {
+      for (auto i = 0; i < range.size; ++i) {
+        stream->appendDictionaryString(*vector, i);
+      }
+    }
+    return;
+  }
   auto* rawValues = flatVector->rawValues();
   if (!flatVector->mayHaveNulls()) {
     for (auto& range : ranges) {
@@ -2189,7 +2209,9 @@ void serializeColumn(
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
   auto encoding = vector->encoding();
-  if (encoding != VectorEncoding::Simple::CONSTANT) {
+  auto kind = vector->typeKind();
+  if (encoding != VectorEncoding::Simple::CONSTANT &&
+      kind != TypeKind::VARCHAR && kind != TypeKind::VARBINARY) {
     stream->ensureFlat();
   }
 
@@ -2242,8 +2264,8 @@ void serializeColumn(
 
 // Returns ranges for the non-null rows of an array  or map. 'rows' gives the
 // rows. nulls is the nulls of the array/map or nullptr if no nulls. 'offsets'
-// and 'sizes' are the offsets and sizes of the array/map.Returns the number of
-// index ranges. Obtains the ranges from 'rangesHolder'. If 'sizesPtr' is
+// and 'sizes' are the offsets and sizes of the array/map.Returns the number
+// of index ranges. Obtains the ranges from 'rangesHolder'. If 'sizesPtr' is
 // non-null, gets returns  the sizes for the inner ranges in 'sizesHolder'. If
 // 'stream' is non-null, writes the lengths and nulls for the array/map into
 // 'stream'.
@@ -2361,16 +2383,17 @@ void appendNonNull(
   const int32_t* nonNullIndices;
   int32_t numNonNull;
   if (LIKELY(numRows <= 8)) {
-    // Short batches need extra optimization. The set bits are prematerialized.
+    // Short batches need extra optimization. The set bits are
+    // prematerialized.
     uint8_t nullsByte = *reinterpret_cast<const uint8_t*>(nulls);
     numNonNull = __builtin_popcount(nullsByte);
     nonNullIndices =
         numNonNull == numRows ? nullptr : simd::byteSetBits(nullsByte);
   } else {
     auto mutableIndices = nonNullHolder.get(numRows);
-    // Convert null flags to indices. This is much faster than checking bits one
-    // by one, several bits per clock specially if mostly null or non-null. Even
-    // worst case of half nulls is more than one row per clock.
+    // Convert null flags to indices. This is much faster than checking bits
+    // one by one, several bits per clock specially if mostly null or
+    // non-null. Even worst case of half nulls is more than one row per clock.
     numNonNull = simd::indicesOfSetBits(nulls, 0, numRows, mutableIndices);
     nonNullIndices = numNonNull == numRows ? nullptr : mutableIndices;
   }
@@ -2470,8 +2493,16 @@ void serializeFlatVector(
     VectorStream* stream,
     Scratch& scratch) {
   using T = typename TypeTraits<kind>::NativeType;
+
   auto* flatVector = vector->asUnchecked<FlatVector<T>>();
   auto* rawValues = flatVector->rawValues();
+  if (std::is_same_v<T, StringView> && stream->mayTryDictionary()) {
+    for (auto row : rows) {
+      stream->appendDictionaryString(*vector, row);
+    }
+    return;
+  }
+
   if (!flatVector->mayHaveNulls()) {
     if (std::is_same_v<T, Timestamp>) {
       appendTimestamps(
@@ -2808,7 +2839,9 @@ void serializeColumn(
     VectorStream* stream,
     Scratch& scratch) {
   auto encoding = vector->encoding();
-  if (encoding != VectorEncoding::Simple::CONSTANT) {
+  auto kind = vector->typeKind();
+  if (encoding != VectorEncoding::Simple::CONSTANT &&
+      kind != TypeKind::VARCHAR && kind != TypeKind::VARBINARY) {
     stream->ensureFlat();
   }
   switch (encoding) {
