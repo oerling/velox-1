@@ -52,6 +52,7 @@ class PrestoVectorSerde : public VectorSerde {
     /// TODO: Make Presto also serialize nulls before columns of
     /// structs.
     bool nullsFirst{false};
+    bool alwaysFlat{false};
   };
 
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
@@ -138,3 +139,4 @@ class PrestoOutputStreamListener : public OutputStreamListener {
   bits::Crc32 crc_;
 };
 } // namespace facebook::velox::serializer::presto
+

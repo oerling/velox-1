@@ -56,7 +56,18 @@ class VectorSerializer {
       Scratch& scratch) {
     VELOX_UNSUPPORTED();
   }
+  virtual void incrementRows(int32_t numRows) {
+    VELOX_UNSUPPORTED();
+  }
 
+    virtual void appendColumn(
+      const RowVectorPtr& vector,
+      int32_t column,
+      const folly::Range<const vector_size_t*>& rows,
+      Scratch& scratch) {
+    VELOX_UNSUPPORTED();
+  }
+  
   /// Serialize all rows in a vector.
   void append(const RowVectorPtr& vector);
 
@@ -244,6 +255,17 @@ class VectorStreamGroup : public StreamArena {
       const folly::Range<const vector_size_t*>& rows,
       Scratch& scratch);
 
+  void incrementRows(int32_t numRows) {
+    serializer_->incrementRows(numRows);
+  }
+
+  void appendColumn(
+      const RowVectorPtr& vector,
+      int32_t column,
+      const folly::Range<const vector_size_t*>& rows,
+      Scratch& scratch);
+
+  
   void append(const RowVectorPtr& vector);
 
   // Writes the contents to 'stream' in wire format.
