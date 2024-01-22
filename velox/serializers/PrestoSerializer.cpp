@@ -809,15 +809,15 @@ void readRowVector(
     const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
     row->resize(resultOffset + numNewValues);
     readNulls(
-	      source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
+        source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
     if (row->rawNulls()) {
       combinedNulls = AlignedBuffer::allocate<bool>(numNewValues, pool);
       bits::copyBits(
-		     row->rawNulls(),
-		     resultOffset,
-		     combinedNulls->asMutable<uint64_t>(),
-		     0,
-		     numNewValues);
+          row->rawNulls(),
+          resultOffset,
+          combinedNulls->asMutable<uint64_t>(),
+          0,
+          numNewValues);
       childNulls = combinedNulls->as<uint64_t>();
       numChildNulls = numNewValues;
     }
@@ -3235,7 +3235,7 @@ class PrestoVectorSerializer : public VectorSerializer {
         encoding = encodings[i];
       }
       streams_[i] = std::make_unique<VectorStream>(
-						   types[i], encoding, std::nullopt, streamArena, numRows, opts);
+          types[i], encoding, std::nullopt, streamArena, numRows, opts);
     }
   }
 
@@ -3292,7 +3292,6 @@ class PrestoVectorSerializer : public VectorSerializer {
           vector->childAt(i).get(), rows, streams_[i].get(), scratch);
     }
   }
-
 
   size_t maxSerializedSize() const override {
     size_t dataSize = 4; // streams_.size()
