@@ -530,10 +530,16 @@ void readConstantVector(
 
   auto constantVector =
       BaseVector::wrapInConstant(numNewValues, 0, children[0]);
-  if (resultOffset == 0 && !incomingNulls) {
+
+  // If there are no previous results, we output this as a constant. RowVectors
+  // with top-level nulls can have child ConstantVector (even though they can't
+  // have nulls explicitly set on them), so we don't need to try to apply
+  // incomingNulls here.
+  if (resultOffset == 0) {
     result = std::move(constantVector);
   } else {
     if (!incomingNulls &&
+        opts.nullsFirst && // TODO remove when removing scatter nulls pass.
         result->encoding() == VectorEncoding::Simple::CONSTANT &&
         constantVector->equalValueAt(result.get(), 0, 0)) {
       result->resize(resultOffset + numNewValues);
@@ -803,15 +809,15 @@ void readRowVector(
     const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
     row->resize(resultOffset + numNewValues);
     readNulls(
-        source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
+	      source, size, resultOffset, incomingNulls, numIncomingNulls, *result);
     if (row->rawNulls()) {
       combinedNulls = AlignedBuffer::allocate<bool>(numNewValues, pool);
       bits::copyBits(
-          row->rawNulls(),
-          resultOffset,
-          combinedNulls->asMutable<uint64_t>(),
-          0,
-          numNewValues);
+		     row->rawNulls(),
+		     resultOffset,
+		     combinedNulls->asMutable<uint64_t>(),
+		     0,
+		     numNewValues);
       childNulls = combinedNulls->as<uint64_t>();
       numChildNulls = numNewValues;
     }
@@ -1222,20 +1228,27 @@ raw_vector<uint64_t>& threadTempNulls() {
 // the value was not null.
 class VectorStream {
  public:
+  // This constructor takes an optional encoding and vector. In cases where the
+  // vector (data) is not available when the stream is created, callers can also
+  // manually specify the encoding, which only applies to the top level stream.
+  // If both are specified, `encoding` takes precedence over the actual
+  // encoding of `vector`. Only 'flat' encoding can take precedence over the
+  // input data encoding.
   VectorStream(
       const TypePtr& type,
       std::optional<VectorEncoding::Simple> encoding,
+      std::optional<VectorPtr> vector,
       StreamArena* streamArena,
       int32_t initialNumRows,
       const SerdeOpts& opts)
       : type_(type),
-        isLongDecimal_(type_->isLongDecimal()),
-        encoding_(encoding),
+        encoding_(getEncoding(encoding, vector)),
         useLosslessTimestamp_(opts.useLosslessTimestamp),
         nullsFirst_(opts.nullsFirst),
         nulls_(streamArena, true, true),
         lengths_(streamArena),
-        values_(streamArena) {
+        values_(streamArena),
+        isLongDecimal_(type_->isLongDecimal()) {
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
       return;
@@ -1245,15 +1258,27 @@ class VectorStream {
       switch (encoding_.value()) {
         case VectorEncoding::Simple::CONSTANT: {
           initializeHeader(kRLE, *streamArena);
+          isConstantStream_ = true;
           children_.emplace_back(std::make_unique<VectorStream>(
-              type_, std::nullopt, streamArena, initialNumRows, opts));
+              type_,
+              std::nullopt,
+              std::nullopt,
+              streamArena,
+              initialNumRows,
+              opts));
           return;
         }
         case VectorEncoding::Simple::DICTIONARY: {
           initializeHeader(kDictionary, *streamArena);
           values_.startWrite(initialNumRows * 4);
+          isDictionaryStream_ = true;
           children_.emplace_back(std::make_unique<VectorStream>(
-              type_, std::nullopt, streamArena, initialNumRows, opts));
+              type_,
+              std::nullopt,
+              std::nullopt,
+              streamArena,
+              initialNumRows,
+              opts));
           return;
         }
         default:
@@ -1281,6 +1306,7 @@ class VectorStream {
           children_[i] = std::make_unique<VectorStream>(
               type_->childAt(i),
               std::nullopt,
+              getChildAt(vector, i),
               streamArena,
               initialNumRows,
               opts);
@@ -1300,6 +1326,31 @@ class VectorStream {
         values_.startWrite(initialNumRows * 4);
         break;
     }
+  }
+
+  std::optional<VectorEncoding::Simple> getEncoding(
+      std::optional<VectorEncoding::Simple> encoding,
+      std::optional<VectorPtr> vector) {
+    if (encoding.has_value()) {
+      return encoding;
+    } else if (vector.has_value()) {
+      return vector.value()->encoding();
+    } else {
+      return std::nullopt;
+    }
+  }
+
+  std::optional<VectorPtr> getChildAt(
+      std::optional<VectorPtr> vector,
+      size_t idx) {
+    if (!vector.has_value()) {
+      return std::nullopt;
+    }
+
+    if ((*vector)->encoding() == VectorEncoding::Simple::ROW) {
+      return (*vector)->as<RowVector>()->childAt(idx);
+    }
+    return std::nullopt;
   }
 
   void initializeHeader(std::string_view name, StreamArena& streamArena) {
@@ -1408,6 +1459,14 @@ class VectorStream {
   template <typename T>
   void appendOne(const T& value) {
     append(folly::Range(&value, 1));
+  }
+
+  bool isDictionaryStream() const {
+    return isDictionaryStream_;
+  }
+
+  bool isConstantStream() const {
+    return isConstantStream_;
   }
 
   VectorStream* childAt(int32_t index) {
@@ -1533,7 +1592,6 @@ class VectorStream {
 
  private:
   const TypePtr type_;
-  const bool isLongDecimal_;
   const std::optional<VectorEncoding::Simple> encoding_;
   /// Indicates whether to serialize timestamps with nanosecond precision.
   /// If false, they are serialized with millisecond precision which is
@@ -1549,6 +1607,9 @@ class VectorStream {
   ByteOutputStream lengths_;
   ByteOutputStream values_;
   std::vector<std::unique_ptr<VectorStream>> children_;
+  const bool isLongDecimal_;
+  bool isDictionaryStream_{false};
+  bool isConstantStream_{false};
 };
 
 template <>
@@ -1839,8 +1900,37 @@ static inline int32_t rangesTotalSize(
   return total;
 }
 
+template <TypeKind Kind>
+void serializeDictionaryVector(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream) {
+  // Cannot serialize dictionary as PrestoPage dictionary if it has nulls.
+  // Also check if the stream was set up for dictionary (we had to know the
+  // encoding type when creating VectorStream for that).
+  if (vector->nulls() || !stream->isDictionaryStream()) {
+    serializeWrapped(vector, ranges, stream);
+    return;
+  }
+
+  using T = typename KindToFlatVector<Kind>::WrapperType;
+  auto dictionaryVector = vector->as<DictionaryVector<T>>();
+
+  std::vector<IndexRange> childRanges;
+  childRanges.push_back({0, dictionaryVector->valueVector()->size()});
+  serializeColumn(
+      dictionaryVector->valueVector().get(), childRanges, stream->childAt(0));
+
+  const BufferPtr& indices = dictionaryVector->indices();
+  auto* rawIndices = indices->as<vector_size_t>();
+  for (const auto& range : ranges) {
+    stream->appendNonNull(range.size);
+    stream->append<int32_t>(folly::Range(&rawIndices[range.begin], range.size));
+  }
+}
+
 template <TypeKind kind>
-void serializeConstantVector(
+void serializeConstantVectorImpl(
     const BaseVector* vector,
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
@@ -1863,6 +1953,24 @@ void serializeConstantVector(
   for (int32_t i = 0; i < count; ++i) {
     stream->appendNonNull();
     stream->appendOne(value);
+  }
+}
+
+template <TypeKind Kind>
+void serializeConstantVector(
+    const BaseVector* vector,
+    const folly::Range<const IndexRange*>& ranges,
+    VectorStream* stream) {
+  if (stream->isConstantStream()) {
+    for (const auto& range : ranges) {
+      stream->appendNonNull(range.size);
+    }
+
+    std::vector<IndexRange> newRanges;
+    newRanges.push_back({0, 1});
+    serializeConstantVectorImpl<Kind>(vector, newRanges, stream->childAt(0));
+  } else {
+    serializeConstantVectorImpl<Kind>(vector, ranges, stream);
   }
 }
 
@@ -1907,6 +2015,14 @@ void serializeColumn(
     case VectorEncoding::Simple::CONSTANT:
       VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
           serializeConstantVector, vector->typeKind(), vector, ranges, stream);
+      break;
+    case VectorEncoding::Simple::DICTIONARY:
+      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+          serializeDictionaryVector,
+          vector->typeKind(),
+          vector,
+          ranges,
+          stream);
       break;
     case VectorEncoding::Simple::BIASED:
       switch (vector->typeKind()) {
@@ -2547,67 +2663,6 @@ void serializeColumn(
   }
 }
 
-template <TypeKind Kind>
-void serializeConstantColumn(
-    const BaseVector* vector,
-    const folly::Range<const IndexRange*>& ranges,
-    VectorStream* stream) {
-  for (const auto& range : ranges) {
-    stream->appendNonNull(range.size);
-  }
-
-  std::vector<IndexRange> newRanges;
-  newRanges.push_back({0, 1});
-  serializeConstantVector<Kind>(vector, newRanges, stream->childAt(0));
-}
-
-template <TypeKind Kind>
-void serializeDictionaryColumn(
-    const BaseVector* vector,
-    const folly::Range<const IndexRange*>& ranges,
-    VectorStream* stream) {
-  using T = typename KindToFlatVector<Kind>::WrapperType;
-
-  auto dictionaryVector = dynamic_cast<const DictionaryVector<T>*>(vector);
-  VELOX_CHECK_NULL(
-      dictionaryVector->nulls(),
-      "Cannot serialize dictionary vector with nulls");
-
-  std::vector<IndexRange> childRanges;
-  childRanges.push_back({0, dictionaryVector->valueVector()->size()});
-  serializeColumn(
-      dictionaryVector->valueVector().get(), childRanges, stream->childAt(0));
-
-  const BufferPtr& indices = dictionaryVector->indices();
-  auto* rawIndices = indices->as<vector_size_t>();
-  for (const auto& range : ranges) {
-    stream->appendNonNull(range.size);
-    stream->append<int32_t>(folly::Range(&rawIndices[range.begin], range.size));
-  }
-}
-
-void serializeEncodedColumn(
-    const BaseVector* vector,
-    const folly::Range<const IndexRange*>& ranges,
-    VectorStream* stream) {
-  switch (vector->encoding()) {
-    case VectorEncoding::Simple::CONSTANT:
-      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
-          serializeConstantColumn, vector->typeKind(), vector, ranges, stream);
-      break;
-    case VectorEncoding::Simple::DICTIONARY:
-      VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
-          serializeDictionaryColumn,
-          vector->typeKind(),
-          vector,
-          ranges,
-          stream);
-      break;
-    default:
-      serializeColumn(vector, ranges, stream);
-  }
-}
-
 void expandRepeatedRanges(
     const BaseVector* vector,
     const vector_size_t* rawOffsets,
@@ -3173,13 +3228,39 @@ class PrestoVectorSerializer : public VectorSerializer {
     const auto types = rowType->children();
     const auto numTypes = types.size();
     streams_.resize(numTypes);
+
     for (int i = 0; i < numTypes; ++i) {
-      std::optional<VectorEncoding::Simple> encoding;
-      if (!encodings.empty()) {
+      std::optional<VectorEncoding::Simple> encoding = std::nullopt;
+      if (i < encodings.size()) {
         encoding = encodings[i];
       }
       streams_[i] = std::make_unique<VectorStream>(
-          types[i], encoding, streamArena, numRows, opts);
+						   types[i], encoding, std::nullopt, streamArena, numRows, opts);
+    }
+  }
+
+  // Constructor that takes a row vector instead of only the types. This is
+  // different because then we know exactly how each vector is encoded
+  // (recursively).
+  PrestoVectorSerializer(
+      const RowVectorPtr& rowVector,
+      StreamArena* streamArena,
+      const SerdeOpts& opts)
+      : streamArena_(streamArena),
+        codec_(common::compressionKindToCodec(opts.compressionKind)) {
+    auto numRows = rowVector->size();
+    auto rowType = rowVector->type();
+    auto numChildren = rowVector->childrenSize();
+    streams_.resize(numChildren);
+
+    for (int i = 0; i < numChildren; i++) {
+      streams_[i] = std::make_unique<VectorStream>(
+          rowType->childAt(i),
+          std::nullopt,
+          rowVector->childAt(i),
+          streamArena,
+          numRows,
+          opts);
     }
   }
 
@@ -3212,23 +3293,6 @@ class PrestoVectorSerializer : public VectorSerializer {
     }
   }
 
-  void appendEncoded(
-      const RowVectorPtr& vector,
-      const folly::Range<const IndexRange*>& ranges) {
-    const auto newRows = rangesTotalSize(ranges);
-    if (newRows > 0) {
-      numRows_ += newRows;
-      for (int32_t i = 0; i < vector->childrenSize(); ++i) {
-        auto child = vector->childAt(i).get();
-        if (child->encoding() == VectorEncoding::Simple::DICTIONARY &&
-            child->rawNulls()) {
-          serializeColumn(child, ranges, streams_[i].get());
-        } else {
-          serializeEncodedColumn(child, ranges, streams_[i].get());
-        }
-      }
-    }
-  }
 
   size_t maxSerializedSize() const override {
     size_t dataSize = 4; // streams_.size()
@@ -3253,7 +3317,8 @@ class PrestoVectorSerializer : public VectorSerializer {
     VELOX_CHECK_EQ(0, numRows_);
 
     std::vector<IndexRange> ranges{{0, vector->size()}};
-    appendEncoded(vector, folly::Range(ranges.data(), ranges.size()));
+    Scratch scratch;
+    append(vector, folly::Range(ranges.data(), ranges.size()), scratch);
 
     flushInternal(vector->size(), out);
   }
@@ -3429,11 +3494,10 @@ void PrestoVectorSerde::serializeEncoded(
     StreamArena* streamArena,
     const Options* options,
     OutputStream* out) {
-  auto serializer = createSerializer(
-      asRowType(vector->type()), vector->size(), streamArena, options);
-
-  static_cast<PrestoVectorSerializer*>(serializer.get())
-      ->flushEncoded(vector, out);
+  auto prestoOptions = toPrestoOptions(options);
+  auto serializer = std::make_unique<PrestoVectorSerializer>(
+      vector, streamArena, prestoOptions);
+  serializer->flushEncoded(vector, out);
 }
 namespace {
 bool hasNestedStructs(const TypePtr& type) {
