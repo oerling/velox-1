@@ -1401,10 +1401,10 @@ class VectorStream {
   void appendNull() {
     if (UNLIKELY(runLengths_.size() > 0)) {
       // This may be called to add an extra null from dictionary
-      // wrappers. if so, must flatten. This is simpler than adding a
-      // null to the distincts. Reconsider when adding dictionary
-      // preserving.
-      ensureFlat();
+      // wrappers.
+      auto index = findNullIndex();
+      appendIndex(index, 1);
+      return;
     }
     if (nonNullCount_ && nullCount_ == 0) {
       nulls_.appendBool(false, nonNullCount_);
@@ -1547,12 +1547,7 @@ class VectorStream {
     VELOX_DCHECK(mayAppendConstant());
     VELOX_DCHECK_EQ(vector.encoding(), VectorEncoding::Simple::CONSTANT);
     auto dictIndex = addDistinctValue(vector, vector.wrappedIndex(0));
-    if (!indices_.empty() && indices_.back() == dictIndex) {
-      runLengths_.back() += repeats;
-    } else {
-      indices_.push_back(dictIndex);
-      runLengths_.push_back(repeats);
-    }
+    appendIndex(dictIndex, repeats);
   }
 
   bool isDictionaryStream() const {
@@ -1591,11 +1586,8 @@ class VectorStream {
     ++numFlushes_;
     if (!isFlushed_) {
       totalNonNull_ += nonNullCount_;
-      if (isString_) {
-        maxDistinctStrings_ = totalNonNull_ / (numFlushes_ + 1) / 3;
-      }
+      setEncodingByDistincts();
     }
-    setEncodingByDistincts();
 
     isFlushed_ = true;
     out->write(reinterpret_cast<char*>(header_.buffer), header_.size);
@@ -1702,6 +1694,9 @@ class VectorStream {
   /// Sets 'this' to post-construction state. Sizes streams to reserve previous
   /// size worth of space if 'reservePreviousSize' is true.
   void clear(bool reservePreviousSize = true) {
+    if (isString_) {
+      maxDistinctStrings_ = totalNonNull_ / (numFlushes_ + 1) / 3;
+    }
     clearDistincts();
     initializeHeader(typeToEncodingName(type_), *streamArena_);
     nonNullCount_ = 0;
@@ -1725,7 +1720,7 @@ class VectorStream {
     return !forceFlat_;
   }
 
-  inline bool appendDictionaryString(
+  bool appendDictionaryString(
       const BaseVector& vector,
       vector_size_t i) {
     if (forceFlat_ || maxDistinctStrings_ == 0) {
@@ -1735,26 +1730,21 @@ class VectorStream {
         StringView string =
             vector.asUnchecked<FlatVector<StringView>>()->valueAt(i);
         appendNonNull(1);
-        appendLength(string.size());
         appendOne(string);
       }
       return false;
     }
     if (distincts_ != nullptr || (nullCount_ == 0 && nonNullCount_ == 0)) {
       vector_size_t dictIndex = addDistinctValue(vector, i);
-      if (!indices_.empty() && indices_.back() == dictIndex) {
-        ++runLengths_.back();
-      } else {
-        indices_.push_back(dictIndex);
-        runLengths_.push_back(1);
+      appendIndex(dictIndex, 1);
+      if (distinctStrings_.size() > maxDistinctStrings_) {
+	++numAbandonDict_;
+	ensureFlat();
+	forceFlat_ = true;
       }
+      return true;
     }
-    if (distinctStrings_.size() > maxDistinctStrings_) {
-      ++numAbandonDict_;
-      ensureFlat();
-      forceFlat_ = true;
-    }
-    return true;
+    return false;
   }
 
  private:
@@ -1800,13 +1790,16 @@ class VectorStream {
       distincts_->resize(newIndex + 1);
     }
     distincts_->copy(vector.wrappedVector(), newIndex, index, 1);
+    const bool isNull = vector.isNullAt(index);
+    if (isNull) {
+      nullIndex_ = newIndex;
+    }
     if (isString_) {
-      if (vector.isNullAt(index)) {
-        nullIndex_ = newIndex;
-      } else {
-        distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
-                             ->valueAt(newIndex)] = newIndex;
-        if (newIndex >= usedStrings_.size() * 64) {
+      if (!isNull) {
+	distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
+			 ->valueAt(newIndex)] = newIndex;
+
+	if (newIndex >= usedStrings_.size() * 64) {
           usedStrings_.resize(bits::roundUp(newIndex + 1, 64) / 64);
         }
         bits::setBit(usedStrings_.data(), newIndex, true);
@@ -1817,6 +1810,25 @@ class VectorStream {
     return newIndex;
   }
 
+  void appendIndex(vector_size_t index, vector_size_t repeats) {
+    if (!indices_.empty() && indices_.back() == index) {
+      runLengths_.back() += repeats;
+    } else {
+      indices_.push_back(index);
+      runLengths_.push_back(repeats);
+      }
+  }
+  
+  vector_size_t findNullIndex() {
+    if (nullIndex_ !=  kNoNullIndex) {
+      return nullIndex_;
+    }
+    auto tempNull = BaseVector::create(type_, 1, streamArena_->pool());
+    tempNull->setNull(0, true);
+    return addDistinctValue(*tempNull, 0);
+  }
+
+  
   void setEncodingByDistincts() {
     if (indices_.empty()) {
       return;
@@ -1890,9 +1902,11 @@ class VectorStream {
     }
     if (isString_) {
       if (!usedStrings_.empty()) {
+	// We keep the dictionary even if we do not use it this time
+	// if the values so far cover enough of it.
         auto numUsed =
             bits::countBits(usedStrings_.data(), 0, distincts_->size());
-        auto batch = totalNonNull_ / numFlushes_;
+        auto batch = (totalNonNull_ + nonNullCount_) / std::max<int64_t>(1, numFlushes_);
         if (nonNullCount_ > batch * 0.7 && numUsed > distincts_->size() * 0.7) {
           std::fill(usedStrings_.begin(), usedStrings_.end(), 0);
           return;
@@ -2282,7 +2296,7 @@ void serializeDictionaryVector(
   std::vector<IndexRange> childRanges;
   childRanges.push_back({0, dictionaryVector->valueVector()->size()});
   serializeColumn(
-      dictionaryVector->valueVector().get(), childRanges, stream->childAt(0));
+		  dictionaryVector->valueVector().get(), childRanges, stream->alphabet());
 
   const BufferPtr& indices = dictionaryVector->indices();
   auto* rawIndices = indices->as<vector_size_t>();
@@ -2331,7 +2345,7 @@ void serializeConstantVector(
 
     std::vector<IndexRange> newRanges;
     newRanges.push_back({0, 1});
-    serializeConstantVectorImpl<Kind>(vector, newRanges, stream->childAt(0));
+    serializeConstantVectorImpl<Kind>(vector, newRanges, stream->alphabet());
   } else {
     serializeConstantVectorImpl<Kind>(vector, ranges, stream);
   }
