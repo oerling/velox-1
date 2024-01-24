@@ -152,9 +152,11 @@ void readValues(
     ByteInputStream* source,
     vector_size_t size,
     vector_size_t offset,
-    BufferPtr nulls,
+    const BufferPtr& nulls,
     vector_size_t nullCount,
-    BufferPtr values) {
+    const BufferPtr& values) {
+  auto bufferSize = values->size() / sizeof(T);
+  VELOX_CHECK_LE(offset + size, bufferSize);
   if (nullCount) {
     auto rawValues = values->asMutable<T>();
     int32_t toClear = offset;
@@ -162,9 +164,11 @@ void readValues(
         nulls->as<uint64_t>(), offset, offset + size, [&](int32_t row) {
           // Set the values between the last non-null and this to type default.
           for (; toClear < row; ++toClear) {
+	    VELOX_CHECK_LT(toClear, bufferSize);
             rawValues[toClear] = T();
           }
-          rawValues[row] = source->read<T>();
+	  VELOX_CHECK_LT(row, bufferSize);
+	    rawValues[row] = source->read<T>();
           toClear = row + 1;
         });
   } else {
@@ -178,18 +182,22 @@ void readValues<bool>(
     ByteInputStream* source,
     vector_size_t size,
     vector_size_t offset,
-    BufferPtr nulls,
+    const BufferPtr& nulls,
     vector_size_t nullCount,
-    BufferPtr values) {
+    const BufferPtr& values) {
   auto rawValues = values->asMutable<uint64_t>();
+  auto bufferSize = values->size() * 8;
+  VELOX_CHECK_LE(offset + size, bufferSize);
   if (nullCount) {
     int32_t toClear = offset;
     bits::forEachSetBit(
         nulls->as<uint64_t>(), offset, offset + size, [&](int32_t row) {
           // Set the values between the last non-null and this to type default.
           for (; toClear < row; ++toClear) {
+	    VELOX_CHECK_LT(toClear, bufferSize);
             bits::clearBit(rawValues, toClear);
           }
+	  VELOX_CHECK_LT(row, bufferSize);
           bits::setBit(rawValues, row, (source->read<int8_t>() != 0));
           toClear = row + 1;
         });
@@ -210,10 +218,13 @@ void readValues<Timestamp>(
     ByteInputStream* source,
     vector_size_t size,
     vector_size_t offset,
-    BufferPtr nulls,
+    const BufferPtr& nulls,
     vector_size_t nullCount,
-    BufferPtr values) {
+    const BufferPtr& values) {
   auto rawValues = values->asMutable<Timestamp>();
+  auto bufferSize = values->size() / sizeof(Timestamp);
+  VELOX_CHECK_LE(offset + size, bufferSize);
+
   if (nullCount) {
     int32_t toClear = offset;
     bits::forEachSetBit(
@@ -242,9 +253,10 @@ void readLosslessTimestampValues(
     ByteInputStream* source,
     vector_size_t size,
     vector_size_t offset,
-    BufferPtr nulls,
+    const BufferPtr& nulls,
     vector_size_t nullCount,
-    BufferPtr values) {
+    const BufferPtr& values) {
+  auto bufferSize = values->size() / sizeof(Timestamp); 
   auto rawValues = values->asMutable<Timestamp>();
   if (nullCount > 0) {
     int32_t toClear = offset;
@@ -281,9 +293,11 @@ void readDecimalValues(
     ByteInputStream* source,
     vector_size_t size,
     vector_size_t offset,
-    BufferPtr nulls,
+    const BufferPtr& nulls,
     vector_size_t nullCount,
-    BufferPtr values) {
+    const BufferPtr& values) {
+  auto bufferSize = values->size() / sizeof(int128_t);
+  VELOX_CHECK_LE(offset + size, bufferSize);
   auto rawValues = values->asMutable<int128_t>();
   if (nullCount) {
     int32_t toClear = offset;
