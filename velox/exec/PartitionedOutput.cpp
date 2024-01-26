@@ -87,7 +87,7 @@ BlockingReason Destination::flush(
   const int64_t flushedRows = rowsInCurrent_;
 
   current_->flush(&stream);
-  //current_ = nullptr;
+  // current_ = nullptr;
   current_->clear();
 
   const int64_t flushedBytes = stream.tellp();
