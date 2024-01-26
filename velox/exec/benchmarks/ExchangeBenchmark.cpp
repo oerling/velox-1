@@ -352,7 +352,7 @@ class ExchangeBenchmark : public VectorTestBase {
 
 int32_t ExchangeBenchmark::iteration_;
 
-ExchangeBenchmark bm;
+std::unique_ptr<ExchangeBenchmark> bm;
 
 std::vector<RowVectorPtr> flat10k;
 std::vector<RowVectorPtr> deep10k;
@@ -370,27 +370,27 @@ Counters struct1kCounters;
 Counters string10kCounters;
 
 BENCHMARK(exchangeFlat10k) {
-  bm.run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
+  bm->run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
 }
 
 BENCHMARK_RELATIVE(exchangeFlat50) {
-  bm.run(flat50, FLAGS_width, FLAGS_task_width, flat50Counters);
+  bm->run(flat50, FLAGS_width, FLAGS_task_width, flat50Counters);
 }
 
 BENCHMARK(exchangeDeep10k) {
-  bm.run(deep10k, FLAGS_width, FLAGS_task_width, deep10kCounters);
+  bm->run(deep10k, FLAGS_width, FLAGS_task_width, deep10kCounters);
 }
 
 BENCHMARK_RELATIVE(exchangeDeep50) {
-  bm.run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
+  bm->run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
 }
 
 BENCHMARK(exchangeStruct1K) {
-  bm.run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
+  bm->run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
 }
 
 BENCHMARK(localFlat10k) {
-  bm.runLocal(
+  bm->runLocal(
       flat10k, FLAGS_width, FLAGS_num_local_tasks, localFlat10kCounters);
 }
 
