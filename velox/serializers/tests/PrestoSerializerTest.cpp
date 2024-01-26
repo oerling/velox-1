@@ -102,10 +102,10 @@ class PrestoSerializerTest
       serializer->clear();
     } else {
       arena = std::make_unique<StreamArena>(pool_.get());
-      serializer =
-        serde_->createSerializer(rowType, numRows, arena.get(), &paramOptions);
+      serializer = serde_->createSerializer(
+          rowType, numRows, arena.get(), &paramOptions);
     }
-      vector_size_t sizeEstimate = 0;
+    vector_size_t sizeEstimate = 0;
 
     Scratch scratch;
     if (indexRanges.has_value()) {
@@ -203,7 +203,14 @@ class PrestoSerializerTest
     std::unique_ptr<StreamArena> reuseArena;
     auto rowVector = makeRowVector({vector});
     std::ostringstream out;
-    serialize(rowVector, &out, serdeOptions, std::nullopt, std::nullopt, &reuseSerializer, &reuseArena);
+    serialize(
+        rowVector,
+        &out,
+        serdeOptions,
+        std::nullopt,
+        std::nullopt,
+        &reuseSerializer,
+        &reuseArena);
 
     auto rowType = asRowType(rowVector->type());
     auto deserialized = deserialize(rowType, out.str(), serdeOptions);
@@ -219,7 +226,14 @@ class PrestoSerializerTest
     std::vector<std::string> serialized;
     for (const auto& split : splits) {
       std::ostringstream out;
-      serialize(split, &out, serdeOptions, std::nullopt, std::nullopt, &reuseSerializer, &reuseArena);
+      serialize(
+          split,
+          &out,
+          serdeOptions,
+          std::nullopt,
+          std::nullopt,
+          &reuseSerializer,
+          &reuseArena);
       serialized.push_back(out.str());
     }
 
@@ -240,10 +254,13 @@ class PrestoSerializerTest
         makeIndices(rowVector->size() / 2, [&](auto row) { return row * 2; });
     auto odd = makeIndices(
         (rowVector->size() - 1) / 2, [&](auto row) { return (row * 2) + 1; });
-    testSerializeRows(rowVector, even, serdeOptions, &reuseSerializer, &reuseArena);
-    auto oddStats = testSerializeRows(rowVector, odd, serdeOptions, &reuseSerializer, &reuseArena);
+    testSerializeRows(
+        rowVector, even, serdeOptions, &reuseSerializer, &reuseArena);
+    auto oddStats = testSerializeRows(
+        rowVector, odd, serdeOptions, &reuseSerializer, &reuseArena);
     auto wrappedRowVector = wrapChildren(rowVector);
-    auto wrappedStats = testSerializeRows(wrappedRowVector, odd, serdeOptions, &reuseSerializer, &reuseArena);
+    auto wrappedStats = testSerializeRows(
+        wrappedRowVector, odd, serdeOptions, &reuseSerializer, &reuseArena);
     EXPECT_EQ(oddStats.estimatedSize, wrappedStats.estimatedSize);
     // The second serialization may come out smaller if encoding is better.
     EXPECT_GE(oddStats.actualSize, wrappedStats.actualSize);
@@ -252,14 +269,20 @@ class PrestoSerializerTest
   SerializeStats testSerializeRows(
       const RowVectorPtr& rowVector,
       BufferPtr indices,
-      const serializer::presto::PrestoVectorSerde::PrestoOptions*
-      serdeOptions,
+      const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions,
       std::unique_ptr<VectorSerializer>* reuseSerializer,
-				   std::unique_ptr<StreamArena>* reuseArena) {
+      std::unique_ptr<StreamArena>* reuseArena) {
     std::ostringstream out;
     auto rows = folly::Range<const vector_size_t*>(
         indices->as<vector_size_t>(), indices->size() / sizeof(vector_size_t));
-    auto stats = serialize(rowVector, &out, serdeOptions, std::nullopt, rows, reuseSerializer, reuseArena);
+    auto stats = serialize(
+        rowVector,
+        &out,
+        serdeOptions,
+        std::nullopt,
+        rows,
+        reuseSerializer,
+        reuseArena);
 
     auto rowType = asRowType(rowVector->type());
     auto deserialized = deserialize(rowType, out.str(), serdeOptions);

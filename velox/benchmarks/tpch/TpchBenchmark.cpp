@@ -289,7 +289,7 @@ class TpchBenchmark {
         params.planNode = tpchPlan.plan;
         params.queryConfigs[core::QueryConfig::kMaxSplitPreloadPerDriver] =
             std::to_string(FLAGS_split_preload_per_driver);
-        params.queryConfigs[core::QueryConfig::kPreferredOutputBatchBytes ] =
+        params.queryConfigs[core::QueryConfig::kPreferredOutputBatchBytes] =
             std::to_string(FLAGS_batch_bytes);
 
         const int numSplitsPerFile = FLAGS_num_splits_per_file;

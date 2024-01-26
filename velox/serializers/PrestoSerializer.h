@@ -163,4 +163,3 @@ class PrestoOutputStreamListener : public OutputStreamListener {
   bits::Crc32 crc_;
 };
 } // namespace facebook::velox::serializer::presto
-

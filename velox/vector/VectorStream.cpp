@@ -124,7 +124,6 @@ void VectorStreamGroup::appendColumn(
   serializer_->append(vector, rows, scratch);
 }
 
-  
 void VectorStreamGroup::append(const RowVectorPtr& vector) {
   serializer_->append(vector);
 }

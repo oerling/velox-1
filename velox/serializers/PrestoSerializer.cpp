@@ -1705,8 +1705,10 @@ class VectorStream {
   void clear(bool reservePreviousSize = true) {
     isFlushed_ = false;
     if (isString_) {
-      // May do dictionary with 1/3 of typical batch size worth of distinct values.
-      maxDistinctStrings_ = std::max<int32_t>(10, totalNonNull_ / (numFlushes_ + 1) / 3);
+      // May do dictionary with 1/3 of typical batch size worth of distinct
+      // values.
+      maxDistinctStrings_ =
+          std::max<int32_t>(10, totalNonNull_ / (numFlushes_ + 1) / 3);
     }
     clearDistincts();
     encoding_ = std::nullopt;
