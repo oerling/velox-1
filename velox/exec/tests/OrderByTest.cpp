@@ -15,6 +15,7 @@
  */
 #include <re2/re2.h>
 
+#include <fmt/format.h>
 #include "folly/experimental/EventCount.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/file/FileSystems.h"
@@ -515,10 +516,10 @@ TEST_F(OrderByTest, spill) {
   ASSERT_EQ(
       planStats.customStats["spillSerializationTime"].count,
       planStats.customStats["spillFlushTime"].count);
-  ASSERT_GT(planStats.customStats["spillDiskWrites"].sum, 0);
+  ASSERT_GT(planStats.customStats["spillWrites"].sum, 0);
   ASSERT_GT(planStats.customStats["spillWriteTime"].sum, 0);
   ASSERT_EQ(
-      planStats.customStats["spillDiskWrites"].count,
+      planStats.customStats["spillWrites"].count,
       planStats.customStats["spillWriteTime"].count);
   OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
 }
@@ -862,7 +863,7 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringAllocation) {
     batches.push_back(fuzzer.fuzzRow(rowType));
   }
 
-  std::vector<bool> enableSpillings = {false, true};
+  const std::vector<bool> enableSpillings = {false, true};
   for (const auto enableSpilling : enableSpillings) {
     SCOPED_TRACE(fmt::format("enableSpilling {}", enableSpilling));
     auto tempDirectory = exec::test::TempDirectoryPath::create();
@@ -992,7 +993,7 @@ DEBUG_ONLY_TEST_F(OrderByTest, reclaimDuringOutputProcessing) {
     batches.push_back(fuzzer.fuzzRow(rowType));
   }
 
-  std::vector<bool> enableSpillings = {false, true};
+  const std::vector<bool> enableSpillings = {false, true};
   for (const auto enableSpilling : enableSpillings) {
     SCOPED_TRACE(fmt::format("enableSpilling {}", enableSpilling));
     auto tempDirectory = exec::test::TempDirectoryPath::create();

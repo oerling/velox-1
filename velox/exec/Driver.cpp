@@ -194,7 +194,7 @@ void BlockingState::setResume(std::shared_ptr<BlockingState> state) {
         auto& driver = state->driver_;
         auto& task = driver->task();
 
-        std::lock_guard<std::mutex> l(task->mutex());
+        std::lock_guard<std::timed_mutex> l(task->mutex());
         if (!driver->state().isTerminated) {
           state->operator_->recordBlockingTime(
               state->sinceMicros_, state->reason_);
@@ -523,12 +523,8 @@ StopReason Driver::runInternal(
 
         if (FOLLY_UNLIKELY(shouldYield())) {
           recordYieldCount();
-          stop = StopReason::kYield;
-          future = ContinueFuture{folly::Unit{}};
-          blockingState = std::make_shared<BlockingState>(
-              self, std::move(future), op, blockingReason_);
           guard.notThrown();
-          return stop;
+          return StopReason::kYield;
         }
 
         // In case we are blocked, this index will point to the operator, whose
@@ -797,7 +793,7 @@ void Driver::run(std::shared_ptr<Driver> self) {
     case StopReason::kAtEnd:
       return;
     default:
-      VELOX_CHECK(false, "Unhandled stop reason");
+      VELOX_FAIL("Unhandled stop reason");
   }
 }
 
@@ -962,10 +958,10 @@ std::string Driver::toString() const {
   return out.str();
 }
 
-std::string Driver::toJsonString() const {
+folly::dynamic Driver::toJson() const {
   folly::dynamic obj = folly::dynamic::object;
   obj["blockingReason"] = blockingReasonToString(blockingReason_);
-  obj["state"] = state_.toJsonString();
+  obj["state"] = state_.toJson();
   obj["closed"] = closed_.load();
   obj["queueTimeStartMicros"] = queueTimeStartMicros_;
   const auto ocs = opCallStatus();
@@ -978,11 +974,11 @@ std::string Driver::toJsonString() const {
   folly::dynamic operatorsObj = folly::dynamic::object;
   int index = 0;
   for (auto& op : operators_) {
-    operatorsObj[std::to_string(index++)] = op->toJsonString();
+    operatorsObj[std::to_string(index++)] = op->toJson();
   }
   obj["operators"] = operatorsObj;
 
-  return folly::toPrettyJson(obj);
+  return obj;
 }
 
 SuspendedSection::SuspendedSection(Driver* driver) : driver_(driver) {

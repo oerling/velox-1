@@ -18,7 +18,9 @@
 
 #include "velox/common/base/Counters.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/base/StatsReporter.h"
+#include "velox/common/memory/Memory.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/common/time/Timer.h"
 
@@ -464,12 +466,11 @@ uint64_t SharedArbitrator::reclaim(
   numShrunkBytes_ += freedBytes;
   reclaimTimeUs_ += reclaimDurationUs;
   numNonReclaimableAttempts_ += reclaimerStats.numNonReclaimableAttempts;
-  VELOX_MEM_LOG(INFO) << "Reclaimed from memory pool " << pool->name()
-                      << " with target of " << succinctBytes(targetBytes)
-                      << ", actually reclaimed " << succinctBytes(freedBytes)
-                      << " free memory and "
-                      << succinctBytes(reclaimedBytes - freedBytes)
-                      << " used memory";
+  VELOX_MEM_LOG_EVERY_MS(INFO, 1000)
+      << "Reclaimed from memory pool " << pool->name() << " with target of "
+      << succinctBytes(targetBytes) << ", actually reclaimed "
+      << succinctBytes(freedBytes) << " free memory and "
+      << succinctBytes(reclaimedBytes - freedBytes) << " used memory";
   return reclaimedBytes;
 }
 
@@ -575,12 +576,16 @@ SharedArbitrator::ScopedArbitration::ScopedArbitration(
 
 SharedArbitrator::ScopedArbitration::~ScopedArbitration() {
   requestor_->leaveArbitration();
-  const auto arbitrationTime =
+  const auto arbitrationTimeUs =
       std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::steady_clock::now() - startTime_);
+          std::chrono::steady_clock::now() - startTime_)
+          .count();
   RECORD_HISTOGRAM_METRIC_VALUE(
-      kMetricArbitratorArbitrationTimeMs, arbitrationTime.count() / 1'000);
-  arbitrator_->arbitrationTimeUs_ += arbitrationTime.count();
+      kMetricArbitratorArbitrationTimeMs, arbitrationTimeUs / 1'000);
+  addThreadLocalRuntimeStat(
+      "memoryArbitrationWallNanos",
+      RuntimeCounter(arbitrationTimeUs * 1'000, RuntimeCounter::Unit::kNanos));
+  arbitrator_->arbitrationTimeUs_ += arbitrationTimeUs;
   arbitrator_->finishArbitration();
 }
 

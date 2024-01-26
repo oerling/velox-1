@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <fmt/format.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -1126,8 +1127,8 @@ TEST_P(MemoryPoolTest, persistentNonContiguousAllocateFailure) {
     std::string debugString() const {
       return fmt::format(
           "numOldPages:{}, numNewPages:{}, injectedFailure:{}",
-          numOldPages,
-          numNewPages,
+          static_cast<uint64_t>(numOldPages),
+          static_cast<uint64_t>(numNewPages),
           injectedFailure);
     }
   } testSettings[] = {// Cap failure injection.
@@ -1225,73 +1226,92 @@ TEST_P(MemoryPoolTest, transientNonContiguousAllocateFailure) {
   struct {
     MachinePageCount numOldPages;
     MachinePageCount numNewPages;
+    MachinePageCount expectedAllocatedPages;
     MemoryAllocator::InjectedFailure injectedFailure;
     std::string debugString() const {
       return fmt::format(
-          "numOldPages:{}, numNewPages:{}, injectedFailure:{}",
+          "numOldPages:{}, numNewPages:{}, expectedAllocatedPages:{}, injectedFailure:{}",
           numOldPages,
           numNewPages,
+          expectedAllocatedPages,
           injectedFailure);
     }
-  } testSettings[] = {// Cap failure injection.
-                      {0, 100, MemoryAllocator::InjectedFailure::kCap},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {100, 100, MemoryAllocator::InjectedFailure::kCap},
-                      {Allocation::PageRun::kMaxPagesInRun / 2,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {200, 100, MemoryAllocator::InjectedFailure::kCap},
-                      {Allocation::PageRun::kMaxPagesInRun / 2 + 100,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun - 1,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      // Allocate failure injection.
-                      {0, 100, MemoryAllocator::InjectedFailure::kAllocate},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun,
-                       MemoryAllocator::InjectedFailure::kCap},
-                      {100, 100, MemoryAllocator::InjectedFailure::kAllocate},
-                      {Allocation::PageRun::kMaxPagesInRun / 2,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      {200, 100, MemoryAllocator::InjectedFailure::kAllocate},
-                      {Allocation::PageRun::kMaxPagesInRun / 2 + 100,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun - 1,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      {Allocation::PageRun::kMaxPagesInRun,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kAllocate},
-                      // Madvise failure injection.
-                      {0, 100, MemoryAllocator::InjectedFailure::kMadvise},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun / 2,
-                       MemoryAllocator::InjectedFailure::kMadvise},
-                      {0,
-                       Allocation::PageRun::kMaxPagesInRun,
-                       MemoryAllocator::InjectedFailure::kMadvise},
-                      {200, 100, MemoryAllocator::InjectedFailure::kMadvise}};
+  } testSettings[] = {
+      // Cap failure injection.
+      {0, 100, 100, MemoryAllocator::InjectedFailure::kCap},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kCap},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kCap},
+      {100, 100, 100, MemoryAllocator::InjectedFailure::kCap},
+      {Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kCap},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kCap},
+      {200, 100, 100, MemoryAllocator::InjectedFailure::kCap},
+      {Allocation::PageRun::kMaxPagesInRun / 2 + 100,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kCap},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun - 1,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kCap},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kCap},
+      // Allocate failure injection.
+      {0, 100, 100, MemoryAllocator::InjectedFailure::kAllocate},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kCap},
+      {100, 100, 100, MemoryAllocator::InjectedFailure::kAllocate},
+      {Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      {200, 100, 100, MemoryAllocator::InjectedFailure::kAllocate},
+      {Allocation::PageRun::kMaxPagesInRun / 2 + 100,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun - 1,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      {Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kAllocate},
+      // Madvise failure injection.
+      {0, 100, 100, MemoryAllocator::InjectedFailure::kMadvise},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       Allocation::PageRun::kMaxPagesInRun / 2,
+       MemoryAllocator::InjectedFailure::kMadvise},
+      {0,
+       Allocation::PageRun::kMaxPagesInRun,
+       Allocation::PageRun::kMaxPagesInRun + 1,
+       MemoryAllocator::InjectedFailure::kMadvise},
+      {200, 100, 100, MemoryAllocator::InjectedFailure::kMadvise}};
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(fmt::format(
         "{}, useMmap:{}, useCache:{}",
@@ -1317,7 +1337,7 @@ TEST_P(MemoryPoolTest, transientNonContiguousAllocateFailure) {
     manager->allocator()->testingSetFailureInjection(testData.injectedFailure);
     if (useCache_) {
       pool->allocateNonContiguous(testData.numNewPages, allocation);
-      ASSERT_EQ(allocation.numPages(), testData.numNewPages);
+      ASSERT_EQ(allocation.numPages(), testData.expectedAllocatedPages);
     } else {
       ASSERT_THROW(
           pool->allocateNonContiguous(testData.numNewPages, allocation),
