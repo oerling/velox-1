@@ -24,6 +24,8 @@
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 
+DEFINE_bool(enable_serialize_dict, true, "Enable dictionarizing serialization");
+
 namespace facebook::velox::serializer::presto {
 
 using SerdeOpts = PrestoVectorSerde::PrestoOptions;
@@ -1737,6 +1739,9 @@ class VectorStream {
   }
 
   bool mayTryDictionary() const {
+    if (!FLAGS_enable_serialize_dict) {
+      return false;
+    }
     return !forceFlat_;
   }
 
