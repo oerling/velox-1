@@ -23,6 +23,7 @@
 #include "velox/common/memory/MmapArena.h"
 #include "velox/common/testutil/TestValue.h"
 
+#include <fmt/format.h>
 #include <folly/Random.h>
 #include <folly/Range.h>
 #include <gflags/gflags.h>
@@ -770,8 +771,8 @@ TEST_P(MemoryAllocatorTest, nonContiguousFailure) {
     std::string debugString() const {
       return fmt::format(
           "numOldPages:{}, numNewPages:{}, injectedFailure:{}",
-          numOldPages,
-          numNewPages,
+          static_cast<uint64_t>(numOldPages),
+          static_cast<uint64_t>(numNewPages),
           injectedFailure);
     }
   } testSettings[] = {// Cap failure injection.
@@ -1444,7 +1445,8 @@ TEST_P(MemoryAllocatorTest, allocatorCapacity) {
 TEST_P(MemoryAllocatorTest, allocatorCapacityWithThreads) {
   std::atomic<int64_t> numOps{0};
   const int64_t numMaxOps = 100000;
-  const int64_t nonContAllocPages = Allocation::PageRun::kMaxPagesInRun;
+  const int64_t nonContAllocPages =
+      Allocation::PageRun::kMaxPagesInRun / 256 * 256;
 
   std::function<void()> nonContiguousReserveFail = [&, this]() {
     while (numOps < numMaxOps) {

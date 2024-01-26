@@ -150,7 +150,7 @@ commands:
 executors:
   build:
     docker:
-      - image : ghcr.io/facebookincubator/velox-dev:circleci-avx
+      - image : ghcr.io/facebookincubator/velox-dev:new-cci
     resource_class: 2xlarge
     environment:
       CC:  /opt/rh/gcc-toolset-9/root/bin/gcc
@@ -253,7 +253,7 @@ jobs:
       - run:
           name: "Build"
           command: |
-            make debug NUM_THREADS=16 MAX_HIGH_MEM_JOBS=8 MAX_LINK_JOBS=5 EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON"
+            make debug NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=4 EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON"
             ccache -s
           no_output_timeout: 1h
       - run:
