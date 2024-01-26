@@ -1305,7 +1305,12 @@ class VectorStream {
           flatOpts.alwaysFlat = true;
           initializeHeader(kRLE, *streamArena);
           alphabet_ = std::make_unique<VectorStream>(
-              type_, std::nullopt, std::nullopt, streamArena, initialNumRows, flatOpts);
+              type_,
+              std::nullopt,
+              std::nullopt,
+              streamArena,
+              initialNumRows,
+              flatOpts);
           isConstantStream_ = true;
           return;
         }
@@ -1315,7 +1320,12 @@ class VectorStream {
           initializeHeader(kDictionary, *streamArena);
           values_.startWrite(initialNumRows * 4);
           alphabet_ = std::make_unique<VectorStream>(
-						     type_, std::nullopt, std::nullopt, streamArena, initialNumRows, flatOpts);
+              type_,
+              std::nullopt,
+              std::nullopt,
+              streamArena,
+              initialNumRows,
+              flatOpts);
           isDictionaryStream_ = true;
           return;
         }
@@ -1565,7 +1575,7 @@ class VectorStream {
   VectorStream* alphabet() const {
     return alphabet_.get();
   }
-  
+
   ByteOutputStream& values() {
     return values_;
   }
@@ -1583,9 +1593,8 @@ class VectorStream {
 
   // Writes out the accumulated contents. Does not change the state.
   void flush(OutputStream* out) {
-    ++numFlushes_;
     if (!isFlushed_) {
-      totalNonNull_ += nonNullCount_;
+      ++numFlushes_;
       setEncodingByDistincts();
     }
 
@@ -1694,16 +1703,24 @@ class VectorStream {
   /// Sets 'this' to post-construction state. Sizes streams to reserve previous
   /// size worth of space if 'reservePreviousSize' is true.
   void clear(bool reservePreviousSize = true) {
+    isFlushed_ = false;
     if (isString_) {
-      maxDistinctStrings_ = totalNonNull_ / (numFlushes_ + 1) / 3;
+      // May do dictionary with 1/3 of typical batch size worth of distinct values.
+      maxDistinctStrings_ = std::max<int32_t>(10, totalNonNull_ / (numFlushes_ + 1) / 3);
     }
     clearDistincts();
+    encoding_ = std::nullopt;
     initializeHeader(typeToEncodingName(type_), *streamArena_);
     nonNullCount_ = 0;
     nullCount_ = 0;
     totalLength_ = 0;
     if (hasLengths_) {
       lengths_.startWrite(lengths_.size());
+      if (type_->kind() == TypeKind::ROW || type_->kind() == TypeKind::ARRAY ||
+          type_->kind() == TypeKind::MAP) {
+        // A complex type has a 0 as first length.
+        lengths_.appendOne<int32_t>(0);
+      }
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
@@ -1713,6 +1730,7 @@ class VectorStream {
     }
     if (alphabet_) {
       alphabet_->clear();
+      alphabet_->forceFlat_ = true;
     }
   }
 
@@ -1720,10 +1738,9 @@ class VectorStream {
     return !forceFlat_;
   }
 
-  bool appendDictionaryString(
-      const BaseVector& vector,
-      vector_size_t i) {
-    if (forceFlat_ || maxDistinctStrings_ == 0) {
+  bool appendDictionaryString(const BaseVector& vector, vector_size_t i) {
+    if (forceFlat_ || maxDistinctStrings_ == 0 || nullCount_ > 0 ||
+        nonNullCount_ > 0) {
       if (vector.isNullAt(i)) {
         appendNull();
       } else {
@@ -1734,17 +1751,14 @@ class VectorStream {
       }
       return false;
     }
-    if (distincts_ != nullptr || (nullCount_ == 0 && nonNullCount_ == 0)) {
-      vector_size_t dictIndex = addDistinctValue(vector, i);
-      appendIndex(dictIndex, 1);
-      if (distinctStrings_.size() > maxDistinctStrings_) {
-	++numAbandonDict_;
-	ensureFlat();
-	forceFlat_ = true;
-      }
-      return true;
+    vector_size_t dictIndex = addDistinctValue(vector, i);
+    appendIndex(dictIndex, 1);
+    if (distinctStrings_.size() > maxDistinctStrings_) {
+      ++numAbandonDict_;
+      ensureFlat();
+      forceFlat_ = true;
     }
-    return false;
+    return true;
   }
 
  private:
@@ -1796,10 +1810,10 @@ class VectorStream {
     }
     if (isString_) {
       if (!isNull) {
-	distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
-			 ->valueAt(newIndex)] = newIndex;
+        distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
+                             ->valueAt(newIndex)] = newIndex;
 
-	if (newIndex >= usedStrings_.size() * 64) {
+        if (newIndex >= usedStrings_.size() * 64) {
           usedStrings_.resize(bits::roundUp(newIndex + 1, 64) / 64);
         }
         bits::setBit(usedStrings_.data(), newIndex, true);
@@ -1816,11 +1830,11 @@ class VectorStream {
     } else {
       indices_.push_back(index);
       runLengths_.push_back(repeats);
-      }
+    }
   }
-  
+
   vector_size_t findNullIndex() {
-    if (nullIndex_ !=  kNoNullIndex) {
+    if (nullIndex_ != kNoNullIndex) {
       return nullIndex_;
     }
     auto tempNull = BaseVector::create(type_, 1, streamArena_->pool());
@@ -1828,17 +1842,18 @@ class VectorStream {
     return addDistinctValue(*tempNull, 0);
   }
 
-  
   void setEncodingByDistincts() {
     if (indices_.empty()) {
+      totalNonNull_ += nonNullCount_;
       return;
     }
     SerdeOpts opts;
     opts.useLosslessTimestamp = useLosslessTimestamp_;
     opts.nullsFirst = nullsFirst_;
     opts.alwaysFlat = true;
+    int32_t totalInRuns = 0;
     for (auto run : runLengths_) {
-      nonNullCount_ += run;
+      totalInRuns += run;
     }
 
     if (distincts_->size() == 1) {
@@ -1849,6 +1864,10 @@ class VectorStream {
       }
       Scratch scratch;
       ++totalDistincts_;
+      nonNullCount_ = totalInRuns;
+      if (distincts_->isNullAt(0)) {
+        totalNonNull_ += nonNullCount_;
+      }
       vector_size_t zero = 0;
       serializeColumn(
           distincts_.get(),
@@ -1856,12 +1875,19 @@ class VectorStream {
           alphabet_.get(),
           scratch);
       encoding_ = VectorEncoding::Simple::CONSTANT;
-    } else if (!isString_ || nonNullCount_ > distincts_->size() * 2) {
+    } else if (true /*!isString_ || nonNullCount_ > distincts_->size() * 2*/) {
       initializeHeader(kDictionary, *streamArena_);
       if (!alphabet_) {
         alphabet_ = std::make_unique<VectorStream>(
-            type_, std::nullopt, std::nullopt, streamArena_, distincts_->size(), opts);
+            type_,
+            std::nullopt,
+            std::nullopt,
+            streamArena_,
+            distincts_->size(),
+            opts);
       }
+      nonNullCount_ = totalInRuns;
+      totalNonNull_ += nonNullCount_;
       IndexRange range = IndexRange{0, distincts_->size()};
       serializeColumn(
           distincts_.get(),
@@ -1883,10 +1909,13 @@ class VectorStream {
       auto* strings = distincts_->asUnchecked<FlatVector<StringView>>();
       for (auto i = 0; i < indices_.size(); ++i) {
         auto index = indices_[i];
-        int32_t length =
-            strings->isNullAt(index) ? 0 : strings->valueAt(i).size();
+        auto isNull = index == nullIndex_;
         for (auto repeat = 0; repeat < runLengths_[i]; ++i) {
-          appendLength(length);
+          if (isNull) {
+            appendNull();
+          } else {
+            appendOne(strings->valueAt(index));
+          }
         }
       }
       ++numAbandonDict_;
@@ -1902,11 +1931,12 @@ class VectorStream {
     }
     if (isString_) {
       if (!usedStrings_.empty()) {
-	// We keep the dictionary even if we do not use it this time
-	// if the values so far cover enough of it.
+        // We keep the dictionary even if we do not use it this time
+        // if the values so far cover enough of it.
         auto numUsed =
             bits::countBits(usedStrings_.data(), 0, distincts_->size());
-        auto batch = (totalNonNull_ + nonNullCount_) / std::max<int64_t>(1, numFlushes_);
+        auto batch =
+            (totalNonNull_ + nonNullCount_) / std::max<int64_t>(1, numFlushes_);
         if (nonNullCount_ > batch * 0.7 && numUsed > distincts_->size() * 0.7) {
           std::fill(usedStrings_.begin(), usedStrings_.end(), 0);
           return;
@@ -1915,6 +1945,7 @@ class VectorStream {
     } else if (distincts_->size() < 20) {
       return;
     }
+    nullIndex_ = kNoNullIndex;
     distincts_ = nullptr;
     distinctSet_.clear();
     distinctStrings_.clear();
@@ -2296,7 +2327,7 @@ void serializeDictionaryVector(
   std::vector<IndexRange> childRanges;
   childRanges.push_back({0, dictionaryVector->valueVector()->size()});
   serializeColumn(
-		  dictionaryVector->valueVector().get(), childRanges, stream->alphabet());
+      dictionaryVector->valueVector().get(), childRanges, stream->alphabet());
 
   const BufferPtr& indices = dictionaryVector->indices();
   auto* rawIndices = indices->as<vector_size_t>();
