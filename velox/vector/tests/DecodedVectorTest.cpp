@@ -44,14 +44,19 @@ class DecodedVectorTest : public testing::Test, public VectorTestBase {
     }
   }
 
-  void assertNoNulls(DecodedVector& decodedVector, const SelectivityVector* rows = nullptr) {
+  void assertNoNulls(
+      DecodedVector& decodedVector,
+      const SelectivityVector* rows = nullptr) {
     ASSERT_TRUE(decodedVector.nulls() == nullptr);
     for (auto i = 0; i < decodedVector.size(); ++i) {
       ASSERT_FALSE(decodedVector.isNullAt(i));
     }
   }
 
-  void assertNulls(const VectorPtr& vector, DecodedVector& decodedVector, const SelectivityVector* rows = nullptr) {
+  void assertNulls(
+      const VectorPtr& vector,
+      DecodedVector& decodedVector,
+      const SelectivityVector* rows = nullptr) {
     SCOPED_TRACE(vector->toString(true));
     ASSERT_TRUE(decodedVector.nulls(rows) != nullptr);
     for (auto i = 0; i < decodedVector.size(); ++i) {

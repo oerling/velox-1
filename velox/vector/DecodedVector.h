@@ -405,7 +405,8 @@ class DecodedVector {
 
   bool loadLazy_ = false;
 
-  // True if decode() was called with rows != nullptr. If so, nulls() must also be called with the same 'rows'.
+  // True if decode() was called with rows != nullptr. If so, nulls() must also
+  // be called with the same 'rows'.
   bool partialRowsDecoded_{true};
 
   // Index of an element of the baseVector_ that points to a constant value of

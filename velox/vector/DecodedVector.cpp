@@ -434,10 +434,13 @@ const uint64_t* DecodedVector::nulls(const SelectivityVector* rows) {
       // Copy base nulls.
       copiedNulls_.resize(bits::nwords(size_));
       auto* rawCopiedNulls = copiedNulls_.data();
-      VELOX_CHECK(partialRowsDecoded_ == (rows != nullptr), "DecodedVector::nulls() must be called with the same rows as decode()");
+      VELOX_CHECK(
+          partialRowsDecoded_ == (rows != nullptr),
+          "DecodedVector::nulls() must be called with the same rows as decode()");
       if (rows != nullptr) {
-	// Partial consistency check: The end may be less than the decode time end but not greater.
-	VELOX_CHECK_LE(rows->end(), size_);
+        // Partial consistency check: The end may be less than the decode time
+        // end but not greater.
+        VELOX_CHECK_LE(rows->end(), size_);
       }
       applyToRows(rows, [&](auto i) {
         bits::setNull(rawCopiedNulls, i, bits::isBitNull(nulls_, indices_[i]));

@@ -1001,7 +1001,10 @@ void HashProbe::prepareFilterRowsForNullAwareJoin(
         // NOTE: the false value of a raw null bit indicates null so we OR with
         // negative of the raw bit.
         bits::orWithNegatedBits(
-            rawNullRows, filterInputColumnDecodedVector_.nulls(&filterInputRows_), 0, numRows);
+            rawNullRows,
+            filterInputColumnDecodedVector_.nulls(&filterInputRows_),
+            0,
+            numRows);
       }
     }
     nullFilterInputRows_.updateBounds();
