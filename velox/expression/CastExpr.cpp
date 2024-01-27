@@ -748,7 +748,7 @@ void CastExpr::apply(
     const TypePtr& toType,
     VectorPtr& result) {
   LocalDecodedVector decoded(context, *input, rows);
-  auto* rawNulls = decoded->nulls();
+  auto* rawNulls = decoded->nulls(&rows);
 
   LocalSelectivityVector nonNullRows(*context.execCtx(), rows.end());
   *nonNullRows = rows;
