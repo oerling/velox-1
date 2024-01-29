@@ -423,7 +423,7 @@ class PrestoSerializerTest
       std::ostringstream out2;
       facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
       OStreamOutputStream outs2(&out2, &listener);
-      
+
       reusedSerializer->append(data);
       reusedSerializer->flush(&outs2);
       reusedPieces.push_back(out2.str());

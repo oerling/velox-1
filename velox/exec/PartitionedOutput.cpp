@@ -90,7 +90,7 @@ BlockingReason Destination::flush(
   const int64_t flushedRows = rowsInCurrent_;
 
   current_->flush(&stream);
-  //current_ = nullptr;
+  // current_ = nullptr;
   current_->clear();
 
   const int64_t flushedBytes = stream.tellp();
@@ -103,8 +103,7 @@ BlockingReason Destination::flush(
   bool blocked = bufferManager.enqueue(
       taskId_,
       destination_,
-      std::make_unique<SerializedPage>(
-				       std::move(iobuf), nullptr, flushedRows),
+      std::make_unique<SerializedPage>(std::move(iobuf), nullptr, flushedRows),
       future);
 
   recordEnqueued_(flushedBytes, flushedRows);
@@ -112,11 +111,11 @@ BlockingReason Destination::flush(
   return blocked ? BlockingReason::kWaitForConsumer
                  : BlockingReason::kNotBlocked;
 }
-  void destination::check(std::unique_ptr<IOBuf>& iobuf) {
-    std::vector<ByteRange> ranges;
-    for (auto& range : iobuf) {
-    }
+void destination::check(std::unique_ptr<IOBuf>& iobuf) {
+  std::vector<ByteRange> ranges;
+  for (auto& range : iobuf) {
   }
+}
 
 } // namespace detail
 
@@ -264,19 +263,19 @@ void PartitionedOutput::maybeEncode(column_index_t i) {
   replaceOutputColumn(i, BaseVector::wrapInConstant(rows_.end(), 0, column));
 }
 
-  void PartitionedOutput::replaceOutputColumn(int32_t i, VectorPtr column) {
-    if (input_ == output_) {
-      auto children = input_->children();
-      output_ = std::make_shared<RowVector>(
+void PartitionedOutput::replaceOutputColumn(int32_t i, VectorPtr column) {
+  if (input_ == output_) {
+    auto children = input_->children();
+    output_ = std::make_shared<RowVector>(
         input_->pool(),
         outputType_,
         nullptr /*nulls*/,
         input_->size(),
         children);
-    }
-    output_->childAt(i) = column;
   }
-  
+  output_->childAt(i) = column;
+}
+
 void PartitionedOutput::initializeDestinations() {
   if (destinations_.empty()) {
     auto taskId = operatorCtx_->taskId();

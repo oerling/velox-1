@@ -107,8 +107,7 @@ class Destination {
 
   void check(std::unique_ptr<IOBuf>& iobuf);
   TypePtr type_;
-  
-  
+
   // Bytes serialized in 'current_'
   uint64_t bytesInCurrent_{0};
   // Number of rows serialized in 'current_'
@@ -198,7 +197,7 @@ class PartitionedOutput : public Operator {
 
   // Sets the ''th output column to 'column'.
   void replaceOutputColumn(int32_t i, VectorPtr column);
-  
+
   void estimateRowSizes();
 
   /// Collect all rows with null keys into nullRows_.

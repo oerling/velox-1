@@ -282,7 +282,7 @@ class VectorStreamGroup : public StreamArena {
     StreamArena::clear();
     serializer_->clear(reservePreviousSize);
   }
-  
+
  private:
   std::unique_ptr<VectorSerializer> serializer_;
   VectorSerde* serde_{nullptr};

@@ -172,7 +172,8 @@ int32_t checkValuesSize(
     const BufferPtr& nulls,
     int32_t size,
     int32_t offset) {
-  auto bufferSize = (std::is_same_v<T, bool>) ? values->size() * 8 : values->size() / sizeof(T);
+  auto bufferSize = (std::is_same_v<T, bool>) ? values->size() * 8
+                                              : values->size() / sizeof(T);
   // If all nulls, values does not have to be sized for vector size.
   if (nulls && bits::isAllSet(nulls->as<uint64_t>(), 0, size + offset, false)) {
     return 0;
@@ -191,8 +192,7 @@ void readValues(
     const BufferPtr& values) {
   if (nullCount) {
     auto bufferSize = checkValuesSize<T>(values, nulls, size, offset);
-    auto rawValues =
-        values->asMutable<T>();
+    auto rawValues = values->asMutable<T>();
     int32_t toClear = offset;
     bits::forEachSetBit(
         nulls->as<uint64_t>(), offset, offset + size, [&](int32_t row) {
@@ -693,7 +693,7 @@ void readArrayVector(
       continue;
     }
     int32_t offset = source->read<int32_t>();
-    VELOX_CHECK(offset>= 0 && offset < 100000000);
+    VELOX_CHECK(offset >= 0 && offset < 100000000);
     rawOffsets[resultOffset + i] = resultElementsOffset + base;
     rawSizes[resultOffset + i] = offset - base;
     base = offset;
@@ -1413,9 +1413,10 @@ class VectorStream {
     if (encoding.has_value()) {
       return encoding;
     } else if (vector.has_value()) {
-      auto encoding =  vector.value()->encoding();
-      if (encoding == VectorEncoding::Simple::DICTIONARY && vector.value()->rawNulls()) {
-	return std::nullopt;
+      auto encoding = vector.value()->encoding();
+      if (encoding == VectorEncoding::Simple::DICTIONARY &&
+          vector.value()->rawNulls()) {
+        return std::nullopt;
       }
       return encoding;
     } else {
@@ -1585,7 +1586,7 @@ class VectorStream {
   }
 
   bool mayAppendConstant() const {
-    return false; //nonNullCount_ == 0 && nullCount_ == 0;
+    return false; // nonNullCount_ == 0 && nullCount_ == 0;
   }
 
   /// Adds 'repeats' repeats of 'vector's constant value in a
@@ -1764,7 +1765,7 @@ class VectorStream {
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
-    forceFlat_ = true;//numAbandonDict_ > numFlushes_ / 10;
+    forceFlat_ = true; // numAbandonDict_ > numFlushes_ / 10;
     for (auto& child : children_) {
       child->clear();
     }
