@@ -429,7 +429,8 @@ class PrestoSerializerTest
     }
     RowVectorPtr deserialized =
         BaseVector::create<RowVector>(rowType, 0, pool_.get());
-    for (auto& piece : pieces) {
+    for (auto pieceIdx = 0; pieceIdx < pieces.size(); ++pieceIdx) {
+      auto piece = pieces[pieceIdx];
       auto byteStream = toByteStream(piece);
       serde_->deserialize(
           &byteStream,
@@ -438,11 +439,38 @@ class PrestoSerializerTest
           &deserialized,
           deserialized->size(),
           &paramOptions);
+
+      RowVectorPtr single =
+          BaseVector::create<RowVector>(rowType, 0, pool_.get());
+      byteStream = toByteStream(piece);
+      serde_->deserialize(
+          &byteStream, pool_.get(), rowType, &single, 0, &paramOptions);
+      assertEqualVectors(single->childAt(0), vectors[pieceIdx]);
     }
     assertEqualVectors(concatenation, deserialized);
   }
+  int64_t randInt(int64_t min, int64_t max) {
+    return min + folly::Random::rand64(rng_) % (max - min);
+  }
+
+  void randomOptions(VectorFuzzer::Options& options, bool isFirst) {
+    options.nullRatio = randInt(1, 10) < 3 ? 0.0 : randInt(1, 10) / 10.0;
+    options.stringLength = randInt(1, 100);
+    options.stringVariableLength = true;
+    options.containerLength = randInt(1, 50);
+    options.containerVariableLength = true;
+    options.complexElementsMaxSize = 20000;
+    options.maxConstantContainerSize = 2;
+    options.normalizeMapKeys = randInt(0, 20) < 16;
+    if (isFirst) {
+      options.timestampPrecision =
+          static_cast<VectorFuzzer::Options::TimestampPrecision>(randInt(0, 3));
+    }
+    options.allowLazyVector = false;
+  }
 
   std::unique_ptr<serializer::presto::PrestoVectorSerde> serde_;
+  folly::Random::DefaultGenerator rng_;
 };
 
 TEST_P(PrestoSerializerTest, basic) {
@@ -793,6 +821,34 @@ TEST_P(PrestoSerializerTest, encodedConcatenation) {
     for (auto i = 0; i < permutations.size(); ++i) {
       serializer::presto::PrestoVectorSerde::PrestoOptions opts;
       opts.nullsFirst = i % 2 == 0;
+      testEncodedConcatenation(permutations[i], &opts);
+    }
+  }
+}
+
+TEST_P(PrestoSerializerTest, encodedConcatenation2) {
+  // Slow test, run only for no compression.
+  if (GetParam() != common::CompressionKind::CompressionKind_NONE) {
+    return;
+  }
+  VectorFuzzer::Options options;
+  VectorFuzzer fuzzer(options, pool_.get());
+  for (auto nthType = 0; nthType < 20; ++nthType) {
+    auto type = (fuzzer.randRowType());
+
+    std::vector<VectorPtr> vectors;
+    for (auto nth = 0; nth < 3; ++nth) {
+      randomOptions(options, 0 == nth);
+      fuzzer.setOptions(options);
+      vectors.push_back(fuzzer.fuzzInputRow(type));
+    }
+    std::vector<std::vector<VectorPtr>> permutations;
+    std::vector<VectorPtr> temp;
+    makePermutations(vectors, 3, temp, permutations);
+    for (auto i = 0; i < permutations.size(); ++i) {
+      serializer::presto::PrestoVectorSerde::PrestoOptions opts;
+      opts.useLosslessTimestamp = true;
+      // opts.nullsFirst = i % 2 == 0;
       testEncodedConcatenation(permutations[i], &opts);
     }
   }

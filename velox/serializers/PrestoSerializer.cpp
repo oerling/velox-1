@@ -167,6 +167,21 @@ std::pair<const uint64_t*, int32_t> getStructNulls(int64_t position) {
 }
 
 template <typename T>
+int32_t checkValuesSize(
+    const BufferPtr& values,
+    const BufferPtr& nulls,
+    int32_t size,
+    int32_t offset) {
+  auto bufferSize = (std::is_same_v<T, bool>) ? values->size() * 8 : values->size() / sizeof(T);
+  // If all nulls, values does not have to be sized for vector size.
+  if (nulls && bits::isAllSet(nulls->as<uint64_t>(), 0, size + offset, false)) {
+    return 0;
+  }
+  VELOX_CHECK_LE(offset + size, bufferSize);
+  return bufferSize;
+}
+
+template <typename T>
 void readValues(
     ByteInputStream* source,
     vector_size_t size,
@@ -174,10 +189,10 @@ void readValues(
     const BufferPtr& nulls,
     vector_size_t nullCount,
     const BufferPtr& values) {
-  auto bufferSize = values->size() / sizeof(T);
-  VELOX_CHECK_LE(offset + size, bufferSize);
   if (nullCount) {
-    auto rawValues = values->asMutable<T>();
+    auto bufferSize = checkValuesSize<T>(values, nulls, size, offset);
+    auto rawValues =
+        values->asMutable<T>();
     int32_t toClear = offset;
     bits::forEachSetBit(
         nulls->as<uint64_t>(), offset, offset + size, [&](int32_t row) {
@@ -205,8 +220,7 @@ void readValues<bool>(
     vector_size_t nullCount,
     const BufferPtr& values) {
   auto rawValues = values->asMutable<uint64_t>();
-  auto bufferSize = values->size() * 8;
-  VELOX_CHECK_LE(offset + size, bufferSize);
+  auto bufferSize = checkValuesSize<bool>(values, nulls, size, offset);
   if (nullCount) {
     int32_t toClear = offset;
     bits::forEachSetBit(
@@ -241,9 +255,7 @@ void readValues<Timestamp>(
     vector_size_t nullCount,
     const BufferPtr& values) {
   auto rawValues = values->asMutable<Timestamp>();
-  auto bufferSize = values->size() / sizeof(Timestamp);
-  VELOX_CHECK_LE(offset + size, bufferSize);
-
+  checkValuesSize<Timestamp>(values, nulls, size, offset);
   if (nullCount) {
     int32_t toClear = offset;
     bits::forEachSetBit(
@@ -277,6 +289,7 @@ void readLosslessTimestampValues(
     const BufferPtr& values) {
   auto bufferSize = values->size() / sizeof(Timestamp);
   auto rawValues = values->asMutable<Timestamp>();
+  checkValuesSize<Timestamp>(values, nulls, size, offset);
   if (nullCount > 0) {
     int32_t toClear = offset;
     bits::forEachSetBit(
@@ -437,6 +450,7 @@ void read(
       source, size, resultOffset, incomingNulls, numIncomingNulls, *flatResult);
 
   BufferPtr values = flatResult->mutableValues(resultOffset + numNewValues);
+
   if constexpr (std::is_same_v<T, Timestamp>) {
     if (opts.useLosslessTimestamp) {
       readLosslessTimestampValues(
@@ -1398,7 +1412,11 @@ class VectorStream {
     if (encoding.has_value()) {
       return encoding;
     } else if (vector.has_value()) {
-      return vector.value()->encoding();
+      auto encoding =  vector.value()->encoding();
+      if (encoding == VectorEncoding::Simple::DICTIONARY && vector.value()->rawNulls()) {
+	return std::nullopt;
+      }
+      return encoding;
     } else {
       return std::nullopt;
     }
