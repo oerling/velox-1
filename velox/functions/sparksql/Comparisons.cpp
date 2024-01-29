@@ -193,7 +193,7 @@ void applyTyped(
     // (isnull(a) AND isnull(b)) || (a == b)
     // When DecodedVector::nulls() is null it means there are no nulls.
     auto* rawNulls0 = decodedLhs->nulls(&rows);
-    auto* rawNulls1 = decodedRhs->nulls&rows);
+    auto* rawNulls1 = decodedRhs->nulls(&rows);
     rows.applyToSelected([&](vector_size_t i) {
       auto isNull0 = rawNulls0 && bits::isBitNull(rawNulls0, i);
       auto isNull1 = rawNulls1 && bits::isBitNull(rawNulls1, i);
