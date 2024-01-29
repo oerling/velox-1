@@ -401,7 +401,7 @@ BENCHMARK(exchangeString10k) {
 } // namespace
 
 int main(int argc, char** argv) {
-  folly::init(&argc, &argv);
+  folly::Init init{&argc, &argv};
   memory::MemoryManager::initialize({});
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
