@@ -278,6 +278,11 @@ class VectorStreamGroup : public StreamArena {
       RowVectorPtr* result,
       const VectorSerde::Options* options = nullptr);
 
+  void clear(bool reservePreviousSize = true) {
+    StreamArena::clear();
+    serializer_->clear(reservePreviousSize);
+  }
+  
  private:
   std::unique_ptr<VectorSerializer> serializer_;
   VectorSerde* serde_{nullptr};

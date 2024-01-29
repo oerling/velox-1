@@ -389,12 +389,16 @@ class PrestoSerializerTest
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
           nullptr) {
     std::vector<std::string> pieces;
+    std::vector<std::string> reusedPieces;
     auto rowType = ROW({{"f", vectors[0]->type()}});
     auto concatenation = BaseVector::create(rowType, 0, pool_.get());
     auto arena = std::make_unique<StreamArena>(pool_.get());
     auto paramOptions = getParamSerdeOptions(serdeOptions);
     auto serializer =
         serde_->createSerializer(rowType, 10, arena.get(), &paramOptions);
+    auto reusedSerializer =
+        serde_->createSerializer(rowType, 10, arena.get(), &paramOptions);
+
     VectorEncoding::Simple expectEncoding = VectorEncoding::Simple::CONSTANT;
     for (auto i = 0; i < vectors.size(); ++i) {
       const auto& vector = vectors[i];
@@ -415,6 +419,16 @@ class PrestoSerializerTest
       std::ostringstream out;
       serializeEncoded(data, &out, &paramOptions);
       pieces.push_back(out.str());
+
+      std::ostringstream out2;
+      facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
+      OStreamOutputStream outs2(&out2, &listener);
+      
+      reusedSerializer->append(data);
+      reusedSerializer->flush(&outs2);
+      reusedPieces.push_back(out2.str());
+      reusedSerializer->clear();
+
       serializer->append(data);
     }
     facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
@@ -446,6 +460,13 @@ class PrestoSerializerTest
       serde_->deserialize(
           &byteStream, pool_.get(), rowType, &single, 0, &paramOptions);
       assertEqualVectors(single->childAt(0), vectors[pieceIdx]);
+
+      RowVectorPtr single2 =
+          BaseVector::create<RowVector>(rowType, 0, pool_.get());
+      byteStream = toByteStream(reusedPieces[pieceIdx]);
+      serde_->deserialize(
+          &byteStream, pool_.get(), rowType, &single2, 0, &paramOptions);
+      assertEqualVectors(single2->childAt(0), vectors[pieceIdx]);
     }
     assertEqualVectors(concatenation, deserialized);
   }

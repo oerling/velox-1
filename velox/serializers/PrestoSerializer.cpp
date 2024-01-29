@@ -693,6 +693,7 @@ void readArrayVector(
       continue;
     }
     int32_t offset = source->read<int32_t>();
+    VELOX_CHECK(offset>= 0 && offset < 100000000);
     rawOffsets[resultOffset + i] = resultElementsOffset + base;
     rawSizes[resultOffset + i] = offset - base;
     base = offset;
@@ -1468,7 +1469,10 @@ class VectorStream {
   }
 
   void appendLength(int32_t length) {
+    VELOX_CHECK(length >= 0 && length < 1000000);
     totalLength_ += length;
+    VELOX_CHECK(totalLength_ >= 0 && totalLength_ < 1000000);
+
     lengths_.appendOne<int32_t>(totalLength_);
   }
 
@@ -1581,7 +1585,7 @@ class VectorStream {
   }
 
   bool mayAppendConstant() const {
-    return nonNullCount_ == 0 && nullCount_ == 0;
+    return false; //nonNullCount_ == 0 && nullCount_ == 0;
   }
 
   /// Adds 'repeats' repeats of 'vector's constant value in a
@@ -1760,7 +1764,7 @@ class VectorStream {
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
-    forceFlat_ = numAbandonDict_ > numFlushes_ / 10;
+    forceFlat_ = true;//numAbandonDict_ > numFlushes_ / 10;
     for (auto& child : children_) {
       child->clear();
     }
