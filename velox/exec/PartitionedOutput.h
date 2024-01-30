@@ -105,7 +105,8 @@ class Destination {
   const bool eagerFlush_;
   const std::function<void(uint64_t bytes, uint64_t rows)> recordEnqueued_;
 
-  void check(std::unique_ptr<IOBuf>& iobuf);
+  void check(std::unique_ptr<folly::IOBuf>& iobuf);
+
   TypePtr type_;
 
   // Bytes serialized in 'current_'

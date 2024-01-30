@@ -30,8 +30,8 @@ BlockingReason Destination::advance(
     bool* atEnd,
     ContinueFuture* future,
     Scratch& scratch) {
-  if (!type) {
-    type_ = output_->type();
+  if (!type_) {
+    type_ = output->type();
   }
   if (rowIdx_ >= rows_.size()) {
     *atEnd = true;
@@ -111,10 +111,18 @@ BlockingReason Destination::flush(
   return blocked ? BlockingReason::kWaitForConsumer
                  : BlockingReason::kNotBlocked;
 }
-void destination::check(std::unique_ptr<IOBuf>& iobuf) {
+
+void Destination::check(std::unique_ptr<folly::IOBuf>& iobuf) {
   std::vector<ByteRange> ranges;
-  for (auto& range : iobuf) {
+  for (auto& range : *iobuf) {
+    ranges.push_back(ByteRange{
+        reinterpret_cast<uint8_t*>(const_cast<uint8_t*>(range.data())),
+        static_cast<int32_t>(range.size()),
+        0});
   }
+  ByteInputStream in(std::move(ranges));
+  RowVectorPtr result;
+  getVectorSerde()->deserialize(&in, pool_, std::static_pointer_cast<const RowType>(type_), &result, 0);
 }
 
 } // namespace detail
