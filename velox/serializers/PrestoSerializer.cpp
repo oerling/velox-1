@@ -3819,7 +3819,6 @@ class PrestoVectorSerializer : public VectorSerializer {
 
   void clear(bool reservePreviousSize = true) override {
     numRows_ = 0;
-    streamArena_->clear();
     for (auto& stream : streams_) {
       stream->clear();
     }
