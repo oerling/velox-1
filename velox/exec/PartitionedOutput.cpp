@@ -122,7 +122,8 @@ void Destination::check(std::unique_ptr<folly::IOBuf>& iobuf) {
   }
   ByteInputStream in(std::move(ranges));
   RowVectorPtr result;
-  getVectorSerde()->deserialize(&in, pool_, std::static_pointer_cast<const RowType>(type_), &result, 0);
+  getVectorSerde()->deserialize(
+      &in, pool_, std::static_pointer_cast<const RowType>(type_), &result, 0);
 }
 
 } // namespace detail
