@@ -23,6 +23,12 @@
 namespace facebook::velox::exec {
 
 namespace detail {
+
+  struct History {
+    RowVectorPtr rows;
+    raw_vector<vector_size_t> indices;
+  };
+
 class Destination {
  public:
   /// @param recordEnqueued Should be called to record each call to
@@ -95,7 +101,7 @@ class Destination {
   // batch size for each converges.
   void setTargetSizePct() {
     // Flush at 70 to 120% of target row or byte count.
-    targetSizePct_ = 70 + (folly::Random::rand32(rng_) % 50);
+    targetSizePct_ = 100; // 70 + (folly::Random::rand32(rng_) % 50);
     targetNumRows_ = (10'000 * targetSizePct_) / 100;
   }
 
@@ -105,8 +111,12 @@ class Destination {
   const bool eagerFlush_;
   const std::function<void(uint64_t bytes, uint64_t rows)> recordEnqueued_;
 
+  void record(const RowVectorPtr& row, int32_t begin, int32_t end);
+  
   void check(std::unique_ptr<folly::IOBuf>& iobuf);
 
+  void replay();
+  
   TypePtr type_;
 
   // Bytes serialized in 'current_'
@@ -134,6 +144,8 @@ class Destination {
 
   // Generator for varying target batch size. Randomly seeded at construction.
   folly::Random::DefaultGenerator rng_;
+
+  std::vector<History> history_;
 };
 } // namespace detail
 

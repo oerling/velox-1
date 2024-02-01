@@ -741,7 +741,7 @@ TEST_P(PrestoSerializerTest, ioBufRoundTrip) {
   opts.nullRatio = 0.1;
   VectorFuzzer fuzzer(opts, pool_.get());
 
-  const size_t numRounds = 100;
+  const size_t numRounds = 200;
 
   for (size_t i = 0; i < numRounds; ++i) {
     auto rowType = fuzzer.randRowType();

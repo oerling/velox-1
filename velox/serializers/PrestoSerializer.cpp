@@ -1191,6 +1191,7 @@ void readStructNullsColumns(
 
   for (int32_t i = 0; i < types.size(); ++i) {
     const auto& columnType = types[i];
+    int32_t pos = source->tellp();
 
     const auto encoding = readLengthPrefixedString(source);
     if (encoding == kRLE) {
@@ -1307,9 +1308,11 @@ class VectorStream {
       std::optional<VectorPtr> vector,
       StreamArena* streamArena,
       int32_t initialNumRows,
-      const SerdeOpts& opts)
+      const SerdeOpts& opts,
+      int32_t* ordinal = nullptr)
       : type_(type),
         encoding_(getEncoding(encoding, vector)),
+        hasFixedEncoding_(encoding.has_value() || vector.has_value()),
         useLosslessTimestamp_(opts.useLosslessTimestamp),
         nullsFirst_(opts.nullsFirst),
         alwaysFlat_(opts.alwaysFlat),
@@ -1321,8 +1324,13 @@ class VectorStream {
             type_->kind() == TypeKind::VARCHAR ||
             type_->kind() == TypeKind::VARBINARY),
         streamArena_(streamArena) {
+    int32_t counter = 0;
+    if (ordinal == nullptr) {
+      ordinal = &counter;
+    }
+    ordinal_ = ++*ordinal;
     if (alwaysFlat_) {
-      forceFlat_ = true;
+      disableDict_ = true;
     }
     if (initialNumRows == 0) {
       initializeHeader(typeToEncodingName(type), *streamArena);
@@ -1341,7 +1349,8 @@ class VectorStream {
               std::nullopt,
               streamArena,
               initialNumRows,
-              flatOpts);
+              flatOpts,
+              ordinal);
           isConstantStream_ = true;
           return;
         }
@@ -1356,7 +1365,8 @@ class VectorStream {
               std::nullopt,
               streamArena,
               initialNumRows,
-              flatOpts);
+              flatOpts,
+              ordinal);
           isDictionaryStream_ = true;
           return;
         }
@@ -1388,7 +1398,8 @@ class VectorStream {
               getChildAt(vector, i),
               streamArena,
               initialNumRows,
-              opts);
+              opts,
+              ordinal);
         }
         // The first element in the offsets in the wire format is always 0 for
         // nested types.
@@ -1470,9 +1481,9 @@ class VectorStream {
   }
 
   void appendLength(int32_t length) {
-    VELOX_CHECK(length >= 0 && length < 1000000);
+    VELOX_CHECK(length >= 0 && length < 6000000);
     totalLength_ += length;
-    VELOX_CHECK(totalLength_ >= 0 && totalLength_ < 1000000);
+    VELOX_CHECK(totalLength_ >= 0 && totalLength_ < 10000000);
 
     lengths_.appendOne<int32_t>(totalLength_);
   }
@@ -1559,7 +1570,7 @@ class VectorStream {
   /// when we preserve constants and find that we need a flat encoding
   /// instead. This clears 'distincts_' and related members.
   void ensureFlat() {
-    if (forceFlat_ || indices_.empty()) {
+    if (indices_.empty()) {
       return;
     }
     vector_size_t size = 0;
@@ -1575,7 +1586,8 @@ class VectorStream {
           indices_[i]);
       fill += runLengths_[i];
     }
-    forceFlat_ = true;
+    disableDict_ = true;
+    indices_.clear();
     Scratch scratch;
     serializeColumn(
         distincts_.get(),
@@ -1586,7 +1598,7 @@ class VectorStream {
   }
 
   bool mayAppendConstant() const {
-    return false; // nonNullCount_ == 0 && nullCount_ == 0;
+    return nonNullCount_ == 0 && nullCount_ == 0;
   }
 
   /// Adds 'repeats' repeats of 'vector's constant value in a
@@ -1638,6 +1650,7 @@ class VectorStream {
     }
 
     isFlushed_ = true;
+    serializationStartOffset_ = out->tellp();
     out->write(reinterpret_cast<char*>(header_.buffer), header_.size);
 
     if (encoding_.has_value()) {
@@ -1765,25 +1778,29 @@ class VectorStream {
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
-    forceFlat_ = true; // numAbandonDict_ > numFlushes_ / 10;
+    disableDict_ = numAbandonDict_ > numFlushes_ / 10;
     for (auto& child : children_) {
       child->clear();
     }
     if (alphabet_) {
       alphabet_->clear();
-      alphabet_->forceFlat_ = true;
+      alphabet_->disableDict_ = true;
     }
   }
 
   bool mayTryDictionary() const {
+    // If there are already distincts from constants, we can do more dictionary.
+    if (!indices_.empty()) {
+      return true;
+    }
     if (!FLAGS_enable_serialize_dict) {
       return false;
     }
-    return !forceFlat_;
+    return !disableDict_;
   }
 
   bool appendDictionaryString(const BaseVector& vector, vector_size_t i) {
-    if (forceFlat_ || maxDistinctStrings_ == 0 || nullCount_ > 0 ||
+    if (nullCount_ > 0 ||
         nonNullCount_ > 0) {
       if (vector.isNullAt(i)) {
         appendNull();
@@ -1800,9 +1817,30 @@ class VectorStream {
     if (distinctStrings_.size() > maxDistinctStrings_) {
       ++numAbandonDict_;
       ensureFlat();
-      forceFlat_ = true;
+      disableDict_ = true;
     }
     return true;
+  }
+
+  std::string toString() {
+    std::stringstream out;
+    std::string headString(
+        std::string_view((char*)header_.buffer + 4, header_.size - 4));
+    out << "{vs " << ordinal_ << " " << type_->name() << " " << headString
+        << " nulls=" << nullCount_ << " nonNulls=" << nonNullCount_
+        << " totalNonNull=" << totalNonNull_ << " flushes=" << numFlushes_
+        << " abandonDict=" << numAbandonDict_
+        << " dictSize=" << (distincts_ == nullptr ? 0 : distincts_->size())
+        << " forceFlat=" << disableDict_
+        << " serstart=" << serializationStartOffset_ << std::endl;
+    if (alphabet_) {
+      out << "alphabet=" << alphabet_->toString() << std::endl;
+    }
+    for (auto i = 0; i < children_.size(); ++i) {
+      out << children_[i]->toString() << std::endl;
+    }
+    out << "}";
+    return out.str();
   }
 
  private:
@@ -1887,8 +1925,12 @@ class VectorStream {
   }
 
   void setEncodingByDistincts() {
+    if (hasFixedEncoding_) {
+      return;
+    }
     if (indices_.empty()) {
       totalNonNull_ += nonNullCount_;
+      encoding_ = std::nullopt;
       return;
     }
     SerdeOpts opts;
@@ -1999,6 +2041,9 @@ class VectorStream {
   const TypePtr type_;
   std::optional<VectorEncoding::Simple> encoding_;
 
+  // true if encoding is given at construction time from 'encoding' or 'vector'.
+  const bool hasFixedEncoding_;
+
   /// Indicates whether to serialize timestamps with nanosecond precision.
   /// If false, they are serialized with millisecond precision which is
   /// compatible with presto.
@@ -2058,13 +2103,17 @@ class VectorStream {
   // Number of times strings are too many for dictionarizing.
   int32_t numAbandonDict_{0};
 
-  bool forceFlat_{false};
+  bool disableDict_{false};
 
   bool isFlushed_{false};
 
   // Stream for serializing the alphabet for dictionary or constant encoding.
   // Set on first use.
   std::unique_ptr<VectorStream> alphabet_;
+
+  // debugging counters.
+  int32_t serializationStartOffset_{0};
+  int32_t ordinal_{0};
 };
 
 template <>
@@ -3824,6 +3873,16 @@ class PrestoVectorSerializer : public VectorSerializer {
     }
   }
 
+  std::string toString() {
+    std::stringstream out;
+    out << "{PrestoSerializer ";
+    for (auto i = 0; i < streams_.size(); ++i) {
+      out << i << "=" << streams_[i]->toString() << std::endl;
+    }
+    out << "}";
+    return out.str();
+  }
+
  private:
   void flushUncompressed(
       int32_t numRows,
@@ -4133,5 +4192,39 @@ void PrestoVectorSerde::registerVectorSerde() {
   }
   velox::registerVectorSerde(std::make_unique<PrestoVectorSerde>());
 }
+
+std::string pvsString(void* ptr) {
+  return reinterpret_cast<PrestoVectorSerializer*>(ptr)->toString();
+}
+
+std::string pvt(BaseVector* vector, int32_t* ordinal = nullptr) {
+  int32_t c = 0;
+  if (!ordinal) {
+    ordinal = &c;
+  }
+  std::stringstream out;
+  out << (++*ordinal) << " " << (void*)vector << " " << vector->toString()
+      << std::endl;
+  while (vector->encoding() == VectorEncoding::Simple::DICTIONARY ||
+	 vector->encoding() == VectorEncoding::Simple::CONSTANT) {
+    auto values = vector->valueVector().get();
+    if (values) {
+      out << " wraps " << vector->toString() << std::endl;
+      vector = values;
+    } else {
+      break;
+    }
+  }
+  if (vector->encoding() == VectorEncoding::Simple::ROW) {
+    auto* row = vector->as<RowVector>();
+    out << "{ ROW ";
+    for (auto i = 0; i < row->childrenSize(); ++i) {
+      out << pvt(row->childAt(i).get(), ordinal) << std::endl;
+    }
+    out << "}" << std::endl;
+  }
+  return out.str();
+}
+
 
 } // namespace facebook::velox::serializer::presto

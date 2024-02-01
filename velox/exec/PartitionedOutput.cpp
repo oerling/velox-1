@@ -62,6 +62,7 @@ BlockingReason Destination::advance(
   }
   current_->append(
       output, folly::Range(&rows_[firstRow], rowIdx_ - firstRow), scratch);
+  record(output, firstRow, rowIdx_);
   // Update output state variable.
   if (rowIdx_ == rows_.size()) {
     *atEnd = true;
@@ -76,7 +77,7 @@ BlockingReason Destination::flush(
     OutputBufferManager& bufferManager,
     const std::function<void()>& bufferReleaseFn,
     ContinueFuture* future) {
-  if (!current_) {
+  if (!current_ || rowsInCurrent_ == 0) {
     return BlockingReason::kNotBlocked;
   }
 
@@ -89,17 +90,20 @@ BlockingReason Destination::flush(
       std::max<int64_t>(kMinMessageSize, current_->size()));
   const int64_t flushedRows = rowsInCurrent_;
 
-  current_->flush(&stream);
-  // current_ = nullptr;
-  current_->clear();
+  raw_vector<vector_size_t> empty;
+  history_.push_back(History{nullptr, std::move(empty)});
 
+  current_->flush(&stream);
+  
   const int64_t flushedBytes = stream.tellp();
 
   bytesInCurrent_ = 0;
   rowsInCurrent_ = 0;
   setTargetSizePct();
   auto iobuf = stream.getIOBuf(bufferReleaseFn);
-  check(iobuf);
+  //check(iobuf);
+  //current_ = nullptr;
+  current_->clear();
   bool blocked = bufferManager.enqueue(
       taskId_,
       destination_,
@@ -112,6 +116,22 @@ BlockingReason Destination::flush(
                  : BlockingReason::kNotBlocked;
 }
 
+  void Destination::record(const RowVectorPtr& input, int32_t begin, int32_t end) {
+    raw_vector<vector_size_t> temp;
+    for (auto i = begin; i < end; ++i) {
+      temp.push_back(rows_[i]);
+    }
+
+    auto children = input->children();
+    RowVectorPtr copy = std::make_shared<RowVector>(
+        input->pool(),
+        input->type(),
+        nullptr /*nulls*/,
+        input->size(),
+        children);
+    history_.push_back(History{std::move(copy), std::move(temp)});
+  }
+  
 void Destination::check(std::unique_ptr<folly::IOBuf>& iobuf) {
   std::vector<ByteRange> ranges;
   for (auto& range : *iobuf) {
@@ -122,10 +142,33 @@ void Destination::check(std::unique_ptr<folly::IOBuf>& iobuf) {
   }
   ByteInputStream in(std::move(ranges));
   RowVectorPtr result;
-  getVectorSerde()->deserialize(
-      &in, pool_, std::static_pointer_cast<const RowType>(type_), &result, 0);
+  getVectorSerde()->deserialize(&in, pool_, std::static_pointer_cast<const RowType>(type_), &result, 0);
+  VELOX_CHECK_LT(0, result->size());
 }
 
+  void Destination::replay() {
+    Scratch scratch;
+    auto group = std::make_unique<VectorStreamGroup>(pool_);
+    auto rowType = asRowType(type_);
+    group->createStreamTree(rowType, 100);
+    for (auto i = 0; i < history_.size(); ++i) {
+      auto& record = history_[i];
+      if (record.rows == nullptr) {
+	IOBufOutputStream stream(
+				 *group->pool(),
+				 nullptr,
+				 std::max<int64_t>(128, group->size()));
+
+	group->flush(&stream);
+	auto iobuf = stream.getIOBuf(nullptr);
+	check(iobuf);
+      } else {
+	group->append(record.rows, folly::Range(record.indices.data(), record.indices.size()), scratch);
+      }
+    }
+  }
+  
+  
 } // namespace detail
 
 PartitionedOutput::PartitionedOutput(
