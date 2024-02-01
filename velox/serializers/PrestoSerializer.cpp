@@ -1800,8 +1800,7 @@ class VectorStream {
   }
 
   bool appendDictionaryString(const BaseVector& vector, vector_size_t i) {
-    if (nullCount_ > 0 ||
-        nonNullCount_ > 0) {
+    if (nullCount_ > 0 || nonNullCount_ > 0) {
       if (vector.isNullAt(i)) {
         appendNull();
       } else {
@@ -4206,7 +4205,7 @@ std::string pvt(BaseVector* vector, int32_t* ordinal = nullptr) {
   out << (++*ordinal) << " " << (void*)vector << " " << vector->toString()
       << std::endl;
   while (vector->encoding() == VectorEncoding::Simple::DICTIONARY ||
-	 vector->encoding() == VectorEncoding::Simple::CONSTANT) {
+         vector->encoding() == VectorEncoding::Simple::CONSTANT) {
     auto values = vector->valueVector().get();
     if (values) {
       out << " wraps " << vector->toString() << std::endl;
@@ -4225,6 +4224,5 @@ std::string pvt(BaseVector* vector, int32_t* ordinal = nullptr) {
   }
   return out.str();
 }
-
 
 } // namespace facebook::velox::serializer::presto

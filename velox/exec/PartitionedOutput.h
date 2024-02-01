@@ -24,10 +24,10 @@ namespace facebook::velox::exec {
 
 namespace detail {
 
-  struct History {
-    RowVectorPtr rows;
-    raw_vector<vector_size_t> indices;
-  };
+struct History {
+  RowVectorPtr rows;
+  raw_vector<vector_size_t> indices;
+};
 
 class Destination {
  public:
@@ -112,11 +112,11 @@ class Destination {
   const std::function<void(uint64_t bytes, uint64_t rows)> recordEnqueued_;
 
   void record(const RowVectorPtr& row, int32_t begin, int32_t end);
-  
+
   void check(std::unique_ptr<folly::IOBuf>& iobuf);
 
   void replay();
-  
+
   TypePtr type_;
 
   // Bytes serialized in 'current_'
