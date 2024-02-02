@@ -210,10 +210,11 @@ class VeloxRunner {
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
 
+    auto config = std::make_shared<core::MemConfig>();
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector(kHiveConnectorId, nullptr, ioExecutor_.get());
+            ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
 
     std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;

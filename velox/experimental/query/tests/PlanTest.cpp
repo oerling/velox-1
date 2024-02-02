@@ -43,6 +43,7 @@ std::string nodeString(core::PlanNode* node) {
 class PlanTest : public testing::Test {
  protected:
   void SetUp() override {
+    memory::MemoryManager::testingSetInstance({});
     rootPool_ = memory::memoryManager()->addRootPool("velox_sql");
     pool_ = rootPool_->addLeafChild("optimizer");
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
