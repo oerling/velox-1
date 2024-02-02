@@ -20,7 +20,7 @@
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/ArenaCache.h"
 
-//#define QG_USE_MALLOC
+// #define QG_USE_MALLOC
 #define QG_CACHE_ARENA
 
 /// Thread local context and utilities for query planning.
