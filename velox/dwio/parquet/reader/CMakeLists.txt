@@ -14,6 +14,7 @@
 
 add_library(
   velox_dwio_native_parquet_reader
+  Metadata.cpp
   NestedStructureDecoder.cpp
   ParquetReader.cpp
   ParquetTypeWithId.cpp
@@ -33,7 +34,6 @@ target_link_libraries(
   velox_dwio_common
   velox_dwio_common_compression
   fmt::fmt
-  parquet
   arrow
   Snappy::snappy
   thrift

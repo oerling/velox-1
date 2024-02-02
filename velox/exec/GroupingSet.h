@@ -39,7 +39,6 @@ class GroupingSet {
       const std::vector<vector_size_t>& globalGroupingSets,
       const std::optional<column_index_t>& groupIdChannel,
       const common::SpillConfig* spillConfig,
-      uint32_t* numSpillRuns,
       tsan_atomic<bool>* nonReclaimableSection,
       OperatorCtx* operatorCtx);
 
@@ -112,7 +111,7 @@ class GroupingSet {
   void spill(const RowContainerIterator& rowIterator);
 
   /// Returns the spiller stats including total bytes and rows spilled so far.
-  std::optional<SpillStats> spilledStats() const {
+  std::optional<common::SpillStats> spilledStats() const {
     if (spiller_ == nullptr) {
       return std::nullopt;
     }
@@ -281,7 +280,7 @@ class GroupingSet {
 
   const bool ignoreNullKeys_;
 
-  vector_size_t numInputRows_ = 0;
+  uint64_t numInputRows_ = 0;
 
   // The maximum memory usage that a final aggregation can hold before spilling.
   // If it is zero, then there is no such limit.
@@ -293,8 +292,6 @@ class GroupingSet {
   std::optional<column_index_t> groupIdChannel_;
 
   const common::SpillConfig* const spillConfig_;
-
-  uint32_t* const numSpillRuns_;
 
   // Indicates if this grouping set and the associated hash aggregation operator
   // is under non-reclaimable execution section or not.

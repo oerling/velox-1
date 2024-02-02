@@ -35,7 +35,9 @@ DEFINE_string(
 DEFINE_string(
     spiller_benchmark_path,
     "",
-    "The file directory path for spilling");
+    "The directory path for spilling. e.g. with '/path/to/dir' provided, spill "
+    "file like '/path/to/dir/SpillerBenchmarkTest-spill-0-0-0' will be "
+    "created.");
 DEFINE_string(
     spiller_benchmark_compression_kind,
     "none",
@@ -78,7 +80,8 @@ using namespace facebook::velox::memory;
 namespace facebook::velox::exec::test {
 
 void SpillerBenchmarkBase::setUp() {
-  rootPool_ = defaultMemoryManager().addRootPool(FLAGS_spiller_benchmark_name);
+  rootPool_ =
+      memory::memoryManager()->addRootPool(FLAGS_spiller_benchmark_name);
   pool_ = rootPool_->addLeafChild(FLAGS_spiller_benchmark_name);
 
   rowType_ =

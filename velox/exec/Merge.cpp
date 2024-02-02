@@ -192,8 +192,7 @@ bool SourceStream::operator<(const MergeStream& other) const {
   for (auto i = 0; i < sortingKeys_.size(); ++i) {
     const auto& [_, compareFlags] = sortingKeys_[i];
     VELOX_DCHECK(
-        compareFlags.nullHandlingMode == CompareFlags::NullHandlingMode::NoStop,
-        "not supported null handling mode");
+        compareFlags.nullAsValue(), "not supported null handling mode");
     if (auto result = keyColumns_[i]
                           ->compare(
                               otherCursor.keyColumns_[i],
@@ -350,7 +349,8 @@ BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
                 remoteSourceTaskIds_[remoteSourceIndex],
                 operatorCtx_->task()->destination(),
                 maxQueuedBytesPerSource,
-                pool));
+                pool,
+                operatorCtx_->task()->queryCtx()->executor()));
           }
         }
         // TODO Delay this call until all input data has been processed.

@@ -39,41 +39,6 @@ void logRowVector(const RowVectorPtr& rowVector) {
     VLOG(1) << "\tAt " << i << ": " << rowVector->toString(i);
   }
 }
-namespace {
-auto createCopy(const VectorPtr& input) {
-  VectorPtr result;
-  SelectivityVector rows(input->size());
-  BaseVector::ensureWritable(rows, input->type(), input->pool(), result);
-  result->copy(input.get(), rows, nullptr);
-  return result;
-}
-} // namespace
-
-void compareVectors(
-    const VectorPtr& left,
-    const VectorPtr& right,
-    const SelectivityVector& rows) {
-  // Print vector contents if in verbose mode.
-  size_t vectorSize = left->size();
-  VLOG(1) << "== Result contents (common vs. simple): ";
-  rows.applyToSelected([&](vector_size_t row) {
-    VLOG(1) << fmt::format(
-        "At {} [ {} vs {} ]", row, left->toString(row), right->toString(row));
-  });
-  VLOG(1) << "===================";
-
-  rows.applyToSelected([&](vector_size_t row) {
-    VELOX_CHECK(
-        left->equalValueAt(right.get(), row, row),
-        "Different results at idx '{}': '{}' vs. '{}'",
-        row,
-        left->toString(row),
-        right->toString(row));
-  });
-
-  LOG(INFO) << "All results match.";
-}
-
 } // namespace
 
 ResultOrError ExpressionVerifier::verify(
@@ -154,14 +119,19 @@ ResultOrError ExpressionVerifier::verify(
       logRowVector(inputRowVector);
     } else {
       // Copy loads lazy vectors so only do this when there are no lazy inputs.
-      copiedInput = createCopy(inputRowVector);
+      copiedInput = BaseVector::copy(*inputRowVector);
     }
 
     exec::EvalCtx evalCtxCommon(execCtx_, &exprSetCommon, inputRowVector.get());
     exprSetCommon.eval(rows, evalCtxCommon, commonEvalResult);
+
     if (copiedInput) {
-      SelectivityVector rows(copiedInput->size());
-      compareVectors(copiedInput, inputRowVector, rows);
+      // Flatten the input vector as an optimization if its very deeply nested.
+      compareVectors(
+          copiedInput,
+          BaseVector::copy(*inputRowVector),
+          "Copy of original input",
+          "Input after common");
     }
   } catch (const VeloxUserError&) {
     if (!canThrow) {
@@ -188,12 +158,15 @@ ResultOrError ExpressionVerifier::verify(
     exec::EvalCtx evalCtxSimplified(
         execCtx_, &exprSetSimplified, rowVector.get());
 
-    auto copy = createCopy(rowVector);
+    auto copy = BaseVector::copy(*rowVector);
     exprSetSimplified.eval(rows, evalCtxSimplified, simplifiedEvalResult);
-    {
-      SelectivityVector rows(copy->size());
-      compareVectors(copy, rowVector, rows);
-    }
+
+    // Flatten the input vector as an optimization if its very deeply nested.
+    compareVectors(
+        copy,
+        BaseVector::copy(*rowVector),
+        "Copy of original input",
+        "Input after simplified");
 
   } catch (const VeloxUserError&) {
     exceptionSimplifiedPtr = std::current_exception();
@@ -217,7 +190,12 @@ ResultOrError ExpressionVerifier::verify(
       VELOX_CHECK_EQ(commonEvalResult.size(), plans.size());
       VELOX_CHECK_EQ(simplifiedEvalResult.size(), plans.size());
       for (int i = 0; i < plans.size(); ++i) {
-        compareVectors(commonEvalResult[i], simplifiedEvalResult[i], rows);
+        compareVectors(
+            commonEvalResult[i],
+            simplifiedEvalResult[i],
+            "common path results ",
+            "simplified path results",
+            rows);
       }
     }
   } catch (...) {

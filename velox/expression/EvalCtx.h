@@ -29,7 +29,7 @@ class Expr;
 class ExprSet;
 class LocalDecodedVector;
 class LocalSelectivityVector;
-struct ScopedContextSaver;
+struct ContextSaver;
 class PeeledEncoding;
 
 // Context for holding the base row vector, error state and various
@@ -77,9 +77,9 @@ class EvalCtx {
   }
 
   /// Used by peelEncodings.
-  void saveAndReset(ScopedContextSaver& saver, const SelectivityVector& rows);
+  void saveAndReset(ContextSaver& saver, const SelectivityVector& rows);
 
-  void restore(ScopedContextSaver& saver);
+  void restore(ContextSaver& saver);
 
   // If exceptionPtr is known to be a VeloxException use setVeloxExceptionError
   // instead.
@@ -109,7 +109,7 @@ class EvalCtx {
         }
         // Avoid double throwing.
         setVeloxExceptionError(row, std::current_exception());
-      } catch (const std::exception& e) {
+      } catch (const std::exception&) {
         setError(row, std::current_exception());
       }
     });
@@ -140,7 +140,7 @@ class EvalCtx {
       ErrorVectorPtr& topLevelErrors);
 
   // Given a mapping from element rows to top-level rows, set errors in
-  // in the elements as nulls int the top level row.
+  // the elements as nulls in the top level row.
   void convertElementErrorsToTopLevelNulls(
       const SelectivityVector& elementRows,
       const BufferPtr& elementToTopLevelRows,
@@ -327,11 +327,18 @@ class EvalCtx {
     return cacheEnabled_;
   }
 
+  /// Returns the maximum number of distinct inputs to cache results for in a
+  /// given shared subexpression.
+  uint32_t maxSharedSubexprResultsCached() const {
+    return maxSharedSubexprResultsCached_;
+  }
+
  private:
   core::ExecCtx* const FOLLY_NONNULL execCtx_;
   ExprSet* FOLLY_NULLABLE const exprSet_;
   const RowVector* FOLLY_NULLABLE row_;
   const bool cacheEnabled_;
+  const uint32_t maxSharedSubexprResultsCached_;
   bool inputFlatNoNulls_;
 
   // Corresponds 1:1 to children of 'row_'. Set to an inner vector
@@ -361,12 +368,11 @@ class EvalCtx {
   ErrorVectorPtr errors_;
 };
 
-/// Utility wrapper struct that is used to temporarily reset the value of the an
-/// ExprCtx till it goes out of scope. EvalCtx::saveAndReset() is used to
-/// achieve that. The old context can also be explicitly restored using
-/// EvalCtx::restore().
-struct ScopedContextSaver {
-  ~ScopedContextSaver();
+/// Utility wrapper struct that is used to temporarily reset the value of the
+/// EvalCtx. EvalCtx::saveAndReset() is used to achieve that. Use
+/// withContextSaver to ensure the original context is restored on a scucessful
+/// run or call EvalContext::restore to do it manually.
+struct ContextSaver {
   // The context to restore. nullptr if nothing to restore.
   EvalCtx* FOLLY_NULLABLE context = nullptr;
   std::vector<VectorPtr> peeled;
@@ -377,6 +383,16 @@ struct ScopedContextSaver {
   const SelectivityVector* FOLLY_NULLABLE finalSelection;
   ErrorVectorPtr errors;
 };
+
+/// Restores the context when the body executes successfully.
+template <typename F>
+void withContextSaver(F&& f) {
+  ContextSaver saver;
+  f(saver);
+  if (saver.context) {
+    saver.context->restore(saver);
+  }
+}
 
 /// Produces a SelectivityVector with a single row selected using a pool of
 /// SelectivityVectors managed by the EvalCtx::execCtx().

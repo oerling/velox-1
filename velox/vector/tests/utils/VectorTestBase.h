@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 #include <optional>
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::test {
 
@@ -126,6 +127,38 @@ class VectorTestBase {
       const std::shared_ptr<const RowType>& rowType,
       vector_size_t size) {
     return vectorMaker_.rowVector(rowType, size);
+  }
+
+  std::vector<RowVectorPtr> createVectors(
+      const RowTypePtr& type,
+      uint64_t byteSize,
+      const VectorFuzzer::Options& fuzzerOpts) {
+    VectorFuzzer fuzzer(fuzzerOpts, pool());
+    uint64_t totalSize{0};
+    std::vector<RowVectorPtr> vectors;
+    while (totalSize < byteSize) {
+      vectors.push_back(fuzzer.fuzzInputRow(type));
+      totalSize += vectors.back()->estimateFlatSize();
+    }
+    return vectors;
+  }
+
+  std::vector<RowVectorPtr>
+  createVectors(const RowTypePtr& type, size_t vectorSize, uint64_t byteSize) {
+    return createVectors(type, byteSize, {.vectorSize = vectorSize});
+  }
+
+  std::vector<RowVectorPtr> createVectors(
+      uint32_t numVectors,
+      const RowTypePtr& type,
+      const VectorFuzzer::Options& fuzzerOpts = {}) {
+    VectorFuzzer fuzzer(fuzzerOpts, pool());
+    std::vector<RowVectorPtr> vectors;
+    vectors.reserve(numVectors);
+    for (int i = 0; i < numVectors; ++i) {
+      vectors.emplace_back(fuzzer.fuzzRow(type));
+    }
+    return vectors;
   }
 
   /// Splits input vector into 'n' vectors evenly. Input vector must have at
@@ -459,6 +492,20 @@ class VectorTestBase {
         size, sizeAt, valueAt, isNullAt, valueIsNullAt, arrayType);
   }
 
+  /// Similar to makeArrayVectorFromJson. Creates an ArrayVector from list of
+  /// JSON arrays of arrays.
+  /// @tparam T Type of array elements. Must be an integer: int8_t, int16_t,
+  /// int32_t, int64_t.
+  /// @param jsonArrays A list of JSON arrays. JSON array cannot be an empty
+  /// string.
+  /// @param arrayType type of array elements.
+  template <typename T>
+  ArrayVectorPtr makeNestedArrayVectorFromJson(
+      const std::vector<std::string>& jsonArrays,
+      const TypePtr& arrayType = ARRAY(CppToType<T>::create())) {
+    return vectorMaker_.nestedArrayVectorFromJson<T>(jsonArrays, arrayType);
+  }
+
   template <typename T>
   ArrayVectorPtr makeArrayVector(
       vector_size_t size,
@@ -751,7 +798,7 @@ class VectorTestBase {
   }
 
   std::shared_ptr<memory::MemoryPool> rootPool_{
-      memory::defaultMemoryManager().addRootPool()};
+      memory::memoryManager()->addRootPool()};
   std::shared_ptr<memory::MemoryPool> pool_{rootPool_->addLeafChild("leaf")};
   velox::test::VectorMaker vectorMaker_{pool_.get()};
   std::shared_ptr<folly::Executor> executor_{

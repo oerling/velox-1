@@ -119,13 +119,12 @@ class MutableRemainingRows {
     return mutableRows_->hasSelections();
   }
 
-  /// @return true if current set of rows might be different from the original
+  /// @return true if current set of rows is different from the original
   /// set of rows, which may happen if deselectNull() or deselectErrors() were
-  /// called. May return 'true' even if current set of rows is the same as
-  /// original set. Returns 'false' only if current set of rows is for sure the
-  /// same as original.
-  bool mayHaveChanged() const {
-    return mutableRows_ != nullptr && !mutableRows_->isAllSelected();
+  /// called.
+  bool hasChanged() const {
+    return mutableRows_ != nullptr &&
+        mutableRows_->countSelected() != originalRows_->countSelected();
   }
 
  private:
@@ -363,7 +362,7 @@ class Expr {
       const SelectivityVector& rows,
       const uint64_t* FOLLY_NULLABLE rawNulls,
       EvalCtx& context,
-      VectorPtr& result);
+      VectorPtr& result) const;
 
   auto& vectorFunction() const {
     return vectorFunction_;
@@ -408,7 +407,7 @@ class Expr {
 
   PeelEncodingsResult peelEncodings(
       EvalCtx& context,
-      ScopedContextSaver& saver,
+      ContextSaver& saver,
       const SelectivityVector& rows,
       LocalDecodedVector& localDecoded,
       LocalSelectivityVector& newRowsHolder,

@@ -541,6 +541,7 @@ class Type : public Tree<const TypePtr>, public velox::ISerializable {
   VELOX_FLUENT_CAST(Row, ROW)
   VELOX_FLUENT_CAST(Opaque, OPAQUE)
   VELOX_FLUENT_CAST(UnKnown, UNKNOWN)
+  VELOX_FLUENT_CAST(Function, FUNCTION)
 
   const ShortDecimalType& asShortDecimal() const;
   const LongDecimalType& asLongDecimal() const;
@@ -968,7 +969,6 @@ class RowType : public TypeBase<TypeKind::ROW> {
   const std::vector<std::string> names_;
   const std::vector<std::shared_ptr<const Type>> children_;
   const std::vector<TypeParameter> parameters_;
-  const folly::F14FastMap<std::string, uint32_t> childrenIndices_;
 };
 
 using RowTypePtr = std::shared_ptr<const RowType>;
@@ -1869,6 +1869,50 @@ struct Varbinary {
 struct Varchar {
  private:
   Varchar() {}
+};
+
+template <typename T>
+struct Constant {};
+
+template <typename T>
+struct UnwrapConstantType {
+  using type = T;
+};
+
+template <typename T>
+struct UnwrapConstantType<Constant<T>> {
+  using type = T;
+};
+
+template <typename T>
+struct isConstantType {
+  static constexpr bool value = false;
+};
+
+template <typename T>
+struct isConstantType<Constant<T>> {
+  static constexpr bool value = true;
+};
+
+template <typename... TArgs>
+struct ConstantChecker {
+  static constexpr bool isConstant[sizeof...(TArgs)] = {
+      isConstantType<TArgs>::value...};
+};
+
+template <TypeKind kind>
+struct KindToSimpleType {
+  using type = typename TypeTraits<kind>::NativeType;
+};
+
+template <>
+struct KindToSimpleType<TypeKind::VARCHAR> {
+  using type = Varchar;
+};
+
+template <>
+struct KindToSimpleType<TypeKind::VARBINARY> {
+  using type = Varbinary;
 };
 
 template <typename T>

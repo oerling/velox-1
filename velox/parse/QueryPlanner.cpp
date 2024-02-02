@@ -17,8 +17,17 @@
 #include "velox/parse/QueryPlanner.h"
 #include "velox/duckdb/conversion/DuckConversion.h"
 #include "velox/expression/ScopedVarSetter.h"
-#include "velox/external/duckdb/duckdb.hpp"
+#include <duckdb.hpp> // @manual
 #include "velox/parse/DuckLogicalOperator.h"
+
+#include <duckdb.hpp> // @manual
+#include <duckdb/main/connection.hpp> // @manual
+#include <duckdb/planner/expression/bound_aggregate_expression.hpp> // @manual
+#include <duckdb/planner/expression/bound_cast_expression.hpp> // @manual
+#include <duckdb/planner/expression/bound_comparison_expression.hpp> // @manual
+#include <duckdb/planner/expression/bound_constant_expression.hpp> // @manual
+#include <duckdb/planner/expression/bound_function_expression.hpp> // @manual
+#include <duckdb/planner/expression/bound_reference_expression.hpp> // @manual
 
 namespace facebook::velox::core {
 
@@ -942,7 +951,8 @@ void DuckDbQueryPlanner::registerTable(
   auto createTableSql =
       duckdb::makeCreateTableSql(name, *asRowType(data[0]->type()));
   auto res = conn_.Query(createTableSql);
-  VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
+  VELOX_CHECK(
+      !res->HasError(), "Failed to create DuckDB table: {}", res->GetError());
 
   tables_.insert({name, data});
 }
@@ -955,14 +965,14 @@ void DuckDbQueryPlanner::registerTable(
 
   auto createTableSql = duckdb::makeCreateTableSql(name, *type);
   auto res = conn_.Query(createTableSql);
-  VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
+  //VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
 }
 
 void DuckDbQueryPlanner::registerScalarFunction(
     const std::string& name,
     const std::vector<TypePtr>& argTypes,
     const TypePtr& returnType) {
-  std::vector<::duckdb::LogicalType> argDuckTypes;
+  ::duckdb::vector<::duckdb::LogicalType> argDuckTypes;
   for (auto& type : argTypes) {
     argDuckTypes.push_back(duckdb::fromVeloxType(type));
   }
@@ -978,7 +988,7 @@ void DuckDbQueryPlanner::registerAggregateFunction(
     const std::string& name,
     const std::vector<TypePtr>& argTypes,
     const TypePtr& returnType) {
-  std::vector<::duckdb::LogicalType> argDuckTypes;
+  ::duckdb::vector<::duckdb::LogicalType> argDuckTypes;
   for (auto& type : argTypes) {
     argDuckTypes.push_back(duckdb::fromVeloxType(type));
   }

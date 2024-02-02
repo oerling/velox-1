@@ -143,7 +143,7 @@ Expr::Expr(
   constantInputs_.reserve(inputs_.size());
   inputIsConstant_.reserve(inputs_.size());
   for (auto& expr : inputs_) {
-    if (auto constantExpr = std::dynamic_pointer_cast<ConstantExpr>(expr)) {
+    if (auto constantExpr = expr->as<ConstantExpr>()) {
       constantInputs_.emplace_back(constantExpr->value());
       inputIsConstant_.push_back(true);
     } else {
@@ -192,7 +192,7 @@ bool Expr::allSupportFlatNoNullsFastPath(
 
 void Expr::clearMetaData() {
   metaDataComputed_ = false;
-  for (auto child : inputs_) {
+  for (auto& child : inputs_) {
     child->clearMetaData();
   }
   propagatesNulls_ = false;
@@ -484,7 +484,10 @@ void Expr::evalSimplified(
   if (remainingRows->hasSelections()) {
     evalSimplifiedImpl(*remainingRows, context, result);
   }
-  addNulls(rows, remainingRows->asRange().bits(), context, result);
+
+  if (!type()->isFunction()) {
+    addNulls(rows, remainingRows->asRange().bits(), context, result);
+  }
 }
 
 void Expr::releaseInputValues(EvalCtx& evalCtx) {
@@ -512,7 +515,8 @@ void Expr::evalSimplifiedImpl(
         inputValue->encoding() == VectorEncoding::Simple::FLAT ||
         inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
         inputValue->encoding() == VectorEncoding::Simple::MAP ||
-        inputValue->encoding() == VectorEncoding::Simple::ROW);
+        inputValue->encoding() == VectorEncoding::Simple::ROW ||
+        inputValue->encoding() == VectorEncoding::Simple::FUNCTION);
   };
 
   if (defaultNulls) {
@@ -865,8 +869,32 @@ void Expr::evaluateSharedSubexpr(
         context.getField(field->index(context)).get());
   }
 
+  // Find the cached results for the same inputs, or create an entry if one
+  // doesn't exist.
+  auto sharedSubexprResultsIter =
+      sharedSubexprResults_.find(expressionInputFields);
+  if (sharedSubexprResultsIter == sharedSubexprResults_.end()) {
+    auto maxSharedSubexprResultsCached = context.execCtx()
+                                             ->queryCtx()
+                                             ->queryConfig()
+                                             .maxSharedSubexprResultsCached();
+    if (sharedSubexprResults_.size() < maxSharedSubexprResultsCached) {
+      // If we have room left in the cache, add it.
+      sharedSubexprResultsIter =
+          sharedSubexprResults_
+              .insert(
+                  std::pair(std::move(expressionInputFields), SharedResults()))
+              .first;
+    } else {
+      // Otherwise, simply evaluate it and return without caching the results.
+      eval(rows, context, result);
+
+      return;
+    }
+  }
+
   auto& [sharedSubexprRows, sharedSubexprValues] =
-      sharedSubexprResults_[expressionInputFields];
+      sharedSubexprResultsIter->second;
 
   if (sharedSubexprValues == nullptr) {
     eval(rows, context, result);
@@ -939,7 +967,7 @@ SelectivityVector* singleRow(
 
 Expr::PeelEncodingsResult Expr::peelEncodings(
     EvalCtx& context,
-    ScopedContextSaver& saver,
+    ContextSaver& saver,
     const SelectivityVector& rows,
     LocalDecodedVector& localDecoded,
     LocalSelectivityVector& newRowsHolder,
@@ -1029,8 +1057,8 @@ void Expr::evalEncodings(
     if (!hasFlat) {
       VectorPtr wrappedResult;
       // Attempt peeling and bound the scope of the context used for it.
-      {
-        ScopedContextSaver saveContext;
+
+      withContextSaver([&](ContextSaver& saveContext) {
         LocalSelectivityVector newRowsHolder(context);
         LocalSelectivityVector finalRowsHolder(context);
         LocalDecodedVector decodedHolder(context);
@@ -1044,9 +1072,9 @@ void Expr::evalEncodings(
         auto* newRows = peelEncodingsResult.newRows;
         if (newRows) {
           VectorPtr peeledResult;
-          // peelEncodings() can potentially produce an empty selectivity vector
-          // if all selected values we are waiting for are nulls. So, here we
-          // check for such a case.
+          // peelEncodings() can potentially produce an empty selectivity
+          // vector if all selected values we are waiting for are nulls. So,
+          // here we check for such a case.
           if (newRows->hasSelections()) {
             if (peelEncodingsResult.mayCache) {
               evalWithMemo(*newRows, context, peeledResult);
@@ -1057,7 +1085,8 @@ void Expr::evalEncodings(
           wrappedResult = context.getPeeledEncoding()->wrap(
               this->type(), context.pool(), peeledResult, rows);
         }
-      }
+      });
+
       if (wrappedResult != nullptr) {
         context.moveOrCopyResult(wrappedResult, rows, result);
         return;
@@ -1093,7 +1122,7 @@ bool Expr::removeSureNulls(
   }
   if (result) {
     result->updateBounds();
-    return true;
+    return result->countSelected() != rows.countSelected();
   }
   return false;
 }
@@ -1102,7 +1131,7 @@ void Expr::addNulls(
     const SelectivityVector& rows,
     const uint64_t* FOLLY_NULLABLE rawNulls,
     EvalCtx& context,
-    VectorPtr& result) {
+    VectorPtr& result) const {
   EvalCtx::addNulls(rows, rawNulls, context, type(), result);
 }
 
@@ -1277,7 +1306,7 @@ void computeIsAsciiForInputs(
       auto* vector =
           inputValues[index]->template as<SimpleVector<StringView>>();
 
-      VELOX_CHECK(vector);
+      VELOX_CHECK(vector, inputValues[index]->toString());
       vector->computeAndSetIsAscii(rows);
     }
   }
@@ -1412,7 +1441,7 @@ void Expr::evalAllImpl(
 
   // Write non-selected rows in remainingRows as nulls in the result if some
   // rows have been skipped.
-  if (remainingRows.mayHaveChanged()) {
+  if (remainingRows.hasChanged()) {
     addNulls(rows, remainingRows.rows().asRange().bits(), context, result);
   }
   releaseInputValues(context);
@@ -1424,7 +1453,6 @@ bool Expr::applyFunctionWithPeeling(
     VectorPtr& result) {
   LocalDecodedVector localDecoded(context);
   LocalSelectivityVector newRowsHolder(context);
-  ScopedContextSaver saver;
   // Attempt peeling.
   std::vector<VectorPtr> peeledVectors;
   auto peeledEncoding = PeeledEncoding::peel(
@@ -1445,21 +1473,23 @@ bool Expr::applyFunctionWithPeeling(
   // pre-existing rows need to be preserved.
   auto newRows = peeledEncoding->translateToInnerRows(applyRows, newRowsHolder);
 
-  // Save context and set the peel.
-  context.saveAndReset(saver, applyRows);
-  context.setPeeledEncoding(peeledEncoding);
+  withContextSaver([&](ContextSaver& saver) {
+    // Save context and set the peel.
+    context.saveAndReset(saver, applyRows);
+    context.setPeeledEncoding(peeledEncoding);
 
-  // Apply the function.
-  VectorPtr peeledResult;
-  applyFunction(*newRows, context, peeledResult);
-  VectorPtr wrappedResult = context.getPeeledEncoding()->wrap(
-      this->type(), context.pool(), peeledResult, applyRows);
-  context.moveOrCopyResult(wrappedResult, applyRows, result);
+    // Apply the function.
+    VectorPtr peeledResult;
+    applyFunction(*newRows, context, peeledResult);
+    VectorPtr wrappedResult = context.getPeeledEncoding()->wrap(
+        this->type(), context.pool(), peeledResult, applyRows);
+    context.moveOrCopyResult(wrappedResult, applyRows, result);
 
-  // Recycle peeledResult if it's not owned by the result vector. Examples of
-  // when this can happen is when the result is a primitive constant vector, or
-  // when moveOrCopyResult copies wrappedResult content.
-  context.releaseVector(peeledResult);
+    // Recycle peeledResult if it's not owned by the result vector. Examples of
+    // when this can happen is when the result is a primitive constant vector,
+    // or when moveOrCopyResult copies wrappedResult content.
+    context.releaseVector(peeledResult);
+  });
 
   return true;
 }
@@ -1612,7 +1642,7 @@ bool Expr::isConstant() const {
     return false;
   }
   for (auto& input : inputs_) {
-    if (!dynamic_cast<ConstantExpr*>(input.get())) {
+    if (!input->is<ConstantExpr>()) {
       return false;
     }
   }

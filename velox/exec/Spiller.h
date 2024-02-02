@@ -15,8 +15,8 @@
  */
 #pragma once
 
+#include "velox/common/base/SpillConfig.h"
 #include "velox/common/compression/Compression.h"
-#include "velox/common/config/SpillConfig.h"
 #include "velox/exec/HashBitRange.h"
 #include "velox/exec/RowContainer.h"
 
@@ -26,7 +26,7 @@ namespace facebook::velox::exec {
 class Spiller {
  public:
   // Define the spiller types.
-  enum class Type {
+  enum class Type : int8_t {
     // Used for aggregation input processing stage.
     kAggregateInput = 0,
     // Used for aggregation output processing stage.
@@ -35,60 +35,53 @@ class Spiller {
     kHashJoinBuild = 2,
     // Used for hash join probe.
     kHashJoinProbe = 3,
-    // Used for order by.
-    kOrderBy = 4,
+    // Used for order by input processing stage.
+    kOrderByInput = 4,
+    // Used for order by output processing stage.
+    kOrderByOutput = 5,
+    // Number of spiller types.
+    kNumTypes = 6,
   };
-  static constexpr int kNumTypes = 4;
+
   static std::string typeName(Type);
 
   using SpillRows = std::vector<char*, memory::StlAllocator<char*>>;
 
-  // The constructor without specifying hash bits which will only use one
-  // partition by default.
+  /// The constructor without specifying hash bits which will only use one
+  /// partition by default.
+
+  /// type == Type::kOrderByInput || type == Type::kAggregateInput
   Spiller(
       Type type,
       RowContainer* container,
       RowTypePtr rowType,
       int32_t numSortingKeys,
       const std::vector<CompareFlags>& sortCompareFlags,
-      const std::string& path,
-      uint64_t writeBufferSize,
-      common::CompressionKind compressionKind,
-      memory::MemoryPool* pool,
-      folly::Executor* executor);
+      const common::SpillConfig* spillConfig);
 
+  /// type == Type::kAggregateOutput || type == Type::kOrderByOutput
   Spiller(
       Type type,
       RowContainer* container,
       RowTypePtr rowType,
-      const std::string& path,
-      uint64_t writeBufferSize,
-      common::CompressionKind compressionKind,
-      memory::MemoryPool* pool,
-      folly::Executor* executor);
+      const common::SpillConfig* spillConfig);
 
+  /// type == Type::kHashJoinProbe
   Spiller(
       Type type,
       RowTypePtr rowType,
       HashBitRange bits,
-      const std::string& path,
-      uint64_t targetFileSize,
-      uint64_t writeBufferSize,
-      common::CompressionKind compressionKind,
-      memory::MemoryPool* pool,
-      folly::Executor* executor);
+      const common::SpillConfig* spillConfig,
+      uint64_t targetFileSize);
 
+  /// type == Type::kHashJoinBuild
   Spiller(
       Type type,
       RowContainer* container,
       RowTypePtr rowType,
       HashBitRange bits,
-      const std::string& path,
-      uint64_t targetFileSize,
-      uint64_t writeBufferSize,
-      common::CompressionKind compressionKind,
-      memory::MemoryPool* pool,
-      folly::Executor* executor);
+      const common::SpillConfig* spillConfig,
+      uint64_t targetFileSize);
 
   Type type() const {
     return type_;
@@ -105,6 +98,12 @@ class Spiller {
   /// The caller needs to erase them from the row container.
   void spill(const RowContainerIterator& startRowIter);
 
+  /// Invoked to spill all the rows pointed by rows. This is used by
+  /// 'kOrderByOutput' spiller type to spill during the order by
+  /// output processing. Similarly, the spilled rows still stays in the row
+  /// container. The caller needs to erase them from the row container.
+  void spill(std::vector<char*>& rows);
+
   /// Append 'spillVector' into the spill file of given 'partition'. It is now
   /// only used by the spilling operator which doesn't need data sort, such as
   /// hash join build and hash join probe.
@@ -112,11 +111,6 @@ class Spiller {
   /// NOTE: the spilling operator should first mark 'partition' as spilling and
   /// spill any data buffered in row container before call this.
   void spill(uint32_t partition, const RowVectorPtr& spillVector);
-
-  /// Invoked to finalize the spiller and flush any buffered spill to disk.
-  void finalizeSpill();
-
-  std::unique_ptr<TreeOfLosers<SpillMergeStream>> startMerge();
 
   /// Extracts up to 'maxRows' or 'maxBytes' from 'rows' into 'spillVector'. The
   /// extract starts at nextBatchIndex and updates nextBatchIndex to be the
@@ -129,9 +123,12 @@ class Spiller {
       RowVectorPtr& spillVector,
       size_t& nextBatchIndex);
 
-  /// Finishes spilling and accumulate the spilled partition data in
-  /// 'partitionSet' by spill partition id.
+  /// Finishes spilling and accumulate the spilled partition metadata in
+  /// 'partitionSet' indexed by spill partition id.
   void finishSpill(SpillPartitionSet& partitionSet);
+
+  /// Finishes spilling and expects single partition.
+  SpillPartition finishSpill();
 
   const SpillState& state() const {
     return state_;
@@ -177,7 +174,7 @@ class Spiller {
     return finalized_;
   }
 
-  SpillStats stats() const;
+  common::SpillStats stats() const;
 
   std::string toString() const;
 
@@ -189,12 +186,15 @@ class Spiller {
       HashBitRange bits,
       int32_t numSortingKeys,
       const std::vector<CompareFlags>& sortCompareFlags,
-      const std::string& path,
+      const common::GetSpillDirectoryPathCB& getSpillDirPathCb,
+      const common::UpdateAndCheckSpillLimitCB& updateAndCheckSpillLimitCb,
+      const std::string& fileNamePrefix,
       uint64_t targetFileSize,
       uint64_t writeBufferSize,
       common::CompressionKind compressionKind,
-      memory::MemoryPool* pool,
-      folly::Executor* executor);
+      folly::Executor* executor,
+      uint64_t maxSpillRunRows,
+      const std::string& fileCreateConfig);
 
   // Invoked to spill. If 'startRowIter' is not null, then we only spill rows
   // from row container starting at the offset pointed by 'startRowIter'.
@@ -209,6 +209,9 @@ class Spiller {
   // rows for the spill partition  'partition'. finishSpill()
   // first and 'partition' must specify a partition that has started spilling.
   std::unique_ptr<SpillMergeStream> spillMergeStreamOverRows(int32_t partition);
+
+  // Invoked to finalize the spiller and flush any buffered spill to disk.
+  void finalizeSpill();
 
   // Represents a run of rows from a spillable partition of
   // a RowContainer. Rows that hash to the same partition are accumulated here
@@ -258,13 +261,22 @@ class Spiller {
 
   void checkEmptySpillRuns() const;
 
+  // Marks all the partitions have been spilled as we don't support
+  // fine-grained spilling as for now.
+  void markAllPartitionsSpilled();
+
   // Prepares spill runs for the spillable data from all the hash partitions.
   // If 'startRowIter' is not null, we prepare runs starting from the offset
   // pointed by 'startRowIter'.
-  void fillSpillRuns(const RowContainerIterator* startRowIter = nullptr);
+  // The function returns true if it is the last spill run.
+  bool fillSpillRuns(RowContainerIterator* startRowIter = nullptr);
+
+  // Prepares spill run of a single partition for the spillable data from the
+  // rows.
+  void fillSpillRun(std::vector<char*>& rows);
 
   // Writes out all the rows collected in spillRuns_.
-  void runSpill();
+  void runSpill(bool lastRun);
 
   // Sorts 'run' if not already sorted.
   void ensureSorted(SpillRun& run);
@@ -289,9 +301,9 @@ class Spiller {
   // the spiller.
   RowContainer* const container_{nullptr};
   folly::Executor* const executor_;
-  memory::MemoryPool* const pool_;
   const HashBitRange bits_;
   const RowTypePtr rowType_;
+  const uint64_t maxSpillRunRows_;
 
   // True if all rows of spilling partitions are in 'spillRuns_', so
   // that one can start reading these back. This means that the rows
@@ -299,10 +311,17 @@ class Spiller {
   // spillMergeStreamOverRows().
   bool finalized_{false};
 
-  folly::Synchronized<SpillStats> stats_;
+  folly::Synchronized<common::SpillStats> stats_;
   SpillState state_;
 
   // Collects the rows to spill for each partition.
   std::vector<SpillRun> spillRuns_;
 };
 } // namespace facebook::velox::exec
+
+template <>
+struct fmt::formatter<facebook::velox::exec::Spiller::Type> : formatter<int> {
+  auto format(facebook::velox::exec::Spiller::Type s, format_context& ctx) {
+    return formatter<int>::format(static_cast<int>(s), ctx);
+  }
+};

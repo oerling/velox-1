@@ -85,8 +85,7 @@ RowTypePtr getAggregationOutputType(
   std::vector<TypePtr> types;
 
   for (auto& key : groupingKeys) {
-    auto field =
-        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(key);
+    auto field = TypedExprs::asFieldAccess(key);
     VELOX_CHECK(field, "Grouping key must be a field reference");
     names.push_back(field->name());
     types.push_back(field->type());
@@ -203,12 +202,9 @@ void addKeys(std::stringstream& stream, const std::vector<TypedExprPtr>& keys) {
   for (auto i = 0; i < keys.size(); ++i) {
     const auto& expr = keys[i];
     appendComma(i, stream);
-    if (auto field =
-            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr)) {
+    if (auto field = TypedExprs::asFieldAccess(expr)) {
       stream << field->name();
-    } else if (
-        auto constant =
-            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(expr)) {
+    } else if (auto constant = TypedExprs::asConstant(expr)) {
       stream << constant->toString();
     } else {
       stream << expr->toString();
@@ -243,6 +239,10 @@ bool AggregationNode::canSpill(const QueryConfig& queryConfig) const {
 
 void AggregationNode::addDetails(std::stringstream& stream) const {
   stream << stepName(step_) << " ";
+
+  if (isPreGrouped()) {
+    stream << "STREAMING ";
+  }
 
   if (!groupingKeys_.empty()) {
     stream << "[";
@@ -440,6 +440,105 @@ PlanNodePtr AggregationNode::create(const folly::dynamic& obj, void* context) {
       groupId,
       obj["ignoreNullKeys"].asBool(),
       deserializeSingleSource(obj, context));
+}
+
+namespace {
+RowTypePtr getExpandOutputType(
+    const std::vector<std::vector<TypedExprPtr>>& projections,
+    std::vector<std::string> names) {
+  VELOX_USER_CHECK(!names.empty());
+  VELOX_USER_CHECK(!projections.empty());
+  VELOX_USER_CHECK_GT(names.size(), 0);
+  VELOX_USER_CHECK_GT(projections.size(), 0);
+
+  for (int32_t i = 0; i < projections.size(); i++) {
+    VELOX_USER_CHECK_EQ(names.size(), projections[i].size());
+  }
+
+  std::vector<TypePtr> types;
+  types.reserve(names.size());
+  for (const auto& projection : projections[0]) {
+    types.push_back(projection->type());
+  }
+
+  folly::F14FastSet<std::string> uniqueNames;
+  for (const auto& name : names) {
+    auto result = uniqueNames.insert(name);
+    VELOX_USER_CHECK(
+        result.second,
+        "Found duplicate column name in Expand plan node: {}.",
+        name);
+  }
+
+  return ROW(std::move(names), std::move(types));
+}
+} // namespace
+
+ExpandNode::ExpandNode(
+    PlanNodeId id,
+    std::vector<std::vector<TypedExprPtr>> projections,
+    std::vector<std::string> names,
+    PlanNodePtr source)
+    : PlanNode(std::move(id)),
+      sources_{source},
+      outputType_(getExpandOutputType(projections, std::move(names))),
+      projections_(std::move(projections)) {
+  const auto& projectionNames = outputType_->names();
+  const auto numColumns = projectionNames.size();
+  const auto numRows = projections_.size();
+
+  for (const auto& rowProjection : projections_) {
+    for (const auto& columnProjection : rowProjection) {
+      VELOX_USER_CHECK(
+          TypedExprs::isFieldAccess(columnProjection) ||
+              TypedExprs::isConstant(columnProjection),
+          "Unsupported projection expression in Expand plan node. Expected field reference or constant. Got: {} ",
+          columnProjection->toString());
+    }
+  }
+
+  for (int i = 0; i < numColumns; ++i) {
+    const auto& type = outputType_->childAt(i);
+    for (int j = 1; j < numRows; ++j) {
+      VELOX_USER_CHECK(
+          projections_[j][i]->type()->equivalent(*type),
+          "The projections type does not match across different rows in the same column. Got: {}, {}",
+          projections_[j][i]->type()->toString(),
+          type->toString());
+    }
+  }
+}
+
+void ExpandNode::addDetails(std::stringstream& stream) const {
+  for (auto i = 0; i < projections_.size(); ++i) {
+    appendComma(i, stream);
+    stream << "[";
+    addKeys(stream, projections_[i]);
+    stream << "]";
+  }
+}
+
+folly::dynamic ExpandNode::serialize() const {
+  auto obj = PlanNode::serialize();
+  obj["projections"] = ISerializable::serialize(projections_);
+  obj["names"] = ISerializable::serialize(outputType_->names());
+
+  return obj;
+}
+
+// static
+PlanNodePtr ExpandNode::create(const folly::dynamic& obj, void* context) {
+  auto source = deserializeSingleSource(obj, context);
+  auto names =
+      ISerializable::deserialize<std::vector<std::string>>(obj["names"]);
+  auto projections =
+      ISerializable::deserialize<std::vector<std::vector<ITypedExpr>>>(
+          obj["projections"], context);
+  return std::make_shared<ExpandNode>(
+      deserializePlanNodeId(obj),
+      std::move(projections),
+      std::move(names),
+      std::move(source));
 }
 
 namespace {
@@ -1240,28 +1339,46 @@ WindowNode::WindowNode(
         "Sorting keys must be unique and not overlap with partitioning keys. Found duplicate key: {}",
         key->name());
   }
+
+  for (const auto& windowFunction : windowFunctions_) {
+    if (windowFunction.frame.type == WindowType::kRange) {
+      if (windowFunction.frame.startValue || windowFunction.frame.endValue) {
+        // This is RANGE frame with a k limit bound like
+        // RANGE BETWEEN 5 PRECEDING AND CURRENT ROW.
+        // Such frames require that the ORDER BY have a single sorting key
+        // for comparison.
+        VELOX_USER_CHECK_EQ(
+            sortingKeys_.size(),
+            1,
+            "Window frame of type RANGE PRECEDING or FOLLOWING requires single sorting key in ORDER BY.");
+      }
+    }
+  }
 }
 
 void WindowNode::addDetails(std::stringstream& stream) const {
-  stream << "partition by [";
+  if (inputsSorted_) {
+    stream << "STREAMING ";
+  }
+
   if (!partitionKeys_.empty()) {
+    stream << "partition by [";
     addFields(stream, partitionKeys_);
-  }
-  stream << "] ";
-
-  stream << "order by [";
-  addSortingKeys(sortingKeys_, sortingOrders_, stream);
-  stream << "] ";
-
-  auto numInputCols = sources_[0]->outputType()->size();
-  auto numOutputCols = outputType_->size();
-  for (auto i = numInputCols; i < numOutputCols; i++) {
-    appendComma(i - numInputCols, stream);
-    stream << outputType_->names()[i] << " := ";
-    addWindowFunction(stream, windowFunctions_[i - numInputCols]);
+    stream << "] ";
   }
 
-  stream << " inputsSorted [" << inputsSorted_ << "]";
+  if (!sortingKeys_.empty()) {
+    stream << "order by [";
+    addSortingKeys(sortingKeys_, sortingOrders_, stream);
+    stream << "] ";
+  }
+
+  const auto numInputs = inputType()->size();
+  for (auto i = 0; i < windowFunctions_.size(); i++) {
+    appendComma(i, stream);
+    stream << outputType_->names()[i + numInputs] << " := ";
+    addWindowFunction(stream, windowFunctions_[i]);
+  }
 }
 
 namespace {
@@ -2107,6 +2224,7 @@ void PlanNode::registerSerDe() {
   registry.Register("AssignUniqueIdNode", AssignUniqueIdNode::create);
   registry.Register("EnforceSingleRowNode", EnforceSingleRowNode::create);
   registry.Register("ExchangeNode", ExchangeNode::create);
+  registry.Register("ExpandNode", ExpandNode::create);
   registry.Register("FilterNode", FilterNode::create);
   registry.Register("GroupIdNode", GroupIdNode::create);
   registry.Register("HashJoinNode", HashJoinNode::create);

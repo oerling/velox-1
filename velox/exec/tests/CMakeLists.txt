@@ -38,6 +38,7 @@ add_executable(
   CustomJoinTest.cpp
   EnforceSingleRowTest.cpp
   ExchangeClientTest.cpp
+  ExpandTest.cpp
   FilterProjectTest.cpp
   FunctionResolutionTest.cpp
   HashJoinBridgeTest.cpp
@@ -91,11 +92,11 @@ add_executable(
   GroupedExecutionTest.cpp
   Main.cpp
   OperatorUtilsTest.cpp
-  ParseTypeSignatureTest.cpp
   PlanBuilderTest.cpp
   QueryAssertionsTest.cpp
   TaskTest.cpp
-  TreeOfLosersTest.cpp)
+  TreeOfLosersTest.cpp
+  PrestoQueryRunnerTest.cpp)
 
 add_test(
   NAME velox_exec_test
@@ -130,6 +131,7 @@ target_link_libraries(
   velox_type
   velox_vector
   velox_vector_fuzzer
+  velox_window
   Boost::atomic
   Boost::context
   Boost::date_time
@@ -154,6 +156,7 @@ target_link_libraries(
   velox_dwio_common_test_utils
   velox_exec
   velox_exec_test_lib
+  velox_fuzzer_util
   velox_functions_lib
   velox_functions_prestosql
   velox_functions_test_lib
@@ -164,6 +167,8 @@ target_link_libraries(
   velox_type
   velox_vector
   velox_vector_fuzzer
+  velox_presto_serializer
+  velox_dwio_dwrf_writer
   Boost::atomic
   Boost::context
   Boost::date_time
@@ -194,31 +199,7 @@ target_link_libraries(
   velox_tpch_connector
   velox_memory)
 
-# Aggregation Fuzzer.
-add_executable(velox_aggregation_fuzzer_test AggregationFuzzerTest.cpp)
-
-target_link_libraries(
-  velox_aggregation_fuzzer_test
-  velox_aggregation_fuzzer
-  velox_aggregates
-  velox_window
-  velox_vector_test_lib
-  gtest
-  gtest_main)
-
-add_executable(spark_aggregation_fuzzer_test SparkAggregationFuzzerTest.cpp)
-
-target_link_libraries(
-  spark_aggregation_fuzzer_test
-  velox_aggregation_fuzzer
-  velox_functions_spark_aggregates
-  velox_window
-  velox_vector_test_lib
-  gtest
-  gtest_main)
-
 # Join Fuzzer.
-
 add_library(velox_join_fuzzer JoinFuzzer.cpp)
 
 target_link_libraries(velox_join_fuzzer velox_type velox_vector_fuzzer
@@ -228,10 +209,28 @@ add_executable(velox_join_fuzzer_test JoinFuzzerTest.cpp)
 
 target_link_libraries(velox_join_fuzzer_test velox_join_fuzzer gtest gtest_main)
 
+add_executable(velox_exchange_fuzzer_test ExchangeFuzzer.cpp)
+
+target_link_libraries(
+  velox_exchange_fuzzer_test
+  velox_exec_test_lib
+  velox_aggregates
+  velox_vector_test_lib
+  velox_vector_fuzzer
+  gtest
+  gtest
+  gtest_main)
+
 add_executable(velox_aggregation_runner_test AggregationRunnerTest.cpp)
 
-target_link_libraries(velox_aggregation_runner_test velox_aggregation_fuzzer
-                      velox_aggregates velox_vector_test_lib gtest gtest_main)
+target_link_libraries(
+  velox_aggregation_runner_test
+  velox_aggregation_fuzzer
+  velox_fuzzer_util
+  velox_aggregates
+  velox_vector_test_lib
+  gtest
+  gtest_main)
 
 add_library(velox_simple_aggregate SimpleAverageAggregate.cpp
                                    SimpleArrayAggAggregate.cpp)

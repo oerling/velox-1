@@ -224,7 +224,7 @@ class Call : public Expr {
     return functions_.contains(set);
   }
 
-  const ExprVector args() const {
+  const ExprVector& args() const {
     return args_;
   }
 
@@ -506,6 +506,9 @@ struct BaseTable : public PlanObject {
 
 using BaseTablePtr = const BaseTable*;
 
+  using TypeVector = std::vector<const velox::Type*, QGAllocator<const velox::Type*>>;
+
+  
 // Aggregate function. The aggregation and arguments are in the
 // inherited Call. The Value pertains to the aggregation
 // result or accumulator.
@@ -530,6 +533,9 @@ class Aggregate : public Call {
         condition_(condition),
         isAccumulator_(isAccumulator),
         intermediateType_(intermediateType) {
+    for (auto& arg : this->args()) {
+      rawInputType_.push_back(arg->value().type);
+    }
     if (condition_) {
       columns_.unionSet(condition_->columns());
     }
@@ -551,11 +557,16 @@ class Aggregate : public Call {
     return intermediateType_;
   }
 
+  const TypeVector rawInputType() const {
+    return rawInputType_;
+  }
+  
  private:
   bool isDistinct_;
   ExprPtr condition_;
   bool isAccumulator_;
   const velox::Type* intermediateType_;
+  TypeVector rawInputType_;
 };
 
 using AggregatePtr = const Aggregate*;

@@ -8,9 +8,9 @@
  *
  * THE TPC SOFTWARE IS AVAILABLE WITHOUT CHARGE FROM TPC.
  */
-#include "dbgen/config.h"
-#include "dbgen/dss.h"
-#include "dbgen/rng64.h"
+#include "dbgen/config.h" // @manual
+#include "dbgen/dss.h" // @manual
+#include "dbgen/rng64.h" // @manual
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,10 +68,8 @@ void NthElement(DSS_HUGE N, DSS_HUGE* StartSeed) {
   DSS_HUGE Z;
   DSS_HUGE Mult;
   static int ln = -1;
-  int i;
 
   if ((verbose > 0) && ++ln % 1000 == 0) {
-    i = ln % LN_CNT;
     fprintf(stderr, "%c\b", lnoise[i]);
   }
   Mult = Multiplier;

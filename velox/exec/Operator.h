@@ -458,6 +458,13 @@ class Operator : public BaseRuntimeStatWriter {
 
   virtual std::string toString() const;
 
+  /// Used in debug ednpoints.
+  virtual folly::dynamic toJson() const {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["operator"] = toString();
+    return obj;
+  }
+
   velox::memory::MemoryPool* pool() const {
     return operatorCtx_->pool();
   }
@@ -621,6 +628,7 @@ class Operator : public BaseRuntimeStatWriter {
     uint64_t reclaim(
         memory::MemoryPool* pool,
         uint64_t targetBytes,
+        uint64_t maxWaitMs,
         memory::MemoryReclaimer::Stats& stats) override;
 
     void abort(memory::MemoryPool* pool, const std::exception_ptr& /* error */)
@@ -678,7 +686,7 @@ class Operator : public BaseRuntimeStatWriter {
       std::optional<uint64_t> averageRowSize = std::nullopt) const;
 
   /// Invoked to record spill stats in operator stats.
-  void recordSpillStats(const SpillStats& spillStats);
+  void recordSpillStats(const common::SpillStats& spillStats);
 
   const std::unique_ptr<OperatorCtx> operatorCtx_;
   const RowTypePtr outputType_;
@@ -713,9 +721,6 @@ class Operator : public BaseRuntimeStatWriter {
 
   std::unordered_map<column_index_t, std::shared_ptr<common::Filter>>
       dynamicFilters_;
-
-  /// The number of times that spilling run on this operator.
-  uint32_t numSpillRuns_{0};
 };
 
 /// Given a row type returns indices for the specified subset of columns.
@@ -763,3 +768,12 @@ class SourceOperator : public Operator {
   }
 };
 } // namespace facebook::velox::exec
+
+template <>
+struct fmt::formatter<std::thread::id> : formatter<std::string> {
+  auto format(std::thread::id s, format_context& ctx) {
+    std::ostringstream oss;
+    oss << s;
+    return formatter<std::string>::format(oss.str(), ctx);
+  }
+};

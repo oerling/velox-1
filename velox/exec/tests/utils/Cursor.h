@@ -62,6 +62,13 @@ struct CursorParameters {
   std::string spillDirectory;
 
   bool copyResult = true;
+
+  /// If true, use single threaded execution.
+  bool singleThreaded = false;
+
+  /// If both 'queryConfigs' and 'queryCtx' are specified, the configurations in
+  /// 'queryCtx' will be overridden by 'queryConfig'.
+  std::unordered_map<std::string, std::string> queryConfigs;
 };
 
 class TaskQueue {
@@ -72,7 +79,7 @@ class TaskQueue {
   };
 
   explicit TaskQueue(uint64_t maxBytes)
-      : pool_(memory::addDefaultLeafMemoryPool()), maxBytes_(maxBytes) {}
+      : pool_(memory::memoryManager()->addLeafPool()), maxBytes_(maxBytes) {}
 
   void setNumProducers(int32_t n) {
     numProducers_ = n;
@@ -117,62 +124,30 @@ class TaskQueue {
 
 class TaskCursor {
  public:
-  explicit TaskCursor(const CursorParameters& params);
+  virtual ~TaskCursor() = default;
 
-  ~TaskCursor() {
-    queue_->close();
-    if (task_ && !atEnd_) {
-      task_->requestCancel();
-    }
-  }
+  static std::unique_ptr<TaskCursor> create(const CursorParameters& params);
 
   /// Starts the task if not started yet.
-  void start();
+  virtual void start() = 0;
 
   /// Fetches another batch from the task queue.
   /// Starts the task if not started yet.
-  bool moveNext();
+  virtual bool moveNext() = 0;
 
-  bool hasNext();
+  virtual bool hasNext() = 0;
 
-  RowVectorPtr& current() {
-    return current_;
-  }
+  virtual RowVectorPtr& current() = 0;
 
-  void setError(std::exception_ptr e) {
-    auto task = task_;
-    error_ = e;
-    if (task) {
-      task->setError(e);
-    }
-    // Wake up the consumer if blocked.
-    queue_->enqueue(nullptr, nullptr);
-  }
-
-  const std::shared_ptr<Task>& task() {
-    return task_;
-  }
-
- private:
-  static std::atomic<int32_t> serial_;
-
-  const int32_t maxDrivers_;
-  const int32_t numConcurrentSplitGroups_;
-  const int32_t numSplitGroups_;
-
-  std::shared_ptr<folly::Executor> executor_;
-  bool started_ = false;
-  std::shared_ptr<TaskQueue> queue_;
-  std::shared_ptr<exec::Task> task_;
-  RowVectorPtr current_;
-  bool atEnd_{false};
-  std::exception_ptr error_;
+  virtual void setError(std::exception_ptr e) = 0;
+  
+  virtual const std::shared_ptr<Task>& task() = 0;
 };
 
 class RowCursor {
  public:
   explicit RowCursor(CursorParameters& params) {
-    cursor_ = std::make_unique<TaskCursor>(params);
+    cursor_ = TaskCursor::create(params);
   }
 
   bool isNullAt(int32_t columnIndex) const {
@@ -205,10 +180,6 @@ class RowCursor {
   SelectivityVector allRows_;
   vector_size_t currentRow_ = 0;
   vector_size_t numRows_ = 0;
-
-  // error set by an external error source. Used when running a
-  // multifragment query where an error from an earlier fragment
-  // should appear to the end consumer.
 };
 
 } // namespace facebook::velox::exec::test

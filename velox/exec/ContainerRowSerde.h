@@ -26,16 +26,18 @@ class ContainerRowSerde {
  public:
   /// Serializes value from source[index] into 'out'. The value must not be
   /// null.
-  static void
-  serialize(const BaseVector& source, vector_size_t index, ByteStream& out);
+  static void serialize(
+      const BaseVector& source,
+      vector_size_t index,
+      ByteOutputStream& out);
 
   static void
   deserialize(ByteInputStream& in, vector_size_t index, BaseVector* result);
 
   /// Returns < 0 if 'left' is less than 'right' at 'index', 0 if
-  /// equal and > 0 otherwise. flags.nullHandlingMode can be only NoStop and
-  /// support null-safe equal.
-  /// Top level rows in right are not allowed to be null.
+  /// equal and > 0 otherwise. flags.nullHandlingMode can be only NullAsValue
+  /// and support null-safe equal. Top level rows in right are not allowed to be
+  /// null.
   static int32_t compare(
       ByteInputStream& left,
       const DecodedVector& right,
@@ -43,8 +45,8 @@ class ContainerRowSerde {
       CompareFlags flags);
 
   /// Returns < 0 if 'left' is less than 'right' at 'index', 0 if
-  /// equal and > 0 otherwise. flags.nullHandlingMode can be only NoStop and
-  /// support null-safe equal.
+  /// equal and > 0 otherwise. flags.nullHandlingMode can be only NullAsValue
+  /// and support null-safe equal.
   static int32_t compare(
       ByteInputStream& left,
       ByteInputStream& right,
@@ -54,9 +56,8 @@ class ContainerRowSerde {
   /// Returns < 0 if 'left' is less than 'right' at 'index', 0 if
   /// equal and > 0 otherwise. If flags.nullHandlingMode is StopAtNull,
   /// returns std::nullopt if either 'left' or 'right' value is null or contains
-  /// a null. If flags.nullHandlingMode is NoStop then NULL is considered equal
-  /// to NULL.
-  /// Top level rows in right are not allowed to be null.
+  /// a null. If flags.nullHandlingMode is NullAsValue then NULL is considered
+  /// equal to NULL. Top level rows in right are not allowed to be null.
   static std::optional<int32_t> compareWithNulls(
       ByteInputStream& left,
       const DecodedVector& right,
@@ -66,8 +67,8 @@ class ContainerRowSerde {
   /// Returns < 0 if 'left' is less than 'right' at 'index', 0 if
   /// equal and > 0 otherwise. If flags.nullHandlingMode is StopAtNull,
   /// returns std::nullopt if either 'left' or 'right' value is null or contains
-  /// a null. If flags.nullHandlingMode is NoStop then NULL is considered equal
-  /// to NULL.
+  /// a null. If flags.nullHandlingMode is NullAsValue then NULL is considered
+  /// equal to NULL.
   static std::optional<int32_t> compareWithNulls(
       ByteInputStream& left,
       ByteInputStream& right,

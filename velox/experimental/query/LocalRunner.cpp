@@ -28,7 +28,7 @@ auto remoteSplit(const std::string& taskId) {
 test::TaskCursor* LocalRunner::cursor() {
   auto lastStage = makeStages();
   params_.planNode = plan_.back().fragment.planNode;
-  auto cursor = std::make_unique<test::TaskCursor>(params_);
+  auto cursor = test::TaskCursor::create(params_);
   stages_.push_back({cursor->task()});
   if (!lastStage.empty()) {
     auto node = plan_.back().inputStages[0].consumer;

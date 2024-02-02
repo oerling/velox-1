@@ -122,7 +122,7 @@ static VectorPtr addDictionary(
   auto pool = vector->pool();
   return std::make_shared<
       DictionaryVector<typename KindToFlatVector<kind>::WrapperType>>(
-      pool, nulls, size, std::move(vector), std::move(indices));
+      pool, std::move(nulls), size, std::move(vector), std::move(indices));
 }
 
 // static
@@ -219,7 +219,7 @@ static VectorPtr addConstant(
       index = constVector->index();
       vector = vector->valueVector();
     } else if (vector->encoding() == VectorEncoding::Simple::DICTIONARY) {
-      BufferPtr indices = vector->as<DictionaryVector<T>>()->indices();
+      const BufferPtr& indices = vector->as<DictionaryVector<T>>()->indices();
       index = indices->as<vector_size_t>()[index];
       vector = vector->valueVector();
     } else {
@@ -254,11 +254,7 @@ std::optional<bool> BaseVector::equalValueAt(
     vector_size_t index,
     vector_size_t otherIndex,
     CompareFlags::NullHandlingMode nullHandlingMode) const {
-  const CompareFlags compareFlags = {
-      .nullsFirst = false,
-      .ascending = false,
-      .equalsOnly = true,
-      .nullHandlingMode = nullHandlingMode};
+  const CompareFlags compareFlags = CompareFlags::equality(nullHandlingMode);
   std::optional<int32_t> result =
       compare(other, index, otherIndex, compareFlags);
   if (result.has_value()) {
@@ -344,7 +340,12 @@ VectorPtr BaseVector::createInternal(
     case TypeKind::UNKNOWN: {
       BufferPtr nulls = allocateNulls(size, pool, bits::kNull);
       return std::make_shared<FlatVector<UnknownValue>>(
-          pool, UNKNOWN(), nulls, size, nullptr, std::vector<BufferPtr>());
+          pool,
+          UNKNOWN(),
+          std::move(nulls),
+          size,
+          nullptr,
+          std::vector<BufferPtr>());
     }
     default:
       return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
@@ -465,27 +466,33 @@ void BaseVector::setNulls(const BufferPtr& nulls) {
 
 // static
 void BaseVector::resizeIndices(
-    vector_size_t size,
+    vector_size_t currentSize,
+    vector_size_t newSize,
     velox::memory::MemoryPool* pool,
-    BufferPtr* indices,
-    const vector_size_t** raw) {
-  const auto newNumBytes = byteSize<vector_size_t>(size);
-  if (indices->get() && !indices->get()->isView() && indices->get()->unique()) {
-    if (indices->get()->size() < newNumBytes) {
-      AlignedBuffer::reallocate<vector_size_t>(indices, size, 0);
+    BufferPtr& indices,
+    const vector_size_t** rawIndices) {
+  const auto newNumBytes = byteSize<vector_size_t>(newSize);
+  if (indices != nullptr && !indices->isView() && indices->unique()) {
+    if (indices->size() < newNumBytes) {
+      AlignedBuffer::reallocate<vector_size_t>(&indices, newSize, 0);
+    }
+    // indices->size() may cover more indices than currentSize.
+    if (newSize > currentSize) {
+      auto* raw = indices->asMutable<vector_size_t>();
+      std::fill(raw + currentSize, raw + newSize, 0);
     }
   } else {
-    auto newIndices = AlignedBuffer::allocate<vector_size_t>(size, pool, 0);
-    if (indices->get()) {
-      auto dst = newIndices->asMutable<vector_size_t>();
-      auto src = indices->get()->as<vector_size_t>();
-      auto numCopyBytes =
-          std::min<vector_size_t>(indices->get()->size(), newNumBytes);
+    auto newIndices = AlignedBuffer::allocate<vector_size_t>(newSize, pool, 0);
+    if (indices != nullptr) {
+      auto* dst = newIndices->asMutable<vector_size_t>();
+      const auto* src = indices->as<vector_size_t>();
+      const auto numCopyBytes = std::min<vector_size_t>(
+          byteSize<vector_size_t>(currentSize), newNumBytes);
       memcpy(dst, src, numCopyBytes);
     }
-    *indices = newIndices;
+    indices = newIndices;
   }
-  *raw = indices->get()->asMutable<vector_size_t>();
+  *rawIndices = indices->asMutable<vector_size_t>();
 }
 
 std::string BaseVector::toSummaryString() const {
@@ -585,7 +592,7 @@ void BaseVector::ensureWritable(
     }
     return;
   }
-  auto resultType = result->type();
+  const auto& resultType = result->type();
   bool isUnknownType = resultType->containsUnknown();
   if (result->encoding() == VectorEncoding::Simple::LAZY) {
     result = BaseVector::loadedVectorShared(result);
@@ -753,11 +760,9 @@ const VectorPtr& BaseVector::loadedVectorShared(const VectorPtr& vector) {
 VectorPtr BaseVector::transpose(BufferPtr indices, VectorPtr&& source) {
   // TODO: Reuse the indices if 'source' is already a dictionary and
   // there are no other users of its indices.
+  vector_size_t size = indices->size() / sizeof(vector_size_t);
   return wrapInDictionary(
-      BufferPtr(nullptr),
-      indices,
-      indices->size() / sizeof(vector_size_t),
-      std::move(source));
+      BufferPtr(nullptr), std::move(indices), size, std::move(source));
 }
 
 bool isLazyNotLoaded(const BaseVector& vector) {

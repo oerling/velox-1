@@ -23,7 +23,7 @@ source $SCRIPTDIR/setup-helper-functions.sh
 CPU_TARGET="${CPU_TARGET:-avx}"
 COMPILER_FLAGS=$(get_cxx_flags "$CPU_TARGET")
 export COMPILER_FLAGS
-FB_OS_VERSION=v2022.11.14.00
+FB_OS_VERSION=v2023.12.04.00
 NPROC=$(getconf _NPROCESSORS_ONLN)
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)}
 export CMAKE_BUILD_TYPE=Release
@@ -31,6 +31,7 @@ export CMAKE_BUILD_TYPE=Release
 # Install all velox and folly dependencies. 
 # The is an issue on 22.04 where a version conflict prevents glog install,
 # installing libunwind first fixes this.
+apt update && apt install sudo
 sudo --preserve-env apt update && sudo --preserve-env apt install -y libunwind-dev && \
   sudo --preserve-env apt install -y \
   g++ \
@@ -45,6 +46,7 @@ sudo --preserve-env apt update && sudo --preserve-env apt install -y libunwind-d
   libboost-all-dev \
   libicu-dev \
   libdouble-conversion-dev \
+  libfmt-dev \
   libgoogle-glog-dev \
   libbz2-dev \
   libgflags-dev \
@@ -85,11 +87,6 @@ function prompt {
   ) 2> /dev/null
 }
 
-function install_fmt {
-  github_checkout fmtlib/fmt 8.0.1
-  cmake_install -DFMT_TEST=OFF
-}
-
 function install_folly {
   github_checkout facebook/folly "${FB_OS_VERSION}"
   cmake_install -DBUILD_TESTS=OFF -DFOLLY_HAVE_INT128_T=ON
@@ -105,6 +102,11 @@ function install_wangle {
   cmake_install -DBUILD_TESTS=OFF -S wangle
 }
 
+function install_mvfst {
+  github_checkout facebook/mvfst "${FB_OS_VERSION}"
+  cmake_install -DBUILD_TESTS=OFF
+}
+
 function install_fbthrift {
   github_checkout facebook/fbthrift "${FB_OS_VERSION}"
   cmake_install -DBUILD_TESTS=OFF
@@ -118,10 +120,10 @@ function install_conda {
 }
 
 function install_velox_deps {
-  run_and_time install_fmt
   run_and_time install_folly
   run_and_time install_fizz
   run_and_time install_wangle
+  run_and_time install_mvfst
   run_and_time install_fbthrift
   run_and_time install_conda
 }

@@ -41,6 +41,7 @@
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -89,9 +90,13 @@ DEFINE_string(
     "",
     "Root path of data. Data layout must follow Hive-style partitioning. ");
 
+DEFINE_string(ssd_path, "", "Directory for local SSD cache");
+DEFINE_int32(ssd_cache_gb, 0, "Size of local SSD cache in GB");
+
 DEFINE_int32(optimizer_trace, 0, "Optimizer trace level");
 
 DEFINE_bool(print_plan, false, "Print optimizer results");
+
 DEFINE_bool(print_stats, false, "print statistics");
 DEFINE_bool(
     include_custom_stats,
@@ -161,19 +166,34 @@ class VeloxRunner {
  public:
   void initialize() {
     if (FLAGS_cache_gb) {
+      memory::MemoryManagerOptions options;
       int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
-      memory::MmapAllocator::Options options;
-      options.capacity = memoryBytes;
+      options.useMmapAllocator = true;
+      options.allocatorCapacity = memoryBytes;
       options.useMmapArena = true;
       options.mmapArenaCapacityRatio = 1;
+      memory::MemoryManager::testingSetInstance(options);
+      std::unique_ptr<cache::SsdCache> ssdCache;
+      if (FLAGS_ssd_cache_gb) {
+        constexpr int32_t kNumSsdShards = 16;
+        cacheExecutor_ =
+            std::make_unique<folly::IOThreadPoolExecutor>(kNumSsdShards);
+        ssdCache = std::make_unique<cache::SsdCache>(
+            FLAGS_ssd_path,
+            static_cast<uint64_t>(FLAGS_ssd_cache_gb) << 30,
+            kNumSsdShards,
+            cacheExecutor_.get(),
+            static_cast<uint64_t>(8) << 30);
+      }
 
-      allocator_ = std::make_shared<memory::MmapAllocator>(options);
-      memory::MemoryAllocator::setDefaultInstance(allocator_.get());
-
-      cache_ = cache::AsyncDataCache::create(allocator_.get(), nullptr);
+      cache_ = cache::AsyncDataCache::create(
+          memory::memoryManager()->allocator(), std::move(ssdCache));
       cache::AsyncDataCache::setInstance(cache_.get());
+    } else {
+      memory::MemoryManager::testingSetInstance({});
     }
-    rootPool_ = memory::defaultMemoryManager().addRootPool("velox_sql");
+
+    rootPool_ = memory::memoryManager()->addRootPool("velox_sql");
 
     optimizerPool_ = rootPool_->addLeafChild("optimizer");
     schemaPool_ = rootPool_->addLeafChild("schema");
@@ -185,8 +205,8 @@ class VeloxRunner {
     filesystems::registerLocalFileSystem();
     parquet::registerParquetReaderFactory();
     dwrf::registerDwrfReaderFactory();
-    exec::Exchange::registerLocalExchangeSource();
-    serializer::presto::PrestoVectorSerde::registerVectorSerde();
+  exec::ExchangeSource::registerFactory(exec::test::createLocalExchangeSource);
+  serializer::presto::PrestoVectorSerde::registerVectorSerde();
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
 
     auto hiveConnector =
@@ -201,7 +221,7 @@ class VeloxRunner {
 
     schemaQueryCtx_ = std::make_shared<core::QueryCtx>(
         executor_.get(),
-        config_,
+        core::QueryConfig(config_),
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild("schemaCtxPool"),
@@ -212,7 +232,8 @@ class VeloxRunner {
     connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
         schemaPool_.get(),
         schemaRootPool_.get(),
-        schemaQueryCtx_->getConnectorConfig(kHiveConnectorId),
+        schemaQueryCtx_->connectorSessionProperties(kHiveConnectorId),
+	nullptr,
         std::make_unique<exec::SimpleExpressionEvaluator>(
             schemaQueryCtx_.get(), schemaPool_.get()),
         schemaQueryCtx_->cache(),
@@ -405,7 +426,7 @@ class VeloxRunner {
     ++queryCounter_;
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(),
-        config_,
+        core::QueryConfig(config_),
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
@@ -591,6 +612,7 @@ class VeloxRunner {
   std::shared_ptr<memory::MemoryPool> schemaRootPool_;
   std::shared_ptr<memory::MemoryPool> checkPool_;
   std::unique_ptr<folly::IOThreadPoolExecutor> ioExecutor_;
+  std::unique_ptr<folly::IOThreadPoolExecutor> cacheExecutor_;
   std::shared_ptr<folly::CPUThreadPoolExecutor> executor_;
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
   std::shared_ptr<core::QueryCtx> schemaQueryCtx_;

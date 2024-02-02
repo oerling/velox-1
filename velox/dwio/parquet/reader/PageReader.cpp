@@ -118,36 +118,6 @@ const char* PageReader::readBytes(int32_t size, BufferPtr& copy) {
   return copy->as<char>();
 }
 
-common::CompressionKind PageReader::thriftCodecToCompressionKind() {
-  switch (codec_) {
-    case thrift::CompressionCodec::UNCOMPRESSED:
-      return common::CompressionKind::CompressionKind_NONE;
-      break;
-    case thrift::CompressionCodec::SNAPPY:
-      return common::CompressionKind::CompressionKind_SNAPPY;
-      break;
-    case thrift::CompressionCodec::GZIP:
-      return common::CompressionKind::CompressionKind_GZIP;
-      break;
-    case thrift::CompressionCodec::LZO:
-      return common::CompressionKind::CompressionKind_LZO;
-      break;
-    case thrift::CompressionCodec::LZ4:
-      return common::CompressionKind::CompressionKind_LZ4;
-      break;
-    case thrift::CompressionCodec::ZSTD:
-      return common::CompressionKind::CompressionKind_ZSTD;
-      break;
-    case thrift::CompressionCodec::LZ4_RAW:
-      return common::CompressionKind::CompressionKind_LZ4;
-    default:
-      VELOX_UNSUPPORTED(
-          "Unsupported compression type: " +
-          facebook::velox::parquet::thrift::to_string(codec_));
-      break;
-  }
-}
-
 const char* FOLLY_NONNULL PageReader::decompressData(
     const char* pageData,
     uint32_t compressedSize,
@@ -159,11 +129,11 @@ const char* FOLLY_NONNULL PageReader::decompressData(
       fmt::format("Page Reader: Stream {}", inputStream_->getName());
   std::unique_ptr<dwio::common::SeekableInputStream> decompressedStream =
       dwio::common::compression::createDecompressor(
-          thriftCodecToCompressionKind(),
+          codec_,
           std::move(inputStream),
           uncompressedSize,
           pool_,
-          getParquetDecompressionOptions(thriftCodecToCompressionKind()),
+          getParquetDecompressionOptions(codec_),
           streamDebugInfo,
           nullptr,
           true,
@@ -243,10 +213,10 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
   auto pageEnd = pageData_ + pageHeader.uncompressed_page_size;
   if (maxRepeat_ > 0) {
     uint32_t repeatLength = readField<int32_t>(pageData_);
-    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+    repeatDecoder_ = std::make_unique<::arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        arrow::bit_util::NumRequiredBits(maxRepeat_));
+        ::arrow::bit_util::NumRequiredBits(maxRepeat_));
 
     pageData_ += repeatLength;
   }
@@ -257,12 +227,12 @@ void PageReader::prepareDataPageV1(const PageHeader& pageHeader, int64_t row) {
       defineDecoder_ = std::make_unique<RleBpDecoder>(
           pageData_,
           pageData_ + defineLength,
-          arrow::bit_util::NumRequiredBits(maxDefine_));
+          ::arrow::bit_util::NumRequiredBits(maxDefine_));
     }
-    wideDefineDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+    wideDefineDecoder_ = std::make_unique<::arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         defineLength,
-        arrow::bit_util::NumRequiredBits(maxDefine_));
+        ::arrow::bit_util::NumRequiredBits(maxDefine_));
     pageData_ += defineLength;
   }
   encodedDataSize_ = pageEnd - pageData_;
@@ -301,17 +271,17 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
   pageData_ = readBytes(bytes, pageBuffer_);
 
   if (repeatLength) {
-    repeatDecoder_ = std::make_unique<arrow::util::RleDecoder>(
+    repeatDecoder_ = std::make_unique<::arrow::util::RleDecoder>(
         reinterpret_cast<const uint8_t*>(pageData_),
         repeatLength,
-        arrow::bit_util::NumRequiredBits(maxRepeat_));
+        ::arrow::bit_util::NumRequiredBits(maxRepeat_));
   }
 
   if (maxDefine_ > 0) {
     defineDecoder_ = std::make_unique<RleBpDecoder>(
         pageData_ + repeatLength,
         pageData_ + repeatLength + defineLength,
-        arrow::bit_util::NumRequiredBits(maxDefine_));
+        ::arrow::bit_util::NumRequiredBits(maxDefine_));
   }
   auto levelsSize = repeatLength + defineLength;
   pageData_ += levelsSize;
@@ -346,7 +316,7 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
       dictionaryEncoding_ == Encoding::PLAIN_DICTIONARY ||
       dictionaryEncoding_ == Encoding::PLAIN);
 
-  if (codec_ != thrift::CompressionCodec::UNCOMPRESSED) {
+  if (codec_ != common::CompressionKind::CompressionKind_NONE) {
     pageData_ = readBytes(pageHeader.compressed_page_size, pageBuffer_);
     pageData_ = decompressData(
         pageData_,
@@ -584,14 +554,14 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
 
 int32_t PageReader::getLengthsAndNulls(
     LevelMode mode,
-    const ::parquet::internal::LevelInfo& info,
+    const arrow::LevelInfo& info,
     int32_t begin,
     int32_t end,
     int32_t maxItems,
     int32_t* lengths,
     uint64_t* nulls,
     int32_t nullsStartIndex) const {
-  ::parquet::internal::ValidityBitmapInputOutput bits;
+  arrow::ValidityBitmapInputOutput bits;
   bits.values_read_upper_bound = maxItems;
   bits.values_read = 0;
   bits.null_count = 0;
@@ -604,7 +574,7 @@ int32_t PageReader::getLengthsAndNulls(
           definitionLevels_.data() + begin, end - begin, info, &bits);
       break;
     case LevelMode::kList: {
-      ::parquet::internal::DefRepLevelsToList(
+      arrow::DefRepLevelsToList(
           definitionLevels_.data() + begin,
           repetitionLevels_.data() + begin,
           end - begin,
@@ -666,6 +636,16 @@ void PageReader::makeDecoder() {
       }
       break;
     case Encoding::DELTA_BINARY_PACKED:
+      switch (parquetType) {
+        case thrift::Type::INT32:
+        case thrift::Type::INT64:
+          deltaBpDecoder_ = std::make_unique<DeltaBpDecoder>(pageData_);
+          break;
+        default:
+          VELOX_UNSUPPORTED(
+              "DELTA_BINARY_PACKED decoder only supports INT32 and INT64");
+      }
+      break;
     default:
       VELOX_UNSUPPORTED("Encoding not supported yet: {}", encoding_);
   }
@@ -698,6 +678,8 @@ void PageReader::skip(int64_t numRows) {
     stringDecoder_->skip(toSkip);
   } else if (booleanDecoder_) {
     booleanDecoder_->skip(toSkip);
+  } else if (deltaBpDecoder_) {
+    deltaBpDecoder_->skip(toSkip);
   } else {
     VELOX_FAIL("No decoder to skip");
   }

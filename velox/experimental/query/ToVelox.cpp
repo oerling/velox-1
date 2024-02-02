@@ -266,6 +266,10 @@ core::PlanNodePtr Optimization::makeAggregation(
 
     auto aggregate = op.aggregates[i];
     core::FieldAccessTypedExprPtr mask;
+    std::vector<TypePtr> rawInputTypes;
+    for (auto type : aggregate->rawInputType()) {
+      rawInputTypes.push_back(toTypePtr(type));
+    }
     if (isRawInput) {
       if (aggregate->condition()) {
         mask = projections.toFieldRef(aggregate->condition());
@@ -274,7 +278,7 @@ core::PlanNodePtr Optimization::makeAggregation(
           toTypePtr(op.columns()[numKeys + i]->value().type),
           projections.toFieldRefs<core::TypedExprPtr>(aggregate->args()),
           aggregate->name());
-      aggregates.push_back({call, mask, {}, {}, false});
+      aggregates.push_back({call, rawInputTypes, mask, {}, {}, false});
     } else {
       auto call = std::make_shared<core::CallTypedExpr>(
           toTypePtr(op.columns()[numKeys + i]->value().type),
@@ -283,7 +287,7 @@ core::PlanNodePtr Optimization::makeAggregation(
                   toTypePtr(aggregate->intermediateType()),
                   aggregateNames.back())},
           aggregate->name());
-      aggregates.push_back({call, mask, {}, {}, false});
+      aggregates.push_back({call, rawInputTypes, mask, {}, {}, false});
     }
   }
   auto keys = projections.toFieldRefs(op.grouping);

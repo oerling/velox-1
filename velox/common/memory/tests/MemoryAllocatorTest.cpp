@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/common/memory/MemoryAllocator.h"
+#include <fstream>
+#include <thread>
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/AllocationPool.h"
 #include "velox/common/memory/MallocAllocator.h"
@@ -21,13 +23,12 @@
 #include "velox/common/memory/MmapArena.h"
 #include "velox/common/testutil/TestValue.h"
 
-#include <fstream>
-#include <thread>
-
+#include <fmt/format.h>
 #include <folly/Random.h>
 #include <folly/Range.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <gmock/gmock-matchers.h>
 #include <gtest/gtest.h>
 
 DECLARE_int32(velox_memory_pool_mb);
@@ -43,7 +44,7 @@ struct ProcessSize {
 };
 } // namespace
 
-static constexpr uint64_t kCapacityBytes = 256UL * 1024 * 1024;
+static constexpr uint64_t kCapacityBytes = 1024UL * 1024 * 1024;
 static constexpr MachinePageCount kCapacityPages =
     (kCapacityBytes / AllocationTraits::kPageSize);
 
@@ -59,50 +60,45 @@ class MemoryAllocatorTest : public testing::TestWithParam<bool> {
 
   void setupAllocator() {
     pool_.reset();
-    MemoryAllocator::testingDestroyInstance();
     useMmap_ = GetParam();
     maxMallocBytes_ = 3072;
     if (useMmap_) {
-      MmapAllocator::Options options;
-      options.capacity = kCapacityBytes;
+      MemoryManagerOptions options;
+      options.useMmapAllocator = true;
+      options.allocatorCapacity = kCapacityBytes;
       options.smallAllocationReservePct = 4;
       options.maxMallocBytes = maxMallocBytes_;
-      allocator_ = std::make_shared<MmapAllocator>(options);
-      auto mmapAllocator = std::dynamic_pointer_cast<MmapAllocator>(allocator_);
+      memoryManager_ = std::make_unique<MemoryManager>(options);
       ASSERT_EQ(
-          AllocationTraits::numPages(mmapAllocator->capacity()),
+          AllocationTraits::numPages(memoryManager_->allocator()->capacity()),
           bits::roundUp(
               kCapacityBytes * (100 - options.smallAllocationReservePct) / 100 /
                   AllocationTraits::kPageSize,
-              64 * mmapAllocator->sizeClasses().back()));
-      MemoryAllocator::setDefaultInstance(allocator_.get());
+              64 * memoryManager_->allocator()->sizeClasses().back()));
     } else {
-      allocator_ = std::make_shared<MallocAllocator>(kCapacityBytes);
-      MemoryAllocator::setDefaultInstance(allocator_.get());
+      MemoryManagerOptions options;
+      options.allocatorCapacity = kCapacityBytes;
+      memoryManager_ = std::make_unique<MemoryManager>(options);
     }
-    instance_ = MemoryAllocator::getInstance();
-    memoryManager_ = std::make_unique<MemoryManager>(MemoryManagerOptions{
-        .capacity = (int64_t)instance_->capacity(), .allocator = instance_});
+    instance_ = memoryManager_->allocator();
     pool_ = memoryManager_->addLeafPool("allocatorTest");
     if (useMmap_) {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMmap);
       ASSERT_EQ(
           instance_->toString(),
-          "Memory Allocator[MMAP capacity 64.00KB allocated pages 0 mapped pages 0 external mapped pages 0\n[size 1: 0(0MB) allocated 0 mapped]\n[size 2: 0(0MB) allocated 0 mapped]\n[size 4: 0(0MB) allocated 0 mapped]\n[size 8: 0(0MB) allocated 0 mapped]\n[size 16: 0(0MB) allocated 0 mapped]\n[size 32: 0(0MB) allocated 0 mapped]\n[size 64: 0(0MB) allocated 0 mapped]\n[size 128: 0(0MB) allocated 0 mapped]\n[size 256: 0(0MB) allocated 0 mapped]\n]");
+          "Memory Allocator[MMAP total capacity 1.00GB free capacity 1.00GB allocated pages 0 mapped pages 0 external mapped pages 0\n[size 1: 0(0MB) allocated 0 mapped]\n[size 2: 0(0MB) allocated 0 mapped]\n[size 4: 0(0MB) allocated 0 mapped]\n[size 8: 0(0MB) allocated 0 mapped]\n[size 16: 0(0MB) allocated 0 mapped]\n[size 32: 0(0MB) allocated 0 mapped]\n[size 64: 0(0MB) allocated 0 mapped]\n[size 128: 0(0MB) allocated 0 mapped]\n[size 256: 0(0MB) allocated 0 mapped]\n]");
     } else {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMalloc);
       ASSERT_EQ(
           instance_->toString(),
-          "Memory Allocator[MALLOC capacity 256.00MB allocated bytes 0 allocated pages 0 mapped pages 0]");
+          "Memory Allocator[MALLOC capacity 1.00GB allocated bytes 0 allocated pages 0 mapped pages 0]");
     }
     ASSERT_EQ(
         MemoryAllocator::kindString(static_cast<MemoryAllocator::Kind>(100)),
         "UNKNOWN: 100");
   }
 
-  void TearDown() override {
-    MemoryAllocator::testingDestroyInstance();
-  }
+  void TearDown() override {}
 
   bool allocate(int32_t numPages, Allocation& result) {
     try {
@@ -405,7 +401,6 @@ class MemoryAllocatorTest : public testing::TestWithParam<bool> {
 
   bool useMmap_;
   int32_t maxMallocBytes_;
-  std::shared_ptr<MemoryAllocator> allocator_;
   MemoryAllocator* instance_;
   std::unique_ptr<MemoryManager> memoryManager_;
   std::shared_ptr<MemoryPool> pool_;
@@ -727,7 +722,7 @@ TEST_P(MemoryAllocatorTest, externalAdvise) {
   }
   constexpr int32_t kSmallSize = 16;
   constexpr int32_t kLargeSize = 32 * kSmallSize + 1;
-  auto instance = dynamic_cast<MmapAllocator*>(MemoryAllocator::getInstance());
+  auto instance = dynamic_cast<MmapAllocator*>(instance_);
   std::vector<std::unique_ptr<Allocation>> allocations;
   auto numAllocs = kCapacityPages / kSmallSize;
   allocations.reserve(numAllocs);
@@ -776,8 +771,8 @@ TEST_P(MemoryAllocatorTest, nonContiguousFailure) {
     std::string debugString() const {
       return fmt::format(
           "numOldPages:{}, numNewPages:{}, injectedFailure:{}",
-          numOldPages,
-          numNewPages,
+          static_cast<uint64_t>(numOldPages),
+          static_cast<uint64_t>(numNewPages),
           injectedFailure);
     }
   } testSettings[] = {// Cap failure injection.
@@ -839,28 +834,49 @@ TEST_P(MemoryAllocatorTest, nonContiguousFailure) {
                        Allocation::PageRun::kMaxPagesInRun,
                        MemoryAllocator::InjectedFailure::kMadvise},
                       {200, 100, MemoryAllocator::InjectedFailure::kMadvise}};
+  std::unordered_map<MemoryAllocator::InjectedFailure, std::string>
+      expectedErrorMsg = {
+          {MemoryAllocator::InjectedFailure::kAllocate,
+           "Malloc failed to allocate"},
+          {MemoryAllocator::InjectedFailure::kCap,
+           "Exceeded memory allocator limit"}};
+  if (useMmap_) {
+    expectedErrorMsg = {
+        {MemoryAllocator::InjectedFailure::kCap,
+         "Exceeded memory allocator limit"},
+        {MemoryAllocator::InjectedFailure::kMadvise,
+         "Could not advise away enough"},
+        {MemoryAllocator::InjectedFailure::kAllocate,
+         "Failed allocation in size class"}};
+  }
+  // Some error messages are only set when a reservationCB is provided
+  auto dummyReservationCB = [](int64_t /*bytes*/, bool /*preAllocation*/) {};
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(
         fmt::format("{}, useMmap:{}", testData.debugString(), useMmap_));
-    if ((testData.injectedFailure !=
-         MemoryAllocator::InjectedFailure::kAllocate) &&
+    if ((testData.injectedFailure ==
+         MemoryAllocator::InjectedFailure::kMadvise) &&
         !useMmap_) {
-      // Non-Allocate failure injection only applies for MmapAllocator.
+      // Madvise failure injection only applies for MmapAllocator.
       continue;
     }
     setupAllocator();
     Allocation allocation;
     if (testData.numOldPages > 0) {
-      allocator_->allocateNonContiguous(testData.numOldPages, allocation);
+      instance_->allocateNonContiguous(testData.numOldPages, allocation);
     }
     ASSERT_GE(allocation.numPages(), testData.numOldPages);
-    allocator_->testingSetFailureInjection(testData.injectedFailure, true);
-    ASSERT_FALSE(
-        allocator_->allocateNonContiguous(testData.numNewPages, allocation));
-    ASSERT_EQ(allocator_->numAllocated(), 0);
-    allocator_->testingClearFailureInjection();
+    instance_->testingSetFailureInjection(testData.injectedFailure, true);
+    ASSERT_FALSE(instance_->allocateNonContiguous(
+        testData.numNewPages, allocation, dummyReservationCB));
+    auto failureMsg = instance_->getAndClearFailureMessage();
+    EXPECT_THAT(
+        failureMsg,
+        testing::HasSubstr(expectedErrorMsg[testData.injectedFailure]));
+    ASSERT_EQ(instance_->numAllocated(), 0);
+    instance_->testingClearFailureInjection();
   }
-  ASSERT_TRUE(allocator_->checkConsistency());
+  ASSERT_TRUE(instance_->checkConsistency());
 }
 
 TEST_P(MemoryAllocatorTest, allocContiguous) {
@@ -914,7 +930,7 @@ TEST_P(MemoryAllocatorTest, allocContiguous) {
       } else {
         ASSERT_EQ(instance_->numMapped(), testData.newContiguousPages);
       }
-      auto mappedAllocator = dynamic_cast<MmapAllocator*>(allocator_.get());
+      auto mappedAllocator = dynamic_cast<MmapAllocator*>(instance_);
       ASSERT_EQ(
           mappedAllocator->numExternalMapped(), testData.newContiguousPages);
     } else {
@@ -930,7 +946,7 @@ TEST_P(MemoryAllocatorTest, allocContiguous) {
       } else {
         ASSERT_EQ(instance_->numMapped(), 0);
       }
-      auto mappedAllocator = dynamic_cast<MmapAllocator*>(allocator_.get());
+      auto mappedAllocator = dynamic_cast<MmapAllocator*>(instance_);
       ASSERT_EQ(mappedAllocator->numExternalMapped(), 0);
     } else {
       ASSERT_EQ(instance_->numMapped(), 0);
@@ -976,9 +992,16 @@ TEST_P(MemoryAllocatorTest, allocContiguousFail) {
       {100, 0, 100, MemoryAllocator::InjectedFailure::kMadvise},
       {200, 0, 100, MemoryAllocator::InjectedFailure::kMadvise},
       {100, 0, 200, MemoryAllocator::InjectedFailure::kMadvise}};
+
+  std::unordered_map<MemoryAllocator::InjectedFailure, std::string>
+      expectedErrorMsg = {
+          {MemoryAllocator::InjectedFailure::kCap,
+           "Exceeded memory allocator limit"},
+          {MemoryAllocator::InjectedFailure::kMmap, "Mmap failed with"},
+          {MemoryAllocator::InjectedFailure::kMadvise,
+           "Could not advise away enough"}};
   for (const auto& testData : testSettings) {
-    if ((testData.injectedFailure !=
-         MemoryAllocator::InjectedFailure::kAllocate) &&
+    if ((testData.injectedFailure != MemoryAllocator::InjectedFailure::kCap) &&
         !useMmap_) {
       continue;
     }
@@ -1003,13 +1026,17 @@ TEST_P(MemoryAllocatorTest, allocContiguousFail) {
 
     ASSERT_FALSE(instance_->allocateContiguous(
         testData.newContiguousPages, &allocation, contiguousAllocation));
+    auto failureMsg = instance_->getAndClearFailureMessage();
+    EXPECT_THAT(
+        failureMsg,
+        testing::HasSubstr(expectedErrorMsg[testData.injectedFailure]));
     ASSERT_EQ(instance_->numAllocated(), 0);
 
     if (useMmap_) {
       // Mmap allocator doesn't free mapped pages count for the old
       // non-contiguous allocation.
       ASSERT_EQ(instance_->numMapped(), testData.nonContiguousPages);
-      auto mappedAllocator = dynamic_cast<MmapAllocator*>(allocator_.get());
+      auto mappedAllocator = dynamic_cast<MmapAllocator*>(instance_);
       ASSERT_EQ(mappedAllocator->numExternalMapped(), 0);
     } else {
       ASSERT_EQ(instance_->numMapped(), 0);
@@ -1047,7 +1074,19 @@ TEST_P(MemoryAllocatorTest, allocContiguousGrow) {
   EXPECT_TRUE(instance_->allocateContiguous(
       kInitialLarge, nullptr, large, nullptr, kCapacityPages));
   EXPECT_FALSE(instance_->growContiguous(kMinGrow, large));
+  auto failureMsg = instance_->getAndClearFailureMessage();
+  auto expected = "Exceeded memory allocator limit";
+  EXPECT_THAT(failureMsg, testing::HasSubstr(expected));
   freeSmall(kMinGrow);
+  if (useMmap_) {
+    // Also test mmap failure path
+    instance_->testingSetFailureInjection(
+        MemoryAllocator::InjectedFailure::kMmap, false);
+    EXPECT_FALSE(instance_->growContiguous(kMinGrow, large));
+    failureMsg = instance_->getAndClearFailureMessage();
+    expected = "Could not advise away enough";
+    EXPECT_THAT(failureMsg, testing::HasSubstr(expected));
+  }
   EXPECT_TRUE(instance_->growContiguous(kMinGrow, large));
   EXPECT_EQ(instance_->numAllocated(), kCapacityPages);
   freeSmall(4 * kMinGrow);
@@ -1304,15 +1343,17 @@ TEST_P(MemoryAllocatorTest, StlMemoryAllocator) {
   }
 }
 
-TEST_P(MemoryAllocatorTest, badNonContiguousAllocation) {
+TEST_P(MemoryAllocatorTest, nonContiguousAllocationBounds) {
   // Set the num of pages to allocate exceeds one PageRun limit.
   constexpr MachinePageCount kNumPages =
       Allocation::PageRun::kMaxPagesInRun + 1;
   std::unique_ptr<Allocation> allocation(new Allocation());
-  ASSERT_THROW(
-      instance_->allocateNonContiguous(kNumPages, *allocation),
-      VeloxRuntimeError);
+  ASSERT_TRUE(instance_->allocateNonContiguous(kNumPages, *allocation));
+  instance_->freeNonContiguous(*allocation);
   ASSERT_TRUE(instance_->allocateNonContiguous(kNumPages - 1, *allocation));
+  instance_->freeNonContiguous(*allocation);
+  ASSERT_TRUE(instance_->allocateNonContiguous(
+      Allocation::PageRun::kMaxPagesInRun * 2, *allocation));
   instance_->freeNonContiguous(*allocation);
 }
 
@@ -1379,7 +1420,13 @@ TEST_P(MemoryAllocatorTest, allocatorCapacity) {
     EXPECT_NE(nullptr, preExistingBuf);
 
     EXPECT_EQ(nullptr, instance_->allocateBytes(allocationBytes));
+    EXPECT_THAT(
+        instance_->getAndClearFailureMessage(),
+        testing::HasSubstr("Exceeded memory allocator limit"));
     EXPECT_EQ(nullptr, instance_->allocateZeroFilled(allocationBytes));
+    EXPECT_THAT(
+        instance_->getAndClearFailureMessage(),
+        testing::HasSubstr("Exceeded memory allocator limit"));
     Allocation small;
     if (allocationBytes <= Allocation::PageRun::kMaxPagesInRun) {
       EXPECT_FALSE(instance_->allocateNonContiguous(allocationBytes, small));
@@ -1398,10 +1445,8 @@ TEST_P(MemoryAllocatorTest, allocatorCapacity) {
 TEST_P(MemoryAllocatorTest, allocatorCapacityWithThreads) {
   std::atomic<int64_t> numOps{0};
   const int64_t numMaxOps = 100000;
-  // We need large enough (at least close to capacity) allocations to breach the
-  // capacity limit in this test.
-  EXPECT_GT(Allocation::PageRun::kMaxPagesInRun, kCapacityPages / 4 * 3);
-  const int64_t nonContAllocPages = Allocation::PageRun::kMaxPagesInRun;
+  const int64_t nonContAllocPages =
+      Allocation::PageRun::kMaxPagesInRun / 256 * 256;
 
   std::function<void()> nonContiguousReserveFail = [&, this]() {
     while (numOps < numMaxOps) {
@@ -1806,6 +1851,43 @@ TEST_F(MmapArenaTest, managedMmapArenasFreeError) {
     ASSERT_ANY_THROW(managedArenas->free(alloc1, kArenaCapacityBytes));
     managedArenas->free(alloc2, kArenaCapacityBytes);
     ASSERT_ANY_THROW(managedArenas->free(alloc2, kArenaCapacityBytes));
+  }
+}
+
+TEST_P(MemoryAllocatorTest, unmap) {
+  const int smallAllocationSize = 1024;
+  const int largeAllocationSize = 8192;
+  const int numAllocations = 10;
+  std::vector<void*> smallBuffers;
+  std::vector<void*> largeBuffers;
+  for (int i = 0; i < numAllocations; ++i) {
+    smallBuffers.push_back(instance_->allocateBytes(smallAllocationSize));
+    largeBuffers.push_back(instance_->allocateBytes(largeAllocationSize));
+  }
+  const auto numAllocated = instance_->numAllocated();
+  if (useMmap_) {
+    ASSERT_EQ(instance_->numMapped(), numAllocated);
+  } else {
+    ASSERT_EQ(instance_->numAllocated(), 0);
+    ASSERT_EQ(instance_->numMapped(), 0);
+  }
+  // Nothing can be unmapped.
+  ASSERT_EQ(instance_->unmap(numAllocated), 0);
+  for (const auto& smallBuffer : smallBuffers) {
+    instance_->freeBytes(smallBuffer, smallAllocationSize);
+  }
+  for (const auto& largeBuffer : largeBuffers) {
+    instance_->freeBytes(largeBuffer, largeAllocationSize);
+  }
+  ASSERT_EQ(instance_->numAllocated(), 0);
+  if (useMmap_) {
+    ASSERT_EQ(instance_->numMapped(), numAllocated);
+    ASSERT_EQ(instance_->unmap(numAllocated / 2), numAllocated / 2);
+    ASSERT_GT(instance_->unmap(numAllocated), 0);
+    ASSERT_EQ(instance_->numMapped(), 0);
+  } else {
+    ASSERT_EQ(instance_->numMapped(), 0);
+    ASSERT_EQ(instance_->unmap(numAllocated), 0);
   }
 }
 } // namespace facebook::velox::memory

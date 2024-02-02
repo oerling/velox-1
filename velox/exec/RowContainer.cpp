@@ -79,8 +79,8 @@ Accumulator::Accumulator(
       usesExternalMemory_{usesExternalMemory},
       alignment_{alignment},
       spillType_{std::move(spillType)},
-      spillExtractFunction_{spillExtractFunction},
-      destroyFunction_{destroyFunction} {}
+      spillExtractFunction_{std::move(spillExtractFunction)},
+      destroyFunction_{std::move(destroyFunction)} {}
 
 bool Accumulator::isFixedSize() const {
   return isFixedSize_;
@@ -520,9 +520,9 @@ int32_t RowContainer::storeVariableSizeAt(
     }
   } else {
     if (size > 0) {
-      ByteStream stream(stringAllocator_.get(), false, false);
+      ByteOutputStream stream(stringAllocator_.get(), false, false);
       const auto position = stringAllocator_->newWrite(stream);
-      stream.appendStringPiece(folly::StringPiece(data + 4, size));
+      stream.appendStringView(std::string_view(data + 4, size));
       stringAllocator_->finishWrite(stream, 0);
       valueAt<std::string_view>(row, rowColumn.offset()) =
           std::string_view(reinterpret_cast<char*>(position.position), size);
@@ -663,7 +663,7 @@ void RowContainer::storeComplexType(
     return;
   }
   RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
-  ByteStream stream(stringAllocator_.get(), false, false);
+  ByteOutputStream stream(stringAllocator_.get(), false, false);
   auto position = stringAllocator_->newWrite(stream);
   ContainerRowSerde::serialize(*decoded.base(), decoded.index(index), stream);
   stringAllocator_->finishWrite(stream, 0);
@@ -671,7 +671,7 @@ void RowContainer::storeComplexType(
   valueAt<std::string_view>(row, offset) = std::string_view(
       reinterpret_cast<char*>(position.position), stream.size());
 
-  // TODO Fix ByteStream::size() API. @oerling is looking into that.
+  // TODO Fix ByteOutputStream::size() API. @oerling is looking into that.
   // Fix the 'size' of the std::string_view.
   // stream.size() is the capacity
   // stream.size() - stream.remainingSize() is the size of the data + size of
@@ -699,7 +699,7 @@ int RowContainer::compareComplexType(
     const DecodedVector& decoded,
     vector_size_t index,
     CompareFlags flags) {
-  VELOX_DCHECK(!flags.mayStopAtNull(), "not supported null handling mode");
+  VELOX_DCHECK(flags.nullAsValue(), "not supported null handling mode");
 
   auto stream = prepareRead(row, offset);
   return ContainerRowSerde::compare(stream, decoded, index, flags);
@@ -719,7 +719,7 @@ int32_t RowContainer::compareComplexType(
     int32_t leftOffset,
     int32_t rightOffset,
     CompareFlags flags) {
-  VELOX_DCHECK(!flags.mayStopAtNull(), "not supported null handling mode");
+  VELOX_DCHECK(flags.nullAsValue(), "not supported null handling mode");
 
   auto leftStream = prepareRead(left, leftOffset);
   auto rightStream = prepareRead(right, rightOffset);
@@ -988,8 +988,8 @@ int32_t RowContainer::listPartitionRows(
         atEnd = true;
       }
       while (bits) {
-        int32_t hit = __builtin_ctz(bits);
-        auto distance = hit + startRow - iter.rowNumber;
+        const int32_t hit = __builtin_ctz(bits);
+        const auto distance = hit + startRow - iter.rowNumber;
         skip(iter, distance);
         result[numResults++] = iter.currentRow();
         if (numResults == maxRows) {

@@ -17,6 +17,7 @@
 
 #include "velox/common/base/SimdUtil.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/Cost.h"
 #include "velox/experimental/query/ExecutablePlan.h"

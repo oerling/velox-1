@@ -26,6 +26,7 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "expression/Expr.h"
 
 DEFINE_string(
     data_path,
@@ -44,7 +45,7 @@ std::string nodeString(core::PlanNode* node) {
 class PlanTest : public testing::Test {
  protected:
   void SetUp() override {
-    rootPool_ = memory::defaultMemoryManager().addRootPool("velox_sql");
+    rootPool_ = memory::memoryManager()->addRootPool("velox_sql");
     pool_ = rootPool_->addLeafChild("optimizer");
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
     context_ = std::make_unique<QueryGraphContext>(*allocator_);
@@ -55,7 +56,7 @@ class PlanTest : public testing::Test {
     filesystems::registerLocalFileSystem();
     if (!registered) {
       registered = true;
-      parquet::registerParquetReaderFactory(parquet::ParquetReaderType::NATIVE);
+      parquet::registerParquetReaderFactory();
     }
     builder_ = std::make_unique<exec::test::TpchQueryBuilder>(
         dwio::common::FileFormat::PARQUET);

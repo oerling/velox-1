@@ -499,6 +499,9 @@ TEST_F(BitUtilTest, nextPowerOfTwo) {
   EXPECT_EQ(nextPowerOfTwo(31), 32);
   EXPECT_EQ(nextPowerOfTwo(32), 32);
   EXPECT_EQ(nextPowerOfTwo(33), 64);
+  EXPECT_EQ(nextPowerOfTwo(1ULL << 32), 1ULL << 32);
+  EXPECT_EQ(nextPowerOfTwo((1ULL << 32) + 1), 1ULL << 33);
+  EXPECT_EQ(nextPowerOfTwo((1ULL << 62) + 1), 1ULL << 63);
 }
 
 TEST_F(BitUtilTest, isPowerOfTwo) {
@@ -850,6 +853,23 @@ TEST_F(BitUtilTest, countLeadingZeros) {
   EXPECT_EQ(
       countLeadingZeros<__uint128_t>(HugeInt::build(0x08FFFFFFFFFFFFFF, 0)), 4);
 }
+
+TEST_F(BitUtilTest, storeBitsToByte) {
+  uint8_t bytes[3]{};
+  storeBitsToByte<8>(0xAA, bytes, 0);
+  ASSERT_EQ(bytes[0], 0xAA);
+  ASSERT_EQ(bytes[1], 0);
+  ASSERT_EQ(bytes[2], 0);
+  storeBitsToByte<4>(0x5, bytes, 8);
+  ASSERT_EQ(bytes[0], 0xAA);
+  ASSERT_EQ(bytes[1], 0x5);
+  ASSERT_EQ(bytes[2], 0);
+  storeBitsToByte<4>(0xA, bytes, 12);
+  ASSERT_EQ(bytes[0], 0xAA);
+  ASSERT_EQ(bytes[1], 0xA5);
+  ASSERT_EQ(bytes[2], 0);
+}
+
 } // namespace bits
 } // namespace velox
 } // namespace facebook
