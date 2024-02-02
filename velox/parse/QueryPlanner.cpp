@@ -15,9 +15,9 @@
  */
 
 #include "velox/parse/QueryPlanner.h"
+#include <duckdb.hpp> // @manual
 #include "velox/duckdb/conversion/DuckConversion.h"
 #include "velox/expression/ScopedVarSetter.h"
-#include <duckdb.hpp> // @manual
 #include "velox/parse/DuckLogicalOperator.h"
 
 #include <duckdb.hpp> // @manual
@@ -433,8 +433,7 @@ PlanNodePtr toVeloxPlan(
 
     auto aggName = translateAggregateName(call->name());
     aggregates.push_back({
-        std::make_shared<CallTypedExpr>(
-            call->type(), fieldInputs, aggName),
+        std::make_shared<CallTypedExpr>(call->type(), fieldInputs, aggName),
         rawInputTypes,
         nullptr, // mask
         {}, // sortingKeys
@@ -965,7 +964,7 @@ void DuckDbQueryPlanner::registerTable(
 
   auto createTableSql = duckdb::makeCreateTableSql(name, *type);
   auto res = conn_.Query(createTableSql);
-  //VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
+  // VELOX_CHECK(res->success, "Failed to create DuckDB table: {}", res->error);
 }
 
 void DuckDbQueryPlanner::registerScalarFunction(

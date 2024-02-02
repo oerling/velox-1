@@ -19,6 +19,7 @@
 
 #include <folly/init/Init.h>
 #include <gtest/gtest.h>
+#include "expression/Expr.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
@@ -26,7 +27,6 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
-#include "expression/Expr.h"
 
 DEFINE_string(
     data_path,
@@ -66,7 +66,7 @@ class PlanTest : public testing::Test {
     queryCtx_ = std::make_shared<core::QueryCtx>();
 
     evaluator_ = std::make_unique<exec::SimpleExpressionEvaluator>(
-								   queryCtx_.get(), pool_.get());
+        queryCtx_.get(), pool_.get());
   }
 
   void makeCheats() {
@@ -92,8 +92,7 @@ class PlanTest : public testing::Test {
     auto schema = tpchSchema(100, partitioned, ordered, false);
     std::string string;
     for (auto counter = 0; counter < numRepeats; ++counter) {
-      Optimization opt(
-          *plan, *schema, *history_, *evaluator_, FLAGS_trace);
+      Optimization opt(*plan, *schema, *history_, *evaluator_, FLAGS_trace);
       auto result = opt.bestPlan();
       if (counter == numRepeats - 1) {
         string = result->toString(true);

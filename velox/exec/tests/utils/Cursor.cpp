@@ -290,7 +290,7 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
     // Wake up the consumer if blocked.
     queue_->enqueue(nullptr, nullptr);
   }
-  
+
   const std::shared_ptr<Task>& task() override {
     return task_;
   }
@@ -373,7 +373,7 @@ class SingleThreadedTaskCursor : public TaskCursorBase {
       task->setError(e);
     }
   }
-  
+
   const std::shared_ptr<Task>& task() override {
     return task_;
   }

@@ -506,9 +506,9 @@ struct BaseTable : public PlanObject {
 
 using BaseTablePtr = const BaseTable*;
 
-  using TypeVector = std::vector<const velox::Type*, QGAllocator<const velox::Type*>>;
+using TypeVector =
+    std::vector<const velox::Type*, QGAllocator<const velox::Type*>>;
 
-  
 // Aggregate function. The aggregation and arguments are in the
 // inherited Call. The Value pertains to the aggregation
 // result or accumulator.
@@ -560,7 +560,7 @@ class Aggregate : public Call {
   const TypeVector rawInputType() const {
     return rawInputType_;
   }
-  
+
  private:
   bool isDistinct_;
   ExprPtr condition_;

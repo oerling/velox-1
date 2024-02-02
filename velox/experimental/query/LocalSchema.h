@@ -18,9 +18,9 @@
 
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
-#include "velox/connectors/hive/TableHandle.h"
 #include "velox/experimental/query/Schema.h"
 
 namespace facebook::verax {
