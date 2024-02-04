@@ -174,12 +174,10 @@ class MaxSizeForStatsAggregate
       return ++i < numToProcess;
     });
 
-    Scratch scratch;
     getVectorSerde()->estimateSerializedSize(
         vector,
         folly::Range(elementIndices_.data(), elementIndices_.size()),
-        elementSizePtrs_.data(),
-        scratch);
+        elementSizePtrs_.data());
   }
 
   void doUpdateSingleGroup(
