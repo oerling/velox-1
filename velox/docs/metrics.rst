@@ -1,9 +1,9 @@
 
-==============
-Runtime Metric
-==============
+===============
+Runtime Metrics
+===============
 
-Runtime metric is used to collect the metrics of important velox runtime events
+Runtime metrics are used to collect the metrics of important velox runtime events
 for monitoring purpose. The collected metrics can provide insights into the
 continuous availability and performance analysis of a Velox runtime system. For
 instance, the collected data can help automatically generate alerts at an
@@ -49,6 +49,20 @@ less than min is counted in min bucket, and any one larger than max is counted
 in max bucket. It also allows to specify the value percentiles to report for
 monitoring. This allows BaseStatsReporter and the backend monitoring service to
 optimize the aggregated data storage.
+
+Task Execution
+--------------
+.. list-table::
+   :widths: 40 10 50
+   :header-rows: 1
+
+   * - Metric Name
+     - Type
+     - Description
+   * - driver_yield_count
+     - Count
+     - The number of times that a driver has yielded from the thread when it
+       hits the per-driver cpu time slice limit if enforced.
 
 Memory Management
 -----------------
@@ -124,6 +138,15 @@ Memory Management
      - Average
      - The average of total free memory capacity which is managed by the
        memory arbitrator.
+   * - memory_pool_usage_leak_bytes
+     - Sum
+     - The leaf memory pool usage leak in bytes.
+   * - memory_pool_reservation_leak_bytes
+     - Sum
+     - The leaf memory pool reservation leak in bytes.
+   * - memory_pool_capacity_leak_bytes
+     - Sum
+     - The root memory pool reservation leak in bytes.
 
 Spilling
 --------

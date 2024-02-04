@@ -61,6 +61,14 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         std::thread::hardware_concurrency());
   }
 
+  void TearDown() override {
+    connectorQueryCtx_.reset();
+    connectorPool_.reset();
+    opPool_.reset();
+    root_.reset();
+    HiveConnectorTestBase::TearDown();
+  }
+
   std::vector<RowVectorPtr> createVectors(int vectorSize, int numVectors) {
     VectorFuzzer::Options options;
     options.vectorSize = vectorSize;
@@ -77,6 +85,7 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
       uint64_t writerFlushThreshold) {
     return std::make_unique<SpillConfig>(
         [&]() -> const std::string& { return spillPath; },
+        [&](uint64_t) {},
         "",
         0,
         0,
@@ -84,6 +93,7 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         spillExecutor_.get(),
         10,
         20,
+        0,
         0,
         0,
         0,
@@ -98,7 +108,7 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
     opPool_.reset();
     root_.reset();
 
-    root_ = memory::defaultMemoryManager().addRootPool(
+    root_ = memory::memoryManager()->addRootPool(
         "HiveDataSinkTest", 1L << 30, exec::MemoryReclaimer::create());
     opPool_ = root_->addLeafChild("operator");
     connectorPool_ =
@@ -183,7 +193,7 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
   }
 
   const std::shared_ptr<memory::MemoryPool> pool_ =
-      memory::addDefaultLeafMemoryPool();
+      memory::memoryManager()->addLeafPool();
 
   std::shared_ptr<memory::MemoryPool> root_;
   std::shared_ptr<memory::MemoryPool> opPool_;
@@ -474,7 +484,7 @@ TEST_F(HiveDataSinkTest, basic) {
   ASSERT_TRUE(stats.empty()) << stats.toString();
   ASSERT_EQ(
       stats.toString(),
-      "numWrittenBytes 0B numWrittenFiles 0 spillRuns[0] spilledInputBytes[0B] spilledBytes[0B] spilledRows[0] spilledPartitions[0] spilledFiles[0] spillFillTimeUs[0us] spillSortTime[0us] spillSerializationTime[0us] spillDiskWrites[0] spillFlushTime[0us] spillWriteTime[0us] maxSpillExceededLimitCount[0]");
+      "numWrittenBytes 0B numWrittenFiles 0 spillRuns[0] spilledInputBytes[0B] spilledBytes[0B] spilledRows[0] spilledPartitions[0] spilledFiles[0] spillFillTimeUs[0us] spillSortTime[0us] spillSerializationTime[0us] spillWrites[0] spillFlushTime[0us] spillWriteTime[0us] maxSpillExceededLimitCount[0]");
 
   const int numBatches = 10;
   const auto vectors = createVectors(500, numBatches);
@@ -572,7 +582,7 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
     std::string debugString() const {
       return fmt::format(
           "format: {}, sortWriter: {}, writerSpillEnabled: {}, writerFlushThreshold: {}, expectedWriterReclaimEnabled: {}, expectedWriterReclaimed: {}",
-          format,
+          dwio::common::toString(format),
           sortWriter,
           writerSpillEnabled,
           succinctBytes(writerFlushThreshold),
@@ -664,9 +674,9 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
       dataSink->appendData(vectors[i]);
     }
     memory::MemoryReclaimer::Stats stats;
-    uint64_t reclaimableBytes;
+    uint64_t reclaimableBytes{0};
     if (testData.expectedWriterReclaimed) {
-      ASSERT_TRUE(root_->reclaimableBytes(reclaimableBytes));
+      reclaimableBytes = root_->reclaimableBytes().value();
       ASSERT_GT(reclaimableBytes, 0);
       ASSERT_GT(root_->reclaim(256L << 20, 0, stats), 0);
       ASSERT_GT(stats.reclaimExecTimeUs, 0);
@@ -674,8 +684,7 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
       // We expect dwrf writer set numNonReclaimableAttempts counter.
       ASSERT_LE(stats.numNonReclaimableAttempts, 1);
     } else {
-      ASSERT_FALSE(root_->reclaimableBytes(reclaimableBytes));
-      ASSERT_EQ(reclaimableBytes, 0);
+      ASSERT_FALSE(root_->reclaimableBytes().has_value());
       ASSERT_EQ(root_->reclaim(256L << 20, 0, stats), 0);
       ASSERT_EQ(stats.reclaimExecTimeUs, 0);
       ASSERT_EQ(stats.reclaimedBytes, 0);
@@ -713,7 +722,7 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
     std::string debugString() const {
       return fmt::format(
           "format: {}, sortWriter: {}, writerSpillEnabled: {}, close: {}, expectedWriterReclaimEnabled: {}",
-          format,
+          dwio::common::toString(format),
           sortWriter,
           writerSpillEnabled,
           close,
@@ -812,9 +821,9 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
     }
 
     memory::MemoryReclaimer::Stats stats;
-    uint64_t reclaimableBytes;
+    uint64_t reclaimableBytes{0};
     if (testData.expectedWriterReclaimEnabled) {
-      ASSERT_TRUE(root_->reclaimableBytes(reclaimableBytes));
+      reclaimableBytes = root_->reclaimableBytes().value();
       if (testData.close) {
         // NOTE: file writer might not release all the memory on close
         // immediately.
@@ -823,8 +832,7 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
         ASSERT_EQ(reclaimableBytes, 0);
       }
     } else {
-      ASSERT_FALSE(root_->reclaimableBytes(reclaimableBytes));
-      ASSERT_EQ(reclaimableBytes, 0);
+      ASSERT_FALSE(root_->reclaimableBytes().has_value());
     }
     ASSERT_EQ(root_->reclaim(1L << 30, 0, stats), 0);
     ASSERT_EQ(stats.reclaimExecTimeUs, 0);
@@ -898,6 +906,6 @@ int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   // Signal handler required for ThreadDebugInfoTest
   facebook::velox::process::addDefaultFatalSignalHandler();
-  folly::init(&argc, &argv, false);
+  folly::Init init{&argc, &argv, false};
   return RUN_ALL_TESTS();
 }

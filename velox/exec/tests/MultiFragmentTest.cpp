@@ -68,9 +68,8 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     auto configCopy = configSettings_;
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(), core::QueryConfig(std::move(configCopy)));
-    queryCtx->testingOverrideMemoryPool(
-        memory::defaultMemoryManager().addRootPool(
-            queryCtx->queryId(), maxMemory, MemoryReclaimer::create()));
+    queryCtx->testingOverrideMemoryPool(memory::memoryManager()->addRootPool(
+        queryCtx->queryId(), maxMemory, MemoryReclaimer::create()));
     core::PlanFragment planFragment{planNode};
     return Task::create(
         taskId,
@@ -157,7 +156,7 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     auto listener = bufferManager_->newListener();
     IOBufOutputStream stream(*pool(), listener.get(), data->size());
     data->flush(&stream);
-    return std::make_unique<SerializedPage>(stream.getIOBuf());
+    return std::make_unique<SerializedPage>(stream.getIOBuf(), nullptr, size);
   }
 
   int32_t enqueue(
@@ -180,6 +179,9 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       int32_t expectedBackgroundCpuCount) const {
     auto taskStats = exec::toPlanStats(task->taskStats());
 
+    const auto& exchangeOperatorStats = taskStats.at("0");
+    ASSERT_GT(exchangeOperatorStats.rawInputBytes, 0);
+    ASSERT_GT(exchangeOperatorStats.rawInputRows, 0);
     const auto& exchangeStats = taskStats.at("0").customStats;
     ASSERT_EQ(1, exchangeStats.count("localExchangeSource.numPages"));
     ASSERT_EQ(
@@ -564,8 +566,8 @@ TEST_F(MultiFragmentTest, partitionedOutputWithLargeInput) {
   // We create a large vector that hits the row limit (70% - 120% of 10,000)
   // which would hit a task level memory limit of 1MB unless its split up.
   // This test exercises splitting up the input both from the edges and the
-  // middle as it ends up splitting it in ~ 10 splits.
-  setupSources(1, 100'000);
+  // middle as it ends up splitting it in ~ 3 splits.
+  setupSources(1, 30'000);
   const int64_t kRootMemoryLimit = 1 << 20; // 1MB
   // Single Partition
   {
@@ -1411,7 +1413,7 @@ TEST_F(MultiFragmentTest, customPlanNodeWithExchangeClient) {
           .capturePlanNodeId(testNodeId)
           .planNode();
 
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
   auto task = cursor->task();
   addRemoteSplits(task, {leafTaskId});
   while (cursor->moveNext()) {

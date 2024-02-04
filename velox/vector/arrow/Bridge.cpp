@@ -800,19 +800,6 @@ void exportFlattenedVector(
       flattenAndExport, vec.typeKind(), vec, rows, out, pool, holder);
 }
 
-// Set the array as using "Null Layout" - no buffers are allocated.
-void setNullArray(ArrowArray& array, size_t length) {
-  array.length = length;
-  array.null_count = length;
-  array.offset = 0;
-  array.n_buffers = 0;
-  array.n_children = 0;
-  array.buffers = nullptr;
-  array.children = nullptr;
-  array.dictionary = nullptr;
-  array.release = releaseArrowArray;
-}
-
 void exportConstantValue(
     const BaseVector& vec,
     ArrowArray& out,
@@ -982,7 +969,7 @@ TypePtr importFromArrowImpl(
         // Parse ",".
         int scale = std::stoi(&format[2 + sz + 1], &sz);
         return DECIMAL(precision, scale);
-      } catch (std::invalid_argument& err) {
+      } catch (std::invalid_argument&) {
         VELOX_USER_FAIL(
             "Unable to convert '{}' ArrowSchema decimal format to Velox decimal",
             format);
@@ -1168,7 +1155,7 @@ void exportToArrow(
           exportToArrow(rows.childAt(i), *currentSchema, options);
           currentSchema->name = bridgeHolder->rowType->nameOf(i).data();
           arrowSchema.children[i] = currentSchema.get();
-        } catch (const VeloxException& e) {
+        } catch (const VeloxException&) {
           // Release any children that have already been built before
           // re-throwing the exception back to the client.
           for (size_t j = 0; j < i; ++j) {

@@ -22,6 +22,7 @@
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/compression/Compression.h"
 #include "velox/dwio/parquet/reader/BooleanDecoder.h"
+#include "velox/dwio/parquet/reader/DeltaBpDecoder.h"
 #include "velox/dwio/parquet/reader/ParquetTypeWithId.h"
 #include "velox/dwio/parquet/reader/RleBpDataDecoder.h"
 #include "velox/dwio/parquet/reader/StringDecoder.h"
@@ -39,7 +40,7 @@ class PageReader {
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
       ParquetTypeWithIdPtr fileType,
-      thrift::CompressionCodec::type codec,
+      common::CompressionKind codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
@@ -57,7 +58,7 @@ class PageReader {
   PageReader(
       std::unique_ptr<dwio::common::SeekableInputStream> stream,
       memory::MemoryPool& pool,
-      thrift::CompressionCodec::type codec,
+      common::CompressionKind codec,
       int64_t chunkSize)
       : pool_(pool),
         inputStream_(std::move(stream)),
@@ -120,6 +121,10 @@ class PageReader {
   void clearDictionary() {
     dictionary_.clear();
     dictionaryValues_.reset();
+  }
+
+  bool isDeltaBinaryPacked() const {
+    return encoding_ == thrift::Encoding::DELTA_BINARY_PACKED;
   }
 
   /// Returns the range of repdefs for the top level rows covered by the last
@@ -198,8 +203,6 @@ class PageReader {
   // straddles buffers. Allocates or resizes 'copy' as needed.
   const char* FOLLY_NONNULL readBytes(int32_t size, BufferPtr& copy);
 
-  common::CompressionKind thriftCodecToCompressionKind();
-
   // Decompresses data starting at 'pageData_', consuming 'compressedsize' and
   // producing up to 'uncompressedSize' bytes. The start of the decoding
   // result is returned. an intermediate copy may be made in 'decompresseddata_'
@@ -264,6 +267,9 @@ class PageReader {
       if (isDictionary()) {
         auto dictVisitor = visitor.toDictionaryColumnVisitor();
         dictionaryIdDecoder_->readWithVisitor<true>(nulls, dictVisitor);
+      } else if (encoding_ == thrift::Encoding::DELTA_BINARY_PACKED) {
+        nullsFromFastPath = false;
+        deltaBpDecoder_->readWithVisitor<true>(nulls, visitor);
       } else {
         directDecoder_->readWithVisitor<true>(
             nulls, visitor, nullsFromFastPath);
@@ -272,6 +278,8 @@ class PageReader {
       if (isDictionary()) {
         auto dictVisitor = visitor.toDictionaryColumnVisitor();
         dictionaryIdDecoder_->readWithVisitor<false>(nullptr, dictVisitor);
+      } else if (encoding_ == thrift::Encoding::DELTA_BINARY_PACKED) {
+        deltaBpDecoder_->readWithVisitor<false>(nulls, visitor);
       } else {
         directDecoder_->readWithVisitor<false>(
             nulls, visitor, !this->type_->type()->isShortDecimal());
@@ -346,7 +354,7 @@ class PageReader {
   const int32_t maxDefine_;
   const bool isTopLevel_;
 
-  const thrift::CompressionCodec::type codec_;
+  const common::CompressionKind codec_;
   const int64_t chunkSize_;
   const char* FOLLY_NULLABLE bufferStart_{nullptr};
   const char* FOLLY_NULLABLE bufferEnd_{nullptr};
@@ -476,6 +484,7 @@ class PageReader {
   std::unique_ptr<RleBpDataDecoder> dictionaryIdDecoder_;
   std::unique_ptr<StringDecoder> stringDecoder_;
   std::unique_ptr<BooleanDecoder> booleanDecoder_;
+  std::unique_ptr<DeltaBpDecoder> deltaBpDecoder_;
   // Add decoders for other encodings here.
 };
 

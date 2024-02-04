@@ -18,6 +18,14 @@
 
 namespace facebook::velox::exec {
 
+void Exchange::addTaskIds(std::vector<std::string>& taskIds) {
+  std::shuffle(std::begin(taskIds), std::end(taskIds), rng_);
+  for (const std::string& taskId : taskIds) {
+    exchangeClient_->addRemoteTaskId(taskId);
+  }
+  stats_.wlock()->numSplits += taskIds.size();
+}
+
 bool Exchange::getSplits(ContinueFuture* future) {
   if (!processSplits_) {
     return false;
@@ -25,6 +33,7 @@ bool Exchange::getSplits(ContinueFuture* future) {
   if (noMoreSplits_) {
     return false;
   }
+  std::vector<std::string> taskIds;
   for (;;) {
     exec::Split split;
     auto reason = operatorCtx_->task()->getSplitOrFuture(
@@ -34,9 +43,9 @@ bool Exchange::getSplits(ContinueFuture* future) {
         auto remoteSplit = std::dynamic_pointer_cast<RemoteConnectorSplit>(
             split.connectorSplit);
         VELOX_CHECK(remoteSplit, "Wrong type of split");
-        exchangeClient_->addRemoteTaskId(remoteSplit->taskId);
-        ++stats_.wlock()->numSplits;
+        taskIds.push_back(remoteSplit->taskId);
       } else {
+        addTaskIds(taskIds);
         exchangeClient_->noMoreRemoteTasks();
         noMoreSplits_ = true;
         if (atEnd_) {
@@ -47,6 +56,7 @@ bool Exchange::getSplits(ContinueFuture* future) {
         return false;
       }
     } else {
+      addTaskIds(taskIds);
       return true;
     }
   }
@@ -106,15 +116,33 @@ RowVectorPtr Exchange::getOutput() {
 
   uint64_t rawInputBytes{0};
   vector_size_t resultOffset = 0;
+  int32_t numBatchMerges = 0;
   for (const auto& page : currentPages_) {
     rawInputBytes += page->size();
 
     auto inputStream = page->prepareStreamForDeserialize();
 
     while (!inputStream.atEnd()) {
+      if (resultOffset > 0) {
+        ++numBatchMerges;
+      }
       getSerde()->deserialize(
           &inputStream, pool(), outputType_, &result_, resultOffset);
+      const auto newRows = result_->size() - resultOffset;
       resultOffset = result_->size();
+      int32_t constantRows = 0;
+      for (auto i = 0; i < result_->childrenSize(); ++i) {
+        auto& column = result_->childAt(i);
+        if (column->encoding() == VectorEncoding::Simple::CONSTANT) {
+          auto lockedStats = stats_.wlock();
+          lockedStats->addRuntimeStat("constantRows", RuntimeCounter(newRows));
+        }
+        if (column->encoding() == VectorEncoding::Simple::DICTIONARY) {
+          auto lockedStats = stats_.wlock();
+          lockedStats->addRuntimeStat(
+              "dictionaryRows", RuntimeCounter(newRows));
+        }
+      }
     }
   }
 
@@ -123,7 +151,10 @@ RowVectorPtr Exchange::getOutput() {
   {
     auto lockedStats = stats_.wlock();
     lockedStats->rawInputBytes += rawInputBytes;
+    lockedStats->rawInputPositions += result_->size();
     lockedStats->addInputVector(result_->estimateFlatSize(), result_->size());
+    lockedStats->addRuntimeStat(
+        "numBatchMerges", RuntimeCounter(numBatchMerges));
   }
 
   return result_;

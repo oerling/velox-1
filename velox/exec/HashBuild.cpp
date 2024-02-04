@@ -30,9 +30,11 @@ namespace {
 BlockingReason fromStateToBlockingReason(HashBuild::State state) {
   switch (state) {
     case HashBuild::State::kRunning:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case HashBuild::State::kFinish:
       return BlockingReason::kNotBlocked;
+    case HashBuild::State::kYield:
+      return BlockingReason::kYield;
     case HashBuild::State::kWaitForSpill:
       return BlockingReason::kWaitForSpill;
     case HashBuild::State::kWaitForBuild:
@@ -238,14 +240,8 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
       table_->rows(),
       tableType_,
       std::move(hashBits),
-      spillConfig.getSpillDirPathCb,
-      spillConfig.fileNamePrefix,
-      spillConfig.maxFileSize,
-      spillConfig.writeBufferSize,
-      spillConfig.compressionKind,
-      memory::spillMemoryPool(),
-      spillConfig.executor,
-      spillConfig.fileCreateConfig);
+      &spillConfig,
+      spillConfig.maxFileSize);
 
   const int32_t numPartitions = spiller_->hashBits().numPartitions();
   spillInputIndicesBuffers_.resize(numPartitions);
@@ -454,7 +450,7 @@ bool HashBuild::reserveMemory(const RowVectorPtr& input) {
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
   const auto outOfLineBytesPerRow =
       std::max<uint64_t>(1, numRows == 0 ? 0 : outOfLineBytes / numRows);
-  const auto currentUsage = pool()->parent()->currentBytes();
+  const auto currentUsage = pool()->currentBytes();
 
   if (numRows != 0) {
     // Test-only spill path.
@@ -466,9 +462,10 @@ bool HashBuild::reserveMemory(const RowVectorPtr& input) {
 
     // We check usage from the parent pool to take peers' allocations into
     // account.
-    if (spillMemoryThreshold_ != 0 && currentUsage > spillMemoryThreshold_) {
+    const auto nodeUsage = pool()->parent()->currentBytes();
+    if (spillMemoryThreshold_ != 0 && nodeUsage > spillMemoryThreshold_) {
       const int64_t bytesToSpill =
-          currentUsage * spillConfig()->spillableReservationGrowthPct / 100;
+          nodeUsage * spillConfig()->spillableReservationGrowthPct / 100;
       numSpillRows_ = std::max<int64_t>(
           1, bytesToSpill / (rows->fixedRowSize() + outOfLineBytesPerRow));
       numSpillBytes_ = numSpillRows_ * outOfLineBytesPerRow;
@@ -917,6 +914,11 @@ void HashBuild::processSpillInput() {
     if (!isRunning()) {
       return;
     }
+    if (operatorCtx_->driver()->shouldYield()) {
+      state_ = State::kYield;
+      future_ = ContinueFuture{folly::Unit{}};
+      return;
+    }
   }
   noMoreInputInternal();
 }
@@ -969,6 +971,11 @@ BlockingReason HashBuild::isBlocked(ContinueFuture* future) {
         processSpillInput();
       }
       break;
+    case State::kYield:
+      setRunning();
+      VELOX_CHECK(isInputFromSpill());
+      processSpillInput();
+      break;
     case State::kFinish:
       break;
     case State::kWaitForSpill:
@@ -979,7 +986,7 @@ BlockingReason HashBuild::isBlocked(ContinueFuture* future) {
       }
       break;
     case State::kWaitForBuild:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForProbe:
       if (!future_.valid()) {
         setRunning();
@@ -1029,11 +1036,11 @@ void HashBuild::checkStateTransition(State state) {
       }
       break;
     case State::kWaitForBuild:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForSpill:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kWaitForProbe:
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case State::kFinish:
       VELOX_CHECK_EQ(state_, State::kRunning);
       break;
@@ -1047,6 +1054,8 @@ std::string HashBuild::stateName(State state) {
   switch (state) {
     case State::kRunning:
       return "RUNNING";
+    case State::kYield:
+      return "YIELD";
     case State::kWaitForSpill:
       return "WAIT_FOR_SPILL";
     case State::kWaitForBuild:
@@ -1113,9 +1122,8 @@ void HashBuild::reclaim(
       ++stats.numNonReclaimableAttempts;
       LOG(WARNING) << "Can't reclaim from hash build operator, state_["
                    << stateName(buildOp->state_) << "], nonReclaimableSection_["
-                   << nonReclaimableSection_ << "], spiller_["
-                   << (spiller_->finalized() ? "finalized" : "non-finalized")
-                   << "], " << buildOp->pool()->name() << ", usage: "
+                   << buildOp->nonReclaimableSection_ << "], "
+                   << buildOp->pool()->name() << ", usage: "
                    << succinctBytes(buildOp->pool()->currentBytes());
       return;
     }
@@ -1172,7 +1180,8 @@ void HashBuild::reclaim(
 }
 
 bool HashBuild::nonReclaimableState() const {
-  return ((state_ != State::kRunning) && (state_ != State::kWaitForBuild)) ||
+  return ((state_ != State::kRunning) && (state_ != State::kWaitForBuild) &&
+          (state_ != State::kYield)) ||
       nonReclaimableSection_ || spiller_->finalized();
 }
 

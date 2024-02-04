@@ -57,7 +57,8 @@ class BenchmarkBase {
   }
 
  private:
-  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{
+      memory::memoryManager()->addLeafPool()};
   VectorMaker vectorMaker_{pool_.get()};
 };
 
@@ -239,7 +240,8 @@ BENCHMARK(computeValueIdsLowCardinalityNotAllUsed) {
 }
 
 int main(int argc, char** argv) {
-  folly::init(&argc, &argv);
+  folly::Init init{&argc, &argv};
+  memory::MemoryManager::initialize({});
   folly::runBenchmarks();
   return 0;
 }

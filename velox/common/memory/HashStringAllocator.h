@@ -239,7 +239,11 @@ class HashStringAllocator : public StreamArena {
 
   // Returns ByteInputStream over the data in the range of 'header' and
   // possible continuation ranges.
-  static ByteInputStream prepareRead(const Header* header);
+  // @param maxBytes If provided, the returned stream will cover at most that
+  // many bytes.
+  static ByteInputStream prepareRead(
+      const Header* header,
+      size_t maxBytes = std::numeric_limits<size_t>::max());
 
   // Returns the number of payload bytes between 'header->begin()' and
   // 'position'.
@@ -322,7 +326,7 @@ class HashStringAllocator : public StreamArena {
   }
 
   // Frees all memory associated with 'this' and leaves 'this' ready for reuse.
-  void clear();
+  void clear(bool /*reservePreviousSize*/ = true) override;
 
   memory::MemoryPool* FOLLY_NONNULL pool() const {
     return pool_.pool();

@@ -1146,7 +1146,7 @@ TEST_F(TableScanTest, count) {
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
 
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
 
   cursor->task()->addSplit("0", makeHiveSplit(filePath->path));
   cursor->task()->noMoreSplits("0");
@@ -1245,7 +1245,7 @@ TEST_F(TableScanTest, sequentialSplitNoDoubleRead) {
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
 
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
   // Add the same split with the same sequence id twice. The second should be
   // ignored.
   EXPECT_TRUE(cursor->task()->addSplitWithSequence(
@@ -1275,7 +1275,7 @@ TEST_F(TableScanTest, outOfOrderSplits) {
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
 
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
 
   // Add splits out of order (1, 0). Both of them should be processed.
   EXPECT_TRUE(cursor->task()->addSplitWithSequence(
@@ -1306,7 +1306,7 @@ TEST_F(TableScanTest, splitDoubleRead) {
   params.planNode = tableScanNode(ROW({}, {}));
 
   for (size_t i = 0; i < 2; ++i) {
-    auto cursor = std::make_unique<TaskCursor>(params);
+    auto cursor = TaskCursor::create(params);
 
     // Add the same split twice - we should read twice the size.
     cursor->task()->addSplit("0", makeHiveSplit(filePath->path));
@@ -1388,12 +1388,19 @@ TEST_F(TableScanTest, splitOffsetAndLength) {
 }
 
 TEST_F(TableScanTest, fileNotFound) {
-  CursorParameters params;
-  params.planNode = tableScanNode();
-
-  auto cursor = std::make_unique<TaskCursor>(params);
-  cursor->task()->addSplit("0", makeHiveSplit("/path/to/nowhere.orc"));
-  EXPECT_THROW(cursor->moveNext(), VeloxRuntimeError);
+  auto split = HiveConnectorSplitBuilder("/path/to/nowhere.orc").build();
+  auto assertMissingFile = [&](bool ignoreMissingFiles) {
+    AssertQueryBuilder(tableScanNode())
+        .connectorSessionProperty(
+            kHiveConnectorId,
+            connector::hive::HiveConfig::kIgnoreMissingFilesSession,
+            std::to_string(ignoreMissingFiles))
+        .split(split)
+        .assertEmptyResults();
+  };
+  assertMissingFile(true);
+  VELOX_ASSERT_RUNTIME_THROW_CODE(
+      assertMissingFile(false), error_code::kFileNotFound);
 }
 
 // A valid ORC file (containing headers) but no data.
@@ -1497,6 +1504,15 @@ TEST_F(TableScanTest, partitionedTableDoubleKey) {
   writeToFile(filePath->path, vectors);
   createDuckDbTable(vectors);
   testPartitionedTable(filePath->path, DOUBLE(), "3.5");
+}
+
+TEST_F(TableScanTest, partitionedTableDateKey) {
+  auto rowType = ROW({"c0", "c1"}, {BIGINT(), DOUBLE()});
+  auto vectors = makeVectors(10, 1'000, rowType);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, vectors);
+  createDuckDbTable(vectors);
+  testPartitionedTable(filePath->path, DATE(), "2023-10-27");
 }
 
 std::vector<StringView> toStringViews(const std::vector<std::string>& values) {
@@ -1834,9 +1850,20 @@ TEST_F(TableScanTest, statsBasedSkippingNulls) {
         "SELECT * FROM tmp WHERE " + filter);
   };
 
-  auto task = assertQuery("c0 IS NULL");
+  auto task = TableScanTest::assertQuery(
+      PlanBuilder().tableScan(rowType).planNode(),
+      filePaths,
+      "SELECT * FROM tmp");
 
   auto stats = getTableScanStats(task);
+  EXPECT_EQ(31'234, stats.rawInputRows);
+  EXPECT_EQ(31'234, stats.inputRows);
+  EXPECT_EQ(31'234, stats.outputRows);
+  EXPECT_GT(getTableScanRuntimeStats(task)["totalScanTime"].sum, 0);
+
+  task = assertQuery("c0 IS NULL");
+
+  stats = getTableScanStats(task);
   EXPECT_EQ(0, stats.rawInputRows);
   EXPECT_EQ(0, stats.inputRows);
   EXPECT_EQ(0, stats.outputRows);
@@ -2918,17 +2945,17 @@ TEST_F(TableScanTest, interleaveLazyEager) {
                         .assignments(assignments)
                         .endTableScan()
                         .planNode();
-  TaskCursor cursor(params);
-  cursor.task()->addSplit("0", makeHiveSplit(lazyFile->path));
-  cursor.task()->addSplit("0", makeHiveSplit(eagerFile->path));
-  cursor.task()->addSplit("0", makeHiveSplit(lazyFile->path));
-  cursor.task()->noMoreSplits("0");
+  auto cursor = TaskCursor::create(params);
+  cursor->task()->addSplit("0", makeHiveSplit(lazyFile->path));
+  cursor->task()->addSplit("0", makeHiveSplit(eagerFile->path));
+  cursor->task()->addSplit("0", makeHiveSplit(lazyFile->path));
+  cursor->task()->noMoreSplits("0");
   for (int i = 0; i < 3; ++i) {
-    ASSERT_TRUE(cursor.moveNext());
-    auto result = cursor.current();
+    ASSERT_TRUE(cursor->moveNext());
+    auto result = cursor->current();
     ASSERT_EQ(result->size(), i % 2 == 0 ? kSize : numNonNull);
   }
-  ASSERT_FALSE(cursor.moveNext());
+  ASSERT_FALSE(cursor->moveNext());
 }
 
 TEST_F(TableScanTest, lazyVectorAccessTwiceWithDifferentRows) {
@@ -3014,7 +3041,7 @@ TEST_F(TableScanTest, addSplitsToFailedTask) {
                         .project({"5 / c0"})
                         .planNode();
 
-  auto cursor = std::make_unique<exec::test::TaskCursor>(params);
+  auto cursor = exec::test::TaskCursor::create(params);
   cursor->task()->addSplit(scanNodeId, makeHiveSplit(filePath->path));
 
   EXPECT_THROW(while (cursor->moveNext()){}, VeloxUserError);
@@ -3703,4 +3730,35 @@ TEST_F(TableScanTest, varbinaryPartitionKey) {
                 .planNode();
 
   assertQuery(op, split, "SELECT c0, '2021-12-02' FROM tmp");
+}
+
+TEST_F(TableScanTest, timestampPartitionKey) {
+  const char* inputs[] = {"2023-10-14 07:00:00.0", "2024-01-06 04:00:00.0"};
+  auto expected = makeRowVector(
+      {"t"},
+      {
+          makeFlatVector<Timestamp>(
+              std::end(inputs) - std::begin(inputs),
+              [&](auto i) {
+                auto t = util::fromTimestampString(inputs[i]);
+                t.toGMT(Timestamp::defaultTimezone());
+                return t;
+              }),
+      });
+  auto vectors = makeVectors(1, 1);
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->path, vectors);
+  ColumnHandleMap assignments = {{"t", partitionKey("t", TIMESTAMP())}};
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
+  for (auto& t : inputs) {
+    splits.push_back(
+        HiveConnectorSplitBuilder(filePath->path).partitionKey("t", t).build());
+  }
+  auto plan = PlanBuilder()
+                  .startTableScan()
+                  .outputType(ROW({"t"}, {TIMESTAMP()}))
+                  .assignments(assignments)
+                  .endTableScan()
+                  .planNode();
+  AssertQueryBuilder(plan).splits(std::move(splits)).assertResults(expected);
 }

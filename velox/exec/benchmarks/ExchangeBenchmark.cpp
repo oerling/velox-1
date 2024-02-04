@@ -42,6 +42,17 @@ DEFINE_int64(
 DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
 DEFINE_int32(dict_pct, 0, "Percentage of columns wrapped in dictionary");
 
+DEFINE_int32(
+    string_min_cardinality,
+    100,
+    "Minimum cardinality of strings for string10k");
+DEFINE_int32(
+    string_max_cardinality,
+    10000,
+    "Minimum cardinality of strings for string10k");
+DEFINE_int32(small_string_size, 20, "Size of small string in strinh10k"); );
+DEFINE_int32(large_string_size, 200, "Size of large string in strinh10k"); );
+
 /// Benchmarks repartition/exchange with different batch sizes,
 /// numbers of destinations and data type mixes.  Generates a plan
 /// that 1. shuffles a constant input in each of n workers, sending
@@ -292,8 +303,7 @@ class ExchangeBenchmark : public VectorTestBase {
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(), core::QueryConfig(std::move(configCopy)));
     queryCtx->testingOverrideMemoryPool(
-        memory::defaultMemoryManager().addRootPool(
-            queryCtx->queryId(), maxMemory));
+        memory::memoryManager()->addRootPool(queryCtx->queryId(), maxMemory));
     core::PlanFragment planFragment{planNode};
     return Task::create(
         taskId,
@@ -342,13 +352,14 @@ class ExchangeBenchmark : public VectorTestBase {
 
 int32_t ExchangeBenchmark::iteration_;
 
-ExchangeBenchmark bm;
+std::unique_ptr<ExchangeBenchmark> bm;
 
 std::vector<RowVectorPtr> flat10k;
 std::vector<RowVectorPtr> deep10k;
 std::vector<RowVectorPtr> flat50;
 std::vector<RowVectorPtr> deep50;
 std::vector<RowVectorPtr> struct1k;
+std::vector<RowVectorPtr> string10k;
 
 Counters flat10kCounters;
 Counters deep10kCounters;
@@ -356,36 +367,42 @@ Counters flat50Counters;
 Counters deep50Counters;
 Counters localFlat10kCounters;
 Counters struct1kCounters;
+Counters string10kCounters;
 
 BENCHMARK(exchangeFlat10k) {
-  bm.run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
+  bm->run(flat10k, FLAGS_width, FLAGS_task_width, flat10kCounters);
 }
 
 BENCHMARK_RELATIVE(exchangeFlat50) {
-  bm.run(flat50, FLAGS_width, FLAGS_task_width, flat50Counters);
+  bm->run(flat50, FLAGS_width, FLAGS_task_width, flat50Counters);
 }
 
 BENCHMARK(exchangeDeep10k) {
-  bm.run(deep10k, FLAGS_width, FLAGS_task_width, deep10kCounters);
+  bm->run(deep10k, FLAGS_width, FLAGS_task_width, deep10kCounters);
 }
 
 BENCHMARK_RELATIVE(exchangeDeep50) {
-  bm.run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
+  bm->run(deep50, FLAGS_width, FLAGS_task_width, deep50Counters);
 }
 
 BENCHMARK(exchangeStruct1K) {
-  bm.run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
+  bm->run(struct1k, FLAGS_width, FLAGS_task_width, struct1kCounters);
 }
 
 BENCHMARK(localFlat10k) {
-  bm.runLocal(
+  bm->runLocal(
       flat10k, FLAGS_width, FLAGS_num_local_tasks, localFlat10kCounters);
+}
+
+BENCHMARK(exchangeString10k) {
+  bm.run(string10k, FLAGS_width, FLAGS_task_width, string10kCounters);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-  folly::init(&argc, &argv);
+  folly::Init init{&argc, &argv};
+  memory::MemoryManager::initialize({});
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
@@ -433,6 +450,18 @@ int main(int argc, char** argv) {
                    {"d5", DOUBLE()},
                    {"b5", BOOLEAN()},
                    {"a5", ARRAY(TINYINT())}})}})}});
+  auto stringType = ROW(
+      {{"c0", BIGINT()},
+       {"s1", VARCHAR()},
+       {"s2", VARCHAR()},
+       {"s3", VARCHAR()},
+       {"s4", VARCHAR()},
+       {"s5", VARCHAR()},
+       {"s6", VARCHAR()},
+       {"s7", VARCHAR()},
+       {"s8", VARCHAR()},
+       {"s9", VARCHAR()},
+       {"s10", VARCHAR()}});
 
   auto deepType = ROW(
       {{"c0", BIGINT()},
@@ -449,6 +478,7 @@ int main(int argc, char** argv) {
   flat50 = bm.makeRows(flatType, 2000, 50, FLAGS_dict_pct);
   deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
   struct1k = bm.makeRows(structType, 100, 1000, FLAGS_dict_pct);
+  string10k = bm.makeRows(stringType, 100, 10000, FLAGS_dict_pct);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl
@@ -456,6 +486,6 @@ int main(int argc, char** argv) {
             << "deep10k: " << deep10kCounters.toString() << std::endl
             << "deep50: " << deep50Counters.toString() << std::endl
             << "struct1k: " << struct1kCounters.toString() << std::endl;
-  return 0;
+  << "string10k: " << string10kCounters.toString() << std::endl;
   return 0;
 }

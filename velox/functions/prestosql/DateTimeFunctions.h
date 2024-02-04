@@ -69,29 +69,32 @@ struct TimestampWithTimezoneSupport {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   // Convert timestampWithTimezone to a timestamp representing the moment at the
-  // zone in timestampWithTimezone.
+  // zone in timestampWithTimezone. If `asGMT` is set to true, return the GMT
+  // time at the same moment.
   FOLLY_ALWAYS_INLINE
   Timestamp toTimestamp(
-      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      bool asGMT = false) {
     const auto milliseconds = *timestampWithTimezone.template at<0>();
+    auto tz = *timestampWithTimezone.template at<1>();
     Timestamp timestamp = Timestamp::fromMillis(milliseconds);
-    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+    if (!asGMT) {
+      timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+    }
 
     return timestamp;
   }
 
-  // Get offset in seconds with GMT from timestampWithTimezone
+  // Get offset in seconds with GMT from timestampWithTimezone.
   FOLLY_ALWAYS_INLINE
   int64_t getGMTOffsetSec(
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     Timestamp inputTimeStamp = this->toTimestamp(timestampWithTimezone);
-    // Get the given timezone name
-    auto timezone =
-        util::getTimeZoneName(*timestampWithTimezone.template at<1>());
-    auto* timezonePtr = date::locate_zone(timezone);
+
     // Create a copy of inputTimeStamp and convert it to GMT
     auto gmtTimeStamp = inputTimeStamp;
-    gmtTimeStamp.toGMT(*timezonePtr);
+    gmtTimeStamp.toGMT(*timestampWithTimezone.template at<1>());
+
     // Get offset in seconds with GMT and convert to hour
     return (inputTimeStamp.getSeconds() - gmtTimeStamp.getSeconds());
   }
@@ -1121,8 +1124,8 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
     call(
         result,
         unitString,
-        this->toTimestamp(timestamp1),
-        this->toTimestamp(timestamp2));
+        this->toTimestamp(timestamp1, true),
+        this->toTimestamp(timestamp2, true));
   }
 };
 
@@ -1221,7 +1224,8 @@ struct DateParseFunction {
     }
 
     auto dateTimeResult =
-        format_->parse(std::string_view(input.data(), input.size()));
+        format_->parse(std::string_view(input.data(), input.size()), true)
+            .value();
 
     // Since MySql format has no timezone specifier, simply check if session
     // timezone was provided. If not, fallback to 0 (GMT).
@@ -1332,7 +1336,8 @@ struct ParseDateTimeFunction {
           std::string_view(format.data(), format.size()));
     }
     auto dateTimeResult =
-        format_->parse(std::string_view(input.data(), input.size()));
+        format_->parse(std::string_view(input.data(), input.size()), true)
+            .value();
 
     // If timezone was not parsed, fallback to the session timezone. If there's
     // no session timezone, fallback to 0 (GMT).

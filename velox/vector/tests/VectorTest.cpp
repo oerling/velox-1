@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 
 #include "velox/common/base/tests/GTestUtils.h"
@@ -104,6 +105,10 @@ int NonPOD::alive = 0;
 
 class VectorTest : public testing::Test, public test::VectorTestBase {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   void SetUp() override {
     if (!isRegisteredVectorSerde()) {
       facebook::velox::serializer::presto::PrestoVectorSerde::
@@ -1470,6 +1475,20 @@ TEST_F(VectorTest, wrapInConstant) {
   for (auto i = 0; i < size; i++) {
     ASSERT_TRUE(constArrayVector->isNullAt(i));
   }
+
+  // Wrap a loaded lazy complex vector that will be retained as a valueVector.
+  // Ensure the lazy layer is stripped away and the valueVector points to the
+  // loaded Vector underneath it.
+  auto lazyOverArray = std::make_shared<LazyVector>(
+      pool(),
+      arrayVector->type(),
+      size,
+      std::make_unique<TestingLoader>(arrayVector));
+  lazyOverArray->loadedVector();
+  EXPECT_TRUE(lazyOverArray->isLoaded());
+  constArrayVector = std::dynamic_pointer_cast<ConstantVector<ComplexType>>(
+      BaseVector::wrapInConstant(size, 22, lazyOverArray));
+  EXPECT_FALSE(constArrayVector->valueVector()->isLazy());
 }
 
 TEST_F(VectorTest, wrapInConstantWithCopy) {
@@ -2242,6 +2261,23 @@ TEST_F(VectorTest, nestedLazy) {
   EXPECT_TRUE(lazy->isLoaded());
 }
 
+TEST_F(VectorTest, wrapInDictionaryOverLoadedLazy) {
+  // Ensure the lazy layer is stripped away and the dictionaryValues vector
+  // points to the loaded Vector underneath it.
+  vector_size_t size = 10;
+  auto lazy = std::make_shared<LazyVector>(
+      pool(),
+      INTEGER(),
+      size,
+      std::make_unique<TestingLoader>(
+          makeFlatVector<int64_t>(size, [](auto row) { return row; })));
+  lazy->loadedVector();
+  EXPECT_TRUE(lazy->isLoaded());
+  auto dict = wrapInDictionary(makeIndices(size, folly::identity), size, lazy);
+  auto valuesVector = dict->valueVector();
+  EXPECT_FALSE(valuesVector->isLazy());
+}
+
 TEST_F(VectorTest, dictionaryResize) {
   vector_size_t size = 10;
   std::vector<int64_t> elements{0, 1, 2, 3, 4};
@@ -2576,7 +2612,7 @@ TEST_F(VectorTest, mapSliceMutability) {
 TEST_F(VectorTest, lifetime) {
   ASSERT_DEATH(
       {
-        auto childPool = memory::addDefaultLeafMemoryPool();
+        auto childPool = memory::memoryManager()->addLeafPool();
         auto v = BaseVector::create(INTEGER(), 10, childPool.get());
 
         // BUG: Memory pool needs to stay alive until all memory allocated from
@@ -3238,7 +3274,10 @@ TEST_F(VectorTest, primitiveTypeNullEqual) {
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return base->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+        other.get(),
+        i,
+        j,
+        CompareFlags::NullHandlingMode::kNullAsIndeterminate);
   };
 
   // No null compare.
@@ -3268,7 +3307,10 @@ TEST_F(VectorTest, complexTypeNullEqual) {
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return base->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+        other.get(),
+        i,
+        j,
+        CompareFlags::NullHandlingMode::kNullAsIndeterminate);
   };
 
   // No null compare, [0, 1] vs [0, 1].
@@ -3309,7 +3351,10 @@ TEST_F(VectorTest, dictionaryNullEqual) {
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return dictVector->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+        other.get(),
+        i,
+        j,
+        CompareFlags::NullHandlingMode::kNullAsIndeterminate);
   };
 
   for (vector_size_t i = 0; i < 2; ++i) {
@@ -3349,7 +3394,10 @@ TEST_F(VectorTest, constantNullEqual) {
 
   auto equalStopAtNull = [&](vector_size_t i, vector_size_t j) {
     return constantVector->equalValueAt(
-        other.get(), i, j, CompareFlags::NullHandlingMode::kStopAtNull);
+        other.get(),
+        i,
+        j,
+        CompareFlags::NullHandlingMode::kNullAsIndeterminate);
   };
 
   // No null compare, [2, null] vs [0, 1], [2, null] vs [1, 2].
@@ -3590,6 +3638,13 @@ TEST_F(VectorTest, setType) {
                ROW({"ee", "ff"}, {VARCHAR(), BIGINT()})),
            BIGINT()});
   test(type, newType, invalidNewType);
+}
+
+TEST_F(VectorTest, getLargeStringBuffer) {
+  auto vector = makeFlatVector<StringView>({});
+  size_t size = size_t(std::numeric_limits<int32_t>::max()) + 1;
+  auto* buffer = vector->getBufferWithSpace(size);
+  EXPECT_GE(buffer->capacity(), size);
 }
 
 } // namespace

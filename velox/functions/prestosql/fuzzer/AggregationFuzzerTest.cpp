@@ -19,10 +19,10 @@
 #include <gtest/gtest.h>
 #include <unordered_set>
 
-#include <boost/random/uniform_int_distribution.hpp>
 #include "velox/exec/fuzzer/AggregationFuzzerOptions.h"
 #include "velox/exec/fuzzer/AggregationFuzzerRunner.h"
 #include "velox/exec/fuzzer/DuckQueryRunner.h"
+#include "velox/exec/fuzzer/PrestoQueryRunner.h"
 #include "velox/exec/fuzzer/TransformResultVerifier.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/fuzzer/ApproxDistinctInputGenerator.h"
@@ -46,6 +46,13 @@ DEFINE_string(
     "this comma separated list of function names "
     "(e.g: --only \"min\" or --only \"sum,avg\").");
 
+DEFINE_string(
+    presto_url,
+    "",
+    "Presto coordinator URI along with port. If set, we use Presto "
+    "source of truth. Otherwise, use DuckDB. Example: "
+    "--presto_url=http://127.0.0.1:8080");
+
 namespace facebook::velox::exec::test {
 namespace {
 
@@ -62,15 +69,41 @@ getCustomInputGenerators() {
   };
 }
 
+std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner() {
+  if (FLAGS_presto_url.empty()) {
+    auto duckQueryRunner = std::make_unique<DuckQueryRunner>();
+    duckQueryRunner->disableAggregateFunctions({
+        "skewness",
+        // DuckDB results on constant inputs are incorrect. Should be NaN,
+        // but DuckDB returns some random value.
+        "kurtosis",
+        "entropy",
+    });
+    return duckQueryRunner;
+  } else {
+    return std::make_unique<PrestoQueryRunner>(
+        FLAGS_presto_url, "aggregation_fuzzer");
+  }
+}
+
 } // namespace
 } // namespace facebook::velox::exec::test
 
 int main(int argc, char** argv) {
-  facebook::velox::aggregate::prestosql::registerAllAggregateFunctions(
-      "", false);
+  // Register only presto supported signatures if we are verifying against
+  // Presto.
+  if (FLAGS_presto_url.empty()) {
+    facebook::velox::aggregate::prestosql::registerAllAggregateFunctions(
+        "", false);
+  } else {
+    facebook::velox::aggregate::prestosql::registerAllAggregateFunctions(
+        "", false, true);
+  }
+
   facebook::velox::functions::prestosql::registerAllScalarFunctions();
   facebook::velox::window::prestosql::registerAllWindowFunctions();
   facebook::velox::functions::prestosql::registerInternalFunctions();
+  facebook::velox::memory::MemoryManager::initialize({});
 
   ::testing::InitGoogleTest(&argc, argv);
 
@@ -80,16 +113,6 @@ int main(int argc, char** argv) {
   folly::Init init(&argc, &argv);
 
   size_t initialSeed = FLAGS_seed == 0 ? std::time(nullptr) : FLAGS_seed;
-
-  auto duckQueryRunner =
-      std::make_unique<facebook::velox::exec::test::DuckQueryRunner>();
-  duckQueryRunner->disableAggregateFunctions({
-      "skewness",
-      // DuckDB results on constant inputs are incorrect. Should be NaN,
-      // but DuckDB returns some random value.
-      "kurtosis",
-      "entropy",
-  });
 
   // List of functions that have known bugs that cause crashes or failures.
   static const std::unordered_set<std::string> skipFunctions = {
@@ -101,6 +124,7 @@ int main(int argc, char** argv) {
 
   using facebook::velox::exec::test::ApproxDistinctResultVerifier;
   using facebook::velox::exec::test::ApproxPercentileResultVerifier;
+  using facebook::velox::exec::test::setupReferenceQueryRunner;
   using facebook::velox::exec::test::TransformResultVerifier;
 
   auto makeArrayVerifier = []() {
@@ -161,5 +185,5 @@ int main(int argc, char** argv) {
       facebook::velox::exec::test::getCustomInputGenerators();
   options.timestampPrecision =
       facebook::velox::VectorFuzzer::Options::TimestampPrecision::kMilliSeconds;
-  return Runner::run(initialSeed, std::move(duckQueryRunner), options);
+  return Runner::run(initialSeed, setupReferenceQueryRunner(), options);
 }
