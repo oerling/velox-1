@@ -91,6 +91,9 @@ class Destination {
     return bytesInCurrent_;
   }
 
+  /// Adds serialization stats to runtime stats of 'op'.
+  void updateStats(Operator* op);
+  
  private:
   // Sets the next target size for flushing. This is called at the
   // start of each batch of output for the destination. The effect is
@@ -245,6 +248,12 @@ class PartitionedOutput : public Operator {
   // Index of columns in 'output_' that can be checked for encoding.
   std::vector<column_index_t> encodingCandidates_;
   DecodedVector tempDecoded_;
+
+  // Destinations that have at least one row from the current input.
+  raw_vector<detail::Destination*> toAppend_;
+
+  // Destinations that are ready to flush after adding the current input.
+  raw_vector<detail::Destination*> toFlush_;
 };
 
 } // namespace facebook::velox::exec

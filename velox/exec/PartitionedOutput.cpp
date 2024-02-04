@@ -116,7 +116,16 @@ BlockingReason Destination::flush(
                  : BlockingReason::kNotBlocked;
 }
 
-void Destination::record(
+
+  void Destination::updateStats(Operator* op) {
+    auto serializerStats = current_->serializer()->runtimeStats();
+    auto lockedStats = op->stats().wlock();
+    for (auto& pair : serializerStats) {
+      lockedStats->addRuntimeStat(pair.first, pair.second);
+    }
+  }
+
+  void Destination::record(
     const RowVectorPtr& input,
     int32_t begin,
     int32_t end) {
@@ -517,7 +526,7 @@ RowVectorPtr PartitionedOutput::getOutput() {
       }
       destination->flush(*bufferManager, bufferReleaseFn_, nullptr);
       destination->setFinished();
-    }
+      destination->updateStats(this);    }
 
     bufferManager->noMoreData(operatorCtx_->task()->taskId());
     finished_ = true;

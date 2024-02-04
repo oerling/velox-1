@@ -1266,6 +1266,12 @@ void serializeColumn(
     VectorStream* stream,
     Scratch& scratch);
 
+void estimateSerializedSizeInt(
+    const BaseVector* vector,
+    const folly::Range<const vector_size_t*>& rows,
+    vector_size_t** sizes,
+    Scratch& scratch);
+
 struct VectorValueSetEntry {
   const BaseVector* vector;
   vector_size_t index;
@@ -1289,6 +1295,55 @@ using VectorValueSet = folly::F14FastSet<
     VectorValueSetEntry,
     VectorValueSetHasher,
     VectorValueSetComparer>;
+
+// Finds distinct indices in 'indices'. Returns them in 'distincts' in the order
+// of first occurrence. Replaces the original indices in 'indices with their
+// positions in 'distincts'.
+int64_t usedDictionaryIndices(
+    folly::Range<vector_size_t*> indices,
+    const vector_size_t* runLengths,
+    vector_size_t cardinality,
+    const vector_size_t* sizes,
+    raw_vector<vector_size_t>& alphabetIndices,
+    Scratch& scratch) {
+  ScratchPtr<uint64_t, 4> bitsHolder(scratch);
+  ScratchPtr<int32_t, 20> mappingHolder(scratch);
+  auto numBitsWords = bits::nwords(cardinality);
+  auto bits = bitsHolder.get(numBitsWords);
+  std::fill(bits, bits + numBitsWords, 0);
+  auto mapping = mappingHolder.get(cardinality);
+  int64_t saved = 0;
+  int64_t serialSize = 0;
+  for (auto i = 0; i < indices.size(); ++i) {
+    auto index = indices[i];
+    auto word = index >> 6;
+    uint64_t mask = 1UL << (index & 63);
+    serialSize += runLengths[i] * sizes[index];
+    if (bits[word] & mask) {
+      saved += runLengths[i] * sizes[index];
+    } else {
+      bits[word] |= mask;
+      mapping[index] = alphabetIndices.size();
+      alphabetIndices.push_back(index);
+      if (runLengths[i] > 1) {
+        saved += sizes[index] * (runLengths[i] - 1);
+      }
+    }
+  }
+  if (saved < serialSize / 4) {
+    return -1;
+  }
+  for (auto i = 0; i < indices.size(); ++i) {
+    indices[i] = mapping[indices[i]];
+  }
+  return saved;
+}
+
+struct VectorStreamStats {
+  int64_t totalNonNull{0};
+  int64_t totalNull{0};
+  int64_t encodingSavedBytes{0};
+};
 
 // Appendable container for serialized values. To append a value at a
 // time, call appendNull or appendNonNull first. Then call appendLength if the
@@ -1456,7 +1511,7 @@ class VectorStream {
   }
 
   void appendNull() {
-    if (UNLIKELY(runLengths_.size() > 0)) {
+    if (UNLIKELY(indices_.size() > 0)) {
       // This may be called to add an extra null from dictionary
       // wrappers.
       auto index = findNullIndex();
@@ -1588,6 +1643,7 @@ class VectorStream {
     }
     disableDict_ = true;
     indices_.clear();
+    runLengths_.clear();
     Scratch scratch;
     serializeColumn(
         distincts_.get(),
@@ -1598,6 +1654,9 @@ class VectorStream {
   }
 
   bool mayAppendConstant() const {
+    if (hasFixedEncoding_) {
+      return false;
+    }
     return nonNullCount_ == 0 && nullCount_ == 0;
   }
 
@@ -1607,7 +1666,10 @@ class VectorStream {
   void appendConstant(const BaseVector& vector, vector_size_t repeats) {
     VELOX_DCHECK(mayAppendConstant());
     VELOX_DCHECK_EQ(vector.encoding(), VectorEncoding::Simple::CONSTANT);
-    auto dictIndex = addDistinctValue(vector, vector.wrappedIndex(0));
+    if (repeats == 0) {
+      return;
+    }
+    auto dictIndex = addDistinctValue(vector, 0);
     appendIndex(dictIndex, repeats);
   }
 
@@ -1638,15 +1700,16 @@ class VectorStream {
   // Returns the size to flush to OutputStream before calling `flush`.
   size_t serializedSize() {
     CountingOutputStream out;
-    flush(&out);
+    Scratch scratch;
+    flush(&out, scratch);
     return out.size();
   }
 
   // Writes out the accumulated contents. Does not change the state.
-  void flush(OutputStream* out) {
+  void flush(OutputStream* out, Scratch& scratch) {
     if (!isFlushed_) {
       ++numFlushes_;
-      setEncodingByDistincts();
+      setEncodingByDistincts(scratch);
     }
 
     isFlushed_ = true;
@@ -1658,12 +1721,12 @@ class VectorStream {
         case VectorEncoding::Simple::CONSTANT: {
           writeInt32(out, nonNullCount_);
 
-          alphabet_->flush(out);
+          alphabet_->flush(out, scratch);
           return;
         }
         case VectorEncoding::Simple::DICTIONARY: {
           writeInt32(out, nonNullCount_);
-          alphabet_->flush(out);
+          alphabet_->flush(out, scratch);
           values_.flush(out);
 
           // Write 24 bytes of 'instance id'.
@@ -1693,7 +1756,7 @@ class VectorStream {
         }
         writeInt32(out, children_.size());
         for (auto& child : children_) {
-          child->flush(out);
+          child->flush(out, scratch);
         }
         if (!nullsFirst_) {
           writeInt32(out, nullCount_ + nonNullCount_);
@@ -1703,15 +1766,15 @@ class VectorStream {
         return;
 
       case TypeKind::ARRAY:
-        children_[0]->flush(out);
+        children_[0]->flush(out, scratch);
         writeInt32(out, nullCount_ + nonNullCount_);
         lengths_.flush(out);
         flushNulls(out);
         return;
 
       case TypeKind::MAP: {
-        children_[0]->flush(out);
-        children_[1]->flush(out);
+        children_[0]->flush(out, scratch);
+        children_[1]->flush(out, scratch);
         // hash table size. -1 means not included in serialization.
         writeInt32(out, -1);
         writeInt32(out, nullCount_ + nonNullCount_);
@@ -1778,7 +1841,7 @@ class VectorStream {
     }
     nulls_.startWrite(nulls_.size());
     values_.startWrite(values_.size());
-    disableDict_ = numAbandonDict_ > numFlushes_ / 10;
+    disableDict_ = numAbandonDict_ > 10 || numAbandonDict_ > numFlushes_ / 5;
     for (auto& child : children_) {
       child->clear();
     }
@@ -1789,6 +1852,9 @@ class VectorStream {
   }
 
   bool mayTryDictionary() const {
+    if (hasFixedEncoding_) {
+      return false;
+    }
     // If there are already distincts from constants, we can do more dictionary.
     if (!indices_.empty()) {
       return true;
@@ -1842,6 +1908,16 @@ class VectorStream {
     return out.str();
   }
 
+  /// Recursively accumulates counters into 'stats'.
+  void stats(VectorStreamStats& stats) {
+    stats.totalNonNull += totalNonNull_;
+    stats.totalNull += totalNull_;
+    stats.encodingSavedBytes += encodingSavedBytes_;
+    for (auto& child : children_) {
+      child->stats(stats);
+    }
+  }
+
  private:
   static constexpr int32_t kNoNullIndex = -1;
 
@@ -1849,55 +1925,69 @@ class VectorStream {
   // there is one, otherwise adds the value and returns the index of the added
   // value.
   vector_size_t addDistinctValue(
-      const BaseVector& vector,
-      vector_size_t index) {
+      const BaseVector& topVector,
+      vector_size_t topIndex) {
+    const BaseVector* vector = &topVector;
+    vector_size_t index = topIndex;
+    if (topVector.encoding() != VectorEncoding::Simple::FLAT) {
+      vector = topVector.wrappedVector();
+      index = topVector.wrappedIndex(topIndex);
+    }
     if (LIKELY(isString_)) {
       StringView string;
-      bool isNull = vector.isNullAt(index);
+      bool isNull = vector->isNullAt(index);
       if (UNLIKELY(isNull)) {
         if (nullIndex_ != kNoNullIndex) {
           return nullIndex_;
         }
       } else {
-        if (LIKELY(vector.encoding() == VectorEncoding::Simple::FLAT)) {
-          string = vector.asUnchecked<FlatVector<StringView>>()->valueAt(index);
+        if (LIKELY(vector->encoding() == VectorEncoding::Simple::FLAT)) {
+          string = vector->asUnchecked<FlatVector<StringView>>()->valueAt(index);
         } else {
-          string = vector.asUnchecked<ConstantVector<StringView>>()->valueAt(0);
+          string = vector->asUnchecked<ConstantVector<StringView>>()->valueAt(0);
         }
         auto it = distinctStrings_.find(string);
         if (it != distinctStrings_.end()) {
-          bits::setBit(usedStrings_.data(), it->second, true);
           return it->second;
         }
       }
     } else {
-      auto it = distinctSet_.find(VectorValueSetEntry{&vector, index});
+      auto it = distinctSet_.find(VectorValueSetEntry{vector, index});
       if (it != distinctSet_.end()) {
         return it->index;
       }
     }
     int32_t newIndex;
     if (distincts_ == nullptr) {
-      distincts_ = BaseVector::create(vector.type(), 1, streamArena_->pool());
+      distincts_ = BaseVector::create(vector->type(), 1, streamArena_->pool());
       newIndex = 0;
+      distinctsSizes_.resize(1);
     } else {
       newIndex = distincts_->size();
       distincts_->resize(newIndex + 1);
+      distinctsSizes_.resize(newIndex + 1);
     }
-    distincts_->copy(vector.wrappedVector(), newIndex, index, 1);
-    const bool isNull = vector.isNullAt(index);
+    distincts_->copy(vector, newIndex, index, 1);
+    const bool isNull = vector->isNullAt(index);
     if (isNull) {
+      distinctsSizes_[newIndex] = 0;
       nullIndex_ = newIndex;
+    } else {
+      vector_size_t zero = 0;
+      Scratch scratch;
+      distinctsSizes_[newIndex] = 0;
+      auto sizeIndices = folly::Range<const vector_size_t*>(&index, 1);
+      vector_size_t* sizes = &distinctsSizes_[newIndex];
+      estimateSerializedSizeInt(
+				vector,
+          sizeIndices,
+          &sizes,
+          scratch);
     }
     if (isString_) {
       if (!isNull) {
         distinctStrings_[distincts_->asUnchecked<FlatVector<StringView>>()
                              ->valueAt(newIndex)] = newIndex;
-
-        if (newIndex >= usedStrings_.size() * 64) {
-          usedStrings_.resize(bits::roundUp(newIndex + 1, 64) / 64);
-        }
-        bits::setBit(usedStrings_.data(), newIndex, true);
       }
     } else {
       distinctSet_.insert(VectorValueSetEntry{distincts_.get(), newIndex});
@@ -1923,12 +2013,13 @@ class VectorStream {
     return addDistinctValue(*tempNull, 0);
   }
 
-  void setEncodingByDistincts() {
+  void setEncodingByDistincts(Scratch& scratch) {
     if (hasFixedEncoding_) {
       return;
     }
     if (indices_.empty()) {
       totalNonNull_ += nonNullCount_;
+      totalNull_ += nullCount_;
       encoding_ = std::nullopt;
       return;
     }
@@ -1936,12 +2027,55 @@ class VectorStream {
     opts.useLosslessTimestamp = useLosslessTimestamp_;
     opts.nullsFirst = nullsFirst_;
     opts.alwaysFlat = true;
-    int32_t totalInRuns = 0;
-    for (auto run : runLengths_) {
-      totalInRuns += run;
-    }
 
-    if (distincts_->size() == 1) {
+    int32_t totalInRuns = 0;
+    int32_t nonNullInRuns = 0;
+    int32_t nullInRuns = 0;
+    if (nullIndex_ == kNoNullIndex) {
+      for (auto run : runLengths_) {
+	totalInRuns += run;
+      }
+      nonNullInRuns = totalInRuns;
+    } else {
+      for (auto i = 0; i < runLengths_.size(); ++i) {
+	auto run = runLengths_[i];
+	totalInRuns += run;
+	if (indices_[i] == nullIndex_) {
+	  nonNullInRuns += run;
+	} else {
+	  nonNullInRuns += run;
+	}
+      }
+    }
+    vector_size_t zero = 0;
+    folly::Range<const vector_size_t*> alphabetIndices(&zero, 1);
+    int64_t saved;
+    raw_vector<vector_size_t> usedDictIndices;
+    if (distincts_->size() > 1) {
+      saved = usedDictionaryIndices(
+          folly::Range<vector_size_t*>(indices_.data(), indices_.size()),
+          runLengths_.data(),
+          distincts_->size(),
+	  distinctsSizes_.data(),
+          usedDictIndices,
+          scratch);
+      alphabetIndices = folly::Range<const vector_size_t*>(
+							   usedDictIndices.data(), usedDictIndices.size());
+
+
+    } else {
+      saved = runLengths_[0] <= 1 ? -1 : distinctsSizes_[0] * (runLengths_[0] -  1);
+      alphabetIndices = folly::Range<const vector_size_t*>(
+							   indices_.data(), 1);
+    }
+    if (alphabetIndices.size() > 1 && saved <= 100) {
+        // Not enough reuse of indices to justify encoding.
+        ensureFlat();
+        encoding_ = std::nullopt;
+        return;
+      }
+      encodingSavedBytes_ += saved;
+    if (alphabetIndices.size() == 1) {
       initializeHeader(kRLE, *streamArena_);
       if (!alphabet_) {
         alphabet_ = std::make_unique<VectorStream>(
@@ -1950,17 +2084,13 @@ class VectorStream {
       Scratch scratch;
       ++totalDistincts_;
       nonNullCount_ = totalInRuns;
-      if (distincts_->isNullAt(0)) {
+      if (distincts_->isNullAt(alphabetIndices[0])) {
         totalNonNull_ += nonNullCount_;
       }
-      vector_size_t zero = 0;
       serializeColumn(
-          distincts_.get(),
-          folly::Range<const vector_size_t*>(&zero, 1),
-          alphabet_.get(),
-          scratch);
+          distincts_.get(), alphabetIndices, alphabet_.get(), scratch);
       encoding_ = VectorEncoding::Simple::CONSTANT;
-    } else if (true /*!isString_ || nonNullCount_ > distincts_->size() * 2*/) {
+    } else {
       initializeHeader(kDictionary, *streamArena_);
       if (!alphabet_) {
         alphabet_ = std::make_unique<VectorStream>(
@@ -1972,69 +2102,40 @@ class VectorStream {
             opts);
       }
       nonNullCount_ = totalInRuns;
-      totalNonNull_ += nonNullCount_;
-      IndexRange range = IndexRange{0, distincts_->size()};
+      totalNonNull_ += nonNullInRuns;
+      totalNull_ += nullInRuns;
       serializeColumn(
-          distincts_.get(),
-          folly::Range<const IndexRange*>(&range, 1),
-          alphabet_.get());
+          distincts_.get(), alphabetIndices, alphabet_.get(), scratch);
       encoding_ = VectorEncoding::Simple::DICTIONARY;
       if (values_.ranges().empty()) {
         values_.startWrite(indices_.size() * sizeof(indices_[0]));
       }
-      totalDistincts_ += distincts_->size();
+      totalDistincts_ += alphabetIndices.size();
       for (auto i = 0; i < runLengths_.size(); ++i) {
         auto index = indices_[i];
         for (auto counter = 0; counter < runLengths_[i]; ++counter) {
           appendOne<int32_t>(index);
         }
       }
-    } else {
-      VELOX_CHECK(isString_);
-      auto* strings = distincts_->asUnchecked<FlatVector<StringView>>();
-      for (auto i = 0; i < indices_.size(); ++i) {
-        auto index = indices_[i];
-        auto isNull = index == nullIndex_;
-        for (auto repeat = 0; repeat < runLengths_[i]; ++i) {
-          if (isNull) {
-            appendNull();
-          } else {
-            appendOne(strings->valueAt(index));
-          }
-        }
-      }
-      ++numAbandonDict_;
-      encoding_ = std::nullopt;
     }
   }
 
   void clearDistincts() {
     indices_.clear();
     runLengths_.clear();
-    if (distincts_ == nullptr) {
+    // Tiny often used dictionary will not be cleared.
+    if (distincts_ == nullptr ||
+        (distincts_->retainedSize() < 10240 && numAbandonDict_ < 10)) {
       return;
     }
-    if (isString_) {
-      if (!usedStrings_.empty()) {
-        // We keep the dictionary even if we do not use it this time
-        // if the values so far cover enough of it.
-        auto numUsed =
-            bits::countBits(usedStrings_.data(), 0, distincts_->size());
-        auto batch =
-            (totalNonNull_ + nonNullCount_) / std::max<int64_t>(1, numFlushes_);
-        if (nonNullCount_ > batch * 0.7 && numUsed > distincts_->size() * 0.7) {
-          std::fill(usedStrings_.begin(), usedStrings_.end(), 0);
-          return;
-        }
-      }
-    } else if (distincts_->size() < 20) {
+    // Every 8th flush makes a new dict
+    if ((numFlushes_ & 7) != 0) {
       return;
     }
     nullIndex_ = kNoNullIndex;
     distincts_ = nullptr;
     distinctSet_.clear();
     distinctStrings_.clear();
-    usedStrings_.clear();
   }
 
   const TypePtr type_;
@@ -2069,14 +2170,14 @@ class VectorStream {
   // Container for distinct values in encoding preserving serialization.
   VectorPtr distincts_;
 
+  // Serialized size for each in 'distincts_'.
+  raw_vector<vector_size_t> distinctsSizes_;
+
   // Hash table for lookup into 'distincts_' for non-string types.
   VectorValueSet distinctSet_;
 
   // Lookup into 'distincts_' for strings.
   folly::F14FastMap<StringView, int32_t> distinctStrings_;
-
-  // Bit is set if the string at the bit position is used.
-  std::vector<uint64_t> usedStrings_;
 
   int32_t nullIndex_ = kNoNullIndex;
 
@@ -2092,6 +2193,15 @@ class VectorStream {
 
   // Number of written non-null values across all flushes and clears.
   int64_t totalNonNull_{0};
+
+  // Number of times a value was replaced by a constant or dictionary.
+  int64_t totalRepeatsSaved{0};
+
+  // Approximate serialized size saved by encoding.
+  int64_t encodingSavedBytes_{0};
+
+  // Total nulls across all flushes and clears.
+  int64_t totalNull_{0};
 
   // Sum of distinct values across non-flat encoding flushes.
   int64_t totalDistincts_{0};
@@ -2507,6 +2617,9 @@ void serializeColumn(
     const BaseVector* vector,
     const folly::Range<const IndexRange*>& ranges,
     VectorStream* stream) {
+  if (ranges.size() == 0) {
+    return; // May happen in array/map for 0 length child.
+  }
   auto encoding = vector->encoding();
   auto kind = vector->typeKind();
   if (encoding != VectorEncoding::Simple::CONSTANT &&
@@ -3882,6 +3995,19 @@ class PrestoVectorSerializer : public VectorSerializer {
     return out.str();
   }
 
+  std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {
+    VectorStreamStats stats;
+    for (auto& stream : streams_) {
+      stream->stats(stats);
+    }
+    std::unordered_map<std::string, RuntimeCounter> map;
+    map.insert({{
+	  "totalNonNull", RuntimeCounter(stats.totalNonNull)},
+	  {"totalNull", RuntimeCounter(stats.totalNull)},
+	  {"encodingSavedBytes",  RuntimeCounter(stats.encodingSavedBytes, RuntimeCounter::Unit::kBytes)}});
+    return map;
+  }
+
  private:
   void flushUncompressed(
       int32_t numRows,
@@ -3913,8 +4039,9 @@ class PrestoVectorSerializer : public VectorSerializer {
     }
     writeInt32(out, streams_.size());
 
+    Scratch scratch;
     for (auto& stream : streams_) {
-      stream->flush(out);
+      stream->flush(out, scratch);
     }
 
     // Pause CRC computation
@@ -3959,8 +4086,9 @@ class PrestoVectorSerializer : public VectorSerializer {
         *(streamArena_->pool()), nullptr, streamArena_->size());
     writeInt32(&out, streams_.size());
 
+    Scratch scratch;
     for (auto& stream : streams_) {
-      stream->flush(&out);
+      stream->flush(&out, scratch);
     }
 
     const int32_t uncompressedSize = out.tellp();
@@ -4058,6 +4186,7 @@ void PrestoVectorSerde::serializeEncoded(
       vector, streamArena, prestoOptions);
   serializer->flushEncoded(vector, out);
 }
+
 namespace {
 bool hasNestedStructs(const TypePtr& type) {
   if (type->isRow()) {
@@ -4226,3 +4355,4 @@ std::string pvt(BaseVector* vector, int32_t* ordinal = nullptr) {
 }
 
 } // namespace facebook::velox::serializer::presto
+

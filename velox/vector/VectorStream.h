@@ -23,6 +23,7 @@
 #include "velox/common/memory/MemoryAllocator.h"
 #include "velox/common/memory/StreamArena.h"
 #include "velox/vector/ComplexVector.h"
+#include "velox/common/base/RuntimeMetrics.h"
 
 namespace facebook::velox {
 
@@ -99,6 +100,10 @@ class VectorSerializer {
   /// 'reservePreviousSize' is true.
   virtual void clear(bool reservePreviousSize = true) {
     VELOX_UNSUPPORTED("clear");
+  }
+
+  virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() {
+    VELOX_UNSUPPORTED();
   }
 };
 
@@ -270,6 +275,10 @@ class VectorStreamGroup : public StreamArena {
   // Writes the contents to 'stream' in wire format.
   void flush(OutputStream* stream);
 
+  VectorSerializer* serializer() const {
+    return serializer_.get();
+  }
+  
   // Reads data in wire format. Returns the RowVector in 'result'.
   static void read(
       ByteInputStream* source,
