@@ -50,7 +50,7 @@ DEFINE_int32(
     string_max_cardinality,
     10000,
     "Minimum cardinality of strings for string10k");
-DEFINE_int32(small_string_size, 20, "Size of small string in strinh10k"); );
+DEFINE_int32(small_string_size, 20, "Size of small string in strinh10k");
 DEFINE_int32(large_string_size, 200, "Size of large string in strinh10k"); );
 
 /// Benchmarks repartition/exchange with different batch sizes,
@@ -116,6 +116,11 @@ class ExchangeBenchmark : public VectorTestBase {
     return vectors;
   }
 
+  /// Updates 'vectors' to have 'card' values each, picked from 'totalCard' values. 
+  void makeCardinality(int32_t card, int32_t totalCard, std::vector<VectorPtr>& vectors) {
+    auto distinct = BaseVector::create(vectors[0]->
+  }
+  
   void run(
       std::vector<RowVectorPtr>& vectors,
       int32_t width,
@@ -479,7 +484,8 @@ int main(int argc, char** argv) {
   deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
   struct1k = bm.makeRows(structType, 100, 1000, FLAGS_dict_pct);
   string10k = bm.makeRows(stringType, 100, 10000, FLAGS_dict_pct);
-
+  bm.adjustStringCardinality(string10k);
+  
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl
             << "flat50: " << flat50Counters.toString() << std::endl
