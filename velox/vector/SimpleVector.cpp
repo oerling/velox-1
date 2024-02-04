@@ -30,6 +30,4 @@ void SimpleVector<StringView>::validate(
   }
 }
 
-
-  
 } // namespace facebook::velox

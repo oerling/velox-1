@@ -1942,9 +1942,11 @@ class VectorStream {
         }
       } else {
         if (LIKELY(vector->encoding() == VectorEncoding::Simple::FLAT)) {
-          string = vector->asUnchecked<FlatVector<StringView>>()->valueAt(index);
+          string =
+              vector->asUnchecked<FlatVector<StringView>>()->valueAt(index);
         } else {
-          string = vector->asUnchecked<ConstantVector<StringView>>()->valueAt(0);
+          string =
+              vector->asUnchecked<ConstantVector<StringView>>()->valueAt(0);
         }
         auto it = distinctStrings_.find(string);
         if (it != distinctStrings_.end()) {
@@ -1978,11 +1980,7 @@ class VectorStream {
       distinctsSizes_[newIndex] = 0;
       auto sizeIndices = folly::Range<const vector_size_t*>(&index, 1);
       vector_size_t* sizes = &distinctsSizes_[newIndex];
-      estimateSerializedSizeInt(
-				vector,
-          sizeIndices,
-          &sizes,
-          scratch);
+      estimateSerializedSizeInt(vector, sizeIndices, &sizes, scratch);
     }
     if (isString_) {
       if (!isNull) {
@@ -2033,18 +2031,18 @@ class VectorStream {
     int32_t nullInRuns = 0;
     if (nullIndex_ == kNoNullIndex) {
       for (auto run : runLengths_) {
-	totalInRuns += run;
+        totalInRuns += run;
       }
       nonNullInRuns = totalInRuns;
     } else {
       for (auto i = 0; i < runLengths_.size(); ++i) {
-	auto run = runLengths_[i];
-	totalInRuns += run;
-	if (indices_[i] == nullIndex_) {
-	  nonNullInRuns += run;
-	} else {
-	  nonNullInRuns += run;
-	}
+        auto run = runLengths_[i];
+        totalInRuns += run;
+        if (indices_[i] == nullIndex_) {
+          nonNullInRuns += run;
+        } else {
+          nonNullInRuns += run;
+        }
       }
     }
     vector_size_t zero = 0;
@@ -2056,25 +2054,24 @@ class VectorStream {
           folly::Range<vector_size_t*>(indices_.data(), indices_.size()),
           runLengths_.data(),
           distincts_->size(),
-	  distinctsSizes_.data(),
+          distinctsSizes_.data(),
           usedDictIndices,
           scratch);
       alphabetIndices = folly::Range<const vector_size_t*>(
-							   usedDictIndices.data(), usedDictIndices.size());
-
+          usedDictIndices.data(), usedDictIndices.size());
 
     } else {
-      saved = runLengths_[0] <= 1 ? -1 : distinctsSizes_[0] * (runLengths_[0] -  1);
-      alphabetIndices = folly::Range<const vector_size_t*>(
-							   indices_.data(), 1);
+      saved =
+          runLengths_[0] <= 1 ? -1 : distinctsSizes_[0] * (runLengths_[0] - 1);
+      alphabetIndices = folly::Range<const vector_size_t*>(indices_.data(), 1);
     }
     if (alphabetIndices.size() > 1 && saved <= 100) {
-        // Not enough reuse of indices to justify encoding.
-        ensureFlat();
-        encoding_ = std::nullopt;
-        return;
-      }
-      encodingSavedBytes_ += saved;
+      // Not enough reuse of indices to justify encoding.
+      ensureFlat();
+      encoding_ = std::nullopt;
+      return;
+    }
+    encodingSavedBytes_ += saved;
     if (alphabetIndices.size() == 1) {
       initializeHeader(kRLE, *streamArena_);
       if (!alphabet_) {
@@ -4001,10 +3998,12 @@ class PrestoVectorSerializer : public VectorSerializer {
       stream->stats(stats);
     }
     std::unordered_map<std::string, RuntimeCounter> map;
-    map.insert({{
-	  "totalNonNull", RuntimeCounter(stats.totalNonNull)},
-	  {"totalNull", RuntimeCounter(stats.totalNull)},
-	  {"encodingSavedBytes",  RuntimeCounter(stats.encodingSavedBytes, RuntimeCounter::Unit::kBytes)}});
+    map.insert(
+        {{"totalNonNull", RuntimeCounter(stats.totalNonNull)},
+         {"totalNull", RuntimeCounter(stats.totalNull)},
+         {"encodingSavedBytes",
+          RuntimeCounter(
+              stats.encodingSavedBytes, RuntimeCounter::Unit::kBytes)}});
     return map;
   }
 
@@ -4355,4 +4354,3 @@ std::string pvt(BaseVector* vector, int32_t* ordinal = nullptr) {
 }
 
 } // namespace facebook::velox::serializer::presto
-

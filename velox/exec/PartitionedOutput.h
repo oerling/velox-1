@@ -93,7 +93,7 @@ class Destination {
 
   /// Adds serialization stats to runtime stats of 'op'.
   void updateStats(Operator* op);
-  
+
  private:
   // Sets the next target size for flushing. This is called at the
   // start of each batch of output for the destination. The effect is
