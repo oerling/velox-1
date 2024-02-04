@@ -381,7 +381,7 @@ class PrestoSerializerTest
     }
     assertEqualVectors(concatenation, deserialized);
   }
-  
+
   void testEncodedRoundTrip(
       const RowVectorPtr& data,
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
