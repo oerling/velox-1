@@ -84,28 +84,28 @@ class PatternMetadata {
   static PatternMetadata fixed(const std::string& fixedPattern);
 
   static PatternMetadata relaxedFixed(
-      const std::string& fixedPattern,
-      const std::vector<SubPatternMetadata>& subPatterns);
+      std::string fixedPattern,
+      std::vector<SubPatternMetadata> subPatterns);
 
   static PatternMetadata prefix(const std::string& fixedPattern);
 
   static PatternMetadata relaxedPrefix(
-      const std::string& fixedPattern,
-      const std::vector<SubPatternMetadata>& subPatterns);
+      std::string fixedPattern,
+      std::vector<SubPatternMetadata> subPatterns);
 
   static PatternMetadata suffix(const std::string& fixedPattern);
 
   static PatternMetadata relaxedSuffix(
-      const std::string& fixedPattern,
-      const std::vector<SubPatternMetadata>& subPatterns);
+      std::string fixedPattern,
+      std::vector<SubPatternMetadata> subPatterns);
 
   static PatternMetadata substring(const std::string& fixedPattern);
 
-  const PatternKind patternKind() const {
+  PatternKind patternKind() const {
     return patternKind_;
   }
 
-  const size_t length() const {
+  size_t length() const {
     return length_;
   }
 
