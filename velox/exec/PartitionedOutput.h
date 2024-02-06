@@ -250,7 +250,10 @@ class PartitionedOutput : public Operator {
   DecodedVector tempDecoded_;
 
   // Destinations that have at least one row from the current input.
-  raw_vector<detail::Destination*> toAppend_;
+  raw_vector<detail::Destination*> toAdvance_;
+
+  // Destinations that have data not appended to the serialization.
+  raw_vector<detail::Destination*> nextToAdvance_;
 
   // Destinations that are ready to flush after adding the current input.
   raw_vector<detail::Destination*> toFlush_;

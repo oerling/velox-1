@@ -51,7 +51,7 @@ DEFINE_int32(
     10000,
     "Minimum cardinality of strings for string10k");
 DEFINE_int32(small_string_size, 20, "Size of small string in strinh10k");
-DEFINE_int32(large_string_size, 200, "Size of large string in strinh10k"); );
+DEFINE_int32(large_string_size, 200, "Size of large string in strinh10k");
 
 /// Benchmarks repartition/exchange with different batch sizes,
 /// numbers of destinations and data type mixes.  Generates a plan
@@ -120,9 +120,33 @@ class ExchangeBenchmark : public VectorTestBase {
   /// values.
   void makeCardinality(
       int32_t card,
-      int32_t totalCard,
+      int32_t maxCardinality,
       std::vector<VectorPtr>& vectors) {
-    auto distinct = BaseVector::create(vectors[0]->
+    auto alphabet =
+        BaseVector::create(vectors[0]->type(), maxCardinality, pool_.get());
+    int32_t vectorIdx = 0;
+    int32_t elementIdx = 0;
+    int32_t filled = 0;
+    while (filled < maxCardinality) {
+      alphabet->copy(vectors[vectorIdx].get(), filled, elementIdx, 1);
+      ++filled;
+      if (++elementIdx >= vectors[vectorIdx]->size()) {
+        if (++vectorIdx >= vectors.size()) {
+          break;
+        }
+        elementIdx = 0;
+      }
+    }
+    // We have taken maxCardinality first values as the alphabet. Now we fill
+    // windows of 'card' elements with random values from the alphabet, so that
+    // each window has values picked  from a window of card * 1.2 values out of
+    // 'distincts'. The window over 'alphabet' shifts by one  for every window
+    // to be filled. Like this, values repeat but there is the odd new value now
+    // and then.
+  }
+
+  void adjustStringCardinality(std::vector<RowVectorPtr>& vectors) {
+    ;
   }
 
   void run(
@@ -404,7 +428,7 @@ BENCHMARK(localFlat10k) {
 }
 
 BENCHMARK(exchangeString10k) {
-  bm.run(string10k, FLAGS_width, FLAGS_task_width, string10kCounters);
+  bm->run(string10k, FLAGS_width, FLAGS_task_width, string10kCounters);
 }
 
 } // namespace
@@ -482,20 +506,21 @@ int main(int argc, char** argv) {
             MAP(BIGINT(),
                 ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}});
 
-  flat10k = bm.makeRows(flatType, 10, 10000, FLAGS_dict_pct);
-  deep10k = bm.makeRows(deepType, 10, 10000, FLAGS_dict_pct);
-  flat50 = bm.makeRows(flatType, 2000, 50, FLAGS_dict_pct);
-  deep50 = bm.makeRows(deepType, 2000, 50, FLAGS_dict_pct);
-  struct1k = bm.makeRows(structType, 100, 1000, FLAGS_dict_pct);
-  string10k = bm.makeRows(stringType, 100, 10000, FLAGS_dict_pct);
-  bm.adjustStringCardinality(string10k);
+  bm = std::make_unique<ExchangeBenchmark>();
+  flat10k = bm->makeRows(flatType, 10, 10000, FLAGS_dict_pct);
+  deep10k = bm->makeRows(deepType, 10, 10000, FLAGS_dict_pct);
+  flat50 = bm->makeRows(flatType, 2000, 50, FLAGS_dict_pct);
+  deep50 = bm->makeRows(deepType, 2000, 50, FLAGS_dict_pct);
+  struct1k = bm->makeRows(structType, 100, 1000, FLAGS_dict_pct);
+  string10k = bm->makeRows(stringType, 100, 10000, FLAGS_dict_pct);
+  bm->adjustStringCardinality(string10k);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl
             << "flat50: " << flat50Counters.toString() << std::endl
             << "deep10k: " << deep10kCounters.toString() << std::endl
             << "deep50: " << deep50Counters.toString() << std::endl
-            << "struct1k: " << struct1kCounters.toString() << std::endl;
-  << "string10k: " << string10kCounters.toString() << std::endl;
+            << "struct1k: " << struct1kCounters.toString() << std::endl
+	    << "string10k: " << string10kCounters.toString() << std::endl;
   return 0;
 }
