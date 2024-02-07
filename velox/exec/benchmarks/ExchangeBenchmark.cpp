@@ -521,6 +521,6 @@ int main(int argc, char** argv) {
             << "deep10k: " << deep10kCounters.toString() << std::endl
             << "deep50: " << deep50Counters.toString() << std::endl
             << "struct1k: " << struct1kCounters.toString() << std::endl
-	    << "string10k: " << string10kCounters.toString() << std::endl;
+            << "string10k: " << string10kCounters.toString() << std::endl;
   return 0;
 }
