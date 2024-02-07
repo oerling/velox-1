@@ -2051,12 +2051,19 @@ class VectorStream {
       distinctsSizes_[newIndex] = 0;
       nullIndex_ = newIndex;
     } else {
-      vector_size_t zero = 0;
       Scratch scratch;
+      ScratchPtr<vector_size_t, 1> indicesHolder(scratch);
+      ScratchPtr<vector_size_t*, 1> sizesHolder(scratch);
+      auto sizeIndices = indicesHolder.get(1);
+      sizeIndices[0] = newIndex;
+      auto sizes = sizesHolder.get(1);
       distinctsSizes_[newIndex] = 0;
-      auto sizeIndices = folly::Range<const vector_size_t*>(&index, 1);
-      vector_size_t* sizes = &distinctsSizes_[newIndex];
-      estimateSerializedSizeInt(vector, sizeIndices, &sizes, scratch);
+      sizes[0] = &distinctsSizes_[newIndex];
+      estimateSerializedSizeInt(
+          distincts_.get(),
+          folly::Range<const vector_size_t*>(sizeIndices, 1),
+          sizes,
+          scratch);
     }
     if (isString_) {
       if (!isNull) {
@@ -2147,7 +2154,9 @@ class VectorStream {
       encoding_ = std::nullopt;
       return;
     }
-    encodingSavedBytes_ += saved;
+    if (saved > 0) {
+      encodingSavedBytes_ += saved;
+    }
     if (alphabetIndices.size() == 1) {
       initializeHeader(kRLE, *streamArena_);
       if (!alphabet_) {
@@ -2207,6 +2216,8 @@ class VectorStream {
     }
     nullIndex_ = kNoNullIndex;
     distincts_ = nullptr;
+    std::destroy_at(&distinctsSizes_);
+    new (&distinctsSizes_) raw_vector<vector_size_t>();
     distinctSet_.clear();
     distinctStrings_.clear();
   }
