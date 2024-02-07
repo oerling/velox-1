@@ -3687,16 +3687,20 @@ void readTopColumns(
     velox::memory::MemoryPool* pool,
     const RowVectorPtr& result,
     int32_t resultOffset,
-    const SerdeOpts& opts) {
+    const SerdeOpts& opts,
+		    bool singleColumn = false) {
   auto& children = result->children();
   const auto& childTypes = type->asRow().children();
-  const auto numColumns = source.read<int32_t>();
-  VELOX_USER_CHECK_EQ(
-      numColumns,
-      type->size(),
-      "Number of columns in serialized data doesn't match "
-      "number of columns requested for deserialization");
-
+  int32_t numColumns = 1;
+  if (!singleColumn) {
+    numColumns = source.read<int32_t>();
+    VELOX_USER_CHECK_EQ(
+			numColumns,
+			type->size(),
+			"Number of columns in serialized data doesn't match "
+			"number of columns requested for deserialization");
+  }
+  
   auto guard = folly::makeGuard([&]() { structNullsMap().reset(); });
 
   if (!opts.nullsFirst && hasNestedStructs(childTypes)) {
@@ -3801,18 +3805,10 @@ void PrestoVectorSerde::deserializeSingleColumn(
     *result = BaseVector::create(type, 0, pool);
   }
 
-  auto types = {type};
-  std::vector<VectorPtr> resultList = {*result};
-  readColumns(source, types, 0, nullptr, 0, pool, prestoOptions, resultList);
-
-  auto rowType = asRowType(ROW(types));
-  RowVectorPtr tempRow = std::make_shared<velox::RowVector>(
-      pool, rowType, nullptr, resultList[0]->size(), resultList);
-  scatterStructNulls(tempRow->size(), 0, nullptr, nullptr, *tempRow, 0);
-  // A copy of the 'result' shared_ptr was passed to scatterStructNulls() via
-  // 'resultList'. Make sure we re-assign 'result' in case the copy was replaced
-  // with a new vector.
-  *result = resultList[0];
+  auto rowType = ROW({"c0"}, {type});
+  auto row = std::make_shared<RowVector>(pool, rowType, BufferPtr(nullptr), 0, std::vector<VectorPtr>{*result});
+  readTopColumns(*source, rowType, pool, row, 0, prestoOptions, true);
+  *result = row->childAt(0);
 }
 
 // static
