@@ -3688,19 +3688,19 @@ void readTopColumns(
     const RowVectorPtr& result,
     int32_t resultOffset,
     const SerdeOpts& opts,
-		    bool singleColumn = false) {
+    bool singleColumn = false) {
   auto& children = result->children();
   const auto& childTypes = type->asRow().children();
   int32_t numColumns = 1;
   if (!singleColumn) {
     numColumns = source.read<int32_t>();
     VELOX_USER_CHECK_EQ(
-			numColumns,
-			type->size(),
-			"Number of columns in serialized data doesn't match "
-			"number of columns requested for deserialization");
+        numColumns,
+        type->size(),
+        "Number of columns in serialized data doesn't match "
+        "number of columns requested for deserialization");
   }
-  
+
   auto guard = folly::makeGuard([&]() { structNullsMap().reset(); });
 
   if (!opts.nullsFirst && hasNestedStructs(childTypes)) {
@@ -3806,7 +3806,8 @@ void PrestoVectorSerde::deserializeSingleColumn(
   }
 
   auto rowType = ROW({"c0"}, {type});
-  auto row = std::make_shared<RowVector>(pool, rowType, BufferPtr(nullptr), 0, std::vector<VectorPtr>{*result});
+  auto row = std::make_shared<RowVector>(
+      pool, rowType, BufferPtr(nullptr), 0, std::vector<VectorPtr>{*result});
   readTopColumns(*source, rowType, pool, row, 0, prestoOptions, true);
   *result = row->childAt(0);
 }
