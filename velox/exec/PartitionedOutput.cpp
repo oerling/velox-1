@@ -62,7 +62,7 @@ BlockingReason Destination::advance(
   }
   current_->append(
       output, folly::Range(&rows_[firstRow], rowIdx_ - firstRow), scratch);
-  record(output, firstRow, rowIdx_);
+  //record(output, firstRow, rowIdx_);
   // Update output state variable.
   if (rowIdx_ == rows_.size()) {
     *atEnd = true;
@@ -116,11 +116,13 @@ BlockingReason Destination::flush(
                  : BlockingReason::kNotBlocked;
 }
 
-void Destination::updateStats(Operator* op) {
-  auto serializerStats = current_->serializer()->runtimeStats();
-  auto lockedStats = op->stats().wlock();
-  for (auto& pair : serializerStats) {
+  void Destination::updateStats(Operator* op) {
+  if (current_ && current_->serializer()) {
+    auto serializerStats = current_->serializer()->runtimeStats();
+    auto lockedStats = op->stats().wlock();
+    for (auto& pair : serializerStats) {
     lockedStats->addRuntimeStat(pair.first, pair.second);
+    }
   }
 }
 
