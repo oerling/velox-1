@@ -95,8 +95,8 @@ class PrestoSerializerTest
     auto rowType = asRowType(rowVector->type());
     auto numRows = rowVector->size();
     auto paramOptions = getParamSerdeOptions(serdeOptions);
-    auto serializer =
-        serde_->createSerializer(rowType, numRows, arena.get(), &paramOptions);
+    auto serializer = serde_->createIterativeSerializer(
+        rowType, numRows, arena.get(), &paramOptions);
     vector_size_t sizeEstimate = 0;
 
     Scratch scratch;
@@ -1005,6 +1005,17 @@ TEST_P(PrestoSerializerTest, typeMismatch) {
       deserialize(ROW({BIGINT(), VARCHAR(), BOOLEAN()}), serialized, nullptr),
       "Number of columns in serialized data doesn't match "
       "number of columns requested for deserialization");
+
+  // TMore columns in serialization than in type.
+  if (GetParam() == common::CompressionKind_NONE) {
+    // No throw.
+    deserialize(ROW({BIGINT()}), serialized, nullptr);
+  } else {
+    VELOX_ASSERT_THROW(
+        deserialize(ROW({BIGINT()}), serialized, nullptr),
+        "Number of columns in serialized data doesn't match "
+        "number of columns requested for deserialization");
+  }
 
   // Wrong types of columns.
   VELOX_ASSERT_THROW(
