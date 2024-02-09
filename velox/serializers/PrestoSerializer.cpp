@@ -3732,7 +3732,8 @@ void readTopColumns(
   auto& children = result->children();
   const auto& childTypes = type->asRow().children();
   const auto numColumns = source.read<int32_t>();
-  // Bug for bug compatibility: Extra columns at the end are allowed for non-compressed data.
+  // Bug for bug compatibility: Extra columns at the end are allowed for
+  // non-compressed data.
   if (opts.compressionKind == common::CompressionKind_NONE) {
     VELOX_USER_CHECK_GE(
         numColumns,
@@ -3806,13 +3807,7 @@ void PrestoVectorSerde::deserialize(
           common::codecTypeToCompressionKind(codec->type())));
 
   if (!needCompression(*codec)) {
-    readTopColumns(
-        *source,
-        type,
-        pool,
-        *result,
-        resultOffset,
-        prestoOptions);
+    readTopColumns(*source, type, pool, *result, resultOffset, prestoOptions);
   } else {
     auto compressBuf = folly::IOBuf::create(compressedSize);
     source->readBytes(compressBuf->writableData(), compressedSize);
