@@ -74,6 +74,13 @@ class Destination {
       ContinueFuture* future,
       Scratch& scratch);
 
+  bool chooseAdvance(
+		     const RowVectorPtr& output,
+		     uint64_t maxBytes,
+    const std::vector<vector_size_t>& sizes,
+    raw_vector<detail::Destination*>& needMoreAdvance,
+    raw_vector<detail::Destination*>& toFlush);
+  
   BlockingReason flush(
       OutputBufferManager& bufferManager,
       const std::function<void()>& bufferReleaseFn,
@@ -91,6 +98,22 @@ class Destination {
     return bytesInCurrent_;
   }
 
+  const auto& rows() const {
+    return rows_;
+  }
+  
+  int32_t firstRow() const {
+    return firstRow_;
+  }
+
+  int32_t rowIdx() const {
+    return rowIdx_;
+  }
+  
+
+  auto* streamGroup() const {
+    return current_.get();
+  }
   /// Adds serialization stats to runtime stats of 'op'.
   void updateStats(Operator* op);
 
@@ -128,6 +151,9 @@ class Destination {
   vector_size_t rowsInCurrent_{0};
   raw_vector<vector_size_t> rows_;
 
+  //  Start of row range to serialize.
+  vector_size_t firstRow_{0};
+  
   // First index of 'rows_' that is not appended to 'current_'.
   vector_size_t rowIdx_{0};
 
@@ -219,6 +245,8 @@ class PartitionedOutput : public Operator {
   /// Collect all rows with null keys into nullRows_.
   void collectNullRows();
 
+  void getOutputColumnwise();
+  
   const std::vector<column_index_t> keyChannels_;
   const int numDestinations_;
   const bool replicateNullsAndAny_;
