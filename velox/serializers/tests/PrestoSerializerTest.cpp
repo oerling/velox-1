@@ -88,7 +88,7 @@ class PrestoSerializerTest
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions,
       std::optional<folly::Range<const IndexRange*>> indexRanges = std::nullopt,
       std::optional<folly::Range<const vector_size_t*>> rows = std::nullopt,
-      std::unique_ptr<VectorSerializer>* reuseSerializer = nullptr,
+      std::unique_ptr<IterativeVectorSerializer>* reuseSerializer = nullptr,
       std::unique_ptr<StreamArena>* reuseArena = nullptr) {
     auto streamInitialSize = output->tellp();
     sanityCheckEstimateSerializedSize(rowVector);
@@ -97,14 +97,14 @@ class PrestoSerializerTest
     auto rowType = asRowType(rowVector->type());
     auto numRows = rowVector->size();
     auto paramOptions = getParamSerdeOptions(serdeOptions);
-    std::unique_ptr<VectorSerializer> serializer;
+    std::unique_ptr<IterativeVectorSerializer> serializer;
     if (reuseSerializer && *reuseSerializer) {
       arena = std::move(*reuseArena);
       serializer = std::move(*reuseSerializer);
       serializer->clear();
     } else {
       arena = std::make_unique<StreamArena>(pool_.get());
-      serializer = serde_->createSerializer(
+      serializer = serde_->createIterativeSerializer(
           rowType, numRows, arena.get(), &paramOptions);
     }
     vector_size_t sizeEstimate = 0;
@@ -201,7 +201,7 @@ class PrestoSerializerTest
       VectorPtr vector,
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
           nullptr) {
-    std::unique_ptr<VectorSerializer> reuseSerializer;
+    std::unique_ptr<IterativeVectorSerializer> reuseSerializer;
     std::unique_ptr<StreamArena> reuseArena;
     auto rowVector = makeRowVector({vector});
     std::ostringstream out;
@@ -272,7 +272,7 @@ class PrestoSerializerTest
       const RowVectorPtr& rowVector,
       BufferPtr indices,
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions,
-      std::unique_ptr<VectorSerializer>* reuseSerializer,
+      std::unique_ptr<IterativeVectorSerializer>* reuseSerializer,
       std::unique_ptr<StreamArena>* reuseArena) {
     std::ostringstream out;
     auto rows = folly::Range<const vector_size_t*>(
@@ -1126,6 +1126,17 @@ TEST_P(PrestoSerializerTest, typeMismatch) {
       deserialize(ROW({BIGINT(), VARCHAR(), BOOLEAN()}), serialized, nullptr),
       "Number of columns in serialized data doesn't match "
       "number of columns requested for deserialization");
+
+  // TMore columns in serialization than in type.
+  if (GetParam() == common::CompressionKind_NONE) {
+    // No throw.
+    deserialize(ROW({BIGINT()}), serialized, nullptr);
+  } else {
+    VELOX_ASSERT_THROW(
+        deserialize(ROW({BIGINT()}), serialized, nullptr),
+        "Number of columns in serialized data doesn't match "
+        "number of columns requested for deserialization");
+  }
 
   // Wrong types of columns.
   VELOX_ASSERT_THROW(
