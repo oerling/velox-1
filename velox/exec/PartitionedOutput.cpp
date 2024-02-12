@@ -97,13 +97,13 @@ BlockingReason Destination::flush(
 
   const int64_t flushedBytes = stream.tellp();
 
+  bytesInCurrent_ = 0;
+  rowsInCurrent_ = 0;
+  setTargetSizePct();
   auto iobuf = stream.getIOBuf(bufferReleaseFn);
   // check(iobuf);
   // current_ = nullptr;
   current_->clear();
-  bytesInCurrent_ = 0;
-  rowsInCurrent_ = 0;
-  setTargetSizePct();
   bool blocked = bufferManager.enqueue(
       taskId_,
       destination_,
