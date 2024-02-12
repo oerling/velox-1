@@ -90,20 +90,20 @@ BlockingReason Destination::flush(
       std::max<int64_t>(kMinMessageSize, current_->size()));
   const int64_t flushedRows = rowsInCurrent_;
 
-  //raw_vector<vector_size_t> empty;
-  //history_.push_back(History{nullptr, std::move(empty)});
+  // raw_vector<vector_size_t> empty;
+  // history_.push_back(History{nullptr, std::move(empty)});
 
   current_->flush(&stream);
 
   const int64_t flushedBytes = stream.tellp();
 
-  bytesInCurrent_ = 0;
-  rowsInCurrent_ = 0;
-  setTargetSizePct();
   auto iobuf = stream.getIOBuf(bufferReleaseFn);
   // check(iobuf);
   // current_ = nullptr;
   current_->clear();
+  bytesInCurrent_ = 0;
+  rowsInCurrent_ = 0;
+  setTargetSizePct();
   bool blocked = bufferManager.enqueue(
       taskId_,
       destination_,
@@ -180,13 +180,17 @@ void Destination::replay() {
 }
 
 bool Destination::chooseAdvance(
-				const RowVectorPtr& output,
-				uint64_t maxBytes,
+    const RowVectorPtr& output,
+    uint64_t maxBytes,
     const std::vector<vector_size_t>& sizes,
     raw_vector<detail::Destination*>& needMoreAdvance,
     raw_vector<detail::Destination*>& toFlush) {
   if (rowIdx_ >= rows_.size()) {
     return false;
+  }
+
+  if (!type_) {
+    type_ = output->type();
   }
 
   firstRow_ = rowIdx_;
@@ -222,7 +226,6 @@ bool Destination::chooseAdvance(
   return true;
 }
 
-  
 } // namespace detail
 
 PartitionedOutput::PartitionedOutput(
@@ -606,55 +609,63 @@ void PartitionedOutput::getOutputColumnwise() {
       kMinDestinationSize,
       std::min<uint64_t>(kMaxPageSize, maxBufferedBytes_ / numDestinations_));
 
-  toFlush_.clear();
-  toAdvance_.clear();
-  nextToAdvance_.clear();
-  
-  for (;;) {
-    for (auto& destination : destinations_) {
-      if (destination->chooseAdvance(
-				     output_,
-				     maxPageSize,
-          rowSize_,
-	  nextToAdvance_,
-	  toFlush_)) {
-	toAdvance_.push_back(destination.get());
+  if (!destinations_.empty()) {
+    for (;;) {
+      toFlush_.clear();
+      toAdvance_.clear();
+      nextToAdvance_.clear();
+      for (auto& destination : destinations_) {
+        if (destination->chooseAdvance(
+                output_, maxPageSize, rowSize_, nextToAdvance_, toFlush_)) {
+          toAdvance_.push_back(destination.get());
+        }
       }
-    }
-    for (auto column = 0; column < output_->childrenSize(); ++column) {
+      for (auto column = 0;
+           !toAdvance_.empty() && column < output_->childrenSize();
+           ++column) {
+        for (auto i = 0; i < toAdvance_.size(); ++i) {
+          auto destination = toAdvance_[i];
+          destination->streamGroup()->appendColumn(
+              output_,
+              column,
+              folly::Range(
+                  destination->rows().data() + destination->firstRow(),
+                  destination->rowIdx() - destination->firstRow()),
+              scratch_);
+        }
+      }
       for (auto i = 0; i < toAdvance_.size(); ++i) {
-	auto destination = toAdvance_[i];
-	  destination->streamGroup()->appendColumn(output_, column, folly::Range(destination->rows().data() + destination->firstRow(), destination->rowIdx() - destination->firstRow()), scratch_);
+        auto destination = toAdvance_[i];
+        destination->streamGroup()->serializer()->incrementRows(
+            destination->rowIdx() - destination->firstRow());
+      }
+      for (auto* destination : toFlush_) {
+        blockingReason_ = destination->flush(
+            *bufferManager,
+            bufferReleaseFn_,
+            blockedDestination ? nullptr : &future_);
+        if (blockingReason_ != BlockingReason::kNotBlocked &&
+            blockedDestination == nullptr) {
+          blockedDestination = destination;
+        }
+      }
+      if (blockedDestination != nullptr || nextToAdvance_.empty()) {
+        break;
       }
     }
-    for (auto* destination : toFlush_) {
-      blockingReason_ = destination->flush(
-					   *bufferManager,
-				 bufferReleaseFn_,
-				 blockedDestination ? nullptr : &future_);
-      if (blockingReason_ != BlockingReason::kNotBlocked && blockedDestination == nullptr) {
-        blockedDestination = destination;
-      }
-      }
-    if (blockedDestination != nullptr || nextToAdvance_.empty()) { 
-      break;
-    }
-    toAdvance_.clear();
-    std::swap(toAdvance_, nextToAdvance_);
-  }
 
-
-  if (blockedDestination) {
-    // If we are going off-thread, we may as well make the output in
-    // progress for other destinations available, unless it is too
-    // small to be worth transfer.
-    for (auto& destination : destinations_) {
-      if (destination->serializedBytes() < kMinDestinationSize) {
-        continue;
+    if (blockedDestination) {
+      // If we are going off-thread, we may as well make the output in
+      // progress for other destinations available, unless it is too
+      // small to be worth transfer.
+      for (auto& destination : destinations_) {
+        if (destination->serializedBytes() < kMinDestinationSize) {
+          continue;
+        }
+        destination->flush(*bufferManager, bufferReleaseFn_, nullptr);
       }
-      destination->flush(*bufferManager, bufferReleaseFn_, nullptr);
+      return;
     }
-    return;
   }
   // All of 'output_' is written into the destinations. We are finishing, hence
   // move all the destinations to the output queue. This will not grow memory
@@ -678,5 +689,5 @@ void PartitionedOutput::getOutputColumnwise() {
   output_ = nullptr;
   return;
 }
-  
+
 } // namespace facebook::velox::exec
