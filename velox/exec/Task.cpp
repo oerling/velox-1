@@ -2000,11 +2000,13 @@ bool Task::getLongRunningOpCalls(
       if (!opCallStatus.empty()) {
         auto callDurationMs = opCallStatus.callDuration();
         if (callDurationMs > thresholdDurationMs) {
+          auto* op = driver->findOperatorNoThrow(opCallStatus.opId);
           out.push_back({
               .durationMs = callDurationMs,
               .tid = driver->state().tid,
               .opId = opCallStatus.opId,
               .taskId = taskId_,
+              .opCall = OpCallStatusRaw::formatCall(op, opCallStatus.method),
           });
         }
       }
@@ -2152,14 +2154,13 @@ folly::dynamic Task::toJson() const {
     obj["plan"] = planFragment_.planNode->toString(true, true);
   }
 
-  folly::dynamic driverObj = folly::dynamic::array;
-  int index = 0;
-  for (auto& driver : drivers_) {
-    if (driver) {
-      driverObj[index++] = driver->toJson();
+  folly::dynamic drivers = folly::dynamic::object;
+  for (auto i = 0; i < drivers_.size(); ++i) {
+    if (drivers_[i] != nullptr) {
+      drivers[i] = drivers_[i]->toJson();
     }
   }
-  obj["drivers"] = driverObj;
+  obj["drivers"] = drivers;
 
   if (auto buffers = bufferManager_.lock()) {
     if (auto buffer = buffers->getBufferIfExists(taskId_)) {

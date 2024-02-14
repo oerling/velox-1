@@ -24,10 +24,11 @@ namespace facebook::velox::serializer::presto {
 /// There are two ways to serialize data using PrestoVectorSerde:
 ///
 /// 1. In order to append multiple RowVectors into the same serialized payload,
-/// one can first create a VectorSerializer using createSerializer(), then
-/// append successive RowVectors using VectorSerializer::append(). In this case,
-/// since different RowVector might encode columns differently, data is always
-/// flattened in the serialized payload.
+/// one can first create an IterativeVectorSerializer using
+/// createIterativeSerializer(), then append successive RowVectors using
+/// IterativeVectorSerializer::append(). In this case, since different RowVector
+/// might encode columns differently, data is always flattened in the serialized
+/// payload.
 ///
 /// Note that there are two flavors of append(), one that takes a range of rows,
 /// and one that takes a list of row ids. The former is useful when serializing
@@ -57,9 +58,6 @@ class PrestoVectorSerde : public VectorSerde {
     bool useLosslessTimestamp{false};
     common::CompressionKind compressionKind{
         common::CompressionKind::CompressionKind_NONE};
-
-    /// Specifies the encoding for each of the top-level child vector.
-    std::vector<VectorEncoding::Simple> encodings;
   };
 
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
@@ -76,7 +74,7 @@ class PrestoVectorSerde : public VectorSerde {
       vector_size_t** sizes,
       Scratch& scratch) override;
 
-  std::unique_ptr<VectorSerializer> createSerializer(
+  std::unique_ptr<IterativeVectorSerializer> createIterativeSerializer(
       RowTypePtr type,
       int32_t numRows,
       StreamArena* streamArena,
@@ -88,25 +86,6 @@ class PrestoVectorSerde : public VectorSerde {
   std::unique_ptr<BatchVectorSerializer> createBatchSerializer(
       memory::MemoryPool* pool,
       const Options* options) override;
-
-  /// Serializes a single RowVector with possibly encoded children, preserving
-  /// their encodings. Encodings are preserved recursively for any RowVector
-  /// children, but not for children of other nested vectors such as Array, Map,
-  /// and Dictionary.
-  ///
-  /// PrestoPage does not support serialization of Dictionaries with nulls;
-  /// in case dictionaries contain null they are serialized as flat buffers.
-  ///
-  /// In order to override the encodings of top-level columns in the RowVector,
-  /// you can specifiy the encodings using PrestoOptions.encodings
-  ///
-  /// DEPRECATED: Use createBatchSerializer and the BatchVectorSerializer's
-  /// serialize function instead.
-  void deprecatedSerializeEncoded(
-      const RowVectorPtr& vector,
-      StreamArena* streamArena,
-      const Options* options,
-      OutputStream* out);
 
   bool supportsAppendInDeserialize() const override {
     return true;
@@ -128,6 +107,18 @@ class PrestoVectorSerde : public VectorSerde {
       RowVectorPtr* result,
       vector_size_t resultOffset,
       const Options* options) override;
+
+  /// This function is used to deserialize a single column that is serialized in
+  /// PrestoPage format. It is important to note that the PrestoPage format used
+  /// here does not include the Presto page header. Therefore, the 'source'
+  /// should contain uncompressed, serialized binary data, beginning at the
+  /// column header.
+  void deserializeSingleColumn(
+      ByteInputStream* source,
+      velox::memory::MemoryPool* pool,
+      TypePtr type,
+      VectorPtr* result,
+      const Options* options);
 
   static void registerVectorSerde();
 };
