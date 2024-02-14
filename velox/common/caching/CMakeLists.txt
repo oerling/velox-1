@@ -14,6 +14,7 @@
 
 add_library(
   velox_caching
+  CacheTTLController.cpp
   FileIds.cpp
   StringIdMap.cpp
   AsyncDataCache.cpp
@@ -27,6 +28,7 @@ target_link_libraries(
          velox_exception
          velox_file
          velox_memory
+         velox_process
          Folly::folly
          fmt::fmt
          gflags::gflags

@@ -99,19 +99,6 @@ bool isMember(
   return std::find(fields.begin(), fields.end(), &field) != fields.end();
 }
 
-void mergeFields(
-    std::vector<FieldReference*>& distinctFields,
-    std::unordered_set<FieldReference*>& multiplyReferencedFields,
-    const std::vector<FieldReference*>& moreFields) {
-  for (auto* newField : moreFields) {
-    if (isMember(distinctFields, *newField)) {
-      multiplyReferencedFields.insert(newField);
-    } else {
-      distinctFields.emplace_back(newField);
-    }
-  }
-}
-
 // Returns true if input expression or any sub-expression is an IF, AND or OR.
 bool hasConditionals(Expr* expr) {
   if (expr->isConditional()) {
@@ -156,7 +143,7 @@ Expr::Expr(
   constantInputs_.reserve(inputs_.size());
   inputIsConstant_.reserve(inputs_.size());
   for (auto& expr : inputs_) {
-    if (auto constantExpr = std::dynamic_pointer_cast<ConstantExpr>(expr)) {
+    if (auto constantExpr = expr->as<ConstantExpr>()) {
       constantInputs_.emplace_back(constantExpr->value());
       inputIsConstant_.push_back(true);
     } else {
@@ -205,7 +192,7 @@ bool Expr::allSupportFlatNoNullsFastPath(
 
 void Expr::clearMetaData() {
   metaDataComputed_ = false;
-  for (auto child : inputs_) {
+  for (auto& child : inputs_) {
     child->clearMetaData();
   }
   propagatesNulls_ = false;
@@ -214,6 +201,26 @@ void Expr::clearMetaData() {
   hasConditionals_ = false;
   deterministic_ = true;
   sameAsParentDistinctFields_ = false;
+}
+
+void Expr::mergeFields(
+    std::vector<FieldReference*>& distinctFields,
+    std::unordered_set<FieldReference*>& multiplyReferencedFields,
+    const std::vector<FieldReference*>& moreFields) {
+  for (auto* newField : moreFields) {
+    if (isMember(distinctFields, *newField)) {
+      multiplyReferencedFields.insert(newField);
+    } else {
+      distinctFields.emplace_back(newField);
+    }
+  }
+}
+
+void Expr::computeDistinctFields() {
+  for (auto& input : inputs_) {
+    mergeFields(
+        distinctFields_, multiplyReferencedFields_, input->distinctFields_);
+  }
 }
 
 void Expr::computeMetadata() {
@@ -241,15 +248,7 @@ void Expr::computeMetadata() {
   }
 
   // (2) Compute distinctFields_ and multiplyReferencedFields_.
-  for (auto& input : inputs_) {
-    mergeFields(
-        distinctFields_, multiplyReferencedFields_, input->distinctFields_);
-  }
-
-  if (is<FieldReference>() && inputs_.empty()) {
-    distinctFields_.resize(1);
-    distinctFields_[0] = this->as<FieldReference>();
-  }
+  computeDistinctFields();
 
   // (3) Compute propagatesNulls_.
   // propagatesNulls_ is true iff a null in any of the columns this
@@ -485,7 +484,10 @@ void Expr::evalSimplified(
   if (remainingRows->hasSelections()) {
     evalSimplifiedImpl(*remainingRows, context, result);
   }
-  addNulls(rows, remainingRows->asRange().bits(), context, result);
+
+  if (!type()->isFunction()) {
+    addNulls(rows, remainingRows->asRange().bits(), context, result);
+  }
 }
 
 void Expr::releaseInputValues(EvalCtx& evalCtx) {
@@ -513,7 +515,8 @@ void Expr::evalSimplifiedImpl(
         inputValue->encoding() == VectorEncoding::Simple::FLAT ||
         inputValue->encoding() == VectorEncoding::Simple::ARRAY ||
         inputValue->encoding() == VectorEncoding::Simple::MAP ||
-        inputValue->encoding() == VectorEncoding::Simple::ROW);
+        inputValue->encoding() == VectorEncoding::Simple::ROW ||
+        inputValue->encoding() == VectorEncoding::Simple::FUNCTION);
   };
 
   if (defaultNulls) {
@@ -832,9 +835,12 @@ void Expr::eval(
     for (auto* field : distinctFields_) {
       context.ensureFieldLoaded(field->index(context), rows);
     }
-  } else if (!propagatesNulls_) {
-    // Load multiply-referenced fields at common parent expr with "rows".
-    // Delay loading fields that are not in multiplyReferencedFields_.
+  } else if (
+      !propagatesNulls_ && !evaluatesArgumentsOnNonIncreasingSelection()) {
+    // Load multiply-referenced fields at common parent expr with "rows".  Delay
+    // loading fields that are not in multiplyReferencedFields_.  In case
+    // evaluatesArgumentsOnNonIncreasingSelection() is true, this is delayed
+    // until we process the inputs of ConjunctExpr.
     for (const auto& field : multiplyReferencedFields_) {
       context.ensureFieldLoaded(field->index(context), rows);
     }
@@ -863,8 +869,32 @@ void Expr::evaluateSharedSubexpr(
         context.getField(field->index(context)).get());
   }
 
+  // Find the cached results for the same inputs, or create an entry if one
+  // doesn't exist.
+  auto sharedSubexprResultsIter =
+      sharedSubexprResults_.find(expressionInputFields);
+  if (sharedSubexprResultsIter == sharedSubexprResults_.end()) {
+    auto maxSharedSubexprResultsCached = context.execCtx()
+                                             ->queryCtx()
+                                             ->queryConfig()
+                                             .maxSharedSubexprResultsCached();
+    if (sharedSubexprResults_.size() < maxSharedSubexprResultsCached) {
+      // If we have room left in the cache, add it.
+      sharedSubexprResultsIter =
+          sharedSubexprResults_
+              .insert(
+                  std::pair(std::move(expressionInputFields), SharedResults()))
+              .first;
+    } else {
+      // Otherwise, simply evaluate it and return without caching the results.
+      eval(rows, context, result);
+
+      return;
+    }
+  }
+
   auto& [sharedSubexprRows, sharedSubexprValues] =
-      sharedSubexprResults_[expressionInputFields];
+      sharedSubexprResultsIter->second;
 
   if (sharedSubexprValues == nullptr) {
     eval(rows, context, result);
@@ -937,7 +967,7 @@ SelectivityVector* singleRow(
 
 Expr::PeelEncodingsResult Expr::peelEncodings(
     EvalCtx& context,
-    ScopedContextSaver& saver,
+    ContextSaver& saver,
     const SelectivityVector& rows,
     LocalDecodedVector& localDecoded,
     LocalSelectivityVector& newRowsHolder,
@@ -1027,8 +1057,8 @@ void Expr::evalEncodings(
     if (!hasFlat) {
       VectorPtr wrappedResult;
       // Attempt peeling and bound the scope of the context used for it.
-      {
-        ScopedContextSaver saveContext;
+
+      withContextSaver([&](ContextSaver& saveContext) {
         LocalSelectivityVector newRowsHolder(context);
         LocalSelectivityVector finalRowsHolder(context);
         LocalDecodedVector decodedHolder(context);
@@ -1042,9 +1072,9 @@ void Expr::evalEncodings(
         auto* newRows = peelEncodingsResult.newRows;
         if (newRows) {
           VectorPtr peeledResult;
-          // peelEncodings() can potentially produce an empty selectivity vector
-          // if all selected values we are waiting for are nulls. So, here we
-          // check for such a case.
+          // peelEncodings() can potentially produce an empty selectivity
+          // vector if all selected values we are waiting for are nulls. So,
+          // here we check for such a case.
           if (newRows->hasSelections()) {
             if (peelEncodingsResult.mayCache) {
               evalWithMemo(*newRows, context, peeledResult);
@@ -1055,7 +1085,8 @@ void Expr::evalEncodings(
           wrappedResult = context.getPeeledEncoding()->wrap(
               this->type(), context.pool(), peeledResult, rows);
         }
-      }
+      });
+
       if (wrappedResult != nullptr) {
         context.moveOrCopyResult(wrappedResult, rows, result);
         return;
@@ -1091,7 +1122,7 @@ bool Expr::removeSureNulls(
   }
   if (result) {
     result->updateBounds();
-    return true;
+    return result->countSelected() != rows.countSelected();
   }
   return false;
 }
@@ -1100,7 +1131,7 @@ void Expr::addNulls(
     const SelectivityVector& rows,
     const uint64_t* FOLLY_NULLABLE rawNulls,
     EvalCtx& context,
-    VectorPtr& result) {
+    VectorPtr& result) const {
   EvalCtx::addNulls(rows, rawNulls, context, type(), result);
 }
 
@@ -1143,81 +1174,96 @@ void Expr::evalWithNulls(
   evalAll(rows, context, result);
 }
 
+// Optimization that attempts to cache results for inputs that are dictionary
+// encoded and use the same base vector between subsequent input batches. Since
+// this hold onto a reference to the base vector and the cached results, it can
+// be memory intensive. Therefore in order to reduce this consumption and ensure
+// it is only employed for cases where it can be useful, it only starts caching
+// result after it encounters the same base at least twice.
 void Expr::evalWithMemo(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
   VectorPtr base;
   distinctFields_[0]->evalSpecialForm(rows, context, base);
-  ++numCachableInput_;
-  if (baseDictionary_ == base) {
-    ++numCacheableRepeats_;
-    if (cachedDictionaryIndices_) {
-      LocalSelectivityVector cachedHolder(context, rows);
-      auto cached = cachedHolder.get();
-      VELOX_DCHECK(cached != nullptr);
-      cached->intersect(*cachedDictionaryIndices_);
-      if (cached->hasSelections()) {
-        context.ensureWritable(rows, type(), result);
-        result->copy(dictionaryCache_.get(), *cached, nullptr);
-      }
-    }
-    LocalSelectivityVector uncachedHolder(context, rows);
-    auto uncached = uncachedHolder.get();
-    VELOX_DCHECK(uncached != nullptr);
-    if (cachedDictionaryIndices_) {
-      uncached->deselect(*cachedDictionaryIndices_);
-    }
-    if (uncached->hasSelections()) {
-      // Fix finalSelection at "rows" if uncached rows is a strict subset to
-      // avoid losing values not in uncached rows that were copied earlier into
-      // "result" from the cached rows.
-      ScopedFinalSelectionSetter scopedFinalSelectionSetter(
-          context, &rows, uncached->countSelected() < rows.countSelected());
 
-      evalWithNulls(*uncached, context, result);
-      context.deselectErrors(*uncached);
-      context.exprSet()->addToMemo(this);
-      auto newCacheSize = uncached->end();
-
-      // dictionaryCache_ is valid only for cachedDictionaryIndices_. Hence, a
-      // safe call to BaseVector::ensureWritable must include all the rows not
-      // covered by cachedDictionaryIndices_. If BaseVector::ensureWritable is
-      // called only for a subset of rows not covered by
-      // cachedDictionaryIndices_, it will attempt to copy rows that are not
-      // valid leading to a crash.
-      LocalSelectivityVector allUncached(context, dictionaryCache_->size());
-      allUncached.get()->setAll();
-      allUncached.get()->deselect(*cachedDictionaryIndices_);
-      context.ensureWritable(*allUncached.get(), type(), dictionaryCache_);
-
-      if (cachedDictionaryIndices_->size() < newCacheSize) {
-        cachedDictionaryIndices_->resize(newCacheSize, false);
-      }
-
-      cachedDictionaryIndices_->select(*uncached);
-
-      // Resize the dictionaryCache_ to accommodate all the necessary rows.
-      if (dictionaryCache_->size() < uncached->end()) {
-        dictionaryCache_->resize(uncached->end());
-      }
-      dictionaryCache_->copy(result.get(), *uncached, nullptr);
-    }
-    context.releaseVector(base);
+  if (base.get() != baseOfDictionaryRawPtr_ ||
+      baseOfDictionaryWeakPtr_.expired()) {
+    baseOfDictionaryRepeats_ = 0;
+    baseOfDictionaryWeakPtr_ = base;
+    baseOfDictionaryRawPtr_ = base.get();
+    context.releaseVector(baseOfDictionary_);
+    context.releaseVector(dictionaryCache_);
+    evalWithNulls(rows, context, result);
     return;
   }
-  context.releaseVector(baseDictionary_);
-  baseDictionary_ = base;
-  evalWithNulls(rows, context, result);
+  ++baseOfDictionaryRepeats_;
 
-  context.releaseVector(dictionaryCache_);
-  dictionaryCache_ = result;
-  if (!cachedDictionaryIndices_) {
-    cachedDictionaryIndices_ =
-        context.execCtx()->getSelectivityVector(rows.end());
+  if (baseOfDictionaryRepeats_ == 1) {
+    evalWithNulls(rows, context, result);
+    baseOfDictionary_ = base;
+    dictionaryCache_ = result;
+    if (!cachedDictionaryIndices_) {
+      cachedDictionaryIndices_ =
+          context.execCtx()->getSelectivityVector(rows.end());
+    }
+    *cachedDictionaryIndices_ = rows;
+    context.deselectErrors(*cachedDictionaryIndices_);
+    return;
   }
-  *cachedDictionaryIndices_ = rows;
-  context.deselectErrors(*cachedDictionaryIndices_);
+
+  if (cachedDictionaryIndices_) {
+    LocalSelectivityVector cachedHolder(context, rows);
+    auto cached = cachedHolder.get();
+    VELOX_DCHECK(cached != nullptr);
+    cached->intersect(*cachedDictionaryIndices_);
+    if (cached->hasSelections()) {
+      context.ensureWritable(rows, type(), result);
+      result->copy(dictionaryCache_.get(), *cached, nullptr);
+    }
+  }
+  LocalSelectivityVector uncachedHolder(context, rows);
+  auto uncached = uncachedHolder.get();
+  VELOX_DCHECK(uncached != nullptr);
+  if (cachedDictionaryIndices_) {
+    uncached->deselect(*cachedDictionaryIndices_);
+  }
+  if (uncached->hasSelections()) {
+    // Fix finalSelection at "rows" if uncached rows is a strict subset to
+    // avoid losing values not in uncached rows that were copied earlier into
+    // "result" from the cached rows.
+    ScopedFinalSelectionSetter scopedFinalSelectionSetter(
+        context, &rows, uncached->countSelected() < rows.countSelected());
+
+    evalWithNulls(*uncached, context, result);
+    context.deselectErrors(*uncached);
+    context.exprSet()->addToMemo(this);
+    auto newCacheSize = uncached->end();
+
+    // dictionaryCache_ is valid only for cachedDictionaryIndices_. Hence, a
+    // safe call to BaseVector::ensureWritable must include all the rows not
+    // covered by cachedDictionaryIndices_. If BaseVector::ensureWritable is
+    // called only for a subset of rows not covered by
+    // cachedDictionaryIndices_, it will attempt to copy rows that are not
+    // valid leading to a crash.
+    LocalSelectivityVector allUncached(context, dictionaryCache_->size());
+    allUncached.get()->setAll();
+    allUncached.get()->deselect(*cachedDictionaryIndices_);
+    context.ensureWritable(*allUncached.get(), type(), dictionaryCache_);
+
+    if (cachedDictionaryIndices_->size() < newCacheSize) {
+      cachedDictionaryIndices_->resize(newCacheSize, false);
+    }
+
+    cachedDictionaryIndices_->select(*uncached);
+
+    // Resize the dictionaryCache_ to accommodate all the necessary rows.
+    if (dictionaryCache_->size() < uncached->end()) {
+      dictionaryCache_->resize(uncached->end());
+    }
+    dictionaryCache_->copy(result.get(), *uncached, nullptr);
+  }
+  context.releaseVector(base);
 }
 
 void Expr::setAllNulls(
@@ -1260,7 +1306,7 @@ void computeIsAsciiForInputs(
       auto* vector =
           inputValues[index]->template as<SimpleVector<StringView>>();
 
-      VELOX_CHECK(vector);
+      VELOX_CHECK(vector, inputValues[index]->toString());
       vector->computeAndSetIsAscii(rows);
     }
   }
@@ -1395,24 +1441,11 @@ void Expr::evalAllImpl(
 
   // Write non-selected rows in remainingRows as nulls in the result if some
   // rows have been skipped.
-  if (remainingRows.mayHaveChanged()) {
+  if (remainingRows.hasChanged()) {
     addNulls(rows, remainingRows.rows().asRange().bits(), context, result);
   }
   releaseInputValues(context);
 }
-
-namespace {
-void setPeeledArg(
-    VectorPtr arg,
-    int32_t index,
-    int32_t numArgs,
-    std::vector<VectorPtr>& peeledArgs) {
-  if (peeledArgs.empty()) {
-    peeledArgs.resize(numArgs);
-  }
-  peeledArgs[index] = arg;
-}
-} // namespace
 
 bool Expr::applyFunctionWithPeeling(
     const SelectivityVector& applyRows,
@@ -1420,7 +1453,6 @@ bool Expr::applyFunctionWithPeeling(
     VectorPtr& result) {
   LocalDecodedVector localDecoded(context);
   LocalSelectivityVector newRowsHolder(context);
-  ScopedContextSaver saver;
   // Attempt peeling.
   std::vector<VectorPtr> peeledVectors;
   auto peeledEncoding = PeeledEncoding::peel(
@@ -1441,21 +1473,23 @@ bool Expr::applyFunctionWithPeeling(
   // pre-existing rows need to be preserved.
   auto newRows = peeledEncoding->translateToInnerRows(applyRows, newRowsHolder);
 
-  // Save context and set the peel.
-  context.saveAndReset(saver, applyRows);
-  context.setPeeledEncoding(peeledEncoding);
+  withContextSaver([&](ContextSaver& saver) {
+    // Save context and set the peel.
+    context.saveAndReset(saver, applyRows);
+    context.setPeeledEncoding(peeledEncoding);
 
-  // Apply the function.
-  VectorPtr peeledResult;
-  applyFunction(*newRows, context, peeledResult);
-  VectorPtr wrappedResult = context.getPeeledEncoding()->wrap(
-      this->type(), context.pool(), peeledResult, applyRows);
-  context.moveOrCopyResult(wrappedResult, applyRows, result);
+    // Apply the function.
+    VectorPtr peeledResult;
+    applyFunction(*newRows, context, peeledResult);
+    VectorPtr wrappedResult = context.getPeeledEncoding()->wrap(
+        this->type(), context.pool(), peeledResult, applyRows);
+    context.moveOrCopyResult(wrappedResult, applyRows, result);
 
-  // Recycle peeledResult if it's not owned by the result vector. Examples of
-  // when this can happen is when the result is a primitive constant vector, or
-  // when moveOrCopyResult copies wrappedResult content.
-  context.releaseVector(peeledResult);
+    // Recycle peeledResult if it's not owned by the result vector. Examples of
+    // when this can happen is when the result is a primitive constant vector,
+    // or when moveOrCopyResult copies wrappedResult content.
+    context.releaseVector(peeledResult);
+  });
 
   return true;
 }
@@ -1608,7 +1642,7 @@ bool Expr::isConstant() const {
     return false;
   }
   for (auto& input : inputs_) {
-    if (!dynamic_cast<ConstantExpr*>(input.get())) {
+    if (!input->is<ConstantExpr>()) {
       return false;
     }
   }
@@ -1711,7 +1745,7 @@ ExprSet::ExprSet(
   exprs_ = compileExpressions(sources, execCtx, this, enableConstantFolding);
   std::vector<FieldReference*> allDistinctFields;
   for (auto& expr : exprs_) {
-    mergeFields(
+    Expr::mergeFields(
         distinctFields_, multiplyReferencedFields_, expr->distinctFields());
   }
 }

@@ -47,10 +47,14 @@ void PlanNodeStats::addTotals(const OperatorStats& stats) {
   cpuWallTiming.add(stats.getOutputTiming);
   cpuWallTiming.add(stats.finishTiming);
 
+  backgroundTiming.add(stats.backgroundTiming);
+
   blockedWallNanos += stats.blockedWallNanos;
 
   peakMemoryBytes += stats.memoryStats.peakTotalMemoryReservation;
   numMemoryAllocations += stats.memoryStats.numMemoryAllocations;
+
+  physicalWrittenBytes += stats.physicalWrittenBytes;
 
   for (const auto& [name, runtimeStats] : stats.runtimeStats) {
     if (UNLIKELY(customStats.count(name) == 0)) {
@@ -102,6 +106,12 @@ std::string PlanNodeStats::toString(bool includeInputStats) const {
   if (numSplits > 0) {
     out << ", Splits: " << numSplits;
   }
+
+  if (spilledRows > 0) {
+    out << ", Spilled: " << spilledRows << " rows ("
+        << succinctBytes(spilledBytes) << ", " << spilledFiles << " files)";
+  }
+
   return out.str();
 }
 
@@ -146,6 +156,7 @@ folly::dynamic toPlanStatsJson(const facebook::velox::exec::TaskStats& stats) {
       stat["blockedWallNanos"] = operatorStat.second->blockedWallNanos;
       stat["peakMemoryBytes"] = operatorStat.second->peakMemoryBytes;
       stat["numMemoryAllocations"] = operatorStat.second->numMemoryAllocations;
+      stat["physicalWrittenBytes"] = operatorStat.second->physicalWrittenBytes;
       stat["numDrivers"] = operatorStat.second->numDrivers;
       stat["numSplits"] = operatorStat.second->numSplits;
       stat["spilledInputBytes"] = operatorStat.second->spilledInputBytes;

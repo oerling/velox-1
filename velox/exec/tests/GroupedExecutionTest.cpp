@@ -13,10 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <regex>
+
 #include <velox/type/Timestamp.h>
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/exec/PartitionedOutputBufferManager.h"
+#include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/TableScan.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -120,7 +122,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
   VELOX_ASSERT_THROW(
-      task->start(task, 3, 1),
+      task->start(3, 1),
       "groupedExecutionLeafNodeIds must be empty in ungrouped execution mode");
 
   // Check grouped execution without supplied leaf node ids.
@@ -129,7 +131,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
   VELOX_ASSERT_THROW(
-      task->start(task, 3, 1),
+      task->start(3, 1),
       "groupedExecutionLeafNodeIds must not be empty in "
       "grouped execution mode");
 
@@ -140,7 +142,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
   VELOX_ASSERT_THROW(
-      task->start(task, 3, 1),
+      task->start(3, 1),
       fmt::format(
           "Grouped execution leaf node {} is not a leaf node in any pipeline",
           projectNodeId));
@@ -153,7 +155,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
   VELOX_ASSERT_THROW(
-      task->start(task, 3, 1),
+      task->start(3, 1),
       fmt::format(
           "Grouped execution leaf node {} is not a leaf node in any pipeline",
           projectNodeId));
@@ -166,7 +168,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
   task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
   VELOX_ASSERT_THROW(
-      task->start(task, 3, 1),
+      task->start(3, 1),
       fmt::format(
           "Grouped execution leaf node {} not found or it is not a leaf node",
           localPartitionNodeId));
@@ -203,7 +205,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
   auto task =
       exec::Task::create("0", std::move(planFragment), 0, std::move(queryCtx));
   // 3 drivers max and 1 concurrent split group.
-  task->start(task, 3, 1);
+  task->start(3, 1);
 
   // All pipelines run grouped execution, so no drivers should be running.
   EXPECT_EQ(0, task->numRunningDrivers());
@@ -256,8 +258,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
 
   // 'Delete results' from output buffer triggers 'set all output consumed',
   // which should finish the task.
-  auto outputBufferManager =
-      exec::PartitionedOutputBufferManager::getInstance().lock();
+  auto outputBufferManager = exec::OutputBufferManager::getInstance().lock();
   outputBufferManager->deleteResults(task->taskId(), 0);
 
   // Task must be finished at this stage.
@@ -301,6 +302,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
         .capturePlanNodeId(probeScanNodeId)
         .project({"c3 as x", "c2 as y", "c1 as z", "c0 as w", "c4", "c5"});
     // Hash or Nested Loop join.
+    core::PlanNodeId joinNodeId;
     if (i == 0) {
       planBuilder
           .hashJoin(
@@ -313,6 +315,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
                   .planNode(),
               "",
               {"x", "y", "z", "w", "c4", "c5"})
+          .capturePlanNodeId(joinNodeId)
           .localPartitionRoundRobinRow()
           .project({"w as c0", "z as c1", "y as c2", "x as c3", "c4", "c5"})
           .planNode();
@@ -341,7 +344,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
     auto task = exec::Task::create(
         "0", std::move(planFragment), 0, std::move(queryCtx));
     // 3 drivers max and 1 concurrent split group.
-    task->start(task, 3, 1);
+    task->start(3, 1);
 
     // Build pipeline runs ungrouped execution, so it should have drivers
     // running.
@@ -410,14 +413,36 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
 
     // 'Delete results' from output buffer triggers 'set all output consumed',
     // which should finish the task.
-    auto outputBufferManager =
-        exec::PartitionedOutputBufferManager::getInstance().lock();
+    auto outputBufferManager = exec::OutputBufferManager::getInstance().lock();
     outputBufferManager->deleteResults(task->taskId(), 0);
 
     // Task must be finished at this stage.
     EXPECT_EQ(exec::TaskState::kFinished, task->state());
     EXPECT_EQ(
         std::unordered_set<int32_t>({1, 5, 8}), getCompletedSplitGroups(task));
+    if (i == 0) {
+      // Check each split group has a separate hash join node pool.
+      const std::unordered_set<int32_t> expectedSplitGroupIds({1, 5, 8});
+      int numSplitGroupJoinNodes{0};
+      task->pool()->visitChildren([&](memory::MemoryPool* childPool) -> bool {
+        if (folly::StringPiece(childPool->name())
+                .startsWith(fmt::format("node.{}[", joinNodeId))) {
+          ++numSplitGroupJoinNodes;
+          std::vector<std::string> parts;
+          folly::split(".", childPool->name(), parts);
+          const std::string name = parts[1];
+          parts.clear();
+          folly::split("[", name, parts);
+          const std::string splitGroupIdStr =
+              parts[1].substr(0, parts[1].size() - 1);
+          EXPECT_TRUE(
+              expectedSplitGroupIds.count(atoi(splitGroupIdStr.c_str())))
+              << splitGroupIdStr;
+        }
+        return true;
+      });
+      ASSERT_EQ(numSplitGroupJoinNodes, expectedSplitGroupIds.size());
+    }
   }
 }
 
@@ -443,7 +468,7 @@ TEST_F(GroupedExecutionTest, groupedExecution) {
   params.numConcurrentSplitGroups = 2;
 
   // Create the cursor with the task underneath. It is not started yet.
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
   auto task = cursor->task();
 
   // Add one splits before start to ensure we can handle such cases.

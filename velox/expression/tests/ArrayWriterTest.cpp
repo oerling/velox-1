@@ -316,12 +316,16 @@ TEST_F(ArrayWriterTest, testVarChar) {
         stringWriter,
         "test a long string, a bit longer than that, longer, and longer");
   }
+
+  arrayWriter.push_back("new_feature"_sv);
+
   vectorWriter.commit();
   auto expected = std::vector<std::vector<std::optional<StringView>>>{
       {"hi"_sv,
        std::nullopt,
        "welcome"_sv,
-       "test a long string, a bit longer than that, longer, and longer"_sv}};
+       "test a long string, a bit longer than that, longer, and longer"_sv,
+       "new_feature"_sv}};
   assertEqualVectors(result, makeNullableArrayVector(expected));
 }
 
@@ -769,6 +773,50 @@ TEST_F(ArrayWriterTest, addItems) {
   }
 }
 
+TEST_F(ArrayWriterTest, addItemsString) {
+  std::string string1 =
+      "*************************************not-inlined-string*********************************************1";
+  std::string string2 =
+      "*************************************not-inlined-string*********************************************2";
+
+  auto inputVector = makeArrayVector<std::string>(
+      {{string1, string2}, {string1, string1}, {string2, string2}});
+  DecodedVector decoded;
+  decoded.decode(*inputVector, 1);
+  exec::VectorReader<Array<Varchar>> inputReader(&decoded);
+
+  auto result = prepareResult(CppToType<Array<Varchar>>::create());
+  exec::VectorWriter<Array<Varchar>> writer;
+  writer.init(*result->as<ArrayVector>());
+  writer.setOffset(0);
+  auto& arrayWriter = writer.current();
+
+  arrayWriter.add_items(inputReader[0]);
+  arrayWriter.add_items(inputReader[1]);
+  arrayWriter.add_items(inputReader[2]);
+  arrayWriter.add_items(inputReader[0]);
+  writer.commit();
+  writer.finish();
+
+  auto expected = makeArrayVector<std::string>(
+      {{string1,
+        string2,
+        string1,
+        string1,
+        string2,
+        string2,
+        string1,
+        string2}});
+  assertEqualVectors(result, expected);
+
+  // Make sure that buffers are reused.
+  auto flatOutElements =
+      result->as<ArrayVector>()->elements()->asFlatVector<StringView>();
+  auto flatInElements =
+      inputVector->as<ArrayVector>()->elements()->asFlatVector<StringView>();
+  ASSERT_EQ(flatOutElements->stringBuffers(), flatInElements->stringBuffers());
+}
+
 // Make sure nested vectors are resized to actual size after writing.
 TEST_F(ArrayWriterTest, finishPostSize) {
   using out_t = Array<Array<int32_t>>;
@@ -809,7 +857,6 @@ TEST_F(ArrayWriterTest, nestedArrayWriteThenCommitNull) {
     auto& nestedArray = current.add_item();
     nestedArray.push_back(1);
     nestedArray.push_back(2);
-
     writer.commitNull();
   }
 

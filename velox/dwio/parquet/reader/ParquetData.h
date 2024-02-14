@@ -16,29 +16,33 @@
 
 #pragma once
 
-#include <thrift/protocol/TCompactProtocol.h> //@manual
-#include "velox/common/base/RawVector.h"
 #include "velox/dwio/common/BufferUtil.h"
-#include "velox/dwio/common/BufferedInput.h"
-#include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/parquet/reader/Metadata.h"
 #include "velox/dwio/parquet/reader/PageReader.h"
-#include "velox/dwio/parquet/thrift/ParquetThriftTypes.h"
-#include "velox/dwio/parquet/thrift/ThriftTransport.h"
+
+namespace facebook::velox::common {
+class ScanSpec;
+} // namespace facebook::velox::common
+
+namespace facebook::velox::dwio::common {
+class BufferedInput;
+} // namespace facebook::velox::dwio::common
 
 namespace facebook::velox::parquet {
+
 class ParquetParams : public dwio::common::FormatParams {
  public:
   ParquetParams(
       memory::MemoryPool& pool,
       dwio::common::ColumnReaderStatistics& stats,
-      const thrift::FileMetaData& metaData)
+      const FileMetaDataPtr metaData)
       : FormatParams(pool, stats), metaData_(metaData) {}
   std::unique_ptr<dwio::common::FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       const common::ScanSpec& scanSpec) override;
 
  private:
-  const thrift::FileMetaData& metaData_;
+  const FileMetaDataPtr metaData_;
 };
 
 /// Format-specific data created for each leaf column of a Parquet rowgroup.
@@ -46,11 +50,11 @@ class ParquetData : public dwio::common::FormatData {
  public:
   ParquetData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      const std::vector<thrift::RowGroup>& rowGroups,
+      const FileMetaDataPtr fileMetadataPtr,
       memory::MemoryPool& pool)
       : pool_(pool),
         type_(std::static_pointer_cast<const ParquetTypeWithId>(type)),
-        rowGroups_(rowGroups),
+        fileMetaDataPtr_(fileMetadataPtr),
         maxDefine_(type_->maxDefine_),
         maxRepeat_(type_->maxRepeat_),
         rowsInRowGroup_(-1) {}
@@ -171,6 +175,10 @@ class ParquetData : public dwio::common::FormatData {
     return reader_->isDictionary();
   }
 
+  bool isDeltaBinaryPacked() const {
+    return reader_->isDeltaBinaryPacked();
+  }
+
   bool parentNullsInLeaves() const override {
     return true;
   }
@@ -186,7 +194,7 @@ class ParquetData : public dwio::common::FormatData {
  protected:
   memory::MemoryPool& pool_;
   std::shared_ptr<const ParquetTypeWithId> type_;
-  const std::vector<thrift::RowGroup>& rowGroups_;
+  const FileMetaDataPtr fileMetaDataPtr_;
   // Streams for this column in each of 'rowGroups_'. Will be created on or
   // ahead of first use, not at construction.
   std::vector<std::unique_ptr<dwio::common::SeekableInputStream>> streams_;

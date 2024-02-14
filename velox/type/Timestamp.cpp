@@ -15,7 +15,6 @@
  */
 #include "velox/type/Timestamp.h"
 #include <chrono>
-#include "velox/common/base/Exceptions.h"
 #include "velox/external/date/tz.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
@@ -47,17 +46,23 @@ Timestamp Timestamp::now() {
 void Timestamp::toGMT(const date::time_zone& zone) {
   // Magic number -2^39 + 24*3600. This number and any number lower than that
   // will cause time_zone::to_sys() to SIGABRT. We don't want that to happen.
-  if (seconds_ <= (-1096193779200l + 86400l)) {
-    VELOX_UNSUPPORTED(
-        "Timestamp out of bound for time zone adjustment {} seconds", seconds_);
-  }
+  VELOX_USER_CHECK_GT(
+      seconds_,
+      -1096193779200l + 86400l,
+      "Timestamp seconds out of range for time zone adjustment");
+
+  VELOX_USER_CHECK_LE(
+      seconds_,
+      kMaxSeconds,
+      "Timestamp seconds out of range for time zone adjustment");
+
   date::local_time<std::chrono::seconds> localTime{
       std::chrono::seconds(seconds_)};
   std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>
       sysTime;
   try {
     sysTime = zone.to_sys(localTime);
-  } catch (const date::ambiguous_local_time& error) {
+  } catch (const date::ambiguous_local_time&) {
     // If the time is ambiguous, pick the earlier possibility to be consistent
     // with Presto.
     sysTime = zone.to_sys(localTime, date::choose::earliest);
@@ -103,9 +108,10 @@ void validateTimePoint(const std::chrono::time_point<
 } // namespace
 
 std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>
-Timestamp::toTimePoint() const {
+Timestamp::toTimePoint(bool allowOverflow) const {
   using namespace std::chrono;
-  auto tp = time_point<system_clock, milliseconds>(milliseconds(toMillis()));
+  auto tp = time_point<system_clock, milliseconds>(
+      milliseconds(allowOverflow ? toMillisAllowOverflow() : toMillis()));
   validateTimePoint(tp);
   return tp;
 }
@@ -126,6 +132,20 @@ void Timestamp::toTimezone(int16_t tzID) {
     // Other ids go this path.
     toTimezone(*date::locate_zone(util::getTimeZoneName(tzID)));
   }
+}
+
+const date::time_zone& Timestamp::defaultTimezone() {
+  static const date::time_zone* kDefault = ({
+    // TODO: We are hard-coding PST/PDT here to be aligned with the current
+    // behavior in DWRF reader/writer.  Once they are fixed, we can use
+    // date::current_zone() here.
+    //
+    // See https://github.com/facebookincubator/velox/issues/8127
+    auto* tz = date::locate_zone("America/Los_Angeles");
+    VELOX_CHECK_NOT_NULL(tz);
+    tz;
+  });
+  return *kDefault;
 }
 
 namespace {
@@ -166,9 +186,25 @@ void appendSmallInt(int n, std::string& out) {
   out.append(intToStr[n], 2);
 }
 
+std::string::size_type getCapacity(const TimestampToStringOptions& options) {
+  auto precisionWidth = static_cast<int8_t>(options.precision);
+  switch (options.mode) {
+    case TimestampToStringOptions::Mode::kDateOnly:
+      // yyyy-mm-dd
+      return 10;
+    case TimestampToStringOptions::Mode::kTimeOnly:
+      // hh:mm:ss.precision
+      return 9 + precisionWidth;
+    case TimestampToStringOptions::Mode::kFull:
+      return 26 + precisionWidth;
+    default:
+      VELOX_UNREACHABLE();
+  }
+}
+
 } // namespace
 
-bool epochToUtc(int64_t epoch, std::tm& tm) {
+bool Timestamp::epochToUtc(int64_t epoch, std::tm& tm) {
   constexpr int kSecondsPerHour = 3600;
   constexpr int kSecondsPerDay = 24 * kSecondsPerHour;
   constexpr int kDaysPerYear = 365;
@@ -213,54 +249,84 @@ bool epochToUtc(int64_t epoch, std::tm& tm) {
   return true;
 }
 
-std::string tmToString(
+std::string Timestamp::tmToString(
     const std::tm& tmValue,
-    int nanos,
+    uint64_t nanos,
     const TimestampToStringOptions& options) {
   VELOX_DCHECK_GE(nanos, 0);
   VELOX_DCHECK_LT(nanos, 1'000'000'000);
-  int width = options.precision;
+  auto precisionWidth = static_cast<int8_t>(options.precision);
   std::string out;
-  out.reserve(options.dateOnly ? 10 : 26 + width);
-  int n = kTmYearBase + tmValue.tm_year;
-  bool negative = n < 0;
-  if (negative) {
-    out += '-';
-    n = -n;
-  }
-  while (n > 0) {
-    out += '0' + n % 10;
-    n /= 10;
-  }
-  if (options.zeroPaddingYear && out.size() < negative + 4) {
-    while (out.size() < negative + 4) {
-      out += '0';
+  out.reserve(getCapacity(options));
+
+  if (options.mode != TimestampToStringOptions::Mode::kTimeOnly) {
+    int n = kTmYearBase + tmValue.tm_year;
+    const bool leadingPositiveSign = options.leadingPositiveSign && n > 9999;
+    bool negative = n < 0;
+    if (negative) {
+      out += '-';
+      n = -n;
     }
+    while (n > 0) {
+      out += '0' + n % 10;
+      n /= 10;
+    }
+    auto zeroPaddingYearSize = negative + 4;
+    if (options.zeroPaddingYear && out.size() < zeroPaddingYearSize) {
+      while (out.size() < zeroPaddingYearSize) {
+        out += '0';
+      }
+    }
+    if (leadingPositiveSign) {
+      out += '+';
+    }
+    std::reverse(out.begin() + negative, out.end());
+    out += '-';
+    appendSmallInt(1 + tmValue.tm_mon, out);
+    out += '-';
+    appendSmallInt(tmValue.tm_mday, out);
+    if (options.mode == TimestampToStringOptions::Mode::kDateOnly) {
+      return out;
+    }
+
+    out += options.dateTimeSeparator;
   }
-  std::reverse(out.begin() + negative, out.end());
-  out += '-';
-  appendSmallInt(1 + tmValue.tm_mon, out);
-  out += '-';
-  appendSmallInt(tmValue.tm_mday, out);
-  if (options.dateOnly) {
-    return out;
-  }
-  out += options.dateTimeSeparator;
+
   appendSmallInt(tmValue.tm_hour, out);
   out += ':';
   appendSmallInt(tmValue.tm_min, out);
   out += ':';
   appendSmallInt(tmValue.tm_sec, out);
-  out += '.';
-  int offset = out.size();
-  if (options.precision == TimestampToStringOptions::kMilliseconds) {
+  if (options.precision == TimestampToStringOptions::Precision::kMilliseconds) {
     nanos /= 1'000'000;
+  } else if (
+      options.precision == TimestampToStringOptions::Precision::kMicroseconds) {
+    nanos /= 1'000;
   }
-  while (nanos > 0) {
-    out += '0' + nanos % 10;
-    nanos /= 10;
+  if (options.skipTrailingZeros && nanos == 0) {
+    return out;
   }
-  while (out.size() - offset < width) {
+  out += '.';
+  const int offset = out.size();
+  int trailingZeros = 0;
+
+  if (options.skipTrailingZeros) {
+    while (nanos > 0) {
+      if (out.size() == offset && nanos % 10 == 0) {
+        trailingZeros += 1;
+      } else {
+        out += '0' + nanos % 10;
+      }
+      nanos /= 10;
+    }
+  } else {
+    while (nanos > 0) {
+      out += '0' + nanos % 10;
+      nanos /= 10;
+    }
+  }
+
+  while (out.size() - offset < precisionWidth - trailingZeros) {
     out += '0';
   }
   std::reverse(out.begin() + offset, out.end());

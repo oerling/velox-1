@@ -23,7 +23,7 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
 
-    bool duplicate = !taskIds_.insert(taskId).second;
+    bool duplicate = !remoteTaskIds_.insert(taskId).second;
     if (duplicate) {
       // Do not add sources twice. Presto protocol may add duplicate sources
       // and the task updates have no guarantees of arriving in order.
@@ -33,7 +33,7 @@ void ExchangeClient::addRemoteTaskId(const std::string& taskId) {
     std::shared_ptr<ExchangeSource> source;
     try {
       source = ExchangeSource::create(taskId, destination_, queue_, pool_);
-    } catch (const VeloxException& e) {
+    } catch (const VeloxException&) {
       throw;
     } catch (const std::exception& e) {
       // Task ID can be very long. Truncate to 128 characters.
@@ -91,8 +91,17 @@ folly::F14FastMap<std::string, RuntimeMetric> ExchangeClient::stats() const {
 
   folly::F14FastMap<std::string, RuntimeMetric> stats;
   for (const auto& source : sources_) {
-    for (const auto& [name, value] : source->stats()) {
-      stats[name].addValue(value);
+    if (source->supportsMetrics()) {
+      for (const auto& [name, value] : source->metrics()) {
+        if (UNLIKELY(stats.count(name) == 0)) {
+          stats.insert(std::pair(name, RuntimeMetric(value.unit)));
+        }
+        stats[name].merge(value);
+      }
+    } else {
+      for (const auto& [name, value] : source->stats()) {
+        stats[name].addValue(value);
+      }
     }
   }
 
@@ -105,21 +114,20 @@ folly::F14FastMap<std::string, RuntimeMetric> ExchangeClient::stats() const {
   return stats;
 }
 
-std::unique_ptr<SerializedPage> ExchangeClient::next(
-    bool* atEnd,
-    ContinueFuture* future) {
+std::vector<std::unique_ptr<SerializedPage>>
+ExchangeClient::next(uint32_t maxBytes, bool* atEnd, ContinueFuture* future) {
   RequestSpec requestSpec;
-  std::unique_ptr<SerializedPage> page;
+  std::vector<std::unique_ptr<SerializedPage>> pages;
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
     *atEnd = false;
-    page = queue_->dequeueLocked(atEnd, future);
+    pages = queue_->dequeueLocked(maxBytes, atEnd, future);
     if (*atEnd) {
-      return page;
+      return pages;
     }
 
-    if (page && queue_->totalBytes() > maxQueuedBytes_) {
-      return page;
+    if (!pages.empty() && queue_->totalBytes() > maxQueuedBytes_) {
+      return pages;
     }
 
     requestSpec = pickSourcesToRequestLocked();
@@ -127,54 +135,38 @@ std::unique_ptr<SerializedPage> ExchangeClient::next(
 
   // Outside of lock
   request(requestSpec);
-  return page;
+  return pages;
 }
 
 void ExchangeClient::request(const RequestSpec& requestSpec) {
-  auto& exec = folly::QueuedImmediateExecutor::instance();
+  auto self = shared_from_this();
   for (auto& source : requestSpec.sources) {
-    if (source->supportsFlowControlV2()) {
-      auto future =
-          source->request(requestSpec.maxBytes, kDefaultMaxWaitSeconds);
-      VELOX_CHECK(future.valid());
-      std::move(future)
-          .via(&exec)
-          .thenValue([this, requestSource = source](auto&& response) {
-            RequestSpec requestSpec;
-            {
-              std::lock_guard<std::mutex> l(queue_->mutex());
-              if (!response.atEnd) {
-                if (response.bytes > 0) {
-                  producingSources_.push(requestSource);
-                } else {
-                  emptySources_.push(requestSource);
-                }
+    auto future = source->request(requestSpec.maxBytes, kDefaultMaxWaitSeconds);
+    VELOX_CHECK(future.valid());
+    std::move(future)
+        .via(executor_)
+        .thenValue([self, requestSource = source](auto&& response) {
+          RequestSpec requestSpec;
+          {
+            std::lock_guard<std::mutex> l(self->queue_->mutex());
+            if (self->closed_) {
+              return;
+            }
+            if (!response.atEnd) {
+              if (response.bytes > 0) {
+                self->producingSources_.push(requestSource);
+              } else {
+                self->emptySources_.push(requestSource);
               }
-              requestSpec = pickSourcesToRequestLocked();
             }
-            request(requestSpec);
-          })
-          .thenError(
-              folly::tag_t<std::exception>{},
-              [&](const std::exception& e) { queue_->setError(e.what()); });
-    } else {
-      auto future = source->request(requestSpec.maxBytes);
-      VELOX_CHECK(future.valid());
-      std::move(future)
-          .via(&exec)
-          .thenValue([this, requestSource = source](auto&& /*unused*/) {
-            RequestSpec requestSpec;
-            {
-              std::lock_guard<std::mutex> l(queue_->mutex());
-              emptySources_.push(requestSource);
-              requestSpec = pickSourcesToRequestLocked();
-            }
-            request(requestSpec);
-          })
-          .thenError(
-              folly::tag_t<std::exception>{},
-              [&](const std::exception& e) { queue_->setError(e.what()); });
-    }
+            requestSpec = self->pickSourcesToRequestLocked();
+          }
+          self->request(requestSpec);
+        })
+        .thenError(
+            folly::tag_t<std::exception>{}, [self](const std::exception& e) {
+              self->queue_->setError(e.what());
+            });
   }
 }
 
@@ -260,16 +252,17 @@ std::string ExchangeClient::toString() const {
   return out.str();
 }
 
-std::string ExchangeClient::toJsonString() const {
+folly::dynamic ExchangeClient::toJson() const {
   folly::dynamic obj = folly::dynamic::object;
   obj["taskId"] = taskId_;
   obj["closed"] = closed_;
   folly::dynamic clientsObj = folly::dynamic::object;
   int index = 0;
   for (auto& source : sources_) {
-    clientsObj[std::to_string(index++)] = source->toJsonString();
+    clientsObj[std::to_string(index++)] = source->toJson();
   }
-  return folly::toPrettyJson(obj);
+  obj["clients"] = clientsObj;
+  return obj;
 }
 
 } // namespace facebook::velox::exec

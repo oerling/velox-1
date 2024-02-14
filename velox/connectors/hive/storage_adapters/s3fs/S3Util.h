@@ -26,6 +26,8 @@
 
 #include "velox/common/base/Exceptions.h"
 
+#include <fmt/format.h>
+
 namespace facebook::velox {
 
 namespace {
@@ -158,17 +160,28 @@ inline std::string getRequestID(
   {                                                                                                                            \
     if (!outcome.IsSuccess()) {                                                                                                \
       auto error = outcome.GetError();                                                                                         \
-      VELOX_FAIL(                                                                                                              \
+      auto errMsg = fmt::format(                                                                                               \
           "{} due to: '{}'. Path:'{}', SDK Error Type:{}, HTTP Status Code:{}, S3 Service:'{}', Message:'{}', RequestID:'{}'", \
           errorMsgPrefix,                                                                                                      \
           getErrorStringFromS3Error(error),                                                                                    \
           s3URI(bucket, key),                                                                                                  \
-          error.GetErrorType(),                                                                                                \
+          static_cast<int>(error.GetErrorType()),                                                                              \
           error.GetResponseCode(),                                                                                             \
           getS3BackendService(error.GetResponseHeaders()),                                                                     \
           error.GetMessage(),                                                                                                  \
-          getRequestID(error.GetResponseHeaders()))                                                                            \
+          getRequestID(error.GetResponseHeaders()));                                                                           \
+      if (error.GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND) {                                                 \
+        VELOX_FILE_NOT_FOUND_ERROR(errMsg);                                                                                    \
+      }                                                                                                                        \
+      VELOX_FAIL(errMsg)                                                                                                       \
     }                                                                                                                          \
   }
 
 } // namespace facebook::velox
+
+template <>
+struct fmt::formatter<Aws::Http::HttpResponseCode> : formatter<int> {
+  auto format(Aws::Http::HttpResponseCode s, format_context& ctx) {
+    return formatter<int>::format(static_cast<int>(s), ctx);
+  }
+};

@@ -261,13 +261,12 @@ LocalPartition::LocalPartition(
 
 namespace {
 std::vector<BufferPtr> allocateIndexBuffers(
-    int numBuffers,
-    vector_size_t size,
+    const std::vector<vector_size_t>& sizes,
     memory::MemoryPool* pool) {
   std::vector<BufferPtr> indexBuffers;
-  indexBuffers.reserve(numBuffers);
-  for (auto i = 0; i < numBuffers; i++) {
-    indexBuffers.emplace_back(allocateIndices(size, pool));
+  indexBuffers.reserve(sizes.size());
+  for (auto size : sizes) {
+    indexBuffers.push_back(allocateIndices(size, pool));
   }
   return indexBuffers;
 }
@@ -307,11 +306,9 @@ void LocalPartition::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
 
-  input_ = std::move(input);
-
   if (numPartitions_ == 1) {
     ContinueFuture future;
-    auto blockingReason = queues_[0]->enqueue(input_, &future);
+    auto blockingReason = queues_[0]->enqueue(input, &future);
     if (blockingReason != BlockingReason::kNotBlocked) {
       blockingReasons_.push_back(blockingReason);
       futures_.push_back(std::move(future));
@@ -320,11 +317,11 @@ void LocalPartition::addInput(RowVectorPtr input) {
   }
 
   const auto singlePartition =
-      partitionFunction_->partition(*input_, partitions_);
+      partitionFunction_->partition(*input, partitions_);
   if (singlePartition.has_value()) {
     ContinueFuture future;
     auto blockingReason =
-        queues_[singlePartition.value()]->enqueue(input_, &future);
+        queues_[singlePartition.value()]->enqueue(input, &future);
     if (blockingReason != BlockingReason::kNotBlocked) {
       blockingReasons_.push_back(blockingReason);
       futures_.push_back(std::move(future));
@@ -332,11 +329,15 @@ void LocalPartition::addInput(RowVectorPtr input) {
     return;
   }
 
-  auto numInput = input_->size();
-  auto indexBuffers = allocateIndexBuffers(numPartitions_, numInput, pool());
+  const auto numInput = input->size();
+  std::vector<vector_size_t> maxIndex(numPartitions_, 0);
+  for (auto i = 0; i < numInput; ++i) {
+    ++maxIndex[partitions_[i]];
+  }
+  auto indexBuffers = allocateIndexBuffers(maxIndex, pool());
   auto rawIndices = getRawIndices(indexBuffers);
 
-  std::vector<vector_size_t> maxIndex(numPartitions_, 0);
+  std::fill(maxIndex.begin(), maxIndex.end(), 0);
   for (auto i = 0; i < numInput; ++i) {
     auto partition = partitions_[i];
     rawIndices[partition][maxIndex[partition]] = i;
@@ -349,9 +350,8 @@ void LocalPartition::addInput(RowVectorPtr input) {
       // Do not enqueue empty partitions.
       continue;
     }
-    indexBuffers[i]->setSize(partitionSize * sizeof(vector_size_t));
     auto partitionData =
-        wrapChildren(input_, partitionSize, std::move(indexBuffers[i]));
+        wrapChildren(input, partitionSize, std::move(indexBuffers[i]));
 
     ContinueFuture future;
     auto reason = queues_[i]->enqueue(partitionData, &future);

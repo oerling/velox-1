@@ -16,16 +16,18 @@
 
 #include <gtest/gtest.h>
 
+#include <fmt/format.h>
 #include <re2/re2.h>
 #include <deque>
+#include <vector>
 #include "folly/experimental/EventCount.h"
 #include "folly/futures/Barrier.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/memory/MallocAllocator.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryArbitrator.h"
-#include "velox/common/memory/SharedArbitrator.h"
 #include "velox/common/testutil/TestValue.h"
+#include "velox/exec/SharedArbitrator.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
@@ -161,8 +163,11 @@ class MockMemoryOperator {
       return op_->reclaimableBytes(pool, reclaimableBytes);
     }
 
-    uint64_t reclaim(MemoryPool* pool, uint64_t targetBytes, Stats& stats)
-        override {
+    uint64_t reclaim(
+        MemoryPool* pool,
+        uint64_t targetBytes,
+        uint64_t /*unused*/,
+        Stats& stats) override {
       ++numReclaims_;
       if (!reclaimable_) {
         return 0;
@@ -171,7 +176,9 @@ class MockMemoryOperator {
         reclaimInjectCb_(pool, targetBytes);
       }
       reclaimTargetBytes_.push_back(targetBytes);
-      return op_->reclaim(pool, targetBytes);
+      auto reclaimBytes = op_->reclaim(pool, targetBytes);
+      stats.reclaimedBytes += reclaimBytes;
+      return reclaimBytes;
     }
 
     void enterArbitration() override {
@@ -383,7 +390,7 @@ MockTask::~MockTask() {
 class MockSharedArbitrationTest : public testing::Test {
  protected:
   static void SetUpTestCase() {
-    SharedArbitrator::registerFactory();
+    exec::SharedArbitrator::registerFactory();
     FLAGS_velox_memory_leak_check_enabled = true;
     TestValue::enable();
   }
@@ -408,13 +415,10 @@ class MockSharedArbitrationTest : public testing::Test {
       memoryPoolTransferCapacity = kMemoryPoolTransferCapacity;
     }
     memoryCapacity = (memoryCapacity != 0) ? memoryCapacity : kMemoryCapacity;
-    allocator_ = std::make_shared<MallocAllocator>(memoryCapacity);
     MemoryManagerOptions options;
-    options.allocator = allocator_.get();
-    options.capacity = allocator_->capacity();
+    options.allocatorCapacity = memoryCapacity;
     std::string arbitratorKind = "SHARED";
     options.arbitratorKind = arbitratorKind;
-    options.capacity = options.capacity;
     options.memoryPoolInitCapacity = memoryPoolInitCapacity;
     options.memoryPoolTransferCapacity = memoryPoolTransferCapacity;
     options.arbitrationStateCheckCb = std::move(arbitrationStateCheckCb);
@@ -444,7 +448,6 @@ class MockSharedArbitrationTest : public testing::Test {
     tasks_.clear();
   }
 
-  std::shared_ptr<MemoryAllocator> allocator_;
   std::unique_ptr<MemoryManager> manager_;
   SharedArbitrator* arbitrator_;
   std::vector<std::shared_ptr<MockTask>> tasks_;
@@ -570,14 +573,15 @@ TEST_F(MockSharedArbitrationTest, arbitrationFailsTask) {
   auto growTask = addTask(192 * MB);
   auto growOp = growTask->addMemoryOp(false);
   auto bufGrow = growOp->allocate(128 * MB);
-  EXPECT_NO_THROW(manager_->growPool(growOp->pool(), 64 * MB));
+  EXPECT_NO_THROW(manager_->testingGrowPool(growOp->pool(), 64 * MB));
   ASSERT_NE(nonReclaimTask->error(), nullptr);
   try {
     std::rethrow_exception(nonReclaimTask->error());
   } catch (const VeloxRuntimeError& e) {
     ASSERT_EQ(velox::error_code::kMemAborted, e.errorCode());
     ASSERT_TRUE(
-        std::string(e.what()).find("usage 384.00MB peak 384.00MB") !=
+        std::string(e.what()).find(
+            "usage 384.00MB reserved 384.00MB peak 384.00MB") !=
         std::string::npos);
   } catch (...) {
     FAIL();
@@ -588,7 +592,7 @@ TEST_F(MockSharedArbitrationTest, arbitrationFailsTask) {
 
 TEST_F(MockSharedArbitrationTest, shrinkMemory) {
   std::vector<std::shared_ptr<MemoryPool>> pools;
-  ASSERT_THROW(arbitrator_->shrinkMemory(pools, 128), VeloxException);
+  ASSERT_THROW(arbitrator_->shrinkCapacity(pools, 128), VeloxException);
 }
 
 TEST_F(MockSharedArbitrationTest, singlePoolGrowWithoutArbitration) {
@@ -877,7 +881,7 @@ TEST_F(MockSharedArbitrationTest, failedArbitration) {
 }
 
 TEST_F(MockSharedArbitrationTest, singlePoolGrowCapacityWithArbitration) {
-  std::vector<bool> isLeafReclaimables = {true, false};
+  const std::vector<bool> isLeafReclaimables = {true, false};
   for (const auto isLeafReclaimable : isLeafReclaimables) {
     SCOPED_TRACE(fmt::format("isLeafReclaimable {}", isLeafReclaimable));
     setupMemory();
@@ -918,7 +922,7 @@ TEST_F(MockSharedArbitrationTest, singlePoolGrowCapacityWithArbitration) {
 }
 
 TEST_F(MockSharedArbitrationTest, arbitrateWithCapacityShrink) {
-  std::vector<bool> isLeafReclaimables = {true, false};
+  const std::vector<bool> isLeafReclaimables = {true, false};
   for (const auto isLeafReclaimable : isLeafReclaimables) {
     SCOPED_TRACE(fmt::format("isLeafReclaimable {}", isLeafReclaimable));
     setupMemory();
@@ -953,7 +957,7 @@ TEST_F(MockSharedArbitrationTest, arbitrateWithCapacityShrink) {
 TEST_F(MockSharedArbitrationTest, arbitrateWithMemoryReclaim) {
   const uint64_t memoryCapacity = 256 * MB;
   const uint64_t minPoolCapacity = 8 * MB;
-  const std::vector<bool> isLeafReclaimables = {true, false};
+  const std::vector<char> isLeafReclaimables = {true, false};
   for (const auto isLeafReclaimable : isLeafReclaimables) {
     SCOPED_TRACE(fmt::format("isLeafReclaimable {}", isLeafReclaimable));
     setupMemory(memoryCapacity, minPoolCapacity);

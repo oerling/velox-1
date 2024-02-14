@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "velox/exec/Driver.h"
+#include "velox/exec/OutputBuffer.h"
 
 namespace facebook::velox::exec {
 
@@ -73,6 +74,11 @@ struct TaskStats {
   /// and results have been consumed.
   uint64_t endTimeMs{0};
 
+  /// Epoch time (ms) when the task was terminated, i.e. its terminal state
+  /// has been set, whether by finishing successfully or with an error, or
+  /// being cancelled or aborted.
+  uint64_t terminationTimeMs{0};
+
   /// Total number of drivers.
   uint64_t numTotalDrivers{0};
   /// The number of completed drivers (which slots are null in Task 'drivers_'
@@ -92,10 +98,18 @@ struct TaskStats {
   /// Indicates if output buffer is over-utilized and thus blocks the producers.
   bool outputBufferOverutilized{false};
 
+  /// Output buffer stats if present.
+  std::optional<OutputBuffer::Stats> outputBufferStats;
+
   /// The longest still running operator call in "op::call" format.
   std::string longestRunningOpCall;
   /// The longest still running operator call's duration in ms.
   size_t longestRunningOpCallMs{0};
+
+  /// The total memory reclamation count.
+  uint32_t memoryReclaimCount{0};
+  /// The total memory reclamation time.
+  uint64_t memoryReclaimMs{0};
 };
 
 } // namespace facebook::velox::exec

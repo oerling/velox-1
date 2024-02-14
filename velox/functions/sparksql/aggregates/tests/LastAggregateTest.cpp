@@ -15,7 +15,7 @@
  */
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 
 namespace facebook::velox::functions::aggregate::sparksql::test {
@@ -27,6 +27,9 @@ class LastAggregateTest : public aggregate::test::AggregationTestBase {
   void SetUp() override {
     aggregate::test::AggregationTestBase::SetUp();
     registerAggregateFunctions("spark_");
+    // Disable incremental aggregation tests because the boolean field in
+    // intermediate result of spark_last is unset and has undefined value.
+    AggregationTestBase::disableTestIncremental();
   }
 
   template <typename T>

@@ -26,7 +26,7 @@ using namespace facebook::velox::memory;
 
 class MemoryReclaimerTest : public OperatorTestBase {
  protected:
-  MemoryReclaimerTest() : pool_(memory::addDefaultLeafMemoryPool()) {
+  MemoryReclaimerTest() : pool_(memory::memoryManager()->addLeafPool()) {
     const auto seed =
         std::chrono::system_clock::now().time_since_epoch().count();
     rng_.seed(seed);
@@ -86,7 +86,7 @@ TEST_F(MemoryReclaimerTest, abortTest) {
   for (const auto& leafPool : {false, true}) {
     const std::string testName = fmt::format("leafPool: {}", leafPool);
     SCOPED_TRACE(testName);
-    auto rootPool = defaultMemoryManager().addRootPool(
+    auto rootPool = memory::memoryManager()->addRootPool(
         testName, kMaxMemory, exec::MemoryReclaimer::create());
     ASSERT_FALSE(rootPool->aborted());
     if (leafPool) {
@@ -111,4 +111,54 @@ TEST_F(MemoryReclaimerTest, abortTest) {
       ASSERT_TRUE(aggregatePool->aborted());
     }
   }
+}
+
+TEST(ReclaimableSectionGuard, basic) {
+  tsan_atomic<bool> nonReclaimableSection{false};
+  {
+    NonReclaimableSectionGuard guard(&nonReclaimableSection);
+    ASSERT_TRUE(nonReclaimableSection);
+    {
+      ReclaimableSectionGuard guard(&nonReclaimableSection);
+      ASSERT_FALSE(nonReclaimableSection);
+      {
+        ReclaimableSectionGuard guard(&nonReclaimableSection);
+        ASSERT_FALSE(nonReclaimableSection);
+        {
+          NonReclaimableSectionGuard guard(&nonReclaimableSection);
+          ASSERT_TRUE(nonReclaimableSection);
+        }
+        ASSERT_FALSE(nonReclaimableSection);
+      }
+      ASSERT_FALSE(nonReclaimableSection);
+    }
+    ASSERT_TRUE(nonReclaimableSection);
+  }
+  ASSERT_FALSE(nonReclaimableSection);
+  nonReclaimableSection = true;
+  {
+    ReclaimableSectionGuard guard(&nonReclaimableSection);
+    ASSERT_FALSE(nonReclaimableSection);
+    {
+      NonReclaimableSectionGuard guard(&nonReclaimableSection);
+      ASSERT_TRUE(nonReclaimableSection);
+      {
+        ReclaimableSectionGuard guard(&nonReclaimableSection);
+        ASSERT_FALSE(nonReclaimableSection);
+        {
+          ReclaimableSectionGuard guard(&nonReclaimableSection);
+          ASSERT_FALSE(nonReclaimableSection);
+        }
+        ASSERT_FALSE(nonReclaimableSection);
+        {
+          NonReclaimableSectionGuard guard(&nonReclaimableSection);
+          ASSERT_TRUE(nonReclaimableSection);
+        }
+        ASSERT_FALSE(nonReclaimableSection);
+      }
+      ASSERT_TRUE(nonReclaimableSection);
+    }
+    ASSERT_FALSE(nonReclaimableSection);
+  }
+  ASSERT_TRUE(nonReclaimableSection);
 }

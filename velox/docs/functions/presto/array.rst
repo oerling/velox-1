@@ -93,21 +93,31 @@ Array Functions
 
 .. function:: array_max(array(E)) -> E
 
-    Returns the maximum value of input array. ::
+    Returns the maximum value of input array.
+    Returns NaN if E is REAL or DOUBLE and array contains a NaN value.
+    Returns NULL if array doesn't contain a NaN value, but contains a NULL value. ::
 
         SELECT array_max(ARRAY [1, 2, 3]); -- 3
         SELECT array_max(ARRAY [-1, -2, -2]); -- -1
         SELECT array_max(ARRAY [-1, -2, NULL]); -- NULL
         SELECT array_max(ARRAY []); -- NULL
+        SELECT array_max(ARRAY[NULL, nan()]); -- NaN
+        SELECT array_max(ARRAY[{-1, -2, -3, nan()]); -- NaN
+        SELECT array_max(ARRAY[-0.0001, NULL, -0.0003, nan()]); -- NaN
 
 .. function:: array_min(array(E)) -> E
 
-    Returns the minimum value of input array. ::
+    Returns the minimum value of input array.
+    Returns NaN if E is REAL or DOUBLE and array contains a NaN value.
+    Returns NULL if array doesn't contain a NaN value, but contains a NULL value. ::
 
         SELECT array_min(ARRAY [1, 2, 3]); -- 1
         SELECT array_min(ARRAY [-1, -2, -2]); -- -2
         SELECT array_min(ARRAY [-1, -2, NULL]); -- NULL
         SELECT array_min(ARRAY []); -- NULL
+        SELECT array_min(ARRAY[NULL, nan()]); -- NaN
+        SELECT array_min(ARRAY[{-1, -2, -3, nan()]); -- NaN
+        SELECT array_min(ARRAY[-0.0001, NULL, -0.0003, nan()]); -- NaN
 
 .. function:: array_normalize(array(E), E) -> array(E)
 
@@ -137,38 +147,52 @@ Array Functions
 .. function:: array_sort(array(E)) -> array(E)
 
     Returns an array which has the sorted order of the input array x. E must be
-    an orderable type. Null elements will be placed at the end of the returned array.::
+    an orderable type. Null elements will be placed at the end of the returned array.
+    May throw if E is and ARRAY or ROW type and input values contain nested nulls.
+    Throws if deciding the order of elements would require comparing nested null values. ::
 
         SELECT array_sort(ARRAY [1, 2, 3]); -- [1, 2, 3]
         SELECT array_sort(ARRAY [3, 2, 1]); -- [1, 2, 3]
         SELECT array_sort(ARRAY [2, 1, NULL]; -- [1, 2, NULL]
         SELECT array_sort(ARRAY [NULL, 1, NULL]); -- [1, NULL, NULL]
         SELECT array_sort(ARRAY [NULL, 2, 1]); -- [1, 2, NULL]
+        SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [2, null]]); -- [[1, 2], [2, null]]
+        SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [1, null]]); -- failed: Ordering nulls is not supported
 
 .. function:: array_sort(array(T), function(T,U)) -> array(T)
+    :noindex:
 
     Returns the array sorted by values computed using specified lambda in ascending
     order. U must be an orderable type. Null elements will be placed at the end of
-    the returned array. ::
+    the returned array. May throw if E is and ARRAY or ROW type and input values contain
+    nested nulls. Throws if deciding the order of elements would require comparing nested
+    null values. ::
 
         SELECT array_sort(ARRAY ['cat', 'leopard', 'mouse'], x -> length(x)); -- ['cat', 'mouse', 'leopard']
 
 .. function:: array_sort_desc(array(E)) -> array(E)
 
     Returns the array sorted in the descending order. E must be an orderable type.
-    Null elements will be placed at the end of the returned array.::
+    Null elements will be placed at the end of the returned array.
+    May throw if E is and ARRAY or ROW type and input values contain nested nulls.
+    Throws if deciding the order of elements would require comparing nested null values. ::
 
         SELECT array_sort_desc(ARRAY [1, 2, 3]); -- [3, 2, 1]
         SELECT array_sort_desc(ARRAY [3, 2, 1]); -- [3, 2, 1]
         SELECT array_sort_desc(ARRAY [2, 1, NULL]; -- [2, 1, NULL]
         SELECT array_sort_desc(ARRAY [NULL, 1, NULL]); -- [1, NULL, NULL]
         SELECT array_sort_desc(ARRAY [NULL, 2, 1]); -- [2, 1, NULL]
+        SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [2, null]]); -- [[1, 2], [2, null]]
+        SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [1, null]]); -- failed: Ordering nulls is not supported
 
 .. function:: array_sort_desc(array(T), function(T,U)) -> array(T)
+    :noindex:
 
     Returns the array sorted by values computed using specified lambda in descending
     order. U must be an orderable type. Null elements will be placed at the end of
-    the returned array. ::
+    the returned array. May throw if E is and ARRAY or ROW type and input values contain
+    nested nulls. Throws if deciding the order of elements would require comparing nested
+    null values. ::
 
         SELECT array_sort_desc(ARRAY ['cat', 'leopard', 'mouse'], x -> length(x)); -- ['leopard', 'mouse', 'cat']
 
@@ -196,6 +220,12 @@ Array Functions
 .. function:: contains(x, element) -> boolean
 
     Returns true if the array ``x`` contains the ``element``.
+    When 'element' is of complex type, throws if 'x' or 'element' contains nested nulls
+    and these need to be compared to produce a result. ::
+
+        SELECT contains(ARRAY[ARRAY[1, 3]], ARRAY[2, null]); -- false.
+        SELECT contains(ARRAY[ARRAY[2, 3]], ARRAY[2, null]); -- failed: contains does not support arrays with elements that are null or contain null
+        SELECT contains(ARRAY[ARRAY[2, null]], ARRAY[2, 1]); -- failed: contains does not support arrays with elements that are null or contain null
 
 .. function:: element_at(array(E), index) -> E
 
@@ -219,6 +249,7 @@ Array Functions
     for no-match and first-match-is-null cases.
 
 .. function:: find_first(array(T), index, function(T,boolean)) -> E
+    :noindex:
 
     Returns the first element of ``array`` that matches the predicate.
     Returns ``NULL`` if no element matches the predicate.
@@ -240,6 +271,7 @@ Array Functions
     Returns ``NULL`` if no such element exists.
 
 .. function:: find_first_index(array(T), index, function(T,boolean)) -> BIGINT
+    :noindex:
 
     Returns the 1-based index of the first element of ``array`` that matches the predicate.
     Returns ``NULL`` if no such element exists.
@@ -256,6 +288,19 @@ Array Functions
 
     Flattens an ``array(array(T))`` to an ``array(T)`` by concatenating the contained arrays.
 
+.. function:: ngrams(array(T), n) -> array(array(T))
+
+    Returns `n-grams <https://en.wikipedia.org/wiki/N-gram>`_  for the array.
+    Throws if n is zero or negative. If n is greater or equal to input array,
+    result array contains input array as the only item. ::
+
+        SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 2); -- [['foo', 'bar'], ['bar', 'baz'], ['baz', 'foo']]
+        SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 3); -- [['foo', 'bar', 'baz'], ['bar', 'baz', 'foo']]
+        SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 4); -- [['foo', 'bar', 'baz', 'foo']]
+        SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 5); -- [['foo', 'bar', 'baz', 'foo']]
+        SELECT ngrams(ARRAY[1, 2, 3, 4], 2); -- [[1, 2], [2, 3], [3, 4]]
+        SELECT ngrams(ARRAY["foo", NULL, "bar"], 2); -- [["foo", NULL], [NULL, "bar"]]
+
 .. function:: reduce(array(T), initialState S, inputFunction(S,T,S), outputFunction(S,R)) -> R
 
     Returns a single value reduced from ``array``. ``inputFunction`` will
@@ -263,7 +308,9 @@ Array Functions
     the element, ``inputFunction`` takes the current state, initially
     ``initialState``, and returns the new state. ``outputFunction`` will be
     invoked to turn the final state into the result value. It may be the
-    identity function (``i -> i``). ::
+    identity function (``i -> i``).
+
+    Throws if array has more than 10,000 elements. ::
 
         SELECT reduce(ARRAY [], 0, (s, x) -> s + x, s -> s); -- 0
         SELECT reduce(ARRAY [5, 20, 50], 0, (s, x) -> s + x, s -> s); -- 75
@@ -286,7 +333,7 @@ Array Functions
 
 .. function:: shuffle(array(E)) -> array(E)
 
-    Generate a random permutation of the given ``array``::
+    Generate a random permutation of the given ``array`` ::
 
         SELECT shuffle(ARRAY [1, 2, 3]); -- [3, 1, 2] or any other random permutation
         SELECT shuffle(ARRAY [0, 0, 0]); -- [0, 0, 0]
@@ -334,7 +381,7 @@ Array Functions
 
 .. function:: remove_nulls(x) -> array
 
-    Remove null values from an array ``array``::
+    Remove null values from an array ``array`` ::
 
         SELECT remove_nulls(ARRAY[1, NULL, 3, NULL]); -- [1, 3]
         SELECT remove_nulls(ARRAY[true, false, NULL]); -- [true, false]
@@ -351,7 +398,8 @@ Array Functions
 .. function:: zip_with(array(T), array(U), function(T,U,R)) -> array(R)
 
     Merges the two given arrays, element-wise, into a single array using ``function``.
-    If one array is shorter, nulls are appended at the end to match the length of the longer array, before applying ``function``::
+    If one array is shorter, nulls are appended at the end to match the length of the
+    longer array, before applying ``function`` ::
 
         SELECT zip_with(ARRAY[1, 3, 5], ARRAY['a', 'b', 'c'], (x, y) -> (y, x)); -- [ROW('a', 1), ROW('b', 3), ROW('c', 5)]
         SELECT zip_with(ARRAY[1, 2], ARRAY[3, 4], (x, y) -> x + y); -- [4, 6]

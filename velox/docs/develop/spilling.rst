@@ -7,7 +7,8 @@ Background
 
 Spilling in Velox allows a query to succeed using a limited amount of memory
 when some operators are accumulating large state. For example, a hash
-aggregation operator stores the intermediate aggregation state in a hash table,
+aggregation operator stores the intermediate aggregation state in a
+`hash table <hash-table.html>`_,
 and it starts to produce the results after processing all the input.  In high
 cardinality workloads (large number of groups) the size of the hash table
 exceeds the query’s memory limit.
@@ -167,7 +168,7 @@ partition to create a sorted reader to restore the spilled partition state.
     std::unique_ptr<TreeOfLosers<SpillMergeStream>> Spiller::startMerge(
         int32_t partition);
 
-**unsorted spill restore**: Used by order by hash build and hash probe
+**unsorted spill restore**: Used by hash build and hash probe
 operators. The operator first calls Spiller::finishSpill() to mark the
 completion of spilling. The Spiller collects metadata for the spilled
 partitioned and returns these to the operator. The operator processes the

@@ -24,6 +24,14 @@
 namespace facebook::velox {
 namespace {
 
+std::string timestampToString(
+    Timestamp ts,
+    const TimestampToStringOptions& options) {
+  std::tm tm;
+  Timestamp::epochToUtc(ts.getSeconds(), tm);
+  return Timestamp::tmToString(tm, ts.getNanos(), options);
+}
+
 TEST(TimestampTest, fromMillisAndMicros) {
   int64_t positiveSecond = 10'000;
   int64_t negativeSecond = -10'000;
@@ -116,6 +124,8 @@ TEST(TimestampTest, arithmeticOverflow) {
           "Could not convert Timestamp({}, {}) to nanoseconds",
           negativeSecond,
           0));
+  ASSERT_NO_THROW(Timestamp::minMillis().toMillis());
+  ASSERT_NO_THROW(Timestamp::maxMillis().toMillis());
 }
 
 TEST(TimestampTest, toAppend) {
@@ -202,7 +212,7 @@ TEST(TimestampTest, toStringPrestoCastBehavior) {
   auto kMin = Timestamp(Timestamp::kMinSeconds, 0);
   auto kMax = Timestamp(Timestamp::kMaxSeconds, Timestamp::kMaxNanos);
   TimestampToStringOptions options = {
-      .precision = TimestampToStringOptions::kMilliseconds,
+      .precision = TimestampToStringOptions::Precision::kMilliseconds,
       .zeroPaddingYear = true,
       .dateTimeSeparator = ' ',
   };
@@ -227,7 +237,7 @@ std::string toStringAlt(
   std::tm tmValue;
   VELOX_CHECK_NOT_NULL(gmtime_r((const time_t*)&seconds, &tmValue));
   auto width = static_cast<int>(precision);
-  auto value = precision == TimestampToStringOptions::kMilliseconds
+  auto value = precision == TimestampToStringOptions::Precision::kMilliseconds
       ? t.getNanos() / 1'000'000
       : t.getNanos();
   std::ostringstream oss;
@@ -244,11 +254,11 @@ TEST(TimestampTest, compareWithToStringAlt) {
   std::uniform_int_distribution<int64_t> distSec(
       Timestamp::kMinSeconds, Timestamp::kMaxSeconds);
   std::uniform_int_distribution<uint64_t> distNano(0, Timestamp::kMaxNanos);
-  for (int i = 0; i < 10000; ++i) {
+  for (int i = 0; i < 10'000; ++i) {
     Timestamp t(distSec(gen), distNano(gen));
     for (auto precision :
-         {TimestampToStringOptions::kMilliseconds,
-          TimestampToStringOptions::kNanoseconds}) {
+         {TimestampToStringOptions::Precision::kMilliseconds,
+          TimestampToStringOptions::Precision::kNanoseconds}) {
       TimestampToStringOptions options{};
       options.precision = precision;
       ASSERT_EQ(t.toString(options), toStringAlt(t, precision))
@@ -299,36 +309,195 @@ TEST(TimestampTest, outOfRange) {
       t.toTimezone(*timezone), "Timestamp is outside of supported range");
 }
 
+// In debug mode, Timestamp constructor will throw exception if range check
+// fails.
+#ifdef NDEBUG
+TEST(TimestampTest, overflow) {
+  Timestamp t(std::numeric_limits<int64_t>::max(), 0);
+  VELOX_ASSERT_THROW(
+      t.toTimePoint(false),
+      fmt::format(
+          "Could not convert Timestamp({}, {}) to milliseconds",
+          std::numeric_limits<int64_t>::max(),
+          0));
+  ASSERT_NO_THROW(t.toTimePoint(true));
+}
+#endif
+
+void checkTm(const std::tm& actual, const std::tm& expected) {
+  ASSERT_EQ(expected.tm_year, actual.tm_year);
+  ASSERT_EQ(expected.tm_yday, actual.tm_yday);
+  ASSERT_EQ(expected.tm_mon, actual.tm_mon);
+  ASSERT_EQ(expected.tm_mday, actual.tm_mday);
+  ASSERT_EQ(expected.tm_wday, actual.tm_wday);
+  ASSERT_EQ(expected.tm_hour, actual.tm_hour);
+  ASSERT_EQ(expected.tm_min, actual.tm_min);
+  ASSERT_EQ(expected.tm_sec, actual.tm_sec);
+}
+
+std::string tmToString(
+    const std::tm& tmValue,
+    uint64_t nanos,
+    const std::string& format,
+    const TimestampToStringOptions& options) {
+  auto width = static_cast<int>(options.precision);
+  auto value =
+      options.precision == TimestampToStringOptions::Precision::kMilliseconds
+      ? nanos / 1'000'000
+      : nanos;
+
+  std::ostringstream oss;
+  oss << std::put_time(&tmValue, format.c_str());
+
+  if (options.mode != TimestampToStringOptions::Mode::kDateOnly) {
+    oss << '.' << std::setfill('0') << std::setw(width) << value;
+  }
+
+  return oss.str();
+}
+
 TEST(TimestampTest, epochToUtc) {
-  std::tm tm;
-  ASSERT_FALSE(epochToUtc(-(1ll << 60), tm));
-  ASSERT_FALSE(epochToUtc(1ll << 60, tm));
+  std::tm tm{};
+  ASSERT_FALSE(Timestamp::epochToUtc(-(1ll << 60), tm));
+  ASSERT_FALSE(Timestamp::epochToUtc(1ll << 60, tm));
 }
 
 TEST(TimestampTest, randomEpochToUtc) {
   uint64_t seed = 42;
-  // seed = std::random_device{}();
   std::default_random_engine gen(seed);
   std::uniform_int_distribution<time_t> dist(
       std::numeric_limits<time_t>::min(), std::numeric_limits<time_t>::max());
-  std::tm actual, expected;
-  for (int i = 0; i < 10000; ++i) {
+  std::tm actual{};
+  std::tm expected{};
+  for (int i = 0; i < 10'000; ++i) {
     auto epoch = dist(gen);
     SCOPED_TRACE(fmt::format("epoch={}", epoch));
     if (gmtime_r(&epoch, &expected)) {
-      ASSERT_TRUE(epochToUtc(epoch, actual));
-      ASSERT_EQ(expected.tm_year, actual.tm_year);
-      ASSERT_EQ(expected.tm_yday, actual.tm_yday);
-      ASSERT_EQ(expected.tm_mon, actual.tm_mon);
-      ASSERT_EQ(expected.tm_mday, actual.tm_mday);
-      ASSERT_EQ(expected.tm_wday, actual.tm_wday);
-      ASSERT_EQ(expected.tm_hour, actual.tm_hour);
-      ASSERT_EQ(expected.tm_min, actual.tm_min);
-      ASSERT_EQ(expected.tm_sec, actual.tm_sec);
+      ASSERT_TRUE(Timestamp::epochToUtc(epoch, actual));
+      checkTm(actual, expected);
     } else {
-      ASSERT_FALSE(epochToUtc(epoch, actual));
+      ASSERT_FALSE(Timestamp::epochToUtc(epoch, actual));
     }
   }
+}
+
+void testTmToString(
+    const std::string& format,
+    const TimestampToStringOptions::Mode mode) {
+  uint64_t seed = 42;
+  std::default_random_engine gen(seed);
+
+  std::uniform_int_distribution<time_t> dist(
+      std::numeric_limits<time_t>::min(), std::numeric_limits<time_t>::max());
+  std::uniform_int_distribution<int> nanosDist(0, Timestamp::kMaxNanos);
+
+  std::tm actual{};
+  std::tm expected{};
+
+  TimestampToStringOptions options;
+  options.mode = mode;
+
+  const std::vector<TimestampToStringOptions::Precision> precisions = {
+      TimestampToStringOptions::Precision::kMilliseconds,
+      TimestampToStringOptions::Precision::kNanoseconds};
+
+  for (auto precision : precisions) {
+    options.precision = precision;
+    for (int i = 0; i < 10'000; ++i) {
+      auto epoch = dist(gen);
+      auto nanos = nanosDist(gen);
+      SCOPED_TRACE(fmt::format(
+          "epoch={}, nanos={}, mode={}, precision={}",
+          epoch,
+          nanos,
+          mode,
+          precision));
+      if (gmtime_r(&epoch, &expected)) {
+        ASSERT_TRUE(Timestamp::epochToUtc(epoch, actual));
+        checkTm(actual, expected);
+
+        auto actualString = Timestamp::tmToString(actual, nanos, options);
+        auto expectedString = tmToString(expected, nanos, format, options);
+        ASSERT_EQ(expectedString, actualString);
+
+      } else {
+        ASSERT_FALSE(Timestamp::epochToUtc(epoch, actual));
+      }
+    }
+  }
+}
+
+TEST(TimestampTest, tmToStringDateOnly) {
+  // %F - equivalent to "%Y-%m-%d" (the ISO 8601 date format)
+  testTmToString("%F", TimestampToStringOptions::Mode::kDateOnly);
+}
+
+TEST(TimestampTest, tmToStringTimeOnly) {
+  // %T - equivalent to "%H:%M:%S" (the ISO 8601 time format)
+  testTmToString("%T", TimestampToStringOptions::Mode::kTimeOnly);
+}
+
+TEST(TimestampTest, tmToStringTimestamp) {
+  // %FT%T - equivalent to "%Y-%m-%dT%H:%M:%S" (the ISO 8601 timestamp format)
+  testTmToString("%FT%T", TimestampToStringOptions::Mode::kFull);
+}
+
+TEST(TimestampTest, leadingPositiveSign) {
+  TimestampToStringOptions options = {
+      .leadingPositiveSign = true,
+      .zeroPaddingYear = true,
+      .dateTimeSeparator = ' ',
+  };
+
+  ASSERT_EQ(
+      timestampToString(Timestamp(253402231016, 0), options),
+      "9999-12-31 04:36:56.000000000");
+  ASSERT_EQ(
+      timestampToString(Timestamp(253405036800, 0), options),
+      "+10000-02-01 16:00:00.000000000");
+}
+
+TEST(TimestampTest, skipTrailingZeros) {
+  TimestampToStringOptions options = {
+      .precision = TimestampToStringOptions::Precision::kMicroseconds,
+      .skipTrailingZeros = true,
+      .zeroPaddingYear = true,
+      .dateTimeSeparator = ' ',
+  };
+
+  ASSERT_EQ(
+      timestampToString(Timestamp(-946684800, 0), options),
+      "1940-01-02 00:00:00");
+  ASSERT_EQ(timestampToString(Timestamp(0, 0), options), "1970-01-01 00:00:00");
+  ASSERT_EQ(
+      timestampToString(Timestamp(0, 365), options), "1970-01-01 00:00:00");
+  ASSERT_EQ(
+      timestampToString(Timestamp(0, 65873), options),
+      "1970-01-01 00:00:00.000065");
+  ASSERT_EQ(
+      timestampToString(Timestamp(94668480000, 0), options),
+      "4969-12-04 00:00:00");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129999999), options),
+      "2000-01-01 12:21:56.129999");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129990000), options),
+      "2000-01-01 12:21:56.12999");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129900000), options),
+      "2000-01-01 12:21:56.1299");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129000000), options),
+      "2000-01-01 12:21:56.129");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129010000), options),
+      "2000-01-01 12:21:56.12901");
+  ASSERT_EQ(
+      timestampToString(Timestamp(946729316, 129001000), options),
+      "2000-01-01 12:21:56.129001");
+  ASSERT_EQ(
+      timestampToString(Timestamp(-50049331200, 726600000), options),
+      "0384-01-01 08:00:00.7266");
 }
 
 } // namespace

@@ -72,15 +72,18 @@ void RowNumber::addInput(RowVectorPtr input) {
   if (table_) {
     ensureInputFits(input);
 
-    NonReclaimableSection guard(this);
-
     if (inputSpiller_ != nullptr) {
       spillInput(input, pool());
       return;
     }
 
     SelectivityVector rows(numInput);
-    table_->prepareForProbe(*lookup_, input, rows, false);
+    table_->prepareForGroupProbe(
+        *lookup_,
+        input,
+        rows,
+        false,
+        BaseHashTable::kNoSpillInputStartPartitionBit);
     table_->groupProbe(*lookup_);
 
     // Initialize new partitions with zeros.
@@ -95,7 +98,8 @@ void RowNumber::addInput(RowVectorPtr input) {
 void RowNumber::addSpillInput() {
   const auto numInput = input_->size();
   SelectivityVector rows(numInput);
-  table_->prepareForProbe(*lookup_, input_, rows, false);
+  table_->prepareForGroupProbe(
+      *lookup_, input_, rows, false, spillConfig_->startPartitionBit);
   table_->groupProbe(*lookup_);
 
   // Initialize new partitions with zeros.
@@ -135,12 +139,12 @@ void RowNumber::restoreNextSpillPartition() {
   }
 
   auto it = spillInputPartitionSet_.begin();
-  spillInputReader_ = it->second->createReader();
+  spillInputReader_ = it->second->createUnorderedReader(pool());
 
   // Find matching partition for the hash table.
   auto hashTableIt = spillHashTablePartitionSet_.find(it->first);
   if (hashTableIt != spillHashTablePartitionSet_.end()) {
-    spillHashTableReader_ = hashTableIt->second->createReader();
+    spillHashTableReader_ = hashTableIt->second->createUnorderedReader(pool());
 
     RowVectorPtr data;
     while (spillHashTableReader_->nextBatch(data)) {
@@ -159,7 +163,8 @@ void RowNumber::restoreNextSpillPartition() {
 
       const auto numInput = input->size();
       SelectivityVector rows(numInput);
-      table_->prepareForProbe(*lookup_, input, rows, false);
+      table_->prepareForGroupProbe(
+          *lookup_, input, rows, false, spillConfig_->startPartitionBit);
       table_->groupProbe(*lookup_);
 
       auto* counts = data->children().back()->as<FlatVector<int64_t>>();
@@ -178,7 +183,7 @@ void RowNumber::restoreNextSpillPartition() {
 }
 
 void RowNumber::ensureInputFits(const RowVectorPtr& input) {
-  if (!spillConfig_.has_value()) {
+  if (!spillEnabled()) {
     // Spilling is disabled.
     return;
   }
@@ -231,11 +236,17 @@ void RowNumber::ensureInputFits(const RowVectorPtr& input) {
   const auto targetIncrementBytes = std::max<int64_t>(
       incrementBytes * 2,
       currentUsage * spillConfig_->spillableReservationGrowthPct / 100);
-  if (pool()->maybeReserve(targetIncrementBytes)) {
-    return;
+  {
+    Operator::ReclaimableSectionGuard guard(this);
+    if (pool()->maybeReserve(targetIncrementBytes)) {
+      return;
+    }
   }
 
-  spill();
+  LOG(WARNING) << "Failed to reserve " << succinctBytes(targetIncrementBytes)
+               << " for memory pool " << pool()->name()
+               << ", usage: " << succinctBytes(pool()->currentBytes())
+               << ", reservation: " << succinctBytes(pool()->reservedBytes());
 }
 
 FlatVector<int64_t>& RowNumber::getOrCreateRowNumberVector(vector_size_t size) {
@@ -257,8 +268,6 @@ RowVectorPtr RowNumber::getOutput() {
     // No partition keys.
     return getOutputForSinglePartition();
   }
-
-  NonReclaimableSection guard(this);
 
   const auto numInput = input_->size();
 
@@ -312,6 +321,7 @@ RowVectorPtr RowNumber::getOutput() {
     } else {
       input_ = nullptr;
       spillInputReader_ = nullptr;
+      table_->clear();
       restoreNextSpillPartition();
     }
   } else {
@@ -360,6 +370,9 @@ void RowNumber::setNumRows(char* partition, int64_t numRows) {
 void RowNumber::reclaim(
     uint64_t /*targetBytes*/,
     memory::MemoryReclaimer::Stats& stats) {
+  VELOX_CHECK(canReclaim());
+  VELOX_CHECK(!nonReclaimableSection_);
+
   if (table_ == nullptr || table_->numDistinct() == 0) {
     // Nothing to spill.
     return;
@@ -367,11 +380,6 @@ void RowNumber::reclaim(
 
   if (hashTableSpiller_) {
     // Already spilled.
-    return;
-  }
-
-  if (nonReclaimableSection_) {
-    ++stats.numNonReclaimableAttempts;
     return;
   }
 
@@ -392,20 +400,10 @@ void RowNumber::setupHashTableSpiller() {
   hashTableSpiller_ = std::make_unique<Spiller>(
       Spiller::Type::kHashJoinBuild,
       table_->rows(),
-      [&](folly::Range<char**> /*rows*/) {
-        // Do nothing. We spill hash table in full and clear it all at once.
-      },
       tableType,
       std::move(hashBits),
-      tableType->size() - 1,
-      std::vector<CompareFlags>(),
-      spillConfig.filePath,
-      spillConfig.maxFileSize,
-      spillConfig.writeBufferSize,
-      spillConfig.minSpillRunSize,
-      spillConfig.compressionKind,
-      memory::spillMemoryPool(),
-      spillConfig.executor);
+      &spillConfig,
+      spillConfig.maxFileSize);
 }
 
 void RowNumber::setupInputSpiller() {
@@ -417,13 +415,8 @@ void RowNumber::setupInputSpiller() {
       Spiller::Type::kHashJoinProbe,
       inputType_,
       hashBits,
-      spillConfig.filePath,
-      spillConfig.maxFileSize,
-      spillConfig.writeBufferSize,
-      spillConfig.minSpillRunSize,
-      spillConfig.compressionKind,
-      memory::spillMemoryPool(),
-      spillConfig.executor);
+      &spillConfig,
+      spillConfig.maxFileSize);
 
   const auto& hashers = table_->hashers();
 
@@ -445,9 +438,6 @@ void RowNumber::spill() {
   setupHashTableSpiller();
   setupInputSpiller();
 
-  std::vector<Spiller::SpillableStats> spillableStats(
-      hashTableSpiller_->hashBits().numPartitions());
-  hashTableSpiller_->fillSpillRuns(spillableStats);
   hashTableSpiller_->spill();
   hashTableSpiller_->finishSpill(spillHashTablePartitionSet_);
 
@@ -474,8 +464,8 @@ void RowNumber::spillInput(
 
   const auto numPartitions = spillHashFunction_->numPartitions();
 
-  std::vector<BufferPtr> partitionIndices(numInput);
-  std::vector<vector_size_t*> rawPartitionIndices(numInput);
+  std::vector<BufferPtr> partitionIndices(numPartitions);
+  std::vector<vector_size_t*> rawPartitionIndices(numPartitions);
 
   for (auto i = 0; i < numPartitions; ++i) {
     partitionIndices[i] = allocateIndices(numInput, pool);

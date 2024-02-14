@@ -14,11 +14,31 @@
  * limitations under the License.
  */
 #pragma once
+
 #include "velox/common/base/Crc.h"
 #include "velox/common/compression/Compression.h"
 #include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::serializer::presto {
+
+/// There are two ways to serialize data using PrestoVectorSerde:
+///
+/// 1. In order to append multiple RowVectors into the same serialized payload,
+/// one can first create an IterativeVectorSerializer using
+/// createIterativeSerializer(), then append successive RowVectors using
+/// IterativeVectorSerializer::append(). In this case, since different RowVector
+/// might encode columns differently, data is always flattened in the serialized
+/// payload.
+///
+/// Note that there are two flavors of append(), one that takes a range of rows,
+/// and one that takes a list of row ids. The former is useful when serializing
+/// large sections of the input vector (or the full vector); the latter is
+/// efficient for a selective subset, e.g. when splitting a vector to a large
+/// number of output shuffle destinations.
+///
+/// 2. To serialize a single RowVector, one can use the BatchVectorSerializer
+/// returned by createBatchSerializer(). Since it serializes a single RowVector,
+/// it tries to preserve the encodings of the input data.
 class PrestoVectorSerde : public VectorSerde {
  public:
   // Input options that the serializer recognizes.
@@ -31,44 +51,97 @@ class PrestoVectorSerde : public VectorSerde {
         : useLosslessTimestamp(_useLosslessTimestamp),
           compressionKind(_compressionKind) {}
 
-    // Currently presto only supports millisecond precision and the serializer
-    // converts velox native timestamp to that resulting in loss of precision.
-    // This option allows it to serialize with nanosecond precision and is
-    // currently used for spilling. Is false by default.
+    /// Currently presto only supports millisecond precision and the serializer
+    /// converts velox native timestamp to that resulting in loss of precision.
+    /// This option allows it to serialize with nanosecond precision and is
+    /// currently used for spilling. Is false by default.
     bool useLosslessTimestamp{false};
     common::CompressionKind compressionKind{
         common::CompressionKind::CompressionKind_NONE};
+
+    /// Specifies the encoding for each of the top-level child vector.
     std::vector<VectorEncoding::Simple> encodings;
   };
 
+  /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
+  /// '*sizes[i]'.
   void estimateSerializedSize(
       VectorPtr vector,
       const folly::Range<const IndexRange*>& ranges,
-      vector_size_t** sizes) override;
+      vector_size_t** sizes,
+      Scratch& scratch) override;
 
-  std::unique_ptr<VectorSerializer> createSerializer(
+  void estimateSerializedSize(
+      VectorPtr vector,
+      const folly::Range<const vector_size_t*> rows,
+      vector_size_t** sizes,
+      Scratch& scratch) override;
+
+  std::unique_ptr<IterativeVectorSerializer> createIterativeSerializer(
       RowTypePtr type,
       int32_t numRows,
       StreamArena* streamArena,
       const Options* options) override;
 
-  /// Serializes a flat RowVector with possibly encoded children. Preserves
-  /// first level of encodings. Dictionary vectors must not have nulls added by
-  /// the dictionary.
+  /// Note that in addition to the differences highlighted in the VectorSerde
+  /// interface, BatchVectorSerializer returned by this function can maintain
+  /// the encodings of the input vectors recursively.
+  std::unique_ptr<BatchVectorSerializer> createBatchSerializer(
+      memory::MemoryPool* pool,
+      const Options* options) override;
+
+  /// Serializes a single RowVector with possibly encoded children, preserving
+  /// their encodings. Encodings are preserved recursively for any RowVector
+  /// children, but not for children of other nested vectors such as Array, Map,
+  /// and Dictionary.
   ///
-  /// Used for testing.
-  void serializeEncoded(
+  /// PrestoPage does not support serialization of Dictionaries with nulls;
+  /// in case dictionaries contain null they are serialized as flat buffers.
+  ///
+  /// In order to override the encodings of top-level columns in the RowVector,
+  /// you can specifiy the encodings using PrestoOptions.encodings
+  ///
+  /// DEPRECATED: Use createBatchSerializer and the BatchVectorSerializer's
+  /// serialize function instead.
+  void deprecatedSerializeEncoded(
       const RowVectorPtr& vector,
       StreamArena* streamArena,
       const Options* options,
       OutputStream* out);
 
+  bool supportsAppendInDeserialize() const override {
+    return true;
+  }
+
   void deserialize(
-      ByteStream* source,
+      ByteInputStream* source,
       velox::memory::MemoryPool* pool,
       RowTypePtr type,
-      std::shared_ptr<RowVector>* result,
+      RowVectorPtr* result,
+      const Options* options) override {
+    return deserialize(source, pool, type, result, 0, options);
+  }
+
+  void deserialize(
+      ByteInputStream* source,
+      velox::memory::MemoryPool* pool,
+      RowTypePtr type,
+      RowVectorPtr* result,
+      vector_size_t resultOffset,
       const Options* options) override;
+
+  /// This function is used to deserialize a single column that is serialized in
+  /// PrestoPage format. It is important to note that the PrestoPage format used
+  /// here does not include the Presto page header. Therefore, the 'source'
+  /// should contain uncompressed, serialized binary data, beginning at the
+  /// column header.
+  void deserializeSingleColumn(
+      ByteInputStream* source,
+      velox::memory::MemoryPool* pool,
+      TypePtr type,
+      VectorPtr* result,
+      const Options* options);
+
   static void registerVectorSerde();
 };
 
@@ -78,7 +151,8 @@ void testingScatterStructNulls(
     vector_size_t scatterSize,
     const vector_size_t* scatter,
     const uint64_t* incomingNulls,
-    RowVector& row);
+    RowVector& row,
+    vector_size_t rowOffset);
 
 class PrestoOutputStreamListener : public OutputStreamListener {
  public:

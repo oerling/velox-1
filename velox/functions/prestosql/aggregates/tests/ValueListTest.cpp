@@ -79,7 +79,8 @@ class ValueListTest : public functions::test::FunctionBaseTest {
     return allocator_.get();
   }
 
-  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{
+      memory::memoryManager()->addLeafPool()};
   std::unique_ptr<HashStringAllocator> allocator_{
       std::make_unique<HashStringAllocator>(pool_.get())};
 };
@@ -112,13 +113,20 @@ TEST_F(ValueListTest, integers) {
 
 TEST_F(ValueListTest, arrays) {
   // No nulls.
+  int32_t kSizeCaps[] = {730, 4000, 7500, 50000};
+  int32_t counter = 0;
   for (auto size : kTestSizes) {
     auto data = makeArrayVector<int32_t>(
         size,
         [](auto row) { return row % 7; },
         [](auto row) { return row % 11; });
 
+    auto previousBytes = allocator()->cumulativeBytes();
     testRoundTrip(data);
+    if (counter < sizeof(kSizeCaps) / sizeof(kSizeCaps[0])) {
+      auto cap = kSizeCaps[counter++];
+      EXPECT_GT(cap, allocator()->cumulativeBytes() - previousBytes);
+    }
   }
 
   // Different percentage of nulls.

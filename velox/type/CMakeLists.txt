@@ -15,6 +15,7 @@ if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
 
+add_subdirectory(parser)
 add_subdirectory(tz)
 add_subdirectory(fbhive)
 
@@ -42,6 +43,7 @@ target_link_libraries(
   velox_exception
   velox_serialization
   velox_external_date
+  velox_status
   Boost::headers
   Folly::folly
   re2::re2)

@@ -59,7 +59,8 @@ class TpchSpeedTest {
     auto tpchConnector =
         connector::getConnectorFactory(
             connector::tpch::TpchConnectorFactory::kTpchConnectorName)
-            ->newConnector(kTpchConnectorId_, nullptr);
+            ->newConnector(
+                kTpchConnectorId_, std::make_shared<core::MemConfig>());
     connector::registerConnector(tpchConnector);
   }
 
@@ -74,7 +75,7 @@ class TpchSpeedTest {
     core::PlanNodeId scanId;
     auto plan =
         PlanBuilder()
-            .tableScan(
+            .tpchTableScan(
                 table, folly::copy(getTableSchema(table)->names()), scaleFactor)
             .capturePlanNodeId(scanId)
             .planNode();
@@ -91,14 +92,14 @@ class TpchSpeedTest {
     params.planNode = plan;
     params.maxDrivers = FLAGS_max_drivers;
 
-    TaskCursor taskCursor(params);
-    taskCursor.start();
+    auto taskCursor = TaskCursor::create(params);
+    taskCursor->start();
 
-    auto task = taskCursor.task();
+    auto task = taskCursor->task();
     addSplits(*task, scanId, numSplits);
 
-    while (taskCursor.moveNext()) {
-      processBatch(taskCursor.current());
+    while (taskCursor->moveNext()) {
+      processBatch(taskCursor->current());
     }
 
     // Wait for the task to finish.
@@ -179,7 +180,7 @@ class TpchSpeedTest {
 } // namespace
 
 int main(int argc, char** argv) {
-  folly::init(&argc, &argv, false);
+  folly::Init init{&argc, &argv, false};
 
   TpchSpeedTest speedTest;
   speedTest.run(

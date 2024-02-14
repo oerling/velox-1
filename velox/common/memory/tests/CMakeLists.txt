@@ -25,7 +25,6 @@ add_executable(
   MemoryManagerTest.cpp
   MemoryPoolTest.cpp
   MockSharedArbitratorTest.cpp
-  SharedArbitratorTest.cpp
   StreamArenaTest.cpp)
 
 target_link_libraries(
@@ -40,6 +39,7 @@ target_link_libraries(
           velox_test_util
           velox_vector_fuzzer
           Folly::folly
+          fmt::fmt
           gflags::gflags
           glog::glog
           gmock

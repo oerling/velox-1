@@ -14,13 +14,19 @@
  * limitations under the License.
  */
 
+#include <string>
+
 #include "velox/functions/Registerer.h"
+#include "velox/functions/lib/Repeat.h"
 #include "velox/functions/prestosql/ArrayConstructor.h"
 #include "velox/functions/prestosql/ArrayFunctions.h"
 #include "velox/functions/prestosql/ArraySort.h"
 #include "velox/functions/prestosql/WidthBucketArray.h"
 
 namespace facebook::velox::functions {
+extern void registerArrayConcatFunctions(const std::string& prefix);
+extern void registerArrayNGramsFunctions(const std::string& prefix);
+
 template <typename T>
 inline void registerArrayMinMaxFunctions(const std::string& prefix) {
   registerFunction<ArrayMinFunction, T, Array<T>>({prefix + "array_min"});
@@ -139,7 +145,8 @@ void registerArrayFunctions(const std::string& prefix) {
   });
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_sum, prefix + "array_sum");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_repeat, prefix + "repeat");
+  exec::registerStatefulVectorFunction(
+      prefix + "repeat", repeatSignatures(), makeRepeat);
   VELOX_REGISTER_VECTOR_FUNCTION(udf_sequence, prefix + "sequence");
 
   exec::registerStatefulVectorFunction(
@@ -158,6 +165,7 @@ void registerArrayFunctions(const std::string& prefix) {
   registerArrayMinMaxFunctions<Varchar>(prefix);
   registerArrayMinMaxFunctions<Timestamp>(prefix);
   registerArrayMinMaxFunctions<Date>(prefix);
+  registerArrayMinMaxFunctions<Orderable<T1>>(prefix);
 
   registerArrayJoinFunctions<int8_t>(prefix);
   registerArrayJoinFunctions<int16_t>(prefix);
@@ -174,20 +182,8 @@ void registerArrayFunctions(const std::string& prefix) {
   registerFunction<ArrayAverageFunction, double, Array<double>>(
       {prefix + "array_average"});
 
-  registerFunction<
-      ArrayConcatFunction,
-      Array<Generic<T1>>,
-      Array<Generic<T1>>,
-      Generic<T1>>({prefix + "concat"});
-  registerFunction<
-      ArrayConcatFunction,
-      Array<Generic<T1>>,
-      Generic<T1>,
-      Array<Generic<T1>>>({prefix + "concat"});
-  registerFunction<
-      ArrayConcatFunction,
-      Array<Generic<T1>>,
-      Variadic<Array<Generic<T1>>>>({prefix + "concat"});
+  registerArrayConcatFunctions(prefix);
+  registerArrayNGramsFunctions(prefix);
 
   registerFunction<
       ArrayFlattenFunction,
@@ -211,11 +207,6 @@ void registerArrayFunctions(const std::string& prefix) {
       Array<Varchar>,
       Array<Varchar>,
       Varchar>({prefix + "array_remove"});
-  registerFunction<
-      ArrayRemoveFunction,
-      Array<Generic<T1>>,
-      Array<Generic<T1>>,
-      Generic<T1>>({prefix + "array_remove"});
 
   registerArrayTrimFunctions<int8_t>(prefix);
   registerArrayTrimFunctions<int16_t>(prefix);
@@ -228,15 +219,11 @@ void registerArrayFunctions(const std::string& prefix) {
   registerArrayTrimFunctions<Timestamp>(prefix);
   registerArrayTrimFunctions<Date>(prefix);
   registerArrayTrimFunctions<Varbinary>(prefix);
+  registerArrayTrimFunctions<Generic<T1>>(prefix);
   registerFunction<
       ArrayTrimFunctionString,
       Array<Varchar>,
       Array<Varchar>,
-      int64_t>({prefix + "trim_array"});
-  registerFunction<
-      ArrayTrimFunction,
-      Array<Generic<T1>>,
-      Array<Generic<T1>>,
       int64_t>({prefix + "trim_array"});
 
   registerArrayRemoveNullFunctions<int8_t>(prefix);
@@ -250,14 +237,11 @@ void registerArrayFunctions(const std::string& prefix) {
   registerArrayRemoveNullFunctions<Timestamp>(prefix);
   registerArrayRemoveNullFunctions<Date>(prefix);
   registerArrayRemoveNullFunctions<Varbinary>(prefix);
+  registerArrayRemoveNullFunctions<Generic<T1>>(prefix);
   registerFunction<
       ArrayRemoveNullFunctionString,
       Array<Varchar>,
       Array<Varchar>>({prefix + "remove_nulls"});
-  registerFunction<
-      ArrayRemoveNullFunction,
-      Array<Generic<T1>>,
-      Array<Generic<T1>>>({prefix + "remove_nulls"});
 
   registerArrayUnionFunctions<int8_t>(prefix);
   registerArrayUnionFunctions<int16_t>(prefix);
@@ -291,8 +275,16 @@ void registerArrayFunctions(const std::string& prefix) {
   registerArrayHasDuplicatesFunctions<int128_t>(prefix);
   registerArrayHasDuplicatesFunctions<Varchar>(prefix);
 
+  registerArrayFrequencyFunctions<bool>(prefix);
+  registerArrayFrequencyFunctions<int8_t>(prefix);
+  registerArrayFrequencyFunctions<int16_t>(prefix);
+  registerArrayFrequencyFunctions<int32_t>(prefix);
   registerArrayFrequencyFunctions<int64_t>(prefix);
   registerArrayFrequencyFunctions<int128_t>(prefix);
+  registerArrayFrequencyFunctions<float>(prefix);
+  registerArrayFrequencyFunctions<double>(prefix);
+  registerArrayFrequencyFunctions<Timestamp>(prefix);
+  registerArrayFrequencyFunctions<Date>(prefix);
   registerArrayFrequencyFunctions<Varchar>(prefix);
 
   registerArrayNormalizeFunctions<float>(prefix);

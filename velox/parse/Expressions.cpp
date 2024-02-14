@@ -29,13 +29,6 @@ namespace facebook::velox::core {
 Expressions::TypeResolverHook Expressions::resolverHook_;
 
 namespace {
-std::vector<TypePtr> getTypes(const std::vector<TypedExprPtr>& inputs) {
-  std::vector<TypePtr> types{};
-  for (auto& i : inputs) {
-    types.push_back(i->type());
-  }
-  return types;
-}
 
 // Determine output type based on input types.
 TypePtr resolveTypeImpl(
@@ -49,8 +42,8 @@ TypePtr resolveTypeImpl(
 namespace {
 std::shared_ptr<const core::CastTypedExpr> makeTypedCast(
     const TypePtr& type,
-    const std::vector<TypedExprPtr>& inputs) {
-  return std::make_shared<const core::CastTypedExpr>(type, inputs, false);
+    const TypedExprPtr& input) {
+  return std::make_shared<const core::CastTypedExpr>(type, input, false);
 }
 
 std::vector<TypePtr> implicitCastTargets(const TypePtr& type) {
@@ -85,7 +78,7 @@ std::vector<TypePtr> implicitCastTargets(const TypePtr& type) {
       break;
     }
     default: // make compilers happy
-        ;
+      (void)0; // Statement to avoid empty semicolon warning
   }
   return targetTypes;
 }
@@ -100,7 +93,7 @@ std::vector<TypedExprPtr> genImplicitCasts(const TypedExprPtr& typedExpr) {
   std::vector<TypedExprPtr> implicitCasts;
   implicitCasts.reserve(targetTypes.size());
   for (auto targetType : targetTypes) {
-    implicitCasts.emplace_back(makeTypedCast(targetType, {typedExpr}));
+    implicitCasts.emplace_back(makeTypedCast(targetType, typedExpr));
   }
   return implicitCasts;
 }
@@ -139,21 +132,6 @@ TypedExprPtr adjustLastNArguments(
   }
 
   return nullptr;
-}
-
-std::string toString(
-    const std::shared_ptr<const core::CallExpr>& expr,
-    const std::vector<TypedExprPtr>& inputs) {
-  std::ostringstream signature;
-  signature << expr->getFunctionName() << "(";
-  for (auto i = 0; i < inputs.size(); i++) {
-    if (i > 0) {
-      signature << ", ";
-    }
-    signature << inputs[i]->type()->toString();
-  }
-  signature << ")";
-  return signature.str();
 }
 
 TypedExprPtr createWithImplicitCast(

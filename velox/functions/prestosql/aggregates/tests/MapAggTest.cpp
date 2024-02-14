@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/functions/lib/aggregates/tests/AggregationTestBase.h"
+#include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
 
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
@@ -363,6 +363,30 @@ TEST_F(MapAggTest, selectiveMaskWithDuplicates) {
                   .singleAggregation({"c0"}, {"map_agg(c1, c2)"}, {"c3"})
                   .planNode();
   assertQuery(plan, {expectedResult});
+}
+
+TEST_F(MapAggTest, unknownKey) {
+  auto data = makeRowVector({
+      makeFlatVector<int8_t>({1, 2, 1, 2, 1, 2, 1, 2, 1, 2}),
+      makeAllNullFlatVector<UnknownValue>(10),
+      makeConstant<int32_t>(123, 10),
+  });
+
+  testAggregations(
+      {data},
+      {"c0"},
+      {"map_agg(c1, c2)"},
+      "VALUES (1, NULL), (2, NULL)",
+      {},
+      false /*testWithTableScan*/);
+
+  testAggregations(
+      {data},
+      {},
+      {"map_agg(c1, c2)"},
+      "VALUES (NULL)",
+      {},
+      false /*testWithTableScan*/);
 }
 
 TEST_F(MapAggTest, stringLifeCycle) {

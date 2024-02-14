@@ -94,29 +94,12 @@ class QueryConfig {
 
   /// Flags used to configure the CAST operator:
 
+  static constexpr const char* kLegacyCast = "legacy_cast";
+
   /// This flag makes the Row conversion to by applied in a way that the casting
   /// row field are matched by name instead of position.
   static constexpr const char* kCastMatchStructByName =
       "cast_match_struct_by_name";
-
-  /// If set, cast from float/double/decimal/string to integer truncates the
-  /// decimal part, otherwise rounds.
-  static constexpr const char* kCastToIntByTruncate = "cast_to_int_by_truncate";
-
-  /// If set, cast from string to date allows only ISO 8601 formatted strings:
-  /// [+-](YYYY-MM-DD). Otherwise, allows all patterns supported by Spark:
-  /// `[+-]yyyy*`
-  /// `[+-]yyyy*-[m]m`
-  /// `[+-]yyyy*-[m]m-[d]d`
-  /// `[+-]yyyy*-[m]m-[d]d *`
-  /// `[+-]yyyy*-[m]m-[d]dT*`
-  /// The asterisk `*` in `yyyy*` stands for any numbers.
-  /// For the last two patterns, the trailing `*` can represent none or any
-  /// sequence of characters, e.g:
-  ///   "1970-01-01 123"
-  ///   "1970-01-01 (BC)"
-  static constexpr const char* kCastStringToDateIsIso8601 =
-      "cast_string_to_date_is_iso_8601";
 
   /// Used for backpressure to block local exchange producers when the local
   /// exchange buffer reaches or exceeds this size.
@@ -127,6 +110,11 @@ class QueryConfig {
   /// approximately, not strictly.
   static constexpr const char* kMaxExchangeBufferSize =
       "exchange.max_buffer_size";
+
+  /// Maximum size in bytes to accumulate among all sources of the merge
+  /// exchange. Enforced approximately, not strictly.
+  static constexpr const char* kMaxMergeExchangeBufferSize =
+      "merge_exchange.max_buffer_size";
 
   static constexpr const char* kMaxPartialAggregationMemory =
       "max_partial_aggregation_memory";
@@ -140,8 +128,16 @@ class QueryConfig {
   static constexpr const char* kAbandonPartialAggregationMinPct =
       "abandon_partial_aggregation_min_pct";
 
+  static constexpr const char* kAbandonPartialTopNRowNumberMinRows =
+      "abandon_partial_topn_row_number_min_rows";
+
+  static constexpr const char* kAbandonPartialTopNRowNumberMinPct =
+      "abandon_partial_topn_row_number_min_pct";
+
   static constexpr const char* kMaxPartitionedOutputBufferSize =
       "max_page_partitioning_buffer_size";
+
+  static constexpr const char* kMaxOutputBufferSize = "max_output_buffer_size";
 
   /// Preferred size of batches in bytes to be returned by operators from
   /// Operator::getOutput. It is used when an estimate of average row size is
@@ -191,9 +187,20 @@ class QueryConfig {
   /// OrderBy spilling flag, only applies if "spill_enabled" flag is set.
   static constexpr const char* kOrderBySpillEnabled = "order_by_spill_enabled";
 
+  /// Window spilling flag, only applies if "spill_enabled" flag is set.
+  static constexpr const char* kWindowSpillEnabled = "window_spill_enabled";
+
+  /// If true, the memory arbitrator will reclaim memory from table writer by
+  /// flushing its buffered data to disk.
+  static constexpr const char* kWriterSpillEnabled = "writer_spill_enabled";
+
   /// RowNumber spilling flag, only applies if "spill_enabled" flag is set.
   static constexpr const char* kRowNumberSpillEnabled =
       "row_number_spill_enabled";
+
+  /// TopNRowNumber spilling flag, only applies if "spill_enabled" flag is set.
+  static constexpr const char* kTopNRowNumberSpillEnabled =
+      "topn_row_number_spill_enabled";
 
   /// The max memory that a final aggregation can use before spilling. If it 0,
   /// then there is no limit.
@@ -209,6 +216,19 @@ class QueryConfig {
   /// there is no limit.
   static constexpr const char* kOrderBySpillMemoryThreshold =
       "order_by_spill_memory_threshold";
+
+  /// The max row numbers to fill and spill for each spill run. This is used to
+  /// cap the memory used for spilling. If it is zero, then there is no limit
+  /// and spilling might run out of memory.
+  /// Based on offline test results, the default value is set to 12 million rows
+  /// which uses ~128MB memory when to fill a spill run.
+  static constexpr const char* kMaxSpillRunRows = "max_spill_run_rows";
+
+  /// The max spill bytes limit set for each query. This is used to cap the
+  /// storage used for spilling. If it is zero, then there is no limit and
+  /// spilling might exhaust the storage or takes too long to run. The default
+  /// value is set to 100 GB.
+  static constexpr const char* kMaxSpillBytes = "max_spill_bytes";
 
   static constexpr const char* kTestingSpillPct = "testing.spill_pct";
 
@@ -243,26 +263,28 @@ class QueryConfig {
   static constexpr const char* kSpillWriteBufferSize =
       "spill_write_buffer_size";
 
+  /// Config used to create spill files. This config is provided to underlying
+  /// file system and the config is free form. The form should be defined by the
+  /// underlying file system.
+  static constexpr const char* kSpillFileCreateConfig =
+      "spill_file_create_config";
+
   static constexpr const char* kSpillStartPartitionBit =
       "spiller_start_partition_bit";
 
   static constexpr const char* kJoinSpillPartitionBits =
       "join_spiller_partition_bits";
 
-  static constexpr const char* kAggregationSpillPartitionBits =
-      "aggregation_spiller_partition_bits";
-
-  /// If true and spilling has been triggered during the input processing, the
-  /// spiller will spill all the remaining in-memory state to disk before output
-  /// processing. This is to simplify the aggregation query OOM prevention in
-  /// output processing stage.
-  static constexpr const char* kAggregationSpillAll = "aggregation_spill_all";
-
   static constexpr const char* kMinSpillableReservationPct =
       "min_spillable_reservation_pct";
 
   static constexpr const char* kSpillableReservationGrowthPct =
       "spillable_reservation_growth_pct";
+
+  /// Minimum memory footprint size required to reclaim memory from a file
+  /// writer by flushing its buffered data to disk.
+  static constexpr const char* kWriterFlushThresholdBytes =
+      "writer_flush_threshold_bytes";
 
   /// If true, array_agg() aggregation function will ignore nulls in the input.
   static constexpr const char* kPrestoArrayAggIgnoreNulls =
@@ -276,11 +298,11 @@ class QueryConfig {
   static constexpr const char* kSparkBloomFilterExpectedNumItems =
       "spark.bloom_filter.expected_num_items";
 
-  // The default number of bits to use for the bloom filter.
+  /// The default number of bits to use for the bloom filter.
   static constexpr const char* kSparkBloomFilterNumBits =
       "spark.bloom_filter.num_bits";
 
-  // The max number of bits to use for the bloom filter.
+  /// The max number of bits to use for the bloom filter.
   static constexpr const char* kSparkBloomFilterMaxNumBits =
       "spark.bloom_filter.max_num_bits";
 
@@ -318,6 +340,23 @@ class QueryConfig {
   static constexpr const char* kEnableExpressionEvaluationCache =
       "enable_expression_evaluation_cache";
 
+  // For a given shared subexpression, the maximum distinct sets of inputs we
+  // cache results for. Lambdas can call the same expression with different
+  // inputs many times, causing the results we cache to explode in size. Putting
+  // a limit contains the memory usage.
+  static constexpr const char* kMaxSharedSubexprResultsCached =
+      "max_shared_subexpr_results_cached";
+
+  /// Maximum number of splits to preload. Set to 0 to disable preloading.
+  static constexpr const char* kMaxSplitPreloadPerDriver =
+      "max_split_preload_per_driver";
+
+  /// If not zero, specifies the cpu time slice limit in ms that a driver thread
+  /// can continuously run without yielding. If it is zero, then there is no
+  /// limit.
+  static constexpr const char* kDriverCpuTimeSliceLimitMs =
+      "driver_cpu_time_slice_limit_ms";
+
   uint64_t queryMaxMemoryPerNode() const {
     return toCapacity(
         get<std::string>(kQueryMaxMemoryPerNode, "0B"), CapacityUnit::BYTE);
@@ -341,6 +380,14 @@ class QueryConfig {
     return get<int32_t>(kAbandonPartialAggregationMinPct, 80);
   }
 
+  int32_t abandonPartialTopNRowNumberMinRows() const {
+    return get<int32_t>(kAbandonPartialTopNRowNumberMinRows, 100'000);
+  }
+
+  int32_t abandonPartialTopNRowNumberMinPct() const {
+    return get<int32_t>(kAbandonPartialTopNRowNumberMinPct, 80);
+  }
+
   uint64_t aggregationSpillMemoryThreshold() const {
     static constexpr uint64_t kDefault = 0;
     return get<uint64_t>(kAggregationSpillMemoryThreshold, kDefault);
@@ -356,13 +403,35 @@ class QueryConfig {
     return get<uint64_t>(kOrderBySpillMemoryThreshold, kDefault);
   }
 
-  // Returns the target size for a Task's buffered output. The
-  // producer Drivers are blocked when the buffered size exceeds
-  // this. The Drivers are resumed when the buffered size goes below
-  // PartitionedOutputBufferManager::kContinuePct % of this.
+  uint64_t maxSpillRunRows() const {
+    static constexpr uint64_t kDefault = 12UL << 20;
+    return get<uint64_t>(kMaxSpillRunRows, kDefault);
+  }
+
+  uint64_t maxSpillBytes() const {
+    static constexpr uint64_t kDefault = 100UL << 30;
+    return get<uint64_t>(kMaxSpillBytes, kDefault);
+  }
+
+  /// Returns the maximum number of bytes to buffer in PartitionedOutput
+  /// operator to avoid creating tiny SerializedPages.
+  ///
+  /// For PartitionedOutputNode::Kind::kPartitioned, PartitionedOutput operator
+  /// would buffer up to that number of bytes / number of destinations for each
+  /// destination before producing a SerializedPage.
   uint64_t maxPartitionedOutputBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxPartitionedOutputBufferSize, kDefault);
+  }
+
+  /// Returns the maximum size in bytes for the task's buffered output.
+  ///
+  /// The producer Drivers are blocked when the buffered size exceeds
+  /// this. The Drivers are resumed when the buffered size goes below
+  /// OutputBufferManager::kContinuePct % of this.
+  uint64_t maxOutputBufferSize() const {
+    static constexpr uint64_t kDefault = 32UL << 20;
+    return get<uint64_t>(kMaxOutputBufferSize, kDefault);
   }
 
   uint64_t maxLocalExchangeBufferSize() const {
@@ -373,6 +442,11 @@ class QueryConfig {
   uint64_t maxExchangeBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxExchangeBufferSize, kDefault);
+  }
+
+  uint64_t maxMergeExchangeBufferSize() const {
+    static constexpr uint64_t kDefault = 128UL << 20;
+    return get<uint64_t>(kMaxMergeExchangeBufferSize, kDefault);
   }
 
   uint64_t preferredOutputBatchBytes() const {
@@ -410,16 +484,12 @@ class QueryConfig {
     return get<bool>(kAdaptiveFilterReorderingEnabled, true);
   }
 
+  bool isLegacyCast() const {
+    return get<bool>(kLegacyCast, false);
+  }
+
   bool isMatchStructByName() const {
     return get<bool>(kCastMatchStructByName, false);
-  }
-
-  bool isCastToIntByTruncate() const {
-    return get<bool>(kCastToIntByTruncate, false);
-  }
-
-  bool isIso8601() const {
-    return get<bool>(kCastStringToDateIsIso8601, true);
   }
 
   bool codegenEnabled() const {
@@ -469,14 +539,32 @@ class QueryConfig {
     return get<bool>(kOrderBySpillEnabled, true);
   }
 
-  /// Returns 'is row_number spilling enabled' flag. Must also check the
+  /// Returns true if spilling is enabled for Window operator. Must also
+  /// check the spillEnabled()!
+  bool windowSpillEnabled() const {
+    return get<bool>(kWindowSpillEnabled, true);
+  }
+
+  /// Returns 'is writer spilling enabled' flag. Must also check the
   /// spillEnabled()!
+  bool writerSpillEnabled() const {
+    return get<bool>(kWriterSpillEnabled, true);
+  }
+
+  /// Returns true if spilling is enabled for RowNumber operator. Must also
+  /// check the spillEnabled()!
   bool rowNumberSpillEnabled() const {
     return get<bool>(kRowNumberSpillEnabled, true);
   }
 
-  // Returns a percentage of aggregation or join input batches that
-  // will be forced to spill for testing. 0 means no extra spilling.
+  /// Returns true if spilling is enabled for TopNRowNumber operator. Must also
+  /// check the spillEnabled()!
+  bool topNRowNumberSpillEnabled() const {
+    return get<bool>(kTopNRowNumberSpillEnabled, true);
+  }
+
+  /// Returns a percentage of aggregation or join input batches that will be
+  /// forced to spill for testing. 0 means no extra spilling.
   int32_t testingSpillPct() const {
     return get<int32_t>(kTestingSpillPct, 0);
   }
@@ -490,7 +578,7 @@ class QueryConfig {
   /// calculate the spilling partition number for join spill or aggregation
   /// spill.
   uint8_t spillStartPartitionBit() const {
-    constexpr uint8_t kDefaultStartBit = 29;
+    constexpr uint8_t kDefaultStartBit = 48;
     return get<uint8_t>(kSpillStartPartitionBit, kDefaultStartBit);
   }
 
@@ -506,20 +594,8 @@ class QueryConfig {
         kMaxBits, get<uint8_t>(kJoinSpillPartitionBits, kDefaultBits));
   }
 
-  /// Returns the number of bits used to calculate the spilling partition
-  /// number for hash join. The number of spilling partitions will be power of
-  /// two.
-  ///
-  /// NOTE: as for now, we only support up to 8-way spill partitioning.
-  uint8_t aggregationSpillPartitionBits() const {
-    constexpr uint8_t kDefaultBits = 0;
-    constexpr uint8_t kMaxBits = 3;
-    return std::min(
-        kMaxBits, get<uint8_t>(kAggregationSpillPartitionBits, kDefaultBits));
-  }
-
-  bool aggregationSpillAll() const {
-    return get<bool>(kAggregationSpillAll, true);
+  uint64_t writerFlushThresholdBytes() const {
+    return get<uint64_t>(kWriterFlushThresholdBytes, 96L << 20);
   }
 
   uint64_t maxSpillFileSize() const {
@@ -539,6 +615,10 @@ class QueryConfig {
   uint64_t spillWriteBufferSize() const {
     // The default write buffer size set to 1MB.
     return get<uint64_t>(kSpillWriteBufferSize, 1L << 20);
+  }
+
+  std::string spillFileCreateConfig() const {
+    return get<std::string>(kSpillFileCreateConfig, "");
   }
 
   /// Returns the minimal available spillable memory reservation in percentage
@@ -625,6 +705,30 @@ class QueryConfig {
 
   bool isExpressionEvaluationCacheEnabled() const {
     return get<bool>(kEnableExpressionEvaluationCache, true);
+  }
+
+  uint32_t maxSharedSubexprResultsCached() const {
+    // 10 was chosen as a default as there are cases where a shared
+    // subexpression can be called in 2 different places and a particular
+    // argument may be peeled in one and not peeled in another. 10 is large
+    // enough to handle this happening for a few arguments in different
+    // combinations.
+    //
+    // For example, when the UDF at the root of a shared subexpression does not
+    // have default null behavior and takes an input that is dictionary encoded
+    // with nulls set in the DictionaryVector. That dictionary
+    // encoding may be peeled depending on whether or not there is a UDF above
+    // it in the expression tree that has default null behavior and takes the
+    // same input as an argument.
+    return get<uint32_t>(kMaxSharedSubexprResultsCached, 10);
+  }
+
+  int32_t maxSplitPreloadPerDriver() const {
+    return get<int32_t>(kMaxSplitPreloadPerDriver, 2);
+  }
+
+  uint32_t driverCpuTimeSliceLimitMs() const {
+    return get<uint32_t>(kDriverCpuTimeSliceLimitMs, 0);
   }
 
   template <typename T>
