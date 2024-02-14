@@ -17,6 +17,7 @@
 #include "velox/exec/PartitionedOutput.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/Task.h"
+#include "velox/serializers/PrestoSerializer.h"
 
 namespace facebook::velox::exec {
 
@@ -56,9 +57,12 @@ BlockingReason Destination::advance(
 
   // Serialize
   if (!current_) {
+    
     current_ = std::make_unique<VectorStreamGroup>(pool_);
     auto rowType = asRowType(output->type());
-    current_->createStreamTree(rowType, rowsInCurrent_);
+    serializer::presto::PrestoVectorSerde::PrestoOptions options;
+    options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+    current_->createStreamTree(rowType, rowsInCurrent_, &options);
   }
   current_->append(
       output, folly::Range(&rows_[firstRow], rowIdx_ - firstRow), scratch);
@@ -160,7 +164,9 @@ void Destination::replay() {
   Scratch scratch;
   auto group = std::make_unique<VectorStreamGroup>(pool_);
   auto rowType = asRowType(type_);
-  group->createStreamTree(rowType, 100);
+    serializer::presto::PrestoVectorSerde::PrestoOptions options;
+    options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+    group->createStreamTree(rowType, 100, &options);
   for (auto i = 0; i < history_.size(); ++i) {
     auto& record = history_[i];
     if (record.rows == nullptr) {
@@ -213,7 +219,10 @@ bool Destination::chooseAdvance(
   if (!current_) {
     current_ = std::make_unique<VectorStreamGroup>(pool_);
     auto rowType = asRowType(output->type());
-    current_->createStreamTree(rowType, rowsInCurrent_);
+    serializer::presto::PrestoVectorSerde::PrestoOptions options;
+    options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+
+    current_->createStreamTree(rowType, rowsInCurrent_, &options);
   }
 
   if (rowIdx_ < rows_.size()) {
@@ -625,7 +634,7 @@ void PartitionedOutput::getOutputColumnwise() {
            ++column) {
         for (auto i = 0; i < toAdvance_.size(); ++i) {
           auto destination = toAdvance_[i];
-          destination->streamGroup()->appendColumn(
+          destination->streamGroup()->serializer()->appendColumn(
               output_,
               column,
               folly::Range(
@@ -640,12 +649,13 @@ void PartitionedOutput::getOutputColumnwise() {
             destination->rowIdx() - destination->firstRow());
       }
       for (auto* destination : toFlush_) {
-        blockingReason_ = destination->flush(
+        auto reason = destination->flush(
             *bufferManager,
             bufferReleaseFn_,
             blockedDestination ? nullptr : &future_);
-        if (blockingReason_ != BlockingReason::kNotBlocked &&
+        if (reason != BlockingReason::kNotBlocked &&
             blockedDestination == nullptr) {
+	  blockingReason_ = reason;
           blockedDestination = destination;
         }
       }

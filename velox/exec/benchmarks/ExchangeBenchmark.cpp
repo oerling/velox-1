@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include <folly/Benchmark.h>
+#include <folly/Random.h>
 #include <folly/init/Init.h>
 
 #include "velox/core/QueryConfig.h"
@@ -81,8 +82,9 @@ struct Counters {
       return "N/A";
     }
     return fmt::format(
-        "{}/s repartition={} exchange={} exchange batch={}",
+        "{}/s ({}) repartition={}  exchange={} exchange batch={}",
         succinctBytes(bytes / (usec / 1.0e6)),
+        succinctBytes(bytes),
         succinctNanos(repartitionNanos),
         succinctNanos(exchangeNanos),
         exchangeRows / exchangeBatches);
@@ -91,17 +93,41 @@ struct Counters {
 
 class ExchangeBenchmark : public VectorTestBase {
  public:
+  // Specifies cardinalities for columns of generated
+  // data. 'beginColumn' gets 'lowest' distinct values and 'endColumn
+  // - 1' gets 'hightest' distinct values. See adjustCardinalities for the
+  // interpretation of distinct values.
+  struct Cardinalities {
+    int32_t beginColumn;
+    int32_t endColumn;
+    int32_t lowest;
+    int32_t highest;
+  };
+
   std::vector<RowVectorPtr> makeRows(
       RowTypePtr type,
       int32_t numVectors,
       int32_t rowsPerVector,
-      int32_t dictPct = 0) {
+      int32_t dictPct = 0,
+      const Cardinalities* cardinalities = nullptr) {
     std::vector<RowVectorPtr> vectors;
     BufferPtr indices;
     for (int32_t i = 0; i < numVectors; ++i) {
       auto vector = std::dynamic_pointer_cast<RowVector>(
           BatchMaker::createBatch(type, rowsPerVector, *pool_));
-      auto width = vector->childrenSize();
+      vectors.push_back(vector);
+    }
+
+    if (cardinalities) {
+      adjustColumnCardinalities(
+          cardinalities->beginColumn,
+          cardinalities->endColumn,
+          cardinalities->lowest,
+          cardinalities->highest,
+          vectors);
+    }
+    auto width = vectors[0]->childrenSize();
+    for (auto& vector : vectors) {
       for (auto child = 0; child < width; ++child) {
         if (100 * child / width > dictPct) {
           if (!indices) {
@@ -111,17 +137,20 @@ class ExchangeBenchmark : public VectorTestBase {
               nullptr, indices, vector->size(), vector->childAt(child));
         }
       }
-      vectors.push_back(vector);
     }
     return vectors;
   }
 
-  /// Updates 'vectors' to have 'card' values each, picked from 'totalCard'
-  /// values.
+  /// Updates 'vectors' to have 'windowCardinality' distinct values every
+  /// 'windowCardinality' rows.
+
   void makeCardinality(
-      int32_t card,
+      int32_t windowCardinality,
       int32_t maxCardinality,
       std::vector<VectorPtr>& vectors) {
+    folly::Random::DefaultGenerator rng;
+    rng.seed(1);
+
     auto alphabet =
         BaseVector::create(vectors[0]->type(), maxCardinality, pool_.get());
     int32_t vectorIdx = 0;
@@ -138,15 +167,39 @@ class ExchangeBenchmark : public VectorTestBase {
       }
     }
     // We have taken maxCardinality first values as the alphabet. Now we fill
-    // windows of 'card' elements with random values from the alphabet, so that
-    // each window has values picked  from a window of card * 1.2 values out of
-    // 'distincts'. The window over 'alphabet' shifts by one  for every window
-    // to be filled. Like this, values repeat but there is the odd new value now
-    // and then.
+    // windows of 'windowCardinality' elements with random values from the
+    // alphabet, so that the window shifts over the alphabet little by little.
+    // Values repeat but also appear and go away.
+    int32_t counter = 0;
+    int32_t base = 0;
+    for (auto& vector : vectors) {
+      for (auto index = 0; index < vector->size(); ++index) {
+        if (++counter % windowCardinality == 0) {
+          ++base;
+        }
+        auto alphabetIndex =
+            (base + (folly::Random::rand32() % windowCardinality)) %
+            alphabet->size();
+        vector->copy(alphabet.get(), index, alphabetIndex, 1);
+      }
+    }
   }
 
-  void adjustStringCardinality(std::vector<RowVectorPtr>& vectors) {
-    ;
+  void adjustColumnCardinalities(
+      int32_t beginColumn,
+      int32_t endColumn,
+      int32_t lowest,
+      int32_t highest,
+      std::vector<RowVectorPtr>& rows) {
+    auto increasePerColumn = (highest - lowest) / (endColumn - beginColumn);
+    for (auto i = beginColumn; i < endColumn; ++i) {
+      std::vector<VectorPtr> column;
+      for (auto& r : rows) {
+        column.push_back(r->childAt(i));
+      }
+      auto columnCardinality = lowest + ((i - beginColumn) * increasePerColumn);
+      makeCardinality(columnCardinality, columnCardinality * 2, column);
+    }
   }
 
   void run(
@@ -213,6 +266,7 @@ class ExchangeBenchmark : public VectorTestBase {
     int64_t exchangeBatches = 0;
     int64_t exchangeRows = 0;
     for (auto& task : tasks) {
+      exec::test::waitForTaskCompletion(task.get(), 1'000'000);
       auto stats = task->taskStats();
       for (auto& pipeline : stats.pipelineStats) {
         for (auto& op : pipeline.operatorStats) {
@@ -512,8 +566,13 @@ int main(int argc, char** argv) {
   flat50 = bm->makeRows(flatType, 2000, 50, FLAGS_dict_pct);
   deep50 = bm->makeRows(deepType, 2000, 50, FLAGS_dict_pct);
   struct1k = bm->makeRows(structType, 100, 1000, FLAGS_dict_pct);
-  string10k = bm->makeRows(stringType, 100, 10000, FLAGS_dict_pct);
-  bm->adjustStringCardinality(string10k);
+  ExchangeBenchmark::Cardinalities stringCardinalities = {
+      0,
+      static_cast<int32_t>(stringType->size()),
+      FLAGS_string_min_cardinality,
+      FLAGS_string_max_cardinality};
+  string10k = bm->makeRows(
+      stringType, 100, 10000, FLAGS_dict_pct, &stringCardinalities);
 
   folly::runBenchmarks();
   std::cout << "flat10k: " << flat10kCounters.toString() << std::endl
@@ -522,5 +581,13 @@ int main(int argc, char** argv) {
             << "deep50: " << deep50Counters.toString() << std::endl
             << "struct1k: " << struct1kCounters.toString() << std::endl
             << "string10k: " << string10kCounters.toString() << std::endl;
+
+  flat10k.clear();
+  deep10k.clear();
+  flat50.clear();
+  deep50.clear();
+  struct1k.clear();
+  string10k.clear();
+  bm.reset();
   return 0;
 }

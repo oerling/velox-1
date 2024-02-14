@@ -1928,15 +1928,12 @@ class VectorStream {
   }
 
   bool mayTryDictionary() const {
-    if (hasFixedEncoding_) {
+    if (hasFixedEncoding_ || !FLAGS_enable_serialize_dict) {
       return false;
     }
     // If there are already distincts from constants, we can do more dictionary.
     if (!indices_.empty()) {
       return true;
-    }
-    if (!FLAGS_enable_serialize_dict) {
-      return false;
     }
     return !disableDict_;
   }
@@ -1994,6 +1991,10 @@ class VectorStream {
     }
   }
 
+  bool hasEncoding() const {
+    return !indices_.empty();
+  }
+  
  private:
   static constexpr int32_t kNoNullIndex = -1;
 
@@ -2210,8 +2211,8 @@ class VectorStream {
         (distincts_->retainedSize() < 10240 && numAbandonDict_ < 10)) {
       return;
     }
-    // Every 8th flush makes a new dict
-    if ((numFlushes_ & 7) != 0) {
+    // Every 64th flush makes a new dict
+    if ((numFlushes_ & 63) != 0) {
       return;
     }
     nullIndex_ = kNoNullIndex;
@@ -2706,7 +2707,7 @@ void serializeColumn(
   }
   auto encoding = vector->encoding();
   auto kind = vector->typeKind();
-  if (encoding != VectorEncoding::Simple::CONSTANT &&
+  if (stream->hasEncoding() && encoding != VectorEncoding::Simple::CONSTANT &&
       kind != TypeKind::VARCHAR && kind != TypeKind::VARBINARY) {
     stream->ensureFlat();
   }
@@ -3344,7 +3345,7 @@ void serializeColumn(
     Scratch& scratch) {
   auto encoding = vector->encoding();
   auto kind = vector->typeKind();
-  if (encoding != VectorEncoding::Simple::CONSTANT &&
+  if (stream->hasEncoding() && encoding != VectorEncoding::Simple::CONSTANT &&
       kind != TypeKind::VARCHAR && kind != TypeKind::VARBINARY) {
     stream->ensureFlat();
   }

@@ -15,6 +15,7 @@
  */
 #include "velox/exec/Exchange.h"
 #include "velox/exec/Task.h"
+#include "velox/serializers/PrestoSerializer.h"
 
 namespace facebook::velox::exec {
 
@@ -126,8 +127,11 @@ RowVectorPtr Exchange::getOutput() {
       if (resultOffset > 0) {
         ++numBatchMerges;
       }
+      serializer::presto::PrestoVectorSerde::PrestoOptions options;
+      options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+
       getSerde()->deserialize(
-          &inputStream, pool(), outputType_, &result_, resultOffset);
+			      &inputStream, pool(), outputType_, &result_, resultOffset, &options);
       const auto newRows = result_->size() - resultOffset;
       resultOffset = result_->size();
       int32_t constantRows = 0;
