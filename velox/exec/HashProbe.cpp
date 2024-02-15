@@ -1023,7 +1023,7 @@ void HashProbe::prepareFilterRowsForNullAwareJoin(
         // NOTE: the false value of a raw null bit indicates null so we OR with
         // negative of the raw bit.
         bits::orWithNegatedBits(
-				rawNullRows, nullsInActiveRows.asRange().bits(), 0, numRows);
+            rawNullRows, nullsInActiveRows.asRange().bits(), 0, numRows);
       }
     }
     nullFilterInputRows_.updateBounds();
