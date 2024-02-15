@@ -298,28 +298,6 @@ class PrestoSerializerTest
     return stats;
   }
 
-  void serializeEncoded(
-      const RowVectorPtr& rowVector,
-      std::ostream* output,
-      const serializer::presto::PrestoVectorSerde::PrestoOptions*
-          serdeOptions) {
-    facebook::velox::serializer::presto::PrestoOutputStreamListener listener;
-    OStreamOutputStream out(output, &listener);
-    StreamArena arena{pool_.get()};
-    auto paramOptions = getParamSerdeOptions(serdeOptions);
-
-    for (const auto& child : rowVector->children()) {
-      auto encoding = child->encoding();
-      if (encoding == VectorEncoding::Simple::DICTIONARY && child->rawNulls()) {
-        paramOptions.encodings.push_back(VectorEncoding::Simple::FLAT);
-      } else {
-        paramOptions.encodings.push_back(encoding);
-      }
-    }
-
-    serde_->deprecatedSerializeEncoded(rowVector, &arena, &paramOptions, &out);
-  }
-
   void assertEqualEncoding(
       const RowVectorPtr& expected,
       const RowVectorPtr& actual) {
@@ -417,7 +395,7 @@ class PrestoSerializerTest
       auto data = makeRowVector({"f"}, {vector});
       concatenation->append(data.get());
       std::ostringstream out;
-      serializeEncoded(data, &out, &paramOptions);
+      serializeBatch(data, &out, &paramOptions);
       pieces.push_back(out.str());
 
       std::ostringstream out2;
@@ -495,7 +473,7 @@ class PrestoSerializerTest
       const serializer::presto::PrestoVectorSerde::PrestoOptions* serdeOptions =
           nullptr) {
     std::ostringstream out;
-    serializeEncoded(data, &out, serdeOptions);
+    serializeBatch(data, &out, serdeOptions);
     const auto serialized = out.str();
 
     verifySerializedEncodedData(data, serialized, serdeOptions);
@@ -920,31 +898,15 @@ TEST_P(PrestoSerializerTest, longDecimal) {
 }
 
 // Test that hierarchically encoded columns (rows) have their encodings
-// preserved.
-TEST_P(PrestoSerializerTest, encodings) {
-  testEncodedRoundTrip(encodingsTestVector());
-}
-
-// Test that hierarchically encoded columns (rows) have their encodings
 // preserved by the PrestoBatchVectorSerializer.
 TEST_P(PrestoSerializerTest, encodingsBatchVectorSerializer) {
   testBatchVectorSerializerRoundTrip(encodingsTestVector());
-}
-
-// Test that array elements have their encodings preserved.
-TEST_P(PrestoSerializerTest, encodingsArrayElements) {
-  testEncodedRoundTrip(encodingsArrayElementsTestVector());
 }
 
 // Test that array elements have their encodings preserved by the
 // PrestoBatchVectorSerializer.
 TEST_P(PrestoSerializerTest, encodingsArrayElementsBatchVectorSerializer) {
   testBatchVectorSerializerRoundTrip(encodingsArrayElementsTestVector());
-}
-
-// Test that map values have their encodings preserved.
-TEST_P(PrestoSerializerTest, encodingsMapValues) {
-  testEncodedRoundTrip(encodingsMapValuesTestVector());
 }
 
 // Test that map values have their encodings preserved by the
