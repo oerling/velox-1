@@ -1009,14 +1009,14 @@ void HashProbe::prepareFilterRowsForNullAwareJoin(
       filterInputColumnDecodedVector_.decode(
           *filterInput_->childAt(projection.outputChannel), filterInputRows_);
       if (filterInputColumnDecodedVector_.mayHaveNulls()) {
-        std::vector<uint64_t> nullsInActiveRows(bits::nwords(numRows));
+        SelectivityVector nullsInActiveRows(numRows);
         memcpy(
-            nullsInActiveRows.data(),
+	       nullsInActiveRows.asMutableRange().bits(),
             filterInputColumnDecodedVector_.nulls(&filterInputRows_),
             bits::nbytes(numRows));
         // All rows that are not active count as non-null here.
         bits::orWithNegatedBits(
-            nullsInActiveRows.data(),
+				nullsInActiveRows.asMutableRange().bits(),
             filterInputRows_.asRange().bits(),
             0,
             numRows);
