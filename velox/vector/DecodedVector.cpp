@@ -444,7 +444,7 @@ const uint64_t* DecodedVector::nulls(const SelectivityVector* rows) {
       }
       auto baseSize = baseVector_->size();
       applyToRows(rows, [&](auto i) {
-	VELOX_DCHECK_LT(indices_[i], baseSize);
+        VELOX_DCHECK_LT(indices_[i], baseSize);
         bits::setNull(rawCopiedNulls, i, bits::isBitNull(nulls_, indices_[i]));
       });
       allNulls_ = copiedNulls_.data();
