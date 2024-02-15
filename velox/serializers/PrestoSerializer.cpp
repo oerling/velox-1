@@ -3575,12 +3575,7 @@ class PrestoIterativeVectorSerializer : public IterativeVectorSerializer {
 
     for (int i = 0; i < numTypes; ++i) {
       streams_[i] = std::make_unique<VectorStream>(
-          types[i],
-          std::nullopt,
-          std::nullopt,
-          streamArena,
-          numRows,
-          opts);
+          types[i], std::nullopt, std::nullopt, streamArena, numRows, opts);
     }
   }
 

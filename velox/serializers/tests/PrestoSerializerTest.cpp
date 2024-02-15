@@ -373,7 +373,6 @@ class PrestoSerializerTest
     verifySerializedEncodedData(data, serialized, serdeOptions);
   }
 
-
   void serializeBatch(
       const RowVectorPtr& rowVector,
       std::ostream* output,
