@@ -185,7 +185,8 @@ void testWritable(const std::string& dir) {
   auto testPath = fmt::format("{}/test", dir);
   int32_t fd = open(testPath.c_str(), O_RDWR | O_CREAT);
   if (fd < 0) {
-    LOG(ERROR) << "Can't open " << testPath << " for write"; return;
+    LOG(ERROR) << "Can't open " << testPath << " for write";
+    return;
   }
   if (4 != write(fd, "test", 4)) {
     LOG(ERROR) << "Can't write to " << testPath;

@@ -14,8 +14,7 @@
 
 add_executable(
   velox_process_test TraceContextTest.cpp ThreadLocalRegistryTest.cpp
-  TraceHistoryTest.cpp
-  ProfilerTest.cpp)
+                     TraceHistoryTest.cpp ProfilerTest.cpp)
 
 add_test(velox_process_test velox_process_test)
 
