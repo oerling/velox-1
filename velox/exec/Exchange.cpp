@@ -128,7 +128,7 @@ RowVectorPtr Exchange::getOutput() {
         ++numBatchMerges;
       }
       serializer::presto::PrestoVectorSerde::PrestoOptions options;
-      options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+      options.compressionKind = compressionKind_;
 
       getSerde()->deserialize(
 			      &inputStream, pool(), outputType_, &result_, resultOffset, &options);
