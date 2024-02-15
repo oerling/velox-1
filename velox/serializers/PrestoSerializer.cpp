@@ -3518,13 +3518,10 @@ void flushStreams(
 
 class PrestoBatchVectorSerializer : public BatchVectorSerializer {
  public:
-  PrestoBatchVectorSerializer(
-      memory::MemoryPool* pool,
-      bool useLosslessTimestamp,
-      common::CompressionKind compressionKind)
+  PrestoBatchVectorSerializer(memory::MemoryPool* pool, const SerdeOpts& opts)
       : pool_(pool),
-        useLosslessTimestamp_(useLosslessTimestamp),
-        codec_(common::compressionKindToCodec(compressionKind)) {}
+        codec_(common::compressionKindToCodec(opts.compressionKind)),
+        opts_(opts) {}
 
   void serialize(
       const RowVectorPtr& vector,
@@ -3537,8 +3534,6 @@ class PrestoBatchVectorSerializer : public BatchVectorSerializer {
 
     StreamArena arena(pool_);
     std::vector<std::unique_ptr<VectorStream>> streams(numChildren);
-    SerdeOpts opts;
-    opts.useLosslessTimestamp = useLosslessTimestamp_;
     for (int i = 0; i < numChildren; i++) {
       streams[i] = std::make_unique<VectorStream>(
           rowType->childAt(i),
@@ -3546,7 +3541,7 @@ class PrestoBatchVectorSerializer : public BatchVectorSerializer {
           vector->childAt(i),
           &arena,
           numRows,
-          opts);
+          opts_);
 
       serializeColumn(vector->childAt(i).get(), ranges, streams[i].get());
     }
@@ -3556,8 +3551,8 @@ class PrestoBatchVectorSerializer : public BatchVectorSerializer {
 
  private:
   memory::MemoryPool* pool_;
-  const bool useLosslessTimestamp_;
   const std::unique_ptr<folly::io::Codec> codec_;
+  SerdeOpts opts_;
 };
 
 class PrestoIterativeVectorSerializer : public IterativeVectorSerializer {
@@ -3667,8 +3662,7 @@ std::unique_ptr<BatchVectorSerializer> PrestoVectorSerde::createBatchSerializer(
     memory::MemoryPool* pool,
     const Options* options) {
   const auto prestoOptions = toPrestoOptions(options);
-  return std::make_unique<PrestoBatchVectorSerializer>(
-      pool, prestoOptions.useLosslessTimestamp, prestoOptions.compressionKind);
+  return std::make_unique<PrestoBatchVectorSerializer>(pool, prestoOptions);
 }
 
 namespace {
