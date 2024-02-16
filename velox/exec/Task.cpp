@@ -35,6 +35,7 @@
 #if CODEGEN_ENABLED == 1
 #include "velox/experimental/codegen/CodegenLogger.h"
 #endif
+#include "velox/common/process/Profiler.h"
 #include "velox/common/testutil/TestValue.h"
 
 using facebook::velox::common::testutil::TestValue;

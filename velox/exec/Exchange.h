@@ -50,7 +50,11 @@ class Exchange : public SourceOperator {
         preferredOutputBatchBytes_{
             driverCtx->queryConfig().preferredOutputBatchBytes()},
         processSplits_{operatorCtx_->driverCtx()->driverId == 0},
-        exchangeClient_{std::move(exchangeClient)} {}
+        exchangeClient_{std::move(exchangeClient)} {
+    if (auto manager = OutputBufferManager::getInstance().lock()) {
+      compressionKind_ = manager->compressionKind();
+    }
+  }
 
   ~Exchange() override {
     close();
@@ -105,6 +109,7 @@ class Exchange : public SourceOperator {
   std::vector<std::unique_ptr<SerializedPage>> currentPages_;
   bool atEnd_{false};
   std::default_random_engine rng_{std::random_device{}()};
+  common::CompressionKind compressionKind_;
 };
 
 } // namespace facebook::velox::exec
