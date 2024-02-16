@@ -20,9 +20,6 @@
 #include <thread>
 #include "velox/common/process/TraceContext.h"
 
-
-
-
 using namespace facebook::velox::process;
 using namespace facebook::velox;
 

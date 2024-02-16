@@ -18,5 +18,5 @@ add_executable(
 
 add_test(velox_process_test velox_process_test)
 
-target_link_libraries(velox_process_test PRIVATE velox_process fmt::fmt gtest velox_time
-                                                 gtest_main)
+target_link_libraries(velox_process_test PRIVATE velox_process fmt::fmt gtest
+                                                 velox_time gtest_main)
