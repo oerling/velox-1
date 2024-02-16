@@ -77,10 +77,6 @@ class Task : public std::enable_shared_from_this<Task> {
     spillDirectoryCreated_ = alreadyCreated;
   }
 
-  void setProfileDirectoryBase(const std::string& dir) {
-    profileDirectoryBase_ = dir;
-  }
-
   std::string toString() const;
 
   folly::dynamic toJson() const;
@@ -1089,11 +1085,6 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Base spill directory for this task.
   std::string spillDirectory_;
-
-  // If constant profiling is on, directory to put results in. Derived from
-  // 'spillDirectory_'
-  std::string profileDirectoryBase_;
-  std::string profileDirectory_;
 
   // Mutex to ensure only the first caller thread of 'getOrCreateSpillDirectory'
   // creates the directory.

@@ -19,6 +19,11 @@
 #include <string>
 #include "velox/common/file/FileSystems.h"
 
+DECLARE_int32(profiler_check_interval_seconds);
+DECLARE_int32(profiler_min_cpu_pct);
+DECLARE_int32(profiler_min_sample_seconds);
+DECLARE_int32(profiler_max_sample_seconds);
+
 namespace facebook::velox::process {
 
 class Profiler {
@@ -33,12 +38,13 @@ class Profiler {
   static bool isRunning();
 
  private:
-  static void copyToResult(
-      int32_t counter,
-      const std::string& path,
-      const std::string* result = nullptr);
+  static void copyToResult(const std::string* result = nullptr);
   static void makeProfileDir(std::string path);
-  static void threadFunction(std::string path);
+  static std::thread startSample();
+  // Returns after 'seconds' of wall time or sooner if interrupted by stop().
+  static bool interruptibleSleep(int32_t seconds);
+  static void stopSample(std::thread thread);
+  static void threadFunction();
 
   static bool profileStarted_;
   static std::thread profileThread_;
@@ -47,6 +53,25 @@ class Profiler {
   static bool isSleeping_;
   static bool shouldStop_;
   static folly::Promise<bool> sleepPromise_;
+
+  // Directory where results are deposited. Results have unique names within
+  // this.
+  static std::string resultPath_;
+
+  // indicates if the results of the the profile should be saved at stop.
+  static bool shouldSaveResult_;
+
+  // Time of starting the profile. Seconds from epoch.
+  static int64_t sampleStartTime_;
+
+  // CPU time at start of profile.
+  static int64_t cpuAtSampleStart_;
+
+  // CPU time at last periodic check.
+  static int64_t cpuAtLastCheck_;
+
+  // Pid of currently running perf if started with exec andd pipes.
+  static int32_t perfPid_;
 };
 
 } // namespace facebook::velox::process

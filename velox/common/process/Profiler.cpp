@@ -32,6 +32,26 @@
 
 DEFINE_string(profile_tmp_dir, "/tmp", "Writable temp for perf.data");
 
+DEFINE_int32(
+    profiler_check_interval_seconds,
+    60,
+    "Frequency of checking CPU load and turning profiling on/off");
+
+DEFINE_int32(
+    profiler_min_cpu_pct,
+    200,
+    "Minimum CPU percent to justify profile. 100 is one core busy");
+
+DEFINE_int32(
+    profiler_min_sample_seconds,
+    60,
+    "Minimum amount of time at above minimum load to justify producing a result file");
+
+DEFINE_int32(
+    profiler_max_sample_seconds,
+    300,
+    "Number of seconds before switching to new file");
+
 namespace facebook::velox::process {
 
 constexpr int32_t kErrorToStdout = -2;
@@ -178,26 +198,56 @@ std::thread Profiler::profileThread_;
 std::mutex Profiler::profileMutex_;
 std::shared_ptr<velox::filesystems::FileSystem> Profiler::fileSystem_;
 bool Profiler::isSleeping_;
+std::string Profiler::resultPath_;
 bool Profiler::shouldStop_;
 folly::Promise<bool> Profiler::sleepPromise_;
+bool Profiler::shouldSaveResult_;
+int64_t Profiler::sampleStartTime_;
+int64_t Profiler::cpuAtSampleStart_;
+int64_t Profiler::cpuAtLastCheck_;
+int32_t Profiler::perfPid_;
+
+namespace {
+std::string hostname;
+}
 
 void testWritable(const std::string& dir) {
   auto testPath = fmt::format("{}/test", dir);
-  int32_t fd = open(testPath.c_str(), O_RDWR | O_CREAT);
+  int32_t fd =
+      open(testPath.c_str(), O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
   if (fd < 0) {
-    LOG(ERROR) << "Can't open " << testPath << " for write";
+    LOG(ERROR) << "Can't open " << testPath << " for write errno=" << errno;
     return;
   }
   if (4 != write(fd, "test", 4)) {
-    LOG(ERROR) << "Can't write to " << testPath;
+    LOG(ERROR) << "Can't write to " << testPath << " errno=" << errno;
   }
   close(fd);
 }
 
-void Profiler::copyToResult(
-    int32_t counter,
-    const std::string& path,
-    const std::string* data) {
+// Returns user+system cpu seconds from getrusage()
+int64_t cpuSeconds() {
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return ru.ru_utime.tv_sec + ru.ru_stime.tv_sec;
+}
+
+int64_t nowSeconds() {
+  struct timeval tv;
+  struct timezone tz;
+  gettimeofday(&tv, &tz);
+  return tv.tv_sec;
+}
+
+std::string timeString(int64_t seconds) {
+  struct tm tm;
+  localtime_r(&seconds, &tm);
+  char temp[100];
+  strftime(temp, sizeof(temp), "%Y-%m-%d_%H:%M:%S", &tm);
+  return std::string(temp);
+}
+
+void Profiler::copyToResult(const std::string* data) {
   char* buffer;
   int32_t resultSize;
   std::string temp;
@@ -218,7 +268,10 @@ void Profiler::copyToResult(
     resultSize = ::read(fd, buffer, bufferSize);
     close(fd);
   }
-  auto target = fmt::format("{}/prof-{}", path, counter);
+
+  std::string dt = timeString(nowSeconds());
+  auto target =
+      fmt::format("{}/prof-{}-{}-{}", resultPath_, hostname, dt, getpid());
   try {
     try {
       fileSystem_->remove(target);
@@ -226,6 +279,15 @@ void Profiler::copyToResult(
       // ignore
     }
     auto out = fileSystem_->openFileForWrite(target);
+    auto now = nowSeconds();
+    auto elapsed = (now - sampleStartTime_);
+    auto cpu = cpuSeconds();
+    out->append(fmt::format(
+        "Profile from {} to {} at {}% CPU\n\n",
+
+        timeString(sampleStartTime_),
+        timeString(now),
+        100 * (cpu - cpuAtSampleStart_) / std::max<int64_t>(1, elapsed)));
     out->append(std::string_view(buffer, resultSize));
     out->flush();
     LOG(INFO) << "PROFILE: Produced result " << target << " " << resultSize
@@ -245,85 +307,150 @@ void Profiler::makeProfileDir(std::string path) {
   }
 }
 
-void Profiler::threadFunction(std::string path) {
-  const int32_t pid = getpid();
-  makeProfileDir(path);
-  for (int32_t counter = 0;; ++counter) {
-    int32_t perfPid = 0;
-    std::thread systemThread([&]() {
+std::thread Profiler::startSample() {
+  std::thread thread([&]() {
 #if !defined(WITH_PIPE)
-      system(fmt::format(
-                 "(cd {}; /usr/bin/perf record --pid {};"
-                 "perf report --sort symbol > perf ;"
-                 "sed --in-place 's/      / /' perf;"
-                 "sed --in-place 's/      / /' perf; date) "
-                 ">> {}/perftrace 2>>{}/perftrace2",
-                 FLAGS_profile_tmp_dir,
-                 pid,
-                 FLAGS_profile_tmp_dir,
-                 FLAGS_profile_tmp_dir)
-                 .c_str());
-      copyToResult(counter, path);
+    system(fmt::format(
+               "(cd {}; /usr/bin/perf record --pid {};"
+               "perf report --sort symbol > perf ;"
+               "sed --in-place 's/      / /' perf;"
+               "sed --in-place 's/      / /' perf; date) "
+               ">> {}/perftrace 2>>{}/perftrace2",
+               FLAGS_profile_tmp_dir,
+               getpid(),
+               FLAGS_profile_tmp_dir,
+               FLAGS_profile_tmp_dir)
+               .c_str());
+    if (shouldSaveResult_) {
+      copyToResult();
+    }
 
 #else
-      int32_t fd;
-      int32_t errorFd = kMakeErrorPipe;
-      auto workingDir = FLAGS_profile_tmp_dir;
-      perfPid = startCmd(
-          "perf",
-          {"record", "--pid", fmt::format("{}", pid) /*, "-m", "100" */},
-          -1,
-          fd,
-          errorFd,
-          workingDir.c_str());
-      int32_t reportFd;
-      auto reportPid = startCmd(
-          "perf",
-          {"report", "--sort", "symbol"},
-          fd,
-          reportFd,
-          errorFd,
-          workingDir.c_str());
-      std::string report;
-      std::string error;
-      waitCmd(reportPid, reportFd, errorFd, &report, &error);
-      wait(reportPid);
-      wait(perfPid);
-      LOG(INFO) << "PROFILE: stderr:" << error;
-      copyToResult(counter, path, &report);
+    int32_t fd;
+    int32_t errorFd = kMakeErrorPipe;
+    auto workingDir = FLAGS_profile_tmp_dir;
+    perfPid_ = startCmd(
+        "perf",
+        {"record", "--pid", fmt::format("{}", pid) /*, "-m", "100" */},
+        -1,
+        fd,
+        errorFd,
+        workingDir.c_str());
+    int32_t reportFd;
+    auto reportPid = startCmd(
+        "perf",
+        {"report", "--sort", "symbol"},
+        fd,
+        reportFd,
+        errorFd,
+        workingDir.c_str());
+    std::string report;
+    std::string error;
+    waitCmd(reportPid, reportFd, errorFd, &report, &error);
+    wait(reportPid);
+    wait(perfPid_);
+    LOG(INFO) << "PROFILE: stderr:" << error;
+    if (shouldSaveResult_) {
+      copyToResult(&report);
+    }
 
 #endif
-    });
-    folly::SemiFuture<bool> sleepFuture(false);
-    {
-      std::lock_guard<std::mutex> l(profileMutex_);
-      isSleeping_ = true;
-      sleepPromise_ = folly::Promise<bool>();
-      sleepFuture = sleepPromise_.getSemiFuture();
+  });
+
+  cpuAtSampleStart_ = cpuSeconds();
+  sampleStartTime_ = nowSeconds();
+  return thread;
+}
+
+bool Profiler::interruptibleSleep(int32_t seconds) {
+  sleepPromise_ = folly::Promise<bool>();
+
+  folly::SemiFuture<bool> sleepFuture(false);
+  {
+    std::lock_guard<std::mutex> l(profileMutex_);
+    isSleeping_ = true;
+    sleepPromise_ = folly::Promise<bool>();
+    sleepFuture = sleepPromise_.getSemiFuture();
+  }
+  if (!shouldStop_) {
+    try {
+      auto& executor = folly::QueuedImmediateExecutor::instance();
+      std::move(sleepFuture)
+          .via(&executor)
+          .wait((std::chrono::seconds(seconds)));
+    } catch (std::exception& e) {
     }
-    if (!shouldStop_) {
-      try {
-        auto& executor = folly::QueuedImmediateExecutor::instance();
-        std::move(sleepFuture)
-            .via(&executor)
-            .wait((std::chrono::seconds(counter < 2 ? 60 : 300)));
-      } catch (std::exception& e) {
+  }
+  {
+    std::lock_guard<std::mutex> l(profileMutex_);
+    isSleeping_ = false;
+  }
+
+  return shouldStop_;
+}
+
+void Profiler::stopSample(std::thread systemThread) {
+  LOG(INFO) << "PROFILE: Signalling perf";
+
+#if WITH_PIPE
+  system(fmt::format("kill -2 {}", perfPid_).c_str());
+#else
+  system("killall -2 perf");
+#endif
+  systemThread.join();
+
+  sampleStartTime_ = 0;
+}
+
+void Profiler::threadFunction() {
+  const int32_t pid = getpid();
+  makeProfileDir(resultPath_);
+  auto initialCpu = cpuSeconds();
+  cpuAtLastCheck_ = cpuSeconds();
+  std::thread sampleThread;
+  for (int32_t counter = 0;; ++counter) {
+    if (FLAGS_profiler_min_cpu_pct == 0) {
+      sampleThread = startSample();
+      // First two times sleep for one interval and then five intervals.
+      if (interruptibleSleep(
+              FLAGS_profiler_check_interval_seconds * (counter < 2 ? 1 : 5))) {
+        break;
+      }
+      stopSample(std::move(sampleThread));
+    } else {
+      int64_t now = nowSeconds();
+      int64_t cpuNow = cpuSeconds();
+      int32_t lastPct = counter == 0 ? 0
+                                     : (100 * (cpuNow - cpuAtLastCheck_) /
+                                        FLAGS_profiler_check_interval_seconds);
+      if (sampleStartTime_ != 0) {
+        if (now - sampleStartTime_ > FLAGS_profiler_max_sample_seconds) {
+          shouldSaveResult_ = true;
+          stopSample(std::move(sampleThread));
+        }
+      }
+      if (lastPct > FLAGS_profiler_min_cpu_pct) {
+        if (sampleStartTime_ == 0) {
+          sampleThread = startSample();
+        }
+      } else {
+        if (sampleStartTime_ != 0) {
+          shouldSaveResult_ =
+              now - sampleStartTime_ >= FLAGS_profiler_min_sample_seconds;
+          stopSample(std::move(sampleThread));
+        }
+      }
+      cpuAtLastCheck_ = cpuNow;
+      if (interruptibleSleep(FLAGS_profiler_check_interval_seconds)) {
+        break;
       }
     }
-    {
-      std::lock_guard<std::mutex> l(profileMutex_);
-      isSleeping_ = false;
-    }
-    LOG(INFO) << "PROFILE: Signalling perf at " << perfPid;
-#if WITH_PIPE
-    system(fmt::format("kill -2 {}", perfPid).c_str());
-#else
-    system("killall -2 perf");
-#endif
-    systemThread.join();
-    if (shouldStop_) {
-      return;
-    }
+  }
+  if (sampleStartTime_ != 0) {
+    auto now = nowSeconds();
+    shouldSaveResult_ =
+        now - sampleStartTime_ >= FLAGS_profiler_min_sample_seconds;
+    stopSample(std::move(sampleThread));
   }
 }
 
@@ -337,12 +464,16 @@ void Profiler::start(const std::string& path) {
 #if !defined(linux)
     VELOX_FAIL("Profiler is only available for Linux");
 #endif
+    resultPath_ = path;
     std::lock_guard<std::mutex> l(profileMutex_);
     if (profileStarted_) {
       return;
     }
     profileStarted_ = true;
   }
+  char temp[1000] = {};
+  gethostname(temp, sizeof(temp) - 1);
+  hostname = std::string(temp);
   fileSystem_ = velox::filesystems::getFileSystem(path, nullptr);
   if (!fileSystem_) {
     LOG(ERROR) << "PROFILE: Failed to find file system for " << path
@@ -352,13 +483,16 @@ void Profiler::start(const std::string& path) {
   makeProfileDir(path);
   atexit(Profiler::stop);
   LOG(INFO) << "PROFILE: Starting profiling to " << path;
-  profileThread_ = std::thread([path]() { threadFunction(path); });
+  profileThread_ = std::thread([]() { threadFunction(); });
 }
 
 void Profiler::stop() {
   {
     std::lock_guard<std::mutex> l(profileMutex_);
     shouldStop_ = true;
+    if (!profileStarted_) {
+      return;
+    }
     if (isSleeping_) {
       sleepPromise_.setValue(true);
     }
