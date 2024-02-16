@@ -26,10 +26,10 @@
 #include <thread>
 
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <sys/resource.h>
 
 DEFINE_string(profile_tmp_dir, "/tmp", "Writable temp for perf.data");
 
