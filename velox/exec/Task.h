@@ -910,12 +910,6 @@ class Task : public std::enable_shared_from_this<Task> {
       Task::taskDeleted();
     }
   };
-
-  // Starts process::Profiler if profiling enabled. The profile path is named
-  // after the first Task. In Presto on Spark, this identifies the profile with
-  // the query.
-  void startProfilingLocked();
-
   friend class Task::TaskCounter;
 
   // NOTE: keep 'taskCount_' the first member so that it will be the first
