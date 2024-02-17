@@ -57,7 +57,6 @@ BlockingReason Destination::advance(
 
   // Serialize
   if (!current_) {
-    
     current_ = std::make_unique<VectorStreamGroup>(pool_);
     auto rowType = asRowType(output->type());
     serializer::presto::PrestoVectorSerde::PrestoOptions options;
@@ -164,9 +163,9 @@ void Destination::replay() {
   Scratch scratch;
   auto group = std::make_unique<VectorStreamGroup>(pool_);
   auto rowType = asRowType(type_);
-    serializer::presto::PrestoVectorSerde::PrestoOptions options;
-    options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
-    group->createStreamTree(rowType, 100, &options);
+  serializer::presto::PrestoVectorSerde::PrestoOptions options;
+  options.compressionKind = common::CompressionKind::CompressionKind_LZ4;
+  group->createStreamTree(rowType, 100, &options);
   for (auto i = 0; i < history_.size(); ++i) {
     auto& record = history_[i];
     if (record.rows == nullptr) {
@@ -655,7 +654,7 @@ void PartitionedOutput::getOutputColumnwise() {
             blockedDestination ? nullptr : &future_);
         if (reason != BlockingReason::kNotBlocked &&
             blockedDestination == nullptr) {
-	  blockingReason_ = reason;
+          blockingReason_ = reason;
           blockedDestination = destination;
         }
       }

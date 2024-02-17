@@ -142,7 +142,8 @@ class OutputBufferManager {
   // Returns NULL if task not found.
   std::shared_ptr<OutputBuffer> getBufferIfExists(const std::string& taskId);
 
-  /// Specifies that output may be compressed with 'kind'. Each SerializedPage indicates whether compression is actually applied.
+  /// Specifies that output may be compressed with 'kind'. Each SerializedPage
+  /// indicates whether compression is actually applied.
   bool enableCompression(common::CompressionKind kind) {
     compressionKind_ = kind;
   }
@@ -150,7 +151,7 @@ class OutputBufferManager {
   common::CompressionKind compressionKind() const {
     return compressionKind_;
   }
-  
+
  private:
   // Retrieves the set of buffers for a query.
   // Throws an exception if buffer doesn't exist.
@@ -163,6 +164,7 @@ class OutputBufferManager {
 
   std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory_{
       nullptr};
-  common::CompressionKind compressionKind_{common::CompressionKind::CompressionKind_NONE};
+  common::CompressionKind compressionKind_{
+      common::CompressionKind::CompressionKind_NONE};
 };
 } // namespace facebook::velox::exec

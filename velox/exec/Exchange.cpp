@@ -131,7 +131,7 @@ RowVectorPtr Exchange::getOutput() {
       options.compressionKind = compressionKind_;
 
       getSerde()->deserialize(
-			      &inputStream, pool(), outputType_, &result_, resultOffset, &options);
+          &inputStream, pool(), outputType_, &result_, resultOffset, &options);
       const auto newRows = result_->size() - resultOffset;
       resultOffset = result_->size();
       int32_t constantRows = 0;

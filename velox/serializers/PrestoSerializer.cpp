@@ -1994,7 +1994,7 @@ class VectorStream {
   bool hasEncoding() const {
     return !indices_.empty();
   }
-  
+
  private:
   static constexpr int32_t kNoNullIndex = -1;
 
