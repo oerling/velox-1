@@ -4306,12 +4306,12 @@ void readTopColumns(
     int32_t resultOffset,
     const SerdeOpts& opts,
     bool singleColumn = false) {
-  auto& children = result->children();
-  const auto& childTypes = type->asRow().children();
   int32_t numColumns = 1;
   if (!singleColumn) {
     numColumns = source.read<int32_t>();
   }
+  auto& children = result->children();
+  const auto& childTypes = type->asRow().children();
   // Bug for bug compatibility: Extra columns at the end are allowed for
   // non-compressed data.
   if (opts.compressionKind == common::CompressionKind_NONE) {
