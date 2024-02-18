@@ -66,18 +66,24 @@ int64_t computeChecksum(
     ByteInputStream* source,
     int codecMarker,
     int numRows,
-    int uncompressedSize) {
+    int uncompressedSize,
+    int32_t compressedSize) {
   auto offset = source->tellp();
+  bool compressed = codecMarker & kCompressedBitMask;
+  if (compressed) {
+    VELOX_CHECK_LT(compressedSize, uncompressedSize);
+  }
+  int32_t dataSize = compressed ? compressedSize : uncompressedSize;
   bits::Crc32 crc32;
-  if (FOLLY_UNLIKELY(source->remainingSize() < uncompressedSize)) {
+  if (FOLLY_UNLIKELY(source->remainingSize() < dataSize)) {
     VELOX_FAIL(
         "Tried to read {} bytes, larger than what's remained in source {} "
         "bytes. Source details: {}",
-        uncompressedSize,
+        dataSize,
         source->remainingSize(),
         source->toString());
   }
-  auto remainingBytes = uncompressedSize;
+  auto remainingBytes = dataSize;
   while (remainingBytes > 0) {
     auto data = source->nextView(remainingBytes);
     if (FOLLY_UNLIKELY(data.size() == 0)) {
@@ -4413,7 +4419,7 @@ void PrestoVectorSerde::deserialize(
   int64_t actualCheckSum = 0;
   if (isChecksumBitSet(pageCodecMarker)) {
     actualCheckSum =
-        computeChecksum(source, pageCodecMarker, numRows, uncompressedSize);
+      computeChecksum(source, pageCodecMarker, numRows, uncompressedSize, compressedSize);
   }
 
   VELOX_CHECK_EQ(
