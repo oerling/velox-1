@@ -4418,8 +4418,8 @@ void PrestoVectorSerde::deserialize(
 
   int64_t actualCheckSum = 0;
   if (isChecksumBitSet(pageCodecMarker)) {
-    actualCheckSum =
-      computeChecksum(source, pageCodecMarker, numRows, uncompressedSize, compressedSize);
+    actualCheckSum = computeChecksum(
+        source, pageCodecMarker, numRows, uncompressedSize, compressedSize);
   }
 
   VELOX_CHECK_EQ(
