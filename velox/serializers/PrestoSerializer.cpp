@@ -4017,6 +4017,7 @@ void flushCompressed(
   }
 
   writeInt32(output, numRows);
+  auto maskOffset = output->tellp();
   output->write(&codecMask, 1);
 
   IOBufOutputStream out(*(arena.pool()), nullptr, arena.size());
@@ -4032,9 +4033,41 @@ void flushCompressed(
       uncompressedSize,
       codec.maxUncompressedLength(),
       "UncompressedSize exceeds limit");
-  auto compressed = codec.compress(out.getIOBuf().get());
+  auto iobuf = out.getIOBuf();
+  auto compressed = codec.compress(iobuf.get());
   const int32_t compressedSize = compressed->length();
   writeInt32(output, uncompressedSize);
+  if (compressedSize > uncompressedSize * 0.8) {
+    writeInt32(output, uncompressedSize);
+    const int32_t crcOffset = output->tellp();
+    writeInt64(output, 0); // Write zero checksum
+    // Number of columns and stream content. Unpause CRC.
+    if (listener) {
+      listener->resume();
+    }
+    for (auto range : *iobuf) {
+      output->write(reinterpret_cast<const char*>(range.data()), range.size());
+    }
+    // Pause CRC computation
+    if (listener) {
+      listener->pause();
+    }
+    const int32_t endSize = output->tellp();
+    codecMask &= ~kCompressedBitMask;
+    ;
+    output->seekp(maskOffset);
+    output->write(&codecMask, 1);
+
+    // Fill in crc
+    int64_t crc = 0;
+    if (listener) {
+      crc = computeChecksum(listener, codecMask, numRows, uncompressedSize);
+    }
+    output->seekp(crcOffset);
+    writeInt64(output, crc);
+    output->seekp(endSize);
+    return;
+  }
   writeInt32(output, compressedSize);
   const int32_t crcOffset = output->tellp();
   writeInt64(output, 0); // Write zero checksum
@@ -4053,7 +4086,7 @@ void flushCompressed(
   // Fill in crc
   int64_t crc = 0;
   if (listener) {
-    crc = computeChecksum(listener, codecMask, numRows, compressedSize);
+    crc = computeChecksum(listener, codecMask, numRows, uncompressedSize);
   }
   output->seekp(crcOffset);
   writeInt64(output, crc);
@@ -4380,20 +4413,13 @@ void PrestoVectorSerde::deserialize(
   int64_t actualCheckSum = 0;
   if (isChecksumBitSet(pageCodecMarker)) {
     actualCheckSum =
-        computeChecksum(source, pageCodecMarker, numRows, compressedSize);
+        computeChecksum(source, pageCodecMarker, numRows, uncompressedSize);
   }
 
   VELOX_CHECK_EQ(
       checksum, actualCheckSum, "Received corrupted serialized page.");
 
-  VELOX_CHECK_EQ(
-      needCompression(*codec),
-      isCompressedBitSet(pageCodecMarker),
-      "Compression kind {} should align with codec marker.",
-      common::compressionKindToString(
-          common::codecTypeToCompressionKind(codec->type())));
-
-  if (!needCompression(*codec)) {
+  if (!isCompressedBitSet(pageCodecMarker)) {
     readTopColumns(*source, type, pool, *result, resultOffset, prestoOptions);
   } else {
     auto compressBuf = folly::IOBuf::create(compressedSize);
