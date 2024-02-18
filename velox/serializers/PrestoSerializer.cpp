@@ -4038,34 +4038,35 @@ void flushCompressed(
   const int32_t compressedSize = compressed->length();
   writeInt32(output, uncompressedSize);
   if (compressedSize > uncompressedSize * 0.8) {
-  writeInt32(output, uncompressedSize);
-  const int32_t crcOffset = output->tellp();
-  writeInt64(output, 0); // Write zero checksum
-  // Number of columns and stream content. Unpause CRC.
-  if (listener) {
-    listener->resume();
-  }
-  for (auto range : *iobuf) {
-    output->write(reinterpret_cast<const char*>(range.data()), range.size());
-  }
-  // Pause CRC computation
-  if (listener) {
-    listener->pause();
-  }
-  const int32_t endSize = output->tellp();
-  codecMask &= ~kCompressedBitMask;;
-  output->seekp(maskOffset);
-  output->write(&codecMask, 1);
-  
-  // Fill in crc
-  int64_t crc = 0;
-  if (listener) {
-    crc = computeChecksum(listener, codecMask, numRows, uncompressedSize);
-  }
-  output->seekp(crcOffset);
-  writeInt64(output, crc);
-  output->seekp(endSize);
-  return;
+    writeInt32(output, uncompressedSize);
+    const int32_t crcOffset = output->tellp();
+    writeInt64(output, 0); // Write zero checksum
+    // Number of columns and stream content. Unpause CRC.
+    if (listener) {
+      listener->resume();
+    }
+    for (auto range : *iobuf) {
+      output->write(reinterpret_cast<const char*>(range.data()), range.size());
+    }
+    // Pause CRC computation
+    if (listener) {
+      listener->pause();
+    }
+    const int32_t endSize = output->tellp();
+    codecMask &= ~kCompressedBitMask;
+    ;
+    output->seekp(maskOffset);
+    output->write(&codecMask, 1);
+
+    // Fill in crc
+    int64_t crc = 0;
+    if (listener) {
+      crc = computeChecksum(listener, codecMask, numRows, uncompressedSize);
+    }
+    output->seekp(crcOffset);
+    writeInt64(output, crc);
+    output->seekp(endSize);
+    return;
   }
   writeInt32(output, compressedSize);
   const int32_t crcOffset = output->tellp();
