@@ -143,7 +143,7 @@ class OutputBufferManager {
   std::shared_ptr<OutputBuffer> getBufferIfExists(const std::string& taskId);
 
   /// Specifies that output may be compressed with 'kind'. Each SerializedPage indicates whether compression is actually applied.
-  bool enableCompression(common::CompressionKind kind) {
+  void enableCompression(common::CompressionKind kind) {
     compressionKind_ = kind;
   }
 
