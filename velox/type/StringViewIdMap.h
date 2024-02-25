@@ -28,7 +28,6 @@ class StringViewIdMap {
   static constexpr int64_t kNotFound = ~0L;
 
   StringViewIdMap(int32_t size);
-  
 
   /// Returns a unique id for 'view'. If 'view' was added and did not
   /// fit inline, '*copyPtr' is set to point to an address that the
@@ -118,17 +117,17 @@ class StringViewIdMap {
     }
   }
   void clear();
-  
+
  private:
   static constexpr int32_t kNoEmpty = ~0;
   uint64_t hash1(const StringView& view) {
-    auto h =  bits::hashBytes(1, view.data(), view.size());
+    auto h = bits::hashBytes(1, view.data(), view.size());
     return h ^ (h >> 32);
     uint64_t sizeAndPrefix = view.sizeAndPrefixAsInt64();
     uint32_t hash = static_cast<uint32_t>(sizeAndPrefix);
     uint32_t size = hash;
     hash *= (sizeAndPrefix >> 32);
-    hash = hash ^ (hash  >> 16);
+    hash = hash ^ (hash >> 16);
     uint64_t tail = 1;
     if (size > StringView::kInlineSize) {
       tail = *reinterpret_cast<const uint64_t*>(view.value_.data + size - 8);
@@ -150,9 +149,9 @@ class StringViewIdMap {
       return entry[1] == reinterpret_cast<const uint64_t*>(&view)[1];
     }
     bool flag = memcmp(
-               reinterpret_cast<const char*>(entry[1]) + 4,
-               view.value_.data + 4,
-               size - 4) == 0;
+                    reinterpret_cast<const char*>(entry[1]) + 4,
+                    view.value_.data + 4,
+                    size - 4) == 0;
     ++collisions2_;
     return flag;
   }

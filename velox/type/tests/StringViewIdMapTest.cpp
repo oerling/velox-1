@@ -143,10 +143,9 @@ class StringViewIdMapTest : public testing::Test {
         }
       }
       if (counter < kNumRepeats - 1) {
-	
-	map.clear();
+        map.clear();
       }
-      }
+    }
     for (auto counter = 0; counter < kNumRepeats; ++counter) {
       {
         SelectivityTimer t(f14Info, data.size());
@@ -155,7 +154,7 @@ class StringViewIdMapTest : public testing::Test {
         }
       }
       if (counter < kNumRepeats - 1) {
-	f14.clear();
+        f14.clear();
       }
     }
     for (auto i = 0; i + kBatchSize <= data.size(); i += kBatchSize) {
