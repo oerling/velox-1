@@ -589,18 +589,18 @@ class BaseVector {
     return false;
   }
 
-  /// If 'vector' consists of a single value or has few distinct values, creates an equivalent constant or dictionary encoded vector. If there is no advantage to this, returns nullptr.
-  static VectorPtr reencode(const BaseVector& vector);
+  /// If 'vector' consists of a single value, returns an equivalent constant vector, else nullptr.
+  static VectorPtr constantify(const BaseVector& vector);
 
   /// Compares each element of 'vector' to elements of 'alphabet'.
   /// Returns the index of each element of 'vector' in 'alphabet' in
   /// 'indices'. Creates 'alphabet' if it is nullptr. Adds unique
   /// elements of 'vector' to 'alphabet'. If 'alphabet' would exceed
   /// 'maxDistinct' elements, returns false and leaves 'alphabet'
-  /// partly filled. and 'indices' is empty. Returns true if all
+  /// partly filled and 'indices' undefined. Returns true if all
   /// elements of 'vector' are in 'alphabet' and their indices are set
   /// in 'indices'. 'map' is a map from the value to its index in 'alphabet'. If it is non-empty at time of call, it must correspond to 'alphabet'.
-  static bool dictionarize(const BaseVector& vector, int32_t maxDistinct, BufferPtr& indices, VectorPtr& alphabet, VectorMap& map);
+  static bool dictionarize(const BaseVector& vector, int32_t maxDistinct, vector_size_t* indices, VectorPtr& alphabet, VectorMap& map);
   
   /// Adds all elements of 'second' to the end of 'first'. If 'first'
   /// is a constant or dictionary and 'second' has values that overlap

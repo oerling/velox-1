@@ -1035,4 +1035,10 @@ std::string printIndices(
   return out.str();
 }
 
+  // static
+  VectorPtr constantify(const BaseVector& vector) {
+
+  }
+
+  
 } // namespace facebook::velox
