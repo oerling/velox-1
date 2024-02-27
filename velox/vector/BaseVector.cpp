@@ -1036,8 +1036,22 @@ std::string printIndices(
   return out.str();
 }
 
+template <TypeKind Kind>
+bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
+  using T = typename KindToFlatVector<Kind>::WrapperType;
+  auto flat = vector.asUnchecked<FlatVector<T>>();
+  auto rawValues = flat->rawValues();
+  T first = rawValues[0];
+  for (auto i = 1; i < size; ++i) {
+    if (first != rawValues[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+  
 // static
-VectorPtr constantify(const VectorPtr& input, DecodedVector* temp) {
+  VectorPtr BaseVector::constantify(const VectorPtr& input, DecodedVector* temp) {
   auto& vector = BaseVector::loadedVectorShared(input);
 
   // If this is already a constant or empty or single element, it can stay as
@@ -1053,12 +1067,11 @@ VectorPtr constantify(const VectorPtr& input, DecodedVector* temp) {
   }
   // Quick return if first and last are different.
   if (!vector->equalValueAt(vector.get(), 0, vector->size() - 1)) {
-    return;
+    return nullptr;
   }
   DecodedVector localDecoded;
   DecodedVector* decoded = temp ? temp : &localDecoded;
-
-  decoded->decode(*vector, rows_);
+  decoded->decode(*vector);
   if (!decoded->isIdentityMapping()) {
     auto indices = decoded->indices();
     auto first = indices[0];
@@ -1073,7 +1086,7 @@ VectorPtr constantify(const VectorPtr& input, DecodedVector* temp) {
         }
       }
     }
-    return BaseVector::wrapInConstant(rows_.end(), 0, vector);
+    return BaseVector::wrapInConstant(vector->size(), 0, vector);
   }
   if (vector->mayHaveNulls()) {
     return nullptr;
