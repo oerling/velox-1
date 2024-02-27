@@ -14,17 +14,15 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
-#include "velox/vector/tests/VectorTestUtils.h"
-#include "velox/vector/VectorMap.h"
-#include "velox/vector/tests/utils/VectorTestBase.h"
 #include <velox/serializers/PrestoSerializer.h>
-
+#include "velox/vector/VectorMap.h"
+#include "velox/vector/tests/VectorTestUtils.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
 
-class EncodingTest : public testing::Test,
-                                  public test::VectorTestBase {
+class EncodingTest : public testing::Test, public test::VectorTestBase {
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
@@ -34,9 +32,7 @@ class EncodingTest : public testing::Test,
     }
   }
 
-  
- EncodingTest() = default;
-
+  EncodingTest() = default;
 
   template <typename T>
   T testValue(int32_t i, BufferPtr& space) {
@@ -44,7 +40,12 @@ class EncodingTest : public testing::Test,
   }
 
   template <TypeKind KIND>
-  VectorPtr createScalar(TypePtr type, vector_size_t size, int32_t numDistinct, int32_t step, bool withNulls) {
+  VectorPtr createScalar(
+      TypePtr type,
+      vector_size_t size,
+      int32_t numDistinct,
+      int32_t step,
+      bool withNulls) {
     using T = typename TypeTraits<KIND>::NativeType;
     BufferPtr buffer;
     VectorPtr base = BaseVector::create(type, size, pool());
@@ -68,7 +69,6 @@ class EncodingTest : public testing::Test,
     auto constantRow = BaseVector::constantify(row);
     assertEqualVectors(row, constantRow);
 
-    
     vector = createScalar<kind>(type, 1000, 1, 0, true);
     // A nullable vector does not make a constant.
     EXPECT_TRUE(BaseVector::constantify(vector) == nullptr);
@@ -76,11 +76,10 @@ class EncodingTest : public testing::Test,
     checkDictionarize(vector, 2);
 
     if (kind == TypeKind::BOOLEAN || kind == TypeKind::TINYINT) {
-
       return;
     }
 
-    vector = createScalar<kind>(type, 1000,1000, 1, false);
+    vector = createScalar<kind>(type, 1000, 1000, 1, false);
 
     // A vector with different values does not make a constant.
     EXPECT_TRUE(BaseVector::constantify(vector) == nullptr);
@@ -92,18 +91,22 @@ class EncodingTest : public testing::Test,
   }
 
   void checkDictionarize(const VectorPtr& vector, int expectDistincts) {
-    auto indices = AlignedBuffer::allocate<vector_size_t>(vector->size(), pool_.get());
+    auto indices =
+        AlignedBuffer::allocate<vector_size_t>(vector->size(), pool_.get());
     VectorMap map(*vector);
     EXPECT_EQ(expectDistincts, map.size());
 
     VectorMap map2(vector->type(), pool_.get());
     raw_vector<vector_size_t> temp;
-    folly::Range<const vector_size_t*> rows(iota(vector->size(), temp), vector->size());
+    folly::Range<const vector_size_t*> rows(
+        iota(vector->size(), temp), vector->size());
     map2.addMultiple(*vector, rows, indices->asMutable<vector_size_t>());
     EXPECT_EQ(expectDistincts, map2.size());
-    assertEqualVectors(vector, BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, vector->size(), map2.alphabetOwned()));
+    assertEqualVectors(
+        vector,
+        BaseVector::wrapInDictionary(
+            BufferPtr(nullptr), indices, vector->size(), map2.alphabetOwned()));
   }
-  
 };
 
 template <>
@@ -138,8 +141,6 @@ Timestamp EncodingTest::testValue(int32_t i, BufferPtr& /*space*/) {
   return Timestamp(i * 1000, (i % 1000) * 1000000);
 }
 
-
-
 TEST_F(EncodingTest, basic) {
   checkTypeEncoding<TypeKind::BOOLEAN>(BOOLEAN());
   checkTypeEncoding<TypeKind::TINYINT>(TINYINT());
@@ -148,7 +149,4 @@ TEST_F(EncodingTest, basic) {
   checkTypeEncoding<TypeKind::BIGINT>(BIGINT());
   checkTypeEncoding<TypeKind::VARCHAR>(VARCHAR());
   checkTypeEncoding<TypeKind::TIMESTAMP>(TIMESTAMP());
-  
 }
-
-

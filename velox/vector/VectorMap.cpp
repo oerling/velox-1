@@ -25,9 +25,14 @@ VectorMap::VectorMap(BaseVector& alphabet)
       isString_(
           alphabet_->typeKind() == TypeKind::VARCHAR ||
           alphabet_->typeKind() == TypeKind::VARBINARY),
-      fixedWidth_(alphabet_->type()->isFixedWidth() ? alphabet_->type()->cppSizeInBytes() : kVariableWidth) {
+      fixedWidth_(
+          alphabet_->type()->isFixedWidth()
+              ? alphabet_->type()->cppSizeInBytes()
+              : kVariableWidth) {
   auto size = alphabet_->size();
-  // We reserve the size. The assumption is that we run this on an alphabet of a dictionary vector in preparation for adding elements, so the values are expected to be distinct.
+  // We reserve the size. The assumption is that we run this on an alphabet of a
+  // dictionary vector in preparation for adding elements, so the values are
+  // expected to be distinct.
   if (isString_) {
     distinctStrings_.reserve(size);
   } else {
@@ -38,10 +43,15 @@ VectorMap::VectorMap(BaseVector& alphabet)
   }
 }
 
-  VectorMap::VectorMap(const TypePtr& type, memory::MemoryPool* pool, int32_t reserve)
-  : isString_(type->kind() == TypeKind::VARCHAR || type->kind() == TypeKind::VARBINARY),
-    fixedWidth_(type->isFixedWidth() ? type->cppSizeInBytes() : kVariableWidth)
-{
+VectorMap::VectorMap(
+    const TypePtr& type,
+    memory::MemoryPool* pool,
+    int32_t reserve)
+    : isString_(
+          type->kind() == TypeKind::VARCHAR ||
+          type->kind() == TypeKind::VARBINARY),
+      fixedWidth_(
+          type->isFixedWidth() ? type->cppSizeInBytes() : kVariableWidth) {
   alphabetOwned_ = BaseVector::create(type, 0, pool);
   alphabet_ = alphabetOwned_.get();
   if (isString_) {

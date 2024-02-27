@@ -59,7 +59,10 @@ class VectorMap {
 
   // Constructs an empty map initializing alphabet to an empty vector of 'type'.
   // Alphabet is owned. 'reserve' is the expected count of distinct values.
-  VectorMap(const TypePtr& type, memory::MemoryPool* pool, int32_t reserve = 32);
+  VectorMap(
+      const TypePtr& type,
+      memory::MemoryPool* pool,
+      int32_t reserve = 32);
 
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
   /// 'rows'. The ids are returned in indices.
@@ -74,7 +77,9 @@ class VectorMap {
       bool insertToAlphabet = true);
 
   vector_size_t size() const {
-    return isString_ ? distinctStrings_.size() + (nullIndex_ != kNoNullIndex) : distinctSet_.size();alphabet_->size();
+    return isString_ ? distinctStrings_.size() + (nullIndex_ != kNoNullIndex)
+                     : distinctSet_.size();
+    alphabet_->size();
   }
 
   vector_size_t sizeAt(vector_size_t index) const {
@@ -89,7 +94,7 @@ class VectorMap {
  private:
   static constexpr vector_size_t kNoNullIndex = -1;
   static constexpr int32_t kVariableWidth = -1;
-  
+
   // Vector containing all the distinct values.
   BaseVector* alphabet_;
 
