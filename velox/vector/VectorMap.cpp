@@ -15,13 +15,35 @@
  */
 
 #include "velox/vector/VectorMap.h"
+#include "velox/vector/FlatVector.h"
+#include "velox/vector/VectorStream.h"
 
 namespace facebook::velox {
 
+VectorMap::VectorMap(BaseVector& alphabet)
+    : alphabet_(&alphabet),
+      isString_(
+          alphabet_->typeKind() == TypeKind::VARCHAR ||
+          alphabet_->typeKind() == TypeKind::VARBINARY) {
+  auto size = alphabet_->size();
+  for (auto i = 0; i < size; ++i) {
+    addOne(*alphabet_, i, false);
+  }
+}
+
+VectorMap::VectorMap(const TypePtr& type, memory::MemoryPool* pool) {
+  alphabetOwned_ = BaseVector::create(type, 0, pool);
+  alphabet_ = alphabetOwned_.get();
+}
+
+// Assigns an id to the value in 'topVector' at 'topIndex'. Adds the  value to
+// 'alphabet_' at the returned index if 'insertToAlphabet' is true.
+
 vector_size_t VectorMap::addOne(
     const BaseVector& topVector,
-    vector_size_t topIndex) {
-  const BaseVector* vector = &index;
+    vector_size_t topIndex,
+    bool insertToAlphabet) {
+  const BaseVector* vector = &topVector;
   vector_size_t index = topIndex;
   if (topVector.encoding() != VectorEncoding::Simple::FLAT) {
     vector = topVector.wrappedVector();
@@ -52,20 +74,22 @@ vector_size_t VectorMap::addOne(
     }
   }
   int32_t newIndex;
-  if (alphabet_ == nullptr) {
-    alphabet_ = BaseVector::create(vector->type(), 1, streamArena_->pool());
-    newIndex = 0;
-    distinctsSizes_.resize(1);
-  } else {
+  if (insertToAlphabet) {
     newIndex = alphabet_->size();
     alphabet_->resize(newIndex + 1);
-    distinctsSizes_.resize(newIndex + 1);
+    alphabetSizes_.resize(newIndex + 1);
+    alphabet_->copy(vector, newIndex, index, 1);
+  } else {
+    newIndex = topIndex;
+    alphabetSizes_.resize(newIndex + 1);
   }
-  alphabet_->copy(vector, newIndex, index, 1);
   const bool isNull = vector->isNullAt(index);
   if (isNull) {
-    distinctsSizes_[newIndex] = 0;
+    alphabetSizes_[newIndex] = 0;
     nullIndex_ = newIndex;
+  } else if (isString_) {
+    alphabetSizes_[newIndex] = alphabet_->asUnchecked <
+      FlatVector<StringView>>()->valueAt(newIndex).size() + 4;
   } else {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);
@@ -73,10 +97,10 @@ vector_size_t VectorMap::addOne(
     auto sizeIndices = indicesHolder.get(1);
     sizeIndices[0] = newIndex;
     auto sizes = sizesHolder.get(1);
-    distinctsSizes_[newIndex] = 0;
-    sizes[0] = &distinctsSizes_[newIndex];
-    estimateSerializedSizeInt(
-        alphabet_.get(),
+    alphabetSizes_[newIndex] = 0;
+    sizes[0] = &alphabetSizes_[newIndex];
+    getVectorSerde()->estimateSerializedSize(
+        alphabet_,
         folly::Range<const vector_size_t*>(sizeIndices, 1),
         sizes,
         scratch);
@@ -87,9 +111,19 @@ vector_size_t VectorMap::addOne(
                            ->valueAt(newIndex)] = newIndex;
     }
   } else {
-    distinctSet_.insert(VectorValueSetEntry{alphabet_.get(), newIndex});
+    distinctSet_.insert(VectorValueSetEntry{alphabet_, newIndex});
   }
   return newIndex;
+}
+
+void VectorMap::addMultiple(
+    BaseVector& vector,
+    folly::Range<const vector_size_t*> rows,
+    vector_size_t* ids) {
+  auto size = rows.size();
+  for (auto i = 0; i < size; ++i) {
+    ids[i] = addOne(vector, rows[i]);
+  }
 }
 
 } // namespace facebook::velox

@@ -17,6 +17,8 @@
 #pragma once
 
 #include "velox/vector/BaseVector.h"
+#include <folly/container/F14Set.h>
+#include "velox/common/base/RawVector.h"
 
 namespace facebook::velox {
 
@@ -47,37 +49,54 @@ using VectorValueSet = folly::F14FastSet<
 /// A map translating values in a vector to positions in the mapped vector.
 class VectorMap {
  public:
-  VectorMap();
 
-  explicit VectorMap(const BaseVector& alphabet);
+  // Constructs 'this' to index the distinct elements in 'alphabet'. 'alphabet' is not changed and not owned. For example, when concatenating two dictionaries, the first initializes the map.
+  explicit VectorMap(BaseVector& alphabet);
 
-  static std::unique_ptr<VectorMap> create(const TypePtr& type);
+  // Constructs an empty map initializing alphabet to an empty vector of 'type'. Alphabet is owned.
+  VectorMap(const TypePtr& type, memory::MemoryPool* pool);
 
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
-  /// 'rows'. The ids are returned in indices. If new ids were assigned, the row
-  /// where the value first occurred is written to 'newIds'. The number of
-  /// values in newIds is returned. 'newIds' mustr have space for up to
-  /// 'rows.size()' entries. Stops assigning ids if maxId is exceeded.
-  std::pair<int32_t, bool> maybeAdd(
+  /// 'rows'. The ids are returned in indices. 
+  void addMultiple(
       BaseVector& vector,
       folly::Range<const vector_size_t*> rows,
-      int32_t maxDistincts,
-      vector_size_t* ids,
-      vector_size_t* newIds);
+      vector_size_t* ids);
 
-  std::pair<vector_size_t, bool> addOne(
+  vector_size_t addOne(
       const BaseVector& vector,
-      vector_size_t row);
+      vector_size_t row,
+		       bool insertToAlphabet = true);
 
+  vector_size_t size() const {
+    return alphabet_->size();
+  }
+  
+  vector_size_t sizeAt(vector_size_t index) const {
+    return alphabetSizes_[index];
+  }
+  
  private:
+  static constexpr vector_size_t kNoNullIndex = -1;
+
   // Vector containing all the distinct values.
-  VectorPtr alphabet_;
+  BaseVector* alphabet_;
+
+  // Optional owning pointer to 'alphabet_'.
+  VectorPtr alphabetOwned_;
+
   // Map from value in 'alphabet_' to the index in 'alphabet_'.
   VectorValueSet distinctSet_;
 
   // Map from string value in 'alphabet_' to index in 'alphabet_'. Used only if
   // 'alphabet_' is a FlatVector<StringView>.
-  folly::F14FastSet<std::pair<StringView, int32_t>> distinctStrings_;
+  folly::F14FastMap<StringView, int32_t> distinctStrings_;
+
+  // Index of null value in 'alphabet_'.
+  vector_size_t nullIndex_{kNoNullIndex};
+  
+  // Serialized size estimate for the corresponding element of 'alphabet'.
+  raw_vector<vector_size_t> alphabetSizes_;
 
   // True if  using 'distinctStrings_'
   bool isString_;
