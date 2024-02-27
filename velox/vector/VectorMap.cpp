@@ -24,20 +24,32 @@ VectorMap::VectorMap(BaseVector& alphabet)
     : alphabet_(&alphabet),
       isString_(
           alphabet_->typeKind() == TypeKind::VARCHAR ||
-          alphabet_->typeKind() == TypeKind::VARBINARY) {
+          alphabet_->typeKind() == TypeKind::VARBINARY),
+      fixedWidth_(alphabet_->type()->isFixedWidth() ? alphabet_->type()->cppSizeInBytes() : kVariableWidth) {
   auto size = alphabet_->size();
+  // We reserve the size. The assumption is that we run this on an alphabet of a dictionary vector in preparation for adding elements, so the values are expected to be distinct.
+  if (isString_) {
+    distinctStrings_.reserve(size);
+  } else {
+    distinctSet_.reserve(size);
+  }
   for (auto i = 0; i < size; ++i) {
     addOne(*alphabet_, i, false);
   }
 }
 
-VectorMap::VectorMap(const TypePtr& type, memory::MemoryPool* pool) {
+  VectorMap::VectorMap(const TypePtr& type, memory::MemoryPool* pool, int32_t reserve)
+  : isString_(type->kind() == TypeKind::VARCHAR || type->kind() == TypeKind::VARBINARY),
+    fixedWidth_(type->isFixedWidth() ? type->cppSizeInBytes() : kVariableWidth)
+{
   alphabetOwned_ = BaseVector::create(type, 0, pool);
   alphabet_ = alphabetOwned_.get();
+  if (isString_) {
+    distinctStrings_.reserve(reserve);
+  } else {
+    distinctSet_.reserve(reserve);
+  }
 }
-
-// Assigns an id to the value in 'topVector' at 'topIndex'. Adds the  value to
-// 'alphabet_' at the returned index if 'insertToAlphabet' is true.
 
 vector_size_t VectorMap::addOne(
     const BaseVector& topVector,
@@ -92,7 +104,8 @@ vector_size_t VectorMap::addOne(
                                    ->valueAt(newIndex)
                                    .size() +
         4;
-  } else {
+
+  } else if (fixedWidth_ == kVariableWidth) {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);
     ScratchPtr<vector_size_t*, 1> sizesHolder(scratch);

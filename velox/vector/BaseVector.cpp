@@ -1050,6 +1050,20 @@ bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
   return true;
 }
 
+template <>
+bool isAllSameFlat<TypeKind::BOOLEAN>(
+    const BaseVector& vector,
+    vector_size_t size) {
+  auto& values = vector.asUnchecked<FlatVector<bool>>()->values();
+  auto* bits = values->as<uint64_t>();
+  // Check the all true and all false separately. Easier for compiler if the
+  // last argument is constant.
+  if ((bits[0] & 1) == 1) {
+    return bits ::isAllSet(bits, 0, size, true);
+  }
+  return bits ::isAllSet(bits, 0, size, false);
+}
+
 // static
 VectorPtr BaseVector::constantify(const VectorPtr& input, DecodedVector* temp) {
   auto& vector = BaseVector::loadedVectorShared(input);

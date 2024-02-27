@@ -17,6 +17,8 @@
 #include "velox/vector/tests/VectorTestUtils.h"
 #include "velox/vector/VectorMap.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
+#include <velox/serializers/PrestoSerializer.h>
+
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -26,6 +28,10 @@ class EncodingTest : public testing::Test,
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
+    if (!isRegisteredVectorSerde()) {
+      facebook::velox::serializer::presto::PrestoVectorSerde::
+          registerVectorSerde();
+    }
   }
 
   
@@ -59,21 +65,34 @@ class EncodingTest : public testing::Test,
     auto constant = BaseVector::constantify(vector);
     assertEqualVectors(vector, constant);
     auto row = makeRowVector({"c0"}, {vector});
-    auto constantRow = BaseVector::constantify(vector);
+    auto constantRow = BaseVector::constantify(row);
     assertEqualVectors(row, constantRow);
 
     
     vector = createScalar<kind>(type, 1000, 1, 0, true);
     // A nullable vector does not make a constant.
     EXPECT_TRUE(BaseVector::constantify(vector) == nullptr);
+    // It has 2 values, null and the single value.
     checkDictionarize(vector, 2);
-    
+
+    if (kind == TypeKind::BOOLEAN || kind == TypeKind::TINYINT) {
+
+      return;
+    }
+
+    vector = createScalar<kind>(type, 1000,1000, 1, false);
+
     // A vector with different values does not make a constant.
-    EXPECT_TRUE(BaseVector::constantify(createScalar<kind>(type, 1000,1000, 1, false)) == nullptr);
+    EXPECT_TRUE(BaseVector::constantify(vector) == nullptr);
+    checkDictionarize(vector, 1000);
+    row = makeRowVector({"c0"}, {vector});
+    EXPECT_TRUE(BaseVector::constantify(row) == nullptr);
+
+    checkDictionarize(row, 1000);
   }
 
   void checkDictionarize(const VectorPtr& vector, int expectDistincts) {
-    auto indices = AlignedBuffer::allocate<vector_size_t>(expectDistincts, pool_.get());
+    auto indices = AlignedBuffer::allocate<vector_size_t>(vector->size(), pool_.get());
     VectorMap map(*vector);
     EXPECT_EQ(expectDistincts, map.size());
 

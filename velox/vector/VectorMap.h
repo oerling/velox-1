@@ -46,7 +46,10 @@ using VectorValueSet = folly::F14FastSet<
     VectorValueSetHasher,
     VectorValueSetComparer>;
 
-/// A map translating values in a vector to positions in the mapped vector.
+/// A map translating values in a vector to positions in an alphabet
+/// vector. if the values are complex type or variable length, also
+/// keeps track of the serialized size of the values. Usable for
+/// ad-hoc reencoding for serialization.
 class VectorMap {
  public:
   // Constructs 'this' to index the distinct elements in 'alphabet'. 'alphabet'
@@ -55,8 +58,8 @@ class VectorMap {
   explicit VectorMap(BaseVector& alphabet);
 
   // Constructs an empty map initializing alphabet to an empty vector of 'type'.
-  // Alphabet is owned.
-  VectorMap(const TypePtr& type, memory::MemoryPool* pool);
+  // Alphabet is owned. 'reserve' is the expected count of distinct values.
+  VectorMap(const TypePtr& type, memory::MemoryPool* pool, int32_t reserve = 32);
 
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
   /// 'rows'. The ids are returned in indices.
@@ -71,10 +74,11 @@ class VectorMap {
       bool insertToAlphabet = true);
 
   vector_size_t size() const {
-    return alphabet_->size();
+    return isString_ ? distinctStrings_.size() + (nullIndex_ != kNoNullIndex) : distinctSet_.size();alphabet_->size();
   }
 
   vector_size_t sizeAt(vector_size_t index) const {
+    VELOX_DCHECK_EQ(fixedWidth_, kVariableWidth);
     return alphabetSizes_[index];
   }
 
@@ -84,7 +88,8 @@ class VectorMap {
 
  private:
   static constexpr vector_size_t kNoNullIndex = -1;
-
+  static constexpr int32_t kVariableWidth = -1;
+  
   // Vector containing all the distinct values.
   BaseVector* alphabet_;
 
@@ -105,7 +110,9 @@ class VectorMap {
   raw_vector<vector_size_t> alphabetSizes_;
 
   // True if  using 'distinctStrings_'
-  bool isString_;
+  const bool isString_;
+
+  const int32_t fixedWidth_;
 };
 
 } // namespace facebook::velox
