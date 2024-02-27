@@ -843,9 +843,9 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
 
     VectorStreamGroup::estimateSerializedSize(
-					      source.get(), evenIndices, evenSizePointers.data());
+        source.get(), evenIndices, evenSizePointers.data());
     VectorStreamGroup::estimateSerializedSize(
-					      source.get(), oddIndices, oddSizePointers.data());
+        source.get(), oddIndices, oddSizePointers.data());
     even.append(
         sourceRow, folly::Range(evenIndices.data(), evenIndices.size() / 2));
     even.append(

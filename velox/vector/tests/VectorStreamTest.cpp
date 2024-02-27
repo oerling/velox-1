@@ -21,7 +21,7 @@ namespace facebook::velox::test {
 
 class MockVectorSerde : public VectorSerde {
   void estimateSerializedSize(
-			      const BaseVector* vector,
+      const BaseVector* vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes) override {}
 
