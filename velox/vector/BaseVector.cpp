@@ -1049,9 +1049,9 @@ bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
   }
   return true;
 }
-  
+
 // static
-  VectorPtr BaseVector::constantify(const VectorPtr& input, DecodedVector* temp) {
+VectorPtr BaseVector::constantify(const VectorPtr& input, DecodedVector* temp) {
   auto& vector = BaseVector::loadedVectorShared(input);
 
   // If this is already a constant or empty or single element, it can stay as
