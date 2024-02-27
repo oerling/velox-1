@@ -63,6 +63,8 @@ struct VectorValidateOptions {
   std::function<void(const BaseVector&)> callback;
 };
 
+class DecodedVector;
+  
 /**
  * Base class for all columnar-based vectors of any type.
  */
@@ -601,7 +603,7 @@ class BaseVector {
   }
 
   /// If 'vector' consists of a single value, returns an equivalent constant vector, else nullptr.
-  static VectorPtr constantify(const BaseVector& vector);
+  static VectorPtr constantify(const std::shared_ptr<BaseVector>& vector, DecodedVector* decoded = nullptr);
 
   /// Compares each element of 'vector' to elements of 'alphabet'.
   /// Returns the index of each element of 'vector' in 'alphabet' in

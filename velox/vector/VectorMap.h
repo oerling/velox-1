@@ -46,12 +46,12 @@ using VectorValueSet = folly::F14FastSet<
     VectorValueSetComparer>;
 
   
-/// A map translating values in in a vector to positions in the vector.
+/// A map translating values in a vector to positions in the mapped vector.
 class VectorMap {
  public:
   VectorMap();
 
-  explicit VectorMap(const BaseVector& vector);
+  explicit VectorMap(const BaseVector& alphabet);
 
   static std::unique_ptr<VectorMap> create(const TypePtr & type);
   
@@ -72,9 +72,16 @@ class VectorMap {
       vector_size_t row);
 
  private:
-  VectorValueSet map_;
-  folly::F14FastSet<std::pair<StringView, int32_t>> stringMap_;
-  
+  // Vector containing all the distinct values.
+  VectorPtr alphabet_;
+  // Map from value in 'alphabet_' to the index in 'alphabet_'.
+  VectorValueSet distinctSet_;
+
+  // Map from string value in 'alphabet_' to index in 'alphabet_'. Used only if 'alphabet_' is a FlatVector<StringView>.
+  folly::F14FastSet<std::pair<StringView, int32_t>> distinctStrings_;
+
+  // True if  using 'distinctStrings_'
+  bool isString_;
 };
 
 } // namespace facebook::velox
