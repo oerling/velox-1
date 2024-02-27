@@ -20,7 +20,6 @@
 
 namespace facebook::velox {
 
-
 struct VectorValueSetEntry {
   const BaseVector* vector;
   vector_size_t index;
@@ -45,7 +44,6 @@ using VectorValueSet = folly::F14FastSet<
     VectorValueSetHasher,
     VectorValueSetComparer>;
 
-  
 /// A map translating values in a vector to positions in the mapped vector.
 class VectorMap {
  public:
@@ -53,8 +51,8 @@ class VectorMap {
 
   explicit VectorMap(const BaseVector& alphabet);
 
-  static std::unique_ptr<VectorMap> create(const TypePtr & type);
-  
+  static std::unique_ptr<VectorMap> create(const TypePtr& type);
+
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
   /// 'rows'. The ids are returned in indices. If new ids were assigned, the row
   /// where the value first occurred is written to 'newIds'. The number of
@@ -77,7 +75,8 @@ class VectorMap {
   // Map from value in 'alphabet_' to the index in 'alphabet_'.
   VectorValueSet distinctSet_;
 
-  // Map from string value in 'alphabet_' to index in 'alphabet_'. Used only if 'alphabet_' is a FlatVector<StringView>.
+  // Map from string value in 'alphabet_' to index in 'alphabet_'. Used only if
+  // 'alphabet_' is a FlatVector<StringView>.
   folly::F14FastSet<std::pair<StringView, int32_t>> distinctStrings_;
 
   // True if  using 'distinctStrings_'
