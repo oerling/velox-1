@@ -60,7 +60,7 @@ class EncodingTest : public testing::Test,
   }
 
   template <TypeKind kind>
-  void testConstant(const TypePtr& type) {
+  void checkTypeEncoding(const TypePtr& type) {
     auto vector = createScalar<kind>(type, 1000, 1, 0, false);
     auto constant = BaseVector::constantify(vector);
     assertEqualVectors(vector, constant);
@@ -141,13 +141,13 @@ Timestamp EncodingTest::testValue(int32_t i, BufferPtr& /*space*/) {
 
 
 TEST_F(EncodingTest, basic) {
-  testConstant<TypeKind::BOOLEAN>(BOOLEAN());
-  testConstant<TypeKind::TINYINT>(TINYINT());
-  testConstant<TypeKind::SMALLINT>(SMALLINT());
-  testConstant<TypeKind::INTEGER>(INTEGER());
-  testConstant<TypeKind::BIGINT>(BIGINT());
-  testConstant<TypeKind::VARCHAR>(VARCHAR());
-  testConstant<TypeKind::TIMESTAMP>(TIMESTAMP());
+  checkTypeEncoding<TypeKind::BOOLEAN>(BOOLEAN());
+  checkTypeEncoding<TypeKind::TINYINT>(TINYINT());
+  checkTypeEncoding<TypeKind::SMALLINT>(SMALLINT());
+  checkTypeEncoding<TypeKind::INTEGER>(INTEGER());
+  checkTypeEncoding<TypeKind::BIGINT>(BIGINT());
+  checkTypeEncoding<TypeKind::VARCHAR>(VARCHAR());
+  checkTypeEncoding<TypeKind::TIMESTAMP>(TIMESTAMP());
   
 }
 
