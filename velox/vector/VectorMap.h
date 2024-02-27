@@ -78,6 +78,10 @@ class VectorMap {
     return alphabetSizes_[index];
   }
 
+  VectorPtr& alphabetOwned() {
+    return alphabetOwned_;
+  }
+  
  private:
   static constexpr vector_size_t kNoNullIndex = -1;
 
