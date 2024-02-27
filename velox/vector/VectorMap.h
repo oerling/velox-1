@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/vector/BaseVector.h"
 #include <folly/container/F14Set.h>
 #include "velox/common/base/RawVector.h"
+#include "velox/vector/BaseVector.h"
 
 namespace facebook::velox {
 
@@ -49,15 +49,17 @@ using VectorValueSet = folly::F14FastSet<
 /// A map translating values in a vector to positions in the mapped vector.
 class VectorMap {
  public:
-
-  // Constructs 'this' to index the distinct elements in 'alphabet'. 'alphabet' is not changed and not owned. For example, when concatenating two dictionaries, the first initializes the map.
+  // Constructs 'this' to index the distinct elements in 'alphabet'. 'alphabet'
+  // is not changed and not owned. For example, when concatenating two
+  // dictionaries, the first initializes the map.
   explicit VectorMap(BaseVector& alphabet);
 
-  // Constructs an empty map initializing alphabet to an empty vector of 'type'. Alphabet is owned.
+  // Constructs an empty map initializing alphabet to an empty vector of 'type'.
+  // Alphabet is owned.
   VectorMap(const TypePtr& type, memory::MemoryPool* pool);
 
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
-  /// 'rows'. The ids are returned in indices. 
+  /// 'rows'. The ids are returned in indices.
   void addMultiple(
       BaseVector& vector,
       folly::Range<const vector_size_t*> rows,
@@ -66,16 +68,16 @@ class VectorMap {
   vector_size_t addOne(
       const BaseVector& vector,
       vector_size_t row,
-		       bool insertToAlphabet = true);
+      bool insertToAlphabet = true);
 
   vector_size_t size() const {
     return alphabet_->size();
   }
-  
+
   vector_size_t sizeAt(vector_size_t index) const {
     return alphabetSizes_[index];
   }
-  
+
  private:
   static constexpr vector_size_t kNoNullIndex = -1;
 
@@ -94,7 +96,7 @@ class VectorMap {
 
   // Index of null value in 'alphabet_'.
   vector_size_t nullIndex_{kNoNullIndex};
-  
+
   // Serialized size estimate for the corresponding element of 'alphabet'.
   raw_vector<vector_size_t> alphabetSizes_;
 

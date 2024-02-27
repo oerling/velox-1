@@ -155,7 +155,7 @@ class SumDataSizeForStatsAggregate
     });
 
     getVectorSerde()->estimateSerializedSize(
-					     vector.get(),
+        vector.get(),
         folly::Range(rowIndices_.data(), rowIndices_.size()),
         rowSizePtrs_.data());
   }

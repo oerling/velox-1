@@ -128,7 +128,7 @@ class VectorSerde {
 
   /// Adds the serialized size of vector at 'rows[i]' to '*sizes[i]'.
   virtual void estimateSerializedSize(
-				      const BaseVector* vector,
+      const BaseVector* vector,
       folly::Range<const vector_size_t*> rows,
       vector_size_t** sizes,
       Scratch& scratch) {
@@ -138,7 +138,7 @@ class VectorSerde {
   /// Adds the serialized sizes of the rows of 'vector' in 'ranges[i]' to
   /// '*sizes[i]'.
   virtual void estimateSerializedSize(
-				      const BaseVector* vector,
+      const BaseVector* vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes,
       Scratch& scratch) {
@@ -146,7 +146,7 @@ class VectorSerde {
   }
 
   virtual void estimateSerializedSize(
-				      const BaseVector* vector,
+      const BaseVector* vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes) {
     Scratch scratch;
@@ -260,19 +260,19 @@ class VectorStreamGroup : public StreamArena {
 
   /// Increments sizes[i] for each ith row in 'rows' in 'vector'.
   static void estimateSerializedSize(
-				     const BaseVector* vector,
+      const BaseVector* vector,
       folly::Range<const vector_size_t*> rows,
       vector_size_t** sizes,
       Scratch& scratch);
 
   static void estimateSerializedSize(
-				     const BaseVector* vector,
+      const BaseVector* vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes,
       Scratch& scratch);
 
   static inline void estimateSerializedSize(
-					    const BaseVector* vector,
+      const BaseVector* vector,
       const folly::Range<const IndexRange*>& ranges,
       vector_size_t** sizes) {
     Scratch scratch;

@@ -88,8 +88,10 @@ vector_size_t VectorMap::addOne(
     alphabetSizes_[newIndex] = 0;
     nullIndex_ = newIndex;
   } else if (isString_) {
-    alphabetSizes_[newIndex] = alphabet_->asUnchecked <
-      FlatVector<StringView>>()->valueAt(newIndex).size() + 4;
+    alphabetSizes_[newIndex] = alphabet_->asUnchecked<FlatVector<StringView>>()
+                                   ->valueAt(newIndex)
+                                   .size() +
+        4;
   } else {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);

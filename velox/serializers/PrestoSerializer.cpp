@@ -3542,7 +3542,7 @@ class PrestoIterativeVectorSerializer : public IterativeVectorSerializer {
 } // namespace
 
 void PrestoVectorSerde::estimateSerializedSize(
-					       const BaseVector* vector,
+    const BaseVector* vector,
     const folly::Range<const IndexRange*>& ranges,
     vector_size_t** sizes,
     Scratch& scratch) {
@@ -3550,7 +3550,7 @@ void PrestoVectorSerde::estimateSerializedSize(
 }
 
 void PrestoVectorSerde::estimateSerializedSize(
-					       const BaseVector* vector,
+    const BaseVector* vector,
     const folly::Range<const vector_size_t*> rows,
     vector_size_t** sizes,
     Scratch& scratch) {

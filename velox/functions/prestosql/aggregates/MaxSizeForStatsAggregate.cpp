@@ -175,7 +175,7 @@ class MaxSizeForStatsAggregate
     });
 
     getVectorSerde()->estimateSerializedSize(
-					     vector.get(),
+        vector.get(),
         folly::Range(elementIndices_.data(), elementIndices_.size()),
         elementSizePtrs_.data());
   }
