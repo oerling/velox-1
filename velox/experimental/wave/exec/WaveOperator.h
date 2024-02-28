@@ -18,6 +18,7 @@
 
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/exec/Driver.h"
 
 namespace facebook::velox::wave {
 
@@ -30,7 +31,7 @@ class WaveOperator {
 
   virtual ~WaveOperator() = default;
 
-  virtual exec::BlockingReason isBlocked(exec::ContinueFuture& future) {
+  virtual exec::BlockingReason isBlocked(ContinueFuture& future) {
     return exec::BlockingReason::kNotBlocked;
   }
   
