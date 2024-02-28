@@ -31,7 +31,7 @@
       case PhysicalType::kString:                \
         return _func<StringView>(__VA_ARGS__);   \
       default:                                   \
-        VELOX_UNSUPPORTED("{}", _kind);          \
+        VELOX_UNSUPPORTED("{}", static_cast<int32_t>(_kind));	\
     };                                           \
   }()
 
@@ -83,7 +83,7 @@ Aggregation::Aggregation(
     : WaveOperator(state, node.outputType()),
       arena_(&state.arena()),
       functionRegistry_(functionRegistry) {
-  VELOX_CHECK_EQ(node.step(), core::AggregationNode::Step::kSingle);
+  VELOX_CHECK(node.step() == core::AggregationNode::Step::kSingle);
   VELOX_CHECK(node.preGroupedKeys().empty());
   auto& inputType = node.sources()[0]->outputType();
   container_ = arena_->allocate<aggregation::GroupsContainer>(

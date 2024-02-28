@@ -383,7 +383,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         break;
       }
       default:
-        VELOX_UNSUPPORTED("OpCode {}", instruction->opCode);
+        VELOX_UNSUPPORTED("OpCode {}", static_cast<int32_t>(instruction->opCode));
     }
   sortSlots();
   arena_ = &arena;
