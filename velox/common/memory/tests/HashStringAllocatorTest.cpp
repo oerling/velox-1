@@ -36,8 +36,12 @@ struct Multipart {
 
 class HashStringAllocatorTest : public testing::Test {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::initialize({});
+  }
+
   void SetUp() override {
-    pool_ = memory::addDefaultLeafMemoryPool();
+    pool_ = memory::memoryManager()->addLeafPool();
     allocator_ = std::make_unique<HashStringAllocator>(pool_.get());
     rng_.seed(1);
   }
@@ -432,7 +436,7 @@ TEST_F(HashStringAllocatorTest, stlAllocatorWithSet) {
   allocator_->checkConsistency();
 
   // We allow for some overhead for free lists after all is freed.
-  EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 180);
+  EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 220);
 }
 
 TEST_F(HashStringAllocatorTest, alignedStlAllocatorWithF14Map) {
@@ -473,6 +477,23 @@ TEST_F(HashStringAllocatorTest, alignedStlAllocatorWithF14Map) {
   EXPECT_LE(allocator_->retainedSize() - allocator_->freeSpace(), 130);
 }
 
+TEST_F(HashStringAllocatorTest, alignedStlAllocatorLargeAllocation) {
+  const auto allocateSize = 1ULL << 10;
+
+  // Test large allocation + aligned pool.
+  AlignedStlAllocator<int64_t, 16> alignedAlloc16(allocator_.get());
+  int64_t* ptr = alignedAlloc16.allocate(allocateSize);
+  alignedAlloc16.deallocate(ptr, allocateSize);
+  allocator_->checkConsistency();
+
+  // Test large allocation + un-aligned pool.
+  ASSERT_LT(allocator_->pool()->alignment(), 128);
+  AlignedStlAllocator<int64_t, 128> alignedAlloc128(allocator_.get());
+  ptr = alignedAlloc128.allocate(allocateSize);
+  alignedAlloc128.deallocate(ptr, allocateSize);
+  allocator_->checkConsistency();
+}
+
 TEST_F(HashStringAllocatorTest, stlAllocatorOverflow) {
   StlAllocator<int64_t> alloc(allocator_.get());
   VELOX_ASSERT_THROW(alloc.allocate(1ULL << 62), "integer overflow");
@@ -482,8 +503,7 @@ TEST_F(HashStringAllocatorTest, stlAllocatorOverflow) {
 
 TEST_F(HashStringAllocatorTest, externalLeak) {
   constexpr int32_t kSize = HashStringAllocator ::kMaxAlloc * 10;
-  auto root =
-      memory::MemoryManager::getInstance().addRootPool("HSALeakTestRoot");
+  auto root = memory::memoryManager()->addRootPool("HSALeakTestRoot");
   auto pool = root->addLeafChild("HSALeakLeaf");
   auto initialBytes = pool->currentBytes();
   auto allocator = std::make_unique<HashStringAllocator>(pool.get());

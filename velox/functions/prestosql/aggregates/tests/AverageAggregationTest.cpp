@@ -441,6 +441,11 @@ TEST_F(AverageAggregationTest, decimalAccumulator) {
 }
 
 TEST_F(AverageAggregationTest, avgDecimal) {
+  // Disable incremental aggregation tests because DecimalAggregate doesn't set
+  // StringView::prefix when extracting accumulators, leaving the prefix field
+  // undefined that fails the test.
+  AggregationTestBase::disableTestIncremental();
+
   // Skip testing with TableScan because decimal is not supported in writers.
   auto shortDecimal = makeNullableFlatVector<int64_t>(
       {1'000, 2'000, 3'000, 4'000, 5'000, std::nullopt}, DECIMAL(10, 1));
@@ -589,9 +594,13 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       expectedResult,
       /*config*/ {},
       /*testWithTableScan*/ false);
+
+  AggregationTestBase::enableTestIncremental();
 }
 
 TEST_F(AverageAggregationTest, avgDecimalWithMultipleRowVectors) {
+  AggregationTestBase::disableTestIncremental();
+
   auto inputRows = {
       makeRowVector({makeFlatVector<int64_t>({100, 200}, DECIMAL(5, 2))}),
       makeRowVector({makeFlatVector<int64_t>({300, 400}, DECIMAL(5, 2))}),
@@ -608,6 +617,8 @@ TEST_F(AverageAggregationTest, avgDecimalWithMultipleRowVectors) {
       expectedResult,
       /*config*/ {},
       /*testWithTableScan*/ false);
+
+  AggregationTestBase::enableTestIncremental();
 }
 
 TEST_F(AverageAggregationTest, constantVectorOverflow) {
@@ -694,6 +705,29 @@ TEST_F(AverageAggregationTest, companionFunctionsWithNonFlatAndLazyInputs) {
 
   testFunction("avg");
   testFunction("simple_avg");
+}
+
+/// We can get 0 as the count of a group when
+/// try and do a single aggregation over distinct values.
+///  In this case presto returns null as avg and not 'NaN'.
+TEST_F(AverageAggregationTest, zeroCounts) {
+  auto data = makeRowVector(
+      {makeNullableFlatVector<int64_t>({std::nullopt, 1}),
+       makeNullableFlatVector<int64_t>({2, 1}),
+       makeFlatVector<bool>({true, false})});
+
+  auto expected = makeRowVector({
+      makeNullableFlatVector<int64_t>({std::nullopt, 1}),
+      makeNullableFlatVector<double>({2.0, std::nullopt}),
+  });
+
+  auto op = PlanBuilder()
+                .values({data})
+                .project({"c0", "c1", "c2"})
+                .singleAggregation({"c0"}, {"avg(distinct c1)"}, {{"c2"}})
+                .planNode();
+
+  assertQuery(op, expected);
 }
 
 } // namespace

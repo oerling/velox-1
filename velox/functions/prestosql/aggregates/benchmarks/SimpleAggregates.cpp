@@ -268,8 +268,8 @@ BENCHMARK_DRAW_LINE();
 } // namespace
 
 int main(int argc, char** argv) {
-  folly::init(&argc, &argv);
-
+  folly::Init init{&argc, &argv};
+  memory::MemoryManager::initialize({});
   benchmark = std::make_unique<SimpleAggregatesBenchmark>();
   folly::runBenchmarks();
   benchmark.reset();

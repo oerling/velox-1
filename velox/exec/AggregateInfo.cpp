@@ -52,17 +52,6 @@ std::vector<AggregateInfo> toAggregateInfo(
 
   for (auto i = 0; i < numAggregates; i++) {
     const auto& aggregate = aggregationNode.aggregates()[i];
-
-    // TODO: Add support for StreamingAggregation
-    if (isStreaming && !aggregate.sortingKeys.empty()) {
-      VELOX_UNSUPPORTED(
-          "Streaming aggregation doesn't support aggregations over sorted inputs yet");
-    }
-    if (isStreaming && aggregate.distinct) {
-      VELOX_UNSUPPORTED(
-          "Streaming aggregation doesn't support aggregations over distinct inputs yet");
-    }
-
     AggregateInfo info;
     // Populate input.
     auto& channels = info.inputs;
@@ -142,6 +131,16 @@ std::vector<AggregateInfo> toAggregateInfo(
     aggregates.emplace_back(std::move(info));
   }
   return aggregates;
+}
+
+std::vector<std::optional<column_index_t>> extractMaskChannels(
+    const std::vector<AggregateInfo>& aggregates) {
+  std::vector<std::optional<column_index_t>> masks;
+  masks.reserve(aggregates.size());
+  for (const auto& aggregate : aggregates) {
+    masks.push_back(aggregate.mask);
+  }
+  return masks;
 }
 
 } // namespace facebook::velox::exec

@@ -152,6 +152,11 @@ struct OperatorStats {
   int64_t lastLazyCpuNanos{0};
   int64_t lastLazyWallNanos{0};
 
+  // Total null keys processed by the operator.
+  // Currently populated only by HashJoin/HashBuild.
+  // HashProbe doesn't populate numNullKeys when build side is empty.
+  int64_t numNullKeys{0};
+
   std::unordered_map<std::string, RuntimeMetric> runtimeStats;
 
   int numDrivers = 0;
@@ -419,15 +424,6 @@ class Operator : public BaseRuntimeStatWriter {
     operatorCtx_->pool()->release();
   }
 
-  /// Invoked by memory arbitrator to free up operator's resource immediately on
-  /// memory abort, and the query will stop running after this call.
-  ///
-  /// NOTE: we don't expect any access to this operator except close method
-  /// call.
-  virtual void abort() {
-    close();
-  }
-
   // Returns true if 'this' never has more output rows than input rows.
   virtual bool isFilter() const {
     return false;
@@ -457,6 +453,13 @@ class Operator : public BaseRuntimeStatWriter {
   void recordBlockingTime(uint64_t start, BlockingReason reason);
 
   virtual std::string toString() const;
+
+  /// Used in debug ednpoints.
+  virtual folly::dynamic toJson() const {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["operator"] = toString();
+    return obj;
+  }
 
   velox::memory::MemoryPool* pool() const {
     return operatorCtx_->pool();
@@ -505,6 +508,10 @@ class Operator : public BaseRuntimeStatWriter {
 
   const std::string& operatorType() const {
     return operatorCtx_->operatorType();
+  }
+
+  const std::string& taskId() const {
+    return operatorCtx_->taskId();
   }
 
   /// Registers 'translator' for mapping user defined PlanNode subclass
@@ -761,3 +768,12 @@ class SourceOperator : public Operator {
   }
 };
 } // namespace facebook::velox::exec
+
+template <>
+struct fmt::formatter<std::thread::id> : formatter<std::string> {
+  auto format(std::thread::id s, format_context& ctx) {
+    std::ostringstream oss;
+    oss << s;
+    return formatter<std::string>::format(oss.str(), ctx);
+  }
+};

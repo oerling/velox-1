@@ -143,7 +143,7 @@ Expr::Expr(
   constantInputs_.reserve(inputs_.size());
   inputIsConstant_.reserve(inputs_.size());
   for (auto& expr : inputs_) {
-    if (auto constantExpr = std::dynamic_pointer_cast<ConstantExpr>(expr)) {
+    if (auto constantExpr = expr->as<ConstantExpr>()) {
       constantInputs_.emplace_back(constantExpr->value());
       inputIsConstant_.push_back(true);
     } else {
@@ -192,7 +192,7 @@ bool Expr::allSupportFlatNoNullsFastPath(
 
 void Expr::clearMetaData() {
   metaDataComputed_ = false;
-  for (auto child : inputs_) {
+  for (auto& child : inputs_) {
     child->clearMetaData();
   }
   propagatesNulls_ = false;
@@ -394,7 +394,7 @@ bool Expr::evalArgsDefaultNulls(
       auto& arg = inputValues_[i];
       if (arg->mayHaveNulls()) {
         decoded.get()->decode(*arg, rows.rows());
-        flatNulls = decoded.get()->nulls();
+        flatNulls = decoded.get()->nulls(&rows.rows());
       }
       // A null with no error deselects the row.
       // An error adds itself to argument errors.
@@ -533,7 +533,7 @@ void Expr::evalSimplifiedImpl(
   try {
     vectorFunction_->apply(
         remainingRows.rows(), inputValues_, type(), context, result);
-  } catch (const VeloxException& ve) {
+  } catch (const VeloxException&) {
     throw;
   } catch (const std::exception& e) {
     VELOX_USER_FAIL(e.what());
@@ -869,8 +869,32 @@ void Expr::evaluateSharedSubexpr(
         context.getField(field->index(context)).get());
   }
 
+  // Find the cached results for the same inputs, or create an entry if one
+  // doesn't exist.
+  auto sharedSubexprResultsIter =
+      sharedSubexprResults_.find(expressionInputFields);
+  if (sharedSubexprResultsIter == sharedSubexprResults_.end()) {
+    auto maxSharedSubexprResultsCached = context.execCtx()
+                                             ->queryCtx()
+                                             ->queryConfig()
+                                             .maxSharedSubexprResultsCached();
+    if (sharedSubexprResults_.size() < maxSharedSubexprResultsCached) {
+      // If we have room left in the cache, add it.
+      sharedSubexprResultsIter =
+          sharedSubexprResults_
+              .insert(
+                  std::pair(std::move(expressionInputFields), SharedResults()))
+              .first;
+    } else {
+      // Otherwise, simply evaluate it and return without caching the results.
+      eval(rows, context, result);
+
+      return;
+    }
+  }
+
   auto& [sharedSubexprRows, sharedSubexprValues] =
-      sharedSubexprResults_[expressionInputFields];
+      sharedSubexprResultsIter->second;
 
   if (sharedSubexprValues == nullptr) {
     eval(rows, context, result);
@@ -1087,7 +1111,7 @@ bool Expr::removeSureNulls(
 
     if (values->mayHaveNulls()) {
       LocalDecodedVector decoded(context, *values, rows);
-      if (auto* rawNulls = decoded->nulls()) {
+      if (auto* rawNulls = decoded->nulls(&rows)) {
         if (!result) {
           result = nullHolder.get(rows);
         }
@@ -1098,7 +1122,7 @@ bool Expr::removeSureNulls(
   }
   if (result) {
     result->updateBounds();
-    return true;
+    return result->countSelected() != rows.countSelected();
   }
   return false;
 }
@@ -1282,7 +1306,7 @@ void computeIsAsciiForInputs(
       auto* vector =
           inputValues[index]->template as<SimpleVector<StringView>>();
 
-      VELOX_CHECK(vector);
+      VELOX_CHECK(vector, inputValues[index]->toString());
       vector->computeAndSetIsAscii(rows);
     }
   }
@@ -1417,7 +1441,7 @@ void Expr::evalAllImpl(
 
   // Write non-selected rows in remainingRows as nulls in the result if some
   // rows have been skipped.
-  if (remainingRows.mayHaveChanged()) {
+  if (remainingRows.hasChanged()) {
     addNulls(rows, remainingRows.rows().asRange().bits(), context, result);
   }
   releaseInputValues(context);
@@ -1485,7 +1509,7 @@ void Expr::applyFunction(
 
   try {
     vectorFunction_->apply(rows, inputValues_, type(), context, result);
-  } catch (const VeloxException& ve) {
+  } catch (const VeloxException&) {
     throw;
   } catch (const std::exception& e) {
     VELOX_USER_FAIL(e.what());
@@ -1502,7 +1526,7 @@ void Expr::applyFunction(
         // should only apply when the UDF is buggy (hopefully rarely).
         VELOX_USER_FAIL(
             "Function neither returned results nor threw exception.");
-      } catch (const std::exception& e) {
+      } catch (const std::exception&) {
         context.setErrors(remainingRows.rows(), std::current_exception());
       }
     }
@@ -1618,7 +1642,7 @@ bool Expr::isConstant() const {
     return false;
   }
   for (auto& input : inputs_) {
-    if (!dynamic_cast<ConstantExpr*>(input.get())) {
+    if (!input->is<ConstantExpr>()) {
       return false;
     }
   }

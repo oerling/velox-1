@@ -20,6 +20,7 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Values.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
@@ -979,7 +980,7 @@ TEST_F(DriverTest, driverCreationThrow) {
   CursorParameters params;
   params.planNode = plan;
   params.maxDrivers = 5;
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
   auto task = cursor->task();
   // Ensure execution threw correct error.
   VELOX_ASSERT_THROW(cursor->moveNext(), "Too many drivers");
@@ -1363,3 +1364,120 @@ DEBUG_ONLY_TEST_F(DriverTest, nonReclaimableSection) {
   auto plan = PlanBuilder().values(batches).planNode();
   ASSERT_NO_THROW(AssertQueryBuilder(plan).copyResults(pool()));
 }
+
+DEBUG_ONLY_TEST_F(DriverTest, driverCpuTimeSlicingCheck) {
+  const int numBatches = 3;
+  std::vector<RowVectorPtr> batches;
+  for (int i = 0; i < numBatches; ++i) {
+    batches.push_back(
+        makeRowVector({"c0"}, {makeFlatVector<int32_t>({1, 2, 3})}));
+  }
+
+  for (const auto& hasCpuTimeSliceLimit : {false, true}) {
+    SCOPED_TRACE(fmt::format("hasCpuSliceLimit: {}", hasCpuTimeSliceLimit));
+    SCOPED_TESTVALUE_SET(
+        "facebook::velox::exec::Values::getOutput",
+        std::function<void(const exec::Values*)>([&](const exec::Values*
+                                                         values) {
+          // Verify that no matter driver cpu time slicing is enforced or not,
+          // the driver start execution time is set properly.
+          ASSERT_NE(
+              values->testingOperatorCtx()->driver()->state().startExecTimeMs,
+              0);
+          if (hasCpuTimeSliceLimit) {
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // NOLINT
+            ASSERT_GT(
+                values->testingOperatorCtx()->driver()->state().execTimeMs(),
+                0);
+          }
+        }));
+    auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+    auto fragment =
+        PlanBuilder(planNodeIdGenerator).values(batches).planFragment();
+    std::unordered_map<std::string, std::string> queryConfig;
+    if (hasCpuTimeSliceLimit) {
+      queryConfig.emplace(core::QueryConfig::kDriverCpuTimeSliceLimitMs, "500");
+    }
+    const uint64_t oldYieldCount = Driver::yieldCount();
+    auto task = Task::create(
+        "t0",
+        fragment,
+        0,
+        std::make_shared<core::QueryCtx>(
+            driverExecutor_.get(), std::move(queryConfig)),
+        [](RowVectorPtr /*unused*/, ContinueFuture* /*unused*/) {
+          return exec::BlockingReason::kNotBlocked;
+        });
+    task->start(1, 1);
+    ASSERT_TRUE(waitForTaskCompletion(task.get(), 600'000'000));
+    if (hasCpuTimeSliceLimit) {
+      // NOTE: there is one additional yield for the empty output.
+      ASSERT_GE(Driver::yieldCount(), oldYieldCount + numBatches + 1);
+    } else {
+      ASSERT_EQ(Driver::yieldCount(), oldYieldCount);
+    }
+  }
+}
+
+class OpCallStatusTest : public OperatorTestBase {};
+
+// Test that the opCallStatus is returned properly and formats the call as
+// expected.
+TEST_F(OpCallStatusTest, basic) {
+  std::vector<RowVectorPtr> data{
+      makeRowVector({"c0"}, {makeFlatVector<int32_t>({1, 2, 3})})};
+
+  const int firstNodeId{17};
+  auto planNodeIdGenerator =
+      std::make_shared<core::PlanNodeIdGenerator>(firstNodeId);
+  auto fragment = PlanBuilder(planNodeIdGenerator).values(data).planFragment();
+
+  std::unordered_map<std::string, std::string> queryConfig;
+  auto task = Task::create(
+      "t19",
+      fragment,
+      0,
+      std::make_shared<core::QueryCtx>(
+          driverExecutor_.get(), std::move(queryConfig)),
+      [](RowVectorPtr /*unused*/, ContinueFuture* /*unused*/) {
+        return exec::BlockingReason::kNotBlocked;
+      });
+
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::exec::Values::getOutput",
+      std::function<void(const exec::Values*)>([&](const exec::Values* values) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto* driver = values->testingOperatorCtx()->driver();
+        auto ocs = driver->opCallStatus();
+        // Check osc to be not empty and the correct format.
+        EXPECT_FALSE(ocs.empty());
+        const auto formattedOpCall =
+            ocs.formatCall(driver->findOperatorNoThrow(ocs.opId), ocs.method);
+        EXPECT_EQ(
+            formattedOpCall,
+            fmt::format("Values.{}::{}", firstNodeId, ocs.method));
+        // Check the correct format when operator is not found.
+        ocs.method = "randomName";
+        EXPECT_EQ(
+            ocs.formatCall(
+                driver->findOperatorNoThrow(ocs.opId + 10), ocs.method),
+            fmt::format("null::{}", ocs.method));
+
+        // Check that the task returns correct long running op call.
+        std::vector<Task::OpCallInfo> stuckCalls;
+        const std::chrono::milliseconds lockTimeoutMs(10);
+        task->getLongRunningOpCalls(lockTimeoutMs, 10, stuckCalls);
+        EXPECT_EQ(stuckCalls.size(), 1);
+        if (!stuckCalls.empty()) {
+          const auto& stuckCall = stuckCalls[0];
+          EXPECT_EQ(stuckCall.opId, ocs.opId);
+          EXPECT_GE(stuckCall.durationMs, 100);
+          EXPECT_EQ(stuckCall.tid, driver->state().tid);
+          EXPECT_EQ(stuckCall.taskId, task->taskId());
+          EXPECT_EQ(stuckCall.opCall, formattedOpCall);
+        }
+      }));
+
+  task->start(1, 1);
+  ASSERT_TRUE(waitForTaskCompletion(task.get(), 600'000'000));
+};

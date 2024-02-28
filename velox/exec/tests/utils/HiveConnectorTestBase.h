@@ -71,7 +71,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
   static std::shared_ptr<connector::ConnectorSplit> makeHiveConnectorSplit(
       const std::string& filePath,
       uint64_t start = 0,
-      uint64_t length = std::numeric_limits<uint64_t>::max());
+      uint64_t length = std::numeric_limits<uint64_t>::max(),
+      int64_t splitWeight = 0);
 
   /// Split file at path 'filePath' into 'splitCount' splits. If not local file,
   /// file size can be given as 'externalSize'.
@@ -180,10 +181,6 @@ class HiveConnectorTestBase : public OperatorTestBase {
     }
     return assignments;
   }
-
-  memory::MemoryAllocator* allocator() {
-    return memory::MemoryAllocator::getInstance();
-  }
 };
 
 class HiveConnectorSplitBuilder {
@@ -198,6 +195,11 @@ class HiveConnectorSplitBuilder {
 
   HiveConnectorSplitBuilder& length(uint64_t length) {
     length_ = length;
+    return *this;
+  }
+
+  HiveConnectorSplitBuilder& splitWeight(int64_t splitWeight) {
+    splitWeight_ = splitWeight;
     return *this;
   }
 
@@ -218,15 +220,27 @@ class HiveConnectorSplitBuilder {
     return *this;
   }
 
+  HiveConnectorSplitBuilder& connectorId(const std::string& connectorId) {
+    connectorId_ = connectorId;
+    return *this;
+  }
+
   std::shared_ptr<connector::hive::HiveConnectorSplit> build() const {
+    static const std::unordered_map<std::string, std::string> customSplitInfo;
+    static const std::shared_ptr<std::string> extraFileInfo;
+    static const std::unordered_map<std::string, std::string> serdeParameters;
     return std::make_shared<connector::hive::HiveConnectorSplit>(
-        kHiveConnectorId,
+        connectorId_,
         filePath_.find("/") == 0 ? "file:" + filePath_ : filePath_,
         fileFormat_,
         start_,
         length_,
         partitionKeys_,
-        tableBucketNumber_);
+        tableBucketNumber_,
+        customSplitInfo,
+        extraFileInfo,
+        serdeParameters,
+        splitWeight_);
   }
 
  private:
@@ -236,6 +250,8 @@ class HiveConnectorSplitBuilder {
   uint64_t length_{std::numeric_limits<uint64_t>::max()};
   std::unordered_map<std::string, std::optional<std::string>> partitionKeys_;
   std::optional<int32_t> tableBucketNumber_;
+  std::string connectorId_ = kHiveConnectorId;
+  int64_t splitWeight_{0};
 };
 
 } // namespace facebook::velox::exec::test

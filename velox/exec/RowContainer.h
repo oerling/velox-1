@@ -828,6 +828,7 @@ class RowContainer {
   inline void storeWithNulls(
       const DecodedVector& decoded,
       vector_size_t index,
+      bool isKey,
       char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte,
@@ -851,6 +852,7 @@ class RowContainer {
   inline void storeNoNulls(
       const DecodedVector& decoded,
       vector_size_t index,
+      bool isKey,
       char* FOLLY_NONNULL group,
       int32_t offset) {
     using T = typename TypeTraits<Kind>::NativeType;
@@ -953,21 +955,13 @@ class RowContainer {
       uint8_t nullMask,
       const DecodedVector& decoded,
       vector_size_t index) {
-    using T = typename KindToFlatVector<Kind>::HashRowType;
     bool rowIsNull = isNullAt(row, nullByte, nullMask);
     bool indexIsNull = decoded.isNullAt(index);
     if (rowIsNull || indexIsNull) {
       return rowIsNull == indexIsNull;
     }
-    if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
-        Kind == TypeKind::MAP) {
-      return compareComplexType(row, offset, decoded, index) == 0;
-    }
-    if (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
-      return compareStringAsc(
-                 valueAt<StringView>(row, offset), decoded, index) == 0;
-    }
-    return decoded.valueAt<T>(index) == valueAt<T>(row, offset);
+
+    return equalsNoNulls<Kind>(row, offset, decoded, index);
   }
 
   template <TypeKind Kind>
@@ -976,17 +970,17 @@ class RowContainer {
       int32_t offset,
       const DecodedVector& decoded,
       vector_size_t index) {
-    using T = typename KindToFlatVector<Kind>::HashRowType;
-
-    if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
+    if constexpr (
+        Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
         Kind == TypeKind::MAP) {
       return compareComplexType(row, offset, decoded, index) == 0;
     }
-    if (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
+    if constexpr (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
       return compareStringAsc(
                  valueAt<StringView>(row, offset), decoded, index) == 0;
     }
 
+    using T = typename KindToFlatVector<Kind>::HashRowType;
     return decoded.valueAt<T>(index) == valueAt<T>(row, offset);
   }
 
@@ -1074,6 +1068,7 @@ class RowContainer {
   void storeComplexType(
       const DecodedVector& decoded,
       vector_size_t index,
+      bool isKey,
       char* FOLLY_NONNULL row,
       int32_t offset,
       int32_t nullByte = 0,
@@ -1259,66 +1254,73 @@ template <>
 inline void RowContainer::storeWithNulls<TypeKind::ROW>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
-  storeComplexType(decoded, index, row, offset, nullByte, nullMask);
+  storeComplexType(decoded, index, isKey, row, offset, nullByte, nullMask);
 }
 
 template <>
 inline void RowContainer::storeNoNulls<TypeKind::ROW>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset) {
-  storeComplexType(decoded, index, row, offset);
+  storeComplexType(decoded, index, isKey, row, offset);
 }
 
 template <>
 inline void RowContainer::storeWithNulls<TypeKind::ARRAY>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
-  storeComplexType(decoded, index, row, offset, nullByte, nullMask);
+  storeComplexType(decoded, index, isKey, row, offset, nullByte, nullMask);
 }
 
 template <>
 inline void RowContainer::storeNoNulls<TypeKind::ARRAY>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset) {
-  storeComplexType(decoded, index, row, offset);
+  storeComplexType(decoded, index, isKey, row, offset);
 }
 
 template <>
 inline void RowContainer::storeWithNulls<TypeKind::MAP>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
-  storeComplexType(decoded, index, row, offset, nullByte, nullMask);
+  storeComplexType(decoded, index, isKey, row, offset, nullByte, nullMask);
 }
 
 template <>
 inline void RowContainer::storeNoNulls<TypeKind::MAP>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool isKey,
     char* FOLLY_NONNULL row,
     int32_t offset) {
-  storeComplexType(decoded, index, row, offset);
+  storeComplexType(decoded, index, isKey, row, offset);
 }
 
 template <>
 inline void RowContainer::storeWithNulls<TypeKind::HUGEINT>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool /*isKey*/,
     char* FOLLY_NONNULL row,
     int32_t offset,
     int32_t nullByte,
@@ -1333,6 +1335,7 @@ template <>
 inline void RowContainer::storeNoNulls<TypeKind::HUGEINT>(
     const DecodedVector& decoded,
     vector_size_t index,
+    bool /*isKey*/,
     char* FOLLY_NONNULL row,
     int32_t offset) {
   HugeInt::serialize(decoded.valueAt<int128_t>(index), row + offset);

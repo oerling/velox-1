@@ -24,8 +24,12 @@ using namespace facebook::velox;
 class UnsafeRowSerializerTest : public ::testing::Test,
                                 public test::VectorTestBase {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   void SetUp() override {
-    pool_ = memory::addDefaultLeafMemoryPool();
+    pool_ = memory::memoryManager()->addLeafPool();
     serde_ = std::make_unique<serializer::spark::UnsafeRowVectorSerde>();
   }
 
@@ -39,7 +43,8 @@ class UnsafeRowSerializerTest : public ::testing::Test,
 
     auto arena = std::make_unique<StreamArena>(pool_.get());
     auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
-    auto serializer = serde_->createSerializer(rowType, numRows, arena.get());
+    auto serializer =
+        serde_->createIterativeSerializer(rowType, numRows, arena.get());
 
     Scratch scratch;
     serializer->append(rowVector, folly::Range(rows.data(), numRows), scratch);

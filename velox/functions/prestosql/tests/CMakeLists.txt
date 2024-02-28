@@ -35,6 +35,7 @@ add_executable(
   ArrayIntersectTest.cpp
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
+  ArrayNGramsTest.cpp
   ArrayNoneMatchTest.cpp
   ArrayNormalizeTest.cpp
   ArrayPositionTest.cpp
@@ -65,6 +66,7 @@ add_executable(
   MapEntriesTest.cpp
   MapFilterTest.cpp
   MapFromEntriesTest.cpp
+  MultimapFromEntriesTest.cpp
   MapKeysAndValuesTest.cpp
   MapMatchTest.cpp
   MapTest.cpp
@@ -74,7 +76,6 @@ add_executable(
   RandTest.cpp
   ReduceTest.cpp
   RegexpReplaceTest.cpp
-  RepeatTest.cpp
   ReverseTest.cpp
   RoundTest.cpp
   ScalarFunctionRegTest.cpp

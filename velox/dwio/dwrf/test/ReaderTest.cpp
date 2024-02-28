@@ -80,6 +80,10 @@ class TestReaderP
     : public testing::TestWithParam</* parallel decoding = */ bool>,
       public VectorTestBase {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   folly::Executor* executor() {
     if (GetParam() && !executor_) {
       std::make_shared<folly::CPUThreadPoolExecutor>(
@@ -98,6 +102,10 @@ class TestReaderP
 
 class TestReader : public testing::Test, public VectorTestBase {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   std::vector<VectorPtr> createBatches(
       const std::vector<std::vector<int32_t>>& values) {
     std::vector<VectorPtr> batches;
@@ -110,9 +118,19 @@ class TestReader : public testing::Test, public VectorTestBase {
   }
 };
 
-class TestRowReaderPrefetch : public testing::Test, public VectorTestBase {};
+class TestRowReaderPrefetch : public testing::Test, public VectorTestBase {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+};
 
-class TestRowReaderPfetch : public testing::Test, public VectorTestBase {};
+class TestRowReaderPfetch : public testing::Test, public VectorTestBase {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+};
 
 } // namespace
 
@@ -285,7 +303,7 @@ void verifyFlatMapReading(
 
   /* If an extra sanity check is desired you can uncomment the 2 below lines and
    * re-run */
-  // readerOpts.setDirectorySizeGuess(257);
+  // readerOpts.setFooterEstimatedSize(257);
   // readerOpts.setFilePreloadThreshold(0);
 
   RowReaderOptions rowReaderOpts;
@@ -392,7 +410,12 @@ void verifyCachedIndexStreamReads(
   }
 }
 
-class TestFlatMapReader : public TestWithParam<bool>, public VectorTestBase {};
+class TestFlatMapReader : public TestWithParam<bool>, public VectorTestBase {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+};
 
 TEST_P(TestFlatMapReader, testReadFlatMapEmptyMap) {
   const std::string emptyFile(getExampleFilePath("empty_flatmap.orc"));
@@ -704,7 +727,7 @@ TEST_F(TestRowReaderPrefetch, testParallelPrefetchNoPreload) {
   dwio::common::ReaderOptions readerOpts{pool()};
   // Explicitly disable so IO takes some time
   readerOpts.setFilePreloadThreshold(0);
-  readerOpts.setDirectorySizeGuess(4);
+  readerOpts.setFooterEstimatedSize(4);
   RowReaderOptions rowReaderOpts;
   rowReaderOpts.select(std::make_shared<ColumnSelector>(getFlatmapSchema()));
   auto reader = DwrfReader::create(
@@ -731,7 +754,7 @@ TEST_F(TestRowReaderPrefetch, testParallelPrefetchNoPreload) {
 TEST_F(TestRowReaderPrefetch, prefetchWithCachedIndexStream) {
   dwio::common::ReaderOptions readerOpts{pool()};
   readerOpts.setFilePreloadThreshold(0);
-  readerOpts.setDirectorySizeGuess(4);
+  readerOpts.setFooterEstimatedSize(4);
   RowReaderOptions rowReaderOpts;
 
   std::shared_ptr<const RowType> requestedType = std::dynamic_pointer_cast<
@@ -780,7 +803,12 @@ struct ByStripeInfo {
 };
 
 class TestRowReaderPrefetchByStripe : public TestWithParam<ByStripeInfo>,
-                                      public VectorTestBase {};
+                                      public VectorTestBase {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+};
 
 // This test ensures that we only return the prefetch units for the stripes that
 // we'll actually use, according to the range passed to the row reader. We
@@ -791,7 +819,7 @@ TEST_P(TestRowReaderPrefetchByStripe, prefetchWithCachedIndexStream) {
   auto opt = GetParam();
   dwio::common::ReaderOptions readerOpts{pool()};
   readerOpts.setFilePreloadThreshold(0);
-  readerOpts.setDirectorySizeGuess(4);
+  readerOpts.setFooterEstimatedSize(4);
   RowReaderOptions rowReaderOpts;
   rowReaderOpts.range(opt.offset, opt.length);
 
@@ -910,7 +938,12 @@ TEST_F(TestRowReaderPrefetch, testEmptyRowRange) {
 
 class TestFlatMapReaderFlatLayout
     : public TestWithParam<std::tuple<bool, size_t>>,
-      public VectorTestBase {};
+      public VectorTestBase {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+};
 
 TEST_P(TestFlatMapReaderFlatLayout, testCompare) {
   dwio::common::ReaderOptions readerOptions{pool()};
@@ -1784,6 +1817,92 @@ TEST_F(TestReader, fileColumnNamesReadAsLowerCaseComplexStruct) {
   auto col0_1_1_0_0_0 = col0_1_1_0_0->childAt(0);
   EXPECT_EQ(col0_1_1_0_0_0->type()->kind(), TypeKind::INTEGER);
   EXPECT_EQ(col0_1_1_0_0->childByName("ccint3"), col0_1_1_0_0_0);
+}
+
+TEST_F(TestReader, TestStripeSizeCallback) {
+  dwio::common::ReaderOptions readerOpts{pool()};
+  readerOpts.setFilePreloadThreshold(0);
+  readerOpts.setFooterEstimatedSize(4);
+  RowReaderOptions rowReaderOpts;
+
+  std::shared_ptr<const RowType> requestedType = std::dynamic_pointer_cast<
+      const RowType>(HiveTypeParser().parse(
+      "struct<int_column:int,string_column:string,string_column_2:string,ds:string>"));
+  rowReaderOpts.select(std::make_shared<ColumnSelector>(requestedType));
+  rowReaderOpts.setEagerFirstStripeLoad(false);
+  uint16_t stripeCount = 0;
+  int numCalls = 0;
+  rowReaderOpts.setStripeCountCallback([&](uint16_t count) {
+    stripeCount += count;
+    ++numCalls;
+  });
+
+  auto reader = DwrfReader::create(
+      createFileBufferedInput(
+          getExampleFilePath("dict_encoded_strings.orc"),
+          readerOpts.getMemoryPool()),
+      readerOpts);
+  auto rowReaderOwner = reader->createRowReader(rowReaderOpts);
+  EXPECT_EQ(stripeCount, 3);
+  EXPECT_EQ(numCalls, 1);
+}
+
+TEST_F(TestReader, TestStripeSizeCallbackLimitsOneStripe) {
+  dwio::common::ReaderOptions readerOpts{pool()};
+  readerOpts.setFilePreloadThreshold(0);
+  readerOpts.setFooterEstimatedSize(4);
+  RowReaderOptions rowReaderOpts;
+
+  std::shared_ptr<const RowType> requestedType = std::dynamic_pointer_cast<
+      const RowType>(HiveTypeParser().parse(
+      "struct<int_column:int,string_column:string,string_column_2:string,ds:string>"));
+  rowReaderOpts.select(std::make_shared<ColumnSelector>(requestedType));
+  rowReaderOpts.setEagerFirstStripeLoad(false);
+  rowReaderOpts.range(600, 600);
+  uint16_t stripeCount = 0;
+  int numCalls = 0;
+  rowReaderOpts.setStripeCountCallback([&](uint16_t count) {
+    stripeCount += count;
+    ++numCalls;
+  });
+
+  auto reader = DwrfReader::create(
+      createFileBufferedInput(
+          getExampleFilePath("dict_encoded_strings.orc"),
+          readerOpts.getMemoryPool()),
+      readerOpts);
+  auto rowReaderOwner = reader->createRowReader(rowReaderOpts);
+  EXPECT_EQ(stripeCount, 1);
+  EXPECT_EQ(numCalls, 1);
+}
+
+TEST_F(TestReader, TestStripeSizeCallbackLimitsTwoStripe) {
+  dwio::common::ReaderOptions readerOpts{pool()};
+  readerOpts.setFilePreloadThreshold(0);
+  readerOpts.setFooterEstimatedSize(4);
+  RowReaderOptions rowReaderOpts;
+
+  std::shared_ptr<const RowType> requestedType = std::dynamic_pointer_cast<
+      const RowType>(HiveTypeParser().parse(
+      "struct<int_column:int,string_column:string,string_column_2:string,ds:string>"));
+  rowReaderOpts.select(std::make_shared<ColumnSelector>(requestedType));
+  rowReaderOpts.setEagerFirstStripeLoad(false);
+  rowReaderOpts.range(0, 600);
+  uint16_t stripeCount = 0;
+  int numCalls = 0;
+  rowReaderOpts.setStripeCountCallback([&](uint16_t count) {
+    stripeCount += count;
+    ++numCalls;
+  });
+
+  auto reader = DwrfReader::create(
+      createFileBufferedInput(
+          getExampleFilePath("dict_encoded_strings.orc"),
+          readerOpts.getMemoryPool()),
+      readerOpts);
+  auto rowReaderOwner = reader->createRowReader(rowReaderOpts);
+  EXPECT_EQ(stripeCount, 2);
+  EXPECT_EQ(numCalls, 1);
 }
 
 TEST_P(TestReaderP, testUpcastBoolean) {

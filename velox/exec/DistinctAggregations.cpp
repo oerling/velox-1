@@ -122,11 +122,13 @@ class TypedDistinctAggregations : public DistinctAggregations {
           accumulator->extractValues(*(data->template as<FlatVector<T>>()), 0);
         }
 
-        rows.resize(data->size());
-        std::vector<VectorPtr> inputForAggregation_ =
-            makeInputForAggregation(data);
-        aggregate.function->addSingleGroupRawInput(
-            group, rows, inputForAggregation_, false);
+        if (data->size() > 0) {
+          rows.resize(data->size());
+          std::vector<VectorPtr> inputForAggregation =
+              makeInputForAggregation(data);
+          aggregate.function->addSingleGroupRawInput(
+              group, rows, inputForAggregation, false);
+        }
       }
 
       aggregate.function->extractValues(
@@ -135,6 +137,14 @@ class TypedDistinctAggregations : public DistinctAggregations {
       // Release memory back to HashStringAllocator to allow next
       // aggregate to re-use it.
       aggregate.function->destroy(groups);
+
+      // Overwrite empty groups over the destructed groups to keep the container
+      // in a well formed state.
+      raw_vector<int32_t> temp;
+      aggregate.function->initializeNewGroups(
+          groups.data(),
+          folly::Range<const int32_t*>(
+              iota(groups.size(), temp), groups.size()));
     }
   }
 
@@ -237,6 +247,8 @@ std::unique_ptr<DistinctAggregations> DistinctAggregations::create(
     case TypeKind::TIMESTAMP:
       return std::make_unique<TypedDistinctAggregations<Timestamp>>(
           aggregates, inputType, pool);
+    case TypeKind::VARBINARY:
+      [[fallthrough]];
     case TypeKind::VARCHAR:
       return std::make_unique<TypedDistinctAggregations<StringView>>(
           aggregates, inputType, pool);

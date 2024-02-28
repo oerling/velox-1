@@ -40,7 +40,7 @@ struct ToUnixtimeFunction {
   FOLLY_ALWAYS_INLINE bool call(
       double& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
-    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    const auto milliseconds = unpackMillisUtc(timestampWithTimezone);
     result = (double)milliseconds / kMillisecondsInSecond;
     return true;
   }
@@ -69,29 +69,29 @@ struct TimestampWithTimezoneSupport {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   // Convert timestampWithTimezone to a timestamp representing the moment at the
-  // zone in timestampWithTimezone.
+  // zone in timestampWithTimezone. If `asGMT` is set to true, return the GMT
+  // time at the same moment.
   FOLLY_ALWAYS_INLINE
   Timestamp toTimestamp(
-      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
-    const auto milliseconds = *timestampWithTimezone.template at<0>();
-    Timestamp timestamp = Timestamp::fromMillis(milliseconds);
-    timestamp.toTimezone(*timestampWithTimezone.template at<1>());
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      bool asGMT = false) {
+    auto timestamp = unpackTimestampUtc(timestampWithTimezone);
+    if (!asGMT) {
+      timestamp.toTimezone(unpackZoneKeyId(timestampWithTimezone));
+    }
 
     return timestamp;
   }
 
-  // Get offset in seconds with GMT from timestampWithTimezone
+  // Get offset in seconds with GMT from timestampWithTimezone.
   FOLLY_ALWAYS_INLINE
   int64_t getGMTOffsetSec(
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     Timestamp inputTimeStamp = this->toTimestamp(timestampWithTimezone);
-    // Get the given timezone name
-    auto timezone =
-        util::getTimeZoneName(*timestampWithTimezone.template at<1>());
-    auto* timezonePtr = date::locate_zone(timezone);
     // Create a copy of inputTimeStamp and convert it to GMT
     auto gmtTimeStamp = inputTimeStamp;
-    gmtTimeStamp.toGMT(*timezonePtr);
+    gmtTimeStamp.toGMT(unpackZoneKeyId(timestampWithTimezone));
+
     // Get offset in seconds with GMT and convert to hour
     return (inputTimeStamp.getSeconds() - gmtTimeStamp.getSeconds());
   }
@@ -905,11 +905,10 @@ struct DateTruncFunction : public TimestampWithTimezoneSupport<T> {
     }
 
     if (unit == DateTimeUnit::kSecond) {
-      auto utcTimestamp =
-          Timestamp::fromMillis(*timestampWithTimezone.template at<0>());
-      result.template get_writer_at<0>() = utcTimestamp.getSeconds() * 1000;
-      result.template get_writer_at<1>() =
-          *timestampWithTimezone.template at<1>();
+      auto utcTimestamp = unpackTimestampUtc(timestampWithTimezone);
+      result = pack(
+          utcTimestamp.getSeconds() * 1000,
+          unpackZoneKeyId(timestampWithTimezone));
       return;
     }
 
@@ -917,11 +916,9 @@ struct DateTruncFunction : public TimestampWithTimezoneSupport<T> {
     auto dateTime = getDateTime(timestamp, nullptr);
     adjustDateTime(dateTime, unit);
     timestamp = Timestamp::fromMillis(timegm(&dateTime) * 1000);
-    timestamp.toGMT(*timestampWithTimezone.template at<1>());
+    timestamp.toGMT(unpackZoneKeyId(timestampWithTimezone));
 
-    result.template get_writer_at<0>() = timestamp.toMillis();
-    result.template get_writer_at<1>() =
-        *timestampWithTimezone.template at<1>();
+    result = pack(timestamp.toMillis(), unpackZoneKeyId(timestampWithTimezone));
   }
 };
 
@@ -1006,9 +1003,9 @@ struct DateAddFunction : public TimestampWithTimezoneSupport<T> {
 
     auto finalTimeStamp = addToTimestamp(
         this->toTimestamp(timestampWithTimezone), unit, (int32_t)value);
-    finalTimeStamp.toGMT(*timestampWithTimezone.template at<1>());
-    result = std::make_tuple(
-        finalTimeStamp.toMillis(), *timestampWithTimezone.template at<1>());
+    auto tzID = unpackZoneKeyId(timestampWithTimezone);
+    finalTimeStamp.toGMT(tzID);
+    result = pack(finalTimeStamp.toMillis(), tzID);
 
     return true;
   }
@@ -1121,8 +1118,8 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
     call(
         result,
         unitString,
-        this->toTimestamp(timestamp1),
-        this->toTimestamp(timestamp2));
+        this->toTimestamp(timestamp1, true),
+        this->toTimestamp(timestamp2, true));
   }
 };
 
@@ -1130,31 +1127,25 @@ template <typename T>
 struct DateFormatFunction : public TimestampWithTimezoneSupport<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  const date::time_zone* sessionTimeZone_ = nullptr;
-  std::shared_ptr<DateTimeFormatter> mysqlDateTime_;
-  bool isConstFormat_ = false;
-
-  FOLLY_ALWAYS_INLINE void setFormatter(const arg_type<Varchar>* formatString) {
-    if (formatString != nullptr) {
-      mysqlDateTime_ = buildMysqlDateTimeFormatter(
-          std::string_view(formatString->data(), formatString->size()));
-      isConstFormat_ = true;
-    }
-  }
-
   FOLLY_ALWAYS_INLINE void initialize(
       const core::QueryConfig& config,
       const arg_type<Timestamp>* /*timestamp*/,
       const arg_type<Varchar>* formatString) {
     sessionTimeZone_ = getTimeZoneFromConfig(config);
-    setFormatter(formatString);
+    if (formatString != nullptr) {
+      setFormatter(*formatString);
+      isConstFormat_ = true;
+    }
   }
 
   FOLLY_ALWAYS_INLINE void initialize(
       const core::QueryConfig& /*config*/,
       const arg_type<TimestampWithTimezone>* /*timestamp*/,
       const arg_type<Varchar>* formatString) {
-    setFormatter(formatString);
+    if (formatString != nullptr) {
+      setFormatter(*formatString);
+      isConstFormat_ = true;
+    }
   }
 
   FOLLY_ALWAYS_INLINE bool call(
@@ -1162,16 +1153,13 @@ struct DateFormatFunction : public TimestampWithTimezoneSupport<T> {
       const arg_type<Timestamp>& timestamp,
       const arg_type<Varchar>& formatString) {
     if (!isConstFormat_) {
-      mysqlDateTime_ = buildMysqlDateTimeFormatter(
-          std::string_view(formatString.data(), formatString.size()));
+      setFormatter(formatString);
     }
 
-    auto formattedResult = mysqlDateTime_->format(timestamp, sessionTimeZone_);
-    auto resultSize = formattedResult.size();
+    result.reserve(maxResultSize_);
+    const auto resultSize = mysqlDateTime_->format(
+        timestamp, sessionTimeZone_, maxResultSize_, result.data());
     result.resize(resultSize);
-    if (resultSize != 0) {
-      std::memcpy(result.data(), formattedResult.data(), resultSize);
-    }
     return true;
   }
 
@@ -1182,6 +1170,18 @@ struct DateFormatFunction : public TimestampWithTimezoneSupport<T> {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     return call(result, timestamp, formatString);
   }
+
+ private:
+  FOLLY_ALWAYS_INLINE void setFormatter(const arg_type<Varchar> formatString) {
+    mysqlDateTime_ = buildMysqlDateTimeFormatter(
+        std::string_view(formatString.data(), formatString.size()));
+    maxResultSize_ = mysqlDateTime_->maxResultSize(sessionTimeZone_);
+  }
+
+  const date::time_zone* sessionTimeZone_ = nullptr;
+  std::shared_ptr<DateTimeFormatter> mysqlDateTime_;
+  uint32_t maxResultSize_;
+  bool isConstFormat_ = false;
 };
 
 template <typename T>
@@ -1218,7 +1218,8 @@ struct DateParseFunction {
     }
 
     auto dateTimeResult =
-        format_->parse(std::string_view(input.data(), input.size()));
+        format_->parse(std::string_view(input.data(), input.size()), true)
+            .value();
 
     // Since MySql format has no timezone specifier, simply check if session
     // timezone was provided. If not, fallback to 0 (GMT).
@@ -1233,18 +1234,13 @@ template <typename T>
 struct FormatDateTimeFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  const date::time_zone* sessionTimeZone_ = nullptr;
-  std::shared_ptr<DateTimeFormatter> jodaDateTime_;
-  bool isConstFormat_ = false;
-
   FOLLY_ALWAYS_INLINE void initialize(
       const core::QueryConfig& config,
       const arg_type<Timestamp>* /*timestamp*/,
       const arg_type<Varchar>* formatString) {
     sessionTimeZone_ = getTimeZoneFromConfig(config);
     if (formatString != nullptr) {
-      jodaDateTime_ = buildJodaDateTimeFormatter(
-          std::string_view(formatString->data(), formatString->size()));
+      setFormatter(*formatString);
       isConstFormat_ = true;
     }
   }
@@ -1252,12 +1248,11 @@ struct FormatDateTimeFunction {
   FOLLY_ALWAYS_INLINE void ensureFormatter(
       const arg_type<Varchar>& formatString) {
     if (!isConstFormat_) {
-      jodaDateTime_ = buildJodaDateTimeFormatter(
-          std::string_view(formatString.data(), formatString.size()));
+      setFormatter(formatString);
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
       out_type<Varchar>& result,
       const arg_type<Timestamp>& timestamp,
       const arg_type<Varchar>& formatString) {
@@ -1265,34 +1260,40 @@ struct FormatDateTimeFunction {
 
     // TODO: We should give dateTimeFormatter a sink/ostream to prevent the
     // copy.
-    auto formattedResult = jodaDateTime_->format(timestamp, sessionTimeZone_);
-    auto resultSize = formattedResult.size();
+    result.reserve(maxResultSize_);
+    const auto resultSize = jodaDateTime_->format(
+        timestamp, sessionTimeZone_, maxResultSize_, result.data());
     result.resize(resultSize);
-    if (resultSize != 0) {
-      std::memcpy(result.data(), formattedResult.data(), resultSize);
-    }
-    return true;
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE void call(
       out_type<Varchar>& result,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone,
       const arg_type<Varchar>& formatString) {
     ensureFormatter(formatString);
 
-    const auto milliseconds = *timestampWithTimezone.template at<0>();
-    Timestamp timestamp = Timestamp::fromMillis(milliseconds);
-    int16_t timeZoneId = *timestampWithTimezone.template at<1>();
+    const auto timestamp = unpackTimestampUtc(timestampWithTimezone);
+    const auto timeZoneId = unpackZoneKeyId(timestampWithTimezone);
     auto* timezonePtr = date::locate_zone(util::getTimeZoneName(timeZoneId));
 
-    auto formattedResult = jodaDateTime_->format(timestamp, timezonePtr);
-    auto resultSize = formattedResult.size();
+    auto maxResultSize = jodaDateTime_->maxResultSize(timezonePtr);
+    result.reserve(maxResultSize);
+    auto resultSize = jodaDateTime_->format(
+        timestamp, timezonePtr, maxResultSize, result.data());
     result.resize(resultSize);
-    if (resultSize != 0) {
-      std::memcpy(result.data(), formattedResult.data(), resultSize);
-    }
-    return true;
   }
+
+ private:
+  FOLLY_ALWAYS_INLINE void setFormatter(const arg_type<Varchar>& formatString) {
+    jodaDateTime_ = buildJodaDateTimeFormatter(
+        std::string_view(formatString.data(), formatString.size()));
+    maxResultSize_ = jodaDateTime_->maxResultSize(sessionTimeZone_);
+  }
+
+  const date::time_zone* sessionTimeZone_ = nullptr;
+  std::shared_ptr<DateTimeFormatter> jodaDateTime_;
+  uint32_t maxResultSize_;
+  bool isConstFormat_ = false;
 };
 
 template <typename T>
@@ -1328,7 +1329,8 @@ struct ParseDateTimeFunction {
           std::string_view(format.data(), format.size()));
     }
     auto dateTimeResult =
-        format_->parse(std::string_view(input.data(), input.size()));
+        format_->parse(std::string_view(input.data(), input.size()), true)
+            .value();
 
     // If timezone was not parsed, fallback to the session timezone. If there's
     // no session timezone, fallback to 0 (GMT).
@@ -1336,7 +1338,7 @@ struct ParseDateTimeFunction {
         ? dateTimeResult.timezoneId
         : sessionTzID_.value_or(0);
     dateTimeResult.timestamp.toGMT(timezoneId);
-    result = std::make_tuple(dateTimeResult.timestamp.toMillis(), timezoneId);
+    result = pack(dateTimeResult.timestamp.toMillis(), timezoneId);
     return true;
   }
 };

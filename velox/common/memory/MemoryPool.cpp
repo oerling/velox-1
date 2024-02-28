@@ -19,6 +19,8 @@
 #include <signal.h>
 #include <set>
 
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/testutil/TestValue.h"
@@ -110,10 +112,11 @@ void treeMemoryUsageVisitor(
     MemoryPool* pool,
     size_t indent,
     MemoryUsageHeap& topLeafMemUsages,
+    bool skipEmptyPool,
     std::stringstream& out) {
   const MemoryPool::Stats stats = pool->stats();
-  // Avoid logging empty pools.
-  if (stats.empty()) {
+  // Avoid logging empty pools if 'skipEmptyPool' is true.
+  if (stats.empty() && skipEmptyPool) {
     return;
   }
   const MemoryUsage usage{
@@ -125,6 +128,9 @@ void treeMemoryUsageVisitor(
   out << std::string(indent, ' ') << usage.toString() << "\n";
 
   if (pool->kind() == MemoryPool::Kind::kLeaf) {
+    if (stats.empty()) {
+      return;
+    }
     static const size_t kTopNLeafMessages = 10;
     topLeafMemUsages.push(usage);
     if (topLeafMemUsages.size() > kTopNLeafMessages) {
@@ -132,11 +138,11 @@ void treeMemoryUsageVisitor(
     }
     return;
   }
-  pool->visitChildren(
-      [&, indent = indent + kCapMessageIndentSize](MemoryPool* pool) {
-        treeMemoryUsageVisitor(pool, indent, topLeafMemUsages, out);
-        return true;
-      });
+  pool->visitChildren([&, indent = indent + kCapMessageIndentSize](
+                          MemoryPool* pool) {
+    treeMemoryUsageVisitor(pool, indent, topLeafMemUsages, skipEmptyPool, out);
+    return true;
+  });
 }
 
 std::string capacityToString(int64_t capacity) {
@@ -212,7 +218,6 @@ MemoryPool::MemoryPool(
       maxCapacity_(parent_ == nullptr ? options.maxCapacity : kMaxMemory),
       trackUsage_(options.trackUsage),
       threadSafe_(options.threadSafe),
-      checkUsageLeak_(options.checkUsageLeak),
       debugEnabled_(options.debugEnabled),
       coreOnAllocationFailureEnabled_(options.coreOnAllocationFailureEnabled) {
   VELOX_CHECK(!isRoot() || !isLeaf());
@@ -261,7 +266,7 @@ MemoryPool* MemoryPool::root() const {
 }
 
 uint64_t MemoryPool::getChildCount() const {
-  folly::SharedMutex::ReadHolder guard{poolMutex_};
+  std::shared_lock guard{poolMutex_};
   return children_.size();
 }
 
@@ -269,7 +274,7 @@ void MemoryPool::visitChildren(
     const std::function<bool(MemoryPool*)>& visitor) const {
   std::vector<std::shared_ptr<MemoryPool>> children;
   {
-    folly::SharedMutex::ReadHolder guard{poolMutex_};
+    std::shared_lock guard{poolMutex_};
     children.reserve(children_.size());
     for (auto& entry : children_) {
       auto child = entry.second.lock();
@@ -302,7 +307,7 @@ std::shared_ptr<MemoryPool> MemoryPool::addLeafChild(
     std::unique_ptr<MemoryReclaimer> reclaimer) {
   CHECK_POOL_MANAGEMENT_OP(addLeafChild);
 
-  folly::SharedMutex::WriteHolder guard{poolMutex_};
+  std::unique_lock guard{poolMutex_};
   VELOX_CHECK_EQ(
       children_.count(name),
       0,
@@ -324,7 +329,7 @@ std::shared_ptr<MemoryPool> MemoryPool::addAggregateChild(
     std::unique_ptr<MemoryReclaimer> reclaimer) {
   CHECK_POOL_MANAGEMENT_OP(addAggregateChild);
 
-  folly::SharedMutex::WriteHolder guard{poolMutex_};
+  std::unique_lock guard{poolMutex_};
   VELOX_CHECK_EQ(
       children_.count(name),
       0,
@@ -343,7 +348,7 @@ std::shared_ptr<MemoryPool> MemoryPool::addAggregateChild(
 
 void MemoryPool::dropChild(const MemoryPool* child) {
   CHECK_POOL_MANAGEMENT_OP(dropChild);
-  folly::SharedMutex::WriteHolder guard{poolMutex_};
+  std::unique_lock guard{poolMutex_};
   const auto ret = children_.erase(child->name());
   VELOX_CHECK_EQ(
       ret,
@@ -377,11 +382,13 @@ MemoryPoolImpl::MemoryPoolImpl(
     Kind kind,
     std::shared_ptr<MemoryPool> parent,
     std::unique_ptr<MemoryReclaimer> reclaimer,
+    GrowCapacityCallback growCapacityCb,
     DestructionCallback destructionCb,
     const Options& options)
     : MemoryPool{name, kind, parent, options},
       manager_{memoryManager},
-      allocator_{&manager_->allocator()},
+      allocator_{manager_->allocator()},
+      growCapacityCb_(std::move(growCapacityCb)),
       destructionCb_(std::move(destructionCb)),
       debugPoolNameRegex_(debugEnabled_ ? *(debugPoolNameRegex().rlock()) : ""),
       reclaimer_(std::move(reclaimer)),
@@ -397,6 +404,10 @@ MemoryPoolImpl::MemoryPoolImpl(
       "Child memory pool {} shall only set memory reclaimer if its parent {} has also set",
       name_,
       parent_->name());
+  VELOX_CHECK(
+      isRoot() || (destructionCb_ == nullptr && growCapacityCb_ == nullptr),
+      "Only root memory pool allows to set destruction and capacity grow callbacks: {}",
+      name_);
 }
 
 MemoryPoolImpl::~MemoryPoolImpl() {
@@ -404,13 +415,26 @@ MemoryPoolImpl::~MemoryPoolImpl() {
   if (parent_ != nullptr) {
     toImpl(parent_)->dropChild(this);
   }
-  if (checkUsageLeak_) {
-    VELOX_CHECK(
-        (usedReservationBytes_ == 0) && (reservationBytes_ == 0) &&
-            (minReservationBytes_ == 0),
-        "Bad memory usage track state: {}",
-        toString());
+
+  if (isLeaf()) {
+    if (usedReservationBytes_ > 0) {
+      LOG(ERROR) << "Memory leak (Used memory): " << toString();
+      RECORD_METRIC_VALUE(
+          kMetricMemoryPoolUsageLeakBytes, usedReservationBytes_);
+    }
+
+    if (minReservationBytes_ > 0) {
+      LOG(ERROR) << "Memory leak (Reserved Memory): " << toString();
+      RECORD_METRIC_VALUE(
+          kMetricMemoryPoolReservationLeakBytes, minReservationBytes_);
+    }
   }
+  VELOX_DCHECK(
+      (usedReservationBytes_ == 0) && (reservationBytes_ == 0) &&
+          (minReservationBytes_ == 0),
+      "Bad memory usage track state: {}",
+      toString());
+
   if (destructionCb_ != nullptr) {
     destructionCb_(this);
   }
@@ -648,11 +672,11 @@ std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(
       parent,
       std::move(reclaimer),
       nullptr,
+      nullptr,
       Options{
           .alignment = alignment_,
           .trackUsage = trackUsage_,
           .threadSafe = threadSafe,
-          .checkUsageLeak = checkUsageLeak_,
           .debugEnabled = debugEnabled_,
           .coreOnAllocationFailureEnabled = coreOnAllocationFailureEnabled_});
 }
@@ -666,7 +690,7 @@ bool MemoryPoolImpl::maybeReserve(uint64_t increment) {
   const auto reservationToAdd = bits::roundUp(increment, kGrowthQuantum);
   try {
     reserve(reservationToAdd, true);
-  } catch (const std::exception& e) {
+  } catch (const std::exception&) {
     if (aborted()) {
       // NOTE: we shall throw to stop the query execution if the root memory
       // pool has been aborted. It is also unsafe to proceed as the memory abort
@@ -717,7 +741,7 @@ void MemoryPoolImpl::reserveThreadSafe(uint64_t size, bool reserveOnly) {
         "facebook::velox::memory::MemoryPoolImpl::reserveThreadSafe", this);
     try {
       incrementReservationThreadSafe(this, increment);
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
       // When race with concurrent memory reservation free, we might end up with
       // unused reservation but no used reservation if a retry memory
       // reservation attempt run into memory capacity exceeded error.
@@ -751,15 +775,13 @@ bool MemoryPoolImpl::incrementReservationThreadSafe(
     }
   }
 
-  {
-    std::lock_guard<std::mutex> l(mutex_);
-    if (maybeIncrementReservationLocked(size)) {
-      return true;
-    }
+  if (maybeIncrementReservation(size)) {
+    return true;
   }
+
   VELOX_CHECK_NULL(parent_);
 
-  if (manager_->growPool(requestor, size)) {
+  if (growCapacityCb_(requestor, size)) {
     TestValue::adjust(
         "facebook::velox::memory::MemoryPoolImpl::incrementReservationThreadSafe::AfterGrowCallback",
         this);
@@ -787,10 +809,6 @@ bool MemoryPoolImpl::incrementReservationThreadSafe(
 
 bool MemoryPoolImpl::maybeIncrementReservation(uint64_t size) {
   std::lock_guard<std::mutex> l(mutex_);
-  return maybeIncrementReservationLocked(size);
-}
-
-bool MemoryPoolImpl::maybeIncrementReservationLocked(uint64_t size) {
   if (isRoot()) {
     checkIfAborted();
 
@@ -870,9 +888,9 @@ void MemoryPoolImpl::decrementReservation(uint64_t size) noexcept {
   sanityCheckLocked();
 }
 
-std::string MemoryPoolImpl::treeMemoryUsage() const {
+std::string MemoryPoolImpl::treeMemoryUsage(bool skipEmptyPool) const {
   if (parent_ != nullptr) {
-    return parent_->treeMemoryUsage();
+    return parent_->treeMemoryUsage(skipEmptyPool);
   }
   if (FLAGS_velox_suppress_memory_capacity_exceeding_error_message) {
     return "";
@@ -891,7 +909,7 @@ std::string MemoryPoolImpl::treeMemoryUsage() const {
 
   MemoryUsageHeap topLeafMemUsages;
   visitChildren([&, indent = kCapMessageIndentSize](MemoryPool* pool) {
-    treeMemoryUsageVisitor(pool, indent, topLeafMemUsages, out);
+    treeMemoryUsageVisitor(pool, indent, topLeafMemUsages, skipEmptyPool, out);
     return true;
   });
 
@@ -937,12 +955,17 @@ MemoryReclaimer* MemoryPoolImpl::reclaimer() const {
   return reclaimer_.get();
 }
 
-bool MemoryPoolImpl::reclaimableBytes(uint64_t& reclaimableBytes) const {
-  reclaimableBytes = 0;
+std::optional<uint64_t> MemoryPoolImpl::reclaimableBytes() const {
   if (reclaimer() == nullptr) {
-    return false;
+    return std::nullopt;
   }
-  return reclaimer()->reclaimableBytes(*this, reclaimableBytes);
+
+  uint64_t reclaimableBytes = 0;
+  if (!reclaimer()->reclaimableBytes(*this, reclaimableBytes)) {
+    return std::nullopt;
+  }
+
+  return reclaimableBytes;
 }
 
 uint64_t MemoryPoolImpl::reclaim(

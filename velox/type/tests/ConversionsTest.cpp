@@ -42,13 +42,14 @@ class ConversionsTest : public testing::Test {
 
     auto cast = [&](TFrom input) -> TTo {
       if (truncate & legacyCast) {
-        return Converter<toTypeKind, void, true, true>::cast(input);
+        return Converter<toTypeKind, void, TruncateLegacyCastPolicy>::cast(
+            input);
       } else if (!truncate & legacyCast) {
-        return Converter<toTypeKind, void, false, true>::cast(input);
+        return Converter<toTypeKind, void, LegacyCastPolicy>::cast(input);
       } else if (truncate & !legacyCast) {
-        return Converter<toTypeKind, void, true, false>::cast(input);
+        return Converter<toTypeKind, void, TruncateCastPolicy>::cast(input);
       } else {
-        return Converter<toTypeKind, void, false, false>::cast(input);
+        return Converter<toTypeKind, void, DefaultCastPolicy>::cast(input);
       }
     };
 
@@ -485,6 +486,7 @@ TEST_F(ConversionsTest, toIntegeralTypes) {
             "0.",
             ".",
             "-.",
+            "+1",
         },
         {
             1,
@@ -496,12 +498,9 @@ TEST_F(ConversionsTest, toIntegeralTypes) {
             0,
             0,
             0,
+            1,
         },
         /*truncate*/ true);
-
-    // When TRUNCATE = true, invalid cases.
-    testConversion<std::string, int8_t>(
-        {"1234567", "+1"}, {}, /*truncate*/ true, false, /*expectError*/ true);
     testConversion<std::string, int64_t>(
         {
             "1a",

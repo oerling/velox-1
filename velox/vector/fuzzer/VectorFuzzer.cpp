@@ -436,6 +436,14 @@ VectorPtr VectorFuzzer::fuzzConstant(const TypePtr& type, vector_size_t size) {
 
   ScopedOptions restorer(this);
   opts_.allowLazyVector = false;
+  // Have a lower cap on repeated sizes inside constant. Otherwise will OOM when
+  // flattening.
+  if (opts_.maxConstantContainerSize.has_value()) {
+    opts_.containerLength = std::min<int32_t>(
+        opts_.maxConstantContainerSize.value(), opts_.containerLength);
+    opts_.complexElementsMaxSize = std::min<int32_t>(
+        opts_.maxConstantContainerSize.value(), opts_.complexElementsMaxSize);
+  }
   return BaseVector::wrapInConstant(
       size, constantIndex, fuzz(type, innerVectorSize));
 }
@@ -990,15 +998,15 @@ VectorPtr VectorLoaderWrap::makeEncodingPreservedCopy(
       [&](auto row) { rawIndices[row] = decodedIndices[row]; });
 
   BufferPtr nulls = nullptr;
-  if (decoded.nulls() || vectorSize > rows.end()) {
+  if (decoded.nulls(&rows) || vectorSize > rows.end()) {
     // We fill [rows.end(), vectorSize) with nulls then copy nulls for selected
     // baseRows.
     nulls = allocateNulls(vectorSize, vector_->pool(), bits::kNull);
     if (baseRows.hasSelections()) {
-      if (decoded.nulls()) {
+      if (decoded.nulls(&rows)) {
         std::memcpy(
             nulls->asMutable<uint64_t>(),
-            decoded.nulls(),
+            decoded.nulls(&rows),
             bits::nbytes(rows.end()));
       } else {
         bits::fillBits(

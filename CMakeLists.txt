@@ -62,6 +62,11 @@ option(
   VELOX_BUILD_MINIMAL
   "Build a minimal set of components only. This will override other build options."
   OFF)
+option(
+  VELOX_BUILD_MINIMAL_WITH_DWIO
+  "Build a minimal set of components, including DWIO (file format readers/writers).
+   This will override other build options."
+  OFF)
 
 # option() always creates a BOOL variable so we have to use a normal cache
 # variable with STRING type for this option.
@@ -75,7 +80,6 @@ set(VELOX_DEPENDENCY_SOURCE
       STRING
       "Default source for all dependencies with source builds enabled: AUTO SYSTEM BUNDLED."
 )
-option(VELOX_ENABLE_DUCKDB "Build duckDB to enable differential testing." ON)
 option(VELOX_ENABLE_EXEC "Build exec." ON)
 option(VELOX_ENABLE_AGGREGATES "Build aggregates." ON)
 option(VELOX_ENABLE_HIVE_CONNECTOR "Build Hive connector." ON)
@@ -83,7 +87,6 @@ option(VELOX_ENABLE_TPCH_CONNECTOR "Build TPC-H connector." ON)
 option(VELOX_ENABLE_PRESTO_FUNCTIONS "Build Presto SQL functions." ON)
 option(VELOX_ENABLE_SPARK_FUNCTIONS "Build Spark SQL functions." ON)
 option(VELOX_ENABLE_EXPRESSION "Build expression." ON)
-option(VELOX_ENABLE_PARSE "Build parser used for unit tests." ON)
 option(VELOX_ENABLE_EXAMPLES
        "Build examples. This will enable VELOX_ENABLE_EXPRESSION automatically."
        OFF)
@@ -98,10 +101,11 @@ option(VELOX_ENABLE_PARQUET "Enable Parquet support" OFF)
 option(VELOX_ENABLE_ARROW "Enable Arrow support" OFF)
 option(VELOX_ENABLE_REMOTE_FUNCTIONS "Enable remote function support" OFF)
 option(VELOX_ENABLE_CCACHE "Use ccache if installed." ON)
+option(VELOX_ENABLE_CODEGEN_SUPPORT "Enable experimental codegen support." OFF)
 
 option(VELOX_BUILD_TEST_UTILS "Builds Velox test utilities" OFF)
+option(VELOX_BUILD_VECTOR_TEST_UTILS "Builds Velox vector test utilities" OFF)
 option(VELOX_BUILD_PYTHON_PACKAGE "Builds Velox Python bindings" OFF)
-option(VELOX_BUILD_BENCHMARKS "Builds Velox benchmarks" OFF)
 option(
   VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND
   "make buildPartitionBounds_ a vector int64 instead of int32 to avoid integer overflow when the hashtable has billions of records"
@@ -117,9 +121,7 @@ if(${VELOX_BUILD_MINIMAL})
   # Enable and disable components for velox base build
   set(VELOX_BUILD_TESTING OFF)
   set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_DUCKDB OFF)
   set(VELOX_ENABLE_EXPRESSION ON)
-  set(VELOX_ENABLE_PARSE OFF)
   set(VELOX_ENABLE_EXEC OFF)
   set(VELOX_ENABLE_AGGREGATES OFF)
   set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
@@ -130,15 +132,13 @@ if(${VELOX_BUILD_MINIMAL})
   set(VELOX_ENABLE_GCS OFF)
   set(VELOX_ENABLE_ABFS OFF)
   set(VELOX_ENABLE_SUBSTRAIT OFF)
-  set(VELOX_CODEGEN_SUPPORT OFF)
+  set(VELOX_ENABLE_CODEGEN_SUPPORT OFF)
 endif()
 
 if(${VELOX_BUILD_TESTING})
   # Enable all components to build testing binaries
   set(VELOX_ENABLE_PRESTO_FUNCTIONS ON)
-  set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_EXPRESSION ON)
-  set(VELOX_ENABLE_PARSE ON)
   set(VELOX_ENABLE_EXEC ON)
   set(VELOX_ENABLE_AGGREGATES ON)
   set(VELOX_ENABLE_HIVE_CONNECTOR ON)
@@ -147,23 +147,23 @@ if(${VELOX_BUILD_TESTING})
   set(VELOX_ENABLE_EXAMPLES ON)
 endif()
 
-if(${VELOX_ENABLE_EXAMPLES})
-  set(VELOX_ENABLE_EXPRESSION ON)
+if(${VELOX_ENABLE_BENCHMARKS})
+  set(VELOX_ENABLE_BENCHMARKS_BASIC ON)
 endif()
 
-if(${VELOX_BUILD_BENCHMARKS})
-  set(VELOX_ENABLE_BENCHMARKS ON)
-  set(VELOX_ENABLE_BENCHMARKS_BASIC ON)
+if(VELOX_ENABLE_BENCHMARKS_BASIC)
+  set(VELOX_BUILD_TEST_UTILS ON)
+endif()
+
+if(VELOX_BUILD_TESTING OR VELOX_BUILD_TEST_UTILS)
+  set(cpr_SOURCE BUNDLED)
+  resolve_dependency(cpr)
   set(VELOX_ENABLE_DUCKDB ON)
   set(VELOX_ENABLE_PARSE ON)
-  set(VELOX_ENABLE_PARQUET ON)
-  set(VELOX_BUILD_TEST_UTILS ON)
-  set(VELOX_BUILD_TESTING OFF)
-  set(VELOX_ENABLE_EXAMPLES OFF)
-  set(VELOX_ENABLE_GCS OFF)
-  set(VELOX_ENABLE_ABFS OFF)
-  set(VELOX_ENABLE_SUBSTRAIT OFF)
-  set(VELOX_CODEGEN_SUPPORT OFF)
+endif()
+
+if(${VELOX_ENABLE_EXAMPLES})
+  set(VELOX_ENABLE_EXPRESSION ON)
 endif()
 
 if(${VELOX_BUILD_PYTHON_PACKAGE})
@@ -182,9 +182,14 @@ if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_ENABLE_GCS OFF)
   set(VELOX_ENABLE_ABFS OFF)
   set(VELOX_ENABLE_SUBSTRAIT OFF)
-  set(VELOX_CODEGEN_SUPPORT OFF)
+  set(VELOX_ENABLE_CODEGEN_SUPPORT OFF)
   set(VELOX_ENABLE_BENCHMARKS_BASIC OFF)
+  set(VELOX_ENABLE_BENCHMARKS OFF)
 endif()
+
+# We look for OpenSSL here to cache the result enforce the version across our
+# dependencies.
+find_package(OpenSSL REQUIRED)
 
 if(VELOX_ENABLE_CCACHE
    AND NOT CMAKE_C_COMPILER_LAUNCHER
@@ -258,16 +263,8 @@ if(VELOX_ENABLE_PARQUET)
   set(VELOX_ENABLE_ARROW ON)
 endif()
 
-if(VELOX_ENABLE_REMOTE_FUNCTIONS)
-  # TODO: Move this to use resolve_dependency(). For some reason, FBThrift
-  # requires clients to explicitly install fizz and wangle.
-  find_package(fizz CONFIG REQUIRED)
-  find_package(wangle CONFIG REQUIRED)
-  find_package(FBThrift CONFIG REQUIRED)
-endif()
-
 # define processor variable for conditional compilation
-if(${VELOX_CODEGEN_SUPPORT})
+if(${VELOX_ENABLE_CODEGEN_SUPPORT})
   add_compile_definitions(CODEGEN_ENABLED=1)
 endif()
 
@@ -428,9 +425,12 @@ if(${VELOX_ENABLE_DUCKDB})
 endif()
 
 set_source(fmt)
-resolve_dependency(fmt)
+resolve_dependency(fmt 9.0.0)
 
-if(NOT ${VELOX_BUILD_MINIMAL})
+if(${VELOX_BUILD_MINIMAL_WITH_DWIO} OR ${VELOX_ENABLE_HIVE_CONNECTOR})
+  # DWIO needs all sorts of stream compression libraries.
+  #
+  # TODO: make these optional and pluggable.
   find_package(ZLIB REQUIRED)
   find_package(lz4 REQUIRED)
   find_package(lzo2 REQUIRED)
@@ -456,12 +456,20 @@ if(${VELOX_BUILD_PYTHON_PACKAGE})
 endif()
 
 set_source(simdjson)
-resolve_dependency(simdjson 3.1.5)
+resolve_dependency(simdjson)
 
 # Locate or build folly.
 add_compile_definitions(FOLLY_HAVE_INT128_T=1)
 set_source(folly)
 resolve_dependency(folly)
+
+if(VELOX_ENABLE_REMOTE_FUNCTIONS)
+  # TODO: Move this to use resolve_dependency(). For some reason, FBThrift
+  # requires clients to explicitly install fizz and wangle.
+  find_package(fizz CONFIG REQUIRED)
+  find_package(wangle CONFIG REQUIRED)
+  find_package(FBThrift CONFIG REQUIRED)
+endif()
 
 if(DEFINED FOLLY_BENCHMARK_STATIC_LIB)
   set(FOLLY_BENCHMARK ${FOLLY_BENCHMARK_STATIC_LIB})
@@ -469,7 +477,11 @@ else()
   set(FOLLY_BENCHMARK Folly::follybenchmark)
 endif()
 
-if(NOT ${VELOX_BUILD_MINIMAL})
+# DWIO (ORC/DWRF), Substrait and experimental/codegen depend on protobuf.
+if(${VELOX_BUILD_MINIMAL_WITH_DWIO}
+   OR ${VELOX_ENABLE_HIVE_CONNECTOR}
+   OR ${VELOX_ENABLE_SUBSTRAIT}
+   OR ${VELOX_ENABLE_CODEGEN_SUPPORT})
   # Locate or build protobuf.
   set_source(Protobuf)
   resolve_dependency(Protobuf 3.21 EXACT)
@@ -480,10 +492,10 @@ endif()
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
   set(FILESYSTEM "stdc++fs")
 
-  # Ensure we have gcc at least 8+.
-  if(CMAKE_CXX_COMPILER_VERSION LESS 8.0)
+  # Ensure we have gcc at least 9+.
+  if(CMAKE_CXX_COMPILER_VERSION LESS 9.0)
     message(
-      FATAL_ERROR "VELOX requires gcc > 8. Found ${CMAKE_CXX_COMPILER_VERSION}")
+      FATAL_ERROR "VELOX requires gcc > 9. Found ${CMAKE_CXX_COMPILER_VERSION}")
   endif()
 
   # Find Threads library
@@ -546,13 +558,8 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
       PARENT_SCOPE)
 endif()
 
-set(xsimd_SOURCE BUNDLED)
-resolve_dependency(xsimd)
-
-if(VELOX_BUILD_TESTING OR VELOX_BUILD_TEST_UTILS)
-  set(cpr_SOURCE BUNDLED)
-  resolve_dependency(cpr)
-endif()
+set_source(xsimd)
+resolve_dependency(xsimd 10.0.0)
 
 if(VELOX_BUILD_TESTING)
   set(BUILD_TESTING ON)

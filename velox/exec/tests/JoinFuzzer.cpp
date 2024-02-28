@@ -132,7 +132,7 @@ class JoinFuzzer {
   size_t currentSeed_{0};
 
   std::shared_ptr<memory::MemoryPool> rootPool_{
-      memory::defaultMemoryManager().addRootPool()};
+      memory::memoryManager()->addRootPool()};
   std::shared_ptr<memory::MemoryPool> pool_{rootPool_->addLeafChild("leaf")};
   VectorFuzzer vectorFuzzer_;
 };
@@ -140,10 +140,15 @@ class JoinFuzzer {
 JoinFuzzer::JoinFuzzer(size_t initialSeed)
     : vectorFuzzer_{getFuzzerOptions(), pool_.get()} {
   filesystems::registerLocalFileSystem();
+
+  // Make sure not to run out of open file descriptors.
+  const std::unordered_map<std::string, std::string> hiveConfig = {
+      {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, std::make_shared<core::MemConfig>());
+          ->newConnector(
+              kHiveConnectorId, std::make_shared<core::MemConfig>(hiveConfig));
   connector::registerConnector(hiveConnector);
 
   seed(initialSeed);

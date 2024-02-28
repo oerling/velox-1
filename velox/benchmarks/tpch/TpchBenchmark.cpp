@@ -1,4 +1,4 @@
-bv /*
+/*
     * Copyright (c) Facebook, Inc. and its affiliates.
     *
     * Licensed under the Apache License, Version 2.0 (the "License");
@@ -175,9 +175,8 @@ DEFINE_int32(
     512 << 10,
     "Maximum distance in bytes in which coalesce will combine requests");
 
-<<<<<<< HEAD
 DEFINE_bool(use_wave, false, "Use Wave offload");
-=======
+
 DEFINE_int32(
     parquet_prefetch_rowgroups,
     1,
@@ -186,7 +185,6 @@ DEFINE_int32(
     "the current one");
 
 DEFINE_int32(split_preload_per_driver, 2, "Prefetch split metadata");
->>>>>>> main
 
 struct RunStats {
   std::map<std::string, std::string> flags;
@@ -225,11 +223,13 @@ class TpchBenchmark {
  public:
   void initialize() {
     if (FLAGS_cache_gb) {
+      memory::MemoryManagerOptions options;
       int64_t memoryBytes = FLAGS_cache_gb * (1LL << 30);
-      memory::MmapAllocator::Options options;
-      options.capacity = memoryBytes;
+      options.useMmapAllocator = true;
+      options.allocatorCapacity = memoryBytes;
       options.useMmapArena = true;
       options.mmapArenaCapacityRatio = 1;
+      memory::MemoryManager::testingSetInstance(options);
       std::unique_ptr<cache::SsdCache> ssdCache;
       if (FLAGS_ssd_cache_gb) {
         constexpr int32_t kNumSsdShards = 16;
@@ -243,14 +243,11 @@ class TpchBenchmark {
             static_cast<uint64_t>(FLAGS_ssd_checkpoint_interval_gb) << 30);
       }
 
-      allocator_ = std::make_shared<memory::MmapAllocator>(options);
-      cache_ =
-          cache::AsyncDataCache::create(allocator_.get(), std::move(ssdCache));
+      cache_ = cache::AsyncDataCache::create(
+          memory::memoryManager()->allocator(), std::move(ssdCache));
       cache::AsyncDataCache::setInstance(cache_.get());
-      memory::MemoryAllocator::setDefaultInstance(allocator_.get());
-      memory::MemoryManagerOptions mmOptions;
-      mmOptions.capacity = memoryBytes;
-      memory::MemoryManager::getInstance(mmOptions);
+    } else {
+      memory::MemoryManager::testingSetInstance({});
     }
     functions::prestosql::registerAllScalarFunctions();
     aggregate::prestosql::registerAllAggregateFunctions();

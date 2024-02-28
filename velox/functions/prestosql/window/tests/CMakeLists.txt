@@ -48,7 +48,7 @@ add_test(
 target_link_libraries(velox_windows_value_test
                       ${CMAKE_WINDOW_TEST_LINK_LIBRARIES})
 
-add_executable(velox_windows_agg_test SimpleAggregatesTest.cpp
+add_executable(velox_windows_agg_test AggregateWindowTest.cpp
                                       ${CMAKE_WINDOW_TEST_MAIN_FILES})
 
 add_test(
@@ -57,15 +57,4 @@ add_test(
   WORKING_DIRECTORY .)
 
 target_link_libraries(velox_windows_agg_test
-                      ${CMAKE_WINDOW_TEST_LINK_LIBRARIES})
-
-add_executable(velox_windows_util_test WindowFunctionRegTest.cpp
-                                       ${CMAKE_WINDOW_TEST_MAIN_FILES})
-
-add_test(
-  NAME velox_windows_util_test
-  COMMAND velox_windows_util_test
-  WORKING_DIRECTORY .)
-
-target_link_libraries(velox_windows_util_test
                       ${CMAKE_WINDOW_TEST_LINK_LIBRARIES})

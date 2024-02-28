@@ -27,7 +27,7 @@ class JoinBridge;
 class LocalExchangeMemoryManager;
 class MergeSource;
 class MergeJoinSource;
-class Split;
+struct Split;
 class SpillOperatorGroup;
 
 /// Corresponds to Presto TaskState, needed for reporting query completion.
@@ -64,6 +64,9 @@ struct SplitsStore {
 
 /// Structure contains the current info on splits for a particular plan node.
 struct SplitsState {
+  /// True if the source node is a table scan.
+  bool sourceIsTableScan{false};
+
   /// Plan node-wide 'no more splits'.
   bool noMoreSplits{false};
 

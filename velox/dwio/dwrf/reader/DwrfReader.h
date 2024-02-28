@@ -149,6 +149,8 @@ class DwrfRowReader : public StrideIndexProvider,
   std::shared_ptr<StripeDictionaryCache> stripeDictionaryCache_;
   dwio::common::RowReaderOptions options_;
   std::shared_ptr<folly::Executor> executor_;
+  std::function<void(uint64_t)> decodingTimeUsCallback_;
+  std::function<void(uint16_t)> stripeCountCallback_;
 
   struct PrefetchedStripeState {
     bool preloaded;
@@ -342,6 +344,10 @@ class DwrfReader : public dwio::common::Reader {
       std::unique_ptr<dwio::common::BufferedInput> input,
       const dwio::common::ReaderOptions& options);
 
+  ReaderBase* testingReaderBase() const {
+    return readerBase_.get();
+  }
+
  private:
   // Ensures that files column names match the ones from the table schema using
   // column indices.
@@ -350,8 +356,6 @@ class DwrfReader : public dwio::common::Reader {
  private:
   std::shared_ptr<ReaderBase> readerBase_;
   const dwio::common::ReaderOptions options_;
-
-  friend class E2EEncryptionTest;
 };
 
 class DwrfReaderFactory : public dwio::common::ReaderFactory {
