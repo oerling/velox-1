@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/exec/Operator.h"
 #include "velox/exec/Driver.h"
+#include "velox/exec/Operator.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 
 namespace facebook::velox::wave {

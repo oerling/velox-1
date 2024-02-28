@@ -20,12 +20,8 @@
 
 namespace facebook::velox::wave {
 
-
-
-
-
 TableScan::TableScan(
-		     CompileContext& context,
+    CompileContext& context,
     DriverCtx* driverCtx,
     std::shared_ptr<const core::TableScanNode> tableScanNode)
     : SourceOperator(
@@ -279,9 +275,6 @@ void TableScan::addDynamicFilter(
   }
 }
 
+} // namespace facebook::velox::wave
 }
-
-}
-
-
 }
