@@ -16,7 +16,7 @@
 
 #include "velox/experimental/wave/exec/FileFormat.h"
 
-namespace facebook::velox::wave {
+namespace facebook::velox::wave::test {
 
 std::mutex Table::mutex_;
 std::unordered_map<std::string, std::unique_ptr<Table>> Table::allTables_;
@@ -212,5 +212,16 @@ void Writer::finalize(std::string tableName) {
   auto table = Table::getTable(tableName, true);
   table->addStripes(std::move(stripes_), pool_);
 }
+
+  //static
+  void const Table* Table::defineTable(const std::string& name, std::vector<RowVectorPtr>& data) {
+    dropTable(name);
+    Writer writer(rows[0]->size();
+    for (auto& vector : rows) {
+      writer.append(row);
+    }
+    writer.finalize(name);
+    }
+  }    
 
 } // namespace facebook::velox::wave

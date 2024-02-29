@@ -20,7 +20,7 @@
 #include "velox/vector/ComplexVector.h"
 
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
-namespace facebook::velox::wave {
+namespace facebook::velox::wave::test {
 
 enum Encoding { kFlat, kDict };
 
@@ -119,6 +119,7 @@ class Writer {
 
   /// Appends a batch of data.
   void append(RowVectorPtr data);
+
   // Finishes encoding data, makes the table ready to read.
   void finalize(std::string tableName);
 
@@ -137,10 +138,14 @@ struct WaveTestConnectorSplit : public connector::ConnectorSplit {
   Stripe* stripe;
 };
 
-class Table {
+  using SplitVector =     std::vector<std::shared_ptr<ConnectorSplit>>;
+
+  class Table {
  public:
   Table(const std::string name) : name_(name) {}
 
+    static const Table* defineTable(const std::string& name, std::vector<RowVectorPtr>& data);
+    
   static Table* getTable(const std::string& name, bool makeNew = false) {
     std::lock_guard<std::mutex> l(mutex_);
     auto it = allTables_.find(name);
@@ -155,6 +160,12 @@ class Table {
     }
     return it->second.get();
   }
+
+  static dropTable(const std::string& name) {
+    std::lock_guard<std::mutex> l(mutex_);
+    allTables_.erase(name);
+  }
+
   void addStripes(
       std::vector<std::unique_ptr<Stripe>>&& stripes,
       std::shared_ptr<memory::MemoryPool> pool) {
@@ -177,6 +188,15 @@ class Table {
     return stripes_[index].get();
   }
 
+    SplitVector splits() const {
+      SplitVector result;
+    std::lock_guard<std::mutex> l(mutex_);
+    for (auto split : splits_) {
+      result.push_back(std::make_shared<WaveTestConnectorSplit>(stripe.get()));
+    }
+    return result;
+  }
+  
  private:
   static std::mutex mutex_;
   static std::unordered_map<std::string, std::unique_ptr<Table>> allTables_;

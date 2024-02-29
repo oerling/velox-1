@@ -26,18 +26,12 @@ add_library(
   Wave.cpp
   Project.cpp
   TableScan.cpp
-  WaveConnector.cpp
-  WaveTestDataSource.cpp)
+)
 
 set_target_properties(velox_wave_exec PROPERTIES CUDA_ARCHITECTURES native)
 
 target_link_libraries(velox_wave_exec velox_wave_vector velox_wave_common
                       velox_exception velox_common_base velox_exec)
-
-add_library(velox_wave_format FileFormat.cpp)
-
-target_link_libraries(velox_wave_format velox_wave_vector velox_wave_common
-                      velox_exception velox_common_base velox_vector)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
