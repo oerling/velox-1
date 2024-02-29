@@ -15,9 +15,9 @@
  */
 
 
-#include "velox/experimental/wave/WaveConnector.h"
+#include "velox/experimental/wave/tests/utils/WaveConnector.h"
 
-namespace facebook::velox::wave {
+namespace facebook::velox::wave::test {
 
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<WaveConnectorFactory>())
 

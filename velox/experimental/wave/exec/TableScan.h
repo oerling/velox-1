@@ -29,29 +29,24 @@ namespace facebook::velox::wave {
   TableScan(
 	    CompileState& state,
 	    int32_t operatorId,
-      DriverCtx* driverCtx,
       std::shared_ptr<const core::TableScanNode> tableScanNode);
 
-  virtual int32_t canAdvance() {
+    int32_t canAdvance() override {
     if (!dataSource_) {
       return 0;
     }
-    return dataSource_->canAdvance();
+    return waveDataSource_->canAdvance();
     }
 
-  virtual void schedule(WaveStream& stream, int32_t maxRows = 0);
+    void schedule(WaveStream& stream, int32_t maxRows = 0) override {
+      waveDataSource_->schedule(stream, maxRows);
+    }
 
   virtual bool isFinished() const {
     VELOX_FAIL("Override for source or blocking operator");
   }
 
-  BlockingReason isBlocked(ContinueFuture* future) override {
-    if (blockingFuture_.valid()) {
-      *future = std::move(blockingFuture_);
-      return blockingReason_;
-    }
-    return BlockingReason::kNotBlocked;
-  }
+    BlockingReason isBlocked(ContinueFuture* future) override;
 
   bool isFinished() override;
 
@@ -100,7 +95,9 @@ namespace facebook::velox::wave {
   std::unordered_map<column_index_t, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
 
-  std::shared_ptr<WaveDataSource> dataSource_;
+      std::shared_ptr<DataSource> dataSource_;
+
+  std::shared_ptr<WaveDataSource> waveDataSource_;
 
   int32_t maxPreloadedSplits_{0};
 
@@ -131,10 +128,6 @@ namespace facebook::velox::wave {
 
   // String shown in ExceptionContext inside DataSource and LazyVector loading.
   std::string debugString_;
-
-  // Holds the current status of the operator. Used when debugging to understand
-  // what operator is doing.
-  std::atomic<const char*> curStatus_{""};
 
   // The last value of the IO wait time of 'this' that has been added to the
   // global static 'ioWaitNanos_'.

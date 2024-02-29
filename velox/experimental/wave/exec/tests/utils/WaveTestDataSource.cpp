@@ -13,32 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/connectors/Connector.h"
-
-#include "velox/common/time/Timer.h"
-#include "velox/exec/Task.h"
-#include "velox/expression/Expr.h"
-
-namespace facebook::velox::wave {
-
-  /// A delegate produced by a regular Velox connector::DataSource for reading its particular file format on GPU.
-  class WaveDataSource :  {
- public:
-  virtual void addDynamicFilter(
-      column_index_t outputChannel,
-      const std::shared_ptr<common::Filter>& filter) = 0;
 
 
-    virtual int32_t canAdvance() = 0;  
+#include "velox/experimental/wave/exec/tests/utils/WaveTestdataSource.h"
 
-  virtual void schedule(WaveStream& stream, int32_t maxRows = 0) = 0;
+namespace facebook::velox::wave::test {
 
-    virtual bool isFinished() const = 0;
-
-    
   
-  };
+  int32_t canAdvance() overide {
+    return 0;
+  }
+
+  void schedule(WaveStream& stream, int32_t maxRows = 0) {
+    VELOX_NYI();
+  }
+
+  bool isFinished() const {
+    return false;
+  }
+
+
+
 }
-
-
-

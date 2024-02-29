@@ -19,8 +19,8 @@
 
 namespace facebook::velox::wave {
 
-WaveOperator::WaveOperator(CompileState& state, const RowTypePtr& type)
-    : id_(state.numOperators()), outputType_(type) {
+  WaveOperator::WaveOperator(CompileState& state, const RowTypePtr& type, const std::string planNodeId)
+    : id_(state.numOperators()), outputType_(type), planNodeId_(planNodeId) {
   definesSubfields(state, outputType_);
 }
 

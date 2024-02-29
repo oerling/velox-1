@@ -18,9 +18,8 @@
 
 #include "velox/connectors/Connector.h"
 
-namespace facebook::velox::wave {
-
-  
+namespace facebook::velox::wave::test {
+ 
 
   /// Connector, ConnectorFactory and DataSource for Wave memory mock tables.
   class WaveMockDataSource : public connector::DataSource {

@@ -269,7 +269,7 @@ void CompileState::addFilterProject(
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
-      std::make_unique<Project>(*this, outputType, operands, levels));
+		       std::make_unique<Project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -325,6 +325,11 @@ bool CompileState::addOperator(
     VELOX_CHECK_NOT_NULL(node);
     operators_.push_back(std::make_unique<Aggregation>(
         *this, *node, aggregateFunctionRegistry()));
+    outputType = node->outputType();
+  } else if (name == "TableScan") {
+    operators_.push_back(std::make_unique<TableScan>(
+
+						     *this, operators_.size(), std::static_pointer_cast<TableScanNode>(node)));
     outputType = node->outputType();
   } else {
     return false;

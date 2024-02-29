@@ -20,19 +20,18 @@
 
 namespace facebook::velox::wave {
 
+  using exec::BlockingReason;
+  
 TableScan::TableScan(
     CompileContext& context,
-    DriverCtx* driverCtx,
     std::shared_ptr<const core::TableScanNode> tableScanNode)
     : WaveOperator(
-          driverCtx,
+		   state,
           tableScanNode->outputType(),
-          operatorId,
-          tableScanNode->id(),
-          "TableScan"),
+		   tableScanNode->id()),
       tableHandle_(tableScanNode->tableHandle()),
       columnHandles_(tableScanNode->assignments()),
-      driverCtx_(driverCtx),
+      driverCtx_(state->driver().driverCtx()),
       connectorPool_(driverCtx_->task->addConnectorPoolLocked(
           planNodeId(),
           driverCtx_->pipelineId,
@@ -45,13 +44,19 @@ TableScan::TableScan(
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 
-RowVectorPtr TableScan::getOutput() {
-  if (noMoreSplits_) {
-    return nullptr;
+
+  BlockingReason TableScan::isBlocked(ContinueFuture* future) override {
+    if (!dataSource_ || needNewSplit_) {
+      nextSplit(future)
+    }
+    if (blockingFuture_.valid()) {
+      *future = std::move(blockingFuture_);
+      return blockingReason_;
+    }
+    return BlockingReason::kNotBlocked;
   }
 
-  for (;;) {
-    if (needNewSplit_) {
+  BlockingReason   TableScan::nextSplit(ContinueFuture* future) {
       exec::Split split;
       blockingReason_ = driverCtx_->task->getSplitOrFuture(
           driverCtx_->splitGroupId,
@@ -103,12 +108,25 @@ RowVectorPtr TableScan::getOutput() {
             tableHandle_,
             columnHandles_,
             connectorQueryCtx_.get());
+	waveDataSource_ = dataSource_->toWaveDataSource();
         for (const auto& entry : pendingDynamicFilters_) {
-          dataSource_->addDynamicFilter(entry.first, entry.second);
+          waveDataSource_->addDynamicFilter(entry.first, entry.second);
         }
         pendingDynamicFilters_.clear();
       }
 
+
+  }
+
+  
+RowVectorPtr TableScan::getOutput() {
+  if (noMoreSplits_) {
+    return nullptr;
+  }
+
+  for (;;) {
+    if (needNewSplit_) {
+      !!;
       debugString_ = fmt::format(
           "Split [{}] Task {}",
           connectorSplit->toString(),

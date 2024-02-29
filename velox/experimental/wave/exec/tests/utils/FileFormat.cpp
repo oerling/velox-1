@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/FileFormat.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 
 namespace facebook::velox::wave::test {
 
