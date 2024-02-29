@@ -1,8 +1,4 @@
 
 #include "velox/experimental/wave/exec/WaveDataSource.h"
 
-namespace facebook::velox::wave {
-
-}
-
-
+namespace facebook::velox::wave {}

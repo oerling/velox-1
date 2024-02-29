@@ -19,34 +19,34 @@
 
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
-#include "velox/expression/Expr.h"
 #include "velox/experimental/wave/WaveDataSource.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
 
-  class TableScan : public WaveOperator {
+class TableScan : public WaveOperator {
  public:
   TableScan(
-	    CompileState& state,
-	    int32_t operatorId,
+      CompileState& state,
+      int32_t operatorId,
       std::shared_ptr<const core::TableScanNode> tableScanNode);
 
-    int32_t canAdvance() override {
+  int32_t canAdvance() override {
     if (!dataSource_) {
       return 0;
     }
     return waveDataSource_->canAdvance();
-    }
+  }
 
-    void schedule(WaveStream& stream, int32_t maxRows = 0) override {
-      waveDataSource_->schedule(stream, maxRows);
-    }
+  void schedule(WaveStream& stream, int32_t maxRows = 0) override {
+    waveDataSource_->schedule(stream, maxRows);
+  }
 
   virtual bool isFinished() const {
     VELOX_FAIL("Override for source or blocking operator");
   }
 
-    BlockingReason isBlocked(ContinueFuture* future) override;
+  BlockingReason isBlocked(ContinueFuture* future) override;
 
   bool isFinished() override;
 
@@ -95,7 +95,7 @@ namespace facebook::velox::wave {
   std::unordered_map<column_index_t, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
 
-      std::shared_ptr<DataSource> dataSource_;
+  std::shared_ptr<DataSource> dataSource_;
 
   std::shared_ptr<WaveDataSource> waveDataSource_;
 
@@ -133,4 +133,4 @@ namespace facebook::velox::wave {
   // global static 'ioWaitNanos_'.
   uint64_t lastIoWaitNanos_{0};
 };
-}
+} // namespace facebook::velox::wave

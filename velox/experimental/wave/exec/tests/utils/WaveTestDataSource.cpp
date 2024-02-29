@@ -14,24 +14,20 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/exec/tests/utils/WaveTestdataSource.h"
 
 namespace facebook::velox::wave::test {
 
-  
-  int32_t canAdvance() overide {
-    return 0;
-  }
-
-  void schedule(WaveStream& stream, int32_t maxRows = 0) {
-    VELOX_NYI();
-  }
-
-  bool isFinished() const {
-    return false;
-  }
-
-
-
+int32_t canAdvance() overide {
+  return 0;
 }
+
+void schedule(WaveStream& stream, int32_t maxRows = 0) {
+  VELOX_NYI();
+}
+
+bool isFinished() const {
+  return false;
+}
+
+} // namespace facebook::velox::wave::test

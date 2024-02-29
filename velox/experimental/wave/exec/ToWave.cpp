@@ -269,7 +269,7 @@ void CompileState::addFilterProject(
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
-		       std::make_unique<Project>(*this, outputType, operands, levels));
+      std::make_unique<Project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -329,7 +329,9 @@ bool CompileState::addOperator(
   } else if (name == "TableScan") {
     operators_.push_back(std::make_unique<TableScan>(
 
-						     *this, operators_.size(), std::static_pointer_cast<TableScanNode>(node)));
+        *this,
+        operators_.size(),
+        std::static_pointer_cast<TableScanNode>(node)));
     outputType = node->outputType();
   } else {
     return false;

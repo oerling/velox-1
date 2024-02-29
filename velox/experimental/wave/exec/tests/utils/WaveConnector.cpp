@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/tests/utils/WaveConnector.h"
 
 namespace facebook::velox::wave::test {

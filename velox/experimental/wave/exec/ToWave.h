@@ -34,7 +34,7 @@ class CompileState {
   exec::Driver& driver() {
     return driver_;
   }
-  
+
   // Replaces sequences of Operators in the Driver given at construction with
   // Wave equivalents. Returns true if the Driver was changed.
   bool compile();

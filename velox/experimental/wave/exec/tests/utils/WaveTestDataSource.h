@@ -22,8 +22,8 @@ namespace facebook::velox::wave::test {
 /// A WaveDataSource that decodes mock Wave tables.
 class WaveTestDataSource : public WaveDataSource {
  public:
- WaveTestDataSource(const std::shared_ptr<WaveTestConnectorSplit>& split)
-    : split_(split);
+  WaveTestDataSource(const std::shared_ptr<WaveTestConnectorSplit>& split)
+      : split_(split);
 
   void addDynamicFilter(
       column_index_t outputChannel,
@@ -31,16 +31,13 @@ class WaveTestDataSource : public WaveDataSource {
     VELOX_NYI();
   }
 
-  
   int32_t canAdvance() overide;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   bool isFinished() const override;
 
-  
  private:
   std::shared_pptr<WaveTestConnectorSplit> split_;
 };
-}
-
+} // namespace facebook::velox::wave::test

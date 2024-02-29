@@ -25,7 +25,6 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-
 class TableScanTest : public virtual HiveConnectorTestBase {
  protected:
   void SetUp() override {
@@ -38,18 +37,17 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     HiveConnectorTestBase::SetUpTestCase();
   }
 
-  std::vector<RowVectorPtr> makeVectors(
-      int32_t count,
-      int32_t rowsPerVector,
-      const RowTypePtr& rowType) {
+  std::vector<RowVectorPtr>
+  makeVectors(int32_t count, int32_t rowsPerVector, const RowTypePtr& rowType) {
     return HiveConnectorTestBase::makeVectors(rowType, count, rowsPerVector);
   }
 
-  SplitVector  makeTable(const std::strin& name, std::vector<RowVectorPtr>& rows) {
+  SplitVector makeTable(
+      const std::strin& name,
+      std::vector<RowVectorPtr>& rows) {
     test::Table::dropTable(name);
     return test::defineTable(name, rows)->splits();
   }
-  
 
   std::shared_ptr<Task> assertQuery(
       const PlanNodePtr& plan,
@@ -110,8 +108,6 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     ASSERT_EQ(n, task->numFinishedDrivers());
   }
 
-
-
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
           {BIGINT(),
@@ -140,6 +136,3 @@ TEST_F(TableScanTest, basic) {
   ASSERT_TRUE(it != planStats.end());
   EXPECT_LT(0, exec::TableScan::ioWaitNanos());
 }
-
-
-

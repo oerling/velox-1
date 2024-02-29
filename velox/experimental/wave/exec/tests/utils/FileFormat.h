@@ -133,19 +133,21 @@ class Writer {
 
 struct WaveTestConnectorSplit : public connector::ConnectorSplit {
   WaveTestConnectorSplit(Stripe* stripe)
-    : ConnectorSplit("wavetest"), stripe(stripe) {}
-    
+      : ConnectorSplit("wavetest"), stripe(stripe) {}
+
   Stripe* stripe;
 };
 
-  using SplitVector =     std::vector<std::shared_ptr<ConnectorSplit>>;
+using SplitVector = std::vector<std::shared_ptr<ConnectorSplit>>;
 
-  class Table {
+class Table {
  public:
   Table(const std::string name) : name_(name) {}
 
-    static const Table* defineTable(const std::string& name, std::vector<RowVectorPtr>& data);
-    
+  static const Table* defineTable(
+      const std::string& name,
+      std::vector<RowVectorPtr>& data);
+
   static Table* getTable(const std::string& name, bool makeNew = false) {
     std::lock_guard<std::mutex> l(mutex_);
     auto it = allTables_.find(name);
@@ -188,15 +190,15 @@ struct WaveTestConnectorSplit : public connector::ConnectorSplit {
     return stripes_[index].get();
   }
 
-    SplitVector splits() const {
-      SplitVector result;
+  SplitVector splits() const {
+    SplitVector result;
     std::lock_guard<std::mutex> l(mutex_);
     for (auto split : splits_) {
       result.push_back(std::make_shared<WaveTestConnectorSplit>(stripe.get()));
     }
     return result;
   }
-  
+
  private:
   static std::mutex mutex_;
   static std::unordered_map<std::string, std::unique_ptr<Table>> allTables_;
@@ -206,4 +208,4 @@ struct WaveTestConnectorSplit : public connector::ConnectorSplit {
   std::vector<std::unique_ptr<Stripe>> stripes_;
 };
 
-} // namespace facebook::velox::wave
+} // namespace facebook::velox::wave::test

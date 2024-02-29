@@ -21,24 +21,18 @@
 
 namespace facebook::velox::wave {
 
-  /// A delegate produced by a regular Velox connector::DataSource for reading its particular file format on GPU.
-  class WaveDataSource :  {
+/// A delegate produced by a regular Velox connector::DataSource for reading its
+/// particular file format on GPU.
+class WaveDataSource : {
  public:
   virtual void addDynamicFilter(
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) = 0;
 
-
-    virtual int32_t canAdvance() = 0;  
+  virtual int32_t canAdvance() = 0;
 
   virtual void schedule(WaveStream& stream, int32_t maxRows = 0) = 0;
 
-    virtual bool isFinished() const = 0;
-
-    
-  
-  };
-}
-
-
-
+  virtual bool isFinished() const = 0;
+};
+} // namespace facebook::velox::wave

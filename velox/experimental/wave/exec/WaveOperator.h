@@ -27,7 +27,10 @@ class WaveDriver;
 
 class WaveOperator {
  public:
-  WaveOperator(CompileState& state, const RowTypePtr& outputType, const std::string& planNodeId);
+  WaveOperator(
+      CompileState& state,
+      const RowTypePtr& outputType,
+      const std::string& planNodeId);
 
   virtual ~WaveOperator() = default;
 
@@ -153,7 +156,7 @@ class WaveOperator {
 
   // Id in original plan. Use for getting splits.
   std::string planNodeId_;
-  
+
   // the execution time set of OperandIds.
   OperandSet outputIds_;
 

@@ -20,15 +20,12 @@
 
 namespace facebook::velox::wave {
 
-  using exec::BlockingReason;
-  
+using exec::BlockingReason;
+
 TableScan::TableScan(
     CompileContext& context,
     std::shared_ptr<const core::TableScanNode> tableScanNode)
-    : WaveOperator(
-		   state,
-          tableScanNode->outputType(),
-		   tableScanNode->id()),
+    : WaveOperator(state, tableScanNode->outputType(), tableScanNode->id()),
       tableHandle_(tableScanNode->tableHandle()),
       columnHandles_(tableScanNode->assignments()),
       driverCtx_(state->driver().driverCtx()),
@@ -44,81 +41,73 @@ TableScan::TableScan(
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 
+BlockingReason TableScan::isBlocked(ContinueFuture* future) override {
+  if (!dataSource_ || needNewSplit_) {
+    nextSplit(future)
+  }
+  if (blockingFuture_.valid()) {
+    *future = std::move(blockingFuture_);
+    return blockingReason_;
+  }
+  return BlockingReason::kNotBlocked;
+}
 
-  BlockingReason TableScan::isBlocked(ContinueFuture* future) override {
-    if (!dataSource_ || needNewSplit_) {
-      nextSplit(future)
-    }
-    if (blockingFuture_.valid()) {
-      *future = std::move(blockingFuture_);
-      return blockingReason_;
-    }
-    return BlockingReason::kNotBlocked;
+BlockingReason TableScan::nextSplit(ContinueFuture* future) {
+  exec::Split split;
+  blockingReason_ = driverCtx_->task->getSplitOrFuture(
+      driverCtx_->splitGroupId,
+      planNodeId(),
+      split,
+      blockingFuture_,
+      maxPreloadedSplits_,
+      splitPreloader_);
+  if (blockingReason_ != BlockingReason::kNotBlocked) {
+    return nullptr;
   }
 
-  BlockingReason   TableScan::nextSplit(ContinueFuture* future) {
-      exec::Split split;
-      blockingReason_ = driverCtx_->task->getSplitOrFuture(
-          driverCtx_->splitGroupId,
-          planNodeId(),
-          split,
-          blockingFuture_,
-          maxPreloadedSplits_,
-          splitPreloader_);
-      if (blockingReason_ != BlockingReason::kNotBlocked) {
-        return nullptr;
-      }
-
-      if (!split.hasConnectorSplit()) {
-        noMoreSplits_ = true;
-        if (dataSource_) {
-          auto connectorStats = dataSource_->runtimeStats();
-          auto lockedStats = stats_.wlock();
-          for (const auto& [name, counter] : connectorStats) {
-            if (name == "ioWaitNanos") {
-              ioWaitNanos_ += counter.value - lastIoWaitNanos_;
-              lastIoWaitNanos_ = counter.value;
-            }
-            if (UNLIKELY(lockedStats->runtimeStats.count(name) == 0)) {
-              lockedStats->runtimeStats.insert(
-                  std::make_pair(name, RuntimeMetric(counter.unit)));
-            } else {
-              VELOX_CHECK_EQ(
-                  lockedStats->runtimeStats.at(name).unit, counter.unit);
-            }
-            lockedStats->runtimeStats.at(name).addValue(counter.value);
-          }
+  if (!split.hasConnectorSplit()) {
+    noMoreSplits_ = true;
+    if (dataSource_) {
+      auto connectorStats = dataSource_->runtimeStats();
+      auto lockedStats = stats_.wlock();
+      for (const auto& [name, counter] : connectorStats) {
+        if (name == "ioWaitNanos") {
+          ioWaitNanos_ += counter.value - lastIoWaitNanos_;
+          lastIoWaitNanos_ = counter.value;
         }
-        return nullptr;
-      }
-
-      const auto& connectorSplit = split.connectorSplit;
-      needNewSplit_ = false;
-
-      VELOX_CHECK_EQ(
-          connector_->connectorId(),
-          connectorSplit->connectorId,
-          "Got splits with different connector IDs");
-
-      if (!dataSource_) {
-        connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
-            connectorSplit->connectorId, planNodeId(), connectorPool_);
-        dataSource_ = connector_->createDataSource(
-            outputType_,
-            tableHandle_,
-            columnHandles_,
-            connectorQueryCtx_.get());
-	waveDataSource_ = dataSource_->toWaveDataSource();
-        for (const auto& entry : pendingDynamicFilters_) {
-          waveDataSource_->addDynamicFilter(entry.first, entry.second);
+        if (UNLIKELY(lockedStats->runtimeStats.count(name) == 0)) {
+          lockedStats->runtimeStats.insert(
+              std::make_pair(name, RuntimeMetric(counter.unit)));
+        } else {
+          VELOX_CHECK_EQ(lockedStats->runtimeStats.at(name).unit, counter.unit);
         }
-        pendingDynamicFilters_.clear();
+        lockedStats->runtimeStats.at(name).addValue(counter.value);
       }
-
-
+    }
+    return nullptr;
   }
 
-  
+  const auto& connectorSplit = split.connectorSplit;
+  needNewSplit_ = false;
+
+  VELOX_CHECK_EQ(
+      connector_->connectorId(),
+      connectorSplit->connectorId,
+      "Got splits with different connector IDs");
+
+  if (!dataSource_) {
+    connectorQueryCtx_ = operatorCtx_->createConnectorQueryCtx(
+        connectorSplit->connectorId, planNodeId(), connectorPool_);
+    dataSource_ = connector_->createDataSource(
+        outputType_, tableHandle_, columnHandles_, connectorQueryCtx_.get());
+    waveDataSource_ = dataSource_->toWaveDataSource();
+    for (const auto& entry : pendingDynamicFilters_) {
+      waveDataSource_->addDynamicFilter(entry.first, entry.second);
+    }
+    pendingDynamicFilters_.clear();
+  }
+}
+
 RowVectorPtr TableScan::getOutput() {
   if (noMoreSplits_) {
     return nullptr;
