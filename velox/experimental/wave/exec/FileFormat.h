@@ -131,6 +131,9 @@ class Writer {
 };
 
 struct WaveTestConnectorSplit : public connector::ConnectorSplit {
+  WaveTestConnectorSplit(Stripe* stripe)
+    : ConnectorSplit("wavetest"), stripe(stripe) {}
+    
   Stripe* stripe;
 };
 

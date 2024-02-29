@@ -377,6 +377,7 @@ if(${VELOX_ENABLE_GPU})
     add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:-G>")
   endif()
   include_directories("${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWAVE")
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

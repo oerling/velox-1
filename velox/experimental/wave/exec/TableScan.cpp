@@ -24,7 +24,7 @@ TableScan::TableScan(
     CompileContext& context,
     DriverCtx* driverCtx,
     std::shared_ptr<const core::TableScanNode> tableScanNode)
-    : SourceOperator(
+    : WaveOperator(
           driverCtx,
           tableScanNode->outputType(),
           operatorId,

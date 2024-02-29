@@ -24,7 +24,10 @@ add_library(
   Values.cpp
   WaveDriver.cpp
   Wave.cpp
-  Project.cpp)
+  Project.cpp
+  TableScan.cpp
+  WaveConnector.cpp
+  WaveTestDataSource.cpp)
 
 set_target_properties(velox_wave_exec PROPERTIES CUDA_ARCHITECTURES native)
 
