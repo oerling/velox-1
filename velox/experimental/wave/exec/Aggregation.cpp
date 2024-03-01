@@ -80,7 +80,7 @@ Aggregation::Aggregation(
     const core::AggregationNode& node,
     const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
         functionRegistry)
-    : WaveOperator(state, node.outputType()),
+  : WaveOperator(state, node.outputType(), node.id()),
       arena_(&state.arena()),
       functionRegistry_(functionRegistry) {
   VELOX_CHECK(node.step() == core::AggregationNode::Step::kSingle);

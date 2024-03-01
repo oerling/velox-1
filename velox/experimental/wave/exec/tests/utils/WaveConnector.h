@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/connectors/Connector.h"
+#include "velox/experimental/wave/exec/WaveDataSource.h"
 
 namespace facebook::velox::wave::test {
 
@@ -28,13 +29,13 @@ class WaveMockDataSource : public connector::DataSource {
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      const ConnectorQueryCtx* connectorQueryCtx)
+      const connector::ConnectorQueryCtx* connectorQueryCtx)
       : outputType(outputType_),
         tableHandle_(tableHandle),
         columnHandles_(columnHandles),
         connectorQueryCtx_(connectorQueryCtx) {}
 
-  void addSplit(std::shared_ptr<ConnectorSplit> split) override {
+  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override {
     split_ = std::dynamic_pointer_cast<WaveTestConnectorSplit>(split);
     VELOX_CHECK_NOT_NULL(split_);
   }
@@ -52,7 +53,7 @@ class WaveMockDataSource : public connector::DataSource {
   const std::
       unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           columnHandles_;
-  const ConnectorQueryCtx* connectorQueryCtx_;
+  const connector::ConnectorQueryCtx* connectorQueryCtx_;
 };
 
 class WaveMockConnector : public connector::Connector {

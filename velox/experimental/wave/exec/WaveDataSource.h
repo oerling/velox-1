@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "velox/connectors/Connector.h"
-
+#include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
@@ -23,7 +23,7 @@ namespace facebook::velox::wave {
 
 /// A delegate produced by a regular Velox connector::DataSource for reading its
 /// particular file format on GPU.
-class WaveDataSource : {
+class WaveDataSource {
  public:
   virtual void addDynamicFilter(
       column_index_t outputChannel,

@@ -214,16 +214,17 @@ void Writer::finalize(std::string tableName) {
 }
 
 // static
-void const Table* Table::defineTable(
+const Table* Table::defineTable(
     const std::string& name,
-    std::vector<RowVectorPtr>& data) {
+    const std::vector<RowVectorPtr>& data) {
   dropTable(name);
-    Writer writer(rows[0]->size();
-    for (auto& vector : rows) {
-    writer.append(row);
-    }
-    writer.finalize(name);
+  Writer writer(data[0]->size());
+  for (auto& vector : data) {
+    writer.append(vector);
+  }
+  writer.finalize(name);
 }
+
 } // namespace facebook::velox::wave::test
 
-} // namespace facebook::velox::wave
+

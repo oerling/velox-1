@@ -138,7 +138,7 @@ struct WaveTestConnectorSplit : public connector::ConnectorSplit {
   Stripe* stripe;
 };
 
-using SplitVector = std::vector<std::shared_ptr<ConnectorSplit>>;
+  using SplitVector = std::vector<std::shared_ptr<connector::ConnectorSplit>>;
 
 class Table {
  public:
@@ -146,7 +146,7 @@ class Table {
 
   static const Table* defineTable(
       const std::string& name,
-      std::vector<RowVectorPtr>& data);
+      const std::vector<RowVectorPtr>& data);
 
   static Table* getTable(const std::string& name, bool makeNew = false) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -163,7 +163,7 @@ class Table {
     return it->second.get();
   }
 
-  static dropTable(const std::string& name) {
+  static void dropTable(const std::string& name) {
     std::lock_guard<std::mutex> l(mutex_);
     allTables_.erase(name);
   }
@@ -193,7 +193,7 @@ class Table {
   SplitVector splits() const {
     SplitVector result;
     std::lock_guard<std::mutex> l(mutex_);
-    for (auto split : splits_) {
+    for (auto& stripe : stripes_) {
       result.push_back(std::make_shared<WaveTestConnectorSplit>(stripe.get()));
     }
     return result;

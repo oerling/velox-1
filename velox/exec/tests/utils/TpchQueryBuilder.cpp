@@ -20,7 +20,7 @@
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/tpch/gen/TpchGen.h"
 
-#include "velox/experimental/wave/exec/FileFormat.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 
 #include <fstream>
 
@@ -2121,7 +2121,7 @@ class WaveRecoder : public Operator {
 
  private:
   std::string tableName_;
-  std::unique_ptr<wave::Writer> table_;
+  std::unique_ptr<wave::test::Writer> table_;
 };
 
 class WaveRecodeFactory : public Operator::PlanNodeTranslator {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/tests/utils/WaveTestdataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/WaveTestDataSource.h"
 
 namespace facebook::velox::wave::test {
 

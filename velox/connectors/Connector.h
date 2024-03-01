@@ -27,6 +27,11 @@
 
 #include <folly/Synchronized.h>
 
+#ifdef WAVE
+namespace facebook::velox::wave {
+  class WaveDataSource;
+}
+#endif
 namespace facebook::velox::common {
 class Filter;
 }
@@ -229,6 +234,12 @@ class DataSource {
   virtual int64_t estimatedRowSize() {
     return kUnknownRowSize;
   }
+#ifdef WAVE
+  /// Returns a Wave delegate that implements the Wave Operator interface for a GPU table scan. This must be called after addSplit or setFromDataSource and before accessing any data. adddynamicFilter  is supported after calling this.
+  virtual std::shared_ptr<wave::WaveDataSource> toWaveDataSource() {
+    VELOX_UNSUPPORTED();
+  }
+#endif
 };
 
 /// Collection of context data for use in a DataSource or DataSink. One instance
