@@ -58,6 +58,14 @@ class F14IdMap {
     return it->second;
   }
 
+  auto size() const {
+    return set_.size();
+  }
+
+  void reserve(size_t size) {
+    set_.reserve(size);
+  }
+  
   void clear() {
     set_.clear();
   }
@@ -90,9 +98,10 @@ class StringViewIdMapTest : public testing::Test {
     testData(size, range, maxLength, data);
     auto result = test(data);
     std::cout << fmt::format(
-                     "Size={} range={} clocks IdMap={} F14={} ({}%)",
+                     "Size={} range={} 4-{} byte key clocks IdMap={} F14={} ({}%)",
                      size,
                      range,
+		     maxLength,
                      result.first,
                      result.second,
                      100 * result.second / result.first)
@@ -154,7 +163,9 @@ class StringViewIdMapTest : public testing::Test {
         }
       }
       if (counter < kNumRepeats - 1) {
+	auto size = f14.size();
         f14.clear();
+	f14.reserve(size);
       }
     }
     for (auto i = 0; i + kBatchSize <= data.size(); i += kBatchSize) {
