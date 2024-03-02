@@ -14,22 +14,20 @@
  * limitations under the License.
  */
 #include <cuda_runtime.h> // @manual
-#include "velox/vector/fuzzer/VectorFuzzer.h"
+#include "velox/exec/ExchangeSource.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
-#include "velox/exec/ExchangeSource.h"
-#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
-
 
 class TableScanTest : public virtual OperatorTestBase {
  protected:
@@ -44,20 +42,20 @@ class TableScanTest : public virtual OperatorTestBase {
     OperatorTestBase::SetUpTestCase();
   }
 
-std::vector<RowVectorPtr> makeVectors(
-    const RowTypePtr& rowType,
-    int32_t numVectors,
-    int32_t rowsPerVector) {
-  std::vector<RowVectorPtr> vectors;
-  options_.vectorSize = rowsPerVector;
-  fuzzer_->setOptions(options_);
+  std::vector<RowVectorPtr> makeVectors(
+      const RowTypePtr& rowType,
+      int32_t numVectors,
+      int32_t rowsPerVector) {
+    std::vector<RowVectorPtr> vectors;
+    options_.vectorSize = rowsPerVector;
+    fuzzer_->setOptions(options_);
 
-  for (int32_t i = 0; i < numVectors; ++i) {
-    auto vector = fuzzer_->fuzzInputFlatRow(rowType);
-    vectors.push_back(vector);
+    for (int32_t i = 0; i < numVectors; ++i) {
+      auto vector = fuzzer_->fuzzInputFlatRow(rowType);
+      vectors.push_back(vector);
+    }
+    return vectors;
   }
-  return vectors;
-}
 
   wave::test::SplitVector makeTable(
       const std::string& name,
@@ -120,7 +118,7 @@ std::vector<RowVectorPtr> makeVectors(
     }
     ASSERT_EQ(n, task->numFinishedDrivers());
   }
-  
+
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
 };

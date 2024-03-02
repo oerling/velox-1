@@ -138,7 +138,7 @@ struct WaveTestConnectorSplit : public connector::ConnectorSplit {
   Stripe* stripe;
 };
 
-  using SplitVector = std::vector<std::shared_ptr<connector::ConnectorSplit>>;
+using SplitVector = std::vector<std::shared_ptr<connector::ConnectorSplit>>;
 
 class Table {
  public:

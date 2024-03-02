@@ -18,9 +18,9 @@
 #include "velox/exec/FilterProject.h"
 #include "velox/experimental/wave/exec/Aggregation.h"
 #include "velox/experimental/wave/exec/Project.h"
+#include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
-#include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
 
@@ -329,13 +329,11 @@ bool CompileState::addOperator(
     outputType = node->outputType();
   } else if (name == "TableScan") {
     auto scan = reinterpret_cast<const core::TableScanNode*>(
-							     driverFactory_.planNodes[nodeIndex].get());
+        driverFactory_.planNodes[nodeIndex].get());
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
 
-    operators_.push_back(std::make_unique<TableScan>(
-						     *this,
-        operators_.size(),
-						     *scan));
+    operators_.push_back(
+        std::make_unique<TableScan>(*this, operators_.size(), *scan));
     outputType = scan->outputType();
   } else {
     return false;

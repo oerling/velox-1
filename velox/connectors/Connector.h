@@ -29,7 +29,7 @@
 
 #ifdef WAVE
 namespace facebook::velox::wave {
-  class WaveDataSource;
+class WaveDataSource;
 }
 #endif
 namespace facebook::velox::common {
@@ -235,7 +235,10 @@ class DataSource {
     return kUnknownRowSize;
   }
 #ifdef WAVE
-  /// Returns a Wave delegate that implements the Wave Operator interface for a GPU table scan. This must be called after addSplit or setFromDataSource and before accessing any data. adddynamicFilter  is supported after calling this.
+  /// Returns a Wave delegate that implements the Wave Operator interface for a
+  /// GPU table scan. This must be called after addSplit or setFromDataSource
+  /// and before accessing any data. adddynamicFilter  is supported after
+  /// calling this.
   virtual std::shared_ptr<wave::WaveDataSource> toWaveDataSource() {
     VELOX_UNSUPPORTED();
   }

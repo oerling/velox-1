@@ -17,9 +17,9 @@
 
 #include "velox/experimental/wave/exec/WaveOperator.h"
 
-#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
+#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/WaveDataSource.h"
 #include "velox/expression/Expr.h"
 
@@ -31,21 +31,21 @@ class TableScan : public WaveOperator {
       CompileState& state,
       int32_t operatorId,
       const core::TableScanNode& tableScanNode)
-        : WaveOperator(state, tableScanNode.outputType(), tableScanNode.id()),
-      tableHandle_(tableScanNode.tableHandle()),
-      columnHandles_(tableScanNode.assignments()),
-      driverCtx_(state.driver().driverCtx()),
-      connectorPool_(driverCtx_->task->addConnectorPoolLocked(
-          planNodeId_,
-          driverCtx_->pipelineId,
-          driverCtx_->driverId,
-          "",
-          tableHandle_->connectorId())),
-      readBatchSize_(driverCtx_->task->queryCtx()
-                         ->queryConfig()
-                         .preferredOutputBatchRows()) {
-  connector_ = connector::getConnector(tableHandle_->connectorId());
-}
+      : WaveOperator(state, tableScanNode.outputType(), tableScanNode.id()),
+        tableHandle_(tableScanNode.tableHandle()),
+        columnHandles_(tableScanNode.assignments()),
+        driverCtx_(state.driver().driverCtx()),
+        connectorPool_(driverCtx_->task->addConnectorPoolLocked(
+            planNodeId_,
+            driverCtx_->pipelineId,
+            driverCtx_->driverId,
+            "",
+            tableHandle_->connectorId())),
+        readBatchSize_(driverCtx_->task->queryCtx()
+                           ->queryConfig()
+                           .preferredOutputBatchRows()) {
+    connector_ = connector::getConnector(tableHandle_->connectorId());
+  }
 
   int32_t canAdvance() override {
     if (!dataSource_) {
@@ -62,12 +62,10 @@ class TableScan : public WaveOperator {
     return waveDataSource_->outputSize(stream);
   }
 
-
   bool isStreaming() const override {
     return true;
   }
 
-  
   exec::BlockingReason isBlocked(ContinueFuture* future) override;
 
   bool isFinished() const override;
@@ -87,7 +85,7 @@ class TableScan : public WaveOperator {
   std::string toString() const override {
     return "TableScan";
   }
-  
+
  private:
   exec::BlockingReason nextSplit(ContinueFuture* future);
 

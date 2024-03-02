@@ -25,7 +25,7 @@ namespace facebook::velox::wave {
 
 class CompileState;
 class WaveDriver;
-  
+
 class WaveOperator {
  public:
   WaveOperator(
@@ -148,7 +148,7 @@ class WaveOperator {
       const std::shared_ptr<common::Filter>& filter) {
     VELOX_UNSUPPORTED();
   }
-  
+
  protected:
   folly::Synchronized<exec::OperatorStats>& stats();
 

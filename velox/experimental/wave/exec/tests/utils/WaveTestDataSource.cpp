@@ -18,13 +18,14 @@
 
 namespace facebook::velox::wave::test {
 
-  void WaveTestDataSource::addSplit(std::shared_ptr<connector::ConnectorSplit> split) {
-    auto testSplit = std::dynamic_pointer_cast<WaveTestConnectorSplit>(split);
-    VELOX_CHECK_NOT_NULL(testSplit);
-    split_ = testSplit;
-  }
+void WaveTestDataSource::addSplit(
+    std::shared_ptr<connector::ConnectorSplit> split) {
+  auto testSplit = std::dynamic_pointer_cast<WaveTestConnectorSplit>(split);
+  VELOX_CHECK_NOT_NULL(testSplit);
+  split_ = testSplit;
+}
 
-  int32_t WaveTestDataSource::canAdvance() {
+int32_t WaveTestDataSource::canAdvance() {
   return 0;
 }
 
@@ -32,11 +33,10 @@ void WaveTestDataSource::schedule(WaveStream& stream, int32_t maxRows) {
   VELOX_NYI();
 }
 
-  vector_size_t WaveTestDataSource::outputSize(WaveStream& stream) const {
-    return 0;
-  }
+vector_size_t WaveTestDataSource::outputSize(WaveStream& stream) const {
+  return 0;
+}
 
-  
 bool WaveTestDataSource::isFinished() const {
   return false;
 }

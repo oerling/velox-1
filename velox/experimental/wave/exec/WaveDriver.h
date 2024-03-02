@@ -80,7 +80,7 @@ class WaveDriver : public exec::SourceOperator {
   exec::OperatorCtx* operatorCtx() const {
     return operatorCtx_.get();
   }
-  
+
  private:
   // True if all output from 'stream' is fetched.
   bool streamAtEnd(WaveStream& stream);

@@ -226,5 +226,3 @@ const Table* Table::defineTable(
 }
 
 } // namespace facebook::velox::wave::test
-
-

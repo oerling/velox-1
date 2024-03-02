@@ -24,17 +24,13 @@ namespace facebook::velox::wave::test {
 /// A WaveDataSource that decodes mock Wave tables.
 class WaveTestDataSource : public WaveDataSource {
  public:
-  WaveTestDataSource(
-		     const std::shared_ptr<WaveTestConnectorSplit>& split)
-    : split_(split) {}
+  WaveTestDataSource(const std::shared_ptr<WaveTestConnectorSplit>& split)
+      : split_(split) {}
 
   void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
 
-  
-  void setFromDataSource(connector::DataSource* dataSource) override {
-  }
+  void setFromDataSource(connector::DataSource* dataSource) override {}
 
-  
   void addDynamicFilter(
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) {

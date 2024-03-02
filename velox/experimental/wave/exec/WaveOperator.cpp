@@ -15,8 +15,8 @@
  */
 
 #include "velox/experimental/wave/exec/WaveOperator.h"
-#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 
 namespace facebook::velox::wave {
 
@@ -56,9 +56,8 @@ void WaveOperator::definesSubfields(
   }
 }
 
-
-  folly::Synchronized<exec::OperatorStats>& WaveOperator::stats() {
-    return driver_ ->stats();
-  }
+folly::Synchronized<exec::OperatorStats>& WaveOperator::stats() {
+  return driver_->stats();
+}
 
 } // namespace facebook::velox::wave

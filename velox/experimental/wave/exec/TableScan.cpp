@@ -15,16 +15,15 @@
  */
 
 #include "velox/experimental/wave/exec/TableScan.h"
-#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
 
-  std::atomic<uint64_t> TableScan::ioWaitNanos_;
+std::atomic<uint64_t> TableScan::ioWaitNanos_;
 
-  
 using exec::BlockingReason;
 
 BlockingReason TableScan::isBlocked(ContinueFuture* future) {
@@ -38,8 +37,7 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-
-  #if 0
+#if 0
   TableScan::TableScan(
     CompileContext& context,
     int32_t operatorId,
@@ -60,7 +58,7 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
 #endif
-  
+
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(
@@ -117,7 +115,6 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   }
 }
 
-
 void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
   // The AsyncSource returns a unique_ptr to the shared_ptr of the
   // DataSource. The callback may outlive the Task, hence it captures
@@ -137,7 +134,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
           return nullptr;
         }
         auto debugString =
-	  fmt::format("Split {} Task {}", split->toString(), task->taskId());
+            fmt::format("Split {} Task {}", split->toString(), task->taskId());
         ExceptionContextSetter exceptionContext(
             {[](VeloxException::Type /*exceptionType*/, auto* debugString) {
                return *static_cast<std::string*>(debugString);
@@ -161,16 +158,17 @@ void TableScan::checkPreload() {
   }
   if (dataSource_->allPrefetchIssued()) {
     maxPreloadedSplits_ = driverCtx_->task->numDrivers(driverCtx_->driver) *
-      maxSplitPreloadPerDriver_;
+        maxSplitPreloadPerDriver_;
     if (!splitPreloader_) {
       splitPreloader_ =
           [executor, this](std::shared_ptr<connector::ConnectorSplit> split) {
             preload(split);
 
-            executor->add([taskHolder = driver_->operatorCtx()->task(), split]() mutable {
-              split->dataSource->prepare();
-              split.reset();
-            });
+            executor->add(
+                [taskHolder = driver_->operatorCtx()->task(), split]() mutable {
+                  split->dataSource->prepare();
+                  split.reset();
+                });
           };
     }
   }
