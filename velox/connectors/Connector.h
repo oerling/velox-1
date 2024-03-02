@@ -235,10 +235,12 @@ class DataSource {
     return kUnknownRowSize;
   }
 #ifdef WAVE
-  /// Returns a Wave delegate that implements the Wave Operator interface for a
-  /// GPU table scan. This must be called after addSplit or setFromDataSource
-  /// and before accessing any data. adddynamicFilter  is supported after
-  /// calling this.
+  /// Returns a Wave delegate that implements the Wave Operator
+  /// interface for a GPU table scan. This should be called after
+  /// construction and no other methods should be called on 'this'
+  /// after creating the delegate. Splits, dynamic filters etc.  will
+  /// be added to the WaveDataSource instead of 'this'. 'this' should
+  /// stay live until after the destruction of the delegate.
   virtual std::shared_ptr<wave::WaveDataSource> toWaveDataSource() {
     VELOX_UNSUPPORTED();
   }

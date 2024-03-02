@@ -24,6 +24,9 @@
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
+#ifdef WAVE
+#include "velox/experimental/wave/exec/WaveDataSource.h"
+#endif
 
 namespace facebook::velox::connector::hive {
 
@@ -424,4 +427,33 @@ void HiveDataSource::resetSplit() {
   // Keep readers around to hold adaptation.
 }
 
+#ifdef WAVE
+
+  WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
+
+  std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
+    return waveDelegateHook_(      hiveTableHandle_,
+      scanSpec_,
+      readerOutputType_,
+      &partitionKeys_,
+      fileHandleFactory_,
+      executor_,
+      connectorQueryCtx_,
+      hiveConfig_,
+				   ioStats_,
+				   remainingFilterExprSet_);
+
+    hiveTableHandle_,
+      scanSpec_,
+      readerOutputType_,
+      &partitionKeys_,
+      fileHandleFactory_,
+      executor_,
+      connectorQueryCtx_,
+      hiveConfig_,
+      ioStats_);
+    
+  }
+#endif
+  
 } // namespace facebook::velox::connector::hive
