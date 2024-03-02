@@ -20,6 +20,7 @@
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
 
@@ -331,7 +332,7 @@ bool CompileState::addOperator(
 
         *this,
         operators_.size(),
-        std::static_pointer_cast<TableScanNode>(node)));
+        std::static_pointer_cast<core::TableScanNode>(node)));
     outputType = node->outputType();
   } else {
     return false;

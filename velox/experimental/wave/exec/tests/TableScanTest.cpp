@@ -25,10 +25,11 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-class TableScanTest : public virtual HiveConnectorTestBase {
+
+class TableScanTest : public virtual OperatorTestBase {
  protected:
   void SetUp() override {
-    HiveConnectorTestBase::SetUp();
+    OperatorTestBase::SetUp();
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
   }

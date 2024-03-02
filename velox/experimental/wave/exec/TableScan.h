@@ -17,9 +17,10 @@
 
 #include "velox/experimental/wave/exec/WaveOperator.h"
 
+#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
-#include "velox/experimental/wave/WaveDataSource.h"
+#include "velox/experimental/wave/exec/WaveDataSource.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
@@ -29,7 +30,22 @@ class TableScan : public WaveOperator {
   TableScan(
       CompileState& state,
       int32_t operatorId,
-      std::shared_ptr<const core::TableScanNode> tableScanNode);
+      std::shared_ptr<const core::TableScanNode> tableScanNode)
+        : WaveOperator(state, tableScanNode->outputType(), tableScanNode->id()),
+      tableHandle_(tableScanNode->tableHandle()),
+      columnHandles_(tableScanNode->assignments()),
+      driverCtx_(state.driver().driverCtx()),
+      connectorPool_(driverCtx_->task->addConnectorPoolLocked(
+          planNodeId_,
+          driverCtx_->pipelineId,
+          driverCtx_->driverId,
+          "",
+          tableHandle_->connectorId())),
+      readBatchSize_(driverCtx_->task->queryCtx()
+                         ->queryConfig()
+                         .preferredOutputBatchRows()) {
+  connector_ = connector::getConnector(tableHandle_->connectorId());
+}
 
   int32_t canAdvance() override {
     if (!dataSource_) {
@@ -42,13 +58,9 @@ class TableScan : public WaveOperator {
     waveDataSource_->schedule(stream, maxRows);
   }
 
-  virtual bool isFinished() const {
-    VELOX_FAIL("Override for source or blocking operator");
-  }
+  exec::BlockingReason isBlocked(ContinueFuture* future) override;
 
-  BlockingReason isBlocked(ContinueFuture* future) override;
-
-  bool isFinished() override;
+  bool isFinished() const override;
 
   bool canAddDynamicFilter() const override {
     return true;
@@ -63,6 +75,8 @@ class TableScan : public WaveOperator {
   }
 
  private:
+  exec::BlockingReason nextSplit(ContinueFuture* future);
+
   // Sets 'maxPreloadSplits' and 'splitPreloader' if prefetching
   // splits is appropriate. The preloader will be applied to the
   // 'first 'maxPreloadSplits' of the Tasks's split queue for 'this'
@@ -82,10 +96,10 @@ class TableScan : public WaveOperator {
   const std::
       unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           columnHandles_;
-  DriverCtx* const driverCtx_;
+  exec::DriverCtx* const driverCtx_;
   memory::MemoryPool* const connectorPool_;
   ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
-  BlockingReason blockingReason_;
+  exec::BlockingReason blockingReason_;
   int64_t currentSplitWeight_{0};
   bool needNewSplit_ = true;
   std::shared_ptr<connector::Connector> connector_;
@@ -95,7 +109,7 @@ class TableScan : public WaveOperator {
   std::unordered_map<column_index_t, std::shared_ptr<common::Filter>>
       pendingDynamicFilters_;
 
-  std::shared_ptr<DataSource> dataSource_;
+  std::shared_ptr<connector::DataSource> dataSource_;
 
   std::shared_ptr<WaveDataSource> waveDataSource_;
 

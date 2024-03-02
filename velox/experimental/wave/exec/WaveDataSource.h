@@ -13,6 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#pragma once
+
 #include "velox/connectors/Connector.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/common/time/Timer.h"
@@ -25,14 +28,26 @@ namespace facebook::velox::wave {
 /// particular file format on GPU.
 class WaveDataSource {
  public:
+
+  virtual void setFromDataSource(connector::DataSource* dataSource) = 0;
+
   virtual void addDynamicFilter(
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) = 0;
 
+  virtual void addSplit(std::shared_ptr<connector::ConnectorSplit> split) = 0;
+  
   virtual int32_t canAdvance() = 0;
 
   virtual void schedule(WaveStream& stream, int32_t maxRows = 0) = 0;
 
   virtual bool isFinished() const = 0;
+
+  virtual   uint64_t getCompletedBytes()  = 0;
+
+  virtual uint64_t getCompletedRows() = 0; {
+
+    virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats()  = 0;
+
 };
 } // namespace facebook::velox::wave

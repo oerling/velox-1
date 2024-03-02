@@ -18,11 +18,14 @@
 
 #include "velox/connectors/Connector.h"
 #include "velox/experimental/wave/exec/WaveDataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+#include "velox/experimental/wave/exec/tests/utils/WaveTestDataSource.h"
 
 namespace facebook::velox::wave::test {
 
 /// Connector, ConnectorFactory and DataSource for Wave memory mock tables.
 class WaveMockDataSource : public connector::DataSource {
+public:
   WaveMockDataSource(
       const RowTypePtr& outputType,
       const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
@@ -30,7 +33,7 @@ class WaveMockDataSource : public connector::DataSource {
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
       const connector::ConnectorQueryCtx* connectorQueryCtx)
-      : outputType(outputType_),
+      : outputType_(outputType),
         tableHandle_(tableHandle),
         columnHandles_(columnHandles),
         connectorQueryCtx_(connectorQueryCtx) {}
@@ -41,12 +44,36 @@ class WaveMockDataSource : public connector::DataSource {
   }
 
   void setFromDataSource(std::unique_ptr<DataSource> sourceUnique) override {
-    auto other = dynamic_cast<WaveMockDataSource*>(other.get());
+    auto other = dynamic_cast<WaveMockDataSource*>(sourceUnique.get());
     split_ = std::move(other->split_);
   }
 
   std::shared_ptr<WaveDataSource> toWaveDataSource() override;
 
+  std::optional<RowVectorPtr> next(
+					   uint64_t size,
+					   velox::ContinueFuture& future) {
+									       VELOX_UNSUPPORTED();
+  }
+
+    void addDynamicFilter(
+				column_index_t outputChannel,
+				const std::shared_ptr<common::Filter>& filter) {
+      waveDataSource_->addDynamicFilter(outputChannel, filter);
+    }
+
+  uint64_t getCompletedBytes() override {
+    waveDataSource_->getCompletedBytes();
+  }
+
+  uint64_t getCompletedRows() override {
+    waveDataSource_->getCompletedBytes();
+  };
+
+  std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {
+    return waveDataSource_->runtimeStats();
+  }
+  
  private:
   const RowTypePtr outputType_;
   std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
@@ -54,14 +81,16 @@ class WaveMockDataSource : public connector::DataSource {
       unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           columnHandles_;
   const connector::ConnectorQueryCtx* connectorQueryCtx_;
+  std::shared_ptr<WaveTestConnectorSplit> split_;
+  std::shared_ptr<WaveTestDataSource> waveDataSource_;
 };
 
 class WaveMockConnector : public connector::Connector {
  public:
-  WaveConnector(
+  WaveMockConnector(
       const std::string& id,
       std::shared_ptr<const Config> config,
-      folly::Executor* FOLLY_NULLABLE executor);
+      folly::Executor* executor);
 
   const std::shared_ptr<const Config>& connectorConfig() const override {
     return config_;
@@ -71,31 +100,30 @@ class WaveMockConnector : public connector::Connector {
     return true;
   }
 
-  std::unique_ptr<DataSource> createDataSource(
+  std::unique_ptr<connector::DataSource> createDataSource(
       const RowTypePtr& outputType,
-      const std::shared_ptr<ConnectorTableHandle>& tableHandle,
+      const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
       const std::unordered_map<
           std::string,
           std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) override {
-    return std::make_shared<WaveMockConnector>(
-        const RowTypePtr& outputType,
-        const std::shared_ptr<ConnectorTableHandle>& tableHandle,
-        const std::unordered_map<
-            std::string,
-            std::shared_ptr<connector::ColumnHandle>>& columnHandles,
-        ConnectorQueryCtx* connectorQueryCtx) override {}
-
+      connector::ConnectorQueryCtx* connectorQueryCtx) override {
+    return std::make_unique<WaveMockDataSource>(
+					       outputType,
+					       tableHandle,
+					       columnHandles,
+					       connectorQueryCtx);
+  }
+    
     bool supportsSplitPreload() override {
       return true;
     }
 
-    std::unique_ptr<DataSink> createDataSink(
+  std::unique_ptr<connector::DataSink> createDataSink(
         RowTypePtr inputType,
-        std::shared_ptr<ConnectorInsertTableHandle> connectorInsertTableHandle,
-        ConnectorQueryCtx * connectorQueryCtx,
-        CommitStrategy commitStrategy) override final {
-      VELOX_NYI();
+        std::shared_ptr<connector::ConnectorInsertTableHandle> connectorInsertTableHandle,
+        connector::ConnectorQueryCtx * connectorQueryCtx,
+        connector::CommitStrategy commitStrategy) override final {
+      VELOX_UNSUPPORTED();
     }
 
     folly::Executor* FOLLY_NULLABLE executor() const override {
@@ -107,22 +135,22 @@ class WaveMockConnector : public connector::Connector {
     std::shared_ptr<const Config> config_;
   };
 
-  class WaveMockConnectorFactory : public ConnectorFactory {
+  class WaveMockConnectorFactory : public connector::ConnectorFactory {
    public:
     static constexpr const char* kWaveConnectorName = "wave";
 
-    WaveConnectorFactory() : ConnectorFactory(kWaveConnectorName) {}
+    WaveMockConnectorFactory() : ConnectorFactory(kWaveConnectorName) {}
 
-    explicit WaveConnectorFactory(const char* FOLLY_NONNULL connectorName)
+    explicit WaveMockConnectorFactory(const char* FOLLY_NONNULL connectorName)
         : ConnectorFactory(connectorName) {}
 
     void initialize() override {}
 
-    std::shared_ptr<Connector> newConnector(
+    std::shared_ptr<connector::Connector> newConnector(
         const std::string& id,
         std::shared_ptr<const Config> config,
         folly::Executor* FOLLY_NULLABLE executor = nullptr) override {
-      return std::make_shared<WaveConnector>(id, config, executor);
+      return std::make_shared<WaveMockConnector>(id, config, executor);
     }
   };
 }

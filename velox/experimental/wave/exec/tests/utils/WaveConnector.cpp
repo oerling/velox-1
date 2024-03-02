@@ -18,6 +18,11 @@
 
 namespace facebook::velox::wave::test {
 
-VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<WaveConnectorFactory>())
+  std::shared_ptr<WaveDataSource>  WaveMockDataSource::toWaveDataSource() {
+    waveDataSource_ = std::make_shared<WaveTestDataSource>(split_);
+    return waveDataSource_;
+  }
+  
+VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<WaveMockConnectorFactory>())
 
 }

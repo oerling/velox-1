@@ -19,12 +19,13 @@
 #include "velox/exec/Driver.h"
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/type/Filter.h"
 
 namespace facebook::velox::wave {
 
 class CompileState;
 class WaveDriver;
-
+  
 class WaveOperator {
  public:
   WaveOperator(
@@ -34,7 +35,7 @@ class WaveOperator {
 
   virtual ~WaveOperator() = default;
 
-  virtual exec::BlockingReason isBlocked(ContinueFuture& future) {
+  virtual exec::BlockingReason isBlocked(ContinueFuture* future) {
     return exec::BlockingReason::kNotBlocked;
   }
 
@@ -138,7 +139,21 @@ class WaveOperator {
     return id_;
   }
 
+  virtual bool canAddDynamicFilter() const {
+    return false;
+  }
+
+  virtual void addDynamicFilter(
+      column_index_t outputChannel,
+      const std::shared_ptr<common::Filter>& filter) {
+    VELOX_UNSUPPORTED();
+  }
+  
  protected:
+  folly::Synchronized<exec::OperatorStats>& stats() {
+    return driver_->stats();
+  }
+
   // Sequence number in WaveOperator sequence inside WaveDriver. IUsed to label
   // states of different oprators in WaveStream.
   int32_t id_;

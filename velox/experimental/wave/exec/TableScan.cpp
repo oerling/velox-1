@@ -13,7 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/TableScan.h"
+
+#include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
@@ -22,8 +23,22 @@ namespace facebook::velox::wave {
 
 using exec::BlockingReason;
 
-TableScan::TableScan(
+BlockingReason TableScan::isBlocked(ContinueFuture* future) {
+  if (!dataSource_ || needNewSplit_) {
+    nextSplit(future);
+  }
+  if (blockingFuture_.valid()) {
+    *future = std::move(blockingFuture_);
+    return blockingReason_;
+  }
+  return BlockingReason::kNotBlocked;
+}
+
+
+  #if 0
+  TableScan::TableScan(
     CompileContext& context,
+    int32_t operatorId,
     std::shared_ptr<const core::TableScanNode> tableScanNode)
     : WaveOperator(state, tableScanNode->outputType(), tableScanNode->id()),
       tableHandle_(tableScanNode->tableHandle()),
@@ -40,29 +55,19 @@ TableScan::TableScan(
                          .preferredOutputBatchRows()) {
   connector_ = connector::getConnector(tableHandle_->connectorId());
 }
-
-BlockingReason TableScan::isBlocked(ContinueFuture* future) override {
-  if (!dataSource_ || needNewSplit_) {
-    nextSplit(future)
-  }
-  if (blockingFuture_.valid()) {
-    *future = std::move(blockingFuture_);
-    return blockingReason_;
-  }
-  return BlockingReason::kNotBlocked;
-}
-
+#endif
+  
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(
       driverCtx_->splitGroupId,
-      planNodeId(),
+      planNodeId_,
       split,
       blockingFuture_,
       maxPreloadedSplits_,
       splitPreloader_);
   if (blockingReason_ != BlockingReason::kNotBlocked) {
-    return nullptr;
+    return blockingReason_;
   }
 
   if (!split.hasConnectorSplit()) {
@@ -268,7 +273,7 @@ void TableScan::checkPreload() {
   }
 }
 
-bool TableScan::isFinished() {
+bool TableScan::isFinished() const {
   return noMoreSplits_;
 }
 
@@ -283,5 +288,3 @@ void TableScan::addDynamicFilter(
 }
 
 } // namespace facebook::velox::wave
-}
-}

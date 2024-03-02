@@ -2095,7 +2095,7 @@ class WaveRecoder : public Operator {
 
   void addInput(RowVectorPtr input) override {
     if (!table_) {
-      table_ = std::make_unique<wave::Writer>(FLAGS_wave_stripe_rows);
+      table_ = std::make_unique<wave::test::Writer>(FLAGS_wave_stripe_rows);
     }
     table_->append(input);
   }

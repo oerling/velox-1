@@ -18,15 +18,15 @@
 
 namespace facebook::velox::wave::test {
 
-int32_t canAdvance() overide {
+  int32_t WaveTestDataSource::canAdvance() {
   return 0;
 }
 
-void schedule(WaveStream& stream, int32_t maxRows = 0) {
+void WaveTestDataSource::schedule(WaveStream& stream, int32_t maxRows) {
   VELOX_NYI();
 }
 
-bool isFinished() const {
+bool WaveTestDataSource::isFinished() const {
   return false;
 }
 
