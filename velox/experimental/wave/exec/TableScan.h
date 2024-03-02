@@ -30,10 +30,10 @@ class TableScan : public WaveOperator {
   TableScan(
       CompileState& state,
       int32_t operatorId,
-      std::shared_ptr<const core::TableScanNode> tableScanNode)
-        : WaveOperator(state, tableScanNode->outputType(), tableScanNode->id()),
-      tableHandle_(tableScanNode->tableHandle()),
-      columnHandles_(tableScanNode->assignments()),
+      const core::TableScanNode& tableScanNode)
+        : WaveOperator(state, tableScanNode.outputType(), tableScanNode.id()),
+      tableHandle_(tableScanNode.tableHandle()),
+      columnHandles_(tableScanNode.assignments()),
       driverCtx_(state.driver().driverCtx()),
       connectorPool_(driverCtx_->task->addConnectorPoolLocked(
           planNodeId_,
@@ -58,6 +58,16 @@ class TableScan : public WaveOperator {
     waveDataSource_->schedule(stream, maxRows);
   }
 
+  vector_size_t outputSize(WaveStream& stream) const {
+    return waveDataSource_->outputSize(stream);
+  }
+
+
+  bool isStreaming() const override {
+    return true;
+  }
+
+  
   exec::BlockingReason isBlocked(ContinueFuture* future) override;
 
   bool isFinished() const override;
@@ -74,6 +84,10 @@ class TableScan : public WaveOperator {
     return ioWaitNanos_;
   }
 
+  std::string toString() const override {
+    return "TableScan";
+  }
+  
  private:
   exec::BlockingReason nextSplit(ContinueFuture* future);
 

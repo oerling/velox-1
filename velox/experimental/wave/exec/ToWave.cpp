@@ -328,12 +328,15 @@ bool CompileState::addOperator(
         *this, *node, aggregateFunctionRegistry()));
     outputType = node->outputType();
   } else if (name == "TableScan") {
-    operators_.push_back(std::make_unique<TableScan>(
+    auto scan = reinterpret_cast<const core::TableScanNode*>(
+							     driverFactory_.planNodes[nodeIndex].get());
+    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
 
-        *this,
+    operators_.push_back(std::make_unique<TableScan>(
+						     *this,
         operators_.size(),
-        std::static_pointer_cast<core::TableScanNode>(node)));
-    outputType = node->outputType();
+						     *scan));
+    outputType = scan->outputType();
   } else {
     return false;
   }

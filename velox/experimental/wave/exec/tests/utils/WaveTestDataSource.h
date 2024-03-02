@@ -28,6 +28,9 @@ class WaveTestDataSource : public WaveDataSource {
 		     const std::shared_ptr<WaveTestConnectorSplit>& split)
     : split_(split) {}
 
+  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
+
+  
   void setFromDataSource(connector::DataSource* dataSource) override {
   }
 
@@ -42,6 +45,8 @@ class WaveTestDataSource : public WaveDataSource {
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
+  vector_size_t outputSize(WaveStream& stream) const;
+
   bool isFinished() const override;
 
   uint64_t getCompletedBytes() override {
@@ -50,10 +55,10 @@ class WaveTestDataSource : public WaveDataSource {
 
   uint64_t getCompletedRows() override {
     return 0;
-  
-    std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {
-      return ();
-    }
+  }
+  std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {
+    return {};
+  }
 
  private:
   std::shared_ptr<WaveTestConnectorSplit> split_;

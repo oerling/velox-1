@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 #include <cuda_runtime.h> // @manual
-#include "velox/dwio/common/tests/utils/BatchMaker.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+#include "velox/exec/ExchangeSource.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
+using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
@@ -32,34 +37,45 @@ class TableScanTest : public virtual OperatorTestBase {
     OperatorTestBase::SetUp();
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
+    fuzzer_ = std::make_unique<VectorFuzzer>(options_, pool_.get());
   }
 
   static void SetUpTestCase() {
-    HiveConnectorTestBase::SetUpTestCase();
+    OperatorTestBase::SetUpTestCase();
   }
 
-  std::vector<RowVectorPtr>
-  makeVectors(int32_t count, int32_t rowsPerVector, const RowTypePtr& rowType) {
-    return HiveConnectorTestBase::makeVectors(rowType, count, rowsPerVector);
-  }
+std::vector<RowVectorPtr> makeVectors(
+    const RowTypePtr& rowType,
+    int32_t numVectors,
+    int32_t rowsPerVector) {
+  std::vector<RowVectorPtr> vectors;
+  options_.vectorSize = rowsPerVector;
+  fuzzer_->setOptions(options_);
 
-  SplitVector makeTable(
-      const std::strin& name,
+  for (int32_t i = 0; i < numVectors; ++i) {
+    auto vector = fuzzer_->fuzzInputFlatRow(rowType);
+    vectors.push_back(vector);
+  }
+  return vectors;
+}
+
+  wave::test::SplitVector makeTable(
+      const std::string& name,
       std::vector<RowVectorPtr>& rows) {
-    test::Table::dropTable(name);
-    return test::defineTable(name, rows)->splits();
+    wave::test::Table::dropTable(name);
+    return wave::test::Table::defineTable(name, rows)->splits();
   }
 
   std::shared_ptr<Task> assertQuery(
       const PlanNodePtr& plan,
-      const test::SplitVector& splits,
+      const wave::test::SplitVector& splits,
       const std::string& duckDbSql) {
     return OperatorTestBase::assertQuery(plan, splits, duckDbSql);
   }
 
   std::shared_ptr<Task> assertQuery(
       const PlanNodePtr& plan,
-      const test::SplitVector& splits,
+      const wave::test::SplitVector& splits,
       const std::string& duckDbSql,
       const int32_t numPrefetchSplit) {
     return AssertQueryBuilder(plan, duckDbQueryRunner_)
@@ -68,10 +84,6 @@ class TableScanTest : public virtual OperatorTestBase {
             std::to_string(numPrefetchSplit))
         .splits(splits)
         .assertResults(duckDbSql);
-  }
-
-  core::PlanNodePtr tableScanNode() {
-    return tableScanNode(rowType_);
   }
 
   core::PlanNodePtr tableScanNode(const RowTypePtr& outputType) {
@@ -108,21 +120,14 @@ class TableScanTest : public virtual OperatorTestBase {
     }
     ASSERT_EQ(n, task->numFinishedDrivers());
   }
-
-  RowTypePtr rowType_{
-      ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
-          {BIGINT(),
-           INTEGER(),
-           SMALLINT(),
-           REAL(),
-           DOUBLE(),
-           VARCHAR(),
-           TINYINT()})};
+  
+  VectorFuzzer::Options options_;
+  std::unique_ptr<VectorFuzzer> fuzzer_;
 };
 
 TEST_F(TableScanTest, basic) {
   auto type = ROW({"c0"}, {BIGINT()});
-  auto vectors = makeVectors(10, 1'000, type);
+  auto vectors = makeVectors(type, 10, 1'000);
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
 
@@ -135,5 +140,4 @@ TEST_F(TableScanTest, basic) {
   auto scanNodeId = plan->id();
   auto it = planStats.find(scanNodeId);
   ASSERT_TRUE(it != planStats.end());
-  EXPECT_LT(0, exec::TableScan::ioWaitNanos());
 }

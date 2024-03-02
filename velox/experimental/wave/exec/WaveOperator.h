@@ -150,9 +150,7 @@ class WaveOperator {
   }
   
  protected:
-  folly::Synchronized<exec::OperatorStats>& stats() {
-    return driver_->stats();
-  }
+  folly::Synchronized<exec::OperatorStats>& stats();
 
   // Sequence number in WaveOperator sequence inside WaveDriver. IUsed to label
   // states of different oprators in WaveStream.

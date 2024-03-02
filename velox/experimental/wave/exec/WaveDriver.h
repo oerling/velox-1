@@ -76,6 +76,10 @@ class WaveDriver : public exec::SourceOperator {
       const std::shared_ptr<common::Filter>& filter) override {
     pipelines_[0].operators[0]->addDynamicFilter(outputChannel, filter);
   }
+
+  exec::OperatorCtx* operatorCtx() const {
+    return operatorCtx_.get();
+  }
   
  private:
   // True if all output from 'stream' is fetched.

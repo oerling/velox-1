@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {
@@ -23,7 +24,7 @@ WaveOperator::WaveOperator(
     CompileState& state,
     const RowTypePtr& type,
     const std::string& planNodeId)
-    : id_(state.numOperators()), outputType_(type), planNodeId_(planNodeId) {
+    : id_(state.numOperators()), planNodeId_(planNodeId), outputType_(type) {
   definesSubfields(state, outputType_);
 }
 
@@ -54,5 +55,10 @@ void WaveOperator::definesSubfields(
     }
   }
 }
+
+
+  folly::Synchronized<exec::OperatorStats>& WaveOperator::stats() {
+    return driver_ ->stats();
+  }
 
 } // namespace facebook::velox::wave
