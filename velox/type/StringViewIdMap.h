@@ -45,8 +45,8 @@ class StringViewIdMap {
       emptyId_ = numEntries_++;
       return emptyId_;
     }
-    auto hash = hash1(view) & sizeMask_;
-    return findEntry<true, true>(hash * kEntrySize, view, sizeAndPrefix, copyPtr);
+    auto hash = (hash1(view) & sizeMask_) * kEntrySize;
+    return findEntry<true, true>(hash, view, sizeAndPrefix, copyPtr);
   }
 
   int32_t findId(const StringView& view) {
@@ -59,31 +59,36 @@ class StringViewIdMap {
       }
       return kNotFound;
     }
-    auto hash = hash1(view) & sizeMask_;
+    auto hash =( hash1(view) & sizeMask_) * kEntrySize;
     return findEntry<false, false>(hash, view, sizeAndPrefix, nullptr);
   }
 
-  xsimd::batch<int64_t>
-  makeIds(const StringView* views, int32x4 indices, char*** copyPtr) {
-    int64_t result[4];
-    result[0] = makeId(views[indices[0]], copyPtr[0]);
-    result[1] = makeId(views[indices[1]], copyPtr[1]);
-    result[2] = makeId(views[indices[2]], copyPtr[2]);
-    result[3] = makeId(views[indices[3]], copyPtr[3]);
-    return xsimd::load_unaligned(&result[0]);
-  }
 
-  xsimd::batch<int64_t> findIds(const StringView* views, int32x4 indices) {
-    int64_t result[4];
-    result[0] = findId(views[indices[0]]);
-    result[1] = findId(views[indices[1]]);
-    result[2] = findId(views[indices[2]]);
-    result[3] = findId(views[indices[3]]);
-    return xsimd::load_unaligned(&result[0]);
-  }
 
   void findIds8(const StringView* views, const int32_t* indices, bool makeIds, int32_t* ids, char** tails);
-  
+
+  void findIds8Scalar(const StringView* views, const int32_t* indices, bool makeIds, int32_t* ids, char** tails) {
+    if (makeIds) {
+      ids[0] = makeId(views[indices[0]], &tails[0]);
+    ids[1] = makeId(views[indices[1]], &tails[1]);
+    ids[2] = makeId(views[indices[2]], &tails[2]);
+    ids[3] = makeId(views[indices[3]], &tails[3]);
+      ids[4] = makeId(views[indices[4]], &tails[4]);
+    ids[5] = makeId(views[indices[5]], &tails[5]);
+    ids[6] = makeId(views[indices[6]], &tails[6]);
+    ids[7] = makeId(views[indices[7]], &tails[7]);
+    } else {
+      ids[0] = findId(views[indices[0]]);
+      ids[1] = findId(views[indices[1]]);
+      ids[2] = findId(views[indices[2]]);
+      ids[3] = findId(views[indices[3]]);
+      ids[4] = findId(views[indices[4]]);
+      ids[5] = findId(views[indices[5]]);
+      ids[6] = findId(views[indices[6]]);
+      ids[7] = findId(views[indices[7]]);
+    }
+  }
+
   template <bool makeNew, bool mayRehash>
   int32_t findEntry(
       int32_t offset,
@@ -196,4 +201,47 @@ class StringViewIdMap {
   int32_t collisions2_{0};
 };
 
+#if 0
+  int32_t check1(StringView* view, int32_t& id, int32_t& offset) {
+    auto head = view->sizeAndPrefixAsInt64();
+    auto size  static_cast<uint32_t>(head);
+    if (size <= 4) {
+      h = offset(1, head);
+      word = reinterpret_cast<int64_t*>(table + offset);
+      if (word == head) {
+	id = reinterpret_cast<int32_t*>(table + offset + sizeof(StringView));
+	done |= nth;
+      } else if (word == kEmpty) {
+	simd::memcpy(table + offset, view, sizeof(StringView));
+	table + offset + sizeof(StringView) = numEntries_++;
+	done |= nth;
+      } else {
+	offset = nextOffset(offset);
+      }
+    } else if (size <= 12) {
+      offset = offset(head >> 32, reinterpret_cast<int64_t*>(view)[1]);
+      word = ref64(table, offset);
+      if (head == word && reinterpret_cast<int64_t*>(table + offset)[1] == ref64(view, 8))
+	id = ref32(table + offset + 16);
+	done = nth;
+	} else if (word == kEmpty) 
+      } else {
+    offset = nextOffset(offset);
+  } else {
+  tail = ref64(view, 8);
+  last = reinterpret_cast<int64_t*>(tail + size - 8);
+  offset = offset(head >> 32, last);
+  word = ref64(table, offset);
+  if (head == word)
+    auto tail = ref64(table + offset + 8);
+  if (memcmp(ref64(view, 8), last, size)) {
+    id = ref32(table. sizeof(StringView));
+    done |= nth;
+  }
+ }
+
+  
+  #endif
+
+  
 } // namespace facebook::velox

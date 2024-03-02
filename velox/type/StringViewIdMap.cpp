@@ -18,7 +18,6 @@
 
 namespace facebook::velox {
 
-    
 StringViewIdMap::StringViewIdMap(int32_t capacity)
     : capacity_(std::max<int32_t>(64, bits::nextPowerOfTwo(capacity))) {
   sizeMask_ = capacity_ - 1;
@@ -69,22 +68,21 @@ static inline void hash(
     int32_t i,
     int32_t* hashArray) {
   hashArray[i] = tailArray[i] == 0
-      ? simd::crc32U64(1, headArray[1])
+      ? simd::crc32U64(1, headArray[i])
       : simd::crc32U64(headArray[i] >> 32, tailArray[i]);
 }
 
-  
 void StringViewIdMap::findIds8(
     const StringView* views,
     const int32_t* indices,
     bool makeIds,
     int32_t* ids,
     char** tails) {
-  xsimd::broadcast<int64_t>(0).store_unaligned(
-      reinterpret_cast<int64_t*>(tails));
-  xsimd::broadcast<int64_t>(0).store_unaligned(
-      reinterpret_cast<int64_t*>(tails) + 4);
   if (makeIds) {
+    xsimd::broadcast<int64_t>(0).store_unaligned(
+        reinterpret_cast<int64_t*>(tails));
+    xsimd::broadcast<int64_t>(0).store_unaligned(
+        reinterpret_cast<int64_t*>(tails) + 4);
     if (UNLIKELY(numEntries_ >= maxEntries_)) {
       resize(capacity_ * 2);
     }
@@ -134,37 +132,37 @@ void StringViewIdMap::findIds8(
   ((xsimd::load_unaligned(&hashArray[0]) & sizeMask_) * kEntrySize)
       .store_unaligned(&hashArray[0]);
 
-  #define COMPARE_TABLE_HEAD(n)						\
+#define COMPARE_TABLE_HEAD(n)                                           \
   auto offsetBytes##n =                                                 \
-  simd::loadGatherIndices<int64_t, int32_t>(&hashArray[n * 4]);		\
+      simd::loadGatherIndices<int64_t, int32_t>(&hashArray[n * 4]);     \
   auto words##n = simd::gather<int64_t, int32_t, 1>(                    \
       reinterpret_cast<const int64_t*>(table_.data()), offsetBytes##n); \
   auto hits##n = heads##n == words##n;                                  \
-  auto empties ##n = words##n == kEmpty;
-
-
+  auto empties##n = words##n == kEmpty;
 
   COMPARE_TABLE_HEAD(0);
   COMPARE_TABLE_HEAD(1);
 
   uint16_t hitBits = simd::toBitMask(hits0) | (simd::toBitMask(hits1) << 4);
-  uint16_t emptyBits = simd::toBitMask(empties0) | simd::toBitMask(empties1) << 4;
-  uint16_t tailBits = simd::toBitMask(haveTail0) | simd::toBitMask(haveTail1) << 4;
+  uint16_t emptyBits =
+      simd::toBitMask(empties0) | simd::toBitMask(empties1) << 4;
+  uint16_t tailBits =
+      simd::toBitMask(haveTail0) | simd::toBitMask(haveTail1) << 4;
   uint16_t longTailBits =
       simd::toBitMask(longTails0) | simd::toBitMask(longTails1) << 4;
 
-
   auto tailCheck = hitBits & tailBits & ~longTailBits;
   uint16_t longTailCheck = hitBits & longTailBits;
-#define CHECK_SHORT_TAIL(n)                                            \
-  if ((tailCheck & (0xf << (n * 4))) != 0) {                           \
-    auto tableTails = simd::maskGather<int64_t, int32_t, 1>(	       \
-        xsimd::broadcast<int64_t>(0),                                  \
-        haveTail##n,                                                   \
-        reinterpret_cast<int64_t*>(table_.data()) + 1,                 \
-        offsetBytes##n);                                               \
-    uint16_t tailMiss = simd::toBitMask(tableTails != viewTails##n) & (tailCheck >> (n * 4)); \
-    hitBits ^= tailMiss << (n * 4);                                   \
+#define CHECK_SHORT_TAIL(n)                                                   \
+  if ((tailCheck & (0xf << (n * 4))) != 0) {                                  \
+    auto tableTails = simd::maskGather<int64_t, int32_t, 1>(                  \
+        xsimd::broadcast<int64_t>(0),                                         \
+        haveTail##n,                                                          \
+        reinterpret_cast<int64_t*>(table_.data()) + 1,                        \
+        offsetBytes##n);                                                      \
+    uint16_t tailMiss =                                                       \
+        simd::toBitMask(tableTails != viewTails##n) & (tailCheck >> (n * 4)); \
+    hitBits ^= tailMiss << (n * 4);                                           \
   }
   CHECK_SHORT_TAIL(0);
   CHECK_SHORT_TAIL(1);
@@ -198,7 +196,10 @@ void StringViewIdMap::findIds8(
     while (remaining) {
       auto lane = bits::getAndClearLastSetBit(remaining);
       ids[lane] = findEntry<false, false>(
-					  nextOffset(hashArray[lane]), views[indices[lane]], headArray[lane], nullptr);
+          nextOffset(hashArray[lane]),
+          views[indices[lane]],
+          headArray[lane],
+          nullptr);
     }
   }
   simd::gather<int32_t, int32_t, 1>(
@@ -212,8 +213,8 @@ void StringViewIdMap::findIds8(
     if ((emptyBits & (1 << lane)) == 0) {
       offset = nextOffset(offset);
     }
-    ids[lane] = findEntry<false, false>(
-				      offset, views[indices[lane]], headArray[lane], &tails[lane]);
+    ids[lane] = findEntry<true, false>(
+        offset, views[indices[lane]], headArray[lane], &tails[lane]);
   }
 }
 
