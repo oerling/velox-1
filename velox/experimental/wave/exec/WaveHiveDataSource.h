@@ -21,7 +21,8 @@ namespace facebook::velox::wave {
 
 class WaveHiveDataSource : public WaveDataSource {
  public:
-  WaveHiveDataSource(const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+  WaveHiveDataSource(
+      const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
       const RowTypePtr& readerOutputType,
       std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
@@ -30,25 +31,23 @@ class WaveHiveDataSource : public WaveDataSource {
       folly::Executor* executor,
       const ConnectorQueryCtx* connectorQueryCtx,
       const std::shared_ptr<HiveConfig>& hiveConfig,
-										       const std::shared_ptr<io::IoStatistics>& ioStats,
-		     const ExprSet& remainingFilter);
-  
+      const std::shared_ptr<io::IoStatistics>& ioStats,
+      const ExprSet& remainingFilter);
+
   static void register();
-  
+
  private:
   const std::shared_ptr<HiveTableHandle>& hiveTableHandle_;
   const std::shared_ptr<common::ScanSpec>& scanSpec_;
   const RowTypePtr& readerOutputType_;
-      std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
-	partitionKeys_;
-      FileHandleFactory* fileHandleFactory_;
-      folly::Executor* executor_;
-      const ConnectorQueryCtx* connectorQueryCtx_;
-      const std::shared_ptr<HiveConfig>& hiveConfig_;
-      const std::shared_ptr<io::IoStatistics>& ioStats_;
-      std::shared_ptr<Expr> remainingFilter_;
-
-  
+  std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
+      partitionKeys_;
+  FileHandleFactory* fileHandleFactory_;
+  folly::Executor* executor_;
+  const ConnectorQueryCtx* connectorQueryCtx_;
+  const std::shared_ptr<HiveConfig>& hiveConfig_;
+  const std::shared_ptr<io::IoStatistics>& ioStats_;
+  std::shared_ptr<Expr> remainingFilter_;
 };
 
-}
+} // namespace facebook::velox::wave

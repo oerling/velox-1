@@ -72,25 +72,26 @@ class HiveDataSource : public DataSource {
 
   int64_t estimatedRowSize() override;
 
-  #if def WAVE
-  using WaveDelegateHookFunction = std::function<std::shared_ptr<WaveDataSource>(      const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
-      const std::shared_ptr<common::ScanSpec>& scanSpec,
-      const RowTypePtr& readerOutputType,
-      std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
-          partitionKeys,
-      FileHandleFactory* fileHandleFactory,
-      folly::Executor* executor,
-      const ConnectorQueryCtx* connectorQueryCtx,
-      const std::shared_ptr<HiveConfig>& hiveConfig,
-										       const std::shared_ptr<io::IoStatistics>& ioStats,
-										       const ExprSet& remainingFilter)>;
-
+#if def WAVE
+  using WaveDelegateHookFunction =
+      std::function<std::shared_ptr<WaveDataSource>(
+          const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+          const std::shared_ptr<common::ScanSpec>& scanSpec,
+          const RowTypePtr& readerOutputType,
+          std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
+              partitionKeys,
+          FileHandleFactory* fileHandleFactory,
+          folly::Executor* executor,
+          const ConnectorQueryCtx* connectorQueryCtx,
+          const std::shared_ptr<HiveConfig>& hiveConfig,
+          const std::shared_ptr<io::IoStatistics>& ioStats,
+          const ExprSet& remainingFilter)>;
 
   static registerWaveDelegateHook(WaveDelegateHookFunction hook) {
     waveDelegateHook_ = ook;
   }
   std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
-  #endif
+#endif
 
   // Internal API, made public to be accessible in unit tests.  Do not use in
   // other places.

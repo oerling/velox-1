@@ -429,10 +429,11 @@ void HiveDataSource::resetSplit() {
 
 #ifdef WAVE
 
-  WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
+WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
 
-  std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
-    return waveDelegateHook_(      hiveTableHandle_,
+std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
+  return waveDelegateHook_(
+      hiveTableHandle_,
       scanSpec_,
       readerOutputType_,
       &partitionKeys_,
@@ -440,8 +441,8 @@ void HiveDataSource::resetSplit() {
       executor_,
       connectorQueryCtx_,
       hiveConfig_,
-				   ioStats_,
-				   remainingFilterExprSet_);
+      ioStats_,
+      remainingFilterExprSet_);
 
     hiveTableHandle_,
       scanSpec_,
@@ -452,8 +453,7 @@ void HiveDataSource::resetSplit() {
       connectorQueryCtx_,
       hiveConfig_,
       ioStats_);
-    
-  }
+}
 #endif
-  
+
 } // namespace facebook::velox::connector::hive
