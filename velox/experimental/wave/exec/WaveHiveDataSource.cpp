@@ -18,8 +18,51 @@
 
 namespace facebook::velox::wave {
 
+  
+  WaveHiveDataSource::WaveHiveDataSource
+  std::shared_ptr<WaveDataSource>(      const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+      const std::shared_ptr<common::ScanSpec>& scanSpec,
+      const RowTypePtr& readerOutputType,
+      std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
+          partitionKeys,
+      FileHandleFactory* fileHandleFactory,
+      folly::Executor* executor,
+      const ConnectorQueryCtx* connectorQueryCtx,
+      const std::shared_ptr<HiveConfig>& hiveConfig,
+										       const std::shared_ptr<io::IoStatistics>& ioStats,
+					const ExprSet& remainingFilter) {
+    params_.hiveTableHandle = hiveTableHandle;
+params_.scanSpec = scanSpec;
+  params_.readerOutputType  = readerOutputType;
+  params_.partitionKeys = partitionKeys;
+  params_.fileHandleFactory = fileHandleFactory;
+  params_.executor = executor;
+  params_.connectorQueryCtx = connectorQueryCtx;
+  params_.hiveConfig = hiveConfig;
+  params_.ioStats = ioStats;
+   remainingFilter_ = remainingFilter.exprAt(0);
+}
+
+
+  void WaveHiveDataSource::addSplit(std::shared_ptr<connector::ConnectorSplit> split) {
+    
+  }
+  
 // static
 void WaveHiveDataSource::register() {
+  static bool registered = false;
+  if (registered) {
+    return;
+  }
+  registered = true;
+  std::make_shared<const core::MemConfig>({});
+
+    // Create hive connector with config...
+    auto hiveConnector =
+        connector::getConnectorFactory(
+            connector::hive::HiveConnectorFactory::kHiveConnectorName)
+            ->newConnector("wavemock", properties, nullptr);
+    connector::registerConnector(hiveConnector);
   connector::hive::DataSource::registerWaveDelegateHook(
       [](const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
          const std::shared_ptr<common::ScanSpec>& scanSpec,

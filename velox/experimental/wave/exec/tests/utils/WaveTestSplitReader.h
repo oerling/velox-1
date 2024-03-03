@@ -16,26 +16,17 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/WaveDataSource.h"
+#include "velox/experimental/wave/exec/WaveSplitReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 
 namespace facebook::velox::wave::test {
 
-/// A WaveDataSource that decodes mock Wave tables.
-class WaveTestDataSource : public WaveDataSource {
+/// A WaveSplitReader that decodes mock Wave tables.
+class WaveTestSplitReader : public WaveSplitReader {
  public:
-  WaveTestDataSource(const std::shared_ptr<WaveTestConnectorSplit>& split)
-      : split_(split) {}
-
-  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
-
-  void setFromDataSource(connector::DataSource* dataSource) override {}
-
-  void addDynamicFilter(
-      column_index_t outputChannel,
-      const std::shared_ptr<common::Filter>& filter) {
-    VELOX_NYI();
-  }
+  WaveTestSplitReader(const std::shared_ptr<connector::hive::HiveConnectorSplit>& split,
+		      const SplitReaderParams& params);
+  
 
   int32_t canAdvance() override;
 
@@ -56,7 +47,11 @@ class WaveTestDataSource : public WaveDataSource {
     return {};
   }
 
+  static void registertestSplitReader();
+  
  private:
-  std::shared_ptr<WaveTestConnectorSplit> split_;
+  test::Stripe* stripe;
 };
+
+
 } // namespace facebook::velox::wave::test

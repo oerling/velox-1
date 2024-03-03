@@ -18,6 +18,7 @@
 #include "velox/connectors/Connector.h"
 #include "velox/type/StringView.h"
 #include "velox/vector/ComplexVector.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
 
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave::test {
@@ -46,6 +47,10 @@ struct Column {
 struct Stripe {
   Stripe(std::vector<std::unique_ptr<Column>>&& in) : columns(std::move(in)) {}
 
+  // Unique name assigned when associating with a Table.
+  std::string name;
+
+  // Top level columns.
   std::vector<std::unique_ptr<Column>> columns;
 };
 
@@ -131,13 +136,6 @@ class Writer {
   std::vector<std::unique_ptr<Encoder>> encoders_;
 };
 
-struct WaveTestConnectorSplit : public connector::ConnectorSplit {
-  WaveTestConnectorSplit(Stripe* stripe)
-      : ConnectorSplit("wavetest"), stripe(stripe) {}
-
-  Stripe* stripe;
-};
-
 using SplitVector = std::vector<std::shared_ptr<connector::ConnectorSplit>>;
 
 class Table {
@@ -163,16 +161,21 @@ class Table {
     return it->second.get();
   }
 
-  static void dropTable(const std::string& name) {
-    std::lock_guard<std::mutex> l(mutex_);
-    allTables_.erase(name);
-  }
+  static void dropTable(const std::string& name);
 
+  Stripe* getStripe(const std::string& path) {
+    std::lock_guard<std::mutex> l(mutex_);
+    auto it = allStripes_.find(path);
+    VELOX_CHECK(it != allStripes_.end());
+    return it->second;
+  }
+  
   void addStripes(
       std::vector<std::unique_ptr<Stripe>>&& stripes,
       std::shared_ptr<memory::MemoryPool> pool) {
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& s : stripes) {
+      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size()); 
       stripes_.push_back(std::move(s));
     }
     pools_.push_back(pool);
@@ -194,7 +197,7 @@ class Table {
     SplitVector result;
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stripe : stripes_) {
-      result.push_back(std::make_shared<WaveTestConnectorSplit>(stripe.get()));
+      result.push_back(std::make_shared<connector::hive::HiveConnectorSplit>("wavemock", stripe->name, dwio::common::FileFormat::UNKNOWN));
     }
     return result;
   }
@@ -202,7 +205,7 @@ class Table {
  private:
   static std::mutex mutex_;
   static std::unordered_map<std::string, std::unique_ptr<Table>> allTables_;
-
+  static std::unordered_map<std::string, Stripe*> allStripes_;
   std::vector<std::shared_ptr<memory::MemoryPool>> pools_;
   std::string name_;
   std::vector<std::unique_ptr<Stripe>> stripes_;

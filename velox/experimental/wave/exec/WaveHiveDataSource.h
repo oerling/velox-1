@@ -16,6 +16,9 @@
 
 #pragma once
 #include "velox/experimental/wave/exec/WaveDataSource.h"
+#include "velox/connectors/hive/HiveDataSource.h"
+#include "velox/experimental/wave/exec/WaveSplitReader.h"
+
 
 namespace facebook::velox::wave {
 
@@ -33,20 +36,30 @@ class WaveHiveDataSource : public WaveDataSource {
       const std::shared_ptr<HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
       const ExprSet& remainingFilter);
+  void addDynamicFilter(
+				column_index_t outputChannel,
+				const std::shared_ptr<common::Filter>& filter) = 0 override;
 
+  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) = 0 override;
+
+  int32_t canAdvance() override;
+
+  void schedule(WaveStream& stream, int32_t maxRows = 0) override;
+ 
+  vector_size_t outputSize(WaveStream& stream) const override;
+
+  bool isFinished() const override;
+  uint64_t getCompletedBytes() override;
+
+  uint64_t getCompletedRows() override;
+
+  std::unordered_map<std::string, RuntimeCounter> runtimeStats() override;
+
+  
   static void register();
 
  private:
-  const std::shared_ptr<HiveTableHandle>& hiveTableHandle_;
-  const std::shared_ptr<common::ScanSpec>& scanSpec_;
-  const RowTypePtr& readerOutputType_;
-  std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
-      partitionKeys_;
-  FileHandleFactory* fileHandleFactory_;
-  folly::Executor* executor_;
-  const ConnectorQueryCtx* connectorQueryCtx_;
-  const std::shared_ptr<HiveConfig>& hiveConfig_;
-  const std::shared_ptr<io::IoStatistics>& ioStats_;
+  SplitReaderParams params_;
   std::shared_ptr<Expr> remainingFilter_;
 };
 

@@ -23,6 +23,8 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
+#include "velox/experimental/wave/exec/WaveHiveDataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;
@@ -33,6 +35,7 @@ class TableScanTest : public virtual OperatorTestBase {
  protected:
   void SetUp() override {
     OperatorTestBase::SetUp();
+    WaveTestSplitReader::registerTestSplitReader();
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
     fuzzer_ = std::make_unique<VectorFuzzer>(options_, pool_.get());

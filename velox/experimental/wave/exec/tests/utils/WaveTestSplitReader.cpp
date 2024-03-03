@@ -14,16 +14,14 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/tests/utils/WaveTestDataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 
 namespace facebook::velox::wave::test {
 
-void WaveTestDataSource::addSplit(
-    std::shared_ptr<connector::ConnectorSplit> split) {
-  auto testSplit = std::dynamic_pointer_cast<WaveTestConnectorSplit>(split);
-  VELOX_CHECK_NOT_NULL(testSplit);
-  split_ = testSplit;
-}
+  WaveTestSplitReader::WaveTestSplitReader(const std::shared_ptr<connector::ConnectorSplit>& split,
+					   const SplitReaderParams& params) {
+    stripe_ = test::Table::getStripe(split->path);
+  }
 
 int32_t WaveTestDataSource::canAdvance() {
   return 0;
@@ -40,5 +38,23 @@ vector_size_t WaveTestDataSource::outputSize(WaveStream& stream) const {
 bool WaveTestDataSource::isFinished() const {
   return false;
 }
+  namespace {
+  class WaveTestSplitReaderFactory {
+  public:
+    std::unique_ptr<WaveSplitReader> create (const std::shared_ptr<HiveConnectorSplit>& split,
+					     const SplitReaderParams& params) override {
+      if (memcmp(split.path.data(), "wavemock://", 11) == 0) {
+	return std::make_unique<WaveTestSplitReader>(split, params);
+      }
+      return nullptr;
+    }
 
+  };
+  }
+    
+  static void WaveTestSplitReader::registerTestSplitReader() {
+    WaveSplitReader::register(std::make_unique<WaveTestSplitReaderFactory>());
+  }
+
+  
 } // namespace facebook::velox::wave::test

@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/tests/utils/WaveConnector.h"
+#include "velox/connectors/hive/HiveConnectorUtil.h"
 
 namespace facebook::velox::wave::test {
 
@@ -23,6 +24,8 @@ std::shared_ptr<WaveDataSource> WaveMockDataSource::toWaveDataSource() {
   return waveDataSource_;
 }
 
+
+  
 VELOX_REGISTER_CONNECTOR_FACTORY(std::make_shared<WaveMockConnectorFactory>())
 
 } // namespace facebook::velox::wave::test

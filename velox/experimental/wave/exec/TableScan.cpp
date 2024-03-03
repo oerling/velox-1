@@ -123,6 +123,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
   // avoid needless work.
   split->dataSource = std::make_unique<AsyncSource<connector::DataSource>>(
       [type = outputType_,
+       source = waveDataSource_,
        table = tableHandle_,
        columns = columnHandles_,
        connector = connector_,
@@ -141,11 +142,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
              },
              &debugString});
 
-        auto ptr = connector->createDataSource(type, table, columns, ctx.get());
-        if (task->isCancelled()) {
-          return nullptr;
-        }
-        ptr->addSplit(split);
+        auto ptr = source->createShellForSplit(split);
         return ptr;
       });
 }

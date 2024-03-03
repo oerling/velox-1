@@ -72,9 +72,9 @@ class HiveDataSource : public DataSource {
 
   int64_t estimatedRowSize() override;
 
-#if def WAVE
+#ifdef WAVE
   using WaveDelegateHookFunction =
-      std::function<std::shared_ptr<WaveDataSource>(
+    std::function<std::shared_ptr<wave::WaveDataSource>(
           const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
           const std::shared_ptr<common::ScanSpec>& scanSpec,
           const RowTypePtr& readerOutputType,
@@ -85,10 +85,10 @@ class HiveDataSource : public DataSource {
           const ConnectorQueryCtx* connectorQueryCtx,
           const std::shared_ptr<HiveConfig>& hiveConfig,
           const std::shared_ptr<io::IoStatistics>& ioStats,
-          const ExprSet& remainingFilter)>;
+          const exec::ExprSet& remainingFilter)>;
 
   static registerWaveDelegateHook(WaveDelegateHookFunction hook) {
-    waveDelegateHook_ = ook;
+    waveDelegateHook_ = hook;
   }
   std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
 #endif
