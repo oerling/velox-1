@@ -18,19 +18,20 @@
 
 namespace facebook::velox::wave {
 
+  using namespace connector::hive;
   
-  WaveHiveDataSource::WaveHiveDataSource
-  std::shared_ptr<WaveDataSource>(      const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+  WaveHiveDataSource::WaveHiveDataSource(
+					 const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
       const RowTypePtr& readerOutputType,
       std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
           partitionKeys,
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
-      const ConnectorQueryCtx* connectorQueryCtx,
+					 const connector::ConnectorQueryCtx* connectorQueryCtx,
       const std::shared_ptr<HiveConfig>& hiveConfig,
 										       const std::shared_ptr<io::IoStatistics>& ioStats,
-					const ExprSet& remainingFilter) {
+					 const exec::ExprSet& remainingFilter) {
     params_.hiveTableHandle = hiveTableHandle;
 params_.scanSpec = scanSpec;
   params_.readerOutputType  = readerOutputType;
@@ -40,7 +41,7 @@ params_.scanSpec = scanSpec;
   params_.connectorQueryCtx = connectorQueryCtx;
   params_.hiveConfig = hiveConfig;
   params_.ioStats = ioStats;
-   remainingFilter_ = remainingFilter.exprAt(0);
+  remainingFilter_ = remainingFilter.exprs().at(0);
 }
 
 
@@ -49,21 +50,21 @@ params_.scanSpec = scanSpec;
   }
   
 // static
-void WaveHiveDataSource::register() {
+void WaveHiveDataSource::registerConnector() {
   static bool registered = false;
   if (registered) {
     return;
   }
   registered = true;
-  std::make_shared<const core::MemConfig>({});
+  auto config = std::make_shared<const core::MemConfig>();
 
     // Create hive connector with config...
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
-            ->newConnector("wavemock", properties, nullptr);
+            ->newConnector("wavemock", config, nullptr);
     connector::registerConnector(hiveConnector);
-  connector::hive::DataSource::registerWaveDelegateHook(
+  connector::hive::HiveDataSource::registerWaveDelegateHook(
       [](const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
          const std::shared_ptr<common::ScanSpec>& scanSpec,
          const RowTypePtr& readerOutputType,
@@ -71,10 +72,10 @@ void WaveHiveDataSource::register() {
              partitionKeys,
          FileHandleFactory* fileHandleFactory,
          folly::Executor* executor,
-         const ConnectorQueryCtx* connectorQueryCtx,
+         const connector::ConnectorQueryCtx* connectorQueryCtx,
          const std::shared_ptr<HiveConfig>& hiveConfig,
          const std::shared_ptr<io::IoStatistics>& ioStats,
-         const ExprSet& remainingFilter) {
+         const exec::ExprSet& remainingFilter) {
         return std::make_shared<WaveHiveDataSource>(
             hiveTableHandle,
             scanSpec,
@@ -86,7 +87,7 @@ void WaveHiveDataSource::register() {
             connectorQueryCtx,
             hiveConfig,
             ioStats,
-            remainingFilter)
+            remainingFilter);
       });
 }
 

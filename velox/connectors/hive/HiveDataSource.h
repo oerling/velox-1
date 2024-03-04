@@ -73,6 +73,8 @@ class HiveDataSource : public DataSource {
   int64_t estimatedRowSize() override;
 
 #ifdef WAVE
+  std::shared_ptr<wave::WaveDataSource> toWaveDataSource() override;
+
   using WaveDelegateHookFunction =
     std::function<std::shared_ptr<wave::WaveDataSource>(
           const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
@@ -87,10 +89,9 @@ class HiveDataSource : public DataSource {
           const std::shared_ptr<io::IoStatistics>& ioStats,
           const exec::ExprSet& remainingFilter)>;
 
-  static registerWaveDelegateHook(WaveDelegateHookFunction hook) {
-    waveDelegateHook_ = hook;
-  }
-  std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
+  static WaveDelegateHookFunction  waveDelegateHook_;
+  
+  static void registerWaveDelegateHook(WaveDelegateHookFunction hook);
 #endif
 
   // Internal API, made public to be accessible in unit tests.  Do not use in

@@ -25,26 +25,27 @@ namespace facebook::velox::wave {
 class WaveHiveDataSource : public WaveDataSource {
  public:
   WaveHiveDataSource(
-      const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+		     const std::shared_ptr<connector::hive::HiveTableHandle>& hiveTableHandle,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
       const RowTypePtr& readerOutputType,
-      std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
+		     std::unordered_map<std::string, std::shared_ptr<connector::hive::HiveColumnHandle>>*
           partitionKeys,
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
-      const ConnectorQueryCtx* connectorQueryCtx,
-      const std::shared_ptr<HiveConfig>& hiveConfig,
+		     const connector::ConnectorQueryCtx* connectorQueryCtx,
+		     const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
-      const ExprSet& remainingFilter);
+		     const exec::ExprSet& remainingFilter);
+
   void addDynamicFilter(
 				column_index_t outputChannel,
-				const std::shared_ptr<common::Filter>& filter) = 0 override;
+				const std::shared_ptr<common::Filter>& filter)  override;
 
-  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) = 0 override;
+  void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
 
   int32_t canAdvance() override;
 
-  void schedule(WaveStream& stream, int32_t maxRows = 0) override;
+  void schedule(WaveStream& stream, int32_t maxRows )override;
  
   vector_size_t outputSize(WaveStream& stream) const override;
 
@@ -56,11 +57,11 @@ class WaveHiveDataSource : public WaveDataSource {
   std::unordered_map<std::string, RuntimeCounter> runtimeStats() override;
 
   
-  static void register();
+  static void registerConnector();
 
  private:
   SplitReaderParams params_;
-  std::shared_ptr<Expr> remainingFilter_;
+  std::shared_ptr<exec::Expr> remainingFilter_;
 };
 
 } // namespace facebook::velox::wave

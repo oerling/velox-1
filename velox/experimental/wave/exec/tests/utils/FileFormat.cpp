@@ -20,6 +20,7 @@ namespace facebook::velox::wave::test {
 
 std::mutex Table::mutex_;
 std::unordered_map<std::string, std::unique_ptr<Table>> Table::allTables_;
+std::unordered_map<std::string, Stripe*> Table::allStripes_;
 
 int32_t bitWidth(uint64_t max) {
   return 64 - __builtin_clzll(max);

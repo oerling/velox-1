@@ -163,7 +163,7 @@ class Table {
 
   static void dropTable(const std::string& name);
 
-  Stripe* getStripe(const std::string& path) {
+  static Stripe* getStripe(const std::string& path) {
     std::lock_guard<std::mutex> l(mutex_);
     auto it = allStripes_.find(path);
     VELOX_CHECK(it != allStripes_.end());

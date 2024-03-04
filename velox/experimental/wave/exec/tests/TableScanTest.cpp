@@ -35,7 +35,7 @@ class TableScanTest : public virtual OperatorTestBase {
  protected:
   void SetUp() override {
     OperatorTestBase::SetUp();
-    WaveTestSplitReader::registerTestSplitReader();
+    wave::test::WaveTestSplitReader::registerTestSplitReader();
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
     fuzzer_ = std::make_unique<VectorFuzzer>(options_, pool_.get());

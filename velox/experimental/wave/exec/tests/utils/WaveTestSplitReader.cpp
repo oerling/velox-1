@@ -20,30 +20,37 @@ namespace facebook::velox::wave::test {
 
   WaveTestSplitReader::WaveTestSplitReader(const std::shared_ptr<connector::ConnectorSplit>& split,
 					   const SplitReaderParams& params) {
-    stripe_ = test::Table::getStripe(split->path);
+    auto hiveSplit = dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+    VELOX_CHECK_NOT_NULL(hiveSplit);
+    stripe_ = test::Table::getStripe(hiveSplit->filePath);
+    VELOX_CHECK_NOT_NULL(stripe_);
   }
 
-int32_t WaveTestDataSource::canAdvance() {
+int32_t WaveTestSplitReader::canAdvance() {
   return 0;
 }
 
-void WaveTestDataSource::schedule(WaveStream& stream, int32_t maxRows) {
+void WaveTestSplitReader::schedule(WaveStream& stream, int32_t maxRows) {
   VELOX_NYI();
 }
 
-vector_size_t WaveTestDataSource::outputSize(WaveStream& stream) const {
+vector_size_t WaveTestSplitReader::outputSize(WaveStream& stream) const {
   return 0;
 }
 
-bool WaveTestDataSource::isFinished() const {
+bool WaveTestSplitReader::isFinished() const {
   return false;
 }
   namespace {
-  class WaveTestSplitReaderFactory {
+    class WaveTestSplitReaderFactory : public WaveSplitReaderFactory{
   public:
-    std::unique_ptr<WaveSplitReader> create (const std::shared_ptr<HiveConnectorSplit>& split,
+    std::unique_ptr<WaveSplitReader> create (const std::shared_ptr<connector::ConnectorSplit>& split,
 					     const SplitReaderParams& params) override {
-      if (memcmp(split.path.data(), "wavemock://", 11) == 0) {
+      auto hiveSplit = dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+      if (!hiveSplit) {
+	return nullptr;
+      }
+      if (hiveSplit->filePath.size() > 11 &&memcmp(hiveSplit->filePath.data(), "wavemock://", 11) == 0) {
 	return std::make_unique<WaveTestSplitReader>(split, params);
       }
       return nullptr;
@@ -52,8 +59,9 @@ bool WaveTestDataSource::isFinished() const {
   };
   }
     
-  static void WaveTestSplitReader::registerTestSplitReader() {
-    WaveSplitReader::register(std::make_unique<WaveTestSplitReaderFactory>());
+  //  static
+  void WaveTestSplitReader::registerTestSplitReader() {
+    WaveSplitReader::registerFactory(std::make_unique<WaveTestSplitReaderFactory>());
   }
 
   
