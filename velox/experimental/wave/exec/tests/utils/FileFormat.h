@@ -16,9 +16,9 @@
 #pragma once
 
 #include "velox/connectors/Connector.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/type/StringView.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
 
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave::test {
@@ -169,13 +169,13 @@ class Table {
     VELOX_CHECK(it != allStripes_.end());
     return it->second;
   }
-  
+
   void addStripes(
       std::vector<std::unique_ptr<Stripe>>&& stripes,
       std::shared_ptr<memory::MemoryPool> pool) {
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& s : stripes) {
-      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size()); 
+      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size());
       stripes_.push_back(std::move(s));
     }
     pools_.push_back(pool);
@@ -197,7 +197,8 @@ class Table {
     SplitVector result;
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stripe : stripes_) {
-      result.push_back(std::make_shared<connector::hive::HiveConnectorSplit>("wavemock", stripe->name, dwio::common::FileFormat::UNKNOWN));
+      result.push_back(std::make_shared<connector::hive::HiveConnectorSplit>(
+          "wavemock", stripe->name, dwio::common::FileFormat::UNKNOWN));
     }
     return result;
   }

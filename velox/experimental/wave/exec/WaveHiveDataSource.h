@@ -15,38 +15,38 @@
  */
 
 #pragma once
-#include "velox/experimental/wave/exec/WaveDataSource.h"
 #include "velox/connectors/hive/HiveDataSource.h"
+#include "velox/experimental/wave/exec/WaveDataSource.h"
 #include "velox/experimental/wave/exec/WaveSplitReader.h"
-
 
 namespace facebook::velox::wave {
 
 class WaveHiveDataSource : public WaveDataSource {
  public:
   WaveHiveDataSource(
-		     const std::shared_ptr<connector::hive::HiveTableHandle>& hiveTableHandle,
+      const std::shared_ptr<connector::hive::HiveTableHandle>& hiveTableHandle,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
       const RowTypePtr& readerOutputType,
-		     std::unordered_map<std::string, std::shared_ptr<connector::hive::HiveColumnHandle>>*
-          partitionKeys,
+      std::unordered_map<
+          std::string,
+          std::shared_ptr<connector::hive::HiveColumnHandle>>* partitionKeys,
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
-		     const connector::ConnectorQueryCtx* connectorQueryCtx,
-		     const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
+      const connector::ConnectorQueryCtx* connectorQueryCtx,
+      const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
-		     const exec::ExprSet& remainingFilter);
+      const exec::ExprSet& remainingFilter);
 
   void addDynamicFilter(
-				column_index_t outputChannel,
-				const std::shared_ptr<common::Filter>& filter)  override;
+      column_index_t outputChannel,
+      const std::shared_ptr<common::Filter>& filter) override;
 
   void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
 
   int32_t canAdvance() override;
 
-  void schedule(WaveStream& stream, int32_t maxRows )override;
- 
+  void schedule(WaveStream& stream, int32_t maxRows) override;
+
   vector_size_t outputSize(WaveStream& stream) const override;
 
   bool isFinished() const override;
@@ -56,7 +56,6 @@ class WaveHiveDataSource : public WaveDataSource {
 
   std::unordered_map<std::string, RuntimeCounter> runtimeStats() override;
 
-  
   static void registerConnector();
 
  private:

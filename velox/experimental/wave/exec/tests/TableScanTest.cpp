@@ -21,10 +21,10 @@
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/wave/exec/ToWave.h"
-#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
-#include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/experimental/wave/exec/WaveHiveDataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;

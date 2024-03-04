@@ -76,7 +76,7 @@ class HiveDataSource : public DataSource {
   std::shared_ptr<wave::WaveDataSource> toWaveDataSource() override;
 
   using WaveDelegateHookFunction =
-    std::function<std::shared_ptr<wave::WaveDataSource>(
+      std::function<std::shared_ptr<wave::WaveDataSource>(
           const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
           const std::shared_ptr<common::ScanSpec>& scanSpec,
           const RowTypePtr& readerOutputType,
@@ -89,8 +89,8 @@ class HiveDataSource : public DataSource {
           const std::shared_ptr<io::IoStatistics>& ioStats,
           const exec::ExprSet& remainingFilter)>;
 
-  static WaveDelegateHookFunction  waveDelegateHook_;
-  
+  static WaveDelegateHookFunction waveDelegateHook_;
+
   static void registerWaveDelegateHook(WaveDelegateHookFunction hook);
 #endif
 

@@ -37,7 +37,7 @@ class WaveDataSource {
   virtual int32_t canAdvance() = 0;
 
   virtual void schedule(WaveStream& stream, int32_t maxRows = 0) = 0;
- 
+
   virtual vector_size_t outputSize(WaveStream& stream) const = 0;
 
   virtual bool isFinished() const = 0;
@@ -50,9 +50,11 @@ class WaveDataSource {
   void setSplitFromShell(std::unique_ptr<connector::DataSource> source) {
     VELOX_UNSUPPORTED();
   }
-  
-  /// Initializes a SplitReader for 'split' and encapsulates it inside the returned DataSource. 
-  std::unique_ptr<connector::DataSource> createShellForSplit(std::shared_ptr<connector::ConnectorSplit> split) {
+
+  /// Initializes a SplitReader for 'split' and encapsulates it inside the
+  /// returned DataSource.
+  std::unique_ptr<connector::DataSource> createShellForSplit(
+      std::shared_ptr<connector::ConnectorSplit> split) {
     VELOX_UNSUPPORTED();
   }
 };

@@ -24,9 +24,9 @@ namespace facebook::velox::wave::test {
 /// A WaveSplitReader that decodes mock Wave tables.
 class WaveTestSplitReader : public WaveSplitReader {
  public:
-  WaveTestSplitReader(const std::shared_ptr<connector::ConnectorSplit>& split,
-		      const SplitReaderParams& params);
-  
+  WaveTestSplitReader(
+      const std::shared_ptr<connector::ConnectorSplit>& split,
+      const SplitReaderParams& params);
 
   int32_t canAdvance() override;
 
@@ -48,10 +48,9 @@ class WaveTestSplitReader : public WaveSplitReader {
   }
 
   static void registerTestSplitReader();
-  
+
  private:
   test::Stripe* stripe_;
 };
-
 
 } // namespace facebook::velox::wave::test

@@ -18,13 +18,15 @@
 
 namespace facebook::velox::wave::test {
 
-  WaveTestSplitReader::WaveTestSplitReader(const std::shared_ptr<connector::ConnectorSplit>& split,
-					   const SplitReaderParams& params) {
-    auto hiveSplit = dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
-    VELOX_CHECK_NOT_NULL(hiveSplit);
-    stripe_ = test::Table::getStripe(hiveSplit->filePath);
-    VELOX_CHECK_NOT_NULL(stripe_);
-  }
+WaveTestSplitReader::WaveTestSplitReader(
+    const std::shared_ptr<connector::ConnectorSplit>& split,
+    const SplitReaderParams& params) {
+  auto hiveSplit =
+      dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+  VELOX_CHECK_NOT_NULL(hiveSplit);
+  stripe_ = test::Table::getStripe(hiveSplit->filePath);
+  VELOX_CHECK_NOT_NULL(stripe_);
+}
 
 int32_t WaveTestSplitReader::canAdvance() {
   return 0;
@@ -41,28 +43,30 @@ vector_size_t WaveTestSplitReader::outputSize(WaveStream& stream) const {
 bool WaveTestSplitReader::isFinished() const {
   return false;
 }
-  namespace {
-    class WaveTestSplitReaderFactory : public WaveSplitReaderFactory{
-  public:
-    std::unique_ptr<WaveSplitReader> create (const std::shared_ptr<connector::ConnectorSplit>& split,
-					     const SplitReaderParams& params) override {
-      auto hiveSplit = dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
-      if (!hiveSplit) {
-	return nullptr;
-      }
-      if (hiveSplit->filePath.size() > 11 &&memcmp(hiveSplit->filePath.data(), "wavemock://", 11) == 0) {
-	return std::make_unique<WaveTestSplitReader>(split, params);
-      }
+namespace {
+class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
+ public:
+  std::unique_ptr<WaveSplitReader> create(
+      const std::shared_ptr<connector::ConnectorSplit>& split,
+      const SplitReaderParams& params) override {
+    auto hiveSplit =
+        dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+    if (!hiveSplit) {
       return nullptr;
     }
-
-  };
+    if (hiveSplit->filePath.size() > 11 &&
+        memcmp(hiveSplit->filePath.data(), "wavemock://", 11) == 0) {
+      return std::make_unique<WaveTestSplitReader>(split, params);
+    }
+    return nullptr;
   }
-    
-  //  static
-  void WaveTestSplitReader::registerTestSplitReader() {
-    WaveSplitReader::registerFactory(std::make_unique<WaveTestSplitReaderFactory>());
-  }
+};
+} // namespace
 
-  
+//  static
+void WaveTestSplitReader::registerTestSplitReader() {
+  WaveSplitReader::registerFactory(
+      std::make_unique<WaveTestSplitReaderFactory>());
+}
+
 } // namespace facebook::velox::wave::test

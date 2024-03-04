@@ -429,7 +429,7 @@ void HiveDataSource::resetSplit() {
 
 #ifdef WAVE
 
-  HiveDataSource::WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
+HiveDataSource::WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
 
 std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
   VELOX_CHECK_NOT_NULL(waveDelegateHook_);
@@ -448,9 +448,9 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
 
 //  static
 void HiveDataSource::registerWaveDelegateHook(WaveDelegateHookFunction hook) {
-    waveDelegateHook_ = hook;
-  }
-  std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
+  waveDelegateHook_ = hook;
+}
+std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
 
 #endif
 

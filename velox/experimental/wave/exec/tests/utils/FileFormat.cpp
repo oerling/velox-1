@@ -226,20 +226,18 @@ const Table* Table::defineTable(
   writer.finalize(name);
 }
 
-
-  //  static
-  void Table::dropTable(const std::string& name) {
-    std::lock_guard<std::mutex> l(mutex_);
-    auto it = allTables_.find(name);
-    if (it == allTables_.end()) {
-      return;
-    }
-    auto& table = it->second;
-    for (auto& stripe : table->stripes_) {
-      allStripes_.erase(stripe->name);
-    }
-    allTables_.erase(it);
+//  static
+void Table::dropTable(const std::string& name) {
+  std::lock_guard<std::mutex> l(mutex_);
+  auto it = allTables_.find(name);
+  if (it == allTables_.end()) {
+    return;
   }
+  auto& table = it->second;
+  for (auto& stripe : table->stripes_) {
+    allStripes_.erase(stripe->name);
+  }
+  allTables_.erase(it);
+}
 
-  
 } // namespace facebook::velox::wave::test
