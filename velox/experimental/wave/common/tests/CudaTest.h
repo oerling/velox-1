@@ -22,22 +22,21 @@
 
 namespace facebook::velox::wave {
 
+struct WideParams {
+  int32_t size;
+  int32_t* numbers;
+  int32_t stride;
+  char data[8100];
+  void* result;
+};
 
-  struct WideParams {
-    int32_t size;
-    int32_t* numbers;
-    int32_t stride;
-    char data[8100];
-    void* result;
-  };
-
-  class TestStream : public Stream {
+class TestStream : public Stream {
  public:
-  // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats 'repeat' times.
-    void addOne(int32_t* numbers, int size, int32_t repeat = 1);
- 
-      void addOneWide(int32_t* numbers, int32_t size);
+  // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats
+  // 'repeat' times.
+  void addOne(int32_t* numbers, int size, int32_t repeat = 1);
 
-  };
+  void addOneWide(int32_t* numbers, int32_t size);
+};
 
 } // namespace facebook::velox::wave

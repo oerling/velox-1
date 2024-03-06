@@ -435,16 +435,16 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
   VELOX_CHECK_NOT_NULL(waveDelegateHook_);
   if (!waveDataSource_) {
     waveDataSource_ = waveDelegateHook_(
-      hiveTableHandle_,
-      scanSpec_,
-      readerOutputType_,
-      &partitionKeys_,
-      fileHandleFactory_,
-      executor_,
-      connectorQueryCtx_,
-      hiveConfig_,
-      ioStats_,
-      *remainingFilterExprSet_);
+        hiveTableHandle_,
+        scanSpec_,
+        readerOutputType_,
+        &partitionKeys_,
+        fileHandleFactory_,
+        executor_,
+        connectorQueryCtx_,
+        hiveConfig_,
+        ioStats_,
+        *remainingFilterExprSet_);
   }
   return waveDataSource_;
 }

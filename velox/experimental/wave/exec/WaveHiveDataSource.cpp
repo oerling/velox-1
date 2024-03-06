@@ -64,7 +64,6 @@ void WaveHiveDataSource::setFromDataSource(
   params_.ioStats = std::move(source->params_.ioStats);
 }
 
-  
 void WaveHiveDataSource::addSplit(
     std::shared_ptr<connector::ConnectorSplit> split) {
   VELOX_CHECK(
@@ -79,14 +78,15 @@ void WaveHiveDataSource::addSplit(
     splitReader_.reset();
   }
 
-  splitReader_ = WaveSplitReader::create(split, params_);;
+  splitReader_ = WaveSplitReader::create(split, params_);
+  ;
   // Split reader subclasses may need to use the reader options in prepareSplit
   // so we initialize it beforehand.
   splitReader_->configureReaderOptions();
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
 }
 
-}
+} // namespace facebook::velox::wave
 
 // static
 void WaveHiveDataSource::registerConnector() {

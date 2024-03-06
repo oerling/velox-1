@@ -161,7 +161,8 @@ class HiveDataSource : public DataSource {
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
 #ifdef WAVE
-  // Remembers the WaveDataSource. Successive calls to toWaveDataSource() will return the same.
+  // Remembers the WaveDataSource. Successive calls to toWaveDataSource() will
+  // return the same.
   std::shared_ptr<wave::WaveDataSource> waveDataSource_;
 #endif
 };
