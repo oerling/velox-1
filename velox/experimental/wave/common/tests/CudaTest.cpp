@@ -476,7 +476,7 @@ struct RoundtripStats {
         numAdds / (micros * 1000),
         mode,
         numThreads,
-	micros,
+        micros,
         micros / numOps,
         toDeviceBytes / (micros * 1000),
         toHostBytes / (micros * 1000));
@@ -499,7 +499,10 @@ class RoundtripThread {
     for (auto i = 0; i < kNumInts; ++i) {
       hostBuffer_->as<int32_t>()[i] = i;
     }
-    stream_->hostToDeviceAsync(lookupBuffer_->as<int32_t>(), hostBuffer_->as<int32_t>(), kNumInts * sizeof(int32_t));
+    stream_->hostToDeviceAsync(
+        lookupBuffer_->as<int32_t>(),
+        hostBuffer_->as<int32_t>(),
+        kNumInts * sizeof(int32_t));
     stream_->wait();
   }
 
@@ -547,15 +550,20 @@ class RoundtripThread {
             stats.toHostBytes += op.param1 * 1024;
             break;
           case OpCode::kAdd:
-            stream_->addOne(deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            stream_->addOne(
+                deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
           case OpCode::kAddRandom:
-            stream_->addOneRandom(deviceBuffer_->as<int32_t>(), lookupBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            stream_->addOneRandom(
+                deviceBuffer_->as<int32_t>(),
+                lookupBuffer_->as<int32_t>(),
+                op.param1 * 256,
+                op.param2);
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
-	case OpCode::kSync:
+          case OpCode::kSync:
             stream_->wait();
             break;
           case OpCode::kSyncEvent:
@@ -586,34 +594,34 @@ class RoundtripThread {
           break;
         case 'd':
           op.opCode = OpCode::kToDevice;
-	  ++position;
+          ++position;
           op.param1 = parseInt(str, position, 1);
           return op;
         case 'h':
           op.opCode = OpCode::kToHost;
-	  ++position;
+          ++position;
           op.param1 = parseInt(str, position, 1);
           return op;
         case 'a':
           op.opCode = OpCode::kAdd;
-	  ++position;
+          ++position;
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
         case 'r':
           op.opCode = OpCode::kAddRandom;
-	  ++position;
+          ++position;
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
 
-      case 's':
+        case 's':
           op.opCode = OpCode::kSync;
-	  ++position;
+          ++position;
           return op;
         case 'e':
           op.opCode = OpCode::kSyncEvent;
-	  ++position;
+          ++position;
           return op;
         default:
           VELOX_FAIL("No opcode {}", str[position]);
@@ -1122,8 +1130,15 @@ TEST_F(CudaTest, roundTripMatrix) {
   std::vector<RoundtripStats> allStats;
   std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
   std::vector<std::string> modeValues = {
-					 "dahs", "d10h10h10s", "d100a100h100s", "d1000a1000h1000s", "d1000a1000,10h1000s", "d1000a1000,10h1sd1a1000,5h1s", "d100a100,10h1s",
-					 "d1000a1000,30h1sd1a1000,30h1s", "d1000a1000,150h1sd1a1000,150h1s"};
+      "dahs",
+      "d10h10h10s",
+      "d100a100h100s",
+      "d1000a1000h1000s",
+      "d1000a1000,10h1000s",
+      "d1000a1000,10h1sd1a1000,5h1s",
+      "d100a100,10h1s",
+      "d1000a1000,30h1sd1a1000,30h1s",
+      "d1000a1000,150h1sd1a1000,150h1s"};
   int32_t ordinal = 0;
   for (auto numThreads : numThreadsValues) {
     std::vector<RoundtripStats> runStats;

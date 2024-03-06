@@ -38,8 +38,11 @@ class TestStream : public Stream {
 
   void addOneWide(int32_t* numbers, int32_t size);
 
-  void addOneRandom(int32_t* numbers, const int32_t* lookup, int size, int32_t repeat = 1);
-
+  void addOneRandom(
+      int32_t* numbers,
+      const int32_t* lookup,
+      int size,
+      int32_t repeat = 1);
 };
 
 } // namespace facebook::velox::wave
