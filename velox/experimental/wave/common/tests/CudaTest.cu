@@ -70,5 +70,31 @@ namespace facebook::velox::wave {
       params);
   CUDA_CHECK(cudaGetLastError());
 }
-  
+
+  __global__ void addOneRandomKernel(int32_t* numbers, const int32_t* lookup, int32_t size, int32_t stride, int32_t repeats) {
+  auto index = blockDim.x * blockIdx.x + threadIdx.x;
+  for (auto counter = 0; counter < repeats; ++ counter) {
+    for (; index < size; index += stride) {
+    auto rnd = (static_cast<uint64_t>(static_cast<uint32_t>(index * (counter + 1) * 1367836089)) * size) >> 32;
+numbers[index] += lookup[rnd];
+    }
+    __syncthreads();
+  }
+  }
+
+  void TestStream::addOneRandom(int32_t* numbers, const int32_t* lookup, int32_t size, int32_t repeats) {
+  constexpr int32_t kWidth = 10240;
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > kWidth / kBlockSize) {
+    stride = kWidth;
+    numBlocks = kWidth / kBlockSize;
+  }
+	 addOneRandomKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+							      numbers, lookup, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+
 } // namespace facebook::velox::wave

@@ -445,6 +445,7 @@ struct RoundtripStats {
 
   // Bytes copied to host.
   int64_t toHostBytes{0};
+
   int64_t startMicros{0};
 
   int64_t endMicros{0};
@@ -469,14 +470,15 @@ struct RoundtripStats {
 
   std::string toString() const {
     return fmt::format(
-        "{}: rps={} gips={}  mode={} threads={} avgus={} toDev={} GB/s toHost={} GB/s",
+        "{}: rps={} gips={}  mode={} threads={} micros={} avgus={} toDev={} GB/s toHost={} GB/s",
         id,
-        (micros / numThreads * numOps) * 1000000,
-        (numAdds * numThreads) / (micros * 1000),
+        (numThreads * numOps) / (micros / 1000000),
+        numAdds / (micros * 1000),
         mode,
         numThreads,
+	micros,
         micros / numOps,
-        (toDeviceBytes / micros * 1000),
+        toDeviceBytes / (micros * 1000),
         toHostBytes / (micros * 1000));
   }
 };
@@ -490,16 +492,22 @@ class RoundtripThread {
     setDevice(getDevice(device));
     hostBuffer_ = arenas_->host->allocate<int32_t>(kNumInts);
     deviceBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
+    lookupBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
+
     stream_ = std::make_unique<TestStream>();
     event_ = std::make_unique<Event>();
     for (auto i = 0; i < kNumInts; ++i) {
       hostBuffer_->as<int32_t>()[i] = i;
     }
+    stream_->hostToDeviceAsync(lookupBuffer_->as<int32_t>(), hostBuffer_->as<int32_t>(), kNumInts * sizeof(int32_t));
+    stream_->wait();
   }
+
   enum class OpCode {
     kToDevice,
     kToHost,
     kAdd,
+    kAddRandom,
     kWide,
     kEnd,
     kSync,
@@ -539,10 +547,15 @@ class RoundtripThread {
             stats.toHostBytes += op.param1 * 1024;
             break;
           case OpCode::kAdd:
-            stream_->addOne(deviceBuffer_->as<int32_t>(), op.param1, op.param2);
-            stats.numAdds = op.param1 * op.param2 * 1024;
+            stream_->addOne(deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            stats.numAdds += op.param1 * op.param2 * 256;
             break;
-          case OpCode::kSync:
+          case OpCode::kAddRandom:
+            stream_->addOneRandom(deviceBuffer_->as<int32_t>(), lookupBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+
+	case OpCode::kSync:
             stream_->wait();
             break;
           case OpCode::kSyncEvent:
@@ -560,7 +573,7 @@ class RoundtripThread {
     stats.endMicros = getCurrentTimeMicro();
   }
 
-  Op nextOp(const std::string& str, int32_t position) {
+  Op nextOp(const std::string& str, int32_t& position) {
     Op op;
     for (;;) {
       if (position >= str.size()) {
@@ -573,22 +586,34 @@ class RoundtripThread {
           break;
         case 'd':
           op.opCode = OpCode::kToDevice;
+	  ++position;
           op.param1 = parseInt(str, position, 1);
           return op;
         case 'h':
           op.opCode = OpCode::kToHost;
+	  ++position;
           op.param1 = parseInt(str, position, 1);
           return op;
         case 'a':
           op.opCode = OpCode::kAdd;
+	  ++position;
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
-        case 's':
+        case 'r':
+          op.opCode = OpCode::kAddRandom;
+	  ++position;
+          op.param1 = parseInt(str, position, 1);
+          op.param2 = parseInt(str, position, 1);
+          return op;
+
+      case 's':
           op.opCode = OpCode::kSync;
+	  ++position;
           return op;
         case 'e':
           op.opCode = OpCode::kSyncEvent;
+	  ++position;
           return op;
         default:
           VELOX_FAIL("No opcode {}", str[position]);
@@ -618,6 +643,7 @@ class RoundtripThread {
   ArenaSet* const arenas_;
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
+  WaveBufferPtr lookupBuffer_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
 };
@@ -1096,7 +1122,8 @@ TEST_F(CudaTest, roundTripMatrix) {
   std::vector<RoundtripStats> allStats;
   std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
   std::vector<std::string> modeValues = {
-      "drhs", "dsrshs", "drhe", "derehe", "whs"};
+					 "dahs", "d10h10h10s", "d100a100h100s", "d1000a1000h1000s", "d1000a1000,10h1000s", "d1000a1000,10h1sd1a1000,5h1s", "d100a100,10h1s",
+					 "d1000a1000,30h1sd1a1000,30h1s", "d1000a1000,150h1sd1a1000,150h1s"};
   int32_t ordinal = 0;
   for (auto numThreads : numThreadsValues) {
     std::vector<RoundtripStats> runStats;
