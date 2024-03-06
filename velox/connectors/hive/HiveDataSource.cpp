@@ -433,7 +433,8 @@ HiveDataSource::WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
 
 std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
   VELOX_CHECK_NOT_NULL(waveDelegateHook_);
-  return waveDelegateHook_(
+  if (!waveDataSource_) {
+    waveDataSource_ = waveDelegateHook_(
       hiveTableHandle_,
       scanSpec_,
       readerOutputType_,
@@ -444,6 +445,8 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
       hiveConfig_,
       ioStats_,
       *remainingFilterExprSet_);
+  }
+  return waveDataSource_;
 }
 
 //  static

@@ -50,7 +50,11 @@ class WaveTestSplitReader : public WaveSplitReader {
   static void registerTestSplitReader();
 
  private:
-  test::Stripe* stripe_;
+  SplitReaderParams params_;
+  test::Stripe* stripe_{nullptr};
+
+  // First unscheduled row.
+  int32_t currentRow_;
 };
 
 } // namespace facebook::velox::wave::test

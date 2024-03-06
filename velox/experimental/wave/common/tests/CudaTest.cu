@@ -19,14 +19,17 @@
 
 namespace facebook::velox::wave {
 
-__global__ void addOneKernel(int32_t* numbers, int32_t size, int32_t stride) {
+  __global__ void addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   auto index = blockDim.x * blockIdx.x + threadIdx.x;
-  for (; index < size; index += stride) {
-    ++numbers[index];
+  for (auto counter = 0; counter < repeats; ++ counter) {
+    for (; index < size; index += stride) {
+      ++numbers[index];
+    }
+    __syncthreads();
   }
-}
+  }
 
-void TestStream::addOne(int32_t* numbers, int32_t size) {
+  void TestStream::addOne(int32_t* numbers, int32_t size, int32_t repeats) {
   constexpr int32_t kWidth = 10240;
   constexpr int32_t kBlockSize = 256;
   auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
@@ -36,8 +39,36 @@ void TestStream::addOne(int32_t* numbers, int32_t size) {
     numBlocks = kWidth / kBlockSize;
   }
   addOneKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-      numbers, size, stride);
+							      numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
 
+  __global__ void addOneWideKernel (WideParams params) {
+  auto index = blockDim.x * blockIdx.x + threadIdx.x;
+  auto numbers = params.numbers;
+  auto size = params.size;
+  auto stride = params.stride;
+  for (; index < size; index += stride) {
+    ++numbers[index];
+  }
+  }
+
+  void TestStream::addOneWide(int32_t* numbers, int32_t size) {
+  constexpr int32_t kWidth = 10240;
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > kWidth / kBlockSize) {
+    stride = kWidth;
+    numBlocks = kWidth / kBlockSize;
+  }
+  WideParams params;
+  params.numbers = numbers;
+  params.size = size;
+  params.stride = stride;
+  addOneWideKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      params);
+  CUDA_CHECK(cudaGetLastError());
+}
+  
 } // namespace facebook::velox::wave

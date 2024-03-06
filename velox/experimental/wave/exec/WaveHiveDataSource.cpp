@@ -44,8 +44,49 @@ WaveHiveDataSource::WaveHiveDataSource(
   remainingFilter_ = remainingFilter.exprs().at(0);
 }
 
+void WaveHiveDataSource::setFromDataSource(
+    std::unique_ptr<WaveDataSource> sourceUnique) {
+  auto source = dynamic_cast<WaveHiveDataSource*>(sourceUnique.get());
+  VELOX_CHECK(source, "Bad DataSource type");
+
+  split_ = std::move(source->split_);
+  if (source->splitReader_ && source->splitReader_->emptySplit()) {
+    runtimeStats_.skippedSplits += source->runtimeStats_.skippedSplits;
+    runtimeStats_.skippedSplitBytes += source->runtimeStats_.skippedSplitBytes;
+    return;
+  }
+  source->params_.scanSpec->moveAdaptationFrom(*params_.scanSpec);
+  params_.scanSpec = std::move(source->params_.scanSpec);
+  splitReader_ = std::move(source->splitReader_);
+  // New io will be accounted on the stats of 'source'. Add the existing
+  // balance to that.
+  source->params_.ioStats->merge(*params_.ioStats);
+  params_.ioStats = std::move(source->params_.ioStats);
+}
+
+  
 void WaveHiveDataSource::addSplit(
-    std::shared_ptr<connector::ConnectorSplit> split) {}
+    std::shared_ptr<connector::ConnectorSplit> split) {
+  VELOX_CHECK(
+      split_ == nullptr,
+      "Previous split has not been processed yet. Call next to process the split.");
+  split_ = std::dynamic_pointer_cast<HiveConnectorSplit>(split);
+  VELOX_CHECK(split_, "Wrong type of split");
+
+  VLOG(1) << "Adding split " << split_->toString();
+
+  if (splitReader_) {
+    splitReader_.reset();
+  }
+
+  splitReader_ = WaveSplitReader::create(split, params_);;
+  // Split reader subclasses may need to use the reader options in prepareSplit
+  // so we initialize it beforehand.
+  splitReader_->configureReaderOptions();
+  splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
+}
+
+}
 
 // static
 void WaveHiveDataSource::registerConnector() {

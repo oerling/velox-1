@@ -160,6 +160,10 @@ class HiveDataSource : public DataSource {
   VectorPtr filterResult_;
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
+#ifdef WAVE
+  // Remembers the WaveDataSource. Successive calls to toWaveDataSource() will return the same.
+  std::shared_ptr<wave::WaveDataSource> waveDataSource_;
+#endif
 };
 
 } // namespace facebook::velox::connector::hive

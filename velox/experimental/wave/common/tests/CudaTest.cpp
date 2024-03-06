@@ -428,6 +428,176 @@ class ProcessDeviceCoalesced : public ProcessBatchBase {
   Semaphore syncSem_{0};
 };
 
+struct RoundtripStats {
+  // id of experiment.
+  int32_t id{0};
+  // Description of round trip.
+  std::string mode;
+  // Threads in experiment.
+  int32_t numThreads{0};
+  // Number of times a thread repeats the sequence given by 'mode'.
+  int64_t numOps{0};
+  // Number of additions in the ops
+  int64_t numAdds{0};
+
+  // Bytes transferred to device.
+  int64_t toDeviceBytes{0};
+
+  // Bytes copied to host.
+  int64_t toHostBytes{0};
+  int64_t startMicros{0};
+
+  int64_t endMicros{0};
+
+  // Wall time of experiment.
+  float micros{0};
+  void init(int32_t _id, int32_t _numThreads, std::string _mode, int32_t repeats) {
+    id = _id;
+    numThreads = _numThreads;
+    mode = _mode;
+    numOps = repeats;
+  }
+
+  void add(RoundtripStats& other) {
+    startMicros = std::min(startMicros, other.startMicros);
+    endMicros = std::max(endMicros, other.endMicros);
+    toHostBytes += other.toHostBytes;
+    toDeviceBytes += other.toDeviceBytes;
+    numAdds += other.numAdds;
+  }
+  
+  std::string toString() const {
+    return fmt::format("{}: rps={} gips={}  mode={} threads={} avgus={} toDev={} GB/s toHost={} GB/s", id, (micros / numThreads * numOps) * 1000000, (numAdds * numThreads) / (micros * 1000),  mode, numThreads, micros / numOps, (toDeviceBytes / micros * 1000), toHostBytes / (micros * 1000));
+  }
+};
+
+// Describes one thread of execution in round trip measurerment. 
+class RoundtripThread {
+public:
+  static constexpr int32_t kNumInts = 2560 << 10;
+  
+  RoundtripThread(int32_t device, ArenaSet* arenas)
+    : arenas_(arenas) 
+  {
+    setDevice(getDevice(device));
+    hostBuffer_ = arenas_->host->allocate<int32_t>(kNumInts);
+    deviceBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
+    stream_ = std::make_unique<TestStream>();
+    event_ = std::make_unique<Event>();
+    for (auto i = 0; i < kNumInts; ++i) {
+      hostBuffer_->as<int32_t>()[i] = i;
+    }
+  }
+  enum class OpCode {kToDevice, kToHost, kAdd, kWide, kEnd, kSync, kSyncEvent};
+
+  struct Op {
+    OpCode opCode;
+    int32_t param1{1};
+    int32_t param2{0};
+  };
+
+  void run(RoundtripStats& stats) {
+    stats.startMicros = getCurrentTimeMicro();
+    for (auto counter = 0; counter < stats.numOps; ++counter) {
+    int32_t position = 0;
+
+    bool done = false;
+    for (;;) {
+      auto op = nextOp(stats.mode, position);
+      switch (op.opCode) {
+      case OpCode::kEnd:
+	done = true;
+	break;
+      case OpCode::kToDevice:
+	stream_->hostToDeviceAsync(deviceBuffer_->as<int32_t>(), hostBuffer_->as<int32_t>(), op.param1 * 1024);
+	stats.toDeviceBytes += op.param1 * 1024;
+	break;
+      case OpCode::kToHost:
+	stream_->deviceToHostAsync(hostBuffer_->as<int32_t>(), deviceBuffer_->as<int32_t>(), op.param1 * 1024);
+	stats.toHostBytes += op.param1 * 1024;
+	break;
+      case OpCode::kAdd:
+	stream_->addOne(deviceBuffer_->as<int32_t>(), op.param1, op.param2);
+	stats.numAdds = op.param1 * op.param2 * 1024;
+	break;
+      case OpCode::kSync:
+	stream_->wait();
+	break;
+      case OpCode::kSyncEvent:
+	event_->record(*stream_);
+	event_->wait();
+	break;
+      default:
+	VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
+      }
+      if (done) {
+	break;
+      }
+    }
+    }
+	stats.endMicros = getCurrentTimeMicro();
+  }
+
+  Op nextOp(const std::string& str, int32_t position) {
+    Op op;
+    for (;;) {
+      if (position >= str.size()) {
+	op.opCode = OpCode::kEnd;
+	return op;
+      }
+      switch(str[position]) {
+      case ' ': ++position;
+	break;
+      case 'd': 
+	op.opCode = OpCode::kToDevice;
+	op.param1 = parseInt(str, position, 1);
+	return op;
+      case 'h': 
+	op.opCode = OpCode::kToHost;
+	op.param1 = parseInt(str, position, 1);
+	return op;
+      case 'a':
+	op.opCode = OpCode::kAdd;
+	op.param1 = parseInt(str, position, 1);
+	op.param2 = parseInt(str, position, 1);
+	return op;
+      case  's':
+	op.opCode = OpCode::kSync;
+	return op;
+      case  'e':
+	op.opCode = OpCode::kSyncEvent;
+	return op;
+      default: VELOX_FAIL("No opcode {}", str[position]);
+      }
+    }
+  }
+
+  int32_t parseInt(const std::string& str, int32_t& position, int32_t deflt) {
+    int32_t result = 0;
+    if (position >= str.size()){
+      return deflt;
+    }
+    if (str[position] == ',') {
+      ++position;
+    } else if (!isdigit(str[position])) {
+      return deflt;
+    }
+    for (;;) {
+      result = 10 * result + str[position++] - '0';
+      if (position == str.size() || !isdigit(str[position])) {
+	break;
+      }
+    }
+    return result;
+  }
+      
+  ArenaSet* const arenas_;
+  WaveBufferPtr deviceBuffer_;
+  WaveBufferPtr hostBuffer_;
+  std::unique_ptr<TestStream> stream_;
+  std::unique_ptr<Event> event_;
+};
+
 class CudaTest : public testing::Test {
  protected:
   static constexpr int64_t kArenaQuantum = 512 << 20;
@@ -895,6 +1065,49 @@ TEST_F(CudaTest, reduceMatrix) {
     std::cout << stats.toString() << std::endl;
   }
   waitFinish();
+}
+
+TEST_F(CudaTest, roundTripMatrix) {
+  auto arenas = getArenas();
+  std::vector<RoundtripStats> allStats;
+  std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
+  std::vector<std::string> modeValues = {"drhs", "dsrshs", "drhe", "derehe", "whs"};
+  int32_t ordinal = 0;
+  for (auto numThreads : numThreadsValues) {
+    std::vector<RoundtripStats> runStats;
+    for (auto& mode : modeValues) {
+      std::vector<std::thread> threads;
+      std::vector<std::unique_ptr<RoundtripThread>> runs;
+      threads.reserve(numThreads);
+      runs.reserve(numThreads);
+      std::vector<RoundtripStats> threadStats;
+      threadStats.resize(numThreads);
+      
+      for (int32_t i = 0; i < numThreads; ++i) {
+	threadStats[i].init(++ordinal, numThreads, mode, 10000);
+	runs.push_back(std::make_unique<RoundtripThread>(0, arenas.get()));
+  }
+      for (int32_t i = 0; i < numThreads; ++i) {
+	threads.push_back(std::thread([i, this, &runs, &threadStats ]() {
+					runs[i]->run(threadStats[i]);
+				      }));
+      }
+      for (auto i = 0; i < numThreads; ++i) {
+	threads[i].join();
+	if (i == 0) {
+	  allStats.push_back(threadStats[i]);
+	} else {
+	  allStats.back().add(threadStats[i]);
+	}
+      }
+      allStats.back().micros = allStats.back().endMicros - allStats.back().startMicros;
+    }
+  }
+  std::sort(allStats.begin(), allStats.end(), [](const RoundtripStats& left, const RoundtripStats& right) { return left.numAdds / left.micros > right.numAdds / right.micros;});
+  for (auto& stats : allStats) {
+    std::cout << stats.toString() << std::endl;
+  }
+  releaseArenas(std::move(arenas));
 }
 
 int main(int argc, char** argv) {

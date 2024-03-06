@@ -60,6 +60,8 @@ class WaveHiveDataSource : public WaveDataSource {
 
  private:
   SplitReaderParams params_;
+  std::shared_ptr<connector::ConnectorSplit> split_;
+  std::unique_ptr<WaveSplitReader> splitReader_;
   std::shared_ptr<exec::Expr> remainingFilter_;
 };
 
