@@ -47,13 +47,16 @@ namespace facebook::velox::wave {
   auto index = blockDim.x * blockIdx.x + threadIdx.x;
   auto numbers = params.numbers;
   auto size = params.size;
+  auto repeat = params.repeat;
   auto stride = params.stride;
-  for (; index < size; index += stride) {
-    ++numbers[index];
+  for (auto counter = 0; counter < repeat; ++counter) {
+    for (; index < size; index += stride) {
+      ++numbers[index];
+    }
   }
-  }
+}
 
-  void TestStream::addOneWide(int32_t* numbers, int32_t size) {
+  void TestStream::addOneWide(int32_t* numbers, int32_t size, int32_t repeat) {
   constexpr int32_t kWidth = 10240;
   constexpr int32_t kBlockSize = 256;
   auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
@@ -66,7 +69,8 @@ namespace facebook::velox::wave {
   params.numbers = numbers;
   params.size = size;
   params.stride = stride;
-  addOneWideKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+  params.repeat = repeat;
+addOneWideKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
       params);
   CUDA_CHECK(cudaGetLastError());
 }

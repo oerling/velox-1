@@ -26,6 +26,7 @@ struct WideParams {
   int32_t size;
   int32_t* numbers;
   int32_t stride;
+  int32_t repeat;
   char data[8100];
   void* result;
 };
@@ -36,7 +37,7 @@ class TestStream : public Stream {
   // 'repeat' times.
   void addOne(int32_t* numbers, int size, int32_t repeat = 1);
 
-  void addOneWide(int32_t* numbers, int32_t size);
+  void addOneWide(int32_t* numbers, int32_t size, int32_t repeat = 1);
 
   void addOneRandom(
       int32_t* numbers,

@@ -431,6 +431,7 @@ class ProcessDeviceCoalesced : public ProcessBatchBase {
 struct RoundtripStats {
   // id of experiment.
   int32_t id{0};
+  bool isCpu{false};
   // Description of round trip.
   std::string mode;
   // Threads in experiment.
@@ -453,8 +454,9 @@ struct RoundtripStats {
   // Wall time of experiment.
   float micros{0};
   void
-  init(int32_t _id, int32_t _numThreads, std::string _mode, int32_t repeats) {
+  init(int32_t _id, bool _isCpu, int32_t _numThreads, std::string _mode, int32_t repeats) {
     id = _id;
+    isCpu = _isCpu;
     numThreads = _numThreads;
     mode = _mode;
     numOps = repeats;
@@ -486,7 +488,8 @@ struct RoundtripStats {
 // Describes one thread of execution in round trip measurerment.
 class RoundtripThread {
  public:
-  static constexpr int32_t kNumInts = 2560 << 10;
+  // Up to 16 MB of ints.
+  static constexpr int32_t kNumInts = 4  << 20;
 
   RoundtripThread(int32_t device, ArenaSet* arenas) : arenas_(arenas) {
     setDevice(getDevice(device));
@@ -504,6 +507,9 @@ class RoundtripThread {
         hostBuffer_->as<int32_t>(),
         kNumInts * sizeof(int32_t));
     stream_->wait();
+    hostInts_ = std::make_unique<int32_t>(kNumInts);
+    hostLookup_ = std::make_unique<int32_t>(kNumInts);
+    memcpy(hostLookup_.get(), hostBuffer_->as<int32_t>(), kNumInts);
   }
 
   enum class OpCode {
@@ -511,7 +517,7 @@ class RoundtripThread {
     kToHost,
     kAdd,
     kAddRandom,
-    kWide,
+    kWideAdd,
     kEnd,
     kSync,
     kSyncEvent
@@ -527,7 +533,6 @@ class RoundtripThread {
     stats.startMicros = getCurrentTimeMicro();
     for (auto counter = 0; counter < stats.numOps; ++counter) {
       int32_t position = 0;
-
       bool done = false;
       for (;;) {
         auto op = nextOp(stats.mode, position);
@@ -536,13 +541,19 @@ class RoundtripThread {
             done = true;
             break;
           case OpCode::kToDevice:
-            stream_->hostToDeviceAsync(
-                deviceBuffer_->as<int32_t>(),
-                hostBuffer_->as<int32_t>(),
-                op.param1 * 1024);
-            stats.toDeviceBytes += op.param1 * 1024;
+	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
+	    if (stats.isCpu) {
+	      memcpy(hostInts_.get(), hostBuffer_->as<int32_t>(), op.param1 * 1024);
+	    } else {
+	      stream_->hostToDeviceAsync(
+					 deviceBuffer_->as<int32_t>(),
+					 hostBuffer_->as<int32_t>(),
+					 op.param1 * 1024);
+	    }
+	      stats.toDeviceBytes += op.param1 * 1024;
             break;
           case OpCode::kToHost:
+	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
             stream_->deviceToHostAsync(
                 hostBuffer_->as<int32_t>(),
                 deviceBuffer_->as<int32_t>(),
@@ -550,11 +561,20 @@ class RoundtripThread {
             stats.toHostBytes += op.param1 * 1024;
             break;
           case OpCode::kAdd:
+	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
             stream_->addOne(
                 deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
-          case OpCode::kAddRandom:
+          case OpCode::kWideAdd:
+	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
+            stream_->addOneWide(
+                deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+
+	case OpCode::kAddRandom:
+	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
             stream_->addOneRandom(
                 deviceBuffer_->as<int32_t>(),
                 lookupBuffer_->as<int32_t>(),
@@ -608,7 +628,14 @@ class RoundtripThread {
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
-        case 'r':
+        case 'w':
+          op.opCode = OpCode::kWideAdd;
+          ++position;
+          op.param1 = parseInt(str, position, 1);
+          op.param2 = parseInt(str, position, 1);
+          return op;
+
+      case 'r':
           op.opCode = OpCode::kAddRandom;
           ++position;
           op.param1 = parseInt(str, position, 1);
@@ -652,6 +679,8 @@ class RoundtripThread {
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
   WaveBufferPtr lookupBuffer_;
+  std::unique_ptr<int32_t> hostLookup_;
+  std::unique_ptr<int32_t> hostInts_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
 };
@@ -962,6 +991,55 @@ class CudaTest : public testing::Test {
     return gbs;
   }
 
+  void roundtripTest(const std::string& title, const std::vector<std::string>& modeValues, bool isCpu) {
+  auto arenas = getArenas();
+  std::vector<RoundtripStats> allStats;
+  std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
+  int32_t ordinal = 0;
+  for (auto numThreads : numThreadsValues) {
+    std::vector<RoundtripStats> runStats;
+    for (auto& mode : modeValues) {
+      std::vector<std::thread> threads;
+      std::vector<std::unique_ptr<RoundtripThread>> runs;
+      threads.reserve(numThreads);
+      runs.reserve(numThreads);
+      std::vector<RoundtripStats> threadStats;
+      threadStats.resize(numThreads);
+
+      for (int32_t i = 0; i < numThreads; ++i) {
+        threadStats[i].init(++ordinal, isCpu, numThreads, mode, 10000);
+        runs.push_back(std::make_unique<RoundtripThread>(0, arenas.get()));
+      }
+      for (int32_t i = 0; i < numThreads; ++i) {
+        threads.push_back(std::thread([i, this, &runs, &threadStats]() {
+          runs[i]->run(threadStats[i]);
+        }));
+      }
+      for (auto i = 0; i < numThreads; ++i) {
+        threads[i].join();
+        if (i == 0) {
+          allStats.push_back(threadStats[i]);
+        } else {
+          allStats.back().add(threadStats[i]);
+        }
+      }
+      allStats.back().micros =
+          allStats.back().endMicros - allStats.back().startMicros;
+    }
+  }
+  std::sort(
+      allStats.begin(),
+      allStats.end(),
+      [](const RoundtripStats& left, const RoundtripStats& right) {
+        return left.numAdds / left.micros > right.numAdds / right.micros;
+      });
+  std::cout << std::endl << title << std::endl;
+  for (auto& stats : allStats) {
+    std::cout << stats.toString() << std::endl;
+  }
+  releaseArenas(std::move(arenas));
+}
+  
   std::unique_ptr<ArenaSet> getArenas() {
     {
       std::lock_guard<std::mutex> l(mutex_);
@@ -1126,11 +1204,9 @@ TEST_F(CudaTest, reduceMatrix) {
 }
 
 TEST_F(CudaTest, roundTripMatrix) {
-  auto arenas = getArenas();
-  std::vector<RoundtripStats> allStats;
-  std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
   std::vector<std::string> modeValues = {
-      "dahs",
+#if 0
+					 "dahs",
       "d10h10h10s",
       "d100a100h100s",
       "d1000a1000h1000s",
@@ -1138,49 +1214,11 @@ TEST_F(CudaTest, roundTripMatrix) {
       "d1000a1000,10h1sd1a1000,5h1s",
       "d100a100,10h1s",
       "d1000a1000,30h1sd1a1000,30h1s",
-      "d1000a1000,150h1sd1a1000,150h1s"};
-  int32_t ordinal = 0;
-  for (auto numThreads : numThreadsValues) {
-    std::vector<RoundtripStats> runStats;
-    for (auto& mode : modeValues) {
-      std::vector<std::thread> threads;
-      std::vector<std::unique_ptr<RoundtripThread>> runs;
-      threads.reserve(numThreads);
-      runs.reserve(numThreads);
-      std::vector<RoundtripStats> threadStats;
-      threadStats.resize(numThreads);
-
-      for (int32_t i = 0; i < numThreads; ++i) {
-        threadStats[i].init(++ordinal, numThreads, mode, 10000);
-        runs.push_back(std::make_unique<RoundtripThread>(0, arenas.get()));
-      }
-      for (int32_t i = 0; i < numThreads; ++i) {
-        threads.push_back(std::thread([i, this, &runs, &threadStats]() {
-          runs[i]->run(threadStats[i]);
-        }));
-      }
-      for (auto i = 0; i < numThreads; ++i) {
-        threads[i].join();
-        if (i == 0) {
-          allStats.push_back(threadStats[i]);
-        } else {
-          allStats.back().add(threadStats[i]);
-        }
-      }
-      allStats.back().micros =
-          allStats.back().endMicros - allStats.back().startMicros;
-    }
-  }
-  std::sort(
-      allStats.begin(),
-      allStats.end(),
-      [](const RoundtripStats& left, const RoundtripStats& right) {
-        return left.numAdds / left.micros > right.numAdds / right.micros;
-      });
-  for (auto& stats : allStats) {
-    std::cout << stats.toString() << std::endl;
-  }
-  releaseArenas(std::move(arenas));
+      "d1000a1000,150h1sd1a1000,150h1s",
+#endif
+      "d1000r1000,10h1s"};
+  roundtripTest("Random GPU", modeValues, false);
+  roundtripTest("Random CPU", modeValues, true);
 }
 
 int main(int argc, char** argv) {
