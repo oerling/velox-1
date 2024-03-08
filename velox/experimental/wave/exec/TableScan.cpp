@@ -37,28 +37,6 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-#if 0
-  TableScan::TableScan(
-    CompileContext& context,
-    int32_t operatorId,
-    std::shared_ptr<const core::TableScanNode> tableScanNode)
-    : WaveOperator(state, tableScanNode->outputType(), tableScanNode->id()),
-      tableHandle_(tableScanNode->tableHandle()),
-      columnHandles_(tableScanNode->assignments()),
-      driverCtx_(state->driver().driverCtx()),
-      connectorPool_(driverCtx_->task->addConnectorPoolLocked(
-          planNodeId(),
-          driverCtx_->pipelineId,
-          driverCtx_->driverId,
-          operatorType(),
-          tableHandle_->connectorId())),
-      readBatchSize_(driverCtx_->task->queryCtx()
-                         ->queryConfig()
-                         .preferredOutputBatchRows()) {
-  connector_ = connector::getConnector(tableHandle_->connectorId());
-}
-#endif
-
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(
@@ -108,11 +86,30 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
     dataSource_ = connector_->createDataSource(
         outputType_, tableHandle_, columnHandles_, connectorQueryCtx_.get());
     waveDataSource_ = dataSource_->toWaveDataSource();
-    for (const auto& entry : pendingDynamicFilters_) {
-      dataSource_->addDynamicFilter(entry.first, entry.second);
+  } else {
+    if (connectorSplit->dataSource) {
+      ++numPreloadedSplits_;
+      // The AsyncSource returns a unique_ptr to a shared_ptr. The
+      // unique_ptr will be nullptr if there was a cancellation.
+      numReadyPreloadedSplits_ += connectorSplit->dataSource->hasValue();
+      auto preparedDataSource = connectorSplit->dataSource->move();
+      driver_->stats().wlock()->getOutputTiming.add(
+					  connectorSplit->dataSource->prepareTiming());
+      if (!preparedDataSource) {
+	// There must be a cancellation.
+	VELOX_CHECK(driver_->operatorCtx()->task()->isCancelled());
+	return BlockingReason::kNotBlocked;
+      }
+      auto preparedWaveSource = preparedDataSource->toWaveDataSource();
+      waveDataSource_->setFromDataSource(std::move(preparedWaveSource));
+    } else {
+      waveDataSource_->addSplit(connectorSplit);
     }
-    pendingDynamicFilters_.clear();
   }
+  for (const auto& entry : pendingDynamicFilters_) {
+    waveDataSource_->addDynamicFilter(entry.first, entry.second);
+  }
+  pendingDynamicFilters_.clear();
 }
 
 void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
@@ -142,7 +139,12 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
              },
              &debugString});
 
-        auto ptr = source->createShellForSplit(split);
+        auto ptr = connector->createDataSource(type, table, columns, ctx.get());
+        if (task->isCancelled()) {
+          return nullptr;
+        }
+	auto waveSource = ptr->toWaveDataSource();
+        waveSource->addSplit(split);
         return ptr;
       });
 }

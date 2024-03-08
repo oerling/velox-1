@@ -488,8 +488,9 @@ struct RoundtripStats {
 // Describes one thread of execution in round trip measurerment.
 class RoundtripThread {
  public:
-  // Up to 16 MB of ints.
-  static constexpr int32_t kNumInts = 4  << 20;
+  // Up to 32 MB of ints.
+  static constexpr int32_t kNumKB= 32 << 10;
+  static constexpr int32_t kNumInts = kNumKB * 256;
 
   RoundtripThread(int32_t device, ArenaSet* arenas) : arenas_(arenas) {
     setDevice(getDevice(device));
@@ -507,9 +508,9 @@ class RoundtripThread {
         hostBuffer_->as<int32_t>(),
         kNumInts * sizeof(int32_t));
     stream_->wait();
-    hostInts_ = std::make_unique<int32_t>(kNumInts);
-    hostLookup_ = std::make_unique<int32_t>(kNumInts);
-    memcpy(hostLookup_.get(), hostBuffer_->as<int32_t>(), kNumInts);
+    hostInts_ = std::make_unique<int32_t[]>(kNumInts);
+    hostLookup_ = std::make_unique<int32_t[]>(kNumInts);
+    memcpy(hostLookup_.get(), hostBuffer_->as<int32_t>(), kNumInts * sizeof(int32_t));
   }
 
   enum class OpCode {
@@ -541,7 +542,7 @@ class RoundtripThread {
             done = true;
             break;
           case OpCode::kToDevice:
-	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
+	    VELOX_CHECK_LE(op.param1, kNumKB);
 	    if (stats.isCpu) {
 	      memcpy(hostInts_.get(), hostBuffer_->as<int32_t>(), op.param1 * 1024);
 	    } else {
@@ -553,43 +554,63 @@ class RoundtripThread {
 	      stats.toDeviceBytes += op.param1 * 1024;
             break;
           case OpCode::kToHost:
-	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
-            stream_->deviceToHostAsync(
-                hostBuffer_->as<int32_t>(),
-                deviceBuffer_->as<int32_t>(),
-                op.param1 * 1024);
-            stats.toHostBytes += op.param1 * 1024;
+	    VELOX_CHECK_LE(op.param1, kNumKB);
+	    if (stats.isCpu) {
+	      memcpy(hostBuffer_->as<int32_t>(), hostInts_.get(), op.param1 * 1024);
+	    } else {
+	      stream_->deviceToHostAsync(
+					 hostBuffer_->as<int32_t>(),
+					 deviceBuffer_->as<int32_t>(),
+					 op.param1 * 1024);
+	    }
+	      stats.toHostBytes += op.param1 * 1024;
             break;
           case OpCode::kAdd:
-	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
-            stream_->addOne(
-                deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
-            stats.numAdds += op.param1 * op.param2 * 256;
+	    VELOX_CHECK_LE(op.param1, kNumKB);
+	    if (stats.isCpu) {
+	      addOneCpu(op.param1 * 256, op.param2);
+	    } else {
+	      stream_->addOne(
+			      deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+	    }
+	    stats.numAdds += op.param1 * op.param2 * 256;
             break;
           case OpCode::kWideAdd:
-	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
-            stream_->addOneWide(
-                deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
-            stats.numAdds += op.param1 * op.param2 * 256;
-            break;
+	    VELOX_CHECK_LE(op.param1, kNumKB);
+	    if (stats.isCpu) {
+	      addOneCpu(op.param1 * 256, op.param2);
+	    } else {
+	      stream_->addOneWide(
+				  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+	    }
+	    stats.numAdds += op.param1 * op.param2 * 256;
+	    break;
 
 	case OpCode::kAddRandom:
-	    VELOX_CHECK_LE(op.param1, kNumInts / 1024);
-            stream_->addOneRandom(
-                deviceBuffer_->as<int32_t>(),
-                lookupBuffer_->as<int32_t>(),
-                op.param1 * 256,
-                op.param2);
-            stats.numAdds += op.param1 * op.param2 * 256;
+	    VELOX_CHECK_LE(op.param1, kNumKB);
+	    if (stats.isCpu) {
+	      addOneRandomCpu(op.param1 * 256, op.param2);
+	    } else {
+	      stream_->addOneRandom(
+				    deviceBuffer_->as<int32_t>(),
+				    lookupBuffer_->as<int32_t>(),
+				    op.param1 * 256,
+				    op.param2);
+	    }
+	      stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
           case OpCode::kSync:
-            stream_->wait();
-            break;
+	    if (!stats.isCpu) {
+	      stream_->wait();
+	    }
+	      break;
           case OpCode::kSyncEvent:
-            event_->record(*stream_);
-            event_->wait();
-            break;
+	    if (!stats.isCpu) {
+	      event_->record(*stream_);
+	      event_->wait();
+	    }
+	    break;
           default:
             VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
         }
@@ -599,6 +620,25 @@ class RoundtripThread {
       }
     }
     stats.endMicros = getCurrentTimeMicro();
+  }
+
+  void addOneCpu(int32_t size, int32_t repeat) {
+    int32_t* ints = hostInts_.get();
+    for (auto counter = 0; counter < repeat; ++counter) {
+      for (auto i = 0; i < size; ++i) {
+	++ints[i];
+      }
+    }
+  }
+  void addOneRandomCpu(uint32_t size, int32_t repeat) {
+    int32_t* ints = hostInts_.get();
+    int32_t* lookup = hostLookup_.get();
+    for (uint32_t counter = 0; counter < repeat; ++counter) {
+      for (auto i = 0; i < size; ++i) {
+	auto rnd = (static_cast<uint64_t>(static_cast<uint32_t>(i * (counter + 1) * 1367836089)) * size) >> 32;
+	ints[i] += lookup[rnd];
+      }
+    }
   }
 
   Op nextOp(const std::string& str, int32_t& position) {
@@ -679,8 +719,8 @@ class RoundtripThread {
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
   WaveBufferPtr lookupBuffer_;
-  std::unique_ptr<int32_t> hostLookup_;
-  std::unique_ptr<int32_t> hostInts_;
+  std::unique_ptr<int32_t[]> hostLookup_;
+  std::unique_ptr<int32_t[]> hostInts_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
 };
@@ -991,10 +1031,10 @@ class CudaTest : public testing::Test {
     return gbs;
   }
 
-  void roundtripTest(const std::string& title, const std::vector<std::string>& modeValues, bool isCpu) {
+  void roundtripTest(const std::string& title, const std::vector<std::string>& modeValues, bool isCpu, int numOps = 10000) {
   auto arenas = getArenas();
   std::vector<RoundtripStats> allStats;
-  std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16};
+  std::vector<int32_t> numThreadsValues = {2, 4, 8, 16, 32};
   int32_t ordinal = 0;
   for (auto numThreads : numThreadsValues) {
     std::vector<RoundtripStats> runStats;
@@ -1007,7 +1047,7 @@ class CudaTest : public testing::Test {
       threadStats.resize(numThreads);
 
       for (int32_t i = 0; i < numThreads; ++i) {
-        threadStats[i].init(++ordinal, isCpu, numThreads, mode, 10000);
+        threadStats[i].init(++ordinal, isCpu, numThreads, mode, numOps);
         runs.push_back(std::make_unique<RoundtripThread>(0, arenas.get()));
       }
       for (int32_t i = 0; i < numThreads; ++i) {
@@ -1203,10 +1243,22 @@ TEST_F(CudaTest, reduceMatrix) {
   waitFinish();
 }
 
-TEST_F(CudaTest, roundTripMatrix) {
-  std::vector<std::string> modeValues = {
-#if 0
-					 "dahs",
+TEST_F(CudaTest, roundtripMatrix) {
+  if (!FLAGS_enable_bm) {
+    return;
+  }
+  std::vector<std::string> syncModeValues = {
+					      "dahs",
+						"dahe",
+					      "dsashs",
+					      "deaehe",
+					      "whs",
+					      "d10w10h1sw10h1sw10h1s",
+					      "d10a10h1sd1a10h1sd1a10h1s"};
+   roundtripTest("Sync GPU", syncModeValues, false, 10000);
+  roundtripTest("Sync CPU", syncModeValues, true, 10000);
+
+  std::vector<std::string> seqModeValues = {
       "d10h10h10s",
       "d100a100h100s",
       "d1000a1000h1000s",
@@ -1215,10 +1267,22 @@ TEST_F(CudaTest, roundTripMatrix) {
       "d100a100,10h1s",
       "d1000a1000,30h1sd1a1000,30h1s",
       "d1000a1000,150h1sd1a1000,150h1s",
-#endif
-      "d1000r1000,10h1s"};
-  roundtripTest("Random GPU", modeValues, false);
-  roundtripTest("Random CPU", modeValues, true);
+  };
+  roundtripTest("Seq GPU", seqModeValues, false, 1024);
+  roundtripTest("Seq CPU", seqModeValues, true, 64);
+
+
+  std::vector<std::string> randomModeValues = {
+					       "d100r100,10h1s",
+					       "d100r100,10r100,10h1s",
+					       "d100r100,10r100,100h1s",
+					       "d100r100,1000h1s",
+					       "d1000r1000,10h1s",
+					       "d1000r1000,100h1s",
+					       "d10000r10000,10h1s",
+					       "d30000r30000,50h1s"};
+  roundtripTest("Random GPU", randomModeValues, false, 512);
+  roundtripTest("Random CPU", randomModeValues, true, 16);
 }
 
 int main(int argc, char** argv) {

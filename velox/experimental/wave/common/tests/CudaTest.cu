@@ -75,9 +75,9 @@ addOneWideKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
   CUDA_CHECK(cudaGetLastError());
 }
 
-  __global__ void addOneRandomKernel(int32_t* numbers, const int32_t* lookup, int32_t size, int32_t stride, int32_t repeats) {
+  __global__ void addOneRandomKernel(int32_t* numbers, const int32_t* lookup, uint32_t size, int32_t stride, int32_t repeats) {
   auto index = blockDim.x * blockIdx.x + threadIdx.x;
-  for (auto counter = 0; counter < repeats; ++ counter) {
+  for (uint32_t counter = 0; counter < repeats; ++ counter) {
     for (; index < size; index += stride) {
     auto rnd = (static_cast<uint64_t>(static_cast<uint32_t>(index * (counter + 1) * 1367836089)) * size) >> 32;
 numbers[index] += lookup[rnd];

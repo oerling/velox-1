@@ -47,7 +47,8 @@ class WaveDataSource {
   virtual uint64_t getCompletedRows() = 0;
 
   virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() = 0;
-  void setSplitFromShell(std::unique_ptr<connector::DataSource> source) {
+ 
+  virtual void setFromDataSource(std::shared_ptr<WaveDataSource> source) {
     VELOX_UNSUPPORTED();
   }
 
@@ -58,4 +59,5 @@ class WaveDataSource {
     VELOX_UNSUPPORTED();
   }
 };
+  
 } // namespace facebook::velox::wave

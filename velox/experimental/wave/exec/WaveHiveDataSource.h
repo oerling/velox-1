@@ -35,7 +35,8 @@ class WaveHiveDataSource : public WaveDataSource {
       const connector::ConnectorQueryCtx* connectorQueryCtx,
       const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
-      const exec::ExprSet& remainingFilter);
+      const exec::ExprSet& remainingFilter,
+      std::shared_ptr<common::MetadataFilter> metadataFilter);
 
   void addDynamicFilter(
       column_index_t outputChannel,
@@ -43,6 +44,8 @@ class WaveHiveDataSource : public WaveDataSource {
 
   void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
 
+  void setFromDataSource(std::shared_ptr<WaveDataSource> dataSource) override;
+  
   int32_t canAdvance() override;
 
   void schedule(WaveStream& stream, int32_t maxRows) override;
@@ -63,6 +66,8 @@ class WaveHiveDataSource : public WaveDataSource {
   std::shared_ptr<connector::ConnectorSplit> split_;
   std::unique_ptr<WaveSplitReader> splitReader_;
   std::shared_ptr<exec::Expr> remainingFilter_;
+  dwio::common::RuntimeStatistics runtimeStats_;
+    std::shared_ptr<common::MetadataFilter> metadataFilter_;
 };
 
 } // namespace facebook::velox::wave

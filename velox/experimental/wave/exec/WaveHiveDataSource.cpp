@@ -31,7 +31,8 @@ WaveHiveDataSource::WaveHiveDataSource(
     const connector::ConnectorQueryCtx* connectorQueryCtx,
     const std::shared_ptr<HiveConfig>& hiveConfig,
     const std::shared_ptr<io::IoStatistics>& ioStats,
-    const exec::ExprSet& remainingFilter) {
+    const exec::ExprSet& remainingFilter,
+    std::shared_ptr<common::MetadataFilter> metadataFilter) {
   params_.hiveTableHandle = hiveTableHandle;
   params_.scanSpec = scanSpec;
   params_.readerOutputType = readerOutputType;
@@ -42,11 +43,12 @@ WaveHiveDataSource::WaveHiveDataSource(
   params_.hiveConfig = hiveConfig;
   params_.ioStats = ioStats;
   remainingFilter_ = remainingFilter.exprs().at(0);
+  metadataFilter_ = metadataFilter;
 }
 
 void WaveHiveDataSource::setFromDataSource(
-    std::unique_ptr<WaveDataSource> sourceUnique) {
-  auto source = dynamic_cast<WaveHiveDataSource*>(sourceUnique.get());
+    std::shared_ptr<WaveDataSource> sourceShared) {
+  auto source = dynamic_cast<WaveHiveDataSource*>(sourceShared.get());
   VELOX_CHECK(source, "Bad DataSource type");
 
   split_ = std::move(source->split_);
@@ -86,7 +88,6 @@ void WaveHiveDataSource::addSplit(
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
 }
 
-} // namespace facebook::velox::wave
 
 // static
 void WaveHiveDataSource::registerConnector() {
@@ -114,7 +115,8 @@ void WaveHiveDataSource::registerConnector() {
          const connector::ConnectorQueryCtx* connectorQueryCtx,
          const std::shared_ptr<HiveConfig>& hiveConfig,
          const std::shared_ptr<io::IoStatistics>& ioStats,
-         const exec::ExprSet& remainingFilter) {
+         const exec::ExprSet& remainingFilter,
+	 std::shared_ptr<common::MetadataFilter> metadataFilter) {
         return std::make_shared<WaveHiveDataSource>(
             hiveTableHandle,
             scanSpec,
@@ -126,7 +128,8 @@ void WaveHiveDataSource::registerConnector() {
             connectorQueryCtx,
             hiveConfig,
             ioStats,
-            remainingFilter);
+            remainingFilter,
+	    metadataFilter);
       });
 }
 

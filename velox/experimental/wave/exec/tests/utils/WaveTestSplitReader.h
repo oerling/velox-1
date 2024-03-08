@@ -28,6 +28,10 @@ class WaveTestSplitReader : public WaveSplitReader {
       const std::shared_ptr<connector::ConnectorSplit>& split,
       const SplitReaderParams& params);
 
+  bool emptySplit() override {
+    return false;
+  }
+  
   int32_t canAdvance() override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
