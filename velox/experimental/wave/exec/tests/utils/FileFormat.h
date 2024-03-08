@@ -19,6 +19,7 @@
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/type/StringView.h"
 #include "velox/vector/ComplexVector.h"
+#include "velox/dwio/common/TypeWithId.h"
 
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave::test {
@@ -45,11 +46,14 @@ struct Column {
 };
 
 struct Stripe {
-  Stripe(std::vector<std::unique_ptr<Column>>&& in) : columns(std::move(in)) {}
+  Stripe(std::vector<std::unique_ptr<Column>>&& in, std::shared_ptr<const TypeWithId> type)
+    : typeWithId(std::move(type)), columns (std::move(in))  {}
 
   // Unique name assigned when associating with a Table.
   std::string name;
 
+  dwio::common::TypeWithId typeWithId;
+  
   // Top level columns.
   std::vector<std::unique_ptr<Column>> columns;
 };
@@ -129,6 +133,7 @@ class Writer {
   void finalize(std::string tableName);
 
  private:
+  TypePtr type_;
   void finishStripe();
   const int32_t stripeSize_;
   std::vector<std::unique_ptr<Stripe>> stripes_;

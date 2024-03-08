@@ -189,6 +189,7 @@ void Encoder::append(VectorPtr data) {
 }
 
 void Writer::append(RowVectorPtr data) {
+  type_ = data->type();
   if (encoders_.empty()) {
     for (auto i = 0; i < data->type()->size(); ++i) {
       encoders_.push_back(std::make_unique<Encoder>(pool_.get()));
@@ -205,7 +206,7 @@ void Writer::finishStripe() {
   for (auto& encoder : encoders_) {
     columns.push_back(encoder->toColumn());
   }
-  stripes_.push_back(std::make_unique<Stripe>(std::move(columns)));
+  stripes_.push_back(std::make_unique<Stripe>(std::move(columns), dwio::common::TypeWithId::create(type_)));
 }
 
 void Writer::finalize(std::string tableName) {
