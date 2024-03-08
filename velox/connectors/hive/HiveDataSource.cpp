@@ -445,7 +445,7 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
         hiveConfig_,
         ioStats_,
         *remainingFilterExprSet_,
-	metadataFilter_);
+        metadataFilter_);
   }
   return waveDataSource_;
 }

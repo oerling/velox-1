@@ -88,7 +88,6 @@ void WaveHiveDataSource::addSplit(
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
 }
 
-
 // static
 void WaveHiveDataSource::registerConnector() {
   static bool registered = false;
@@ -116,7 +115,7 @@ void WaveHiveDataSource::registerConnector() {
          const std::shared_ptr<HiveConfig>& hiveConfig,
          const std::shared_ptr<io::IoStatistics>& ioStats,
          const exec::ExprSet& remainingFilter,
-	 std::shared_ptr<common::MetadataFilter> metadataFilter) {
+         std::shared_ptr<common::MetadataFilter> metadataFilter) {
         return std::make_shared<WaveHiveDataSource>(
             hiveTableHandle,
             scanSpec,
@@ -129,7 +128,7 @@ void WaveHiveDataSource::registerConnector() {
             hiveConfig,
             ioStats,
             remainingFilter,
-	    metadataFilter);
+            metadataFilter);
       });
 }
 

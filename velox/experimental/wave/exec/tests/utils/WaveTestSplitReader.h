@@ -31,7 +31,7 @@ class WaveTestSplitReader : public WaveSplitReader {
   bool emptySplit() override {
     return false;
   }
-  
+
   int32_t canAdvance() override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;

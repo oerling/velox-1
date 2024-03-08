@@ -88,7 +88,7 @@ class HiveDataSource : public DataSource {
           const std::shared_ptr<HiveConfig>& hiveConfig,
           const std::shared_ptr<io::IoStatistics>& ioStats,
           const exec::ExprSet& remainingFilter,
-	  std::shared_ptr<common::MetadataFilter> metadataFilter)>;
+          std::shared_ptr<common::MetadataFilter> metadataFilter)>;
 
   static WaveDelegateHookFunction waveDelegateHook_;
 

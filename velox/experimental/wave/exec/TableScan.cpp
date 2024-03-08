@@ -94,11 +94,11 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
       numReadyPreloadedSplits_ += connectorSplit->dataSource->hasValue();
       auto preparedDataSource = connectorSplit->dataSource->move();
       driver_->stats().wlock()->getOutputTiming.add(
-					  connectorSplit->dataSource->prepareTiming());
+          connectorSplit->dataSource->prepareTiming());
       if (!preparedDataSource) {
-	// There must be a cancellation.
-	VELOX_CHECK(driver_->operatorCtx()->task()->isCancelled());
-	return BlockingReason::kNotBlocked;
+        // There must be a cancellation.
+        VELOX_CHECK(driver_->operatorCtx()->task()->isCancelled());
+        return BlockingReason::kNotBlocked;
       }
       auto preparedWaveSource = preparedDataSource->toWaveDataSource();
       waveDataSource_->setFromDataSource(std::move(preparedWaveSource));
@@ -143,7 +143,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
         if (task->isCancelled()) {
           return nullptr;
         }
-	auto waveSource = ptr->toWaveDataSource();
+        auto waveSource = ptr->toWaveDataSource();
         waveSource->addSplit(split);
         return ptr;
       });

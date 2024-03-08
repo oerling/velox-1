@@ -45,7 +45,7 @@ class WaveHiveDataSource : public WaveDataSource {
   void addSplit(std::shared_ptr<connector::ConnectorSplit> split) override;
 
   void setFromDataSource(std::shared_ptr<WaveDataSource> dataSource) override;
-  
+
   int32_t canAdvance() override;
 
   void schedule(WaveStream& stream, int32_t maxRows) override;
@@ -67,7 +67,7 @@ class WaveHiveDataSource : public WaveDataSource {
   std::unique_ptr<WaveSplitReader> splitReader_;
   std::shared_ptr<exec::Expr> remainingFilter_;
   dwio::common::RuntimeStatistics runtimeStats_;
-    std::shared_ptr<common::MetadataFilter> metadataFilter_;
+  std::shared_ptr<common::MetadataFilter> metadataFilter_;
 };
 
 } // namespace facebook::velox::wave
