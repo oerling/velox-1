@@ -19,29 +19,23 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/FormatData.h"
 
-
 namespace facebook::velox::wave {
 
-  /// dwio::SelectiveColumnReader for Wave
-  class ColumnReader {
-  public:
-    ColumnReader(
+/// dwio::SelectiveColumnReader for Wave
+class ColumnReader {
+ public:
+  ColumnReader(
       const TypePtr& requestedType,
       std::shared_ptr<const dwio::common::TypeWithId> fileType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
-          : memoryPool_(params.pool()),
-      requestedType_(requestedType),
-      fileType_(fileType),
-      formatData_(params.toFormatData(fileType, scanSpec)),
-      scanSpec_(&scanSpec) {}
+      : memoryPool_(params.pool()),
+        requestedType_(requestedType),
+        fileType_(fileType),
+        formatData_(params.toFormatData(fileType, scanSpec)),
+        scanSpec_(&scanSpec) {}
 
+ protected:
+};
 
-  protected:
-		      
-      
-  };
-
-}
-
-
+} // namespace facebook::velox::wave

@@ -18,47 +18,48 @@
 
 namespace facebook::velox::wave {
 
-  // Describes how a column is staged on GPU, for example, copy from host RAM, direct read, already on device etc.
-  struct Staging {
-    // Pointer to data in pageable host memory, if applicable.
-    const void* hostData{nullptr};
+// Describes how a column is staged on GPU, for example, copy from host RAM,
+// direct read, already on device etc.
+struct Staging {
+  // Pointer to data in pageable host memory, if applicable.
+  const void* hostData{nullptr};
 
-    // Pointer to data in pinned host memory if applicable.
-    const void* pinnedHostData{nullptr};
-    //  Size in bytes.
-    size_t size;
+  // Pointer to data in pinned host memory if applicable.
+  const void* pinnedHostData{nullptr};
+  //  Size in bytes.
+  size_t size;
 
-    // Add members here to describe locations in storage for GPU direct transfer.
-    
-  };
+  // Add members here to describe locations in storage for GPU direct transfer.
+};
 
-  /// Describes how columns to be read together are staged on device. This is anything from a set of host to device copies, GPU direct IO, or no-op if data already on device.
-  class SplitStaging {
-    add(Staging& staging);
+/// Describes how columns to be read together are staged on device. This is
+/// anything from a set of host to device copies, GPU direct IO, or no-op if
+/// data already on device.
+class SplitStaging {
+  add(Staging& staging);
 
-    // Starts the transfers registered with add(). 'stream' is set to a stream where operations depending on the transfer may be queued.
-    void transfer(WaveStream& stream, Stream*& stream);
-    
-    // Pinned host memory for transfer to device. May be nullptr if using unified memory.
-    WaveBufferPtr hostData_;
+  // Starts the transfers registered with add(). 'stream' is set to a stream
+  // where operations depending on the transfer may be queued.
+  void transfer(WaveStream& stream, Stream*& stream);
 
-    // Device accessible memory (device or unified) with the data to read.
-    WaveBufferPtr deviceData_;
-    // Pointers to starts of streams inside deviceBuffer_.
-    std::vector<char*> devicePtrs;
-  };
-  
-  
-  /// Operations on leaf columns. This is specialized for each file format.
-  class FormatData {
-  public:
+  // Pinned host memory for transfer to device. May be nullptr if using unified
+  // memory.
+  WaveBufferPtr hostData_;
+
+  // Device accessible memory (device or unified) with the data to read.
+  WaveBufferPtr deviceData_;
+  // Pointers to starts of streams inside deviceBuffer_.
+  std::vector<char*> devicePtrs;
+};
+
+/// Operations on leaf columns. This is specialized for each file format.
+class FormatData {
+ public:
   virtual ~FormatData() = default;
 
-    
-    void addStaging(int32_t numRows, SplitStaging& staging) = 0;
+  void addStaging(int32_t numRows, SplitStaging& staging) = 0;
 
-    void schedule(int32_t numRows, FormatData* previousFilter  = nullptr);
-    
+  void schedule(int32_t numRows, FormatData* previousFilter = nullptr);
 };
 
 class FormatParams {
@@ -86,7 +87,5 @@ class FormatParams {
   ColumnReaderStatistics& stats_;
 };
 
-  
-};
-
+}; // namespace facebook::velox::wave
 }

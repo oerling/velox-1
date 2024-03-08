@@ -206,7 +206,8 @@ void Writer::finishStripe() {
   for (auto& encoder : encoders_) {
     columns.push_back(encoder->toColumn());
   }
-  stripes_.push_back(std::make_unique<Stripe>(std::move(columns), dwio::common::TypeWithId::create(type_)));
+  stripes_.push_back(std::make_unique<Stripe>(
+      std::move(columns), dwio::common::TypeWithId::create(type_)));
 }
 
 void Writer::finalize(std::string tableName) {

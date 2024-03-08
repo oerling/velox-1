@@ -14,16 +14,13 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/tests/utils/TestFormatReader.h"
 
-namespace facebook::velox::wave  {
+namespace facebook::velox::wave {
 
-std::unique_ptr<FormatData> TestFormatParams::toFormatData      (const std::shared_ptr<const dwio::common::TypeWithId>& type,
-    const velox::common::ScanSpec& scanSpec) {
-
-}
-
+std::unique_ptr<FormatData> TestFormatParams::toFormatData(
+    const std::shared_ptr<const dwio::common::TypeWithId>& type,
+    const velox::common::ScanSpec& scanSpec) {}
 
 TestStructColumnReader::StructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
@@ -31,11 +28,7 @@ TestStructColumnReader::StructColumnReader(
     DwrfParams& params,
     common::ScanSpec& scanSpec,
     bool isRoot)
-    : StructColumnReader(
-          requestedType,
-          fileType,
-          params,
-          scanSpec) {
+    : StructColumnReader(requestedType, fileType, params, scanSpec) {
   // A reader tree may be constructed while the ScanSpec is being used
   // for another read. This happens when the next stripe is being
   // prepared while the previous one is reading.
@@ -49,10 +42,7 @@ TestStructColumnReader::StructColumnReader(
     auto childFileType = fileType_->childByName(childSpec->fieldName());
     auto childRequestedType =
         requestedType_->childByName(childSpec->fieldName());
-    auto childParams = DwrfParams(
-        stripe,
-        params.runtimeStatistics(),
-);
+    auto childParams = DwrfParams(stripe, params.runtimeStatistics(), );
 
     addChild(TestFormatReader::build(
         childRequestedType, childFileType, params, *childSpec));
@@ -60,27 +50,24 @@ TestStructColumnReader::StructColumnReader(
   }
 }
 
-
-  
-//static
+// static
 std::unique_ptr<ColumnReader> TestFormatReader::build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
-      const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
-      TestFormatParams& params,
-      common::ScanSpec& scanSpec,
-      bool isRoot = false) {
+    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
+    TestFormatParams& params,
+    common::ScanSpec& scanSpec,
+    bool isRoot = false) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
           requestedType, fileType, params, INT_BYTE_SIZE, scanSpec);
 
-  case TypeKind::ROW:
+    case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
           requestedType, fileType, params, scanSpec, isRoot);
-  default: VELOX_UNREACHABLE();
+    default:
+      VELOX_UNREACHABLE();
   }
 }
 
-
-
-}
+} // namespace facebook::velox::wave

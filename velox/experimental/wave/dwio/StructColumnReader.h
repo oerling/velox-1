@@ -18,27 +18,26 @@
 
 #include "velox/experiemental/wave/dwio/ColumnReader.h"
 
-
-namespace facebook:velox::wave {
+namespace facebook : velox::wave {
 
   class StructColumnReader {: public ColunReader {
-          StructColumnReader(
-      const TypePtr& requestedType,
-      std::shared_ptr<const dwio::common::TypeWithId> fileType,
-      FormatParams& params,
-      velox::common::ScanSpec& scanSpec)
-	    : ColumnReader(requestedType, fileType, params, scanSpec) {}
+      StructColumnReader(
+          const TypePtr& requestedType,
+          std::shared_ptr<const dwio::common::TypeWithId> fileType,
+          FormatParams& params,
+          velox::common::ScanSpec& scanSpec)
+          : ColumnReader(requestedType, fileType, params, scanSpec) {}
 
-    protected:
-  void addChild(std::unique_ptr<ColumnReader> child) {
-    children_.push_back(child.get());
-    childrenOwned_.push_back(std::move(child));
-  }
+     protected:
+      void addChild(std::unique_ptr<ColumnReader> child) {
+        children_.push_back(child.get());
+        childrenOwned_.push_back(std::move(child));
+      }
 
       std::vector<ColumnReader*> children_;
 
-  std::vector<std::unique_ptr<ColumnReader>> childrenOwned_;
-  };
-}
+      std::vector<std::unique_ptr<ColumnReader>> childrenOwned_;
+    };
+  }
 
-}
+} // namespace velox::wave

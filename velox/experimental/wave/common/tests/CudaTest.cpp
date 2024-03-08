@@ -69,7 +69,10 @@ DEFINE_string(mode, "all", "Mode for reduce test memory transfers.");
 
 DEFINE_bool(enable_bm, false, "Enable custom and long running tests");
 
-DEFINE_string(roundtrip_ops, "", "Custom roundtrip composition, see comments in RoundtripThread");
+DEFINE_string(
+    roundtrip_ops,
+    "",
+    "Custom roundtrip composition, see comments in RoundtripThread");
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
@@ -491,15 +494,21 @@ struct RoundtripStats {
   }
 };
 
-/// Describes one thread of execution in round trip measurement. Each thread does a sequence of data transfers, kernel calls and synchronizations. The operations are described in a string of the form:
+/// Describes one thread of execution in round trip measurement. Each thread
+/// does a sequence of data transfers, kernel calls and synchronizations. The
+/// operations are described in a string of the form:
 ///
 ///  dnnn - Transfer nnn KB to device.
 /// hnnn - transfer nnn KB to host.
-/// annn,xxx - Increment nnn KB of ints in a kernel xxx times. Reads and writes nnn KB sequentially over up to 10K threads in 256 thread blocks
-/// rnnn,xxx - Increment nnn KB of int32 counters by a random increment fetched from a lookup table of nnn KB. This is done xxx times. Read and write sequential, read random in up to 10K lanes in blocks of 256.
-/// wnnn,xxx Same as 'a' but invokes the kernel wit a 8KB struct. Measures difference of sending a small parameter block as kernel parameter as opposed to pre-staging it on device with a small transfer.
-/// s - Synchronize the stream.
-/// e - Synchronize the stream with record event + wait event.
+/// annn,xxx - Increment nnn KB of ints in a kernel xxx times. Reads and writes
+/// nnn KB sequentially over up to 10K threads in 256 thread blocks rnnn,xxx -
+/// Increment nnn KB of int32 counters by a random increment fetched from a
+/// lookup table of nnn KB. This is done xxx times. Read and write sequential,
+/// read random in up to 10K lanes in blocks of 256. wnnn,xxx Same as 'a' but
+/// invokes the kernel wit a 8KB struct. Measures difference of sending a small
+/// parameter block as kernel parameter as opposed to pre-staging it on device
+/// with a small transfer. s - Synchronize the stream. e - Synchronize the
+/// stream with record event + wait event.
 class RoundtripThread {
  public:
   // Up to 32 MB of ints.
@@ -1276,8 +1285,10 @@ TEST_F(CudaTest, reduceMatrix) {
 TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
-    roundtripTest(fmt::format("{} GPU, 1000 repeats", modes[0]),, modes, false, 1000);
-    roundtripTest(fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 100);
+    roundtripTest(
+        fmt::format("{} GPU, 1000 repeats", modes[0]), , modes, false, 1000);
+    roundtripTest(
+        fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 100);
     return;
   }
   if (!FLAGS_enable_bm) {
