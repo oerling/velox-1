@@ -36,6 +36,8 @@ class ColumnReader {
         scanSpec_(&scanSpec) {}
 
  protected:
+  std::unique_ptr<FormatData> formatData_;
+  
 };
 
 } // namespace facebook::velox::wave

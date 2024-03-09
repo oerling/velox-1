@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
 
@@ -69,7 +69,7 @@ struct GpuDecode {
 
   struct Trivial {
     // Type of the input and result data.
-    DataType dataType;
+    TypeKind dataType;
     // Input data.
     const void* input;
     // Begin position for input, scatter and result.
@@ -84,7 +84,7 @@ struct GpuDecode {
 
   struct MainlyConstant {
     // Type of the values and result.
-    DataType dataType;
+    TypeKind dataType;
     // Number of total values that should be written to result.
     int count;
     // Common value that is repeated.
@@ -105,7 +105,7 @@ struct GpuDecode {
 
   struct DictionaryOnBitpack {
     // Type of the alphabet and result.
-    DataType dataType;
+    TypeKind dataType;
     // Dictionary alphabet.
     const void* alphabet;
     // Indices into the alphabet.
@@ -136,7 +136,7 @@ struct GpuDecode {
     // Should be allocated at least "size" large.
     int32_t* endPos;
     // Type of the result number.
-    DataType resultType;
+    TypeKind resultType;
     // Starting address of the result.
     void* result;
     // Count of the numbers in the result.
@@ -171,7 +171,7 @@ struct GpuDecode {
 
   struct Rle {
     // Type of values and result.
-    DataType valueType;
+    TypeKind valueType;
     // Values that will be repeated.
     const void* values;
     // Length of each value.

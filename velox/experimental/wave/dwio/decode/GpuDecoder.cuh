@@ -17,9 +17,12 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include "dwio/alpha/encodings/cuda/DecodeStep.h"
+#include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 
-namespace facebook::alpha::cuda {
+namespace facebook::velox::wave {
+
+/// Returns the amount of shared memory per thread block for 'op'
+int32_t sharedMemorySize(GpuDecode& op);
 
 /// Decode plans passed, one thread block will be running on each plan.
 __device__ void decodeNoSharedMemory(GpuDecode* plan);
@@ -67,4 +70,4 @@ constexpr inline T roundUp(T value, U factor) {
 
 } // namespace facebook::alpha::cuda
 
-#include "dwio/alpha/encodings/cuda/GpuDecoder-inl.cuh"
+#include "velox/experimental/wave/dwio/decode/GpuDecoder-inl.cuh"

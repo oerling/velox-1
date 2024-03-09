@@ -1286,7 +1286,7 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-        fmt::format("{} GPU, 1000 repeats", modes[0]), , modes, false, 1000);
+        fmt::format("{} GPU, 1000 repeats", modes[0]), modes, false, 1000);
     roundtripTest(
         fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 100);
     return;

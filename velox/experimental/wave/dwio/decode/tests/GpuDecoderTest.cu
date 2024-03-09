@@ -18,7 +18,7 @@
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include "velox/experimental/wave/dwio/cuda/GpuDecoder.cuh"
+#include "velox/experimental/wave/dwio/decode/GpuDecoder.cuh"
 #include "velox/experimental/gpu/Common.h"
 
 DEFINE_int32(device_id, 0, "");
@@ -187,7 +187,7 @@ class GpuDecoderTest : public ::testing::Test {
       int32_t begin = i * valuesPerOp;
       ops[i].step = DecodeStep::kTrivial;
       auto& op = ops[i].data.trivial;
-      op.dataType = TypeTraits<T>::dataType;
+      op.dataType = WaveTypeTrait<T>::typeKind;
       op.begin = begin;
       op.end = std::min<int32_t>(numValues, (i + 1) * valuesPerOp);
       op.result = result.get();
@@ -249,7 +249,7 @@ class GpuDecoderTest : public ::testing::Test {
       op.alphabet = dict;
       op.scatter = scatter;
       op.baseline = 0;
-      op.dataType = TypeTraits<T>::dataType;
+      op.dataType = WaveTypeTrait<T>::typeKind;
     }
     testCase(
         fmt::format(
@@ -340,7 +340,7 @@ class GpuDecoderTest : public ::testing::Test {
       op.size = inputSize;
       op.ends = ends.get() + i * inputSize;
       op.endPos = endPos.get() + i * inputSize;
-      op.resultType = DataType::Uint64;
+      op.resultType = TypeKind::BIGINT;
       op.result = result.get() + i * inputSize;
     }
     testCase(
@@ -371,7 +371,7 @@ class GpuDecoderTest : public ::testing::Test {
     for (int i = 0; i < numBlocks; ++i) {
       ops[i].step = DecodeStep::kMainlyConstant;
       auto& op = ops[i].data.mainlyConstant;
-      op.dataType = TypeTraits<T>::dataType;
+      op.dataType = WaveTypeTrait<T>::typeKind;
       op.count = numValues;
       op.commonValue = &values[numValues];
       op.otherValues = values.get();
@@ -458,7 +458,7 @@ class GpuDecoderTest : public ::testing::Test {
       int subtotal = ops[i].data.rleTotalLength.result;
       ops[i].step = DecodeStep::kRle;
       auto& op = ops[i].data.rle;
-      op.valueType = TypeTraits<T>::dataType;
+      op.valueType = WaveTypeTrait<T>::typeKind;
       op.values = values.get() + i * valuesPerOp;
       op.lengths = lengths.get() + i * valuesPerOp;
       op.count = std::min(valuesPerOp, numValues - i * valuesPerOp);
@@ -563,7 +563,8 @@ TEST_F(GpuDecoderTest, makeScatterIndices) {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
-  folly::init(&argc, &argv);
+  folly::Init init{&argc, &argv};
+
   cudaDeviceProp prop;
   CUDA_CHECK_FATAL(cudaGetDeviceProperties(&prop, FLAGS_device_id));
   printf("Running on device: %s\n", prop.name);

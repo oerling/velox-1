@@ -18,7 +18,7 @@
 
 #include <cub/cub.cuh> // @manual
 
-namespace facebook::alpha::cuda {
+namespace facebook::velox::wave {
 
 namespace detail {
 
@@ -47,22 +47,18 @@ __device__ void decodeTrivial(GpuDecode::Trivial& op) {
 __device__ inline void decodeTrivial(GpuDecode& plan) {
   auto& op = plan.data.trivial;
   switch (op.dataType) {
-    case DataType::Int8:
-    case DataType::Uint8:
+    case TypeKind::TINYINT:
       decodeTrivial<uint8_t>(op);
       break;
-    case DataType::Int16:
-    case DataType::Uint16:
+    case TypeKind::SMALLINT:
       decodeTrivial<uint16_t>(op);
       break;
-    case DataType::Int32:
-    case DataType::Uint32:
-    case DataType::Float:
+    case TypeKind::INTEGER:
+    case TypeKind::REAL:
       decodeTrivial<uint32_t>(op);
       break;
-    case DataType::Int64:
-    case DataType::Uint64:
-    case DataType::Double:
+    case TypeKind::BIGINT:
+    case TypeKind::DOUBLE:
       decodeTrivial<uint64_t>(op);
       break;
     default:
@@ -147,29 +143,17 @@ __device__ void decodeDictionaryOnBitpack(GpuDecode::DictionaryOnBitpack& op) {
 __device__ inline void decodeDictionaryOnBitpack(GpuDecode& plan) {
   auto& op = plan.data.dictionaryOnBitpack;
   switch (op.dataType) {
-    case DataType::Int8:
+    case TypeKind::TINYINT:
       decodeDictionaryOnBitpack<int8_t>(op);
       break;
-    case DataType::Uint8:
-      decodeDictionaryOnBitpack<uint8_t>(op);
-      break;
-    case DataType::Int16:
+    case TypeKind::SMALLINT:
       decodeDictionaryOnBitpack<int16_t>(op);
       break;
-    case DataType::Uint16:
-      decodeDictionaryOnBitpack<uint16_t>(op);
-      break;
-    case DataType::Int32:
+    case TypeKind::INTEGER:
       decodeDictionaryOnBitpack<int32_t>(op);
       break;
-    case DataType::Uint32:
-      decodeDictionaryOnBitpack<uint32_t>(op);
-      break;
-    case DataType::Int64:
+    case TypeKind::BIGINT:
       decodeDictionaryOnBitpack<int64_t>(op);
-      break;
-    case DataType::Uint64:
-      decodeDictionaryOnBitpack<uint64_t>(op);
       break;
     default:
       if (threadIdx.x == 0) {
@@ -187,7 +171,9 @@ __device__ int scatterIndices(
     int32_t end,
     int32_t* indices) {
   typedef cub::BlockScan<int32_t, kBlockSize> BlockScan;
-  __shared__ typename BlockScan::TempStorage scanStorage;
+  extern __shared__ __align__(
+			      alignof(typename BlockScan::TempStorage)) char smem[];
+  auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
   int numMatch;
   bool match;
   int32_t k = 0;
@@ -195,7 +181,7 @@ __device__ int scatterIndices(
     auto jt = j + threadIdx.x;
     numMatch = match = (jt < end && values[jt] == value);
     int subtotal;
-    BlockScan(scanStorage).ExclusiveSum(numMatch, numMatch, subtotal);
+    BlockScan(*scanStorage).ExclusiveSum(numMatch, numMatch, subtotal);
     __syncthreads();
     if (match) {
       indices[k + numMatch] = jt - begin;
@@ -213,7 +199,9 @@ __device__ int scatterIndices(
     int32_t end,
     int32_t* indices) {
   typedef cub::BlockScan<int32_t, kBlockSize> BlockScan;
-  __shared__ typename BlockScan::TempStorage scanStorage;
+  extern __shared__ __align__(
+			      alignof(typename BlockScan::TempStorage)) char smem[];
+  auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
   constexpr int kPerThread = 8;
   int numMatch[kPerThread];
   bool match[kPerThread];
@@ -225,7 +213,7 @@ __device__ int scatterIndices(
       numMatch[i] = match[i] = jt + i < end && isSet(bits, jt + i) == value;
     }
     int subtotal;
-    BlockScan(scanStorage).ExclusiveSum(numMatch, numMatch, subtotal);
+    BlockScan(*scanStorage).ExclusiveSum(numMatch, numMatch, subtotal);
     __syncthreads();
     for (auto i = 0; i < kPerThread; ++i) {
       if (match[i]) {
@@ -357,11 +345,11 @@ __device__ void decodeVarint(GpuDecode& plan) {
   auto& op = plan.data.varint;
   int resultSize;
   switch (op.resultType) {
-    case DataType::Uint32:
+  case TypeKind::INTEGER:
       resultSize = decodeVarint<kBlockSize, uint32_t>(
           op.input, op.size, op.ends, op.endPos, (uint32_t*)op.result);
       break;
-    case DataType::Uint64:
+  case TypeKind::BIGINT:
       resultSize = decodeVarint<kBlockSize, uint64_t>(
           op.input, op.size, op.ends, op.endPos, (uint64_t*)op.result);
       break;
@@ -399,22 +387,18 @@ template <int kBlockSize>
 __device__ void decodeMainlyConstant(GpuDecode& plan) {
   auto& op = plan.data.mainlyConstant;
   switch (op.dataType) {
-    case DataType::Int8:
-    case DataType::Uint8:
+    case TypeKind::TINYINT:
       decodeMainlyConstant<kBlockSize, uint8_t>(op);
       break;
-    case DataType::Int16:
-    case DataType::Uint16:
+    case TypeKind::SMALLINT:
       decodeMainlyConstant<kBlockSize, uint16_t>(op);
       break;
-    case DataType::Int32:
-    case DataType::Uint32:
-    case DataType::Float:
+    case TypeKind::INTEGER:
+    case TypeKind::REAL:
       decodeMainlyConstant<kBlockSize, uint32_t>(op);
       break;
-    case DataType::Int64:
-    case DataType::Uint64:
-    case DataType::Double:
+    case TypeKind::BIGINT:
+    case TypeKind::DOUBLE:
       decodeMainlyConstant<kBlockSize, uint64_t>(op);
       break;
     default:
@@ -428,7 +412,9 @@ __device__ void decodeMainlyConstant(GpuDecode& plan) {
 template <int kBlockSize, typename T, typename U>
 __device__ T sum(const U* values, int size) {
   using Reduce = cub::BlockReduce<T, kBlockSize>;
-  __shared__ typename Reduce::TempStorage reduceStorage;
+  extern __shared__ __align__(
+			      alignof(typename Reduce::TempStorage)) char smem[];
+  auto* reduceStorage = reinterpret_cast<typename Reduce::TempStorage*>(smem);
   T total = 0;
   for (int i = 0; i < size; i += kBlockSize) {
     auto numValid = min(size - i, kBlockSize);
@@ -436,7 +422,7 @@ __device__ T sum(const U* values, int size) {
     if (threadIdx.x < numValid) {
       value = values[i + threadIdx.x];
     }
-    total += Reduce(reduceStorage).Sum(value, numValid);
+    total += Reduce(*reduceStorage).Sum(value, numValid);
     __syncthreads();
   }
   return total;
@@ -467,7 +453,10 @@ __device__ int upperBound(const T* data, int size, T target) {
 template <int kBlockSize, typename T>
 __device__ void decodeRle(GpuDecode::Rle& op) {
   using BlockScan = cub::BlockScan<int32_t, kBlockSize>;
-  __shared__ typename BlockScan::TempStorage scanStorage;
+  extern __shared__ __align__(
+			      alignof(typename BlockScan::TempStorage)) char smem[];
+  auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
+
   static_assert(sizeof scanStorage >= sizeof(int32_t) * kBlockSize);
   auto* offsets = (int32_t*)&scanStorage;
   auto* values = (const T*)op.values;
@@ -478,7 +467,7 @@ __device__ void decodeRle(GpuDecode::Rle& op) {
     auto len = ti < op.count ? op.lengths[ti] : 0;
     int32_t offset, subtotal;
     __syncthreads();
-    BlockScan(scanStorage).InclusiveSum(len, offset, subtotal);
+    BlockScan(*scanStorage).InclusiveSum(len, offset, subtotal);
     __syncthreads();
     offsets[threadIdx.x] = offset;
     __syncthreads();
@@ -493,22 +482,18 @@ template <int kBlockSize>
 __device__ void decodeRle(GpuDecode& plan) {
   auto& op = plan.data.rle;
   switch (op.valueType) {
-    case DataType::Int8:
-    case DataType::Uint8:
+    case TypeKind::TINYINT:
       decodeRle<kBlockSize, uint8_t>(op);
       break;
-    case DataType::Int16:
-    case DataType::Uint16:
+    case TypeKind::SMALLINT:
       decodeRle<kBlockSize, uint16_t>(op);
       break;
-    case DataType::Int32:
-    case DataType::Uint32:
-    case DataType::Float:
+    case TypeKind::INTEGER:
+    case TypeKind::REAL:
       decodeRle<kBlockSize, uint32_t>(op);
       break;
-    case DataType::Int64:
-    case DataType::Uint64:
-    case DataType::Double:
+    case TypeKind::BIGINT:
+    case TypeKind::DOUBLE:
       decodeRle<kBlockSize, uint64_t>(op);
       break;
     default:
@@ -527,35 +512,8 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
     *op.indicesCount = indicesCount;
   }
 }
-
-template <int kBlockSize>
-__global__ void decodeGlobal(GpuDecode* plan) {
-  auto& op = plan[blockIdx.x];
-  switch (op.step) {
-    case DecodeStep::kTrivial:
-    case DecodeStep::kDictionaryOnBitpack:
-    case DecodeStep::kSparseBool:
-      decodeNoSharedMemory(plan);
-      break;
-    case DecodeStep::kMainlyConstant:
-    case DecodeStep::kVarint:
-    case DecodeStep::kRleTotalLength:
-    case DecodeStep::kRle:
-    case DecodeStep::kMakeScatterIndices:
-      decodeWithSharedMemory<kBlockSize>(plan);
-      break;
-    default:
-      if (threadIdx.x == 0) {
-        printf("ERROR: Unsupported DecodeStep\n");
-        op.statusCode = GpuDecode::StatusCode::kUnsupportedError;
-      }
-  }
-}
-
-} // namespace detail
-
-__device__ inline void decodeNoSharedMemory(GpuDecode* plan) {
-  auto& op = plan[blockIdx.x];
+  template <int32_t kBlockSize>
+  __device__ void decodeSwitch(GpuDecode* op) {
   if (threadIdx.x == 0) {
     op.statusCode = GpuDecode::StatusCode::kOk;
   }
@@ -569,22 +527,7 @@ __device__ inline void decodeNoSharedMemory(GpuDecode* plan) {
     case DecodeStep::kSparseBool:
       detail::decodeSparseBool(op.data.sparseBool);
       break;
-    default:
-      if (threadIdx.x == 0) {
-        printf("ERROR: Unsupported DecodeStep (no shared memory)\n");
-        op.statusCode = GpuDecode::StatusCode::kUnsupportedError;
-      }
-  }
-}
-
-template <int kBlockSize>
-__device__ void decodeWithSharedMemory(GpuDecode* plan) {
-  auto& op = plan[blockIdx.x];
-  if (threadIdx.x == 0) {
-    op.statusCode = GpuDecode::StatusCode::kOk;
-  }
-  switch (op.step) {
-    case DecodeStep::kMainlyConstant:
+  case DecodeStep::kMainlyConstant:
       detail::decodeMainlyConstant<kBlockSize>(op);
       break;
     case DecodeStep::kVarint:
@@ -607,9 +550,48 @@ __device__ void decodeWithSharedMemory(GpuDecode* plan) {
   }
 }
 
+
+  
+template <int kBlockSize>
+__global__ void decodeGlobal(GpuDecode* plan) {
+  decodeSwitch<kBlockSize>(plan + blockIdx.x);
+}
+
+    int32_t sharedMemorySizeForDecode(DecodeStep DecodeStep step) {
+    using Reduce32= cub::BlockReduce<int32_t, kBlockSize>;
+  using BlockScan32 = cub::BlockScan<int32_t, kBlockSize> ;
+    switch (step) {
+    case DecodeStep::kTrivial:
+    case DecodeStep::kDictionaryOnBitpack:
+    case DecodeStep::kSparseBool:
+      return 0;
+      break;
+    
+  case DecodeStep::kRleTotalLength:
+    return sizeof(Reduce32::TempStorage);
+  case DecodeStep::kMainlyConstant:
+  case DecodeStep::kRleBool:
+  case DecodeStep::kRle:
+  case DecodeStep::kVarint:
+  kSparseBool,
+  case DecodeStep::kMakeScatterIndices:
+  case DecodeStep::kLengthToOffset:
+    return sizeof(BlockScan32::TempStorage);
+      default: assert(false); // Undefined.
+      }
+  }
+
+} // namespace detail
+
+
+
 template <int kBlockSize>
 void decodeGlobal(GpuDecode* plan, int numBlocks, cudaStream_t stream) {
-  detail::decodeGlobal<kBlockSize><<<numBlocks, kBlockSize, 0, stream>>>(plan);
+  int32_t sharedSize = 0;
+  for (auto i = 0; i < numBlocks; ++i) {
+    sharedSize = std::max(sharedSize, sharedMemorySizeForDecode<kBlockSize>(op[i].decodeStep));
+  }
+  detail::decodeGlobal<kBlockSize><<<numBlocks, kBlockSize, sharedSize, stream>>>(plan);
 }
 
 } // namespace facebook::alpha::cuda
