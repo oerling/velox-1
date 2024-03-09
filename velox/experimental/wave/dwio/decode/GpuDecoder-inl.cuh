@@ -172,7 +172,7 @@ __device__ int scatterIndices(
     int32_t* indices) {
   typedef cub::BlockScan<int32_t, kBlockSize> BlockScan;
   extern __shared__ __align__(
-			      alignof(typename BlockScan::TempStorage)) char smem[];
+      alignof(typename BlockScan::TempStorage)) char smem[];
   auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
   int numMatch;
   bool match;
@@ -200,7 +200,7 @@ __device__ int scatterIndices(
     int32_t* indices) {
   typedef cub::BlockScan<int32_t, kBlockSize> BlockScan;
   extern __shared__ __align__(
-			      alignof(typename BlockScan::TempStorage)) char smem[];
+      alignof(typename BlockScan::TempStorage)) char smem[];
   auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
   constexpr int kPerThread = 8;
   int numMatch[kPerThread];
@@ -345,11 +345,11 @@ __device__ void decodeVarint(GpuDecode& plan) {
   auto& op = plan.data.varint;
   int resultSize;
   switch (op.resultType) {
-  case TypeKind::INTEGER:
+    case TypeKind::INTEGER:
       resultSize = decodeVarint<kBlockSize, uint32_t>(
           op.input, op.size, op.ends, op.endPos, (uint32_t*)op.result);
       break;
-  case TypeKind::BIGINT:
+    case TypeKind::BIGINT:
       resultSize = decodeVarint<kBlockSize, uint64_t>(
           op.input, op.size, op.ends, op.endPos, (uint64_t*)op.result);
       break;
@@ -413,7 +413,7 @@ template <int kBlockSize, typename T, typename U>
 __device__ T sum(const U* values, int size) {
   using Reduce = cub::BlockReduce<T, kBlockSize>;
   extern __shared__ __align__(
-			      alignof(typename Reduce::TempStorage)) char smem[];
+      alignof(typename Reduce::TempStorage)) char smem[];
   auto* reduceStorage = reinterpret_cast<typename Reduce::TempStorage*>(smem);
   T total = 0;
   for (int i = 0; i < size; i += kBlockSize) {
@@ -454,7 +454,7 @@ template <int kBlockSize, typename T>
 __device__ void decodeRle(GpuDecode::Rle& op) {
   using BlockScan = cub::BlockScan<int32_t, kBlockSize>;
   extern __shared__ __align__(
-			      alignof(typename BlockScan::TempStorage)) char smem[];
+      alignof(typename BlockScan::TempStorage)) char smem[];
   auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
 
   static_assert(sizeof scanStorage >= sizeof(int32_t) * kBlockSize);
@@ -512,8 +512,8 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
     *op.indicesCount = indicesCount;
   }
 }
-  template <int32_t kBlockSize>
-  __device__ void decodeSwitch(GpuDecode* op) {
+template <int32_t kBlockSize>
+__device__ void decodeSwitch(GpuDecode* op) {
   if (threadIdx.x == 0) {
     op.statusCode = GpuDecode::StatusCode::kOk;
   }
@@ -527,7 +527,7 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
     case DecodeStep::kSparseBool:
       detail::decodeSparseBool(op.data.sparseBool);
       break;
-  case DecodeStep::kMainlyConstant:
+    case DecodeStep::kMainlyConstant:
       detail::decodeMainlyConstant<kBlockSize>(op);
       break;
     case DecodeStep::kVarint:
@@ -550,48 +550,47 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
   }
 }
 
-
-  
 template <int kBlockSize>
 __global__ void decodeGlobal(GpuDecode* plan) {
   decodeSwitch<kBlockSize>(plan + blockIdx.x);
 }
 
-    int32_t sharedMemorySizeForDecode(DecodeStep DecodeStep step) {
-    using Reduce32= cub::BlockReduce<int32_t, kBlockSize>;
-  using BlockScan32 = cub::BlockScan<int32_t, kBlockSize> ;
-    switch (step) {
+int32_t sharedMemorySizeForDecode(DecodeStep DecodeStep step) {
+  using Reduce32 = cub::BlockReduce<int32_t, kBlockSize>;
+  using BlockScan32 = cub::BlockScan<int32_t, kBlockSize>;
+  switch (step) {
     case DecodeStep::kTrivial:
     case DecodeStep::kDictionaryOnBitpack:
     case DecodeStep::kSparseBool:
       return 0;
       break;
-    
-  case DecodeStep::kRleTotalLength:
-    return sizeof(Reduce32::TempStorage);
-  case DecodeStep::kMainlyConstant:
-  case DecodeStep::kRleBool:
-  case DecodeStep::kRle:
-  case DecodeStep::kVarint:
-  kSparseBool,
-  case DecodeStep::kMakeScatterIndices:
-  case DecodeStep::kLengthToOffset:
-    return sizeof(BlockScan32::TempStorage);
-      default: assert(false); // Undefined.
-      }
+
+    case DecodeStep::kRleTotalLength:
+      return sizeof(Reduce32::TempStorage);
+    case DecodeStep::kMainlyConstant:
+    case DecodeStep::kRleBool:
+    case DecodeStep::kRle:
+    case DecodeStep::kVarint:
+      kSparseBool,
+          case DecodeStep::kMakeScatterIndices
+          : case DecodeStep::kLengthToOffset
+          : return sizeof(BlockScan32::TempStorage);
+    default:
+      assert(false); // Undefined.
   }
+}
 
 } // namespace detail
-
-
 
 template <int kBlockSize>
 void decodeGlobal(GpuDecode* plan, int numBlocks, cudaStream_t stream) {
   int32_t sharedSize = 0;
   for (auto i = 0; i < numBlocks; ++i) {
-    sharedSize = std::max(sharedSize, sharedMemorySizeForDecode<kBlockSize>(op[i].decodeStep));
+    sharedSize = std::max(
+        sharedSize, sharedMemorySizeForDecode<kBlockSize>(op[i].decodeStep));
   }
-  detail::decodeGlobal<kBlockSize><<<numBlocks, kBlockSize, sharedSize, stream>>>(plan);
+  detail::decodeGlobal<kBlockSize>
+      <<<numBlocks, kBlockSize, sharedSize, stream>>>(plan);
 }
 
-} // namespace facebook::alpha::cuda
+} // namespace facebook::velox::wave

@@ -37,7 +37,6 @@ class ColumnReader {
 
  protected:
   std::unique_ptr<FormatData> formatData_;
-  
 };
 
 } // namespace facebook::velox::wave

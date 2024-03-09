@@ -23,7 +23,8 @@
 /// side files.
 namespace facebook::velox::wave {
 
-  /// Copy of TypeKind in velox/type/Type.h. Type.h is incompatible with Cuda headers, therefore duplicated here.
+/// Copy of TypeKind in velox/type/Type.h. Type.h is incompatible with Cuda
+/// headers, therefore duplicated here.
 enum class TypeKind : int8_t {
   BOOLEAN = 0,
   TINYINT = 1,
@@ -48,23 +49,28 @@ enum class TypeKind : int8_t {
   INVALID = 36
 };
 
-template<typename T>
-  struct   WaveTypeTrait {};
+template <typename T>
+struct WaveTypeTrait {};
 
- template<>
-   struct WaveTypeTrait<int32_t> { static constexpr TypeKind typeKind = TypeKind::INTEGER; };
+template <>
+struct WaveTypeTrait<int32_t> {
+  static constexpr TypeKind typeKind = TypeKind::INTEGER;
+};
 
-  template<>
-   struct WaveTypeTrait<uint32_t> { static constexpr TypeKind typeKind = TypeKind::INTEGER; };
+template <>
+struct WaveTypeTrait<uint32_t> {
+  static constexpr TypeKind typeKind = TypeKind::INTEGER;
+};
 
-  template<>
-    struct WaveTypeTrait<int64_t> { static constexpr TypeKind typeKind = TypeKind::BIGINT; };
-  template<>
-    struct WaveTypeTrait<uint64_t> { static constexpr TypeKind typeKind = TypeKind::BIGINT; };
+template <>
+struct WaveTypeTrait<int64_t> {
+  static constexpr TypeKind typeKind = TypeKind::BIGINT;
+};
+template <>
+struct WaveTypeTrait<uint64_t> {
+  static constexpr TypeKind typeKind = TypeKind::BIGINT;
+};
 
-  
- 
-  
 // Normal thread block size for Wave kernels
 constexpr int32_t kBlockSize = 256;
 using OperandId = int32_t;

@@ -209,4 +209,4 @@ struct GpuDecode {
   } data;
 };
 
-} // namespace facebook::alpha::cuda
+} // namespace facebook::velox::wave

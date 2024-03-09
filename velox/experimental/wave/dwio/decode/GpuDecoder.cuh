@@ -68,6 +68,6 @@ constexpr inline T roundUp(T value, U factor) {
   return (value + (factor - 1)) / factor * factor;
 }
 
-} // namespace facebook::alpha::cuda
+} // namespace facebook::velox::wave
 
 #include "velox/experimental/wave/dwio/decode/GpuDecoder-inl.cuh"
