@@ -457,8 +457,8 @@ __device__ void decodeRle(GpuDecode::Rle& op) {
       alignof(typename BlockScan::TempStorage)) char smem[];
   auto* scanStorage = reinterpret_cast<typename BlockScan::TempStorage*>(smem);
 
-  static_assert(sizeof scanStorage >= sizeof(int32_t) * kBlockSize);
-  auto* offsets = (int32_t*)&scanStorage;
+  static_assert(sizeof(*scanStorage) >= sizeof(int32_t) * kBlockSize);
+  auto* offsets = (int32_t*)scanStorage;
   auto* values = (const T*)op.values;
   auto* result = (T*)op.result;
   int total = 0;
@@ -513,7 +513,7 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
   }
 }
 template <int32_t kBlockSize>
-__device__ void decodeSwitch(GpuDecode* op) {
+__device__ void decodeSwitch(GpuDecode& op) {
   if (threadIdx.x == 0) {
     op.statusCode = GpuDecode::StatusCode::kOk;
   }
@@ -552,10 +552,11 @@ __device__ void decodeSwitch(GpuDecode* op) {
 
 template <int kBlockSize>
 __global__ void decodeGlobal(GpuDecode* plan) {
-  decodeSwitch<kBlockSize>(plan + blockIdx.x);
+  decodeSwitch<kBlockSize>(plan [blockIdx.x]);
 }
 
-int32_t sharedMemorySizeForDecode(DecodeStep DecodeStep step) {
+template <int32_t kBlockSize>
+int32_t sharedMemorySizeForDecode(DecodeStep step) {
   using Reduce32 = cub::BlockReduce<int32_t, kBlockSize>;
   using BlockScan32 = cub::BlockScan<int32_t, kBlockSize>;
   switch (step) {
@@ -566,15 +567,14 @@ int32_t sharedMemorySizeForDecode(DecodeStep DecodeStep step) {
       break;
 
     case DecodeStep::kRleTotalLength:
-      return sizeof(Reduce32::TempStorage);
+      return sizeof(typename Reduce32::TempStorage);
     case DecodeStep::kMainlyConstant:
     case DecodeStep::kRleBool:
     case DecodeStep::kRle:
     case DecodeStep::kVarint:
-      kSparseBool,
-          case DecodeStep::kMakeScatterIndices
-          : case DecodeStep::kLengthToOffset
-          : return sizeof(BlockScan32::TempStorage);
+  case DecodeStep::kMakeScatterIndices:
+  case DecodeStep::kLengthToOffset:
+      return sizeof(typename BlockScan32::TempStorage);
     default:
       assert(false); // Undefined.
   }
@@ -587,8 +587,12 @@ void decodeGlobal(GpuDecode* plan, int numBlocks, cudaStream_t stream) {
   int32_t sharedSize = 0;
   for (auto i = 0; i < numBlocks; ++i) {
     sharedSize = std::max(
-        sharedSize, sharedMemorySizeForDecode<kBlockSize>(op[i].decodeStep));
+			  sharedSize, detail::sharedMemorySizeForDecode<kBlockSize>(plan[i].step));
   }
+  if (sharedSize > 0) {
+    sharedSize += 15; // allow align at 16.
+  }
+
   detail::decodeGlobal<kBlockSize>
       <<<numBlocks, kBlockSize, sharedSize, stream>>>(plan);
 }

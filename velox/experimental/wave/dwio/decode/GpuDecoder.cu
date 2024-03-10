@@ -50,7 +50,7 @@ __global__ void decodeKernel(GpuDecodeParams inlineParams) {
   GpuDecode* ops =
       reinterpret_cast<GpuDecode*>(&&params.starts[0] + roundUp(gridDim.x, 2));
   for (i = programStart; i < programEnd; ++i) {
-    decodeSwitch<kBlockSize>(ops + i);
+    decodeSwitch<kBlockSize>(ops[i]);
   }
 }
 
@@ -68,7 +68,10 @@ void callGpuDecode(
       shared = std::max(shared, step.sharedMemorySize());
     }
   }
-  GpuDecodeParams localParams;
+  if (shared > 0) {
+  shared += 15; // allow align at 16.
+}
+GpuDecodeParams localParams;
   GpuDecodeParams = &localParams;
   if (numOps > GpuDecodeParams::kMaxInline) {
     extra = arena->allocate<char>(

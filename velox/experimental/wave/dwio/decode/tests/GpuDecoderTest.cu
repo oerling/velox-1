@@ -18,8 +18,8 @@
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include "velox/experimental/wave/dwio/decode/GpuDecoder.cuh"
 #include "velox/experimental/gpu/Common.h"
+#include "velox/experimental/wave/dwio/decode/GpuDecoder.cuh"
 
 DEFINE_int32(device_id, 0, "");
 DEFINE_bool(benchmark, false, "");
@@ -527,31 +527,31 @@ TEST_F(GpuDecoderTest, trivial) {
 }
 
 TEST_F(GpuDecoderTest, dictionaryOnBitpack) {
-  dictTestPlan<int32_t, 128>(11, 4'000'037, 1024, false);
-  dictTestPlan<int64_t, 128>(11, 4'000'037, 1024, false);
-  dictTestPlan<int32_t, 128>(11, 40'000'003, 1024, false);
-  dictTestPlan<int64_t, 128>(11, 40'000'003, 1024, false);
-  dictTestPlan<int64_t, 128>(11, 40'000'003, 1024, true);
+  dictTestPlan<int32_t, 256>(11, 4'000'037, 1024, false);
+  dictTestPlan<int64_t, 256>(11, 4'000'037, 1024, false);
+  dictTestPlan<int32_t, 256>(11, 40'000'003, 1024, false);
+  dictTestPlan<int64_t, 256>(11, 40'000'003, 1024, false);
+  dictTestPlan<int64_t, 256>(11, 40'000'003, 1024, true);
 }
 
 TEST_F(GpuDecoderTest, sparseBool) {
-  testSparseBool<1024>(40013, 1024);
+  testSparseBool<256>(40013, 1024);
 }
 
 TEST_F(GpuDecoderTest, varint) {
-  testVarint<512>(4001, 1024);
+  testVarint<256>(4001, 1024);
 }
 
 TEST_F(GpuDecoderTest, mainlyConstant) {
-  testMainlyConstant<int64_t, 512>(40013, 1024);
+  testMainlyConstant<int64_t, 256>(40013, 1024);
 }
 
 TEST_F(GpuDecoderTest, rleTotalLength) {
-  testRleTotalLength<512>(40'000'003, 1024);
+  testRleTotalLength<256>(40'000'003, 1024);
 }
 
 TEST_F(GpuDecoderTest, rle) {
-  testRle<int64_t, 512>(40'000'003, 1024);
+  testRle<int64_t, 256>(40'000'003, 1024);
 }
 
 TEST_F(GpuDecoderTest, makeScatterIndices) {
@@ -559,7 +559,20 @@ TEST_F(GpuDecoderTest, makeScatterIndices) {
 }
 
 } // namespace
-} // namespace facebook::alpha::cuda
+} // namespace facebook::velox::wave
+
+void printFuncAttrs(
+    const std::string& heading,
+    const cudaFuncAttributes& attrs) {
+  std::cout << heading << " sharedSizeBytes=" << attrs.sharedSizeBytes
+            << " constSizeBytes" << attrs.constSizeBytes
+            << " localSizeBytes =" << attrs.localSizeBytes
+            << "maxThreadsPerBlock=" << attrs.maxThreadsPerBlock
+            << " numRegs=" << attrs.numRegs
+            << "maxDynamicSharedSizeBytes=" << attrs.maxDynamicSharedSizeBytes
+            << std::endl;
+}
+using namespace facebook::velox::wave;
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
@@ -569,5 +582,14 @@ int main(int argc, char** argv) {
   CUDA_CHECK_FATAL(cudaGetDeviceProperties(&prop, FLAGS_device_id));
   printf("Running on device: %s\n", prop.name);
   CUDA_CHECK_FATAL(cudaSetDevice(FLAGS_device_id));
+  cudaFuncAttributes attrs;
+  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<128>));
+  printFuncAttrs("decode blocksize 128", attrs);
+  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<256>));
+  printFuncAttrs("decode blocksize 256", attrs);
+  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<512>));
+  printFuncAttrs("decode blocksize 512", attrs);
+  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<1024>));
+  printFuncAttrs("decode blocksize 1024", attrs);
   return RUN_ALL_TESTS();
 }
