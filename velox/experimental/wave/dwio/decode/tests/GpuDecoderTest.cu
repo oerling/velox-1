@@ -203,9 +203,6 @@ class GpuDecoderTest : public ::testing::Test {
         [&] { decodeGlobal<kBlockSize>(ops.get(), numOps); },
         numValues * sizeof(T),
         10);
-    for (int i = 0; i < numOps; ++i) {
-      ASSERT_EQ(ops[i].statusCode, GpuDecode::StatusCode::kOk);
-    }
     if (!scatter) {
       EXPECT_EQ(0xdeadbeef, result[numValues]);
     }
@@ -263,9 +260,6 @@ class GpuDecoderTest : public ::testing::Test {
     if (!scatter) {
       EXPECT_EQ(0xdeadbeef, result[numValues]);
     }
-    for (int i = 0; i < numOps; ++i) {
-      ASSERT_EQ(ops[i].statusCode, GpuDecode::StatusCode::kOk);
-    }
     auto mask = (1u << bitWidth) - 1;
     for (auto i = 0; i < numValues; ++i) {
       int32_t bit = i * bitWidth;
@@ -306,7 +300,6 @@ class GpuDecoderTest : public ::testing::Test {
         resultSize * numBlocks,
         3);
     for (int j = 0; j < numBlocks; ++j) {
-      ASSERT_EQ(ops[j].statusCode, GpuDecode::StatusCode::kOk);
       auto* actual = ops[j].data.sparseBool.result;
       for (int i = 0; i < numValues; ++i) {
         ASSERT_EQ(isSet(actual, i), isSet(expected.get(), i)) << i;
@@ -349,7 +342,6 @@ class GpuDecoderTest : public ::testing::Test {
         numValues * sizeof(uint64_t) * numBlocks,
         3);
     for (int j = 0; j < numBlocks; ++j) {
-      ASSERT_EQ(ops[j].statusCode, GpuDecode::StatusCode::kOk);
       auto& op = ops[j].data.varint;
       ASSERT_EQ(op.resultSize, numValues);
       for (int i = 0; i < numValues; ++i) {
@@ -386,7 +378,6 @@ class GpuDecoderTest : public ::testing::Test {
         numValues * numBlocks * sizeof(T),
         3);
     for (int k = 0; k < numBlocks; ++k) {
-      ASSERT_EQ(ops[k].statusCode, GpuDecode::StatusCode::kOk);
       auto& op = ops[k].data.mainlyConstant;
       auto* result = (const T*)op.result;
       int j = 0;
@@ -407,11 +398,13 @@ class GpuDecoderTest : public ::testing::Test {
     fillRandom(values.get(), numValues);
     int valuesPerOp = (numValues + numBlocks - 1) / numBlocks;
     auto ops = allocate<GpuDecode>(numBlocks);
+    auto lengths = allocate<int64_t>(numBlocks);
     for (auto i = 0; i < numBlocks; ++i) {
       ops[i].step = DecodeStep::kRleTotalLength;
       auto& op = ops[i].data.rleTotalLength;
       op.input = values.get() + i * valuesPerOp;
       op.count = std::min(valuesPerOp, numValues - i * valuesPerOp);
+      op.result = &lengths[i];
     }
     testCase(
         "",
@@ -419,13 +412,12 @@ class GpuDecoderTest : public ::testing::Test {
         numValues * sizeof(int32_t),
         5);
     for (int i = 0; i < numBlocks; ++i) {
-      ASSERT_EQ(ops[i].statusCode, GpuDecode::StatusCode::kOk);
       auto& op = ops[i].data.rleTotalLength;
       int64_t expected = 0;
       for (int j = 0; j < op.count; ++j) {
         expected += op.input[j];
       }
-      ASSERT_EQ(op.result, expected);
+      ASSERT_EQ(*op.result, expected);
     }
   }
 
@@ -442,12 +434,14 @@ class GpuDecoderTest : public ::testing::Test {
       totalLength += lengths[i];
     }
     auto ops = allocate<GpuDecode>(numBlocks);
+    auto results = allocate<int64_t>(numBlocks);
     int valuesPerOp = (numValues + numBlocks - 1) / numBlocks;
     for (int i = 0; i < numBlocks; ++i) {
       ops[i].step = DecodeStep::kRleTotalLength;
       auto& op = ops[i].data.rleTotalLength;
       op.input = lengths.get() + i * valuesPerOp;
       op.count = std::min(valuesPerOp, numValues - i * valuesPerOp);
+      op.result = &results[i];
     }
     decodeGlobal<kBlockSize>(ops.get(), numBlocks);
     CUDA_CHECK_FATAL(cudaGetLastError());
@@ -455,7 +449,7 @@ class GpuDecoderTest : public ::testing::Test {
     auto result = allocate<T>(totalLength);
     int lengthSofar = 0;
     for (int i = 0; i < numBlocks; ++i) {
-      int subtotal = ops[i].data.rleTotalLength.result;
+      int subtotal = *ops[i].data.rleTotalLength.result;
       ops[i].step = DecodeStep::kRle;
       auto& op = ops[i].data.rle;
       op.valueType = WaveTypeTrait<T>::typeKind;
@@ -471,7 +465,6 @@ class GpuDecoderTest : public ::testing::Test {
         totalLength * sizeof(T),
         3);
     for (int i = 0; i < numBlocks; ++i) {
-      ASSERT_EQ(ops[i].statusCode, GpuDecode::StatusCode::kOk);
     }
     for (int i = 0, j = 0; i < numValues; ++i) {
       for (int k = 0; k < lengths[i]; ++k) {
@@ -503,7 +496,6 @@ class GpuDecoderTest : public ::testing::Test {
         numValues * numBlocks * sizeof(int32_t),
         3);
     for (int i = 0; i < numBlocks; ++i) {
-      ASSERT_EQ(ops[i].statusCode, GpuDecode::StatusCode::kOk);
       auto& op = ops[i].data.makeScatterIndices;
       int k = 0;
       for (int j = 0; j < numValues; ++j) {
@@ -555,7 +547,7 @@ TEST_F(GpuDecoderTest, rle) {
 }
 
 TEST_F(GpuDecoderTest, makeScatterIndices) {
-  testMakeScatterIndices<512>(40013, 1024);
+  testMakeScatterIndices<256>(40013, 1024);
 }
 
 } // namespace

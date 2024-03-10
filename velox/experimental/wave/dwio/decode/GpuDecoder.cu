@@ -54,12 +54,12 @@ __global__ void decodeKernel(GpuDecodeParams inlineParams) {
   }
 }
 
-void callGpuDecode(
-    const std::vector<std::vector<GpuDecode>> programs,
+void launchDecode(
+		const DecodePrograms programs,
     GpuArena* arena,
     WaveBufferPtr& extra,
     Stream* stream) {
-  int32_t numBlocks = programs.size();
+  int32_t numBlocks = programs.programs.size();
   int32_t numOps = 0;
   int32_t shared = 0;
   for (auto& program : programs) {

@@ -64,7 +64,6 @@ __device__ inline void decodeTrivial(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported data type for Trivial\n");
-        plan.statusCode = GpuDecode::StatusCode::kUnsupportedError;
       }
   }
 }
@@ -158,7 +157,7 @@ __device__ inline void decodeDictionaryOnBitpack(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported data type for DictionaryOnBitpack\n");
-        plan.statusCode = GpuDecode::StatusCode::kUnsupportedError;
+	assert(false);
       }
   }
 }
@@ -356,7 +355,7 @@ __device__ void decodeVarint(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported result type for varint decoder\n");
-        plan.statusCode = GpuDecode::StatusCode::kUnsupportedError;
+        assert(false);
       }
   }
   if (threadIdx.x == 0) {
@@ -404,7 +403,7 @@ __device__ void decodeMainlyConstant(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported data type for MainlyConstant\n");
-        plan.statusCode = GpuDecode::StatusCode::kUnsupportedError;
+	assert(false);
       }
   }
 }
@@ -432,7 +431,7 @@ template <int kBlockSize>
 __device__ void rleTotalLength(GpuDecode::RleTotalLength& op) {
   auto result = sum<kBlockSize, int64_t>(op.input, op.count);
   if (threadIdx.x == 0) {
-    op.result = result;
+    *op.result = result;
   }
 }
 
@@ -499,7 +498,7 @@ __device__ void decodeRle(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported value type for Rle\n");
-        plan.statusCode = GpuDecode::StatusCode::kUnsupportedError;
+        assert(false);
       }
   }
 }
@@ -514,9 +513,6 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
 }
 template <int32_t kBlockSize>
 __device__ void decodeSwitch(GpuDecode& op) {
-  if (threadIdx.x == 0) {
-    op.statusCode = GpuDecode::StatusCode::kOk;
-  }
   switch (op.step) {
     case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
@@ -545,7 +541,6 @@ __device__ void decodeSwitch(GpuDecode& op) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported DecodeStep (with shared memory)\n");
-        op.statusCode = GpuDecode::StatusCode::kUnsupportedError;
       }
   }
 }

@@ -57,15 +57,16 @@ enum class DecodeStep {
 
 /// Describes a decoding loop's input and result disposition.
 struct GpuDecode {
-  DecodeStep step;
-
   /// Code indicating the result status of decoding operation.  Usually some
   /// error message should be printed to stdout in kernel code to give more
   /// details if the result is not OK.
-  enum class StatusCode {
+  enum class StatusCode : uint8_t {
     kOk,
     kUnsupportedError,
-  } statusCode;
+      };
+
+  // The operation to perform. Decides which branch of the union to use.
+  DecodeStep step;
 
   struct Trivial {
     // Type of the input and result data.
@@ -166,7 +167,7 @@ struct GpuDecode {
     // Number of input data.
     int count;
     // The sum of input data.
-    int64_t result;
+    int64_t* result;
   };
 
   struct Rle {
@@ -208,5 +209,10 @@ struct GpuDecode {
     MakeScatterIndices makeScatterIndices;
   } data;
 };
+
+ struct DecodePrograms {
+   std::vector<std::vector<DecodeStep>> programs;
+ };
+
 
 } // namespace facebook::velox::wave
