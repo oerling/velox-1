@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_library(velox_wave_stream
+    OperandSet.cpp
+   Wave.cpp)
+
 add_library(
   velox_wave_exec
   Aggregation.cpp
   AggregationInstructions.cu
   ExprKernel.cu
-  OperandSet.cpp
   ToWave.cpp
   WaveOperator.cpp
   Vectors.cpp
   Values.cpp
   WaveDriver.cpp
-  Wave.cpp
   Project.cpp
   TableScan.cpp
   WaveHiveDataSource.cpp
@@ -32,7 +34,7 @@ add_library(
 
 set_target_properties(velox_wave_exec PROPERTIES CUDA_ARCHITECTURES native)
 
-target_link_libraries(velox_wave_exec velox_wave_vector velox_wave_common
+target_link_libraries(velox_wave_exec velox_wave_vector velox_wave_common velox_wave_stream
                       velox_exception velox_common_base velox_exec)
 
 if(${VELOX_BUILD_TESTING})

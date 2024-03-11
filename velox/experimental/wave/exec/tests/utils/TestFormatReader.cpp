@@ -16,13 +16,33 @@
 
 #include "velox/experimental/wave/tests/utils/TestFormatReader.h"
 
-namespace facebook::velox::wave {
+namespace facebook::velox::wave::test {
 
 std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
-    const velox::common::ScanSpec& scanSpec) {}
+    const velox::common::ScanSpec& scanSpec) {
+  auto* column = stripe_->findColumn(*type); 
+  return std::make_unique<TestFormatData>(column);
+}
 
-TestStructColumnReader::StructColumnReader(
+  int32_t  TestFormatData::startRead(int32_t offset, RowSet rows, FormatData* /*previousFilter*/, SplitStaging& staging, DecodePrograms& program, WaveStream& stream) {
+    int32_t result;
+    if (!staged_) {
+    staged_ = true;
+    result |= FormatData::kStaged;
+    Staging staging;
+    staging.host column->buffer = column->values->as<char>();
+    staging.size = column->values->size();
+    splitStaging.add(std::move(staging));
+  }
+    if (!queud_) {
+      result |= FormatData::kQueued || FormatData::kAllQueued;
+      programs.programs
+    }
+    return result;
+  }
+
+  TestStructColumnReader::StructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& fileType,
     DwrfParams& params,
@@ -50,6 +70,11 @@ TestStructColumnReader::StructColumnReader(
   }
 }
 
+std::unique_ptr<ColumnReader> buildIntegerReader(
+						 std::shared_ptr<TypeWithId>& requestedType, std::shared_ptr<TypeWithId>& fileType, TestFormatParams& params, ScanSpec& scanSpec) {
+  return std::make_unique<ColumnReader>(requestedType, fileType, params, scanSpec);
+}  
+
 // static
 std::unique_ptr<ColumnReader> TestFormatReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
@@ -60,7 +85,7 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
-          requestedType, fileType, params, INT_BYTE_SIZE, scanSpec);
+          requestedType, fileType, params,  scanSpec);
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(

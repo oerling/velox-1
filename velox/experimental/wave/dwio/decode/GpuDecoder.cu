@@ -65,7 +65,7 @@ void launchDecode(
   for (auto& program : programs) {
     numOps += program.size();
     for (auto& step : program) {
-      shared = std::max(shared, step.sharedMemorySize());
+      shared = std::max(shared, step->sharedMemorySize());
     }
   }
   if (shared > 0) {
@@ -85,7 +85,7 @@ GpuDecodeParams localParams;
   for (auto i = 0; i < programs.size(); ++i) {
     params->ends[i] = (i == 0 ? 0 : params[i - 1]) + programs[i].size();
     for (auto& op : programs[i]) {
-      ops[fill++] = op;
+      ops[fill++] = *op;
     }
   }
   if (extra) {
@@ -93,6 +93,14 @@ GpuDecodeParams localParams;
   }
 
   decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream>>>(inlineParams);
+  CUDA_CHECK(cudaGetLastError());
+  if (program.result) {
+    if (!program.hostResult) {
+      stream->prefetch(nullptr, program.result->as<char>(), program.result->size());
+    } else {
+      stream->deviceToHostAsync(program.hostResult->as<char>(), program.result->as<char>(), program.hostResult->size());
+    }
+}
 }
 
 } // namespace facebook::velox::wave

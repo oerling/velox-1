@@ -211,7 +211,16 @@ struct GpuDecode {
 };
 
  struct DecodePrograms {
-   std::vector<std::vector<DecodeStep>> programs;
+   // Set of decode programs submitted as a unit. Each vector<DecodeStep> is run on its own thread block. The consecutive DecodeSteps in the same program are consecutive and the next one can depend on a previous one. 
+   std::vector<std::vector<xtd::unique_ptr<DecodeStep>>> programs;
+
+   /// Unified or device memory   buffer where steps in 'programs' write results for the host. Decode results stay on device, only control information like filter result counts or length sums come to the host via this buffer. If nullptr, no data transfer is scheduled. 'result' should be nullptr if all steps are unconditional, like simple decoding.
+   WaveBufferPtr result;
+   /// Host addressable copy of 'result'. If result is unified memory
+   /// this can be nullptr and we just enqueue a prefetch. to host. If
+   /// 'result' is device memory, this should be pinned host memory
+   /// with the same size.
+   WaveBufferPtr hostResult;
  };
 
 

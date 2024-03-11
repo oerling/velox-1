@@ -18,7 +18,7 @@
 
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 
-namespace facebook::velox::wave {
+namespace facebook::velox::wave::test {
 class TestFormatParams {
  public:
   TestFormatParams(const test::Stripe* stripe) : stripe_(stripe) {}
@@ -29,10 +29,16 @@ class TestFormatParams {
 class TestFormatData : public wave::FormatData {
  public:
   TestFormatData(const test::Column* column) : column_(column) {}
+  
+  /// Adds the next read of the column. If the column is a filter depending on another filter, the previous filter is given on the first call. Returns an OR of flags describing the action. See kStaged, kQueued, kAllQueued.
+  virtual int32_t  startRead(int32_t offset, RowSet rows, FormatData* previousFilter, SplitStaging& staging, DecodePrograms& program) = 0;
+  
 
+  
  private:
-  const test::Column* nulls_{nullptr};
-  const Column* column_{nullptr};
+  const test::Column* column_;
+  bool staged_{false};
+  bool queued_{false};
 };
 
 class TestFormatParams : public wave::FormatParams {
@@ -54,7 +60,7 @@ class TestFormatReader {
   static std::unique_ptr<ColumnReader> build(
       const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
-      DwrfParams& params,
+      TestFormatParams& params,
       common::ScanSpec& scanSpec,
       bool isRoot = false);
 };
