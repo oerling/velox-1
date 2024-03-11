@@ -57,7 +57,7 @@ __global__ void decodeKernel(GpuDecodeParams inlineParams) {
 }
 
 void launchDecode(
-		const DecodePrograms programs,
+		const DecodePrograms& programs,
     GpuArena* arena,
     WaveBufferPtr& extra,
     Stream* stream) {
@@ -94,7 +94,7 @@ GpuDecodeParams localParams;
     localParams.external = params;
   }
 
-  decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(*params);
+  decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(localParams);
   CUDA_CHECK(cudaGetLastError());
   if (programs.result) {
     if (!programs.hostResult) {

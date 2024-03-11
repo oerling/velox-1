@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
@@ -225,4 +226,10 @@ struct DecodePrograms {
   WaveBufferPtr hostResult;
 };
 
+void launchDecode(
+		  		const DecodePrograms& programs,
+    GpuArena* arena,
+    WaveBufferPtr& extra,
+		Stream* stream);
+ 
 } // namespace facebook::velox::wave
