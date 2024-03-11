@@ -61,13 +61,11 @@ add_library(
   ProbeOperatorState.cpp
   RowContainer.cpp
   RowNumber.cpp
-  SharedArbitrator.cpp
   SortBuffer.cpp
   SortedAggregations.cpp
   SortWindowBuild.cpp
   Spill.cpp
   SpillFile.cpp
-  SpillOperatorGroup.cpp
   Spiller.cpp
   StreamingAggregation.cpp
   StreamingWindowBuild.cpp
@@ -94,8 +92,8 @@ target_link_libraries(
   velox_core
   velox_vector
   velox_connector
+  velox_expression
   velox_time
-  velox_codegen
   velox_common_base
   velox_test_util
   velox_arrow_bridge
