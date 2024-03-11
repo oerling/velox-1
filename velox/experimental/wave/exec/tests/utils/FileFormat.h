@@ -48,15 +48,15 @@ struct Column {
 struct Stripe {
   Stripe(
       std::vector<std::unique_ptr<Column>>&& in,
-      std::shared_ptr<const common::TypeWithId> type)
-      : typeWithId(std::move(type)), columns(std::move(in)) {}
+      const std::shared_ptr<const dwio::common::TypeWithId>& type)
+      : typeWithId(type), columns(std::move(in)) {}
 
-  Column* findColumn(TypeWithId& child);
+  const Column* findColumn(const dwio::common::TypeWithId& child) const;
 
   // Unique name assigned when associating with a Table.
   std::string name;
 
-  dwio::common::TypeWithId typeWithId;
+  std::shared_ptr<const dwio::common::TypeWithId> typeWithId;
 
   // Top level columns.
   std::vector<std::unique_ptr<Column>> columns;

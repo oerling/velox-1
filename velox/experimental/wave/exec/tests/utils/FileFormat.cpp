@@ -18,13 +18,13 @@
 
 namespace facebook::velox::wave::test {
 
-Column* Stripe::findColumn(TypeWithId& child) {
-  for (auto i = 0; i < type->size(); ++i) {
-    if (type->childAt(i)->id() == child->id()) {
-      return columns[i];
+const Column* Stripe::findColumn(const dwio::common::TypeWithId& child) const {
+  for (auto i = 0; i < typeWithId->size(); ++i) {
+    if (typeWithId->childAt(i)->id() == child.id()) {
+      return columns[i].get();
     }
   }
-  VELOX_FAIL("No such column {}", type->id());
+  VELOX_FAIL("No such column {}", child.id());
 }
 
 std::mutex Table::mutex_;
