@@ -627,3 +627,5 @@ int main(int argc, char** argv) {
   printFuncAttrs("decode blocksize 1024", attrs);
   return RUN_ALL_TESTS();
 }
+n b
+va
