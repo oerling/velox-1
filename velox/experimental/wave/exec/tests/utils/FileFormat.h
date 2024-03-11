@@ -43,17 +43,17 @@ struct Column {
   int8_t bitWidth;
 
   BufferPtr values;
-};es
+};
+es
 
-
-struct Stripe {
+    struct Stripe {
   Stripe(
       std::vector<std::unique_ptr<Column>>&& in,
       std::shared_ptr<const TypeWithId> type)
       : typeWithId(std::move(type)), columns(std::move(in)) {}
 
   Column* findColumn(TypeWithId& child);
-  
+
   // Unique name assigned when associating with a Table.
   std::string name;
 

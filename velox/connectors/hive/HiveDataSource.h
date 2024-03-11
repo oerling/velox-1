@@ -96,7 +96,7 @@ class HiveDataSource : public DataSource {
   static void registerWaveDelegateHook(WaveDelegateHookFunction hook);
 #endif
 
-protected:
+ protected:
   virtual std::unique_ptr<SplitReader> createSplitReader();
 
   std::shared_ptr<HiveConnectorSplit> split_;
