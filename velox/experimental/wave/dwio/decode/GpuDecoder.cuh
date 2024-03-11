@@ -18,6 +18,7 @@
 
 #include <cuda_runtime.h>
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 namespace facebook::velox::wave {
 
@@ -61,11 +62,6 @@ __host__ __device__ inline void clearBit(uint8_t* bits, uint32_t idx) {
 __host__ __device__ inline void
 setBit(uint8_t* bits, uint32_t idx, bool value) {
   value ? setBit(bits, idx) : clearBit(bits, idx);
-}
-
-template <typename T, typename U>
-constexpr inline T roundUp(T value, U factor) {
-  return (value + (factor - 1)) / factor * factor;
 }
 
 } // namespace facebook::velox::wave

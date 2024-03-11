@@ -165,5 +165,5 @@ class HiveDataSource : public DataSource {
   // return the same.
   std::shared_ptr<wave::WaveDataSource> waveDataSource_;
 #endif
-}
+};
 } // namespace facebook::velox::connector::hive

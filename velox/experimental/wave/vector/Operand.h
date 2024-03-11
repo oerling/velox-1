@@ -25,8 +25,9 @@ namespace facebook::velox::wave {
 
 /// Copy of TypeKind in velox/type/Type.h. Type.h is incompatible with Cuda
 /// headers, therefore duplicated here.
-enum class TypeKind : int8_t {
-  BOOLEAN = 0,
+enum class WaveTypeKind : int8_t {
+
+			   BOOLEAN = 0,
   TINYINT = 1,
   SMALLINT = 2,
   INTEGER = 3,
@@ -54,21 +55,21 @@ struct WaveTypeTrait {};
 
 template <>
 struct WaveTypeTrait<int32_t> {
-  static constexpr TypeKind typeKind = TypeKind::INTEGER;
+  static constexpr WaveTypeKind typeKind = WaveTypeKind::INTEGER;
 };
 
 template <>
 struct WaveTypeTrait<uint32_t> {
-  static constexpr TypeKind typeKind = TypeKind::INTEGER;
+  static constexpr WaveTypeKind typeKind = WaveTypeKind::INTEGER;
 };
 
 template <>
 struct WaveTypeTrait<int64_t> {
-  static constexpr TypeKind typeKind = TypeKind::BIGINT;
+  static constexpr WaveTypeKind typeKind = WaveTypeKind::BIGINT;
 };
 template <>
 struct WaveTypeTrait<uint64_t> {
-  static constexpr TypeKind typeKind = TypeKind::BIGINT;
+  static constexpr WaveTypeKind typeKind = WaveTypeKind::BIGINT;
 };
 
 // Normal thread block size for Wave kernels

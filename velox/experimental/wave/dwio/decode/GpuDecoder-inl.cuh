@@ -47,18 +47,18 @@ __device__ void decodeTrivial(GpuDecode::Trivial& op) {
 __device__ inline void decodeTrivial(GpuDecode& plan) {
   auto& op = plan.data.trivial;
   switch (op.dataType) {
-    case TypeKind::TINYINT:
+    case WaveTypeKind::TINYINT:
       decodeTrivial<uint8_t>(op);
       break;
-    case TypeKind::SMALLINT:
+    case WaveTypeKind::SMALLINT:
       decodeTrivial<uint16_t>(op);
       break;
-    case TypeKind::INTEGER:
-    case TypeKind::REAL:
+    case WaveTypeKind::INTEGER:
+    case WaveTypeKind::REAL:
       decodeTrivial<uint32_t>(op);
       break;
-    case TypeKind::BIGINT:
-    case TypeKind::DOUBLE:
+    case WaveTypeKind::BIGINT:
+    case WaveTypeKind::DOUBLE:
       decodeTrivial<uint64_t>(op);
       break;
     default:
@@ -142,16 +142,16 @@ __device__ void decodeDictionaryOnBitpack(GpuDecode::DictionaryOnBitpack& op) {
 __device__ inline void decodeDictionaryOnBitpack(GpuDecode& plan) {
   auto& op = plan.data.dictionaryOnBitpack;
   switch (op.dataType) {
-    case TypeKind::TINYINT:
+    case WaveTypeKind::TINYINT:
       decodeDictionaryOnBitpack<int8_t>(op);
       break;
-    case TypeKind::SMALLINT:
+    case WaveTypeKind::SMALLINT:
       decodeDictionaryOnBitpack<int16_t>(op);
       break;
-    case TypeKind::INTEGER:
+    case WaveTypeKind::INTEGER:
       decodeDictionaryOnBitpack<int32_t>(op);
       break;
-    case TypeKind::BIGINT:
+    case WaveTypeKind::BIGINT:
       decodeDictionaryOnBitpack<int64_t>(op);
       break;
     default:
@@ -344,11 +344,11 @@ __device__ void decodeVarint(GpuDecode& plan) {
   auto& op = plan.data.varint;
   int resultSize;
   switch (op.resultType) {
-    case TypeKind::INTEGER:
+    case WaveTypeKind::INTEGER:
       resultSize = decodeVarint<kBlockSize, uint32_t>(
           op.input, op.size, op.ends, op.endPos, (uint32_t*)op.result);
       break;
-    case TypeKind::BIGINT:
+    case WaveTypeKind::BIGINT:
       resultSize = decodeVarint<kBlockSize, uint64_t>(
           op.input, op.size, op.ends, op.endPos, (uint64_t*)op.result);
       break;
@@ -386,18 +386,18 @@ template <int kBlockSize>
 __device__ void decodeMainlyConstant(GpuDecode& plan) {
   auto& op = plan.data.mainlyConstant;
   switch (op.dataType) {
-    case TypeKind::TINYINT:
+    case WaveTypeKind::TINYINT:
       decodeMainlyConstant<kBlockSize, uint8_t>(op);
       break;
-    case TypeKind::SMALLINT:
+    case WaveTypeKind::SMALLINT:
       decodeMainlyConstant<kBlockSize, uint16_t>(op);
       break;
-    case TypeKind::INTEGER:
-    case TypeKind::REAL:
+    case WaveTypeKind::INTEGER:
+    case WaveTypeKind::REAL:
       decodeMainlyConstant<kBlockSize, uint32_t>(op);
       break;
-    case TypeKind::BIGINT:
-    case TypeKind::DOUBLE:
+    case WaveTypeKind::BIGINT:
+    case WaveTypeKind::DOUBLE:
       decodeMainlyConstant<kBlockSize, uint64_t>(op);
       break;
     default:
@@ -481,18 +481,18 @@ template <int kBlockSize>
 __device__ void decodeRle(GpuDecode& plan) {
   auto& op = plan.data.rle;
   switch (op.valueType) {
-    case TypeKind::TINYINT:
+    case WaveTypeKind::TINYINT:
       decodeRle<kBlockSize, uint8_t>(op);
       break;
-    case TypeKind::SMALLINT:
+    case WaveTypeKind::SMALLINT:
       decodeRle<kBlockSize, uint16_t>(op);
       break;
-    case TypeKind::INTEGER:
-    case TypeKind::REAL:
+    case WaveTypeKind::INTEGER:
+    case WaveTypeKind::REAL:
       decodeRle<kBlockSize, uint32_t>(op);
       break;
-    case TypeKind::BIGINT:
-    case TypeKind::DOUBLE:
+    case WaveTypeKind::BIGINT:
+    case WaveTypeKind::DOUBLE:
       decodeRle<kBlockSize, uint64_t>(op);
       break;
     default:

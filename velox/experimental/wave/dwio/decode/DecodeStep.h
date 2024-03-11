@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
@@ -62,7 +63,7 @@ struct GpuDecode {
 
   struct Trivial {
     // Type of the input and result data.
-    TypeKind dataType;
+    WaveTypeKind dataType;
     // Input data.
     const void* input;
     // Begin position for input, scatter and result.
@@ -77,7 +78,7 @@ struct GpuDecode {
 
   struct MainlyConstant {
     // Type of the values and result.
-    TypeKind dataType;
+    WaveTypeKind dataType;
     // Number of total values that should be written to result.
     int count;
     // Common value that is repeated.
@@ -98,7 +99,7 @@ struct GpuDecode {
 
   struct DictionaryOnBitpack {
     // Type of the alphabet and result.
-    TypeKind dataType;
+    WaveTypeKind dataType;
     // Dictionary alphabet.
     const void* alphabet;
     // Indices into the alphabet.
@@ -129,7 +130,7 @@ struct GpuDecode {
     // Should be allocated at least "size" large.
     int32_t* endPos;
     // Type of the result number.
-    TypeKind resultType;
+    WaveTypeKind resultType;
     // Starting address of the result.
     void* result;
     // Count of the numbers in the result.
@@ -164,7 +165,7 @@ struct GpuDecode {
 
   struct Rle {
     // Type of values and result.
-    TypeKind valueType;
+    WaveTypeKind valueType;
     // Values that will be repeated.
     const void* values;
     // Length of each value.
@@ -200,13 +201,16 @@ struct GpuDecode {
     Rle rle;
     MakeScatterIndices makeScatterIndices;
   } data;
+
+  /// Returns the amount f shared memory for standard size thread block for 'step'.
+  int32_t sharedMemorySize() const;
 };
 
 struct DecodePrograms {
   // Set of decode programs submitted as a unit. Each vector<DecodeStep> is run
   // on its own thread block. The consecutive DecodeSteps in the same program
   // are consecutive and the next one can depend on a previous one.
-  std::vector<std::vector<xtd::unique_ptr<DecodeStep>>> programs;
+  std::vector<std::vector<std::unique_ptr<GpuDecode>>> programs;
 
   /// Unified or device memory   buffer where steps in 'programs' write results
   /// for the host. Decode results stay on device, only control information like

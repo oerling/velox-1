@@ -333,7 +333,7 @@ class GpuDecoderTest : public ::testing::Test {
       op.size = inputSize;
       op.ends = ends.get() + i * inputSize;
       op.endPos = endPos.get() + i * inputSize;
-      op.resultType = TypeKind::BIGINT;
+      op.resultType = WaveTypeKind::BIGINT;
       op.result = result.get() + i * inputSize;
     }
     testCase(

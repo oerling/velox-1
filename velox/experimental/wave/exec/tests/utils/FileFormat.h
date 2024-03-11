@@ -44,12 +44,11 @@ struct Column {
 
   BufferPtr values;
 };
-es
 
     struct Stripe {
   Stripe(
       std::vector<std::unique_ptr<Column>>&& in,
-      std::shared_ptr<const TypeWithId> type)
+      std::shared_ptr<const common::TypeWithId> type)
       : typeWithId(std::move(type)), columns(std::move(in)) {}
 
   Column* findColumn(TypeWithId& child);
