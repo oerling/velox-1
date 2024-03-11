@@ -18,7 +18,6 @@
 
 namespace facebook::velox::wave::test {
 
-
 Column* Stripe::findColumn(TypeWithId& child) {
   for (auto i = 0; i < type->size(); ++i) {
     if (type->childAt(i)->id() == child->id()) {
@@ -27,7 +26,7 @@ Column* Stripe::findColumn(TypeWithId& child) {
   }
   VELOX_FAIL("No such column {}", type->id());
 }
-  
+
 std::mutex Table::mutex_;
 std::unordered_map<std::string, std::unique_ptr<Table>> Table::allTables_;
 std::unordered_map<std::string, Stripe*> Table::allStripes_;

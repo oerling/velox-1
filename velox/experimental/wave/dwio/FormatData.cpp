@@ -14,36 +14,33 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/dwio/FormatData.h"
 
 namespace facebook::velox::wave {
 
-  int32_t SplitStageing::add(Staging& staging) {
-    staging_.push_back(staging);
-    offsets_.push_back(fill_);
-    fill_ += bits::roundUp(staging.size, 8);
-    return offsets_.size() - 1;
-  }
+int32_t SplitStageing::add(Staging& staging) {
+  staging_.push_back(staging);
+  offsets_.push_back(fill_);
+  fill_ += bits::roundUp(staging.size, 8);
+  return offsets_.size() - 1;
+}
 
-  void SplitStaging::registerPointer(int32_t id, void** ptr) {
-    patch_.push_back(std::make_pair(id, ptr));
-  }
+void SplitStaging::registerPointer(int32_t id, void** ptr) {
+  patch_.push_back(std::make_pair(id, ptr));
+}
 
-  // Starts the transfers registered with add(). 'stream' is set to a stream
-  // where operations depending on the transfer may be queued.
-  void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
-    deviceBuffer_ = waveStream.arena()->allocate(fill);
-    auto universal = deviceBuffer_->as<char>();
-    for (auto i = 0; i < offsets_.size(); ++i) {
-      memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
-    }
+// Starts the transfers registered with add(). 'stream' is set to a stream
+// where operations depending on the transfer may be queued.
+void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
+  deviceBuffer_ = waveStream.arena()->allocate(fill);
+  auto universal = deviceBuffer_->as<char>();
+  for (auto i = 0; i < offsets_.size(); ++i) {
+    memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
+  }
   stream->PREFETCH(getDevice(), deviceBuffer_->as<char>, deviceBuffer_->size());
   for (auto& pair : patch_) {
     *pair.second += reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
   }
-  }
-  
 }
 
-
+} // namespace facebook::velox::wave

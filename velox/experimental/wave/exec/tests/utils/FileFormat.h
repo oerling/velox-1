@@ -52,7 +52,7 @@ struct Stripe {
       : typeWithId(std::move(type)), columns(std::move(in)) {}
 
   Column* findColumn(TypeWithId& child);
-  
+
   // Unique name assigned when associating with a Table.
   std::string name;
 

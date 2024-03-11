@@ -21,13 +21,19 @@ namespace facebook::velox::wave::test {
 std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     const velox::common::ScanSpec& scanSpec) {
-  auto* column = stripe_->findColumn(*type); 
+  auto* column = stripe_->findColumn(*type);
   return std::make_unique<TestFormatData>(column);
 }
 
-  int32_t  TestFormatData::startRead(int32_t offset, RowSet rows, FormatData* /*previousFilter*/, SplitStaging& staging, DecodePrograms& program, WaveStream& stream) {
-    int32_t result;
-    if (!staged_) {
+int32_t TestFormatData::startRead(
+    int32_t offset,
+    RowSet rows,
+    FormatData* /*previousFilter*/,
+    SplitStaging& staging,
+    DecodePrograms& program,
+    WaveStream& stream) {
+  int32_t result;
+  if (!staged_) {
     staged_ = true;
     result |= FormatData::kStaged;
     Staging staging;
@@ -35,14 +41,14 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     staging.size = column->values->size();
     splitStaging.add(std::move(staging));
   }
-    if (!queud_) {
-      result |= FormatData::kQueued || FormatData::kAllQueued;
-      programs.programs
-    }
-    return result;
+  if (!queud_) {
+    result |= FormatData::kQueued || FormatData::kAllQueued;
+    programs.programs
   }
+  return result;
+}
 
-  TestStructColumnReader::StructColumnReader(
+TestStructColumnReader::StructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& fileType,
     DwrfParams& params,
@@ -71,9 +77,13 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
 }
 
 std::unique_ptr<ColumnReader> buildIntegerReader(
-						 std::shared_ptr<TypeWithId>& requestedType, std::shared_ptr<TypeWithId>& fileType, TestFormatParams& params, ScanSpec& scanSpec) {
-  return std::make_unique<ColumnReader>(requestedType, fileType, params, scanSpec);
-}  
+    std::shared_ptr<TypeWithId>& requestedType,
+    std::shared_ptr<TypeWithId>& fileType,
+    TestFormatParams& params,
+    ScanSpec& scanSpec) {
+  return std::make_unique<ColumnReader>(
+      requestedType, fileType, params, scanSpec);
+}
 
 // static
 std::unique_ptr<ColumnReader> TestFormatReader::build(
@@ -84,8 +94,7 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
     bool isRoot = false) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
-      return buildIntegerReader(
-          requestedType, fileType, params,  scanSpec);
+      return buildIntegerReader(requestedType, fileType, params, scanSpec);
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
@@ -95,4 +104,4 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
   }
 }
 
-} // namespace facebook::velox::wave
+} // namespace facebook::velox::wave::test

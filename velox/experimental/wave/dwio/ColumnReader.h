@@ -16,14 +16,14 @@
 
 #pragma once
 
-#include "velox/experimental/wave/exec/Wave.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/FormatData.h"
+#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
-class   ReadStream;
-  
+class ReadStream;
+
 /// dwio::SelectiveColumnReader for Wave
 class ColumnReader {
  public:
@@ -44,16 +44,14 @@ class ColumnReader {
   /// the next read. For example, lengths of a previous ReadStream may
   /// have to be added up before a next read can start.
   virtual bool mayStartReadStream() const;
-  
+
   /// Returns how many rows are left for which no read has been
   /// initiated. A read is initiated by making a ReadStream, which
   /// schedules a range of rows for reading. This may be called if
   /// mayStartReadStream() is true.
-  int32_t numRowsRemaining()const;
+  int32_t numRowsRemaining() const;
 
-  
- 
-protected:
+ protected:
   std::unique_ptr<FormatData> formatData_;
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
@@ -65,14 +63,16 @@ protected:
   vector_size_t readOffset_ = 0;
 };
 
-  class ReadStream {
-  public:
-    ReadStream(ColumnReader* columnReader, vector_size_t offset, RowSet rows, OperandSet firstColumns);
+class ReadStream {
+ public:
+  ReadStream(
+      ColumnReader* columnReader,
+      vector_size_t offset,
+      RowSet rows,
+      OperandSet firstColumns);
 
-    
-    // Returns the vectors for Operands.
-    void getVectors(folly::Range<Operand*> operands, WaveVectorPtr* vectors);
-    
-  };
-  
+  // Returns the vectors for Operands.
+  void getVectors(folly::Range<Operand*> operands, WaveVectorPtr* vectors);
+};
+
 } // namespace facebook::velox::wave
