@@ -17,8 +17,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 
 namespace facebook::velox::wave {
 

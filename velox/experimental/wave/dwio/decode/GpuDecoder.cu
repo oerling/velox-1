@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/common/Cuda.h"
-#include "velox/experimental/wave/dwio/decode/GpuDecoder.cuh"
 #include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
+#include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/common/GpuArena.h"
+#include "velox/experimental/wave/dwio/decode/GpuDecoder.cuh"
 
 namespace facebook::velox::wave {
 
@@ -32,7 +32,7 @@ int32_t GpuDecode::sharedMemorySize() const {
 /// ends[nth-1] to ends[nth]. After gridDim.x ends, we round to an 8 aligned
 /// offset and have an array of GpuDecodes.]
 struct GpuDecodeParams {
-// If need to represent more than this many ops, use a dynamically allocated
+  // If need to represent more than this many ops, use a dynamically allocated
   // external array in 'external'.
   static constexpr int32_t kMaxInlineOps = 100;
 
@@ -41,7 +41,9 @@ struct GpuDecodeParams {
   GpuDecodeParams* external{nullptr};
   // The end of each decode program. The first starts at 0. The end is
   // ends[blockIdx.x].
-  int32_t ends[kMaxInlineOps * (sizeof(GpuDecode) + sizeof(int32_t)) / sizeof(int32_t)] = {};
+  int32_t ends
+      [kMaxInlineOps * (sizeof(GpuDecode) + sizeof(int32_t)) /
+       sizeof(int32_t)] = {};
 };
 
 __global__ void decodeKernel(GpuDecodeParams inlineParams) {
@@ -57,7 +59,7 @@ __global__ void decodeKernel(GpuDecodeParams inlineParams) {
 }
 
 void launchDecode(
-		const DecodePrograms& programs,
+    const DecodePrograms& programs,
     GpuArena* arena,
     WaveBufferPtr& extra,
     Stream* stream) {
@@ -67,13 +69,14 @@ void launchDecode(
   for (auto& program : programs.programs) {
     numOps += program.size();
     for (auto& step : program) {
-      shared = std::max(shared, detail::sharedMemorySizeForDecode<kBlockSize>(step->step));
+      shared = std::max(
+          shared, detail::sharedMemorySizeForDecode<kBlockSize>(step->step));
     }
   }
   if (shared > 0) {
-  shared += 15; // allow align at 16.
-}
-GpuDecodeParams localParams;
+    shared += 15; // allow align at 16.
+  }
+  GpuDecodeParams localParams;
   GpuDecodeParams* params = &localParams;
   if (numOps > GpuDecodeParams::kMaxInlineOps) {
     extra = arena->allocate<char>(
@@ -85,7 +88,8 @@ GpuDecodeParams localParams;
       reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(numBlocks, 2));
   int32_t fill = 0;
   for (auto i = 0; i < programs.programs.size(); ++i) {
-    params->ends[i] = (i == 0 ? 0 : params->ends[i - 1]) + programs.programs[i].size();
+    params->ends[i] =
+        (i == 0 ? 0 : params->ends[i - 1]) + programs.programs[i].size();
     for (auto& op : programs.programs[i]) {
       decodes[fill++] = *op;
     }
@@ -94,15 +98,20 @@ GpuDecodeParams localParams;
     localParams.external = params;
   }
 
-  decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(localParams);
+  decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(
+      localParams);
   CUDA_CHECK(cudaGetLastError());
   if (programs.result) {
     if (!programs.hostResult) {
-      stream->prefetch(nullptr, programs.result->as<char>(), programs.result->size());
+      stream->prefetch(
+          nullptr, programs.result->as<char>(), programs.result->size());
     } else {
-      stream->deviceToHostAsync(programs.hostResult->as<char>(), programs.result->as<char>(), programs.hostResult->size());
+      stream->deviceToHostAsync(
+          programs.hostResult->as<char>(),
+          programs.result->as<char>(),
+          programs.hostResult->size());
     }
-}
+  }
 }
 
 } // namespace facebook::velox::wave
