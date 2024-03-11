@@ -30,10 +30,10 @@ WaveVector::WaveVector(
       arena_(&arena),
       children_(std::move(children)) {
   switch (kind_) {
-  case TypeKind::ROW:
+    case TypeKind::ROW:
       encoding_ = VectorEncoding::Simple::ROW;
       break;
-      case TypeKind::ARRAY:
+    case TypeKind::ARRAY:
       encoding_ = VectorEncoding::Simple::ARRAY;
       break;
     case TypeKind::MAP:
@@ -98,7 +98,7 @@ void toBits(uint64_t* words, int32_t numBytes) {
   }
 }
 
-  template <TypeKind kind>
+template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,
     velox::memory::MemoryPool* pool,

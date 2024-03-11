@@ -27,7 +27,7 @@ namespace facebook::velox::wave {
 /// headers, therefore duplicated here.
 enum class WaveTypeKind : int8_t {
 
-			   BOOLEAN = 0,
+  BOOLEAN = 0,
   TINYINT = 1,
   SMALLINT = 2,
   INTEGER = 3,

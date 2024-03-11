@@ -43,13 +43,11 @@ int32_t TestFormatData::startRead(
   }
   if (!queud_) {
     result |= FormatData::kQueued || FormatData::kAllQueued;
-      auto step = std::make_unique<DecodeStep>();
-      step->decodeStep = decodeStep::kTrivial;
-      step->data.trivial.input = 0;
-      splitStaging.registerPointer(&stream, id, &step->data.trivial.input);
-      program.programs.push_back(std::move(step));
-
-
+    auto step = std::make_unique<DecodeStep>();
+    step->decodeStep = decodeStep::kTrivial;
+    step->data.trivial.input = 0;
+    splitStaging.registerPointer(&stream, id, &step->data.trivial.input);
+    program.programs.push_back(std::move(step));
   }
   return result;
 }

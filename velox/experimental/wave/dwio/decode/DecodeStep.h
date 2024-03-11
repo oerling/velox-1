@@ -203,7 +203,8 @@ struct GpuDecode {
     MakeScatterIndices makeScatterIndices;
   } data;
 
-  /// Returns the amount f shared memory for standard size thread block for 'step'.
+  /// Returns the amount f shared memory for standard size thread block for
+  /// 'step'.
   int32_t sharedMemorySize() const;
 };
 
@@ -227,9 +228,9 @@ struct DecodePrograms {
 };
 
 void launchDecode(
-		  		const DecodePrograms& programs,
+    const DecodePrograms& programs,
     GpuArena* arena,
     WaveBufferPtr& extra,
-		Stream* stream);
- 
+    Stream* stream);
+
 } // namespace facebook::velox::wave

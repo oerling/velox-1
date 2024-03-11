@@ -45,7 +45,7 @@ struct Column {
   BufferPtr values;
 };
 
-    struct Stripe {
+struct Stripe {
   Stripe(
       std::vector<std::unique_ptr<Column>>&& in,
       std::shared_ptr<const common::TypeWithId> type)

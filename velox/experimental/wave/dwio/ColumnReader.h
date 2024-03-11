@@ -74,7 +74,7 @@ class ReadStream {
   // Returns the vectors for Operands.
   void getVectors(folly::Range<Operand*> operands, WaveVectorPtr* vectors);
 
-  folly::F14FastMap<int32_t, WaveVectorPtr>vectors_;
+  folly::F14FastMap<int32_t, WaveVectorPtr> vectors_;
 };
 
 } // namespace facebook::velox::wave

@@ -16,8 +16,8 @@
 
 #pragma once
 #include <boost/intrusive_ptr.hpp>
-#include <cstdint>
 #include <atomic>
+#include <cstdint>
 
 namespace facebook::velox::wave {
 
