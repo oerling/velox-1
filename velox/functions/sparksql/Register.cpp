@@ -33,10 +33,12 @@
 #include "velox/functions/sparksql/In.h"
 #include "velox/functions/sparksql/LeastGreatest.h"
 #include "velox/functions/sparksql/MightContain.h"
+#include "velox/functions/sparksql/MonotonicallyIncreasingId.h"
 #include "velox/functions/sparksql/RegexFunctions.h"
 #include "velox/functions/sparksql/RegisterArithmetic.h"
 #include "velox/functions/sparksql/RegisterCompare.h"
 #include "velox/functions/sparksql/Size.h"
+#include "velox/functions/sparksql/SparkPartitionId.h"
 #include "velox/functions/sparksql/String.h"
 #include "velox/functions/sparksql/StringToMap.h"
 #include "velox/functions/sparksql/UnscaledValueFunction.h"
@@ -269,6 +271,8 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<WeekFunction, int32_t, Timestamp>({prefix + "week_of_year"});
   registerFunction<WeekFunction, int32_t, Date>({prefix + "week_of_year"});
 
+  registerFunction<UnixDateFunction, int32_t, Date>({prefix + "unix_date"});
+
   registerFunction<UnixTimestampFunction, int64_t>({prefix + "unix_timestamp"});
 
   registerFunction<UnixTimestampParseFunction, int64_t, Varchar>(
@@ -319,6 +323,10 @@ void registerFunctions(const std::string& prefix) {
 
   registerFunction<HourFunction, int32_t, Timestamp>({prefix + "hour"});
 
+  registerFunction<MinuteFunction, int32_t, Timestamp>({prefix + "minute"});
+
+  registerFunction<SecondFunction, int32_t, Timestamp>({prefix + "second"});
+
   // Register bloom filter function
   registerFunction<BloomFilterMightContainFunction, bool, Varbinary, int64_t>(
       {prefix + "might_contain"});
@@ -330,6 +338,12 @@ void registerFunctions(const std::string& prefix) {
       prefix + "unscaled_value",
       unscaledValueSignatures(),
       makeUnscaledValue());
+
+  registerFunction<SparkPartitionIdFunction, int32_t>(
+      {prefix + "spark_partition_id"});
+
+  registerFunction<MonotonicallyIncreasingIdFunction, int64_t>(
+      {prefix + "monotonically_increasing_id"});
 }
 
 } // namespace sparksql
