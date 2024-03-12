@@ -39,6 +39,15 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     return i;
   }
 
+  VectorPtr mapFromScalar(VectorPtr scalar, int itemsPerMap) {
+    auto keys = makeFlatVector<int32_t>(vector->size(), [](auto row) { return row % entriesPerMap; });
+    auto numMaps = bits::roundUp(vector->size(), entriesPerMap) / entriesPerMap;
+    auto sizes = makeIndices(bits::numMaps, [&](auto) { return entriesPerMap; });
+    auto offsets = makeIndices(numMaps, [&](auto row) { return row * entriesPerMap;});
+    return std::make_shared<MapVector>(pool_.get(), MAP(keys->type(), vector->type()), BufferPtr(nullptr), numMaps, offsets, sizes, keys, vector);
+  }
+
+  
   template <TypeKind KIND>
   VectorPtr createScalar(
       TypePtr type,
@@ -65,6 +74,10 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     auto vector = createScalar<kind>(type, 1000, 1, 0, false);
     auto constant = BaseVector::constantify(vector);
     assertEqualVectors(vector, constant);
+    auto indices = makeIndices(vector.size(), [](auto row) { return row / 2; });
+    auto wrappedVector = BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, vector->size(), vector);
+    assertEqualVectors(constant, BaseVector::constantify(wrapped));
+
     auto row = makeRowVector({"c0"}, {vector});
     auto constantRow = BaseVector::constantify(row);
     assertEqualVectors(row, constantRow);
@@ -88,6 +101,15 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     EXPECT_TRUE(BaseVector::constantify(row) == nullptr);
 
     checkDictionarize(row, 1000);
+
+    vector = createScalar<kind>(type, 1000, 10, 1, false);
+    // The vector has values repeating in in a 10 value cycle. If each 10 values are map values with the same key, the map from the base is constant. If we take every 5 consecutive values as map values with the same keys, we have 2 distinct maps.
+    auto map = mapFromScalar(vector, 10);
+    auto constantMap = BaseVector::constantify(map);
+    assertEqualVectors(map, constantMap);
+map = mapFromScalar(vector, 5);
+ EXPECT_TRUE(baseVector::constantify(map) == nullptr);
+ checkDictionarize(map, 2);
   }
 
   void checkDictionarize(const VectorPtr& vector, int expectDistincts) {

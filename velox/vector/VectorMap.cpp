@@ -96,6 +96,7 @@ vector_size_t VectorMap::addOne(
     }
   }
   int32_t newIndex;
+  VELOX_CHECK_NOT_NULL(alphabetOwned_);
   if (insertToAlphabet) {
     newIndex = alphabet_->size();
     alphabet_->resize(newIndex + 1);
@@ -113,8 +114,7 @@ vector_size_t VectorMap::addOne(
     alphabetSizes_[newIndex] = alphabet_->asUnchecked<FlatVector<StringView>>()
                                    ->valueAt(newIndex)
                                    .size() +
-        4;
-
+      4; // + 4 for string length.
   } else if (fixedWidth_ == kVariableWidth) {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);

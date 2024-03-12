@@ -605,8 +605,8 @@ class BaseVector {
     return false;
   }
 
-  /// If 'vector' consists of a single value, returns an equivalent constant
-  /// vector, else nullptr.
+  /// If 'vector' consists of a single value and is longer than one,
+  /// returns an equivalent constant vector, else nullptr.
   static VectorPtr constantify(
       const std::shared_ptr<BaseVector>& vector,
       DecodedVector* decoded = nullptr);
