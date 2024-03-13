@@ -1057,6 +1057,9 @@ bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
   using T = typename KindToFlatVector<Kind>::WrapperType;
   auto flat = vector.asUnchecked<FlatVector<T>>();
   auto rawValues = flat->rawValues();
+  if (vector.size() == 0) {
+    return false;
+  }
   T first = rawValues[0];
   for (auto i = 1; i < size; ++i) {
     if (first != rawValues[i]) {

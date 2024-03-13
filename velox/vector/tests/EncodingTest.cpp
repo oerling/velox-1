@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
-#include <velox/serializers/PrestoSerializer.h>
+#include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorMap.h"
 #include "velox/vector/tests/VectorTestUtils.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"

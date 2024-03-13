@@ -52,7 +52,6 @@ class VectorPool;
 class BaseVector;
 using VectorPtr = std::shared_ptr<BaseVector>;
 
-class VectorMap;
 // Set of options that validate() accepts.
 struct VectorValidateOptions {
   // If set to true then an unloaded lazy vector is loaded and validate is
