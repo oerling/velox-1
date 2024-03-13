@@ -116,7 +116,8 @@ vector_size_t VectorMap::addOne(
     // Add 4 for length.
     alphabetSizes_[newIndex] = alphabet_->asUnchecked<FlatVector<StringView>>()
                                    ->valueAt(newIndex)
-                                   .size() + 4;
+                                   .size() +
+        4;
   } else if (fixedWidth_ == kVariableWidth) {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);
