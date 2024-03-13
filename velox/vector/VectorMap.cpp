@@ -96,25 +96,27 @@ vector_size_t VectorMap::addOne(
     }
   }
   int32_t newIndex;
-  VELOX_CHECK_NOT_NULL(alphabetOwned_);
   if (insertToAlphabet) {
+    VELOX_CHECK(alphabet_ == alphabetOwned_.get());
     newIndex = alphabet_->size();
     alphabet_->resize(newIndex + 1);
     alphabetSizes_.resize(newIndex + 1);
     alphabet_->copy(vector, newIndex, index, 1);
   } else {
     newIndex = topIndex;
-    alphabetSizes_.resize(newIndex + 1);
+    if (alphabetSizes_.size() < newIndex + 1) {
+      alphabetSizes_.resize(newIndex + 1);
+    }
   }
   const bool isNull = vector->isNullAt(index);
   if (isNull) {
     alphabetSizes_[newIndex] = 0;
     nullIndex_ = newIndex;
   } else if (isString_) {
+    // Add 4 for length.
     alphabetSizes_[newIndex] = alphabet_->asUnchecked<FlatVector<StringView>>()
                                    ->valueAt(newIndex)
-                                   .size() +
-      4; // + 4 for string length.
+                                   .size() + 4;
   } else if (fixedWidth_ == kVariableWidth) {
     Scratch scratch;
     ScratchPtr<vector_size_t, 1> indicesHolder(scratch);
@@ -144,10 +146,11 @@ vector_size_t VectorMap::addOne(
 void VectorMap::addMultiple(
     BaseVector& vector,
     folly::Range<const vector_size_t*> rows,
+    bool insertToAlphabet,
     vector_size_t* ids) {
   auto size = rows.size();
   for (auto i = 0; i < size; ++i) {
-    ids[i] = addOne(vector, rows[i]);
+    ids[i] = addOne(vector, rows[i], insertToAlphabet);
   }
 }
 

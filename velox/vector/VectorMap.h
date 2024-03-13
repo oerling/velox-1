@@ -65,12 +65,14 @@ class VectorMap {
       int32_t reserve = 32);
 
   /// Assigns a zero-based id to each distinct value in 'vector' at positions
-  /// 'rows'. The ids are returned in 'ids'.
+  /// 'rows'. The ids are returned in 'ids'. If insertToAlphabet is true and the value is not previously in alphabet_, the value is added to it. Alphabet must be owned if insertToAlphabet is true.
   void addMultiple(
       BaseVector& vector,
       folly::Range<const vector_size_t*> rows,
+      bool insertToAlphabet,
       vector_size_t* ids);
 
+  // Gets/assigns s an id to single value. The meaning of parameters is as in addMultiple().
   vector_size_t addOne(
       const BaseVector& vector,
       vector_size_t row,
@@ -82,7 +84,7 @@ class VectorMap {
                      : distinctSet_.size();
   }
 
-  /// Returns the approxinmate serialized binary length of the 'index'th value in 'alphabet_'. The type must be a variable length type.
+  /// Returns the approximate serialized binary length of the 'index'th value in 'alphabet_'. The type must be a variable length type.
   vector_size_t lengthAt(vector_size_t index) const {
     VELOX_DCHECK_EQ(fixedWidth_, kVariableWidth);
     return alphabetSizes_[index];
@@ -92,7 +94,7 @@ class VectorMap {
     return alphabetOwned_;
   }
 
- private:
+private:
   static constexpr vector_size_t kNoNullIndex = -1;
   static constexpr int32_t kVariableWidth = -1;
 

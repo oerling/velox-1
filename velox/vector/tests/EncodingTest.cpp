@@ -39,15 +39,24 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     return i;
   }
 
-  VectorPtr mapFromScalar(VectorPtr scalar, int itemsPerMap) {
-    auto keys = makeFlatVector<int32_t>(vector->size(), [](auto row) { return row % entriesPerMap; });
-    auto numMaps = bits::roundUp(vector->size(), entriesPerMap) / entriesPerMap;
-    auto sizes = makeIndices(bits::numMaps, [&](auto) { return entriesPerMap; });
-    auto offsets = makeIndices(numMaps, [&](auto row) { return row * entriesPerMap;});
-    return std::make_shared<MapVector>(pool_.get(), MAP(keys->type(), vector->type()), BufferPtr(nullptr), numMaps, offsets, sizes, keys, vector);
+  VectorPtr mapFromScalar(VectorPtr vector, int itemsPerMap) {
+    auto keys = makeFlatVector<int32_t>(
+        vector->size(), [&](auto row) { return row % itemsPerMap; });
+    auto numMaps = bits::roundUp(vector->size(), itemsPerMap) / itemsPerMap;
+    auto sizes = makeIndices(numMaps, [&](auto) { return itemsPerMap; });
+    auto offsets =
+        makeIndices(numMaps, [&](auto row) { return row * itemsPerMap; });
+    return std::make_shared<MapVector>(
+        pool_.get(),
+        MAP(keys->type(), vector->type()),
+        BufferPtr(nullptr),
+        numMaps,
+        offsets,
+        sizes,
+        keys,
+        vector);
   }
 
-  
   template <TypeKind KIND>
   VectorPtr createScalar(
       TypePtr type,
@@ -74,9 +83,11 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     auto vector = createScalar<kind>(type, 1000, 1, 0, false);
     auto constant = BaseVector::constantify(vector);
     assertEqualVectors(vector, constant);
-    auto indices = makeIndices(vector.size(), [](auto row) { return row / 2; });
-    auto wrappedVector = BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, vector->size(), vector);
-    assertEqualVectors(constant, BaseVector::constantify(wrapped));
+    auto indices =
+        makeIndices(vector->size(), [](auto row) { return row / 2; });
+    auto wrappedVector = BaseVector::wrapInDictionary(
+        BufferPtr(nullptr), indices, vector->size(), vector);
+    assertEqualVectors(constant, BaseVector::constantify(wrappedVector));
 
     auto row = makeRowVector({"c0"}, {vector});
     auto constantRow = BaseVector::constantify(row);
@@ -103,13 +114,16 @@ class EncodingTest : public testing::Test, public test::VectorTestBase {
     checkDictionarize(row, 1000);
 
     vector = createScalar<kind>(type, 1000, 10, 1, false);
-    // The vector has values repeating in in a 10 value cycle. If each 10 values are map values with the same key, the map from the base is constant. If we take every 5 consecutive values as map values with the same keys, we have 2 distinct maps.
+    // The vector has values repeating in in a 10 value cycle. If each 10 values
+    // are map values with the same key, the map from the base is constant. If
+    // we take every 5 consecutive values as map values with the same keys, we
+    // have 2 distinct maps.
     auto map = mapFromScalar(vector, 10);
     auto constantMap = BaseVector::constantify(map);
     assertEqualVectors(map, constantMap);
-map = mapFromScalar(vector, 5);
- EXPECT_TRUE(baseVector::constantify(map) == nullptr);
- checkDictionarize(map, 2);
+    map = mapFromScalar(vector, 5);
+    EXPECT_TRUE(BaseVector::constantify(map) == nullptr);
+    checkDictionarize(map, 2);
   }
 
   void checkDictionarize(const VectorPtr& vector, int expectDistincts) {
@@ -122,12 +136,21 @@ map = mapFromScalar(vector, 5);
     raw_vector<vector_size_t> temp;
     folly::Range<const vector_size_t*> rows(
         iota(vector->size(), temp), vector->size());
-    map2.addMultiple(*vector, rows, indices->asMutable<vector_size_t>());
+    map2.addMultiple(*vector, rows, true, indices->asMutable<vector_size_t>());
     EXPECT_EQ(expectDistincts, map2.size());
     assertEqualVectors(
         vector,
         BaseVector::wrapInDictionary(
             BufferPtr(nullptr), indices, vector->size(), map2.alphabetOwned()));
+    if (vector->typeKind() == TypeKind::VARCHAR ||
+        vector->typeKind() == TypeKind::VARBINARY) {
+      for (auto i = 0; i < vector->size(); ++i) {
+        auto length = vector->isNullAt(i)
+            ? 0
+            : vector->as<SimpleVector<StringView>>()->valueAt(i).size() + 4;
+        EXPECT_EQ(map2.lengthAt(indices->as<int32_t>()[i]), length);
+      }
+    }
   }
 };
 
