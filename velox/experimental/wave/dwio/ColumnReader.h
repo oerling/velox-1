@@ -23,9 +23,9 @@
 namespace facebook::velox::wave {
 
 class ReadStream;
-  class StructColumnReader;
+class StructColumnReader;
 
-  /// dwio::SelectiveColumnReader for Wave
+/// dwio::SelectiveColumnReader for Wave
 class ColumnReader {
  public:
   ColumnReader(
@@ -34,11 +34,10 @@ class ColumnReader {
       OperandId operand,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
-      : 
-        requestedType_(requestedType),
+      : requestedType_(requestedType),
         fileType_(fileType),
-	operand_(operand),
-	formatData_(params.toFormatData(fileType_, scanSpec, operand)),
+        operand_(operand),
+        formatData_(params.toFormatData(fileType_, scanSpec, operand)),
         scanSpec_(&scanSpec) {}
 
   /// True if 'this' has a position from which a new ReadStream can be
@@ -63,8 +62,8 @@ class ColumnReader {
   OperandId operand() const {
     return operand_;
   }
-  
-protected:
+
+ protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
   const OperandId operand_;
@@ -72,9 +71,9 @@ protected:
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
   // run time based on adaptation. Owned by caller.
-  velox::common::ScanSpec*  scanSpec_;
+  velox::common::ScanSpec* scanSpec_;
 
-      std::vector<ColumnReader*> children_;
+  std::vector<ColumnReader*> children_;
 
   // Row number after last read row, relative to the ORC stripe or Parquet
   // Rowgroup start.
@@ -85,59 +84,56 @@ protected:
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
 // needs the nulls of the struct but no other parts to decode.
-enum class ColumnAction {
-  kNulls,
-  kFilter,
-  kLengths,
-  kValues
-};
+enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
 
-  /// A generic description of a decode step. The actual steps are
-  /// provided by FormatData specializations but this captures
-  /// dependences, e.g. filters before non-filters, nulls and lengths
-  /// of repeated containers before decoding the values. A dependency
-  /// can be device side only or may need host decision. Items that
-  /// depend device side can be made into consecutive decode ops in
-  /// one kernel launch or can be in consecutively queued
-  /// kernels. dependences which need host require the prerequisite
-  /// kernel to ship data to host, which will sync on the stream and
-  /// only then may schedule the dependents in another kernel.
-  struct ColumnOp {
-    static constexpr int32_t kNoPrerequisite = -1;
-    static constexpr int32_t kNoOperand = -1;
-    // Is the column fully decoded after this? If so, any dependent action can be queued as soon as this is set.
+/// A generic description of a decode step. The actual steps are
+/// provided by FormatData specializations but this captures
+/// dependences, e.g. filters before non-filters, nulls and lengths
+/// of repeated containers before decoding the values. A dependency
+/// can be device side only or may need host decision. Items that
+/// depend device side can be made into consecutive decode ops in
+/// one kernel launch or can be in consecutively queued
+/// kernels. dependences which need host require the prerequisite
+/// kernel to ship data to host, which will sync on the stream and
+/// only then may schedule the dependents in another kernel.
+struct ColumnOp {
+  static constexpr int32_t kNoPrerequisite = -1;
+  static constexpr int32_t kNoOperand = -1;
+  // Is the column fully decoded after this? If so, any dependent action can be
+  // queued as soon as this is set.
   bool isFinal;
-  // True if has a host side result. A dependent cannot start until the kernel of this arrives and the host processes the result.
+  // True if has a host side result. A dependent cannot start until the kernel
+  // of this arrives and the host processes the result.
   bool hasResult;
   OperandId producesOperand{kNoOperand};
-  // Index of another op in column ops array in ReadStream. 
+  // Index of another op in column ops array in ReadStream.
   int32_t prerequisite{kNoPrerequisite};
   ColumnAction action;
   ColumnReader* reader;
-  // Vector completed by arrival of this. nullptr if no vector. 
+  // Vector completed by arrival of this. nullptr if no vector.
   WaveVectorPtr waveVector_;
-    // Host side result size. 0 for unconditional decoding. Can be buffer size for passing rows, length/offset array etc.
+  // Host side result size. 0 for unconditional decoding. Can be buffer size for
+  // passing rows, length/offset array etc.
   int32_t resultSize_{0};
-  
-  // Device side non-vector result, like set of passing rows, array of lengths/starts etc.
-  int32_t*  deviceResult{nullptr};
+
+  // Device side non-vector result, like set of passing rows, array of
+  // lengths/starts etc.
+  int32_t* deviceResult{nullptr};
   int32_t* hostResult{nullptr};
-  };
+};
 
-
-  class ReadStream : Executable {
+class ReadStream : Executable {
  public:
   ReadStream(
-	     StructColumnReader* columnReader,
+      StructColumnReader* columnReader,
       vector_size_t offset,
       RowSet rows,
-	     WaveStream& waveStream,
-	     const OperandSet* firstColumns = nullptr);
+      WaveStream& waveStream,
+      const OperandSet* firstColumns = nullptr);
 
-  private:
-    StructColumnReader* reader_;
-    std::vector<ColumnOp> ops_;
-
-  };
+ private:
+  StructColumnReader* reader_;
+  std::vector<ColumnOp> ops_;
+};
 
 } // namespace facebook::velox::wave

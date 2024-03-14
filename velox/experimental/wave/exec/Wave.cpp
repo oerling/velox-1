@@ -19,13 +19,13 @@
 
 namespace facebook::velox::wave {
 
-
-
-  OperandId pathToOperand(const DefinesMap& map,  std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
-    common::Subfield field(std::move(path));
-    Value value(&field);
-    auto it = map.find(value);
-    path = std::move(field.path());
+OperandId pathToOperand(
+    const DefinesMap& map,
+    std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
+  common::Subfield field(std::move(path));
+  Value value(&field);
+  auto it = map.find(value);
+  path = std::move(field.path());
   if (it == map.end()) {
     return kNoOperand;
   }
@@ -48,7 +48,6 @@ WaveVector* Executable::operandVector(OperandId id) {
   return nullptr;
 }
 
-  
 WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
   WaveVectorPtr* ptr = nullptr;
   if (outputOperands.contains(id)) {
@@ -406,22 +405,23 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   return &control;
 }
 
-  
-  void WaveStream::getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr* waveVectors) {
-    for (auto i = 0; i < operands.size(); ++i) {
-      auto id = operands[i];
-      auto exe = operandExecutable(id);
-      VELOX_CHECK_NOT_NULL(exe);
-      auto ordinal = exe->outputOperands.ordinal(id);
+void WaveStream::getOutput(
+    folly::Range<const OperandId*> operands,
+    WaveVectorPtr* waveVectors) {
+  for (auto i = 0; i < operands.size(); ++i) {
+    auto id = operands[i];
+    auto exe = operandExecutable(id);
+    VELOX_CHECK_NOT_NULL(exe);
+    auto ordinal = exe->outputOperands.ordinal(id);
+    waveVectors[i] = std::move(exe->output[ordinal]);
+    if (waveVectors[i] == nullptr) {
+      exe->ensureLazyArrived(operands);
       waveVectors[i] = std::move(exe->output[ordinal]);
-      if (waveVectors[i] == nullptr) {
-	exe->ensureLazyArrived(operands);
-	waveVectors[i] = std::move(exe->output[ordinal]);
-	VELOX_CHECK_NOT_NULL(waveVectors[i]);
-      }
+      VELOX_CHECK_NOT_NULL(waveVectors[i]);
     }
   }
-  
+}
+
 ScalarType typeKindCode(TypeKind kind) {
   switch (kind) {
     case TypeKind::BIGINT:

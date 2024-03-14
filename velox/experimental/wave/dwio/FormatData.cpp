@@ -43,26 +43,25 @@ void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
   }
 }
 
-  BufferId ResultStageing::reserve(int32_t bytes) {
-    offsets_.push_back(fill_);
-    fill_ += bits::roundUp(bytes, 8);
-    return offsets_.size() - 1;
+BufferId ResultStageing::reserve(int32_t bytes) {
+  offsets_.push_back(fill_);
+  fill_ += bits::roundUp(bytes, 8);
+  return offsets_.size() - 1;
+}
+
+void ResultStaging::registerPointer(BufferId id, void** pointer) {
+  patch_.push_back(std::make_pair(id, pointer));
+}
+
+void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
+  programs.result = arena.allocate(fill_);
+  auto address = reinterpret_cast<int64_t>(programs.result->as<char>());
+  // Patch all the registered pointers to point to buffer at offset offset_[id]
+  // + the offset already in the registered pointer.
+  for (auto& pair : patch_) {
+    int64_t* pointer = reinterpret_cast<int64_t*>(pair.second);
+    *pointer += address + offsets_[pair.first];
   }
+}
 
-  void ResultStaging::registerPointer(BufferId id, void** pointer) {
-    patch_.push_back(std::make_pair(id, pointer));
-  }
-
-  void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
-    programs.result = arena.allocate(fill_);
-    auto address = reinterpret_cast<int64_t>(programs.result->as<char>());
-    // Patch all the registered pointers to point to buffer at offset offset_[id] + the offset already in the registered pointer. 
-    for (auto& pair : patch_) {
-      int64_t* pointer = reinterpret_cast<int64_t*>(pair.second);
-      *pointer += address + offsets_[pair.first];
-    }
-  }
-
-
-  
 } // namespace facebook::velox::wave

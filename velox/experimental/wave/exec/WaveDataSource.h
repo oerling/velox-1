@@ -56,8 +56,7 @@ class WaveDataSource {
     VELOX_UNSUPPORTED();
   }
 
-
-protected:
+ protected:
   const DefinesMap* defines_{nullptr};
 };
 

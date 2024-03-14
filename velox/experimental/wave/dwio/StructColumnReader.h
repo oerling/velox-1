@@ -24,11 +24,11 @@ namespace facebook : velox::wave {
       StructColumnReader(
           const TypePtr& requestedType,
           std::shared_ptr<const dwio::common::TypeWithId> fileType,
-	  OperandId operand,
+          OperandId operand,
           FormatParams& params,
           velox::common::ScanSpec& scanSpec)
-	: ColumnReader(requestedType, fileType, operand, params, scanSpec) {}
-      
+          : ColumnReader(requestedType, fileType, operand, params, scanSpec) {}
+
      protected:
       void addChild(std::unique_ptr<ColumnReader> child) {
         children_.push_back(child.get());

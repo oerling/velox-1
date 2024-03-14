@@ -136,10 +136,9 @@ RowVectorPtr WaveDriver::makeResult(
       std::move(children));
   int32_t nthChild = 0;
   std::vector<WaveVectorPtr> waveVectors(resultOrder_.size());
-  stream.getOutput(
-		   resultOrder_, waveVectors.data());
+  stream.getOutput(resultOrder_, waveVectors.data());
   for (auto& item : waveVectors) {
-  result->childAt(nthChild++) = item->toVelox(operatorCtx_->pool());
+    result->childAt(nthChild++) = item->toVelox(operatorCtx_->pool());
   };
   return result;
 }

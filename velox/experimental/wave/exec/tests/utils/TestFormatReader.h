@@ -22,7 +22,8 @@ namespace facebook::velox::wave::test {
 
 class TestFormatData : public wave::FormatData {
  public:
-  TestFormatData(OperandId operand, const test::Column* column) : operand_(operand), column_(column) {}
+  TestFormatData(OperandId operand, const test::Column* column)
+      : operand_(operand), column_(column) {}
 
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Returns an
@@ -51,9 +52,10 @@ class TestFormatParams : public wave::FormatParams {
 
   std::unique_ptr<FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      const velox::common::ScanSpec& scanSpec, OperandId operand) override;
+      const velox::common::ScanSpec& scanSpec,
+      OperandId operand) override;
 
-private:
+ private:
   const test::Stripe* stripe_;
 };
 
@@ -64,7 +66,8 @@ class TestFormatReader {
       TestFormatParams& params,
       common::ScanSpec& scanSpec,
       std::vector<std::unique_ptr<Subfield::PathElement>>& path,
-    const DefinesMap& defines,      bool isRoot = false);
+      const DefinesMap& defines,
+      bool isRoot = false);
 };
 
 } // namespace facebook::velox::wave::test

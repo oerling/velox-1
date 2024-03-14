@@ -16,14 +16,14 @@
 
 #pragma once
 
-#include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/dwio/common/Statistics.h"
+#include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 
 namespace facebook::velox::wave {
-  using BufferId = int32_t;
+using BufferId = int32_t;
 
-  class ReadStream;
-  
+class ReadStream;
+
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
@@ -78,27 +78,29 @@ class SplitStaging {
 };
 
 class ResultStaging {
-public:
-  /// Reserves 'bytes' bytes in result buffer to be brought to host after Decodeprograms completes on device. 
+ public:
+  /// Reserves 'bytes' bytes in result buffer to be brought to host after
+  /// Decodeprograms completes on device.
   BufferId reserve(int32_t bytes);
 
-  /// Registers '*pointer' to be patched to the buffer. The starting address of the buffer is added to *pointer, so that if *pointer was 16, *pointer will come to point to the 16th byte in the buffer.
+  /// Registers '*pointer' to be patched to the buffer. The starting address of
+  /// the buffer is added to *pointer, so that if *pointer was 16, *pointer will
+  /// come to point to the 16th byte in the buffer.
   void registerPointer(BufferId id, void** pointer);
 
-    void setReturnBuffer(GpuArena* arena, DecodePrograms& programs);
-    
-  private:
+  void setReturnBuffer(GpuArena* arena, DecodePrograms& programs);
 
+ private:
   // Offset of each result in either buffer.
   std::vector<int32_t> offsets;
-  // Patch addresses. The int64_t* is updated to point to the result buffer once it is allocated.
+  // Patch addresses. The int64_t* is updated to point to the result buffer once
+  // it is allocated.
   std::vector<std::pair<int32_t, int64_t**>> patch;
   int32_t fill{0};
   WaveBufferPtr deviceBuffer;
   WaveBufferPtr hostBuffer;
-  };
+};
 
-  
 /// Operations on leaf columns. This is specialized for each file format.
 class FormatData {
  public:
@@ -117,11 +119,17 @@ class FormatData {
 
   virtual bool hasNulls() = 0;
 
-  /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the result area allocated from 'deviceStaging'.
-  virtual BufferId  readNulls(int32_t numRows, ResultStaging& deviceStaging, SplitStaging& stageing, DecodePrograms& programs);
-  
+  /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the
+  /// result area allocated from 'deviceStaging'.
+  virtual BufferId readNulls(
+      int32_t numRows,
+      ResultStaging& deviceStaging,
+      SplitStaging& stageing,
+      DecodePrograms& programs);
+
   /// Adds the next read of the column. If the column is a filter depending on
-  /// another filter, the previous filter is given on the first call. Returns a mask of flags describing the action. See kStaged, kQueued, kAllQueued.
+  /// another filter, the previous filter is given on the first call. Returns a
+  /// mask of flags describing the action. See kStaged, kQueued, kAllQueued.
   /// Allocates device and host buffers. These are owned by 'waveStream'.
   virtual int32_t startRead(
       int32_t offset,
@@ -134,8 +142,10 @@ class FormatData {
 };
 
 class FormatParams {
-public:
-  explicit FormatParams(memory::MemoryPool& pool, dwio::common::ColumnReaderStatistics& stats)
+ public:
+  explicit FormatParams(
+      memory::MemoryPool& pool,
+      dwio::common::ColumnReaderStatistics& stats)
       : pool_(pool), stats_(stats) {}
 
   virtual ~FormatParams() = default;
@@ -145,7 +155,7 @@ public:
   virtual std::unique_ptr<FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       const velox::common::ScanSpec& scanSpec,
-						   OperandId operand) = 0;
+      OperandId operand) = 0;
 
   memory::MemoryPool& pool() {
     return pool_;
@@ -161,4 +171,3 @@ public:
 };
 
 }; // namespace facebook::velox::wave
-

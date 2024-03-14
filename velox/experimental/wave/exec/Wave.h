@@ -59,14 +59,16 @@ struct ValueComparer {
   }
 };
 
-using DefinesMap = folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
+using DefinesMap =
+    folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
 
-  /// Translates a set of path steps to an OperandId or kNoOperand if
-  /// none found. The path is not const because it is temporarily
-  /// moved into a Subfield. Not thread safe for 'path'.
-OperandId pathToOperand(const DefinesMap& map,
-			std::vector<std::unique_ptr<common::Subfield::PathElement>>& path);
-  
+/// Translates a set of path steps to an OperandId or kNoOperand if
+/// none found. The path is not const because it is temporarily
+/// moved into a Subfield. Not thread safe for 'path'.
+OperandId pathToOperand(
+    const DefinesMap& map,
+    std::vector<std::unique_ptr<common::Subfield::PathElement>>& path);
+
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
       : from(from), to(to), size(size) {}
@@ -99,17 +101,18 @@ struct Executable {
       WaveStream& stream);
 
   virtual void ensureLazyArrived(folly::Range<const OperandId*> operands) {
-    VELOX_UNREACHABLE("A table scan executable is expected to override this "
-		      "or always produce all columns");
-   }
+    VELOX_UNREACHABLE(
+        "A table scan executable is expected to override this "
+        "or always produce all columns");
+  }
 
   /// Returns the vector for 'id' or nullptr if does not exist.
   WaveVector* operandVector(OperandId id);
 
-  
-  /// Returns the vector for 'id' and creates an empty vector of 'type' if one does not exist. The caller will resize.
+  /// Returns the vector for 'id' and creates an empty vector of 'type' if one
+  /// does not exist. The caller will resize.
   WaveVector* operandVector(OperandId id, const TypePtr& type);
-  
+
   // Clear state to prepare for reuse.
   void reuse() {
     operands = nullptr;
@@ -117,7 +120,7 @@ struct Executable {
   }
   // The containing WaveStream, if needed.
   WaveStream* waveStream{nullptr};
-  
+
   // The Program this is an invocationn of. nullptr if 'this' represents a data
   // transfer or column read.
   std::shared_ptr<Program> programShared;
@@ -278,8 +281,10 @@ class WaveStream {
     return arena_;
   }
 
-  void getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr* waveVectors);
-  
+  void getOutput(
+      folly::Range<const OperandId*> operands,
+      WaveVectorPtr* waveVectors);
+
   Executable* operandExecutable(OperandId id) {
     auto it = operandToExecutable_.find(id);
     if (it == operandToExecutable_.end()) {

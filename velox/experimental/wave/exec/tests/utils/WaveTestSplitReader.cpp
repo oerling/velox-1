@@ -22,21 +22,21 @@ namespace facebook::velox::wave::test {
 WaveTestSplitReader::WaveTestSplitReader(
     const std::shared_ptr<connector::ConnectorSplit>& split,
     const SplitReaderParams& params,
-					 const DefinesMap* defines) {
+    const DefinesMap* defines) {
   auto hiveSplit =
       dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
   VELOX_CHECK_NOT_NULL(hiveSplit);
   stripe_ = test::Table::getStripe(hiveSplit->filePath);
   VELOX_CHECK_NOT_NULL(stripe_);
   columnReader_ = TestFormatReader::build(
-					  params.readerOutputType,
-    stripe->typeWithId,
+      params.readerOutputType,
+      stripe->typeWithId,
 
-					  params. scanSpec,
-					  std::vector<std::unique_ptr<Subfield::PathElement>>{},
-					  & defines,
-					  true);
-					  }
+      params.scanSpec,
+      std::vector<std::unique_ptr<Subfield::PathElement>>{},
+      &defines,
+      true);
+}
 
 int32_t WaveTestSplitReader::canAdvance() {
   return 0;
@@ -59,7 +59,7 @@ class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
   std::unique_ptr<WaveSplitReader> create(
       const std::shared_ptr<connector::ConnectorSplit>& split,
       const SplitReaderParams& params,
-					  const DefinesMap* defines) override {
+      const DefinesMap* defines) override {
     auto hiveSplit =
         dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
     if (!hiveSplit) {

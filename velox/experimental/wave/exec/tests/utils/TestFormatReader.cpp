@@ -20,7 +20,8 @@ namespace facebook::velox::wave::test {
 
 std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
-    const velox::common::ScanSpec& scanSpec, OperandId operand) {
+    const velox::common::ScanSpec& scanSpec,
+    OperandId operand) {
   auto* column = stripe_->findColumn(*type);
   return std::make_unique<TestFormatData>(operand, column);
 }
@@ -53,14 +54,19 @@ int32_t TestFormatData::startRead(
 }
 
 TestStructColumnReader::StructColumnReader(
-					   const TypePtr& requestedType,
+    const TypePtr& requestedType,
     const std::shared_ptr<const TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines,
     bool isRoot)
-  : StructColumnReader(requestedType, fileType, pathToOperand(defines, path), params, scanSpec) {
+    : StructColumnReader(
+          requestedType,
+          fileType,
+          pathToOperand(defines, path),
+          params,
+          scanSpec) {
   // A reader tree may be constructed while the ScanSpec is being used
   // for another read. This happens when the next stripe is being
   // prepared while the previous one is reading.
@@ -76,9 +82,14 @@ TestStructColumnReader::StructColumnReader(
         requestedType_->childByName(childSpec->fieldName());
     auto childParams = DwrfParams(stripe, params.runtimeStatistics(), );
 
-    path.push_back(std::make_unique<Subfield::NestedField(childSpec->fieldName()));
+    path.push_back(
+        std::make_unique < Subfield::NestedField(childSpec->fieldName()));
     addChild(TestFormatReader::build(
-				     childRequestedType, childFileType, pathToOperand(defines, path), params, *childSpec));
+        childRequestedType,
+        childFileType,
+        pathToOperand(defines, path),
+        params,
+        *childSpec));
     path.pop_back();
     childSpec->setSubscript(children_.size() - 1);
   }
@@ -92,7 +103,7 @@ std::unique_ptr<ColumnReader> buildIntegerReader(
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines) {
   return std::make_unique<ColumnReader>(
-					requestedType, fileType, pathToOperand(defines, path), params, scanSpec);
+      requestedType, fileType, pathToOperand(defines, path), params, scanSpec);
 }
 
 // static
@@ -102,14 +113,16 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
-    const DefinesMap& defines,    bool isRoot = false) {
+    const DefinesMap& defines,
+    bool isRoot = false) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
-      return buildIntegerReader(requestedType, fileType, params, scanSpec, path, defines);
+      return buildIntegerReader(
+          requestedType, fileType, params, scanSpec, path, defines);
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
-						  requestedType, fileType, params, scanSpec, path, defines, isRoot);
+          requestedType, fileType, params, scanSpec, path, defines, isRoot);
     default:
       VELOX_UNREACHABLE();
   }
