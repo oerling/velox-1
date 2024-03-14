@@ -18,14 +18,14 @@
 
 namespace facebook::velox::wave {
 
-int32_t SplitStageing::add(Staging& staging) {
+BufferId SplitStageing::add(Staging& staging) {
   staging_.push_back(staging);
   offsets_.push_back(fill_);
   fill_ += bits::roundUp(staging.size, 8);
   return offsets_.size() - 1;
 }
 
-void SplitStaging::registerPointer(int32_t id, void** ptr) {
+void SplitStaging::registerPointer(BufferId id, void** ptr) {
   patch_.push_back(std::make_pair(id, ptr));
 }
 
@@ -43,13 +43,13 @@ void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
   }
 }
 
-  int32_t ResultStageing::reserve(int32_t bytes) {
+  BufferId ResultStageing::reserve(int32_t bytes) {
     offsets_.push_back(fill_);
     fill_ += bits::roundUp(bytes, 8);
     return offsets_.size() - 1;
   }
 
-  void ResultStaging::registerPointer(int32_t id, void** pointer) {
+  void ResultStaging::registerPointer(BufferId id, void** pointer) {
     patch_.push_back(std::make_pair(id, pointer));
   }
 

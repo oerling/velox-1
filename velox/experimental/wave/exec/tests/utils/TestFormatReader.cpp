@@ -20,9 +20,9 @@ namespace facebook::velox::wave::test {
 
 std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
-    const velox::common::ScanSpec& scanSpec) {
+    const velox::common::ScanSpec& scanSpec, OperandId operand) {
   auto* column = stripe_->findColumn(*type);
-  return std::make_unique<TestFormatData>(column);
+  return std::make_unique<TestFormatData>(operand, column);
 }
 
 int32_t TestFormatData::startRead(
@@ -53,7 +53,7 @@ int32_t TestFormatData::startRead(
 }
 
 TestStructColumnReader::StructColumnReader(
-    const std::shared_ptr<const TypeWithId>& requestedType,
+					   const TypePtr& requestedType,
     const std::shared_ptr<const TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,

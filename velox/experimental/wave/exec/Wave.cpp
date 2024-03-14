@@ -32,7 +32,40 @@ namespace facebook::velox::wave {
   return it->second->id;
 }
 
+WaveVector* Executable::operandVector(OperandId id) {
+  WaveVectorPtr* ptr = nullptr;
+  if (outputOperands.contains(id)) {
+    auto ordinal = outputOperands.ordinal(id);
+    ptr = &output[ordinal];
+  }
+  if (localOperands.contains(id)) {
+    auto ordinal = localOperands.ordinal(id);
+    ptr = &intermediate[ordinal];
+  }
+  if (*ptr) {
+    return ptr->get();
+  }
+  return nullptr;
+}
+
   
+WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
+  WaveVectorPtr* ptr = nullptr;
+  if (outputOperands.contains(id)) {
+    auto ordinal = outputOperands.ordinal(id);
+    ptr = &output[ordinal];
+  }
+  if (localOperands.contains(id)) {
+    auto ordinal = localOperands.ordinal(id);
+    ptr = &intermediate[ordinal];
+  }
+  if (*ptr) {
+    return ptr->get();
+  }
+  *ptr = WaveVector::create(type, waveStream->arena());
+  return ptr->get();
+}
+
 WaveStream::~WaveStream() {
   // TODO: wait for device side work to finish before freeing associated memory
   // owned by exes and buffers in 'this'.
@@ -388,8 +421,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       }
     }
   }
-
-
   
 ScalarType typeKindCode(TypeKind kind) {
   switch (kind) {

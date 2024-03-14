@@ -102,6 +102,13 @@ struct Executable {
     VELOX_UNREACHABLE("A table scan executable is expected to override this "
 		      "or always produce all columns");
    }
+
+  /// Returns the vector for 'id' or nullptr if does not exist.
+  WaveVector* operandVector(OperandId id);
+
+  
+  /// Returns the vector for 'id' and creates an empty vector of 'type' if one does not exist. The caller will resize.
+  WaveVector* operandVector(OperandId id, const TypePtr& type);
   
   // Clear state to prepare for reuse.
   void reuse() {
@@ -215,8 +222,7 @@ class Program : public std::enable_shared_from_this<Program> {
  private:
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
-      produces_;
+  DefinesMap produces_;
   std::vector<std::unique_ptr<AbstractInstruction>> instructions_;
   bool isMutable_{true};
 

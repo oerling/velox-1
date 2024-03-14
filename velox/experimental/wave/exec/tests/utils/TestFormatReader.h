@@ -19,16 +19,10 @@
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 
 namespace facebook::velox::wave::test {
-class TestFormatParams {
- public:
-  TestFormatParams(const test::Stripe* stripe) : stripe_(stripe) {}
-
-  const test::Stripe* stripe_;
-};
 
 class TestFormatData : public wave::FormatData {
  public:
-  TestFormatData(const test::Column* column) : column_(column) {}
+  TestFormatData(OperandId operand, const test::Column* column) : operand_(operand), column_(column) {}
 
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Returns an
@@ -41,6 +35,7 @@ class TestFormatData : public wave::FormatData {
       DecodePrograms& program) = 0;
 
  private:
+  const OperandId operand_;
   const test::Column* column_;
   bool staged_{false};
   bool queued_{false};
@@ -50,14 +45,15 @@ class TestFormatParams : public wave::FormatParams {
  public:
   TestFormatDataParams(
       memory::MemoryPool& pool,
-      ColumnReaderStatistics& stats,
+      dwio::common::ColumnReaderStatistics& stats,
       const test::Stripe* stripe)
       : FormatParams(pool, stats), stripe_(stripe) {}
 
   std::unique_ptr<FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
-      const velox::common::ScanSpec& scanSpec) override;
+      const velox::common::ScanSpec& scanSpec, OperandId operand) override;
 
+private:
   const test::Stripe* stripe_;
 };
 

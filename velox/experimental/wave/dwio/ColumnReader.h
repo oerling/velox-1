@@ -37,8 +37,8 @@ class ColumnReader {
       : 
         requestedType_(requestedType),
         fileType_(fileType),
-	operand_(operand);
-        formatData_(params.toFormatData(fileType, scanSpec)),
+	operand_(operand),
+	formatData_(params.toFormatData(fileType_, scanSpec, operand)),
         scanSpec_(&scanSpec) {}
 
   /// True if 'this' has a position from which a new ReadStream can be
@@ -54,19 +54,27 @@ class ColumnReader {
   /// mayStartReadStream() is true.
   int32_t numRowsRemaining() const;
 
-  const ScanSpec& scanSpec() const {
-    return scanSpec_;
+  const common::ScanSpec& scanSpec() const {
+    return *scanSpec_;
   }
-
+  const std::vector<ColumnReader*> children() const {
+    return children_;
+  }
+  OperandId operand() const {
+    return operand_;
+  }
+  
 protected:
-  TypePtr requestedType_
-  std::shared_ptr<dwio::common::TypeWithId> fileType_
+  TypePtr requestedType_;
+  std::shared_ptr<const dwio::common::TypeWithId> fileType_;
   const OperandId operand_;
   std::unique_ptr<FormatData> formatData_;
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
   // run time based on adaptation. Owned by caller.
   velox::common::ScanSpec*  scanSpec_;
+
+      std::vector<ColumnReader*> children_;
 
   // Row number after last read row, relative to the ORC stripe or Parquet
   // Rowgroup start.
@@ -113,7 +121,7 @@ enum class ColumnAction {
   
   // Device side non-vector result, like set of passing rows, array of lengths/starts etc.
   int32_t*  deviceResult{nullptr};
-  int32_t hostResult{nullptr};
+  int32_t* hostResult{nullptr};
   };
 
 
@@ -123,12 +131,13 @@ enum class ColumnAction {
 	     StructColumnReader* columnReader,
       vector_size_t offset,
       RowSet rows,
-      OperandSet firstColumns);
+	     WaveStream& waveStream,
+	     const OperandSet* firstColumns = nullptr);
 
-  // Returns the vectors for Operands.
-  void getVectors(folly::Range<Operand*> operands, WaveVectorPtr* vectors);
+  private:
+    StructColumnReader* reader_;
+    std::vector<ColumnOp> ops_;
 
-  folly::F14FastMap<int32_t, WaveVectorPtr> vectors_;
-};
+  };
 
 } // namespace facebook::velox::wave
