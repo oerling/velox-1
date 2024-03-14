@@ -28,7 +28,7 @@ namespace facebook::velox::wave {
 /// particular file format on GPU.
 class WaveDataSource {
  public:
-  setOutputOperands(const DefinesMap& defines) {
+  void setOutputOperands(const DefinesMap& defines) {
     defines_ = &defines;
   }
 

@@ -21,14 +21,15 @@ namespace facebook::velox::wave {
 
 
 
-OperandId pathToOperand(const DefinesMap& map,  std::vector<std::unique_ptr<Subfield::PathElement>>& path) {
-  Subfield field(std::move(path));
-  auto it = map.find(field);
-  path = field->path();
+  OperandId pathToOperand(const DefinesMap& map,  std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
+    common::Subfield field(std::move(path));
+    Value value(&field);
+    auto it = map.find(value);
+    path = std::move(field.path());
   if (it == map.end()) {
     return kNoOperand;
   }
-  return it->second.id;
+  return it->second->id;
 }
 
   
@@ -373,9 +374,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 }
 
   
-  void WaveStream::getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr** waveVectors) {
-    for (auto id : operands_) {
-      auto exe = stream.operandExecutable(id);
+  void WaveStream::getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr* waveVectors) {
+    for (auto i = 0; i < operands.size(); ++i) {
+      auto id = operands[i];
+      auto exe = operandExecutable(id);
       VELOX_CHECK_NOT_NULL(exe);
       auto ordinal = exe->outputOperands.ordinal(id);
       waveVectors[i] = std::move(exe->output[ordinal]);

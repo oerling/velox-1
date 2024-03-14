@@ -18,6 +18,7 @@
 
 #include "velox/experimental/wave/exec/WaveSplitReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+#include "velox/experimental/wave/dwio/ColumnReader.h"
 
 namespace facebook::velox::wave::test {
 
@@ -26,7 +27,8 @@ class WaveTestSplitReader : public WaveSplitReader {
  public:
   WaveTestSplitReader(
       const std::shared_ptr<connector::ConnectorSplit>& split,
-      const SplitReaderParams& params);
+      const SplitReaderParams& params,
+		      const DefinesMap* defines);
 
   bool emptySplit() override {
     return false;
@@ -56,7 +58,7 @@ class WaveTestSplitReader : public WaveSplitReader {
  private:
   SplitReaderParams params_;
   test::Stripe* stripe_{nullptr};
-
+  std::unique_ptr<ColumnReader> columnReader_;
   // First unscheduled row.
   int32_t currentRow_;
 };

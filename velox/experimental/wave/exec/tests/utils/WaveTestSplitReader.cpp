@@ -15,18 +15,28 @@
  */
 
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
+#include "velox/experimental/wave/exec/tests/utils/TestFormatReader.h"
 
 namespace facebook::velox::wave::test {
 
 WaveTestSplitReader::WaveTestSplitReader(
     const std::shared_ptr<connector::ConnectorSplit>& split,
-    const SplitReaderParams& params) {
+    const SplitReaderParams& params,
+					 const DefinesMap* defines) {
   auto hiveSplit =
       dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
   VELOX_CHECK_NOT_NULL(hiveSplit);
   stripe_ = test::Table::getStripe(hiveSplit->filePath);
   VELOX_CHECK_NOT_NULL(stripe_);
-}
+  columnReader_ = TestFormatReader::build(
+					  params.readerOutputType,
+    stripe->typeWithId,
+
+					  params. scanSpec,
+					  std::vector<std::unique_ptr<Subfield::PathElement>>{},
+					  & defines,
+					  true);
+					  }
 
 int32_t WaveTestSplitReader::canAdvance() {
   return 0;
@@ -48,7 +58,8 @@ class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
  public:
   std::unique_ptr<WaveSplitReader> create(
       const std::shared_ptr<connector::ConnectorSplit>& split,
-      const SplitReaderParams& params) override {
+      const SplitReaderParams& params,
+					  const DefinesMap* defines) override {
     auto hiveSplit =
         dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
     if (!hiveSplit) {
@@ -56,7 +67,7 @@ class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
     }
     if (hiveSplit->filePath.size() > 11 &&
         memcmp(hiveSplit->filePath.data(), "wavemock://", 11) == 0) {
-      return std::make_unique<WaveTestSplitReader>(split, params);
+      return std::make_unique<WaveTestSplitReader>(split, params, defines);
     }
     return nullptr;
   }
