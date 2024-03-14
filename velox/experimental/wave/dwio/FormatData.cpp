@@ -53,7 +53,7 @@ void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
     patch_.push_back(std::make_pair(id, pointer));
   }
 
-  void decodePrograms::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
+  void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
     programs.result = arena.allocate(fill_);
     auto address = reinterpret_cast<int64_t>(programs.result->as<char>());
     // Patch all the registered pointers to point to buffer at offset offset_[id] + the offset already in the registered pointer. 

@@ -19,6 +19,19 @@
 
 namespace facebook::velox::wave {
 
+
+
+OperandId pathToOperand(const DefinesMap& map,  std::vector<std::unique_ptr<Subfield::PathElement>>& path) {
+  Subfield field(std::move(path));
+  auto it = map.find(field);
+  path = field->path();
+  if (it == map.end()) {
+    return kNoOperand;
+  }
+  return it->second.id;
+}
+
+  
 WaveStream::~WaveStream() {
   // TODO: wait for device side work to finish before freeing associated memory
   // owned by exes and buffers in 'this'.

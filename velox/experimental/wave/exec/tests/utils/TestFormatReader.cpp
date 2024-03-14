@@ -60,7 +60,7 @@ TestStructColumnReader::StructColumnReader(
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines,
     bool isRoot)
-    : StructColumnReader(requestedType, fileType, params, scanSpec) {
+  : StructColumnReader(requestedType, fileType, pathToOperand(defines, path), params, scanSpec) {
   // A reader tree may be constructed while the ScanSpec is being used
   // for another read. This happens when the next stripe is being
   // prepared while the previous one is reading.
@@ -76,8 +76,10 @@ TestStructColumnReader::StructColumnReader(
         requestedType_->childByName(childSpec->fieldName());
     auto childParams = DwrfParams(stripe, params.runtimeStatistics(), );
 
+    path.push_back(std::make_unique<Subfield::NestedField(childSpec->fieldName()));
     addChild(TestFormatReader::build(
-        childRequestedType, childFileType, params, *childSpec));
+				     childRequestedType, childFileType, pathToOperand(defines, path), params, *childSpec));
+    path.pop_back();
     childSpec->setSubscript(children_.size() - 1);
   }
 }
@@ -90,7 +92,7 @@ std::unique_ptr<ColumnReader> buildIntegerReader(
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines) {
   return std::make_unique<ColumnReader>(
-      requestedType, fileType, params, scanSpec);
+					requestedType, fileType, pathToOperand(defines, path), params, scanSpec);
 }
 
 // static

@@ -75,7 +75,7 @@ class SplitStaging {
 
 class ResultStaging {
 public:
-  /// Reserves 'bytes' bytes in result buffer to be brought to host after Decodeprograms complete on device. 
+  /// Reserves 'bytes' bytes in result buffer to be brought to host after Decodeprograms completes on device. 
   int32_t reserve(int32_t bytes);
 
   /// Registers '*pointer' to be patched to the buffer. The starting address of the buffer is added to *pointer, so that if *pointer was 16, *pointer will come to point to the 16th byte in the buffer.

@@ -60,6 +60,12 @@ struct ValueComparer {
 };
 
 using DefinesMap = folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
+
+  /// Translates a set of path steps to an OperandId or kNoOperand if
+  /// none found. The path is not const because it is temporarily
+  /// moved into a Subfield. Not thread safe for 'path'.
+OperandId pathToOperand(const DefinesMap& map,
+			std::vector<std::unique_ptr<Subfield::PathElement>>& path);
   
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
