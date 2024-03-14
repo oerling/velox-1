@@ -59,6 +59,8 @@ struct ValueComparer {
   }
 };
 
+using DefinesMap = folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
+  
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
       : from(from), to(to), size(size) {}
@@ -90,14 +92,21 @@ struct Executable {
       std::vector<Transfer>&& transfers,
       WaveStream& stream);
 
+  virtual void ensureLazyArrived(folly::Range<const OperandId*> operands) {
+    VELOX_UNREACHABLE("A table scan executable is expected to override this "
+		      "or always produce all columns");
+   }
+  
   // Clear state to prepare for reuse.
   void reuse() {
     operands = nullptr;
     stream = nullptr;
   }
-
+  // The containing WaveStream, if needed.
+  WaveStream* waveStream{nullptr};
+  
   // The Program this is an invocationn of. nullptr if 'this' represents a data
-  // transfer.
+  // transfer or column read.
   std::shared_ptr<Program> programShared;
 
   ThreadBlockProgram* program{nullptr};
@@ -257,6 +266,8 @@ class WaveStream {
     return arena_;
   }
 
+  void getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr** waveVectors);
+  
   Executable* operandExecutable(OperandId id) {
     auto it = operandToExecutable_.find(id);
     if (it == operandToExecutable_.end()) {

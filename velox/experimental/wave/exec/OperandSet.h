@@ -22,6 +22,8 @@
 namespace facebook::velox::wave {
 using OperandId = int32_t;
 
+  constexpr OperandId kNoOperand = -1;
+  
 /// Set of OperandId . Uses the id() as an index into a bitmap.
 class OperandSet {
  public:

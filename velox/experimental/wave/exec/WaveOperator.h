@@ -180,12 +180,10 @@ class WaveOperator {
   RowTypePtr outputType_;
 
   // The operands that are first defined here.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
-      defines_;
+  DefinesMap defines_;
 
   // The operand for values that are projected through 'this'.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
-      projects_;
+  DefinesMap projects_;
 
   std::vector<std::shared_ptr<Program>> programs_;
 

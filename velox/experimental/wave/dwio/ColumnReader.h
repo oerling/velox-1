@@ -30,11 +30,13 @@ class ColumnReader {
   ColumnReader(
       const TypePtr& requestedType,
       std::shared_ptr<const dwio::common::TypeWithId> fileType,
+      const AbstractOperand& subfield,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
       : memoryPool_(params.pool()),
         requestedType_(requestedType),
         fileType_(fileType),
+	subfield_(subfield);
         formatData_(params.toFormatData(fileType, scanSpec)),
         scanSpec_(&scanSpec) {}
 
@@ -51,7 +53,12 @@ class ColumnReader {
   /// mayStartReadStream() is true.
   int32_t numRowsRemaining() const;
 
- protected:
+  const ScanSpec& scanSpec() const {
+    return scanSpec_;
+  }
+
+protected:
+  const AbstractOperand subfield_;
   std::unique_ptr<FormatData> formatData_;
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
@@ -63,7 +70,7 @@ class ColumnReader {
   vector_size_t readOffset_ = 0;
 };
 
-class ReadStream {
+  class ReadStream : Executable {
  public:
   ReadStream(
       ColumnReader* columnReader,

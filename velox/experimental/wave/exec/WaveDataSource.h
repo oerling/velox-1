@@ -28,6 +28,10 @@ namespace facebook::velox::wave {
 /// particular file format on GPU.
 class WaveDataSource {
  public:
+  setOutputOperands(const DefinesMap& defines) {
+    defines_ = &defines;
+  }
+
   virtual void addDynamicFilter(
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) = 0;
@@ -52,12 +56,9 @@ class WaveDataSource {
     VELOX_UNSUPPORTED();
   }
 
-  /// Initializes a SplitReader for 'split' and encapsulates it inside the
-  /// returned DataSource.
-  std::unique_ptr<connector::DataSource> createShellForSplit(
-      std::shared_ptr<connector::ConnectorSplit> split) {
-    VELOX_UNSUPPORTED();
-  }
+
+protected:
+  const DefinesMap* defines_{nullptr};
 };
 
 } // namespace facebook::velox::wave

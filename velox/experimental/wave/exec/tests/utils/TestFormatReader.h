@@ -67,7 +67,8 @@ class TestFormatReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       TestFormatParams& params,
       common::ScanSpec& scanSpec,
-      bool isRoot = false);
+      std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+    const DefinesMap& defines,      bool isRoot = false);
 };
 
 } // namespace facebook::velox::wave::test

@@ -359,6 +359,23 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   return &control;
 }
 
+  
+  void WaveStream::getOutput(folly::Range<const OperandId*> operands, WaveVectorPtr** waveVectors) {
+    for (auto id : operands_) {
+      auto exe = stream.operandExecutable(id);
+      VELOX_CHECK_NOT_NULL(exe);
+      auto ordinal = exe->outputOperands.ordinal(id);
+      waveVectors[i] = std::move(exe->output[ordinal]);
+      if (waveVectors[i] == nullptr) {
+	exe->ensureLazyArrived(operands);
+	waveVectors[i] = std::move(exe->output[ordinal]);
+	VELOX_CHECK_NOT_NULL(waveVectors[i]);
+      }
+    }
+  }
+
+
+  
 ScalarType typeKindCode(TypeKind kind) {
   switch (kind) {
     case TypeKind::BIGINT:

@@ -80,7 +80,7 @@ void WaveHiveDataSource::addSplit(
     splitReader_.reset();
   }
 
-  splitReader_ = WaveSplitReader::create(split, params_);
+  splitReader_ = WaveSplitReader::create(split, params_, defines_);
   ;
   // Split reader subclasses may need to use the reader options in prepareSplit
   // so we initialize it beforehand.

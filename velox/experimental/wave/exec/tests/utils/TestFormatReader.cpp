@@ -55,8 +55,10 @@ int32_t TestFormatData::startRead(
 TestStructColumnReader::StructColumnReader(
     const std::shared_ptr<const TypeWithId>& requestedType,
     const std::shared_ptr<const TypeWithId>& fileType,
-    DwrfParams& params,
+    TestFormatParams& params,
     common::ScanSpec& scanSpec,
+    std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+    const DefinesMap& defines,
     bool isRoot)
     : StructColumnReader(requestedType, fileType, params, scanSpec) {
   // A reader tree may be constructed while the ScanSpec is being used
@@ -84,7 +86,9 @@ std::unique_ptr<ColumnReader> buildIntegerReader(
     std::shared_ptr<TypeWithId>& requestedType,
     std::shared_ptr<TypeWithId>& fileType,
     TestFormatParams& params,
-    ScanSpec& scanSpec) {
+    ScanSpec& scanSpec,
+    std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+    const DefinesMap& defines) {
   return std::make_unique<ColumnReader>(
       requestedType, fileType, params, scanSpec);
 }
@@ -95,14 +99,15 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
-    bool isRoot = false) {
+    std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+    const DefinesMap& defines,    bool isRoot = false) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
-      return buildIntegerReader(requestedType, fileType, params, scanSpec);
+      return buildIntegerReader(requestedType, fileType, params, scanSpec, path, defines);
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
-          requestedType, fileType, params, scanSpec, isRoot);
+						  requestedType, fileType, params, scanSpec, path, defines, isRoot);
     default:
       VELOX_UNREACHABLE();
   }
