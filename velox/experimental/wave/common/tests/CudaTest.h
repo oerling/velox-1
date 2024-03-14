@@ -27,7 +27,7 @@ struct WideParams {
   int32_t* numbers;
   int32_t stride;
   int32_t repeat;
-  char data[8100];
+  char data[4000];
   void* result;
 };
 

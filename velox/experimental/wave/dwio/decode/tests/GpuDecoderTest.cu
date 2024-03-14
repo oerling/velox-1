@@ -518,7 +518,7 @@ class GpuDecoderTest : public ::testing::Test {
       programs.programs.emplace_back();
       programs.programs.back().push_back(std::make_unique<GpuDecode>());
       auto opPtr = programs.programs.back().front().get();
-    opPtr->step = DecodeStep::kMakeScatterIndices;
+      opPtr->step = DecodeStep::kMakeScatterIndices;
       auto& op = opPtr->data.makeScatterIndices;
       op.bits = bits.get();
       op.findSetBits = true;
@@ -527,13 +527,14 @@ class GpuDecoderTest : public ::testing::Test {
       op.indices = indices.get() + i * numValues;
       op.indicesCount = indicesCounts.get() + i;
     }
-  auto stream = std::make_unique<Stream>();
-  auto arena = std::make_unique<GpuArena>(100000000, getAllocator(getDevice()));
-  WaveBufferPtr extra;
-  launchDecode(programs, arena.get(), extra, stream.get());
-  stream->wait();
-  for (int i = 0; i < numBlocks; ++i) {
-    auto& op = programs.programs[i].front()->data.makeScatterIndices;
+    auto stream = std::make_unique<Stream>();
+    auto arena =
+        std::make_unique<GpuArena>(100000000, getAllocator(getDevice()));
+    WaveBufferPtr extra;
+    launchDecode(programs, arena.get(), extra, stream.get());
+    stream->wait();
+    for (int i = 0; i < numBlocks; ++i) {
+      auto& op = programs.programs[i].front()->data.makeScatterIndices;
       int k = 0;
       for (int j = 0; j < numValues; ++j) {
         if (isSet(bits.get(), j + i * numValues)) {
@@ -544,7 +545,7 @@ class GpuDecoderTest : public ::testing::Test {
       ASSERT_EQ(k, *op.indicesCount);
     }
   }
-  
+
  private:
   cudaEvent_t startEvent_;
   cudaEvent_t stopEvent_;
@@ -588,7 +589,8 @@ TEST_F(GpuDecoderTest, makeScatterIndices) {
 }
 
 TEST_F(GpuDecoderTest, streamApi) {
-  //  One call with few blocks, another with many, to cover inlined and out of line params.
+  //  One call with few blocks, another with many, to cover inlined and out of
+  //  line params.
   testMakeScatterIndicesStream(100, 20);
   testMakeScatterIndicesStream(999, 999);
 }
@@ -603,7 +605,7 @@ void printFuncAttrs(
             << " localSizeBytes =" << attrs.localSizeBytes
             << "maxThreadsPerBlock=" << attrs.maxThreadsPerBlock
             << " numRegs=" << attrs.numRegs
-            << "maxDynamicSharedSizeBytes=" << attrs.maxDynamicSharedSizeBytes
+            << " maxDynamicSharedSizeBytes=" << attrs.maxDynamicSharedSizeBytes
             << std::endl;
 }
 using namespace facebook::velox::wave;
@@ -627,5 +629,3 @@ int main(int argc, char** argv) {
   printFuncAttrs("decode blocksize 1024", attrs);
   return RUN_ALL_TESTS();
 }
-n b
-va

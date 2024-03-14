@@ -157,7 +157,7 @@ __device__ inline void decodeDictionaryOnBitpack(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported data type for DictionaryOnBitpack\n");
-	assert(false);
+        assert(false);
       }
   }
 }
@@ -403,7 +403,7 @@ __device__ void decodeMainlyConstant(GpuDecode& plan) {
     default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported data type for MainlyConstant\n");
-	assert(false);
+        assert(false);
       }
   }
 }
@@ -547,7 +547,7 @@ __device__ void decodeSwitch(GpuDecode& op) {
 
 template <int kBlockSize>
 __global__ void decodeGlobal(GpuDecode* plan) {
-  decodeSwitch<kBlockSize>(plan [blockIdx.x]);
+  decodeSwitch<kBlockSize>(plan[blockIdx.x]);
 }
 
 template <int32_t kBlockSize>
@@ -567,11 +567,12 @@ int32_t sharedMemorySizeForDecode(DecodeStep step) {
     case DecodeStep::kRleBool:
     case DecodeStep::kRle:
     case DecodeStep::kVarint:
-  case DecodeStep::kMakeScatterIndices:
-  case DecodeStep::kLengthToOffset:
+    case DecodeStep::kMakeScatterIndices:
+    case DecodeStep::kLengthToOffset:
       return sizeof(typename BlockScan32::TempStorage);
     default:
       assert(false); // Undefined.
+      return 0;
   }
 }
 
@@ -582,7 +583,8 @@ void decodeGlobal(GpuDecode* plan, int numBlocks, cudaStream_t stream) {
   int32_t sharedSize = 0;
   for (auto i = 0; i < numBlocks; ++i) {
     sharedSize = std::max(
-			  sharedSize, detail::sharedMemorySizeForDecode<kBlockSize>(plan[i].step));
+        sharedSize,
+        detail::sharedMemorySizeForDecode<kBlockSize>(plan[i].step));
   }
   if (sharedSize > 0) {
     sharedSize += 15; // allow align at 16.

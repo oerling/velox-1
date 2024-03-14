@@ -34,7 +34,7 @@ int32_t GpuDecode::sharedMemorySize() const {
 struct GpuDecodeParams {
   // If need to represent more than this many ops, use a dynamically allocated
   // external array in 'external'.
-  static constexpr int32_t kMaxInlineOps = 100;
+  static constexpr int32_t kMaxInlineOps = 50;
 
   // Pointer to standalone description of work. If nullptr, the description of
   // work fits inline in 'this'.

@@ -152,10 +152,16 @@ class MemoryArbitrator {
   /// of memory pools by reclaiming free and used memory. The freed memory
   /// capacity is given back to the arbitrator.  If 'targetBytes' is zero, then
   /// try to reclaim all the memory from 'pools'. The function returns the
-  /// actual freed memory capacity in bytes.
+  /// actual freed memory capacity in bytes. If 'allowSpill' is true, it
+  /// reclaims the used memory by spilling. If 'allowAbort' is true, it reclaims
+  /// the used memory by aborting the queries with the most memory usage. If
+  /// both are true, it first reclaims the used memory by spilling and then
+  /// abort queries to reach the reclaim target.
   virtual uint64_t shrinkCapacity(
       const std::vector<std::shared_ptr<MemoryPool>>& pools,
-      uint64_t targetBytes) = 0;
+      uint64_t targetBytes,
+      bool allowSpill = true,
+      bool allowAbort = false) = 0;
 
   /// The internal execution stats of the memory arbitrator.
   struct Stats {
@@ -427,14 +433,20 @@ bool underMemoryArbitration();
 /// The function triggers memory arbitration by shrinking memory pools from
 /// 'manager' by invoking shrinkPools API. If 'manager' is not set, then it
 /// shrinks from the process wide memory manager. If 'targetBytes' is zero, then
-/// reclaims all the memory from 'manager' if possible.
+/// it reclaims all the memory from 'manager' if possible. If 'allowSpill' is
+/// true, then it allows to reclaim the used memory by spilling.
 class MemoryManager;
 void testingRunArbitration(
     uint64_t targetBytes = 0,
+    bool allowSpill = true,
     MemoryManager* manager = nullptr);
 
 /// The function triggers memory arbitration by shrinking memory pools from
 /// 'manager' of 'pool' by invoking its shrinkPools API. If 'targetBytes' is
-/// zero, then reclaims all the memory from 'manager' if possible.
-void testingRunArbitration(MemoryPool* pool, uint64_t targetBytes = 0);
+/// zero, then it reclaims all the memory from 'manager' if possible. If
+/// 'allowSpill' is true, then it allows to reclaim the used memory by spilling.
+void testingRunArbitration(
+    MemoryPool* pool,
+    uint64_t targetBytes = 0,
+    bool allowSpill = true);
 } // namespace facebook::velox::memory

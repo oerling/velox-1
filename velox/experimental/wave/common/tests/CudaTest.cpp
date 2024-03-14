@@ -32,7 +32,6 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/common/tests/CudaTest.h"
 
 #include <iostream>
 
@@ -772,7 +771,7 @@ class CudaTest : public testing::Test {
     hostAllocator_ = getHostAllocator(device_);
   }
 
-  void setupMemory(int64_t capacity = 16UL << 30) {
+  void setupMemory(int64_t capacity = 24UL << 30) {
     static bool inited = false;
     if (!globalSyncExecutor) {
       globalSyncExecutor = std::make_unique<folly::CPUThreadPoolExecutor>(10);
@@ -1090,9 +1089,8 @@ class CudaTest : public testing::Test {
           runs.push_back(std::make_unique<RoundtripThread>(0, arenas.get()));
         }
         for (int32_t i = 0; i < numThreads; ++i) {
-          threads.push_back(std::thread([i, this, &runs, &threadStats]() {
-            runs[i]->run(threadStats[i]);
-          }));
+          threads.push_back(std::thread(
+              [i, &runs, &threadStats]() { runs[i]->run(threadStats[i]); }));
         }
         for (auto i = 0; i < numThreads; ++i) {
           threads[i].join();
