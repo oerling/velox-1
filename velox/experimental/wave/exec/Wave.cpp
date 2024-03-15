@@ -40,7 +40,7 @@ WaveVector* Executable::operandVector(OperandId id) {
   }
   if (localOperands.contains(id)) {
     auto ordinal = localOperands.ordinal(id);
-    ptr = &intermediate[ordinal];
+    ptr = &intermediates[ordinal];
   }
   if (*ptr) {
     return ptr->get();
@@ -56,7 +56,7 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
   }
   if (localOperands.contains(id)) {
     auto ordinal = localOperands.ordinal(id);
-    ptr = &intermediate[ordinal];
+    ptr = &intermediates[ordinal];
   }
   if (*ptr) {
     return ptr->get();

@@ -16,7 +16,9 @@
 
 #pragma once
 
+#include "velox/type/Subfield.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 
 namespace facebook::velox::wave::test {
 
@@ -44,11 +46,11 @@ class TestFormatData : public wave::FormatData {
 
 class TestFormatParams : public wave::FormatParams {
  public:
-  TestFormatDataParams(
-      memory::MemoryPool& pool,
-      dwio::common::ColumnReaderStatistics& stats,
+  TestFormatParams(
+		   memory::MemoryPool& pool,
+		   dwio::common::ColumnReaderStatistics& stats,
       const test::Stripe* stripe)
-      : FormatParams(pool, stats), stripe_(stripe) {}
+    : FormatParams(pool, stats), stripe_(stripe) {}
 
   std::unique_ptr<FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
@@ -60,12 +62,13 @@ class TestFormatParams : public wave::FormatParams {
 };
 
 class TestFormatReader {
+public:
   static std::unique_ptr<ColumnReader> build(
-      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       TestFormatParams& params,
       common::ScanSpec& scanSpec,
-      std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+      std::vector<std::unique_ptr<common::Subfield::PathElement>>& path,
       const DefinesMap& defines,
       bool isRoot = false);
 };

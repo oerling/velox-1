@@ -17,7 +17,11 @@
 #pragma once
 
 #include "velox/dwio/common/Statistics.h"
+#include "velox/dwio/common/ScanSpec.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
+#include "velox/experimental/wave/vector/WaveVector.h"
+
+#include <folly/Range.h>
 
 namespace facebook::velox::wave {
 using BufferId = int32_t;
@@ -55,7 +59,7 @@ class SplitStaging {
 
   // Starts the transfers registered with add(). 'stream' is set to a stream
   // where operations depending on the transfer may be queued.
-  void transfer(WaveStream& waveStream, Stream*& stream);
+  void transfer(ReadStream& waveStream, Stream*& stream);
 
  private:
   // Pinned host memory for transfer to device. May be nullptr if using unified
@@ -101,6 +105,69 @@ class ResultStaging {
   WaveBufferPtr hostBuffer;
 };
 
+  using RowSet = folly::Range<const int32_t*>;
+  
+// Specifies an action on a column. A column is not indivisible. It
+// has parts and another column's decode may depend on one part of
+// another column but not another., e.g. a child of a nullable struct
+// needs the nulls of the struct but no other parts to decode.
+enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
+
+/// A generic description of a decode step. The actual steps are
+/// provided by FormatData specializations but this captures
+/// dependences, e.g. filters before non-filters, nulls and lengths
+/// of repeated containers before decoding the values. A dependency
+/// can be device side only or may need host decision. Items that
+/// depend device side can be made into consecutive decode ops in
+/// one kernel launch or can be in consecutively queued
+/// kernels. dependences which need host require the prerequisite
+/// kernel to ship data to host, which will sync on the stream and
+/// only then may schedule the dependents in another kernel.
+struct ColumnOp {
+  static constexpr int32_t kNoPrerequisite = -1;
+  static constexpr int32_t kNoOperand = -1;
+
+  static constexpr int32_t kQueued = 1;
+  static constexpr int32_t kResultArrived = 1;
+
+  class ColumnReader;
+  
+  // Is the column fully decoded after this? If so, any dependent action can be
+  // queued as soon as this is set.
+  bool isFinal;
+  // True if has a host side result. A dependent cannot start until the kernel
+  // of this arrives and the host processes the result.
+  bool hasResult;
+  OperandId producesOperand{kNoOperand};
+  // Index of another op in column ops array in ReadStream.
+  int32_t prerequisite{kNoPrerequisite};
+  /// Bit mask of kQueud, kResultArrived.
+  int32_t status{0};
+  ColumnAction action;
+  // Non-owning view on rows to read.
+  RowSet rows;
+  ColumnReader* reader;
+  // Vector completed by arrival of this. nullptr if no vector.
+  WaveVector* waveVector_;
+  // Host side result size. 0 for unconditional decoding. Can be buffer size for
+  // passing rows, length/offset array etc.
+  int32_t resultSize_{0};
+
+  // Device side non-vector result, like set of passing rows, array of
+  // lengths/starts etc.
+  int32_t* deviceResult{nullptr};
+  int32_t* hostResult{nullptr};
+
+  /// True if 'this' is sufficiently underway for 'next' to be scheduled.
+  bool isSatisfied(const ColumnOp& next) {
+    if (hasResult) {
+      return status & kResultArrived;
+    }
+    return status & kQueued;
+  }
+};
+
+  
 /// Operations on leaf columns. This is specialized for each file format.
 class FormatData {
  public:
@@ -125,17 +192,27 @@ class FormatData {
       int32_t numRows,
       ResultStaging& deviceStaging,
       SplitStaging& stageing,
-      DecodePrograms& programs);
+      DecodePrograms& programs) {
+    VELOX_NYI();
+  }
 
+  /// Sets how many TBs will be scheduled at a time for this column.
+  void setBlocks(int32_t numBlocks);
+
+  /// Returns estimate of sequential instructions needed to decode one value. Used to decide how many TBs to use for each column.
+  virtual float cost(const ColumnOp& op) {
+    return 10;
+  }
+  
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Returns a
   /// mask of flags describing the action. See kStaged, kQueued, kAllQueued.
   /// Allocates device and host buffers. These are owned by 'waveStream'.
-  virtual int32_t startRead(
-      int32_t offset,
-      RowSet rows,
-      FormatData* previousFilter,
+  virtual int32_t startOp(
+			  ColumnOp& op,
+      const ColumnOp* previousFilter,
       ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
       SplitStaging& staging,
       DecodePrograms& program,
       ReadStream& stream) = 0;

@@ -63,6 +63,8 @@ class ColumnReader {
     return operand_;
   }
 
+  virtual void makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op);
+  
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
@@ -80,47 +82,6 @@ class ColumnReader {
   vector_size_t readOffset_ = 0;
 };
 
-// Specifies an action on a column. A column is not indivisible. It
-// has parts and another column's decode may depend on one part of
-// another column but not another., e.g. a child of a nullable struct
-// needs the nulls of the struct but no other parts to decode.
-enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
-
-/// A generic description of a decode step. The actual steps are
-/// provided by FormatData specializations but this captures
-/// dependences, e.g. filters before non-filters, nulls and lengths
-/// of repeated containers before decoding the values. A dependency
-/// can be device side only or may need host decision. Items that
-/// depend device side can be made into consecutive decode ops in
-/// one kernel launch or can be in consecutively queued
-/// kernels. dependences which need host require the prerequisite
-/// kernel to ship data to host, which will sync on the stream and
-/// only then may schedule the dependents in another kernel.
-struct ColumnOp {
-  static constexpr int32_t kNoPrerequisite = -1;
-  static constexpr int32_t kNoOperand = -1;
-  // Is the column fully decoded after this? If so, any dependent action can be
-  // queued as soon as this is set.
-  bool isFinal;
-  // True if has a host side result. A dependent cannot start until the kernel
-  // of this arrives and the host processes the result.
-  bool hasResult;
-  OperandId producesOperand{kNoOperand};
-  // Index of another op in column ops array in ReadStream.
-  int32_t prerequisite{kNoPrerequisite};
-  ColumnAction action;
-  ColumnReader* reader;
-  // Vector completed by arrival of this. nullptr if no vector.
-  WaveVectorPtr waveVector_;
-  // Host side result size. 0 for unconditional decoding. Can be buffer size for
-  // passing rows, length/offset array etc.
-  int32_t resultSize_{0};
-
-  // Device side non-vector result, like set of passing rows, array of
-  // lengths/starts etc.
-  int32_t* deviceResult{nullptr};
-  int32_t* hostResult{nullptr};
-};
 
 class ReadStream : Executable {
  public:
@@ -131,9 +92,29 @@ class ReadStream : Executable {
       WaveStream& waveStream,
       const OperandSet* firstColumns = nullptr);
 
+  /// Runs a sequence of kernel invocations until all eagerly produced columns have their last kernel in flight. Transfers ownership of 'readStream' to its WaveStream. 
+  static void launch(std::unique_ptr<ReadStream>&& readStream);
+
+  DecodePrograms& programs() {
+    return programs_;
+  }
+  
+  // Prepares the next kernel launch in 'programs_'. Returns true if all non-lazy activity will be complete after the program kernel completes.
+  bool makePrograms();
  private:
+
   StructColumnReader* reader_;
+  RowSet rows_;
   std::vector<ColumnOp> ops_;
+  std::vector<std::unique_ptr<SplitStaging>> staging_;
+  SplitStaging* currentStaging_;
+
+  // Data to be copied from device, e.g. filter selectivities.
+  ResultStaging hostStaging_;
+  // Intermediate data to stay on device, e.g. selected rows.
+  ResultStaging deviceStaging;
+  // Reusable control block for launching decode kernels.
+  DecodePrograms programs_;
 };
 
 } // namespace facebook::velox::wave

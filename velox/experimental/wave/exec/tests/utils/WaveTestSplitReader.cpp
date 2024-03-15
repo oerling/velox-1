@@ -19,6 +19,8 @@
 
 namespace facebook::velox::wave::test {
 
+  using common::Subfield;
+  
 WaveTestSplitReader::WaveTestSplitReader(
     const std::shared_ptr<connector::ConnectorSplit>& split,
     const SplitReaderParams& params,
@@ -28,13 +30,15 @@ WaveTestSplitReader::WaveTestSplitReader(
   VELOX_CHECK_NOT_NULL(hiveSplit);
   stripe_ = test::Table::getStripe(hiveSplit->filePath);
   VELOX_CHECK_NOT_NULL(stripe_);
+  TestFormatParams formatParams(*params.connectorQueryCtx->memoryPool(), readerStats_, stripe_);
+  std::vector<std::unique_ptr<Subfield::PathElement>> empty;
   columnReader_ = TestFormatReader::build(
       params.readerOutputType,
-      stripe->typeWithId,
-
-      params.scanSpec,
-      std::vector<std::unique_ptr<Subfield::PathElement>>{},
-      &defines,
+      stripe_->typeWithId,
+      formatParams,
+      *params.scanSpec,
+      empty,
+      *defines,
       true);
 }
 

@@ -61,6 +61,7 @@ class WaveTestSplitReader : public WaveSplitReader {
   std::unique_ptr<ColumnReader> columnReader_;
   // First unscheduled row.
   int32_t currentRow_;
+  dwio::common::ColumnReaderStatistics readerStats_;
 };
 
 } // namespace facebook::velox::wave::test

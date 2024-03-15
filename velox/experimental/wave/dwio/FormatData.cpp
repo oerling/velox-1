@@ -31,8 +31,12 @@ void SplitStaging::registerPointer(BufferId id, void** ptr) {
 
 // Starts the transfers registered with add(). 'stream' is set to a stream
 // where operations depending on the transfer may be queued.
-void SplitStaging::transfer(WaveStream& stream, Stream*& stream) {
-  deviceBuffer_ = waveStream.arena()->allocate(fill);
+void SplitStaging::transfer(ReadStream& readStream, Stream*& stream) {
+  if (fill_ == 0) {
+    return;
+  }
+  auto waveStream = readStream.waveStream;
+  deviceBuffer_ = waveStream->arena()->allocate(fill);
   auto universal = deviceBuffer_->as<char>();
   for (auto i = 0; i < offsets_.size(); ++i) {
     memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
@@ -54,6 +58,11 @@ void ResultStaging::registerPointer(BufferId id, void** pointer) {
 }
 
 void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
+  if (fill_ == 0) {
+    programs.result = nullptr;
+    programs.hostResult = nullptr;
+    return;
+  }
   programs.result = arena.allocate(fill_);
   auto address = reinterpret_cast<int64_t>(programs.result->as<char>());
   // Patch all the registered pointers to point to buffer at offset offset_[id]
