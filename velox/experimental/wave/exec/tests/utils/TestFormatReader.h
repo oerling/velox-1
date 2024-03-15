@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/type/Subfield.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+#include "velox/type/Subfield.h"
 
 namespace facebook::velox::wave::test {
 
@@ -47,10 +47,10 @@ class TestFormatData : public wave::FormatData {
 class TestFormatParams : public wave::FormatParams {
  public:
   TestFormatParams(
-		   memory::MemoryPool& pool,
-		   dwio::common::ColumnReaderStatistics& stats,
+      memory::MemoryPool& pool,
+      dwio::common::ColumnReaderStatistics& stats,
       const test::Stripe* stripe)
-    : FormatParams(pool, stats), stripe_(stripe) {}
+      : FormatParams(pool, stats), stripe_(stripe) {}
 
   std::unique_ptr<FormatData> toFormatData(
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
@@ -62,7 +62,7 @@ class TestFormatParams : public wave::FormatParams {
 };
 
 class TestFormatReader {
-public:
+ public:
   static std::unique_ptr<ColumnReader> build(
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,

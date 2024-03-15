@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/common/Statistics.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
 
@@ -105,8 +105,8 @@ class ResultStaging {
   WaveBufferPtr hostBuffer;
 };
 
-  using RowSet = folly::Range<const int32_t*>;
-  
+using RowSet = folly::Range<const int32_t*>;
+
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
@@ -131,7 +131,7 @@ struct ColumnOp {
   static constexpr int32_t kResultArrived = 1;
 
   class ColumnReader;
-  
+
   // Is the column fully decoded after this? If so, any dependent action can be
   // queued as soon as this is set.
   bool isFinal;
@@ -167,7 +167,6 @@ struct ColumnOp {
   }
 };
 
-  
 /// Operations on leaf columns. This is specialized for each file format.
 class FormatData {
  public:
@@ -199,17 +198,18 @@ class FormatData {
   /// Sets how many TBs will be scheduled at a time for this column.
   void setBlocks(int32_t numBlocks);
 
-  /// Returns estimate of sequential instructions needed to decode one value. Used to decide how many TBs to use for each column.
+  /// Returns estimate of sequential instructions needed to decode one value.
+  /// Used to decide how many TBs to use for each column.
   virtual float cost(const ColumnOp& op) {
     return 10;
   }
-  
+
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Returns a
   /// mask of flags describing the action. See kStaged, kQueued, kAllQueued.
   /// Allocates device and host buffers. These are owned by 'waveStream'.
   virtual int32_t startOp(
-			  ColumnOp& op,
+      ColumnOp& op,
       const ColumnOp* previousFilter,
       ResultStaging& deviceStaging,
       ResultStaging& resultStaging,

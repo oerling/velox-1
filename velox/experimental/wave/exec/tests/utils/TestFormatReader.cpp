@@ -18,9 +18,9 @@
 
 namespace facebook::velox::wave::test {
 
-  using common::Subfield;
+using common::Subfield;
 
-  std::unique_ptr<FormatData> TestFormatParams::toFormatData(
+std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     const velox::common::ScanSpec& scanSpec,
     OperandId operand) {
@@ -85,7 +85,7 @@ TestStructColumnReader::StructColumnReader(
     auto childParams = TestFormatParams(stripe, params.runtimeStatistics(), );
 
     path.push_back(
-        std::make_unique <Subfield::NestedField(childSpec->fieldName()));
+        std::make_unique < Subfield::NestedField(childSpec->fieldName()));
     addChild(TestFormatReader::build(
         childRequestedType,
         childFileType,
@@ -120,11 +120,18 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
-				requestedType, fileType, params, scanSpec, path, defines);
+          requestedType, fileType, params, scanSpec, path, defines);
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
-						  requestedType, fileType, params, operand, scanSpec, path, defines, isRoot);
+          requestedType,
+          fileType,
+          params,
+          operand,
+          scanSpec,
+          path,
+          defines,
+          isRoot);
     default:
       VELOX_UNREACHABLE();
   }

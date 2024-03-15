@@ -63,8 +63,9 @@ class ColumnReader {
     return operand_;
   }
 
-  virtual void makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op);
-  
+  virtual void
+  makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op);
+
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
@@ -82,7 +83,6 @@ class ColumnReader {
   vector_size_t readOffset_ = 0;
 };
 
-
 class ReadStream : Executable {
  public:
   ReadStream(
@@ -92,17 +92,20 @@ class ReadStream : Executable {
       WaveStream& waveStream,
       const OperandSet* firstColumns = nullptr);
 
-  /// Runs a sequence of kernel invocations until all eagerly produced columns have their last kernel in flight. Transfers ownership of 'readStream' to its WaveStream. 
+  /// Runs a sequence of kernel invocations until all eagerly produced columns
+  /// have their last kernel in flight. Transfers ownership of 'readStream' to
+  /// its WaveStream.
   static void launch(std::unique_ptr<ReadStream>&& readStream);
 
   DecodePrograms& programs() {
     return programs_;
   }
-  
-  // Prepares the next kernel launch in 'programs_'. Returns true if all non-lazy activity will be complete after the program kernel completes.
-  bool makePrograms();
- private:
 
+  // Prepares the next kernel launch in 'programs_'. Returns true if all
+  // non-lazy activity will be complete after the program kernel completes.
+  bool makePrograms();
+
+ private:
   StructColumnReader* reader_;
   RowSet rows_;
   std::vector<ColumnOp> ops_;
