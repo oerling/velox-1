@@ -126,23 +126,16 @@ enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
 struct ColumnOp {
   static constexpr int32_t kNoPrerequisite = -1;
   static constexpr int32_t kNoOperand = -1;
-
-  static constexpr int32_t kQueued = 1;
-  static constexpr int32_t kResultArrived = 1;
-
   class ColumnReader;
 
-  // Is the column fully decoded after this? If so, any dependent action can be
+  // Is the op completed after this? If so, any dependent action can be
   // queued as soon as this is set.
   bool isFinal;
-  // True if has a host side result. A dependent cannot start until the kernel
-  // of this arrives and the host processes the result.
-  bool hasResult;
+  // True if needs a result on the host before proceeding.
+  bool needsResult;
   OperandId producesOperand{kNoOperand};
   // Index of another op in column ops array in ReadStream.
   int32_t prerequisite{kNoPrerequisite};
-  /// Bit mask of kQueud, kResultArrived.
-  int32_t status{0};
   ColumnAction action;
   // Non-owning view on rows to read.
   RowSet rows;
@@ -159,28 +152,11 @@ struct ColumnOp {
   int32_t* hostResult{nullptr};
 
   /// True if 'this' is sufficiently underway for 'next' to be scheduled.
-  bool isSatisfied(const ColumnOp& next) {
-    if (hasResult) {
-      return status & kResultArrived;
-    }
-    return status & kQueued;
-  }
 };
 
 /// Operations on leaf columns. This is specialized for each file format.
 class FormatData {
  public:
-  /// Mask indicating that one or more data transfers were added to staging. If
-  /// set, whatever was added to program can must be enqueued on the same stream
-  /// after the staging.
-  static constexpr int32_t kStaged = 1;
-  /// Mask indicating that work was added to a DecodeProgram.
-  static constexpr int32_t kQueued = 2;
-  // Mask indicating that the column or RowSet from  'this' is ready after the
-  // queued work is ready. Dependent work can be enqueued on the stream of the
-  // program as soon as the program is launched.
-  static constexpr int32_t kAllQueued = 4;
-
   virtual ~FormatData() = default;
 
   virtual bool hasNulls() = 0;
@@ -205,10 +181,8 @@ class FormatData {
   }
 
   /// Adds the next read of the column. If the column is a filter depending on
-  /// another filter, the previous filter is given on the first call. Returns a
-  /// mask of flags describing the action. See kStaged, kQueued, kAllQueued.
-  /// Allocates device and host buffers. These are owned by 'waveStream'.
-  virtual int32_t startOp(
+  /// another filter, the previous filter is given on the first call. Updates status of 'op'.
+  virtual void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,
       ResultStaging& deviceStaging,

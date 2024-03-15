@@ -33,6 +33,7 @@ WaveTestSplitReader::WaveTestSplitReader(
   TestFormatParams formatParams(
       *params.connectorQueryCtx->memoryPool(), readerStats_, stripe_);
   std::vector<std::unique_ptr<Subfield::PathElement>> empty;
+  TestFormatParams params(params_.connectorQueryCtx->memoryPool(), stats_, stripe_);
   columnReader_ = TestFormatReader::build(
       params.readerOutputType,
       stripe_->typeWithId,
@@ -44,20 +45,33 @@ WaveTestSplitReader::WaveTestSplitReader(
 }
 
 int32_t WaveTestSplitReader::canAdvance() {
-  return 0;
+  if (!stripe_) {
+    return 0;
+  }
+  return available();
 }
 
 void WaveTestSplitReader::schedule(WaveStream& stream, int32_t maxRows) {
-  VELOX_NYI();
+  auto rows = std::min<int32_t>(maxRows, available());
+  scheduledRows_ = rows;
+  rowSet = folly::Range<const int32_t*>(iota(numRows, temp), numRows);
+  auto readStream = std::make_unique<ReadStream>(
+						 reinterpret_cast<StructColumnReader*>(columnReader_.get()),
+						 0,
+						 rowSet,
+						 waveStream);
+  ReadStream::launch(std::move(readStream));
+  nextRow_ += scheduledRows_;
 }
 
 vector_size_t WaveTestSplitReader::outputSize(WaveStream& stream) const {
-  return 0;
+  return scheduledRows_;
 }
 
 bool WaveTestSplitReader::isFinished() const {
-  return false;
+  return nextRow_ >= available();
 }
+
 namespace {
 class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
  public:

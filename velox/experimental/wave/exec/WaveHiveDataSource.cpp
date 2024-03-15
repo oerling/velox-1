@@ -88,6 +88,54 @@ void WaveHiveDataSource::addSplit(
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
 }
 
+int32_t WaveHiveDataSource::canAdvance() {
+  return splitReader_ != nullptr ?  splitReader_->canAdvance() : 0;
+}
+
+  void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
+    splitReader_->schedule(stream, maxRows);
+  }
+
+  vector_size_t WaveHiveDataSource::outputSize(WaveStream& stream) const {
+    splitReader_->outputSize(stream);
+  }
+
+  bool WaveHiveDataSource::isFinished() {
+    if (!splitReader_) {
+      return false;
+    }
+    if (splitReader_->isFinished()) {
+      auto stats = splitReader_->runtimeStats();
+      for (auto& pair : stats) {
+	if (splitReaderStats_.count(pair.first) == 0) {
+	  splitReaderStats_[pair.first] = pair.second;
+	} else {
+	  splitReaderStats_[pair.first].value += pair.second.value;
+	}
+      }
+      return true;
+    }
+    return false;
+  }
+
+  uint64_t WaveHiveDataSource::getCompletedBytes() {
+    return 0;
+  }
+
+  uint64_t WaveHiveDataSource::getCompletedRows() {
+    return completedRows_;
+  }
+
+  std::unordered_map<std::string, RuntimeCounter> WaveHiveDataSource::runtimeStats() {
+  auto map = runtimeStats_.toMap();
+  for (auto& pair : splitReaderStats_) {
+    map[pair.first] = pair.second;
+  }
+  return map;
+}
+
+  
+  
 // static
 void WaveHiveDataSource::registerConnector() {
   static bool registered = false;

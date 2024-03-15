@@ -52,7 +52,8 @@ class WaveHiveDataSource : public WaveDataSource {
 
   vector_size_t outputSize(WaveStream& stream) const override;
 
-  bool isFinished() const override;
+  bool isFinished() override;
+
   uint64_t getCompletedBytes() override;
 
   uint64_t getCompletedRows() override;
@@ -68,6 +69,9 @@ class WaveHiveDataSource : public WaveDataSource {
   std::shared_ptr<exec::Expr> remainingFilter_;
   dwio::common::RuntimeStatistics runtimeStats_;
   std::shared_ptr<common::MetadataFilter> metadataFilter_;
+  int64_t completedRows_{0};
+  int64_t completedBytes_{0};
+  std::unordered_map<std::string, RuntimeCounter> splitReaderStats_;
 };
 
 } // namespace facebook::velox::wave

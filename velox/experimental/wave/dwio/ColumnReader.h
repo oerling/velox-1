@@ -101,9 +101,13 @@ class ReadStream : Executable {
     return programs_;
   }
 
-  // Prepares the next kernel launch in 'programs_'. Returns true if all
-  // non-lazy activity will be complete after the program kernel completes.
-  bool makePrograms();
+  // Prepares the next kernel launch in 'programs_'. Returns true if
+  // all non-lazy activity will be complete after the program kernel
+  // completes. Sets needSync if the next step(s) depend on the stream
+  // being synced first, i.e. a device to host transfer must have
+  // completed so that the next step can decide based on data received
+  // from device.
+  bool makePrograms(bool& needSync);
 
  private:
   StructColumnReader* reader_;

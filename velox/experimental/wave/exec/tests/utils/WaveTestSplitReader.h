@@ -31,7 +31,7 @@ class WaveTestSplitReader : public WaveSplitReader {
       const DefinesMap* defines);
 
   bool emptySplit() override {
-    return false;
+    return !stripe_ || stripe_->columns[0]->numValues == 0;
   }
 
   int32_t canAdvance() override;
@@ -49,6 +49,7 @@ class WaveTestSplitReader : public WaveSplitReader {
   uint64_t getCompletedRows() override {
     return 0;
   }
+
   std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {
     return {};
   }
@@ -56,11 +57,17 @@ class WaveTestSplitReader : public WaveSplitReader {
   static void registerTestSplitReader();
 
  private:
+  int32_t available() const {
+    return stripe_->columns[0]->numValues - nextRow_;
+  }
+  
+  std::shared_ptr<connector::ConnectorSplit> split_;
   SplitReaderParams params_;
   test::Stripe* stripe_{nullptr};
   std::unique_ptr<ColumnReader> columnReader_;
   // First unscheduled row.
-  int32_t currentRow_;
+  int32_t nextRow_{0};
+  int32_t scheduledRows_{0};
   dwio::common::ColumnReaderStatistics readerStats_;
 };
 

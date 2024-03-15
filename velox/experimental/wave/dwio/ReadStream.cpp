@@ -51,12 +51,16 @@ void readStream::makeOps() {
   }
 }
 
-bool ReadStream::makePrograms() {
+bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
+  needSync = false;
   for (auto i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
+    if (op.isFinal) {
+      continue;
+    }
     if (op.prerequisite == kNoPrerequisite ||
-        ops_[op.prerequisite].isSatisfied(op)) {
+        ops_[op.prerequisite].isFinal) {
       op->reader->formatData()->startOp(
           op,
           nullptr,
@@ -65,8 +69,13 @@ bool ReadStream::makePrograms() {
           *currentStaging_,
           programs,
           this);
-      op.status |= ColumnOp::kQueued;
-    } else {
+      if (!op.isFinal) {
+	allDone = false;
+      }
+      if (op.needResult) {
+	needSync = true;
+      }
+      } else {
       allDone = false;
     }
   }
@@ -80,6 +89,7 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
       folly::Range<std::unique_ptr<Executable*>>(&readStream, 1),
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto ReadStream = reinterpret_cast<ReadStream*>(exes[0]);
+	bool needSync = false;
         for (;;) {
           bool done = readStream->makePrograms();
           currentStaging_->transfer(readStream, stream);
@@ -93,7 +103,7 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
               stream);
           staging_.push_back(std::make_unique<SplitStaging>());
           currentStaging_ = staging_.back().get();
-          if (readStream->programs().result) {
+          if (needSync) {
             stream->wait();
           }
         }
@@ -103,18 +113,5 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
       });
 }
 
-bool ReadStream::canAdvance(ColumnOp& op) {
-  return true;
-}
-void ReadStream::advance() {
-  DecodePrograms programs;
-  for (auto i = 0; i < ops_.size(); ++i) {
-    auto& op = ops_[i];
-    if (canAdvance(op)) {
-      setupResult(op);
-      op.reader->advance(topOffset, topRows, op, *currentStaging, programs);
-    }
-  }
-}
 
 } // namespace facebook::velox::wave
