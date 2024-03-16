@@ -18,32 +18,30 @@
 
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 
-
 namespace facebook ::velox::wave {
 
-  class StructColumnReader : public ColumnReader {
-  public:
-    StructColumnReader(
-          const TypePtr& requestedType,
-          std::shared_ptr<const dwio::common::TypeWithId> fileType,
-          OperandId operand,
-          FormatParams& params,
-          velox::common::ScanSpec& scanSpec,
-		       bool isRoot)
-      : ColumnReader(requestedType, fileType, operand, params, scanSpec), isRoot_(isRoot) {}
+class StructColumnReader : public ColumnReader {
+ public:
+  StructColumnReader(
+      const TypePtr& requestedType,
+      std::shared_ptr<const dwio::common::TypeWithId> fileType,
+      OperandId operand,
+      FormatParams& params,
+      velox::common::ScanSpec& scanSpec,
+      bool isRoot)
+      : ColumnReader(requestedType, fileType, operand, params, scanSpec),
+        isRoot_(isRoot) {}
 
-    bool isChildConstant(
-		     const velox::common::ScanSpec& childSpec) const;
-    
-         protected:
-      void addChild(std::unique_ptr<ColumnReader> child) {
-        children_.push_back(child.get());
-        childrenOwned_.push_back(std::move(child));
-      }
+  bool isChildConstant(const velox::common::ScanSpec& childSpec) const;
 
-    const bool isRoot_;
-    std::vector<std::unique_ptr<ColumnReader>> childrenOwned_;
-  };
+ protected:
+  void addChild(std::unique_ptr<ColumnReader> child) {
+    children_.push_back(child.get());
+    childrenOwned_.push_back(std::move(child));
+  }
 
+  const bool isRoot_;
+  std::vector<std::unique_ptr<ColumnReader>> childrenOwned_;
+};
 
-} // namespace velox::wave
+} // namespace facebook::velox::wave

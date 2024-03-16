@@ -39,4 +39,4 @@ bool StructColumnReader::isChildConstant(
        childSpec.channel() >= fileType_->size());
 }
 
-}
+} // namespace facebook::velox::wave

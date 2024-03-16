@@ -89,45 +89,47 @@ void WaveHiveDataSource::addSplit(
 }
 
 int32_t WaveHiveDataSource::canAdvance() {
-  return splitReader_ != nullptr ?  splitReader_->canAdvance() : 0;
+  return splitReader_ != nullptr ? splitReader_->canAdvance() : 0;
 }
 
-  void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
-    splitReader_->schedule(stream, maxRows);
-  }
+void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
+  splitReader_->schedule(stream, maxRows);
+}
 
-  vector_size_t WaveHiveDataSource::outputSize(WaveStream& stream) const {
-    splitReader_->outputSize(stream);
-  }
+vector_size_t WaveHiveDataSource::outputSize(WaveStream& stream) const {
+  splitReader_->outputSize(stream);
+}
 
-  bool WaveHiveDataSource::isFinished() {
-    if (!splitReader_) {
-      return false;
-    }
-    if (splitReader_->isFinished()) {
-      auto stats = splitReader_->runtimeStats();
-      for (const auto& [name, counter] : stats) {
-	auto it = splitReaderStats_.find(name);
-	if (it == splitReaderStats_.end()) {
-	  splitReaderStats_.insert(std::make_pair(name, counter));
-	} else {
-	  splitReaderStats_.insert(std::make_pair(name, RuntimeCounter(it->second.value, counter.unit)));
-	}
-      }
-      return true;
-    }
+bool WaveHiveDataSource::isFinished() {
+  if (!splitReader_) {
     return false;
   }
-
-  uint64_t WaveHiveDataSource::getCompletedBytes() {
-    return 0;
+  if (splitReader_->isFinished()) {
+    auto stats = splitReader_->runtimeStats();
+    for (const auto& [name, counter] : stats) {
+      auto it = splitReaderStats_.find(name);
+      if (it == splitReaderStats_.end()) {
+        splitReaderStats_.insert(std::make_pair(name, counter));
+      } else {
+        splitReaderStats_.insert(std::make_pair(
+            name, RuntimeCounter(it->second.value, counter.unit)));
+      }
+    }
+    return true;
   }
+  return false;
+}
 
-  uint64_t WaveHiveDataSource::getCompletedRows() {
-    return completedRows_;
-  }
+uint64_t WaveHiveDataSource::getCompletedBytes() {
+  return 0;
+}
 
-  std::unordered_map<std::string, RuntimeCounter> WaveHiveDataSource::runtimeStats() {
+uint64_t WaveHiveDataSource::getCompletedRows() {
+  return completedRows_;
+}
+
+std::unordered_map<std::string, RuntimeCounter>
+WaveHiveDataSource::runtimeStats() {
   auto map = runtimeStats_.toMap();
   for (const auto& [name, counter] : splitReaderStats_) {
     map.insert(std::make_pair(name, counter));
@@ -135,8 +137,6 @@ int32_t WaveHiveDataSource::canAdvance() {
   return map;
 }
 
-  
-  
 // static
 void WaveHiveDataSource::registerConnector() {
   static bool registered = false;

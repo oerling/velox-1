@@ -51,18 +51,22 @@ class ColumnReader {
   int32_t totalRows() const {
     return formatData_->totalRows();
   }
-  
+
   OperandId operand() const {
     return operand_;
   }
 
-  virtual void
-  makeOp(ReadStream* readStream, ColumnAction action, int32_t offset, RowSet rows, ColumnOp& op);
+  virtual void makeOp(
+      ReadStream* readStream,
+      ColumnAction action,
+      int32_t offset,
+      RowSet rows,
+      ColumnOp& op);
 
   FormatData* formatData() const {
     return formatData_.get();
   }
-  
+
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
@@ -109,7 +113,6 @@ class ReadStream : public Executable {
  private:
   /// Makes column dependencies.
   void makeOps();
-  
 
   StructColumnReader* reader_;
   int32_t offset_;

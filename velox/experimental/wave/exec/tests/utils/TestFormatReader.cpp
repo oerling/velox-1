@@ -26,19 +26,20 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const velox::common::ScanSpec& scanSpec,
     OperandId operand) {
   auto* column = stripe_->findColumn(*type);
-  return std::make_unique<TestFormatData>(operand, stripe_->columns[0]->numValues, column);
+  return std::make_unique<TestFormatData>(
+      operand, stripe_->columns[0]->numValues, column);
 }
 
-  void TestFormatData::startOp(
-	       ColumnOp& op,
-	       const ColumnOp* previousFilter,
-	       ResultStaging& deviceStaging,
-	       ResultStaging& resultStaging,
-	       SplitStaging& splitStaging,
-	       DecodePrograms& program,
-	       ReadStream& stream) {
-    BufferId id = kNoBufferId;
-    if (!staged_) {
+void TestFormatData::startOp(
+    ColumnOp& op,
+    const ColumnOp* previousFilter,
+    ResultStaging& deviceStaging,
+    ResultStaging& resultStaging,
+    SplitStaging& splitStaging,
+    DecodePrograms& program,
+    ReadStream& stream) {
+  BufferId id = kNoBufferId;
+  if (!staged_) {
     staged_ = true;
     Staging staging;
     staging.hostData = column_->values->as<char>();
@@ -67,55 +68,59 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
   }
 }
 
-  class TestStructColumnReader : public StructColumnReader {
-  public:
-    TestStructColumnReader(
+class TestStructColumnReader : public StructColumnReader {
+ public:
+  TestStructColumnReader(
+      const TypePtr& requestedType,
+      const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
+      TestFormatParams& params,
+      common::ScanSpec& scanSpec,
+      std::vector<std::unique_ptr<Subfield::PathElement>>& path,
+      const DefinesMap& defines,
+      bool isRoot)
+      : StructColumnReader(
+            requestedType,
+            fileType,
+            pathToOperand(defines, path),
+            params,
+            scanSpec,
+            isRoot) {
+    // A reader tree may be constructed while the ScanSpec is being used
+    // for another read. This happens when the next stripe is being
+    // prepared while the previous one is reading.
+    auto& childSpecs = scanSpec.stableChildren();
+    for (auto i = 0; i < childSpecs.size(); ++i) {
+      auto childSpec = childSpecs[i];
+      if (isChildConstant(*childSpec)) {
+        VELOX_NYI();
+        continue;
+      }
+      auto childFileType = fileType_->childByName(childSpec->fieldName());
+      auto childRequestedType = requestedType_->as<TypeKind::ROW>().findChild(
+          folly::StringPiece(childSpec->fieldName()));
+      auto childParams = TestFormatParams(
+          params.pool(), params.runtimeStatistics(), params.stripe());
+
+      path.push_back(std::make_unique<common::Subfield::NestedField>(
+          childSpec->fieldName()));
+      addChild(TestFormatReader::build(
+          childRequestedType,
+          childFileType,
+          params,
+          *childSpec,
+          path,
+          defines));
+      path.pop_back();
+      childSpec->setSubscript(children_.size() - 1);
+    }
+  }
+};
+
+std::unique_ptr<ColumnReader> buildIntegerReader(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
-    std::vector<std::unique_ptr<Subfield::PathElement>>& path,
-    const DefinesMap& defines,
-    bool isRoot)
-    : StructColumnReader(
-          requestedType,
-          fileType,
-          pathToOperand(defines, path),
-          params,
-          scanSpec, isRoot) {
-  // A reader tree may be constructed while the ScanSpec is being used
-  // for another read. This happens when the next stripe is being
-  // prepared while the previous one is reading.
-  auto& childSpecs = scanSpec.stableChildren();
-  for (auto i = 0; i < childSpecs.size(); ++i) {
-    auto childSpec = childSpecs[i];
-    if (isChildConstant(*childSpec)) {
-      VELOX_NYI();
-      continue;
-    }
-    auto childFileType = fileType_->childByName(childSpec->fieldName());
-    auto childRequestedType =
-      requestedType_->as<TypeKind::ROW>().findChild(folly::StringPiece(childSpec->fieldName()));
-    auto childParams = TestFormatParams(params.pool(), params.runtimeStatistics(), params.stripe());
-
-    path.push_back(
-		   std::make_unique <common:: Subfield::NestedField>(childSpec->fieldName()));
-    addChild(TestFormatReader::build(
-        childRequestedType,
-        childFileType,
-        params,
-        *childSpec, path, defines));
-    path.pop_back();
-    childSpec->setSubscript(children_.size() - 1);
-  }
-    }
-  };
-  
-std::unique_ptr<ColumnReader> buildIntegerReader(
-						 const TypePtr& requestedType,
-						 const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
-    TestFormatParams& params,
-						 common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines) {
   return std::make_unique<ColumnReader>(
@@ -124,7 +129,7 @@ std::unique_ptr<ColumnReader> buildIntegerReader(
 
 // static
 std::unique_ptr<ColumnReader> TestFormatReader::build(
-						      const TypePtr& requestedType,
+    const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
@@ -138,13 +143,7 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
 
     case TypeKind::ROW:
       return std::make_unique<TestStructColumnReader>(
-          requestedType,
-          fileType,
-          params,
-          scanSpec,
-          path,
-          defines,
-          isRoot);
+          requestedType, fileType, params, scanSpec, path, defines, isRoot);
     default:
       VELOX_UNREACHABLE();
   }

@@ -15,7 +15,7 @@
  */
 
 #pragma once
- 
+
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/type/Subfield.h"
@@ -24,8 +24,11 @@ namespace facebook::velox::wave::test {
 
 class TestFormatData : public wave::FormatData {
  public:
-  TestFormatData(OperandId operand, int32_t totalRows, const test::Column* column)
-    : operand_(operand), totalRows_(totalRows), column_(column) {}
+  TestFormatData(
+      OperandId operand,
+      int32_t totalRows,
+      const test::Column* column)
+      : operand_(operand), totalRows_(totalRows), column_(column) {}
 
   bool hasNulls() const override {
     return false;
@@ -34,12 +37,12 @@ class TestFormatData : public wave::FormatData {
   int32_t totalRows() const override {
     return totalRows_;
   }
-  
+
   void newBatch(int32_t startRow) override {
     currentRow_ = startRow;
     queued_ = false;
   }
-  
+
   void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,
@@ -78,7 +81,7 @@ class TestFormatParams : public wave::FormatParams {
   const Stripe* stripe() const {
     return stripe_;
   }
-  
+
  private:
   const test::Stripe* stripe_;
 };

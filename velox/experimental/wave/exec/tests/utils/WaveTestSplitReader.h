@@ -60,7 +60,7 @@ class WaveTestSplitReader : public WaveSplitReader {
   int32_t available() const {
     return stripe_->columns[0]->numValues - nextRow_;
   }
-  
+
   std::shared_ptr<connector::ConnectorSplit> split_;
   SplitReaderParams params_;
   test::Stripe* stripe_{nullptr};

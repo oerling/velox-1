@@ -26,11 +26,11 @@
 
 namespace facebook::velox::wave {
 using BufferId = int32_t;
-  constexpr BufferId kNoBufferId = -1;
-  
+constexpr BufferId kNoBufferId = -1;
+
 class ReadStream;
-  class WaveStream;
-  
+class WaveStream;
+
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
@@ -60,7 +60,8 @@ class SplitStaging {
   /// id, so that the actual start of the area is added to the offset at *ptr.
   template <typename T>
   void registerPointer(BufferId id, T pointer) {
-    registerPointerInternal(id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+    registerPointerInternal(
+        id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
   }
 
   // Starts the transfers registered with add( on 'stream').
@@ -68,7 +69,6 @@ class SplitStaging {
 
  private:
   void registerPointerInternal(BufferId id, void** ptr);
-
 
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
@@ -100,7 +100,8 @@ class ResultStaging {
   /// come to point to the 16th byte in the buffer.
   template <typename T>
   void registerPointer(BufferId id, T pointer) {
-    registerPointerInternal(id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+    registerPointerInternal(
+        id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
   }
 
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
@@ -121,7 +122,6 @@ class ResultStaging {
 using RowSet = folly::Range<const int32_t*>;
 class ColumnReader;
 
-  
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
@@ -172,7 +172,7 @@ class FormatData {
   virtual ~FormatData() = default;
 
   virtual int32_t totalRows() const = 0;
-  
+
   virtual bool hasNulls() const = 0;
 
   /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the
@@ -196,11 +196,14 @@ class FormatData {
     return 10;
   }
 
-  /// Prepares a new batch of reads. The batch starts at 'startRiw', which is a row number in terms of the column of 'this'. The row number for a nested column is in terms of the column, not in terms of top level rows.
+  /// Prepares a new batch of reads. The batch starts at 'startRiw', which is a
+  /// row number in terms of the column of 'this'. The row number for a nested
+  /// column is in terms of the column, not in terms of top level rows.
   virtual void newBatch(int32_t startRow) = 0;
-  
+
   /// Adds the next read of the column. If the column is a filter depending on
-  /// another filter, the previous filter is given on the first call. Updates status of 'op'.
+  /// another filter, the previous filter is given on the first call. Updates
+  /// status of 'op'.
   virtual void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,

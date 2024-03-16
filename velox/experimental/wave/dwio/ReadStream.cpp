@@ -34,7 +34,7 @@ ReadStream::ReadStream(
     RowSet rows,
     WaveStream& _waveStream,
     const OperandSet* firstColumns)
-  : Executable(), offset_(offset), rows_(rows) {
+    : Executable(), offset_(offset), rows_(rows) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands);
   output.resize(outputOperands.size());
@@ -74,12 +74,12 @@ bool ReadStream::makePrograms(bool& needSync) {
           programs_,
           *this);
       if (!op.isFinal) {
-	allDone = false;
+        allDone = false;
       }
       if (op.needsResult) {
-	needSync = true;
+        needSync = true;
       }
-      } else {
+    } else {
       allDone = false;
     }
   }
@@ -91,17 +91,18 @@ bool ReadStream::makePrograms(bool& needSync) {
 void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
   using UniqueExe = std::unique_ptr<Executable>;
   readStream->waveStream->installExecutables(
-					     folly::Range<UniqueExe*>(reinterpret_cast<UniqueExe*>(&readStream), 1),
+      folly::Range<UniqueExe*>(reinterpret_cast<UniqueExe*>(&readStream), 1),
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
-	bool needSync = false;
+        bool needSync = false;
         for (;;) {
           bool done = readStream->makePrograms(needSync);
-          readStream->currentStaging_->transfer(*readStream->waveStream, *stream);
+          readStream->currentStaging_->transfer(
+              *readStream->waveStream, *stream);
           if (done) {
             break;
           }
-	  WaveBufferPtr extra;
+          WaveBufferPtr extra;
           launchDecode(
               readStream->programs(),
               &readStream->waveStream->arena(),
@@ -113,9 +114,12 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
             stream->wait();
           }
         }
-	WaveBufferPtr extra;
+        WaveBufferPtr extra;
         launchDecode(
-            readStream->programs(), &readStream->waveStream->arena(), extra, stream);
+            readStream->programs(),
+            &readStream->waveStream->arena(),
+            extra,
+            stream);
         readStream->waveStream->markLaunch(*stream, *readStream);
       });
 }

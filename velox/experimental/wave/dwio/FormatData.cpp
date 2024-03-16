@@ -43,14 +43,16 @@ void SplitStaging::transfer(WaveStream& waveStream, Stream& stream) {
   for (auto i = 0; i < offsets_.size(); ++i) {
     memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
   }
-  stream.prefetch(getDevice(), deviceBuffer_->as<char>(), deviceBuffer_->size());
+  stream.prefetch(
+      getDevice(), deviceBuffer_->as<char>(), deviceBuffer_->size());
   for (auto& pair : patch_) {
-    *reinterpret_cast<int64_t*>(pair.second) += reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
+    *reinterpret_cast<int64_t*>(pair.second) +=
+        reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
   }
 }
 
-  BufferId ResultStaging::reserve(int32_t bytes) {
-    offsets_.push_back(fill_);
+BufferId ResultStaging::reserve(int32_t bytes) {
+  offsets_.push_back(fill_);
   fill_ += bits::roundUp(bytes, 8);
   return offsets_.size() - 1;
 }
