@@ -20,13 +20,15 @@
 namespace facebook::velox::wave {
 
 BufferId SplitStaging::add(Staging& staging) {
+  VELOX_CHECK_NULL(deviceBuffer_);
   staging_.push_back(staging);
   offsets_.push_back(fill_);
   fill_ += bits::roundUp(staging.size, 8);
   return offsets_.size() - 1;
 }
 
-void SplitStaging::registerPointer(BufferId id, void** ptr) {
+void SplitStaging::registerPointerInternal(BufferId id, void** ptr) {
+  VELOX_CHECK_NULL(deviceBuffer_);
   patch_.push_back(std::make_pair(id, ptr));
 }
 
@@ -53,7 +55,7 @@ void SplitStaging::transfer(WaveStream& waveStream, Stream& stream) {
   return offsets_.size() - 1;
 }
 
-void ResultStaging::registerPointer(BufferId id, void** pointer) {
+void ResultStaging::registerPointerInternal(BufferId id, void** pointer) {
   patch_.push_back(std::make_pair(id, pointer));
 }
 
@@ -71,6 +73,9 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
     int64_t* pointer = reinterpret_cast<int64_t*>(pair.second);
     *pointer += address + offsets_[pair.first];
   }
+  patch_.clear();
+  offsets_.clear();
+  fill_ = 0;
 }
 
 } // namespace facebook::velox::wave

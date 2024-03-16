@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/tests/utils/TestFormatReader.h"
+#include "velox/experimental/wave/dwio/StructColumnReader.h"
 
 namespace facebook::velox::wave::test {
 
@@ -25,38 +26,52 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const velox::common::ScanSpec& scanSpec,
     OperandId operand) {
   auto* column = stripe_->findColumn(*type);
-  return std::make_unique<TestFormatData>(operand, column);
+  return std::make_unique<TestFormatData>(operand, stripe_->columns[0]->numValues, column);
 }
 
-  void TestFormatReader::startOp(
+  void TestFormatData::startOp(
 	       ColumnOp& op,
 	       const ColumnOp* previousFilter,
 	       ResultStaging& deviceStaging,
 	       ResultStaging& resultStaging,
-	       SplitStaging& staging,
+	       SplitStaging& splitStaging,
 	       DecodePrograms& program,
 	       ReadStream& stream) {
-  if (!staged_) {
+    BufferId id = kNoBufferId;
+    if (!staged_) {
     staged_ = true;
-
     Staging staging;
-    staging.host column->buffer = column->values->as<char>();
-    staging.size = column->values->size();
-    splitStaging.add(std::move(staging));
+    staging.hostData = column_->values->as<char>();
+    staging.size = column_->values->size();
+    id = splitStaging.add(staging);
   }
-  if (!queud_) {
-
-    auto step = std::make_unique<DecodeStep>();
-    step->decodeStep = decodeStep::kTrivial;
+  if (!queued_) {
+    queued_ = true;
+    auto step = std::make_unique<GpuDecode>();
+    step->step = DecodeStep::kTrivial;
     step->data.trivial.input = 0;
-    splitStaging.registerPointer(&stream, id, &step->data.trivial.input);
-    program.programs.push_back(std::move(step));
+    step->data.trivial.begin = currentRow_;
+    step->data.trivial.end = currentRow_ + op.rows.back() + 1;
+    step->data.trivial.input = nullptr;
+    if (id != kNoBufferId) {
+      splitStaging.registerPointer(id, &step->data.trivial.input);
+      splitStaging.registerPointer(id, &deviceBuffer_);
+    } else {
+      step->data.trivial.input = deviceBuffer_;
+    }
+    step->data.trivial.result = op.waveVector->values<char>();
+    op.isFinal = true;
+    std::vector<std::unique_ptr<GpuDecode>> steps;
+    steps.push_back(std::move(step));
+    program.programs.push_back(std::move(steps));
   }
 }
 
-TestStructColumnReader::StructColumnReader(
+  class TestStructColumnReader : public StructColumnReader {
+  public:
+    TestStructColumnReader(
     const TypePtr& requestedType,
-    const std::shared_ptr<const TypeWithId>& fileType,
+    const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
@@ -67,7 +82,7 @@ TestStructColumnReader::StructColumnReader(
           fileType,
           pathToOperand(defines, path),
           params,
-          scanSpec) {
+          scanSpec, isRoot) {
   // A reader tree may be constructed while the ScanSpec is being used
   // for another read. This happens when the next stripe is being
   // prepared while the previous one is reading.
@@ -75,32 +90,32 @@ TestStructColumnReader::StructColumnReader(
   for (auto i = 0; i < childSpecs.size(); ++i) {
     auto childSpec = childSpecs[i];
     if (isChildConstant(*childSpec)) {
-      childSpec->setSubscript(kConstantChildSpecSubscript);
+      VELOX_NYI();
       continue;
     }
     auto childFileType = fileType_->childByName(childSpec->fieldName());
     auto childRequestedType =
-        requestedType_->childByName(childSpec->fieldName());
-    auto childParams = TestFormatParams(stripe, params.runtimeStatistics(), );
+      requestedType_->as<TypeKind::ROW>().findChild(folly::StringPiece(childSpec->fieldName()));
+    auto childParams = TestFormatParams(params.pool(), params.runtimeStatistics(), params.stripe());
 
     path.push_back(
-        std::make_unique < Subfield::NestedField(childSpec->fieldName()));
+		   std::make_unique <common:: Subfield::NestedField>(childSpec->fieldName()));
     addChild(TestFormatReader::build(
         childRequestedType,
         childFileType,
-        pathToOperand(defines, path),
         params,
-        *childSpec));
+        *childSpec, path, defines));
     path.pop_back();
     childSpec->setSubscript(children_.size() - 1);
   }
-}
-
+    }
+  };
+  
 std::unique_ptr<ColumnReader> buildIntegerReader(
-    std::shared_ptr<TypeWithId>& requestedType,
-    std::shared_ptr<TypeWithId>& fileType,
+						 const TypePtr& requestedType,
+						 const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
-    ScanSpec& scanSpec,
+						 common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines) {
   return std::make_unique<ColumnReader>(
@@ -109,24 +124,23 @@ std::unique_ptr<ColumnReader> buildIntegerReader(
 
 // static
 std::unique_ptr<ColumnReader> TestFormatReader::build(
-    const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+						      const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     TestFormatParams& params,
     common::ScanSpec& scanSpec,
     std::vector<std::unique_ptr<Subfield::PathElement>>& path,
     const DefinesMap& defines,
-    bool isRoot = false) {
+    bool isRoot) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
       return buildIntegerReader(
           requestedType, fileType, params, scanSpec, path, defines);
 
     case TypeKind::ROW:
-      return std::make_unique<StructColumnReader>(
+      return std::make_unique<TestStructColumnReader>(
           requestedType,
           fileType,
           params,
-          operand,
           scanSpec,
           path,
           defines,

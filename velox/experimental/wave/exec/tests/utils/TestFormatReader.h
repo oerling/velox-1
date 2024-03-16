@@ -24,9 +24,22 @@ namespace facebook::velox::wave::test {
 
 class TestFormatData : public wave::FormatData {
  public:
-  TestFormatData(OperandId operand, const test::Column* column)
-      : operand_(operand), column_(column) {}
+  TestFormatData(OperandId operand, int32_t totalRows, const test::Column* column)
+    : operand_(operand), totalRows_(totalRows), column_(column) {}
 
+  bool hasNulls() const override {
+    return false;
+  }
+
+  int32_t totalRows() const override {
+    return totalRows_;
+  }
+  
+  void newBatch(int32_t startRow) override {
+    currentRow_ = startRow;
+    queued_ = false;
+  }
+  
   void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,
@@ -38,9 +51,15 @@ class TestFormatData : public wave::FormatData {
 
  private:
   const OperandId operand_;
+  int32_t totalRows_{0};
+
   const test::Column* column_;
   bool staged_{false};
   bool queued_{false};
+  int32_t numStaged_{0};
+  int32_t currentRow_{0};
+  // The device side data area start, set after the staged transfer is done.
+  void* deviceBuffer_{nullptr};
 };
 
 class TestFormatParams : public wave::FormatParams {
@@ -56,6 +75,10 @@ class TestFormatParams : public wave::FormatParams {
       const velox::common::ScanSpec& scanSpec,
       OperandId operand) override;
 
+  const Stripe* stripe() const {
+    return stripe_;
+  }
+  
  private:
   const test::Stripe* stripe_;
 };

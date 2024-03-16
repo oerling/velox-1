@@ -34,7 +34,7 @@ ReadStream::ReadStream(
     RowSet rows,
     WaveStream& _waveStream,
     const OperandSet* firstColumns)
-    : Executable() {
+  : Executable(), offset_(offset), rows_(rows) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands);
   output.resize(outputOperands.size());
@@ -50,7 +50,7 @@ void ReadStream::makeOps() {
     ops_.emplace_back();
     auto& op = ops_.back();
     auto* child = reader_->children()[i];
-    child->makeOp(this, ColumnAction::kValues, op, rows_);
+    child->makeOp(this, ColumnAction::kValues, offset_, rows_, op);
   }
 }
 

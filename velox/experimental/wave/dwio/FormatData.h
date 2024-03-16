@@ -26,7 +26,8 @@
 
 namespace facebook::velox::wave {
 using BufferId = int32_t;
-
+  constexpr BufferId kNoBufferId = -1;
+  
 class ReadStream;
   class WaveStream;
   
@@ -57,12 +58,18 @@ class SplitStaging {
   /// Registers '*ptr' to be patched to the device side address of the transfer
   /// identified by 'id'. The *ptr is an offset into the buffer identified by
   /// id, so that the actual start of the area is added to the offset at *ptr.
-  void registerPointer(BufferId id, void** ptr);
+  template <typename T>
+  void registerPointer(BufferId id, T pointer) {
+    registerPointerInternal(id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+  }
 
   // Starts the transfers registered with add( on 'stream').
   void transfer(WaveStream& waveStream, Stream& stream);
 
  private:
+  void registerPointerInternal(BufferId id, void** ptr);
+
+
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
   WaveBufferPtr hostBuffer_;
@@ -91,11 +98,16 @@ class ResultStaging {
   /// Registers '*pointer' to be patched to the buffer. The starting address of
   /// the buffer is added to *pointer, so that if *pointer was 16, *pointer will
   /// come to point to the 16th byte in the buffer.
-  void registerPointer(BufferId id, void** pointer);
+  template <typename T>
+  void registerPointer(BufferId id, T pointer) {
+    registerPointerInternal(id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+  }
 
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
 
  private:
+  void registerPointerInternal(BufferId id, void** pointer);
+
   // Offset of each result in either buffer.
   std::vector<int32_t> offsets_;
   // Patch addresses. The int64_t* is updated to point to the result buffer once
@@ -132,18 +144,18 @@ struct ColumnOp {
 
   // Is the op completed after this? If so, any dependent action can be
   // queued as soon as this is set.
-  bool isFinal;
+  bool isFinal{false};
   // True if needs a result on the host before proceeding.
-  bool needsResult;
+  bool needsResult{false};
   OperandId producesOperand{kNoOperand};
   // Index of another op in column ops array in ReadStream.
   int32_t prerequisite{kNoPrerequisite};
   ColumnAction action;
   // Non-owning view on rows to read.
   RowSet rows;
-  ColumnReader* reader;
+  ColumnReader* reader{nullptr};
   // Vector completed by arrival of this. nullptr if no vector.
-  WaveVector* waveVector;
+  WaveVector* waveVector{nullptr};
   // Host side result size. 0 for unconditional decoding. Can be buffer size for
   // passing rows, length/offset array etc.
   int32_t resultSize{0};
@@ -159,7 +171,9 @@ class FormatData {
  public:
   virtual ~FormatData() = default;
 
-  virtual bool hasNulls() = 0;
+  virtual int32_t totalRows() const = 0;
+  
+  virtual bool hasNulls() const = 0;
 
   /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the
   /// result area allocated from 'deviceStaging'.
@@ -172,7 +186,9 @@ class FormatData {
   }
 
   /// Sets how many TBs will be scheduled at a time for this column.
-  void setBlocks(int32_t numBlocks);
+  void setBlocks(int32_t numBlocks) {
+    VELOX_NYI();
+  }
 
   /// Returns estimate of sequential instructions needed to decode one value.
   /// Used to decide how many TBs to use for each column.
@@ -180,6 +196,9 @@ class FormatData {
     return 10;
   }
 
+  /// Prepares a new batch of reads. The batch starts at 'startRiw', which is a row number in terms of the column of 'this'. The row number for a nested column is in terms of the column, not in terms of top level rows.
+  virtual void newBatch(int32_t startRow) = 0;
+  
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Updates status of 'op'.
   virtual void startOp(
@@ -219,6 +238,7 @@ class FormatParams {
  private:
   memory::MemoryPool& pool_;
   dwio::common::ColumnReaderStatistics& stats_;
+  int32_t currentRow_{0};
 };
 
 }; // namespace facebook::velox::wave

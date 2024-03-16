@@ -40,31 +40,24 @@ class ColumnReader {
         formatData_(params.toFormatData(fileType_, scanSpec, operand)),
         scanSpec_(&scanSpec) {}
 
-  /// True if 'this' has a position from which a new ReadStream can be
-  /// started.  This may be false if processing a previous ReadStream
-  /// needs to advance before 'this' knows the starting position of
-  /// the next read. For example, lengths of a previous ReadStream may
-  /// have to be added up before a next read can start.
-  virtual bool mayStartReadStream() const;
-
-  /// Returns how many rows are left for which no read has been
-  /// initiated. A read is initiated by making a ReadStream, which
-  /// schedules a range of rows for reading. This may be called if
-  /// mayStartReadStream() is true.
-  int32_t numRowsRemaining() const;
-
   const common::ScanSpec& scanSpec() const {
     return *scanSpec_;
   }
+
   const std::vector<ColumnReader*> children() const {
     return children_;
   }
+
+  int32_t totalRows() const {
+    return formatData_->totalRows();
+  }
+  
   OperandId operand() const {
     return operand_;
   }
 
   virtual void
-  makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op, RowSet rows);
+  makeOp(ReadStream* readStream, ColumnAction action, int32_t offset, RowSet rows, ColumnOp& op);
 
   FormatData* formatData() const {
     return formatData_.get();
@@ -119,6 +112,7 @@ class ReadStream : public Executable {
   
 
   StructColumnReader* reader_;
+  int32_t offset_;
   RowSet rows_;
   std::vector<ColumnOp> ops_;
   std::vector<std::unique_ptr<SplitStaging>> staging_;
