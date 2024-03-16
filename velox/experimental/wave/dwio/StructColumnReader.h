@@ -16,11 +16,12 @@
 
 #pragma once
 
-#include "velox/experiemental/wave/dwio/ColumnReader.h"
+#include "velox/experimental/wave/dwio/ColumnReader.h"
 
-namespace facebook : velox::wave {
 
-  class StructColumnReader {: public ColunReader {
+namespace facebook ::velox::wave {
+
+  class StructColumnReader : public ColumnReader {
       StructColumnReader(
           const TypePtr& requestedType,
           std::shared_ptr<const dwio::common::TypeWithId> fileType,
@@ -36,7 +37,7 @@ namespace facebook : velox::wave {
       }
 
       std::vector<std::unique_ptr<ColumnReader>> childrenOwned_;
-    };
-  }
+  };
+
 
 } // namespace velox::wave

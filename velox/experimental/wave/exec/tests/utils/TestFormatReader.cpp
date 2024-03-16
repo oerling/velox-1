@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/tests/utils/TestFormatReader.h"
+#include "velox/experimental/wave/exec/tests/utils/TestFormatReader.h"
 
 namespace facebook::velox::wave::test {
 
@@ -28,31 +28,30 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
   return std::make_unique<TestFormatData>(operand, column);
 }
 
-int32_t TestFormatData::startRead(
-    int32_t offset,
-    RowSet rows,
-    FormatData* /*previousFilter*/,
-    SplitStaging& staging,
-    DecodePrograms& program,
-    WaveStream& stream) {
-  int32_t result;
+  void TestFormatReader::startOp(
+	       ColumnOp& op,
+	       const ColumnOp* previousFilter,
+	       ResultStaging& deviceStaging,
+	       ResultStaging& resultStaging,
+	       SplitStaging& staging,
+	       DecodePrograms& program,
+	       ReadStream& stream) {
   if (!staged_) {
     staged_ = true;
-    result |= FormatData::kStaged;
+
     Staging staging;
     staging.host column->buffer = column->values->as<char>();
     staging.size = column->values->size();
     splitStaging.add(std::move(staging));
   }
   if (!queud_) {
-    result |= FormatData::kQueued || FormatData::kAllQueued;
+
     auto step = std::make_unique<DecodeStep>();
     step->decodeStep = decodeStep::kTrivial;
     step->data.trivial.input = 0;
     splitStaging.registerPointer(&stream, id, &step->data.trivial.input);
     program.programs.push_back(std::move(step));
   }
-  return result;
 }
 
 TestStructColumnReader::StructColumnReader(

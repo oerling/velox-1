@@ -18,6 +18,7 @@
 
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/Statistics.h"
+#include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
 
@@ -27,7 +28,8 @@ namespace facebook::velox::wave {
 using BufferId = int32_t;
 
 class ReadStream;
-
+  class WaveStream;
+  
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
@@ -57,17 +59,16 @@ class SplitStaging {
   /// id, so that the actual start of the area is added to the offset at *ptr.
   void registerPointer(BufferId id, void** ptr);
 
-  // Starts the transfers registered with add(). 'stream' is set to a stream
-  // where operations depending on the transfer may be queued.
-  void transfer(ReadStream& waveStream, Stream*& stream);
+  // Starts the transfers registered with add( on 'stream').
+  void transfer(WaveStream& waveStream, Stream& stream);
 
  private:
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
-  WaveBufferPtr hostData_;
+  WaveBufferPtr hostBuffer_;
 
   // Device accessible memory (device or unified) with the data to read.
-  WaveBufferPtr deviceData_;
+  WaveBufferPtr deviceBuffer_;
 
   std::vector<Staging> staging_;
   // Offsets into device buffer for each id returned by add().
@@ -92,21 +93,23 @@ class ResultStaging {
   /// come to point to the 16th byte in the buffer.
   void registerPointer(BufferId id, void** pointer);
 
-  void setReturnBuffer(GpuArena* arena, DecodePrograms& programs);
+  void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
 
  private:
   // Offset of each result in either buffer.
-  std::vector<int32_t> offsets;
+  std::vector<int32_t> offsets_;
   // Patch addresses. The int64_t* is updated to point to the result buffer once
   // it is allocated.
-  std::vector<std::pair<int32_t, int64_t**>> patch;
-  int32_t fill{0};
-  WaveBufferPtr deviceBuffer;
-  WaveBufferPtr hostBuffer;
+  std::vector<std::pair<int32_t, void**>> patch_;
+  int32_t fill_{0};
+  WaveBufferPtr deviceBuffer_;
+  WaveBufferPtr hostBuffer_;
 };
 
 using RowSet = folly::Range<const int32_t*>;
+class ColumnReader;
 
+  
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
@@ -126,7 +129,6 @@ enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
 struct ColumnOp {
   static constexpr int32_t kNoPrerequisite = -1;
   static constexpr int32_t kNoOperand = -1;
-  class ColumnReader;
 
   // Is the op completed after this? If so, any dependent action can be
   // queued as soon as this is set.
@@ -141,17 +143,15 @@ struct ColumnOp {
   RowSet rows;
   ColumnReader* reader;
   // Vector completed by arrival of this. nullptr if no vector.
-  WaveVector* waveVector_;
+  WaveVector* waveVector;
   // Host side result size. 0 for unconditional decoding. Can be buffer size for
   // passing rows, length/offset array etc.
-  int32_t resultSize_{0};
+  int32_t resultSize{0};
 
   // Device side non-vector result, like set of passing rows, array of
   // lengths/starts etc.
   int32_t* deviceResult{nullptr};
   int32_t* hostResult{nullptr};
-
-  /// True if 'this' is sufficiently underway for 'next' to be scheduled.
 };
 
 /// Operations on leaf columns. This is specialized for each file format.

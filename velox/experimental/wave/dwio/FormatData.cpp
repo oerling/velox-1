@@ -15,10 +15,11 @@
  */
 
 #include "velox/experimental/wave/dwio/FormatData.h"
+#include "velox/experimental/wave/dwio/ColumnReader.h"
 
 namespace facebook::velox::wave {
 
-BufferId SplitStageing::add(Staging& staging) {
+BufferId SplitStaging::add(Staging& staging) {
   staging_.push_back(staging);
   offsets_.push_back(fill_);
   fill_ += bits::roundUp(staging.size, 8);
@@ -31,24 +32,23 @@ void SplitStaging::registerPointer(BufferId id, void** ptr) {
 
 // Starts the transfers registered with add(). 'stream' is set to a stream
 // where operations depending on the transfer may be queued.
-void SplitStaging::transfer(ReadStream& readStream, Stream*& stream) {
+void SplitStaging::transfer(WaveStream& waveStream, Stream& stream) {
   if (fill_ == 0) {
     return;
   }
-  auto waveStream = readStream.waveStream;
-  deviceBuffer_ = waveStream->arena()->allocate(fill);
+  deviceBuffer_ = waveStream.arena().allocate<char>(fill_);
   auto universal = deviceBuffer_->as<char>();
   for (auto i = 0; i < offsets_.size(); ++i) {
     memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
   }
-  stream->PREFETCH(getDevice(), deviceBuffer_->as<char>, deviceBuffer_->size());
+  stream.prefetch(getDevice(), deviceBuffer_->as<char>(), deviceBuffer_->size());
   for (auto& pair : patch_) {
-    *pair.second += reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
+    *reinterpret_cast<int64_t*>(pair.second) += reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
   }
 }
 
-BufferId ResultStageing::reserve(int32_t bytes) {
-  offsets_.push_back(fill_);
+  BufferId ResultStaging::reserve(int32_t bytes) {
+    offsets_.push_back(fill_);
   fill_ += bits::roundUp(bytes, 8);
   return offsets_.size() - 1;
 }
@@ -63,7 +63,7 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
     programs.hostResult = nullptr;
     return;
   }
-  programs.result = arena.allocate(fill_);
+  programs.result = arena.allocate<char>(fill_);
   auto address = reinterpret_cast<int64_t>(programs.result->as<char>());
   // Patch all the registered pointers to point to buffer at offset offset_[id]
   // + the offset already in the registered pointer.

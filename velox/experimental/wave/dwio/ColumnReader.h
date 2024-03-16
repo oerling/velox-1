@@ -64,8 +64,12 @@ class ColumnReader {
   }
 
   virtual void
-  makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op);
+  makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op, RowSet rows);
 
+  FormatData* formatData() const {
+    return formatData_.get();
+  }
+  
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
@@ -83,7 +87,7 @@ class ColumnReader {
   vector_size_t readOffset_ = 0;
 };
 
-class ReadStream : Executable {
+class ReadStream : public Executable {
  public:
   ReadStream(
       StructColumnReader* columnReader,
@@ -110,6 +114,10 @@ class ReadStream : Executable {
   bool makePrograms(bool& needSync);
 
  private:
+  /// Makes column dependencies.
+  void makeOps();
+  
+
   StructColumnReader* reader_;
   RowSet rows_;
   std::vector<ColumnOp> ops_;
@@ -117,9 +125,9 @@ class ReadStream : Executable {
   SplitStaging* currentStaging_;
 
   // Data to be copied from device, e.g. filter selectivities.
-  ResultStaging hostStaging_;
+  ResultStaging resultStaging_;
   // Intermediate data to stay on device, e.g. selected rows.
-  ResultStaging deviceStaging;
+  ResultStaging deviceStaging_;
   // Reusable control block for launching decode kernels.
   DecodePrograms programs_;
 };

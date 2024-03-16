@@ -24,7 +24,7 @@ add_test(velox_wave_exec_test velox_wave_exec_test)
 target_link_libraries(
   velox_wave_exec_test
   velox_wave_exec
-  velox_wave_mock_file_connector
+  velox_wave_mock_reader
   velox_aggregates
   velox_dwio_common
   velox_dwio_common_exception

@@ -106,11 +106,12 @@ int32_t WaveHiveDataSource::canAdvance() {
     }
     if (splitReader_->isFinished()) {
       auto stats = splitReader_->runtimeStats();
-      for (auto& pair : stats) {
-	if (splitReaderStats_.count(pair.first) == 0) {
-	  splitReaderStats_[pair.first] = pair.second;
+      for (const auto& [name, counter] : stats) {
+	auto it = splitReaderStats_.find(name);
+	if (it == splitReaderStats_.end()) {
+	  splitReaderStats_.insert(std::make_pair(name, counter));
 	} else {
-	  splitReaderStats_[pair.first].value += pair.second.value;
+	  splitReaderStats_.insert(std::make_pair(name, RuntimeCounter(it->second.value, counter.unit)));
 	}
       }
       return true;
@@ -128,8 +129,8 @@ int32_t WaveHiveDataSource::canAdvance() {
 
   std::unordered_map<std::string, RuntimeCounter> WaveHiveDataSource::runtimeStats() {
   auto map = runtimeStats_.toMap();
-  for (auto& pair : splitReaderStats_) {
-    map[pair.first] = pair.second;
+  for (const auto& [name, counter] : splitReaderStats_) {
+    map.insert(std::make_pair(name, counter));
   }
   return map;
 }

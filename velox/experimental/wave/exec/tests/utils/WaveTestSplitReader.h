@@ -69,6 +69,7 @@ class WaveTestSplitReader : public WaveSplitReader {
   int32_t nextRow_{0};
   int32_t scheduledRows_{0};
   dwio::common::ColumnReaderStatistics readerStats_;
+  raw_vector<int32_t> rows_;
 };
 
 } // namespace facebook::velox::wave::test

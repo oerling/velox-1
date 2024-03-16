@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-#include "velox/common/experimental/wave/dwio/ColumnReader.h"
+#include "velox/experimental/wave/dwio/ColumnReader.h"
+#include "velox/experimental/wave/dwio/StructColumnReader.h"
 
 namespace facebook::velox::wave {
 void allOperands(const ColumnReader* reader, OperandSet& operands) {
-  auto op -= reader->operand();
+  auto op = reader->operand();
   if (op != kNoOperand) {
     operands.add(op);
   }
@@ -34,19 +35,21 @@ ReadStream::ReadStream(
     WaveStream& _waveStream,
     const OperandSet* firstColumns)
     : Executable() {
-  waveStream = _waveStream;
+  waveStream = &_waveStream;
   allOperands(columnReader, outputOperands);
   output.resize(outputOperands.size());
   reader_ = columnReader;
   staging_.push_back(std::make_unique<SplitStaging>());
   currentStaging_ = staging_[0].get();
+  makeOps();
 }
 
-void readStream::makeOps() {
+void ReadStream::makeOps() {
   auto& children = reader_->children();
   for (auto i = 0; i < children.size(); ++i) {
     ops_.emplace_back();
     auto& op = ops_.back();
+    auto* child = reader_->children()[i];
     child->makeOp(this, ColumnAction::kValues, op, rows_);
   }
 }
@@ -54,64 +57,67 @@ void readStream::makeOps() {
 bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
   needSync = false;
+  programs_.clear();
   for (auto i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
     if (op.isFinal) {
       continue;
     }
-    if (op.prerequisite == kNoPrerequisite ||
+    if (op.prerequisite == ColumnOp::kNoPrerequisite ||
         ops_[op.prerequisite].isFinal) {
-      op->reader->formatData()->startOp(
+      op.reader->formatData()->startOp(
           op,
           nullptr,
-          deviceStaging,
-          hostStaging,
+          deviceStaging_,
+          resultStaging_,
           *currentStaging_,
-          programs,
-          this);
+          programs_,
+          *this);
       if (!op.isFinal) {
 	allDone = false;
       }
-      if (op.needResult) {
+      if (op.needsResult) {
 	needSync = true;
       }
       } else {
       allDone = false;
     }
   }
-  resultStaging.setReturnBuffer(waveStream->arena(), programs);
+  resultStaging_.setReturnBuffer(waveStream->arena(), programs_);
   return allDone;
 }
 
 // static
 void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
+  using UniqueExe = std::unique_ptr<Executable>;
   readStream->waveStream->installExecutables(
-      folly::Range<std::unique_ptr<Executable*>>(&readStream, 1),
+					     folly::Range<UniqueExe*>(reinterpret_cast<UniqueExe*>(&readStream), 1),
       [&](Stream* stream, folly::Range<Executable**> exes) {
-        auto ReadStream = reinterpret_cast<ReadStream*>(exes[0]);
+        auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
 	bool needSync = false;
         for (;;) {
-          bool done = readStream->makePrograms();
-          currentStaging_->transfer(readStream, stream);
+          bool done = readStream->makePrograms(needSync);
+          readStream->currentStaging_->transfer(*readStream->waveStream, *stream);
           if (done) {
             break;
           }
+	  WaveBufferPtr extra;
           launchDecode(
               readStream->programs(),
-              readStream->waveStream->arena(),
+              &readStream->waveStream->arena(),
               extra,
               stream);
-          staging_.push_back(std::make_unique<SplitStaging>());
-          currentStaging_ = staging_.back().get();
+          readStream->staging_.push_back(std::make_unique<SplitStaging>());
+          readStream->currentStaging_ = readStream->staging_.back().get();
           if (needSync) {
             stream->wait();
           }
         }
+	WaveBufferPtr extra;
         launchDecode(
-            readStream->programs(), exe->waveStream->arena(), extra, stream);
-        markLaunch(*stream, *readStream);
+            readStream->programs(), &readStream->waveStream->arena(), extra, stream);
+        readStream->waveStream->markLaunch(*stream, *readStream);
       });
 }
-
 
 } // namespace facebook::velox::wave

@@ -15,7 +15,7 @@
  */
 
 #pragma once
-
+ 
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/type/Subfield.h"
@@ -27,15 +27,14 @@ class TestFormatData : public wave::FormatData {
   TestFormatData(OperandId operand, const test::Column* column)
       : operand_(operand), column_(column) {}
 
-  /// Adds the next read of the column. If the column is a filter depending on
-  /// another filter, the previous filter is given on the first call. Returns an
-  /// OR of flags describing the action. See kStaged, kQueued, kAllQueued.
-  virtual int32_t startRead(
-      int32_t offset,
-      RowSet rows,
-      FormatData* previousFilter,
+  void startOp(
+      ColumnOp& op,
+      const ColumnOp* previousFilter,
+      ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
       SplitStaging& staging,
-      DecodePrograms& program) = 0;
+      DecodePrograms& program,
+      ReadStream& stream) override;
 
  private:
   const OperandId operand_;
