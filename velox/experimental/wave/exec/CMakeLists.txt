@@ -27,7 +27,6 @@ add_library(
   Project.cpp
   TableScan.cpp
   WaveHiveDataSource.cpp
-  WaveDataSource.cpp
   WaveSplitReader.cpp)
 
 set_target_properties(velox_wave_exec PROPERTIES CUDA_ARCHITECTURES native)
