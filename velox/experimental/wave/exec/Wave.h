@@ -68,8 +68,6 @@ struct ValueComparer {
 using SubfieldMap =
     folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
-
-  
 using DefinesMap =
     folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
 

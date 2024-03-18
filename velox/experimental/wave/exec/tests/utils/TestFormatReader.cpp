@@ -55,39 +55,42 @@ void TestFormatData::startOp(
     }
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     if (column_->encoding == Encoding::kFlat) {
-      if (column_->baseline == 0 && (column_->bitWidth == 32 || column_->bitWidth == 64)) {
-      step->step = DecodeStep::kTrivial;
-      step->data.trivial.dataType = columnKind;
-      step->data.trivial.input = 0;
-    step->data.trivial.begin = currentRow_;
-    step->data.trivial.end = currentRow_ + op.rows.back() + 1;
-    step->data.trivial.input = nullptr;
-    if (id != kNoBufferId) {
-      splitStaging.registerPointer(id, &step->data.trivial.input);
-      splitStaging.registerPointer(id, &deviceBuffer_);
+      if (column_->baseline == 0 &&
+          (column_->bitWidth == 32 || column_->bitWidth == 64)) {
+        step->step = DecodeStep::kTrivial;
+        step->data.trivial.dataType = columnKind;
+        step->data.trivial.input = 0;
+        step->data.trivial.begin = currentRow_;
+        step->data.trivial.end = currentRow_ + op.rows.back() + 1;
+        step->data.trivial.input = nullptr;
+        if (id != kNoBufferId) {
+          splitStaging.registerPointer(id, &step->data.trivial.input);
+          splitStaging.registerPointer(id, &deviceBuffer_);
+        } else {
+          step->data.trivial.input = deviceBuffer_;
+        }
+        step->data.trivial.result = op.waveVector->values<char>();
+      } else {
+        step->step = DecodeStep::kDictionaryOnBitpack;
+        // Just bit pack, no dictionary.
+        step->data.dictionaryOnBitpack.alphabet = nullptr;
+        step->data.dictionaryOnBitpack.dataType = columnKind;
+        step->data.dictionaryOnBitpack.baseline = column_->baseline;
+        step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth;
+        step->data.dictionaryOnBitpack.indices = nullptr;
+        step->data.dictionaryOnBitpack.begin = currentRow_;
+        step->data.dictionaryOnBitpack.end = currentRow_ + op.rows.back() + 1;
+        if (id != kNoBufferId) {
+          splitStaging.registerPointer(
+              id, &step->data.dictionaryOnBitpack.indices);
+          splitStaging.registerPointer(id, &deviceBuffer_);
+        } else {
+          step->data.dictionaryOnBitpack.indices =
+              reinterpret_cast<uint64_t*>(deviceBuffer_);
+        }
+        step->data.dictionaryOnBitpack.result = op.waveVector->values<char>();
+      }
     } else {
-      step->data.trivial.input = deviceBuffer_;
-    }
-    step->data.trivial.result = op.waveVector->values<char>();
-    } else {
-      step->step = DecodeStep::kDictionaryOnBitpack;
-      // Just bit pack, no dictionary.
-      step->data.dictionaryOnBitpack.alphabet = nullptr;
-      step->data.dictionaryOnBitpack.dataType = columnKind;
-      step->data.dictionaryOnBitpack.baseline = column_->baseline;
-      step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth; 
-      step->data.dictionaryOnBitpack.indices = nullptr;
-    step->data.dictionaryOnBitpack.begin = currentRow_;
-    step->data.dictionaryOnBitpack.end = currentRow_ + op.rows.back() + 1;
-    if (id != kNoBufferId) {
-      splitStaging.registerPointer(id, &step->data.dictionaryOnBitpack.indices);
-      splitStaging.registerPointer(id, &deviceBuffer_);
-    } else {
-      step->data.dictionaryOnBitpack.indices = reinterpret_cast<uint64_t*>(deviceBuffer_);
-    }
-    step->data.dictionaryOnBitpack.result = op.waveVector->values<char>();
-    }
-  }else {
       VELOX_NYI("Non flat test encoding");
     }
     op.isFinal = true;
@@ -96,7 +99,7 @@ void TestFormatData::startOp(
     program.programs.push_back(std::move(steps));
   }
 }
-  
+
 class TestStructColumnReader : public StructColumnReader {
  public:
   TestStructColumnReader(

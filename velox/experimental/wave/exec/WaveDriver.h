@@ -64,7 +64,7 @@ class WaveDriver : public exec::SourceOperator {
   const SubfieldMap* subfields() {
     return &subfields_;
   }
-  
+
   /// Returns the control block with thread block level sizes and statuses for
   /// input of  operator with id 'operator'. This is the control for the source
   /// or previous cardinality change.

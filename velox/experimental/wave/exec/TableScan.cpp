@@ -148,7 +148,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
         if (task->isCancelled()) {
           return nullptr;
         }
-	WithSubfieldMap subfields(driver_->subfields());
+        WithSubfieldMap subfields(driver_->subfields());
         auto waveSource = ptr->toWaveDataSource();
         waveSource->setOutputOperands(defines);
         waveSource->addSplit(split);
