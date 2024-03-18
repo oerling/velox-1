@@ -367,11 +367,11 @@ void Table::dropTable(const std::string& name) {
   }
   allTables_.erase(it);
 }
-  //static
-  void Table::dropAll() {
-    std::lock_guard<std::mutex> l(mutex_);
-    allStripes_.clear();
-    allTables_.clear();
-  }
+// static
+void Table::dropAll() {
+  std::lock_guard<std::mutex> l(mutex_);
+  allStripes_.clear();
+  allTables_.clear();
+}
 
 } // namespace facebook::velox::wave::test
