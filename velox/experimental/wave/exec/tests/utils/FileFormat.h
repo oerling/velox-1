@@ -236,6 +236,9 @@ class Table {
     return result;
   }
 
+  /// Drops all tables and stripes. Do this at end of test for cleanup.
+  static void dropAll();
+  
  private:
   static std::mutex mutex_;
   static std::unordered_map<std::string, std::unique_ptr<Table>> allTables_;
