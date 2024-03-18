@@ -113,7 +113,7 @@ class WaveVector {
  private:
   // Type of the content.
   TypePtr type_;
-  velox::TypeKind kind_;
+  TypeKind kind_;
 
   // Encoding. FLAT, CONSTANT, DICTIONARY, ROW, ARRAY, MAP are possible
   // values.

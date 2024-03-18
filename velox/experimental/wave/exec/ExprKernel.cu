@@ -39,8 +39,7 @@ __device__ inline void binaryOpKernel(
     return;
   }
   flatResult<T>(operands, op.result, blockBase, shared) = func(
-
-       getOperand<T>(operands, op.left, blockBase, shared),
+      getOperand<T>(operands, op.left, blockBase, shared),
       getOperand<T>(operands, op.right, blockBase, shared));
 }
 
