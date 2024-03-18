@@ -19,9 +19,9 @@
 
 namespace facebook::velox::wave {
 
-DefinesMap*& threadDefinesMap() {
-  thread_local DefinesMap* defines;
-  return defines;
+const SubfieldMap*& threadSubfieldMap() {
+  thread_local const SubfieldMap* subfields;
+  return subfields;
 }
 
 std::string definesToString(const DefinesMap* map) {
@@ -42,13 +42,18 @@ OperandId pathToOperand(
     return kNoOperand;
   }
   common::Subfield field(std::move(path));
-  Value value(&field);
-  auto it = map.find(value);
-  path = std::move(field.path());
-  if (it == map.end()) {
+  const auto subfieldMap = threadSubfieldMap();
+  auto it = threadSubfieldMap()->find(field.toString());
+  if (it == subfieldMap->end()) {
     return kNoOperand;
   }
-  return it->second->id;
+  Value value(it->second.get());
+  auto valueIt = map.find(value);
+  path = std::move(field.path());
+  if (valueIt == map.end()) {
+    return kNoOperand;
+  }
+  return valueIt->second->id;
 }
 
 WaveVector* Executable::operandVector(OperandId id) {

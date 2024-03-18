@@ -65,6 +65,11 @@ struct ValueComparer {
   }
 };
 
+using SubfieldMap =
+    folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
+
+
+  
 using DefinesMap =
     folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
 
@@ -75,20 +80,20 @@ OperandId pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path);
 
-DefinesMap*& threadDefinesMap();
+const SubfieldMap*& threadSubfieldMap();
 
-class With DefinesMap {
+class WithSubfieldMap {
  public:
-  WithDefinesMap(DefinesMap* map) {
-    previous_ = threadDefinesMap();
-    threadDefinesMap() = map;
+  WithSubfieldMap(const SubfieldMap* map) {
+    previous_ = threadSubfieldMap();
+    threadSubfieldMap() = map;
   }
-  ~WithDefinesMap() {
-    threadDefinesMap() = previous_;
+  ~WithSubfieldMap() {
+    threadSubfieldMap() = previous_;
   }
 
  private:
-  DefinesMap* previous_;
+  const SubfieldMap* previous_;
 };
 
 struct Transfer {

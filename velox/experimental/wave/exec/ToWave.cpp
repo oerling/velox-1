@@ -328,6 +328,9 @@ bool CompileState::addOperator(
         *this, *node, aggregateFunctionRegistry()));
     outputType = node->outputType();
   } else if (name == "TableScan") {
+    if (!reserveMemory()) {
+      return false;
+    }
     auto scan = reinterpret_cast<const core::TableScanNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();

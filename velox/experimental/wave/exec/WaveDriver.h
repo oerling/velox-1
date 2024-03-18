@@ -22,9 +22,6 @@
 
 namespace facebook::velox::wave {
 
-using SubfieldMap =
-    folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
-
 class WaveDriver : public exec::SourceOperator {
  public:
   WaveDriver(
@@ -64,8 +61,12 @@ class WaveDriver : public exec::SourceOperator {
     return operands_;
   }
 
+  const SubfieldMap* subfields() {
+    return &subfields_;
+  }
+  
   /// Returns the control block with thread block level sizes and statuses for
-  /// input of  operator with id 'operator'. This is te control for the source
+  /// input of  operator with id 'operator'. This is the control for the source
   /// or previous cardinality change.
   LaunchControl* inputControl(WaveStream& stream, int32_t operatorId);
 
