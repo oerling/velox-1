@@ -33,7 +33,6 @@ add_library(
 
 target_link_libraries(
   velox_exec_test_lib
-  velox_wave_mock_file
   velox_vector_test_lib
   velox_temp_path
   velox_core
