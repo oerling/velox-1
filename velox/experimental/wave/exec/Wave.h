@@ -38,7 +38,9 @@ struct Value {
   ~Value() = default;
 
   bool operator==(const Value& other) const {
-    return expr == other.expr && subfield == other.subfield;
+    if (expr == other.expr && subfield == other.subfield) {return true;};
+    if (subfield && other.subfield && *subfield == *other.subfield) { return true; }
+    return false;
   }
 
   const exec::Expr* expr;
@@ -59,16 +61,32 @@ struct ValueComparer {
   }
 };
 
-using DefinesMap =
+  using DefinesMap =
     folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>;
 
 /// Translates a set of path steps to an OperandId or kNoOperand if
 /// none found. The path is not const because it is temporarily
 /// moved into a Subfield. Not thread safe for 'path'.
 OperandId pathToOperand(
-    const DefinesMap& map,
+			const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path);
 
+
+  DefinesMap*& threadDefinesMap();
+
+  class With DefinesMap {public:
+			 WithDefinesMap(DefinesMap* map) {
+							  previous_ = threadDefinesMap();
+							  threadDefinesMap() = map;
+			 }
+			 ~WithDefinesMap() {
+					    threadDefinesMap() = previous_;
+			 }
+  private:
+			 DefinesMap* previous_;
+  };
+
+  
 struct Transfer {
   Transfer(const void* from, void* to, size_t size)
       : from(from), to(to), size(size) {}
@@ -78,6 +96,8 @@ struct Transfer {
   // Transfer size in bytes.
   size_t size;
 };
+
+  std::string definesToString(const DefinesMap* map);
 
 class WaveStream;
 class Program;

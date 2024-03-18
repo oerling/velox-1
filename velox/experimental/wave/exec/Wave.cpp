@@ -19,9 +19,28 @@
 
 namespace facebook::velox::wave {
 
+
+  DefinesMap*& threadDefinesMap() {
+    thread_local DefinesMap* defines;
+    return defines;
+  }
+
+  
+  std::string definesToString(const DefinesMap* map) {
+    std::stringstream out;
+    for (const auto& [value, id] : *map) {
+      out << (value.subfield ? value.subfield->toString() : value.expr->toString(1));
+      out << " = " << id->id << " (" << id->type->toString() << ")" << std::endl;
+    }
+    return out.str();
+  }
+  
 OperandId pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
+  if (path.empty()) {
+    return kNoOperand;
+  }
   common::Subfield field(std::move(path));
   Value value(&field);
   auto it = map.find(value);
@@ -53,10 +72,11 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
   if (outputOperands.contains(id)) {
     auto ordinal = outputOperands.ordinal(id);
     ptr = &output[ordinal];
-  }
-  if (localOperands.contains(id)) {
+  } else if (localOperands.contains(id)) {
     auto ordinal = localOperands.ordinal(id);
     ptr = &intermediates[ordinal];
+  } else {
+    VELOX_FAIL("No local/output operand found");
   }
   if (*ptr) {
     return ptr->get();

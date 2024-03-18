@@ -24,7 +24,9 @@
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave::test {
 
-enum Encoding { kFlat, kDict };
+  class Table;
+  
+  enum Encoding { kFlat, kDict };
 
 struct Column {
   TypeKind kind;
@@ -43,6 +45,9 @@ struct Column {
   int8_t bitWidth;
 
   BufferPtr values;
+
+  /// Frame of reference base for kFlat.
+  int64_t baseline{0};
 };
 
 struct Stripe {
@@ -77,42 +82,50 @@ class StringSet {
   memory::MemoryPool* pool_;
 };
 
-class Encoder {
+  class EncoderBase {
+  public:
+    virtual void append(const VectorPtr& data) = 0;
+
+    virtual   std::unique_ptr<Column>  toColumn() = 0;
+  };
+  
+    template <typename T>
+    class Encoder : public EncoderBase {
  public:
-  Encoder(memory::MemoryPool* pool)
-      : pool_(pool), dictStrings_(pool), allStrings_(pool) {}
+  Encoder(memory::MemoryPool* pool, const TypePtr& type)
+    : pool_(pool), kind_(type->kind()), dictStrings_(pool), allStrings_(pool) {}
+
   // Adds data.
-  void append(VectorPtr data);
+  void append(const VectorPtr& data) override;
 
   // Retrieves the data added so far as an encoded column.
-  std::unique_ptr<Column> toColumn();
+  std::unique_ptr<Column> toColumn() override;
 
  private:
-  template <TypeKind kind>
+
   void appendTyped(VectorPtr data);
 
-  template <typename T>
   void add(T data);
 
-  int64_t flatSize();
+      int64_t flatSize();
   int64_t dictSize();
 
   memory::MemoryPool* pool_;
-  TypeKind kind_{TypeKind::UNKNOWN};
+  TypeKind kind_;
   int32_t count_{0};
-  // Distincts for either int64_t or double.
-  folly::F14FastMap<uint64_t, int32_t> ints_;
-  // Distincts for strings.
-  folly::F14FastMap<StringView, int32_t> strings_;
+      int32_t nonNullCount_{0};
+      // Distincts for either int64_t or double.
+  folly::F14FastMap<T, int32_t> distincts_;
   // Values as indices into dicts.
   std::vector<int32_t> indices_;
 
-  std::vector<uint64_t> dictInts_;
+  std::vector<T> dictInts_;
   // The fixed width values as direct.
-  std::vector<uint64_t> direct_;
+  std::vector<T> direct_;
   // True if too many distinct values for dict.
   bool abandonDict_{false};
-  uint64_t max_{0};
+      T max_{};
+      T min_{};
   // longest string, if string type.
   int32_t maxLength_{0};
   // Total bytes in distinct strings.
@@ -124,7 +137,23 @@ class Encoder {
   StringSet allStrings_;
 };
 
-class Writer {
+  template <>
+  void Encoder<StringView>::add(StringView data);
+
+  template <>
+  int64_t Encoder<StringView>::dictSize();
+
+    template <>
+  int64_t Encoder<StringView>::flatSize();
+
+      template <>
+  int64_t Encoder<Timestamp>::flatSize();
+    template <>
+  int64_t Encoder<double>::flatSize();
+    template <>
+  int64_t Encoder<float>::flatSize();
+
+  class Writer {
  public:
   Writer(int32_t stripeSize)
       : stripeSize_(stripeSize),
@@ -134,7 +163,7 @@ class Writer {
   void append(RowVectorPtr data);
 
   // Finishes encoding data, makes the table ready to read.
-  void finalize(std::string tableName);
+  Table* finalize(std::string tableName);
 
  private:
   TypePtr type_;
@@ -142,7 +171,7 @@ class Writer {
   const int32_t stripeSize_;
   std::vector<std::unique_ptr<Stripe>> stripes_;
   std::shared_ptr<memory::MemoryPool> pool_;
-  std::vector<std::unique_ptr<Encoder>> encoders_;
+  std::vector<std::unique_ptr<EncoderBase>> encoders_;
 };
 
 using SplitVector = std::vector<std::shared_ptr<connector::ConnectorSplit>>;
@@ -179,16 +208,9 @@ class Table {
     return it->second;
   }
 
-  void addStripes(
+    void addStripes(
       std::vector<std::unique_ptr<Stripe>>&& stripes,
-      std::shared_ptr<memory::MemoryPool> pool) {
-    std::lock_guard<std::mutex> l(mutex_);
-    for (auto& s : stripes) {
-      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size());
-      stripes_.push_back(std::move(s));
-    }
-    pools_.push_back(pool);
-  }
+      std::shared_ptr<memory::MemoryPool> pool);
 
   int32_t numStripes() const {
     return stripes_.size();
@@ -207,7 +229,7 @@ class Table {
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stripe : stripes_) {
       result.push_back(std::make_shared<connector::hive::HiveConnectorSplit>(
-          "wavemock", stripe->name, dwio::common::FileFormat::UNKNOWN));
+          "test-hive", stripe->name, dwio::common::FileFormat::UNKNOWN));
     }
     return result;
   }

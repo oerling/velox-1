@@ -35,7 +35,7 @@ class WaveHiveDataSource : public WaveDataSource {
       const connector::ConnectorQueryCtx* connectorQueryCtx,
       const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
-      const exec::ExprSet& remainingFilter,
+      const exec::ExprSet* remainingFilter,
       std::shared_ptr<common::MetadataFilter> metadataFilter);
 
   void addDynamicFilter(

@@ -35,36 +35,119 @@ int32_t bitWidth(uint64_t max) {
   return 64 - __builtin_clzll(max);
 }
 
+  template <typename T>
+T  subtractMin(T value, T min) {
+    return value - min;
+  }
+
+  template<>
+  StringView subtractMin(StringView value, StringView /*min*/) {
+    return value;
+  }
+
+  
+  template<>
+  Timestamp subtractMin(Timestamp value, Timestamp /*min*/) {
+    return value;
+  }
+
+    template<>
+  double subtractMin(double value, double /*min*/) {
+    return value;
+  }
+
+      template<>
+  float subtractMin(float value, float /*min*/) {
+    return value;
+  }
+
+
+  template <typename T>
+  int64_t baseValue(T value) { return static_cast<int64_t>(value); }
+
+
+
+  template<>
+  int64_t baseValue(StringView value) { return 0;}
+
+  
+  template<>
+  int64_t baseValue(Timestamp value) { return 0;}
+
+    template<>
+  int64_t baseValue(double value) { return 0;}
+  template<>
+  int64_t baseValue(float value) { return 0;}
+
+  template <typename T>
+  int32_t rangeBitWidth(T max, T min) {
+    auto bits = bitWidth(baseValue(subtractMin(max, min)));
+    return bits ? bits : sizeof(T) * 8;
+  }
+	     
 template <typename T>
 BufferPtr
-encodeInts(const std::vector<T>& ints, uint64_t max, memory::MemoryPool* pool) {
-  int32_t width = bitWidth(max);
-  int32_t size = bits::roundUp(ints.size() * width, 128) / 128;
+encodeInts(const std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
+  int32_t width = rangeBitWidth(max, min);
+  int32_t size = bits::roundUp(ints.size() * width, 128) / 8;
   auto buffer = AlignedBuffer::allocate<char>(size, pool);
   auto destination = buffer->asMutable<uint64_t>();
-  auto source = reinterpret_cast<const uint64_t*>(ints.data());
-  int32_t sourceWidth = sizeof(T) * 8;
   for (auto i = 0; i < ints.size(); ++i) {
-    bits::copyBits(source, i * sourceWidth, destination, i * width, width);
+    T sourceValue = subtractMin(ints[i],  min);
+    bits::copyBits(reinterpret_cast<uint64_t*>(&sourceValue), 0, destination, i * width, width);
   }
   return buffer;
 }
 
-int64_t Encoder::flatSize() {
-  if (kind_ == TypeKind::VARCHAR) {
+  template <TypeKind kind>
+  std::unique_ptr<EncoderBase> makeTypedEncoder(memory::MemoryPool& pool, const TypePtr& type) {
+    using T = typename TypeTraits<kind>::NativeType;
+    return std::make_unique<Encoder<T>>(&pool, type);
+  }
+
+  std::unique_ptr<EncoderBase> makeEncoder(memory::MemoryPool& pool, const TypePtr& type) {
+    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(makeTypedEncoder, type->kind(), pool, type);
+  }
+
+  template <typename T>
+  int64_t Encoder<T>::flatSize() {
+    return count_ * rangeBitWidth(max_, min_) / 8;
+}
+
+  template <>
+  int64_t Encoder<StringView>::flatSize() {
     return totalStringBytes_ + (count_ * bitWidth(maxLength_) / 8);
   }
-  return count_ * bitWidth(max_) / 8;
-}
 
-int64_t Encoder::dictSize() {
-  if (kind_ == TypeKind::VARCHAR) {
-    return (count_ * bitWidth(strings_.size() - 1) / 8) + dictBytes_;
+    template <>
+  int64_t Encoder<Timestamp>::flatSize() {
+      return direct_.size() * sizeof(Timestamp);
   }
-  return (bitWidth(max_) * ints_.size() / 8) +
-      (bitWidth(ints_.size() - 1) * count_ / 8);
+
+  template<>
+  int64_t Encoder<double>::flatSize() {
+      return direct_.size() * sizeof(double);
+  }
+
+  template <>
+    int64_t Encoder<float>::flatSize() {
+      return direct_.size() * sizeof(float);
+  }
+
+  
+  template <typename T>
+  int64_t Encoder<T>::dictSize() {
+    return (rangeBitWidth(max_, min_) * distincts_.size() / 8) +
+      (bitWidth(distincts_.size() - 1) * count_ / 8);
 }
 
+  template <>
+  int64_t Encoder<StringView>::dictSize() {
+    return (count_ * bitWidth(distincts_.size() - 1) / 8) + dictBytes_;
+  }
+
+
+  
 struct StringWithId {
   StringView string;
   int32_t id;
@@ -72,48 +155,65 @@ struct StringWithId {
 
 template <typename T>
 std::unique_ptr<Column>
-directInts(std::vector<T>& ints, uint64_t max, memory::MemoryPool* pool) {
+directInts(std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
   auto column = std::make_unique<Column>();
-  column->values = encodeInts(ints, max, pool);
+  column->values = encodeInts(ints, min, max, pool);
   column->numValues = ints.size();
   return column;
 }
 
-std::unique_ptr<Column> Encoder::toColumn() {
+
+  template <typename T>
+  std::unique_ptr<Column> Encoder<T>::toColumn() {
   auto column = std::make_unique<Column>();
   column->kind = kind_;
+  if (distincts_.size() <= 1) {
+    VELOX_NYI("constant not supported");
+  }
   if (!abandonDict_ && dictSize() < flatSize()) {
     if (kind_ == TypeKind::VARCHAR) {
       column->encoding = kDict;
-      column->values = encodeInts(indices_, strings_.size() - 1, pool_);
-      column->bitWidth = bitWidth(strings_.size() - 1);
+      column->values = encodeInts(indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
+      column->bitWidth = bitWidth(distincts_.size() - 1);
       column->alphabet = dictStrings_.toColumn();
       return column;
     } else {
-      column->alphabet = directInts(dictInts_, max_, pool_);
+      column->alphabet = directInts(dictInts_, min_, max_, pool_);
     }
   }
-}
+  column->values = encodeInts(direct_, min_, max_, pool_);
+  column->numValues = count_;
+  column->bitWidth = rangeBitWidth(max_, min_); 
+    column->baseline = baseValue(min_);
+  return column;
+  }
 
 template <typename T>
-void Encoder::add(T data) {
-  uint64_t item = 0;
-  memcpy(&item, &data, std::min(sizeof(item), sizeof(data)));
-  if (item > max_) {
-    max_ = item;
+void Encoder<T>::add(T data) {
+  if (direct_.empty()) {
+    min_ = data;
+    max_ = data;
+  } else {
+    if (data > max_) {
+      max_ = data;
+    } else if (data < min_) {
+      min_ = data;
+    }
   }
-  direct_.push_back(item);
+  ++count_;
+  ++nonNullCount_;
+  direct_.push_back(data);
   if (abandonDict_) {
     return;
   }
-  auto it = ints_.find(item);
-  if (it != ints_.end()) {
+  auto it = distincts_.find(data);
+  if (it != distincts_.end()) {
     indices_.push_back(it->second);
     return;
   }
-  auto id = ints_.size();
-  ints_[item] = id;
-  dictInts_.push_back(item);
+  auto id = distincts_.size();
+  distincts_[data] = id;
+  dictInts_.push_back(data);
   indices_.push_back(id);
 }
 
@@ -147,13 +247,15 @@ std::unique_ptr<Column> StringSet::toColumn() {
   column->kind = TypeKind::VARCHAR;
   column->encoding = kFlat;
   column->values = buffer;
-  column->lengths = directInts(lengths_, maxLength_, pool_);
+  column->lengths = directInts(lengths_, 0, maxLength_, pool_);
   column->bitWidth = bitWidth(maxLength_);
   return column;
 }
 
 template <>
-void Encoder::add(StringView data) {
+void Encoder<StringView>::add(StringView data) {
+  ++count_;
+  ++nonNullCount_;
   auto size = data.size();
   totalStringBytes_ += size;
   if (size > maxLength_) {
@@ -164,44 +266,35 @@ void Encoder::add(StringView data) {
     allStrings_.add(data);
     return;
   }
-  auto it = strings_.find(data);
-  if (it != strings_.end()) {
+  auto it = distincts_.find(data);
+  if (it != distincts_.end()) {
     indices_.push_back(it->second);
     return;
   }
   dictBytes_ += data.size();
   auto copy = dictStrings_.add(data);
-  auto id = strings_.size();
-  strings_[copy] = id;
+  auto id = distincts_.size();
+  distincts_[copy] = id;
   indices_.push_back(id);
 }
 
-template <TypeKind kind>
-void Encoder::appendTyped(VectorPtr data) {
-  using T = typename TypeTraits<kind>::NativeType;
+template <typename T>
+void Encoder<T>::append(const VectorPtr& data) {
 
   auto size = data->size();
   SelectivityVector allRows(size);
   DecodedVector decoded(*data, allRows, true);
   for (auto i = 0; i < size; ++i) {
-    add<T>(decoded.valueAt<T>(i));
+    add(decoded.valueAt<T>(i));
   }
 }
 
-void Encoder::append(VectorPtr data) {
-  auto kind = data->type()->kind();
-  if (kind == TypeKind::UNKNOWN) {
-    kind_ = kind;
-  }
-  count_ += data->size();
-  VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(appendTyped, kind, data);
-}
 
 void Writer::append(RowVectorPtr data) {
   type_ = data->type();
   if (encoders_.empty()) {
     for (auto i = 0; i < data->type()->size(); ++i) {
-      encoders_.push_back(std::make_unique<Encoder>(pool_.get()));
+      encoders_.push_back(makeEncoder(*pool_, data->type()->as<TypeKind::ROW>().childAt(i)));
     }
   }
   VELOX_CHECK_EQ(encoders_.size(), data->type()->size());
@@ -219,12 +312,26 @@ void Writer::finishStripe() {
       std::move(columns), dwio::common::TypeWithId::create(type_)));
 }
 
-void Writer::finalize(std::string tableName) {
+Table* Writer::finalize(std::string tableName) {
   finishStripe();
   auto table = Table::getTable(tableName, true);
   table->addStripes(std::move(stripes_), pool_);
+  return table;
 }
 
+  void Table::addStripes(
+      std::vector<std::unique_ptr<Stripe>>&& stripes,
+      std::shared_ptr<memory::MemoryPool> pool) {
+    std::lock_guard<std::mutex> l(mutex_);
+    for (auto& s : stripes) {
+      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size());
+      allStripes_[s->name] = s.get();
+      stripes_.push_back(std::move(s));
+    }
+    pools_.push_back(pool);
+  }
+
+  
 // static
 const Table* Table::defineTable(
     const std::string& name,
@@ -234,7 +341,7 @@ const Table* Table::defineTable(
   for (auto& vector : data) {
     writer.append(vector);
   }
-  writer.finalize(name);
+  return writer.finalize(name);
 }
 
 //  static

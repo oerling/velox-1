@@ -86,6 +86,8 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
     dataSource_ = connector_->createDataSource(
         outputType_, tableHandle_, columnHandles_, connectorQueryCtx_.get());
     waveDataSource_ = dataSource_->toWaveDataSource();
+    waveDataSource_->setOutputOperands(defines_);
+    waveDataSource_->addSplit(connectorSplit);
   } else {
     if (connectorSplit->dataSource) {
       ++numPreloadedSplits_;
@@ -124,6 +126,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
        table = tableHandle_,
        columns = columnHandles_,
        connector = connector_,
+       defines = defines_,
        ctx = driver_->operatorCtx()->createConnectorQueryCtx(
            split->connectorId, planNodeId_, connectorPool_),
        task = driver_->operatorCtx()->task(),
@@ -144,6 +147,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
           return nullptr;
         }
         auto waveSource = ptr->toWaveDataSource();
+	waveSource->setOutputOperands(defines);
         waveSource->addSplit(split);
         return ptr;
       });

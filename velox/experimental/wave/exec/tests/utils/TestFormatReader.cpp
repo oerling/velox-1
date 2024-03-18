@@ -25,7 +25,7 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
     const std::shared_ptr<const dwio::common::TypeWithId>& type,
     const velox::common::ScanSpec& scanSpec,
     OperandId operand) {
-  auto* column = stripe_->findColumn(*type);
+  auto* column = type->id() == 0 ? nullptr : stripe_->findColumn(*type);
   return std::make_unique<TestFormatData>(
       operand, stripe_->columns[0]->numValues, column);
 }
@@ -38,6 +38,7 @@ void TestFormatData::startOp(
     SplitStaging& splitStaging,
     DecodePrograms& program,
     ReadStream& stream) {
+  VELOX_CHECK_NOT_NULL(column_);
   BufferId id = kNoBufferId;
   if (!staged_) {
     staged_ = true;
@@ -138,6 +139,7 @@ std::unique_ptr<ColumnReader> TestFormatReader::build(
     bool isRoot) {
   switch (fileType->type()->kind()) {
     case TypeKind::INTEGER:
+    case TypeKind::BIGINT:
       return buildIntegerReader(
           requestedType, fileType, params, scanSpec, path, defines);
 

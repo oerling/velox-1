@@ -31,7 +31,7 @@ WaveHiveDataSource::WaveHiveDataSource(
     const connector::ConnectorQueryCtx* connectorQueryCtx,
     const std::shared_ptr<HiveConfig>& hiveConfig,
     const std::shared_ptr<io::IoStatistics>& ioStats,
-    const exec::ExprSet& remainingFilter,
+    const exec::ExprSet* remainingFilter,
     std::shared_ptr<common::MetadataFilter> metadataFilter) {
   params_.hiveTableHandle = hiveTableHandle;
   params_.scanSpec = scanSpec;
@@ -42,10 +42,17 @@ WaveHiveDataSource::WaveHiveDataSource(
   params_.connectorQueryCtx = connectorQueryCtx;
   params_.hiveConfig = hiveConfig;
   params_.ioStats = ioStats;
-  remainingFilter_ = remainingFilter.exprs().at(0);
+  remainingFilter_ = remainingFilter ? remainingFilter->exprs().at(0) : nullptr;
   metadataFilter_ = metadataFilter;
 }
 
+  void WaveHiveDataSource::addDynamicFilter(
+      column_index_t outputChannel,
+      const std::shared_ptr<common::Filter>& filter) {
+    VELOX_NYI();
+  }
+
+  
 void WaveHiveDataSource::setFromDataSource(
     std::shared_ptr<WaveDataSource> sourceShared) {
   auto source = dynamic_cast<WaveHiveDataSource*>(sourceShared.get());
@@ -163,7 +170,7 @@ void WaveHiveDataSource::registerConnector() {
          const connector::ConnectorQueryCtx* connectorQueryCtx,
          const std::shared_ptr<HiveConfig>& hiveConfig,
          const std::shared_ptr<io::IoStatistics>& ioStats,
-         const exec::ExprSet& remainingFilter,
+         const exec::ExprSet* remainingFilter,
          std::shared_ptr<common::MetadataFilter> metadataFilter) {
         return std::make_shared<WaveHiveDataSource>(
             hiveTableHandle,
