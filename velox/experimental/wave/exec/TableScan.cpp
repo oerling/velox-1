@@ -147,7 +147,7 @@ void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {
           return nullptr;
         }
         auto waveSource = ptr->toWaveDataSource();
-	waveSource->setOutputOperands(defines);
+        waveSource->setOutputOperands(defines);
         waveSource->addSplit(split);
         return ptr;
       });

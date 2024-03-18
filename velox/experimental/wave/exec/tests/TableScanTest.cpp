@@ -17,13 +17,13 @@
 #include "velox/exec/ExchangeSource.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/WaveHiveDataSource.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
-#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 using namespace facebook::velox;

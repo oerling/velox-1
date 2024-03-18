@@ -46,13 +46,12 @@ WaveHiveDataSource::WaveHiveDataSource(
   metadataFilter_ = metadataFilter;
 }
 
-  void WaveHiveDataSource::addDynamicFilter(
-      column_index_t outputChannel,
-      const std::shared_ptr<common::Filter>& filter) {
-    VELOX_NYI();
-  }
+void WaveHiveDataSource::addDynamicFilter(
+    column_index_t outputChannel,
+    const std::shared_ptr<common::Filter>& filter) {
+  VELOX_NYI();
+}
 
-  
 void WaveHiveDataSource::setFromDataSource(
     std::shared_ptr<WaveDataSource> sourceShared) {
   auto source = dynamic_cast<WaveHiveDataSource*>(sourceShared.get());

@@ -24,9 +24,9 @@
 /// Sample set of composable encodings. Bit packing, direct and dictionary.
 namespace facebook::velox::wave::test {
 
-  class Table;
-  
-  enum Encoding { kFlat, kDict };
+class Table;
+
+enum Encoding { kFlat, kDict };
 
 struct Column {
   TypeKind kind;
@@ -82,18 +82,21 @@ class StringSet {
   memory::MemoryPool* pool_;
 };
 
-  class EncoderBase {
-  public:
-    virtual void append(const VectorPtr& data) = 0;
+class EncoderBase {
+ public:
+  virtual void append(const VectorPtr& data) = 0;
 
-    virtual   std::unique_ptr<Column>  toColumn() = 0;
-  };
-  
-    template <typename T>
-    class Encoder : public EncoderBase {
+  virtual std::unique_ptr<Column> toColumn() = 0;
+};
+
+template <typename T>
+class Encoder : public EncoderBase {
  public:
   Encoder(memory::MemoryPool* pool, const TypePtr& type)
-    : pool_(pool), kind_(type->kind()), dictStrings_(pool), allStrings_(pool) {}
+      : pool_(pool),
+        kind_(type->kind()),
+        dictStrings_(pool),
+        allStrings_(pool) {}
 
   // Adds data.
   void append(const VectorPtr& data) override;
@@ -102,19 +105,18 @@ class StringSet {
   std::unique_ptr<Column> toColumn() override;
 
  private:
-
   void appendTyped(VectorPtr data);
 
   void add(T data);
 
-      int64_t flatSize();
+  int64_t flatSize();
   int64_t dictSize();
 
   memory::MemoryPool* pool_;
   TypeKind kind_;
   int32_t count_{0};
-      int32_t nonNullCount_{0};
-      // Distincts for either int64_t or double.
+  int32_t nonNullCount_{0};
+  // Distincts for either int64_t or double.
   folly::F14FastMap<T, int32_t> distincts_;
   // Values as indices into dicts.
   std::vector<int32_t> indices_;
@@ -124,8 +126,8 @@ class StringSet {
   std::vector<T> direct_;
   // True if too many distinct values for dict.
   bool abandonDict_{false};
-      T max_{};
-      T min_{};
+  T max_{};
+  T min_{};
   // longest string, if string type.
   int32_t maxLength_{0};
   // Total bytes in distinct strings.
@@ -137,23 +139,23 @@ class StringSet {
   StringSet allStrings_;
 };
 
-  template <>
-  void Encoder<StringView>::add(StringView data);
+template <>
+void Encoder<StringView>::add(StringView data);
 
-  template <>
-  int64_t Encoder<StringView>::dictSize();
+template <>
+int64_t Encoder<StringView>::dictSize();
 
-    template <>
-  int64_t Encoder<StringView>::flatSize();
+template <>
+int64_t Encoder<StringView>::flatSize();
 
-      template <>
-  int64_t Encoder<Timestamp>::flatSize();
-    template <>
-  int64_t Encoder<double>::flatSize();
-    template <>
-  int64_t Encoder<float>::flatSize();
+template <>
+int64_t Encoder<Timestamp>::flatSize();
+template <>
+int64_t Encoder<double>::flatSize();
+template <>
+int64_t Encoder<float>::flatSize();
 
-  class Writer {
+class Writer {
  public:
   Writer(int32_t stripeSize)
       : stripeSize_(stripeSize),
@@ -208,7 +210,7 @@ class Table {
     return it->second;
   }
 
-    void addStripes(
+  void addStripes(
       std::vector<std::unique_ptr<Stripe>>&& stripes,
       std::shared_ptr<memory::MemoryPool> pool);
 

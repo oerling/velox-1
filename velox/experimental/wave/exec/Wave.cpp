@@ -19,22 +19,22 @@
 
 namespace facebook::velox::wave {
 
+DefinesMap*& threadDefinesMap() {
+  thread_local DefinesMap* defines;
+  return defines;
+}
 
-  DefinesMap*& threadDefinesMap() {
-    thread_local DefinesMap* defines;
-    return defines;
+std::string definesToString(const DefinesMap* map) {
+  std::stringstream out;
+  for (const auto& [value, id] : *map) {
+    out
+        << (value.subfield ? value.subfield->toString()
+                           : value.expr->toString(1));
+    out << " = " << id->id << " (" << id->type->toString() << ")" << std::endl;
   }
+  return out.str();
+}
 
-  
-  std::string definesToString(const DefinesMap* map) {
-    std::stringstream out;
-    for (const auto& [value, id] : *map) {
-      out << (value.subfield ? value.subfield->toString() : value.expr->toString(1));
-      out << " = " << id->id << " (" << id->type->toString() << ")" << std::endl;
-    }
-    return out.str();
-  }
-  
 OperandId pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {

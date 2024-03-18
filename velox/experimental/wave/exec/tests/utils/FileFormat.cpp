@@ -35,56 +35,61 @@ int32_t bitWidth(uint64_t max) {
   return 64 - __builtin_clzll(max);
 }
 
-  template <typename T>
-T  subtractMin(T value, T min) {
-    return value - min;
-  }
+template <typename T>
+T subtractMin(T value, T min) {
+  return value - min;
+}
 
-  template<>
-  StringView subtractMin(StringView value, StringView /*min*/) {
-    return value;
-  }
+template <>
+StringView subtractMin(StringView value, StringView /*min*/) {
+  return value;
+}
 
-  
-  template<>
-  Timestamp subtractMin(Timestamp value, Timestamp /*min*/) {
-    return value;
-  }
+template <>
+Timestamp subtractMin(Timestamp value, Timestamp /*min*/) {
+  return value;
+}
 
-    template<>
-  double subtractMin(double value, double /*min*/) {
-    return value;
-  }
+template <>
+double subtractMin(double value, double /*min*/) {
+  return value;
+}
 
-      template<>
-  float subtractMin(float value, float /*min*/) {
-    return value;
-  }
+template <>
+float subtractMin(float value, float /*min*/) {
+  return value;
+}
 
+template <typename T>
+int64_t baseValue(T value) {
+  return static_cast<int64_t>(value);
+}
 
-  template <typename T>
-  int64_t baseValue(T value) { return static_cast<int64_t>(value); }
+template <>
+int64_t baseValue(StringView value) {
+  return 0;
+}
 
+template <>
+int64_t baseValue(Timestamp value) {
+  return 0;
+}
 
+template <>
+int64_t baseValue(double value) {
+  return 0;
+}
+template <>
+int64_t baseValue(float value) {
+  return 0;
+}
 
-  template<>
-  int64_t baseValue(StringView value) { return 0;}
+template <typename T>
+int32_t rangeBitWidth(T max, T min) {
+  auto bits = bitWidth(baseValue(subtractMin(max, min)));
+  return bits ? bits : sizeof(T) * 8;
+}
 
-  
-  template<>
-  int64_t baseValue(Timestamp value) { return 0;}
-
-    template<>
-  int64_t baseValue(double value) { return 0;}
-  template<>
-  int64_t baseValue(float value) { return 0;}
-
-  template <typename T>
-  int32_t rangeBitWidth(T max, T min) {
-    auto bits = bitWidth(baseValue(subtractMin(max, min)));
-    return bits ? bits : sizeof(T) * 8;
-  }
-	     
 template <typename T>
 BufferPtr
 encodeInts(const std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
@@ -93,61 +98,68 @@ encodeInts(const std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
   auto buffer = AlignedBuffer::allocate<char>(size, pool);
   auto destination = buffer->asMutable<uint64_t>();
   for (auto i = 0; i < ints.size(); ++i) {
-    T sourceValue = subtractMin(ints[i],  min);
-    bits::copyBits(reinterpret_cast<uint64_t*>(&sourceValue), 0, destination, i * width, width);
+    T sourceValue = subtractMin(ints[i], min);
+    bits::copyBits(
+        reinterpret_cast<uint64_t*>(&sourceValue),
+        0,
+        destination,
+        i * width,
+        width);
   }
   return buffer;
 }
 
-  template <TypeKind kind>
-  std::unique_ptr<EncoderBase> makeTypedEncoder(memory::MemoryPool& pool, const TypePtr& type) {
-    using T = typename TypeTraits<kind>::NativeType;
-    return std::make_unique<Encoder<T>>(&pool, type);
-  }
-
-  std::unique_ptr<EncoderBase> makeEncoder(memory::MemoryPool& pool, const TypePtr& type) {
-    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(makeTypedEncoder, type->kind(), pool, type);
-  }
-
-  template <typename T>
-  int64_t Encoder<T>::flatSize() {
-    return count_ * rangeBitWidth(max_, min_) / 8;
+template <TypeKind kind>
+std::unique_ptr<EncoderBase> makeTypedEncoder(
+    memory::MemoryPool& pool,
+    const TypePtr& type) {
+  using T = typename TypeTraits<kind>::NativeType;
+  return std::make_unique<Encoder<T>>(&pool, type);
 }
 
-  template <>
-  int64_t Encoder<StringView>::flatSize() {
-    return totalStringBytes_ + (count_ * bitWidth(maxLength_) / 8);
-  }
+std::unique_ptr<EncoderBase> makeEncoder(
+    memory::MemoryPool& pool,
+    const TypePtr& type) {
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      makeTypedEncoder, type->kind(), pool, type);
+}
 
-    template <>
-  int64_t Encoder<Timestamp>::flatSize() {
-      return direct_.size() * sizeof(Timestamp);
-  }
+template <typename T>
+int64_t Encoder<T>::flatSize() {
+  return count_ * rangeBitWidth(max_, min_) / 8;
+}
 
-  template<>
-  int64_t Encoder<double>::flatSize() {
-      return direct_.size() * sizeof(double);
-  }
+template <>
+int64_t Encoder<StringView>::flatSize() {
+  return totalStringBytes_ + (count_ * bitWidth(maxLength_) / 8);
+}
 
-  template <>
-    int64_t Encoder<float>::flatSize() {
-      return direct_.size() * sizeof(float);
-  }
+template <>
+int64_t Encoder<Timestamp>::flatSize() {
+  return direct_.size() * sizeof(Timestamp);
+}
 
-  
-  template <typename T>
-  int64_t Encoder<T>::dictSize() {
-    return (rangeBitWidth(max_, min_) * distincts_.size() / 8) +
+template <>
+int64_t Encoder<double>::flatSize() {
+  return direct_.size() * sizeof(double);
+}
+
+template <>
+int64_t Encoder<float>::flatSize() {
+  return direct_.size() * sizeof(float);
+}
+
+template <typename T>
+int64_t Encoder<T>::dictSize() {
+  return (rangeBitWidth(max_, min_) * distincts_.size() / 8) +
       (bitWidth(distincts_.size() - 1) * count_ / 8);
 }
 
-  template <>
-  int64_t Encoder<StringView>::dictSize() {
-    return (count_ * bitWidth(distincts_.size() - 1) / 8) + dictBytes_;
-  }
+template <>
+int64_t Encoder<StringView>::dictSize() {
+  return (count_ * bitWidth(distincts_.size() - 1) / 8) + dictBytes_;
+}
 
-
-  
 struct StringWithId {
   StringView string;
   int32_t id;
@@ -162,9 +174,8 @@ directInts(std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
   return column;
 }
 
-
-  template <typename T>
-  std::unique_ptr<Column> Encoder<T>::toColumn() {
+template <typename T>
+std::unique_ptr<Column> Encoder<T>::toColumn() {
   auto column = std::make_unique<Column>();
   column->kind = kind_;
   if (distincts_.size() <= 1) {
@@ -173,7 +184,8 @@ directInts(std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
   if (!abandonDict_ && dictSize() < flatSize()) {
     if (kind_ == TypeKind::VARCHAR) {
       column->encoding = kDict;
-      column->values = encodeInts(indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
+      column->values = encodeInts(
+          indices_, 0, static_cast<int32_t>(distincts_.size() - 1), pool_);
       column->bitWidth = bitWidth(distincts_.size() - 1);
       column->alphabet = dictStrings_.toColumn();
       return column;
@@ -183,10 +195,10 @@ directInts(std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
   }
   column->values = encodeInts(direct_, min_, max_, pool_);
   column->numValues = count_;
-  column->bitWidth = rangeBitWidth(max_, min_); 
-    column->baseline = baseValue(min_);
+  column->bitWidth = rangeBitWidth(max_, min_);
+  column->baseline = baseValue(min_);
   return column;
-  }
+}
 
 template <typename T>
 void Encoder<T>::add(T data) {
@@ -280,7 +292,6 @@ void Encoder<StringView>::add(StringView data) {
 
 template <typename T>
 void Encoder<T>::append(const VectorPtr& data) {
-
   auto size = data->size();
   SelectivityVector allRows(size);
   DecodedVector decoded(*data, allRows, true);
@@ -289,12 +300,12 @@ void Encoder<T>::append(const VectorPtr& data) {
   }
 }
 
-
 void Writer::append(RowVectorPtr data) {
   type_ = data->type();
   if (encoders_.empty()) {
     for (auto i = 0; i < data->type()->size(); ++i) {
-      encoders_.push_back(makeEncoder(*pool_, data->type()->as<TypeKind::ROW>().childAt(i)));
+      encoders_.push_back(
+          makeEncoder(*pool_, data->type()->as<TypeKind::ROW>().childAt(i)));
     }
   }
   VELOX_CHECK_EQ(encoders_.size(), data->type()->size());
@@ -319,19 +330,18 @@ Table* Writer::finalize(std::string tableName) {
   return table;
 }
 
-  void Table::addStripes(
-      std::vector<std::unique_ptr<Stripe>>&& stripes,
-      std::shared_ptr<memory::MemoryPool> pool) {
-    std::lock_guard<std::mutex> l(mutex_);
-    for (auto& s : stripes) {
-      s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size());
-      allStripes_[s->name] = s.get();
-      stripes_.push_back(std::move(s));
-    }
-    pools_.push_back(pool);
+void Table::addStripes(
+    std::vector<std::unique_ptr<Stripe>>&& stripes,
+    std::shared_ptr<memory::MemoryPool> pool) {
+  std::lock_guard<std::mutex> l(mutex_);
+  for (auto& s : stripes) {
+    s->name = fmt::format("wavemock://{}/{}", name_, stripes_.size());
+    allStripes_[s->name] = s.get();
+    stripes_.push_back(std::move(s));
   }
+  pools_.push_back(pool);
+}
 
-  
 // static
 const Table* Table::defineTable(
     const std::string& name,
