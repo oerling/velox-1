@@ -14,5 +14,5 @@
 
 add_subdirectory(decode)
 
-add_library(velox_wave_dwio ColumnReader.cpp FormatData.cpp ReadStream.cpp StructColumnReader.cpp)
-
+add_library(velox_wave_dwio ColumnReader.cpp FormatData.cpp ReadStream.cpp
+                            StructColumnReader.cpp)
