@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-
 add_library(velox_wave_mock_file FileFormat.cpp)
-target_link_libraries(velox_wave_mock_file 
-                      velox_exception velox_common_base velox_vector)
+target_link_libraries(velox_wave_mock_file velox_exception velox_common_base
+                      velox_vector)
 
+add_library(velox_wave_mock_reader WaveTestSplitReader.cpp TestFormatReader.cpp)
 
-
-add_library(velox_wave_mock_reader 
-  WaveTestSplitReader.cpp TestFormatReader.cpp)
-
-
-target_link_libraries(velox_wave_mock_reader 
-velox_wave_exec velox_wave_mock_file  velox_wave_dwio velox_wave_decode
-  velox_exception velox_common_base velox_vector )
-
-
-
+target_link_libraries(
+  velox_wave_mock_reader
+  velox_wave_exec
+  velox_wave_mock_file
+  velox_wave_dwio
+  velox_wave_decode
+  velox_exception
+  velox_common_base
+  velox_vector)
