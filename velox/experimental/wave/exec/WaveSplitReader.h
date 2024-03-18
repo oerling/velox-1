@@ -16,52 +16,50 @@
 
 #pragma once
 
+#include "velox/common/io/IoStatistics.h"
 #include "velox/common/time/Timer.h"
-#include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/ScanSpec.h"
-#include "velox/common/io/IoStatistics.h"
+#include "velox/dwio/common/Statistics.h"
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
-#include "velox/dwio/common/Statistics.h"
 
 namespace facebook::velox::wave {
 
-  /// Parameters for a Wave Hive SplitReaderFactory.
-  struct SplitReaderParams {
-    std ::shared_ptr<connector::hive::HiveTableHandle> hiveTableHandle;
-    std::shared_ptr<common::ScanSpec> scanSpec;
-    RowTypePtr readerOutputType;
-    std::unordered_map<std::string, std::shared_ptr<connector::hive::HiveColumnHandle>>*
-      partitionKeys;
-    FileHandleFactory* fileHandleFactory;
-    folly::Executor* executor;
-    const connector::ConnectorQueryCtx* connectorQueryCtx;
-    std::shared_ptr<connector::hive::HiveConfig> hiveConfig;
-    std::shared_ptr<io::IoStatistics> ioStats;
-  };
-  
+/// Parameters for a Wave Hive SplitReaderFactory.
+struct SplitReaderParams {
+  std ::shared_ptr<connector::hive::HiveTableHandle> hiveTableHandle;
+  std::shared_ptr<common::ScanSpec> scanSpec;
+  RowTypePtr readerOutputType;
+  std::unordered_map<
+      std::string,
+      std::shared_ptr<connector::hive::HiveColumnHandle>>* partitionKeys;
+  FileHandleFactory* fileHandleFactory;
+  folly::Executor* executor;
+  const connector::ConnectorQueryCtx* connectorQueryCtx;
+  std::shared_ptr<connector::hive::HiveConfig> hiveConfig;
+  std::shared_ptr<io::IoStatistics> ioStats;
+};
 
-  class WaveSplitReaderFactory;
+class WaveSplitReaderFactory;
 
-  class WaveSplitReader {
+class WaveSplitReader {
  public:
-    virtual ~WaveSplitReader() = default;
-    
-    static std::unique_ptr<WaveSplitReader>create(
-    const std::shared_ptr<velox::connector::ConnectorSplit>&
-    split,
-    const SplitReaderParams& params,
-						  const DefinesMap* defines);
+  virtual ~WaveSplitReader() = default;
 
-    virtual bool emptySplit() = 0;
-    
+  static std::unique_ptr<WaveSplitReader> create(
+      const std::shared_ptr<velox::connector::ConnectorSplit>& split,
+      const SplitReaderParams& params,
+      const DefinesMap* defines);
+
+  virtual bool emptySplit() = 0;
+
   virtual int32_t canAdvance() = 0;
 
-    virtual void schedule(WaveStream& stream, int32_t maxRows) = 0;
- 
+  virtual void schedule(WaveStream& stream, int32_t maxRows) = 0;
+
   virtual vector_size_t outputSize(WaveStream& stream) const = 0;
 
   virtual bool isFinished() const = 0;
@@ -72,24 +70,22 @@ namespace facebook::velox::wave {
 
   virtual std::unordered_map<std::string, RuntimeCounter> runtimeStats() = 0;
 
-    virtual void configureReaderOptions() {}
-    virtual void prepareSplit(      std::shared_ptr<common::MetadataFilter> metadataFilter,
-			       dwio::common::RuntimeStatistics& runtimeStats) {}
+  virtual void configureReaderOptions() {}
+  virtual void prepareSplit(
+      std::shared_ptr<common::MetadataFilter> metadataFilter,
+      dwio::common::RuntimeStatistics& runtimeStats) {}
 
-    static void registerFactory(std::unique_ptr<WaveSplitReaderFactory> factory);
-  
-  static std::vector <std::unique_ptr<WaveSplitReaderFactory>> factories_;
+  static void registerFactory(std::unique_ptr<WaveSplitReaderFactory> factory);
+
+  static std::vector<std::unique_ptr<WaveSplitReaderFactory>> factories_;
 };
 
-  class WaveSplitReaderFactory {
-    public:
-      virtual std::unique_ptr<WaveSplitReader> create (const std::shared_ptr<connector::ConnectorSplit>& split,
-						       const SplitReaderParams& params, const DefinesMap* defines) = 0;
+class WaveSplitReaderFactory {
+ public:
+  virtual std::unique_ptr<WaveSplitReader> create(
+      const std::shared_ptr<connector::ConnectorSplit>& split,
+      const SplitReaderParams& params,
+      const DefinesMap* defines) = 0;
+};
 
-    };
-
-  } // namespace facebook::velox::wave
-
-
-
-
+} // namespace facebook::velox::wave
