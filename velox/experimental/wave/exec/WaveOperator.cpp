@@ -49,6 +49,7 @@ void WaveOperator::definesSubfields(
         defines_[Value(field)] = operand;
       }
     }
+      [[fallthrough]];
       // TODO:Add cases for nested types.
     default: {
       return;

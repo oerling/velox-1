@@ -63,10 +63,9 @@ TEST(SpillConfig, spillLevel) {
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     if (testData.expectedLevel == -1) {
-      ASSERT_ANY_THROW(config.joinSpillLevel(testData.bitOffset));
+      ASSERT_ANY_THROW(config.spillLevel(testData.bitOffset));
     } else {
-      ASSERT_EQ(
-          config.joinSpillLevel(testData.bitOffset), testData.expectedLevel);
+      ASSERT_EQ(config.spillLevel(testData.bitOffset), testData.expectedLevel);
     }
   }
 }
@@ -130,7 +129,7 @@ TEST(SpillConfig, spillLevelLimit) {
 
     ASSERT_EQ(
         testData.expectedExceeds,
-        config.exceedJoinSpillLevelLimit(testData.bitOffset));
+        config.exceedSpillLevelLimit(testData.bitOffset, testData.numBits));
   }
 }
 

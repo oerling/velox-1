@@ -42,6 +42,7 @@
 #include "velox/functions/sparksql/String.h"
 #include "velox/functions/sparksql/StringToMap.h"
 #include "velox/functions/sparksql/UnscaledValueFunction.h"
+#include "velox/functions/sparksql/Uuid.h"
 #include "velox/functions/sparksql/specialforms/DecimalRound.h"
 #include "velox/functions/sparksql/specialforms/MakeDecimal.h"
 #include "velox/functions/sparksql/specialforms/SparkCastExpr.h"
@@ -126,6 +127,8 @@ void registerFunctions(const std::string& prefix) {
 
   // Register size functions
   registerSize(prefix + "size");
+
+  registerRegexpReplace(prefix);
 
   registerFunction<JsonExtractScalarFunction, Varchar, Varchar, Varchar>(
       {prefix + "get_json_object"});
@@ -276,6 +279,11 @@ void registerFunctions(const std::string& prefix) {
   registerFunction<WeekFunction, int32_t, Timestamp>({prefix + "week_of_year"});
   registerFunction<WeekFunction, int32_t, Date>({prefix + "week_of_year"});
 
+  registerFunction<ToUtcTimestampFunction, Timestamp, Timestamp, Varchar>(
+      {prefix + "to_utc_timestamp"});
+  registerFunction<FromUtcTimestampFunction, Timestamp, Timestamp, Varchar>(
+      {prefix + "from_utc_timestamp"});
+
   registerFunction<UnixDateFunction, int32_t, Date>({prefix + "unix_date"});
 
   registerFunction<UnixTimestampFunction, int64_t>({prefix + "unix_timestamp"});
@@ -351,6 +359,8 @@ void registerFunctions(const std::string& prefix) {
 
   registerFunction<MonotonicallyIncreasingIdFunction, int64_t>(
       {prefix + "monotonically_increasing_id"});
+
+  registerFunction<UuidFunction, Varchar, Constant<int64_t>>({prefix + "uuid"});
 }
 
 } // namespace sparksql

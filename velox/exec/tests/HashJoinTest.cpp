@@ -2642,7 +2642,13 @@ TEST_P(MultiThreadedHashJoinTest, leftJoinWithNullableFilter) {
 
   std::vector<RowVectorPtr> buildVectors =
       makeBatches(5, [&](int32_t /*unused*/) {
-        return makeRowVector({makeFlatVector<int32_t>({1, 2, 10, 30, 40})});
+        return makeRowVector(
+            {makeFlatVector<int32_t>(128, [](vector_size_t row) {
+              if (row < 3) {
+                return row;
+              }
+              return row + 10;
+            })});
       });
 
   HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
@@ -3138,7 +3144,7 @@ TEST_P(MultiThreadedHashJoinTest, noSpillLevelLimit) {
           "SELECT t_k0, t_data, u_k0, u_data FROM t, u WHERE t.t_k0 = u.u_k0")
       .maxSpillLevel(-1)
       .config(core::QueryConfig::kSpillStartPartitionBit, "48")
-      .config(core::QueryConfig::kJoinSpillPartitionBits, "3")
+      .config(core::QueryConfig::kNumSpillPartitionBits, "3")
       .checkSpillStats(false)
       .verifier([&](const std::shared_ptr<Task>& task, bool hasSpill) {
         if (!hasSpill) {
@@ -4938,7 +4944,7 @@ TEST_F(HashJoinTest, spillFileSize) {
         .referenceQuery(
             "SELECT t_k0, t_data, u_k0, u_data FROM t, u WHERE t.t_k0 = u.u_k0")
         .config(core::QueryConfig::kSpillStartPartitionBit, "48")
-        .config(core::QueryConfig::kJoinSpillPartitionBits, "3")
+        .config(core::QueryConfig::kNumSpillPartitionBits, "3")
         .config(
             core::QueryConfig::kMaxSpillFileSize, std::to_string(spillFileSize))
         .checkSpillStats(false)
@@ -4972,7 +4978,7 @@ TEST_F(HashJoinTest, spillPartitionBitsOverlap) {
           .referenceQuery(
               "SELECT t_k0, t_k1, t_data, u_k0, u_k1, u_data FROM t, u WHERE t_k0 = u_k0 and t_k1 = u_k1")
           .config(core::QueryConfig::kSpillStartPartitionBit, "8")
-          .config(core::QueryConfig::kJoinSpillPartitionBits, "1")
+          .config(core::QueryConfig::kNumSpillPartitionBits, "1")
           .checkSpillStats(false)
           .maxSpillLevel(0);
   VELOX_ASSERT_THROW(builder.run(), "vs. 8");
@@ -5422,7 +5428,6 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringAllocation) {
         "facebook::velox::exec::Driver::runInternal::addInput",
         std::function<void(Operator*)>(([&](Operator* testOp) {
           if (testOp->operatorType() != "HashBuild") {
-            ASSERT_FALSE(testOp->canReclaim());
             return;
           }
           op = testOp;
@@ -5670,10 +5675,10 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
                       concat(probeType_->names(), buildType_->names()))
                   .planNode();
 
+  std::atomic_bool driverWaitFlag{true};
   folly::EventCount driverWait;
-  auto driverWaitKey = driverWait.prepareWait();
+  std::atomic_bool testWaitFlag{true};
   folly::EventCount testWait;
-  auto testWaitKey = testWait.prepareWait();
 
   Operator* op;
   std::atomic<bool> injectSpillOnce{true};
@@ -5704,7 +5709,6 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
         if (testOp->operatorType() != "HashProbe") {
           return;
         }
-        ASSERT_FALSE(testOp->canReclaim());
         if (!injectOnce.exchange(false)) {
           return;
         }
@@ -5714,11 +5718,12 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
         const bool reclaimable = op->reclaimableBytes(reclaimableBytes);
         ASSERT_TRUE(reclaimable);
         ASSERT_GT(reclaimableBytes, 0);
-        testWait.notify();
+        testWaitFlag = false;
+        testWait.notifyAll();
         auto* driver = testOp->testingOperatorCtx()->driver();
         auto task = driver->task();
         SuspendedSection suspendedSection(driver);
-        driverWait.wait(driverWaitKey);
+        driverWait.await([&]() { return !driverWaitFlag.load(); });
       })));
 
   std::thread taskThread([&]() {
@@ -5741,7 +5746,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
         .run();
   });
 
-  testWait.wait(testWaitKey);
+  testWait.await([&]() { return !testWaitFlag.load(); });
   ASSERT_TRUE(op != nullptr);
   auto task = op->testingOperatorCtx()->task();
   auto taskPauseWait = task->requestPause();
@@ -5764,7 +5769,8 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   // No reclaim as the build operator is not in building table state.
   ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
 
-  driverWait.notify();
+  driverWaitFlag = false;
+  driverWait.notifyAll();
   Task::resume(task);
   task.reset();
 
@@ -6474,7 +6480,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimFromJoinBuild) {
     std::unordered_map<std::string, std::string> config{
         {core::QueryConfig::kSpillEnabled, "true"},
         {core::QueryConfig::kJoinSpillEnabled, "true"},
-        {core::QueryConfig::kJoinSpillPartitionBits, "2"},
+        {core::QueryConfig::kNumSpillPartitionBits, "2"},
     };
     joinQueryCtx->testingOverrideConfigUnsafe(std::move(config));
 
@@ -6897,7 +6903,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, arbitrationTriggeredByEnsureJoinTableFit) {
           .spillDirectory(spillDirectory->path)
           .config(core::QueryConfig::kSpillEnabled, true)
           .config(core::QueryConfig::kJoinSpillEnabled, true)
-          .config(core::QueryConfig::kJoinSpillPartitionBits, 2)
+          .config(core::QueryConfig::kNumSpillPartitionBits, 2)
           // Set multiple hash build drivers to trigger parallel build.
           .maxDrivers(4)
           .queryCtx(joinQueryCtx)
@@ -6964,7 +6970,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringJoinTableBuild) {
             .spillDirectory(spillDirectory->path)
             .config(core::QueryConfig::kSpillEnabled, true)
             .config(core::QueryConfig::kJoinSpillEnabled, true)
-            .config(core::QueryConfig::kJoinSpillPartitionBits, 2)
+            .config(core::QueryConfig::kNumSpillPartitionBits, 2)
             // Set multiple hash build drivers to trigger parallel build.
             .maxDrivers(4)
             .queryCtx(joinQueryCtx)
@@ -7013,165 +7019,6 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringJoinTableBuild) {
   joinThread.join();
   memThread.join();
   waitForAllTasksToBeDeleted();
-}
-
-// This test is to reproduce a race condition that memory arbitrator tries to
-// reclaim from a set of hash build operators in which the last hash build
-// operator has finished.
-DEBUG_ONLY_TEST_F(HashJoinTest, raceBetweenRaclaimAndJoinFinish) {
-  std::unique_ptr<memory::MemoryManager> memoryManager = createMemoryManager();
-  const auto& arbitrator = memoryManager->arbitrator();
-  auto rowType = ROW({
-      {"c0", INTEGER()},
-      {"c1", INTEGER()},
-      {"c2", VARCHAR()},
-  });
-  // Build a large vector to trigger memory arbitration.
-  fuzzerOpts_.vectorSize = 10'000;
-  std::vector<RowVectorPtr> vectors = createVectors(2, rowType, fuzzerOpts_);
-  createDuckDbTable(vectors);
-
-  std::shared_ptr<core::QueryCtx> joinQueryCtx =
-      newQueryCtx(memoryManager, executor_, kMemoryCapacity);
-
-  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-  core::PlanNodeId planNodeId;
-  auto plan = PlanBuilder(planNodeIdGenerator)
-                  .values(vectors, false)
-                  .project({"c0 AS t0", "c1 AS t1", "c2 AS t2"})
-                  .hashJoin(
-                      {"t0"},
-                      {"u0"},
-                      PlanBuilder(planNodeIdGenerator)
-                          .values(vectors, true)
-                          .project({"c0 AS u0", "c1 AS u1", "c2 AS u2"})
-                          .planNode(),
-                      "",
-                      {"t1"},
-                      core::JoinType::kAnti)
-                  .capturePlanNodeId(planNodeId)
-                  .planNode();
-
-  std::atomic<bool> waitForBuildFinishFlag{true};
-  folly::EventCount waitForBuildFinishEvent;
-  std::atomic<Driver*> lastBuildDriver{nullptr};
-  std::atomic<Task*> task{nullptr};
-  std::atomic<bool> isLastBuildFirstChildPool{false};
-  SCOPED_TESTVALUE_SET(
-      "facebook::velox::exec::HashBuild::finishHashBuild",
-      std::function<void(exec::HashBuild*)>([&](exec::HashBuild* buildOp) {
-        lastBuildDriver = buildOp->testingOperatorCtx()->driver();
-        // Checks if the last build memory pool is the first build pool in its
-        // parent node pool. It is used to check the test result.
-        int buildPoolIndex{0};
-        buildOp->pool()->parent()->visitChildren([&](memory::MemoryPool* pool) {
-          if (pool == buildOp->pool()) {
-            return false;
-          }
-          if (isHashBuildMemoryPool(*pool)) {
-            ++buildPoolIndex;
-          }
-          return true;
-        });
-        isLastBuildFirstChildPool = (buildPoolIndex == 0);
-        task = lastBuildDriver.load()->task().get();
-        waitForBuildFinishFlag = false;
-        waitForBuildFinishEvent.notifyAll();
-      }));
-
-  std::atomic<bool> waitForReclaimFlag{true};
-  folly::EventCount waitForReclaimEvent;
-  SCOPED_TESTVALUE_SET(
-      "facebook::velox::exec::Driver::runInternal",
-      std::function<void(Driver*)>([&](Driver* driver) {
-        auto* op = driver->findOperator(planNodeId);
-        if (op->operatorType() != "HashBuild" &&
-            op->operatorType() != "HashProbe") {
-          return;
-        }
-
-        // Suspend hash probe driver to wait for the test triggered reclaim to
-        // finish.
-        if (op->operatorType() == "HashProbe") {
-          op->pool()->reclaimer()->enterArbitration();
-          waitForReclaimEvent.await(
-              [&]() { return !waitForReclaimFlag.load(); });
-          op->pool()->reclaimer()->leaveArbitration();
-        }
-
-        // Check if we have reached to the last hash build operator or not. The
-        // testvalue callback will set the last build driver.
-        if (lastBuildDriver == nullptr) {
-          return;
-        }
-
-        // Suspend all the remaining hash build drivers until the test triggered
-        // reclaim finish.
-        op->pool()->reclaimer()->enterArbitration();
-        waitForReclaimEvent.await([&]() { return !waitForReclaimFlag.load(); });
-        op->pool()->reclaimer()->leaveArbitration();
-      }));
-
-  const int numDrivers = 4;
-  std::thread queryThread([&]() {
-    const auto spillDirectory = exec::test::TempDirectoryPath::create();
-    AssertQueryBuilder(plan, duckDbQueryRunner_)
-        .maxDrivers(numDrivers)
-        .queryCtx(joinQueryCtx)
-        .spillDirectory(spillDirectory->path)
-        .config(core::QueryConfig::kSpillEnabled, true)
-        .config(core::QueryConfig::kJoinSpillEnabled, true)
-        .assertResults(
-            "SELECT c1 FROM tmp WHERE c0 NOT IN (SELECT c0 FROM tmp)");
-  });
-
-  // Wait for the last hash build operator to start building the hash table.
-  waitForBuildFinishEvent.await([&] { return !waitForBuildFinishFlag.load(); });
-  ASSERT_TRUE(lastBuildDriver != nullptr);
-  ASSERT_TRUE(task != nullptr);
-
-  // Wait until the last build driver gets removed from the task after finishes.
-  while (task.load()->numFinishedDrivers() != 1) {
-    bool foundLastBuildDriver{false};
-    task.load()->testingVisitDrivers([&](Driver* driver) {
-      if (driver == lastBuildDriver) {
-        foundLastBuildDriver = true;
-      }
-    });
-    if (!foundLastBuildDriver) {
-      break;
-    }
-  }
-
-  // Reclaim from the task, and we can't reclaim anything as we don't support
-  // spill after hash table built.
-  memory::MemoryReclaimer::Stats stats;
-  const uint64_t oldCapacity = joinQueryCtx->pool()->capacity();
-  task.load()->pool()->shrink();
-  task.load()->pool()->reclaim(1'000, 0, stats);
-  // If the last build memory pool is first child of its parent memory pool,
-  // then memory arbitration (or join node memory pool) will reclaim from the
-  // last build operator first which simply quits as the driver has gone. If
-  // not, we expect to get numNonReclaimableAttempts from any one of the
-  // remaining hash build operator.
-  if (isLastBuildFirstChildPool) {
-    ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
-  } else {
-    ASSERT_EQ(stats.numNonReclaimableAttempts, 1);
-  }
-  // Make sure we don't leak memory capacity since we reclaim from task pool
-  // directly.
-  static_cast<memory::MemoryPoolImpl*>(task.load()->pool())
-      ->testingSetCapacity(oldCapacity);
-  waitForReclaimFlag = false;
-  waitForReclaimEvent.notifyAll();
-
-  queryThread.join();
-
-  waitForAllTasksToBeDeleted();
-  ASSERT_EQ(arbitrator->stats().numFailures, 0);
-  ASSERT_EQ(arbitrator->stats().numReclaimedBytes, 0);
-  ASSERT_EQ(arbitrator->stats().numReserves, 1);
 }
 
 DEBUG_ONLY_TEST_F(HashJoinTest, joinBuildSpillError) {

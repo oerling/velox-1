@@ -116,19 +116,8 @@ void RowNumber::noMoreInput() {
 
   if (inputSpiller_ != nullptr) {
     inputSpiller_->finishSpill(spillInputPartitionSet_);
-
     recordSpillStats(inputSpiller_->stats());
-
-    // Remove empty partitions.
-    auto it = spillInputPartitionSet_.begin();
-    while (it != spillInputPartitionSet_.end()) {
-      if (it->second->numFiles() > 0) {
-        ++it;
-      } else {
-        it = spillInputPartitionSet_.erase(it);
-      }
-    }
-
+    removeEmptyPartitions(spillInputPartitionSet_);
     restoreNextSpillPartition();
   }
 }
@@ -397,7 +386,7 @@ SpillPartitionNumSet RowNumber::spillHashTable() {
   auto tableType = ROW(std::move(columnTypes));
 
   auto hashTableSpiller = std::make_unique<Spiller>(
-      Spiller::Type::kHashJoinBuild,
+      Spiller::Type::kRowNumber,
       table_->rows(),
       tableType,
       spillPartitionBits_,
@@ -444,7 +433,7 @@ void RowNumber::spill() {
 
   spillPartitionBits_ = HashBitRange(
       spillConfig_->startPartitionBit,
-      spillConfig_->startPartitionBit + spillConfig_->joinPartitionBits);
+      spillConfig_->startPartitionBit + spillConfig_->numPartitionBits);
 
   const auto spillPartitionSet = spillHashTable();
 
