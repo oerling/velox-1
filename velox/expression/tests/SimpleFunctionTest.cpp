@@ -992,7 +992,7 @@ VectorPtr testVariadicArgReuse(
       exec::simpleFunctions()
           .resolveFunction(functionName, {})
           ->createFunction()
-          ->createVectorFunction({}, execCtx->queryCtx()->queryConfig());
+          ->createVectorFunction({}, {}, execCtx->queryCtx()->queryConfig());
 
   // Create a dummy EvalCtx.
   SelectivityVector rows(inputs[0]->size());
@@ -1248,6 +1248,7 @@ struct ConstantArgumentFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
       const core::QueryConfig& /*config*/,
       const arg_type<int32_t>* /*first*/,
       const arg_type<int32_t>* /*second*/,

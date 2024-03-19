@@ -16,6 +16,7 @@
 
 #include "velox/exec/fuzzer/WindowFuzzer.h"
 
+#include <boost/random/uniform_int_distribution.hpp>
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
@@ -68,8 +69,90 @@ void WindowFuzzer::addWindowFunctionSignatures(
 }
 
 const std::string WindowFuzzer::generateFrameClause() {
-  // TODO: allow randomly generating the frame clauses.
-  return "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
+  auto frameType = [](int value) -> const std::string {
+    switch (value) {
+      case 0:
+        return "RANGE";
+      case 1:
+        return "ROWS";
+      default:
+        VELOX_UNREACHABLE("Unknown value for frame type generation");
+    }
+  };
+  auto isRowsFrame =
+      boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
+  auto frameTypeString = frameType(isRowsFrame);
+
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+  constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
+  // For frames with kPreceding, kFollowing bounds, pick a valid k, in the range
+  // of 1 to 10, 70% of times. Test for random k values remaining times.
+  int64_t minKValue, maxKValue;
+  if (vectorFuzzer_.coinToss(0.7)) {
+    minKValue = 1;
+    maxKValue = 10;
+  } else {
+    minKValue = kMin;
+    maxKValue = kMax;
+  }
+
+  auto frameBound =
+      [minKValue, maxKValue, this](
+          core::WindowNode::BoundType boundType) -> const std::string {
+    // Generating only constant bounded k PRECEDING/FOLLOWING frames for now.
+    auto kValue = boost::random::uniform_int_distribution<int64_t>(
+        minKValue, maxKValue)(rng_);
+    switch (boundType) {
+      case core::WindowNode::BoundType::kUnboundedPreceding:
+        return "UNBOUNDED PRECEDING";
+      case core::WindowNode::BoundType::kPreceding:
+        return fmt::format("{} PRECEDING", kValue);
+      case core::WindowNode::BoundType::kCurrentRow:
+        return "CURRENT ROW";
+      case core::WindowNode::BoundType::kFollowing:
+        return fmt::format("{} FOLLOWING", kValue);
+      case core::WindowNode::BoundType::kUnboundedFollowing:
+        return "UNBOUNDED FOLLOWING";
+      default:
+        VELOX_UNREACHABLE("Unknown option for frame clause generation");
+    }
+  };
+
+  // Generating k PRECEDING and k FOLLOWING frames only for ROWS type.
+  // k RANGE frames require more work as we have to generate columns with the
+  // frame bound values.
+  std::vector<core::WindowNode::BoundType> startBoundOptions, endBoundOptions;
+  if (isRowsFrame) {
+    startBoundOptions = {
+        core::WindowNode::BoundType::kUnboundedPreceding,
+        core::WindowNode::BoundType::kPreceding,
+        core::WindowNode::BoundType::kCurrentRow,
+        core::WindowNode::BoundType::kFollowing};
+    endBoundOptions = {
+        core::WindowNode::BoundType::kPreceding,
+        core::WindowNode::BoundType::kCurrentRow,
+        core::WindowNode::BoundType::kFollowing,
+        core::WindowNode::BoundType::kUnboundedFollowing};
+  } else {
+    startBoundOptions = {
+        core::WindowNode::BoundType::kUnboundedPreceding,
+        core::WindowNode::BoundType::kCurrentRow};
+    endBoundOptions = {
+        core::WindowNode::BoundType::kCurrentRow,
+        core::WindowNode::BoundType::kUnboundedFollowing};
+  }
+
+  // End bound option should not be greater than start bound option as this
+  // would result in an invalid frame.
+  auto startBoundIndex = boost::random::uniform_int_distribution<uint32_t>(
+      0, startBoundOptions.size() - 1)(rng_);
+  auto endBoundMinIdx = std::max(0, static_cast<int>(startBoundIndex) - 1);
+  auto endBoundIndex = boost::random::uniform_int_distribution<uint32_t>(
+      endBoundMinIdx, endBoundOptions.size() - 1)(rng_);
+  auto frameStart = frameBound(startBoundOptions[startBoundIndex]);
+  auto frameEnd = frameBound(endBoundOptions[endBoundIndex]);
+
+  return frameTypeString + " BETWEEN " + frameStart + " AND " + frameEnd;
 }
 
 const std::string WindowFuzzer::generateOrderByClause(
@@ -137,6 +220,10 @@ void WindowFuzzer::go() {
 
     const bool customVerification =
         customVerificationFunctions_.count(signature.name) != 0;
+    std::shared_ptr<ResultVerifier> customVerifier = nullptr;
+    if (customVerification) {
+      customVerifier = customVerificationFunctions_.at(signature.name);
+    }
     const bool requireSortedInput =
         orderDependentFunctions_.count(signature.name) != 0;
 
@@ -174,6 +261,7 @@ void WindowFuzzer::go() {
         call,
         input,
         customVerification,
+        customVerifier,
         FLAGS_enable_window_reference_verification);
     if (failed) {
       signatureWithStats.second.numFailed++;
@@ -209,6 +297,7 @@ void WindowFuzzer::testAlternativePlans(
     const std::string& functionCall,
     const std::vector<RowVectorPtr>& input,
     bool customVerification,
+    const std::shared_ptr<ResultVerifier>& customVerifier,
     const velox::test::ResultOrError& expected) {
   std::vector<AggregationFuzzerBase::PlanWithSplits> plans;
 
@@ -265,14 +354,23 @@ void WindowFuzzer::testAlternativePlans(
 
   for (const auto& plan : plans) {
     testPlan(
-        plan,
-        false,
-        false,
-        customVerification,
-        /*customVerifiers*/ {},
-        expected);
+        plan, false, false, customVerification, {customVerifier}, expected);
   }
 }
+
+namespace {
+void initializeVerifier(
+    const core::PlanNodePtr& plan,
+    const std::shared_ptr<ResultVerifier>& customVerifier,
+    const std::vector<RowVectorPtr>& input,
+    const std::vector<std::string>& partitionKeys,
+    const std::string& frame) {
+  const auto& windowNode =
+      std::dynamic_pointer_cast<const core::WindowNode>(plan);
+  customVerifier->initializeWindow(
+      input, partitionKeys, windowNode->windowFunctions()[0], frame, "w0");
+}
+} // namespace
 
 bool WindowFuzzer::verifyWindow(
     const std::vector<std::string>& partitionKeys,
@@ -281,12 +379,22 @@ bool WindowFuzzer::verifyWindow(
     const std::string& functionCall,
     const std::vector<RowVectorPtr>& input,
     bool customVerification,
+    const std::shared_ptr<ResultVerifier>& customVerifier,
     bool enableWindowVerification) {
   auto frame = getFrame(partitionKeys, sortingKeysAndOrders, frameClause);
   auto plan = PlanBuilder()
                   .values(input)
                   .window({fmt::format("{} over ({})", functionCall, frame)})
                   .planNode();
+  if (customVerifier) {
+    initializeVerifier(plan, customVerifier, input, partitionKeys, frame);
+  }
+  SCOPE_EXIT {
+    if (customVerifier) {
+      customVerifier->reset();
+    }
+  };
+
   if (persistAndRunOnce_) {
     persistReproInfo({{plan, {}}}, reproPersistPath_);
   }
@@ -298,8 +406,8 @@ bool WindowFuzzer::verifyWindow(
       ++stats_.numFailed;
     }
 
-    if (!customVerification && enableWindowVerification) {
-      if (resultOrError.result) {
+    if (!customVerification) {
+      if (resultOrError.result && enableWindowVerification) {
         auto referenceResult = computeReferenceResults(plan, input);
         stats_.updateReferenceQueryStats(referenceResult.second);
         if (auto expectedResult = referenceResult.first) {
@@ -316,9 +424,15 @@ bool WindowFuzzer::verifyWindow(
         }
       }
     } else {
-      // TODO: support custom verification.
-      LOG(INFO) << "Verification skipped";
+      LOG(INFO) << "Verification through custom verifier";
       ++stats_.numVerificationSkipped;
+
+      if (customVerifier && resultOrError.result) {
+        VELOX_CHECK(
+            customVerifier->supportsVerify(),
+            "Window fuzzer only uses custom verify() methods.");
+        customVerifier->verify(resultOrError.result);
+      }
     }
 
     testAlternativePlans(
@@ -328,6 +442,7 @@ bool WindowFuzzer::verifyWindow(
         functionCall,
         input,
         customVerification,
+        customVerifier,
         resultOrError);
 
     return resultOrError.exceptionPtr != nullptr;
