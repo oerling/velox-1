@@ -82,6 +82,10 @@ class WaveSplitReader {
 
 class WaveSplitReaderFactory {
  public:
+  virtual ~WaveSplitReaderFactory() = default;
+
+  /// Returns a new split reader corresponding to 'split' if 'this' recognizes
+  /// the split, otherwise returns nullptr.
   virtual std::unique_ptr<WaveSplitReader> create(
       const std::shared_ptr<connector::ConnectorSplit>& split,
       const SplitReaderParams& params,

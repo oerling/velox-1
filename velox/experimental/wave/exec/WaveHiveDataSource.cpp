@@ -103,7 +103,7 @@ void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
 }
 
 vector_size_t WaveHiveDataSource::outputSize(WaveStream& stream) const {
-  splitReader_->outputSize(stream);
+  return splitReader_->outputSize(stream);
 }
 
 bool WaveHiveDataSource::isFinished() {

@@ -175,8 +175,6 @@ DEFINE_int32(
     512 << 10,
     "Maximum distance in bytes in which coalesce will combine requests");
 
-DEFINE_bool(use_wave, false, "Use Wave offload");
-
 DEFINE_int32(
     parquet_prefetch_rowgroups,
     1,

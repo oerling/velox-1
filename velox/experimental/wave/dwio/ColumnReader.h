@@ -40,6 +40,8 @@ class ColumnReader {
         formatData_(params.toFormatData(fileType_, scanSpec, operand)),
         scanSpec_(&scanSpec) {}
 
+  virtual ~ColumnReader() = default;
+
   const common::ScanSpec& scanSpec() const {
     return *scanSpec_;
   }

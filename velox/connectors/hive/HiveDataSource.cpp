@@ -23,9 +23,6 @@
 #include "velox/connectors/hive/HiveConnectorUtil.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/expression/FieldReference.h"
-#ifdef WAVE
-#include "velox/experimental/wave/exec/WaveDataSource.h"
-#endif
 
 namespace facebook::velox::connector::hive {
 
@@ -371,8 +368,6 @@ void HiveDataSource::resetSplit() {
   // Keep readers around to hold adaptation.
 }
 
-#ifdef WAVE
-
 HiveDataSource::WaveDelegateHookFunction HiveDataSource::waveDelegateHook_;
 
 std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
@@ -399,7 +394,5 @@ void HiveDataSource::registerWaveDelegateHook(WaveDelegateHookFunction hook) {
   waveDelegateHook_ = hook;
 }
 std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
-
-#endif
 
 } // namespace facebook::velox::connector::hive

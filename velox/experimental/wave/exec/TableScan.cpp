@@ -113,6 +113,7 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
     waveDataSource_->addDynamicFilter(entry.first, entry.second);
   }
   pendingDynamicFilters_.clear();
+  return BlockingReason::kNotBlocked;
 }
 
 void TableScan::preload(std::shared_ptr<connector::ConnectorSplit> split) {

@@ -115,6 +115,8 @@ class Program;
 /// WaveStream level unique id for each output column. be nulllptr if this
 /// represents data movement only.
 struct Executable {
+  virtual ~Executable() = default;
+
   std::unique_ptr<Executable>
   create(std::shared_ptr<Program> program, int32_t numRows, GpuArena& arena);
 

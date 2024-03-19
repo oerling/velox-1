@@ -84,6 +84,8 @@ class StringSet {
 
 class EncoderBase {
  public:
+  virtual ~EncoderBase() = default;
+
   virtual void append(const VectorPtr& data) = 0;
 
   virtual std::unique_ptr<Column> toColumn() = 0;
