@@ -132,14 +132,14 @@ Program* CompileState::newProgram() {
   return program.get();
 }
 
-  Program* CompileState::programOf(AbstractOperand* op) {
-    auto it = definedIn_.find(op);
-    if (it == definedIn_.end()) {
-      return newProgram();
-    }
-    return it->second;
+Program* CompileState::programOf(AbstractOperand* op) {
+  auto it = definedIn_.find(op);
+  if (it == definedIn_.end()) {
+    return newProgram();
   }
-  
+  return it->second;
+}
+
 void CompileState::addInstruction(
     std::unique_ptr<AbstractInstruction> instruction,
     AbstractOperand* result,
@@ -186,7 +186,8 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
     if (predicate_) {
       auto result = newOperand(constant->type(), constant->toString());
-      currentProgram_->add(std::make_unique<AbstractLiteral>(constant->value(), result, predicate_));
+      currentProgram_->add(std::make_unique<AbstractLiteral>(
+          constant->value(), result, predicate_));
       return result;
     } else {
       auto op = newOperand(constant->value()->type(), constant->toString());
@@ -271,18 +272,18 @@ int32_t findOutputChannel(
   VELOX_FAIL("Expr without output channel");
 }
 
-  void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
-      int32_t numPrograms = allPrograms_.size();
+void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
+  int32_t numPrograms = allPrograms_.size();
   auto condition = addExpr(expr);
   auto indices = newOperand(INTEGER(), "indices");
-  auto program =programOf(condition);
+  auto program = programOf(condition);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
   program->add(std::make_unique<AbstractWrap>(indices));
   auto levels = makeLevels(numPrograms);
-  operators_.push_back(
-		       std::make_unique<Project>(*this, outputType, std::vector<AbstractOperand*>{}, levels));
-  }
-    
+  operators_.push_back(std::make_unique<Project>(
+      *this, outputType, std::vector<AbstractOperand*>{}, levels));
+}
+
 void CompileState::addFilterProject(
     exec::Operator* op,
     RowTypePtr outputType,
@@ -295,7 +296,8 @@ void CompileState::addFilterProject(
     firstProjection = 1;
   }
   int32_t numPrograms = allPrograms_.size();
-  auto operands = addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
+  auto operands =
+      addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
   for (auto i = 0; i < operands.size(); ++i) {
     int32_t channel = findOutputChannel(*data.resultProjections, i);
     auto subfield = toSubfield(outputType->nameOf(channel));

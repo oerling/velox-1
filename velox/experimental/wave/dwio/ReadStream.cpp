@@ -97,10 +97,12 @@ bool ReadStream::makePrograms(bool& needSync) {
 // static
 void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
   using UniqueExe = std::unique_ptr<Executable>;
-  // The function of control here is to have a status and row count for each kBlockSize top level rows of output.
+  // The function of control here is to have a status and row count for each
+  // kBlockSize top level rows of output.
   auto numRows = readStream->rows_.size();
   auto control = std::make_unique<LaunchControl>(0, numRows);
-  control->deviceData = readStream->waveStream->arena().allocate<BlockStatus>(bits::roundUp(numRows, kBlockSize) / kBlockSize);
+  control->deviceData = readStream->waveStream->arena().allocate<BlockStatus>(
+      bits::roundUp(numRows, kBlockSize) / kBlockSize);
   control->status = control->deviceData->as<BlockStatus>();
   readStream->waveStream->addLaunchControl(0, std::move(control));
   readStream->waveStream->installExecutables(

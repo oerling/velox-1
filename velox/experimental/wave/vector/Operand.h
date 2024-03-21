@@ -136,5 +136,4 @@ struct BlockStatus {
   ErrorCode errors[kBlockSize];
 };
 
-  
 } // namespace facebook::velox::wave

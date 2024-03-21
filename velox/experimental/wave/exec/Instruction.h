@@ -47,7 +47,9 @@ struct AbstractOperand {
   // to byte on device.
   bool flagsAsBits{false};
 
-  // Offset of the literal from the block of literals after the instructions. The base array in Operand will be set to 'constantOffset + end of last instruction'.
+  // Offset of the literal from the block of literals after the instructions.
+  // The base array in Operand will be set to 'constantOffset + end of last
+  // instruction'.
   int32_t constantOffset{kNoConstant};
   bool constantNull{false};
 };
@@ -64,14 +66,16 @@ struct AbstractInstruction {
 };
 
 struct AbstractFilter : public AbstractInstruction {
-  AbstractFilter(AbstractOperand* flags, AbstractOperand* indices) : AbstractInstruction(OpCode::kFilter), flags(flags), indices(indices) {}
-  
+  AbstractFilter(AbstractOperand* flags, AbstractOperand* indices)
+      : AbstractInstruction(OpCode::kFilter), flags(flags), indices(indices) {}
+
   AbstractOperand* flags;
   AbstractOperand* indices;
 };
 
 struct AbstractWrap : public AbstractInstruction {
-  AbstractWrap(AbstractOperand* indices) : AbstractInstruction(OpCode::kWrap), indices(indices) {}
+  AbstractWrap(AbstractOperand* indices)
+      : AbstractInstruction(OpCode::kWrap), indices(indices) {}
   AbstractOperand* indices;
   std::vector<AbstractOperand*> source;
   std::vector<AbstractOperand*> target;
@@ -91,8 +95,12 @@ struct AbstractBinary : public AbstractInstruction {
       AbstractOperand* left,
       AbstractOperand* right,
       AbstractOperand* result,
-		 AbstractOperand* predicate = nullptr)
-    : AbstractInstruction(opCode), left(left), right(right), result(result), predicate(predicate) {}
+      AbstractOperand* predicate = nullptr)
+      : AbstractInstruction(opCode),
+        left(left),
+        right(right),
+        result(result),
+        predicate(predicate) {}
 
   AbstractOperand* left;
   AbstractOperand* right;
@@ -100,20 +108,33 @@ struct AbstractBinary : public AbstractInstruction {
   AbstractOperand* predicate;
 };
 
-  struct AbstractLiteral : public AbstractInstruction {
-    AbstractLiteral(const VectorPtr& constant, AbstractOperand* result, AbstractOperand* predicate)
-      : AbstractInstruction(OpCode::kLiteral), constant(constant), result(result), predicate(predicate) {}
-    VectorPtr constant;
-    AbstractOperand* result;
-    AbstractOperand* predicate;
-  };
+struct AbstractLiteral : public AbstractInstruction {
+  AbstractLiteral(
+      const VectorPtr& constant,
+      AbstractOperand* result,
+      AbstractOperand* predicate)
+      : AbstractInstruction(OpCode::kLiteral),
+        constant(constant),
+        result(result),
+        predicate(predicate) {}
+  VectorPtr constant;
+  AbstractOperand* result;
+  AbstractOperand* predicate;
+};
 
-  struct AbstractUnary : public AbstractInstruction {
-    AbstractUnary(OpCode opcode, AbstractOperand* input, AbstractOperand* result, AbstractOperand* predicate = nullptr)
-      : AbstractInstruction(opcode), input(input), result(result), predicate(predicate) {}
-      AbstractOperand* input;
-    AbstractOperand* result;
-    AbstractOperand* predicate;
-      };
-  
+struct AbstractUnary : public AbstractInstruction {
+  AbstractUnary(
+      OpCode opcode,
+      AbstractOperand* input,
+      AbstractOperand* result,
+      AbstractOperand* predicate = nullptr)
+      : AbstractInstruction(opcode),
+        input(input),
+        result(result),
+        predicate(predicate) {}
+  AbstractOperand* input;
+  AbstractOperand* result;
+  AbstractOperand* predicate;
+};
+
 } // namespace facebook::velox::wave

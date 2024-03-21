@@ -67,11 +67,14 @@ class FilterProjectTest : public OperatorTestBase {
     auto task = assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp");
   }
 
-  std::shared_ptr<Task> assertFilterProject(const std::string& filter, const std::vector<std::string>& projections, const std::vector<RowVectorPtr>& vectors) {
+  std::shared_ptr<Task> assertFilterProject(
+      const std::string& filter,
+      const std::vector<std::string>& projections,
+      const std::vector<RowVectorPtr>& vectors) {
     auto plan = PlanBuilder()
                     .values(vectors)
-      .filter(filter)
-      .project(projections)
+                    .filter(filter)
+                    .project(projections)
                     .planNode();
     std::stringstream sql;
     sql << "SELECT ";
@@ -84,7 +87,7 @@ class FilterProjectTest : public OperatorTestBase {
     return task;
   }
 
-    std::shared_ptr<const RowType> rowType_{
+  std::shared_ptr<const RowType> rowType_{
       ROW({"c0", "c1", "c2", "c3"},
           {BIGINT(), BIGINT(), SMALLINT(), DOUBLE()})};
 };
@@ -124,5 +127,6 @@ TEST_F(FilterProjectTest, filterProject) {
   }
   createDuckDbTable(vectors);
 
-  assertFilterProject("c0 < 400000000", std::vector<std::string>{"c0", "c1 + c2"}, vectors);
+  assertFilterProject(
+      "c0 < 400000000", std::vector<std::string>{"c0", "c1 + c2"}, vectors);
 }

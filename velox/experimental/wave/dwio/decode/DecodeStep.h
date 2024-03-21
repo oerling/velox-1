@@ -54,8 +54,8 @@ enum class DecodeStep {
   kMap,
   kFlatMap,
   kFlatMapNode,
-    kRowCountNoFilter,
-    kUnsupported,
+  kRowCountNoFilter,
+  kUnsupported,
 };
 
 /// Describes a decoding loop's input and result disposition.
@@ -197,7 +197,7 @@ struct GpuDecode {
     int32_t numRows;
     BlockStatus* status;
   };
-  
+
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;

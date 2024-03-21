@@ -54,10 +54,12 @@ enum class OpCode {
   kNE,
 
 };
-  constexpr int32_t kLastScalarKind = static_cast<int32_t>(WaveTypeKind::HUGEINT);
-  
-#define OP_MIX(op, t) \
-  static_cast<OpCode>(static_cast<int32_t>(t) + (kLastScalarKind + 1) * static_cast<int32_t>(op))
+constexpr int32_t kLastScalarKind = static_cast<int32_t>(WaveTypeKind::HUGEINT);
+
+#define OP_MIX(op, t)           \
+  static_cast<OpCode>(          \
+      static_cast<int32_t>(t) + \
+      (kLastScalarKind + 1) * static_cast<int32_t>(op))
 
 struct IBinary {
   OperandIndex left;
@@ -105,18 +107,18 @@ struct IWrap {
   int32_t* mayShareIndices;
 };
 
-  struct ILiteral {
-    OperandIndex literal;
-    OperandIndex result;
-    OperandIndex predicate;
-  };
+struct ILiteral {
+  OperandIndex literal;
+  OperandIndex result;
+  OperandIndex predicate;
+};
 
-  struct INegate {
-    OperandIndex value;
-    OperandIndex result;
-    OperandIndex predicate;
-  };
-    
+struct INegate {
+  OperandIndex value;
+  OperandIndex result;
+  OperandIndex predicate;
+};
+
 struct Instruction {
   OpCode opCode;
   union {

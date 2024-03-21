@@ -27,7 +27,9 @@ class Filter : public WaveOperator {
       AbstractOperand* condition,
       const RowTypePtr& outputType,
       std::vector<std::vector<ProgramPtr>> levels)
-: WaveOperator(state, outputType, ""), condition_(condition), levels_(std::move(levels)) {}
+      : WaveOperator(state, outputType, ""),
+        condition_(condition),
+        levels_(std::move(levels)) {}
 
   bool isStreaming() const override {
     return true;
@@ -47,10 +49,10 @@ class Filter : public WaveOperator {
     return computedSet_;
   }
 
-private:
-  AbstractOperand* const  condition_;
+ private:
+  AbstractOperand* const condition_;
   std::vector<std::vector<ProgramPtr>> levels_;
-  
+
   OperandSet computedSet_;
 };
 

@@ -83,7 +83,7 @@ class CompileState {
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
 
   void addFilter(const exec::Expr& expr, const RowTypePtr& outputType);
-  
+
   void addFilterProject(
       exec::Operator* op,
       RowTypePtr outputType,
@@ -104,7 +104,7 @@ class CompileState {
       const std::vector<Program*>& inputs);
 
   Program* programOf(AbstractOperand* op);
-  
+
   const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
   aggregateFunctionRegistry();
 
@@ -129,14 +129,12 @@ class CompileState {
   // The Wave operators generated so far.
   std::vector<std::unique_ptr<WaveOperator>> operators_;
 
-  
-  
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;
 
   // Boolean to select the instruction. Set for conditionl sections.
   AbstractOperand* predicate_{nullptr};
-  
+
   // Sequence number for operands.
   int32_t operandCounter_{0};
 
