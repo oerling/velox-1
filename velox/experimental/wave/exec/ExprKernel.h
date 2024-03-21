@@ -29,15 +29,6 @@
 /// be allocated dynamically at kernel invocation.
 namespace facebook::velox::wave {
 
-/// Mixed with opcode to switch between instantiations of instructions for
-/// different types.
-enum class ScalarType {
-  kInt32,
-  kInt64,
-  kReal,
-  kDouble,
-  kString,
-};
 
 /// Opcodes for common instruction set. First all instructions that
 /// do not have operand type variants, then all the ones that
@@ -47,6 +38,8 @@ enum class OpCode {
   // First all OpCodes that have no operand type specialization.
   kFilter = 0,
   kWrap,
+  kLiteral,
+  kNegate,
 
   // From here, only OpCodes that have variants for scalar types.
   kPlus,
@@ -61,9 +54,10 @@ enum class OpCode {
   kNE,
 
 };
-
+  constexpr int32_t kLastScalarKind = static_cast<int32_t>(WaveTypeKind::HUGEINT);
+  
 #define OP_MIX(op, t) \
-  static_cast<OpCode>(static_cast<int32_t>(t) + 8 * static_cast<int32_t>(op))
+  static_cast<OpCode>(static_cast<int32_t>(t) + (kLastScalarKind + 1) * static_cast<int32_t>(op))
 
 struct IBinary {
   OperandIndex left;
@@ -111,6 +105,18 @@ struct IWrap {
   int32_t* mayShareIndices;
 };
 
+  struct ILiteral {
+    OperandIndex literal;
+    OperandIndex result;
+    OperandIndex predicate;
+  };
+
+  struct INegate {
+    OperandIndex value;
+    OperandIndex result;
+    OperandIndex predicate;
+  };
+    
 struct Instruction {
   OpCode opCode;
   union {

@@ -38,13 +38,8 @@ struct Value {
   ~Value() = default;
 
   bool operator==(const Value& other) const {
-    if (expr == other.expr && subfield == other.subfield) {
-      return true;
-    };
-    if (subfield && other.subfield && *subfield == *other.subfield) {
-      return true;
-    }
-    return false;
+    // Both exprs and subfields are deduplicated.
+    return expr == other.expr && subfield == other.subfield;
   }
 
   const exec::Expr* expr;
@@ -53,6 +48,7 @@ struct Value {
 
 struct ValueHasher {
   size_t operator()(const Value& value) const {
+    // Hash the addresses because both exprs and subfields are deduplicated.
     return folly::hasher<uint64_t>()(
                reinterpret_cast<uintptr_t>(value.subfield)) ^
         folly::hasher<uint64_t>()(reinterpret_cast<uintptr_t>(value.expr));
@@ -168,10 +164,13 @@ struct Executable {
   // Operand ids for outputs.
   OperandSet outputOperands;
 
-  // Unified memory Operand structs for intermediates/outputs. These
+  // Unified memory Operand structs for intermediates/outputs/constants. These
   // are a contiguous array of Operand in LaunchControl of 'this'
   Operand* operands;
 
+  // Host side array of constants. These refer to literal data in device side ThreadBlockProgram. These are copied at the end of 'operands' at launch.
+  const std::vector<Operand>* constants;
+  
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
   // scheduling follow up work that is synchronized with arrival of 'this', the
   // intermediates can be moved to the dependent executable at time of
@@ -203,6 +202,7 @@ class Program : public std::enable_shared_from_this<Program> {
     instructions_.push_back(std::move(instruction));
   }
 
+  
   const std::vector<Program*>& dependsOn() const {
     return dependsOn_;
   }
@@ -252,6 +252,12 @@ class Program : public std::enable_shared_from_this<Program> {
   }
 
  private:
+  template <TypeKind kind>
+  int32_t addConstantTyped(AbstractOperand* op);
+    /// Returns a starting offset to a constant with 'count' elements of T, initialized from 'value[]' The values are copied to device side ThreadBlockProgram.
+  template <typename T>
+  int32_t addConstant(T* value, int32_t count);
+  
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
   DefinesMap produces_;
@@ -272,6 +278,16 @@ class Program : public std::enable_shared_from_this<Program> {
   // Local/output Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
 
+
+  // Constant Operand  to offset in operands array.
+  folly::F14FastMap<AbstractOperand*, int32_t> constant_;
+
+  // Offset of first unused constant area byte from start of constant area.
+  int32_t nextConstant_{0};
+
+  // Binary data for constants to be embedded in ThreadBlockProgram. Must be relocatable, i.e. does not contain non-relative pointers within the constant area.
+  std::string constantArea_;
+  
   // Owns device side 'threadBlockProgram_'
   WaveBufferPtr deviceData_;
 
@@ -279,6 +295,12 @@ class Program : public std::enable_shared_from_this<Program> {
   ThreadBlockProgram* program_;
 
   int32_t sharedMemorySize_{0};
+
+  // Host side image of device side Operands that reference 'constantArea_'. These are copied at the end of the operand block created at kernel launch. 
+  std::vector<Operand> constantOperands_;
+  
+  // Start of device side constant area.
+  char* deviceConstants_{nullptr};
   // Serializes 'prepared_'. Access on WaveStrea, is single threaded but sharing
   // Programs across WaveDrivers makes sense, so make the preallocated resource
   // thread safe.
@@ -393,6 +415,10 @@ class WaveStream {
     return launchControl_[key];
   }
 
+  void addLaunchControl(int32_t key, std::unique_ptr<LaunchControl> control) {
+    launchControl_[key].push_back(std::move(control));
+  }
+  
  private:
   Event* newEvent();
 
@@ -443,25 +469,29 @@ class WaveStream {
 //// WaveVectors in each exe. Array of TB return status blocks, one
 //// per TB.
 struct LaunchControl {
-  int32_t key;
+  LaunchControl(int32_t _key, int32_t _inputRows) : key(_key), inputRows(_inputRows) {}
 
-  int32_t inputRows;
+  // Id of the initiating operator.
+  const int32_t key;
+
+  // Number of rows the programs get as input. Initializes the BlockStatus'es on device in prepareProgamLaunch().
+  const int32_t inputRows;
 
   /// The first thread block with the program.
-  int32_t* blockBase;
+  int32_t* blockBase{0};
   // The ordinal of the program. All blocks with the same program have the same
   // number here.
-  int32_t* programIdx;
+  int32_t* programIdx{nullptr};
 
   // The TB program for each exe.
-  ThreadBlockProgram** programs;
+  ThreadBlockProgram** programs{nullptr};
 
   // For each exe, the start of the array of Operand*. Instructions reference
-  // operands via offset in this array.//
-  Operand*** operands;
+  // operands via offset in this array.
+  Operand*** operands{nullptr};
 
   // the status return block for each TB.
-  BlockStatus* status;
+  BlockStatus* status{nullptr};
   int32_t sharedMemorySize{0};
 
   // Storage for all the above in a contiguous unified memory piece.

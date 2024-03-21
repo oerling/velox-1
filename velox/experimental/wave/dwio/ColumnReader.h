@@ -129,6 +129,10 @@ class ReadStream : public Executable {
   ResultStaging deviceStaging_;
   // Reusable control block for launching decode kernels.
   DecodePrograms programs_;
+  // If no filters, the starting RowSet directly initializes the BlockStatus'es at the end of the ReadStream.
+  bool hasFilters_{false};
+  //  Sequence number of kernel launch.
+  int32_t nthWave_{0};
 };
 
 } // namespace facebook::velox::wave

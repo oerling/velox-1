@@ -54,7 +54,8 @@ enum class DecodeStep {
   kMap,
   kFlatMap,
   kFlatMapNode,
-  kUnsupported,
+    kRowCountNoFilter,
+    kUnsupported,
 };
 
 /// Describes a decoding loop's input and result disposition.
@@ -192,6 +193,11 @@ struct GpuDecode {
     int32_t* indicesCount;
   };
 
+  struct RowCountNoFilter {
+    int32_t numRows;
+    BlockStatus* status;
+  };
+  
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;
@@ -201,6 +207,7 @@ struct GpuDecode {
     RleTotalLength rleTotalLength;
     Rle rle;
     MakeScatterIndices makeScatterIndices;
+    RowCountNoFilter rowCountNoFilter;
   } data;
 
   /// Returns the amount f shared memory for standard size thread block for

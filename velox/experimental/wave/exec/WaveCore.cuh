@@ -57,6 +57,7 @@ __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
   return getOperand<T>(&op, 0, blockBase, shared);
 }
 
+
 template <typename T>
 __device__ inline T value(Operand* op, int index) {
   if (auto indicesInOp = op->indices) {

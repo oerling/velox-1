@@ -22,14 +22,36 @@ namespace facebook::velox::wave {
 
 class Filter : public WaveOperator {
  public:
-  Filter(RowTypePtr inputType, exec::ExprSet exprSet);
+  Filter(
+      CompileState& state,
+      AbstractOperand* condition,
+      const RowTypePtr& outputType,
+      std::vector<std::vector<ProgramPtr>> levels)
+: WaveOperator(state, outputType, ""), condition_(condition), levels_(std::move(levels)) {}
 
   bool isStreaming() const override {
     return true;
   }
 
- private:
-  std::vector<Subfield> input_;
+  void schedule(WaveStream& stream, int32_t maxRows = 0) override;
+
+  vector_size_t outputSize(WaveStream& stream) const override;
+
+  void finalize(CompileState& state) override;
+
+  std::string toString() const override {
+    return "Filter";
+  }
+
+  const OperandSet& syncSet() const override {
+    return computedSet_;
+  }
+
+private:
+  AbstractOperand* const  condition_;
+  std::vector<std::vector<ProgramPtr>> levels_;
+  
+  OperandSet computedSet_;
 };
 
 } // namespace facebook::velox::wave

@@ -82,6 +82,8 @@ class CompileState {
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
 
+  void addFilter(const exec::Expr& expr, const RowTypePtr& outputType);
+  
   void addFilterProject(
       exec::Operator* op,
       RowTypePtr outputType,
@@ -101,17 +103,17 @@ class CompileState {
       const AbstractOperand* result,
       const std::vector<Program*>& inputs);
 
+  Program* programOf(AbstractOperand* op);
+  
   const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
   aggregateFunctionRegistry();
 
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
-      definedBy_;
+  DefinesMap definedBy_;
 
   // The Operand where Value is available after all projections placed to date.
-  folly::F14FastMap<Value, AbstractOperand*, ValueHasher, ValueComparer>
-      projectedTo_;
+  DefinesMap projectedTo_;
 
   folly::F14FastMap<AbstractOperand*, Program*> definedIn_;
 
@@ -127,9 +129,14 @@ class CompileState {
   // The Wave operators generated so far.
   std::vector<std::unique_ptr<WaveOperator>> operators_;
 
+  
+  
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;
 
+  // Boolean to select the instruction. Set for conditionl sections.
+  AbstractOperand* predicate_{nullptr};
+  
   // Sequence number for operands.
   int32_t operandCounter_{0};
 

@@ -84,7 +84,7 @@ __device__ void wrapKernel(
     int32_t& numRows) {}
 
 #define BINARY_TYPES(opCode, OP)                             \
-  case OP_MIX(opCode, ScalarType::kInt64):                   \
+  case OP_MIX(opCode, WaveTypeKind::BIGINT):     \
     binaryOpKernel<int64_t>(                                 \
         [](auto left, auto right) { return left OP right; }, \
         instruction->_.binary,                               \

@@ -344,7 +344,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     markLaunch(*stream, *exe);
     shared = std::max(shared, exe->programShared->sharedMemorySize());
     int32_t numIn = exe->inputOperands.size();
-    int numOps = numIn + exe->intermediates.size() + exe->outputOperands.size();
+    int numOps = numIn + exe->intermediates.size() + exe->outputOperands.size() + (exe->constants ? exe->constants->size()_ : 0)
     numTotalOps += numOps;
     size += numOps * sizeof(void*) + (numOps - numIn) * sizeof(Operand);
   }
@@ -356,11 +356,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   auto buffer = arena_.allocate<char>(size);
 
-  auto controlUnique = std::make_unique<LaunchControl>();
+  auto controlUnique = std::make_unique<LaunchControl>(key, inputRows);
   auto& control = *controlUnique;
 
-  control.key = key;
-  control.inputRows = inputRows;
   control.sharedMemorySize = shared;
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
@@ -396,6 +394,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     auto exe = exes[exeIdx];
     int32_t numIn = exe->inputOperands.size();
     int32_t numLocal = exe->intermediates.size() + exe->outputOperands.size();
+    int32_t numConstant = exe->constants_ ? exe->constants_->size() : 0;
     control.programs[exeIdx] = exe->program;
     control.operands[exeIdx] = operandPtrBegin;
     // We get the actual input operands for the exe from the exes this depends
@@ -420,7 +419,15 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++operandPtrBegin;
       ++operandArrayBegin;
     }
-    for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
+    if (numConstants) {
+      memcpy(operandArrayBegin, exe->constants->data(), numConstant * sizeof(Operand));
+      for (auto i = 0; i < numConstants; ++i) {
+	*operandPtrBegin = operandArrayBegin;
+	++operandPtrBegin;
+	++operandArrayBegin;
+      }
+    }
+      for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
       control.blockBase[fill] = exeIdx * blocksPerExe;
       control.programIdx[fill] = exeIdx;
     }
@@ -447,21 +454,30 @@ void WaveStream::getOutput(
   }
 }
 
-ScalarType typeKindCode(TypeKind kind) {
-  switch (kind) {
-    case TypeKind::BIGINT:
-      return ScalarType::kInt64;
-    default:
-      VELOX_UNSUPPORTED("Bad TypeKind {}", kind);
-  }
+WaveTypeKind typeKindCode(TypeKind kind) {
+  return static_cast<WaveTypeKind>(kind);
 }
+
+  #define IN_HEAD(abstract, physical, _op) \
+	auto abstractInst = instruction->as<abstract>(); \
+	space->opCode = _op;
+        auto physicalInst = new (&space->_) physical();	\
+
+#define IN_OPERAND(member) \
+	physicalInst->member = operandIndex(abstractInst->member) 
 
 void Program::prepareForDevice(GpuArena& arena) {
   int32_t codeSize = 0;
   int32_t sharedMemorySize = 0;
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
-      case OpCode::kPlus: {
+    case OpCode::kFilter: {
+        auto& filter = instruction->as<AbstractFilter>();
+        markInput(filter.flags);
+	markResult(filter.indices);
+	break;
+    }
+    case OpCode::kPlus: {
         auto& bin = instruction->as<AbstractBinary>();
         markInput(bin.left);
         markInput(bin.right);
@@ -470,14 +486,23 @@ void Program::prepareForDevice(GpuArena& arena) {
         codeSize += sizeof(Instruction);
         break;
       }
-      default:
+      case OpCode::kNegate: {
+        auto& un = instruction->as<AbstractUnary>();
+        markInput(un.input);
+        markResult(un.result);
+        markInput(un.predicate);
+        codeSize += sizeof(Instruction);
+        break;
+      }
+
+    default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
     }
   sortSlots();
   arena_ = &arena;
   deviceData_ = arena.allocate<char>(
-      codeSize + instructions_.size() * sizeof(void*) +
+				     codeSize + instructions_.size() * sizeof(void*) + constantArea_.size() +
       sizeof(ThreadBlockProgram));
   program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
@@ -491,29 +516,55 @@ void Program::prepareForDevice(GpuArena& arena) {
     ++instructionArray;
     switch (instruction->opCode) {
       case OpCode::kPlus: {
-        auto& bin = instruction->as<AbstractBinary>();
-        auto typeCode = typeKindCode(bin.left->type->kind());
-        // Comstructed on host, no vtable.
-        space->opCode = OP_MIX(instruction->opCode, typeCode);
-        new (&space->_.binary) IBinary();
-        space->_.binary.left = operandIndex(bin.left);
-        space->_.binary.right = operandIndex(bin.right);
+	IN_HEAD(AbstractBinary, binary, makeTypedOpcode(instruction->opCode, instruction->as<AbstractBinary>()->left->type()->kind()));
+
+
+	IN_OPERAND(left);
+	IN_OPERAND(right);
+	IN_OPERAND(result);
+	IN_OPERAND(predicate);
+        break;
+      }
+      case OpCode::kFilter: {
+
+	IN_HEAD(AbstractFilter, IFilter, OpCode::kFilter);
+	IN_OPERAND(flags);
+
+        space->_.filter.flags = operandIndex(filter.flags);
+        space->_.filter.result = operandIndex(filter.result);
         space->_.binary.result = operandIndex(bin.result);
+        space->_.binary.predicate = operandIndex(bin.predicate);
         ++space;
         break;
       }
-      default:
+    default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
   }
+  char* constantArea = reinterpret_cast<char*> space;
+  memcpy(constantArea, constantArea_.data(), constantArea_.size());
+  constantOperands_.resize(constants_.size());
+  int32_t counter  = 0;
+  for (auto& [op, id] : constants_) {
+    constantToOperand(op, constantOperands[counter]);
+  }
 }
+  void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
+    op.indexMask = 0;
+    op.indices = nullptr;
+    if (abstractOp->constantNull) {
+      op.nulls = deviceConstants + op->constantOffset;
+    } else {
+      op.value = deviceConstants_ + abstractOp->constantOffset;
+  }
 
+  
 void Program::sortSlots() {
   // Assigns offsets to input and local/output slots so that all
   // input is first and output next and within input and output, the
   // slots are ordered with lower operand id first. So, if inputs
   // are slots 88 and 22 and outputs are 77 and 33, then the
-  // complete order is 22, 88, 33, 77.
+  // complete order is 22, 88, 33, 77. Constants are sorted after everything else.
   std::vector<AbstractOperand*> ids;
   for (auto& pair : input_) {
     ids.push_back(pair.first);
@@ -540,7 +591,11 @@ void Program::sortSlots() {
   for (auto i = 0; i < ids.size(); ++i) {
     local_[ids[i]] = i + input_.size();
   }
+  for (auto& [op, id] : constants_) {
+    constants_[op] = input_.size() + local_.size() + id;
+  }
 }
+  
 
 OperandIndex Program::operandIndex(AbstractOperand* op) const {
   auto it = input_.find(op);
@@ -548,14 +603,63 @@ OperandIndex Program::operandIndex(AbstractOperand* op) const {
     return it->second;
   }
   it = local_.find(op);
-  if (it == local_.end()) {
-    VELOX_FAIL("Bad operand, offset not known");
-  }
+  if (it != local_.end()) {
   return it->second;
+  }
+  it = constants_.find(op);
+  if (it != constants_.end()) {
+    return it->second;
+  }
+  VELOX_FAIL("Operand not found");
 }
 
+  template <typename T>
+  int32_t Program::addConstant(T* value, int32_t count) {
+    nextConstant_ = bits::roundUp(nextConstant_, sizeof(T));
+    auto start = nextConstant_;
+    nextConstant_ += sizeof(T) * count;
+    constantArea_.resize(nextConstant_);
+    memcpy(constantArea_.data(), value, sizeof(T) * count);
+    return start;
+  }
+
+  template <TypeKind kind>
+  int32_t Program::addConstantTyped(AbstractOperand* op) {
+    if (op->constantOffset != AbstractOperand::kNoConstant) {
+      return op->constantOffset;
+    }
+    using T = typename TypeTraits<kind>::NativeType;
+    if (op->constant->isNullAt(0)) {
+      op->constantNull = true;
+      char zero = 0;
+      op->constantOffset = addConstant<char>(&zero, 1);
+      return;
+    }
+    T value = op->constant->as<SimpleVector<T>>->valueAt(0);
+    if (constexpr (std::is_same_v<T, StringView>)) {
+      int64_t inline = 0;
+      StringView* value = reinterpret_cast<StringView*>(&value);
+      if (stringView->size() <= 6) {
+	int64_t inline = static_cast<int64_t>(stringView->size()) << 48;
+	memcpy(reinterpret_cast<char*>(&inline) + 2, stringView->data(), stringView->size());
+	op->constantOffset = addConstant(&inline, 1);
+      } else {
+	int64_t zero = 0;
+	op->constantOffset = addConstant(&zero);
+	addConstant(stringView->data(), stringView->size());
+  }
+    } else {
+      op->constantOffset = addConstant(&T);
+    }
+  }
+  
 void Program::markInput(AbstractOperand* op) {
   if (!op) {
+    return;
+  }
+  if (op->constant) {
+    VELOX_SCALAR_TYPE_DISPATCH(addConstantTyped, op->constant->type()->kind(), op);
+    constant_[op] = constant_.size();
     return;
   }
   if (!local_.count(op)) {
@@ -591,6 +695,7 @@ std::unique_ptr<Executable> Program::getExecutable(
       exe->outputOperands.add(pair.first->id);
     }
     exe->output.resize(local_.size());
+    exe->constants = &constantOperands_;
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
       auto program = ptr->programShared.get();
       ptr->reuse();
@@ -606,4 +711,4 @@ std::unique_ptr<Executable> Program::getExecutable(
   });
   return exe;
 }
-} // namespace facebook::velox::wave
+} // namespace facebook::velox::wav
