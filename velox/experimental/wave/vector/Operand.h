@@ -108,7 +108,6 @@ struct Operand {
   // Array of flat base values. Cast to pod type or StringView.
   void* base;
 
-  
   // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for
   // consistency with Velox.
   uint8_t* nulls;

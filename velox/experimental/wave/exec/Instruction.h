@@ -29,11 +29,12 @@ T addBytes(U* p, int32_t bytes) {
   return reinterpret_cast<T>(reinterpret_cast<uintptr_t>(p) + bytes);
 }
 
-  /// Represents an input/output of an instruction or WaveOperator on host. The device-side Operator is made at launch time based on this.  
+/// Represents an input/output of an instruction or WaveOperator on host. The
+/// device-side Operator is made at launch time based on this.
 struct AbstractOperand {
   static constexpr int32_t kNoConstant = ~0;
   static constexpr kNoWrap = ~0;
-  
+
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
@@ -62,9 +63,13 @@ struct AbstractOperand {
   // true if null literal.
   bool constantNull{false};
 
-  // True if the data needs no null flags. Applies to some intermediates like selected rows or flags.
+  // True if the data needs no null flags. Applies to some intermediates like
+  // selected rows or flags.
   bool notNull{false};
-  // Ordinal of the wrap instruction that first wraps this. All operands wrapped by the same wrap share 'Operand.indices'. All Operands that are wrapped at some point get indices when first created. When they get wrapped, there is one wrap for all Operands with the same 'wrappedAt'
+  // Ordinal of the wrap instruction that first wraps this. All operands wrapped
+  // by the same wrap share 'Operand.indices'. All Operands that are wrapped at
+  // some point get indices when first created. When they get wrapped, there is
+  // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
 };
 
@@ -89,15 +94,16 @@ struct AbstractFilter : public AbstractInstruction {
 
 struct AbstractWrap : public AbstractInstruction {
   AbstractWrap(AbstractOperand* indices, int32_t id)
-    : AbstractInstruction(OpCode::kWrap), indices(indices), id(id) {}
+      : AbstractInstruction(OpCode::kWrap), indices(indices), id(id) {}
   AbstractOperand* indices;
   std::vector<AbstractOperand*> source;
   std::vector<AbstractOperand*> target;
 
   const int32_t id;
-  // Offset of array of affected operand indices in the literals section of the TB program. Filled in by first pass of making the TB program.
+  // Offset of array of affected operand indices in the literals section of the
+  // TB program. Filled in by first pass of making the TB program.
   int32_t literalOffset{-1};
-  
+
   void addWrap(AbstractOperand* sourceOp, AbstractOperand* targetOp = nullptr) {
     if (std::find(source.begin(), source.end(), sourceOp) != source.end()) {
       return;

@@ -21,10 +21,10 @@
 
 namespace facebook::velox::wave {
 
-  AbstractWrap* findWrap() const overide {
-    return filterWrap_;
-  }
-  
+AbstractWrap* findWrap() const overide {
+  return filterWrap_;
+}
+
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
   for (auto& level : levels_) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
@@ -53,7 +53,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
   }
 }
 
-  void Project::finalize(CompileState& state, operandSet& allWraps) {
+void Project::finalize(CompileState& state, operandSet& allWraps) {
   for (auto& level : levels_) {
     for (auto& program : level) {
       program->prepareForDevice(state.arena());

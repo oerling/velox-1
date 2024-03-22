@@ -282,8 +282,10 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   auto wrap = wrapUnique.get();
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
-  operators_.push_back(std::make_unique<Project>(
-						 *this, outputType, std::vector<AbstractOperand*>{}, levels), wrap);
+  operators_.push_back(
+      std::make_unique<Project>(
+          *this, outputType, std::vector<AbstractOperand*>{}, levels),
+      wrap);
 }
 
 void CompileState::addFilterProject(

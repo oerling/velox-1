@@ -169,9 +169,10 @@ struct Executable {
   // are a contiguous array of Operand in LaunchControl of 'this'
   Operand* operands;
 
-  // Map from wrapAt in AbstractOperand to device side 'indices' with one int32_t* per thread block.
+  // Map from wrapAt in AbstractOperand to device side 'indices' with one
+  // int32_t* per thread block.
   folly::F14FastMap<int32_t, int32_t*> wraps;
-  
+
   // Host side array of literals. These refer to literal data in device side
   // ThreadBlockProgram. These are copied at the end of 'operands' at launch.
   const std::vector<Operand>* literals;
@@ -187,7 +188,8 @@ struct Executable {
   // scheduling.
   std::vector<WaveVectorPtr> intermediates;
 
-  // Backing device memory   for 'output'. These are accessed by dependent executables and must not be written to until out of scope.
+  // Backing device memory   for 'output'. These are accessed by dependent
+  // executables and must not be written to until out of scope.
   std::vector<WaveVectorPtr> output;
 
   // If this represents data transfer, the ranges to transfer.
@@ -233,7 +235,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::unique_ptr<Executable> getExecutable(
       int32_t maxRows,
       const std::vector<std::unique_ptr<AbstractOperand>>& operands);
- 
+
   ThreadBlockProgram* threadBlockProgram() {
     return program_;
   }
@@ -309,7 +311,7 @@ class Program : public std::enable_shared_from_this<Program> {
   // indices. These must have their in 'indices' in Operand initialized
   // to an array with one nullptr per TB for the kernel.
   OperandSet operandsWithIndices_;
-  
+
   // Owns device side 'threadBlockProgram_'
   WaveBufferPtr deviceData_;
 
@@ -340,8 +342,10 @@ struct LaunchControl;
 /// Represents consecutive data dependent kernel launches.
 class WaveStream {
  public:
-  WaveStream(GpuArena& arena, const std::vector<std::unique_ptr<AbstractOperand>>* operands)
-    : arena_(arena), operands_(operands) {}
+  WaveStream(
+      GpuArena& arena,
+      const std::vector<std::unique_ptr<AbstractOperand>>* operands)
+      : arena_(arena), operands_(operands) {}
 
   ~WaveStream();
 
@@ -457,12 +461,12 @@ class WaveStream {
     folly::F14FastMap<int32_t, int32_t*> inputWrap;
     folly::F14FastMap<int32_t, int32_t*> localWrap;
   };
-  
+
   void exeLaunchInfo(Executable& exe, blocksPerExe, ExeLaunchInfo& info);
 
   Operand** fillOperands(Executable& exe, ExeLaunchInfo, char* start);
 
-private:
+ private:
   Event* newEvent();
 
   static std::unique_ptr<Event> eventFromReserve();

@@ -117,7 +117,7 @@ class ReadStream : public Executable {
   void makeOps();
 
   StructColumnReader* reader_;
-    std::vector<AbstractOperand*> abstractOperands_;
+  std::vector<AbstractOperand*> abstractOperands_;
 
   // Offset from end of previous read.
   int32_t offset_;

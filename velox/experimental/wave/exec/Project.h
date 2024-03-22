@@ -24,11 +24,14 @@ class Project : public WaveOperator {
       CompileState& state,
       RowTypePtr outputType,
       std::vector<AbstractOperand*> operands,
-      std::vector<std::vector<ProgramPtr>> levels, AbstractWrap* wrap = nullptr)
-    : WaveOperator(state, outputType, ""), levels_(std::move(levels)), filterWrap_(filterWrap) {}
+      std::vector<std::vector<ProgramPtr>> levels,
+      AbstractWrap* wrap = nullptr)
+      : WaveOperator(state, outputType, ""),
+        levels_(std::move(levels)),
+        filterWrap_(filterWrap) {}
 
   AbstractWrap* findWrap() const overide;
-  
+
   bool isStreaming() const override {
     return true;
   }
