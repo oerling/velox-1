@@ -87,9 +87,14 @@ bool ReadStream::makePrograms(bool& needSync) {
       allDone = false;
     }
   }
-  if (!hasFilters_ && nthWave_ == 0) {
+  if (allDone) {
+    makeControl();
+  }
+  if (!hasFilters_ && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
+    setCount->data.rowCountNoFilter.numRows = rowset_.size();
+    setCount->data.rowCountNoFilter.status = control->deviceData()->as<BlockStatus>();
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
   }
@@ -105,19 +110,6 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
   // kBlockSize top level rows of output and to have Operand structs for the produced column.
   auto numRows = readStream->rows_.size();
   
-  auto numBlocks = bits::roundUp(numRows, kBlockSize) / kBockSize;
-  auto deviceBytes = sizeof(BlockStatus) * numBlocks;
-  for (auto* op : abstractOperands_) {
-    if (op->isWrapped) {
-      numIndices += numBlocks;
-	deviceBytes += sizeof(void*) * numBlocks;
-	}
-  }
-  auto control = std::make_unique<LaunchControl>(0, numRows);
-  control->deviceData = readStream->waveStream->arena().allocate<char>(deviceBytes);
-  control->status = control->deviceData->as<BlockStatus>();
-  makeOutputOperands(*control);
-  readStream->waveStream->addLaunchControl(0, std::move(control));
   readStream->waveStream->installExecutables(
       folly::Range<UniqueExe*>(reinterpret_cast<UniqueExe*>(&readStream), 1),
       [&](Stream* stream, folly::Range<Executable**> exes) {
@@ -153,10 +145,27 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
       });
 }
 
+void ReadStream::makeControl() {
+    numBlocks_ = bits::roundUp(numRows, kBlockSize) / kBockSize;
+  auto deviceBytes = sizeof(BlockStatus) * numBlocks_;
+  for (auto* op : abstractOperands_) {
+    if (op->isWrapped) {
+      numIndices += numBlocks_;
+	deviceBytes += sizeof(void*) * numBlocks_;
+	}
+  }
+  auto control = std::make_unique<LaunchControl>(0, numRows);
+  control->deviceData = readStream->waveStream->arena().allocate<char>(deviceBytes);
+  control->status = control->deviceData->as<BlockStatus>();
+  makeOutputOperands(*control);
+  readStream->waveStream->addLaunchControl(0, std::move(control));
+
+}
+
 void ReadStream::makeOutputOperands(LaunchControl& control) {
   auto data = control.deviceData->as<char>();
-  Operand* operandBegin = addBytes<Operand*>(data
-  int32_t** indicesPtr = abstractOperands_.size() * sizeof(Operand); 
+  Operand* operandBegin = addBytes<Operand*>(data, sizeof(BlockStatus) * numBlocks);
+  int32_t** indicesBegin = abstractOperands_.size() * sizeof(Operand); 
 }
 
 } // namespace facebook::velox::wave

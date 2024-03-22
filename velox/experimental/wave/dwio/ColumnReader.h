@@ -125,6 +125,8 @@ class ReadStream : public Executable {
   // Row numbers to read starting after skipping 'offset_'.
   RowSet rows_;
   std::vector<ColumnOp> ops_;
+  // Cout of KBlockSize blocks in max top level rows.
+  int32_t numBlocks_{0};
   std::vector<std::unique_ptr<SplitStaging>> staging_;
   SplitStaging* currentStaging_;
 
@@ -139,6 +141,7 @@ class ReadStream : public Executable {
   bool hasFilters_{false};
   //  Sequence number of kernel launch.
   int32_t nthWave_{0};
+  LaunchControl* control_;
 };
 
 } // namespace facebook::velox::wave
