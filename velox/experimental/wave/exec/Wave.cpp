@@ -35,7 +35,7 @@ std::string definesToString(const DefinesMap* map) {
   return out.str();
 }
 
-OperandId pathToOperand(
+AbstractOperand* pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
   if (path.empty()) {
@@ -51,9 +51,9 @@ OperandId pathToOperand(
   auto valueIt = map.find(value);
   path = std::move(field.path());
   if (valueIt == map.end()) {
-    return kNoOperand;
+    return nullptr;
   }
-  return valueIt->second->id;
+  return valueIt->second;
 }
 
 WaveVector* Executable::operandVector(OperandId id) {
@@ -315,11 +315,6 @@ bool WaveStream::isArrived(
   return false;
 }
 
-template <typename T, typename U>
-T addBytes(U* p, int32_t bytes) {
-  return reinterpret_cast<T>(reinterpret_cast<uintptr_t>(p) + bytes);
-}
-
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
     int32_t inputRows,
@@ -340,15 +335,19 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   auto operandOffset = size;
   // Exe dependent sizes for parameters.
   int32_t numTotalOps = 0;
+  int32_t numOperandIndices = 0;
   for (auto& exe : exes) {
     markLaunch(*stream, *exe);
     shared = std::max(shared, exe->programShared->sharedMemorySize());
     int32_t numIn = exe->inputOperands.size();
     int numOps = numIn + exe->intermediates.size() +
         exe->outputOperands.size() +
-        (exe->constants ? exe->constants->size() _ : 0)numTotalOps += numOps;
+      (exe->literals ? exe->literals->size() : 0);
+    numTotalOps += numOps;
+    numOperandIndices += exec->operandsWithIndices->size() * blocksPerExe;
     size += numOps * sizeof(void*) + (numOps - numIn) * sizeof(Operand);
   }
+  size += numOperandIndices * sizeof(void*);
   int32_t statusOffset = 0;
   if (initStatus) {
     statusOffset = size;
@@ -374,6 +373,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
   Operand* operandArrayBegin =
       addBytes<Operand*>(operandPtrBegin, numTotalOps * sizeof(void*));
+  int32_t** indicesArrayBegin = addBytes<int32_t**>(operandArrayBegin, sizeof(Operand) * numTotalOps); 
+  int32_t** indicesArrayPtr = indicesArrayBegin;
   if (initStatus) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
@@ -395,7 +396,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     auto exe = exes[exeIdx];
     int32_t numIn = exe->inputOperands.size();
     int32_t numLocal = exe->intermediates.size() + exe->outputOperands.size();
-    int32_t numConstant = exe->constants_ ? exe->constants_->size() : 0;
+    int32_t numConstants = exe->literals ? exe->literals->size() : 0;
     control.programs[exeIdx] = exe->program;
     control.operands[exeIdx] = operandPtrBegin;
     // We get the actual input operands for the exe from the exes this depends
@@ -411,6 +412,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     for (auto& vec : exe->intermediates) {
       *operandPtrBegin = operandArrayBegin;
       vec->toOperand(operandArrayBegin);
+      if (iswrapped!!) {
+	operandArrayBegin->indices = indicesBegin;
+	indicesBegin += blocksPerExe;
+      }
       ++operandPtrBegin;
       ++operandArrayBegin;
     }
@@ -423,8 +428,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     if (numConstants) {
       memcpy(
           operandArrayBegin,
-          exe->constants->data(),
-          numConstant * sizeof(Operand));
+          exe->literals->data(),
+          numConstants * sizeof(Operand));
       for (auto i = 0; i < numConstants; ++i) {
         *operandPtrBegin = operandArrayBegin;
         ++operandPtrBegin;
@@ -463,14 +468,14 @@ WaveTypeKind typeKindCode(TypeKind kind) {
 }
 
 #define IN_HEAD(abstract, physical, _op)           \
-  auto abstractInst = instruction->as<abstract>(); \
-  space->opCode = _op;
+  auto* abstractInst = &instruction->as<abstract>(); \
+  space->opCode = _op; \
 auto physicalInst = new (&space->_) physical();
 
 #define IN_OPERAND(member) \
   physicalInst->member = operandIndex(abstractInst->member)
 
-void Program::prepareForDevice(GpuArena& arena) {
+  void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
   int32_t codeSize = 0;
   int32_t sharedMemorySize = 0;
   for (auto& instruction : instructions_)
@@ -481,7 +486,26 @@ void Program::prepareForDevice(GpuArena& arena) {
         markResult(filter.indices);
         break;
       }
-      case OpCode::kPlus: {
+    case OpCode::kWrap: {
+      auto& wrap = instruction->as<AbstractWrap>();
+      markInput(wrap.indices);
+      std::vector<OperandIndex> indices(wrap.targets.size());
+      wrap.literalOffset = addLiteral(indices.data(), indices.size());
+      for (auto i = 0; i < wrap.target.size(); ++i) {
+	auto target = wrap.target[i];
+	markInput(wrap->source[i]);
+	if (wrappedOperands.contains(target->id)) {
+	  continue;
+	}
+	if (target != wrap->source[i]) {
+	  markResult(target);
+	}
+	wrappedOperands_.add(target->id);
+	operandsWithIndices_.add(target->id);
+      }
+      break;
+    }
+    case OpCode::kPlus: {
         auto& bin = instruction->as<AbstractBinary>();
         markInput(bin.left);
         markInput(bin.right);
@@ -506,7 +530,7 @@ void Program::prepareForDevice(GpuArena& arena) {
   sortSlots();
   arena_ = &arena;
   deviceData_ = arena.allocate<char>(
-      codeSize + instructions_.size() * sizeof(void*) + constantArea_.size() +
+      codeSize + instructions_.size() * sizeof(void*) + literalArea_.size() +
       sizeof(ThreadBlockProgram));
   program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
@@ -523,9 +547,9 @@ void Program::prepareForDevice(GpuArena& arena) {
         IN_HEAD(
             AbstractBinary,
             binary,
-            makeTypedOpcode(
+            OP_MIX(
                 instruction->opCode,
-                instruction->as<AbstractBinary>()->left->type()->kind()));
+                instruction->as<AbstractBinary>().left->type()->kind()));
 
         IN_OPERAND(left);
         IN_OPERAND(right);
@@ -536,11 +560,7 @@ void Program::prepareForDevice(GpuArena& arena) {
       case OpCode::kFilter: {
         IN_HEAD(AbstractFilter, IFilter, OpCode::kFilter);
         IN_OPERAND(flags);
-
-        space->_.filter.flags = operandIndex(filter.flags);
-        space->_.filter.result = operandIndex(filter.result);
-        space->_.binary.result = operandIndex(bin.result);
-        space->_.binary.predicate = operandIndex(bin.predicate);
+	IN_OPERAND(indices);
         ++space;
         break;
       }
@@ -548,23 +568,24 @@ void Program::prepareForDevice(GpuArena& arena) {
         VELOX_UNSUPPORTED("Bad OpCode");
     }
   }
-  char* constantArea = reinterpret_cast<char*> space;
-  memcpy(constantArea, constantArea_.data(), constantArea_.size());
-  constantOperands_.resize(constants_.size());
+  char* literalArea = reinterpret_cast<char*> space;
+  memcpy(literalArea, literalArea_.data(), constantArea_.size());
+  literalOperands_.resize(constants_.size());
   int32_t counter = 0;
   for (auto& [op, id] : constants_) {
-    constantToOperand(op, constantOperands[counter]);
+    literalToOperand(op, literalOperands[counter]);
   }
 }
-void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
+void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   op.indexMask = 0;
   op.indices = nullptr;
   if (abstractOp->constantNull) {
     op.nulls = deviceConstants + op->constantOffset;
   } else {
-    op.value = deviceConstants_ + abstractOp->constantOffset;
+    op.base = deviceConstants_ + abstractOp->constantOffset;
   }
-
+}
+  
   void Program::sortSlots() {
     // Assigns offsets to input and local/output slots so that all
     // input is first and output next and within input and output, the
@@ -598,8 +619,8 @@ void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
     for (auto i = 0; i < ids.size(); ++i) {
       local_[ids[i]] = i + input_.size();
     }
-    for (auto& [op, id] : constants_) {
-      constants_[op] = input_.size() + local_.size() + id;
+    for (auto& [op, id] : literals_) {
+      literals_[op] = input_.size() + local_.size() + id;
     }
   }
 
@@ -612,26 +633,26 @@ void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
     if (it != local_.end()) {
       return it->second;
     }
-    it = constants_.find(op);
-    if (it != constants_.end()) {
+    it = literals_.find(op);
+    if (it != literals_.end()) {
       return it->second;
     }
     VELOX_FAIL("Operand not found");
   }
 
   template <typename T>
-  int32_t Program::addConstant(T * value, int32_t count) {
+  int32_t Program::addLiteral(T * value, int32_t count) {
     nextConstant_ = bits::roundUp(nextConstant_, sizeof(T));
     auto start = nextConstant_;
-    nextConstant_ += sizeof(T) * count;
-    constantArea_.resize(nextConstant_);
-    memcpy(constantArea_.data(), value, sizeof(T) * count);
+    nextLiteral_ += sizeof(T) * count;
+    literalArea_.resize(nextLiteral_);
+    memcpy(literalArea_.data(), value, sizeof(T) * count);
     return start;
   }
 
   template <TypeKind kind>
-  int32_t Program::addConstantTyped(AbstractOperand * op) {
-    if (op->constantOffset != AbstractOperand::kNoConstant) {
+  int32_t Program::addLiteralTyped(AbstractOperand * op) {
+    if (op->literalOffset != AbstractOperand::kNoConstant) {
       return op->constantOffset;
     }
     using T = typename TypeTraits<kind>::NativeType;
@@ -668,7 +689,7 @@ void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
     }
     if (op->constant) {
       VELOX_SCALAR_TYPE_DISPATCH(
-          addConstantTyped, op->constant->type()->kind(), op);
+          addLiteralTyped, op->constant->type()->kind(), op);
       constant_[op] = constant_.size();
       return;
     }
@@ -705,7 +726,8 @@ void Program::constantToOperand(AbstractOperand* abstractOp, Operand& op) {
         exe->outputOperands.add(pair.first->id);
       }
       exe->output.resize(local_.size());
-      exe->constants = &constantOperands_;
+      exe->literals = &literalOperands_;
+      exe->operandsWithIndices = &operandsWithIndices_;
       exe->releaser = [](std::unique_ptr<Executable>& ptr) {
         auto program = ptr->programShared.get();
         ptr->reuse();

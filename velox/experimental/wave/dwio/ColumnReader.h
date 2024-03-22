@@ -31,7 +31,7 @@ class ColumnReader {
   ColumnReader(
       const TypePtr& requestedType,
       std::shared_ptr<const dwio::common::TypeWithId> fileType,
-      OperandId operand,
+      AbsractOperand* operand,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
       : requestedType_(requestedType),
@@ -54,7 +54,7 @@ class ColumnReader {
     return formatData_->totalRows();
   }
 
-  OperandId operand() const {
+  AbstractOperand* operand() const {
     return operand_;
   }
 
@@ -72,7 +72,7 @@ class ColumnReader {
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
-  const OperandId operand_;
+  AbstractOperand* const operand_;
   std::unique_ptr<FormatData> formatData_;
   // Specification of filters, value extraction, pruning etc. The
   // spec is assigned at construction and the contents may change at
@@ -117,7 +117,12 @@ class ReadStream : public Executable {
   void makeOps();
 
   StructColumnReader* reader_;
+    std::vector<AbstractOperand*> abstractOperands_;
+
+  // Offset from end of previous read.
   int32_t offset_;
+
+  // Row numbers to read starting after skipping 'offset_'.
   RowSet rows_;
   std::vector<ColumnOp> ops_;
   std::vector<std::unique_ptr<SplitStaging>> staging_;

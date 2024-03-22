@@ -108,15 +108,16 @@ struct Operand {
   // Array of flat base values. Cast to pod type or StringView.
   void* base;
 
+  
+  // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for
+  // consistency with Velox.
+  uint8_t* nulls;
+
   // If non-nullptr, provides index into 'base. Subscripted with the
   // blockIdx - idx of first bllock wit this instruction
   // stream. Different thread blocks may or may not have indices for
   // a given operand.
-  int32_t** indices;
-
-  // Array of null indicators. No nulls if nullptr.  A 1 means not-null, for
-  // consistency with Velox.
-  uint8_t* nulls;
+  int32_t* indices;
 };
 
 /// Per-lane error code.
@@ -127,7 +128,7 @@ enum class ErrorCode : uint8_t {
   // Catchall for runtime errors.
   kError,
 
-  kInsuffcientMemory,
+  kInsufficientMemory,
 };
 
 /// Contains a count of active lanes and a per lane error code.

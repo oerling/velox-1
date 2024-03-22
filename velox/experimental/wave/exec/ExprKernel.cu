@@ -81,7 +81,31 @@ __device__ void wrapKernel(
     IWrap& wrap,
     Operand** operands,
     int32_t blockBase,
-    int32_t& numRows) {}
+    char* shared,
+    int32_t numRows) {
+  struct WrapState {
+    bool done;
+    int32_t* filterIndices;
+  };
+  WrapState state = reinterpret_cast<WrapState*>(shared);
+  
+  if (threadIdx.x == 0) {
+    state->filterIndices = reinterpret_cast<int32_t*>(operands[wrap->indices]->values);
+  }
+  __syncthreads();
+  if (!state->filterIndices) {
+    // Nothing wrapped.
+    return;
+  }
+  for (auto i = 0; i < wrap.numColumns) {
+    if (threadIdx.x == 0) {
+      auto* operand = operands[wrap.columns[i]];
+      auto* indices = op->indices[base / kBlockSize];
+      if (!indices) {
+	op->indices[base / kBlockSize] = filterIndices;
+      }
+    }
+}
 
 #define BINARY_TYPES(opCode, OP)                             \
   case OP_MIX(opCode, WaveTypeKind::BIGINT):     \

@@ -70,7 +70,7 @@ using DefinesMap =
 /// Translates a set of path steps to an OperandId or kNoOperand if
 /// none found. The path is not const because it is temporarily
 /// moved into a Subfield. Not thread safe for 'path'.
-OperandId pathToOperand(
+AbstractOperand* pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path);
 
@@ -164,13 +164,18 @@ struct Executable {
   // Operand ids for outputs.
   OperandSet outputOperands;
 
-  // Unified memory Operand structs for intermediates/outputs/constants. These
+  // Unified memory Operand structs for intermediates/outputs/literals. These
   // are a contiguous array of Operand in LaunchControl of 'this'
   Operand* operands;
 
-  // Host side array of constants. These refer to literal data in device side
+  // Host side array of literals. These refer to literal data in device side
   // ThreadBlockProgram. These are copied at the end of 'operands' at launch.
-  const std::vector<Operand>* constants;
+  const std::vector<Operand>* literals;
+
+  // These are operans that acquire indices for selection in
+  // 'program'. If they come as input and get indices for selection in
+  // the program that makes them, they are not included here.
+  const operandSet* operandsWithIndices;
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
   // scheduling follow up work that is synchronized with arrival of 'this', the
@@ -178,8 +183,7 @@ struct Executable {
   // scheduling.
   std::vector<WaveVectorPtr> intermediates;
 
-  // Backing device memory   for 'output' Can be moved to intermediates or
-  // output of a dependent executables.
+  // Backing device memory   for 'output'. These are accessed by dependent executables and must not be written to until out of scope.
   std::vector<WaveVectorPtr> output;
 
   // If this represents data transfer, the ranges to transfer.
@@ -215,14 +219,17 @@ class Program : public std::enable_shared_from_this<Program> {
     dependsOn_.push_back(source);
   }
 
-  // Initializes executableImage and relocation information and places for
-  // parameters.
-  void prepareForDevice(GpuArena& arena);
+  // Initializes executableImage and relocation information and places
+  // for parameters. If the program wraps operands, (indirection for
+  // selection), then the affected operands are added to
+  // wrappedOperands. Launch will create the wrapping arrays if the
+  // operand did not et these from a prior program.
+  void prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands);
 
   std::unique_ptr<Executable> getExecutable(
       int32_t maxRows,
       const std::vector<std::unique_ptr<AbstractOperand>>& operands);
-
+ 
   ThreadBlockProgram* threadBlockProgram() {
     return program_;
   }
@@ -253,12 +260,14 @@ class Program : public std::enable_shared_from_this<Program> {
 
  private:
   template <TypeKind kind>
-  int32_t addConstantTyped(AbstractOperand* op);
+  int32_t addLiteralTyped(AbstractOperand* op);
   /// Returns a starting offset to a constant with 'count' elements of T,
   /// initialized from 'value[]' The values are copied to device side
   /// ThreadBlockProgram.
   template <typename T>
-  int32_t addConstant(T* value, int32_t count);
+  int32_t addLiteral(T* value, int32_t count);
+
+  void literalToOperand(AbstractOperand* abstractOp, Operand& op);
 
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
@@ -268,6 +277,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // Adds 'op' to 'input' if it is not produced by one in 'local'
   void markInput(AbstractOperand* op);
+
   // Adds 'op' to 'local_'
   void markResult(AbstractOperand* op);
   void sortSlots();
@@ -281,16 +291,21 @@ class Program : public std::enable_shared_from_this<Program> {
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
 
   // Constant Operand  to offset in operands array.
-  folly::F14FastMap<AbstractOperand*, int32_t> constant_;
+  folly::F14FastMap<AbstractOperand*, int32_t> literal_;
 
   // Offset of first unused constant area byte from start of constant area.
-  int32_t nextConstant_{0};
+  int32_t nextLiteral_{0};
 
   // Binary data for constants to be embedded in ThreadBlockProgram. Must be
   // relocatable, i.e. does not contain non-relative pointers within the
   // constant area.
-  std::string constantArea_;
+  std::string literalArea_;
 
+  // Set of operands that may be wrapped in a selection with per TB
+  // indices. These must have their in 'indices' in Operand initialized
+  // to an array with one nullptr per TB for the kernel.
+  OperandSet operandsWithIndices_;
+  
   // Owns device side 'threadBlockProgram_'
   WaveBufferPtr deviceData_;
 
@@ -301,10 +316,10 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // Host side image of device side Operands that reference 'constantArea_'.
   // These are copied at the end of the operand block created at kernel launch.
-  std::vector<Operand> constantOperands_;
+  std::vector<Operand> literalOperands_;
 
   // Start of device side constant area.
-  char* deviceConstants_{nullptr};
+  char* deviceLiterals_{nullptr};
   // Serializes 'prepared_'. Access on WaveStrea, is single threaded but sharing
   // Programs across WaveDrivers makes sense, so make the preallocated resource
   // thread safe.

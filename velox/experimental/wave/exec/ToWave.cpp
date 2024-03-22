@@ -278,10 +278,12 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   auto indices = newOperand(INTEGER(), "indices");
   auto program = programOf(condition);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
-  program->add(std::make_unique<AbstractWrap>(indices));
+  auto wrapUnique = std::make_unique<AbstractWrap>(indices);
+  auto wrap = wrapUnique.get();
+  program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
   operators_.push_back(std::make_unique<Project>(
-      *this, outputType, std::vector<AbstractOperand*>{}, levels));
+						 *this, outputType, std::vector<AbstractOperand*>{}, levels), wrap);
 }
 
 void CompileState::addFilterProject(
@@ -419,8 +421,9 @@ bool CompileState::compile() {
   if (operators_.empty()) {
     return false;
   }
+  OperandSet allWraps;
   for (auto& op : operators_) {
-    op->finalize(*this);
+    op->finalize(*this, allWraps);
   }
   std::vector<OperandId> resultOrder;
   for (auto i = 0; i < outputType->size(); ++i) {

@@ -24,6 +24,12 @@ namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a device
 /// side ThreadBlockProgram right before execution.
 
+template <typename T, typename U>
+T addBytes(U* p, int32_t bytes) {
+  return reinterpret_cast<T>(reinterpret_cast<uintptr_t>(p) + bytes);
+}
+
+  /// Represents an input/output of an instruction or WaveOperator on host. The device-side Operator is made at launch time based on this.  
 struct AbstractOperand {
   static constexpr int32_t kNoConstant = ~0;
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
@@ -51,7 +57,13 @@ struct AbstractOperand {
   // The base array in Operand will be set to 'constantOffset + end of last
   // instruction'.
   int32_t constantOffset{kNoConstant};
+  // true if null literal.
   bool constantNull{false};
+
+  // True if the data needs no null flags. Applies to some intermediates like selected rows or flags.
+  bool notNull{false};
+  // true if the operand will at some point acquire a wrap for cardinality.
+  bool isWrapped{false};
 };
 
 struct AbstractInstruction {
@@ -80,12 +92,20 @@ struct AbstractWrap : public AbstractInstruction {
   std::vector<AbstractOperand*> source;
   std::vector<AbstractOperand*> target;
 
+  // Offset of array of affected operand indices in the literals section of the TB program. Filled in by first pass of making the TB program.
+  int32_t literalOffset{-1};
+  
   void addWrap(AbstractOperand* sourceOp, AbstractOperand* targetOp = nullptr) {
     if (std::find(source.begin(), source.end(), sourceOp) != source.end()) {
       return;
     }
     source.push_back(sourceOp);
     target.push_back(targetOp ? targetOp : sourceOp);
+    if (target) {
+      target->isWrapped = true;
+    } else {
+      source->isWrapped = true;
+    }
   }
 };
 
