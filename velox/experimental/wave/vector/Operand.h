@@ -117,7 +117,7 @@ struct Operand {
   // blockIdx - idx of first bllock wit this instruction
   // stream. Different thread blocks may or may not have indices for
   // a given operand.
-  int32_t* indices;
+  int32_t** indices;
 };
 
 /// Per-lane error code.

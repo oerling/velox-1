@@ -137,7 +137,8 @@ class CompileState {
 
   // Sequence number for operands.
   int32_t operandCounter_{0};
-
+  int32_t wrapCounter_{0};
+  
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;
 };

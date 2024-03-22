@@ -142,6 +142,7 @@ struct Executable {
   void reuse() {
     operands = nullptr;
     stream = nullptr;
+    wraps.clear();
   }
   // The containing WaveStream, if needed.
   WaveStream* waveStream{nullptr};
@@ -168,6 +169,9 @@ struct Executable {
   // are a contiguous array of Operand in LaunchControl of 'this'
   Operand* operands;
 
+  // Map from wrapAt in AbstractOperand to device side 'indices' with one int32_t* per thread block.
+  folly::F14FastMap<int32_t, int32_t*> wraps;
+  
   // Host side array of literals. These refer to literal data in device side
   // ThreadBlockProgram. These are copied at the end of 'operands' at launch.
   const std::vector<Operand>* literals;
@@ -336,7 +340,8 @@ struct LaunchControl;
 /// Represents consecutive data dependent kernel launches.
 class WaveStream {
  public:
-  WaveStream(GpuArena& arena) : arena_(arena) {}
+  WaveStream(GpuArena& arena, const std::vector<std::unique_ptr<AbstractOperand>>* operands)
+    : arena_(arena), operands_(operands) {}
 
   ~WaveStream();
 
@@ -438,7 +443,26 @@ class WaveStream {
     launchControl_[key].push_back(std::move(control));
   }
 
- private:
+  const AbstractOperand* operandAt(int32_t id) {
+    VELOX_CHECK_LT(id, operands_->size());
+    return operands_[id].get();
+  }
+
+  struct ExeLaunchInfo {
+    int32_t numBlocks;
+    int32_t numInput{0};
+    int32_t numLocalOps{0};
+    int32_t numLocalWrap{0};
+    int32_t totalBytes{0};
+    folly::F14FastMap<int32_t, int32_t*> inputWrap;
+    folly::F14FastMap<int32_t, int32_t*> localWrap;
+  };
+  
+  void exeLaunchInfo(Executable& exe, blocksPerExe, ExeLaunchInfo& info);
+
+  Operand** fillOperands(Executable& exe, ExeLaunchInfo, char* start);
+
+private:
   Event* newEvent();
 
   static std::unique_ptr<Event> eventFromReserve();
@@ -453,6 +477,7 @@ class WaveStream {
   static void clearReusable();
 
   GpuArena& arena_;
+  const std::vector<std::unique_ptr<AbstractOperand>>* const operands_;
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
   std::vector<std::unique_ptr<Executable>> executables_;
 

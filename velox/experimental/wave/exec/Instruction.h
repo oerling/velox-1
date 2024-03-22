@@ -32,6 +32,8 @@ T addBytes(U* p, int32_t bytes) {
   /// Represents an input/output of an instruction or WaveOperator on host. The device-side Operator is made at launch time based on this.  
 struct AbstractOperand {
   static constexpr int32_t kNoConstant = ~0;
+  static constexpr kNoWrap = ~0;
+  
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
@@ -62,8 +64,8 @@ struct AbstractOperand {
 
   // True if the data needs no null flags. Applies to some intermediates like selected rows or flags.
   bool notNull{false};
-  // true if the operand will at some point acquire a wrap for cardinality.
-  bool isWrapped{false};
+  // Ordinal of the wrap instruction that first wraps this. All operands wrapped by the same wrap share 'Operand.indices'. All Operands that are wrapped at some point get indices when first created. When they get wrapped, there is one wrap for all Operands with the same 'wrappedAt'
+  int32_t wrappedAt{kNoWrap};
 };
 
 struct AbstractInstruction {
@@ -86,12 +88,13 @@ struct AbstractFilter : public AbstractInstruction {
 };
 
 struct AbstractWrap : public AbstractInstruction {
-  AbstractWrap(AbstractOperand* indices)
-      : AbstractInstruction(OpCode::kWrap), indices(indices) {}
+  AbstractWrap(AbstractOperand* indices, int32_t id)
+    : AbstractInstruction(OpCode::kWrap), indices(indices), id(id) {}
   AbstractOperand* indices;
   std::vector<AbstractOperand*> source;
   std::vector<AbstractOperand*> target;
 
+  const int32_t id;
   // Offset of array of affected operand indices in the literals section of the TB program. Filled in by first pass of making the TB program.
   int32_t literalOffset{-1};
   
@@ -102,9 +105,9 @@ struct AbstractWrap : public AbstractInstruction {
     source.push_back(sourceOp);
     target.push_back(targetOp ? targetOp : sourceOp);
     if (target) {
-      target->isWrapped = true;
-    } else {
-      source->isWrapped = true;
+      target->wrapAt = id;
+    } else if (source->wrapAt == AbstractOperand::kNoWrap) {
+      source->wrapAt = id;
     }
   }
 };

@@ -278,7 +278,7 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   auto indices = newOperand(INTEGER(), "indices");
   auto program = programOf(condition);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
-  auto wrapUnique = std::make_unique<AbstractWrap>(indices);
+  auto wrapUnique = std::make_unique<AbstractWrap>(indices, wrapCounter_++);
   auto wrap = wrapUnique.get();
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);

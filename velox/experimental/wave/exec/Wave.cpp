@@ -315,6 +315,114 @@ bool WaveStream::isArrived(
   return false;
 }
 
+  
+void WaveStream::exeLaunchInfo(Executable& exe, int32_t numBlocks, ExeLaunchInfo info) {
+    // The exe has an Operand* for each input/local/output/literal
+    // op. It has an Operator for each local/output/literal op. It has
+    // an array of numBlock int32_t*'s for every distinct wrapAt in
+    // its local/output operands where the wrapAt does not occur in
+    // any of the input Operands.
+    info.numBlocks = numBlocks;
+    exe.input.forEach([&](auto id) {
+    auto op = operandAt(id);
+    if (op->wrapAt != AbsttractOperand::kNoWrap) {
+      inputExe = operandExecutable(op->id);
+      indices = inputExe->wraps[op->wrapAt];
+      VELOX_CHECK_NOT_NULL(indices);
+      info.inputWrap[op->wrapAt] = indices;
+    }
+		      });
+
+    exe.local.forEach([&](auto id) {
+			  auto op = operandAt(id);
+			  if (op->wrapAt != AbstractOperand::kNoWrap) {
+			    if (inputWrap.find(id) == inputWrap.end()) {
+			      if (info.localWrap.find(op->wrapAt) != info.localWrap.end()) {
+				localWrap[op->wrapAt] = localWrap.size() * numBlocks * sizeof(void*);
+			      }
+			    }
+			  }
+		      });
+    exe.output.forEach([&](auto id) {
+			  auto op = operandAt(id);
+			  if (op->wrapAt != AbstractOperand::kNoWrap) {
+			    if (inputWrap.find(id) == inputWrap.end()) {
+			      if (info.localWrap.find(op->wrapAt) != info.localWrap.end()) {
+				localWrap[op->wrapAt] = localWrap.size() * numBlocks * sizeof(void*);
+			      }
+			    }
+			  }
+		      });
+    auto numLiteral = exe->literalOperands ? exe->literalOperands->size() : 0;
+    auto  numLocalOps = exe.local.size() + exe.output.size() + numLiteral;
+    info.totalBytes =
+      // Pointer to Operand for input and local Operands.
+      sizeof(void*) * (numLocalOps + exe.input.size()) +
+      // Flat array of Operand for all but input.
+      sizeof(Operand) * numLocalOps +
+      // Space for the 'indices' for each distinct wrapAt.
+      (localWrap.size() * numBlocks * sizeof(void*));
+  }
+
+  Operand** WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
+    OperandPtr*** operandPtrBegin = addBytes<OperandPtr***>(start, 0);
+    exe->inputOperands.forEach([&](int32_t id) {
+      auto* inputExe = operandToExecutable_[id];
+      int32_t ordinal = inputExe->outputOperands.ordinal(id);
+      *operandPtrBegin = &inputExe->operands[ordinal];
+      ++operandPtrBegin;
+    });
+    Operand* operandBegin = addBytes<Operand*>(start, (info.numInput + info.numLocalOps) * sizeof(void*));
+    int32_t* indicesBegin = addBytes<int32_t*>(operandBegin, info.numLocalOps *  sizeof(Operand));
+    for (auto& [id, ptr] : info.localWrap) {
+      info.localWrap[id] = addBytes<int32_t*>(indicesBegin, reinterpret_cast<int64_t>(ptr));
+    }
+    exe.wrap = std::move(info.localWrap);
+    for (auto& [id, ptr] :info.inputWrap) {
+      exe.wrap[id] = ptr;
+    }
+    exe.intermediate.forEach([&](auto id) {
+			       auto op = operandAt(id);
+			       auto vec = getVector(op);
+			       vec->toOperand(operandBegin);
+			       if (op->wrapAt != AbstractOperand::kNoWrap) {
+				 operandBegin->indices = exe.wrap[op->wrapAt];
+				 VELOX_CHECK_NOT_NULL(operandBegin->indices);
+			       }
+			       *operandPtrBegin = operandBegin;
+			       ++operandPtrBegin;
+			       ++operandBegin;
+			     });
+    exe.outputOperands.forEach([&](auto id) {
+			       auto op = operandAt(id);
+			       auto vec = getVector(op);
+			       vec->toOperand(operandBegin);
+			       if (op->wrapAt != AbstractOperand::kNoWrap) {
+				 operandBegin->indices = exe.wrap[op->wrapAt];
+				 VELOX_CHECK_NOT_NULL(operandBegin->indices);
+			       }
+			       *operandPtrBegin = operandBegin;
+			       ++operandPtrBegin;
+			       ++operandBegin;
+			       });
+
+    auto numConstants = exe.literals ? exe.literals->size() : 0;
+    if (numConstants) {
+      memcpy(
+	     operandBegin,
+          exe->literals->data(),
+          numConstants * sizeof(Operand));
+      for (auto i = 0; i < numConstants; ++i) {
+        *operandPtrBegin = operandBegin;
+        ++operandPtrBegin;
+        ++operandBegin;
+      }
+    }
+
+    return addBytes<OperandPtr**>(start, 0);
+  }
+
+
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
     int32_t inputRows,
@@ -329,25 +437,19 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
+  std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
   // 2 pointers per exe: TB program and start of its param array.
   size += exes.size() * sizeof(void*) * 2;
   auto operandOffset = size;
   // Exe dependent sizes for parameters.
-  int32_t numTotalOps = 0;
-  int32_t numOperandIndices = 0;
-  for (auto& exe : exes) {
+  for (auto i = 0; i < exes.size(); ++i) {
+    launchInfo(exes[i], numBlocks, info[i]);
+    paramBytes += info[i].totalBytes;
     markLaunch(*stream, *exe);
     shared = std::max(shared, exe->programShared->sharedMemorySize());
-    int32_t numIn = exe->inputOperands.size();
-    int numOps = numIn + exe->intermediates.size() +
-        exe->outputOperands.size() +
-      (exe->literals ? exe->literals->size() : 0);
-    numTotalOps += numOps;
-    numOperandIndices += exec->operandsWithIndices->size() * blocksPerExe;
-    size += numOps * sizeof(void*) + (numOps - numIn) * sizeof(Operand);
   }
-  size += numOperandIndices * sizeof(void*);
+  size += paramBytes; 
   int32_t statusOffset = 0;
   if (initStatus) {
     statusOffset = size;
@@ -369,12 +471,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       control.programIdx, numBlocks * sizeof(int32_t));
   control.operands =
       addBytes<Operand***>(control.programs, exes.size() * sizeof(void*));
-  int32_t fill = 0;
-  Operand** operandPtrBegin = addBytes<Operand**>(start, operandOffset);
-  Operand* operandArrayBegin =
-      addBytes<Operand*>(operandPtrBegin, numTotalOps * sizeof(void*));
-  int32_t** indicesArrayBegin = addBytes<int32_t**>(operandArrayBegin, sizeof(Operand) * numTotalOps); 
-  int32_t** indicesArrayPtr = indicesArrayBegin;
   if (initStatus) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
@@ -392,39 +488,12 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   } else {
     control.status = nullptr;
   }
-  for (auto exeIdx = 0; exeIdx < exes.size(); ++exeIdx) {
-    auto exe = exes[exeIdx];
-    int32_t numIn = exe->inputOperands.size();
-    int32_t numLocal = exe->intermediates.size() + exe->outputOperands.size();
-    int32_t numConstants = exe->literals ? exe->literals->size() : 0;
-    control.programs[exeIdx] = exe->program;
-    control.operands[exeIdx] = operandPtrBegin;
-    // We get the actual input operands for the exe from the exes this depends
-    // on
-    exe->inputOperands.forEach([&](int32_t id) {
-      auto* inputExe = operandToExecutable_[id];
-      int32_t ordinal = inputExe->outputOperands.ordinal(id);
-      *operandPtrBegin = &inputExe->operands[ordinal];
-      ++operandPtrBegin;
-    });
-    // We install the intermediates and outputs from the WaveVectors in the exe.
-    exe->operands = operandArrayBegin;
-    for (auto& vec : exe->intermediates) {
-      *operandPtrBegin = operandArrayBegin;
-      vec->toOperand(operandArrayBegin);
-      if (iswrapped!!) {
-	operandArrayBegin->indices = indicesBegin;
-	indicesBegin += blocksPerExe;
-      }
-      ++operandPtrBegin;
-      ++operandArrayBegin;
-    }
-    for (auto& vec : exe->output) {
-      *operandPtrBegin = operandArrayBegin;
-      vec->toOperand(operandArrayBegin);
-      ++operandPtrBegin;
-      ++operandArrayBegin;
-    }
+
+  for (auto i = 0; i < exes.size(); ++i) {
+    control.programs[i] = exes[i]->program;
+    control.operands[i] = fillOperands(exes[i], paramAreaStart, info[i]);
+    paramAreaStart += info[i].totalBytes;
+  }
     if (numConstants) {
       memcpy(
           operandArrayBegin,

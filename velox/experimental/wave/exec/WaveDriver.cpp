@@ -152,7 +152,7 @@ void WaveDriver::startMore() {
     }
     if (auto rows = ops[0]->canAdvance()) {
       VLOG(1) << "Advance " << rows << " rows in pipeline " << i;
-      auto stream = std::make_unique<WaveStream>(*arena_);
+      auto stream = std::make_unique<WaveStream>(*arena_, &operands());
       for (auto& op : ops) {
         op->schedule(*stream, rows);
       }

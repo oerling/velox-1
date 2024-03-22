@@ -24,9 +24,10 @@ namespace facebook::velox::wave {
   if (op != nullptr) {
     operands.add(op->id);
     if (abstractOperands) {
-      abstractOperands->push_back(op);}
+      abstractOperands->push_back(op);
     }
   }
+
   for (auto& child : reader->children()) {
     allOperands(child, operands, abstractOperands);
   }
@@ -147,25 +148,16 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
 
 void ReadStream::makeControl() {
     numBlocks_ = bits::roundUp(numRows, kBlockSize) / kBockSize;
-  auto deviceBytes = sizeof(BlockStatus) * numBlocks_;
-  for (auto* op : abstractOperands_) {
-    if (op->isWrapped) {
-      numIndices += numBlocks_;
-	deviceBytes += sizeof(void*) * numBlocks_;
-	}
-  }
-  auto control = std::make_unique<LaunchControl>(0, numRows);
+    WaveStream::ExeLaunchInfo info;
+    waveStream->exeLaunchInfo(*this, numBlocks_, info);
+    auto deviceBytes = sizeof(BlockStatus) * numBlocks_ + info.totalBytes;
+    auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = readStream->waveStream->arena().allocate<char>(deviceBytes);
   control->status = control->deviceData->as<BlockStatus>();
-  makeOutputOperands(*control);
-  readStream->waveStream->addLaunchControl(0, std::move(control));
-
+  auto operandArea = addBytes<char*>(control->status, sizeof(BlockStatus) * numBlocks_);
+  waveStream->makeOperands(*this, operandArea, info);
+  operands = readStream->waveStream->addLaunchControl(0, std::move(control));
 }
 
-void ReadStream::makeOutputOperands(LaunchControl& control) {
-  auto data = control.deviceData->as<char>();
-  Operand* operandBegin = addBytes<Operand*>(data, sizeof(BlockStatus) * numBlocks);
-  int32_t** indicesBegin = abstractOperands_.size() * sizeof(Operand); 
-}
 
 } // namespace facebook::velox::wave
