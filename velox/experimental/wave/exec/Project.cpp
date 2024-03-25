@@ -21,7 +21,7 @@
 
 namespace facebook::velox::wave {
 
-  AbstractWrap* Project::findWrap() const {
+AbstractWrap* Project::findWrap() const {
   return filterWrap_;
 }
 

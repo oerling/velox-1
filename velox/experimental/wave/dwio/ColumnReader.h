@@ -98,7 +98,7 @@ class ReadStream : public Executable {
   void setNullable(const AbstractOperand& op, bool nullable) {
     waveStream->setNullable(op, nullable);
   }
-  
+
   /// Runs a sequence of kernel invocations until all eagerly produced columns
   /// have their last kernel in flight. Transfers ownership of 'readStream' to
   /// its WaveStream.
@@ -120,7 +120,7 @@ class ReadStream : public Executable {
   /// Makes column dependencies.
   void makeOps();
   void makeControl();
-  
+
   StructColumnReader* reader_;
   std::vector<AbstractOperand*> abstractOperands_;
 

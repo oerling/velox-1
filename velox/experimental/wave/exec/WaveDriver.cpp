@@ -69,7 +69,7 @@ RowVectorPtr WaveDriver::getOutput() {
           ++it;
           continue;
         }
-	stream->setState(WaveStream::State::kNotRunning); 
+        stream->setState(WaveStream::State::kNotRunning);
         RowVectorPtr result;
         if (i + 1 < pipelines_.size()) {
           auto waveResult = makeWaveResult(op.outputType(), *stream, lastSet);
@@ -81,7 +81,7 @@ RowVectorPtr WaveDriver::getOutput() {
           VLOG(1) << "Final output size: " << result->size();
         }
         if (streamAtEnd(*stream)) {
-	  stats_.add(stream->stats());
+          stats_.add(stream->stats());
           it = streams.erase(it);
         } else {
           ++it;

@@ -22,19 +22,19 @@
 
 namespace facebook::velox::wave {
 
-
-  
 template <typename T>
 __device__ inline T& flatValue(void* base, int32_t blockBase) {
   return reinterpret_cast<T*>(base)[blockBase + threadIdx.x];
 }
 
-  template <typename T>
+template <typename T>
 __device__ T& sharedMemoryOperand(char* shared, OperandIndex op) {
-  return reinterpret_cast<T*>(shared + ((op & kSharedOperandMask) << 1))[blockIdx.x];
+  return reinterpret_cast<T*>(
+      shared + ((op & kSharedOperandMask) << 1))[blockIdx.x];
 }
-  /// Returns true if operand is non null. Sets 'value' to the value of the operand.
-  template <typename T>
+/// Returns true if operand is non null. Sets 'value' to the value of the
+/// operand.
+template <typename T>
 __device__ inline bool operandOrNull(
     Operand** operands,
     OperandIndex opIdx,
@@ -62,8 +62,8 @@ __device__ inline bool operandOrNull(
   }
   value = reinterpret_cast<const T*>(op->base)[index];
   return true;
-  }
-  
+}
+
 template <typename T>
 __device__ inline T getOperand(
     Operand** operands,
@@ -89,7 +89,6 @@ __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
   return getOperand<T>(&op, 0, blockBase, shared);
 }
 
-
 template <typename T>
 __device__ inline T value(Operand* op, int index) {
   if (auto indicesInOp = op->indices) {
@@ -101,14 +100,14 @@ __device__ inline T value(Operand* op, int index) {
   return reinterpret_cast<const T*>(op->base)[index];
 }
 
-  /// Sets the lane's result to null for opIdx.
+/// Sets the lane's result to null for opIdx.
 __device__ inline void resultNull(
     Operand** operands,
     OperandIndex opIdx,
     int32_t blockBase,
     char* shared) {
   if (opIdx >= kMinSharedMemIndex) {
-    auto offset = (opIdx & kSharedNullMask)  - 1;
+    auto offset = (opIdx & kSharedNullMask) - 1;
     shared[(kBlockSize * offset) + blockIdx.x] = kNull;
   } else {
     auto* op = operands[opIdx];
@@ -116,7 +115,6 @@ __device__ inline void resultNull(
   }
 }
 
-  
 template <typename T>
 __device__ inline T& flatResult(
     Operand** operands,

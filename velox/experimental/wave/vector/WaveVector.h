@@ -54,12 +54,13 @@ class WaveVector {
 
   // Constructs a vector. Resize can be used to create buffers for a given size.
   WaveVector(const TypePtr& type, GpuArena& arena, bool notNull = false)
-    : type_(type), kind_(type_->kind()), arena_(&arena), notNull_(notNull) {}
+      : type_(type), kind_(type_->kind()), arena_(&arena), notNull_(notNull) {}
 
   WaveVector(
       const TypePtr& type,
       GpuArena& arena,
-      std::vector<std::unique_ptr<WaveVector>> children, bool notNull = false);
+      std::vector<std::unique_ptr<WaveVector>> children,
+      bool notNull = false);
 
   const TypePtr& type() const {
     return type_;
@@ -120,7 +121,8 @@ class WaveVector {
 
   vector_size_t size_{0};
 
-  // Values array, cast to pod type or StringView. If there are nulls, the null flags are in this buffer after the values, starting at 'null_'
+  // Values array, cast to pod type or StringView. If there are nulls, the null
+  // flags are in this buffer after the values, starting at 'null_'
   WaveBufferPtr values_;
 
   // Nulls, points to the tail of 'values'. nullptr if no nulls.

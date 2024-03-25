@@ -40,13 +40,15 @@ __device__ inline void binaryOpKernel(
   }
   T left;
   T right;
-  if (operandOrNull(operands, instr.left, blockBase, shared, left) && operandOrNull(operands, instr.right, blockBase, shared, right)) {
-    flatResult<T>(operands, instr.result, blockBase, shared) = func(left, right);
+  if (operandOrNull(operands, instr.left, blockBase, shared, left) &&
+      operandOrNull(operands, instr.right, blockBase, shared, right)) {
+    flatResult<T>(operands, instr.result, blockBase, shared) =
+        func(left, right);
   } else {
     resultNull(operands, instr.result, blockBase, shared);
   }
 }
-  
+
 __device__ void filterKernel(
     const IFilter& filter,
     Operand** operands,
@@ -107,7 +109,7 @@ __device__ void wrapKernel(
     __syncthreads();
     if (remap) {
       if (threadIdx.x < numRows) {
-	(*opIndices)[threadIdx.x] = newIndex;
+        (*opIndices)[threadIdx.x] = newIndex;
       }
     } else if (threadIdx.x == 0) {
       *opIndices = filterIndices + blockBase;
@@ -116,7 +118,7 @@ __device__ void wrapKernel(
 }
 
 #define BINARY_TYPES(opCode, OP)                             \
-  case OP_MIX(opCode, WaveTypeKind::BIGINT):     \
+  case OP_MIX(opCode, WaveTypeKind::BIGINT):                 \
     binaryOpKernel<int64_t>(                                 \
         [](auto left, auto right) { return left OP right; }, \
         instruction->_.binary,                               \

@@ -84,12 +84,15 @@ constexpr OperandIndex kEmpty = ~0;
 // operand indices above this are offsets into TB shared memory arrays.
 constexpr OperandIndex kMinSharedMemIndex = 0x8000;
 
-  // Number of nullable locals in shared memory. Each has kBlockSize null bytes at the start of the TB shared memory. 0 means no nulls. 1 means first kBlockSize bytes are nulls, 2 means second kBlockSize  bytes are null flags etc.
-  constexpr uint16_t kSharedNullMask = 3;
+// Number of nullable locals in shared memory. Each has kBlockSize null bytes at
+// the start of the TB shared memory. 0 means no nulls. 1 means first kBlockSize
+// bytes are nulls, 2 means second kBlockSize  bytes are null flags etc.
+constexpr uint16_t kSharedNullMask = 3;
 
-    /// Start of the parameter array in the TB shared memory. 13 bits. Shift 1 left to get offset.
-  constexpr uint16_t kSharedOperandMask = 0x7ffc;
-    
+/// Start of the parameter array in the TB shared memory. 13 bits. Shift 1 left
+/// to get offset.
+constexpr uint16_t kSharedOperandMask = 0x7ffc;
+
 /// Describes an operand for a Wave kernel instruction. The same
 /// insttruction is interpreted by multiple thread blocks in the
 /// kernel invocation. When accessing an operand, we have the base

@@ -122,39 +122,36 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
         bool needSync = false;
         for (;;) {
           bool done = readStream->makePrograms(needSync);
-	  stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();
-	  ++stats.numKernels;
-	  stats.numPrograms += readStream->programs_.programs.size();
-	  stats.numThreads += readStream->programs_.programs.size() * std::min<int32_t>(readStream->rows_.size(), kBlockSize);
-	  readStream->currentStaging_->transfer(
-              *waveStream, *stream);
-	  if (done) {
+          stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();
+          ++stats.numKernels;
+          stats.numPrograms += readStream->programs_.programs.size();
+          stats.numThreads += readStream->programs_.programs.size() *
+              std::min<int32_t>(readStream->rows_.size(), kBlockSize);
+          readStream->currentStaging_->transfer(*waveStream, *stream);
+          if (done) {
             break;
           }
           WaveBufferPtr extra;
           launchDecode(
-              readStream->programs(),
-              &waveStream->arena(),
-              extra,
-              stream);
+              readStream->programs(), &waveStream->arena(), extra, stream);
           readStream->staging_.push_back(std::make_unique<SplitStaging>());
           readStream->currentStaging_ = readStream->staging_.back().get();
           if (needSync) {
-	    waveStream->setState(WaveStream::State::kWait);
+            waveStream->setState(WaveStream::State::kWait);
             stream->wait();
-	    readStream->waveStream->setState(WaveStream::State::kHost);
-	  } else {
-	    readStream->waveStream->setState(WaveStream::State::kParallel);
-	  }
-	}
-	
+            readStream->waveStream->setState(WaveStream::State::kHost);
+          } else {
+            readStream->waveStream->setState(WaveStream::State::kParallel);
+          }
+        }
+
         WaveBufferPtr extra;
         launchDecode(
             readStream->programs(),
             &readStream->waveStream->arena(),
             extra,
             stream);
-	readStream->waveStream->setState(WaveStream::State::kParallel);
+        readStream->waveStream->setState(WaveStream::State::kParallel);
         readStream->waveStream->markLaunch(*stream, *readStream);
       });
 }
@@ -167,11 +164,11 @@ void ReadStream::makeControl() {
   auto statusBytes = sizeof(BlockStatus) * numBlocks_;
   auto deviceBytes = statusBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
-  control->deviceData =
-    waveStream->arena().allocate<char>(deviceBytes);
+  control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
   control->status = control->deviceData->as<BlockStatus>();
-  
-  operands = waveStream->fillOperands(*this,  control->deviceData->as<char>() + statusBytes, info)[0];
+
+  operands = waveStream->fillOperands(
+      *this, control->deviceData->as<char>() + statusBytes, info)[0];
 
   waveStream->addLaunchControl(0, std::move(control));
 }

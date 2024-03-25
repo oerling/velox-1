@@ -24,7 +24,8 @@ namespace facebook::velox::wave {
 WaveVector::WaveVector(
     const TypePtr& type,
     GpuArena& arena,
-    std::vector<std::unique_ptr<WaveVector>> children, bool notNull)
+    std::vector<std::unique_ptr<WaveVector>> children,
+    bool notNull)
     : type_(type),
       kind_(type_->kind()),
       arena_(&arena),
@@ -56,10 +57,11 @@ void WaveVector::resize(vector_size_t size, bool nullable) {
   } else {
     bytes = type_->cppSizeInBytes() * size;
   }
-  auto bytesNeeded = bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0); 
+  auto bytesNeeded =
+      bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0);
   if (bytesNeeded > capacity) {
     values_ = arena_->allocateBytes(bytesNeeded);
-    }
+  }
   if (nullable) {
     nulls_ = values_->as<uint8_t>() + bits::roundUp(bytes, sizeof(void*));
   } else {
@@ -95,15 +97,14 @@ void toBits(uint64_t* words, int32_t numBytes) {
   }
 }
 
-  namespace {
-    class NoReleaser {
-    public:
-      void addRef() const {};
-      void release() const {};
-    };
-  }
-  
-  
+namespace {
+class NoReleaser {
+ public:
+  void addRef() const {};
+  void release() const {};
+};
+} // namespace
+
 template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,

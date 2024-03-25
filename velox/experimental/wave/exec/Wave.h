@@ -28,76 +28,79 @@
 
 namespace facebook::velox::wave {
 
-  /// A host side time point for measuring wait and launch prepare latency. Counts both wall microseconds and clocks.
-  struct WaveTime {
-    size_t micros{0};
-    uint64_t clocks{0};
+/// A host side time point for measuring wait and launch prepare latency. Counts
+/// both wall microseconds and clocks.
+struct WaveTime {
+  size_t micros{0};
+  uint64_t clocks{0};
 
-    static WaveTime now() {
-      return {getCurrentTimeMicro(), folly::hardware_timestamp()};
-    }
-    
-    WaveTime operator-(const WaveTime right) const {
-      return {right.micros - micros, right.clocks - clocks};
-    }
+  static WaveTime now() {
+    return {getCurrentTimeMicro(), folly::hardware_timestamp()};
+  }
 
-    WaveTime operator+(const WaveTime right) const {
-      return {right.micros + micros, right.clocks + clocks};
-    }
-    void operator+=(const WaveTime& other) {
-      micros += other.micros;
-      clocks += other.clocks;
-    }
-    std::string toString() const;
-  };
+  WaveTime operator-(const WaveTime right) const {
+    return {right.micros - micros, right.clocks - clocks};
+  }
+
+  WaveTime operator+(const WaveTime right) const {
+    return {right.micros + micros, right.clocks + clocks};
+  }
+  void operator+=(const WaveTime& other) {
+    micros += other.micros;
+    clocks += other.clocks;
+  }
+  std::string toString() const;
+};
 
 class WaveTimer {
-  WaveTimer(WaveTime& accumulator) : accumulator_(accumulator), start_(WaveTime::now()) {}
+  WaveTimer(WaveTime& accumulator)
+      : accumulator_(accumulator), start_(WaveTime::now()) {}
   ~WaveTimer() {
     accumulator_ = accumulator_ + (WaveTime::now() - start_);
   }
 
-private:
+ private:
   WaveTime& accumulator_;
   WaveTime start_;
-  };
-  
+};
 
-  struct WaveStats {
-    /// Count of WaveStreams.
-    int64_t numWaves{1};
+struct WaveStats {
+  /// Count of WaveStreams.
+  int64_t numWaves{1};
 
-    // Count of kernel launches. 
-    int64_t numKernels{0};
+  // Count of kernel launches.
+  int64_t numKernels{0};
 
-    // Count of thread blocks in all kernel launches. 
-    int64_t numThreadBlocks{0};
+  // Count of thread blocks in all kernel launches.
+  int64_t numThreadBlocks{0};
 
-    /// Number of programs. One launch typically has several programs, roughly one per output column. 
-    int64_t numPrograms{0};
+  /// Number of programs. One launch typically has several programs, roughly one
+  /// per output column.
+  int64_t numPrograms{0};
 
-    /// Number of starting lanes in kernel launches. This is not exactly thread blocks because the last block per program is not full.
-    int64_t numThreads{0};
+  /// Number of starting lanes in kernel launches. This is not exactly thread
+  /// blocks because the last block per program is not full.
+  int64_t numThreads{0};
 
+  /// Data transfer from host to device.
+  int64_t bytesToDevice{0};
 
-    /// Data transfer from host to device.
-    int64_t bytesToDevice{0};
+  int64_t bytesToHost{0};
 
-    int64_t bytesToHost{0};
+  /// Number of times the host syncs with device.
+  int64_t numSync{0};
 
-    /// Number of times the host syncs with device.
-    int64_t numSync{0};
-    
-    /// Time a host thread runs without activity on device, e.g. after a sync or before first launch.
-    WaveTime hostOnlyTime;
-    /// Time a host thread runs after kernel launch preparing the next kernel. 
-    WaveTime hostParallelTime;
-    /// Time a host thread waits for device.
-    WaveTime waitTime;
+  /// Time a host thread runs without activity on device, e.g. after a sync or
+  /// before first launch.
+  WaveTime hostOnlyTime;
+  /// Time a host thread runs after kernel launch preparing the next kernel.
+  WaveTime hostParallelTime;
+  /// Time a host thread waits for device.
+  WaveTime waitTime;
 
-    void add(const WaveStats& other);
-  };
-  
+  void add(const WaveStats& other);
+};
+
 // A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
 // subfield. Subfield between operators, Expr inside  an Expr.
 struct Value {
@@ -408,12 +411,13 @@ class WaveStream {
   enum class State {
     // Not runnable, e.g. another WaveStream is being processed by WaveDriver.
     kNotRunning,
-      // Running on host only, e.g. preparing for first kernel launch.
-      kHost,
-      // Running on host with device side work submitted.
-      kParallel,
-      // Waiting on host thread for device results.
-      kWait };
+    // Running on host only, e.g. preparing for first kernel launch.
+    kHost,
+    // Running on host with device side work submitted.
+    kParallel,
+    // Waiting on host thread for device results.
+    kWait
+  };
 
   WaveStream(
       GpuArena& arena,
@@ -447,8 +451,11 @@ class WaveStream {
   /// Sets 'vector' to ' a WaveVector of suitable type, size and
   /// nullability. May reuse 'vector' if not nullptr. The size comes
   /// from setNumRows() if not given as parameter.
-  void ensureVector(const AbstractOperand& operand, WaveVectorPtr & vector, int32_t numRows = -1);
-  
+  void ensureVector(
+      const AbstractOperand& operand,
+      WaveVectorPtr& vector,
+      int32_t numRows = -1);
+
   void getOutput(
       folly::Range<const OperandId*> operands,
       WaveVectorPtr* waveVectors);
@@ -551,13 +558,14 @@ class WaveStream {
     folly::F14FastMap<int32_t, int32_t**> localWrap;
   };
 
-  void exeLaunchInfo(Executable& exe, int32_t blocksPerExe, ExeLaunchInfo& info);
+  void
+  exeLaunchInfo(Executable& exe, int32_t blocksPerExe, ExeLaunchInfo& info);
 
   Operand** fillOperands(Executable& exe, char* start, ExeLaunchInfo& info);
 
   /// Sets the state for stats collection.
   void setState(WaveStream::State state);
-  
+
   const WaveStats& stats() const {
     return stats_;
   }
@@ -566,7 +574,6 @@ class WaveStream {
     return stats_;
   }
 
-  
  private:
   Event* newEvent();
 
@@ -586,7 +593,8 @@ class WaveStream {
   // True at '[i]' if in this stream 'operands_[i]' should have null flags.
   std::vector<bool> operandNullable_;
 
-  // Number of rows to allocate for top level vectors for the next kernel launch.
+  // Number of rows to allocate for top level vectors for the next kernel
+  // launch.
   int32_t numRows_{0};
 
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
@@ -612,9 +620,9 @@ class WaveStream {
 
   // Time when created or when advancing 'this' started.
   WaveTime start_;
-  
+
   State state_{State::kNotRunning};
-  
+
   WaveStats stats_;
 };
 

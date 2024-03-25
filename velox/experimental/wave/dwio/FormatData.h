@@ -64,7 +64,6 @@ class SplitStaging {
         id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
   }
 
-
   int64_t bytesToDevice() const {
     return fill_;
   }

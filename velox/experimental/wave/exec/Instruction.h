@@ -49,9 +49,10 @@ struct AbstractOperand {
   // Label for debugging, e.g. column name or Expr::toString output.
   std::string label;
 
-  // The Operand of this is nullable if the Operand at some nullableIf_ is nullable.
+  // The Operand of this is nullable if the Operand at some nullableIf_ is
+  // nullable.
   std::vector<OperandIndex> nullableIf;
-  
+
   // Vector with constant value, else nullptr.
   VectorPtr constant;
 
@@ -70,12 +71,14 @@ struct AbstractOperand {
   // selected rows or flags or values of compile-time known non-nulls.
   bool notNull{false};
 
-  // True if nullability depends on the run-time nullability of Operands this depends on. These are in 'nullableIf'.
+  // True if nullability depends on the run-time nullability of Operands this
+  // depends on. These are in 'nullableIf'.
   bool conditionalNonNull{false};
 
-  // if true, nullability is set in WaveStream at the time of launching. Given by e.g. file metadata but not set at plan time.
+  // if true, nullability is set in WaveStream at the time of launching. Given
+  // by e.g. file metadata but not set at plan time.
   bool sourceNullable{false};
-  
+
   // Ordinal of the wrap instruction that first wraps this. All operands wrapped
   // by the same wrap share 'Operand.indices'. All Operands that are wrapped at
   // some point get indices when first created. When they get wrapped, there is
@@ -118,7 +121,7 @@ struct AbstractWrap : public AbstractInstruction {
     for (auto item : source) {
       // If the operand has the same wrap as another one here, do nothing.
       if (item->wrappedAt == sourceOp->wrappedAt) {
-	return;
+        return;
       }
     }
     source.push_back(sourceOp);

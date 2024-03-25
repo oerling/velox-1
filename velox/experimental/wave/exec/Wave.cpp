@@ -19,27 +19,27 @@
 
 namespace facebook::velox::wave {
 
-  std::string WaveTime::toString() const {
-    if (micros < 20) {
-      return fmt::format("{} ({} clocks)", succinctNanos(micros * 1000), clocks);
-    }
-    return succinctNanos(micros * 1000);
+std::string WaveTime::toString() const {
+  if (micros < 20) {
+    return fmt::format("{} ({} clocks)", succinctNanos(micros * 1000), clocks);
   }
+  return succinctNanos(micros * 1000);
+}
 
-  void WaveStats::add(const WaveStats& other) {
-    numWaves += other.numWaves;
-    numKernels += other.numKernels;
-    numThreadBlocks += other.numThreadBlocks;
-    numPrograms += other.numPrograms;
-    numThreads += other.numThreads;
-    numSync += other.numSync;
-    bytesToDevice += other.bytesToDevice;
-    bytesToHost += other.bytesToHost;
-    hostOnlyTime += other.hostOnlyTime;
-    hostParallelTime += other.hostParallelTime;
-    waitTime += other.waitTime;
-  }
-  
+void WaveStats::add(const WaveStats& other) {
+  numWaves += other.numWaves;
+  numKernels += other.numKernels;
+  numThreadBlocks += other.numThreadBlocks;
+  numPrograms += other.numPrograms;
+  numThreads += other.numThreads;
+  numSync += other.numSync;
+  bytesToDevice += other.bytesToDevice;
+  bytesToHost += other.bytesToHost;
+  hostOnlyTime += other.hostOnlyTime;
+  hostParallelTime += other.hostParallelTime;
+  waitTime += other.waitTime;
+}
+
 const SubfieldMap*& threadSubfieldMap() {
   thread_local const SubfieldMap* subfields;
   return subfields;
@@ -128,24 +128,31 @@ WaveStream::~WaveStream() {
   }
 }
 
-  void WaveStream::setState(WaveStream::State state) {
-    if (state == state_) {
-      return;
-    }
-    WaveTime nowTime = WaveTime::now();
-    switch (state_) {
-    case State::kNotRunning: break;
-    case State::kHost: stats_.hostOnlyTime += nowTime - start_; break;
-    case State::kParallel: stats_.hostParallelTime += nowTime - start_; break;
-    case State::kWait: stats_.waitTime += nowTime - start_; break;
-    }
-    start_ = nowTime;
-    state_ = state;
-    if (state_ == State::kWait) {
-      ++stats_.numSync;
-    }
+void WaveStream::setState(WaveStream::State state) {
+  if (state == state_) {
+    return;
   }
-  
+  WaveTime nowTime = WaveTime::now();
+  switch (state_) {
+    case State::kNotRunning:
+      break;
+    case State::kHost:
+      stats_.hostOnlyTime += nowTime - start_;
+      break;
+    case State::kParallel:
+      stats_.hostParallelTime += nowTime - start_;
+      break;
+    case State::kWait:
+      stats_.waitTime += nowTime - start_;
+      break;
+  }
+  start_ = nowTime;
+  state_ = state;
+  if (state_ == State::kWait) {
+    ++stats_.numSync;
+  }
+}
+
 std::mutex WaveStream::reserveMutex_;
 std::vector<std::unique_ptr<Stream>> WaveStream::streamsForReuse_;
 std::vector<std::unique_ptr<Event>> WaveStream::eventsForReuse_;
@@ -354,27 +361,30 @@ bool WaveStream::isArrived(
   return false;
 }
 
-  void WaveStream::ensureVector(const AbstractOperand& op, WaveVectorPtr& vector, int32_t numRows) {
-    if (!vector) {
-      vector = std::make_unique<WaveVector>(op.type, arena());
-    }
-      bool notNull = op.notNull;
-    if (!notNull) {
-      if (op.sourceNullable) {
-	notNull = !operandNullable_[op.id];
-      } else {
-	notNull = true;
-	for (auto i : op.nullableIf) {
-	  if (operandNullable_[i]) {
-	    notNull = false;
-	    break;
-	  }
-	}
+void WaveStream::ensureVector(
+    const AbstractOperand& op,
+    WaveVectorPtr& vector,
+    int32_t numRows) {
+  if (!vector) {
+    vector = std::make_unique<WaveVector>(op.type, arena());
+  }
+  bool notNull = op.notNull;
+  if (!notNull) {
+    if (op.sourceNullable) {
+      notNull = !operandNullable_[op.id];
+    } else {
+      notNull = true;
+      for (auto i : op.nullableIf) {
+        if (operandNullable_[i]) {
+          notNull = false;
+          break;
+        }
       }
     }
-    vector->resize(numRows < 0 ? numRows_ : numRows, notNull);
   }
-  
+  vector->resize(numRows < 0 ? numRows_ : numRows, notNull);
+}
+
 void WaveStream::exeLaunchInfo(
     Executable& exe,
     int32_t numBlocks,
@@ -400,7 +410,8 @@ void WaveStream::exeLaunchInfo(
     if (op->wrappedAt != AbstractOperand::kNoWrap) {
       if (info.inputWrap.find(id) == info.inputWrap.end()) {
         if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
-          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(info.localWrap.size() * numBlocks * sizeof(void*));
+          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(
+              info.localWrap.size() * numBlocks * sizeof(void*));
         }
       }
     }
@@ -410,7 +421,8 @@ void WaveStream::exeLaunchInfo(
     if (op->wrappedAt != AbstractOperand::kNoWrap) {
       if (info.inputWrap.find(id) == info.inputWrap.end()) {
         if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
-          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(info.localWrap.size() * numBlocks * sizeof(void*));
+          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(
+              info.localWrap.size() * numBlocks * sizeof(void*));
         }
       }
     }
@@ -502,7 +514,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   int32_t shared = 0;
-  
+
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
@@ -529,7 +541,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   auto buffer = arena_.allocate<char>(size);
   memset(buffer->as<char>(), 0, size);
-  
+
   auto controlUnique = std::make_unique<LaunchControl>(key, inputRows);
   auto& control = *controlUnique;
 
@@ -575,7 +587,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   stats_.numPrograms += exes.size();
   stats_.numThreadBlocks += blocksPerExe * exes.size();
   stats_.numThreads += numRows_ * exes.size();
-  
+
   control.deviceData = std::move(buffer);
   launchControl_[key].push_back(std::move(controlUnique));
   return &control;
@@ -627,7 +639,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         std::vector<OperandIndex> indices(wrap.target.size());
         wrap.literalOffset = addLiteral(indices.data(), indices.size());
         for (auto i = 0; i < wrap.target.size(); ++i) {
-	  auto target = wrap.target[i];
+          auto target = wrap.target[i];
           markInput(wrap.source[i]);
           if (target != wrap.source[i]) {
             markResult(target);
@@ -669,7 +681,8 @@ void Program::prepareForDevice(GpuArena& arena) {
   program_->instructions = instructionArray;
   Instruction* space = addBytes<Instruction*>(
       instructionArray, instructions_.size() * sizeof(void*));
-  char* literalArea = reinterpret_cast<char*>(space) + sizeof(Instruction) * instructions_.size();
+  char* literalArea = reinterpret_cast<char*>(space) +
+      sizeof(Instruction) * instructions_.size();
   memcpy(literalArea, literalArea_.data(), literalArea_.size());
 
   for (auto& instruction : instructions_) {
@@ -697,22 +710,23 @@ void Program::prepareForDevice(GpuArena& arena) {
         ++space;
         break;
       }
-    case OpCode::kWrap: {
-      IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
-      IN_OPERAND(indices);
-      physicalInst->columns = reinterpret_cast<OperandIndex*>(literalArea + abstractInst->literalOffset);
-      for (auto i = 0; i < abstractInst->source.size(); ++i) {
-	  physicalInst->columns[i] = operandIndex(abstractInst->source[i]);
+      case OpCode::kWrap: {
+        IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
+        IN_OPERAND(indices);
+        physicalInst->columns = reinterpret_cast<OperandIndex*>(
+            literalArea + abstractInst->literalOffset);
+        for (auto i = 0; i < abstractInst->source.size(); ++i) {
+          physicalInst->columns[i] = operandIndex(abstractInst->source[i]);
+        }
+        break;
       }
-      break;
-    }
-    default:
+      default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
   }
   literalOperands_.resize(literal_.size());
   int32_t counter = 0;
-  for (auto &[op, index] : literal_) {
+  for (auto& [op, index] : literal_) {
     literalToOperand(op, literalOperands_[counter++]);
   }
 }
@@ -720,7 +734,8 @@ void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   op.indexMask = 0;
   op.indices = nullptr;
   if (abstractOp->literalNull) {
-    op.nulls = reinterpret_cast<uint8_t*>(deviceLiterals_ + abstractOp->literalOffset);
+    op.nulls =
+        reinterpret_cast<uint8_t*>(deviceLiterals_ + abstractOp->literalOffset);
   } else {
     op.base = deviceLiterals_ + abstractOp->literalOffset;
   }
@@ -881,4 +896,4 @@ std::unique_ptr<Executable> Program::getExecutable(
   });
   return exe;
 }
-} // namespace facebook::velox::wav
+} // namespace facebook::velox::wave
