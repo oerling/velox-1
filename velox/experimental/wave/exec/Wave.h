@@ -28,6 +28,76 @@
 
 namespace facebook::velox::wave {
 
+  /// A host side time point for measuring wait and launch prepare latency. Counts both wall microseconds and clocks.
+  struct WaveTime {
+    size_t micros{0};
+    uint64_t clocks{0};
+
+    static WaveTime now() {
+      return {getCurrentTimeMicro(), folly::hardware_timestamp()};
+    }
+    
+    WaveTime operator-(const WaveTime right) const {
+      return {right.micros - micros, right.clocks - clocks};
+    }
+
+    WaveTime operator+(const WaveTime right) const {
+      return {right.micros + micros, right.clocks + clocks};
+    }
+    void operator+=(const WaveTime& other) {
+      micros += other.micros;
+      clocks += other.clocks;
+    }
+    std::string toString() const;
+  };
+
+class WaveTimer {
+  WaveTimer(WaveTime& accumulator) : accumulator_(accumulator), start_(WaveTime::now()) {}
+  ~WaveTimer() {
+    accumulator_ = accumulator_ + (WaveTime::now() - start_);
+  }
+
+private:
+  WaveTime& accumulator_;
+  WaveTime start_;
+  };
+  
+
+  struct WaveStats {
+    /// Count of WaveStreams.
+    int64_t numWaves{1};
+
+    // Count of kernel launches. 
+    int64_t numKernels{0};
+
+    // Count of thread blocks in all kernel launches. 
+    int64_t numThreadBlocks{0};
+
+    /// Number of programs. One launch typically has several programs, roughly one per output column. 
+    int64_t numPrograms{0};
+
+    /// Number of starting lanes in kernel launches. This is not exactly thread blocks because the last block per program is not full.
+    int64_t numThreads{0};
+
+
+    /// Data transfer from host to device.
+    int64_t bytesToDevice{0};
+
+    int64_t bytesToHost{0};
+
+    /// Number of times the host syncs with device.
+    int64_t numSync{0};
+    
+    /// Time a host thread runs without activity on device, e.g. after a sync or before first launch.
+    WaveTime hostOnlyTime;
+    /// Time a host thread runs after kernel launch preparing the next kernel. 
+    WaveTime hostParallelTime;
+    /// Time a host thread waits for device.
+    WaveTime waitTime;
+
+    void add(const WaveStats& other);
+  };
+  
 // A value a kernel can depend on. Either a dedupped exec::Expr or a dedupped
 // subfield. Subfield between operators, Expr inside  an Expr.
 struct Value {
@@ -171,16 +241,11 @@ struct Executable {
 
   // Map from wrapAt in AbstractOperand to device side 'indices' with one
   // int32_t* per thread block.
-  folly::F14FastMap<int32_t, int32_t*> wraps;
+  folly::F14FastMap<int32_t, int32_t**> wraps;
 
   // Host side array of literals. These refer to literal data in device side
   // ThreadBlockProgram. These are copied at the end of 'operands' at launch.
   const std::vector<Operand>* literals;
-
-  // These are operans that acquire indices for selection in
-  // 'program'. If they come as input and get indices for selection in
-  // the program that makes them, they are not included here.
-  const operandSet* operandsWithIndices;
 
   // Backing memory for intermediate Operands. Free when 'this' arrives. If
   // scheduling follow up work that is synchronized with arrival of 'this', the
@@ -226,11 +291,8 @@ class Program : public std::enable_shared_from_this<Program> {
   }
 
   // Initializes executableImage and relocation information and places
-  // for parameters. If the program wraps operands, (indirection for
-  // selection), then the affected operands are added to
-  // wrappedOperands. Launch will create the wrapping arrays if the
-  // operand did not et these from a prior program.
-  void prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands);
+  // the result on device.
+  void prepareForDevice(GpuArena& arena);
 
   std::unique_ptr<Executable> getExecutable(
       int32_t maxRows,
@@ -342,10 +404,23 @@ struct LaunchControl;
 /// Represents consecutive data dependent kernel launches.
 class WaveStream {
  public:
+  /// Describes what 'this' is doing for purposes of stats collection.
+  enum class State {
+    // Not runnable, e.g. another WaveStream is being processed by WaveDriver.
+    kNotRunning,
+      // Running on host only, e.g. preparing for first kernel launch.
+      kHost,
+      // Running on host with device side work submitted.
+      kParallel,
+      // Waiting on host thread for device results.
+      kWait };
+
   WaveStream(
       GpuArena& arena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands)
-      : arena_(arena), operands_(operands) {}
+      : arena_(arena), operands_(operands) {
+    operandNullable_.resize(operands_->size(), true);
+  }
 
   ~WaveStream();
 
@@ -360,6 +435,20 @@ class WaveStream {
     return arena_;
   }
 
+  void setNullable(const AbstractOperand& op, bool nullable) {
+    operandNullable_[op.id] = nullable;
+  }
+
+  // Sets the size of top-level vectors to be prepared for the next launch.
+  void setNumRows(int32_t numRows) {
+    numRows_ = numRows;
+  }
+
+  /// Sets 'vector' to ' a WaveVector of suitable type, size and
+  /// nullability. May reuse 'vector' if not nullptr. The size comes
+  /// from setNumRows() if not given as parameter.
+  void ensureVector(const AbstractOperand& operand, WaveVectorPtr & vector, int32_t numRows = -1);
+  
   void getOutput(
       folly::Range<const OperandId*> operands,
       WaveVectorPtr* waveVectors);
@@ -449,7 +538,7 @@ class WaveStream {
 
   const AbstractOperand* operandAt(int32_t id) {
     VELOX_CHECK_LT(id, operands_->size());
-    return operands_[id].get();
+    return (*operands_)[id].get();
   }
 
   struct ExeLaunchInfo {
@@ -458,14 +547,26 @@ class WaveStream {
     int32_t numLocalOps{0};
     int32_t numLocalWrap{0};
     int32_t totalBytes{0};
-    folly::F14FastMap<int32_t, int32_t*> inputWrap;
-    folly::F14FastMap<int32_t, int32_t*> localWrap;
+    folly::F14FastMap<int32_t, int32_t**> inputWrap;
+    folly::F14FastMap<int32_t, int32_t**> localWrap;
   };
 
-  void exeLaunchInfo(Executable& exe, blocksPerExe, ExeLaunchInfo& info);
+  void exeLaunchInfo(Executable& exe, int32_t blocksPerExe, ExeLaunchInfo& info);
 
-  Operand** fillOperands(Executable& exe, ExeLaunchInfo, char* start);
+  Operand** fillOperands(Executable& exe, char* start, ExeLaunchInfo& info);
 
+  /// Sets the state for stats collection.
+  void setState(WaveStream::State state);
+  
+  const WaveStats& stats() const {
+    return stats_;
+  }
+
+  WaveStats& stats() {
+    return stats_;
+  }
+
+  
  private:
   Event* newEvent();
 
@@ -482,6 +583,12 @@ class WaveStream {
 
   GpuArena& arena_;
   const std::vector<std::unique_ptr<AbstractOperand>>* const operands_;
+  // True at '[i]' if in this stream 'operands_[i]' should have null flags.
+  std::vector<bool> operandNullable_;
+
+  // Number of rows to allocate for top level vectors for the next kernel launch.
+  int32_t numRows_{0};
+
   folly::F14FastMap<OperandId, Executable*> operandToExecutable_;
   std::vector<std::unique_ptr<Executable>> executables_;
 
@@ -502,6 +609,13 @@ class WaveStream {
       launchControl_;
 
   folly::F14FastMap<int32_t, WaveBufferPtr> extraData_;
+
+  // Time when created or when advancing 'this' started.
+  WaveTime start_;
+  
+  State state_{State::kNotRunning};
+  
+  WaveStats stats_;
 };
 
 /// Describes all the control data for launching a kernel executing

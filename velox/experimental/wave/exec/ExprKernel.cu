@@ -30,7 +30,7 @@ __device__ inline T opFunc_kPlus(T left, T right) {
 template <typename T, typename OpFunc>
 __device__ inline void binaryOpKernel(
     OpFunc func,
-    IBinary& op,
+    IBinary& instr,
     Operand** operands,
     int32_t blockBase,
     char* shared,
@@ -38,11 +38,15 @@ __device__ inline void binaryOpKernel(
   if (threadIdx.x >= status->numRows) {
     return;
   }
-  flatResult<T>(operands, op.result, blockBase, shared) = func(
-      getOperand<T>(operands, op.left, blockBase, shared),
-      getOperand<T>(operands, op.right, blockBase, shared));
+  T left;
+  T right;
+  if (operandOrNull(operands, instr.left, blockBase, shared, left) && operandOrNull(operands, instr.right, blockBase, shared, right)) {
+    flatResult<T>(operands, instr.result, blockBase, shared) = func(left, right);
+  } else {
+    resultNull(operands, instr.result, blockBase, shared);
+  }
 }
-
+  
 __device__ void filterKernel(
     const IFilter& filter,
     Operand** operands,
@@ -78,33 +82,37 @@ __device__ void filterKernel(
 }
 
 __device__ void wrapKernel(
-    IWrap& wrap,
+    const IWrap& wrap,
     Operand** operands,
     int32_t blockBase,
-    char* shared,
     int32_t numRows) {
-  struct WrapState {
-    bool done;
-    int32_t* filterIndices;
-  };
-  WrapState state = reinterpret_cast<WrapState*>(shared);
-  
-  if (threadIdx.x == 0) {
-    state->filterIndices = reinterpret_cast<int32_t*>(operands[wrap->indices]->values);
-  }
-  __syncthreads();
-  if (!state->filterIndices) {
-    // Nothing wrapped.
+  if (threadIdx.x >= numRows) {
     return;
   }
-  for (auto i = 0; i < wrap.numColumns) {
-    if (threadIdx.x == 0) {
-      auto* operand = operands[wrap.columns[i]];
-      auto* indices = op->indices[base / kBlockSize];
-      if (!indices) {
-	op->indices[base / kBlockSize] = filterIndices;
-      }
+  Operand* op = operands[wrap.indices];
+  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
+  if (filterIndices[blockBase + numRows - 1] == numRows + blockBase - 1) {
+    // There is no cardinality change.
+    return;
+  }
+  for (auto column = 0; column < wrap.numColumns; ++column) {
+    int32_t opIndex = wrap.columns[column];
+    auto* op = operands[opIndex];
+    int32_t newIndex;
+    int32_t** opIndices = &op->indices[blockBase / kBlockSize];
+    bool remap = *opIndices != nullptr;
+    if (remap) {
+      newIndex = (*opIndices)[filterIndices[threadIdx.x]];
     }
+    __syncthreads();
+    if (remap) {
+      if (threadIdx.x < numRows) {
+	(*opIndices)[threadIdx.x] = newIndex;
+      }
+    } else if (threadIdx.x == 0) {
+      *opIndices = filterIndices + blockBase;
+    }
+  }
 }
 
 #define BINARY_TYPES(opCode, OP)                             \

@@ -91,15 +91,12 @@ bool ReadStream::makePrograms(bool& needSync) {
       allDone = false;
     }
   }
-  if (allDone) {
-    makeControl();
-  }
   if (!hasFilters_ && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
-    setCount->data.rowCountNoFilter.numRows = rowset_.size();
+    setCount->data.rowCountNoFilter.numRows = rows_.size();
     setCount->data.rowCountNoFilter.status =
-        control->deviceData()->as<BlockStatus>();
+        control_->deviceData->as<BlockStatus>();
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
   }
@@ -114,32 +111,42 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
   // The function of control here is to have a status and row count for each
   // kBlockSize top level rows of output and to have Operand structs for the
   // produced column.
+  readStream->makeControl();
   auto numRows = readStream->rows_.size();
-
-  readStream->waveStream->installExecutables(
+  auto waveStream = readStream->waveStream;
+  WaveStats& stats = waveStream->stats();
+  waveStream->installExecutables(
       folly::Range<UniqueExe*>(reinterpret_cast<UniqueExe*>(&readStream), 1),
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
         bool needSync = false;
         for (;;) {
           bool done = readStream->makePrograms(needSync);
-          readStream->currentStaging_->transfer(
-              *readStream->waveStream, *stream);
-          if (done) {
+	  stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();
+	  ++stats.numKernels;
+	  stats.numPrograms += readStream->programs_.programs.size();
+	  stats.numThreads += readStream->programs_.programs.size() * std::min<int32_t>(readStream->rows_.size(), kBlockSize);
+	  readStream->currentStaging_->transfer(
+              *waveStream, *stream);
+	  if (done) {
             break;
           }
           WaveBufferPtr extra;
           launchDecode(
               readStream->programs(),
-              &readStream->waveStream->arena(),
+              &waveStream->arena(),
               extra,
               stream);
           readStream->staging_.push_back(std::make_unique<SplitStaging>());
           readStream->currentStaging_ = readStream->staging_.back().get();
           if (needSync) {
+	    waveStream->setState(WaveStream::State::kWait);
             stream->wait();
-          }
-        }
+	    readStream->waveStream->setState(WaveStream::State::kHost);
+	  } else {
+	    readStream->waveStream->setState(WaveStream::State::kParallel);
+	  }
+	}
 	
         WaveBufferPtr extra;
         launchDecode(
@@ -147,23 +154,26 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
             &readStream->waveStream->arena(),
             extra,
             stream);
+	readStream->waveStream->setState(WaveStream::State::kParallel);
         readStream->waveStream->markLaunch(*stream, *readStream);
       });
 }
 
 void ReadStream::makeControl() {
-  numBlocks_ = bits::roundUp(numRows, kBlockSize) / kBockSize;
+  auto numRows = rows_.size();
+  numBlocks_ = bits::roundUp(numRows, kBlockSize) / kBlockSize;
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
-  auto deviceBytes = sizeof(BlockStatus) * numBlocks_ + info.totalBytes;
+  auto statusBytes = sizeof(BlockStatus) * numBlocks_;
+  auto deviceBytes = statusBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData =
-      readStream->waveStream->arena().allocate<char>(deviceBytes);
+    waveStream->arena().allocate<char>(deviceBytes);
   control->status = control->deviceData->as<BlockStatus>();
-  auto operandArea =
-      addBytes<char*>(control->status, sizeof(BlockStatus) * numBlocks_);
-  waveStream->makeOperands(*this, operandArea, info);
-  operands = readStream->waveStream->addLaunchControl(0, std::move(control));
+  
+  operands = waveStream->fillOperands(*this,  control->deviceData->as<char>() + statusBytes, info)[0];
+
+  waveStream->addLaunchControl(0, std::move(control));
 }
 
 } // namespace facebook::velox::wave

@@ -24,7 +24,7 @@ namespace facebook::velox::wave {
 WaveVector::WaveVector(
     const TypePtr& type,
     GpuArena& arena,
-    std::vector<std::unique_ptr<WaveVector>> children)
+    std::vector<std::unique_ptr<WaveVector>> children, bool notNull)
     : type_(type),
       kind_(type_->kind()),
       arena_(&arena),
@@ -48,30 +48,28 @@ WaveVector::WaveVector(
 }
 
 void WaveVector::resize(vector_size_t size, bool nullable) {
-  if (size > size_) {
-    int64_t bytes;
-    if (type_->kind() == TypeKind::VARCHAR) {
-      bytes = sizeof(StringView) * size;
-    } else {
-      bytes = type_->cppSizeInBytes() * size;
+  auto capacity = values_ ? values_->capacity() : 0;
+  size_ = size;
+  int32_t bytes;
+  if (type_->kind() == TypeKind::VARCHAR) {
+    bytes = sizeof(StringView) * size;
+  } else {
+    bytes = type_->cppSizeInBytes() * size;
+  }
+  auto bytesNeeded = bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0); 
+  if (bytesNeeded > capacity) {
+    values_ = arena_->allocateBytes(bytesNeeded);
     }
-    if (!values_ || bytes > values_->capacity()) {
-      values_ = arena_->allocateBytes(bytes);
-    }
-    if (nullable) {
-      if (!nulls_ || nulls_->capacity() < size) {
-        nulls_ = arena_->allocateBytes(size);
-      }
-    } else {
-      nulls_.reset();
-    }
-    size_ = size;
+  if (nullable) {
+    nulls_ = values_->as<uint8_t>() + bits::roundUp(bytes, sizeof(void*));
+  } else {
+    nulls_ = nullptr;
   }
 }
 
 void WaveVector::toOperand(Operand* operand) const {
   operand->size = size_;
-  operand->nulls = nulls_ ? nulls_->as<uint8_t>() : nullptr;
+  operand->nulls = nulls_;
   if (encoding_ == VectorEncoding::Simple::CONSTANT) {
     operand->indexMask = 0;
     operand->base = values_->as<uint64_t>();
@@ -97,18 +95,27 @@ void toBits(uint64_t* words, int32_t numBytes) {
   }
 }
 
+  namespace {
+    class NoReleaser {
+    public:
+      void addRef() const {};
+      void release() const {};
+    };
+  }
+  
+  
 template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,
     velox::memory::MemoryPool* pool,
     const TypePtr& type,
     const WaveBufferPtr& values,
-    const WaveBufferPtr& nulls) {
+    const uint8_t* nulls) {
   using T = typename TypeTraits<kind>::NativeType;
 
   BufferPtr nullsView;
   if (nulls) {
-    nullsView = WaveBufferView::create(nulls);
+    nullsView = BufferView<NoReleaser>::create(nulls, size, NoReleaser());
     toBits(
         const_cast<uint64_t*>(nullsView->as<uint64_t>()),
         nullsView->capacity());

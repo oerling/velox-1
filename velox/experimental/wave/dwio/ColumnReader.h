@@ -31,13 +31,13 @@ class ColumnReader {
   ColumnReader(
       const TypePtr& requestedType,
       std::shared_ptr<const dwio::common::TypeWithId> fileType,
-      AbsractOperand* operand,
+      AbstractOperand* operand,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec)
       : requestedType_(requestedType),
         fileType_(fileType),
         operand_(operand),
-        formatData_(params.toFormatData(fileType_, scanSpec, operand)),
+        formatData_(params.toFormatData(fileType_, scanSpec, operand->id)),
         scanSpec_(&scanSpec) {}
 
   virtual ~ColumnReader() = default;
@@ -95,6 +95,10 @@ class ReadStream : public Executable {
       WaveStream& waveStream,
       const OperandSet* firstColumns = nullptr);
 
+  void setNullable(const AbstractOperand& op, bool nullable) {
+    waveStream->setNullable(op, nullable);
+  }
+  
   /// Runs a sequence of kernel invocations until all eagerly produced columns
   /// have their last kernel in flight. Transfers ownership of 'readStream' to
   /// its WaveStream.
@@ -115,7 +119,8 @@ class ReadStream : public Executable {
  private:
   /// Makes column dependencies.
   void makeOps();
-
+  void makeControl();
+  
   StructColumnReader* reader_;
   std::vector<AbstractOperand*> abstractOperands_;
 

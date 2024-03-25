@@ -135,6 +135,7 @@ class WaveDriver : public exec::SourceOperator {
   SubfieldMap subfields_;
   // Operands handed over by compilation.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
+  WaveStats stats_;
 };
 
 } // namespace facebook::velox::wave

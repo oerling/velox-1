@@ -53,13 +53,13 @@ class WaveVector {
   }
 
   // Constructs a vector. Resize can be used to create buffers for a given size.
-  WaveVector(const TypePtr& type, GpuArena& arena)
-      : type_(type), kind_(type_->kind()), arena_(&arena) {}
+  WaveVector(const TypePtr& type, GpuArena& arena, bool notNull = false)
+    : type_(type), kind_(type_->kind()), arena_(&arena), notNull_(notNull) {}
 
   WaveVector(
       const TypePtr& type,
       GpuArena& arena,
-      std::vector<std::unique_ptr<WaveVector>> children);
+      std::vector<std::unique_ptr<WaveVector>> children, bool notNull = false);
 
   const TypePtr& type() const {
     return type_;
@@ -69,14 +69,11 @@ class WaveVector {
     return size_;
   }
 
-  void resize(vector_size_t sie, bool nullable = true);
+  void resize(vector_size_t siez, bool nullable = true);
 
   bool mayHaveNulls() const {
     return nulls_ != nullptr;
   }
-
-  // Makes sure there is space for nulls. Initial value is undefined.
-  void ensureNulls();
 
   // Frees all allocated buffers. resize() can be used to populate the buffers
   // with a selected size.
@@ -95,10 +92,7 @@ class WaveVector {
   }
 
   uint8_t* nulls() {
-    if (nulls_) {
-      return nulls_->as<uint8_t>();
-    }
-    return nullptr;
+    return nulls_;
   }
 
   /// Returns a Velox vector giving a view on device side data. The device
@@ -126,24 +120,16 @@ class WaveVector {
 
   vector_size_t size_{0};
 
-  // Values array, cast to pod type or StringView
+  // Values array, cast to pod type or StringView. If there are nulls, the null flags are in this buffer after the values, starting at 'null_'
   WaveBufferPtr values_;
 
-  // Nulls buffer, nullptr if no nulls.
-  WaveBufferPtr nulls_;
+  // Nulls, points to the tail of 'values'. nullptr if no nulls.
+  uint8_t* nulls_{nullptr};
 
   // If dictionary or if wrapped in a selection, vector of indices into
   // 'values'.
   WaveBufferPtr indices_;
 
-  // Thread block level sizes. For each kBlockSize values, contains
-  // one int16_t that indicates how many of 'values' or 'indices' have
-  // a value.
-  WaveBufferPtr blockSizes_;
-  // Thread block level pointers inside 'indices_'. the ith entry is nullptr
-  // if the ith thread block has no row number mapping (all rows pass or none
-  // pass).
-  WaveBufferPtr blockIndices_;
 
   // Lengths and offsets for array/map elements.
   WaveBufferPtr lengths_;
@@ -151,6 +137,7 @@ class WaveVector {
 
   // Members of a array/map/struct vector.
   std::vector<std::unique_ptr<WaveVector>> children_;
+  bool notNull_{false};
 };
 
 using WaveVectorPtr = std::unique_ptr<WaveVector>;

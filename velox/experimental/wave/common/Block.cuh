@@ -23,6 +23,7 @@
 
 namespace facebook::velox::wave {
 
+  /// Converts an array of flags to an array of indices of set flags. The first index is given by 'start'. The number of indices is returned in 'size', i.e. this is 1 + the index of the last set flag.
 template <
     int32_t blockSize,
     cub::BlockScanAlgorithm Algorithm = cub::BLOCK_SCAN_RAKING,
@@ -44,11 +45,12 @@ __device__ inline void boolBlockToIndices(
   BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
   __syncthreads();
   if (flag) {
-    indices[data[0]] = threadIdx.x + start;
+    indices[data[0]] = threadIdx.x + start; 
   }
   if (threadIdx.x == 0) {
-    size = aggregate;
+    size = aggregate - start;
   }
+  __syncthreads();
 }
 
 template <int32_t blockSize, typename T, typename Getter>

@@ -21,7 +21,7 @@
 
 namespace facebook::velox::wave {
 
-AbstractWrap* findWrap() const overide {
+  AbstractWrap* Project::findWrap() const {
   return filterWrap_;
 }
 
@@ -53,7 +53,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
   }
 }
 
-void Project::finalize(CompileState& state, operandSet& allWraps) {
+void Project::finalize(CompileState& state) {
   for (auto& level : levels_) {
     for (auto& program : level) {
       program->prepareForDevice(state.arena());

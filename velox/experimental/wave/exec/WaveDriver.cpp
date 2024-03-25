@@ -69,6 +69,7 @@ RowVectorPtr WaveDriver::getOutput() {
           ++it;
           continue;
         }
+	stream->setState(WaveStream::State::kNotRunning); 
         RowVectorPtr result;
         if (i + 1 < pipelines_.size()) {
           auto waveResult = makeWaveResult(op.outputType(), *stream, lastSet);
@@ -80,6 +81,7 @@ RowVectorPtr WaveDriver::getOutput() {
           VLOG(1) << "Final output size: " << result->size();
         }
         if (streamAtEnd(*stream)) {
+	  stats_.add(stream->stats());
           it = streams.erase(it);
         } else {
           ++it;
@@ -153,12 +155,14 @@ void WaveDriver::startMore() {
     if (auto rows = ops[0]->canAdvance()) {
       VLOG(1) << "Advance " << rows << " rows in pipeline " << i;
       auto stream = std::make_unique<WaveStream>(*arena_, &operands());
+      stream->setState(WaveStream::State::kHost);
       for (auto& op : ops) {
         op->schedule(*stream, rows);
       }
       if (i == pipelines_.size() - 1) {
         prefetchReturn(*stream);
       }
+      stream->setState(WaveStream::State::kNotRunning);
       pipelines_[i].streams.push_back(std::move(stream));
       break;
     }

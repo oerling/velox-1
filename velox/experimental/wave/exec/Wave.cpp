@@ -19,6 +19,27 @@
 
 namespace facebook::velox::wave {
 
+  std::string WaveTime::toString() const {
+    if (micros < 20) {
+      return fmt::format("{} ({} clocks)", succinctNanos(micros * 1000), clocks);
+    }
+    return succinctNanos(micros * 1000);
+  }
+
+  void WaveStats::add(const WaveStats& other) {
+    numWaves += other.numWaves;
+    numKernels += other.numKernels;
+    numThreadBlocks += other.numThreadBlocks;
+    numPrograms += other.numPrograms;
+    numThreads += other.numThreads;
+    numSync += other.numSync;
+    bytesToDevice += other.bytesToDevice;
+    bytesToHost += other.bytesToHost;
+    hostOnlyTime += other.hostOnlyTime;
+    hostParallelTime += other.hostParallelTime;
+    waitTime += other.waitTime;
+  }
+  
 const SubfieldMap*& threadSubfieldMap() {
   thread_local const SubfieldMap* subfields;
   return subfields;
@@ -39,13 +60,13 @@ AbstractOperand* pathToOperand(
     const DefinesMap& map,
     std::vector<std::unique_ptr<common::Subfield::PathElement>>& path) {
   if (path.empty()) {
-    return kNoOperand;
+    return nullptr;
   }
   common::Subfield field(std::move(path));
   const auto subfieldMap = threadSubfieldMap();
   auto it = threadSubfieldMap()->find(field.toString());
   if (it == subfieldMap->end()) {
-    return kNoOperand;
+    return nullptr;
   }
   Value value(it->second.get());
   auto valueIt = map.find(value);
@@ -107,6 +128,24 @@ WaveStream::~WaveStream() {
   }
 }
 
+  void WaveStream::setState(WaveStream::State state) {
+    if (state == state_) {
+      return;
+    }
+    WaveTime nowTime = WaveTime::now();
+    switch (state_) {
+    case State::kNotRunning: break;
+    case State::kHost: stats_.hostOnlyTime += nowTime - start_; break;
+    case State::kParallel: stats_.hostParallelTime += nowTime - start_; break;
+    case State::kWait: stats_.waitTime += nowTime - start_; break;
+    }
+    start_ = nowTime;
+    state_ = state;
+    if (state_ == State::kWait) {
+      ++stats_.numSync;
+    }
+  }
+  
 std::mutex WaveStream::reserveMutex_;
 std::vector<std::unique_ptr<Stream>> WaveStream::streamsForReuse_;
 std::vector<std::unique_ptr<Event>> WaveStream::eventsForReuse_;
@@ -315,61 +354,82 @@ bool WaveStream::isArrived(
   return false;
 }
 
+  void WaveStream::ensureVector(const AbstractOperand& op, WaveVectorPtr& vector, int32_t numRows) {
+    if (!vector) {
+      vector = std::make_unique<WaveVector>(op.type, arena());
+    }
+      bool notNull = op.notNull;
+    if (!notNull) {
+      if (op.sourceNullable) {
+	notNull = !operandNullable_[op.id];
+      } else {
+	notNull = true;
+	for (auto i : op.nullableIf) {
+	  if (operandNullable_[i]) {
+	    notNull = false;
+	    break;
+	  }
+	}
+      }
+    }
+    vector->resize(numRows < 0 ? numRows_ : numRows, notNull);
+  }
+  
 void WaveStream::exeLaunchInfo(
     Executable& exe,
     int32_t numBlocks,
-    ExeLaunchInfo info) {
+    ExeLaunchInfo& info) {
   // The exe has an Operand* for each input/local/output/literal
   // op. It has an Operator for each local/output/literal op. It has
   // an array of numBlock int32_t*'s for every distinct wrapAt in
   // its local/output operands where the wrapAt does not occur in
   // any of the input Operands.
   info.numBlocks = numBlocks;
-  exe.input.forEach([&](auto id) {
+  exe.inputOperands.forEach([&](auto id) {
     auto op = operandAt(id);
-    if (op->wrapAt != AbsttractOperand::kNoWrap) {
-      inputExe = operandExecutable(op->id);
-      indices = inputExe->wraps[op->wrapAt];
+    auto* inputExe = operandExecutable(op->id);
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      auto* indices = inputExe->wraps[op->wrappedAt];
       VELOX_CHECK_NOT_NULL(indices);
-      info.inputWrap[op->wrapAt] = indices;
+      info.inputWrap[op->wrappedAt] = indices;
     }
   });
 
-  exe.local.forEach([&](auto id) {
+  exe.localOperands.forEach([&](auto id) {
     auto op = operandAt(id);
-    if (op->wrapAt != AbstractOperand::kNoWrap) {
-      if (inputWrap.find(id) == inputWrap.end()) {
-        if (info.localWrap.find(op->wrapAt) != info.localWrap.end()) {
-          localWrap[op->wrapAt] = localWrap.size() * numBlocks * sizeof(void*);
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      if (info.inputWrap.find(id) == info.inputWrap.end()) {
+        if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
+          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(info.localWrap.size() * numBlocks * sizeof(void*));
         }
       }
     }
   });
-  exe.output.forEach([&](auto id) {
+  exe.outputOperands.forEach([&](auto id) {
     auto op = operandAt(id);
-    if (op->wrapAt != AbstractOperand::kNoWrap) {
-      if (inputWrap.find(id) == inputWrap.end()) {
-        if (info.localWrap.find(op->wrapAt) != info.localWrap.end()) {
-          localWrap[op->wrapAt] = localWrap.size() * numBlocks * sizeof(void*);
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      if (info.inputWrap.find(id) == info.inputWrap.end()) {
+        if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
+          info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(info.localWrap.size() * numBlocks * sizeof(void*));
         }
       }
     }
   });
-  auto numLiteral = exe->literalOperands ? exe->literalOperands->size() : 0;
-  auto numLocalOps = exe.local.size() + exe.output.size() + numLiteral;
+  auto numLiteral = exe.literals ? exe.literals->size() : 0;
+  auto numLocalOps = exe.localOperands.size() + exe.output.size() + numLiteral;
   info.totalBytes =
       // Pointer to Operand for input and local Operands.
-      sizeof(void*) * (numLocalOps + exe.input.size()) +
+      sizeof(void*) * (numLocalOps + exe.inputOperands.size()) +
       // Flat array of Operand for all but input.
       sizeof(Operand) * numLocalOps +
-      // Space for the 'indices' for each distinct wrapAt.
-      (localWrap.size() * numBlocks * sizeof(void*));
+      // Space for the 'indices' for each distinct wrappedAt.
+      (info.localWrap.size() * numBlocks * sizeof(void*));
 }
 
 Operand**
 WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
-  OperandPtr*** operandPtrBegin = addBytes<OperandPtr***>(start, 0);
-  exe->inputOperands.forEach([&](int32_t id) {
+  Operand** operandPtrBegin = addBytes<Operand**>(start, 0);
+  exe.inputOperands.forEach([&](int32_t id) {
     auto* inputExe = operandToExecutable_[id];
     int32_t ordinal = inputExe->outputOperands.ordinal(id);
     *operandPtrBegin = &inputExe->operands[ordinal];
@@ -381,30 +441,38 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
       addBytes<int32_t*>(operandBegin, info.numLocalOps * sizeof(Operand));
   for (auto& [id, ptr] : info.localWrap) {
     info.localWrap[id] =
-        addBytes<int32_t*>(indicesBegin, reinterpret_cast<int64_t>(ptr));
+        addBytes<int32_t**>(indicesBegin, reinterpret_cast<int64_t>(ptr));
   }
-  exe.wrap = std::move(info.localWrap);
+  exe.wraps = std::move(info.localWrap);
   for (auto& [id, ptr] : info.inputWrap) {
-    exe.wrap[id] = ptr;
+    exe.wraps[id] = ptr;
   }
-  exe.intermediate.forEach([&](auto id) {
+  exe.intermediates.resize(exe.localOperands.size());
+  int32_t fill = 0;
+  exe.localOperands.forEach([&](auto id) {
     auto op = operandAt(id);
-    auto vec = getVector(op);
+    ensureVector(*op, exe.intermediates[fill]);
+    auto vec = exe.intermediates[fill].get();
+    ++fill;
     vec->toOperand(operandBegin);
-    if (op->wrapAt != AbstractOperand::kNoWrap) {
-      operandBegin->indices = exe.wrap[op->wrapAt];
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      operandBegin->indices = exe.wraps[op->wrappedAt];
       VELOX_CHECK_NOT_NULL(operandBegin->indices);
     }
     *operandPtrBegin = operandBegin;
     ++operandPtrBegin;
     ++operandBegin;
   });
+  exe.output.resize(exe.outputOperands.size());
+  fill = 0;
   exe.outputOperands.forEach([&](auto id) {
     auto op = operandAt(id);
-    auto vec = getVector(op);
+    ensureVector(*op, exe.output[fill]);
+    auto vec = exe.output[fill].get();
+    ++fill;
     vec->toOperand(operandBegin);
-    if (op->wrapAt != AbstractOperand::kNoWrap) {
-      operandBegin->indices = exe.wrap[op->wrapAt];
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      operandBegin->indices = exe.wraps[op->wrappedAt];
       VELOX_CHECK_NOT_NULL(operandBegin->indices);
     }
     *operandPtrBegin = operandBegin;
@@ -414,7 +482,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
 
   auto numConstants = exe.literals ? exe.literals->size() : 0;
   if (numConstants) {
-    memcpy(operandBegin, exe->literals->data(), numConstants * sizeof(Operand));
+    memcpy(operandBegin, exe.literals->data(), numConstants * sizeof(Operand));
     for (auto i = 0; i < numConstants; ++i) {
       *operandPtrBegin = operandBegin;
       ++operandPtrBegin;
@@ -422,7 +490,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     }
   }
 
-  return addBytes<OperandPtr**>(start, 0);
+  return addBytes<Operand**>(start, 0);
 }
 
 LaunchControl* WaveStream::prepareProgramLaunch(
@@ -434,7 +502,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   int32_t shared = 0;
-
+  
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
@@ -444,14 +512,15 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   // 2 pointers per exe: TB program and start of its param array.
   size += exes.size() * sizeof(void*) * 2;
   auto operandOffset = size;
-  // Exe dependent sizes for parameters.
+  // Exe dependent sizes for operands.
+  int32_t operandBytes = 0;
   for (auto i = 0; i < exes.size(); ++i) {
-    launchInfo(exes[i], numBlocks, info[i]);
-    paramBytes += info[i].totalBytes;
-    markLaunch(*stream, *exe);
-    shared = std::max(shared, exe->programShared->sharedMemorySize());
+    exeLaunchInfo(*exes[i], numBlocks, info[i]);
+    operandBytes += info[i].totalBytes;
+    markLaunch(*stream, *exes[i]);
+    shared = std::max(shared, exes[i]->programShared->sharedMemorySize());
   }
-  size += paramBytes;
+  size += operandBytes;
   int32_t statusOffset = 0;
   if (initStatus) {
     statusOffset = size;
@@ -459,7 +528,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     size += blocksPerExe * sizeof(BlockStatus);
   }
   auto buffer = arena_.allocate<char>(size);
-
+  memset(buffer->as<char>(), 0, size);
+  
   auto controlUnique = std::make_unique<LaunchControl>(key, inputRows);
   auto& control = *controlUnique;
 
@@ -490,28 +560,22 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   } else {
     control.status = nullptr;
   }
-
+  char* operandStart = addBytes<char*>(start, operandOffset);
+  int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     control.programs[i] = exes[i]->program;
-    control.operands[i] = fillOperands(exes[i], paramAreaStart, info[i]);
-    paramAreaStart += info[i].totalBytes;
-  }
-  if (numConstants) {
-    memcpy(
-        operandArrayBegin,
-        exe->literals->data(),
-        numConstants * sizeof(Operand));
-    for (auto i = 0; i < numConstants; ++i) {
-      *operandPtrBegin = operandArrayBegin;
-      ++operandPtrBegin;
-      ++operandArrayBegin;
-    }
-  }
+    control.operands[i] = fillOperands(*exes[i], operandStart, info[i]);
+    operandStart += info[i].totalBytes;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
-      control.blockBase[fill] = exeIdx * blocksPerExe;
-      control.programIdx[fill] = exeIdx;
+      control.blockBase[fill] = i * blocksPerExe;
+      control.programIdx[fill] = i;
     }
   }
+  ++stats_.numKernels;
+  stats_.numPrograms += exes.size();
+  stats_.numThreadBlocks += blocksPerExe * exes.size();
+  stats_.numThreads += numRows_ * exes.size();
+  
   control.deviceData = std::move(buffer);
   launchControl_[key].push_back(std::move(controlUnique));
   return &control;
@@ -546,7 +610,7 @@ WaveTypeKind typeKindCode(TypeKind kind) {
 #define IN_OPERAND(member) \
   physicalInst->member = operandIndex(abstractInst->member)
 
-void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
+void Program::prepareForDevice(GpuArena& arena) {
   int32_t codeSize = 0;
   int32_t sharedMemorySize = 0;
   for (auto& instruction : instructions_)
@@ -560,19 +624,14 @@ void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
       case OpCode::kWrap: {
         auto& wrap = instruction->as<AbstractWrap>();
         markInput(wrap.indices);
-        std::vector<OperandIndex> indices(wrap.targets.size());
+        std::vector<OperandIndex> indices(wrap.target.size());
         wrap.literalOffset = addLiteral(indices.data(), indices.size());
         for (auto i = 0; i < wrap.target.size(); ++i) {
-          auto target = wrap.target[i];
-          markInput(wrap->source[i]);
-          if (wrappedOperands.contains(target->id)) {
-            continue;
-          }
-          if (target != wrap->source[i]) {
+	  auto target = wrap.target[i];
+          markInput(wrap.source[i]);
+          if (target != wrap.source[i]) {
             markResult(target);
           }
-          wrappedOperands_.add(target->id);
-          operandsWithIndices_.add(target->id);
         }
         break;
       }
@@ -610,6 +669,9 @@ void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
   program_->instructions = instructionArray;
   Instruction* space = addBytes<Instruction*>(
       instructionArray, instructions_.size() * sizeof(void*));
+  char* literalArea = reinterpret_cast<char*>(space) + sizeof(Instruction) * instructions_.size();
+  memcpy(literalArea, literalArea_.data(), literalArea_.size());
+
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;
@@ -617,10 +679,10 @@ void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
       case OpCode::kPlus: {
         IN_HEAD(
             AbstractBinary,
-            binary,
+            IBinary,
             OP_MIX(
                 instruction->opCode,
-                instruction->as<AbstractBinary>().left->type()->kind()));
+                instruction->as<AbstractBinary>().left->type->kind()));
 
         IN_OPERAND(left);
         IN_OPERAND(right);
@@ -635,25 +697,32 @@ void Program::prepareForDevice(GpuArena& arena, OperandSet& wrappedOperands) {
         ++space;
         break;
       }
-      default:
+    case OpCode::kWrap: {
+      IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
+      IN_OPERAND(indices);
+      physicalInst->columns = reinterpret_cast<OperandIndex*>(literalArea + abstractInst->literalOffset);
+      for (auto i = 0; i < abstractInst->source.size(); ++i) {
+	  physicalInst->columns[i] = operandIndex(abstractInst->source[i]);
+      }
+      break;
+    }
+    default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
   }
-  char* literalArea = reinterpret_cast<char*> space;
-  memcpy(literalArea, literalArea_.data(), constantArea_.size());
-  literalOperands_.resize(constants_.size());
+  literalOperands_.resize(literal_.size());
   int32_t counter = 0;
-  for (auto& [op, id] : constants_) {
-    literalToOperand(op, literalOperands[counter]);
+  for (auto &[op, index] : literal_) {
+    literalToOperand(op, literalOperands_[counter++]);
   }
 }
 void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   op.indexMask = 0;
   op.indices = nullptr;
-  if (abstractOp->constantNull) {
-    op.nulls = deviceConstants + op->constantOffset;
+  if (abstractOp->literalNull) {
+    op.nulls = reinterpret_cast<uint8_t*>(deviceLiterals_ + abstractOp->literalOffset);
   } else {
-    op.base = deviceConstants_ + abstractOp->constantOffset;
+    op.base = deviceLiterals_ + abstractOp->literalOffset;
   }
 }
 
@@ -690,8 +759,8 @@ void Program::sortSlots() {
   for (auto i = 0; i < ids.size(); ++i) {
     local_[ids[i]] = i + input_.size();
   }
-  for (auto& [op, id] : literals_) {
-    literals_[op] = input_.size() + local_.size() + id;
+  for (auto& [op, id] : literal_) {
+    literal_[op] = input_.size() + local_.size() + id;
   }
 }
 
@@ -704,8 +773,8 @@ OperandIndex Program::operandIndex(AbstractOperand* op) const {
   if (it != local_.end()) {
     return it->second;
   }
-  it = literals_.find(op);
-  if (it != literals_.end()) {
+  it = literal_.find(op);
+  if (it != literal_.end()) {
     return it->second;
   }
   VELOX_FAIL("Operand not found");
@@ -713,8 +782,8 @@ OperandIndex Program::operandIndex(AbstractOperand* op) const {
 
 template <typename T>
 int32_t Program::addLiteral(T* value, int32_t count) {
-  nextConstant_ = bits::roundUp(nextConstant_, sizeof(T));
-  auto start = nextConstant_;
+  nextLiteral_ = bits::roundUp(nextLiteral_, sizeof(T));
+  auto start = nextLiteral_;
   nextLiteral_ += sizeof(T) * count;
   literalArea_.resize(nextLiteral_);
   memcpy(literalArea_.data(), value, sizeof(T) * count);
@@ -724,33 +793,32 @@ int32_t Program::addLiteral(T* value, int32_t count) {
 template <TypeKind kind>
 int32_t Program::addLiteralTyped(AbstractOperand* op) {
   if (op->literalOffset != AbstractOperand::kNoConstant) {
-    return op->constantOffset;
+    return op->literalOffset;
   }
   using T = typename TypeTraits<kind>::NativeType;
   if (op->constant->isNullAt(0)) {
-    op->constantNull = true;
+    op->literalNull = true;
     char zero = 0;
-    op->constantOffset = addConstant<char>(&zero, 1);
-    return;
+    return op->literalOffset = addLiteral<char>(&zero, 1);
   }
-  T value = op->constant->as<SimpleVector<T>>->valueAt(0);
-  if (constexpr(std::is_same_v<T, StringView>)) {
-    int64_t inline = 0;
-    StringView* value = reinterpret_cast<StringView*>(&value);
+  T value = op->constant->as<SimpleVector<T>>()->valueAt(0);
+  if constexpr (std::is_same_v<T, StringView>) {
+    int64_t inlined = 0;
+    StringView* stringView = reinterpret_cast<StringView*>(&value);
     if (stringView->size() <= 6) {
-      int64_t inline = static_cast<int64_t>(stringView->size()) << 48;
+      int64_t inlined = static_cast<int64_t>(stringView->size()) << 48;
       memcpy(
-          reinterpret_cast<char*>(&inline) + 2,
+          reinterpret_cast<char*>(&inlined) + 2,
           stringView->data(),
           stringView->size());
-      op->constantOffset = addConstant(&inline, 1);
+      op->literalOffset = addLiteral(&inlined, 1);
     } else {
       int64_t zero = 0;
-      op->constantOffset = addConstant(&zero);
-      addConstant(stringView->data(), stringView->size());
+      op->literalOffset = addLiteral(&zero, 1);
+      addLiteral(stringView->data(), stringView->size());
     }
   } else {
-    op->constantOffset = addConstant(&T);
+    return op->literalOffset = addLiteral(&value, 1);
   }
 }
 
@@ -759,9 +827,9 @@ void Program::markInput(AbstractOperand* op) {
     return;
   }
   if (op->constant) {
-    VELOX_SCALAR_TYPE_DISPATCH(
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
         addLiteralTyped, op->constant->type()->kind(), op);
-    constant_[op] = constant_.size();
+    literal_[op] = literal_.size();
     return;
   }
   if (!local_.count(op)) {
@@ -798,7 +866,6 @@ std::unique_ptr<Executable> Program::getExecutable(
     }
     exe->output.resize(local_.size());
     exe->literals = &literalOperands_;
-    exe->operandsWithIndices = &operandsWithIndices_;
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
       auto program = ptr->programShared.get();
       ptr->reuse();
