@@ -23,15 +23,17 @@ namespace facebook::velox::wave {
 WaveOperator::WaveOperator(
     CompileState& state,
     const RowTypePtr& type,
-    const std::string& planNodeId)
+    const std::string& planNodeId,
+			   bool isNullabilitySource)
     : id_(state.numOperators()), planNodeId_(planNodeId), outputType_(type) {
-  definesSubfields(state, outputType_);
+  definesSubfields(state, outputType_, "", isNullabilitySource);
 }
 
 void WaveOperator::definesSubfields(
     CompileState& state,
     const TypePtr& type,
-    const std::string& parentPath) {
+    const std::string& parentPath,
+    bool sourceNullable) {
   switch (type->kind()) {
     case TypeKind::ROW: {
       auto& row = type->as<TypeKind::ROW>();
@@ -45,6 +47,9 @@ void WaveOperator::definesSubfields(
         if (!operand) {
           operand = state.newOperand(child, name);
         }
+	if (sourceNullable && !operand->notNull && !operand->conditionalNonNull) {
+	  operand->sourceNullable = true;
+	}
         outputIds_.add(operand->id);
         defines_[Value(field)] = operand;
       }

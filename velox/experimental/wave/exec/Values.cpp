@@ -21,7 +21,7 @@
 namespace facebook::velox::wave {
 
 Values::Values(CompileState& state, const core::ValuesNode& values)
-    : WaveOperator(state, values.outputType(), values.id()),
+  : WaveOperator(state, values.outputType(), values.id(), true),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {}
 
@@ -52,8 +52,14 @@ void Values::schedule(WaveStream& stream, int32_t maxRows) {
   for (auto i = 0; i < subfields_.size(); ++i) {
     sources.push_back(data->childAt(i).get());
   }
+  int32_t counter = 0;
+  outputIds_.forEach([&](auto id) {
+		       stream.setNullable(*stream.operandAt(id), sources[counter]->mayHaveNulls());
+		      ++counter;
+		    });
   folly::Range<Executable**> empty(nullptr, nullptr);
   auto numBlocks = bits::roundUp(data->size(), kBlockSize) / kBlockSize;
+  stream.setNumRows(data->size());
   stream.prepareProgramLaunch(
       id_, data->size(), empty, numBlocks, true, nullptr);
   vectorsToDevice(

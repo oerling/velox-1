@@ -51,7 +51,7 @@ struct AbstractOperand {
 
   // The Operand of this is nullable if the Operand at some nullableIf_ is
   // nullable.
-  std::vector<OperandIndex> nullableIf;
+  std::vector<OperandId> nullableIf;
 
   // Vector with constant value, else nullptr.
   VectorPtr constant;

@@ -159,6 +159,7 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
 void ReadStream::makeControl() {
   auto numRows = rows_.size();
   numBlocks_ = bits::roundUp(numRows, kBlockSize) / kBlockSize;
+  waveStream->setNumRows(numRows);
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
   auto statusBytes = sizeof(BlockStatus) * numBlocks_;
@@ -169,7 +170,7 @@ void ReadStream::makeControl() {
 
   operands = waveStream->fillOperands(
       *this, control->deviceData->as<char>() + statusBytes, info)[0];
-
+  control_ = control.get();
   waveStream->addLaunchControl(0, std::move(control));
 }
 

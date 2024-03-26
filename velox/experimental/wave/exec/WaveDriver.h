@@ -102,6 +102,8 @@ class WaveDriver : public exec::SourceOperator {
   // Enqueus a prefetch from device to host for the buffers of output vectors.
   void prefetchReturn(WaveStream& stream);
 
+  void updateStats();
+  
   std::unique_ptr<GpuArena> arena_;
   std::unique_ptr<GpuArena> deviceArena_;
   std::unique_ptr<GpuArena> hostArena_;
@@ -135,7 +137,7 @@ class WaveDriver : public exec::SourceOperator {
   SubfieldMap subfields_;
   // Operands handed over by compilation.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
-  WaveStats stats_;
+  WaveStats waveStats_;
 };
 
 } // namespace facebook::velox::wave

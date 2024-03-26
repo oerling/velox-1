@@ -103,6 +103,10 @@ class CompileState {
       const AbstractOperand* result,
       const std::vector<Program*>& inputs);
 
+  void setConditionalNullable(AbstractBinary& binary);
+
+  void addNullableIf(const AbstractOperand* op, std::vector<OperandId>& nullableIf);
+
   Program* programOf(AbstractOperand* op);
 
   const std::shared_ptr<aggregation::AggregateFunctionRegistry>&

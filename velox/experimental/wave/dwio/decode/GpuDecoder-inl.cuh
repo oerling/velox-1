@@ -522,10 +522,7 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
     if (idx < numCounts) {
       // Every thread writes a row count and errors for kBlockSize rows. All errors are cleared and all row counts except the last are kBlockSize.
       status[idx].numRows = idx < numCounts - 1 ? kBlockSize : numRows - idx * kBlockSize;
-      auto errors = reinterpret_cast<uint64_t*>(&status[base + threadIdx.x].errors);
-      for (auto i = 0; i < kBlockSize / 8; ++i) {
-      errors[i] = 0;
-      }
+      memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
     }
   }
 }

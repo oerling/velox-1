@@ -40,15 +40,13 @@ __device__ inline void boolBlockToIndices(
   int data[1];
   uint8_t flag = getter();
   data[0] = flag;
-  __syncthreads();
   int aggregate;
   BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
-  __syncthreads();
   if (flag) {
     indices[data[0]] = threadIdx.x + start; 
   }
   if (threadIdx.x == 0) {
-    size = aggregate - start;
+    size = aggregate;
   }
   __syncthreads();
 }

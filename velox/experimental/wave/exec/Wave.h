@@ -548,6 +548,7 @@ class WaveStream {
     return (*operands_)[id].get();
   }
 
+  // Describes an exe in a multi-program launch.
   struct ExeLaunchInfo {
     int32_t numBlocks;
     int32_t numInput{0};
@@ -649,20 +650,20 @@ struct LaunchControl {
   // device in prepareProgamLaunch().
   const int32_t inputRows;
 
-  /// The first thread block with the program.
+  /// The first thread block with the program. Subscript is blockIdx.x.
   int32_t* blockBase{0};
   // The ordinal of the program. All blocks with the same program have the same
-  // number here.
+  // number here. Subscript is blockIdx.x.
   int32_t* programIdx{nullptr};
 
-  // The TB program for each exe.
+  // The TB program for each exe. The subscript is programIdx[blockIdx.x].
   ThreadBlockProgram** programs{nullptr};
 
   // For each exe, the start of the array of Operand*. Instructions reference
-  // operands via offset in this array.
+  // operands via offset in this array. The subscript is programIndx[blockIdx.x].
   Operand*** operands{nullptr};
 
-  // the status return block for each TB.
+  // the status return block for each TB. The subscript is blockIdx.x - (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
   BlockStatus* status{nullptr};
   int32_t sharedMemorySize{0};
 

@@ -37,7 +37,7 @@ class ColumnReader {
       : requestedType_(requestedType),
         fileType_(fileType),
         operand_(operand),
-        formatData_(params.toFormatData(fileType_, scanSpec, operand->id)),
+        formatData_(params.toFormatData(fileType_, scanSpec, operand ? operand->id : kNoOperand)),
         scanSpec_(&scanSpec) {}
 
   virtual ~ColumnReader() = default;
@@ -146,7 +146,7 @@ class ReadStream : public Executable {
   bool hasFilters_{false};
   //  Sequence number of kernel launch.
   int32_t nthWave_{0};
-  LaunchControl* control_;
+  LaunchControl* control_{nullptr};
 };
 
 } // namespace facebook::velox::wave

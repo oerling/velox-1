@@ -252,6 +252,7 @@ void Executable::startTransfer(
       [&](Stream* stream, folly::Range<Executable**> executables) {
         for (auto& transfer : executables[0]->transfers) {
           stream->prefetch(device, transfer.to, transfer.size);
+	  waveStream.stats().bytesToDevice += transfer.size;
         }
         waveStream.markLaunch(*stream, *executables[0]);
       });
@@ -289,7 +290,7 @@ void WaveStream::installExecutables(
   }
 
   // exes with no dependences go on a new stream. Streams with dependent compute
-  // get an event. The dependent computes ggo on new streams that first wait for
+  // get an event. The dependent computes go on new streams that first wait for
   // the events.
   folly::F14FastMap<int32_t, Event*> streamEvents;
   for (auto& [ids, exeVector] : dependences) {
@@ -382,7 +383,7 @@ void WaveStream::ensureVector(
       }
     }
   }
-  vector->resize(numRows < 0 ? numRows_ : numRows, notNull);
+  vector->resize(numRows < 0 ? numRows_ : numRows, !notNull);
 }
 
 void WaveStream::exeLaunchInfo(
@@ -395,6 +396,7 @@ void WaveStream::exeLaunchInfo(
   // its local/output operands where the wrapAt does not occur in
   // any of the input Operands.
   info.numBlocks = numBlocks;
+  info.numInput = exe.inputOperands.size();
   exe.inputOperands.forEach([&](auto id) {
     auto op = operandAt(id);
     auto* inputExe = operandExecutable(op->id);
@@ -428,12 +430,12 @@ void WaveStream::exeLaunchInfo(
     }
   });
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
-  auto numLocalOps = exe.localOperands.size() + exe.output.size() + numLiteral;
+  info.numLocalOps = exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
   info.totalBytes =
       // Pointer to Operand for input and local Operands.
-      sizeof(void*) * (numLocalOps + exe.inputOperands.size()) +
+      sizeof(void*) * (info.numLocalOps + exe.inputOperands.size()) +
       // Flat array of Operand for all but input.
-      sizeof(Operand) * numLocalOps +
+      sizeof(Operand) * info.numLocalOps +
       // Space for the 'indices' for each distinct wrappedAt.
       (info.localWrap.size() * numBlocks * sizeof(void*));
 }
@@ -563,7 +565,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     // Writing errors is not serialized but each lane with at least one error
     // will show one error.
     control.status = addBytes<BlockStatus*>(start, statusOffset);
-    memset(control.status, 0, blocksPerExe * sizeof(BlockStatus));
+    // Memory is already set to all 0.
     for (auto i = 0; i < blocksPerExe; ++i) {
       auto status = &control.status[i];
       status->numRows =
@@ -581,10 +583,13 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
       control.blockBase[fill] = i * blocksPerExe;
       control.programIdx[fill] = i;
+      ++fill;
     }
   }
-  ++stats_.numKernels;
-  stats_.numPrograms += exes.size();
+  if (!exes.empty()) {
+    ++stats_.numKernels;
+  }
+    stats_.numPrograms += exes.size();
   stats_.numThreadBlocks += blocksPerExe * exes.size();
   stats_.numThreads += numRows_ * exes.size();
 
@@ -780,6 +785,9 @@ void Program::sortSlots() {
 }
 
 OperandIndex Program::operandIndex(AbstractOperand* op) const {
+  if (!op) {
+    return kEmpty;
+  }
   auto it = input_.find(op);
   if (it != input_.end()) {
     return it->second;

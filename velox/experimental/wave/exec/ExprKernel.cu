@@ -159,6 +159,7 @@ __global__ void waveBaseKernel(
         break;
 
         BINARY_TYPES(OpCode::kPlus, +);
+        BINARY_TYPES(OpCode::kLT, <);
     }
   }
 }
