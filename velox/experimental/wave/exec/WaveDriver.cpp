@@ -207,17 +207,37 @@ std::string WaveDriver::toString() const {
 
 void WaveDriver::updateStats() {
   auto lockedStats = stats_.wlock();
-  lockedStats->addRuntimeStat("wave.numWaves", RuntimeCounter(waveStats_.numWaves));
-  lockedStats->addRuntimeStat("wave.numKernels", RuntimeCounter(waveStats_.numKernels));
-  lockedStats->addRuntimeStat("wave.numThreadBlocks", RuntimeCounter(waveStats_.numThreadBlocks));
-  lockedStats->addRuntimeStat("wave.numThreads", RuntimeCounter(waveStats_.numThreads));
-  lockedStats->addRuntimeStat("wave.numPrograms", RuntimeCounter(waveStats_.numPrograms));
-  lockedStats->addRuntimeStat("wave.numSync", RuntimeCounter(waveStats_.numSync));
-  lockedStats->addRuntimeStat("wave.bytesToDevice", RuntimeCounter(waveStats_.bytesToDevice, RuntimeCounter::Unit::kBytes));
-  lockedStats->addRuntimeStat("wave.bytesToHost", RuntimeCounter(waveStats_.bytesToHost, RuntimeCounter::Unit::kBytes));
-  lockedStats->addRuntimeStat("wave.hostOnlyTime", RuntimeCounter(waveStats_.hostOnlyTime.micros * 1000, RuntimeCounter::Unit::kNanos));
-  lockedStats->addRuntimeStat("wave.hostParallelTime", RuntimeCounter(waveStats_.hostParallelTime.micros * 1000, RuntimeCounter::Unit::kNanos));
-  lockedStats->addRuntimeStat("wave.waitTime", RuntimeCounter(waveStats_.waitTime.micros * 1000, RuntimeCounter::Unit::kNanos));
+  lockedStats->addRuntimeStat(
+      "wave.numWaves", RuntimeCounter(waveStats_.numWaves));
+  lockedStats->addRuntimeStat(
+      "wave.numKernels", RuntimeCounter(waveStats_.numKernels));
+  lockedStats->addRuntimeStat(
+      "wave.numThreadBlocks", RuntimeCounter(waveStats_.numThreadBlocks));
+  lockedStats->addRuntimeStat(
+      "wave.numThreads", RuntimeCounter(waveStats_.numThreads));
+  lockedStats->addRuntimeStat(
+      "wave.numPrograms", RuntimeCounter(waveStats_.numPrograms));
+  lockedStats->addRuntimeStat(
+      "wave.numSync", RuntimeCounter(waveStats_.numSync));
+  lockedStats->addRuntimeStat(
+      "wave.bytesToDevice",
+      RuntimeCounter(waveStats_.bytesToDevice, RuntimeCounter::Unit::kBytes));
+  lockedStats->addRuntimeStat(
+      "wave.bytesToHost",
+      RuntimeCounter(waveStats_.bytesToHost, RuntimeCounter::Unit::kBytes));
+  lockedStats->addRuntimeStat(
+      "wave.hostOnlyTime",
+      RuntimeCounter(
+          waveStats_.hostOnlyTime.micros * 1000, RuntimeCounter::Unit::kNanos));
+  lockedStats->addRuntimeStat(
+      "wave.hostParallelTime",
+      RuntimeCounter(
+          waveStats_.hostParallelTime.micros * 1000,
+          RuntimeCounter::Unit::kNanos));
+  lockedStats->addRuntimeStat(
+      "wave.waitTime",
+      RuntimeCounter(
+          waveStats_.waitTime.micros * 1000, RuntimeCounter::Unit::kNanos));
 }
-  
+
 } // namespace facebook::velox::wave

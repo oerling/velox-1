@@ -660,10 +660,12 @@ struct LaunchControl {
   ThreadBlockProgram** programs{nullptr};
 
   // For each exe, the start of the array of Operand*. Instructions reference
-  // operands via offset in this array. The subscript is programIndx[blockIdx.x].
+  // operands via offset in this array. The subscript is
+  // programIndx[blockIdx.x].
   Operand*** operands{nullptr};
 
-  // the status return block for each TB. The subscript is blockIdx.x - (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
+  // the status return block for each TB. The subscript is blockIdx.x -
+  // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
   BlockStatus* status{nullptr};
   int32_t sharedMemorySize{0};
 

@@ -177,25 +177,30 @@ void CompileState::addInstruction(
   definedIn_[result] = program;
 }
 
-  bool maybeNotNull(const AbstractOperand* op) {
-    if (!op) { return true; }
-    return op->conditionalNonNull || op->notNull;
+bool maybeNotNull(const AbstractOperand* op) {
+  if (!op) {
+    return true;
   }
+  return op->conditionalNonNull || op->notNull;
+}
 
-  void CompileState::addNullableIf(const AbstractOperand* op, std::vector<OperandId>& nullableIf) {
-    for (auto id : op->nullableIf) {
-      if (std::find(nullableIf.begin(), nullableIf.end(), id) == nullableIf.end()) {
-	nullableIf.push_back(id);
-      }
+void CompileState::addNullableIf(
+    const AbstractOperand* op,
+    std::vector<OperandId>& nullableIf) {
+  for (auto id : op->nullableIf) {
+    if (std::find(nullableIf.begin(), nullableIf.end(), id) ==
+        nullableIf.end()) {
+      nullableIf.push_back(id);
     }
   }
-  
+}
+
 void CompileState::setConditionalNullable(AbstractBinary& binary) {
   if (maybeNotNull(binary.left) && maybeNotNull(binary.right)) {
     binary.result->conditionalNonNull = true;
     addNullableIf(binary.left, binary.result->nullableIf);
     addNullableIf(binary.right, binary.result->nullableIf);
-      }
+  }
 }
 
 AbstractOperand* CompileState::addExpr(const Expr& expr) {

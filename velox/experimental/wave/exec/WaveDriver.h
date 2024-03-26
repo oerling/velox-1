@@ -103,7 +103,7 @@ class WaveDriver : public exec::SourceOperator {
   void prefetchReturn(WaveStream& stream);
 
   void updateStats();
-  
+
   std::unique_ptr<GpuArena> arena_;
   std::unique_ptr<GpuArena> deviceArena_;
   std::unique_ptr<GpuArena> hostArena_;

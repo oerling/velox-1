@@ -105,7 +105,9 @@ class CompileState {
 
   void setConditionalNullable(AbstractBinary& binary);
 
-  void addNullableIf(const AbstractOperand* op, std::vector<OperandId>& nullableIf);
+  void addNullableIf(
+      const AbstractOperand* op,
+      std::vector<OperandId>& nullableIf);
 
   Program* programOf(AbstractOperand* op);
 

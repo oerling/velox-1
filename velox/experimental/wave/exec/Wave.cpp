@@ -252,7 +252,7 @@ void Executable::startTransfer(
       [&](Stream* stream, folly::Range<Executable**> executables) {
         for (auto& transfer : executables[0]->transfers) {
           stream->prefetch(device, transfer.to, transfer.size);
-	  waveStream.stats().bytesToDevice += transfer.size;
+          waveStream.stats().bytesToDevice += transfer.size;
         }
         waveStream.markLaunch(*stream, *executables[0]);
       });
@@ -430,7 +430,8 @@ void WaveStream::exeLaunchInfo(
     }
   });
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
-  info.numLocalOps = exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
+  info.numLocalOps =
+      exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
   info.totalBytes =
       // Pointer to Operand for input and local Operands.
       sizeof(void*) * (info.numLocalOps + exe.inputOperands.size()) +
@@ -589,7 +590,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   if (!exes.empty()) {
     ++stats_.numKernels;
   }
-    stats_.numPrograms += exes.size();
+  stats_.numPrograms += exes.size();
   stats_.numThreadBlocks += blocksPerExe * exes.size();
   stats_.numThreads += numRows_ * exes.size();
 

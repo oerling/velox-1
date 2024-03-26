@@ -37,7 +37,7 @@ class WaveOperator {
       CompileState& state,
       const RowTypePtr& outputType,
       const std::string& planNodeId,
-	       bool isNullabilitySource = false);
+      bool isNullabilitySource = false);
 
   virtual ~WaveOperator() = default;
 

@@ -37,7 +37,10 @@ class ColumnReader {
       : requestedType_(requestedType),
         fileType_(fileType),
         operand_(operand),
-        formatData_(params.toFormatData(fileType_, scanSpec, operand ? operand->id : kNoOperand)),
+        formatData_(params.toFormatData(
+            fileType_,
+            scanSpec,
+            operand ? operand->id : kNoOperand)),
         scanSpec_(&scanSpec) {}
 
   virtual ~ColumnReader() = default;

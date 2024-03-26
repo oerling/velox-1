@@ -24,7 +24,7 @@ WaveOperator::WaveOperator(
     CompileState& state,
     const RowTypePtr& type,
     const std::string& planNodeId,
-			   bool isNullabilitySource)
+    bool isNullabilitySource)
     : id_(state.numOperators()), planNodeId_(planNodeId), outputType_(type) {
   definesSubfields(state, outputType_, "", isNullabilitySource);
 }
@@ -47,9 +47,10 @@ void WaveOperator::definesSubfields(
         if (!operand) {
           operand = state.newOperand(child, name);
         }
-	if (sourceNullable && !operand->notNull && !operand->conditionalNonNull) {
-	  operand->sourceNullable = true;
-	}
+        if (sourceNullable && !operand->notNull &&
+            !operand->conditionalNonNull) {
+          operand->sourceNullable = true;
+        }
         outputIds_.add(operand->id);
         defines_[Value(field)] = operand;
       }
