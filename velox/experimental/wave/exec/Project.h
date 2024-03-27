@@ -26,7 +26,7 @@ class Project : public WaveOperator {
       std::vector<AbstractOperand*> operands,
       std::vector<std::vector<ProgramPtr>> levels,
       AbstractWrap* filterWrap = nullptr)
-      : WaveOperator(state, outputType, ""),
+    : WaveOperator(state, outputType, ""),
         levels_(std::move(levels)),
         filterWrap_(filterWrap) {}
 

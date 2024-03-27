@@ -118,20 +118,22 @@ struct AbstractWrap : public AbstractInstruction {
   int32_t literalOffset{-1};
 
   void addWrap(AbstractOperand* sourceOp, AbstractOperand* targetOp = nullptr) {
-    for (auto item : source) {
-      // If the operand has the same wrap as another one here, do nothing.
-      if (item->wrappedAt == sourceOp->wrappedAt) {
-        return;
-      }
-    }
-    source.push_back(sourceOp);
-    target.push_back(targetOp ? targetOp : sourceOp);
+    int newWrap = AbstractOperand::kNoWrap;
     if (targetOp) {
       targetOp->wrappedAt = id;
     } else if (sourceOp->wrappedAt == AbstractOperand::kNoWrap) {
       sourceOp->wrappedAt = id;
     }
+
+    for (auto i = 0; i < source.size(); ++i) {
+    // If the operand has the same wrap as another one here, do nothing.
+      if (source[i]->wrappedAt == sourceOp->wrappedAt || (targetOp && target[i]->wrappedAt == targetOp->wrappedAt)) {
+      return;
+    }
   }
+  source.push_back(sourceOp);
+  target.push_back(targetOp ? targetOp : sourceOp);
+}
 };
 
 struct AbstractBinary : public AbstractInstruction {

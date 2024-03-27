@@ -34,8 +34,7 @@ class TableScan : public WaveOperator {
       : WaveOperator(
             state,
             tableScanNode.outputType(),
-            tableScanNode.id(),
-            true),
+            tableScanNode.id()),
         tableHandle_(tableScanNode.tableHandle()),
         columnHandles_(tableScanNode.assignments()),
         driverCtx_(state.driver().driverCtx()),

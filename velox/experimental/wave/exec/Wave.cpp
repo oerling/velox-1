@@ -234,16 +234,18 @@ void copyData(std::vector<Transfer>& transfers) {
 
 void Executable::startTransfer(
     OperandSet outputOperands,
-    WaveBufferPtr&& operands,
     std::vector<WaveVectorPtr>&& outputVectors,
     std::vector<Transfer>&& transfers,
     WaveStream& waveStream) {
   auto exe = std::make_unique<Executable>();
+  exe->waveStream = &waveStream;
   exe->outputOperands = outputOperands;
+  ExeLaunchInfo info;
+  exeLaunchInfo(*exe, numBlocks, info);
   exe->output = std::move(outputVectors);
   exe->transfers = std::move(transfers);
-  exe->deviceData.push_back(operands);
-  exe->operands = operands->as<Operand>();
+  
+  exe->operands = waveStream.fillOperands();
   exe->outputOperands = outputOperands;
   copyData(exe->transfers);
   auto* device = waveStream.device();
@@ -391,7 +393,7 @@ void WaveStream::exeLaunchInfo(
     int32_t numBlocks,
     ExeLaunchInfo& info) {
   // The exe has an Operand* for each input/local/output/literal
-  // op. It has an Operator for each local/output/literal op. It has
+  // op. It has an Operand for each local/output/literal op. It has
   // an array of numBlock int32_t*'s for every distinct wrapAt in
   // its local/output operands where the wrapAt does not occur in
   // any of the input Operands.
@@ -653,7 +655,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-      case OpCode::kPlus: {
+      case OpCode::kPlus:
+      case OpCode::kLT: {
         auto& bin = instruction->as<AbstractBinary>();
         markInput(bin.left);
         markInput(bin.right);
@@ -695,7 +698,8 @@ void Program::prepareForDevice(GpuArena& arena) {
     *instructionArray = space;
     ++instructionArray;
     switch (instruction->opCode) {
-      case OpCode::kPlus: {
+      case OpCode::kPlus:
+      case OpCode::kLT: {
         IN_HEAD(
             AbstractBinary,
             IBinary,
@@ -713,7 +717,6 @@ void Program::prepareForDevice(GpuArena& arena) {
         IN_HEAD(AbstractFilter, IFilter, OpCode::kFilter);
         IN_OPERAND(flags);
         IN_OPERAND(indices);
-        ++space;
         break;
       }
       case OpCode::kWrap: {
@@ -729,6 +732,7 @@ void Program::prepareForDevice(GpuArena& arena) {
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
+    ++space;
   }
   literalOperands_.resize(literal_.size());
   int32_t counter = 0;
@@ -736,6 +740,7 @@ void Program::prepareForDevice(GpuArena& arena) {
     literalToOperand(op, literalOperands_[counter++]);
   }
 }
+
 void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   op.indexMask = 0;
   op.indices = nullptr;

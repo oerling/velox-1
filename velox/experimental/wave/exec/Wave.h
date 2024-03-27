@@ -193,7 +193,6 @@ struct Executable {
   /// addTransfer().
   static void startTransfer(
       OperandSet outputOperands,
-      WaveBufferPtr&& operands,
       std::vector<WaveVectorPtr>&& outputVectors,
       std::vector<Transfer>&& transfers,
       WaveStream& stream);

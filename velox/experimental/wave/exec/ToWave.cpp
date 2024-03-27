@@ -17,7 +17,6 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/exec/FilterProject.h"
 #include "velox/experimental/wave/exec/Aggregation.h"
-#include "velox/experimental/wave/exec/Filter.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/Values.h"
@@ -181,7 +180,7 @@ bool maybeNotNull(const AbstractOperand* op) {
   if (!op) {
     return true;
   }
-  return op->conditionalNonNull || op->notNull;
+  return op->conditionalNonNull || op->notNull || op->sourceNullable;
 }
 
 void CompileState::addNullableIf(
@@ -221,10 +220,15 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
     } else {
       auto op = newOperand(constant->value()->type(), constant->toString());
       op->constant = constant->value();
-      return op;
+      if (constant->value()->isNullAt(0)) {
+	op->literalNull = true;
+      } else {
+	op->notNull = true;
+      }
+	return op;
     }
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
-    VELOX_UNSUPPORTED("No special forms");
+    VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
   }
   auto opCode = binaryOpCode(expr);
   if (!opCode.has_value()) {
@@ -303,7 +307,7 @@ int32_t findOutputChannel(
   VELOX_FAIL("Expr without output channel");
 }
 
-void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
+  void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   int32_t numPrograms = allPrograms_.size();
   auto condition = addExpr(expr);
   auto indices = newOperand(INTEGER(), "indices");
@@ -315,7 +319,7 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
   operators_.push_back(std::make_unique<Project>(
-      *this, outputType, std::vector<AbstractOperand*>{}, levels, wrap));
+						 *this, outputType, std::vector<AbstractOperand*>{}, levels, wrap));
 }
 
 void CompileState::addFilterProject(
@@ -324,6 +328,7 @@ void CompileState::addFilterProject(
     int32_t& nodeIndex) {
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
   auto data = filterProject->exprsAndProjection();
+  auto& identityProjections = filterProject->identityProjections();
   int32_t firstProjection = 0;
   if (data.hasFilter) {
     addFilter(*data.exprs->exprs()[0], outputType);
@@ -333,13 +338,13 @@ void CompileState::addFilterProject(
   auto operands =
       addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
   for (auto i = 0; i < operands.size(); ++i) {
-    int32_t channel = findOutputChannel(*data.resultProjections, i);
+    int32_t channel = findOutputChannel(*data.resultProjections, i + firstProjection);
     auto subfield = toSubfield(outputType->nameOf(channel));
     definedBy_[Value(subfield)] = operands[i];
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
-      std::make_unique<Project>(*this, outputType, operands, levels));
+		       std::make_unique<Project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -414,7 +419,7 @@ bool CompileState::addOperator(
 }
 
 bool isProjectedThrough(
-    const std::vector<exec::IdentityProjection>& projectedThrough,
+			const std::vector<exec::IdentityProjection>& projectedThrough,
     int32_t i) {
   for (auto& projection : projectedThrough) {
     if (projection.outputChannel == i) {
@@ -436,20 +441,27 @@ bool CompileState::compile() {
   // them during the transformation.
   driver_.initializeOperators();
   for (; operatorIndex < operators.size(); ++operatorIndex) {
+    int32_t previousNumOperators = operators_.size();
     if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
     ++nodeIndex;
-    auto& identity = operators[operatorIndex]->identityProjections();
-    for (auto i = 0; i < outputType->size(); ++i) {
-      Value value = Value(toSubfield(outputType->nameOf(i)));
-      if (isProjectedThrough(identity, i)) {
-        continue;
-      }
-      auto operand = operators_.back()->defines(value);
-      definedBy_[value] = operand;
+    for (auto newIndex = previousNumOperators; newIndex < operators_.size(); ++newIndex) {
+      auto& identity = operators[operatorIndex]->identityProjections();
+      for (auto i = 0; i < outputType->size(); ++i) {
+	auto& name = outputType->nameOf(i);
+	Value value = Value(toSubfield(name));
+	if (isProjectedThrough(identity, i)) {
+	  continue;
+	}
+	auto operand = operators_[newIndex]->defines(value);
+	if (!operand) {
+	  operand = operators_[newIndex]->definesSubfield(*this, outputType->childAt(i), name, newIndex == 0);
+	}
+	definedBy_[value] = operand;
     }
-  }
+    }
+    }
   if (operators_.empty()) {
     return false;
   }

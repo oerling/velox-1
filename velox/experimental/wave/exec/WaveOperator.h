@@ -28,16 +28,10 @@ class WaveDriver;
 
 class WaveOperator {
  public:
-  // Sets output subfields and their ids from 'outputType' If
-  // 'isNullabilitySource' is true, the created Operands for the
-  // subfields will have nullability set for each WaveStream, i.e. a
-  // source may decide nullability at run time based on e.g. split
-  // metadata.
   WaveOperator(
       CompileState& state,
       const RowTypePtr& outputType,
-      const std::string& planNodeId,
-      bool isNullabilitySource = false);
+      const std::string& planNodeId);
 
   virtual ~WaveOperator() = default;
 
@@ -101,7 +95,7 @@ class WaveOperator {
 
   virtual std::string toString() const = 0;
 
-  void definesSubfields(
+  AbstractOperand* definesSubfield(
       CompileState& state,
       const TypePtr& type,
       const std::string& parentPath = "",
