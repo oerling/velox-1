@@ -97,8 +97,8 @@ class WaveVector {
   }
 
   /// Returns a Velox vector giving a view on device side data. The device
-  /// buffers stay live while referenced by Velox.
-  VectorPtr toVelox(memory::MemoryPool* pool);
+  /// buffers stay live while referenced by Velox. If there is a selection, numBlocks is the number of kBlockSize blocks the vector was allocated for, BlockStatus gives the row counts per block and Operand gives the dictionary indices representing the selection.
+  VectorPtr toVelox(memory::MemoryPool* pool, int32_t numBlocks = -1, const BlockStatus* status = nullptr, const Operand* operand = nullptr);
 
   /// Sets 'operand' to point to the buffers of 'this'.
   void toOperand(Operand* operand) const;

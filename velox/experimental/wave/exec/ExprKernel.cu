@@ -164,6 +164,16 @@ __global__ void waveBaseKernel(
   }
 }
 
+int32_t instructionSharedMemory(const Instruction& instruction) {
+  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+  
+  switch (instruction.opCode) {
+  case OpCode::kFilter:
+    return sizeof(ScanAlgorithm::TempStorage);
+  default: return 0;
+  }
+}
+  
 void WaveKernelStream::call(
     Stream* alias,
     int32_t numBlocks,

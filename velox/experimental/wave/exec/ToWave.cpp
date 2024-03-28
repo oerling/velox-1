@@ -134,9 +134,12 @@ Program* CompileState::newProgram() {
   return program.get();
 }
 
-Program* CompileState::programOf(AbstractOperand* op) {
+  Program* CompileState::programOf(AbstractOperand* op, bool create) {
   auto it = definedIn_.find(op);
   if (it == definedIn_.end()) {
+    if (!create) {
+      return nullptr;
+    }
     return newProgram();
   }
   return it->second;
@@ -313,6 +316,7 @@ int32_t findOutputChannel(
   auto indices = newOperand(INTEGER(), "indices");
   indices->notNull = true;
   auto program = programOf(condition);
+  //program->markOutput(indices->id);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
   auto wrapUnique = std::make_unique<AbstractWrap>(indices, wrapCounter_++);
   auto wrap = wrapUnique.get();
@@ -340,6 +344,10 @@ void CompileState::addFilterProject(
   for (auto i = 0; i < operands.size(); ++i) {
     int32_t channel = findOutputChannel(*data.resultProjections, i + firstProjection);
     auto subfield = toSubfield(outputType->nameOf(channel));
+    auto program = programOf(operands[i], false);
+    if (program) {
+      program->markOutput(operands[i]->id);
+    }
     definedBy_[Value(subfield)] = operands[i];
   }
   auto levels = makeLevels(numPrograms);
@@ -458,10 +466,11 @@ bool CompileState::compile() {
 	if (!operand) {
 	  operand = operators_[newIndex]->definesSubfield(*this, outputType->childAt(i), name, newIndex == 0);
 	}
+	operators_[newIndex]->addOutputId(operand->id);
 	definedBy_[value] = operand;
+      }
     }
-    }
-    }
+  }
   if (operators_.empty()) {
     return false;
   }

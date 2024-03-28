@@ -280,6 +280,11 @@ class Program : public std::enable_shared_from_this<Program> {
     instructions_.push_back(std::move(instruction));
   }
 
+  /// Specifies that Operand with 'id' is used by a dependent operation. 
+  void markOutput(OperandId id) {
+    outputIds_.add(id);
+  }
+  
   const std::vector<Program*>& dependsOn() const {
     return dependsOn_;
   }
@@ -348,7 +353,7 @@ class Program : public std::enable_shared_from_this<Program> {
   // Adds 'op' to 'input' if it is not produced by one in 'local'
   void markInput(AbstractOperand* op);
 
-  // Adds 'op' to 'local_'
+  // Adds 'op' to 'local_' or 'output_'.
   void markResult(AbstractOperand* op);
   void sortSlots();
 
@@ -357,8 +362,13 @@ class Program : public std::enable_shared_from_this<Program> {
   // Input Operand  to offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> input_;
 
-  // Local/output Operand offset in operands array.
+  /// Set of OperandIds for outputs. These must come after intermediates in Operands array.
+OperandSet outputIds_;
+  
+  // Local Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
+  // Output Operand offset in operands array.
+  folly::F14FastMap<AbstractOperand*, int32_t> output_;
 
   // Constant Operand  to offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> literal_;
@@ -370,11 +380,6 @@ class Program : public std::enable_shared_from_this<Program> {
   // relocatable, i.e. does not contain non-relative pointers within the
   // constant area.
   std::string literalArea_;
-
-  // Set of operands that may be wrapped in a selection with per TB
-  // indices. These must have their in 'indices' in Operand initialized
-  // to an array with one nullptr per TB for the kernel.
-  OperandSet operandsWithIndices_;
 
   // Owns device side 'threadBlockProgram_'
   WaveBufferPtr deviceData_;
@@ -442,6 +447,10 @@ class WaveStream {
     operandNullable_[op.id] = nullable;
   }
 
+  int32_t numRows() const {
+    return numRows_;
+  }
+  
   // Sets the size of top-level vectors to be prepared for the next launch.
   void setNumRows(int32_t numRows) {
     numRows_ = numRows;

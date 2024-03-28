@@ -109,7 +109,7 @@ class CompileState {
       const AbstractOperand* op,
       std::vector<OperandId>& nullableIf);
 
-  Program* programOf(AbstractOperand* op);
+  Program* programOf(AbstractOperand* op, bool create = true);
 
   const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
   aggregateFunctionRegistry();

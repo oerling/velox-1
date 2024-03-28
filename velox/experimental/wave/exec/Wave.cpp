@@ -238,15 +238,16 @@ void Executable::startTransfer(
     std::vector<Transfer>&& transfers,
     WaveStream& waveStream) {
   auto exe = std::make_unique<Executable>();
+  auto numBlocks = bits::roundUp(waveStream.numRows(), kBlockSize) / kBlockSize;
   exe->waveStream = &waveStream;
   exe->outputOperands = outputOperands;
-  ExeLaunchInfo info;
-  exeLaunchInfo(*exe, numBlocks, info);
+  WaveStream::ExeLaunchInfo info;
+  waveStream.exeLaunchInfo(*exe, numBlocks, info);
   exe->output = std::move(outputVectors);
   exe->transfers = std::move(transfers);
-  
-  exe->operands = waveStream.fillOperands();
-  exe->outputOperands = outputOperands;
+  exe->deviceData.push_back(waveStream.arena().allocate<char>(info.totalBytes)); 
+			    auto start = exe->deviceData[0]->as<char>();
+			    exe->operands = waveStream.fillOperands(*exe, start, info)[0];
   copyData(exe->transfers);
   auto* device = waveStream.device();
   waveStream.installExecutables(
@@ -326,7 +327,7 @@ bool WaveStream::isArrived(
   OperandSet waitSet;
   ids.forEach([&](int32_t id) {
     auto exe = operandToExecutable_[id];
-    VELOX_CHECK_NOT_NULL(exe);
+    VELOX_CHECK_NOT_NULL(exe, "No exe produces operand {} in stream", id);
     if (!exe->stream) {
       return;
     }
@@ -413,7 +414,7 @@ void WaveStream::exeLaunchInfo(
     auto op = operandAt(id);
     if (op->wrappedAt != AbstractOperand::kNoWrap) {
       if (info.inputWrap.find(id) == info.inputWrap.end()) {
-        if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
+        if (info.localWrap.find(op->wrappedAt) == info.localWrap.end()) {
           info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(
               info.localWrap.size() * numBlocks * sizeof(void*));
         }
@@ -424,7 +425,7 @@ void WaveStream::exeLaunchInfo(
     auto op = operandAt(id);
     if (op->wrappedAt != AbstractOperand::kNoWrap) {
       if (info.inputWrap.find(id) == info.inputWrap.end()) {
-        if (info.localWrap.find(op->wrappedAt) != info.localWrap.end()) {
+        if (info.localWrap.find(op->wrappedAt) == info.localWrap.end()) {
           info.localWrap[op->wrappedAt] = reinterpret_cast<int32_t**>(
               info.localWrap.size() * numBlocks * sizeof(void*));
         }
@@ -639,6 +640,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto& filter = instruction->as<AbstractFilter>();
         markInput(filter.flags);
         markResult(filter.indices);
+
         break;
       }
       case OpCode::kWrap: {
@@ -685,14 +687,13 @@ void Program::prepareForDevice(GpuArena& arena) {
       sizeof(ThreadBlockProgram));
   program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
-  program_->sharedMemorySize = sharedMemorySize;
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
   Instruction* space = addBytes<Instruction*>(
       instructionArray, instructions_.size() * sizeof(void*));
-  char* literalArea = reinterpret_cast<char*>(space) +
+  deviceLiterals_ = reinterpret_cast<char*>(space) +
       sizeof(Instruction) * instructions_.size();
-  memcpy(literalArea, literalArea_.data(), literalArea_.size());
+  memcpy(deviceLiterals_, literalArea_.data(), literalArea_.size());
 
   for (auto& instruction : instructions_) {
     *instructionArray = space;
@@ -723,7 +724,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
         IN_OPERAND(indices);
         physicalInst->columns = reinterpret_cast<OperandIndex*>(
-            literalArea + abstractInst->literalOffset);
+            deviceLiterals_ + abstractInst->literalOffset);
         for (auto i = 0; i < abstractInst->source.size(); ++i) {
           physicalInst->columns[i] = operandIndex(abstractInst->source[i]);
         }
@@ -732,8 +733,10 @@ void Program::prepareForDevice(GpuArena& arena) {
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
+    sharedMemorySize = std::max(sharedMemorySize, instructionSharedMemory(*space));
     ++space;
   }
+  program_->sharedMemorySize = sharedMemorySize;
   literalOperands_.resize(literal_.size());
   int32_t counter = 0;
   for (auto& [op, index] : literal_) {
@@ -752,6 +755,26 @@ void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   }
 }
 
+  namespace {
+    // Sorts 'map' by id. Inserts back into map with second as ordinal number starting at 'startAt'. Returns 1 + the highest assigned number.
+  int32_t sortAndRenumber(int32_t startAt, folly::F14FastMap<AbstractOperand*, int32_t>& map) {
+    std::vector<AbstractOperand*> ids;
+    for (auto& pair : map) {
+      ids.push_back(pair.first);
+    }
+    std::sort(
+	      ids.begin(),
+	      ids.end(),
+	      [](AbstractOperand*& left, AbstractOperand*& right) {
+		return left->id < right->id;
+	      });
+    for (auto i = 0; i < ids.size(); ++i) {
+      map[ids[i]] = i + startAt;
+    }
+    return startAt + ids.size();
+  }
+  }
+  
 void Program::sortSlots() {
   // Assigns offsets to input and local/output slots so that all
   // input is first and output next and within input and output, the
@@ -759,35 +782,11 @@ void Program::sortSlots() {
   // are slots 88 and 22 and outputs are 77 and 33, then the
   // complete order is 22, 88, 33, 77. Constants are sorted after everything
   // else.
-  std::vector<AbstractOperand*> ids;
-  for (auto& pair : input_) {
-    ids.push_back(pair.first);
-  }
-  std::sort(
-      ids.begin(),
-      ids.end(),
-      [](AbstractOperand*& left, AbstractOperand*& right) {
-        return left->id < right->id;
-      });
-  for (auto i = 0; i < ids.size(); ++i) {
-    input_[ids[i]] = i;
-  }
-  ids.clear();
-  for (auto& pair : local_) {
-    ids.push_back(pair.first);
-  }
-  std::sort(
-      ids.begin(),
-      ids.end(),
-      [](AbstractOperand*& left, AbstractOperand*& right) {
-        return left->id < right->id;
-      });
-  for (auto i = 0; i < ids.size(); ++i) {
-    local_[ids[i]] = i + input_.size();
-  }
-  for (auto& [op, id] : literal_) {
-    literal_[op] = input_.size() + local_.size() + id;
-  }
+
+  auto start = sortAndRenumber(0, input_);
+  start = sortAndRenumber(start, local_);
+  start = sortAndRenumber(start, output_);
+  sortAndRenumber(start, literal_);
 }
 
 OperandIndex Program::operandIndex(AbstractOperand* op) const {
@@ -802,6 +801,11 @@ OperandIndex Program::operandIndex(AbstractOperand* op) const {
   if (it != local_.end()) {
     return it->second;
   }
+  it = output_.find(op);
+  if (it != local_.end()) {
+    return it->second;
+  }
+
   it = literal_.find(op);
   if (it != literal_.end()) {
     return it->second;
@@ -815,7 +819,7 @@ int32_t Program::addLiteral(T* value, int32_t count) {
   auto start = nextLiteral_;
   nextLiteral_ += sizeof(T) * count;
   literalArea_.resize(nextLiteral_);
-  memcpy(literalArea_.data(), value, sizeof(T) * count);
+  memcpy(literalArea_.data() + start, value, sizeof(T) * count);
   return start;
 }
 
@@ -867,6 +871,10 @@ void Program::markInput(AbstractOperand* op) {
 }
 
 void Program::markResult(AbstractOperand* op) {
+  if (outputIds_.contains(op->id)) {
+    output_[op] = outputIds_.ordinal(op->id);
+    return;
+  }
   if (!local_.count(op)) {
     local_[op] = local_.size();
   }
@@ -891,23 +899,20 @@ std::unique_ptr<Executable> Program::getExecutable(
       exe->inputOperands.add(pair.first->id);
     }
     for (auto& pair : local_) {
+      exe->localOperands.add(pair.first->id);
+    }
+    for (auto& pair : output_) {
       exe->outputOperands.add(pair.first->id);
     }
-    exe->output.resize(local_.size());
+
     exe->literals = &literalOperands_;
     exe->releaser = [](std::unique_ptr<Executable>& ptr) {
       auto program = ptr->programShared.get();
       ptr->reuse();
       program->releaseExe(std::move(ptr));
     };
-
-  } // We have an exe, whether new or reused. Check the vectors.
-  int32_t nth = 0;
-  exe->outputOperands.forEach([&](int32_t id) {
-    ensureWaveVector(
-        exe->output[nth], operands[id]->type, maxRows, true, *arena_);
-    ++nth;
-  });
+  }
   return exe;
 }
+
 } // namespace facebook::velox::wave

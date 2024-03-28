@@ -119,15 +119,8 @@ void vectorsToDevice(
     transferVector(
         source[i], i, transfers, waveVectors, operandVector, arena, bytes);
   }
-  auto operands = arena.allocate<Operand>(operandVector.size());
-  memcpy(
-      operands->as<Operand>(),
-      operandVector.data(),
-      operandVector.size() * sizeof(Operand));
-  operandVector.clear();
   Executable::startTransfer(
-      ids,
-      std::move(operands),
+			    ids,
       std::move(waveVectors),
       std::move(transfers),
       stream);
