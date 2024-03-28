@@ -280,11 +280,11 @@ class Program : public std::enable_shared_from_this<Program> {
     instructions_.push_back(std::move(instruction));
   }
 
-  /// Specifies that Operand with 'id' is used by a dependent operation. 
+  /// Specifies that Operand with 'id' is used by a dependent operation.
   void markOutput(OperandId id) {
     outputIds_.add(id);
   }
-  
+
   const std::vector<Program*>& dependsOn() const {
     return dependsOn_;
   }
@@ -362,9 +362,10 @@ class Program : public std::enable_shared_from_this<Program> {
   // Input Operand  to offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> input_;
 
-  /// Set of OperandIds for outputs. These must come after intermediates in Operands array.
-OperandSet outputIds_;
-  
+  /// Set of OperandIds for outputs. These must come after intermediates in
+  /// Operands array.
+  OperandSet outputIds_;
+
   // Local Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
   // Output Operand offset in operands array.
@@ -450,7 +451,7 @@ class WaveStream {
   int32_t numRows() const {
     return numRows_;
   }
-  
+
   // Sets the size of top-level vectors to be prepared for the next launch.
   void setNumRows(int32_t numRows) {
     numRows_ = numRows;

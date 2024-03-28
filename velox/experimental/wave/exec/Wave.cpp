@@ -245,9 +245,9 @@ void Executable::startTransfer(
   waveStream.exeLaunchInfo(*exe, numBlocks, info);
   exe->output = std::move(outputVectors);
   exe->transfers = std::move(transfers);
-  exe->deviceData.push_back(waveStream.arena().allocate<char>(info.totalBytes)); 
-			    auto start = exe->deviceData[0]->as<char>();
-			    exe->operands = waveStream.fillOperands(*exe, start, info)[0];
+  exe->deviceData.push_back(waveStream.arena().allocate<char>(info.totalBytes));
+  auto start = exe->deviceData[0]->as<char>();
+  exe->operands = waveStream.fillOperands(*exe, start, info)[0];
   copyData(exe->transfers);
   auto* device = waveStream.device();
   waveStream.installExecutables(
@@ -733,7 +733,8 @@ void Program::prepareForDevice(GpuArena& arena) {
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
-    sharedMemorySize = std::max(sharedMemorySize, instructionSharedMemory(*space));
+    sharedMemorySize =
+        std::max(sharedMemorySize, instructionSharedMemory(*space));
     ++space;
   }
   program_->sharedMemorySize = sharedMemorySize;
@@ -755,26 +756,29 @@ void Program::literalToOperand(AbstractOperand* abstractOp, Operand& op) {
   }
 }
 
-  namespace {
-    // Sorts 'map' by id. Inserts back into map with second as ordinal number starting at 'startAt'. Returns 1 + the highest assigned number.
-  int32_t sortAndRenumber(int32_t startAt, folly::F14FastMap<AbstractOperand*, int32_t>& map) {
-    std::vector<AbstractOperand*> ids;
-    for (auto& pair : map) {
-      ids.push_back(pair.first);
-    }
-    std::sort(
-	      ids.begin(),
-	      ids.end(),
-	      [](AbstractOperand*& left, AbstractOperand*& right) {
-		return left->id < right->id;
-	      });
-    for (auto i = 0; i < ids.size(); ++i) {
-      map[ids[i]] = i + startAt;
-    }
-    return startAt + ids.size();
+namespace {
+// Sorts 'map' by id. Inserts back into map with second as ordinal number
+// starting at 'startAt'. Returns 1 + the highest assigned number.
+int32_t sortAndRenumber(
+    int32_t startAt,
+    folly::F14FastMap<AbstractOperand*, int32_t>& map) {
+  std::vector<AbstractOperand*> ids;
+  for (auto& pair : map) {
+    ids.push_back(pair.first);
   }
+  std::sort(
+      ids.begin(),
+      ids.end(),
+      [](AbstractOperand*& left, AbstractOperand*& right) {
+        return left->id < right->id;
+      });
+  for (auto i = 0; i < ids.size(); ++i) {
+    map[ids[i]] = i + startAt;
   }
-  
+  return startAt + ids.size();
+}
+} // namespace
+
 void Program::sortSlots() {
   // Assigns offsets to input and local/output slots so that all
   // input is first and output next and within input and output, the

@@ -135,14 +135,19 @@ static VectorPtr toVeloxTyped(
       std::vector<BufferPtr>());
 }
 
-VectorPtr WaveVector::toVelox(memory::MemoryPool* pool, int32_t numBlocks, const BlockStatus* status, const Operand* operand) {
+VectorPtr WaveVector::toVelox(
+    memory::MemoryPool* pool,
+    int32_t numBlocks,
+    const BlockStatus* status,
+    const Operand* operand) {
   auto base = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
       toVeloxTyped, type_->kind(), size_, pool, type_, values_, nulls_);
   if (!status || !operand) {
     return base;
   }
 
-  // Translate the BlockStatus and indices in Operand to a host side dictionary wrap.
+  // Translate the BlockStatus and indices in Operand to a host side dictionary
+  // wrap.
   int maxRow = std::min<int32_t>(size_, numBlocks * kBlockSize);
   int numActive = 0;
   numBlocks = bits::roundUp(maxRow, kBlockSize) / kBlockSize;
@@ -151,7 +156,10 @@ VectorPtr WaveVector::toVelox(memory::MemoryPool* pool, int32_t numBlocks, const
   }
   auto operandIndices = operand->indices;
   if (!operandIndices) {
-    VELOX_CHECK_EQ(numActive, size_, "If there is no indirection in Operand, vector size must match BlockStatus");
+    VELOX_CHECK_EQ(
+        numActive,
+        size_,
+        "If there is no indirection in Operand, vector size must match BlockStatus");
     return base;
   }
   auto indices = AlignedBuffer::allocate<vector_size_t>(numActive, pool);
@@ -161,21 +169,27 @@ VectorPtr WaveVector::toVelox(memory::MemoryPool* pool, int32_t numBlocks, const
     auto blockIndices = operandIndices[block];
     if (!blockIndices) {
       if (block == numBlocks - 1) {
-	VELOX_CHECK_EQ(size_ - block * kBlockSize, status[block].numRows, "If last block has no indices, its size must be the remainder of the vector");
+        VELOX_CHECK_EQ(
+            size_ - block * kBlockSize,
+            status[block].numRows,
+            "If last block has no indices, its size must be the remainder of the vector");
       } else {
-	VELOX_CHECK_EQ(kBlockSize, status->numRows, "A block with no indices must have all rows active");
+        VELOX_CHECK_EQ(
+            kBlockSize,
+            status->numRows,
+            "A block with no indices must have all rows active");
       }
       for (auto i = 0; i < status[block].numRows; ++i) {
-	rawIndices[fill++] = block * kBlockSize + i;
+        rawIndices[fill++] = block * kBlockSize + i;
       }
     } else {
       for (auto i = 0; i < status[block].numRows; ++i) {
-	rawIndices[fill++] = blockIndices[i];
+        rawIndices[fill++] = blockIndices[i];
       }
     }
   }
-  return BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, numActive, base);
+  return BaseVector::wrapInDictionary(
+      BufferPtr(nullptr), indices, numActive, base);
 }
-
 
 } // namespace facebook::velox::wave

@@ -126,14 +126,15 @@ struct AbstractWrap : public AbstractInstruction {
     }
 
     for (auto i = 0; i < source.size(); ++i) {
-    // If the operand has the same wrap as another one here, do nothing.
-      if (source[i]->wrappedAt == sourceOp->wrappedAt || (targetOp && target[i]->wrappedAt == targetOp->wrappedAt)) {
-      return;
+      // If the operand has the same wrap as another one here, do nothing.
+      if (source[i]->wrappedAt == sourceOp->wrappedAt ||
+          (targetOp && target[i]->wrappedAt == targetOp->wrappedAt)) {
+        return;
+      }
     }
+    source.push_back(sourceOp);
+    target.push_back(targetOp ? targetOp : sourceOp);
   }
-  source.push_back(sourceOp);
-  target.push_back(targetOp ? targetOp : sourceOp);
-}
 };
 
 struct AbstractBinary : public AbstractInstruction {

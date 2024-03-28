@@ -120,10 +120,7 @@ void vectorsToDevice(
         source[i], i, transfers, waveVectors, operandVector, arena, bytes);
   }
   Executable::startTransfer(
-			    ids,
-      std::move(waveVectors),
-      std::move(transfers),
-      stream);
+      ids, std::move(waveVectors), std::move(transfers), stream);
 }
 
 // Patches the position 'ofet' in 'code' to be a new uninitialized device

@@ -128,7 +128,7 @@ class WaveOperator {
   void addOutputId(OperandId id) {
     outputIds_.add(id);
   }
-  
+
   // The set of output operands that must have arrived for there to be a result.
   virtual const OperandSet& syncSet() const {
     return outputIds_;

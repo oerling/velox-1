@@ -134,7 +134,7 @@ Program* CompileState::newProgram() {
   return program.get();
 }
 
-  Program* CompileState::programOf(AbstractOperand* op, bool create) {
+Program* CompileState::programOf(AbstractOperand* op, bool create) {
   auto it = definedIn_.find(op);
   if (it == definedIn_.end()) {
     if (!create) {
@@ -224,11 +224,11 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
       auto op = newOperand(constant->value()->type(), constant->toString());
       op->constant = constant->value();
       if (constant->value()->isNullAt(0)) {
-	op->literalNull = true;
+        op->literalNull = true;
       } else {
-	op->notNull = true;
+        op->notNull = true;
       }
-	return op;
+      return op;
     }
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
     VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
@@ -310,20 +310,20 @@ int32_t findOutputChannel(
   VELOX_FAIL("Expr without output channel");
 }
 
-  void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
+void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   int32_t numPrograms = allPrograms_.size();
   auto condition = addExpr(expr);
   auto indices = newOperand(INTEGER(), "indices");
   indices->notNull = true;
   auto program = programOf(condition);
-  //program->markOutput(indices->id);
+  // program->markOutput(indices->id);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
   auto wrapUnique = std::make_unique<AbstractWrap>(indices, wrapCounter_++);
   auto wrap = wrapUnique.get();
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
   operators_.push_back(std::make_unique<Project>(
-						 *this, outputType, std::vector<AbstractOperand*>{}, levels, wrap));
+      *this, outputType, std::vector<AbstractOperand*>{}, levels, wrap));
 }
 
 void CompileState::addFilterProject(
@@ -342,7 +342,8 @@ void CompileState::addFilterProject(
   auto operands =
       addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
   for (auto i = 0; i < operands.size(); ++i) {
-    int32_t channel = findOutputChannel(*data.resultProjections, i + firstProjection);
+    int32_t channel =
+        findOutputChannel(*data.resultProjections, i + firstProjection);
     auto subfield = toSubfield(outputType->nameOf(channel));
     auto program = programOf(operands[i], false);
     if (program) {
@@ -352,7 +353,7 @@ void CompileState::addFilterProject(
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
-		       std::make_unique<Project>(*this, outputType, operands, levels));
+      std::make_unique<Project>(*this, outputType, operands, levels));
 }
 
 bool CompileState::reserveMemory() {
@@ -427,7 +428,7 @@ bool CompileState::addOperator(
 }
 
 bool isProjectedThrough(
-			const std::vector<exec::IdentityProjection>& projectedThrough,
+    const std::vector<exec::IdentityProjection>& projectedThrough,
     int32_t i) {
   for (auto& projection : projectedThrough) {
     if (projection.outputChannel == i) {
@@ -454,20 +455,22 @@ bool CompileState::compile() {
       break;
     }
     ++nodeIndex;
-    for (auto newIndex = previousNumOperators; newIndex < operators_.size(); ++newIndex) {
+    for (auto newIndex = previousNumOperators; newIndex < operators_.size();
+         ++newIndex) {
       auto& identity = operators[operatorIndex]->identityProjections();
       for (auto i = 0; i < outputType->size(); ++i) {
-	auto& name = outputType->nameOf(i);
-	Value value = Value(toSubfield(name));
-	if (isProjectedThrough(identity, i)) {
-	  continue;
-	}
-	auto operand = operators_[newIndex]->defines(value);
-	if (!operand) {
-	  operand = operators_[newIndex]->definesSubfield(*this, outputType->childAt(i), name, newIndex == 0);
-	}
-	operators_[newIndex]->addOutputId(operand->id);
-	definedBy_[value] = operand;
+        auto& name = outputType->nameOf(i);
+        Value value = Value(toSubfield(name));
+        if (isProjectedThrough(identity, i)) {
+          continue;
+        }
+        auto operand = operators_[newIndex]->defines(value);
+        if (!operand) {
+          operand = operators_[newIndex]->definesSubfield(
+              *this, outputType->childAt(i), name, newIndex == 0);
+        }
+        operators_[newIndex]->addOutputId(operand->id);
+        definedBy_[value] = operand;
       }
     }
   }

@@ -37,25 +37,24 @@ AbstractOperand* WaveOperator::definesSubfield(
       for (auto i = 0; i < type->size(); ++i) {
         auto& child = row.childAt(i);
         auto name = row.nameOf(i);
-	std::string childPath = fmt::format("{}.{}", parentPath, name);
-	definesSubfield(state, child, childPath, sourceNullable);
+        std::string childPath = fmt::format("{}.{}", parentPath, name);
+        definesSubfield(state, child, childPath, sourceNullable);
       }
     }
       [[fallthrough]];
       // TODO:Add cases for nested types.
     default: {
-        auto field = state.toSubfield(parentPath);
-        subfields_.push_back(field);
-        types_.push_back(type);
-        auto operand = state.findCurrentValue(Value(field));
-        if (!operand) {
-          operand = state.newOperand(type, parentPath);
-        }
-        if (sourceNullable && !operand->notNull &&
-            !operand->conditionalNonNull) {
-          operand->sourceNullable = true;
-        }
-        defines_[Value(field)] = operand;
+      auto field = state.toSubfield(parentPath);
+      subfields_.push_back(field);
+      types_.push_back(type);
+      auto operand = state.findCurrentValue(Value(field));
+      if (!operand) {
+        operand = state.newOperand(type, parentPath);
+      }
+      if (sourceNullable && !operand->notNull && !operand->conditionalNonNull) {
+        operand->sourceNullable = true;
+      }
+      defines_[Value(field)] = operand;
 
       return operand;
     }
