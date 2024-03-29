@@ -451,7 +451,8 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
   exe.inputOperands.forEach([&](int32_t id) {
     auto* inputExe = operandToExecutable_[id];
     int32_t ordinal = inputExe->outputOperands.ordinal(id);
-    *operandPtrBegin = &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
+    *operandPtrBegin =
+        &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
     ++operandPtrBegin;
   });
   Operand* operandBegin = addBytes<Operand*>(
@@ -605,9 +606,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 }
 
 int32_t WaveStream::getOutput(
-			   int32_t operatorId,
-			   memory::MemoryPool& pool,
-			   folly::Range<const OperandId*> operands,
+    int32_t operatorId,
+    memory::MemoryPool& pool,
+    folly::Range<const OperandId*> operands,
     VectorPtr* vectors) {
   auto it = launchControl_.find(operatorId);
   VELOX_CHECK(it != launchControl_.end());
@@ -622,12 +623,17 @@ int32_t WaveStream::getOutput(
     auto exe = operandExecutable(id);
     VELOX_CHECK_NOT_NULL(exe);
     auto ordinal = exe->outputOperands.ordinal(id);
-    auto waveVectorPtr  = &exe->output[ordinal];
+    auto waveVectorPtr = &exe->output[ordinal];
     if (!waveVectorPtr->get()) {
       exe->ensureLazyArrived(operands);
-      VELOX_CHECK_NOT_NULL(waveVectorPtr->get(), "Lazy load should have filled in the result");
+      VELOX_CHECK_NOT_NULL(
+          waveVectorPtr->get(), "Lazy load should have filled in the result");
     }
-    vectors[i] = waveVectorPtr->get()->toVelox(&pool, numBlocks, status, &exe->operands[exe->firstOutputOperandIdx + ordinal]);
+    vectors[i] = waveVectorPtr->get()->toVelox(
+        &pool,
+        numBlocks,
+        status,
+        &exe->operands[exe->firstOutputOperandIdx + ordinal]);
   }
   return vectors[0]->size();
 }
@@ -735,7 +741,7 @@ void Program::prepareForDevice(GpuArena& arena) {
       case OpCode::kWrap: {
         IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
         IN_OPERAND(indices);
-	physicalInst->numColumns = abstractInst->source.size();
+        physicalInst->numColumns = abstractInst->source.size();
         physicalInst->columns = reinterpret_cast<OperandIndex*>(
             deviceLiterals_ + abstractInst->literalOffset);
         for (auto i = 0; i < abstractInst->source.size(); ++i) {
@@ -934,7 +940,8 @@ std::unique_ptr<Executable> Program::getExecutable(
 
 std::string AbstractOperand::toString() const {
   if (constant) {
-    return fmt::format("<literal {} {}>", constant->toString(0), type->toString());
+    return fmt::format(
+        "<literal {} {}>", constant->toString(0), type->toString());
   }
   return fmt::format("<{}: {} {}>", id, label, type->toString());
 }
@@ -944,10 +951,12 @@ std::string Executable::toString() const {
   out << "{Exe produces ";
   bool first = true;
   outputOperands.forEach([&](auto id) {
-			   if (!first) { out << ", ";};
-			   first = false;
-			   out << waveStream->operandAt(id)->toString();
-			 });
+    if (!first) {
+      out << ", ";
+    };
+    first = false;
+    out << waveStream->operandAt(id)->toString();
+  });
   if (programShared) {
     out << std::endl;
     out << "program " << programShared->label();

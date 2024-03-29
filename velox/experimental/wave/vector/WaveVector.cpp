@@ -143,7 +143,6 @@ int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks) {
   return numRows;
 }
 
-  
 VectorPtr WaveVector::toVelox(
     memory::MemoryPool* pool,
     int32_t numBlocks,

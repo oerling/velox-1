@@ -70,5 +70,5 @@ std::string WaveOperator::toString() const {
   out << "Id: " << id_ << " produces " << outputIds_.toString() << std::endl;
   return out.str();
 }
-  
+
 } // namespace facebook::velox::wave

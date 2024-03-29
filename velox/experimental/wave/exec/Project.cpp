@@ -58,10 +58,10 @@ void Project::finalize(CompileState& state) {
     for (auto& program : level) {
       program->prepareForDevice(state.arena());
       for (auto& pair : program->output()) {
-	if (true /*isProjected(id)*/) {
-	  computedSet_.add(pair.first->id);
-	}
-	}
+        if (true /*isProjected(id)*/) {
+          computedSet_.add(pair.first->id);
+        }
+      }
     }
   }
 }

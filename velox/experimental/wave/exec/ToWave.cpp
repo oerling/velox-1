@@ -464,7 +464,7 @@ bool CompileState::compile() {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
         if (isProjectedThrough(identity, i)) {
-	  addIdentityProjections(value);
+          addIdentityProjections(value);
           continue;
         }
         auto operand = operators_[newIndex]->defines(value);
@@ -479,7 +479,6 @@ bool CompileState::compile() {
   }
   if (operators_.empty()) {
     return false;
-    
   }
   for (auto& op : operators_) {
     op->finalize(*this);

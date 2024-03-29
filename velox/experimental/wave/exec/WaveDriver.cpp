@@ -132,9 +132,10 @@ RowVectorPtr WaveDriver::makeResult(
   auto& rowType = last.outputType();
   auto operatorId = last.operatorId();
   std::vector<VectorPtr> children(rowType->size());
-  int32_t numRows = stream.getOutput(operatorId, *operatorCtx_->pool(), resultOrder_, children.data());
+  int32_t numRows = stream.getOutput(
+      operatorId, *operatorCtx_->pool(), resultOrder_, children.data());
   auto result = std::make_shared<RowVector>(
-					    operatorCtx_->pool(),
+      operatorCtx_->pool(),
       rowType,
       BufferPtr(nullptr),
       numRows,

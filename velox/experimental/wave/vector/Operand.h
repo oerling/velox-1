@@ -144,7 +144,7 @@ struct BlockStatus {
   ErrorCode errors[kBlockSize];
 };
 
-  /// Returns the number of active rows in 'status' for 'numBlocks'.
+/// Returns the number of active rows in 'status' for 'numBlocks'.
 int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks);
 
 } // namespace facebook::velox::wave

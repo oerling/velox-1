@@ -218,7 +218,7 @@ struct Executable {
   }
 
   virtual std::string toString() const;
-  
+
   // The containing WaveStream.
   WaveStream* waveStream{nullptr};
 
@@ -246,7 +246,7 @@ struct Executable {
 
   // Index of first output operand in 'operands'.
   int32_t firstOutputOperandIdx{-1};
-  
+
   // Map from wrapAt in AbstractOperand to device side 'indices' with one
   // int32_t* per thread block.
   folly::F14FastMap<int32_t, int32_t**> wraps;
@@ -346,7 +346,7 @@ class Program : public std::enable_shared_from_this<Program> {
   void addLabel(const std::string& label) {
     label_ = label_ + " " + label;
   }
-  
+
  private:
   template <TypeKind kind>
   int32_t addLiteralTyped(AbstractOperand* op);
@@ -409,7 +409,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::vector<Operand> literalOperands_;
 
   std::string label_;
-  
+
   // Start of device side constant area.
   char* deviceLiterals_{nullptr};
   // Serializes 'prepared_'. Access on WaveStrea, is single threaded but sharing
@@ -481,11 +481,14 @@ class WaveStream {
       WaveVectorPtr& vector,
       int32_t numRows = -1);
 
-  /// Updates 'vectors' to reference the data in 'operands'. 'id' is the id of the last WaveOperator. It identifies the LaunchControl with the final BlockStatus with errors and cardinalities. Returns the number of rows after possible selection.
+  /// Updates 'vectors' to reference the data in 'operands'. 'id' is the id of
+  /// the last WaveOperator. It identifies the LaunchControl with the final
+  /// BlockStatus with errors and cardinalities. Returns the number of rows
+  /// after possible selection.
   int32_t getOutput(
-		 int32_t operatorId,
-		 memory::MemoryPool& pool,
-		 folly::Range<const OperandId*> operands,
+      int32_t operatorId,
+      memory::MemoryPool& pool,
+      folly::Range<const OperandId*> operands,
       VectorPtr* vectors);
 
   Executable* operandExecutable(OperandId id) {
