@@ -39,7 +39,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
         range, [&](Stream* out, folly::Range<Executable**> exes) {
           auto inputControl = driver_->inputControl(stream, id_);
           auto control = stream.prepareProgramLaunch(
-              id_, maxRows, exes, blocksPerExe, false, out);
+              id_, maxRows, exes, blocksPerExe, inputControl, out);
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,
@@ -57,9 +57,11 @@ void Project::finalize(CompileState& state) {
   for (auto& level : levels_) {
     for (auto& program : level) {
       program->prepareForDevice(state.arena());
-      for (auto& pair : program->localAndOutput()) {
-        computedSet_.add(pair.first->id);
-      }
+      for (auto& pair : program->output()) {
+	if (true /*isProjected(id)*/) {
+	  computedSet_.add(pair.first->id);
+	}
+	}
     }
   }
 }

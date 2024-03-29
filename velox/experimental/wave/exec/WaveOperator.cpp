@@ -65,4 +65,10 @@ folly::Synchronized<exec::OperatorStats>& WaveOperator::stats() {
   return driver_->stats();
 }
 
+std::string WaveOperator::toString() const {
+  std::stringstream out;
+  out << "Id: " << id_ << " produces " << outputIds_.toString() << std::endl;
+  return out.str();
+}
+  
 } // namespace facebook::velox::wave

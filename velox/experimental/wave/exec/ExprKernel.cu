@@ -42,7 +42,7 @@ __device__ inline void binaryOpKernel(
   T right;
   if (operandOrNull(operands, instr.left, blockBase, shared, left) &&
       operandOrNull(operands, instr.right, blockBase, shared, right)) {
-    flatResult<T>(operands, instr.result, blockBase, shared) =
+    flatResult<decltype(func(left, right))>(operands, instr.result, blockBase, shared) =
         func(left, right);
   } else {
     resultNull(operands, instr.result, blockBase, shared);

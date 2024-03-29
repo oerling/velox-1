@@ -84,6 +84,8 @@ struct AbstractOperand {
   // some point get indices when first created. When they get wrapped, there is
   // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
+
+  std::string toString() const;
 };
 
 struct AbstractInstruction {
@@ -95,6 +97,10 @@ struct AbstractInstruction {
   }
 
   OpCode opCode;
+
+  virtual std::string toString() const {
+    return fmt::format("OpCode {}", static_cast<int32_t>(opCode));
+  }
 };
 
 struct AbstractFilter : public AbstractInstruction {

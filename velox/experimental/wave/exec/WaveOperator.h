@@ -93,7 +93,7 @@ class WaveOperator {
     VELOX_FAIL("Override for source or blocking operator");
   }
 
-  virtual std::string toString() const = 0;
+  virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(
       CompileState& state,

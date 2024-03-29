@@ -72,7 +72,7 @@ AbstractOperand* CompileState::newOperand(
     const TypePtr& type,
     const std::string& label) {
   operands_.push_back(
-      std::make_unique<AbstractOperand>(operandCounter_++, type, ""));
+      std::make_unique<AbstractOperand>(operandCounter_++, type, label));
   auto op = operands_.back().get();
   return op;
 }
@@ -265,6 +265,7 @@ std::vector<AbstractOperand*> CompileState::addExprSet(
   std::vector<AbstractOperand*> result;
   for (auto i = begin; i < end; ++i) {
     result.push_back(addExpr(*exprs[i]));
+    programOf(result.back())->addLabel(exprs[i]->toString(true));
   }
   return result;
 }
@@ -273,7 +274,7 @@ std::vector<std::vector<ProgramPtr>> CompileState::makeLevels(
     int32_t startIndex) {
   std::vector<std::vector<ProgramPtr>> levels;
   folly::F14FastSet<Program*> toAdd;
-  for (auto i = 0; i < allPrograms_.size(); ++i) {
+  for (auto i = startIndex; i < allPrograms_.size(); ++i) {
     toAdd.insert(allPrograms_[i].get());
   }
   while (!toAdd.empty()) {
@@ -316,7 +317,8 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   auto indices = newOperand(INTEGER(), "indices");
   indices->notNull = true;
   auto program = programOf(condition);
-  // program->markOutput(indices->id);
+  program->addLabel(expr.toString(true));
+  program->markOutput(indices->id);
   program->add(std::make_unique<AbstractFilter>(condition, indices));
   auto wrapUnique = std::make_unique<AbstractWrap>(indices, wrapCounter_++);
   auto wrap = wrapUnique.get();
@@ -462,6 +464,7 @@ bool CompileState::compile() {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
         if (isProjectedThrough(identity, i)) {
+	  addIdentityProjections(value);
           continue;
         }
         auto operand = operators_[newIndex]->defines(value);
@@ -476,6 +479,7 @@ bool CompileState::compile() {
   }
   if (operators_.empty()) {
     return false;
+    
   }
   for (auto& op : operators_) {
     op->finalize(*this);

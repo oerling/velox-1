@@ -135,6 +135,15 @@ static VectorPtr toVeloxTyped(
       std::vector<BufferPtr>());
 }
 
+int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks) {
+  int32_t numRows = 0;
+  for (auto i = 0; i < numBlocks; ++i) {
+    numRows += status[i].numRows;
+  }
+  return numRows;
+}
+
+  
 VectorPtr WaveVector::toVelox(
     memory::MemoryPool* pool,
     int32_t numBlocks,
@@ -149,11 +158,8 @@ VectorPtr WaveVector::toVelox(
   // Translate the BlockStatus and indices in Operand to a host side dictionary
   // wrap.
   int maxRow = std::min<int32_t>(size_, numBlocks * kBlockSize);
-  int numActive = 0;
   numBlocks = bits::roundUp(maxRow, kBlockSize) / kBlockSize;
-  for (auto i = 0; i < numBlocks; ++i) {
-    numActive += status[i].numRows;
-  }
+  int numActive = statusNumRows(status, numBlocks);
   auto operandIndices = operand->indices;
   if (!operandIndices) {
     VELOX_CHECK_EQ(

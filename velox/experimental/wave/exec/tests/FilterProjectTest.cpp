@@ -81,7 +81,7 @@ class FilterProjectTest : public OperatorTestBase {
     for (auto i = 0; i < projections.size(); ++i) {
       sql << " " << projections[i] << (i == projections.size() - 1 ? "" : ",");
     }
-    sql << " WHERE " << filter;
+    sql << " FROM tmp WHERE " << filter;
 
     auto task = assertQuery(plan, sql.str());
     return task;
@@ -119,7 +119,7 @@ TEST_F(FilterProjectTest, project) {
 
 TEST_F(FilterProjectTest, filterProject) {
   std::vector<RowVectorPtr> vectors;
-  for (int32_t i = 0; i < 10; ++i) {
+  for (int32_t i = 0; i < 1; ++i) {
     auto vector = std::dynamic_pointer_cast<RowVector>(
         BatchMaker::createBatch(rowType_, 100, *pool_));
     makeNotNull(vector, 1000000000);

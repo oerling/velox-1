@@ -273,6 +273,7 @@ void WaveStream::installExecutables(
   for (auto& exeUnique : executables) {
     executables_.push_back(std::move(exeUnique));
     auto exe = executables_.back().get();
+    exe->waveStream = this;
     VELOX_CHECK(exe->stream == nullptr);
     OperandSet streamSet;
     exe->inputOperands.forEach([&](int32_t id) {
@@ -450,7 +451,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
   exe.inputOperands.forEach([&](int32_t id) {
     auto* inputExe = operandToExecutable_[id];
     int32_t ordinal = inputExe->outputOperands.ordinal(id);
-    *operandPtrBegin = &inputExe->operands[ordinal];
+    *operandPtrBegin = &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
     ++operandPtrBegin;
   });
   Operand* operandBegin = addBytes<Operand*>(
@@ -481,6 +482,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     ++operandPtrBegin;
     ++operandBegin;
   });
+  exe.firstOutputOperandIdx = exe.intermediates.size();
   exe.output.resize(exe.outputOperands.size());
   fill = 0;
   exe.outputOperands.forEach([&](auto id) {
@@ -516,10 +518,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t inputRows,
     folly::Range<Executable**> exes,
     int32_t blocksPerExe,
-    bool initStatus,
+    const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
-  int32_t shared = 0;
 
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
@@ -532,6 +533,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   auto operandOffset = size;
   // Exe dependent sizes for operands.
   int32_t operandBytes = 0;
+  int32_t shared = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     exeLaunchInfo(*exes[i], numBlocks, info[i]);
     operandBytes += info[i].totalBytes;
@@ -540,7 +542,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
   size += operandBytes;
   int32_t statusOffset = 0;
-  if (initStatus) {
+  if (!inputControl) {
     statusOffset = size;
     //  Pointer to return block for each tB.
     size += blocksPerExe * sizeof(BlockStatus);
@@ -561,7 +563,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       control.programIdx, numBlocks * sizeof(int32_t));
   control.operands =
       addBytes<Operand***>(control.programs, exes.size() * sizeof(void*));
-  if (initStatus) {
+  if (!inputControl) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
     // are multiple exes, they all share the same error codes. A launch can have
@@ -576,7 +578,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
           i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
   } else {
-    control.status = nullptr;
+    control.status = inputControl->status;
   }
   char* operandStart = addBytes<char*>(start, operandOffset);
   int32_t fill = 0;
@@ -602,21 +604,32 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   return &control;
 }
 
-void WaveStream::getOutput(
-    folly::Range<const OperandId*> operands,
-    WaveVectorPtr* waveVectors) {
+int32_t WaveStream::getOutput(
+			   int32_t operatorId,
+			   memory::MemoryPool& pool,
+			   folly::Range<const OperandId*> operands,
+    VectorPtr* vectors) {
+  auto it = launchControl_.find(operatorId);
+  VELOX_CHECK(it != launchControl_.end());
+  auto* control = it->second[0].get();
+  auto* status = control->status;
+  auto numBlocks = bits::roundUp(control->inputRows, kBlockSize) / kBlockSize;
+  if (operands.empty()) {
+    return statusNumRows(status, numBlocks);
+  }
   for (auto i = 0; i < operands.size(); ++i) {
     auto id = operands[i];
     auto exe = operandExecutable(id);
     VELOX_CHECK_NOT_NULL(exe);
     auto ordinal = exe->outputOperands.ordinal(id);
-    waveVectors[i] = std::move(exe->output[ordinal]);
-    if (waveVectors[i] == nullptr) {
+    auto waveVectorPtr  = &exe->output[ordinal];
+    if (!waveVectorPtr->get()) {
       exe->ensureLazyArrived(operands);
-      waveVectors[i] = std::move(exe->output[ordinal]);
-      VELOX_CHECK_NOT_NULL(waveVectors[i]);
+      VELOX_CHECK_NOT_NULL(waveVectorPtr->get(), "Lazy load should have filled in the result");
     }
+    vectors[i] = waveVectorPtr->get()->toVelox(&pool, numBlocks, status, &exe->operands[exe->firstOutputOperandIdx + ordinal]);
   }
+  return vectors[0]->size();
 }
 
 WaveTypeKind typeKindCode(TypeKind kind) {
@@ -633,7 +646,6 @@ WaveTypeKind typeKindCode(TypeKind kind) {
 
 void Program::prepareForDevice(GpuArena& arena) {
   int32_t codeSize = 0;
-  int32_t sharedMemorySize = 0;
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
       case OpCode::kFilter: {
@@ -723,6 +735,7 @@ void Program::prepareForDevice(GpuArena& arena) {
       case OpCode::kWrap: {
         IN_HEAD(AbstractWrap, IWrap, OpCode::kWrap);
         IN_OPERAND(indices);
+	physicalInst->numColumns = abstractInst->source.size();
         physicalInst->columns = reinterpret_cast<OperandIndex*>(
             deviceLiterals_ + abstractInst->literalOffset);
         for (auto i = 0; i < abstractInst->source.size(); ++i) {
@@ -733,11 +746,11 @@ void Program::prepareForDevice(GpuArena& arena) {
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
-    sharedMemorySize =
-        std::max(sharedMemorySize, instructionSharedMemory(*space));
+    sharedMemorySize_ =
+        std::max(sharedMemorySize_, instructionSharedMemory(*space));
     ++space;
   }
-  program_->sharedMemorySize = sharedMemorySize;
+  program_->sharedMemorySize = sharedMemorySize_;
   literalOperands_.resize(literal_.size());
   int32_t counter = 0;
   for (auto& [op, index] : literal_) {
@@ -869,7 +882,7 @@ void Program::markInput(AbstractOperand* op) {
     literal_[op] = literal_.size();
     return;
   }
-  if (!local_.count(op)) {
+  if (!local_.count(op) && !output_.count(op)) {
     input_[op] = input_.size();
   }
 }
@@ -917,6 +930,29 @@ std::unique_ptr<Executable> Program::getExecutable(
     };
   }
   return exe;
+}
+
+std::string AbstractOperand::toString() const {
+  if (constant) {
+    return fmt::format("<literal {} {}>", constant->toString(0), type->toString());
+  }
+  return fmt::format("<{}: {} {}>", id, label, type->toString());
+}
+
+std::string Executable::toString() const {
+  std::stringstream out;
+  out << "{Exe produces ";
+  bool first = true;
+  outputOperands.forEach([&](auto id) {
+			   if (!first) { out << ", ";};
+			   first = false;
+			   out << waveStream->operandAt(id)->toString();
+			 });
+  if (programShared) {
+    out << std::endl;
+    out << "program " << programShared->label();
+    return out.str();
+  }
 }
 
 } // namespace facebook::velox::wave

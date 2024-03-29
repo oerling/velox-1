@@ -130,19 +130,15 @@ RowVectorPtr WaveDriver::makeResult(
     const OperandSet& lastSet) {
   auto& last = *pipelines_.back().operators.back();
   auto& rowType = last.outputType();
+  auto operatorId = last.operatorId();
   std::vector<VectorPtr> children(rowType->size());
+  int32_t numRows = stream.getOutput(operatorId, *operatorCtx_->pool(), resultOrder_, children.data());
   auto result = std::make_shared<RowVector>(
-      operatorCtx_->pool(),
+					    operatorCtx_->pool(),
       rowType,
       BufferPtr(nullptr),
-      last.outputSize(stream),
+      numRows,
       std::move(children));
-  int32_t nthChild = 0;
-  std::vector<WaveVectorPtr> waveVectors(resultOrder_.size());
-  stream.getOutput(resultOrder_, waveVectors.data());
-  for (auto& item : waveVectors) {
-    result->childAt(nthChild++) = item->toVelox(operatorCtx_->pool());
-  };
   return result;
 }
 
