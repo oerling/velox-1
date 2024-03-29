@@ -42,8 +42,8 @@ __device__ inline void binaryOpKernel(
   T right;
   if (operandOrNull(operands, instr.left, blockBase, shared, left) &&
       operandOrNull(operands, instr.right, blockBase, shared, right)) {
-    flatResult<decltype(func(left, right))>(operands, instr.result, blockBase, shared) =
-        func(left, right);
+    flatResult<decltype(func(left, right))>(
+        operands, instr.result, blockBase, shared) = func(left, right);
   } else {
     resultNull(operands, instr.result, blockBase, shared);
   }
@@ -166,14 +166,15 @@ __global__ void waveBaseKernel(
 
 int32_t instructionSharedMemory(const Instruction& instruction) {
   using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
-  
+
   switch (instruction.opCode) {
-  case OpCode::kFilter:
-    return sizeof(ScanAlgorithm::TempStorage);
-  default: return 0;
+    case OpCode::kFilter:
+      return sizeof(ScanAlgorithm::TempStorage);
+    default:
+      return 0;
   }
 }
-  
+
 void WaveKernelStream::call(
     Stream* alias,
     int32_t numBlocks,
