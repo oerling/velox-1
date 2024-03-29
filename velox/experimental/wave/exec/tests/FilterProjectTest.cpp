@@ -128,5 +128,5 @@ TEST_F(FilterProjectTest, filterProject) {
   createDuckDbTable(vectors);
 
   assertFilterProject(
-      "c0 < 400000000", std::vector<std::string>{"c0", "c1 + c0"}, vectors);
+		      "c0 < 400000000", std::vector<std::string>{"c0", "c1 + c0", "c2", "c3"}, vectors);
 }
