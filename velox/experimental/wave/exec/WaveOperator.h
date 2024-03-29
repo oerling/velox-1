@@ -110,6 +110,11 @@ class WaveOperator {
     return it->second;
   }
 
+  /// Marks 'operand' as defined here.
+  void defined(Value value, AbstractOperand* op) {
+    defines_[value] = op;
+  }
+  
   void setDriver(WaveDriver* driver) {
     driver_ = driver;
   }

@@ -53,7 +53,7 @@ class CompileState {
 
   Value toValue(const exec::Expr& expr);
 
-  AbstractOperand* addIdentityProjections(Value value);
+  AbstractOperand* addIdentityProjections(AbstractOperand* source);
   AbstractOperand* findCurrentValue(Value value);
   AbstractOperand* addExpr(const exec::Expr& expr);
 
@@ -121,6 +121,9 @@ class CompileState {
   // The Operand where Value is available after all projections placed to date.
   DefinesMap projectedTo_;
 
+  // Index of WaveOperator producing the operand.
+  folly::F14FastMap<AbstractOperand*, int32_t> operandOperatorIndex_;
+  
   folly::F14FastMap<AbstractOperand*, Program*> definedIn_;
 
   const exec::DriverFactory& driverFactory_;

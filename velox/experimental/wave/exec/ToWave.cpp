@@ -77,16 +77,15 @@ AbstractOperand* CompileState::newOperand(
   return op;
 }
 
-AbstractOperand* CompileState::addIdentityProjections(Value value) {
+AbstractOperand* CompileState::addIdentityProjections(AbstractOperand* source) {
   AbstractOperand* result = nullptr;
-  for (auto i = 0; i < operators_.size(); ++i) {
-    if (auto operand = operators_[i]->defines(value)) {
-      result = operand;
-      continue;
-    }
-    if (!result) {
-      continue;
-    }
+
+  int32_t latest = 0;
+  auto it = operandOperatorIndex_.find(source);
+  VELOX_CHECK(it != operandOperatorIndex_.end(), "The operand being projected through must b defined first");
+  latest = it->second;
+  result = source;
+  for (auto i = latest; i < operators_.size(); ++i) {
     if (auto wrap = operators_[i]->findWrap()) {
       if (operators_[i]->isExpanding()) {
         auto newResult = newOperand(*result);
@@ -102,16 +101,18 @@ AbstractOperand* CompileState::addIdentityProjections(Value value) {
 
 AbstractOperand* CompileState::findCurrentValue(Value value) {
   auto it = projectedTo_.find(value);
+  AbstractOperand* source;
   if (it == projectedTo_.end()) {
     auto originIt = definedBy_.find(value);
     if (originIt == definedBy_.end()) {
       return nullptr;
     }
+    source = originIt->second;
     // The operand is defined earlier, so must get translated through
     // cardinality changes. Or if it is not defined earlier, it is defined in
     // the WaveOperator being constructed, in which case,i.e. the operand in
     // 'definedBy_'.
-    auto projected = addIdentityProjections(value);
+    auto projected = addIdentityProjections(source);
     return projected ? projected : originIt->second;
   }
   return it->second;
@@ -343,6 +344,7 @@ void CompileState::addFilterProject(
   int32_t numPrograms = allPrograms_.size();
   auto operands =
       addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
+  std::vector<std::pair<Value, AbstractOperand*>> pairs;
   for (auto i = 0; i < operands.size(); ++i) {
     int32_t channel =
         findOutputChannel(*data.resultProjections, i + firstProjection);
@@ -350,12 +352,20 @@ void CompileState::addFilterProject(
     auto program = programOf(operands[i], false);
     if (program) {
       program->markOutput(operands[i]->id);
+      definedIn_[operands[i]] = program;
     }
-    definedBy_[Value(subfield)] = operands[i];
+    Value value(subfield);
+    definedBy_[value] = operands[i];
+
+    operandOperatorIndex_[operands[i]] = operators_.size();
+    pairs.push_back(std::make_pair(value, operands[i]));
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
       std::make_unique<Project>(*this, outputType, operands, levels));
+  for (auto& [value, operand] : pairs) {
+    operators_.back()->defined(value, operand);
+  }
 }
 
 bool CompileState::reserveMemory() {
@@ -464,7 +474,7 @@ bool CompileState::compile() {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
         if (isProjectedThrough(identity, i)) {
-          addIdentityProjections(value);
+          findCurrentValue(value);
           continue;
         }
         auto operand = operators_[newIndex]->defines(value);
@@ -474,6 +484,7 @@ bool CompileState::compile() {
         }
         operators_[newIndex]->addOutputId(operand->id);
         definedBy_[value] = operand;
+	operandOperatorIndex_[operand] = operators_.size() - 1;
       }
     }
   }
