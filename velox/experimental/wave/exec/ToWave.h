@@ -123,7 +123,7 @@ class CompileState {
 
   // Index of WaveOperator producing the operand.
   folly::F14FastMap<AbstractOperand*, int32_t> operandOperatorIndex_;
-  
+
   folly::F14FastMap<AbstractOperand*, Program*> definedIn_;
 
   const exec::DriverFactory& driverFactory_;

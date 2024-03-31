@@ -61,7 +61,6 @@ class WaveDriver : public exec::SourceOperator {
     return *hostArena_;
   }
 
-  
   const std::vector<std::unique_ptr<AbstractOperand>>& operands() {
     return operands_;
   }
@@ -125,7 +124,9 @@ class WaveDriver : public exec::SourceOperator {
     // independently of each other.  This is bounded by device memory and the
     // speed at which the source can produce new batches.
     std::list<std::unique_ptr<WaveStream>> streams;
-    /// True if status copy to host is needed after the last kernel. True if returns vectors to host or if can produce multiple batches of output for one input.
+    /// True if status copy to host is needed after the last kernel. True if
+    /// returns vectors to host or if can produce multiple batches of output for
+    /// one input.
     bool needStatus{false};
   };
 

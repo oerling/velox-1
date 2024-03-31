@@ -444,7 +444,7 @@ class WaveStream {
       GpuArena& arena,
       GpuArena& hostArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands)
-    : arena_(arena), hostArena_(hostArena), operands_(operands) {
+      : arena_(arena), hostArena_(hostArena), operands_(operands) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -485,12 +485,15 @@ class WaveStream {
   /// Marks 'op' as being later copied to host.  Allocates these together.
   void markHostOutputOperand(const AbstractOperand& op);
 
-  /// Finalizes return state. setNumRows and markHostOutputOperand may not be called after this. If 'needStatus' is false and no columns are marked for host return there is no need for any data transfer at the end of the stream.
+  /// Finalizes return state. setNumRows and markHostOutputOperand may not be
+  /// called after this. If 'needStatus' is false and no columns are marked for
+  /// host return there is no need for any data transfer at the end of the
+  /// stream.
   void setReturnData(bool needStatus);
-  
+
   /// Enqueus copy of device side results to host.
   void resultToHost();
-  
+
   /// Updates 'vectors' to reference the data in 'operands'. 'id' is the id of
   /// the last WaveOperator. It identifies the LaunchControl with the final
   /// BlockStatus with errors and cardinalities. Returns the number of rows
@@ -653,9 +656,10 @@ class WaveStream {
   // The most recent event recorded on the pairwise corresponding element of
   // 'streams_'.
   std::vector<Event*> lastEvent_;
-  // If status return copy has been initiated, then this is th event to sync with before accessing the 'hostReturnData_'
+  // If status return copy has been initiated, then this is th event to sync
+  // with before accessing the 'hostReturnData_'
   Event* hostReturnEvent_{nullptr};
-  
+
   // all events recorded on any stream. Events, once seen realized, are moved
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
@@ -672,13 +676,14 @@ class WaveStream {
 
   // Offset of the operand in 'hostReturnData_' and 'deviceReturnData_'.
   folly::F14FastMap<OperandId, int64_t> hostReturnOffset_;
-  
+
   // Size of data returned at end of stream.
   int64_t hostReturnSize_{0};
 
   int64_t hostReturnDataUsed_{0};
-  
-  // Device side data for all returnable data, like BlockStatus and Vector bodies to be copied to host.
+
+  // Device side data for all returnable data, like BlockStatus and Vector
+  // bodies to be copied to host.
   WaveBufferPtr deviceReturnData_;
 
   // Host pinned memory to which 'deviceReturnData' is copied.

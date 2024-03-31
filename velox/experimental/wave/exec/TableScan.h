@@ -31,7 +31,10 @@ class TableScan : public WaveSourceOperator {
       CompileState& state,
       int32_t operatorId,
       const core::TableScanNode& tableScanNode)
-      : WaveSourceOperator(state, tableScanNode.outputType(), tableScanNode.id()),
+      : WaveSourceOperator(
+            state,
+            tableScanNode.outputType(),
+            tableScanNode.id()),
         tableHandle_(tableScanNode.tableHandle()),
         columnHandles_(tableScanNode.assignments()),
         driverCtx_(state.driver().driverCtx()),

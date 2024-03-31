@@ -42,7 +42,8 @@ WaveDriver::WaveDriver(
       operands_(std::move(operands)) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
-  hostArena_ = std::make_unique<GpuArena>(returnBatchSize * 10, getHostAllocator(getDevice()));
+  hostArena_ = std::make_unique<GpuArena>(
+      returnBatchSize * 10, getHostAllocator(getDevice()));
   pipelines_.emplace_back();
   for (auto& op : waveOperators) {
     op->setDriver(this);
@@ -153,23 +154,24 @@ void WaveDriver::startMore() {
     if (blockingReason_ != exec::BlockingReason::kNotBlocked) {
       return;
     }
-    auto stream = std::make_unique<WaveStream>(*arena_, *hostArena_, &operands());
-      stream->setState(WaveStream::State::kHost);
+    auto stream =
+        std::make_unique<WaveStream>(*arena_, *hostArena_, &operands());
+    stream->setState(WaveStream::State::kHost);
 
     if (auto rows = ops[0]->canAdvance(*stream)) {
       VLOG(1) << "Advance " << rows << " rows in pipeline " << i;
       stream->setNumRows(rows);
       if (i == pipelines_.size() - 1) {
-	for (auto i : resultOrder_) {
-	  stream->markHostOutputOperand(*operands_[i]);
-	}
+        for (auto i : resultOrder_) {
+          stream->markHostOutputOperand(*operands_[i]);
+        }
       }
       stream->setReturnData(pipelines_[i].needStatus);
       for (auto& op : ops) {
         op->schedule(*stream, rows);
       }
       if (pipelines_[i].needStatus) {
-	stream->resultToHost();
+        stream->resultToHost();
       }
       stream->setState(WaveStream::State::kNotRunning);
       pipelines_[i].streams.push_back(std::move(stream));

@@ -273,7 +273,7 @@ std::string GpuSlab::toString() const {
 
 GpuArena::Buffers::Buffers() {
   for (auto i = 0; i < sizeof(buffers) / sizeof(buffers[0]); ++i) {
-    new(&buffers[i]) Buffer();
+    new (&buffers[i]) Buffer();
   }
 }
 
@@ -299,7 +299,7 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
     result = firstFreeBuffer_;
   }
   firstFreeBuffer_ = reinterpret_cast<Buffer*>(result->ptr_);
-  new(result) Buffer();
+  new (result) Buffer();
   result->arena_ = this;
   result->ptr_ = ptr;
   result->size_ = size;

@@ -109,14 +109,11 @@ static inline void intrusive_ptr_add_ref(Buffer* buffer) {
 static inline void intrusive_ptr_release(Buffer* buffer) {
   buffer->release();
 }
-  
+
 template <typename Releaser>
 class WaveBufferView : public Buffer {
  public:
-  static WaveBufferPtr create(
-			      uint8_t* data,
-      size_t size,
-      Releaser releaser) {
+  static WaveBufferPtr create(uint8_t* data, size_t size, Releaser releaser) {
     WaveBufferView<Releaser>* view = new WaveBufferView(data, size, releaser);
     WaveBufferPtr result(view);
     return result;
@@ -125,23 +122,22 @@ class WaveBufferView : public Buffer {
   ~WaveBufferView() override = default;
 
   void release() override {
-      if (referenceCount_.fetch_sub(1) == 1) {
-	// Destructs releaser, which should release the hold on the underlying buffer.
-	delete this;
-      }
+    if (referenceCount_.fetch_sub(1) == 1) {
+      // Destructs releaser, which should release the hold on the underlying
+      // buffer.
+      delete this;
+    }
   }
-  
+
  private:
   WaveBufferView(uint8_t* data, size_t size, Releaser releaser)
-    : Buffer(),
-        releaser_(releaser) {
-	  ptr_ = data;
-	  size_ = size;
+      : Buffer(), releaser_(releaser) {
+    ptr_ = data;
+    size_ = size;
     capacity_ = size;
   }
 
   Releaser const releaser_;
 };
 
-  
 } // namespace facebook::velox::wave

@@ -56,7 +56,7 @@ class WaveOperator {
   virtual bool isSource() const {
     return false;
   }
-  
+
   virtual bool isStreaming() const = 0;
 
   virtual void enqueue(WaveVectorPtr) {
@@ -118,7 +118,7 @@ class WaveOperator {
   void defined(Value value, AbstractOperand* op) {
     defines_[value] = op;
   }
-  
+
   void setDriver(WaveDriver* driver) {
     driver_ = driver;
   }
@@ -213,16 +213,16 @@ class WaveOperator {
   std::vector<WaveBufferPtr> executableMemory_;
 };
 
-  class WaveSourceOperator : public WaveOperator {
-  public:
+class WaveSourceOperator : public WaveOperator {
+ public:
   WaveSourceOperator(
       CompileState& state,
       const RowTypePtr& outputType,
       const std::string& planNodeId)
-    : WaveOperator(state, outputType, planNodeId) {}
-    bool isSource() const override {
-      return true;
-    }
-  };
-  
+      : WaveOperator(state, outputType, planNodeId) {}
+  bool isSource() const override {
+    return true;
+  }
+};
+
 } // namespace facebook::velox::wave

@@ -229,24 +229,27 @@ void WaveStream::markHostOutputOperand(const AbstractOperand& op) {
   hostReturnSize_ += WaveVector::backingSize(op.type, numRows_, nullable);
 }
 
-  void WaveStream::setReturnData(bool needStatus) {
-    if (!needStatus && hostReturnSize_ == 0) {
-      return;
-    }
+void WaveStream::setReturnData(bool needStatus) {
+  if (!needStatus && hostReturnSize_ == 0) {
+    return;
   }
+}
 
-  void WaveStream::resultToHost() {
-    if (streams_.size() == 1) {
-      if (hostReturnDataUsed_ > 0) {
-	streams_[0]->deviceToHostAsync(hostReturnData_->as<char>(), deviceReturnData_->as<char>(), hostReturnDataUsed_);
-      }
-      hostReturnEvent_ = newEvent();
-      hostReturnEvent_->record(*streams_[0]);
-    } else {
-      VELOX_NYI();
+void WaveStream::resultToHost() {
+  if (streams_.size() == 1) {
+    if (hostReturnDataUsed_ > 0) {
+      streams_[0]->deviceToHostAsync(
+          hostReturnData_->as<char>(),
+          deviceReturnData_->as<char>(),
+          hostReturnDataUsed_);
     }
+    hostReturnEvent_ = newEvent();
+    hostReturnEvent_->record(*streams_[0]);
+  } else {
+    VELOX_NYI();
   }
-    
+}
+
 namespace {
 // Copies from pageable host to unified address. Multithreaded memcpy is
 // probably best.
@@ -413,10 +416,10 @@ void WaveStream::ensureVector(
   } else {
     vector->resize(numRows < 0 ? numRows_ : numRows, nullable);
   }
-  }
+}
 
-  bool WaveStream::isNullable(const AbstractOperand& op) const {
-      bool notNull = op.notNull;
+bool WaveStream::isNullable(const AbstractOperand& op) const {
+  bool notNull = op.notNull;
   if (!notNull) {
     if (op.sourceNullable) {
       notNull = !operandNullable_[op.id];
@@ -431,8 +434,8 @@ void WaveStream::ensureVector(
     }
   }
   return !notNull;
-  }
-  
+}
+
 void WaveStream::exeLaunchInfo(
     Executable& exe,
     int32_t numBlocks,
@@ -629,8 +632,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   for (auto i = 0; i < exes.size(); ++i) {
     control.programs[i] = exes[i]->program;
 
-    auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);control.operands[i] = operandPtrs;
-    // The operands defined by the exe start after the input operands and are all consecutive.
+    auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
+    control.operands[i] = operandPtrs;
+    // The operands defined by the exe start after the input operands and are
+    // all consecutive.
     exes[i]->operands = operandPtrs[exes[i]->inputOperands.size()];
     operandStart += info[i].totalBytes;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {

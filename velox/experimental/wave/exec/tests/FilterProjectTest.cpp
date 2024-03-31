@@ -90,11 +90,9 @@ class FilterProjectTest : public OperatorTestBase {
   std::shared_ptr<const RowType> rowType_{
       ROW({"c0", "c1", "c2", "c3"},
           {BIGINT(), BIGINT(), SMALLINT(), DOUBLE()})};
-
 };
 
 TEST_F(FilterProjectTest, roundTrip) {
-
   std::vector<RowVectorPtr> vectors;
   for (int32_t i = 0; i < 10; ++i) {
     auto vector = std::dynamic_pointer_cast<RowVector>(
@@ -130,5 +128,7 @@ TEST_F(FilterProjectTest, filterProject) {
   createDuckDbTable(vectors);
 
   assertFilterProject(
-		      "c0 < 400000000", std::vector<std::string>{"c0", "c1", "c1 + c0 as s", "c2", "c3"}, vectors);
+      "c0 < 400000000",
+      std::vector<std::string>{"c0", "c1", "c1 + c0 as s", "c2", "c3"},
+      vectors);
 }

@@ -48,13 +48,18 @@ WaveVector::WaveVector(
   }
 }
 
-  void WaveVector::resize(vector_size_t size, bool nullable, WaveBufferPtr* backing, int64_t* backingOffset) {
+void WaveVector::resize(
+    vector_size_t size,
+    bool nullable,
+    WaveBufferPtr* backing,
+    int64_t* backingOffset) {
   auto capacity = values_ ? values_->capacity() : 0;
   size_ = size;
   int32_t bytesNeeded = backingSize(type_, size, nullable);
   if (bytesNeeded > capacity) {
     if (backing) {
-      values_ = WaveBufferView<WaveBufferPtr>::create((*backing)->as<uint8_t>() + *backingOffset, bytesNeeded, *backing);
+      values_ = WaveBufferView<WaveBufferPtr>::create(
+          (*backing)->as<uint8_t>() + *backingOffset, bytesNeeded, *backing);
       *backingOffset += bytesNeeded;
     } else {
       values_ = arena_->allocateBytes(bytesNeeded);
@@ -104,11 +109,8 @@ class NoReleaser {
 } // namespace
 
 template <TypeKind kind>
-static int32_t vectorSizeTyped(vector_size_t size) {
-}
+static int32_t vectorSizeTyped(vector_size_t size) {}
 
-
-  
 template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,
@@ -147,28 +149,29 @@ int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks) {
   return numRows;
 }
 
-  // static 
-  int32_t WaveVector::alignment(const TypePtr& type)  {
-    switch (type->kind()) {
+// static
+int32_t WaveVector::alignment(const TypePtr& type) {
+  switch (type->kind()) {
     case TypeKind::VARCHAR:
-    case TypeKind::VARBINARY: return sizeof(void*);
-    default: return type->cppSizeInBytes();
-    }
+    case TypeKind::VARBINARY:
+      return sizeof(void*);
+    default:
+      return type->cppSizeInBytes();
   }
+}
 
-
-  //    static
-  int64_t WaveVector::backingSize(const TypePtr& type, int32_t size, bool nullable) {
-    int64_t bytes;
-    if (type->kind() == TypeKind::VARCHAR) {
+//    static
+int64_t
+WaveVector::backingSize(const TypePtr& type, int32_t size, bool nullable) {
+  int64_t bytes;
+  if (type->kind() == TypeKind::VARCHAR) {
     bytes = sizeof(StringView) * size;
   } else {
     bytes = type->cppSizeInBytes() * size;
   }
-return bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0);
-  }
+  return bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0);
+}
 
-  
 VectorPtr WaveVector::toVelox(
     memory::MemoryPool* pool,
     int32_t numBlocks,
@@ -187,7 +190,8 @@ VectorPtr WaveVector::toVelox(
   int numActive = statusNumRows(status, numBlocks);
   auto operandIndices = operand->indices;
   if (!operandIndices) {
-    // Vector sizes are >= active in status because they are allocated before the row count in status becomes known.
+    // Vector sizes are >= active in status because they are allocated before
+    // the row count in status becomes known.
     VELOX_CHECK_LE(
         numActive,
         size_,

@@ -82,7 +82,9 @@ AbstractOperand* CompileState::addIdentityProjections(AbstractOperand* source) {
 
   int32_t latest = 0;
   auto it = operandOperatorIndex_.find(source);
-  VELOX_CHECK(it != operandOperatorIndex_.end(), "The operand being projected through must b defined first");
+  VELOX_CHECK(
+      it != operandOperatorIndex_.end(),
+      "The operand being projected through must b defined first");
   latest = it->second;
   result = source;
   for (auto i = latest; i < operators_.size(); ++i) {
@@ -465,12 +467,16 @@ bool CompileState::compile() {
   RowTypePtr inputType;
   for (; operatorIndex < operators.size(); ++operatorIndex) {
     int32_t previousNumOperators = operators_.size();
-          auto& identity = operators[operatorIndex]->identityProjections();
-	  // The columns that are projected through are renamed. They may also get an indirection after the new operator is placed.
-	  std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
-	  for (auto& projection : identity) {
-	    identityProjected.push_back(std::make_pair(findCurrentValue(Value(toSubfield(inputType->nameOf(projection.inputChannel)))), projection.outputChannel));
-	  }
+    auto& identity = operators[operatorIndex]->identityProjections();
+    // The columns that are projected through are renamed. They may also get an
+    // indirection after the new operator is placed.
+    std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
+    for (auto& projection : identity) {
+      identityProjected.push_back(std::make_pair(
+          findCurrentValue(
+              Value(toSubfield(inputType->nameOf(projection.inputChannel)))),
+          projection.outputChannel));
+    }
     if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
@@ -480,25 +486,25 @@ bool CompileState::compile() {
       for (auto i = 0; i < outputType->size(); ++i) {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
-	int32_t inputChannel;
+        int32_t inputChannel;
         if (isProjectedThrough(identity, i, inputChannel)) {
-	  continue;
+          continue;
         }
         auto operand = operators_[newIndex]->defines(value);
         if (!operand && operators_[newIndex]->isSource()) {
           operand = operators_[newIndex]->definesSubfield(
               *this, outputType->childAt(i), name, newIndex == 0);
         }
-	if (operand) {
-	  operators_[newIndex]->addOutputId(operand->id);
-	  definedBy_[value] = operand;
-	  operandOperatorIndex_[operand] = operators_.size() - 1;
-	}
+        if (operand) {
+          operators_[newIndex]->addOutputId(operand->id);
+          definedBy_[value] = operand;
+          operandOperatorIndex_[operand] = operators_.size() - 1;
+        }
       }
     }
     for (auto& [op, channel] : identityProjected) {
       Value value(toSubfield(outputType->nameOf(channel)));
-      auto newOp = 		  addIdentityProjections(op);
+      auto newOp = addIdentityProjections(op);
       projectedTo_[value] = newOp;
     }
     inputType = outputType;

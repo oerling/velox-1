@@ -75,14 +75,19 @@ class WaveVector {
   /// backing store, starting at offset *backingOffset'. Returns the
   /// offset of the first unused byte in '*backingOffset'. Leaves
   /// contents uninitialized in all cases.
-  void resize(vector_size_t size, bool nullable = true, WaveBufferPtr* backing = nullptr, int64_t* backingOffset = nullptr);
+  void resize(
+      vector_size_t size,
+      bool nullable = true,
+      WaveBufferPtr* backing = nullptr,
+      int64_t* backingOffset = nullptr);
 
   /// Returns the needed alignment for backing memory.
   static int32_t alignment(const TypePtr& type);
 
-  /// Returns the size in bytes for 'size' elements of 'type', including nulls if 'nullable' is true. Does not include string buffers.
+  /// Returns the size in bytes for 'size' elements of 'type', including nulls
+  /// if 'nullable' is true. Does not include string buffers.
   static int64_t backingSize(const TypePtr& type, int32_t size, bool nullable);
-  
+
   bool mayHaveNulls() const {
     return nulls_ != nullptr;
   }
@@ -180,10 +185,14 @@ struct WaveReleaser {
 class VeloxWaveBufferView : public BufferView<WaveReleaser> {
  public:
   /// Takes an additional reference to buffer. 'offset' and 'size'
-  /// allow sharing one allocation for many views. This is done when many vectors have to be moved as a unit between device and host.
-  static BufferPtr create(WaveBufferPtr buffer, int64_t offset = 0, int32_t size = -1) {
+  /// allow sharing one allocation for many views. This is done when many
+  /// vectors have to be moved as a unit between device and host.
+  static BufferPtr
+  create(WaveBufferPtr buffer, int64_t offset = 0, int32_t size = -1) {
     return BufferView<WaveReleaser>::create(
-					    buffer->as<uint8_t>() + offset, size == - 1 ? buffer->capacity() - offset : size, WaveReleaser(buffer));
+        buffer->as<uint8_t>() + offset,
+        size == -1 ? buffer->capacity() - offset : size,
+        WaveReleaser(buffer));
   }
 };
 
