@@ -279,7 +279,7 @@ void Aggregation::flush(bool noMoreInput) {
   flushDone_.record(*flushStream_);
 }
 
-int32_t Aggregation::canAdvance() {
+int32_t Aggregation::canAdvance(WaveStream& stream) {
   if (!noMoreInput_ || finished_) {
     return 0;
   }

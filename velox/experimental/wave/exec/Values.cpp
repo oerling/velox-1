@@ -21,11 +21,11 @@
 namespace facebook::velox::wave {
 
 Values::Values(CompileState& state, const core::ValuesNode& values)
-    : WaveOperator(state, values.outputType(), values.id()),
+    : WaveSourceOperator(state, values.outputType(), values.id()),
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {}
 
-int32_t Values::canAdvance() {
+int32_t Values::canAdvance(WaveStream& stream) {
   if (current_ < values_.size()) {
     return values_[current_]->size();
   }

@@ -86,7 +86,7 @@ class CompileState {
 
   void addFilterProject(
       exec::Operator* op,
-      RowTypePtr outputType,
+      RowTypePtr& outputType,
       int32_t& nodeIndex);
 
   bool reserveMemory();

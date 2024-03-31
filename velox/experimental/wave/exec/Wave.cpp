@@ -221,6 +221,32 @@ void WaveStream::releaseEvent(std::unique_ptr<Event>&& event) {
   eventsForReuse_.push_back(std::move(event));
 }
 
+void WaveStream::markHostOutputOperand(const AbstractOperand& op) {
+  hostOutputOperands_.add(op.id);
+  auto nullable = isNullable(op);
+  auto alignment = WaveVector::alignment(op.type);
+  hostReturnSize_ = bits::roundUp(hostReturnSize_, alignment);
+  hostReturnSize_ += WaveVector::backingSize(op.type, numRows_, nullable);
+}
+
+  void WaveStream::setReturnData(bool needStatus) {
+    if (!needStatus && hostReturnSize_ == 0) {
+      return;
+    }
+  }
+
+  void WaveStream::resultToHost() {
+    if (streams_.size() == 1) {
+      if (hostReturnDataUsed_ > 0) {
+	streams_[0]->deviceToHostAsync(hostReturnData_->as<char>(), deviceReturnData_->as<char>(), hostReturnDataUsed_);
+      }
+      hostReturnEvent_ = newEvent();
+      hostReturnEvent_->record(*streams_[0]);
+    } else {
+      VELOX_NYI();
+    }
+  }
+    
 namespace {
 // Copies from pageable host to unified address. Multithreaded memcpy is
 // probably best.
@@ -270,6 +296,7 @@ void WaveStream::installExecutables(
       OperandSetHasher,
       OperandSetComparer>
       dependences;
+  VELOX_CHECK_NULL(hostReturnEvent_);
   for (auto& exeUnique : executables) {
     executables_.push_back(std::move(exeUnique));
     auto exe = executables_.back().get();
@@ -301,6 +328,10 @@ void WaveStream::installExecutables(
     folly::Range<Executable**> exes(exeVector.data(), exeVector.size());
     std::vector<Stream*> required;
     ids.forEach([&](int32_t id) { required.push_back(streams_[id].get()); });
+    if (required.size() == 1) {
+      launch(required[0], exes);
+      continue;
+    }
     if (required.empty()) {
       auto stream = newStream();
       launch(stream, exes);
@@ -326,6 +357,9 @@ bool WaveStream::isArrived(
     int32_t sleepMicro,
     int32_t timeoutMicro) {
   OperandSet waitSet;
+  if (hostReturnEvent_) {
+    return hostReturnEvent_->query();
+  }
   ids.forEach([&](int32_t id) {
     auto exe = operandToExecutable_[id];
     VELOX_CHECK_NOT_NULL(exe, "No exe produces operand {} in stream", id);
@@ -373,7 +407,16 @@ void WaveStream::ensureVector(
   if (!vector) {
     vector = std::make_unique<WaveVector>(op.type, arena());
   }
-  bool notNull = op.notNull;
+  bool nullable = isNullable(op);
+  if (false /*hostOutputOperands_.contains(op.id)*/) {
+    VELOX_NYI();
+  } else {
+    vector->resize(numRows < 0 ? numRows_ : numRows, nullable);
+  }
+  }
+
+  bool WaveStream::isNullable(const AbstractOperand& op) const {
+      bool notNull = op.notNull;
   if (!notNull) {
     if (op.sourceNullable) {
       notNull = !operandNullable_[op.id];
@@ -387,9 +430,9 @@ void WaveStream::ensureVector(
       }
     }
   }
-  vector->resize(numRows < 0 ? numRows_ : numRows, !notNull);
-}
-
+  return !notNull;
+  }
+  
 void WaveStream::exeLaunchInfo(
     Executable& exe,
     int32_t numBlocks,
@@ -585,7 +628,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     control.programs[i] = exes[i]->program;
-    control.operands[i] = fillOperands(*exes[i], operandStart, info[i]);
+
+    auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);control.operands[i] = operandPtrs;
+    // The operands defined by the exe start after the input operands and are all consecutive.
+    exes[i]->operands = operandPtrs[exes[i]->inputOperands.size()];
     operandStart += info[i].totalBytes;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
       control.blockBase[fill] = i * blocksPerExe;

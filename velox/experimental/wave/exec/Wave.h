@@ -442,8 +442,9 @@ class WaveStream {
 
   WaveStream(
       GpuArena& arena,
+      GpuArena& hostArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands)
-      : arena_(arena), operands_(operands) {
+    : arena_(arena), hostArena_(hostArena), operands_(operands) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -481,6 +482,15 @@ class WaveStream {
       WaveVectorPtr& vector,
       int32_t numRows = -1);
 
+  /// Marks 'op' as being later copied to host.  Allocates these together.
+  void markHostOutputOperand(const AbstractOperand& op);
+
+  /// Finalizes return state. setNumRows and markHostOutputOperand may not be called after this. If 'needStatus' is false and no columns are marked for host return there is no need for any data transfer at the end of the stream.
+  void setReturnData(bool needStatus);
+  
+  /// Enqueus copy of device side results to host.
+  void resultToHost();
+  
   /// Updates 'vectors' to reference the data in 'operands'. 'id' is the id of
   /// the last WaveOperator. It identifies the LaunchControl with the final
   /// BlockStatus with errors and cardinalities. Returns the number of rows
@@ -607,6 +617,9 @@ class WaveStream {
   }
 
  private:
+  // true if 'op' is nullable in the context of 'this'.
+  bool isNullable(const AbstractOperand& op) const;
+
   Event* newEvent();
 
   static std::unique_ptr<Event> eventFromReserve();
@@ -621,6 +634,7 @@ class WaveStream {
   static void clearReusable();
 
   GpuArena& arena_;
+  GpuArena& hostArena_;
   const std::vector<std::unique_ptr<AbstractOperand>>* const operands_;
   // True at '[i]' if in this stream 'operands_[i]' should have null flags.
   std::vector<bool> operandNullable_;
@@ -635,10 +649,13 @@ class WaveStream {
   // Currently active streams, each at the position given by its
   // stream->userData().
   std::vector<std::unique_ptr<Stream>> streams_;
+
   // The most recent event recorded on the pairwise corresponding element of
   // 'streams_'.
   std::vector<Event*> lastEvent_;
-
+  // If status return copy has been initiated, then this is th event to sync with before accessing the 'hostReturnData_'
+  Event* hostReturnEvent_{nullptr};
+  
   // all events recorded on any stream. Events, once seen realized, are moved
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
@@ -650,7 +667,24 @@ class WaveStream {
 
   folly::F14FastMap<int32_t, WaveBufferPtr> extraData_;
 
-  // Time when created or when advancing 'this' started.
+  // ids of operands that need their memory to be in the host return area.
+  OperandSet hostOutputOperands_;
+
+  // Offset of the operand in 'hostReturnData_' and 'deviceReturnData_'.
+  folly::F14FastMap<OperandId, int64_t> hostReturnOffset_;
+  
+  // Size of data returned at end of stream.
+  int64_t hostReturnSize_{0};
+
+  int64_t hostReturnDataUsed_{0};
+  
+  // Device side data for all returnable data, like BlockStatus and Vector bodies to be copied to host.
+  WaveBufferPtr deviceReturnData_;
+
+  // Host pinned memory to which 'deviceReturnData' is copied.
+  WaveBufferPtr hostReturnData_;
+
+  // Time when host side activity last started on 'this'.
   WaveTime start_;
 
   State state_{State::kNotRunning};

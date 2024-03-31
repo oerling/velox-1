@@ -165,7 +165,7 @@ TEST_F(TableScanTest, basic) {
 }
 
 TEST_F(TableScanTest, filter) {
-  auto type = ROW({{"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()}));
+  auto type = ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto vectors = makeVectors(type, 10, 1'000);
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);

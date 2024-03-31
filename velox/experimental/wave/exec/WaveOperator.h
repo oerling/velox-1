@@ -53,6 +53,10 @@ class WaveOperator {
     return isExpanding_;
   }
 
+  virtual bool isSource() const {
+    return false;
+  }
+  
   virtual bool isStreaming() const = 0;
 
   virtual void enqueue(WaveVectorPtr) {
@@ -74,7 +78,7 @@ class WaveOperator {
   /// Returns how many rows of output are available from 'this'. Source
   /// operators and cardinality increasing operators must return a correct
   /// answer if they are ready to produce data. Others should return 0.
-  virtual int32_t canAdvance() {
+  virtual int32_t canAdvance(WaveStream& stream) {
     return 0;
   }
 
@@ -209,4 +213,16 @@ class WaveOperator {
   std::vector<WaveBufferPtr> executableMemory_;
 };
 
+  class WaveSourceOperator : public WaveOperator {
+  public:
+  WaveSourceOperator(
+      CompileState& state,
+      const RowTypePtr& outputType,
+      const std::string& planNodeId)
+    : WaveOperator(state, outputType, planNodeId) {}
+    bool isSource() const override {
+      return true;
+    }
+  };
+  
 } // namespace facebook::velox::wave

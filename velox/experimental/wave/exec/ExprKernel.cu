@@ -88,32 +88,34 @@ __device__ void wrapKernel(
     Operand** operands,
     int32_t blockBase,
     int32_t numRows) {
-  if (threadIdx.x >= numRows) {
-    return;
-  }
   Operand* op = operands[wrap.indices];
   auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
   if (filterIndices[blockBase + numRows - 1] == numRows + blockBase - 1) {
     // There is no cardinality change.
     return;
   }
+  bool rowActive = threadIdx.x < numRows;
   for (auto column = 0; column < wrap.numColumns; ++column) {
-    int32_t opIndex = wrap.columns[column];
-    auto* op = operands[opIndex];
     int32_t newIndex;
-    int32_t** opIndices = &op->indices[blockBase / kBlockSize];
-    bool remap = *opIndices != nullptr;
-    if (remap) {
-      newIndex = (*opIndices)[filterIndices[threadIdx.x]];
+    int32_t** opIndices;
+    bool remap = false;
+    if (rowActive) {
+      auto opIndex = wrap.columns[column];
+      auto* op = operands[opIndex];
+      opIndices = &op->indices[blockBase / kBlockSize];
+      remap = *opIndices != nullptr;
+      if (remap) {
+	newIndex = (*opIndices)[filterIndices[threadIdx.x]];
+      } else if (threadIdx.x == 0) {
+	*opIndices = filterIndices + blockBase;
+      }
     }
-    __syncthreads();
-    if (remap) {
-      if (threadIdx.x < numRows) {
+    // All threads hit this.
+      __syncthreads();
+      if (remap) {
+	// remap can b true only on activ rows.
         (*opIndices)[threadIdx.x] = newIndex;
       }
-    } else if (threadIdx.x == 0) {
-      *opIndices = filterIndices + blockBase;
-    }
   }
 }
 

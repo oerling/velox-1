@@ -43,7 +43,7 @@ class Project : public WaveOperator {
   void finalize(CompileState& state) override;
 
   std::string toString() const override {
-    return "Project  + WaveOperator::toString()";
+    return fmt::format("Project {}", WaveOperator::toString());
   }
 
   const OperandSet& syncSet() const override {

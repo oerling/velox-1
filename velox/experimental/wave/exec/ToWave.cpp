@@ -331,15 +331,18 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
 
 void CompileState::addFilterProject(
     exec::Operator* op,
-    RowTypePtr outputType,
+    RowTypePtr& outputType,
     int32_t& nodeIndex) {
   auto filterProject = reinterpret_cast<exec::FilterProject*>(op);
+  outputType = driverFactory_.planNodes[nodeIndex]->outputType();
   auto data = filterProject->exprsAndProjection();
   auto& identityProjections = filterProject->identityProjections();
   int32_t firstProjection = 0;
   if (data.hasFilter) {
     addFilter(*data.exprs->exprs()[0], outputType);
     firstProjection = 1;
+    ++nodeIndex;
+    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
   }
   int32_t numPrograms = allPrograms_.size();
   auto operands =
@@ -356,8 +359,6 @@ void CompileState::addFilterProject(
     }
     Value value(subfield);
     definedBy_[value] = operands[i];
-
-    operandOperatorIndex_[operands[i]] = operators_.size();
     pairs.push_back(std::make_pair(value, operands[i]));
   }
   auto levels = makeLevels(numPrograms);
@@ -409,8 +410,6 @@ bool CompileState::addOperator(
     if (!reserveMemory()) {
       return false;
     }
-
-    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
     addFilterProject(op, outputType, nodeIndex);
   } else if (name == "Aggregation") {
     if (!reserveMemory()) {
@@ -441,9 +440,11 @@ bool CompileState::addOperator(
 
 bool isProjectedThrough(
     const std::vector<exec::IdentityProjection>& projectedThrough,
-    int32_t i) {
+    int32_t i,
+    int32_t& inputChannel) {
   for (auto& projection : projectedThrough) {
     if (projection.outputChannel == i) {
+      inputChannel = projection.inputChannel;
       return true;
     }
   }
@@ -461,32 +462,46 @@ bool CompileState::compile() {
   // Make sure operator states are initialized.  We will need to inspect some of
   // them during the transformation.
   driver_.initializeOperators();
+  RowTypePtr inputType;
   for (; operatorIndex < operators.size(); ++operatorIndex) {
     int32_t previousNumOperators = operators_.size();
+          auto& identity = operators[operatorIndex]->identityProjections();
+	  // The columns that are projected through are renamed. They may also get an indirection after the new operator is placed.
+	  std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
+	  for (auto& projection : identity) {
+	    identityProjected.push_back(std::make_pair(findCurrentValue(Value(toSubfield(inputType->nameOf(projection.inputChannel)))), projection.outputChannel));
+	  }
     if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
     ++nodeIndex;
     for (auto newIndex = previousNumOperators; newIndex < operators_.size();
          ++newIndex) {
-      auto& identity = operators[operatorIndex]->identityProjections();
       for (auto i = 0; i < outputType->size(); ++i) {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
-        if (isProjectedThrough(identity, i)) {
-          findCurrentValue(value);
-          continue;
+	int32_t inputChannel;
+        if (isProjectedThrough(identity, i, inputChannel)) {
+	  continue;
         }
         auto operand = operators_[newIndex]->defines(value);
-        if (!operand) {
+        if (!operand && operators_[newIndex]->isSource()) {
           operand = operators_[newIndex]->definesSubfield(
               *this, outputType->childAt(i), name, newIndex == 0);
         }
-        operators_[newIndex]->addOutputId(operand->id);
-        definedBy_[value] = operand;
-	operandOperatorIndex_[operand] = operators_.size() - 1;
+	if (operand) {
+	  operators_[newIndex]->addOutputId(operand->id);
+	  definedBy_[value] = operand;
+	  operandOperatorIndex_[operand] = operators_.size() - 1;
+	}
       }
     }
+    for (auto& [op, channel] : identityProjected) {
+      Value value(toSubfield(outputType->nameOf(channel)));
+      auto newOp = 		  addIdentityProjections(op);
+      projectedTo_[value] = newOp;
+    }
+    inputType = outputType;
   }
   if (operators_.empty()) {
     return false;

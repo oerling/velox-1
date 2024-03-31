@@ -48,22 +48,20 @@ WaveVector::WaveVector(
   }
 }
 
-void WaveVector::resize(vector_size_t size, bool nullable) {
+  void WaveVector::resize(vector_size_t size, bool nullable, WaveBufferPtr* backing, int64_t* backingOffset) {
   auto capacity = values_ ? values_->capacity() : 0;
   size_ = size;
-  int32_t bytes;
-  if (type_->kind() == TypeKind::VARCHAR) {
-    bytes = sizeof(StringView) * size;
-  } else {
-    bytes = type_->cppSizeInBytes() * size;
-  }
-  auto bytesNeeded =
-      bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0);
+  int32_t bytesNeeded = backingSize(type_, size, nullable);
   if (bytesNeeded > capacity) {
-    values_ = arena_->allocateBytes(bytesNeeded);
+    if (backing) {
+      values_ = WaveBufferView<WaveBufferPtr>::create((*backing)->as<uint8_t>() + *backingOffset, bytesNeeded, *backing);
+      *backingOffset += bytesNeeded;
+    } else {
+      values_ = arena_->allocateBytes(bytesNeeded);
+    }
   }
   if (nullable) {
-    nulls_ = values_->as<uint8_t>() + bits::roundUp(bytes, sizeof(void*));
+    nulls_ = values_->as<uint8_t>() + bytesNeeded - size;
   } else {
     nulls_ = nullptr;
   }
@@ -106,6 +104,12 @@ class NoReleaser {
 } // namespace
 
 template <TypeKind kind>
+static int32_t vectorSizeTyped(vector_size_t size) {
+}
+
+
+  
+template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,
     velox::memory::MemoryPool* pool,
@@ -123,7 +127,7 @@ static VectorPtr toVeloxTyped(
   }
   BufferPtr valuesView;
   if (values) {
-    valuesView = WaveBufferView::create(values);
+    valuesView = VeloxWaveBufferView::create(values);
   }
 
   return std::make_shared<FlatVector<T>>(
@@ -143,6 +147,28 @@ int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks) {
   return numRows;
 }
 
+  // static 
+  int32_t WaveVector::alignment(const TypePtr& type)  {
+    switch (type->kind()) {
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY: return sizeof(void*);
+    default: return type->cppSizeInBytes();
+    }
+  }
+
+
+  //    static
+  int64_t WaveVector::backingSize(const TypePtr& type, int32_t size, bool nullable) {
+    int64_t bytes;
+    if (type->kind() == TypeKind::VARCHAR) {
+    bytes = sizeof(StringView) * size;
+  } else {
+    bytes = type->cppSizeInBytes() * size;
+  }
+return bits::roundUp(bytes, sizeof(void*)) + (nullable ? size : 0);
+  }
+
+  
 VectorPtr WaveVector::toVelox(
     memory::MemoryPool* pool,
     int32_t numBlocks,
@@ -161,10 +187,11 @@ VectorPtr WaveVector::toVelox(
   int numActive = statusNumRows(status, numBlocks);
   auto operandIndices = operand->indices;
   if (!operandIndices) {
-    VELOX_CHECK_EQ(
+    // Vector sizes are >= active in status because they are allocated before the row count in status becomes known.
+    VELOX_CHECK_LE(
         numActive,
         size_,
-        "If there is no indirection in Operand, vector size must match BlockStatus");
+        "If there is no indirection in Operand, vector size must be <= BlockStatus");
     return base;
   }
   auto indices = AlignedBuffer::allocate<vector_size_t>(numActive, pool);
