@@ -18,6 +18,9 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
+#include <cub/block/block_radix_sort.cuh>
+#include <cub/block/block_store.cuh>
+
 
 /// Utilities for  booleans and indices and thread blocks.
 
@@ -51,7 +54,7 @@ BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
   }
   __syncthreads();
 }
-
+  
 template <int32_t blockSize, typename T, typename Getter>
 __device__ inline void blockSum(Getter getter, void* shmem, T* result) {
   typedef cub::BlockReduce<T, blockSize> BlockReduceT;
@@ -66,4 +69,41 @@ __device__ inline void blockSum(Getter getter, void* shmem, T* result) {
   }
 }
 
+  template<int32_t kBlockSize, int32_t kItemsPerThread, typename Key, typename Value>
+  using RadixSortStorage = cub::BlockRadixSort<Key, kBlockSize, kItemsPerThread, Value>;
+
+
+    template <int32_t kBlockSize, int32_t kItemsPerThread, typename Key, typename Value, typename ValueGetter, typename KeyGetter>
+    void __device__ sortBlocks(KeyGetter keyGetter, ValueGetter valueGetter, Key** keyOut, Value** valueOut, char* smem) {
+
+      enum { TILE_SIZE = kBlockSize * kItemsPerThread };
+
+
+      using Sort = cub::BlockRadixSort<Key, kBlockSize, kItemsPerThread, Value>;
+
+    // Per-thread tile items
+    Key keys[kItemsPerThread];
+    Value values[kItemsPerThread];
+
+    // Our current block's offset
+    int blockOffset = 0;
+
+    // Load items into a blocked arrangement
+      for (auto i = 0; i <kItemsPerThread; ++i) {
+	int32_t idx = blockOffset + i * kBlockSize + threadIdx.x;
+	values[i] = valueGetter(idx);
+	keys[i] = keyGetter(idx);
+      }
+
+    __syncthreads();
+      auto* temp_storage = reinterpret_cast<typename Sort::TempStorage>(smem);
+
+    Sort(*temp_storage).SortBlockedToStriped(keys, values);
+
+    // Store output in striped fashion
+    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, *valueOut + blockOffset, values);
+    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, *keyOut + blockOffset, keys);
+    __syncthreads();
+}
+  
 } // namespace facebook::velox::wave

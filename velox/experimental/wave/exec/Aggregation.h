@@ -121,5 +121,4 @@ class Aggregation : public WaveOperator {
   bool noMoreInput_ = false;
   bool finished_ = false;
 };
-
 } // namespace facebook::velox::wave

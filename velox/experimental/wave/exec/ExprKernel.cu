@@ -193,5 +193,6 @@ void WaveKernelStream::call(
       alias ? alias->stream()->stream : stream()->stream>>>(
       bases, programIdx, programs, operands, status);
 }
-
+REGISTER_KERNEL("expr", waveBaseKernel);
+  
 } // namespace facebook::velox::wave

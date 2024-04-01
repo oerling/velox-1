@@ -375,4 +375,6 @@ void call(
   CUDA_CHECK(cudaGetLastError());
 }
 
+REGISTER_KERNEL("agg", runPrograms);
+  
 } // namespace facebook::velox::wave::aggregation

@@ -565,7 +565,7 @@ __device__ void decodeSwitch(GpuDecode& op) {
 }
 
 template <int kBlockSize>
-__global__ void decodeGlobal(GpuDecode* plan) {
+void __global__  __launch_bounds__(1024, 3) decodeGlobal(GpuDecode* plan) {
   decodeSwitch<kBlockSize>(plan[blockIdx.x]);
 }
 
