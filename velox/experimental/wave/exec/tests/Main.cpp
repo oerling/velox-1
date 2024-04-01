@@ -17,14 +17,11 @@
 
 #include <folly/Unit.h>
 #include <folly/init/Init.h>
-#include <gtest/gtest.h>
 #include <gflags/gflags.h>
+#include <gtest/gtest.h>
 #include "velox/experimental/wave/common/Cuda.h"
 
-
-
 DEFINE_bool(list_kernels, false, "List kernel occupancy info and exit");
-
 
 using namespace facebook::velox::wave;
 
@@ -35,9 +32,12 @@ int main(int argc, char** argv) {
   facebook::velox::process::addDefaultFatalSignalHandler();
   folly::Init init{&argc, &argv, false};
   if (FLAGS_list_kernels) {
-    std::cout << "agg: " << getRegisteredKernelInfo("agg").toString() << std::endl;
-    std::cout << "expr: " << getRegisteredKernelInfo("expr").toString() << std::endl;
-    std::cout << "decode: " << getRegisteredKernelInfo("decode").toString() << std::endl;
+    std::cout << "agg: " << getRegisteredKernelInfo("agg").toString()
+              << std::endl;
+    std::cout << "expr: " << getRegisteredKernelInfo("expr").toString()
+              << std::endl;
+    std::cout << "decode: " << getRegisteredKernelInfo("decode").toString()
+              << std::endl;
     ::facebook::velox::wave::printKernels();
     exit(0);
   }

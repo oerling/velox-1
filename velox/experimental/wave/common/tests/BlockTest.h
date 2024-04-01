@@ -39,15 +39,14 @@ class BlockTestStream : public Stream {
       int32_t** indices,
       int32_t* sizes,
       int64_t* times,
-				 void*);
+      void*);
 
   // Returns the smem size for block size 256 of boolToIndices().
   static int32_t boolToIndicesSize();
-  
+
   // calculates the sum over blocks of 256 int64s and returns the result for
   // numbers[i * 256] ... numbers[(i + 1) * 256 - 1] inclusive  in results[i].
   void testSum64(int32_t numBlocks, int64_t* numbers, int64_t* results);
-  
 
   void testSort16(int32_t numBlocks, uint16_t** keys, uint16_t** values);
 };

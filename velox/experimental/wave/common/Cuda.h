@@ -184,25 +184,24 @@ GpuAllocator::UniquePtr<T[]> GpuAllocator::allocate(size_t n) {
   T* ptr = static_cast<T*>(allocate(bytes));
   return UniquePtr<T[]>(ptr, Deleter(this, bytes));
 }
-  
-  /// Info on kernel occupancy limits.
-  struct KernelInfo {
-    int32_t numRegs{0};
-    int32_t maxThreadsPerBlock;
-    int32_t sharedMemory{0};
-    int32_t maxOccupancy0{0};
-    int32_t maxOccupancy16{0};
 
-    std::string toString() const;
-  };
+/// Info on kernel occupancy limits.
+struct KernelInfo {
+  int32_t numRegs{0};
+  int32_t maxThreadsPerBlock;
+  int32_t sharedMemory{0};
+  int32_t maxOccupancy0{0};
+  int32_t maxOccupancy16{0};
 
-  KernelInfo getRegisteredKernelInfo(const char* name);
-  
-  KernelInfo kernelInfo(const void* func);
+  std::string toString() const;
+};
 
-  
- std::unordered_map<std::string, KernelInfo>& kernelRegistry();
-  /// Prints summary of registered kernels.
-  void printKernels();
-  
+KernelInfo getRegisteredKernelInfo(const char* name);
+
+KernelInfo kernelInfo(const void* func);
+
+std::unordered_map<std::string, KernelInfo>& kernelRegistry();
+/// Prints summary of registered kernels.
+void printKernels();
+
 } // namespace facebook::velox::wave

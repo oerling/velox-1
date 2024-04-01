@@ -113,20 +113,21 @@ TEST_F(BlockTest, boolToIndices) {
             << kNumFlags / static_cast<float>(elapsed) << " Mrows/s"
             << std::endl;
 
-  auto temp = arena_->allocate<char>(BlockTestStream::boolToIndicesSize() * kNumBlocks);
+  auto temp =
+      arena_->allocate<char>(BlockTestStream::boolToIndicesSize() * kNumBlocks);
   startMicros = getCurrentTimeMicro();
   stream.testBoolToIndicesNoShared(
-			   kNumBlocks,
-			   flagsPointers->as<uint8_t*>(),
-			   indicesPointers->as<int32_t*>(),
-			   sizesBuffer->as<int32_t>(),
-			   timesBuffer->as<int64_t>(), temp->as<char>());
+      kNumBlocks,
+      flagsPointers->as<uint8_t*>(),
+      indicesPointers->as<int32_t*>(),
+      sizesBuffer->as<int32_t>(),
+      timesBuffer->as<int64_t>(),
+      temp->as<char>());
   stream.wait();
   elapsed = getCurrentTimeMicro() - startMicros;
   std::cout << "Flags to indices no smem: " << elapsed << "us, "
             << kNumFlags / static_cast<float>(elapsed) << " Mrows/s"
             << std::endl;
-
 }
 
 TEST_F(BlockTest, shortRadixSort) {
@@ -147,13 +148,15 @@ TEST_F(BlockTest, shortRadixSort) {
   for (auto i = 0; i < kNumValues; ++i) {
     keys[i] = i * 2017;
     values[i] = i;
-    }
+  }
 
-for (auto b = 0; b < kNumBlocks; ++b) {
+  for (auto b = 0; b < kNumBlocks; ++b) {
     auto start = b * kBlockSize;
     std::vector<uint16_t> indices(kBlockSize);
     std::iota(indices.begin(), indices.end(), 0);
-    std::sort(indices.begin(), indices.end(), [&](auto left, auto right) { return values[start + left] < values[start + right];}); 
+    std::sort(indices.begin(), indices.end(), [&](auto left, auto right) {
+      return values[start + left] < values[start + right];
+    });
     for (auto i = 0; i < kBlockSize; ++i) {
       referenceValues[start + i] = values[start + indices[i]];
     }
@@ -162,8 +165,8 @@ for (auto b = 0; b < kNumBlocks; ++b) {
   prefetch(stream, valuesBuffer);
   prefetch(stream, keysBuffer);
 
-auto keysPointers = arena_->allocate<void*>(kNumBlocks);
-auto valuesPointers = arena_->allocate<void*>(kNumBlocks);
+  auto keysPointers = arena_->allocate<void*>(kNumBlocks);
+  auto valuesPointers = arena_->allocate<void*>(kNumBlocks);
   for (auto i = 0; i < kNumBlocks; ++i) {
     keysPointers->as<uint16_t*>()[i] = keys + (i * kBlockSize);
     valuesPointers->as<uint16_t*>()[i] =
