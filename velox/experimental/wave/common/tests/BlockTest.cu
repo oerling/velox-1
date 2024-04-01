@@ -41,6 +41,32 @@ void BlockTestStream::testBoolToIndices(
   CUDA_CHECK(cudaGetLastError());
 }
 
+__global__ void boolToIndicesNoShared(
+    uint8_t** bools,
+    int32_t** indices,
+    int32_t* sizes,
+    int64_t* times,
+    void* temp) {
+
+  int32_t idx = blockIdx.x;
+  
+// Start cycle timer
+  clock_t start = clock();
+  uint8_t* blockBools = bools[idx];
+  char* smem = reinterpret_cast<char*>(temp) + blockIdx.x * sizeof(typename  ScanAlgorithm::TempStorage);
+boolBlockToIndices<256>(
+      [&]() { return blockBools[threadIdx.x]; },
+      idx * 256,
+      indices[idx],
+      smem,
+      sizes[idx]);
+  clock_t stop = clock();
+  if (threadIdx.x == 0) {
+    times[idx] = (start > stop) ? start - stop : stop - start;
+  }
+}
+
+
 void BlockTestStream::testBoolToIndicesNoShared(
     int32_t numBlocks,
     uint8_t** flags,
@@ -49,13 +75,15 @@ void BlockTestStream::testBoolToIndicesNoShared(
     int64_t* times,
     void* temp) {
   CUDA_CHECK(cudaGetLastError());
-  auto tempBytes = reinterpret_cast<char*>(temp) + blockIdx.x * sizeof(typename ScanAlgorithm::TempStorage);
-  boolToIndicesNoShared<<<numBlocks, 256, tempBytes, stream_->stream>>>(
-								flags, indices, sizes, times,  temp->as<void>());
+  boolToIndicesNoShared<<<numBlocks, 256, 0, stream_->stream>>>(
+								flags, indices, sizes, times, temp);
   CUDA_CHECK(cudaGetLastError());
 }
 
-  
+  int32_t BlockTestStream::boolToIndicesSize() {
+    return sizeof(typename ScanAlgorithm::TempStorage);
+  }
+
 __global__ void sum64(int64_t* numbers, int64_t* results) {
   extern __shared__ __align__(
       alignof(cub::BlockReduce<int64_t, 256>::TempStorage)) char smem[];
@@ -79,17 +107,23 @@ void BlockTestStream::testSum64(
     extern __shared__ __align__(16) char smem[];
     auto keyBase = keys[blockIdx.x];
     auto valueBase = values[blockIdx.x];
-    blockSort([&](auto i) {
+    blockSort<1024, 8>([&](auto i) {
 		return keyBase[i];
 	      },
     [&](auto i) { return valueBase[i];},
-    keys, values);
+      keys[blockIdx.x], values[blockIdx.x], smem);
   }
 
-  BlockStream::testSort16(int32_t numBlocks, uint16_t* keys, uint16_t* values) {
-    auto tempBytes = sizeof(typename RadixSortStorage<1024, 8, uint16_t, uint16_t>);
+  void BlockTestStream::testSort16(int32_t numBlocks, uint16_t** keys, uint16_t** values) {
+    auto tempBytes = sizeof(typename cub::BlockRadixSort<uint16_t, 1024, 8, uint16_t>::TempStorage);
 
-    testSort<<<1024, numBlocks, tempBytes, stream_->stream>>>>(keys, values);
+    testSort<<<1024, numBlocks, tempBytes, stream_->stream>>>(keys, values);
   }
 
+  REGISTER_KERNEL("testSort", testSort);
+  REGISTER_KERNEL("boolToIndices", boolToIndices);
+  REGISTER_KERNEL("sum64", sum64);
+  
+  
+  
 } // namespace facebook::velox::wave

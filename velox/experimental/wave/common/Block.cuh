@@ -70,14 +70,11 @@ __device__ inline void blockSum(Getter getter, void* shmem, T* result) {
 }
 
   template<int32_t kBlockSize, int32_t kItemsPerThread, typename Key, typename Value>
-  using RadixSortStorage = cub::BlockRadixSort<Key, kBlockSize, kItemsPerThread, Value>;
+  using RadixSort = typename cub::BlockRadixSort<Key, kBlockSize, kItemsPerThread, Value>;
 
 
-    template <int32_t kBlockSize, int32_t kItemsPerThread, typename Key, typename Value, typename ValueGetter, typename KeyGetter>
-    void __device__ sortBlocks(KeyGetter keyGetter, ValueGetter valueGetter, Key** keyOut, Value** valueOut, char* smem) {
-
-      enum { TILE_SIZE = kBlockSize * kItemsPerThread };
-
+  template <int32_t kBlockSize, int32_t kItemsPerThread, typename Key, typename Value, typename KeyGetter, typename ValueGetter>
+  void __device__ blockSort(KeyGetter keyGetter, ValueGetter valueGetter, Key* keyOut, Value* valueOut, char* smem) {
 
       using Sort = cub::BlockRadixSort<Key, kBlockSize, kItemsPerThread, Value>;
 
@@ -96,13 +93,13 @@ __device__ inline void blockSum(Getter getter, void* shmem, T* result) {
       }
 
     __syncthreads();
-      auto* temp_storage = reinterpret_cast<typename Sort::TempStorage>(smem);
+      auto* temp_storage = reinterpret_cast<typename Sort::TempStorage*>(smem);
 
     Sort(*temp_storage).SortBlockedToStriped(keys, values);
 
     // Store output in striped fashion
-    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, *valueOut + blockOffset, values);
-    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, *keyOut + blockOffset, keys);
+    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, valueOut + blockOffset, values);
+    cub::StoreDirectStriped<kBlockSize>(threadIdx.x, keyOut + blockOffset, keys);
     __syncthreads();
 }
   
