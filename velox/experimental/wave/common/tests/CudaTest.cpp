@@ -493,6 +493,101 @@ struct RoundtripStats {
   }
 };
 
+void  fillMockTable(int32_t keyRange, MockTable* data) {
+    for (auto i = 0; i < keyRange; ++i) {
+      auto start = bits::hashMix(1, key) & table->sizeMask_;
+      for (;;) {
+	if (!table->rows[start]) {
+	  int64_t* row = table->rows + table->rowSize * table->numRows;
+	  table->rows[start] = row;
+	  row[0] = key;
+	  ++table->numRows;
+	}
+	start = (start + 1) & table->sizeMask_;
+      }
+    }
+  }
+
+
+
+struct GpuTable {
+  void init(int32_t size, int32_t keyRange, uint8_t numColumns, GpuArena* arena) {
+    rows = arena->allocate<char>(sizeof(MockTable) + sizeof(void*) * size);
+    memset(rows->as<char>(), 0, rows->capacity());
+    table = rows->as<MockTable>();
+    table->partitionSize = size >> 16;
+    table->partitionMask = ~(table->partitionSize - 1);
+    table->rows = reinterpret_cast<int64_t**>(table + 1);
+    columns = arena->allocate<int64_t>(size * (1 + numColumns));
+    memset(columns->as<char>(), 0, columns->capacity())
+    table->columns = columns->as<int64_t>();
+    table->numColumns = numColumns;
+    fillMockTable(keyRange, &table);
+  }
+
+  MockTable* table;
+  WaveBufferPtr rows;
+  WaveBufferPtr columns;
+};
+
+struct CpuTable {
+  void init(int32_t size), int32_t keyRange, uint8_t numColumns {
+    table.sizeMask = size - 1;
+    rows.resize(size);
+    columns.resize(size * (1 + numColumns) * sizeof(int64_t));
+    table.rows = rows.data();
+    table.columns = columns.data();
+    fillMockTable(keyRange, table);
+  }
+
+  MockTable table;
+  std::vector<uint*> table;
+  std::vector<char> columns;
+};
+
+void makeInput(int32_t numRows, int32_t keyRange, uint8_t numColumns, int64_t** columns) {
+  static int64_t counter;
+  for (auto i = 0; i <M numRows; ++i) {
+    keys[i] = (static_cast<uint64_t>(static_cast<uint32_t>(counter* 2017)) * keyRange) >> 32;
+  }
+  for (auto c = 0; c < numColumns; ++c) {
+    for (auto r = 0; r < numRows; ++r) {
+      columns[c][r] = c;
+    }
+  }
+}
+
+
+  
+  
+  void hashAndPartition8K(int32_t num8KBlocks, int64_t* keys, uint64_t* hashes) {
+    constexpr int32_t K8 = 8192;
+    for (auto i = 0; i < numBlocks * K8; ++i) {
+      hash[i] = bits::hashMix(1, keys[i]);
+    }
+  }
+
+  void update8K(int32_t num8KBlocks, int64_t* key, uint64_t* hash, uint8_t numAggs, int64_t** args, MockTable* table) {
+    constexpr int32_t K8 = 8192;
+    for (auto i = 0; i < nun8KBlocks * K8; ++i) {
+      int32_t start  = hash[i] & table->sizeMask;
+      for (;;) {
+	auto row = table->rows[start];
+	assert(row);
+	if (row[0] == keys[i]) {
+	  for (auto c = 0;c < numColumns; ++c) {
+	    row[1 + c] += args[c][i];
+	  }
+	  break;
+	}
+	start = (start + 1) & table->sizemask;
+      }
+    }
+  }
+
+
+  
+  
 /// Describes one thread of execution in round trip measurement. Each thread
 /// does a sequence of data transfers, kernel calls and synchronizations. The
 /// operations are described in a string of the form:
@@ -546,7 +641,8 @@ class RoundtripThread {
     kWideAdd,
     kEnd,
     kSync,
-    kSyncEvent
+    kSyncEvent,
+    kGroupBatch
   };
 
   struct Op {
@@ -642,7 +738,18 @@ class RoundtripThread {
               event_->wait();
             }
             break;
-          default:
+	case OpCode::kInitGroup: {
+	  break;
+	}
+	case:: OpCode::kGroupBatch: {
+	  if (stats.isCpu) {
+	    cpuGroupBatch(op.param1);
+	  } else {
+	    deviceGroupBatch(op.param1);
+	  }
+	  break;
+	}
+	default:
             VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
         }
         if (done) {
@@ -757,6 +864,12 @@ class RoundtripThread {
   std::unique_ptr<int32_t[]> hostInts_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
+
+  CpuMockTable cpuTable;
+  GpuMockTable gpuTable;
+
+  // Each is inited to be a MockProbe with 1K threads.
+  std::vector<WaveBuffer> gpuProbe;
 };
 
 class CudaTest : public testing::Test {
@@ -1336,5 +1449,6 @@ int main(int argc, char** argv) {
     LOG(WARNING) << "No CUDA detected, skipping all tests";
     return 0;
   }
+  printKernels();
   return RUN_ALL_TESTS();
 }

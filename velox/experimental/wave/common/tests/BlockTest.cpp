@@ -135,6 +135,7 @@ TEST_F(BlockTest, shortRadixSort) {
   constexpr int32_t kNumBlocks = 1024;
   constexpr int32_t kBlockSize = 1024;
   constexpr int32_t kValuesPerThread = 8;
+  constexpr int32_t kValuesPerBlock = kBlockSize * kValuesPerThread;
   constexpr int32_t kNumValues = kBlockSize * kNumBlocks * kValuesPerThread;
   auto keysBuffer = arena_->allocate<uint16_t>(kNumValues);
   auto valuesBuffer = arena_->allocate<int16_t>(kNumValues);
@@ -151,13 +152,13 @@ TEST_F(BlockTest, shortRadixSort) {
   }
 
   for (auto b = 0; b < kNumBlocks; ++b) {
-    auto start = b * kBlockSize;
-    std::vector<uint16_t> indices(kBlockSize);
+    auto start = b * kValuesPerBlock;
+    std::vector<uint16_t> indices(kValuesPerBlock);
     std::iota(indices.begin(), indices.end(), 0);
     std::sort(indices.begin(), indices.end(), [&](auto left, auto right) {
-      return values[start + left] < values[start + right];
+      return keys[start + left] < keys[start + right];
     });
-    for (auto i = 0; i < kBlockSize; ++i) {
+    for (auto i = 0; i < kValuesPerBlock; ++i) {
       referenceValues[start + i] = values[start + indices[i]];
     }
   }
@@ -168,25 +169,27 @@ TEST_F(BlockTest, shortRadixSort) {
   auto keysPointers = arena_->allocate<void*>(kNumBlocks);
   auto valuesPointers = arena_->allocate<void*>(kNumBlocks);
   for (auto i = 0; i < kNumBlocks; ++i) {
-    keysPointers->as<uint16_t*>()[i] = keys + (i * kBlockSize);
+    keysPointers->as<uint16_t*>()[i] = keys + (i * kValuesPerBlock);
     valuesPointers->as<uint16_t*>()[i] =
-        valuesBuffer->as<uint16_t>() + (i * kBlockSize);
+        valuesBuffer->as<uint16_t>() + (i * kValuesPerBlock);
   }
-
+  auto keySegments =      keysPointers->as<uint16_t*>();
+  auto valueSegments =      valuesPointers->as<uint16_t*>();
+  
   auto startMicros = getCurrentTimeMicro();
   stream.testSort16(
       kNumBlocks,
-      keysPointers->as<uint16_t*>(),
-      valuesPointers->as<uint16_t*>());
+      keySegments,
+      valueSegments);
   stream.wait();
   auto elapsed = getCurrentTimeMicro() - startMicros;
   for (auto b = 0; b < kNumBlocks; ++b) {
     ASSERT_EQ(
         0,
         ::memcmp(
-            referenceValues.data() + b * kBlockSize,
-            valuesBuffer->as<int32_t>() + b * kBlockSize,
-            kBlockSize * sizeof(uint16_t)));
+            referenceValues.data() + b * kValuesPerBlock,
+            valueSegments[b],
+            kValuesPerBlock * sizeof(uint16_t)));
   }
   std::cout << "sort16: " << elapsed << "us, "
             << kNumValues / static_cast<float>(elapsed) << " Mrows/s"

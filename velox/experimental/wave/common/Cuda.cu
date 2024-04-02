@@ -259,7 +259,8 @@ float Event::elapsedTime(const Event& start) const {
     out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock << " sharedMemory=" << sharedMemory << " occupancy 256,  0=" << maxOccupancy0 << " occupancy 256,16=" << maxOccupancy16;
       return out.str();
   }
-  KernelInfo getRegisteredKernelInfo(const char* name) {
+
+KernelInfo getRegisteredKernelInfo(const char* name) {
     for (auto i = 0; i < numKernelEntries; ++i) {
       if (strcmp(name, kernelEntries[i].name) == 0) {
 	return kernelInfo(kernelEntries[i].func);
@@ -274,8 +275,8 @@ std::unordered_map<std::string, KernelInfo>& kernelRegistry() {
 }
 
   void printKernels() {
-    for (auto& [name, info] : kernelRegistry()) {
-      std::cout << name << " - " << info.toString() << std::endl;
+  for (auto i =0; i <numKernelEntries; ++i) {
+      std::cout << kernelEntries[i].name << " - " << getRegisteredKernelInfo(kernelEntries[i].name).toString() << std::endl;
     }
   }
   
