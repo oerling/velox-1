@@ -493,25 +493,25 @@ struct RoundtripStats {
   }
 };
 
-void  fillMockTable(int32_t keyRange, MockTable* table) {
-    for (auto i = 0; i < keyRange; ++i) {
-      auto start = bits::hashMix(1, i) & table->sizeMask;
-      for (;;) {
-	if (!table->rows[start]) {
-	  int64_t* row = reinterpret_cast<int64_t*>(table->columns + table->rowSize * table->numRows);
-	  table->rows[start] = row;
-	  row[0] = i;
-	  ++table->numRows;
-	}
-	start = (start + 1) & table->sizeMask;
+void fillMockTable(int32_t keyRange, MockTable* table) {
+  for (auto i = 0; i < keyRange; ++i) {
+    auto start = bits::hashMix(1, i) & table->sizeMask;
+    for (;;) {
+      if (!table->rows[start]) {
+        int64_t* row = reinterpret_cast<int64_t*>(
+            table->columns + table->rowSize * table->numRows);
+        table->rows[start] = row;
+        row[0] = i;
+        ++table->numRows;
       }
+      start = (start + 1) & table->sizeMask;
     }
   }
-
-
+}
 
 struct GpuTable {
-  void init(int32_t size, int32_t keyRange, uint8_t numColumns, GpuArena* arena) {
+  void
+  init(int32_t size, int32_t keyRange, uint8_t numColumns, GpuArena* arena) {
     rows = arena->allocate<char>(sizeof(MockTable) + sizeof(void*) * size);
     memset(rows->as<char>(), 0, rows->capacity());
     table = rows->as<MockTable>();
@@ -534,10 +534,10 @@ struct GpuTable {
 };
 
 struct CpuTable {
-  void init(int32_t size, int32_t keyRange, uint8_t numColumns ){
+  void init(int32_t size, int32_t keyRange, uint8_t numColumns) {
     table.sizeMask = size - 1;
     rows.resize(size);
-    columnHolder.resize(sizeof(int64_t)  * size * (1 + numColumns));
+    columnHolder.resize(sizeof(int64_t) * size * (1 + numColumns));
     table.rows = rows.data();
     table.columns = columnHolder.data();
     table.numColumns = numColumns;
@@ -550,9 +550,17 @@ struct CpuTable {
   std::vector<char> columnHolder;
 };
 
-void makeInput(int32_t numRows, int64_t counter, int32_t keyRange, uint8_t numColumns, int64_t** columns) {
+void makeInput(
+    int32_t numRows,
+    int64_t counter,
+    int32_t keyRange,
+    uint8_t numColumns,
+    int64_t** columns) {
   for (auto i = 0; i < numRows; ++i) {
-    columns[0][i] = (static_cast<uint64_t>(static_cast<uint32_t>(counter* 2017)) * keyRange) >> 32;
+    columns[0][i] =
+        (static_cast<uint64_t>(static_cast<uint32_t>(counter * 2017)) *
+         keyRange) >>
+        32;
     ++counter;
   }
   for (auto c = 1; c < numColumns; ++c) {
@@ -561,33 +569,37 @@ void makeInput(int32_t numRows, int64_t counter, int32_t keyRange, uint8_t numCo
     }
   }
 }
-  
-  
-  void hashAndPartition8K(int32_t numRows, int64_t* keys, uint64_t* hashes) {
-    constexpr int32_t K8 = 8192;
-    for (auto i = 0; i < numRows; ++i) {
-      hashes[i] = bits::hashMix(1, keys[i]);
-    }
-  }
 
-  void update8K(int32_t numRows, int64_t* key, uint64_t* hash, int64_t** args, MockTable* table) {
-    constexpr int32_t K8 = 8192;
-    for (auto i = 0; i < numRows; ++i) {
-      int32_t start  = hash[i] & table->sizeMask;
-      for (;;) {
-	auto row = table->rows[start];
-	assert(row);
-	if (row[0] == key[i]) {
-	  for (auto c = 0;c < table->numColumns; ++c) {
-	    row[1 + c] += args[c][i];
-	  }
-	  break;
-	}
-	start = (start + 1) & table->sizeMask;
+void hashAndPartition8K(int32_t numRows, int64_t* keys, uint64_t* hashes) {
+  constexpr int32_t K8 = 8192;
+  for (auto i = 0; i < numRows; ++i) {
+    hashes[i] = bits::hashMix(1, keys[i]);
+  }
+}
+
+void update8K(
+    int32_t numRows,
+    int64_t* key,
+    uint64_t* hash,
+    int64_t** args,
+    MockTable* table) {
+  constexpr int32_t K8 = 8192;
+  for (auto i = 0; i < numRows; ++i) {
+    int32_t start = hash[i] & table->sizeMask;
+    for (;;) {
+      auto row = table->rows[start];
+      assert(row);
+      if (row[0] == key[i]) {
+        for (auto c = 0; c < table->numColumns; ++c) {
+          row[1 + c] += args[c][i];
+        }
+        break;
       }
+      start = (start + 1) & table->sizeMask;
     }
   }
-  
+}
+
 /// Describes one thread of execution in round trip measurement. Each thread
 /// does a sequence of data transfers, kernel calls and synchronizations. The
 /// operations are described in a string of the form:
@@ -740,33 +752,34 @@ class RoundtripThread {
               event_->wait();
             }
             break;
-	case OpCode::kGroupInit: {
-	  if (groupInited_) {
-	    break;
-	  }
-	  groupInited_ = true;
-	  auto size = bits::nextPowerOfTwo(op.param1);
-	  keyRange_ = op.param2;
-	  auto numColumns = op.param3;
-	  if (stats.isCpu) {
-	    cpuTable_.init(size, keyRange_, numColumns);
-	  } else{
-	    gpuTable_.init(size, keyRange_, numColumns, arenas_->unified.get());
-	  }
-	  // The init is not in measured interval.
-	  stats.startMicros = getCurrentTimeMicro();
-	  break;
-	}
-	case OpCode::kGroupBatch: {
-	  VELOX_CHECK(groupInited_);
-	  if (stats.isCpu) {
-	    cpuGroupBatch(op.param1);
-	  } else {
-	    deviceGroupBatch(op.param1);
-	  }
-	  break;
-	}
-	default:
+          case OpCode::kGroupInit: {
+            if (groupInited_) {
+              break;
+            }
+            groupInited_ = true;
+            auto size = bits::nextPowerOfTwo(op.param1);
+            keyRange_ = op.param2;
+            auto numColumns = op.param3;
+            if (stats.isCpu) {
+              cpuTable_.init(size, keyRange_, numColumns);
+            } else {
+              gpuTable_.init(
+                  size, keyRange_, numColumns, arenas_->unified.get());
+            }
+            // The init is not in measured interval.
+            stats.startMicros = getCurrentTimeMicro();
+            break;
+          }
+          case OpCode::kGroupBatch: {
+            VELOX_CHECK(groupInited_);
+            if (stats.isCpu) {
+              cpuGroupBatch(op.param1);
+            } else {
+              deviceGroupBatch(op.param1);
+            }
+            break;
+          }
+          default:
             VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
         }
         if (done) {
@@ -806,37 +819,53 @@ class RoundtripThread {
       columns_.resize(cpuTable_.table.numColumns);
       columnData_.resize(cpuTable_.table.numColumns);
       for (auto i = 0; i < columns_.size(); ++i) {
-	columns_[i].resize(numRows);
-	columnData_[i] = columns_[i].data();
+        columns_[i].resize(numRows);
+        columnData_[i] = columns_[i].data();
       }
     }
-    makeInput(numRows, keyStart_, keyRange_, cpuTable_.table.numColumns,  columnData_.data());
+    makeInput(
+        numRows,
+        keyStart_,
+        keyRange_,
+        cpuTable_.table.numColumns,
+        columnData_.data());
     keyStart_ += numRows;
-    hashAndPartition8K(numRows,  keys_.data(),  hashes_.data());
-    update8K(numRows, keys_.data(), hashes_.data(), columnData_.data(), &cpuTable_.table);
-
-
+    hashAndPartition8K(numRows, keys_.data(), hashes_.data());
+    update8K(
+        numRows,
+        keys_.data(),
+        hashes_.data(),
+        columnData_.data(),
+        &cpuTable_.table);
   }
 
   void deviceGroupBatch(int32_t numRows) {
     if (!dColumnData_) {
       auto numRows8K = bits::roundUp(numRows, 8 << 10);
-      int64_t bytes = numRows * (gpuTable_.numColumns + 2) * sizeof(int64_t) + 2 * numRows8K * 2 * sizeof(uint16_t);
+      int64_t bytes = numRows * (gpuTable_.numColumns + 2) * sizeof(int64_t) +
+          2 * numRows8K * 2 * sizeof(uint16_t);
       deviceGroupBatchData_ = arenas_->host->allocate<char>(bytes);
       dKeys_ = gpuColumns_->as<int64_t>();
       dHashes_ = reinterpret_cast<uint64_t*>(dKeys_ + numRows);
       dColumns_ = reinterpret_cast<int64_t*>(dHashes_) + numRows;
-      dRows_ = reinterpret_cast<uint16_t*>(dColumns_ + gpuTable_.numColumns * numRows);
+      dRows_ = reinterpret_cast<uint16_t*>(
+          dColumns_ + gpuTable_.numColumns * numRows);
       dPartitions_ = dRows_ + numRows8K;
       dColumnData_ = arenas_->unified->allocate<int64_t*>(gpuTable_.numColumns);
       dColumnData_->as<int64_t*>()[0] = dKeys_;
       for (auto i = 0; i < gpuTable_.numColumns; ++i) {
-	dColumnData_->as<int64_t*>()[i + 1] = dColumns_ + i * numRows;
+        dColumnData_->as<int64_t*>()[i + 1] = dColumns_ + i * numRows;
       }
     }
-    stream_->makeInput(numRows, keyRange_, keyStart_, gpuTable_.numColumns, dColumnData_->as<int64_t*>());
+    stream_->makeInput(
+        numRows,
+        keyRange_,
+        keyStart_,
+        gpuTable_.numColumns,
+        dColumnData_->as<int64_t*>());
     keyStart_ += numRows;
-    stream_->hashAndPartition8K(numRows, dKeys_, dHashes_, dPartitions_, dRows_);
+    stream_->hashAndPartition8K(
+        numRows, dKeys_, dHashes_, dPartitions_, dRows_);
   }
 
   Op nextOp(const std::string& str, int32_t& position) {
@@ -891,17 +920,17 @@ class RoundtripThread {
         case 'I':
           op.opCode = OpCode::kGroupInit;
           ++position;
-	  op.param1 = parseInt(str, position, 1 << 20);
-	  op.param2 = parseInt(str, position, (1 << 20) * 0.75);
-	  op.param3 = parseInt(str, position, 6);
+          op.param1 = parseInt(str, position, 1 << 20);
+          op.param2 = parseInt(str, position, (1 << 20) * 0.75);
+          op.param3 = parseInt(str, position, 6);
           return op;
         case 'G':
           op.opCode = OpCode::kGroupBatch;
           ++position;
-	  op.param1 = parseInt(str, position, 8192);
-	  return op;
+          op.param1 = parseInt(str, position, 8192);
+          return op;
 
-      default:
+        default:
           VELOX_FAIL("No opcode {}", str[position]);
       }
     }
@@ -941,10 +970,15 @@ class RoundtripThread {
   CpuTable cpuTable_;
   GpuTable gpuTable_;
 
-  // Input data for gpuGroupBatch(). Each array is rounded to 8K elements and has a group of 8K elements for each of the 8K row batches launched at the same time. The arrays are first keys, then increments for all non-key columns, then hashes, then partitions, then rowNumbers. The two last are 16 bit, all others are 64 bit.
+  // Input data for gpuGroupBatch(). Each array is rounded to 8K elements and
+  // has a group of 8K elements for each of the 8K row batches launched at the
+  // same time. The arrays are first keys, then increments for all non-key
+  // columns, then hashes, then partitions, then rowNumbers. The two last are 16
+  // bit, all others are 64 bit.
   WaveBufferPtr gpuColumns_;
 
-  // Temp space for hash probe. Sized to blockDim.x * gridDim.x elements for each array in MockProbe.
+  // Temp space for hash probe. Sized to blockDim.x * gridDim.x elements for
+  // each array in MockProbe.
   WaveBufferPtr gpuProbe_;
 
   // Temp arrays for CPUGroupBatch().

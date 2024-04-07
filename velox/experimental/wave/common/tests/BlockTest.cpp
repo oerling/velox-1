@@ -173,14 +173,11 @@ TEST_F(BlockTest, shortRadixSort) {
     valuesPointers->as<uint16_t*>()[i] =
         valuesBuffer->as<uint16_t>() + (i * kValuesPerBlock);
   }
-  auto keySegments =      keysPointers->as<uint16_t*>();
-  auto valueSegments =      valuesPointers->as<uint16_t*>();
-  
+  auto keySegments = keysPointers->as<uint16_t*>();
+  auto valueSegments = valuesPointers->as<uint16_t*>();
+
   auto startMicros = getCurrentTimeMicro();
-  stream.testSort16(
-      kNumBlocks,
-      keySegments,
-      valueSegments);
+  stream.testSort16(kNumBlocks, keySegments, valueSegments);
   stream.wait();
   auto elapsed = getCurrentTimeMicro() - startMicros;
   for (auto b = 0; b < kNumBlocks; ++b) {
