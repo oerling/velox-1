@@ -25,24 +25,36 @@ namespace facebook::velox::wave {
 
   /// Struct for the state of a probe into MockTable. A struct of arrays. Each thread fills its state at threadIdx.x so the neighbors can decide who does what.
   struct MockProbe {
+    static constexpr int32_t kMinBlockSize = 128;
+    static constexpr int32_t kMaxBlocks = 8192 / kMinBlockSize;
+    // First row of blockIdx.x. Index into 'partitions' of the update kernel.
+    int32_t begin[kMaxBlocks];
+    // first row of next TB.
+    int32_t end[kMaxBlocks];
+
     // The row of input that corresponds to the probe.
     int32_t* start;
     // Whether the position is a hit.
     bool* isHit;
     // Whether the probe needs to cross to the next partition.
     bool* overflow;
-    
   };
-// Hash table, works in CPU and GPU.
+
+/// Hash table, works in CPU and GPU.
 struct MockTable {
   int32_t sizeMask;
-  // Size / 64K.
+  // Size / 64K.o
   int32_t partitionSize{0};
   // Mask to get partition base.
   int32_t partitionMask{0};
   int64_t** rows;
   int32_t numRows{0};
+  // Size of row, includes keys and dependents, aligned to 8.
+  int32_t rowSize{0};
+  // Number of dependent columns.
   uint8_t numColumns;
+  // Payload.
+  char* columns{nullptr};
 };
 
   
@@ -69,14 +81,15 @@ class TestStream : public Stream {
       int size,
       int32_t repeat = 1);
 
+  static int32_t sort8KTempSize();
   
-  // Makes random lookup keys and increments, starting at 'startCount'
-  void makeInput(int32_t numBlocks, int32_t keyRange, int32_t startCount, uint8_t numColumns, int64_t** columns);
+  // Makes random lookup keys and increments, starting at 'startCount' columns[0] is keys.
+  void makeInput(int32_t numRows, int32_t keyRange, int32_t startCount, uint8_t numColumns, int64_t** columns);
   
   /// Calculates a hash of each key, stores it in hash and then calculates a 16 bit partition number. Gives each row a sequence number. Sorts by partition, so that the row numbers are in partition order in 'rows'. 
-  void hashAndPartition8K(int32_t num8KBlocks, int64_t* keys, uint64_t* keys, uint16_t partitions, uint16_t* rows);
+  void hashAndPartition8K(int32_t numRows, int64_t* keys, uint64_t* hashes, uint16_t* partitions, uint16_t* rows);
 
-  void update8K(int32_t num8KBlocks, int64_t* key, uint64_t* hash, uint16_t* partitions, uint16_t* rowNumbers, uint8_t numAggs, int64_t** args);
+  void update8K(int32_t numRows, int64_t* key, uint64_t* hash, uint16_t* partitions, uint16_t* rowNumbers, int64_t** args, MockProbe* probe, MockTable* table);
 
 
 

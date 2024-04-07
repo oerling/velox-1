@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/tests/CudaTest.h"
 
@@ -75,11 +76,10 @@ void TestStream::addOneWide(int32_t* numbers, int32_t size, int32_t repeat) {
   CUDA_CHECK(cudaGetLastError());
 }
 
-  __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
-    return (static_cast<uint64_t>(static_cast<uint32_t>(n)) *
-                  scale) >> 32;
-  }
-  
+__device__ uint32_t scale32(uint32_t n, uint32_t scale) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
+}
+
 __global__ void addOneRandomKernel(
     int32_t* numbers,
     const int32_t* lookup,
@@ -90,7 +90,7 @@ __global__ void addOneRandomKernel(
   for (uint32_t counter = 0; counter < repeats; ++counter) {
     for (; index < size; index += stride) {
       auto rnd = scale32(index * (counter + 1) * 1367836089, size);
-      
+
       numbers[index] += lookup[rnd];
     }
     __syncthreads();
@@ -124,86 +124,236 @@ __device__ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
   b *= kMul;
   return b;
 }
-  void   __global__   __launch_bounds__(1024) makeInput(int32_t keyRange, int32_t startCount, uint8_t numColumns, int64_t** columns) {
-    auto idx = blockDim.x * blockIdx.x + threadIdx.x;
-    columns[idx] = scale32(idx * 2017, keyrange);
-    for (auto i = 1; i < numColumns; ++i) {
-      columns[i][idx] = i;
-    }
+void __global__ __launch_bounds__(1024) makeInputKernel(
+    int32_t numRows,
+    int32_t keyRange,
+    int32_t startCount,
+    uint8_t numColumns,
+    int64_t** columns) {
+  uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
+  if (idx >= numRows) {
+    return;
   }
+  columns[0][idx] = scale32(idx * 2017, keyRange);
+  for (auto i = 1; i < numColumns; ++i) {
+    columns[i][idx] = i;
+  }
+}
 
-  void TestStream::makeInput(int32_t numBlocks, int32_t keyRange, int32_t startCount, uint8_t numColumns, int64_t** columns) {
-    makeInput<<<1024, numBlocks, 0, stream_->stream>>>(keyRange, startCount, numColumns, columns);
-  }
+void TestStream::makeInput(
+    int32_t numRows,
+    int32_t keyRange,
+    int32_t startCount,
+    uint8_t numColumns,
+    int64_t** columns) {
+  auto numBlocks = roundUp(numRows, 256) / 256;
+  makeInputKernel<<<256, numBlocks, 0, stream_->stream>>>(
+      numRows, keyRange, startCount, numColumns, columns);
+}
 
-  
-  void __device__	updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t**args) {
-    
+void __device__
+updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
+  for (auto i = 0; i < numColumns; ++i) {
+    entry[i + 1] += args[i][row];
   }
-  
-  void __global__ __launch_bounds__(1024) hashAndPartition8K(int64_t* keys, uint64_t* hashes, uint16_t partitions, uint16_t* rows) {
-    auto base = blockIdx.x * 8192;
-    for (auto stride = 0; stride < 8192; stride += 1024) {
-      auto idx = base + stride + threadIdx.x;
-      hashes[idx] = ashMix(1, keys[idx]); 
+}
+
+void __global__ __launch_bounds__(1024) hashAndPartition8KKernel(
+    int32_t numRows,
+    int64_t* keys,
+    uint64_t* hash,
+    uint16_t* partitions,
+    uint16_t* rows) {
+  auto base = blockIdx.x * 8192;
+  auto end = base + 8192 < numRows ? base + 8192 : numRows;
+  for (auto stride = 0; stride < 8192; stride += 1024) {
+    auto idx = base + stride + threadIdx.x;
+    if (idx < end) {
+      hash[idx] = hashMix(1, keys[idx]);
       rows[idx] = idx;
-      partitions[idx] = hashes[idx] >> 40;
+      partitions[idx] = (hash[idx] >> 40);
+    } else {
+      rows[idx] = 0xffff;
+      partitions[idx] = 0xffff;
     }
-    syncthreads();
-    extern __shared__ __align__(16) char smem[];
-    blockSort<1024, 8>([&](auto i) {
-		return partitions[base + i];
-	      },
-    [&](auto i) { return rows[base + i];},
-      partitions + base, rows + base, smem);
   }
-  
-  void TestStream::hashAndPartition8K(int32_t num8KBlocks, int64_t* keys, uint64_t* hashes, uint16_t partitions, uint16_t* rows) {
-    hashAndPartition8K<<<1024, numBlocks, tempBytes, stream_->stream>>>(keys, hashes, partitions, rows);
-  }
-  void   __global__ __launch_bounds__(1024) update1K(int64_t* key, uint64_t* hash, uint16_t* partitions, uint16_t* rowNumbers, uint8_t numAggs, int64_t** args, MockProbe* probe, MockTable* table) {
-    auto idx = blockDim.x * blockIdx.x + threadIdx.x;
-    // Indirection to access the keys, hashes, args.
-    auto row = rows[idx];
-    auto part = partition[idx];
-    bool isLeader = idx == 0 || partition[idx - 1] != part;
-    start = hash[row] & table->sizeMask;
-    partEnd = (start & table->partitionMask) + table->partitionSize; 
-    for (;;) {
-      auto entry = table->rows[start];
-      if (!entry) {
-	// The test is supposed to only look for existing keys.
-	assert(false);
-	missed = true;
-	break;
-      }
-      if (keys[row] == entry[0]) {
-	hit = true;
-	break;
-      }
-      start = (start + 1) + table->sizeMask;
+  __syncthreads();
+  extern __shared__ __align__(16) char smem[];
+  blockSort<1024, 8>(
+      [&](auto i) { return partitions[base + i]; },
+      [&](auto i) { return rows[base + i]; },
+      partitions + base,
+      rows + base,
+      smem);
+}
+
+int32_t TestStream::sort8KTempSize() {
+  return sizeof(
+      typename cub::BlockRadixSort<uint16_t, 1024, 8, uint16_t>::TempStorage);
+}
+
+void TestStream::hashAndPartition8K(
+    int32_t numRows,
+    int64_t* keys,
+    uint64_t* hashes,
+    uint16_t* partitions,
+    uint16_t* rows) {
+  auto tempBytes = sort8KTempSize();
+  int32_t num8KBlocks = roundUp(numRows, 8192);
+  hashAndPartition8KKernel<<<1024, num8KBlocks, tempBytes, stream_->stream>>>(
+      numRows, keys, hashes, partitions, rows);
+}
+
+namespace {
+template <typename T>
+__device__ int findFirst(const T* data, int size, T target) {
+  int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (data[i] < target) {
+      lo = i + 1;
+    } else {
+      hi = i;
     }
-    probe.start[threadIdx.x] = start;
-    probe.isHit[threadIdx.x]= isHit;
+  }
+  return lo;
+}
+
+template <typename T>
+__device__ int findLast(const T* data, int size, T target) {
+  int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (data[i] <= target) {
+      lo = i + 1;
+    } else {
+      hi = i;
+    }
+  }
+  return lo;
+}
+} // namespace
+
+/// Updates partitions of 'table' The input is divided into batches
+/// of 8K entries, where the last can be under 8K, for a total of
+/// 'numRows'. blockDim.x * gridDim.x must be 8192. Each TB takes
+/// its fraction of a 64K range of partitions in 'partitions'. Each
+/// 8K slice of 'partitions' is sorted. Each TB takes its range of
+/// 64K, so if there are 8 blocks of 1024, the first handles
+/// partitions [0, 8191], the second [8192, 16385] and so on. Each
+/// TB begins by finding the index of the first and last item in
+/// 'partitions' that falls in its range. Like this, the TBs are
+/// guaranteed disjoint domains of the table. Each TB loops until
+/// all input is processed. the TBs have a stride of 8192. So after
+/// the first TB has done the first range of the first 8K, it looks
+/// at the bounds of its range from the second 8K range of
+/// 'partitions', until there is no next 8K piece in 'partitions'.
+void __global__ __launch_bounds__(1024) update8KKernel(
+    int32_t numRows,
+    int64_t* keys,
+    uint64_t* hash,
+    uint16_t* partitions,
+    uint16_t* rows,
+    int64_t** args,
+    MockProbe* probe,
+    MockTable* table) {
+  auto end = roundUp(numRows, 8192);
+  for (auto batchStart = 0; batchStart < end; batchStart += 8192) {
+    if (threadIdx.x == 0) {
+      int32_t blockRangeSize = 0x10000 / gridDim.x;
+      uint16_t firstPartition = blockRangeSize * blockIdx.x;
+      uint16_t lastPartition = (blockIdx.x + 1) * blockRangeSize - 1;
+      auto batchSize =
+          batchStart + 8192 < numRows ? 8192 : numRows - batchStart;
+
+      auto idx = findFirst(partitions + batchStart, batchSize, firstPartition);
+      if (partitions[batchStart + idx] < firstPartition) {
+        ++idx;
+      }
+            probe->begin[blockIdx.x] = idx;
+      idx = findLast(partitions + batchStart, batchSize, lastPartition);
+      if (idx == batchSize) {
+        --idx;
+      } else if (partitions[batchStart + idx] > lastPartition) {
+        --idx;
+      }
+      probe->end[blockIdx.x] = idx;
+    }
     __syncthreads();
-    if (isLeader) {
-      int32_t lane = threadIdx.x;
-      for (;;) {
-	updateAggs(table->rows[start], row, numColumns, args); 
+    auto partitionBegin = probe->begin[blockIdx.x] + batchStart;
+    auto partitionLast = probe->end[blockIdx.x] + batchStart;
+
+    for (int32_t counter = partitionBegin; counter <= partitionLast;
+         counter += blockDim.x) {
+	       auto idx = counter + threadIdx.x;
+      bool isLeader = false;
+      int32_t  start;
+      int32_t row;
+      int32_t part;
+      if (idx <= partitionLast) {
+  // Indirection to access the keys, hashes, args.
+  row = rows[idx];
+  part = partitions[idx];
+  isLeader = idx == partitionBegin || partitions[idx - 1] != part;
+  bool hit = false;
+	         start = hash[row] & table->sizeMask;
+        int32_t partEnd = (start & table->partitionMask) + table->partitionSize;
+        for (;;) {
+          auto entry = table->rows[start];
+          if (!entry) {
+            // The test is supposed to only look for existing keys.
+            *(long*)0 = 0; // crash.
+            break;
+          }
+          if (keys[row] == entry[0]) {
+            hit = true;
+            break;
+          }
+          start = (start + 1) + table->sizeMask;
+        }
+        probe->start[threadIdx.x] = start;
+        probe->isHit[threadIdx.x] = hit;
       }
-      if (lane >= blockDim.x - 1 || partition[lane + 1] != partition) {
-	break;
+      __syncthreads();
+      if (isLeader) {
+        int32_t lane = threadIdx.x;
+        for (;;) {
+          updateAggs(table->rows[start], row, table->numColumns, args);
+          if (lane >= blockDim.x - 1 || partitions[lane + 1] != part) {
+            break;
+          }
+          start = probe->start[lane];
+          row = rows[lane];
+        }
       }
-      start = probe.start[lane];
-      row = rows[lane];
     }
   }
+}
 
-  void TestStream::update8K(int32_t num8KBlocks, int64_t* key, uint64_t* hash, uint16_t* partitions, uint16_t* rowNumbers, uint8_t numAggs, int64_t** args) {
-  }
+void TestStream::update8K(
+    int32_t numRows,
+    int64_t* key,
+    uint64_t* hash,
+    uint16_t* partitions,
+    uint16_t* rowNumbers,
+    int64_t** args,
+    MockProbe* probe,
+    MockTable* table) {
+  constexpr int32_t kGroupBlockSize = 256;
+  auto num8KBlocks = roundUp(numRows, 8192) / 8192;
+  update8KKernel<<<
+      num8KBlocks*(8192 / kGroupBlockSize),
+      kGroupBlockSize,
+      0,
+      stream_->stream>>>(
+      numRows, key, hash, partitions, rowNumbers, args, probe, table);
+}
 
-  
 REGISTER_KERNEL("addOne", addOneKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);
-REGISTER_KERNEL("addOneRandom", addOneRandomKernel);  
+REGISTER_KERNEL("addOneRandom", addOneRandomKernel);
+REGISTER_KERNEL("makeInput", makeInputKernel);
+REGISTER_KERNEL("hashAndPartition8K", hashAndPartition8KKernel);
+REGISTER_KERNEL("update8K", update8KKernel);
+
 } // namespace facebook::velox::wave

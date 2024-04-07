@@ -47,14 +47,14 @@ __global__ void boolToIndicesNoShared(
     int32_t* sizes,
     int64_t* times,
     void* temp) {
-
   int32_t idx = blockIdx.x;
-  
-// Start cycle timer
+
+  // Start cycle timer
   clock_t start = clock();
   uint8_t* blockBools = bools[idx];
-  char* smem = reinterpret_cast<char*>(temp) + blockIdx.x * sizeof(typename  ScanAlgorithm::TempStorage);
-boolBlockToIndices<256>(
+  char* smem = reinterpret_cast<char*>(temp) +
+      blockIdx.x * sizeof(typename ScanAlgorithm::TempStorage);
+  boolBlockToIndices<256>(
       [&]() { return blockBools[threadIdx.x]; },
       idx * 256,
       indices[idx],
@@ -66,7 +66,6 @@ boolBlockToIndices<256>(
   }
 }
 
-
 void BlockTestStream::testBoolToIndicesNoShared(
     int32_t numBlocks,
     uint8_t** flags,
@@ -76,13 +75,13 @@ void BlockTestStream::testBoolToIndicesNoShared(
     void* temp) {
   CUDA_CHECK(cudaGetLastError());
   boolToIndicesNoShared<<<numBlocks, 256, 0, stream_->stream>>>(
-								flags, indices, sizes, times, temp);
+      flags, indices, sizes, times, temp);
   CUDA_CHECK(cudaGetLastError());
 }
 
-  int32_t BlockTestStream::boolToIndicesSize() {
-    return sizeof(typename ScanAlgorithm::TempStorage);
-  }
+int32_t BlockTestStream::boolToIndicesSize() {
+  return sizeof(typename ScanAlgorithm::TempStorage);
+}
 
 __global__ void sum64(int64_t* numbers, int64_t* results) {
   extern __shared__ __align__(
@@ -101,29 +100,33 @@ void BlockTestStream::testSum64(
   CUDA_CHECK(cudaGetLastError());
 }
 
-  
-  /// Keys and values are n sections of 8K items. The items in each section get sorted on the key.
-  void   __global__ __launch_bounds__(1024) testSort(uint16_t** keys, uint16_t** values) {
-    extern __shared__ __align__(16) char smem[];
-    auto keyBase = keys[blockIdx.x];
-    auto valueBase = values[blockIdx.x];
-    blockSort<1024, 8>([&](auto i) {
-		return keyBase[i];
-	      },
-    [&](auto i) { return valueBase[i];},
-      keys[blockIdx.x], values[blockIdx.x], smem);
-  }
+/// Keys and values are n sections of 8K items. The items in each section get
+/// sorted on the key.
+void __global__ __launch_bounds__(1024)
+    testSort(uint16_t** keys, uint16_t** values) {
+  extern __shared__ __align__(16) char smem[];
+  auto keyBase = keys[blockIdx.x];
+  auto valueBase = values[blockIdx.x];
+  blockSort<1024, 8>(
+      [&](auto i) { return keyBase[i]; },
+      [&](auto i) { return valueBase[i]; },
+      keys[blockIdx.x],
+      values[blockIdx.x],
+      smem);
+}
 
-  void BlockTestStream::testSort16(int32_t numBlocks, uint16_t** keys, uint16_t** values) {
-    auto tempBytes = sizeof(typename cub::BlockRadixSort<uint16_t, 1024, 8, uint16_t>::TempStorage);
+void BlockTestStream::testSort16(
+    int32_t numBlocks,
+    uint16_t** keys,
+    uint16_t** values) {
+  auto tempBytes = sizeof(
+      typename cub::BlockRadixSort<uint16_t, 1024, 8, uint16_t>::TempStorage);
 
-    testSort<<<1024, numBlocks, tempBytes, stream_->stream>>>(keys, values);
-  }
+  testSort<<<1024, numBlocks, tempBytes, stream_->stream>>>(keys, values);
+}
 
-  REGISTER_KERNEL("testSort", testSort);
-  REGISTER_KERNEL("boolToIndices", boolToIndices);
-  REGISTER_KERNEL("sum64", sum64);
-  
-  
-  
+REGISTER_KERNEL("testSort", testSort);
+REGISTER_KERNEL("boolToIndices", boolToIndices);
+REGISTER_KERNEL("sum64", sum64);
+
 } // namespace facebook::velox::wave
