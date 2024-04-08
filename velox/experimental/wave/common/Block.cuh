@@ -26,25 +26,34 @@
 
 namespace facebook::velox::wave {
 
+template <typename T, int32_t blockSize,     cub::BlockScanAlgorithm Algorithm = cub::BLOCK_SCAN_RAKING>
+inline int32_t __device__ __host__ boolToIndicesSharedSize() {
+  typedef cub::BlockScan<T, blockSize, Algorithm> BlockScanT;
+
+return sizeof(typename BlockScanT::TempStorage);
+
+}
+
   /// Converts an array of flags to an array of indices of set flags. The first index is given by 'start'. The number of indices is returned in 'size', i.e. this is 1 + the index of the last set flag.
 template <
     int32_t blockSize,
+    	    typename T,
     cub::BlockScanAlgorithm Algorithm = cub::BLOCK_SCAN_RAKING,
     typename Getter>
 __device__ inline void boolBlockToIndices(
     Getter getter,
-    int32_t start,
-    int32_t* indices,
+    T start,
+    T* indices,
     void* shmem,
-    int32_t& size) {
-  typedef cub::BlockScan<int, blockSize, Algorithm> BlockScanT;
+    T& size) {
+  typedef cub::BlockScan<T, blockSize, Algorithm> BlockScanT;
 
   auto* temp = reinterpret_cast<typename BlockScanT::TempStorage*>(shmem);
-  int data[1];
+  T data[1];
   uint8_t flag = getter();
   data[0] = flag;
   __syncthreads();
-  int aggregate;
+  T aggregate;
 BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
   if (flag) {
     indices[data[0]] = threadIdx.x + start; 
@@ -54,7 +63,7 @@ BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
   }
   __syncthreads();
 }
-  
+
 template <int32_t blockSize, typename T, typename Getter>
 __device__ inline void blockSum(Getter getter, void* shmem, T* result) {
   typedef cub::BlockReduce<T, blockSize> BlockReduceT;

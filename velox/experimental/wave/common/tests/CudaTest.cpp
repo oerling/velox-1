@@ -527,10 +527,53 @@ struct GpuTable {
     fillMockTable(keyRange, table);
   }
 
+  void prefetch(Device* device, Stream* stream) {
+    stream->prefetch(device, columns->as<char>(), columns->size());
+    stream->prefetch(device, rows->as<char>(), rows->size());
+    stream->wait();
+  }
+  
   MockTable* table;
   WaveBufferPtr rows;
   WaveBufferPtr columns;
   uint8_t numColumns;
+};
+
+// Host side struct with device side arrays to feed to GpuTable.
+struct GpuTableBatch : public MockTableBatch {
+  void init(int32_t numRows, uint8_t numColumns, ArenaSet* arenas) {
+    auto numRows8K = bits::roundUp(numRows, 8 << 10);
+    int32_t numBlocks8K = numRows8K / kBlockSize;
+    int64_t returnBytes = 
+      // Status for each TB times number of 8K batches.
+      numBlocks8K * sizeof(MockStatus) +
+      // Array for partitions and rows, each is 8K elements for each 8K batch.
+      2 * numRows8K * sizeof(uint16_t);
+
+      int64_t bytes = returnBytes +
+      // array of hash numbers, non-keys, each is numRows elements of 64 bits. 
+      numRows * (numColumns + 1) * sizeof(int64_t);
+
+    batchData = arenas->device->allocate<char>(bytes);
+    status = batchData->as<MockStatus>();
+      partitions = reinterpret_cast<uint16_t*>(status + numBlocks8K);
+    rows = partitions + numRows8K;
+    hashes = reinterpret_cast<uint64_t*>(rows + numRows8K);
+    columnData = reinterpret_cast<int64_t*>(hashes + numRows);
+    columnStarts = arenas->unified->allocate<int64_t*>(numColumns);
+    columns = columnStarts->as<int64_t*>();
+    for (auto i = 0; i < numColumns; ++i) {
+      columns[i] = columnData + i * numRows;
+    }
+    returnData = arenas->host->allocate<char>(returnBytes);
+    returnStatus = returnData->as<MockStatus>();
+    returnPartitions = reinterpret_cast<uint16_t*>(returnStatus + numBlocks8K);
+    returnRows = returnPartitions + numRows8K;
+  }
+
+  WaveBufferPtr columnStarts;
+  WaveBufferPtr batchData;
+  WaveBufferPtr returnData;
 };
 
 struct CpuTable {
@@ -552,8 +595,8 @@ struct CpuTable {
 
 void makeInput(
     int32_t numRows,
-    int64_t counter,
     int32_t keyRange,
+    int64_t counter,
     uint8_t numColumns,
     int64_t** columns) {
   for (auto i = 0; i < numRows; ++i) {
@@ -622,7 +665,8 @@ class RoundtripThread {
   static constexpr int32_t kNumInts = kNumKB * 256;
 
   RoundtripThread(int32_t device, ArenaSet* arenas) : arenas_(arenas) {
-    setDevice(getDevice(device));
+    device_ = getDevice(device);
+    setDevice(device_);
     hostBuffer_ = arenas_->host->allocate<int32_t>(kNumInts);
     deviceBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
     lookupBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
@@ -765,6 +809,7 @@ class RoundtripThread {
             } else {
               gpuTable_.init(
                   size, keyRange_, numColumns, arenas_->unified.get());
+	      gpuTable_.prefetch(device_, stream_.get());
             }
             // The init is not in measured interval.
             stats.startMicros = getCurrentTimeMicro();
@@ -825,8 +870,8 @@ class RoundtripThread {
     }
     makeInput(
         numRows,
-        keyStart_,
         keyRange_,
+        keyStart_,
         cpuTable_.table.numColumns,
         columnData_.data());
     keyStart_ += numRows;
@@ -840,34 +885,30 @@ class RoundtripThread {
   }
 
   void deviceGroupBatch(int32_t numRows) {
-    if (!dColumnData_) {
-      auto numRows8K = bits::roundUp(numRows, 8 << 10);
-      int64_t bytes = numRows * (gpuTable_.numColumns + 2) * sizeof(int64_t) +
-          2 * numRows8K * 2 * sizeof(uint16_t);
-      deviceGroupBatchData_ = arenas_->host->allocate<char>(bytes);
-      dKeys_ = gpuColumns_->as<int64_t>();
-      dHashes_ = reinterpret_cast<uint64_t*>(dKeys_ + numRows);
-      dColumns_ = reinterpret_cast<int64_t*>(dHashes_) + numRows;
-      dRows_ = reinterpret_cast<uint16_t*>(
-          dColumns_ + gpuTable_.numColumns * numRows);
-      dPartitions_ = dRows_ + numRows8K;
-      dColumnData_ = arenas_->unified->allocate<int64_t*>(gpuTable_.numColumns);
-      dColumnData_->as<int64_t*>()[0] = dKeys_;
-      for (auto i = 0; i < gpuTable_.numColumns; ++i) {
-        dColumnData_->as<int64_t*>()[i + 1] = dColumns_ + i * numRows;
-      }
+    if (!tableBatch_.status) {
+      tableBatch_.init(numRows, gpuTable_.numColumns, arenas_);
+      initGpuProbe(numRows);
+
+
     }
     stream_->makeInput(
         numRows,
         keyRange_,
         keyStart_,
         gpuTable_.numColumns,
-        dColumnData_->as<int64_t*>());
+        tableBatch_.columns);
     keyStart_ += numRows;
     stream_->hashAndPartition8K(
-        numRows, dKeys_, dHashes_, dPartitions_, dRows_);
+				numRows, tableBatch_.columnData,  tableBatch_.hashes, tableBatch_.partitions, tableBatch_.rows);
+    stream_->update8K(numRows, tableBatch_.hashes, tableBatch_.partitions, tableBatch_.rows, tableBatch_.columns, probePtr->as<MockProbe>(), tableBatch_.status, gpuTable_.table);
+    stream_->deviceToHostAsync(tableBatch_.returnStatus, tableBatch_.status, tableBatch_.returnData->size());
+    stream_->wait();
   }
 
+  void initGpuProbe(int32_t numRows8K) {
+    probePtr = arenas_->device->allocate<MockProbe>(1);
+  }
+  
   Op nextOp(const std::string& str, int32_t& position) {
     Op op;
     for (;;) {
@@ -956,6 +997,7 @@ class RoundtripThread {
   }
 
   ArenaSet* const arenas_;
+  Device* device_{nullptr};
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
   WaveBufferPtr lookupBuffer_;
@@ -979,7 +1021,6 @@ class RoundtripThread {
 
   // Temp space for hash probe. Sized to blockDim.x * gridDim.x elements for
   // each array in MockProbe.
-  WaveBufferPtr gpuProbe_;
 
   // Temp arrays for CPUGroupBatch().
   std::vector<int64_t> keys_;
@@ -988,15 +1029,8 @@ class RoundtripThread {
   std::vector<int64_t*> columnData_;
 
   // Pointers to device sideg roup by input data.
-  int64_t* dKeys_;
-  uint64_t* dHashes_;
-  uint16_t* dPartitions_;
-  uint16_t* dRows_;
-  int64_t* dColumns_;
-  // Singlel device side allocation with all group by input data.
-  WaveBufferPtr deviceGroupBatchData_;
-  // Unified memory array of addresses of columns in device memory.
-  WaveBufferPtr dColumnData_;
+  GpuTableBatch tableBatch_;
+  WaveBufferPtr probePtr;
 };
 
 class CudaTest : public testing::Test {
@@ -1357,6 +1391,56 @@ class CudaTest : public testing::Test {
     releaseArenas(std::move(arenas));
   }
 
+  void hashTableTest(int32_t size, int32_t keyRange) {
+    constexpr int32_t kRowsInBatch = 72 << 10; // 9 batches of 8K at a time.
+    constexpr int32_t kNumColumns = 3;
+    CpuTable cpuTable;
+    GpuTable gpuTable;
+    auto arenas = getArenas();
+    auto stream = std::make_unique<TestStream>();
+    cpuTable.init(size, keyRange, kNumColumns);
+    gpuTable.init(size, keyRange, kNumColumns, arenas->unified.get());
+    auto gpuProbe = arenas->device->allocate<MockProbe>(1);
+    GpuTableBatch tableBatch;
+    std::vector<uint64_t> hashes(kRowsInBatch);
+    std::vector<int64_t> keys(kRowsInBatch);
+    std::vector<std::vector<int64_t>> columns(kNumColumns - 1);
+    std::vector<int64_t*> columnData(kNumColumns);
+    columnData[0] = keys.data();
+    for (auto i = 1; i < kNumColumns; ++i) {
+      columns[i - 1].resize(kRowsInBatch);
+      columnData[i] = columns[i - 1].data();
+    }
+    tableBatch.init(kRowsInBatch, kNumColumns, arenas.get());
+    for (auto count = 0; count < 10; ++count) {
+      int64_t keyStart = 0;
+      for (auto i = 0; i < keyRange; i += kRowsInBatch) {
+	auto end = std::min<int32_t>(keyRange, i + kRowsInBatch);
+	auto numRows = end - i;
+	makeInput(numRows, keyRange, keyStart, cpuTable.table.numColumns, columnData.data());
+	hashAndPartition8K(numRows, columnData[0], hashes.data());
+    update8K(
+        numRows,
+        columnData[0],
+        hashes.data(),
+        columnData.data(),
+        &cpuTable.table);
+
+    stream->makeInput(numRows, keyRange, keyStart, kNumColumns, tableBatch.columns);
+    stream->hashAndPartition8K(
+				numRows, tableBatch.columnData,  tableBatch.hashes, tableBatch.partitions, tableBatch.rows);
+    stream->update8K(numRows, tableBatch.hashes, tableBatch.partitions, tableBatch.rows, tableBatch.columns, gpuProbe->as<MockProbe>(), tableBatch.status, gpuTable.table);
+    stream->deviceToHostAsync(tableBatch.returnStatus, tableBatch.status, tableBatch.returnData->size());
+    stream->wait();
+
+
+      keyStart += numRows;
+
+      }
+    }
+    releaseArenas(std::move(arenas));
+  }
+  
   std::unique_ptr<ArenaSet> getArenas() {
     {
       std::lock_guard<std::mutex> l(mutex_);

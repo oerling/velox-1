@@ -234,6 +234,8 @@ __device__ int findLast(const T* data, int size, T target) {
 }
 } // namespace
 
+  void __device__ markSkew(MockProbe* probe, int32_t start, int32_t numRepeats) {}
+  
 /// Updates partitions of 'table' The input is divided into batches
 /// of 8K entries, where the last can be under 8K, for a total of
 /// 'numRows'. blockDim.x * gridDim.x must be 8192. Each TB takes
@@ -250,13 +252,14 @@ __device__ int findLast(const T* data, int size, T target) {
 /// 'partitions', until there is no next 8K piece in 'partitions'.
 void __global__ __launch_bounds__(1024) update8KKernel(
     int32_t numRows,
-    int64_t* keys,
     uint64_t* hash,
     uint16_t* partitions,
     uint16_t* rows,
     int64_t** args,
     MockProbe* probe,
+    MockStatus* status,
     MockTable* table) {
+  constexpr int32_t kBlockSize = 256;
   auto end = roundUp(numRows, 8192);
   for (auto batchStart = 0; batchStart < end; batchStart += 8192) {
     if (threadIdx.x == 0) {
@@ -279,25 +282,27 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       }
       probe->end[blockIdx.x] = idx;
     }
+    probe->failFill[blockDim.x] = 0;
     __syncthreads();
-    auto partitionBegin = probe->begin[blockIdx.x] + batchStart;
-    auto partitionLast = probe->end[blockIdx.x] + batchStart;
-
-    for (int32_t counter = partitionBegin; counter <= partitionLast;
+    int32_t partitionBegin = probe->begin[blockIdx.x] + batchStart;
+    int32_t partitionEnd = probe->end[blockIdx.x] + batchStart;
+    int64_t* keys = args[0];
+    for (int32_t counter = partitionBegin; counter <= partitionEnd;
          counter += blockDim.x) {
 	       auto idx = counter + threadIdx.x;
       bool isLeader = false;
+      probe->isOverflow[blockIdx.x * blockDim.x + threadIdx.x] = false;
       int32_t  start;
       int32_t row;
       int32_t part;
-      if (idx <= partitionLast) {
+      if (idx < partitionEnd) {
   // Indirection to access the keys, hashes, args.
-  row = rows[idx];
+  row = batchStart + rows[idx];
   part = partitions[idx];
   isLeader = idx == partitionBegin || partitions[idx - 1] != part;
   bool hit = false;
-	         start = hash[row] & table->sizeMask;
-        int32_t partEnd = (start & table->partitionMask) + table->partitionSize;
+  start = hash[row] & table->sizeMask;
+        int32_t tableRangeEnd = (start & table->partitionMask) + table->partitionSize;
         for (;;) {
           auto entry = table->rows[start];
           if (!entry) {
@@ -310,6 +315,11 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             break;
           }
           start = (start + 1) + table->sizeMask;
+	  if (start == 0 || start >= tableRangeEnd) {
+	    probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
+	    isLeader = false;
+	    break;
+	  }
         }
         probe->start[threadIdx.x] = start;
         probe->isHit[threadIdx.x] = hit;
@@ -317,36 +327,79 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       __syncthreads();
       if (isLeader) {
         int32_t lane = threadIdx.x;
+	int32_t sameCnt = 0;
         for (;;) {
-          updateAggs(table->rows[start], row, table->numColumns, args);
-          if (lane >= blockDim.x - 1 || partitions[lane + 1] != part) {
+          updateAggs(table->rows[start], row, table->numColumns, args + 1);
+          if (lane >= blockDim.x - 1 || partitions[lane + 1] != part || lane >= partitionEnd) {
             break;
           }
-          start = probe->start[lane];
+          auto newStart = probe->start[lane];
+	  if (newStart == start) {
+	    ++sameCnt;
+	  } else {
+	    markSkew(probe, start, sameCnt);
+	    sameCnt = 0;
+	    start = newStart;
+	  }
           row = rows[lane];
         }
+	if (sameCnt > 2) {
+	  markSkew(probe, start, sameCnt);
+	}
       }
+
+      // We record the failed row, partition pairs.
+      uint16_t failFill = probe->failFill[blockIdx.x];
+      extern __shared__ __align__(16) char smem[];
+      
+      boolBlockToIndices<kBlockSize>([&]() { return probe->isOverflow[threadIdx.x];},
+		  failFill,
+		    &probe->failIdx[blockIdx.x * blockDim.x + failFill],
+		    smem,
+		  probe->failFill[blockIdx.x]);
+      uint16_t newFailed = probe->failFill[blockIdx.x] - failFill;
+      uint16_t rowTemp;
+      uint16_t partTemp;
+      if (threadIdx.x < newFailed) {
+	auto source = batchStart + probe->begin[blockIdx.x] + probe->failIdx[blockDim.x * blockIdx.x + threadIdx.x + failFill];
+	auto rowTemp = rows[source];
+	auto partTemp = partitions[source];
+      }
+      __syncthreads();
+      if (threadIdx.x < newFailed) {
+	int32_t destIdx = batchStart + probe->begin[blockIdx.x] + failFill + threadIdx.x;
+	rows[destIdx] = rowTemp;
+	partitions[destIdx] = partTemp;
+      }
+    }
+    // The partition is processed for one TB in one 8K batch.
+    if (threadIdx.x == 0) {
+      auto* tbStatus = status + blockIdx.x + (batchStart / 8192) * (8192 / kBlockSize);
+      tbStatus->beginIn8K = probe->begin[blockIdx.x];
+      tbStatus->endIn8K = probe->end[blockIdx.x];
+      tbStatus->numFailed = probe->failFill[blockIdx.x];
+      tbStatus->lastConsumed = 0;
     }
   }
 }
 
 void TestStream::update8K(
     int32_t numRows,
-    int64_t* key,
     uint64_t* hash,
     uint16_t* partitions,
     uint16_t* rowNumbers,
     int64_t** args,
     MockProbe* probe,
+    MockStatus* status,
     MockTable* table) {
-  constexpr int32_t kGroupBlockSize = 256;
+  constexpr int32_t kBlockSize = 256;
   auto num8KBlocks = roundUp(numRows, 8192) / 8192;
   update8KKernel<<<
-      num8KBlocks*(8192 / kGroupBlockSize),
-      kGroupBlockSize,
-      0,
+      num8KBlocks*(8192 / kBlockSize),
+      kBlockSize,
+	boolToIndicesSharedSize<uint16_t, kBlockSize>(),
       stream_->stream>>>(
-      numRows, key, hash, partitions, rowNumbers, args, probe, table);
+			 numRows, hash, partitions, rowNumbers, args, probe, status, table);
 }
 
 REGISTER_KERNEL("addOne", addOneKernel);
