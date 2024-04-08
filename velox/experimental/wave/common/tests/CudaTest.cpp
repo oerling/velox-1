@@ -493,19 +493,87 @@ struct RoundtripStats {
   }
 };
 
+// Returns the next place in MockTable, so that first we wrap around to the start of the partition and then to the start of next. Updates all parameters when going to a new partition.
+inline void nextProbe(MockTable* table, uint32_t& nextPartition, uint32_t& firstProbe, uint32_t& start) {
+  int32_t next = start + 1;
+  if (next >= nextPartition) {
+    start = next - table->partitionSize;
+    if (start != firstProbe) {
+      return;
+    }
+    start += table->partitionSize;
+    firstProbe = start;
+    nextPartition = start + table->partitionSize;
+    ++table->numNextPartition;
+    if ((start & (((table->sizeMask + 1) >>  5) - 1)) == 0) {
+      ++table->numNextBlock;
+    }
+    return;
+  }
+  if (next == firstProbe) {
+    start = ((next & table->partitionMask) + table->partitionSize) & table->sizeMask;
+    nextPartition = start + table->partitionSize;
+    firstProbe = start;
+    ++table->numNextPartition;
+    if ((start & (((table->sizeMask + 1) >>  5) - 1)) == 0) {
+      ++table->numNextBlock;
+    }
+    return;
+  }
+  start = next;
+}
+
+int64_t isPrime(int64_t n) {
+  int64_t end = sqrt(n);
+  for (int64_t f = 3; f < end; f += 2) {
+    if (n % f == 0) {
+      return f;
+    }
+  }
+  return 0;
+}
+
+inline uint32_t scale32(uint32_t n, uint32_t scale) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
+}
+
 void fillMockTable(int32_t keyRange, MockTable* table) {
   for (auto i = 0; i < keyRange; ++i) {
-    auto start = bits::hashMix(1, i) & table->sizeMask;
+    int64_t key = scale32(i * kPrime32, keyRange);
+    uint32_t start = bits::hashMix(1, key) & table->sizeMask;
+    auto firstProbe = start;
+    int numTries = 0;
+    uint32_t nextPartition = (start & table->partitionMask) + table->partitionSize;
     for (;;) {
       if (!table->rows[start]) {
+	if (numTries > table->maxCollisionSteps) {
+	  table->maxCollisionSteps = numTries;
+	}
+	table->numCollisions += numTries;
         int64_t* row = reinterpret_cast<int64_t*>(
             table->columns + table->rowSize * table->numRows);
         table->rows[start] = row;
-        row[0] = i;
+        row[0] = key;
         ++table->numRows;
+	break;
       }
-      start = (start + 1) & table->sizeMask;
+      nextProbe(table, nextPartition, firstProbe, start);
+      ++numTries;
     }
+  }
+}
+
+int64_t* findMockTable(MockTable* table, int64_t key) {
+  auto start = bits::hashMix(1, key) & table->sizeMask;
+  for (;;) {
+    auto* row = table->rows[start];
+    if (!row) {
+      return nullptr;
+    }
+    if (row[0] == key) {
+      return row;
+    }
+    start = (start + 1) & table->sizeMask;
   }
 }
 
@@ -518,11 +586,11 @@ struct GpuTable {
     table->partitionSize = size >> 16;
     table->partitionMask = ~(table->partitionSize - 1);
     table->rows = reinterpret_cast<int64_t**>(table + 1);
-    columns = arena->allocate<int64_t>(size * (1 + numColumns));
+    columns = arena->allocate<int64_t>(size * numColumns);
     memset(columns->as<char>(), 0, columns->capacity());
     table->columns = columns->as<char>();
     table->numColumns = numColumns;
-    table->rowSize = sizeof(int64_t) * (1 + table->numColumns);
+    table->rowSize = sizeof(int64_t) * table->numColumns;
     this->numColumns = numColumns;
     fillMockTable(keyRange, table);
   }
@@ -551,9 +619,8 @@ struct GpuTableBatch : public MockTableBatch {
         2 * numRows8K * sizeof(uint16_t);
 
     int64_t bytes = returnBytes +
-        // array of hash numbers, non-keys, each is numRows elements of 64 bits.
+        // array of hash numbers, keys, non-keys, each is numRows elements of 64 bits.
         numRows * (numColumns + 1) * sizeof(int64_t);
-
     batchData = arenas->device->allocate<char>(bytes);
     status = batchData->as<MockStatus>();
     partitions = reinterpret_cast<uint16_t*>(status + numBlocks8K);
@@ -579,12 +646,14 @@ struct GpuTableBatch : public MockTableBatch {
 struct CpuTable {
   void init(int32_t size, int32_t keyRange, uint8_t numColumns) {
     table.sizeMask = size - 1;
+    table.partitionSize = size >> 16;
+    table.partitionMask = ~(table.partitionSize - 1);
     rows.resize(size);
-    columnHolder.resize(sizeof(int64_t) * size * (1 + numColumns));
+    columnHolder.resize(sizeof(int64_t) * size * numColumns);
     table.rows = rows.data();
     table.columns = columnHolder.data();
     table.numColumns = numColumns;
-    table.rowSize = sizeof(int64_t) * (1 + numColumns);
+    table.rowSize = sizeof(int64_t) * numColumns;
     fillMockTable(keyRange, &table);
   }
 
@@ -596,19 +665,19 @@ struct CpuTable {
 void makeInput(
     int32_t numRows,
     int32_t keyRange,
+    int32_t powerOfTwo,
     int64_t counter,
     uint8_t numColumns,
     int64_t** columns) {
+  int32_t delta = counter & (powerOfTwo - 1);
   for (auto i = 0; i < numRows; ++i) {
-    columns[0][i] =
-        (static_cast<uint64_t>(static_cast<uint32_t>(counter * 2017)) *
-         keyRange) >>
-        32;
-    ++counter;
+    auto previous = columns[0][i];
+    columns[0][i] =scale32((previous + delta + i) * kPrime32, keyRange);
   }
+  counter += numRows;
   for (auto c = 1; c < numColumns; ++c) {
     for (auto r = 0; r < numRows; ++r) {
-      columns[c][r] = c;
+      columns[c][r] = c + (r & 7);
     }
   }
 }
@@ -628,7 +697,9 @@ void update8K(
     MockTable* table) {
   constexpr int32_t K8 = 8192;
   for (auto i = 0; i < numRows; ++i) {
-    int32_t start = hash[i] & table->sizeMask;
+    uint32_t start = hash[i] & table->sizeMask;
+    uint32_t firstProbe = start;
+    uint32_t nextPartition = (start & table->partitionMask) + table->partitionSize;
     for (;;) {
       auto row = table->rows[start];
       assert(row);
@@ -638,7 +709,7 @@ void update8K(
         }
         break;
       }
-      start = (start + 1) & table->sizeMask;
+      nextProbe(table, nextPartition, firstProbe, start);
     }
   }
 }
@@ -848,18 +919,15 @@ class RoundtripThread {
     int32_t* lookup = hostLookup_.get();
     for (uint32_t counter = 0; counter < repeat; ++counter) {
       for (auto i = 0; i < size; ++i) {
-        auto rnd = (static_cast<uint64_t>(
-                        static_cast<uint32_t>(i * (counter + 1) * 1367836089)) *
-                    size) >>
-            32;
+        auto rnd = scale32(i * (counter + 1)  * kPrime32, size);
+
         ints[i] += lookup[rnd];
       }
     }
   }
 
   void cpuGroupBatch(int32_t numRows) {
-    if (keys_.size() != numRows) {
-      keys_.resize(numRows);
+    if (columnData_.size() != numRows) {
       hashes_.resize(numRows);
       columns_.resize(cpuTable_.table.numColumns);
       columnData_.resize(cpuTable_.table.numColumns);
@@ -871,16 +939,17 @@ class RoundtripThread {
     makeInput(
         numRows,
         keyRange_,
+	bits::nextPowerOfTwo(keyRange_),
         keyStart_,
         cpuTable_.table.numColumns,
         columnData_.data());
     keyStart_ += numRows;
-    hashAndPartition8K(numRows, keys_.data(), hashes_.data());
+    hashAndPartition8K(numRows, columnData_[0], hashes_.data());
     update8K(
         numRows,
-        keys_.data(),
+        columnData_[0],
         hashes_.data(),
-        columnData_.data(),
+        columnData_.data() + 1,
         &cpuTable_.table);
   }
 
@@ -888,10 +957,19 @@ class RoundtripThread {
     if (!tableBatch_.status) {
       tableBatch_.init(numRows, gpuTable_.numColumns, arenas_);
       initGpuProbe(numRows);
+      // Clear the keys.
+      stream_->makeInput(
+			 numRows,
+			 keyRange_,
+			 0,
+			 keyStart_,
+			 gpuTable_.numColumns,
+			 tableBatch_.columns);
     }
     stream_->makeInput(
         numRows,
         keyRange_,
+	bits::nextPowerOfTwo(keyRange_),
         keyStart_,
         gpuTable_.numColumns,
         tableBatch_.columns);
@@ -1404,7 +1482,7 @@ class CudaTest : public testing::Test {
     releaseArenas(std::move(arenas));
   }
 
-  void hashTableTest(int32_t size, int32_t keyRange) {
+  void hashTableTest(int32_t size, int32_t keyRange, bool allInPartition) {
     constexpr int32_t kRowsInBatch = 72 << 10; // 9 batches of 8K at a time.
     constexpr int32_t kNumColumns = 3;
     CpuTable cpuTable;
@@ -1425,14 +1503,20 @@ class CudaTest : public testing::Test {
       columnData[i] = columns[i - 1].data();
     }
     tableBatch.init(kRowsInBatch, kNumColumns, arenas.get());
+    int64_t totalFailed = 0;
     for (auto count = 0; count < 10; ++count) {
       int64_t keyStart = 0;
+      // Zero out device side input keys.
+      stream->makeInput(
+			kRowsInBatch, keyRange, 0, keyStart, kNumColumns, tableBatch.columns);
+
       for (auto i = 0; i < keyRange; i += kRowsInBatch) {
         auto end = std::min<int32_t>(keyRange, i + kRowsInBatch);
         auto numRows = end - i;
         makeInput(
             numRows,
             keyRange,
+	    bits::nextPowerOfTwo(keyRange),
             keyStart,
             cpuTable.table.numColumns,
             columnData.data());
@@ -1445,7 +1529,7 @@ class CudaTest : public testing::Test {
             &cpuTable.table);
 
         stream->makeInput(
-            numRows, keyRange, keyStart, kNumColumns, tableBatch.columns);
+			  numRows, keyRange, bits::nextPowerOfTwo(keyRange), keyStart, kNumColumns, tableBatch.columns);
         stream->hashAndPartition8K(
             numRows,
             tableBatch.columnData,
@@ -1461,13 +1545,31 @@ class CudaTest : public testing::Test {
             gpuProbe->as<MockProbe>(),
             tableBatch.status,
             gpuTable.table);
+	auto returnStatus = tableBatch.returnStatus;
         stream->deviceToHostAsync(
-            tableBatch.returnStatus,
+	    returnStatus,
             tableBatch.status,
             tableBatch.returnData->size());
         stream->wait();
-
+	int32_t numStatus = bits::roundUp(numRows, 8192) / (8192 / TestStream::kGroupBlockSize);
+	for (auto i = 0; i < numStatus; ++i) {
+	  totalFailed += returnStatus[i].numFailed;
+	  if (allInPartition) {
+	    EXPECT_EQ(0, returnStatus[i].numFailed);
+	  }
+	}
         keyStart += numRows;
+      }
+    }
+    gpuTable.prefetch(nullptr, stream.get());
+    for (auto i = 0; i <= cpuTable.table.sizeMask; ++i) {
+      auto row = cpuTable.table.rows[i];
+      if (row) {
+	auto gpuRow = findMockTable(gpuTable.table, row[0]);
+	ASSERT(gpuRow != nullptr);
+	for (auto c = 0; c < kNumColumns; ++c) {
+	  ASSERT_EQ(gpuRow[c], row[c]);
+	}
       }
     }
     releaseArenas(std::move(arenas));
@@ -1683,6 +1785,10 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d30000r30000,50h1s"};
   roundtripTest("Random GPU", randomModeValues, false, 512);
   roundtripTest("Random CPU", randomModeValues, true, 16);
+}
+
+TEST_F(CudaTest, hashTable) {
+  hashTableTest(256 << 10, 123400, true);
 }
 
 int main(int argc, char** argv) {

@@ -22,6 +22,8 @@
 
 namespace facebook::velox::wave {
 
+constexpr uint32_t kPrime32 = 1367836089;
+  
 /// Struct for the state of a probe into MockTable. A struct of arrays. Each
 /// thread fills its state at threadIdx.x so the neighbors can decide who does
 /// what.
@@ -96,17 +98,34 @@ struct MockTableBatch {
 
 /// Hash table, works in CPU and GPU.
 struct MockTable {
-  int32_t sizeMask;
-  // Size / 64K.o
+  uint32_t sizeMask;
+
+  // Size / 64K.
   int32_t partitionSize{0};
+
   // Mask to get partition base.
-  int32_t partitionMask{0};
-  int64_t** rows;
+  uint32_t partitionMask{0};
+
+  // Number of entries not at their first location.
+  int64_t numCollisions{0};int64_t** rows;
+
+  // Number of times an insert goes outside of the thread block of the hash number.
+  int64_t numNextBlock{0};
+
+  // Max number of entries tried before finding a place to insert.
+  int32_t maxCollisionSteps{0};
+
+  // Number of times a partition boundary was crossed when inserting a key. One insert can cross multiple boundaries.
+  int64_t numNextPartition{0};
+
   int32_t numRows{0};
+
   // Size of row, includes keys and dependents, aligned to 8.
   int32_t rowSize{0};
-  // Number of dependent columns.
+
+  // Number of key and dependent columns.
   uint8_t numColumns;
+
   // Payload.
   char* columns{nullptr};
 };
@@ -122,6 +141,8 @@ struct WideParams {
 
 class TestStream : public Stream {
  public:
+  static constexpr int32_t kGroupBlockSize = 256;
+
   // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats
   // 'repeat' times.
   void addOne(int32_t* numbers, int size, int32_t repeat = 1);
@@ -137,10 +158,15 @@ class TestStream : public Stream {
   static int32_t sort8KTempSize();
 
   // Makes random lookup keys and increments, starting at 'startCount'
-  // columns[0] is keys.
+  // columns[0] is keys. 'powerOfTwo' is the next power of two from
+  // 'keyRange'. If 'powerOfTwo' is 0 the key columns are set to
+  // zero. Otherwise the key column values are incremented by a a
+  // delta + index of column where delta for element 0 is startCount &
+  // (powerOfTwo - 1).
   void makeInput(
       int32_t numRows,
       int32_t keyRange,
+      int32_t powerOfTwo,
       int32_t startCount,
       uint8_t numColumns,
       int64_t** columns);

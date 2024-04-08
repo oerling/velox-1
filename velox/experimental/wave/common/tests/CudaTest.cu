@@ -127,6 +127,7 @@ __device__ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
 void __global__ __launch_bounds__(1024) makeInputKernel(
     int32_t numRows,
     int32_t keyRange,
+    int32_t powerOfTwo,
     int32_t startCount,
     uint8_t numColumns,
     int64_t** columns) {
@@ -134,21 +135,28 @@ void __global__ __launch_bounds__(1024) makeInputKernel(
   if (idx >= numRows) {
     return;
   }
-  columns[0][idx] = scale32(idx * 2017, keyRange);
+  if (powerOfTwo == 0) {
+    columns[0][idx] = 0;
+    return;
+  }
+  auto delta = startCount & (powerOfTwo - 1);
+  auto previous = columns[0][idx];
+  columns[0][idx] = scale32((previous + delta + idx) * kPrime32, keyRange);
   for (auto i = 1; i < numColumns; ++i) {
-    columns[i][idx] = i;
+    columns[i][idx] = i + (idx & 7);
   }
 }
-
+  
 void TestStream::makeInput(
     int32_t numRows,
     int32_t keyRange,
+    int32_t powerOfTwo,
     int32_t startCount,
     uint8_t numColumns,
     int64_t** columns) {
   auto numBlocks = roundUp(numRows, 256) / 256;
   makeInputKernel<<<256, numBlocks, 0, stream_->stream>>>(
-      numRows, keyRange, startCount, numColumns, columns);
+							  numRows, keyRange, powerOfTwo, startCount, numColumns, columns);
 }
 
 void __device__
@@ -304,6 +312,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         start = hash[row] & table->sizeMask;
         int32_t tableRangeEnd =
             (start & table->partitionMask) + table->partitionSize;
+	auto firstProbe = start;
         for (;;) {
           auto entry = table->rows[start];
           if (!entry) {
@@ -315,9 +324,13 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             hit = true;
             break;
           }
-          start = (start + 1) + table->sizeMask;
-          if (start == 0 || start >= tableRangeEnd) {
-            probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
+          start = start + 1;
+          if (start >= tableRangeEnd) {
+	    // Wrap around to the beginning of the partition. Mark as overflow after exhausting the partition.
+	    start = firstProbe & table->partitionMask;
+	  }
+	  if (start == firstProbe) {
+	    probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
             isLeader = false;
             break;
           }
@@ -398,12 +411,11 @@ void TestStream::update8K(
     MockProbe* probe,
     MockStatus* status,
     MockTable* table) {
-  constexpr int32_t kBlockSize = 256;
   auto num8KBlocks = roundUp(numRows, 8192) / 8192;
   update8KKernel<<<
-      num8KBlocks*(8192 / kBlockSize),
-      kBlockSize,
-      boolToIndicesSharedSize<uint16_t, kBlockSize>(),
+      num8KBlocks*(8192 / kGroupBlockSize),
+      kGroupBlockSize,
+      boolToIndicesSharedSize<uint16_t, kGroupBlockSize>(),
       stream_->stream>>>(
       numRows, hash, partitions, rowNumbers, args, probe, status, table);
 }
