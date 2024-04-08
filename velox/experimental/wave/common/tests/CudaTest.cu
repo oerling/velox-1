@@ -234,8 +234,8 @@ __device__ int findLast(const T* data, int size, T target) {
 }
 } // namespace
 
-  void __device__ markSkew(MockProbe* probe, int32_t start, int32_t numRepeats) {}
-  
+void __device__ markSkew(MockProbe* probe, int32_t start, int32_t numRepeats) {}
+
 /// Updates partitions of 'table' The input is divided into batches
 /// of 8K entries, where the last can be under 8K, for a total of
 /// 'numRows'. blockDim.x * gridDim.x must be 8192. Each TB takes
@@ -273,7 +273,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       if (partitions[batchStart + idx] < firstPartition) {
         ++idx;
       }
-            probe->begin[blockIdx.x] = idx;
+      probe->begin[blockIdx.x] = idx;
       idx = findLast(partitions + batchStart, batchSize, lastPartition);
       if (idx == batchSize) {
         --idx;
@@ -289,20 +289,21 @@ void __global__ __launch_bounds__(1024) update8KKernel(
     int64_t* keys = args[0];
     for (int32_t counter = partitionBegin; counter <= partitionEnd;
          counter += blockDim.x) {
-	       auto idx = counter + threadIdx.x;
+      auto idx = counter + threadIdx.x;
       bool isLeader = false;
       probe->isOverflow[blockIdx.x * blockDim.x + threadIdx.x] = false;
-      int32_t  start;
+      int32_t start;
       int32_t row;
       int32_t part;
       if (idx < partitionEnd) {
-  // Indirection to access the keys, hashes, args.
-  row = batchStart + rows[idx];
-  part = partitions[idx];
-  isLeader = idx == partitionBegin || partitions[idx - 1] != part;
-  bool hit = false;
-  start = hash[row] & table->sizeMask;
-        int32_t tableRangeEnd = (start & table->partitionMask) + table->partitionSize;
+        // Indirection to access the keys, hashes, args.
+        row = batchStart + rows[idx];
+        part = partitions[idx];
+        isLeader = idx == partitionBegin || partitions[idx - 1] != part;
+        bool hit = false;
+        start = hash[row] & table->sizeMask;
+        int32_t tableRangeEnd =
+            (start & table->partitionMask) + table->partitionSize;
         for (;;) {
           auto entry = table->rows[start];
           if (!entry) {
@@ -315,11 +316,11 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             break;
           }
           start = (start + 1) + table->sizeMask;
-	  if (start == 0 || start >= tableRangeEnd) {
-	    probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
-	    isLeader = false;
-	    break;
-	  }
+          if (start == 0 || start >= tableRangeEnd) {
+            probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
+            isLeader = false;
+            break;
+          }
         }
         probe->start[threadIdx.x] = start;
         probe->isHit[threadIdx.x] = hit;
@@ -327,54 +328,59 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       __syncthreads();
       if (isLeader) {
         int32_t lane = threadIdx.x;
-	int32_t sameCnt = 0;
+        int32_t sameCnt = 0;
         for (;;) {
           updateAggs(table->rows[start], row, table->numColumns, args + 1);
-          if (lane >= blockDim.x - 1 || partitions[lane + 1] != part || lane >= partitionEnd) {
+          if (lane >= blockDim.x - 1 || partitions[lane + 1] != part ||
+              lane >= partitionEnd) {
             break;
           }
           auto newStart = probe->start[lane];
-	  if (newStart == start) {
-	    ++sameCnt;
-	  } else {
-	    markSkew(probe, start, sameCnt);
-	    sameCnt = 0;
-	    start = newStart;
-	  }
+          if (newStart == start) {
+            ++sameCnt;
+          } else {
+            markSkew(probe, start, sameCnt);
+            sameCnt = 0;
+            start = newStart;
+          }
           row = rows[lane];
         }
-	if (sameCnt > 2) {
-	  markSkew(probe, start, sameCnt);
-	}
+        if (sameCnt > 2) {
+          markSkew(probe, start, sameCnt);
+        }
       }
 
       // We record the failed row, partition pairs.
       uint16_t failFill = probe->failFill[blockIdx.x];
       extern __shared__ __align__(16) char smem[];
-      
-      boolBlockToIndices<kBlockSize>([&]() { return probe->isOverflow[threadIdx.x];},
-		  failFill,
-		    &probe->failIdx[blockIdx.x * blockDim.x + failFill],
-		    smem,
-		  probe->failFill[blockIdx.x]);
+
+      boolBlockToIndices<kBlockSize>(
+          [&]() { return probe->isOverflow[threadIdx.x]; },
+          failFill,
+          &probe->failIdx[blockIdx.x * blockDim.x + failFill],
+          smem,
+          probe->failFill[blockIdx.x]);
       uint16_t newFailed = probe->failFill[blockIdx.x] - failFill;
       uint16_t rowTemp;
       uint16_t partTemp;
       if (threadIdx.x < newFailed) {
-	auto source = batchStart + probe->begin[blockIdx.x] + probe->failIdx[blockDim.x * blockIdx.x + threadIdx.x + failFill];
-	auto rowTemp = rows[source];
-	auto partTemp = partitions[source];
+        auto source = batchStart + probe->begin[blockIdx.x] +
+            probe->failIdx[blockDim.x * blockIdx.x + threadIdx.x + failFill];
+        rowTemp = rows[source];
+	partTemp = partitions[source];
       }
       __syncthreads();
       if (threadIdx.x < newFailed) {
-	int32_t destIdx = batchStart + probe->begin[blockIdx.x] + failFill + threadIdx.x;
-	rows[destIdx] = rowTemp;
-	partitions[destIdx] = partTemp;
+        int32_t destIdx =
+            batchStart + probe->begin[blockIdx.x] + failFill + threadIdx.x;
+        rows[destIdx] = rowTemp;
+        partitions[destIdx] = partTemp;
       }
     }
     // The partition is processed for one TB in one 8K batch.
     if (threadIdx.x == 0) {
-      auto* tbStatus = status + blockIdx.x + (batchStart / 8192) * (8192 / kBlockSize);
+      auto* tbStatus =
+          status + blockIdx.x + (batchStart / 8192) * (8192 / kBlockSize);
       tbStatus->beginIn8K = probe->begin[blockIdx.x];
       tbStatus->endIn8K = probe->end[blockIdx.x];
       tbStatus->numFailed = probe->failFill[blockIdx.x];
@@ -397,9 +403,9 @@ void TestStream::update8K(
   update8KKernel<<<
       num8KBlocks*(8192 / kBlockSize),
       kBlockSize,
-	boolToIndicesSharedSize<uint16_t, kBlockSize>(),
+      boolToIndicesSharedSize<uint16_t, kBlockSize>(),
       stream_->stream>>>(
-			 numRows, hash, partitions, rowNumbers, args, probe, status, table);
+      numRows, hash, partitions, rowNumbers, args, probe, status, table);
 }
 
 REGISTER_KERNEL("addOne", addOneKernel);

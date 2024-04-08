@@ -16,10 +16,10 @@
 
 #include <cuda_runtime.h>
 #include <fmt/format.h>
+#include <iostream>
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
-#include <iostream>
 
 namespace facebook::velox::wave {
 
@@ -41,7 +41,6 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
   exit(1);
 }
 
-  
 namespace {
 class CudaManagedAllocator : public GpuAllocator {
  public:
@@ -220,27 +219,27 @@ float Event::elapsedTime(const Event& start) const {
   CUDA_CHECK(cudaEventElapsedTime(&ms, start.event_->event, event_->event));
   return ms;
 }
-  namespace {
+namespace {
 
-  struct KernelEntry {
-    const char* name;
-    const void* func;
-  };
+struct KernelEntry {
+  const char* name;
+  const void* func;
+};
 
-    int32_t numKernelEntries = 0;
-    KernelEntry kernelEntries[100]; 
-  }
+int32_t numKernelEntries = 0;
+KernelEntry kernelEntries[100];
+} // namespace
 
-  bool registerKernel(const char* name, const void* func) {
-    kernelEntries[numKernelEntries].name = name;
-    kernelEntries[numKernelEntries].func = func;
-    ++numKernelEntries;
-    return true;
-  }
+bool registerKernel(const char* name, const void* func) {
+  kernelEntries[numKernelEntries].name = name;
+  kernelEntries[numKernelEntries].func = func;
+  ++numKernelEntries;
+  return true;
+}
 
-  KernelInfo kernelInfo(const const void* func) {
-    cudaFuncAttributes attrs;
-    CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, func));
+KernelInfo kernelInfo(const const void* func) {
+  cudaFuncAttributes attrs;
+  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, func));
   KernelInfo info;
   info.numRegs = attrs.numRegs;
   info.maxThreadsPerBlock = attrs.maxThreadsPerBlock;
@@ -250,34 +249,39 @@ float Event::elapsedTime(const Event& start) const {
   info.maxOccupancy0 = max;
   cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max, func, 256, 16);
   info.maxOccupancy16 = max;
-  
-  return info;
-  }
 
-  std::string KernelInfo::toString() const {
-    std::stringstream out;
-    out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock << " sharedMemory=" << sharedMemory << " occupancy 256,  0=" << maxOccupancy0 << " occupancy 256,16=" << maxOccupancy16;
-      return out.str();
-  }
+  return info;
+}
+
+std::string KernelInfo::toString() const {
+  std::stringstream out;
+  out << "NumRegs=" << numRegs << " maxThreadsPerBlock= " << maxThreadsPerBlock
+      << " sharedMemory=" << sharedMemory
+      << " occupancy 256,  0=" << maxOccupancy0
+      << " occupancy 256,16=" << maxOccupancy16;
+  return out.str();
+}
 
 KernelInfo getRegisteredKernelInfo(const char* name) {
-    for (auto i = 0; i < numKernelEntries; ++i) {
-      if (strcmp(name, kernelEntries[i].name) == 0) {
-	return kernelInfo(kernelEntries[i].func);
-      }
+  for (auto i = 0; i < numKernelEntries; ++i) {
+    if (strcmp(name, kernelEntries[i].name) == 0) {
+      return kernelInfo(kernelEntries[i].func);
     }
-    return KernelInfo();
   }
-  
+  return KernelInfo();
+}
+
 std::unordered_map<std::string, KernelInfo>& kernelRegistry() {
-  static  std::unordered_map<std::string, KernelInfo> kernels;
+  static std::unordered_map<std::string, KernelInfo> kernels;
   return kernels;
 }
 
-  void printKernels() {
-  for (auto i =0; i <numKernelEntries; ++i) {
-      std::cout << kernelEntries[i].name << " - " << getRegisteredKernelInfo(kernelEntries[i].name).toString() << std::endl;
-    }
+void printKernels() {
+  for (auto i = 0; i < numKernelEntries; ++i) {
+    std::cout << kernelEntries[i].name << " - "
+              << getRegisteredKernelInfo(kernelEntries[i].name).toString()
+              << std::endl;
   }
-  
+}
+
 } // namespace facebook::velox::wave
