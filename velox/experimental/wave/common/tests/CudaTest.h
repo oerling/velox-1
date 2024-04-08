@@ -33,42 +33,50 @@ struct MockProbe {
   // first row of next TB.
   int32_t end[kMaxBlocks];
   uint16_t failFill[kMaxBlocks];
-  // The row of input that corresponds to the probe. Subscript is threadIdx.x + blockDim.x * blockIdx.x.
+  // The row of input that corresponds to the probe. Subscript is threadIdx.x +
+  // blockDim.x * blockIdx.x.
   int32_t start[8192];
-  // Whether the lane is a hit. Subscript is threadIdx.x + blockDim.x * blockIdx.x.
+  // Whether the lane is a hit. Subscript is threadIdx.x + blockDim.x *
+  // blockIdx.x.
   bool isHit[8192];
-  // Whether the probe needs to cross to the next partition. Subscript is threadIdx.x + blockDim.x * blockIdx.x.
+  // Whether the probe needs to cross to the next partition. Subscript is
+  // threadIdx.x + blockDim.x * blockIdx.x.
   bool isOverflow[8192];
 
-  // Temp area for gathering failed probes. A TB has blockDim.x elements starting at blockIdx.x * blockDim.x.
+  // Temp area for gathering failed probes. A TB has blockDim.x elements
+  // starting at blockIdx.x * blockDim.x.
   uint16_t failIdx[8192];
 };
 
-
-  /// A return state record for MockTable on GPU. There is one per TB per 8K batch.
-  struct MockStatus {
-    // Number of failed rows for the TB. Fail can be a would overflow to another TB's partition or not having a new row to insert. The row/partition of the failed rows are compacted starting at 'firstIn8K'
-    uint16_t numFailed;
-    // The index in the 8K batch of 'this' for the first in the TB's partition.
-    uint16_t  beginIn8K;
-    // The index of the first above the last in the 8K batch.
-    uint16_t endIn8K;
-    // The index of the first unconsumed row in the insertable row supply of the TB.
-    uint16_t lastConsumed;
-    // Up to 5 indices into the table for groups with high skew. Host can decide to deskew by replicating accumulators. -1 means no key.
-    int32_t skewedKey[5];
+/// A return state record for MockTable on GPU. There is one per TB per 8K
+/// batch.
+struct MockStatus {
+  // Number of failed rows for the TB. Fail can be a would overflow to another
+  // TB's partition or not having a new row to insert. The row/partition of the
+  // failed rows are compacted starting at 'firstIn8K'
+  uint16_t numFailed;
+  // The index in the 8K batch of 'this' for the first in the TB's partition.
+  uint16_t beginIn8K;
+  // The index of the first above the last in the 8K batch.
+  uint16_t endIn8K;
+  // The index of the first unconsumed row in the insertable row supply of the
+  // TB.
+  uint16_t lastConsumed;
+  // Up to 5 indices into the table for groups with high skew. Host can decide
+  // to deskew by replicating accumulators. -1 means no key.
+  int32_t skewedKey[5];
 };
 
-  /// Host side collection of pointers to device memory for updating a
-  /// MockTable. The layout is: MockStatus array, one element per TB
-  /// per 8K batch. Array of partition numbers, 8K elements for each
-  /// 8K batch. Array of row numbers, 8K elements per 8K batch. The
-  /// status array and the contiguous partition and row number arrays
-  /// are copied back to host as return status. The remaining fields
-  /// are not copied to host. Array of 64 bit hash numbers, one per
-  /// row of input. Array of 64 bit column values, one array of
-  /// numRows entries per column. Key columns are before non-key
-  /// columns.
+/// Host side collection of pointers to device memory for updating a
+/// MockTable. The layout is: MockStatus array, one element per TB
+/// per 8K batch. Array of partition numbers, 8K elements for each
+/// 8K batch. Array of row numbers, 8K elements per 8K batch. The
+/// status array and the contiguous partition and row number arrays
+/// are copied back to host as return status. The remaining fields
+/// are not copied to host. Array of 64 bit hash numbers, one per
+/// row of input. Array of 64 bit column values, one array of
+/// numRows entries per column. Key columns are before non-key
+/// columns.
 struct MockTableBatch {
   MockStatus* status;
   uint16_t* partitions;
@@ -79,13 +87,13 @@ struct MockTableBatch {
   // Unified memory array of pointers to start of each column.
   int64_t** columns;
 
-  // Host side shadow of status, partitions and rows. These are copied from the input status, partitions and rows after the batch is done.
+  // Host side shadow of status, partitions and rows. These are copied from the
+  // input status, partitions and rows after the batch is done.
   MockStatus* returnStatus;
   uint16_t* returnPartitions;
   uint16_t* returnRows;
 };
 
-  
 /// Hash table, works in CPU and GPU.
 struct MockTable {
   int32_t sizeMask;
@@ -149,8 +157,7 @@ class TestStream : public Stream {
 
   void update8K(
       int32_t numRows,
-      uint64_t
-      * hash,
+      uint64_t* hash,
       uint16_t* partitions,
       uint16_t* rowNumbers,
       int64_t** columns,
