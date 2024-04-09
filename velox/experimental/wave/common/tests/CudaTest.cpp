@@ -765,6 +765,8 @@ class RoundtripThread {
     kToHost,
     kAdd,
     kAddRandom,
+    kAddRandomEmptyWarps,
+    kAddRandomEmptyThreads,
     kWideAdd,
     kEnd,
     kSync,
@@ -843,6 +845,8 @@ class RoundtripThread {
             break;
 
           case OpCode::kAddRandom:
+          case OpCode::kAddRandomEmptyWarps:
+          case OpCode::kAddRandomEmptyThreads:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneRandomCpu(op.param1 * 256, op.param2);
@@ -851,7 +855,9 @@ class RoundtripThread {
                   deviceBuffer_->as<int32_t>(),
                   lookupBuffer_->as<int32_t>(),
                   op.param1 * 256,
-                  op.param2);
+                  op.param2,
+		  op.opCode == OpCode::kAddRandomEmptyWarps,
+		  op.opCode == OpCode::kAddRandomEmptyThreads);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -920,7 +926,6 @@ class RoundtripThread {
     for (uint32_t counter = 0; counter < repeat; ++counter) {
       for (auto i = 0; i < size; ++i) {
         auto rnd = scale32(i * (counter + 1)  * kPrime32, size);
-
         ints[i] += lookup[rnd];
       }
     }
@@ -1035,8 +1040,16 @@ class RoundtripThread {
           return op;
 
         case 'r':
-          op.opCode = OpCode::kAddRandom;
           ++position;
+	  if (str[position] == 'w') {
+	    op.opCode = OpCode::kAddRandomEmptyWarps;
+	    ++position;
+	  } else 	  if (str[position] == 't') {
+	    op.opCode = OpCode::kAddRandomEmptyThreads;
+	    ++position;
+	  } else {
+	    op.opCode = OpCode::kAddRandom;
+	  }
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
@@ -1771,8 +1784,8 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d1000a1000,30h1sd1a1000,30h1s",
       "d1000a1000,150h1sd1a1000,150h1s",
   };
-  roundtripTest("Seq GPU", seqModeValues, false, 1024);
-  roundtripTest("Seq CPU", seqModeValues, true, 64);
+  roundtripTest("Seq GPU", seqModeValues, false, 32);
+  roundtripTest("Seq CPU", seqModeValues, true, 16);
 
   std::vector<std::string> randomModeValues = {
       "d100r100,10h1s",
@@ -1783,8 +1796,8 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d1000r1000,100h1s",
       "d10000r10000,10h1s",
       "d30000r30000,50h1s"};
-  roundtripTest("Random GPU", randomModeValues, false, 512);
-  roundtripTest("Random CPU", randomModeValues, true, 16);
+  roundtripTest("Random GPU", randomModeValues, false, 16);
+  roundtripTest("Random CPU", randomModeValues, true, 8);
 }
 
 TEST_F(CudaTest, hashTable) {

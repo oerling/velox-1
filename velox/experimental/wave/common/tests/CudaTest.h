@@ -22,7 +22,7 @@
 
 namespace facebook::velox::wave {
 
-constexpr uint32_t kPrime32 = 1367836089;
+constexpr uint32_t kPrime32 = 1815531889;
   
 /// Struct for the state of a probe into MockTable. A struct of arrays. Each
 /// thread fills its state at threadIdx.x so the neighbors can decide who does
@@ -149,11 +149,18 @@ class TestStream : public Stream {
 
   void addOneWide(int32_t* numbers, int32_t size, int32_t repeat = 1);
 
+  /// Increments each of 'numbers by a deterministic pseudorandom
+  /// increment from 'lookup'.  If 'emptyWarps' is true, odd warps do
+  /// no work but still sync with the other ones with __syncthreads().
+  /// If 'emptyThreads' is true, odd lanes do no work and even lanes
+  /// do their work instead.
   void addOneRandom(
       int32_t* numbers,
       const int32_t* lookup,
       int size,
-      int32_t repeat = 1);
+      int32_t repeat = 1,
+      bool emptyWarps = false,
+		    bool emptyLanes = false);
 
   static int32_t sort8KTempSize();
 

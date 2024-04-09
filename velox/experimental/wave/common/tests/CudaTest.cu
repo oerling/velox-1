@@ -22,9 +22,8 @@ namespace facebook::velox::wave {
 
 __global__ void
 addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
-  auto index = blockDim.x * blockIdx.x + threadIdx.x;
   for (auto counter = 0; counter < repeats; ++counter) {
-    for (; index < size; index += stride) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
       ++numbers[index];
     }
     __syncthreads();
@@ -46,13 +45,12 @@ void TestStream::addOne(int32_t* numbers, int32_t size, int32_t repeats) {
 }
 
 __global__ void addOneWideKernel(WideParams params) {
-  auto index = blockDim.x * blockIdx.x + threadIdx.x;
   auto numbers = params.numbers;
   auto size = params.size;
   auto repeat = params.repeat;
   auto stride = params.stride;
   for (auto counter = 0; counter < repeat; ++counter) {
-    for (; index < size; index += stride) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
       ++numbers[index];
     }
   }
@@ -85,15 +83,36 @@ __global__ void addOneRandomKernel(
     const int32_t* lookup,
     uint32_t size,
     int32_t stride,
-    int32_t repeats) {
-  auto index = blockDim.x * blockIdx.x + threadIdx.x;
+    int32_t repeats,
+    bool emptyWarps,
+    bool emptyThreads) {
   for (uint32_t counter = 0; counter < repeats; ++counter) {
-    for (; index < size; index += stride) {
-      auto rnd = scale32(index * (counter + 1) * 1367836089, size);
+    if (emptyWarps) {
+      if ((threadIdx.x / 32) & 1 == 0) {
+	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
+	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+	  numbers[index] += lookup[rnd];
+	  rnd = scale32((index + 32)* (counter + 1) * kPrime32, size);
+	  numbers[index + 32] += lookup[rnd];
 
-      numbers[index] += lookup[rnd];
+	}
+      }
+    } else if (emptyThreads) {
+      if (threadIdx.x  & 1 == 0) {
+	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
+	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+	  numbers[index] += lookup[rnd];
+	  rnd = scale32((index + 1)* (counter + 1) * kPrime32, size);
+	  numbers[index + 1] += lookup[rnd];
+	}
+      }
+    } else {
+      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
+	auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+	numbers[index] += lookup[rnd];
+      }
     }
-    __syncthreads();
+      __syncthreads();
   }
 }
 
@@ -101,7 +120,9 @@ void TestStream::addOneRandom(
     int32_t* numbers,
     const int32_t* lookup,
     int32_t size,
-    int32_t repeats) {
+    int32_t repeats,
+    bool emptyWarps,
+    bool emptyThreads) {
   constexpr int32_t kWidth = 10240;
   constexpr int32_t kBlockSize = 256;
   auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
@@ -111,9 +132,10 @@ void TestStream::addOneRandom(
     numBlocks = kWidth / kBlockSize;
   }
   addOneRandomKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-      numbers, lookup, size, stride, repeats);
+								    numbers, lookup, size, stride, repeats, emptyWarps, emptyThreads);
   CUDA_CHECK(cudaGetLastError());
 }
+
 __device__ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
   // Murmur-inspired hashing.
   const uint64_t kMul = 0x9ddfea08eb382d69ULL;
