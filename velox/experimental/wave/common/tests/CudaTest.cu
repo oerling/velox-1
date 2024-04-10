@@ -86,7 +86,7 @@ __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
     bool emptyThreads) {
   for (uint32_t counter = 0; counter < repeats; ++counter) {
     if (emptyWarps) {
-      if ((threadIdx.x / 32) & 1 == 0) {
+      if (((threadIdx.x / 32) & 1) == 0) {
 	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
 	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
 	  numbers[index] += lookup[rnd];
@@ -95,7 +95,7 @@ __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
 	}
       }
     } else if (emptyThreads) {
-      if (threadIdx.x  & 1 == 0) {
+      if ((threadIdx.x  & 1) == 0) {
 	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
 	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
 	  numbers[index] += lookup[rnd];
@@ -150,7 +150,8 @@ void __global__ __launch_bounds__(1024) makeInputKernel(
     int32_t keyRange,
     int32_t powerOfTwo,
     int32_t startCount,
-    uint8_t numColumns,
+    uint64_t* hashes,
+uint8_t numColumns,
     int64_t** columns) {
   uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
   if (idx >= numRows) {
@@ -162,8 +163,10 @@ void __global__ __launch_bounds__(1024) makeInputKernel(
   }
   auto delta = startCount & (powerOfTwo - 1);
   auto previous = columns[0][idx];
-  columns[0][idx] = scale32((previous + delta + idx) * kPrime32, keyRange);
-  for (auto i = 1; i < numColumns; ++i) {
+  auto key = scale32((previous + delta + idx) * kPrime32, keyRange);
+columns[0][idx] = key;
+  hashes[idx] = hashMix(1, key);
+for (auto i = 1; i < numColumns; ++i) {
     columns[i][idx] = i + (idx & 7);
   }
 }
@@ -173,11 +176,12 @@ void TestStream::makeInput(
     int32_t keyRange,
     int32_t powerOfTwo,
     int32_t startCount,
-    uint8_t numColumns,
+    uint64_t* hash,
+uint8_t numColumns,
     int64_t** columns) {
   auto numBlocks = roundUp(numRows, 256) / 256;
   makeInputKernel<<<256, numBlocks, 0, stream_->stream>>>(
-							  numRows, keyRange, powerOfTwo, startCount, numColumns, columns);
+							  numRows, keyRange, powerOfTwo, startCount, hash, numColumns, columns);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -188,7 +192,7 @@ updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
   }
 }
 
-void __global__ __launch_bounds__(1024) hashAndPartition8KKernel(
+void __global__ __launch_bounds__(1024) partition8KKernel(
     int32_t numRows,
     int64_t* keys,
     uint64_t* hash,
@@ -199,8 +203,7 @@ void __global__ __launch_bounds__(1024) hashAndPartition8KKernel(
   for (auto stride = 0; stride < 8192; stride += 1024) {
     auto idx = base + stride + threadIdx.x;
     if (idx < end) {
-      hash[idx] = hashMix(1, keys[idx]);
-      rows[idx] = idx;
+      rows[idx] = idx - base;
       partitions[idx] = (hash[idx] >> 40);
     } else {
       rows[idx] = 0xffff;
@@ -221,7 +224,7 @@ int32_t TestStream::sort8KTempSize() {
   return blockSortSharedSize<1024, 8, uint16_t, uint16_t>();
 }
 
-void TestStream::hashAndPartition8K(
+void TestStream::partition8K(
     int32_t numRows,
     int64_t* keys,
     uint64_t* hashes,
@@ -229,7 +232,7 @@ void TestStream::hashAndPartition8K(
     uint16_t* rows) {
   auto tempBytes = sort8KTempSize();
   int32_t num8KBlocks = roundUp(numRows, 8192) / 8192;
-  hashAndPartition8KKernel<<<num8KBlocks, 1024, tempBytes, stream_->stream>>>(
+  partition8KKernel<<<num8KBlocks, 1024, tempBytes, stream_->stream>>>(
       numRows, keys, hashes, partitions, rows);
   CUDA_CHECK(cudaGetLastError());
 }
@@ -323,7 +326,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         // Indirection to access the keys, hashes, args.
         row = batchStart + rows[idx];
         part = partitions[idx];
-        isLeader = idx == partitionBegin || partitions[idx - 1] != part;
+        isLeader = idx == counter || partitions[idx - 1] != part;
         bool hit = false;
         start = hash[row] & table->sizeMask;
         int32_t nextPartition =
@@ -451,7 +454,7 @@ REGISTER_KERNEL("addOne", addOneKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);
 REGISTER_KERNEL("addOneRandom", addOneRandomKernel);
 REGISTER_KERNEL("makeInput", makeInputKernel);
-REGISTER_KERNEL("hashAndPartition8K", hashAndPartition8KKernel);
+REGISTER_KERNEL("partition8K", partition8KKernel);
 REGISTER_KERNEL("update8K", update8KKernel);
 
 } // namespace facebook::velox::wave

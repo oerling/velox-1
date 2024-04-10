@@ -901,6 +901,7 @@ class RoundtripThread {
             } else {
               deviceGroupBatch(op.param1);
             }
+	    stats.numAdds = op.param1;
             break;
           }
           default:
@@ -970,6 +971,7 @@ class RoundtripThread {
 			 keyRange_,
 			 0,
 			 keyStart_,
+			 tableBatch_.hashes,
 			 gpuTable_.numColumns,
 			 tableBatch_.columns);
     }
@@ -978,10 +980,11 @@ class RoundtripThread {
         keyRange_,
 	bits::nextPowerOfTwo(keyRange_),
         keyStart_,
+	tableBatch_.hashes,
         gpuTable_.numColumns,
         tableBatch_.columns);
     keyStart_ += numRows;
-    stream_->hashAndPartition8K(
+    stream_->partition8K(
         numRows,
         tableBatch_.columnData,
         tableBatch_.hashes,
@@ -1527,7 +1530,8 @@ class CudaTest : public testing::Test {
       int64_t keyStart = 0;
       // Zero out device side input keys.
       stream->makeInput(
-			kRowsInBatch, keyRange, 0, keyStart, kNumColumns, tableBatch.columns);
+			kRowsInBatch, keyRange, 0, keyStart, tableBatch.hashes,
+			kNumColumns, tableBatch.columns);
 
       for (auto i = 0; i < keyRange; i += kRowsInBatch) {
         auto end = std::min<int32_t>(keyRange, i + kRowsInBatch);
@@ -1548,8 +1552,8 @@ class CudaTest : public testing::Test {
             &cpuTable.table);
 
         stream->makeInput(
-			  numRows, keyRange, bits::nextPowerOfTwo(keyRange), keyStart, kNumColumns, tableBatch.columns);
-        stream->hashAndPartition8K(
+			  numRows, keyRange, bits::nextPowerOfTwo(keyRange), keyStart, tableBatch.hashes, kNumColumns, tableBatch.columns);
+        stream->partition8K(
             numRows,
             tableBatch.columnData,
             tableBatch.hashes,
@@ -1570,7 +1574,7 @@ class CudaTest : public testing::Test {
             tableBatch.status,
             tableBatch.returnData->size());
         stream->wait();
-	int32_t numStatus = bits::roundUp(numRows, 8192) / (8192 / TestStream::kGroupBlockSize);
+	int32_t numStatus = bits::roundUp(numRows, 8192) / TestStream::kGroupBlockSize;
 	for (auto i = 0; i < numStatus; ++i) {
 	  totalFailed += returnStatus[i].numFailed;
 	  if (allInPartition) {
@@ -1817,6 +1821,67 @@ TEST_F(CudaTest, roundtripMatrix) {
 					       "d30000rw30000,5,10240h1s",
 					       "d30000rt30000,5,10240h1s"};
   roundtripTest("Random GPU, width and conditional", widthModeValues, false, 8);
+}
+
+TEST_F(CudaTest, addRandom) {
+  constexpr int32_t kNumInts = 16 << 20;
+  auto arenas = getArenas();
+  auto stream = std::make_unique<TestStream>();
+  auto indices = arenas->unified->allocate<int32_t>(kNumInts);
+  auto sourceBuffer = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawIndices = indices->as<int32_t>();
+  for (auto i =0; i < kNumInts; ++i) {
+    rawIndices[i] = i + 1;
+  }
+  stream->prefetch(getDevice(), rawIndices, indices->capacity());
+  auto ints1 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts1 = ints1->as<int32_t>();
+  auto ints2 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts2 = ints2->as<int32_t>();
+  auto ints3 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts3 = ints3->as<int32_t>();
+  memset(rawInts1, 0, kNumInts * sizeof(int32_t));
+  memset(rawInts2, 0, kNumInts * sizeof(int32_t));
+  memset(rawInts3, 0, kNumInts * sizeof(int32_t));
+  stream->prefetch(getDevice(), rawInts1, ints1->capacity());
+  stream->prefetch(getDevice(), rawInts2, ints2->capacity());
+  stream->prefetch(getDevice(), rawInts3, ints3->capacity());
+  // Let prefetch finish.
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  // warm up.
+  stream->addOneRandom(rawInts1, rawIndices, kNumInts, 20, 10240);
+    stream->addOneRandom(rawInts2, rawIndices, kNumInts, 20, 10240, true);
+    stream->addOneRandom(rawInts3, rawIndices, kNumInts, 20, 10240, false, true);
+    stream->wait();
+
+  uint64_t time1 = 0;
+  uint64_t time2 = 0;
+  uint64_t time3 = 0;
+  for (auto count = 0; count < 20; ++count) {
+  {
+    MicrosecondTimer t(&time1);
+    stream->addOneRandom(rawInts1, rawIndices, kNumInts, 20, 10240);
+    stream->wait();
+  }
+  {
+    MicrosecondTimer t(&time2);
+    stream->addOneRandom(rawInts2, rawIndices, kNumInts, 20, 10240, true);
+    stream->wait();
+  }
+  {
+    MicrosecondTimer t(&time3);
+    stream->addOneRandom(rawInts3, rawIndices, kNumInts, 20, 10240, false, true);
+    stream->wait();
+  }
+  }
+  std::cout << fmt::format("All {}, half warps {} half threads {}", time1, time2, time3) << std::endl;
+
+  stream->prefetch(nullptr, rawInts1, ints1->capacity());
+  stream->prefetch(nullptr, rawInts2, ints2->capacity());
+  stream->prefetch(nullptr, rawInts3, ints3->capacity());
+
+  EXPECT_EQ(0, memcmp(rawInts1, rawInts2, kNumInts * sizeof(int32_t)));
+  EXPECT_EQ(0, memcmp(rawInts1, rawInts3, kNumInts * sizeof(int32_t)));
 }
 
 TEST_F(CudaTest, hashTable) {

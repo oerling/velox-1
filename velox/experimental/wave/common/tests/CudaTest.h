@@ -176,13 +176,14 @@ class TestStream : public Stream {
       int32_t keyRange,
       int32_t powerOfTwo,
       int32_t startCount,
+      uint64_t* hash,
       uint8_t numColumns,
       int64_t** columns);
 
   /// Calculates a hash of each key, stores it in hash and then calculates a 16
   /// bit partition number. Gives each row a sequence number. Sorts by
   /// partition, so that the row numbers are in partition order in 'rows'.
-  void hashAndPartition8K(
+  void partition8K(
       int32_t numRows,
       int64_t* keys,
       uint64_t* hashes,
