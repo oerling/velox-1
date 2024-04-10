@@ -145,9 +145,9 @@ class TestStream : public Stream {
 
   // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats
   // 'repeat' times.
-  void addOne(int32_t* numbers, int size, int32_t repeat = 1);
+  void addOne(int32_t* numbers, int size, int32_t repeat = 1, int32_t width = 10240);
 
-  void addOneWide(int32_t* numbers, int32_t size, int32_t repeat = 1);
+  void addOneWide(int32_t* numbers, int32_t size, int32_t repeat = 1,       int32_t width = 10240);
 
   /// Increments each of 'numbers by a deterministic pseudorandom
   /// increment from 'lookup'.  If 'emptyWarps' is true, odd warps do
@@ -159,6 +159,7 @@ class TestStream : public Stream {
       const int32_t* lookup,
       int size,
       int32_t repeat = 1,
+      int32_t width = 10240,
       bool emptyWarps = false,
 		    bool emptyLanes = false);
 

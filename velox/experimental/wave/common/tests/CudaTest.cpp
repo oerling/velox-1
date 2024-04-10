@@ -522,8 +522,8 @@ inline void nextProbe(MockTable* table, uint32_t& nextPartition, uint32_t& first
   }
   start = next;
 }
-
-int64_t isPrime(int64_t n) {
+// Checks a number for being prime. Returns 0 for prime and a factor for others.
+int64_t factor(int64_t n) {
   int64_t end = sqrt(n);
   for (int64_t f = 3; f < end; f += 2) {
     if (n % f == 0) {
@@ -583,6 +583,7 @@ struct GpuTable {
     rows = arena->allocate<char>(sizeof(MockTable) + sizeof(void*) * size);
     memset(rows->as<char>(), 0, rows->capacity());
     table = rows->as<MockTable>();
+    table->sizeMask = size - 1; 
     table->partitionSize = size >> 16;
     table->partitionMask = ~(table->partitionSize - 1);
     table->rows = reinterpret_cast<int64_t**>(table + 1);
@@ -704,8 +705,8 @@ void update8K(
       auto row = table->rows[start];
       assert(row);
       if (row[0] == key[i]) {
-        for (auto c = 0; c < table->numColumns; ++c) {
-          row[1 + c] += args[c][i];
+        for (auto c = 1; c < table->numColumns; ++c) {
+          row[c] += args[c][i];
         }
         break;
       }
@@ -856,6 +857,7 @@ class RoundtripThread {
                   lookupBuffer_->as<int32_t>(),
                   op.param1 * 256,
                   op.param2,
+		  op.param3,
 		  op.opCode == OpCode::kAddRandomEmptyWarps,
 		  op.opCode == OpCode::kAddRandomEmptyThreads);
             }
@@ -1050,8 +1052,12 @@ class RoundtripThread {
 	  } else {
 	    op.opCode = OpCode::kAddRandom;
 	  }
+	  // Size of data to update and lookup array (KB). 
           op.param1 = parseInt(str, position, 1);
+	  // Number of repeats.
           op.param2 = parseInt(str, position, 1);
+	  // target number of  threads in kernel.
+          op.param3 = parseInt(str, position, 10240);
           return op;
 
         case 's':
@@ -1755,9 +1761,9 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-        fmt::format("{} GPU, 1000 repeats", modes[0]), modes, false, 1000);
+        fmt::format("{} GPU, 1000 repeats", modes[0]), modes, false, 64);
     roundtripTest(
-        fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 100);
+        fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 32);
     return;
   }
   if (!FLAGS_enable_bm) {
@@ -1798,10 +1804,24 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d30000r30000,50h1s"};
   roundtripTest("Random GPU", randomModeValues, false, 16);
   roundtripTest("Random CPU", randomModeValues, true, 8);
+
+  std::vector<std::string> widthModeValues = {
+					       "d100r100,10,256h1s",
+					       "d100r100,10,1024",
+					       "d100r100,10,8192",
+					       "d30000r30000,5,256h1s",
+					       "d30000r30000,5,256h1s",
+					       "d30000r30000,5,512h1s",
+					       "d30000r30000,5,2048h1s",
+					       "d30000r30000,5,10240h1s",
+					       "d30000rw30000,5,10240h1s",
+					       "d30000rt30000,5,10240h1s"};
+  roundtripTest("Random GPU, width and conditional", widthModeValues, false, 8);
 }
 
 TEST_F(CudaTest, hashTable) {
-  hashTableTest(256 << 10, 123400, true);
+  // Sparsely filled, all inserts fit in their first partition.
+  hashTableTest(256 << 10, 11200, true);
 }
 
 int main(int argc, char** argv) {
