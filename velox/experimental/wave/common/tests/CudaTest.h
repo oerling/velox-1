@@ -23,7 +23,7 @@
 namespace facebook::velox::wave {
 
 constexpr uint32_t kPrime32 = 1815531889;
-  
+
 /// Struct for the state of a probe into MockTable. A struct of arrays. Each
 /// thread fills its state at threadIdx.x so the neighbors can decide who does
 /// what.
@@ -107,15 +107,18 @@ struct MockTable {
   uint32_t partitionMask{0};
 
   // Number of entries not at their first location.
-  int64_t numCollisions{0};int64_t** rows;
+  int64_t numCollisions{0};
+  int64_t** rows;
 
-  // Number of times an insert goes outside of the thread block of the hash number.
+  // Number of times an insert goes outside of the thread block of the hash
+  // number.
   int64_t numNextBlock{0};
 
   // Max number of entries tried before finding a place to insert.
   int32_t maxCollisionSteps{0};
 
-  // Number of times a partition boundary was crossed when inserting a key. One insert can cross multiple boundaries.
+  // Number of times a partition boundary was crossed when inserting a key. One
+  // insert can cross multiple boundaries.
   int64_t numNextPartition{0};
 
   int32_t numRows{0};
@@ -145,9 +148,14 @@ class TestStream : public Stream {
 
   // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats
   // 'repeat' times.
-  void addOne(int32_t* numbers, int size, int32_t repeat = 1, int32_t width = 10240);
+  void
+  addOne(int32_t* numbers, int size, int32_t repeat = 1, int32_t width = 10240);
 
-  void addOneWide(int32_t* numbers, int32_t size, int32_t repeat = 1,       int32_t width = 10240);
+  void addOneWide(
+      int32_t* numbers,
+      int32_t size,
+      int32_t repeat = 1,
+      int32_t width = 10240);
 
   /// Increments each of 'numbers by a deterministic pseudorandom
   /// increment from 'lookup'.  If 'emptyWarps' is true, odd warps do
@@ -161,7 +169,7 @@ class TestStream : public Stream {
       int32_t repeat = 1,
       int32_t width = 10240,
       bool emptyWarps = false,
-		    bool emptyLanes = false);
+      bool emptyLanes = false);
 
   static int32_t sort8KTempSize();
 
