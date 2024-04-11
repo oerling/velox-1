@@ -23,14 +23,19 @@ namespace facebook::velox::wave {
 __global__ void
 addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
-    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
       ++numbers[index];
     }
     __syncthreads();
   }
 }
 
-  void TestStream::addOne(int32_t* numbers, int32_t size, int32_t repeats, int32_t width) {
+void TestStream::addOne(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
   constexpr int32_t kBlockSize = 256;
   auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
   int32_t stride = size;
@@ -49,13 +54,18 @@ __global__ void addOneWideKernel(WideParams params) {
   auto repeat = params.repeat;
   auto stride = params.stride;
   for (auto counter = 0; counter < repeat; ++counter) {
-    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
       ++numbers[index];
     }
   }
 }
 
-  void TestStream::addOneWide(int32_t* numbers, int32_t size, int32_t repeat, int32_t width) {
+void TestStream::addOneWide(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeat,
+    int32_t width) {
   constexpr int32_t kBlockSize = 256;
   auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
   int32_t stride = size;
@@ -76,7 +86,7 @@ __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
-  __global__ void __launch_bounds__(1024) addOneRandomKernel(
+__global__ void __launch_bounds__(1024) addOneRandomKernel(
     int32_t* numbers,
     const int32_t* lookup,
     uint32_t size,
@@ -87,33 +97,36 @@ __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
   for (uint32_t counter = 0; counter < repeats; ++counter) {
     if (emptyWarps) {
       if (((threadIdx.x / 32) & 1) == 0) {
-	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
-	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
-	  numbers[index] += lookup[rnd];
-	  rnd = scale32((index + 32)* (counter + 1) * kPrime32, size);
-	  numbers[index + 32] += lookup[rnd];
-	}
+        for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+             index += stride) {
+          auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+          numbers[index] += lookup[rnd];
+          rnd = scale32((index + 32) * (counter + 1) * kPrime32, size);
+          numbers[index + 32] += lookup[rnd];
+        }
       }
     } else if (emptyThreads) {
-      if ((threadIdx.x  & 1) == 0) {
-	for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
-	  auto rnd = scale32(index * (counter + 1) * kPrime32, size);
-	  numbers[index] += lookup[rnd];
-	  rnd = scale32((index + 1)* (counter + 1) * kPrime32, size);
-	  numbers[index + 1] += lookup[rnd];
-	}
+      if ((threadIdx.x & 1) == 0) {
+        for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+             index += stride) {
+          auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+          numbers[index] += lookup[rnd];
+          rnd = scale32((index + 1) * (counter + 1) * kPrime32, size);
+          numbers[index + 1] += lookup[rnd];
+        }
       }
     } else {
 #pragma unroll
-      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size; index += stride) {
-	auto rnd = scale32(index * (counter + 1) * kPrime32, size);
-	numbers[index] += lookup[rnd];
+      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+           index += stride) {
+        auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+        numbers[index] += lookup[rnd];
       }
     }
     __syncthreads();
   }
   __syncthreads();
-  }
+}
 
 void TestStream::addOneRandom(
     int32_t* numbers,
@@ -131,7 +144,7 @@ void TestStream::addOneRandom(
     numBlocks = width / kBlockSize;
   }
   addOneRandomKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-								    numbers, lookup, size, stride, repeats, emptyWarps, emptyThreads);
+      numbers, lookup, size, stride, repeats, emptyWarps, emptyThreads);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -151,7 +164,7 @@ void __global__ __launch_bounds__(1024) makeInputKernel(
     int32_t powerOfTwo,
     int32_t startCount,
     uint64_t* hashes,
-uint8_t numColumns,
+    uint8_t numColumns,
     int64_t** columns) {
   uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
   if (idx >= numRows) {
@@ -164,29 +177,29 @@ uint8_t numColumns,
   auto delta = startCount & (powerOfTwo - 1);
   auto previous = columns[0][idx];
   auto key = scale32((previous + delta + idx) * kPrime32, keyRange);
-columns[0][idx] = key;
+  columns[0][idx] = key;
   hashes[idx] = hashMix(1, key);
-for (auto i = 1; i < numColumns; ++i) {
+  for (auto i = 1; i < numColumns; ++i) {
     columns[i][idx] = i + (idx & 7);
   }
   __syncthreads();
   return;
 }
-  
+
 void TestStream::makeInput(
     int32_t numRows,
     int32_t keyRange,
     int32_t powerOfTwo,
     int32_t startCount,
     uint64_t* hash,
-uint8_t numColumns,
+    uint8_t numColumns,
     int64_t** columns) {
   auto numBlocks = roundUp(numRows, 256) / 256;
   makeInputKernel<<<256, numBlocks, 0, stream_->stream>>>(
-							  numRows, keyRange, powerOfTwo, startCount, hash, numColumns, columns);
+      numRows, keyRange, powerOfTwo, startCount, hash, numColumns, columns);
   CUDA_CHECK(cudaGetLastError());
 }
-  
+
 void __device__
 updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
   for (auto i = 1; i < numColumns; ++i) {
@@ -309,7 +322,8 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         ++idx;
       }
       probe->begin[blockIdx.x] = idx;
-      probe->end[blockIdx.x]  = findLast(partitions + batchStart, batchSize, lastPartition);
+      probe->end[blockIdx.x] =
+          findLast(partitions + batchStart, batchSize, lastPartition);
     }
     probe->failFill[blockDim.x] = 0;
     __syncthreads();
@@ -333,7 +347,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         start = hash[row] & table->sizeMask;
         int32_t nextPartition =
             (start & table->partitionMask) + table->partitionSize;
-	auto firstProbe = start;
+        auto firstProbe = start;
         for (;;) {
           auto entry = table->rows[start];
           if (!entry) {
@@ -341,20 +355,21 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             *(long*)0 = 0; // crash.
             break;
           }
-	  if (0 && keys[row] == 5740) {
-	    *(long*)0 = 0; //printf("bing");
-	  }
+          if (0 && keys[row] == 5740) {
+            *(long*)0 = 0; // printf("bing");
+          }
           if (keys[row] == entry[0]) {
             hit = true;
             break;
           }
           start = start + 1;
           if (start >= nextPartition) {
-	    // Wrap around to the beginning of the partition. Mark as overflow after exhausting the partition.
-	    start = firstProbe & table->partitionMask;
-	  }
-	  if (start == firstProbe) {
-	    probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
+            // Wrap around to the beginning of the partition. Mark as overflow
+            // after exhausting the partition.
+            start = firstProbe & table->partitionMask;
+          }
+          if (start == firstProbe) {
+            probe->isOverflow[blockIdx.x + blockIdx.x * blockDim.x] = true;
             isLeader = false;
             break;
           }
@@ -364,29 +379,31 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       }
       __syncthreads();
       if (isLeader) {
-	auto idx = counter + threadIdx.x;
-	auto endThreadIdx = min(blockDim.x, partitionEnd - counter);
+        auto idx = counter + threadIdx.x;
+        auto endThreadIdx = min(blockDim.x, partitionEnd - counter);
         int32_t sameCnt = 0;
-	//Leader updates all in the partition. Break at end of
-	//partition or when next item has different partition. If the
-	//same row repeats over kSkewMinRepeats, mark the skew.
-	constexpr int kSkewMinRepeats = 5;
-	int32_t nthUpdate = 0;
+        // Leader updates all in the partition. Break at end of
+        // partition or when next item has different partition. If the
+        // same row repeats over kSkewMinRepeats, mark the skew.
+        constexpr int kSkewMinRepeats = 5;
+        int32_t nthUpdate = 0;
 
         for (;;) {
           updateAggs(table->rows[start], row, table->numColumns, args);
-	  ++nthUpdate;
-          if (threadIdx.x + nthUpdate >= endThreadIdx  || partitions[idx + 1] != part) {
+          ++nthUpdate;
+          if (threadIdx.x + nthUpdate >= endThreadIdx ||
+              partitions[idx + 1] != part) {
             break;
           }
-	  ++idx;
-          auto newStart = probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate];
+          ++idx;
+          auto newStart =
+              probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate];
           if (newStart == start) {
             ++sameCnt;
           } else {
-	    if (sameCnt > kSkewMinRepeats) {
-	      markSkew(probe, start, sameCnt);
-	    }
+            if (sameCnt > kSkewMinRepeats) {
+              markSkew(probe, start, sameCnt);
+            }
             sameCnt = 0;
             start = newStart;
           }
@@ -414,7 +431,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         auto source = batchStart + probe->begin[blockIdx.x] +
             probe->failIdx[blockDim.x * blockIdx.x + threadIdx.x + failFill];
         rowTemp = rows[source];
-	partTemp = partitions[source];
+        partTemp = partitions[source];
       }
       __syncthreads();
       if (threadIdx.x < newFailed) {
