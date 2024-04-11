@@ -220,21 +220,24 @@ float Event::elapsedTime(const Event& start) const {
   return ms;
 }
 namespace {
-
 struct KernelEntry {
   const char* name;
   const void* func;
 };
 
 int32_t numKernelEntries = 0;
-KernelEntry kernelEntries[100];
+KernelEntry kernelEntries[200];
 } // namespace
 
 bool registerKernel(const char* name, const void* func) {
   kernelEntries[numKernelEntries].name = name;
   kernelEntries[numKernelEntries].func = func;
   ++numKernelEntries;
-  return true;
+  if (numKernelEntries >= sizeof(kernelEntries) / sizeof(kernelEntries[0])) {
+    LOG(ERROR) << "Reserve more space in kernelEntries";
+    exit(1);
+  }
+return true;
 }
 
 KernelInfo kernelInfo(const const void* func) {
@@ -269,11 +272,6 @@ KernelInfo getRegisteredKernelInfo(const char* name) {
     }
   }
   return KernelInfo();
-}
-
-std::unordered_map<std::string, KernelInfo>& kernelRegistry() {
-  static std::unordered_map<std::string, KernelInfo> kernels;
-  return kernels;
 }
 
 void printKernels() {

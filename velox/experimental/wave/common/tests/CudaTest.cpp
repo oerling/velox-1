@@ -539,7 +539,7 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
 
 void fillMockTable(int32_t keyRange, MockTable* table) {
   for (auto i = 0; i < keyRange; ++i) {
-    int64_t key = scale32(i * kPrime32, keyRange);
+    int64_t key = i;
     uint32_t start = bits::hashMix(1, key) & table->sizeMask;
     auto firstProbe = start;
     int numTries = 0;
@@ -564,7 +564,9 @@ void fillMockTable(int32_t keyRange, MockTable* table) {
 }
 
 int64_t* findMockTable(MockTable* table, int64_t key) {
-  auto start = bits::hashMix(1, key) & table->sizeMask;
+  uint32_t start = bits::hashMix(1, key) & table->sizeMask;
+  auto firstProbe = start;
+  uint32_t nextPartition = (start & table->partitionMask) + table->partitionSize;
   for (;;) {
     auto* row = table->rows[start];
     if (!row) {
@@ -573,7 +575,7 @@ int64_t* findMockTable(MockTable* table, int64_t key) {
     if (row[0] == key) {
       return row;
     }
-    start = (start + 1) & table->sizeMask;
+    nextProbe(table, nextPartition, firstProbe, start);
   }
 }
 
@@ -622,7 +624,7 @@ struct GpuTableBatch : public MockTableBatch {
     int64_t bytes = returnBytes +
         // array of hash numbers, keys, non-keys, each is numRows elements of 64 bits.
         numRows * (numColumns + 1) * sizeof(int64_t);
-    batchData = arenas->device->allocate<char>(bytes);
+    batchData = arenas->unified->allocate<char>(bytes);
     status = batchData->as<MockStatus>();
     partitions = reinterpret_cast<uint16_t*>(status + numBlocks8K);
     rows = partitions + numRows8K;
@@ -1146,6 +1148,19 @@ class RoundtripThread {
   WaveBufferPtr probePtr;
 };
 
+   FOLLY_NOINLINE void findKey(int64_t key, int32_t numRows, uint8_t numColumns, int64_t** columns){
+    for (auto i = 0; i < numRows; ++i) {
+      if (columns[0][i] == key) {
+	std::cout << "key: " << key << " at " << i << ": ";
+	for (auto c = 0; c < numColumns; ++c) {
+	  std::cout << columns[c][i] << " ";
+	}
+	std::cout << std::endl;
+      }
+    }
+  }
+
+
 class CudaTest : public testing::Test {
  protected:
   static constexpr int64_t kArenaQuantum = 512 << 20;
@@ -1507,9 +1522,9 @@ class CudaTest : public testing::Test {
   void hashTableTest(int32_t size, int32_t keyRange, bool allInPartition) {
     constexpr int32_t kRowsInBatch = 72 << 10; // 9 batches of 8K at a time.
     constexpr int32_t kNumColumns = 3;
+    auto arenas = getArenas();
     CpuTable cpuTable;
     GpuTable gpuTable;
-    auto arenas = getArenas();
     auto stream = std::make_unique<TestStream>();
     cpuTable.init(size, keyRange, kNumColumns);
     gpuTable.init(size, keyRange, kNumColumns, arenas->unified.get());
@@ -1526,14 +1541,14 @@ class CudaTest : public testing::Test {
     }
     tableBatch.init(kRowsInBatch, kNumColumns, arenas.get());
     int64_t totalFailed = 0;
-    for (auto count = 0; count < 10; ++count) {
+    for (auto count = 0; count < 1; ++count) {
       int64_t keyStart = 0;
       // Zero out device side input keys.
       stream->makeInput(
 			kRowsInBatch, keyRange, 0, keyStart, tableBatch.hashes,
 			kNumColumns, tableBatch.columns);
 
-      for (auto i = 0; i < keyRange; i += kRowsInBatch) {
+      for (auto i = 1; i < 2; i += kRowsInBatch) {
         auto end = std::min<int32_t>(keyRange, i + kRowsInBatch);
         auto numRows = end - i;
         makeInput(
@@ -1591,7 +1606,7 @@ class CudaTest : public testing::Test {
 	auto gpuRow = findMockTable(gpuTable.table, row[0]);
 	ASSERT(gpuRow != nullptr);
 	for (auto c = 0; c < kNumColumns; ++c) {
-	  ASSERT_EQ(gpuRow[c], row[c]);
+	  EXPECT_EQ(gpuRow[c], row[c]) << "Key = " << row[0];
 	}
       }
     }

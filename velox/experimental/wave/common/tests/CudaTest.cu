@@ -169,6 +169,8 @@ columns[0][idx] = key;
 for (auto i = 1; i < numColumns; ++i) {
     columns[i][idx] = i + (idx & 7);
   }
+  __syncthreads();
+  return;
 }
   
 void TestStream::makeInput(
@@ -184,7 +186,7 @@ uint8_t numColumns,
 							  numRows, keyRange, powerOfTwo, startCount, hash, numColumns, columns);
   CUDA_CHECK(cudaGetLastError());
 }
-
+  
 void __device__
 updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
   for (auto i = 1; i < numColumns; ++i) {
@@ -339,6 +341,9 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             *(long*)0 = 0; // crash.
             break;
           }
+	  if (0 && keys[row] == 5740) {
+	    *(long*)0 = 0; //printf("bing");
+	  }
           if (keys[row] == entry[0]) {
             hit = true;
             break;
@@ -370,11 +375,11 @@ void __global__ __launch_bounds__(1024) update8KKernel(
 
         for (;;) {
           updateAggs(table->rows[start], row, table->numColumns, args);
+	  ++nthUpdate;
           if (threadIdx.x + nthUpdate >= endThreadIdx  || partitions[idx + 1] != part) {
             break;
           }
 	  ++idx;
-	  ++nthUpdate;
           auto newStart = probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate];
           if (newStart == start) {
             ++sameCnt;
@@ -429,6 +434,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       tbStatus->lastConsumed = 0;
     }
   }
+  __syncthreads();
 }
 
 void TestStream::update8K(
