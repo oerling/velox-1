@@ -237,7 +237,7 @@ bool registerKernel(const char* name, const void* func) {
     LOG(ERROR) << "Reserve more space in kernelEntries";
     exit(1);
   }
-return true;
+  return true;
 }
 
 KernelInfo kernelInfo(const const void* func) {

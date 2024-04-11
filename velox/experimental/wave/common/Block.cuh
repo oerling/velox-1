@@ -91,7 +91,8 @@ template <
     typename Key,
     typename Value>
 inline int32_t __host__ __device__ blockSortSharedSize() {
-  return sizeof(typename RadixSort<kBlockSize, kItemsPerThread, Key, Value>::TempStorage);
+  return sizeof(
+      typename RadixSort<kBlockSize, kItemsPerThread, Key, Value>::TempStorage);
 }
 
 template <
