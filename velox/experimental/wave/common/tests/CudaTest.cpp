@@ -529,6 +529,7 @@ inline void nextProbe(
   }
   start = next;
 }
+
 // Checks a number for being prime. Returns 0 for prime and a factor for others.
 int64_t factor(int64_t n) {
   int64_t end = sqrt(n);
@@ -603,6 +604,7 @@ struct GpuTable {
     table->columns = columns->as<char>();
     table->numColumns = numColumns;
     table->rowSize = sizeof(int64_t) * table->numColumns;
+    partitionShift = __builtin_ctz(size) -16; 
     this->numColumns = numColumns;
     fillMockTable(keyRange, table);
   }
@@ -613,10 +615,12 @@ struct GpuTable {
     stream->wait();
   }
 
+  
   MockTable* table;
   WaveBufferPtr rows;
   WaveBufferPtr columns;
   uint8_t numColumns;
+  uint8_t partitionShift;
 };
 
 // Host side struct with device side arrays to feed to GpuTable.
@@ -634,7 +638,7 @@ struct GpuTableBatch : public MockTableBatch {
         // array of hash numbers, keys, non-keys, each is numRows elements of 64
         // bits.
         numRows * (numColumns + 1) * sizeof(int64_t);
-    batchData = arenas->unified->allocate<char>(bytes);
+    batchData = arenas->device->allocate<char>(bytes);
     status = batchData->as<MockStatus>();
     partitions = reinterpret_cast<uint16_t*>(status + numBlocks8K);
     rows = partitions + numRows8K;
@@ -772,8 +776,17 @@ class RoundtripThread {
         hostLookup_.get(),
         hostBuffer_->as<int32_t>(),
         kNumInts * sizeof(int32_t));
+    serial_ = ++serialCounter_;
   }
 
+  ~RoundtripThread() {
+    try {
+      stream_->wait();
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Error in sync on ~RoundtripThread(): " << e.what();
+    }
+  }
+  
   enum class OpCode {
     kToDevice,
     kToHost,
@@ -970,12 +983,12 @@ class RoundtripThread {
         numRows,
         columnData_[0],
         hashes_.data(),
-        columnData_.data() + 1,
+        columnData_.data(),
         &cpuTable_.table);
   }
 
   void deviceGroupBatch(int32_t numRows) {
-    if (!tableBatch_.status) {
+    if (!tableBatch_.batchData) {
       tableBatch_.init(numRows, gpuTable_.numColumns, arenas_);
       initGpuProbe(numRows);
       // Clear the keys.
@@ -999,6 +1012,7 @@ class RoundtripThread {
     keyStart_ += numRows;
     stream_->partition8K(
         numRows,
+	gpuTable_.partitionShift,
         tableBatch_.columnData,
         tableBatch_.hashes,
         tableBatch_.partitions,
@@ -1009,7 +1023,7 @@ class RoundtripThread {
         tableBatch_.partitions,
         tableBatch_.rows,
         tableBatch_.columns,
-        probePtr->as<MockProbe>(),
+        probePtr_->as<MockProbe>(),
         tableBatch_.status,
         gpuTable_.table);
     stream_->deviceToHostAsync(
@@ -1020,7 +1034,7 @@ class RoundtripThread {
   }
 
   void initGpuProbe(int32_t numRows8K) {
-    probePtr = arenas_->device->allocate<MockProbe>(1);
+    probePtr_ = arenas_->device->allocate<MockProbe>(1);
   }
 
   Op nextOp(const std::string& str, int32_t& position) {
@@ -1156,10 +1170,12 @@ class RoundtripThread {
 
   // Pointers to device sideg roup by input data.
   GpuTableBatch tableBatch_;
-  WaveBufferPtr probePtr;
+  WaveBufferPtr probePtr_;
+  int32_t serial_;
+  static inline std::atomic<int32_t> serialCounter_{0};
 };
 
-FOLLY_NOINLINE void
+void
 findKey(int64_t key, int32_t numRows, uint8_t numColumns, int64_t** columns) {
   for (auto i = 0; i < numRows; ++i) {
     if (columns[0][i] == key) {
@@ -1592,6 +1608,7 @@ class CudaTest : public testing::Test {
             tableBatch.columns);
         stream->partition8K(
             numRows,
+	    gpuTable.partitionShift,
             tableBatch.columnData,
             tableBatch.hashes,
             tableBatch.partitions,
@@ -1801,9 +1818,9 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-        fmt::format("{} GPU, 1000 repeats", modes[0]), modes, false, 64);
+        fmt::format("{} GPU, 64 repeats", modes[0]), modes, false, 64);
     roundtripTest(
-        fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 32);
+        fmt::format("{} CPU, 32 repeats", modes[0]), modes, true, 32);
     return;
   }
   if (!FLAGS_enable_bm) {

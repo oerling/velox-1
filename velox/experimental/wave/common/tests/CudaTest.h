@@ -193,6 +193,7 @@ class TestStream : public Stream {
   /// partition, so that the row numbers are in partition order in 'rows'.
   void partition8K(
       int32_t numRows,
+      uint8_t shift,
       int64_t* keys,
       uint64_t* hashes,
       uint16_t* partitions,

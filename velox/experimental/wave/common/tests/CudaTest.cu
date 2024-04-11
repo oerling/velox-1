@@ -202,14 +202,21 @@ void TestStream::makeInput(
 
 void __device__
 updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
-  for (auto i = 1; i < numColumns; ++i) {
+  if (!entry) {
+    *(long*)0 = 0;
+  }
+  if (false && entry[0] != args[0][row]) {
+    *(long*)0 = 0;
+		    }
+for (auto i = 1; i < numColumns; ++i) {
     entry[i] += args[i][row];
   }
 }
 
 void __global__ __launch_bounds__(1024) partition8KKernel(
     int32_t numRows,
-    int64_t* keys,
+    uint8_t shift,
+int64_t* keys,
     uint64_t* hash,
     uint16_t* partitions,
     uint16_t* rows) {
@@ -219,7 +226,7 @@ void __global__ __launch_bounds__(1024) partition8KKernel(
     auto idx = base + stride + threadIdx.x;
     if (idx < end) {
       rows[idx] = idx - base;
-      partitions[idx] = (hash[idx] >> 40);
+      partitions[idx] = (hash[idx] >> shift);
     } else {
       rows[idx] = 0xffff;
       partitions[idx] = 0xffff;
@@ -241,14 +248,15 @@ int32_t TestStream::sort8KTempSize() {
 
 void TestStream::partition8K(
     int32_t numRows,
-    int64_t* keys,
+    uint8_t shift,
+int64_t* keys,
     uint64_t* hashes,
     uint16_t* partitions,
     uint16_t* rows) {
   auto tempBytes = sort8KTempSize();
   int32_t num8KBlocks = roundUp(numRows, 8192) / 8192;
   partition8KKernel<<<num8KBlocks, 1024, tempBytes, stream_->stream>>>(
-      numRows, keys, hashes, partitions, rows);
+      numRows, shift, keys, hashes, partitions, rows);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -341,10 +349,16 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       if (idx < partitionEnd) {
         // Indirection to access the keys, hashes, args.
         row = batchStart + rows[idx];
+	if (row < batchStart || row > batchStart + 9191) {
+	  *(long*)0 =0;
+	}
         part = partitions[idx];
         isLeader = idx == counter || partitions[idx - 1] != part;
         bool hit = false;
         start = hash[row] & table->sizeMask;
+	if (start == 0) {
+	  *(long*)0 = 0;
+	}
         int32_t nextPartition =
             (start & table->partitionMask) + table->partitionSize;
         auto firstProbe = start;
@@ -354,9 +368,6 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             // The test is supposed to only look for existing keys.
             *(long*)0 = 0; // crash.
             break;
-          }
-          if (0 && keys[row] == 5740) {
-            *(long*)0 = 0; // printf("bing");
           }
           if (keys[row] == entry[0]) {
             hit = true;
@@ -374,6 +385,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             break;
           }
         }
+	if (start == 0) { *(long*)0 = 0; }
         probe->start[blockIdx.x * blockDim.x + threadIdx.x] = start;
         probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
       }
@@ -407,13 +419,14 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             sameCnt = 0;
             start = newStart;
           }
-          row = rows[idx];
+          row = batchStart + rows[idx];
         }
         if (sameCnt > kSkewMinRepeats) {
           markSkew(probe, start, sameCnt);
         }
       }
 
+      __syncthreads();
       // We record the failed row, partition pairs.
       uint16_t failFill = probe->failFill[blockIdx.x];
       extern __shared__ __align__(16) char smem[];
