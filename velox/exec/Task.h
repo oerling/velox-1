@@ -247,9 +247,8 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Returns a future which is realized when the task is no longer in
   /// running state.
   /// If the task is not in running state at the time of call, the future is
-  /// immediately realized. The future is realized with an exception after
-  /// maxWaitMicros. A zero max wait means no timeout.
-  ContinueFuture taskCompletionFuture(uint64_t maxWaitMicros);
+  /// immediately realized.
+  ContinueFuture taskCompletionFuture();
 
   /// Returns task execution error or nullptr if no error occurred.
   std::exception_ptr error() const {
@@ -300,6 +299,17 @@ class Task : public std::enable_shared_from_this<Task> {
   uint32_t numOutputDrivers() const {
     return numDrivers(getOutputPipelineId());
   }
+
+  /// Stores the number of drivers in various states of execution.
+  struct DriverCounts {
+    uint32_t numQueuedDrivers{0};
+    uint32_t numOnThreadDrivers{0};
+    uint32_t numSuspendedDrivers{0};
+    std::unordered_map<BlockingReason, uint64_t> numBlockedDrivers;
+  };
+
+  /// Returns the number of drivers in various states of execution.
+  DriverCounts driverCounts() const;
 
   /// Returns the number of running drivers.
   uint32_t numRunningDrivers() const {
@@ -497,6 +507,9 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Adds 'stats' to the cumulative total stats for the operator in the Task
   /// stats. Called from Drivers upon their closure.
   void addOperatorStats(OperatorStats& stats);
+
+  /// Adds per driver statistics.  Called from Drivers upon their closure.
+  void addDriverStats(int pipelineId, DriverStats stats);
 
   /// Returns kNone if no pause or terminate is requested. The thread count is
   /// incremented if kNone is returned. If something else is returned the

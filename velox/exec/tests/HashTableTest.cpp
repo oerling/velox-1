@@ -59,11 +59,12 @@ class HashTableTestHelper {
   }
 
   void insertForJoin(
+      RowContainer* rows,
       char** groups,
       uint64_t* hashes,
       int32_t numGroups,
       TableInsertPartitionInfo* partitionInfo) {
-    table_->insertForJoin(groups, hashes, numGroups, partitionInfo);
+    table_->insertForJoin(rows, groups, hashes, numGroups, partitionInfo);
   }
 
   void setHashMode(BaseHashTable::HashMode mode, int32_t numNew) {
@@ -175,6 +176,10 @@ class HashTableTest : public testing::TestWithParam<bool>,
     testGroupBySpill(size, buildType, numKeys);
     const auto memoryUsage = pool()->currentBytes();
     topTable_->clear(true);
+    for (const auto* rowContainer : topTable_->allRows()) {
+      ASSERT_EQ(rowContainer->numRows(), 0);
+    }
+    ASSERT_EQ(topTable_->numDistinct(), 0);
     ASSERT_LT(pool()->currentBytes(), memoryUsage);
   }
 
