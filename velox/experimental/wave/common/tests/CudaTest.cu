@@ -31,6 +31,22 @@ addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   }
 }
 
+__global__ void
+addOneSharedKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  extern __shared__ __align__(16) char smem[];
+  int32_t* temp = reinterpret_cast<int32_t*>(smem);
+  for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+       index += stride) {
+    temp[threadIdx.x] = numbers[blockDim.x * blockIdx.x + threadIdx.x];
+    for (auto counter = 0; counter < repeats; ++counter) {
+      ++temp[index];
+    }
+    __syncthreads();
+    numbers[blockDim.x * blockIdx.x + threadIdx.x] = temp[threadIdx.x];
+  }
+}
+
+  
 void TestStream::addOne(
     int32_t* numbers,
     int32_t size,
@@ -240,6 +256,7 @@ int64_t* keys,
       partitions + base,
       rows + base,
       smem);
+  __syncthreads();
 }
 
 int32_t TestStream::sort8KTempSize() {
@@ -335,6 +352,9 @@ void __global__ __launch_bounds__(1024) update8KKernel(
     }
     probe->failFill[blockDim.x] = 0;
     __syncthreads();
+      extern __shared__ __align__(16) char smem[];
+      int32_t* starts = reinterpret_cast<int32_t*>(smem);
+
     int32_t partitionBegin = probe->begin[blockIdx.x] + batchStart;
     int32_t partitionEnd = probe->end[blockIdx.x] + batchStart;
     int64_t* keys = args[0];
@@ -385,11 +405,23 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             break;
           }
         }
+
 	if (start == 0) { *(long*)0 = 0; }
         probe->start[blockIdx.x * blockDim.x + threadIdx.x] = start;
+	starts[threadIdx.x] = start;
         probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
       }
       __syncthreads();
+      __threadfence();
+      auto endThreadIdx = min(blockDim.x, partitionEnd - counter);
+      if (threadIdx.x + 2< endThreadIdx) {
+	if (        probe->start[blockIdx.x * blockDim.x + threadIdx.x] != start) {
+	  *(long*)0 = 0;
+	}
+	if (starts[threadIdx.x + 2] != probe->start[blockDim.x * blockIdx.x + threadIdx.x + 2]) {
+	  *(long*)0 = 0;
+	}
+      }
       if (isLeader) {
         auto idx = counter + threadIdx.x;
         auto endThreadIdx = min(blockDim.x, partitionEnd - counter);
@@ -408,8 +440,10 @@ void __global__ __launch_bounds__(1024) update8KKernel(
             break;
           }
           ++idx;
-          auto newStart =
-              probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate];
+          auto newStart = starts[threadIdx.x + nthUpdate];
+	  if (newStart != probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate]) {
+	    *(long*)0 = 0;
+	  }
           if (newStart == start) {
             ++sameCnt;
           } else {
@@ -427,6 +461,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       }
 
       __syncthreads();
+#if 0
       // We record the failed row, partition pairs.
       uint16_t failFill = probe->failFill[blockIdx.x];
       extern __shared__ __align__(16) char smem[];
@@ -448,12 +483,15 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       }
       __syncthreads();
       if (threadIdx.x < newFailed) {
+	*(long*)0 = 0;
         int32_t destIdx =
             batchStart + probe->begin[blockIdx.x] + failFill + threadIdx.x;
         rows[destIdx] = rowTemp;
         partitions[destIdx] = partTemp;
       }
+#endif
     }
+#if 0
     // The partition is processed for one TB in one 8K batch.
     if (threadIdx.x == 0) {
       auto* tbStatus =
@@ -463,6 +501,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       tbStatus->numFailed = probe->failFill[blockIdx.x];
       tbStatus->lastConsumed = 0;
     }
+#endif
   }
   __syncthreads();
 }
@@ -480,7 +519,7 @@ void TestStream::update8K(
   update8KKernel<<<
       8192 / kGroupBlockSize,
       kGroupBlockSize,
-      boolToIndicesSharedSize<uint16_t, kGroupBlockSize>(),
+	1200, //boolToIndicesSharedSize<uint16_t, kGroupBlockSize>(),
       stream_->stream>>>(
       numRows, hash, partitions, rowNumbers, args, probe, status, table);
   CUDA_CHECK(cudaGetLastError());

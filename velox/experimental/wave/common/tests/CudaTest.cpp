@@ -780,6 +780,7 @@ class RoundtripThread {
   }
 
   ~RoundtripThread() {
+    std::cout << "Destruct " << this << " probe=" << (probePtr_ ? probePtr_->as<void*>() : nullptr) << std::endl;
     try {
       stream_->wait();
     } catch (const std::exception& e) {
@@ -993,15 +994,17 @@ class RoundtripThread {
       initGpuProbe(numRows);
       // Clear the keys.
       stream_->makeInput(
-          numRows,
-          keyRange_,
-          0,
-          keyStart_,
-          tableBatch_.hashes,
-          gpuTable_.numColumns,
-          tableBatch_.columns);
+			 numRows,
+			 keyRange_,
+			 0,
+			 keyStart_,
+			 tableBatch_.hashes,
+			 gpuTable_.numColumns,
+			 tableBatch_.columns);
+      
+      keyStart_ = 0;
     }
-    stream_->makeInput(
+      stream_->makeInput(
         numRows,
         keyRange_,
         bits::nextPowerOfTwo(keyRange_),
@@ -1017,6 +1020,7 @@ class RoundtripThread {
         tableBatch_.hashes,
         tableBatch_.partitions,
         tableBatch_.rows);
+    std::cout << "update " << probePtr_->as<void*>() << " s= " << probePtr_->size() << std::endl;
     stream_->update8K(
         numRows,
         tableBatch_.hashes,
@@ -1034,6 +1038,7 @@ class RoundtripThread {
   }
 
   void initGpuProbe(int32_t numRows8K) {
+    probePtr2_ = arenas_->device->allocate<MockProbe>(1);
     probePtr_ = arenas_->device->allocate<MockProbe>(1);
   }
 
@@ -1171,6 +1176,7 @@ class RoundtripThread {
   // Pointers to device sideg roup by input data.
   GpuTableBatch tableBatch_;
   WaveBufferPtr probePtr_;
+  WaveBufferPtr probePtr2_;
   int32_t serial_;
   static inline std::atomic<int32_t> serialCounter_{0};
 };
@@ -1501,7 +1507,7 @@ class CudaTest : public testing::Test {
       int numOps = 10000) {
     auto arenas = getArenas();
     std::vector<RoundtripStats> allStats;
-    std::vector<int32_t> numThreadsValues = {2, 4, 8, 16, 32};
+    std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16, 32};
     int32_t ordinal = 0;
     for (auto numThreads : numThreadsValues) {
       std::vector<RoundtripStats> runStats;
