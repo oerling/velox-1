@@ -604,7 +604,7 @@ struct GpuTable {
     table->columns = columns->as<char>();
     table->numColumns = numColumns;
     table->rowSize = sizeof(int64_t) * table->numColumns;
-    partitionShift = __builtin_ctz(size) -16; 
+    partitionShift = __builtin_ctz(size) - 16;
     this->numColumns = numColumns;
     fillMockTable(keyRange, table);
   }
@@ -615,7 +615,6 @@ struct GpuTable {
     stream->wait();
   }
 
-  
   MockTable* table;
   WaveBufferPtr rows;
   WaveBufferPtr columns;
@@ -780,14 +779,16 @@ class RoundtripThread {
   }
 
   ~RoundtripThread() {
-    std::cout << "Destruct " << this << " probe=" << (probePtr_ ? probePtr_->as<void*>() : nullptr) << std::endl;
+    std::cout << "Destruct " << this
+              << " probe=" << (probePtr_ ? probePtr_->as<void*>() : nullptr)
+              << std::endl;
     try {
       stream_->wait();
     } catch (const std::exception& e) {
       LOG(ERROR) << "Error in sync on ~RoundtripThread(): " << e.what();
     }
   }
-  
+
   enum class OpCode {
     kToDevice,
     kToHost,
@@ -994,17 +995,17 @@ class RoundtripThread {
       initGpuProbe(numRows);
       // Clear the keys.
       stream_->makeInput(
-			 numRows,
-			 keyRange_,
-			 0,
-			 keyStart_,
-			 tableBatch_.hashes,
-			 gpuTable_.numColumns,
-			 tableBatch_.columns);
-      
+          numRows,
+          keyRange_,
+          0,
+          keyStart_,
+          tableBatch_.hashes,
+          gpuTable_.numColumns,
+          tableBatch_.columns);
+
       keyStart_ = 0;
     }
-      stream_->makeInput(
+    stream_->makeInput(
         numRows,
         keyRange_,
         bits::nextPowerOfTwo(keyRange_),
@@ -1015,12 +1016,13 @@ class RoundtripThread {
     keyStart_ += numRows;
     stream_->partition8K(
         numRows,
-	gpuTable_.partitionShift,
+        gpuTable_.partitionShift,
         tableBatch_.columnData,
         tableBatch_.hashes,
         tableBatch_.partitions,
         tableBatch_.rows);
-    std::cout << "update " << probePtr_->as<void*>() << " s= " << probePtr_->size() << std::endl;
+    std::cout << "update " << probePtr_->as<void*>()
+              << " s= " << probePtr_->size() << std::endl;
     stream_->update8K(
         numRows,
         tableBatch_.hashes,
@@ -1181,8 +1183,11 @@ class RoundtripThread {
   static inline std::atomic<int32_t> serialCounter_{0};
 };
 
-void
-findKey(int64_t key, int32_t numRows, uint8_t numColumns, int64_t** columns) {
+void findKey(
+    int64_t key,
+    int32_t numRows,
+    uint8_t numColumns,
+    int64_t** columns) {
   for (auto i = 0; i < numRows; ++i) {
     if (columns[0][i] == key) {
       std::cout << "key: " << key << " at " << i << ": ";
@@ -1614,7 +1619,7 @@ class CudaTest : public testing::Test {
             tableBatch.columns);
         stream->partition8K(
             numRows,
-	    gpuTable.partitionShift,
+            gpuTable.partitionShift,
             tableBatch.columnData,
             tableBatch.hashes,
             tableBatch.partitions,
@@ -1825,8 +1830,7 @@ TEST_F(CudaTest, roundtripMatrix) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
         fmt::format("{} GPU, 64 repeats", modes[0]), modes, false, 64);
-    roundtripTest(
-        fmt::format("{} CPU, 32 repeats", modes[0]), modes, true, 32);
+    roundtripTest(fmt::format("{} CPU, 32 repeats", modes[0]), modes, true, 32);
     return;
   }
   if (!FLAGS_enable_bm) {
