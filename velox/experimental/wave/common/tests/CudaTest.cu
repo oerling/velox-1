@@ -31,8 +31,11 @@ addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   }
 }
 
-__global__ void
-addOneSharedKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+__global__ void addOneSharedKernel(
+    int32_t* numbers,
+    int32_t size,
+    int32_t stride,
+    int32_t repeats) {
   extern __shared__ __align__(16) char smem[];
   int32_t* temp = reinterpret_cast<int32_t*>(smem);
   for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
@@ -46,7 +49,6 @@ addOneSharedKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repea
   }
 }
 
-  
 void TestStream::addOne(
     int32_t* numbers,
     int32_t size,
@@ -110,12 +112,14 @@ void TestStream::addOneShared(
     stride = width;
     numBlocks = width / kBlockSize;
   }
-  addOneSharedKernel<<<numBlocks, kBlockSize, sizeof(int32_t) * kBlockSize, stream_->stream>>>(
-      numbers, size, stride, repeats);
+  addOneSharedKernel<<<
+      numBlocks,
+      kBlockSize,
+      sizeof(int32_t) * kBlockSize,
+      stream_->stream>>>(numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
 
-  
 __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
@@ -241,8 +245,8 @@ updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
   }
   if (false && entry[0] != args[0][row]) {
     *(long*)0 = 0;
-		    }
-for (auto i = 1; i < numColumns; ++i) {
+  }
+  for (auto i = 1; i < numColumns; ++i) {
     entry[i] += args[i][row];
   }
 }
@@ -250,7 +254,7 @@ for (auto i = 1; i < numColumns; ++i) {
 void __global__ __launch_bounds__(1024) partition8KKernel(
     int32_t numRows,
     uint8_t shift,
-int64_t* keys,
+    int64_t* keys,
     uint64_t* hash,
     uint16_t* partitions,
     uint16_t* rows) {
@@ -284,7 +288,7 @@ int32_t TestStream::sort8KTempSize() {
 void TestStream::partition8K(
     int32_t numRows,
     uint8_t shift,
-int64_t* keys,
+    int64_t* keys,
     uint64_t* hashes,
     uint16_t* partitions,
     uint16_t* rows) {
@@ -371,8 +375,8 @@ void __global__ __launch_bounds__(1024) update8KKernel(
     }
     probe->failFill[blockIdx.x] = 0;
     __syncthreads();
-      extern __shared__ __align__(16) char smem[];
-      int32_t* starts = reinterpret_cast<int32_t*>(smem);
+    extern __shared__ __align__(16) char smem[];
+    int32_t* starts = reinterpret_cast<int32_t*>(smem);
 
     int32_t partitionBegin = probe->begin[blockIdx.x] + batchStart;
     int32_t partitionEnd = probe->end[blockIdx.x] + batchStart;
@@ -392,9 +396,9 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         isLeader = idx == counter || partitions[idx - 1] != part;
         bool hit = false;
         start = hash[row] & table->sizeMask;
-	if (start == 0) {
-	  *(long*)0 = 0;
-	}
+        if (start == 0) {
+          *(long*)0 = 0;
+        }
         int32_t nextPartition =
             (start & table->partitionMask) + table->partitionSize;
         auto firstProbe = start;
@@ -423,8 +427,8 @@ void __global__ __launch_bounds__(1024) update8KKernel(
         }
 
         probe->start[blockIdx.x * blockDim.x + threadIdx.x] = start;
-	starts[threadIdx.x] = start;
-        //probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
+        starts[threadIdx.x] = start;
+        // probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
       }
       __syncthreads();
       if (isLeader) {
@@ -446,9 +450,10 @@ void __global__ __launch_bounds__(1024) update8KKernel(
           }
           ++idx;
           auto newStart = starts[threadIdx.x + nthUpdate];
-	  if (newStart != probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate]) {
-	    *(long*)0 = 0;
-	  }
+          if (newStart !=
+              probe->start[blockIdx.x * blockDim.x + threadIdx.x + nthUpdate]) {
+            *(long*)0 = 0;
+          }
           if (newStart == start) {
             ++sameCnt;
           } else {
@@ -524,7 +529,7 @@ void TestStream::update8K(
   update8KKernel<<<
       8192 / kGroupBlockSize,
       kGroupBlockSize,
-	1200, //boolToIndicesSharedSize<uint16_t, kGroupBlockSize>(),
+      1200, // boolToIndicesSharedSize<uint16_t, kGroupBlockSize>(),
       stream_->stream>>>(
       numRows, hash, partitions, rowNumbers, args, probe, status, table);
   CUDA_CHECK(cudaGetLastError());
