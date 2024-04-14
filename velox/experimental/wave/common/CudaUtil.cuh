@@ -37,6 +37,11 @@ __host__ __device__ constexpr inline T roundUp(T value, U factor) {
   return (value + (factor - 1)) / factor * factor;
 }
 
+template <typename T>
+T __device__ __host__ lowMask(int32_t bits) {
+  return (static_cast<T>(1) << bits) - 1;
+}
+
 __device__ __host__ inline int
 memcmp(const void* lhs, const void* rhs, size_t n) {
   auto* a = reinterpret_cast<const uint8_t*>(lhs);

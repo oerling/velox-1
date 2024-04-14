@@ -779,9 +779,6 @@ class RoundtripThread {
   }
 
   ~RoundtripThread() {
-    std::cout << "Destruct " << this
-              << " probe=" << (probePtr_ ? probePtr_->as<void*>() : nullptr)
-              << std::endl;
     try {
       stream_->wait();
     } catch (const std::exception& e) {
@@ -797,6 +794,7 @@ class RoundtripThread {
     kAddRandomEmptyWarps,
     kAddRandomEmptyThreads,
     kWideAdd,
+    kAddShared,
     kEnd,
     kSync,
     kSyncEvent,
@@ -862,7 +860,18 @@ class RoundtripThread {
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
-          case OpCode::kWideAdd:
+          case OpCode::kAddShared:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu(op.param1 * 256, op.param2);
+            } else {
+              stream_->addOneShared(
+                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            }
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+
+	case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
@@ -1021,8 +1030,7 @@ class RoundtripThread {
         tableBatch_.hashes,
         tableBatch_.partitions,
         tableBatch_.rows);
-    std::cout << "update " << probePtr_->as<void*>()
-              << " s= " << probePtr_->size() << std::endl;
+#if 1
     stream_->update8K(
         numRows,
         tableBatch_.hashes,
@@ -1032,6 +1040,7 @@ class RoundtripThread {
         probePtr_->as<MockProbe>(),
         tableBatch_.status,
         gpuTable_.table);
+#endif
     stream_->deviceToHostAsync(
         tableBatch_.returnStatus,
         tableBatch_.status,
@@ -1040,7 +1049,6 @@ class RoundtripThread {
   }
 
   void initGpuProbe(int32_t numRows8K) {
-    probePtr2_ = arenas_->device->allocate<MockProbe>(1);
     probePtr_ = arenas_->device->allocate<MockProbe>(1);
   }
 
@@ -1178,7 +1186,6 @@ class RoundtripThread {
   // Pointers to device sideg roup by input data.
   GpuTableBatch tableBatch_;
   WaveBufferPtr probePtr_;
-  WaveBufferPtr probePtr2_;
   int32_t serial_;
   static inline std::atomic<int32_t> serialCounter_{0};
 };
@@ -1653,7 +1660,7 @@ class CudaTest : public testing::Test {
       auto row = cpuTable.table.rows[i];
       if (row) {
         auto gpuRow = findMockTable(gpuTable.table, row[0]);
-        ASSERT(gpuRow != nullptr);
+        assert(gpuRow != nullptr);
         for (auto c = 0; c < kNumColumns; ++c) {
           EXPECT_EQ(gpuRow[c], row[c]) << "Key = " << row[0];
         }

@@ -27,6 +27,15 @@
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
+constexpr int32_t kNumPartitionBlocks = 100;
+struct PartitionRun {
+  uint16_t* keys[kNumPartitionBlocks];
+    int32_t numRows[kNumPartitionBlocks];
+    int32_t* ranks[kNumPartitionBlocks];
+    int32_t* partitionStarts[kNumPartitionBlocks];
+    int32_t* partitionedRows[kNumPartitionBlocks];
+};
+
 class BlockTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -39,7 +48,52 @@ class BlockTest : public testing::Test {
   void prefetch(Stream& stream, WaveBufferPtr buffer) {
     stream.prefetch(device_, buffer->as<char>(), buffer->capacity());
   }
-
+  void makePartitionRun(int32_t numRows, int32_t numPartitions, PartitionRun*& run, WaveBufferPtr& buffer) {
+    auto rowsRounded = bits::roundUp(numRows, 8);
+    auto partitionsRounded = bits::roundUp(numPartitions, 8);
+    int64_t bytes = sizeof(PartitionRun) + kNumPartitionBlocks * (rowsRounded * 4 + partitionsRounded);
+    if (!buffer || buffer->capacity() < bytes) {
+      buffer = arena_->allocate<char>(bytes);
+    }
+    run = buffer->as<PartitionRun>();
+    auto chars = buffer->as<char>() + sizeof(PartitionRun);
+    for (auto block = 0; block < kNumPartitionBlocks; ++block) {
+      run->keys[block] = reinterpret_cast<uint16_t*>(chars);
+      run->numRows[block] = numRows;
+      chars += rowsRounded * sizeof(uint16_t);
+      run->partitionStarts[block] = reinterpret_cast<int32_t*>(chars);
+      chars += numPartitions * sizeof(int32_t);
+      run->ranks[block] = reinterpret_cast<int32_t*>(chars);
+      chars += sizeof(int32_t) * numRows;
+      run->partitionedRows[block] = reinterpret_cast<int32_t*>(chars);
+      chars += sizeof(int32_t) * numRows;
+      for (auto i = 0; i < numRows; ++i) {
+	run->keys[block][i] = (block + i * 2017) % numPartitions;
+      }
+    }
+    VELOX_CHECK_LE(chars - buffer->as<char>(), bytes);
+  }
+      
+  void checkPartitionRun(const PartitionRun& run, int32_t numPartitions) {
+    // Check that every row is once in its proper partition.
+    for (auto block = 0; block < kNumPartitionBlocks; ++block) { 
+      std::vector<bool> flags(run.numRows[block], false);
+      int32_t start = 0;
+      for (auto part = 0; part < numPartitions; ++part) {
+	for (auto i = start; i < run.partitionStarts[block][part]; ++i) {
+	  auto row = run.partitionedRows[block][i];
+	  EXPECT_LT(row, run.numRows[block]);
+	  EXPECT_FALSE(flags[row]);
+	  EXPECT_EQ(part, run.keys[block][row]);
+	  flags[row] = true;
+	}
+      }
+      // Expect that all flags are set.
+      for (auto i = 0; i < run.numRows[block]; ++i) {
+	EXPECT_TRUE(flags[i]);
+      }
+    }
+  }
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
@@ -191,4 +245,30 @@ TEST_F(BlockTest, shortRadixSort) {
   std::cout << "sort16: " << elapsed << "us, "
             << kNumValues / static_cast<float>(elapsed) << " Mrows/s"
             << std::endl;
+}
+
+
+TEST_F(BlockTest, partition) {
+  // We make severl sets of keys and temp and result buffers. These
+  // are in unified memory. We run the partition for all and check the
+  // outcome on the host. We run at several different partition counts
+  // and batch sizes. All experiments are submitted as kNumPartitionBlocks concurrent
+  // thread blocks of 256 threads.
+  BlockTestStream stream;
+  std::vector<int32_t> partitionCounts = {1, 2, 32, 333, 1000, 8000};
+  std::vector<int32_t> runSizes = {100, 1000, 10000, 30000};
+  WaveBufferPtr buffer;
+  PartitionRun* run;
+  for (auto parts : partitionCounts) {
+    for (auto rows : runSizes) {
+      makePartitionRun(rows, parts, run, buffer);
+      prefetch(stream, buffer);
+      auto startMicros = getCurrentTimeMicro();
+      stream.partitionShorts(kNumPartitionBlocks, run->keys, run->numRows,  parts, run->ranks, run->partitionStarts, run->partitionedRows);
+      stream.wait();
+      auto time = getCurrentTimeMicro() - startMicros;
+      std::cout << fmt::format("Partition {} {} in {}, {} Mrows/s", kNumPartitionBlocks, rows, parts, kNumPartitionBlocks * static_cast<float>(rows) / time) << std::endl;
+      checkPartitionRun(*run, parts);
+    }
+  }
 }

@@ -98,6 +98,24 @@ void TestStream::addOneWide(
   CUDA_CHECK(cudaGetLastError());
 }
 
+void TestStream::addOneShared(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneSharedKernel<<<numBlocks, kBlockSize, sizeof(int32_t) * kBlockSize, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+  
 __device__ uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
@@ -250,7 +268,7 @@ int64_t* keys,
   }
   __syncthreads();
   extern __shared__ __align__(16) char smem[];
-  blockSort<1024, 8>(
+  blockSort<256, 32>(
       [&](auto i) { return partitions[base + i]; },
       [&](auto i) { return rows[base + i]; },
       partitions + base,
@@ -260,7 +278,7 @@ int64_t* keys,
 }
 
 int32_t TestStream::sort8KTempSize() {
-  return blockSortSharedSize<1024, 8, uint16_t, uint16_t>();
+  return blockSortSharedSize<256, 32, uint16_t, uint16_t>();
 }
 
 void TestStream::partition8K(
@@ -272,7 +290,7 @@ int64_t* keys,
     uint16_t* rows) {
   auto tempBytes = sort8KTempSize();
   int32_t num8KBlocks = roundUp(numRows, 8192) / 8192;
-  partition8KKernel<<<num8KBlocks, 1024, tempBytes, stream_->stream>>>(
+  partition8KKernel<<<num8KBlocks, 256, tempBytes, stream_->stream>>>(
       numRows, shift, keys, hashes, partitions, rows);
   CUDA_CHECK(cudaGetLastError());
 }
@@ -334,6 +352,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
     MockTable* table) {
   constexpr int32_t kBlockSize = 256;
   auto end = roundUp(numRows, 8192);
+  int32_t* alias = &probe->start[threadIdx.x + blockIdx.x * blockDim.x];
   for (auto batchStart = 0; batchStart < end; batchStart += 8192) {
     if (threadIdx.x == 0) {
       int32_t blockRangeSize = 0x10000 / gridDim.x;
@@ -350,7 +369,7 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       probe->end[blockIdx.x] =
           findLast(partitions + batchStart, batchSize, lastPartition);
     }
-    probe->failFill[blockDim.x] = 0;
+    probe->failFill[blockIdx.x] = 0;
     __syncthreads();
       extern __shared__ __align__(16) char smem[];
       int32_t* starts = reinterpret_cast<int32_t*>(smem);
@@ -369,9 +388,6 @@ void __global__ __launch_bounds__(1024) update8KKernel(
       if (idx < partitionEnd) {
         // Indirection to access the keys, hashes, args.
         row = batchStart + rows[idx];
-	if (row < batchStart || row > batchStart + 9191) {
-	  *(long*)0 =0;
-	}
         part = partitions[idx];
         isLeader = idx == counter || partitions[idx - 1] != part;
         bool hit = false;
@@ -406,22 +422,11 @@ void __global__ __launch_bounds__(1024) update8KKernel(
           }
         }
 
-	if (start == 0) { *(long*)0 = 0; }
         probe->start[blockIdx.x * blockDim.x + threadIdx.x] = start;
 	starts[threadIdx.x] = start;
-        probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
+        //probe->isHit[blockIdx.x * blockDim.x + threadIdx.x] = hit;
       }
       __syncthreads();
-      __threadfence();
-      auto endThreadIdx = min(blockDim.x, partitionEnd - counter);
-      if (threadIdx.x + 2< endThreadIdx) {
-	if (        probe->start[blockIdx.x * blockDim.x + threadIdx.x] != start) {
-	  *(long*)0 = 0;
-	}
-	if (starts[threadIdx.x + 2] != probe->start[blockDim.x * blockIdx.x + threadIdx.x + 2]) {
-	  *(long*)0 = 0;
-	}
-      }
       if (isLeader) {
         auto idx = counter + threadIdx.x;
         auto endThreadIdx = min(blockDim.x, partitionEnd - counter);

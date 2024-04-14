@@ -21,6 +21,8 @@
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
 
+#include <sstream>
+
 namespace facebook::velox::wave {
 
 void cudaCheck(cudaError_t err, const char* file, int line) {
