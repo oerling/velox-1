@@ -49,8 +49,14 @@ class BlockTestStream : public Stream {
   void testSum64(int32_t numBlocks, int64_t* numbers, int64_t* results);
 
   void testSort16(int32_t numBlocks, uint16_t** keys, uint16_t** values);
-  void partitionShorts(int32_t numBlocks, uint16_t** keys, int32_t* numKeys, int32_t numPartitions, 
-		       int32_t** ranks, int32_t** partitionStarts, int32_t**partitionedRows);
+  void partitionShorts(
+      int32_t numBlocks,
+      uint16_t** keys,
+      int32_t* numKeys,
+      int32_t numPartitions,
+      int32_t** ranks,
+      int32_t** partitionStarts,
+      int32_t** partitionedRows);
 };
 
 } // namespace facebook::velox::wave

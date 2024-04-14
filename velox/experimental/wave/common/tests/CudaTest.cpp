@@ -871,7 +871,7 @@ class RoundtripThread {
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
-	case OpCode::kWideAdd:
+          case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
