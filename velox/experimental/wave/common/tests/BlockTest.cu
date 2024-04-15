@@ -161,7 +161,7 @@ void __device__ partitionRows(
     RowNumber* partitionStarts,
     RowNumber* partitionedRows) {
   using Scan = cub::BlockScan<int32_t, kBlockDimX>;
-  constexpr int32_t kWarpThreads = CUB_LOG_WARP_THREADS(0);
+  constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
   auto warp = threadIdx.x / kWarpThreads;
   auto lane = cub::LaneId();
   extern __shared__ __align__(16) char smem[];
@@ -172,7 +172,7 @@ void __device__ partitionRows(
     counters = reinterpret_cast<uint32_t*>(
         smem + sizeof(typename Scan::TempStorage) -
         (kBlockDimX - 2) * sizeof(int32_t));
-    for (auto i = 0; i < numPartitions; i += kBlockDimX) {
+    for (auto i = threadIdx.x; i < numPartitions; i += kBlockDimX) {
       counters[i] = 0;
     }
   }
@@ -188,14 +188,14 @@ void __device__ partitionRows(
     if (warpStart + lane < numKeys) {
       int32_t key = getter(warpStart + lane);
       uint32_t mask = __match_any_sync(laneMask, key);
-      int32_t leader = __ffs(mask) - 1;
-      uint32_t cnt = __popc(mask & lowMask<uint32_t>(lane));
+      int32_t leader = (kWarpThreads - 1) - __clz(mask);
+      uint32_t cnt = __popc(mask & lowMask<uint32_t>(lane + 1));
       uint32_t base;
       if (lane == leader) {
         base = atomicAdd(&counters[key], cnt);
       }
       base = __shfl_sync(laneMask, base, leader);
-      ranks[warpStart + lane] = base + cnt;
+      ranks[warpStart + lane] = base + cnt - 1;
     }
   }
   // Prefix sum the counts.
@@ -210,7 +210,9 @@ void __device__ partitionRows(
       localCount[0] += *aggregate;
     }
     Scan(*temp).InclusiveSum(localCount, localCount);
-    partitionStarts[start + threadIdx.x] = localCount[0];
+    if (start + threadIdx.x < numPartitions) {
+      partitionStarts[start + threadIdx.x] = localCount[0];
+    }
     if (threadIdx.x == kBlockDimX - 1 && start + kBlockDimX < numPartitions) {
       *aggregate = localCount[0];
     }

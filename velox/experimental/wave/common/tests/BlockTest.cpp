@@ -56,7 +56,7 @@ class BlockTest : public testing::Test {
     auto rowsRounded = bits::roundUp(numRows, 8);
     auto partitionsRounded = bits::roundUp(numPartitions, 8);
     int64_t bytes = sizeof(PartitionRun) +
-        kNumPartitionBlocks * (rowsRounded * 4 + partitionsRounded);
+      kNumPartitionBlocks * (rowsRounded * sizeof(int32_t) * 4 + partitionsRounded * sizeof(int32_t));
     if (!buffer || buffer->capacity() < bytes) {
       buffer = arena_->allocate<char>(bytes);
     }
