@@ -40,15 +40,29 @@ struct RowAllocator {
   char** rows{nullptr};
 };
 
- enum class probeStatus {kHit, kMiss, kMoreValues, kNeedSpace };
+ enum class probeState : uint8_t {kInit, kDone, kMoreValues, kNeedSpace, kRetry };
   
 struct HashProbe {
   /// Count of probe keys.
   int32_t numKeys;
+
   /// Hash numbers for probe keys.
   uint64_t* hashes;
-  /// Flag indicating if hit/miss/more values/need more space/...
+
+  /// List of input rows to retry in kernel. Sized to one per row of input. Used inside kernel, not meaningful after return.
+  int32_t* kernelRetries;
+
+  /// List of input rows to retry after host updated state. Sized to one per row of input.
+  int32_t* hostRetries;
+
+  /// ount of valid items in 'hostRetries'.
+  int32_t numHostRetries;
+  
+
   Probestatus* status;
+
+  // Optional payload rows hitting from a probe.
+  void** hits{nullptr};
 };
  
 struct HashTable {

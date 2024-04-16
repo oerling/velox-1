@@ -17,8 +17,9 @@
 #pragma once
 
 #include "velox/experimental/wave/common/Cuda.h"
+#include "velox/experimental/wave/common/hashTable.h" 
 
-/// Sample header for testing Block.cuh
+/// Sample header for testing Wave Utilities.
 
 namespace facebook::velox::wave {
 
@@ -57,6 +58,24 @@ class BlockTestStream : public Stream {
       int32_t** ranks,
       int32_t** partitionStarts,
       int32_t** partitionedRows);
+
+  enum class HashCase {kGroup, kBuild, kProbe};
+
+  // A mock hash table content row to test HashTable.
+  struct TestingRow {
+    int64_t key;
+
+    // Count of updates.
+    int64_t count{0};
+    
+    // Next pointer in the case simulating a non-unique join table.
+    hashRow* next{nullptr}; 
+
+    // flags for updating the row.
+    int32_t flags{0};
+  };
+  
+  void hashProbe(HashTable* table, HashProbe* probe, hashCase mode);
 };
 
 } // namespace facebook::velox::wave

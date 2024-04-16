@@ -83,9 +83,9 @@ class BlockTest : public testing::Test {
     // Check that every row is once in its proper partition.
     for (auto block = 0; block < kNumPartitionBlocks; ++block) {
       std::vector<bool> flags(run.numRows[block], false);
-      int32_t start = 0;
       for (auto part = 0; part < numPartitions; ++part) {
-        for (auto i = start; i < run.partitionStarts[block][part]; ++i) {
+	for (auto i = (part == 0 ? 0 : run.partitionStarts[block][part - 1]);
+	     i < run.partitionStarts[block][part]; ++i) {
           auto row = run.partitionedRows[block][i];
           EXPECT_LT(row, run.numRows[block]);
           EXPECT_FALSE(flags[row]);
@@ -279,7 +279,7 @@ TEST_F(BlockTest, partition) {
       stream.wait();
       auto time = getCurrentTimeMicro() - startMicros;
       std::cout << fmt::format(
-                       "Partition {} {} in {}, {} Mrows/s",
+                       "Partition {} batch={}  fanout={}  rate={} Mrows/s",
                        kNumPartitionBlocks,
                        rows,
                        parts,

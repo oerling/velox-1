@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
@@ -125,109 +141,6 @@ void BlockTestStream::testSort16(
   testSort<<<numBlocks, 256, tempBytes, stream_->stream>>>(keys, values);
 }
 
-template <int kBlockSize>
-int32_t partitionRowsSharedSize(int32_t numPartitions) {
-  using Scan = cub::BlockScan<int, kBlockSize>;
-  auto scanSize = sizeof(typename Scan::TempStorage) + sizeof(int32_t);
-  int32_t counterSize = sizeof(int32_t) * numPartitions;
-  if (counterSize <= scanSize) {
-    return scanSize;
-  }
-  static_assert(
-      sizeof(typename Scan::TempStorage) >= sizeof(int32_t) * kBlockSize);
-  return scanSize + counterSize - (kBlockSize - 2) * sizeof(int32_t);
-}
-
-/// Partitions a sequence of indices into runs where the indices
-/// belonging to the same partition are contiguous. Indices from 0
-/// to 'numKeys-1' are partitioned into 'partitionedRows', which
-/// must have space for 'numKeys' row numbers. The 0-based partition
-/// number for row 'i' is given by 'getter(i)'.  The row numbers for
-/// partition 0 start at 0. The row numbers for partition i start at
-/// 'partitionStarts[i-1]'.  If 'counters' is non-nullptr it is an
-/// array of 'numPartitions' counters that are expected to be
-/// initialized to 0. If it is nullptr, we use shared memory. There
-/// must be at least the amount of shared memory given by
-/// partitionSharedSize(numPartitions). If counters is non-nullptr
-/// 'numPartitions' to partitionSharedSize can be 0.  'ranks' is a
-/// temporary array of 'numKeys' elements.
-template <int32_t kBlockDimX, typename RowNumber, typename Getter>
-void __device__ partitionRows(
-    Getter getter,
-    uint32_t numKeys,
-    uint32_t numPartitions,
-    uint32_t* counters,
-    RowNumber* ranks,
-    RowNumber* partitionStarts,
-    RowNumber* partitionedRows) {
-  using Scan = cub::BlockScan<int32_t, kBlockDimX>;
-  constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
-  auto warp = threadIdx.x / kWarpThreads;
-  auto lane = cub::LaneId();
-  extern __shared__ __align__(16) char smem[];
-
-  if (!counters) {
-    // The first kBlockDimX - 2 counters overlap with the smem of the block
-    // scan. These will be in registers when the scan starts.
-    counters = reinterpret_cast<uint32_t*>(
-        smem + sizeof(typename Scan::TempStorage) -
-        (kBlockDimX - 2) * sizeof(int32_t));
-    for (auto i = threadIdx.x; i < numPartitions; i += kBlockDimX) {
-      counters[i] = 0;
-    }
-  }
-  __syncthreads();
-  for (auto start = 0; start < numKeys; start += kBlockDimX) {
-    int32_t warpStart = start + warp * kWarpThreads;
-    if (start >= numKeys) {
-      break;
-    }
-    uint32_t laneMask = warpStart + kWarpThreads <= numKeys
-        ? 0xffffffff
-        : lowMask<uint32_t>(numKeys - warpStart);
-    if (warpStart + lane < numKeys) {
-      int32_t key = getter(warpStart + lane);
-      uint32_t mask = __match_any_sync(laneMask, key);
-      int32_t leader = (kWarpThreads - 1) - __clz(mask);
-      uint32_t cnt = __popc(mask & lowMask<uint32_t>(lane + 1));
-      uint32_t base;
-      if (lane == leader) {
-        base = atomicAdd(&counters[key], cnt);
-      }
-      base = __shfl_sync(laneMask, base, leader);
-      ranks[warpStart + lane] = base + cnt - 1;
-    }
-  }
-  // Prefix sum the counts.
-  auto* temp = reinterpret_cast<typename Scan::TempStorage*>(smem);
-  int32_t* aggregate =
-      reinterpret_cast<int32_t*>(smem + sizeof(typename Scan::TempStorage));
-  *aggregate = 0;
-  for (auto start = 0; start < numPartitions; start += kBlockDimX) {
-    int32_t localCount[1];
-    localCount[0] = counters[start + threadIdx.x];
-    if (threadIdx.x == 0) {
-      localCount[0] += *aggregate;
-    }
-    Scan(*temp).InclusiveSum(localCount, localCount);
-    if (start + threadIdx.x < numPartitions) {
-      partitionStarts[start + threadIdx.x] = localCount[0];
-    }
-    if (threadIdx.x == kBlockDimX - 1 && start + kBlockDimX < numPartitions) {
-      *aggregate = localCount[0];
-    }
-    __syncthreads();
-  }
-  // Write the row numbers of the inputs into the rankth position in each
-  // partition.
-  for (auto start = 0; start < numKeys; start += kBlockDimX) {
-    auto i = start + threadIdx.x;
-    auto key = getter(i);
-    auto keyStart = key == 0 ? 0 : partitionStarts[key - 1];
-    partitionedRows[keyStart + ranks[i]] = i;
-  }
-}
-
 /// Calls partitionRows on each thread block of 256 threads. The parameters
 /// correspond to 'partitionRows'. Each is an array subscripted by blockIdx.x.
 void __global__ partitionShortsKernel(
@@ -241,7 +154,6 @@ void __global__ partitionShortsKernel(
       [&](auto i) { return keys[blockIdx.x][i]; },
       numKeys[blockIdx.x],
       numPartitions,
-      nullptr,
       ranks[blockIdx.x],
       partitionStarts[blockIdx.x],
       partitionedRows[blockIdx.x]);
@@ -262,6 +174,50 @@ void BlockTestStream::partitionShorts(
   CUDA_CHECK(cudaGetLastError());
 }
 
+void __global__ hashTestKernel(HashTable* table HashProbe* probe, BlockTestStream::hashCase mode) {
+  switch (mode) {
+  case HashCase::kBuild:
+    genericProbe<TestingRow>(int32_t i, TestingRow* row) {
+      if (!row) {
+	return ProbeState::kRetry;
+      }
+      if (probe->keys[i] == row->key) {
+	return ProbeState::kDone;
+      }
+      return probestate::kInit;
+    },
+      [&](int32_t i, HashBucket* bucket, int32_t tagIdx, uint32_t oldTags) {
+	if (!addNewTag(hashtag(probe->hashes[i]), oldTags, bucket, tagIdx)) {
+	  return ProbeState::kRetry;
+	}
+	auto* row = getNewRow(table, probe->hash[i]);
+	if (!row) {
+	  *(long*)0 = 0;
+	} else {
+	  setBucketPtr(bucket, tagIdx, row);
+	}
+      });
+     [&](hashProbe* probe, int32_t i, void* row) -> ProbeState {
+       if (probe->keys[i] == row->key) {
+	 return ProbeState::kDone;
+       }
+       return ProbeState::kMiss;
+     });,
+   break;
+    case HashCase::kGroup:
+ case HashCase::kProbe:
+
+    }
+  }
+  
+
+  void BlockTestStream::hash(HashTable* table, HashProbe* probe, HashCase mode) {
+    hashTestKernel<<<numBlocks, 256, shared, stream_->stream>>>(table, probe, mode);
+    CUDA_CHECK(cudaGetLastError());
+  }
+
+
+  
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
 REGISTER_KERNEL("sum64", sum64);
