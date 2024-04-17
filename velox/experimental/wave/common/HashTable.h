@@ -16,67 +16,77 @@
 
 #pragma once
 
-
-
-
 #include <cstdint.h>
 
-/// Structs for tagged hash table. Can be inclued in both Velox .cpp and .cu.
+/// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and .cu.
 namespace facebook::velox::wave {
 
 /// A 32 byte tagged bucket with 4 tags, 4 flag bytes and 4 6-byte
 /// pointers. Fits in one 32 byte GPU cache sector.
-struct Bucket {
+struct GpuBucketMembers {
   uint32_t tags;
   uint32_t flags;
-  short data[12];
+  uint16_t data[12];
 };
 
-/// A set of rows 
-struct RowAllocator {
-  int32_t fill{0};
-  int32_t capacity{0};
-  // Array of pointers to starts of preallocated rows.
-  char** rows{nullptr};
-};
+/// A set of preallocated row.
+ struct RowAllocator;
+ enum class probeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
 
- enum class probeState : uint8_t {kInit, kDone, kMoreValues, kNeedSpace, kRetry };
-  
+ /// Operands for one TB of hash probe.
 struct HashProbe {
   /// Count of probe keys.
   int32_t numKeys;
 
+  /// Data for probe keys. To be interpreted by Ops of the probe, no
+  /// fixed format.
+  void* probeKeys;
+  
   /// Hash numbers for probe keys.
   uint64_t* hashes;
 
-  /// List of input rows to retry in kernel. Sized to one per row of input. Used inside kernel, not meaningful after return.
+  /// List of input rows to retry in kernel. Sized to one per row of
+  /// input. Used inside kernel, not meaningful after return. Sample
+  /// use case is another warp updating the same row.
   int32_t* kernelRetries;
 
-  /// List of input rows to retry after host updated state. Sized to one per row of input.
+  /// List of input rows to retry after host updated state. Sized to
+  /// one per row of input. The reason for a host side retry is
+  /// needing more space. The host will decide to allocate/spill/error
+  /// out.
   int32_t* hostRetries;
 
-  /// ount of valid items in 'hostRetries'.
+  /// Count of valid items in 'hostRetries'.
   int32_t numHostRetries;
+
+  /// Space in 'hits' and 'hitRows'. Should be a multiple of probe block width.
+  int32_t maxHits{0};
+
+  /// Row numbers for hits. Indices into 'hashes'.
+  int32_t hitRows{nullptr};
   
-
-  Probestatus* status;
-
   // Optional payload rows hitting from a probe.
   void** hits{nullptr};
 };
+
+struct GpuBucket;
  
 struct HashTable {
-  Bucket* buckets;
+  /// Bucket array. Size is 'sizeMask + 1'.
+  GpuBucket* buckets;
+
+  // Mask to extract index into 'buckets' from a hash number. a
+  // sizemask of 63 means 64 buckets, which is up to 256 entries.
   uint32_t sizeMask;
   
-
   // Translates a hash number to a partition number '(hash &
   // partitionMask) >> partitionShift' is a partition number used as
   // a physical partition of the table. Used as index into 'allocators'.
   uint32_t partitionMask{0};
   uint8_t partitionShift{0};
   
-  RowAllocators* rowAllocators;
+  /// A RowAllocator for each partition.
+  RowAllocators*allocators;
 };
 
 }

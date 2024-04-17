@@ -174,6 +174,40 @@ void BlockTestStream::partitionShorts(
   CUDA_CHECK(cudaGetLastError());
 }
 
+/// An Ops parameter class to do group by.
+class MockGroupByOps {
+public:
+  bool __device__ compare(HashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
+    return row->key == reinterpret_cast<int64_t*>(probe->keys)[i];
+  }
+
+  TestingRow* __device__  newRow(Hashtable* table, bucketIdx) {
+    int32_t part = (bucketIdx & table->partitionMask) >> table->partitionShift;
+    auto row = allocateRow<TestingRow>(table->allocators[partition]);
+  }
+  
+  ProbeState __device__ insert(hashTable* table GpuBucket* bucket, uint32_t& misses, uint32_t& oldTag, uint32_t tagWord, int32_t i, HashProbe* probe) {
+    int32_t bucketIdx = table->buckets - bucket;
+    auto row = newRow(table, bucketIdx);
+    if (!row) {
+      return ProbeState::kNeedSpace;
+    }
+    row->key = reinterpret_cast<int64_t*>(probe->keys)[i];
+    probe->flags = testingRow::kExclusive;
+    auto missShift = __ffs(misses) - 1;
+    if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
+      allocator->free(row);
+      return ProbeState::kRetry;
+    }
+    bucket->store(missShift / 8, row);
+    oldTags = bucket->tags;
+    misses = __vcmpeq(oldTags, 0);
+
+    return ProbeState::kDone;
+  }
+};
+
+
 void __global__ hashTestKernel(HashTable* table HashProbe* probe, BlockTestStream::hashCase mode) {
   switch (mode) {
   case HashCase::kBuild:
