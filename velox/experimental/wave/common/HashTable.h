@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <cstdint.h>
+#include <cstdint>
 
 /// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and .cu.
 namespace facebook::velox::wave {
@@ -31,7 +31,7 @@ struct GpuBucketMembers {
 
 /// A set of preallocated row.
  struct RowAllocator;
- enum class probeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
+ enum class ProbeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
 
  /// Operands for one TB of hash probe.
 struct HashProbe {
@@ -40,7 +40,7 @@ struct HashProbe {
 
   /// Data for probe keys. To be interpreted by Ops of the probe, no
   /// fixed format.
-  void* probeKeys;
+  void* keys;
   
   /// Hash numbers for probe keys.
   uint64_t* hashes;
@@ -63,7 +63,7 @@ struct HashProbe {
   int32_t maxHits{0};
 
   /// Row numbers for hits. Indices into 'hashes'.
-  int32_t hitRows{nullptr};
+  int32_t* hitRows{nullptr};
   
   // Optional payload rows hitting from a probe.
   void** hits{nullptr};
@@ -71,7 +71,7 @@ struct HashProbe {
 
 struct GpuBucket;
  
-struct HashTable {
+struct GpuHashTableBase {
   /// Bucket array. Size is 'sizeMask + 1'.
   GpuBucket* buckets;
 
@@ -86,7 +86,7 @@ struct HashTable {
   uint8_t partitionShift{0};
   
   /// A RowAllocator for each partition.
-  RowAllocators*allocators;
+  RowAllocator*allocators;
 };
 
 }

@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <cub/block/block_radix_sort.cuh>
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>

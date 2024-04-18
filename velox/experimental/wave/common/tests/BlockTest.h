@@ -17,12 +17,46 @@
 #pragma once
 
 #include "velox/experimental/wave/common/Cuda.h"
-#include "velox/experimental/wave/common/hashTable.h" 
+#include "velox/experimental/wave/common/HashTable.h" 
 
 /// Sample header for testing Wave Utilities.
 
 namespace facebook::velox::wave {
 
+
+  /// A mock aggregate that concatenates numbers, like array_agg of bigint.
+struct ArrayAgg64 {
+  struct Run {
+    Run* next;
+    int64_t data[16];
+  };
+
+  Run* first{nullptr};
+  Run* last{nullptr};
+  // Fill of 'last->data', all other runs are full.
+  int8_t numInLast{0};
+};
+
+  /// A mock hash table content row to test HashTable.
+  struct TestingRow {
+    // Single ke part.
+    int64_t key;
+
+    // Count of updates. Sample aggregate
+    int64_t count{0};
+
+    // A mock concatenating aggregate. Use for testing control flow in
+    // running out of space in updating a group.
+    ArrayAgg64 concatenation;
+    
+    // Next pointer in the case simulating a non-unique join table.
+    TestingRow* next{nullptr}; 
+
+    // flags for updating the row. E.g. probed flag, marker for exclusive write.
+    int32_t flags{0};
+  };
+
+  
 class BlockTestStream : public Stream {
  public:
   /// In each block of 256 bools in bools[i], counts the number of
@@ -62,43 +96,9 @@ class BlockTestStream : public Stream {
 
   // Operation for hash table tests.
   enum class HashCase {kGroup, kBuild, kProbe};
-
-  /// A mock aggregate that concatenates numbers, like array_agg of bigint.
-struct ArrayAgg64 {
-  struct Run {
-    Run* next;
-    int64_t data[16];
-  };
-
-  Run* first{nullptr};
-  Run* last{nullptr};
-  // Fill of 'last->data', all other runs are full.
-  int8_t numInLast{0};
-};
-
-  /// A mock hash table content row to test HashTable.
-  struct TestingRow {
-    static constexpr int32_t kExclusive = 1;
-
-    // Single ke part.
-    int64_t key;
-
-    // Count of updates. Sample aggregate
-    int64_t count{0};
-
-    // A mock concatenating aggregate. Use for testing control flow in
-    // running out of space in updating a group.
-    ArrayAgg64 concatenation;
-    
-    // Next pointer in the case simulating a non-unique join table.
-    hashRow* next{nullptr}; 
-
-    // flags for updating the row. E.g. probed flag, marker for exclusive write.
-    int32_t flags{0};
-  };
   
-
-  void hashProbe(HashTable* table, HashProbe* probe, hashCase mode);
+  /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and temp storage. 'table' and 'probe' are expected to be resident on device. 'numKeys' is a host side copy of numKeys in 'probe'.
+  void hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numKeys, HashCase mode);
 };
 
 } // namespace facebook::velox::wave

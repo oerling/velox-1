@@ -17,10 +17,11 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/HashTable.cuh"
 
 namespace facebook::velox::wave {
 
-using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
 
 __global__ void boolToIndices(
     uint8_t** bools,
@@ -174,82 +175,108 @@ void BlockTestStream::partitionShorts(
   CUDA_CHECK(cudaGetLastError());
 }
 
-/// An Ops parameter class to do group by.
+  /// A mock complex accumulator update function.
+  ProbeState __device__ arrayAgg64Append(ArrayAgg64* accumulator, int64_t arg, RowAllocator* allocator) {
+      auto* last = accumulator->last;
+    if (!last || accumulator->numInLast >= sizeof(last->data) / sizeof(int64_t)) {
+      auto* next = allocator->allocate<ArrayAgg64::Run>(1);
+      if (!next) {
+	return ProbeState::kNeedSpace;
+      }
+      next->next = nullptr;
+      if (accumulator->last) {
+	accumulator->last->next = next;
+	accumulator->last = next;
+      } else {
+	accumulator->first = accumulator->last = next;
+      }
+    }
+    accumulator->last->data[accumulator->numInLast++] =arg;
+    return ProbeState::kDone;
+   }
+  
+/// An mock Ops parameter class to do group by.
 class MockGroupByOps {
 public:
-  bool __device__ compare(HashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
-    return row->key == reinterpret_cast<int64_t*>(probe->keys)[i];
+  bool __device__ compare(GpuHashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
+    return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
   }
 
-  TestingRow* __device__  newRow(Hashtable* table, bucketIdx) {
-    int32_t part = (bucketIdx & table->partitionMask) >> table->partitionShift;
-    auto row = allocateRow<TestingRow>(table->allocators[partition]);
+  TestingRow* __device__  newRow(GpuHashTable* table, int32_t bucketIdx, RowAllocator*& allocator) {
+    int32_t part = table->partitionIdx(bucketIdx);
+    allocator = &table->allocators[part];
+    auto row = allocator->allocateRow<TestingRow>();
   }
   
-  ProbeState __device__ insert(hashTable* table GpuBucket* bucket, uint32_t& misses, uint32_t& oldTag, uint32_t tagWord, int32_t i, HashProbe* probe) {
-    int32_t bucketIdx = table->buckets - bucket;
-    auto row = newRow(table, bucketIdx);
+  ProbeState __device__ insert(GpuHashTable* table, GpuBucket* bucket, uint32_t misses, uint32_t oldTags, uint32_t tagWord, int32_t i, HashProbe* probe) {
+    int32_t bucketIdx = table->buckets - bucket;    	       
+    RowAllocator* allocator;
+    auto row = newRow(table, bucketIdx, allocator);
     if (!row) {
       return ProbeState::kNeedSpace;
     }
-    row->key = reinterpret_cast<int64_t*>(probe->keys)[i];
-    probe->flags = testingRow::kExclusive;
+    row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
+    row->flags = GpuHashTable::kExclusive;
     auto missShift = __ffs(misses) - 1;
     if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
       allocator->free(row);
       return ProbeState::kRetry;
     }
     bucket->store(missShift / 8, row);
-    oldTags = bucket->tags;
-    misses = __vcmpeq(oldTags, 0);
-
+    row->count = 0;
+    new(&row->concatenation) ArrayAgg64();
+    update(table, bucket, row, i, probe);
+    row->flags = 0;
+    __threadfence();
     return ProbeState::kDone;
   }
+
+  TestingRow* __device__ getExclusive(GpuHashTable* table, GpuBucket* bucket, TestingRow* row, int32_t hitIdx, int32_t warp) {
+    if (0 == atomicCAS(&row->flags, 0, GpuHashTable::kExclusive)) {
+      return row;
+    }
+    return nullptr;
+  }
+
+  ProbeState __device__ update(GpuHashTable* table, GpuBucket* bucket, TestingRow* row, int32_t i, HashProbe* probe) {
+    ++row->count;
+    
+    int64_t arg = reinterpret_cast<int64_t**>(probe->keys)[1][i];
+    int32_t part = table->partitionIdx(bucket - table->buckets);
+    auto* allocator = &table->allocators[part];
+    auto state = arrayAgg64Append(&row->concatenation, arg, allocator);
+    row->flags = 0;
+    __threadfence();
+    return state;
+  }
+  
 };
 
 
-void __global__ hashTestKernel(HashTable* table HashProbe* probe, BlockTestStream::hashCase mode) {
+  void __global__ hashTestKernel(GpuHashTable* table, HashProbe* probe, BlockTestStream::HashCase mode) {
   switch (mode) {
-  case HashCase::kBuild:
-    genericProbe<TestingRow>(int32_t i, TestingRow* row) {
-      if (!row) {
-	return ProbeState::kRetry;
-      }
-      if (probe->keys[i] == row->key) {
-	return ProbeState::kDone;
-      }
-      return probestate::kInit;
-    },
-      [&](int32_t i, HashBucket* bucket, int32_t tagIdx, uint32_t oldTags) {
-	if (!addNewTag(hashtag(probe->hashes[i]), oldTags, bucket, tagIdx)) {
-	  return ProbeState::kRetry;
-	}
-	auto* row = getNewRow(table, probe->hash[i]);
-	if (!row) {
-	  *(long*)0 = 0;
-	} else {
-	  setBucketPtr(bucket, tagIdx, row);
-	}
-      });
-     [&](hashProbe* probe, int32_t i, void* row) -> ProbeState {
-       if (probe->keys[i] == row->key) {
-	 return ProbeState::kDone;
-       }
-       return ProbeState::kMiss;
-     });,
-   break;
-    case HashCase::kGroup:
- case HashCase::kProbe:
-
+  case BlockTestStream::HashCase::kGroup: {
+    table->updatingProbe<TestingRow>(probe, MockGroupByOps());
+    break;
+  }
+  case BlockTestStream::HashCase::kBuild:
+  case BlockTestStream::HashCase::kProbe:
+   *(long*)0 = 0; // Unimplemented.
     }
   }
   
 
-  void BlockTestStream::hash(HashTable* table, HashProbe* probe, HashCase mode) {
-    hashTestKernel<<<numBlocks, 256, shared, stream_->stream>>>(table, probe, mode);
+  void BlockTestStream::hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numKeys, HashCase mode) {
+        int32_t numBlocks = roundUp(numKeys, kBlockSize) / kBlockSize;
+	constexpr int32_t kBlockSize = 256;
+	
+    int32_t shared = 0;
+    if (mode == HashCase::kGroup) {
+      shared = GpuHashTable::updatingProbeSharedSize();
+    }
+    hashTestKernel<<<numBlocks, kBlockSize, shared, stream_->stream>>>(reinterpret_cast<GpuHashTable*>(table), probe, mode);
     CUDA_CHECK(cudaGetLastError());
   }
-
 
   
 REGISTER_KERNEL("testSort", testSort);
