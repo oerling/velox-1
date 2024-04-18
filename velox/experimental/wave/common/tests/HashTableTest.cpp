@@ -81,7 +81,10 @@ class HashTableTest : public testing::Test {
       + 2 * sizeof(int32_t) * roundedRows; 
   }
 
+  //
+  prepareInput(HashRun& run)
 
+  
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
