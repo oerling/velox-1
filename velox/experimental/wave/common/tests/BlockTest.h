@@ -97,8 +97,8 @@ class BlockTestStream : public Stream {
   // Operation for hash table tests.
   enum class HashCase {kGroup, kBuild, kProbe};
   
-  /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and temp storage. 'table' and 'probe' are expected to be resident on device. 'numKeys' is a host side copy of numKeys in 'probe'.
-  void hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numKeys, HashCase mode);
+  /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and temp storage. 'table' and 'probe' are expected to be resident on device. 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
+  void hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numBlocks, HashCase mode);
 };
 
 } // namespace facebook::velox::wave

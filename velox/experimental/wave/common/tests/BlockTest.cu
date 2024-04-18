@@ -198,6 +198,14 @@ void BlockTestStream::partitionShorts(
 /// An mock Ops parameter class to do group by.
 class MockGroupByOps {
 public:
+  int32_t __device__ blockBase(HashProbe* probe) {
+    return probe->numRowsPerThread * blockDim.x * blockIdx.x;
+  }
+
+  int32_t __device__ numRowsInBlock(HashProbe* probe) {
+    return probe->numKeys[blockIdx.x];
+  }
+  
   bool __device__ compare(GpuHashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
     return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
   }
@@ -266,10 +274,8 @@ public:
   }
   
 
-  void BlockTestStream::hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numKeys, HashCase mode) {
-        int32_t numBlocks = roundUp(numKeys, kBlockSize) / kBlockSize;
-	constexpr int32_t kBlockSize = 256;
-	
+  void BlockTestStream::hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numBlocks, HashCase mode) {
+    constexpr int32_t kBlockSize = 256;
     int32_t shared = 0;
     if (mode == HashCase::kGroup) {
       shared = GpuHashTable::updatingProbeSharedSize();
@@ -283,5 +289,6 @@ REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
 REGISTER_KERNEL("sum64", sum64);
 REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
+REGISTER_KERNEL("hashTest", hashTestKernel);
 
 } // namespace facebook::velox::wave

@@ -35,8 +35,11 @@ struct GpuBucketMembers {
 
  /// Operands for one TB of hash probe.
 struct HashProbe {
-  /// Count of probe keys.
-  int32_t numKeys;
+  /// The number of input rows processed by each thread of a TB. The base index for a block in the arrays in 'this' is 'numRowsPerThread * blockDim.x * blockIdx.x'
+  int32_t numRowsPerThread{1};
+
+  /// Count of probe keys for each TB. Subscript is blockIdx.x.
+  int32_t* numKeys;
 
   /// Data for probe keys. To be interpreted by Ops of the probe, no
   /// fixed format.
@@ -56,8 +59,8 @@ struct HashProbe {
   /// out.
   int32_t* hostRetries;
 
-  /// Count of valid items in 'hostRetries'.
-  int32_t numHostRetries;
+  /// Count of valid items in 'hostRetries'. The subscript is blockIdx.x.
+  int32_t* numHostRetries;
 
   /// Space in 'hits' and 'hitRows'. Should be a multiple of probe block width.
   int32_t maxHits{0};

@@ -38,7 +38,7 @@ struct RowAllocator {
     T* __device__ allocateRow() {
       auto idx = atomicAdd(&numUsed, 1);
       if (idx < capacity) {
-	return items[idx];
+	return reinterpret_cast<T*>(items[idx]);
       }
       return nullptr;
     }
@@ -61,13 +61,13 @@ struct RowAllocator {
       stringsFill = stringsCapacity;
       return nullptr;
     }
-    return strings + offset;
+    return reinterpret_cast<T*>(strings + offset);
   }
 };
 
   
   inline uint8_t __device__ hashTag(uint64_t h) {
-    return h >> 32;
+    return 0x80 | (h >> 32);
   }
 
   struct GpuBucket : public GpuBucketMembers {
@@ -102,6 +102,7 @@ struct RowAllocator {
   struct ProbeShared {
     uint32_t numKernelRetries;
     uint32_t numHostRetries;
+    int32_t blockBase;
   };
 
 class GpuHashTable : public GpuHashTableBase {
@@ -114,8 +115,9 @@ class GpuHashTable : public GpuHashTableBase {
 
 template <typename RowType, typename Ops>
 void __device__ readOnlyProbe(HashProbe* probe, Ops ops) {
-  int32_t numKeys = probe->numKeys;
-  for (auto i = threadIdx.x; i < numKeys; i += blockDim.x) {
+  int32_t blockBase = ops.blockBase(probe);
+  int32_t end = ops.numRowsInBlock(probe) + blockBase;
+  for (auto i = blockBase + threadIdx.x; i < end; i += blockDim.x) {
     auto h = probe->hashes[i];
         uint32_t   tagWord = hashTag(h);
 	tagWord |= tagWord << 8;
@@ -152,13 +154,14 @@ void __device__ updatingProbe(HashProbe* probe, Ops ops) {
   if (threadIdx.x == 0) {
     sharedState->numKernelRetries = 0;
     sharedState->numHostRetries = 0;
+    sharedState->blockBase = ops.blockBase(probe);
   }
   __syncthreads();
   auto lane = cub::LaneId();
   constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
   auto warp = threadIdx.x / kWarpThreads;
   bool doingRetries = false;
-  int32_t numKeys = probe->numKeys;
+  int32_t numKeys = ops.numRowsInBlock(probe);
   for (;;) {
     for (auto count = 0; count < numKeys; count += blockDim.x) {
       auto i = count + threadIdx.x;
@@ -167,6 +170,7 @@ void __device__ updatingProbe(HashProbe* probe, Ops ops) {
       break;
     }
     uint32_t laneMask = warp  * kWarpThreads + kWarpThreads > numInBlock ? lowMask<uint32_t>(numInBlock - warp * kWarpThreads) : 0xffffffff;
+    i += sharedState->blockBase;
     if (doingRetries) {
       i = probe->kernelRetries[i];
     }
@@ -208,7 +212,7 @@ void __device__ updatingProbe(HashProbe* probe, Ops ops) {
       bucketIdx = (bucketIdx + 1) & sizeMask;
     }
     // Every lane has a hit or a miss.
-    uint32_t peers = __match_any_sync(laneMask, hit);
+    uint32_t peers = __match_any_sync(laneMask, reinterpret_cast<int64_t>(hit));
       RowType* writable = nullptr;
       if (!hit) {
 	// The missers divide by bucket.
@@ -280,8 +284,6 @@ void __device__ updatingProbe(HashProbe* probe, Ops ops) {
   }
 }
 
-
-
   int32_t __device__ partitionIdx(int32_t bucketIdx) const {
     return (bucketIdx & partitionMask) >> partitionShift;
   }
@@ -289,11 +291,11 @@ void __device__ updatingProbe(HashProbe* probe, Ops ops) {
 
 private:
   static void __device__ addKernelRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
-    probe->kernelRetries[atomicAdd(&shared->numKernelRetries, 1)] = i;
+    probe->kernelRetries[shared->blockBase + atomicAdd(&shared->numKernelRetries, 1)] = i;
   }
 
   static void __device__ addHostRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
-    probe->hostRetries[atomicAdd(&shared->numHostRetries, 1)] = i;
+    probe->hostRetries[shared->blockBase + atomicAdd(&shared->numHostRetries, 1)] = i;
   }
 };
 }
