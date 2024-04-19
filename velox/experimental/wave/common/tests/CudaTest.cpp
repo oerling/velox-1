@@ -32,6 +32,7 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/test/hashTableTestUtils.h"
 
 #include <iostream>
 
@@ -677,26 +678,6 @@ struct CpuTable {
   std::vector<int64_t*> rows;
   std::vector<char> columnHolder;
 };
-
-void makeInput(
-    int32_t numRows,
-    int32_t keyRange,
-    int32_t powerOfTwo,
-    int64_t counter,
-    uint8_t numColumns,
-    int64_t** columns) {
-  int32_t delta = counter & (powerOfTwo - 1);
-  for (auto i = 0; i < numRows; ++i) {
-    auto previous = columns[0][i];
-    columns[0][i] = scale32((previous + delta + i) * kPrime32, keyRange);
-  }
-  counter += numRows;
-  for (auto c = 1; c < numColumns; ++c) {
-    for (auto r = 0; r < numRows; ++r) {
-      columns[c][r] = c + (r & 7);
-    }
-  }
-}
 
 void hashAndPartition8K(int32_t numRows, int64_t* keys, uint64_t* hashes) {
   constexpr int32_t K8 = 8192;
