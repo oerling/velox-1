@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/common/test/HashTestUtil.h"
 
 
 namespace facebook::velox::wave {
@@ -31,7 +32,14 @@ void makeInput(
   int32_t delta = counter & (powerOfTwo - 1);
   for (auto i = 0; i < numRows; ++i) {
     auto previous = columns[0][i];
-    columns[0][i] = scale32((previous + delta + i) * kPrime32, keyRange);
+    auto seed = (previous + delta + i) * kPrime32;
+    if (hotPct && scale32(seed >> 32, 100) <= hotPct) {
+      int32_t nth = scale32(seed, numHot);
+      nth = std::min<int64_t>(keyRange - 1, nth * (static_cast<float>(keyRange) / nth));
+      columns[0][i] = nth;
+    } else {
+      columns[0][i] = scale32(seed, keyRange);
+    }
   }
   counter += numRows;
   for (auto c = 1; c < numColumns; ++c) {

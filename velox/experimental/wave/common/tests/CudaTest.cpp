@@ -541,9 +541,6 @@ int64_t factor(int64_t n) {
   return 0;
 }
 
-inline uint32_t scale32(uint32_t n, uint32_t scale) {
-  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
-}
 
 void fillMockTable(int32_t keyRange, MockTable* table) {
   for (auto i = 0; i < keyRange; ++i) {
