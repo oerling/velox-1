@@ -16,12 +16,12 @@
 
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
-#include "velox/experimental/wave/common/tests/BlockTest.h"
 #include "velox/experimental/wave/common/HashTable.cuh"
+#include "velox/experimental/wave/common/tests/BlockTest.h"
 
 namespace facebook::velox::wave {
 
-  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
 
 __global__ void boolToIndices(
     uint8_t** bools,
@@ -175,29 +175,32 @@ void BlockTestStream::partitionShorts(
   CUDA_CHECK(cudaGetLastError());
 }
 
-  /// A mock complex accumulator update function.
-  ProbeState __device__ arrayAgg64Append(ArrayAgg64* accumulator, int64_t arg, RowAllocator* allocator) {
-      auto* last = accumulator->last;
-    if (!last || accumulator->numInLast >= sizeof(last->data) / sizeof(int64_t)) {
-      auto* next = allocator->allocate<ArrayAgg64::Run>(1);
-      if (!next) {
-	return ProbeState::kNeedSpace;
-      }
-      next->next = nullptr;
-      if (accumulator->last) {
-	accumulator->last->next = next;
-	accumulator->last = next;
-      } else {
-	accumulator->first = accumulator->last = next;
-      }
+/// A mock complex accumulator update function.
+ProbeState __device__ arrayAgg64Append(
+    ArrayAgg64* accumulator,
+    int64_t arg,
+    RowAllocator* allocator) {
+  auto* last = accumulator->last;
+  if (!last || accumulator->numInLast >= sizeof(last->data) / sizeof(int64_t)) {
+    auto* next = allocator->allocate<ArrayAgg64::Run>(1);
+    if (!next) {
+      return ProbeState::kNeedSpace;
     }
-    accumulator->last->data[accumulator->numInLast++] =arg;
-    return ProbeState::kDone;
-   }
-  
+    next->next = nullptr;
+    if (accumulator->last) {
+      accumulator->last->next = next;
+      accumulator->last = next;
+    } else {
+      accumulator->first = accumulator->last = next;
+    }
+  }
+  accumulator->last->data[accumulator->numInLast++] = arg;
+  return ProbeState::kDone;
+}
+
 /// An mock Ops parameter class to do group by.
 class MockGroupByOps {
-public:
+ public:
   int32_t __device__ blockBase(HashProbe* probe) {
     return probe->numRowsPerThread * blockDim.x * blockIdx.x;
   }
@@ -205,19 +208,28 @@ public:
   int32_t __device__ numRowsInBlock(HashProbe* probe) {
     return probe->numKeys[blockIdx.x];
   }
-  
-  bool __device__ compare(GpuHashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
+
+  bool __device__
+  compare(GpuHashTable* table, HashProbe* probe, int32_t i, TestingRow* row) {
     return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
   }
 
-  TestingRow* __device__  newRow(GpuHashTable* table, int32_t bucketIdx, RowAllocator*& allocator) {
+  TestingRow* __device__
+  newRow(GpuHashTable* table, int32_t bucketIdx, RowAllocator*& allocator) {
     int32_t part = table->partitionIdx(bucketIdx);
     allocator = &table->allocators[part];
     auto row = allocator->allocateRow<TestingRow>();
   }
-  
-  ProbeState __device__ insert(GpuHashTable* table, GpuBucket* bucket, uint32_t misses, uint32_t oldTags, uint32_t tagWord, int32_t i, HashProbe* probe) {
-    int32_t bucketIdx = table->buckets - bucket;    	       
+
+  ProbeState __device__ insert(
+      GpuHashTable* table,
+      GpuBucket* bucket,
+      uint32_t misses,
+      uint32_t oldTags,
+      uint32_t tagWord,
+      int32_t i,
+      HashProbe* probe) {
+    int32_t bucketIdx = table->buckets - bucket;
     RowAllocator* allocator;
     auto row = newRow(table, bucketIdx, allocator);
     if (!row) {
@@ -232,23 +244,33 @@ public:
     }
     bucket->store(missShift / 8, row);
     row->count = 0;
-    new(&row->concatenation) ArrayAgg64();
+    new (&row->concatenation) ArrayAgg64();
     update(table, bucket, row, i, probe);
     row->flags = 0;
     __threadfence();
     return ProbeState::kDone;
   }
 
-  TestingRow* __device__ getExclusive(GpuHashTable* table, GpuBucket* bucket, TestingRow* row, int32_t hitIdx, int32_t warp) {
+  TestingRow* __device__ getExclusive(
+      GpuHashTable* table,
+      GpuBucket* bucket,
+      TestingRow* row,
+      int32_t hitIdx,
+      int32_t warp) {
     if (0 == atomicCAS(&row->flags, 0, GpuHashTable::kExclusive)) {
       return row;
     }
     return nullptr;
   }
 
-  ProbeState __device__ update(GpuHashTable* table, GpuBucket* bucket, TestingRow* row, int32_t i, HashProbe* probe) {
+  ProbeState __device__ update(
+      GpuHashTable* table,
+      GpuBucket* bucket,
+      TestingRow* row,
+      int32_t i,
+      HashProbe* probe) {
     ++row->count;
-    
+
     int64_t arg = reinterpret_cast<int64_t**>(probe->keys)[1][i];
     int32_t part = table->partitionIdx(bucket - table->buckets);
     auto* allocator = &table->allocators[part];
@@ -257,43 +279,53 @@ public:
     __threadfence();
     return state;
   }
-  
 };
 
-
-  void __global__ hashTestKernel(GpuHashTable* table, HashProbe* probe, BlockTestStream::HashCase mode) {
+void __global__ hashTestKernel(
+    GpuHashTable* table,
+    HashProbe* probe,
+    BlockTestStream::HashCase mode) {
   switch (mode) {
-  case BlockTestStream::HashCase::kGroup: {
-    table->updatingProbe<TestingRow>(probe, MockGroupByOps());
-    break;
-  }
-  case BlockTestStream::HashCase::kBuild:
-  case BlockTestStream::HashCase::kProbe:
-   *(long*)0 = 0; // Unimplemented.
+    case BlockTestStream::HashCase::kGroup: {
+      table->updatingProbe<TestingRow>(probe, MockGroupByOps());
+      break;
     }
+    case BlockTestStream::HashCase::kBuild:
+    case BlockTestStream::HashCase::kProbe:
+      *(long*)0 = 0; // Unimplemented.
   }
-  
+}
 
-  void BlockTestStream::hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numBlocks, HashCase mode) {
-    constexpr int32_t kBlockSize = 256;
-    int32_t shared = 0;
-    if (mode == HashCase::kGroup) {
-      shared = GpuHashTable::updatingProbeSharedSize();
-    }
-    hashTestKernel<<<numBlocks, kBlockSize, shared, stream_->stream>>>(reinterpret_cast<GpuHashTable*>(table), probe, mode);
-    CUDA_CHECK(cudaGetLastError());
+void BlockTestStream::hashTest(
+    GpuHashTableBase* table,
+    HashProbe* probe,
+    int32_t numBlocks,
+    HashCase mode) {
+  constexpr int32_t kBlockSize = 256;
+  int32_t shared = 0;
+  if (mode == HashCase::kGroup) {
+    shared = GpuHashTable::updatingProbeSharedSize();
   }
+  hashTestKernel<<<numBlocks, kBlockSize, shared, stream_->stream>>>(
+      reinterpret_cast<GpuHashTable*>(table), probe, mode);
+  CUDA_CHECK(cudaGetLastError());
+}
 
-void __global__ allocatorTestKernel(int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* allResults) {
+void __global__ allocatorTestKernel(
+    int32_t numAlloc,
+    int32_t numFree,
+    int32_t numStr,
+    AllocatorTestResult* allResults) {
   auto* result = allResults + threadIdx.x;
   for (;;) {
-    int32_t maxRows = sizeof(result->rows ) / sizeof(result->rows[0]); 
-    int32_t maxStrings = sizeof(result->strings ) / sizeof(result->strings[0]); 
+    int32_t maxRows = sizeof(result->rows) / sizeof(result->rows[0]);
+    int32_t maxStrings = sizeof(result->strings) / sizeof(result->strings[0]);
     for (auto count = 0; count < numAlloc; ++count) {
       if (result->numRows >= maxRows) {
-	return;
+        return;
       }
-      result->rows[result->numRows++] = result->allocator->allocateRow<int64_t>();
+      result->rows[result->numRows++] =
+          result->allocator->allocateRow<int64_t>();
     }
     for (auto count = 0; count < numFree; ++count) {
       result->allocator->freeRow(result->rows[--result->numRows]);
@@ -301,17 +333,22 @@ void __global__ allocatorTestKernel(int32_t numAlloc, int32_t numFree, int32_t n
     for (auto count = 0; count < numStr; ++count) {
       auto str = result->allocator->allocate<char>(11);
       if (!str) {
-	return;
+        return;
       }
       result->strings[result->numStrings++] = reinterpret_cast<int64_t*>(str);
     }
   }
 }
 
-void BlockTestStream::rowAllocatorTest(int32_t numBlocks, int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* results) {
-  allocatorTestKernel<<<numBlocks, 64, 0, stream_->stream>>>(numAlloc, numFree, numStr, results);
+void BlockTestStream::rowAllocatorTest(
+    int32_t numBlocks,
+    int32_t numAlloc,
+    int32_t numFree,
+    int32_t numStr,
+    AllocatorTestResult* results) {
+  allocatorTestKernel<<<numBlocks, 64, 0, stream_->stream>>>(
+      numAlloc, numFree, numStr, results);
 }
-
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);

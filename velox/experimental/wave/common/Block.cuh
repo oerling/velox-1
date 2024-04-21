@@ -16,11 +16,11 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <cub/block/block_radix_sort.cuh>
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/block/block_store.cuh>
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 /// Utilities for  booleans and indices and thread blocks.
 
@@ -137,7 +137,6 @@ void __device__ blockSort(
   __syncthreads();
 }
 
-
 template <int kBlockSize>
 int32_t partitionRowsSharedSize(int32_t numPartitions) {
   using Scan = cub::BlockScan<int, kBlockSize>;
@@ -148,7 +147,7 @@ int32_t partitionRowsSharedSize(int32_t numPartitions) {
   }
   static_assert(
       sizeof(typename Scan::TempStorage) >= sizeof(int32_t) * kBlockSize);
-  return scanSize + counterSize;// - kBlockSize * sizeof(int32_t);
+  return scanSize + counterSize; // - kBlockSize * sizeof(int32_t);
 }
 
 /// Partitions a sequence of indices into runs where the indices
@@ -173,7 +172,11 @@ void __device__ partitionRows(
   auto warp = threadIdx.x / kWarpThreads;
   auto lane = cub::LaneId();
   extern __shared__ __align__(16) char smem[];
-  auto* counters = reinterpret_cast<uint32_t*>(numPartitions <= kBlockSize ? smem : smem + sizeof(typename Scan::TempStorage) /*- kBlockSize * sizeof(uint32_t)*/ );
+  auto* counters = reinterpret_cast<uint32_t*>(
+      numPartitions <= kBlockSize ? smem
+                                  : smem +
+              sizeof(typename Scan::
+                         TempStorage) /*- kBlockSize * sizeof(uint32_t)*/);
   for (auto i = threadIdx.x; i < numPartitions; i += kBlockSize) {
     counters[i] = 0;
   }
@@ -184,7 +187,7 @@ void __device__ partitionRows(
       break;
     }
     uint32_t laneMask = warpStart + kWarpThreads <= numKeys
-      ? 0xffffffff
+        ? 0xffffffff
         : lowMask<uint32_t>(numKeys - warpStart);
     if (warpStart + lane < numKeys) {
       int32_t key = getter(warpStart + lane);
@@ -202,11 +205,11 @@ void __device__ partitionRows(
   // Prefix sum the counts. All counters must have their final value.
   __syncthreads();
   auto* temp = reinterpret_cast<typename Scan::TempStorage*>(smem);
-  int32_t* aggregate =
-      reinterpret_cast<int32_t*>(smem);
+  int32_t* aggregate = reinterpret_cast<int32_t*>(smem);
   for (auto start = 0; start < numPartitions; start += kBlockSize) {
     int32_t localCount[1];
-    localCount[0] = threadIdx.x + start < numPartitions ? counters[start + threadIdx.x] : 0;
+    localCount[0] =
+        threadIdx.x + start < numPartitions ? counters[start + threadIdx.x] : 0;
     if (threadIdx.x == 0 && start > 0) {
       // The sum of the previous round is carried over as start of this.
       localCount[0] += *aggregate;
