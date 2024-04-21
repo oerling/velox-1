@@ -14,34 +14,31 @@
  * limitations under the License.
  */
 
-#include "velox/common/base/BitUtil.h"
-#include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/HashTable.h"
-#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include <fmt/format.h>
-
+#include "velox/common/base/BitUtil.h"
+#include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/GpuArena.h"
+#include "velox/experimental/wave/common/HashTable.h"
 
 namespace facebook::velox::wave {
 
-  
 constexpr uint32_t kPrime32 = 1815531889;
 
-    // Returns the byte size for a GpuProbe with numRows as first, rounded row count as second.
-  std::pair<int64_t, int32_t> probeSize(HashRun& run) {
-    int32_t roundedRows = bits::roundUp(run.numRows, 256 * run.rowsPerThread);
-    return {sizeof(HashProbe) +
-      // Column data and hash number array.
-      (1 + run.numColumns) * roundedRows * sizeof(int64_t)
-      // Pointers to column starts 
-      + sizeof(int64_t*) * run.numColumns
-      // retry lists
-      + 2 * sizeof(int32_t) * roundedRows,
-      roundedRows}; 
-  }
-
-
-
+// Returns the byte size for a GpuProbe with numRows as first, rounded row count
+// as second.
+std::pair<int64_t, int32_t> probeSize(HashRun& run) {
+  int32_t roundedRows = bits::roundUp(run.numRows, 256 * run.rowsPerThread);
+  return {
+      sizeof(HashProbe) +
+          // Column data and hash number array.
+          (1 + run.numColumns) * roundedRows * sizeof(int64_t)
+          // Pointers to column starts
+          + sizeof(int64_t*) * run.numColumns
+          // retry lists
+          + 2 * sizeof(int32_t) * roundedRows,
+      roundedRows};
+}
 
 void fillHashTestInput(
     int32_t numRows,
@@ -51,14 +48,15 @@ void fillHashTestInput(
     uint8_t numColumns,
     int64_t** columns,
     int32_t numHot,
-	       int32_t hotPct) {
+    int32_t hotPct) {
   int32_t delta = counter & (powerOfTwo - 1);
   for (auto i = 0; i < numRows; ++i) {
     auto previous = columns[0][i];
     auto seed = (previous + delta + i) * kPrime32;
     if (hotPct && scale32(seed >> 32, 100) <= hotPct) {
       int32_t nth = scale32(seed, numHot);
-      nth = std::min<int64_t>(keyRange - 1, nth * (static_cast<float>(keyRange) / nth));
+      nth = std::min<int64_t>(
+          keyRange - 1, nth * (static_cast<float>(keyRange) / nth));
       columns[0][i] = nth;
     } else {
       columns[0][i] = scale32(seed, keyRange);
@@ -72,67 +70,73 @@ void fillHashTestInput(
   }
 }
 
-  void initializeHashtestInput(HashRun& run, GpuArena* arena) {
-    auto [bytes, roundedRows] = probeSize(run);
-    char* data;
-    if (!arena) {
-      run.cpuData = std::make_unique<char[]>(bytes);
-      run.input = run.cpuData.get();
-    } else {
-      run.gpuData = arena->allocate<char>(bytes);
-      run.input = run.gpuData->as<char>();
-    }
-    auto dataBegin = data;
-    HashProbe* probe = new(data) HashProbe();
-    data += sizeof(HashProbe);
-    probe->numKeys = reinterpret_cast<int32_t*>(data);
-    data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * 256);
-    if (!arena) {
-      probe->numKeys[0] = run.numRows;
-    } else {
-      int32_t numBlocks = roundedRows / (256 * run.rowsPerThread);
-    }
-    probe->hashes = reinterpret_cast<uint64_t*>(data);
-    data += sizeof(uint64_t) * roundedRows;
-    probe->keys = data;
-    data += sizeof(void*) * run.numColumns;
-    probe->kernelRetries = reinterpret_cast<int32_t*>(data);
-    data += sizeof(int32_t) * roundedRows;
-    probe->hostRetries = reinterpret_cast<int32_t*>(data);
-    data += sizeof(int32_t) * roundedRows;
-    for (auto i = 0; i <run.numColumns; ++i) {
-      reinterpret_cast<int64_t**>(probe->keys)[i] = reinterpret_cast<int64_t*>(data);
-      data += sizeof(int64_t) * roundedRows;
-    }
-    VELOX_CHECK_LE(data - dataBegin, bytes);
+void initializeHashtestInput(HashRun& run, GpuArena* arena) {
+  auto [bytes, roundedRows] = probeSize(run);
+  char* data;
+  if (!arena) {
+    run.cpuData = std::make_unique<char[]>(bytes);
+    run.input = run.cpuData.get();
+  } else {
+    run.gpuData = arena->allocate<char>(bytes);
+    run.input = run.gpuData->as<char>();
   }
-
-  void setupGpuTable(int32_t numSlots, int32_t maxRows, int64_t rowSize,  GpuArena* arena, GpuHashTableBase*& table, WaveBufferPtr& buffer) {
-    // GPU cache lines are 128 bytes divided in 4 separately loadable 32 byte sectors.
-    constexpr int32_t kAlignment = 128;
-    int32_t numBuckets = bits::nextPowerOfTwo(numSlots / 4);
-    int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator) + 
-      sizeof(GpuBucketMembers) * numBuckets
-      + maxRows *  rowSize;
-    buffer = arena->allocate<char>(bytes + kAlignment);
-    table = buffer->as<GpuHashTableBase>();
-    char * data = reinterpret_cast<char*>(table + 1);
-    table->allocators = reinterpret_cast<RowAllocator*>(data);
-    data += sizeof(HashPartitionAllocator);
-    // The buckets start at aligned address.
-    data = reinterpret_cast<char*>(bits::roundUp(reinterpret_cast<uint64_t>(data), kAlignment));
-    table->buckets = reinterpret_cast<GpuBucket*>(data);
-    data += sizeof(GpuBucketMembers) * numBuckets;
-    auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
-    new(allocator) HashPartitionAllocator(data, maxRows * rowSize, rowSize);
-    table->partitionMask = 0;
-    table->partitionShift = 0;
+  auto dataBegin = data;
+  HashProbe* probe = new (data) HashProbe();
+  data += sizeof(HashProbe);
+  probe->numKeys = reinterpret_cast<int32_t*>(data);
+  data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * 256);
+  if (!arena) {
+    probe->numKeys[0] = run.numRows;
+  } else {
+    int32_t numBlocks = roundedRows / (256 * run.rowsPerThread);
   }
-
-
-  std::string HashRun::toString() const {
-    return fmt::format("");
+  probe->hashes = reinterpret_cast<uint64_t*>(data);
+  data += sizeof(uint64_t) * roundedRows;
+  probe->keys = data;
+  data += sizeof(void*) * run.numColumns;
+  probe->kernelRetries = reinterpret_cast<int32_t*>(data);
+  data += sizeof(int32_t) * roundedRows;
+  probe->hostRetries = reinterpret_cast<int32_t*>(data);
+  data += sizeof(int32_t) * roundedRows;
+  for (auto i = 0; i < run.numColumns; ++i) {
+    reinterpret_cast<int64_t**>(probe->keys)[i] =
+        reinterpret_cast<int64_t*>(data);
+    data += sizeof(int64_t) * roundedRows;
   }
-
+  VELOX_CHECK_LE(data - dataBegin, bytes);
 }
 
+void setupGpuTable(
+    int32_t numSlots,
+    int32_t maxRows,
+    int64_t rowSize,
+    GpuArena* arena,
+    GpuHashTableBase*& table,
+    WaveBufferPtr& buffer) {
+  // GPU cache lines are 128 bytes divided in 4 separately loadable 32 byte
+  // sectors.
+  constexpr int32_t kAlignment = 128;
+  int32_t numBuckets = bits::nextPowerOfTwo(numSlots / 4);
+  int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator) +
+      sizeof(GpuBucketMembers) * numBuckets + maxRows * rowSize;
+  buffer = arena->allocate<char>(bytes + kAlignment);
+  table = buffer->as<GpuHashTableBase>();
+  char* data = reinterpret_cast<char*>(table + 1);
+  table->allocators = reinterpret_cast<RowAllocator*>(data);
+  data += sizeof(HashPartitionAllocator);
+  // The buckets start at aligned address.
+  data = reinterpret_cast<char*>(
+      bits::roundUp(reinterpret_cast<uint64_t>(data), kAlignment));
+  table->buckets = reinterpret_cast<GpuBucket*>(data);
+  data += sizeof(GpuBucketMembers) * numBuckets;
+  auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
+  new (allocator) HashPartitionAllocator(data, maxRows * rowSize, rowSize);
+  table->partitionMask = 0;
+  table->partitionShift = 0;
+}
+
+std::string HashRun::toString() const {
+  return fmt::format("");
+}
+
+} // namespace facebook::velox::wave

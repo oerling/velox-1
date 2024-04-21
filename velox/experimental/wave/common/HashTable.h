@@ -18,7 +18,8 @@
 
 #include <cstdint>
 
-/// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and .cu.
+/// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and
+/// .cu.
 namespace facebook::velox::wave {
 
 /// A 32 byte tagged bucket with 4 tags, 4 flag bytes and 4 6-byte
@@ -31,31 +32,33 @@ struct GpuBucketMembers {
 
 /// A device arena for device side allocation.
 struct HashPartitionAllocator {
-    static constexpr uint32_t kEmpty = ~0;
+  static constexpr uint32_t kEmpty = ~0;
 
-HashPartitionAllocator(char* data, uint32_t size, uint32_t rowSize)
-  : rowSize(rowSize),
-      base(reinterpret_cast<uint64_t>(data)),
-      capacity(size),
-      stringOffset(capacity) {}
-  
+  HashPartitionAllocator(char* data, uint32_t size, uint32_t rowSize)
+      : rowSize(rowSize),
+        base(reinterpret_cast<uint64_t>(data)),
+        capacity(size),
+        stringOffset(capacity) {}
+
   const int32_t rowSize{0};
   const uint64_t base{0};
   uint32_t rowOffset{0};
   const uint32_t capacity{0};
   uint32_t stringOffset{0};
   // Offset of first in free list of rows.
-    uint32_t freeRows{kEmpty};
-  };
- 
+  uint32_t freeRows{kEmpty};
+};
+
 /// Implementation of HashPartitionAllocator, defined in .cuh.
 struct RowAllocator;
 
-enum class ProbeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
+enum class ProbeState : uint8_t { kDone, kMoreValues, kNeedSpace, kRetry };
 
- /// Operands for one TB of hash probe.
+/// Operands for one TB of hash probe.
 struct HashProbe {
-  /// The number of input rows processed by each thread of a TB. The base index for a block in the arrays in 'this' is 'numRowsPerThread * blockDim.x * blockIdx.x'
+  /// The number of input rows processed by each thread of a TB. The base index
+  /// for a block in the arrays in 'this' is 'numRowsPerThread * blockDim.x *
+  /// blockIdx.x'
   int32_t numRowsPerThread{1};
 
   /// Count of probe keys for each TB. Subscript is blockIdx.x.
@@ -64,7 +67,7 @@ struct HashProbe {
   /// Data for probe keys. To be interpreted by Ops of the probe, no
   /// fixed format.
   void* keys;
-  
+
   /// Hash numbers for probe keys.
   uint64_t* hashes;
 
@@ -87,13 +90,13 @@ struct HashProbe {
 
   /// Row numbers for hits. Indices into 'hashes'.
   int32_t* hitRows{nullptr};
-  
+
   // Optional payload rows hitting from a probe.
   void** hits{nullptr};
 };
 
 struct GpuBucket;
- 
+
 struct GpuHashTableBase {
   /// Bucket array. Size is 'sizeMask + 1'.
   GpuBucket* buckets;
@@ -101,17 +104,15 @@ struct GpuHashTableBase {
   // Mask to extract index into 'buckets' from a hash number. a
   // sizemask of 63 means 64 buckets, which is up to 256 entries.
   uint32_t sizeMask;
-  
+
   // Translates a hash number to a partition number '(hash &
   // partitionMask) >> partitionShift' is a partition number used as
   // a physical partition of the table. Used as index into 'allocators'.
   uint32_t partitionMask{0};
   uint8_t partitionShift{0};
-  
+
   /// A RowAllocator for each partition.
-  RowAllocator*allocators;
+  RowAllocator* allocators;
 };
 
-
- 
-}
+} // namespace facebook::velox::wave

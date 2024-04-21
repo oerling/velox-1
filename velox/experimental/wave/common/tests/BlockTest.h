@@ -17,7 +17,7 @@
 #pragma once
 
 #include "velox/experimental/wave/common/Cuda.h"
-#include "velox/experimental/wave/common/HashTable.h" 
+#include "velox/experimental/wave/common/HashTable.h"
 
 /// Sample header for testing Wave Utilities.
 
@@ -25,9 +25,7 @@ namespace facebook::velox::wave {
 
 constexpr uint32_t kPrime32 = 1815531889;
 
-
-
-  /// A mock aggregate that concatenates numbers, like array_agg of bigint.
+/// A mock aggregate that concatenates numbers, like array_agg of bigint.
 struct ArrayAgg64 {
   struct Run {
     Run* next;
@@ -40,35 +38,34 @@ struct ArrayAgg64 {
   int8_t numInLast{0};
 };
 
-  /// A mock hash table content row to test HashTable.
-  struct TestingRow {
-    // Single ke part.
-    int64_t key;
+/// A mock hash table content row to test HashTable.
+struct TestingRow {
+  // Single ke part.
+  int64_t key;
 
-    // Count of updates. Sample aggregate
-    int64_t count{0};
+  // Count of updates. Sample aggregate
+  int64_t count{0};
 
-    // A mock concatenating aggregate. Use for testing control flow in
-    // running out of space in updating a group.
-    ArrayAgg64 concatenation;
-    
-    // Next pointer in the case simulating a non-unique join table.
-    TestingRow* next{nullptr}; 
+  // A mock concatenating aggregate. Use for testing control flow in
+  // running out of space in updating a group.
+  ArrayAgg64 concatenation;
 
-    // flags for updating the row. E.g. probed flag, marker for exclusive write.
-    int32_t flags{0};
-  };
+  // Next pointer in the case simulating a non-unique join table.
+  TestingRow* next{nullptr};
 
-  /// Result of allocator test kernel. 
-  struct AllocatorTestResult {
-    RowAllocator* allocator;
-    int32_t numRows;
-    int32_t numStrings;
-    int64_t* rows[200000];
-    int64_t* strings[200000];
-  };
+  // flags for updating the row. E.g. probed flag, marker for exclusive write.
+  int32_t flags{0};
+};
 
-  
+/// Result of allocator test kernel.
+struct AllocatorTestResult {
+  RowAllocator* allocator;
+  int32_t numRows;
+  int32_t numStrings;
+  int64_t* rows[200000];
+  int64_t* strings[200000];
+};
+
 class BlockTestStream : public Stream {
  public:
   /// In each block of 256 bools in bools[i], counts the number of
@@ -107,13 +104,24 @@ class BlockTestStream : public Stream {
       int32_t** partitionedRows);
 
   // Operation for hash table tests.
-  enum class HashCase {kGroup, kBuild, kProbe};
-  
-  /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and temp storage. 'table' and 'probe' are expected to be resident on device. 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
-  void hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numBlocks, HashCase mode);
+  enum class HashCase { kGroup, kBuild, kProbe };
+
+  /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and
+  /// temp storage. 'table' and 'probe' are expected to be resident on device.
+  /// 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
+  void hashTest(
+      GpuHashTableBase* table,
+      HashProbe* probe,
+      int32_t numBlocks,
+      HashCase mode);
 
   /// tests RowAllocator.
-  void rowAllocatorTest(int32_t numBlocks, int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* results);
+  void rowAllocatorTest(
+      int32_t numBlocks,
+      int32_t numAlloc,
+      int32_t numFree,
+      int32_t numStr,
+      AllocatorTestResult* results);
 };
 
 } // namespace facebook::velox::wave

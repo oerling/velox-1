@@ -17,30 +17,32 @@
 #pragma once
 
 #include <memory>
-#include "velox/experimental/wave/common/HashTable.h"
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/HashTable.h"
 
 namespace facebook::velox::wave {
 
-  /// Describes a hashtable benchmark case.
+/// Describes a hashtable benchmark case.
 struct HashRun {
-  //CPU/GPU measurement.
+  // CPU/GPU measurement.
   bool isCpu;
 
   // Number of slots in table.
-    int32_t numSlots;
+  int32_t numSlots;
 
-    // Number of probe rows.
-    int32_t numRows;
+  // Number of probe rows.
+  int32_t numRows;
 
-    // Number of distinct keys.
-    int32_t numDistinct;
+  // Number of distinct keys.
+  int32_t numDistinct;
 
-    // Number of distinct hot keys.
-    int32_t numHot;
+  // Number of distinct hot keys.
+  int32_t numHot;
 
-    // Percentage of hot keys over total keys. e.g. with 1000 distinct and 10 hot and hotPct of 50, every second key will be one of 10 and the rest are evenly spread over the 1000.
-    int32_t hotPct{0};
+  // Percentage of hot keys over total keys. e.g. with 1000 distinct and 10 hot
+  // and hotPct of 50, every second key will be one of 10 and the rest are
+  // evenly spread over the 1000.
+  int32_t hotPct{0};
 
   // Number of keys processed by each thread of each block.
   int32_t rowsPerThread;
@@ -50,7 +52,7 @@ struct HashRun {
 
   // Number of columns. Key is column 0.
   uint8_t numColumns{1};
-  
+
   // Number of independent hash tables.
   int32_t numTables;
 
@@ -59,14 +61,14 @@ struct HashRun {
 
   std::unique_ptr<char[]> cpuData;
   WaveBufferPtr gpuData;
-  
+
   // Input data, either cpuData or gpuData.
   char* input;
-  
+
   std::string toString() const;
 };
-   
-  void fillHashTestInput(
+
+void fillHashTestInput(
     int32_t numRows,
     int32_t keyRange,
     int32_t powerOfTwo,
@@ -74,14 +76,12 @@ struct HashRun {
     uint8_t numColumns,
     int64_t** columns,
     int32_t numHot = 0,
-		 int32_t hotPct = 0);
+    int32_t hotPct = 0);
 
 inline uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
- void initializeHashtestInput(HashRun& run, GpuArena* arena);
- 
-  
-}
+void initializeHashtestInput(HashRun& run, GpuArena* arena);
 
+} // namespace facebook::velox::wave

@@ -542,7 +542,6 @@ int64_t factor(int64_t n) {
   return 0;
 }
 
-
 void fillMockTable(int32_t keyRange, MockTable* table) {
   for (auto i = 0; i < keyRange; ++i) {
     int64_t key = i;

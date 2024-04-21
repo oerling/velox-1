@@ -14,16 +14,14 @@
  * limitations under the License.
  */
 
+#include <gtest/gtest.h>
+#include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 #include "velox/experimental/wave/common/tests/CpuTable.h"
-#include "velox/experimental/wave/common/Buffer.h"
-#include <gtest/gtest.h>
 
 namespace facebook::velox::wave {
 
-
-  
 class HashTableTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -37,63 +35,72 @@ class HashTableTest : public testing::Test {
     stream.prefetch(device_, buffer->as<char>(), buffer->capacity());
   }
 
-
-  
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
 };
 
- 
 TEST_F(HashTableTest, hashMatrix) {
-  std::vector<int32_t> sizeValues = {256, 8 << 10}; 
+  std::vector<int32_t> sizeValues = {256, 8 << 10};
 }
 
-  TEST_F(HashTableTest, allocator) {
-    constexpr int32_t kNumThreads = 256;
-    constexpr int32_t kTotal = 1 << 30;
-    WaveBufferPtr data = arena_->allocate<char>(kTotal);
-    auto* allocator = data->as<HashPartitionAllocator>();
-    new(allocator)  HashPartitionAllocator(data->as<char>() + sizeof(HashPartitionAllocator), kTotal - sizeof(HashPartitionAllocator), 16);
-    WaveBufferPtr allResults = arena_->allocate<AllocatorTestResult>(kNumThreads);
-    auto results = allResults->as<AllocatorTestResult>();
-    for (auto i = 0; i < kNumThreads; ++i) {
-      results[i].allocator = reinterpret_cast<RowAllocator*>(allocator);
-      results[i].numRows = 0;
-      results[i].numStrings = 0;    }
-    auto stream1 = std::make_unique<BlockTestStream>();
-    auto stream2 = std::make_unique<BlockTestStream>();
-    stream1->rowAllocatorTest(2, 4, 3, 2, results);
-    stream2->rowAllocatorTest(2, 4, 3, 2, results + 128);
+TEST_F(HashTableTest, allocator) {
+  constexpr int32_t kNumThreads = 256;
+  constexpr int32_t kTotal = 1 << 30;
+  WaveBufferPtr data = arena_->allocate<char>(kTotal);
+  auto* allocator = data->as<HashPartitionAllocator>();
+  new (allocator) HashPartitionAllocator(
+      data->as<char>() + sizeof(HashPartitionAllocator),
+      kTotal - sizeof(HashPartitionAllocator),
+      16);
+  WaveBufferPtr allResults = arena_->allocate<AllocatorTestResult>(kNumThreads);
+  auto results = allResults->as<AllocatorTestResult>();
+  for (auto i = 0; i < kNumThreads; ++i) {
+    results[i].allocator = reinterpret_cast<RowAllocator*>(allocator);
+    results[i].numRows = 0;
+    results[i].numStrings = 0;
+  }
+  auto stream1 = std::make_unique<BlockTestStream>();
+  auto stream2 = std::make_unique<BlockTestStream>();
+  stream1->rowAllocatorTest(2, 4, 3, 2, results);
+  stream2->rowAllocatorTest(2, 4, 3, 2, results + 128);
 
-    stream1->wait();
-    stream2->wait();
-    // Pointer to result idx, position in result;
-    std::unordered_map<int64_t*, int32_t> uniques;
+  stream1->wait();
+  stream2->wait();
+  // Pointer to result idx, position in result;
+  std::unordered_map<int64_t*, int32_t> uniques;
   for (auto resultIdx = 0; resultIdx < kNumThreads; ++resultIdx) {
     auto* result = results + resultIdx;
     for (auto i = 0; i < result->numRows; ++i) {
       auto row = result->rows[i];
       EXPECT_GE(reinterpret_cast<uint64_t>(row), allocator->base);
-      EXPECT_LT(reinterpret_cast<uint64_t>(row),  allocator->base + allocator->capacity);
+      EXPECT_LT(
+          reinterpret_cast<uint64_t>(row),
+          allocator->base + allocator->capacity);
       auto it = uniques.find(row);
-      EXPECT_TRUE(it == uniques.end())
-	<< fmt::format("row {} is also at {} {}", reinterpret_cast<uint64_t>(row),  it->second >> 24, it->second & bits::lowMask(24));
-      
+      EXPECT_TRUE(it == uniques.end()) << fmt::format(
+          "row {} is also at {} {}",
+          reinterpret_cast<uint64_t>(row),
+          it->second >> 24,
+          it->second & bits::lowMask(24));
+
       uniques[row] = (resultIdx << 24) | i;
     }
-        for (auto i = 0; i < result->numStrings; ++i) {
-	  auto string = result->strings[i];
-	  EXPECT_GE(reinterpret_cast<uint64_t>(string), allocator->base);
-      EXPECT_LT(reinterpret_cast<uint64_t>(string),  allocator->base + allocator->capacity);
+    for (auto i = 0; i < result->numStrings; ++i) {
+      auto string = result->strings[i];
+      EXPECT_GE(reinterpret_cast<uint64_t>(string), allocator->base);
+      EXPECT_LT(
+          reinterpret_cast<uint64_t>(string),
+          allocator->base + allocator->capacity);
       auto it = uniques.find(string);
-      EXPECT_TRUE(it == uniques.end())
-	<< fmt::format("String {} is also at {} {}", reinterpret_cast<uint64_t>(string),  it->second >> 24, it->second & bits::lowMask(24));
+      EXPECT_TRUE(it == uniques.end()) << fmt::format(
+          "String {} is also at {} {}",
+          reinterpret_cast<uint64_t>(string),
+          it->second >> 24,
+          it->second & bits::lowMask(24));
       uniques[string] = (resultIdx << 24) | i;
     }
-
   }
-
-  }
-
 }
+
+} // namespace facebook::velox::wave

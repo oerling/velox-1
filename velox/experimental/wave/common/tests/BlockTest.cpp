@@ -56,7 +56,9 @@ class BlockTest : public testing::Test {
     auto rowsRounded = bits::roundUp(numRows, 8);
     auto partitionsRounded = bits::roundUp(numPartitions, 8);
     int64_t bytes = sizeof(PartitionRun) +
-      kNumPartitionBlocks * (rowsRounded * sizeof(int32_t) * 4 + partitionsRounded * sizeof(int32_t));
+        kNumPartitionBlocks *
+            (rowsRounded * sizeof(int32_t) * 4 +
+             partitionsRounded * sizeof(int32_t));
     if (!buffer || buffer->capacity() < bytes) {
       buffer = arena_->allocate<char>(bytes);
     }
@@ -84,8 +86,9 @@ class BlockTest : public testing::Test {
     for (auto block = 0; block < kNumPartitionBlocks; ++block) {
       std::vector<bool> flags(run.numRows[block], false);
       for (auto part = 0; part < numPartitions; ++part) {
-	for (auto i = (part == 0 ? 0 : run.partitionStarts[block][part - 1]);
-	     i < run.partitionStarts[block][part]; ++i) {
+        for (auto i = (part == 0 ? 0 : run.partitionStarts[block][part - 1]);
+             i < run.partitionStarts[block][part];
+             ++i) {
           auto row = run.partitionedRows[block][i];
           EXPECT_LT(row, run.numRows[block]);
           EXPECT_FALSE(flags[row]);
