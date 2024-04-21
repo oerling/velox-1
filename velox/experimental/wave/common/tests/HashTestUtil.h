@@ -15,7 +15,10 @@
  */
 
 #pragma once
+
+#include <memory>
 #include "velox/experimental/wave/common/HashTable.h"
+#include "velox/experimental/wave/common/Buffer.h"
 
 namespace facebook::velox::wave {
 
@@ -51,20 +54,19 @@ struct HashRun {
   // Number of independent hash tables.
   int32_t numTables;
 
-  // Rows processed per second on GPU/CPU.
-  float gpuRPS;
-  float cpuRPS;
+  // Rows processed per second.
+  float rPS;
 
-  // Input data, not owned, resident on GPU if GPU run.
-  HashProbe* input;
+  std::unique_ptr<char[]> cpuData;
+  WaveBufferPtr gpuData;
   
-  std::string toString() {
-    return fmt::format("");
-  }
+  // Input data, either cpuData or gpuData.
+  char* input;
+  
+  std::string toString() const;
 };
- 
-  
-  void makeInput(
+   
+  void fillHashTestInput(
     int32_t numRows,
     int32_t keyRange,
     int32_t powerOfTwo,
@@ -78,6 +80,8 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
+ void initializeHashtestInput(HashRun& run, GpuArena* arena);
+ 
   
 }
 

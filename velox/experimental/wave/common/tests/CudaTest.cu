@@ -19,7 +19,9 @@
 #include "velox/experimental/wave/common/tests/CudaTest.h"
 
 namespace facebook::velox::wave {
+constexpr uint32_t kPrime32 = 1815531889;
 
+  
 __global__ void
 addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {

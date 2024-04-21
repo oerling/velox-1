@@ -227,7 +227,7 @@ public:
     row->flags = GpuHashTable::kExclusive;
     auto missShift = __ffs(misses) - 1;
     if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
-      allocator->free(row);
+      allocator->freeRow(row);
       return ProbeState::kRetry;
     }
     bucket->store(missShift / 8, row);
@@ -284,11 +284,40 @@ public:
     CUDA_CHECK(cudaGetLastError());
   }
 
-  
+void __global__ allocatorTestKernel(int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* allResults) {
+  auto* result = allResults + threadIdx.x;
+  for (;;) {
+    int32_t maxRows = sizeof(result->rows ) / sizeof(result->rows[0]); 
+    int32_t maxStrings = sizeof(result->strings ) / sizeof(result->strings[0]); 
+    for (auto count = 0; count < numAlloc; ++count) {
+      if (result->numRows >= maxRows) {
+	return;
+      }
+      result->rows[result->numRows++] = result->allocator->allocateRow<int64_t>();
+    }
+    for (auto count = 0; count < numFree; ++count) {
+      result->allocator->freeRow(result->rows[--result->numRows]);
+    }
+    for (auto count = 0; count < numStr; ++count) {
+      auto str = result->allocator->allocate<char>(11);
+      if (!str) {
+	return;
+      }
+      result->strings[result->numStrings++] = reinterpret_cast<int64_t*>(str);
+    }
+  }
+}
+
+void BlockTestStream::rowAllocatorTest(int32_t numBlocks, int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* results) {
+  allocatorTestKernel<<<numBlocks, 64, 0, stream_->stream>>>(numAlloc, numFree, numStr, results);
+}
+
+
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
 REGISTER_KERNEL("sum64", sum64);
 REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
 REGISTER_KERNEL("hashTest", hashTestKernel);
+REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
 
 } // namespace facebook::velox::wave

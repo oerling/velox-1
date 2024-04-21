@@ -22,8 +22,6 @@
 
 namespace facebook::velox::wave {
 
-constexpr uint32_t kPrime32 = 1815531889;
-
 /// Struct for the state of a probe into MockTable. A struct of arrays. Each
 /// thread fills its state at threadIdx.x so the neighbors can decide who does
 /// what.

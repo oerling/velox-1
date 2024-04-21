@@ -32,7 +32,7 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/common/test/hashTableTestUtils.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
 #include <iostream>
 
@@ -959,7 +959,7 @@ class RoundtripThread {
         columnData_[i] = columns_[i].data();
       }
     }
-    makeInput(
+    fillHashTestInput(
         numRows,
         keyRange_,
         bits::nextPowerOfTwo(keyRange_),
@@ -1579,7 +1579,7 @@ class CudaTest : public testing::Test {
       for (auto i = 1; i < 2; i += kRowsInBatch) {
         auto end = std::min<int32_t>(keyRange, i + kRowsInBatch);
         auto numRows = end - i;
-        makeInput(
+        fillHashTestInput(
             numRows,
             keyRange,
             bits::nextPowerOfTwo(keyRange),

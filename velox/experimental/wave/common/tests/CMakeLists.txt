@@ -13,7 +13,7 @@
 # limitations under the License.
 
 add_executable(velox_wave_common_test GpuArenaTest.cpp CudaTest.cpp CudaTest.cu
-                                      BlockTest.cpp BlockTest.cu, HashTableTest.cpp HashtestUtil.cpp)
+                                      BlockTest.cpp BlockTest.cu HashTableTest.cpp HashTestUtil.cpp)
 
 set_target_properties(velox_wave_common_test PROPERTIES CUDA_ARCHITECTURES
                                                         native)

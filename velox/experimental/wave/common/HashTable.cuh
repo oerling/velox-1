@@ -20,52 +20,53 @@
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <cub/util_ptx.cuh>
+#include <cub/thread/thread_load.cuh>
 
 namespace facebook::velox::wave {
 
-struct RowAllocator {
-  int32_t numUsed{0};
-  int32_t numFreed{0};
-  int32_t capacity{0};
-  // Array of pointers to starts of preallocated rows.
-  void** items{nullptr};
-  void** freedItems{nullptr};
-  char* strings{nullptr};
-  uint32_t stringsFill{0};
-  uint32_t stringsCapacity{0};
-  
+  /// Allocator subclass that defines device member functions. 
+  struct RowAllocator : public HashPartitionAllocator {
     template <typename T>
     T* __device__ allocateRow() {
-      auto idx = atomicAdd(&numUsed, 1);
-      if (idx < capacity) {
-	return reinterpret_cast<T*>(items[idx]);
+      for(;;) {
+	auto free = freeRows;
+	if (free == kEmpty) {
+	  break;
+	}
+	auto nextFree = *reinterpret_cast<uint32_t*>(base + free);
+	if (free == atomicCAS(&freeRows, free, nextFree)) {
+	  return reinterpret_cast<T*>(base + free);
+	}
+      } 
+      auto offset = atomicAdd(&rowOffset, rowSize);
+      if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
+	return reinterpret_cast<T*>(base + offset);
       }
       return nullptr;
     }
 
-  void __device__ free(void* row) {
-    auto idx = atomicAdd(&numFreed, 1);
-    if (idx < capacity) {
-      freedItems[idx] = row;
+  void __device__ freeRow(void* row) {
+    uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
+    for (;;) {
+      auto free = freeRows;
+      *reinterpret_cast<uint32_t*>(row) = offset;
+      if (free == atomicCAS(&freeRows, free, offset)) {
+	return;
+      }
     }
   }
-
+  
   template <typename T>
   T* __device__ allocate(int32_t cnt) {
     uint32_t size = sizeof(T) * cnt;
-    if (!strings) {
-      return nullptr;
+    auto offset = atomicSub(&stringOffset, size);
+    if (offset - size <= cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
+      return reinterpret_cast<T*>(base + offset - size);
     }
-    auto offset = atomicAdd(&stringsFill, size);
-    if (offset + size > stringsCapacity) {
-      stringsFill = stringsCapacity;
-      return nullptr;
-    }
-    return reinterpret_cast<T*>(strings + offset);
+    return nullptr;
   }
 };
 
-  
   inline uint8_t __device__ hashTag(uint64_t h) {
     return 0x80 | (h >> 32);
   }
@@ -86,9 +87,9 @@ struct RowAllocator {
     inline void __device__ store(int32_t idx, void* ptr) {
           auto uptr = reinterpret_cast<uint64_t>(ptr);
       data[8 + idx] = uptr >> 32;
-      reinterpret_cast<uint32_t*>(&data)[idx] = uptr;
-      // The two writes must be seen together on other threads.
+      // The high part must be seen if the low part is seen.
       __threadfence();
+      reinterpret_cast<uint32_t*>(&data)[idx] = uptr;
     }
 
     bool __device__ addNewTag(uint8_t tag, uint32_t oldTags, uint8_t tagShift) {

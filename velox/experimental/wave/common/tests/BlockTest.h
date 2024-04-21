@@ -23,6 +23,9 @@
 
 namespace facebook::velox::wave {
 
+constexpr uint32_t kPrime32 = 1815531889;
+
+
 
   /// A mock aggregate that concatenates numbers, like array_agg of bigint.
 struct ArrayAgg64 {
@@ -54,6 +57,15 @@ struct ArrayAgg64 {
 
     // flags for updating the row. E.g. probed flag, marker for exclusive write.
     int32_t flags{0};
+  };
+
+  /// Result of allocator test kernel. 
+  struct AllocatorTestResult {
+    RowAllocator* allocator;
+    int32_t numRows;
+    int32_t numStrings;
+    int64_t* rows[200000];
+    int64_t* strings[200000];
   };
 
   
@@ -99,6 +111,9 @@ class BlockTestStream : public Stream {
   
   /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and temp storage. 'table' and 'probe' are expected to be resident on device. 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
   void hashTest(GpuHashTableBase* table, HashProbe* probe, int32_t numBlocks, HashCase mode);
+
+  /// tests RowAllocator.
+  void rowAllocatorTest(int32_t numBlocks, int32_t numAlloc, int32_t numFree, int32_t numStr, AllocatorTestResult* results);
 };
 
 } // namespace facebook::velox::wave

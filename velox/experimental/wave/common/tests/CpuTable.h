@@ -22,34 +22,38 @@
 
 namespace facebook::velox::wave {
 
-  struct CpuBucket {
-      using TagVector = xsimd::batch<uint8_t, xsimd::sse2>;
-    uint8_t tags[16];
-    uint8_t data[128 - 16];
+  class CpuBucket {
+  public:
+    using TagVector = xsimd::batch<uint8_t, xsimd::sse2>;
 
-
-
-    auto tags() {
-      return TagVector(_mm_loadu_si128(reinterpret_cast<__m128i const*>&tags));;
+    auto loadTags() {
+      return TagVector(_mm_loadu_si128(reinterpret_cast<__m128i const*>(&tags_)));
     }
 
-    uint16_t matchtags(TagVector tags, uint8_t tag) {
+    void setTag(int32_t idx, uint8_t tag) {
+      tags_[idx] = tag;
+    }
+    
+    static inline uint16_t matchTags(TagVector tags, uint8_t tag) {
       auto flags = TagVector::broadcast(tag) == tags;
       return simd::toBitMask(flags);
     }
-
-  
-
+ 
     template <typename T>
     T* load(int32_t idx) {
-      uint64_t data = *reinterpret_cast<uint64_t*>(&data[idx * 6]);
+      uint64_t data = *reinterpret_cast<uint64_t*>(&data_[idx * 6]);
       return reinterpret_cast<T*>(data & 0xffffffffffff);
     }
 
     void store(int32_t idx, void* row){
-      uint64_t data = *reinterpret_cast<uint64_t*>(&data[idx * 6]);
-      *reinterpret_cast<uint64_t*>(&data[idx * 6]) = (data & 0xffff000000000000) | uptr;
+      auto uptr = reinterpret_cast<uint64_t>(row);
+      uint64_t data = *reinterpret_cast<uint64_t*>(&data_[idx * 6]);
+      *reinterpret_cast<uint64_t*>(&data_[idx * 6]) = (data & 0xffff000000000000) | uptr;
     }
+  private:
+    uint8_t tags_[16];
+    uint8_t data_[128 - 16];
+
   };
 
   struct CpuHashTable {
@@ -64,14 +68,14 @@ namespace facebook::velox::wave {
     
     
     template <typename RowType, typename Ops>
-      void updatingProbe(HashProbe* probe) {
+    void updatingProbe(HashProbe* probe, Ops ops) {
       auto numRows = probe->numKeys[0];
       for (auto i  = 0; i < numRows; ++i) {
 	auto h = probe->hashes[i];
 	uint8_t tag = 0x80 | (h >> 32); 
 	auto bucketIdx = h & sizeMask;
 	for (;;) {
-	  auto tags = buckets[bucketIdx].loadtags;
+	  auto tags = buckets[bucketIdx].loadTags();
 	  auto hits = CpuBucket::matchTags(tags, tag);
 	  while (hits) {
 	    auto idx = bits::getAndClearLastSetBit(hits);
@@ -84,7 +88,7 @@ namespace facebook::velox::wave {
 	  auto misses = CpuBucket::matchTags(tags, 0);
 	  if (misses) {
 	    int32_t idx = bits::getAndClearLastSetBit(misses);
-	    buckets[bucketIdx].tags[idx] = tag;
+	    buckets[bucketIdx].setTag(idx,  tag);
 	    auto* newRow = ops.newRow(this);
 	    buckets[bucketIdx].store(idx, newRow);
 	    break;

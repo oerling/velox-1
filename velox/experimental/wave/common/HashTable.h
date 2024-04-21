@@ -29,9 +29,29 @@ struct GpuBucketMembers {
   uint16_t data[12];
 };
 
-/// A set of preallocated row.
- struct RowAllocator;
- enum class ProbeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
+/// A device arena for device side allocation.
+struct HashPartitionAllocator {
+    static constexpr uint32_t kEmpty = ~0;
+
+HashPartitionAllocator(char* data, uint32_t size, uint32_t rowSize)
+  : rowSize(rowSize),
+      base(reinterpret_cast<uint64_t>(data)),
+      capacity(size),
+      stringOffset(capacity) {}
+  
+  const int32_t rowSize{0};
+  const uint64_t base{0};
+  uint32_t rowOffset{0};
+  const uint32_t capacity{0};
+  uint32_t stringOffset{0};
+  // Offset of first in free list of rows.
+    uint32_t freeRows{kEmpty};
+  };
+ 
+/// Implementation of HashPartitionAllocator, defined in .cuh.
+struct RowAllocator;
+
+enum class ProbeState : uint8_t {kDone, kMoreValues, kNeedSpace, kRetry };
 
  /// Operands for one TB of hash probe.
 struct HashProbe {
@@ -92,4 +112,6 @@ struct GpuHashTableBase {
   RowAllocator*allocators;
 };
 
+
+ 
 }
