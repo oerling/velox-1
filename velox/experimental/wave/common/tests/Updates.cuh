@@ -17,27 +17,33 @@
 #pragma once
 
 #include "velox/experimental/wave/common/HashTable.cuh"
-#include "velox/experimental/velox/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/tests/BlockTest.h"
 
 namespace facebook::velox::wave {
 
   void __device__ testSumAtomic(TestingRow* rows, HashProbe* probe) {
-  int32_t base = probe->rowsPerThread * blockDim.x * blockIdx.x * 
-    auto rowsInBlock = probe->rowsPerThread * blockDim.x;
-  int32_t end = min(base + rowsInBlock, probe->numRows - base};
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = probe->numRows[blockIdx.x];
 
-  for (auto i = base; i < end; i += blockDim.x) {
+  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];
-    atomicAdd(&row->count, static_cast<int64_t>(deltas[i]));
+    atomicAdd((unsigned long long*)&row->count, (unsigned long long)deltas[i]);
   }
 }
 
 
 void __device__ updateExch(TestingRow* rows, HashProbe* probe) {
 
-    int32_t base = probe->rowsPerThread * blockDim.x * blockIdx.x * 
-    auto rowsInBlock = probe->rowsPerThread * blockDim.x;
-  int32_t end = min(base + rowsInBlock, probe->numRows - base};
+  int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+    int32_t end = base + probe->numRows[blockIdx.x];
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
 
   extern __shared__ __align__(16) char smem[];
   ProbeShared* shared = reinterpret_cast<ProbeShared*>(smem);
@@ -45,14 +51,14 @@ void __device__ updateExch(TestingRow* rows, HashProbe* probe) {
     shared->numKernelRetries = 0;
   }
   __syncthreads();
-  int32_t numRows = numIndices;
   bool inRetries = false;
   for (;;) {
-    for (auto i = base; i < end; i += blockDim.x) {
-      if (base + threadIdx.x < end) {
-	i = inRetry ? shared->kernelRetries[i] : i;
+    for (auto counter = base; counter < end; counter += blockDim.x) {
+      auto i = counter + threadIdx.x;
+      if (i < end) {
+	i = inRetries ? probe->kernelRetries[i] : i;
 	auto* row = &rows[indices[i]];
-	if (atomicCas(&ro->flags, 0, 1)) {
+	if (atomicCAS(&row->flags, 0, 1) == 0) {
 	  row->count += deltas[i];
 	  atomicExch(&row->flags, 0);
 	} else {
@@ -64,7 +70,7 @@ void __device__ updateExch(TestingRow* rows, HashProbe* probe) {
     if (shared->numKernelRetries == 0) {
       return;
     }
-    inRetry = true;
+    inRetries = true;
     end = base + shared->numKernelRetries;
     if (threadIdx.x == 0) {
       shared->numKernelRetries = 0;

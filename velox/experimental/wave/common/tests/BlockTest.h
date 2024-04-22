@@ -18,6 +18,7 @@
 
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/HashTable.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
 /// Sample header for testing Wave Utilities.
 
@@ -126,6 +127,8 @@ class BlockTestStream : public Stream {
       int32_t numFree,
       int32_t numStr,
       AllocatorTestResult* results);
+
+  void updateSum1Atomic(TestingRow* rows, HashRun& run);
 };
 
 } // namespace facebook::velox::wave

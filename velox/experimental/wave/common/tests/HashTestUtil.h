@@ -22,8 +22,20 @@
 
 namespace facebook::velox::wave {
 
+  /// Identifies operation being tested. A collection of representative hash table ops like aggregates probes and builds with different functions and layouts.
+  enum class HashTestCase {
+    // bigint sum.  Update only, no hash table.
+    kUpdateSum1,
+      // array_agg of bigint. Update only, no hash table.
+      kUpdateArrayAgg1
+  };
+  
 /// Describes a hashtable benchmark case.
 struct HashRun {
+  // Label of test case. Describes what is done. The labels for different implementations come from 'scores'.
+  std::string label;
+  // the operation being measured.
+  HashTestCase testCase;
   // CPU/GPU measurement.
   bool isCpu;
 
@@ -37,7 +49,7 @@ struct HashRun {
   int32_t numDistinct;
 
   // Number of distinct hot keys.
-  int32_t numHot;
+  int32_t numHot{0};
 
   // Percentage of hot keys over total keys. e.g. with 1000 distinct and 10 hot
   // and hotPct of 50, every second key will be one of 10 and the rest are
@@ -47,17 +59,19 @@ struct HashRun {
   // Number of keys processed by each thread of each block.
   int32_t rowsPerThread;
 
-  // Number of blocks of 256 threads.
+  int32_t blockSize{256};
+  
+  // Number of blocks of 'blockSize' threads.
   int32_t numBlocks;
 
   // Number of columns. Key is column 0.
   uint8_t numColumns{1};
 
   // Number of independent hash tables.
-  int32_t numTables;
+  int32_t numTables{1};
 
-  // Rows processed per second.
-  float rPS;
+  // Result, labeled by implementation alternative.
+  std::vector<std::pair<std::string, float>> scores;
 
   std::unique_ptr<char[]> cpuData;
   WaveBufferPtr gpuData;
@@ -65,6 +79,9 @@ struct HashRun {
   // Input data, either cpuData or gpuData.
   char* input;
 
+  // Initialized probe params, contained in 'input'.
+  HashProbe* probe;
+  
   std::string toString() const;
 };
 
@@ -82,6 +99,6 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
-void initializeHashtestInput(HashRun& run, GpuArena* arena);
+void initializeHashTestInput(HashRun& run, GpuArena* arena);
 
 } // namespace facebook::velox::wave

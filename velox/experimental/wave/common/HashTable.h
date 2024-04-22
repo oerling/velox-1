@@ -42,11 +42,13 @@ struct HashPartitionAllocator {
 
   const int32_t rowSize{0};
   const uint64_t base{0};
+  // Offset of first in free list of rows. Align at 8 bytes.
+  uint32_t freeRows{kEmpty};
+  // counter of pops from fre list. Must be upper half of 64 bit word with freeRows as lower half. Use for lock free ABA magic.
+  uint32_t numPops{0};
   uint32_t rowOffset{0};
   const uint32_t capacity{0};
   uint32_t stringOffset{0};
-  // Offset of first in free list of rows.
-  uint32_t freeRows{kEmpty};
   uint32_t mutex;
   void* freeSet{nullptr};
   int32_t numFromFree{0};
@@ -66,7 +68,7 @@ struct HashProbe {
   int32_t numRowsPerThread{1};
 
   /// Count of probe keys for each TB. Subscript is blockIdx.x.
-  int32_t* numKeys;
+  int32_t* numRows;
 
   /// Data for probe keys. To be interpreted by Ops of the probe, no
   /// fixed format.

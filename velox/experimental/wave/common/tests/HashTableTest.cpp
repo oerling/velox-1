@@ -15,9 +15,11 @@
  */
 
 #include <gtest/gtest.h>
+#include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include "velox/experimental/wave/common/tests/CpuTable.h"
 
 namespace facebook::velox::wave {
@@ -29,15 +31,105 @@ class HashTableTest : public testing::Test {
     setDevice(device_);
     allocator_ = getAllocator(device_);
     arena_ = std::make_unique<GpuArena>(1 << 28, allocator_);
+    streams_.push_back(std::make_unique<BlockTestStream>());
   }
 
   void prefetch(Stream& stream, WaveBufferPtr buffer) {
     stream.prefetch(device_, buffer->as<char>(), buffer->capacity());
   }
 
+  // Tests different styles of updating a group by. Results are returned in 'run'.
+  void updateTestCase(
+		      int32_t numDistinct,
+		      int32_t numRows,
+		      HashRun& run) {
+    run.numRows = numRows;
+    run.numColumns = 2;
+    run.rowsPerThread = 4;
+  
+    initializeHashTestInput(run, arena_.get());
+    fillHashTestInput(
+		      run.numRows,
+		      run.numDistinct,
+		      bits::nextPowerOfTwo(run.numDistinct),
+		      1,
+		      run.numColumns,
+		      reinterpret_cast<int64_t**>(run.probe->keys));
+    std::vector<TestingRow> reference(run.numDistinct); 
+    for (auto i = 0; i < run.numDistinct; ++i) {
+      reference[i].key = i;
+    }
+    WaveBufferPtr gpuRowsBuffer = arena_->allocate<TestingRow>(run.numDistinct);
+    TestingRow* gpuRows = gpuRowsBuffer->as<TestingRow>();
+    memcpy(gpuRows, reference.data(), sizeof(TestingRow) * run.numDistinct);
+    prefetch(*streams_[0], gpuRowsBuffer);
+    prefetch(*streams_[0], run.gpuData);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    runCpu(reference.data(), run);
+    runGpu(gpuRows, run, reference.data());
+    std::cout << run.toString() << std::endl;
+  }
+
+  void runCpu(TestingRow* rows, HashRun& run) {
+    uint64_t micros = 0;
+    {
+    MicrosecondTimer t(&micros);
+    switch (run.testCase) {
+    case HashTestCase::kUpdateSum1:{
+      int64_t** keys = reinterpret_cast<int64_t**>(run.probe->keys);
+      int64_t* indices = keys[0];
+      int64_t* data = keys[1];
+      auto numRows = run.numRows;
+      for (auto i = 0;  i < numRows; ++i) {
+	rows[indices[i]].count += data[i];
+      }
+      break;
+    }
+      default: VELOX_FAIL("Unsupported test case");
+    }
+  }
+    run.scores.push_back(std::make_pair<std::string, float>("Cpu1T", run.numRows / (micros / 1e6)));
+  }
+
+  void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
+    uint64_t micros = 0;
+    if (streams_.empty()) {
+      streams_.push_back(std::make_unique<BlockTestStream>());
+    }
+    switch (run.testCase) {
+    case HashTestCase::kUpdateSum1:
+      {
+	MicrosecondTimer t(&micros);
+	streams_[0]->updateSum1Atomic(rows, run);
+	streams_[0]->wait();
+      }
+      run.scores.push_back(std::make_pair<std::string, float>("Gpu atm", run.numRows / (micros / 1e6)));
+      compareAndReset(reference, rows, run.numDistinct);
+      break;
+      default: VELOX_FAIL("Unsupported test case");
+    }
+    }
+
+
+  void compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows) {
+    for (auto i = 0; i < numRows; ++i) {
+      if (rows[i].count == reference[i].count) {
+	continue;
+      }
+      EXPECT_EQ(reference[i].count, rows[i].count) << " at " << i;
+      break;
+    }
+    for (auto i = 0; i < numRows; ++i) {
+      new(rows + i)  TestingRow();
+      rows[i].key = i;
+    }
+  }
+  
+  
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
+  std::vector<std::unique_ptr<BlockTestStream>> streams_;
 };
 
 TEST_F(HashTableTest, hashMatrix) {
@@ -109,12 +201,14 @@ TEST_F(HashTableTest, allocator) {
 }
 
 TEST_F(HashTableTest, update) {
-  constexpr kNumRows = 1000000;
-  HashRun run;
-  run.numRows = kNumRows;
-  run.numSlots = 2;
-  run.rowsPerThread = 4;
-  initializeHashTestInput(run, arena_);
+  {
+    HashRun run;
+    updateTestCase(1000, 2000000, run);
+  }
+  {
+    HashRun run;
+    updateTestCase(10000000, 2000000, run);
+  }
+  }
   
-}
 } // namespace facebook::velox::wave

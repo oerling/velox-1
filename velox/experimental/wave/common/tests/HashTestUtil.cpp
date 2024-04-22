@@ -70,25 +70,27 @@ void fillHashTestInput(
   }
 }
 
-void initializeHashtestInput(HashRun& run, GpuArena* arena) {
+void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   auto [bytes, roundedRows] = probeSize(run);
   char* data;
   if (!arena) {
+    run.isCpu = true;
     run.cpuData = std::make_unique<char[]>(bytes);
     run.input = run.cpuData.get();
   } else {
+    run.isCpu = false;
     run.gpuData = arena->allocate<char>(bytes);
     run.input = run.gpuData->as<char>();
   }
   auto dataBegin = data;
   HashProbe* probe = new (data) HashProbe();
   data += sizeof(HashProbe);
-  probe->numKeys = reinterpret_cast<int32_t*>(data);
+  probe->numRows = reinterpret_cast<int32_t*>(data);
   data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * 256);
   if (!arena) {
-    probe->numKeys[0] = run.numRows;
+    probe->numRows[0] = run.numRows;
   } else {
-    int32_t numBlocks = roundedRows / (256 * run.rowsPerThread);
+    run.numBlocks = roundedRows / (256 * run.rowsPerThread);
   }
   probe->hashes = reinterpret_cast<uint64_t*>(data);
   data += sizeof(uint64_t) * roundedRows;
@@ -136,7 +138,20 @@ void setupGpuTable(
 }
 
 std::string HashRun::toString() const {
-  return fmt::format("");
+  std::stringstream out;
+  std::string opLabel = testCase == HashTestCase::kUpdateSum1 ? "update sum1" : "update array_agg1";
+  out << label << ":" << opLabel
+      << "distinct=" << numDistinct << " rows=" << numRows 
+      << " (" << numBlocks << "x" << blockSize << "x" << rowsPerThread << ") ";
+    if (hotPct) {
+      out << " skew " << hotPct << "% in " << numHot << " ";
+    }
+    auto sorted = scores;
+  std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) { return left.second > right.second;});
+  for (auto& score : sorted) {
+    out << fmt::format(" {}={} rps ", score.first, score.second);
+  }
+  return out.str();
 }
 
 } // namespace facebook::velox::wave

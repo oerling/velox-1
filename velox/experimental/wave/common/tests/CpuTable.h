@@ -69,7 +69,7 @@ struct CpuHashTable {
 
   template <typename RowType, typename Ops>
   void updatingProbe(HashProbe* probe, Ops ops) {
-    auto numRows = probe->numKeys[0];
+    auto numRows = probe->numRows[0];
     for (auto i = 0; i < numRows; ++i) {
       auto h = probe->hashes[i];
       uint8_t tag = 0x80 | (h >> 32);

@@ -17,7 +17,9 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
+#include "velox/experimental/wave/common/tests/Updates.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
 namespace facebook::velox::wave {
 
@@ -206,7 +208,7 @@ class MockGroupByOps {
   }
 
   int32_t __device__ numRowsInBlock(HashProbe* probe) {
-    return probe->numKeys[blockIdx.x];
+    return probe->numRows[blockIdx.x];
   }
 
   bool __device__
@@ -387,10 +389,15 @@ void BlockTestStream::rowAllocatorTest(
       numAlloc, numFree, numStr, results);
 }
 
-  void __global__ testUpdateKernel(TestingRow* rows, int32_t* indices, int32_t numIndices, int32_t* deltas) {
-    
+  void __global__ updateSum1AtomicKernel(TestingRow* rows, HashProbe* probe) {
+    testSumAtomic(rows, probe);
   }
-  
+
+void BlockTestStream::updateSum1Atomic(TestingRow* rows, HashRun& run) {
+  updateSum1AtomicKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+}
+
+
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
 REGISTER_KERNEL("sum64", sum64);
