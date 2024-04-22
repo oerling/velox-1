@@ -108,4 +108,13 @@ TEST_F(HashTableTest, allocator) {
   }
 }
 
+TEST_F(HashTableTest, update) {
+  constexpr kNumRows = 1000000;
+  HashRun run;
+  run.numRows = kNumRows;
+  run.numSlots = 2;
+  run.rowsPerThread = 4;
+  initializeHashTestInput(run, arena_);
+  
+}
 } // namespace facebook::velox::wave
