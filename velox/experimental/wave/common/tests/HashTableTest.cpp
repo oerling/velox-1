@@ -46,13 +46,16 @@ TEST_F(HashTableTest, hashMatrix) {
 
 TEST_F(HashTableTest, allocator) {
   constexpr int32_t kNumThreads = 256;
-  constexpr int32_t kTotal = 1 << 30;
+  constexpr int32_t kTotal = 1 << 22;
   WaveBufferPtr data = arena_->allocate<char>(kTotal);
   auto* allocator = data->as<HashPartitionAllocator>();
+  auto freeSetSize = BlockTestStream::freeSetSize();
   new (allocator) HashPartitionAllocator(
-      data->as<char>() + sizeof(HashPartitionAllocator),
-      kTotal - sizeof(HashPartitionAllocator),
+      data->as<char>() + sizeof(HashPartitionAllocator) + freeSetSize,
+      kTotal - sizeof(HashPartitionAllocator) - freeSetSize,
       16);
+  allocator->freeSet = allocator + 1;
+  memset(allocator->freeSet, 0, freeSetSize);
   WaveBufferPtr allResults = arena_->allocate<AllocatorTestResult>(kNumThreads);
   auto results = allResults->as<AllocatorTestResult>();
   for (auto i = 0; i < kNumThreads; ++i) {
@@ -62,6 +65,8 @@ TEST_F(HashTableTest, allocator) {
   }
   auto stream1 = std::make_unique<BlockTestStream>();
   auto stream2 = std::make_unique<BlockTestStream>();
+  stream1->initAllocator(allocator);
+  stream1->wait();
   stream1->rowAllocatorTest(2, 4, 3, 2, results);
   stream2->rowAllocatorTest(2, 4, 3, 2, results + 128);
 

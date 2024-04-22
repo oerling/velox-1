@@ -16,55 +16,128 @@
 
 #pragma once
 
+#include <cuda/semaphore>
+
 #include <cub/thread/thread_load.cuh>
 #include <cub/util_ptx.cuh>
+
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/HashTable.h"
+#include "velox/experimental/wave/common/FreeSet.cuh"
 
 namespace facebook::velox::wave {
 
+#define GPF() *(long*)0 = 0
+
+//#define FREE_SET
+  
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
+  using Mutex = cuda::binary_semaphore<cuda::thread_scope_device>;
+  
   template <typename T>
   T* __device__ allocateRow() {
-    for (;;) {
-      auto free = freeRows;
-      if (free == kEmpty) {
-        break;
-      }
-      auto nextFree = *reinterpret_cast<uint32_t*>(base + free);
-      if (free == atomicCAS(&freeRows, free, nextFree)) {
-        return reinterpret_cast<T*>(base + free);
-      }
+    auto fromFree = getFromFree();
+    if (fromFree != kEmpty) {
+      ++numFromFree;
+      return reinterpret_cast<T*>(base + fromFree);
     }
     auto offset = atomicAdd(&rowOffset, rowSize);
+
     if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
+      if (!inRange(base + offset)) {
+	GPF();
+      }
       return reinterpret_cast<T*>(base + offset);
-    }
-    return nullptr;
+    } 
+   return nullptr;
   }
 
-  void __device__ freeRow(void* row) {
-    uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
+  uint32_t __device__ getFromFree() {
+#ifdef FREE_SET
+    uint32_t item = reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->get();
+    if (item != kEmpty) {
+      ++numFromFree;
+    }
+    return item;
+#else 
     for (;;) {
-      auto free = freeRows;
-      *reinterpret_cast<uint32_t*>(row) = offset;
+      auto free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
+      if (free == kEmpty) {
+        return kEmpty;
+      }
+      lock();
+      free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
+      if (free == kEmpty) {
+	unlock();
+        return kEmpty;
+      }
+      auto nextFree = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<uint32_t*>(base + free));
+      if (free == atomicCAS(reinterpret_cast<uint32_t*>(&freeRows), free, nextFree)) {
+	if (!inRange(base + free)) {
+	  GPF();
+	}
+	unlock();
+	        return free;
+      }
+      unlock();
+    }
+#endif
+  }
+	
+  
+  void __device__ freeRow(void* row) {
+    if (!inRange(row)) {
+      GPF();
+    }
+    uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
+#ifdef FREE_SET
+    numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(offset) == false;
+#else 
+    for (;;) {
+      lock();
+      auto free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
+      if (offset == free) {
+	//GPF();
+      }
+      *reinterpret_cast<uint32_t*>(row) = free;
+      __threadfence();
       if (free == atomicCAS(&freeRows, free, offset)) {
+	unlock();
         return;
       }
+      unlock();
     }
+    #endif
   }
 
   template <typename T>
   T* __device__ allocate(int32_t cnt) {
     uint32_t size = sizeof(T) * cnt;
     auto offset = atomicSub(&stringOffset, size);
-    if (offset - size <= cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
+    if (offset - size > cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
+      if (!inRange(base + offset - size)) {
+	GPF();
+      }
       return reinterpret_cast<T*>(base + offset - size);
     }
     return nullptr;
   }
+
+  template <typename T>
+  bool __device__ inRange(T ptr) {
+    return reinterpret_cast<uint64_t>(ptr) >= base && reinterpret_cast<uint64_t>(ptr) < base + capacity;
+  } 
+
+  void __device__ lock() {
+    //reinterpret_cast<Mutex*>(&mutex)->acquire();
+  }
+
+  void __device__ unlock() {
+    //reinterpret_cast<Mutex*>(&mutex)->release();
+  }
+
 };
 
 inline uint8_t __device__ hashTag(uint64_t h) {

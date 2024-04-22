@@ -47,6 +47,10 @@ struct HashPartitionAllocator {
   uint32_t stringOffset{0};
   // Offset of first in free list of rows.
   uint32_t freeRows{kEmpty};
+  uint32_t mutex;
+  void* freeSet{nullptr};
+  int32_t numFromFree{0};
+  int32_t numFull{0};
 };
 
 /// Implementation of HashPartitionAllocator, defined in .cuh.

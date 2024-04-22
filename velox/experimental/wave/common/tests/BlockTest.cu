@@ -246,7 +246,8 @@ class MockGroupByOps {
     row->count = 0;
     new (&row->concatenation) ArrayAgg64();
     update(table, bucket, row, i, probe);
-    row->flags = 0;
+    __threadfence();
+    atomicExch(&row->flags, 0);
     __threadfence();
     return ProbeState::kDone;
   }
@@ -316,7 +317,7 @@ void __global__ allocatorTestKernel(
     int32_t numFree,
     int32_t numStr,
     AllocatorTestResult* allResults) {
-  auto* result = allResults + threadIdx.x;
+  auto* result = allResults + threadIdx.x + blockIdx.x * blockDim.x;
   for (;;) {
     int32_t maxRows = sizeof(result->rows) / sizeof(result->rows[0]);
     int32_t maxStrings = sizeof(result->strings) / sizeof(result->strings[0]);
@@ -324,11 +325,28 @@ void __global__ allocatorTestKernel(
       if (result->numRows >= maxRows) {
         return;
       }
-      result->rows[result->numRows++] =
-          result->allocator->allocateRow<int64_t>();
+      auto newRow =           result->allocator->allocateRow<int64_t>();
+      if (newRow == nullptr) {
+	return;
+      }
+      if (reinterpret_cast<uint64_t>(newRow) == result->allocator->base)  {
+	printf("");
+      }
+
+      result->rows[result->numRows++] = newRow;
     }
     for (auto count = 0; count < numFree; ++count) {
-      result->allocator->freeRow(result->rows[--result->numRows]);
+      if (result->numRows == 0) {
+	return;
+      }
+      auto* toFree = result->rows[--result->numRows];
+      if (reinterpret_cast<uint64_t>(toFree) == result->allocator->base)  {
+	printf(""); //GPF();
+      }
+      if (!result->allocator->inRange(toFree)) {
+	GPF();
+      }
+      result->allocator->freeRow(toFree);
     }
     for (auto count = 0; count < numStr; ++count) {
       auto str = result->allocator->allocate<char>(11);
@@ -340,6 +358,25 @@ void __global__ allocatorTestKernel(
   }
 }
 
+  void __global__ initAllocatorKernel(RowAllocator* allocator) {
+    if (threadIdx.x == 0) {
+      new(&allocator->mutex) cuda::binary_semaphore<cuda::thread_scope_device>(1);
+      if (allocator->freeSet) {
+	reinterpret_cast<FreeSet<uint32_t, 1024>*>(allocator->freeSet)->clear();
+      }
+    }
+  }
+
+//  static
+int32_t BlockTestStream::freeSetSize() {
+  return sizeof(FreeSet<uint32_t, 1024>);
+}
+
+  
+void BlockTestStream::initAllocator(HashPartitionAllocator* allocator) {
+  initAllocatorKernel<<<1, 1, 0, stream_->stream>>>(reinterpret_cast<RowAllocator*>(allocator));
+}
+  
 void BlockTestStream::rowAllocatorTest(
     int32_t numBlocks,
     int32_t numAlloc,
@@ -350,6 +387,10 @@ void BlockTestStream::rowAllocatorTest(
       numAlloc, numFree, numStr, results);
 }
 
+  void __global__ testUpdateKernel(TestingRow* rows, int32_t* indices, int32_t numIndices, int32_t* deltas) {
+    
+  }
+  
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
 REGISTER_KERNEL("sum64", sum64);
