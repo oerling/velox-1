@@ -330,9 +330,7 @@ WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
   // GpuSlab's capacity. No further attempts will happen.
   auto arenaBytes = std::max<uint64_t>(singleArenaCapacity_, bytes);
   auto newArena = std::make_shared<GpuSlab>(
-      allocator_->allocate(arenaBytes),
-      arenaBytes,
-      allocator_);
+      allocator_->allocate(arenaBytes), arenaBytes, allocator_);
   arenas_.emplace(reinterpret_cast<uint64_t>(newArena->address()), newArena);
   currentArena_ = newArena;
   result = currentArena_->allocate(bytes);

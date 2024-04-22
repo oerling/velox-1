@@ -44,7 +44,8 @@ struct HashPartitionAllocator {
   const uint64_t base{0};
   // Offset of first in free list of rows. Align at 8 bytes.
   uint32_t freeRows{kEmpty};
-  // counter of pops from fre list. Must be upper half of 64 bit word with freeRows as lower half. Use for lock free ABA magic.
+  // counter of pops from fre list. Must be upper half of 64 bit word with
+  // freeRows as lower half. Use for lock free ABA magic.
   uint32_t numPops{0};
   uint32_t rowOffset{0};
   const uint32_t capacity{0};

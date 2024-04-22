@@ -139,15 +139,19 @@ void setupGpuTable(
 
 std::string HashRun::toString() const {
   std::stringstream out;
-  std::string opLabel = testCase == HashTestCase::kUpdateSum1 ? "update sum1" : "update array_agg1";
-  out << label << ":" << opLabel
-      << "distinct=" << numDistinct << " rows=" << numRows 
-      << " (" << numBlocks << "x" << blockSize << "x" << rowsPerThread << ") ";
-    if (hotPct) {
-      out << " skew " << hotPct << "% in " << numHot << " ";
-    }
-    auto sorted = scores;
-  std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) { return left.second > right.second;});
+  std::string opLabel = testCase == HashTestCase::kUpdateSum1
+      ? "update sum1"
+      : "update array_agg1";
+  out << label << ":" << opLabel << "distinct=" << numDistinct
+      << " rows=" << numRows << " (" << numBlocks << "x" << blockSize << "x"
+      << rowsPerThread << ") ";
+  if (hotPct) {
+    out << " skew " << hotPct << "% in " << numHot << " ";
+  }
+  auto sorted = scores;
+  std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) {
+    return left.second > right.second;
+  });
   for (auto& score : sorted) {
     out << fmt::format(" {}={} rps ", score.first, score.second);
   }

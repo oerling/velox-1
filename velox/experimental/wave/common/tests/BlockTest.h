@@ -117,9 +117,9 @@ class BlockTestStream : public Stream {
       HashCase mode);
 
   static int32_t freeSetSize();
-  
+
   void initAllocator(HashPartitionAllocator* allocator);
-  
+
   /// tests RowAllocator.
   void rowAllocatorTest(
       int32_t numBlocks,

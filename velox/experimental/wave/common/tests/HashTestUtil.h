@@ -22,17 +22,19 @@
 
 namespace facebook::velox::wave {
 
-  /// Identifies operation being tested. A collection of representative hash table ops like aggregates probes and builds with different functions and layouts.
-  enum class HashTestCase {
-    // bigint sum.  Update only, no hash table.
-    kUpdateSum1,
-      // array_agg of bigint. Update only, no hash table.
-      kUpdateArrayAgg1
-  };
-  
+/// Identifies operation being tested. A collection of representative hash table
+/// ops like aggregates probes and builds with different functions and layouts.
+enum class HashTestCase {
+  // bigint sum.  Update only, no hash table.
+  kUpdateSum1,
+  // array_agg of bigint. Update only, no hash table.
+  kUpdateArrayAgg1
+};
+
 /// Describes a hashtable benchmark case.
 struct HashRun {
-  // Label of test case. Describes what is done. The labels for different implementations come from 'scores'.
+  // Label of test case. Describes what is done. The labels for different
+  // implementations come from 'scores'.
   std::string label;
   // the operation being measured.
   HashTestCase testCase;
@@ -60,7 +62,7 @@ struct HashRun {
   int32_t rowsPerThread;
 
   int32_t blockSize{256};
-  
+
   // Number of blocks of 'blockSize' threads.
   int32_t numBlocks;
 
@@ -81,7 +83,7 @@ struct HashRun {
 
   // Initialized probe params, contained in 'input'.
   HashProbe* probe;
-  
+
   std::string toString() const;
 };
 
