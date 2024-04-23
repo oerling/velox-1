@@ -134,9 +134,9 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
       if (((threadIdx.x / 32) & 1) == 0) {
         for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
              index += stride) {
-          auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+          auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
           numbers[index] += lookup[rnd];
-          rnd = scale32((index + 32) * (counter + 1) * kPrime32, size);
+          rnd = deviceScale32((index + 32) * (counter + 1) * kPrime32, size);
           numbers[index + 32] += lookup[rnd];
         }
       }
@@ -144,9 +144,9 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
       if ((threadIdx.x & 1) == 0) {
         for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
              index += stride) {
-          auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+          auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
           numbers[index] += lookup[rnd];
-          rnd = scale32((index + 1) * (counter + 1) * kPrime32, size);
+          rnd = deviceScale32((index + 1) * (counter + 1) * kPrime32, size);
           numbers[index + 1] += lookup[rnd];
         }
       }
@@ -154,7 +154,7 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
 #pragma unroll
       for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
            index += stride) {
-        auto rnd = scale32(index * (counter + 1) * kPrime32, size);
+        auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
         numbers[index] += lookup[rnd];
       }
     }
@@ -211,7 +211,7 @@ void __global__ __launch_bounds__(1024) makeInputKernel(
   }
   auto delta = startCount & (powerOfTwo - 1);
   auto previous = columns[0][idx];
-  auto key = scale32((previous + delta + idx) * kPrime32, keyRange);
+  auto key = deviceScale32((previous + delta + idx) * kPrime32, keyRange);
   columns[0][idx] = key;
   hashes[idx] = hashMix(1, key);
   for (auto i = 1; i < numColumns; ++i) {

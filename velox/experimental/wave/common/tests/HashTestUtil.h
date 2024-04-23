@@ -59,7 +59,7 @@ struct HashRun {
   int32_t hotPct{0};
 
   // Number of keys processed by each thread of each block.
-  int32_t rowsPerThread;
+  int32_t numRowsPerThread;
 
   int32_t blockSize{256};
 
@@ -85,6 +85,7 @@ struct HashRun {
   HashProbe* probe;
 
   std::string toString() const;
+  void addScore(const std::string& label, uint64_t micros);
 };
 
 void fillHashTestInput(

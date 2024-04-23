@@ -27,7 +27,7 @@ namespace facebook::velox::wave {
     auto deltas = keys[1];
     int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
     auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
-  int32_t end = probe->numRows[blockIdx.x];
+  int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];

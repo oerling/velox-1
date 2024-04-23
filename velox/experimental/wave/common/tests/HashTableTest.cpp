@@ -44,7 +44,7 @@ class HashTableTest : public testing::Test {
     run.numRows = numRows;
     run.numDistinct = numDistinct;
     run.numColumns = 2;
-    run.rowsPerThread = 4;
+    run.numRowsPerThread = 4;
 
     initializeHashTestInput(run, arena_.get());
     fillHashTestInput(
@@ -106,6 +106,7 @@ class HashTableTest : public testing::Test {
         run.scores.push_back(std::make_pair<std::string, float>(
             "Gpu atm", run.numRows / (micros / 1e6)));
         compareAndReset(reference, rows, run.numDistinct);
+	prefetch(streams_[0], gpuRowsBuffer);
         break;
       default:
         VELOX_FAIL("Unsupported test case");
@@ -204,10 +205,12 @@ TEST_F(HashTableTest, allocator) {
 TEST_F(HashTableTest, update) {
   {
     HashRun run;
+    run.testCase = HashTestCase::kUpdateSum1;
     updateTestCase(1000, 2000000, run);
   }
   {
     HashRun run;
+    run.testCase = HashTestCase::kUpdateSum1;
     updateTestCase(10000000, 2000000, run);
   }
 }

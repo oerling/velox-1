@@ -33,6 +33,8 @@
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
+#include "velox/experimental/wave/common/tests/Util.h"
+
 
 #include <iostream>
 
@@ -786,9 +788,6 @@ class RoundtripThread {
     int32_t param3{0};
   };
 
-inline uint32_t scale32(uint32_t n, uint32_t scale) {
-  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
-}
 
   
   void run(RoundtripStats& stats) {

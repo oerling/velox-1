@@ -32,7 +32,7 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
 // Returns the byte size for a GpuProbe with numRows as first, rounded row count
 // as second.
 std::pair<int64_t, int32_t> probeSize(HashRun& run) {
-  int32_t roundedRows = bits::roundUp(run.numRows, run.blockSize * run.rowsPerThread);
+  int32_t roundedRows = bits::roundUp(run.numRows, run.blockSize * run.numRowsPerThread);
   return {
       sizeof(HashProbe) +
           // Column data and hash number array.
@@ -42,7 +42,7 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           // retry lists
           + 2 * sizeof(int32_t) * roundedRows +
       // numRows for each block.
-      sizeof(int32_t) * roundedRows / (run.blockSize * run.rowsPerThread),
+      sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread),
       roundedRows};
 }
 
@@ -93,12 +93,20 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   run.probe = probe;
   data += sizeof(HashProbe);
   probe->numRows = reinterpret_cast<int32_t*>(data);
-  data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * run.blockSize);
+  data += sizeof(int32_t) * roundedRows / (run.numRowsPerThread * run.blockSize);
   if (!arena) {
     probe->numRows[0] = run.numRows;
   } else {
-    run.numBlocks = roundedRows / (run.blockSize * run.rowsPerThread);
+    run.numBlocks = roundedRows / (run.blockSize * run.numRowsPerThread);
+    for (auto i = 0; i < run.numBlocks; ++i) {
+      if (i == run.numBlocks - 1) {
+	probe->numRows[i] =  run.numRows - (i * run.blockSize * run.numRowsPerThread);
+	break;
+      }
+      probe->numRows[i] = run.blockSize * run.numRowsPerThread;;
+    }
   }
+  probe->numRowsPerThread = run.numRowsPerThread;
   probe->hashes = reinterpret_cast<uint64_t*>(data);
   data += sizeof(uint64_t) * roundedRows;
   probe->keys = data;
@@ -149,9 +157,9 @@ std::string HashRun::toString() const {
   std::string opLabel = testCase == HashTestCase::kUpdateSum1
       ? "update sum1"
       : "update array_agg1";
-  out << label << ":" << opLabel << "distinct=" << numDistinct
+  out << label << ":" << opLabel << " distinct=" << numDistinct
       << " rows=" << numRows << " (" << numBlocks << "x" << blockSize << "x"
-      << rowsPerThread << ") ";
+      << numRowsPerThread << ") ";
   if (hotPct) {
     out << " skew " << hotPct << "% in " << numHot << " ";
   }
