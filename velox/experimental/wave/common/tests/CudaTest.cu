@@ -121,10 +121,6 @@ void TestStream::addOneShared(
   CUDA_CHECK(cudaGetLastError());
 }
 
-__device__ uint32_t scale32(uint32_t n, uint32_t scale) {
-  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
-}
-
 __global__ void __launch_bounds__(1024) addOneRandomKernel(
     int32_t* numbers,
     const int32_t* lookup,

@@ -24,11 +24,15 @@
 namespace facebook::velox::wave {
 
 constexpr uint32_t kPrime32 = 1815531889;
+inline uint32_t scale32(uint32_t n, uint32_t scale) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
+}
 
+  
 // Returns the byte size for a GpuProbe with numRows as first, rounded row count
 // as second.
 std::pair<int64_t, int32_t> probeSize(HashRun& run) {
-  int32_t roundedRows = bits::roundUp(run.numRows, 256 * run.rowsPerThread);
+  int32_t roundedRows = bits::roundUp(run.numRows, run.blockSize * run.rowsPerThread);
   return {
       sizeof(HashProbe) +
           // Column data and hash number array.
@@ -36,7 +40,9 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           // Pointers to column starts
           + sizeof(int64_t*) * run.numColumns
           // retry lists
-          + 2 * sizeof(int32_t) * roundedRows,
+          + 2 * sizeof(int32_t) * roundedRows +
+      // numRows for each block.
+      sizeof(int32_t) * roundedRows / (run.blockSize * run.rowsPerThread),
       roundedRows};
 }
 
@@ -72,7 +78,6 @@ void fillHashTestInput(
 
 void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   auto [bytes, roundedRows] = probeSize(run);
-  char* data;
   if (!arena) {
     run.isCpu = true;
     run.cpuData = std::make_unique<char[]>(bytes);
@@ -82,15 +87,17 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
     run.gpuData = arena->allocate<char>(bytes);
     run.input = run.gpuData->as<char>();
   }
+  auto data = run.input;
   auto dataBegin = data;
   HashProbe* probe = new (data) HashProbe();
+  run.probe = probe;
   data += sizeof(HashProbe);
   probe->numRows = reinterpret_cast<int32_t*>(data);
-  data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * 256);
+  data += sizeof(int32_t) * roundedRows / (run.rowsPerThread * run.blockSize);
   if (!arena) {
     probe->numRows[0] = run.numRows;
   } else {
-    run.numBlocks = roundedRows / (256 * run.rowsPerThread);
+    run.numBlocks = roundedRows / (run.blockSize * run.rowsPerThread);
   }
   probe->hashes = reinterpret_cast<uint64_t*>(data);
   data += sizeof(uint64_t) * roundedRows;

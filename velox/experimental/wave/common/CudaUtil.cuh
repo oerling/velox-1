@@ -54,6 +54,12 @@ memcmp(const void* lhs, const void* rhs, size_t n) {
   return 0;
 }
 
+__device__ __host__ uint32_t scale32(uint32_t n, uint32_t scale) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
+}
+
+
+
 struct StreamImpl {
   cudaStream_t stream;
 };

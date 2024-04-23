@@ -42,7 +42,7 @@ struct HashRun {
   bool isCpu;
 
   // Number of slots in table.
-  int32_t numSlots;
+  int32_t numSlots{0};
 
   // Number of probe rows.
   int32_t numRows;
@@ -97,9 +97,6 @@ void fillHashTestInput(
     int32_t numHot = 0,
     int32_t hotPct = 0);
 
-inline uint32_t scale32(uint32_t n, uint32_t scale) {
-  return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
-}
 
 void initializeHashTestInput(HashRun& run, GpuArena* arena);
 

@@ -42,6 +42,7 @@ class HashTableTest : public testing::Test {
   // 'run'.
   void updateTestCase(int32_t numDistinct, int32_t numRows, HashRun& run) {
     run.numRows = numRows;
+    run.numDistinct = numDistinct;
     run.numColumns = 2;
     run.rowsPerThread = 4;
 
