@@ -20,23 +20,22 @@
 
 namespace facebook::velox::wave {
 
-
 template <typename T, int32_t kSize>
 class FreeSet {
-public:
+ public:
   static constexpr uint32_t kEmpty = ~0;
   static constexpr int32_t kBitSizeMask = (kSize / 64) - 1;
-  static constexpr int32_t kSizeMask = kSize - 1; 
+  static constexpr int32_t kSizeMask = kSize - 1;
 
   void __device__ clear() {
     for (auto i = threadIdx.x; i < kSize; i += blockDim.x) {
       if (i < sizeof(bits_) / sizeof(bits_[0])) {
-	bits_[i] = 0;
+        bits_[i] = 0;
       }
       items_[i] = kEmpty;
     }
   }
-  
+
   // Adds an item. Returns true if succeededs.
   bool __device__ put(T item) {
     if (full_) {
@@ -45,20 +44,20 @@ public:
     auto tid = threadIdx.x + blockDim.x * blockIdx.x;
     auto bitIdx = tid & kBitSizeMask;
     for (auto count = 0; count <= kBitSizeMask; ++count) {
-    auto word = ~bits_[bitIdx];
-    while (word) {
-      auto bit = __ffsll(word);
-      --bit;
-      if (kEmpty == atomicCAS(&items_[bitIdx * 64 + bit], kEmpty, item)) {
-	  atomicOr(&bits_[bitIdx], 1UL << bit);
-	  if (empty_) {
-	    atomicExch(&empty_, 0);
-	  }
-	  return true;
+      auto word = ~bits_[bitIdx];
+      while (word) {
+        auto bit = __ffsll(word);
+        --bit;
+        if (kEmpty == atomicCAS(&items_[bitIdx * 64 + bit], kEmpty, item)) {
+          atomicOr(&bits_[bitIdx], 1UL << bit);
+          if (empty_) {
+            atomicExch(&empty_, 0);
+          }
+          return true;
+        }
+        word &= word - 1;
       }
-      word &= word - 1;
-    }
-    bitIdx = bitIdx + 1 & kBitSizeMask;
+      bitIdx = bitIdx + 1 & kBitSizeMask;
     }
     atomicExch(&full_, 1);
     return false;
@@ -72,30 +71,29 @@ public:
     auto tid = threadIdx.x + blockDim.x * blockIdx.x;
     auto bitIdx = tid & kBitSizeMask;
     for (auto count = 0; count <= kBitSizeMask; ++count) {
-    auto word = bits_[bitIdx];
-    while (word) {
-      auto bit = __ffsll(word);
-      --bit;
-      T item = atomicExch(&items_[bitIdx * 64 + bit], kEmpty);
-      if (item != kEmpty) {
-	atomicAnd(&bits_[bitIdx], ~(1UL << bit));
-	  if (full_) {
-	    atomicExch(&full_, 0);
-	  }
-	  return  item;
+      auto word = bits_[bitIdx];
+      while (word) {
+        auto bit = __ffsll(word);
+        --bit;
+        T item = atomicExch(&items_[bitIdx * 64 + bit], kEmpty);
+        if (item != kEmpty) {
+          atomicAnd(&bits_[bitIdx], ~(1UL << bit));
+          if (full_) {
+            atomicExch(&full_, 0);
+          }
+          return item;
+        }
+        word &= word - 1;
       }
-      word &= word - 1;
-    }
-    bitIdx = bitIdx + 1 & kBitSizeMask;
+      bitIdx = bitIdx + 1 & kBitSizeMask;
     }
     atomicExch(&empty_, true);
     return kEmpty;
   }
-  
 
   int32_t full_{0};
   int32_t empty_{1};
   unsigned long long bits_[kBitSizeMask + 1];
   T items_[kSize];
 };
-}
+} // namespace facebook::velox::wave

@@ -22,20 +22,20 @@
 #include <cub/util_ptx.cuh>
 
 #include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/common/FreeSet.cuh"
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/HashTable.h"
-#include "velox/experimental/wave/common/FreeSet.cuh"
 
 namespace facebook::velox::wave {
 
 #define GPF() *(long*)0 = 0
 
 //#define FREE_SET
-  
+
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
   using Mutex = cuda::binary_semaphore<cuda::thread_scope_device>;
-  
+
   template <typename T>
   T* __device__ allocateRow() {
     auto fromFree = getFromFree();
@@ -47,11 +47,11 @@ struct RowAllocator : public HashPartitionAllocator {
 
     if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
       if (!inRange(base + offset)) {
-	GPF();
+        GPF();
       }
       return reinterpret_cast<T*>(base + offset);
-    } 
-   return nullptr;
+    }
+    return nullptr;
   }
 
   uint32_t __device__ getFromFree() {
@@ -61,58 +61,65 @@ struct RowAllocator : public HashPartitionAllocator {
       ++numFromFree;
     }
     return item;
-#else 
+#else
     for (;;) {
-      uint64_t free = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
+      uint64_t free =
+          cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
       if (free == kEmpty) {
         return kEmpty;
       }
       lock();
       uint64_t counter = 1 + atomicAdd(&numPops, 1);
-      free = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
+      free =
+          cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
       if (free == kEmpty) {
-	unlock();
+        unlock();
         return kEmpty;
       }
-      uint32_t next = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(base + free));
+      uint32_t next = cub::ThreadLoad<cub::LOAD_CG>(
+          reinterpret_cast<uint32_t*>(base + free));
       unsigned long long freeAndCount = free | (counter << 32);
       unsigned long long nextFreeAndCount = next | (counter << 32);
-      if (freeAndCount == atomicCAS(reinterpret_cast<unsigned long long*>(&freeRows), freeAndCount, nextFreeAndCount)) {
-	if (!inRange(base + free)) {
-	  GPF();
-	}
-	unlock();
-	return free;
+      if (freeAndCount ==
+          atomicCAS(
+              reinterpret_cast<unsigned long long*>(&freeRows),
+              freeAndCount,
+              nextFreeAndCount)) {
+        if (!inRange(base + free)) {
+          GPF();
+        }
+        unlock();
+        return free;
       }
       unlock();
     }
 #endif
   }
-	
-  
+
   void __device__ freeRow(void* row) {
     if (!inRange(row)) {
       GPF();
     }
     uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
 #ifdef FREE_SET
-    numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(offset) == false;
-#else 
+    numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(
+                   offset) == false;
+#else
     for (;;) {
       lock();
       auto free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
       if (offset == free) {
-	//GPF();
+        // GPF();
       }
       *reinterpret_cast<uint32_t*>(row) = free;
       __threadfence();
       if (free == atomicCAS(&freeRows, free, offset)) {
-	unlock();
+        unlock();
         return;
       }
       unlock();
     }
-    #endif
+#endif
   }
 
   template <typename T>
@@ -121,7 +128,7 @@ struct RowAllocator : public HashPartitionAllocator {
     auto offset = atomicSub(&stringOffset, size);
     if (offset - size > cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
       if (!inRange(base + offset - size)) {
-	GPF();
+        GPF();
       }
       return reinterpret_cast<T*>(base + offset - size);
     }
@@ -130,17 +137,17 @@ struct RowAllocator : public HashPartitionAllocator {
 
   template <typename T>
   bool __device__ inRange(T ptr) {
-    return reinterpret_cast<uint64_t>(ptr) >= base && reinterpret_cast<uint64_t>(ptr) < base + capacity;
-  } 
+    return reinterpret_cast<uint64_t>(ptr) >= base &&
+        reinterpret_cast<uint64_t>(ptr) < base + capacity;
+  }
 
   void __device__ lock() {
-    //reinterpret_cast<Mutex*>(&mutex)->acquire();
+    // reinterpret_cast<Mutex*>(&mutex)->acquire();
   }
 
   void __device__ unlock() {
-    //reinterpret_cast<Mutex*>(&mutex)->release();
+    // reinterpret_cast<Mutex*>(&mutex)->release();
   }
-
 };
 
 inline uint8_t __device__ hashTag(uint64_t h) {

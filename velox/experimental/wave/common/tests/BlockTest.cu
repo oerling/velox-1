@@ -17,9 +17,9 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
-#include "velox/experimental/wave/common/tests/Updates.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
+#include "velox/experimental/wave/common/tests/Updates.cuh"
 
 namespace facebook::velox::wave {
 
@@ -327,26 +327,26 @@ void __global__ allocatorTestKernel(
       if (result->numRows >= maxRows) {
         return;
       }
-      auto newRow =           result->allocator->allocateRow<int64_t>();
+      auto newRow = result->allocator->allocateRow<int64_t>();
       if (newRow == nullptr) {
-	return;
+        return;
       }
-      if (reinterpret_cast<uint64_t>(newRow) == result->allocator->base)  {
-	printf("");
+      if (reinterpret_cast<uint64_t>(newRow) == result->allocator->base) {
+        printf("");
       }
 
       result->rows[result->numRows++] = newRow;
     }
     for (auto count = 0; count < numFree; ++count) {
       if (result->numRows == 0) {
-	return;
+        return;
       }
       auto* toFree = result->rows[--result->numRows];
-      if (reinterpret_cast<uint64_t>(toFree) == result->allocator->base)  {
-	printf(""); //GPF();
+      if (reinterpret_cast<uint64_t>(toFree) == result->allocator->base) {
+        printf(""); // GPF();
       }
       if (!result->allocator->inRange(toFree)) {
-	GPF();
+        GPF();
       }
       result->allocator->freeRow(toFree);
     }
@@ -360,25 +360,26 @@ void __global__ allocatorTestKernel(
   }
 }
 
-  void __global__ initAllocatorKernel(RowAllocator* allocator) {
-    if (threadIdx.x == 0) {
-      new(&allocator->mutex) cuda::binary_semaphore<cuda::thread_scope_device>(1);
-      if (allocator->freeSet) {
-	reinterpret_cast<FreeSet<uint32_t, 1024>*>(allocator->freeSet)->clear();
-      }
+void __global__ initAllocatorKernel(RowAllocator* allocator) {
+  if (threadIdx.x == 0) {
+    new (&allocator->mutex)
+        cuda::binary_semaphore<cuda::thread_scope_device>(1);
+    if (allocator->freeSet) {
+      reinterpret_cast<FreeSet<uint32_t, 1024>*>(allocator->freeSet)->clear();
     }
   }
+}
 
 //  static
 int32_t BlockTestStream::freeSetSize() {
   return sizeof(FreeSet<uint32_t, 1024>);
 }
 
-  
 void BlockTestStream::initAllocator(HashPartitionAllocator* allocator) {
-  initAllocatorKernel<<<1, 1, 0, stream_->stream>>>(reinterpret_cast<RowAllocator*>(allocator));
+  initAllocatorKernel<<<1, 1, 0, stream_->stream>>>(
+      reinterpret_cast<RowAllocator*>(allocator));
 }
-  
+
 void BlockTestStream::rowAllocatorTest(
     int32_t numBlocks,
     int32_t numAlloc,
@@ -389,62 +390,91 @@ void BlockTestStream::rowAllocatorTest(
       numAlloc, numFree, numStr, results);
 }
 
+#define UPDATE_CASE(name, func, smem)                                      \
+  void __global__ name##Kernel(TestingRow* rows, HashProbe* probe) {       \
+    func(rows, probe);                                                     \
+  }                                                                        \
+                                                                           \
+  void BlockTestStream::name(TestingRow* rows, HashRun& run) {             \
+    name##Kernel<<<run.numBlocks, run.blockSize, smem, stream_->stream>>>( \
+        rows, run.probe);                                                  \
+  }
 
+UPDATE_CASE(updateSum1NoSync, testSumNoSync, 0);
+UPDATE_CASE(updateSum1Mtx, testSumMtx, 0);
+UPDATE_CASE(updateSum1MtxCoalesce, testSumMtxCoalesce, 0);
+UPDATE_CASE(updateSum1Atomic, testSumAtomic, 0);
+UPDATE_CASE(updateSum1AtomicCoalesce, testSumAtomicCoalesce, 0);
+UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
+UPDATE_CASE(updateSum1Order, testSumOrder, 0);
 
-#define UPDATE_CASE(name, func, smem)				     \
-  void __global__ name##Kernel(TestingRow* rows, HashProbe* probe) { \
-    func(rows, probe); \
-  } \
-\
-  void BlockTestStream::name(TestingRow* rows, HashRun& run) { \
-  name##Kernel<<<run.numBlocks, run.blockSize, smem, stream_->stream>>>(rows, run.probe); \
+void __global__ update1PartitionKernel(
+    int32_t numRows,
+    int32_t numDistinct,
+    int32_t numParts,
+    int32_t blockStride,
+    HashProbe* probe,
+    int32_t* temp) {
+  auto blockStart = blockStride * blockIdx.x;
+  auto keysInPart = numDistinct / numParts;
+  int32_t shift = 0;
+  auto keys = reinterpret_cast<int64_t**>(probe->keys);
+  auto indices = keys[0];
+  if (keysInPart > 32) {
+    shift = 5;
+  }
+  partitionRows<1024, int32_t>(
+      [&](auto i) -> int32_t {
+        return (indices[i + blockStart] >> shift) % numDistinct;
+      },
+      blockIdx.x == blockDim.x - 1 ? numRows - blockStart : blockStride,
+      numParts,
+      temp + blockIdx.x * blockStride,
+      probe->hostRetries + blockStride * blockIdx.x,
+      probe->kernelRetries + blockStride * blockIdx.x);
 }
 
-  UPDATE_CASE(updateSum1NoSync, testSumNoSync, 0);
-  UPDATE_CASE(updateSum1Mtx, testSumMtx, 0);
-  UPDATE_CASE(updateSum1MtxCoalesce, testSumMtxCoalesce, 0);
-
-  UPDATE_CASE(updateSum1Atomic, testSumAtomic, 0);
-  UPDATE_CASE(updateSum1AtomicCoalesce, testSumAtomicCoalesce, 0);
-  UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
-  UPDATE_CASE(updateSum1Order, testSumOrder, 0);
-  
-  void __global__ updatePartitionKernel(int32_t numRows, int32_t numDistinct, int32_t numParts, int32_t blockStride, HashProbe* probe, int32_t* temp) {
-    auto blockStart = blockStride * blockIdx.x;
-    auto keysInPart = numDistinct / numParts;
-    int32_t shift = 0;
-    auto keys = reinterpret_cast<int64_t**>(probe->keys);
-    auto indices = keys[0];
-    if (keysInPart > 32){
-      shift = 5;
-    }
-    partitionRows<1024, int32_t>(
-		  [&](auto i) -> int32_t {
-		    return (indices[i + blockStart] >> shift) % numDistinct;
-		  },
-		  blockIdx.x == blockDim.x - 1 ? numRows - blockStart : blockStride,
-		  numParts,
-		  temp + blockIdx.x * blockStride,
-		  probe->hostRetries + blockStride * blockIdx.x,
-		  probe->kernelRetries + blockStride * blockIdx.x);
-  }
-
-  void __global__ updateSum1PartKernel(TestingRow* rows, int32_t numParts, HashProbe* probe, int32_t numGroups, int32_t groupStride) {
-    testSumPart(rows, probe, probe->kernelRetries, probe->hostRetries, numGroups, groupStride);
-  }
+void __global__ updateSum1PartKernel(
+    TestingRow* rows,
+    int32_t numParts,
+    HashProbe* probe,
+    int32_t numGroups,
+    int32_t groupStride) {
+  testSumPart(
+      rows,
+      numParts,
+      probe,
+      probe->kernelRetries,
+      probe->hostRetries,
+      numGroups,
+      groupStride);
+}
 
 void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
   auto numParts = std::min<int32_t>(run.numDistinct, 8192);
   auto groupStride = run.numRows / 8;
   auto numGroups = run.numRows / groupStride;
   auto partSmem = partitionRowsSharedSize<1024>(numParts);
-  // We use probe->kernelRetries as the indices array for partitions. We use probe->hostRetries as the array of partition starts. So, if we have 10 partitions, then hostRetries[x..y] is the input rows for partition 1 if x is partitionStarts[0] and y is partitionStarts[1].  
-  update1PartitionKernel<<<numGroups, 1024, partSmem, stream_->stream>>>(run.numRows, run.numDistinct, numParts, blockStride, probe, run.partitiontemp);
+  // We use probe->kernelRetries as the indices array for partitions. We use
+  // probe->hostRetries as the array of partition starts. So, if we have 10
+  // partitions, then hostRetries[x..y] is the input rows for partition 1 if x
+  // is partitionStarts[0] and y is partitionStarts[1].
+  update1PartitionKernel<<<numGroups, 1024, partSmem, stream_->stream>>>(
+      run.numRows,
+      run.numDistinct,
+      numParts,
+      groupStride,
+      run.probe,
+      run.partitionTemp);
   int32_t blockSize = roundUp(std::min<int32_t>(256, numParts), 32);
   int32_t numBlocks = numParts / blockSize;
-  updateSum1PartKernel<<<numBlocks, blockSize, 0, stream_->stream>>>(rows, run.probe, run.probe->kernelRetries, run.probe->hostRetries, numGroups, groupStride);
+  updateSum1PartKernel<<<numBlocks, blockSize, 0, stream_->stream>>>(
+      rows,
+      numParts,
+      run.probe,
+      numGroups,
+      groupStride);
 }
-
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);

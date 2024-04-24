@@ -106,13 +106,14 @@ class HashTableTest : public testing::Test {
     uint64_t micros = 0;
     switch (run.testCase) {
     case HashTestCase::kUpdateSum1:
-      UPDATE_CASE("sum1Atm", testSum1Atomic, true, 0);
-      UPDATE_CASE("sum1NoSync", testSum1NoSync, false, 0);
-      UPDATE_CASE("sum1AtmCoa", testSum1AtomicCoalesce, true, 0);
-      UPDATE_CASE("sum1Exch", testSum1Exch, false, 1);
-      UPDATE_CASE("sum1Mtx", testSum1Mtx, true, 1);
-      UPDATE_CASE("sum1MtxCoa", testSum1MtxCoa, true, 1);
-      UPDATE_CASE("sum1Part", testSum1Part, run.numDistinct, true, 0);
+      UPDATE_CASE("sum1Atm", updateSum1Atomic, true, 0);
+      UPDATE_CASE("sum1NoSync", updateSum1NoSync, false, 0);
+      UPDATE_CASE("sum1AtmCoa", updateSum1AtomicCoalesce, true, 0);
+      UPDATE_CASE("sum1Exch", updateSum1Exch, false, 1);
+      UPDATE_CASE("sum1Mtx", updateSum1Mtx, true, 1);
+      UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 1);
+      UPDATE_CASE("sum1Part", updateSum1Part, true, 0);
+      UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
       
 
         break;
