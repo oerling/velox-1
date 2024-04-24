@@ -129,6 +129,9 @@ class BlockTestStream : public Stream {
       AllocatorTestResult* results);
 
   void updateSum1Atomic(TestingRow* rows, HashRun& run);
+  void updateSum1Exch(TestingRow* rows, HashRun& run);
+  void updateSum1NoSync(TestingRow* rows, HashRun& run);
+  void updateSum1AtomicCoalesce(TestingRow* rows, HashRun& run);
 };
 
 } // namespace facebook::velox::wave

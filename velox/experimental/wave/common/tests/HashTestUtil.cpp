@@ -42,7 +42,9 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           // retry lists
           + 2 * sizeof(int32_t) * roundedRows +
       // numRows for each block.
-      sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread),
+      sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread) +
+      // alignment padding
+      256,
       roundedRows};
 }
 
@@ -93,7 +95,7 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   run.probe = probe;
   data += sizeof(HashProbe);
   probe->numRows = reinterpret_cast<int32_t*>(data);
-  data += sizeof(int32_t) * roundedRows / (run.numRowsPerThread * run.blockSize);
+  data += bits::roundUp(sizeof(int32_t) * roundedRows / (run.numRowsPerThread * run.blockSize), 8);
   if (!arena) {
     probe->numRows[0] = run.numRows;
   } else {
@@ -167,10 +169,15 @@ std::string HashRun::toString() const {
   std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) {
     return left.second > right.second;
   });
+  float gb = numRows * sizeof(int64_t) * numColumns / static_cast<float>(1 << 30);
   for (auto& score : sorted) {
-    out << fmt::format(" {}={} rps ", score.first, score.second);
+    out << fmt::format(" {}={} rps {} GB/s {} us ", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second);
   }
   return out.str();
 }
 
+void HashRun::addScore(const char* label, uint64_t micros) {
+  scores.push_back(std::make_pair<std::string, float>(
+						      label, micros));
+}
 } // namespace facebook::velox::wave

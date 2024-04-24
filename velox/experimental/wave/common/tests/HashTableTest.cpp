@@ -44,7 +44,7 @@ class HashTableTest : public testing::Test {
     run.numRows = numRows;
     run.numDistinct = numDistinct;
     run.numColumns = 2;
-    run.numRowsPerThread = 4;
+    run.numRowsPerThread = 32;
 
     initializeHashTestInput(run, arena_.get());
     fillHashTestInput(
@@ -58,10 +58,10 @@ class HashTableTest : public testing::Test {
     for (auto i = 0; i < run.numDistinct; ++i) {
       reference[i].key = i;
     }
-    WaveBufferPtr gpuRowsBuffer = arena_->allocate<TestingRow>(run.numDistinct);
-    TestingRow* gpuRows = gpuRowsBuffer->as<TestingRow>();
+    gpuRowsBuffer_ = arena_->allocate<TestingRow>(run.numDistinct);
+    TestingRow* gpuRows = gpuRowsBuffer_->as<TestingRow>();
     memcpy(gpuRows, reference.data(), sizeof(TestingRow) * run.numDistinct);
-    prefetch(*streams_[0], gpuRowsBuffer);
+    prefetch(*streams_[0], gpuRowsBuffer_);
     prefetch(*streams_[0], run.gpuData);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     runCpu(reference.data(), run);
@@ -88,25 +88,55 @@ class HashTableTest : public testing::Test {
           VELOX_FAIL("Unsupported test case");
       }
     }
-    run.scores.push_back(std::make_pair<std::string, float>(
-        "Cpu1T", run.numRows / (micros / 1e6)));
+    run.addScore("cpu1t", micros);
   }
 
   void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
     uint64_t micros = 0;
-    if (streams_.empty()) {
-      streams_.push_back(std::make_unique<BlockTestStream>());
-    }
     switch (run.testCase) {
       case HashTestCase::kUpdateSum1: {
         MicrosecondTimer t(&micros);
         streams_[0]->updateSum1Atomic(rows, run);
         streams_[0]->wait();
       }
-        run.scores.push_back(std::make_pair<std::string, float>(
-            "Gpu atm", run.numRows / (micros / 1e6)));
-        compareAndReset(reference, rows, run.numDistinct);
-	prefetch(streams_[0], gpuRowsBuffer);
+        run.addScore("Gpu atm", micros);
+	micros = 0;
+        compareAndReset(reference, rows, run.numDistinct, "gpuAtm");
+	prefetch(*streams_[0], gpuRowsBuffer_);
+	streams_[0]->wait();
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+	{
+	  MicrosecondTimer t(&micros);
+	  streams_[0]->updateSum1NoSync(rows, run);
+	  streams_[0]->wait();
+	}
+	run.addScore("Gpu NoSync", micros);
+	micros = 0;
+	compareAndReset(reference, rows, run.numDistinct, "gpuNoSync");
+	prefetch(*streams_[0], gpuRowsBuffer_);
+	streams_[0]->wait();
+	{
+	  MicrosecondTimer t(&micros);
+	  streams_[0]->updateSum1AtomicCoalesce(rows, run);
+	  streams_[0]->wait();
+	}
+	run.addScore("Gpu atmcoa", micros);
+	micros = 0;
+	compareAndReset(reference, rows, run.numDistinct, "gpuAtmCoa");
+	prefetch(*streams_[0], gpuRowsBuffer_);
+	streams_[0]->wait();
+	{
+	  MicrosecondTimer t(&micros);
+	  streams_[0]->updateSum1Exch(rows, run);
+	  streams_[0]->wait();
+	}
+	run.addScore("Gpu exch", micros);
+	micros = 0;
+	compareAndReset(reference, rows, run.numDistinct, "gpuExch");
+	prefetch(*streams_[0], gpuRowsBuffer_);
+	streams_[0]->wait();
+
         break;
       default:
         VELOX_FAIL("Unsupported test case");
@@ -114,13 +144,23 @@ class HashTableTest : public testing::Test {
   }
 
   void
-  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows) {
+  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title) {
+    int32_t numError = 0;
+    int64_t errorDelta = 0;
     for (auto i = 0; i < numRows; ++i) {
       if (rows[i].count == reference[i].count) {
         continue;
       }
-      EXPECT_EQ(reference[i].count, rows[i].count) << " at " << i;
-      break;
+      if (numError == 0) {
+std::cout << "In " << title << std::endl;
+	EXPECT_EQ(reference[i].count, rows[i].count) << " at " << i;
+      }
+      ++numError;
+      int64_t d = reference[i].count - rows[i].count;
+      errorDelta += d < 0 ? -d : d;
+    }
+    if (numError) {
+      std::cout << fmt::format("numError={} errorDelta={}", numError, errorDelta) << std::endl;
     }
     for (auto i = 0; i < numRows; ++i) {
       new (rows + i) TestingRow();
@@ -132,6 +172,7 @@ class HashTableTest : public testing::Test {
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
   std::vector<std::unique_ptr<BlockTestStream>> streams_;
+  WaveBufferPtr gpuRowsBuffer_;
 };
 
 TEST_F(HashTableTest, hashMatrix) {
@@ -212,6 +253,11 @@ TEST_F(HashTableTest, update) {
     HashRun run;
     run.testCase = HashTestCase::kUpdateSum1;
     updateTestCase(10000000, 2000000, run);
+  }
+  {
+    HashRun run;
+    run.testCase = HashTestCase::kUpdateSum1;
+    updateTestCase(10, 2000000, run);
   }
 }
 

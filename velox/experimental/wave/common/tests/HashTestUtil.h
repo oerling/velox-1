@@ -73,7 +73,7 @@ struct HashRun {
   int32_t numTables{1};
 
   // Result, labeled by implementation alternative.
-  std::vector<std::pair<std::string, float>> scores;
+  std::vector< std::pair<std::string, float>> scores;
 
   std::unique_ptr<char[]> cpuData;
   WaveBufferPtr gpuData;
@@ -85,7 +85,10 @@ struct HashRun {
   HashProbe* probe;
 
   std::string toString() const;
-  void addScore(const std::string& label, uint64_t micros);
+  void addScore(const char* label, uint64_t micros);
+  void clearScore() {
+    scores.clear();
+  }
 };
 
 void fillHashTestInput(

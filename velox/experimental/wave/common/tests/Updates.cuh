@@ -18,9 +18,26 @@
 
 #include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include <cub/util_ptx.cuh>
+#include <cuda/atomic>
 
 namespace facebook::velox::wave {
 
+  void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
+
+  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+    auto* row = &rows[indices[i]];
+    row->count += deltas[i];
+  }
+}
+
+  
   void __device__ testSumAtomic(TestingRow* rows, HashProbe* probe) {
     auto keys = reinterpret_cast<int64_t**>(probe->keys);
     auto indices = keys[0];
@@ -35,8 +52,49 @@ namespace facebook::velox::wave {
   }
 }
 
+  void __device__ testSumAtomicCoalesce(TestingRow* rows, HashProbe* probe) {
+    constexpr int32_t kWarpThreads = 32;
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    int32_t warp = threadIdx.x / kWarpThreads;
+    int32_t lane = cub::LaneId();
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
 
-void __device__ updateExch(TestingRow* rows, HashProbe* probe) {
+  for (auto count = base; count < end; count += blockDim.x) {
+    auto i = threadIdx.x + count;
+
+    if (i < end) {
+	uint32_t laneMask = count + kWarpThreads <= end
+        ? 0xffffffff
+        : lowMask<uint32_t>(end - count);
+      auto index = indices[i];
+      auto delta = deltas[i];
+      uint32_t allPeers = __match_any_sync(laneMask, index);
+      int32_t leader = __ffs(allPeers) - 1;
+      auto peers = allPeers;
+      int64_t total = 0;
+      auto currentPeer = leader;
+      for (;;) {
+	total += __shfl_sync(allPeers, delta, currentPeer);
+	peers &= peers - 1;
+	if (peers == 0) {
+	  break;
+	}
+	currentPeer = __ffs(peers) - 1;
+      }
+      if (lane == leader) {
+	auto* row = &rows[index];
+	atomicAdd((unsigned long long*)&row->count, (unsigned long long)total);
+      }
+    }
+  }
+  }
+
+  
+void __device__ testSumExch(TestingRow* rows, HashProbe* probe) {
 
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
     auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
@@ -60,6 +118,7 @@ void __device__ updateExch(TestingRow* rows, HashProbe* probe) {
 	auto* row = &rows[indices[i]];
 	if (atomicCAS(&row->flags, 0, 1) == 0) {
 	  row->count += deltas[i];
+	  __threadfence();
 	  atomicExch(&row->flags, 0);
 	} else {
 	  probe->kernelRetries[atomicAdd(&shared->numKernelRetries, 1)] = i;

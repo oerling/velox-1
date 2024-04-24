@@ -393,10 +393,34 @@ void BlockTestStream::rowAllocatorTest(
     testSumAtomic(rows, probe);
   }
 
+  void __global__ updateSum1ExchKernel(TestingRow* rows, HashProbe* probe) {
+    testSumExch(rows, probe);
+  }
+
 void BlockTestStream::updateSum1Atomic(TestingRow* rows, HashRun& run) {
   updateSum1AtomicKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
 }
 
+void BlockTestStream::updateSum1Exch(TestingRow* rows, HashRun& run) {
+  updateSum1AtomicKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+}
+
+  void __global__ updateSum1NoSyncKernel(TestingRow* rows, HashProbe* probe) {
+    testSumNoSync(rows, probe);
+  }
+
+void BlockTestStream::updateSum1NoSync(TestingRow* rows, HashRun& run) {
+  updateSum1NoSyncKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+}
+
+
+  void __global__ updateSum1AtomicCoalesceKernel(TestingRow* rows, HashProbe* probe) {
+    testSumAtomicCoalesce(rows, probe);
+  }
+
+void BlockTestStream::updateSum1AtomicCoalesce(TestingRow* rows, HashRun& run) {
+  updateSum1AtomicCoalesceKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+}
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);
@@ -404,5 +428,7 @@ REGISTER_KERNEL("sum64", sum64);
 REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
 REGISTER_KERNEL("hashTest", hashTestKernel);
 REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
+REGISTER_KERNEL("sun1atm", updateSum1AtomicKernel)
+REGISTER_KERNEL("sun1Exch", updateSum1ExchKernel)
 
 } // namespace facebook::velox::wave
