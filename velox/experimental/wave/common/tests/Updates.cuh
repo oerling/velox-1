@@ -23,7 +23,17 @@
 
 namespace facebook::velox::wave {
 
-  void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
+  using Mutex = cuda::binary_semaphore<cuda::thread_scope_device>;
+
+inline   void __device__ testingLock(int32_t* mtx) {
+    reinterpret_cast<Mutex*>(mtx)->acquire();
+}
+
+inline void __device__ testingUnlock(int32_t* mtx) {
+  reinterpret_cast<Mutex*>(mtx)->release();
+}
+  
+void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
     auto keys = reinterpret_cast<int64_t**>(probe->keys);
     auto indices = keys[0];
     auto deltas = keys[1];
@@ -37,7 +47,37 @@ namespace facebook::velox::wave {
   }
 }
 
+void __device__ testSumPart(TestingRow* rows, HashProbe* probe, int32_t* part, int32_t* partEnd) {
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t linear = threadIdx.x + blockIdx.x * blockDim.x;
+    int32_t begin = linear == 0 ? 0 : partEnd[linear - 1];
+    int32_t end = partEnd[linear];
+
+    for (auto i = begin; i < end; ++i) {
+    auto index = part[i];
+    auto* row = &rows[indices[index]];
+    row->count += deltas[index];
+  }
+}
   
+void __device__ testSum1Mtx(TestingRow* rows, HashProbe* probe) {
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
+
+  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+    auto* row = &rows[indices[i]];
+    testingLock(&row->flags);
+    row->count += deltas[i];
+    testingUnlock(&row->flags);
+  }
+}
+ 
   void __device__ testSumAtomic(TestingRow* rows, HashProbe* probe) {
     auto keys = reinterpret_cast<int64_t**>(probe->keys);
     auto indices = keys[0];
@@ -138,6 +178,64 @@ void __device__ testSumExch(TestingRow* rows, HashProbe* probe) {
   }
   }   
 
-  
+void __device__ testSumMtxCoalesce(TestingRow* rows, HashProbe* probe) {
+    constexpr int32_t kWarpThreads = 32;
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    auto deltas = keys[1];
+    int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+    int32_t warp = threadIdx.x / kWarpThreads;
+    int32_t lane = cub::LaneId();
+    auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
 
+  for (auto count = base; count < end; count += blockDim.x) {
+    auto i = threadIdx.x + count;
+
+    if (i < end) {
+	uint32_t laneMask = count + kWarpThreads <= end
+        ? 0xffffffff
+        : lowMask<uint32_t>(end - count);
+      auto index = indices[i];
+      auto delta = deltas[i];
+      uint32_t allPeers = __match_any_sync(laneMask, index);
+      int32_t leader = __ffs(allPeers) - 1;
+      auto peers = allPeers;
+      int64_t total = 0;
+      auto currentPeer = leader;
+      for (;;) {
+	total += __shfl_sync(allPeers, delta, currentPeer);
+	peers &= peers - 1;
+	if (peers == 0) {
+	  break;
+	}
+	currentPeer = __ffs(peers) - 1;
+      }
+      if (lane == leader) {
+	auto* row = &rows[index];
+	testingLock(&row->flags);
+	row->count += total;
+	testingUnlock(&row->flags);
+      }
+    }
+  }
+}
+
+void __device__ testSum1Order(TestingRow* rows, HashProbe* probe) {
+  using Mtx = cuda::atomic<int32_t>;
+  auto keys = reinterpret_cast<int64_t**>(probe->keys);
+  auto indices = keys[0];
+  auto deltas = keys[1];
+  int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
+
+  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+    auto* row = &rows[indices[i]];
+    if (0 == reinterpret_cast<Mtx*>(&row->flags)->swap(1, std::memory_order_consume);
+    row->count += deltas[i];
+	reinterpret_cast<Mtx*>(&row->flags)->store(0, std::memory_order_release);
+	}
+}
+  
 }

@@ -63,23 +63,26 @@ struct RowAllocator : public HashPartitionAllocator {
     return item;
 #else 
     for (;;) {
-      auto free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
-      if (free == kEmpty) {
+      auto freeAndCount = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<unsigned long long*>(&freeRows));
+      if ((freeAndCount & 0xffffffff)  == kEmpty) {
         return kEmpty;
       }
       lock();
-      free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
-      if (free == kEmpty) {
+       atomicAdd(&numPops, 1);
+      freeAndCount = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<unsigned long long>(&freeRows));
+      if ((freeAndCount & 0xffffffff) == kEmpty) {
 	unlock();
         return kEmpty;
       }
-      auto nextFree = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<uint32_t*>(base + free));
-      if (free == atomicCAS(reinterpret_cast<uint32_t*>(&freeRows), free, nextFree)) {
+      
+      uint64_t next = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<uint32_t*>(base + (freeAndCount & 0xffffffff)));
+      unsigned long long nextFreeAndCount = next | ( 0xffffffff00000000 & freeAndCount);
+      if (freeAndCount == atomicCAS(reinterpret_cast<unsigned long long*>(&freeRows), nextFreeAndCount, nextFreeAndCount)) {
 	if (!inRange(base + free)) {
 	  GPF();
 	}
 	unlock();
-	        return free;
+	        return freeAndCount & 0xffffffff;
       }
       unlock();
     }

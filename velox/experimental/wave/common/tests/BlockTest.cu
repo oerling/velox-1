@@ -402,7 +402,7 @@ void BlockTestStream::updateSum1Atomic(TestingRow* rows, HashRun& run) {
 }
 
 void BlockTestStream::updateSum1Exch(TestingRow* rows, HashRun& run) {
-  updateSum1AtomicKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+  updateSum1ExchKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
 }
 
   void __global__ updateSum1NoSyncKernel(TestingRow* rows, HashProbe* probe) {

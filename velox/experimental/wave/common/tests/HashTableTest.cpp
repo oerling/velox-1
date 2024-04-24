@@ -91,51 +91,28 @@ class HashTableTest : public testing::Test {
     run.addScore("cpu1t", micros);
   }
 
+#define UPDATE_CASE(title, func, nextFlags) {	\
+        MicrosecondTimer t(&micros); \
+        streams_[0]->func(rows, run); \
+        streams_[0]->wait();\
+      } \
+        run.addScore(title, micros);\
+	micros = 0; \
+  compareAndReset(reference, rows, run.numDistinct, title, nextFlags);
+
+  
   void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
     uint64_t micros = 0;
     switch (run.testCase) {
-      case HashTestCase::kUpdateSum1: {
-        MicrosecondTimer t(&micros);
-        streams_[0]->updateSum1Atomic(rows, run);
-        streams_[0]->wait();
-      }
-        run.addScore("Gpu atm", micros);
-	micros = 0;
-        compareAndReset(reference, rows, run.numDistinct, "gpuAtm");
-	prefetch(*streams_[0], gpuRowsBuffer_);
-	streams_[0]->wait();
-	std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-	{
-	  MicrosecondTimer t(&micros);
-	  streams_[0]->updateSum1NoSync(rows, run);
-	  streams_[0]->wait();
-	}
-	run.addScore("Gpu NoSync", micros);
-	micros = 0;
-	compareAndReset(reference, rows, run.numDistinct, "gpuNoSync");
-	prefetch(*streams_[0], gpuRowsBuffer_);
-	streams_[0]->wait();
-	{
-	  MicrosecondTimer t(&micros);
-	  streams_[0]->updateSum1AtomicCoalesce(rows, run);
-	  streams_[0]->wait();
-	}
-	run.addScore("Gpu atmcoa", micros);
-	micros = 0;
-	compareAndReset(reference, rows, run.numDistinct, "gpuAtmCoa");
-	prefetch(*streams_[0], gpuRowsBuffer_);
-	streams_[0]->wait();
-	{
-	  MicrosecondTimer t(&micros);
-	  streams_[0]->updateSum1Exch(rows, run);
-	  streams_[0]->wait();
-	}
-	run.addScore("Gpu exch", micros);
-	micros = 0;
-	compareAndReset(reference, rows, run.numDistinct, "gpuExch");
-	prefetch(*streams_[0], gpuRowsBuffer_);
-	streams_[0]->wait();
+    case HashTestCase::kUpdateSum1: UPDATE_CASE("sum1Atm", testSum1Atomic, 0);	prefetch(*streams_[0], gpuRowsBuffer_);
+    case HashTestCase::kUpdateSum1:
+      UPDATE_CASE("sum1Atm", testSum1Atomic, 0);
+      UPDATE_CASE("sum1NoSync", testSum1NoSync, 0);
+      UPDATE_CASE("sum1AtmCoa", testSum1AtomicCoalesce, 0);
+      UPDATE_CASE("sum1Exch", testSum1Exch, 1);
+      UPDATE_CASE("sum1Mtx", testSum1Mtx, 1);
+      UPDATE_CASE("sum1MtxCoa", testSum1MtxCoa, 1);
+      
 
         break;
       default:
@@ -144,7 +121,7 @@ class HashTableTest : public testing::Test {
   }
 
   void
-  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title) {
+  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title, int32_t initFlags = 0) {
     int32_t numError = 0;
     int64_t errorDelta = 0;
     for (auto i = 0; i < numRows; ++i) {
@@ -165,7 +142,10 @@ std::cout << "In " << title << std::endl;
     for (auto i = 0; i < numRows; ++i) {
       new (rows + i) TestingRow();
       rows[i].key = i;
+      rows[i].flags = initFlags;
     }
+    prefetch(*streams_[0], gpuRowsBuffer_);
+    streams_[0]->wait();
   }
 
   Device* device_;
