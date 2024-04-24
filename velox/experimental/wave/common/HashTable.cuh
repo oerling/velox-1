@@ -63,26 +63,26 @@ struct RowAllocator : public HashPartitionAllocator {
     return item;
 #else 
     for (;;) {
-      auto freeAndCount = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<unsigned long long*>(&freeRows));
-      if ((freeAndCount & 0xffffffff)  == kEmpty) {
+      uint64_t free = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
+      if (free == kEmpty) {
         return kEmpty;
       }
       lock();
-       atomicAdd(&numPops, 1);
-      freeAndCount = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<unsigned long long>(&freeRows));
-      if ((freeAndCount & 0xffffffff) == kEmpty) {
+      uint64_t counter = 1 + atomicAdd(&numPops, 1);
+      free = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
+      if (free == kEmpty) {
 	unlock();
         return kEmpty;
       }
-      
-      uint64_t next = cub::ThreadLoad<cub::LOAD_CV>(reinterpret_cast<uint32_t*>(base + (freeAndCount & 0xffffffff)));
-      unsigned long long nextFreeAndCount = next | ( 0xffffffff00000000 & freeAndCount);
-      if (freeAndCount == atomicCAS(reinterpret_cast<unsigned long long*>(&freeRows), nextFreeAndCount, nextFreeAndCount)) {
+      uint32_t next = cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(base + free));
+      unsigned long long freeAndCount = free | (counter << 32);
+      unsigned long long nextFreeAndCount = next | (counter << 32);
+      if (freeAndCount == atomicCAS(reinterpret_cast<unsigned long long*>(&freeRows), freeAndCount, nextFreeAndCount)) {
 	if (!inRange(base + free)) {
 	  GPF();
 	}
 	unlock();
-	        return freeAndCount & 0xffffffff;
+	return free;
       }
       unlock();
     }

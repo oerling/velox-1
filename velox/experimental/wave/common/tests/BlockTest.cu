@@ -389,38 +389,62 @@ void BlockTestStream::rowAllocatorTest(
       numAlloc, numFree, numStr, results);
 }
 
-  void __global__ updateSum1AtomicKernel(TestingRow* rows, HashProbe* probe) {
-    testSumAtomic(rows, probe);
-  }
 
-  void __global__ updateSum1ExchKernel(TestingRow* rows, HashProbe* probe) {
-    testSumExch(rows, probe);
-  }
 
-void BlockTestStream::updateSum1Atomic(TestingRow* rows, HashRun& run) {
-  updateSum1AtomicKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+#define UPDATE_CASE(name, func, smem)				     \
+  void __global__ name##Kernel(TestingRow* rows, HashProbe* probe) { \
+    func(rows, probe); \
+  } \
+\
+  void BlockTestStream::name(TestingRow* rows, HashRun& run) { \
+  name##Kernel<<<run.numBlocks, run.blockSize, smem, stream_->stream>>>(rows, run.probe); \
 }
 
-void BlockTestStream::updateSum1Exch(TestingRow* rows, HashRun& run) {
-  updateSum1ExchKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
-}
+  UPDATE_CASE(updateSum1NoSync, testSumNoSync, 0);
+  UPDATE_CASE(updateSum1Mtx, testSumMtx, 0);
+  UPDATE_CASE(updateSum1MtxCoalesce, testSumMtxCoalesce, 0);
 
-  void __global__ updateSum1NoSyncKernel(TestingRow* rows, HashProbe* probe) {
-    testSumNoSync(rows, probe);
+  UPDATE_CASE(updateSum1Atomic, testSumAtomic, 0);
+  UPDATE_CASE(updateSum1AtomicCoalesce, testSumAtomicCoalesce, 0);
+  UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
+  UPDATE_CASE(updateSum1Order, testSumOrder, 0);
+  
+  void __global__ updatePartitionKernel(int32_t numRows, int32_t numDistinct, int32_t numParts, int32_t blockStride, HashProbe* probe, int32_t* temp) {
+    auto blockStart = blockStride * blockIdx.x;
+    auto keysInPart = numDistinct / numParts;
+    int32_t shift = 0;
+    auto keys = reinterpret_cast<int64_t**>(probe->keys);
+    auto indices = keys[0];
+    if (keysInPart > 32){
+      shift = 5;
+    }
+    partitionRows<1024, int32_t>(
+		  [&](auto i) -> int32_t {
+		    return (indices[i + blockStart] >> shift) % numDistinct;
+		  },
+		  blockIdx.x == blockDim.x - 1 ? numRows - blockStart : blockStride,
+		  numParts,
+		  temp + blockIdx.x * blockStride,
+		  probe->hostRetries + blockStride * blockIdx.x,
+		  probe->kernelRetries + blockStride * blockIdx.x);
   }
 
-void BlockTestStream::updateSum1NoSync(TestingRow* rows, HashRun& run) {
-  updateSum1NoSyncKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
-}
-
-
-  void __global__ updateSum1AtomicCoalesceKernel(TestingRow* rows, HashProbe* probe) {
-    testSumAtomicCoalesce(rows, probe);
+  void __global__ updateSum1PartKernel(TestingRow* rows, int32_t numParts, HashProbe* probe, int32_t numGroups, int32_t groupStride) {
+    testSumPart(rows, probe, probe->kernelRetries, probe->hostRetries, numGroups, groupStride);
   }
 
-void BlockTestStream::updateSum1AtomicCoalesce(TestingRow* rows, HashRun& run) {
-  updateSum1AtomicCoalesceKernel<<<run.numBlocks, run.blockSize, 0, stream_->stream>>>(rows, run.probe);
+void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
+  auto numParts = std::min<int32_t>(run.numDistinct, 8192);
+  auto groupStride = run.numRows / 8;
+  auto numGroups = run.numRows / groupStride;
+  auto partSmem = partitionRowsSharedSize<1024>(numParts);
+  // We use probe->kernelRetries as the indices array for partitions. We use probe->hostRetries as the array of partition starts. So, if we have 10 partitions, then hostRetries[x..y] is the input rows for partition 1 if x is partitionStarts[0] and y is partitionStarts[1].  
+  update1PartitionKernel<<<numGroups, 1024, partSmem, stream_->stream>>>(run.numRows, run.numDistinct, numParts, blockStride, probe, run.partitiontemp);
+  int32_t blockSize = roundUp(std::min<int32_t>(256, numParts), 32);
+  int32_t numBlocks = numParts / blockSize;
+  updateSum1PartKernel<<<numBlocks, blockSize, 0, stream_->stream>>>(rows, run.probe, run.probe->kernelRetries, run.probe->hostRetries, numGroups, groupStride);
 }
+
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndices);

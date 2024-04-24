@@ -91,27 +91,28 @@ class HashTableTest : public testing::Test {
     run.addScore("cpu1t", micros);
   }
 
-#define UPDATE_CASE(title, func, nextFlags) {	\
+#define UPDATE_CASE(title, func, expectCorrect, nextFlags) {	\
         MicrosecondTimer t(&micros); \
         streams_[0]->func(rows, run); \
         streams_[0]->wait();\
       } \
         run.addScore(title, micros);\
 	micros = 0; \
-  compareAndReset(reference, rows, run.numDistinct, title, nextFlags);
+	compareAndReset(reference, rows, run.numDistinct, title, expectCorrect, nextFlags);
 
+  
   
   void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
     uint64_t micros = 0;
     switch (run.testCase) {
-    case HashTestCase::kUpdateSum1: UPDATE_CASE("sum1Atm", testSum1Atomic, 0);	prefetch(*streams_[0], gpuRowsBuffer_);
     case HashTestCase::kUpdateSum1:
-      UPDATE_CASE("sum1Atm", testSum1Atomic, 0);
-      UPDATE_CASE("sum1NoSync", testSum1NoSync, 0);
-      UPDATE_CASE("sum1AtmCoa", testSum1AtomicCoalesce, 0);
-      UPDATE_CASE("sum1Exch", testSum1Exch, 1);
-      UPDATE_CASE("sum1Mtx", testSum1Mtx, 1);
-      UPDATE_CASE("sum1MtxCoa", testSum1MtxCoa, 1);
+      UPDATE_CASE("sum1Atm", testSum1Atomic, true, 0);
+      UPDATE_CASE("sum1NoSync", testSum1NoSync, false, 0);
+      UPDATE_CASE("sum1AtmCoa", testSum1AtomicCoalesce, true, 0);
+      UPDATE_CASE("sum1Exch", testSum1Exch, false, 1);
+      UPDATE_CASE("sum1Mtx", testSum1Mtx, true, 1);
+      UPDATE_CASE("sum1MtxCoa", testSum1MtxCoa, true, 1);
+      UPDATE_CASE("sum1Part", testSum1Part, run.numDistinct, true, 0);
       
 
         break;
@@ -121,14 +122,14 @@ class HashTableTest : public testing::Test {
   }
 
   void
-  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title, int32_t initFlags = 0) {
+  compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title, bool expectCorrect, int32_t initFlags = 0) {
     int32_t numError = 0;
     int64_t errorDelta = 0;
     for (auto i = 0; i < numRows; ++i) {
       if (rows[i].count == reference[i].count) {
         continue;
       }
-      if (numError == 0) {
+      if (numError == 0 && expectCorrect) {
 std::cout << "In " << title << std::endl;
 	EXPECT_EQ(reference[i].count, rows[i].count) << " at " << i;
       }
@@ -137,7 +138,7 @@ std::cout << "In " << title << std::endl;
       errorDelta += d < 0 ? -d : d;
     }
     if (numError) {
-      std::cout << fmt::format("numError={} errorDelta={}", numError, errorDelta) << std::endl;
+      std::cout << fmt::format("{}: numError={} errorDelta={}", title, numError, errorDelta) << std::endl;
     }
     for (auto i = 0; i < numRows; ++i) {
       new (rows + i) TestingRow();

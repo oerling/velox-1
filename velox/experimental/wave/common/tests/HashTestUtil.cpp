@@ -171,7 +171,7 @@ std::string HashRun::toString() const {
   });
   float gb = numRows * sizeof(int64_t) * numColumns / static_cast<float>(1 << 30);
   for (auto& score : sorted) {
-    out << fmt::format(" {}={:.3f} rps {:.3f} GB/s {} us ", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second);
+    out << std::endl << "  * " << fmt::format(" {}={:.3f} rps {:.3f} GB/s {} us ", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second);
   }
   return out.str();
 }

@@ -83,7 +83,10 @@ struct HashRun {
 
   // Initialized probe params, contained in 'input'.
   HashProbe* probe;
+  // One int per row, use for partitioning intermediates. Uninitialized.
+  int32_t* partitionTemp;
 
+  int32_t* partitionArgs; 
   std::string toString() const;
   void addScore(const char* label, uint64_t micros);
   void clearScore() {

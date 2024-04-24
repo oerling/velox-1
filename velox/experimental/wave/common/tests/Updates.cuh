@@ -47,22 +47,25 @@ void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
   }
 }
 
-void __device__ testSumPart(TestingRow* rows, HashProbe* probe, int32_t* part, int32_t* partEnd) {
+  void __device__ testSumPart(TestingRow* rows, HashProbe* probe, int32_t* part, int32_t* partEnd, int32_t numGroups, int32_t groupStride) {
     auto keys = reinterpret_cast<int64_t**>(probe->keys);
     auto indices = keys[0];
     auto deltas = keys[1];
+    for (auto groupIdx = 0; groupIdx < numGroups; ++groupIdx) {
+      auto groupStart = groupIdx * groupStride;
     int32_t linear = threadIdx.x + blockIdx.x * blockDim.x;
-    int32_t begin = linear == 0 ? 0 : partEnd[linear - 1];
-    int32_t end = partEnd[linear];
+    int32_t begin = linear == 0 ? groupStart : groupStart + partEnd[groupStart + linear - 1];
+    int32_t end = groupStart + partEnd[groupStart + linear];
 
     for (auto i = begin; i < end; ++i) {
-    auto index = part[i];
-    auto* row = &rows[indices[index]];
-    row->count += deltas[index];
+      auto index = part[i];
+      auto* row = &rows[indices[index]];
+      row->count += deltas[index];
+    }
+    }
   }
-}
-  
-void __device__ testSum1Mtx(TestingRow* rows, HashProbe* probe) {
+
+  void __device__ testSumMtx(TestingRow* rows, HashProbe* probe) {
     auto keys = reinterpret_cast<int64_t**>(probe->keys);
     auto indices = keys[0];
     auto deltas = keys[1];
@@ -221,8 +224,8 @@ void __device__ testSumMtxCoalesce(TestingRow* rows, HashProbe* probe) {
   }
 }
 
-void __device__ testSum1Order(TestingRow* rows, HashProbe* probe) {
-  using Mtx = cuda::atomic<int32_t>;
+void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
+  using Mtx = cuda::atomic<int32_t, cuda::thread_scope_device>;
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
   auto deltas = keys[1];
@@ -232,10 +235,10 @@ void __device__ testSum1Order(TestingRow* rows, HashProbe* probe) {
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];
-    if (0 == reinterpret_cast<Mtx*>(&row->flags)->swap(1, std::memory_order_consume);
-    row->count += deltas[i];
-	reinterpret_cast<Mtx*>(&row->flags)->store(0, std::memory_order_release);
-	}
+    if (0 == reinterpret_cast<Mtx*>(&row->flags)->exchange(1, cuda::memory_order_consume)) {
+      row->count += deltas[i];				      
+	reinterpret_cast<Mtx*>(&row->flags)->store(0, cuda::memory_order_release);
+    }
+  }
 }
-  
 }

@@ -132,6 +132,11 @@ class BlockTestStream : public Stream {
   void updateSum1Exch(TestingRow* rows, HashRun& run);
   void updateSum1NoSync(TestingRow* rows, HashRun& run);
   void updateSum1AtomicCoalesce(TestingRow* rows, HashRun& run);
+  void updateSum1Part(TestingRow* rows, HashRun& run);
+  void updateSum1Mtx(TestingRow* rows, HashRun& run);
+  void updateSum1MtxCoalesce(TestingRow* rows, HashRun& run);
+  void updateSum1Order(TestingRow* rows, HashRun& run);
+  
 };
 
 } // namespace facebook::velox::wave
