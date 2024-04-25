@@ -378,6 +378,7 @@ int32_t BlockTestStream::freeSetSize() {
 void BlockTestStream::initAllocator(HashPartitionAllocator* allocator) {
   initAllocatorKernel<<<1, 1, 0, stream_->stream>>>(
       reinterpret_cast<RowAllocator*>(allocator));
+  CUDA_CHECK(cudaGetLastError());
 }
 
 void BlockTestStream::rowAllocatorTest(
@@ -388,6 +389,7 @@ void BlockTestStream::rowAllocatorTest(
     AllocatorTestResult* results) {
   allocatorTestKernel<<<numBlocks, 64, 0, stream_->stream>>>(
       numAlloc, numFree, numStr, results);
+  CUDA_CHECK(cudaGetLastError());
 }
 
 #define UPDATE_CASE(name, func, smem)                                      \
@@ -398,7 +400,8 @@ void BlockTestStream::rowAllocatorTest(
   void BlockTestStream::name(TestingRow* rows, HashRun& run) {             \
     name##Kernel<<<run.numBlocks, run.blockSize, smem, stream_->stream>>>( \
         rows, run.probe);                                                  \
-  }
+  CUDA_CHECK(cudaGetLastError()); \
+}
 
 UPDATE_CASE(updateSum1NoSync, testSumNoSync, 0);
 UPDATE_CASE(updateSum1Mtx, testSumMtx, 0);
@@ -408,7 +411,7 @@ UPDATE_CASE(updateSum1AtomicCoalesce, testSumAtomicCoalesce, 0);
 UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
 UPDATE_CASE(updateSum1Order, testSumOrder, 0);
 
-void __global__ update1PartitionKernel(
+  void __global__ __launch_bounds__(1024) update1PartitionKernel(
     int32_t numRows,
     int32_t numDistinct,
     int32_t numParts,
@@ -466,14 +469,21 @@ void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
       groupStride,
       run.probe,
       run.partitionTemp);
+  CUDA_CHECK(cudaGetLastError());
+
   int32_t blockSize = roundUp(std::min<int32_t>(256, numParts), 32);
   int32_t numBlocks = numParts / blockSize;
+  // There will be one lane per partition. The last blocks may have empty lanes.
+  if (numBlocks * blockSize < numParts) {
+    ++numBlocks;
+  }
   updateSum1PartKernel<<<numBlocks, blockSize, 0, stream_->stream>>>(
       rows,
       numParts,
       run.probe,
       numGroups,
       groupStride);
+  CUDA_CHECK(cudaGetLastError());
 }
 
 REGISTER_KERNEL("testSort", testSort);

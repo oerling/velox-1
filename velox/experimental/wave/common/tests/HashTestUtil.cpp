@@ -43,6 +43,8 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           + 2 * sizeof(int32_t) * roundedRows +
       // numRows for each block.
       sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread) +
+      // Temp space for partitioning.
+      roundedRows * sizeof(int32_t) +
       // alignment padding
       256,
       roundedRows};
@@ -122,6 +124,8 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
         reinterpret_cast<int64_t*>(data);
     data += sizeof(int64_t) * roundedRows;
   }
+  run.partitionTemp = reinterpret_cast<int32_t*>(data);
+  data += bits::roundUp(sizeof(int32_t) * roundedRows, 8);
   VELOX_CHECK_LE(data - dataBegin, bytes);
 }
 

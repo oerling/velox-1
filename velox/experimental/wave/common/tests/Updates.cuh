@@ -244,12 +244,18 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];
-    if (0 ==
-        reinterpret_cast<Mtx*>(&row->flags)
-            ->exchange(1, cuda::memory_order_consume)) {
-      row->count += deltas[i];
-      reinterpret_cast<Mtx*>(&row->flags)->store(0, cuda::memory_order_release);
+    int32_t try = 1;
+    for (;;) {
+      if (0 ==
+	  reinterpret_cast<Mtx*>(&row->flags)
+	  ->exchange(1, cuda::memory_order_consume)) {
+	row->count += deltas[i];
+	reinterpret_cast<Mtx*>(&row->flags)->store(0, cuda::memory_order_release);
+      } else {
+	nanosleep(tries);
+	tries += threadIdx.x & 31;
+      }
     }
-  }
+    }
 }
 } // namespace facebook::velox::wave
