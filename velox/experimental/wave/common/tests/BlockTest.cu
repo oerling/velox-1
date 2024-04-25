@@ -420,15 +420,11 @@ UPDATE_CASE(updateSum1Order, testSumOrder, 0);
     int32_t* temp) {
   auto blockStart = blockStride * blockIdx.x;
   auto keysInPart = numDistinct / numParts;
-  int32_t shift = 0;
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
-  if (keysInPart > 32) {
-    shift = 5;
-  }
   partitionRows<1024, int32_t>(
       [&](auto i) -> int32_t {
-        return (indices[i + blockStart] >> shift) % numDistinct;
+        return indices[i + blockStart] % numParts;
       },
       blockIdx.x == blockDim.x - 1 ? numRows - blockStart : blockStride,
       numParts,

@@ -22,6 +22,8 @@
 #include "velox/experimental/wave/common/tests/CpuTable.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
+#include <iostream>
+
 namespace facebook::velox::wave {
 
 class HashTableTest : public testing::Test {
@@ -100,7 +102,6 @@ class HashTableTest : public testing::Test {
 	micros = 0; \
 	compareAndReset(reference, rows, run.numDistinct, title, expectCorrect, nextFlags);
 
-  
   
   void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
     uint64_t micros = 0;

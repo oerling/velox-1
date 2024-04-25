@@ -62,18 +62,19 @@ HashProbe* probe,
     auto groupStart = groupIdx * groupStride;
     int32_t linear = threadIdx.x + blockIdx.x * blockDim.x;
     if (linear > numParts) {
-      return;
+      break;
     }
     int32_t begin = linear == 0 ? groupStart
                                 : groupStart + partEnd[groupStart + linear - 1];
     int32_t end = groupStart + partEnd[groupStart + linear];
 
     for (auto i = begin; i < end; ++i) {
-      auto index = part[i];
+      auto index = groupStart + part[i];
       auto* row = &rows[indices[index]];
       row->count += deltas[index];
     }
   }
+  __syncthreads();
 }
 
 void __device__ testSumMtx(TestingRow* rows, HashProbe* probe) {
@@ -244,16 +245,17 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];
-    int32_t try = 1;
+    int32_t waitNano = 1;
     for (;;) {
       if (0 ==
 	  reinterpret_cast<Mtx*>(&row->flags)
 	  ->exchange(1, cuda::memory_order_consume)) {
 	row->count += deltas[i];
 	reinterpret_cast<Mtx*>(&row->flags)->store(0, cuda::memory_order_release);
+	break;
       } else {
-	nanosleep(tries);
-	tries += threadIdx.x & 31;
+	__nanosleep(waitNano);
+	waitNano += threadIdx.x & 31;
       }
     }
     }
