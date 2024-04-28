@@ -28,11 +28,11 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
-  
 // Returns the byte size for a GpuProbe with numRows as first, rounded row count
 // as second.
 std::pair<int64_t, int32_t> probeSize(HashRun& run) {
-  int32_t roundedRows = bits::roundUp(run.numRows, run.blockSize * run.numRowsPerThread);
+  int32_t roundedRows =
+      bits::roundUp(run.numRows, run.blockSize * run.numRowsPerThread);
   return {
       sizeof(HashProbe) +
           // Column data and hash number array.
@@ -41,12 +41,13 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           + sizeof(int64_t*) * run.numColumns
           // retry lists
           + 3 * sizeof(int32_t) * roundedRows +
-      // numRows for each block.
-      sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread) +
-      // Temp space for partitioning.
-      roundedRows * sizeof(int32_t) +
-      // alignment padding
-      256,
+          // numRows for each block.
+          sizeof(int32_t) * roundedRows /
+              (run.blockSize * run.numRowsPerThread) +
+          // Temp space for partitioning.
+          roundedRows * sizeof(int32_t) +
+          // alignment padding
+          256,
       roundedRows};
 }
 
@@ -97,17 +98,21 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   run.probe = probe;
   data += sizeof(HashProbe);
   probe->numRows = reinterpret_cast<int32_t*>(data);
-  data += bits::roundUp(sizeof(int32_t) * roundedRows / (run.numRowsPerThread * run.blockSize), 8);
+  data += bits::roundUp(
+      sizeof(int32_t) * roundedRows / (run.numRowsPerThread * run.blockSize),
+      8);
   if (!arena) {
     probe->numRows[0] = run.numRows;
   } else {
     run.numBlocks = roundedRows / (run.blockSize * run.numRowsPerThread);
     for (auto i = 0; i < run.numBlocks; ++i) {
       if (i == run.numBlocks - 1) {
-	probe->numRows[i] =  run.numRows - (i * run.blockSize * run.numRowsPerThread);
-	break;
+        probe->numRows[i] =
+            run.numRows - (i * run.blockSize * run.numRowsPerThread);
+        break;
       }
-      probe->numRows[i] = run.blockSize * run.numRowsPerThread;;
+      probe->numRows[i] = run.blockSize * run.numRowsPerThread;
+      ;
     }
   }
   probe->numRowsPerThread = run.numRowsPerThread;
@@ -165,8 +170,8 @@ std::string HashRun::toString() const {
   std::stringstream out;
   std::string opLabel = testCase == HashTestCase::kUpdateSum1
       ? "update sum1"
-    : testCase == HashTestCase::kGroupSum1 ? "groupSum1"
-    : "update array_agg1";
+      : testCase == HashTestCase::kGroupSum1 ? "groupSum1"
+                                             : "update array_agg1";
   out << "===" << label << ":" << opLabel << " distinct=" << numDistinct
       << " rows=" << numRows << " (" << numBlocks << "x" << blockSize << "x"
       << numRowsPerThread << ") ";
@@ -177,15 +182,23 @@ std::string HashRun::toString() const {
   std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) {
     return left.second < right.second;
   });
-  float gb = numRows * sizeof(int64_t) * numColumns / static_cast<float>(1 << 30);
+  float gb =
+      numRows * sizeof(int64_t) * numColumns / static_cast<float>(1 << 30);
   for (auto& score : sorted) {
-    out << std::endl << "  * " << fmt::format(" {}={:.2f} rps {:.2f} GB/s {} us {:.2f}x", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second, score.second / sorted[0].second);
+    out << std::endl
+        << "  * "
+        << fmt::format(
+               " {}={:.2f} rps {:.2f} GB/s {} us {:.2f}x",
+               score.first,
+               numRows / (score.second / 1e6),
+               gb / (score.second / 1e6),
+               score.second,
+               score.second / sorted[0].second);
   }
   return out.str();
 }
 
 void HashRun::addScore(const char* label, uint64_t micros) {
-  scores.push_back(std::make_pair<std::string, float>(
-						      label, micros));
+  scores.push_back(std::make_pair<std::string, float>(label, micros));
 }
 } // namespace facebook::velox::wave

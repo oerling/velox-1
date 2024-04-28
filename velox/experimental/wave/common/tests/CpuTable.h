@@ -62,10 +62,11 @@ struct CpuHashTable {
     auto numBuckets = bits::nextPowerOfTwo(numSlots) / 16;
     sizeMask = numBuckets - 1;
     bucketSpace.resize(numBuckets * sizeof(CpuBucket) + 64);
-    buckets = reinterpret_cast<CpuBucket*>(bits::roundUp(reinterpret_cast<uint64_t>(bucketSpace.data()), 64));
+    buckets = reinterpret_cast<CpuBucket*>(
+        bits::roundUp(reinterpret_cast<uint64_t>(bucketSpace.data()), 64));
     rows.resize(rowBytes);
   }
-  
+
   std::string bucketSpace;
   CpuBucket* buckets;
   int32_t sizeMask;
@@ -111,7 +112,7 @@ struct CpuHashTable {
           buckets[bucketIdx].setTag(idx, tag);
           auto* newRow = ops.newRow(this, i, probe);
           buckets[bucketIdx].store(idx, newRow);
-	  ops.update(this, newRow, i, probe);
+          ops.update(this, newRow, i, probe);
           break;
         }
         bucketIdx = (bucketIdx + 1) & sizeMask;
@@ -121,6 +122,4 @@ struct CpuHashTable {
   }
 };
 
-
-  
 } // namespace facebook::velox::wave

@@ -35,7 +35,6 @@
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include "velox/experimental/wave/common/tests/Util.h"
 
-
 #include <iostream>
 
 DEFINE_int32(num_streams, 0, "Number of paralll streams");
@@ -788,8 +787,6 @@ class RoundtripThread {
     int32_t param3{0};
   };
 
-
-  
   void run(RoundtripStats& stats) {
     stats.startMicros = getCurrentTimeMicro();
     for (auto counter = 0; counter < stats.numOps; ++counter) {

@@ -27,9 +27,9 @@ namespace facebook::velox::wave {
 enum class HashTestCase {
   // bigint sum.  Update only, no hash table.
   kUpdateSum1,
-    // group by with bigint sum.
-    kGroupSum1,
-    // array_agg of bigint. Update only, no hash table.
+  // group by with bigint sum.
+  kGroupSum1,
+  // array_agg of bigint. Update only, no hash table.
   kUpdateArrayAgg1
 };
 
@@ -75,7 +75,7 @@ struct HashRun {
   int32_t numTables{1};
 
   // Result, labeled by implementation alternative.
-  std::vector< std::pair<std::string, float>> scores;
+  std::vector<std::pair<std::string, float>> scores;
 
   std::unique_ptr<char[]> cpuData;
   WaveBufferPtr gpuData;
@@ -88,7 +88,7 @@ struct HashRun {
   // One int per row, use for partitioning intermediates. Uninitialized.
   int32_t* partitionTemp;
 
-  int32_t* partitionArgs; 
+  int32_t* partitionArgs;
   std::string toString() const;
   void addScore(const char* label, uint64_t micros);
   void clearScore() {
@@ -106,15 +106,14 @@ void fillHashTestInput(
     int32_t numHot = 0,
     int32_t hotPct = 0);
 
-
 void initializeHashTestInput(HashRun& run, GpuArena* arena);
 
- void setupGpuTable(
+void setupGpuTable(
     int32_t numSlots,
     int32_t maxRows,
     int64_t rowSize,
     GpuArena* arena,
     GpuHashTableBase*& table,
     WaveBufferPtr& buffer);
- 
+
 } // namespace facebook::velox::wave

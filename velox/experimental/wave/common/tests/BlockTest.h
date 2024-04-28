@@ -110,10 +110,7 @@ class BlockTestStream : public Stream {
   /// Does probe/groupby/build on 'table'. 'probe' contains the parameters and
   /// temp storage. 'table' and 'probe' are expected to be resident on device.
   /// 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
-  void hashTest(
-      GpuHashTableBase* table,
-      HashRun& probe,
-      HashCase mode);
+  void hashTest(GpuHashTableBase* table, HashRun& probe, HashCase mode);
 
   static int32_t freeSetSize();
 
@@ -135,7 +132,6 @@ class BlockTestStream : public Stream {
   void updateSum1Mtx(TestingRow* rows, HashRun& run);
   void updateSum1MtxCoalesce(TestingRow* rows, HashRun& run);
   void updateSum1Order(TestingRow* rows, HashRun& run);
-  
 };
 
 } // namespace facebook::velox::wave
