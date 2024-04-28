@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/Bits.cuh"
+#include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 
 namespace facebook::velox::wave {
@@ -48,7 +48,7 @@ void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
 void __device__ testSumPart(
     TestingRow* rows,
     int32_t numParts,
-HashProbe* probe,
+    HashProbe* probe,
     int32_t* part,
     int32_t* partEnd,
     int32_t numGroups,
@@ -151,14 +151,14 @@ void __device__ testSumExch(TestingRow* rows, HashProbe* probe) {
 
   extern __shared__ __align__(16) char smem[];
   ProbeShared* shared = reinterpret_cast<ProbeShared*>(smem);
-if (threadIdx.x == 0) {
+  if (threadIdx.x == 0) {
     shared->init(probe, base);
     shared->blockEnd = end;
     shared->toDo = probe->numRows[blockIdx.x];
     shared->numRounds = 0;
     shared->numUpdated = 0;
     shared->numTried = 0;
- }
+  }
   __syncthreads();
   for (;;) {
     if (shared->blockEnd <= shared->blockBase) {
@@ -168,39 +168,45 @@ if (threadIdx.x == 0) {
     for (counter = base; counter < shared->blockEnd; counter += blockDim.x) {
       auto i = counter + threadIdx.x;
       if (i < shared->blockEnd) {
-	atomicAdd(&shared->numTried, 1);
-	if (shared->inputRetries) {
-	  i = shared->inputRetries[i];
-	}
-	auto* row = &rows[indices[i]];
-	if (0 ==
-	    asDeviceAtomic<int32_t>(&row->flags)
-	    ->exchange(1, cuda::memory_order_consume)) {
-	  atomicAdd((unsigned long long*)&row->count, (unsigned long long)deltas[i]);
-	  atomicAdd(&shared->numUpdated, 1);
-	  asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
-	} else {
-	  shared->outputRetries[base + atomicAdd(&shared->numKernelRetries, 1)] = i;
-	}
+        atomicAdd(&shared->numTried, 1);
+        if (shared->inputRetries) {
+          i = shared->inputRetries[i];
+        }
+        auto* row = &rows[indices[i]];
+        if (0 ==
+            asDeviceAtomic<int32_t>(&row->flags)
+                ->exchange(1, cuda::memory_order_consume)) {
+          atomicAdd(
+              (unsigned long long*)&row->count, (unsigned long long)deltas[i]);
+          atomicAdd(&shared->numUpdated, 1);
+          asDeviceAtomic<int32_t>(&row->flags)
+              ->store(0, cuda::memory_order_release);
+        } else {
+          shared
+              ->outputRetries[base + atomicAdd(&shared->numKernelRetries, 1)] =
+              i;
+        }
       } else {
-	atomicAdd(&shared->numTried, 1 << 16);
+        atomicAdd(&shared->numTried, 1 << 16);
       }
       // __syncthreads();
     }
     __syncthreads();
     if (shared->numKernelRetries == 0) {
       if ((shared->numTried & 0xffff) != shared->blockEnd - shared->blockBase) {
-	GPF();
+        GPF();
       }
-      if (shared->done + (shared->blockEnd - shared->blockBase) != shared->toDo) {
-	GPF();
+      if (shared->done + (shared->blockEnd - shared->blockBase) !=
+          shared->toDo) {
+        GPF();
       }
-      //printf("%d %d //%d\n", base, end, counter);
+      // printf("%d %d //%d\n", base, end, counter);
       return;
     }
 
     if (threadIdx.x == 0) {
-      shared->done += (shared->blockEnd - shared->blockBase) - shared->numKernelRetries;
+      shared->done +=
+          (shared->blockEnd - shared->blockBase) - shared->numKernelRetries;
       ++shared->numRounds;
       shared->numTried = 0;
       shared->blockEnd = base + shared->numKernelRetries;
@@ -263,17 +269,18 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
     auto d = deltas[i];
     for (;;) {
       if (0 ==
-	  asDeviceAtomic<int32_t>(&row->flags)
-	  ->exchange(1, cuda::memory_order_consume)) {
-	row->count += d;
-	asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
-	break;
+          asDeviceAtomic<int32_t>(&row->flags)
+              ->exchange(1, cuda::memory_order_consume)) {
+        row->count += d;
+        asDeviceAtomic<int32_t>(&row->flags)
+            ->store(0, cuda::memory_order_release);
+        break;
       } else {
-	__nanosleep(waitNano);
-	waitNano += threadIdx.x & 31;
+        __nanosleep(waitNano);
+        waitNano += threadIdx.x & 31;
       }
     }
-    }
+  }
 }
 
 void __device__ testSumFwd(TestingRow* rows, HashProbe* probe) {
@@ -297,19 +304,18 @@ void __device__ testSumFwd(TestingRow* rows, HashProbe* probe) {
     auto* row = &rows[indices[i]];
     for (;;) {
       if (0 ==
-	  asDeviceAtomic<int32_t>(&row->flags)
-	  ->exchange(1, cuda::memory_order_consume)) {
-	row->count += d;
-	asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
-	break;
+          asDeviceAtomic<int32_t>(&row->flags)
+              ->exchange(1, cuda::memory_order_consume)) {
+        row->count += d;
+        asDeviceAtomic<int32_t>(&row->flags)
+            ->store(0, cuda::memory_order_release);
+        break;
       } else {
-
-	__nanosleep(waitNano);
-	waitNano += threadIdx.x & 31;
+        __nanosleep(waitNano);
+        waitNano += threadIdx.x & 31;
       }
     }
   }
 }
-
 
 } // namespace facebook::velox::wave

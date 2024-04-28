@@ -239,17 +239,17 @@ class MockGroupByOps {
       HashProbe* probe,
       TestingRow*& row) {
     if (!row) {
-      row = newRow(table, partition,  i, probe);
-    if (!row) {
-      return ProbeState::kNeedSpace;
-    }
-    auto missShift = __ffs(misses) - 1;
-    if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
-      return ProbeState::kRetry;
-    }
-    bucket->store(missShift / 8, row);
-    row = nullptr;
-    return ProbeState::kDone;
+      row = newRow(table, partition, i, probe);
+      if (!row) {
+        return ProbeState::kNeedSpace;
+      }
+      auto missShift = __ffs(misses) - 1;
+      if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
+        return ProbeState::kRetry;
+      }
+      bucket->store(missShift / 8, row);
+      row = nullptr;
+      return ProbeState::kDone;
     }
   }
   TestingRow* __device__ getExclusive(
@@ -261,7 +261,7 @@ class MockGroupByOps {
     int32_t nanos = 1;
     for (;;) {
       if (atomicTryLock(&row->flags)) {
-	return row;
+        return row;
       }
       __nanosleep((nanos + threadIdx.x) & 31);
       nanos += 3;
@@ -271,7 +271,7 @@ class MockGroupByOps {
   void __device__ writeDone(TestingRow* row) {
     atomicUnlock(&row->flags);
   }
-  
+
   ProbeState __device__ update(
       GpuHashTable* table,
       GpuBucket* bucket,
@@ -358,11 +358,11 @@ void __global__ allocatorTestKernel(
     }
     for (auto count = 0; count < numStr; ++count) {
       if (result->numStrings >= maxStrings) {
-	return;
+        return;
       }
       auto str = result->allocator->allocate<char>(11);
       if (!str) {
-	return;
+        return;
       }
       result->strings[result->numStrings++] = reinterpret_cast<int64_t*>(str);
     }
@@ -407,8 +407,8 @@ void BlockTestStream::rowAllocatorTest(
   void BlockTestStream::name(TestingRow* rows, HashRun& run) {             \
     name##Kernel<<<run.numBlocks, run.blockSize, smem, stream_->stream>>>( \
         rows, run.probe);                                                  \
-  CUDA_CHECK(cudaGetLastError()); \
-}
+    CUDA_CHECK(cudaGetLastError());                                        \
+  }
 
 UPDATE_CASE(updateSum1NoSync, testSumNoSync, 0);
 UPDATE_CASE(updateSum1Mtx, testSumMtx, 0);
@@ -418,7 +418,7 @@ UPDATE_CASE(updateSum1AtomicCoalesce, testSumAtomicCoalesce, 0);
 UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
 UPDATE_CASE(updateSum1Order, testSumOrder, 0);
 
-  void __global__ __launch_bounds__(1024) update1PartitionKernel(
+void __global__ __launch_bounds__(1024) update1PartitionKernel(
     int32_t numRows,
     int32_t numDistinct,
     int32_t numParts,
@@ -429,9 +429,7 @@ UPDATE_CASE(updateSum1Order, testSumOrder, 0);
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
   partitionRows<256, int32_t>(
-      [&](auto i) -> int32_t {
-        return indices[i + blockStart] % numParts;
-      },
+      [&](auto i) -> int32_t { return indices[i + blockStart] % numParts; },
       blockIdx.x == blockDim.x - 1 ? numRows - blockStart : blockStride,
       numParts,
       temp + blockIdx.x * blockStride,
@@ -480,11 +478,7 @@ void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
     ++numBlocks;
   }
   updateSum1PartKernel<<<numBlocks, blockSize, 0, stream_->stream>>>(
-      rows,
-      numParts,
-      run.probe,
-      numGroups,
-      groupStride);
+      rows, numParts, run.probe, numGroups, groupStride);
   CUDA_CHECK(cudaGetLastError());
 }
 

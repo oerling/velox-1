@@ -20,8 +20,8 @@
 
 namespace facebook::velox::wave {
 
-
-  /// Lock free stack of pointers into an arena of up to 4GB. The entries are offsets from the base address of the arena.
+/// Lock free stack of pointers into an arena of up to 4GB. The entries are
+/// offsets from the base address of the arena.
 struct FreeList {
   static constexpr uint32_t kEmpty = ~0;
 
@@ -64,14 +64,12 @@ struct FreeList {
   }
 
   uint64_t base{0};
-// Offset of first in free list of rows. Align at 8 bytes.
+  // Offset of first in free list of rows. Align at 8 bytes.
   uint32_t freeRows{kEmpty};
 
   // counter of pops from fre list. Must be upper half of 64 bit word with
   // freeRows as lower half. Use for lock free ABA magic.
   uint32_t numPops{0};
-
 };
 
-
-}
+} // namespace facebook::velox::wave

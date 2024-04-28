@@ -22,7 +22,9 @@ namespace facebook::velox::wave {
 
 template <typename T, typename U>
 inline void __device__ setBit(T* bits, U index, bool bit = true) {
-  constexpr int32_t kShift = sizeof(T) == 1 ? 3 : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
+  constexpr int32_t kShift = sizeof(T) == 1
+      ? 3
+      : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
   constexpr U kMask = (static_cast<U>(1) << kShift) - 1;
   if (bit == true) {
     bits[index >> kShift] |= static_cast<T>(1) << (index & kMask);
@@ -30,12 +32,14 @@ inline void __device__ setBit(T* bits, U index, bool bit = true) {
     bits[index >> kShift] &= (static_cast<T>(1) << ~(index & kMask));
   }
 }
-  
+
 template <typename T, typename U>
 inline bool __device__ isBitSet(T* bits, U index) {
-  constexpr int32_t kShift = sizeof(T) == 1 ? 3 : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
+  constexpr int32_t kShift = sizeof(T) == 1
+      ? 3
+      : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
   constexpr U kMask = (static_cast<U>(1) << kShift) - 1;
   return (bits[index >> kShift] & static_cast<T>(1) << (index & kMask)) != 0;
 }
 
-}
+} // namespace facebook::velox::wave
