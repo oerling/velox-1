@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cuda/atomic>
 #include <cuda/semaphore>
 
 #include <cub/thread/thread_load.cuh>
@@ -30,8 +31,23 @@ namespace facebook::velox::wave {
 
 #define GPF() *(long*)0 = 0
 
-//#define FREE_SET
+#define FREE_SET
 
+  template <typename T, typename U>
+  inline __device__ cuda::atomic<T, cuda::thread_scope_device>* asDeviceAtomic(U* ptr) {
+    return reinterpret_cast<cuda::atomic<T, cuda::thread_scope_device>*>(ptr);
+  }
+
+  template <typename T>
+inline   bool __device__ atomicTryLock(T* lock) {
+    return 0 == asDeviceAtomic<int32_t>(lock)->exchange(1, cuda::memory_order_consume);
+  }
+
+    template <typename T>
+inline void __device__ atomicUnlock(T* lock) {
+    asDeviceAtomic<int32_t>(lock)->store(0, cuda::memory_order_release);
+  }
+  
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
   using Mutex = cuda::binary_semaphore<cuda::thread_scope_device>;
@@ -55,45 +71,11 @@ struct RowAllocator : public HashPartitionAllocator {
   }
 
   uint32_t __device__ getFromFree() {
-#ifdef FREE_SET
     uint32_t item = reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->get();
     if (item != kEmpty) {
       ++numFromFree;
     }
     return item;
-#else
-    for (;;) {
-      uint64_t free =
-          cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
-      if (free == kEmpty) {
-        return kEmpty;
-      }
-      lock();
-      uint64_t counter = 1 + atomicAdd(&numPops, 1);
-      free =
-          cub::ThreadLoad<cub::LOAD_CG>(reinterpret_cast<uint32_t*>(&freeRows));
-      if (free == kEmpty) {
-        unlock();
-        return kEmpty;
-      }
-      uint32_t next = cub::ThreadLoad<cub::LOAD_CG>(
-          reinterpret_cast<uint32_t*>(base + free));
-      unsigned long long freeAndCount = free | (counter << 32);
-      unsigned long long nextFreeAndCount = next | (counter << 32);
-      if (freeAndCount ==
-          atomicCAS(
-              reinterpret_cast<unsigned long long*>(&freeRows),
-              freeAndCount,
-              nextFreeAndCount)) {
-        if (!inRange(base + free)) {
-          GPF();
-        }
-        unlock();
-        return free;
-      }
-      unlock();
-    }
-#endif
   }
 
   void __device__ freeRow(void* row) {
@@ -101,25 +83,8 @@ struct RowAllocator : public HashPartitionAllocator {
       GPF();
     }
     uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
-#ifdef FREE_SET
     numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(
                    offset) == false;
-#else
-    for (;;) {
-      lock();
-      auto free = cub::ThreadLoad<cub::LOAD_CV>(&freeRows);
-      if (offset == free) {
-        // GPF();
-      }
-      *reinterpret_cast<uint32_t*>(row) = free;
-      __threadfence();
-      if (free == atomicCAS(&freeRows, free, offset)) {
-        unlock();
-        return;
-      }
-      unlock();
-    }
-#endif
   }
 
   template <typename T>
@@ -140,14 +105,6 @@ struct RowAllocator : public HashPartitionAllocator {
     return reinterpret_cast<uint64_t>(ptr) >= base &&
         reinterpret_cast<uint64_t>(ptr) < base + capacity;
   }
-
-  void __device__ lock() {
-    // reinterpret_cast<Mutex*>(&mutex)->acquire();
-  }
-
-  void __device__ unlock() {
-    // reinterpret_cast<Mutex*>(&mutex)->release();
-  }
 };
 
 inline uint8_t __device__ hashTag(uint64_t h) {
@@ -166,12 +123,33 @@ struct GpuBucket : public GpuBucketMembers {
     return reinterpret_cast<RowType*>(uptr);
   }
 
+  template <typename RowType>
+  inline RowType* __device__ loadConsume(int32_t idx) {
+    uint32_t low = asDeviceAtomic<uint32_t>(&data)[idx].load(cuda::memory_order_consume);
+    if (low == 0) {
+      return nullptr;
+    }
+    uint32_t uptr = low;
+    uptr |= static_cast<uint64_t>(data[idx + 8]);
+    return reinterpret_cast<RowType*>(uptr);
+  }
+
+  template <typename RowType>
+  inline RowType* __device__ loadWithWait(int32_t idx) {
+    RowType* hit;
+    do {
+	      // It could be somebody inserted the tag but did not fill in the
+              // pointer. The pointer is coming in a few clocks.
+              hit = loadConsume<RowType>(idx);
+    } while (!hit);
+    return hit;
+  }
+    
   inline void __device__ store(int32_t idx, void* ptr) {
     auto uptr = reinterpret_cast<uint64_t>(ptr);
     data[8 + idx] = uptr >> 32;
     // The high part must be seen if the low part is seen.
-    __threadfence();
-    reinterpret_cast<uint32_t*>(&data)[idx] = uptr;
+    asDeviceAtomic<uint32_t>(&data)[idx].store(uptr, cuda::memory_order_release);
   }
 
   bool __device__ addNewTag(uint8_t tag, uint32_t oldTags, uint8_t tagShift) {
@@ -182,9 +160,44 @@ struct GpuBucket : public GpuBucketMembers {
 
 /// Shared memory state for an updating probe.
 struct ProbeShared {
+  int32_t* inputRetries;
+  int32_t* outputRetries;
   uint32_t numKernelRetries;
   uint32_t numHostRetries;
   int32_t blockBase;
+  int32_t blockEnd;
+  int32_t numRounds;
+  int32_t toDo;
+  int32_t done;
+  int32_t numUpdated;
+  int32_t numTried;
+
+  /// Initializes a probe. Sets outputRetries and clears inputRetries and other state.
+  void __device__ init(HashProbe* probe, int32_t base) {
+    inputRetries = nullptr;
+    outputRetries = probe->kernelRetries1;
+    numKernelRetries = 0;
+    numHostRetries = 0;
+    blockBase = base;
+    toDo = 0;
+    done = 0;
+    numRounds = 0;
+  }
+
+  // Resets retrry count and swaps input and output retries.
+  void __device__ nextRound(HashProbe* probe) {
+    numKernelRetries = 0;
+    if (!inputRetries) {
+      // This is after the initial round where there are no input retries.
+      inputRetries = outputRetries;
+      outputRetries = probe->kernelRetries2;
+    } else {
+      // swap input and output retries.
+      auto temp = outputRetries;
+      outputRetries = inputRetries;
+      inputRetries = temp;
+    }
+  }
 };
 
 class GpuHashTable : public GpuHashTableBase {
@@ -214,6 +227,7 @@ class GpuHashTable : public GpuHashTableBase {
           auto hitIdx = (__ffs(hits) - 1) / 8;
           hit = bucket->load<RowType>(hitIdx);
           if (ops.compare(this, i, probe, hit)) {
+	    ops.hit(i, probe, hit);
             goto done;
           }
           hits = hits & (hits - 1);
@@ -233,30 +247,23 @@ class GpuHashTable : public GpuHashTableBase {
     extern __shared__ __align__(16) char smem[];
     auto* sharedState = reinterpret_cast<ProbeShared*>(smem);
     if (threadIdx.x == 0) {
-      sharedState->numKernelRetries = 0;
-      sharedState->numHostRetries = 0;
-      sharedState->blockBase = ops.blockBase(probe);
+      sharedState->init(probe, ops.blockBase(probe));
     }
     __syncthreads();
     auto lane = cub::LaneId();
     constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
     auto warp = threadIdx.x / kWarpThreads;
-    bool doingRetries = false;
     int32_t numKeys = ops.numRowsInBlock(probe);
-    for (;;) {
-      for (auto count = 0; count < numKeys; count += blockDim.x) {
-        auto i = count + threadIdx.x;
-        int32_t numInBlock = numKeys - count;
-        if (i >= numInBlock) {
+    for (auto count = 0; count < numKeys; count += blockDim.x) {
+      auto i = count + threadIdx.x;
+      int32_t numInBlock = numKeys - count;
+      if (i >= numInBlock) {
           break;
-        }
+      }
         uint32_t laneMask = warp * kWarpThreads + kWarpThreads > numInBlock
             ? lowMask<uint32_t>(numInBlock - warp * kWarpThreads)
             : 0xffffffff;
         i += sharedState->blockBase;
-        if (doingRetries) {
-          i = probe->kernelRetries[i];
-        }
         auto h = probe->hashes[i];
         uint32_t tagWord = hashTag(h);
         tagWord |= tagWord << 8;
@@ -269,17 +276,12 @@ class GpuHashTable : public GpuHashTableBase {
         uint32_t tags;
         for (;;) {
           bucket = buckets + bucketIdx;
+	reprobe:
           tags = bucket->tags;
           auto hits = __vcmpeq4(tags, tagWord) & 0x01010101;
           while (hits) {
             hitIdx = (__ffs(hits) - 1) / 8;
-            do {
-              // It could be somebody inserted the tag but did not fill in the
-              // pointer. The pointer is coming in a few clocks.
-              hit = bucket->load<RowType>(hitIdx);
-              // The thread expects to see writes from other threads.
-              __threadfence();
-            } while (hit);
+	    hit = bucket->loadWithWait<RowType>(hitIdx);
             if (ops.compare(this, probe, i, hit)) {
               break;
             }
@@ -290,49 +292,22 @@ class GpuHashTable : public GpuHashTableBase {
           }
           misses = __vcmpeq4(tags, 0);
           if (misses) {
-            hit = nullptr;
+	    auto success = ops.insert(
+				      this, partitionIdx(h), bucket, misses, tags, tagWord, i, probe, hit);
+	    if (success == ProbeState::kRetry) {
+	      goto reprobe;
+	    }
+	    if (success == ProbeState::kNeedSpace) {
+	      addHostRetry(sharedState, i, probe);
+	    }
             break;
           }
           bucketIdx = (bucketIdx + 1) & sizeMask;
         }
-        // Every lane has a hit or a miss.
+        // Every lane has a hit, or a miss if out of space.
         uint32_t peers =
             __match_any_sync(laneMask, reinterpret_cast<int64_t>(hit));
-        RowType* writable = nullptr;
-        if (!hit) {
-          // The missers divide by bucket.
-          uint32_t sameBucket =
-              __match_any_sync(peers, reinterpret_cast<int64_t>(bucket));
-          // The leader is given by the lowest bit. This is processed first in
-          // sequence, so its tags etc are already in the lane's registers.
-          int32_t leader = __ffs(sameBucket) - 1;
-          auto insertBits = sameBucket;
-          auto idxToInsert = i;
-          ProbeState success = ProbeState::kDone;
-          while (insertBits) {
-            if (lane == leader) {
-              if (success == ProbeState::kDone) {
-                // The leader tries to insert the next from its cohort.
-                success = ops.insert(
-                    this, bucket, misses, tags, tagWord, idxToInsert, probe);
-              }
-              if (success != ProbeState::kDone) {
-                if (success == ProbeState::kNeedSpace) {
-                  addHostRetry(sharedState, idxToInsert, probe);
-                } else {
-                  // The lane goes into retries with the rest of cohort.
-                  addKernelRetry(sharedState, idxToInsert, probe);
-                }
-              }
-            }
-            insertBits &= insertBits - 1;
-            if (insertBits) {
-              // The other threads hitting the same bucket get retried. They
-              // could be inserts or hits of each other.
-              success = ProbeState::kRetry;
-            }
-          }
-        } else {
+	if (hit)  {
           int32_t leader = (kWarpThreads - 1) - __clz(peers);
           RowType* writable = nullptr;
           if (lane == leader) {
@@ -348,42 +323,24 @@ class GpuHashTable : public GpuHashTableBase {
                 success =
                     ops.update(this, bucket, writable, idxToUpdate, probe);
               }
-              if (success != ProbeState::kDone) {
-                if (success == ProbeState::kNeedSpace) {
-                  addHostRetry(sharedState, idxToUpdate, probe);
-                } else {
-                  addKernelRetry(sharedState, idxToUpdate, probe);
-                }
-              }
+	      if (success == ProbeState::kNeedSpace) {
+		addHostRetry(sharedState, idxToUpdate, probe);
+	      }
             }
             toUpdate &= toUpdate - 1;
           }
+	  if (lane == leader) {
+	    ops.writeDone(writable);
+	  }
         }
       }
-      __syncthreads();
-      // All probes have had one try.
-      if (sharedState->numKernelRetries == 0) {
-        return;
-      }
-      numKeys = sharedState->numKernelRetries;
-      doingRetries = true;
-      if (threadIdx.x == 0) {
-        sharedState->numKernelRetries = 0;
-      }
-      __syncthreads();
-    }
   }
 
-  int32_t __device__ partitionIdx(int32_t bucketIdx) const {
-    return (bucketIdx & partitionMask) >> partitionShift;
+  int32_t __device__ partitionIdx(uint64_t h) const {
+    return (h & partitionMask) >> partitionShift;
   }
 
  private:
-  static void __device__
-  addKernelRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
-    probe->kernelRetries
-        [shared->blockBase + atomicAdd(&shared->numKernelRetries, 1)] = i;
-  }
 
   static void __device__
   addHostRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {

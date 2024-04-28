@@ -65,13 +65,13 @@ class HashTableTest : public testing::Test {
     memcpy(gpuRows, reference.data(), sizeof(TestingRow) * run.numDistinct);
     prefetch(*streams_[0], gpuRowsBuffer_);
     prefetch(*streams_[0], run.gpuData);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    runCpu(reference.data(), run);
-    runGpu(gpuRows, run, reference.data());
+    streams_[0]->wait();
+    updateCpu(reference.data(), run);
+    updateGpu(gpuRows, run, reference.data());
     std::cout << run.toString() << std::endl;
   }
 
-  void runCpu(TestingRow* rows, HashRun& run) {
+  void updateCpu(TestingRow* rows, HashRun& run) {
     uint64_t micros = 0;
     {
       MicrosecondTimer t(&micros);
@@ -94,7 +94,8 @@ class HashTableTest : public testing::Test {
   }
 
 #define UPDATE_CASE(title, func, expectCorrect, nextFlags) {	\
-        MicrosecondTimer t(&micros); \
+  std::cout << title << std::endl; \
+  MicrosecondTimer t(&micros);	      \
         streams_[0]->func(rows, run); \
         streams_[0]->wait();\
       } \
@@ -103,7 +104,7 @@ class HashTableTest : public testing::Test {
 	compareAndReset(reference, rows, run.numDistinct, title, expectCorrect, nextFlags);
 
   
-  void runGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
+  void updateGpu(TestingRow* rows, HashRun& run, TestingRow* reference) {
     uint64_t micros = 0;
     switch (run.testCase) {
     case HashTestCase::kUpdateSum1:
@@ -112,7 +113,7 @@ class HashTableTest : public testing::Test {
       UPDATE_CASE("sum1AtmCoa", updateSum1AtomicCoalesce, true, 0);
       UPDATE_CASE("sum1Exch", updateSum1Exch, false, 1);
       UPDATE_CASE("sum1Mtx", updateSum1Mtx, true, 1);
-      UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 1);
+      UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 0);
       UPDATE_CASE("sum1Part", updateSum1Part, true, 0);
       UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
       
@@ -126,6 +127,7 @@ class HashTableTest : public testing::Test {
   void
   compareAndReset(TestingRow* reference, TestingRow* rows, int32_t numRows, const char* title, bool expectCorrect, int32_t initFlags = 0) {
     int32_t numError = 0;
+    int64_t errorSigned = 0;
     int64_t errorDelta = 0;
     for (auto i = 0; i < numRows; ++i) {
       if (rows[i].count == reference[i].count) {
@@ -137,10 +139,11 @@ std::cout << "In " << title << std::endl;
       }
       ++numError;
       int64_t d = reference[i].count - rows[i].count;
+      errorSigned += d;
       errorDelta += d < 0 ? -d : d;
     }
     if (numError) {
-      std::cout << fmt::format("{}: numError={} errorDelta={}", title, numError, errorDelta) << std::endl;
+      std::cout << fmt::format("{}: numError={} errorDelta={} errorSigned={}", title, numError, errorDelta, errorSigned) << std::endl;
     }
     for (auto i = 0; i < numRows; ++i) {
       new (rows + i) TestingRow();
@@ -151,6 +154,92 @@ std::cout << "In " << title << std::endl;
     streams_[0]->wait();
   }
 
+
+  void groupTestCase(int32_t numDistinct, int32_t numRows, HashRun& run) {
+    run.numRows = numRows;
+    run.numDistinct = numDistinct;
+    run.numColumns = 2;
+    run.numRowsPerThread = 32;
+
+    initializeHashTestInput(run, arena_.get());
+    fillHashTestInput(
+        run.numRows,
+        run.numDistinct,
+        bits::nextPowerOfTwo(run.numDistinct),
+        1,
+        run.numColumns,
+        reinterpret_cast<int64_t**>(run.probe->keys));
+    CpuHashTable cpuTable(run.numSlots, sizeof(TestingRow) * run.numDistinct);
+    cpuGroupBy(cpuTable, run);
+    gpuGroupBy(cpuTable, run);
+  }
+
+  void cpuGroupBy(CpuHashTable& table, HashRun& run) {
+  class CpuMockGroupByOps {
+ public:
+  bool
+  compare(CpuHashTable* table, TestingRow* row, int32_t i, HashProbe* probe) {
+    return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
+  }
+
+  TestingRow*
+  newRow(CpuHashTable* table, int32_t i, HashProbe* probe) {
+    auto row = table->newRow<TestingRow>();
+      row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
+      row->flags = 0;
+      row->count = 0;
+      new (&row->concatenation) ArrayAgg64();
+    return row;
+  }
+
+    void  update(
+		 CpuHashTable* table,
+      TestingRow* row,
+      int32_t i,
+      HashProbe* probe) {
+      auto* keys = reinterpret_cast<int64_t**>(probe->keys);
+      row->count += keys[1][i];
+
+      #if 0
+    int64_t arg = keys[1][i];
+    int32_t part = table->partitionIdx(bucket - table->buckets);
+    auto* allocator = &table->allocators[part];
+    auto state = arrayAgg64Append(&row->concatenation, arg, allocator);
+#endif
+    }
+};
+
+
+    uint64_t time = 0;
+    {
+      MicrosecondTimer t(&time);
+      table.updatingProbe<TestingRow>(run.probe, CpuMockGroupByOps());
+    }
+    run.addScore("cpu1T", time); 
+  }
+
+  void gpuGroupBy(const CpuHashTable& reference, HashRun& run) {
+    WaveBufferPtr gpuTableBuffer;
+    GpuHashTableBase* gpuTable;
+    setupGpuTable(
+		  run.numSlots,
+		  run.numRows,
+		  sizeof(TestingRow),
+		  arena_.get(),
+		  gpuTable,
+		  gpuTableBuffer);
+    prefetch(*streams_[0], run.gpuData);
+    prefetch(*streams_[0], gpuTableBuffer);
+    streams_[0]->wait();
+    uint64_t micros = 0;
+    {
+      MicrosecondTimer t(&micros);
+      streams_[0]->hashTest(gpuTable, run, BlockTestStream::HashCase::kGroup);
+      streams_[0]->wait();
+    }
+    run.addScore("gpu", micros);
+  }
+  
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
@@ -244,4 +333,15 @@ TEST_F(HashTableTest, update) {
   }
 }
 
+TEST_F(HashTableTest, groupBy) {
+  {
+    HashRun run;
+    run.testCase = HashTestCase::kGroupSum1;
+    groupTestCase(1000, 2000000, run);
+  }
+}
+
+
+  
+  
 } // namespace facebook::velox::wave

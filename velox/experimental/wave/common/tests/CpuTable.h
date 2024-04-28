@@ -58,14 +58,34 @@ class CpuBucket {
 };
 
 struct CpuHashTable {
-  std::vector<CpuBucket> buckets;
+  CpuHashTable(int32_t numSlots, int32_t rowBytes) {
+    auto numBuckets = bits::nextPowerOfTwo(numSlots) / 16;
+    sizeMask = numBuckets - 1;
+    bucketSpace.resize(numBuckets * sizeof(CpuBucket) + 64);
+    buckets = reinterpret_cast<CpuBucket*>(bits::roundUp(reinterpret_cast<uint64_t>(bucketSpace.data()), 64));
+    rows.resize(rowBytes);
+  }
+  
+  std::string bucketSpace;
+  CpuBucket* buckets;
   int32_t sizeMask;
-  // Preallocated rows.
-  void** rows;
-  // Count of preallocated rows.
-  int32_t numRows;
-  // Number of used rows.
-  int32_t usedRows{0};
+
+  // Preallocated space for rows. Do not resize.
+  std::string rows;
+
+  // Number of used bytes in 'rows'.
+  int32_t spaceUsed{0};
+
+  template <typename T>
+  T* newRow() {
+    auto size = sizeof(T);
+    if (spaceUsed + size > rows.size()) {
+      return nullptr;
+    }
+    auto row = reinterpret_cast<T*>(rows.data() + spaceUsed);
+    spaceUsed += size;
+    return row;
+  }
 
   template <typename RowType, typename Ops>
   void updatingProbe(HashProbe* probe, Ops ops) {
@@ -80,17 +100,18 @@ struct CpuHashTable {
         while (hits) {
           auto idx = bits::getAndClearLastSetBit(hits);
           auto row = buckets[bucketIdx].load<RowType>(idx);
-          if (ops.compare(row, i, probe)) {
-            ops.update(row, i, probe);
-            goto next;
+          if (ops.compare(this, row, i, probe)) {
+            ops.update(this, row, i, probe);
+            goto done;
           }
         }
         auto misses = CpuBucket::matchTags(tags, 0);
         if (misses) {
           int32_t idx = bits::getAndClearLastSetBit(misses);
           buckets[bucketIdx].setTag(idx, tag);
-          auto* newRow = ops.newRow(this);
+          auto* newRow = ops.newRow(this, i, probe);
           buckets[bucketIdx].store(idx, newRow);
+	  ops.update(this, newRow, i, probe);
           break;
         }
         bucketIdx = (bucketIdx + 1) & sizeMask;
@@ -100,4 +121,6 @@ struct CpuHashTable {
   }
 };
 
+
+  
 } // namespace facebook::velox::wave

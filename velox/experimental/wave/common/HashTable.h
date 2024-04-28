@@ -42,15 +42,9 @@ struct HashPartitionAllocator {
 
   const int32_t rowSize{0};
   const uint64_t base{0};
-  // Offset of first in free list of rows. Align at 8 bytes.
-  uint32_t freeRows{kEmpty};
-  // counter of pops from fre list. Must be upper half of 64 bit word with
-  // freeRows as lower half. Use for lock free ABA magic.
-  uint32_t numPops{0};
   uint32_t rowOffset{0};
   const uint32_t capacity{0};
   uint32_t stringOffset{0};
-  uint32_t mutex;
   void* freeSet{nullptr};
   int32_t numFromFree{0};
   int32_t numFull{0};
@@ -81,7 +75,8 @@ struct HashProbe {
   /// List of input rows to retry in kernel. Sized to one per row of
   /// input. Used inside kernel, not meaningful after return. Sample
   /// use case is another warp updating the same row.
-  int32_t* kernelRetries;
+  int32_t* kernelRetries1;
+  int32_t* kernelRetries2;
 
   /// List of input rows to retry after host updated state. Sized to
   /// one per row of input. The reason for a host side retry is

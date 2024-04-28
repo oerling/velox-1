@@ -27,7 +27,9 @@ namespace facebook::velox::wave {
 enum class HashTestCase {
   // bigint sum.  Update only, no hash table.
   kUpdateSum1,
-  // array_agg of bigint. Update only, no hash table.
+    // group by with bigint sum.
+    kGroupSum1,
+    // array_agg of bigint. Update only, no hash table.
   kUpdateArrayAgg1
 };
 
@@ -107,4 +109,12 @@ void fillHashTestInput(
 
 void initializeHashTestInput(HashRun& run, GpuArena* arena);
 
+ void setupGpuTable(
+    int32_t numSlots,
+    int32_t maxRows,
+    int64_t rowSize,
+    GpuArena* arena,
+    GpuHashTableBase*& table,
+    WaveBufferPtr& buffer);
+ 
 } // namespace facebook::velox::wave

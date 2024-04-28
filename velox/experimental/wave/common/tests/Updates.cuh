@@ -16,9 +16,8 @@
 
 #pragma once
 
-#include <cub/util_ptx.cuh>
-#include <cuda/atomic>
 #include "velox/experimental/wave/common/HashTable.cuh"
+#include "velox/experimental/wave/common/Bits.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 
 namespace facebook::velox::wave {
@@ -38,7 +37,6 @@ void __device__ testSumNoSync(TestingRow* rows, HashProbe* probe) {
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
@@ -82,7 +80,6 @@ void __device__ testSumMtx(TestingRow* rows, HashProbe* probe) {
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
@@ -98,7 +95,6 @@ void __device__ testSumAtomic(TestingRow* rows, HashProbe* probe) {
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
@@ -113,9 +109,7 @@ void __device__ testSumAtomicCoalesce(TestingRow* rows, HashProbe* probe) {
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  int32_t warp = threadIdx.x / kWarpThreads;
   int32_t lane = cub::LaneId();
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto count = base; count < end; count += blockDim.x) {
@@ -150,7 +144,6 @@ void __device__ testSumAtomicCoalesce(TestingRow* rows, HashProbe* probe) {
 
 void __device__ testSumExch(TestingRow* rows, HashProbe* probe) {
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
@@ -158,48 +151,71 @@ void __device__ testSumExch(TestingRow* rows, HashProbe* probe) {
 
   extern __shared__ __align__(16) char smem[];
   ProbeShared* shared = reinterpret_cast<ProbeShared*>(smem);
-  if (threadIdx.x == 0) {
-    shared->numKernelRetries = 0;
-  }
+if (threadIdx.x == 0) {
+    shared->init(probe, base);
+    shared->blockEnd = end;
+    shared->toDo = probe->numRows[blockIdx.x];
+    shared->numRounds = 0;
+    shared->numUpdated = 0;
+    shared->numTried = 0;
+ }
   __syncthreads();
-  bool inRetries = false;
   for (;;) {
-    for (auto counter = base; counter < end; counter += blockDim.x) {
+    if (shared->blockEnd <= shared->blockBase) {
+      GPF();
+    }
+    int32_t counter;
+    for (counter = base; counter < shared->blockEnd; counter += blockDim.x) {
       auto i = counter + threadIdx.x;
-      if (i < end) {
-        i = inRetries ? probe->kernelRetries[i] : i;
-        auto* row = &rows[indices[i]];
-        if (atomicCAS(&row->flags, 0, 1) == 0) {
-          row->count += deltas[i];
-          __threadfence();
-          atomicExch(&row->flags, 0);
-        } else {
-          probe->kernelRetries[atomicAdd(&shared->numKernelRetries, 1)] = i;
-        }
+      if (i < shared->blockEnd) {
+	atomicAdd(&shared->numTried, 1);
+	if (shared->inputRetries) {
+	  i = shared->inputRetries[i];
+	}
+	auto* row = &rows[indices[i]];
+	if (0 ==
+	    asDeviceAtomic<int32_t>(&row->flags)
+	    ->exchange(1, cuda::memory_order_consume)) {
+	  atomicAdd((unsigned long long*)&row->count, (unsigned long long)deltas[i]);
+	  atomicAdd(&shared->numUpdated, 1);
+	  asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
+	} else {
+	  shared->outputRetries[base + atomicAdd(&shared->numKernelRetries, 1)] = i;
+	}
+      } else {
+	atomicAdd(&shared->numTried, 1 << 16);
       }
+      // __syncthreads();
     }
     __syncthreads();
     if (shared->numKernelRetries == 0) {
+      if ((shared->numTried & 0xffff) != shared->blockEnd - shared->blockBase) {
+	GPF();
+      }
+      if (shared->done + (shared->blockEnd - shared->blockBase) != shared->toDo) {
+	GPF();
+      }
+      //printf("%d %d //%d\n", base, end, counter);
       return;
     }
-    inRetries = true;
-    end = base + shared->numKernelRetries;
+
     if (threadIdx.x == 0) {
-      shared->numKernelRetries = 0;
+      shared->done += (shared->blockEnd - shared->blockBase) - shared->numKernelRetries;
+      ++shared->numRounds;
+      shared->numTried = 0;
+      shared->blockEnd = base + shared->numKernelRetries;
+      shared->nextRound(probe);
     }
     __syncthreads();
   }
 }
-
 void __device__ testSumMtxCoalesce(TestingRow* rows, HashProbe* probe) {
   constexpr int32_t kWarpThreads = 32;
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  int32_t warp = threadIdx.x / kWarpThreads;
   int32_t lane = cub::LaneId();
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto count = base; count < end; count += blockDim.x) {
@@ -235,23 +251,22 @@ void __device__ testSumMtxCoalesce(TestingRow* rows, HashProbe* probe) {
 }
 
 void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
-  using Mtx = cuda::atomic<int32_t, cuda::thread_scope_device>;
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
   auto deltas = keys[1];
   int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  auto rowsInBlock = probe->numRowsPerThread * blockDim.x;
   int32_t end = base + probe->numRows[blockIdx.x];
 
   for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
     auto* row = &rows[indices[i]];
     int32_t waitNano = 1;
+    auto d = deltas[i];
     for (;;) {
       if (0 ==
-	  reinterpret_cast<Mtx*>(&row->flags)
+	  asDeviceAtomic<int32_t>(&row->flags)
 	  ->exchange(1, cuda::memory_order_consume)) {
-	row->count += deltas[i];
-	reinterpret_cast<Mtx*>(&row->flags)->store(0, cuda::memory_order_release);
+	row->count += d;
+	asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
 	break;
       } else {
 	__nanosleep(waitNano);
@@ -260,4 +275,41 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
     }
     }
 }
+
+void __device__ testSumFwd(TestingRow* rows, HashProbe* probe) {
+  auto keys = reinterpret_cast<int64_t**>(probe->keys);
+  auto indices = keys[0];
+  auto deltas = keys[1];
+  int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
+  int32_t end = base + probe->numRows[blockIdx.x];
+  int32_t flagsPerThread = roundUp(probe->numRowsPerThread, 32) / 32;
+  auto threadFlags = probe->kernelRetries1 + flagsPerThread * threadIdx.x;
+  for (auto i = 0; i < flagsPerThread; ++i) {
+    threadFlags[threadIdx.x] = 0;
+  }
+  int32_t nthOnThread = 0;
+  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
+    if (nthOnThread > 0 && isBitSet(threadFlags, nthOnThread)) {
+      continue;
+    }
+    int32_t waitNano = 1;
+    auto d = deltas[i];
+    auto* row = &rows[indices[i]];
+    for (;;) {
+      if (0 ==
+	  asDeviceAtomic<int32_t>(&row->flags)
+	  ->exchange(1, cuda::memory_order_consume)) {
+	row->count += d;
+	asDeviceAtomic<int32_t>(&row->flags)->store(0, cuda::memory_order_release);
+	break;
+      } else {
+
+	__nanosleep(waitNano);
+	waitNano += threadIdx.x & 31;
+      }
+    }
+  }
+}
+
+
 } // namespace facebook::velox::wave

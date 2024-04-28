@@ -103,8 +103,7 @@ int32_t BlockTestStream::boolToIndicesSize() {
 }
 
 __global__ void sum64(int64_t* numbers, int64_t* results) {
-  extern __shared__ __align__(
-      alignof(cub::BlockReduce<int64_t, 256>::TempStorage)) char smem[];
+  extern __shared__ __align__(16) char smem[];
   int32_t idx = blockIdx.x;
   blockSum<256>(
       [&]() { return numbers[idx * 256 + threadIdx.x]; }, smem, results);
@@ -217,64 +216,72 @@ class MockGroupByOps {
   }
 
   TestingRow* __device__
-  newRow(GpuHashTable* table, int32_t bucketIdx, RowAllocator*& allocator) {
-    int32_t part = table->partitionIdx(bucketIdx);
-    allocator = &table->allocators[part];
+  newRow(GpuHashTable* table, int32_t partition, int32_t i, HashProbe* probe) {
+    auto* allocator = &table->allocators[partition];
     auto row = allocator->allocateRow<TestingRow>();
+    if (row) {
+      row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
+      row->flags = 0;
+      row->count = 0;
+      new (&row->concatenation) ArrayAgg64();
+    }
+    return row;
   }
 
   ProbeState __device__ insert(
       GpuHashTable* table,
+      int32_t partition,
       GpuBucket* bucket,
       uint32_t misses,
       uint32_t oldTags,
       uint32_t tagWord,
       int32_t i,
-      HashProbe* probe) {
-    int32_t bucketIdx = table->buckets - bucket;
-    RowAllocator* allocator;
-    auto row = newRow(table, bucketIdx, allocator);
+      HashProbe* probe,
+      TestingRow*& row) {
+    if (!row) {
+      row = newRow(table, partition,  i, probe);
     if (!row) {
       return ProbeState::kNeedSpace;
     }
-    row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
-    row->flags = GpuHashTable::kExclusive;
     auto missShift = __ffs(misses) - 1;
     if (!bucket->addNewTag(tagWord, oldTags, missShift)) {
-      allocator->freeRow(row);
       return ProbeState::kRetry;
     }
     bucket->store(missShift / 8, row);
-    row->count = 0;
-    new (&row->concatenation) ArrayAgg64();
-    update(table, bucket, row, i, probe);
-    __threadfence();
-    atomicExch(&row->flags, 0);
-    __threadfence();
+    row = nullptr;
     return ProbeState::kDone;
+    }
   }
-
   TestingRow* __device__ getExclusive(
       GpuHashTable* table,
       GpuBucket* bucket,
       TestingRow* row,
       int32_t hitIdx,
       int32_t warp) {
-    if (0 == atomicCAS(&row->flags, 0, GpuHashTable::kExclusive)) {
-      return row;
+    int32_t nanos = 1;
+    for (;;) {
+      if (atomicTryLock(&row->flags)) {
+	return row;
+      }
+      __nanosleep((nanos + threadIdx.x) & 31);
+      nanos += 3;
     }
-    return nullptr;
   }
 
+  void __device__ writeDone(TestingRow* row) {
+    atomicUnlock(&row->flags);
+  }
+  
   ProbeState __device__ update(
       GpuHashTable* table,
       GpuBucket* bucket,
       TestingRow* row,
       int32_t i,
       HashProbe* probe) {
-    ++row->count;
-
-    int64_t arg = reinterpret_cast<int64_t**>(probe->keys)[1][i];
+    auto* keys = reinterpret_cast<int64_t**>(probe->keys);
+    row->count += keys[1][i];
+    return ProbeState::kDone;
+    int64_t arg = keys[1][i];
     int32_t part = table->partitionIdx(bucket - table->buckets);
     auto* allocator = &table->allocators[part];
     auto state = arrayAgg64Append(&row->concatenation, arg, allocator);
@@ -301,16 +308,15 @@ void __global__ hashTestKernel(
 
 void BlockTestStream::hashTest(
     GpuHashTableBase* table,
-    HashProbe* probe,
-    int32_t numBlocks,
+    HashRun& run,
     HashCase mode) {
   constexpr int32_t kBlockSize = 256;
   int32_t shared = 0;
   if (mode == HashCase::kGroup) {
     shared = GpuHashTable::updatingProbeSharedSize();
   }
-  hashTestKernel<<<numBlocks, kBlockSize, shared, stream_->stream>>>(
-      reinterpret_cast<GpuHashTable*>(table), probe, mode);
+  hashTestKernel<<<run.numBlocks, run.blockSize, shared, stream_->stream>>>(
+      reinterpret_cast<GpuHashTable*>(table), run.probe, mode);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -351,9 +357,12 @@ void __global__ allocatorTestKernel(
       result->allocator->freeRow(toFree);
     }
     for (auto count = 0; count < numStr; ++count) {
+      if (result->numStrings >= maxStrings) {
+	return;
+      }
       auto str = result->allocator->allocate<char>(11);
       if (!str) {
-        return;
+	return;
       }
       result->strings[result->numStrings++] = reinterpret_cast<int64_t*>(str);
     }
@@ -362,8 +371,6 @@ void __global__ allocatorTestKernel(
 
 void __global__ initAllocatorKernel(RowAllocator* allocator) {
   if (threadIdx.x == 0) {
-    new (&allocator->mutex)
-        cuda::binary_semaphore<cuda::thread_scope_device>(1);
     if (allocator->freeSet) {
       reinterpret_cast<FreeSet<uint32_t, 1024>*>(allocator->freeSet)->clear();
     }
@@ -419,10 +426,9 @@ UPDATE_CASE(updateSum1Order, testSumOrder, 0);
     HashProbe* probe,
     int32_t* temp) {
   auto blockStart = blockStride * blockIdx.x;
-  auto keysInPart = numDistinct / numParts;
   auto keys = reinterpret_cast<int64_t**>(probe->keys);
   auto indices = keys[0];
-  partitionRows<1024, int32_t>(
+  partitionRows<256, int32_t>(
       [&](auto i) -> int32_t {
         return indices[i + blockStart] % numParts;
       },
@@ -430,7 +436,7 @@ UPDATE_CASE(updateSum1Order, testSumOrder, 0);
       numParts,
       temp + blockIdx.x * blockStride,
       probe->hostRetries + blockStride * blockIdx.x,
-      probe->kernelRetries + blockStride * blockIdx.x);
+      probe->kernelRetries1 + blockStride * blockIdx.x);
 }
 
 void __global__ updateSum1PartKernel(
@@ -443,7 +449,7 @@ void __global__ updateSum1PartKernel(
       rows,
       numParts,
       probe,
-      probe->kernelRetries,
+      probe->kernelRetries1,
       probe->hostRetries,
       numGroups,
       groupStride);
@@ -451,14 +457,14 @@ void __global__ updateSum1PartKernel(
 
 void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
   auto numParts = std::min<int32_t>(run.numDistinct, 8192);
-  auto groupStride = run.numRows / 8;
+  auto groupStride = run.numRows / 32;
   auto numGroups = run.numRows / groupStride;
-  auto partSmem = partitionRowsSharedSize<1024>(numParts);
-  // We use probe->kernelRetries as the indices array for partitions. We use
+  auto partSmem = partitionRowsSharedSize<256>(numParts);
+  // We use probe->kernelRetries1 as the indices array for partitions. We use
   // probe->hostRetries as the array of partition starts. So, if we have 10
   // partitions, then hostRetries[x..y] is the input rows for partition 1 if x
   // is partitionStarts[0] and y is partitionStarts[1].
-  update1PartitionKernel<<<numGroups, 1024, partSmem, stream_->stream>>>(
+  update1PartitionKernel<<<numGroups, 256, partSmem, stream_->stream>>>(
       run.numRows,
       run.numDistinct,
       numParts,
@@ -488,7 +494,9 @@ REGISTER_KERNEL("sum64", sum64);
 REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
 REGISTER_KERNEL("hashTest", hashTestKernel);
 REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
-REGISTER_KERNEL("sun1atm", updateSum1AtomicKernel)
-REGISTER_KERNEL("sun1Exch", updateSum1ExchKernel)
+REGISTER_KERNEL("sum1atm", updateSum1AtomicKernel);
+REGISTER_KERNEL("sum1Exch", updateSum1ExchKernel);
+REGISTER_KERNEL("sum1Part", updateSum1PartKernel);
+REGISTER_KERNEL("partSum", update1PartitionKernel);
 
 } // namespace facebook::velox::wave

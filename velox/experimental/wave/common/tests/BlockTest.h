@@ -112,8 +112,7 @@ class BlockTestStream : public Stream {
   /// 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
   void hashTest(
       GpuHashTableBase* table,
-      HashProbe* probe,
-      int32_t numBlocks,
+      HashRun& probe,
       HashCase mode);
 
   static int32_t freeSetSize();

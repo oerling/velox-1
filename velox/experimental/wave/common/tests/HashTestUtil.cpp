@@ -40,7 +40,7 @@ std::pair<int64_t, int32_t> probeSize(HashRun& run) {
           // Pointers to column starts
           + sizeof(int64_t*) * run.numColumns
           // retry lists
-          + 2 * sizeof(int32_t) * roundedRows +
+          + 3 * sizeof(int32_t) * roundedRows +
       // numRows for each block.
       sizeof(int32_t) * roundedRows / (run.blockSize * run.numRowsPerThread) +
       // Temp space for partitioning.
@@ -115,7 +115,9 @@ void initializeHashTestInput(HashRun& run, GpuArena* arena) {
   data += sizeof(uint64_t) * roundedRows;
   probe->keys = data;
   data += sizeof(void*) * run.numColumns;
-  probe->kernelRetries = reinterpret_cast<int32_t*>(data);
+  probe->kernelRetries1 = reinterpret_cast<int32_t*>(data);
+  data += sizeof(int32_t) * roundedRows;
+  probe->kernelRetries2 = reinterpret_cast<int32_t*>(data);
   data += sizeof(int32_t) * roundedRows;
   probe->hostRetries = reinterpret_cast<int32_t*>(data);
   data += sizeof(int32_t) * roundedRows;
@@ -156,14 +158,16 @@ void setupGpuTable(
   new (allocator) HashPartitionAllocator(data, maxRows * rowSize, rowSize);
   table->partitionMask = 0;
   table->partitionShift = 0;
+  memset(table->buckets, 0, sizeof(GpuBucketMembers) * (table->sizeMask + 1));
 }
 
 std::string HashRun::toString() const {
   std::stringstream out;
   std::string opLabel = testCase == HashTestCase::kUpdateSum1
       ? "update sum1"
-      : "update array_agg1";
-  out << label << ":" << opLabel << " distinct=" << numDistinct
+    : testCase == HashTestCase::kGroupSum1 ? "groupSum1"
+    : "update array_agg1";
+  out << "===" << label << ":" << opLabel << " distinct=" << numDistinct
       << " rows=" << numRows << " (" << numBlocks << "x" << blockSize << "x"
       << numRowsPerThread << ") ";
   if (hotPct) {
@@ -171,11 +175,11 @@ std::string HashRun::toString() const {
   }
   auto sorted = scores;
   std::sort(sorted.begin(), sorted.end(), [](auto& left, auto& right) {
-    return left.second > right.second;
+    return left.second < right.second;
   });
   float gb = numRows * sizeof(int64_t) * numColumns / static_cast<float>(1 << 30);
   for (auto& score : sorted) {
-    out << std::endl << "  * " << fmt::format(" {}={:.3f} rps {:.3f} GB/s {} us ", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second);
+    out << std::endl << "  * " << fmt::format(" {}={:.2f} rps {:.2f} GB/s {} us {:.2f}x", score.first, numRows / (score.second / 1e6), gb / (score.second / 1e6), score.second, score.second / sorted[0].second);
   }
   return out.str();
 }
