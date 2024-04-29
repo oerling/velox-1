@@ -103,7 +103,7 @@ __device__ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
   b *= kMul;
   return b;
 }
-  
+
 template <typename T>
 struct IntHasher32 {
   __device__ __host__ uint32_t operator()(T val) const {

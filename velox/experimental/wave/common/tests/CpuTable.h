@@ -23,7 +23,7 @@
 namespace facebook::velox::wave {
 
 #define GPF() *(long*)0 = 0
-  
+
 class CpuBucket {
  public:
   using TagVector = xsimd::batch<uint8_t, xsimd::sse2>;
@@ -46,7 +46,7 @@ class CpuBucket {
     uint64_t data = *reinterpret_cast<uint64_t*>(&data_[idx * 6]);
     return reinterpret_cast<T*>(data & 0xffffffffffff);
   }
-  
+
   void store(uint32_t idx, void* row) {
     auto uptr = reinterpret_cast<uint64_t>(row);
     uint64_t data = *reinterpret_cast<uint64_t*>(&data_[idx * 6]);
@@ -61,7 +61,7 @@ class CpuBucket {
 
 struct CpuHashTable {
   CpuHashTable() = default;
-  
+
   CpuHashTable(int32_t numSlots, int32_t rowBytes) {
     auto numBuckets = bits::nextPowerOfTwo(numSlots) / 16;
     assert(numBuckets > 0);
@@ -86,7 +86,7 @@ struct CpuHashTable {
 
   // Number of entries.
   int32_t size{0};
-  
+
   template <typename T>
   T* newRow() {
     auto size = sizeof(T);
@@ -100,24 +100,24 @@ struct CpuHashTable {
 
   template <typename RowType, typename Ops>
   RowType* find(int64_t key, uint64_t h, Ops ops) const {
-      uint8_t tag = 0x80 | (h >> 32);
-      int32_t bucketIdx = h & sizeMask;
-      for (;;) {
-        auto tags = buckets[bucketIdx].loadTags();
-        auto hits = CpuBucket::matchTags(tags, tag);
-        while (hits) {
-          auto idx = bits::getAndClearLastSetBit(hits);
-          auto row = buckets[bucketIdx].load<RowType>(idx);
-          if (ops.compare1(this, row, key)) {
-	    return row;
-          }
+    uint8_t tag = 0x80 | (h >> 32);
+    int32_t bucketIdx = h & sizeMask;
+    for (;;) {
+      auto tags = buckets[bucketIdx].loadTags();
+      auto hits = CpuBucket::matchTags(tags, tag);
+      while (hits) {
+        auto idx = bits::getAndClearLastSetBit(hits);
+        auto row = buckets[bucketIdx].load<RowType>(idx);
+        if (ops.compare1(this, row, key)) {
+          return row;
         }
-        auto misses = CpuBucket::matchTags(tags, 0);
-        if (misses) {
-	  return nullptr;
-  }
-	bucketIdx = (1 + bucketIdx) & sizeMask;
       }
+      auto misses = CpuBucket::matchTags(tags, 0);
+      if (misses) {
+        return nullptr;
+      }
+      bucketIdx = (1 + bucketIdx) & sizeMask;
+    }
   }
 
   template <typename RowType, typename Ops>
@@ -143,7 +143,7 @@ struct CpuHashTable {
           buckets[bucketIdx].setTag(idx, tag);
           auto* newRow = ops.newRow(this, i, probe);
           buckets[bucketIdx].store(idx, newRow);
-	  ++size;
+          ++size;
           ops.update(this, newRow, i, probe);
           break;
         }
@@ -156,15 +156,14 @@ struct CpuHashTable {
   void check() {
     for (auto i = 0; i <= sizeMask; ++i) {
       for (auto j = 0; j < 16; j++) {
-	auto row = buckets[i].load<char>(j);
-	if (!row || (row >= rows.data() && row < rows.data() + rows.size())) {
-	  continue;
-	}
-	GPF();
+        auto row = buckets[i].load<char>(j);
+        if (!row || (row >= rows.data() && row < rows.data() + rows.size())) {
+          continue;
+        }
+        GPF();
       }
     }
   }
-
 };
 
 } // namespace facebook::velox::wave

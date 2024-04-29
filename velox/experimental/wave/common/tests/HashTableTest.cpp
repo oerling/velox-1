@@ -27,35 +27,29 @@
 namespace facebook::velox::wave {
 
 class CpuMockGroupByOps {
-public:
-    bool compare(
-		 CpuHashTable* table,
-		 TestingRow* row,
-		 int32_t i,
-		 HashProbe* probe) {
-      return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
-    }
+ public:
+  bool
+  compare(CpuHashTable* table, TestingRow* row, int32_t i, HashProbe* probe) {
+    return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
+  }
 
   bool compare1(const CpuHashTable* table, TestingRow* row, int64_t key) {
     return key == row->key;
   }
-  
-    TestingRow* newRow(CpuHashTable* table, int32_t i, HashProbe* probe) {
-      auto row = table->newRow<TestingRow>();
-      row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
-      row->flags = 0;
-      row->count = 0;
-      new (&row->concatenation) ArrayAgg64();
-      return row;
-    }
 
-    void update(
-		CpuHashTable* table,
-		TestingRow* row,
-		int32_t i,
-		HashProbe* probe) {
-      auto* keys = reinterpret_cast<int64_t**>(probe->keys);
-      row->count += keys[1][i];
+  TestingRow* newRow(CpuHashTable* table, int32_t i, HashProbe* probe) {
+    auto row = table->newRow<TestingRow>();
+    row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
+    row->flags = 0;
+    row->count = 0;
+    new (&row->concatenation) ArrayAgg64();
+    return row;
+  }
+
+  void
+  update(CpuHashTable* table, TestingRow* row, int32_t i, HashProbe* probe) {
+    auto* keys = reinterpret_cast<int64_t**>(probe->keys);
+    row->count += keys[1][i];
 
 #if 0
       int64_t arg = keys[1][i];
@@ -63,10 +57,9 @@ public:
       auto* allocator = &table->allocators[part];
       auto state = arrayAgg64Append(&row->concatenation, arg, allocator);
 #endif
-    }
-  };
+  }
+};
 
-  
 class HashTableTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -157,7 +150,7 @@ class HashTableTest : public testing::Test {
         UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 0);
         UPDATE_CASE("sum1Part", updateSum1Part, true, 0);
         UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
-        //UPDATE_CASE("sum1Exch", updateSum1Exch, false, 0);
+        // UPDATE_CASE("sum1Exch", updateSum1Exch, false, 0);
 
         break;
       default:
@@ -233,12 +226,13 @@ class HashTableTest : public testing::Test {
     uint64_t time = 0;
     {
       MicrosecondTimer t(&time);
-      int64_t* key = reinterpret_cast<int64_t**>(run.probe->keys)[0]; 
+      int64_t* key = reinterpret_cast<int64_t**>(run.probe->keys)[0];
       auto* hashes = run.probe->hashes;
       for (auto i = 0; i < run.numRows; ++i) {
-	hashes[i] = bits::hashMix(1, key[i]);
+        hashes[i] = bits::hashMix(1, key[i]);
       }
-      table.updatingProbe<TestingRow>(run.numRows, run.probe, CpuMockGroupByOps());
+      table.updatingProbe<TestingRow>(
+          run.numRows, run.probe, CpuMockGroupByOps());
     }
     run.addScore("cpu1T", time);
   }
@@ -270,16 +264,18 @@ class HashTableTest : public testing::Test {
     int32_t numChecked = 0;
     for (auto i = 0; i <= table->sizeMask; ++i) {
       for (auto j = 0; j < 4; ++j) {
-	auto* row = reinterpret_cast<GpuBucketMembers*>(table->buckets)[i].testingLoad<TestingRow>(j);
-	if (row == nullptr) {
-	  continue;
-	}
-	++numChecked;
-	auto referenceRow = reference.find<TestingRow>(row->key, bits::hashMix(1, row->key), CpuMockGroupByOps ());
-	ASSERT(referenceRow != nullptr);
-	EXPECT_EQ(referenceRow->count, row->count);
+        auto* row = reinterpret_cast<GpuBucketMembers*>(table->buckets)[i]
+                        .testingLoad<TestingRow>(j);
+        if (row == nullptr) {
+          continue;
+        }
+        ++numChecked;
+        auto referenceRow = reference.find<TestingRow>(
+            row->key, bits::hashMix(1, row->key), CpuMockGroupByOps());
+        ASSERT(referenceRow != nullptr);
+        EXPECT_EQ(referenceRow->count, row->count);
       }
-  }
+    }
     EXPECT_EQ(reference.size, numChecked);
   }
 
@@ -289,7 +285,6 @@ class HashTableTest : public testing::Test {
   std::vector<std::unique_ptr<BlockTestStream>> streams_;
   WaveBufferPtr gpuRowsBuffer_;
 };
-
 
 TEST_F(HashTableTest, allocator) {
   constexpr int32_t kNumThreads = 256;

@@ -72,12 +72,11 @@ void fillHashTestInput(
     } else {
       columns[0][i] = scale32(seed, keyRange);
     }
-
   }
   counter += numRows;
   for (auto c = 1; c < numColumns; ++c) {
     for (auto r = 0; r < numRows; ++r) {
-      columns[c][r] = 1;//c + (r & 7);
+      columns[c][r] = 1; // c + (r & 7);
     }
   }
 }
@@ -150,18 +149,19 @@ void setupGpuTable(
   constexpr int32_t kAlignment = 128;
   int32_t numBuckets = bits::nextPowerOfTwo(numSlots / 4);
   int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator) +
-    sizeof(FreeSetType) +
-    sizeof(GpuBucketMembers) * numBuckets + maxRows * rowSize;
+      sizeof(FreeSetType) + sizeof(GpuBucketMembers) * numBuckets +
+      maxRows * rowSize;
   buffer = arena->allocate<char>(bytes + kAlignment);
   table = buffer->as<GpuHashTableBase>();
-  new(table) GpuHashTableBase();
+  new (table) GpuHashTableBase();
   table->sizeMask = numBuckets - 1;
   char* data = reinterpret_cast<char*>(table + 1);
   table->allocators = reinterpret_cast<RowAllocator*>(data);
-  auto allocatorBase = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
+  auto allocatorBase =
+      reinterpret_cast<HashPartitionAllocator*>(table->allocators);
   data += sizeof(HashPartitionAllocator);
   auto freeSet = reinterpret_cast<FreeSetType*>(data);
-  new(freeSet) FreeSetType();
+  new (freeSet) FreeSetType();
   data += sizeof(FreeSetType);
   // The buckets start at aligned address.
   data = reinterpret_cast<char*>(
@@ -169,7 +169,8 @@ void setupGpuTable(
   table->buckets = reinterpret_cast<GpuBucket*>(data);
   data += sizeof(GpuBucketMembers) * numBuckets;
   auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
-  new (allocator) HashPartitionAllocator(data, maxRows * rowSize, rowSize, freeSet);
+  new (allocator)
+      HashPartitionAllocator(data, maxRows * rowSize, rowSize, freeSet);
   table->partitionMask = 0;
   table->partitionShift = 0;
   memset(table->buckets, 0, sizeof(GpuBucketMembers) * (table->sizeMask + 1));

@@ -32,8 +32,8 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include "velox/experimental/wave/common/tests/CpuTable.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include "velox/experimental/wave/common/tests/Util.h"
 
 #include <iostream>
@@ -495,7 +495,6 @@ struct RoundtripStats {
         toHostBytes / (micros * 1000));
   }
 };
-
 
 // Checks a number for being prime. Returns 0 for prime and a factor for others.
 int64_t factor(int64_t n) {
@@ -1461,7 +1460,6 @@ TEST_F(CudaTest, addRandom) {
   EXPECT_EQ(0, memcmp(rawInts1, rawInts2, kNumInts * sizeof(int32_t)));
   EXPECT_EQ(0, memcmp(rawInts1, rawInts3, kNumInts * sizeof(int32_t)));
 }
-
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);

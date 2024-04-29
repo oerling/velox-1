@@ -29,7 +29,7 @@ struct GpuBucketMembers {
   uint32_t flags;
   uint16_t data[12];
 
-  template<typename T>
+  template <typename T>
   T* testingLoad(int32_t idx) {
     auto uptr = static_cast<uint64_t>(data[8 + idx]) << 32;
     uptr |= reinterpret_cast<uint32_t*>(data)[idx];
@@ -44,18 +44,21 @@ class FreeSetBase {
   unsigned long long bits_[kSize / 64] = {};
   T items_[kSize] = {};
 };
- 
- 
+
 /// A device arena for device side allocation.
 struct HashPartitionAllocator {
   static constexpr uint32_t kEmpty = ~0;
 
-HashPartitionAllocator(char* data, uint32_t size, uint32_t rowSize, void* freeSet)
+  HashPartitionAllocator(
+      char* data,
+      uint32_t size,
+      uint32_t rowSize,
+      void* freeSet)
       : rowSize(rowSize),
         base(reinterpret_cast<uint64_t>(data)),
         capacity(size),
-    stringOffset(capacity),
-    freeSet(freeSet) {}
+        stringOffset(capacity),
+        freeSet(freeSet) {}
 
   const int32_t rowSize{0};
   const uint64_t base{0};
