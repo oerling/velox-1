@@ -31,7 +31,6 @@ namespace facebook::velox::wave {
 
 #define GPF() *(long*)0 = 0
 
-
 template <typename T, typename U>
 inline __device__ cuda::atomic<T, cuda::thread_scope_device>* asDeviceAtomic(
     U* ptr) {
@@ -51,7 +50,6 @@ inline void __device__ atomicUnlock(T* lock) {
 
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
-
   template <typename T>
   T* __device__ allocateRow() {
     auto fromFree = getFromFree();
@@ -225,7 +223,7 @@ class GpuHashTable : public GpuHashTableBase {
         auto hits = __vcmpeq4(tags, tagWord) & 0x01010101;
         while (hits) {
           auto hitIdx = (__ffs(hits) - 1) / 8;
-	  auto* hit = bucket->load<RowType>(hitIdx);
+          auto* hit = bucket->load<RowType>(hitIdx);
           if (ops.compare(this, hit, i, probe)) {
             ops.hit(i, probe, hit);
             goto done;
@@ -254,10 +252,11 @@ class GpuHashTable : public GpuHashTableBase {
     constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
     auto warp = threadIdx.x / kWarpThreads;
     int32_t end = ops.numRowsInBlock(probe) + sharedState->blockBase;
-    for (auto i = threadIdx.x + sharedState->blockBase; i < end; i += blockDim.x) {
+    for (auto i = threadIdx.x + sharedState->blockBase; i < end;
+         i += blockDim.x) {
       auto start = i & ~(kWarpThreads - 1);
-      uint32_t laneMask = start + kWarpThreads <= end ? ~0  
-	: lowMask<uint32_t>(end - start);
+      uint32_t laneMask =
+          start + kWarpThreads <= end ? ~0 : lowMask<uint32_t>(end - start);
       auto h = ops.hash(i, probe);
       uint32_t tagWord = hashTag(h);
       tagWord |= tagWord << 8;
@@ -272,16 +271,17 @@ class GpuHashTable : public GpuHashTableBase {
       for (;;) {
         bucket = buckets + bucketIdx;
       reprobe:
-        tags = asDeviceAtomic<uint32_t>(&bucket->tags)->load(cuda::memory_order_consume);
+        tags = asDeviceAtomic<uint32_t>(&bucket->tags)
+                   ->load(cuda::memory_order_consume);
         auto hits = __vcmpeq4(tags, tagWord) & 0x01010101;
         while (hits) {
           hitIdx = (__ffs(hits) - 1) / 8;
           auto candidate = bucket->loadWithWait<RowType>(hitIdx);
           if (ops.compare(this, candidate, i, probe)) {
-	    if (toInsert) {
-	      freeInsertable(toInsert, h);
-	    }
-	    hit = candidate;
+            if (toInsert) {
+              freeInsertable(toInsert, h);
+            }
+            hit = candidate;
             break;
           }
           hits = hits & (hits - 1);
@@ -307,7 +307,7 @@ class GpuHashTable : public GpuHashTableBase {
           if (success == ProbeState::kNeedSpace) {
             addHostRetry(sharedState, i, probe);
           }
-	  hit = toInsert;
+          hit = toInsert;
           break;
         }
         bucketIdx = (bucketIdx + 1) & sizeMask;
@@ -333,9 +333,9 @@ class GpuHashTable : public GpuHashTableBase {
             if (success == ProbeState::kNeedSpace) {
               addHostRetry(sharedState, idxToUpdate, probe);
             }
-	    if (success != ProbeState::kDone) {
-	      printf("");
-	    }
+            if (success != ProbeState::kDone) {
+              printf("");
+            }
           }
           toUpdate &= toUpdate - 1;
         }
@@ -343,7 +343,7 @@ class GpuHashTable : public GpuHashTableBase {
           ops.writeDone(writable);
         }
       } else {
-	printf("");
+        printf("");
       }
     }
   }
@@ -353,7 +353,7 @@ class GpuHashTable : public GpuHashTableBase {
     allocators[partitionIdx(h)].freeRow(row);
     row = nullptr;
   }
-  
+
   int32_t __device__ partitionIdx(uint64_t h) const {
     return (h & partitionMask) >> partitionShift;
   }

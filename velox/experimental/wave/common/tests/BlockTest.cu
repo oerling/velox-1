@@ -214,7 +214,7 @@ class MockGroupByOps {
     auto key = reinterpret_cast<int64_t**>(probe->keys)[0];
     return hashMix(1, key[i]);
   }
-  
+
   bool __device__
   compare(GpuHashTable* table, TestingRow* row, int32_t i, HashProbe* probe) {
     return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
@@ -275,7 +275,7 @@ class MockGroupByOps {
   }
 
   void __device__ writeDone(TestingRow* row) {
-    //atomicUnlock(&row->flags);
+    // atomicUnlock(&row->flags);
   }
 
   ProbeState __device__ update(
@@ -285,7 +285,7 @@ class MockGroupByOps {
       int32_t i,
       HashProbe* probe) {
     auto* keys = reinterpret_cast<int64_t**>(probe->keys);
-    atomicAdd((unsigned long long*)&row->count,  (unsigned long long)keys[1][i]);
+    atomicAdd((unsigned long long*)&row->count, (unsigned long long)keys[1][i]);
     return ProbeState::kDone;
     int64_t arg = keys[1][i];
     int32_t part = table->partitionIdx(bucket - table->buckets);
@@ -297,7 +297,7 @@ class MockGroupByOps {
   }
 };
 
-  void __global__ __launch_bounds__(1024) hashTestKernel(
+void __global__ __launch_bounds__(1024) hashTestKernel(
     GpuHashTable* table,
     HashProbe* probe,
     BlockTestStream::HashCase mode) {
