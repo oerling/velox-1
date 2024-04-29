@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/Bits.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 
@@ -267,41 +266,6 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
     auto* row = &rows[indices[i]];
     int32_t waitNano = 1;
     auto d = deltas[i];
-    for (;;) {
-      if (0 ==
-          asDeviceAtomic<int32_t>(&row->flags)
-              ->exchange(1, cuda::memory_order_consume)) {
-        row->count += d;
-        asDeviceAtomic<int32_t>(&row->flags)
-            ->store(0, cuda::memory_order_release);
-        break;
-      } else {
-        __nanosleep(waitNano);
-        waitNano += threadIdx.x & 31;
-      }
-    }
-  }
-}
-
-void __device__ testSumFwd(TestingRow* rows, HashProbe* probe) {
-  auto keys = reinterpret_cast<int64_t**>(probe->keys);
-  auto indices = keys[0];
-  auto deltas = keys[1];
-  int32_t base = probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  int32_t end = base + probe->numRows[blockIdx.x];
-  int32_t flagsPerThread = roundUp(probe->numRowsPerThread, 32) / 32;
-  auto threadFlags = probe->kernelRetries1 + flagsPerThread * threadIdx.x;
-  for (auto i = 0; i < flagsPerThread; ++i) {
-    threadFlags[threadIdx.x] = 0;
-  }
-  int32_t nthOnThread = 0;
-  for (auto i = base + threadIdx.x; i < end; i += blockDim.x) {
-    if (nthOnThread > 0 && isBitSet(threadFlags, nthOnThread)) {
-      continue;
-    }
-    int32_t waitNano = 1;
-    auto d = deltas[i];
-    auto* row = &rows[indices[i]];
     for (;;) {
       if (0 ==
           asDeviceAtomic<int32_t>(&row->flags)

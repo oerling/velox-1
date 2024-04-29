@@ -574,9 +574,7 @@ class RoundtripThread {
     kAddShared,
     kEnd,
     kSync,
-    kSyncEvent,
-    kGroupInit,
-    kGroupBatch
+    kSyncEvent
   };
 
   struct Op {
@@ -689,43 +687,6 @@ class RoundtripThread {
               event_->wait();
             }
             break;
-          case OpCode::kGroupInit: {
-            if (groupInited_) {
-              break;
-            }
-            groupInited_ = true;
-            auto size = bits::nextPowerOfTwo(op.param1);
-            keyRange_ = op.param2;
-            auto numColumns = op.param3;
-	    initializeHashTestInput(run, arenas_->unified);
-            if (stats.isCpu) {
-              cpuTable_ = std::make_unique<CpuHashTable>(size, sizeof(int64_t) * numColumns);
-            } else {
-	      setupGpuTable(
-			    hashRun.numSlots,
-			    hashRun.numDistinct,
-			    sizeof(int64_t) * (numColumns + 1),
-			    arenas_->unified,
-			    gpuTable,
-			    gpuTablebuffer);
-
-			    size, keyRange_, numColumns, arenas_->unified.get());
-              gpuTable_.prefetch(device_, stream_.get());
-            }
-            // The init is not in measured interval.
-            stats.startMicros = getCurrentTimeMicro();
-            break;
-          }
-          case OpCode::kGroupBatch: {
-            VELOX_CHECK(groupInited_);
-            if (stats.isCpu) {
-              cpuGroupBatch(op.param1);
-            } else {
-              deviceGroupBatch(op.param1);
-            }
-            stats.numAdds = op.param1;
-            break;
-          }
           default:
             VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
         }
@@ -755,73 +716,6 @@ class RoundtripThread {
       }
     }
   }
-
-  void cpuGroupBatch(int32_t numRows) {
-    if (columnData_.size() != numRows) {
-      initializeHashTestInput(run, nullptr);
-    }
-    fillHashTestInput(
-        numRows,
-        keyRange_,
-        bits::nextPowerOfTwo(keyRange_),
-        keyStart_,
-        cpuTable_.table.numColumns,
-        reinterpret_cast<int64_t**>(hashRun_.probe->keys),
-    keyStart_ += numRows;
-	
-	}
-
-  void deviceGroupBatch(int32_t numRows) {
-      if (!hashRun_.probe) {
-	initializehashTestInput(hasRun_, arenas_->unified.get());
-
-      initGpuProbe(numRows);
-      // Clear the keys.
-      stream_->makeInput(
-          numRows,
-          keyRange_,
-          0,
-          keyStart_,
-          tableBatch_.hashes,
-          gpuTable_.numColumns,
-          tableBatch_.columns);
-
-      keyStart_ = 0;
-    }
-    stream_->makeInput(
-        numRows,
-        keyRange_,
-        bits::nextPowerOfTwo(keyRange_),
-        keyStart_,
-        tableBatch_.hashes,
-        gpuTable_.numColumns,
-        tableBatch_.columns);
-    keyStart_ += numRows;
-    stream_->partition8K(
-        numRows,
-        gpuTable_.partitionShift,
-        tableBatch_.columnData,
-        tableBatch_.hashes,
-        tableBatch_.partitions,
-        tableBatch_.rows);
-#if 1
-    stream_->update8K(
-        numRows,
-        tableBatch_.hashes,
-        tableBatch_.partitions,
-        tableBatch_.rows,
-        tableBatch_.columns,
-        probePtr_->as<MockProbe>(),
-        tableBatch_.status,
-        gpuTable_.table);
-#endif
-    stream_->deviceToHostAsync(
-        tableBatch_.returnStatus,
-        tableBatch_.status,
-        tableBatch_.returnData->size());
-    stream_->wait();
-  }
-
 
   Op nextOp(const std::string& str, int32_t& position) {
     Op op;
@@ -884,19 +778,6 @@ class RoundtripThread {
           op.opCode = OpCode::kSyncEvent;
           ++position;
           return op;
-        case 'I':
-          op.opCode = OpCode::kGroupInit;
-          ++position;
-          op.param1 = parseInt(str, position, 1 << 20);
-          op.param2 = parseInt(str, position, (1 << 20) * 0.75);
-          op.param3 = parseInt(str, position, 6);
-          return op;
-        case 'G':
-          op.opCode = OpCode::kGroupBatch;
-          ++position;
-          op.param1 = parseInt(str, position, 8192);
-          return op;
-
         default:
           VELOX_FAIL("No opcode {}", str[position]);
       }
@@ -932,16 +813,6 @@ class RoundtripThread {
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
 
-  bool groupInited_{false};
-  int32_t keyRange_{0};
-  int64_t keyStart_{0};
-CpuHashTable cpuTable_;
-GpuHashTableBase gpuTable_;
-
-  HashRun hashRun_;
-  
-
-WaveBufferPtr gpuTableBuffer_;
 
   static inline std::atomic<int32_t> serialCounter_{0};
 };

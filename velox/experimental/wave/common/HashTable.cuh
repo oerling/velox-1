@@ -31,7 +31,6 @@ namespace facebook::velox::wave {
 
 #define GPF() *(long*)0 = 0
 
-#define FREE_SET
 
 template <typename T, typename U>
 inline __device__ cuda::atomic<T, cuda::thread_scope_device>* asDeviceAtomic(
@@ -52,7 +51,6 @@ inline void __device__ atomicUnlock(T* lock) {
 
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
-  using Mutex = cuda::binary_semaphore<cuda::thread_scope_device>;
 
   template <typename T>
   T* __device__ allocateRow() {

@@ -183,75 +183,8 @@ void TestStream::addOneRandom(
   CUDA_CHECK(cudaGetLastError());
 }
 
-__device__ inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
-  // Murmur-inspired hashing.
-  const uint64_t kMul = 0x9ddfea08eb382d69ULL;
-  uint64_t a = (lower ^ upper) * kMul;
-  a ^= (a >> 47);
-  uint64_t b = (upper ^ a) * kMul;
-  b ^= (b >> 47);
-  b *= kMul;
-  return b;
-}
-
-void __global__ __launch_bounds__(1024) makeInputKernel(
-    int32_t numRows,
-    int32_t keyRange,
-    int32_t powerOfTwo,
-    int32_t startCount,
-    uint64_t* hashes,
-    uint8_t numColumns,
-    int64_t** columns) {
-  uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= numRows) {
-    return;
-  }
-  if (powerOfTwo == 0) {
-    columns[0][idx] = 0;
-    return;
-  }
-  auto delta = startCount & (powerOfTwo - 1);
-  auto previous = columns[0][idx];
-  auto key = deviceScale32((previous + delta + idx) * kPrime32, keyRange);
-  columns[0][idx] = key;
-  hashes[idx] = hashMix(1, key);
-  for (auto i = 1; i < numColumns; ++i) {
-    columns[i][idx] = i + (idx & 7);
-  }
-  __syncthreads();
-  return;
-}
-
-void TestStream::makeInput(
-    int32_t numRows,
-    int32_t keyRange,
-    int32_t powerOfTwo,
-    int32_t startCount,
-    uint64_t* hash,
-    uint8_t numColumns,
-    int64_t** columns) {
-  auto numBlocks = roundUp(numRows, 256) / 256;
-  makeInputKernel<<<256, numBlocks, 0, stream_->stream>>>(
-      numRows, keyRange, powerOfTwo, startCount, hash, numColumns, columns);
-  CUDA_CHECK(cudaGetLastError());
-}
-
-void __device__
-updateAggs(int64_t* entry, uint16_t row, uint8_t numColumns, int64_t** args) {
-  if (!entry) {
-    *(long*)0 = 0;
-  }
-  if (false && entry[0] != args[0][row]) {
-    *(long*)0 = 0;
-  }
-  for (auto i = 1; i < numColumns; ++i) {
-    entry[i] += args[i][row];
-  }
-}
-
 REGISTER_KERNEL("addOne", addOneKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);
 REGISTER_KERNEL("addOneRandom", addOneRandomKernel);
-REGISTER_KERNEL("makeInput", makeInputKernel);
 
 } // namespace facebook::velox::wave
