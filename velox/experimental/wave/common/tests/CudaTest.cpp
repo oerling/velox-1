@@ -812,8 +812,7 @@ class RoundtripThread {
   std::unique_ptr<int32_t[]> hostInts_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
-
-
+  int32_t serial_{0};
   static inline std::atomic<int32_t> serialCounter_{0};
 };
 
@@ -1461,7 +1460,7 @@ TEST_F(CudaTest, addRandom) {
 
   EXPECT_EQ(0, memcmp(rawInts1, rawInts2, kNumInts * sizeof(int32_t)));
   EXPECT_EQ(0, memcmp(rawInts1, rawInts3, kNumInts * sizeof(int32_t)));
-<}
+}
 
 
 int main(int argc, char** argv) {
