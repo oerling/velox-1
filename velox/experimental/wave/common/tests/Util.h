@@ -24,5 +24,4 @@ inline uint32_t scale32(uint32_t n, uint32_t scale) {
   return (static_cast<uint64_t>(static_cast<uint32_t>(n)) * scale) >> 32;
 }
 
-
-}
+} // namespace facebook::velox::wave
