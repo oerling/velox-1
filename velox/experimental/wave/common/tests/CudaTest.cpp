@@ -32,6 +32,9 @@
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/tests/HashTestUtil.h"
+#include "velox/experimental/wave/common/tests/CpuTable.h"
+#include "velox/experimental/wave/common/tests/Util.h"
 
 #include <iostream>
 
@@ -493,6 +496,18 @@ struct RoundtripStats {
   }
 };
 
+
+// Checks a number for being prime. Returns 0 for prime and a factor for others.
+int64_t factor(int64_t n) {
+  int64_t end = sqrt(n);
+  for (int64_t f = 3; f < end; f += 2) {
+    if (n % f == 0) {
+      return f;
+    }
+  }
+  return 0;
+}
+
 /// Describes one thread of execution in round trip measurement. Each thread
 /// does a sequence of data transfers, kernel calls and synchronizations. The
 /// operations are described in a string of the form:
@@ -515,7 +530,8 @@ class RoundtripThread {
   static constexpr int32_t kNumInts = kNumKB * 256;
 
   RoundtripThread(int32_t device, ArenaSet* arenas) : arenas_(arenas) {
-    setDevice(getDevice(device));
+    device_ = getDevice(device);
+    setDevice(device_);
     hostBuffer_ = arenas_->host->allocate<int32_t>(kNumInts);
     deviceBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
     lookupBuffer_ = arenas_->device->allocate<int32_t>(kNumInts);
@@ -536,6 +552,15 @@ class RoundtripThread {
         hostLookup_.get(),
         hostBuffer_->as<int32_t>(),
         kNumInts * sizeof(int32_t));
+    serial_ = ++serialCounter_;
+  }
+
+  ~RoundtripThread() {
+    try {
+      stream_->wait();
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Error in sync on ~RoundtripThread(): " << e.what();
+    }
   }
 
   enum class OpCode {
@@ -543,16 +568,22 @@ class RoundtripThread {
     kToHost,
     kAdd,
     kAddRandom,
+    kAddRandomEmptyWarps,
+    kAddRandomEmptyThreads,
     kWideAdd,
+    kAddShared,
     kEnd,
     kSync,
-    kSyncEvent
+    kSyncEvent,
+    kGroupInit,
+    kGroupBatch
   };
 
   struct Op {
     OpCode opCode;
     int32_t param1{1};
     int32_t param2{0};
+    int32_t param3{0};
   };
 
   void run(RoundtripStats& stats) {
@@ -606,6 +637,17 @@ class RoundtripThread {
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
+          case OpCode::kAddShared:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu(op.param1 * 256, op.param2);
+            } else {
+              stream_->addOneShared(
+                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            }
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+
           case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
@@ -618,6 +660,8 @@ class RoundtripThread {
             break;
 
           case OpCode::kAddRandom:
+          case OpCode::kAddRandomEmptyWarps:
+          case OpCode::kAddRandomEmptyThreads:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneRandomCpu(op.param1 * 256, op.param2);
@@ -626,7 +670,10 @@ class RoundtripThread {
                   deviceBuffer_->as<int32_t>(),
                   lookupBuffer_->as<int32_t>(),
                   op.param1 * 256,
-                  op.param2);
+                  op.param2,
+                  op.param3,
+                  op.opCode == OpCode::kAddRandomEmptyWarps,
+                  op.opCode == OpCode::kAddRandomEmptyThreads);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -642,6 +689,43 @@ class RoundtripThread {
               event_->wait();
             }
             break;
+          case OpCode::kGroupInit: {
+            if (groupInited_) {
+              break;
+            }
+            groupInited_ = true;
+            auto size = bits::nextPowerOfTwo(op.param1);
+            keyRange_ = op.param2;
+            auto numColumns = op.param3;
+	    initializeHashTestInput(run, arenas_->unified);
+            if (stats.isCpu) {
+              cpuTable_ = std::make_unique<CpuHashTable>(size, sizeof(int64_t) * numColumns);
+            } else {
+	      setupGpuTable(
+			    hashRun.numSlots,
+			    hashRun.numDistinct,
+			    sizeof(int64_t) * (numColumns + 1),
+			    arenas_->unified,
+			    gpuTable,
+			    gpuTablebuffer);
+
+			    size, keyRange_, numColumns, arenas_->unified.get());
+              gpuTable_.prefetch(device_, stream_.get());
+            }
+            // The init is not in measured interval.
+            stats.startMicros = getCurrentTimeMicro();
+            break;
+          }
+          case OpCode::kGroupBatch: {
+            VELOX_CHECK(groupInited_);
+            if (stats.isCpu) {
+              cpuGroupBatch(op.param1);
+            } else {
+              deviceGroupBatch(op.param1);
+            }
+            stats.numAdds = op.param1;
+            break;
+          }
           default:
             VELOX_FAIL("Bad test opcode {}", static_cast<int32_t>(op.opCode));
         }
@@ -666,14 +750,78 @@ class RoundtripThread {
     int32_t* lookup = hostLookup_.get();
     for (uint32_t counter = 0; counter < repeat; ++counter) {
       for (auto i = 0; i < size; ++i) {
-        auto rnd = (static_cast<uint64_t>(
-                        static_cast<uint32_t>(i * (counter + 1) * 1367836089)) *
-                    size) >>
-            32;
+        auto rnd = scale32(i * (counter + 1) * kPrime32, size);
         ints[i] += lookup[rnd];
       }
     }
   }
+
+  void cpuGroupBatch(int32_t numRows) {
+    if (columnData_.size() != numRows) {
+      initializeHashTestInput(run, nullptr);
+    }
+    fillHashTestInput(
+        numRows,
+        keyRange_,
+        bits::nextPowerOfTwo(keyRange_),
+        keyStart_,
+        cpuTable_.table.numColumns,
+        reinterpret_cast<int64_t**>(hashRun_.probe->keys),
+    keyStart_ += numRows;
+	
+	}
+
+  void deviceGroupBatch(int32_t numRows) {
+      if (!hashRun_.probe) {
+	initializehashTestInput(hasRun_, arenas_->unified.get());
+
+      initGpuProbe(numRows);
+      // Clear the keys.
+      stream_->makeInput(
+          numRows,
+          keyRange_,
+          0,
+          keyStart_,
+          tableBatch_.hashes,
+          gpuTable_.numColumns,
+          tableBatch_.columns);
+
+      keyStart_ = 0;
+    }
+    stream_->makeInput(
+        numRows,
+        keyRange_,
+        bits::nextPowerOfTwo(keyRange_),
+        keyStart_,
+        tableBatch_.hashes,
+        gpuTable_.numColumns,
+        tableBatch_.columns);
+    keyStart_ += numRows;
+    stream_->partition8K(
+        numRows,
+        gpuTable_.partitionShift,
+        tableBatch_.columnData,
+        tableBatch_.hashes,
+        tableBatch_.partitions,
+        tableBatch_.rows);
+#if 1
+    stream_->update8K(
+        numRows,
+        tableBatch_.hashes,
+        tableBatch_.partitions,
+        tableBatch_.rows,
+        tableBatch_.columns,
+        probePtr_->as<MockProbe>(),
+        tableBatch_.status,
+        gpuTable_.table);
+#endif
+    stream_->deviceToHostAsync(
+        tableBatch_.returnStatus,
+        tableBatch_.status,
+        tableBatch_.returnData->size());
+    stream_->wait();
+  }
+
 
   Op nextOp(const std::string& str, int32_t& position) {
     Op op;
@@ -710,10 +858,22 @@ class RoundtripThread {
           return op;
 
         case 'r':
-          op.opCode = OpCode::kAddRandom;
           ++position;
+          if (str[position] == 'w') {
+            op.opCode = OpCode::kAddRandomEmptyWarps;
+            ++position;
+          } else if (str[position] == 't') {
+            op.opCode = OpCode::kAddRandomEmptyThreads;
+            ++position;
+          } else {
+            op.opCode = OpCode::kAddRandom;
+          }
+          // Size of data to update and lookup array (KB).
           op.param1 = parseInt(str, position, 1);
+          // Number of repeats.
           op.param2 = parseInt(str, position, 1);
+          // target number of  threads in kernel.
+          op.param3 = parseInt(str, position, 10240);
           return op;
 
         case 's':
@@ -724,6 +884,19 @@ class RoundtripThread {
           op.opCode = OpCode::kSyncEvent;
           ++position;
           return op;
+        case 'I':
+          op.opCode = OpCode::kGroupInit;
+          ++position;
+          op.param1 = parseInt(str, position, 1 << 20);
+          op.param2 = parseInt(str, position, (1 << 20) * 0.75);
+          op.param3 = parseInt(str, position, 6);
+          return op;
+        case 'G':
+          op.opCode = OpCode::kGroupBatch;
+          ++position;
+          op.param1 = parseInt(str, position, 8192);
+          return op;
+
         default:
           VELOX_FAIL("No opcode {}", str[position]);
       }
@@ -750,6 +923,7 @@ class RoundtripThread {
   }
 
   ArenaSet* const arenas_;
+  Device* device_{nullptr};
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
   WaveBufferPtr lookupBuffer_;
@@ -757,6 +931,19 @@ class RoundtripThread {
   std::unique_ptr<int32_t[]> hostInts_;
   std::unique_ptr<TestStream> stream_;
   std::unique_ptr<Event> event_;
+
+  bool groupInited_{false};
+  int32_t keyRange_{0};
+  int64_t keyStart_{0};
+CpuHashTable cpuTable_;
+GpuHashTableBase gpuTable_;
+
+  HashRun hashRun_;
+  
+
+WaveBufferPtr gpuTableBuffer_;
+
+  static inline std::atomic<int32_t> serialCounter_{0};
 };
 
 class CudaTest : public testing::Test {
@@ -1072,7 +1259,7 @@ class CudaTest : public testing::Test {
       int numOps = 10000) {
     auto arenas = getArenas();
     std::vector<RoundtripStats> allStats;
-    std::vector<int32_t> numThreadsValues = {2, 4, 8, 16, 32};
+    std::vector<int32_t> numThreadsValues = {1, 2, 4, 8, 16, 32};
     int32_t ordinal = 0;
     for (auto numThreads : numThreadsValues) {
       std::vector<RoundtripStats> runStats;
@@ -1284,9 +1471,8 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-        fmt::format("{} GPU, 1000 repeats", modes[0]), modes, false, 1000);
-    roundtripTest(
-        fmt::format("{} CPU, 100 repeats", modes[0]), modes, true, 100);
+        fmt::format("{} GPU, 64 repeats", modes[0]), modes, false, 64);
+    roundtripTest(fmt::format("{} CPU, 32 repeats", modes[0]), modes, true, 32);
     return;
   }
   if (!FLAGS_enable_bm) {
@@ -1313,8 +1499,8 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d1000a1000,30h1sd1a1000,30h1s",
       "d1000a1000,150h1sd1a1000,150h1s",
   };
-  roundtripTest("Seq GPU", seqModeValues, false, 1024);
-  roundtripTest("Seq CPU", seqModeValues, true, 64);
+  roundtripTest("Seq GPU", seqModeValues, false, 32);
+  roundtripTest("Seq CPU", seqModeValues, true, 16);
 
   std::vector<std::string> randomModeValues = {
       "d100r100,10h1s",
@@ -1325,9 +1511,87 @@ TEST_F(CudaTest, roundtripMatrix) {
       "d1000r1000,100h1s",
       "d10000r10000,10h1s",
       "d30000r30000,50h1s"};
-  roundtripTest("Random GPU", randomModeValues, false, 512);
-  roundtripTest("Random CPU", randomModeValues, true, 16);
+  roundtripTest("Random GPU", randomModeValues, false, 16);
+  roundtripTest("Random CPU", randomModeValues, true, 8);
+
+  std::vector<std::string> widthModeValues = {
+      "d100r100,10,256h1s",
+      "d100r100,10,1024",
+      "d100r100,10,8192",
+      "d30000r30000,5,256h1s",
+      "d30000r30000,5,256h1s",
+      "d30000r30000,5,512h1s",
+      "d30000r30000,5,2048h1s",
+      "d30000r30000,5,10240h1s",
+      "d30000rw30000,5,10240h1s",
+      "d30000rt30000,5,10240h1s"};
+  roundtripTest("Random GPU, width and conditional", widthModeValues, false, 8);
 }
+
+TEST_F(CudaTest, addRandom) {
+  constexpr int32_t kNumInts = 16 << 20;
+  auto arenas = getArenas();
+  auto stream = std::make_unique<TestStream>();
+  auto indices = arenas->unified->allocate<int32_t>(kNumInts);
+  auto sourceBuffer = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawIndices = indices->as<int32_t>();
+  for (auto i = 0; i < kNumInts; ++i) {
+    rawIndices[i] = i + 1;
+  }
+  stream->prefetch(getDevice(), rawIndices, indices->capacity());
+  auto ints1 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts1 = ints1->as<int32_t>();
+  auto ints2 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts2 = ints2->as<int32_t>();
+  auto ints3 = arenas->unified->allocate<int32_t>(kNumInts);
+  auto rawInts3 = ints3->as<int32_t>();
+  memset(rawInts1, 0, kNumInts * sizeof(int32_t));
+  memset(rawInts2, 0, kNumInts * sizeof(int32_t));
+  memset(rawInts3, 0, kNumInts * sizeof(int32_t));
+  stream->prefetch(getDevice(), rawInts1, ints1->capacity());
+  stream->prefetch(getDevice(), rawInts2, ints2->capacity());
+  stream->prefetch(getDevice(), rawInts3, ints3->capacity());
+  // Let prefetch finish.
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  // warm up.
+  stream->addOneRandom(rawInts1, rawIndices, kNumInts, 20, 10240);
+  stream->addOneRandom(rawInts2, rawIndices, kNumInts, 20, 10240, true);
+  stream->addOneRandom(rawInts3, rawIndices, kNumInts, 20, 10240, false, true);
+  stream->wait();
+
+  uint64_t time1 = 0;
+  uint64_t time2 = 0;
+  uint64_t time3 = 0;
+  for (auto count = 0; count < 20; ++count) {
+    {
+      MicrosecondTimer t(&time1);
+      stream->addOneRandom(rawInts1, rawIndices, kNumInts, 20, 10240);
+      stream->wait();
+    }
+    {
+      MicrosecondTimer t(&time2);
+      stream->addOneRandom(rawInts2, rawIndices, kNumInts, 20, 10240, true);
+      stream->wait();
+    }
+    {
+      MicrosecondTimer t(&time3);
+      stream->addOneRandom(
+          rawInts3, rawIndices, kNumInts, 20, 10240, false, true);
+      stream->wait();
+    }
+  }
+  std::cout << fmt::format(
+                   "All {}, half warps {} half threads {}", time1, time2, time3)
+            << std::endl;
+
+  stream->prefetch(nullptr, rawInts1, ints1->capacity());
+  stream->prefetch(nullptr, rawInts2, ints2->capacity());
+  stream->prefetch(nullptr, rawInts3, ints3->capacity());
+
+  EXPECT_EQ(0, memcmp(rawInts1, rawInts2, kNumInts * sizeof(int32_t)));
+  EXPECT_EQ(0, memcmp(rawInts1, rawInts3, kNumInts * sizeof(int32_t)));
+<}
+
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
@@ -1336,5 +1600,6 @@ int main(int argc, char** argv) {
     LOG(WARNING) << "No CUDA detected, skipping all tests";
     return 0;
   }
+  printKernels();
   return RUN_ALL_TESTS();
 }
