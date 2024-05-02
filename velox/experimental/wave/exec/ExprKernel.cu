@@ -19,6 +19,9 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
+#include <gflags/gflags.h>
+
+DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
 namespace facebook::velox::wave {
 
@@ -192,6 +195,9 @@ void WaveKernelStream::call(
       sharedSize,
       alias ? alias->stream()->stream : stream()->stream>>>(
       bases, programIdx, programs, operands, status);
+  if (FLAGS_kernel_gdb) {
+    (alias ? alias : this)->wait();
+  }
 }
 
 } // namespace facebook::velox::wave

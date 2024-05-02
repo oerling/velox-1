@@ -144,6 +144,9 @@ RowVectorPtr WaveDriver::makeResult(
       BufferPtr(nullptr),
       numRows,
       std::move(children));
+  if (!numRows) {
+    return nullptr;
+  }
   return result;
 }
 

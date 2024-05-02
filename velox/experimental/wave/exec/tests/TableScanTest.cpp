@@ -169,14 +169,14 @@ TEST_F(TableScanTest, basic) {
 TEST_F(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 10, 1'000);
+  auto vectors = makeVectors(type, 1, 1'000);
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
                   .filter("c0 < 500000000")
-                  .project({"c0", "c1 + 100000000", "c2", "c3"})
+                  .project({"c0", "c1 + 100000000 as c1", "c2", "c3"})
                   .filter("c1 < 500000000")
                   .project({"c0", "c1", "c2 + 1", "c3", "c3 + 2"})
                   .planNode();

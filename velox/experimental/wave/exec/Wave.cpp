@@ -571,7 +571,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
-  int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
+  int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
@@ -925,8 +925,9 @@ int32_t Program::addLiteralTyped(AbstractOperand* op) {
       addLiteral(stringView->data(), stringView->size());
     }
   } else {
-    return op->literalOffset = addLiteral(&value, 1);
+    op->literalOffset = addLiteral(&value, 1);
   }
+  return op->literalOffset;
 }
 
 void Program::markInput(AbstractOperand* op) {
@@ -1011,8 +1012,38 @@ std::string Executable::toString() const {
   if (programShared) {
     out << std::endl;
     out << "program " << programShared->label();
-    return out.str();
   }
+  return out.str();
 }
 
+  std::string Program::toString() const {
+    std::stringstream out;
+    out << "{ program" << std::endl;
+    for (auto& instruction : instructions_) {
+      out << instruction->toString() << std::endl; 
+    }
+    out << "}" << std::endl;
+    return out.str();
+  }
+
+
+  std::string AbstractFilter::toString() const {
+    return fmt::format("filter {} -> {}", flags->toString(), indices->toString());;
+  }
+
+
+  std::string AbstractWrap::toString() const {
+    std::stringstream out;
+    out << "wrap indices=" <<  indices->toString() << " {";
+    for (auto& op : source) {
+      out << op->toString() << " ";
+    }
+    out << "}";
+    return out.str();
+  }
+
+  std::string AbstractBinary::toString() const {
+    return fmt::format("{} = {} {} {} {}", result->toString(), left->toString(), static_cast<int32_t>(opCode), right->toString(), predicate ? fmt::format(" if {}", predicate->toString()) : "");
+  }
+  
 } // namespace facebook::velox::wave

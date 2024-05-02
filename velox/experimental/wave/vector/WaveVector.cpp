@@ -109,9 +109,6 @@ class NoReleaser {
 } // namespace
 
 template <TypeKind kind>
-static int32_t vectorSizeTyped(vector_size_t size) {}
-
-template <TypeKind kind>
 static VectorPtr toVeloxTyped(
     vector_size_t size,
     velox::memory::MemoryPool* pool,
@@ -203,7 +200,8 @@ VectorPtr WaveVector::toVelox(
   int32_t fill = 0;
   for (auto block = 0; block < numBlocks; ++block) {
     auto blockIndices = operandIndices[block];
-    if (!blockIndices) {
+    if (!blockIndices && status[block].numRows > 0) {
+      // If the block comes out empty, it may be no wraps were installed, so nothing to check.
       if (block == numBlocks - 1) {
         VELOX_CHECK_EQ(
             size_ - block * kBlockSize,
