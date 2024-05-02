@@ -201,7 +201,8 @@ VectorPtr WaveVector::toVelox(
   for (auto block = 0; block < numBlocks; ++block) {
     auto blockIndices = operandIndices[block];
     if (!blockIndices && status[block].numRows > 0) {
-      // If the block comes out empty, it may be no wraps were installed, so nothing to check.
+      // If the block comes out empty, it may be no wraps were installed, so
+      // nothing to check.
       if (block == numBlocks - 1) {
         VELOX_CHECK_EQ(
             size_ - block * kBlockSize,

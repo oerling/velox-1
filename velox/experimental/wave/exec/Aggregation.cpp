@@ -300,14 +300,15 @@ void Aggregation::schedule(WaveStream& waveStream, int32_t maxRows) {
   auto* instructions = arena_->allocate<aggregation::Instruction>(
       numColumns, exec->deviceData.emplace_back());
   auto numBlocks = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
-  auto* rowStatus = arena_->allocate<BlockStatus>(
-					       numBlocks, exec->deviceData.emplace_back());
+  auto* rowStatus =
+      arena_->allocate<BlockStatus>(numBlocks, exec->deviceData.emplace_back());
   bzero(rowStatus, numBlocks * sizeof(BlockStatus));
   for (auto i = 0; i < numBlocks; ++i) {
-    rowStatus[i].numRows = i == numBlocks - 1 ? maxRows - kBlockSize * i : kBlockSize;
+    rowStatus[i].numRows =
+        i == numBlocks - 1 ? maxRows - kBlockSize * i : kBlockSize;
   }
   auto* status = arena_->allocate<BlockStatus>(
-					       numColumns, exec->deviceData.emplace_back());
+      numColumns, exec->deviceData.emplace_back());
   bzero(status, numColumns * sizeof(BlockStatus));
   exec->operands =
       arena_->allocate<Operand>(numColumns, exec->deviceData.emplace_back());
@@ -341,9 +342,9 @@ void Aggregation::schedule(WaveStream& waveStream, int32_t maxRows) {
         int sharedSize = std::max(
             aggregation::ExtractKeys::sharedSize(),
             aggregation::ExtractValues::sharedSize());
-	auto control = std::make_unique<LaunchControl>(id_, maxRows);
-	control->status = rowStatus;
-	waveStream.addLaunchControl(id_, std::move(control));
+        auto control = std::make_unique<LaunchControl>(id_, maxRows);
+        control->status = rowStatus;
+        waveStream.addLaunchControl(id_, std::move(control));
         aggregation::call(
             *stream, numColumns, programs, nullptr, status, sharedSize);
         waveStream.markLaunch(*stream, *exes[0]);

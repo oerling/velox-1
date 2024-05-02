@@ -1016,34 +1016,39 @@ std::string Executable::toString() const {
   return out.str();
 }
 
-  std::string Program::toString() const {
-    std::stringstream out;
-    out << "{ program" << std::endl;
-    for (auto& instruction : instructions_) {
-      out << instruction->toString() << std::endl; 
-    }
-    out << "}" << std::endl;
-    return out.str();
+std::string Program::toString() const {
+  std::stringstream out;
+  out << "{ program" << std::endl;
+  for (auto& instruction : instructions_) {
+    out << instruction->toString() << std::endl;
   }
+  out << "}" << std::endl;
+  return out.str();
+}
 
+std::string AbstractFilter::toString() const {
+  return fmt::format("filter {} -> {}", flags->toString(), indices->toString());
+  ;
+}
 
-  std::string AbstractFilter::toString() const {
-    return fmt::format("filter {} -> {}", flags->toString(), indices->toString());;
+std::string AbstractWrap::toString() const {
+  std::stringstream out;
+  out << "wrap indices=" << indices->toString() << " {";
+  for (auto& op : source) {
+    out << op->toString() << " ";
   }
+  out << "}";
+  return out.str();
+}
 
+std::string AbstractBinary::toString() const {
+  return fmt::format(
+      "{} = {} {} {} {}",
+      result->toString(),
+      left->toString(),
+      static_cast<int32_t>(opCode),
+      right->toString(),
+      predicate ? fmt::format(" if {}", predicate->toString()) : "");
+}
 
-  std::string AbstractWrap::toString() const {
-    std::stringstream out;
-    out << "wrap indices=" <<  indices->toString() << " {";
-    for (auto& op : source) {
-      out << op->toString() << " ";
-    }
-    out << "}";
-    return out.str();
-  }
-
-  std::string AbstractBinary::toString() const {
-    return fmt::format("{} = {} {} {} {}", result->toString(), left->toString(), static_cast<int32_t>(opCode), right->toString(), predicate ? fmt::format(" if {}", predicate->toString()) : "");
-  }
-  
 } // namespace facebook::velox::wave

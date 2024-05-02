@@ -348,7 +348,7 @@ class Program : public std::enable_shared_from_this<Program> {
   }
 
   std::string toString() const;
-  
+
  private:
   template <TypeKind kind>
   int32_t addLiteralTyped(AbstractOperand* op);
@@ -693,7 +693,7 @@ class WaveStream {
 
   // Pointer to statuses inside 'hostReturnData_'.
   BlockStatus* hostStatus_{nullptr};
-  
+
   // Time when host side activity last started on 'this'.
   WaveTime start_;
 
