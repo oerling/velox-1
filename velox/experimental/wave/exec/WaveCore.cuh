@@ -50,12 +50,14 @@ __device__ inline bool operandOrNull(
     return true;
   }
   auto op = operands[opIdx];
-  int32_t index = (threadIdx.x + blockBase) & op->indexMask;
+  int32_t index = threadIdx.x;
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
       index = indices[index];
     }
+  } else {
+    index = (index + blockBase) & op->indexMask;
   }
   if (op->nulls && op->nulls[index] == kNull) {
     return false;

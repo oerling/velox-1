@@ -120,6 +120,7 @@ __device__ void wrapKernel(
         (*opIndices)[threadIdx.x] = newIndex;
       }
   }
+  __syncthreads();
 }
 
 #define BINARY_TYPES(opCode, OP)                             \

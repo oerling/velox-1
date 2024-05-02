@@ -702,7 +702,7 @@ WaveTypeKind typeKindCode(TypeKind kind) {
   physicalInst->member = operandIndex(abstractInst->member)
 
 void Program::prepareForDevice(GpuArena& arena) {
-  int32_t codeSize = 0;
+  int32_t codeSize = sizeof(Instruction) * instructions_.size();
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
       case OpCode::kFilter: {
@@ -733,7 +733,6 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(bin.right);
         markResult(bin.result);
         markInput(bin.predicate);
-        codeSize += sizeof(Instruction);
         break;
       }
       case OpCode::kNegate: {
@@ -741,7 +740,6 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(un.input);
         markResult(un.result);
         markInput(un.predicate);
-        codeSize += sizeof(Instruction);
         break;
       }
 
@@ -754,6 +752,7 @@ void Program::prepareForDevice(GpuArena& arena) {
   deviceData_ = arena.allocate<char>(
       codeSize + instructions_.size() * sizeof(void*) + literalArea_.size() +
       sizeof(ThreadBlockProgram));
+  uintptr_t end = reinterpret_cast<uintptr_t>(deviceData_->as<char>() + deviceData_->size());
   program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
   program_->numInstructions = instructions_.size();
@@ -762,8 +761,10 @@ void Program::prepareForDevice(GpuArena& arena) {
       instructionArray, instructions_.size() * sizeof(void*));
   deviceLiterals_ = reinterpret_cast<char*>(space) +
       sizeof(Instruction) * instructions_.size();
+  VELOX_CHECK_LE(reinterpret_cast<uintptr_t>(deviceLiterals_) + literalArea_.size(), end);
   memcpy(deviceLiterals_, literalArea_.data(), literalArea_.size());
-
+  
+  
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;
@@ -806,12 +807,12 @@ void Program::prepareForDevice(GpuArena& arena) {
     sharedMemorySize_ =
         std::max(sharedMemorySize_, instructionSharedMemory(*space));
     ++space;
+    VELOX_CHECK_LE(reinterpret_cast<uintptr_t>(space), reinterpret_cast<uintptr_t>(deviceLiterals_));
   }
-  program_->sharedMemorySize = sharedMemorySize_;
+  program_-> sharedMemorySize = sharedMemorySize_;
   literalOperands_.resize(literal_.size());
-  int32_t counter = 0;
   for (auto& [op, index] : literal_) {
-    literalToOperand(op, literalOperands_[counter++]);
+    literalToOperand(op, literalOperands_[index]);
   }
 }
 
