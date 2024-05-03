@@ -55,6 +55,8 @@ __device__ inline bool operandOrNull(
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
       index = indices[index];
+    } else {
+      index += blockBase;
     }
   } else {
     index = (index + blockBase) & op->indexMask;

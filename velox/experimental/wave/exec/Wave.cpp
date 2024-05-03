@@ -812,7 +812,7 @@ void Program::prepareForDevice(GpuArena& arena) {
   program_-> sharedMemorySize = sharedMemorySize_;
   literalOperands_.resize(literal_.size());
   for (auto& [op, index] : literal_) {
-    literalToOperand(op, literalOperands_[index]);
+    literalToOperand(op, literalOperands_[index - firstLiteralIdx_]);
   }
 }
 
@@ -861,6 +861,7 @@ void Program::sortSlots() {
   auto start = sortAndRenumber(0, input_);
   start = sortAndRenumber(start, local_);
   start = sortAndRenumber(start, output_);
+  firstLiteralIdx_ = start;
   sortAndRenumber(start, literal_);
 }
 

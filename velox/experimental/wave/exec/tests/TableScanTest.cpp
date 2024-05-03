@@ -52,6 +52,7 @@ class TableScanTest : public virtual HiveConnectorTestBase {
 
   void TearDown() override {
     wave::test::Table::dropAll();
+    HiveConnectorTestBase::TearDown();
   }
 
   std::vector<RowVectorPtr> makeVectors(

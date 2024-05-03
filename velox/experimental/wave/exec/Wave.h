@@ -387,6 +387,9 @@ class Program : public std::enable_shared_from_this<Program> {
   // Output Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> output_;
 
+  // OperandIdx for first literal operand.
+  int32_t firstLiteralIdx_{-1};
+  
   // Constant Operand  to offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> literal_;
 

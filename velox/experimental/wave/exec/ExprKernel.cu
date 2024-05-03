@@ -108,7 +108,7 @@ __device__ void wrapKernel(
       opIndices = &op->indices[blockBase / kBlockSize];
       remap = *opIndices != nullptr;
       if (remap) {
-	newIndex = (*opIndices)[filterIndices[threadIdx.x]];
+	newIndex = (*opIndices)[filterIndices[blockBase + threadIdx.x] - blockBase];
       } else if (threadIdx.x == 0) {
 	*opIndices = filterIndices + blockBase;
       }
