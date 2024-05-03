@@ -155,7 +155,6 @@ int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks) {
   return numRows;
 }
 
-  
 // static
 int32_t WaveVector::alignment(const TypePtr& type) {
   switch (type->kind()) {
@@ -218,7 +217,10 @@ VectorPtr WaveVector::toVelox(
         rawIndices[fill++] = block * kBlockSize + i;
       }
     } else {
-      memcpy(rawIndices + fill, blockIndices, status[block].numRows * sizeof(int32_t));
+      memcpy(
+          rawIndices + fill,
+          blockIndices,
+          status[block].numRows * sizeof(int32_t));
       fill += status[block].numRows;
     }
   }

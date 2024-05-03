@@ -752,7 +752,8 @@ void Program::prepareForDevice(GpuArena& arena) {
   deviceData_ = arena.allocate<char>(
       codeSize + instructions_.size() * sizeof(void*) + literalArea_.size() +
       sizeof(ThreadBlockProgram));
-  uintptr_t end = reinterpret_cast<uintptr_t>(deviceData_->as<char>() + deviceData_->size());
+  uintptr_t end = reinterpret_cast<uintptr_t>(
+      deviceData_->as<char>() + deviceData_->size());
   program_ = deviceData_->as<ThreadBlockProgram>();
   auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
   program_->numInstructions = instructions_.size();
@@ -761,10 +762,10 @@ void Program::prepareForDevice(GpuArena& arena) {
       instructionArray, instructions_.size() * sizeof(void*));
   deviceLiterals_ = reinterpret_cast<char*>(space) +
       sizeof(Instruction) * instructions_.size();
-  VELOX_CHECK_LE(reinterpret_cast<uintptr_t>(deviceLiterals_) + literalArea_.size(), end);
+  VELOX_CHECK_LE(
+      reinterpret_cast<uintptr_t>(deviceLiterals_) + literalArea_.size(), end);
   memcpy(deviceLiterals_, literalArea_.data(), literalArea_.size());
-  
-  
+
   for (auto& instruction : instructions_) {
     *instructionArray = space;
     ++instructionArray;
@@ -807,9 +808,11 @@ void Program::prepareForDevice(GpuArena& arena) {
     sharedMemorySize_ =
         std::max(sharedMemorySize_, instructionSharedMemory(*space));
     ++space;
-    VELOX_CHECK_LE(reinterpret_cast<uintptr_t>(space), reinterpret_cast<uintptr_t>(deviceLiterals_));
+    VELOX_CHECK_LE(
+        reinterpret_cast<uintptr_t>(space),
+        reinterpret_cast<uintptr_t>(deviceLiterals_));
   }
-  program_-> sharedMemorySize = sharedMemorySize_;
+  program_->sharedMemorySize = sharedMemorySize_;
   literalOperands_.resize(literal_.size());
   for (auto& [op, index] : literal_) {
     literalToOperand(op, literalOperands_[index - firstLiteralIdx_]);

@@ -172,7 +172,7 @@ TEST_F(TableScanTest, filter) {
   for (auto& vector : vectors) {
     makeNotNull(vector, 1000000000);
   }
-    auto splits = makeTable("test", vectors);
+  auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
 
   auto plan = PlanBuilder(pool_.get())
