@@ -292,7 +292,7 @@ class HashProbe : public Operator {
   void wakeupPeerOperators();
 
   void ensureFilterInput(vector_size_t size);
-  
+
   //  std::vector<Operator*> findPeerOperators();
 
   // TODO: Define batch size as bytes based on RowContainer row sizes.
@@ -390,7 +390,7 @@ class HashProbe : public Operator {
   RowTypePtr filterInputType_;
 
   RowVectorPtr filterInput_;
-  
+
   // Maps input channels to channels in 'filterInputType_'.
   std::vector<IdentityProjection> filterInputProjections_;
 

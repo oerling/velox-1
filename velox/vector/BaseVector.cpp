@@ -1166,7 +1166,7 @@ void BaseVector::transposeDictionaryValues(
   }
   dictionaryValues = dictionaryValues->valueVector();
 }
-  
+
 template <TypeKind Kind>
 bool isAllSameFlat(const BaseVector& vector, vector_size_t size) {
   using T = typename KindToFlatVector<Kind>::WrapperType;

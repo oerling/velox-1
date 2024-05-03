@@ -1040,17 +1040,15 @@ RowVectorPtr HashProbe::getOutputInternal(bool toSpillOutput) {
   }
 }
 
-
-
 void HashProbe::ensureFilterInput(vector_size_t size) {
   if (!filterInput_) {
-    filterInput_ = BaseVector::create<RowVector>(filterInputType_, size, pool());
+    filterInput_ =
+        BaseVector::create<RowVector>(filterInputType_, size, pool());
   } else {
     filterInput_->resize(size);
   }
 }
 
-  
 bool HashProbe::maybeReadSpillOutput() {
   if (spillOutputReader_ == nullptr) {
     return false;
