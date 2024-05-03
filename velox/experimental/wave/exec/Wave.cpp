@@ -702,6 +702,10 @@ WaveTypeKind typeKindCode(TypeKind kind) {
   physicalInst->member = operandIndex(abstractInst->member)
 
 void Program::prepareForDevice(GpuArena& arena) {
+  VELOX_CHECK(!instructions_.empty());
+  if (instructions_.back()->opCode != OpCode::kReturn) {
+    instructions_.push_back(std::make_unique<AbstractReturn>());
+  }
   int32_t codeSize = sizeof(Instruction) * instructions_.size();
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
@@ -742,7 +746,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(un.predicate);
         break;
       }
-
+    case OpCode::kReturn: break;
       default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
@@ -750,16 +754,15 @@ void Program::prepareForDevice(GpuArena& arena) {
   sortSlots();
   arena_ = &arena;
   deviceData_ = arena.allocate<char>(
-      codeSize + instructions_.size() * sizeof(void*) + literalArea_.size() +
+      codeSize + literalArea_.size() +
       sizeof(ThreadBlockProgram));
   uintptr_t end = reinterpret_cast<uintptr_t>(
       deviceData_->as<char>() + deviceData_->size());
   program_ = deviceData_->as<ThreadBlockProgram>();
-  auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
+  auto instructionArray = addBytes<Instruction*>(program_, sizeof(*program_));
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
-  Instruction* space = addBytes<Instruction*>(
-      instructionArray, instructions_.size() * sizeof(void*));
+  Instruction* space = instructionArray;
   deviceLiterals_ = reinterpret_cast<char*>(space) +
       sizeof(Instruction) * instructions_.size();
   VELOX_CHECK_LE(
@@ -767,8 +770,6 @@ void Program::prepareForDevice(GpuArena& arena) {
   memcpy(deviceLiterals_, literalArea_.data(), literalArea_.size());
 
   for (auto& instruction : instructions_) {
-    *instructionArray = space;
-    ++instructionArray;
     switch (instruction->opCode) {
       case OpCode::kPlus:
       case OpCode::kLT: {
@@ -802,7 +803,11 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-      default:
+    case OpCode::kReturn: {
+      IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
+      break;
+    }
+    default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
     sharedMemorySize_ =

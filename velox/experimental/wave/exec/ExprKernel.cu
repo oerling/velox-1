@@ -149,10 +149,12 @@ __global__ void waveBaseKernel(
   auto* operands = programOperands[programIndex];
   auto* status = &blockStatusArray[blockIdx.x - baseIndices[blockIdx.x]];
   int32_t blockBase = (blockIdx.x - baseIndices[blockIdx.x]) * blockDim.x;
-  for (auto i = 0; i < program->numInstructions; ++i) {
-    auto instruction = program->instructions[i];
+  auto instruction = program->instructions;
+  for (;;) {
     switch (instruction->opCode) {
-      case OpCode::kFilter:
+    case OpCode::kReturn:
+      return;
+    case OpCode::kFilter:
         filterKernel(
             instruction->_.filter,
             operands,
@@ -168,6 +170,7 @@ __global__ void waveBaseKernel(
         BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
     }
+    ++instruction;
   }
 }
 
