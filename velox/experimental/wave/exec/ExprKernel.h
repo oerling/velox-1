@@ -95,8 +95,8 @@ struct INegate {
   OperandIndex result;
   OperandIndex predicate;
 };
-  struct IReturn {};
-  
+struct IReturn {};
+
 struct Instruction {
   OpCode opCode;
   union {

@@ -106,7 +106,7 @@ struct AbstractInstruction {
 struct AbstractReturn : public AbstractInstruction {
   AbstractReturn() : AbstractInstruction(OpCode::kReturn) {}
 };
-  
+
 struct AbstractFilter : public AbstractInstruction {
   AbstractFilter(AbstractOperand* flags, AbstractOperand* indices)
       : AbstractInstruction(OpCode::kFilter), flags(flags), indices(indices) {}

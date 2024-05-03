@@ -746,7 +746,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(un.predicate);
         break;
       }
-    case OpCode::kReturn: break;
+      case OpCode::kReturn:
+        break;
       default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
@@ -754,8 +755,7 @@ void Program::prepareForDevice(GpuArena& arena) {
   sortSlots();
   arena_ = &arena;
   deviceData_ = arena.allocate<char>(
-      codeSize + literalArea_.size() +
-      sizeof(ThreadBlockProgram));
+      codeSize + literalArea_.size() + sizeof(ThreadBlockProgram));
   uintptr_t end = reinterpret_cast<uintptr_t>(
       deviceData_->as<char>() + deviceData_->size());
   program_ = deviceData_->as<ThreadBlockProgram>();
@@ -803,11 +803,11 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-    case OpCode::kReturn: {
-      IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
-      break;
-    }
-    default:
+      case OpCode::kReturn: {
+        IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
+        break;
+      }
+      default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
     sharedMemorySize_ =
