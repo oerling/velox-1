@@ -1041,13 +1041,15 @@ RowVectorPtr HashProbe::getOutputInternal(bool toSpillOutput) {
 }
 
 
-  #if 0
-void HashProbe::fillFilterInput(vector_size_t size) {
+
+void HashProbe::ensureFilterInput(vector_size_t size) {
   if (!filterInput_) {
-    filterInput_ = BaseVector::create<RowVector>(filterInputType_, 1, pool());
+    filterInput_ = BaseVector::create<RowVector>(filterInputType_, size, pool());
+  } else {
+    filterInput_->resize(size);
   }
 }
-  #endif
+
   
 bool HashProbe::maybeReadSpillOutput() {
   if (spillOutputReader_ == nullptr) {
@@ -1066,7 +1068,7 @@ bool HashProbe::maybeReadSpillOutput() {
 RowVectorPtr HashProbe::createFilterInput(vector_size_t size) {
   std::vector<VectorPtr> filterColumns(filterInputType_->size());
   WrapState state;
-  filterInput_->resize(size);
+  ensureFilterInput(size);
   for (auto projection : filterInputProjections_) {
     ensureLoadedIfNotAtEnd(projection.inputChannel);
     filterInput_->childAt(projection.outputChannel) = wrapOne(
