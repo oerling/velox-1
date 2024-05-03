@@ -20,14 +20,11 @@
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/PeriodicStatsReporter.h"
 
 namespace facebook::velox {
-
-class StatsReporterTest : public testing::Test {
- protected:
-  void SetUp() override {}
-  void TearDown() override {}
-};
 
 class TestReporter : public BaseStatsReporter {
  public:
@@ -36,16 +33,23 @@ class TestReporter : public BaseStatsReporter {
   mutable std::unordered_map<std::string, std::vector<int32_t>>
       histogramPercentilesMap;
 
-  void addStatExportType(const char* key, StatType statType) const override {
+  void clear() {
+    counterMap.clear();
+    statTypeMap.clear();
+    histogramPercentilesMap.clear();
+  }
+
+  void registerMetricExportType(const char* key, StatType statType)
+      const override {
     statTypeMap[key] = statType;
   }
 
-  void addStatExportType(folly::StringPiece key, StatType statType)
+  void registerMetricExportType(folly::StringPiece key, StatType statType)
       const override {
     statTypeMap[key.str()] = statType;
   }
 
-  void addHistogramExportPercentiles(
+  void registerHistogramMetricExportType(
       const char* key,
       int64_t /* bucketWidth */,
       int64_t /* min */,
@@ -54,7 +58,7 @@ class TestReporter : public BaseStatsReporter {
     histogramPercentilesMap[key] = pcts;
   }
 
-  void addHistogramExportPercentiles(
+  void registerHistogramMetricExportType(
       folly::StringPiece key,
       int64_t /* bucketWidth */,
       int64_t /* min */,
@@ -63,63 +67,150 @@ class TestReporter : public BaseStatsReporter {
     histogramPercentilesMap[key.str()] = pcts;
   }
 
-  void addStatValue(const std::string& key, const size_t value) const override {
+  void addMetricValue(const std::string& key, const size_t value)
+      const override {
     counterMap[key] += value;
   }
 
-  void addStatValue(const char* key, const size_t value) const override {
+  void addMetricValue(const char* key, const size_t value) const override {
     counterMap[key] += value;
   }
 
-  void addStatValue(folly::StringPiece key, size_t value) const override {
+  void addMetricValue(folly::StringPiece key, size_t value) const override {
     counterMap[key.str()] += value;
   }
 
-  void addHistogramValue(const std::string& key, size_t value) const override {
+  void addHistogramMetricValue(const std::string& key, size_t value)
+      const override {
     counterMap[key] = std::max(counterMap[key], value);
   }
 
-  void addHistogramValue(const char* key, size_t value) const override {
+  void addHistogramMetricValue(const char* key, size_t value) const override {
     counterMap[key] = std::max(counterMap[key], value);
   }
 
-  void addHistogramValue(folly::StringPiece key, size_t value) const override {
+  void addHistogramMetricValue(folly::StringPiece key, size_t value)
+      const override {
     counterMap[key.str()] = std::max(counterMap[key.str()], value);
   }
 };
 
-TEST_F(StatsReporterTest, trivialReporter) {
-  auto reporter = std::dynamic_pointer_cast<TestReporter>(
-      folly::Singleton<BaseStatsReporter>::try_get());
+class StatsReporterTest : public testing::Test {
+ protected:
+  void SetUp() override {
+    reporter_ = std::dynamic_pointer_cast<TestReporter>(
+        folly::Singleton<BaseStatsReporter>::try_get());
+  }
+  void TearDown() override {
+    reporter_->clear();
+  }
 
-  REPORT_ADD_STAT_EXPORT_TYPE("key1", StatType::COUNT);
-  REPORT_ADD_STAT_EXPORT_TYPE("key2", StatType::SUM);
-  REPORT_ADD_STAT_EXPORT_TYPE("key3", StatType::RATE);
-  REPORT_ADD_HISTOGRAM_EXPORT_PERCENTILE("key4", 10, 0, 100, 50, 99, 100);
-
-  EXPECT_EQ(StatType::COUNT, reporter->statTypeMap["key1"]);
-  EXPECT_EQ(StatType::SUM, reporter->statTypeMap["key2"]);
-  EXPECT_EQ(StatType::RATE, reporter->statTypeMap["key3"]);
-  std::vector<int32_t> expected = {50, 99, 100};
-  EXPECT_EQ(expected, reporter->histogramPercentilesMap["key4"]);
-  EXPECT_TRUE(
-      reporter->statTypeMap.find("key5") == reporter->statTypeMap.end());
-
-  REPORT_ADD_STAT_VALUE("key1", 10);
-  REPORT_ADD_STAT_VALUE("key1", 11);
-  REPORT_ADD_STAT_VALUE("key1", 15);
-  REPORT_ADD_STAT_VALUE("key2", 1001);
-  REPORT_ADD_STAT_VALUE("key2", 1200);
-  REPORT_ADD_STAT_VALUE("key3");
-  REPORT_ADD_STAT_VALUE("key3", 1100);
-  REPORT_ADD_HISTOGRAM_VALUE("key4", 50);
-  REPORT_ADD_HISTOGRAM_VALUE("key4", 100);
-
-  EXPECT_EQ(36, reporter->counterMap["key1"]);
-  EXPECT_EQ(2201, reporter->counterMap["key2"]);
-  EXPECT_EQ(1101, reporter->counterMap["key3"]);
-  EXPECT_EQ(100, reporter->counterMap["key4"]);
+  std::shared_ptr<TestReporter> reporter_;
 };
+
+TEST_F(StatsReporterTest, trivialReporter) {
+  DEFINE_METRIC("key1", StatType::COUNT);
+  DEFINE_METRIC("key2", StatType::SUM);
+  DEFINE_METRIC("key3", StatType::RATE);
+  DEFINE_HISTOGRAM_METRIC("key4", 10, 0, 100, 50, 99, 100);
+
+  EXPECT_EQ(StatType::COUNT, reporter_->statTypeMap["key1"]);
+  EXPECT_EQ(StatType::SUM, reporter_->statTypeMap["key2"]);
+  EXPECT_EQ(StatType::RATE, reporter_->statTypeMap["key3"]);
+  std::vector<int32_t> expected = {50, 99, 100};
+  EXPECT_EQ(expected, reporter_->histogramPercentilesMap["key4"]);
+  EXPECT_TRUE(
+      reporter_->statTypeMap.find("key5") == reporter_->statTypeMap.end());
+
+  RECORD_METRIC_VALUE("key1", 10);
+  RECORD_METRIC_VALUE("key1", 11);
+  RECORD_METRIC_VALUE("key1", 15);
+  RECORD_METRIC_VALUE("key2", 1001);
+  RECORD_METRIC_VALUE("key2", 1200);
+  RECORD_METRIC_VALUE("key3");
+  RECORD_METRIC_VALUE("key3", 1100);
+  RECORD_HISTOGRAM_METRIC_VALUE("key4", 50);
+  RECORD_HISTOGRAM_METRIC_VALUE("key4", 100);
+
+  EXPECT_EQ(36, reporter_->counterMap["key1"]);
+  EXPECT_EQ(2201, reporter_->counterMap["key2"]);
+  EXPECT_EQ(1101, reporter_->counterMap["key3"]);
+  EXPECT_EQ(100, reporter_->counterMap["key4"]);
+};
+
+class PeriodicStatsReporterTest : public StatsReporterTest {};
+
+class TestStatsReportMemoryArbitrator : public memory::MemoryArbitrator {
+ public:
+  explicit TestStatsReportMemoryArbitrator(
+      memory::MemoryArbitrator::Stats stats)
+      : memory::MemoryArbitrator({}), stats_(stats) {}
+
+  ~TestStatsReportMemoryArbitrator() override = default;
+
+  void updateStats(memory::MemoryArbitrator::Stats stats) {
+    stats_ = stats;
+  }
+
+  std::string kind() const override {
+    return "test";
+  }
+
+  uint64_t growCapacity(memory::MemoryPool* /*unused*/, uint64_t /*unused*/)
+      override {
+    return 0;
+  }
+
+  bool growCapacity(
+      memory::MemoryPool* /*unused*/,
+      const std::vector<std::shared_ptr<memory::MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
+    return false;
+  }
+
+  uint64_t shrinkCapacity(memory::MemoryPool* /*unused*/, uint64_t /*unused*/)
+      override {
+    return 0;
+  }
+
+  uint64_t shrinkCapacity(
+      const std::vector<std::shared_ptr<memory::MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/,
+      bool /*unused*/,
+      bool /*unused*/) override {
+    return 0;
+  }
+
+  Stats stats() const override {
+    return stats_;
+  }
+
+  std::string toString() const override {
+    return "TestStatsReportMemoryArbitrator::toString()";
+  }
+
+ private:
+  memory::MemoryArbitrator::Stats stats_;
+};
+
+TEST_F(PeriodicStatsReporterTest, basic) {
+  TestStatsReportMemoryArbitrator arbitrator({});
+  PeriodicStatsReporter::Options options;
+  options.arbitratorStatsIntervalMs = 4'000;
+  PeriodicStatsReporter periodicReporter(&arbitrator, options);
+
+  periodicReporter.start();
+  std::this_thread::sleep_for(std::chrono::milliseconds(2'000));
+  // Stop right after sufficient wait to ensure the following reads from main
+  // thread does not trigger TSAN failures.
+  periodicReporter.stop();
+
+  const auto& counterMap = reporter_->counterMap;
+  ASSERT_EQ(counterMap.size(), 2);
+  ASSERT_EQ(counterMap.count(kMetricArbitratorFreeCapacityBytes.str()), 1);
+  ASSERT_EQ(
+      counterMap.count(kMetricArbitratorFreeReservedCapacityBytes.str()), 1);
+}
 
 // Registering to folly Singleton with intended reporter type
 folly::Singleton<BaseStatsReporter> reporter([]() {
@@ -130,7 +221,7 @@ folly::Singleton<BaseStatsReporter> reporter([]() {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
-  folly::init(&argc, &argv, false);
+  folly::Init init{&argc, &argv, false};
   facebook::velox::BaseStatsReporter::registered = true;
   return RUN_ALL_TESTS();
 }

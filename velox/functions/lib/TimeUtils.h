@@ -21,9 +21,10 @@
 #include "velox/functions/Macros.h"
 
 namespace facebook::velox::functions {
-namespace {
+
 inline constexpr int64_t kSecondsInDay = 86'400;
 inline constexpr int64_t kDaysInWeek = 7;
+extern const folly::F14FastMap<std::string, int8_t> kDayOfWeekNames;
 
 FOLLY_ALWAYS_INLINE const date::time_zone* getTimeZoneFromConfig(
     const core::QueryConfig& config) {
@@ -45,7 +46,6 @@ getSeconds(Timestamp timestamp, const date::time_zone* timeZone) {
     return timestamp.getSeconds();
   }
 }
-} // namespace
 
 FOLLY_ALWAYS_INLINE
 std::tm getDateTime(Timestamp timestamp, const date::time_zone* timeZone) {
@@ -98,6 +98,7 @@ struct InitSessionTimezone {
   const date::time_zone* timeZone_{nullptr};
 
   FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
       const core::QueryConfig& config,
       const arg_type<Timestamp>* /*timestamp*/) {
     timeZone_ = getTimeZoneFromConfig(config);

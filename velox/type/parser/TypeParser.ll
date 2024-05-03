@@ -36,9 +36,7 @@ Z   [Z|z]
 WORD              ([[:alpha:][:alnum:]_]*)
 QUOTED_ID         (['"'][[:alnum:][:space:]_]*['"'])
 NUMBER            ([[:digit:]]+)
-ROW               (ROW|STRUCT)
 VARIABLE          (VARCHAR|VARBINARY)
-TYPE_WITH_SPACES  ((DOUBLE[ ]PRECISION)|(TIME[ ]WITH[ ]TIME[ ]ZONE)|(TIMESTAMP[ ]WITH[ ]TIME[ ]ZONE)|(INTERVAL[ ]YEAR[ ]TO[ ]MONTH)|(INTERVAL[ ]DAY[ ]TO[ ]SECOND))
 
 %%
 
@@ -49,11 +47,10 @@ TYPE_WITH_SPACES  ((DOUBLE[ ]PRECISION)|(TIME[ ]WITH[ ]TIME[ ]ZONE)|(TIMESTAMP[ 
 (MAP)              return Parser::token::MAP;
 (FUNCTION)         return Parser::token::FUNCTION;
 (DECIMAL)          return Parser::token::DECIMAL;
-{ROW}              return Parser::token::ROW;
+(ROW)              return Parser::token::ROW;
 {VARIABLE}         yylval->build<std::string>(YYText()); return Parser::token::VARIABLE;
 {NUMBER}           yylval->build<long long>(folly::to<int>(YYText())); return Parser::token::NUMBER;
 {WORD}             yylval->build<std::string>(YYText()); return Parser::token::WORD;
-{TYPE_WITH_SPACES} yylval->build<std::string>(YYText()); return Parser::token::TYPE_WITH_SPACES;
 {QUOTED_ID}        yylval->build<std::string>(YYText()); return Parser::token::QUOTED_ID;
 <<EOF>>            return Parser::token::YYEOF;
 .               /* no action on unmatched input */
@@ -69,8 +66,9 @@ int yyFlexLexer::yylex() {
 facebook::velox::TypePtr facebook::velox::parseType(const std::string& typeText)
  {
     std::istringstream is(typeText);
+    std::ostringstream os;
     facebook::velox::TypePtr type;
-    facebook::velox::type::Scanner scanner{is, std::cerr, type, typeText};
+    facebook::velox::type::Scanner scanner{is, os, type, typeText};
     facebook::velox::type::Parser parser{ &scanner };
     parser.parse();
     VELOX_CHECK(type, "Failed to parse type [{}]", typeText);

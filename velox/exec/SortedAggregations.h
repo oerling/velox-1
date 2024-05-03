@@ -31,7 +31,14 @@ class SortedAggregations {
   /// @param inputType Input row type for the aggregation operator.
   /// @param pool Memory pool.
   SortedAggregations(
-      std::vector<AggregateInfo*> aggregates,
+      const std::vector<const AggregateInfo*>& aggregates,
+      const RowTypePtr& inputType,
+      memory::MemoryPool* pool);
+
+  /// Create a SortedAggregations instance using aggregation infos. Return null
+  /// if there is no sorted aggregation.
+  static std::unique_ptr<SortedAggregations> create(
+      const std::vector<AggregateInfo>& aggregates,
       const RowTypePtr& inputType,
       memory::MemoryPool* pool);
 
@@ -47,10 +54,14 @@ class SortedAggregations {
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask,
+      int32_t initializedByte,
+      uint8_t initializedMask,
       int32_t rowSizeOffset) {
     offset_ = offset;
     nullByte_ = nullByte;
     nullMask_ = nullMask;
+    initializedByte_ = initializedByte;
+    initializedMask_ = initializedMask;
     rowSizeOffset_ = rowSizeOffset;
   }
 
@@ -66,8 +77,6 @@ class SortedAggregations {
       char* group,
       const VectorPtr& input,
       vector_size_t index);
-
-  void noMoreInput();
 
   /// Sorts input row for the specified groups, computes aggregations and stores
   /// results in the specified 'result' vector.
@@ -130,8 +139,9 @@ class SortedAggregations {
   };
 
   // Aggregates grouped by sorting keys and orders.
-  folly::F14FastMap<SortingSpec, std::vector<AggregateInfo*>, Hash, EqualTo>
-      aggregates_;
+  folly::
+      F14FastMap<SortingSpec, std::vector<const AggregateInfo*>, Hash, EqualTo>
+          aggregates_;
 
   // Indices of all inputs for all aggregates.
   std::vector<column_index_t> inputs_;
@@ -148,6 +158,8 @@ class SortedAggregations {
   int32_t offset_;
   int32_t nullByte_;
   uint8_t nullMask_;
+  int32_t initializedByte_;
+  uint8_t initializedMask_;
   int32_t rowSizeOffset_;
 };
 

@@ -15,8 +15,9 @@
  */
 
 #include "velox/common/base/SpillStats.h"
+#include "velox/common/base/Counters.h"
 #include "velox/common/base/Exceptions.h"
-
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/base/SuccinctPrinter.h"
 
 namespace facebook::velox::common {
@@ -44,10 +45,14 @@ SpillStats::SpillStats(
     uint64_t _spillFillTimeUs,
     uint64_t _spillSortTimeUs,
     uint64_t _spillSerializationTimeUs,
-    uint64_t _spillDiskWrites,
+    uint64_t _spillWrites,
     uint64_t _spillFlushTimeUs,
     uint64_t _spillWriteTimeUs,
-    uint64_t _spillMaxLevelExceededCount)
+    uint64_t _spillMaxLevelExceededCount,
+    uint64_t _spillReadBytes,
+    uint64_t _spillReads,
+    uint64_t _spillReadTimeUs,
+    uint64_t _spillDeserializationTimeUs)
     : spillRuns(_spillRuns),
       spilledInputBytes(_spilledInputBytes),
       spilledBytes(_spilledBytes),
@@ -57,10 +62,14 @@ SpillStats::SpillStats(
       spillFillTimeUs(_spillFillTimeUs),
       spillSortTimeUs(_spillSortTimeUs),
       spillSerializationTimeUs(_spillSerializationTimeUs),
-      spillDiskWrites(_spillDiskWrites),
+      spillWrites(_spillWrites),
       spillFlushTimeUs(_spillFlushTimeUs),
       spillWriteTimeUs(_spillWriteTimeUs),
-      spillMaxLevelExceededCount(_spillMaxLevelExceededCount) {}
+      spillMaxLevelExceededCount(_spillMaxLevelExceededCount),
+      spillReadBytes(_spillReadBytes),
+      spillReads(_spillReads),
+      spillReadTimeUs(_spillReadTimeUs),
+      spillDeserializationTimeUs(_spillDeserializationTimeUs) {}
 
 SpillStats& SpillStats::operator+=(const SpillStats& other) {
   spillRuns += other.spillRuns;
@@ -72,10 +81,14 @@ SpillStats& SpillStats::operator+=(const SpillStats& other) {
   spillFillTimeUs += other.spillFillTimeUs;
   spillSortTimeUs += other.spillSortTimeUs;
   spillSerializationTimeUs += other.spillSerializationTimeUs;
-  spillDiskWrites += other.spillDiskWrites;
+  spillWrites += other.spillWrites;
   spillFlushTimeUs += other.spillFlushTimeUs;
   spillWriteTimeUs += other.spillWriteTimeUs;
   spillMaxLevelExceededCount += other.spillMaxLevelExceededCount;
+  spillReadBytes += other.spillReadBytes;
+  spillReads += other.spillReads;
+  spillReadTimeUs += other.spillReadTimeUs;
+  spillDeserializationTimeUs += other.spillDeserializationTimeUs;
   return *this;
 }
 
@@ -91,16 +104,20 @@ SpillStats SpillStats::operator-(const SpillStats& other) const {
   result.spillSortTimeUs = spillSortTimeUs - other.spillSortTimeUs;
   result.spillSerializationTimeUs =
       spillSerializationTimeUs - other.spillSerializationTimeUs;
-  result.spillDiskWrites = spillDiskWrites - other.spillDiskWrites;
+  result.spillWrites = spillWrites - other.spillWrites;
   result.spillFlushTimeUs = spillFlushTimeUs - other.spillFlushTimeUs;
   result.spillWriteTimeUs = spillWriteTimeUs - other.spillWriteTimeUs;
   result.spillMaxLevelExceededCount =
       spillMaxLevelExceededCount - other.spillMaxLevelExceededCount;
+  result.spillReadBytes = spillReadBytes - other.spillReadBytes;
+  result.spillReads = spillReads - other.spillReads;
+  result.spillReadTimeUs = spillReadTimeUs - other.spillReadTimeUs;
+  result.spillDeserializationTimeUs =
+      spillDeserializationTimeUs - other.spillDeserializationTimeUs;
   return result;
 }
 
 bool SpillStats::operator<(const SpillStats& other) const {
-  uint32_t eqCount{0};
   uint32_t gtCount{0};
   uint32_t ltCount{0};
 #define UPDATE_COUNTER(counter)           \
@@ -109,8 +126,6 @@ bool SpillStats::operator<(const SpillStats& other) const {
       ++ltCount;                          \
     } else if (counter > other.counter) { \
       ++gtCount;                          \
-    } else {                              \
-      ++eqCount;                          \
     }                                     \
   } while (0);
 
@@ -123,10 +138,14 @@ bool SpillStats::operator<(const SpillStats& other) const {
   UPDATE_COUNTER(spillFillTimeUs);
   UPDATE_COUNTER(spillSortTimeUs);
   UPDATE_COUNTER(spillSerializationTimeUs);
-  UPDATE_COUNTER(spillDiskWrites);
+  UPDATE_COUNTER(spillWrites);
   UPDATE_COUNTER(spillFlushTimeUs);
   UPDATE_COUNTER(spillWriteTimeUs);
   UPDATE_COUNTER(spillMaxLevelExceededCount);
+  UPDATE_COUNTER(spillReadBytes);
+  UPDATE_COUNTER(spillReads);
+  UPDATE_COUNTER(spillReadTimeUs);
+  UPDATE_COUNTER(spillDeserializationTimeUs);
 #undef UPDATE_COUNTER
   VELOX_CHECK(
       !((gtCount > 0) && (ltCount > 0)),
@@ -159,10 +178,14 @@ bool SpillStats::operator==(const SpillStats& other) const {
              spillFillTimeUs,
              spillSortTimeUs,
              spillSerializationTimeUs,
-             spillDiskWrites,
+             spillWrites,
              spillFlushTimeUs,
              spillWriteTimeUs,
-             spillMaxLevelExceededCount) ==
+             spillMaxLevelExceededCount,
+             spillReadBytes,
+             spillReads,
+             spillReadTimeUs,
+             spillDeserializationTimeUs) ==
       std::tie(
              other.spillRuns,
              other.spilledInputBytes,
@@ -173,10 +196,14 @@ bool SpillStats::operator==(const SpillStats& other) const {
              other.spillFillTimeUs,
              other.spillSortTimeUs,
              other.spillSerializationTimeUs,
-             other.spillDiskWrites,
+             other.spillWrites,
              other.spillFlushTimeUs,
              other.spillWriteTimeUs,
-             spillMaxLevelExceededCount);
+             spillMaxLevelExceededCount,
+             spillReadBytes,
+             spillReads,
+             spillReadTimeUs,
+             spillDeserializationTimeUs);
 }
 
 void SpillStats::reset() {
@@ -189,15 +216,24 @@ void SpillStats::reset() {
   spillFillTimeUs = 0;
   spillSortTimeUs = 0;
   spillSerializationTimeUs = 0;
-  spillDiskWrites = 0;
+  spillWrites = 0;
   spillFlushTimeUs = 0;
   spillWriteTimeUs = 0;
   spillMaxLevelExceededCount = 0;
+  spillReadBytes = 0;
+  spillReads = 0;
+  spillReadTimeUs = 0;
+  spillDeserializationTimeUs = 0;
 }
 
 std::string SpillStats::toString() const {
   return fmt::format(
-      "spillRuns[{}] spilledInputBytes[{}] spilledBytes[{}] spilledRows[{}] spilledPartitions[{}] spilledFiles[{}] spillFillTimeUs[{}] spillSortTime[{}] spillSerializationTime[{}] spillDiskWrites[{}] spillFlushTime[{}] spillWriteTime[{}] maxSpillExceededLimitCount[{}]",
+      "spillRuns[{}] spilledInputBytes[{}] spilledBytes[{}] spilledRows[{}] "
+      "spilledPartitions[{}] spilledFiles[{}] spillFillTimeUs[{}] "
+      "spillSortTime[{}] spillSerializationTime[{}] spillWrites[{}] "
+      "spillFlushTime[{}] spillWriteTime[{}] maxSpillExceededLimitCount[{}] "
+      "spillReadBytes[{}] spillReads[{}] spillReadTime[{}] "
+      "spillReadDeserializationTime[{}]",
       spillRuns,
       succinctBytes(spilledInputBytes),
       succinctBytes(spilledBytes),
@@ -207,10 +243,14 @@ std::string SpillStats::toString() const {
       succinctMicros(spillFillTimeUs),
       succinctMicros(spillSortTimeUs),
       succinctMicros(spillSerializationTimeUs),
-      spillDiskWrites,
+      spillWrites,
       succinctMicros(spillFlushTimeUs),
       succinctMicros(spillWriteTimeUs),
-      spillMaxLevelExceededCount);
+      spillMaxLevelExceededCount,
+      succinctBytes(spillReadBytes),
+      spillReads,
+      succinctMicros(spillReadTimeUs),
+      succinctMicros(spillDeserializationTimeUs));
 }
 
 void updateGlobalSpillRunStats(uint64_t numRuns) {
@@ -221,6 +261,9 @@ void updateGlobalSpillRunStats(uint64_t numRuns) {
 void updateGlobalSpillAppendStats(
     uint64_t numRows,
     uint64_t serializationTimeUs) {
+  RECORD_METRIC_VALUE(kMetricSpilledRowsCount, numRows);
+  RECORD_HISTOGRAM_METRIC_VALUE(
+      kMetricSpillSerializationTimeMs, serializationTimeUs / 1'000);
   auto statsLocked = localSpillStats().wlock();
   statsLocked->spilledRows += numRows;
   statsLocked->spillSerializationTimeUs += serializationTimeUs;
@@ -231,31 +274,47 @@ void incrementGlobalSpilledPartitionStats() {
 }
 
 void updateGlobalSpillFillTime(uint64_t timeUs) {
+  RECORD_HISTOGRAM_METRIC_VALUE(kMetricSpillFillTimeMs, timeUs / 1'000);
   localSpillStats().wlock()->spillFillTimeUs += timeUs;
 }
 
 void updateGlobalSpillSortTime(uint64_t timeUs) {
+  RECORD_HISTOGRAM_METRIC_VALUE(kMetricSpillSortTimeMs, timeUs / 1'000);
   localSpillStats().wlock()->spillSortTimeUs += timeUs;
 }
 
 void updateGlobalSpillWriteStats(
-    uint32_t numDiskWrites,
     uint64_t spilledBytes,
     uint64_t flushTimeUs,
     uint64_t writeTimeUs) {
+  RECORD_METRIC_VALUE(kMetricSpillWritesCount);
+  RECORD_METRIC_VALUE(kMetricSpilledBytes, spilledBytes);
+  RECORD_HISTOGRAM_METRIC_VALUE(kMetricSpillFlushTimeMs, flushTimeUs / 1'000);
+  RECORD_HISTOGRAM_METRIC_VALUE(kMetricSpillWriteTimeMs, writeTimeUs / 1'000);
   auto statsLocked = localSpillStats().wlock();
-  statsLocked->spillDiskWrites += numDiskWrites;
+  ++statsLocked->spillWrites;
   statsLocked->spilledBytes += spilledBytes;
   statsLocked->spillFlushTimeUs += flushTimeUs;
   statsLocked->spillWriteTimeUs += writeTimeUs;
 }
 
+void updateGlobalSpillReadStats(
+    uint64_t spillReadBytes,
+    uint64_t spillRadTimeUs) {
+  auto statsLocked = localSpillStats().wlock();
+  ++statsLocked->spillReads;
+  statsLocked->spillReadBytes += spillReadBytes;
+  statsLocked->spillReadTimeUs += spillRadTimeUs;
+}
+
 void updateGlobalSpillMemoryBytes(uint64_t spilledInputBytes) {
+  RECORD_METRIC_VALUE(kMetricSpilledInputBytes, spilledInputBytes);
   auto statsLocked = localSpillStats().wlock();
   statsLocked->spilledInputBytes += spilledInputBytes;
 }
 
 void incrementGlobalSpilledFiles() {
+  RECORD_METRIC_VALUE(kMetricSpilledFilesCount);
   ++localSpillStats().wlock()->spilledFiles;
 }
 
@@ -263,6 +322,10 @@ void updateGlobalMaxSpillLevelExceededCount(
     uint64_t maxSpillLevelExceededCount) {
   localSpillStats().wlock()->spillMaxLevelExceededCount +=
       maxSpillLevelExceededCount;
+}
+
+void updateGlobalSpillDeserializationTimeUs(uint64_t timeUs) {
+  localSpillStats().wlock()->spillDeserializationTimeUs += timeUs;
 }
 
 SpillStats globalSpillStats() {

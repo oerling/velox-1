@@ -15,63 +15,10 @@
  */
 #include "velox/exec/HashAggregation.h"
 #include <optional>
-#include "velox/exec/Aggregate.h"
-#include "velox/exec/OperatorUtils.h"
-#include "velox/exec/SortedAggregations.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
-
-namespace {
-std::vector<core::LambdaTypedExprPtr> extractLambdaInputs(
-    const core::AggregationNode::Aggregate& aggregate) {
-  std::vector<core::LambdaTypedExprPtr> lambdas;
-  for (const auto& arg : aggregate.call->inputs()) {
-    if (auto lambda =
-            std::dynamic_pointer_cast<const core::LambdaTypedExpr>(arg)) {
-      lambdas.push_back(lambda);
-    }
-  }
-
-  return lambdas;
-}
-
-void populateAggregateInputs(
-    const core::AggregationNode::Aggregate& aggregate,
-    const RowType& inputType,
-    AggregateInfo& info,
-    memory::MemoryPool* pool) {
-  auto& channels = info.inputs;
-  auto& constants = info.constantInputs;
-
-  for (const auto& arg : aggregate.call->inputs()) {
-    if (auto field =
-            dynamic_cast<const core::FieldAccessTypedExpr*>(arg.get())) {
-      channels.push_back(inputType.getChildIdx(field->name()));
-      constants.push_back(nullptr);
-    } else if (
-        auto constant =
-            dynamic_cast<const core::ConstantTypedExpr*>(arg.get())) {
-      channels.push_back(kConstantChannel);
-      constants.push_back(constant->toConstantVector(pool));
-    } else if (
-        auto lambda = dynamic_cast<const core::LambdaTypedExpr*>(arg.get())) {
-      for (const auto& name : lambda->signature()->names()) {
-        if (auto captureIndex = inputType.getChildIdxIfExists(name)) {
-          channels.push_back(captureIndex.value());
-          constants.push_back(nullptr);
-        }
-      }
-    } else {
-      VELOX_FAIL(
-          "Expression must be field access, constant, or lambda: {}",
-          arg->toString());
-    }
-  }
-}
-
-} // namespace
 
 HashAggregation::HashAggregation(
     int32_t operatorId,
@@ -106,8 +53,7 @@ void HashAggregation::initialize() {
 
   VELOX_CHECK(pool()->trackUsage());
 
-  auto inputType = aggregationNode_->sources()[0]->outputType();
-
+  const auto& inputType = aggregationNode_->sources()[0]->outputType();
   auto hashers =
       createVectorHashers(inputType, aggregationNode_->groupingKeys());
   auto numHashers = hashers.size();
@@ -119,64 +65,9 @@ void HashAggregation::initialize() {
     preGroupedChannels.push_back(channel);
   }
 
-  const auto numAggregates = aggregationNode_->aggregates().size();
-  std::vector<AggregateInfo> aggregateInfos;
-  aggregateInfos.reserve(numAggregates);
-
   std::shared_ptr<core::ExpressionEvaluator> expressionEvaluator;
-
-  for (auto i = 0; i < numAggregates; i++) {
-    const auto& aggregate = aggregationNode_->aggregates()[i];
-
-    AggregateInfo info;
-    info.distinct = aggregate.distinct;
-    populateAggregateInputs(aggregate, inputType->asRow(), info, pool());
-
-    info.intermediateType = Aggregate::intermediateType(
-        aggregate.call->name(), aggregate.rawInputTypes);
-
-    // Setup aggregation mask: convert the Variable Reference name to the
-    // channel (projection) index, if there is a mask.
-    if (const auto& mask = aggregate.mask) {
-      if (mask != nullptr) {
-        info.mask = inputType->asRow().getChildIdx(mask->name());
-      }
-    }
-
-    const auto& resultType = outputType_->childAt(numHashers + i);
-    info.function = Aggregate::create(
-        aggregate.call->name(),
-        isPartialOutput(aggregationNode_->step())
-            ? core::AggregationNode::Step::kPartial
-            : core::AggregationNode::Step::kSingle,
-        aggregate.rawInputTypes,
-        resultType,
-        operatorCtx_->driverCtx()->queryConfig());
-
-    auto lambdas = extractLambdaInputs(aggregate);
-    if (!lambdas.empty()) {
-      if (expressionEvaluator == nullptr) {
-        expressionEvaluator = std::make_shared<SimpleExpressionEvaluator>(
-            operatorCtx_->execCtx()->queryCtx(),
-            operatorCtx_->execCtx()->pool());
-      }
-      info.function->setLambdaExpressions(lambdas, expressionEvaluator);
-    }
-
-    info.output = numHashers + i;
-
-    // Sorting keys and orders.
-    const auto numSortingKeys = aggregate.sortingKeys.size();
-    VELOX_CHECK_EQ(numSortingKeys, aggregate.sortingOrders.size());
-    info.sortingOrders = aggregate.sortingOrders;
-
-    info.sortingKeys.reserve(numSortingKeys);
-    for (const auto& key : aggregate.sortingKeys) {
-      info.sortingKeys.push_back(exprToChannel(key.get(), inputType));
-    }
-
-    aggregateInfos.emplace_back(std::move(info));
-  }
+  std::vector<AggregateInfo> aggregateInfos = toAggregateInfo(
+      *aggregationNode_, *operatorCtx_, numHashers, expressionEvaluator);
 
   // Check that aggregate result type match the output type.
   for (auto i = 0; i < aggregateInfos.size(); i++) {
@@ -214,9 +105,9 @@ void HashAggregation::initialize() {
       aggregationNode_->globalGroupingSets(),
       groupIdChannel,
       spillConfig_.has_value() ? &spillConfig_.value() : nullptr,
-      &numSpillRuns_,
       &nonReclaimableSection_,
-      operatorCtx_.get());
+      operatorCtx_.get(),
+      &spillStats_);
 
   aggregationNode_.reset();
 }
@@ -260,10 +151,10 @@ void HashAggregation::addInput(RowVectorPtr input) {
     if (newDistincts_) {
       // Save input to use for output in getOutput().
       input_ = input;
-    } else if (abandonPartialEarly) {
-      // If no new distinct groups (meaning we don't have anything to output)
-      // and we are abandoning the partial aggregation, then we need to ensure
-      // we 'need input'. For that we need to reset the 'partial full' flag.
+    } else {
+      // If no new distinct groups (meaning we don't have anything to output),
+      // then we need to ensure we 'need input'. For that we need to reset
+      // the 'partial full' flag.
       partialFull_ = false;
     }
   }
@@ -289,23 +180,14 @@ void HashAggregation::updateRuntimeStats() {
     }
   }
 
-  runtimeStats["hashtable.capacity"] = RuntimeMetric(hashTableStats.capacity);
-  runtimeStats["hashtable.numRehashes"] =
+  runtimeStats[BaseHashTable::kCapacity] =
+      RuntimeMetric(hashTableStats.capacity);
+  runtimeStats[BaseHashTable::kNumRehashes] =
       RuntimeMetric(hashTableStats.numRehashes);
-  runtimeStats["hashtable.numDistinct"] =
+  runtimeStats[BaseHashTable::kNumDistinct] =
       RuntimeMetric(hashTableStats.numDistinct);
-  runtimeStats["hashtable.numTombstones"] =
+  runtimeStats[BaseHashTable::kNumTombstones] =
       RuntimeMetric(hashTableStats.numTombstones);
-}
-
-void HashAggregation::recordSpillStats() {
-  auto spillStatsOr = groupingSet_->spilledStats();
-  if (!spillStatsOr.has_value()) {
-    return;
-  }
-  VELOX_CHECK_EQ(spillStatsOr.value().spillRuns, 0);
-  spillStatsOr.value().spillRuns = numSpillRuns_;
-  Operator::recordSpillStats(spillStatsOr.value());
 }
 
 void HashAggregation::prepareOutput(vector_size_t size) {
@@ -501,7 +383,6 @@ void HashAggregation::noMoreInput() {
   updateEstimatedOutputRowSize();
   groupingSet_->noMoreInput();
   Operator::noMoreInput();
-  recordSpillStats();
   // Release the extra reserved memory right after processing all the inputs.
   pool()->release();
 }
@@ -542,9 +423,6 @@ void HashAggregation::reclaim(
     // Spill all the rows starting from the next output row pointed by
     // 'resultIterator_'.
     groupingSet_->spill(resultIterator_);
-    // NOTE: we will only spill once during the output processing stage so
-    // record stats here.
-    recordSpillStats();
   } else {
     // TODO: support fine-grain disk spilling based on 'targetBytes' after
     // having row container memory compaction support later.
@@ -561,10 +439,6 @@ void HashAggregation::close() {
 
   output_ = nullptr;
   groupingSet_.reset();
-}
-
-void HashAggregation::abort() {
-  close();
 }
 
 void HashAggregation::updateEstimatedOutputRowSize() {

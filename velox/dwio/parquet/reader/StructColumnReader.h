@@ -17,8 +17,7 @@
 #pragma once
 
 #include "velox/dwio/common/SelectiveStructColumnReader.h"
-
-#include <parquet/level_conversion.h>
+#include "velox/dwio/parquet/writer/arrow/LevelConversion.h"
 
 namespace facebook::velox::dwio::common {
 class BufferedInput;
@@ -53,12 +52,12 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
   // No-op in Parquet. All readers switch row groups at the same time, there is
   // no on-demand skipping to a new row group.
   void advanceFieldReader(
-      dwio::common::SelectiveColumnReader* FOLLY_NONNULL /*reader*/,
+      dwio::common::SelectiveColumnReader* /*reader*/,
       vector_size_t /*offset*/) override {}
 
   void setNullsFromRepDefs(PageReader& pageReader);
 
-  dwio::common::SelectiveColumnReader* FOLLY_NULLABLE childForRepDefs() const {
+  dwio::common::SelectiveColumnReader* childForRepDefs() const {
     return childForRepDefs_;
   }
 
@@ -85,7 +84,7 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
 
   // Leaf column reader used for getting nullability information for
   // 'this'. This is nullptr for the root of a table.
-  dwio::common::SelectiveColumnReader* FOLLY_NULLABLE childForRepDefs_{nullptr};
+  dwio::common::SelectiveColumnReader* childForRepDefs_{nullptr};
 
   // Mode for getting nulls from repdefs. kStructOverLists if 'this'
   // only has list children.
@@ -93,7 +92,7 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
 
   // The level information for extracting nulls for 'this' from the
   // repdefs in a leaf PageReader.
-  ::parquet::internal::LevelInfo levelInfo_;
+  arrow::LevelInfo levelInfo_;
 };
 
 } // namespace facebook::velox::parquet

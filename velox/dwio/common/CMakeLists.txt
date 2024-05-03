@@ -26,39 +26,41 @@ add_library(
   BitConcatenation.cpp
   BitPackDecoder.cpp
   BufferedInput.cpp
-  CachedBufferedInput.cpp
   CacheInputStream.cpp
-  DirectBufferedInput.cpp
-  DirectInputStream.cpp
+  CachedBufferedInput.cpp
+  ColumnLoader.cpp
   ColumnSelector.cpp
   DataBufferHolder.cpp
   DecoderUtil.cpp
+  DirectBufferedInput.cpp
   DirectDecoder.cpp
+  DirectInputStream.cpp
   DwioMetricsLog.cpp
   ExecutorBarrier.cpp
   FileSink.cpp
   FlatMapHelper.cpp
+  OnDemandUnitLoader.cpp
   InputStream.cpp
   IntDecoder.cpp
   MetadataFilter.cpp
   Options.cpp
   OutputStream.cpp
+  ParallelFor.cpp
   Range.cpp
   Reader.cpp
   ReaderFactory.cpp
   ScanSpec.cpp
-  ColumnLoader.cpp
+  SeekableInputStream.cpp
   SelectiveByteRleColumnReader.cpp
   SelectiveColumnReader.cpp
   SelectiveRepeatedColumnReader.cpp
   SelectiveStructColumnReader.cpp
-  SeekableInputStream.cpp
+  SortingWriter.cpp
+  SortingWriter.h
   TypeUtils.cpp
   TypeWithId.cpp
   Writer.cpp
-  WriterFactory.cpp
-  SortingWriter.cpp
-  SortingWriter.h)
+  WriterFactory.cpp)
 
 target_include_directories(velox_dwio_common PRIVATE ${Protobuf_INCLUDE_DIRS})
 
@@ -73,7 +75,6 @@ target_link_libraries(
   velox_exception
   velox_expression
   velox_memory
-  velox_exec
   Boost::regex
   Folly::folly
   glog::glog)

@@ -129,7 +129,11 @@ class ConstantVector final : public SimpleVector<T> {
     setInternalState();
   }
 
-  virtual ~ConstantVector() override = default;
+  virtual ~ConstantVector() override {
+    if (valueVector_) {
+      valueVector_->clearContainingLazyAndWrapped();
+    }
+  }
 
   bool isNullAt(vector_size_t /*idx*/) const override {
     VELOX_DCHECK(initialized_);
@@ -249,6 +253,10 @@ class ConstantVector final : public SimpleVector<T> {
     return valueVector_;
   }
 
+  VectorPtr& valueVector() override {
+    return valueVector_;
+  }
+
   // Index of the element of the base vector that determines the value of this
   // constant vector.
   vector_size_t index() const {
@@ -352,6 +360,27 @@ class ConstantVector final : public SimpleVector<T> {
     }
   }
 
+  VectorPtr copyPreserveEncodings() const override {
+    if (valueVector_) {
+      return std::make_shared<ConstantVector<T>>(
+          BaseVector::pool_,
+          BaseVector::length_,
+          index_,
+          valueVector_->copyPreserveEncodings(),
+          SimpleVector<T>::stats_);
+    }
+
+    return std::make_shared<ConstantVector<T>>(
+        BaseVector::pool_,
+        BaseVector::length_,
+        isNull_,
+        BaseVector::type_,
+        T(value_),
+        SimpleVector<T>::stats_,
+        BaseVector::representedByteCount_,
+        BaseVector::storageByteCount_);
+  }
+
  protected:
   std::string toSummaryString() const override {
     std::stringstream out;
@@ -372,6 +401,9 @@ class ConstantVector final : public SimpleVector<T> {
       // Do not load Lazy vector
       return;
     }
+    // Ensure any internal state in valueVector_ is initialized, and it points
+    // to the loaded vector underneath any lazy layers.
+    valueVector_ = BaseVector::loadedVectorShared(valueVector_);
 
     isNull_ = valueVector_->isNullAt(index_);
     BaseVector::distinctValueCount_ = isNull_ ? 0 : 1;

@@ -20,6 +20,7 @@
 #include <unordered_set>
 
 #include <folly/Executor.h>
+#include "velox/common/base/RandomUtil.h"
 #include "velox/common/base/SpillConfig.h"
 #include "velox/common/compression/Compression.h"
 #include "velox/common/io/Options.h"
@@ -30,6 +31,7 @@
 #include "velox/dwio/common/FlushPolicy.h"
 #include "velox/dwio/common/InputStream.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/dwio/common/UnitLoader.h"
 #include "velox/dwio/common/encryption/Encryption.h"
 
 namespace facebook::velox::dwio::common {
@@ -43,7 +45,7 @@ enum class FileFormat {
   TEXT = 5,
   JSON = 6,
   PARQUET = 7,
-  ALPHA = 8,
+  NIMBLE = 8,
   ORC = 9,
 };
 
@@ -77,6 +79,7 @@ class SerDeOptions {
   inline static const std::string kFieldDelim{"field.delim"};
   inline static const std::string kCollectionDelim{"collection.delim"};
   inline static const std::string kMapKeyDelim{"mapkey.delim"};
+  inline static const std::string kEscapeChar{"escape.delim"};
 
   explicit SerDeOptions(
       uint8_t fieldDelim = '\1',
@@ -93,7 +96,16 @@ class SerDeOptions {
 };
 
 struct TableParameter {
+  /// If present in the table parameters, the option is passed to the row reader
+  /// to instruct it to skip the number of rows from the current position. Used
+  /// to skip the column header row(s).
   static constexpr const char* kSkipHeaderLineCount = "skip.header.line.count";
+  /// If present in the table parameters, the option overrides the default value
+  /// of the SerDeOptions::nullString. It causes any field read from the file
+  /// (usually of the TEXT format) to be considered NULL if it is equal to this
+  /// string.
+  static constexpr const char* kSerializationNullFormat =
+      "serialization.null.format";
 };
 
 /**
@@ -117,6 +129,7 @@ class RowReaderOptions {
   // 'ioExecutor' enables parallelism when performing file system read
   // operations.
   std::shared_ptr<folly::Executor> decodingExecutor_;
+  size_t decodingParallelismFactor_{0};
   bool appendRowNumberColumn_ = false;
   // Function to populate metrics related to feature projection stats
   // in Koski. This gets fired in FlatMapColumnReader.
@@ -129,10 +142,14 @@ class RowReaderOptions {
   // Function to track how much time we spend waiting on IO before reading rows
   // (in dwrf row reader). todo: encapsulate this and keySelectionCallBack_ in a
   // struct
-  std::function<void(uint64_t)> blockedOnIoCallback_;
-  std::function<void(uint64_t)> decodingTimeMsCallback_;
+  std::function<void(std::chrono::high_resolution_clock::duration)>
+      blockedOnIoCallback_;
+  std::function<void(std::chrono::high_resolution_clock::duration)>
+      decodingTimeCallback_;
+  std::function<void(uint16_t)> stripeCountCallback_;
   bool eagerFirstStripeLoad = true;
   uint64_t skipRows_ = 0;
+  std::shared_ptr<UnitLoaderFactory> unitLoaderFactory_;
 
  public:
   RowReaderOptions() noexcept
@@ -308,6 +325,10 @@ class RowReaderOptions {
     decodingExecutor_ = executor;
   }
 
+  void setDecodingParallelismFactor(size_t factor) {
+    decodingParallelismFactor_ = factor;
+  }
+
   /*
    * Set to true, if you want to add a new column to the results containing the
    * row numbers.  These row numbers are relative to the beginning of file (0 as
@@ -336,32 +357,59 @@ class RowReaderOptions {
   }
 
   void setBlockedOnIoCallback(
-      std::function<void(int64_t)> blockedOnIoCallback) {
+      std::function<void(std::chrono::high_resolution_clock::duration)>
+          blockedOnIoCallback) {
     blockedOnIoCallback_ = std::move(blockedOnIoCallback);
   }
 
-  const std::function<void(int64_t)> getBlockedOnIoCallback() const {
+  const std::function<void(std::chrono::high_resolution_clock::duration)>
+  getBlockedOnIoCallback() const {
     return blockedOnIoCallback_;
   }
 
-  void setDecodingTimeMsCallback(std::function<void(int64_t)> decodingTimeMs) {
-    decodingTimeMsCallback_ = std::move(decodingTimeMs);
+  void setDecodingTimeCallback(
+      std::function<void(std::chrono::high_resolution_clock::duration)>
+          decodingTime) {
+    decodingTimeCallback_ = std::move(decodingTime);
   }
 
-  const std::function<void(int64_t)> getDecodingTimeMsCallback() const {
-    return decodingTimeMsCallback_;
+  std::function<void(std::chrono::high_resolution_clock::duration)>
+  getDecodingTimeCallback() const {
+    return decodingTimeCallback_;
+  }
+
+  void setStripeCountCallback(
+      std::function<void(uint16_t)> stripeCountCallback) {
+    stripeCountCallback_ = std::move(stripeCountCallback);
+  }
+
+  std::function<void(uint16_t)> getStripeCountCallback() const {
+    return stripeCountCallback_;
   }
 
   void setSkipRows(uint64_t skipRows) {
     skipRows_ = skipRows;
   }
 
-  bool getSkipRows() const {
+  uint64_t getSkipRows() const {
     return skipRows_;
+  }
+
+  void setUnitLoaderFactory(
+      std::shared_ptr<UnitLoaderFactory> unitLoaderFactory) {
+    unitLoaderFactory_ = std::move(unitLoaderFactory);
+  }
+
+  const std::shared_ptr<UnitLoaderFactory>& getUnitLoaderFactory() const {
+    return unitLoaderFactory_;
   }
 
   const std::shared_ptr<folly::Executor>& getDecodingExecutor() const {
     return decodingExecutor_;
+  }
+
+  size_t getDecodingParallelismFactor() const {
+    return decodingParallelismFactor_;
   }
 };
 
@@ -375,14 +423,15 @@ class ReaderOptions : public io::ReaderOptions {
   RowTypePtr fileSchema;
   SerDeOptions serDeOptions;
   std::shared_ptr<encryption::DecrypterFactory> decrypterFactory_;
-  uint64_t directorySizeGuess{kDefaultDirectorySizeGuess};
+  uint64_t footerEstimatedSize{kDefaultFooterEstimatedSize};
   uint64_t filePreloadThreshold{kDefaultFilePreloadThreshold};
   bool fileColumnNamesReadAsLowerCase{false};
   bool useColumnNamesForColumnMapping_{false};
   std::shared_ptr<folly::Executor> ioExecutor_;
+  std::shared_ptr<random::RandomSkipTracker> randomSkip_;
 
  public:
-  static constexpr uint64_t kDefaultDirectorySizeGuess = 1024 * 1024; // 1MB
+  static constexpr uint64_t kDefaultFooterEstimatedSize = 1024 * 1024; // 1MB
   static constexpr uint64_t kDefaultFilePreloadThreshold =
       1024 * 1024 * 8; // 8MB
 
@@ -403,7 +452,7 @@ class ReaderOptions : public io::ReaderOptions {
     }
     serDeOptions = other.serDeOptions;
     decrypterFactory_ = other.decrypterFactory_;
-    directorySizeGuess = other.directorySizeGuess;
+    footerEstimatedSize = other.footerEstimatedSize;
     filePreloadThreshold = other.filePreloadThreshold;
     fileColumnNamesReadAsLowerCase = other.fileColumnNamesReadAsLowerCase;
     useColumnNamesForColumnMapping_ = other.useColumnNamesForColumnMapping_;
@@ -417,7 +466,7 @@ class ReaderOptions : public io::ReaderOptions {
         fileSchema(other.fileSchema),
         serDeOptions(other.serDeOptions),
         decrypterFactory_(other.decrypterFactory_),
-        directorySizeGuess(other.directorySizeGuess),
+        footerEstimatedSize(other.footerEstimatedSize),
         filePreloadThreshold(other.filePreloadThreshold),
         fileColumnNamesReadAsLowerCase(other.fileColumnNamesReadAsLowerCase),
         useColumnNamesForColumnMapping_(other.useColumnNamesForColumnMapping_) {
@@ -465,8 +514,8 @@ class ReaderOptions : public io::ReaderOptions {
     return *this;
   }
 
-  ReaderOptions& setDirectorySizeGuess(uint64_t size) {
-    directorySizeGuess = size;
+  ReaderOptions& setFooterEstimatedSize(uint64_t size) {
+    footerEstimatedSize = size;
     return *this;
   }
 
@@ -525,8 +574,8 @@ class ReaderOptions : public io::ReaderOptions {
     return decrypterFactory_;
   }
 
-  uint64_t getDirectorySizeGuess() const {
-    return directorySizeGuess;
+  uint64_t getFooterEstimatedSize() const {
+    return footerEstimatedSize;
   }
 
   uint64_t getFilePreloadThreshold() const {
@@ -544,6 +593,14 @@ class ReaderOptions : public io::ReaderOptions {
   bool isUseColumnNamesForColumnMapping() const {
     return useColumnNamesForColumnMapping_;
   }
+
+  const std::shared_ptr<random::RandomSkipTracker>& randomSkip() const {
+    return randomSkip_;
+  }
+
+  void setRandomSkip(std::shared_ptr<random::RandomSkipTracker> randomSkip) {
+    randomSkip_ = randomSkip;
+  }
 };
 
 struct WriterOptions {
@@ -555,6 +612,7 @@ struct WriterOptions {
   std::optional<uint64_t> maxStripeSize{std::nullopt};
   std::optional<uint64_t> maxDictionaryMemory{std::nullopt};
   std::map<std::string, std::string> serdeParameters;
+  std::optional<uint8_t> parquetWriteTimestampUnit;
 };
 
 } // namespace facebook::velox::dwio::common

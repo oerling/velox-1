@@ -23,6 +23,7 @@ add_library(
   Hash.cpp
   In.cpp
   LeastGreatest.cpp
+  MakeTimestamp.cpp
   Map.cpp
   RegexFunctions.cpp
   Register.cpp
@@ -62,6 +63,7 @@ endif()
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
   add_subdirectory(coverage)
+  add_subdirectory(fuzzer)
 endif()
 
 if(${VELOX_ENABLE_BENCHMARKS})

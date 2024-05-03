@@ -18,8 +18,10 @@
 
 #include <string>
 #include "velox/common/base/CheckedArithmetic.h"
+#include "velox/common/base/CountBits.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Nulls.h"
+#include "velox/common/base/Status.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox {
@@ -98,7 +100,7 @@ class DecimalUtil {
   }
 
   /// Helper function to convert a decimal value to string.
-  static std::string toString(const int128_t value, const TypePtr& type);
+  static std::string toString(int128_t value, const TypePtr& type);
 
   template <typename T>
   inline static void fillDecimals(
@@ -146,12 +148,13 @@ class DecimalUtil {
   }
 
   template <typename TInput, typename TOutput>
-  inline static std::optional<TOutput> rescaleWithRoundUp(
-      const TInput inputValue,
-      const int fromPrecision,
-      const int fromScale,
-      const int toPrecision,
-      const int toScale) {
+  inline static Status rescaleWithRoundUp(
+      TInput inputValue,
+      int fromPrecision,
+      int fromScale,
+      int toPrecision,
+      int toScale,
+      TOutput& output) {
     int128_t rescaledValue = inputValue;
     auto scaleDifference = toScale - fromScale;
     bool isOverflow = false;
@@ -173,20 +176,19 @@ class DecimalUtil {
     }
     // Check overflow.
     if (!valueInPrecisionRange(rescaledValue, toPrecision) || isOverflow) {
-      VELOX_USER_FAIL(
+      return Status::UserError(
           "Cannot cast DECIMAL '{}' to DECIMAL({}, {})",
           DecimalUtil::toString(inputValue, DECIMAL(fromPrecision, fromScale)),
           toPrecision,
           toScale);
     }
-    return static_cast<TOutput>(rescaledValue);
+    output = static_cast<TOutput>(rescaledValue);
+    return Status::OK();
   }
 
   template <typename TInput, typename TOutput>
-  inline static std::optional<TOutput> rescaleInt(
-      const TInput inputValue,
-      const int toPrecision,
-      const int toScale) {
+  inline static std::optional<TOutput>
+  rescaleInt(TInput inputValue, int toPrecision, int toScale) {
     int128_t rescaledValue = static_cast<int128_t>(inputValue);
     bool isOverflow = __builtin_mul_overflow(
         rescaledValue, DecimalUtil::kPowersOfTen[toScale], &rescaledValue);
@@ -202,17 +204,81 @@ class DecimalUtil {
     return static_cast<TOutput>(rescaledValue);
   }
 
+  /// Rescales a floating point value to decimal value of given precision and
+  /// scale. Returns error status if fails.
+  /// @tparam TInput Either float or double.
+  /// @tparam TOutput Either int64_t or int128_t.
+  template <typename TInput, typename TOutput>
+  inline static Status rescaleFloatingPoint(
+      TInput value,
+      int precision,
+      int scale,
+      TOutput& output) {
+    if (!std::isfinite(value)) {
+      return Status::UserError("The input value should be finite.");
+    }
+    if (value <= std::numeric_limits<TOutput>::min() ||
+        value >= std::numeric_limits<TOutput>::max()) {
+      return Status::UserError("Result overflows.");
+    }
+
+    uint8_t digits;
+    if constexpr (std::is_same_v<TInput, float>) {
+      // A float provides between 6 and 7 decimal digits, so at least 6 digits
+      // are precise.
+      digits = 6;
+    } else {
+      // A double provides from 15 to 17 decimal digits, so at least 15 digits
+      // are precise.
+      digits = 15;
+    }
+
+    // Calculate the precise fractional digits.
+    const auto integralValue = static_cast<uint128_t>(std::abs(value));
+    const auto integralDigits =
+        integralValue == 0 ? 0 : countDigits(integralValue);
+    const auto fractionDigits = std::max(digits - integralDigits, 0);
+
+    // Scales up the input value with all the precise fractional digits kept.
+    // Convert value as long double type because 1) double * int128_t returns
+    // int128_t and fractional digits are lost. 2) we could also convert the
+    // int128_t value as double to avoid 'double * int128_t', but double
+    // multiplication gives inaccurate result on large numbers. For example,
+    // -3333030000000000000 * 1e3 = -3333030000000000065536. No need to
+    // consider the result becoming infinite as DOUBLE_MAX * 10^38 <
+    // LONG_DOUBLE_MAX.
+    long double scaledValue = std::round(
+        (long double)value * DecimalUtil::kPowersOfTen[fractionDigits]);
+    if (scale > fractionDigits) {
+      scaledValue *= DecimalUtil::kPowersOfTen[scale - fractionDigits];
+    } else {
+      scaledValue /= DecimalUtil::kPowersOfTen[fractionDigits - scale];
+    }
+
+    const auto result = folly::tryTo<TOutput>(std::round(scaledValue));
+    if (result.hasError()) {
+      return Status::UserError("Result overflows.");
+    }
+    const TOutput rescaledValue = result.value();
+    if (!valueInPrecisionRange<TOutput>(rescaledValue, precision)) {
+      return Status::UserError(
+          "Result cannot fit in the given precision {}.", precision);
+    }
+    output = rescaledValue;
+    return Status::OK();
+  }
+
   template <typename R, typename A, typename B>
   inline static R divideWithRoundUp(
       R& r,
-      const A& a,
-      const B& b,
+      A a,
+      B b,
       bool noRoundUp,
       uint8_t aRescale,
       uint8_t /*bRescale*/) {
     VELOX_USER_CHECK_NE(b, 0, "Division by zero");
     int resultSign = 1;
-    A unsignedDividendRescaled(a);
+    R unsignedDividendRescaled(a);
     if (a < 0) {
       resultSign = -1;
       unsignedDividendRescaled *= -1;
@@ -232,7 +298,7 @@ class DecimalUtil {
       ++quotient;
     }
     r = quotient * resultSign;
-    return remainder;
+    return remainder * resultSign;
   }
 
   /*
@@ -311,38 +377,9 @@ class DecimalUtil {
     return sum;
   }
 
-  /*
-   * Computes average. If there is an overflow value uses the following
-   * expression to compute the average.
-   *                       ---                                         ---
-   *                      |    overflow_multiplier          sum          |
-   * average = overflow * |     -----------------  +  ---------------    |
-   *                      |         count              count * overflow  |
-   *                       ---                                         ---
-   */
-  inline static void computeAverage(
-      int128_t& avg,
-      const int128_t& sum,
-      const int64_t count,
-      const int64_t overflow) {
-    if (overflow == 0) {
-      divideWithRoundUp<int128_t, int128_t, int64_t>(
-          avg, sum, count, false, 0, 0);
-    } else {
-      __uint128_t sumA{0};
-      auto remainderA =
-          DecimalUtil::divideWithRoundUp<__uint128_t, __uint128_t, int64_t>(
-              sumA, kOverflowMultiplier, count, true, 0, 0);
-      double totalRemainder = (double)remainderA / count;
-      __uint128_t sumB{0};
-      auto remainderB =
-          DecimalUtil::divideWithRoundUp<__uint128_t, __int128_t, int64_t>(
-              sumB, sum, count * overflow, true, 0, 0);
-      totalRemainder += (double)remainderB / (count * overflow);
-      DecimalUtil::addWithOverflow(avg, sumA, sumB);
-      avg = avg * overflow + (int)(totalRemainder * overflow);
-    }
-  }
+  /// avg = (sum + overflow * kOverflowMultiplier) / count
+  static void
+  computeAverage(int128_t& avg, int128_t sum, int64_t count, int64_t overflow);
 
   /// Origins from java side BigInteger#bitLength.
   ///

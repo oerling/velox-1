@@ -20,14 +20,15 @@
 namespace facebook::velox::serializer {
 
 void CompactRowVectorSerde::estimateSerializedSize(
-    VectorPtr /* vector */,
+    const BaseVector* /* vector */,
     const folly::Range<const IndexRange*>& /* ranges */,
-    vector_size_t** /* sizes */) {
+    vector_size_t** /* sizes */,
+    Scratch& /*scratch*/) {
   VELOX_UNSUPPORTED();
 }
 
 namespace {
-class CompactRowVectorSerializer : public VectorSerializer {
+class CompactRowVectorSerializer : public IterativeVectorSerializer {
  public:
   using TRowSize = uint32_t;
 
@@ -36,7 +37,8 @@ class CompactRowVectorSerializer : public VectorSerializer {
 
   void append(
       const RowVectorPtr& vector,
-      const folly::Range<const IndexRange*>& ranges) override {
+      const folly::Range<const IndexRange*>& ranges,
+      Scratch& scratch) override {
     size_t totalSize = 0;
     row::CompactRow row(vector);
     if (auto fixedRowSize =
@@ -90,7 +92,7 @@ class CompactRowVectorSerializer : public VectorSerializer {
   }
 
  private:
-  memory::MemoryPool* const FOLLY_NONNULL pool_;
+  memory::MemoryPool* const pool_;
   std::vector<BufferPtr> buffers_;
 };
 
@@ -118,7 +120,8 @@ std::string concatenatePartialRow(
 
 } // namespace
 
-std::unique_ptr<VectorSerializer> CompactRowVectorSerde::createSerializer(
+std::unique_ptr<IterativeVectorSerializer>
+CompactRowVectorSerde::createIterativeSerializer(
     RowTypePtr /* type */,
     int32_t /* numRows */,
     StreamArena* streamArena,

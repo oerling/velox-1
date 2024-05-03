@@ -46,11 +46,11 @@ class FlatVector final : public SimpleVector<T> {
   // Minimum size of a string buffer. 32 KB value is chosen to ensure that a
   // single buffer is sufficient for a "typical" vector: 1K rows, medium size
   // strings.
-  static constexpr vector_size_t kInitialStringSize =
+  static constexpr size_t kInitialStringSize =
       (32 * 1024) - sizeof(AlignedBuffer);
   /// Maximum size of a string buffer to re-use (see
   /// BaseVector::prepareForReuse): 1MB.
-  static constexpr vector_size_t kMaxStringSizeForReuse =
+  static constexpr size_t kMaxStringSizeForReuse =
       (1 << 20) - sizeof(AlignedBuffer);
 
   FlatVector(
@@ -86,6 +86,13 @@ class FlatVector final : public SimpleVector<T> {
         values_ || BaseVector::nulls_,
         "FlatVector needs to either have values or nulls");
     if (!values_) {
+      // Make sure that all rows are null.
+      auto cnt =
+          bits::countNonNulls(BaseVector::rawNulls_, 0, BaseVector::length_);
+      VELOX_CHECK_EQ(
+          0,
+          cnt,
+          "FlatVector with null values buffer must have all rows set to null")
       return;
     }
     auto byteSize = BaseVector::byteSize<T>(BaseVector::length_);
@@ -228,8 +235,9 @@ class FlatVector final : public SimpleVector<T> {
   Range<T> asRange() const;
 
   void set(vector_size_t idx, T value) {
-    VELOX_DCHECK(idx < BaseVector::length_);
-    VELOX_DCHECK(!values_->isView());
+    VELOX_DCHECK_LT(idx, BaseVector::length_);
+    ensureValues();
+    VELOX_DCHECK(!values_->isView())
     rawValues_[idx] = value;
     if (BaseVector::nulls_) {
       BaseVector::setNull(idx, false);
@@ -265,6 +273,22 @@ class FlatVector final : public SimpleVector<T> {
   void copyRanges(
       const BaseVector* source,
       const folly::Range<const BaseVector::CopyRange*>& ranges) override;
+
+  VectorPtr copyPreserveEncodings() const override {
+    return std::make_shared<FlatVector<T>>(
+        BaseVector::pool_,
+        BaseVector::type_,
+        AlignedBuffer::copy(BaseVector::pool_, BaseVector::nulls_),
+        BaseVector::length_,
+        AlignedBuffer::copy(BaseVector::pool_, values_),
+        std::vector<BufferPtr>(stringBuffers_),
+        SimpleVector<T>::stats_,
+        BaseVector::distinctValueCount_,
+        BaseVector::nullCount_,
+        SimpleVector<T>::isSorted_,
+        BaseVector::representedByteCount_,
+        BaseVector::storageByteCount_);
+  }
 
   void resize(vector_size_t newSize, bool setNotNull = true) override;
 
@@ -446,7 +470,7 @@ class FlatVector final : public SimpleVector<T> {
   ///
   /// If allocates new buffer and 'exactSize' is true, allocates 'size' bytes.
   /// Otherwise, allocates at least kInitialStringSize bytes.
-  Buffer* getBufferWithSpace(int32_t /*size*/, bool exactSize = false) {
+  Buffer* getBufferWithSpace(size_t /*size*/, bool exactSize = false) {
     return nullptr;
   }
 
@@ -462,7 +486,7 @@ class FlatVector final : public SimpleVector<T> {
   ///
   /// If allocates new buffer and 'exactSize' is true, allocates 'size' bytes.
   /// Otherwise, allocates at least kInitialStringSize bytes.
-  char* getRawStringBufferWithSpace(int32_t /*size*/, bool exactSize = false) {
+  char* getRawStringBufferWithSpace(size_t /*size*/, bool exactSize = false) {
     return nullptr;
   }
 
@@ -487,7 +511,22 @@ class FlatVector final : public SimpleVector<T> {
     }
   }
 
+  void unsafeSetSize(vector_size_t newSize) {
+    this->length_ = newSize;
+  }
+
+  void unsafeSetValues(BufferPtr values) {
+    values_ = std::move(values);
+    rawValues_ = values_ ? const_cast<T*>(values_->as<T>()) : nullptr;
+  }
+
  private:
+  void ensureValues() {
+    if (rawValues_ == nullptr) {
+      mutableRawValues();
+    }
+  }
+
   void copyValuesAndNulls(
       const BaseVector* source,
       const SelectivityVector& rows,
@@ -568,13 +607,11 @@ void FlatVector<StringView>::validate(
     const VectorValidateOptions& options) const;
 
 template <>
-Buffer* FlatVector<StringView>::getBufferWithSpace(
-    int32_t size,
-    bool exactSize);
+Buffer* FlatVector<StringView>::getBufferWithSpace(size_t size, bool exactSize);
 
 template <>
 char* FlatVector<StringView>::getRawStringBufferWithSpace(
-    int32_t size,
+    size_t size,
     bool exactSize);
 
 template <>

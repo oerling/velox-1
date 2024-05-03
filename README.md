@@ -70,23 +70,24 @@ Blog posts are available [here](https://velox-lib.io/blog).
 
 ## Getting Started
 
-We provide scripts to help developers setup and install Velox dependencies.
-
 ### Get the Velox Source
 ```
-git clone --recursive https://github.com/facebookincubator/velox.git
+git clone https://github.com/facebookincubator/velox.git
 cd velox
-# if you are updating an existing checkout
-git submodule sync --recursive
-git submodule update --init --recursive
 ```
+Once Velox is checked out, the first step is to install the dependencies.
+Details on the dependencies and how Velox manages some of them for you
+[can be found here](CMake/resolve_dependency_modules/README.md).
+
+Velox also provides the following scripts to help developers setup and install Velox
+dependencies for a given platform.
 
 ### Setting up on macOS
 
-Once you have checked out Velox, on an Intel MacOS machine you can setup and then build like so:
+On an Intel MacOS machine you can setup and then build like so:
 
 ```shell
-$ ./scripts/setup-macos.sh 
+$ ./scripts/setup-macos.sh
 $ make
 ```
 
@@ -113,7 +114,7 @@ $ CPU_TARGET="aarch64" make
 Once you have checked out Velox, you can setup and build like so:
 
 ```shell
-$ ./scripts/setup-ubuntu.sh 
+$ ./scripts/setup-ubuntu.sh
 $ make
 ```
 
@@ -124,14 +125,14 @@ Run `make` in the root directory to compile the sources. For development, use
 an optimized version.  Use `make unittest` to build and run tests.
 
 Note that,
-* Velox requires C++17 , thus minimum supported compiler is GCC 5.0 and Clang 5.0.
+* Velox requires a compiler at the minimum GCC 9.0 or Clang 14.0.
 * Velox requires the CPU to support instruction sets:
   * bmi
   * bmi2
   * f16c
 * Velox tries to use the following (or equivalent) instruction sets where available:
   * On Intel CPUs
-    * avx  
+    * avx
     * avx2
     * sse
   * On ARM
@@ -163,7 +164,7 @@ contribute to the project.
 ## Community
 
 The main communication channel with the Velox OSS community is through the
-[the Velox-OSS Slack workspace](http://velox-oss.slack.com). 
+[the Velox-OSS Slack workspace](http://velox-oss.slack.com).
 Please reach out to **velox@meta.com** to get access to Velox Slack Channel.
 
 

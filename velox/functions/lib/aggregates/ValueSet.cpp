@@ -22,14 +22,15 @@ void ValueSet::write(
     const BaseVector& vector,
     vector_size_t index,
     HashStringAllocator::Position& position) const {
-  ByteStream stream(allocator_);
+  ByteOutputStream stream(allocator_);
   if (position.header == nullptr) {
     position = allocator_->newWrite(stream);
   } else {
     allocator_->extendWrite(position, stream);
   }
 
-  exec::ContainerRowSerde::serialize(vector, index, stream);
+  static const exec::ContainerRowSerdeOptions options{};
+  exec::ContainerRowSerde::serialize(vector, index, stream, options);
   allocator_->finishWrite(stream, 0);
 }
 

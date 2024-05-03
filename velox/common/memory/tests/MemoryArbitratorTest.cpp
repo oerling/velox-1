@@ -22,7 +22,7 @@
 #include "velox/common/memory/MallocAllocator.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryArbitrator.h"
-#include "velox/exec/SharedArbitrator.h"
+#include "velox/common/memory/SharedArbitrator.h"
 
 using namespace ::testing;
 
@@ -32,7 +32,20 @@ constexpr int64_t GB = 1024L * MB;
 
 namespace facebook::velox::memory {
 
-class MemoryArbitrationTest : public testing::Test {};
+class MemoryArbitrationTest : public testing::Test {
+ protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
+  void SetUp() {
+    SharedArbitrator::registerFactory();
+  }
+
+  void TearDown() {
+    SharedArbitrator::unregisterFactory();
+  }
+};
 
 TEST_F(MemoryArbitrationTest, stats) {
   MemoryArbitrator::Stats stats;
@@ -43,6 +56,8 @@ TEST_F(MemoryArbitrationTest, stats) {
   stats.arbitrationTimeUs = 1020;
   stats.numShrunkBytes = 100'000'000;
   stats.numReclaimedBytes = 10'000;
+  stats.freeReservedCapacityBytes = 1000;
+  stats.freeCapacityBytes = 2000;
   stats.reclaimTimeUs = 1'000;
   stats.numNonReclaimableAttempts = 5;
   ASSERT_EQ(
@@ -51,7 +66,14 @@ TEST_F(MemoryArbitrationTest, stats) {
       "numNonReclaimableAttempts 5 numReserves 0 numReleases 0 "
       "queueTime 230.00ms arbitrationTime 1.02ms reclaimTime 1.00ms "
       "shrunkMemory 95.37MB reclaimedMemory 9.77KB "
-      "maxCapacity 0B freeCapacity 0B]");
+      "maxCapacity 0B freeCapacity 1.95KB freeReservedCapacity 1000B]");
+  ASSERT_EQ(
+      fmt::format("{}", stats),
+      "STATS[numRequests 2 numSucceeded 0 numAborted 3 numFailures 100 "
+      "numNonReclaimableAttempts 5 numReserves 0 numReleases 0 "
+      "queueTime 230.00ms arbitrationTime 1.02ms reclaimTime 1.00ms "
+      "shrunkMemory 95.37MB reclaimedMemory 9.77KB "
+      "maxCapacity 0B freeCapacity 1.95KB freeReservedCapacity 1000B]");
 }
 
 TEST_F(MemoryArbitrationTest, create) {
@@ -62,7 +84,8 @@ TEST_F(MemoryArbitrationTest, create) {
   };
   for (const auto& kind : kinds) {
     MemoryArbitrator::Config config;
-    config.capacity = 1 * GB;
+    config.capacity = 8 * GB;
+    config.reservedCapacity = 4 * GB;
     config.kind = kind;
     if (kind.empty()) {
       auto arbitrator = MemoryArbitrator::create(config);
@@ -79,7 +102,8 @@ TEST_F(MemoryArbitrationTest, create) {
 
 TEST_F(MemoryArbitrationTest, createWithDefaultConf) {
   MemoryArbitrator::Config config;
-  config.capacity = 1 * GB;
+  config.capacity = 8 * GB;
+  config.reservedCapacity = 4 * GB;
   const auto& arbitrator = MemoryArbitrator::create(config);
   ASSERT_EQ(arbitrator->kind(), "NOOP");
 }
@@ -87,11 +111,11 @@ TEST_F(MemoryArbitrationTest, createWithDefaultConf) {
 TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
   {
     // Reserved memory is not enforced when no arbitrator is provided.
-    auto allocator = std::make_shared<MallocAllocator>(8L << 20);
-    MemoryManager manager{
-        {.capacity = (int64_t)allocator->capacity(),
-         .queryMemoryCapacity = 4L << 20,
-         .allocator = allocator.get()}};
+    MemoryManagerOptions options;
+    options.allocatorCapacity = 8L << 20;
+    options.arbitratorCapacity = 4L << 20;
+    options.arbitratorReservedCapacity = 2L << 20;
+    MemoryManager manager(options);
     auto rootPool = manager.addRootPool("root-1", 8L << 20);
     auto leafPool = rootPool->addLeafChild("leaf-1.0");
     void* buffer;
@@ -102,34 +126,198 @@ TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
   }
   {
     // Reserved memory is enforced when SharedMemoryArbitrator is used.
-    exec::SharedArbitrator::registerFactory();
-    auto allocator = std::make_shared<MallocAllocator>(8L << 20);
-    MemoryManager manager{
-        {.capacity = (int64_t)allocator->capacity(),
-         .queryMemoryCapacity = 4L << 20,
-         .allocator = allocator.get(),
-         .arbitratorKind = "SHARED"}};
+    MemoryManagerOptions options;
+    options.allocatorCapacity = 16L << 20;
+    options.arbitratorCapacity = 6L << 20;
+    options.arbitratorReservedCapacity = 2L << 20;
+    options.arbitratorKind = "SHARED";
+    options.memoryPoolInitCapacity = 1 << 20;
+    options.memoryPoolReservedCapacity = 1 << 20;
+    MemoryManager manager(options);
     auto rootPool =
         manager.addRootPool("root-1", 8L << 20, MemoryReclaimer::create());
+    ASSERT_EQ(rootPool->capacity(), 1 << 20);
+    ASSERT_EQ(
+        manager.arbitrator()->growCapacity(rootPool.get(), 1 << 20), 1 << 20);
+    ASSERT_EQ(
+        manager.arbitrator()->growCapacity(rootPool.get(), 6 << 20), 2 << 20);
+    ASSERT_EQ(manager.arbitrator()->stats().freeCapacityBytes, 2 << 20);
+    ASSERT_EQ(manager.arbitrator()->stats().freeReservedCapacityBytes, 2 << 20);
+
     auto leafPool = rootPool->addLeafChild("leaf-1.0");
     void* buffer;
     VELOX_ASSERT_THROW(
         buffer = leafPool->allocate(7L << 20),
         "Exceeded memory pool cap of 4.00MB");
     ASSERT_NO_THROW(buffer = leafPool->allocate(4L << 20));
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(rootPool.get(), 0), 0);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 0), 0);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 1), 0);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(rootPool.get(), 1), 0);
     leafPool->free(buffer, 4L << 20);
-    exec::SharedArbitrator::unregisterFactory();
+    ASSERT_EQ(
+        manager.arbitrator()->shrinkCapacity(leafPool.get(), 1 << 20), 1 << 20);
+    ASSERT_EQ(
+        manager.arbitrator()->shrinkCapacity(rootPool.get(), 1 << 20), 1 << 20);
+    ASSERT_EQ(rootPool->capacity(), 2 << 20);
+    ASSERT_EQ(leafPool->capacity(), 2 << 20);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 0), 2 << 20);
+    ASSERT_EQ(rootPool->capacity(), 0);
+    ASSERT_EQ(leafPool->capacity(), 0);
   }
+}
+
+TEST_F(MemoryArbitrationTest, memoryPoolCapacityOnCreation) {
+  struct {
+    uint64_t freeNonReservedCapacity;
+    uint64_t freeReservedCapacity;
+    uint64_t poolMaxCapacity;
+    uint64_t poolInitCapacity;
+    uint64_t poolReservedCapacity;
+    uint64_t expectedPoolCapacityOnCreation;
+
+    std::string debugString() const {
+      return fmt::format(
+          "freeNonReservedCapacity {} freeReservedCapacity {} poolMaxCapacity {} poolInitCapacity {} poolReservedCapacity {} expectedPoolCapacityOnCreation {}",
+          freeNonReservedCapacity,
+          freeReservedCapacity,
+          poolMaxCapacity,
+          poolInitCapacity,
+          poolReservedCapacity,
+          expectedPoolCapacityOnCreation);
+    }
+  } testSettings[] = {
+      {1 << 20, 3 << 20, kMaxMemory, 3 << 20, 1 << 20, 1 << 20},
+      {1 << 20, 3 << 20, kMaxMemory, 1 << 20, 1 << 20, 1 << 20},
+      {1 << 20, 3 << 20, kMaxMemory, 8 << 20, 1 << 20, 1 << 20},
+      {0 << 20, 3 << 20, kMaxMemory, 1 << 20, 1 << 20, 1 << 20},
+      {0 << 20, 3 << 20, kMaxMemory, 2 << 20, 1 << 20, 1 << 20},
+      {0 << 20, 3 << 20, kMaxMemory, 8 << 20, 1 << 20, 1 << 20},
+      {0 << 20, 3 << 20, kMaxMemory, 8 << 20, 0 << 20, 0},
+      {1 << 20, 3 << 20, kMaxMemory, 3 << 20, 2 << 20, 2 << 20},
+      {1 << 20, 3 << 20, kMaxMemory, 3 << 20, 3 << 20, 3 << 20},
+      {1 << 20, 3 << 20, kMaxMemory, 3 << 20, 4 << 20, 4 << 20},
+      {1 << 20, 3 << 20, kMaxMemory, 3 << 20, 5 << 20, 4 << 20},
+      {1 << 20, 3 << 20, 3 << 20, 3 << 20, 5 << 20, 4 << 20},
+      {1 << 20, 3 << 20, 3 << 20, 3 << 20, 1 << 20, 1 << 20},
+      {1 << 20, 3 << 20, 3 << 20, 3 << 20, 2 << 20, 2 << 20},
+      {1 << 20, 3 << 20, 3 << 20, 1 << 20, 2 << 20, 2 << 20}};
+
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+
+    MemoryManagerOptions options;
+    options.arbitratorKind = "SHARED";
+    options.arbitratorReservedCapacity = testData.freeReservedCapacity;
+    options.arbitratorCapacity =
+        testData.freeReservedCapacity + testData.freeNonReservedCapacity;
+    options.allocatorCapacity = options.arbitratorCapacity;
+    options.memoryPoolInitCapacity = testData.poolInitCapacity;
+    options.memoryPoolReservedCapacity = testData.poolReservedCapacity;
+
+    MemoryManager manager(options);
+    auto rootPool = manager.addRootPool("root-1", kMaxMemory);
+    ASSERT_EQ(rootPool->capacity(), testData.expectedPoolCapacityOnCreation);
+  }
+}
+
+TEST_F(MemoryArbitrationTest, reservedCapacityFreeByPoolRelease) {
+  MemoryManagerOptions options;
+  options.arbitratorKind = "SHARED";
+  options.arbitratorReservedCapacity = 4 << 20;
+  options.arbitratorCapacity = 9 << 20;
+  options.allocatorCapacity = options.arbitratorCapacity;
+  options.memoryPoolInitCapacity = 3 << 20;
+  options.memoryPoolReservedCapacity = 1 << 20;
+
+  MemoryManager manager(options);
+  auto* arbitrator = manager.arbitrator();
+  auto pool1 = manager.addRootPool("root-1", kMaxMemory);
+  ASSERT_EQ(pool1->capacity(), 3 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 4 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 6 << 20);
+
+  auto pool2 = manager.addRootPool("root-2", kMaxMemory);
+  ASSERT_EQ(pool2->capacity(), 2 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 4 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 4 << 20);
+
+  auto pool3 = manager.addRootPool("root-3", kMaxMemory);
+  ASSERT_EQ(pool3->capacity(), 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 3 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 3 << 20);
+
+  auto pool4 = manager.addRootPool("root-4", kMaxMemory);
+  ASSERT_EQ(pool4->capacity(), 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 2 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 2 << 20);
+
+  auto pool5 = manager.addRootPool("root-5", kMaxMemory);
+  ASSERT_EQ(pool4->capacity(), 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 1 << 20);
+
+  auto pool6 = manager.addRootPool("root-6", kMaxMemory);
+  ASSERT_EQ(pool4->capacity(), 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 0 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 0 << 20);
+
+  auto pool7 = manager.addRootPool("root-7", kMaxMemory);
+  ASSERT_EQ(pool7->capacity(), 0);
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 0 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 0 << 20);
+
+  pool7.reset();
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 0 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 0 << 20);
+
+  pool6.reset();
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 1 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 1 << 20);
+
+  pool1.reset();
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 4 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 4 << 20);
+
+  pool2.reset();
+  ASSERT_EQ(arbitrator->stats().freeReservedCapacityBytes, 4 << 20);
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 6 << 20);
+}
+
+TEST_F(MemoryArbitrationTest, reservedCapacityFreeByPoolShrink) {
+  MemoryManagerOptions options;
+  options.arbitratorKind = "SHARED";
+  options.arbitratorReservedCapacity = 4 << 20;
+  options.arbitratorCapacity = 8 << 20;
+  options.allocatorCapacity = options.arbitratorCapacity;
+  options.memoryPoolInitCapacity = 2 << 20;
+  options.memoryPoolReservedCapacity = 1 << 20;
+
+  MemoryManager manager(options);
+  auto* arbitrator = manager.arbitrator();
+  const int numPools = 6;
+  std::vector<std::shared_ptr<MemoryPool>> pools;
+  for (int i = 0; i < numPools; ++i) {
+    pools.push_back(manager.addRootPool("", kMaxMemory));
+    ASSERT_GE(pools.back()->capacity(), 1 << 20);
+  }
+  ASSERT_EQ(arbitrator->stats().freeCapacityBytes, 0);
+  pools.push_back(manager.addRootPool("", kMaxMemory));
+
+  ASSERT_GE(pools.back()->capacity(), 0);
+  ASSERT_EQ(arbitrator->shrinkCapacity(pools, 1 << 20), 2 << 20);
+  ASSERT_EQ(arbitrator->growCapacity(pools[numPools - 1].get(), 1 << 20), 0);
+  ASSERT_EQ(arbitrator->growCapacity(pools.back().get(), 2 << 20), 1 << 20);
 }
 
 TEST_F(MemoryArbitrationTest, arbitratorStats) {
   const MemoryArbitrator::Stats emptyStats;
   ASSERT_TRUE(emptyStats.empty());
   const MemoryArbitrator::Stats anchorStats(
-      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5);
+      5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5);
   ASSERT_FALSE(anchorStats.empty());
   const MemoryArbitrator::Stats largeStats(
-      8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8);
+      8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8);
   ASSERT_FALSE(largeStats.empty());
   ASSERT_TRUE(!(anchorStats == largeStats));
   ASSERT_TRUE(anchorStats != largeStats);
@@ -139,10 +327,11 @@ TEST_F(MemoryArbitrationTest, arbitratorStats) {
   ASSERT_TRUE(!(anchorStats >= largeStats));
   const auto delta = largeStats - anchorStats;
   ASSERT_EQ(
-      delta, MemoryArbitrator::Stats(3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 3, 3, 3, 3));
+      delta,
+      MemoryArbitrator::Stats(3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 3, 3, 3, 3));
 
   const MemoryArbitrator::Stats smallStats(
-      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2);
+      2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2);
   ASSERT_TRUE(!(anchorStats == smallStats));
   ASSERT_TRUE(anchorStats != smallStats);
   ASSERT_TRUE(!(anchorStats < smallStats));
@@ -151,13 +340,13 @@ TEST_F(MemoryArbitrationTest, arbitratorStats) {
   ASSERT_TRUE(anchorStats >= smallStats);
 
   const MemoryArbitrator::Stats invalidStats(
-      2, 2, 2, 2, 2, 2, 8, 8, 8, 8, 8, 2, 8, 2);
+      2, 2, 2, 2, 2, 2, 8, 8, 8, 8, 8, 8, 2, 8, 2);
   ASSERT_TRUE(!(anchorStats == invalidStats));
   ASSERT_TRUE(anchorStats != invalidStats);
-  ASSERT_THROW(anchorStats < invalidStats, VeloxException);
-  ASSERT_THROW(anchorStats > invalidStats, VeloxException);
-  ASSERT_THROW(anchorStats <= invalidStats, VeloxException);
-  ASSERT_THROW(anchorStats >= invalidStats, VeloxException);
+  VELOX_ASSERT_THROW(anchorStats < invalidStats, "");
+  VELOX_ASSERT_THROW(anchorStats > invalidStats, "");
+  VELOX_ASSERT_THROW(anchorStats <= invalidStats, "");
+  VELOX_ASSERT_THROW(anchorStats >= invalidStats, "");
 }
 
 namespace {
@@ -167,32 +356,35 @@ class FakeTestArbitrator : public MemoryArbitrator {
       : MemoryArbitrator(
             {.kind = config.kind,
              .capacity = config.capacity,
-             .memoryPoolInitCapacity = config.memoryPoolInitCapacity,
              .memoryPoolTransferCapacity = config.memoryPoolTransferCapacity}) {
-  }
-
-  void reserveMemory(MemoryPool* pool, uint64_t bytes) override {
-    VELOX_NYI();
-  }
-
-  void releaseMemory(MemoryPool* pool) override {
-    VELOX_NYI();
   }
 
   std::string kind() const override {
     return "USER";
   }
 
-  bool growMemory(
-      MemoryPool* pool,
-      const std::vector<std::shared_ptr<MemoryPool>>& candidatePools,
-      uint64_t targetBytes) override {
+  uint64_t growCapacity(MemoryPool* /*unused*/, uint64_t /*unused*/) override {
+    VELOX_NYI();
+    return 0;
+  }
+
+  bool growCapacity(
+      MemoryPool* /*unused*/,
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/) override {
     VELOX_NYI();
   }
 
-  uint64_t shrinkMemory(
-      const std::vector<std::shared_ptr<MemoryPool>>& pools,
-      uint64_t targetBytes) override {
+  uint64_t shrinkCapacity(
+      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
+      uint64_t /*unused*/,
+      bool /*unused*/,
+      bool /*unused*/) override {
+    VELOX_NYI();
+  }
+
+  uint64_t shrinkCapacity(MemoryPool* /*unused*/, uint64_t /*unused*/)
+      override {
     VELOX_NYI();
   }
 
@@ -211,6 +403,7 @@ class MemoryArbitratorFactoryTest : public testing::Test {
  protected:
   static void SetUpTestCase() {
     MemoryArbitrator::registerFactory(kind_, factory_);
+    memory::MemoryManager::testingSetInstance({});
   }
 
   static void TearDownTestCase() {
@@ -226,7 +419,9 @@ class MemoryArbitratorFactoryTest : public testing::Test {
 };
 
 TEST_F(MemoryArbitratorFactoryTest, register) {
-  ASSERT_FALSE(MemoryArbitrator::registerFactory(kind_, factory_));
+  VELOX_ASSERT_THROW(
+      MemoryArbitrator::registerFactory(kind_, factory_),
+      "Arbitrator factory for kind USER is already registered");
 }
 
 TEST_F(MemoryArbitratorFactoryTest, create) {
@@ -238,6 +433,10 @@ TEST_F(MemoryArbitratorFactoryTest, create) {
 
 class MemoryReclaimerTest : public testing::Test {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   MemoryReclaimerTest() {
     const auto seed =
         std::chrono::system_clock::now().time_since_epoch().count();
@@ -285,7 +484,7 @@ TEST_F(MemoryReclaimerTest, common) {
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     std::vector<std::shared_ptr<MemoryPool>> pools;
-    auto pool = defaultMemoryManager().addRootPool(
+    auto pool = memory::memoryManager()->addRootPool(
         "shrinkAPIs", kMaxMemory, memory::MemoryReclaimer::create());
     pools.push_back(pool);
 
@@ -318,14 +517,12 @@ TEST_F(MemoryReclaimerTest, common) {
       }
     }
     for (auto& pool : pools) {
-      uint64_t reclaimableBytes;
-      ASSERT_FALSE(pool->reclaimableBytes(reclaimableBytes));
-      ASSERT_EQ(reclaimableBytes, 0);
-      ASSERT_EQ(pool->reclaim(0, stats_), 0);
+      ASSERT_FALSE(pool->reclaimableBytes().has_value());
+      ASSERT_EQ(pool->reclaim(0, 0, stats_), 0);
       ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
-      ASSERT_EQ(pool->reclaim(100, stats_), 0);
+      ASSERT_EQ(pool->reclaim(100, 0, stats_), 0);
       ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
-      ASSERT_EQ(pool->reclaim(kMaxMemory, stats_), 0);
+      ASSERT_EQ(pool->reclaim(kMaxMemory, 0, stats_), 0);
       ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
     }
     ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
@@ -352,8 +549,10 @@ class MockLeafMemoryReclaimer : public MemoryReclaimer {
   }
 
   uint64_t reclaim(
-      MemoryPool* /*unused*/,
+      MemoryPool* /*unused*/
+      ,
       uint64_t targetBytes,
+      uint64_t /*unused*/,
       Stats& stats) noexcept override {
     std::lock_guard<std::mutex> l(mu_);
     uint64_t reclaimedBytes{0};
@@ -388,7 +587,7 @@ class MockLeafMemoryReclaimer : public MemoryReclaimer {
   void free(const Allocation& allocation) {
     pool_->free(allocation.buffer, allocation.size);
     totalUsedBytes_ -= allocation.size;
-    VELOX_CHECK_GE(totalUsedBytes_, 0);
+    VELOX_CHECK_GE(static_cast<int>(totalUsedBytes_), 0);
   }
 
   uint64_t reclaimableBytes() const {
@@ -412,7 +611,7 @@ TEST_F(MemoryReclaimerTest, mockReclaim) {
   const int numAllocationsPerLeaf = 10;
   const int allocBytes = 10;
   std::atomic<uint64_t> totalUsedBytes{0};
-  auto root = defaultMemoryManager().addRootPool(
+  auto root = memory::memoryManager()->addRootPool(
       "mockReclaim", kMaxMemory, MemoryReclaimer::create());
   std::vector<std::shared_ptr<MemoryPool>> childPools;
   for (int i = 0; i < numChildren; ++i) {
@@ -437,31 +636,27 @@ TEST_F(MemoryReclaimerTest, mockReclaim) {
   ASSERT_EQ(
       numGrandchildren * numChildren * numAllocationsPerLeaf * allocBytes,
       totalUsedBytes);
-  uint64_t reclaimableBytes;
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
-  ASSERT_EQ(reclaimableBytes, totalUsedBytes);
+  ASSERT_EQ(root->reclaimableBytes().value(), totalUsedBytes);
   const int numReclaims = 5;
   const int numBytesToReclaim = allocBytes * 3;
   for (int iter = 0; iter < numReclaims; ++iter) {
-    const auto reclaimedBytes = root->reclaim(numBytesToReclaim, stats_);
+    const auto reclaimedBytes = root->reclaim(numBytesToReclaim, 0, stats_);
     ASSERT_EQ(reclaimedBytes, numBytesToReclaim);
     ASSERT_EQ(reclaimedBytes, stats_.reclaimedBytes);
-    ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
-    ASSERT_EQ(reclaimableBytes, totalUsedBytes);
+    ASSERT_EQ(root->reclaimableBytes().value(), totalUsedBytes);
     stats_.reset();
   }
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
-  ASSERT_EQ(totalUsedBytes, reclaimableBytes);
-  ASSERT_EQ(root->reclaim(allocBytes + 1, stats_), 2 * allocBytes);
-  ASSERT_EQ(root->reclaim(allocBytes - 1, stats_), allocBytes);
+
+  ASSERT_EQ(totalUsedBytes, root->reclaimableBytes().value());
+  ASSERT_EQ(root->reclaim(allocBytes + 1, 0, stats_), 2 * allocBytes);
+  ASSERT_EQ(root->reclaim(allocBytes - 1, 0, stats_), allocBytes);
   ASSERT_EQ(3 * allocBytes, stats_.reclaimedBytes);
 
   const uint64_t expectedReclaimedBytes = totalUsedBytes;
-  ASSERT_EQ(root->reclaim(0, stats_), expectedReclaimedBytes);
+  ASSERT_EQ(root->reclaim(0, 0, stats_), expectedReclaimedBytes);
   ASSERT_EQ(3 * allocBytes + expectedReclaimedBytes, stats_.reclaimedBytes);
   ASSERT_EQ(totalUsedBytes, 0);
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
-  ASSERT_EQ(reclaimableBytes, 0);
+  ASSERT_EQ(root->reclaimableBytes().value(), 0);
 
   stats_.reset();
   ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
@@ -472,7 +667,7 @@ TEST_F(MemoryReclaimerTest, mockReclaimMoreThanAvailable) {
   const int numAllocationsPerLeaf = 10;
   const int allocBytes = 100;
   std::atomic<uint64_t> totalUsedBytes{0};
-  auto root = defaultMemoryManager().addRootPool(
+  auto root = memory::memoryManager()->addRootPool(
       "mockReclaimMoreThanAvailable", kMaxMemory, MemoryReclaimer::create());
   std::vector<std::shared_ptr<MemoryPool>> childPools;
   for (int i = 0; i < numChildren; ++i) {
@@ -490,15 +685,14 @@ TEST_F(MemoryReclaimerTest, mockReclaimMoreThanAvailable) {
     }
   }
   ASSERT_EQ(numChildren * numAllocationsPerLeaf * allocBytes, totalUsedBytes);
-  uint64_t reclaimableBytes;
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
+  uint64_t reclaimableBytes = root->reclaimableBytes().value();
   ASSERT_EQ(reclaimableBytes, totalUsedBytes);
   const uint64_t expectedReclaimedBytes = totalUsedBytes;
   ASSERT_EQ(
-      root->reclaim(totalUsedBytes + 100, stats_), expectedReclaimedBytes);
+      root->reclaim(totalUsedBytes + 100, 0, stats_), expectedReclaimedBytes);
   ASSERT_EQ(expectedReclaimedBytes, stats_.reclaimedBytes);
   ASSERT_EQ(totalUsedBytes, 0);
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
+  reclaimableBytes = root->reclaimableBytes().value();
   ASSERT_EQ(reclaimableBytes, 0);
   stats_.reset();
   ASSERT_EQ(stats_, MemoryReclaimer::Stats{});
@@ -512,7 +706,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   const std::vector<int> initAllocUnitsVec = {10, 11, 8, 16, 5};
   ASSERT_EQ(initAllocUnitsVec.size(), numChildren);
   std::atomic<uint64_t> totalUsedBytes{0};
-  auto root = defaultMemoryManager().addRootPool(
+  auto root = memory::memoryManager()->addRootPool(
       "orderedReclaim", kMaxMemory, MemoryReclaimer::create());
   int totalAllocUnits{0};
   std::vector<std::shared_ptr<MemoryPool>> childPools;
@@ -556,7 +750,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child.
   // So expected reclaimable allocation units are {10, 11, 8, *14*, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, 0, stats_),
       2 * allocUnitBytes);
   ASSERT_EQ(2 * allocUnitBytes, stats_.reclaimedBytes);
   totalAllocUnits -= 2;
@@ -566,7 +760,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child.
   // So expected reclaimable allocation units are {10, 11, 8, *12*, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, 0, stats_),
       2 * allocUnitBytes);
   ASSERT_EQ(4 * allocUnitBytes, stats_.reclaimedBytes);
   totalAllocUnits -= 2;
@@ -576,7 +770,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child.
   // So expected reclaimable allocation units are {10, 11, 8, *4*, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 8 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 8 * allocUnitBytes, 0, stats_),
       8 * allocUnitBytes);
   ASSERT_EQ(12 * allocUnitBytes, stats_.reclaimedBytes);
   totalAllocUnits -= 8;
@@ -586,7 +780,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child.
   // So expected reclaimable allocation gunits are {10, *9*, 8, 4, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 2 * allocUnitBytes, 0, stats_),
       2 * allocUnitBytes);
   totalAllocUnits -= 2;
   verify({10, 9, 8, 4, 5});
@@ -595,7 +789,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child.
   // So expected reclaimable allocation units are {*7*, 9, 8, 4, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 3 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 3 * allocUnitBytes, 0, stats_),
       3 * allocUnitBytes);
   totalAllocUnits -= 3;
   verify({7, 9, 8, 4, 5});
@@ -604,7 +798,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child and two from 2nd child.
   // So expected reclaimable allocation units are {7, *0*, *6*, 4, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 11 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 11 * allocUnitBytes, 0, stats_),
       11 * allocUnitBytes);
   totalAllocUnits -= 11;
   verify({7, 0, 6, 4, 5});
@@ -613,7 +807,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child and three from 2nd child.
   // So expected reclaimable allocation units are {*0*, 0, *3*, 4, 5}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 10 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 10 * allocUnitBytes, 0, stats_),
       10 * allocUnitBytes);
   totalAllocUnits -= 10;
   verify({0, 0, 3, 4, 5});
@@ -622,7 +816,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // child and 4 from 4th child and 1 from 2nd.
   // So expected reclaimable allocation units are {0, 0, 2, *0*, *0*}
   ASSERT_EQ(
-      root->reclaimer()->reclaim(root.get(), 10 * allocUnitBytes, stats_),
+      root->reclaimer()->reclaim(root.get(), 10 * allocUnitBytes, 0, stats_),
       10 * allocUnitBytes);
   totalAllocUnits -= 10;
   verify({0, 0, 2, 0, 0});
@@ -631,7 +825,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
   // cleared.
   ASSERT_EQ(
       root->reclaimer()->reclaim(
-          root.get(), totalAllocUnits * allocUnitBytes, stats_),
+          root.get(), totalAllocUnits * allocUnitBytes, 0, stats_),
       totalAllocUnits * allocUnitBytes);
   totalAllocUnits = 0;
   verify({0, 0, 0, 0, 0});
@@ -640,7 +834,7 @@ TEST_F(MemoryReclaimerTest, orderedReclaim) {
 }
 
 TEST_F(MemoryReclaimerTest, arbitrationContext) {
-  auto root = defaultMemoryManager().addRootPool(
+  auto root = memory::memoryManager()->addRootPool(
       "arbitrationContext", kMaxMemory, MemoryReclaimer::create());
   ASSERT_FALSE(isSpillMemoryPool(root.get()));
   ASSERT_TRUE(isSpillMemoryPool(spillMemoryPool()));
@@ -650,29 +844,29 @@ TEST_F(MemoryReclaimerTest, arbitrationContext) {
   ASSERT_FALSE(isSpillMemoryPool(leafChild2.get()));
   ASSERT_TRUE(memoryArbitrationContext() == nullptr);
   {
-    ScopedMemoryArbitrationContext arbitrationContext(*leafChild1);
+    ScopedMemoryArbitrationContext arbitrationContext(leafChild1.get());
     ASSERT_TRUE(memoryArbitrationContext() != nullptr);
-    ASSERT_EQ(&memoryArbitrationContext()->requestor, leafChild1.get());
+    ASSERT_EQ(memoryArbitrationContext()->requestor, leafChild1.get());
   }
   ASSERT_TRUE(memoryArbitrationContext() == nullptr);
   {
-    ScopedMemoryArbitrationContext arbitrationContext(*leafChild2);
+    ScopedMemoryArbitrationContext arbitrationContext(leafChild2.get());
     ASSERT_TRUE(memoryArbitrationContext() != nullptr);
-    ASSERT_EQ(&memoryArbitrationContext()->requestor, leafChild2.get());
+    ASSERT_EQ(memoryArbitrationContext()->requestor, leafChild2.get());
   }
   ASSERT_TRUE(memoryArbitrationContext() == nullptr);
   std::thread nonAbitrationThread([&]() {
     ASSERT_TRUE(memoryArbitrationContext() == nullptr);
     {
-      ScopedMemoryArbitrationContext arbitrationContext(*leafChild1);
+      ScopedMemoryArbitrationContext arbitrationContext(leafChild1.get());
       ASSERT_TRUE(memoryArbitrationContext() != nullptr);
-      ASSERT_EQ(&memoryArbitrationContext()->requestor, leafChild1.get());
+      ASSERT_EQ(memoryArbitrationContext()->requestor, leafChild1.get());
     }
     ASSERT_TRUE(memoryArbitrationContext() == nullptr);
     {
-      ScopedMemoryArbitrationContext arbitrationContext(*leafChild2);
+      ScopedMemoryArbitrationContext arbitrationContext(leafChild2.get());
       ASSERT_TRUE(memoryArbitrationContext() != nullptr);
-      ASSERT_EQ(&memoryArbitrationContext()->requestor, leafChild2.get());
+      ASSERT_EQ(memoryArbitrationContext()->requestor, leafChild2.get());
     }
     ASSERT_TRUE(memoryArbitrationContext() == nullptr);
   });
@@ -681,7 +875,7 @@ TEST_F(MemoryReclaimerTest, arbitrationContext) {
 }
 
 TEST_F(MemoryReclaimerTest, concurrentRandomMockReclaims) {
-  auto root = defaultMemoryManager().addRootPool(
+  auto root = memory::memoryManager()->addRootPool(
       "concurrentRandomMockReclaims", kMaxMemory, MemoryReclaimer::create());
 
   std::atomic<uint64_t> totalUsedBytes{0};
@@ -720,7 +914,7 @@ TEST_F(MemoryReclaimerTest, concurrentRandomMockReclaims) {
           bytesToReclaim = 0;
         }
       }
-      const auto reclaimedBytes = root->reclaim(bytesToReclaim, stats_);
+      const auto reclaimedBytes = root->reclaim(bytesToReclaim, 0, stats_);
       totalReclaimedBytes += reclaimedBytes;
       if (reclaimedBytes < bytesToReclaim) {
         ASSERT_GT(bytesToReclaim, oldUsedBytes);
@@ -755,14 +949,13 @@ TEST_F(MemoryReclaimerTest, concurrentRandomMockReclaims) {
   }
   reclaimerThread.join();
 
-  uint64_t reclaimableBytes;
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
+  uint64_t reclaimableBytes = root->reclaimableBytes().value();
   ASSERT_EQ(reclaimableBytes, totalUsedBytes);
 
-  root->reclaim(0, stats_);
+  root->reclaim(0, 0, stats_);
   ASSERT_EQ(totalReclaimedBytes + reclaimableBytes, stats_.reclaimedBytes);
 
-  ASSERT_TRUE(root->reclaimableBytes(reclaimableBytes));
+  reclaimableBytes = root->reclaimableBytes().value();
   ASSERT_EQ(reclaimableBytes, 0);
   ASSERT_EQ(totalUsedBytes, 0);
   stats_.reset();

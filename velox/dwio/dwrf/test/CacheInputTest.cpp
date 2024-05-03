@@ -50,6 +50,10 @@ class CacheTest : public testing::Test {
     std::vector<Region> regions;
   };
 
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   void SetUp() override {
     executor_ = std::make_unique<folly::IOThreadPoolExecutor>(10, 10);
     rng_.seed(1);
@@ -74,7 +78,7 @@ class CacheTest : public testing::Test {
       FLAGS_ssd_odirect = false;
       tempDirectory_ = exec::test::TempDirectoryPath::create();
       ssd = std::make_unique<SsdCache>(
-          fmt::format("{}/cache", tempDirectory_->path),
+          fmt::format("{}/cache", tempDirectory_->getPath()),
           ssdBytes,
           1,
           executor_.get());
@@ -197,8 +201,15 @@ class CacheTest : public testing::Test {
               (1 << 20) - 11,
               (streamStarts_[streamIndex + 1] - streamStarts_[streamIndex]) /
                   2)};
-      data->streams.push_back(
-          data->input->enqueue(region, streamIds_[streamIndex].get()));
+      auto stream = data->input->enqueue(region, streamIds_[streamIndex].get());
+      if (cache_->ssdCache()) {
+        auto name = static_cast<const CacheInputStream&>(*stream).getName();
+        EXPECT_TRUE(
+            name.find("ssdFile=" + cache_->ssdCache()->filePrefix()) !=
+            name.npos)
+            << name;
+      }
+      data->streams.push_back(std::move(stream));
       data->regions.push_back(region);
     }
     return data;
@@ -371,12 +382,13 @@ class CacheTest : public testing::Test {
   std::vector<StringIdLease> fileIds_;
   folly::F14FastMap<uint64_t, std::shared_ptr<TestReadFile>> pathToInput_;
   std::shared_ptr<exec::test::TempDirectoryPath> tempDirectory_;
-  cache::FileGroupStats* FOLLY_NULLABLE groupStats_ = nullptr;
+  cache::FileGroupStats* groupStats_ = nullptr;
   std::shared_ptr<memory::MemoryAllocator> allocator_;
   std::shared_ptr<AsyncDataCache> cache_;
   std::shared_ptr<IoStatistics> ioStats_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
-  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{
+      memory::memoryManager()->addLeafPool()};
 
   // Id of simulated streams. Corresponds 1:1 to 'streamStarts_'.
   std::vector<std::unique_ptr<dwrf::DwrfStreamIdentifier>> streamIds_;
@@ -419,6 +431,7 @@ TEST_F(CacheTest, window) {
   auto stream = input->read(begin, end - begin, LogType::TEST);
   auto cacheInput = dynamic_cast<CacheInputStream*>(stream.get());
   EXPECT_TRUE(cacheInput != nullptr);
+  ASSERT_EQ(cacheInput->getName(), "CacheInputStream 0 of 13631488");
   auto maxSize =
       allocator_->sizeClasses().back() * memory::AllocationTraits::kPageSize;
   const void* buffer;
@@ -496,8 +509,6 @@ TEST_F(CacheTest, ssd) {
   readFiles(
       "prefix1_", 0, kSsdBytes / bytesPerFile, 30, 100, 1, kStripesPerFile, 4);
 
-  LOG(INFO) << cache_->toString();
-
   waitForWrite();
   cache_->clear();
   // Read double this to get some eviction from SSD.
@@ -518,7 +529,6 @@ TEST_F(CacheTest, ssd) {
   // issued. Also, the head of each file does not get prefetched
   // because each file has its own tracker.
   EXPECT_LE(kSsdBytes / 8, ioStats_->prefetch().sum());
-  LOG(INFO) << cache_->toString();
 
   readFiles(
       "prefix1_",
@@ -529,7 +539,6 @@ TEST_F(CacheTest, ssd) {
       1,
       kStripesPerFile,
       4);
-  LOG(INFO) << cache_->toString();
 }
 
 TEST_F(CacheTest, singleFileThreads) {
@@ -592,7 +601,7 @@ class FileWithReadAhead {
   static constexpr int64_t kLoadQuantum = 6 << 20;
   FileWithReadAhead(
       const std::string& name,
-      cache::AsyncDataCache* FOLLY_NONNULL cache,
+      cache::AsyncDataCache* cache,
       IoStatisticsPtr stats,
       memory::MemoryPool& pool,
       folly::Executor* executor)

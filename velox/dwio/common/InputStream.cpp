@@ -39,6 +39,16 @@ using ::facebook::velox::common::Region;
 
 namespace facebook::velox::dwio::common {
 
+namespace {
+int64_t totalBufferSize(const std::vector<folly::Range<char*>>& buffers) {
+  int64_t bufferSize = 0;
+  for (auto& buffer : buffers) {
+    bufferSize += buffer.size();
+  }
+  return bufferSize;
+}
+} // namespace
+
 folly::SemiFuture<uint64_t> InputStream::readAsync(
     const std::vector<folly::Range<char*>>& buffers,
     uint64_t offset,
@@ -95,10 +105,7 @@ void ReadFileInputStream::read(
     const std::vector<folly::Range<char*>>& buffers,
     uint64_t offset,
     LogType logType) {
-  int64_t bufferSize = 0;
-  for (auto& buffer : buffers) {
-    bufferSize += buffer.size();
-  }
+  const int64_t bufferSize = totalBufferSize(buffers);
   logRead(offset, bufferSize, logType);
   auto size = readFile_->preadv(offset, buffers);
   DWIO_ENSURE_EQ(
@@ -118,10 +125,7 @@ folly::SemiFuture<uint64_t> ReadFileInputStream::readAsync(
     const std::vector<folly::Range<char*>>& buffers,
     uint64_t offset,
     LogType logType) {
-  int64_t bufferSize = 0;
-  for (auto& buffer : buffers) {
-    bufferSize += buffer.size();
-  }
+  const int64_t bufferSize = totalBufferSize(buffers);
   logRead(offset, bufferSize, logType);
   return readFile_->preadvAsync(offset, buffers);
 }
@@ -141,11 +145,11 @@ void ReadFileInputStream::vread(
       size_t(0),
       [&](size_t acc, const auto& r) { return acc + r.length; });
   logRead(regions[0].offset, length, purpose);
-  auto readStartMs = getCurrentTimeMs();
+  auto readStartMicros = getCurrentTimeMicro();
   readFile_->preadv(regions, iobufs);
   if (stats_) {
     stats_->incRawBytesRead(length);
-    stats_->incTotalScanTime(getCurrentTimeMs() - readStartMs);
+    stats_->incTotalScanTime((getCurrentTimeMicro() - readStartMicros) * 1000);
   }
 }
 

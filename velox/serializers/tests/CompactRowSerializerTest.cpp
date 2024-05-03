@@ -24,8 +24,12 @@ namespace {
 class CompactRowSerializerTest : public ::testing::Test,
                                  public test::VectorTestBase {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   void SetUp() override {
-    pool_ = memory::addDefaultLeafMemoryPool();
+    pool_ = memory::memoryManager()->addLeafPool();
     serde_ = std::make_unique<serializer::CompactRowVectorSerde>();
   }
 
@@ -39,9 +43,11 @@ class CompactRowSerializerTest : public ::testing::Test,
 
     auto arena = std::make_unique<StreamArena>(pool_.get());
     auto rowType = asRowType(rowVector->type());
-    auto serializer = serde_->createSerializer(rowType, numRows, arena.get());
+    auto serializer =
+        serde_->createIterativeSerializer(rowType, numRows, arena.get());
 
-    serializer->append(rowVector, folly::Range(rows.data(), numRows));
+    Scratch scratch;
+    serializer->append(rowVector, folly::Range(rows.data(), numRows), scratch);
     auto size = serializer->maxSerializedSize();
     OStreamOutputStream out(output);
     serializer->flush(&out);
@@ -112,7 +118,6 @@ TEST_F(CompactRowSerializerTest, fuzz) {
   VectorFuzzer::Options opts;
   opts.vectorSize = 5;
   opts.nullRatio = 0.1;
-  opts.containerHasNulls = false;
   opts.dictionaryHasNulls = false;
   opts.stringVariableLength = true;
   opts.stringLength = 20;
@@ -129,7 +134,7 @@ TEST_F(CompactRowSerializerTest, fuzz) {
   SCOPED_TRACE(fmt::format("seed: {}", seed));
   VectorFuzzer fuzzer(opts, pool_.get(), seed);
 
-  auto data = fuzzer.fuzzRow(rowType);
+  auto data = fuzzer.fuzzInputRow(rowType);
   testRoundTrip(data);
 }
 

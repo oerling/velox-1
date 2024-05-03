@@ -80,7 +80,8 @@ using namespace facebook::velox::memory;
 namespace facebook::velox::exec::test {
 
 void SpillerBenchmarkBase::setUp() {
-  rootPool_ = defaultMemoryManager().addRootPool(FLAGS_spiller_benchmark_name);
+  rootPool_ =
+      memory::memoryManager()->addRootPool(FLAGS_spiller_benchmark_name);
   pool_ = rootPool_->addLeafChild(FLAGS_spiller_benchmark_name);
 
   rowType_ =
@@ -108,7 +109,7 @@ void SpillerBenchmarkBase::setUp() {
 
   if (FLAGS_spiller_benchmark_path.empty()) {
     tempDir_ = exec::test::TempDirectoryPath::create();
-    spillDir_ = tempDir_->path;
+    spillDir_ = tempDir_->getPath();
   } else {
     spillDir_ = FLAGS_spiller_benchmark_path;
   }

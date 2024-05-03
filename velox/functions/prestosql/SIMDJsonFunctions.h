@@ -175,6 +175,14 @@ struct SIMDJsonExtractScalarFunction {
       out_type<Varchar>& result,
       const arg_type<Json>& json,
       const arg_type<Varchar>& jsonPath) {
+    return callImpl(result, json, jsonPath) == simdjson::SUCCESS;
+  }
+
+ private:
+  FOLLY_ALWAYS_INLINE bool callImpl(
+      out_type<Varchar>& result,
+      const arg_type<Json>& json,
+      const arg_type<Varchar>& jsonPath) {
     bool resultPopulated = false;
     std::optional<std::string> resultStr;
     auto consumer = [&resultStr, &resultPopulated](auto& v) {
@@ -182,7 +190,7 @@ struct SIMDJsonExtractScalarFunction {
         // We should just get a single value, if we see multiple, it's an error
         // and we should return null.
         resultStr = std::nullopt;
-        return true;
+        return simdjson::SUCCESS;
       }
 
       resultPopulated = true;
@@ -207,19 +215,17 @@ struct SIMDJsonExtractScalarFunction {
           SIMDJSON_ASSIGN_OR_RAISE(resultStr, simdjson::to_json_string(v));
         }
       }
-      return true;
+      return simdjson::SUCCESS;
     };
 
-    if (!simdJsonExtract(json, jsonPath, consumer)) {
-      // If there's an error parsing the JSON, return null.
-      return false;
-    }
+    auto& extractor = SIMDJsonExtractor::getInstance(jsonPath);
+    SIMDJSON_TRY(simdJsonExtract(json, extractor, consumer));
 
     if (resultStr.has_value()) {
       result.copy_from(*resultStr);
-      return true;
+      return simdjson::SUCCESS;
     } else {
-      return false;
+      return simdjson::NO_SUCH_FIELD;
     }
   }
 };
@@ -229,6 +235,14 @@ struct SIMDJsonExtractFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   bool call(
+      out_type<Json>& result,
+      const arg_type<Json>& json,
+      const arg_type<Varchar>& jsonPath) {
+    return callImpl(result, json, jsonPath) == simdjson::SUCCESS;
+  }
+
+ private:
+  simdjson::error_code callImpl(
       out_type<Json>& result,
       const arg_type<Json>& json,
       const arg_type<Varchar>& jsonPath) {
@@ -268,28 +282,31 @@ struct SIMDJsonExtractFunction {
           results += kNullString;
           break;
       }
-      return true;
+      return simdjson::SUCCESS;
     };
 
-    if (!simdJsonExtract(json, jsonPath, consumer)) {
-      // If there's an error parsing the JSON, return null.
-      return false;
-    }
+    auto& extractor = SIMDJsonExtractor::getInstance(jsonPath);
+    SIMDJSON_TRY(simdJsonExtract(json, extractor, consumer));
 
     if (resultSize == 0) {
-      // If the path didn't map to anything in the JSON object, return null.
-      return false;
-    }
+      if (extractor.isDefinitePath()) {
+        // If the path didn't map to anything in the JSON object, return null.
+        return simdjson::NO_SUCH_FIELD;
+      }
 
-    if (resultSize == 1) {
+      result.copy_from("[]");
+    } else if (resultSize == 1 && extractor.isDefinitePath()) {
       // If there was only one value mapped to by the path, don't wrap it in an
       // array.
       result.copy_from(results);
     } else {
       // Add the square brackets to make it a valid JSON array.
-      result.copy_from("[" + results + "]");
+      result.reserve(2 + results.size());
+      result.append("[");
+      result.append(results);
+      result.append("]");
     }
-    return true;
+    return simdjson::SUCCESS;
   }
 };
 
@@ -298,6 +315,14 @@ struct SIMDJsonSizeFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   FOLLY_ALWAYS_INLINE bool call(
+      int64_t& result,
+      const arg_type<Json>& json,
+      const arg_type<Varchar>& jsonPath) {
+    return callImpl(result, json, jsonPath) == simdjson::SUCCESS;
+  }
+
+ private:
+  FOLLY_ALWAYS_INLINE simdjson::error_code callImpl(
       int64_t& result,
       const arg_type<Json>& json,
       const arg_type<Varchar>& jsonPath) {
@@ -328,22 +353,20 @@ struct SIMDJsonSizeFunction {
             break;
         }
       }
-      return true;
+      return simdjson::SUCCESS;
     };
 
-    if (!simdJsonExtract(json, jsonPath, consumer)) {
-      // If there's an error parsing the JSON, return null.
-      return false;
-    }
+    auto& extractor = SIMDJsonExtractor::getInstance(jsonPath);
+    SIMDJSON_TRY(simdJsonExtract(json, extractor, consumer));
 
     if (resultCount == 0) {
       // If the path didn't map to anything in the JSON object, return null.
-      return false;
+      return simdjson::NO_SUCH_FIELD;
     }
 
     result = resultCount == 1 ? singleResultSize : resultCount;
 
-    return true;
+    return simdjson::SUCCESS;
   }
 };
 

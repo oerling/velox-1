@@ -25,14 +25,15 @@ void SingleValueAccumulator::write(
     const BaseVector* vector,
     vector_size_t index,
     HashStringAllocator* allocator) {
-  ByteStream stream(allocator);
+  ByteOutputStream stream(allocator);
   if (start_.header == nullptr) {
     start_ = allocator->newWrite(stream);
   } else {
     allocator->extendWrite(start_, stream);
   }
 
-  exec::ContainerRowSerde::serialize(*vector, index, stream);
+  static const exec::ContainerRowSerdeOptions options{};
+  exec::ContainerRowSerde::serialize(*vector, index, stream, options);
   allocator->finishWrite(stream, 0);
 }
 

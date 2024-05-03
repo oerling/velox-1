@@ -19,9 +19,11 @@ namespace facebook::velox::exec {
 
 SerializedPage::SerializedPage(
     std::unique_ptr<folly::IOBuf> iobuf,
-    std::function<void(folly::IOBuf&)> onDestructionCb)
+    std::function<void(folly::IOBuf&)> onDestructionCb,
+    std::optional<int64_t> numRows)
     : iobuf_(std::move(iobuf)),
       iobufBytes_(chainBytes(*iobuf_.get())),
+      numRows_(numRows),
       onDestructionCb_(onDestructionCb) {
   VELOX_CHECK_NOT_NULL(iobuf_);
   for (auto& buf : *iobuf_) {
@@ -109,7 +111,7 @@ std::vector<std::unique_ptr<SerializedPage>> ExchangeQueue::dequeueLocked(
     if (queue_.empty()) {
       if (atEnd_) {
         *atEnd = true;
-      } else {
+      } else if (pages.empty()) {
         promises_.emplace_back("ExchangeQueue::dequeue");
         *future = promises_.back().getSemiFuture();
       }

@@ -62,6 +62,9 @@ struct PlanNodeStats {
   /// Sum of raw input bytes for all corresponding operators.
   uint64_t rawInputBytes{0};
 
+  /// Contains the dynamic filters stats if applied.
+  DynamicFilterStats dynamicFilterStats;
+
   /// Sum of output rows for all corresponding operators. When
   /// plan node corresponds to multiple operator types, operators of only one of
   /// these types report non-zero output rows.
@@ -91,6 +94,8 @@ struct PlanNodeStats {
   uint64_t peakMemoryBytes{0};
 
   uint64_t numMemoryAllocations{0};
+
+  uint64_t physicalWrittenBytes{0};
 
   /// Operator-specific counters.
   std::unordered_map<std::string, RuntimeMetric> customStats;

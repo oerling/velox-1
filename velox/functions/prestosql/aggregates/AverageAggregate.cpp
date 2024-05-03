@@ -29,9 +29,10 @@ namespace facebook::velox::aggregate::prestosql {
 ///     REAL            |     DOUBLE          |    REAL
 ///     ALL INTs        |     DOUBLE          |    DOUBLE
 ///     DECIMAL         |     DECIMAL         |    DECIMAL
-exec::AggregateRegistrationResult registerAverageAggregate(
+void registerAverageAggregate(
     const std::string& prefix,
-    bool withCompanionFunctions) {
+    bool withCompanionFunctions,
+    bool overwrite) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
 
   for (const auto& inputType : {"smallint", "integer", "bigint", "double"}) {
@@ -57,7 +58,7 @@ exec::AggregateRegistrationResult registerAverageAggregate(
                            .build());
 
   auto name = prefix + kAvg;
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -133,6 +134,7 @@ exec::AggregateRegistrationResult registerAverageAggregate(
                 return std::make_unique<DecimalAverageAggregateBase<int64_t>>(
                     resultType);
               }
+              [[fallthrough]];
             default:
               VELOX_FAIL(
                   "Unsupported result type for final aggregation: {}",
@@ -140,7 +142,9 @@ exec::AggregateRegistrationResult registerAverageAggregate(
           }
         }
       },
-      withCompanionFunctions);
+      {false /*orderSensitive*/},
+      withCompanionFunctions,
+      overwrite);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

@@ -17,15 +17,18 @@
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/file/tests/FaultyFileSystem.h"
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 
 namespace facebook::velox::exec::test {
 
 HiveConnectorTestBase::HiveConnectorTestBase() {
   filesystems::registerLocalFileSystem();
+  tests::utils::registerFaultyFileSystem();
 }
 
 void HiveConnectorTestBase::SetUp() {
@@ -49,13 +52,12 @@ void HiveConnectorTestBase::TearDown() {
 }
 
 void HiveConnectorTestBase::resetHiveConnector(
-    const std::shared_ptr<const Config>& connectorProperties) {
+    const std::shared_ptr<const Config>& config) {
   connector::unregisterConnector(kHiveConnectorId);
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(
-              kHiveConnectorId, connectorProperties, ioExecutor_.get());
+          ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
   connector::registerConnector(hiveConnector);
 }
 
@@ -103,6 +105,19 @@ std::shared_ptr<exec::Task> HiveConnectorTestBase::assertQuery(
     const std::string& duckDbSql) {
   return OperatorTestBase::assertQuery(
       plan, makeHiveConnectorSplits(filePaths), duckDbSql);
+}
+
+std::shared_ptr<Task> HiveConnectorTestBase::assertQuery(
+    const core::PlanNodePtr& plan,
+    const std::vector<std::shared_ptr<connector::ConnectorSplit>>& splits,
+    const std::string& duckDbSql,
+    const int32_t numPrefetchSplit) {
+  return AssertQueryBuilder(plan, duckDbQueryRunner_)
+      .config(
+          core::QueryConfig::kMaxSplitPreloadPerDriver,
+          std::to_string(numPrefetchSplit))
+      .splits(splits)
+      .assertResults(duckDbSql);
 }
 
 std::vector<std::shared_ptr<TempFilePath>> HiveConnectorTestBase::makeFilePaths(
@@ -172,7 +187,12 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
     const std::vector<std::shared_ptr<TempFilePath>>& filePaths) {
   std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
   for (auto filePath : filePaths) {
-    splits.push_back(makeHiveConnectorSplit(filePath->path));
+    splits.push_back(makeHiveConnectorSplit(
+        filePath->getPath(),
+        filePath->fileSize(),
+        filePath->fileModifiedTime(),
+        0,
+        std::numeric_limits<uint64_t>::max()));
   }
   return splits;
 }
@@ -181,8 +201,25 @@ std::shared_ptr<connector::ConnectorSplit>
 HiveConnectorTestBase::makeHiveConnectorSplit(
     const std::string& filePath,
     uint64_t start,
+    uint64_t length,
+    int64_t splitWeight) {
+  return HiveConnectorSplitBuilder(filePath)
+      .start(start)
+      .length(length)
+      .splitWeight(splitWeight)
+      .build();
+}
+
+std::shared_ptr<connector::ConnectorSplit>
+HiveConnectorTestBase::makeHiveConnectorSplit(
+    const std::string& filePath,
+    int64_t fileSize,
+    int64_t fileModifiedTime,
+    uint64_t start,
     uint64_t length) {
   return HiveConnectorSplitBuilder(filePath)
+      .infoColumn("$file_size", fmt::format("{}", fileSize))
+      .infoColumn("$file_modified_time", fmt::format("{}", fileModifiedTime))
       .start(start)
       .length(length)
       .build();

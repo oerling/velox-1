@@ -27,6 +27,10 @@ using facebook::velox::exec::test::PlanBuilder;
 namespace {
 class PlanFragmentTest : public testing::Test {
  protected:
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance({});
+  }
+
   void SetUp() override {
     rowType_ = ROW({"c0", "c1", "c2"}, {BIGINT(), BIGINT(), BIGINT()});
     rowTypeWithProjection_ = ROW(
@@ -74,9 +78,10 @@ class PlanFragmentTest : public testing::Test {
   RowTypePtr probeTypeWithProjection_;
   std::vector<RowVectorPtr> emptyProbeVectors_;
   std::shared_ptr<PlanNode> probeValueNode_;
-  std::shared_ptr<memory::MemoryPool> pool_{memory::addDefaultLeafMemoryPool()};
+  std::shared_ptr<memory::MemoryPool> pool_{
+      memory::memoryManager()->addLeafPool()};
 };
-}; // namespace
+} // namespace
 
 TEST_F(PlanFragmentTest, orderByCanSpill) {
   struct {
@@ -144,7 +149,7 @@ TEST_F(PlanFragmentTest, aggregationCanSpill) {
     std::string debugString() const {
       return fmt::format(
           "aggregationStep:{} isSpillEnabled:{} isAggregationSpillEnabled:{} isDistinct:{} hasPreAggregation:{} expectedCanSpill:{}",
-          aggregationStep,
+          AggregationNode::stepName(aggregationStep),
           isSpillEnabled,
           isAggregationSpillEnabled,
           isDistinct,
@@ -316,4 +321,15 @@ TEST_F(PlanFragmentTest, hashJoin) {
         planFragment.canSpill(queryCtx->queryConfig()),
         testData.expectedCanSpill);
   }
+}
+
+TEST_F(PlanFragmentTest, executionStrategyToString) {
+  ASSERT_EQ(
+      executionStrategyToString(core::ExecutionStrategy::kUngrouped),
+      "UNGROUPED");
+  ASSERT_EQ(
+      executionStrategyToString(core::ExecutionStrategy::kGrouped), "GROUPED");
+  ASSERT_EQ(
+      executionStrategyToString(static_cast<core::ExecutionStrategy>(999)),
+      "UNKNOWN: 999");
 }

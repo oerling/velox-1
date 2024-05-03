@@ -99,11 +99,23 @@ DEBUG_ONLY_TEST_F(ThreadDebugInfoDeathTest, withinTheCallingThread) {
       nullptr,
       "TaskCursorQuery_0");
   auto task = exec::Task::create(
-      "single.execution.task.0", std::move(plan), 0, queryCtx);
+      "single.execution.task.0",
+      std::move(plan),
+      0,
+      queryCtx,
+      exec::Task::ExecutionMode::kSerial);
 
 #if IS_BUILDING_WITH_ASAN() == 0
   ASSERT_DEATH(
       (task->next()),
       ".*Fatal signal handler. Query Id= TaskCursorQuery_0 Task Id= single.execution.task.0.*");
 #endif
+}
+
+DEBUG_ONLY_TEST_F(ThreadDebugInfoDeathTest, noThreadContextSet) {
+  int* nullpointer = nullptr;
+#if IS_BUILDING_WITH_ASAN() == 0
+  ASSERT_DEATH((*nullpointer = 6), ".*ThreadDebugInfo object not found.*");
+#endif
+  folly::compiler_must_not_elide(nullpointer);
 }

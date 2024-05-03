@@ -24,21 +24,29 @@ resolve_dependency_url(DUCKDB)
 
 message(STATUS "Building DuckDB from source")
 # We need remove-ccache.patch to remove adding ccache to the build command
-# twice. Velox already does this.
+# twice. Velox already does this. We need fix-duckdbversion.patch as DuckDB
+# tries to infer the version via a git commit hash or git tag. This inference
+# can lead to errors when building in another git project such as Prestissimo.
 FetchContent_Declare(
   duckdb
   URL ${VELOX_DUCKDB_SOURCE_URL}
   URL_HASH ${VELOX_DUCKDB_BUILD_SHA256_CHECKSUM}
-  PATCH_COMMAND git apply ${CMAKE_CURRENT_LIST_DIR}/duckdb/remove-ccache.patch)
+  PATCH_COMMAND
+    git apply ${CMAKE_CURRENT_LIST_DIR}/duckdb/remove-ccache.patch && git apply
+    ${CMAKE_CURRENT_LIST_DIR}/duckdb/fix-duckdbversion.patch)
 
 set(BUILD_UNITTESTS OFF)
 set(ENABLE_SANITIZER OFF)
 set(ENABLE_UBSAN OFF)
 set(BUILD_SHELL OFF)
 set(EXPORT_DLL_SYMBOLS OFF)
+set(PREVIOUS_BUILD_TYPE ${CMAKE_BUILD_TYPE})
+set(CMAKE_BUILD_TYPE Release)
 
 FetchContent_MakeAvailable(duckdb)
 
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
   target_compile_options(duckdb_catalog PRIVATE -Wno-nonnull-compare)
 endif()
+
+set(CMAKE_BUILD_TYPE ${PREVIOUS_BUILD_TYPE})

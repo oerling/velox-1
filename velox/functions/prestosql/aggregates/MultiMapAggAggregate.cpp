@@ -13,10 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/exec/AddressableNonNullValueList.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/Strings.h"
+#include "velox/functions/lib/aggregates/ValueList.h"
 #include "velox/functions/prestosql/aggregates/AggregateNames.h"
-#include "velox/functions/prestosql/aggregates/ValueList.h"
 #include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::aggregate::prestosql {
@@ -41,6 +42,17 @@ struct MultiMapAccumulator {
   MultiMapAccumulator(const TypePtr& /*type*/, HashStringAllocator* allocator)
       : keys{AlignedStlAllocator<std::pair<const K, ValueList>, 16>(
             allocator)} {}
+
+  MultiMapAccumulator(
+      Hash hash,
+      EqualTo equalTo,
+      HashStringAllocator* allocator)
+      : keys{
+            0, // initialCapacity
+            hash,
+            equalTo,
+            AlignedStlAllocator<std::pair<const K, ValueList>, 16>(
+                allocator)} {}
 
   size_t size() const {
     return keys.size();
@@ -124,13 +136,115 @@ struct MultiMapAccumulator {
   }
 };
 
+struct ComplexTypeMultiMapAccumulator {
+  MultiMapAccumulator<
+      AddressableNonNullValueList::Entry,
+      AddressableNonNullValueList::Hash,
+      AddressableNonNullValueList::EqualTo>
+      base;
+
+  /// Stores unique non-null keys.
+  AddressableNonNullValueList serializedKeys;
+
+  ComplexTypeMultiMapAccumulator(
+      const TypePtr& type,
+      HashStringAllocator* allocator)
+      : base{
+            AddressableNonNullValueList::Hash{},
+            AddressableNonNullValueList::EqualTo{type},
+            allocator} {}
+
+  size_t size() const {
+    return base.size();
+  }
+
+  size_t numValues() const {
+    return base.numValues();
+  }
+
+  /// Adds key-value pair.
+  void insert(
+      const DecodedVector& decodedKeys,
+      const DecodedVector& decodedValues,
+      vector_size_t index,
+      HashStringAllocator& allocator) {
+    const auto entry = serializedKeys.append(decodedKeys, index, &allocator);
+
+    auto& values = insertKey(entry);
+    values.appendValue(decodedValues, index, &allocator);
+  }
+
+  /// Adds a key with a list of values.
+  void insertMultiple(
+      const DecodedVector& decodedKeys,
+      vector_size_t keyIndex,
+      const DecodedVector& decodedValues,
+      vector_size_t valueIndex,
+      vector_size_t numValues,
+      HashStringAllocator& allocator) {
+    const auto entry = serializedKeys.append(decodedKeys, keyIndex, &allocator);
+
+    auto& values = insertKey(entry);
+    for (auto i = 0; i < numValues; ++i) {
+      values.appendValue(decodedValues, valueIndex + i, &allocator);
+    }
+  }
+
+  ValueList& insertKey(const AddressableNonNullValueList::Entry& key) {
+    auto result = base.keys.insert({key, ValueList()});
+    if (!result.second) {
+      serializedKeys.removeLast(key);
+    }
+
+    return result.first->second;
+  }
+
+  void extract(
+      VectorPtr& mapKeys,
+      ArrayVector& mapValueArrays,
+      vector_size_t& keyOffset,
+      vector_size_t& valueOffset) {
+    auto& mapValues = mapValueArrays.elements();
+
+    for (auto& entry : base.keys) {
+      AddressableNonNullValueList::read(entry.first, *mapKeys, keyOffset);
+
+      const auto numValues = entry.second.size();
+      mapValueArrays.setOffsetAndSize(keyOffset, valueOffset, numValues);
+
+      aggregate::ValueListReader reader(entry.second);
+      for (auto i = 0; i < numValues; i++) {
+        reader.next(*mapValues, valueOffset++);
+      }
+
+      ++keyOffset;
+    }
+  }
+
+  void free(HashStringAllocator& allocator) {
+    base.free(allocator);
+    serializedKeys.free(allocator);
+  }
+};
+
+template <typename T>
+struct MultiMapAccumulatorTypeTraits {
+  using AccumulatorType = MultiMapAccumulator<T>;
+};
+
+template <>
+struct MultiMapAccumulatorTypeTraits<ComplexType> {
+  using AccumulatorType = ComplexTypeMultiMapAccumulator;
+};
+
 template <typename K>
 class MultiMapAggAggregate : public exec::Aggregate {
  public:
   explicit MultiMapAggAggregate(TypePtr resultType)
       : exec::Aggregate(std::move(resultType)) {}
 
-  using AccumulatorType = MultiMapAccumulator<K>;
+  using AccumulatorType =
+      typename MultiMapAccumulatorTypeTraits<K>::AccumulatorType;
 
   bool isFixedSize() const override {
     return false;
@@ -138,16 +252,6 @@ class MultiMapAggAggregate : public exec::Aggregate {
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(AccumulatorType);
-  }
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    const auto& type = resultType()->childAt(0);
-    for (auto index : indices) {
-      new (groups[index] + offset_) AccumulatorType(type, allocator_);
-    }
-    setAllNulls(groups, indices);
   }
 
   void addRawInput(
@@ -318,11 +422,24 @@ class MultiMapAggAggregate : public exec::Aggregate {
     extractValues(groups, numGroups, result);
   }
 
-  void destroy(folly::Range<char**> groups) override {
+ protected:
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    const auto& type = resultType()->childAt(0);
+    for (auto index : indices) {
+      new (groups[index] + offset_) AccumulatorType(type, allocator_);
+    }
+    setAllNulls(groups, indices);
+  }
+
+  void destroyInternal(folly::Range<char**> groups) override {
     for (auto* group : groups) {
-      auto accumulator = value<AccumulatorType>(group);
-      accumulator->free(*allocator_);
-      destroyAccumulator<AccumulatorType>(group);
+      if (isInitialized(group)) {
+        auto accumulator = value<AccumulatorType>(group);
+        accumulator->free(*allocator_);
+        destroyAccumulator<AccumulatorType>(group);
+      }
     }
   }
 
@@ -363,37 +480,22 @@ class MultiMapAggAggregate : public exec::Aggregate {
 
 } // namespace
 
-exec::AggregateRegistrationResult registerMultiMapAggAggregate(
-    const std::string& prefix) {
-  static const std::vector<std::string> kSupportedKeyTypes = {
-      "boolean",
-      "tinyint",
-      "smallint",
-      "integer",
-      "bigint",
-      "real",
-      "double",
-      "timestamp",
-      "date",
-      "varbinary",
-      "varchar",
-      "unknown",
-  };
-
-  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
-  for (const auto& keyType : kSupportedKeyTypes) {
-    signatures.emplace_back(
-        exec::AggregateFunctionSignatureBuilder()
-            .typeVariable("V")
-            .returnType(fmt::format("map({},array(V))", keyType))
-            .intermediateType(fmt::format("map({},array(V))", keyType))
-            .argumentType(keyType)
-            .argumentType("V")
-            .build());
-  }
+void registerMultiMapAggAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite) {
+  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures{
+      exec::AggregateFunctionSignatureBuilder()
+          .typeVariable("K")
+          .typeVariable("V")
+          .returnType("map(K,array(V))")
+          .intermediateType("map(K,array(V))")
+          .argumentType("K")
+          .argumentType("V")
+          .build()};
 
   auto name = prefix + kMultiMapAgg;
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -426,13 +528,22 @@ exec::AggregateRegistrationResult registerMultiMapAggAggregate(
           case TypeKind::VARCHAR:
             return std::make_unique<MultiMapAggAggregate<StringView>>(
                 resultType);
+          case TypeKind::ARRAY:
+            [[fallthrough]];
+          case TypeKind::MAP:
+            [[fallthrough]];
+          case TypeKind::ROW:
+            return std::make_unique<MultiMapAggAggregate<ComplexType>>(
+                resultType);
           case TypeKind::UNKNOWN:
             return std::make_unique<MultiMapAggAggregate<int32_t>>(resultType);
           default:
             VELOX_UNREACHABLE(
                 "Unexpected type {}", mapTypeKindToName(typeKind));
         }
-      });
+      },
+      withCompanionFunctions,
+      overwrite);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

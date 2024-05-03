@@ -20,6 +20,7 @@
 #include "velox/exec/CallbackSink.h"
 #include "velox/exec/EnforceSingleRow.h"
 #include "velox/exec/Exchange.h"
+#include "velox/exec/Expand.h"
 #include "velox/exec/FilterProject.h"
 #include "velox/exec/GroupId.h"
 #include "velox/exec/HashAggregation.h"
@@ -224,6 +225,12 @@ uint32_t maxDrivers(
     } else if (std::dynamic_pointer_cast<const core::MergeJoinNode>(node)) {
       // Merge join must run single-threaded.
       return 1;
+    } else if (
+        auto join = std::dynamic_pointer_cast<const core::HashJoinNode>(node)) {
+      // Right semi project doesn't support multi-threaded execution.
+      if (join->isRightSemiProjectJoin()) {
+        return 1;
+      }
     } else if (
         auto tableWrite =
             std::dynamic_pointer_cast<const core::TableWriteNode>(node)) {
@@ -492,15 +499,17 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
     } else if (
         auto aggregationNode =
             std::dynamic_pointer_cast<const core::AggregationNode>(planNode)) {
-      if (!aggregationNode->preGroupedKeys().empty() &&
-          aggregationNode->preGroupedKeys().size() ==
-              aggregationNode->groupingKeys().size()) {
+      if (aggregationNode->isPreGrouped()) {
         operators.push_back(std::make_unique<StreamingAggregation>(
             id, ctx.get(), aggregationNode));
       } else {
         operators.push_back(
             std::make_unique<HashAggregation>(id, ctx.get(), aggregationNode));
       }
+    } else if (
+        auto expandNode =
+            std::dynamic_pointer_cast<const core::ExpandNode>(planNode)) {
+      operators.push_back(std::make_unique<Expand>(id, ctx.get(), expandNode));
     } else if (
         auto groupIdNode =
             std::dynamic_pointer_cast<const core::GroupIdNode>(planNode)) {

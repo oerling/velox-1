@@ -66,13 +66,19 @@ class BitwiseXorAggregate {
 
 } // namespace
 
-exec::AggregateRegistrationResult registerBitwiseXorAggregate(
-    const std::string& prefix) {
+void registerBitwiseXorAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool onlyPrestoSignatures,
+    bool overwrite) {
   const std::string name = prefix + kBitwiseXor;
 
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
-
-  for (const auto& inputType : {"tinyint", "smallint", "integer", "bigint"}) {
+  std::vector<std::string> typeList{"tinyint", "smallint", "integer", "bigint"};
+  if (onlyPrestoSignatures) {
+    typeList = {"bigint"};
+  }
+  for (const auto& inputType : typeList) {
     signatures.push_back(exec::AggregateFunctionSignatureBuilder()
                              .returnType(inputType)
                              .intermediateType(inputType)
@@ -80,7 +86,7 @@ exec::AggregateRegistrationResult registerBitwiseXorAggregate(
                              .build());
   }
 
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -115,7 +121,8 @@ exec::AggregateRegistrationResult registerBitwiseXorAggregate(
                 inputType->toString());
         }
       },
-      false);
+      withCompanionFunctions,
+      overwrite);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

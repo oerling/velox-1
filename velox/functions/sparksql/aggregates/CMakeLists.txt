@@ -16,9 +16,12 @@ add_library(
   AverageAggregate.cpp
   BitwiseXorAggregate.cpp
   BloomFilterAggAggregate.cpp
+  CentralMomentsAggregate.cpp
+  CollectListAggregate.cpp
   FirstLastAggregate.cpp
   MinMaxByAggregate.cpp
   Register.cpp
+  RegrReplacementAggregate.cpp
   SumAggregate.cpp)
 
 target_link_libraries(velox_functions_spark_aggregates fmt::fmt velox_exec

@@ -18,6 +18,8 @@
 
 #include <folly/ScopeGuard.h>
 
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/memory/MemoryArbitrator.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/common/time/CpuWallTimer.h"
@@ -37,14 +39,17 @@ dwio::common::StripeProgress getStripeProgress(const WriterContext& context) {
       .stripeIndex = context.stripeIndex(),
       .stripeRowCount = context.stripeRowCount(),
       .totalMemoryUsage = context.getTotalMemoryUsage(),
-      .stripeSizeEstimate = std::max(
-          context.getEstimatedStripeSize(context.stripeRawSize()),
-          // The stripe size estimate is only more accurate from the second
-          // stripe onward because it uses past stripe states in heuristics.
-          // We need to additionally bound it with output stream size based
-          // estimate for the first stripe.
-          context.stripeIndex() == 0 ? context.getEstimatedOutputStreamSize()
-                                     : 0)};
+      .stripeSizeEstimate = context.linearStripeSizeHeuristics()
+          ? std::max(
+                context.getEstimatedStripeSize(context.stripeRawSize()),
+                // The stripe size estimate is only more accurate from the
+                // second stripe onward because it uses past stripe states in
+                // heuristics. We need to additionally bound it with output
+                // stream size based estimate for the first stripe.
+                context.stripeIndex() == 0
+                    ? context.getEstimatedOutputStreamSize()
+                    : 0)
+          : context.getEstimatedOutputStreamSize()};
 }
 
 #define NON_RECLAIMABLE_SECTION_CHECK() \
@@ -220,7 +225,7 @@ void Writer::ensureWriteFits(size_t appendBytes, size_t appendRows) {
 
   // Allows the memory arbitrator to reclaim memory from this file writer if the
   // memory reservation below has triggered memory arbitration.
-  exec::ReclaimableSectionGuard reclaimGuard(nonReclaimableSection_);
+  memory::ReclaimableSectionGuard reclaimGuard(nonReclaimableSection_);
 
   const size_t estimatedAppendMemoryBytes =
       std::max(appendBytes, context.estimateNextWriteSize(appendRows));
@@ -252,7 +257,7 @@ void Writer::ensureStripeFlushFits() {
 
   // Allows the memory arbitrator to reclaim memory from this file writer if the
   // memory reservation below has triggered memory arbitration.
-  exec::ReclaimableSectionGuard reclaimGuard(nonReclaimableSection_);
+  memory::ReclaimableSectionGuard reclaimGuard(nonReclaimableSection_);
 
   auto& context = getContext();
   const size_t estimateFlushMemoryBytes =
@@ -415,11 +420,14 @@ void Writer::flushStripe(bool close) {
   });
 
   // Collects the memory increment from flushing data to output streams.
+  const auto postFlushStreamMemoryUsage =
+      context.getMemoryUsage(MemoryUsageCategory::OUTPUT_STREAM);
   const auto flushOverhead =
-      context.getMemoryUsage(MemoryUsageCategory::OUTPUT_STREAM) -
-      preFlushStreamMemoryUsage;
-  context.recordFlushOverhead(flushOverhead);
-  metrics.flushOverhead = flushOverhead;
+      postFlushStreamMemoryUsage > preFlushStreamMemoryUsage
+      ? postFlushStreamMemoryUsage - preFlushStreamMemoryUsage
+      : 0;
+  metrics.flushOverhead = static_cast<uint64_t>(flushOverhead);
+  context.recordFlushOverhead(metrics.flushOverhead);
 
   const auto postFlushMem = context.getTotalMemoryUsage();
 
@@ -541,7 +549,7 @@ void Writer::flushStripe(bool close) {
   metrics.groupSize = 0;
   metrics.close = close;
 
-  LOG(INFO) << fmt::format(
+  VLOG(1) << fmt::format(
       "Stripe {}: Flush overhead = {}, data length = {}, pre flush mem = {}, post flush mem = {}. Closing = {}",
       metrics.stripeIndex,
       metrics.flushOverhead,
@@ -719,12 +727,14 @@ bool Writer::MemoryReclaimer::reclaimableBytes(
 uint64_t Writer::MemoryReclaimer::reclaim(
     memory::MemoryPool* pool,
     uint64_t targetBytes,
+    uint64_t /*unused*/,
     memory::MemoryReclaimer::Stats& stats) {
   if (!writer_->canReclaim()) {
     return 0;
   }
 
   if (*writer_->nonReclaimableSection_) {
+    RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
     LOG(WARNING)
         << "Can't reclaim from dwrf writer which is under non-reclaimable section: "
         << pool->name();
@@ -739,6 +749,7 @@ uint64_t Writer::MemoryReclaimer::reclaim(
   }
   const uint64_t memoryUsage = writer_->getContext().getTotalMemoryUsage();
   if (memoryUsage < writer_->spillConfig_->writerFlushThresholdSize) {
+    RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
     LOG(WARNING)
         << "Can't reclaim memory from dwrf writer pool " << pool->name()
         << " which doesn't have sufficient memory to flush, writer memory usage: "

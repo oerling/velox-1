@@ -17,7 +17,9 @@
 #include <gtest/gtest.h>
 #include <chrono>
 
+#include "duckdb/common/types.hpp" // @manual
 #include "velox/duckdb/conversion/DuckConversion.h"
+#include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -37,6 +39,30 @@ template <TypeKind kind>
 ::duckdb::Value duckValueAt(const VectorPtr& vector, vector_size_t index) {
   using T = typename KindToFlatVector<kind>::WrapperType;
   return ::duckdb::Value(vector->as<SimpleVector<T>>()->valueAt(index));
+}
+
+template <>
+::duckdb::Value duckValueAt<TypeKind::TINYINT>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  return ::duckdb::Value::TINYINT(
+      vector->as<SimpleVector<int8_t>>()->valueAt(index));
+}
+
+template <>
+::duckdb::Value duckValueAt<TypeKind::SMALLINT>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  return ::duckdb::Value::SMALLINT(
+      vector->as<SimpleVector<int16_t>>()->valueAt(index));
+}
+
+template <>
+::duckdb::Value duckValueAt<TypeKind::BOOLEAN>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  return ::duckdb::Value::BOOLEAN(
+      vector->as<SimpleVector<bool>>()->valueAt(index));
 }
 
 template <>
@@ -68,6 +94,18 @@ template <>
 }
 
 template <>
+::duckdb::Value duckValueAt<TypeKind::INTEGER>(
+    const VectorPtr& vector,
+    vector_size_t index) {
+  auto type = vector->type();
+  if (type->isDate()) {
+    return ::duckdb::Value::DATE(::duckdb::Date::EpochDaysToDate(
+        vector->as<SimpleVector<int32_t>>()->valueAt(index)));
+  }
+  return ::duckdb::Value(vector->as<SimpleVector<int32_t>>()->valueAt(index));
+}
+
+template <>
 ::duckdb::Value duckValueAt<TypeKind::BIGINT>(
     const VectorPtr& vector,
     vector_size_t index) {
@@ -80,6 +118,16 @@ template <>
         decimalType.precision(),
         decimalType.scale());
   }
+
+  if (type->isIntervalDayTime()) {
+    static constexpr int64_t kMicrosecondsInDay =
+        1000L * 1000L * 60L * 60L * 24L;
+    const auto interval = vector->as<SimpleVector<int64_t>>()->valueAt(index);
+    const int64_t microseconds = interval % kMicrosecondsInDay;
+    const int64_t days = interval / kMicrosecondsInDay;
+    return ::duckdb::Value::INTERVAL(0, days, microseconds);
+  }
+
   return ::duckdb::Value(vector->as<SimpleVector<T>>()->valueAt(index));
 }
 
@@ -848,9 +896,9 @@ void DuckDbQueryRunner::createTable(
   auto res = con.Query(sql);
   verifyDuckDBResult(res, sql);
 
+  ::duckdb::Appender appender(con, name);
   for (auto& vector : data) {
     for (int32_t row = 0; row < vector->size(); row++) {
-      ::duckdb::Appender appender(con, name);
       appender.BeginRow();
       for (int32_t column = 0; column < rowType.size(); column++) {
         auto columnVector = vector->childAt(column);
@@ -867,15 +915,12 @@ void DuckDbQueryRunner::createTable(
           appender.Append(duckValueAt<TypeKind::BIGINT>(columnVector, row));
         } else if (rowType.childAt(column)->isLongDecimal()) {
           appender.Append(duckValueAt<TypeKind::HUGEINT>(columnVector, row));
-        } else if (type->isIntervalDayTime()) {
-          auto value = ::duckdb::Value::INTERVAL(
-              0, 0, columnVector->as<SimpleVector<int64_t>>()->valueAt(row));
-          appender.Append(value);
-        } else if (type->isDate()) {
-          auto value = ::duckdb::Value::DATE(::duckdb::Date::EpochDaysToDate(
-              columnVector->as<SimpleVector<int32_t>>()->valueAt(row)));
-          appender.Append(value);
         } else {
+          VELOX_CHECK(
+              type->equivalent(*columnVector->type()),
+              "{} vs. {}",
+              type->toString(),
+              columnVector->toString())
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, type->kind(), columnVector, row);
           appender.Append(value);
@@ -980,6 +1025,19 @@ bool assertEqualResults(
   const auto& expectedType =
       (expected.size() == 0) ? nullptr : expected.at(0)->type();
   return assertEqualResults(expectedRows, expectedType, actual);
+}
+
+bool assertEqualResults(
+    const core::PlanNodePtr& plan1,
+    const core::PlanNodePtr& plan2) {
+  CursorParameters params1;
+  params1.planNode = plan1;
+  auto [cursor1, results1] = readCursor(params1, [](Task*) {});
+
+  CursorParameters params2;
+  params2.planNode = plan2;
+  auto [cursor2, results2] = readCursor(params2, [](Task*) {});
+  return assertEqualResults(results1, results2);
 }
 
 void assertEqualTypeAndNumRows(
@@ -1263,11 +1321,48 @@ void assertResultsOrdered(
   }
 }
 
+tsan_atomic<int32_t>& testingAbortPct() {
+  static tsan_atomic<int32_t> abortPct = 0;
+  return abortPct;
+}
+
+tsan_atomic<int32_t>& testingAbortCounter() {
+  static tsan_atomic<int32_t> counter = 0;
+  return counter;
+}
+
+TestScopedAbortInjection::TestScopedAbortInjection(
+    int32_t abortPct,
+    int32_t maxInjections) {
+  testingAbortPct() = abortPct;
+  testingAbortCounter() = maxInjections;
+}
+
+TestScopedAbortInjection::~TestScopedAbortInjection() {
+  testingAbortPct() = 0;
+  testingAbortCounter() = 0;
+}
+
+bool testingMaybeTriggerAbort(exec::Task* task) {
+  if (testingAbortPct() <= 0 || testingAbortCounter() <= 0) {
+    return false;
+  }
+
+  if ((folly::Random::rand32() % 100) < testingAbortPct()) {
+    if (testingAbortCounter()-- > 0) {
+      task->requestAbort();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     const CursorParameters& params,
     std::function<void(exec::Task*)> addSplits,
     uint64_t maxWaitMicros) {
-  auto cursor = std::make_unique<TaskCursor>(params);
+  auto cursor = TaskCursor::create(params);
   // 'result' borrows memory from cursor so the life cycle must be shorter.
   std::vector<RowVectorPtr> result;
   auto* task = cursor->task().get();
@@ -1276,9 +1371,25 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
   while (cursor->moveNext()) {
     result.push_back(cursor->current());
     addSplits(task);
+    testingMaybeTriggerAbort(task);
   }
 
-  EXPECT_TRUE(waitForTaskCompletion(task, maxWaitMicros)) << task->taskId();
+  if (!waitForTaskCompletion(task, maxWaitMicros)) {
+    // NOTE: there is async memory arbitration might fail the task after all the
+    // results have been consumed and before the task finishes. So we might run
+    // into the failed task state in some rare case such as exposed by
+    // concurrent memory arbitration test.
+    if (task->state() != TaskState::kFinished &&
+        task->state() != TaskState::kRunning) {
+      waitForTaskDriversToFinish(task, maxWaitMicros);
+      std::rethrow_exception(task->error());
+    } else {
+      VELOX_FAIL(
+          "Failed to wait for task to complete after {}, task: {}",
+          succinctMicros(maxWaitMicros),
+          task->toString());
+    }
+  }
   return {std::move(cursor), std::move(result)};
 }
 
@@ -1316,7 +1427,9 @@ bool waitForTaskStateChange(
   // Wait for task to transition to finished state.
   if (task->state() != state) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->taskCompletionFuture(maxWaitMicros).via(&executor);
+    auto future = task->taskCompletionFuture()
+                      .within(std::chrono::microseconds(maxWaitMicros))
+                      .via(&executor);
     future.wait();
   }
 
@@ -1446,4 +1559,29 @@ void printResults(const RowVectorPtr& result, std::ostream& out) {
   }
 }
 
+std::unordered_map<std::string, OperatorStats> toOperatorStats(
+    const TaskStats& taskStats) {
+  std::unordered_map<std::string, OperatorStats> opStatsMap;
+
+  for (const auto& pipelineStats : taskStats.pipelineStats) {
+    for (const auto& opStats : pipelineStats.operatorStats) {
+      const auto& opType = opStats.operatorType;
+      auto it = opStatsMap.find(opType);
+      if (it != opStatsMap.end()) {
+        it->second.add(opStats);
+      } else {
+        opStatsMap.emplace(opType, opStats);
+      }
+    }
+  }
+  return opStatsMap;
+}
+
 } // namespace facebook::velox::exec::test
+
+template <>
+struct fmt::formatter<::duckdb::LogicalTypeId> : formatter<int> {
+  auto format(::duckdb::LogicalTypeId s, format_context& ctx) {
+    return formatter<int>::format(static_cast<int>(s), ctx);
+  }
+};

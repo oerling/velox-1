@@ -18,97 +18,176 @@
 
 namespace facebook::velox::aggregate::prestosql {
 
-extern exec::AggregateRegistrationResult registerApproxMostFrequentAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerApproxPercentileAggregate(
+extern void registerApproxMostFrequentAggregate(
     const std::string& prefix,
-    bool withCompanionFunctions);
-extern exec::AggregateRegistrationResult registerArbitraryAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerArrayAggAggregate(
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerApproxPercentileAggregate(
     const std::string& prefix,
-    bool withCompanionFunctions);
-extern exec::AggregateRegistrationResult registerAverageAggregate(
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerArbitraryAggregate(
     const std::string& prefix,
-    bool withCompanionFunctions);
-extern exec::AggregateRegistrationResult registerBitwiseXorAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerChecksumAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerCountAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerCountIfAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerEntropyAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerGeometricMeanAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerHistogramAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerMapAggAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerMapUnionAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerMapUnionSumAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerMaxDataSizeForStatsAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerMultiMapAggAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerSumDataSizeForStatsAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerReduceAgg(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerSetAggAggregate(
-    const std::string& prefix);
-extern exec::AggregateRegistrationResult registerSetUnionAggregate(
-    const std::string& prefix);
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerArrayAggAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerAverageAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerBitwiseXorAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool onlyPrestoSignatures,
+    bool overwrite);
+extern void registerChecksumAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerCountAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerCountIfAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerEntropyAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerGeometricMeanAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerHistogramAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMapAggAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMapUnionAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMapUnionSumAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMaxDataSizeForStatsAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMultiMapAggAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerSumDataSizeForStatsAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerReduceAgg(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerSetAggAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerSetUnionAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
 
 extern void registerApproxDistinctAggregates(
     const std::string& prefix,
-    bool withCompanionFunctions);
-extern void registerBitwiseAggregates(const std::string& prefix);
-extern void registerBoolAggregates(const std::string& prefix);
-extern void registerCentralMomentsAggregates(const std::string& prefix);
-extern void registerCovarianceAggregates(const std::string& prefix);
-extern void registerMinMaxAggregates(const std::string& prefix);
-extern void registerMinMaxByAggregates(const std::string& prefix);
-extern void registerSumAggregate(const std::string& prefix);
-extern void registerVarianceAggregates(const std::string& prefix);
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerBitwiseAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool onlyPrestoSignatures,
+    bool overwrite);
+extern void registerBoolAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerCentralMomentsAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerCovarianceAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMinMaxAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerMinMaxByAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerSumAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
+extern void registerVarianceAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite);
 
 void registerAllAggregateFunctions(
     const std::string& prefix,
-    bool withCompanionFunctions) {
-  registerApproxDistinctAggregates(prefix, withCompanionFunctions);
-  registerApproxMostFrequentAggregate(prefix);
-  registerApproxPercentileAggregate(prefix, withCompanionFunctions);
-  registerArbitraryAggregate(prefix);
-  registerArrayAggAggregate(prefix, withCompanionFunctions);
-  registerAverageAggregate(prefix, withCompanionFunctions);
-  registerBitwiseAggregates(prefix);
-  registerBitwiseXorAggregate(prefix);
-  registerBoolAggregates(prefix);
-  registerCentralMomentsAggregates(prefix);
-  registerChecksumAggregate(prefix);
-  registerCountAggregate(prefix);
-  registerCountIfAggregate(prefix);
-  registerCovarianceAggregates(prefix);
-  registerEntropyAggregate(prefix);
-  registerGeometricMeanAggregate(prefix);
-  registerHistogramAggregate(prefix);
-  registerMapAggAggregate(prefix);
-  registerMapUnionAggregate(prefix);
-  registerMapUnionSumAggregate(prefix);
-  registerMaxDataSizeForStatsAggregate(prefix);
-  registerMultiMapAggAggregate(prefix);
-  registerSumDataSizeForStatsAggregate(prefix);
-  registerMinMaxAggregates(prefix);
-  registerMinMaxByAggregates(prefix);
-  registerReduceAgg(prefix);
-  registerSetAggAggregate(prefix);
-  registerSetUnionAggregate(prefix);
-  registerSumAggregate(prefix);
-  registerVarianceAggregates(prefix);
+    bool withCompanionFunctions,
+    bool onlyPrestoSignatures,
+    bool overwrite) {
+  registerApproxDistinctAggregates(prefix, withCompanionFunctions, overwrite);
+  registerApproxMostFrequentAggregate(
+      prefix, withCompanionFunctions, overwrite);
+  registerApproxPercentileAggregate(prefix, withCompanionFunctions, overwrite);
+  registerArbitraryAggregate(prefix, withCompanionFunctions, overwrite);
+  registerArrayAggAggregate(prefix, withCompanionFunctions, overwrite);
+  registerAverageAggregate(prefix, withCompanionFunctions, overwrite);
+  registerBitwiseAggregates(
+      prefix, withCompanionFunctions, onlyPrestoSignatures, overwrite);
+  registerBitwiseXorAggregate(
+      prefix, withCompanionFunctions, onlyPrestoSignatures, overwrite);
+  registerBoolAggregates(prefix, withCompanionFunctions, overwrite);
+  registerCentralMomentsAggregates(prefix, withCompanionFunctions, overwrite);
+  registerChecksumAggregate(prefix, withCompanionFunctions, overwrite);
+  registerCountAggregate(prefix, withCompanionFunctions, overwrite);
+  registerCountIfAggregate(prefix, withCompanionFunctions, overwrite);
+  registerCovarianceAggregates(prefix, withCompanionFunctions, overwrite);
+  registerEntropyAggregate(prefix, withCompanionFunctions, overwrite);
+  registerGeometricMeanAggregate(prefix, withCompanionFunctions, overwrite);
+  registerHistogramAggregate(prefix, withCompanionFunctions, overwrite);
+  registerMapAggAggregate(prefix, withCompanionFunctions, overwrite);
+  registerMapUnionAggregate(prefix, withCompanionFunctions, overwrite);
+  registerMapUnionSumAggregate(prefix, withCompanionFunctions, overwrite);
+  registerMaxDataSizeForStatsAggregate(
+      prefix, withCompanionFunctions, overwrite);
+  registerMultiMapAggAggregate(prefix, withCompanionFunctions, overwrite);
+  registerSumDataSizeForStatsAggregate(
+      prefix, withCompanionFunctions, overwrite);
+  registerMinMaxAggregates(prefix, withCompanionFunctions, overwrite);
+  registerMinMaxByAggregates(prefix, withCompanionFunctions, overwrite);
+  registerReduceAgg(prefix, withCompanionFunctions, overwrite);
+  registerSetAggAggregate(prefix, withCompanionFunctions, overwrite);
+  registerSetUnionAggregate(prefix, withCompanionFunctions, overwrite);
+  registerSumAggregate(prefix, withCompanionFunctions, overwrite);
+  registerVarianceAggregates(prefix, withCompanionFunctions, overwrite);
+}
+
+extern void registerCountDistinctAggregate(const std::string& prefix);
+
+void registerInternalAggregateFunctions(const std::string& prefix) {
+  registerCountDistinctAggregate(prefix);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

@@ -129,10 +129,16 @@ struct SsdCacheStats {
   void operator=(const SsdCacheStats& other) {
     entriesWritten = tsanAtomicValue(other.entriesWritten);
     bytesWritten = tsanAtomicValue(other.bytesWritten);
+    checkpointsWritten = tsanAtomicValue(other.checkpointsWritten);
     entriesRead = tsanAtomicValue(other.entriesRead);
     bytesRead = tsanAtomicValue(other.bytesRead);
+    checkpointsRead = tsanAtomicValue(other.checkpointsRead);
     entriesCached = tsanAtomicValue(other.entriesCached);
+    regionsCached = tsanAtomicValue(other.regionsCached);
     bytesCached = tsanAtomicValue(other.bytesCached);
+    entriesAgedOut = tsanAtomicValue(other.entriesAgedOut);
+    regionsAgedOut = tsanAtomicValue(other.regionsAgedOut);
+    regionsEvicted = tsanAtomicValue(other.regionsEvicted);
     numPins = tsanAtomicValue(other.numPins);
 
     openFileErrors = tsanAtomicValue(other.openFileErrors);
@@ -148,10 +154,16 @@ struct SsdCacheStats {
 
   tsan_atomic<uint64_t> entriesWritten{0};
   tsan_atomic<uint64_t> bytesWritten{0};
+  tsan_atomic<uint64_t> checkpointsWritten{0};
   tsan_atomic<uint64_t> entriesRead{0};
   tsan_atomic<uint64_t> bytesRead{0};
+  tsan_atomic<uint64_t> checkpointsRead{0};
   tsan_atomic<uint64_t> entriesCached{0};
+  tsan_atomic<uint64_t> regionsCached{0};
   tsan_atomic<uint64_t> bytesCached{0};
+  tsan_atomic<uint64_t> entriesAgedOut{0};
+  tsan_atomic<uint64_t> regionsAgedOut{0};
+  tsan_atomic<uint64_t> regionsEvicted{0};
   tsan_atomic<int32_t> numPins{0};
 
   tsan_atomic<uint32_t> openFileErrors{0};
@@ -245,6 +257,14 @@ class SsdFile {
   // Deletes the backing file. Used in testing.
   void deleteFile();
 
+  /// Remove cached entries of files in the fileNum set 'filesToRemove'. If
+  /// successful, return true, and 'filesRetained' contains entries that should
+  /// not be removed, ex., from pinned regions. Otherwise, return false and
+  /// 'filesRetained' could be ignored.
+  bool removeFileEntries(
+      const folly::F14FastSet<uint64_t>& filesToRemove,
+      folly::F14FastSet<uint64_t>& filesRetained);
+
   // Writes a checkpoint state that can be recovered from. The
   // checkpoint is serialized on 'mutex_'. If 'force' is false,
   // rechecks that at least 'checkpointIntervalBytes_' have been
@@ -253,6 +273,11 @@ class SsdFile {
 
   /// Returns true if copy on write is disabled for this file. Used in testing.
   bool testingIsCowDisabled() const;
+
+  /// Return the SSD file path.
+  const std::string& fileName() const {
+    return fileName_;
+  }
 
  private:
   // 4 first bytes of a checkpoint file. Allows distinguishing between format
@@ -263,6 +288,8 @@ class SsdFile {
   static constexpr int64_t kCheckpointMapMarker = 0xfffffffffffffffe;
   // Magic number at end of completed checkpoint file.
   static constexpr int64_t kCheckpointEndMarker = 0xcbedf11e;
+
+  static constexpr int kMaxErasedSizePct = 50;
 
   // Increments the pin count of the region of 'offset'. Caller must hold
   // 'mutex_'.
@@ -312,6 +339,11 @@ class SsdFile {
   // the files for making new checkpoints.
   void initializeCheckpoint();
 
+  // Writes 'iovecs' to the SSD file at the 'offset'. Returns true if the write
+  // succeeds; otherwise, log the error and return false.
+  bool
+  write(uint64_t offset, uint64_t length, const std::vector<iovec>& iovecs);
+
   // Synchronously logs that 'regions' are no longer valid in a possibly xisting
   // checkpoint.
   void logEviction(const std::vector<int32_t>& regions);
@@ -324,6 +356,9 @@ class SsdFile {
 
   // Maximum size of the backing file in kRegionSize units.
   const int32_t maxRegions_;
+
+  // True if copy on write should be disabled.
+  const bool disableFileCow_;
 
   // Serializes access to all private data members.
   mutable std::shared_mutex mutex_;
@@ -343,6 +378,8 @@ class SsdFile {
   // offset and the end of the region. This is subscripted with the region
   // index. The regionIndex times kRegionSize is an offset into the file.
   std::vector<uint32_t> regionSizes_;
+
+  std::vector<uint32_t> erasedRegionSizes_;
 
   // Indices of regions available for writing new entries.
   std::vector<int32_t> writableRegions_;

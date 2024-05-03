@@ -103,7 +103,7 @@ class BoolComparisonFunction final : public exec::VectorFunction {
                       ->template mutableRawValues<uint64_t>();
       rows.applyToSelected([&](vector_size_t i) {
         flatResult->set(
-            i, cmp(bits::isBitSet(rawA, i), bits::isBitSet(rawA, i)));
+            i, cmp(bits::isBitSet(rawA, i), bits::isBitSet(rawB, i)));
       });
     } else if (args[0]->isConstantEncoding() && args[1]->isFlatEncoding()) {
       // Fast path for (const, flat).
@@ -192,8 +192,8 @@ void applyTyped(
   } else {
     // (isnull(a) AND isnull(b)) || (a == b)
     // When DecodedVector::nulls() is null it means there are no nulls.
-    auto* rawNulls0 = decodedLhs->nulls();
-    auto* rawNulls1 = decodedRhs->nulls();
+    auto* rawNulls0 = decodedLhs->nulls(&rows);
+    auto* rawNulls1 = decodedRhs->nulls(&rows);
     rows.applyToSelected([&](vector_size_t i) {
       auto isNull0 = rawNulls0 && bits::isBitNull(rawNulls0, i);
       auto isNull1 = rawNulls1 && bits::isBitNull(rawNulls1, i);
@@ -206,45 +206,8 @@ void applyTyped(
   }
 }
 
-template <>
-void applyTyped<TypeKind::ARRAY>(
-    const SelectivityVector& /* rows */,
-    std::vector<VectorPtr>& /* args */,
-    DecodedVector* /* decodedLhs */,
-    DecodedVector* /* decodedRhs */,
-    exec::EvalCtx& /* context */,
-    FlatVector<bool>* /* flatResult */) {
-  VELOX_NYI("euqaltonullsafe does not support arrays.");
-}
-
-template <>
-void applyTyped<TypeKind::MAP>(
-    const SelectivityVector& /* rows */,
-    std::vector<VectorPtr>& /* args */,
-    DecodedVector* /* decodedLhs */,
-    DecodedVector* /* decodedRhs */,
-    exec::EvalCtx& /* context */,
-    FlatVector<bool>* /* flatResult */) {
-  VELOX_NYI("euqaltonullsafe does not support maps.");
-}
-
-template <>
-void applyTyped<TypeKind::ROW>(
-    const SelectivityVector& /* rows */,
-    std::vector<VectorPtr>& /* args */,
-    DecodedVector* /* decodedLhs */,
-    DecodedVector* /* decodedRhs */,
-    exec::EvalCtx& /* context */,
-    FlatVector<bool>* /* flatResult */) {
-  VELOX_NYI("euqaltonullsafe does not support structs.");
-}
-
 class EqualtoNullSafe final : public exec::VectorFunction {
  public:
-  bool isDefaultNullBehavior() const override {
-    return false;
-  }
-
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
@@ -259,7 +222,7 @@ class EqualtoNullSafe final : public exec::VectorFunction {
     auto* flatResult = result->asUnchecked<FlatVector<bool>>();
     flatResult->mutableRawValues<int64_t>();
 
-    VELOX_DYNAMIC_TYPE_DISPATCH(
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
         applyTyped,
         args[0]->typeKind(),
         rows,

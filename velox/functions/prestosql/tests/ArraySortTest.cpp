@@ -510,6 +510,11 @@ TEST_F(ArraySortTest, lambda) {
     SCOPED_TRACE(lambdaExpr);
     auto result = evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data);
     assertEqualVectors(sortedAsc, result);
+
+    SelectivityVector firstRow(1);
+    result =
+        evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data, firstRow);
+    assertEqualVectors(sortedAsc->slice(0, 1), result);
   };
 
   auto testDesc = [&](const std::string& name, const std::string& lambdaExpr) {
@@ -517,6 +522,11 @@ TEST_F(ArraySortTest, lambda) {
     SCOPED_TRACE(lambdaExpr);
     auto result = evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data);
     assertEqualVectors(sortedDesc, result);
+
+    SelectivityVector firstRow(1);
+    result =
+        evaluate(fmt::format("{}(c0, {})", name, lambdaExpr), data, firstRow);
+    assertEqualVectors(sortedDesc->slice(0, 1), result);
   };
 
   // Different ways to sort by length ascending.
@@ -538,6 +548,19 @@ TEST_F(ArraySortTest, lambda) {
   testDesc(
       "array_sort",
       "(x, y) -> if(length(x) < length(y), 1, if(length(x) = length(y), 0, -1))");
+}
+
+TEST_F(ArraySortTest, unsupporteLambda) {
+  auto data = makeRowVector({
+      makeArrayVectorFromJson<int32_t>({
+          "[1, 2, 3, 4]",
+          "[1, 2, 3]",
+      }),
+  });
+
+  VELOX_ASSERT_THROW(
+      evaluate("array_sort(c0, (a, b) -> 0)", data),
+      "array_sort with comparator lambda that cannot be rewritten into a transform is not supported");
 }
 
 TEST_F(ArraySortTest, failOnMapTypeSort) {
@@ -566,8 +589,7 @@ TEST_F(ArraySortTest, failOnArrayNullCompare) {
       "[5, null]",
       "null",
   });
-  static const std::string kErrorMessage =
-      "array_sort contains nested nulls not supported for comparison";
+  static const std::string kErrorMessage = "Ordering nulls is not supported";
 
   // [2, null] vs [4, 4], [5, null] vs null no throw.
   const auto noNullCompareBatch = makeRowVector({
@@ -616,8 +638,7 @@ TEST_F(ArraySortTest, failOnRowNullCompare) {
           {1, 1, 2, std::nullopt, 4, std::nullopt, 0}),
   });
   baseVector->setNull(6, true);
-  static const std::string kErrorMessage =
-      "array_sort contains nested nulls not supported for comparison";
+  static const std::string kErrorMessage = "Ordering nulls is not supported";
 
   // (2, null) vs (4, 4), (5, null) vs null no throw.
   const auto noNullCompareBatch = makeRowVector({

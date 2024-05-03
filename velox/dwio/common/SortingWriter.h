@@ -31,6 +31,8 @@ class SortingWriter : public Writer {
       uint32_t maxOutputRowsConfig,
       uint64_t maxOutputBytesConfig);
 
+  ~SortingWriter() override;
+
   void write(const VectorPtr& data) override;
 
   /// No action because we need to accumulate all data and sort before data can
@@ -54,6 +56,7 @@ class SortingWriter : public Writer {
     uint64_t reclaim(
         memory::MemoryPool* pool,
         uint64_t targetBytes,
+        uint64_t maxWaitMs,
         memory::MemoryReclaimer::Stats& stats) override;
 
    private:
@@ -75,9 +78,9 @@ class SortingWriter : public Writer {
   const std::unique_ptr<Writer> outputWriter_;
   const uint32_t maxOutputRowsConfig_;
   const uint64_t maxOutputBytesConfig_;
-
   memory::MemoryPool* const sortPool_;
   const bool canReclaim_;
+
   std::unique_ptr<exec::SortBuffer> sortBuffer_;
 };
 

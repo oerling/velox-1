@@ -107,6 +107,10 @@ class ColumnReader {
     VELOX_NYI();
   }
 
+  virtual bool isFlatMap() const {
+    return false;
+  }
+
   /**
    * Create a reader for the given stripe.
    */
@@ -115,7 +119,8 @@ class ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       StripeStreams& stripe,
       const StreamLabels& streamLabels,
-      folly::Executor* FOLLY_NULLABLE executor,
+      folly::Executor* executor,
+      size_t decodingParallelismFactor,
       FlatMapContext flatMapContext = {});
 };
 
@@ -127,7 +132,8 @@ class ColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       StripeStreams& stripe,
       const StreamLabels& streamLabels,
-      folly::Executor* FOLLY_NULLABLE executor,
+      folly::Executor* executor,
+      size_t decodingParallelismFactor,
       FlatMapContext flatMapContext = {}) {
     return ColumnReader::build(
         requestedType,
@@ -135,6 +141,7 @@ class ColumnReaderFactory {
         stripe,
         streamLabels,
         executor,
+        decodingParallelismFactor,
         std::move(flatMapContext));
   }
 

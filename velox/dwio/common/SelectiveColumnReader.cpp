@@ -110,6 +110,7 @@ void SelectiveColumnReader::prepareNulls(
       }
     }
   }
+  returnReaderNulls_ = false;
   if (resultNulls_ && resultNulls_->unique() &&
       resultNulls_->capacity() >= bits::nbytes(numRows) + simd::kPadding) {
     // Clear whole capacity because future uses could hit
@@ -389,17 +390,6 @@ void SelectiveColumnReader::addStringValue(folly::StringPiece value) {
   auto copy = copyStringValue(value);
   reinterpret_cast<StringView*>(rawValues_)[numValues_++] =
       StringView(copy, value.size());
-}
-
-bool SelectiveColumnReader::readsNullsOnly() const {
-  auto filter = scanSpec_->filter();
-  if (filter) {
-    auto kind = filter->kind();
-    return kind == velox::common::FilterKind::kIsNull ||
-        (!scanSpec_->keepValues() &&
-         kind == velox::common::FilterKind::kIsNotNull);
-  }
-  return false;
 }
 
 void SelectiveColumnReader::setNulls(BufferPtr resultNulls) {

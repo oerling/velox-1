@@ -17,6 +17,7 @@
 #include "velox/functions/lib/RegistrationHelpers.h"
 #include "velox/functions/prestosql/Arithmetic.h"
 #include "velox/functions/prestosql/Bitwise.h"
+#include "velox/functions/prestosql/DecimalFunctions.h"
 #include "velox/functions/prestosql/Probability.h"
 #include "velox/functions/prestosql/Rand.h"
 
@@ -25,7 +26,17 @@ namespace facebook::velox::functions {
 namespace {
 void registerSimpleFunctions(const std::string& prefix) {
   registerBinaryFloatingPoint<PlusFunction>({prefix + "plus"});
+  registerFunction<
+      PlusFunction,
+      IntervalDayTime,
+      IntervalDayTime,
+      IntervalDayTime>({prefix + "plus"});
   registerBinaryFloatingPoint<MinusFunction>({prefix + "minus"});
+  registerFunction<
+      MinusFunction,
+      IntervalDayTime,
+      IntervalDayTime,
+      IntervalDayTime>({prefix + "minus"});
   registerBinaryFloatingPoint<MultiplyFunction>({prefix + "multiply"});
   registerFunction<MultiplyFunction, IntervalDayTime, IntervalDayTime, int64_t>(
       {prefix + "multiply"});
@@ -50,8 +61,23 @@ void registerSimpleFunctions(const std::string& prefix) {
   registerBinaryFloatingPoint<ModulusFunction>({prefix + "mod"});
   registerUnaryNumeric<CeilFunction>({prefix + "ceil", prefix + "ceiling"});
   registerUnaryNumeric<FloorFunction>({prefix + "floor"});
+
   registerUnaryNumeric<AbsFunction>({prefix + "abs"});
+  registerFunction<
+      DecimalAbsFunction,
+      LongDecimal<P1, S1>,
+      LongDecimal<P1, S1>>({prefix + "abs"});
+  registerFunction<
+      DecimalAbsFunction,
+      ShortDecimal<P1, S1>,
+      ShortDecimal<P1, S1>>({prefix + "abs"});
+
   registerUnaryFloatingPoint<NegateFunction>({prefix + "negate"});
+  registerFunction<NegateFunction, LongDecimal<P1, S1>, LongDecimal<P1, S1>>(
+      {prefix + "negate"});
+  registerFunction<NegateFunction, ShortDecimal<P1, S1>, ShortDecimal<P1, S1>>(
+      {prefix + "negate"});
+
   registerFunction<RadiansFunction, double, double>({prefix + "radians"});
   registerFunction<DegreesFunction, double, double>({prefix + "degrees"});
   registerUnaryNumeric<RoundFunction>({prefix + "round"});
@@ -132,10 +158,10 @@ void registerSimpleFunctions(const std::string& prefix) {
       {prefix + "cauchy_cdf"});
   registerFunction<ChiSquaredCDFFunction, double, double, double>(
       {prefix + "chi_squared_cdf"});
-  registerFunction<InverseBetaCDFFunction, double, double, double, double>(
-      {prefix + "inverse_beta_cdf"});
   registerFunction<FCDFFunction, double, double, double, double>(
       {prefix + "f_cdf"});
+  registerFunction<InverseBetaCDFFunction, double, double, double, double>(
+      {prefix + "inverse_beta_cdf"});
   registerFunction<PoissonCDFFunction, double, double, int64_t>(
       {prefix + "poisson_cdf"});
   registerFunction<PoissonCDFFunction, double, double, int32_t>(
@@ -161,6 +187,8 @@ void registerSimpleFunctions(const std::string& prefix) {
       double,
       Map<Varchar, double>,
       Map<Varchar, double>>({prefix + "cosine_similarity"});
+  registerFunction<WeibullCDFFunction, double, double, double, double>(
+      {prefix + "weibull_cdf"});
 }
 
 } // namespace
@@ -168,13 +196,13 @@ void registerSimpleFunctions(const std::string& prefix) {
 void registerArithmeticFunctions(const std::string& prefix = "") {
   registerSimpleFunctions(prefix);
   VELOX_REGISTER_VECTOR_FUNCTION(udf_not, prefix + "not");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_add, prefix + "plus");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_sub, prefix + "minus");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_mul, prefix + "multiply");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_div, prefix + "divide");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_round, prefix + "round");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_abs, prefix + "abs");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_negate, prefix + "negate");
+
+  registerDecimalPlus(prefix);
+  registerDecimalMinus(prefix);
+  registerDecimalMultiply(prefix);
+  registerDecimalDivide(prefix);
+  registerDecimalFloor(prefix);
+  registerDecimalRound(prefix);
 }
 
 } // namespace facebook::velox::functions

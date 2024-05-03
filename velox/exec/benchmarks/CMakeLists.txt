@@ -37,7 +37,27 @@ add_executable(velox_hash_benchmark HashTableBenchmark.cpp)
 target_link_libraries(velox_hash_benchmark velox_exec velox_exec_test_lib
                       velox_vector_test_lib ${FOLLY_BENCHMARK})
 
-add_executable(velox_sort_benchmark RowContainerSortBenchmark.cpp)
+add_executable(velox_hash_join_list_result_benchmark
+               HashJoinListResultBenchmark.cpp)
 
-target_link_libraries(velox_sort_benchmark velox_exec velox_exec_test_lib
+target_link_libraries(
+  velox_hash_join_list_result_benchmark velox_exec velox_exec_test_lib
+  velox_vector_test_lib ${FOLLY_BENCHMARK})
+
+if(${VELOX_ENABLE_PARQUET})
+  add_executable(velox_sort_benchmark RowContainerSortBenchmark.cpp)
+
+  target_link_libraries(
+    velox_sort_benchmark
+    velox_exec
+    velox_exec_test_lib
+    velox_vector_test_lib
+    ${FOLLY_BENCHMARK}
+    arrow
+    thrift)
+endif()
+
+add_executable(velox_prefixsort_benchmark PrefixSortBenchmark.cpp)
+
+target_link_libraries(velox_prefixsort_benchmark velox_exec velox_vector_fuzzer
                       velox_vector_test_lib ${FOLLY_BENCHMARK})

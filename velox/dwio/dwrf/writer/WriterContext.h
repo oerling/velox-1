@@ -311,10 +311,18 @@ class WriterContext : public CompressionBufferPool {
   }
 
   int64_t getEstimatedOutputStreamSize() const {
+    constexpr float kDataBufferGrowthFactor = 1.5;
+    // NOTE: This is a rough heuristic, based on buffer growth factors. Due to
+    // the chained/paged buffer semantics of output streams, the larger the
+    // streams are, the more we are undercounting content size. However, this
+    // ensures that we don't produce small stripes for flat map scenarios. A
+    // better heuristics would have to account for the number of streams in some
+    // way.
     return (int64_t)std::ceil(
-        (getMemoryUsage(MemoryUsageCategory::OUTPUT_STREAM) +
-         getMemoryUsage(MemoryUsageCategory::DICTIONARY)) /
-        getConfig(Config::COMPRESSION_BLOCK_SIZE_EXTEND_RATIO));
+        (getMemoryUsage(MemoryUsageCategory::OUTPUT_STREAM) /
+             getConfig(Config::COMPRESSION_BLOCK_SIZE_EXTEND_RATIO) +
+         getMemoryUsage(MemoryUsageCategory::DICTIONARY) /
+             kDataBufferGrowthFactor));
   }
 
   /// The additional memory usage of writers during flush typically comes from
@@ -385,6 +393,10 @@ class WriterContext : public CompressionBufferPool {
 
   uint64_t dictionarySizeFlushThreshold() const {
     return dictionarySizeFlushThreshold_;
+  }
+
+  bool linearStripeSizeHeuristics() const {
+    return linearStripeSizeHeuristics_;
   }
 
   bool streamSizeAboveThresholdCheckEnabled() const {
@@ -490,37 +502,37 @@ class WriterContext : public CompressionBufferPool {
         break;
       }
       case TypeKind::BOOLEAN:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::TINYINT:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::SMALLINT:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::INTEGER:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::BIGINT:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::HUGEINT:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::REAL:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::DOUBLE:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::VARCHAR:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::VARBINARY:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::TIMESTAMP:
         physicalSizeAggregators_.emplace(
             type.id(), std::make_unique<PhysicalSizeAggregator>(parent));
         break;
       case TypeKind::UNKNOWN:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::FUNCTION:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::OPAQUE:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       case TypeKind::INVALID:
-        FOLLY_FALLTHROUGH;
+        [[fallthrough]];
       default:
         VELOX_FAIL(
             "Unexpected type kind {} encountered when building "
@@ -603,6 +615,7 @@ class WriterContext : public CompressionBufferPool {
   const bool shareFlatMapDictionaries_;
   const uint64_t stripeSizeFlushThreshold_;
   const uint64_t dictionarySizeFlushThreshold_;
+  const bool linearStripeSizeHeuristics_;
   const bool streamSizeAboveThresholdCheckEnabled_;
   const uint64_t rawDataSizePerBatch_;
   const dwio::common::MetricsLogPtr metricLogger_;
@@ -656,11 +669,10 @@ class WriterContext : public CompressionBufferPool {
   friend class StringColumnWriterDictionaryEncodingIndexTest;
   friend class StringColumnWriterDirectEncodingIndexTest;
   // TODO: remove once writer code is consolidated
-  template <typename TestType>
   friend class WriterEncodingIndexTest2;
 
-  VELOX_FRIEND_TEST(TestWriterContext, GetIntDictionaryEncoder);
-  VELOX_FRIEND_TEST(TestWriterContext, RemoveIntDictionaryEncoderForNode);
+  VELOX_FRIEND_TEST(WriterContextTest, GetIntDictionaryEncoder);
+  VELOX_FRIEND_TEST(WriterContextTest, RemoveIntDictionaryEncoderForNode);
 };
 
 } // namespace facebook::velox::dwrf

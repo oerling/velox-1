@@ -26,6 +26,11 @@ namespace facebook::velox::aggregate::test {
 
 namespace {
 
+constexpr int64_t kLongMax = std::numeric_limits<int64_t>::max();
+constexpr int64_t kLongMin = std::numeric_limits<int64_t>::min();
+constexpr int128_t kHugeMax = std::numeric_limits<int128_t>::max();
+constexpr int128_t kHugeMin = std::numeric_limits<int128_t>::min();
+
 class SetAggTest : public AggregationTestBase {
  protected:
   void SetUp() override {
@@ -153,6 +158,184 @@ TEST_F(SetAggTest, groupBy) {
       {"set_agg(c1)"},
       {"c0", "array_sort(a0)"},
       {expected});
+}
+
+TEST_F(SetAggTest, shortDecimal) {
+  // Test with short decimal
+  auto type = DECIMAL(6, 2);
+
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>(
+          {kLongMin,
+           2000,
+           3000,
+           -4321,
+           kLongMax,
+           5000,
+           3000,
+           kLongMax,
+           -2000,
+           6000,
+           7000},
+          type),
+  });
+
+  auto expected = makeRowVector({
+      makeArrayVector<int64_t>(
+          {
+              {kLongMin, -4321, -2000, 2000, 3000, 5000, 6000, 7000, kLongMax},
+          },
+          type),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
+
+  // Test with some NULL inputs (short decimals)
+  data = makeRowVector({
+      makeNullableFlatVector<int64_t>(
+          {1000,
+           std::nullopt,
+           kLongMin,
+           4000,
+           std::nullopt,
+           4000,
+           std::nullopt,
+           -1000,
+           5000,
+           -9999,
+           kLongMax},
+          type),
+  });
+
+  expected = makeRowVector({
+      makeNullableArrayVector(
+          std::vector<std::vector<std::optional<int64_t>>>{
+              {kLongMin,
+               -9999,
+               -1000,
+               1000,
+               4000,
+               5000,
+               kLongMax,
+               std::nullopt}},
+          ARRAY(type)),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
+
+  // Test with all NULL inputs (short decimals)
+  data = makeRowVector({
+      makeNullableFlatVector<int64_t>(
+          {std::nullopt,
+           std::nullopt,
+           std::nullopt,
+           std::nullopt,
+           std::nullopt},
+          type),
+  });
+
+  expected = makeRowVector({
+      makeNullableArrayVector(
+          std::vector<std::vector<std::optional<int64_t>>>{{std::nullopt}},
+          ARRAY(type)),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
+}
+
+TEST_F(SetAggTest, longDecimal) {
+  // Test with long decimal
+  auto type = DECIMAL(20, 2);
+
+  auto data = makeRowVector({
+      makeFlatVector<int128_t>(
+          {kHugeMin,
+           -2000,
+           3000,
+           4000,
+           5000,
+           kHugeMax,
+           -9630,
+           2000,
+           6000,
+           7000},
+          type),
+  });
+
+  auto expected = makeRowVector({
+      makeArrayVector<int128_t>(
+          {
+              {kHugeMin,
+               -9630,
+               -2000,
+               2000,
+               3000,
+               4000,
+               5000,
+               6000,
+               7000,
+               kHugeMax},
+          },
+          type),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
+
+  // Test with some NULL inputs (long decimals)
+  data = makeRowVector({
+      makeNullableFlatVector<int128_t>(
+          {1000,
+           std::nullopt,
+           3000,
+           4000,
+           std::nullopt,
+           kHugeMax,
+           -8424,
+           4000,
+           std::nullopt,
+           -1000,
+           5000,
+           kHugeMin,
+           2000},
+          type),
+  });
+
+  expected = makeRowVector({
+      makeNullableArrayVector(
+          std::vector<std::vector<std::optional<int128_t>>>{
+              {kHugeMin,
+               -8424,
+               -1000,
+               1000,
+               2000,
+               3000,
+               4000,
+               5000,
+               kHugeMax,
+               std::nullopt}},
+          ARRAY(type)),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
+
+  // Test with all NULL inputs (long decimals)
+  data = makeRowVector({
+      makeNullableFlatVector<int128_t>(
+          {std::nullopt,
+           std::nullopt,
+           std::nullopt,
+           std::nullopt,
+           std::nullopt},
+          type),
+  });
+
+  expected = makeRowVector({
+      makeNullableArrayVector(
+          std::vector<std::vector<std::optional<int128_t>>>{{std::nullopt}},
+          ARRAY(type)),
+  });
+
+  testAggregations({data}, {}, {"set_agg(c0)"}, {"array_sort(a0)"}, {expected});
 }
 
 std::vector<std::optional<std::string>> generateStrings(
@@ -411,6 +594,103 @@ TEST_F(SetAggTest, rowCheckNull) {
       {"c1"},
       {"set_agg(c0)"},
       "ROW comparison not supported for values that contain nulls");
+}
+
+TEST_F(SetAggTest, inputOrder) {
+  // Presto preserves order of input.
+
+  auto testInputOrder = [&](const RowVectorPtr& data,
+                            const RowVectorPtr& expected) {
+    auto plan = PlanBuilder()
+                    .values({data})
+                    .singleAggregation({}, {"set_agg(c0)"})
+                    .planNode();
+    assertQuery(plan, expected);
+  };
+
+  // Integers.
+
+  auto data = makeRowVector({
+      makeNullableFlatVector<int32_t>(
+          {1, 2, 3, std::nullopt, 3, 4, 4, 5, 6, 7, std::nullopt}),
+  });
+
+  auto expected = makeRowVector({
+      makeArrayVectorFromJson<int32_t>({"[1, 2, 3, null, 4, 5, 6, 7]"}),
+  });
+
+  testInputOrder(data, expected);
+
+  // Strings.
+  data = makeRowVector({
+      makeNullableFlatVector<StringView>(
+          {"abc",
+           "bxy",
+           "cde",
+           "abc",
+           "bxy",
+           "cdef",
+           "hijk",
+           std::nullopt,
+           "abc",
+           "some very long string to test long strings"}),
+  });
+
+  expected = makeRowVector({
+      makeNullableArrayVector<StringView>({
+          {"abc",
+           "bxy",
+           "cde",
+           "cdef",
+           "hijk",
+           std::nullopt,
+           "some very long string to test long strings"},
+      }),
+  });
+
+  testInputOrder(data, expected);
+
+  // Complex types.
+
+  data = makeRowVector({
+      makeArrayVectorFromJson<int32_t>({
+          "[1, 2]",
+          "[5, 6]",
+          "null",
+          "[3, 4]",
+          "[1, 2]",
+          "[7, 8]",
+      }),
+  });
+
+  expected = makeRowVector({
+      makeNestedArrayVectorFromJson<int32_t>(
+          {"[[1,2], [5, 6], null, [3,4], [7, 8]]"}),
+  });
+
+  testInputOrder(data, expected);
+
+  // Group by
+  data = makeRowVector({
+      makeFlatVector<int32_t>({1, 2, 2, 1, 1, 1, 2, 2, 1, 2, 1}),
+      makeNullableFlatVector<int32_t>(
+          {1, 2, 3, std::nullopt, 3, 4, 4, 5, 6, 7, std::nullopt}),
+  });
+
+  expected = makeRowVector({
+      makeFlatVector<int32_t>({1, 2}),
+      makeArrayVectorFromJson<int32_t>({
+          "[1, null, 3, 4, 6]",
+          "[2, 3, 4, 5, 7]",
+      }),
+  });
+
+  auto plan = PlanBuilder()
+                  .values({data})
+                  .singleAggregation({"c0"}, {"set_agg(c1)"})
+                  .planNode();
+
+  assertQuery(plan, expected);
 }
 
 } // namespace

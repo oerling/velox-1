@@ -127,7 +127,13 @@ void CacheInputStream::seekToPosition(PositionProvider& seekPosition) {
 }
 
 std::string CacheInputStream::getName() const {
-  return fmt::format("CacheInputStream {} of {}", position_, region_.length);
+  std::string result =
+      fmt::format("CacheInputStream {} of {}", position_, region_.length);
+  auto ssdFile = ssdFileName();
+  if (!ssdFile.empty()) {
+    result += fmt::format(" ssdFile={}", ssdFile);
+  }
+  return result;
 }
 
 size_t CacheInputStream::positionSize() {
@@ -163,8 +169,6 @@ std::vector<folly::Range<char*>> makeRanges(
 }
 } // namespace
 void CacheInputStream::loadSync(Region region) {
-  // rawBytesRead is the number of bytes touched. Whether they come
-  // from disk, ssd or memory is itemized in different counters. A
   process::TraceContext trace("loadSync");
   int64_t hitSize = region.length;
   if (window_.has_value()) {
@@ -176,6 +180,8 @@ void CacheInputStream::loadSync(Region region) {
         std::max<int64_t>(windowStart, region.offset);
   }
 
+  // rawBytesRead is the number of bytes touched. Whether they come
+  // from disk, ssd or memory is itemized in different counters. A
   // coalesced read from InputStream removes itself from this count
   // so as not to double count when the individual parts are
   // hit.
@@ -217,6 +223,7 @@ void CacheInputStream::loadSync(Region region) {
       }
       ioStats_->read().increment(region.length);
       ioStats_->queryThreadIoLatency().increment(usec);
+      ioStats_->incTotalScanTime(usec * 1'000);
       entry->setExclusiveToShared();
     } else {
       // Hit memory cache.
@@ -282,6 +289,14 @@ bool CacheInputStream::loadFromSsd(
   ioStats_->queryThreadIoLatency().increment(usec);
   entry.setExclusiveToShared();
   return true;
+}
+
+std::string CacheInputStream::ssdFileName() const {
+  auto ssdCache = cache_->ssdCache();
+  if (!ssdCache) {
+    return "";
+  }
+  return ssdCache->file(fileNum_).fileName();
 }
 
 void CacheInputStream::loadPosition() {

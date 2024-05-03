@@ -24,8 +24,8 @@
 #include <memory>
 #include <optional>
 
-#include "parquet/exception.h"
 #include "velox/dwio/parquet/writer/arrow/ColumnPage.h"
+#include "velox/dwio/parquet/writer/arrow/Exception.h"
 #include "velox/dwio/parquet/writer/arrow/FileWriter.h"
 #include "velox/dwio/parquet/writer/arrow/Metadata.h"
 #include "velox/dwio/parquet/writer/arrow/Platform.h"
@@ -36,7 +36,6 @@
 #include "velox/dwio/parquet/writer/arrow/tests/TestUtil.h"
 
 #include "arrow/io/memory.h"
-#include "arrow/status.h"
 #include "arrow/testing/gtest_util.h"
 #include "arrow/util/compression.h"
 #include "arrow/util/crc32.h"

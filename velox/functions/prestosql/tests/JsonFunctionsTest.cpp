@@ -197,10 +197,15 @@ TEST_F(JsonFunctionsTest, jsonParse) {
   EXPECT_EQ(jsonParse(R"({"k1":"v1"})"), R"({"k1":"v1"})");
   EXPECT_EQ(jsonParse(R"(["k1", "v1"])"), R"(["k1", "v1"])");
 
-  VELOX_ASSERT_THROW(jsonParse(R"({"k1":})"), "expected json value");
   VELOX_ASSERT_THROW(
-      jsonParse(R"({:"k1"})"), "json parse error on line 0 near `:\"k1\"}");
-  VELOX_ASSERT_THROW(jsonParse(R"(not_json)"), "expected json value");
+      jsonParse(R"({"k1":})"), "The JSON document has an improper structure");
+  VELOX_ASSERT_THROW(
+      jsonParse(R"({:"k1"})"), "The JSON document has an improper structure");
+  VELOX_ASSERT_THROW(jsonParse(R"(not_json)"), "Problem while parsing an atom");
+  VELOX_ASSERT_THROW(
+      jsonParse("[1"),
+      "JSON document ended early in the middle of an object or array");
+  VELOX_ASSERT_THROW(jsonParse(""), "no JSON found");
 
   EXPECT_EQ(jsonParseWithTry(R"(not_json)"), std::nullopt);
   EXPECT_EQ(jsonParseWithTry(R"({"k1":})"), std::nullopt);
@@ -223,7 +228,7 @@ TEST_F(JsonFunctionsTest, jsonParse) {
 
   VELOX_ASSERT_THROW(
       evaluate("json_parse(c0)", data),
-      "json parse error on line 0 near `:': parsing didn't consume all input");
+      "Unexpected trailing content in the JSON input");
 
   data = makeRowVector({makeFlatVector<StringView>(
       {R"("This is a long sentence")", R"("This is some other sentence")"})});
@@ -240,6 +245,17 @@ TEST_F(JsonFunctionsTest, jsonParse) {
 
   velox::test::assertEqualVectors(expected, result);
 
+  data = makeRowVector({makeFlatVector<StringView>({"233897314173811950000"})});
+  result = evaluate("json_parse(c0)", data);
+  expected = makeFlatVector<StringView>({{"233897314173811950000"}}, JSON());
+  velox::test::assertEqualVectors(expected, result);
+
+  data =
+      makeRowVector({makeFlatVector<StringView>({"[233897314173811950000]"})});
+  result = evaluate("json_parse(c0)", data);
+  expected = makeFlatVector<StringView>({{"[233897314173811950000]"}}, JSON());
+  velox::test::assertEqualVectors(expected, result);
+
   data = makeRowVector(
       {makeFlatVector<bool>({true, false}),
        makeFlatVector<StringView>(
@@ -251,6 +267,13 @@ TEST_F(JsonFunctionsTest, jsonParse) {
       {R"("This is a long sentence")", R"("This is some other sentence")"},
       JSON());
   velox::test::assertEqualVectors(expected, result);
+
+  try {
+    jsonParse(R"({"k1":})");
+    FAIL() << "Error expected";
+  } catch (const VeloxUserError& e) {
+    ASSERT_EQ(e.context(), "json_parse(c0)");
+  }
 }
 
 TEST_F(JsonFunctionsTest, isJsonScalarSignatures) {
@@ -577,6 +600,30 @@ TEST_F(JsonFunctionsTest, jsonExtract) {
       "[\"0-553-21311-3\",\"0-395-19395-8\"]",
       jsonExtract(kJson, "$.store.book[*].isbn"));
   EXPECT_EQ("\"Evelyn Waugh\"", jsonExtract(kJson, "$.store.book[1].author"));
+
+  // Paths without leading '$'.
+  auto json = R"({"x": {"a": 1, "b": [10, 11, 12]} })";
+  EXPECT_EQ(R"({"a": 1, "b": [10, 11, 12]})", jsonExtract(json, "x"));
+  EXPECT_EQ("1", jsonExtract(json, "x.a"));
+  EXPECT_EQ("[10, 11, 12]", jsonExtract(json, "x.b"));
+  EXPECT_EQ("12", jsonExtract(json, "x.b[2]"));
+  EXPECT_EQ(std::nullopt, jsonExtract(json, "x.c"));
+  EXPECT_EQ(std::nullopt, jsonExtract(json, "x.b[20]"));
+
+  // Paths with redundant '.'s.
+  json = R"([[[{"a": 1, "b": [1, 2, 3]}]]])";
+  EXPECT_EQ("1", jsonExtract(json, "$.[0][0][0].a"));
+  EXPECT_EQ("[1, 2, 3]", jsonExtract(json, "$.[0].[0].[0].b"));
+  EXPECT_EQ("[1, 2, 3]", jsonExtract(json, "$[0][0].[0].b"));
+  EXPECT_EQ("3", jsonExtract(json, "$[0][0][0].b.[2]"));
+  EXPECT_EQ("3", jsonExtract(json, "$.[0].[0][0].b.[2]"));
+
+  // Definite vs. non-definite paths.
+  EXPECT_EQ("[123]", jsonExtract(R"({"a": [{"b": 123}]})", "$.a[*].b"));
+  EXPECT_EQ("123", jsonExtract(R"({"a": [{"b": 123}]})", "$.a[0].b"));
+
+  EXPECT_EQ("[]", jsonExtract(R"({"a": [{"b": 123}]})", "$.a[*].c"));
+  EXPECT_EQ(std::nullopt, jsonExtract(R"({"a": [{"b": 123}]})", "$.a[0].c"));
 
   // TODO The following paths are supported by Presto via Jayway, but do not
   // work in Velox yet. Figure out how to add support for these.

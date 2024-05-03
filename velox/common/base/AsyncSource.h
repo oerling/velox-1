@@ -40,7 +40,13 @@ template <typename Item>
 class AsyncSource {
  public:
   explicit AsyncSource(std::function<std::unique_ptr<Item>()> make)
-      : make_(make) {}
+      : make_(std::move(make)) {}
+
+  ~AsyncSource() {
+    VELOX_CHECK(
+        moved_ || closed_,
+        "AsyncSource should be properly consumed or closed.");
+  }
 
   // Makes an item if it is not already made. To be called on a background
   // executor.
@@ -60,7 +66,7 @@ class AsyncSource {
     try {
       CpuWallTimer timer(timing_);
       item = make();
-    } catch (std::exception& e) {
+    } catch (std::exception&) {
       std::lock_guard<std::mutex> l(mutex_);
       exception_ = std::current_exception();
     }
@@ -89,6 +95,7 @@ class AsyncSource {
     ContinueFuture wait;
     {
       std::lock_guard<std::mutex> l(mutex_);
+      moved_ = true;
       // 'making_' can be read atomically, 'exception' maybe not. So test
       // 'making' so as not to read half-assigned 'exception_'.
       if (!making_ && exception_) {
@@ -115,7 +122,7 @@ class AsyncSource {
     if (make) {
       try {
         return make();
-      } catch (const std::exception& e) {
+      } catch (const std::exception&) {
         std::lock_guard<std::mutex> l(mutex_);
         exception_ = std::current_exception();
         throw;
@@ -144,6 +151,39 @@ class AsyncSource {
     return timing_;
   }
 
+  /// This function assists the caller in ensuring that resources allocated in
+  /// AsyncSource are promptly released:
+  /// 1. Waits for the completion of the 'make_' function if it is executing in
+  /// the thread pool.
+  /// 2. Resets the 'make_' function if it has not started yet.
+  /// 3. Cleans up the 'item_' if 'make_' has completed, but the result 'item_'
+  /// has not been returned to the caller.
+  void close() {
+    if (closed_ || moved_) {
+      return;
+    }
+    ContinueFuture wait;
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      if (making_) {
+        promise_ = std::make_unique<ContinuePromise>();
+        wait = promise_->getSemiFuture();
+      } else if (make_) {
+        make_ = nullptr;
+      }
+    }
+
+    auto& exec = folly::QueuedImmediateExecutor::instance();
+    std::move(wait).via(&exec).wait();
+    {
+      std::lock_guard<std::mutex> l(mutex_);
+      if (item_) {
+        item_ = nullptr;
+      }
+      closed_ = true;
+    }
+  }
+
  private:
   mutable std::mutex mutex_;
   // True if 'prepare() is making the item.
@@ -153,5 +193,7 @@ class AsyncSource {
   std::function<std::unique_ptr<Item>()> make_;
   std::exception_ptr exception_;
   CpuWallTiming timing_;
+  bool closed_{false};
+  bool moved_{false};
 };
 } // namespace facebook::velox

@@ -20,6 +20,7 @@
 #include "velox/common/base/BitUtil.h"
 #include "velox/dwio/common/DataBuffer.h"
 #include "velox/dwio/common/FlatMapHelper.h"
+#include "velox/dwio/common/ParallelFor.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/dwio/dwrf/reader/ColumnReader.h"
 #include "velox/dwio/dwrf/reader/ConstantColumnReader.h"
@@ -78,20 +79,20 @@ class KeyNode {
 
   // try to load numValues from current position
   // return the items loaded
-  BaseVector* FOLLY_NULLABLE load(uint64_t numValues);
+  BaseVector* load(uint64_t numValues);
 
   void loadAsChild(
       VectorPtr& vec,
       uint64_t numValues,
       BufferPtr& mergedNulls,
       uint64_t nonNullMaps,
-      const uint64_t* FOLLY_NULLABLE nulls);
+      const uint64_t* nulls);
 
-  const uint64_t* FOLLY_NULLABLE mergeNulls(
+  const uint64_t* mergeNulls(
       uint64_t numValues,
       BufferPtr& mergedNulls,
       uint64_t nonNullMaps,
-      const uint64_t* FOLLY_NULLABLE nulls);
+      const uint64_t* nulls);
 
   const uint64_t* FOLLY_NULLABLE
   getAllNulls(uint64_t numValues, BufferPtr& mergedNulls);
@@ -108,7 +109,7 @@ class KeyNode {
   void fillKeysVector(
       VectorPtr& vector,
       vector_size_t offset,
-      const StringKeyBuffer* FOLLY_NULLABLE /* unused */) {
+      const StringKeyBuffer* /* unused */) {
     // Ideally, this should be dynamic_cast, but we would like to avoid the
     // cost. We cannot make vector type template variable because for string
     // type, we will have two different vector representations
@@ -148,21 +149,27 @@ class FlatMapColumnReader : public ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       StripeStreams& stripe,
       const StreamLabels& streamLabels,
+      folly::Executor* executor,
+      size_t decodingParallelismFactor,
       FlatMapContext flatMapContext);
   ~FlatMapColumnReader() override = default;
 
   uint64_t skip(uint64_t numValues) override;
 
-  void next(
-      uint64_t numValues,
-      VectorPtr& result,
-      const uint64_t* FOLLY_NULLABLE nulls) override;
+  void next(uint64_t numValues, VectorPtr& result, const uint64_t* nulls)
+      override;
+
+  bool isFlatMap() const override {
+    return true;
+  }
 
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes_;
   std::unique_ptr<StringKeyBuffer> stringKeyBuffer_;
   bool returnFlatVector_;
+  folly::Executor* executor_;
+  std::unique_ptr<dwio::common::ParallelFor> parallelForOnKeyNodes_;
 
   void initStringKeyBuffer() {}
 
@@ -177,22 +184,26 @@ class FlatMapStructEncodingColumnReader : public ColumnReader {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       StripeStreams& stripe,
       const StreamLabels& streamLabels,
-      folly::Executor* FOLLY_NULLABLE executor,
+      folly::Executor* executor,
+      size_t decodingParallelismFactor,
       FlatMapContext flatMapContext);
   ~FlatMapStructEncodingColumnReader() override = default;
 
   uint64_t skip(uint64_t numValues) override;
 
-  void next(
-      uint64_t numValues,
-      VectorPtr& result,
-      const uint64_t* FOLLY_NULLABLE nulls) override;
+  void next(uint64_t numValues, VectorPtr& result, const uint64_t* nulls)
+      override;
+
+  bool isFlatMap() const override {
+    return true;
+  }
 
  private:
   const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
   std::vector<std::unique_ptr<KeyNode<T>>> keyNodes_;
   std::unique_ptr<NullColumnReader> nullColumnReader_;
-  folly::Executor* FOLLY_NULLABLE executor_;
+  folly::Executor* executor_;
+  dwio::common::ParallelFor parallelForOnKeyNodes_;
   BufferPtr mergedNulls_;
 };
 
@@ -203,7 +214,8 @@ class FlatMapColumnReaderFactory {
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       StripeStreams& stripe,
       const StreamLabels& streamLabels,
-      folly::Executor* FOLLY_NULLABLE executor,
+      folly::Executor* executor,
+      size_t decodingParallelismFactor,
       FlatMapContext flatMapContext);
 };
 

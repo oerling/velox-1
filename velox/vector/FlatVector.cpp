@@ -39,7 +39,9 @@ Range<bool> FlatVector<bool>::asRange() const {
 
 template <>
 void FlatVector<bool>::set(vector_size_t idx, bool value) {
-  VELOX_DCHECK(idx < BaseVector::length_);
+  VELOX_DCHECK_LT(idx, BaseVector::length_);
+  ensureValues();
+  VELOX_DCHECK(!values_->isView())
   if (BaseVector::rawNulls_) {
     BaseVector::setNull(idx, false);
   }
@@ -48,7 +50,7 @@ void FlatVector<bool>::set(vector_size_t idx, bool value) {
 
 template <>
 Buffer* FlatVector<StringView>::getBufferWithSpace(
-    int32_t size,
+    size_t size,
     bool exactSize) {
   VELOX_DCHECK_GE(stringBuffers_.size(), stringBufferSet_.size());
 
@@ -61,7 +63,7 @@ Buffer* FlatVector<StringView>::getBufferWithSpace(
   }
 
   // Allocate a new buffer.
-  const int32_t newSize = exactSize ? size : std::max(kInitialStringSize, size);
+  const size_t newSize = exactSize ? size : std::max(kInitialStringSize, size);
   BufferPtr newBuffer = AlignedBuffer::allocate<char>(newSize, pool());
   newBuffer->setSize(0);
   addStringBuffer(newBuffer);
@@ -70,7 +72,7 @@ Buffer* FlatVector<StringView>::getBufferWithSpace(
 
 template <>
 char* FlatVector<StringView>::getRawStringBufferWithSpace(
-    int32_t size,
+    size_t size,
     bool exactSize) {
   Buffer* buffer = getBufferWithSpace(size, exactSize);
   char* rawBuffer = buffer->asMutable<char>() + buffer->size();
@@ -101,7 +103,9 @@ void FlatVector<StringView>::prepareForReuse() {
 
 template <>
 void FlatVector<StringView>::set(vector_size_t idx, StringView value) {
-  VELOX_DCHECK(idx < BaseVector::length_);
+  VELOX_DCHECK_LT(idx, BaseVector::length_);
+  ensureValues();
+  VELOX_DCHECK(!values_->isView())
   if (BaseVector::rawNulls_) {
     BaseVector::setNull(idx, false);
   }
@@ -124,12 +128,13 @@ template <>
 void FlatVector<StringView>::setNoCopy(
     const vector_size_t idx,
     const StringView& value) {
-  VELOX_DCHECK(idx < BaseVector::length_);
-  VELOX_DCHECK(!values_->isView());
-  rawValues_[idx] = value;
+  VELOX_DCHECK_LT(idx, BaseVector::length_);
+  ensureValues();
+  VELOX_DCHECK(!values_->isView())
   if (BaseVector::nulls_) {
     BaseVector::setNull(idx, false);
   }
+  rawValues_[idx] = value;
 }
 
 template <>

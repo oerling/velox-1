@@ -55,24 +55,7 @@ class MinMaxAggregate : public SimpleNumericAggregate<T, T, T> {
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
       VectorPtr& result) const override {
-    const auto& input = args[0];
-    if (rows.isAllSelected()) {
-      result = input;
-      return;
-    }
-
-    auto* pool = BaseAggregate::allocator_->pool();
-
-    result = BaseVector::create(input->type(), rows.size(), pool);
-
-    // Set result to NULL for rows that are masked out.
-    {
-      BufferPtr nulls = allocateNulls(rows.size(), pool, bits::kNull);
-      rows.clearNulls(nulls);
-      result->setNulls(nulls);
-    }
-
-    result->copy(input.get(), rows, nullptr);
+    this->singleInputAsIntermediate(rows, args, result);
   }
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
@@ -119,15 +102,6 @@ class MaxAggregate : public MinMaxAggregate<T> {
 
  public:
   explicit MaxAggregate(TypePtr resultType) : MinMaxAggregate<T>(resultType) {}
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    exec::Aggregate::setAllNulls(groups, indices);
-    for (auto i : indices) {
-      *exec::Aggregate::value<T>(groups[i]) = kInitialValue_;
-    }
-  }
 
   void addRawInput(
       char** groups,
@@ -191,6 +165,16 @@ class MaxAggregate : public MinMaxAggregate<T> {
     addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
+ protected:
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    exec::Aggregate::setAllNulls(groups, indices);
+    for (auto i : indices) {
+      *exec::Aggregate::value<T>(groups[i]) = kInitialValue_;
+    }
+  }
+
  private:
   static const T kInitialValue_;
 };
@@ -204,15 +188,6 @@ class MinAggregate : public MinMaxAggregate<T> {
 
  public:
   explicit MinAggregate(TypePtr resultType) : MinMaxAggregate<T>(resultType) {}
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    exec::Aggregate::setAllNulls(groups, indices);
-    for (auto i : indices) {
-      *exec::Aggregate::value<T>(groups[i]) = kInitialValue_;
-    }
-  }
 
   void addRawInput(
       char** groups,
@@ -272,6 +247,16 @@ class MinAggregate : public MinMaxAggregate<T> {
     addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
+ protected:
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    exec::Aggregate::setAllNulls(groups, indices);
+    for (auto i : indices) {
+      *exec::Aggregate::value<T>(groups[i]) = kInitialValue_;
+    }
+  }
+
  private:
   static const T kInitialValue_;
 };
@@ -288,15 +273,6 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(SingleValueAccumulator);
-  }
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    exec::Aggregate::setAllNulls(groups, indices);
-    for (auto i : indices) {
-      new (groups[i] + offset_) SingleValueAccumulator();
-    }
   }
 
   bool supportsToIntermediate() const override {
@@ -367,12 +343,6 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
     extractValues(groups, numGroups, result);
   }
 
-  void destroy(folly::Range<char**> groups) override {
-    for (auto group : groups) {
-      value<SingleValueAccumulator>(group)->destroy(allocator_);
-    }
-  }
-
  protected:
   template <typename TCompareTest>
   void doUpdate(
@@ -439,6 +409,23 @@ class NonNumericMinMaxAggregateBase : public exec::Aggregate {
         accumulator->write(baseVector, indices[i], allocator_);
       }
     });
+  }
+
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    exec::Aggregate::setAllNulls(groups, indices);
+    for (auto i : indices) {
+      new (groups[i] + offset_) SingleValueAccumulator();
+    }
+  }
+
+  void destroyInternal(folly::Range<char**> groups) override {
+    for (auto group : groups) {
+      if (isInitialized(group)) {
+        value<SingleValueAccumulator>(group)->destroy(allocator_);
+      }
+    }
   }
 
  private:
@@ -545,17 +532,21 @@ std::pair<vector_size_t*, vector_size_t*> rawOffsetAndSizes(
 template <typename T, typename Compare>
 struct MinMaxNAccumulator {
   int64_t n{0};
-  std::priority_queue<T, std::vector<T, StlAllocator<T>>, Compare> topValues;
+  using Allocator = std::conditional_t<
+      std::is_same_v<int128_t, T>,
+      AlignedStlAllocator<T, sizeof(int128_t)>,
+      StlAllocator<T>>;
+  std::vector<T, Allocator> heapValues;
 
   explicit MinMaxNAccumulator(HashStringAllocator* allocator)
-      : topValues{Compare{}, StlAllocator<T>(allocator)} {}
+      : heapValues{Allocator(allocator)} {}
 
   int64_t getN() const {
     return n;
   }
 
   size_t size() const {
-    return topValues.size();
+    return heapValues.size();
   }
 
   void checkAndSetN(DecodedVector& decodedN, vector_size_t row) {
@@ -584,25 +575,27 @@ struct MinMaxNAccumulator {
   }
 
   void compareAndAdd(T value, Compare& comparator) {
-    if (topValues.size() < n) {
-      topValues.push(value);
+    if (heapValues.size() < n) {
+      heapValues.push_back(value);
+      std::push_heap(heapValues.begin(), heapValues.end(), comparator);
     } else {
-      const auto& topValue = topValues.top();
+      const auto& topValue = heapValues.front();
       if (comparator(value, topValue)) {
-        topValues.pop();
-        topValues.push(value);
+        std::pop_heap(heapValues.begin(), heapValues.end(), comparator);
+        heapValues.back() = value;
+        std::push_heap(heapValues.begin(), heapValues.end(), comparator);
       }
     }
   }
 
-  /// Moves all values from 'topValues' into 'rawValues' buffer. The queue of
-  /// 'topValues' will be empty after this call.
-  void extractValues(T* rawValues, vector_size_t offset) {
-    const vector_size_t size = topValues.size();
-    for (auto i = size - 1; i >= 0; --i) {
-      rawValues[offset + i] = topValues.top();
-      topValues.pop();
+  /// Copy all values from 'topValues' into 'rawValues' buffer. The heap remains
+  /// unchanged after the call.
+  void extractValues(T* rawValues, vector_size_t offset, Compare& comparator) {
+    std::sort_heap(heapValues.begin(), heapValues.end(), comparator);
+    for (int64_t i = heapValues.size() - 1; i >= 0; --i) {
+      rawValues[offset + i] = heapValues[i];
     }
+    std::make_heap(heapValues.begin(), heapValues.end(), comparator);
   }
 };
 
@@ -622,7 +615,7 @@ class MinMaxNAggregateBase : public exec::Aggregate {
     return sizeof(AccumulatorType);
   }
 
-  void initializeNewGroups(
+  void initializeNewGroupsInternal(
       char** groups,
       folly::Range<const vector_size_t*> indices) override {
     exec::Aggregate::setAllNulls(groups, indices);
@@ -745,7 +738,7 @@ class MinMaxNAggregateBase : public exec::Aggregate {
     extractValues(groups, numGroups, rawOffsets, rawSizes, rawValues, rawNs);
   }
 
-  void destroy(folly::Range<char**> groups) override {
+  void destroyInternal(folly::Range<char**> groups) override {
     destroyAccumulators<AccumulatorType>(groups);
   }
 
@@ -775,7 +768,7 @@ class MinMaxNAggregateBase : public exec::Aggregate {
         if (rawNs != nullptr) {
           rawNs[i] = accumulator->n;
         }
-        accumulator->extractValues(rawValues, offset);
+        accumulator->extractValues(rawValues, offset, comparator_);
 
         offset += size;
       }
@@ -904,7 +897,10 @@ template <
     typename TNonNumeric,
     template <typename T>
     class TNumericN>
-exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
+exec::AggregateRegistrationResult registerMinMax(
+    const std::string& name,
+    bool withCompanionFunctions,
+    bool overwrite) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
   signatures.push_back(exec::AggregateFunctionSignatureBuilder()
                            .orderableTypeVariable("T")
@@ -923,6 +919,18 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
             .argumentType("bigint")
             .build());
   }
+
+  // decimal(p,s), bigint -> row(array(decimal(p,s)), bigint) ->
+  // array(decimal(p,s))
+  signatures.push_back(
+      exec::AggregateFunctionSignatureBuilder()
+          .integerVariable("a_precision")
+          .integerVariable("a_scale")
+          .argumentType("DECIMAL(a_precision, a_scale)")
+          .argumentType("bigint")
+          .intermediateType("row(bigint, array(DECIMAL(a_precision, a_scale)))")
+          .returnType("array(DECIMAL(a_precision, a_scale))")
+          .build());
 
   return exec::registerAggregateFunction(
       name,
@@ -960,7 +968,10 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
             case TypeKind::TIMESTAMP:
               return std::make_unique<TNumericN<Timestamp>>(resultType);
             case TypeKind::HUGEINT:
-              return std::make_unique<TNumericN<int128_t>>(resultType);
+              if (inputType->isLongDecimal()) {
+                return std::make_unique<TNumericN<int128_t>>(resultType);
+              }
+              VELOX_UNREACHABLE();
             default:
               VELOX_CHECK(
                   false,
@@ -1008,16 +1019,22 @@ exec::AggregateRegistrationResult registerMinMax(const std::string& name) {
                   inputType->kindName());
           }
         }
-      });
+      },
+      {false /*orderSensitive*/},
+      withCompanionFunctions,
+      overwrite);
 }
 
 } // namespace
 
-void registerMinMaxAggregates(const std::string& prefix) {
+void registerMinMaxAggregates(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite) {
   registerMinMax<MinAggregate, NonNumericMinAggregate, MinNAggregate>(
-      prefix + kMin);
+      prefix + kMin, withCompanionFunctions, overwrite);
   registerMinMax<MaxAggregate, NonNumericMaxAggregate, MaxNAggregate>(
-      prefix + kMax);
+      prefix + kMax, withCompanionFunctions, overwrite);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

@@ -37,6 +37,10 @@ SortingWriter::SortingWriter(
   setState(State::kRunning);
 }
 
+SortingWriter::~SortingWriter() {
+  sortPool_->release();
+}
+
 void SortingWriter::write(const VectorPtr& data) {
   checkRunning();
   sortBuffer_->addInput(data);
@@ -57,6 +61,7 @@ void SortingWriter::close() {
     outputWriter_->write(output);
     output = sortBuffer_->getOutput(maxOutputBatchRows);
   }
+
   sortBuffer_.reset();
   sortPool_->release();
   outputWriter_->close();
@@ -134,6 +139,7 @@ bool SortingWriter::MemoryReclaimer::reclaimableBytes(
 uint64_t SortingWriter::MemoryReclaimer::reclaim(
     memory::MemoryPool* pool,
     uint64_t targetBytes,
+    uint64_t /*unused*/,
     memory::MemoryReclaimer::Stats& stats) {
   VELOX_CHECK_EQ(pool->name(), writer_->sortPool_->name());
 

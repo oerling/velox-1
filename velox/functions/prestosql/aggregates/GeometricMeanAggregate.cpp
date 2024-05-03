@@ -82,8 +82,10 @@ class GeometricMeanAggregate {
 
 } // namespace
 
-exec::AggregateRegistrationResult registerGeometricMeanAggregate(
-    const std::string& prefix) {
+void registerGeometricMeanAggregate(
+    const std::string& prefix,
+    bool withCompanionFunctions,
+    bool overwrite) {
   const std::string name = prefix + kGeometricMean;
 
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
@@ -103,7 +105,7 @@ exec::AggregateRegistrationResult registerGeometricMeanAggregate(
                            .argumentType("real")
                            .build());
 
-  return exec::registerAggregateFunction(
+  exec::registerAggregateFunction(
       name,
       std::move(signatures),
       [name](
@@ -134,7 +136,9 @@ exec::AggregateRegistrationResult registerGeometricMeanAggregate(
                 inputType->toString());
         }
       },
-      false);
+      {false /*orderSensitive*/},
+      withCompanionFunctions,
+      overwrite);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

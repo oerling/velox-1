@@ -22,8 +22,6 @@
 #include <gtest/gtest.h>
 #include <re2/re2.h>
 
-DECLARE_int32(split_preload_per_driver);
-
 using namespace facebook::velox;
 using namespace facebook::velox::exec::test;
 
@@ -52,8 +50,7 @@ void compareOutputs(
     while (!RE2::FullMatch(line, expectedLine.line)) {
       potentialLines.push_back(expectedLine.line);
       if (!expectedLine.optional) {
-        ASSERT_FALSE(true) << "Output did not match "
-                           << "Source:" << testName
+        ASSERT_FALSE(true) << "Output did not match " << "Source:" << testName
                            << ", Line number:" << lineCount
                            << ", Line: " << line << ", Expected Line one of: "
                            << folly::join(",", potentialLines);
@@ -91,7 +88,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
         makeFlatVector<int64_t>(numRowsProbe, [](auto row) { return row; }),
     });
     leftVectors.push_back(rowVector);
-    writeToFile(leftFiles[i]->path, rowVector);
+    writeToFile(leftFiles[i]->getPath(), rowVector);
   }
   auto probeType = ROW({"c0", "c1"}, {INTEGER(), BIGINT()});
 
@@ -141,7 +138,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"     HashBuild: Input: 100 rows \\(.+\\), Output: 0 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+ Memory allocations: .+, Threads: 1"},
        {"     HashProbe: Input: 2000 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1"},
        {"    -- TableScan\\[table: hive_table\\] -> c0:INTEGER, c1:BIGINT"},
-       {"       Input: 2000 rows \\(.+\\), Raw Input: 20480 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 20"},
+       {"       Input: 2000 rows \\(.+\\), Raw Input: 20480 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 20, DynamicFilter producer plan nodes: 3"},
        {"    -- Project\\[expressions: \\(u_c0:INTEGER, ROW\\[\"c0\"\\]\\), \\(u_c1:BIGINT, ROW\\[\"c1\"\\]\\)\\] -> u_c0:INTEGER, u_c1:BIGINT"},
        {"       Output: 100 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: 0B, Memory allocations: .+, Threads: 1"},
        {"      -- Values\\[100 rows in 1 vectors\\] -> c0:INTEGER, c1:BIGINT"},
@@ -162,6 +159,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"     Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+"},
        {"     HashBuild: Input: 100 rows \\(.+\\), Output: 0 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1"},
        {"        distinctKey0\\s+sum: 101, count: 1, min: 101, max: 101"},
+       {"        hashtable.buildWallNanos\\s+sum: .+, count: 1, min: .+, max: .+"},
        {"        hashtable.capacity\\s+sum: 200, count: 1, min: 200, max: 200"},
        {"        hashtable.numDistinct\\s+sum: 100, count: 1, min: 100, max: 100"},
        {"        hashtable.numRehashes\\s+sum: 1, count: 1, min: 1, max: 1"},
@@ -186,12 +184,14 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"        runningFinishWallNanos\\s+sum: .+, count: 1, min: .+, max: .+"},
        {"        runningGetOutputWallNanos\\s+sum: .+, count: 1, min: .+, max: .+"},
        {"    -- TableScan\\[table: hive_table\\] -> c0:INTEGER, c1:BIGINT"},
-       {"       Input: 2000 rows \\(.+\\), Raw Input: 20480 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 20"},
-       {"          dataSourceWallNanos [ ]* sum: .+, count: 1, min: .+, max: .+"},
+       {"       Input: 2000 rows \\(.+\\), Raw Input: 20480 rows \\(.+\\), Output: 2000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 20, DynamicFilter producer plan nodes: 3"},
+       {"          dataSourceAddSplitWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
+       {"          dataSourceReadWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
        {"          dynamicFiltersAccepted[ ]* sum: 1, count: 1, min: 1, max: 1"},
        {"          flattenStringDictionaryValues [ ]* sum: 0, count: 1, min: 0, max: 0"},
        {"          ioWaitNanos      [ ]* sum: .+, count: .+ min: .+, max: .+"},
        {"          localReadBytes      [ ]* sum: 0B, count: 1, min: 0B, max: 0B"},
+       {"          maxSingleIoWaitNanos[ ]*sum: .+, count: 1, min: .+, max: .+"},
        {"          numLocalRead        [ ]* sum: 0, count: 1, min: 0, max: 0"},
        {"          numPrefetch         [ ]* sum: .+, count: 1, min: .+, max: .+"},
        {"          numRamRead          [ ]* sum: 40, count: 1, min: 40, max: 40"},
@@ -236,9 +236,8 @@ TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
   for (const auto& numPrefetchSplit : numPrefetchSplits) {
     SCOPED_TRACE(fmt::format("numPrefetchSplit {}", numPrefetchSplit));
     asyncDataCache_->clear();
-    FLAGS_split_preload_per_driver = numPrefetchSplit;
     auto filePath = TempFilePath::create();
-    writeToFile(filePath->path, vectors);
+    writeToFile(filePath->getPath(), vectors);
 
     auto op =
         PlanBuilder()
@@ -247,11 +246,14 @@ TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
                 {"c5"}, {"max(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(c4)"})
             .planNode();
 
-    auto task = assertQuery(
-        op,
-        {filePath},
-        "SELECT c5, max(c0), sum(c1), sum(c2), sum(c3), sum(c4) FROM tmp group by c5");
-
+    auto task =
+        AssertQueryBuilder(op, duckDbQueryRunner_)
+            .config(
+                core::QueryConfig::kMaxSplitPreloadPerDriver,
+                std::to_string(numPrefetchSplit))
+            .splits(makeHiveConnectorSplits({filePath}))
+            .assertResults(
+                "SELECT c5, max(c0), sum(c1), sum(c2), sum(c3), sum(c4) FROM tmp group by c5");
     ensureTaskCompletion(task.get());
     compareOutputs(
         ::testing::UnitTest::GetInstance()->current_test_info()->name(),
@@ -279,10 +281,12 @@ TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
          {"      runningGetOutputWallNanos\\s+sum: .+, count: 1, min: .+, max: .+"},
          {"  -- TableScan\\[table: hive_table\\] -> c0:BIGINT, c1:INTEGER, c2:SMALLINT, c3:REAL, c4:DOUBLE, c5:VARCHAR"},
          {"     Input: 10000 rows \\(.+\\), Output: 10000 rows \\(.+\\), Cpu time: .+, Blocked wall time: .+, Peak memory: .+, Memory allocations: .+, Threads: 1, Splits: 1"},
-         {"        dataSourceWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
+         {"        dataSourceAddSplitWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
+         {"        dataSourceReadWallNanos[ ]* sum: .+, count: 1, min: .+, max: .+"},
          {"        flattenStringDictionaryValues [ ]* sum: 0, count: 1, min: 0, max: 0"},
          {"        ioWaitNanos      [ ]* sum: .+, count: .+ min: .+, max: .+"},
          {"        localReadBytes   [ ]* sum: 0B, count: 1, min: 0B, max: 0B"},
+         {"        maxSingleIoWaitNanos[ ]*sum: .+, count: 1, min: .+, max: .+"},
          {"        numLocalRead     [ ]* sum: 0, count: 1, min: 0, max: 0"},
          {"        numPrefetch      [ ]* sum: .+, count: .+, min: .+, max: .+"},
          {"        numRamRead       [ ]* sum: 6, count: 1, min: 6, max: 6"},

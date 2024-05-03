@@ -26,9 +26,9 @@ TEST(SpillConfig, spillLevel) {
   const uint8_t kInitialBitOffset = 16;
   const uint8_t kNumPartitionsBits = 3;
   const SpillConfig config(
-      []() { return ""; },
+      []() -> std::string_view { return ""; },
+      [&](uint64_t) {},
       "fakeSpillPath",
-      0,
       0,
       0,
       nullptr,
@@ -62,10 +62,9 @@ TEST(SpillConfig, spillLevel) {
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     if (testData.expectedLevel == -1) {
-      ASSERT_ANY_THROW(config.joinSpillLevel(testData.bitOffset));
+      ASSERT_ANY_THROW(config.spillLevel(testData.bitOffset));
     } else {
-      ASSERT_EQ(
-          config.joinSpillLevel(testData.bitOffset), testData.expectedLevel);
+      ASSERT_EQ(config.spillLevel(testData.bitOffset), testData.expectedLevel);
     }
   }
 }
@@ -76,7 +75,7 @@ TEST(SpillConfig, spillLevelLimit) {
     int32_t numBits;
     uint8_t bitOffset;
     int32_t maxSpillLevel;
-    int32_t expectedExceeds;
+    bool expectedExceeds;
 
     std::string debugString() const {
       return fmt::format(
@@ -111,9 +110,9 @@ TEST(SpillConfig, spillLevelLimit) {
     const HashBitRange partitionBits(
         testData.startBitOffset, testData.startBitOffset + testData.numBits);
     const SpillConfig config(
-        []() { return ""; },
+        []() -> std::string_view { return ""; },
+        [&](uint64_t) {},
         "fakeSpillPath",
-        0,
         0,
         0,
         nullptr,
@@ -128,7 +127,7 @@ TEST(SpillConfig, spillLevelLimit) {
 
     ASSERT_EQ(
         testData.expectedExceeds,
-        config.exceedJoinSpillLevelLimit(testData.bitOffset));
+        config.exceedSpillLevelLimit(testData.bitOffset));
   }
 }
 
@@ -151,15 +150,14 @@ TEST(SpillConfig, spillableReservationPercentages) {
       {50, 100, true},
       {1, 50, true},
       {1, 1, false}};
-  const std::string emptySpillFolder = "";
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
 
     auto createConfigFn = [&]() {
       const SpillConfig config(
-          [&]() -> const std::string& { return emptySpillFolder; },
+          [&]() -> std::string_view { return ""; },
+          [&](uint64_t) {},
           "spillableReservationPercentages",
-          0,
           0,
           0,
           nullptr,
@@ -168,7 +166,7 @@ TEST(SpillConfig, spillableReservationPercentages) {
           0,
           0,
           0,
-          0,
+          1'000'000,
           0,
           "none");
     };

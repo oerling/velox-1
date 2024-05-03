@@ -191,7 +191,12 @@ void TopNRowNumber::addInput(RowVectorPtr input) {
     ensureInputFits(input);
 
     SelectivityVector rows(numInput);
-    table_->prepareForProbe(*lookup_, input, rows, false);
+    table_->prepareForGroupProbe(
+        *lookup_,
+        input,
+        rows,
+        false,
+        BaseHashTable::kNoSpillInputStartPartitionBit);
     table_->groupProbe(*lookup_);
 
     // Initialize new partitions.
@@ -280,10 +285,9 @@ void TopNRowNumber::noMoreInput() {
     // spilled data.
     spill();
 
-    spiller_->finalizeSpill();
-    recordSpillStats(spiller_->stats());
-
-    merge_ = spiller_->startMerge();
+    VELOX_CHECK_NULL(merge_);
+    auto spillPartition = spiller_->finishSpill();
+    merge_ = spillPartition.createOrderedReader(pool(), &spillStats_);
   } else {
     outputRows_.resize(outputBatchSize_);
   }
@@ -670,7 +674,7 @@ void TopNRowNumber::ensureInputFits(const RowVectorPtr& input) {
   }
 
   // Test-only spill path.
-  if (spillConfig_->testSpillPct > 0) {
+  if (testingTriggerSpill(pool()->name())) {
     spill();
     return;
   }
@@ -713,7 +717,10 @@ void TopNRowNumber::ensureInputFits(const RowVectorPtr& input) {
     }
   }
 
-  spill();
+  LOG(WARNING) << "Failed to reserve " << succinctBytes(targetIncrementBytes)
+               << " for memory pool " << pool()->name()
+               << ", usage: " << succinctBytes(pool()->currentBytes())
+               << ", reservation: " << succinctBytes(pool()->reservedBytes());
 }
 
 void TopNRowNumber::spill() {
@@ -731,19 +738,16 @@ void TopNRowNumber::spill() {
 
 void TopNRowNumber::setupSpiller() {
   VELOX_CHECK_NULL(spiller_);
+  VELOX_CHECK(spillConfig_.has_value());
 
   spiller_ = std::make_unique<Spiller>(
       // TODO Replace Spiller::Type::kOrderBy.
-      Spiller::Type::kOrderBy,
+      Spiller::Type::kOrderByInput,
       data_.get(),
       inputType_,
       spillCompareFlags_.size(),
       spillCompareFlags_,
-      spillConfig_->getSpillDirPathCb,
-      spillConfig_->fileNamePrefix,
-      spillConfig_->writeBufferSize,
-      spillConfig_->compressionKind,
-      memory::spillMemoryPool(),
-      spillConfig_->executor);
+      &spillConfig_.value(),
+      &spillStats_);
 }
 } // namespace facebook::velox::exec

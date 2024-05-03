@@ -18,6 +18,9 @@
 
 #include <utility>
 
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/RuntimeMetrics.h"
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/memory/Memory.h"
 
 namespace facebook::velox::memory {
@@ -29,9 +32,10 @@ class FactoryRegistry {
       const std::string& kind,
       MemoryArbitrator::Factory factory) {
     std::lock_guard<std::mutex> l(mutex_);
-    if (map_.find(kind) != map_.end()) {
-      return false;
-    }
+    VELOX_USER_CHECK(
+        map_.find(kind) == map_.end(),
+        "Arbitrator factory for kind {} is already registered",
+        kind);
     map_[kind] = std::move(factory);
     return true;
   }
@@ -89,19 +93,14 @@ class NoopArbitrator : public MemoryArbitrator {
 
   // Noop arbitrator has no memory capacity limit so no operation needed for
   // memory pool capacity reserve.
-  void reserveMemory(MemoryPool* pool, uint64_t /*unused*/) override {
-    pool->grow(pool->maxCapacity());
-  }
-
-  // Noop arbitrator has no memory capacity limit so no operation needed for
-  // memory pool capacity release.
-  void releaseMemory(MemoryPool* /*unused*/) override {
-    // No-op
+  uint64_t growCapacity(MemoryPool* pool, uint64_t /*unused*/) override {
+    pool->grow(pool->maxCapacity(), 0);
+    return pool->capacity();
   }
 
   // Noop arbitrator has no memory capacity limit so no operation needed for
   // memory pool capacity grow.
-  bool growMemory(
+  bool growCapacity(
       MemoryPool* /*unused*/,
       const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
       uint64_t /*unused*/) override {
@@ -109,10 +108,19 @@ class NoopArbitrator : public MemoryArbitrator {
   }
 
   // Noop arbitrator has no memory capacity limit so no operation needed for
+  // memory pool capacity release.
+  uint64_t shrinkCapacity(MemoryPool* pool, uint64_t /*unused*/) override {
+    // No-op
+    return 0;
+  }
+
+  // Noop arbitrator has no memory capacity limit so no operation needed for
   // memory pool capacity shrink.
-  uint64_t shrinkMemory(
-      const std::vector<std::shared_ptr<MemoryPool>>& /*unused*/,
-      uint64_t /*unused*/) override {
+  uint64_t shrinkCapacity(
+      const std::vector<std::shared_ptr<MemoryPool>>& /* unused */,
+      uint64_t /* unused */,
+      bool /* unused */,
+      bool /* unused */) override {
     return 0;
   }
 
@@ -162,14 +170,26 @@ uint64_t MemoryReclaimer::run(
     const std::function<uint64_t()>& func,
     Stats& stats) {
   uint64_t execTimeUs{0};
-  uint64_t bytes{0};
+  uint64_t reclaimedBytes{0};
   {
     MicrosecondTimer timer{&execTimeUs};
-    bytes = func();
+    reclaimedBytes = func();
   }
   stats.reclaimExecTimeUs += execTimeUs;
-  stats.reclaimedBytes += bytes;
-  return bytes;
+  stats.reclaimedBytes += reclaimedBytes;
+  RECORD_HISTOGRAM_METRIC_VALUE(
+      kMetricMemoryReclaimExecTimeMs, execTimeUs / 1'000);
+  RECORD_METRIC_VALUE(kMetricMemoryReclaimedBytes, reclaimedBytes);
+  RECORD_METRIC_VALUE(kMetricMemoryReclaimCount, 1);
+  addThreadLocalRuntimeStat(
+      "memoryReclaimWallNanos",
+      RuntimeCounter(execTimeUs * 1'000, RuntimeCounter::Unit::kNanos));
+  addThreadLocalRuntimeStat(
+      "memoryReclaimCount", RuntimeCounter(1, RuntimeCounter::Unit::kNone));
+  addThreadLocalRuntimeStat(
+      "reclaimedMemoryBytes",
+      RuntimeCounter(reclaimedBytes, RuntimeCounter::Unit::kBytes));
+  return reclaimedBytes;
 }
 
 bool MemoryReclaimer::reclaimableBytes(
@@ -181,17 +201,20 @@ bool MemoryReclaimer::reclaimableBytes(
   }
   bool reclaimable{false};
   pool.visitChildren([&](MemoryPool* pool) {
-    uint64_t poolReclaimableBytes{0};
-    reclaimable |= pool->reclaimableBytes(poolReclaimableBytes);
-    reclaimableBytes += poolReclaimableBytes;
+    auto reclaimableBytesOpt = pool->reclaimableBytes();
+    reclaimable |= reclaimableBytesOpt.has_value();
+    reclaimableBytes += reclaimableBytesOpt.value_or(0);
     return true;
   });
   VELOX_CHECK(reclaimable || reclaimableBytes == 0);
   return reclaimable;
 }
 
-uint64_t
-MemoryReclaimer::reclaim(MemoryPool* pool, uint64_t targetBytes, Stats& stats) {
+uint64_t MemoryReclaimer::reclaim(
+    MemoryPool* pool,
+    uint64_t targetBytes,
+    uint64_t maxWaitMs,
+    Stats& stats) {
   if (pool->kind() == MemoryPool::Kind::kLeaf) {
     return 0;
   }
@@ -204,7 +227,7 @@ MemoryReclaimer::reclaim(MemoryPool* pool, uint64_t targetBytes, Stats& stats) {
   };
   std::vector<Candidate> candidates;
   {
-    folly::SharedMutex::ReadHolder guard{pool->poolMutex_};
+    std::shared_lock guard{pool->poolMutex_};
     candidates.reserve(pool->children_.size());
     for (auto& entry : pool->children_) {
       auto child = entry.second.lock();
@@ -224,7 +247,7 @@ MemoryReclaimer::reclaim(MemoryPool* pool, uint64_t targetBytes, Stats& stats) {
 
   uint64_t reclaimedBytes{0};
   for (const auto& candidate : candidates) {
-    const auto bytes = candidate.pool->reclaim(targetBytes, stats);
+    const auto bytes = candidate.pool->reclaim(targetBytes, maxWaitMs, stats);
     reclaimedBytes += bytes;
     if (targetBytes != 0) {
       if (bytes >= targetBytes) {
@@ -284,6 +307,7 @@ MemoryArbitrator::Stats::Stats(
     uint64_t _numReclaimedBytes,
     uint64_t _maxCapacityBytes,
     uint64_t _freeCapacityBytes,
+    uint64_t _freeReservedCapacityBytes,
     uint64_t _reclaimTimeUs,
     uint64_t _numNonReclaimableAttempts,
     uint64_t _numReserves,
@@ -298,6 +322,7 @@ MemoryArbitrator::Stats::Stats(
       numReclaimedBytes(_numReclaimedBytes),
       maxCapacityBytes(_maxCapacityBytes),
       freeCapacityBytes(_freeCapacityBytes),
+      freeReservedCapacityBytes(_freeReservedCapacityBytes),
       reclaimTimeUs(_reclaimTimeUs),
       numNonReclaimableAttempts(_numNonReclaimableAttempts),
       numReserves(_numReserves),
@@ -308,7 +333,7 @@ std::string MemoryArbitrator::Stats::toString() const {
       "STATS[numRequests {} numSucceeded {} numAborted {} numFailures {} "
       "numNonReclaimableAttempts {} numReserves {} numReleases {} "
       "queueTime {} arbitrationTime {} reclaimTime {} shrunkMemory {} "
-      "reclaimedMemory {} maxCapacity {} freeCapacity {}]",
+      "reclaimedMemory {} maxCapacity {} freeCapacity {} freeReservedCapacity {}]",
       numRequests,
       numSucceeded,
       numAborted,
@@ -322,7 +347,8 @@ std::string MemoryArbitrator::Stats::toString() const {
       succinctBytes(numShrunkBytes),
       succinctBytes(numReclaimedBytes),
       succinctBytes(maxCapacityBytes),
-      succinctBytes(freeCapacityBytes));
+      succinctBytes(freeCapacityBytes),
+      succinctBytes(freeReservedCapacityBytes));
 }
 
 MemoryArbitrator::Stats MemoryArbitrator::Stats::operator-(
@@ -338,6 +364,7 @@ MemoryArbitrator::Stats MemoryArbitrator::Stats::operator-(
   result.numReclaimedBytes = numReclaimedBytes - other.numReclaimedBytes;
   result.maxCapacityBytes = maxCapacityBytes;
   result.freeCapacityBytes = freeCapacityBytes;
+  result.freeReservedCapacityBytes = freeReservedCapacityBytes;
   result.reclaimTimeUs = reclaimTimeUs - other.reclaimTimeUs;
   result.numNonReclaimableAttempts =
       numNonReclaimableAttempts - other.numNonReclaimableAttempts;
@@ -358,6 +385,7 @@ bool MemoryArbitrator::Stats::operator==(const Stats& other) const {
              numReclaimedBytes,
              maxCapacityBytes,
              freeCapacityBytes,
+             freeReservedCapacityBytes,
              reclaimTimeUs,
              numNonReclaimableAttempts,
              numReserves,
@@ -373,6 +401,7 @@ bool MemoryArbitrator::Stats::operator==(const Stats& other) const {
              other.numReclaimedBytes,
              other.maxCapacityBytes,
              other.freeCapacityBytes,
+             other.freeReservedCapacityBytes,
              other.reclaimTimeUs,
              other.numNonReclaimableAttempts,
              other.numReserves,
@@ -384,7 +413,6 @@ bool MemoryArbitrator::Stats::operator!=(const Stats& other) const {
 }
 
 bool MemoryArbitrator::Stats::operator<(const Stats& other) const {
-  uint32_t eqCount{0};
   uint32_t gtCount{0};
   uint32_t ltCount{0};
 #define UPDATE_COUNTER(counter)           \
@@ -393,8 +421,6 @@ bool MemoryArbitrator::Stats::operator<(const Stats& other) const {
       ++ltCount;                          \
     } else if (counter > other.counter) { \
       ++gtCount;                          \
-    } else {                              \
-      ++eqCount;                          \
     }                                     \
   } while (0);
 
@@ -432,7 +458,7 @@ bool MemoryArbitrator::Stats::operator<=(const Stats& other) const {
 }
 
 ScopedMemoryArbitrationContext::ScopedMemoryArbitrationContext(
-    const MemoryPool& requestor)
+    const MemoryPool* requestor)
     : savedArbitrationCtx_(arbitrationCtx),
       currentArbitrationCtx_({.requestor = requestor}) {
   arbitrationCtx = &currentArbitrationCtx_;
@@ -448,5 +474,36 @@ MemoryArbitrationContext* memoryArbitrationContext() {
 
 bool underMemoryArbitration() {
   return memoryArbitrationContext() != nullptr;
+}
+
+void testingRunArbitration(
+    uint64_t targetBytes,
+    bool allowSpill,
+    MemoryManager* manager) {
+  if (manager == nullptr) {
+    manager = memory::memoryManager();
+  }
+  manager->shrinkPools(targetBytes, allowSpill);
+}
+
+void testingRunArbitration(
+    MemoryPool* pool,
+    uint64_t targetBytes,
+    bool allowSpill) {
+  pool->enterArbitration();
+  // Seraliazes the testing arbitration injection to make sure that the previous
+  // op has left arbitration section before starting the next one. This is
+  // guaranteed by the production code for operation triggered arbitration.
+  static std::mutex lock;
+  {
+    std::lock_guard<std::mutex> l(lock);
+    static_cast<MemoryPoolImpl*>(pool)->testingManager()->shrinkPools(
+        targetBytes, allowSpill);
+    pool->leaveArbitration();
+  }
+  // This function is simulating an operator triggered arbitration which
+  // would check if the query has been aborted after finish arbitration by the
+  // memory pool capacity grow path.
+  static_cast<MemoryPoolImpl*>(pool)->testingCheckIfAborted();
 }
 } // namespace facebook::velox::memory

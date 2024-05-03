@@ -12,6 +12,18 @@ Date and Time Operators
    * - Operator
      - Example
      - Result
+   * - ``+``
+     - ``interval '1' second + interval '1' hour``
+     - ``0 01:00:01.000``
+   * - ``+``
+     - ``timestamp '1970-01-01 00:00:00.000' + interval '1' second``
+     - ``1970-01-01 00:00:01.000``
+   * - ``-``
+     - ``interval '1' hour - interval '1' second``
+     - ``0 00:59:59.000``
+   * - ``-``
+     - ``timestamp '1970-01-01 00:00:00.000' - interval '1' second``
+     - ``1969-12-31 23:59:59.000``
    * - ``*``
      - ``interval '1' second * 2``
      - ``0 00:00:02.000``
@@ -27,6 +39,24 @@ Date and Time Operators
    * - ``/``
      - ``interval '15' second / 1.5``
      - ``0 00:00:10.000``
+
+.. function:: plus(x, y) -> [same as x]
+
+    Returns the sum of ``x`` and ``y``. Both ``x`` and ``y`` are intervals day
+    to second or one of them can be timestamp. For addition of two intervals day to
+    second, returns ``-106751991167 07:12:55.808`` when the addition overflows
+    in positive and returns ``106751991167 07:12:55.807`` when the addition
+    overflows in negative. When addition of a timestamp with an interval day to
+    second, overflowed results are wrapped around.
+
+.. function:: minus(x, y) -> [same as x]
+
+    Returns the result of subtracting ``y`` from ``x``. Both ``x`` and ``y``
+    are intervals day to second or ``x`` can be timestamp. For subtraction of
+    two intervals day to second, returns ``-106751991167 07:12:55.808`` when
+    the subtraction overflows in positive and returns ``106751991167 07:12:55.807``
+    when the subtraction overflows in negative. For subtraction of an interval
+    day to second from a timestamp, overflowed results are wrapped around.
 
 .. function:: multiply(interval day to second, x) -> interval day to second
 
@@ -62,6 +92,29 @@ Date and Time Functions
 
     This is an alias for ``CAST(x AS date)``.
 
+.. function:: from_iso8601_date(string) -> date
+
+    Parses the ISO 8601 formatted ``string`` into a ``date``.
+    ISO 8601 ``string`` can be formatted as any of the following:
+    ``[+-][Y]Y*``
+
+    ``[+-][Y]Y*-[M]M*``
+
+    ``[+-][Y]Y*-[M]M*-[D]D*``
+
+    ``[+-][Y]Y*-[M]M*-[D]D* *``
+
+    Year value must contain at least one digit, and may contain up to six digits.
+    Month and day values are optional and may each contain one or two digits.
+
+    Examples of supported input strings:
+    "2012",
+    "2012-4",
+    "2012-04",
+    "2012-4-7",
+    "2012-04-07",
+    "2012-04-07  ”
+
 .. function:: from_unixtime(unixtime) -> timestamp
 
     Returns the UNIX timestamp ``unixtime`` as a timestamp.
@@ -71,6 +124,10 @@ Date and Time Functions
 
     Returns the UNIX timestamp ``unixtime`` as a timestamp with time zone
     using ``string`` for the time zone.
+
+.. function:: to_iso8601(x) -> varchar
+
+    Formats ``x`` as an ISO 8601 string. Supported types for ``x`` are: DATE.
 
 .. function:: to_unixtime(timestamp) -> double
 
@@ -193,7 +250,12 @@ The functions in this section leverage a native cpp implementation that follows
 a format string compatible with JodaTime’s `DateTimeFormat
 <http://joda-time.sourceforge.net/apidocs/org/joda/time/format/DateTimeFormat.html>`_
 pattern format. The symbols currently supported are ``y``, ``Y``, ``M`` , ``d``,
-``H``, ``m``, ``s``, ``S``, and ``Z``.
+``H``, ``m``, ``s``, ``S``, ``z`` and ``Z``.
+
+``z`` represents a timezone name (3-letter format), and ``Z`` a timezone offset
+specified using the format ``+00``, ``+00:00`` or ``+0000`` (or ``-``). ``Z``
+also accepts ``UTC``,  ``UCT``, ``GMT``, and ``GMT0`` as valid representations
+of GMT.
 
 .. function:: parse_datetime(string, format) -> timestamp with time zone
 
@@ -212,6 +274,8 @@ arbitrary large timestamps.
 .. function:: day(x) -> bigint
 
     Returns the day of the month from ``x``.
+
+    The supported types for ``x`` are DATE, TIMESTAMP, TIMESTAMP WITH TIME ZONE, INTERVAL DAY TO SECOND.
 
 .. function:: day_of_month(x) -> bigint
 
@@ -337,3 +401,7 @@ transition: ::
 It can be interpreted as `2014-11-02 01:30:00 PDT`, or `2014-11-02 01:30:00 PST`, which are
 `2014-11-02 08:30:00 UTC` or `2014-11-02 09:30:00 UTC` respectively. The former one is
 picked to be consistent with Presto.
+
+**Timezone Name Parsing**: When parsing strings that contain timezone names, the
+list of supported timezones follow the definition `here
+<https://en.wikipedia.org/wiki/List_of_tz_database_time_zones>`_.
