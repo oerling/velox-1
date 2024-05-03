@@ -152,9 +152,9 @@ __global__ void waveBaseKernel(
   auto instruction = program->instructions;
   for (;;) {
     switch (instruction->opCode) {
-    case OpCode::kReturn:
-      return;
-    case OpCode::kFilter:
+      case OpCode::kReturn:
+        return;
+      case OpCode::kFilter:
         filterKernel(
             instruction->_.filter,
             operands,
