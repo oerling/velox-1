@@ -16,10 +16,10 @@
 
 #include "velox/experimental/wave/exec/ExprKernel.h"
 
+#include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
-#include <gflags/gflags.h>
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
@@ -108,17 +108,18 @@ __device__ void wrapKernel(
       opIndices = &op->indices[blockBase / kBlockSize];
       remap = *opIndices != nullptr;
       if (remap) {
-	newIndex = (*opIndices)[filterIndices[blockBase + threadIdx.x] - blockBase];
+        newIndex =
+            (*opIndices)[filterIndices[blockBase + threadIdx.x] - blockBase];
       } else if (threadIdx.x == 0) {
-	*opIndices = filterIndices + blockBase;
+        *opIndices = filterIndices + blockBase;
       }
     }
     // All threads hit this.
-      __syncthreads();
-      if (remap) {
-	// remap can b true only on activ rows.
-        (*opIndices)[threadIdx.x] = newIndex;
-      }
+    __syncthreads();
+    if (remap) {
+      // remap can b true only on activ rows.
+      (*opIndices)[threadIdx.x] = newIndex;
+    }
   }
   __syncthreads();
 }
