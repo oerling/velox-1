@@ -78,6 +78,7 @@ class TableScan : public WaveSourceOperator {
   }
 
   void addDynamicFilter(
+      const core::PlanNodeId& producer,
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
