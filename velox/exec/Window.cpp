@@ -45,7 +45,7 @@ Window::Window(
         windowNode, pool(), spillConfig, &nonReclaimableSection_);
   } else {
     windowBuild_ = std::make_unique<SortWindowBuild>(
-        windowNode, pool(), spillConfig, &nonReclaimableSection_);
+        windowNode, pool(), spillConfig, &nonReclaimableSection_, &spillStats_);
   }
 }
 
@@ -241,10 +241,6 @@ void Window::createPeerAndFrameBuffers() {
 void Window::noMoreInput() {
   Operator::noMoreInput();
   windowBuild_->noMoreInput();
-
-  if (auto spillStats = windowBuild_->spilledStats()) {
-    recordSpillStats(spillStats.value());
-  }
 }
 
 void Window::callResetPartition() {
@@ -284,8 +280,18 @@ void updateKRowsOffsetsColumn(
   // moves ahead.
   int precedingFactor = isKPreceding ? -1 : 1;
   for (auto i = 0; i < numRows; i++) {
-    rawFrameBounds[i] =
-        (startRow + i) + vector_size_t(precedingFactor * offsets[i]);
+    auto startValue = (int64_t)(startRow + i) + precedingFactor * offsets[i];
+    if (startValue < INT32_MIN) {
+      // Same as the handling of startValue < INT32_MIN in
+      // updateKRowsFrameBounds.
+      rawFrameBounds[i] = -1;
+    } else if (startValue > INT32_MAX) {
+      // computeValidFrames will replace INT32_MAX set here
+      // with partition's final row index.
+      rawFrameBounds[i] = INT32_MAX;
+    } else {
+      rawFrameBounds[i] = startValue;
+    }
   }
 }
 
@@ -300,7 +306,41 @@ void Window::updateKRowsFrameBounds(
   if (frameArg.index == kConstantChannel) {
     auto constantOffset = frameArg.constant.value();
     auto startValue =
-        startRow + (isKPreceding ? -constantOffset : constantOffset);
+        (int64_t)startRow + (isKPreceding ? -constantOffset : constantOffset);
+
+    if (isKPreceding) {
+      if (startValue < INT32_MIN) {
+        // For overflow in kPreceding frames, i.e., k < INT32_MIN, we set the
+        // frame bound to -1. For frames whose original frame start is below
+        // INT32_MIN, the new frame start becomes -1 and will be corrected to 0
+        // by the subsequent computeValidFrames call. For frames whose original
+        // frame end is below INT32_MIN, the new frame end becomes -1 and will
+        // be marked invalid by the subsequent computeValidFrames call. This is
+        // expected because the max number of rows in a partition is INT32_MAX,
+        // so a frame end below INT32_MIN always results in an empty frame.
+        std::fill_n(rawFrameBounds, numRows, -1);
+        return;
+      }
+      std::iota(rawFrameBounds, rawFrameBounds + numRows, startValue);
+      return;
+    }
+
+    // KFollowing.
+    // The start index that overflow happens.
+    int32_t overflowStart;
+    if (startValue > (int64_t)INT32_MAX) {
+      overflowStart = 0;
+    } else {
+      overflowStart = INT32_MAX - startValue + 1;
+    }
+    if (overflowStart >= 0 && overflowStart < numRows) {
+      std::iota(rawFrameBounds, rawFrameBounds + overflowStart, startValue);
+      // For remaining rows that overflow happens, use INT32_MAX.
+      // computeValidFrames will replace it with partition's final row index.
+      std::fill_n(
+          rawFrameBounds + overflowStart, numRows - overflowStart, INT32_MAX);
+      return;
+    }
     std::iota(rawFrameBounds, rawFrameBounds + numRows, startValue);
   } else {
     currentPartition_->extractColumn(

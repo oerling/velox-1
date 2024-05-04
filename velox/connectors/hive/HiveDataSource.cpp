@@ -49,8 +49,8 @@ HiveDataSource::HiveDataSource(
   // Column handled keyed on the column alias, the name used in the query.
   for (const auto& [canonicalizedName, columnHandle] : columnHandles) {
     auto handle = std::dynamic_pointer_cast<HiveColumnHandle>(columnHandle);
-    VELOX_CHECK(
-        handle != nullptr,
+    VELOX_CHECK_NOT_NULL(
+        handle,
         "ColumnHandle must be an instance of HiveColumnHandle for {}",
         canonicalizedName);
 
@@ -67,7 +67,7 @@ HiveDataSource::HiveDataSource(
   auto readerRowTypes = outputType_->children();
   folly::F14FastMap<std::string, std::vector<const common::Subfield*>>
       subfields;
-  for (auto& outputName : outputType_->names()) {
+  for (const auto& outputName : outputType_->names()) {
     auto it = columnHandles.find(outputName);
     VELOX_CHECK(
         it != columnHandles.end(),
@@ -86,9 +86,8 @@ HiveDataSource::HiveDataSource(
   }
 
   hiveTableHandle_ = std::dynamic_pointer_cast<HiveTableHandle>(tableHandle);
-  VELOX_CHECK(
-      hiveTableHandle_ != nullptr,
-      "TableHandle must be an instance of HiveTableHandle");
+  VELOX_CHECK_NOT_NULL(
+      hiveTableHandle_, "TableHandle must be an instance of HiveTableHandle");
   if (hiveConfig_->isFileColumnNamesReadAsLowerCase(
           connectorQueryCtx->sessionProperties())) {
     checkColumnNameLowerCase(outputType_);
@@ -97,7 +96,7 @@ HiveDataSource::HiveDataSource(
   }
 
   SubfieldFilters filters;
-  for (auto& [k, v] : hiveTableHandle_->subfieldFilters()) {
+  for (const auto& [k, v] : hiveTableHandle_->subfieldFilters()) {
     filters.emplace(k.clone(), v->clone());
   }
   double sampleRate = 1;
@@ -167,22 +166,22 @@ std::unique_ptr<SplitReader> HiveDataSource::createSplitReader() {
   return SplitReader::create(
       split_,
       hiveTableHandle_,
-      scanSpec_,
-      readerOutputType_,
       &partitionKeys_,
-      fileHandleFactory_,
-      executor_,
       connectorQueryCtx_,
       hiveConfig_,
-      ioStats_);
+      readerOutputType_,
+      ioStats_,
+      fileHandleFactory_,
+      executor_,
+      scanSpec_);
 }
 
 void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
-  VELOX_CHECK(
-      split_ == nullptr,
+  VELOX_CHECK_NULL(
+      split_,
       "Previous split has not been processed yet. Call next to process the split.");
   split_ = std::dynamic_pointer_cast<HiveConnectorSplit>(split);
-  VELOX_CHECK(split_, "Wrong type of split");
+  VELOX_CHECK_NOT_NULL(split_, "Wrong type of split");
 
   VLOG(1) << "Adding split " << split_->toString();
 
@@ -201,8 +200,9 @@ std::optional<RowVectorPtr> HiveDataSource::next(
     uint64_t size,
     velox::ContinueFuture& /*future*/) {
   VELOX_CHECK(split_ != nullptr, "No split to process. Call addSplit first.");
+  VELOX_CHECK_NOT_NULL(splitReader_, "No split reader present");
 
-  if (splitReader_ && splitReader_->emptySplit()) {
+  if (splitReader_->emptySplit()) {
     resetSplit();
     return nullptr;
   }
@@ -324,17 +324,15 @@ std::unordered_map<std::string, RuntimeCounter> HiveDataSource::runtimeStats() {
 void HiveDataSource::setFromDataSource(
     std::unique_ptr<DataSource> sourceUnique) {
   auto source = dynamic_cast<HiveDataSource*>(sourceUnique.get());
-  VELOX_CHECK(source, "Bad DataSource type");
+  VELOX_CHECK_NOT_NULL(source, "Bad DataSource type");
 
   split_ = std::move(source->split_);
-  if (source->splitReader_ && source->splitReader_->emptySplit()) {
-    runtimeStats_.skippedSplits += source->runtimeStats_.skippedSplits;
-    runtimeStats_.skippedSplitBytes += source->runtimeStats_.skippedSplitBytes;
-    return;
-  }
+  runtimeStats_.skippedSplits += source->runtimeStats_.skippedSplits;
+  runtimeStats_.skippedSplitBytes += source->runtimeStats_.skippedSplitBytes;
   source->scanSpec_->moveAdaptationFrom(*scanSpec_);
   scanSpec_ = std::move(source->scanSpec_);
   splitReader_ = std::move(source->splitReader_);
+  splitReader_->setConnectorQueryCtx(connectorQueryCtx_);
   // New io will be accounted on the stats of 'source'. Add the existing
   // balance to that.
   source->ioStats_->merge(*ioStats_);

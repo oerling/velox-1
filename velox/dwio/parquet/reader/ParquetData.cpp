@@ -61,9 +61,7 @@ void ParquetData::filterRowGroups(
   }
 }
 
-bool ParquetData::rowGroupMatches(
-    uint32_t rowGroupId,
-    common::Filter* FOLLY_NULLABLE filter) {
+bool ParquetData::rowGroupMatches(uint32_t rowGroupId, common::Filter* filter) {
   auto column = type_->column();
   auto type = type_->type();
   auto rowGroup = fileMetaDataPtr_.rowGroup(rowGroupId);
@@ -98,7 +96,6 @@ void ParquetData::enqueueRowGroup(
     // this assumes the data pages follow the dict pages directly.
     chunkReadOffset = chunk.dictionaryPageOffset();
   }
-  VELOX_CHECK_GE(chunkReadOffset, 0);
 
   uint64_t readSize =
       (chunk.compression() == common::CompressionKind::CompressionKind_NONE)

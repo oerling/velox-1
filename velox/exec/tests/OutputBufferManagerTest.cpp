@@ -74,8 +74,12 @@ class OutputBufferManagerTest : public testing::Test {
     auto queryCtx = std::make_shared<core::QueryCtx>(
         executor_.get(), core::QueryConfig(std::move(configSettings)));
 
-    auto task =
-        Task::create(taskId, std::move(planFragment), 0, std::move(queryCtx));
+    auto task = Task::create(
+        taskId,
+        std::move(planFragment),
+        0,
+        std::move(queryCtx),
+        Task::ExecutionMode::kParallel);
 
     bufferManager_->initializeTask(task, kind, numDestinations, numDrivers);
     return task;
@@ -337,6 +341,36 @@ class OutputBufferManagerTest : public testing::Test {
       }
     }
     bufferManager_->deleteResults(taskId, destination);
+    // out of order requests are allowed (fetch after delete)
+    {
+      struct Response {
+        std::vector<std::unique_ptr<folly::IOBuf>> pages;
+        int64_t sequence;
+        std::vector<int64_t> remainingBytes;
+      };
+      folly::Promise<Response> promise;
+      auto future = promise.getSemiFuture();
+      bufferManager_->getData(
+          taskId,
+          destination,
+          32'000'000,
+          nextSequence,
+          [&promise](
+              std::vector<std::unique_ptr<folly::IOBuf>> pages,
+              int64_t inSequence,
+              std::vector<int64_t> remainingBytes) {
+            promise.setValue(Response{
+                std::move(pages), inSequence, std::move(remainingBytes)});
+          });
+      future.wait();
+      ASSERT_TRUE(future.isReady());
+      auto& response = future.value();
+      ASSERT_EQ(response.sequence, nextSequence);
+      ASSERT_EQ(response.remainingBytes.size(), 0);
+      ASSERT_EQ(response.pages.size(), 1);
+      ASSERT_EQ(response.pages.at(0), nullptr);
+    }
+
     fetchedPages = nextSequence;
   }
 
@@ -687,8 +721,8 @@ TEST_F(OutputBufferManagerTest, destinationBuffer) {
       buffer.enqueue(makeSerializedPage(rowType_, 100));
     }
     DestinationBuffer destinationBuffer;
-    auto buffers = destinationBuffer.getData(
-        1, 0, noNotify, [] { return true; }, &buffer);
+    auto buffers =
+        destinationBuffer.getData(1, 0, noNotify, [] { return true; }, &buffer);
     ASSERT_TRUE(buffers.immediate);
     ASSERT_EQ(buffers.data.size(), 1);
     ASSERT_GT(buffers.data[0]->length(), 0);
@@ -829,9 +863,7 @@ TEST_F(OutputBufferManagerTest, basicBroadcast) {
   acknowledge(taskId, 5, 3);
   EXPECT_FALSE(bufferManager_->isFinished(taskId));
   deleteResults(taskId, 5);
-  VELOX_ASSERT_THROW(
-      fetch(taskId, 5, 0, 1'000'000'000, 2),
-      "getData received after its buffer is deleted. Destination: 5, sequence: 0");
+  fetch(taskId, 5, 0, 1'000'000'000, 1, true);
 
   bufferManager_->updateOutputBuffers(taskId, 7, true);
   EXPECT_FALSE(bufferManager_->isFinished(taskId));

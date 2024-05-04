@@ -77,27 +77,20 @@ class WindowFuzzer : public AggregationFuzzerBase {
 
  private:
   struct SortingKeyAndOrder {
-    std::string key_;
-    std::string order_;
-    std::string nullsOrder_;
+    const std::string key_;
+    const core::SortOrder sortOrder_;
 
-    SortingKeyAndOrder() = delete;
-
-    SortingKeyAndOrder(
-        const std::string& key,
-        const std::string& order,
-        const std::string& nullsOrder) {
-      key_ = key;
-      order_ = order;
-      nullsOrder_ = nullsOrder;
-    }
+    SortingKeyAndOrder(std::string key, core::SortOrder sortOrder)
+        : key_(std::move(key)), sortOrder_(std::move(sortOrder)) {}
   };
 
   void addWindowFunctionSignatures(const WindowFunctionMap& signatureMap);
 
-  const std::string generateFrameClause();
+  // Return a randomly generated frame clause string together with a boolean
+  // flag indicating whether it is a ROWS frame.
+  std::tuple<std::string, bool> generateFrameClause();
 
-  const std::string generateOrderByClause(
+  std::string generateOrderByClause(
       const std::vector<SortingKeyAndOrder>& sortingKeysAndOrders);
 
   std::string getFrame(
@@ -129,7 +122,7 @@ class WindowFuzzer : public AggregationFuzzerBase {
       const std::vector<RowVectorPtr>& input,
       bool customVerification,
       const std::shared_ptr<ResultVerifier>& customVerifier,
-      const velox::test::ResultOrError& expected);
+      const velox::fuzzer::ResultOrError& expected);
 
   const std::unordered_set<std::string> orderDependentFunctions_;
 

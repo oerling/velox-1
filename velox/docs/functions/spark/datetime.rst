@@ -133,6 +133,23 @@ These functions support TIMESTAMP and DATE input types.
     ``day`` need to be from 1 to 31, and matches the number of days in each month.
     days of ``year-month-day - 1970-01-01`` need to be in the range of INTEGER type.
 
+.. spark:function:: make_ym_interval([years[, months]]) -> interval year to month
+
+    Make year-month interval from ``years`` and ``months`` fields.
+    Returns the actual year-month with month in the range of [0, 11].
+    Both ``years`` and ``months`` can be zero, positive or negative.
+    Throws an error when inputs lead to int overflow,
+    e.g., make_ym_interval(178956970, 8). ::
+
+        SELECT make_ym_interval(1, 2); -- 1-2
+        SELECT make_ym_interval(1, 0); -- 1-0
+        SELECT make_ym_interval(-1, 1); -- -0-11
+        SELECT make_ym_interval(1, 100); -- 9-4
+        SELECT make_ym_interval(1, 12); -- 2-0
+        SELECT make_ym_interval(1, -12); -- 0-0
+        SELECT make_ym_interval(2); -- 2-0
+        SELECT make_ym_interval(); -- 0-0
+
 .. spark:function:: minute(timestamp) -> integer
 
     Returns the minutes of ``timestamp``.::
@@ -200,9 +217,23 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: second(timestamp) -> integer
 
-    Returns the seconds of ``timestamp``.::
+    Returns the seconds of ``timestamp``. ::
 
         SELECT second('2009-07-30 12:58:59'); -- 59
+
+.. spark:function:: timestamp_micros(x) -> timestamp
+
+    Returns timestamp from the number of microseconds since UTC epoch.
+    Supported types are: TINYINT, SMALLINT, INTEGER and BIGINT.::
+
+        SELECT timestamp_micros(1230219000123123); -- '2008-12-25 15:30:00.123123'
+
+.. spark:function:: timestamp_millis(x) -> timestamp
+
+    Returns timestamp from the number of milliseconds since UTC epoch.
+    Supported types are: TINYINT, SMALLINT, INTEGER and BIGINT.::
+
+        SELECT timestamp_millis(1230219000123); -- '2008-12-25 15:30:00.123'
 
 .. spark:function:: to_unix_timestamp(string) -> integer
 
@@ -221,11 +252,30 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: unix_date(date) -> integer
 
-    Returns the number of days since 1970-01-01.::
+    Returns the number of days since 1970-01-01. ::
 
         SELECT unix_date('1970-01-01'); -- '0'
         SELECT unix_date('1970-01-02'); -- '1'
         SELECT unix_date('1969-12-31'); -- '-1'
+
+.. spark:function:: unix_micros(timestamp) -> bigint
+
+    Returns the number of microseconds since 1970-01-01 00:00:00 UTC.::
+
+        SELECT unix_micros('1970-01-01 00:00:01'); -- 1000000
+
+.. spark:function:: unix_millis(timestamp) -> bigint
+
+    Returns the number of milliseconds since 1970-01-01 00:00:00 UTC. Truncates
+    higher levels of precision.::
+
+        SELECT unix_millis('1970-01-01 00:00:01'); -- 1000
+
+.. spark:function:: unix_seconds(timestamp) -> bigint
+    
+    Returns the number of seconds since 1970-01-01 00:00:00 UTC. ::
+
+        SELECT unix_seconds('1970-01-01 00:00:01'); -- 1
 
 .. spark:function:: unix_timestamp() -> integer
 
@@ -255,7 +305,7 @@ These functions support TIMESTAMP and DATE input types.
 
 .. function:: weekday(date) -> integer
 
-    Returns the day of the week for date (0 = Monday, 1 = Tuesday, …, 6 = Sunday).::
+    Returns the day of the week for date (0 = Monday, 1 = Tuesday, …, 6 = Sunday). ::
 
         SELECT weekday('2015-04-08'); -- 2
         SELECT weekday('2024-02-10'); -- 5
@@ -265,3 +315,10 @@ These functions support TIMESTAMP and DATE input types.
 .. spark:function:: year(x) -> integer
 
     Returns the year from ``x``.
+
+.. spark:function:: year_of_week(x) -> integer
+
+    Returns the ISO week-numbering year that ``x`` falls in. For example, 2005-01-02 is
+    part of the 53rd week of year 2004, so the result is 2004. Only supports DATE type.
+
+        SELECT year_of_week('2005-01-02'); -- 2004

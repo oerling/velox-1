@@ -155,7 +155,6 @@ class WaveVector {
   // 'values'.
   WaveBufferPtr indices_;
 
-
   // Lengths and offsets for array/map elements.
   WaveBufferPtr lengths_;
   WaveBufferPtr offsets_;

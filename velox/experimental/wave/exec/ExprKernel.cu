@@ -16,9 +16,12 @@
 
 #include "velox/experimental/wave/exec/ExprKernel.h"
 
+#include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
+
+DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
 namespace facebook::velox::wave {
 
@@ -105,18 +108,20 @@ __device__ void wrapKernel(
       opIndices = &op->indices[blockBase / kBlockSize];
       remap = *opIndices != nullptr;
       if (remap) {
-	newIndex = (*opIndices)[filterIndices[threadIdx.x]];
+        newIndex =
+            (*opIndices)[filterIndices[blockBase + threadIdx.x] - blockBase];
       } else if (threadIdx.x == 0) {
-	*opIndices = filterIndices + blockBase;
+        *opIndices = filterIndices + blockBase;
       }
     }
     // All threads hit this.
-      __syncthreads();
-      if (remap) {
-	// remap can b true only on activ rows.
-        (*opIndices)[threadIdx.x] = newIndex;
-      }
+    __syncthreads();
+    if (remap) {
+      // remap can b true only on activ rows.
+      (*opIndices)[threadIdx.x] = newIndex;
+    }
   }
+  __syncthreads();
 }
 
 #define BINARY_TYPES(opCode, OP)                             \
@@ -144,9 +149,11 @@ __global__ void waveBaseKernel(
   auto* operands = programOperands[programIndex];
   auto* status = &blockStatusArray[blockIdx.x - baseIndices[blockIdx.x]];
   int32_t blockBase = (blockIdx.x - baseIndices[blockIdx.x]) * blockDim.x;
-  for (auto i = 0; i < program->numInstructions; ++i) {
-    auto instruction = program->instructions[i];
+  auto instruction = program->instructions;
+  for (;;) {
     switch (instruction->opCode) {
+      case OpCode::kReturn:
+        return;
       case OpCode::kFilter:
         filterKernel(
             instruction->_.filter,
@@ -163,6 +170,7 @@ __global__ void waveBaseKernel(
         BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
     }
+    ++instruction;
   }
 }
 
@@ -192,6 +200,9 @@ void WaveKernelStream::call(
       sharedSize,
       alias ? alias->stream()->stream : stream()->stream>>>(
       bases, programIdx, programs, operands, status);
+  if (FLAGS_kernel_gdb) {
+    (alias ? alias : this)->wait();
+  }
 }
 
 } // namespace facebook::velox::wave

@@ -175,8 +175,22 @@ void movePromisesOut(
   }
   from.clear();
 }
-
 } // namespace
+
+std::string executionModeString(Task::ExecutionMode mode) {
+  switch (mode) {
+    case Task::ExecutionMode::kSerial:
+      return "Serial";
+    case Task::ExecutionMode::kParallel:
+      return "Parallel";
+    default:
+      return fmt::format("Unknown {}", static_cast<int>(mode));
+  }
+}
+
+std::ostream& operator<<(std::ostream& out, Task::ExecutionMode mode) {
+  return out << executionModeString(mode);
+}
 
 std::string taskStateString(TaskState state) {
   switch (state) {
@@ -231,6 +245,7 @@ std::shared_ptr<Task> Task::create(
     core::PlanFragment planFragment,
     int destination,
     std::shared_ptr<core::QueryCtx> queryCtx,
+    ExecutionMode mode,
     Consumer consumer,
     std::function<void(std::exception_ptr)> onError) {
   return Task::create(
@@ -238,16 +253,19 @@ std::shared_ptr<Task> Task::create(
       std::move(planFragment),
       destination,
       std::move(queryCtx),
+      mode,
       (consumer ? [c = std::move(consumer)]() { return c; }
                 : ConsumerSupplier{}),
       std::move(onError));
 }
 
+// static
 std::shared_ptr<Task> Task::create(
     const std::string& taskId,
     core::PlanFragment planFragment,
     int destination,
     std::shared_ptr<core::QueryCtx> queryCtx,
+    ExecutionMode mode,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError) {
   auto task = std::shared_ptr<Task>(new Task(
@@ -255,6 +273,7 @@ std::shared_ptr<Task> Task::create(
       std::move(planFragment),
       destination,
       std::move(queryCtx),
+      mode,
       std::move(consumerSupplier),
       std::move(onError)));
   task->initTaskPool();
@@ -266,6 +285,7 @@ Task::Task(
     core::PlanFragment planFragment,
     int destination,
     std::shared_ptr<core::QueryCtx> queryCtx,
+    ExecutionMode mode,
     ConsumerSupplier consumerSupplier,
     std::function<void(std::exception_ptr)> onError)
     : uuid_{makeUuid()},
@@ -273,10 +293,18 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      mode_(mode),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(onError),
       splitsStates_(buildSplitStates(planFragment_.planNode)),
-      bufferManager_(OutputBufferManager::getInstance()) {}
+      bufferManager_(OutputBufferManager::getInstance()) {
+  // NOTE: the executor must not be folly::InlineLikeExecutor for parallel
+  // execution.
+  if (mode_ == Task::ExecutionMode::kParallel) {
+    VELOX_CHECK_NULL(
+        dynamic_cast<const folly::InlineLikeExecutor*>(queryCtx_->executor()));
+  }
+}
 
 Task::~Task() {
   // TODO(spershin): Temporary code designed to reveal what causes SIGABRT in
@@ -525,6 +553,7 @@ bool Task::supportsSingleThreadedExecution() const {
 }
 
 RowVectorPtr Task::next(ContinueFuture* future) {
+  checkExecutionMode(ExecutionMode::kSerial);
   // NOTE: Task::next() is single-threaded execution so locking is not required
   // to access Task object.
   VELOX_CHECK_EQ(
@@ -645,6 +674,7 @@ void Task::start(uint32_t maxDrivers, uint32_t concurrentSplitGroups) {
   facebook::velox::process::ThreadDebugInfo threadDebugInfo{
       queryCtx()->queryId(), taskId_, nullptr};
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(threadDebugInfo);
+  checkExecutionMode(ExecutionMode::kParallel);
 
   try {
     VELOX_CHECK_GE(
@@ -688,6 +718,10 @@ void Task::start(uint32_t maxDrivers, uint32_t concurrentSplitGroups) {
   }
 }
 
+void Task::checkExecutionMode(ExecutionMode mode) {
+  VELOX_CHECK_EQ(mode, mode_, "Inconsistent task execution mode.")
+}
+
 void Task::createDriverFactoriesLocked(uint32_t maxDrivers) {
   VELOX_CHECK(isRunningLocked());
   VELOX_CHECK(driverFactories_.empty());
@@ -716,6 +750,7 @@ void Task::createDriverFactoriesLocked(uint32_t maxDrivers) {
 }
 
 void Task::createAndStartDrivers(uint32_t concurrentSplitGroups) {
+  checkExecutionMode(Task::ExecutionMode::kParallel);
   std::unique_lock<std::timed_mutex> l(mutex_);
   VELOX_CHECK(
       isRunningLocked(),
@@ -766,10 +801,6 @@ void Task::createAndStartDrivers(uint32_t concurrentSplitGroups) {
     // cancellations and pauses have the well-defined timing. For example, do
     // not pause and restart a task while it is still adding Drivers.
     //
-    // NOTE: the executor must not be folly::InlineLikeExecutor for parallel
-    // execution. Task::next() is used for the single-threaded execution.
-    VELOX_CHECK_NULL(
-        dynamic_cast<const folly::InlineLikeExecutor*>(queryCtx()->executor()));
     // We might have first slots taken for grouped execution drivers, so need
     // only to enqueue the ungrouped execution drivers.
     for (auto it = drivers_.end() - numDriversUngrouped_; it != drivers_.end();
@@ -861,7 +892,7 @@ void Task::resume(std::shared_ptr<Task> self) {
     if (self->isRunningLocked()) {
       for (auto& driver : self->drivers_) {
         if (driver != nullptr) {
-          if (driver->state().isSuspended) {
+          if (driver->state().suspended()) {
             // The Driver will come on thread in its own time as long as
             // the cancel flag is reset. This check needs to be inside 'mutex_'.
             continue;
@@ -874,6 +905,10 @@ void Task::resume(std::shared_ptr<Task> self) {
           }
           VELOX_CHECK(!driver->isOnThread() && !driver->isTerminated());
           if (!driver->state().hasBlockingFuture) {
+            if (driver->state().endExecTimeMs != 0) {
+              driver->state().totalPauseTimeMs +=
+                  getCurrentTimeMs() - driver->state().endExecTimeMs;
+            }
             // Do not continue a Driver that is blocked on external
             // event. The Driver gets enqueued by the promise realization.
             Driver::enqueue(driver);
@@ -1438,23 +1473,25 @@ exec::Split Task::getSplitLocked(
     int32_t maxPreloadSplits,
     const ConnectorSplitPreloadFunc& preload) {
   int32_t readySplitIndex = -1;
-  if (maxPreloadSplits) {
+  if (maxPreloadSplits > 0) {
     for (auto i = 0; i < splitsStore.splits.size() && i < maxPreloadSplits;
          ++i) {
       auto& connectorSplit = splitsStore.splits[i].connectorSplit;
       if (!connectorSplit->dataSource) {
-        // Initializes split->dataSource
+        // Initializes split->dataSource.
         preload(connectorSplit);
+        preloadingSplits_.emplace(connectorSplit);
       } else if (
-          readySplitIndex == -1 && connectorSplit->dataSource->hasValue()) {
+          (readySplitIndex == -1) && (connectorSplit->dataSource->hasValue())) {
         readySplitIndex = i;
+        preloadingSplits_.erase(connectorSplit);
       }
     }
   }
   if (readySplitIndex == -1) {
     readySplitIndex = 0;
   }
-  assert(!splitsStore.splits.empty());
+  VELOX_CHECK(!splitsStore.splits.empty());
   auto split = std::move(splitsStore.splits[readySplitIndex]);
   splitsStore.splits.erase(splitsStore.splits.begin() + readySplitIndex);
 
@@ -1624,12 +1661,16 @@ std::vector<Operator*> Task::findPeerOperators(
   std::vector<Operator*> peers;
   const auto operatorId = caller->operatorId();
   const auto& operatorType = caller->operatorType();
+  const auto splitGroupId = caller->splitGroupId();
   std::lock_guard<std::timed_mutex> l(mutex_);
   for (auto& driver : drivers_) {
     if (driver == nullptr) {
       continue;
     }
     if (driver->driverCtx()->pipelineId != pipelineId) {
+      continue;
+    }
+    if (driver->driverCtx()->splitGroupId != splitGroupId) {
       continue;
     }
     Operator* peer = driver->findOperator(operatorId);
@@ -1945,6 +1986,11 @@ ContinueFuture Task::terminate(TaskState terminalState) {
     bridge->cancel();
   }
 
+  for (auto split : preloadingSplits_) {
+    split->dataSource->close();
+  }
+  preloadingSplits_.clear();
+
   return makeFinishFuture("Task::terminate");
 }
 
@@ -1988,6 +2034,12 @@ void Task::addOperatorStats(OperatorStats& stats) {
   taskStats_.pipelineStats[stats.pipelineId]
       .operatorStats[stats.operatorId]
       .add(stats);
+}
+
+void Task::addDriverStats(int pipelineId, DriverStats stats) {
+  std::lock_guard<std::timed_mutex> l(mutex_);
+  VELOX_CHECK(0 <= pipelineId && pipelineId < taskStats_.pipelineStats.size());
+  taskStats_.pipelineStats[pipelineId].driverStats.push_back(std::move(stats));
 }
 
 TaskStats Task::taskStats() const {
@@ -2099,6 +2151,29 @@ uint64_t Task::timeSinceTerminationMs() const {
   return getCurrentTimeMs() - taskStats_.terminationTimeMs;
 }
 
+Task::DriverCounts Task::driverCounts() const {
+  std::lock_guard<std::timed_mutex> l(mutex_);
+
+  Task::DriverCounts ret;
+  for (auto& driver : drivers_) {
+    if (driver) {
+      if (driver->state().isEnqueued) {
+        ++ret.numQueuedDrivers;
+      } else if (driver->state().suspended()) {
+        ++ret.numSuspendedDrivers;
+      } else if (driver->isOnThread()) {
+        ++ret.numOnThreadDrivers;
+      } else {
+        const auto blockingReason = driver->blockingReason();
+        if (blockingReason != BlockingReason::kNotBlocked) {
+          ++ret.numBlockedDrivers[driver->blockingReason()];
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 void Task::onTaskCompletion() {
   listeners().withRLock([&](auto& listeners) {
     if (listeners.empty()) {
@@ -2137,7 +2212,7 @@ ContinueFuture Task::stateChangeFuture(uint64_t maxWaitMicros) {
   return std::move(future);
 }
 
-ContinueFuture Task::taskCompletionFuture(uint64_t maxWaitMicros) {
+ContinueFuture Task::taskCompletionFuture() {
   std::lock_guard<std::timed_mutex> l(mutex_);
   // If 'this' is running, the future is realized on timeout or when
   // this no longer is running.
@@ -2148,9 +2223,6 @@ ContinueFuture Task::taskCompletionFuture(uint64_t maxWaitMicros) {
   auto [promise, future] = makeVeloxContinuePromiseContract(
       fmt::format("Task::taskCompletionFuture {}", taskId_));
   taskCompletionPromises_.emplace_back(std::move(promise));
-  if (maxWaitMicros > 0) {
-    return std::move(future).within(std::chrono::microseconds(maxWaitMicros));
-  }
   return std::move(future);
 }
 
@@ -2479,6 +2551,7 @@ StopReason Task::enterSuspended(ThreadState& state) {
       promise.setValue();
     }
   });
+
   std::lock_guard<std::timed_mutex> l(mutex_);
   if (state.isTerminated) {
     return StopReason::kAlreadyTerminated;
@@ -2495,10 +2568,15 @@ StopReason Task::enterSuspended(ThreadState& state) {
           reason == StopReason::kYield,
       "Unexpected stop reason on suspension: {}",
       reason);
-  state.isSuspended = true;
+  if (++state.numSuspensions > 1) {
+    // Only the first suspension request needs to update the running driver
+    // thread counter in the task.
+    return StopReason::kNone;
+  }
   if (--numThreads_ == 0) {
     threadFinishPromises = allThreadsFinishedLocked();
   }
+  VELOX_CHECK_GE(numThreads_, 0);
   return StopReason::kNone;
 }
 
@@ -2509,8 +2587,15 @@ StopReason Task::leaveSuspended(ThreadState& state) {
   for (;;) {
     {
       std::lock_guard<std::timed_mutex> l(mutex_);
-      ++numThreads_;
-      state.isSuspended = false;
+      VELOX_CHECK_GT(state.numSuspensions, 0);
+      auto leaveGuard = folly::makeGuard([&]() {
+        VELOX_CHECK_GE(numThreads_, 0);
+        if (--state.numSuspensions == 0) {
+          // Only the last suspension leave needs to update the running driver
+          // thread counter in the task
+          ++numThreads_;
+        }
+      });
       if (state.isTerminated) {
         return StopReason::kAlreadyTerminated;
       }
@@ -2518,12 +2603,14 @@ StopReason Task::leaveSuspended(ThreadState& state) {
         state.isTerminated = true;
         return StopReason::kTerminate;
       }
-      if (!pauseRequested_) {
-        // For yield or anything but pause we return here.
+      if (state.numSuspensions > 1 || !pauseRequested_) {
+        // If we have more than one suspension requests on this driver thread or
+        // the task has been resumed, then we return here.
         return StopReason::kNone;
       }
-      --numThreads_;
-      state.isSuspended = true;
+      VELOX_CHECK_GT(state.numSuspensions, 0);
+      VELOX_CHECK_GE(numThreads_, 0);
+      leaveGuard.dismiss();
     }
     // If the pause flag is on when trying to reenter, sleep a while outside of
     // the mutex and recheck. This is rare and not time critical. Can happen if
@@ -2688,7 +2775,7 @@ uint64_t Task::MemoryReclaimer::reclaimTask(
   }
   VELOX_CHECK(paused || maxWaitMs != 0);
   if (!paused) {
-    RECORD_METRIC_VALUE(kMetricMemoryReclaimWaitTimeoutCount, 1);
+    RECORD_METRIC_VALUE(kMetricTaskMemoryReclaimWaitTimeoutCount, 1);
     VELOX_FAIL(
         "Memory reclaim failed to wait for task {} to pause after {} with max timeout {}",
         task->taskId(),
@@ -2697,8 +2784,9 @@ uint64_t Task::MemoryReclaimer::reclaimTask(
   }
 
   stats.reclaimWaitTimeUs += reclaimWaitTimeUs;
+  RECORD_METRIC_VALUE(kMetricTaskMemoryReclaimCount, 1);
   RECORD_HISTOGRAM_METRIC_VALUE(
-      kMetricMemoryReclaimWaitTimeMs, reclaimWaitTimeUs / 1'000);
+      kMetricTaskMemoryReclaimWaitTimeMs, reclaimWaitTimeUs / 1'000);
 
   // Don't reclaim from a cancelled task as it will terminate soon.
   if (task->isCancelled()) {
@@ -2710,9 +2798,18 @@ uint64_t Task::MemoryReclaimer::reclaimTask(
   if (shrunkBytes >= targetBytes) {
     return shrunkBytes;
   }
-  return shrunkBytes +
-      memory::MemoryReclaimer::reclaim(
-             task->pool(), targetBytes - shrunkBytes, maxWaitMs, stats);
+  uint64_t reclaimedBytes{0};
+  try {
+    reclaimedBytes = memory::MemoryReclaimer::reclaim(
+        task->pool(), targetBytes - shrunkBytes, maxWaitMs, stats);
+  } catch (...) {
+    // Set task error before resumes the task execution as the task operator
+    // might not be in consistent state anymore. This prevents any off thread
+    // from running again.
+    task->setError(std::current_exception());
+    std::rethrow_exception(std::current_exception());
+  }
+  return shrunkBytes + reclaimedBytes;
 }
 
 void Task::MemoryReclaimer::abort(
@@ -2723,11 +2820,21 @@ void Task::MemoryReclaimer::abort(
     return;
   }
   VELOX_CHECK_EQ(task->pool()->name(), pool->name());
+
   task->setError(error);
-  const static int maxTaskAbortWaitUs = 60'000'000; // 60s
-  // Set timeout to zero to infinite wait until task completes.
-  task->taskCompletionFuture(maxTaskAbortWaitUs).wait();
-  memory::MemoryReclaimer::abort(pool, error);
+  const static uint32_t maxTaskAbortWaitUs = 6'000'000; // 60s
+  if (task->taskCompletionFuture().wait(
+          std::chrono::microseconds(maxTaskAbortWaitUs))) {
+    // If task is completed within 60s wait, we can safely propagate abortion.
+    // Otherwise long running operators might be in the middle of processing,
+    // making it unsafe to force abort. In this case we let running operators
+    // finish by hitting operator boundary, and rely on cleanup mechanism to
+    // release the resource.
+    memory::MemoryReclaimer::abort(pool, error);
+  } else {
+    LOG(WARNING)
+        << "Timeout waiting for task to complete during query memory aborting.";
+  }
 }
 
 } // namespace facebook::velox::exec

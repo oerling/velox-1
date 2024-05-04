@@ -54,6 +54,12 @@ String Functions
     empty string. When `replace` is an empty string invalid characters are
     removed.
 
+.. function:: hamming_distance(string1, string2) -> bigint
+
+    Returns the Hamming distance of ``string1`` and ``string2``,
+    i.e. the number of positions at which the corresponding characters are different.
+    Note that the two strings must have the same length.
+
 .. function:: length(string) -> bigint
 
     Returns the length of ``string`` in characters.
@@ -248,6 +254,43 @@ String Functions
 .. function:: upper(string) -> varchar
 
     Converts ``string`` to uppercase.
+
+.. function:: word_stem(word) -> varchar
+
+    Returns the stem of ``word`` in the English language. If the ``word`` is not an English word,
+    the ``word`` in lowercase is returned.
+
+.. function:: word_stem(word, lang) -> varchar
+
+    Returns the stem of ``word`` in the ``lang`` language. This function supports the following languages:
+
+    =========== ================
+    lang        Language
+    =========== ================
+    ``ca``      ``Catalan``
+    ``da``      ``Danish``
+    ``de``      ``German``
+    ``en``      ``English``
+    ``es``      ``Spanish``
+    ``eu``      ``Basque``
+    ``fi``      ``Finnish``
+    ``fr``      ``French``
+    ``hu``      ``Hungarian``
+    ``hy``      ``Armenian``
+    ``ir``      ``Irish``
+    ``it``      ``Italian``
+    ``lt``      ``Lithuanian``
+    ``nl``      ``Dutch``
+    ``no``      ``Norwegian``
+    ``pt``      ``Portuguese``
+    ``ro``      ``Romanian``
+    ``ru``      ``Russian``
+    ``sv``      ``Swedish``
+    ``tr``      ``Turkish``
+    =========== ================
+
+    If the specified ``lang`` is not supported, this function throws a user error.
+
 
 Unicode Functions
 -----------------

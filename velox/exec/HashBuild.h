@@ -60,7 +60,7 @@ class HashBuild final : public Operator {
 
   HashBuild(
       int32_t operatorId,
-      DriverCtx* FOLLY_NONNULL driverCtx,
+      DriverCtx* driverCtx,
       std::shared_ptr<const core::HashJoinNode> joinNode);
 
   void initialize() override;
@@ -77,7 +77,7 @@ class HashBuild final : public Operator {
 
   void noMoreInput() override;
 
-  BlockingReason isBlocked(ContinueFuture* FOLLY_NONNULL future) override;
+  BlockingReason isBlocked(ContinueFuture* future) override;
 
   bool isFinished() override;
 
@@ -117,9 +117,6 @@ class HashBuild final : public Operator {
     return canReclaim();
   }
 
-  void recordSpillStats();
-  void recordSpillStats(Spiller* spiller);
-
   // Indicates if the input is read from spill data or not.
   bool isInputFromSpill() const;
 
@@ -148,6 +145,13 @@ class HashBuild final : public Operator {
   // the specified 'numRows' if spilling is enabled. The function throws to fail
   // the query if the memory reservation fails.
   void ensureTableFits(uint64_t numRows);
+
+  // Invoked to ensure there is sufficient memory to build the next-row-vectors
+  // with the specified 'numRows' if spilling is enabled. The function throws to
+  // fail the query if the memory reservation fails.
+  void ensureNextRowVectorFits(
+      uint64_t numRows,
+      const std::vector<HashBuild*>& otherBuilds);
 
   // Invoked to compute spill partitions numbers for each row 'input' and spill
   // rows to spiller directly if the associated partition(s) is spilling. The

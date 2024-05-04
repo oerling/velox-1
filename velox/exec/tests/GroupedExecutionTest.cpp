@@ -34,7 +34,6 @@ class GroupedExecutionTest : public virtual HiveConnectorTestBase {
   }
 
   static void SetUpTestCase() {
-    FLAGS_velox_testing_enable_arbitration = true;
     HiveConnectorTestBase::SetUpTestCase();
   }
 
@@ -121,7 +120,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   planFragment.groupedExecutionLeafNodeIds.clear();
   planFragment.groupedExecutionLeafNodeIds.emplace(tableScanNodeId);
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
+  task = exec::Task::create(
+      "0",
+      planFragment,
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   VELOX_ASSERT_THROW(
       task->start(3, 1),
       "groupedExecutionLeafNodeIds must be empty in ungrouped execution mode");
@@ -130,7 +134,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
   planFragment.groupedExecutionLeafNodeIds.clear();
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
+  task = exec::Task::create(
+      "0",
+      planFragment,
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   VELOX_ASSERT_THROW(
       task->start(3, 1),
       "groupedExecutionLeafNodeIds must not be empty in "
@@ -141,7 +150,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   planFragment.groupedExecutionLeafNodeIds.clear();
   planFragment.groupedExecutionLeafNodeIds.emplace(projectNodeId);
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
+  task = exec::Task::create(
+      "0",
+      planFragment,
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   VELOX_ASSERT_THROW(
       task->start(3, 1),
       fmt::format(
@@ -154,7 +168,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   planFragment.groupedExecutionLeafNodeIds.emplace(tableScanNodeId);
   planFragment.groupedExecutionLeafNodeIds.emplace(projectNodeId);
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
+  task = exec::Task::create(
+      "0",
+      planFragment,
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   VELOX_ASSERT_THROW(
       task->start(3, 1),
       fmt::format(
@@ -167,7 +186,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionErrors) {
   planFragment.groupedExecutionLeafNodeIds.clear();
   planFragment.groupedExecutionLeafNodeIds.emplace(localPartitionNodeId);
   queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  task = exec::Task::create("0", planFragment, 0, std::move(queryCtx));
+  task = exec::Task::create(
+      "0",
+      planFragment,
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   VELOX_ASSERT_THROW(
       task->start(3, 1),
       fmt::format(
@@ -181,7 +205,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
   // Create source file - we will read from it in 6 splits.
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
+  writeToFile(filePath->getPath(), vectors);
 
   // A chain of three pipelines separated by local exchange with the leaf one
   // having scan running grouped execution - this will make all three pipelines
@@ -203,8 +227,12 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
   planFragment.groupedExecutionLeafNodeIds.emplace(tableScanNodeId);
   planFragment.numSplitGroups = 10;
   auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
-  auto task =
-      exec::Task::create("0", std::move(planFragment), 0, std::move(queryCtx));
+  auto task = exec::Task::create(
+      "0",
+      std::move(planFragment),
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
   // 3 drivers max and 1 concurrent split group.
   task->start(3, 1);
 
@@ -212,7 +240,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
   EXPECT_EQ(0, task->numRunningDrivers());
 
   // Add one split for group (8).
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
 
   // Only one split group should be in the processing mode, so 9 drivers (3 per
   // pipeline).
@@ -220,11 +248,11 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithOutputBuffer) {
   EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Add the rest of splits
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
 
   // One split group should be in the processing mode, so 9 drivers.
   EXPECT_EQ(9, task->numRunningDrivers());
@@ -290,27 +318,36 @@ DEBUG_ONLY_TEST_F(
   // Create source file to read as split input.
   auto vectors = makeVectors(24, 20);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
+  writeToFile(filePath->getPath(), vectors);
+
+  const int numDriversPerGroup{3};
 
   struct {
     bool enableSpill;
     bool mixedExecutionMode;
+    int groupConcurrency;
     int expectedNumDrivers;
     bool expectedSpill;
 
     std::string debugString() const {
       return fmt::format(
-          "enableSpill {}, mixedExecutionMode {}, expectedNumDrivers {}, expectedSpill {}",
+          "enableSpill {}, mixedExecutionMode {}, groupConcurrency {}, expectedNumDrivers {}, expectedSpill {}",
           enableSpill,
           mixedExecutionMode,
+          groupConcurrency,
           expectedNumDrivers,
+          groupConcurrency,
           expectedSpill);
     }
   } testSettings[] = {
-      {false, false, 12, false},
-      {false, true, 9, false},
-      {true, false, 12, true},
-      {true, true, 9, false}};
+      {false, false, 1, 12, false},
+      {false, true, 1, 9, false},
+      {true, false, 1, 12, true},
+      {true, true, 1, 9, false},
+      {false, false, 2, 12, false},
+      {false, true, 2, 9, false},
+      {true, false, 2, 12, true},
+      {true, true, 2, 9, false}};
 
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
@@ -358,9 +395,30 @@ DEBUG_ONLY_TEST_F(
     SCOPED_TESTVALUE_SET(
         "facebook::velox::exec::Driver::runInternal::noMoreInput",
         std::function<void(Operator*)>([&](Operator* op) {
+          if (op->operatorType() == "HashProbe") {
+            ASSERT_NE(op->splitGroupId(), kUngroupedGroupId);
+            const int pipelineId =
+                op->testingOperatorCtx()->driverCtx()->pipelineId;
+            const auto peerOps =
+                op->testingOperatorCtx()->task()->findPeerOperators(
+                    pipelineId, op);
+            ASSERT_LE(peerOps.size(), numDriversPerGroup);
+          }
           if (op->operatorType() != "HashBuild") {
             return;
           }
+          if (testData.mixedExecutionMode) {
+            ASSERT_EQ(op->splitGroupId(), kUngroupedGroupId);
+          } else {
+            ASSERT_NE(op->splitGroupId(), kUngroupedGroupId);
+          }
+          const int pipelineId =
+              op->testingOperatorCtx()->driverCtx()->pipelineId;
+          const auto peerOps =
+              op->testingOperatorCtx()->task()->findPeerOperators(
+                  pipelineId, op);
+          ASSERT_LE(peerOps.size(), numDriversPerGroup);
+
           ASSERT_EQ(op->canReclaim(), testData.expectedSpill);
           if (testData.enableSpill) {
             memory::testingRunArbitration(op->pool());
@@ -368,30 +426,35 @@ DEBUG_ONLY_TEST_F(
         }));
 
     auto task = exec::Task::create(
-        "0", std::move(planFragment), 0, std::move(queryCtx));
+        "0",
+        std::move(planFragment),
+        0,
+        std::move(queryCtx),
+        Task::ExecutionMode::kParallel);
     const auto spillDirectory = exec::test::TempDirectoryPath::create();
     if (testData.enableSpill) {
-      task->setSpillDirectory(spillDirectory->path);
+      task->setSpillDirectory(spillDirectory->getPath());
     }
 
-    // 3 drivers max and 1 concurrent split group to execute one group at a
-    // time.
-    task->start(3, 1);
+    // 'numDriversPerGroup' drivers max to execute one group at a time.
+    task->start(numDriversPerGroup, testData.groupConcurrency);
     ASSERT_EQ(task->hasMixedExecutionGroup(), testData.mixedExecutionMode);
 
     // Add split(s) to the build scan.
     if (testData.mixedExecutionMode) {
-      task->addSplit(buildScanNodeId, makeHiveSplit(filePath->path));
+      task->addSplit(buildScanNodeId, makeHiveSplit(filePath->getPath()));
     } else {
       task->addSplit(
-          buildScanNodeId, makeHiveSplitWithGroup(filePath->path, 0));
+          buildScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 0));
       task->addSplit(
-          buildScanNodeId, makeHiveSplitWithGroup(filePath->path, 1));
+          buildScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 1));
     }
     // Add one split for probe split group (0).
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 0));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 0));
     // Add one split for probe split group (1).
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 1));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 1));
 
     // Finalize the build split(s).
     if (testData.mixedExecutionMode) {
@@ -430,7 +493,7 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
   // Create source file - we will read from it in 6 splits.
   auto vectors = makeVectors(4, 20);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
+  writeToFile(filePath->getPath(), vectors);
 
   // Run the test twice - for Hash and Cross Join.
   for (size_t i = 0; i < 2; ++i) {
@@ -483,7 +546,11 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
     planFragment.numSplitGroups = 10;
     auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     auto task = exec::Task::create(
-        "0", std::move(planFragment), 0, std::move(queryCtx));
+        "0",
+        std::move(planFragment),
+        0,
+        std::move(queryCtx),
+        Task::ExecutionMode::kParallel);
     // 3 drivers max and 1 concurrent split group.
     task->start(3, 1);
 
@@ -492,10 +559,11 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
     EXPECT_EQ(3, task->numRunningDrivers());
 
     // Add single split to the build scan.
-    task->addSplit(buildScanNodeId, makeHiveSplit(filePath->path));
+    task->addSplit(buildScanNodeId, makeHiveSplit(filePath->getPath()));
 
     // Add one split for group (8).
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 8));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 8));
 
     // Only one split group should be in the processing mode, so 9 drivers (3
     // per pipeline) grouped + 3 ungrouped.
@@ -503,11 +571,16 @@ TEST_F(GroupedExecutionTest, groupedExecutionWithHashAndNestedLoopJoin) {
     EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
     // Add the rest of splits
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 1));
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 5));
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 8));
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 5));
-    task->addSplit(probeScanNodeId, makeHiveSplitWithGroup(filePath->path, 8));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 1));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 5));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 8));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 5));
+    task->addSplit(
+        probeScanNodeId, makeHiveSplitWithGroup(filePath->getPath(), 8));
 
     // One split group should be in the processing mode, so 9 drivers (3 per
     // pipeline) grouped + 3 ungrouped.
@@ -593,7 +666,7 @@ TEST_F(GroupedExecutionTest, groupedExecution) {
   const size_t numSplits{6};
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
+  writeToFile(filePath->getPath(), vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -613,7 +686,7 @@ TEST_F(GroupedExecutionTest, groupedExecution) {
   auto task = cursor->task();
 
   // Add one splits before start to ensure we can handle such cases.
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
 
   // Start task now.
   cursor->start();
@@ -623,11 +696,11 @@ TEST_F(GroupedExecutionTest, groupedExecution) {
   EXPECT_EQ(std::unordered_set<int32_t>{}, getCompletedSplitGroups(task));
 
   // Add the rest of splits
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 5));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 5));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 8));
 
   // Only two split groups should be in the processing mode, so 4 drivers.
   EXPECT_EQ(4, task->numRunningDrivers());
@@ -686,7 +759,7 @@ TEST_F(GroupedExecutionTest, allGroupSplitsReceivedBeforeTaskStart) {
   const size_t numSplits{6};
   auto vectors = makeVectors(10, 1'000);
   auto filePath = TempFilePath::create();
-  writeToFile(filePath->path, vectors);
+  writeToFile(filePath->getPath(), vectors);
 
   CursorParameters params;
   params.planNode = tableScanNode(ROW({}, {}));
@@ -701,12 +774,12 @@ TEST_F(GroupedExecutionTest, allGroupSplitsReceivedBeforeTaskStart) {
   auto task = cursor->task();
 
   // Add all split groups before start to ensure we can handle such cases.
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 0));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 2));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 0));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 1));
-  task->addSplit("0", makeHiveSplitWithGroup(filePath->path, 2));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 0));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 2));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 0));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 1));
+  task->addSplit("0", makeHiveSplitWithGroup(filePath->getPath(), 2));
   task->noMoreSplits("0");
 
   // Start task now.

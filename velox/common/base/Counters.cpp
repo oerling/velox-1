@@ -48,39 +48,13 @@ void registerVeloxMetrics() {
 
   /// ================== Memory Arbitration Counters =================
 
-  // Tracks memory reclaim exec time in range of [0, 600s] with 20 buckets and
-  // reports P50, P90, P99, and P100.
-  DEFINE_HISTOGRAM_METRIC(
-      kMetricMemoryReclaimExecTimeMs, 30'000, 0, 600'000, 50, 90, 99, 100);
-
-  // Tracks memory reclaim task wait time in range of [0, 60s] with 10 buckets
-  // and reports P50, P90, P99, and P100.
-  DEFINE_HISTOGRAM_METRIC(
-      kMetricMemoryReclaimWaitTimeMs, 6'000, 0, 60'000, 50, 90, 99, 100);
-
-  // Tracks memory reclaim bytes.
-  DEFINE_METRIC(kMetricMemoryReclaimedBytes, facebook::velox::StatType::SUM);
-
-  // Tracks the number of times that the memory reclaim wait timeouts.
-  DEFINE_METRIC(
-      kMetricMemoryReclaimWaitTimeoutCount, facebook::velox::StatType::SUM);
-
-  // The number of times that the memory reclaim fails because the operator is
-  // executing a non-reclaimable section where it is expected to have reserved
-  // enough memory to execute without asking for more. Therefore, it is an
-  // indicator that the memory reservation is not sufficient. It excludes
-  // counting instances where the operator is in a non-reclaimable state due to
-  // currently being on-thread and running or being already cancelled.
-  DEFINE_METRIC(
-      kMetricMemoryNonReclaimableCount, facebook::velox::StatType::COUNT);
-
   // The number of arbitration requests.
   DEFINE_METRIC(
       kMetricArbitratorRequestsCount, facebook::velox::StatType::COUNT);
 
   // The number of times a query level memory pool is aborted as a result of a
   // memory arbitration process. The memory pool aborted will eventually result
-  // in a cancelling the original query.
+  // in a cancelling of the original query.
   DEFINE_METRIC(
       kMetricArbitratorAbortedCount, facebook::velox::StatType::COUNT);
 
@@ -91,6 +65,57 @@ void registerVeloxMetrics() {
   // requested amount of memory.
   DEFINE_METRIC(
       kMetricArbitratorFailuresCount, facebook::velox::StatType::COUNT);
+
+  // Tracks the memory reclaim count on an operator.
+  DEFINE_METRIC(kMetricMemoryReclaimCount, facebook::velox::StatType::COUNT);
+
+  // Tracks op memory reclaim exec time in range of [0, 600s] with 20 buckets
+  // and reports P50, P90, P99, and P100.
+  DEFINE_HISTOGRAM_METRIC(
+      kMetricMemoryReclaimExecTimeMs, 30'000, 0, 600'000, 50, 90, 99, 100);
+
+  // Tracks op memory reclaim bytes.
+  DEFINE_METRIC(kMetricMemoryReclaimedBytes, facebook::velox::StatType::SUM);
+
+  // Tracks the memory reclaim count on an operator.
+  DEFINE_METRIC(
+      kMetricTaskMemoryReclaimCount, facebook::velox::StatType::COUNT);
+
+  // Tracks memory reclaim task wait time in range of [0, 60s] with 10 buckets
+  // and reports P50, P90, P99, and P100.
+  DEFINE_HISTOGRAM_METRIC(
+      kMetricTaskMemoryReclaimWaitTimeMs, 6'000, 0, 60'000, 50, 90, 99, 100);
+
+  // Tracks the number of times that the task memory reclaim wait timeouts.
+  DEFINE_METRIC(
+      kMetricTaskMemoryReclaimWaitTimeoutCount,
+      facebook::velox::StatType::COUNT);
+
+  // The number of times that the memory reclaim fails because the operator is
+  // executing a non-reclaimable section where it is expected to have reserved
+  // enough memory to execute without asking for more. Therefore, it is an
+  // indicator that the memory reservation is not sufficient. It excludes
+  // counting instances where the operator is in a non-reclaimable state due to
+  // currently being on-thread and running or being already cancelled.
+  DEFINE_METRIC(
+      kMetricMemoryNonReclaimableCount, facebook::velox::StatType::COUNT);
+
+  // The number of arbitration that reclaims the used memory from the query
+  // which initiates the memory arbitration request itself. It ensures the
+  // memory arbitration request won't exceed its per-query memory capacity
+  // limit.
+  DEFINE_METRIC(
+      kMetricArbitratorLocalArbitrationCount, facebook::velox::StatType::COUNT);
+
+  // The number of arbitration which ensures the total allocated query capacity
+  // won't exceed the arbitrator capacity limit. It may or may not reclaim
+  // memory from the query which initiate the memory arbitration request. This
+  // indicates the velox runtime doesn't have enough memory to run all the
+  // queries at their peak memory usage. We have to trigger spilling to let them
+  // run through completion.
+  DEFINE_METRIC(
+      kMetricArbitratorGlobalArbitrationCount,
+      facebook::velox::StatType::COUNT);
 
   // The distribution of the amount of time an arbitration request stays queued
   // in range of [0, 600s] with 20 buckets. It is configured to report the
@@ -110,6 +135,10 @@ void registerVeloxMetrics() {
   DEFINE_METRIC(
       kMetricArbitratorFreeCapacityBytes, facebook::velox::StatType::AVG);
 
+  DEFINE_METRIC(
+      kMetricArbitratorFreeReservedCapacityBytes,
+      facebook::velox::StatType::AVG);
+
   // Tracks the leaf memory pool usage leak in bytes.
   DEFINE_METRIC(
       kMetricMemoryPoolUsageLeakBytes, facebook::velox::StatType::SUM);
@@ -117,6 +146,31 @@ void registerVeloxMetrics() {
   // Tracks the leaf memory pool reservation leak in bytes.
   DEFINE_METRIC(
       kMetricMemoryPoolReservationLeakBytes, facebook::velox::StatType::SUM);
+
+  // The distribution of a root memory pool's initial capacity in range of [0,
+  // 256MB] with 32 buckets. It is configured to report the capacity at P50,
+  // P90, P99, and P100 percentiles.
+  DEFINE_HISTOGRAM_METRIC(
+      kMetricMemoryPoolInitialCapacityBytes,
+      8L << 20,
+      0,
+      256L << 20,
+      50,
+      90,
+      99,
+      100);
+
+  // The distribution of a root memory pool cappacity growth attempts through
+  // memory arbitration in range of [0, 256] with 32 buckets. It is configured
+  // to report the count at P50, P90, P99, and P100 percentiles.
+  DEFINE_HISTOGRAM_METRIC(
+      kMetricMemoryPoolCapacityGrowCount, 8, 0, 256, 50, 90, 99, 100);
+
+  // Tracks the count of double frees in memory allocator, indicating the
+  // possibility of buffer ownership issues when a buffer is freed more than
+  // once.
+  DEFINE_METRIC(
+      kMetricMemoryAllocatorDoubleFreeCount, facebook::velox::StatType::COUNT);
 
   /// ================== Spill related Counters =================
 
@@ -171,5 +225,10 @@ void registerVeloxMetrics() {
   // Tracks the number of times that we hit the max spill level limit.
   DEFINE_METRIC(
       kMetricMaxSpillLevelExceededCount, facebook::velox::StatType::COUNT);
+
+  // Tracks the total number of bytes in file writers that's pre-maturely
+  // flushed due to memory reclaiming.
+  DEFINE_METRIC(
+      kMetricFileWriterEarlyFlushedRawBytes, facebook::velox::StatType::SUM);
 }
 } // namespace facebook::velox

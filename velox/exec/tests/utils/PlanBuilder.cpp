@@ -135,6 +135,7 @@ PlanBuilder& PlanBuilder::tpchTableScan(
 }
 
 core::PlanNodePtr PlanBuilder::TableScanBuilder::build(core::PlanNodeId id) {
+  VELOX_CHECK_NOT_NULL(outputType_, "outputType must be specified");
   std::unordered_map<std::string, core::TypedExprPtr> typedMapping;
   bool hasAssignments = !(assignments_.empty());
   for (uint32_t i = 0; i < outputType_->size(); ++i) {
@@ -761,10 +762,15 @@ PlanBuilder::AggregatesAndNames PlanBuilder::createAggregateExpressionsAndNames(
     agg.distinct = untypedExpr.distinct;
 
     if (!untypedExpr.orderBy.empty()) {
-      VELOX_CHECK(
-          step == core::AggregationNode::Step::kSingle,
-          "Aggregations over sorted inputs cannot be split into partial and final: {}.",
-          aggregate)
+      auto* entry = exec::getAggregateFunctionEntry(agg.call->name());
+      const auto& metadata = entry->metadata;
+      if (metadata.orderSensitive) {
+        VELOX_CHECK(
+            step == core::AggregationNode::Step::kSingle,
+            "Order sensitive aggregation over sorted inputs cannot be split "
+            "into partial and final: {}.",
+            aggregate)
+      }
     }
 
     for (const auto& [keyExpr, order] : untypedExpr.orderBy) {

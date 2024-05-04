@@ -33,7 +33,7 @@ class BufferedInput {
       std::shared_ptr<ReadFile> readFile,
       memory::MemoryPool& pool,
       const MetricsLogPtr& metricsLog = MetricsLog::voidLog(),
-      IoStatistics* FOLLY_NULLABLE stats = nullptr,
+      IoStatistics* stats = nullptr,
       uint64_t maxMergeDistance = kMaxMergeDistance,
       std::optional<bool> wsVRLoad = std::nullopt)
       : BufferedInput(
@@ -75,7 +75,7 @@ class BufferedInput {
   // these.
   virtual std::unique_ptr<SeekableInputStream> enqueue(
       velox::common::Region region,
-      const StreamIdentifier* FOLLY_NULLABLE si = nullptr);
+      const StreamIdentifier* si = nullptr);
 
   // load all regions to be read in an optimized way (IO efficiency)
   virtual void load(const LogType);
@@ -119,7 +119,8 @@ class BufferedInput {
   // Create a new (clean) instance of BufferedInput sharing the same
   // underlying file and memory pool.  The enqueued regions are NOT copied.
   virtual std::unique_ptr<BufferedInput> clone() const {
-    return std::make_unique<BufferedInput>(input_, pool_);
+    return std::make_unique<BufferedInput>(
+        input_, pool_, maxMergeDistance_, wsVRLoad_);
   }
 
   std::unique_ptr<SeekableInputStream> loadCompleteFile() {
@@ -137,13 +138,11 @@ class BufferedInput {
     return input_;
   }
 
-  virtual folly::Executor* FOLLY_NULLABLE executor() const {
+  virtual folly::Executor* executor() const {
     return nullptr;
   }
 
-  virtual int64_t prefetchSize() const {
-    return 0;
-  }
+  virtual uint64_t nextFetchSize() const;
 
  protected:
   std::shared_ptr<ReadFileInputStream> input_;

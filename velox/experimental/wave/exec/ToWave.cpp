@@ -491,7 +491,9 @@ bool CompileState::compile() {
           continue;
         }
         auto operand = operators_[newIndex]->defines(value);
-        if (!operand && (operators_[newIndex]->isSource() || !operators_[newIndex]->isStreaming())) {
+        if (!operand &&
+            (operators_[newIndex]->isSource() ||
+             !operators_[newIndex]->isStreaming())) {
           operand = operators_[newIndex]->definesSubfield(
               *this, outputType->childAt(i), name, newIndex == 0);
         }

@@ -23,6 +23,7 @@
 #include "velox/common/base/CompareFlags.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/CastTypeChecker.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/DecodedVector.h"
@@ -1133,8 +1134,7 @@ class GenericView {
     // castReaders_[0], and is set in Vector readers.
     if constexpr (SimpleTypeTrait<ToType>::isPrimitiveType) {
       return reinterpret_cast<VectorReader<ToType>*>(castReaders_[0].get())
-          ->
-          operator[](index_);
+          ->operator[](index_);
     } else {
       // TODO: We can distinguish if this is a null-free or not null-free
       // generic. And based on that determine if we want to call operator[] or

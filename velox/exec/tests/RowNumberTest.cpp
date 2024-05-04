@@ -26,16 +26,6 @@ namespace facebook::velox::exec::test {
 
 class RowNumberTest : public OperatorTestBase {
  protected:
-  static void SetUpTestCase() {
-    FLAGS_velox_testing_enable_arbitration = true;
-    OperatorTestBase::SetUpTestCase();
-  }
-
-  static void TearDownTestCase() {
-    FLAGS_velox_testing_enable_arbitration = false;
-    OperatorTestBase::TearDownTestCase();
-  }
-
   RowNumberTest() {
     filesystems::registerLocalFileSystem();
     rowType_ = ROW(
@@ -221,7 +211,7 @@ TEST_F(RowNumberTest, spill) {
     core::PlanNodeId rowNumberPlanNodeId;
     auto task =
         AssertQueryBuilder(duckDbQueryRunner_)
-            .spillDirectory(spillDirectory->path)
+            .spillDirectory(spillDirectory->getPath())
             .config(core::QueryConfig::kSpillEnabled, true)
             .config(core::QueryConfig::kRowNumberSpillEnabled, true)
             .config(
@@ -243,6 +233,15 @@ TEST_F(RowNumberTest, spill) {
         (static_cast<uint32_t>(1) << testData.spillPartitionBits) * 2);
     ASSERT_GT(planStats.spilledFiles, 0);
     ASSERT_GT(planStats.spilledRows, 0);
+    auto operatorStats =
+        task->taskStats().pipelineStats.back().operatorStats.at(1);
+    auto runtimeStats = operatorStats.runtimeStats;
+    ASSERT_EQ(
+        runtimeStats.at(Operator::kSpillReadBytes).sum,
+        operatorStats.spilledBytes);
+    ASSERT_GT(runtimeStats.at(Operator::kSpillReads).sum, 0);
+    ASSERT_GT(runtimeStats.at(Operator::kSpillReadTimeUs).sum, 0);
+    ASSERT_GT(runtimeStats.at(Operator::kSpillDeserializationTimeUs).sum, 0);
 
     task.reset();
     waitForAllTasksToBeDeleted();
@@ -265,17 +264,16 @@ TEST_F(RowNumberTest, maxSpillBytes) {
     std::string debugString() const {
       return fmt::format("maxSpilledBytes {}", maxSpilledBytes);
     }
-  } testSettings[] = {{1 << 30, false}, {16 << 20, true}, {0, false}};
-
-  auto spillDirectory = exec::test::TempDirectoryPath::create();
-  auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+  } testSettings[] = {{1 << 30, false}, {1 << 20, true}, {0, false}};
 
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
+    auto spillDirectory = exec::test::TempDirectoryPath::create();
+    auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     try {
       TestScopedSpillInjection scopedSpillInjection(100);
       AssertQueryBuilder(plan)
-          .spillDirectory(spillDirectory->path)
+          .spillDirectory(spillDirectory->getPath())
           .queryCtx(queryCtx)
           .config(core::QueryConfig::kSpillEnabled, true)
           .config(core::QueryConfig::kRowNumberSpillEnabled, true)
@@ -286,7 +284,7 @@ TEST_F(RowNumberTest, maxSpillBytes) {
       ASSERT_TRUE(testData.expectedExceedLimit);
       ASSERT_NE(
           e.message().find(
-              "Query exceeded per-query local spill limit of 16.00MB"),
+              "Query exceeded per-query local spill limit of 1.00MB"),
           std::string::npos);
       ASSERT_EQ(
           e.errorCode(), facebook::velox::error_code::kSpillLimitExceeded);
@@ -317,11 +315,11 @@ TEST_F(RowNumberTest, memoryUsage) {
     std::shared_ptr<Task> task;
     TestScopedSpillInjection scopedSpillInjection(100);
     AssertQueryBuilder(plan)
-        .spillDirectory(spillDirectory->path)
+        .spillDirectory(spillDirectory->getPath())
         .queryCtx(queryCtx)
         .config(core::QueryConfig::kSpillEnabled, spillEnableConfig)
         .config(core::QueryConfig::kRowNumberSpillEnabled, spillEnableConfig)
-        .spillDirectory(spillDirectory->path)
+        .spillDirectory(spillDirectory->getPath())
         .copyResults(pool_.get(), task);
 
     if (spillEnable) {

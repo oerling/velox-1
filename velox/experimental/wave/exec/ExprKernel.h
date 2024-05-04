@@ -40,6 +40,7 @@ enum class OpCode {
   kWrap,
   kLiteral,
   kNegate,
+  kReturn,
 
   // From here, only OpCodes that have variants for scalar types.
   kPlus,
@@ -94,6 +95,7 @@ struct INegate {
   OperandIndex result;
   OperandIndex predicate;
 };
+struct IReturn {};
 
 struct Instruction {
   OpCode opCode;
@@ -111,8 +113,8 @@ struct ThreadBlockProgram {
   // across the ThreadBlockPrograms.
   int32_t sharedMemorySize{0};
   int32_t numInstructions;
-
-  Instruction** instructions;
+  // Array of instructions. Ends in a kReturn.
+  Instruction* instructions;
 };
 
 /// Returns the shared memory size for instruction for kBlockSize.

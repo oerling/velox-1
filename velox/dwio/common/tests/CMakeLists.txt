@@ -23,8 +23,11 @@ add_executable(
   DataBufferTests.cpp
   DecoderUtilTest.cpp
   ExecutorBarrierTest.cpp
+  OnDemandUnitLoaderTests.cpp
   LocalFileSinkTest.cpp
+  MemorySinkTest.cpp
   LoggedExceptionTest.cpp
+  MeasureTimeTests.cpp
   ParallelForTest.cpp
   RangeTests.cpp
   ReadFileInputStreamTests.cpp
@@ -32,6 +35,7 @@ add_executable(
   RetryTests.cpp
   TestBufferedInput.cpp
   TypeTests.cpp
+  UnitLoaderToolsTests.cpp
   WriterTest.cpp)
 add_test(velox_dwio_common_test velox_dwio_common_test)
 target_link_libraries(

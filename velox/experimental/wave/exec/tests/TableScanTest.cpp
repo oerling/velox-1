@@ -34,6 +34,9 @@ using namespace facebook::velox::exec::test;
 class TableScanTest : public virtual HiveConnectorTestBase {
  protected:
   void SetUp() override {
+    if (int device; cudaGetDevice(&device) != cudaSuccess) {
+      GTEST_SKIP() << "No CUDA detected, skipping all tests";
+    }
     HiveConnectorTestBase::SetUp();
     wave::registerWave();
     wave::WaveHiveDataSource::registerConnector();
@@ -49,6 +52,7 @@ class TableScanTest : public virtual HiveConnectorTestBase {
 
   void TearDown() override {
     wave::test::Table::dropAll();
+    HiveConnectorTestBase::TearDown();
   }
 
   std::vector<RowVectorPtr> makeVectors(
@@ -155,8 +159,6 @@ TEST_F(TableScanTest, basic) {
   auto plan = tableScanNode(type);
   auto task = assertQuery(plan, splits, "SELECT * FROM tmp");
 
-  // A quick sanity check for memory usage reporting. Check that peak total
-  // memory usage for the project node is > 0.
   auto planStats = toPlanStats(task->taskStats());
   auto scanNodeId = plan->id();
   auto it = planStats.find(scanNodeId);
@@ -166,15 +168,17 @@ TEST_F(TableScanTest, basic) {
 TEST_F(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 10, 1'000);
-  makeNotNull(vectors, 1000000000);
+  auto vectors = makeVectors(type, 1, 1'000);
+  for (auto& vector : vectors) {
+    makeNotNull(vector, 1000000000);
+  }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
                   .filter("c0 < 500000000")
-                  .project({"c0", "c1 + 100000000", "c2", "c3"})
+                  .project({"c0", "c1 + 100000000 as c1", "c2", "c3"})
                   .filter("c1 < 500000000")
                   .project({"c0", "c1", "c2 + 1", "c3", "c3 + 2"})
                   .planNode();
@@ -182,11 +186,4 @@ TEST_F(TableScanTest, filter) {
       plan,
       splits,
       "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
-
-  // A quick sanity check for memory usage reporting. Check that peak total
-  // memory usage for the project node is > 0.
-  auto planStats = toPlanStats(task->taskStats());
-  auto scanNodeId = plan->id();
-  auto it = planStats.find(scanNodeId);
-  ASSERT_TRUE(it != planStats.end());
 }

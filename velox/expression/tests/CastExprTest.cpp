@@ -48,11 +48,6 @@ struct ErrorOnOddFunctionElseUnknown {
 class CastExprTest : public functions::test::CastBaseTest {
  protected:
   CastExprTest() {
-    exec::registerVectorFunction(
-        "testing_dictionary",
-        TestingDictionaryFunction::signatures(),
-        std::make_unique<TestingDictionaryFunction>());
-
     registerFunction<ErrorOnOddFunctionElseUnknown, UnknownValue, int32_t>(
         {"error_on_odd_else_unknown"});
   }
@@ -579,6 +574,7 @@ TEST_F(CastExprTest, realAndDoubleToString) {
 TEST_F(CastExprTest, stringToTimestamp) {
   std::vector<std::optional<std::string>> input{
       "1970-01-01",
+      "1970-01-01 00:00 America/Sao_Paulo",
       "2000-01-01",
       "1970-01-01 00:00:00",
       "2000-01-01 12:21:56",
@@ -587,11 +583,30 @@ TEST_F(CastExprTest, stringToTimestamp) {
   };
   std::vector<std::optional<Timestamp>> expected{
       Timestamp(0, 0),
+      Timestamp(10800, 0),
       Timestamp(946684800, 0),
       Timestamp(0, 0),
       Timestamp(946729316, 0),
       Timestamp(7200, 0),
       std::nullopt,
+  };
+  testCast<std::string, Timestamp>("timestamp", input, expected);
+
+  // Try with a different session timezone.
+  setTimezone("America/Los_Angeles");
+  input = {
+      "1970-01-01 00:00",
+      "1970-01-01 00:00 +00:00",
+      "1970-01-01 00:00 +01:00",
+      "1970-01-01 00:00 America/Sao_Paulo",
+      "2000-01-01 12:21:56Z",
+  };
+  expected = {
+      Timestamp(28800, 0),
+      Timestamp(0, 0),
+      Timestamp(-3600, 0),
+      Timestamp(10800, 0),
+      Timestamp(946729316, 0),
   };
   testCast<std::string, Timestamp>("timestamp", input, expected);
 }
@@ -695,7 +710,6 @@ TEST_F(CastExprTest, dateToTimestamp) {
 }
 
 TEST_F(CastExprTest, timestampToDate) {
-  setTimezone("");
   std::vector<std::optional<Timestamp>> inputTimestamps = {
       Timestamp(0, 0),
       Timestamp(946684800, 0),
@@ -751,6 +765,10 @@ TEST_F(CastExprTest, timestampInvalid) {
 }
 
 TEST_F(CastExprTest, timestampAdjustToTimezone) {
+  // Empty timezone is assumed to be GMT.
+  testCast<std::string, Timestamp>(
+      "timestamp", {"1970-01-01"}, {Timestamp(0, 0)});
+
   setTimezone("America/Los_Angeles");
 
   // Expect unix epochs to be converted to LA timezone (8h offset).
@@ -770,25 +788,14 @@ TEST_F(CastExprTest, timestampAdjustToTimezone) {
           Timestamp(946713600, 0),
           Timestamp(0, 0),
           Timestamp(946758116, 0),
-          Timestamp(-21600, 0),
+          Timestamp(-50400, 0),
           std::nullopt,
           Timestamp(957164400, 0),
       });
-
-  // Empty timezone is assumed to be GMT.
-  setTimezone("");
-  testCast<std::string, Timestamp>(
-      "timestamp", {"1970-01-01"}, {Timestamp(0, 0)});
 }
 
 TEST_F(CastExprTest, timestampAdjustToTimezoneInvalid) {
-  auto testFunc = [&]() {
-    testCast<std::string, Timestamp>(
-        "timestamp", {"1970-01-01"}, {Timestamp(1, 0)});
-  };
-
-  setTimezone("bla");
-  EXPECT_THROW(testFunc(), std::runtime_error);
+  VELOX_ASSERT_USER_THROW(setTimezone("bla"), "Unknown time zone: 'bla'");
 }
 
 TEST_F(CastExprTest, date) {
@@ -2383,10 +2390,6 @@ class TestingDictionaryToFewerRowsFunction : public exec::VectorFunction {
  public:
   TestingDictionaryToFewerRowsFunction() {}
 
-  bool isDefaultNullBehavior() const override {
-    return false;
-  }
-
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
@@ -2394,8 +2397,8 @@ class TestingDictionaryToFewerRowsFunction : public exec::VectorFunction {
       exec::EvalCtx& context,
       VectorPtr& result) const override {
     const auto size = rows.size();
-    auto indices = makeIndices(
-        size, [](auto /*row*/) { return 0; }, context.pool());
+    auto indices =
+        makeIndices(size, [](auto /*row*/) { return 0; }, context.pool());
 
     result = BaseVector::wrapInDictionary(nullptr, indices, size, args[0]);
   }
@@ -2429,7 +2432,8 @@ TEST_F(CastExprTest, dictionaryEncodedNestedInput) {
   exec::registerVectorFunction(
       "add_dict",
       TestingDictionaryToFewerRowsFunction::signatures(),
-      std::make_unique<TestingDictionaryToFewerRowsFunction>());
+      std::make_unique<TestingDictionaryToFewerRowsFunction>(),
+      exec::VectorFunctionMetadataBuilder().defaultNullBehavior(false).build());
 
   auto elements = makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6});
   auto elementsInDict = BaseVector::wrapInDictionary(
@@ -2590,5 +2594,35 @@ TEST_F(CastExprTest, skipCastEvaluation) {
     assertEqualVectors(result, expected);
   }
 }
+
+TEST_F(CastExprTest, intervalDayTimeToVarchar) {
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>(
+          {kMillisInDay,
+           kMillisInHour,
+           kMillisInMinute,
+           kMillisInSecond,
+           5 * kMillisInDay + 14 * kMillisInHour + 20 * kMillisInMinute +
+               52 * kMillisInSecond + 88},
+          INTERVAL_DAY_TIME()),
+  });
+
+  auto result = evaluate("cast(c0 as varchar)", data);
+  auto expected = makeFlatVector<std::string>({
+      "1 00:00:00.000",
+      "0 01:00:00.000",
+      "0 00:01:00.000",
+      "0 00:00:01.000",
+      "5 14:20:52.088",
+  });
+
+  assertEqualVectors(result, expected);
+
+  // Reverse cast is not supported.
+  VELOX_ASSERT_THROW(
+      evaluate("cast('5 14:20:52.088' as interval day to second)", data),
+      "Cast from VARCHAR to INTERVAL DAY TO SECOND is not supported");
+}
+
 } // namespace
 } // namespace facebook::velox::test

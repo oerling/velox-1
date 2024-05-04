@@ -168,6 +168,22 @@ class RowVector : public BaseVector {
       const BaseVector* source,
       const folly::Range<const CopyRange*>& ranges) override;
 
+  VectorPtr copyPreserveEncodings() const override {
+    std::vector<VectorPtr> copiedChildren(children_.size());
+
+    for (auto i = 0; i < children_.size(); ++i) {
+      copiedChildren[i] = children_[i]->copyPreserveEncodings();
+    }
+
+    return std::make_shared<RowVector>(
+        pool_,
+        type_,
+        AlignedBuffer::copy(pool_, nulls_),
+        length_,
+        copiedChildren,
+        nullCount_);
+  }
+
   uint64_t retainedSize() const override {
     auto size = BaseVector::retainedSize();
     for (auto& child : children_) {
@@ -227,6 +243,10 @@ class RowVector : public BaseVector {
   /// Note : If the child is null, then it will stay null after the resize.
   void resize(vector_size_t newSize, bool setNotNull = true) override;
 
+  VectorPtr& rawVectorForBatchReader() {
+    return rawVectorForBatchReader_;
+  }
+
  private:
   vector_size_t childSize() const {
     bool allConstant = false;
@@ -270,6 +290,10 @@ class RowVector : public BaseVector {
   // loadedVector is called, and reset to false when updateContainsLazyNotLoaded
   // is called (i.e. some children are likely updated to lazy).
   mutable bool childrenLoaded_ = false;
+
+  // For some non-selective reader, we need to keep the original vector that is
+  // unprojected and unfilterd, and reuse its memory.
+  VectorPtr rawVectorForBatchReader_;
 };
 
 // Common parent class for ARRAY and MAP vectors.  Contains 'offsets' and
@@ -442,6 +466,18 @@ class ArrayVector : public ArrayVectorBase {
       const BaseVector* source,
       const folly::Range<const CopyRange*>& ranges) override;
 
+  VectorPtr copyPreserveEncodings() const override {
+    return std::make_shared<ArrayVector>(
+        pool_,
+        type_,
+        AlignedBuffer::copy(pool_, nulls_),
+        length_,
+        AlignedBuffer::copy(pool_, offsets_),
+        AlignedBuffer::copy(pool_, sizes_),
+        elements_->copyPreserveEncodings(),
+        nullCount_);
+  }
+
   uint64_t retainedSize() const override {
     return BaseVector::retainedSize() + offsets_->capacity() +
         sizes_->capacity() + elements_->retainedSize();
@@ -570,6 +606,20 @@ class MapVector : public ArrayVectorBase {
   void copyRanges(
       const BaseVector* source,
       const folly::Range<const CopyRange*>& ranges) override;
+
+  VectorPtr copyPreserveEncodings() const override {
+    return std::make_shared<MapVector>(
+        pool_,
+        type_,
+        AlignedBuffer::copy(pool_, nulls_),
+        length_,
+        AlignedBuffer::copy(pool_, offsets_),
+        AlignedBuffer::copy(pool_, sizes_),
+        keys_->copyPreserveEncodings(),
+        values_->copyPreserveEncodings(),
+        nullCount_,
+        sortedKeys_);
+  }
 
   uint64_t retainedSize() const override {
     return BaseVector::retainedSize() + offsets_->capacity() +

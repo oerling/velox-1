@@ -120,8 +120,12 @@ template <>
   }
 
   if (type->isIntervalDayTime()) {
-    return ::duckdb::Value::INTERVAL(
-        0, 0, vector->as<SimpleVector<int64_t>>()->valueAt(index));
+    static constexpr int64_t kMicrosecondsInDay =
+        1000L * 1000L * 60L * 60L * 24L;
+    const auto interval = vector->as<SimpleVector<int64_t>>()->valueAt(index);
+    const int64_t microseconds = interval % kMicrosecondsInDay;
+    const int64_t days = interval / kMicrosecondsInDay;
+    return ::duckdb::Value::INTERVAL(0, days, microseconds);
   }
 
   return ::duckdb::Value(vector->as<SimpleVector<T>>()->valueAt(index));
@@ -1423,7 +1427,9 @@ bool waitForTaskStateChange(
   // Wait for task to transition to finished state.
   if (task->state() != state) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->taskCompletionFuture(maxWaitMicros).via(&executor);
+    auto future = task->taskCompletionFuture()
+                      .within(std::chrono::microseconds(maxWaitMicros))
+                      .via(&executor);
     future.wait();
   }
 
@@ -1551,6 +1557,24 @@ void printResults(const RowVectorPtr& result, std::ostream& out) {
   for (const auto& row : materializedRows) {
     out << toString(row, type) << std::endl;
   }
+}
+
+std::unordered_map<std::string, OperatorStats> toOperatorStats(
+    const TaskStats& taskStats) {
+  std::unordered_map<std::string, OperatorStats> opStatsMap;
+
+  for (const auto& pipelineStats : taskStats.pipelineStats) {
+    for (const auto& opStats : pipelineStats.operatorStats) {
+      const auto& opType = opStats.operatorType;
+      auto it = opStatsMap.find(opType);
+      if (it != opStatsMap.end()) {
+        it->second.add(opStats);
+      } else {
+        opStatsMap.emplace(opType, opStats);
+      }
+    }
+  }
+  return opStatsMap;
 }
 
 } // namespace facebook::velox::exec::test

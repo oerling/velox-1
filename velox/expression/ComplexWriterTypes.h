@@ -30,6 +30,7 @@
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/core/Metaprogramming.h"
 #include "velox/expression/ComplexViewTypes.h"
+#include "velox/expression/KindToSimpleType.h"
 #include "velox/expression/UdfTypeResolver.h"
 #include "velox/type/Type.h"
 #include "velox/vector/TypeAliases.h"
@@ -764,7 +765,7 @@ class MapWriter {
     keysVector_ = &keysWriter_->vector();
     valuesVector_ = &valuesWriter_->vector();
 
-    innerOffset_ = std::max(keysVector_->size(), valuesVector_->size());
+    innerOffset_ = std::min(keysVector_->size(), valuesVector_->size());
 
     // Keys can never be null.
     keysVector_->resetNulls();
@@ -772,10 +773,7 @@ class MapWriter {
     keysWriter_->ensureSize(1);
     valuesWriter_->ensureSize(1);
 
-    VELOX_DCHECK(
-        keysVector_->size() == valuesVector_->size(),
-        "expect map keys and value vector sized to be synchronized");
-    capacity_ = keysVector_->size();
+    capacity_ = std::min(keysVector_->size(), valuesVector_->size());
   }
 
   key_element_t& lastKeyWriter() {

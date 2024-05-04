@@ -129,7 +129,11 @@ class ConstantVector final : public SimpleVector<T> {
     setInternalState();
   }
 
-  virtual ~ConstantVector() override = default;
+  virtual ~ConstantVector() override {
+    if (valueVector_) {
+      valueVector_->clearContainingLazyAndWrapped();
+    }
+  }
 
   bool isNullAt(vector_size_t /*idx*/) const override {
     VELOX_DCHECK(initialized_);
@@ -249,6 +253,10 @@ class ConstantVector final : public SimpleVector<T> {
     return valueVector_;
   }
 
+  VectorPtr& valueVector() override {
+    return valueVector_;
+  }
+
   // Index of the element of the base vector that determines the value of this
   // constant vector.
   vector_size_t index() const {
@@ -350,6 +358,27 @@ class ConstantVector final : public SimpleVector<T> {
       }
       valueVector_->validate(options);
     }
+  }
+
+  VectorPtr copyPreserveEncodings() const override {
+    if (valueVector_) {
+      return std::make_shared<ConstantVector<T>>(
+          BaseVector::pool_,
+          BaseVector::length_,
+          index_,
+          valueVector_->copyPreserveEncodings(),
+          SimpleVector<T>::stats_);
+    }
+
+    return std::make_shared<ConstantVector<T>>(
+        BaseVector::pool_,
+        BaseVector::length_,
+        isNull_,
+        BaseVector::type_,
+        T(value_),
+        SimpleVector<T>::stats_,
+        BaseVector::representedByteCount_,
+        BaseVector::storageByteCount_);
   }
 
  protected:

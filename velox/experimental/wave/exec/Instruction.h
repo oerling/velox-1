@@ -103,12 +103,18 @@ struct AbstractInstruction {
   }
 };
 
+struct AbstractReturn : public AbstractInstruction {
+  AbstractReturn() : AbstractInstruction(OpCode::kReturn) {}
+};
+
 struct AbstractFilter : public AbstractInstruction {
   AbstractFilter(AbstractOperand* flags, AbstractOperand* indices)
       : AbstractInstruction(OpCode::kFilter), flags(flags), indices(indices) {}
 
   AbstractOperand* flags;
   AbstractOperand* indices;
+
+  std::string toString() const override;
 };
 
 struct AbstractWrap : public AbstractInstruction {
@@ -141,6 +147,8 @@ struct AbstractWrap : public AbstractInstruction {
     source.push_back(sourceOp);
     target.push_back(targetOp ? targetOp : sourceOp);
   }
+
+  std::string toString() const override;
 };
 
 struct AbstractBinary : public AbstractInstruction {
@@ -160,6 +168,8 @@ struct AbstractBinary : public AbstractInstruction {
   AbstractOperand* right;
   AbstractOperand* result;
   AbstractOperand* predicate;
+
+  std::string toString() const override;
 };
 
 struct AbstractLiteral : public AbstractInstruction {

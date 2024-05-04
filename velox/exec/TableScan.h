@@ -46,31 +46,29 @@ class TableScan : public SourceOperator {
   }
 
   void addDynamicFilter(
+      const core::PlanNodeId& producer,
       column_index_t outputChannel,
       const std::shared_ptr<common::Filter>& filter) override;
 
-  /// Returns process-wide cumulative IO wait time for all table
-  /// scan. This is the blocked time. If running entirely from memory
-  /// this would be 0.
-  static uint64_t ioWaitNanos() {
-    return ioWaitNanos_;
-  }
-
  private:
-  // Sets 'maxPreloadSplits' and 'splitPreloader' if prefetching
-  // splits is appropriate. The preloader will be applied to the
-  // 'first 'maxPreloadSplits' of the Tasks's split queue for 'this'
-  // when getting splits.
+  // Checks if this table scan operator needs to yield before processing the
+  // next split.
+  bool shouldYield(StopReason taskStopReason, size_t startTimeMs) const;
+
+  // Checks if this table scan operator needs to stop because the task has been
+  // terminated.
+  bool shouldStop(StopReason taskStopReason) const;
+
+  // Sets 'maxPreloadSplits' and 'splitPreloader' if prefetching splits is
+  // appropriate. The preloader will be applied to the 'first 'maxPreloadSplits'
+  // of the Task's split queue for 'this' when getting splits.
   void checkPreload();
 
-  // Sets 'split->dataSource' to be a Asyncsource that makes a
-  // DataSource to read 'split'. This source will be prepared in the
-  // background on the executor of the connector. If the DataSource is
-  // needed before prepare is done, it will be made when needed.
+  // Sets 'split->dataSource' to be an AsyncSource that makes a DataSource to
+  // read 'split'. This source will be prepared in the background on the
+  // executor of the connector. If the DataSource is needed before prepare is
+  // done, it will be made when needed.
   void preload(std::shared_ptr<connector::ConnectorSplit> split);
-
-  // Process-wide IO wait time.
-  static std::atomic<uint64_t> ioWaitNanos_;
 
   const std::shared_ptr<connector::ConnectorTableHandle> tableHandle_;
   const std::
@@ -88,17 +86,16 @@ class TableScan : public SourceOperator {
   bool noMoreSplits_ = false;
   // Dynamic filters to add to the data source when it gets created.
   std::unordered_map<column_index_t, std::shared_ptr<common::Filter>>
-      pendingDynamicFilters_;
+      dynamicFilters_;
 
   int32_t maxPreloadedSplits_{0};
 
   const int32_t maxSplitPreloadPerDriver_{0};
 
-  // Callback passed to getSplitOrFuture() for triggering async
-  // preload. The callback's lifetime is the lifetime of 'this'. This
-  // callback can schedule preloads on an executor. These preloads may
-  // outlive the Task and therefore need to capture a shared_ptr to
-  // it.
+  // Callback passed to getSplitOrFuture() for triggering async preload. The
+  // callback's lifetime is the lifetime of 'this'. This callback can schedule
+  // preloads on an executor. These preloads may outlive the Task and therefore
+  // need to capture a shared_ptr to it.
   std::function<void(const std::shared_ptr<connector::ConnectorSplit>&)>
       splitPreloader_{nullptr};
 
@@ -111,8 +108,8 @@ class TableScan : public SourceOperator {
   int32_t readBatchSize_;
   int32_t maxReadBatchSize_;
 
-  // Exits getOutput() method after this many milliseconds.
-  // Zero means 'no limit'.
+  // Exits getOutput() method after this many milliseconds. Zero means 'no
+  // limit'.
   size_t getOutputTimeLimitMs_{0};
 
   double maxFilteringRatio_{0};
@@ -123,9 +120,5 @@ class TableScan : public SourceOperator {
   // Holds the current status of the operator. Used when debugging to understand
   // what operator is doing.
   std::atomic<const char*> curStatus_{""};
-
-  // The last value of the IO wait time of 'this' that has been added to the
-  // global static 'ioWaitNanos_'.
-  uint64_t lastIoWaitNanos_{0};
 };
 } // namespace facebook::velox::exec

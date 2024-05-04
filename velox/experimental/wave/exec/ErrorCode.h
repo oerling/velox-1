@@ -18,5 +18,4 @@
 
 #include "velox/experimental/wave/vector/Operand.h"
 
-namespace facebook::velox::wave {
-} // namespace facebook::velox::wave
+namespace facebook::velox::wave {} // namespace facebook::velox::wave

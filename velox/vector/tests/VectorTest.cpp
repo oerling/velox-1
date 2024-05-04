@@ -1402,8 +1402,8 @@ TEST_F(VectorTest, copyFromUnknown) {
 TEST_F(VectorTest, wrapInConstant) {
   // wrap flat vector
   const vector_size_t size = 1'000;
-  auto flatVector = makeFlatVector<int32_t>(
-      size, [](auto row) { return row; }, nullEvery(7));
+  auto flatVector =
+      makeFlatVector<int32_t>(size, [](auto row) { return row; }, nullEvery(7));
 
   auto constVector = std::dynamic_pointer_cast<ConstantVector<int32_t>>(
       BaseVector::wrapInConstant(size, 5, flatVector));
@@ -1494,8 +1494,8 @@ TEST_F(VectorTest, wrapInConstant) {
 TEST_F(VectorTest, wrapInConstantWithCopy) {
   // Wrap flat vector.
   const vector_size_t size = 1'000;
-  auto flatVector = makeFlatVector<int32_t>(
-      size, [](auto row) { return row; }, nullEvery(7));
+  auto flatVector =
+      makeFlatVector<int32_t>(size, [](auto row) { return row; }, nullEvery(7));
 
   auto constVector = std::dynamic_pointer_cast<ConstantVector<int32_t>>(
       BaseVector::wrapInConstant(size, 5, flatVector, true));
@@ -2248,6 +2248,13 @@ TEST_F(VectorTest, nestedLazy) {
       "An unloaded lazy vector cannot be wrapped by two different top level"
       " vectors.");
 
+  // Verify that if the original dictionary layer is destroyed without loading
+  // the underlying vector then the lazy vector can be wrapped in a new encoding
+  // layer.
+  dict.reset();
+  dict = BaseVector::wrapInDictionary(
+      nullptr, makeIndices(size, indexAt), size, lazy);
+
   // Verify that the unloaded dictionary can be nested as long as it has one top
   // level vector.
   EXPECT_NO_THROW(BaseVector::wrapInDictionary(
@@ -2753,6 +2760,12 @@ TEST_F(VectorTest, flattenVector) {
       nullptr, makeIndices(100, [](auto row) { return row % 2; }), 100, flat);
   test(dictionary, false);
   EXPECT_TRUE(dictionary->isFlatEncoding());
+
+  VectorPtr lazyDictionary =
+      wrapInLazyDictionary(makeFlatVector<int32_t>({1, 2, 3}));
+  test(lazyDictionary, true);
+  EXPECT_TRUE(lazyDictionary->isLazy());
+  EXPECT_TRUE(lazyDictionary->loadedVector()->isFlatEncoding());
 
   // Array with constant elements.
   auto* arrayVector = array->as<ArrayVector>();

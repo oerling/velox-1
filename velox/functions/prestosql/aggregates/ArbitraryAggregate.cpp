@@ -39,10 +39,8 @@ class ArbitraryAggregate : public SimpleNumericAggregate<T, T, T> {
     return sizeof(T);
   }
 
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    exec::Aggregate::setAllNulls(groups, indices);
+  int32_t accumulatorAlignmentSize() const override {
+    return 1;
   }
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
@@ -131,12 +129,27 @@ class ArbitraryAggregate : public SimpleNumericAggregate<T, T, T> {
     addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
 
+ protected:
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    exec::Aggregate::setAllNulls(groups, indices);
+  }
+
  private:
   inline void updateValue(char* group, T value) {
     exec::Aggregate::clearNull(group);
     *exec::Aggregate::value<T>(group) = value;
   }
 };
+
+/// Override 'accumulatorAlignmentSize' for UnscaledLongDecimal values as it
+/// uses int128_t type. Some CPUs don't support misaligned access to int128_t
+/// type.
+template <>
+inline int32_t ArbitraryAggregate<int128_t>::accumulatorAlignmentSize() const {
+  return static_cast<int32_t>(sizeof(int128_t));
+}
 
 // Arbitrary for non-numeric types. We always keep the first (non-NULL) element
 // seen. Arbitrary (x) will produce partial and final aggregations of type x.
@@ -149,16 +162,6 @@ class NonNumericArbitrary : public exec::Aggregate {
   // struct will allow us to save variable-width value.
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(SingleValueAccumulator);
-  }
-
-  // Initialize each group, we will not use the null flags because
-  // SingleValueAccumulator has its own flag.
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    for (auto i : indices) {
-      new (groups[i] + offset_) SingleValueAccumulator();
-    }
   }
 
   void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
@@ -183,12 +186,6 @@ class NonNumericArbitrary : public exec::Aggregate {
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
       override {
     extractValues(groups, numGroups, result);
-  }
-
-  void destroy(folly::Range<char**> groups) override {
-    for (auto group : groups) {
-      value<SingleValueAccumulator>(group)->destroy(allocator_);
-    }
   }
 
   void addRawInput(
@@ -258,6 +255,25 @@ class NonNumericArbitrary : public exec::Aggregate {
       bool mayPushdown) override {
     addSingleGroupRawInput(group, rows, args, mayPushdown);
   }
+
+ protected:
+  // Initialize each group, we will not use the null flags because
+  // SingleValueAccumulator has its own flag.
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    for (auto i : indices) {
+      new (groups[i] + offset_) SingleValueAccumulator();
+    }
+  }
+
+  void destroyInternal(folly::Range<char**> groups) override {
+    for (auto group : groups) {
+      if (isInitialized(group)) {
+        value<SingleValueAccumulator>(group)->destroy(allocator_);
+      }
+    }
+  }
 };
 
 } // namespace
@@ -297,6 +313,11 @@ void registerArbitraryAggregate(
             return std::make_unique<ArbitraryAggregate<int32_t>>(inputType);
           case TypeKind::BIGINT:
             return std::make_unique<ArbitraryAggregate<int64_t>>(inputType);
+          case TypeKind::HUGEINT:
+            if (inputType->isLongDecimal()) {
+              return std::make_unique<ArbitraryAggregate<int128_t>>(inputType);
+            }
+            VELOX_NYI();
           case TypeKind::REAL:
             return std::make_unique<ArbitraryAggregate<float>>(inputType);
           case TypeKind::DOUBLE:

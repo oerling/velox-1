@@ -20,11 +20,13 @@
 #include <optional>
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/Status.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/core/Metaprogramming.h"
 #include "velox/core/QueryConfig.h"
 #include "velox/expression/FunctionSignature.h"
 #include "velox/expression/SignatureBinder.h"
+#include "velox/type/SimpleFunctionApi.h"
 #include "velox/type/Type.h"
 #include "velox/type/Variant.h"
 
@@ -179,10 +181,14 @@ struct TypeAnalysisResults {
     }
   }
 
-  // String representaion of the type in the FunctionSignatureBuilder.
+  /// String representation of the type in the FunctionSignatureBuilder.
   std::ostringstream out;
 
-  // Set of generic variables used in the type.
+  /// Physical type, e.g. BIGINT() for Date and ARRAY(BIGINT()) for
+  // Array<Date>. UNKNOWN() if type is generic or opaque.
+  TypePtr physicalType;
+
+  /// Set of generic variables used in the type.
   std::map<std::string, exec::SignatureVariable> variablesInformation;
 
   std::string typeAsString() {
@@ -219,6 +225,13 @@ struct TypeAnalysis {
     results.stats.concreteCount++;
     results.out << detail::strToLowerCopy(
         std::string(SimpleTypeTrait<T>::name));
+    if constexpr (
+        SimpleTypeTrait<T>::typeKind == TypeKind::OPAQUE ||
+        SimpleTypeTrait<T>::typeKind == TypeKind::UNKNOWN) {
+      results.physicalType = UNKNOWN();
+    } else {
+      results.physicalType = createScalarType(SimpleTypeTrait<T>::typeKind);
+    }
   }
 };
 
@@ -239,6 +252,39 @@ struct TypeAnalysis<Generic<T, comparable, orderable>> {
           comparable));
     }
     results.stats.hasGeneric = true;
+    results.physicalType = UNKNOWN();
+  }
+};
+
+template <typename P, typename S>
+struct TypeAnalysis<ShortDecimal<P, S>> {
+  void run(TypeAnalysisResults& results) {
+    results.stats.concreteCount++;
+
+    const auto p = P::name();
+    const auto s = S::name();
+    results.out << fmt::format("decimal({},{})", p, s);
+    results.addVariable(exec::SignatureVariable(
+        p, std::nullopt, exec::ParameterType::kIntegerParameter));
+    results.addVariable(exec::SignatureVariable(
+        s, std::nullopt, exec::ParameterType::kIntegerParameter));
+    results.physicalType = BIGINT();
+  }
+};
+
+template <typename P, typename S>
+struct TypeAnalysis<LongDecimal<P, S>> {
+  void run(TypeAnalysisResults& results) {
+    results.stats.concreteCount++;
+
+    const auto p = P::name();
+    const auto s = S::name();
+    results.out << fmt::format("decimal({},{})", p, s);
+    results.addVariable(exec::SignatureVariable(
+        p, std::nullopt, exec::ParameterType::kIntegerParameter));
+    results.addVariable(exec::SignatureVariable(
+        s, std::nullopt, exec::ParameterType::kIntegerParameter));
+    results.physicalType = HUGEINT();
   }
 };
 
@@ -248,9 +294,12 @@ struct TypeAnalysis<Map<K, V>> {
     results.stats.concreteCount++;
     results.out << "map(";
     TypeAnalysis<K>().run(results);
+    auto keyType = results.physicalType;
     results.out << ", ";
     TypeAnalysis<V>().run(results);
+    auto valueType = results.physicalType;
     results.out << ")";
+    results.physicalType = MAP(keyType, valueType);
   }
 };
 
@@ -273,6 +322,7 @@ struct TypeAnalysis<Variadic<V>> {
       results.addVariable(std::move(variable));
     }
     results.out << tmp.typeAsString();
+    results.physicalType = tmp.physicalType;
   }
 };
 
@@ -283,6 +333,7 @@ struct TypeAnalysis<Array<V>> {
     results.out << "array(";
     TypeAnalysis<V>().run(results);
     results.out << ")";
+    results.physicalType = ARRAY(results.physicalType);
   }
 };
 
@@ -296,6 +347,7 @@ struct TypeAnalysis<Row<T...>> {
   void run(TypeAnalysisResults& results) {
     results.stats.concreteCount++;
     results.out << "row(";
+    std::vector<TypePtr> fieldTypes;
     // This expression applies the lambda for each row child type.
     bool first = true;
     (
@@ -305,9 +357,11 @@ struct TypeAnalysis<Row<T...>> {
           }
           first = false;
           TypeAnalysis<T>().run(results);
+          fieldTypes.push_back(results.physicalType);
         }(),
         ...);
     results.out << ")";
+    results.physicalType = ROW(std::move(fieldTypes));
   }
 };
 
@@ -316,20 +370,30 @@ struct TypeAnalysis<CustomType<T>> {
   void run(TypeAnalysisResults& results) {
     results.stats.concreteCount++;
     results.out << T::typeName;
+
+    TypeAnalysisResults tmp;
+    TypeAnalysis<typename T::type>().run(tmp);
+    results.physicalType = tmp.physicalType;
   }
 };
 
 class ISimpleFunctionMetadata {
  public:
+  virtual ~ISimpleFunctionMetadata() = default;
+
   // Return the return type of the function if its independent on the input
   // types, otherwise return null.
   virtual TypePtr tryResolveReturnType() const = 0;
   virtual std::string getName() const = 0;
   virtual bool isDeterministic() const = 0;
+  virtual bool defaultNullBehavior() const = 0;
   virtual uint32_t priority() const = 0;
   virtual const std::shared_ptr<exec::FunctionSignature> signature() const = 0;
+  virtual const TypePtr& resultPhysicalType() const = 0;
+  virtual const std::vector<TypePtr>& argPhysicalTypes() const = 0;
+  virtual bool physicalSignatureEquals(
+      const ISimpleFunctionMetadata& other) const = 0;
   virtual std::string helpMessage(const std::string& name) const = 0;
-  virtual ~ISimpleFunctionMetadata() = default;
 };
 
 template <typename T, typename = int32_t>
@@ -394,6 +458,10 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
     return udf_is_deterministic<Fun>();
   }
 
+  bool defaultNullBehavior() const final {
+    return defaultNullBehavior_;
+  }
+
   static constexpr bool isVariadic() {
     if constexpr (num_args == 0) {
       return false;
@@ -402,16 +470,49 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
     }
   }
 
-  explicit SimpleFunctionMetadata() {
-    auto analysis = analyzeSignatureTypes();
+  explicit SimpleFunctionMetadata(
+      bool defaultNullBehavior,
+      const std::vector<exec::SignatureVariable>& constraints)
+      : defaultNullBehavior_{defaultNullBehavior} {
+    auto analysis = analyzeSignatureTypes(constraints);
+
     buildSignature(analysis);
     priority_ = analysis.stats.computePriority();
+    resultPhysicalType_ = analysis.resultPhysicalType;
+    argPhysicalTypes_ = analysis.argPhysicalTypes;
   }
 
   ~SimpleFunctionMetadata() override = default;
 
   const exec::FunctionSignaturePtr signature() const override {
     return signature_;
+  }
+
+  const TypePtr& resultPhysicalType() const override {
+    return resultPhysicalType_;
+  }
+
+  const std::vector<TypePtr>& argPhysicalTypes() const override {
+    return argPhysicalTypes_;
+  }
+
+  bool physicalSignatureEquals(
+      const ISimpleFunctionMetadata& other) const override {
+    if (!resultPhysicalType_->kindEquals(other.resultPhysicalType())) {
+      return false;
+    }
+
+    if (argPhysicalTypes_.size() != other.argPhysicalTypes().size()) {
+      return false;
+    }
+
+    for (auto i = 0; i < argPhysicalTypes_.size(); ++i) {
+      if (!argPhysicalTypes_[i]->kindEquals(other.argPhysicalTypes()[i])) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   std::string helpMessage(const std::string& name) const final {
@@ -441,14 +542,19 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
     std::string outputType;
     std::map<std::string, exec::SignatureVariable> variables;
     TypeAnalysisResults::Stats stats;
+    TypePtr resultPhysicalType;
+    std::vector<TypePtr> argPhysicalTypes;
   };
 
-  SignatureTypesAnalysisResults analyzeSignatureTypes() {
+  SignatureTypesAnalysisResults analyzeSignatureTypes(
+      const std::vector<exec::SignatureVariable>& constraints) {
     std::vector<std::string> argsTypes;
 
     TypeAnalysisResults results;
     TypeAnalysis<return_type>().run(results);
     std::string outputType = results.typeAsString();
+    const auto resultPhysicalType = results.physicalType;
+    std::vector<TypePtr> argPhysicalTypes;
 
     (
         [&]() {
@@ -457,14 +563,27 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
           results.resetTypeString();
           TypeAnalysis<Args>().run(results);
           argsTypes.push_back(results.typeAsString());
+          argPhysicalTypes.push_back(results.physicalType);
         }(),
         ...);
+
+    for (const auto& constraint : constraints) {
+      VELOX_CHECK(
+          !constraint.constraint().empty(),
+          "Constraint must be set for variable {}",
+          constraint.name());
+
+      results.variablesInformation.erase(constraint.name());
+      results.variablesInformation.emplace(constraint.name(), constraint);
+    }
 
     return SignatureTypesAnalysisResults{
         std::move(argsTypes),
         std::move(outputType),
         std::move(results.variablesInformation),
-        std::move(results.stats)};
+        std::move(results.stats),
+        resultPhysicalType,
+        argPhysicalTypes};
   }
 
   void buildSignature(const SignatureTypesAnalysisResults& analysis) {
@@ -490,8 +609,11 @@ class SimpleFunctionMetadata : public ISimpleFunctionMetadata {
     signature_ = builder.build();
   }
 
+  const bool defaultNullBehavior_;
   exec::FunctionSignaturePtr signature_;
   uint32_t priority_;
+  TypePtr resultPhysicalType_;
+  std::vector<TypePtr> argPhysicalTypes_;
 };
 
 // wraps a UDF object to provide the inheritance
@@ -566,17 +688,33 @@ class UDFHolder {
       bool,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
+
   static constexpr bool udf_has_call_return_void = util::has_method<
       Fun,
       call_method_resolver,
       void,
       exec_return_type,
       const exec_arg_type<TArgs>&...>::value;
-  static constexpr bool udf_has_call =
-      udf_has_call_return_bool | udf_has_call_return_void;
+
+  static constexpr bool udf_has_call_return_status = util::has_method<
+      Fun,
+      call_method_resolver,
+      Status,
+      exec_return_type,
+      const exec_arg_type<TArgs>&...>::value;
+
+  static constexpr bool udf_has_call = udf_has_call_return_bool |
+      udf_has_call_return_void | udf_has_call_return_status;
+
   static_assert(
       !(udf_has_call_return_bool && udf_has_call_return_void),
-      "Provided call() methods need to return either void OR bool.");
+      "Provided call() methods need to return either void OR bool OR status.");
+  static_assert(
+      !(udf_has_call_return_bool && udf_has_call_return_status),
+      "Provided call() methods need to return either void OR bool OR status.");
+  static_assert(
+      !(udf_has_call_return_void && udf_has_call_return_status),
+      "Provided call() methods need to return either void OR bool OR status.");
 
   // callNullable():
   static constexpr bool udf_has_callNullable_return_bool = util::has_method<
@@ -742,13 +880,14 @@ class UDFHolder {
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool call(
+  FOLLY_ALWAYS_INLINE Status call(
       exec_return_type& out,
+      bool& notNull,
       const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_call) {
-      return callImpl(out, args...);
+      return callImpl(out, notNull, args...);
     } else if constexpr (udf_has_callNullable) {
-      return callNullableImpl(out, (&args)...);
+      return callNullableImpl(out, notNull, (&args)...);
     } else {
       VELOX_UNREACHABLE(
           "call should never be called if the UDF does not "
@@ -756,18 +895,20 @@ class UDFHolder {
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool callNullable(
+  FOLLY_ALWAYS_INLINE Status callNullable(
       exec_return_type& out,
+      bool& notNull,
       const typename exec_resolver<TArgs>::in_type*... args) {
     if constexpr (udf_has_callNullable) {
-      return callNullableImpl(out, args...);
+      return callNullableImpl(out, notNull, args...);
     } else if constexpr (udf_has_call) {
       // Default null behavior.
       const bool isAllSet = (args && ...);
       if (LIKELY(isAllSet)) {
-        return callImpl(out, (*args)...);
+        return callImpl(out, notNull, (*args)...);
       } else {
-        return false;
+        notNull = false;
+        return Status::OK();
       }
     } else {
       VELOX_UNREACHABLE(
@@ -776,21 +917,23 @@ class UDFHolder {
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool callAscii(
+  FOLLY_ALWAYS_INLINE Status callAscii(
       exec_return_type& out,
+      bool& notNull,
       const typename exec_resolver<TArgs>::in_type&... args) {
     if constexpr (udf_has_callAscii) {
-      return callAsciiImpl(out, args...);
+      return callAsciiImpl(out, notNull, args...);
     } else {
-      return call(out, args...);
+      return call(out, notNull, args...);
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool callNullFree(
+  FOLLY_ALWAYS_INLINE Status callNullFree(
       exec_return_type& out,
+      bool& notNull,
       const exec_no_nulls_arg_type<TArgs>&... args) {
     if constexpr (udf_has_callNullFree) {
-      return callNullFreeImpl(out, args...);
+      return callNullFreeImpl(out, notNull, args...);
     } else {
       VELOX_UNREACHABLE(
           "callNullFree should never be called if the UDF does not implement callNullFree.");
@@ -799,52 +942,66 @@ class UDFHolder {
 
   // Helper functions to handle void vs bool return type.
 
-  FOLLY_ALWAYS_INLINE bool callImpl(
+  FOLLY_ALWAYS_INLINE Status callImpl(
       typename Exec::template resolver<TReturn>::out_type& out,
+      bool& notNull,
       const typename Exec::template resolver<TArgs>::in_type&... args) {
     static_assert(udf_has_call);
-    if constexpr (udf_has_call_return_bool) {
+
+    if constexpr (udf_has_call_return_status) {
+      notNull = true;
       return instance_.call(out, args...);
+    } else if constexpr (udf_has_call_return_bool) {
+      notNull = instance_.call(out, args...);
+      return Status::OK();
     } else {
       instance_.call(out, args...);
-      return true;
+      notNull = true;
+      return Status::OK();
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool callNullableImpl(
+  FOLLY_ALWAYS_INLINE Status callNullableImpl(
       exec_return_type& out,
+      bool& notNull,
       const typename Exec::template resolver<TArgs>::in_type*... args) {
     static_assert(udf_has_callNullable);
     if constexpr (udf_has_callNullable_return_bool) {
-      return instance_.callNullable(out, args...);
+      notNull = instance_.callNullable(out, args...);
+      return Status::OK();
     } else {
       instance_.callNullable(out, args...);
-      return true;
+      notNull = true;
+      return Status::OK();
     }
   }
 
-  FOLLY_ALWAYS_INLINE bool callAsciiImpl(
+  FOLLY_ALWAYS_INLINE Status callAsciiImpl(
       typename Exec::template resolver<TReturn>::out_type& out,
+      bool& notNull,
       const typename Exec::template resolver<TArgs>::in_type&... args) {
     static_assert(udf_has_callAscii);
     if constexpr (udf_has_callAscii_return_bool) {
-      return instance_.callAscii(out, args...);
+      notNull = instance_.callAscii(out, args...);
     } else {
       instance_.callAscii(out, args...);
-      return true;
+      notNull = true;
     }
+    return Status::OK();
   }
 
-  FOLLY_ALWAYS_INLINE bool callNullFreeImpl(
+  FOLLY_ALWAYS_INLINE Status callNullFreeImpl(
       typename Exec::template resolver<TReturn>::out_type& out,
+      bool& notNull,
       const exec_no_nulls_arg_type<TArgs>&... args) {
     static_assert(udf_has_callNullFree);
     if constexpr (udf_has_callNullFree_return_bool) {
-      return instance_.callNullFree(out, args...);
+      notNull = instance_.callNullFree(out, args...);
     } else {
       instance_.callNullFree(out, args...);
-      return true;
+      notNull = true;
     }
+    return Status::OK();
   }
 };
 

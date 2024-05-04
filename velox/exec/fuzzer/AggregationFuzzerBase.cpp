@@ -25,7 +25,7 @@
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/SignatureBinder.h"
-#include "velox/expression/tests/utils/ArgumentTypeFuzzer.h"
+#include "velox/expression/fuzzer/ArgumentTypeFuzzer.h"
 #include "velox/vector/VectorSaver.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -86,6 +86,10 @@ DEFINE_bool(
     "enabled. Note that this option only works in debug builds.");
 
 namespace facebook::velox::exec::test {
+
+int32_t AggregationFuzzerBase::randInt(int32_t min, int32_t max) {
+  return boost::random::uniform_int_distribution<int32_t>(min, max)(rng_);
+}
 
 bool AggregationFuzzerBase::isSupportedType(const TypePtr& type) const {
   // Date / IntervalDayTime/ Unknown are not currently supported by DWRF.
@@ -194,7 +198,7 @@ AggregationFuzzerBase::pickSignature() {
     const auto& signatureTemplate =
         signatureTemplates_[idx - signatures_.size()];
     signature.name = signatureTemplate.name;
-    velox::test::ArgumentTypeFuzzer typeFuzzer(
+    velox::fuzzer::ArgumentTypeFuzzer typeFuzzer(
         *signatureTemplate.signature, rng_);
     VELOX_CHECK(typeFuzzer.fuzzArgumentTypes(FLAGS_max_num_varargs));
     signature.args = typeFuzzer.argumentTypes();
@@ -382,7 +386,7 @@ void AggregationFuzzerBase::printSignatureStats() {
   }
 }
 
-velox::test::ResultOrError AggregationFuzzerBase::execute(
+velox::fuzzer::ResultOrError AggregationFuzzerBase::execute(
     const core::PlanNodePtr& plan,
     const std::vector<exec::Split>& splits,
     bool injectSpill,
@@ -391,7 +395,7 @@ velox::test::ResultOrError AggregationFuzzerBase::execute(
   LOG(INFO) << "Executing query plan: " << std::endl
             << plan->toString(true, true);
 
-  velox::test::ResultOrError resultOrError;
+  velox::fuzzer::ResultOrError resultOrError;
   try {
     std::shared_ptr<TempDirectoryPath> spillDirectory;
     AssertQueryBuilder builder(plan);
@@ -401,10 +405,12 @@ velox::test::ResultOrError AggregationFuzzerBase::execute(
     int32_t spillPct{0};
     if (injectSpill) {
       spillDirectory = exec::test::TempDirectoryPath::create();
-      builder.spillDirectory(spillDirectory->path)
+      builder.spillDirectory(spillDirectory->getPath())
           .config(core::QueryConfig::kSpillEnabled, "true")
-          .config(core::QueryConfig::kAggregationSpillEnabled, "true");
-      spillPct = 100;
+          .config(core::QueryConfig::kAggregationSpillEnabled, "true")
+          .config(core::QueryConfig::kMaxSpillRunRows, randInt(32, 1L << 30));
+      // Randomized the spill injection with a percentage less than 100.
+      spillPct = 20;
     }
 
     if (abandonPartial) {
@@ -428,7 +434,7 @@ velox::test::ResultOrError AggregationFuzzerBase::execute(
     TestScopedSpillInjection scopedSpillInjection(spillPct);
     resultOrError.result =
         builder.maxDrivers(maxDrivers).copyResults(pool_.get());
-  } catch (VeloxUserError& e) {
+  } catch (VeloxUserError&) {
     // NOTE: velox user exception is accepted as it is caused by the invalid
     // fuzzer test inputs.
     resultOrError.exceptionPtr = std::current_exception();
@@ -505,7 +511,7 @@ void AggregationFuzzerBase::testPlan(
     bool abandonPartial,
     bool customVerification,
     const std::vector<std::shared_ptr<ResultVerifier>>& customVerifiers,
-    const velox::test::ResultOrError& expected,
+    const velox::fuzzer::ResultOrError& expected,
     int32_t maxDrivers) {
   auto actual = execute(
       planWithSplits.plan,
@@ -517,10 +523,10 @@ void AggregationFuzzerBase::testPlan(
 }
 
 void AggregationFuzzerBase::compare(
-    const velox::test::ResultOrError& actual,
+    const velox::fuzzer::ResultOrError& actual,
     bool customVerification,
     const std::vector<std::shared_ptr<ResultVerifier>>& customVerifiers,
-    const velox::test::ResultOrError& expected) {
+    const velox::fuzzer::ResultOrError& expected) {
   // Compare results or exceptions (if any). Fail is anything is different.
   if (FLAGS_enable_oom_injection) {
     // If OOM injection is enabled and we've made it this far and the test
@@ -531,7 +537,8 @@ void AggregationFuzzerBase::compare(
   // Compare results or exceptions (if any). Fail if anything is different.
   if (expected.exceptionPtr || actual.exceptionPtr) {
     // Throws in case exceptions are not compatible.
-    velox::test::compareExceptions(expected.exceptionPtr, actual.exceptionPtr);
+    velox::fuzzer::compareExceptions(
+        expected.exceptionPtr, actual.exceptionPtr);
     return;
   }
 
@@ -781,7 +788,8 @@ void persistReproInfo(
 
 std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
     const std::string& prestoUrl,
-    const std::string& runnerName) {
+    const std::string& runnerName,
+    const uint32_t& reqTimeoutMs) {
   if (prestoUrl.empty()) {
     auto duckQueryRunner = std::make_unique<DuckQueryRunner>();
     duckQueryRunner->disableAggregateFunctions({
@@ -796,7 +804,10 @@ std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
     LOG(INFO) << "Using DuckDB as the reference DB.";
     return duckQueryRunner;
   } else {
-    return std::make_unique<PrestoQueryRunner>(prestoUrl, runnerName);
+    return std::make_unique<PrestoQueryRunner>(
+        prestoUrl,
+        runnerName,
+        static_cast<std::chrono::milliseconds>(reqTimeoutMs));
     LOG(INFO) << "Using Presto as the reference DB.";
   }
 }

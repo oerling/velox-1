@@ -37,6 +37,17 @@ using ConnectorSplitPreloadFunc =
 
 class Task : public std::enable_shared_from_this<Task> {
  public:
+  /// Threading mode the task is executed.
+  enum class ExecutionMode {
+    /// Mode that executes the query serially (single-threaded) on the calling
+    /// thread. Task is executed via the Task::next() API.
+    kSerial,
+    /// Mode that executes the query in parallel (multi-threaded) using provided
+    /// executor. Task is executed via the Task::start() API that starts up
+    /// multiple driver threads and manages their lifecycle.
+    kParallel,
+  };
+
   /// Creates a task to execute a plan fragment, but doesn't start execution
   /// until Task::start() method is called.
   /// @param taskId Unique task identifier.
@@ -48,8 +59,10 @@ class Task : public std::enable_shared_from_this<Task> {
   /// @param queryCtx Query context containing MemoryPool and MemoryAllocator
   /// instances to use for memory allocations during execution, executor to
   /// schedule operators on, and session properties.
+  /// @param mode Execution mode for this task. The task can be executed in
+  /// Serial and Parallel mode.
   /// @param consumer Optional factory function to get callbacks to pass the
-  /// results of the execution. In a multi-threaded execution, results from each
+  /// results of the execution. In a parallel execution mode, results from each
   /// thread are passed on to a separate consumer.
   /// @param onError Optional callback to receive an exception if task
   /// execution fails.
@@ -58,6 +71,7 @@ class Task : public std::enable_shared_from_this<Task> {
       core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
+      ExecutionMode mode,
       Consumer consumer = nullptr,
       std::function<void(std::exception_ptr)> onError = nullptr);
 
@@ -66,6 +80,7 @@ class Task : public std::enable_shared_from_this<Task> {
       core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
+      ExecutionMode mode,
       ConsumerSupplier consumerSupplier,
       std::function<void(std::exception_ptr)> onError = nullptr);
 
@@ -247,9 +262,8 @@ class Task : public std::enable_shared_from_this<Task> {
   /// Returns a future which is realized when the task is no longer in
   /// running state.
   /// If the task is not in running state at the time of call, the future is
-  /// immediately realized. The future is realized with an exception after
-  /// maxWaitMicros. A zero max wait means no timeout.
-  ContinueFuture taskCompletionFuture(uint64_t maxWaitMicros);
+  /// immediately realized.
+  ContinueFuture taskCompletionFuture();
 
   /// Returns task execution error or nullptr if no error occurred.
   std::exception_ptr error() const {
@@ -300,6 +314,17 @@ class Task : public std::enable_shared_from_this<Task> {
   uint32_t numOutputDrivers() const {
     return numDrivers(getOutputPipelineId());
   }
+
+  /// Stores the number of drivers in various states of execution.
+  struct DriverCounts {
+    uint32_t numQueuedDrivers{0};
+    uint32_t numOnThreadDrivers{0};
+    uint32_t numSuspendedDrivers{0};
+    std::unordered_map<BlockingReason, uint64_t> numBlockedDrivers;
+  };
+
+  /// Returns the number of drivers in various states of execution.
+  DriverCounts driverCounts() const;
 
   /// Returns the number of running drivers.
   uint32_t numRunningDrivers() const {
@@ -498,6 +523,9 @@ class Task : public std::enable_shared_from_this<Task> {
   /// stats. Called from Drivers upon their closure.
   void addOperatorStats(OperatorStats& stats);
 
+  /// Adds per driver statistics.  Called from Drivers upon their closure.
+  void addDriverStats(int pipelineId, DriverStats stats);
+
   /// Returns kNone if no pause or terminate is requested. The thread count is
   /// incremented if kNone is returned. If something else is returned the
   /// calling thread should unwind and return itself to its pool. If 'this' goes
@@ -619,6 +647,11 @@ class Task : public std::enable_shared_from_this<Task> {
     return numDriversInPartitionedOutput_ > 0;
   }
 
+  void testingIncrementThreads() {
+    std::lock_guard l(mutex_);
+    ++numThreads_;
+  }
+
   /// Invoked to run provided 'callback' on each alive driver of the task.
   void testingVisitDrivers(const std::function<void(Driver*)>& callback);
 
@@ -633,8 +666,13 @@ class Task : public std::enable_shared_from_this<Task> {
       core::PlanFragment planFragment,
       int destination,
       std::shared_ptr<core::QueryCtx> queryCtx,
+      ExecutionMode mode,
       ConsumerSupplier consumerSupplier,
       std::function<void(std::exception_ptr)> onError = nullptr);
+
+  // Consistency check of the task execution to make sure the execution mode
+  // stays the same.
+  void checkExecutionMode(ExecutionMode mode);
 
   // Creates driver factories.
   void createDriverFactoriesLocked(uint32_t maxDrivers);
@@ -940,6 +978,10 @@ class Task : public std::enable_shared_from_this<Task> {
   const int destination_;
   const std::shared_ptr<core::QueryCtx> queryCtx_;
 
+  // The execution mode of the task. It is enforced that a task can only be
+  // executed in a single mode throughout its lifetime
+  const ExecutionMode mode_;
+
   // Root MemoryPool for this Task. All member variables that hold references
   // to pool_ must be defined after pool_, childPools_.
   std::shared_ptr<memory::MemoryPool> pool_;
@@ -1096,6 +1138,10 @@ class Task : public std::enable_shared_from_this<Task> {
 
   // Indicates whether the spill directory has been created.
   std::atomic<bool> spillDirectoryCreated_{false};
+
+  // Stores unconsumed preloading splits to ensure they are closed promptly.
+  folly::F14FastSet<std::shared_ptr<connector::ConnectorSplit>>
+      preloadingSplits_;
 };
 
 /// Listener invoked on task completion.
@@ -1122,4 +1168,19 @@ bool registerTaskListener(std::shared_ptr<TaskListener> listener);
 /// unregistered successfuly, false if listener was not found.
 bool unregisterTaskListener(const std::shared_ptr<TaskListener>& listener);
 
+std::string executionModeString(Task::ExecutionMode mode);
+
+std::ostream& operator<<(std::ostream& out, Task::ExecutionMode mode);
+
 } // namespace facebook::velox::exec
+
+template <>
+struct fmt::formatter<facebook::velox::exec::Task::ExecutionMode>
+    : formatter<std::string> {
+  auto format(
+      facebook::velox::exec::Task::ExecutionMode m,
+      format_context& ctx) {
+    return formatter<std::string>::format(
+        facebook::velox::exec::executionModeString(m), ctx);
+  }
+};

@@ -571,7 +571,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
 
   //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
-  int32_t numBlocks = std::min<int32_t>(1, exes.size()) * blocksPerExe;
+  int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
@@ -702,7 +702,11 @@ WaveTypeKind typeKindCode(TypeKind kind) {
   physicalInst->member = operandIndex(abstractInst->member)
 
 void Program::prepareForDevice(GpuArena& arena) {
-  int32_t codeSize = 0;
+  VELOX_CHECK(!instructions_.empty());
+  if (instructions_.back()->opCode != OpCode::kReturn) {
+    instructions_.push_back(std::make_unique<AbstractReturn>());
+  }
+  int32_t codeSize = sizeof(Instruction) * instructions_.size();
   for (auto& instruction : instructions_)
     switch (instruction->opCode) {
       case OpCode::kFilter: {
@@ -733,7 +737,6 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(bin.right);
         markResult(bin.result);
         markInput(bin.predicate);
-        codeSize += sizeof(Instruction);
         break;
       }
       case OpCode::kNegate: {
@@ -741,10 +744,10 @@ void Program::prepareForDevice(GpuArena& arena) {
         markInput(un.input);
         markResult(un.result);
         markInput(un.predicate);
-        codeSize += sizeof(Instruction);
         break;
       }
-
+      case OpCode::kReturn:
+        break;
       default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
@@ -752,21 +755,21 @@ void Program::prepareForDevice(GpuArena& arena) {
   sortSlots();
   arena_ = &arena;
   deviceData_ = arena.allocate<char>(
-      codeSize + instructions_.size() * sizeof(void*) + literalArea_.size() +
-      sizeof(ThreadBlockProgram));
+      codeSize + literalArea_.size() + sizeof(ThreadBlockProgram));
+  uintptr_t end = reinterpret_cast<uintptr_t>(
+      deviceData_->as<char>() + deviceData_->size());
   program_ = deviceData_->as<ThreadBlockProgram>();
-  auto instructionArray = addBytes<Instruction**>(program_, sizeof(*program_));
+  auto instructionArray = addBytes<Instruction*>(program_, sizeof(*program_));
   program_->numInstructions = instructions_.size();
   program_->instructions = instructionArray;
-  Instruction* space = addBytes<Instruction*>(
-      instructionArray, instructions_.size() * sizeof(void*));
+  Instruction* space = instructionArray;
   deviceLiterals_ = reinterpret_cast<char*>(space) +
       sizeof(Instruction) * instructions_.size();
+  VELOX_CHECK_LE(
+      reinterpret_cast<uintptr_t>(deviceLiterals_) + literalArea_.size(), end);
   memcpy(deviceLiterals_, literalArea_.data(), literalArea_.size());
 
   for (auto& instruction : instructions_) {
-    *instructionArray = space;
-    ++instructionArray;
     switch (instruction->opCode) {
       case OpCode::kPlus:
       case OpCode::kLT: {
@@ -800,18 +803,24 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
+      case OpCode::kReturn: {
+        IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
+        break;
+      }
       default:
         VELOX_UNSUPPORTED("Bad OpCode");
     }
     sharedMemorySize_ =
         std::max(sharedMemorySize_, instructionSharedMemory(*space));
     ++space;
+    VELOX_CHECK_LE(
+        reinterpret_cast<uintptr_t>(space),
+        reinterpret_cast<uintptr_t>(deviceLiterals_));
   }
   program_->sharedMemorySize = sharedMemorySize_;
   literalOperands_.resize(literal_.size());
-  int32_t counter = 0;
   for (auto& [op, index] : literal_) {
-    literalToOperand(op, literalOperands_[counter++]);
+    literalToOperand(op, literalOperands_[index - firstLiteralIdx_]);
   }
 }
 
@@ -860,6 +869,7 @@ void Program::sortSlots() {
   auto start = sortAndRenumber(0, input_);
   start = sortAndRenumber(start, local_);
   start = sortAndRenumber(start, output_);
+  firstLiteralIdx_ = start;
   sortAndRenumber(start, literal_);
 }
 
@@ -925,8 +935,9 @@ int32_t Program::addLiteralTyped(AbstractOperand* op) {
       addLiteral(stringView->data(), stringView->size());
     }
   } else {
-    return op->literalOffset = addLiteral(&value, 1);
+    op->literalOffset = addLiteral(&value, 1);
   }
+  return op->literalOffset;
 }
 
 void Program::markInput(AbstractOperand* op) {
@@ -1011,8 +1022,43 @@ std::string Executable::toString() const {
   if (programShared) {
     out << std::endl;
     out << "program " << programShared->label();
-    return out.str();
   }
+  return out.str();
+}
+
+std::string Program::toString() const {
+  std::stringstream out;
+  out << "{ program" << std::endl;
+  for (auto& instruction : instructions_) {
+    out << instruction->toString() << std::endl;
+  }
+  out << "}" << std::endl;
+  return out.str();
+}
+
+std::string AbstractFilter::toString() const {
+  return fmt::format("filter {} -> {}", flags->toString(), indices->toString());
+  ;
+}
+
+std::string AbstractWrap::toString() const {
+  std::stringstream out;
+  out << "wrap indices=" << indices->toString() << " {";
+  for (auto& op : source) {
+    out << op->toString() << " ";
+  }
+  out << "}";
+  return out.str();
+}
+
+std::string AbstractBinary::toString() const {
+  return fmt::format(
+      "{} = {} {} {} {}",
+      result->toString(),
+      left->toString(),
+      static_cast<int32_t>(opCode),
+      right->toString(),
+      predicate ? fmt::format(" if {}", predicate->toString()) : "");
 }
 
 } // namespace facebook::velox::wave

@@ -55,8 +55,7 @@ class MallocAllocator : public MemoryAllocator {
 
   bool growContiguousWithoutRetry(
       MachinePageCount increment,
-      ContiguousAllocation& allocation,
-      ReservationCallback reservationCB = nullptr) override;
+      ContiguousAllocation& allocation) override;
 
   void freeBytes(void* p, uint64_t bytes) noexcept override;
 
@@ -84,23 +83,19 @@ class MallocAllocator : public MemoryAllocator {
 
  private:
   bool allocateNonContiguousWithoutRetry(
-      MachinePageCount numPages,
-      Allocation& out,
-      ReservationCallback reservationCB = nullptr,
-      MachinePageCount minSizeClass = 0) override;
+      const SizeMix& sizeMix,
+      Allocation& out) override;
 
   bool allocateContiguousWithoutRetry(
       MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
-      ReservationCallback reservationCB = nullptr,
       MachinePageCount maxPages = 0) override;
 
   bool allocateContiguousImpl(
       MachinePageCount numPages,
       Allocation* collateral,
       ContiguousAllocation& allocation,
-      ReservationCallback reservationCB,
       MachinePageCount maxPages);
 
   void freeContiguousImpl(ContiguousAllocation& allocation);
@@ -197,7 +192,6 @@ class MallocAllocator : public MemoryAllocator {
       decrementUsageWithoutReservation(reservationByteLimit_);
       counter -= reservationByteLimit_;
     }
-    VELOX_CHECK_GE(counter, 0);
     VELOX_CHECK_LT(counter, 2 * reservationByteLimit_);
   }
 

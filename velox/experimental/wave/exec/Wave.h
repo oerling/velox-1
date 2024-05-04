@@ -347,6 +347,8 @@ class Program : public std::enable_shared_from_this<Program> {
     label_ = label_ + " " + label;
   }
 
+  std::string toString() const;
+
  private:
   template <TypeKind kind>
   int32_t addLiteralTyped(AbstractOperand* op);
@@ -384,6 +386,9 @@ class Program : public std::enable_shared_from_this<Program> {
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
   // Output Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> output_;
+
+  // OperandIdx for first literal operand.
+  int32_t firstLiteralIdx_{-1};
 
   // Constant Operand  to offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> literal_;
@@ -688,6 +693,9 @@ class WaveStream {
 
   // Host pinned memory to which 'deviceReturnData' is copied.
   WaveBufferPtr hostReturnData_;
+
+  // Pointer to statuses inside 'hostReturnData_'.
+  BlockStatus* hostStatus_{nullptr};
 
   // Time when host side activity last started on 'this'.
   WaveTime start_;
