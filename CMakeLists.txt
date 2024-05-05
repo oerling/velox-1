@@ -567,6 +567,7 @@ install(FILES velox/type/Type.h DESTINATION "include/velox")
 if("${TREAT_WARNINGS_AS_ERRORS}")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
 endif()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 add_subdirectory(third_party)
 add_subdirectory(velox)
