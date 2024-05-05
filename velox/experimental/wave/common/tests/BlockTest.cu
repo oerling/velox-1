@@ -25,10 +25,8 @@ namespace facebook::velox::wave {
 
 using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
 
-__global__ void boolToIndicesKernel(
-    uint8_t** bools,
-    int32_t** indices,
-    int32_t* sizes) {
+__global__ void
+boolToIndicesKernel(uint8_t** bools, int32_t** indices, int32_t* sizes) {
   extern __shared__ char smem[];
   int32_t idx = blockIdx.x;
   // Start cycle timer
@@ -87,25 +85,24 @@ int32_t BlockTestStream::boolToIndicesSize() {
   return sizeof(typename ScanAlgorithm::TempStorage);
 }
 
-__global__ void bool256ToIndicesKernel(
-    uint8_t** bools,
-    int32_t** indices,
-    int32_t* sizes) {
+__global__ void
+bool256ToIndicesKernel(uint8_t** bools, int32_t** indices, int32_t* sizes) {
   extern __shared__ char smem[];
   int32_t idx = blockIdx.x;
   auto* bool64 = reinterpret_cast<uint64_t*>(bools[idx]);
   bool256ToIndices(
-			[&](int32_t index8) { return bool64[index8]; },
+      [&](int32_t index8) { return bool64[index8]; },
       idx * 256,
       indices[idx],
-			sizes[idx], smem);
+      sizes[idx],
+      smem);
 }
 
 void BlockTestStream::testBool256ToIndices(
     int32_t numBlocks,
     uint8_t** flags,
     int32_t** indices,
-    int32_t* sizes){
+    int32_t* sizes) {
   CUDA_CHECK(cudaGetLastError());
   auto tempBytes = bool256ToIndicesSize();
   bool256ToIndicesKernel<<<numBlocks, 256, tempBytes, stream_->stream>>>(
@@ -120,13 +117,13 @@ __global__ void bool256ToIndicesNoSharedKernel(
     void* temp) {
   int32_t idx = blockIdx.x;
   auto* bool64 = reinterpret_cast<uint64_t*>(bools[idx]);
-  char* smem = reinterpret_cast<char*>(temp) +
-    blockIdx.x * 80;
+  char* smem = reinterpret_cast<char*>(temp) + blockIdx.x * 80;
   bool256ToIndices(
-		   [&](int32_t index8) { return bool64[index8]; },
-			idx * 256,
+      [&](int32_t index8) { return bool64[index8]; },
+      idx * 256,
       indices[idx],
-		   sizes[idx], smem);
+      sizes[idx],
+      smem);
 }
 
 void BlockTestStream::testBool256ToIndicesNoShared(
@@ -144,7 +141,7 @@ void BlockTestStream::testBool256ToIndicesNoShared(
 int32_t BlockTestStream::bool256ToIndicesSize() {
   return 80;
 }
-  
+
 __global__ void sum64(int64_t* numbers, int64_t* results) {
   extern __shared__ char smem[];
   int32_t idx = blockIdx.x;
@@ -177,11 +174,13 @@ void __global__ __launch_bounds__(1024)
 }
 
 void __global__ __launch_bounds__(1024)
-  testSortNoShared(uint16_t** keys, uint16_t** values, char* smem) {
+    testSortNoShared(uint16_t** keys, uint16_t** values, char* smem) {
   auto keyBase = keys[blockIdx.x];
   auto valueBase = values[blockIdx.x];
-  char* tbTemp = smem + blockIdx.x * sizeof(
-					    typename cub::BlockRadixSort<uint16_t, 256, 32, uint16_t>::TempStorage);
+  char* tbTemp = smem +
+      blockIdx.x *
+          sizeof(typename cub::BlockRadixSort<uint16_t, 256, 32, uint16_t>::
+                     TempStorage);
 
   blockSort<256, 32>(
       [&](auto i) { return keyBase[i]; },
@@ -193,9 +192,9 @@ void __global__ __launch_bounds__(1024)
 
 int32_t BlockTestStream::sort16SharedSize() {
   return sizeof(
-		typename cub::BlockRadixSort<uint16_t, 256, 32, uint16_t>::TempStorage);
+      typename cub::BlockRadixSort<uint16_t, 256, 32, uint16_t>::TempStorage);
 }
-  
+
 void BlockTestStream::testSort16(
     int32_t numBlocks,
     uint16_t** keys,
@@ -210,12 +209,10 @@ void BlockTestStream::testSort16NoShared(
     int32_t numBlocks,
     uint16_t** keys,
     uint16_t** values,
-					 char* temp) {
+    char* temp) {
   testSortNoShared<<<numBlocks, 256, 0, stream_->stream>>>(keys, values, temp);
 }
 
-
-  
 /// Calls partitionRows on each thread block of 256 threads. The parameters
 /// correspond to 'partitionRows'. Each is an array subscripted by blockIdx.x.
 void __global__ partitionShortsKernel(

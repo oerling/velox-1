@@ -57,7 +57,7 @@ __global__ void addOneRegKernel(
     int32_t repeats) {
   for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
        index += stride) {
-           auto temp = numbers[index];
+    auto temp = numbers[index];
     for (auto counter = 0; counter < repeats; ++counter) {
       temp += (index + counter) & 31;
     }
@@ -65,7 +65,6 @@ __global__ void addOneRegKernel(
     numbers[index] = temp;
   }
 }
-
 
 void TestStream::addOne(
     int32_t* numbers,
@@ -117,7 +116,6 @@ void TestStream::addOneReg(
   CUDA_CHECK(cudaGetLastError());
 }
 
-
 __global__ void addOneWideKernel(WideParams params) {
   auto numbers = params.numbers;
   auto size = params.size;
@@ -152,7 +150,6 @@ void TestStream::addOneWide(
   CUDA_CHECK(cudaGetLastError());
 }
 
-
 __global__ void __launch_bounds__(1024) addOneRandomKernel(
     int32_t* numbers,
     const int32_t* lookup,
@@ -169,20 +166,20 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
         for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
              index += stride) {
           auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
-	  auto sum = lookup[rnd];
-	  auto limit = min(rnd + localStride * (1 + numLocal),  size);
-	  for (auto j = rnd + localStride; j < limit; j += localStride) {
-							    sum += lookup[j];
-	    }
-	  numbers[index] += sum;
+          auto sum = lookup[rnd];
+          auto limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index] += sum;
 
-	  rnd = deviceScale32((index + 32) * (counter + 1) * kPrime32, size);
-	  sum = lookup[rnd];
-	  limit = min(rnd + localStride * (1 + numLocal),  size);
-	  for (auto j = rnd + localStride; j < limit; j += localStride) {
-	    sum += lookup[j];
-	  }
-	  numbers[index + 32] += sum;
+          rnd = deviceScale32((index + 32) * (counter + 1) * kPrime32, size);
+          sum = lookup[rnd];
+          limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index + 32] += sum;
         }
       }
     } else if (emptyThreads) {
@@ -190,32 +187,32 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
         for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
              index += stride) {
           auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
-	  auto sum = lookup[rnd];
-	  auto limit = min(rnd + localStride * (1 + numLocal),  size);
-	  for (auto j = rnd + localStride; j < limit; j += localStride) {
-							    sum += lookup[j];
-	    }
-	  numbers[index] += sum;
+          auto sum = lookup[rnd];
+          auto limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index] += sum;
 
-	  rnd = deviceScale32((index + 1) * (counter + 1) * kPrime32, size);
-	  sum = lookup[rnd];
-	  limit = min(rnd + localStride * (1 + numLocal),  size);
-	  for (auto j = rnd + localStride; j < limit; j += localStride) {
-	    sum += lookup[j];
-	  }
-	  numbers[index + 1] += sum;
+          rnd = deviceScale32((index + 1) * (counter + 1) * kPrime32, size);
+          sum = lookup[rnd];
+          limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index + 1] += sum;
         }
       }
     } else {
       for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
            index += stride) {
         auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
-	  auto sum = lookup[rnd];
-	  auto limit = min(rnd + localStride * (1 + numLocal),  size);
-	  for (auto j = rnd + localStride; j < limit; j += localStride) {
-	    sum += lookup[j];
-	  }
-	  numbers[index] += sum;
+        auto sum = lookup[rnd];
+        auto limit = min(rnd + localStride * (1 + numLocal), size);
+        for (auto j = rnd + localStride; j < limit; j += localStride) {
+          sum += lookup[j];
+        }
+        numbers[index] += sum;
       }
     }
     __syncthreads();
@@ -241,7 +238,15 @@ void TestStream::addOneRandom(
     numBlocks = width / kBlockSize;
   }
   addOneRandomKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-								    numbers, lookup, size, stride, repeats, numLocal, localStride, emptyWarps, emptyThreads);
+      numbers,
+      lookup,
+      size,
+      stride,
+      repeats,
+      numLocal,
+      localStride,
+      emptyWarps,
+      emptyThreads);
   CUDA_CHECK(cudaGetLastError());
 }
 
