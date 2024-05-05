@@ -485,7 +485,7 @@ struct RoundtripStats {
 
   std::string toString() const {
     return fmt::format(
-        "{}: rps={:.2f} gips={:.4f}  mode={} threads={} micros={} avgus={{.2f} toDev={:.2f} GB/s toHost={:.2f} GB/s",
+        "{}: rps={:.2f} gips={:.4f}  mode={} threads={} micros={} avgus={:.2f} toDev={:.2f} GB/s toHost={:.2f} GB/s",
         id,
         (numThreads * numOps) / (micros / 1000000.0),
         numAdds / (micros * 1000.0),

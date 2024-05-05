@@ -164,9 +164,6 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
     bool emptyWarps,
     bool emptyThreads) {
   for (uint32_t counter = 0; counter < repeats; ++counter) {
-    if (counter  > 0 && threadIdx.x > blockDim.x / 2) {
-      goto sync;
-    }
     if (emptyWarps) {
       if (((threadIdx.x / 32) & 1) == 0) {
         for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
@@ -221,7 +218,6 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
 	  numbers[index] += sum;
       }
     }
-  sync:
     __syncthreads();
   }
   __syncthreads();
