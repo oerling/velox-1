@@ -684,8 +684,8 @@ class RoundtripThread {
                   op.param1 * 256,
                   op.param2,
                   op.param3,
-		  op.param4,
-		  op.param5,
+                  op.param4,
+                  op.param5,
                   op.opCode == OpCode::kAddRandomEmptyWarps,
                   op.opCode == OpCode::kAddRandomEmptyThreads);
             }
@@ -722,17 +722,22 @@ class RoundtripThread {
       }
     }
   }
-  FOLLY_NOINLINE void addOneRandomCpu(uint32_t size, int32_t repeat, int32_t numLocal, int32_t localStride) {
+  FOLLY_NOINLINE void addOneRandomCpu(
+      uint32_t size,
+      int32_t repeat,
+      int32_t numLocal,
+      int32_t localStride) {
     int32_t* ints = hostInts_.get();
     int32_t* lookup = hostLookup_.get();
     for (uint32_t counter = 0; counter < repeat; ++counter) {
       for (auto i = 0; i < size; ++i) {
         auto rnd = scale32(i * (counter + 1) * kPrime32, size);
-	auto sum = lookup[rnd];
-	auto limit = std::min<int32_t>(rnd + localStride * (1 + numLocal),  size);
-	for (auto j = rnd + localStride; j < limit; j += localStride) {
-	  sum += lookup[j];
-	}
+        auto sum = lookup[rnd];
+        auto limit =
+            std::min<int32_t>(rnd + localStride * (1 + numLocal), size);
+        for (auto j = rnd + localStride; j < limit; j += localStride) {
+          sum += lookup[j];
+        }
         ints[i] += sum;
       }
     }
@@ -762,13 +767,13 @@ class RoundtripThread {
         case 'a':
           op.opCode = OpCode::kAdd;
           ++position;
-	  if (str[position] == 's') {
-	    op.opCode = OpCode::kAddShared;
-	    ++position;
-	  } else if (str[position] == 'r') {
-	    op.opCode = OpCode::kAddReg;
-	    ++position;
-	  }
+          if (str[position] == 's') {
+            op.opCode = OpCode::kAddShared;
+            ++position;
+          } else if (str[position] == 'r') {
+            op.opCode = OpCode::kAddReg;
+            ++position;
+          }
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
           return op;
@@ -796,9 +801,9 @@ class RoundtripThread {
           op.param2 = parseInt(str, position, 1);
           // target number of  threads in kernel.
           op.param3 = parseInt(str, position, 10240);
-	  // Number of nearby memory accesses
+          // Number of nearby memory accesses
           op.param4 = parseInt(str, position, 0);
-	  // Stride of nearby memory accesses
+          // Stride of nearby memory accesses
           op.param5 = parseInt(str, position, 0);
           return op;
 

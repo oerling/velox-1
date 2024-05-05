@@ -17,9 +17,9 @@
 
 #include <folly/Unit.h>
 #include <folly/init/Init.h>
+#include <gflags/gflags.h>
 #include <gtest/gtest.h>
 #include "velox/experimental/wave/common/Cuda.h"
-#include <gflags/gflags.h>
 
 DEFINE_bool(print_kernels, false, "Print register use of kernels");
 
