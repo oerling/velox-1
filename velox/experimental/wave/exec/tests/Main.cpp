@@ -21,7 +21,7 @@
 #include <gtest/gtest.h>
 #include "velox/experimental/wave/common/Cuda.h"
 
-DEFINE_bool(print_kernels, false, "Print register use of kernels");
+DEFINE_bool(list_kernels, false, "Print register use of kernels");
 
 // This main is needed for some tests on linux.
 int main(int argc, char** argv) {
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
   // Signal handler required for ThreadDebugInfoTest
   facebook::velox::process::addDefaultFatalSignalHandler();
   folly::Init init{&argc, &argv, false};
-  if (FLAGS_print_kernels) {
+  if (FLAGS_list_kernels) {
     facebook::velox::wave::printKernels();
   }
   return RUN_ALL_TESTS();
