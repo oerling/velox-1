@@ -213,6 +213,19 @@ class BlockTest : public testing::Test {
       }
     }
   }
+
+  void testScatterBits(int32_t bits, int32_t setPct) {
+    auto numWords = bits::nwords(numBits);
+    auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
+        auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
+        auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
+    auto indicesBuffer = arena_->allocate<int32_t>(kNumFlags);
+    auto sizesBuffer = arena_->allocate<int32_t>(kNumBlocks);
+    BlockTestStream stream;
+
+
+  }
+
   Device* device_;
   GpuAllocator* allocator_;
   std::unique_ptr<GpuArena> arena_;
@@ -345,4 +358,15 @@ TEST_F(BlockTest, partition) {
       checkPartitionRun(*run, parts);
     }
   }
+}
+
+TEST_F(BlockTest, scatterBits) {
+  scatterBitsTest(999, 0);
+  scatterBitsTest(999, 100);
+  scatterBitsTest(999, 42);
+  scatterBitsTest(999, 96);
+  scatterBitsTest(12345999, 0);
+  scatterBitsTest(12345999, 100);
+  scatterBitsTest(12345999, 42);
+  scatterBitsTest(12345999, 96);
 }
