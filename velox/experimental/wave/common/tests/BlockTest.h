@@ -153,6 +153,13 @@ class BlockTestStream : public Stream {
   void updateSum1Mtx(TestingRow* rows, HashRun& run);
   void updateSum1MtxCoalesce(TestingRow* rows, HashRun& run);
   void updateSum1Order(TestingRow* rows, HashRun& run);
+
+  void scatterBits(int32_t numSource,
+    int32_t numTarget,
+    const char* source,
+    const uint64_t* targetMask,
+  char* target,
+		   char* smem);
 };
 
 } // namespace facebook::velox::wave

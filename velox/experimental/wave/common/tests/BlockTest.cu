@@ -558,6 +558,25 @@ void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
   CUDA_CHECK(cudaGetLastError());
 }
 
+__global__ void scatterBitsKernel(int32_t numSource,
+    int32_t numTarget,
+    const char* source,
+    const uint64_t* targetMask,
+  char* target,
+		   char* smem) {
+  scatterBitsDevice<4>(numSource, numTarget, source, targetMask, target, smem);
+}
+
+
+  void BlockTestStream::scatterBits(int32_t numSource,
+    int32_t numTarget,
+    const char* source,
+    const uint64_t* targetMask,
+  char* target,
+				    char* smem) {
+    scatterBitsKernel<<<1, 256, 0, stream_->stream>>>(numSource, numTarget, source, targetMask, target, smem);
+  }
+
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndicesKernel);
 REGISTER_KERNEL("bool256ToIndices", bool256ToIndicesKernel);
@@ -570,5 +589,6 @@ REGISTER_KERNEL("sum1atmCoa", updateSum1AtomicCoalesceKernel);
 REGISTER_KERNEL("sum1Exch", updateSum1ExchKernel);
 REGISTER_KERNEL("sum1Part", updateSum1PartKernel);
 REGISTER_KERNEL("partSum", update1PartitionKernel);
+REGISTER_KERNEL("scatterBits", scatterBitsKernel);
 
 } // namespace facebook::velox::wave
