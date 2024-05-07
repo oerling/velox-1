@@ -224,10 +224,14 @@ class BlockTest : public testing::Test {
     BlockTestStream stream;
 
 
-  constexpr int32_t kNumBits = kSize * 64 - 2;
-  std::vector<uint64_t> mask(numWords);
   auto maskData = maskBuffer->as<uint64_t>();
-
+  folly::Random::DefaultGenerator rng;
+  rng.seed(1);
+  for (auto bit = 0; bit < numBits; ++bit) {
+    if (folly::Random::rand32(rng) % 100 < setPct) {
+      setBit(maskData, bit);
+    }
+  }
   // Ranges of tens of set and unset bits.
   fillBits(maskData, numBits - 130, numBits - 2, true);
   fillBits(maskData, kNumBits - 601, kNumBits - 403, true);
@@ -248,36 +252,37 @@ class BlockTest : public testing::Test {
     }
   }
 
-  auto numInMask = bits::countBits(maskData, 0, kNumBits);
+  auto numInMask = bits::countBits(maskData, 0, numBits);
   auto* source = sourceBuffer->as<uint64_t>();
   uint64_t seed = 0x123456789abcdef0LL;
   for (auto i = 0; i < numWords; ++i) {
     source[i] = seed;
     seed *= 0x5cdf;
   }
-  std::vector<char> test(kSize * 8);
   std::vector<char> reference(numWords);
-  auto sourceAsChar = sourceBuffer->as<char>();
+  auto sourceAsChar = sourceBuffer->as<char>() + 1;
   uint64_t cpuTime = 0;
   {
     MicrosecondTimer t(&cpuTime);
   scatterBits(numInMask, kNumBits, sourceAsChar, maskData, reference.data());
   }
+  prefetch(stream, maskBuffer);
+  prefetch(stream, resultBuffer);
+  prefetch(stream, smemBuffer);
+  prefetch(stream, sourceBuffer);
+  stream.wait();
   uint64_t gpuTime = 0;
   {
-    
+    MicrosecondTimer t(&gpuTime);
+    stream.scatterBits(numInMask, kNumBits, sourceAsChar, maskData, result->as<char>(), smemBuffer->as<int32_t>());
   }
-  FLAGS_bmi2 = false; // NOLINT
-  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, reference.data());
-  FLAGS_bmi2 = true; // NOLINT
-  EXPECT_EQ(reference, test);
-  // Repeat the same in place.
-  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, sourceAsChar);
-  for (int32_t i = kNumBits - 1; i >= 0; --i) {
+  auto resultAsChar = resultBuffer->as<char>();
+  for (int32_t i = 0; i < numBits; ++i) {
     EXPECT_EQ(
-        bits::isBitSet(reference.data(), i), bits::isBitSet(sourceAsChar, i));
+        bits::isBitSet(reference.data(), i), bits::isBitSet(resultAsChar, i));
   }
 
+  std::cout << fmt::format("scatterBits {} {}% set: cpu1t {} b/s gpu256t {} b/s", numBits, setPct, numBits / (cpuTime / 1e6), numBits / (gpuTime / 1e6)) << std::endl; 
   }
 
   Device* device_;
