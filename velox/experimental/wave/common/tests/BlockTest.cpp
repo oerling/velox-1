@@ -214,15 +214,69 @@ class BlockTest : public testing::Test {
     }
   }
 
-  void testScatterBits(int32_t bits, int32_t setPct) {
+  void testScatterBits(int32_t numBits, int32_t setPct, bool useSmem = false) {
     auto numWords = bits::nwords(numBits);
-    auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
-        auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
-        auto maskBuffer = arena_->allocate<uint8_t>(kNumFlags);
-    auto indicesBuffer = arena_->allocate<int32_t>(kNumFlags);
-    auto sizesBuffer = arena_->allocate<int32_t>(kNumBlocks);
+    auto maskBuffer = arena_->allocate<uint64_t>(numWords);
+        auto sourceBuffer = arena_->allocate<uint8_t>(numWords + 1);
+        auto resultBuffer = arena_->allocate<uint8_t>(numWords);
+        auto smemBuffer = arena_->allocate<uint32_t>(BlockTestStream::scatterBitsSize());
+
     BlockTestStream stream;
 
+
+  constexpr int32_t kNumBits = kSize * 64 - 2;
+  std::vector<uint64_t> mask(numWords);
+  auto maskData = maskBuffer->as<uint64_t>();
+
+  // Ranges of tens of set and unset bits.
+  fillBits(maskData, numBits - 130, numBits - 2, true);
+  fillBits(maskData, kNumBits - 601, kNumBits - 403, true);
+
+  folly::Random::DefaultGenerator rng;
+  rng.seed(1);
+  // Range of mostly set bits, 1/50 is not set.
+  for (auto bit = kNumBits - 1000; bit > 400; --bit) {
+    if (folly::Random::rand32(rng) % 50) {
+      setBit(maskData, bit);
+    }
+  }
+  // Alternating groups of 5 bits with 0-3 bis set.
+  for (auto i = 0; i < 305; i += 5) {
+    auto numSet = (i / 5) % 4;
+    for (auto j = 0; j < numSet; ++j) {
+      setBit(maskData, i + j, true);
+    }
+  }
+
+  auto numInMask = bits::countBits(maskData, 0, kNumBits);
+  auto* source = sourceBuffer->as<uint64_t>();
+  uint64_t seed = 0x123456789abcdef0LL;
+  for (auto i = 0; i < numWords; ++i) {
+    source[i] = seed;
+    seed *= 0x5cdf;
+  }
+  std::vector<char> test(kSize * 8);
+  std::vector<char> reference(numWords);
+  auto sourceAsChar = sourceBuffer->as<char>();
+  uint64_t cpuTime = 0;
+  {
+    MicrosecondTimer t(&cpuTime);
+  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, reference.data());
+  }
+  uint64_t gpuTime = 0;
+  {
+    
+  }
+  FLAGS_bmi2 = false; // NOLINT
+  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, reference.data());
+  FLAGS_bmi2 = true; // NOLINT
+  EXPECT_EQ(reference, test);
+  // Repeat the same in place.
+  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, sourceAsChar);
+  for (int32_t i = kNumBits - 1; i >= 0; --i) {
+    EXPECT_EQ(
+        bits::isBitSet(reference.data(), i), bits::isBitSet(sourceAsChar, i));
+  }
 
   }
 

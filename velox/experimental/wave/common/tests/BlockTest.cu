@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/common/Block.cuh"
+#include "velox/experimental/wave/common/Bits.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
@@ -23,7 +24,6 @@
 
 namespace facebook::velox::wave {
 
-using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
 
 __global__ void
 boolToIndicesKernel(uint8_t** bools, int32_t** indices, int32_t* sizes) {
@@ -44,7 +44,8 @@ void BlockTestStream::testBoolToIndices(
     uint8_t** flags,
     int32_t** indices,
     int32_t* sizes) {
-  CUDA_CHECK(cudaGetLastError());
+    using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+    CUDA_CHECK(cudaGetLastError());
   auto tempBytes = sizeof(typename ScanAlgorithm::TempStorage);
   boolToIndicesKernel<<<numBlocks, 256, tempBytes, stream_->stream>>>(
       flags, indices, sizes);
@@ -56,6 +57,7 @@ __global__ void boolToIndicesNoSharedKernel(
     int32_t** indices,
     int32_t* sizes,
     void* temp) {
+  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
   int32_t idx = blockIdx.x;
 
   uint8_t* blockBools = bools[idx];
@@ -82,7 +84,8 @@ void BlockTestStream::testBoolToIndicesNoShared(
 }
 
 int32_t BlockTestStream::boolToIndicesSize() {
-  return sizeof(typename ScanAlgorithm::TempStorage);
+using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
+ return sizeof(typename ScanAlgorithm::TempStorage);
 }
 
 __global__ void
