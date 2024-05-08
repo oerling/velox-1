@@ -296,11 +296,11 @@ class BlockTest : public testing::Test {
     }
 
     std::cout << fmt::format(
-                     "scatterBits {} {}% set: cpu1t {} b/s gpu256t {} b/s",
+                     "scatterBits {} {}% set: cpu1t {} Mb/s gpu256t {} Mb/s",
                      numBits,
                      setPct,
-                     numBits / (cpuTime / 1e6),
-                     numBits / (gpuTime / 1e6))
+                     numBits / static_cast<float>(cpuTime),
+                     numBits / static_cast<float>(gpuTime))
               << std::endl;
   }
 
