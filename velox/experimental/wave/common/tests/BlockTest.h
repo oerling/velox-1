@@ -155,13 +155,14 @@ class BlockTestStream : public Stream {
   void updateSum1Order(TestingRow* rows, HashRun& run);
 
   static int32_t scatterBitsSize(int32_t blockSize);
-  
-  void scatterBits(int32_t numSource,
-    int32_t numTarget,
-    const char* source,
-    const uint64_t* targetMask,
-  char* target,
-		   int32_t* temp);
+
+  void scatterBits(
+      int32_t numSource,
+      int32_t numTarget,
+      const char* source,
+      const uint64_t* targetMask,
+      char* target,
+      int32_t* temp);
 };
 
 } // namespace facebook::velox::wave
