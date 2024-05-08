@@ -79,6 +79,60 @@ loadBits64(void const* p, uint32_t bitIdx, uint32_t width) {
   return (static_cast<uint64_t>(v1 & lowMask<uint32_t>(width - 32)) << 32) | v0;
 }
 
+/**
+ * Invokes a function for each batch of bits (partial or full words)
+ * in a given range.
+ *
+ * @param begin first bit to check (inclusive)
+ * @param end last bit to check (exclusive)
+ * @param partialWordFunc function to invoke for a partial word;
+ *  takes index of the word and mask
+ * @param fullWordFunc function to invoke for a full word;
+ *  takes index of the word
+ */
+template <typename PartialWordFunc, typename FullWordFunc>
+inline __device__ void forEachWord(
+    int32_t begin,
+    int32_t end,
+    PartialWordFunc partialWordFunc,
+    FullWordFunc fullWordFunc) {
+  if (begin >= end) {
+    return;
+  }
+  int32_t firstWord = roundUp(begin, 64);
+  int32_t lastWord = end & ~63L;
+  if (lastWord < firstWord) {
+    partialWordFunc(
+		    lastWord / 64, lowMask(end - lastWord) & highMask<uint64_t>(firstWord - begin));
+    return;
+  }
+  if (begin != firstWord) {
+    partialWordFunc(begin / 64, highMask<uint64_t>(firstWord - begin));
+  }
+  for (int32_t i = firstWord; i + 64 <= lastWord; i += 64) {
+    fullWordFunc(i / 64);
+  }
+  if (end != lastWord) {
+    partialWordFunc(lastWord / 64, lowMask<uint64_t>(end - lastWord));
+  }
+}
+
+
+  
+inline int32_t __device__ countBits(const uint64_t* bits, int32_t begin, int32_t end) {
+  int32_t count = 0;
+  forEachWord(
+      begin,
+      end,
+      [&count, bits](int32_t idx, uint64_t mask) {
+        count += __popcll(bits[idx] & mask);
+      },
+      [&count, bits](int32_t idx) {
+        count += __popcll(bits[idx]);
+      });
+  return count;
+}
+
 inline int32_t __device__ __host__ scatterBitsDeviceSize(int32_t blockSize) {
   // One int32 per warp + one int32_t.
   return sizeof(int32_t) * (1 + (blockSize / 32));

@@ -40,8 +40,13 @@ __host__ __device__ constexpr inline T roundUp(T value, U factor) {
 }
 
 template <typename T>
-T __device__ __host__ lowMask(int32_t bits) {
+constexpr T __device__ __host__ lowMask(int32_t bits) {
   return (static_cast<T>(1) << bits) - 1;
+}
+
+template <typename T>
+constexpr inline __device__ __host__ T highMask(int32_t bits) {
+  return lowMask(bits) << ((sizeof(T) * 8) - bits);
 }
 
 __device__ __host__ inline int
