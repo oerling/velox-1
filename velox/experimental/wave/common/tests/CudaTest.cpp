@@ -943,7 +943,7 @@ class CudaTest : public testing::Test {
         waitEach(streams, events);
       }
       for (auto i = 0; i < numStreams; ++i) {
-        streams[i]->addOne(ints[i], opSize);
+        streams[i]->incOne(ints[i], opSize);
         if (counter == 0 || counter >= firstNotify) {
           streams[i]->addCallback([&]() {
             auto d = getCurrentTimeMicro() - start;
@@ -1263,7 +1263,7 @@ TEST_F(CudaTest, stream) {
   stream.prefetch(nullptr, ints, opSize * sizeof(int32_t));
   stream.wait();
   for (auto i = 0; i < opSize; ++i) {
-    ASSERT_EQ(ints[i], i + 1);
+    ASSERT_EQ(ints[i], i + (i & 31));
   }
   allocator_->free(ints, sizeof(int32_t) * opSize);
 }

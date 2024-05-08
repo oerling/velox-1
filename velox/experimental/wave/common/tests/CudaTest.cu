@@ -22,6 +22,17 @@ namespace facebook::velox::wave {
 constexpr uint32_t kPrime32 = 1815531889;
 
 __global__ void
+incOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  for (auto counter = 0; counter < repeats; ++counter) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
+      numbers[index] += index & 31;
+    }
+    __syncthreads();
+  }
+}
+
+__global__ void
 addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
     for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
@@ -66,6 +77,23 @@ __global__ void addOneRegKernel(
   }
 }
 
+void TestStream::incOne(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  incOneKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 void TestStream::addOne(
     int32_t* numbers,
     int32_t size,
@@ -79,22 +107,6 @@ void TestStream::addOne(
     numBlocks = width / kBlockSize;
   }
   addOneKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-      numbers, size, stride, repeats);
-  CUDA_CHECK(cudaGetLastError());
-}
-void TestStream::addOneShared(
-    int32_t* numbers,
-    int32_t size,
-    int32_t repeats,
-    int32_t width) {
-  constexpr int32_t kBlockSize = 256;
-  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
-  int32_t stride = size;
-  if (numBlocks > width / kBlockSize) {
-    stride = width;
-    numBlocks = width / kBlockSize;
-  }
-  addOneSharedKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
       numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
@@ -113,6 +125,26 @@ void TestStream::addOneReg(
   }
   addOneRegKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
       numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void TestStream::addOneShared(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneSharedKernel<<<
+      numBlocks,
+      kBlockSize,
+      kBlockSize * sizeof(int32_t),
+      stream_->stream>>>(numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
 

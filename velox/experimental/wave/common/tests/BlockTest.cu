@@ -24,6 +24,7 @@
 
 namespace facebook::velox::wave {
 
+using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
 
 __global__ void
 boolToIndicesKernel(uint8_t** bools, int32_t** indices, int32_t* sizes) {
@@ -44,8 +45,7 @@ void BlockTestStream::testBoolToIndices(
     uint8_t** flags,
     int32_t** indices,
     int32_t* sizes) {
-    using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
-    CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaGetLastError());
   auto tempBytes = sizeof(typename ScanAlgorithm::TempStorage);
   boolToIndicesKernel<<<numBlocks, 256, tempBytes, stream_->stream>>>(
       flags, indices, sizes);
@@ -57,7 +57,6 @@ __global__ void boolToIndicesNoSharedKernel(
     int32_t** indices,
     int32_t* sizes,
     void* temp) {
-  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
   int32_t idx = blockIdx.x;
 
   uint8_t* blockBools = bools[idx];
@@ -84,8 +83,7 @@ void BlockTestStream::testBoolToIndicesNoShared(
 }
 
 int32_t BlockTestStream::boolToIndicesSize() {
-using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
- return sizeof(typename ScanAlgorithm::TempStorage);
+  return sizeof(typename ScanAlgorithm::TempStorage);
 }
 
 __global__ void
@@ -566,9 +564,18 @@ __global__ void scatterBitsKernel(int32_t numSource,
     const char* source,
     const uint64_t* targetMask,
   char* target,
-		   char* smem) {
-  scatterBitsDevice<4>(numSource, numTarget, source, targetMask, target, smem);
+				  int32_t* temp) {
+  if (!temp) {
+    extern __shared__ __align__(16) char smem[];
+    temp = reinterpret_cast<int32_t*>(smem);
+  }
+  scatterBitsDevice<4>(numSource, numTarget, source, targetMask, target, temp);
 }
+
+  //    static
+  int32_t BlockTestStream::scatterBitsSize(int32_t blockSize) {
+    return scatterBitsDeviceSize(blockSize);
+  }
 
 
   void BlockTestStream::scatterBits(int32_t numSource,
@@ -576,9 +583,10 @@ __global__ void scatterBitsKernel(int32_t numSource,
     const char* source,
     const uint64_t* targetMask,
   char* target,
-				    char* smem) {
-    scatterBitsKernel<<<1, 256, 0, stream_->stream>>>(numSource, numTarget, source, targetMask, target, smem);
+				    int32_t* temp) {
+    scatterBitsKernel<<<1, 256, temp ? 0 : scatterBitsDeviceSize(256), stream_->stream>>>(numSource, numTarget, source, targetMask, target, temp);
   }
+
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndicesKernel);

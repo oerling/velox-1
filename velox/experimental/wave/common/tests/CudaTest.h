@@ -36,6 +36,10 @@ class TestStream : public Stream {
   // Queues a kernel to add 1 to numbers[0...size - 1]. The kernel repeats
   // 'repeat' times.
   void
+  incOne(int32_t* numbers, int size, int32_t repeat = 1, int32_t width = 10240);
+
+  /// Like incOne but adds idx & 31 to numbers[idx].
+  void
   addOne(int32_t* numbers, int size, int32_t repeat = 1, int32_t width = 10240);
 
   void addOneWide(

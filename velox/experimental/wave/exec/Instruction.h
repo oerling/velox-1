@@ -91,6 +91,8 @@ struct AbstractOperand {
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode) : opCode(opCode) {}
 
+  virtual ~AbstractInstruction() = default;
+
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);

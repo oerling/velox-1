@@ -24,6 +24,8 @@
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 
+#include <folly/Random.h>
+
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
@@ -153,8 +155,8 @@ class BlockTest : public testing::Test {
     }
     stream.wait();
     elapsed = getCurrentTimeMicro() - startMicros;
-    std::cout << "Flags " << (use256 ? "256" : "") << " to indices: "
-              << " to indices no smem: " << elapsed << "us, "
+    std::cout << "Flags " << (use256 ? "256" : "")
+              << " to indices: " << " to indices no smem: " << elapsed << "us, "
               << kNumFlags / static_cast<float>(elapsed) << " Mrows/s"
               << std::endl;
   }
@@ -214,13 +216,14 @@ class BlockTest : public testing::Test {
     }
   }
 
-  void testScatterBits(int32_t numBits, int32_t setPct, bool useSmem = false) {
+  void scatterBitsTest(int32_t numBits, int32_t setPct, bool useSmem = false) {
     auto numWords = bits::nwords(numBits);
     auto maskBuffer = arena_->allocate<uint64_t>(numWords);
         auto sourceBuffer = arena_->allocate<uint8_t>(numWords + 1);
         auto resultBuffer = arena_->allocate<uint8_t>(numWords);
-        auto smemBuffer = arena_->allocate<uint32_t>(BlockTestStream::scatterBitsSize());
-
+        auto smemBuffer = arena_->allocate<uint32_t>(BlockTestStream::scatterBitsSize(256));
+	VELOX_CHECK_LE(1000, numBits);
+	memset(maskBuffer->as<char>(), 0, maskBuffer->capacity());
     BlockTestStream stream;
 
 
@@ -229,26 +232,24 @@ class BlockTest : public testing::Test {
   rng.seed(1);
   for (auto bit = 0; bit < numBits; ++bit) {
     if (folly::Random::rand32(rng) % 100 < setPct) {
-      setBit(maskData, bit);
+      bits::setBit(maskData, bit);
     }
   }
   // Ranges of tens of set and unset bits.
-  fillBits(maskData, numBits - 130, numBits - 2, true);
-  fillBits(maskData, kNumBits - 601, kNumBits - 403, true);
+  bits::fillBits(maskData, numBits - 130, numBits - 2, true);
+  bits::fillBits(maskData, numBits - 601, numBits - 403, true);
 
-  folly::Random::DefaultGenerator rng;
-  rng.seed(1);
   // Range of mostly set bits, 1/50 is not set.
-  for (auto bit = kNumBits - 1000; bit > 400; --bit) {
+  for (auto bit = numBits - 1000; bit > 400; --bit) {
     if (folly::Random::rand32(rng) % 50) {
-      setBit(maskData, bit);
+      bits::setBit(maskData, bit);
     }
   }
   // Alternating groups of 5 bits with 0-3 bis set.
   for (auto i = 0; i < 305; i += 5) {
     auto numSet = (i / 5) % 4;
     for (auto j = 0; j < numSet; ++j) {
-      setBit(maskData, i + j, true);
+      bits::setBit(maskData, i + j, true);
     }
   }
 
@@ -264,7 +265,7 @@ class BlockTest : public testing::Test {
   uint64_t cpuTime = 0;
   {
     MicrosecondTimer t(&cpuTime);
-  scatterBits(numInMask, kNumBits, sourceAsChar, maskData, reference.data());
+    bits::scatterBits(numInMask, numBits, sourceAsChar, maskData, reference.data());
   }
   prefetch(stream, maskBuffer);
   prefetch(stream, resultBuffer);
@@ -274,7 +275,7 @@ class BlockTest : public testing::Test {
   uint64_t gpuTime = 0;
   {
     MicrosecondTimer t(&gpuTime);
-    stream.scatterBits(numInMask, kNumBits, sourceAsChar, maskData, result->as<char>(), smemBuffer->as<int32_t>());
+    stream.scatterBits(numInMask, numBits, sourceAsChar, maskData, resultBuffer->as<char>(), smemBuffer->as<int32_t>());
   }
   auto resultAsChar = resultBuffer->as<char>();
   for (int32_t i = 0; i < numBits; ++i) {
@@ -420,10 +421,10 @@ TEST_F(BlockTest, partition) {
 }
 
 TEST_F(BlockTest, scatterBits) {
-  scatterBitsTest(999, 0);
-  scatterBitsTest(999, 100);
-  scatterBitsTest(999, 42);
-  scatterBitsTest(999, 96);
+  scatterBitsTest(1999, 0);
+  scatterBitsTest(1999, 100);
+  scatterBitsTest(1999, 42);
+  scatterBitsTest(1999, 96);
   scatterBitsTest(12345999, 0);
   scatterBitsTest(12345999, 100);
   scatterBitsTest(12345999, 42);

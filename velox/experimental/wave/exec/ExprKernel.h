@@ -29,7 +29,6 @@
 /// be allocated dynamically at kernel invocation.
 namespace facebook::velox::wave {
 
-
 /// Opcodes for common instruction set. First all instructions that
 /// do not have operand type variants, then all the ones that
 /// do. For type templated instructions, the case label is opcode *
