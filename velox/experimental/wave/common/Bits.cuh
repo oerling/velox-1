@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cub/warp/warp_scan.cuh>
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 namespace facebook::velox::wave {
 
@@ -197,15 +198,15 @@ __device__ void scatterBitsDevice(
   }
 }
 
-#if 0
+
   /// Identifies threads that have a non-null value in a 256 thread
-  /// block. If the thread falls on a null, -1 is returned, else the
+  /// block. Consecutive threads process consecutive values. If the thread falls on a null, -1 is returned, else the
   /// ordinal of the non-null corresponding to the thread. Must be
-  /// called on all threads of the TB.
+  /// called on all threads of the TB. 'nonNullOffset' is added to the returned index. 'nonNullOffset' is incremented by the number of non-null rows in this set of 256 rows if numRows == 256. This can be called on a loop where each iteration processes 256 consecutive rows and nonNullOffset c carries the offset between iterations.
   inline __device__ int32_t
-nonNullIndex256(int32_t base, char* nulls, int32_t* next, int32_t* smem) {
+nonNullIndex256(int32_t base, char* nulls, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
   int32_t group = threadIdx.x / 32;
-  uint32_t bits = unalignedLoad32(base + group * 4);
+  uint32_t bits = threadIdx.x < numRows ? unalignedLoad32(base + group * 4) : 0;
   if (threadIdx.x = 32 * group) {
     smem[group] = __popc(bits);
   }
@@ -213,12 +214,15 @@ nonNullIndex256(int32_t base, char* nulls, int32_t* next, int32_t* smem) {
   if (threadIdx.x < 32) {
     using Scan = cub::WarpScan<int32_t, 8>;
     int32_t count = threadIdx.x < 8 ? smem[threadIdx.x] : 0;
+    if (threadIdx.x == 0) {
+      count += nonNullOffset;
+    }
     uint32_t start;
     Scan(*reinterpret_cast<typename Scan::TempStorage*>(smem)).ExclusiveSum(count, start);
     if (threadIdx.x < 8) {
       smem[threadIdx.x] = start;
-      if (threadIdx.x == 7) {
-	*sum = start + count;
+      if (threadIdx.x == 7 && numRows == 256) {
+	nonNullOffset = start + count;
       }
     }
   }
@@ -230,5 +234,53 @@ nonNullIndex256(int32_t base, char* nulls, int32_t* next, int32_t* smem) {
   }
 }
 
-#endif
+  /// Like nonNullIndex256 but takes an array of non-contiguous but
+  /// ascending row numbers. 'nulls' must have enough valid bits to
+  /// cover rows[numRows-1] bits. Each thread returns -1 if
+  /// rows[threadIdx.x] falls on a null and the corresponding index in
+  /// non-null rows otherwise. This can be called multiple times on
+  /// consecutive groups of 256 row numbers. the non-null offset of
+  /// the last row is carried in 'non-nulloffset'. 'rowOffset' is the
+  /// offset of the first row of the batch of 256 in 'rows', so it has
+  /// 0, 256, 512.. in consecutive calls.
+  inline __device__ int32_t
+  nonNullIndex256Sparse(int32_t base, char* nulls, int32_t* rows, int32_t rowOffset, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
+    auto rowIdx = rowOffset + threadIdx.x;
+    bool isNull = true;
+    int32_t nonNullsBelow = 0;
+    if (rowIdx < numRows) {
+      bool isNull = isBitSet(nulls, rows[rowIdx]);
+      nonNullsBelow = isNull;
+      int32_t previousRow = rowIdx == 0 ? 0 : rows[rowIdx - 1];
+      nonNullsBelow += countBits(nulls, previousRow + 1, rows[rowIdx]);
+    }
+    Scan32(detail::warpScanTemp()).InclusiveSum(nonNullsBelow, nonNullsBelow);
+    if ((threadIdx.x & (kWarpThreads - 1)) == kWarpThreads - 1) {
+      // The last thread of the warp writes warp total.
+      smem[threadIdx.x / kWarpThreads] = nonNullsBelow;
+    }
+    __syncthreads();
+    if (threadIdx.x < kWarpThreads) {
+      int32_t start = 0;
+      if (threadIdx.x < blockDim.x / kWarpThreads) {
+	start = smem[threadIdx.x];
+      }
+      using Scan8 = cub::WarpScan<int32_t, 8>;
+      int32_t sum = 0;
+      Scan8(detail::warpScanTemp(smem)).ExclusiveSum(start, sum);
+      if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
+	*nonNullOffset = start + sum;
+      }
+      if (threadIdx.x < blockDim.x / kWarpThreads) {
+	smem[threadIdx.x] = sum;
+      }
+    }
+    __syncthreads();
+    if (isNull) {
+      return 0;
+    }
+    return smem[threadIdx.x / kWarpThreads] + nonNullsBelow - 1;
+  }
+  
+
 } // namespace facebook::velox::wave
