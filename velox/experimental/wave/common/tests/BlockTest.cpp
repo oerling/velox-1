@@ -219,15 +219,14 @@ class BlockTest : public testing::Test {
   void scatterBitsTest(int32_t numBits, int32_t setPct, bool useSmem = false) {
     auto numWords = bits::nwords(numBits);
     auto maskBuffer = arena_->allocate<uint64_t>(numWords);
-        auto sourceBuffer = arena_->allocate<uint8_t>(numWords + 1);
-        auto resultBuffer = arena_->allocate<uint8_t>(numWords);
-        auto smemBuffer = arena_->allocate<uint32_t>(BlockTestStream::scatterBitsSize(256));
+        auto sourceBuffer = arena_->allocate<uint64_t>(numWords + 1);
+        auto resultBuffer = arena_->allocate<uint64_t>(numWords);
+        auto smemBuffer = arena_->allocate<uint32_t>(BlockTestStream::scatterBitsSize(256) / sizeof(int32_t));
 	VELOX_CHECK_LE(1000, numBits);
 	memset(maskBuffer->as<char>(), 0, maskBuffer->capacity());
     BlockTestStream stream;
 
-
-  auto maskData = maskBuffer->as<uint64_t>();
+    auto maskData = maskBuffer->as<uint64_t>();
   folly::Random::DefaultGenerator rng;
   rng.seed(1);
   for (auto bit = 0; bit < numBits; ++bit) {
@@ -260,12 +259,12 @@ class BlockTest : public testing::Test {
     source[i] = seed;
     seed *= 0x5cdf;
   }
-  std::vector<char> reference(numWords);
+  std::vector<uint64_t> reference(numWords);
   auto sourceAsChar = sourceBuffer->as<char>() + 1;
   uint64_t cpuTime = 0;
   {
     MicrosecondTimer t(&cpuTime);
-    bits::scatterBits(numInMask, numBits, sourceAsChar, maskData, reference.data());
+    bits::scatterBits(numInMask, numBits, sourceAsChar, maskData, reinterpret_cast<char*>(reference.data()));
   }
   prefetch(stream, maskBuffer);
   prefetch(stream, resultBuffer);
@@ -276,6 +275,7 @@ class BlockTest : public testing::Test {
   {
     MicrosecondTimer t(&gpuTime);
     stream.scatterBits(numInMask, numBits, sourceAsChar, maskData, resultBuffer->as<char>(), smemBuffer->as<int32_t>());
+    stream.wait();
   }
   auto resultAsChar = resultBuffer->as<char>();
   for (int32_t i = 0; i < numBits; ++i) {

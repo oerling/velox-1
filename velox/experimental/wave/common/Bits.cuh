@@ -135,7 +135,7 @@ __device__ void scatterBitsDevice(
   source -= align;
   int32_t sourceBitBase = align * 8;
   for (auto targetIdx = 0; targetIdx * 64 < numTarget;
-       targetIdx += blockDim.x * kWordsPerThread * 64) {
+       targetIdx += blockDim.x * kWordsPerThread) {
     int32_t firstTargetIdx = targetIdx + threadIdx.x * kWordsPerThread;
     int32_t bitsForThread =
         min(kWordsPerThread * 64, numTarget - firstTargetIdx * 64);
@@ -152,7 +152,7 @@ __device__ void scatterBitsDevice(
     uint32_t threadFirstBit = 0;
     Scan32(*detail::warpScanTemp(smem))
         .ExclusiveSum(count, threadFirstBit);
-    if (threadIdx.x & (kWarpThreads - 1) == kWarpThreads - 1) {
+    if ((threadIdx.x & (kWarpThreads - 1)) == kWarpThreads - 1) {
       // Last thread in warp sets warpBase to warp bit count.
       *detail::warpBase(smem) = threadFirstBit + count;
     }
