@@ -79,6 +79,27 @@ loadBits64(void const* p, uint32_t bitIdx, uint32_t width) {
   return (static_cast<uint64_t>(v1 & lowMask<uint32_t>(width - 32)) << 32) | v0;
 }
 
+
+  /// Sets 'bits', 'begin' and 'end' so that 'bits' is aligned at 8.
+inline __device__ void   alignBits(uint64_t* bits, int32_t& begin, int32_t& end) {
+  int32_t align = 7 & reinterpret_cast<uintptr_t>(bits);
+  if (align) {
+    bits = addBytes(bits, -align);
+    begin += align * 8;
+    end += align * 8;
+  }
+}
+
+inline __device__ void   alignBits(const uint64_t* bits, int32_t& begin, int32_t& end) {
+  int32_t align = 7 & reinterpret_cast<uintptr_t>(bits);
+  if (align) {
+    bits = addBytes(bits, -align);
+    begin += align * 8;
+    end += align * 8;
+  }
+}
+
+  
 /**
  * Invokes a function for each batch of bits (partial or full words)
  * in a given range.
@@ -103,7 +124,7 @@ inline __device__ void forEachWord(
   int32_t lastWord = end & ~63L;
   if (lastWord < firstWord) {
     partialWordFunc(
-		    lastWord / 64, lowMask(end - lastWord) & highMask<uint64_t>(firstWord - begin));
+		    lastWord / 64, lowMask<uint64_t>(end - lastWord) & highMask<uint64_t>(firstWord - begin));
     return;
   }
   if (begin != firstWord) {
@@ -117,10 +138,10 @@ inline __device__ void forEachWord(
   }
 }
 
-
-  
+  /// 
 inline int32_t __device__ countBits(const uint64_t* bits, int32_t begin, int32_t end) {
   int32_t count = 0;
+  alignBits(bits, begin, end);
   forEachWord(
       begin,
       end,
@@ -258,30 +279,31 @@ __device__ void scatterBitsDevice(
   /// ordinal of the non-null corresponding to the thread. Must be
   /// called on all threads of the TB. 'nonNullOffset' is added to the returned index. 'nonNullOffset' is incremented by the number of non-null rows in this set of 256 rows if numRows == 256. This can be called on a loop where each iteration processes 256 consecutive rows and nonNullOffset c carries the offset between iterations.
   inline __device__ int32_t
-nonNullIndex256(int32_t base, char* nulls, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
-  int32_t group = threadIdx.x / 32;
-  uint32_t bits = threadIdx.x < numRows ? unalignedLoad32(base + group * 4) : 0;
-  if (threadIdx.x = 32 * group) {
+nonNullIndex256(char* nulls, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
+    constexpr int32_t kWarpThreads = 32;
+    int32_t group = threadIdx.x / 32;
+  uint32_t bits = threadIdx.x < numRows ? unalignedLoad32(nulls + group * 4) : 0;
+  if (threadIdx.x == 32 * group) {
     smem[group] = __popc(bits);
   }
   __syncthreads();
   if (threadIdx.x < 32) {
-    using Scan = cub::WarpScan<int32_t, 8>;
-    int32_t count = threadIdx.x < 8 ? smem[threadIdx.x] : 0;
+    using Scan = cub::WarpScan<uint32_t, 8>;
+    uint32_t count = threadIdx.x < (blockDim.x / kWarpThreads) ? smem[threadIdx.x] : 0;
     if (threadIdx.x == 0) {
       count += nonNullOffset;
     }
     uint32_t start;
-    Scan(*reinterpret_cast<typename Scan::TempStorage*>(smem)).ExclusiveSum(count, start);
-    if (threadIdx.x < 8) {
+    Scan(*reinterpret_cast<Scan::TempStorage*>(smem)).ExclusiveSum(count, start);
+    if (threadIdx.x < blockDim.x / kWarpThreads) {
       smem[threadIdx.x] = start;
-      if (threadIdx.x == 7 && numRows == 256) {
+      if (threadIdx.x == (blockDim.x / kWarpThreads) - 1 && numRows == 256) {
 	nonNullOffset = start + count;
       }
     }
   }
   __syncthreads();
-  if (bits & (1 << threadIdx & 31)) {
+  if (bits & (1 << (threadIdx.x & 31))) {
     return smem[group] + __popc(bits & lowMask<uint32_t>(threadIdx.x & 31));
   } else {
     return -1;
@@ -298,10 +320,12 @@ nonNullIndex256(int32_t base, char* nulls, int32_t numRows, int32_t& nonNullOffs
   /// offset of the first row of the batch of 256 in 'rows', so it has
   /// 0, 256, 512.. in consecutive calls.
   inline __device__ int32_t
-  nonNullIndex256Sparse(int32_t base, char* nulls, int32_t* rows, int32_t rowOffset, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
+  nonNullIndex256Sparse(char* nulls, int32_t* rows, int32_t rowOffset, int32_t numRows, int32_t& nonNullOffset, int32_t* smem) {
+    constexpr int32_t kWarpThreads = 32;
+    using Scan32 = cub::WarpScan<uint32_t>;
     auto rowIdx = rowOffset + threadIdx.x;
     bool isNull = true;
-    int32_t nonNullsBelow = 0;
+    uint32_t nonNullsBelow = 0;
     if (rowIdx < numRows) {
       bool isNull = isBitSet(nulls, rows[rowIdx]);
       nonNullsBelow = isNull;
@@ -321,7 +345,7 @@ nonNullIndex256(int32_t base, char* nulls, int32_t numRows, int32_t& nonNullOffs
       }
       using Scan8 = cub::WarpScan<int32_t, 8>;
       int32_t sum = 0;
-      Scan8(detail::warpScanTemp(smem)).ExclusiveSum(start, sum);
+      Scan8(*reinterpret_cast<Scan8::TempStorage*>(smem)).ExclusiveSum(start, sum);
       if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
 	*nonNullOffset = start + sum;
       }

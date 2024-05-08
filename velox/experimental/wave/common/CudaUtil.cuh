@@ -46,8 +46,19 @@ constexpr T __device__ __host__ lowMask(int32_t bits) {
 
 template <typename T>
 constexpr inline __device__ __host__ T highMask(int32_t bits) {
-  return lowMask(bits) << ((sizeof(T) * 8) - bits);
+  return lowMask<T>(bits) << ((sizeof(T) * 8) - bits);
 }
+
+template <typename T>
+inline T* __device__ __host__ addBytes(T* ptr, int bytes) {
+  return reinterpret_cast<T*>(reinterpret_cast<char*>(ptr) + bytes);
+}
+
+template <typename T>
+inline const T* __device__ __host__  addBytes(const T* ptr, int bytes) {
+  return reinterpret_cast<const T*>(reinterpret_cast<const char*>(ptr) + bytes);
+}
+
 
 __device__ __host__ inline int
 memcmp(const void* lhs, const void* rhs, size_t n) {
