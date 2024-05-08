@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/Bits.cuh"
+#include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
@@ -490,7 +490,7 @@ void BlockTestStream::rowAllocatorTest(
 #define UPDATE_CASE(name, func, smem)                                      \
   void __global__ name##Kernel(TestingRow* rows, HashProbe* probe) {       \
     func(rows, probe);                                                     \
-    __syncthreads(); \
+    __syncthreads();                                                       \
   }                                                                        \
                                                                            \
   void BlockTestStream::name(TestingRow* rows, HashRun& run) {             \
@@ -573,12 +573,13 @@ void BlockTestStream::updateSum1Part(TestingRow* rows, HashRun& run) {
   CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void scatterBitsKernel(int32_t numSource,
+__global__ void scatterBitsKernel(
+    int32_t numSource,
     int32_t numTarget,
     const char* source,
     const uint64_t* targetMask,
-  char* target,
-				  int32_t* temp) {
+    char* target,
+    int32_t* temp) {
   if (!temp) {
     extern __shared__ __align__(16) char smem[];
     temp = reinterpret_cast<int32_t*>(smem);
@@ -587,21 +588,25 @@ __global__ void scatterBitsKernel(int32_t numSource,
   __syncthreads();
 }
 
-  //    static
-  int32_t BlockTestStream::scatterBitsSize(int32_t blockSize) {
-    return scatterBitsDeviceSize(blockSize);
-  }
+//    static
+int32_t BlockTestStream::scatterBitsSize(int32_t blockSize) {
+  return scatterBitsDeviceSize(blockSize);
+}
 
-
-  void BlockTestStream::scatterBits(int32_t numSource,
+void BlockTestStream::scatterBits(
+    int32_t numSource,
     int32_t numTarget,
     const char* source,
     const uint64_t* targetMask,
-  char* target,
-				    int32_t* temp) {
-    scatterBitsKernel<<<1, 256, temp ? 0 : scatterBitsDeviceSize(256), stream_->stream>>>(numSource, numTarget, source, targetMask, target, temp);
-  }
-
+    char* target,
+    int32_t* temp) {
+  scatterBitsKernel<<<
+      1,
+      256,
+      temp ? 0 : scatterBitsDeviceSize(256),
+      stream_->stream>>>(
+      numSource, numTarget, source, targetMask, target, temp);
+}
 
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndicesKernel);

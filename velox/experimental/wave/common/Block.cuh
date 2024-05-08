@@ -59,7 +59,7 @@ boolBlockToIndices(Getter getter, T start, T* indices, void* shmem, T& size) {
   T aggregate;
   BlockScanT(*temp).ExclusiveSum(data, data, aggregate);
   if (flag) {
-    indices[data[0]] = threadIdx.x + start; 
+    indices[data[0]] = threadIdx.x + start;
   }
   if (threadIdx.x == 0) {
     size = aggregate;

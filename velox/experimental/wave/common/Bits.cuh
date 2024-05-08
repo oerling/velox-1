@@ -24,7 +24,8 @@ namespace facebook::velox::wave {
 // From libcudf
 inline __device__ uint32_t unalignedLoad32(void const* p) {
   uint32_t ofs = 3 & reinterpret_cast<uintptr_t>(p);
-  auto const* p32 = reinterpret_cast<uint32_t const*>(reinterpret_cast<uintptr_t>(p) - ofs);
+  auto const* p32 =
+      reinterpret_cast<uint32_t const*>(reinterpret_cast<uintptr_t>(p) - ofs);
   uint32_t v = p32[0];
   return (ofs) ? __funnelshift_r(v, p32[1], ofs * 8) : v;
 }
@@ -32,7 +33,8 @@ inline __device__ uint32_t unalignedLoad32(void const* p) {
 /// From libcudf
 inline __device__ uint64_t unalignedLoad64(void const* p) {
   uint32_t ofs = 3 & reinterpret_cast<uintptr_t>(p);
-  auto const* p32 = reinterpret_cast<uint32_t const*>(reinterpret_cast<uintptr_t>(p) - ofs);
+  auto const* p32 =
+      reinterpret_cast<uint32_t const*>(reinterpret_cast<uintptr_t>(p) - ofs);
   uint32_t v0 = p32[0];
   uint32_t v1 = p32[1];
   if (ofs) {
@@ -42,14 +44,15 @@ inline __device__ uint64_t unalignedLoad64(void const* p) {
   return (((uint64_t)v1) << 32) | v0;
 }
 
-  // Loads uint32 at bit offset 'bits' from 'p' at 'width' bits.
-  inline __device__ uint32_t loadBits32(void const* p, uint32_t bitIdx, int32_t width) {
-    uint32_t bytes = bitIdx / 8;
-    uint32_t bit = bitIdx & 7;
-    auto uptr = reinterpret_cast<uintptr_t>(p) + bytes;
-    uint32_t ofs = 3 & uptr;
-    bit += ofs * 8;
-    auto const* p32 = reinterpret_cast<uint32_t const*>(uptr - ofs);
+// Loads uint32 at bit offset 'bits' from 'p' at 'width' bits.
+inline __device__ uint32_t
+loadBits32(void const* p, uint32_t bitIdx, int32_t width) {
+  uint32_t bytes = bitIdx / 8;
+  uint32_t bit = bitIdx & 7;
+  auto uptr = reinterpret_cast<uintptr_t>(p) + bytes;
+  uint32_t ofs = 3 & uptr;
+  bit += ofs * 8;
+  auto const* p32 = reinterpret_cast<uint32_t const*>(uptr - ofs);
   uint32_t v = p32[0];
   uint32_t mask = lowMask<uint32_t>(width);
   if (bit + width < 32) {
@@ -58,11 +61,12 @@ inline __device__ uint64_t unalignedLoad64(void const* p) {
   return (__funnelshift_r(v, p32[1], bit)) & mask;
 }
 
-inline __device__ uint64_t loadBits64(void const* p, uint32_t bitIdx, uint32_t width) {
-    uint32_t bytes = bitIdx / 8;
-    uint32_t bit = bitIdx & 7;
-    auto uptr = reinterpret_cast<uintptr_t>(p) + bytes;
-    uint32_t ofs = (3 & uptr);
+inline __device__ uint64_t
+loadBits64(void const* p, uint32_t bitIdx, uint32_t width) {
+  uint32_t bytes = bitIdx / 8;
+  uint32_t bit = bitIdx & 7;
+  auto uptr = reinterpret_cast<uintptr_t>(p) + bytes;
+  uint32_t ofs = (3 & uptr);
   auto const* p32 = reinterpret_cast<uint32_t const*>(uptr - ofs);
   bit += ofs * 8;
   uint32_t v0 = p32[0];
@@ -74,11 +78,9 @@ inline __device__ uint64_t loadBits64(void const* p, uint32_t bitIdx, uint32_t w
   return (static_cast<uint64_t>(v1 & lowMask<uint32_t>(width - 32)) << 32) | v0;
 }
 
-  
 inline int32_t __device__ __host__ scatterBitsDeviceSize(int32_t blockSize) {
   // One int32 per warp + one int32_t.
-  return 
-    sizeof(int32_t) * (1 + (blockSize / 32));
+  return sizeof(int32_t) * (1 + (blockSize / 32));
 }
 
 namespace detail {
@@ -116,7 +118,6 @@ inline __device__ auto* warpScanTemp(void* smem) {
 }
 } // namespace detail
 
-
 /// Sets 'target' so that a 0 bit in 'mask' is 0 and a 1 bit in 'mask' is the
 /// nth bit in 'source', where nth is the number of set bits in 'mask' below th
 /// target bit. 'mask' and 'target' must be 8 byte aligned. 'source' needs no
@@ -150,8 +151,7 @@ __device__ void scatterBitsDevice(
       }
     }
     uint32_t threadFirstBit = 0;
-    Scan32(*detail::warpScanTemp(smem))
-        .ExclusiveSum(count, threadFirstBit);
+    Scan32(*detail::warpScanTemp(smem)).ExclusiveSum(count, threadFirstBit);
     if ((threadIdx.x & (kWarpThreads - 1)) == kWarpThreads - 1) {
       // Last thread in warp sets warpBase to warp bit count.
       *detail::warpBase(smem) = threadFirstBit + count;
@@ -159,21 +159,22 @@ __device__ void scatterBitsDevice(
 
     __syncthreads();
     if (threadIdx.x < kWarpThreads) {
-      uint32_t start = (threadIdx.x < blockDim.x / kWarpThreads)
-          ? smem[threadIdx.x]
-          : 0;
+      uint32_t start =
+          (threadIdx.x < blockDim.x / kWarpThreads) ? smem[threadIdx.x] : 0;
       Scan32(*detail::warpScanTemp(smem)).ExclusiveSum(start, start);
       if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
-	// The last thread records total sum of bits in smem[blockDim.x / 32].
-	smem[blockDim.x / kWarpThreads] = start + smem[(blockDim.x / kWarpThreads) - 1];
+        // The last thread records total sum of bits in smem[blockDim.x / 32].
+        smem[blockDim.x / kWarpThreads] =
+            start + smem[(blockDim.x / kWarpThreads) - 1];
       }
       if (threadIdx.x < blockDim.x / kWarpThreads) {
-	smem[threadIdx.x] = start;
-    }
+        smem[threadIdx.x] = start;
+      }
     }
     __syncthreads();
     // Each thread knows its range in source and target.
-    int32_t sourceBit = sourceBitBase + *detail::warpBase(smem) + threadFirstBit;
+    int32_t sourceBit =
+        sourceBitBase + *detail::warpBase(smem) + threadFirstBit;
     for (auto bit = 0; bit < bitsForThread; bit += 64) {
       uint64_t maskWord;
       if (bit + 64 <= bitsForThread) {
@@ -184,19 +185,19 @@ __device__ void scatterBitsDevice(
       }
       int2 result;
       result.x = detail::scatterInWord(
-				       static_cast<uint32_t>(maskWord),
+          static_cast<uint32_t>(maskWord),
           reinterpret_cast<const uint32_t*>(source),
-				       sourceBit);
+          sourceBit);
       result.y = detail::scatterInWord(
           maskWord >> 32, reinterpret_cast<const uint32_t*>(source), sourceBit);
       reinterpret_cast<int2*>(target)[firstTargetIdx + (bit / 64)] = result;
     }
-// All threads increment the count of consumed source bits from smem.
- sourceBitBase += smem[blockDim.x / kWarpThreads];
-    }
+    // All threads increment the count of consumed source bits from smem.
+    sourceBitBase += smem[blockDim.x / kWarpThreads];
+  }
 }
 
-  #if 0
+#if 0
   /// Identifies threads that have a non-null value in a 256 thread
   /// block. If the thread falls on a null, -1 is returned, else the
   /// ordinal of the non-null corresponding to the thread. Must be
@@ -229,6 +230,5 @@ nonNullIndex256(int32_t base, char* nulls, int32_t* next, int32_t* smem) {
   }
 }
 
-  
 #endif
 } // namespace facebook::velox::wave
