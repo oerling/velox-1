@@ -608,6 +608,23 @@ void BlockTestStream::scatterBits(
       numSource, numTarget, source, targetMask, target, temp);
 }
 
+  void __global__ nonNullIndexKernel(char* nulls, int32_t* rows, int32_t numRows, int32_t* indices, int32_t* temp) {
+    for (auto i = 0; i < numRows; i += blockDim.x) {
+      auto last = min(i + 256, numRows);
+      if (rows[last - 1] - rows[i] == last - i - 1) {
+	indices[i + threadIdx.x] = nonNullIndex256(nulls + (i / 8), rows[i], last - i, temp[0], temp + 1);
+      } else {
+	indices[i + threadIdx.x] = nonNullIndex256Sparse(nulls + (i / 8), rows, i, last, temp[0], temp + 1);
+      }
+    }
+    __syncthreads();
+  }
+  
+  void BlockTestStream::nonNullIndex(char* nulls, int32_t* rows, int32_t numRows, int32_t* indices, int32_t* temp) {
+  nonNullIndexKernel<<<1, 256, 0, stream->stream>>>(nulls, rows, numRows, indices, temp);
+}
+
+
 REGISTER_KERNEL("testSort", testSort);
 REGISTER_KERNEL("boolToIndices", boolToIndicesKernel);
 REGISTER_KERNEL("bool256ToIndices", bool256ToIndicesKernel);

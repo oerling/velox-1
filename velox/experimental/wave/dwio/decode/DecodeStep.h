@@ -22,6 +22,26 @@
 
 namespace facebook::velox::wave {
 
+  enum class NullMode : uint8_t {
+    kDenseNonNull,
+      kSparseNonNull,
+      kDenseNullable,
+      kSparseNullable
+  };
+
+  enum class WaveFilterKind : uint8_t {
+    kNone,
+      kNotNull,
+      kNull,
+      kRange,
+      kIn
+  };
+
+struct WaveFilterBase {
+  void* data[2];
+};
+
+  
 /// Instructions for GPU decode.  This can be decoding,
 /// or pre/post processing other than decoding.
 enum class DecodeStep {
@@ -63,6 +83,32 @@ struct GpuDecode {
   // The operation to perform. Decides which branch of the union to use.
   DecodeStep step;
 
+  /// If false, implies a not null filter. If there is a filter, specifies whether nulls pass.
+  bool nullsAllowed{true};
+
+  WaveFilterKind filterKind{kNone};
+
+  NullMode nullMode;
+  
+  /// Number of rows to decode. Either row number or index into 'rows' if 'rows' is set.
+  int32_t numRows{0};
+  
+  /// If results will be scattered because of nulls, this is the bitmap with a 0 for null.
+  char* nulls{nullptr};
+
+  // If rows are sparsely decoded, this is the array of row numbers to extract. The numbers are in terms of nullable rows.
+  int32_t* rows{nullptr};
+
+  /// Row numbers that pass 'filter'. nullptr if no filter.
+  int32_t* resultRows{nullptr};
+  
+  /// Result nulls.
+  char* resultNulls{nullptr};
+
+  /// Result array. nullptr if filter only.
+  void* result{nullptr};
+  
+  
   struct Trivial {
     // Type of the input and result data.
     WaveTypeKind dataType;

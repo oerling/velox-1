@@ -22,6 +22,29 @@
 
 namespace facebook::velox::wave {
 
+
+template <typename T, typename U>
+inline void __device__ setBit(T* bits, U index, bool bit = true) {
+  constexpr int32_t kShift = sizeof(T) == 1
+      ? 3
+      : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
+  constexpr U kMask = (static_cast<U>(1) << kShift) - 1;
+  if (bit == true) {
+    bits[index >> kShift] |= static_cast<T>(1) << (index & kMask);
+  } else {
+    bits[index >> kShift] &= (static_cast<T>(1) << ~(index & kMask));
+  }
+}
+
+template <typename T, typename U>
+inline bool __device__ isBitSet(T* bits, U index) {
+  constexpr int32_t kShift = sizeof(T) == 1
+      ? 3
+      : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;
+  constexpr U kMask = (static_cast<U>(1) << kShift) - 1;
+  return (bits[index >> kShift] & static_cast<T>(1) << (index & kMask)) != 0;
+}
+  
 // From libcudf
 inline __device__ uint32_t unalignedLoad32(void const* p) {
   uint32_t ofs = 3 & reinterpret_cast<uintptr_t>(p);
@@ -330,9 +353,9 @@ nonNullIndex256(char* nulls, int32_t numRows, int32_t& nonNullOffset, int32_t* s
       bool isNull = isBitSet(nulls, rows[rowIdx]);
       nonNullsBelow = isNull;
       int32_t previousRow = rowIdx == 0 ? 0 : rows[rowIdx - 1];
-      nonNullsBelow += countBits(nulls, previousRow + 1, rows[rowIdx]);
+      nonNullsBelow += countBits(reinterpret_cast<uint64_t*>(nulls), previousRow + 1, rows[rowIdx]);
     }
-    Scan32(detail::warpScanTemp()).InclusiveSum(nonNullsBelow, nonNullsBelow);
+    Scan32(*detail::warpScanTemp(smem)).InclusiveSum(nonNullsBelow, nonNullsBelow);
     if ((threadIdx.x & (kWarpThreads - 1)) == kWarpThreads - 1) {
       // The last thread of the warp writes warp total.
       smem[threadIdx.x / kWarpThreads] = nonNullsBelow;
@@ -347,7 +370,7 @@ nonNullIndex256(char* nulls, int32_t numRows, int32_t& nonNullOffset, int32_t* s
       int32_t sum = 0;
       Scan8(*reinterpret_cast<Scan8::TempStorage*>(smem)).ExclusiveSum(start, sum);
       if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
-	*nonNullOffset = start + sum;
+	nonNullOffset = start + sum;
       }
       if (threadIdx.x < blockDim.x / kWarpThreads) {
 	smem[threadIdx.x] = sum;
