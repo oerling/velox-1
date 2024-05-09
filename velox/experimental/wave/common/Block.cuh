@@ -72,6 +72,8 @@ inline int32_t __device__ __host__ bool256ToIndicesSize() {
       33 * sizeof(uint16_t);
 }
 
+constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
+
 /// Returns indices of set bits for 256 one byte flags. 'getter8' is
 /// invoked for 8 flags at a time, with the ordinal of the 8 byte
 /// flags word as argument, so that an index of 1 means flags
@@ -284,4 +286,30 @@ void __device__ partitionRows(
   __syncthreads();
 }
 
+namespace detail {
+bool isLastInWarp() {
+  return (threadIdx.x & (kWarpThreads - 1)) == (kWarpThreads - 1);
+}
+
+template <typename T, int32_t kBlockSize>
+inline __device__ T exclusiveSum(T input, T* total, T* temp) {
+  using Scan = cub::WarpScan<T>;
+  T sum;
+  Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).exclusiveSum(input, sum);
+  if (isLastInWarp()) {
+    temp[threadIdx.x / kWarpThreads] = input + sum;
+  }
+  __syncthreads();
+  constexpr kNumWarps = kBlockSize / kWarpThreads;
+  using InnerScan = cub::WarpScan<T, kNumWarps>;
+  T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
+  InnerScan(*reinterpret_cast<InnerScan::TempStorage*>(temp)).ExclusiveSum(warpSum, warpSum);
+  if (threadIdx.x < kNumWarps) {
+    temp[threadIdx.x] = warpSum;
+  }
+  __syncthreads();
+  sum += temp[threadIdx.x / kWarpThreads];
+  
+}
+  
 } // namespace facebook::velox::wave
