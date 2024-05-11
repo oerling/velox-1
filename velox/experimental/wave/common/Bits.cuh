@@ -399,8 +399,13 @@ inline __device__ int32_t nonNullIndex256Sparse(
     Scan8(*reinterpret_cast<Scan8::TempStorage*>(temp))
         .ExclusiveSum(start, sum);
     if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
+      // The last sum thread increments the running count of non-nulls
+      // by the block total. It adds the optional extraNonNulls to the
+      // total between the barriers. 'extraNonNulls' or the running
+      // non-null count do not affect the result of the 256 lanes of
+      // this.
       if (extraNonNulls) {
-        sum += *extraNonNulls;
+        start += *extraNonNulls;
         *extraNonNulls = 0;
       }
       *nonNullOffset += start + sum;

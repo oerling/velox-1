@@ -632,7 +632,7 @@ void __global__ nonNullIndexKernel(
         // If the next 256 rows are dense, then add the non-nulls between the
         // last of the sparse and te first of hte dense.
         if (isDense(rows, last, nextLast)) {
-          temp[1] = countBits(nulls, rows[last], rows[last + 1]);
+          temp[1] = countBits(reinterpret_cast<uint64_t*>(nulls), rows[last - 1] + 1, rows[last]);
         }
       }
       indices[i + threadIdx.x] =
