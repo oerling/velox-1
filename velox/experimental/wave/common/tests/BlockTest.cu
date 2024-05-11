@@ -609,19 +609,32 @@ void BlockTestStream::scatterBits(
 }
 
   void __global__ nonNullIndexKernel(char* nulls, int32_t* rows, int32_t numRows, int32_t* indices, int32_t* temp) {
+    if (threadIdx.x == 0) {
+      temp[0] = 0;
+      temp[1] = 0;
+    }
+    __syncthreads();
     for (auto i = 0; i < numRows; i += blockDim.x) {
       auto last = min(i + 256, numRows);
-      if (rows[last - 1] - rows[i] == last - i - 1) {
-	indices[i + threadIdx.x] = nonNullIndex256(nulls + (i / 8), rows[i], last - i, temp[0], temp + 1);
+      if (isDense(rows, i, last)) {
+      indices[i + threadIdx.x] = nonNullIndex256(nulls, rows[i], last - i, temp, temp + 1);
       } else {
-	indices[i + threadIdx.x] = nonNullIndex256Sparse(nulls + (i / 8), rows, i, last, temp[0], temp + 1);
+	// If a non-contiguous run is followed by a contiguous run, add the non-nulls after between the runs to the total.
+	if (threadIdx.x == 0) {
+	  int32_t nextLast = min(last + 256, numRows);
+	  // If the next 256 rows are dense, then add the non-nulls between the last of the sparse and te first of hte dense. 
+	  if (isDense(rows, last, nextLast)) {
+	    temp[1] = countBits(nulls, rows[last], rows[last + 1]);
+	  }
+	}
+      indices[i + threadIdx.x] = nonNullIndex256Sparse(nulls, rows, i, last,  temp, temp + 1, temp + 2);
       }
     }
     __syncthreads();
   }
   
   void BlockTestStream::nonNullIndex(char* nulls, int32_t* rows, int32_t numRows, int32_t* indices, int32_t* temp) {
-  nonNullIndexKernel<<<1, 256, 0, stream->stream>>>(nulls, rows, numRows, indices, temp);
+  nonNullIndexKernel<<<1, 256, 0, stream_->stream>>>(nulls, rows, numRows, indices, temp);
 }
 
 
