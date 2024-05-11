@@ -55,10 +55,9 @@ inline T* __device__ __host__ addBytes(T* ptr, int bytes) {
 }
 
 template <typename T>
-inline const T* __device__ __host__  addBytes(const T* ptr, int bytes) {
+inline const T* __device__ __host__ addBytes(const T* ptr, int bytes) {
   return reinterpret_cast<const T*>(reinterpret_cast<const char*>(ptr) + bytes);
 }
-
 
 __device__ __host__ inline int
 memcmp(const void* lhs, const void* rhs, size_t n) {

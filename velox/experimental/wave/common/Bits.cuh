@@ -18,11 +18,10 @@
 
 #include <cstdint>
 #include <cub/warp/warp_scan.cuh>
-#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Block.cuh"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 namespace facebook::velox::wave {
-
 
 template <typename T, typename U>
 inline void __device__ setBit(T* bits, U index, bool bit = true) {
@@ -45,7 +44,7 @@ inline bool __device__ isBitSet(T* bits, U index) {
   constexpr U kMask = (static_cast<U>(1) << kShift) - 1;
   return (bits[index >> kShift] & (static_cast<T>(1) << (index & kMask))) != 0;
 }
-  
+
 // From libcudf
 inline __device__ uint32_t unalignedLoad32(void const* p) {
   uint32_t ofs = 3 & reinterpret_cast<uintptr_t>(p);
@@ -103,9 +102,8 @@ loadBits64(void const* p, uint32_t bitIdx, uint32_t width) {
   return (static_cast<uint64_t>(v1 & lowMask<uint32_t>(width - 32)) << 32) | v0;
 }
 
-
-  /// Sets 'bits', 'begin' and 'end' so that 'bits' is aligned at 8.
-inline __device__ void   alignBits(uint64_t* bits, int32_t& begin, int32_t& end) {
+/// Sets 'bits', 'begin' and 'end' so that 'bits' is aligned at 8.
+inline __device__ void alignBits(uint64_t* bits, int32_t& begin, int32_t& end) {
   int32_t align = 7 & reinterpret_cast<uintptr_t>(bits);
   if (align) {
     bits = addBytes(bits, -align);
@@ -114,7 +112,8 @@ inline __device__ void   alignBits(uint64_t* bits, int32_t& begin, int32_t& end)
   }
 }
 
-inline __device__ void   alignBits(const uint64_t* bits, int32_t& begin, int32_t& end) {
+inline __device__ void
+alignBits(const uint64_t* bits, int32_t& begin, int32_t& end) {
   int32_t align = 7 & reinterpret_cast<uintptr_t>(bits);
   if (align) {
     bits = addBytes(bits, -align);
@@ -123,7 +122,6 @@ inline __device__ void   alignBits(const uint64_t* bits, int32_t& begin, int32_t
   }
 }
 
-  
 /**
  * Invokes a function for each batch of bits (partial or full words)
  * in a given range.
@@ -148,7 +146,9 @@ inline __device__ void forEachWord(
   int32_t lastWord = end & ~63L;
   if (lastWord < firstWord) {
     partialWordFunc(
-		    lastWord / 64, lowMask<uint64_t>(end - lastWord) & highMask<uint64_t>(firstWord - begin));
+        lastWord / 64,
+        lowMask<uint64_t>(end - lastWord) &
+            highMask<uint64_t>(firstWord - begin));
     return;
   }
   if (begin != firstWord) {
@@ -162,8 +162,9 @@ inline __device__ void forEachWord(
   }
 }
 
-  /// 
-inline int32_t __device__ countBits(const uint64_t* bits, int32_t begin, int32_t end) {
+///
+inline int32_t __device__
+countBits(const uint64_t* bits, int32_t begin, int32_t end) {
   int32_t numBits = end - begin;
   if (numBits == 0) {
     return 0;
@@ -179,9 +180,7 @@ inline int32_t __device__ countBits(const uint64_t* bits, int32_t begin, int32_t
       [&count, bits](int32_t idx, uint64_t mask) {
         count += __popcll(bits[idx] & mask);
       },
-      [&count, bits](int32_t idx) {
-        count += __popcll(bits[idx]);
-      });
+      [&count, bits](int32_t idx) { count += __popcll(bits[idx]); });
   return count;
 }
 
@@ -304,19 +303,28 @@ __device__ void scatterBitsDevice(
   }
 }
 
-  /// True if rows[i...last-1] are all consecutive.
-  inline __device__ bool isDense(const int32_t* rows, int32_t i, int32_t last) {
-    return rows[last - 1] - rows[i] == last - i - 1;
-      }
-  
-  /// Identifies threads that have a non-null value in a 256 thread
-  /// block. Consecutive threads process consecutive values. If the thread falls on a null, -1 is returned, else the
-  /// ordinal of the non-null corresponding to the thread. Must be
-  /// called on all threads of the TB. 'nonNullOffset' is added to the returned index. 'nonNullOffset' is incremented by the number of non-null rows in this set of 256 rows if numRows == 256. This can be called on a loop where each iteration processes 256 consecutive rows and nonNullOffset c carries the offset between iterations.
-inline __device__ int32_t
-nonNullIndex256(char* nulls, int32_t bitOffset, int32_t numRows, int32_t* nonNullOffset, int32_t* temp) {
+/// True if rows[i...last-1] are all consecutive.
+inline __device__ bool isDense(const int32_t* rows, int32_t i, int32_t last) {
+  return rows[last - 1] - rows[i] == last - i - 1;
+}
+
+/// Identifies threads that have a non-null value in a 256 thread
+/// block. Consecutive threads process consecutive values. If the thread falls
+/// on a null, -1 is returned, else the ordinal of the non-null corresponding to
+/// the thread. Must be called on all threads of the TB. 'nonNullOffset' is
+/// added to the returned index. 'nonNullOffset' is incremented by the number of
+/// non-null rows in this set of 256 rows if numRows == 256. This can be called
+/// on a loop where each iteration processes 256 consecutive rows and
+/// nonNullOffset c carries the offset between iterations.
+inline __device__ int32_t nonNullIndex256(
+    char* nulls,
+    int32_t bitOffset,
+    int32_t numRows,
+    int32_t* nonNullOffset,
+    int32_t* temp) {
   int32_t group = threadIdx.x / 32;
-  uint32_t bits = threadIdx.x < numRows ? loadBits32(nulls, bitOffset + group * 32, 32) : 0;
+  uint32_t bits =
+      threadIdx.x < numRows ? loadBits32(nulls, bitOffset + group * 32, 32) : 0;
   if (threadIdx.x == kWarpThreads * group) {
     temp[group] = __popc(bits);
   }
@@ -324,77 +332,88 @@ nonNullIndex256(char* nulls, int32_t bitOffset, int32_t numRows, int32_t* nonNul
   __syncthreads();
   if (threadIdx.x < kWarpThreads) {
     using Scan = cub::WarpScan<uint32_t, 8>;
-    uint32_t count = threadIdx.x < (blockDim.x / kWarpThreads) ? temp[threadIdx.x] : 0;
+    uint32_t count =
+        threadIdx.x < (blockDim.x / kWarpThreads) ? temp[threadIdx.x] : 0;
     uint32_t start;
-    Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).ExclusiveSum(count, start);
+    Scan(*reinterpret_cast<Scan::TempStorage*>(temp))
+        .ExclusiveSum(count, start);
     if (threadIdx.x < blockDim.x / kWarpThreads) {
       temp[threadIdx.x] = start;
       if (threadIdx.x == (blockDim.x / kWarpThreads) - 1 && numRows == 256) {
-	*nonNullOffset += start + count;
+        *nonNullOffset += start + count;
       }
     }
   }
   __syncthreads();
   if (bits & (1 << (threadIdx.x & 31))) {
-    return temp[group] + previousOffset + __popc(bits & lowMask<uint32_t>(threadIdx.x & 31));
+    return temp[group] + previousOffset +
+        __popc(bits & lowMask<uint32_t>(threadIdx.x & 31));
   } else {
     return -1;
   }
 }
 
-  /// Like nonNullIndex256 but takes an array of non-contiguous but
-  /// ascending row numbers. 'nulls' must have enough valid bits to
-  /// cover rows[numRows-1] bits. Each thread returns -1 if
-  /// rows[threadIdx.x] falls on a null and the corresponding index in
-  /// non-null rows otherwise. This can be called multiple times on
-  /// consecutive groups of 256 row numbers. the non-null offset of
-  /// the last row is carried in 'non-nulloffset'. 'rowOffset' is the
-  /// offset of the first row of the batch of 256 in 'rows', so it has
-  /// 0, 256, 512.. in consecutive calls.
-  inline __device__ int32_t
-  nonNullIndex256Sparse(char* nulls, int32_t* rows, int32_t rowOffset, int32_t numRows, int32_t* nonNullOffset, int32_t* extraNonNulls, int32_t* temp) {
-    using Scan32 = cub::WarpScan<uint32_t>;
-    auto rowIdx = rowOffset + threadIdx.x;
-    bool isNull = true;
-    uint32_t nonNullsBelow = 0;
-    if (rowIdx < numRows) {
-      isNull = !isBitSet(nulls, rows[rowIdx]);
-      nonNullsBelow = !isNull;
-      int32_t previousRow = rowIdx == 0 ? 0 : rows[rowIdx - 1];
-      nonNullsBelow += countBits(reinterpret_cast<uint64_t*>(nulls), previousRow + 1, rows[rowIdx]);
-    }
-    Scan32(*detail::warpScanTemp(temp)).InclusiveSum(nonNullsBelow, nonNullsBelow);
-    if (detail::isLastInWarp()) {
-      // The last thread of the warp writes warp total.
-      temp[threadIdx.x / kWarpThreads] = nonNullsBelow;
-    }
-    int32_t previousOffset = *nonNullOffset;
-    __syncthreads();
-    if (threadIdx.x < kWarpThreads) {
-      int32_t start = 0;
-      if (threadIdx.x < blockDim.x / kWarpThreads) {
-	start = temp[threadIdx.x];
-      }
-      using Scan8 = cub::WarpScan<int32_t, 8>;
-      int32_t sum = 0;
-      Scan8(*reinterpret_cast<Scan8::TempStorage*>(temp)).ExclusiveSum(start, sum);
-      if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
-	if (extraNonNulls) {
-	  sum += *extraNonNulls;
-	  *extraNonNulls = 0;
-	}
-	*nonNullOffset += start + sum;
-      }
-      if (threadIdx.x < blockDim.x / kWarpThreads) {
-	temp[threadIdx.x] = sum;
-      }
-    }
-    __syncthreads();
-    if (isNull) {
-      return -1;
-    }
-    return temp[threadIdx.x / kWarpThreads] + previousOffset + nonNullsBelow - 1;
+/// Like nonNullIndex256 but takes an array of non-contiguous but
+/// ascending row numbers. 'nulls' must have enough valid bits to
+/// cover rows[numRows-1] bits. Each thread returns -1 if
+/// rows[threadIdx.x] falls on a null and the corresponding index in
+/// non-null rows otherwise. This can be called multiple times on
+/// consecutive groups of 256 row numbers. the non-null offset of
+/// the last row is carried in 'non-nulloffset'. 'rowOffset' is the
+/// offset of the first row of the batch of 256 in 'rows', so it has
+/// 0, 256, 512.. in consecutive calls.
+inline __device__ int32_t nonNullIndex256Sparse(
+    char* nulls,
+    int32_t* rows,
+    int32_t rowOffset,
+    int32_t numRows,
+    int32_t* nonNullOffset,
+    int32_t* extraNonNulls,
+    int32_t* temp) {
+  using Scan32 = cub::WarpScan<uint32_t>;
+  auto rowIdx = rowOffset + threadIdx.x;
+  bool isNull = true;
+  uint32_t nonNullsBelow = 0;
+  if (rowIdx < numRows) {
+    isNull = !isBitSet(nulls, rows[rowIdx]);
+    nonNullsBelow = !isNull;
+    int32_t previousRow = rowIdx == 0 ? 0 : rows[rowIdx - 1];
+    nonNullsBelow += countBits(
+        reinterpret_cast<uint64_t*>(nulls), previousRow + 1, rows[rowIdx]);
   }
-  
+  Scan32(*detail::warpScanTemp(temp))
+      .InclusiveSum(nonNullsBelow, nonNullsBelow);
+  if (detail::isLastInWarp()) {
+    // The last thread of the warp writes warp total.
+    temp[threadIdx.x / kWarpThreads] = nonNullsBelow;
+  }
+  int32_t previousOffset = *nonNullOffset;
+  __syncthreads();
+  if (threadIdx.x < kWarpThreads) {
+    int32_t start = 0;
+    if (threadIdx.x < blockDim.x / kWarpThreads) {
+      start = temp[threadIdx.x];
+    }
+    using Scan8 = cub::WarpScan<int32_t, 8>;
+    int32_t sum = 0;
+    Scan8(*reinterpret_cast<Scan8::TempStorage*>(temp))
+        .ExclusiveSum(start, sum);
+    if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
+      if (extraNonNulls) {
+        sum += *extraNonNulls;
+        *extraNonNulls = 0;
+      }
+      *nonNullOffset += start + sum;
+    }
+    if (threadIdx.x < blockDim.x / kWarpThreads) {
+      temp[threadIdx.x] = sum;
+    }
+  }
+  __syncthreads();
+  if (isNull) {
+    return -1;
+  }
+  return temp[threadIdx.x / kWarpThreads] + previousOffset + nonNullsBelow - 1;
+}
 
 } // namespace facebook::velox::wave

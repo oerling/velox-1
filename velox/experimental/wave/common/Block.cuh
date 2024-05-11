@@ -290,12 +290,13 @@ namespace detail {
 inline __device__ bool isLastInWarp() {
   return (threadIdx.x & (kWarpThreads - 1)) == (kWarpThreads - 1);
 }
-}
+} // namespace detail
 template <typename T, int32_t kBlockSize>
 inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp)).exclusiveSum(input, sum);
+  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
+      .exclusiveSum(input, sum);
   if (detail::isLastInWarp()) {
     temp[threadIdx.x / kWarpThreads] = input + sum;
   }
@@ -303,13 +304,13 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using InnerScan = cub::WarpScan<T, kNumWarps>;
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
-  InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp)).ExclusiveSum(warpSum, warpSum);
+  InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp))
+      .ExclusiveSum(warpSum, warpSum);
   if (threadIdx.x < kNumWarps) {
     temp[threadIdx.x] = warpSum;
   }
   __syncthreads();
   sum += temp[threadIdx.x / kWarpThreads];
-  
 }
-  
+
 } // namespace facebook::velox::wave
