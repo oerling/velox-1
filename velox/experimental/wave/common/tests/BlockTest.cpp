@@ -454,16 +454,17 @@ TEST_F(BlockTest, nonNull) {
   WaveBufferPtr nullsBuffer = arena_->allocate<uint64_t>(bits::nwords(kNumRows));
   WaveBufferPtr indicesBuffer = arena_->allocate<int32_t>(kNumRows);
   WaveBufferPtr rowsBuffer = arena_->allocate<int32_t>(kNumRows);
-  WaveBufferPtr temp = arena_->allocate<int32_t>(10);
+  WaveBufferPtr temp = arena_->allocate<int32_t>(32);
   auto nulls = nullsBuffer->as<uint64_t>();
   const char* text = "les loopiettes, les loopiettes, comme elles sont chouettes"
     " parfois ci, parfois ca, parfois tu 'l sais pas";
   auto len = strlen(text) - 8;
   for (auto i = 0; i < kNumRows; i+= 4096) {
+    // Every run of 4096 bits, i.e. 64 words has 16 nulls, 16 nonnulls and 32 mostly nonn-nulls.
     auto run = nulls + (i / 64);
     memset(run, 0, 128);
       memset(run + 16, 0xff, 128);
-    for (auto j = 64; j < 128; ++j) {
+    for (auto j = 32; j < 64; ++j) {
       run[j] = bits::hashMix(1, *reinterpret_cast<const int64_t*>(text + (j % len))) | bits::hashMix(0x1008, *reinterpret_cast<const int64_t*>(text + (i % len)));
     }
   }
@@ -498,9 +499,9 @@ TEST_F(BlockTest, nonNull) {
   stream.wait();
   for (auto i = 0; i < numRows; ++i) {
     if (result[i] == -1) {
-      ASSERT_FALSE(bits::isBitSet(nulls, rows[i]));
+      ASSERT_FALSE(bits::isBitSet(nulls, rows[i])) << "i=" << i << " rows[i]=" << rows[i];
     } else {
-      ASSERT_EQ(result[i], rows[i] - nullsBelow(rows[i]));
+      ASSERT_EQ(result[i], rows[i] - nullsBelow(rows[i]))  << "i=" << i << " rows[i]=" << rows[i];;
     }
   }
 }

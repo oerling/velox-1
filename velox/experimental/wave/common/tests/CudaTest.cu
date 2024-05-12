@@ -26,7 +26,7 @@ incOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
     for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
          index += stride) {
-      numbers[index] += index & 31;
+      ++numbers[index];
     }
     __syncthreads();
   }

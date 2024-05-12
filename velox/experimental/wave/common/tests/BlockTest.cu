@@ -630,7 +630,7 @@ void __global__ nonNullIndexKernel(
       if (threadIdx.x == 0) {
         int32_t nextLast = min(last + 256, numRows);
         // If the next 256 rows are dense, then add the non-nulls between the
-        // last of the sparse and te first of hte dense.
+        // last of the sparse and the first of the dense.
         if (isDense(rows, last, nextLast)) {
           temp[1] = countBits(reinterpret_cast<uint64_t*>(nulls), rows[last - 1] + 1, rows[last]);
         }
