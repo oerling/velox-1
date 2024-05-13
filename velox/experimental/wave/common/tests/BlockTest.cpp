@@ -454,7 +454,7 @@ TEST_F(BlockTest, nonNull) {
   WaveBufferPtr nullsBuffer = arena_->allocate<uint64_t>(bits::nwords(kNumRows));
   WaveBufferPtr indicesBuffer = arena_->allocate<int32_t>(kNumRows);
   WaveBufferPtr rowsBuffer = arena_->allocate<int32_t>(kNumRows);
-  WaveBufferPtr temp = arena_->allocate<int32_t>(32);
+  WaveBufferPtr temp = arena_->allocate<int32_t>(1000);
   auto nulls = nullsBuffer->as<uint64_t>();
   const char* text = "les loopiettes, les loopiettes, comme elles sont chouettes"
     " parfois ci, parfois ca, parfois tu 'l sais pas";
@@ -468,6 +468,8 @@ TEST_F(BlockTest, nonNull) {
       run[j] = bits::hashMix(1, *reinterpret_cast<const int64_t*>(text + (j % len))) | bits::hashMix(0x1008, *reinterpret_cast<const int64_t*>(text + (i % len)));
     }
   }
+  // Add a single non-null before the first accessed row.
+  nulls[0] |= 1;
   auto rows = rowsBuffer->as<int32_t>();
   int32_t row = 2;
   int32_t numRows = 0;
@@ -494,8 +496,9 @@ TEST_F(BlockTest, nonNull) {
 		    };
   
   auto result = indicesBuffer->as<int32_t>();
+  auto rawTemp = temp->as<int32_t>();
   BlockTestStream stream;
-  stream.nonNullIndex(reinterpret_cast<char*>(nulls), rows, numRows, result, temp->as<int32_t>());
+  stream.nonNullIndex(reinterpret_cast<char*>(nulls), rows, numRows, result, rawTemp);
   stream.wait();
   for (auto i = 0; i < numRows; ++i) {
     if (result[i] == -1) {

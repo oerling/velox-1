@@ -396,7 +396,6 @@ void BlockTestStream::hashTest(
     GpuHashTableBase* table,
     HashRun& run,
     HashCase mode) {
-  constexpr int32_t kBlockSize = 256;
   int32_t shared = 0;
   if (mode == HashCase::kGroup) {
     shared = GpuHashTable::updatingProbeSharedSize();
@@ -615,7 +614,7 @@ void __global__ nonNullIndexKernel(
     int32_t* indices,
     int32_t* temp) {
   if (threadIdx.x == 0) {
-    temp[0] = 0;
+    temp[0] = countBits(reinterpret_cast<uint64_t*>(nulls), 0, rows[0]);
     temp[1] = 0;
   }
   __syncthreads();
@@ -623,7 +622,7 @@ void __global__ nonNullIndexKernel(
     auto last = min(i + 256, numRows);
     if (isDense(rows, i, last)) {
       indices[i + threadIdx.x] =
-          nonNullIndex256(nulls, rows[i], last - i, temp, temp + 1);
+          nonNullIndex256(nulls, rows[i], last - i, temp, temp + 2);
     } else {
       // If a non-contiguous run is followed by a contiguous run, add the
       // non-nulls after between the runs to the total.

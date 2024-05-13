@@ -187,3 +187,24 @@ TEST_F(TableScanTest, filter) {
       splits,
       "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
+
+TEST_F(TableScanTest, filterInScan) {
+  auto type =
+      ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  auto vectors = makeVectors(type, 1, 1'000);
+  for (auto& vector : vectors) {
+    makeNotNull(vector, 1000000000);
+  }
+  auto splits = makeTable("test", vectors);
+  createDuckDbTable(vectors);
+
+  auto plan = PlanBuilder(pool_.get())
+    .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
+                  .project({"c0", "c1 + 100000000 as c1", "c2", "c3"})
+                  .project({"c0", "c1", "c2 + 1", "c3", "c3 + 2"})
+                  .planNode();
+  auto task = assertQuery(
+      plan,
+      splits,
+      "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
+}

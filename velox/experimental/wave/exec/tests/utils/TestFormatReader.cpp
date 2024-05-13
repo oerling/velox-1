@@ -50,6 +50,7 @@ void TestFormatData::startOp(
   if (!queued_) {
     queued_ = true;
     auto step = std::make_unique<GpuDecode>();
+    step->setFilter(op->reader->scanSpec()->filter());
     if (op.waveVector) {
       op.waveVector->resize(op.rows.size(), false);
     }

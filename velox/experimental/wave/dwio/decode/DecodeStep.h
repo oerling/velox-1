@@ -38,9 +38,21 @@ namespace facebook::velox::wave {
   };
 
 struct WaveFilterBase {
-  void* data[2];
+  union {
+    int64_t int64Range[2];
+    float floatRange[2];
+    double doubleRange[2];
+    struct {
+      int32_t size;
+      void* table;
+    } in;
+  } _;
+  // flags for float/double range.
+  bool lowerUnbounded;
+  bool upperUnbounded;
+  bool lowerExclusive;
+  bool upperExclusive;
 };
-
   
 /// Instructions for GPU decode.  This can be decoding,
 /// or pre/post processing other than decoding.
@@ -78,6 +90,8 @@ enum class DecodeStep {
   kUnsupported,
 };
 
+ class ColumnReader;
+ 
 /// Describes a decoding loop's input and result disposition.
 struct GpuDecode {
   // The operation to perform. Decides which branch of the union to use.
@@ -89,6 +103,12 @@ struct GpuDecode {
   WaveFilterKind filterKind{kNone};
 
   NullMode nullMode;
+
+  /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges have different encodings. The first chunk's encoding is in 'data'. The next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has its own 'nulls'. The input row numbers and output data/row numbers are given by the first GpuDecode.
+  uint8_t numChunks{1};
+
+  /// If there are multiple chunks, this is an array of starts of non-first chunks.
+  int32_t* chunkBounds;
   
   /// Number of rows to decode. Either row number or index into 'rows' if 'rows' is set.
   int32_t numRows{0};
@@ -259,6 +279,9 @@ struct GpuDecode {
   /// Returns the amount f shared memory for standard size thread block for
   /// 'step'.
   int32_t sharedMemorySize() const;
+
+  /// Sets the pushed down filter from ScanSpec of 'reader'. Uses 'stream' to setup device-side data like hash tables.
+  void setFilter(ColumnReader* reader, Stream* stream);
 };
 
 struct DecodePrograms {

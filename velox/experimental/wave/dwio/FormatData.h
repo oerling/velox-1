@@ -129,7 +129,7 @@ class ColumnReader;
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
 // needs the nulls of the struct but no other parts to decode.
-enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
+  enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
 
 /// A generic description of a decode step. The actual steps are
 /// provided by FormatData specializations but this captures
