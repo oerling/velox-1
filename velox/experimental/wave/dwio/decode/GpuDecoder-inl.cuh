@@ -525,6 +525,24 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   }
 }
 
+template <int kBlockSize>
+__device__ void countBits(GpuDecode::CountBits& op) {
+  auto numRows = op.numRows;
+  auto* status = op.status;
+  auto numCounts = roundUp(numRows, kBlockSize) / kBlockSize;
+  for (auto base = 0; base < numCounts; base += kBlockSize) {
+    auto idx = threadIdx.x + base;
+    if (idx < numCounts) {
+      // Every thread writes a row count and errors for kBlockSize rows. All
+      // errors are cleared and all row counts except the last are kBlockSize.
+      status[idx].numRows =
+          idx < numCounts - 1 ? kBlockSize : numRows - idx * kBlockSize;
+      memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
+    }
+  }
+}
+
+  
 template <int32_t kBlockSize>
 __device__ void decodeSwitch(GpuDecode& op) {
   switch (op.step) {

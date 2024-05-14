@@ -66,7 +66,7 @@ ReadStream::ReadStream(
     for (auto i = 0; i < children.size(); ++i) {
     auto* child = reader_->children()[i];
     // TODO:  Must  propagate the incoming nulls from outer to inner structs. griddize must decode nulls if present.
-    child->formatData()->griddize(blocksize, numBlocks, deviceStaging_, currentStaging_, programs_, waveStream);
+    child->formatData()->griddize(blocksize, numBlocks, deviceStaging_, resultStaging_, currentStaging_, programs_, waveStream);
   }
     if (!programs_.empty()) {
 currentStaging_->transfer(*this, *stream_);
@@ -74,9 +74,6 @@ currentStaging_->transfer(*this, *stream_);
       launchDecode(programs_, arena_, extra, waveStream);
     }
 }
-
-
-
   
 void ReadStream::makeOps() {
   auto& children = reader_->children();

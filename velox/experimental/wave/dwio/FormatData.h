@@ -34,6 +34,8 @@ class WaveStream;
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
+  Staging(void* hostData, int32_t bytes) : hostData(hostData), bytes(bytes) {}
+
   // Pointer to data in pageable host memory, if applicable.
   const void* hostData{nullptr};
 
@@ -125,6 +127,22 @@ class ResultStaging {
 using RowSet = folly::Range<const int32_t*>;
 class ColumnReader;
 
+  /// Information that allows a column to be read in parallel independent thread blocks. This represents an array of starting points inside the encoded column.
+  struct ColumnGridInfo {
+    /// Number of independently schedulable blocks.
+    int32_t numBlocks;
+
+    ///Device readable nulls as a flat bitmap. 1 is non-null. nullptr mena means non-null.
+    char* nulls{nullptr};
+
+    /// Device side array of non-null counts. Decoding for values for the ith block starts at index 'nonNullCount[i - 1]' in encoded values. nullptr if non nulls.
+    int32_t* numNonNull{nullptr};
+
+
+    
+    
+  };
+  
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
@@ -222,6 +240,7 @@ class FormatData {
   /// no-op if there are less than 'blockSize' rows left.
   virtual void griddize(int32_t blockSize,
 			int32_t numBlocks,
+			ResultStaging& deviceStaging,
 			ResultStaging& resultStaging,
 			SplitStaging& staging,
 			DecodePrograms& program,

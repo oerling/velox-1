@@ -43,6 +43,15 @@ class TestFormatData : public wave::FormatData {
     queued_ = false;
   }
 
+  void griddize(int32_t blockSize,
+			int32_t numBlocks,
+			ResultStaging& deviceStaging,
+			ResultStaging& resultStaging,
+			SplitStaging& staging,
+			DecodePrograms& programs,
+			ReadStream& stream) override;
+
+  
   void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,
@@ -58,11 +67,13 @@ class TestFormatData : public wave::FormatData {
 
   const test::Column* column_;
   bool staged_{false};
+  bool nullsStaged_{false};
   bool queued_{false};
   int32_t numStaged_{0};
   int32_t currentRow_{0};
   // The device side data area start, set after the staged transfer is done.
   void* deviceBuffer_{nullptr};
+  GridInfo grid_;
 };
 
 class TestFormatParams : public wave::FormatParams {

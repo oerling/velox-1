@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/exec/tests/utils/TestFormatReader.h"
 #include "velox/experimental/wave/dwio/StructColumnReader.h"
 
+DECLARE_int32(wave_reader_rows_per_tb);
+
 namespace facebook::velox::wave::test {
 
 using common::Subfield;
@@ -30,6 +32,32 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
       operand, stripe_->columns[0]->numValues, column);
 }
 
+TestFormatReader::stageNulls() {
+  if (nullsStaged_) {
+    return;
+  }
+  nullsStaged_ = true;
+  auto* nulls = column->nulls.get();
+  if (!nulls) {
+    return;
+  }
+  Staging staging(nulls_->values->as<char>(), bits::nwords(column_->nulls->numValues) * sizeof(uint64_t));
+  auto id = splitStaging.add(staging);
+  splitStaging.registerPointer(id, &grid_.nulls);
+  sums.decodeStep = auto sums = std::make_unique<GpuDecode>();
+  
+}
+  
+  void TestFormatReader::griddize(int32_t blockSize,
+			int32_t numBlocks,
+			ResultStaging& deviceStaging,
+			ResultStaging& resultStaging,
+			SplitStaging& staging,
+			DecodePrograms& programs,
+				  ReadStream& stream) {
+    stageNulls(column, splitStaging;);
+
+  }
 void TestFormatData::startOp(
     ColumnOp& op,
     const ColumnOp* previousFilter,
@@ -40,6 +68,7 @@ void TestFormatData::startOp(
     ReadStream& stream) {
   VELOX_CHECK_NOT_NULL(column_);
   BufferId id = kNoBufferId;
+  stageNulls(column.get(), splitStaging);
   if (!staged_) {
     staged_ = true;
     Staging staging;

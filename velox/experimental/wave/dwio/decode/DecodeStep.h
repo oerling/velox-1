@@ -89,6 +89,7 @@ enum class DecodeStep {
   kFlatMap,
   kFlatMapNode,
   kRowCountNoFilter,
+    kCountBits,
   kUnsupported,
 };
 
@@ -266,6 +267,13 @@ struct GpuDecode {
     BlockStatus* status;
   };
 
+  struct CountBits {
+    const char* bits;
+    int32_t numBits;
+    int32_t resultstride;
+    int32_t* result;
+  };
+  
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;
@@ -276,6 +284,7 @@ struct GpuDecode {
     Rle rle;
     MakeScatterIndices makeScatterIndices;
     RowCountNoFilter rowCountNoFilter;
+    CountBits countBits;
   } data;
 
   /// Returns the amount f shared memory for standard size thread block for
