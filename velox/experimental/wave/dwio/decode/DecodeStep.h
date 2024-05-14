@@ -30,11 +30,13 @@ namespace facebook::velox::wave {
   };
 
   enum class WaveFilterKind : uint8_t {
-    kNone,
+    kAlwaysTrue,
       kNotNull,
       kNull,
-      kRange,
-      kIn
+      kBigintRange,
+      kDoubleRange,
+      kFloatRange,
+      kBigintValues
   };
 
 struct WaveFilterBase {
@@ -45,7 +47,7 @@ struct WaveFilterBase {
     struct {
       int32_t size;
       void* table;
-    } in;
+    } values;
   } _;
   // flags for float/double range.
   bool lowerUnbounded;

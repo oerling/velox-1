@@ -120,6 +120,11 @@ class ReadStream : public Executable {
   bool makePrograms(bool& needSync);
 
  private:
+  // Computes starting points for multiple TBs per column if more rows are needed than is good per TB.
+  void makeGrid();
+  
+
+
   /// Makes column dependencies.
   void makeOps();
   void makeControl();
@@ -133,7 +138,7 @@ class ReadStream : public Executable {
   // Row numbers to read starting after skipping 'offset_'.
   RowSet rows_;
   std::vector<ColumnOp> ops_;
-  // Cout of KBlockSize blocks in max top level rows.
+  // Count of KBlockSize blocks in max top level rows.
   int32_t numBlocks_{0};
   std::vector<std::unique_ptr<SplitStaging>> staging_;
   SplitStaging* currentStaging_;

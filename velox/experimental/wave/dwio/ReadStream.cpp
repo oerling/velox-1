@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/dwio/StructColumnReader.h"
 
+DEFINE_int32(wave_reader_rows_per_tb, 1024, "Number of items per thread block in Wave reader");
+
 namespace facebook::velox::wave {
 
 void allOperands(
@@ -49,16 +51,54 @@ ReadStream::ReadStream(
   reader_ = columnReader;
   staging_.push_back(std::make_unique<SplitStaging>());
   currentStaging_ = staging_[0].get();
+  makeGrid();
   makeOps();
 }
 
+  void ReadStream::makeGrid() {
+    auto total = reader->formatData()->totalRows();
+    auto blockSize = FLAGS_wave_reader_rows_per_tb;
+    if (total < blockSize) {
+      return;
+    }
+    auto numBlocks = bits::roundUp(total, blockSize) / blockSize;
+    auto& children = reader_->children();
+    for (auto i = 0; i < children.size(); ++i) {
+    auto* child = reader_->children()[i];
+    // TODO:  Must  propagate the incoming nulls from outer to inner structs. griddize must decode nulls if present.
+    child->formatData()->griddize(blocksize, numBlocks, deviceStaging_, currentStaging_, programs_, waveStream);
+  }
+    if (!programs_.empty()) {
+currentStaging_->transfer(*this, *stream_);
+      WaveBufferPtr extra;
+      launchDecode(programs_, arena_, extra, waveStream);
+    }
+}
+
+
+
+  
 void ReadStream::makeOps() {
   auto& children = reader_->children();
   for (auto i = 0; i < children.size(); ++i) {
+    auto* child = reader_->children()[i];
+    if (child->scanSpec().filter()) {
+      filters.push_back(child);
+    }
+  }
+  int32_t filterOpIdx = -1;
+
+  for (auto i = 0; i < children.size(); ++i) {
+    auto* child = reader_->children()[i];
+    if (child->scanSpec().filter()) {
+      continue;
+    }
     ops_.emplace_back();
     auto& op = ops_.back();
-    auto* child = reader_->children()[i];
-    child->makeOp(this, ColumnAction::kValues, offset_, rows_, op);
+    if (filterOpIdx != -1) {
+      op->prerequisite = filterOpIdx;
+    }
+      child->makeOp(this, ColumnAction::kValues, offset_, rows_, op);
   }
 }
 

@@ -129,7 +129,7 @@ class ColumnReader;
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
 // needs the nulls of the struct but no other parts to decode.
-  enum class ColumnAction { kNulls, kFilter, kLengths, kValues };
+  enum class ColumnAction { kNulls = 1, kLengths = 2, kFilter = 4, kValues = 8};
 
 /// A generic description of a decode step. The actual steps are
 /// provided by FormatData specializations but this captures
@@ -176,6 +176,10 @@ class FormatData {
 
   virtual int32_t totalRows() const = 0;
 
+  /// Returns a bitmap of steps that apply to this column. Suppose we have a nullable string with a filter. If the nulls, lengths and characters can all be decoded as fused, this returns kValues. If the nulls and lengths have a non-random access capable encoding and cannot be fused, returns kNulls | kLengths | kValues. If the operation is filter without extracting values, uses kFilter instead of kValues.
+  int32_t neededActions() const = 0;
+
+  
   virtual bool hasNulls() const = 0;
 
   /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the
@@ -204,6 +208,25 @@ class FormatData {
   /// column is in terms of the column, not in terms of top level rows.
   virtual void newBatch(int32_t startRow) = 0;
 
+  /// Schedules operations for preparing the encoded data to be
+  /// consumed in 'numBlocks' parallel blocks of 'blockSize' rows. For
+  /// example, for a column of 11M nullable varints, this with 1024
+  /// blocksize and 2048 blocks, this would count 2M bits and write a
+  /// prefix sum every 1K bits, so that we know the corresponding
+  /// position in the varints for non-nulls. Then for the varints, we
+  /// write the starting offset every 1K nulls, e.g, supposing 2 bytes
+  /// per varint and 800 non-nulls for every 1K bits, we get 0, 1600,
+  /// 3600, ... as starts for the varints. The FormatData stores the
+  /// intermediates. This is a no-op for encodings that are random
+  /// access capable, e.g. non-null bit packings. this is a also a
+  /// no-op if there are less than 'blockSize' rows left.
+  virtual void griddize(int32_t blockSize,
+			int32_t numBlocks,
+			ResultStaging& resultStaging,
+			SplitStaging& staging,
+			DecodePrograms& program,
+			ReadStream& stream) = 0;
+  
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Updates
   /// status of 'op'.
