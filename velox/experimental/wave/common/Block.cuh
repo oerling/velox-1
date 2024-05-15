@@ -291,26 +291,71 @@ inline __device__ bool isLastInWarp() {
   return (threadIdx.x & (kWarpThreads - 1)) == (kWarpThreads - 1);
 }
 } // namespace detail
+
+
+  /// Returns the block wide exclusive sum (sum of 'input' for all
+  /// lanes below threadIdx.x). If 'total' is non-nullptr, the block
+  /// wide sum is returned in '*total'. 'temp' must have
+  /// exclusiveSumTempSize() writable bytes aligned for T.
 template <typename T, int32_t kBlockSize>
 inline __device__ T exclusiveSum(T input, T* total, T* temp) {
+  constexpr kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
-      .exclusiveSum(input, sum);
+  Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).exclusiveSum(input, sum);
+  if (kBlockSize == kWarpThreads) {
+    if (total) {
+      if (threadIdx.x == kWarpThreads - 1) {
+	*total = input + sum;
+      }
+      __syncthreads();
+    }
+    return sum;
+  }
   if (detail::isLastInWarp()) {
     temp[threadIdx.x / kWarpThreads] = input + sum;
-  }
+}
   __syncthreads();
-  constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using InnerScan = cub::WarpScan<T, kNumWarps>;
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
-  InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp))
-      .ExclusiveSum(warpSum, warpSum);
+  T blockSum;
+  InnerScan(*reinterpret_cast<InnerScan::TempStorage*>(temp)).ExclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kNumWarps) {
-    temp[threadIdx.x] = warpSum;
+    temp[threadIdx.x] = blockSum;
+    if (total && threadIdx.x == kNumWarps - 1) {
+      *total = warpSum + blockSum;
+    }
   }
   __syncthreads();
-  sum += temp[threadIdx.x / kWarpThreads];
+  return sum + temp[threadIdx.x / kWarpThreads];
+}
+
+
+  /// Returns the block wide inclusive sum (sum of 'input' for all
+  /// lanes below threadIdx.x). 'temp' must have
+  /// exclusiveSumTempSize() writable bytes aligned for T.
+template <typename T, int32_t kBlockSize>
+inline __device__ T inclusiveSum(T input, T* temp) {
+  constexpr kNumWarps = kBlockSize / kWarpThreads;
+  using Scan = cub::WarpScan<T>;
+  T sum;
+  Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).InclusiveSum(input, sum);
+  if (kBlockSize == kWarpThreads) {
+    return sum;
+  }
+  if (detail::isLastInWarp()) {
+    temp[threadIdx.x / kWarpThreads] = input + sum;
+}
+  __syncthreads();
+  using InnerScan = cub::WarpScan<T, kNumWarps>;
+  T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
+  T blockSum;
+  InnerScan(*reinterpret_cast<InnerScan::TempStorage*>(temp)).ExclusiveSum(warpSum, blockSum);
+  if (threadIdx.x < kNumWarps) {
+    temp[threadIdx.x] = blockSum;
+  }
+  __syncthreads();
+  return sum + temp[threadIdx.x / kWarpThreads];
 }
 
 } // namespace facebook::velox::wave

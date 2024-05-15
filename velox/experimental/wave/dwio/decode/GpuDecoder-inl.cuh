@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cub/cub.cuh> // @manual
+#include "velox/experimental/wave/common/Bits.h"
 
 namespace facebook::velox::wave {
 
@@ -525,23 +526,51 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   }
 }
 
+  template <int32_t kBlockSize, int32_t kWidth>
+  inline __device__ void  reduceCase(int32_t cnt, int32_t nthLoop, int32_t* results, int32_t* temp) {
+    using Reduce = cub::WarpReduce<int32_t, kWidth>;
+    auto sum = Reduce(*reinterpret_cast<Reduce::TempStorage*>(temp)).sum(cnt);
+    constexpr kResultsPerLoop = kBlockSize / kWidth;
+
+    if ((threadIdx.x & lowMask<int32_t>(kWidth)) == 0) {
+      temp[threadIdx.x / kWidth] = sum;
+    }
+    __syncthreads();
+    // Add up the temps.
+
+    int32_t sum = threadIdx.x < kResultsPerLoop ? temp[threadIdx.x] : 0;
+    if (threadIdx.x == 0 && nthLoop > 0) {
+      sum += results[nthLoop * kResultsPerLoop - 1];
+    }
+    auto result = inclusiveSum<kBlockSize/kWidth >(threadIdx.x < kResultsPerloop ? sum : 0);
+    if (threadIdx.x + nthLoop * kResultsPerLoop < numResults) {
+      results[resultIdx] = result;
+    }
+  }
+  
 template <int kBlockSize>
 __device__ void countBits(GpuDecode::CountBits& op) {
-  auto numRows = op.numRows;
-  auto* status = op.status;
-  auto numCounts = roundUp(numRows, kBlockSize) / kBlockSize;
-  for (auto base = 0; base < numCounts; base += kBlockSize) {
-    auto idx = threadIdx.x + base;
-    if (idx < numCounts) {
-      // Every thread writes a row count and errors for kBlockSize rows. All
-      // errors are cleared and all row counts except the last are kBlockSize.
-      status[idx].numRows =
-          idx < numCounts - 1 ? kBlockSize : numRows - idx * kBlockSize;
-      memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
+  auto numBits = op.numBits;
+  bool aligned = (reinterpret_cast<uintptr_t>(op.bits) & 7) == 0;
+  int32_t numWords = roundUp(op.numBits) / 64;
+  int32_t numResults = (numBits - 1) / op.resultStride;
+  o  auto* bits = reinterpret_cast<const uint64_t*>(op.bits);
+  for (auto i = 0; i < numBits; i += 64 * kBlockSize) {
+    int32_t idx = threadIdx.x + i;
+    int32_t cnt = 0;
+    if (idx < numWords) {
+      if (aligned) {
+	cnt = __popcll(bits[idx]);
+      } else {
+	cnt = popcll(unalignedLoad64(bits, idx));
+      }
+    }
+    switch (op.resultStride) {
+    case 256:  reduceCase<kBlockSize, 4>(cnt, numResults, i / (64 * kBlockSize), op.result, temp); break;
+
     }
   }
 }
-
   
 template <int32_t kBlockSize>
 __device__ void decodeSwitch(GpuDecode& op) {

@@ -80,11 +80,12 @@ void ReadStream::makeOps() {
   for (auto i = 0; i < children.size(); ++i) {
     auto* child = reader_->children()[i];
     if (child->scanSpec().filter()) {
-      filters.push_back(child);
+      hasFilters_ = true;
+      filters_.emplace_back();
+      bool filterOnly = !child->scanSpec().keepValues();
+      child->makeOp(this, filterOnly ? ColumnAction::kFilter : ColumnAction::kValues, offset_, rows_, ops_.back());
     }
   }
-  int32_t filterOpIdx = -1;
-
   for (auto i = 0; i < children.size(); ++i) {
     auto* child = reader_->children()[i];
     if (child->scanSpec().filter()) {
@@ -92,9 +93,6 @@ void ReadStream::makeOps() {
     }
     ops_.emplace_back();
     auto& op = ops_.back();
-    if (filterOpIdx != -1) {
-      op->prerequisite = filterOpIdx;
-    }
       child->makeOp(this, ColumnAction::kValues, offset_, rows_, op);
   }
 }
@@ -103,6 +101,24 @@ bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
   needSync = false;
   programs_.clear();
+  ColumnOp* previousFilter = nullptr;
+  if (!filtersDone_ && !filters_.empty()) {
+    // Filters are done consecutively, each TB does all the filters for its range.
+    for (auto& filter : filters_) {
+      filter.reader->formatData()->startOp(          filter,
+          previousFilter,
+          deviceStaging_,
+          resultStaging_,
+          *currentStaging_,
+          programs_,
+          *this);
+      previousFilter = &filter;
+    }
+    filtersDone_ = true;
+    if (!columnsAfterFilters()) {
+      return false;
+    }
+  }
   for (auto i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
     if (op.isFinal) {
@@ -112,7 +128,7 @@ bool ReadStream::makePrograms(bool& needSync) {
         ops_[op.prerequisite].isFinal) {
       op.reader->formatData()->startOp(
           op,
-          nullptr,
+          previousFilter,
           deviceStaging_,
           resultStaging_,
           *currentStaging_,
@@ -128,7 +144,7 @@ bool ReadStream::makePrograms(bool& needSync) {
       allDone = false;
     }
   }
-  if (!hasFilters_ && allDone) {
+  if (filters_.empty() && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
     setCount->data.rowCountNoFilter.numRows = rows_.size();

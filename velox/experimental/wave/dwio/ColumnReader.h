@@ -137,7 +137,10 @@ class ReadStream : public Executable {
 
   // Row numbers to read starting after skipping 'offset_'.
   RowSet rows_;
+  // Non-filter columns.
   std::vector<ColumnOp> ops_;
+  // Filter columns in filter order.
+  std::vector<ColumnOp> filters_;
   // Count of KBlockSize blocks in max top level rows.
   int32_t numBlocks_{0};
   std::vector<std::unique_ptr<SplitStaging>> staging_;
@@ -152,6 +155,7 @@ class ReadStream : public Executable {
   // If no filters, the starting RowSet directly initializes the BlockStatus'es
   // at the end of the ReadStream.
   bool hasFilters_{false};
+  bool filtersDone_{false};
   //  Sequence number of kernel launch.
   int32_t nthWave_{0};
   LaunchControl* control_{nullptr};

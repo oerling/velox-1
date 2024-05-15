@@ -268,10 +268,14 @@ struct GpuDecode {
   };
 
   struct CountBits {
-    const char* bits;
+    const uint8_t* bits;
+    // Number of bits. A count is produced for each run of 'resultStride' bits fully included in 'numBits'. If numBits is 600 and resultStride is 256 then result[0] is the count of ones in the first 256, then result[1] is the count of ones in the first 512 and result[2] is unset.
     int32_t numBits;
+    // 256/512/1024/2048.
     int32_t resultstride;
     int32_t* result;
+    // One int per warp (blockDim.x/32).
+    int32_t* temp;
   };
   
   union {
