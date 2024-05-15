@@ -42,10 +42,10 @@ __host__ __device__ constexpr inline T roundUp(T value, U factor) {
 template <typename T>
 constexpr T __device__ __host__ lowMask(int32_t bits) {
   /****
-   * NVCC BUG: If the special case for 32 is not in, all modes except -G 
+   * NVCC BUG: If the special case for 32 is not in, all modes except -G
    * produce a 0 mask for 32 bits.
    ****/
-return bits == 32 ? 0xffffffff : (static_cast<T>(1) << bits) - 1;
+  return bits == 32 ? 0xffffffff : (static_cast<T>(1) << bits) - 1;
 }
 
 template <typename T>
