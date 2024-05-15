@@ -49,7 +49,8 @@ struct Column {
   /// Frame of reference base for kFlat.
   int64_t baseline{0};
 
-  /// Encoded column with 'numValues' null bits, nullptr if no nulls. If set, 'values' has an entry for each non-null.
+  /// Encoded column with 'numValues' null bits, nullptr if no nulls. If set,
+  /// 'values' has an entry for each non-null.
   std::unique_ptr<Column> nulls;
 };
 
@@ -115,7 +116,6 @@ class Encoder : public EncoderBase {
   void add(T data);
 
   void addNull();
-  
 
   int64_t flatSize();
   int64_t dictSize();

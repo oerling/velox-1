@@ -41,25 +41,28 @@ TestFormatReader::stageNulls() {
   if (!nulls) {
     return;
   }
-  Staging staging(nulls_->values->as<char>(), bits::nwords(column_->nulls->numValues) * sizeof(uint64_t));
+  Staging staging(
+      nulls_->values->as<char>(),
+      bits::nwords(column_->nulls->numValues) * sizeof(uint64_t));
   auto id = splitStaging.add(staging);
   splitStaging.registerPointer(id, &grid_.nulls);
   sums.decodeStep = auto sums = std::make_unique<GpuDecode>();
-  
 }
-  
-  void TestFormatReader::griddize(int32_t blockSize,
-			int32_t numBlocks,
-			ResultStaging& deviceStaging,
-			ResultStaging& resultStaging,
-			SplitStaging& staging,
-			DecodePrograms& programs,
-				  ReadStream& stream) {
-    stageNulls(column, splitStaging;);
 
-  }
+void TestFormatReader::griddize(
+    int32_t blockSize,
+    int32_t numBlocks,
+    ResultStaging& deviceStaging,
+    ResultStaging& resultStaging,
+    SplitStaging& staging,
+    DecodePrograms& programs,
+    ReadStream& stream) {
+  stageNulls(column, splitStaging;);
+}
 
-  bool isDense(RowSet rows) { return rows.back() - rows.front() == rows.size() - 1; }
+bool isDense(RowSet rows) {
+  return rows.back() - rows.front() == rows.size() - 1;
+}
 void TestFormatData::startOp(
     ColumnOp& op,
     const ColumnOp* previousFilter,
@@ -73,34 +76,42 @@ void TestFormatData::startOp(
   stageNulls(column.get(), splitStaging);
   if (!staged_) {
     staged_ = true;
-    Staging staging( column_->values->as<char>(), column_->values->size());
+    Staging staging(column_->values->as<char>(), column_->values->size());
     id = splitStaging.add(staging);
   }
   auto rowsperBlock = FLAGS_wave_rows_per_tb;
-  int32_t bits::roundUp(numBlocks = op->rows.size(), rowsPerBlock) / rowsPerBlock;
+  int32_t bits::roundUp(numBlocks = op->rows.size(), rowsPerBlock) /
+      rowsPerBlock;
   int32_t resultRowsId = -1;
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
-    auto rowsInBlock = std::min<int32_t>(rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
+    auto rowsInBlock = std::min<int32_t>(
+        rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
     auto step = std::make_unique<GpuDecode>();
     step->setFilter(op->reader);
     bool dense = previousFilter == nullptr && isDense(rows);
-    step->nullMode = column_->nulls ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
-      : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
+    step->nullMode = column_->nulls
+        ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
+        : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     if (op.waveVector) {
       if (blockIdx == 0) {
-	op.waveVector->resize(op.rows.size(), false);
+        op.waveVector->resize(op.rows.size(), false);
       }
-      stepp->result = op->waveVector->values<char>() + waveTypeKindSize(columnKind) * blockIdx * rowsPerBlock;
-      step->resultNulls = op->waveVector->nulls() ? op->waveVector->nulls() + rowsPerBlock + blockIdx : nullptr;
+      stepp->result = op->waveVector->values<char>() +
+          waveTypeKindSize(columnKind) * blockIdx * rowsPerBlock;
+      step->resultNulls = op->waveVector->nulls()
+          ? op->waveVector->nulls() + rowsPerBlock + blockIdx
+          : nullptr;
       step->rows = previousFilter ? previousFilter->deviceResult : nullptr;
     }
     if (op->reader->scanSpec().filter()) {
       if (blockIdx == 0) {
-	resultRowsId = deviceStaging->register(op->rows.size() * sizeof(int32_t));
-	deviceStaging.registerPointer(resultRowsId, &step->resultRows);
+        resultRowsId =
+            deviceStaging->register(op->rows.size() * sizeof(int32_t));
+        deviceStaging.registerPointer(resultRowsId, &step->resultRows);
       }
-      step->resultRows = reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
+      step->resultRows =
+          reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
     }
     if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&
@@ -113,9 +124,9 @@ void TestFormatData::startOp(
         step->data.trivial.input = nullptr;
         if (id != kNoBufferId) {
           splitStaging.registerPointer(id, &step->data.trivial.input);
-	  if (blockIdx.x == 0) {
-	    splitStaging.registerPointer(id, &deviceBuffer_);
-	  }
+          if (blockIdx.x == 0) {
+            splitStaging.registerPointer(id, &deviceBuffer_);
+          }
         } else {
           step->data.trivial.input = deviceBuffer_;
         }
@@ -149,11 +160,11 @@ void TestFormatData::startOp(
       program.programs.emplace_back();
       steps = &programs.back();
     } else {
-      steps = & programs[blockIdx];
+      steps = &programs[blockIdx];
     }
     steps->push_back(std::move(step));
   }
-}    
+}
 
 class TestStructColumnReader : public StructColumnReader {
  public:

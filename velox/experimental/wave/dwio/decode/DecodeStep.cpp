@@ -14,31 +14,31 @@
  * limitations under the License.
  */
 
-
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 
-
 namespace facebook::velox::wave {
 
-  void   GpuDecoder::setFilter(ColumnReader* reader, Stream* stream) {
-    auto* veloxFilter = reader->scanSpec().filter();
-    if (!veloxFilter) {
-      filterKind = WaveFilterKind::kAlwaysTrue;
-      return;
-    }
-    switch (veloxFilter->kind()) {
+void GpuDecoder::setFilter(ColumnReader* reader, Stream* stream) {
+  auto* veloxFilter = reader->scanSpec().filter();
+  if (!veloxFilter) {
+    filterKind = WaveFilterKind::kAlwaysTrue;
+    return;
+  }
+  switch (veloxFilter->kind()) {
     case common::FilterKind::kBigintRange: {
       filterKind = WaveFilterKind::kBigintRange;
       nullsAllowed = veloxFilter->nullsAllowed();
-      filter._.int64Range[0] = reinterpret_cast<common::BigintRange>(veloxFilter)->lower();
-      filter._.int64Range[1] = reinterpret_cast<common::BigintRange>(veloxFilter)->upper();
+      filter._.int64Range[0] =
+          reinterpret_cast<common::BigintRange>(veloxFilter)->lower();
+      filter._.int64Range[1] =
+          reinterpret_cast<common::BigintRange>(veloxFilter)->upper();
       break;
     }
 
-    default: VELOX_UNSUPPORTED("Unsupported filter kind", filter->kind());
-    }
+    default:
+      VELOX_UNSUPPORTED("Unsupported filter kind", filter->kind());
   }
-  
 }
 
+} // namespace facebook::velox::wave

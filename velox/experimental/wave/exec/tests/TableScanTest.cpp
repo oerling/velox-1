@@ -199,7 +199,7 @@ TEST_F(TableScanTest, filterInScan) {
   createDuckDbTable(vectors);
 
   auto plan = PlanBuilder(pool_.get())
-    .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
+                  .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
                   .project({"c0", "c1 + 100000000 as c1", "c2", "c3"})
                   .project({"c0", "c1", "c2 + 1", "c3", "c3 + 2"})
                   .planNode();

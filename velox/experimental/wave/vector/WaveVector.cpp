@@ -38,8 +38,7 @@ int32_t waveTypeKindSize(WaveTypeKind waveKind) {
 
   return VELOX_DYNAMIC_TYPE_DISPATCH(kindSize, kind);
 }
-  
-  
+
 WaveVector::WaveVector(
     const TypePtr& type,
     GpuArena& arena,

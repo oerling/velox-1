@@ -127,27 +127,28 @@ class ResultStaging {
 using RowSet = folly::Range<const int32_t*>;
 class ColumnReader;
 
-  /// Information that allows a column to be read in parallel independent thread blocks. This represents an array of starting points inside the encoded column.
-  struct ColumnGridInfo {
-    /// Number of independently schedulable blocks.
-    int32_t numBlocks;
+/// Information that allows a column to be read in parallel independent thread
+/// blocks. This represents an array of starting points inside the encoded
+/// column.
+struct ColumnGridInfo {
+  /// Number of independently schedulable blocks.
+  int32_t numBlocks;
 
-    ///Device readable nulls as a flat bitmap. 1 is non-null. nullptr mena means non-null.
-    char* nulls{nullptr};
+  /// Device readable nulls as a flat bitmap. 1 is non-null. nullptr mena means
+  /// non-null.
+  char* nulls{nullptr};
 
-    /// Device side array of non-null counts. Decoding for values for the ith block starts at index 'nonNullCount[i - 1]' in encoded values. nullptr if non nulls.
-    int32_t* numNonNull{nullptr};
+  /// Device side array of non-null counts. Decoding for values for the ith
+  /// block starts at index 'nonNullCount[i - 1]' in encoded values. nullptr if
+  /// non nulls.
+  int32_t* numNonNull{nullptr};
+};
 
-
-    
-    
-  };
-  
 // Specifies an action on a column. A column is not indivisible. It
 // has parts and another column's decode may depend on one part of
 // another column but not another., e.g. a child of a nullable struct
 // needs the nulls of the struct but no other parts to decode.
-  enum class ColumnAction { kNulls = 1, kLengths = 2, kFilter = 4, kValues = 8};
+enum class ColumnAction { kNulls = 1, kLengths = 2, kFilter = 4, kValues = 8 };
 
 /// A generic description of a decode step. The actual steps are
 /// provided by FormatData specializations but this captures
@@ -194,10 +195,14 @@ class FormatData {
 
   virtual int32_t totalRows() const = 0;
 
-  /// Returns a bitmap of steps that apply to this column. Suppose we have a nullable string with a filter. If the nulls, lengths and characters can all be decoded as fused, this returns kValues. If the nulls and lengths have a non-random access capable encoding and cannot be fused, returns kNulls | kLengths | kValues. If the operation is filter without extracting values, uses kFilter instead of kValues.
+  /// Returns a bitmap of steps that apply to this column. Suppose we have a
+  /// nullable string with a filter. If the nulls, lengths and characters can
+  /// all be decoded as fused, this returns kValues. If the nulls and lengths
+  /// have a non-random access capable encoding and cannot be fused, returns
+  /// kNulls | kLengths | kValues. If the operation is filter without extracting
+  /// values, uses kFilter instead of kValues.
   int32_t neededActions() const = 0;
 
-  
   virtual bool hasNulls() const = 0;
 
   /// Enqueues read of 'numRows' worth of null flags.  Returns the id of the
@@ -238,14 +243,15 @@ class FormatData {
   /// intermediates. This is a no-op for encodings that are random
   /// access capable, e.g. non-null bit packings. this is a also a
   /// no-op if there are less than 'blockSize' rows left.
-  virtual void griddize(int32_t blockSize,
-			int32_t numBlocks,
-			ResultStaging& deviceStaging,
-			ResultStaging& resultStaging,
-			SplitStaging& staging,
-			DecodePrograms& program,
-			ReadStream& stream) = 0;
-  
+  virtual void griddize(
+      int32_t blockSize,
+      int32_t numBlocks,
+      ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
+      SplitStaging& staging,
+      DecodePrograms& program,
+      ReadStream& stream) = 0;
+
   /// Adds the next read of the column. If the column is a filter depending on
   /// another filter, the previous filter is given on the first call. Updates
   /// status of 'op'.

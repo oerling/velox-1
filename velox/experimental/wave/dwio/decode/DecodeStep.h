@@ -22,22 +22,22 @@
 
 namespace facebook::velox::wave {
 
-  enum class NullMode : uint8_t {
-    kDenseNonNull,
-      kSparseNonNull,
-      kDenseNullable,
-      kSparseNullable
-  };
+enum class NullMode : uint8_t {
+  kDenseNonNull,
+  kSparseNonNull,
+  kDenseNullable,
+  kSparseNullable
+};
 
-  enum class WaveFilterKind : uint8_t {
-    kAlwaysTrue,
-      kNotNull,
-      kNull,
-      kBigintRange,
-      kDoubleRange,
-      kFloatRange,
-      kBigintValues
-  };
+enum class WaveFilterKind : uint8_t {
+  kAlwaysTrue,
+  kNotNull,
+  kNull,
+  kBigintRange,
+  kDoubleRange,
+  kFloatRange,
+  kBigintValues
+};
 
 struct WaveFilterBase {
   union {
@@ -55,7 +55,7 @@ struct WaveFilterBase {
   bool lowerExclusive;
   bool upperExclusive;
 };
-  
+
 /// Instructions for GPU decode.  This can be decoding,
 /// or pre/post processing other than decoding.
 enum class DecodeStep {
@@ -89,49 +89,57 @@ enum class DecodeStep {
   kFlatMap,
   kFlatMapNode,
   kRowCountNoFilter,
-    kCountBits,
+  kCountBits,
   kUnsupported,
 };
 
- class ColumnReader;
- 
+class ColumnReader;
+
 /// Describes a decoding loop's input and result disposition.
 struct GpuDecode {
   // The operation to perform. Decides which branch of the union to use.
   DecodeStep step;
 
-  /// If false, implies a not null filter. If there is a filter, specifies whether nulls pass.
+  /// If false, implies a not null filter. If there is a filter, specifies
+  /// whether nulls pass.
   bool nullsAllowed{true};
 
   WaveFilterKind filterKind{kNone};
 
   NullMode nullMode;
 
-  /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges have different encodings. The first chunk's encoding is in 'data'. The next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has its own 'nulls'. The input row numbers and output data/row numbers are given by the first GpuDecode.
+  /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges
+  /// have different encodings. The first chunk's encoding is in 'data'. The
+  /// next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has
+  /// its own 'nulls'. The input row numbers and output data/row numbers are
+  /// given by the first GpuDecode.
   uint8_t numChunks{1};
 
-  /// If there are multiple chunks, this is an array of starts of non-first chunks.
+  /// If there are multiple chunks, this is an array of starts of non-first
+  /// chunks.
   int32_t* chunkBounds;
-  
-  /// Number of rows to decode. Either row number or index into 'rows' if 'rows' is set.
+
+  /// Number of rows to decode. Either row number or index into 'rows' if 'rows'
+  /// is set.
   int32_t numRows{0};
-  
-  /// If results will be scattered because of nulls, this is the bitmap with a 0 for null.
+
+  /// If results will be scattered because of nulls, this is the bitmap with a 0
+  /// for null.
   char* nulls{nullptr};
 
-  // If rows are sparsely decoded, this is the array of row numbers to extract. The numbers are in terms of nullable rows.
+  // If rows are sparsely decoded, this is the array of row numbers to extract.
+  // The numbers are in terms of nullable rows.
   int32_t* rows{nullptr};
 
   /// Row numbers that pass 'filter'. nullptr if no filter.
   int32_t* resultRows{nullptr};
-  
+
   /// Result nulls.
   char* resultNulls{nullptr};
 
   /// Result array. nullptr if filter only.
   void* result{nullptr};
-  
-  
+
   struct Trivial {
     // Type of the input and result data.
     WaveTypeKind dataType;
@@ -269,7 +277,10 @@ struct GpuDecode {
 
   struct CountBits {
     const uint8_t* bits;
-    // Number of bits. A count is produced for each run of 'resultStride' bits fully included in 'numBits'. If numBits is 600 and resultStride is 256 then result[0] is the count of ones in the first 256, then result[1] is the count of ones in the first 512 and result[2] is unset.
+    // Number of bits. A count is produced for each run of 'resultStride' bits
+    // fully included in 'numBits'. If numBits is 600 and resultStride is 256
+    // then result[0] is the count of ones in the first 256, then result[1] is
+    // the count of ones in the first 512 and result[2] is unset.
     int32_t numBits;
     // 256/512/1024/2048.
     int32_t resultstride;
@@ -277,7 +288,7 @@ struct GpuDecode {
     // One int per warp (blockDim.x/32).
     int32_t* temp;
   };
-  
+
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;
@@ -295,7 +306,8 @@ struct GpuDecode {
   /// 'step'.
   int32_t sharedMemorySize() const;
 
-  /// Sets the pushed down filter from ScanSpec of 'reader'. Uses 'stream' to setup device-side data like hash tables.
+  /// Sets the pushed down filter from ScanSpec of 'reader'. Uses 'stream' to
+  /// setup device-side data like hash tables.
   void setFilter(ColumnReader* reader, Stream* stream);
 };
 

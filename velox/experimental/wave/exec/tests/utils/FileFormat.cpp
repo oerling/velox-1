@@ -165,17 +165,18 @@ struct StringWithId {
   int32_t id;
 };
 
-  std::unique_ptr<Column> encodeBits(uint64_t* bits, int32_t numBits, memory::MemoryPool* pool) {
-    auto column = std::make_unique<Column>();
-    column->encoding = kFlat;
-    column->kind = TypeKind::BOOLEAN; 
-    column->numValues = numBits;
-    column->values = AlignedBuffer::allocate<bool>(numBits, pool);
-    memcpy(column->values->asMutable<char>(), bits, bits::nbytes(numBits ));
-    column->bitWidth = 1;
-    return column;
-  }
-  
+std::unique_ptr<Column>
+encodeBits(uint64_t* bits, int32_t numBits, memory::MemoryPool* pool) {
+  auto column = std::make_unique<Column>();
+  column->encoding = kFlat;
+  column->kind = TypeKind::BOOLEAN;
+  column->numValues = numBits;
+  column->values = AlignedBuffer::allocate<bool>(numBits, pool);
+  memcpy(column->values->asMutable<char>(), bits, bits::nbytes(numBits));
+  column->bitWidth = 1;
+  return column;
+}
+
 template <typename T>
 std::unique_ptr<Column>
 directInts(std::vector<T>& ints, T min, T max, memory::MemoryPool* pool) {
@@ -313,7 +314,7 @@ void Encoder<T>::addNull() {
     bits::setBit(nulls_.data(), count_ - 1, bits::kNull);
   }
 }
-  
+
 template <typename T>
 void Encoder<T>::append(const VectorPtr& data) {
   auto size = data->size();

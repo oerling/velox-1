@@ -43,15 +43,15 @@ class TestFormatData : public wave::FormatData {
     queued_ = false;
   }
 
-  void griddize(int32_t blockSize,
-			int32_t numBlocks,
-			ResultStaging& deviceStaging,
-			ResultStaging& resultStaging,
-			SplitStaging& staging,
-			DecodePrograms& programs,
-			ReadStream& stream) override;
+  void griddize(
+      int32_t blockSize,
+      int32_t numBlocks,
+      ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
+      SplitStaging& staging,
+      DecodePrograms& programs,
+      ReadStream& stream) override;
 
-  
   void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,

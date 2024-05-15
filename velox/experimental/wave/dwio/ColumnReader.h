@@ -120,10 +120,9 @@ class ReadStream : public Executable {
   bool makePrograms(bool& needSync);
 
  private:
-  // Computes starting points for multiple TBs per column if more rows are needed than is good per TB.
+  // Computes starting points for multiple TBs per column if more rows are
+  // needed than is good per TB.
   void makeGrid();
-  
-
 
   /// Makes column dependencies.
   void makeOps();
