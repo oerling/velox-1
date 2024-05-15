@@ -21,6 +21,25 @@
 
 namespace facebook::velox::wave {
 
+template <TypeKind Kind>
+static int32_t kindSize() {
+  return sizeof(typename KindToFlatVector<Kind>::HashRowType);
+}
+
+int32_t waveTypeKindSize(WaveTypeKind waveKind) {
+  TypeKind kind = static_cast<TypeKind>(waveKind);
+  if (kind == TypeKind::VARCHAR || kind == TypeKind::VARBINARY) {
+    // Wave StringView is 8, not 16 bytes.
+    return sizeof(StringView);
+  }
+  if (kind == TypeKind::UNKNOWN) {
+    return sizeof(UnknownValue);
+  }
+
+  return VELOX_DYNAMIC_TYPE_DISPATCH(kindSize, kind);
+}
+  
+  
 WaveVector::WaveVector(
     const TypePtr& type,
     GpuArena& arena,

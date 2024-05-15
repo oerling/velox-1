@@ -78,6 +78,7 @@ void TestFormatData::startOp(
   }
   auto rowsperBlock = FLAGS_wave_rows_per_tb;
   int32_t bits::roundUp(numBlocks = op->rows.size(), rowsPerBlock) / rowsPerBlock;
+  int32_t resultRowsId = -1;
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
     auto rowsInBlock = std::min<int32_t>(rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
     auto step = std::make_unique<GpuDecode>();
@@ -85,11 +86,12 @@ void TestFormatData::startOp(
     bool dense = previousFilter == nullptr && isDense(rows);
     step->nullMode = column_->nulls ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
       : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
+    auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     if (op.waveVector) {
       if (blockIdx == 0) {
 	op.waveVector->resize(op.rows.size(), false);
       }
-      stepp->result = op->waveVector->values()->as<char>() + sizeofType(!!) * blockIdx * rowsPerBlock;
+      stepp->result = op->waveVector->values<char>() + waveTypeKindSize(columnKind) * blockIdx * rowsPerBlock;
       step->resultNulls = op->waveVector->nulls() ? op->waveVector->nulls() + rowsPerBlock + blockIdx : nullptr;
       step->rows = previousFilter ? previousFilter->deviceResult : nullptr;
     }
@@ -100,7 +102,6 @@ void TestFormatData::startOp(
       }
       step->resultRows = reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
     }
-    auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&
           (column_->bitWidth == 32 || column_->bitWidth == 64)) {
@@ -143,11 +144,16 @@ void TestFormatData::startOp(
       VELOX_NYI("Non flat test encoding");
     }
     op.isFinal = true;
-    std::vector<std::unique_ptr<GpuDecode>> steps;
-    steps.push_back(std::move(step));
-    program.programs.push_back(std::move(steps));
+    std::vector<std::unique_ptr<GpuDecode>>* steps;
+    if (!previousFilter) {
+      program.programs.emplace_back();
+      steps = &programs.back();
+    } else {
+      steps = & programs[blockIdx];
+    }
+    steps->push_back(std::move(step));
   }
-}
+}    
 
 class TestStructColumnReader : public StructColumnReader {
  public:
