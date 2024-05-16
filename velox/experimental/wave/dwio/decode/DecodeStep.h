@@ -125,25 +125,37 @@ struct GpuDecode {
    /// Number of rows to decode. if kFilterHits, the previous GpuDecode gives this number in BlockStatus. If 'rows' is set, this is the number of valid elements in 'rows'. If 'rows' is not set, the start is ''baseRow'
    int32_t numRows{0};
 
+   // If rows are densely decoded, this is the first row in terms of nullable rows to decode in this TB.
+   int32_t baseRow{0};
+
+  /// Row count from filter. If a filter precedes this, the row count
+  /// is read from this and 'rows' is set to the result row
+  /// numbers. If this is a filter, the row count is written to
+  /// 'blockStatus' and the row numbers are written to
+  /// 'resultRows'. There is one BlockStatus for each kBlockSize rows
+  /// in the grid. One TB covers 'numRowsPerThread' consecutive
+  /// BlockStatuses. Because the previous filter for the range of rows
+  /// is in the same TB read and write of row count is ordered by
+  /// syncthreads at the end of each filter. The subscript is
+  /// 'nthBlock * numRowsPerThread + <nth loop>'.
+  BlockStatus* blockStatus{nullptr};
   
    // If multiple TBs on the same column and there are nulls, this is the start offset of the TB's range of rows in non-null values. nullptr if no nulls.
    int32_t* nonNullBases{nullptr};
   
    /// If there are multiple chunks, this is an array of starts of non-first
    /// chunks.
-   int32_t* chunkBounds;
+  int32_t* chunkBounds{nullptr};
 
    /// If results will be scattered because of nulls, this is the bitmap with a 0
-   /// for null.
+   /// for null. Subscripted with row number in encoding unit.
    char* nulls{nullptr};
 
-   // If rows are densely decoded, this is the first row in terms of nullable rows to decode in this TB.
-   int32_t baseRow{0};
-  
    // If rows are sparsely decoded, this is the array of row numbers to extract.
    // The numbers are in terms of nullable rows.
    int32_t* rows{nullptr};
-   // Data for pushed down filter. Interpretation depends on 'filterKind'.
+
+  // Data for pushed down filter. Interpretation depends on 'filterKind'.
   WaveFilterBase filter;
   
   /// Row numbers that pass 'filter'. nullptr if no filter.
