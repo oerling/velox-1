@@ -24,7 +24,7 @@
 namespace facebook::velox::wave {
 
 template <typename T, typename U>
-inline void __device__ setBit(T* bits, U index, bool bit = true) {
+inline void __device__ __host__ setBit(T* bits, U index, bool bit = true) {
   constexpr int32_t kShift = sizeof(T) == 1
       ? 3
       : sizeof(T) == 2 ? 4 : sizeof(T) == 4 ? 5 : sizeof(T) == 8 ? 6 : 0;

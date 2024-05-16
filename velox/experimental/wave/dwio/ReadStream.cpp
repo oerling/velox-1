@@ -54,12 +54,10 @@ ReadStream::ReadStream(
   reader_ = columnReader;
   staging_.push_back(std::make_unique<SplitStaging>());
   currentStaging_ = staging_[0].get();
-  makeGrid();
-  makeOps();
 }
 
-void ReadStream::makeGrid() {
-  auto total = reader->formatData()->totalRows();
+  void ReadStream::makeGrid(Stream* stream) {
+  auto total = reader_->formatData()->totalRows();
   auto blockSize = FLAGS_wave_reader_rows_per_tb;
   if (total < blockSize) {
     return;
@@ -71,18 +69,27 @@ void ReadStream::makeGrid() {
     // TODO:  Must  propagate the incoming nulls from outer to inner structs.
     // griddize must decode nulls if present.
     child->formatData()->griddize(
-        blocksize,
+				  blockSize,
         numBlocks,
         deviceStaging_,
         resultStaging_,
-        currentStaging_,
+				  *currentStaging_,
         programs_,
-        waveStream);
+				  *this);
   }
-  if (!programs_.empty()) {
-    currentStaging_->transfer(*this, *stream_);
+  if (!programs_.programs.empty()) {
+    WaveStats& stats = waveStream->stats();
+    stats.bytesToDevice += currentStaging_->bytesToDevice();
+          ++stats.numKernels;
+          stats.numPrograms += programs_.programs.size();
+          stats.numThreads += programs_.programs.size() *
+              std::min<int32_t>(rows_.size(), kBlockSize);
+
+    currentStaging_->transfer(*waveStream, *stream);
     WaveBufferPtr extra;
-    launchDecode(programs_, arena_, extra, waveStream);
+    launchDecode(programs_, &waveStream->arena(), extra, stream);
+          staging_.push_back(std::make_unique<SplitStaging>());
+          currentStaging_ = staging_.back().get();
   }
 }
 
@@ -113,6 +120,11 @@ void ReadStream::makeOps() {
   }
 }
 
+  bool ReadStream::decodenonFiltersInFiltersKernel() {
+    return ops_.size() == 1;
+  }
+
+  
 bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
   needSync = false;
@@ -133,7 +145,7 @@ bool ReadStream::makePrograms(bool& needSync) {
       previousFilter = &filter;
     }
     filtersDone_ = true;
-    if (!columnsAfterFilters()) {
+    if (!decodenonFiltersInFiltersKernel()) {
       return false;
     }
   }
@@ -191,6 +203,9 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
         bool needSync = false;
+	readStream->makeGrid(stream);
+	readStream->makeOps();
+
         for (;;) {
           bool done = readStream->makePrograms(needSync);
           stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();

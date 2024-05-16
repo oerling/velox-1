@@ -18,12 +18,13 @@
 #include "velox/common/base/SimdUtil.h"
 #include "velox/experimental/wave/common/StringView.h"
 #include "velox/vector/FlatVector.h"
+#include "velox/vector/VectorTypeUtils.h"
 
 namespace facebook::velox::wave {
 
 template <TypeKind Kind>
 static int32_t kindSize() {
-  return sizeof(typename KindToFlatVector<Kind>::HashRowType);
+  return sizeof(typename KindToFlatVector<Kind>::WrapperType);
 }
 
 int32_t waveTypeKindSize(WaveTypeKind waveKind) {

@@ -321,7 +321,7 @@ void Encoder<T>::append(const VectorPtr& data) {
   SelectivityVector allRows(size);
   DecodedVector decoded(*data, allRows, true);
   for (auto i = 0; i < size; ++i) {
-    if (decoded->isNullAt(i)) {
+    if (decoded.isNullAt(i)) {
       addNull();
     } else {
       add(decoded.valueAt<T>(i));

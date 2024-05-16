@@ -27,8 +27,11 @@ BufferId SplitStaging::add(Staging& staging) {
   return offsets_.size() - 1;
 }
 
-void SplitStaging::registerPointerInternal(BufferId id, void** ptr) {
+  void SplitStaging::registerPointerInternal(BufferId id, void** ptr, bool clear) {
   VELOX_CHECK_NULL(deviceBuffer_);
+  if (clear) {
+    *ptr = nullptr;
+  }
   patch_.push_back(std::make_pair(id, ptr));
 }
 
@@ -57,8 +60,11 @@ BufferId ResultStaging::reserve(int32_t bytes) {
   return offsets_.size() - 1;
 }
 
-void ResultStaging::registerPointerInternal(BufferId id, void** pointer) {
-  patch_.push_back(std::make_pair(id, pointer));
+  void ResultStaging::registerPointerInternal(BufferId id, void** pointer, bool clear) {
+    if (clear) {
+      *pointer = nullptr;
+    }
+    patch_.push_back(std::make_pair(id, pointer));
 }
 
 void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {

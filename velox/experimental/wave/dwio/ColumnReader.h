@@ -122,11 +122,17 @@ class ReadStream : public Executable {
  private:
   // Computes starting points for multiple TBs per column if more rows are
   // needed than is good per TB.
-  void makeGrid();
+  void makeGrid(Stream* stream);
 
   /// Makes column dependencies.
   void makeOps();
   void makeControl();
+
+  // True if non-filter columns will be done sequentially in the
+  // filters kernel. This will never loose if there is an always read
+  // single column. This may loose if it were better to take the
+  // launch cost but run all non-filter columns in their own TBs.
+  bool decodenonFiltersInFiltersKernel();
 
   StructColumnReader* reader_;
   std::vector<AbstractOperand*> abstractOperands_;

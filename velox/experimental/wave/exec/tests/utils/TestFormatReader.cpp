@@ -32,24 +32,24 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
       operand, stripe_->columns[0]->numValues, column);
 }
 
-TestFormatReader::stageNulls() {
+  int TestFormatData::stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging) {
   if (nullsStaged_) {
-    return;
+    return kNotRegistered;
   }
   nullsStaged_ = true;
-  auto* nulls = column->nulls.get();
+  auto* nulls = column_->nulls.get();
   if (!nulls) {
-    return;
+    return kNotRegistered;
   }
   Staging staging(
-      nulls_->values->as<char>(),
-      bits::nwords(column_->nulls->numValues) * sizeof(uint64_t));
+      nulls->values->as<char>(),
+      bits::nwords(column_->numValues) * sizeof(uint64_t));
   auto id = splitStaging.add(staging);
-  splitStaging.registerPointer(id, &grid_.nulls);
-  sums.decodeStep = auto sums = std::make_unique<GpuDecode>();
-}
+  splitStaging.registerPointer(id, &grid_.nulls, true);
+  return id;
+  }
 
-void TestFormatReader::griddize(
+void TestFormatData::griddize(
     int32_t blockSize,
     int32_t numBlocks,
     ResultStaging& deviceStaging,
@@ -57,13 +57,27 @@ void TestFormatReader::griddize(
     SplitStaging& staging,
     DecodePrograms& programs,
     ReadStream& stream) {
-  stageNulls(column, splitStaging;);
+  griddized_ = true;
+  auto id = stageNulls(deviceStaging, staging);
+  if (column_->nulls) {
+    auto count = std::make_unique<GpuDecode>();
+    staging.registerPointer(id, &count->data.countBits.bits, true);
+    auto resultId = deviceStaging.reserve(sizeof(int32_t) * numBlocks);
+    deviceStaging.registerPointer(resultId, &count->result, true);
+    deviceStaging.registerPointer(resultId, &grid_.numNonNull, true);
+    count->step = DecodeStep::kCountBits;
+    count->data.countBits.numBits = column_->numValues;
+    count->data.countBits.resultStride = FLAGS_wave_reader_rows_per_tb;
+    programs.programs.emplace_back();
+    programs.programs.back().push_back(std::move(count));
+  }
 }
 
 bool isDense(RowSet rows) {
   return rows.back() - rows.front() == rows.size() - 1;
 }
-void TestFormatData::startOp(
+
+  void TestFormatData::startOp(
     ColumnOp& op,
     const ColumnOp* previousFilter,
     ResultStaging& deviceStaging,
@@ -73,45 +87,61 @@ void TestFormatData::startOp(
     ReadStream& stream) {
   VELOX_CHECK_NOT_NULL(column_);
   BufferId id = kNoBufferId;
-  stageNulls(column.get(), splitStaging);
+  // If nulls were not staged on device in griddize() they will be moved now for the single TB.
+  stageNulls(deviceStaging, splitStaging);
   if (!staged_) {
     staged_ = true;
     Staging staging(column_->values->as<char>(), column_->values->size());
     id = splitStaging.add(staging);
   }
-  auto rowsperBlock = FLAGS_wave_rows_per_tb;
-  int32_t bits::roundUp(numBlocks = op->rows.size(), rowsPerBlock) /
+  auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
+  int32_t numBlocks = bits::roundUp(op.rows.size(), rowsPerBlock) /
       rowsPerBlock;
+  if (numBlocks > 1) {
+    VELOX_CHECK(griddized_);
+  }
+  VELOX_CHECK_LT(numBlocks, 256);
   int32_t resultRowsId = -1;
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
     auto rowsInBlock = std::min<int32_t>(
         rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
     auto step = std::make_unique<GpuDecode>();
-    step->setFilter(op->reader);
+    if (grid_.nulls) {
+      step->nonNullBases = grid_.numNonNull;
+    }
+    step->setFilter(op.reader, nullptr);
     bool dense = previousFilter == nullptr && isDense(rows);
     step->nullMode = column_->nulls
         ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
         : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
+    step->nthBlock = blockIdx;
+
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
+    step->dataType = columnKind;
+    step->numRows = rowsInBlock;
+    step->baseRow = rowsperBlock * blockIdx;
     if (op.waveVector) {
       if (blockIdx == 0) {
         op.waveVector->resize(op.rows.size(), false);
       }
-      stepp->result = op->waveVector->values<char>() +
+      stepp->result = op.waveVector->values<char>() +
           waveTypeKindSize(columnKind) * blockIdx * rowsPerBlock;
-      step->resultNulls = op->waveVector->nulls()
-          ? op->waveVector->nulls() + rowsPerBlock + blockIdx
+      step->resultNulls = op.waveVector->nulls()
+          ? op.waveVector->nulls() + rowsPerBlock + blockIdx
           : nullptr;
+
+
       step->rows = previousFilter ? previousFilter->deviceResult : nullptr;
     }
-    if (op->reader->scanSpec().filter()) {
+    if (op.reader->scanSpec().filter()) {
       if (blockIdx == 0) {
         resultRowsId =
-            deviceStaging->register(op->rows.size() * sizeof(int32_t));
-        deviceStaging.registerPointer(resultRowsId, &step->resultRows);
+            deviceStaging->reserve(op.rows.size() * sizeof(int32_t));
+        deviceStaging.registerPointer(resultRowsId, &step->resultRows, true);
       }
       step->resultRows =
           reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
+      deviceStaging.registerPointer(resultRowsId, &step->resultRows, false);
     }
     if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&

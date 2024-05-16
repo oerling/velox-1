@@ -34,7 +34,7 @@ class WaveStream;
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
-  Staging(void* hostData, int32_t bytes) : hostData(hostData), bytes(bytes) {}
+  Staging(const void* hostData, int32_t size) : hostData(hostData), size(size) {}
 
   // Pointer to data in pageable host memory, if applicable.
   const void* hostData{nullptr};
@@ -59,11 +59,11 @@ class SplitStaging {
 
   /// Registers '*ptr' to be patched to the device side address of the transfer
   /// identified by 'id'. The *ptr is an offset into the buffer identified by
-  /// id, so that the actual start of the area is added to the offset at *ptr.
+  /// id, so that the actual start of the area is added to the offset at *ptr. If 'clear' is true, *ptr is set to nullptr first.
   template <typename T>
-  void registerPointer(BufferId id, T pointer) {
+  void registerPointer(BufferId id, T pointer, bool clear) {
     registerPointerInternal(
-        id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+			    id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)), clear);
   }
 
   int64_t bytesToDevice() const {
@@ -73,7 +73,7 @@ class SplitStaging {
   void transfer(WaveStream& waveStream, Stream& stream);
 
  private:
-  void registerPointerInternal(BufferId id, void** ptr);
+  void registerPointerInternal(BufferId id, void** ptr, bool clear);
 
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
@@ -102,17 +102,17 @@ class ResultStaging {
 
   /// Registers '*pointer' to be patched to the buffer. The starting address of
   /// the buffer is added to *pointer, so that if *pointer was 16, *pointer will
-  /// come to point to the 16th byte in the buffer.
+  /// come to point to the 16th byte in the buffer. If 'clear' is true, *ptr is set to nullptr first.
   template <typename T>
-  void registerPointer(BufferId id, T pointer) {
+  void registerPointer(BufferId id, T pointer, bool clear) {
     registerPointerInternal(
-        id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)));
+			    id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)), clear);
   }
 
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
 
  private:
-  void registerPointerInternal(BufferId id, void** pointer);
+  void registerPointerInternal(BufferId id, void** pointer, bool clear);
 
   // Offset of each result in either buffer.
   std::vector<int32_t> offsets_;
@@ -134,7 +134,7 @@ struct ColumnGridInfo {
   /// Number of independently schedulable blocks.
   int32_t numBlocks;
 
-  /// Device readable nulls as a flat bitmap. 1 is non-null. nullptr mena means
+  /// Device readable nulls as a flat bitmap. 1 is non-null. nullptr means
   /// non-null.
   char* nulls{nullptr};
 
@@ -194,14 +194,6 @@ class FormatData {
   virtual ~FormatData() = default;
 
   virtual int32_t totalRows() const = 0;
-
-  /// Returns a bitmap of steps that apply to this column. Suppose we have a
-  /// nullable string with a filter. If the nulls, lengths and characters can
-  /// all be decoded as fused, this returns kValues. If the nulls and lengths
-  /// have a non-random access capable encoding and cannot be fused, returns
-  /// kNulls | kLengths | kValues. If the operation is filter without extracting
-  /// values, uses kFilter instead of kValues.
-  int32_t neededActions() const = 0;
 
   virtual bool hasNulls() const = 0;
 

@@ -19,7 +19,7 @@
 
 namespace facebook::velox::wave {
 
-void GpuDecoder::setFilter(ColumnReader* reader, Stream* stream) {
+void GpuDecode::setFilter(ColumnReader* reader, Stream* stream) {
   auto* veloxFilter = reader->scanSpec().filter();
   if (!veloxFilter) {
     filterKind = WaveFilterKind::kAlwaysTrue;
@@ -28,16 +28,16 @@ void GpuDecoder::setFilter(ColumnReader* reader, Stream* stream) {
   switch (veloxFilter->kind()) {
     case common::FilterKind::kBigintRange: {
       filterKind = WaveFilterKind::kBigintRange;
-      nullsAllowed = veloxFilter->nullsAllowed();
+      nullsAllowed = veloxFilter->testNull();
       filter._.int64Range[0] =
-          reinterpret_cast<common::BigintRange>(veloxFilter)->lower();
+          reinterpret_cast<common::BigintRange*>(veloxFilter)->lower();
       filter._.int64Range[1] =
-          reinterpret_cast<common::BigintRange>(veloxFilter)->upper();
+          reinterpret_cast<common::BigintRange*>(veloxFilter)->upper();
       break;
     }
 
     default:
-      VELOX_UNSUPPORTED("Unsupported filter kind", filter->kind());
+      VELOX_UNSUPPORTED("Unsupported filter kind", static_cast<int32_t>(veloxFilter->kind()));
   }
 }
 

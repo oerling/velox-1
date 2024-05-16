@@ -298,10 +298,10 @@ inline __device__ bool isLastInWarp() {
 /// exclusiveSumTempSize() writable bytes aligned for T.
 template <typename T, int32_t kBlockSize>
 inline __device__ T exclusiveSum(T input, T* total, T* temp) {
-  constexpr kNumWarps = kBlockSize / kWarpThreads;
+  constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).exclusiveSum(input, sum);
+  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp)).exclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     if (total) {
       if (threadIdx.x == kWarpThreads - 1) {
@@ -318,7 +318,7 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   using InnerScan = cub::WarpScan<T, kNumWarps>;
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
   T blockSum;
-  InnerScan(*reinterpret_cast<InnerScan::TempStorage*>(temp))
+  InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp))
       .ExclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kNumWarps) {
     temp[threadIdx.x] = blockSum;
@@ -335,10 +335,10 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
 /// exclusiveSumTempSize() writable bytes aligned for T.
 template <typename T, int32_t kBlockSize>
 inline __device__ T inclusiveSum(T input, T* temp) {
-  constexpr kNumWarps = kBlockSize / kWarpThreads;
+  constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<Scan::TempStorage*>(temp)).InclusiveSum(input, sum);
+  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp)).InclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     return sum;
   }
@@ -349,7 +349,7 @@ inline __device__ T inclusiveSum(T input, T* temp) {
   using InnerScan = cub::WarpScan<T, kNumWarps>;
   T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
   T blockSum;
-  InnerScan(*reinterpret_cast<InnerScan::TempStorage*>(temp))
+  InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp))
       .ExclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kNumWarps) {
     temp[threadIdx.x] = blockSum;

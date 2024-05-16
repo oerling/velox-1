@@ -24,6 +24,8 @@ namespace facebook::velox::wave::test {
 
 class TestFormatData : public wave::FormatData {
  public:
+  static constexpr int32_t kNotRegistered = -1;
+
   TestFormatData(
       OperandId operand,
       int32_t totalRows,
@@ -62,6 +64,9 @@ class TestFormatData : public wave::FormatData {
       ReadStream& stream) override;
 
  private:
+  // Stages movement of nulls to device if any. Returns the id of the buffer or kNotRegisterd. 
+  int32_t  stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging);
+  
   const OperandId operand_;
   int32_t totalRows_{0};
 
@@ -73,7 +78,8 @@ class TestFormatData : public wave::FormatData {
   int32_t currentRow_{0};
   // The device side data area start, set after the staged transfer is done.
   void* deviceBuffer_{nullptr};
-  GridInfo grid_;
+  ColumnGridInfo grid_;
+  bool griddized_{false};
 };
 
 class TestFormatParams : public wave::FormatParams {

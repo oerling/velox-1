@@ -39,103 +39,116 @@ enum class WaveFilterKind : uint8_t {
   kBigintValues
 };
 
-struct WaveFilterBase {
-  union {
-    int64_t int64Range[2];
-    float floatRange[2];
-    double doubleRange[2];
-    struct {
-      int32_t size;
-      void* table;
-    } values;
-  } _;
-  // flags for float/double range.
-  bool lowerUnbounded;
-  bool upperUnbounded;
-  bool lowerExclusive;
-  bool upperExclusive;
-};
+ struct WaveFilterBase {
+   union {
+     int64_t int64Range[2];
+     float floatRange[2];
+     double doubleRange[2];
+     struct {
+       int32_t size;
+       void* table;
+     } values;
+   } _;
+   // flags for float/double range.
+   bool lowerUnbounded;
+   bool upperUnbounded;
+   bool lowerExclusive;
+   bool upperExclusive;
+ };
 
-/// Instructions for GPU decode.  This can be decoding,
-/// or pre/post processing other than decoding.
-enum class DecodeStep {
-  kConstant32,
-  kConstant64,
-  kConstantChar,
-  kConstantBool,
-  kConstantBytes,
-  kTrivial,
-  kTrivialNoOp,
-  kMainlyConstant,
-  kBitpack32,
-  kBitpack64,
-  kRleTotalLength,
-  kRleBool,
-  kRle,
-  kDictionary,
-  kDictionaryOnBitpack,
-  kVarint,
-  kNullable,
-  kSentinel,
-  kSparseBool,
-  kMakeScatterIndices,
-  kScatter32,
-  kScatter64,
-  kLengthToOffset,
-  kMissing,
-  kStruct,
-  kArray,
-  kMap,
-  kFlatMap,
-  kFlatMapNode,
-  kRowCountNoFilter,
-  kCountBits,
-  kUnsupported,
-};
+ /// Instructions for GPU decode.  This can be decoding,
+ /// or pre/post processing other than decoding.
+ enum class DecodeStep {
+   kConstant32,
+     kConstant64,
+     kConstantChar,
+     kConstantBool,
+     kConstantBytes,
+     kTrivial,
+     kTrivialNoOp,
+     kMainlyConstant,
+     kBitpack32,
+     kBitpack64,
+     kRleTotalLength,
+     kRleBool,
+     kRle,
+     kDictionary,
+     kDictionaryOnBitpack,
+     kVarint,
+     kNullable,
+     kSentinel,
+     kSparseBool,
+     kMakeScatterIndices,
+     kScatter32,
+     kScatter64,
+     kLengthToOffset,
+     kMissing,
+     kStruct,
+     kArray,
+     kMap,
+     kFlatMap,
+     kFlatMapNode,
+     kRowCountNoFilter,
+     kCountBits,
+     kUnsupported,
+     };
 
-class ColumnReader;
+ class ColumnReader;
 
-/// Describes a decoding loop's input and result disposition.
+ /// Describes a decoding loop's input and result disposition.
 struct GpuDecode {
-  // The operation to perform. Decides which branch of the union to use.
-  DecodeStep step;
+   // The operation to perform. Decides which branch of the union to use.
+   DecodeStep step;
 
-  /// If false, implies a not null filter. If there is a filter, specifies
-  /// whether nulls pass.
-  bool nullsAllowed{true};
+   WaveTypeKind dataType;
 
-  WaveFilterKind filterKind{kNone};
+   /// If false, implies a not null filter. If there is a filter, specifies
+   /// whether nulls pass.
+   bool nullsAllowed{true};
 
-  NullMode nullMode;
+   WaveFilterKind filterKind{WaveFilterKind::kAlwaysTrue};
 
-  /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges
-  /// have different encodings. The first chunk's encoding is in 'data'. The
-  /// next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has
-  /// its own 'nulls'. The input row numbers and output data/row numbers are
-  /// given by the first GpuDecode.
-  uint8_t numChunks{1};
+   NullMode nullMode;
 
-  /// If there are multiple chunks, this is an array of starts of non-first
-  /// chunks.
-  int32_t* chunkBounds;
+   // Ordinal number of TB in TBs working on the same column. Each TB does a multiple of TB width rows. The TBs for different ranges of rows are launched in the same grid but are independent. The ordinal for non-first TBs gets the base index for values.
+   uint8_t nthBlock{0};
+  
+   /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges
+   /// have different encodings. The first chunk's encoding is in 'data'. The
+   /// next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has
+   /// its own 'nulls'. The input row numbers and output data/row numbers are
+   /// given by the first GpuDecode.
+   uint8_t numChunks{1};
 
-  /// Number of rows to decode. Either row number or index into 'rows' if 'rows'
-  /// is set.
-  int32_t numRows{0};
+   /// Number of rows to decode. if kFilterHits, the previous GpuDecode gives this number in BlockStatus. If 'rows' is set, this is the number of valid elements in 'rows'. If 'rows' is not set, the start is ''baseRow'
+   int32_t numRows{0};
 
-  /// If results will be scattered because of nulls, this is the bitmap with a 0
-  /// for null.
-  char* nulls{nullptr};
+  
+   // If multiple TBs on the same column and there are nulls, this is the start offset of the TB's range of rows in non-null values. nullptr if no nulls.
+   int32_t* nonNullBases{nullptr};
+  
+   /// If there are multiple chunks, this is an array of starts of non-first
+   /// chunks.
+   int32_t* chunkBounds;
 
-  // If rows are sparsely decoded, this is the array of row numbers to extract.
-  // The numbers are in terms of nullable rows.
-  int32_t* rows{nullptr};
+   /// If results will be scattered because of nulls, this is the bitmap with a 0
+   /// for null.
+   char* nulls{nullptr};
 
+   // If rows are densely decoded, this is the first row in terms of nullable rows to decode in this TB.
+   int32_t baseRow{0};
+  
+   // If rows are sparsely decoded, this is the array of row numbers to extract.
+   // The numbers are in terms of nullable rows.
+   int32_t* rows{nullptr};
+   // Data for pushed down filter. Interpretation depends on 'filterKind'.
+  WaveFilterBase filter;
+  
   /// Row numbers that pass 'filter'. nullptr if no filter.
   int32_t* resultRows{nullptr};
 
   /// Result nulls.
-  char* resultNulls{nullptr};
+  uint8_t* resultNulls{nullptr};
 
   /// Result array. nullptr if filter only.
   void* result{nullptr};
@@ -283,8 +296,7 @@ struct GpuDecode {
     // the count of ones in the first 512 and result[2] is unset.
     int32_t numBits;
     // 256/512/1024/2048.
-    int32_t resultstride;
-    int32_t* result;
+    int32_t resultStride;
     // One int per warp (blockDim.x/32).
     int32_t* temp;
   };

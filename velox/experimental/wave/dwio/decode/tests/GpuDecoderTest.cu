@@ -557,11 +557,11 @@ class GpuDecoderTest : public ::testing::Test {
     programs.programs.back().push_back(std::make_unique<GpuDecode>());
     auto opPtr = programs.programs.back().front().get();
     opPtr->step = DecodeStep::kCountBits;
-    auto& op = opPtr->data.CountBits;
+    auto& op = opPtr->data.countBits;
     op.bits = bits.get();
     op.numBits = numWords * 64;
     op.resultStride = stride;
-    op.result = result;
+    opPtr->result = result.get();
     auto stream = std::make_unique<Stream>();
     WaveBufferPtr extra;
     launchDecode(programs, arena_.get(), extra, stream.get());
@@ -570,7 +570,7 @@ class GpuDecoderTest : public ::testing::Test {
     int32_t count = 0;
     for (auto i = 0; i < numResults; ++i) {
       for (auto j = 0; j < stride / 64; j++) {
-	count += __builtin_popcountl(reinterpret_cast<uint64_t*>(op.bits)[i * (stride / 64) + j]);
+	count += __builtin_popcountl(reinterpret_cast<const uint64_t*>(op.bits)[i * (stride / 64) + j]);
       }
       EXPECT_EQ(count, result[i]);
     }
