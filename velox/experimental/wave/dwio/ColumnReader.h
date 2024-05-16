@@ -128,8 +128,6 @@ class ReadStream : public Executable {
   void makeOps();
   void makeControl();
 
-  void setBlockStatus(DecodePrograms& programs, BlockStatus* status);
-  
   // True if non-filter columns will be done sequentially in the
   // filters kernel. This will never loose if there is an always read
   // single column. This may loose if it were better to take the
