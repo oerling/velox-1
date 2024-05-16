@@ -134,6 +134,9 @@ struct ColumnGridInfo {
   /// Number of independently schedulable blocks.
   int32_t numBlocks;
 
+  /// 
+  BlockStatus* status{nullptr};
+
   /// Device readable nulls as a flat bitmap. 1 is non-null. nullptr means
   /// non-null.
   char* nulls{nullptr};

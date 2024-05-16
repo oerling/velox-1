@@ -120,6 +120,8 @@ struct GpuDecode {
    /// given by the first GpuDecode.
    uint8_t numChunks{1};
 
+  uint16_t numRowsPerThread{1};
+  
    /// Number of rows to decode. if kFilterHits, the previous GpuDecode gives this number in BlockStatus. If 'rows' is set, this is the number of valid elements in 'rows'. If 'rows' is not set, the start is ''baseRow'
    int32_t numRows{0};
 

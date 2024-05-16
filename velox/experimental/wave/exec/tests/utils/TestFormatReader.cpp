@@ -109,6 +109,8 @@ bool isDense(RowSet rows) {
     if (grid_.nulls) {
       step->nonNullBases = grid_.numNonNull;
     }
+    step->numRowsPerThread = rowsPerBlock / kBlockSize;
+    step->blockStatus = !!;
     step->setFilter(op.reader, nullptr);
     bool dense = previousFilter == nullptr && isDense(rows);
     step->nullMode = column_->nulls
