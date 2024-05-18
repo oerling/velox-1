@@ -569,7 +569,8 @@ core::PlanNodePtr Optimization::makeFragment(
     case RelType::kHashBuild:
       return makeFragment(op->input(), fragment, stages);
     default:
-      VELOX_FAIL("Unsupported RelationOp {}", static_cast<int32_t>(op->relType()));
+      VELOX_FAIL(
+          "Unsupported RelationOp {}", static_cast<int32_t>(op->relType()));
   }
   return nullptr;
 }
