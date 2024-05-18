@@ -97,12 +97,4 @@ void DecodeRandomAccessLane(
 
 } // namespace facebook::velox::wave
 
-
-
-
-  
-
-voide decode(DecodeOp* op) {
-
-}
-
+voide decode(DecodeOp* op) {}

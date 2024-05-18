@@ -509,39 +509,47 @@ __device__ void makeScatterIndices(GpuDecode::MakeScatterIndices& op) {
   }
 }
 
-
-
 template <typename T>
 inline __device__ T randomAccessDecode(const GpuDecode* op, int32_t idx) {
   switch (op->encoding) {
-  case DecodeStep::kDictionaryOnBitpack: {
-    const auto& d = op->data.dictionaryOnBitpack;
-    auto width = d.bitWidth;
-    if (sizeof(T) == 4 || width <= 32) {
-      return loadBits32(d.indices, idx, width) + d.baseline;
+    case DecodeStep::kDictionaryOnBitpack: {
+      const auto& d = op->data.dictionaryOnBitpack;
+      auto width = d.bitWidth;
+      if (sizeof(T) == 4 || width <= 32) {
+        return loadBits32(d.indices, idx, width) + d.baseline;
       } else {
-      return loadBits64(d.indices, idx, width) + d.baseline;
+        return loadBits64(d.indices, idx, width) + d.baseline;
+      }
     }
-  }
   }
 }
 
 template <typename T, WaveFilterKind kFilterKind, bool kFixedFilter = true>
 __device__ bool testFilter(const GpuDecode* op, T data) {
-  switch (kFixedFilter ? kFilterKind :  op->filterKind) {
-  case WaveFilterKind::kBigintRange:
-    long2 bounds = *reinterpret_cast<const long2*>(&op->filter);
-    return data >= bounds.x && data <= bounds.y;
-  default:
-    return true;
+  switch (kFixedFilter ? kFilterKind : op->filterKind) {
+    case WaveFilterKind::kBigintRange:
+      long2 bounds = *reinterpret_cast<const long2*>(&op->filter);
+      return data >= bounds.x && data <= bounds.y;
+    default:
+      return true;
   }
 }
 
-  template <typename T, int32_t kBlockSize>
-__device__ void makeResult(const GpuDecode* op, T data, int32_t row, int32_t nthLoop, bool filterPass, uint8_t nullFlag, int32_t* temp) {
+template <typename T, int32_t kBlockSize>
+__device__ void makeResult(
+    const GpuDecode* op,
+    T data,
+    int32_t row,
+    int32_t nthLoop,
+    bool filterPass,
+    uint8_t nullFlag,
+    int32_t* temp) {
   auto base = nthLoop * kBlockSize;
   if (op->filterKind != WaveFilterKind::kAlwaysTrue) {
-    int32_t resultIdx = exclusiveSum<int16_t, kBlockSize>(static_cast<int16_t>(filterPass), nullptr, reinterpret_cast<int16_t*>(temp));
+    int32_t resultIdx = exclusiveSum<int16_t, kBlockSize>(
+        static_cast<int16_t>(filterPass),
+        nullptr,
+        reinterpret_cast<int16_t*>(temp));
     if (threadIdx.x == kBlockSize) {
       op->blockStatus[nthLoop].numRows = resultIdx + filterPass;
     }
@@ -549,10 +557,10 @@ __device__ void makeResult(const GpuDecode* op, T data, int32_t row, int32_t nth
       resultIdx += base;
       op->resultRows[resultIdx] = row;
       if (op->result) {
-	reinterpret_cast<T*>(op->result)[resultIdx] = data;
-	if (op->resultNulls) {
-	  op->resultNulls[resultIdx] = nullFlag;
-	}
+        reinterpret_cast<T*>(op->result)[resultIdx] = data;
+        if (op->resultNulls) {
+          op->resultNulls[resultIdx] = nullFlag;
+        }
       }
     }
   } else {
@@ -564,101 +572,129 @@ __device__ void makeResult(const GpuDecode* op, T data, int32_t row, int32_t nth
   }
 }
 
-  template <typename T, int32_t kBlockSize>
-__device__ void decodeSelective(
-	    GpuDecode* op) {
+template <typename T, int32_t kBlockSize>
+__device__ void decodeSelective(GpuDecode* op) {
   int32_t dataIdx;
-  
+
   int32_t nthLoop = 0;
   switch (op->nullMode) {
-  case NullMode::kDenseNonNull: {
-    do {
-      int32_t row = op->baseRow + nthLoop * kBlockSize;
-      bool filterDecided = false;
-      bool filterPass = false;
-      T data{};
-      if (row < op->maxRow) {
-	data = randomAccessDecode<T>(op, row);
-	filterPass = testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-      }
-      makeResult<T, kBlockSize>(op, data, row, filterPass, nthLoop, kNotNull, op->temp);
-    } while (++nthLoop < op->numRowsPerThread);
-    break;
-  }
+    case NullMode::kDenseNonNull: {
+      do {
+        int32_t row = op->baseRow + nthLoop * kBlockSize;
+        bool filterDecided = false;
+        bool filterPass = false;
+        T data{};
+        if (row < op->maxRow) {
+          data = randomAccessDecode<T>(op, row);
+          filterPass =
+              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+        }
+        makeResult<T, kBlockSize>(
+            op, data, row, filterPass, nthLoop, kNotNull, op->temp);
+      } while (++nthLoop < op->numRowsPerThread);
+      break;
+    }
     case NullMode::kSparseNonNull:
       do {
-	int32_t numRows = op->blockStatus[nthLoop].numRows;
-	bool filterDecided = false;
-      bool filterPass = false;
-      T data{};
-      int32_t row = 0;
-      if (threadIdx.x < numRows) {
-	row = op->rows[threadIdx.x + nthLoop * kBlockSize];
-	data = randomAccessDecode<T>(op, row);
-	filterPass = testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-      }
-      makeResult<T, kBlockSize>(op, data, row, filterPass, nthLoop, kNotNull, op->temp);
+        int32_t numRows = op->blockStatus[nthLoop].numRows;
+        bool filterDecided = false;
+        bool filterPass = false;
+        T data{};
+        int32_t row = 0;
+        if (threadIdx.x < numRows) {
+          row = op->rows[threadIdx.x + nthLoop * kBlockSize];
+          data = randomAccessDecode<T>(op, row);
+          filterPass =
+              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+        }
+        makeResult<T, kBlockSize>(
+            op, data, row, filterPass, nthLoop, kNotNull, op->temp);
       } while (++nthLoop < op->numRowsPerThread);
       break;
 
-  case NullMode::kDenseNullable: {
-    int32_t maxRow = op->maxRow;
-    int32_t dataIdx = 0;
-    auto* temp = op->temp;
-    if (threadIdx.x == 0) {
-      temp[0] = op->nonNullBases[op->nthBlock];
-    }
-    __syncthreads();
-    do {
-      int32_t base = op->baseRow + nthLoop * kBlockSize;
-      auto nonNullOffset = op->nonNullBases[nthLoop];
-      dataIdx =
-	nonNullIndex256(op->nulls, base, min(base + kBlockSize, maxRow), &temp[0], temp + 1);
-	bool filterPass = base + threadIdx.x < maxRow;
-	T data{};
-	if (dataIdx == -1) {
-	if (!op->nullsAllowed) {
-	  filterPass = false;
-	}
-      } else {
-	dataIdx += op->nonNullBases[op->nthBlock ];
-	data = randomAccessDecode<T>(op, dataIdx);
-	filterPass = testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+    case NullMode::kDenseNullable: {
+      int32_t maxRow = op->maxRow;
+      int32_t dataIdx = 0;
+      auto* temp = op->temp;
+      if (threadIdx.x == 0) {
+        temp[0] = op->nonNullBases[op->nthBlock];
       }
-      makeResult<T, kBlockSize>(op, data, base + threadIdx.x, filterPass, nthLoop, dataIdx == -1 ? kNull : kNotNull, temp + 2);
-    } while (++nthLoop < op->numRowsPerThread);
-    break;
-  }
+      __syncthreads();
+      do {
+        int32_t base = op->baseRow + nthLoop * kBlockSize;
+        auto nonNullOffset = op->nonNullBases[nthLoop];
+        dataIdx = nonNullIndex256(
+            op->nulls,
+            base,
+            min(base + kBlockSize, maxRow),
+            &temp[0],
+            temp + 1);
+        bool filterPass = base + threadIdx.x < maxRow;
+        T data{};
+        if (dataIdx == -1) {
+          if (!op->nullsAllowed) {
+            filterPass = false;
+          }
+        } else {
+          dataIdx += op->nonNullBases[op->nthBlock];
+          data = randomAccessDecode<T>(op, dataIdx);
+          filterPass =
+              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+        }
+        makeResult<T, kBlockSize>(
+            op,
+            data,
+            base + threadIdx.x,
+            filterPass,
+            nthLoop,
+            dataIdx == -1 ? kNull : kNotNull,
+            temp + 2);
+      } while (++nthLoop < op->numRowsPerThread);
+      break;
+    }
     case NullMode::kSparseNullable:
       auto temp = op->temp;
       if (threadIdx.x == 0) {
-	temp[0] = op->nonNullBases[op->nthBlock];
-	temp[1] = 0;
+        temp[0] = op->nonNullBases[op->nthBlock];
+        temp[1] = 0;
       }
-	__syncthreads();
+      __syncthreads();
       do {
-	int32_t base = kBlockSize * nthLoop;
-	int32_t numRows = op->blockStatus[nthLoop].numRows;
-	bool filterDecided = false;
-      bool filterPass = true;
-      T data{};
-      dataIdx = nonNullIndex256Sparse(
-				      op->nulls, op->rows, base, base + numRows, &temp[0], &temp[1], temp + 2);
-      if (dataIdx == -1) {
-	if (!op->nullsAllowed) {
-	  filterPass = false;
-	}
-      } else {
-	data = randomAccessDecode<T>(op, dataIdx);
-	filterPass = testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-      }
-      makeResult<T, kBlockSize>(op, data, op->rows[base + threadIdx.x], filterPass, nthLoop, dataIdx == -1 ? kNull : kNotNull, temp + 2);
+        int32_t base = kBlockSize * nthLoop;
+        int32_t numRows = op->blockStatus[nthLoop].numRows;
+        bool filterDecided = false;
+        bool filterPass = true;
+        T data{};
+        dataIdx = nonNullIndex256Sparse(
+            op->nulls,
+            op->rows,
+            base,
+            base + numRows,
+            &temp[0],
+            &temp[1],
+            temp + 2);
+        if (dataIdx == -1) {
+          if (!op->nullsAllowed) {
+            filterPass = false;
+          }
+        } else {
+          data = randomAccessDecode<T>(op, dataIdx);
+          filterPass =
+              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+        }
+        makeResult<T, kBlockSize>(
+            op,
+            data,
+            op->rows[base + threadIdx.x],
+            filterPass,
+            nthLoop,
+            dataIdx == -1 ? kNull : kNotNull,
+            temp + 2);
       } while (++nthLoop < op->numRowsPerThread);
       break;
   }
 }
 
-  
 template <int kBlockSize>
 __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   auto numRows = op.numRows;
@@ -677,10 +713,15 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
 }
 
 template <int32_t kBlockSize, int32_t kWidth>
-inline __device__ void
-reduceCase(int32_t cnt, int32_t nthLoop, int32_t numResults, int32_t* results, int32_t* temp) {
+inline __device__ void reduceCase(
+    int32_t cnt,
+    int32_t nthLoop,
+    int32_t numResults,
+    int32_t* results,
+    int32_t* temp) {
   using Reduce = cub::WarpReduce<int32_t, kWidth>;
-  auto sum = Reduce(*reinterpret_cast<typename Reduce::TempStorage*>(temp)).sum(cnt);
+  auto sum =
+      Reduce(*reinterpret_cast<typename Reduce::TempStorage*>(temp)).sum(cnt);
   constexpr int32_t kResultsPerLoop = kBlockSize / kWidth;
 
   if ((threadIdx.x & lowMask<int32_t>(kWidth)) == 0) {
@@ -721,7 +762,11 @@ __device__ void countBits(GpuDecode& step) {
     switch (op.resultStride) {
       case 256:
         reduceCase<kBlockSize, 4>(
-				  cnt, i / (64 * kBlockSize), numResults, reinterpret_cast<int32_t*>(step.result), op.temp);
+            cnt,
+            i / (64 * kBlockSize),
+            numResults,
+            reinterpret_cast<int32_t*>(step.result),
+            op.temp);
         break;
     }
   }
@@ -730,14 +775,14 @@ __device__ void countBits(GpuDecode& step) {
 template <int32_t kBlockSize>
 __device__ void decodeSwitch(GpuDecode& op) {
   switch (op.step) {
-  case DecodeStep::kSelective32:
-    detail::decodeSelective<int32_t, kBlockSize>(&op);
-    break;
+    case DecodeStep::kSelective32:
+      detail::decodeSelective<int32_t, kBlockSize>(&op);
+      break;
 
-  case DecodeStep::kSelective64:
-    detail::decodeSelective<int64_t, kBlockSize>(&op);
-    break;
-  case DecodeStep::kTrivial:
+    case DecodeStep::kSelective64:
+      detail::decodeSelective<int64_t, kBlockSize>(&op);
+      break;
+    case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
     case DecodeStep::kDictionaryOnBitpack:

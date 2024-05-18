@@ -301,7 +301,8 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp)).ExclusiveSum(input, sum);
+  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
+      .ExclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     if (total) {
       if (threadIdx.x == kWarpThreads - 1) {
@@ -338,7 +339,8 @@ inline __device__ T inclusiveSum(T input, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
-  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp)).InclusiveSum(input, sum);
+  Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
+      .InclusiveSum(input, sum);
   if (kBlockSize == kWarpThreads) {
     return sum;
   }
