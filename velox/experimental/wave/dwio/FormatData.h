@@ -188,6 +188,9 @@ struct ColumnOp {
   // Device side non-vector result, like set of passing rows, array of
   // lengths/starts etc.
   int32_t* deviceResult{nullptr};
+  // Id of 'deviceResult' from resultStaging. A subsequent op must refer to the result of the previous one before the former is allocated.
+  int32_t deviceResultId{0};
+
   int32_t* hostResult{nullptr};
 };
 

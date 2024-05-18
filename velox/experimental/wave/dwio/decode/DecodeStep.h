@@ -39,26 +39,28 @@ enum class WaveFilterKind : uint8_t {
   kBigintValues
 };
 
- struct WaveFilterBase {
-   union {
-     int64_t int64Range[2];
-     float floatRange[2];
-     double doubleRange[2];
-     struct {
-       int32_t size;
-       void* table;
-     } values;
-   } _;
+struct WaveFilterBase {
+  union {
+    int64_t int64Range[2];
+    float floatRange[2];
+    double doubleRange[2];
+    struct {
+      int32_t size;
+      void* table;
+    } values;
+  } _;
    // flags for float/double range.
-   bool lowerUnbounded;
-   bool upperUnbounded;
-   bool lowerExclusive;
-   bool upperExclusive;
+  bool lowerUnbounded;
+  bool upperUnbounded;
+  bool lowerExclusive;
+  bool upperExclusive;
  };
 
  /// Instructions for GPU decode.  This can be decoding,
  /// or pre/post processing other than decoding.
  enum class DecodeStep {
+   kSelective32,
+     kSelective64,
    kConstant32,
      kConstant64,
      kConstantChar,
@@ -95,10 +97,14 @@ enum class WaveFilterKind : uint8_t {
 
  class ColumnReader;
 
- /// Describes a decoding loop's input and result disposition.
+/// Describes a decoding loop's input and result disposition.
 struct GpuDecode {
-   // The operation to perform. Decides which branch of the union to use.
+  /// Constant in 'numRows' to signify the number comes from 'blockstatus'.
+  static constexpr int32_t kFilterHits = -1;
+
+  // The operation to perform. Decides which branch of the union to use.
    DecodeStep step;
+   DecodeStep encoding;
 
    WaveTypeKind dataType;
 
@@ -123,7 +129,7 @@ struct GpuDecode {
   uint16_t numRowsPerThread{1};
   
    /// Number of rows to decode. if kFilterHits, the previous GpuDecode gives this number in BlockStatus. If 'rows' is set, this is the number of valid elements in 'rows'. If 'rows' is not set, the start is ''baseRow'
-   int32_t numRows{0};
+   int32_t maxRow{0};
 
    // If rows are densely decoded, this is the first row in terms of nullable rows to decode in this TB.
    int32_t baseRow{0};
@@ -157,6 +163,10 @@ struct GpuDecode {
 
   // Data for pushed down filter. Interpretation depends on 'filterKind'.
   WaveFilterBase filter;
+
+  // Temp storage. Requires 2 + (kBlockSize / kWarpThreads) ints for each TB.
+  int32_t* temp;
+
   
   /// Row numbers that pass 'filter'. nullptr if no filter.
   int32_t* resultRows{nullptr};

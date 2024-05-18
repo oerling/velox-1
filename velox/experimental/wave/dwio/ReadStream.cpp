@@ -59,7 +59,7 @@ ReadStream::ReadStream(
   void setBlockStatus(DecodePrograms& programs, BlockStatus* status) {
   for (auto& program : programs.programs) {
     for (auto& op : program) {
-      op->blockStatus = status;
+      op->blockStatus = status + op->numRowsPerThread * op->nthBlock;
     }
   }
 }

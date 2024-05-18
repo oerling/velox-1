@@ -111,7 +111,7 @@ bool isDense(RowSet rows) {
     }
     step->numRowsPerThread = rowsPerBlock / kBlockSize;
     step->setFilter(op.reader, nullptr);
-    bool dense = previousFilter == nullptr && isDense(rows);
+    bool dense = previousFilter == nullptr && isDense(op.rows);
     step->nullMode = column_->nulls
         ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
         : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
@@ -119,51 +119,68 @@ bool isDense(RowSet rows) {
 
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     step->dataType = columnKind;
-    step->numRows = rowsInBlock;
-    step->baseRow = rowsperBlock * blockIdx;
+    auto kindSize = waveTypeKindSize(columnKind);
+    step->step = kindSize == 4 ? DecodeStep::kSelective32 : DecodeStep::kSelective64;
+    if (previousFilter) {
+      step->maxRow = GpuDecode::kFilterHits;
+    } else {
+      step->maxRow = currentRow_ + (blockIdx * rowsPerBlock)+ rowsInBlock;
+    }
+    step->baseRow = currentRow_ + rowsPerBlock * blockIdx;
+
     if (op.waveVector) {
       if (blockIdx == 0) {
         op.waveVector->resize(op.rows.size(), false);
       }
-      stepp->result = op.waveVector->values<char>() +
-          waveTypeKindSize(columnKind) * blockIdx * rowsPerBlock;
+      step->result = op.waveVector->values<char>() +
+          kindSize * blockIdx * rowsPerBlock;
       step->resultNulls = op.waveVector->nulls()
           ? op.waveVector->nulls() + rowsPerBlock + blockIdx
           : nullptr;
 
 
-      step->rows = previousFilter ? previousFilter->deviceResult : nullptr;
-    }
-    if (op.reader->scanSpec().filter()) {
+      if (previousFilter) {
+	if (previousFilter->deviceResult) {
+	  step->rows = previousFilter->deviceResult;
+	} else {
+      step->rows =
+          reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
+
+      deviceStaging.registerPointer(previousFilter->deviceResultId, &step->rows, false);
+	}
+      }
+      if (op.reader->scanSpec().filter()) {
       if (blockIdx == 0) {
         resultRowsId =
-            deviceStaging->reserve(op.rows.size() * sizeof(int32_t));
+            deviceStaging.reserve(op.rows.size() * sizeof(int32_t));
         deviceStaging.registerPointer(resultRowsId, &step->resultRows, true);
-      }
-      step->resultRows =
+	op.deviceResultId = resultRowsId;
+      } else {
+	step->resultRows =
           reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock * sizeof(int32_t));
-      deviceStaging.registerPointer(resultRowsId, &step->resultRows, false);
-    }
-    if (column_->encoding == Encoding::kFlat) {
+	deviceStaging.registerPointer(resultRowsId, &step->resultRows, false);
+      }
+      }
+      if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&
           (column_->bitWidth == 32 || column_->bitWidth == 64)) {
-        step->step = DecodeStep::kTrivial;
+        step->encoding = DecodeStep::kTrivial;
         step->data.trivial.dataType = columnKind;
         step->data.trivial.input = 0;
         step->data.trivial.begin = currentRow_;
         step->data.trivial.end = currentRow_ + rowsInBlock;
         step->data.trivial.input = nullptr;
         if (id != kNoBufferId) {
-          splitStaging.registerPointer(id, &step->data.trivial.input);
-          if (blockIdx.x == 0) {
-            splitStaging.registerPointer(id, &deviceBuffer_);
+          splitStaging.registerPointer(id, &step->data.trivial.input, true);
+          if (blockIdx == 0) {
+            splitStaging.registerPointer(id, &deviceBuffer_, true);
           }
         } else {
           step->data.trivial.input = deviceBuffer_;
         }
         step->data.trivial.result = op.waveVector->values<char>();
       } else {
-        step->step = DecodeStep::kDictionaryOnBitpack;
+        step->encoding = DecodeStep::kDictionaryOnBitpack;
         // Just bit pack, no dictionary.
         step->data.dictionaryOnBitpack.alphabet = nullptr;
         step->data.dictionaryOnBitpack.dataType = columnKind;
@@ -174,8 +191,8 @@ bool isDense(RowSet rows) {
         step->data.dictionaryOnBitpack.end = currentRow_ + op.rows.back() + 1;
         if (id != kNoBufferId) {
           splitStaging.registerPointer(
-              id, &step->data.dictionaryOnBitpack.indices);
-          splitStaging.registerPointer(id, &deviceBuffer_);
+				       id, &step->data.dictionaryOnBitpack.indices, true);
+          splitStaging.registerPointer(id, &deviceBuffer_, true);
         } else {
           step->data.dictionaryOnBitpack.indices =
               reinterpret_cast<uint64_t*>(deviceBuffer_);
@@ -189,15 +206,16 @@ bool isDense(RowSet rows) {
     std::vector<std::unique_ptr<GpuDecode>>* steps;
     if (!previousFilter) {
       program.programs.emplace_back();
-      steps = &programs.back();
+      steps = &program.programs.back();
     } else {
-      steps = &programs[blockIdx];
+      steps = &program.programs[blockIdx];
     }
     steps->push_back(std::move(step));
   }
 }
+  }
 
-class TestStructColumnReader : public StructColumnReader {
+  class TestStructColumnReader : public StructColumnReader {
  public:
   TestStructColumnReader(
       const TypePtr& requestedType,

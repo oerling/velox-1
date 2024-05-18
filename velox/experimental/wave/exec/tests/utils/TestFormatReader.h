@@ -75,6 +75,7 @@ class TestFormatData : public wave::FormatData {
   bool nullsStaged_{false};
   bool queued_{false};
   int32_t numStaged_{0};
+  // First unaccessed row number relative to start of 'column_'.
   int32_t currentRow_{0};
   // The device side data area start, set after the staged transfer is done.
   void* deviceBuffer_{nullptr};

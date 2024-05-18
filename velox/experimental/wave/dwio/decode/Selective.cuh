@@ -95,10 +95,8 @@ void DecodeRandomAccessLane(
   }
 }
 
-using Scan16 = cub::WarpScan<uint16_t>;
-
 } // namespace facebook::velox::wave
-)
+
 
 
 
@@ -107,4 +105,4 @@ using Scan16 = cub::WarpScan<uint16_t>;
 voide decode(DecodeOp* op) {
 
 }
-}
+
