@@ -17,12 +17,15 @@
 
 #include <boost/random/uniform_int_distribution.hpp>
 #include "velox/common/base/Fs.h"
+#include "velox/common/base/VeloxException.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
+#include "velox/exec/fuzzer/DuckQueryRunner.h"
+#include "velox/exec/fuzzer/PrestoQueryRunner.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/expression/SignatureBinder.h"
-#include "velox/expression/tests/utils/ArgumentTypeFuzzer.h"
+#include "velox/expression/fuzzer/ArgumentTypeFuzzer.h"
 #include "velox/vector/VectorSaver.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -73,7 +76,35 @@ DEFINE_bool(
     false,
     "Log statistics about function signatures");
 
+DEFINE_bool(
+    enable_oom_injection,
+    false,
+    "When enabled OOMs will randomly be triggered while executing query "
+    "plans. The goal of this mode is to ensure unexpected exceptions "
+    "aren't thrown and the process isn't killed in the process of cleaning "
+    "up after failures. Therefore, results are not compared when this is "
+    "enabled. Note that this option only works in debug builds.");
+
 namespace facebook::velox::exec::test {
+
+int32_t AggregationFuzzerBase::randInt(int32_t min, int32_t max) {
+  return boost::random::uniform_int_distribution<int32_t>(min, max)(rng_);
+}
+
+bool AggregationFuzzerBase::isSupportedType(const TypePtr& type) const {
+  // Date / IntervalDayTime/ Unknown are not currently supported by DWRF.
+  if (type->isDate() || type->isIntervalDayTime() || type->isUnKnown()) {
+    return false;
+  }
+
+  for (auto i = 0; i < type->size(); ++i) {
+    if (!isSupportedType(type->childAt(i))) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 bool AggregationFuzzerBase::addSignature(
     const std::string& name,
@@ -167,7 +198,7 @@ AggregationFuzzerBase::pickSignature() {
     const auto& signatureTemplate =
         signatureTemplates_[idx - signatures_.size()];
     signature.name = signatureTemplate.name;
-    velox::test::ArgumentTypeFuzzer typeFuzzer(
+    velox::fuzzer::ArgumentTypeFuzzer typeFuzzer(
         *signatureTemplate.signature, rng_);
     VELOX_CHECK(typeFuzzer.fuzzArgumentTypes(FLAGS_max_num_varargs));
     signature.args = typeFuzzer.argumentTypes();
@@ -355,7 +386,7 @@ void AggregationFuzzerBase::printSignatureStats() {
   }
 }
 
-velox::test::ResultOrError AggregationFuzzerBase::execute(
+velox::fuzzer::ResultOrError AggregationFuzzerBase::execute(
     const core::PlanNodePtr& plan,
     const std::vector<exec::Split>& splits,
     bool injectSpill,
@@ -364,19 +395,22 @@ velox::test::ResultOrError AggregationFuzzerBase::execute(
   LOG(INFO) << "Executing query plan: " << std::endl
             << plan->toString(true, true);
 
-  velox::test::ResultOrError resultOrError;
+  velox::fuzzer::ResultOrError resultOrError;
   try {
     std::shared_ptr<TempDirectoryPath> spillDirectory;
     AssertQueryBuilder builder(plan);
 
     builder.configs(queryConfigs_);
 
+    int32_t spillPct{0};
     if (injectSpill) {
       spillDirectory = exec::test::TempDirectoryPath::create();
-      builder.spillDirectory(spillDirectory->path)
+      builder.spillDirectory(spillDirectory->getPath())
           .config(core::QueryConfig::kSpillEnabled, "true")
           .config(core::QueryConfig::kAggregationSpillEnabled, "true")
-          .config(core::QueryConfig::kTestingSpillPct, "100");
+          .config(core::QueryConfig::kMaxSpillRunRows, randInt(32, 1L << 30));
+      // Randomized the spill injection with a percentage less than 100.
+      spillPct = 20;
     }
 
     if (abandonPartial) {
@@ -390,12 +424,31 @@ velox::test::ResultOrError AggregationFuzzerBase::execute(
       builder.splits(splits);
     }
 
+    ScopedOOMInjector oomInjector(
+        []() -> bool { return folly::Random::oneIn(10); },
+        10); // Check the condition every 10 ms.
+    if (FLAGS_enable_oom_injection) {
+      oomInjector.enable();
+    }
+
+    TestScopedSpillInjection scopedSpillInjection(spillPct);
     resultOrError.result =
         builder.maxDrivers(maxDrivers).copyResults(pool_.get());
-  } catch (VeloxUserError& e) {
+  } catch (VeloxUserError&) {
     // NOTE: velox user exception is accepted as it is caused by the invalid
     // fuzzer test inputs.
     resultOrError.exceptionPtr = std::current_exception();
+  } catch (VeloxRuntimeError& e) {
+    if (FLAGS_enable_oom_injection &&
+        e.errorCode() == facebook::velox::error_code::kMemCapExceeded &&
+        e.message() == ScopedOOMInjector::kErrorMessage) {
+      // If we enabled OOM injection we expect the exception thrown by the
+      // ScopedOOMInjector. Set the exceptionPtr, in case anything up stream
+      // attempts to use the results if exceptionPtr is not set.
+      resultOrError.exceptionPtr = std::current_exception();
+    } else {
+      throw e;
+    }
   }
 
   return resultOrError;
@@ -413,15 +466,39 @@ AggregationFuzzerBase::computeReferenceResults(
           referenceQueryRunner_->execute(
               sql.value(), input, plan->outputType()),
           ReferenceQueryErrorCode::kSuccess);
-    } catch (std::exception& e) {
-      // ++stats_.numReferenceQueryFailed;
+    } catch (...) {
+      LOG(WARNING) << "Query failed in the reference DB";
+      return std::make_pair(
+          std::nullopt, ReferenceQueryErrorCode::kReferenceQueryFail);
+    }
+  }
+
+  LOG(INFO) << "Query not supported by the reference DB";
+  return std::make_pair(
+      std::nullopt, ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+}
+
+std::pair<
+    std::optional<std::vector<RowVectorPtr>>,
+    AggregationFuzzerBase::ReferenceQueryErrorCode>
+AggregationFuzzerBase::computeReferenceResultsAsVector(
+    const core::PlanNodePtr& plan,
+    const std::vector<RowVectorPtr>& input) {
+  VELOX_CHECK(referenceQueryRunner_->supportsVeloxVectorResults());
+
+  if (auto sql = referenceQueryRunner_->toSql(plan)) {
+    try {
+      return std::make_pair(
+          referenceQueryRunner_->executeVector(
+              sql.value(), input, plan->outputType()),
+          ReferenceQueryErrorCode::kSuccess);
+    } catch (...) {
       LOG(WARNING) << "Query failed in the reference DB";
       return std::make_pair(
           std::nullopt, ReferenceQueryErrorCode::kReferenceQueryFail);
     }
   } else {
     LOG(INFO) << "Query not supported by the reference DB";
-    // ++stats_.numVerificationNotSupported;
   }
 
   return std::make_pair(
@@ -434,7 +511,7 @@ void AggregationFuzzerBase::testPlan(
     bool abandonPartial,
     bool customVerification,
     const std::vector<std::shared_ptr<ResultVerifier>>& customVerifiers,
-    const velox::test::ResultOrError& expected,
+    const velox::fuzzer::ResultOrError& expected,
     int32_t maxDrivers) {
   auto actual = execute(
       planWithSplits.plan,
@@ -442,11 +519,26 @@ void AggregationFuzzerBase::testPlan(
       injectSpill,
       abandonPartial,
       maxDrivers);
+  compare(actual, customVerification, customVerifiers, expected);
+}
 
+void AggregationFuzzerBase::compare(
+    const velox::fuzzer::ResultOrError& actual,
+    bool customVerification,
+    const std::vector<std::shared_ptr<ResultVerifier>>& customVerifiers,
+    const velox::fuzzer::ResultOrError& expected) {
   // Compare results or exceptions (if any). Fail is anything is different.
+  if (FLAGS_enable_oom_injection) {
+    // If OOM injection is enabled and we've made it this far and the test
+    // is considered a success.  We don't bother checking the results.
+    return;
+  }
+
+  // Compare results or exceptions (if any). Fail if anything is different.
   if (expected.exceptionPtr || actual.exceptionPtr) {
     // Throws in case exceptions are not compatible.
-    velox::test::compareExceptions(expected.exceptionPtr, actual.exceptionPtr);
+    velox::fuzzer::compareExceptions(
+        expected.exceptionPtr, actual.exceptionPtr);
     return;
   }
 
@@ -456,6 +548,9 @@ void AggregationFuzzerBase::testPlan(
         "Logically equivalent plans produced different results");
     return;
   }
+
+  VELOX_CHECK_NOT_NULL(expected.result);
+  VELOX_CHECK_NOT_NULL(actual.result);
 
   VELOX_CHECK_EQ(
       expected.result->size(),
@@ -536,6 +631,34 @@ std::vector<exec::Split> AggregationFuzzerBase::makeSplits(
   return splits;
 }
 
+void AggregationFuzzerBase::Stats::updateReferenceQueryStats(
+    AggregationFuzzerBase::ReferenceQueryErrorCode errorCode) {
+  if (errorCode == ReferenceQueryErrorCode::kReferenceQueryFail) {
+    ++numReferenceQueryFailed;
+  } else if (errorCode == ReferenceQueryErrorCode::kReferenceQueryUnsupported) {
+    ++numReferenceQueryNotSupported;
+  } else {
+    VELOX_CHECK(
+        errorCode == ReferenceQueryErrorCode::kSuccess,
+        "Error should be handled by branches above.");
+  }
+}
+
+void AggregationFuzzerBase::Stats::print(size_t numIterations) const {
+  LOG(INFO) << "Total functions tested: " << functionNames.size();
+  LOG(INFO) << "Total iterations requiring sorted inputs: "
+            << printPercentageStat(numSortedInputs, numIterations);
+  LOG(INFO) << "Total iterations verified against reference DB: "
+            << printPercentageStat(numVerified, numIterations);
+  LOG(INFO)
+      << "Total functions not verified (verification skipped / not supported by reference DB / reference DB failed): "
+      << printPercentageStat(numVerificationSkipped, numIterations) << " / "
+      << printPercentageStat(numReferenceQueryNotSupported, numIterations)
+      << " / " << printPercentageStat(numReferenceQueryFailed, numIterations);
+  LOG(INFO) << "Total failed functions: "
+            << printPercentageStat(numFailed, numIterations);
+}
+
 std::string printPercentageStat(size_t n, size_t total) {
   return fmt::format("{} ({:.2f}%)", n, (double)n / total * 100);
 }
@@ -569,7 +692,8 @@ std::string makeFunctionCall(
     const std::string& name,
     const std::vector<std::string>& argNames,
     bool sortedInputs,
-    bool distinctInputs) {
+    bool distinctInputs,
+    bool ignoreNulls) {
   std::ostringstream call;
   call << name << "(";
 
@@ -580,6 +704,9 @@ std::string makeFunctionCall(
     call << "distinct " << args;
   } else {
     call << args;
+  }
+  if (ignoreNulls) {
+    call << " IGNORE NULLS";
   }
   call << ")";
 
@@ -657,6 +784,43 @@ void persistReproInfo(
     LOG(ERROR) << "Failed to store aggregation plans to " << planPath << ": "
                << e.what();
   }
+}
+
+std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
+    const std::string& prestoUrl,
+    const std::string& runnerName,
+    const uint32_t& reqTimeoutMs) {
+  if (prestoUrl.empty()) {
+    auto duckQueryRunner = std::make_unique<DuckQueryRunner>();
+    duckQueryRunner->disableAggregateFunctions({
+        "skewness",
+        // DuckDB results on constant inputs are incorrect. Should be NaN,
+        // but DuckDB returns some random value.
+        "kurtosis",
+        "entropy",
+        // Regr_count result in DuckDB is incorrect when the input data is null.
+        "regr_count",
+    });
+    LOG(INFO) << "Using DuckDB as the reference DB.";
+    return duckQueryRunner;
+  } else {
+    return std::make_unique<PrestoQueryRunner>(
+        prestoUrl,
+        runnerName,
+        static_cast<std::chrono::milliseconds>(reqTimeoutMs));
+    LOG(INFO) << "Using Presto as the reference DB.";
+  }
+}
+
+std::vector<std::string> retrieveWindowFunctionName(
+    const core::PlanNodePtr& node) {
+  auto windowNode = std::dynamic_pointer_cast<const core::WindowNode>(node);
+  VELOX_CHECK_NOT_NULL(windowNode);
+  std::vector<std::string> functionNames;
+  for (const auto& function : windowNode->windowFunctions()) {
+    functionNames.push_back(function.functionCall->name());
+  }
+  return functionNames;
 }
 
 } // namespace facebook::velox::exec::test

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/exec/MemoryReclaimer.h"
+#include "velox/common/memory/MemoryArbitrator.h"
 #include "velox/common/memory/MemoryPool.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
@@ -44,13 +44,16 @@ class MemoryReclaimerTest : public OperatorTestBase {
         "MemoryReclaimerTest",
         std::move(fakePlanFragment),
         0,
-        std::make_shared<core::QueryCtx>());
+        core::QueryCtx::create(executor_.get()),
+        Task::ExecutionMode::kParallel);
   }
 
   void SetUp() override {}
 
   void TearDown() override {}
 
+  std::shared_ptr<folly::CPUThreadPoolExecutor> executor_{
+      std::make_shared<folly::CPUThreadPoolExecutor>(4)};
   const std::shared_ptr<memory::MemoryPool> pool_;
   RowTypePtr rowType_;
   std::shared_ptr<Task> fakeTask_;
@@ -64,19 +67,20 @@ TEST_F(MemoryReclaimerTest, enterArbitrationTest) {
     auto reclaimer = exec::MemoryReclaimer::create();
     auto driver = Driver::testingCreate(
         std::make_unique<DriverCtx>(fakeTask_, 0, 0, 0, 0));
+    fakeTask_->testingIncrementThreads();
     if (underDriverContext) {
       driver->state().setThread();
       ScopedDriverThreadContext scopedDriverThreadCtx{*driver->driverCtx()};
       reclaimer->enterArbitration();
       ASSERT_TRUE(driver->state().isOnThread());
-      ASSERT_TRUE(driver->state().isSuspended);
+      ASSERT_TRUE(driver->state().suspended());
       reclaimer->leaveArbitration();
       ASSERT_TRUE(driver->state().isOnThread());
-      ASSERT_FALSE(driver->state().isSuspended);
+      ASSERT_FALSE(driver->state().suspended());
     } else {
       reclaimer->enterArbitration();
       ASSERT_FALSE(driver->state().isOnThread());
-      ASSERT_FALSE(driver->state().isSuspended);
+      ASSERT_FALSE(driver->state().suspended());
       reclaimer->leaveArbitration();
     }
   }
@@ -94,7 +98,7 @@ TEST_F(MemoryReclaimerTest, abortTest) {
           "leafAbortTest", true, exec::MemoryReclaimer::create());
       try {
         VELOX_FAIL("abortTest error");
-      } catch (const VeloxRuntimeError& e) {
+      } catch (const VeloxRuntimeError&) {
         leafPool->abort(std::current_exception());
       }
       ASSERT_TRUE(rootPool->aborted());
@@ -104,7 +108,7 @@ TEST_F(MemoryReclaimerTest, abortTest) {
           "nonLeafAbortTest", exec::MemoryReclaimer::create());
       try {
         VELOX_FAIL("abortTest error");
-      } catch (const VeloxRuntimeError& e) {
+      } catch (const VeloxRuntimeError&) {
         aggregatePool->abort(std::current_exception());
       }
       ASSERT_TRUE(rootPool->aborted());
@@ -116,16 +120,16 @@ TEST_F(MemoryReclaimerTest, abortTest) {
 TEST(ReclaimableSectionGuard, basic) {
   tsan_atomic<bool> nonReclaimableSection{false};
   {
-    NonReclaimableSectionGuard guard(&nonReclaimableSection);
+    memory::NonReclaimableSectionGuard guard(&nonReclaimableSection);
     ASSERT_TRUE(nonReclaimableSection);
     {
-      ReclaimableSectionGuard guard(&nonReclaimableSection);
+      memory::ReclaimableSectionGuard guard(&nonReclaimableSection);
       ASSERT_FALSE(nonReclaimableSection);
       {
-        ReclaimableSectionGuard guard(&nonReclaimableSection);
+        memory::ReclaimableSectionGuard guard(&nonReclaimableSection);
         ASSERT_FALSE(nonReclaimableSection);
         {
-          NonReclaimableSectionGuard guard(&nonReclaimableSection);
+          memory::NonReclaimableSectionGuard guard(&nonReclaimableSection);
           ASSERT_TRUE(nonReclaimableSection);
         }
         ASSERT_FALSE(nonReclaimableSection);
@@ -137,21 +141,21 @@ TEST(ReclaimableSectionGuard, basic) {
   ASSERT_FALSE(nonReclaimableSection);
   nonReclaimableSection = true;
   {
-    ReclaimableSectionGuard guard(&nonReclaimableSection);
+    memory::ReclaimableSectionGuard guard(&nonReclaimableSection);
     ASSERT_FALSE(nonReclaimableSection);
     {
-      NonReclaimableSectionGuard guard(&nonReclaimableSection);
+      memory::NonReclaimableSectionGuard guard(&nonReclaimableSection);
       ASSERT_TRUE(nonReclaimableSection);
       {
-        ReclaimableSectionGuard guard(&nonReclaimableSection);
+        memory::ReclaimableSectionGuard guard(&nonReclaimableSection);
         ASSERT_FALSE(nonReclaimableSection);
         {
-          ReclaimableSectionGuard guard(&nonReclaimableSection);
+          memory::ReclaimableSectionGuard guard(&nonReclaimableSection);
           ASSERT_FALSE(nonReclaimableSection);
         }
         ASSERT_FALSE(nonReclaimableSection);
         {
-          NonReclaimableSectionGuard guard(&nonReclaimableSection);
+          memory::NonReclaimableSectionGuard guard(&nonReclaimableSection);
           ASSERT_TRUE(nonReclaimableSection);
         }
         ASSERT_FALSE(nonReclaimableSection);

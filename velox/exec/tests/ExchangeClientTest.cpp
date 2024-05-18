@@ -60,11 +60,15 @@ class ExchangeClientTest : public testing::Test,
   std::shared_ptr<Task> makeTask(
       const std::string& taskId,
       const core::PlanNodePtr& planNode) {
-    auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+    auto queryCtx = core::QueryCtx::create(executor_.get());
     queryCtx->testingOverrideMemoryPool(
         memory::memoryManager()->addRootPool(queryCtx->queryId()));
     return Task::create(
-        taskId, core::PlanFragment{planNode}, 0, std::move(queryCtx));
+        taskId,
+        core::PlanFragment{planNode},
+        0,
+        std::move(queryCtx),
+        Task::ExecutionMode::kParallel);
   }
 
   int32_t enqueue(
@@ -80,7 +84,10 @@ class ExchangeClientTest : public testing::Test,
     return pageSize;
   }
 
-  void fetchPages(ExchangeClient& client, int32_t numPages) {
+  std::vector<std::unique_ptr<SerializedPage>> fetchPages(
+      ExchangeClient& client,
+      int32_t numPages) {
+    std::vector<std::unique_ptr<SerializedPage>> allPages;
     for (auto i = 0; i < numPages; ++i) {
       bool atEnd;
       ContinueFuture future;
@@ -90,8 +97,10 @@ class ExchangeClientTest : public testing::Test,
         std::move(future).via(&exec).wait();
         pages = client.next(1, &atEnd, &future);
       }
-      ASSERT_EQ(1, pages.size());
+      EXPECT_EQ(1, pages.size());
+      allPages.push_back(std::move(pages.at(0)));
     }
+    return allPages;
   }
 
   static void addSources(ExchangeQueue& queue, int32_t numSources) {
@@ -251,15 +260,47 @@ TEST_F(ExchangeClientTest, flowControl) {
   client->close();
 }
 
+TEST_F(ExchangeClientTest, largeSinglePage) {
+  auto data = {
+      makeRowVector({makeFlatVector<int64_t>(10000, folly::identity)}),
+      makeRowVector({makeFlatVector<int64_t>(1, folly::identity)}),
+  };
+  auto client =
+      std::make_shared<ExchangeClient>("test", 1, 1000, pool(), executor());
+  auto plan = test::PlanBuilder()
+                  .values({data})
+                  .partitionedOutputArbitrary()
+                  .planNode();
+  auto task = makeTask("local://producer", plan);
+  bufferManager_->initializeTask(
+      task, core::PartitionedOutputNode::Kind::kArbitrary, 1, 1);
+  for (auto& batch : data) {
+    enqueue(task->taskId(), 0, batch);
+  }
+  client->addRemoteTaskId(task->taskId());
+  auto pages = fetchPages(*client, 1);
+  ASSERT_EQ(pages.size(), 1);
+  ASSERT_GT(pages[0]->size(), 1000);
+  pages = fetchPages(*client, 1);
+  ASSERT_EQ(pages.size(), 1);
+  ASSERT_LT(pages[0]->size(), 1000);
+  task->requestCancel();
+  bufferManager_->removeTask(task->taskId());
+  client->close();
+}
+
 TEST_F(ExchangeClientTest, multiPageFetch) {
   auto client =
       std::make_shared<ExchangeClient>("test", 17, 1 << 20, pool(), executor());
 
-  bool atEnd;
-  ContinueFuture future;
-  auto pages = client->next(1, &atEnd, &future);
-  ASSERT_EQ(0, pages.size());
-  ASSERT_FALSE(atEnd);
+  {
+    bool atEnd;
+    ContinueFuture future = ContinueFuture::makeEmpty();
+    auto pages = client->next(1, &atEnd, &future);
+    ASSERT_EQ(0, pages.size());
+    ASSERT_FALSE(atEnd);
+    ASSERT_TRUE(future.valid());
+  }
 
   const auto& queue = client->queue();
   addSources(*queue, 1);
@@ -269,20 +310,25 @@ TEST_F(ExchangeClientTest, multiPageFetch) {
   }
 
   // Fetch one page.
-  pages = client->next(1, &atEnd, &future);
+  bool atEnd;
+  ContinueFuture future = ContinueFuture::makeEmpty();
+  auto pages = client->next(1, &atEnd, &future);
   ASSERT_EQ(1, pages.size());
   ASSERT_FALSE(atEnd);
+  ASSERT_FALSE(future.valid());
 
   // Fetch multiple pages. Each page is slightly larger than 1K bytes, hence,
   // only 4 pages fit.
   pages = client->next(5'000, &atEnd, &future);
   ASSERT_EQ(4, pages.size());
   ASSERT_FALSE(atEnd);
+  ASSERT_FALSE(future.valid());
 
   // Fetch the rest of the pages.
   pages = client->next(10'000, &atEnd, &future);
   ASSERT_EQ(5, pages.size());
   ASSERT_FALSE(atEnd);
+  ASSERT_FALSE(future.valid());
 
   // Signal no-more-data.
   enqueue(*queue, nullptr);
@@ -290,6 +336,7 @@ TEST_F(ExchangeClientTest, multiPageFetch) {
   pages = client->next(10'000, &atEnd, &future);
   ASSERT_EQ(0, pages.size());
   ASSERT_TRUE(atEnd);
+  ASSERT_FALSE(future.valid());
 
   client->close();
 }
@@ -328,10 +375,10 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
 
 #ifndef NDEBUG
   // Wait until all sources have timed out at least once.
-  constexpr int32_t kMaxIters =
-      3 * kNumSources * ExchangeClient::kDefaultMaxWaitSeconds;
-  int32_t counter = 0;
-  for (; counter < kMaxIters; ++counter) {
+  auto deadline = std::chrono::system_clock::now() +
+      3 * kNumSources *
+          std::chrono::seconds(ExchangeClient::kRequestDataSizesMaxWait);
+  while (std::chrono::system_clock::now() < deadline) {
     {
       std::lock_guard<std::mutex> l(mutex);
       if (sourcesWithTimeout.size() >= kNumSources) {
@@ -340,7 +387,7 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
     }
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
-  EXPECT_LT(counter, kMaxIters);
+  EXPECT_LT(std::chrono::system_clock::now(), deadline);
 #endif
 
   const auto& queue = client->queue();
@@ -371,6 +418,53 @@ TEST_F(ExchangeClientTest, sourceTimeout) {
   pages = client->next(10'000, &atEnd, &future);
   EXPECT_EQ(0, pages.size());
   EXPECT_TRUE(atEnd);
+
+  client->close();
+  test::testingShutdownLocalExchangeSource();
+}
+
+TEST_F(ExchangeClientTest, callNextAfterClose) {
+  constexpr int32_t kNumSources = 3;
+  common::testutil::TestValue::enable();
+  auto client =
+      std::make_shared<ExchangeClient>("test", 17, 1 << 20, pool(), executor());
+
+  bool atEnd;
+  ContinueFuture future;
+  auto pages = client->next(1, &atEnd, &future);
+  ASSERT_EQ(0, pages.size());
+  ASSERT_FALSE(atEnd);
+
+  for (auto i = 0; i < kNumSources; ++i) {
+    client->addRemoteTaskId(fmt::format("local://{}", i));
+  }
+  client->noMoreRemoteTasks();
+
+  // Fetch a page. No page is found. All sources are fetching.
+  pages = client->next(1, &atEnd, &future);
+  EXPECT_TRUE(pages.empty());
+
+  const auto& queue = client->queue();
+  for (auto i = 0; i < 10; ++i) {
+    enqueue(*queue, makePage(1'000 + i));
+  }
+
+  // Fetch multiple pages. Each page is slightly larger than 1K bytes, hence,
+  // only 4 pages fit.
+  pages = client->next(5'000, &atEnd, &future);
+  EXPECT_EQ(4, pages.size());
+  EXPECT_FALSE(atEnd);
+
+  // Close the client and try calling next again.
+  client->close();
+
+  // Here we should have no pages returned, be at end (we are closed) and the
+  // future should be invalid (not based on a valid promise).
+  ContinueFuture futureFinal{ContinueFuture::makeEmpty()};
+  pages = client->next(10'000, &atEnd, &futureFinal);
+  EXPECT_EQ(0, pages.size());
+  EXPECT_TRUE(atEnd);
+  EXPECT_FALSE(futureFinal.valid());
 
   client->close();
   test::testingShutdownLocalExchangeSource();

@@ -24,17 +24,15 @@ add_library(
   ArrayIntersectExcept.cpp
   ArrayAndMapMatch.cpp
   ArrayPosition.cpp
-  ArrayShuffle.cpp
   ArraySort.cpp
   ArraySum.cpp
   Comparisons.cpp
-  DecimalVectorFunctions.cpp
+  DecimalFunctions.cpp
   ElementAt.cpp
   FilterFunctions.cpp
   FindFirst.cpp
   FromUnixTime.cpp
   FromUtf8.cpp
-  GreatestLeast.cpp
   InPredicate.cpp
   JsonFunctions.cpp
   Map.cpp
@@ -44,7 +42,6 @@ add_library(
   MapZipWith.cpp
   Not.cpp
   Reduce.cpp
-  Repeat.cpp
   Reverse.cpp
   RowFunction.cpp
   Sequence.cpp
@@ -57,6 +54,7 @@ add_library(
   Transform.cpp
   TransformKeys.cpp
   TransformValues.cpp
+  TypeOf.cpp
   URLFunctions.cpp
   Utf8Utils.cpp
   VectorArithmetic.cpp
@@ -74,7 +72,8 @@ target_link_libraries(
   velox_type_tz
   velox_presto_types
   velox_functions_util
-  Folly::folly)
+  Folly::folly
+  stemmer::stemmer)
 
 set_property(TARGET velox_functions_prestosql_impl PROPERTY JOB_POOL_COMPILE
                                                             high_memory_pool)

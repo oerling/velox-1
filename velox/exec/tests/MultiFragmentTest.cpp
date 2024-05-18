@@ -22,6 +22,7 @@
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/OutputBufferManager.h"
+#include "velox/exec/PartitionedOutput.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/RoundRobinPartitionFunction.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -45,6 +46,15 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
   }
 
+  void TearDown() override {
+    // There might be lingering exchange source on executor even after all tasks
+    // are deleted. This can cause memory leak because exchange source holds
+    // reference to memory pool. We need to make sure they are properly cleaned.
+    testingShutdownLocalExchangeSource();
+    vectors_.clear();
+    HiveConnectorTestBase::TearDown();
+  }
+
   static std::string makeTaskId(const std::string& prefix, int num) {
     return fmt::format("local://{}-{}", prefix, num);
   }
@@ -66,7 +76,7 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       Consumer consumer = nullptr,
       int64_t maxMemory = memory::kMaxMemory) {
     auto configCopy = configSettings_;
-    auto queryCtx = std::make_shared<core::QueryCtx>(
+    auto queryCtx = core::QueryCtx::create(
         executor_.get(), core::QueryConfig(std::move(configCopy)));
     queryCtx->testingOverrideMemoryPool(memory::memoryManager()->addRootPool(
         queryCtx->queryId(), maxMemory, MemoryReclaimer::create()));
@@ -76,6 +86,7 @@ class MultiFragmentTest : public HiveConnectorTestBase {
         std::move(planFragment),
         destination,
         std::move(queryCtx),
+        Task::ExecutionMode::kParallel,
         std::move(consumer));
   }
 
@@ -96,11 +107,11 @@ class MultiFragmentTest : public HiveConnectorTestBase {
       auto split = exec::Split(
           std::make_shared<connector::hive::HiveConnectorSplit>(
               kHiveConnectorId,
-              "file:" + filePath->path,
+              "file:" + filePath->getPath(),
               facebook::velox::dwio::common::FileFormat::DWRF),
           -1);
       task->addSplit("0", std::move(split));
-      VLOG(1) << filePath->path << "\n";
+      VLOG(1) << filePath->getPath() << "\n";
     }
     task->noMoreSplits("0");
   }
@@ -142,7 +153,7 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     filePaths_ = makeFilePaths(filePathCount);
     vectors_ = makeVectors(filePaths_.size(), rowsPerVector);
     for (int i = 0; i < filePaths_.size(); i++) {
-      writeToFile(filePaths_[i]->path, vectors_[i]);
+      writeToFile(filePaths_[i]->getPath(), vectors_[i]);
     }
     createDuckDbTable(vectors_);
   }
@@ -404,8 +415,10 @@ TEST_F(MultiFragmentTest, mergeExchange) {
   }
 
   auto finalSortTaskId = makeTaskId("orderby", tasks.size());
+  core::PlanNodeId mergeExchangeId;
   auto finalSortPlan = PlanBuilder()
                            .mergeExchange(outputType, {"c0"})
+                           .capturePlanNodeId(mergeExchangeId)
                            .partitionedOutput({}, 1)
                            .planNode();
 
@@ -421,6 +434,15 @@ TEST_F(MultiFragmentTest, mergeExchange) {
   for (auto& task : tasks) {
     ASSERT_TRUE(waitForTaskCompletion(task.get())) << task->taskId();
   }
+
+  const auto finalSortStats = toPlanStats(task->taskStats());
+  const auto& mergeExchangeStats = finalSortStats.at(mergeExchangeId);
+
+  EXPECT_EQ(20'000, mergeExchangeStats.inputRows);
+  EXPECT_EQ(20'000, mergeExchangeStats.rawInputRows);
+
+  EXPECT_LT(0, mergeExchangeStats.inputBytes);
+  EXPECT_LT(0, mergeExchangeStats.rawInputBytes);
 }
 
 // Test reordering and dropping columns in PartitionedOutput operator.
@@ -563,12 +585,10 @@ TEST_F(MultiFragmentTest, partitionedOutput) {
 TEST_F(MultiFragmentTest, partitionedOutputWithLargeInput) {
   // Verify that partitionedOutput operator is able to split a single input
   // vector if it hits memory or row limits.
-  // We create a large vector that hits the row limit (70% - 120% of 10,000)
-  // which would hit a task level memory limit of 1MB unless its split up.
+  // We create a large vector that hits the row limit (70% - 120% of 10,000).
   // This test exercises splitting up the input both from the edges and the
-  // middle as it ends up splitting it in ~ 3 splits.
+  // middle as it ends up splitting it into at least 3.
   setupSources(1, 30'000);
-  const int64_t kRootMemoryLimit = 1 << 20; // 1MB
   // Single Partition
   {
     auto leafTaskId = makeTaskId("leaf", 0);
@@ -577,17 +597,16 @@ TEST_F(MultiFragmentTest, partitionedOutputWithLargeInput) {
             .values(vectors_)
             .partitionedOutput({}, 1, {"c0", "c1", "c2", "c3", "c4"})
             .planNode();
-    auto leafTask =
-        makeTask(leafTaskId, leafPlan, 0, nullptr, kRootMemoryLimit);
+    auto leafTask = makeTask(leafTaskId, leafPlan, 0, nullptr, 4 << 20);
     leafTask->start(1);
     auto op = PlanBuilder().exchange(leafPlan->outputType()).planNode();
 
     auto task =
         assertQuery(op, {leafTaskId}, "SELECT c0, c1, c2, c3, c4 FROM tmp");
-    auto taskStats = toPlanStats(task->taskStats());
-    ASSERT_GT(taskStats.at("0").inputVectors, 2);
     ASSERT_TRUE(waitForTaskCompletion(leafTask.get()))
         << leafTask->taskId() << "state: " << leafTask->state();
+    auto taskStats = toPlanStats(leafTask->taskStats());
+    ASSERT_GT(taskStats.at("1").outputVectors, 2);
   }
 
   // Multiple partitions but round-robin.
@@ -625,11 +644,10 @@ TEST_F(MultiFragmentTest, partitionedOutputWithLargeInput) {
 
     auto task = assertQuery(
         op, intermediateTaskIds, "SELECT c0, c1, c2, c3, c4 FROM tmp");
-    auto taskStats = toPlanStats(task->taskStats());
-    ASSERT_GT(taskStats.at("0").inputVectors, 2);
-
     ASSERT_TRUE(waitForTaskCompletion(leafTask.get()))
         << "state: " << leafTask->state();
+    auto taskStats = toPlanStats(leafTask->taskStats());
+    ASSERT_GT(taskStats.at("1").outputVectors, 2);
   }
 }
 
@@ -868,7 +886,7 @@ TEST_F(MultiFragmentTest, limit) {
       1'000, [](auto row) { return row; }, nullEvery(7))});
 
   auto file = TempFilePath::create();
-  writeToFile(file->path, {data});
+  writeToFile(file->getPath(), {data});
 
   // Make leaf task: Values -> PartialLimit(10) -> Repartitioning(0).
   auto leafTaskId = makeTaskId("leaf", 0);
@@ -882,7 +900,7 @@ TEST_F(MultiFragmentTest, limit) {
   leafTask->start(1);
 
   leafTask.get()->addSplit(
-      "0", exec::Split(makeHiveConnectorSplit(file->path)));
+      "0", exec::Split(makeHiveConnectorSplit(file->getPath())));
 
   // Make final task: Exchange -> FinalLimit(10).
   auto plan = PlanBuilder()
@@ -1359,7 +1377,7 @@ class TestCustomExchange : public exec::Exchange {
  public:
   TestCustomExchange(
       int32_t operatorId,
-      DriverCtx* FOLLY_NONNULL ctx,
+      DriverCtx* ctx,
       const std::shared_ptr<const TestCustomExchangeNode>& customExchangeNode,
       std::shared_ptr<ExchangeClient> exchangeClient)
       : exec::Exchange(
@@ -1526,7 +1544,8 @@ TEST_F(MultiFragmentTest, taskTerminateWithPendingOutputBuffers) {
         maxBytes,
         sequence,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> iobufs,
-            int64_t inSequence) {
+            int64_t inSequence,
+            std::vector<int64_t> /*remainingBytes*/) {
           for (auto& iobuf : iobufs) {
             if (iobuf != nullptr) {
               ++inSequence;
@@ -1715,7 +1734,7 @@ class DataFetcher {
         destination_,
         maxBytes_,
         sequence,
-        [&](auto pages, auto sequence) mutable {
+        [&](auto pages, auto sequence, auto /*remainingBytes*/) mutable {
           const auto nextSequence = sequence + pages.size();
           const bool atEnd = processData(std::move(pages), sequence);
           bufferManager_->acknowledge(taskId_, destination_, nextSequence);
@@ -1988,6 +2007,63 @@ TEST_F(MultiFragmentTest, mergeSmallBatchesInExchange) {
   test(1'000, 56);
   test(10'000, 6);
   test(100'000, 1);
+}
+
+TEST_F(MultiFragmentTest, compression) {
+  bufferManager_->testingSetCompression(
+      common::CompressionKind::CompressionKind_LZ4);
+  auto guard = folly::makeGuard([&]() {
+    bufferManager_->testingSetCompression(
+        common::CompressionKind::CompressionKind_NONE);
+  });
+
+  constexpr int32_t kNumRepeats = 1'000'000;
+  const auto data = makeRowVector({makeFlatVector<int64_t>({1, 2, 3})});
+
+  const auto producerPlan = test::PlanBuilder()
+                                .values({data}, false, kNumRepeats)
+                                .partitionedOutput({}, 1)
+                                .planNode();
+
+  const auto plan = test::PlanBuilder()
+                        .exchange(asRowType(data->type()))
+                        .singleAggregation({}, {"sum(c0)"})
+                        .planNode();
+
+  const auto expected =
+      makeRowVector({makeFlatVector<int64_t>(std::vector<int64_t>{6000000})});
+
+  const auto test = [&](const std::string& producerTaskId,
+                        float minCompressionRatio,
+                        bool expectSkipCompression) {
+    PartitionedOutput::testingSetMinCompressionRatio(minCompressionRatio);
+    auto producerTask = makeTask(producerTaskId, producerPlan);
+    producerTask->start(1);
+
+    auto consumerTask = test::AssertQueryBuilder(plan)
+                            .split(remoteSplit(producerTaskId))
+                            .destination(0)
+                            .assertResults(expected);
+
+    auto consumerTaskStats = exec::toPlanStats(consumerTask->taskStats());
+    const auto& consumerPlanStats = consumerTaskStats.at("0");
+    ASSERT_EQ(data->size() * kNumRepeats, consumerPlanStats.outputRows);
+
+    auto producerTaskStats = exec::toPlanStats(producerTask->taskStats());
+    const auto& producerStats = producerTaskStats.at("1");
+    // The data is extremely compressible, 1, 2, 3 repeated 1000000 times.
+    if (!expectSkipCompression) {
+      EXPECT_LT(
+          producerStats.customStats.at("compressedBytes").sum,
+          producerStats.customStats.at("compressionInputBytes").sum);
+      EXPECT_EQ(0, producerStats.customStats.at("compressionSkippedBytes").sum);
+    } else {
+      EXPECT_LT(0, producerStats.customStats.at("compressionSkippedBytes").sum);
+    }
+  };
+
+  test("local://t1", 0.7, false);
+  test("local://t2", 0.0000001, true);
 }
 
 } // namespace

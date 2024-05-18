@@ -67,7 +67,13 @@ struct TimestampToStringOptions {
   };
 
   Mode mode = Mode::kFull;
+
+  const date::time_zone* timeZone = nullptr;
 };
+
+/// Returns the max length of a converted string from timestamp.
+std::string::size_type getMaxStringLength(
+    const TimestampToStringOptions& options);
 
 struct Timestamp {
  public:
@@ -218,6 +224,21 @@ struct Timestamp {
     return Timestamp(second, nano);
   }
 
+  static Timestamp fromMicrosNoError(int64_t micros)
+#if defined(__has_feature)
+#if __has_feature(__address_sanitizer__)
+      __attribute__((__no_sanitize__("signed-integer-overflow")))
+#endif
+#endif
+  {
+    if (micros >= 0 || micros % 1'000'000 == 0) {
+      return Timestamp(micros / 1'000'000, (micros % 1'000'000) * 1'000);
+    }
+    auto second = micros / 1'000'000 - 1;
+    auto nano = ((micros - second * 1'000'000) % 1'000'000) * 1'000;
+    return Timestamp(second, nano);
+  }
+
   static Timestamp fromNanos(int64_t nanos) {
     if (nanos >= 0 || nanos % 1'000'000'000 == 0) {
       return Timestamp(nanos / 1'000'000'000, nanos % 1'000'000'000);
@@ -263,10 +284,22 @@ struct Timestamp {
 
   /// Converts a std::tm to a time/date/timestamp string in ISO 8601 format
   /// according to TimestampToStringOptions.
-  static std::string tmToString(
-      const std::tm&,
+  /// @param startPosition the start position of pre-allocated memory to write
+  /// string to.
+  static StringView tmToStringView(
+      const std::tm& tmValue,
       uint64_t nanos,
-      const TimestampToStringOptions& options);
+      const TimestampToStringOptions& options,
+      char* const startPosition);
+
+  /// Converts a timestamp to a time/date/timestamp string in ISO 8601 format
+  /// according to TimestampToStringOptions.
+  /// @param startPosition the start position of pre-allocated memory to write
+  /// string to.
+  static StringView tsToStringView(
+      const Timestamp& ts,
+      const TimestampToStringOptions& options,
+      char* const startPosition);
 
   // Assuming the timestamp represents a time at zone, converts it to the GMT
   // time at the same moment.
@@ -356,7 +389,11 @@ struct Timestamp {
         epochToUtc(seconds_, tm),
         "Can't convert seconds to time: {}",
         seconds_);
-    return tmToString(tm, nanos_, options);
+    std::string result;
+    result.resize(getMaxStringLength(options));
+    const auto view = tmToStringView(tm, nanos_, options, result.data());
+    result.resize(view.size());
+    return result;
   }
 
   operator std::string() const {

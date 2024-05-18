@@ -205,7 +205,7 @@ class TempProjections {
   core::FieldAccessTypedExprPtr toFieldRef(ExprPtr expr) {
     auto it = exprChannel_.find(expr);
     if (it == exprChannel_.end()) {
-      VELOX_CHECK_NE(expr->type(), PlanType::kColumn);
+      VELOX_CHECK(expr->type() != PlanType::kColumn);
       exprChannel_[expr] = nextChannel_++;
       exprs_.push_back(optimization_.toTypedExpr(expr));
       names_.push_back(fmt::format("__r{}", nextChannel_ - 1));
@@ -569,7 +569,7 @@ core::PlanNodePtr Optimization::makeFragment(
     case RelType::kHashBuild:
       return makeFragment(op->input(), fragment, stages);
     default:
-      VELOX_FAIL("Unsupported RelationOp {}", op->relType());
+      VELOX_FAIL("Unsupported RelationOp {}", static_cast<int32_t>(op->relType()));
   }
   return nullptr;
 }

@@ -8,7 +8,26 @@ Binary Functions
 
 .. function:: from_base64(string) -> varbinary
 
-    Decodes binary data from the base64 encoded ``string``.
+    Decodes a Base64-encoded ``string`` back into its original binary form. 
+    This function is capable of handling both fully padded and non-padded Base64 encoded strings. 
+    Partially padded Base64 strings are not supported and will result in an error.
+
+    Examples
+    --------
+    Query with padded Base64 string:
+    ::
+        SELECT from_base64('SGVsbG8gV29ybGQ='); -- [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100]
+
+    Query with non-padded Base64 string:
+    ::
+        SELECT from_base64('SGVsbG8gV29ybGQ'); -- [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100]
+
+    Query with partial-padded Base64 string:
+    ::
+        SELECT from_base64('SGVsbG8gV29ybGQgZm9yIHZlbG94IQ='); -- Error : Base64::decode() - invalid input string: string length is not a multiple of 4.
+
+    In the above examples, both the fully padded and non-padded Base64 strings ('SGVsbG8gV29ybGQ=' and 'SGVsbG8gV29ybGQ') decode to the binary representation of the text 'Hello World'.
+    While, partial-padded Base64 string 'SGVsbG8gV29ybGQgZm9yIHZlbG94IQ=' will lead to an velox error.
 
 .. function:: from_base64url(string) -> varbinary
 
@@ -25,6 +44,16 @@ Binary Functions
 .. function:: from_hex(string) -> varbinary
 
     Decodes binary data from the hex encoded ``string``.
+
+.. function:: from_ieee754_32(binary) -> real
+
+    Decodes the 32-bit big-endian ``binary`` in IEEE 754 single-precision floating-point format.
+    Throws a user error if input size is shorter / longer than 32 bits.
+
+.. function:: from_ieee754_64(binary) -> double
+
+    Decodes the 64-bit big-endian ``binary`` in IEEE 754 double-precision floating-point format.
+    Throws a user error if input size is shorter / longer than 64 bits.
 
 .. function:: hmac_md5(binary, key) -> varbinary
 
@@ -97,10 +126,6 @@ Binary Functions
 .. function:: to_ieee754_64(double) -> varbinary
 
     Encodes ``double`` in a 64-bit big-endian binary according to IEEE 754 double-precision floating-point format.
-
-.. function:: from_ieee754_64(binary) -> double
-
-    Decodes the 64-bit big-endian ``binary`` in IEEE 754 double-precision floating-point format.
 
 .. function:: xxhash64(binary) -> varbinary
 

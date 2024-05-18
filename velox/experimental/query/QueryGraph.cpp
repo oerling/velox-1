@@ -381,7 +381,7 @@ PlanObjectConstPtr Expr::singleTable() const {
   PlanObjectConstPtr table = nullptr;
   bool multiple = false;
   columns_.forEach([&](PlanObjectConstPtr object) {
-    VELOX_CHECK_EQ(object->type(), PlanType::kColumn);
+    VELOX_CHECK(object->type() == PlanType::kColumn);
     if (!table) {
       table = object->template as<Column>()->relation();
     } else if (table != object->as<Column>()->relation()) {
@@ -595,7 +595,7 @@ void DerivedTable::linkTablesToJoins() {
       if (table->type() == PlanType::kTable) {
         table->as<BaseTable>()->addJoinedBy(join);
       } else {
-        VELOX_CHECK_EQ(table->type(), PlanType::kDerivedTable);
+        VELOX_CHECK(table->type() == PlanType::kDerivedTable);
         table->as<DerivedTable>()->addJoinedBy(join);
       }
     });
@@ -1469,7 +1469,7 @@ IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
     auto schemaTable = table->as<BaseTable>()->schemaTable;
     return schemaTable->indexByColumns(keys);
   }
-  VELOX_CHECK_EQ(table->type(), PlanType::kDerivedTable);
+  VELOX_CHECK(table->type() == PlanType::kDerivedTable);
   auto dt = table->as<DerivedTable>();
   auto distribution = dt->distribution;
   assert(distribution);

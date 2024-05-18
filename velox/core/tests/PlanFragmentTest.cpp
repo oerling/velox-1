@@ -67,7 +67,7 @@ class PlanFragmentTest : public testing::Test {
         {QueryConfig::kOrderBySpillEnabled,
          orderBySpillEnabled ? "true" : "false"},
     });
-    return std::make_shared<QueryCtx>(nullptr, std::move(configData));
+    return QueryCtx::create(nullptr, std::move(configData));
   }
 
   RowTypePtr rowType_;
@@ -81,7 +81,7 @@ class PlanFragmentTest : public testing::Test {
   std::shared_ptr<memory::MemoryPool> pool_{
       memory::memoryManager()->addLeafPool()};
 };
-}; // namespace
+} // namespace
 
 TEST_F(PlanFragmentTest, orderByCanSpill) {
   struct {
@@ -321,4 +321,15 @@ TEST_F(PlanFragmentTest, hashJoin) {
         planFragment.canSpill(queryCtx->queryConfig()),
         testData.expectedCanSpill);
   }
+}
+
+TEST_F(PlanFragmentTest, executionStrategyToString) {
+  ASSERT_EQ(
+      executionStrategyToString(core::ExecutionStrategy::kUngrouped),
+      "UNGROUPED");
+  ASSERT_EQ(
+      executionStrategyToString(core::ExecutionStrategy::kGrouped), "GROUPED");
+  ASSERT_EQ(
+      executionStrategyToString(static_cast<core::ExecutionStrategy>(999)),
+      "UNKNOWN: 999");
 }

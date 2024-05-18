@@ -585,7 +585,7 @@ PlanNodePtr toVeloxPlan(
       joinType = JoinType::kLeftSemiProject;
       break;
     default:
-      VELOX_NYI("Bad Duck join type {}", join.join_type);
+      VELOX_NYI("Bad Duck join type {}", static_cast<int32_t>(join.join_type));
   }
 
   std::vector<std::string> names;

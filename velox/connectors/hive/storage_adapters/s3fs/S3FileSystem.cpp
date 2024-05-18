@@ -20,6 +20,7 @@
 #include "velox/connectors/hive/storage_adapters/s3fs/S3Util.h"
 #include "velox/connectors/hive/storage_adapters/s3fs/S3WriteFile.h"
 #include "velox/core/Config.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/dwio/common/DataBuffer.h"
 
 #include <fmt/format.h>
@@ -79,7 +80,13 @@ class S3ReadFile final : public ReadFile {
 
   // Gets the length of the file.
   // Checks if there are any issues reading the file.
-  void initialize() {
+  void initialize(const filesystems::FileOptions& options) {
+    if (options.fileSize.has_value()) {
+      VELOX_CHECK_GE(
+          options.fileSize.value(), 0, "File size must be non-negative");
+      length_ = options.fileSize.value();
+    }
+
     // Make it a no-op if invoked twice.
     if (length_ != -1) {
       return;
@@ -515,10 +522,44 @@ class S3FileSystem::Impl {
     Aws::Client::ClientConfiguration clientConfig;
     clientConfig.endpointOverride = hiveConfig_->s3Endpoint();
 
+    if (hiveConfig_->s3UseProxyFromEnv()) {
+      auto proxyConfig = S3ProxyConfigurationBuilder(hiveConfig_->s3Endpoint())
+                             .useSsl(hiveConfig_->s3UseSSL())
+                             .build();
+      if (proxyConfig.has_value()) {
+        clientConfig.proxyScheme = Aws::Http::SchemeMapper::FromString(
+            proxyConfig.value().scheme().c_str());
+        clientConfig.proxyHost = awsString(proxyConfig.value().host());
+        clientConfig.proxyPort = proxyConfig.value().port();
+        clientConfig.proxyUserName = awsString(proxyConfig.value().username());
+        clientConfig.proxyPassword = awsString(proxyConfig.value().password());
+      }
+    }
+
     if (hiveConfig_->s3UseSSL()) {
       clientConfig.scheme = Aws::Http::Scheme::HTTPS;
     } else {
       clientConfig.scheme = Aws::Http::Scheme::HTTP;
+    }
+
+    if (hiveConfig_->s3ConnectTimeout().has_value()) {
+      clientConfig.connectTimeoutMs =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              facebook::velox::core::toDuration(
+                  hiveConfig_->s3ConnectTimeout().value()))
+              .count();
+    }
+
+    if (hiveConfig_->s3SocketTimeout().has_value()) {
+      clientConfig.requestTimeoutMs =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              facebook::velox::core::toDuration(
+                  hiveConfig_->s3SocketTimeout().value()))
+              .count();
+    }
+
+    if (hiveConfig_->s3MaxConnections().has_value()) {
+      clientConfig.maxConnections = hiveConfig_->s3MaxConnections().value();
     }
 
     auto credentialsProvider = getCredentialsProvider();
@@ -626,10 +667,10 @@ std::string S3FileSystem::getLogLevelName() const {
 
 std::unique_ptr<ReadFile> S3FileSystem::openFileForRead(
     std::string_view path,
-    const FileOptions& /*unused*/) {
+    const FileOptions& options) {
   const auto file = s3Path(path);
   auto s3file = std::make_unique<S3ReadFile>(file, impl_->s3Client());
-  s3file->initialize();
+  s3file->initialize(options);
   return s3file;
 }
 

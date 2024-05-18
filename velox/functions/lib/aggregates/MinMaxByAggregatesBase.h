@@ -28,8 +28,7 @@ constexpr bool isNumeric() {
   return std::is_same_v<T, bool> || std::is_same_v<T, int8_t> ||
       std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
       std::is_same_v<T, int64_t> || std::is_same_v<T, float> ||
-      std::is_same_v<T, double> || std::is_same_v<T, Date> ||
-      std::is_same_v<T, Timestamp>;
+      std::is_same_v<T, double> || std::is_same_v<T, Timestamp>;
 }
 
 template <typename T, typename TAccumulator>
@@ -104,29 +103,6 @@ class MinMaxByAggregateBase : public exec::Aggregate {
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(ValueAccumulatorType) + sizeof(ComparisonAccumulatorType) +
         sizeof(bool);
-  }
-
-  void initializeNewGroups(
-      char** groups,
-      folly::Range<const vector_size_t*> indices) override {
-    exec::Aggregate::setAllNulls(groups, indices);
-    for (const vector_size_t i : indices) {
-      auto group = groups[i];
-      valueIsNull(group) = true;
-
-      if constexpr (!isNumeric<T>()) {
-        new (group + offset_) SingleValueAccumulator();
-      } else {
-        *value(group) = ValueAccumulatorType();
-      }
-
-      if constexpr (isNumeric<U>()) {
-        *comparisonValue(group) = ComparisonAccumulatorType();
-      } else {
-        new (group + offset_ + sizeof(ValueAccumulatorType))
-            SingleValueAccumulator();
-      }
-    }
   }
 
   void addRawInput(
@@ -283,17 +259,6 @@ class MinMaxByAggregateBase : public exec::Aggregate {
             i,
             rawComparisonValues,
             rawBoolComparisonValues);
-      }
-    }
-  }
-
-  void destroy(folly::Range<char**> groups) override {
-    for (auto group : groups) {
-      if constexpr (!isNumeric<T>()) {
-        value(group)->destroy(allocator_);
-      }
-      if constexpr (!isNumeric<U>()) {
-        comparisonValue(group)->destroy(allocator_);
       }
     }
   }
@@ -497,6 +462,42 @@ class MinMaxByAggregateBase : public exec::Aggregate {
     }
   }
 
+  void initializeNewGroupsInternal(
+      char** groups,
+      folly::Range<const vector_size_t*> indices) override {
+    exec::Aggregate::setAllNulls(groups, indices);
+    for (const vector_size_t i : indices) {
+      auto group = groups[i];
+      valueIsNull(group) = true;
+
+      if constexpr (!isNumeric<T>()) {
+        new (group + offset_) SingleValueAccumulator();
+      } else {
+        *value(group) = ValueAccumulatorType();
+      }
+
+      if constexpr (isNumeric<U>()) {
+        *comparisonValue(group) = ComparisonAccumulatorType();
+      } else {
+        new (group + offset_ + sizeof(ValueAccumulatorType))
+            SingleValueAccumulator();
+      }
+    }
+  }
+
+  void destroyInternal(folly::Range<char**> groups) override {
+    for (auto group : groups) {
+      if (isInitialized(group)) {
+        if constexpr (!isNumeric<T>()) {
+          value(group)->destroy(allocator_);
+        }
+        if constexpr (!isNumeric<U>()) {
+          comparisonValue(group)->destroy(allocator_);
+        }
+      }
+    }
+  }
+
  private:
   template <typename MayUpdate>
   inline void updateValues(
@@ -580,6 +581,9 @@ std::unique_ptr<exec::Aggregate> create(
     case TypeKind::DOUBLE:
       return std::make_unique<Aggregate<W, double, isMaxFunc, Comparator>>(
           resultType);
+    case TypeKind::HUGEINT:
+      return std::make_unique<Aggregate<W, int128_t, isMaxFunc, Comparator>>(
+          resultType);
     case TypeKind::VARBINARY:
       [[fallthrough]];
     case TypeKind::VARCHAR:
@@ -634,6 +638,9 @@ std::unique_ptr<exec::Aggregate> create(
     case TypeKind::BIGINT:
       return create<Aggregate, isMaxFunc, Comparator, int64_t>(
           resultType, compareType, errorMessage, throwOnNestedNulls);
+    case TypeKind::HUGEINT:
+      return create<Aggregate, isMaxFunc, Comparator, int128_t>(
+          resultType, compareType, errorMessage);
     case TypeKind::REAL:
       return create<Aggregate, isMaxFunc, Comparator, float>(
           resultType, compareType, errorMessage, throwOnNestedNulls);

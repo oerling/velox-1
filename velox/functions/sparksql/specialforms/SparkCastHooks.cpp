@@ -16,6 +16,7 @@
 
 #include "velox/functions/sparksql/specialforms/SparkCastHooks.h"
 #include "velox/functions/lib/string/StringImpl.h"
+#include "velox/type/TimestampConversion.h"
 
 namespace facebook::velox::functions::sparksql {
 
@@ -36,21 +37,7 @@ int32_t SparkCastHooks::castStringToDate(const StringView& dateString) const {
   //   "1970-01-01 123"
   //   "1970-01-01 (BC)"
   return util::castFromDateString(
-      removeWhiteSpaces(dateString), false /*isIso8601*/);
-}
-
-void SparkCastHooks::castTimestampToString(
-    const Timestamp& timestamp,
-    exec::StringWriter<false>& out) const {
-  static constexpr TimestampToStringOptions options = {
-      .precision = TimestampToStringOptions::Precision::kMicroseconds,
-      .leadingPositiveSign = true,
-      .skipTrailingZeros = true,
-      .zeroPaddingYear = true,
-      .dateTimeSeparator = ' ',
-  };
-  out.copy_from(timestamp.toString(options));
-  out.finalize();
+      removeWhiteSpaces(dateString), util::ParseMode::kNonStandardCast);
 }
 
 bool SparkCastHooks::legacy() const {
@@ -62,6 +49,18 @@ StringView SparkCastHooks::removeWhiteSpaces(const StringView& view) const {
   stringImpl::trimUnicodeWhiteSpace<true, true, StringView, StringView>(
       output, view);
   return output;
+}
+
+const TimestampToStringOptions& SparkCastHooks::timestampToStringOptions()
+    const {
+  static constexpr TimestampToStringOptions options = {
+      .precision = TimestampToStringOptions::Precision::kMicroseconds,
+      .leadingPositiveSign = true,
+      .skipTrailingZeros = true,
+      .zeroPaddingYear = true,
+      .dateTimeSeparator = ' ',
+  };
+  return options;
 }
 
 bool SparkCastHooks::truncate() const {

@@ -31,7 +31,7 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   PrestoQueryRunner(
       std::string coordinatorUri,
       std::string user,
-      std::chrono::milliseconds timeout = std::chrono::milliseconds{1000});
+      std::chrono::milliseconds timeout);
 
   /// Converts Velox query plan to Presto SQL. Supports Values -> Aggregation or
   /// Window with an optional Project on top.
@@ -60,6 +60,13 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   /// the query must already exist.
   std::vector<velox::RowVectorPtr> execute(const std::string& sql);
 
+  bool supportsVeloxVectorResults() const override;
+
+  std::vector<RowVectorPtr> executeVector(
+      const std::string& sql,
+      const std::vector<RowVectorPtr>& input,
+      const RowTypePtr& resultType) override;
+
  private:
   velox::memory::MemoryPool* rootPool() {
     return rootPool_.get();
@@ -78,6 +85,9 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
 
   std::optional<std::string> toSql(
       const std::shared_ptr<const velox::core::ProjectNode>& projectNode);
+
+  std::optional<std::string> toSql(
+      const std::shared_ptr<const velox::core::RowNumberNode>& rowNumberNode);
 
   std::string startQuery(const std::string& sql);
 

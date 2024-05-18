@@ -87,14 +87,13 @@ struct TestAllocation {
 };
 
 std::shared_ptr<core::QueryCtx> newQueryCtx(
-    const std::unique_ptr<facebook::velox::memory::MemoryManager>&
-        memoryManager,
-    const std::shared_ptr<folly::Executor>& executor,
+    facebook::velox::memory::MemoryManager* memoryManager,
+    folly::Executor* executor,
     int64_t memoryCapacity = facebook::velox::memory::kMaxMemory,
     std::unique_ptr<MemoryReclaimer>&& reclaimer = nullptr);
 
 std::unique_ptr<memory::MemoryManager> createMemoryManager(
-    int64_t allocatorCapacity = kMemoryCapacity,
+    int64_t arbitratorCapacity = kMemoryCapacity,
     uint64_t memoryPoolInitCapacity = kMemoryPoolInitCapacity,
     uint64_t memoryPoolTransferCapacity = kMemoryPoolTransferCapacity,
     uint64_t maxReclaimWaitMs = 0);
@@ -179,5 +178,4 @@ QueryTestResult runWriteTask(
     const std::string& kHiveConnectorId,
     bool enableSpilling,
     const RowVectorPtr& expectedResult = nullptr);
-
 } // namespace facebook::velox::exec::test

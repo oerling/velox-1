@@ -23,6 +23,7 @@
 #include "velox/common/base/CompareFlags.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
+#include "velox/expression/CastTypeChecker.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/DecodedVector.h"
@@ -238,9 +239,7 @@ class SkipNullsIterator {
   using reference = value_type;
 
  public:
-  SkipNullsIterator<BaseIterator>(
-      const BaseIterator& begin,
-      const BaseIterator& end)
+  SkipNullsIterator(const BaseIterator& begin, const BaseIterator& end)
       : iter_(begin), end_(end) {}
 
   // Given an element, return an iterator to the first not-null element starting
@@ -1117,6 +1116,10 @@ class GenericView {
     return decoded_.base()->type();
   }
 
+  std::string toString() const {
+    return decoded_.toString(index_);
+  }
+
   // If conversion is invalid, behavior is undefined. However, debug time
   // checks will throw an exception.
   template <typename ToType>
@@ -1131,8 +1134,7 @@ class GenericView {
     // castReaders_[0], and is set in Vector readers.
     if constexpr (SimpleTypeTrait<ToType>::isPrimitiveType) {
       return reinterpret_cast<VectorReader<ToType>*>(castReaders_[0].get())
-          ->
-          operator[](index_);
+          ->operator[](index_);
     } else {
       // TODO: We can distinguish if this is a null-free or not null-free
       // generic. And based on that determine if we want to call operator[] or

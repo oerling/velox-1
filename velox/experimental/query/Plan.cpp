@@ -285,7 +285,7 @@ const JoinEdgeVector& joinedBy(PlanObjectConstPtr table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()->joinedBy;
   }
-  VELOX_DCHECK_EQ(table->type(), PlanType::kDerivedTable);
+  VELOX_DCHECK(table->type() == PlanType::kDerivedTable);
   return table->as<DerivedTable>()->joinedBy;
 }
 

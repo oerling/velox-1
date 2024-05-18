@@ -33,7 +33,6 @@ class AverageAggregationTest : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-    allowInputShuffle();
 
     registerSimpleAverageAggregate("simple_avg");
   }
@@ -456,9 +455,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {"avg(c0)"},
       {},
       {makeRowVector(
-          {makeNullableFlatVector<int64_t>({3'000}, DECIMAL(10, 1))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          {makeNullableFlatVector<int64_t>({3'000}, DECIMAL(10, 1))})});
 
   // Long decimal aggregation
   testAggregations(
@@ -474,9 +471,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {"avg(c0)"},
       {},
       {makeRowVector({makeFlatVector(
-          std::vector<int128_t>{HugeInt::build(10, 300)}, DECIMAL(23, 4))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          std::vector<int128_t>{HugeInt::build(10, 300)}, DECIMAL(23, 4))})});
   // Round-up average.
   testAggregations(
       {makeRowVector(
@@ -485,9 +480,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {"avg(c0)"},
       {},
       {makeRowVector(
-          {makeFlatVector(std::vector<int64_t>{337}, DECIMAL(3, 2))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          {makeFlatVector(std::vector<int64_t>{337}, DECIMAL(3, 2))})});
 
   // The total sum overflows the max int128_t limit.
   std::vector<int128_t> rawVector;
@@ -501,9 +494,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {makeRowVector({makeFlatVector(
           std::vector<int128_t>{DecimalUtil::kLongDecimalMax},
-          DECIMAL(38, 0))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          DECIMAL(38, 0))})});
   // The total sum underflows the min int128_t limit.
   rawVector.clear();
   auto underFlowTestResult = makeFlatVector(
@@ -516,9 +507,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {},
       {"avg(c0)"},
       {},
-      {makeRowVector({underFlowTestResult})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+      {makeRowVector({underFlowTestResult})});
 
   // Add more rows to show that average result is still accurate.
   for (int i = 0; i < 10; ++i) {
@@ -538,9 +527,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {"avg(c0)"},
       {},
       {makeRowVector(
-          {makeFlatVector(std::vector<int64_t>{100}, DECIMAL(3, 2))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          {makeFlatVector(std::vector<int64_t>{100}, DECIMAL(3, 2))})});
 
   auto newSize = shortDecimal->size() * 2;
   auto indices = makeIndices(newSize, [&](int row) { return row / 2; });
@@ -553,9 +540,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       {"avg(c0)"},
       {},
       {makeRowVector(
-          {makeFlatVector(std::vector<int64_t>{3'000}, DECIMAL(10, 1))})},
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+          {makeFlatVector(std::vector<int64_t>{3'000}, DECIMAL(10, 1))})});
 
   // Decimal average aggregation with multiple groups.
   auto inputRows = {
@@ -587,13 +572,7 @@ TEST_F(AverageAggregationTest, avgDecimal) {
           {makeNullableFlatVector<int32_t>({3}),
            makeFlatVector(std::vector<int64_t>{-2498}, DECIMAL(5, 2))})};
 
-  testAggregations(
-      inputRows,
-      {"c0"},
-      {"avg(c1)"},
-      expectedResult,
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+  testAggregations(inputRows, {"c0"}, {"avg(c1)"}, expectedResult);
 
   AggregationTestBase::enableTestIncremental();
 }
@@ -610,13 +589,7 @@ TEST_F(AverageAggregationTest, avgDecimalWithMultipleRowVectors) {
   auto expectedResult = {makeRowVector(
       {makeFlatVector(std::vector<int64_t>{350}, DECIMAL(5, 2))})};
 
-  testAggregations(
-      inputRows,
-      {},
-      {"avg(c0)"},
-      expectedResult,
-      /*config*/ {},
-      /*testWithTableScan*/ false);
+  testAggregations(inputRows, {}, {"avg(c0)"}, expectedResult);
 
   AggregationTestBase::enableTestIncremental();
 }
@@ -705,6 +678,29 @@ TEST_F(AverageAggregationTest, companionFunctionsWithNonFlatAndLazyInputs) {
 
   testFunction("avg");
   testFunction("simple_avg");
+}
+
+/// We can get 0 as the count of a group when
+/// try and do a single aggregation over distinct values.
+///  In this case presto returns null as avg and not 'NaN'.
+TEST_F(AverageAggregationTest, zeroCounts) {
+  auto data = makeRowVector(
+      {makeNullableFlatVector<int64_t>({std::nullopt, 1}),
+       makeNullableFlatVector<int64_t>({2, 1}),
+       makeFlatVector<bool>({true, false})});
+
+  auto expected = makeRowVector({
+      makeNullableFlatVector<int64_t>({std::nullopt, 1}),
+      makeNullableFlatVector<double>({2.0, std::nullopt}),
+  });
+
+  auto op = PlanBuilder()
+                .values({data})
+                .project({"c0", "c1", "c2"})
+                .singleAggregation({"c0"}, {"avg(distinct c1)"}, {{"c2"}})
+                .planNode();
+
+  assertQuery(op, expected);
 }
 
 } // namespace

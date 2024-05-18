@@ -19,6 +19,7 @@
 
 #include "duckdb/common/types.hpp" // @manual
 #include "velox/duckdb/conversion/DuckConversion.h"
+#include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/vector/VectorTypeUtils.h"
@@ -119,8 +120,12 @@ template <>
   }
 
   if (type->isIntervalDayTime()) {
-    return ::duckdb::Value::INTERVAL(
-        0, 0, vector->as<SimpleVector<int64_t>>()->valueAt(index));
+    static constexpr int64_t kMicrosecondsInDay =
+        1000L * 1000L * 60L * 60L * 24L;
+    const auto interval = vector->as<SimpleVector<int64_t>>()->valueAt(index);
+    const int64_t microseconds = interval % kMicrosecondsInDay;
+    const int64_t days = interval / kMicrosecondsInDay;
+    return ::duckdb::Value::INTERVAL(0, days, microseconds);
   }
 
   return ::duckdb::Value(vector->as<SimpleVector<T>>()->valueAt(index));
@@ -131,12 +136,17 @@ template <>
     const VectorPtr& vector,
     vector_size_t index) {
   using T = typename KindToFlatVector<TypeKind::HUGEINT>::WrapperType;
-  auto type = vector->type()->asLongDecimal();
   auto val = vector->as<SimpleVector<T>>()->valueAt(index);
   auto duckVal = ::duckdb::hugeint_t();
   duckVal.lower = (val << 64) >> 64;
   duckVal.upper = (val >> 64);
-  return ::duckdb::Value::DECIMAL(duckVal, type.precision(), type.scale());
+  if (vector->type()->isLongDecimal()) {
+    auto type = vector->type()->asLongDecimal();
+    return ::duckdb::Value::DECIMAL(
+        std::move(duckVal), type.precision(), type.scale());
+  }
+  // Flat vector is HUGEINT type and not the logical decimal type.
+  return ::duckdb::Value::HUGEINT(std::move(duckVal));
 }
 
 template <>
@@ -252,8 +262,9 @@ velox::variant variantAt<TypeKind::HUGEINT>(
     ::duckdb::DataChunk* dataChunk,
     int32_t row,
     int32_t column) {
-  auto hugeInt = ::duckdb::HugeIntValue::Get(dataChunk->GetValue(column, row));
-  return velox::variant(HugeInt::build(hugeInt.upper, hugeInt.lower));
+  auto unscaledValue =
+      dataChunk->GetValue(column, row).GetValue<::duckdb::hugeint_t>();
+  return variant(HugeInt::build(unscaledValue.upper, unscaledValue.lower));
 }
 
 template <>
@@ -1316,6 +1327,43 @@ void assertResultsOrdered(
   }
 }
 
+tsan_atomic<int32_t>& testingAbortPct() {
+  static tsan_atomic<int32_t> abortPct = 0;
+  return abortPct;
+}
+
+tsan_atomic<int32_t>& testingAbortCounter() {
+  static tsan_atomic<int32_t> counter = 0;
+  return counter;
+}
+
+TestScopedAbortInjection::TestScopedAbortInjection(
+    int32_t abortPct,
+    int32_t maxInjections) {
+  testingAbortPct() = abortPct;
+  testingAbortCounter() = maxInjections;
+}
+
+TestScopedAbortInjection::~TestScopedAbortInjection() {
+  testingAbortPct() = 0;
+  testingAbortCounter() = 0;
+}
+
+bool testingMaybeTriggerAbort(exec::Task* task) {
+  if (testingAbortPct() <= 0 || testingAbortCounter() <= 0) {
+    return false;
+  }
+
+  if ((folly::Random::rand32() % 100) < testingAbortPct()) {
+    if (testingAbortCounter()-- > 0) {
+      task->requestAbort();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     const CursorParameters& params,
     std::function<void(exec::Task*)> addSplits,
@@ -1329,6 +1377,7 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
   while (cursor->moveNext()) {
     result.push_back(cursor->current());
     addSplits(task);
+    testingMaybeTriggerAbort(task);
   }
 
   if (!waitForTaskCompletion(task, maxWaitMicros)) {
@@ -1384,7 +1433,9 @@ bool waitForTaskStateChange(
   // Wait for task to transition to finished state.
   if (task->state() != state) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
-    auto future = task->taskCompletionFuture(maxWaitMicros).via(&executor);
+    auto future = task->taskCompletionFuture()
+                      .within(std::chrono::microseconds(maxWaitMicros))
+                      .via(&executor);
     future.wait();
   }
 
@@ -1512,6 +1563,24 @@ void printResults(const RowVectorPtr& result, std::ostream& out) {
   for (const auto& row : materializedRows) {
     out << toString(row, type) << std::endl;
   }
+}
+
+std::unordered_map<std::string, OperatorStats> toOperatorStats(
+    const TaskStats& taskStats) {
+  std::unordered_map<std::string, OperatorStats> opStatsMap;
+
+  for (const auto& pipelineStats : taskStats.pipelineStats) {
+    for (const auto& opStats : pipelineStats.operatorStats) {
+      const auto& opType = opStats.operatorType;
+      auto it = opStatsMap.find(opType);
+      if (it != opStatsMap.end()) {
+        it->second.add(opStats);
+      } else {
+        opStatsMap.emplace(opType, opStats);
+      }
+    }
+  }
+  return opStatsMap;
 }
 
 } // namespace facebook::velox::exec::test

@@ -22,6 +22,6 @@
 
 namespace facebook::verax {
 
-Cost filterCost(PtrSpan<Expr> conjuncts) {}
+  Cost filterCost(PtrSpan<Expr> conjuncts) { return Cost(); }
 
 } // namespace facebook::verax

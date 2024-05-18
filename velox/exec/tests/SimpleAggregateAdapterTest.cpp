@@ -34,7 +34,6 @@ class SimpleAverageAggregationTest : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-    allowInputShuffle();
 
     registerSimpleAverageAggregate(kSimpleAvg);
   }
@@ -114,7 +113,6 @@ class SimpleArrayAggAggregationTest : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-    disallowInputShuffle();
 
     registerSimpleArrayAggAggregate(kSimpleArrayAgg);
   }
@@ -301,6 +299,8 @@ TEST_F(SimpleArrayAggAggregationTest, trackRowSize) {
         offset,
         RowContainer::nullByte(0),
         RowContainer::nullMask(0),
+        RowContainer::initializedByte(0),
+        RowContainer::initializedMask(0),
         rowSizeOffset);
 
     // Make two groups for odd and even rows.
@@ -432,7 +432,9 @@ exec::AggregateRegistrationResult registerSimpleCountNullsAggregate(
             argTypes.size(), 1, "{} takes at most one argument", name);
         return std::make_unique<SimpleAggregateAdapter<CountNullsAggregate>>(
             resultType);
-      });
+      },
+      false /*registerCompanionFunctions*/,
+      true /*overwrite*/);
 }
 
 void registerSimpleCountNullsAggregate() {

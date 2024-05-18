@@ -24,6 +24,7 @@
 #include "velox/functions/FunctionRegistry.h"
 #include "velox/functions/Macros.h"
 #include "velox/functions/Registerer.h"
+#include "velox/functions/prestosql/tests/utils/FunctionBaseTest.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox {
@@ -47,8 +48,10 @@ struct FuncOne {
 template <typename T>
 struct FuncTwo {
   template <typename T1, typename T2>
-  FOLLY_ALWAYS_INLINE bool
-  call(int64_t& /* result */, const T1& /* arg1 */, const T2& /* arg2 */) {
+  FOLLY_ALWAYS_INLINE bool callNullable(
+      int64_t& /* result */,
+      const T1* /* arg1 */,
+      const T2* /* arg2 */) {
     return true;
   }
 };
@@ -77,9 +80,18 @@ struct FuncFour {
 
 template <typename T>
 struct FuncFive {
-  FOLLY_ALWAYS_INLINE bool call(
-      int64_t& /* result */,
-      const int64_t& /* arg1 */) {
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const int64_t& /* arg1 */) {
+    result = 5;
+    return true;
+  }
+};
+
+// FuncSix has the same signature as FuncFive. It's used to test overwrite
+// during registration.
+template <typename T>
+struct FuncSix {
+  FOLLY_ALWAYS_INLINE bool call(int64_t& result, const int64_t& /* arg1 */) {
+    result = 6;
     return true;
   }
 };
@@ -171,11 +183,6 @@ class VectorFuncFour : public velox::exec::VectorFunction {
                 .argumentType("map(K,V)")
                 .build()};
   }
-
-  // Make it non-deterministic.
-  bool isDeterministic() const override {
-    return false;
-  }
 };
 
 VELOX_DECLARE_VECTOR_FUNCTION(
@@ -193,9 +200,10 @@ VELOX_DECLARE_VECTOR_FUNCTION(
     VectorFuncThree::signatures(),
     std::make_unique<VectorFuncThree>());
 
-VELOX_DECLARE_VECTOR_FUNCTION(
+VELOX_DECLARE_VECTOR_FUNCTION_WITH_METADATA(
     udf_vector_func_four,
     VectorFuncFour::signatures(),
+    exec::VectorFunctionMetadataBuilder().deterministic(false).build(),
     std::make_unique<VectorFuncFour>());
 
 inline void registerTestFunctions() {
@@ -225,7 +233,7 @@ inline void registerTestFunctions() {
 }
 } // namespace
 
-class FunctionRegistryTest : public ::testing::Test {
+class FunctionRegistryTest : public testing::Test {
  public:
   FunctionRegistryTest() {
     registerTestFunctions();
@@ -562,6 +570,53 @@ TEST_F(FunctionRegistryTest, resolveCast) {
   ASSERT_THROW(
       resolveFunctionOrCallableSpecialForm("cast", {VARCHAR()}),
       velox::VeloxRuntimeError);
+}
+
+TEST_F(FunctionRegistryTest, resolveWithMetadata) {
+  auto result = resolveFunctionWithMetadata("func_one", {VARCHAR()});
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(*result->first, *VARCHAR());
+  EXPECT_TRUE(result->second.defaultNullBehavior);
+  EXPECT_FALSE(result->second.deterministic);
+  EXPECT_FALSE(result->second.supportsFlattening);
+
+  result = resolveFunctionWithMetadata("func_two", {BIGINT(), INTEGER()});
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(*result->first, *BIGINT());
+  EXPECT_FALSE(result->second.defaultNullBehavior);
+  EXPECT_TRUE(result->second.deterministic);
+  EXPECT_FALSE(result->second.supportsFlattening);
+
+  result = resolveFunctionWithMetadata(
+      "vector_func_four", {MAP(INTEGER(), VARCHAR())});
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(*result->first, *ARRAY(INTEGER()));
+  EXPECT_TRUE(result->second.defaultNullBehavior);
+  EXPECT_FALSE(result->second.deterministic);
+  EXPECT_FALSE(result->second.supportsFlattening);
+
+  result = resolveFunctionWithMetadata("non-existent-function", {VARCHAR()});
+  EXPECT_FALSE(result.has_value());
+}
+
+class FunctionRegistryOverwriteTest : public functions::test::FunctionBaseTest {
+ public:
+  FunctionRegistryOverwriteTest() {
+    registerTestFunctions();
+  }
+};
+
+TEST_F(FunctionRegistryOverwriteTest, overwrite) {
+  ASSERT_TRUE((registerFunction<FuncFive, int64_t, int64_t>({"foo"})));
+  ASSERT_FALSE(
+      (registerFunction<FuncSix, int64_t, int64_t>({"foo"}, {}, false)));
+  ASSERT_TRUE((evaluateOnce<int64_t, int64_t>("foo(c0)", 0) == 5));
+  ASSERT_TRUE((registerFunction<FuncSix, int64_t, int64_t>({"foo"})));
+  ASSERT_TRUE((evaluateOnce<int64_t, int64_t>("foo(c0)", 0) == 6));
+
+  auto& simpleFunctions = exec::simpleFunctions();
+  auto signatures = simpleFunctions.getFunctionSignatures("foo");
+  ASSERT_EQ(signatures.size(), 1);
 }
 
 } // namespace facebook::velox

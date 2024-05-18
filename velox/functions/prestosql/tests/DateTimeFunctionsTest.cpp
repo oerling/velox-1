@@ -66,7 +66,7 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
       "November",
       "December"};
 
-  std::string padNumber(int number) {
+  static std::string padNumber(int number) {
     return number < 10 ? "0" + std::to_string(number) : std::to_string(number);
   }
 
@@ -114,10 +114,11 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
       return std::nullopt;
     }
 
-    auto rowVector = resultVector->as<RowVector>();
+    auto timestampWithTimezone =
+        resultVector->as<FlatVector<int64_t>>()->valueAt(0);
     return TimestampWithTimezone{
-        rowVector->children()[0]->as<SimpleVector<int64_t>>()->valueAt(0),
-        rowVector->children()[1]->as<SimpleVector<int16_t>>()->valueAt(0)};
+        unpackMillisUtc(timestampWithTimezone),
+        unpackZoneKeyId(timestampWithTimezone)};
   }
 
   std::optional<Timestamp> dateParse(
@@ -206,35 +207,28 @@ class DateTimeFunctionsTest : public functions::test::FunctionBaseTest {
             timestamp.value(), timeZoneName.value().c_str())}));
   }
 
-  int32_t parseDate(const std::string& dateStr) {
+  static int32_t parseDate(const std::string& dateStr) {
     return DATE()->toDays(dateStr);
   }
 
-  RowVectorPtr makeTimestampWithTimeZoneVector(
-      int64_t timestamp,
-      const char* tz) {
-    const int64_t tzid = util::getTimeZoneID(tz);
+  VectorPtr makeTimestampWithTimeZoneVector(int64_t timestamp, const char* tz) {
+    auto tzid = util::getTimeZoneID(tz);
 
-    return std::make_shared<RowVector>(
-        pool(),
-        TIMESTAMP_WITH_TIME_ZONE(),
-        nullptr,
-        1,
-        std::vector<VectorPtr>(
-            {makeNullableFlatVector<int64_t>({timestamp}),
-             makeNullableFlatVector<int16_t>({tzid})}));
+    return makeNullableFlatVector<int64_t>(
+        {pack(timestamp, tzid)}, TIMESTAMP_WITH_TIME_ZONE());
   }
 
-  RowVectorPtr makeTimestampWithTimeZoneVector(
-      const VectorPtr& timestamps,
-      const VectorPtr& timezones) {
-    VELOX_CHECK_EQ(timestamps->size(), timezones->size());
-    return std::make_shared<RowVector>(
-        pool(),
-        TIMESTAMP_WITH_TIME_ZONE(),
+  VectorPtr makeTimestampWithTimeZoneVector(
+      vector_size_t size,
+      const std::function<int64_t(int32_t row)>& timestampAt,
+      const std::function<int16_t(int32_t row)>& timezoneAt) {
+    return makeFlatVector<int64_t>(
+        size,
+        [&](int32_t index) {
+          return pack(timestampAt(index), timezoneAt(index));
+        },
         nullptr,
-        timestamps->size(),
-        std::vector<VectorPtr>({timestamps, timezones}));
+        TIMESTAMP_WITH_TIME_ZONE());
   }
 
   int32_t getCurrentDate(const std::optional<std::string>& timeZone) {
@@ -274,8 +268,18 @@ TEST_F(DateTimeFunctionsTest, parseDatetimeSignatures) {
 }
 
 TEST_F(DateTimeFunctionsTest, dayOfXxxSignatures) {
-  for (const auto& name :
-       {"day_of_year", "doy", "day_of_month", "day_of_week", "dow"}) {
+  for (const auto& name : {"day", "day_of_month"}) {
+    SCOPED_TRACE(name);
+    auto signatures = getSignatureStrings(name);
+    ASSERT_EQ(4, signatures.size());
+
+    ASSERT_EQ(1, signatures.count("(timestamp with time zone) -> bigint"));
+    ASSERT_EQ(1, signatures.count("(date) -> bigint"));
+    ASSERT_EQ(1, signatures.count("(timestamp) -> bigint"));
+    ASSERT_EQ(1, signatures.count("(interval day to second) -> bigint"));
+  }
+
+  for (const auto& name : {"day_of_year", "doy", "day_of_week", "dow"}) {
     SCOPED_TRACE(name);
     auto signatures = getSignatureStrings(name);
     ASSERT_EQ(3, signatures.size());
@@ -363,9 +367,9 @@ TEST_F(DateTimeFunctionsTest, fromUnixtimeWithTimeZone) {
         evaluate("from_unixtime(c0, '+01:00')", makeRowVector({unixtimes}));
 
     auto expected = makeTimestampWithTimeZoneVector(
-        makeFlatVector<int64_t>(
-            size, [&](auto row) { return unixtimeAt(row) * 1'000; }),
-        makeConstant((int16_t)900, size));
+        size,
+        [&](auto row) { return unixtimeAt(row) * 1'000; },
+        [](auto /*row*/) { return 900; });
     assertEqualVectors(expected, result);
 
     // NaN timestamp.
@@ -373,13 +377,13 @@ TEST_F(DateTimeFunctionsTest, fromUnixtimeWithTimeZone) {
         "from_unixtime(c0, '+01:00')",
         makeRowVector({makeFlatVector<double>({kNan, kNan})}));
     expected = makeTimestampWithTimeZoneVector(
-        makeFlatVector<int64_t>({0, 0}), makeFlatVector<int16_t>({900, 900}));
+        2, [](auto /*row*/) { return 0; }, [](auto /*row*/) { return 900; });
     assertEqualVectors(expected, result);
   }
 
   // Variable timezone parameter.
   {
-    std::vector<int16_t> timezoneIds = {900, 960, 1020, 1080, 1140};
+    std::vector<TimeZoneKey> timezoneIds = {900, 960, 1020, 1080, 1140};
     std::vector<std::string> timezoneNames = {
         "+01:00", "+02:00", "+03:00", "+04:00", "+05:00"};
 
@@ -389,10 +393,9 @@ TEST_F(DateTimeFunctionsTest, fromUnixtimeWithTimeZone) {
     auto result = evaluate(
         "from_unixtime(c0, c1)", makeRowVector({unixtimes, timezones}));
     auto expected = makeTimestampWithTimeZoneVector(
-        makeFlatVector<int64_t>(
-            size, [&](auto row) { return unixtimeAt(row) * 1'000; }),
-        makeFlatVector<int16_t>(
-            size, [&](auto row) { return timezoneIds[row % 5]; }));
+        size,
+        [&](auto row) { return unixtimeAt(row) * 1'000; },
+        [&](auto row) { return timezoneIds[row % 5]; });
     assertEqualVectors(expected, result);
 
     // NaN timestamp.
@@ -402,8 +405,11 @@ TEST_F(DateTimeFunctionsTest, fromUnixtimeWithTimeZone) {
             makeFlatVector<double>({kNan, kNan}),
             makeNullableFlatVector<StringView>({"+01:00", "+02:00"}),
         }));
+    auto timezonesVector = std::vector<TimeZoneKey>{900, 960};
     expected = makeTimestampWithTimeZoneVector(
-        makeFlatVector<int64_t>({0, 0}), makeFlatVector<int16_t>({900, 960}));
+        timezonesVector.size(),
+        [](auto /*row*/) { return 0; },
+        [&](auto row) { return timezonesVector[row]; });
     assertEqualVectors(expected, result);
   }
 }
@@ -454,7 +460,7 @@ TEST_F(DateTimeFunctionsTest, year) {
 
 TEST_F(DateTimeFunctionsTest, yearDate) {
   const auto year = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("year(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("year(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, year(std::nullopt));
   EXPECT_EQ(1970, year(DATE()->toDays("1970-01-01")));
@@ -495,11 +501,9 @@ TEST_F(DateTimeFunctionsTest, yearTimestampWithTimezone) {
 TEST_F(DateTimeFunctionsTest, weekDate) {
   const auto weekDate = [&](const char* dateString) {
     auto date = std::make_optional(parseDate(dateString));
-    auto week =
-        evaluateOnce<int64_t, int32_t>("week(c0)", {date}, {DATE()}).value();
+    auto week = evaluateOnce<int64_t>("week(c0)", DATE(), date).value();
     auto weekOfYear =
-        evaluateOnce<int64_t, int32_t>("week_of_year(c0)", {date}, {DATE()})
-            .value();
+        evaluateOnce<int64_t>("week_of_year(c0)", DATE(), date).value();
     VELOX_CHECK_EQ(
         week, weekOfYear, "week and week_of_year must return the same value");
     return week;
@@ -590,7 +594,7 @@ TEST_F(DateTimeFunctionsTest, quarter) {
 
 TEST_F(DateTimeFunctionsTest, quarterDate) {
   const auto quarter = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("quarter(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("quarter(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, quarter(std::nullopt));
   EXPECT_EQ(1, quarter(0));
@@ -656,7 +660,7 @@ TEST_F(DateTimeFunctionsTest, month) {
 
 TEST_F(DateTimeFunctionsTest, monthDate) {
   const auto month = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("month(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("month(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, month(std::nullopt));
   EXPECT_EQ(1, month(0));
@@ -761,7 +765,7 @@ TEST_F(DateTimeFunctionsTest, hourTimestampWithTimezone) {
 
 TEST_F(DateTimeFunctionsTest, hourDate) {
   const auto hour = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("hour(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("hour(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, hour(std::nullopt));
   EXPECT_EQ(0, hour(0));
@@ -797,7 +801,7 @@ TEST_F(DateTimeFunctionsTest, dayOfMonth) {
 
 TEST_F(DateTimeFunctionsTest, dayOfMonthDate) {
   const auto day = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("day_of_month(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("day_of_month(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, day(std::nullopt));
   EXPECT_EQ(1, day(0));
@@ -806,6 +810,59 @@ TEST_F(DateTimeFunctionsTest, dayOfMonthDate) {
   EXPECT_EQ(10, day(40));
   EXPECT_EQ(1, day(18262));
   EXPECT_EQ(2, day(-18262));
+}
+
+TEST_F(DateTimeFunctionsTest, dayOfMonthInterval) {
+  const auto day = [&](std::optional<int64_t> millis) {
+    auto result =
+        evaluateOnce<int64_t>("day_of_month(c0)", INTERVAL_DAY_TIME(), millis);
+
+    auto result2 =
+        evaluateOnce<int64_t>("day(c0)", INTERVAL_DAY_TIME(), millis);
+
+    EXPECT_EQ(result, result2);
+    return result;
+  };
+
+  EXPECT_EQ(1, day(kMillisInDay));
+  EXPECT_EQ(1, day(kMillisInDay + kMillisInHour));
+  EXPECT_EQ(10, day(10 * kMillisInDay + 7 * kMillisInHour));
+  EXPECT_EQ(-10, day(-10 * kMillisInDay - 7 * kMillisInHour));
+}
+
+TEST_F(DateTimeFunctionsTest, plusMinusDateIntervalYearMonth) {
+  const auto makeInput = [&](const std::string& date, int32_t interval) {
+    return makeRowVector({
+        makeNullableFlatVector<int32_t>({parseDate(date)}, DATE()),
+        makeNullableFlatVector<int32_t>({interval}, INTERVAL_YEAR_MONTH()),
+    });
+  };
+
+  const auto plus = [&](const std::string& date, int32_t interval) {
+    return evaluateOnce<int32_t>("c0 + c1", makeInput(date, interval));
+  };
+
+  const auto minus = [&](const std::string& date, int32_t interval) {
+    return evaluateOnce<int32_t>("c0 - c1", makeInput(date, interval));
+  };
+
+  EXPECT_EQ(parseDate("2021-10-15"), plus("2020-10-15", 12));
+  EXPECT_EQ(parseDate("2022-01-15"), plus("2020-10-15", 15));
+  EXPECT_EQ(parseDate("2020-11-15"), plus("2020-10-15", 1));
+  EXPECT_EQ(parseDate("2020-11-30"), plus("2020-10-30", 1));
+  EXPECT_EQ(parseDate("2020-11-30"), plus("2020-10-31", 1));
+  EXPECT_EQ(parseDate("2021-02-28"), plus("2020-02-28", 12));
+  EXPECT_EQ(parseDate("2021-02-28"), plus("2020-02-29", 12));
+  EXPECT_EQ(parseDate("2016-02-29"), plus("2020-02-29", -48));
+
+  EXPECT_EQ(parseDate("2019-10-15"), minus("2020-10-15", 12));
+  EXPECT_EQ(parseDate("2019-07-15"), minus("2020-10-15", 15));
+  EXPECT_EQ(parseDate("2020-09-15"), minus("2020-10-15", 1));
+  EXPECT_EQ(parseDate("2020-09-30"), minus("2020-10-30", 1));
+  EXPECT_EQ(parseDate("2020-09-30"), minus("2020-10-31", 1));
+  EXPECT_EQ(parseDate("2019-02-28"), minus("2020-02-29", 12));
+  EXPECT_EQ(parseDate("2019-02-28"), minus("2020-02-28", 12));
+  EXPECT_EQ(parseDate("2024-02-29"), minus("2020-02-29", -48));
 }
 
 TEST_F(DateTimeFunctionsTest, plusMinusDateIntervalDayTime) {
@@ -848,6 +905,66 @@ TEST_F(DateTimeFunctionsTest, plusMinusDateIntervalDayTime) {
 
   EXPECT_THROW(plus(baseDate, partDay), VeloxUserError);
   EXPECT_THROW(minus(baseDate, partDay), VeloxUserError);
+}
+
+TEST_F(DateTimeFunctionsTest, timestampMinusIntervalYearMonth) {
+  const auto minus = [&](std::optional<std::string> timestamp,
+                         std::optional<int32_t> interval) {
+    return evaluateOnce<std::string>(
+        "date_format(date_parse(c0, '%Y-%m-%d %H:%i:%s') - c1, '%Y-%m-%d %H:%i:%s')",
+        makeRowVector({
+            makeNullableFlatVector<std::string>({timestamp}, VARCHAR()),
+            makeNullableFlatVector<int32_t>({interval}, INTERVAL_YEAR_MONTH()),
+        }));
+  };
+
+  EXPECT_EQ("2001-01-03 04:05:06", minus("2001-02-03 04:05:06", 1));
+  EXPECT_EQ("2000-04-03 04:05:06", minus("2001-02-03 04:05:06", 10));
+  EXPECT_EQ("1999-06-03 04:05:06", minus("2001-02-03 04:05:06", 20));
+
+  // Some special dates.
+  EXPECT_EQ("2001-04-30 04:05:06", minus("2001-05-31 04:05:06", 1));
+  EXPECT_EQ("2001-03-30 04:05:06", minus("2001-04-30 04:05:06", 1));
+  EXPECT_EQ("2001-02-28 04:05:06", minus("2001-03-30 04:05:06", 1));
+  EXPECT_EQ("2000-02-29 04:05:06", minus("2000-03-30 04:05:06", 1));
+  EXPECT_EQ("2000-01-29 04:05:06", minus("2000-02-29 04:05:06", 1));
+}
+
+TEST_F(DateTimeFunctionsTest, timestampPlusIntervalYearMonth) {
+  const auto plus = [&](std::optional<std::string> timestamp,
+                        std::optional<int32_t> interval) {
+    // timestamp + interval.
+    auto result1 = evaluateOnce<std::string>(
+        "date_format(date_parse(c0, '%Y-%m-%d %H:%i:%s') + c1, '%Y-%m-%d %H:%i:%s')",
+        makeRowVector(
+            {makeNullableFlatVector<std::string>({timestamp}, VARCHAR()),
+             makeNullableFlatVector<int32_t>(
+                 {interval}, INTERVAL_YEAR_MONTH())}));
+
+    // interval + timestamp.
+    auto result2 = evaluateOnce<std::string>(
+        "date_format(c1 + date_parse(c0, '%Y-%m-%d %H:%i:%s'), '%Y-%m-%d %H:%i:%s')",
+        makeRowVector(
+            {makeNullableFlatVector<std::string>({timestamp}, VARCHAR()),
+             makeNullableFlatVector<int32_t>(
+                 {interval}, INTERVAL_YEAR_MONTH())}));
+
+    // They should be the same.
+    EXPECT_EQ(result1, result2);
+
+    return result1;
+  };
+
+  EXPECT_EQ("2001-02-03 04:05:06", plus("2001-01-03 04:05:06", 1));
+  EXPECT_EQ("2001-02-03 04:05:06", plus("2000-04-03 04:05:06", 10));
+  EXPECT_EQ("2001-02-03 04:05:06", plus("1999-06-03 04:05:06", 20));
+
+  // Some special dates.
+  EXPECT_EQ("2001-06-30 04:05:06", plus("2001-05-31 04:05:06", 1));
+  EXPECT_EQ("2001-05-30 04:05:06", plus("2001-04-30 04:05:06", 1));
+  EXPECT_EQ("2001-02-28 04:05:06", plus("2001-01-31 04:05:06", 1));
+  EXPECT_EQ("2000-02-29 04:05:06", plus("2000-01-31 04:05:06", 1));
+  EXPECT_EQ("2000-02-29 04:05:06", plus("2000-01-29 04:05:06", 1));
 }
 
 TEST_F(DateTimeFunctionsTest, plusMinusTimestampIntervalDayTime) {
@@ -1013,7 +1130,7 @@ TEST_F(DateTimeFunctionsTest, dayOfWeek) {
 
 TEST_F(DateTimeFunctionsTest, dayOfWeekDate) {
   const auto day = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("day_of_week(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("day_of_week(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, day(std::nullopt));
   EXPECT_EQ(4, day(0));
@@ -1080,7 +1197,7 @@ TEST_F(DateTimeFunctionsTest, dayOfYear) {
 
 TEST_F(DateTimeFunctionsTest, dayOfYearDate) {
   const auto day = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("day_of_year(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("day_of_year(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, day(std::nullopt));
   EXPECT_EQ(1, day(0));
@@ -1151,7 +1268,7 @@ TEST_F(DateTimeFunctionsTest, yearOfWeek) {
 
 TEST_F(DateTimeFunctionsTest, yearOfWeekDate) {
   const auto yow = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("year_of_week(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("year_of_week(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, yow(std::nullopt));
   EXPECT_EQ(1970, yow(0));
@@ -1220,7 +1337,7 @@ TEST_F(DateTimeFunctionsTest, minute) {
 
 TEST_F(DateTimeFunctionsTest, minuteDate) {
   const auto minute = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("minute(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("minute(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, minute(std::nullopt));
   EXPECT_EQ(0, minute(0));
@@ -1284,7 +1401,7 @@ TEST_F(DateTimeFunctionsTest, second) {
 
 TEST_F(DateTimeFunctionsTest, secondDate) {
   const auto second = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("second(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("second(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, second(std::nullopt));
   EXPECT_EQ(0, second(0));
@@ -1339,7 +1456,7 @@ TEST_F(DateTimeFunctionsTest, millisecond) {
 
 TEST_F(DateTimeFunctionsTest, millisecondDate) {
   const auto millisecond = [&](std::optional<int32_t> date) {
-    return evaluateOnce<int64_t, int32_t>("millisecond(c0)", {date}, {DATE()});
+    return evaluateOnce<int64_t>("millisecond(c0)", DATE(), date);
   };
   EXPECT_EQ(std::nullopt, millisecond(std::nullopt));
   EXPECT_EQ(0, millisecond(0));
@@ -1450,8 +1567,8 @@ TEST_F(DateTimeFunctionsTest, dateTrunc) {
 TEST_F(DateTimeFunctionsTest, dateTruncDate) {
   const auto dateTrunc = [&](const std::string& unit,
                              std::optional<int32_t> date) {
-    return evaluateOnce<int32_t, int32_t>(
-        fmt::format("date_trunc('{}', c0)", unit), {date}, {DATE()});
+    return evaluateOnce<int32_t>(
+        fmt::format("date_trunc('{}', c0)", unit), DATE(), date);
   };
 
   EXPECT_EQ(std::nullopt, dateTrunc("year", std::nullopt));
@@ -1487,8 +1604,8 @@ TEST_F(DateTimeFunctionsTest, dateTruncDate) {
 TEST_F(DateTimeFunctionsTest, dateTruncDateForWeek) {
   const auto dateTrunc = [&](const std::string& unit,
                              std::optional<int32_t> date) {
-    return evaluateOnce<int32_t, int32_t>(
-        fmt::format("date_trunc('{}', c0)", unit), {date}, {DATE()});
+    return evaluateOnce<int32_t>(
+        fmt::format("date_trunc('{}', c0)", unit), DATE(), date);
   };
 
   // Date(19576) is 2023-08-07, which is Monday, should return Monday
@@ -1599,11 +1716,11 @@ TEST_F(DateTimeFunctionsTest, dateTruncTimeStampWithTimezoneStringForWeek) {
                                                 const std::string&
                                                     expectedTimestamp) {
     assertEqualVectors(
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             "parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ')",
             makeRowVector({makeNullableFlatVector<StringView>(
                 {StringView{expectedTimestamp}})})),
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             fmt::format(
                 "date_trunc('{}', parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ'))",
                 truncUnit),
@@ -1691,11 +1808,11 @@ TEST_F(DateTimeFunctionsTest, dateTruncTimestampWithTimezone) {
                                                 const std::string&
                                                     expectedTimestamp) {
     assertEqualVectors(
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             "parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ')",
             makeRowVector({makeNullableFlatVector<StringView>(
                 {StringView{expectedTimestamp}})})),
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             fmt::format(
                 "date_trunc('{}', parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ'))",
                 truncUnit),
@@ -1733,10 +1850,11 @@ TEST_F(DateTimeFunctionsTest, dateAddDate) {
   const auto dateAdd = [&](const std::string& unit,
                            std::optional<int32_t> value,
                            std::optional<int32_t> date) {
-    return evaluateOnce<int32_t, int32_t>(
+    return evaluateOnce<int32_t>(
         fmt::format("date_add('{}', c0, c1)", unit),
-        {value, date},
-        {INTEGER(), DATE()});
+        {INTEGER(), DATE()},
+        value,
+        date);
   };
 
   // Check null behaviors
@@ -2105,11 +2223,11 @@ TEST_F(DateTimeFunctionsTest, dateAddTimestampWithTimeZone) {
                                               const std::string&
                                                   expectedTimestamp) {
     assertEqualVectors(
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             "parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ')",
             makeRowVector({makeNullableFlatVector<StringView>(
                 {StringView{expectedTimestamp}})})),
-        evaluate<RowVector>(
+        evaluate<FlatVector<int64_t>>(
             fmt::format(
                 "date_add('{}', {}, parse_datetime(c0, 'YYYY-MM-dd+HH:mm:ssZZ'))",
                 unit,
@@ -2150,10 +2268,11 @@ TEST_F(DateTimeFunctionsTest, dateDiffDate) {
   const auto dateDiff = [&](const std::string& unit,
                             std::optional<int32_t> date1,
                             std::optional<int32_t> date2) {
-    return evaluateOnce<int64_t, int32_t>(
+    return evaluateOnce<int64_t>(
         fmt::format("date_diff('{}', c0, c1)", unit),
-        {date1, date2},
-        {DATE(), DATE()});
+        {DATE(), DATE()},
+        date1,
+        date2);
   };
 
   // Check null behaviors
@@ -2545,7 +2664,7 @@ TEST_F(DateTimeFunctionsTest, parseDatetime) {
   VELOX_ASSERT_THROW(parseDatetime("", ""), "Invalid pattern specification");
   VELOX_ASSERT_THROW(
       parseDatetime("1234", "Y Y"),
-      "Invalid format: \"1234\" is malformed at \"\"");
+      "Invalid date format: '1234' is malformed at ''");
 
   // Simple tests. More exhaustive tests are provided as part of Joda's
   // implementation.
@@ -2607,6 +2726,21 @@ TEST_F(DateTimeFunctionsTest, parseDatetime) {
   EXPECT_EQ(
       TimestampWithTimezone(-66600000, util::getTimeZoneID("+02:00")),
       parseDatetime("1969-12-31+07:30+02:00", "YYYY-MM-dd+HH:mmZZ"));
+
+  // Joda also lets 'Z' to be UTC|UCT|GMT|GMT0.
+  auto ts = TimestampWithTimezone(1708840800000, util::getTimeZoneID("GMT"));
+  EXPECT_EQ(
+      ts, parseDatetime("2024-02-25+06:00:99 GMT", "yyyy-MM-dd+HH:mm:99 ZZZ"));
+  EXPECT_EQ(
+      ts, parseDatetime("2024-02-25+06:00:99 GMT0", "yyyy-MM-dd+HH:mm:99 ZZZ"));
+  EXPECT_EQ(
+      ts, parseDatetime("2024-02-25+06:00:99 UTC", "yyyy-MM-dd+HH:mm:99 ZZZ"));
+  EXPECT_EQ(
+      ts, parseDatetime("2024-02-25+06:00:99 UTC", "yyyy-MM-dd+HH:mm:99 ZZZ"));
+
+  VELOX_ASSERT_THROW(
+      parseDatetime("2024-02-25+06:00:99 PST", "yyyy-MM-dd+HH:mm:99 ZZZ"),
+      "Invalid date format: '2024-02-25+06:00:99 PST' is malformed at 'PST'");
 }
 
 TEST_F(DateTimeFunctionsTest, formatDateTime) {
@@ -3207,31 +3341,32 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
           fromTimestampString("-2000-02-29 00:00:00.987"),
           "%Y-%m-%d %H:%i:%s.%f"));
 
-  // User format errors or unsupported errors
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%D"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%U"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%u"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%V"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%w"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%X"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%v"),
-      VeloxUserError);
-  EXPECT_THROW(
-      dateFormat(fromTimestampString("-2000-02-29 00:00:00.987"), "%x"),
-      VeloxUserError);
+  // User format errors or unsupported errors.
+  const auto timestamp = fromTimestampString("-2000-02-29 00:00:00.987");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%D"),
+      "Date format specifier is not supported: %D");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%U"),
+      "Date format specifier is not supported: %U");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%u"),
+      "Date format specifier is not supported: %u");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%V"),
+      "Date format specifier is not supported: %V");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%w"),
+      "Date format specifier is not supported: %w");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%X"),
+      "Date format specifier is not supported: %X");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%v"),
+      "Date format specifier is not supported: WEEK_OF_WEEK_YEAR");
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "%x"),
+      "Date format specifier is not supported: WEEK_YEAR");
 }
 
 TEST_F(DateTimeFunctionsTest, dateFormatTimestampWithTimezone) {
@@ -3265,6 +3400,31 @@ TEST_F(DateTimeFunctionsTest, dateFormatTimestampWithTimezone) {
   EXPECT_EQ(
       "69-May-11 20:04:45 PM",
       testDateFormat("%y-%M-%e %T %p", -20220915000, "-03:00"));
+}
+
+TEST_F(DateTimeFunctionsTest, fromIso8601Date) {
+  const auto fromIso = [&](const std::string& input) {
+    return evaluateOnce<int32_t, std::string>("from_iso8601_date(c0)", input);
+  };
+
+  EXPECT_EQ(0, fromIso("1970-01-01"));
+  EXPECT_EQ(9, fromIso("1970-01-10"));
+  EXPECT_EQ(-1, fromIso("1969-12-31"));
+  EXPECT_EQ(0, fromIso("1970"));
+  EXPECT_EQ(0, fromIso("1970-01"));
+  EXPECT_EQ(0, fromIso("1970-1"));
+  EXPECT_EQ(8, fromIso("1970-1-9"));
+  EXPECT_EQ(-31, fromIso("1969-12"));
+  EXPECT_EQ(-31, fromIso("1969-12-1"));
+  EXPECT_EQ(-31, fromIso("1969-12-01"));
+  EXPECT_EQ(-31, fromIso("   1969-12-01   "));
+  EXPECT_EQ(-719862, fromIso("-1-2-1"));
+
+  VELOX_ASSERT_THROW(fromIso("2024-01-xx"), "Unable to parse date value");
+  VELOX_ASSERT_THROW(
+      fromIso("2024-01-02T12:31:00"), "Unable to parse date value");
+  VELOX_ASSERT_THROW(
+      fromIso("2024-01-02 12:31:00"), "Unable to parse date value");
 }
 
 TEST_F(DateTimeFunctionsTest, dateParse) {
@@ -3307,12 +3467,9 @@ TEST_F(DateTimeFunctionsTest, dateParse) {
   EXPECT_EQ(
       Timestamp(-66600, 0), dateParse("1969-12-31+11:00", "%Y-%m-%d+%H:%i"));
 
-  VELOX_ASSERT_THROW(
-      dateParse("", "%y+"), "Invalid format: \"\" is malformed at \"\"");
-  VELOX_ASSERT_THROW(
-      dateParse("1", "%y+"), "Invalid format: \"1\" is malformed at \"1\"");
-  VELOX_ASSERT_THROW(
-      dateParse("116", "%y+"), "Invalid format: \"116\" is malformed at \"6\"");
+  VELOX_ASSERT_THROW(dateParse("", "%y+"), "Invalid date format: ''");
+  VELOX_ASSERT_THROW(dateParse("1", "%y+"), "Invalid date format: '1'");
+  VELOX_ASSERT_THROW(dateParse("116", "%y+"), "Invalid date format: '116'");
 }
 
 TEST_F(DateTimeFunctionsTest, dateFunctionVarchar) {
@@ -3642,12 +3799,26 @@ TEST_F(DateTimeFunctionsTest, timestampWithTimezoneComparisons) {
     test::assertEqualVectors(expectedResult, actual);
   };
 
-  RowVectorPtr timestampWithTimezoneLhs = makeTimestampWithTimeZoneVector(
-      makeFlatVector<int64_t>({0, 0, 0}),
-      makeFlatVector<int16_t>({900, 900, 800}));
-  RowVectorPtr timestampWithTimezoneRhs = makeTimestampWithTimeZoneVector(
-      makeFlatVector<int64_t>({0, 1000, 0}),
-      makeFlatVector<int16_t>({900, 900, 900}));
+  /// Timestamp with timezone is internally represented with the milliseconds
+  /// already converted to UTC and thus normalized. The timezone does not play
+  /// a role in the comparison.
+  /// For example, 1970-01-01-06:00:00+02:00 is stored as
+  /// TIMESTAMP WITH TIMEZONE value (14400000, 960). 960 being the tzid
+  /// representing +02:00. And 1970-01-01-04:00:00+00:00 is stored as (14400000,
+  /// 0). These timestamps are equivalent.
+  auto timestampsLhs = std::vector<int64_t>{0, 0, 1000};
+  auto timezonesLhs = std::vector<TimeZoneKey>{900, 900, 800};
+  VectorPtr timestampWithTimezoneLhs = makeTimestampWithTimeZoneVector(
+      timestampsLhs.size(),
+      [&](auto row) { return timestampsLhs[row]; },
+      [&](auto row) { return timezonesLhs[row]; });
+
+  auto timestampsRhs = std::vector<int64_t>{0, 1000, 0};
+  auto timezonesRhs = std::vector<TimeZoneKey>{900, 900, 800};
+  VectorPtr timestampWithTimezoneRhs = makeTimestampWithTimeZoneVector(
+      timestampsRhs.size(),
+      [&](auto row) { return timestampsRhs[row]; },
+      [&](auto row) { return timezonesRhs[row]; });
   auto inputs =
       makeRowVector({timestampWithTimezoneLhs, timestampWithTimezoneRhs});
 
@@ -3673,8 +3844,7 @@ TEST_F(DateTimeFunctionsTest, timestampWithTimezoneComparisons) {
 TEST_F(DateTimeFunctionsTest, castDateToTimestamp) {
   const int64_t kSecondsInDay = kMillisInDay / 1'000;
   const auto castDateToTimestamp = [&](const std::optional<int32_t> date) {
-    return evaluateOnce<Timestamp, int32_t>(
-        "cast(c0 AS timestamp)", {date}, {DATE()});
+    return evaluateOnce<Timestamp>("cast(c0 AS timestamp)", DATE(), date);
   };
 
   EXPECT_EQ(Timestamp(0, 0), castDateToTimestamp(DATE()->toDays("1970-01-01")));
@@ -3737,8 +3907,7 @@ TEST_F(DateTimeFunctionsTest, castDateToTimestamp) {
 
 TEST_F(DateTimeFunctionsTest, lastDayOfMonthDate) {
   const auto lastDayFunc = [&](const std::optional<int32_t> date) {
-    return evaluateOnce<int32_t, int32_t>(
-        "last_day_of_month(c0)", {date}, {DATE()});
+    return evaluateOnce<int32_t>("last_day_of_month(c0)", DATE(), date);
   };
 
   const auto lastDay = [&](const StringView& dateStr) {
@@ -3835,4 +4004,24 @@ TEST_F(DateTimeFunctionsTest, fromUnixtimeDouble) {
       "2021-06-15 09:11:45.000",
   });
   assertEqualVectors(expected, actual);
+}
+
+TEST_F(DateTimeFunctionsTest, toISO8601Date) {
+  const auto toISO8601 = [&](const char* dateString) {
+    return evaluateOnce<std::string>(
+        "to_iso8601(c0)",
+        DATE(),
+        std::make_optional(DATE()->toDays(dateString)));
+  };
+
+  EXPECT_EQ("1970-01-01", toISO8601("1970-01-01"));
+  EXPECT_EQ("2020-02-05", toISO8601("2020-02-05"));
+  EXPECT_EQ("1919-11-28", toISO8601("1919-11-28"));
+  EXPECT_EQ("4653-07-01", toISO8601("4653-07-01"));
+  EXPECT_EQ("1844-10-14", toISO8601("1844-10-14"));
+  EXPECT_EQ("0001-01-01", toISO8601("1-01-01"));
+  EXPECT_EQ("9999-12-31", toISO8601("9999-12-31"));
+  EXPECT_EQ("872343-04-19", toISO8601("872343-04-19"));
+  EXPECT_EQ("-3492-10-05", toISO8601("-3492-10-05"));
+  EXPECT_EQ("-0653-07-12", toISO8601("-653-07-12"));
 }

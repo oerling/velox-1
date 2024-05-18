@@ -227,7 +227,7 @@ class VeloxRunner {
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild("schemaCtxPool"),
-        spillExecutor_,
+        spillExecutor_.get(),
         "schema");
 
     schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
@@ -432,7 +432,7 @@ class VeloxRunner {
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
         rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
-        spillExecutor_,
+        spillExecutor_.get(),
         fmt::format("query_{}", queryCounter_));
 
     core::PlanNodePtr plan;

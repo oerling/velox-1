@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include "velox/common/base/RandomUtil.h"
 #include "velox/common/io/IoStatistics.h"
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/FileHandle.h"
@@ -72,13 +73,26 @@ class HiveDataSource : public DataSource {
 
   int64_t estimatedRowSize() override;
 
-  // Internal API, made public to be accessible in unit tests.  Do not use in
-  // other places.
-  static core::TypedExprPtr extractFiltersFromRemainingFilter(
-      const core::TypedExprPtr& expr,
-      core::ExpressionEvaluator* evaluator,
-      bool negated,
-      SubfieldFilters& filters);
+  std::shared_ptr<wave::WaveDataSource> toWaveDataSource() override;
+
+  using WaveDelegateHookFunction =
+      std::function<std::shared_ptr<wave::WaveDataSource>(
+          const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
+          const std::shared_ptr<common::ScanSpec>& scanSpec,
+          const RowTypePtr& readerOutputType,
+          std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>*
+              partitionKeys,
+          FileHandleFactory* fileHandleFactory,
+          folly::Executor* executor,
+          const ConnectorQueryCtx* connectorQueryCtx,
+          const std::shared_ptr<HiveConfig>& hiveConfig,
+          const std::shared_ptr<io::IoStatistics>& ioStats,
+          const exec::ExprSet* remainingFilter,
+          std::shared_ptr<common::MetadataFilter> metadataFilter)>;
+
+  static WaveDelegateHookFunction waveDelegateHook_;
+
+  static void registerWaveDelegateHook(WaveDelegateHookFunction hook);
 
  protected:
   virtual std::unique_ptr<SplitReader> createSplitReader();
@@ -105,6 +119,7 @@ class HiveDataSource : public DataSource {
   const ConnectorQueryCtx* const connectorQueryCtx_;
   const std::shared_ptr<HiveConfig> hiveConfig_;
   std::shared_ptr<io::IoStatistics> ioStats_;
+  std::shared_ptr<HiveColumnHandle> rowIndexColumn_;
 
  private:
   // Evaluates remainingFilter_ on the specified vector. Returns number of rows
@@ -126,18 +141,26 @@ class HiveDataSource : public DataSource {
 
   // The row type for the data source output, not including filter-only columns
   const RowTypePtr outputType_;
+  core::ExpressionEvaluator* const expressionEvaluator_;
+
+  // Column handles for the Split info columns keyed on their column names.
+  std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
+      infoColumns_;
   std::shared_ptr<common::MetadataFilter> metadataFilter_;
   std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
   RowVectorPtr emptyOutput_;
   dwio::common::RuntimeStatistics runtimeStats_;
   std::atomic<uint64_t> totalRemainingFilterTime_{0};
-  core::ExpressionEvaluator* expressionEvaluator_;
   uint64_t completedRows_ = 0;
 
   // Reusable memory for remaining filter evaluation.
   VectorPtr filterResult_;
   SelectivityVector filterRows_;
   exec::FilterEvalCtx filterEvalCtx_;
-};
+  std::shared_ptr<random::RandomSkipTracker> randomSkip_;
 
+  // Remembers the WaveDataSource. Successive calls to toWaveDataSource() will
+  // return the same.
+  std::shared_ptr<wave::WaveDataSource> waveDataSource_;
+};
 } // namespace facebook::velox::connector::hive

@@ -41,14 +41,15 @@ add_executable(
   ExpandTest.cpp
   FilterProjectTest.cpp
   FunctionResolutionTest.cpp
+  HashBitRangeTest.cpp
   HashJoinBridgeTest.cpp
   HashJoinTest.cpp
-  HashBitRangeTest.cpp
   HashPartitionFunctionTest.cpp
   HashTableTest.cpp
   LimitTest.cpp
   LocalPartitionTest.cpp
   Main.cpp
+  MarkDistinctTest.cpp
   MemoryReclaimerTest.cpp
   MergeJoinTest.cpp
   MergeTest.cpp
@@ -56,18 +57,18 @@ add_executable(
   NestedLoopJoinTest.cpp
   OrderByTest.cpp
   OutputBufferManagerTest.cpp
+  PartitionedOutputTest.cpp
   PlanNodeSerdeTest.cpp
   PlanNodeToStringTest.cpp
+  PrefixSortTest.cpp
   PrintPlanWithStatsTest.cpp
   ProbeOperatorStateTest.cpp
   RoundRobinPartitionFunctionTest.cpp
   RowContainerTest.cpp
   RowNumberTest.cpp
-  MarkDistinctTest.cpp
-  SharedArbitratorTest.cpp
-  SpillTest.cpp
-  SpillOperatorGroupTest.cpp
+  SortBufferTest.cpp
   SpillerTest.cpp
+  SpillTest.cpp
   SplitToStringTest.cpp
   SqlTest.cpp
   StreamingAggregationTest.cpp
@@ -75,14 +76,14 @@ add_executable(
   TableWriteTest.cpp
   TaskListenerTest.cpp
   ThreadDebugInfoTest.cpp
-  TopNTest.cpp
   TopNRowNumberTest.cpp
-  UnorderedStreamReaderTest.cpp
+  TopNTest.cpp
   UnnestTest.cpp
-  VectorHasherTest.cpp
+  UnorderedStreamReaderTest.cpp
   ValuesTest.cpp
+  VectorHasherTest.cpp
   WindowFunctionRegistryTest.cpp
-  SortBufferTest.cpp)
+  WindowTest.cpp)
 
 add_executable(
   velox_exec_infra_test
@@ -93,10 +94,10 @@ add_executable(
   Main.cpp
   OperatorUtilsTest.cpp
   PlanBuilderTest.cpp
+  PrestoQueryRunnerTest.cpp
   QueryAssertionsTest.cpp
   TaskTest.cpp
-  TreeOfLosersTest.cpp
-  PrestoQueryRunnerTest.cpp)
+  TreeOfLosersTest.cpp)
 
 add_test(
   NAME velox_exec_test
@@ -160,6 +161,7 @@ target_link_libraries(
   velox_functions_lib
   velox_functions_prestosql
   velox_functions_test_lib
+  velox_window
   velox_hive_connector
   velox_memory
   velox_serialization
@@ -199,12 +201,13 @@ target_link_libraries(
   velox_tpch_connector
   velox_memory)
 
+# RowNumber Fuzzer.
+add_executable(velox_row_number_fuzzer_test RowNumberFuzzerTest.cpp)
+
+target_link_libraries(velox_row_number_fuzzer_test velox_row_number_fuzzer
+                      gtest gtest_main)
+
 # Join Fuzzer.
-add_library(velox_join_fuzzer JoinFuzzer.cpp)
-
-target_link_libraries(velox_join_fuzzer velox_type velox_vector_fuzzer
-                      velox_exec_test_lib velox_expression_test_utility)
-
 add_executable(velox_join_fuzzer_test JoinFuzzerTest.cpp)
 
 target_link_libraries(velox_join_fuzzer_test velox_join_fuzzer gtest gtest_main)

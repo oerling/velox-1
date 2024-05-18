@@ -120,7 +120,8 @@ void gatherCopy(
 // per event. This function returns true for such metrics.
 bool shouldAggregateRuntimeMetric(const std::string& name) {
   static const folly::F14FastSet<std::string> metricNames{
-      "dataSourceWallNanos",
+      "dataSourceAddSplitWallNanos",
+      "dataSourceReadWallNanos",
       "dataSourceLazyWallNanos",
       "queuedWallNanos",
       "flushTimes"};
@@ -146,7 +147,7 @@ void deselectRowsWithNulls(
     auto& decoded = hashers[i]->decodedVector();
     if (decoded.mayHaveNulls()) {
       anyChange = true;
-      const auto* nulls = hashers[i]->decodedVector().nulls();
+      const auto* nulls = hashers[i]->decodedVector().nulls(&rows);
       bits::andBits(rows.asMutableRange().bits(), nulls, 0, rows.end());
     }
   }
@@ -219,7 +220,7 @@ vector_size_t processEncodedFilterResults(
   DecodedVector& decoded = filterEvalCtx.decodedResult;
   decoded.decode(*filterResult.get(), rows);
   auto values = decoded.data<uint64_t>();
-  auto nulls = decoded.nulls();
+  auto nulls = decoded.nulls(&rows);
   auto indices = decoded.indices();
 
   vector_size_t passed = 0;

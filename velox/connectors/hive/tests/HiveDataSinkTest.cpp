@@ -35,8 +35,6 @@ using namespace facebook::velox::common;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::common::testutil;
 
-constexpr const char* kHiveConnectorId = "test-hive";
-
 class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
  protected:
   void SetUp() override {
@@ -84,10 +82,9 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
       const std::string& spillPath,
       uint64_t writerFlushThreshold) {
     return std::make_unique<SpillConfig>(
-        [&]() -> const std::string& { return spillPath; },
+        [spillPath]() -> const std::string& { return spillPath; },
         [&](uint64_t) {},
         "",
-        0,
         0,
         0,
         spillExecutor_.get(),
@@ -98,7 +95,6 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         0,
         0,
         writerFlushThreshold,
-        0,
         "none");
   }
 
@@ -479,12 +475,17 @@ TEST_F(HiveDataSinkTest, hiveBucketProperty) {
 
 TEST_F(HiveDataSinkTest, basic) {
   const auto outputDirectory = TempDirectoryPath::create();
-  auto dataSink = createDataSink(rowType_, outputDirectory->path);
+  auto dataSink = createDataSink(rowType_, outputDirectory->getPath());
   auto stats = dataSink->stats();
   ASSERT_TRUE(stats.empty()) << stats.toString();
   ASSERT_EQ(
       stats.toString(),
-      "numWrittenBytes 0B numWrittenFiles 0 spillRuns[0] spilledInputBytes[0B] spilledBytes[0B] spilledRows[0] spilledPartitions[0] spilledFiles[0] spillFillTimeUs[0us] spillSortTime[0us] spillSerializationTime[0us] spillWrites[0] spillFlushTime[0us] spillWriteTime[0us] maxSpillExceededLimitCount[0]");
+      "numWrittenBytes 0B numWrittenFiles 0 spillRuns[0] spilledInputBytes[0B] "
+      "spilledBytes[0B] spilledRows[0] spilledPartitions[0] spilledFiles[0] "
+      "spillFillTimeUs[0us] spillSortTime[0us] spillSerializationTime[0us] "
+      "spillWrites[0] spillFlushTime[0us] spillWriteTime[0us] "
+      "maxSpillExceededLimitCount[0] spillReadBytes[0B] spillReads[0] "
+      "spillReadTime[0us] spillReadDeserializationTime[0us]");
 
   const int numBatches = 10;
   const auto vectors = createVectors(500, numBatches);
@@ -502,14 +503,14 @@ TEST_F(HiveDataSinkTest, basic) {
   ASSERT_EQ(partitions.size(), 1);
 
   createDuckDbTable(vectors);
-  verifyWrittenData(outputDirectory->path);
+  verifyWrittenData(outputDirectory->getPath());
 }
 
 TEST_F(HiveDataSinkTest, close) {
   for (bool empty : {true, false}) {
     SCOPED_TRACE(fmt::format("Data sink is empty: {}", empty));
     const auto outputDirectory = TempDirectoryPath::create();
-    auto dataSink = createDataSink(rowType_, outputDirectory->path);
+    auto dataSink = createDataSink(rowType_, outputDirectory->getPath());
 
     auto vectors = createVectors(500, 1);
 
@@ -531,7 +532,7 @@ TEST_F(HiveDataSinkTest, close) {
       ASSERT_EQ(partitions.size(), 1);
       ASSERT_GT(stats.numWrittenBytes, 0);
       createDuckDbTable(vectors);
-      verifyWrittenData(outputDirectory->path);
+      verifyWrittenData(outputDirectory->getPath());
     } else {
       ASSERT_TRUE(partitions.empty());
       ASSERT_EQ(stats.numWrittenBytes, 0);
@@ -543,7 +544,7 @@ TEST_F(HiveDataSinkTest, abort) {
   for (bool empty : {true, false}) {
     SCOPED_TRACE(fmt::format("Data sink is empty: {}", empty));
     const auto outputDirectory = TempDirectoryPath::create();
-    auto dataSink = createDataSink(rowType_, outputDirectory->path);
+    auto dataSink = createDataSink(rowType_, outputDirectory->getPath());
 
     auto vectors = createVectors(1, 1);
     int initialBytes = 0;
@@ -568,8 +569,8 @@ TEST_F(HiveDataSinkTest, abort) {
 }
 
 TEST_F(HiveDataSinkTest, memoryReclaim) {
-  const int numBatches = 20;
-  auto vectors = createVectors(500, 20);
+  const int numBatches = 200;
+  auto vectors = createVectors(500, 200);
 
   struct {
     dwio::common::FileFormat format;
@@ -590,14 +591,14 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
           expectedWriterReclaimed);
     }
   } testSettings[] = {
-    //{dwio::common::FileFormat::DWRF, true, true, 1 << 30, true, true},
-    {dwio::common::FileFormat::DWRF, true, true, 1, true, true},
-    {dwio::common::FileFormat::DWRF, true, false, 1 << 30, false, false},
-    {dwio::common::FileFormat::DWRF, true, false, 1, false, false},
-    {dwio::common::FileFormat::DWRF, false, true, 1 << 30, true, false},
-    {dwio::common::FileFormat::DWRF, false, true, 1, true, true},
-    {dwio::common::FileFormat::DWRF, false, false, 1 << 30, false, false},
-    {dwio::common::FileFormat::DWRF, false, false, 1, false, false},
+      //    {dwio::common::FileFormat::DWRF, true, true, 1 << 30, true, true},
+      {dwio::common::FileFormat::DWRF, true, true, 1, true, true},
+      {dwio::common::FileFormat::DWRF, true, false, 1 << 30, false, false},
+      {dwio::common::FileFormat::DWRF, true, false, 1, false, false},
+      {dwio::common::FileFormat::DWRF, false, true, 1 << 30, true, false},
+      {dwio::common::FileFormat::DWRF, false, true, 1, true, true},
+      {dwio::common::FileFormat::DWRF, false, false, 1 << 30, false, false},
+      {dwio::common::FileFormat::DWRF, false, false, 1, false, false},
   // Add Parquet with https://github.com/facebookincubator/velox/issues/5560
 #if 0
       {dwio::common::FileFormat::PARQUET, true, true, 1 << 30, false, false},
@@ -632,8 +633,8 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
     std::unique_ptr<SpillConfig> spillConfig;
     if (testData.writerSpillEnabled) {
       spillDirectory = exec::test::TempDirectoryPath::create();
-      spillConfig =
-          getSpillConfig(spillDirectory->path, testData.writerFlushThreshold);
+      spillConfig = getSpillConfig(
+          spillDirectory->getPath(), testData.writerFlushThreshold);
       auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
           opPool_.get(),
           connectorPool_.get(),
@@ -663,7 +664,7 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
 
     auto dataSink = createDataSink(
         rowType_,
-        outputDirectory->path,
+        outputDirectory->getPath(),
         testData.format,
         partitionBy,
         bucketProperty);
@@ -673,30 +674,29 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
     for (int i = 0; i < numBatches; ++i) {
       dataSink->appendData(vectors[i]);
     }
-    memory::MemoryReclaimer::Stats stats;
+    memory::MemoryArbitrator::Stats oldStats =
+        memory::memoryManager()->arbitrator()->stats();
     uint64_t reclaimableBytes{0};
     if (testData.expectedWriterReclaimed) {
       reclaimableBytes = root_->reclaimableBytes().value();
       ASSERT_GT(reclaimableBytes, 0);
-      ASSERT_GT(root_->reclaim(256L << 20, 0, stats), 0);
-      ASSERT_GT(stats.reclaimExecTimeUs, 0);
-      ASSERT_GT(stats.reclaimedBytes, 0);
+      memory::testingRunArbitration();
+      memory::MemoryArbitrator::Stats curStats =
+          memory::memoryManager()->arbitrator()->stats();
+      ASSERT_GT(curStats.reclaimTimeUs - oldStats.reclaimTimeUs, 0);
+      ASSERT_GT(curStats.numReclaimedBytes - oldStats.numReclaimedBytes, 0);
       // We expect dwrf writer set numNonReclaimableAttempts counter.
-      ASSERT_LE(stats.numNonReclaimableAttempts, 1);
+      ASSERT_LE(
+          curStats.numNonReclaimableAttempts -
+              oldStats.numNonReclaimableAttempts,
+          1);
     } else {
       ASSERT_FALSE(root_->reclaimableBytes().has_value());
-      ASSERT_EQ(root_->reclaim(256L << 20, 0, stats), 0);
-      ASSERT_EQ(stats.reclaimExecTimeUs, 0);
-      ASSERT_EQ(stats.reclaimedBytes, 0);
-      if (testData.expectedWriterReclaimEnabled) {
-        if (testData.sortWriter) {
-          ASSERT_GE(stats.numNonReclaimableAttempts, 1);
-        } else {
-          ASSERT_EQ(stats.numNonReclaimableAttempts, 1);
-        }
-      } else {
-        ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
-      }
+      memory::testingRunArbitration();
+      memory::MemoryArbitrator::Stats curStats =
+          memory::memoryManager()->arbitrator()->stats();
+      ASSERT_EQ(curStats.reclaimTimeUs - oldStats.reclaimTimeUs, 0);
+      ASSERT_EQ(curStats.numReclaimedBytes - oldStats.numReclaimedBytes, 0);
     }
     const auto partitions = dataSink->close();
     if (testData.sortWriter && testData.expectedWriterReclaimed) {
@@ -771,7 +771,7 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
     std::unique_ptr<SpillConfig> spillConfig;
     if (testData.writerSpillEnabled) {
       spillDirectory = exec::test::TempDirectoryPath::create();
-      spillConfig = getSpillConfig(spillDirectory->path, 0);
+      spillConfig = getSpillConfig(spillDirectory->getPath(), 0);
       auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
           opPool_.get(),
           connectorPool_.get(),
@@ -801,7 +801,7 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
 
     auto dataSink = createDataSink(
         rowType_,
-        outputDirectory->path,
+        outputDirectory->getPath(),
         testData.format,
         partitionBy,
         bucketProperty);
@@ -865,7 +865,7 @@ DEBUG_ONLY_TEST_F(HiveDataSinkTest, sortWriterFailureTest) {
   const std::shared_ptr<TempDirectoryPath> spillDirectory =
       exec::test::TempDirectoryPath::create();
   std::unique_ptr<SpillConfig> spillConfig =
-      getSpillConfig(spillDirectory->path, 0);
+      getSpillConfig(spillDirectory->getPath(), 0);
   // Triggers the memory reservation in sort buffer.
   spillConfig->minSpillableReservationPct = 1'000;
   auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
@@ -883,7 +883,7 @@ DEBUG_ONLY_TEST_F(HiveDataSinkTest, sortWriterFailureTest) {
 
   auto dataSink = createDataSink(
       rowType_,
-      outputDirectory->path,
+      outputDirectory->getPath(),
       dwio::common::FileFormat::DWRF,
       partitionBy,
       bucketProperty);

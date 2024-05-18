@@ -79,7 +79,7 @@ TEST_F(LimitTest, limitOverLocalExchange) {
       {makeFlatVector<int32_t>(1'000, [](auto row) { return row; })});
 
   auto file = TempFilePath::create();
-  writeToFile(file->path, {data});
+  writeToFile(file->getPath(), {data});
 
   core::PlanNodeId scanNodeId;
 
@@ -93,7 +93,7 @@ TEST_F(LimitTest, limitOverLocalExchange) {
 
   auto cursor = TaskCursor::create(params);
   cursor->task()->addSplit(
-      scanNodeId, exec::Split(makeHiveConnectorSplit(file->path)));
+      scanNodeId, exec::Split(makeHiveConnectorSplit(file->getPath())));
 
   int32_t numRead = 0;
   while (cursor->moveNext()) {
@@ -131,7 +131,8 @@ TEST_F(LimitTest, partialLimitEagerFlush) {
         [numPagesPromise =
              std::make_shared<folly::Promise<int>>(std::move(numPagesPromise))](
             std::vector<std::unique_ptr<folly::IOBuf>> pages,
-            int64_t /*sequence*/) {
+            int64_t /*sequence*/,
+            std::vector<int64_t> /*remainingBytes*/) {
           numPagesPromise->setValue(pages.size());
         }));
     ASSERT_GE(std::move(numPagesFuture).get(std::chrono::seconds(1)), 10);

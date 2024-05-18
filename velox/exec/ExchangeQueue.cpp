@@ -97,7 +97,7 @@ std::vector<std::unique_ptr<SerializedPage>> ExchangeQueue::dequeueLocked(
     uint32_t maxBytes,
     bool* atEnd,
     ContinueFuture* future) {
-  VELOX_CHECK(future);
+  VELOX_CHECK_NOT_NULL(future);
   if (!error_.empty()) {
     *atEnd = true;
     VELOX_FAIL(error_);
@@ -111,7 +111,7 @@ std::vector<std::unique_ptr<SerializedPage>> ExchangeQueue::dequeueLocked(
     if (queue_.empty()) {
       if (atEnd_) {
         *atEnd = true;
-      } else {
+      } else if (pages.empty()) {
         promises_.emplace_back("ExchangeQueue::dequeue");
         *future = promises_.back().getSemiFuture();
       }

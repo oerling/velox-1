@@ -82,6 +82,10 @@ RowVectorPtr TaskQueue::dequeue() {
     std::vector<ContinuePromise> mayContinue;
     {
       std::lock_guard<std::mutex> l(mutex_);
+      if (closed_) {
+        return nullptr;
+      }
+
       if (!queue_.empty()) {
         auto result = std::move(queue_.front());
         queue_.pop_front();
@@ -114,10 +118,17 @@ RowVectorPtr TaskQueue::dequeue() {
 void TaskQueue::close() {
   std::lock_guard<std::mutex> l(mutex_);
   closed_ = true;
+  // Unblock producers.
   for (auto& promise : producerUnblockPromises_) {
     promise.setValue();
   }
   producerUnblockPromises_.clear();
+
+  // Unblock consumers.
+  if (consumerBlocked_) {
+    consumerBlocked_ = false;
+    consumerPromise_.setValue();
+  }
 }
 
 bool TaskQueue::hasNext() {
@@ -140,7 +151,7 @@ class TaskCursorBase : public TaskCursor {
       // activities to finish on TaskCursor destruction.
       executor_ = executor;
       static std::atomic<uint64_t> cursorQueryId{0};
-      queryCtx_ = std::make_shared<core::QueryCtx>(
+      queryCtx_ = core::QueryCtx::create(
           executor_.get(),
           core::QueryConfig({}),
           std::unordered_map<std::string, std::shared_ptr<Config>>{},
@@ -215,6 +226,7 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
         std::move(planFragment_),
         params.destination,
         std::move(queryCtx_),
+        Task::ExecutionMode::kParallel,
         // consumer
         [queue, copyResult = params.copyResult](
             const RowVectorPtr& vector, velox::ContinueFuture* future) {
@@ -229,6 +241,12 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
               vector->type(), vector->size(), queue->pool());
           copy->copy(vector.get(), 0, 0, vector->size());
           return queue->enqueue(std::move(copy), future);
+        },
+        [queue](std::exception_ptr) {
+          // onError close the queue to unblock producers and consumers.
+          // moveNext will handle rethrowing the error once it's
+          // unblocked.
+          queue->close();
         });
 
     if (!taskSpillDirectory_.empty()) {
@@ -262,6 +280,12 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
 
     current_ = queue_->dequeue();
     if (task_->error()) {
+      // Wait for the task to finish (there's' a small period of time between
+      // when the error is set on the Task and terminate is called).
+      task_->taskCompletionFuture()
+          .within(std::chrono::microseconds(1'000'000))
+          .wait();
+
       // Wait for all task drivers to finish to avoid destroying the executor_
       // before task_ finished using it and causing a crash.
       waitForTaskDriversToFinish(task_.get());
@@ -321,7 +345,8 @@ class SingleThreadedTaskCursor : public TaskCursorBase {
         taskId_,
         std::move(planFragment_),
         params.destination,
-        std::move(queryCtx_));
+        std::move(queryCtx_),
+        Task::ExecutionMode::kSerial);
 
     if (!taskSpillDirectory_.empty()) {
       task_->setSpillDirectory(taskSpillDirectory_);

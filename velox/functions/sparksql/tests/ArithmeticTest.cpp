@@ -149,6 +149,7 @@ class ArithmeticTest : public SparkFunctionBaseTest {
   static constexpr float kNan = std::numeric_limits<float>::quiet_NaN();
   static constexpr double kNanDouble = std::numeric_limits<double>::quiet_NaN();
   static constexpr float kInf = std::numeric_limits<float>::infinity();
+  static constexpr double kInfDouble = std::numeric_limits<double>::infinity();
 };
 
 TEST_F(ArithmeticTest, UnaryMinus) {
@@ -268,15 +269,57 @@ TEST_F(ArithmeticTest, cosh) {
   EXPECT_TRUE(std::isnan(cosh(kNan).value_or(0)));
 }
 
+TEST_F(ArithmeticTest, rint) {
+  const auto rint = [&](double a) {
+    return evaluateOnce<double>("rint(c0)", std::optional(a)).value();
+  };
+
+  EXPECT_EQ(rint(2.3), 2.0);
+  EXPECT_EQ(rint(3.8), 4.0);
+  EXPECT_EQ(rint(-2.3), -2.0);
+  EXPECT_EQ(rint(-3.8), -4.0);
+
+  EXPECT_EQ(rint(2.5), 2.0);
+
+  EXPECT_TRUE(std::isnan(rint(kNanDouble)));
+  EXPECT_EQ(rint(kInfDouble), kInfDouble);
+  EXPECT_EQ(rint(-kInfDouble), -kInfDouble);
+  EXPECT_EQ(rint(0.0), 0.0);
+  EXPECT_EQ(rint(-0.0), -0.0);
+
+  EXPECT_EQ(rint(std::nextafter(1.0, 0.0)), 1.0);
+  EXPECT_EQ(rint(std::nextafter(1.0, 2.0)), 1.0);
+  EXPECT_EQ(rint(std::nextafter(1e+16, kInfDouble)), 1e+16 + 2);
+}
+
+TEST_F(ArithmeticTest, unhex) {
+  const auto unhex = [&](std::optional<std::string> a) {
+    return evaluateOnce<std::string>("unhex(c0)", a);
+  };
+
+  EXPECT_EQ(unhex("737472696E67"), "string");
+  EXPECT_EQ(unhex(""), "");
+  EXPECT_EQ(unhex("23"), "#");
+  EXPECT_EQ(unhex("123"), "\x01#");
+  EXPECT_EQ(unhex("b23"), "\x0B#");
+  EXPECT_EQ(unhex("b2323"), "\x0B##");
+  EXPECT_EQ(unhex("F"), "\x0F");
+  EXPECT_EQ(unhex("ff"), "\xFF");
+  EXPECT_EQ(unhex("G"), std::nullopt);
+  EXPECT_EQ(unhex("GG"), std::nullopt);
+  EXPECT_EQ(unhex("G23"), std::nullopt);
+  EXPECT_EQ(unhex("E4B889E9878DE79A84"), "\u4E09\u91CD\u7684");
+}
+
 class CeilFloorTest : public SparkFunctionBaseTest {
  protected:
   template <typename T>
   std::optional<int64_t> ceil(std::optional<T> a) {
-    return evaluateOnce<int64_t, T>("ceil(c0)", a);
+    return evaluateOnce<int64_t>("ceil(c0)", a);
   }
   template <typename T>
   std::optional<int64_t> floor(std::optional<T> a) {
-    return evaluateOnce<int64_t, T>("floor(c0)", a);
+    return evaluateOnce<int64_t>("floor(c0)", a);
   }
 };
 
@@ -337,7 +380,7 @@ TEST_F(ArithmeticTest, log1p) {
 class BinTest : public SparkFunctionBaseTest {
  protected:
   std::optional<std::string> bin(std::optional<std::int64_t> arg) {
-    return evaluateOnce<std::string, int64_t>("bin(c0)", {arg}, {BIGINT()});
+    return evaluateOnce<std::string>("bin(c0)", arg);
   }
 };
 
@@ -352,7 +395,7 @@ TEST_F(BinTest, bin) {
       "111111111111111111111111111111111111111111111111111111111111111");
   EXPECT_EQ(bin(0), "0");
   auto result = evaluateOnce<std::string, int64_t>(
-      "bin(row_constructor(c0).c1)", {13}, {BIGINT()});
+      "bin(row_constructor(c0).c1)", std::make_optional(13L));
   EXPECT_EQ(result, "1101");
 }
 

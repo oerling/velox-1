@@ -19,6 +19,8 @@
 #include <folly/portability/SysSyscall.h>
 #include <memory>
 
+#include "velox/common/base/Counters.h"
+#include "velox/common/base/StatsReporter.h"
 #include "velox/common/future/VeloxPromise.h"
 #include "velox/common/process/ThreadDebugInfo.h"
 #include "velox/common/time/CpuWallTimer.h"
@@ -59,6 +61,14 @@ enum class StopReason {
 std::string stopReasonString(StopReason reason);
 
 std::ostream& operator<<(std::ostream& out, const StopReason& reason);
+
+struct DriverStats {
+  static constexpr const char* kTotalPauseTime = "totalDriverPauseWallNanos";
+  static constexpr const char* kTotalOffThreadTime =
+      "totalDriverOffThreadWallNanos";
+
+  std::unordered_map<std::string, RuntimeMetric> runtimeStats;
+};
 
 /// Represents a Driver's state. This is used for cancellation, forcing
 /// release of and for waiting for memory. The fields are serialized on
@@ -102,14 +112,22 @@ struct ThreadState {
   /// True if there is a future outstanding that will schedule this on an
   /// executor thread when some promise is realized.
   bool hasBlockingFuture{false};
-  /// True if on thread but in a section waiting for RPC or memory strategy
-  /// decision. The thread is not supposed to access its memory, which a third
-  /// party can revoke while the thread is in this state.
-  bool isSuspended{false};
+  /// The number of suspension requests on a on-thread driver. If > 0, this
+  /// driver thread is in a (recursive) section waiting for RPC or memory
+  /// strategy decision. The thread is not supposed to access its memory, which
+  /// a third party can revoke while the thread is in this state.
+  std::atomic<uint32_t> numSuspensions{0};
   /// The start execution time on thread in milliseconds. It is reset when the
   /// driver goes off thread. This is used to track the time that a driver has
   /// continuously run on a thread for per-driver cpu time slice enforcement.
   size_t startExecTimeMs{0};
+  /// The end execution time on thread in milliseconds. It is set when the
+  /// driver goes off thread and reset when the driver gets on a thread.
+  size_t endExecTimeMs{0};
+  /// Total time the driver in pause.
+  uint64_t totalPauseTimeMs{0};
+  /// Total off thread time (including blocked time and pause time).
+  uint64_t totalOffThreadTimeMs{0};
 
   bool isOnThread() const {
     return thread != std::thread::id();
@@ -118,6 +136,10 @@ struct ThreadState {
   void setThread() {
     thread = std::this_thread::get_id();
     startExecTimeMs = getCurrentTimeMs();
+    if (endExecTimeMs != 0) {
+      totalOffThreadTimeMs += startExecTimeMs - endExecTimeMs;
+      endExecTimeMs = 0;
+    }
 #if !defined(__APPLE__)
     // This is a debugging feature disabled on the Mac since syscall
     // is deprecated on that platform.
@@ -127,6 +149,9 @@ struct ThreadState {
 
   void clearThread() {
     thread = std::thread::id(); // no thread.
+    endExecTimeMs = getCurrentTimeMs();
+    RECORD_HISTOGRAM_METRIC_VALUE(
+        kMetricDriverExecTimeMs, (endExecTimeMs - startExecTimeMs));
     startExecTimeMs = 0;
     tid = 0;
   }
@@ -141,6 +166,10 @@ struct ThreadState {
     return getCurrentTimeMs() - startExecTimeMs;
   }
 
+  bool suspended() const {
+    return numSuspensions > 0;
+  }
+
   folly::dynamic toJson() const {
     folly::dynamic obj = folly::dynamic::object;
     obj["onThread"] = std::to_string(isOnThread());
@@ -148,7 +177,7 @@ struct ThreadState {
     obj["isTerminated"] = isTerminated.load();
     obj["isEnqueued"] = isEnqueued.load();
     obj["hasBlockingFuture"] = hasBlockingFuture;
-    obj["isSuspended"] = isSuspended;
+    obj["isSuspended"] = suspended();
     obj["startExecTime"] = startExecTimeMs;
     return obj;
   }
@@ -182,6 +211,9 @@ enum class BlockingReason {
   /// exit them because Task requested to yield or stop or after a certain time.
   /// This is the blocking reason used in such cases.
   kYield,
+  /// Operator is blocked waiting for its associated query memory arbitration to
+  /// finish.
+  kWaitForArbitration,
 };
 
 std::string blockingReasonToString(BlockingReason reason);
@@ -242,6 +274,7 @@ struct DriverCtx {
   /// Id of the partition to use by this driver. For local exchange, for
   /// instance.
   const uint32_t partitionId;
+  std::string inputFileName;
 
   std::shared_ptr<Task> task;
   Driver* driver;
@@ -359,6 +392,11 @@ class Driver : public std::enable_shared_from_this<Driver> {
   /// time slice limit if set.
   bool shouldYield() const;
 
+  /// Checks if the associated query is under memory arbitration or not. The
+  /// function returns true if it is and set future which is fulfilled when the
+  /// the memory arbiration finishes.
+  bool checkUnderArbitration(ContinueFuture* future);
+
   void initializeOperatorStats(std::vector<OperatorStats>& stats);
 
   /// Close operators and add operator stats to the task.
@@ -445,6 +483,8 @@ class Driver : public std::enable_shared_from_this<Driver> {
       std::shared_ptr<BlockingState>& blockingState,
       RowVectorPtr& result);
 
+  void updateStats();
+
   void close();
 
   // Push down dynamic filters produced by the operator at the specified
@@ -485,7 +525,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   ThreadState state_;
 
   // Timer used to track down the time we are sitting in the driver queue.
-  size_t queueTimeStartMicros_{0};
+  size_t queueTimeStartUs_{0};
   // Id (index in the vector) of the current operator to run (or the 1st one if
   // we haven't started yet). Used to determine which operator's queueTime we
   // should update.
@@ -494,6 +534,7 @@ class Driver : public std::enable_shared_from_this<Driver> {
   std::vector<std::unique_ptr<Operator>> operators_;
 
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
+  size_t blockedOperatorId_{0};
 
   bool trackOperatorCpuUsage_;
 

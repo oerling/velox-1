@@ -341,14 +341,6 @@ void CastExpr::applyCastKernel(
   try {
     auto inputRowValue = input->valueAt(row);
 
-    if constexpr (
-        FromKind == TypeKind::TIMESTAMP &&
-        (ToKind == TypeKind::VARCHAR || ToKind == TypeKind::VARBINARY)) {
-      auto writer = exec::StringWriter<>(result, row);
-      hooks_->castTimestampToString(inputRowValue, writer);
-      return;
-    }
-
     // Optimize empty input strings casting by avoiding throwing exceptions.
     if constexpr (
         FromKind == TypeKind::VARCHAR || FromKind == TypeKind::VARBINARY) {
@@ -453,22 +445,22 @@ void CastExpr::applyIntToDecimalCastKernel(
       });
 }
 
-template <typename TOutput>
-void CastExpr::applyDoubleToDecimalCastKernel(
+template <typename TInput, typename TOutput>
+void CastExpr::applyFloatingPointToDecimalCastKernel(
     const SelectivityVector& rows,
     const BaseVector& input,
     exec::EvalCtx& context,
     const TypePtr& toType,
     VectorPtr& result) {
-  const auto doubleInput = input.as<SimpleVector<double>>();
+  const auto floatingInput = input.as<SimpleVector<TInput>>();
   auto rawResults =
       result->asUnchecked<FlatVector<TOutput>>()->mutableRawValues();
   const auto toPrecisionScale = getDecimalPrecisionScale(*toType);
 
   applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
     TOutput output;
-    const auto status = DecimalUtil::rescaleDouble<TOutput>(
-        doubleInput->valueAt(row),
+    const auto status = DecimalUtil::rescaleFloatingPoint<TInput, TOutput>(
+        floatingInput->valueAt(row),
         toPrecisionScale.first,
         toPrecisionScale.second,
         output);
@@ -710,8 +702,6 @@ void CastExpr::applyCastPrimitives(
   auto* resultFlatVector = result->as<FlatVector<To>>();
   auto* inputSimpleVector = input.as<SimpleVector<From>>();
 
-  auto& resultType = resultFlatVector->type();
-
   if (!hooks_->truncate()) {
     if (!hooks_->legacy()) {
       applyToSelectedNoThrowLocal(context, rows, result, [&](int row) {
@@ -735,34 +725,6 @@ void CastExpr::applyCastPrimitives(
         applyCastKernel<ToKind, FromKind, util::TruncateLegacyCastPolicy>(
             row, context, inputSimpleVector, resultFlatVector);
       });
-    }
-  }
-
-  // If we're converting to a TIMESTAMP, check if we need to adjust the
-  // current GMT timezone to the user provided session timezone.
-  if constexpr (ToKind == TypeKind::TIMESTAMP) {
-    const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
-    // If user explicitly asked us to adjust the timezone.
-    if (queryConfig.adjustTimestampToTimezone()) {
-      auto sessionTzName = queryConfig.sessionTimezone();
-      if (!sessionTzName.empty()) {
-        // When context.throwOnError is false, some rows will be marked as
-        // 'failed'. These rows should not be processed further. 'remainingRows'
-        // will contain a subset of 'rows' that have passed all the checks (e.g.
-        // keys are not nulls and number of keys and values is the same).
-        exec::LocalSelectivityVector remainingRows(context, rows);
-        context.deselectErrors(*remainingRows);
-
-        // locate_zone throws runtime_error if the timezone couldn't be found
-        // (so we're safe to dereference the pointer).
-        auto* timeZone = date::locate_zone(sessionTzName);
-        auto rawTimestamps = resultFlatVector->mutableRawValues();
-
-        applyToSelectedNoThrowLocal(
-            context, *remainingRows, result, [&](int row) {
-              rawTimestamps[row].toGMT(*timeZone);
-            });
-      }
     }
   }
 }

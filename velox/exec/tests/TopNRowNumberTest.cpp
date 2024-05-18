@@ -132,22 +132,24 @@ TEST_F(TopNRowNumberTest, largeOutput) {
         .assertResults(sql);
 
     // Spilling.
-    auto task =
-        AssertQueryBuilder(plan, duckDbQueryRunner_)
-            .config(core::QueryConfig::kPreferredOutputBatchBytes, "1024")
-            .config(core::QueryConfig::kTestingSpillPct, "100")
-            .config(core::QueryConfig::kSpillEnabled, "true")
-            .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
-            .spillDirectory(spillDirectory->path)
-            .assertResults(sql);
+    {
+      TestScopedSpillInjection scopedSpillInjection(100);
+      auto task =
+          AssertQueryBuilder(plan, duckDbQueryRunner_)
+              .config(core::QueryConfig::kPreferredOutputBatchBytes, "1024")
+              .config(core::QueryConfig::kSpillEnabled, "true")
+              .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
+              .spillDirectory(spillDirectory->getPath())
+              .assertResults(sql);
 
-    auto taskStats = exec::toPlanStats(task->taskStats());
-    const auto& stats = taskStats.at(topNRowNumberId);
+      auto taskStats = exec::toPlanStats(task->taskStats());
+      const auto& stats = taskStats.at(topNRowNumberId);
 
-    ASSERT_GT(stats.spilledBytes, 0);
-    ASSERT_GT(stats.spilledRows, 0);
-    ASSERT_GT(stats.spilledFiles, 0);
-    ASSERT_GT(stats.spilledPartitions, 0);
+      ASSERT_GT(stats.spilledBytes, 0);
+      ASSERT_GT(stats.spilledRows, 0);
+      ASSERT_GT(stats.spilledFiles, 0);
+      ASSERT_GT(stats.spilledPartitions, 0);
+    }
 
     // No partitioning keys.
     plan = PlanBuilder()
@@ -212,24 +214,26 @@ TEST_F(TopNRowNumberTest, manyPartitions) {
     assertQuery(plan, sql);
 
     // Spilling.
-    auto task =
-        AssertQueryBuilder(plan, duckDbQueryRunner_)
-            .config(
-                core::QueryConfig::kPreferredOutputBatchBytes,
-                fmt::format("{}", outputBatchBytes))
-            .config(core::QueryConfig::kTestingSpillPct, "100")
-            .config(core::QueryConfig::kSpillEnabled, "true")
-            .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
-            .spillDirectory(spillDirectory->path)
-            .assertResults(sql);
+    {
+      TestScopedSpillInjection scopedSpillInjection(100);
+      auto task =
+          AssertQueryBuilder(plan, duckDbQueryRunner_)
+              .config(
+                  core::QueryConfig::kPreferredOutputBatchBytes,
+                  fmt::format("{}", outputBatchBytes))
+              .config(core::QueryConfig::kSpillEnabled, "true")
+              .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
+              .spillDirectory(spillDirectory->getPath())
+              .assertResults(sql);
 
-    auto taskStats = exec::toPlanStats(task->taskStats());
-    const auto& stats = taskStats.at(topNRowNumberId);
+      auto taskStats = exec::toPlanStats(task->taskStats());
+      const auto& stats = taskStats.at(topNRowNumberId);
 
-    ASSERT_GT(stats.spilledBytes, 0);
-    ASSERT_GT(stats.spilledRows, 0);
-    ASSERT_GT(stats.spilledFiles, 0);
-    ASSERT_GT(stats.spilledPartitions, 0);
+      ASSERT_GT(stats.spilledBytes, 0);
+      ASSERT_GT(stats.spilledRows, 0);
+      ASSERT_GT(stats.spilledFiles, 0);
+      ASSERT_GT(stats.spilledPartitions, 0);
+    }
   };
 
   testLimit(1);
@@ -348,17 +352,17 @@ TEST_F(TopNRowNumberTest, maxSpillBytes) {
   } testSettings[] = {{1 << 30, false}, {13 << 20, true}, {0, false}};
 
   auto spillDirectory = exec::test::TempDirectoryPath::create();
-  auto queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+  auto queryCtx = core::QueryCtx::create(executor_.get());
 
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     try {
+      TestScopedSpillInjection scopedSpillInjection(100);
       AssertQueryBuilder(plan)
-          .spillDirectory(spillDirectory->path)
+          .spillDirectory(spillDirectory->getPath())
           .queryCtx(queryCtx)
           .config(core::QueryConfig::kSpillEnabled, "true")
           .config(core::QueryConfig::kTopNRowNumberSpillEnabled, "true")
-          .config(core::QueryConfig::kTestingSpillPct, "100")
           .config(
               core::QueryConfig::kMaxSpillBytes,
               std::to_string(testData.maxSpilledBytes))

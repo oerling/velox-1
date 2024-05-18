@@ -18,13 +18,14 @@ add_executable(
   BitUtilTest.cpp
   BloomFilterTest.cpp
   CoalesceIoTest.cpp
+  ConcurrentCounterTest.cpp
   ExceptionTest.cpp
   FsTest.cpp
   RangeTest.cpp
   RawVectorTest.cpp
-  ScratchTest.cpp
   RuntimeMetricsTest.cpp
   ScopedLockTest.cpp
+  ScratchTest.cpp
   SemaphoreTest.cpp
   SimdUtilTest.cpp
   SpillConfigTest.cpp
@@ -37,7 +38,9 @@ add_test(velox_base_test velox_base_test)
 
 target_link_libraries(
   velox_base_test
-  PRIVATE velox_common_base
+  PRIVATE velox_caching
+          velox_common_base
+          velox_memory
           velox_time
           velox_status
           velox_exception

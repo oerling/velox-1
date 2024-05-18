@@ -96,6 +96,7 @@ std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
           fragment.fragment,
           i,
           params_.queryCtx,
+	  exec::Task::ExecutionMode::kParallel,
           consumer,
           onError);
       stages_.back().push_back(task);

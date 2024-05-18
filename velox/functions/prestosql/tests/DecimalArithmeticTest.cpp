@@ -116,7 +116,7 @@ TEST_F(DecimalArithmeticTest, add) {
            {1, 2, 5, std::nullopt, std::nullopt}, DECIMAL(10, 3))});
 
   // Addition overflow.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 + cast(1.00 as decimal(2,0))",
@@ -126,7 +126,7 @@ TEST_F(DecimalArithmeticTest, add) {
       "Decimal overflow. Value '100000000000000000000000000000000000000' is not in the range of Decimal Type");
 
   // Rescaling LHS overflows.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 + 0.01",
@@ -135,7 +135,7 @@ TEST_F(DecimalArithmeticTest, add) {
               DECIMAL(38, 0))}),
       "Decimal overflow: 99999999999999999999999999999999999999 + 1");
   // Rescaling RHS overflows.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "0.01 + c0",
@@ -202,7 +202,7 @@ TEST_F(DecimalArithmeticTest, subtract) {
            {1, 2, 5, std::nullopt, std::nullopt}, DECIMAL(10, 3))});
 
   // Subtraction overflow.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 - cast(1.00 as decimal(2,0))",
@@ -211,7 +211,7 @@ TEST_F(DecimalArithmeticTest, subtract) {
               DECIMAL(38, 0))}),
       "Decimal overflow. Value '-100000000000000000000000000000000000000' is not in the range of Decimal Type");
   // Rescaling LHS overflows.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 - 0.01",
@@ -220,7 +220,7 @@ TEST_F(DecimalArithmeticTest, subtract) {
               DECIMAL(38, 0))}),
       "Decimal overflow: -99999999999999999999999999999999999999 - 1");
   // Rescaling RHS overflows.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "0.01 - c0",
@@ -271,7 +271,7 @@ TEST_F(DecimalArithmeticTest, multiply) {
       expectedConstantFlat, "c0 * 1.00", {shortFlat});
 
   // Long decimal limits
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 * cast(10.00 as decimal(2,0))",
@@ -282,7 +282,7 @@ TEST_F(DecimalArithmeticTest, multiply) {
       "Decimal overflow. Value '119630519620642428561342635425231011830' is not in the range of Decimal Type");
 
   // Rescaling the final result overflows.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 * cast(1.00 as decimal(2,1))",
@@ -291,6 +291,14 @@ TEST_F(DecimalArithmeticTest, multiply) {
                   HugeInt::build(0x08FFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)},
               DECIMAL(38, 0))}),
       "Decimal overflow. Value '119630519620642428561342635425231011830' is not in the range of Decimal Type");
+
+  // The sum of input scales exceeds 38.
+  VELOX_ASSERT_THROW(
+      evaluate(
+          "c0 * c0",
+          makeRowVector(
+              {makeFlatVector<int128_t>({1000, 2000}, DECIMAL(38, 30))})),
+      "");
 }
 
 TEST_F(DecimalArithmeticTest, decimalDivTest) {
@@ -313,6 +321,18 @@ TEST_F(DecimalArithmeticTest, decimalDivTest) {
       makeFlatVector<int128_t>({200, 50}, DECIMAL(19, 3)),
       "divide(c0, c1)",
       {shortFlat, longFlat});
+
+  testDecimalExpr<TypeKind::HUGEINT>(
+      makeFlatVector<int128_t>(
+          {HugeInt::parse("20000000000000000"),
+           HugeInt::parse("50000000000000000")},
+          DECIMAL(38, 19)),
+      "divide(c0, c1)",
+      {makeFlatVector<int64_t>({100, 200}, DECIMAL(17, 4)),
+       makeFlatVector<int128_t>(
+           {HugeInt::parse("50000000000000000000"),
+            HugeInt::parse("40000000000000000000")},
+           DECIMAL(21, 19))});
 
   // Divide long and long, returning long.
   testDecimalExpr<TypeKind::HUGEINT>(
@@ -345,12 +365,12 @@ TEST_F(DecimalArithmeticTest, decimalDivTest) {
       {makeFlatVector<int64_t>({-34, 5, 65, 90, 2, -49}, DECIMAL(2, 1))});
 
   // Divide by zero.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::BIGINT>({}, "c0 / 0.0", {shortFlat}),
       "Division by zero");
 
   // Long decimal limits.
-  VELOX_ASSERT_THROW(
+  VELOX_ASSERT_USER_THROW(
       testDecimalExpr<TypeKind::HUGEINT>(
           {},
           "c0 / 0.01",
@@ -358,6 +378,15 @@ TEST_F(DecimalArithmeticTest, decimalDivTest) {
               std::vector<int128_t>{DecimalUtil::kLongDecimalMax},
               DECIMAL(38, 0))}),
       "Decimal overflow: 99999999999999999999999999999999999999 * 10000");
+
+  // Rescale factor > max precision (38).
+  VELOX_ASSERT_USER_THROW(
+      evaluate(
+          "divide(c0, c1)",
+          makeRowVector(
+              {makeFlatVector<int128_t>({5000, 20000}, DECIMAL(20, 1)),
+               makeFlatVector<int128_t>({5000, 20000}, DECIMAL(33, 32))})),
+      "Decimal overflow");
 }
 
 TEST_F(DecimalArithmeticTest, decimalDivDifferentTypes) {
@@ -468,6 +497,78 @@ TEST_F(DecimalArithmeticTest, roundN) {
       {makeFlatVector<int128_t>(
           {1234567890123456789, 5555555555555555555, -999999999999999999, 0},
           DECIMAL(19, 5))});
+}
+
+TEST_F(DecimalArithmeticTest, floor) {
+  // short DECIMAL -> short DECIMAL.
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeFlatVector<int64_t>({0, 0, -1, 0, -1, 0, -1, 0, -1}, DECIMAL(2, 0))},
+      "floor(c0)",
+      {makeFlatVector<int64_t>(
+          {0, 1, -1, 49, -49, 50, -50, 99, -99}, DECIMAL(3, 2))});
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeFlatVector<int64_t>(
+          {123, -123, 123, -124, 123, -124, 123, -124, 123, -124, 123, -124},
+          DECIMAL(4, 0))},
+      "floor(c0)",
+      {makeFlatVector<int64_t>(
+          {12300,
+           -12300,
+           12301,
+           -12301,
+           12345,
+           -12345,
+           12349,
+           -12349,
+           12350,
+           -12350,
+           12399,
+           -12399},
+          DECIMAL(5, 2))});
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeFlatVector<int64_t>(
+          {DecimalUtil::kShortDecimalMax, DecimalUtil::kShortDecimalMin},
+          DECIMAL(18, 0))},
+      "floor(c0)",
+      {makeFlatVector<int64_t>(
+          {DecimalUtil::kShortDecimalMax, DecimalUtil::kShortDecimalMin},
+          DECIMAL(18, 0))});
+
+  // long DECIMAL -> long DECIMAL.
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeFlatVector<int128_t>(
+          {0, 0, -1, 0, -1, 0, -1, 0, -1}, DECIMAL(19, 0))},
+      "floor(c0)",
+      {makeFlatVector<int128_t>(
+          {0, 1, -1, 49, -49, 50, -50, 99, -99}, DECIMAL(20, 2))});
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeFlatVector<int128_t>(
+          {DecimalUtil::kPowersOfTen[33] - 1, -DecimalUtil::kPowersOfTen[33]},
+          DECIMAL(34, 0))},
+      "floor(c0)",
+      {makeFlatVector<int128_t>(
+          {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
+          DECIMAL(38, 5))});
+  testDecimalExpr<TypeKind::HUGEINT>(
+      {makeFlatVector<int128_t>(
+          {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
+          DECIMAL(38, 0))},
+      "floor(c0)",
+      {makeFlatVector<int128_t>(
+          {DecimalUtil::kLongDecimalMax, DecimalUtil::kLongDecimalMin},
+          DECIMAL(38, 0))});
+
+  // long DECIMAL -> short DECIMAL.
+  testDecimalExpr<TypeKind::BIGINT>(
+      {makeFlatVector<int64_t>({0, 0, -1, -1, 0}, DECIMAL(1, 0))},
+      "floor(c0)",
+      {makeFlatVector<int128_t>(
+          {1234567890123456789,
+           5000000000000000000,
+           -9000000000000000000,
+           -1000000000000000000,
+           0},
+          DECIMAL(19, 19))});
 }
 
 TEST_F(DecimalArithmeticTest, abs) {

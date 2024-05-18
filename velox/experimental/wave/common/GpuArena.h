@@ -42,7 +42,7 @@ class GpuSlab {
 
   // Returns an address for at least 'bytes' of memory inside this slab, nullptr
   // if there is no contiguous run of at least 'bytes'.
-  void* FOLLY_NULLABLE allocate(uint64_t bytes);
+  void* allocate(uint64_t bytes);
 
   /// Frees an area returned by allocate().
   void free(void* address, uint64_t bytes);
@@ -124,7 +124,7 @@ class GpuArena {
   WaveBufferPtr allocateBytes(uint64_t bytes);
 
   template <typename T>
-  WaveBufferPtr allocate(int32_t items) {
+  WaveBufferPtr allocate(uint64_t items) {
     static_assert(std::is_trivially_destructible_v<T>);
     return allocateBytes(sizeof(T) * items);
   }

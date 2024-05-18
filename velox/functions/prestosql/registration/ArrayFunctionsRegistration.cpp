@@ -17,6 +17,8 @@
 #include <string>
 
 #include "velox/functions/Registerer.h"
+#include "velox/functions/lib/ArrayShuffle.h"
+#include "velox/functions/lib/Repeat.h"
 #include "velox/functions/prestosql/ArrayConstructor.h"
 #include "velox/functions/prestosql/ArrayFunctions.h"
 #include "velox/functions/prestosql/ArraySort.h"
@@ -109,6 +111,7 @@ inline void registerArrayRemoveFunctions(const std::string& prefix) {
 void registerInternalArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_$internal$canonicalize, "$internal$canonicalize");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_$internal$contains, "$internal$contains");
 }
 
 void registerArrayFunctions(const std::string& prefix) {
@@ -133,7 +136,11 @@ void registerArrayFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, prefix + "zip");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip_with, prefix + "zip_with");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, prefix + "array_position");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_shuffle, prefix + "shuffle");
+  exec::registerStatefulVectorFunction(
+      prefix + "shuffle",
+      arrayShuffleSignatures(),
+      makeArrayShuffle,
+      getMetadataForArrayShuffle());
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_sort, prefix + "array_sort");
   VELOX_REGISTER_VECTOR_FUNCTION(
@@ -144,7 +151,8 @@ void registerArrayFunctions(const std::string& prefix) {
   });
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_sum, prefix + "array_sum");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_repeat, prefix + "repeat");
+  exec::registerStatefulVectorFunction(
+      prefix + "repeat", repeatSignatures(), makeRepeat, repeatMetadata());
   VELOX_REGISTER_VECTOR_FUNCTION(udf_sequence, prefix + "sequence");
 
   exec::registerStatefulVectorFunction(
@@ -288,4 +296,4 @@ void registerArrayFunctions(const std::string& prefix) {
   registerArrayNormalizeFunctions<float>(prefix);
   registerArrayNormalizeFunctions<double>(prefix);
 }
-}; // namespace facebook::velox::functions
+} // namespace facebook::velox::functions
