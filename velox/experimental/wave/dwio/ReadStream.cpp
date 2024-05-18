@@ -56,7 +56,7 @@ ReadStream::ReadStream(
   currentStaging_ = staging_[0].get();
 }
 
-  void setBlockStatus(DecodePrograms& programs, BlockStatus* status) {
+void setBlockStatus(DecodePrograms& programs, BlockStatus* status) {
   for (auto& program : programs.programs) {
     for (auto& op : program) {
       op->blockStatus = status + op->numRowsPerThread * op->nthBlock;
@@ -64,9 +64,9 @@ ReadStream::ReadStream(
   }
 }
 
-  void ReadStream::makeGrid(Stream* stream) {
-    programs_.clear();
-    auto total = reader_->formatData()->totalRows();
+void ReadStream::makeGrid(Stream* stream) {
+  programs_.clear();
+  auto total = reader_->formatData()->totalRows();
   auto blockSize = FLAGS_wave_reader_rows_per_tb;
   if (total < blockSize) {
     return;
@@ -78,28 +78,28 @@ ReadStream::ReadStream(
     // TODO:  Must  propagate the incoming nulls from outer to inner structs.
     // griddize must decode nulls if present.
     child->formatData()->griddize(
-				  blockSize,
+        blockSize,
         numBlocks,
         deviceStaging_,
         resultStaging_,
-				  *currentStaging_,
+        *currentStaging_,
         programs_,
-				  *this);
+        *this);
   }
   if (!programs_.programs.empty()) {
     WaveStats& stats = waveStream->stats();
     stats.bytesToDevice += currentStaging_->bytesToDevice();
-          ++stats.numKernels;
-          stats.numPrograms += programs_.programs.size();
-          stats.numThreads += programs_.programs.size() *
-              std::min<int32_t>(rows_.size(), kBlockSize);
-	  setBlockStatus(programs_, control_->deviceData->as<BlockStatus>());
+    ++stats.numKernels;
+    stats.numPrograms += programs_.programs.size();
+    stats.numThreads +=
+        programs_.programs.size() * std::min<int32_t>(rows_.size(), kBlockSize);
+    setBlockStatus(programs_, control_->deviceData->as<BlockStatus>());
 
     currentStaging_->transfer(*waveStream, *stream);
     WaveBufferPtr extra;
     launchDecode(programs_, &waveStream->arena(), extra, stream);
-          staging_.push_back(std::make_unique<SplitStaging>());
-          currentStaging_ = staging_.back().get();
+    staging_.push_back(std::make_unique<SplitStaging>());
+    currentStaging_ = staging_.back().get();
   }
 }
 
@@ -130,10 +130,10 @@ void ReadStream::makeOps() {
   }
 }
 
-  bool ReadStream::decodenonFiltersInFiltersKernel() {
-    return ops_.size() == 1;
-  }
-  
+bool ReadStream::decodenonFiltersInFiltersKernel() {
+  return ops_.size() == 1;
+}
+
 bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
   needSync = false;
@@ -212,8 +212,8 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
         bool needSync = false;
-	readStream->makeGrid(stream);
-	readStream->makeOps();
+        readStream->makeGrid(stream);
+        readStream->makeOps();
 
         for (;;) {
           bool done = readStream->makePrograms(needSync);
@@ -226,7 +226,9 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
           if (done) {
             break;
           }
-	  setBlockStatus(readStream->programs_, readStream->control_->deviceData->as<BlockStatus>());
+          setBlockStatus(
+              readStream->programs_,
+              readStream->control_->deviceData->as<BlockStatus>());
           WaveBufferPtr extra;
           launchDecode(
               readStream->programs(), &waveStream->arena(), extra, stream);

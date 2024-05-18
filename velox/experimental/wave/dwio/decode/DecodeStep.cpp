@@ -37,7 +37,8 @@ void GpuDecode::setFilter(ColumnReader* reader, Stream* stream) {
     }
 
     default:
-      VELOX_UNSUPPORTED("Unsupported filter kind", static_cast<int32_t>(veloxFilter->kind()));
+      VELOX_UNSUPPORTED(
+          "Unsupported filter kind", static_cast<int32_t>(veloxFilter->kind()));
   }
 }
 

@@ -34,7 +34,8 @@ class WaveStream;
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
-  Staging(const void* hostData, int32_t size) : hostData(hostData), size(size) {}
+  Staging(const void* hostData, int32_t size)
+      : hostData(hostData), size(size) {}
 
   // Pointer to data in pageable host memory, if applicable.
   const void* hostData{nullptr};
@@ -59,11 +60,14 @@ class SplitStaging {
 
   /// Registers '*ptr' to be patched to the device side address of the transfer
   /// identified by 'id'. The *ptr is an offset into the buffer identified by
-  /// id, so that the actual start of the area is added to the offset at *ptr. If 'clear' is true, *ptr is set to nullptr first.
+  /// id, so that the actual start of the area is added to the offset at *ptr.
+  /// If 'clear' is true, *ptr is set to nullptr first.
   template <typename T>
   void registerPointer(BufferId id, T pointer, bool clear) {
     registerPointerInternal(
-			    id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)), clear);
+        id,
+        reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)),
+        clear);
   }
 
   int64_t bytesToDevice() const {
@@ -102,11 +106,14 @@ class ResultStaging {
 
   /// Registers '*pointer' to be patched to the buffer. The starting address of
   /// the buffer is added to *pointer, so that if *pointer was 16, *pointer will
-  /// come to point to the 16th byte in the buffer. If 'clear' is true, *ptr is set to nullptr first.
+  /// come to point to the 16th byte in the buffer. If 'clear' is true, *ptr is
+  /// set to nullptr first.
   template <typename T>
   void registerPointer(BufferId id, T pointer, bool clear) {
     registerPointerInternal(
-			    id, reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)), clear);
+        id,
+        reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)),
+        clear);
   }
 
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
@@ -134,7 +141,7 @@ struct ColumnGridInfo {
   /// Number of independently schedulable blocks.
   int32_t numBlocks;
 
-  /// 
+  ///
   BlockStatus* status{nullptr};
 
   /// Device readable nulls as a flat bitmap. 1 is non-null. nullptr means
@@ -188,7 +195,8 @@ struct ColumnOp {
   // Device side non-vector result, like set of passing rows, array of
   // lengths/starts etc.
   int32_t* deviceResult{nullptr};
-  // Id of 'deviceResult' from resultStaging. A subsequent op must refer to the result of the previous one before the former is allocated.
+  // Id of 'deviceResult' from resultStaging. A subsequent op must refer to the
+  // result of the previous one before the former is allocated.
   int32_t deviceResultId{0};
 
   int32_t* hostResult{nullptr};

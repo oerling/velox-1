@@ -64,9 +64,10 @@ class TestFormatData : public wave::FormatData {
       ReadStream& stream) override;
 
  private:
-  // Stages movement of nulls to device if any. Returns the id of the buffer or kNotRegisterd. 
-  int32_t  stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging);
-  
+  // Stages movement of nulls to device if any. Returns the id of the buffer or
+  // kNotRegisterd.
+  int32_t stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging);
+
   const OperandId operand_;
   int32_t totalRows_{0};
 
