@@ -119,15 +119,25 @@ class ReadStream : public Executable {
   // from device.
   bool makePrograms(bool& needSync);
 
+  bool filtersDone() const {
+    return filtersDone_;
+  }
+  
  private:
   // Computes starting points for multiple TBs per column if more rows are
   // needed than is good per TB.
   void makeGrid(Stream* stream);
 
+  // Sets consistent blockStatus and temp across 'programs_'
+  void setBlockStatusAndTemp();
+  
   /// Makes column dependencies.
   void makeOps();
   void makeControl();
 
+  // Makes steps to align values from non-last filters to the selction of the last filter.
+  void makeCompact(bool isSerial);
+  
   // True if non-filter columns will be done sequentially in the
   // filters kernel. This will never loose if there is an always read
   // single column. This may loose if it were better to take the
@@ -146,6 +156,8 @@ class ReadStream : public Executable {
   std::vector<ColumnOp> ops_;
   // Filter columns in filter order.
   std::vector<ColumnOp> filters_;
+  //
+  int32_t* lastFilterRows_{nullptr};
   // Count of KBlockSize blocks in max top level rows.
   int32_t numBlocks_{0};
   std::vector<std::unique_ptr<SplitStaging>> staging_;
@@ -153,8 +165,11 @@ class ReadStream : public Executable {
 
   // Data to be copied from device, e.g. filter selectivities.
   ResultStaging resultStaging_;
+
   // Intermediate data to stay on device, e.g. selected rows.
   ResultStaging deviceStaging_;
+  // Owning references to decode programs. Must be live for duration of kernels.
+  std::vector<WaveBufferPtr> commands_;
   // Reusable control block for launching decode kernels.
   DecodePrograms programs_;
   // If no filters, the starting RowSet directly initializes the BlockStatus'es

@@ -39,7 +39,7 @@ enum class WaveFilterKind : uint8_t {
   kBigintValues
 };
 
-struct WaveFilterBase {
+  struct alignas(16) WaveFilterBase {
   union {
     int64_t int64Range[2];
     float floatRange[2];
@@ -60,6 +60,7 @@ struct WaveFilterBase {
 /// or pre/post processing other than decoding.
 enum class DecodeStep {
   kSelective32,
+  kCompact64,
   kSelective64,
   kConstant32,
   kConstant64,
@@ -98,7 +99,7 @@ enum class DecodeStep {
 class ColumnReader;
 
 /// Describes a decoding loop's input and result disposition.
-struct GpuDecode {
+  struct alignas(16) GpuDecode {
   /// Constant in 'numRows' to signify the number comes from 'blockstatus'.
   static constexpr int32_t kFilterHits = -1;
 
@@ -152,6 +153,13 @@ struct GpuDecode {
   /// 'nthBlock * numRowsPerThread + <nth loop>'.
   BlockStatus* blockStatus{nullptr};
 
+  /// Extra copy of result row count for each of kBlockSize rows if
+  /// this is a filter. This is needed for non-last filters that
+  /// extract values. The values have to be aligned after the final
+  /// filtering result is known. This is no longer available in
+  /// blockStatus.
+  int32_t* filterRowCount{nullptr};
+  
   // If multiple TBs on the same column and there are nulls, this is the start
   // offset of the TB's range of rows in non-null values. nullptr if no nulls.
   int32_t* nonNullBases{nullptr};
@@ -328,9 +336,21 @@ struct GpuDecode {
     // 256/512/1024/2048.
     int32_t resultStride;
     // One int per warp (blockDim.x/32).
-    int32_t* temp;
   };
 
+  struct CompactValues {
+    // Selected row numbers from the source filtered column.
+    int32_t* sourceRows;
+    // Row count for each kBlockSize rows of the source.
+    int32_t* sourceNumRows;
+    /// The rows selected by the last filter. blockStatus has the count.
+    int32_t* finalRows;
+    /// The results produced by the first filtered column.
+    void* source;
+    /// Null flags. nullptr if not nullable.
+    uint8_t* sourceNull;
+  };
+  
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;
@@ -342,9 +362,13 @@ struct GpuDecode {
     MakeScatterIndices makeScatterIndices;
     RowCountNoFilter rowCountNoFilter;
     CountBits countBits;
+    CompactValues compact;
   } data;
 
-  /// Returns the amount f shared memory for standard size thread block for
+  /// Returns the amount of int aligned global memory per TB needed in 'temp' for standard size TB.
+  int32_t tempSize() const;
+  
+  /// Returns the amount of shared memory for standard size thread block for
   /// 'step'.
   int32_t sharedMemorySize() const;
 

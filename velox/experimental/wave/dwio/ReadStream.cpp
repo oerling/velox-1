@@ -56,10 +56,19 @@ ReadStream::ReadStream(
   currentStaging_ = staging_[0].get();
 }
 
-void setBlockStatus(DecodePrograms& programs, BlockStatus* status) {
-  for (auto& program : programs.programs) {
-    for (auto& op : program) {
-      op->blockStatus = status + op->numRowsPerThread * op->nthBlock;
+  void ReadStream::setBlockStatusAndTemp() {
+
+
+    auto* status = control_->deviceData->as<BlockStatus>();
+    auto tempSize = programs_.programs[0][0]->tempSize();
+    auto size = programs_.programs.size() * tempSize;
+    auto id = deviceStaging_.reserve(size);
+    for (auto blockIdx = 0; blockIdx < programs_.programs.size(); ++blockIdx) {
+      auto& program = programs_.programs[blockIdx];
+	for (auto& op : program) {
+	  op->temp = reinterpret_cast<int32_t*>(blockIdx * tempSize);
+	  deviceStaging_.registerPointer(id, &op->temp, false);
+	  op->blockStatus = status + op->numRowsPerThread * op->nthBlock;
     }
   }
 }
@@ -93,16 +102,60 @@ void ReadStream::makeGrid(Stream* stream) {
     stats.numPrograms += programs_.programs.size();
     stats.numThreads +=
         programs_.programs.size() * std::min<int32_t>(rows_.size(), kBlockSize);
-    setBlockStatus(programs_, control_->deviceData->as<BlockStatus>());
-
+    setBlockStatusAndTemp();
+    deviceStaging_.makeDeviceBuffer(waveStream->arena());
     currentStaging_->transfer(*waveStream, *stream);
     WaveBufferPtr extra;
     launchDecode(programs_, &waveStream->arena(), extra, stream);
+    if (extra) {
+      commands_.push_back(std::move(extra));
+    }
     staging_.push_back(std::make_unique<SplitStaging>());
     currentStaging_ = staging_.back().get();
   }
 }
 
+  void ReadStream::makeCompact(bool isSerial) {
+    auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
+    for (auto i = 0; i < filters_.size() - 1; ++i) {
+      if (filters_[i].waveVector) {
+	for (auto blockIdx = 0; blockIdx < numBlocks_; ++blockIdx) {
+	  auto step = std::make_unique<GpuDecode>();
+	  step->step = DecodeStep::kCompact64;
+	  step->nthBlock = blockIdx;
+	  step->numRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
+	  if (filters_.back().deviceResult) {
+	    step->data.compact.finalRows = filters_.back().deviceResult + blockIdx * rowsPerBlock;
+	    step->data.compact.sourceNumRows = filters_[i].deviceResult + blockIdx * kBlockSize;
+	  } else {
+	    step->data.compact.finalRows = reinterpret_cast<int32_t*>( blockIdx * rowsPerBlock * sizeof(int32_t));
+	    deviceStaging_.registerPointer(filters_.back().deviceResultId, step->data.compact.finalRows, false);
+	    	    step->data.compact.sourceNumRows = reinterpret_cast<int32_t*>( blockIdx * rowsPerBlock * sizeof(int32_t));
+		    deviceStaging_.registerPointer(filters_[i].extraRowsId, &step->data.compact.sourceNumRows, false);
+	  }
+	  if (filters_[i].deviceResult) {
+	    step->data.compact.sourceRows = filters_[i].deviceResult + blockIdx * rowsPerBlock;
+	  } else {
+	    step->data.compact.sourceRows = reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock);
+	    deviceStaging_.registerPointer(filters_[i].deviceResultId, step->data.compact.sourceRows, false);
+	  }
+	auto& vector = filters_[i].waveVector;
+	step->dataType = static_cast<WaveTypeKind>(vector->type()->kind());
+	step->data.compact.source = vector->values<char>() + waveTypeKindSize(step->dataType) * blockIdx * rowsPerBlock;
+	if (vector->nulls()) {
+	  step->data.compact.sourceNull = vector->nulls() + blockIdx * rowsPerBlock;
+	}
+	if (isSerial) {
+	  programs_.programs[blockIdx].push_back(std::move(step));
+	} else {
+	  programs_.programs.emplace_back();
+	  programs_.programs.back().push_back(std::move(step));
+	}
+      }
+    }
+  }
+  }
+  
 void ReadStream::makeOps() {
   auto& children = reader_->children();
   for (auto i = 0; i < children.size(); ++i) {
@@ -116,7 +169,7 @@ void ReadStream::makeOps() {
           filterOnly ? ColumnAction::kFilter : ColumnAction::kValues,
           offset_,
           rows_,
-          ops_.back());
+          filters_.back());
     }
   }
   for (auto i = 0; i < children.size(); ++i) {
@@ -153,11 +206,12 @@ bool ReadStream::makePrograms(bool& needSync) {
           *this);
       previousFilter = &filter;
     }
-    filtersDone_ = true;
     if (!decodenonFiltersInFiltersKernel()) {
+      filtersDone_ = true;
       return false;
     }
   }
+  makeCompact(!filtersDone_);
   for (auto i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
     if (op.isFinal) {
@@ -183,6 +237,7 @@ bool ReadStream::makePrograms(bool& needSync) {
       allDone = false;
     }
   }
+  filtersDone_ = true;
   if (filters_.empty() && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
@@ -226,13 +281,15 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
           if (done) {
             break;
           }
-          setBlockStatus(
-              readStream->programs_,
-              readStream->control_->deviceData->as<BlockStatus>());
+          readStream->setBlockStatusAndTemp();
+	  readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
           WaveBufferPtr extra;
           launchDecode(
               readStream->programs(), &waveStream->arena(), extra, stream);
-          readStream->staging_.push_back(std::make_unique<SplitStaging>());
+	  if (extra) {
+	    readStream->commands_.push_back(std::move(extra));
+	  }
+	    readStream->staging_.push_back(std::make_unique<SplitStaging>());
           readStream->currentStaging_ = readStream->staging_.back().get();
           if (needSync) {
             waveStream->setState(WaveStream::State::kWait);

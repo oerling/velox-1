@@ -191,7 +191,7 @@ TEST_F(TableScanTest, filter) {
 TEST_F(TableScanTest, filterInScan) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 1, 1'000);
+  auto vectors = makeVectors(type, 1, 2'000);
   for (auto& vector : vectors) {
     makeNotNull(vector, 1000000000);
   }

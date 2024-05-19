@@ -105,6 +105,7 @@ void TestFormatData::startOp(
   }
   VELOX_CHECK_LT(numBlocks, 256);
   int32_t resultRowsId = -1;
+  int32_t extraRowsId = -1;
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
     auto rowsInBlock = std::min<int32_t>(
         rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
@@ -119,7 +120,17 @@ void TestFormatData::startOp(
         ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
         : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
     step->nthBlock = blockIdx;
-
+    if (step->filterKind != WaveFilterKind::kAlwaysTrue && op.waveVector) {
+      /// Filtres get to record an extra copy of their passing rows if they make values.
+      if (blockIdx == 0) {
+	extraRowsId = deviceStaging.reserve(numBlocks * step->numRowsPerThread * sizeof(int32_t));
+	op.extraRowsId = extraRowsId;
+	deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, true);
+      } else {
+	step->filterRowCount = reinterpret_cast<int32_t*>(blockIdx * sizeof(int32_t) * step->numRowsPerThread);
+	deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, false);
+      }
+    }
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
     step->dataType = columnKind;
     auto kindSize = waveTypeKindSize(columnKind);
@@ -144,11 +155,11 @@ void TestFormatData::startOp(
 
       if (previousFilter) {
         if (previousFilter->deviceResult) {
-          step->rows = previousFilter->deviceResult;
+	  // This is when the previous filter is in the previous kernel and its device side result is allocated.
+          step->rows = previousFilter->deviceResult + blockIdx * rowsPerBlock;
         } else {
           step->rows = reinterpret_cast<int32_t*>(
               blockIdx * rowsPerBlock * sizeof(int32_t));
-
           deviceStaging.registerPointer(
               previousFilter->deviceResultId, &step->rows, false);
         }
@@ -187,12 +198,10 @@ void TestFormatData::startOp(
           step->encoding = DecodeStep::kDictionaryOnBitpack;
           // Just bit pack, no dictionary.
           step->data.dictionaryOnBitpack.alphabet = nullptr;
-          step->data.dictionaryOnBitpack.dataType = columnKind;
           step->data.dictionaryOnBitpack.baseline = column_->baseline;
           step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth;
           step->data.dictionaryOnBitpack.indices = nullptr;
           step->data.dictionaryOnBitpack.begin = currentRow_;
-          step->data.dictionaryOnBitpack.end = currentRow_ + op.rows.back() + 1;
           if (id != kNoBufferId) {
             splitStaging.registerPointer(
                 id, &step->data.dictionaryOnBitpack.indices, true);
@@ -201,14 +210,15 @@ void TestFormatData::startOp(
             step->data.dictionaryOnBitpack.indices =
                 reinterpret_cast<uint64_t*>(deviceBuffer_);
           }
-          step->data.dictionaryOnBitpack.result = op.waveVector->values<char>();
         }
       } else {
         VELOX_NYI("Non flat test encoding");
       }
       op.isFinal = true;
       std::vector<std::unique_ptr<GpuDecode>>* steps;
-      if (!previousFilter) {
+
+      //Programs are parallel after filters
+      if (stream.filtersDone() || !previousFilter) {
         program.programs.emplace_back();
         steps = &program.programs.back();
       } else {

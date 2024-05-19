@@ -516,9 +516,9 @@ inline __device__ T randomAccessDecode(const GpuDecode* op, int32_t idx) {
       const auto& d = op->data.dictionaryOnBitpack;
       auto width = d.bitWidth;
       if (sizeof(T) == 4 || width <= 32) {
-        return loadBits32(d.indices, idx, width) + d.baseline;
+        return loadBits32(d.indices, idx * width, width) + d.baseline;
       } else {
-        return loadBits64(d.indices, idx, width) + d.baseline;
+        return loadBits64(d.indices, idx * width, width) + d.baseline;
       }
     }
   }
@@ -527,10 +527,11 @@ inline __device__ T randomAccessDecode(const GpuDecode* op, int32_t idx) {
 template <typename T, WaveFilterKind kFilterKind, bool kFixedFilter = true>
 __device__ bool testFilter(const GpuDecode* op, T data) {
   switch (kFixedFilter ? kFilterKind : op->filterKind) {
-    case WaveFilterKind::kBigintRange:
+    case WaveFilterKind::kBigintRange: {
       long2 bounds = *reinterpret_cast<const long2*>(&op->filter);
       return data >= bounds.x && data <= bounds.y;
-    default:
+    }
+  default:
       return true;
   }
 }
@@ -540,8 +541,8 @@ __device__ void makeResult(
     const GpuDecode* op,
     T data,
     int32_t row,
-    int32_t nthLoop,
     bool filterPass,
+    int32_t nthLoop,
     uint8_t nullFlag,
     int32_t* temp) {
   auto base = nthLoop * kBlockSize;
@@ -580,8 +581,7 @@ __device__ void decodeSelective(GpuDecode* op) {
   switch (op->nullMode) {
     case NullMode::kDenseNonNull: {
       do {
-        int32_t row = op->baseRow + nthLoop * kBlockSize;
-        bool filterDecided = false;
+        int32_t row = threadIdx.x + op->baseRow + nthLoop * kBlockSize;
         bool filterPass = false;
         T data{};
         if (row < op->maxRow) {
@@ -597,7 +597,6 @@ __device__ void decodeSelective(GpuDecode* op) {
     case NullMode::kSparseNonNull:
       do {
         int32_t numRows = op->blockStatus[nthLoop].numRows;
-        bool filterDecided = false;
         bool filterPass = false;
         T data{};
         int32_t row = 0;
@@ -622,7 +621,6 @@ __device__ void decodeSelective(GpuDecode* op) {
       __syncthreads();
       do {
         int32_t base = op->baseRow + nthLoop * kBlockSize;
-        auto nonNullOffset = op->nonNullBases[nthLoop];
         dataIdx = nonNullIndex256(
             op->nulls,
             base,
@@ -662,7 +660,6 @@ __device__ void decodeSelective(GpuDecode* op) {
       do {
         int32_t base = kBlockSize * nthLoop;
         int32_t numRows = op->blockStatus[nthLoop].numRows;
-        bool filterDecided = false;
         bool filterPass = true;
         T data{};
         dataIdx = nonNullIndex256Sparse(
@@ -695,6 +692,53 @@ __device__ void decodeSelective(GpuDecode* op) {
   }
 }
 
+  // Returns the position of 'target' in 'data' to 'data + size'. Not finding the value is an error and the values are expected to be unique.
+inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row) {
+  int lo = 0, hi = size;
+  while (lo < hi) {
+    int i = (lo + hi) / 2;
+    if (rows[i] == row) {
+      return i;
+    }
+    if (rows[i] < row) {
+      lo = i + 1;
+    } else {
+      hi = i;
+    }
+  }
+  printf("Expecting to find the row in findRow()\n");
+  assert(false);
+}
+  
+  template <typename T, int32_t kBlockSize>
+__device__  void compactValues(GpuDecode& op) {
+    auto& compact = op.data.compact;
+    int32_t nthLoop = 0;
+    do {
+      auto numRows = op.blockStatus[nthLoop + op.nthBlock * op.numRowsPerThread].numRows;
+      T sourceValue;
+      uint8_t sourceNull;
+      int32_t base;
+      if (threadIdx.x < numRows) {
+	base = nthLoop * kBlockSize;
+	auto row = compact.finalRows[base + threadIdx.x];
+	auto numSource = compact.sourceNumRows[nthLoop];
+	auto sourceRow = findRow(compact.sourceRows + base, numSource, row);
+	sourceValue = reinterpret_cast<const T*>(compact.source)[base + sourceRow];
+	if (compact.sourceNull) {
+	  sourceNull = compact.sourceNull[base + sourceRow];
+	}
+	__syncthreads();
+	if (threadIdx.x <numRows) {
+	  reinterpret_cast<T*>(compact.source)[base + threadIdx.x] = sourceValue;
+	  if (compact.sourceNull) {
+	    compact.sourceNull[base + threadIdx.x] = sourceNull;
+	  }
+	}
+      }
+    } while (++nthLoop < op.numRowsPerThread);
+  }
+  
 template <int kBlockSize>
 __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   auto numRows = op.numRows;
@@ -766,7 +810,31 @@ __device__ void countBits(GpuDecode& step) {
             i / (64 * kBlockSize),
             numResults,
             reinterpret_cast<int32_t*>(step.result),
-            op.temp);
+            step.temp);
+        break;
+      case 512:
+        reduceCase<kBlockSize, 8>(
+            cnt,
+            i / (64 * kBlockSize),
+            numResults,
+            reinterpret_cast<int32_t*>(step.result),
+            step.temp);
+        break;
+      case 1024:
+        reduceCase<kBlockSize, 16>(
+            cnt,
+            i / (64 * kBlockSize),
+            numResults,
+            reinterpret_cast<int32_t*>(step.result),
+            step.temp);
+        break;
+      case 2048:
+        reduceCase<kBlockSize, 32>(
+            cnt,
+            i / (64 * kBlockSize),
+            numResults,
+            reinterpret_cast<int32_t*>(step.result),
+            step.temp);
         break;
     }
   }
@@ -782,7 +850,11 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kSelective64:
       detail::decodeSelective<int64_t, kBlockSize>(&op);
       break;
-    case DecodeStep::kTrivial:
+
+  case DecodeStep::kCompact64:
+    detail::compactValues<int64_t, kBlockSize>(op);
+    break;
+  case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
     case DecodeStep::kDictionaryOnBitpack:
@@ -826,9 +898,13 @@ int32_t sharedMemorySizeForDecode(DecodeStep step) {
   using Reduce32 = cub::BlockReduce<int32_t, kBlockSize>;
   using BlockScan32 = cub::BlockScan<int32_t, kBlockSize>;
   switch (step) {
-    case DecodeStep::kTrivial:
+  case DecodeStep::kSelective32:
+  case DecodeStep::kSelective64:
+  case DecodeStep::kCompact64:
+  case DecodeStep::kTrivial:
     case DecodeStep::kDictionaryOnBitpack:
-    case DecodeStep::kSparseBool:
+  case DecodeStep::kCountBits:
+  case DecodeStep::kSparseBool:
     case DecodeStep::kRowCountNoFilter:
       return 0;
       break;

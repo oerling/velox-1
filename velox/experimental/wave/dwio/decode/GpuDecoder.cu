@@ -22,6 +22,10 @@
 
 namespace facebook::velox::wave {
 
+
+int32_t GpuDecode::tempSize() const {
+  return sizeof(int32_t) * 256 / kWarpThreads;
+}
 int32_t GpuDecode::sharedMemorySize() const {
   return detail::sharedMemorySizeForDecode<kBlockSize>(step);
 }
@@ -31,7 +35,7 @@ int32_t GpuDecode::sharedMemorySize() const {
 /// each thread block. The first TB runs from 0 to ends[0]. The nth runs from
 /// ends[nth-1] to ends[nth]. After gridDim.x ends, we round to an 8 aligned
 /// offset and have an array of GpuDecodes.]
-struct GpuDecodeParams {
+  struct alignas(16) GpuDecodeParams {
   // If need to represent more than this many ops, use a dynamically allocated
   // external array in 'external'.
   static constexpr int32_t kMaxInlineOps = 50;
@@ -39,6 +43,7 @@ struct GpuDecodeParams {
   // Pointer to standalone description of work. If nullptr, the description of
   // work fits inline in 'this'.
   GpuDecodeParams* external{nullptr};
+  void* padding;
   // The end of each decode program. The first starts at 0. The end is
   // ends[blockIdx.x].
   int32_t ends
@@ -52,7 +57,7 @@ __global__ void decodeKernel(GpuDecodeParams inlineParams) {
   int32_t programStart = blockIdx.x == 0 ? 0 : params->ends[blockIdx.x - 1];
   int32_t programEnd = params->ends[blockIdx.x];
   GpuDecode* ops =
-      reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(gridDim.x, 2));
+      reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(gridDim.x, 4));
   for (auto i = programStart; i < programEnd; ++i) {
     detail::decodeSwitch<kBlockSize>(ops[i]);
   }
@@ -86,7 +91,7 @@ void launchDecode(
   }
   int32_t end = programs.programs[0].size();
   GpuDecode* decodes =
-      reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(numBlocks, 2));
+      reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(numBlocks, 4));
   int32_t fill = 0;
   for (auto i = 0; i < programs.programs.size(); ++i) {
     params->ends[i] =

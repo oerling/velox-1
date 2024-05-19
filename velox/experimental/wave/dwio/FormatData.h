@@ -116,6 +116,9 @@ class ResultStaging {
         clear);
   }
 
+  /// Creates a device side buffer for the reserved space and patches all the registered pointers to offsets inside the device side buffer.  Retains ownership of the device side buffer. Clears any reservations and registrations so that new ones can be reserved and registered. This cycle may repeat multiple times.  The device side buffers are freed on destruction.
+  void makeDeviceBuffer(GpuArena& arena);
+  
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
 
  private:
@@ -129,6 +132,7 @@ class ResultStaging {
   int32_t fill_{0};
   WaveBufferPtr deviceBuffer_;
   WaveBufferPtr hostBuffer_;
+  std::vector<WaveBufferPtr> buffers_;
 };
 
 using RowSet = folly::Range<const int32_t*>;
@@ -197,8 +201,11 @@ struct ColumnOp {
   int32_t* deviceResult{nullptr};
   // Id of 'deviceResult' from resultStaging. A subsequent op must refer to the
   // result of the previous one before the former is allocated.
-  int32_t deviceResultId{0};
+  BufferId deviceResultId{kNoBufferId};
 
+  // Id of extra filter passing row count. Needed for aligning values from non-last filtered columns to final.
+  BufferId extraRowsId{kNoBufferId}; 
+  
   int32_t* hostResult{nullptr};
 };
 
