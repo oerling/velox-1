@@ -39,7 +39,7 @@ enum class WaveFilterKind : uint8_t {
   kBigintValues
 };
 
-  struct alignas(16) WaveFilterBase {
+struct alignas(16) WaveFilterBase {
   union {
     int64_t int64Range[2];
     float floatRange[2];
@@ -99,7 +99,7 @@ enum class DecodeStep {
 class ColumnReader;
 
 /// Describes a decoding loop's input and result disposition.
-  struct alignas(16) GpuDecode {
+struct alignas(16) GpuDecode {
   /// Constant in 'numRows' to signify the number comes from 'blockstatus'.
   static constexpr int32_t kFilterHits = -1;
 
@@ -159,7 +159,7 @@ class ColumnReader;
   /// filtering result is known. This is no longer available in
   /// blockStatus.
   int32_t* filterRowCount{nullptr};
-  
+
   // If multiple TBs on the same column and there are nulls, this is the start
   // offset of the TB's range of rows in non-null values. nullptr if no nulls.
   int32_t* nonNullBases{nullptr};
@@ -350,7 +350,7 @@ class ColumnReader;
     /// Null flags. nullptr if not nullable.
     uint8_t* sourceNull;
   };
-  
+
   union {
     Trivial trivial;
     MainlyConstant mainlyConstant;
@@ -365,9 +365,10 @@ class ColumnReader;
     CompactValues compact;
   } data;
 
-  /// Returns the amount of int aligned global memory per TB needed in 'temp' for standard size TB.
+  /// Returns the amount of int aligned global memory per TB needed in 'temp'
+  /// for standard size TB.
   int32_t tempSize() const;
-  
+
   /// Returns the amount of shared memory for standard size thread block for
   /// 'step'.
   int32_t sharedMemorySize() const;

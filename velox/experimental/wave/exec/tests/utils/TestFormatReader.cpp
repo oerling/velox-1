@@ -121,14 +121,18 @@ void TestFormatData::startOp(
         : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
     step->nthBlock = blockIdx;
     if (step->filterKind != WaveFilterKind::kAlwaysTrue && op.waveVector) {
-      /// Filtres get to record an extra copy of their passing rows if they make values.
+      /// Filtres get to record an extra copy of their passing rows if they make
+      /// values.
       if (blockIdx == 0) {
-	extraRowsId = deviceStaging.reserve(numBlocks * step->numRowsPerThread * sizeof(int32_t));
-	op.extraRowsId = extraRowsId;
-	deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, true);
+        extraRowsId = deviceStaging.reserve(
+            numBlocks * step->numRowsPerThread * sizeof(int32_t));
+        op.extraRowsId = extraRowsId;
+        deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, true);
       } else {
-	step->filterRowCount = reinterpret_cast<int32_t*>(blockIdx * sizeof(int32_t) * step->numRowsPerThread);
-	deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, false);
+        step->filterRowCount = reinterpret_cast<int32_t*>(
+            blockIdx * sizeof(int32_t) * step->numRowsPerThread);
+        deviceStaging.registerPointer(
+            extraRowsId, &step->filterRowCount, false);
       }
     }
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
@@ -155,7 +159,8 @@ void TestFormatData::startOp(
 
       if (previousFilter) {
         if (previousFilter->deviceResult) {
-	  // This is when the previous filter is in the previous kernel and its device side result is allocated.
+          // This is when the previous filter is in the previous kernel and its
+          // device side result is allocated.
           step->rows = previousFilter->deviceResult + blockIdx * rowsPerBlock;
         } else {
           step->rows = reinterpret_cast<int32_t*>(
@@ -217,7 +222,7 @@ void TestFormatData::startOp(
       op.isFinal = true;
       std::vector<std::unique_ptr<GpuDecode>>* steps;
 
-      //Programs are parallel after filters
+      // Programs are parallel after filters
       if (stream.filtersDone() || !previousFilter) {
         program.programs.emplace_back();
         steps = &program.programs.back();

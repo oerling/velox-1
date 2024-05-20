@@ -122,7 +122,7 @@ class ReadStream : public Executable {
   bool filtersDone() const {
     return filtersDone_;
   }
-  
+
  private:
   // Computes starting points for multiple TBs per column if more rows are
   // needed than is good per TB.
@@ -130,14 +130,15 @@ class ReadStream : public Executable {
 
   // Sets consistent blockStatus and temp across 'programs_'
   void setBlockStatusAndTemp();
-  
+
   /// Makes column dependencies.
   void makeOps();
   void makeControl();
 
-  // Makes steps to align values from non-last filters to the selction of the last filter.
+  // Makes steps to align values from non-last filters to the selction of the
+  // last filter.
   void makeCompact(bool isSerial);
-  
+
   // True if non-filter columns will be done sequentially in the
   // filters kernel. This will never loose if there is an always read
   // single column. This may loose if it were better to take the

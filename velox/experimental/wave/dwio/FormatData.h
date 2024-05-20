@@ -116,9 +116,14 @@ class ResultStaging {
         clear);
   }
 
-  /// Creates a device side buffer for the reserved space and patches all the registered pointers to offsets inside the device side buffer.  Retains ownership of the device side buffer. Clears any reservations and registrations so that new ones can be reserved and registered. This cycle may repeat multiple times.  The device side buffers are freed on destruction.
+  /// Creates a device side buffer for the reserved space and patches all the
+  /// registered pointers to offsets inside the device side buffer.  Retains
+  /// ownership of the device side buffer. Clears any reservations and
+  /// registrations so that new ones can be reserved and registered. This cycle
+  /// may repeat multiple times.  The device side buffers are freed on
+  /// destruction.
   void makeDeviceBuffer(GpuArena& arena);
-  
+
   void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
 
  private:
@@ -203,9 +208,10 @@ struct ColumnOp {
   // result of the previous one before the former is allocated.
   BufferId deviceResultId{kNoBufferId};
 
-  // Id of extra filter passing row count. Needed for aligning values from non-last filtered columns to final.
-  BufferId extraRowsId{kNoBufferId}; 
-  
+  // Id of extra filter passing row count. Needed for aligning values from
+  // non-last filtered columns to final.
+  BufferId extraRowsId{kNoBufferId};
+
   int32_t* hostResult{nullptr};
 };
 

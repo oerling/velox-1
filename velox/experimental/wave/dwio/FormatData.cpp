@@ -91,7 +91,6 @@ void ResultStaging::makeDeviceBuffer(GpuArena& arena) {
   buffers_.push_back(std::move(buffer));
 }
 
-  
 void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
   if (fill_ == 0) {
     programs.result = nullptr;
