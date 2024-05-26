@@ -75,10 +75,6 @@ void TestFormatData::griddize(
   }
 }
 
-bool isDense(RowSet rows) {
-  return rows.back() - rows.front() == rows.size() - 1;
-}
-
 void TestFormatData::startOp(
     ColumnOp& op,
     const ColumnOp* previousFilter,
@@ -104,83 +100,12 @@ void TestFormatData::startOp(
     VELOX_CHECK(griddized_);
   }
   VELOX_CHECK_LT(numBlocks, 256);
-  int32_t resultRowsId = -1;
-  int32_t extraRowsId = -1;
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
     auto rowsInBlock = std::min<int32_t>(
         rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
-    auto step = std::make_unique<GpuDecode>();
-    if (grid_.nulls) {
-      step->nonNullBases = grid_.numNonNull;
-    }
-    step->numRowsPerThread = rowsPerBlock / kBlockSize;
-    step->setFilter(op.reader, nullptr);
-    bool dense = previousFilter == nullptr && isDense(op.rows);
-    step->nullMode = column_->nulls
-        ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
-        : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
-    step->nthBlock = blockIdx;
-    if (step->filterKind != WaveFilterKind::kAlwaysTrue && op.waveVector) {
-      /// Filtres get to record an extra copy of their passing rows if they make
-      /// values.
-      if (blockIdx == 0) {
-        extraRowsId = deviceStaging.reserve(
-            numBlocks * step->numRowsPerThread * sizeof(int32_t));
-        op.extraRowsId = extraRowsId;
-        deviceStaging.registerPointer(extraRowsId, &step->filterRowCount, true);
-      } else {
-        step->filterRowCount = reinterpret_cast<int32_t*>(
-            blockIdx * sizeof(int32_t) * step->numRowsPerThread);
-        deviceStaging.registerPointer(
-            extraRowsId, &step->filterRowCount, false);
-      }
-    }
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
-    step->dataType = columnKind;
-    auto kindSize = waveTypeKindSize(columnKind);
-    step->step =
-        kindSize == 4 ? DecodeStep::kSelective32 : DecodeStep::kSelective64;
-    if (previousFilter) {
-      step->maxRow = GpuDecode::kFilterHits;
-    } else {
-      step->maxRow = currentRow_ + (blockIdx * rowsPerBlock) + rowsInBlock;
-    }
-    step->baseRow = currentRow_ + rowsPerBlock * blockIdx;
 
-    if (op.waveVector) {
-      if (blockIdx == 0) {
-        op.waveVector->resize(op.rows.size(), false);
-      }
-      step->result =
-          op.waveVector->values<char>() + kindSize * blockIdx * rowsPerBlock;
-      step->resultNulls = op.waveVector->nulls()
-          ? op.waveVector->nulls() + rowsPerBlock + blockIdx
-          : nullptr;
-
-      if (previousFilter) {
-        if (previousFilter->deviceResult) {
-          // This is when the previous filter is in the previous kernel and its
-          // device side result is allocated.
-          step->rows = previousFilter->deviceResult + blockIdx * rowsPerBlock;
-        } else {
-          step->rows = reinterpret_cast<int32_t*>(
-              blockIdx * rowsPerBlock * sizeof(int32_t));
-          deviceStaging.registerPointer(
-              previousFilter->deviceResultId, &step->rows, false);
-        }
-      }
-      if (op.reader->scanSpec().filter()) {
-        if (blockIdx == 0) {
-          resultRowsId =
-              deviceStaging.reserve(op.rows.size() * sizeof(int32_t));
-          deviceStaging.registerPointer(resultRowsId, &step->resultRows, true);
-          op.deviceResultId = resultRowsId;
-        } else {
-          step->resultRows = reinterpret_cast<int32_t*>(
-              blockIdx * rowsPerBlock * sizeof(int32_t));
-          deviceStaging.registerPointer(resultRowsId, &step->resultRows, false);
-        }
-      }
+    auto step = makeStep(op, previousFilter, deviceStaging, stream, columnKind, blockIdx);
       if (column_->encoding == Encoding::kFlat) {
         if (column_->baseline == 0 &&
             (column_->bitWidth == 32 || column_->bitWidth == 64)) {
@@ -232,7 +157,7 @@ void TestFormatData::startOp(
       steps->push_back(std::move(step));
     }
   }
-}
+
 
 class TestStructColumnReader : public StructColumnReader {
  public:

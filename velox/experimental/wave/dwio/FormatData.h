@@ -210,7 +210,8 @@ struct ColumnOp {
 
   // Id of extra filter passing row count. Needed for aligning values from
   // non-last filtered columns to final.
-  BufferId extraRowsId{kNoBufferId};
+  int32_t* extraRowCount{nullptr};
+  BufferId extraRowCountId{kNoBufferId};
 
   int32_t* hostResult{nullptr};
 };
@@ -282,6 +283,23 @@ class FormatData {
       SplitStaging& staging,
       DecodePrograms& program,
       ReadStream& stream) = 0;
+
+protected:
+  
+  std::unique_ptr<GpuDecode> makeStep(
+  ColumnOp& op,
+      const ColumnOp* previousFilter,
+      ResultStaging& deviceStaging,
+  ReadStream& stream,
+  WaveTypeKind columnKind,
+  int32_t blockIdx);
+
+    // First unaccessed row number relative to start of 'this'.
+  int32_t currentRow_{0};
+
+  ColumnGridInfo grid_;
+  bool griddized_{false};
+
 };
 
 class FormatParams {

@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/dwio/FormatData.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 
+DECLARE_int32(wave_reader_rows_per_tb);
+
 namespace facebook::velox::wave {
 
 BufferId SplitStaging::add(Staging& staging) {
@@ -31,6 +33,7 @@ void SplitStaging::registerPointerInternal(
     BufferId id,
     void** ptr,
     bool clear) {
+  VELOX_CHECK_NOT_NULL(ptr);
   VELOX_CHECK_NULL(deviceBuffer_);
   if (clear) {
     *ptr = nullptr;
@@ -67,6 +70,8 @@ void ResultStaging::registerPointerInternal(
     BufferId id,
     void** pointer,
     bool clear) {
+  VELOX_CHECK_LT(id, offsets_.size());
+  VELOX_CHECK_NOT_NULL(pointer);
   if (clear) {
     *pointer = nullptr;
   }
@@ -109,5 +114,102 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
   offsets_.clear();
   fill_ = 0;
 }
+  
+  std::unique_ptr<GpuDecode> FormatData::makeStep(
+  ColumnOp& op,
+      const ColumnOp* previousFilter,
+      ResultStaging& deviceStaging,
+  ReadStream& stream,
+  WaveTypeKind columnKind,
+  int32_t blockIdx) {
+    auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
+  int32_t numBlocks =
+      bits::roundUp(op.rows.size(), rowsPerBlock) / rowsPerBlock;
 
+    auto rowsInBlock = std::min<int32_t>(
+        rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
+
+  auto step = std::make_unique<GpuDecode>();
+    if (grid_.nulls) {
+      step->nonNullBases = grid_.numNonNull;
+    }
+    step->numRowsPerThread = rowsPerBlock / kBlockSize;
+    step->setFilter(op.reader, nullptr);
+    bool dense = previousFilter == nullptr && simd::isDense(op.rows.data(), op.rows.size());
+    step->nullMode = grid_.nulls
+        ? (dense ? NullMode::kDenseNullable : NullMode::kSparseNullable)
+        : (dense ? NullMode::kDenseNonNull : NullMode::kSparseNonNull);
+    step->nthBlock = blockIdx;
+    if (step->filterKind != WaveFilterKind::kAlwaysTrue && op.waveVector) {
+      /// Filtres get to record an extra copy of their passing rows if they make
+      /// values.
+      if (blockIdx == 0) {
+        op.extraRowCountId = deviceStaging.reserve(
+            numBlocks * step->numRowsPerThread * sizeof(int32_t));
+        deviceStaging.registerPointer(op.extraRowCountId, &step->filterRowCount, true);
+        deviceStaging.registerPointer(op.extraRowCountId, &op.extraRowCount, true);
+      } else {
+        step->filterRowCount = reinterpret_cast<int32_t*>(
+            blockIdx * sizeof(int32_t) * step->numRowsPerThread);
+        deviceStaging.registerPointer(
+				      op.extraRowCountId, &step->filterRowCount, false);
+        op.extraRowCount = reinterpret_cast<int32_t*>(
+							  blockIdx * sizeof(int32_t) * step->numRowsPerThread);
+        deviceStaging.registerPointer(
+				      op.extraRowCountId, &op.extraRowCount, false);
+      }
+    }
+    step->dataType = columnKind;
+    auto kindSize = waveTypeKindSize(columnKind);
+    step->step =
+        kindSize == 4 ? DecodeStep::kSelective32 : DecodeStep::kSelective64;
+    if (previousFilter) {
+      step->maxRow = GpuDecode::kFilterHits;
+    } else {
+      step->maxRow = currentRow_ + (blockIdx * rowsPerBlock) + rowsInBlock;
+    }
+    step->baseRow = currentRow_ + rowsPerBlock * blockIdx;
+
+    if (op.waveVector) {
+      if (blockIdx == 0) {
+        op.waveVector->resize(op.rows.size(), false);
+      }
+      step->result =
+          op.waveVector->values<char>() + kindSize * blockIdx * rowsPerBlock;
+      step->resultNulls = op.waveVector->nulls()
+          ? op.waveVector->nulls() + rowsPerBlock + blockIdx
+          : nullptr;
+
+      if (previousFilter) {
+        if (previousFilter->deviceResult) {
+          // This is when the previous filter is in the previous kernel and its
+          // device side result is allocated.
+          step->rows = previousFilter->deviceResult + blockIdx * rowsPerBlock;
+        } else {
+          step->rows = reinterpret_cast<int32_t*>(
+              blockIdx * rowsPerBlock * sizeof(int32_t));
+          deviceStaging.registerPointer(
+              previousFilter->deviceResultId, &step->rows, false);
+        }
+      }
+      if (op.reader->scanSpec().filter()) {
+        if (blockIdx == 0) {
+          op.deviceResultId =
+              deviceStaging.reserve(op.rows.size() * sizeof(int32_t));
+          deviceStaging.registerPointer(op.deviceResultId, &step->resultRows, true);
+	  deviceStaging.registerPointer(op.deviceResultId, &op.deviceResult, true);
+        } else {
+          step->resultRows = reinterpret_cast<int32_t*>(
+              blockIdx * rowsPerBlock * sizeof(int32_t));
+          deviceStaging.registerPointer(op.deviceResultId, &step->resultRows, false);
+          op.deviceResult = reinterpret_cast<int32_t*>(
+							blockIdx * rowsPerBlock * sizeof(int32_t));
+          deviceStaging.registerPointer(op.deviceResultId, &op.deviceResult, false);
+        }
+      }
+
+  }
+    return step;
+  }
+  
 } // namespace facebook::velox::wave

@@ -551,8 +551,11 @@ __device__ void makeResult(
         static_cast<int16_t>(filterPass),
         nullptr,
         reinterpret_cast<int16_t*>(temp));
-    if (threadIdx.x == kBlockSize) {
+    if (threadIdx.x == kBlockSize - 1) {
       op->blockStatus[nthLoop].numRows = resultIdx + filterPass;
+      if (op->filterRowCount) {
+	op->filterRowCount[nthLoop] = resultIdx + filterPass;
+      }
     }
     if (filterPass) {
       resultIdx += base;
@@ -711,11 +714,11 @@ inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row) {
 }
   
   template <typename T, int32_t kBlockSize>
-__device__  void compactValues(GpuDecode& op) {
-    auto& compact = op.data.compact;
+__device__  void compactValues(GpuDecode* op) {
+    auto& compact = op->data.compact;
     int32_t nthLoop = 0;
     do {
-      auto numRows = op.blockStatus[nthLoop + op.nthBlock * op.numRowsPerThread].numRows;
+      auto numRows = op->blockStatus[nthLoop + op->nthBlock * op->numRowsPerThread].numRows;
       T sourceValue;
       uint8_t sourceNull;
       int32_t base;
@@ -736,7 +739,7 @@ __device__  void compactValues(GpuDecode& op) {
 	  }
 	}
       }
-    } while (++nthLoop < op.numRowsPerThread);
+    } while (++nthLoop < op->numRowsPerThread);
   }
   
 template <int kBlockSize>
@@ -846,13 +849,11 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kSelective32:
       detail::decodeSelective<int32_t, kBlockSize>(&op);
       break;
-
-    case DecodeStep::kSelective64:
+  case DecodeStep::kSelective64:
       detail::decodeSelective<int64_t, kBlockSize>(&op);
       break;
-
   case DecodeStep::kCompact64:
-    detail::compactValues<int64_t, kBlockSize>(op);
+    detail::compactValues<int64_t, kBlockSize>(&op);
     break;
   case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
