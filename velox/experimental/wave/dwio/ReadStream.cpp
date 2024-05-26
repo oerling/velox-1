@@ -115,10 +115,12 @@ void ReadStream::makeGrid(Stream* stream) {
 
 void ReadStream::makeCompact(bool isSerial) {
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
-  auto numRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;;
+  auto numRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
+  ;
   for (auto i = 0; i < filters_.size() - 1; ++i) {
     if (filters_[i].waveVector) {
-      for (auto blockIdx = 0; blockIdx < numBlocks_ / numRowsPerThread; ++blockIdx) {
+      for (auto blockIdx = 0; blockIdx < numBlocks_ / numRowsPerThread;
+           ++blockIdx) {
         auto step = std::make_unique<GpuDecode>();
         step->step = DecodeStep::kCompact64;
         step->nthBlock = blockIdx;
@@ -127,7 +129,7 @@ void ReadStream::makeCompact(bool isSerial) {
           step->data.compact.finalRows =
               filters_.back().deviceResult + blockIdx * rowsPerBlock;
           step->data.compact.sourceNumRows =
-	    filters_[i].extraRowCount + blockIdx;
+              filters_[i].extraRowCount + blockIdx;
         } else {
           step->data.compact.finalRows = reinterpret_cast<int32_t*>(
               blockIdx * rowsPerBlock * sizeof(int32_t));
@@ -149,7 +151,9 @@ void ReadStream::makeCompact(bool isSerial) {
           step->data.compact.sourceRows =
               reinterpret_cast<int32_t*>(blockIdx * rowsPerBlock);
           deviceStaging_.registerPointer(
-              filters_[i].deviceResultId, &step->data.compact.sourceRows, false);
+              filters_[i].deviceResultId,
+              &step->data.compact.sourceRows,
+              false);
         }
         auto& vector = filters_[i].waveVector;
         step->dataType = static_cast<WaveTypeKind>(vector->type()->kind());
@@ -314,17 +318,17 @@ void ReadStream::launch(std::unique_ptr<ReadStream>&& readStream) {
           }
         }
 
-	readStream->setBlockStatusAndTemp();
-	readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
+        readStream->setBlockStatusAndTemp();
+        readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
         WaveBufferPtr extra;
         launchDecode(
             readStream->programs(),
             &readStream->waveStream->arena(),
             extra,
             stream);
-	if (extra) {
-	  readStream->commands_.push_back(std::move(extra));
-	}
+        if (extra) {
+          readStream->commands_.push_back(std::move(extra));
+        }
         readStream->waveStream->setState(WaveStream::State::kParallel);
         readStream->waveStream->markLaunch(*stream, *readStream);
       });

@@ -284,22 +284,20 @@ class FormatData {
       DecodePrograms& program,
       ReadStream& stream) = 0;
 
-protected:
-  
+ protected:
   std::unique_ptr<GpuDecode> makeStep(
-  ColumnOp& op,
+      ColumnOp& op,
       const ColumnOp* previousFilter,
       ResultStaging& deviceStaging,
-  ReadStream& stream,
-  WaveTypeKind columnKind,
-  int32_t blockIdx);
+      ReadStream& stream,
+      WaveTypeKind columnKind,
+      int32_t blockIdx);
 
-    // First unaccessed row number relative to start of 'this'.
+  // First unaccessed row number relative to start of 'this'.
   int32_t currentRow_{0};
 
   ColumnGridInfo grid_;
   bool griddized_{false};
-
 };
 
 class FormatParams {

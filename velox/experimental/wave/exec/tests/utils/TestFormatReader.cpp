@@ -105,59 +105,59 @@ void TestFormatData::startOp(
         rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
 
-    auto step = makeStep(op, previousFilter, deviceStaging, stream, columnKind, blockIdx);
-      if (column_->encoding == Encoding::kFlat) {
-        if (column_->baseline == 0 &&
-            (column_->bitWidth == 32 || column_->bitWidth == 64)) {
-          step->encoding = DecodeStep::kTrivial;
-          step->data.trivial.dataType = columnKind;
-          step->data.trivial.input = 0;
-          step->data.trivial.begin = currentRow_;
-          step->data.trivial.end = currentRow_ + rowsInBlock;
-          step->data.trivial.input = nullptr;
-          if (id != kNoBufferId) {
-            splitStaging.registerPointer(id, &step->data.trivial.input, true);
-            if (blockIdx == 0) {
-              splitStaging.registerPointer(id, &deviceBuffer_, true);
-            }
-          } else {
-            step->data.trivial.input = deviceBuffer_;
-          }
-          step->data.trivial.result = op.waveVector->values<char>();
-        } else {
-          step->encoding = DecodeStep::kDictionaryOnBitpack;
-          // Just bit pack, no dictionary.
-          step->data.dictionaryOnBitpack.alphabet = nullptr;
-          step->data.dictionaryOnBitpack.baseline = column_->baseline;
-          step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth;
-          step->data.dictionaryOnBitpack.indices = nullptr;
-          step->data.dictionaryOnBitpack.begin = currentRow_;
-          if (id != kNoBufferId) {
-            splitStaging.registerPointer(
-                id, &step->data.dictionaryOnBitpack.indices, true);
+    auto step = makeStep(
+        op, previousFilter, deviceStaging, stream, columnKind, blockIdx);
+    if (column_->encoding == Encoding::kFlat) {
+      if (column_->baseline == 0 &&
+          (column_->bitWidth == 32 || column_->bitWidth == 64)) {
+        step->encoding = DecodeStep::kTrivial;
+        step->data.trivial.dataType = columnKind;
+        step->data.trivial.input = 0;
+        step->data.trivial.begin = currentRow_;
+        step->data.trivial.end = currentRow_ + rowsInBlock;
+        step->data.trivial.input = nullptr;
+        if (id != kNoBufferId) {
+          splitStaging.registerPointer(id, &step->data.trivial.input, true);
+          if (blockIdx == 0) {
             splitStaging.registerPointer(id, &deviceBuffer_, true);
-          } else {
-            step->data.dictionaryOnBitpack.indices =
-                reinterpret_cast<uint64_t*>(deviceBuffer_);
           }
+        } else {
+          step->data.trivial.input = deviceBuffer_;
         }
+        step->data.trivial.result = op.waveVector->values<char>();
       } else {
-        VELOX_NYI("Non flat test encoding");
+        step->encoding = DecodeStep::kDictionaryOnBitpack;
+        // Just bit pack, no dictionary.
+        step->data.dictionaryOnBitpack.alphabet = nullptr;
+        step->data.dictionaryOnBitpack.baseline = column_->baseline;
+        step->data.dictionaryOnBitpack.bitWidth = column_->bitWidth;
+        step->data.dictionaryOnBitpack.indices = nullptr;
+        step->data.dictionaryOnBitpack.begin = currentRow_;
+        if (id != kNoBufferId) {
+          splitStaging.registerPointer(
+              id, &step->data.dictionaryOnBitpack.indices, true);
+          splitStaging.registerPointer(id, &deviceBuffer_, true);
+        } else {
+          step->data.dictionaryOnBitpack.indices =
+              reinterpret_cast<uint64_t*>(deviceBuffer_);
+        }
       }
-      op.isFinal = true;
-      std::vector<std::unique_ptr<GpuDecode>>* steps;
-
-      // Programs are parallel after filters
-      if (stream.filtersDone() || !previousFilter) {
-        program.programs.emplace_back();
-        steps = &program.programs.back();
-      } else {
-        steps = &program.programs[blockIdx];
-      }
-      steps->push_back(std::move(step));
+    } else {
+      VELOX_NYI("Non flat test encoding");
     }
-  }
+    op.isFinal = true;
+    std::vector<std::unique_ptr<GpuDecode>>* steps;
 
+    // Programs are parallel after filters
+    if (stream.filtersDone() || !previousFilter) {
+      program.programs.emplace_back();
+      steps = &program.programs.back();
+    } else {
+      steps = &program.programs[blockIdx];
+    }
+    steps->push_back(std::move(step));
+  }
+  }
 
 class TestStructColumnReader : public StructColumnReader {
  public:
