@@ -22,7 +22,6 @@
 
 namespace facebook::velox::wave {
 
-
 int32_t GpuDecode::tempSize() const {
   return sizeof(int32_t) * 256 / kWarpThreads;
 }
@@ -35,7 +34,7 @@ int32_t GpuDecode::sharedMemorySize() const {
 /// each thread block. The first TB runs from 0 to ends[0]. The nth runs from
 /// ends[nth-1] to ends[nth]. After gridDim.x ends, we round to an 8 aligned
 /// offset and have an array of GpuDecodes.]
-  struct alignas(16) GpuDecodeParams {
+struct alignas(16) GpuDecodeParams {
   // If need to represent more than this many ops, use a dynamically allocated
   // external array in 'external'.
   static constexpr int32_t kMaxInlineOps = 50;

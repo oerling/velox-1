@@ -72,6 +72,11 @@ void ResultStaging::registerPointerInternal(
     bool clear) {
   VELOX_CHECK_LT(id, offsets_.size());
   VELOX_CHECK_NOT_NULL(pointer);
+#ifndef NDEBUG
+  for (auto& pair : patch_) {
+    VELOX_CHECK(pair.second != pointer, "Must not register the same pointer twice");
+  }
+#endif
   if (clear) {
     *pointer = nullptr;
   }
@@ -156,10 +161,6 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
           blockIdx * sizeof(int32_t) * step->numRowsPerThread);
       deviceStaging.registerPointer(
           op.extraRowCountId, &step->filterRowCount, false);
-      op.extraRowCount = reinterpret_cast<int32_t*>(
-          blockIdx * sizeof(int32_t) * step->numRowsPerThread);
-      deviceStaging.registerPointer(
-          op.extraRowCountId, &op.extraRowCount, false);
     }
   }
   step->dataType = columnKind;
@@ -208,10 +209,6 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
             blockIdx * rowsPerBlock * sizeof(int32_t));
         deviceStaging.registerPointer(
             op.deviceResultId, &step->resultRows, false);
-        op.deviceResult = reinterpret_cast<int32_t*>(
-            blockIdx * rowsPerBlock * sizeof(int32_t));
-        deviceStaging.registerPointer(
-            op.deviceResultId, &op.deviceResult, false);
       }
     }
   }

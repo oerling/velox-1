@@ -129,7 +129,7 @@ void ReadStream::makeCompact(bool isSerial) {
           step->data.compact.finalRows =
               filters_.back().deviceResult + blockIdx * rowsPerBlock;
           step->data.compact.sourceNumRows =
-              filters_[i].extraRowCount + blockIdx;
+              filters_[i].extraRowCount + blockIdx * numRowsPerThread;
         } else {
           step->data.compact.finalRows = reinterpret_cast<int32_t*>(
               blockIdx * rowsPerBlock * sizeof(int32_t));
@@ -138,7 +138,7 @@ void ReadStream::makeCompact(bool isSerial) {
               &step->data.compact.finalRows,
               false);
           step->data.compact.sourceNumRows = reinterpret_cast<int32_t*>(
-              blockIdx * rowsPerBlock * sizeof(int32_t));
+              blockIdx * numRowsPerThread * sizeof(int32_t));
           deviceStaging_.registerPointer(
               filters_[i].extraRowCountId,
               &step->data.compact.sourceNumRows,
