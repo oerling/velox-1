@@ -59,7 +59,7 @@ class TableScanTest : public virtual HiveConnectorTestBase {
       const RowTypePtr& rowType,
       int32_t numVectors,
       int32_t rowsPerVector,
-					float nullRatio = 0) {
+      float nullRatio = 0) {
     std::vector<RowVectorPtr> vectors;
     options_.vectorSize = rowsPerVector;
     options_.nullRatio = nullRatio;
@@ -80,9 +80,9 @@ class TableScanTest : public virtual HiveConnectorTestBase {
       auto child = row->childAt(i);
       if (auto ints = child->as<FlatVector<int64_t>>()) {
         for (auto i = 0; i < child->size(); ++i) {
-	  if (!notNull && ints->isNullAt(i)) {
-	    continue;
-	  }
+          if (!notNull && ints->isNullAt(i)) {
+            continue;
+          }
           ints->set(i, ints->valueAt(i) % mod);
         }
       }

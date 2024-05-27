@@ -118,7 +118,8 @@ void ReadStream::makeCompact(bool isSerial) {
   auto numRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
   for (int32_t i = 0; i < static_cast<int32_t>(filters_.size()) - 1; ++i) {
     if (filters_[i].waveVector) {
-      int32_t numTBs = bits::roundUp(numBlocks_, numRowsPerThread) / numRowsPerThread;
+      int32_t numTBs =
+          bits::roundUp(numBlocks_, numRowsPerThread) / numRowsPerThread;
       for (auto blockIdx = 0; blockIdx < numTBs; ++blockIdx) {
         auto step = std::make_unique<GpuDecode>();
         step->step = DecodeStep::kCompact64;
@@ -349,7 +350,7 @@ void ReadStream::makeControl() {
     if (!reader->formatData()->hasNulls()) {
       auto* operand = reader->operand();
       if (operand) {
-	waveStream->operandNullable()[operand->id] = false;
+        waveStream->operandNullable()[operand->id] = false;
       }
     }
   }

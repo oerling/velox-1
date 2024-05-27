@@ -542,7 +542,7 @@ class WaveStream {
   std::vector<bool>& operandNullable() {
     return operandNullable_;
   }
-  
+
   // Retuns true if all executables needed to cover 'ids' have arrived. if
   // 'sleepMicro' is default, returns immediately if not arrived. Otherwise
   // sleeps 'leepMicros' and rechecks until complete or until 'timeoutMicro' us

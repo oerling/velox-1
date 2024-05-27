@@ -74,7 +74,8 @@ void ResultStaging::registerPointerInternal(
   VELOX_CHECK_NOT_NULL(pointer);
 #ifndef NDEBUG
   for (auto& pair : patch_) {
-    VELOX_CHECK(pair.second != pointer, "Must not register the same pointer twice");
+    VELOX_CHECK(
+        pair.second != pointer, "Must not register the same pointer twice");
   }
 #endif
   if (clear) {
