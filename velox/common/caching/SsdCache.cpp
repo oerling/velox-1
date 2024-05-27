@@ -35,7 +35,9 @@ SsdCache::SsdCache(
     int32_t numShards,
     folly::Executor* executor,
     int64_t checkpointIntervalBytes,
-    bool disableFileCow)
+    bool disableFileCow,
+    bool checksumEnabled,
+    bool checksumReadVerificationEnabled)
     : filePrefix_(filePrefix),
       numShards_(numShards),
       groupStats_(std::make_unique<FileGroupStats>()),
@@ -46,6 +48,12 @@ SsdCache::SsdCache(
       filePrefix_.find("/") == 0,
       "Ssd path '{}' does not start with '/' that points to local file system.",
       filePrefix_);
+
+  if (checksumReadVerificationEnabled && !checksumEnabled) {
+    VELOX_SSD_CACHE_LOG(WARNING)
+        << "Checksum read has been disabled as checksum is not enabled.";
+    checksumReadVerificationEnabled = false;
+  }
   filesystems::getFileSystem(filePrefix_, nullptr)
       ->mkdir(std::filesystem::path(filePrefix).parent_path().string());
 
@@ -62,6 +70,8 @@ SsdCache::SsdCache(
         fileMaxRegions,
         checkpointIntervalBytes / numShards,
         disableFileCow,
+        checksumEnabled,
+        checksumReadVerificationEnabled,
         executor_));
   }
 }
@@ -72,21 +82,19 @@ SsdFile& SsdCache::file(uint64_t fileId) {
 }
 
 bool SsdCache::startWrite() {
-  if (isShutdown_) {
-    return false;
-  }
-  if (writesInProgress_.fetch_add(numShards_) == 0) {
+  std::lock_guard<std::mutex> l(mutex_);
+  checkNotShutdownLocked();
+  if (writesInProgress_ == 0) {
     // No write was pending, so now all shards are counted as writing.
+    writesInProgress_ += numShards_;
     return true;
   }
-  // There were writes in progress, so compensate for the increment.
-  writesInProgress_.fetch_sub(numShards_);
   VELOX_CHECK_GE(writesInProgress_, 0);
   return false;
 }
 
 void SsdCache::write(std::vector<CachePin> pins) {
-  VELOX_CHECK_GE(numShards_, writesInProgress_);
+  VELOX_CHECK_EQ(numShards_, writesInProgress_);
 
   TestValue::adjust("facebook::velox::cache::SsdCache::write", this);
 
@@ -159,7 +167,6 @@ bool SsdCache::removeFileEntries(
     }
     --writesInProgress_;
   }
-
   return success;
 }
 
@@ -169,12 +176,6 @@ SsdCacheStats SsdCache::stats() const {
     file->updateStats(stats);
   }
   return stats;
-}
-
-void SsdCache::testingClear() {
-  for (auto& file : files_) {
-    file->testingClear();
-  }
 }
 
 std::string SsdCache::toString() const {
@@ -189,20 +190,50 @@ std::string SsdCache::toString() const {
   return out.str();
 }
 
-void SsdCache::testingDeleteFiles() {
-  for (auto& file : files_) {
-    file->deleteFile();
-  }
-}
-
 void SsdCache::shutdown() {
-  isShutdown_ = true;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (shutdown_) {
+      VELOX_SSD_CACHE_LOG(INFO) << "SSD cache has already been shutdown";
+    }
+    shutdown_ = true;
+  }
+
+  VELOX_SSD_CACHE_LOG(INFO) << "SSD cache is shutting down";
   while (writesInProgress_) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // NOLINT
   }
   for (auto& file : files_) {
     file->checkpoint(true);
   }
+  VELOX_SSD_CACHE_LOG(INFO) << "SSD cache has been shutdown";
+}
+
+void SsdCache::testingClear() {
+  for (auto& file : files_) {
+    file->testingClear();
+  }
+}
+
+void SsdCache::testingDeleteFiles() {
+  for (auto& file : files_) {
+    file->testingDeleteFile();
+  }
+}
+
+void SsdCache::testingDeleteCheckpoints() {
+  for (auto& file : files_) {
+    file->deleteCheckpoint();
+  }
+}
+
+uint64_t SsdCache::testingTotalLogEvictionFilesSize() {
+  uint64_t size = 0;
+  for (auto& file : files_) {
+    std::filesystem::path p{file->getEvictLogFilePath()};
+    size += std::filesystem::file_size(p);
+  }
+  return size;
 }
 
 } // namespace facebook::velox::cache

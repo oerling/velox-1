@@ -323,10 +323,13 @@ class MockMemoryOperator {
       allocIt = allocations_.erase(allocIt);
     }
     totalBytes_ -= bytesReclaimed;
+    const auto oldReservedBytes = pool_->reservedBytes();
     for (const auto& allocation : allocationsToFree) {
       pool_->free(allocation.buffer, allocation.size);
     }
-    return pool_->shrink(targetBytes);
+    const auto newReservedBytes = pool_->reservedBytes();
+    VELOX_CHECK_GE(oldReservedBytes, newReservedBytes);
+    return newReservedBytes - oldReservedBytes;
   }
 
   void abort(MemoryPool* pool) {
@@ -676,11 +679,12 @@ TEST_F(MockSharedArbitrationTest, shrinkPools) {
     std::string debugString() const {
       std::stringstream tasksOss;
       for (const auto& testTask : testTasks) {
+        tasksOss << "[";
         tasksOss << testTask.debugString();
-        tasksOss << ",";
+        tasksOss << "], ";
       }
       return fmt::format(
-          "taskTests: [{}], targetBytes: {}, expectedFreedBytes: {}, expectedFreeCapacity: {}, expectedReservedFreeCapacity: {}, allowSpill: {}, allowAbort: {}",
+          "testTasks: [{}], targetBytes: {}, expectedFreedBytes: {}, expectedFreeCapacity: {}, expectedReservedFreeCapacity: {}, allowSpill: {}, allowAbort: {}",
           tasksOss.str(),
           succinctBytes(targetBytes),
           succinctBytes(expectedFreedBytes),
@@ -2114,7 +2118,7 @@ TEST_F(MockSharedArbitrationTest, singlePoolGrowCapacityWithArbitration) {
     setupMemory();
     auto op = addMemoryOp(nullptr, isLeafReclaimable);
     const int allocateSize = MB;
-    while (op->pool()->currentBytes() <
+    while (op->pool()->usedBytes() <
            kMemoryCapacity - kReservedMemoryCapacity) {
       op->allocate(allocateSize);
     }
@@ -2181,7 +2185,7 @@ TEST_F(MockSharedArbitrationTest, arbitrateWithCapacityShrink) {
     ASSERT_GT(freeCapacity, 0);
     reclaimedOp->freeAll();
     ASSERT_GT(reclaimedOp->pool()->freeBytes(), 0);
-    ASSERT_EQ(reclaimedOp->pool()->currentBytes(), 0);
+    ASSERT_EQ(reclaimedOp->pool()->usedBytes(), 0);
     ASSERT_EQ(arbitrator_->stats().freeCapacityBytes, freeCapacity);
 
     auto* arbitrateOp = addMemoryOp(nullptr, isLeafReclaimable);
@@ -2214,7 +2218,7 @@ TEST_F(MockSharedArbitrationTest, arbitrateWithMemoryReclaim) {
         reservedPoolCapacity);
     auto* reclaimedOp = addMemoryOp(nullptr, isLeafReclaimable);
     const int allocateSize = 8 * MB;
-    while (reclaimedOp->pool()->currentBytes() <
+    while (reclaimedOp->pool()->usedBytes() <
            memoryCapacity - reservedMemoryCapacity) {
       reclaimedOp->allocate(allocateSize);
     }
@@ -2260,7 +2264,7 @@ TEST_F(MockSharedArbitrationTest, arbitrateBySelfMemoryReclaim) {
     std::shared_ptr<MockTask> task = addTask(kMemoryCapacity);
     auto* memOp = addMemoryOp(task, isLeafReclaimable);
     const int allocateSize = 8 * MB;
-    while (memOp->pool()->currentBytes() < memCapacity / 2) {
+    while (memOp->pool()->usedBytes() < memCapacity / 2) {
       memOp->allocate(allocateSize);
     }
     ASSERT_EQ(memOp->pool()->freeBytes(), 0);
@@ -2386,7 +2390,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, orderedArbitration) {
       memOp->allocate(allocationSize);
       if (testData.freeCapacity) {
         memOp->freeAll();
-        ASSERT_EQ(memOp->pool()->currentBytes(), 0);
+        ASSERT_EQ(memOp->pool()->usedBytes(), 0);
       }
       memOps.push_back(memOp);
     }
@@ -2559,13 +2563,13 @@ TEST_F(MockSharedArbitrationTest, noArbitratiognFromAbortedPool) {
   // Check we don't allow memory reservation increase or trigger memory
   // arbitration at root memory pool.
   ASSERT_EQ(reclaimedOp->pool()->capacity(), kMemoryPoolInitCapacity);
-  ASSERT_EQ(reclaimedOp->pool()->currentBytes(), 0);
+  ASSERT_EQ(reclaimedOp->pool()->usedBytes(), 0);
   VELOX_ASSERT_THROW(reclaimedOp->allocate(128), "");
-  ASSERT_EQ(reclaimedOp->pool()->currentBytes(), 0);
+  ASSERT_EQ(reclaimedOp->pool()->usedBytes(), 0);
   ASSERT_EQ(reclaimedOp->pool()->capacity(), kMemoryPoolInitCapacity);
   VELOX_ASSERT_THROW(reclaimedOp->allocate(kMemoryPoolInitCapacity * 2), "");
   ASSERT_EQ(reclaimedOp->pool()->capacity(), kMemoryPoolInitCapacity);
-  ASSERT_EQ(reclaimedOp->pool()->currentBytes(), 0);
+  ASSERT_EQ(reclaimedOp->pool()->usedBytes(), 0);
   ASSERT_EQ(arbitrator_->stats().numRequests, 0);
   ASSERT_EQ(arbitrator_->stats().numAborted, 0);
   ASSERT_EQ(arbitrator_->stats().numFailures, 0);
@@ -2635,7 +2639,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromRequestor) {
       otherTaskOps.push_back(addMemoryOp(otherTasks.back(), false));
       otherTaskOps.back()->allocate(otherTaskMemoryCapacity);
       ASSERT_EQ(
-          otherTasks.back()->pool()->currentBytes(), otherTaskMemoryCapacity);
+          otherTasks.back()->pool()->usedBytes(), otherTaskMemoryCapacity);
     }
     std::shared_ptr<MockTask> failedTask = addTask();
     MockMemoryOperator* failedTaskOp = addMemoryOp(
@@ -2720,7 +2724,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromRequestor) {
     }
     ASSERT_TRUE(failedTaskOp->pool()->aborted());
     ASSERT_EQ(
-        failedTaskOp->pool()->currentBytes(),
+        failedTaskOp->pool()->usedBytes(),
         testData.expectedFailedTaskMemoryCapacity);
     ASSERT_EQ(
         failedTaskOp->pool()->capacity(),
@@ -2745,8 +2749,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromRequestor) {
       ASSERT_EQ(
           taskOp->pool()->capacity(), testData.expectedOtherTaskMemoryCapacity);
       ASSERT_EQ(
-          taskOp->pool()->currentBytes(),
-          testData.expectedOtherTaskMemoryUsage);
+          taskOp->pool()->usedBytes(), testData.expectedOtherTaskMemoryUsage);
     }
 
     VELOX_ASSERT_THROW(failedTaskOp->allocate(failedTaskMemoryCapacity), "");
@@ -2820,7 +2823,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromOtherTask) {
       nonFailedTaskOps.push_back(addMemoryOp(nonFailedTasks.back(), false));
       nonFailedTaskOps.back()->allocate(nonFailTaskMemoryCapacity);
       ASSERT_EQ(
-          nonFailedTasks.back()->pool()->currentBytes(),
+          nonFailedTasks.back()->pool()->usedBytes(),
           nonFailTaskMemoryCapacity);
     }
     std::shared_ptr<MockTask> failedTask = addTask();
@@ -2907,7 +2910,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromOtherTask) {
     }
     ASSERT_TRUE(failedTaskOp->pool()->aborted());
     ASSERT_EQ(
-        failedTaskOp->pool()->currentBytes(),
+        failedTaskOp->pool()->usedBytes(),
         testData.expectedFailedTaskMemoryCapacity);
     ASSERT_EQ(
         failedTaskOp->pool()->capacity(),
@@ -2936,7 +2939,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromOtherTask) {
             testData.expectedNonFailedTaskMemoryCapacity +
                 nonFailTaskMemoryCapacity);
         ASSERT_EQ(
-            taskOp->pool()->currentBytes(),
+            taskOp->pool()->usedBytes(),
             testData.expectedNonFailedTaskMemoryUsage +
                 nonFailTaskMemoryCapacity);
       } else {
@@ -2944,7 +2947,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromOtherTask) {
             taskOp->pool()->capacity(),
             testData.expectedNonFailedTaskMemoryCapacity);
         ASSERT_EQ(
-            taskOp->pool()->currentBytes(),
+            taskOp->pool()->usedBytes(),
             testData.expectedNonFailedTaskMemoryUsage);
       }
     }

@@ -412,6 +412,12 @@ void Task::removeSpillDirectoryIfExists() {
   }
 }
 
+uint64_t Task::driverCpuTimeSliceLimitMs() const {
+  return mode_ == Task::ExecutionMode::kSerial
+      ? 0
+      : queryCtx_->queryConfig().driverCpuTimeSliceLimitMs();
+}
+
 void Task::initTaskPool() {
   VELOX_CHECK_NULL(pool_);
   pool_ = queryCtx_->pool()->addAggregateChild(
@@ -453,8 +459,9 @@ std::unique_ptr<memory::MemoryReclaimer> Task::createNodeReclaimer(
   }
   // Sets memory reclaimer for the parent node memory pool on the first child
   // operator construction which has set memory reclaimer.
-  return isHashJoinNode ? HashJoinMemoryReclaimer::create()
-                        : exec::MemoryReclaimer::create();
+  return isHashJoinNode
+      ? HashJoinMemoryReclaimer::create()
+      : exec::ParallelMemoryReclaimer::create(queryCtx_->spillExecutor());
 }
 
 std::unique_ptr<memory::MemoryReclaimer> Task::createExchangeClientReclaimer()
@@ -2816,7 +2823,7 @@ uint64_t Task::MemoryReclaimer::reclaimTask(
   }
 
   stats.reclaimWaitTimeUs += reclaimWaitTimeUs;
-  RECORD_METRIC_VALUE(kMetricTaskMemoryReclaimCount, 1);
+  RECORD_METRIC_VALUE(kMetricTaskMemoryReclaimCount);
   RECORD_HISTOGRAM_METRIC_VALUE(
       kMetricTaskMemoryReclaimWaitTimeMs, reclaimWaitTimeUs / 1'000);
 
@@ -2830,10 +2837,17 @@ uint64_t Task::MemoryReclaimer::reclaimTask(
   if (shrunkBytes >= targetBytes) {
     return shrunkBytes;
   }
+
   uint64_t reclaimedBytes{0};
   try {
-    reclaimedBytes = memory::MemoryReclaimer::reclaim(
-        task->pool(), targetBytes - shrunkBytes, maxWaitMs, stats);
+    uint64_t reclaimExecTimeUs{0};
+    {
+      MicrosecondTimer timer{&reclaimExecTimeUs};
+      reclaimedBytes = memory::MemoryReclaimer::reclaim(
+          task->pool(), targetBytes - shrunkBytes, maxWaitMs, stats);
+    }
+    RECORD_HISTOGRAM_METRIC_VALUE(
+        kMetricTaskMemoryReclaimExecTimeMs, reclaimExecTimeUs / 1'000);
   } catch (...) {
     // Set task error before resumes the task execution as the task operator
     // might not be in consistent state anymore. This prevents any off thread
@@ -2868,5 +2882,4 @@ void Task::MemoryReclaimer::abort(
         << "Timeout waiting for task to complete during query memory aborting.";
   }
 }
-
 } // namespace facebook::velox::exec

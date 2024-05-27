@@ -100,7 +100,7 @@ void sortCandidatesByUsage(
       candidates.end(),
       [](const SharedArbitrator::Candidate& lhs,
          const SharedArbitrator::Candidate& rhs) {
-        return lhs.currentBytes > rhs.currentBytes;
+        return lhs.reservedBytes > rhs.reservedBytes;
       });
 }
 
@@ -185,7 +185,7 @@ void SharedArbitrator::getCandidateStats(
     op->candidates.push_back(
         {freeCapacityOnly ? 0 : reclaimableUsedCapacity(*pool, selfCandidate),
          reclaimableFreeCapacity(*pool, selfCandidate),
-         pool->currentBytes(),
+         pool->reservedBytes(),
          pool.get()});
   }
 }
@@ -208,7 +208,7 @@ int64_t SharedArbitrator::maxReclaimableCapacity(
   // limit check.
   // NOTE: for query system like Prestissimo, it holds a finished query
   // state in minutes for query stats fetch request from the Presto coordinator.
-  if (isSelfReclaim || (pool.currentBytes() == 0 && pool.peakBytes() != 0)) {
+  if (isSelfReclaim || (pool.reservedBytes() == 0 && pool.peakBytes() != 0)) {
     return pool.capacity();
   }
   return std::max<int64_t>(0, pool.capacity() - memoryPoolReservedCapacity_);
@@ -248,7 +248,7 @@ uint64_t SharedArbitrator::growCapacity(
       decrementFreeCapacityLocked(maxBytesToReserve, minBytesToReserve);
   try {
     checkedGrow(pool, reservedBytes, 0);
-  } catch (const VeloxRuntimeError& error) {
+  } catch (const VeloxRuntimeError&) {
     reservedBytes = 0;
   }
   return reservedBytes;
@@ -713,7 +713,7 @@ uint64_t SharedArbitrator::reclaimUsedMemoryFromCandidatesByAbort(
       VELOX_MEM_POOL_ABORTED(fmt::format(
           "Memory pool aborted to reclaim used memory, current usage {}, "
           "memory pool details:\n{}\n{}",
-          succinctBytes(candidate.currentBytes),
+          succinctBytes(candidate.reservedBytes),
           candidate.pool->toString(),
           candidate.pool->treeMemoryUsage()));
     } catch (VeloxRuntimeError&) {
@@ -758,10 +758,9 @@ uint64_t SharedArbitrator::reclaim(
       VELOX_MEM_LOG(ERROR) << "Failed to reclaim from memory pool "
                            << pool->name() << ", aborting it: " << e.what();
       abort(pool, std::current_exception());
-      // Free up all the free capacity from the aborted pool as the associated
-      // query has failed at this point.
       pool->shrink();
     }
+    pool->shrink(bytesToReclaim);
     const uint64_t newCapacity = pool->capacity();
     VELOX_CHECK_GE(oldCapacity, newCapacity);
     reclaimedBytes = oldCapacity - newCapacity;

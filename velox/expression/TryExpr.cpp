@@ -26,6 +26,8 @@ void TryExpr::evalSpecialForm(
   ScopedVarSetter captureErrorDetails(
       context.mutableCaptureErrorDetails(), false);
 
+  ScopedThreadSkipErrorDetails skipErrorDetails(true);
+
   // It's possible with nested TRY expressions that some rows already threw
   // exceptions in earlier expressions that haven't been handled yet. To avoid
   // incorrectly handling them here, store those errors and temporarily reset
@@ -35,6 +37,11 @@ void TryExpr::evalSpecialForm(
   // parent TRY expression, so the parent won't incorrectly null out rows that
   // threw exceptions which this expression already handled.
   ScopedVarSetter<ErrorVectorPtr> errorsSetter(context.errorsPtr(), nullptr);
+
+  // Allocate error vector to avoid repeated re-allocations for every failed
+  // row.
+  context.ensureErrorsVectorSize(rows.end());
+
   inputs_[0]->eval(rows, context, result);
 
   nullOutErrors(rows, context, result);
@@ -48,6 +55,8 @@ void TryExpr::evalSpecialFormSimplified(
   ScopedVarSetter captureErrorDetails(
       context.mutableCaptureErrorDetails(), false);
 
+  ScopedThreadSkipErrorDetails skipErrorDetails(true);
+
   // It's possible with nested TRY expressions that some rows already threw
   // exceptions in earlier expressions that haven't been handled yet. To avoid
   // incorrectly handling them here, store those errors and temporarily reset
@@ -57,6 +66,11 @@ void TryExpr::evalSpecialFormSimplified(
   // parent TRY expression, so the parent won't incorrectly null out rows that
   // threw exceptions which this expression already handled.
   ScopedVarSetter<ErrorVectorPtr> errorsSetter(context.errorsPtr(), nullptr);
+
+  // Allocate error vector to avoid repeated re-allocations for every failed
+  // row.
+  context.ensureErrorsVectorSize(rows.end());
+
   inputs_[0]->evalSimplified(rows, context, result);
 
   nullOutErrors(rows, context, result);
@@ -130,9 +144,10 @@ void TryExpr::nullOutErrors(
       }
     } else {
       if (result.unique() && result->isNullsWritable()) {
+        auto* rawNulls = result->mutableRawNulls();
         rows.applyToSelected([&](auto row) {
           if (row < errors->size() && !errors->isNullAt(row)) {
-            result->setNull(row, true);
+            bits::setNull(rawNulls, row, true);
           }
         });
       } else {

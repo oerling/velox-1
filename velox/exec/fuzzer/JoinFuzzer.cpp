@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/tests/JoinFuzzer.h"
+#include "velox/exec/fuzzer/JoinFuzzer.h"
 #include <boost/random/uniform_int_distribution.hpp>
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
@@ -979,6 +979,10 @@ void JoinFuzzer::verify(core::JoinType joinType) {
       flatProbeInput,
       flatBuildInput,
       outputColumns));
+
+  makeAlternativePlans(defaultPlan.plan, probeInput, buildInput, altPlans);
+  makeAlternativePlans(
+      defaultPlan.plan, flatProbeInput, flatBuildInput, altPlans);
 
   const auto tableScanDir = exec::test::TempDirectoryPath::create();
   addPlansWithTableScan(

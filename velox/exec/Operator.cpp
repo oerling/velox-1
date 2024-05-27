@@ -140,10 +140,9 @@ std::unique_ptr<JoinBridge> Operator::joinBridgeFromPlanNode(
 void Operator::initialize() {
   VELOX_CHECK(!initialized_);
   VELOX_CHECK_EQ(
-      pool()->currentBytes(),
+      pool()->usedBytes(),
       0,
-      "Unexpected memory usage {} from pool {} before operator init",
-      succinctBytes(pool()->currentBytes()),
+      "Unexpected memory usage from pool {} before operator init",
       pool()->name());
   initialized_ = true;
   maybeSetReclaimer();
@@ -366,7 +365,9 @@ void Operator::recordSpillStats() {
   if (lockedSpillStats->spillReadBytes != 0) {
     lockedStats->addRuntimeStat(
         kSpillReadBytes,
-        RuntimeCounter{static_cast<int64_t>(lockedSpillStats->spillReadBytes)});
+        RuntimeCounter{
+            static_cast<int64_t>(lockedSpillStats->spillReadBytes),
+            RuntimeCounter::Unit::kBytes});
   }
 
   if (lockedSpillStats->spillReads != 0) {
@@ -639,7 +640,7 @@ uint64_t Operator::MemoryReclaimer::reclaim(
     RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
     LOG(WARNING) << "Can't reclaim from memory pool " << pool->name()
                  << " which is under non-reclaimable section, memory usage: "
-                 << succinctBytes(pool->currentBytes())
+                 << succinctBytes(pool->usedBytes())
                  << ", reservation: " << succinctBytes(pool->reservedBytes());
     return 0;
   }
@@ -648,8 +649,11 @@ uint64_t Operator::MemoryReclaimer::reclaim(
 
   auto reclaimBytes = memory::MemoryReclaimer::run(
       [&]() {
+        const auto reservedBytesBeforeReclaim = pool->reservedBytes();
         op_->reclaim(targetBytes, stats);
-        return pool->shrink(targetBytes);
+        const auto reservedBytesAfterReclaim = pool->reservedBytes();
+        VELOX_CHECK_GE(reservedBytesBeforeReclaim, reservedBytesAfterReclaim);
+        return reservedBytesBeforeReclaim - reservedBytesAfterReclaim;
       },
       stats);
 

@@ -49,6 +49,12 @@ class HiveConnectorTestBase : public OperatorTestBase {
       std::shared_ptr<dwrf::Config> config =
           std::make_shared<facebook::velox::dwrf::Config>());
 
+  void writeToFile(
+      const std::string& filePath,
+      const std::vector<RowVectorPtr>& vectors,
+      std::shared_ptr<dwrf::Config> config,
+      const TypePtr& schema);
+
   std::vector<RowVectorPtr> makeVectors(
       const RowTypePtr& rowType,
       int32_t numVectors,
@@ -93,7 +99,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
   makeHiveConnectorSplits(
       const std::string& filePath,
       uint32_t splitCount,
-      dwio::common::FileFormat format);
+      dwio::common::FileFormat format,
+      const std::optional<
+          std::unordered_map<std::string, std::optional<std::string>>>&
+          partitionKeys = {});
 
   static std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
       common::test::SubfieldFilters subfieldFilters = {},
@@ -126,7 +135,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::string& name,
       const TypePtr& dataType,
       const TypePtr& hiveType,
-      const std::vector<std::string>& requiredSubfields);
+      const std::vector<std::string>& requiredSubfields,
+      connector::hive::HiveColumnHandle::ColumnType columnType =
+          connector::hive::HiveColumnHandle::ColumnType::kRegular);
 
   /// @param targetDirectory Final directory of the target table after commit.
   /// @param writeDirectory Write directory of the target table before commit.
