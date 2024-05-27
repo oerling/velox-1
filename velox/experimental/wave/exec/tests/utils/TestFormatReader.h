@@ -33,7 +33,7 @@ class TestFormatData : public wave::FormatData {
       : operand_(operand), totalRows_(totalRows), column_(column) {}
 
   bool hasNulls() const override {
-    return false;
+    return column_->nulls != nullptr;
   }
 
   int32_t totalRows() const override {

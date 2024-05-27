@@ -116,11 +116,10 @@ void ReadStream::makeGrid(Stream* stream) {
 void ReadStream::makeCompact(bool isSerial) {
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
   auto numRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
-  ;
-  for (auto i = 0; i < filters_.size() - 1; ++i) {
+  for (int32_t i = 0; i < static_cast<int32_t>(filters_.size()) - 1; ++i) {
     if (filters_[i].waveVector) {
-      for (auto blockIdx = 0; blockIdx < numBlocks_ / numRowsPerThread;
-           ++blockIdx) {
+      int32_t numTBs = bits::roundUp(numBlocks_, numRowsPerThread) / numRowsPerThread;
+      for (auto blockIdx = 0; blockIdx < numTBs; ++blockIdx) {
         auto step = std::make_unique<GpuDecode>();
         step->step = DecodeStep::kCompact64;
         step->nthBlock = blockIdx;
@@ -230,6 +229,7 @@ bool ReadStream::makePrograms(bool& needSync) {
     }
   }
   makeCompact(!filtersDone_);
+  previousFilter = filters_.empty() ? nullptr : &filters_.back();
   for (auto i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
     if (op.isFinal) {
@@ -340,12 +340,19 @@ void ReadStream::makeControl() {
   waveStream->setNumRows(numRows);
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
-  auto statusBytes = sizeof(BlockStatus) * numBlocks_;
+  auto statusBytes = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
   auto deviceBytes = statusBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
   control->status = control->deviceData->as<BlockStatus>();
-
+  for (auto& reader : reader_->children()) {
+    if (!reader->formatData()->hasNulls()) {
+      auto* operand = reader->operand();
+      if (operand) {
+	waveStream->operandNullable()[operand->id] = false;
+      }
+    }
+  }
   operands = waveStream->fillOperands(
       *this, control->deviceData->as<char>() + statusBytes, info)[0];
   control_ = control.get();

@@ -49,7 +49,7 @@ class ColumnReader {
     return *scanSpec_;
   }
 
-  const std::vector<ColumnReader*> children() const {
+  const std::vector<ColumnReader*>& children() const {
     return children_;
   }
 

@@ -58,9 +58,11 @@ class TableScanTest : public virtual HiveConnectorTestBase {
   std::vector<RowVectorPtr> makeVectors(
       const RowTypePtr& rowType,
       int32_t numVectors,
-      int32_t rowsPerVector) {
+      int32_t rowsPerVector,
+					float nullRatio = 0) {
     std::vector<RowVectorPtr> vectors;
     options_.vectorSize = rowsPerVector;
+    options_.nullRatio = nullRatio;
     fuzzer_->setOptions(options_);
 
     for (int32_t i = 0; i < numVectors; ++i) {
@@ -70,13 +72,17 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     return vectors;
   }
 
-  void makeNotNull(
+  void makeRange(
       RowVectorPtr row,
-      int64_t mod = std::numeric_limits<int64_t>::max()) {
+      int64_t mod = std::numeric_limits<int64_t>::max(),
+      bool notNull = true) {
     for (auto i = 0; i < row->type()->size(); ++i) {
       auto child = row->childAt(i);
       if (auto ints = child->as<FlatVector<int64_t>>()) {
         for (auto i = 0; i < child->size(); ++i) {
+	  if (!notNull && ints->isNullAt(i)) {
+	    continue;
+	  }
           ints->set(i, ints->valueAt(i) % mod);
         }
       }
@@ -168,9 +174,9 @@ TEST_F(TableScanTest, basic) {
 TEST_F(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 1, 1'000);
+  auto vectors = makeVectors(type, 1, 1'500);
   for (auto& vector : vectors) {
-    makeNotNull(vector, 1000000000);
+    makeRange(vector, 1000000000);
   }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
@@ -191,9 +197,9 @@ TEST_F(TableScanTest, filter) {
 TEST_F(TableScanTest, filterInScan) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 1, 2'000);
+  auto vectors = makeVectors(type, 10, 2'000);
   for (auto& vector : vectors) {
-    makeNotNull(vector, 1000000000);
+    makeRange(vector, 1000000000);
   }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);

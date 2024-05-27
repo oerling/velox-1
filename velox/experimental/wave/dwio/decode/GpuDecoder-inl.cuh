@@ -523,7 +523,7 @@ inline __device__ T randomAccessDecode(const GpuDecode* op, int32_t idx) {
     }
   }
 }
-
+  
 template <typename T, WaveFilterKind kFilterKind, bool kFixedFilter = true>
 __device__ bool testFilter(const GpuDecode* op, T data) {
   switch (kFixedFilter ? kFilterKind : op->filterKind) {
@@ -693,6 +693,7 @@ __device__ void decodeSelective(GpuDecode* op) {
       } while (++nthLoop < op->numRowsPerThread);
       break;
   }
+  __syncthreads();
 }
 
 // Returns the position of 'target' in 'data' to 'data + size'. Not finding the
@@ -720,7 +721,7 @@ __device__ void compactValues(GpuDecode* op) {
   int32_t nthLoop = 0;
   do {
     auto numRows =
-        op->blockStatus[nthLoop + op->nthBlock * op->numRowsPerThread].numRows;
+        op->blockStatus[nthLoop].numRows;
     T sourceValue;
     uint8_t sourceNull;
     int32_t base;
