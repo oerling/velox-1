@@ -769,12 +769,13 @@ inline __device__ void reduceCase(
     int32_t numResults,
     int32_t* results,
     int32_t* temp) {
+  static_assert(kWidth == 4 || kWidth == 8 || kWidth == 16 || kWidth == 32 );
   using Reduce = cub::WarpReduce<int32_t, kWidth>;
   auto sum =
-      Reduce(*reinterpret_cast<typename Reduce::TempStorage*>(temp)).sum(cnt);
+      Reduce(*reinterpret_cast<typename Reduce::TempStorage*>(temp)).Sum(cnt);
   constexpr int32_t kResultsPerLoop = kBlockSize / kWidth;
 
-  if ((threadIdx.x & lowMask<int32_t>(kWidth)) == 0) {
+  if ((threadIdx.x & (kWidth - 1)) == 0) {
     temp[threadIdx.x / kWidth] = sum;
   }
   __syncthreads();
@@ -783,8 +784,8 @@ inline __device__ void reduceCase(
   if (threadIdx.x == 0 && nthLoop > 0) {
     sum += results[nthLoop * kResultsPerLoop - 1];
   }
-  auto result = inclusiveSum<kBlockSize / kWidth>(
-      threadIdx.x < kResultsPerLoop ? sum : 0);
+  auto result = inclusiveSum<int32_t, kBlockSize / kWidth>(
+						  threadIdx.x < kResultsPerLoop ? sum : 0, temp);
   auto resultIdx = threadIdx.x + nthLoop * kResultsPerLoop;
   if (resultIdx < numResults) {
     results[resultIdx] = result;
@@ -858,7 +859,10 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kCompact64:
       detail::compactValues<int64_t, kBlockSize>(&op);
       break;
-    case DecodeStep::kTrivial:
+  case DecodeStep::kCountBits:
+    countBits<kBlockSize>(op);
+    break;
+  case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
     case DecodeStep::kDictionaryOnBitpack:

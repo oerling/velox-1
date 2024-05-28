@@ -85,8 +85,9 @@ void launchDecode(
   GpuDecodeParams* params = &localParams;
   if (numOps > GpuDecodeParams::kMaxInlineOps) {
     extra = arena->allocate<char>(
-        (numBlocks + 1) * (sizeof(GpuDecode) + sizeof(int32_t)));
-    params = extra->as<GpuDecodeParams>();
+        (numBlocks + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
+    uintptr_t aligned = roundUp(reinterpret_cast<uintptr_t>(extra->as<char>()), 16);
+    params = reinterpret_cast<GpuDecodeParams*>(aligned);
   }
   int32_t end = programs.programs[0].size();
   GpuDecode* decodes =

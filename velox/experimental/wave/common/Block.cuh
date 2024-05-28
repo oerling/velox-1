@@ -341,19 +341,20 @@ inline __device__ T inclusiveSum(T input, T* temp) {
   T sum;
   Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
       .InclusiveSum(input, sum);
-  if (kBlockSize == kWarpThreads) {
+  if (kBlockSize <= kWarpThreads) {
     return sum;
   }
   if (detail::isLastInWarp()) {
-    temp[threadIdx.x / kWarpThreads] = input + sum;
+    temp[threadIdx.x / kWarpThreads] = sum;
   }
   __syncthreads();
-  using InnerScan = cub::WarpScan<T, kNumWarps>;
-  T warpSum = threadIdx.x < kNumWarps ? temp[threadIdx.x] : 0;
+  constexpr int32_t kInnerWidth = kNumWarps < 2 ? 2 : kNumWarps;
+  using InnerScan = cub::WarpScan<T, kInnerWidth>;
+  T warpSum = threadIdx.x < kInnerWidth ? temp[threadIdx.x] : 0;
   T blockSum;
   InnerScan(*reinterpret_cast<typename InnerScan::TempStorage*>(temp))
       .ExclusiveSum(warpSum, blockSum);
-  if (threadIdx.x < kNumWarps) {
+  if (threadIdx.x < kInnerWidth) {
     temp[threadIdx.x] = blockSum;
   }
   __syncthreads();

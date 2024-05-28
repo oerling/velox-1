@@ -552,12 +552,15 @@ class GpuDecoderTest : public ::testing::Test {
     auto bits = allocate<uint8_t>(numWords * 8);
     fillRandomBits(bits.get(), 0.5, numWords * 64);
     auto result = allocate<int32_t>(numWords * 64 / stride);
+    // One int per warp.
+    auto temp = allocate<int32_t>(8);
     DecodePrograms programs;
     programs.programs.emplace_back();
     programs.programs.back().push_back(std::make_unique<GpuDecode>());
     auto opPtr = programs.programs.back().front().get();
     opPtr->step = DecodeStep::kCountBits;
     auto& op = opPtr->data.countBits;
+    opPtr->temp = temp.get();
     op.bits = bits.get();
     op.numBits = numWords * 64;
     op.resultStride = stride;
@@ -567,13 +570,14 @@ class GpuDecoderTest : public ::testing::Test {
     launchDecode(programs, arena_.get(), extra, stream.get());
     stream->wait();
     auto numResults = numWords * 64 / stride;
+    auto* rawResult = result.get();
     int32_t count = 0;
     for (auto i = 0; i < numResults; ++i) {
       for (auto j = 0; j < stride / 64; j++) {
         count += __builtin_popcountl(
             reinterpret_cast<const uint64_t*>(op.bits)[i * (stride / 64) + j]);
       }
-      EXPECT_EQ(count, result[i]);
+      EXPECT_EQ(count, rawResult[i]);
     }
   }
 
