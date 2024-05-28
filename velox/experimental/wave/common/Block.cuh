@@ -333,15 +333,21 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
 
 /// Returns the block wide inclusive sum (sum of 'input' for all
 /// lanes below threadIdx.x). 'temp' must have
-/// exclusiveSumTempSize() writable bytes aligned for T.
+/// exclusiveSumTempSize() writable bytes aligned for T. '*total' is set to the TB-wide total if 'total' is not nullptr.
 template <typename T, int32_t kBlockSize>
-inline __device__ T inclusiveSum(T input, T* temp) {
+inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
   using Scan = cub::WarpScan<T>;
   T sum;
   Scan(*reinterpret_cast<typename Scan::TempStorage*>(temp))
       .InclusiveSum(input, sum);
   if (kBlockSize <= kWarpThreads) {
+    if (total != nullptr) {
+      if (threadIdx.x == kBlockSize - 1) {
+	*total = sum;
+      }
+      __syncthreads();
+    }
     return sum;
   }
   if (detail::isLastInWarp()) {
@@ -356,6 +362,9 @@ inline __device__ T inclusiveSum(T input, T* temp) {
       .ExclusiveSum(warpSum, blockSum);
   if (threadIdx.x < kInnerWidth) {
     temp[threadIdx.x] = blockSum;
+  }
+  if (total != nullptr && threadIdx.x == kInnerWidth - 1) {
+    *total =  blockSum  + warpSum;
   }
   __syncthreads();
   return sum + temp[threadIdx.x / kWarpThreads];

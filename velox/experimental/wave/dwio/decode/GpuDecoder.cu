@@ -23,8 +23,14 @@
 namespace facebook::velox::wave {
 
 int32_t GpuDecode::tempSize() const {
-  return sizeof(int32_t) * 256 / kWarpThreads;
+  // The default global memory temp size is 1 int per warp plust 2
+  // ints extra for TB wide coordination. Allows for a cross TB prefix
+  // sum (warp scans shuffle in registers, so only one int needed for
+  // inter-warp communication). This could be shared memory too but
+  // global works just as well, per experiment.
+return sizeof(int32_t) * (2 + (kBlockSize / kWarpThreads));
 }
+
 int32_t GpuDecode::sharedMemorySize() const {
   return detail::sharedMemorySizeForDecode<kBlockSize>(step);
 }

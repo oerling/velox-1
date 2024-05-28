@@ -785,7 +785,7 @@ inline __device__ void reduceCase(
     sum += results[nthLoop * kResultsPerLoop - 1];
   }
   auto result = inclusiveSum<int32_t, kBlockSize / kWidth>(
-						  threadIdx.x < kResultsPerLoop ? sum : 0, temp);
+							   threadIdx.x < kResultsPerLoop ? sum : 0, nullptr, temp);
   auto resultIdx = threadIdx.x + nthLoop * kResultsPerLoop;
   if (resultIdx < numResults) {
     results[resultIdx] = result;
