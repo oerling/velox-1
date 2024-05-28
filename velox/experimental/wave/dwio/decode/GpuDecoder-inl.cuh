@@ -523,7 +523,7 @@ inline __device__ T randomAccessDecode(const GpuDecode* op, int32_t idx) {
     }
   }
 }
-  
+
 template <typename T, WaveFilterKind kFilterKind, bool kFixedFilter = true>
 __device__ bool testFilter(const GpuDecode* op, T data) {
   switch (kFixedFilter ? kFilterKind : op->filterKind) {
@@ -720,8 +720,7 @@ __device__ void compactValues(GpuDecode* op) {
   auto& compact = op->data.compact;
   int32_t nthLoop = 0;
   do {
-    auto numRows =
-        op->blockStatus[nthLoop].numRows;
+    auto numRows = op->blockStatus[nthLoop].numRows;
     T sourceValue;
     uint8_t sourceNull;
     int32_t base;

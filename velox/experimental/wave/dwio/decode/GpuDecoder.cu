@@ -37,7 +37,7 @@ int32_t GpuDecode::sharedMemorySize() const {
 struct alignas(16) GpuDecodeParams {
   // If need to represent more than this many ops, use a dynamically allocated
   // external array in 'external'.
-  static constexpr int32_t kMaxInlineOps = 50;
+  static constexpr int32_t kMaxInlineOps = 19;
 
   // Pointer to standalone description of work. If nullptr, the description of
   // work fits inline in 'this'.
@@ -101,6 +101,8 @@ void launchDecode(
   }
   if (extra) {
     localParams.external = params;
+    stream->prefetch(
+		     getDevice(), extra->as<char>(), extra->size());
   }
 
   decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(

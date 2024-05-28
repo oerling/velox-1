@@ -121,6 +121,31 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
   fill_ = 0;
 }
 
+  namespace {
+  void setFilter(GpuDecode* step, ColumnReader* reader, Stream* stream) {
+  auto* veloxFilter = reader->scanSpec().filter();
+  if (!veloxFilter) {
+    step->filterKind = WaveFilterKind::kAlwaysTrue;
+    return;
+  }
+  switch (veloxFilter->kind()) {
+    case common::FilterKind::kBigintRange: {
+      step->filterKind = WaveFilterKind::kBigintRange;
+      step->nullsAllowed = veloxFilter->testNull();
+      step->filter._.int64Range[0] =
+          reinterpret_cast<common::BigintRange*>(veloxFilter)->lower();
+      step->filter._.int64Range[1] =
+          reinterpret_cast<common::BigintRange*>(veloxFilter)->upper();
+      break;
+    }
+
+    default:
+      VELOX_UNSUPPORTED(
+          "Unsupported filter kind", static_cast<int32_t>(veloxFilter->kind()));
+  }
+}
+}
+  
 std::unique_ptr<GpuDecode> FormatData::makeStep(
     ColumnOp& op,
     const ColumnOp* previousFilter,
@@ -140,7 +165,7 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
     step->nonNullBases = grid_.numNonNull;
   }
   step->numRowsPerThread = rowsPerBlock / kBlockSize;
-  step->setFilter(op.reader, nullptr);
+  setFilter(step.get(), op.reader, nullptr);
   bool dense = previousFilter == nullptr &&
       simd::isDense(op.rows.data(), op.rows.size());
   step->nullMode = grid_.nulls

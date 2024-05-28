@@ -570,7 +570,8 @@ class GpuDecoderTest : public ::testing::Test {
     int32_t count = 0;
     for (auto i = 0; i < numResults; ++i) {
       for (auto j = 0; j < stride / 64; j++) {
-	count += __builtin_popcountl(reinterpret_cast<const uint64_t*>(op.bits)[i * (stride / 64) + j]);
+        count += __builtin_popcountl(
+            reinterpret_cast<const uint64_t*>(op.bits)[i * (stride / 64) + j]);
       }
       EXPECT_EQ(count, result[i]);
     }
@@ -620,13 +621,13 @@ TEST_F(GpuDecoderTest, makeScatterIndices) {
   testMakeScatterIndices<256>(40013, 1024);
 }
 
-  TEST_F(GpuDecoderTest, countBits) {
-    testCountBits(10000, 256);
-    testCountBits(20000, 512);
-    testCountBits(30000, 1024);
-    testCountBits(100000, 2048);
-  }
-  
+TEST_F(GpuDecoderTest, countBits) {
+  testCountBits(10000, 256);
+  testCountBits(20000, 512);
+  testCountBits(30000, 1024);
+  testCountBits(100000, 2048);
+}
+
 TEST_F(GpuDecoderTest, streamApi) {
   //  One call with few blocks, another with many, to cover inlined and out of
   //  line params.
