@@ -157,7 +157,7 @@ void TestFormatData::startOp(
     }
     steps->push_back(std::move(step));
   }
-  }
+}
 
 class TestStructColumnReader : public StructColumnReader {
  public:
