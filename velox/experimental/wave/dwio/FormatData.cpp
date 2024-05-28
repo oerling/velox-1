@@ -121,8 +121,8 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
   fill_ = 0;
 }
 
-  namespace {
-  void setFilter(GpuDecode* step, ColumnReader* reader, Stream* stream) {
+namespace {
+void setFilter(GpuDecode* step, ColumnReader* reader, Stream* stream) {
   auto* veloxFilter = reader->scanSpec().filter();
   if (!veloxFilter) {
     step->filterKind = WaveFilterKind::kAlwaysTrue;
@@ -144,8 +144,8 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, DecodePrograms& programs) {
           "Unsupported filter kind", static_cast<int32_t>(veloxFilter->kind()));
   }
 }
-}
-  
+} // namespace
+
 std::unique_ptr<GpuDecode> FormatData::makeStep(
     ColumnOp& op,
     const ColumnOp* previousFilter,
