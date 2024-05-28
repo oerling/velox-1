@@ -801,7 +801,7 @@ __device__ void countBits(GpuDecode& step) {
   int32_t numResults = (numBits - 1) / op.resultStride;
   auto* bits = reinterpret_cast<const uint64_t*>(op.bits);
   for (auto i = 0; i < numBits; i += 64 * kBlockSize) {
-    int32_t idx = threadIdx.x + i;
+    int32_t idx = threadIdx.x + (i / 64);
     int32_t cnt = 0;
     if (idx < numWords) {
       if (aligned) {
@@ -889,7 +889,7 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kRowCountNoFilter:
       detail::setRowCountNoFilter<kBlockSize>(op.data.rowCountNoFilter);
       break;
-    default:
+  default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported DecodeStep (with shared memory)\n");
       }
