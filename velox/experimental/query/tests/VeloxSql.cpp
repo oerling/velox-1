@@ -17,6 +17,8 @@
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/file/FileSystems.h"
@@ -706,7 +708,7 @@ int main(int argc, char** argv) {
   std::string kUsage(
       "Velox local SQL command line. Run 'velox_sql --help' for available options.\n");
   gflags::SetUsageMessage(kUsage);
-  folly::init(&argc, &argv, false);
+  folly::Init init(&argc, &argv, false);
   VeloxRunner runner;
   try {
     runner.initialize();

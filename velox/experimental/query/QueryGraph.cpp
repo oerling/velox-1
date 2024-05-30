@@ -149,7 +149,7 @@ void PlanObjectSet::unionColumns(ExprPtr expr) {
       }
     }
       // Fall through.
-      FOLLY_FALLTHROUGH;
+      FMT_FALLTHROUGH;
     case PlanType::kCall: {
       auto call = reinterpret_cast<const Call*>(expr);
       unionSet(call->columns());
@@ -346,7 +346,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
       }
     }
       // Fall through.
-      FOLLY_FALLTHROUGH;
+      FMT_FALLTHROUGH;
     case PlanType::kCall: {
       if (as<Call>()->name() != other.as<Call>()->name()) {
         return false;
@@ -825,7 +825,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
         return copy;
       }
     }
-      FOLLY_FALLTHROUGH;
+      FMT_FALLTHROUGH;
     default:
       VELOX_UNREACHABLE();
   }
