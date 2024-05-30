@@ -96,6 +96,32 @@ __global__ void addOneRegKernel(
   }
 }
 
+
+#if (defined(_MSC_VER) && defined(_WIN64)) || defined(__LP64__) || defined(__CUDACC_RTC__)
+#define __LDG_PTR "l"
+#else
+#define __LDG_PTR "r"
+#endif /*(defined(_MSC_VER) && defined(_WIN64)) || defined(__LP64__) || defined(__CUDACC_RTC__)*/
+
+__global__ void kernel(uint32_t* tgt)
+{
+        printf("tgt = %d\n", *tgt);
+        asm volatile(".reg .u32 r_tgt;");
+        asm volatile("ld.u32 r_tgt, [%0];" :: __LDG_PTR(tgt));
+        asm volatile("ts: .branchtargets BLK0, BLK1, BEXIT;");
+        asm volatile("brx.idx r_tgt, ts;");
+        asm volatile("BLK0:");
+        printf("BLK0\n");
+        asm volatile("ret;\n");
+        asm volatile("BLK1:");
+        printf("BLK1\n");
+        asm volatile("ret;\n");
+        asm volatile("BEXIT:");
+        printf("BEXIT\n");
+        asm volatile("ret;\n");
+}
+
+  
 __global__ void addOneFuncKernel(
     int32_t* numbers,
     int32_t size,
