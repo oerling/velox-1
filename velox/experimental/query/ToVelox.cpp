@@ -322,11 +322,12 @@ core::PlanNodePtr Optimization::makeOrderBy(
   std::vector<core::SortOrder> sortOrder;
   for (auto order : op.distribution().orderType) {
     sortOrder.push_back(
-        order == OrderType::kAscNullsFirst       ? core::SortOrder(true, true)
-            : order == OrderType ::kAscNullsLast ? core::SortOrder(true, false)
-            : order == OrderType::kDescNullsFirst
-            ? core::SortOrder(false, true)
-            : core::SortOrder(false, false));
+        order == OrderType::kAscNullsFirst ? core::SortOrder(true, true)
+                                           : order == OrderType ::kAscNullsLast
+                ? core::SortOrder(true, false)
+                : order == OrderType::kDescNullsFirst
+                    ? core::SortOrder(false, true)
+                    : core::SortOrder(false, false));
   }
   auto keys = projections.toFieldRefs(op.distribution().order);
   auto project = projections.maybeProject(input);
