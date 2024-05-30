@@ -28,7 +28,7 @@ int32_t GpuDecode::tempSize() const {
   // sum (warp scans shuffle in registers, so only one int needed for
   // inter-warp communication). This could be shared memory too but
   // global works just as well, per experiment.
-return sizeof(int32_t) * (2 + (kBlockSize / kWarpThreads));
+  return sizeof(int32_t) * (2 + (kBlockSize / kWarpThreads));
 }
 
 int32_t GpuDecode::sharedMemorySize() const {
@@ -92,7 +92,8 @@ void launchDecode(
   if (numOps > GpuDecodeParams::kMaxInlineOps) {
     extra = arena->allocate<char>(
         (numOps + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
-    uintptr_t aligned = roundUp(reinterpret_cast<uintptr_t>(extra->as<char>()), 16);
+    uintptr_t aligned =
+        roundUp(reinterpret_cast<uintptr_t>(extra->as<char>()), 16);
     params = reinterpret_cast<GpuDecodeParams*>(aligned);
   }
   int32_t end = programs.programs[0].size();
@@ -108,8 +109,7 @@ void launchDecode(
   }
   if (extra) {
     localParams.external = params;
-    stream->prefetch(
-		     getDevice(), extra->as<char>(), extra->size());
+    stream->prefetch(getDevice(), extra->as<char>(), extra->size());
   }
 
   decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(

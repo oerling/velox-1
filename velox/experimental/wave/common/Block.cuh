@@ -333,7 +333,8 @@ inline __device__ T exclusiveSum(T input, T* total, T* temp) {
 
 /// Returns the block wide inclusive sum (sum of 'input' for all
 /// lanes below threadIdx.x). 'temp' must have
-/// exclusiveSumTempSize() writable bytes aligned for T. '*total' is set to the TB-wide total if 'total' is not nullptr.
+/// exclusiveSumTempSize() writable bytes aligned for T. '*total' is set to the
+/// TB-wide total if 'total' is not nullptr.
 template <typename T, int32_t kBlockSize>
 inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
@@ -344,7 +345,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
   if (kBlockSize <= kWarpThreads) {
     if (total != nullptr) {
       if (threadIdx.x == kBlockSize - 1) {
-	*total = sum;
+        *total = sum;
       }
       __syncthreads();
     }
@@ -364,7 +365,7 @@ inline __device__ T inclusiveSum(T input, T* total, T* temp) {
     temp[threadIdx.x] = blockSum;
   }
   if (total != nullptr && threadIdx.x == kInnerWidth - 1) {
-    *total =  blockSum  + warpSum;
+    *total = blockSum + warpSum;
   }
   __syncthreads();
   return sum + temp[threadIdx.x / kWarpThreads];

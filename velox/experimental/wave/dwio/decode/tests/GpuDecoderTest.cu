@@ -569,7 +569,7 @@ class GpuDecoderTest : public ::testing::Test {
     WaveBufferPtr extra;
     launchDecode(programs, arena_.get(), extra, stream.get());
     stream->wait();
-    auto numResults = ((numWords * 64) - 1)  / stride;
+    auto numResults = ((numWords * 64) - 1) / stride;
     auto* rawResult = result.get();
     int32_t count = 0;
     for (auto i = 0; i < numResults; ++i) {
