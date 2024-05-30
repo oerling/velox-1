@@ -226,11 +226,11 @@ void Column::equals(ColumnPtr other) const {
 
 std::string Column::toString() const {
   Name cname = !relation_ ? ""
-                          : relation_->type() == PlanType::kTable
-          ? relation_->as<BaseTable>()->cname
-          : relation_->type() == PlanType::kDerivedTable
-              ? relation_->as<DerivedTable>()->cname
-              : "--";
+      : relation_->type() == PlanType::kTable
+      ? relation_->as<BaseTable>()->cname
+      : relation_->type() == PlanType::kDerivedTable
+      ? relation_->as<DerivedTable>()->cname
+      : "--";
 
   return fmt::format("{}.{}", cname, name_);
 }
