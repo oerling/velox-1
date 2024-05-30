@@ -26,6 +26,7 @@
 #include "velox/dwio/common/Reader.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/type/TimestampConversion.h"
 
 namespace facebook::velox::connector::hive {
 
@@ -327,14 +328,25 @@ void checkColumnNameLowerCase(const core::TypedExprPtr& typeExpr) {
 
 namespace {
 
-void filterOutNullMapKeys(const Type& rootType, common::ScanSpec& rootSpec) {
-  rootSpec.visit(rootType, [](const Type& type, common::ScanSpec& spec) {
+void processFieldSpec(
+    const RowTypePtr& dataColumns,
+    const TypePtr& outputType,
+    common::ScanSpec& fieldSpec) {
+  fieldSpec.visit(*outputType, [](const Type& type, common::ScanSpec& spec) {
     if (type.isMap() && !spec.isConstant()) {
       auto* keys = spec.childByName(common::ScanSpec::kMapKeysFieldName);
       VELOX_CHECK_NOT_NULL(keys);
       keys->addFilter(common::IsNotNull());
     }
   });
+  if (dataColumns) {
+    auto i = dataColumns->getChildIdxIfExists(fieldSpec.fieldName());
+    if (i.has_value()) {
+      if (dataColumns->childAt(*i)->isMap() && outputType->isRow()) {
+        fieldSpec.setFlatMapAsStruct(true);
+      }
+    }
+  }
 }
 
 } // namespace
@@ -364,6 +376,7 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     }
   }
 
+  int numChildren = 0;
   // Process columns that will be projected out.
   for (int i = 0; i < rowType->size(); ++i) {
     auto& name = rowType->nameOf(i);
@@ -373,8 +386,8 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
     }
     auto it = outputSubfields.find(name);
     if (it == outputSubfields.end()) {
-      auto* fieldSpec = spec->addFieldRecursively(name, *type, i);
-      filterOutNullMapKeys(*type, *fieldSpec);
+      auto* fieldSpec = spec->addFieldRecursively(name, *type, numChildren++);
+      processFieldSpec(dataColumns, type, *fieldSpec);
       filterSubfields.erase(name);
       continue;
     }
@@ -388,9 +401,9 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
       }
       filterSubfields.erase(it);
     }
-    auto* fieldSpec = spec->addField(name, i);
+    auto* fieldSpec = spec->addField(name, numChildren++);
     addSubfields(*type, subfieldSpecs, 1, pool, *fieldSpec);
-    filterOutNullMapKeys(*type, *fieldSpec);
+    processFieldSpec(dataColumns, type, *fieldSpec);
     subfieldSpecs.clear();
   }
 
@@ -404,7 +417,7 @@ std::shared_ptr<common::ScanSpec> makeScanSpec(
       auto& type = dataColumns->findChild(fieldName);
       auto* fieldSpec = spec->getOrCreateChild(common::Subfield(fieldName));
       addSubfields(*type, subfieldSpecs, 1, pool, *fieldSpec);
-      filterOutNullMapKeys(*type, *fieldSpec);
+      processFieldSpec(dataColumns, type, *fieldSpec);
       subfieldSpecs.clear();
     }
   }
@@ -565,10 +578,17 @@ void configureRowReaderOptions(
 namespace {
 
 bool applyPartitionFilter(
-    TypeKind kind,
+    const TypePtr& type,
     const std::string& partitionValue,
     common::Filter* filter) {
-  switch (kind) {
+  if (type->isDate()) {
+    const auto result = util::castFromDateString(
+        StringView(partitionValue), util::ParseMode::kStandardCast);
+    VELOX_CHECK(!result.hasError());
+    return applyFilter(*filter, result.value());
+  }
+
+  switch (type->kind()) {
     case TypeKind::BIGINT:
     case TypeKind::INTEGER:
     case TypeKind::SMALLINT:
@@ -586,7 +606,8 @@ bool applyPartitionFilter(
       return applyFilter(*filter, partitionValue);
     }
     default:
-      VELOX_FAIL("Bad type {} for partition value: {}", kind, partitionValue);
+      VELOX_FAIL(
+          "Bad type {} for partition value: {}", type->kind(), partitionValue);
   }
 }
 
@@ -617,7 +638,7 @@ bool testFilters(
 
           // This is a non-null partition key
           return applyPartitionFilter(
-              handlesIter->second->dataType()->kind(),
+              handlesIter->second->dataType(),
               iter->second.value(),
               child->filter());
         }

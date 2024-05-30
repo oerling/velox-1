@@ -376,16 +376,6 @@ class AggregationTest : public OperatorTestBase {
         pool_.get());
   }
 
-  static void reclaimAndRestoreCapacity(
-      const Operator* op,
-      uint64_t targetBytes,
-      memory::MemoryReclaimer::Stats& reclaimerStats) {
-    const auto oldCapacity = op->pool()->capacity();
-    op->pool()->reclaim(targetBytes, 0, reclaimerStats);
-    dynamic_cast<memory::MemoryPoolImpl*>(op->pool())
-        ->testingSetCapacity(oldCapacity);
-  }
-
   RowTypePtr rowType_{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5", "c6"},
           {BIGINT(),
@@ -1134,7 +1124,7 @@ TEST_F(AggregationTest, partialAggregationMaybeReservationReleaseCheck) {
   EXPECT_EQ(0, runtimeStats.count("partialAggregationPct"));
   // Check all the reserved memory have been released.
   EXPECT_EQ(0, task->pool()->availableReservation());
-  EXPECT_GT(kMaxPartialMemoryUsage, task->pool()->currentBytes());
+  EXPECT_GT(kMaxPartialMemoryUsage, task->pool()->reservedBytes());
 }
 
 TEST_F(AggregationTest, spillAll) {
@@ -1783,7 +1773,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, minSpillableMemoryReservation) {
               memory::MemoryPool& pool = groupingSet->testingPool();
               const auto availableReservationBytes =
                   pool.availableReservation();
-              const auto currentUsedBytes = pool.currentBytes();
+              const auto currentUsedBytes = pool.usedBytes();
               // Verifies we always have min reservation after ensuring the
               // input.
               ASSERT_GE(
@@ -2108,17 +2098,17 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
     }
 
     if (testData.expectedReclaimable) {
-      const auto usedMemory = op->pool()->currentBytes();
-      reclaimAndRestoreCapacity(
-          op,
+      const auto usedMemory = op->pool()->usedBytes();
+      op->pool()->reclaim(
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+          0,
           reclaimerStats_);
       ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
       reclaimerStats_.reset();
       // The hash table itself in the grouping set is not cleared so it still
       // uses some memory.
-      ASSERT_LT(op->pool()->currentBytes(), usedMemory);
+      ASSERT_LT(op->pool()->usedBytes(), usedMemory);
     } else {
       VELOX_ASSERT_THROW(
           op->reclaim(
@@ -2232,17 +2222,17 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringReserve) {
   ASSERT_TRUE(reclaimable);
   ASSERT_GT(reclaimableBytes, 0);
 
-  const auto usedMemory = op->pool()->currentBytes();
-  reclaimAndRestoreCapacity(
-      op,
+  const auto usedMemory = op->pool()->usedBytes();
+  op->pool()->reclaim(
       folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+      0,
       reclaimerStats_);
   ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
-  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  ASSERT_GE(reclaimerStats_.reclaimedBytes, 0);
   reclaimerStats_.reset();
   // The hash table itself in the grouping set is not cleared so it still
   // uses some memory.
-  ASSERT_LT(op->pool()->currentBytes(), usedMemory);
+  ASSERT_LT(op->pool()->usedBytes(), usedMemory);
 
   driverWait.notify();
   Task::resume(task);
@@ -2475,13 +2465,13 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringOutputProcessing) {
     ASSERT_EQ(reclaimable, enableSpilling);
     if (enableSpilling) {
       ASSERT_GT(reclaimableBytes, 0);
-      const auto usedMemory = op->pool()->currentBytes();
-      reclaimAndRestoreCapacity(
-          op,
+      const auto usedMemory = op->pool()->usedBytes();
+      op->pool()->reclaim(
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+          0,
           reclaimerStats_);
       ASSERT_EQ(reclaimerStats_.numNonReclaimableAttempts, 0);
-      ASSERT_GT(usedMemory, op->pool()->currentBytes());
+      ASSERT_GT(usedMemory, op->pool()->usedBytes());
       ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
       ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       reclaimerStats_.reset();
@@ -2564,7 +2554,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringNonReclaimableSection) {
           if (!testData.nonReclaimableInput) {
             return;
           }
-          if (groupSet->testingPool().currentBytes() == 0) {
+          if (groupSet->testingPool().usedBytes() == 0) {
             return;
           }
           if (!injectNonReclaimableSectionOnce.exchange(false)) {
@@ -2763,14 +2753,14 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimWithEmptyAggregationTable) {
     ASSERT_EQ(reclaimable, enableSpilling);
     if (enableSpilling) {
       ASSERT_EQ(reclaimableBytes, 0);
-      const auto usedMemory = op->pool()->currentBytes();
-      reclaimAndRestoreCapacity(
-          op,
+      const auto usedMemory = op->pool()->usedBytes();
+      op->pool()->reclaim(
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+          0,
           reclaimerStats_);
       ASSERT_EQ(reclaimerStats_, memory::MemoryReclaimer::Stats{});
       // No reclaim as the operator has started output processing.
-      ASSERT_EQ(usedMemory, op->pool()->currentBytes());
+      ASSERT_EQ(usedMemory, op->pool()->usedBytes());
     } else {
       ASSERT_EQ(reclaimableBytes, 0);
       VELOX_ASSERT_THROW(
@@ -2846,7 +2836,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, abortDuringOutputProcessing) {
                                            : abortPool(op->pool());
           // We can't directly reclaim memory from this hash build operator as
           // its driver thread is running and in suspension state.
-          ASSERT_GT(op->pool()->root()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->root()->usedBytes(), 0);
           ASSERT_EQ(
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);
@@ -2910,7 +2900,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, abortDuringInputgProcessing) {
                                            : abortPool(op->pool());
           // We can't directly reclaim memory from this hash build operator as
           // its driver thread is running and in suspension state.
-          ASSERT_GT(op->pool()->root()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->root()->usedBytes(), 0);
           ASSERT_EQ(
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);

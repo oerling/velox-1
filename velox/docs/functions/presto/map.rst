@@ -39,7 +39,8 @@ Map Functions
 .. function:: map(array(K), array(V)) -> map(K,V)
    :noindex:
 
-    Returns a map created using the given key/value arrays. Keys are not allowed to be null or to contain nulls. ::
+    Returns a map created using the given key/value arrays. Keys are not allowed to be null or to contain nulls.
+    For REAL and DOUBLE, NaNs (Not-a-Number) are considered equal. ::
 
         SELECT map(ARRAY[1,3], ARRAY[2,4]); -- {1 -> 2, 3 -> 4}
 
@@ -96,7 +97,8 @@ Map Functions
 
 .. function:: map_top_n(map(K,V), n) -> map(K, V)
 
-    Truncates map items. Keeps only the top N elements by value.
+    Truncates map items. Keeps only the top N elements by value. Keys are used to break ties with the max key being chosen. Both keys and values should be orderable.
+
     ``n`` must be a non-negative BIGINT value.::
 
         SELECT map_top_n(map(ARRAY['a', 'b', 'c'], ARRAY[2, 3, 1]), 2) --- {'b' -> 3, 'a' -> 2}
@@ -147,6 +149,7 @@ Map Functions
    :noindex:
 
     Returns value for given ``key``. Return null if the key is not contained in the map.
+    For REAL and DOUBLE, NaNs (Not-a-Number) are considered equal and can be used as keys.
     Corresponds to SQL subscript operator [].
 
     SELECT name_to_age_map['Bob'] AS bob_age;

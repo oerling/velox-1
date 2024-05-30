@@ -320,8 +320,16 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// 'capacity()' is fixed and set to 'maxCapacity()' on creation.
   virtual int64_t capacity() const = 0;
 
-  /// Returns the currently used memory in bytes of this memory pool.
+  /// Returns the currently used memory in bytes of this memory pool. For
+  /// non-leaf memory pool, the function returns the aggregated memory
+  /// reservation from all its child memory pools.
   virtual int64_t currentBytes() const = 0;
+
+  /// Returns the currently used memory in bytes of this memory pool. It returns
+  /// the same usage as currentBytes() for leaf memory pool. But for non-leaf
+  /// memory pool, the function returns the aggregated used memory from all its
+  /// child memory pools.
+  virtual int64_t usedBytes() const = 0;
 
   /// Returns the peak memory usage in bytes of this memory pool.
   virtual int64_t peakBytes() const = 0;
@@ -357,22 +365,6 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// the free bytes from the root memory pool by reducing its memory capacity
   /// without actually freeing the used memory.
   virtual uint64_t freeBytes() const = 0;
-
-  /// Invoked to free up to the specified amount of free memory by reducing
-  /// this memory pool's capacity without actually freeing any used memory. The
-  /// function returns the actually freed memory capacity in bytes. If
-  /// 'targetBytes' is zero, the function frees all the free memory capacity.
-  virtual uint64_t shrink(uint64_t targetBytes = 0) = 0;
-
-  /// Invoked to increase the memory pool's capacity by 'growBytes' and commit
-  /// the reservation by 'reservationBytes'. The function makes the two updates
-  /// atomic. The function returns true if the updates succeed, otherwise false
-  /// and neither change will apply.
-  ///
-  /// NOTE: this should only be called by memory arbitrator when a root memory
-  /// pool tries to grow its capacity for a new reservation request which
-  /// exceeds its current capacity limit.
-  virtual bool grow(uint64_t growBytes, uint64_t reservationBytes = 0) = 0;
 
   /// Sets the memory reclaimer for this memory pool.
   ///
@@ -510,6 +502,22 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
  protected:
   static constexpr uint64_t kMB = 1 << 20;
 
+  /// Invoked to free up to the specified amount of free memory by reducing
+  /// this memory pool's capacity without actually freeing any used memory. The
+  /// function returns the actually freed memory capacity in bytes. If
+  /// 'targetBytes' is zero, the function frees all the free memory capacity.
+  virtual uint64_t shrink(uint64_t targetBytes = 0) = 0;
+
+  /// Invoked to increase the memory pool's capacity by 'growBytes' and commit
+  /// the reservation by 'reservationBytes'. The function makes the two updates
+  /// atomic. The function returns true if the updates succeed, otherwise false
+  /// and neither change will apply.
+  ///
+  /// NOTE: this should only be called by memory arbitrator when a root memory
+  /// pool tries to grow its capacity for a new reservation request which
+  /// exceeds its current capacity limit.
+  virtual bool grow(uint64_t growBytes, uint64_t reservationBytes = 0) = 0;
+
   /// Invoked by addLeafChild() and addAggregateChild() to create a child memory
   /// pool object. 'parent' is a shared pointer created from this, ie,
   /// shared_from_this().
@@ -550,6 +558,13 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
 
   friend class MemoryReclaimer;
   friend class velox::exec::ParallelMemoryReclaimer;
+  friend class MemoryManager;
+  friend class MemoryArbitrator;
+
+  VELOX_FRIEND_TEST(MemoryPoolTest, shrinkAndGrowAPIs);
+  VELOX_FRIEND_TEST(MemoryPoolTest, grow);
+  VELOX_FRIEND_TEST(MemoryPoolTest, growFailures);
+  VELOX_FRIEND_TEST(MemoryPoolTest, grownonContiguousAllocateFailures);
 };
 
 std::ostream& operator<<(std::ostream& out, MemoryPool::Kind kind);
@@ -616,6 +631,8 @@ class MemoryPoolImpl : public MemoryPool {
     return currentBytesLocked();
   }
 
+  int64_t usedBytes() const override;
+
   int64_t peakBytes() const override {
     std::lock_guard<std::mutex> l(mutex_);
     return peakBytes_;
@@ -651,10 +668,6 @@ class MemoryPoolImpl : public MemoryPool {
       uint64_t targetBytes,
       uint64_t maxWaitMs,
       memory::MemoryReclaimer::Stats& stats) override;
-
-  uint64_t shrink(uint64_t targetBytes = 0) override;
-
-  bool grow(uint64_t growBytes, uint64_t reservationBytes = 0) override;
 
   void abort(const std::exception_ptr& error) override;
 
@@ -725,6 +738,10 @@ class MemoryPoolImpl : public MemoryPool {
   }
 
  private:
+  uint64_t shrink(uint64_t targetBytes = 0) override;
+
+  bool grow(uint64_t growBytes, uint64_t reservationBytes = 0) override;
+
   FOLLY_ALWAYS_INLINE static MemoryPoolImpl* toImpl(MemoryPool* pool) {
     return static_cast<MemoryPoolImpl*>(pool);
   }

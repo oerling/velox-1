@@ -36,7 +36,6 @@
 #include "velox/functions/sparksql/DateTimeFunctions.h"
 #include "velox/functions/sparksql/Hash.h"
 #include "velox/functions/sparksql/In.h"
-#include "velox/functions/sparksql/InputFileName.h"
 #include "velox/functions/sparksql/LeastGreatest.h"
 #include "velox/functions/sparksql/MightContain.h"
 #include "velox/functions/sparksql/MonotonicallyIncreasingId.h"
@@ -455,16 +454,12 @@ void registerFunctions(const std::string& prefix) {
 
   registerFunction<UuidFunction, Varchar, Constant<int64_t>>({prefix + "uuid"});
 
-  exec::registerVectorFunction(
-      prefix + "input_file_name",
-      inputFileNameSignatures(),
-      makeInputFileName(),
-      {.deterministic = false});
-
   registerFunction<
       ArrayFlattenFunction,
       Array<Generic<T1>>,
       Array<Array<Generic<T1>>>>({prefix + "flatten"});
+
+  registerFunction<SoundexFunction, Varchar, Varchar>({prefix + "soundex"});
 }
 
 } // namespace sparksql

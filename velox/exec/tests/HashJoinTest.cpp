@@ -897,17 +897,6 @@ class HashJoinTest : public HiveConnectorTestBase {
         joinNode->outputType());
   }
 
-  static void reclaimAndRestoreCapacity(
-      const Operator* op,
-      uint64_t targetBytes,
-      memory::MemoryReclaimer::Stats& reclaimerStats) {
-    memory::ScopedMemoryArbitrationContext ctx(op->pool());
-    const auto oldCapacity = op->pool()->capacity();
-    op->pool()->reclaim(targetBytes, 0, reclaimerStats);
-    dynamic_cast<memory::MemoryPoolImpl*>(op->pool())
-        ->testingSetCapacity(oldCapacity);
-  }
-
   const int32_t numDrivers_;
 
   // The default left and right table types used for test.
@@ -5502,14 +5491,17 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringInputProcessing) {
     }
 
     if (testData.expectedReclaimable) {
-      reclaimAndRestoreCapacity(
-          op,
-          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-          reclaimerStats_);
+      {
+        memory::ScopedMemoryArbitrationContext ctx(op->pool());
+        op->pool()->reclaim(
+            folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+            0,
+            reclaimerStats_);
+      }
       ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
       reclaimerStats_.reset();
-      ASSERT_EQ(op->pool()->currentBytes(), 0);
+      ASSERT_EQ(op->pool()->usedBytes(), 0);
     } else {
       VELOX_ASSERT_THROW(
           op->reclaim(
@@ -5588,7 +5580,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
               return;
             }
             ASSERT_TRUE(op->canReclaim());
-            if (op->pool()->currentBytes() == 0) {
+            if (op->pool()->usedBytes() == 0) {
               // We skip trigger memory reclaim when the hash table is empty on
               // memory reservation.
               return;
@@ -5639,13 +5631,16 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringReserve) {
   ASSERT_TRUE(reclaimable);
   ASSERT_GT(reclaimableBytes, 0);
 
-  reclaimAndRestoreCapacity(
-      op,
-      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-      reclaimerStats_);
+  {
+    memory::ScopedMemoryArbitrationContext ctx(op->pool());
+    op->pool()->reclaim(
+        folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+        0,
+        reclaimerStats_);
+  }
   ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
   ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
-  ASSERT_EQ(op->pool()->currentBytes(), 0);
+  ASSERT_EQ(op->pool()->usedBytes(), 0);
 
   driverWaitFlag = false;
   driverWait.notifyAll();
@@ -5890,15 +5885,18 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringOutputProcessing) {
 
     if (enableSpilling) {
       ASSERT_GT(reclaimableBytes, 0);
-      const auto usedMemoryBytes = op->pool()->currentBytes();
-      reclaimAndRestoreCapacity(
-          op,
-          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-          reclaimerStats_);
-      ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+      const auto usedMemoryBytes = op->pool()->usedBytes();
+      {
+        memory::ScopedMemoryArbitrationContext ctx(op->pool());
+        op->pool()->reclaim(
+            folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+            0,
+            reclaimerStats_);
+      }
+      ASSERT_GE(reclaimerStats_.reclaimedBytes, 0);
       ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       // No reclaim as the operator has started output processing.
-      ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
+      ASSERT_EQ(usedMemoryBytes, op->pool()->usedBytes());
     } else {
       ASSERT_EQ(reclaimableBytes, 0);
       VELOX_ASSERT_THROW(
@@ -6034,16 +6032,19 @@ DEBUG_ONLY_TEST_F(HashJoinTest, reclaimDuringWaitForProbe) {
   ASSERT_TRUE(reclaimable);
   ASSERT_GT(reclaimableBytes, 0);
 
-  const auto usedMemoryBytes = op->pool()->currentBytes();
+  const auto usedMemoryBytes = op->pool()->usedBytes();
   reclaimerStats_.reset();
-  reclaimAndRestoreCapacity(
-      op,
-      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
-      reclaimerStats_);
-  ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
+  {
+    memory::ScopedMemoryArbitrationContext ctx(op->pool());
+    op->pool()->reclaim(
+        folly::Random::oneIn(2) ? 0 : folly::Random::rand32(),
+        0,
+        reclaimerStats_);
+  }
+  ASSERT_GE(reclaimerStats_.reclaimedBytes, 0);
   ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   //  No reclaim as the build operator is not in building table state.
-  ASSERT_EQ(usedMemoryBytes, op->pool()->currentBytes());
+  ASSERT_EQ(usedMemoryBytes, op->pool()->usedBytes());
 
   driverWaitFlag = false;
   driverWait.notifyAll();
@@ -6099,7 +6100,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringOutputProcessing) {
           if (!injectOnce.exchange(false)) {
             return;
           }
-          ASSERT_GT(op->pool()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->usedBytes(), 0);
           auto* driver = op->testingOperatorCtx()->driver();
           ASSERT_EQ(
               driver->task()->enterSuspended(driver->state()),
@@ -6108,7 +6109,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringOutputProcessing) {
                                            : abortPool(op->pool());
           // We can't directly reclaim memory from this hash build operator as
           // its driver thread is running and in suspension state.
-          ASSERT_GT(op->pool()->root()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->root()->usedBytes(), 0);
           ASSERT_EQ(
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);
@@ -6175,7 +6176,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringInputProcessing) {
           if (++numInputs != 2) {
             return;
           }
-          ASSERT_GT(op->pool()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->usedBytes(), 0);
           auto* driver = op->testingOperatorCtx()->driver();
           ASSERT_EQ(
               driver->task()->enterSuspended(driver->state()),
@@ -6184,7 +6185,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringInputProcessing) {
                                            : abortPool(op->pool());
           // We can't directly reclaim memory from this hash build operator as
           // its driver thread is running and in suspension state.
-          ASSERT_GT(op->pool()->root()->currentBytes(), 0);
+          ASSERT_GT(op->pool()->root()->usedBytes(), 0);
           ASSERT_EQ(
               driver->task()->leaveSuspended(driver->state()),
               StopReason::kAlreadyTerminated);
@@ -6254,7 +6255,6 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringAllocation) {
                 return;
               }
 
-              // ASSERT_GT(pool->currentBytes(), 0);
               auto& driverCtx = driverThreadContext()->driverCtx;
               ASSERT_EQ(
                   driverCtx.task->enterSuspended(driverCtx.driver->state()),
@@ -6263,7 +6263,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, hashBuildAbortDuringAllocation) {
                                                : abortPool(pool);
               // We can't directly reclaim memory from this hash build operator
               // as its driver thread is running and in suspegnsion state.
-              ASSERT_GE(pool->root()->currentBytes(), 0);
+              ASSERT_GE(pool->root()->usedBytes(), 0);
               ASSERT_EQ(
                   driverCtx.task->leaveSuspended(driverCtx.driver->state()),
                   StopReason::kAlreadyTerminated);
@@ -6498,7 +6498,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, minSpillableMemoryReservation) {
         std::function<void(exec::HashBuild*)>(([&](exec::HashBuild* hashBuild) {
           memory::MemoryPool* pool = hashBuild->pool();
           const auto availableReservationBytes = pool->availableReservation();
-          const auto currentUsedBytes = pool->currentBytes();
+          const auto currentUsedBytes = pool->usedBytes();
           // Verifies we always have min reservation after ensuring the input.
           ASSERT_GE(
               availableReservationBytes,
@@ -6771,9 +6771,24 @@ DEBUG_ONLY_TEST_F(
       runHashJoinTask(vectors, queryCtx, numDrivers, pool(), false).data;
 
   std::atomic_bool nonReclaimableSectionWaitFlag{true};
+  std::atomic_bool reclaimerInitializationWaitFlag{true};
   folly::EventCount nonReclaimableSectionWait;
   std::atomic_bool memoryArbitrationWaitFlag{true};
   folly::EventCount memoryArbitrationWait;
+
+  std::atomic<uint32_t> numInitializedDrivers{0};
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::exec::Driver::runInternal",
+      std::function<void(exec::Driver*)>([&](exec::Driver* driver) {
+        numInitializedDrivers++;
+        // We need to make sure reclaimers on both build and probe side are set
+        // (in Operator::initialize) to avoid race conditions, producing
+        // consistent test results.
+        if (numInitializedDrivers.load() == 2) {
+          reclaimerInitializationWaitFlag = false;
+          nonReclaimableSectionWait.notifyAll();
+        }
+      }));
 
   std::atomic<bool> injectNonReclaimableSectionOnce{true};
   SCOPED_TESTVALUE_SET(
@@ -6809,8 +6824,11 @@ DEBUG_ONLY_TEST_F(
   });
 
   // Wait for the hash build operators to enter into non-reclaimable section.
-  nonReclaimableSectionWait.await(
-      [&]() { return !nonReclaimableSectionWaitFlag.load(); });
+  nonReclaimableSectionWait.await([&]() {
+    return (
+        !nonReclaimableSectionWaitFlag.load() &&
+        !reclaimerInitializationWaitFlag.load());
+  });
 
   // We expect capacity grow fails as we can't reclaim from hash join operators.
   memory::testingRunArbitration();

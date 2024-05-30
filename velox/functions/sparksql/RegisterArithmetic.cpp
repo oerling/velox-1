@@ -69,6 +69,7 @@ void registerArithmeticFunctions(const std::string& prefix) {
   registerFunction<ToHexVarbinaryFunction, Varchar, Varbinary>(
       {prefix + "hex"});
   registerFunction<ExpFunction, double, double>({prefix + "exp"});
+  registerFunction<Expm1Function, double, double>({prefix + "expm1"});
   registerBinaryIntegral<PModIntFunction>({prefix + "pmod"});
   registerBinaryFloatingPoint<PModFloatFunction>({prefix + "pmod"});
   registerFunction<PowerFunction, double, double, double>({prefix + "power"});
@@ -94,6 +95,13 @@ void registerArithmeticFunctions(const std::string& prefix) {
   registerFunction<HypotFunction, double, double, double>({prefix + "hypot"});
   registerFunction<sparksql::Log2Function, double, double>({prefix + "log2"});
   registerFunction<sparksql::Log10Function, double, double>({prefix + "log10"});
+  registerFunction<
+      WidthBucketFunction,
+      int64_t,
+      double,
+      double,
+      double,
+      int64_t>({prefix + "width_bucket"});
   registerRandFunctions(prefix);
 
   VELOX_REGISTER_VECTOR_FUNCTION(udf_decimal_add, prefix + "add");

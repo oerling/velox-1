@@ -1753,7 +1753,37 @@ TEST_F(TableScanTest, partitionedTableDateKey) {
   auto filePath = TempFilePath::create();
   writeToFile(filePath->getPath(), vectors);
   createDuckDbTable(vectors);
-  testPartitionedTable(filePath->getPath(), DATE(), "2023-10-27");
+  const std::string partitionValue = "2023-10-27";
+  testPartitionedTable(filePath->getPath(), DATE(), partitionValue);
+
+  // Test partition filter on date column.
+  {
+    auto split = HiveConnectorSplitBuilder(filePath->getPath())
+                     .partitionKey("pkey", partitionValue)
+                     .build();
+    auto outputType = ROW({"pkey", "c0", "c1"}, {DATE(), BIGINT(), DOUBLE()});
+    ColumnHandleMap assignments = {
+        {"pkey", partitionKey("pkey", DATE())},
+        {"c0", regularColumn("c0", BIGINT())},
+        {"c1", regularColumn("c1", DOUBLE())}};
+
+    SubfieldFilters filters;
+    // pkey > 2020-09-01.
+    filters[common::Subfield("pkey")] = std::make_unique<common::BigintRange>(
+        18506, std::numeric_limits<int64_t>::max(), false);
+
+    auto tableHandle = std::make_shared<HiveTableHandle>(
+        "test-hive", "hive_table", true, std::move(filters), nullptr, nullptr);
+    auto op = std::make_shared<TableScanNode>(
+        "0",
+        std::move(outputType),
+        std::move(tableHandle),
+        std::move(assignments));
+
+    std::string partitionValueStr = "'" + partitionValue + "'";
+    assertQuery(
+        op, split, fmt::format("SELECT {}, * FROM tmp", partitionValueStr));
+  }
 }
 
 std::vector<StringView> toStringViews(const std::vector<std::string>& values) {
@@ -4098,7 +4128,10 @@ TEST_F(TableScanTest, timestampPartitionKey) {
           makeFlatVector<Timestamp>(
               std::end(inputs) - std::begin(inputs),
               [&](auto i) {
-                auto t = util::fromTimestampString(inputs[i]);
+                auto t = util::fromTimestampString(inputs[i]).thenOrThrow(
+                    folly::identity, [&](const Status& status) {
+                      VELOX_USER_FAIL("{}", status.message());
+                    });
                 t.toGMT(Timestamp::defaultTimezone());
                 return t;
               }),
@@ -4140,6 +4173,31 @@ TEST_F(TableScanTest, partitionKeyNotMatchPartitionKeysHandle) {
                 .planNode();
 
   assertQuery(op, split, "SELECT c0 FROM tmp");
+}
+
+TEST_F(TableScanTest, readFlatMapAsStruct) {
+  constexpr int kSize = 10;
+  std::vector<std::string> keys = {"1", "2", "3"};
+  auto vector = makeRowVector({makeRowVector(
+      keys,
+      {
+          makeFlatVector<int64_t>(kSize, folly::identity),
+          makeFlatVector<int64_t>(kSize, folly::identity, nullEvery(5)),
+          makeFlatVector<int64_t>(kSize, folly::identity, nullEvery(7)),
+      })});
+  auto config = std::make_shared<dwrf::Config>();
+  config->set(dwrf::Config::FLATTEN_MAP, true);
+  config->set<const std::vector<uint32_t>>(dwrf::Config::MAP_FLAT_COLS, {0});
+  config->set<const std::vector<std::vector<std::string>>>(
+      dwrf::Config::MAP_FLAT_COLS_STRUCT_KEYS, {keys});
+  auto file = TempFilePath::create();
+  auto writeSchema = ROW({"c0"}, {MAP(INTEGER(), BIGINT())});
+  writeToFile(file->getPath(), {vector}, config, writeSchema);
+  auto readSchema = asRowType(vector->type());
+  auto plan =
+      PlanBuilder().tableScan(readSchema, {}, "", writeSchema).planNode();
+  auto split = makeHiveConnectorSplit(file->getPath());
+  AssertQueryBuilder(plan).split(split).assertResults(vector);
 }
 
 // TODO: re-enable this test once we add back driver suspension support for

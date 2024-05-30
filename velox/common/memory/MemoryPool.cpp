@@ -682,6 +682,21 @@ int64_t MemoryPoolImpl::capacity() const {
   return capacity_;
 }
 
+int64_t MemoryPoolImpl::usedBytes() const {
+  if (isLeaf()) {
+    return currentBytes();
+  }
+  if (currentBytes() == 0) {
+    return 0;
+  }
+  int64_t usedBytes{0};
+  visitChildren([&](MemoryPool* pool) {
+    usedBytes += pool->usedBytes();
+    return true;
+  });
+  return usedBytes;
+}
+
 std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(
     std::shared_ptr<MemoryPool> parent,
     const std::string& name,
@@ -821,7 +836,7 @@ bool MemoryPoolImpl::incrementReservationThreadSafe(
       succinctBytes(size),
       capacityToString(manager_->capacity()),
       requestor->name(),
-      succinctBytes(requestor->currentBytes()),
+      succinctBytes(requestor->usedBytes()),
       treeMemoryUsage()));
 }
 
@@ -1018,7 +1033,7 @@ void MemoryPoolImpl::leaveArbitration() noexcept {
 
 uint64_t MemoryPoolImpl::shrink(uint64_t targetBytes) {
   if (parent_ != nullptr) {
-    return parent_->shrink(targetBytes);
+    return toImpl(parent_)->shrink(targetBytes);
   }
   std::lock_guard<std::mutex> l(mutex_);
   // We don't expect to shrink a memory pool without capacity limit.
@@ -1033,7 +1048,7 @@ uint64_t MemoryPoolImpl::shrink(uint64_t targetBytes) {
 
 bool MemoryPoolImpl::grow(uint64_t growBytes, uint64_t reservationBytes) {
   if (parent_ != nullptr) {
-    return parent_->grow(growBytes, reservationBytes);
+    return toImpl(parent_)->grow(growBytes, reservationBytes);
   }
   // TODO: add to prevent from growing beyond the max capacity and the
   // corresponding support in memory arbitrator.
