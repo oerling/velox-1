@@ -21,6 +21,20 @@
 namespace facebook::velox::wave {
 constexpr uint32_t kPrime32 = 1815531889;
 
+  typedef int32_t(*TestFunc)(int32_t data, int32_t data2, bool& flag, int32_t* ptr);
+
+__device__ TestFunc testFuncs[2];
+
+  __device__ int32_t testFunc(int32_t data, int32_t data2, bool& flag, int32_t* ptr){
+  return data + (data2 & 31);
+}
+
+void   __global__ setupFuncs() {
+    testFuncs[0] = testFunc;
+    testFuncs[1] = testFunc;
+  }
+
+
 __global__ void
 incOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
@@ -31,7 +45,7 @@ incOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
     __syncthreads();
   }
 }
-
+  
 __global__ void
 addOneKernel(int32_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
@@ -77,6 +91,40 @@ __global__ void addOneRegKernel(
   }
 }
 
+__global__ void addOneFuncKernel(
+    int32_t* numbers,
+    int32_t size,
+    int32_t stride,
+    int32_t repeats) {
+  for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+       index += stride) {
+    int32_t* ptr = nullptr;
+    bool flag;
+    auto temp = numbers[index];
+    for (auto counter = 0; counter < repeats; ++counter) {
+      temp = testFuncs[counter & 1](temp, counter, flag, ptr);
+    }
+    __syncthreads();
+    numbers[index] = temp;
+  }
+}
+
+__global__ void addOneFuncStoreKernel(
+    int32_t* numbers,
+    int32_t size,
+    int32_t stride,
+    int32_t repeats) {
+  for (auto counter = 0; counter < repeats; ++counter) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+	 index += stride) {
+      int32_t* ptr = nullptr;
+      bool flag;
+      auto temp = numbers[index];
+      numbers[index] = testFuncs[counter & 1](temp, counter, flag, ptr);
+    }
+    __syncthreads();  }}
+  
+  
 void TestStream::incOne(
     int32_t* numbers,
     int32_t size,
@@ -128,6 +176,46 @@ void TestStream::addOneReg(
   CUDA_CHECK(cudaGetLastError());
 }
 
+void TestStream::addOneFunc(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  setupFuncs<<<1, 1, 0, stream_->stream>>>();
+  CUDA_CHECK(cudaGetLastError());
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneFuncKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+
+void TestStream::addOneFuncStore(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  setupFuncs<<<1, 1, 0, stream_->stream>>>();
+  CUDA_CHECK(cudaGetLastError());
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneFuncStoreKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+  
 void TestStream::addOneShared(
     int32_t* numbers,
     int32_t size,
@@ -283,6 +371,7 @@ void TestStream::addOneRandom(
 }
 
 REGISTER_KERNEL("addOne", addOneKernel);
+REGISTER_KERNEL("addOneFunc", addOneFuncKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);
 REGISTER_KERNEL("addOneRandom", addOneRandomKernel);
 

@@ -63,6 +63,20 @@ class TestStream : public Stream {
       int32_t repeat = 1,
       int32_t width = 10240);
 
+  /// Like addOneReg but does an indirect function call in the inner loop.
+  void addOneFunc(
+      int32_t* numbers,
+      int32_t size,
+      int32_t repeat = 1,
+      int32_t width = 10240);
+
+  void addOneFuncStore(
+      int32_t* numbers,
+      int32_t size,
+      int32_t repeat = 1,
+      int32_t width = 10240);
+
+  
   /// Increments each of 'numbers by a deterministic pseudorandom
   /// increment from 'lookup'. If 'numLocal is non-0, also accesses
   /// 'numLocal' adjacent positions in 'lookup' with a stride of

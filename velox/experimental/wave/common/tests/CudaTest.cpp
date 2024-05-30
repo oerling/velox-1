@@ -570,6 +570,8 @@ class RoundtripThread {
     kAdd,
     kAddShared,
     kAddReg,
+    kAddFunc,
+    kAddFuncStore,
     kAddRandom,
     kAddRandomEmptyWarps,
     kAddRandomEmptyThreads,
@@ -654,12 +656,34 @@ class RoundtripThread {
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
-              stream_->addOneShared(
+              stream_->addOneReg(
+                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            }
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+          case OpCode::kAddFunc:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu(op.param1 * 256, op.param2);
+            } else {
+              stream_->addOneFunc(
                   deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
+          case OpCode::kAddFuncStore:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu(op.param1 * 256, op.param2);
+            } else {
+              stream_->addOneFuncStore(
+                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+            }
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+
+	    
           case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
@@ -772,6 +796,12 @@ class RoundtripThread {
             ++position;
           } else if (str[position] == 'r') {
             op.opCode = OpCode::kAddReg;
+            ++position;
+          } else if (str[position] == 'f') {
+            op.opCode = OpCode::kAddFunc;
+            ++position;
+          } else if (str[position] == 'F') {
+            op.opCode = OpCode::kAddFuncStore;
             ++position;
           }
           op.param1 = parseInt(str, position, 1);
