@@ -62,7 +62,7 @@ class PlanTest : public testing::Test {
     builder_->initialize(FLAGS_data_path);
     history_ = std::make_unique<VeloxHistory>();
     makeCheats();
-    queryCtx_ = std::make_shared<core::QueryCtx>();
+    queryCtx_ = core::QueryCtx::create();
 
     evaluator_ = std::make_unique<exec::SimpleExpressionEvaluator>(
         queryCtx_.get(), pool_.get());
