@@ -21,12 +21,17 @@
 namespace facebook::velox::wave {
 constexpr uint32_t kPrime32 = 1815531889;
 
-  typedef int32_t(*TestFunc)(int32_t data, int32_t data2, bool& flag, int32_t* ptr);
+  struct ResultPair {
+    int64_t n;
+    bool f;
+  };
+  
+  typedef ResultPair(*TestFunc)(int64_t data, int64_t data2, bool& flag, int32_t* ptr);
 
 __device__ TestFunc testFuncs[2];
 
-  __device__ int32_t testFunc(int32_t data, int32_t data2, bool& flag, int32_t* ptr){
-  return data + (data2 & 31);
+  __device__ ResultPair testFunc(int64_t data, int64_t data2, bool& flag, int32_t* ptr){
+    return {data + (data2 & 31), false};
 }
 
 void   __global__ setupFuncs() {
@@ -102,8 +107,51 @@ __global__ void addOneFuncKernel(
     bool flag;
     auto temp = numbers[index];
     for (auto counter = 0; counter < repeats; ++counter) {
-      temp = testFuncs[counter & 1](temp, counter, flag, ptr);
+      auto result = testFuncs[counter & 1](temp, counter, flag, ptr);
+      temp = result.n;
     }
+    __syncthreads();
+    numbers[index] = temp;
+  }
+}
+
+#define TCASE(nn, m) \
+        case nn: \
+	temp = m + testFunc(temp, counter, flag, ptr).n; \
+ break; \
+
+__global__ void addOneFuncSwitchKernel(
+    int32_t* numbers,
+    int32_t size,
+    int32_t stride,
+    int32_t repeats) {
+  for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+       index += stride) {
+    int32_t* ptr = nullptr;
+    bool flag;
+    auto temp = numbers[index];
+    for (auto counter = 0; counter < repeats; ++counter) {
+      switch (counter & 15) {
+	TCASE(0, 1);
+	TCASE(1, 82);
+#if 0
+	TCASE(2, 91);
+	TCASE(3, 181);
+	TCASE(4, 28);
+	TCASE(5, 36);
+	TCASE(6, 18);
+	TCASE(7, 13);
+	TCASE(8, 21);
+	TCASE(9, 32);
+	TCASE(10, 31);
+	TCASE(11, 191);
+	TCASE(12, 181);
+	TCASE(13, 151);
+	TCASE(14, 121);
+	TCASE(15, 111);
+#endif
+      }
+      }
     __syncthreads();
     numbers[index] = temp;
   }
@@ -120,11 +168,11 @@ __global__ void addOneFuncStoreKernel(
       int32_t* ptr = nullptr;
       bool flag;
       auto temp = numbers[index];
-      numbers[index] = testFuncs[counter & 1](temp, counter, flag, ptr);
+      numbers[index] = testFuncs[counter & 1](temp, counter, flag, ptr).n;
     }
-    __syncthreads();  }}
-  
-  
+    __syncthreads();  }
+    }
+
 void TestStream::incOne(
     int32_t* numbers,
     int32_t size,
