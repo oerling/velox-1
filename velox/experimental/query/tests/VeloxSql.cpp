@@ -223,7 +223,7 @@ class VeloxRunner {
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
 
-    schemaQueryCtx_ = std::make_shared<core::QueryCtx>(
+    schemaQueryCtx_ = core::QueryCtx::create(
         executor_.get(),
         core::QueryConfig(config_),
         std::move(connectorConfigs),
@@ -428,7 +428,7 @@ class VeloxRunner {
     connectorConfigs[kHiveConnectorId] =
         std::make_shared<core::MemConfig>(hiveConfig_);
     ++queryCounter_;
-    auto queryCtx = std::make_shared<core::QueryCtx>(
+    auto queryCtx = core::QueryCtx::create(
         executor_.get(),
         core::QueryConfig(config_),
         std::move(connectorConfigs),
