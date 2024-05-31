@@ -160,7 +160,6 @@ __global__ void addOneFuncSwitchKernel(
       switch (counter & 15) {
 	TCASE(0, 1);
 	TCASE(1, 82);
-#if 0
 	TCASE(2, 91);
 	TCASE(3, 181);
 	TCASE(4, 28);
@@ -175,7 +174,55 @@ __global__ void addOneFuncSwitchKernel(
 	TCASE(13, 151);
 	TCASE(14, 121);
 	TCASE(15, 111);
-#endif
+      }
+      }
+    __syncthreads();
+    numbers[index] = temp;
+  }
+}
+
+#define BTCASE(nn, m) \
+        asm volatile("BLK"  nn  ":"); \
+	temp = m + testFunc(temp, counter, flag, ptr).n; \
+ continue; \
+
+
+
+__global__ void addOneFuncBranchKernel(
+    int32_t* numbers,
+    int32_t size,
+    int32_t stride,
+    int32_t repeats) {
+  for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+       index += stride) {
+    int32_t* ptr = nullptr;
+    bool flag;
+    auto temp = numbers[index];
+    for (auto counter = 0; counter < repeats; ++counter) {
+
+        asm volatile(".reg .u32 r_tgt;");
+        asm volatile("ld.u32 r_tgt, [%0];" :: (counter & 15));
+        asm volatile("ts: .branchtargets BLK0, BLK1, BLK2, BLK3, BLK4, BLK5, BLK6, BLK7, BLK8, BLK 9, BLK10, BLK11, BLK12, BLK13, BLK14, BLK15;");
+        asm volatile("brx.idx r_tgt, ts;");
+
+
+	BTCASE("0", 1);
+	BTCASE("1", 82);
+	BTCASE("2", 91);
+	BTCASE("3", 181);
+	BTCASE("4", 28);
+	BTCASE("5", 36);
+	BTCASE("6", 18);
+	BTCASE("7", 13);
+	BTCASE("8", 21);
+	BTCASE("9", 32);
+	BTCASE("10", 31);
+	BTCASE("11", 191);
+	BTCASE("12", 181);
+	BTCASE("13", 151);
+	BTCASE("14", 121);
+	BTCASE("15", 111);
+
       }
       }
     __syncthreads();
@@ -288,6 +335,26 @@ void TestStream::addOneFuncStore(
       numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
+
+void TestStream::addOneBranch(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  setupFuncs<<<1, 1, 0, stream_->stream>>>();
+  CUDA_CHECK(cudaGetLastError());
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneBranchKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 
   
 void TestStream::addOneShared(
