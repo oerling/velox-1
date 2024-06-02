@@ -51,8 +51,8 @@ __device__ inline void binaryOpKernel(
     resultNull(operands, instr.result, blockBase, shared);
   }
 }
-
-__device__ void filterKernel(
+#if 0
+  __device__ void filterKernel(
     const IFilter& filter,
     Operand** operands,
     int32_t blockBase,
@@ -60,6 +60,7 @@ __device__ void filterKernel(
     int32_t& numRows) {
   auto* flags = operands[filter.flags];
   auto* indices = operands[filter.indices];
+  __syncthreads();
   if (flags->nulls) {
     boolBlockToIndices<kBlockSize>(
         [&]() -> uint8_t {
@@ -85,7 +86,54 @@ __device__ void filterKernel(
         numRows);
   }
 }
-
+  #else 
+  
+__device__ void filterKernel(
+    const IFilter& filter,
+    Operand** operands,
+    int32_t blockBase,
+    char* shared,
+    int32_t& numRows) {
+  auto* flags = operands[filter.flags];
+  auto* indices = operands[filter.indices];
+  __syncthreads();
+  if (flags->nulls) {
+    bool256ToIndices<int32_t>(
+        [&](int32_t group) -> uint64_t {
+	  int32_t offset =  group * 8;
+	  int32_t base = blockBase + offset;
+if (offset + 8 < numRows) {
+	    return *addCast<uint64_t>(flags->base, base) & *addCast<uint64_t>(flags->nulls, base);
+	  }
+	  if (offset >= numRows) {
+	    return 0;
+	  }
+	  return lowMask<uint64_t>((offset + 8 - numRows) * 8) &  *addCast<uint64_t>(flags->base, base) & *addCast<uint64_t>(flags->nulls, base);
+        },
+        blockBase,
+        reinterpret_cast<int32_t*>(indices->base) + blockBase,
+	numRows,
+        shared);
+  } else {
+    bool256ToIndices<int32_t>(
+        [&](int32_t group) -> uint64_t {
+	  int32_t offset = group * 8;
+	  int32_t base = blockBase + offset;
+	  if (offset + 8 <= numRows) {
+	    return *addCast<uint64_t>(flags->base, base); 
+	  }
+	  if (offset >= numRows) {
+	    return 0;
+	  }
+	  return lowMask<uint64_t>((numRows - offset) * 8) & *addCast<uint64_t>(flags->base, base);
+        },
+        blockBase,
+        reinterpret_cast<int32_t*>(indices->base) + blockBase,
+        numRows,
+        shared);
+  }
+}
+#endif
 __device__ void wrapKernel(
     const IWrap& wrap,
     Operand** operands,
@@ -141,9 +189,7 @@ __global__ void waveBaseKernel(
     ThreadBlockProgram** programs,
     Operand*** programOperands,
     BlockStatus* blockStatusArray) {
-  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
-  extern __shared__ __align__(
-      alignof(typename ScanAlgorithm::TempStorage)) char shared[];
+  extern __shared__ __align__(16) char shared[];
   int programIndex = programIndices[blockIdx.x];
   auto* program = programs[programIndex];
   auto* operands = programOperands[programIndex];
@@ -155,13 +201,18 @@ __global__ void waveBaseKernel(
       case OpCode::kReturn:
         __syncthreads();
         return;
-      case OpCode::kFilter:
-        filterKernel(
+    case OpCode::kFilter: {
+      int32_t prev = status->numRows;
+      filterKernel(
             instruction->_.filter,
             operands,
             blockBase,
             shared,
             status->numRows);
+      if (threadIdx.x == 0) {
+	printf("B%d from %d to %d\n", blockIdx.x, prev, status->numRows);
+      }
+    }
         break;
 
       case OpCode::kWrap:
@@ -205,5 +256,6 @@ void WaveKernelStream::call(
     (alias ? alias : this)->wait();
   }
 }
+REGISTER_KERNEL("expr", waveBaseKernel);
 
 } // namespace facebook::velox::wave

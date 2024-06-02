@@ -83,6 +83,13 @@ class TestStream : public Stream {
       int32_t repeat = 1,
       int32_t width = 10240);
 
+    /// addOne with switch.
+  void addOneSwitch(
+      int32_t* numbers,
+      int32_t size,
+      int32_t repeat = 1,
+      int32_t width = 10240);
+
   
   /// Increments each of 'numbers by a deterministic pseudorandom
   /// increment from 'lookup'. If 'numLocal is non-0, also accesses

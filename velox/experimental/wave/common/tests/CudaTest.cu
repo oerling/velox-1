@@ -96,31 +96,6 @@ __global__ void addOneRegKernel(
   }
 }
 
-
-#if (defined(_MSC_VER) && defined(_WIN64)) || defined(__LP64__) || defined(__CUDACC_RTC__)
-#define __LDG_PTR "l"
-#else
-#define __LDG_PTR "r"
-#endif /*(defined(_MSC_VER) && defined(_WIN64)) || defined(__LP64__) || defined(__CUDACC_RTC__)*/
-
-__global__ void kernel(uint32_t* tgt)
-{
-        printf("tgt = %d\n", *tgt);
-        asm volatile(".reg .u32 r_tgt;");
-        asm volatile("ld.u32 r_tgt, [%0];" :: __LDG_PTR(tgt));
-        asm volatile("ts: .branchtargets BLK0, BLK1, BEXIT;");
-        asm volatile("brx.idx r_tgt, ts;");
-        asm volatile("BLK0:");
-        printf("BLK0\n");
-        asm volatile("ret;\n");
-        asm volatile("BLK1:");
-        printf("BLK1\n");
-        asm volatile("ret;\n");
-        asm volatile("BEXIT:");
-        printf("BEXIT\n");
-        asm volatile("ret;\n");
-}
-
   
 __global__ void addOneFuncKernel(
     int32_t* numbers,
@@ -146,7 +121,7 @@ __global__ void addOneFuncKernel(
 	temp = m + testFunc(temp, counter, flag, ptr).n; \
  break; \
 
-__global__ void addOneFuncSwitchKernel(
+__global__ void addOneSwitchKernel(
     int32_t* numbers,
     int32_t size,
     int32_t stride,
@@ -157,7 +132,7 @@ __global__ void addOneFuncSwitchKernel(
     bool flag;
     auto temp = numbers[index];
     for (auto counter = 0; counter < repeats; ++counter) {
-      switch (counter & 15) {
+      switch (counter & 31) {
 	TCASE(0, 1);
 	TCASE(1, 82);
 	TCASE(2, 91);
@@ -174,7 +149,23 @@ __global__ void addOneFuncSwitchKernel(
 	TCASE(13, 151);
 	TCASE(14, 121);
 	TCASE(15, 111);
-      }
+	TCASE(16, 1);
+	TCASE(17, 82);
+	TCASE(18, 91);
+	TCASE(19, 181);
+	TCASE(20, 28);
+	TCASE(21, 36);
+	TCASE(22, 18);
+	TCASE(23, 13);
+	TCASE(24, 21);
+	TCASE(25, 32);
+	TCASE(26, 31);
+	TCASE(27, 191);
+	TCASE(28, 181);
+	TCASE(29, 151);
+	TCASE(30, 121);
+	TCASE(31, 111);
+    }
       }
     __syncthreads();
     numbers[index] = temp;
@@ -184,11 +175,11 @@ __global__ void addOneFuncSwitchKernel(
 #define BTCASE(nn, m) \
         asm volatile("BLK"  nn  ":"); \
 	temp = m + testFunc(temp, counter, flag, ptr).n; \
- continue; \
+	if (repeats < 1000000000) goto end;		 \
 
 
 
-__global__ void addOneFuncBranchKernel(
+__global__ void addOneBranchKernel(
     int32_t* numbers,
     int32_t size,
     int32_t stride,
@@ -198,12 +189,21 @@ __global__ void addOneFuncBranchKernel(
     int32_t* ptr = nullptr;
     bool flag;
     auto temp = numbers[index];
-    for (auto counter = 0; counter < repeats; ++counter) {
 
-        asm volatile(".reg .u32 r_tgt;");
-        asm volatile("ld.u32 r_tgt, [%0];" :: (counter & 15));
-        asm volatile("ts: .branchtargets BLK0, BLK1, BLK2, BLK3, BLK4, BLK5, BLK6, BLK7, BLK8, BLK 9, BLK10, BLK11, BLK12, BLK13, BLK14, BLK15;");
-        asm volatile("brx.idx r_tgt, ts;");
+#pragma unroll 1
+    for (auto counter = 0; counter < repeats; ++counter) {
+#if 0
+      if (repeats > 100000000) {
+      switch (repeats) {
+      case 100000001: asm volatile("bra BLK1;");
+      case 100000002: asm volatile("bra BLK2;");
+	break;
+      }
+    }
+      #endif
+      uint32_t bits = counter & 31;
+      asm volatile("ts: .branchtargets BLK0, BLK1, BLK2, BLK3, BLK4, BLK5, BLK6, BLK7, BLK8, BLK9, BLK10, BLK11, BLK12, BLK13, BLK14, BLK15, BLK16, BLK17, BLK18, BLK19, BLK20, BLK21, BLK22, BLK23, BLK24, BLK25, BLK26, BLK27, BLK28, BLK29, BLK30, BLK31;");
+      asm volatile("brx.idx %0, ts;" :: "r"(bits));
 
 
 	BTCASE("0", 1);
@@ -222,9 +222,26 @@ __global__ void addOneFuncBranchKernel(
 	BTCASE("13", 151);
 	BTCASE("14", 121);
 	BTCASE("15", 111);
+	BTCASE("16", 1);
+	BTCASE("17", 82);
+	BTCASE("18", 91);
+	BTCASE("19", 181);
+	BTCASE("20", 28);
+	BTCASE("21", 36);
+	BTCASE("22", 18);
+	BTCASE("23", 13);
+	BTCASE("24", 21);
+	BTCASE("25", 32);
+	BTCASE("26", 31);
+	BTCASE("27", 191);
+	BTCASE("28", 181);
+	BTCASE("29", 151);
+	BTCASE("30", 121);
+	BTCASE("31", 111);
+    end: ;
 
-      }
-      }
+    }
+
     __syncthreads();
     numbers[index] = temp;
   }
@@ -355,7 +372,22 @@ void TestStream::addOneBranch(
   CUDA_CHECK(cudaGetLastError());
 }
 
-
+void TestStream::addOneSwitch(
+    int32_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width) {
+  constexpr int32_t kBlockSize = 256;
+  auto numBlocks = roundUp(size, kBlockSize) / kBlockSize;
+  int32_t stride = size;
+  if (numBlocks > width / kBlockSize) {
+    stride = width;
+    numBlocks = width / kBlockSize;
+  }
+  addOneSwitchKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+      numbers, size, stride, repeats);
+  CUDA_CHECK(cudaGetLastError());
+}
   
 void TestStream::addOneShared(
     int32_t* numbers,
@@ -372,7 +404,7 @@ void TestStream::addOneShared(
   addOneSharedKernel<<<
       numBlocks,
       kBlockSize,
-      kBlockSize * sizeof(int32_t),
+	kBlockSize * sizeof(int32_t),
       stream_->stream>>>(numbers, size, stride, repeats);
   CUDA_CHECK(cudaGetLastError());
 }
@@ -481,6 +513,77 @@ __global__ void __launch_bounds__(1024) addOneRandomKernel(
   __syncthreads();
 }
 
+__global__ void __launch_bounds__(1024) addOneRandomPrefetchKernel(
+    int32_t* numbers,
+    const int32_t* lookup,
+    uint32_t size,
+    int32_t stride,
+    int32_t repeats,
+    int32_t numLocal,
+    int32_t localStride,
+    bool emptyWarps,
+    bool emptyThreads) {
+  for (uint32_t counter = 0; counter < repeats; ++counter) {
+    if (emptyWarps) {
+      if (((threadIdx.x / 32) & 1) == 0) {
+        for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+             index += stride) {
+          auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
+          auto sum = lookup[rnd];
+          auto limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index] += sum;
+
+          rnd = deviceScale32((index + 32) * (counter + 1) * kPrime32, size);
+          sum = lookup[rnd];
+          limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index + 32] += sum;
+        }
+      }
+    } else if (emptyThreads) {
+      if ((threadIdx.x & 1) == 0) {
+        for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+             index += stride) {
+          auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
+          auto sum = lookup[rnd];
+          auto limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index] += sum;
+
+          rnd = deviceScale32((index + 1) * (counter + 1) * kPrime32, size);
+          sum = lookup[rnd];
+          limit = min(rnd + localStride * (1 + numLocal), size);
+          for (auto j = rnd + localStride; j < limit; j += localStride) {
+            sum += lookup[j];
+          }
+          numbers[index + 1] += sum;
+        }
+      }
+    } else {
+      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+           index += stride) {
+        auto rnd = deviceScale32(index * (counter + 1) * kPrime32, size);
+        auto sum = lookup[rnd];
+        auto limit = min(rnd + localStride * (1 + numLocal), size);
+        for (auto j = rnd + localStride; j < limit; j += localStride) {
+          sum += lookup[j];
+        }
+        numbers[index] += sum;
+      }
+    }
+    __syncthreads();
+  }
+  __syncthreads();
+}
+
+  
 void TestStream::addOneRandom(
     int32_t* numbers,
     const int32_t* lookup,

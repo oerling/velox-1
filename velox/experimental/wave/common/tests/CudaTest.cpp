@@ -77,6 +77,10 @@ DEFINE_string(
     roundtrip_ops,
     "",
     "Custom roundtrip composition, see comments in RoundtripThread");
+
+DEFINE_int32(gpu_repeats, 64, "Number of repeats for GPU round trips");
+DEFINE_int32(cpu_repeats, 32, "Number of repeats for CPU round trips");
+
 using namespace facebook::velox;
 using namespace facebook::velox::wave;
 
@@ -573,6 +577,7 @@ class RoundtripThread {
     kAddFunc,
     kAddBranch,
     kAddFuncStore,
+    kAddSwitch,
     kAddRandom,
     kAddRandomEmptyWarps,
     kAddRandomEmptyThreads,
@@ -638,7 +643,7 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOne(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+			      deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -648,7 +653,7 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneShared(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -658,7 +663,7 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneReg(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+				 deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -668,7 +673,7 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneFunc(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+				  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -679,22 +684,32 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneFuncStore(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+				       deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
+          case OpCode::kAddSwitch:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu(op.param1 * 256, op.param2);
+            } else {
+              stream_->addOneSwitch(
+				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+            }
+            stats.numAdds += op.param1 * op.param2 * 256;
+            break;
+	    
           case OpCode::kAddBranch:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneBranch(
-                  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2);
+				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
-
 	    
           case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
@@ -818,9 +833,13 @@ class RoundtripThread {
           } else if (str[position] == 'b') {
             op.opCode = OpCode::kAddBranch;
             ++position;
+          } else if (str[position] == 'w') {
+            op.opCode = OpCode::kAddSwitch;
+            ++position;
           }
           op.param1 = parseInt(str, position, 1);
           op.param2 = parseInt(str, position, 1);
+          op.param3 = parseInt(str, position, 10240);
           return op;
         case 'w':
           op.opCode = OpCode::kWideAdd;
@@ -1423,8 +1442,8 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-        fmt::format("{} GPU, 64 repeats", modes[0]), modes, false, 64);
-    roundtripTest(fmt::format("{} CPU, 32 repeats", modes[0]), modes, true, 32);
+		  fmt::format("{} GPU, {} repeats", modes[0], FLAGS_gpu_repeats), modes, false, FLAGS_gpu_repeats);
+    roundtripTest(fmt::format("{} CPU, {} repeats", modes[0], FLAGS_cpu_repeats), modes, true, FLAGS_cpu_repeats);
     return;
   }
   if (!FLAGS_enable_bm) {

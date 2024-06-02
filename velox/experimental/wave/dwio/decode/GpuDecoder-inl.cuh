@@ -613,7 +613,6 @@ __device__ void decodeSelective(GpuDecode* op) {
             op, data, row, filterPass, nthLoop, kNotNull, op->temp);
       } while (++nthLoop < op->numRowsPerThread);
       break;
-
     case NullMode::kDenseNullable: {
       int32_t maxRow = op->maxRow;
       int32_t dataIdx = 0;
@@ -862,7 +861,8 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kCountBits:
       countBits<kBlockSize>(op);
       break;
-    case DecodeStep::kTrivial:
+#if 0
+case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
     case DecodeStep::kDictionaryOnBitpack:
@@ -886,7 +886,8 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kMakeScatterIndices:
       detail::makeScatterIndices<kBlockSize>(op.data.makeScatterIndices);
       break;
-    case DecodeStep::kRowCountNoFilter:
+#endif
+  case DecodeStep::kRowCountNoFilter:
       detail::setRowCountNoFilter<kBlockSize>(op.data.rowCountNoFilter);
       break;
   default:
