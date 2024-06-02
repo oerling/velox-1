@@ -794,6 +794,37 @@ class RoundtripThread {
     }
   }
 
+  FOLLY_NOINLINE void addOneCpu64(int32_t size, int32_t repeat) {
+    int64_t* ints = reinterpret_cast<int64_t*>(hostInts_.get());
+    for (auto counter = 0; counter < repeat; ++counter) {
+      for (auto i = 0; i < size; ++i) {
+        ++ints[i];
+      }
+    }
+  }
+
+  FOLLY_NOINLINE void addOneRandomCpu(
+      uint32_t size,
+      int32_t repeat,
+      int32_t numLocal,
+      int32_t localStride) {
+    int32_t* ints = hostInts_.get();
+    int32_t* lookup = hostLookup_.get();
+    for (uint32_t counter = 0; counter < repeat; ++counter) {
+      for (auto i = 0; i < size; ++i) {
+        auto rnd = scale32(i * (counter + 1) * kPrime32, size);
+        auto sum = lookup[rnd];
+        auto limit =
+            std::min<int32_t>(rnd + localStride * (1 + numLocal), size);
+        for (auto j = rnd + localStride; j < limit; j += localStride) {
+          sum += lookup[j];
+        }
+        ints[i] += sum;
+      }
+    }
+  }
+
+  
   Op nextOp(const std::string& str, int32_t& position) {
     Op op;
     for (;;) {

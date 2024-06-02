@@ -614,6 +614,35 @@ void TestStream::addOneRandom(
   CUDA_CHECK(cudaGetLastError());
 }
 
+  /// Memory width and stride
+  addOne64Kernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  for (auto counter = 0; counter < repeats; ++counter) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
+      numbers[index] += index & 31;
+    }
+    __syncthreads();
+  }
+}
+
+  addOne64x4ConsecKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    
+    for (auto counter = 0; counter < repeats; ++counter) {
+    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
+      numbers[index] += index & 31;
+    }
+    __syncthreads();
+  }
+}
+
+  
+
+#define ADD8ENTRY(name, kname
+
+  
+
+  
 REGISTER_KERNEL("addOne", addOneKernel);
 REGISTER_KERNEL("addOneFunc", addOneFuncKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);

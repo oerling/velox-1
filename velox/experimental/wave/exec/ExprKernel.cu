@@ -51,42 +51,6 @@ __device__ inline void binaryOpKernel(
     resultNull(operands, instr.result, blockBase, shared);
   }
 }
-#if 0
-  __device__ void filterKernel(
-    const IFilter& filter,
-    Operand** operands,
-    int32_t blockBase,
-    char* shared,
-    int32_t& numRows) {
-  auto* flags = operands[filter.flags];
-  auto* indices = operands[filter.indices];
-  __syncthreads();
-  if (flags->nulls) {
-    boolBlockToIndices<kBlockSize>(
-        [&]() -> uint8_t {
-          return threadIdx.x >= numRows
-              ? 0
-              : flatValue<uint8_t>(flags->base, blockBase) &
-                  flatValue<uint8_t>(flags->nulls, blockBase);
-        },
-        blockBase,
-        reinterpret_cast<int32_t*>(indices->base) + blockBase,
-        shared,
-        numRows);
-  } else {
-    boolBlockToIndices<kBlockSize>(
-        [&]() -> uint8_t {
-          return threadIdx.x >= numRows
-              ? 0
-              : flatValue<uint8_t>(flags->base, blockBase);
-        },
-        blockBase,
-        reinterpret_cast<int32_t*>(indices->base) + blockBase,
-        shared,
-        numRows);
-  }
-}
-  #else 
   
 __device__ void filterKernel(
     const IFilter& filter,
@@ -133,40 +97,53 @@ if (offset + 8 < numRows) {
         shared);
   }
 }
-#endif
+
+  
 __device__ void wrapKernel(
     const IWrap& wrap,
     Operand** operands,
     int32_t blockBase,
-    int32_t numRows) {
+    int32_t numRows,
+    void* shared) {
   Operand* op = operands[wrap.indices];
   auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
   if (filterIndices[blockBase + numRows - 1] == numRows + blockBase - 1) {
     // There is no cardinality change.
     return;
   }
+
+  struct WrapState {
+    int32_t* indices;
+  };
+
+  auto* state = reinterpret_cast<WrapState*>(shared);
   bool rowActive = threadIdx.x < numRows;
   for (auto column = 0; column < wrap.numColumns; ++column) {
-    int32_t newIndex;
-    int32_t** opIndices;
-    bool remap = false;
-    if (rowActive) {
+    if (threadIdx.x == 0) {
       auto opIndex = wrap.columns[column];
       auto* op = operands[opIndex];
-      opIndices = &op->indices[blockBase / kBlockSize];
-      remap = *opIndices != nullptr;
-      if (remap) {
-        newIndex =
-            (*opIndices)[filterIndices[blockBase + threadIdx.x] - blockBase];
-      } else if (threadIdx.x == 0) {
-        *opIndices = filterIndices + blockBase;
+      int32_t** opIndices = &op->indices[blockBase / kBlockSize];
+      if (!*opIndices) {
+	*opIndices = filterIndices + blockBase;
+	state->indices = nullptr;
+      } else {
+	state->indices = *opIndices;
       }
+    }
+    __syncthreads();
+    // Every thread sees the decision on thred 0 above.
+    if (!state->indices) {
+      continue;
+    }
+    int32_t newIndex;
+    if (rowActive) {
+      newIndex =
+	state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
     }
     // All threads hit this.
     __syncthreads();
-    if (remap) {
-      // remap can b true only on activ rows.
-      (*opIndices)[threadIdx.x] = newIndex;
+    if (rowActive) {
+      state->indices[threadIdx.x] = newIndex;
     }
   }
   __syncthreads();
@@ -201,22 +178,17 @@ __global__ void waveBaseKernel(
       case OpCode::kReturn:
         __syncthreads();
         return;
-    case OpCode::kFilter: {
-      int32_t prev = status->numRows;
+    case OpCode::kFilter:
       filterKernel(
-            instruction->_.filter,
-            operands,
-            blockBase,
-            shared,
-            status->numRows);
-      if (threadIdx.x == 0) {
-	printf("B%d from %d to %d\n", blockIdx.x, prev, status->numRows);
-      }
-    }
-        break;
+		   instruction->_.filter,
+		   operands,
+		   blockBase,
+		   shared,
+		   status->numRows);
+      break;
 
       case OpCode::kWrap:
-        wrapKernel(instruction->_.wrap, operands, blockBase, status->numRows);
+        wrapKernel(instruction->_.wrap, operands, blockBase, status->numRows, shared);
         break;
 
         BINARY_TYPES(OpCode::kPlus, +);
