@@ -17,6 +17,7 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/tests/CudaTest.h"
+#include <assert.h>
 
 namespace facebook::velox::wave {
 constexpr uint32_t kPrime32 = 1815531889;
@@ -615,7 +616,7 @@ void TestStream::addOneRandom(
 }
 
   /// Memory width and stride
-  addOne64Kernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+__global__ void addOne64Kernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
   for (auto counter = 0; counter < repeats; ++counter) {
     for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
          index += stride) {
@@ -625,20 +626,315 @@ void TestStream::addOneRandom(
   }
 }
 
-  addOne64x4ConsecKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
-    
+__global__ void   addOne4x64ConsecKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
     for (auto counter = 0; counter < repeats; ++counter) {
-    for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+      for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
          index += stride) {
-      numbers[index] += index & 31;
+	long2 l1 = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	long2 l2 = *addCast<long2>(numbers, sizeof(int64_t) * (index + 2));
+	l1.x += index & 31; 
+	l1.y += (index + 1) & 31; 
+	l2.x += (index + 2) & 31; 
+	l2.y += (index + 3) & 31; 
+	*addCast<long2>(numbers, sizeof(int64_t) * index) = l1;
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + 2)) = l2;
+      }
+      __syncthreads();
     }
-    __syncthreads();
   }
+
+__global__ void   addOne1x64Kernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  int32_t stride1 = stride / 4;
+  for (auto counter = 0; counter < repeats; ++counter) {
+      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride1) {
+	numbers[index] += 31 & index;
+      }
+      __syncthreads();
+    }
+  }
+
+__global__ void   addOne4Ox64Kernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  int32_t stride1 = stride / 4;
+  for (auto counter = 0; counter < repeats; ++counter) {
+      for (auto index = blockDim.x * blockIdx.x + threadIdx.x; index < size;
+         index += stride) {
+	numbers[index] += 31 & index;
+	numbers[index + stride1] += 31 & index;
+	numbers[index + stride1 * 2] += 31 & index;
+	numbers[index + stride1 * 3] += 31 & index;
+      }
+      __syncthreads();
+    }
 }
+  
+__global__  void   addOne4x64CoaKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    int32_t halfStride = stride / 2;
+    for (auto counter = 0; counter < repeats; ++counter) {
+      for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride) {
+	long2 l1 = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	long2 l2 = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
+	l1.x += index & 31; 
+	l1.y += (index + 1) & 31; 
+	l2.x += (index + halfStride) & 31; 
+	l2.y += (index + halfStride + 1) & 31; 
+	*addCast<long2>(numbers, sizeof(int64_t) * index) = l1;
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride)) = l2;
+      }
+      __syncthreads();
+    }
+  }
+
+  struct Params1 {
+    int64_t n;
+    bool flag;
+  };
+  
+  struct Params4 {
+    long2 l1;
+    long2 l2;
+    int32_t flags;
+  };
+
+  typedef Params4(*TestFunc4)(Params4 params, int32_t index, long* args);
+
+
+  
+__device__  Params4 testFunc4(Params4 params, int32_t index, long* args) {
+    params.l1.x += 32 & index;
+    params.l1.y = 31 & (index + 1);
+    params.l2.x += 31 & (index + 2);
+    params.l2.y += 31 & (index + 3);
+    return params;
+  }
+  
+  __device__ TestFunc4 testFuncs4[2];
+
+  typedef void(*TestFunc4SMem)(int64_t* params, int32_t index, int64_t* args);
+__device__  void testFunc4SMem(int64_t* smem, int32_t index, long* args) {
+  long2 l1 = *addCast<long2>(smem, 0);
+  long2 l2 = *addCast<long2>(smem, 16);
+  l1.x += 32 & index;
+  l1.y = 31 & (index + 1);
+    l2.x += 31 & (index + 2);
+    l2.y += 31 & (index + 3);
+    *addCast<long2>(smem, 0) = l1;
+    *addCast<long2>(smem, 16) = l2;
+  }
+  
+  __device__ TestFunc4SMem testFuncs4SMem[2];
+
+ 
+  __global__ void setupFuncs4() {
+    testFuncs[0] = testFunc;
+    testFuncs[1] = testFunc;
+    testFuncs4[0] = testFunc4;
+    testFuncs4[1] = testFunc4;
+    testFuncs4SMem[0] = testFunc4SMem;
+    testFuncs4SMem[1] = testFunc4SMem;
+  }
+
+__global__  void   addOne4x64RegKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    int32_t halfStride = stride / 2;
+      for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride) {
+	long2 l1 = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	long2 l2 = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
+
+	for (auto counter = 0; counter < repeats; ++counter) {
+
+	l1.x += index & 31; 
+	l1.y += (index + 1) & 31; 
+	l2.x += (index + halfStride) & 31; 
+	l2.y += (index + halfStride + 1) & 31; 
+      }
+	*addCast<long2>(numbers, sizeof(int64_t) * (index)) = l1;
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride)) = l2;
+
+	__syncthreads();
+    }
+  }
+
+#define BTCASE4(nn, m) \
+        asm volatile("BLK"  nn  ":"); \
+	params = testFunc4(params, index + m, nullptr); \
+	if (repeats < 1000000000) goto end;			\
+
+  
+void __global__ __launch_bounds__(1024)    addOne4x64BranchKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    int32_t halfStride = stride / 2;
+      for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride) {
+	Params4 params;
+	params.l1 = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	params.l2 = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
+	for (auto counter = 0; counter < repeats; ++counter) {
+      asm volatile("ts: .branchtargets BLK0, BLK1, BLK2, BLK3, BLK4, BLK5, BLK6, BLK7, BLK8, BLK9, BLK10, BLK11, BLK12, BLK13, BLK14, BLK15, BLK16, BLK17, BLK18, BLK19, BLK20, BLK21, BLK22, BLK23, BLK24, BLK25, BLK26, BLK27, BLK28, BLK29, BLK30, BLK31;");
+      asm volatile("brx.idx %0, ts;" :: "r"(counter & 31));
+
+
+	    	BTCASE4("0", 1);
+	BTCASE4("1", 82);
+	BTCASE4("2", 91);
+	BTCASE4("3", 181);
+	BTCASE4("4", 28);
+	BTCASE4("5", 36);
+	BTCASE4("6", 18);
+	BTCASE4("7", 13);
+	BTCASE4("8", 21);
+	BTCASE4("9", 32);
+	BTCASE4("10", 31);
+	BTCASE4("11", 191);
+	BTCASE4("12", 181);
+	BTCASE4("13", 151);
+	BTCASE4("14", 121);
+	BTCASE4("15", 111);
+	BTCASE4("16", 1);
+	BTCASE4("17", 82);
+	BTCASE4("18", 91);
+	BTCASE4("19", 181);
+	BTCASE4("20", 28);
+	BTCASE4("21", 36);
+	BTCASE4("22", 18);
+	BTCASE4("23", 13);
+	BTCASE4("24", 21);
+	BTCASE4("25", 32);
+	BTCASE4("26", 31);
+	BTCASE4("27", 191);
+	BTCASE4("28", 181);
+	BTCASE4("29", 151);
+	BTCASE4("30", 121);
+	BTCASE4("31", 111);
+    end: ;
+
+	}
+	*addCast<long2>(numbers, sizeof(int64_t) * (index)) = params.l1;
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride)) = params.l2;
+
+	__syncthreads();
+    }
+  }
+
+__global__  void   addOne4x64FuncKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    int32_t halfStride = stride / 2;
+      for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride) {
+	Params4 params;
+	params.l1 = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	params.l2 = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
+	for (auto counter = 0; counter < repeats; ++counter) {
+	  params = testFuncs4[counter & 1](params, index, nullptr);
+	}
+	*addCast<long2>(numbers, sizeof(int64_t) * (index)) = params.l1;
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride)) = params.l2;
+
+	__syncthreads();
+    }
+  }
+
+__global__  void   addOne1x64FuncKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+  int32_t stride1 = stride / 4;
+  for (auto index =  (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride1) {
+    ResultPair r;
+    r.n = numbers[index];
+    bool flag;
+    for (auto counter = 0; counter < repeats; ++counter) {
+      r = testFuncs[counter & 1](r.n, 0, flag, nullptr);
+	}
+    numbers[index] = r.n;
+	__syncthreads();
+    }
+  }
 
   
 
-#define ADD8ENTRY(name, kname
+__global__  void   addOne4x64SMemFuncKernel(int64_t* numbers, int32_t size, int32_t stride, int32_t repeats) {
+    int32_t halfStride = stride / 2;
+      extern __shared__ __align__(16) char smemBase[];
+
+    for (auto index = 4 * (blockDim.x * blockIdx.x + threadIdx.x); index < size;
+         index += stride) {
+      long2* smem = addCast<long2>(smemBase, threadIdx.x * 4 * sizeof(int64_t));
+	*smem = *addCast<long2>(numbers, sizeof(int64_t) * index);
+	smem[1] = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
+	for (auto counter = 0; counter < repeats; ++counter) {
+	  testFuncs4SMem[counter & 1](reinterpret_cast<int64_t*>(smem), index, nullptr);
+	}
+	*addCast<long2>(numbers, sizeof(int64_t) * (index)) = smem[0];
+	*addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride)) = smem[1];
+	__syncthreads();
+    }
+  }
+  
+  void TestStream::addOne4x64(
+    int64_t* numbers,
+    int32_t size,
+    int32_t repeats,
+    int32_t width,
+			      Add64Mode mode) {
+  constexpr int32_t kBlockSize = 256;
+  constexpr int32_t kNumPerThread = 4;
+  setupFuncs4<<<1, 1, 0, stream_->stream>>>();
+  CUDA_CHECK(cudaGetLastError());
+  int32_t numThreads = size / kNumPerThread;
+  auto numBlocks = roundUp(size / kNumPerThread, kBlockSize) / kBlockSize;
+  int32_t stride = numThreads;
+  if (numBlocks > (width / (kBlockSize * kNumPerThread))) {
+    stride = width * kNumPerThread;
+    numBlocks = width / kBlockSize;
+    }
+    int32_t smem = 0;
+    if (mode == Add64Mode::k4SMem || mode == Add64Mode::k4SMemFunc) {
+      smem = 5 * kBlockSize * sizeof(int64_t);
+    }
+    switch (mode) {
+    case Add64Mode::k4Seq:
+    addOne4x64ConsecKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+    case Add64Mode::k4Add:
+    addOne4Ox64Kernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+
+    case Add64Mode::k4Coa:
+    addOne4x64CoaKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+    case Add64Mode::k4Reg:
+    addOne4x64RegKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+    case Add64Mode::k4Branch:
+    addOne4x64BranchKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+
+        case Add64Mode::k4Func:
+    addOne4x64FuncKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+        case Add64Mode::k1Func:
+    addOne1x64FuncKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+
+    case Add64Mode::k4SMemFunc:
+    addOne4x64SMemFuncKernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+        case Add64Mode::k1Add:
+    addOne1x64Kernel<<<numBlocks, kBlockSize, smem, stream_->stream>>>(
+      numbers, size, stride, repeats);
+    break;
+
+    default:
+      assert(false);
+    }
+    CUDA_CHECK(cudaGetLastError());
+}
 
   
 
@@ -647,5 +943,8 @@ REGISTER_KERNEL("addOne", addOneKernel);
 REGISTER_KERNEL("addOneFunc", addOneFuncKernel);
 REGISTER_KERNEL("addOneWide", addOneWideKernel);
 REGISTER_KERNEL("addOneRandom", addOneRandomKernel);
+  REGISTER_KERNEL("add4x64branch", addOne4x64BranchKernel);
+  REGISTER_KERNEL("add4x64func", addOne4x64FuncKernel);
+  REGISTER_KERNEL("add4x64smemfunc", addOne4x64SMemFuncKernel);
 
 } // namespace facebook::velox::wave

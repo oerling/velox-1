@@ -582,6 +582,7 @@ class RoundtripThread {
     kAddRandomEmptyWarps,
     kAddRandomEmptyThreads,
     kWideAdd,
+    kAdd4x64,
     kEnd,
     kSync,
     kSyncEvent
@@ -589,6 +590,7 @@ class RoundtripThread {
 
   struct Op {
     OpCode opCode;
+    Add64Mode add64Mode;
     int32_t param1{1};
     int32_t param2{0};
     int32_t param3{0};
@@ -710,6 +712,18 @@ class RoundtripThread {
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
+
+          case OpCode::kAdd4x64:
+            VELOX_CHECK_LE(op.param1, kNumKB);
+            if (stats.isCpu) {
+              addOneCpu64(op.param1 * 128, op.param2);
+            } else {
+              stream_->addOne4x64(
+				  deviceBuffer_->as<int64_t>(), op.param1 * 128, op.param2, op.param3, op.add64Mode);
+            }
+            stats.numAdds += op.param1 * op.param2 * 128;
+            break;
+
 	    
           case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
@@ -773,6 +787,7 @@ class RoundtripThread {
       }
     }
   }
+
   FOLLY_NOINLINE void addOneRandomCpu(
       uint32_t size,
       int32_t repeat,
@@ -799,27 +814,6 @@ class RoundtripThread {
     for (auto counter = 0; counter < repeat; ++counter) {
       for (auto i = 0; i < size; ++i) {
         ++ints[i];
-      }
-    }
-  }
-
-  FOLLY_NOINLINE void addOneRandomCpu(
-      uint32_t size,
-      int32_t repeat,
-      int32_t numLocal,
-      int32_t localStride) {
-    int32_t* ints = hostInts_.get();
-    int32_t* lookup = hostLookup_.get();
-    for (uint32_t counter = 0; counter < repeat; ++counter) {
-      for (auto i = 0; i < size; ++i) {
-        auto rnd = scale32(i * (counter + 1) * kPrime32, size);
-        auto sum = lookup[rnd];
-        auto limit =
-            std::min<int32_t>(rnd + localStride * (1 + numLocal), size);
-        for (auto j = rnd + localStride; j < limit; j += localStride) {
-          sum += lookup[j];
-        }
-        ints[i] += sum;
       }
     }
   }
@@ -872,7 +866,43 @@ class RoundtripThread {
           op.param2 = parseInt(str, position, 1);
           op.param3 = parseInt(str, position, 10240);
           return op;
-        case 'w':
+
+	          case 'A':
+          op.opCode = OpCode::kAdd4x64;
+	  op.add64Mode = Add64Mode::k4Seq;
+          ++position;
+          if (str[position] == 's') {
+            op.add64Mode = Add64Mode::k4SMemFunc;
+            ++position;
+          } else if (str[position] == 'r') {
+            op.add64Mode = Add64Mode::k4Reg;
+            ++position;
+          }  else if (str[position] == 'o') {
+            op.add64Mode = Add64Mode::k1Add;
+            ++position;
+          } else if (str[position] == 'O') {
+            op.add64Mode = Add64Mode::k4Add;
+            ++position;
+          } else if (str[position] == 'c') {
+            op.add64Mode = Add64Mode::k4Coa;
+            ++position;
+          } else if (str[position] == 'f') {
+            op.add64Mode = Add64Mode::k4Func;
+            ++position;
+          } else if (str[position] == 'F') {
+            op.add64Mode = Add64Mode::k1Func;
+            ++position;
+          } else if (str[position] == 'b') {
+            op.add64Mode = Add64Mode::k4Branch;
+            ++position;
+          }
+          op.param1 = parseInt(str, position, 1);
+          op.param2 = parseInt(str, position, 1);
+          op.param3 = parseInt(str, position, 10240);
+          return op;
+
+
+      case 'w':
           op.opCode = OpCode::kWideAdd;
           ++position;
           op.param1 = parseInt(str, position, 1);

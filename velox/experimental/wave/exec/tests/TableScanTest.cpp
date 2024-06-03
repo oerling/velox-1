@@ -86,7 +86,9 @@ class TableScanTest : public virtual HiveConnectorTestBase {
           ints->set(i, ints->valueAt(i) % mod);
         }
       }
-      child->clearNulls(0, row->size());
+      if (notNull)  {
+	child->clearNulls(0, row->size());
+      }
     }
   }
 
