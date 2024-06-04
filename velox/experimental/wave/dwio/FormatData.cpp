@@ -163,6 +163,7 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
   auto step = std::make_unique<GpuDecode>();
   if (grid_.nulls) {
     step->nonNullBases = grid_.numNonNull;
+    step->nulls = grid_.nulls;
   }
   step->numRowsPerThread = rowsPerBlock / kBlockSize;
   setFilter(step.get(), op.reader, nullptr);

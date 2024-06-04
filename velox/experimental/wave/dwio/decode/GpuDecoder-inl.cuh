@@ -618,7 +618,7 @@ __device__ void decodeSelective(GpuDecode* op) {
       int32_t dataIdx = 0;
       auto* temp = op->temp;
       if (threadIdx.x == 0) {
-        temp[0] = op->nonNullBases[op->nthBlock];
+        temp[0] = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
       }
       __syncthreads();
       do {
@@ -636,8 +636,7 @@ __device__ void decodeSelective(GpuDecode* op) {
             filterPass = false;
           }
         } else {
-          dataIdx += op->nonNullBases[op->nthBlock];
-          data = randomAccessDecode<T>(op, dataIdx);
+	    data = randomAccessDecode<T>(op, dataIdx);
           filterPass =
               testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
         }
@@ -655,7 +654,7 @@ __device__ void decodeSelective(GpuDecode* op) {
     case NullMode::kSparseNullable:
       auto temp = op->temp;
       if (threadIdx.x == 0) {
-        temp[0] = op->nonNullBases[op->nthBlock];
+        temp[0] = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
         temp[1] = 0;
       }
       __syncthreads();
