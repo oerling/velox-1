@@ -157,8 +157,8 @@ __device__ inline void decodeDictionaryOnBitpack(GpuDecode& plan) {
       break;
     default:
       if (threadIdx.x == 0) {
-        printf("ERROR: Unsupported data type for DictionaryOnBitpack\n");
         assert(false);
+        printf("ERROR: Unsupported data type for DictionaryOnBitpack\n");
       }
   }
 }
@@ -626,7 +626,7 @@ __device__ void decodeSelective(GpuDecode* op) {
         dataIdx = nonNullIndex256(
             op->nulls,
             base,
-            min(base + kBlockSize, maxRow),
+            min(kBlockSize, maxRow - base),
             &temp[0],
             temp + 1);
         bool filterPass = base + threadIdx.x < maxRow;
@@ -667,7 +667,7 @@ __device__ void decodeSelective(GpuDecode* op) {
             op->nulls,
             op->rows,
             base,
-            base + numRows,
+            numRows,
             &temp[0],
             &temp[1],
             temp + 2);
@@ -696,7 +696,7 @@ __device__ void decodeSelective(GpuDecode* op) {
 
 // Returns the position of 'target' in 'data' to 'data + size'. Not finding the
 // value is an error and the values are expected to be unique.
-inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row) {
+inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row, GpuDecode* op) {
   int lo = 0, hi = size;
   while (lo < hi) {
     int i = (lo + hi) / 2;
@@ -709,7 +709,7 @@ inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row) {
       hi = i;
     }
   }
-  printf("Expecting to find the row in findRow()\n");
+  printf("Expecting to find  row %d in findRow() size %d %p\n", row, size, op);
   assert(false);
 }
 
@@ -726,7 +726,7 @@ __device__ void compactValues(GpuDecode* op) {
       base = nthLoop * kBlockSize;
       auto row = compact.finalRows[base + threadIdx.x];
       auto numSource = compact.sourceNumRows[nthLoop];
-      auto sourceRow = findRow(compact.sourceRows + base, numSource, row);
+      auto sourceRow = findRow(compact.sourceRows + base, numSource, row, op);
       sourceValue =
           reinterpret_cast<const T*>(compact.source)[base + sourceRow];
       if (compact.sourceNull) {
