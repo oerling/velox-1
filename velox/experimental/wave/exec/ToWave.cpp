@@ -186,6 +186,9 @@ bool maybeNotNull(const AbstractOperand* op) {
   if (!op) {
     return true;
   }
+  if (op->constant) {
+    return true;
+  }
   return op->conditionalNonNull || op->notNull || op->sourceNullable;
 }
 
