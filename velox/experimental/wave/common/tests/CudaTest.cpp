@@ -645,7 +645,10 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOne(
-			      deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -655,7 +658,10 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneShared(
-				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -665,7 +671,10 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneReg(
-				 deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -675,7 +684,10 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneFunc(
-				  deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -686,7 +698,10 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneFuncStore(
-				       deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -697,18 +712,24 @@ class RoundtripThread {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneSwitch(
-				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
-	    
+
           case OpCode::kAddBranch:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
               stream_->addOneBranch(
-				    deviceBuffer_->as<int32_t>(), op.param1 * 256, op.param2, op.param3);
+                  deviceBuffer_->as<int32_t>(),
+                  op.param1 * 256,
+                  op.param2,
+                  op.param3);
             }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
@@ -719,12 +740,15 @@ class RoundtripThread {
               addOneCpu64(op.param1 * 128, op.param2);
             } else {
               stream_->addOne4x64(
-				  deviceBuffer_->as<int64_t>(), op.param1 * 128, op.param2, op.param3, op.add64Mode);
+                  deviceBuffer_->as<int64_t>(),
+                  op.param1 * 128,
+                  op.param2,
+                  op.param3,
+                  op.add64Mode);
             }
             stats.numAdds += op.param1 * op.param2 * 128;
             break;
 
-	    
           case OpCode::kWideAdd:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
@@ -818,7 +842,6 @@ class RoundtripThread {
     }
   }
 
-  
   Op nextOp(const std::string& str, int32_t& position) {
     Op op;
     for (;;) {
@@ -867,9 +890,9 @@ class RoundtripThread {
           op.param3 = parseInt(str, position, 10240);
           return op;
 
-	          case 'A':
+        case 'A':
           op.opCode = OpCode::kAdd4x64;
-	  op.add64Mode = Add64Mode::k4Seq;
+          op.add64Mode = Add64Mode::k4Seq;
           ++position;
           if (str[position] == 's') {
             op.add64Mode = Add64Mode::k4SMemFunc;
@@ -877,7 +900,7 @@ class RoundtripThread {
           } else if (str[position] == 'r') {
             op.add64Mode = Add64Mode::k4Reg;
             ++position;
-          }  else if (str[position] == 'o') {
+          } else if (str[position] == 'o') {
             op.add64Mode = Add64Mode::k1Add;
             ++position;
           } else if (str[position] == 'O') {
@@ -901,8 +924,7 @@ class RoundtripThread {
           op.param3 = parseInt(str, position, 10240);
           return op;
 
-
-      case 'w':
+        case 'w':
           op.opCode = OpCode::kWideAdd;
           ++position;
           op.param1 = parseInt(str, position, 1);
@@ -1503,8 +1525,15 @@ TEST_F(CudaTest, roundtripMatrix) {
   if (!FLAGS_roundtrip_ops.empty()) {
     std::vector<std::string> modes = {FLAGS_roundtrip_ops};
     roundtripTest(
-		  fmt::format("{} GPU, {} repeats", modes[0], FLAGS_gpu_repeats), modes, false, FLAGS_gpu_repeats);
-    roundtripTest(fmt::format("{} CPU, {} repeats", modes[0], FLAGS_cpu_repeats), modes, true, FLAGS_cpu_repeats);
+        fmt::format("{} GPU, {} repeats", modes[0], FLAGS_gpu_repeats),
+        modes,
+        false,
+        FLAGS_gpu_repeats);
+    roundtripTest(
+        fmt::format("{} CPU, {} repeats", modes[0], FLAGS_cpu_repeats),
+        modes,
+        true,
+        FLAGS_cpu_repeats);
     return;
   }
   if (!FLAGS_enable_bm) {
