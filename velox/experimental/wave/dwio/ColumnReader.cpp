@@ -28,7 +28,7 @@ void ColumnReader::makeOp(
   formatData_->newBatch(readOffset_ + offset);
   op.action = action;
   op.reader = this;
-  if (scanSpec_->filter() && !scanSpec_->filter()->testNull()) {
+  if (hasNonNullFilter()) {
     readStream->setNullable(*operand_, false);
   } else {
     readStream->setNullable(*operand_, formatData_->hasNulls());
@@ -37,5 +37,9 @@ void ColumnReader::makeOp(
   op.rows = rows;
   readOffset_ = offset + rows.back() + 1;
 };
+
+  bool ColumnReader::hasNonNullFilter() const {
+    return scanSpec_->filter() && !scanSpec_->filter()->testNull();
+  }
 
 } // namespace facebook::velox::wave

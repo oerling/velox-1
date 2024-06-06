@@ -309,8 +309,8 @@ void Encoder<T>::addNull() {
   auto n = bits::nwords(count_);
   if (nulls_.size() < n) {
     nulls_.resize(n, bits::kNotNull64);
-    bits::setBit(nulls_.data(), count_ - 1, bits::kNull);
   }
+  bits::setBit(nulls_.data(), count_ - 1, bits::kNull);
 }
 
 template <typename T>
