@@ -66,10 +66,9 @@ tsan_atomic<bool> Profiler::shouldSaveResult_;
 int64_t Profiler::sampleStartTime_;
 int64_t Profiler::cpuAtSampleStart_;
 int64_t Profiler::cpuAtLastCheck_;
-  std::function<void()> Profiler::startExtra_;
-  std::function<std::string()> Profiler::extraReport_;
+std::function<void()> Profiler::startExtra_;
+std::function<std::string()> Profiler::extraReport_;
 
-  
 namespace {
 std::string hostname;
 
@@ -305,9 +304,10 @@ bool Profiler::isRunning() {
   return profileStarted_;
 }
 
-  void Profiler::start(const std::string& path,
-		       std::function<void()> extraStart,
-		       std::function<std::string()> extraReport) {
+void Profiler::start(
+    const std::string& path,
+    std::function<void()> extraStart,
+    std::function<std::string()> extraReport) {
   {
 #if !defined(linux)
     VELOX_FAIL("Profiler is only available for Linux");
