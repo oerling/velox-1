@@ -28,7 +28,7 @@ int32_t GpuDecode::tempSize() const {
   // sum (warp scans shuffle in registers, so only one int needed for
   // inter-warp communication). This could be shared memory too but
   // global works just as well, per experiment.
-  return sizeof(int32_t) * (2 + (kBlockSize / kWarpThreads));
+  return sizeof(int32_t) * (3 + (kBlockSize / kWarpThreads));
 }
 
 int32_t GpuDecode::sharedMemorySize() const {

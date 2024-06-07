@@ -362,10 +362,12 @@ inline __device__ int32_t nonNullIndex256(
 /// cover rows[numRows-1] bits. Each thread returns -1 if
 /// rows[threadIdx.x] falls on a null and the corresponding index in
 /// non-null rows otherwise. This can be called multiple times on
-/// consecutive groups of 256 row numbers. the non-null offset of
-/// the last row is carried in 'non-nulloffset'. 'rowOffset' is the
-/// offset of the first row of the batch of 256 in 'rows', so it has
-/// 0, 256, 512.. in consecutive calls.
+/// consecutive groups of 256 row numbers. the non-null offset of the
+/// last row is carried in 'non-nulloffset'. 'rowOffset' is the offset
+/// of the first row of the batch of 256 in 'rows', so it has 0, 256,
+/// 512.. in consecutive calls. if 'rowOffset' is negative, -rowOffset
+/// gives the row to which '*nonNullOffset' refers, so the first
+/// non-'nonNullsBelow' is the non-nulls from -rowOffset to 'rows[0]'.
 inline __device__ int32_t nonNullIndex256Sparse(
     char* nulls,
     int32_t* rows,
@@ -375,13 +377,13 @@ inline __device__ int32_t nonNullIndex256Sparse(
     int32_t* extraNonNulls,
     int32_t* temp) {
   using Scan32 = cub::WarpScan<uint32_t>;
-  auto rowIdx = rowOffset + threadIdx.x;
+  auto rowIdx = (rowOffset < 0 ? 0 : rowOffset) + threadIdx.x;
   bool isNull = true;
   uint32_t nonNullsBelow = 0;
   if (rowIdx < numRows) {
     isNull = !isBitSet(nulls, rows[rowIdx]);
     nonNullsBelow = !isNull;
-    int32_t previousRow = rowIdx == 0 ? 0 : rows[rowIdx - 1];
+    int32_t previousRow = rowIdx == 0 ? (rowOffset < 0 ? - rowOffset : 0) : rows[rowIdx - 1];
     nonNullsBelow += countBits(
         reinterpret_cast<uint64_t*>(nulls), previousRow + 1, rows[rowIdx]);
   }

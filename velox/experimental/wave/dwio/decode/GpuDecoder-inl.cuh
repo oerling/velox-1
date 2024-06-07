@@ -656,6 +656,17 @@ __device__ void decodeSelective(GpuDecode* op) {
       if (threadIdx.x == 0) {
         temp[0] = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
         temp[1] = 0;
+	if (op->nthBlock == 0) {
+	  temp[2] = 0;
+	} else {
+	  // temp[2] is the row that corresponds to the
+	  // nonNullBases[op->nthBlock]. Count non-nulls between this
+	  // and rows[0] at the start of the block and add that to
+	  // nonNullBases[op-<nthBlock] to get the non-nulls below
+	  // rows[0]. This is 1 - x to distinguish from an offfset
+	  // into rows that is used for the non-first set of 256.
+	  temp[2] = 1 - (kBlockSize * op->nthBlock * op->numRowsPerThread);
+	}
       }
       __syncthreads();
       do {
@@ -666,11 +677,11 @@ __device__ void decodeSelective(GpuDecode* op) {
         dataIdx = nonNullIndex256Sparse(
             op->nulls,
             op->rows,
-            base,
+            nthLoop = 0 ? temp[2] : base,
             numRows,
             &temp[0],
             &temp[1],
-            temp + 2);
+            temp + 3);
         if (dataIdx == -1) {
           if (!op->nullsAllowed) {
             filterPass = false;
