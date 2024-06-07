@@ -177,8 +177,14 @@ TEST_F(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto vectors = makeVectors(type, 1, 1'500);
+  int32_t cnt = 0;
   for (auto& vector : vectors) {
     makeRange(vector, 1000000000);
+    auto rn = vector->childAt(3)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < rn->size(); ++i) {
+      rn->set(i, cnt++);
+    }
+    std::cout << vector->toString(0, vector->size(), "\n", true) << std::endl;
   }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
@@ -220,7 +226,7 @@ TEST_F(TableScanTest, filterInScan) {
 TEST_F(TableScanTest, filterInScanNull) {
   auto type =
     ROW({"c0", "c1", "c2", "c3", "rn"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT() });
-  auto vectors = makeVectors(type, 1, 2'000, 0.1);
+  auto vectors = makeVectors(type, 1, 20'000, 0.1);
   int32_t cnt = 0;
   for (auto& vector : vectors) {
     makeRange(vector, 1000000000, false);
