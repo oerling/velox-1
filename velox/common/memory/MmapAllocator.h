@@ -37,42 +37,40 @@ namespace facebook::velox::memory {
 /// of a size class dependent number of consecutive machine pages.
 using ClassPageCount = int32_t;
 
-class MmapAllocator;
+  class MmapAllocator;
 
-/// Free list of mmaps (ContiguousAllocation). These are counted as
-/// mapped but not counted as allocated. Sizes are quantized to
-/// multiples of 1MB. Sizes over 16MB are standalone mmaps.
-class LargeFreeList {
-  static constexpr int32_t kGranularity = 256;
+  /// Free list of mmaps (ContiguousAllocation). These are counted as
+  /// mapped but not counted as allocated. Sizes are quantized to
+  /// multiples of 1MB. Sizes over 16MB are standalone mmaps.
+  class LargeFreeList {
+    static constexpr int32_t kGranularity = 256;
   static constexpr int32_t kMaxSize = 256 * 16;
 
   bool addEntry(ContiguousAllocation* allocation);
 
-  bool get(int32_t numPages, ContiguousAllocation& allocation);
+  bool get(int32_t numPages, void*& data);
 
-  MachinePageCount adviseAway(
-      MachinePageCount target,
-      MmapAllocator& allocator);
+    MachinePageCount adviseAway(MachinePageCount target, MmapAllocator& allocator);
 
-  MachinePageCount roundUpSize(MachinePageCount numPages) {
-    return bits::roundUp(numPages, kGranularity);
-  }
+    MachinePageCount roundUpSize(MachinePageCount numPages) {
+      return bits::roundUp(numPages, kGranularity);
+    }
 
-  int32_t freeListNumPages(int32_t freeListIndex);
+    int32_t freeListNumPages(int32_t freeListIndex);
+    
+private:
+    static constexpr int32_t kNumFreeLists = kMaxPages / kGranularity;
+    
+    static int32_t freeListIndex(MachinePageCount numPages);
 
- private:
-  static constexpr int32_t kNumFreeLists = kMaxPages / kGranularity;
-
-  static int32_t freeListIndex(MachinePageCount numPages);
-
-  static int32_t freeListNumPages(int32_t freeListIndex);
-  std::mutex mutex_;
-
+    static int32_t freeListNumPages(int32_t freeListIndex);
+    std::mutex mutex_;
+    
   int32_t numEntries{0};
   int32_t totalPages{0};
-  std::array<std::vector<ContiguousAllocation>, kNumFreeLists> freeLists_;
-};
-
+    std::array<std::vector<ContiguousAllocation>, kNumFreeLists> freeLists_;
+  };
+  
 /// Implementation of MemoryAllocator with mmap and madvise. Each size class is
 /// mmapped for the whole capacity. Each size class has a bitmap of allocated
 /// entries and entries that are backed by memory. If a size class does not have
@@ -404,10 +402,10 @@ class MmapAllocator : public MemoryAllocator {
   // advises them away. Returns the number of pages advised away.
   MachinePageCount adviseAway(MachinePageCount target);
 
-  /// Unmaps or returns 'allocation' to 'managedArenas_'. Does not update
-  /// cocounters.
-  void unmap(ContiguousAllocation&& allocation);
+  /// Unmaps or returns 'allocation' to 'managedArenas_'. Does not update cocounters.
+  void unmap(ContiguousAllocation&& allocation);  
 
+  
   bool useMalloc(uint64_t bytes);
 
   const Kind kind_;
@@ -459,10 +457,9 @@ class MmapAllocator : public MemoryAllocator {
   std::mutex arenaMutex_;
   std::unique_ptr<ManagedMmapArenas> managedArenas_;
 
-  // Short term cache of ContiguousAllocations. The allocations are counted as
-  // mapped.
+  // Short term cache of ContiguousAllocations. The allocations are counted as mapped.
   LargeFreeList largeFreeList_;
-
+  
   std::shared_ptr<Cache> cache_;
 
   friend class LargeFreeList;
