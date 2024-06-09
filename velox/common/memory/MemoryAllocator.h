@@ -138,7 +138,7 @@ struct Stats {
   /// Cumulative count of pages advised away, if the allocator exposes this.
   int64_t numAdvise{0};
 
-  ///Cumulative count of calls to mmap().
+  /// Cumulative count of calls to mmap().
   std::atomic<int64_t> numMap{0};
 
   /// Cumulative count of pages allocated with mmap().

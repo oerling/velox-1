@@ -25,8 +25,8 @@ uint64_t MmapArena::roundBytes(uint64_t bytes) {
   return bits::nextPowerOfTwo(bytes);
 }
 
-  MmapArena::MmapArena(size_t capacityBytes) : byteSize_(capacityBytes, Stats* stats)
-					       : stats_(stats) {
+MmapArena::MmapArena(size_t capacityBytes)
+    : byteSize_(capacityBytes, Stats * stats) : stats_(stats) {
   VELOX_CHECK_EQ(
       byteSize_ % kMinGrainSizeBytes,
       0,
@@ -280,9 +280,8 @@ std::string MmapArena::toString() const {
       freeList_.size());
 }
 
-  ManagedMmapArenas::ManagedMmapArenas(uint64_t singleArenaCapacity, Stats* stats)
-    : singleArenaCapacity_(singleArenaCapacity),
-      stats_(stats) {
+ManagedMmapArenas::ManagedMmapArenas(uint64_t singleArenaCapacity, Stats* stats)
+    : singleArenaCapacity_(singleArenaCapacity), stats_(stats) {
   auto arena = std::make_shared<MmapArena>(singleArenaCapacity);
   arenas_.emplace(reinterpret_cast<uintptr_t>(arena->address()), arena);
   currentArena_ = arena;
