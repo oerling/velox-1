@@ -204,6 +204,82 @@ MachinePageCount MmapAllocator::freeNonContiguousInternal(
   return numFreed;
 }
 
+bool LargeFreeList::add(ContiguousAllocation& allocation) {
+  int32_t numPages = allocation.size();
+  if (AllocationTraits::numPages(allocation.size()) > kMaxPages) {
+    return false;
+  }
+  auto index = freeListIndex(numPages);
+  std::lock_guard<std::mutex> l(mutex_);
+  ++numEntries;
+  numPages_ += numPages;
+  lists_[index].push_back(std::move(allocation));
+  return true;
+}
+
+bool LargeFreeList::get(MachinePageCount numPages, void*& data) {
+  auto firstFreeList = freeListIndex(numPages);
+  std::lock_guard<std::mutex> l(mutex_);
+  ContiguousAllocation allocation;
+  for (auto i = firstFreeList; i < kNumFreeLists; ++i) {
+    if (!freeList_[i].empty()) {
+      numPages_ -= numPages;
+      allocation = std::move(freeLists_[i].back());
+      freeLists_[i].pop_back();
+      data = allocation.data<void>();
+      if (i == firstIndex) {
+        --numEntries_;
+        allocation.clear();
+        return;
+      }
+      // We return the head of the allocation and put the tail in the free list
+      // corresponding to the left over size.
+      auto pagesInEntry = freeListNumPages(i);
+      VELOX_CHECK(pagesInEntry, AllocationTraits::numPages(allocation.size()));
+      auto pagesLeft = pagesInEntry - numPages;
+      ContiguousAllocation tail;
+      tail.set(
+          allocation.data<uint8_t>() + AllocationTraits::pageBytes(numPages),
+          AllocationTraits::pageBytes(pagesInEntry - numPages));
+      freeLists_[newList].push_back(std::move(tail));
+      allocation.clear();
+    }
+  }
+}
+
+MachinePageCount::LargeFreeList::adviseAway(
+    MachinePageCount target,
+    MmapAllocator& allocator) {
+  MachinePageCount numAway = 0;
+  std::lock_guard<std::mutex> l(mutex_);
+  for (auto i = 0; i < kNumFreeLists) {
+    while (!freelists_[i].empty()) {
+      auto& last = freeLists_[i].back();
+      numAway += AllocationTraits::numPages(last.size());
+      allocator.unmap(last);
+      last.clear();
+      freeLists_[i].pop_back();
+      if (numAway >= target) {
+        return;
+      }
+    }
+  }
+  return numAway;
+}
+
+int32_t LargeFreeList::freeListIndex(MachinePageCount numPages);
+VELOX_DCHECK_EQ(
+    0,
+    numPages&(kGranularity - 1),
+    "Size must be a multiple of granularity");
+VELOX_CHECK(numPages > kGranularity && numPages <= kMaxPages);
+return (numPages / kGranularity) - 1;
+}
+int32_t LargeFreeList::freeListNumPages(int32_t index) {
+  VELOX_CHECK_LT(index, kNumFreeLists);
+  return (index + 1) * kGranularity;
+}
+
 bool MmapAllocator::allocateContiguousWithoutRetry(
     MachinePageCount numPages,
     Allocation* collateral,
@@ -248,16 +324,7 @@ bool MmapAllocator::allocateContiguousImpl(
   const auto numLargeCollateralPages = allocation.numPages();
   if (numLargeCollateralPages > 0) {
     useHugePages(allocation, false);
-    if (useMmapArena_) {
-      std::lock_guard<std::mutex> l(arenaMutex_);
-      managedArenas_->free(allocation.data(), allocation.maxSize());
-    } else {
-      if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
-        VELOX_MEM_LOG(ERROR) << "munmap got " << folly::errnoStr(errno)
-                             << " for " << allocation.toString();
-      }
-    }
-    allocation.clear();
+    largeFreeList_.add(std::move(allocation));
   }
   const auto totalCollateralPages =
       numCollateralPages + numLargeCollateralPages;
@@ -325,7 +392,9 @@ bool MmapAllocator::allocateContiguousImpl(
   if (testingHasInjectedFailure(InjectedFailure::kMmap)) {
     data = nullptr;
   } else {
-    if (useMmapArena_) {
+    if (largeFreeList_.get(maxPages, allocation)) {
+      ;
+    } else if (useMmapArena_) {
       std::lock_guard<std::mutex> l(arenaMutex_);
       data = managedArenas_->allocate(AllocationTraits::pageBytes(maxPages));
     } else {
@@ -336,6 +405,8 @@ bool MmapAllocator::allocateContiguousImpl(
           MAP_PRIVATE | MAP_ANONYMOUS,
           -1,
           0);
+      ++stats_.numMap;
+      stats_.numMapPages += maxPages;
     }
   }
   if (data == nullptr || data == MAP_FAILED) {
@@ -360,6 +431,18 @@ bool MmapAllocator::allocateContiguousImpl(
   return true;
 }
 
+void MmapAllocator::unmap(ContiguousAllocation& allocation) {
+  if (useMmapArena_) {
+    std::lock_guard<std::mutex> l(arenaMutex_);
+    managedArenas_->free(allocation.data(), allocation.maxSize());
+  } else {
+    if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
+      VELOX_MEM_LOG(ERROR) << "munmap got " << folly::errnoStr(errno) << " for "
+                           << allocation.toString();
+    }
+  }
+}
+
 void MmapAllocator::freeContiguous(ContiguousAllocation& allocation) {
   stats_.recordFree(
       allocation.size(), [&]() { freeContiguousImpl(allocation); });
@@ -370,15 +453,7 @@ void MmapAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
     return;
   }
   useHugePages(allocation, false);
-  if (useMmapArena_) {
-    std::lock_guard<std::mutex> l(arenaMutex_);
-    managedArenas_->free(allocation.data(), allocation.maxSize());
-  } else {
-    if (::munmap(allocation.data(), allocation.maxSize()) < 0) {
-      VELOX_MEM_LOG(ERROR) << "munmap returned " << folly::errnoStr(errno)
-                           << " for " << allocation.toString();
-    }
-  }
+  unmap(allocation);
   numMapped_ -= allocation.numPages();
   numExternalMapped_ -= allocation.numPages();
   numAllocated_ -= allocation.numPages();
@@ -497,7 +572,11 @@ void MmapAllocator::markAllMapped(const Allocation& allocation) {
 }
 
 MachinePageCount MmapAllocator::adviseAway(MachinePageCount target) {
-  MachinePageCount numAway = 0;
+  MachinePageCount numAway = largeFreeList_.adviseAway(target, *this);
+  if (numAway >= target) {
+    numAdvisedPages_ += numAway;
+    return;
+  }
   for (int32_t i = sizeClasses_.size() - 1; i >= 0; --i) {
     numAway += sizeClasses_[i]->adviseAway(target - numAway);
     if (numAway >= target) {

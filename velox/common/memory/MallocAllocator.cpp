@@ -178,6 +178,8 @@ bool MallocAllocator::allocateContiguousImpl(
       MAP_PRIVATE | MAP_ANONYMOUS,
       -1,
       0);
+  ++stats_.numMap;
+  stats_.numMapPages += maxPages;
   // TODO: add handling of MAP_FAILED.
   allocation.set(
       data,

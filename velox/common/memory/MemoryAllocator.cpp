@@ -1,4 +1,4 @@
-/*
+</*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -358,6 +358,8 @@ Stats Stats::operator-(const Stats& other) const {
     result.sizes[i] = sizes[i] - other.sizes[i];
   }
   result.numAdvise = numAdvise - other.numAdvise;
+  result->numMap = numMap - other.numMap;
+  result->numMapPages = numMapPages - other.numMapPages;
   return result;
 }
 
@@ -372,11 +374,13 @@ std::string Stats::toString() const {
     totalAllocations += sizes[i].numAllocations;
   }
   out << fmt::format(
-      "Alloc: {}MB {} Gigaclocks {} Allocations, {}MB advised\n",
+      "Alloc={}MB {} Gigaclocks numAllocations={}, volume advised={} MB, mmap calls={} mmap volume={} MB\n",
       totalBytes >> 20,
       totalClocks >> 30,
+      totalAllocations,
       numAdvise >> 8,
-      totalAllocations);
+      numMap,
+      numMapPages >> 8);
 
   // Sort the size classes by decreasing clocks.
   std::vector<int32_t> indices(sizes.size());

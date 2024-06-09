@@ -29,6 +29,8 @@
 DEFINE_int64(volume_gb, 2048, "Total GB to allocate during test");
 DEFINE_int64(size_cap_gb, 24, "Size cap: total GB resident at one time");
 DEFINE_bool(use_mmap, true, "Use mmap and madvise to manage fragmentation");
+DEFINE_bool(use_mmap_arena, true,
+	    "Use arena with free list pieces larger than size classes");
 
 using namespace facebook::velox;
 using namespace facebook::velox::memory;
@@ -150,6 +152,7 @@ class FragmentationTest {
   void initMemory(size_t sizeCap) {
     MmapAllocator::Options options;
     options.capacity = sizeCap + (64 << 20);
+    options.useMmapArena = FLAGS_mmap_arena;
     memory_ = std::make_shared<MmapAllocator>(options);
   }
 

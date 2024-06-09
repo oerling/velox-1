@@ -36,7 +36,7 @@ class MmapArena {
   /// MmapArena capacity should be multiple of kMinGrainSizeBytes.
   static constexpr uint64_t kMinGrainSizeBytes = 1024 * 1024; // 1M
 
-  explicit MmapArena(size_t capacityBytes);
+  explicit MmapArena(size_t capacityBytes, Stats* stats);
   ~MmapArena();
 
   void* allocate(uint64_t bytes);
@@ -117,6 +117,7 @@ class MmapArena {
   // A sorted look-up structure that stores the block size as key and a set of
   // addresses of that size as value.
   std::map<uint64_t, std::unordered_set<uintptr_t>> freeLookup_;
+  Stats* const stats_;
 };
 
 /// A class that manages a set of MmapArenas. It is able to adapt itself by
@@ -124,7 +125,7 @@ class MmapArena {
 /// fragmentation happens.
 class ManagedMmapArenas {
  public:
-  explicit ManagedMmapArenas(uint64_t singleArenaCapacity);
+  explicit ManagedMmapArenas(uint64_t singleArenaCapacity, Stats* stats);
 
   void* allocate(uint64_t bytes);
 
@@ -144,6 +145,8 @@ class ManagedMmapArenas {
   // All allocations should come from this MmapArena. When it is no longer able
   // to handle allocations it will be updated to a newly created MmapArena.
   std::shared_ptr<MmapArena> currentArena_;
+
+  Stats* const stats_;
 };
 
 } // namespace facebook::velox::memory
