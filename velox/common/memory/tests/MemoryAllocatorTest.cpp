@@ -853,13 +853,13 @@ TEST_P(MemoryAllocatorTest, largeFreeList) {
   instance->freeBytes(all, allBytes);
   // Check the free list was cleared.
   {
-    auto[numPages, numEntries] = instance->testingFreeListPagesAndCount();
+    auto [numPages, numEntries] = instance->testingFreeListPagesAndCount();
     EXPECT_EQ(0, numPages);
-  EXPECT_EQ(0, numEntries);
+    EXPECT_EQ(0, numEntries);
   }
   EXPECT_TRUE(instance->checkConsistency());
 }
-  
+
 TEST_P(MemoryAllocatorTest, nonContiguousFailure) {
   struct {
     MachinePageCount numOldPages;
@@ -1711,7 +1711,7 @@ TEST_F(MmapArenaTest, basic) {
   // 1 KB upper bound
   const uint64_t kAllocUpperBound = 1l << 10;
   std::unique_ptr<MmapArena> arena =
-    std::make_unique<MmapArena>(kArenaCapacityBytes, &stats_);
+      std::make_unique<MmapArena>(kArenaCapacityBytes, &stats_);
   memset(arena->address(), 0x00, kArenaCapacityBytes);
 
   std::unordered_map<uint64_t, uint64_t> allocations;
@@ -1752,7 +1752,7 @@ TEST_F(MmapArenaTest, managedMmapArenas) {
   {
     // Test natural growing of ManagedMmapArena
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
+        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     EXPECT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes);
     EXPECT_EQ(managedArenas->arenas().size(), 1);
@@ -1768,7 +1768,7 @@ TEST_F(MmapArenaTest, managedMmapArenas) {
   {
     // Test growing of ManagedMmapArena due to fragmentation
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
+        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     const uint64_t kNumAllocs = 128;
     const uint64_t kAllocSize = kArenaCapacityBytes / kNumAllocs;
     std::vector<uint64_t> evenAllocAddresses;
@@ -1897,7 +1897,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFree) {
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
+        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     std::vector<Buffer> buffers;
     buffers.reserve(
         testData.allocSizes.size() + testData.postFreeAllocSizes.size());
@@ -1922,7 +1922,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFree) {
 TEST_F(MmapArenaTest, managedMmapArenasFreeError) {
   {
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
+        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     ASSERT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes / 2);
     void* alloc2 = managedArenas->allocate(kArenaCapacityBytes / 2);
@@ -1934,7 +1934,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFreeError) {
   }
   {
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
+        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     ASSERT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes);
     void* alloc2 = managedArenas->allocate(kArenaCapacityBytes);

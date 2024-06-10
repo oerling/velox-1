@@ -123,7 +123,7 @@ struct Stats {
   void increment(int64_t& counter, int64_t delta) {
     *reinterpret_cast<tsan_atomic<int64_t>*>(&counter) += delta;
   }
-  
+
   std::string toString() const;
 
   /// Returns the size class index for a given size. Here the accounting is in

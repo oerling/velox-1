@@ -40,7 +40,8 @@ MmapArena::MmapArena(size_t capacityBytes, Stats* stats)
       -1,
       0);
   stats_->increment(stats_->numMmap, 1);
-  stats_->increment(stats_->numMmapPages, AllocationTraits::numPages(capacityBytes));
+  stats_->increment(
+      stats_->numMmapPages, AllocationTraits::numPages(capacityBytes));
   if (ptr == MAP_FAILED || ptr == nullptr) {
     VELOX_FAIL(
         "Could not allocate working memory"

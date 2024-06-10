@@ -224,16 +224,16 @@ bool MmapAllocator::LargeFreeList::get(MachinePageCount numPages, void*& data) {
   auto firstFreeList = freeListIndex(numPages);
 #if 1
   if (!freeLists_[firstFreeList].empty()) {
-      numPages_ -= numPages;
-      allocation = std::move(freeLists_[firstFreeList].back());
-      freeLists_[firstFreeList].pop_back();
-      data = allocation.data<void>();
-      --numEntries_;
-      allocation.clear();
-      return true;
+    numPages_ -= numPages;
+    allocation = std::move(freeLists_[firstFreeList].back());
+    freeLists_[firstFreeList].pop_back();
+    data = allocation.data<void>();
+    --numEntries_;
+    allocation.clear();
+    return true;
   }
   return false;
-   #else   
+#else
   for (auto i = firstFreeList; i < kNumFreeLists; ++i) {
     if (!freeLists_[i].empty()) {
       numPages_ -= numPages;
