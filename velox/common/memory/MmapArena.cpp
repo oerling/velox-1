@@ -25,8 +25,8 @@ uint64_t MmapArena::roundBytes(uint64_t bytes) {
   return bits::nextPowerOfTwo(bytes);
 }
 
-MmapArena::MmapArena(size_t capacityBytes)
-    : byteSize_(capacityBytes, Stats * stats) : stats_(stats) {
+MmapArena::MmapArena(size_t capacityBytes, Stats* stats)
+    : byteSize_(capacityBytes), stats_(stats) {
   VELOX_CHECK_EQ(
       byteSize_ % kMinGrainSizeBytes,
       0,
@@ -39,8 +39,8 @@ MmapArena::MmapArena(size_t capacityBytes)
       MAP_PRIVATE | MAP_ANONYMOUS,
       -1,
       0);
-  ++stats_->numMap;
-  stats_->numMapPages += AllocationTraits::numPages(bytes);
+  stats_->increment(stats_->numMmap, 1);
+  stats_->increment(stats_->numMmapPages, AllocationTraits::numPages(capacityBytes));
   if (ptr == MAP_FAILED || ptr == nullptr) {
     VELOX_FAIL(
         "Could not allocate working memory"
@@ -282,7 +282,7 @@ std::string MmapArena::toString() const {
 
 ManagedMmapArenas::ManagedMmapArenas(uint64_t singleArenaCapacity, Stats* stats)
     : singleArenaCapacity_(singleArenaCapacity), stats_(stats) {
-  auto arena = std::make_shared<MmapArena>(singleArenaCapacity);
+  auto arena = std::make_shared<MmapArena>(singleArenaCapacity, stats);
   arenas_.emplace(reinterpret_cast<uintptr_t>(arena->address()), arena);
   currentArena_ = arena;
 }
@@ -296,7 +296,7 @@ void* ManagedMmapArenas::allocate(uint64_t bytes) {
   // If first allocation fails we create a new MmapArena for another attempt. If
   // it ever fails again then it means requested bytes is larger than a single
   // MmapArena's capacity. No further attempts will happen.
-  auto newArena = std::make_shared<MmapArena>(singleArenaCapacity_);
+  auto newArena = std::make_shared<MmapArena>(singleArenaCapacity_, stats_);
   arenas_.emplace(reinterpret_cast<uintptr_t>(newArena->address()), newArena);
   currentArena_ = newArena;
   return currentArena_->allocate(bytes);

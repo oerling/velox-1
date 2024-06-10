@@ -27,6 +27,7 @@
 #include <gflags/gflags.h>
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/base/Portability.h"
 #include "velox/common/memory/Allocation.h"
 #include "velox/common/time/Timer.h"
 
@@ -119,6 +120,10 @@ struct Stats {
     }
   }
 
+  void increment(int64_t& counter, int64_t delta) {
+    *reinterpret_cast<tsan_atomic<int64_t>*>(&counter) += delta;
+  }
+  
   std::string toString() const;
 
   /// Returns the size class index for a given size. Here the accounting is in
@@ -139,10 +144,10 @@ struct Stats {
   int64_t numAdvise{0};
 
   /// Cumulative count of calls to mmap().
-  std::atomic<int64_t> numMap{0};
+  int64_t numMmap{0};
 
   /// Cumulative count of pages allocated with mmap().
-  std::atomic<MachinePageCount> numMapPages{0};
+  int64_t numMmapPages{0};
 };
 
 class MemoryAllocator;

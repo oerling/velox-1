@@ -37,42 +37,6 @@ namespace facebook::velox::memory {
 /// of a size class dependent number of consecutive machine pages.
 using ClassPageCount = int32_t;
 
-class MmapAllocator;
-
-/// Free list of mmaps (ContiguousAllocation). These are counted as
-/// mapped but not counted as allocated. Sizes are quantized to
-/// multiples of 1MB. Sizes over 16MB are standalone mmaps.
-class LargeFreeList {
-  static constexpr int32_t kGranularity = 256;
-  static constexpr int32_t kMaxSize = 256 * 16;
-
-  bool addEntry(ContiguousAllocation* allocation);
-
-  bool get(int32_t numPages, void*& data);
-
-  MachinePageCount adviseAway(
-      MachinePageCount target,
-      MmapAllocator& allocator);
-
-  MachinePageCount roundUpSize(MachinePageCount numPages) {
-    return bits::roundUp(numPages, kGranularity);
-  }
-
-  int32_t freeListNumPages(int32_t freeListIndex);
-
- private:
-  static constexpr int32_t kNumFreeLists = kMaxPages / kGranularity;
-
-  static int32_t freeListIndex(MachinePageCount numPages);
-
-  static int32_t freeListNumPages(int32_t freeListIndex);
-  std::mutex mutex_;
-
-  int32_t numEntries{0};
-  int32_t totalPages{0};
-  std::array<std::vector<ContiguousAllocation>, kNumFreeLists> freeLists_;
-};
-
 /// Implementation of MemoryAllocator with mmap and madvise. Each size class is
 /// mmapped for the whole capacity. Each size class has a bitmap of allocated
 /// entries and entries that are backed by memory. If a size class does not have
@@ -194,6 +158,10 @@ class MmapAllocator : public MemoryAllocator {
   }
 
   std::string toString() const override;
+
+  std::pair<int64_t, int64_t> testingFreeListPagesAndCount() {
+    return {largeFreeList_.numPages(), largeFreeList_.numEntries()};
+  }
 
  private:
   static constexpr uint64_t kAllSet = 0xffffffffffffffff;
@@ -352,6 +320,98 @@ class MmapAllocator : public MemoryAllocator {
     uint64_t numAdvisedAway_ = 0;
   };
 
+  /// Free list of mmaps (ContiguousAllocation). These are counted as
+  /// mapped but not counted as allocated. Sizes are quantized to
+  /// multiples of 1MB. Sizes over 16MB are standalone mmaps.
+  class LargeFreeList {
+   public:
+    static constexpr int32_t kGranularity = 256;
+    static constexpr int32_t kMaxPages = 256 * 16;
+
+    /// Takes ownership f 'allocation' and may return its memory or parts
+    /// thereof via get().
+    void add(ContiguousAllocation&& allocation);
+
+    /// Allocates a contiguous run of 'numPages' from entries added to 'this'
+    /// with add(). On success, returns true and sets data to the start of the
+    /// first page of the run. If there is no memory to return, returns false
+    /// and does not modify 'data'.
+    bool get(MachinePageCount numPages, void*& data);
+
+    /// Reduces RSS by at least 'target' pages. Returns how many pages
+    /// were either unmapped or advised away. Uses MmapArena of
+    /// 'allocator' if this is enabled.
+    MachinePageCount adviseAway(
+        MachinePageCount target,
+        MmapAllocator& allocator);
+
+    /// Rounds 'numPages' to a stock size suitable for use with LargeFreeList.
+    MachinePageCount roundUpSize(MachinePageCount numPages) {
+      return bits::roundUp(numPages, kGranularity);
+    }
+
+    /// Returns a rounded size for use with get() if 'numPages' and
+    /// 'maxPages' given to allocateContiguous() are in range of the
+    /// free list. 'maxPages' and 'numPages' should be equal. Partly
+    /// counted mmaps are not suitable because free list entries are
+    /// counted as mapped.
+    static std::optional<int32_t> getNumPagesToTry(
+        int32_t numPages,
+        int32_t maxPages) {
+      if (numPages != maxPages || numPages <= kGranularity ||
+          numPages > kMaxPages) {
+        return std::nullopt;
+      }
+      return bits::roundUp(numPages, kGranularity);
+    }
+
+    /// If the size is in range, rounds it so that it is a freeable size,
+    /// otherwise returns 'size' as is.
+    static int64_t roundBytesIfInRange(int64_t bytes) {
+      if (bytes <= AllocationTraits::pageBytes(kGranularity) ||
+          bytes > AllocationTraits::pageBytes(kMaxPages)) {
+        return bytes;
+      }
+      return bits::roundUp(bytes, AllocationTraits::pageBytes(kGranularity));
+    }
+
+    /// Returns true if 'allocation' is all counted as mapped and has compatible
+    /// size.
+    static bool isFreeable(const ContiguousAllocation& allocation) {
+      return allocation.size() == allocation.maxSize() &&
+          sizeInRange(allocation.size());
+    }
+
+    int64_t numPages() const {
+      return numPages_;
+    }
+    int64_t numEntries() const {
+      return numEntries_;
+    }
+
+    std::string toString() const;
+
+   private:
+    static constexpr int32_t kNumFreeLists = kMaxPages / kGranularity;
+
+    static int32_t freeListIndex(MachinePageCount numPages);
+
+    static int32_t freeListNumPages(int32_t freeListIndex);
+
+    /// True if 'numPages' is in range and a multiple of kGranularity'.
+    static bool sizeInRange(int64_t bytes) {
+      auto numPages = AllocationTraits::numPages(bytes);
+      return numPages > kGranularity && numPages <= kMaxPages &&
+          0 == (numPages & (kGranularity - 1));
+    }
+
+    std::mutex mutex_;
+
+    int32_t numEntries_{0};
+    int32_t numPages_{0};
+    std::array<std::vector<ContiguousAllocation>, kNumFreeLists> freeLists_;
+  };
+
   bool allocateNonContiguousWithoutRetry(
       const SizeMix& sizeMix,
       Allocation& out) override;
@@ -464,8 +524,6 @@ class MmapAllocator : public MemoryAllocator {
   LargeFreeList largeFreeList_;
 
   std::shared_ptr<Cache> cache_;
-
-  friend class LargeFreeList;
 };
 
 } // namespace facebook::velox::memory

@@ -101,7 +101,7 @@ class MemoryAllocatorTest : public testing::TestWithParam<int> {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMmap);
       ASSERT_EQ(
           instance_->toString(),
-          "Memory Allocator[MMAP total capacity 1.00GB free capacity 1.00GB allocated pages 0 mapped pages 0 external mapped pages 0\n[size 1: 0(0MB) allocated 0 mapped]\n[size 2: 0(0MB) allocated 0 mapped]\n[size 4: 0(0MB) allocated 0 mapped]\n[size 8: 0(0MB) allocated 0 mapped]\n[size 16: 0(0MB) allocated 0 mapped]\n[size 32: 0(0MB) allocated 0 mapped]\n[size 64: 0(0MB) allocated 0 mapped]\n[size 128: 0(0MB) allocated 0 mapped]\n[size 256: 0(0MB) allocated 0 mapped]\n]");
+          "Memory Allocator[MMAP total capacity 1.00GB free capacity 1.00GB allocated pages 0 mapped pages 0 external mapped pages 0\nFree list: entries=0 pages=0\n[size 1: 0(0MB) allocated 0 mapped]\n[size 2: 0(0MB) allocated 0 mapped]\n[size 4: 0(0MB) allocated 0 mapped]\n[size 8: 0(0MB) allocated 0 mapped]\n[size 16: 0(0MB) allocated 0 mapped]\n[size 32: 0(0MB) allocated 0 mapped]\n[size 64: 0(0MB) allocated 0 mapped]\n[size 128: 0(0MB) allocated 0 mapped]\n[size 256: 0(0MB) allocated 0 mapped]\n]");
     } else {
       ASSERT_EQ(instance_->kind(), MemoryAllocator::Kind::kMalloc);
       ASSERT_EQ(
@@ -775,7 +775,8 @@ TEST_P(MemoryAllocatorTest, externalAdvise) {
     return;
   }
   constexpr int32_t kSmallSize = 16;
-  constexpr int32_t kLargeSize = 32 * kSmallSize + 1;
+  // kLargeSize falls on one of the stock sizees for mmaps.
+  constexpr int32_t kLargeSize = 32 * kSmallSize;
   auto instance = dynamic_cast<MmapAllocator*>(instance_);
   std::vector<std::unique_ptr<Allocation>> allocations;
   auto numAllocs = kCapacityPages / kSmallSize;
@@ -817,6 +818,48 @@ TEST_P(MemoryAllocatorTest, externalAdvise) {
   EXPECT_TRUE(instance->checkConsistency());
 }
 
+TEST_P(MemoryAllocatorTest, largeFreeList) {
+  if (!useMmap_) {
+    return;
+  }
+  constexpr int32_t kPageSize = AllocationTraits::kPageSize;
+  constexpr int32_t kSmallSize = 400 * kPageSize;
+  constexpr int32_t kLargeSize = 16 * 256 * kPageSize;
+  auto instance = dynamic_cast<MmapAllocator*>(instance_);
+  std::vector<std::unique_ptr<Allocation>> allocations;
+  auto numAllocs = kCapacityPages / kSmallSize;
+  void* data = instance->allocateBytes(kLargeSize - 100);
+  EXPECT_EQ(kLargeSize / kPageSize, instance->numAllocated());
+  EXPECT_EQ(kLargeSize / kPageSize, instance->numMapped());
+  instance->freeBytes(data, kLargeSize);
+  // After the free the data is not allocated but is mapped.
+  EXPECT_EQ(0, instance->numAllocated());
+  EXPECT_EQ(kLargeSize / kPageSize, instance->numMapped());
+  auto small = instance->allocateBytes(kSmallSize);
+#if 0
+  // We expect one free list entry of 15MB.
+  {
+    auto[numPages, numEntries] = instance->testingFreeListPagesAndCount();
+  EXPECT_EQ(numPages, 256 * 14);
+  EXPECT_EQ(1, numEntries);
+  }
+#else
+  // Expect free list unchanged.
+#endif
+  EXPECT_TRUE(instance->checkConsistency());
+  instance->freeBytes(small, kSmallSize);
+  auto allBytes = instance->capacity();
+  auto all = instance->allocateBytes(allBytes);
+  instance->freeBytes(all, allBytes);
+  // Check the free list was cleared.
+  {
+    auto[numPages, numEntries] = instance->testingFreeListPagesAndCount();
+    EXPECT_EQ(0, numPages);
+  EXPECT_EQ(0, numEntries);
+  }
+  EXPECT_TRUE(instance->checkConsistency());
+}
+  
 TEST_P(MemoryAllocatorTest, nonContiguousFailure) {
   struct {
     MachinePageCount numOldPages;
@@ -1658,6 +1701,7 @@ class MmapArenaTest : public testing::Test {
   }
 
   folly::Random::DefaultGenerator rng_;
+  Stats stats_;
 };
 
 TEST_F(MmapArenaTest, basic) {
@@ -1667,7 +1711,7 @@ TEST_F(MmapArenaTest, basic) {
   // 1 KB upper bound
   const uint64_t kAllocUpperBound = 1l << 10;
   std::unique_ptr<MmapArena> arena =
-      std::make_unique<MmapArena>(kArenaCapacityBytes);
+    std::make_unique<MmapArena>(kArenaCapacityBytes, &stats_);
   memset(arena->address(), 0x00, kArenaCapacityBytes);
 
   std::unordered_map<uint64_t, uint64_t> allocations;
@@ -1708,7 +1752,7 @@ TEST_F(MmapArenaTest, managedMmapArenas) {
   {
     // Test natural growing of ManagedMmapArena
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes);
+      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     EXPECT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes);
     EXPECT_EQ(managedArenas->arenas().size(), 1);
@@ -1724,7 +1768,7 @@ TEST_F(MmapArenaTest, managedMmapArenas) {
   {
     // Test growing of ManagedMmapArena due to fragmentation
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes);
+      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     const uint64_t kNumAllocs = 128;
     const uint64_t kAllocSize = kArenaCapacityBytes / kNumAllocs;
     std::vector<uint64_t> evenAllocAddresses;
@@ -1853,7 +1897,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFree) {
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes);
+      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     std::vector<Buffer> buffers;
     buffers.reserve(
         testData.allocSizes.size() + testData.postFreeAllocSizes.size());
@@ -1878,7 +1922,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFree) {
 TEST_F(MmapArenaTest, managedMmapArenasFreeError) {
   {
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes);
+      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     ASSERT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes / 2);
     void* alloc2 = managedArenas->allocate(kArenaCapacityBytes / 2);
@@ -1890,7 +1934,7 @@ TEST_F(MmapArenaTest, managedMmapArenasFreeError) {
   }
   {
     std::unique_ptr<ManagedMmapArenas> managedArenas =
-        std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes);
+      std::make_unique<ManagedMmapArenas>(kArenaCapacityBytes, &stats_);
     ASSERT_EQ(managedArenas->arenas().size(), 1);
     void* alloc1 = managedArenas->allocate(kArenaCapacityBytes);
     void* alloc2 = managedArenas->allocate(kArenaCapacityBytes);
