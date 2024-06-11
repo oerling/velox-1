@@ -89,10 +89,6 @@ TEST_F(ComparisonsTest, betweenVarchar) {
 }
 
 TEST_F(ComparisonsTest, betweenDate) {
-  auto parseDate = [](const std::string& dateStr) {
-    return DATE()->toDays(dateStr);
-  };
-
   std::vector<std::tuple<int32_t, bool>> testData = {
       {parseDate("2019-05-01"), false},
       {parseDate("2019-06-01"), true},
@@ -115,15 +111,10 @@ TEST_F(ComparisonsTest, betweenTimestamp) {
     auto expr =
         "c0 between cast(\'2019-02-28 10:00:00.500\' as timestamp) and"
         " cast(\'2019-02-28 10:00:00.600\' as timestamp)";
-    if (s.has_value()) {
-      const auto ts =
-          util::fromTimestampString((StringView)s.value())
-              .thenOrThrow(folly::identity, [&](const Status& status) {
-                VELOX_USER_FAIL("{}", status.message());
-              });
-      return evaluateOnce<bool>(expr, std::optional(ts));
+    if (!s.has_value()) {
+      return evaluateOnce<bool>(expr, std::optional<Timestamp>());
     }
-    return evaluateOnce<bool>(expr, std::optional<Timestamp>());
+    return evaluateOnce<bool>(expr, std::optional{parseTimestamp(s.value())});
   };
 
   EXPECT_EQ(std::nullopt, between(std::nullopt));
