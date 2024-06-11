@@ -50,6 +50,10 @@ MmapAllocator::MmapAllocator(const Options& options)
 }
 
 MmapAllocator::~MmapAllocator() {
+  auto numPages = largeFreeList_.adviseAway(
+      std::numeric_limits<MachinePageCount>::max(), *this);
+  numExternalMapped_ -= numPages;
+  numMapped_ -= numPages;
   VELOX_CHECK(
       (numAllocated_ == 0) && (numExternalMapped_ == 0), "{}", toString());
 }
@@ -212,6 +216,7 @@ void MmapAllocator::LargeFreeList::add(ContiguousAllocation&& allocation) {
   std::lock_guard<std::mutex> l(mutex_);
   ++numEntries_;
   numPages_ += numPages;
+  allocation.clearPool();
   freeLists_[index].push_back(std::move(allocation));
 }
 
@@ -230,6 +235,7 @@ bool MmapAllocator::LargeFreeList::get(MachinePageCount numPages, void*& data) {
     data = allocation.data<void>();
     --numEntries_;
     allocation.clear();
+    ++numReused_;
     return true;
   }
   return false;
@@ -269,19 +275,28 @@ MachinePageCount MmapAllocator::LargeFreeList::adviseAway(
     MmapAllocator& allocator) {
   MachinePageCount numAway = 0;
   std::lock_guard<std::mutex> l(mutex_);
-  for (int32_t i = kNumFreeLists - 1; i >= 0; --i) {
-    while (!freeLists_[i].empty()) {
-      auto& last = freeLists_[i].back();
-      numAway += AllocationTraits::numPages(last.size());
-      --numEntries_;
-      numPages_ -= last.numPages();
-      allocator.unmap(std::move(last));
-      freeLists_[i].pop_back();
-      if (numAway >= target) {
-        return numAway;
+  ++adviseCounter_;
+  do {
+    for (auto nthList = 0; nthList < kNumFreeLists; ++nthList) {
+      // 'i' cycles through all free lists but starts at a different point each
+      // time. Avoid leaving stale items in any list.
+      int32_t i = (nthList + adviseCounter_) % kNumFreeLists;
+      // Remove equal amount from each free list. Repeat until enough freed.
+      int toGo = kNumFreeLists - i;
+      for (auto count = 0; count < toGo && !freeLists_[i].empty(); ++count) {
+        auto& last = freeLists_[i].back();
+        numAway += AllocationTraits::numPages(last.size());
+        --numEntries_;
+        numPages_ -= last.numPages();
+	++numDropped_;
+        allocator.unmap(std::move(last));
+        freeLists_[i].pop_back();
+        if (numAway >= target) {
+          return numAway;
+        }
       }
     }
-  }
+  } while (numEntries_ > 0);
   return numAway;
 }
 

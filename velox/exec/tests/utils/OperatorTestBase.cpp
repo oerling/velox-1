@@ -88,6 +88,7 @@ void OperatorTestBase::setupMemory(
     asyncDataCache_.reset();
   }
   MemoryManagerOptions options;
+  options.useMmapAllocator = true;
   options.allocatorCapacity = allocatorCapacity;
   options.arbitratorCapacity = arbitratorCapacity;
   options.arbitratorReservedCapacity = arbitratorReservedCapacity;

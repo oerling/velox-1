@@ -346,6 +346,13 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
     return sizeClassSizes_;
   }
 
+  /// Rounds bytes for large allocations to allocator-specific
+  /// sizes. Applied before reservation, so that reservation reflects
+  /// the native sizes.
+  virtual uint64_t roundUpBytes(uint64_t bytes) const {
+    return bytes;
+  }
+
   /// Returns the total number of used bytes by this allocator
   virtual size_t totalUsedBytes() const = 0;
 

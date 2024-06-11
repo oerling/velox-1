@@ -223,6 +223,9 @@ bool MemoryAllocator::allocateContiguous(
     ContiguousAllocation& allocation,
     ReservationCallback reservationCB,
     MachinePageCount maxPages) {
+  numPages = AllocationTraits::numPages(
+      roundUpBytes(AllocationTraits::pageBytes(numPages)));
+  maxPages = AllocationTraits::numPages(roundUpBytes(AllocationTraits::pageBytes(maxPages)));
   const MachinePageCount numCollateralPages =
       allocation.numPages() + (collateral ? collateral->numPages() : 0);
   const uint64_t totalCollateralBytes =
@@ -317,6 +320,7 @@ bool MemoryAllocator::growContiguous(
 }
 
 void* MemoryAllocator::allocateBytes(uint64_t bytes, uint16_t alignment) {
+  bytes = roundUpBytes(bytes);
   if (cache() == nullptr) {
     return allocateBytesWithoutRetry(bytes, alignment);
   }

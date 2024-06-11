@@ -157,6 +157,10 @@ class MmapAllocator : public MemoryAllocator {
     return stats;
   }
 
+  uint64_t roundUpBytes(uint64_t bytes) const override {
+    return LargeFreeList::roundBytesIfInRange(bytes);
+  }
+
   std::string toString() const override;
 
   std::pair<int64_t, int64_t> testingFreeListPagesAndCount() {
@@ -328,7 +332,7 @@ class MmapAllocator : public MemoryAllocator {
     static constexpr int32_t kGranularity = 256;
     static constexpr int32_t kMaxPages = 256 * 16;
 
-    /// Takes ownership f 'allocation' and may return its memory or parts
+    /// Takes ownership of 'allocation' and may return its memory or parts
     /// thereof via get().
     void add(ContiguousAllocation&& allocation);
 
@@ -405,10 +409,28 @@ class MmapAllocator : public MemoryAllocator {
           0 == (numPages & (kGranularity - 1));
     }
 
+    // Serializes access to all members.
     std::mutex mutex_;
 
+    // Count of items in all fre lists.
     int32_t numEntries_{0};
-    int32_t numPages_{0};
+
+    // Total pages in free lists.
+    int64_t numPages_{0};
+
+    // Count of items reused.*co
+    
+    int64_t numReused_{0};
+
+    // Count of items dropped to make space for other sizes.
+    int64_t numDropped_{0};
+
+    // Counter incremented at each adviseAway(). This gives the free list to
+    // start with.
+    uint32_t adviseCounter_{0};
+
+    // ContiguousAllocations awaiting reuse. 'pool_' is nullptr. These must be
+    // empty before destruction.
     std::array<std::vector<ContiguousAllocation>, kNumFreeLists> freeLists_;
   };
 

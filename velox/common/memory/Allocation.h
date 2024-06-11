@@ -249,6 +249,11 @@ class ContiguousAllocation {
     VELOX_CHECK_NULL(pool_);
     pool_ = pool;
   }
+
+  void clearPool() {
+    pool_ = nullptr;
+  }
+
   MemoryPool* pool() const {
     return pool_;
   }

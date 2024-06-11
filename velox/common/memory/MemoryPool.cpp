@@ -490,7 +490,7 @@ MemoryPool::Stats MemoryPoolImpl::statsLocked() const {
 
 void* MemoryPoolImpl::allocate(int64_t size) {
   CHECK_AND_INC_MEM_OP_STATS(Allocs);
-  const auto alignedSize = sizeAlign(size);
+  const auto alignedSize = allocator_->roundUpBytes(sizeAlign(size));
   reserve(alignedSize);
   void* buffer = allocator_->allocateBytes(alignedSize, alignment_);
   if (FOLLY_UNLIKELY(buffer == nullptr)) {
@@ -502,14 +502,14 @@ void* MemoryPoolImpl::allocate(int64_t size) {
         toString(),
         allocator_->getAndClearFailureMessage()));
   }
-  DEBUG_RECORD_ALLOC(buffer, size);
+  DEBUG_RECORD_ALLOC(buffer, alignedSize);
   return buffer;
 }
 
 void* MemoryPoolImpl::allocateZeroFilled(int64_t numEntries, int64_t sizeEach) {
   CHECK_AND_INC_MEM_OP_STATS(Allocs);
   const auto size = sizeEach * numEntries;
-  const auto alignedSize = sizeAlign(size);
+  const auto alignedSize = allocator_->roundUpBytes(sizeAlign(size));
   reserve(alignedSize);
   void* buffer = allocator_->allocateZeroFilled(alignedSize);
   if (FOLLY_UNLIKELY(buffer == nullptr)) {
@@ -522,13 +522,13 @@ void* MemoryPoolImpl::allocateZeroFilled(int64_t numEntries, int64_t sizeEach) {
         toString(),
         allocator_->getAndClearFailureMessage()));
   }
-  DEBUG_RECORD_ALLOC(buffer, size);
+  DEBUG_RECORD_ALLOC(buffer, alignedSize);
   return buffer;
 }
 
 void* MemoryPoolImpl::reallocate(void* p, int64_t size, int64_t newSize) {
   CHECK_AND_INC_MEM_OP_STATS(Allocs);
-  const auto alignedNewSize = sizeAlign(newSize);
+  const auto alignedNewSize = allocator_->roundUpBytes(sizeAlign(newSize));
   reserve(alignedNewSize);
 
   void* newP = allocator_->allocateBytes(alignedNewSize, alignment_);
@@ -542,7 +542,7 @@ void* MemoryPoolImpl::reallocate(void* p, int64_t size, int64_t newSize) {
         toString(),
         allocator_->getAndClearFailureMessage()));
   }
-  DEBUG_RECORD_ALLOC(newP, newSize);
+  DEBUG_RECORD_ALLOC(newP, alignedNewSize);
   if (p != nullptr) {
     ::memcpy(newP, p, std::min(size, newSize));
     free(p, size);
@@ -552,8 +552,8 @@ void* MemoryPoolImpl::reallocate(void* p, int64_t size, int64_t newSize) {
 
 void MemoryPoolImpl::free(void* p, int64_t size) {
   CHECK_AND_INC_MEM_OP_STATS(Frees);
-  const auto alignedSize = sizeAlign(size);
-  DEBUG_RECORD_FREE(p, size);
+  const auto alignedSize = allocator_->roundUpBytes(sizeAlign(size));
+  DEBUG_RECORD_FREE(p, alignedSize);
   allocator_->freeBytes(p, alignedSize);
   release(alignedSize);
 }
