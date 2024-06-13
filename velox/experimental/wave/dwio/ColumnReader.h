@@ -54,7 +54,7 @@ class ColumnReader {
   }
 
   bool hasNonNullFilter() const;
-  
+
   int32_t totalRows() const {
     return formatData_->totalRows();
   }

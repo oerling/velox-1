@@ -166,15 +166,15 @@ struct StringWithId {
   int32_t id;
 };
 
-  void printSums(uint64_t* bits, int32_t numBits) {
-    std::cout << "***Flags\n";
-    int32_t cnt = 0;
-    for (auto i = 0; i < bits::nwords(numBits) - 16; i += 16) {
-      cnt += bits::countBits(bits, i * 64, (i + 16) * 64);
-      std::cout << fmt::format("{}: {}\n", (i+16) * 64, cnt);
-    }
+void printSums(uint64_t* bits, int32_t numBits) {
+  std::cout << "***Flags\n";
+  int32_t cnt = 0;
+  for (auto i = 0; i < bits::nwords(numBits) - 16; i += 16) {
+    cnt += bits::countBits(bits, i * 64, (i + 16) * 64);
+    std::cout << fmt::format("{}: {}\n", (i + 16) * 64, cnt);
   }
-  
+}
+
 std::unique_ptr<Column>
 encodeBits(uint64_t* bits, int32_t numBits, memory::MemoryPool* pool) {
   auto column = std::make_unique<Column>();

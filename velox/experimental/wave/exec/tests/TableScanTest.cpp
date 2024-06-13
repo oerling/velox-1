@@ -225,7 +225,8 @@ TEST_F(TableScanTest, filterInScan) {
 
 TEST_F(TableScanTest, filterInScanNull) {
   auto type =
-    ROW({"c0", "c1", "c2", "c3", "rn"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT() });
+      ROW({"c0", "c1", "c2", "c3", "rn"},
+          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto vectors = makeVectors(type, 1, 20'000, 0.1);
   int32_t cnt = 0;
   for (auto& vector : vectors) {
@@ -238,11 +239,18 @@ TEST_F(TableScanTest, filterInScanNull) {
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
 
-  auto plan = PlanBuilder(pool_.get())
-                  .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
-    .project({"c0", "c1", "c1 + 100000000 as c1f", "c2 as c2p", "c3 as c3p", "rn"})
-    .project({"c0", "c1", "c1f", "c2p + 1", "c3p", "c3p + 2", "rn"})
-                  .planNode();
+  auto plan =
+      PlanBuilder(pool_.get())
+          .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
+          .project(
+              {"c0",
+               "c1",
+               "c1 + 100000000 as c1f",
+               "c2 as c2p",
+               "c3 as c3p",
+               "rn"})
+          .project({"c0", "c1", "c1f", "c2p + 1", "c3p", "c3p + 2", "rn"})
+          .planNode();
   auto task = assertQuery(
       plan,
       splits,
