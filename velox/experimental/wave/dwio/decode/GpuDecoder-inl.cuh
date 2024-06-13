@@ -568,6 +568,10 @@ __device__ void makeResult(
       }
     }
   } else {
+    if (!filterPass) {
+      // In the no filter case, filterPass is false for lanes that are after the last row.
+      return;
+    }
     auto resultIdx = base + threadIdx.x;
     reinterpret_cast<T*>(op->result)[resultIdx] = data;
     if (op->resultNulls) {
@@ -616,91 +620,90 @@ __device__ void decodeSelective(GpuDecode* op) {
     case NullMode::kDenseNullable: {
       int32_t maxRow = op->maxRow;
       int32_t dataIdx = 0;
-      auto* temp = op->temp;
+            auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-        temp[0] = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+	state->nonNullsBelow = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+	state->nonNullsBelowRow = op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
         int32_t base = op->baseRow + nthLoop * kBlockSize;
-        dataIdx = nonNullIndex256(
-            op->nulls,
-            base,
-            min(kBlockSize, maxRow - base),
-            &temp[0],
-            temp + 1);
-        bool filterPass = base + threadIdx.x < maxRow;
+	bool filterPass = false;
+	int32_t dataIdx;
         T data{};
-        if (dataIdx == -1) {
-          if (!op->nullsAllowed) {
-            filterPass = false;
-          }
-        } else {
-	    data = randomAccessDecode<T>(op, dataIdx);
-          filterPass =
-              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-        }
-        makeResult<T, kBlockSize>(
+	if (base < maxRow) {
+	  dataIdx = nonNullIndex256(
+				    op->nulls,
+				    base,
+            min(kBlockSize, maxRow - base),
+				    state);
+	  filterPass = base + threadIdx.x < maxRow;
+	  if (filterPass) {
+	    if (dataIdx == -1) {
+	      if (!op->nullsAllowed) {
+		filterPass = false;
+	      }
+	    } else {
+	      data = randomAccessDecode<T>(op, dataIdx);
+	      filterPass =
+		testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+	    }
+	  }
+	}
+	makeResult<T, kBlockSize>(
             op,
             data,
             base + threadIdx.x,
             filterPass,
             nthLoop,
             dataIdx == -1 ? kNull : kNotNull,
-            temp + 2);
+            state->temp);
       } while (++nthLoop < op->numRowsPerThread);
       break;
     }
-    case NullMode::kSparseNullable:
-      auto temp = op->temp;
+  case NullMode::kSparseNullable: {
+      auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-        temp[0] = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
-        temp[1] = 0;
-	if (op->nthBlock == 0) {
-	  temp[2] = 0;
-	} else {
-	  // temp[2] is the row that corresponds to the
-	  // nonNullBases[op->nthBlock]. Count non-nulls between this
-	  // and rows[0] at the start of the block and add that to
-	  // nonNullBases[op-<nthBlock] to get the non-nulls below
-	  // rows[0]. This is 1 - x to distinguish from an offfset
-	  // into rows that is used for the non-first set of 256.
-	  temp[2] = 1 - (kBlockSize * op->nthBlock * op->numRowsPerThread);
+        state->nonNullsBelow = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+	state->nonNullsBelowRow = op->numRowsPerThread * op->nthBlock * kBlockSize;
 	}
-      }
       __syncthreads();
       do {
         int32_t base = kBlockSize * nthLoop;
         int32_t numRows = op->blockStatus[nthLoop].numRows;
-        bool filterPass = true;
-        T data{};
-        dataIdx = nonNullIndex256Sparse(
-            op->nulls,
-            op->rows,
-            nthLoop = 0 ? temp[2] : base,
-            numRows,
-            &temp[0],
-            &temp[1],
-            temp + 3);
-        if (dataIdx == -1) {
-          if (!op->nullsAllowed) {
-            filterPass = false;
-          }
-        } else {
-          data = randomAccessDecode<T>(op, dataIdx);
-          filterPass =
-              testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-        }
-        makeResult<T, kBlockSize>(
+	if (numRows == 0) {
+	} else {
+	  bool filterPass = true;
+	  T data{};
+	  dataIdx = nonNullIndex256Sparse(
+					  op->nulls,
+					  op->rows + base,
+					  numRows,
+					  state);
+	  filterPass = threadIdx.x < numRows;
+	  if (filterPass) {
+	    if (dataIdx == -1) {
+	      if (!op->nullsAllowed) {
+		filterPass = false;
+	      }
+	    } else {
+	      data = randomAccessDecode<T>(op, dataIdx);
+	      filterPass =
+		testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+	    }
+	  }
+	  makeResult<T, kBlockSize>(
             op,
             data,
             op->rows[base + threadIdx.x],
             filterPass,
             nthLoop,
             dataIdx == -1 ? kNull : kNotNull,
-            temp + 2);
-      } while (++nthLoop < op->numRowsPerThread);
+            state->temp);
+	}
+	} while (++nthLoop < op->numRowsPerThread);
       break;
+  }
   }
   __syncthreads();
 }
