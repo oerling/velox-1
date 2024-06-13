@@ -66,7 +66,7 @@ __device__ void filterKernel(
         [&](int32_t group) -> uint64_t {
 	  int32_t offset =  group * 8;
 	  int32_t base = blockBase + offset;
-if (offset + 8 < numRows) {
+if (offset + 8 <= numRows) {
 	    return *addCast<uint64_t>(flags->base, base) & *addCast<uint64_t>(flags->nulls, base);
 	  }
 	  if (offset >= numRows) {
@@ -199,11 +199,9 @@ __global__ void waveBaseKernel(
 }
 
 int32_t instructionSharedMemory(const Instruction& instruction) {
-  using ScanAlgorithm = cub::BlockScan<int, 256, cub::BLOCK_SCAN_RAKING>;
-
   switch (instruction.opCode) {
     case OpCode::kFilter:
-      return sizeof(ScanAlgorithm::TempStorage);
+      return (2 + (kBlockSize / kWarpThreads)) * sizeof(int32_t);
     default:
       return 0;
   }

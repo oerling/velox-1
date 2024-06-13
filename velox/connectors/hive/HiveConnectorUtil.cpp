@@ -538,12 +538,14 @@ void configureReaderOptions(
   readerOptions.setFooterEstimatedSize(hiveConfig->footerEstimatedSize());
   readerOptions.setFilePreloadThreshold(hiveConfig->filePreloadThreshold());
   readerOptions.setPrefetchRowGroups(hiveConfig->prefetchRowGroups());
+  readerOptions.setNoCacheRetention(
+      hiveConfig->cacheNoRetention(sessionProperties));
 
-  if (readerOptions.getFileFormat() != dwio::common::FileFormat::UNKNOWN) {
+  if (readerOptions.fileFormat() != dwio::common::FileFormat::UNKNOWN) {
     VELOX_CHECK(
-        readerOptions.getFileFormat() == hiveSplit->fileFormat,
+        readerOptions.fileFormat() == hiveSplit->fileFormat,
         "HiveDataSource received splits of different formats: {} and {}",
-        dwio::common::toString(readerOptions.getFileFormat()),
+        dwio::common::toString(readerOptions.fileFormat()),
         dwio::common::toString(hiveSplit->fileFormat));
   } else {
     auto serDeOptions =
@@ -560,7 +562,7 @@ void configureRowReaderOptions(
     dwio::common::RowReaderOptions& rowReaderOptions,
     const std::unordered_map<std::string, std::string>& tableParameters,
     const std::shared_ptr<common::ScanSpec>& scanSpec,
-    const std::shared_ptr<common::MetadataFilter>& metadataFilter,
+    std::shared_ptr<common::MetadataFilter> metadataFilter,
     const RowTypePtr& rowType,
     const std::shared_ptr<const HiveConnectorSplit>& hiveSplit) {
   auto skipRowsIt =
@@ -569,7 +571,7 @@ void configureRowReaderOptions(
     rowReaderOptions.setSkipRows(folly::to<uint64_t>(skipRowsIt->second));
   }
   rowReaderOptions.setScanSpec(scanSpec);
-  rowReaderOptions.setMetadataFilter(metadataFilter);
+  rowReaderOptions.setMetadataFilter(std::move(metadataFilter));
   rowReaderOptions.select(
       dwio::common::ColumnSelector::fromScanSpec(*scanSpec, rowType));
   rowReaderOptions.range(hiveSplit->start, hiveSplit->length);
@@ -582,8 +584,8 @@ bool applyPartitionFilter(
     const std::string& partitionValue,
     common::Filter* filter) {
   if (type->isDate()) {
-    const auto result = util::castFromDateString(
-        StringView(partitionValue), util::ParseMode::kStandardCast);
+    const auto result = util::fromDateString(
+        StringView(partitionValue), util::ParseMode::kPrestoCast);
     VELOX_CHECK(!result.hasError());
     return applyFilter(*filter, result.value());
   }
@@ -698,7 +700,7 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
       Connector::getTracker(
           connectorQueryCtx->scanId(), readerOpts.loadQuantum()),
       fileHandle.groupId.id(),
-      ioStats,
+      std::move(ioStats),
       executor,
       readerOpts);
 }

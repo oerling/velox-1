@@ -243,8 +243,8 @@ void WindowFuzzer::go() {
     }
     const auto partitionKeys = generateSortingKeys("p", argNames, argTypes);
     const auto [frameClause, isRowsFrame] = generateFrameClause();
-    const auto input =
-        generateInputDataWithRowNumber(argNames, argTypes, signature);
+    const auto input = generateInputDataWithRowNumber(
+        argNames, argTypes, partitionKeys, signature);
     // If the function is order-dependent or uses "rows" frame, sort all input
     // rows by row_number additionally.
     if (requireSortedInput || isRowsFrame) {
@@ -326,7 +326,7 @@ void WindowFuzzer::testAlternativePlans(
   auto directory = exec::test::TempDirectoryPath::create();
   const auto inputRowType = asRowType(input[0]->type());
   if (isTableScanSupported(inputRowType)) {
-    auto splits = makeSplits(input, directory->getPath());
+    auto splits = makeSplits(input, directory->getPath(), writerPool_);
 
     plans.push_back(
         {PlanBuilder()

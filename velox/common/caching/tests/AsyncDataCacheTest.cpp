@@ -50,8 +50,19 @@ struct Request {
   SsdPin ssdPin;
 };
 
-class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
+struct TestParam {
+  bool checksumEnabled;
+  bool checksumVerificationEnabled;
+};
+
+class AsyncDataCacheTest : public ::testing::TestWithParam<TestParam> {
  public:
+  static std::vector<TestParam> getTestParams() {
+    static std::vector<TestParam> testParams = {
+        {false, false}, {true, false}, {true, true}};
+    return testParams;
+  }
+
   // Deterministically fills 'allocation' based on 'sequence'
   static void initializeContents(int64_t sequence, memory::Allocation& alloc) {
     for (int32_t i = 0; i < alloc.numRuns(); ++i) {
@@ -92,10 +103,17 @@ class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
     fileIds().testingReset();
   }
 
+  void waitForPendingLoads() {
+    while (numPendingLoads_ > 0) {
+      std::this_thread::sleep_for(std::chrono::microseconds(2000)); // NOLINT
+    }
+  }
+
   void initializeCache(
       uint64_t maxBytes,
       int64_t ssdBytes = 0,
-      int64_t checkpointIntervalBytes = 0) {
+      uint64_t checkpointIntervalBytes = 0,
+      AsyncDataCache::Options cacheOptions = {}) {
     if (cache_ != nullptr) {
       cache_->shutdown();
     }
@@ -111,15 +129,16 @@ class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
       if (tempDirectory_ == nullptr) {
         tempDirectory_ = exec::test::TempDirectoryPath::create();
       }
-      ssdCache = std::make_unique<SsdCache>(
+      SsdCache::Config config(
           fmt::format("{}/cache", tempDirectory_->getPath()),
           ssdBytes,
           4,
           executor(),
           checkpointIntervalBytes > 0 ? checkpointIntervalBytes : ssdBytes / 20,
           false,
-          GetParam(),
-          GetParam());
+          GetParam().checksumEnabled,
+          GetParam().checksumVerificationEnabled);
+      ssdCache = std::make_unique<SsdCache>(config);
     }
 
     memory::MemoryManagerOptions options;
@@ -130,7 +149,8 @@ class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
     options.trackDefaultUsage = true;
     manager_ = std::make_unique<memory::MemoryManager>(options);
     allocator_ = static_cast<memory::MmapAllocator*>(manager_->allocator());
-    cache_ = AsyncDataCache::create(allocator_, std::move(ssdCache));
+    cache_ =
+        AsyncDataCache::create(allocator_, std::move(ssdCache), cacheOptions);
     if (filenames_.empty()) {
       for (auto i = 0; i < kNumFiles; ++i) {
         auto name = fmt::format("testing_file_{}", i);
@@ -175,7 +195,7 @@ class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
   // 'errorEveryNBatches' is non-0, every nth load batch will have a
   // bad read and wil be dropped. The entries of the failed batch read
   // will still be accessed one by one. If 'largeEveryNBatches' is
-  // non-0, allocates and freees a single allocation of 'largeBytes'
+  // non-0, allocates and frees a single allocation of 'largeBytes'
   // every so many batches. This creates extra memory pressure, as
   // happens when allocating large hash tables in queries.
   void loadLoop(
@@ -266,6 +286,7 @@ class AsyncDataCacheTest : public ::testing::TestWithParam<bool> {
   std::vector<StringIdLease> filenames_;
   std::unique_ptr<folly::IOThreadPoolExecutor> executor_;
   int32_t numLargeRetries_{0};
+  std::atomic_int64_t numPendingLoads_{0};
 };
 
 class TestingCoalescedLoad : public CoalescedLoad {
@@ -452,7 +473,11 @@ void AsyncDataCacheTest::loadBatch(
     }
     auto load = std::make_shared<TestingCoalescedLoad>(
         std::move(keys), std::move(sizes), cache_, injectError);
-    executor()->add([load, semaphore]() {
+    ++numPendingLoads_;
+    executor()->add([this, load, semaphore]() {
+      SCOPE_EXIT {
+        --numPendingLoads_;
+      };
       try {
         load->loadOrFuture(nullptr);
       } catch (const std::exception& e) {
@@ -481,7 +506,11 @@ void AsyncDataCacheTest::loadBatch(
         std::move(ssdPins),
         cache_,
         injectError);
-    executor()->add([load, semaphore]() {
+    ++numPendingLoads_;
+    executor()->add([this, load, semaphore]() {
+      SCOPE_EXIT {
+        --numPendingLoads_;
+      };
       try {
         load->loadOrFuture(nullptr);
       } catch (const std::exception& e) {
@@ -686,6 +715,7 @@ TEST_P(AsyncDataCacheTest, evictAccounting) {
   pool->allocateContiguous(1200, large);
   EXPECT_EQ(memory::AllocationTraits::pageBytes(2400), pool->usedBytes());
   loadLoop(0, kMaxBytes * 1.1);
+  waitForPendingLoads();
   pool->allocateNonContiguous(2400, allocation);
   pool->allocateContiguous(2400, large);
   EXPECT_EQ(memory::AllocationTraits::pageBytes(4800), pool->usedBytes());
@@ -843,8 +873,9 @@ TEST_P(AsyncDataCacheTest, DISABLED_ssd) {
 TEST_P(AsyncDataCacheTest, invalidSsdPath) {
   auto testPath = "hdfs:/test/prefix_";
   uint64_t ssdBytes = 256UL << 20;
+  SsdCache::Config config(testPath, ssdBytes, 4, executor(), ssdBytes / 20);
   VELOX_ASSERT_THROW(
-      SsdCache(testPath, ssdBytes, 4, executor(), ssdBytes / 20, false),
+      SsdCache(config),
       fmt::format(
           "Ssd path '{}' does not start with '/' that points to local file system.",
           testPath));
@@ -1081,10 +1112,10 @@ TEST_P(AsyncDataCacheTest, shutdown) {
     if (!asyncShutdown) {
       waitForSsdWriteToFinish(cache_->ssdCache());
     }
-    const auto bytesWrittenBeforeShutdown =
+    const uint64_t bytesWrittenBeforeShutdown =
         cache_->ssdCache()->stats().bytesWritten;
     cache_->ssdCache()->shutdown();
-    const auto bytesWrittenAfterShutdown =
+    const uint64_t bytesWrittenAfterShutdown =
         cache_->ssdCache()->stats().bytesWritten;
 
     if (asyncShutdown) {
@@ -1214,9 +1245,120 @@ DEBUG_ONLY_TEST_P(AsyncDataCacheTest, ttl) {
   EXPECT_EQ(statsTtl.ssdStats->entriesAgedOut, statsT1.ssdStats->entriesCached);
 }
 
+TEST_P(AsyncDataCacheTest, makeEvictable) {
+  constexpr uint64_t kRamBytes = 128UL << 20;
+  constexpr uint64_t kSsdBytes = 512UL << 20;
+  constexpr int kDataSize = 4096;
+  for (const bool evictable : {false, true}) {
+    SCOPED_TRACE(fmt::format("evictable: {}", evictable));
+    initializeCache(kRamBytes, kSsdBytes);
+    const int numEntries{10};
+    std::vector<CachePin> cachePins;
+    uint64_t offset = 0;
+    for (int i = 0; i < numEntries; ++i) {
+      cachePins.push_back(newEntry(offset, kDataSize));
+      offset += kDataSize;
+    }
+    for (auto& pin : cachePins) {
+      pin.entry()->setExclusiveToShared(!evictable);
+    }
+    if (evictable) {
+      std::vector<RawFileCacheKey> keys;
+      keys.reserve(cachePins.size());
+      for (const auto& pin : cachePins) {
+        keys.push_back(RawFileCacheKey{
+            pin.checkedEntry()->key().fileNum.id(),
+            pin.checkedEntry()->key().offset});
+      }
+      cachePins.clear();
+      for (const auto& key : keys) {
+        cache_->makeEvictable(key);
+      }
+    }
+    const auto cacheEntries = cache_->testingCacheEntries();
+    for (const auto& cacheEntry : cacheEntries) {
+      ASSERT_EQ(cacheEntry->ssdSaveable(), !evictable);
+      ASSERT_EQ(cacheEntry->testingAccessStats().numUses, 0);
+      if (evictable) {
+        ASSERT_EQ(cacheEntry->testingAccessStats().lastUse, 0);
+      } else {
+        ASSERT_NE(cacheEntry->testingAccessStats().lastUse, 0);
+      }
+    }
+    auto* ssdCache = cache_->ssdCache();
+    if (ssdCache == nullptr) {
+      continue;
+    }
+    ssdCache->testingWaitForWriteToFinish();
+    if (evictable) {
+      ASSERT_EQ(ssdCache->stats().entriesCached, 0);
+    } else {
+      if (cache_->testingSsdSavable() == 0) {
+        ASSERT_GT(ssdCache->stats().entriesCached, 0);
+      } else {
+        // Ssd write only gets triggered after a certain ssd space usage
+        // threshold.
+        ASSERT_GE(ssdCache->stats().entriesCached, 0);
+      }
+    }
+  }
+}
+
+TEST_P(AsyncDataCacheTest, ssdWriteOptions) {
+  constexpr uint64_t kRamBytes = 16UL << 20; // 16 MB
+  constexpr uint64_t kSsdBytes = 64UL << 20; // 64 MB
+
+  // Test if ssd write behavior with different settings.
+  struct {
+    double maxWriteRatio;
+    double ssdSavableRatio;
+    int32_t minSsdSavableBytes;
+    bool expectedSaveToSsd;
+
+    std::string debugString() const {
+      return fmt::format(
+          "maxWriteRatio {}, ssdSavableRatio {}, minSsdSavableBytes {}, expectedSaveToSsd {}",
+          maxWriteRatio,
+          ssdSavableRatio,
+          minSsdSavableBytes,
+          expectedSaveToSsd);
+    }
+  } testSettings[] = {
+      {0.8, 0.95, 32UL << 20, false},
+      {0.8, 0.95, 4UL << 20, false},
+      {0.8, 0.3, 32UL << 20, false},
+      {0.8, 0.3, 4UL << 20, true},
+      {0.001, 0.3, 4UL << 20, true}};
+
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+    initializeCache(
+        kRamBytes,
+        kSsdBytes,
+        0,
+        {testData.maxWriteRatio,
+         testData.ssdSavableRatio,
+         testData.minSsdSavableBytes});
+    // Load data half of the in-memory capacity.
+    loadLoop(0, kRamBytes / 2);
+    waitForPendingLoads();
+    auto stats = cache_->refreshStats();
+    if (testData.expectedSaveToSsd) {
+      EXPECT_GE(stats.ssdStats->entriesWritten, 0);
+    } else {
+      EXPECT_EQ(stats.ssdStats->entriesWritten, 0);
+    }
+    if (testData.maxWriteRatio < 0.005) {
+      // SSD cache write rate is so small that it stops right after the
+      // first entry in each shard.
+      EXPECT_EQ(stats.ssdStats->entriesWritten, 4);
+    }
+  }
+}
+
 // TODO: add concurrent fuzzer test.
 
 INSTANTIATE_TEST_SUITE_P(
     AsyncDataCacheTest,
     AsyncDataCacheTest,
-    ::testing::Values(false, true));
+    ::testing::ValuesIn(AsyncDataCacheTest::getTestParams()));

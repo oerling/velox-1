@@ -20,6 +20,7 @@
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/ContainerRowSerde.h"
 #include "velox/exec/Operator.h"
+#include "velox/type/FloatingPointUtil.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -772,16 +773,6 @@ void RowContainer::storeComplexType(
 
   valueAt<std::string_view>(row, offset) = std::string_view(
       reinterpret_cast<char*>(position.position), stream.size());
-
-  // TODO Fix ByteOutputStream::size() API. @oerling is looking into that.
-  // Fix the 'size' of the std::string_view.
-  // stream.size() is the capacity
-  // stream.size() - stream.remainingSize() is the size of the data + size of
-  // 'next' links (8 bytes per link).
-  auto readStream = prepareRead(row, offset);
-  const auto size = readStream.size();
-  valueAt<std::string_view>(row, offset) =
-      std::string_view(reinterpret_cast<char*>(position.position), size);
 }
 
 //   static
@@ -866,6 +857,8 @@ void RowContainer::hashTyped(
           Kind == TypeKind::MAP) {
         auto in = prepareRead(row, offset);
         hash = ContainerRowSerde::hash(in, type);
+      } else if constexpr (std::is_floating_point_v<T>) {
+        hash = util::floating_point::NaNAwareHash<T>()(valueAt<T>(row, offset));
       } else {
         hash = folly::hasher<T>()(valueAt<T>(row, offset));
       }

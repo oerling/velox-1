@@ -186,9 +186,12 @@ void Writer::write(const VectorPtr& input) {
 
     bool doFlush = shouldFlush(context, numRowsToWrite);
     if (doFlush) {
-      // Try abandoning inefficiency dictionary encodings early and see if we
-      // can delay the flush.
-      if (writer_->tryAbandonDictionaries(false)) {
+      // TODO: this is likely not needed after the early dictionary tests.
+      // Should make the decision based on arbitration stats. Then we can
+      // potential simplify a lot of logic around trimming. Try abandoning
+      // inefficiency dictionary encodings early and see if we can delay the
+      // flush.
+      if (writer_->tryAbandonDictionaries(/*force=*/false)) {
         doFlush = shouldFlush(context, numRowsToWrite);
       }
       if (doFlush) {
@@ -336,10 +339,10 @@ bool Writer::shouldFlush(const WriterContext& context, size_t nextWriteRows) {
   // If we are hitting memory budget before satisfying flush criteria, try
   // entering low memory mode to work with less memory-intensive encodings.
   bool overBudget = overMemoryBudget(context, nextWriteRows);
-  bool stripeProgressDecision =
-      flushPolicy_->shouldFlush(getStripeProgress(context));
-  auto dictionaryFlushDecision = flushPolicy_->shouldFlushDictionary(
-      stripeProgressDecision, overBudget, context);
+  const auto stripeProgress = getStripeProgress(context);
+  bool stripeProgressDecision = flushPolicy_->shouldFlush(stripeProgress);
+  const auto dictionaryFlushDecision = flushPolicy_->shouldFlushDictionary(
+      stripeProgressDecision, overBudget, stripeProgress, context);
 
   if (FOLLY_UNLIKELY(
           dictionaryFlushDecision == FlushDecision::ABANDON_DICTIONARY)) {
@@ -351,6 +354,8 @@ bool Writer::shouldFlush(const WriterContext& context, size_t nextWriteRows) {
     overBudget = overMemoryBudget(context, nextWriteRows);
     stripeProgressDecision =
         flushPolicy_->shouldFlush(getStripeProgress(context));
+  } else if (dictionaryFlushDecision == FlushDecision::EVALUATE_DICTIONARY) {
+    writer_->tryAbandonDictionaries(/*force=*/false);
   }
 
   const bool shouldFlush = overBudget || stripeProgressDecision ||
@@ -378,7 +383,7 @@ void Writer::enterLowMemoryMode() {
   if (FOLLY_UNLIKELY(
           context.checkLowMemoryMode() && context.stripeIndex() == 0)) {
     // Idempotent call to switch to less memory intensive encodings.
-    writer_->tryAbandonDictionaries(true);
+    writer_->tryAbandonDictionaries(/*force=*/true);
   }
 }
 
@@ -797,6 +802,16 @@ dwrf::WriterOptions getDwrfOptions(const dwio::common::WriterOptions& options) {
     configs.emplace(
         Config::MAX_DICTIONARY_SIZE.configKey(),
         std::to_string(options.maxDictionaryMemory.value()));
+  }
+  if (options.zlibCompressionLevel.has_value()) {
+    configs.emplace(
+        Config::ZLIB_COMPRESSION_LEVEL.configKey(),
+        std::to_string(options.zlibCompressionLevel.value()));
+  }
+  if (options.zstdCompressionLevel.has_value()) {
+    configs.emplace(
+        Config::ZSTD_COMPRESSION_LEVEL.configKey(),
+        std::to_string(options.zstdCompressionLevel.value()));
   }
 
   dwrf::WriterOptions dwrfOptions;

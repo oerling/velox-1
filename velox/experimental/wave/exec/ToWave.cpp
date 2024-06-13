@@ -187,7 +187,7 @@ bool maybeNotNull(const AbstractOperand* op) {
     return true;
   }
   if (op->constant) {
-    return true;
+    return !op->constant->isNullAt(0);
   }
   return op->conditionalNonNull || op->notNull || op->sourceNullable;
 }
@@ -195,11 +195,12 @@ bool maybeNotNull(const AbstractOperand* op) {
 void CompileState::addNullableIf(
     const AbstractOperand* op,
     std::vector<OperandId>& nullableIf) {
-  for (auto id : op->nullableIf) {
-    if (std::find(nullableIf.begin(), nullableIf.end(), id) ==
-        nullableIf.end()) {
-      nullableIf.push_back(id);
-    }
+  if (op->constant || op->notNull) {
+    return;
+  }
+  if (std::find(nullableIf.begin(), nullableIf.end(), op->id) ==
+      nullableIf.end()) {
+    nullableIf.push_back(op->id);
   }
 }
 
