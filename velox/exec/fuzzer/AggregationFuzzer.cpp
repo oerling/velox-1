@@ -360,8 +360,8 @@ void AggregationFuzzer::go() {
 
         auto partitionKeys = generateKeys("p", argNames, argTypes);
         auto sortingKeys = generateSortingKeys("s", argNames, argTypes);
-        auto input =
-            generateInputDataWithRowNumber(argNames, argTypes, signature);
+        auto input = generateInputDataWithRowNumber(
+            argNames, argTypes, partitionKeys, signature);
 
         bool failed = verifyWindow(
             partitionKeys,
@@ -741,7 +741,7 @@ bool AggregationFuzzer::verifyAggregation(
 
   const auto inputRowType = asRowType(input[0]->type());
   if (isTableScanSupported(inputRowType) && vectorFuzzer_.coinToss(0.5)) {
-    auto splits = makeSplits(input, directory->getPath());
+    auto splits = makeSplits(input, directory->getPath(), writerPool_);
 
     std::vector<core::PlanNodePtr> tableScanPlans;
     makeAlternativePlansWithTableScan(
@@ -856,7 +856,7 @@ bool AggregationFuzzer::verifySortedAggregation(
   const auto inputRowType = asRowType(input[0]->type());
   if (isTableScanSupported(inputRowType)) {
     directory = exec::test::TempDirectoryPath::create();
-    auto splits = makeSplits(input, directory->getPath());
+    auto splits = makeSplits(input, directory->getPath(), writerPool_);
 
     plans.push_back(
         {PlanBuilder()
@@ -1160,7 +1160,7 @@ bool AggregationFuzzer::verifyDistinctAggregation(
   const auto inputRowType = asRowType(input[0]->type());
   if (isTableScanSupported(inputRowType) && vectorFuzzer_.coinToss(0.5)) {
     directory = exec::test::TempDirectoryPath::create();
-    auto splits = makeSplits(input, directory->getPath());
+    auto splits = makeSplits(input, directory->getPath(), writerPool_);
 
     plans.push_back(
         {PlanBuilder()

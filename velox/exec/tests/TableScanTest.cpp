@@ -26,6 +26,7 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/dwio/common/CacheInputStream.h"
 #include "velox/dwio/common/tests/utils/DataFiles.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/OutputBufferManager.h"
@@ -453,6 +454,34 @@ TEST_F(TableScanTest, timestamp) {
       op,
       {filePath},
       "SELECT c0 FROM tmp WHERE c1 < timestamp'1970-01-01 01:30:00'");
+}
+
+TEST_F(TableScanTest, timestampPrecisionDefaultMillisecond) {
+  constexpr int kSize = 10;
+  auto vector = makeRowVector({
+      makeFlatVector<Timestamp>(
+          kSize, [](auto i) { return Timestamp(i, i * 1'001'001); }),
+  });
+  auto schema = asRowType(vector->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  auto split = makeHiveConnectorSplit(file->getPath());
+
+  auto plan = PlanBuilder().tableScan(schema).planNode();
+  auto expected = makeRowVector({
+      makeFlatVector<Timestamp>(
+          kSize, [](auto i) { return Timestamp(i, i * 1'000'000); }),
+  });
+  AssertQueryBuilder(plan).split(split).assertResults(expected);
+
+  plan = PlanBuilder(pool_.get())
+             .tableScan(schema, {"c0 = timestamp '1970-01-01 00:00:01.001'"})
+             .planNode();
+  expected = makeRowVector({
+      makeFlatVector<Timestamp>(
+          1, [](auto) { return Timestamp(1, 1'000'000); }),
+  });
+  AssertQueryBuilder(plan).split(split).assertResults(expected);
 }
 
 DEBUG_ONLY_TEST_F(TableScanTest, timeLimitInGetOutput) {
@@ -2974,6 +3003,44 @@ TEST_F(TableScanTest, remainingFilter) {
       "SELECT * FROM tmp WHERE not (c0 > 0 or c1 > c0)");
 }
 
+TEST_F(TableScanTest, remainingFilterLazyWithMultiReferences) {
+  constexpr int kSize = 10;
+  auto vector = makeRowVector({
+      makeFlatVector<int64_t>(kSize, folly::identity),
+      makeFlatVector<int64_t>(kSize, folly::identity),
+      makeFlatVector<int64_t>(kSize, folly::identity),
+  });
+  auto schema = asRowType(vector->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  CursorParameters params;
+  params.copyResult = false;
+  params.singleThreaded = true;
+  params.planNode =
+      PlanBuilder()
+          .tableScan(schema, {}, "NOT (c0 % 2 == 0 AND c2 % 3 == 0)")
+          .planNode();
+  auto cursor = TaskCursor::create(params);
+  cursor->task()->addSplit(
+      "0", exec::Split(makeHiveConnectorSplit(file->getPath())));
+  cursor->task()->noMoreSplits("0");
+  int i = 0;
+  while (cursor->moveNext()) {
+    auto* result = cursor->current()->asUnchecked<RowVector>();
+    ASSERT_FALSE(isLazyNotLoaded(*result->childAt(0)));
+    ASSERT_TRUE(isLazyNotLoaded(*result->childAt(1)));
+    ASSERT_FALSE(isLazyNotLoaded(*result->childAt(2)));
+    for (int j = 0; j < result->size(); ++i) {
+      ASSERT_LT(i, vector->size());
+      if (i % 6 != 0) {
+        ASSERT_TRUE(result->loadedVector()->equalValueAt(vector.get(), j++, i));
+      }
+    }
+  }
+  ASSERT_EQ(i, vector->size());
+  ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
+}
+
 TEST_F(TableScanTest, remainingFilterSkippedStrides) {
   auto rowType = ROW({{"c0", BIGINT()}, {"c1", BIGINT()}});
   std::vector<RowVectorPtr> vectors(3);
@@ -4128,10 +4195,12 @@ TEST_F(TableScanTest, timestampPartitionKey) {
           makeFlatVector<Timestamp>(
               std::end(inputs) - std::begin(inputs),
               [&](auto i) {
-                auto t = util::fromTimestampString(inputs[i]).thenOrThrow(
-                    folly::identity, [&](const Status& status) {
-                      VELOX_USER_FAIL("{}", status.message());
-                    });
+                auto t = util::fromTimestampString(
+                             inputs[i], util::TimestampParseMode::kPrestoCast)
+                             .thenOrThrow(
+                                 folly::identity, [&](const Status& status) {
+                                   VELOX_USER_FAIL("{}", status.message());
+                                 });
                 t.toGMT(Timestamp::defaultTimezone());
                 return t;
               }),
@@ -4315,4 +4384,50 @@ DEBUG_ONLY_TEST_F(
       op,
       {filePath},
       "SELECT c5, max(c0), max(c1), max(c2), max(c3), max(c4) FROM tmp group by c5");
+}
+
+TEST_F(TableScanTest, noCacheRetention) {
+  const auto vectors = makeVectors(10, 1'000);
+  const auto filePath = TempFilePath::create();
+  writeToFile(filePath->getPath(), vectors);
+  createDuckDbTable(vectors);
+
+  for (const bool noCacheRetention : {true}) {
+    SCOPED_TRACE(fmt::format("noCacheRetention: {}", noCacheRetention));
+
+    auto split = makeHiveConnectorSplit(
+        filePath->getPath(), 0, fs::file_size(filePath->getPath()));
+    AssertQueryBuilder(tableScanNode(), duckDbQueryRunner_)
+        .connectorSessionProperty(
+            kHiveConnectorId,
+            connector::hive::HiveConfig::kCacheNoRetentionSession,
+            noCacheRetention ? "true" : "false")
+        .split(std::move(split))
+        .assertResults("SELECT * FROM tmp");
+    waitForAllTasksToBeDeleted();
+
+    const auto cacheEntries = asyncDataCache_->testingCacheEntries();
+    if (noCacheRetention) {
+      for (const auto& cacheEntry : cacheEntries) {
+        if (!cacheEntry->testingFirstUse()) {
+          ASSERT_EQ(cacheEntry->testingAccessStats().lastUse, 0)
+              << cacheEntry->toString();
+        }
+        ASSERT_EQ(cacheEntry->testingAccessStats().numUses, 0)
+            << cacheEntry->toString();
+      }
+    } else {
+      for (const auto& cacheEntry : cacheEntries) {
+        if (cacheEntry->testingFirstUse()) {
+          ASSERT_EQ(cacheEntry->testingAccessStats().numUses, 0)
+              << cacheEntry->toString();
+        } else {
+          ASSERT_GT(cacheEntry->testingAccessStats().numUses, 0)
+              << cacheEntry->toString();
+        }
+        ASSERT_NE(cacheEntry->testingAccessStats().lastUse, 0)
+            << cacheEntry->toString();
+      }
+    }
+  }
 }

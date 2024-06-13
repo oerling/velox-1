@@ -69,7 +69,7 @@ class E2EWriterTest : public testing::Test {
     return std::make_unique<dwrf::DwrfReader>(
         opts,
         std::make_unique<BufferedInput>(
-            std::make_shared<InMemoryReadFile>(data), opts.getMemoryPool()));
+            std::make_shared<InMemoryReadFile>(data), opts.memoryPool()));
   }
 
   void testFlatMapConfig(
@@ -252,6 +252,7 @@ class E2EWriterTest : public testing::Test {
         "fakeSpillConfig",
         0,
         0,
+        0,
         nullptr,
         minSpillableReservationPct,
         spillableReservationGrowthPct,
@@ -416,7 +417,7 @@ TEST_F(E2EWriterTest, DisableLinearHeuristics) {
 
   // disable linear heuristics
   config->set(dwrf::Config::LINEAR_STRIPE_SIZE_HEURISTICS, false);
-  dwrf::E2EWriterTestUtil::testWriter(*leafPool_, type, batches, 3, 3, config);
+  dwrf::E2EWriterTestUtil::testWriter(*leafPool_, type, batches, 2, 3, config);
 }
 
 // Beside writing larger files, this test also uses regular maps only.

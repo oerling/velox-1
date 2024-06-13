@@ -145,6 +145,11 @@ class E2EFilterTestBase : public testing::Test {
   }
 
   template <typename T>
+  void makeIntMainlyConstant(const std::string& fieldName) {
+    dataSetBuilder_->withIntMainlyConstantForField<T>(Subfield(fieldName));
+  }
+
+  template <typename T>
   void makeQuantizedFloat(
       const std::string& fieldName,
       int64_t buckets,
@@ -200,6 +205,7 @@ class E2EFilterTestBase : public testing::Test {
       dwio::common::RowReaderOptions& opts,
       const std::shared_ptr<ScanSpec>& spec) {
     opts.setScanSpec(spec);
+    opts.setTimestampPrecision(TimestampPrecision::kNanoseconds);
   }
 
   void readWithoutFilter(

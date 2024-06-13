@@ -71,7 +71,7 @@ Expected<T> callFollyTo(const F& v) {
   const auto result = folly::tryTo<T>(v);
   if (result.hasError()) {
     if (threadSkipErrorDetails()) {
-      return folly::makeUnexpected(Status::UserError(""));
+      return folly::makeUnexpected(Status::UserError());
     }
     return folly::makeUnexpected(Status::UserError(
         "{}", folly::makeConversionError(result.error(), "").what()));
@@ -600,15 +600,18 @@ struct Converter<TypeKind::TIMESTAMP, void, TPolicy> {
   }
 
   static Expected<Timestamp> tryCast(folly::StringPiece v) {
-    return fromTimestampString(v.data(), v.size());
+    return fromTimestampString(
+        v.data(), v.size(), TimestampParseMode::kPrestoCast);
   }
 
   static Expected<Timestamp> tryCast(const StringView& v) {
-    return fromTimestampString(v.data(), v.size());
+    return fromTimestampString(
+        v.data(), v.size(), TimestampParseMode::kPrestoCast);
   }
 
   static Expected<Timestamp> tryCast(const std::string& v) {
-    return fromTimestampString(v.data(), v.size());
+    return fromTimestampString(
+        v.data(), v.size(), TimestampParseMode::kPrestoCast);
   }
 };
 
