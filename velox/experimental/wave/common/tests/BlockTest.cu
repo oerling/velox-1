@@ -607,15 +607,17 @@ void BlockTestStream::scatterBits(
       numSource, numTarget, source, targetMask, target, temp);
 }
 
-  /// Struct for tracking state between calls to nonNullIndex256 and nonNullIndex256Sparse.
+/// Struct for tracking state between calls to nonNullIndex256 and
+/// nonNullIndex256Sparse.
 struct NonNullIndexState {
-  // Number of non-nulls below 'row'. the null flag at 'row' is not included in the sum.
+  // Number of non-nulls below 'row'. the null flag at 'row' is not included in
+  // the sum.
   int32_t numNonNullBelow;
   int32_t row;
   // Scratch memory with one int32 per warp of 256 wide TB.
   int32_t temp[256 / kWarpThreads];
 };
-  
+
 void __global__ nonNullIndexKernel(
     char* nulls,
     int32_t* rows,
