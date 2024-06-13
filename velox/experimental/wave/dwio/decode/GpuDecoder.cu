@@ -52,8 +52,9 @@ struct alignas(16) GpuDecodeParams {
        sizeof(int32_t)] = {};
 };
 
-  void   __global__  __launch_bounds__(1024) decodeKernel(GpuDecodeParams inlineParams) {
-  //asm volatile (".maxnregs 40;");
+void __global__ __launch_bounds__(1024)
+    decodeKernel(GpuDecodeParams inlineParams) {
+  // asm volatile (".maxnregs 40;");
   GpuDecodeParams* params =
       inlineParams.external ? inlineParams.external : &inlineParams;
   int32_t programStart = blockIdx.x == 0 ? 0 : params->ends[blockIdx.x - 1];

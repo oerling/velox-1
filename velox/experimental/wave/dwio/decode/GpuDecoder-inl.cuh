@@ -569,7 +569,8 @@ __device__ void makeResult(
     }
   } else {
     if (!filterPass) {
-      // In the no filter case, filterPass is false for lanes that are after the last row.
+      // In the no filter case, filterPass is false for lanes that are after the
+      // last row.
       return;
     }
     auto resultIdx = base + threadIdx.x;
@@ -620,37 +621,36 @@ __device__ void decodeSelective(GpuDecode* op) {
     case NullMode::kDenseNullable: {
       int32_t maxRow = op->maxRow;
       int32_t dataIdx = 0;
-            auto* state = reinterpret_cast<NonNullState*>(op->temp);
+      auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-	state->nonNullsBelow = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
-	state->nonNullsBelowRow = op->numRowsPerThread * op->nthBlock * kBlockSize;
+        state->nonNullsBelow =
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+        state->nonNullsBelowRow =
+            op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
         int32_t base = op->baseRow + nthLoop * kBlockSize;
-	bool filterPass = false;
-	int32_t dataIdx;
+        bool filterPass = false;
+        int32_t dataIdx;
         T data{};
-	if (base < maxRow) {
-	  dataIdx = nonNullIndex256(
-				    op->nulls,
-				    base,
-            min(kBlockSize, maxRow - base),
-				    state);
-	  filterPass = base + threadIdx.x < maxRow;
-	  if (filterPass) {
-	    if (dataIdx == -1) {
-	      if (!op->nullsAllowed) {
-		filterPass = false;
-	      }
-	    } else {
-	      data = randomAccessDecode<T>(op, dataIdx);
-	      filterPass =
-		testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-	    }
-	  }
-	}
-	makeResult<T, kBlockSize>(
+        if (base < maxRow) {
+          dataIdx = nonNullIndex256(
+              op->nulls, base, min(kBlockSize, maxRow - base), state);
+          filterPass = base + threadIdx.x < maxRow;
+          if (filterPass) {
+            if (dataIdx == -1) {
+              if (!op->nullsAllowed) {
+                filterPass = false;
+              }
+            } else {
+              data = randomAccessDecode<T>(op, dataIdx);
+              filterPass =
+                  testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+            }
+          }
+        }
+        makeResult<T, kBlockSize>(
             op,
             data,
             base + threadIdx.x,
@@ -661,56 +661,56 @@ __device__ void decodeSelective(GpuDecode* op) {
       } while (++nthLoop < op->numRowsPerThread);
       break;
     }
-  case NullMode::kSparseNullable: {
+    case NullMode::kSparseNullable: {
       auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-        state->nonNullsBelow = op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
-	state->nonNullsBelowRow = op->numRowsPerThread * op->nthBlock * kBlockSize;
-	}
+        state->nonNullsBelow =
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+        state->nonNullsBelowRow =
+            op->numRowsPerThread * op->nthBlock * kBlockSize;
+      }
       __syncthreads();
       do {
         int32_t base = kBlockSize * nthLoop;
         int32_t numRows = op->blockStatus[nthLoop].numRows;
-	if (numRows == 0) {
-	} else {
-	  bool filterPass = true;
-	  T data{};
-	  dataIdx = nonNullIndex256Sparse(
-					  op->nulls,
-					  op->rows + base,
-					  numRows,
-					  state);
-	  filterPass = threadIdx.x < numRows;
-	  if (filterPass) {
-	    if (dataIdx == -1) {
-	      if (!op->nullsAllowed) {
-		filterPass = false;
-	      }
-	    } else {
-	      data = randomAccessDecode<T>(op, dataIdx);
-	      filterPass =
-		testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
-	    }
-	  }
-	  makeResult<T, kBlockSize>(
-            op,
-            data,
-            op->rows[base + threadIdx.x],
-            filterPass,
-            nthLoop,
-            dataIdx == -1 ? kNull : kNotNull,
-            state->temp);
-	}
-	} while (++nthLoop < op->numRowsPerThread);
+        if (numRows == 0) {
+        } else {
+          bool filterPass = true;
+          T data{};
+          dataIdx =
+              nonNullIndex256Sparse(op->nulls, op->rows + base, numRows, state);
+          filterPass = threadIdx.x < numRows;
+          if (filterPass) {
+            if (dataIdx == -1) {
+              if (!op->nullsAllowed) {
+                filterPass = false;
+              }
+            } else {
+              data = randomAccessDecode<T>(op, dataIdx);
+              filterPass =
+                  testFilter<T, WaveFilterKind::kAlwaysTrue, false>(op, data);
+            }
+          }
+          makeResult<T, kBlockSize>(
+              op,
+              data,
+              op->rows[base + threadIdx.x],
+              filterPass,
+              nthLoop,
+              dataIdx == -1 ? kNull : kNotNull,
+              state->temp);
+        }
+      } while (++nthLoop < op->numRowsPerThread);
       break;
-  }
+    }
   }
   __syncthreads();
 }
 
 // Returns the position of 'target' in 'data' to 'data + size'. Not finding the
 // value is an error and the values are expected to be unique.
-inline __device__ int findRow(const int32_t* rows, int32_t size, int32_t row, GpuDecode* op) {
+inline __device__ int
+findRow(const int32_t* rows, int32_t size, int32_t row, GpuDecode* op) {
   int lo = 0, hi = size;
   while (lo < hi) {
     int i = (lo + hi) / 2;
@@ -900,10 +900,10 @@ case DecodeStep::kTrivial:
       detail::makeScatterIndices<kBlockSize>(op.data.makeScatterIndices);
       break;
 #endif
-  case DecodeStep::kRowCountNoFilter:
+    case DecodeStep::kRowCountNoFilter:
       detail::setRowCountNoFilter<kBlockSize>(op.data.rowCountNoFilter);
       break;
-  default:
+    default:
       if (threadIdx.x == 0) {
         printf("ERROR: Unsupported DecodeStep (with shared memory)\n");
       }
