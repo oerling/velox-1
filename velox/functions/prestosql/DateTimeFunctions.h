@@ -239,6 +239,17 @@ struct YearFunction : public InitSessionTimezone<T>,
 };
 
 template <typename T>
+struct YearFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalYearMonth>& months) {
+    result = months / 12;
+  }
+};
+
+template <typename T>
 struct QuarterFunction : public InitSessionTimezone<T>,
                          public TimestampWithTimezoneSupport<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -289,6 +300,17 @@ struct MonthFunction : public InitSessionTimezone<T>,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     result = getMonth(getDateTime(timestamp, nullptr));
+  }
+};
+
+template <typename T>
+struct MonthFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalYearMonth>& months) {
+    result = months % 12;
   }
 };
 
@@ -466,6 +488,22 @@ struct TimestampPlusInterval {
       const arg_type<IntervalYearMonth>& interval) {
     result = addToTimestamp(timestamp, DateTimeUnit::kMonth, interval);
   }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      const arg_type<IntervalDayTime>& interval) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMillisecond, interval);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      const arg_type<IntervalYearMonth>& interval) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMonth, interval);
+  }
 };
 
 template <typename T>
@@ -491,6 +529,22 @@ struct IntervalPlusTimestamp {
       const arg_type<Timestamp>& timestamp) {
     result = addToTimestamp(timestamp, DateTimeUnit::kMonth, interval);
   }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<IntervalDayTime>& interval,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMillisecond, interval);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<IntervalYearMonth>& interval,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMonth, interval);
+  }
 };
 
 template <typename T>
@@ -515,6 +569,22 @@ struct TimestampMinusInterval {
       const arg_type<Timestamp>& timestamp,
       const arg_type<IntervalYearMonth>& interval) {
     result = addToTimestamp(timestamp, DateTimeUnit::kMonth, -interval);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      const arg_type<IntervalDayTime>& interval) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMillisecond, -interval);
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<TimestampWithTimezone>& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone,
+      const arg_type<IntervalYearMonth>& interval) {
+    result = addToTimestampWithTimezone(
+        timestampWithTimezone, DateTimeUnit::kMonth, -interval);
   }
 };
 
@@ -640,6 +710,17 @@ struct HourFunction : public InitSessionTimezone<T>,
 };
 
 template <typename T>
+struct HourFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalDayTime>& millis) {
+    result = (millis % kMillisInDay) / kMillisInHour;
+  }
+};
+
+template <typename T>
 struct MinuteFunction : public InitSessionTimezone<T>,
                         public TimestampWithTimezoneSupport<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
@@ -659,6 +740,17 @@ struct MinuteFunction : public InitSessionTimezone<T>,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     result = getDateTime(timestamp, nullptr).tm_min;
+  }
+};
+
+template <typename T>
+struct MinuteFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalDayTime>& millis) {
+    result = (millis % kMillisInHour) / kMillisInMinute;
   }
 };
 
@@ -685,6 +777,17 @@ struct SecondFunction : public TimestampWithTimezoneSupport<T> {
 };
 
 template <typename T>
+struct SecondFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalDayTime>& millis) {
+    result = (millis % kMillisInMinute) / kMillisInSecond;
+  }
+};
+
+template <typename T>
 struct MillisecondFunction : public TimestampWithTimezoneSupport<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
@@ -706,6 +809,17 @@ struct MillisecondFunction : public TimestampWithTimezoneSupport<T> {
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     result = timestamp.getNanos() / kNanosecondsInMillisecond;
+  }
+};
+
+template <typename T>
+struct MillisecondFromIntervalFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(
+      int64_t& result,
+      const arg_type<IntervalDayTime>& millis) {
+    result = millis % kMillisecondsInSecond;
   }
 };
 
@@ -931,7 +1045,7 @@ struct DateTruncFunction : public TimestampWithTimezoneSupport<T> {
       default:
         auto dateTime = getDateTime(timestamp, timeZone_);
         adjustDateTime(dateTime, unit);
-        result = Timestamp(timegm(&dateTime), 0);
+        result = Timestamp(Timestamp::calendarUtcToEpoch(dateTime), 0);
     }
 
     if (timeZone_ != nullptr) {
@@ -955,7 +1069,7 @@ struct DateTruncFunction : public TimestampWithTimezoneSupport<T> {
     auto dateTime = getDateTime(date);
     adjustDateTime(dateTime, unit);
 
-    result = timegm(&dateTime) / kSecondsInDay;
+    result = Timestamp::calendarUtcToEpoch(dateTime) / kSecondsInDay;
   }
 
   FOLLY_ALWAYS_INLINE void call(
@@ -980,7 +1094,8 @@ struct DateTruncFunction : public TimestampWithTimezoneSupport<T> {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     auto dateTime = getDateTime(timestamp, nullptr);
     adjustDateTime(dateTime, unit);
-    timestamp = Timestamp::fromMillis(timegm(&dateTime) * 1000);
+    timestamp =
+        Timestamp::fromMillis(Timestamp::calendarUtcToEpoch(dateTime) * 1000);
     timestamp.toGMT(unpackZoneKeyId(timestampWithTimezone));
 
     result = pack(timestamp.toMillis(), unpackZoneKeyId(timestampWithTimezone));
@@ -1080,11 +1195,8 @@ struct DateAddFunction : public TimestampWithTimezoneSupport<T> {
       VELOX_UNSUPPORTED("integer overflow");
     }
 
-    auto finalTimeStamp = addToTimestamp(
-        this->toTimestamp(timestampWithTimezone), unit, (int32_t)value);
-    auto tzID = unpackZoneKeyId(timestampWithTimezone);
-    finalTimeStamp.toGMT(tzID);
-    result = pack(finalTimeStamp.toMillis(), tzID);
+    result =
+        addToTimestampWithTimezone(timestampWithTimezone, unit, (int32_t)value);
   }
 
   FOLLY_ALWAYS_INLINE void call(
