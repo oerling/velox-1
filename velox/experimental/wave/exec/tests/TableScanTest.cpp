@@ -234,7 +234,6 @@ TEST_F(TableScanTest, filterInScanNull) {
     for (auto i = 0; i < rn->size(); ++i) {
       rn->set(i, cnt++);
     }
-    std::cout << vector->toString(0, vector->size(), "\n", true) << std::endl;
   }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);

@@ -28,11 +28,6 @@ void ColumnReader::makeOp(
   formatData_->newBatch(readOffset_ + offset);
   op.action = action;
   op.reader = this;
-  if (hasNonNullFilter()) {
-    readStream->setNullable(*operand_, false);
-  } else {
-    readStream->setNullable(*operand_, formatData_->hasNulls());
-  }
   op.waveVector = readStream->operandVector(operand_->id, requestedType_);
   op.rows = rows;
   readOffset_ = offset + rows.back() + 1;
