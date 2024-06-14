@@ -18,6 +18,7 @@
 #include "velox/common/memory/MallocAllocator.h"
 
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <iostream>
 #include <numeric>
 
@@ -371,11 +372,11 @@ std::string Stats::toString() const {
     totalAllocations += sizes[i].numAllocations;
   }
   out << fmt::format(
-      "Alloc: {}MB {} Gigaclocks {} Allocations, {}MB advised\n",
+      "Alloc: {}MB {} Gigaclocks Allocations={}, advised={} MB\n",
       totalBytes >> 20,
       totalClocks >> 30,
-      numAdvise >> 8,
-      totalAllocations);
+      totalAllocations,
+      numAdvise >> 8);
 
   // Sort the size classes by decreasing clocks.
   std::vector<int32_t> indices(sizes.size());
@@ -437,7 +438,6 @@ std::string MemoryAllocator::getAndClearFailureMessage() {
   return allocatorErrMsg;
 }
 
-
 namespace {
 struct TraceState {
   struct rusage rusage;
@@ -455,7 +455,7 @@ int32_t elapsedUsec(struct timeval end, struct timeval begin) {
 }
 } // namespace
 
-void MemoryAllocator::getTracingFuncs(
+void MemoryAllocator::getTracingHooks(
     std::function<void()>& init,
     std::function<std::string()>& report,
     std::function<int64_t()> ioVolume) {

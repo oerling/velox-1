@@ -400,7 +400,7 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
   /// thread. The message is cleared after return.
   std::string getAndClearFailureMessage();
 
-  void getTracingFuncs(
+  void getTracingHooks(
       std::function<void()>& init,
       std::function<std::string()>& report,
       std::function<int64_t()> ioVolume = nullptr);
