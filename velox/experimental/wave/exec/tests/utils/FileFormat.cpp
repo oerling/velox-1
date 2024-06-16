@@ -350,15 +350,24 @@ void Writer::append(RowVectorPtr data) {
   for (auto i = 0; i < encoders_.size(); ++i) {
     encoders_[i]->append(data->childAt(i));
   }
+  rowsInStripe_ += data->size();
+  if (rowsInStripe_ >= stripeSize_) {
+    finishStripe();
+  }
 }
 
 void Writer::finishStripe() {
+  if (encoders_.empty()) {
+    return;
+  }
   std::vector<std::unique_ptr<Column>> columns;
   for (auto& encoder : encoders_) {
     columns.push_back(encoder->toColumn());
   }
   stripes_.push_back(std::make_unique<Stripe>(
       std::move(columns), dwio::common::TypeWithId::create(type_)));
+  encoders_.clear();
+  rowsInStripe_ = 0;
 }
 
 Table* Writer::finalize(std::string tableName) {
@@ -383,7 +392,8 @@ void Table::addStripes(
 // static
 const Table* Table::defineTable(
     const std::string& name,
-    const std::vector<RowVectorPtr>& data) {
+    const std::vector<RowVectorPtr>& data,
+				int32_t stripeSize) {
   dropTable(name);
   Writer writer(data[0]->size());
   for (auto& vector : data) {
