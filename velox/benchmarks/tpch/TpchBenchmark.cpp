@@ -58,7 +58,9 @@ DEFINE_int32(
     "include in IO meter query. The columns are sorted by name and the n% first "
     "are scanned");
 
-DEFINE_validator(data_format, &facebook::velox::QueryBenchmarkBase::validateDataFormat);
+DEFINE_validator(
+    data_format,
+    &facebook::velox::QueryBenchmarkBase::validateDataFormat);
 
 std::shared_ptr<TpchQueryBuilder> queryBuilder;
 

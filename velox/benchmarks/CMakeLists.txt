@@ -39,7 +39,8 @@ if(${VELOX_ENABLE_BENCHMARKS})
 endif()
 
 add_library(velox_query_benchmark QueryBenchmarkBase.cpp)
-target_link_libraries(velox_query_benchmark
+target_link_libraries(
+  velox_query_benchmark
   velox_aggregates
   velox_exec
   velox_exec_test_lib

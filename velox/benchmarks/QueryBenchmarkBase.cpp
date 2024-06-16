@@ -16,9 +16,7 @@
 
 #include "velox/benchmarks/QueryBenchmarkBase.h"
 
-
 DEFINE_string(data_format, "parquet", "Data format");
-
 
 DEFINE_validator(
     data_format,

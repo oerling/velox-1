@@ -102,7 +102,6 @@ class QueryBenchmarkBase {
   /// Entry point invoked with different settings to run the benchmark.
   virtual void runMain(std::ostream& out, RunStats& runStats) = 0;
 
-  
   void runCombinations(int32_t level);
 
   void runAllCombinations();

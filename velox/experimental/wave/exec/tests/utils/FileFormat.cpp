@@ -393,7 +393,7 @@ void Table::addStripes(
 const Table* Table::defineTable(
     const std::string& name,
     const std::vector<RowVectorPtr>& data,
-				int32_t stripeSize) {
+    int32_t stripeSize) {
   dropTable(name);
   Writer writer(data[0]->size());
   for (auto& vector : data) {
