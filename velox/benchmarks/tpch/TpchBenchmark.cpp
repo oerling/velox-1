@@ -14,58 +14,13 @@
  * limitations under the License.
  */
 
-#include <fcntl.h>
-#include <sys/resource.h>
-#include <sys/time.h>
-
-#include <folly/Benchmark.h>
-#include <folly/init/Init.h>
-#include <gflags/gflags.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <fstream>
-
-#include "velox/common/base/SuccinctPrinter.h"
-#include "velox/common/file/FileSystems.h"
-#include "velox/common/memory/MmapAllocator.h"
-#include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/dwio/common/Options.h"
-#include "velox/exec/PlanNodeStats.h"
-#include "velox/exec/Split.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-#include "velox/exec/tests/utils/TpchQueryBuilder.h"
-#include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
-#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/parse/TypeResolver.h"
+#include "velox/benchmarks/QueryBenchmarkBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
 
-
-namespace {
-static bool notEmpty(const char* /*flagName*/, const std::string& value) {
-  return !value.empty();
-}
-
-
-  static bool validateDataFormat(const char* flagname, const std::string& value) {
-  if ((value.compare("parquet") == 0) || (value.compare("dwrf") == 0)) {
-    return true;
-  }
-  std::cout
-      << fmt::format(
-             "Invalid value for --{}: {}. Allowed values are [\"parquet\", \"dwrf\"]",
-             flagname,
-             value)
-      << std::endl;
-  return false;
-}
-
-}
-} // namespace
 
 DEFINE_string(
     data_path,
@@ -84,6 +39,13 @@ DEFINE_string(
     "each table. If they are files, they contain a file system path for each "
     "data file, one per line. This allows running against cloud storage or "
     "HDFS");
+namespace {
+static bool notEmpty(const char* /*flagName*/, const std::string& value) {
+  return !value.empty();
+}
+} // namespace
+
+DEFINE_validator(data_path, &notEmpty);
 
 DEFINE_int32(
     run_query_verbose,
@@ -96,19 +58,54 @@ DEFINE_int32(
     "include in IO meter query. The columns are sorted by name and the n% first "
     "are scanned");
 
-DEFINE_string(data_format, "parquet", "Data format");
-
-
-DEFINE_validator(data_path, &notEmpty);
-DEFINE_validator(data_format, &validateDataFormat);
+DEFINE_validator(data_format, &facebook::velox::QueryBenchmarkBase::validateDataFormat);
 
 std::shared_ptr<TpchQueryBuilder> queryBuilder;
 
 class TpchBenchmark : public QueryBenchmarkBase {
  public:
-
-
-
+  void runMain(std::ostream& out, RunStats& runStats) override {
+    if (FLAGS_run_query_verbose == -1 && FLAGS_io_meter_column_pct == 0) {
+      folly::runBenchmarks();
+    } else {
+      const auto queryPlan = FLAGS_io_meter_column_pct > 0
+          ? queryBuilder->getIoMeterPlan(FLAGS_io_meter_column_pct)
+          : queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
+      auto [cursor, actualResults] = run(queryPlan);
+      if (!cursor) {
+        LOG(ERROR) << "Query terminated with error. Exiting";
+        exit(1);
+      }
+      auto task = cursor->task();
+      ensureTaskCompletion(task.get());
+      if (FLAGS_include_results) {
+        printResults(actualResults, out);
+        out << std::endl;
+      }
+      const auto stats = task->taskStats();
+      int64_t rawInputBytes = 0;
+      for (auto& pipeline : stats.pipelineStats) {
+        auto& first = pipeline.operatorStats[0];
+        if (first.operatorType == "TableScan") {
+          rawInputBytes += first.rawInputBytes;
+        }
+      }
+      runStats.rawInputBytes = rawInputBytes;
+      out << fmt::format(
+                 "Execution time: {}",
+                 succinctMillis(
+                     stats.executionEndTimeMs - stats.executionStartTimeMs))
+          << std::endl;
+      out << fmt::format(
+                 "Splits total: {}, finished: {}",
+                 stats.numTotalSplits,
+                 stats.numFinishedSplits)
+          << std::endl;
+      out << printPlanWithStats(
+                 *queryPlan.plan, stats, FLAGS_include_custom_stats)
+          << std::endl;
+    }
+  }
 };
 
 TpchBenchmark benchmark;

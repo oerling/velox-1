@@ -41,52 +41,12 @@
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
 
+DECLARE_string(test_flags_file);
+DECLARE_bool(include_results);
+DECLARE_bool(include_custom_stats);
+DECLARE_string(data_format);
+
 namespace facebook::velox {
-namespace {
-static bool notEmpty(const char* /*flagName*/, const std::string& value) {
-  return !value.empty();
-}
-
-static bool validateDataFormat(const char* flagname, const std::string& value) {
-  if ((value.compare("parquet") == 0) || (value.compare("dwrf") == 0)) {
-    return true;
-  }
-  std::cout
-      << fmt::format(
-             "Invalid value for --{}: {}. Allowed values are [\"parquet\", \"dwrf\"]",
-             flagname,
-             value)
-      << std::endl;
-  return false;
-}
-
-void ensureTaskCompletion(exec::Task* task) {
-  // ASSERT_TRUE requires a function with return type void.
-  ASSERT_TRUE(waitForTaskCompletion(task));
-}
-
-void printResults(const std::vector<RowVectorPtr>& results, std::ostream& out) {
-  out << "Results:" << std::endl;
-  bool printType = true;
-  for (const auto& vector : results) {
-    // Print RowType only once.
-    if (printType) {
-      out << vector->type()->asRow().toString() << std::endl;
-      printType = false;
-    }
-    for (vector_size_t i = 0; i < vector->size(); ++i) {
-      out << vector->toString(i) << std::endl;
-    }
-  }
-}
-} // namespace
-
-
-DEFINE_string(data_format, "parquet", "Data format");
-
-DEFINE_validator(data_path, &notEmpty);
-DEFINE_validator(data_format, &validateDataFormat);
-
 
 struct RunStats {
   std::map<std::string, std::string> flags;
@@ -119,21 +79,30 @@ struct ParameterDim {
   std::vector<std::string> values;
 };
 
-
 class QueryBenchmarkBase {
  public:
+  virtual ~QueryBenchmarkBase() = default;
   void initialize();
   void shutdown();
-  std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> run(      const TpchPlan& tpchPlan);
+  std::pair<std::unique_ptr<exec::test::TaskCursor>, std::vector<RowVectorPtr>>
+  run(const exec::test::TpchPlan& tpchPlan);
 
-  static   void ensureTaskCompletion(exec::Task* task);
+  static void ensureTaskCompletion(exec::Task* task);
 
-  static void printResults(const std::vector<RowVectorPtr>& results, std::ostream& out);
+  static bool validateDataFormat(
+      const char* flagname,
+      const std::string& value);
 
+  static void printResults(
+      const std::vector<RowVectorPtr>& results,
+      std::ostream& out);
 
-  void runMain(std::ostream& out, RunStats& runStats);
   void readCombinations();
 
+  /// Entry point invoked with different settings to run the benchmark.
+  virtual void runMain(std::ostream& out, RunStats& runStats) = 0;
+
+  
   void runCombinations(int32_t level);
 
   void runAllCombinations();
@@ -149,3 +118,4 @@ class QueryBenchmarkBase {
 
   std::vector<RunStats> runStats_;
 };
+} // namespace facebook::velox
