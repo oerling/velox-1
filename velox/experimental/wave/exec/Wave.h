@@ -428,6 +428,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
 using ProgramPtr = std::shared_ptr<Program>;
 
+class WaveDataSource;
 struct LaunchControl;
 
 /// Represents consecutive data dependent kernel launches.
@@ -631,6 +632,14 @@ class WaveStream {
     return stats_;
   }
 
+  void setDataSource(const std::shared_ptr<WaveDataSource>& source) {
+    dataSource_ = source;
+  }
+
+  void clearLaunch(int32_t id) {
+    launchControl_[id].clear();
+  }
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -710,6 +719,8 @@ class WaveStream {
   State state_{State::kNotRunning};
 
   WaveStats stats_;
+
+  std::shared_ptr<WaveDataSource> dataSource_;
 };
 
 /// Describes all the control data for launching a kernel executing

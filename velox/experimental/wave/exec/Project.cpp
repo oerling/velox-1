@@ -26,6 +26,7 @@ AbstractWrap* Project::findWrap() const {
 }
 
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
+  stream.clearLaunch(id_);
   for (auto& level : levels_) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
     for (auto i = 0; i < level.size(); ++i) {

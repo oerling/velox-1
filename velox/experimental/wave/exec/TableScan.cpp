@@ -37,6 +37,19 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
+ 
+  int32_t TableScan::canAdvance(WaveStream& stream) override {
+    if (!dataSource_) {
+      return 0;
+    }
+    auto rows = waveDataSource_->canAdvance(stream);
+    if (rows == 0) {
+      needNewSplit_ = true;
+    }
+    return rows;
+  }
+
+  
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(

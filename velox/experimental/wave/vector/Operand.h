@@ -138,9 +138,13 @@ enum class ErrorCode : uint8_t {
   kInsufficientMemory,
 };
 
-/// Contains a count of active lanes and a per lane error code.
+/// Thread block status with count of active lanes and a per lane
+/// error code and continue points for operators that can produce more
+/// data.
 struct BlockStatus {
   int32_t numRows{0};
+  /// Bit mask with ids of operators with continuable state.
+  int32_t continuable;
   ErrorCode errors[kBlockSize];
 };
 

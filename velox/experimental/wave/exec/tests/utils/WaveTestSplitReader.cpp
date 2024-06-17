@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 #include "velox/experimental/wave/exec/tests/utils/TestFormatReader.h"
 
+DECLARE_int32(wave_max_reader_batch_rows);
+
 namespace facebook::velox::wave::test {
 
 using common::Subfield;
@@ -47,7 +49,7 @@ int32_t WaveTestSplitReader::canAdvance(WaveStream& stream) {
   if (!stripe_) {
     return 0;
   }
-  return available();
+  return std::min<int32_t>(FLAGS_wave_max_reader_batch_rows, available());
 }
 
 void WaveTestSplitReader::schedule(WaveStream& waveStream, int32_t maxRows) {

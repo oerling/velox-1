@@ -50,12 +50,7 @@ class TableScan : public WaveSourceOperator {
     connector_ = connector::getConnector(tableHandle_->connectorId());
   }
 
-  int32_t canAdvance(WaveStream& stream) override {
-    if (!dataSource_) {
-      return 0;
-    }
-    return waveDataSource_->canAdvance(stream);
-  }
+  int32_t canAdvance(WaveStream& stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override {
     waveDataSource_->schedule(stream, maxRows);
