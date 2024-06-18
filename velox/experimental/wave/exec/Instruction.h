@@ -203,4 +203,21 @@ struct AbstractUnary : public AbstractInstruction {
   AbstractOperand* predicate;
 };
 
+  struct AbstractHandle {
+    // Index in 'handles' section of program launch.
+    int32_t index;
+  };
+
+  
+struct AbstractOperator {
+  // Identifier of operation if unusual, index in registered ops table.
+  int32_t operatorTypeIdx_{0};
+
+  // Identifies the bit in 'continuable' to indicate need for post-return action.
+  int32_t serial;
+
+  // Handle on device side state, e.g. hash table or repartitioning output buffers.
+  AbstractHandle* handle;
+};
+  
 } // namespace facebook::velox::wave

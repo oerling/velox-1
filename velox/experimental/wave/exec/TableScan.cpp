@@ -29,6 +29,7 @@ using exec::BlockingReason;
 BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   if (!dataSource_ || needNewSplit_) {
     nextSplit(future);
+    isNewSplit_ = true;
   }
   if (blockingFuture_.valid()) {
     *future = std::move(blockingFuture_);
@@ -39,15 +40,26 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
 
  
   int32_t TableScan::canAdvance(WaveStream& stream) override {
-    if (!dataSource_) {
+    if (!dataSource_ || needNewSplit_) {
       return 0;
     }
-    auto rows = waveDataSource_->canAdvance(stream);
-    if (rows == 0) {
+    if (isNewSplit_) {
+      isNewSplit_ = false;
+      return waveDataSource_->canAdvance(stream);
+    }
+    return nextAvailableRows_;
+  }
+
+void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
+    waveDataSource_->schedule(stream, maxRows);
+    // The stream must hold the reader tree. 'this' can initiate many
+    // concurrently running streams over potentially multiple splits.
+    stream.setSplitReader(waveDataSource_->splitReader());
+    nextAvailableRows_ = waveDataSource_->canAdvance();
+    if (nextAvailableRows_ == 0) {
       needNewSplit_ = true;
     }
-    return rows;
-  }
+}
 
   
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {

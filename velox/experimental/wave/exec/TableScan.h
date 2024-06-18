@@ -52,9 +52,7 @@ class TableScan : public WaveSourceOperator {
 
   int32_t canAdvance(WaveStream& stream) override;
 
-  void schedule(WaveStream& stream, int32_t maxRows = 0) override {
-    waveDataSource_->schedule(stream, maxRows);
-  }
+  void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   vector_size_t outputSize(WaveStream& stream) const {
     return waveDataSource_->outputSize(stream);
@@ -157,5 +155,12 @@ class TableScan : public WaveSourceOperator {
   // The last value of the IO wait time of 'this' that has been added to the
   // global static 'ioWaitNanos_'.
   uint64_t lastIoWaitNanos_{0};
+
+  // The value returned by canAdvance() of the WaveDataSource after last
+  // schedule(). 
+  int32_t nextAvailableRows_{0};
+
+  // True if canAdvance() should do waveDataSource_->canAdvance() instead of returning 'nextAvailableRows_'.
+  isNewSplit_{false};
 };
 } // namespace facebook::velox::wave

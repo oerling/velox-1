@@ -76,7 +76,7 @@ bool WaveTestSplitReader::isFinished() const {
 namespace {
 class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
  public:
-  std::unique_ptr<WaveSplitReader> create(
+  std::shared_ptr<WaveSplitReader> create(
       const std::shared_ptr<connector::ConnectorSplit>& split,
       const SplitReaderParams& params,
       const DefinesMap* defines) override {
@@ -87,7 +87,7 @@ class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
     }
     if (hiveSplit->filePath.size() > 11 &&
         memcmp(hiveSplit->filePath.data(), "wavemock://", 11) == 0) {
-      return std::make_unique<WaveTestSplitReader>(split, params, defines);
+      return std::make_shared<WaveTestSplitReader>(split, params, defines);
     }
     return nullptr;
   }

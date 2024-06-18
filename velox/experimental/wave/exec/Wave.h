@@ -632,7 +632,7 @@ class WaveStream {
     return stats_;
   }
 
-  void setDataSource(const std::shared_ptr<WaveDataSource>& source) {
+  void setSplitReader(const std::shared_ptr<WaveSplitReader>& source) {
     dataSource_ = source;
   }
 
@@ -720,7 +720,7 @@ class WaveStream {
 
   WaveStats stats_;
 
-  std::shared_ptr<WaveDataSource> dataSource_;
+  std::shared_ptr<WaveSplitReader> dataSource_;
 };
 
 /// Describes all the control data for launching a kernel executing
