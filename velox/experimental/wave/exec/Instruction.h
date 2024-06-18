@@ -203,9 +203,13 @@ struct AbstractUnary : public AbstractInstruction {
   AbstractOperand* predicate;
 };
 
+  /// Represents a shared state operated on by instructions. For example, a join/group by table, destination buffers for repartition etc. Device side memory owned by a group of WaveBufferPtrs in the Program or WaveStream.
   struct AbstractHandle {
     // Index in 'handles' section of program launch.
     int32_t index;
+
+    /// True if there is one item per WaveDriver, If false, there is one item per WaveStream.
+    bool isGlobal;
   };
 
   

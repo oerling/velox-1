@@ -116,6 +116,39 @@ struct ThreadBlockProgram {
   Instruction* instructions;
 };
 
+/// Thread block wide status in Wave kernels
+struct WaveShared {
+  /// per lane status and row count.
+  BlockStatus* status;
+  /// If true, all threads in block return before starting next instruction.
+  bool stop;
+  // Scratch data area. Size depends on shared memory size for instructions. 
+  int32_t data32;
+  
+};
+  
+  /// Parameters for a Wave kernel. All pointers are device side readable.
+struct KernelParams {
+  /// The first thread block with the program. Subscript is blockIdx.x. 
+  int32_t* blockBase{nullptr};
+  // The ordinal of the program. All blocks with the same program have the same
+  // number here. Subscript is blockIdx.x.
+  int32_t* programIdx{nullptr};
+
+  // The TB program for each exe. The subscript is programIdx[blockIdx.x].
+  ThreadBlockProgram** programs{nullptr};
+
+  // For each exe, the start of the array of Operand*. Instructions reference
+  // operands via offset in this array. The subscript is
+  // programIndx[blockIdx.x].
+  Operand*** operands{nullptr};
+
+  // the status return block for each TB. The subscript is blockIdx.x -
+  // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
+  BlockStatus* status{nullptr};
+
+};
+  
 /// Returns the shared memory size for instruction for kBlockSize.
 int32_t instructionSharedMemory(const Instruction& instruction);
 
@@ -132,12 +165,8 @@ class WaveKernelStream : public Stream {
   void call(
       Stream* alias,
       int32_t numBlocks,
-      int32_t* blockBase,
-      int32_t* programIndices,
-      ThreadBlockProgram** programs,
-      Operand*** operands,
-      BlockStatus* status,
-      int32_t sharedSize);
+      int32_t sharedSize,
+      KernelParams& params);
 };
 
 } // namespace facebook::velox::wave

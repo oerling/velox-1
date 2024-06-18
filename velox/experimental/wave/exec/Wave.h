@@ -178,10 +178,17 @@ std::string definesToString(const DefinesMap* map);
 class WaveStream;
 class Program;
 
+  /// Represents a device side operator state, like a join/group by hash table or repartition output. Can be scoped to a WaveStream or to a Program.
+struct OperatorState {
+  int32_t id;
+  /// Owns the device side data. Starting address of first is passed to the kernel. Layout depends on operator. 
+  std::vector<WaveBufferPtr> buffers;
+};
+  
 /// Represents a kernel or data transfer. Many executables can be in one kernel
 /// launch on different thread blocks. Owns the output and intermediate memory
 /// for the thread block program or data transfer this represents. Has a
-/// WaveStream level unique id for each output column. be nulllptr if this
+/// WaveStream level unique id for each output column. May be nulllptr if this
 /// represents data movement only.
 struct Executable {
   virtual ~Executable() = default;
@@ -424,6 +431,9 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // a pool of ready to run executables.
   std::vector<std::unique_ptr<Executable>> prepared_;
+
+  // 
+  folly::F14FastMap<int32_t, OperatorState*> state_;
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
@@ -746,23 +756,8 @@ struct LaunchControl {
   // device in prepareProgamLaunch().
   const int32_t inputRows;
 
-  /// The first thread block with the program. Subscript is blockIdx.x.
-  int32_t* blockBase{0};
-  // The ordinal of the program. All blocks with the same program have the same
-  // number here. Subscript is blockIdx.x.
-  int32_t* programIdx{nullptr};
+  KernelParams params;
 
-  // The TB program for each exe. The subscript is programIdx[blockIdx.x].
-  ThreadBlockProgram** programs{nullptr};
-
-  // For each exe, the start of the array of Operand*. Instructions reference
-  // operands via offset in this array. The subscript is
-  // programIndx[blockIdx.x].
-  Operand*** operands{nullptr};
-
-  // the status return block for each TB. The subscript is blockIdx.x -
-  // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
-  BlockStatus* status{nullptr};
   int32_t sharedMemorySize{0};
 
   // Storage for all the above in a contiguous unified memory piece.

@@ -164,17 +164,13 @@ __device__ void wrapKernel(
     break;
 
 __global__ void waveBaseKernel(
-    int32_t* baseIndices,
-    int32_t* programIndices,
-    ThreadBlockProgram** programs,
-    Operand*** programOperands,
-    BlockStatus* blockStatusArray) {
+			       KernelParams params) {
   extern __shared__ __align__(16) char shared[];
-  int programIndex = programIndices[blockIdx.x];
-  auto* program = programs[programIndex];
-  auto* operands = programOperands[programIndex];
-  auto* status = &blockStatusArray[blockIdx.x - baseIndices[blockIdx.x]];
-  int32_t blockBase = (blockIdx.x - baseIndices[blockIdx.x]) * blockDim.x;
+  int programIndex = params.programIdx[blockIdx.x];
+  auto* program = params.programs[programIndex];
+  auto* operands = params.operands[programIndex];
+  auto* status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
+  int32_t blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
   auto instruction = program->instructions;
   for (;;) {
     switch (instruction->opCode) {
@@ -214,22 +210,19 @@ int32_t instructionSharedMemory(const Instruction& instruction) {
 void WaveKernelStream::call(
     Stream* alias,
     int32_t numBlocks,
-    int32_t* bases,
-    int32_t* programIdx,
-    ThreadBlockProgram** programs,
-    Operand*** operands,
-    BlockStatus* status,
-    int32_t sharedSize) {
+    int32_t sharedSize,
+    KernelParams& params) {
   waveBaseKernel<<<
       numBlocks,
       kBlockSize,
       sharedSize,
       alias ? alias->stream()->stream : stream()->stream>>>(
-      bases, programIdx, programs, operands, status);
+							    params);
   if (FLAGS_kernel_gdb) {
     (alias ? alias : this)->wait();
   }
 }
+
 REGISTER_KERNEL("expr", waveBaseKernel);
 
 } // namespace facebook::velox::wave
