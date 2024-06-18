@@ -147,6 +147,8 @@ struct KernelParams {
   // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
   BlockStatus* status{nullptr};
 
+  /// Array of global states. Subscripted by programIdx.
+  void** programState{nullptr};
 };
   
 /// Returns the shared memory size for instruction for kBlockSize.
