@@ -56,7 +56,8 @@ class CompileState {
   AbstractOperand* addIdentityProjections(AbstractOperand* source);
   AbstractOperand* findCurrentValue(Value value);
 
-  AbstractOperand* findCurrentValue(const std::shared_ptr<core::FieldaccessTypedExpr>&  field) {
+  AbstractOperand* findCurrentValue(
+      const std::shared_ptr<core::FieldaccessTypedExpr>& field) {
     Value value;
     value.expr = field;
     return findcurrentValue(value);
@@ -97,9 +98,9 @@ class CompileState {
       int32_t& nodeIndex);
 
   void makeAggregateLayout(AbstractAggregate& aggregate);
-  
+
   void makeAggregateAccumulate(const core::AggregationNode* node);
-  
+
   bool reserveMemory();
 
   // Adds 'instruction' to the suitable program and records the result

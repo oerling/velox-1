@@ -57,7 +57,7 @@ class WaveHiveDataSource : public WaveDataSource {
   std::shared_ptr<WaveSplitReader> splitReadr() override {
     return splitReader_;
   }
-  
+
   uint64_t getCompletedBytes() override;
 
   uint64_t getCompletedRows() override;

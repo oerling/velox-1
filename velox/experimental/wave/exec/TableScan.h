@@ -157,10 +157,11 @@ class TableScan : public WaveSourceOperator {
   uint64_t lastIoWaitNanos_{0};
 
   // The value returned by canAdvance() of the WaveDataSource after last
-  // schedule(). 
+  // schedule().
   int32_t nextAvailableRows_{0};
 
-  // True if canAdvance() should do waveDataSource_->canAdvance() instead of returning 'nextAvailableRows_'.
+  // True if canAdvance() should do waveDataSource_->canAdvance() instead of
+  // returning 'nextAvailableRows_'.
   isNewSplit_{false};
 };
 } // namespace facebook::velox::wave

@@ -77,12 +77,13 @@ AbstractOperand* CompileState::newOperand(
   return op;
 }
 
-  AbstractState* CompileState::newState(StateKind kind,
-					const std::string& idString,
+AbstractState* CompileState::newState(
+    StateKind kind,
+    const std::string& idString,
     const std::string& label) {
-    states_.push_back(
-		      std::make_unique<Abstractstate>(stateCounter_++, kind, idString, label));
-    auto state = states_.back().get();
+  states_.push_back(
+      std::make_unique<Abstractstate>(stateCounter_++, kind, idString, label));
+  auto state = states_.back().get();
   return state;
 }
 
@@ -407,10 +408,12 @@ CompileState::aggregateFunctionRegistry() {
   return aggregateFunctionRegistry_;
 }
 
-  void CompileState::setAggregateFromPlan(AbstractAggInstruction& agg, core::AggregationNode::Aggregate& planAggregate) {
-    agg.op = AggregateOp::kSum;
-  }
-  
+void CompileState::setAggregateFromPlan(
+    AbstractAggInstruction& agg,
+    core::AggregationNode::Aggregate& planAggregate) {
+  agg.op = AggregateOp::kSum;
+}
+
 void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
   // First key nulls, then key wirds. Then accumulator nulls, then accumulators.
   int32_t numKeys = aggregate.keys().size();
@@ -420,11 +423,11 @@ void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
   int32_t accOffset = accNullOffset + bits::roundUp(numAggs, 8);
   for (auto i = 0; i < numAggs; ++i) {
     auto& agg = aggregate.aggregates[i];
-    agg.nullOffset =accNullOffset + i;
+    agg.nullOffset = accNullOffset + i;
     agg->accumulatorOffset = accOffset + i * sizeof(int64_t);
   }
 }
-  
+
 void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
   auto* state = newState(StateKind::kGroupBy, node->id(), "");
   std::vector<AbstractOperand*> keys;
@@ -447,23 +450,23 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     setAggregateFromPlan(aggregate, planAggregate);
     for (auto& arg : planAggregate->call()->inputs()) {
       argTypes.push_back(fromCpuType(arg->type()));
-      
+
       auto op = findCurrentValue(arg);
       aggregate.args.push_back(op);
       bool isNew = uniqueArgs.insert(op).second;
       if (isNew) {
-	allArgs.push_back(op);
-	if (auto source = definedIn_[op]) {
-	  programs.insert(source);
-	}
+        allArgs.push_back(op);
+        if (auto source = definedIn_[op]) {
+          programs.insert(source);
+        }
       }
     }
     auto func =
-	functionRegistry_->getFunction(aggregate.call->name(), argTypes);
-      VELOX_CHECK_NOT_NULL(func);
-
+        functionRegistry_->getFunction(aggregate.call->name(), argTypes);
+    VELOX_CHECK_NOT_NULL(func);
   }
-  auto instruction = std::make_unique<AbstractAggregation>(nthContinuable_++, std::move(keys), std::move(aggregates), state);
+  auto instruction = std::make_unique<AbstractAggregation>(
+      nthContinuable_++, std::move(keys), std::move(aggregates), state);
   makeAggregateLayout(*instruction);
   std::vector<programPtr> source*;
   if (sources.empty) {
@@ -475,10 +478,10 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       sourceList.push_back(s);
     }
   }
-  addInstruction(std::move(instruction),nullptr, sourceList);
+  addInstruction(std::move(instruction), nullptr, sourceList);
 }
 
-  bool CompileState::addOperator(
+bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
     RowTypePtr& outputType) {

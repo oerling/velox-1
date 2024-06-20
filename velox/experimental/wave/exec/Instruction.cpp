@@ -16,11 +16,10 @@
 
 #include "velox/experimental/wave/exec/Instruction.h"
 
-
 namespace facebook::velox::wave {
 
 std::string rowTypeString(const Type& type) {
   return "";
 }
 
-}
+} // namespace facebook::velox::wave

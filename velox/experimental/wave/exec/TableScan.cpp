@@ -38,30 +38,28 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
- 
-  int32_t TableScan::canAdvance(WaveStream& stream) override {
-    if (!dataSource_ || needNewSplit_) {
-      return 0;
-    }
-    if (isNewSplit_) {
-      isNewSplit_ = false;
-      return waveDataSource_->canAdvance(stream);
-    }
-    return nextAvailableRows_;
+int32_t TableScan::canAdvance(WaveStream& stream) override {
+  if (!dataSource_ || needNewSplit_) {
+    return 0;
   }
-
-void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
-    waveDataSource_->schedule(stream, maxRows);
-    // The stream must hold the reader tree. 'this' can initiate many
-    // concurrently running streams over potentially multiple splits.
-    stream.setSplitReader(waveDataSource_->splitReader());
-    nextAvailableRows_ = waveDataSource_->canAdvance();
-    if (nextAvailableRows_ == 0) {
-      needNewSplit_ = true;
-    }
+  if (isNewSplit_) {
+    isNewSplit_ = false;
+    return waveDataSource_->canAdvance(stream);
+  }
+  return nextAvailableRows_;
 }
 
-  
+void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
+  waveDataSource_->schedule(stream, maxRows);
+  // The stream must hold the reader tree. 'this' can initiate many
+  // concurrently running streams over potentially multiple splits.
+  stream.setSplitReader(waveDataSource_->splitReader());
+  nextAvailableRows_ = waveDataSource_->canAdvance();
+  if (nextAvailableRows_ == 0) {
+    needNewSplit_ = true;
+  }
+}
+
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(

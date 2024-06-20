@@ -203,42 +203,55 @@ struct AbstractUnary : public AbstractInstruction {
   AbstractOperand* predicate;
 };
 
-  enum class StateKind : uint8_t {kGroupBy};
-  
-  /// Represents a shared state operated on by instructions. For example, a join/group by table, destination buffers for repartition etc. Device side memory owned by a group of WaveBufferPtrs in the Program or WaveStream.
-  struct AbstractState {
-    AbstractState(int32_t id, StateKind kind, std::string& idString, std::string& label)
+enum class StateKind : uint8_t { kGroupBy };
+
+/// Represents a shared state operated on by instructions. For example, a
+/// join/group by table, destination buffers for repartition etc. Device side
+/// memory owned by a group of WaveBufferPtrs in the Program or WaveStream.
+struct AbstractState {
+  AbstractState(
+      int32_t id,
+      StateKind kind,
+      std::string& idString,
+      std::string& label)
       : id(id), kind(kind), idString(idString), label(label) {}
-    
-    /// serial numbr.
-    int32_t id;
 
-    StateKind kind;
+  /// serial numbr.
+  int32_t id;
 
-    /// PlanNodeId for joins/aggregates, other velox::Task scoped id.
-    std::string idString;
+  StateKind kind;
 
-    /// Comment
-    std::string label;
-    
-    /// True if there is one item per WaveDriver, If false, there is one item per WaveStream.
-    bool isGlobal;
-  };
+  /// PlanNodeId for joins/aggregates, other velox::Task scoped id.
+  std::string idString;
 
-  
-  struct AbstractOperator : public AbstractInstruction {
-    AbstractOperator(OpCode opCode, int32_t serial, AbstractState* state, RowTypePtr outputType)
-      : AbstractInstruction(opCode), serial(serial), state(state), outputType(outputType) {}
+  /// Comment
+  std::string label;
 
+  /// True if there is one item per WaveDriver, If false, there is one item per
+  /// WaveStream.
+  bool isGlobal;
+};
 
-  // Identifies the bit in 'continuable' to indicate need for post-return action.
+struct AbstractOperator : public AbstractInstruction {
+  AbstractOperator(
+      OpCode opCode,
+      int32_t serial,
+      AbstractState* state,
+      RowTypePtr outputType)
+      : AbstractInstruction(opCode),
+        serial(serial),
+        state(state),
+        outputType(outputType) {}
+
+  // Identifies the bit in 'continuable' to indicate need for post-return
+  // action.
   int32_t serial;
 
-  // Handle on device side state, e.g. aggregate hash table or repartitioning output buffers.
+  // Handle on device side state, e.g. aggregate hash table or repartitioning
+  // output buffers.
   AbstractState* state;
-    RowTypePtr outputType;
-  };
-
+  RowTypePtr outputType;
+};
 
 struct AbstractAggInstruction {
   AggregateOp op;
@@ -249,24 +262,30 @@ struct AbstractAggInstruction {
   std::vector<AbstractOperand*> args;
   AbstractOperand* result;
 };
-  
+
 struct AbstractAggregation : public AbstractOperator {
-  AbstractAggregation(std::vector<AbstractOperand*> keys, std::vector<AbstractAggInstruction> aggregates, AbstractState* state, RowTypePtr outputType)
-    : AbstractOperator(OpCode::kAggregate, serial, state, outputType), keys(std::move(keys)), aggregates(std::move(aggregates)) {} 
+  AbstractAggregation(
+      std::vector<AbstractOperand*> keys,
+      std::vector<AbstractAggInstruction> aggregates,
+      AbstractState* state,
+      RowTypePtr outputType)
+      : AbstractOperator(OpCode::kAggregate, serial, state, outputType),
+        keys(std::move(keys)),
+        aggregates(std::move(aggregates)) {}
 
   int32_t rowSize() {
     aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
-  
+
   bool intermediateInput{false};
   bool intermediateOutput{false};
-  std::vector <AbstractOperand*> keys;
+  std::vector<AbstractOperand*> keys;
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
   int32_t literalOffset;
 };
 
-  /// Serializes 'row' to characters interpretable on device.
-  std::string rowTypeString(const RowTypePtr& row);
-  
+/// Serializes 'row' to characters interpretable on device.
+std::string rowTypeString(const RowTypePtr& row);
+
 } // namespace facebook::velox::wave

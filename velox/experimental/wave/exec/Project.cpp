@@ -29,7 +29,7 @@ int32_t Project::canAdvance(WaveStream& stream) override {
   VELOX_CHECK(isSource());
   return levels_[0][0]->canAdvance(stream);
 }
-  
+
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
   stream.clearLaunch(id_);
   for (auto& level : levels_) {

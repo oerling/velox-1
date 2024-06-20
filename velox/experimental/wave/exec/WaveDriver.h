@@ -148,7 +148,8 @@ class WaveDriver : public exec::SourceOperator {
   std::vector<std::unique_ptr<AbstractState>> states_;
   WaveStats waveStats_;
 
-  // States shared between WaveStreams and WaveDrivers, for example join/group by tables.
+  // States shared between WaveStreams and WaveDrivers, for example join/group
+  // by tables.
   OperatorStateMap stateMap_;
 };
 

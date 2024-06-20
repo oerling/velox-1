@@ -39,7 +39,7 @@ class Project : public WaveOperator {
     return true;
   }
   int32_t canAdvance(WaveStream& Stream) override;
-  
+
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   vector_size_t outputSize(WaveStream& stream) const override;
