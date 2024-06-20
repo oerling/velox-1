@@ -894,14 +894,14 @@ void Program::prepareForDevice(GpuArena& arena) {
 			      stream.makeAggregate(*Inst, state);
 			    };
 	operatorState_.push_back(programState);
-        physicalInst->updates = reinterpret_cast<IUpdateAgg*>(
+        physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
-	OperandIndex* keys = reinterpret_cast<OperandIndex*>(physicalInst->updates + physicalInst->numAggregates);
+	OperandIndex* keys = reinterpret_cast<OperandIndex*>(physicalInst->aggregates + physicalInst->numAggregates);
 	for (auto i = 0; i < logicalInst->keys.size(); ++i) {
 	  keys[i] = operandIndex(logicalInst->keys[i]);
 	}
         for (auto i = 0; i < logicalInst->aggregates.size(); ++i) {
-	  auto physicalAgg = physicalInst->updates + i;
+	  auto physicalAgg = physicalInst->aggregates + i;
 	  auto& abstractAgg = abstractInst->aggregates[i];
 	  physicalAgg->op = abstractAgg.op;
 	  physicalAgg->nullOffset = abstractAgg.nullOffset;

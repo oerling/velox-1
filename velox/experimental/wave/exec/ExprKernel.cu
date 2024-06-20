@@ -20,6 +20,7 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
+#include "velox/experimental/wave/exec/Aggregate.cuh"/
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
@@ -165,7 +166,7 @@ __device__ void wrapKernel(
 
 __global__ void waveBaseKernel(
 			       KernelParams params) {
-  extern __shared__ __align__(16) char sharedchar[];
+  extern __shared__ __align__(16) char sharedChar[];
   WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);
   int programIndex = params.programIdx[blockIdx.x];
   auto* program = params.programs[programIndex];

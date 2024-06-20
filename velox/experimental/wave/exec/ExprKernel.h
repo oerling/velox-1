@@ -146,14 +146,15 @@ struct IUpdateAgg {
   int32_t accumulatorOffset;
   OperandIndex arg1{kEmpty};
   OperandIndex arg2{kEmpty};
+  OperandIndex result{kEmpty};
 };
 
 struct IAggregate {
   uint16_t numKeys;
   uint16_t numAggregates;
   uint8_t stateIndex;
-  //  'numAggregates' Updates followed by key 'numKeys' key operand indices.
-  IUpdateAgg* updates;
+  //  'numAggre gates' Updates followed by key 'numKeys' key operand indices.
+  IUpdateAgg* aggregates;
 };
   
 struct Instruction {

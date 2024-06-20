@@ -247,6 +247,7 @@ struct AbstractAggInstruction {
   // Offset of accumulator on accumulator row. Aligned at 8.
   int32_t accumulatorOffset;
   std::vector<AbstractOperand*> args;
+  AbstractOperand* result;
 };
   
 struct AbstractAggregation : public AbstractOperator {
@@ -257,6 +258,8 @@ struct AbstractAggregation : public AbstractOperator {
     aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
   
+  bool intermediateInput{false};
+  bool intermediateOutput{false};
   std::vector <AbstractOperand*> keys;
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
