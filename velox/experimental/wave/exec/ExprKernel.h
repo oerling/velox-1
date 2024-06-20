@@ -20,6 +20,7 @@
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/exec/ErrorCode.h"
 #include "velox/experimental/wave/vector/Operand.h"
+#include "velox/experimental/wave/common/HashTable.h"
 
 /// Wave common instruction set. Instructions run a thread block wide
 /// and offer common operations like arithmetic, conditionals,
@@ -39,6 +40,8 @@ enum class OpCode {
   kWrap,
   kLiteral,
   kNegate,
+  kAggregate,
+  kReadAggregate,
   kReturn,
 
   // From here, only OpCodes that have variants for scalar types.
@@ -96,6 +99,63 @@ struct INegate {
 };
 struct IReturn {};
 
+  enum class AggregateOp : uint8_t {
+				    kSum
+  };
+
+/// Device-side state for group by
+struct DeviceAggregation {
+  /// hash table, nullptr if no grouping keys.
+  GpuHashTableBase* table{nullptr};
+
+  // Byte size of a rowm rounded to next 8.
+  int32_t rowSize = 0;
+  
+  /// Allocator for variable llength accumulators, if not provided by 'table'.
+  RowAllocator* allocator{nullptr};
+
+  char* singleRow{nullptr};
+};
+
+  /// Parameters for creating/updating a group by.
+struct AggregationControl {
+    /// Pointer to uninitialized first buffer in the case of initializing and to the previous head in the case of rehashing. Must always be set.
+  void* head;
+    /// Size of block starting at 'head'. Must be set on first setup.
+  int64_t headSize{0};
+    /// For a rehashing request, space for a new head and a new HashTable.
+    void* newHead{nullptr};
+    int64_t newHeadSize{0};
+    /// Size of single row allocation. Required on first init.
+    int32_t rowSize{0};
+    //// Number of slots in HashTable, must be a powr of two. 0 means no hash table (aggregation without grouping keys).
+    int32_t maxTableEntries{0};
+    /// Number of allocators for the hash table, if any. Must be a powr of two. 
+    int32_t numPartitions{1};
+    /// Uninitialized space to be added to the allocators of an existing HashTable.
+    char* extraSpace{nullptr};
+    /// Usable bytes starting at extraSpace.
+    int64_t extraSpaceSize{0};
+  };
+    
+struct IUpdateAgg {
+    AggregateOp op;
+  // Offset of null indicator byte on accumulator row.
+  int32_t nullOffset;
+  // Offset of accumulator on accumulator row. Aligned at 8.
+  int32_t accumulatorOffset;
+  OperandIndex arg1{kEmpty};
+  OperandIndex arg2{kEmpty};
+};
+
+struct IAggregate {
+  uint16_t numKeys;
+  uint16_t numAggregates;
+  uint8_t stateIndex;
+  //  'numAggregates' Updates followed by key 'numKeys' key operand indices.
+  IUpdateAgg* updates;
+};
+  
 struct Instruction {
   OpCode opCode;
   union {
@@ -104,6 +164,7 @@ struct Instruction {
     IWrap wrap;
     ILiteral literal;
     INegate negate;
+    IAggregate aggregate;
   } _;
 };
 
@@ -120,10 +181,13 @@ struct ThreadBlockProgram {
 struct WaveShared {
   /// per lane status and row count.
   BlockStatus* status;
+  Operand** operands;
+  void** states;
   /// If true, all threads in block return before starting next instruction.
   bool stop;
+  int32_t blockBase;
   // Scratch data area. Size depends on shared memory size for instructions. 
-  int32_t data32;
+  char data;
   
 };
   
@@ -146,7 +210,8 @@ struct KernelParams {
   // the status return block for each TB. The subscript is blockIdx.x -
   // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
   BlockStatus* status{nullptr};
-
+  // Address of global states like hash tables. Subscript is 'programIdx' and next subscript is state id in the instruction.
+  void*** operatorStates;
 };
   
 /// Returns the shared memory size for instruction for kBlockSize.
@@ -167,6 +232,9 @@ class WaveKernelStream : public Stream {
       int32_t numBlocks,
       int32_t sharedSize,
       KernelParams& params);
+
+  /// Sets up or updates an aggregation.
+  void setupAggregation(AggregationControl& op);
 };
 
 } // namespace facebook::velox::wave

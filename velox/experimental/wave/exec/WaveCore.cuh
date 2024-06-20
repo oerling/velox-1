@@ -39,7 +39,7 @@ __device__ inline bool operandOrNull(
     Operand** operands,
     OperandIndex opIdx,
     int32_t blockBase,
-    char* shared,
+        char* shared,
     T& value) {
   if (opIdx > kMinSharedMemIndex) {
     uint16_t mask = opIdx & kSharedNullMask;

@@ -112,6 +112,7 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
 }
 
 WaveStream::~WaveStream() {
+  VELOX_CHECK(state_ == State::kHost || state_ == State::kNotRunning, "Bad state at ~WaveStream: {}", static_cast<int32_t>(state_));
   // TODO: wait for device side work to finish before freeing associated memory
   // owned by exes and buffers in 'this'.
   for (auto& exe : executables_) {
@@ -221,6 +222,20 @@ void WaveStream::releaseEvent(std::unique_ptr<Event>&& event) {
   eventsForReuse_.push_back(std::move(event));
 }
 
+OperatorState* WaveStream::operatorState(int32_t id) {
+  auto it = taskStateMap_->states.find(id);
+  if (it != taskStateMap_->states.end()) {
+    return it->second.get();
+  }
+  return nullptr;
+}
+  OperatorState* WaveStream::newState(ProgramState& init) {
+  auto stateShared =std::make_shared<OperatorState>();
+  init.init(*this, *stateShared);
+  taskStateMap_->states[init.stateId] = stateShared;
+  return stateShared.get();
+}
+  
 void WaveStream::markHostOutputOperand(const AbstractOperand& op) {
   hostOutputOperands_.add(op.id);
   auto nullable = isNullable(op);
@@ -489,6 +504,7 @@ void WaveStream::exeLaunchInfo(
       sizeof(Operand) * info.numLocalOps +
       // Space for the 'indices' for each distinct wrappedAt.
       (info.localWrap.size() * numBlocks * sizeof(void*));
+  exe.programShared->  getOperatorStates(*this, info.operatorStates);
 }
 
 Operand**
@@ -581,12 +597,14 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   auto operandOffset = size;
   // Exe dependent sizes for operands.
   int32_t operandBytes = 0;
+  int32_t operatorStateBytes = 0;
   int32_t shared = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     exeLaunchInfo(*exes[i], numBlocks, info[i]);
     operandBytes += info[i].totalBytes;
     markLaunch(*stream, *exes[i]);
     shared = std::max(shared, exes[i]->programShared->sharedMemorySize());
+    operatorStateBytes += info[i].operatorStates.size() * sizeof(void*); 
   }
   size += operandBytes;
   int32_t statusOffset = 0;
@@ -595,6 +613,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     //  Pointer to return block for each tB.
     size += blocksPerExe * sizeof(BlockStatus);
   }
+  // 1 pointer per exe and an exe-dependent data area.
+  int32_t operatorStateOffset = size;
+  size += exes.size() * sizeof(void*) +operatorStateBytes;
   auto buffer = arena_.allocate<char>(size);
   memset(buffer->as<char>(), 0, size);
 
@@ -605,12 +626,12 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   // Now we fill in the various arrays and put their start addresses in
   // 'control'.
   auto start = buffer->as<int32_t>();
-  control.blockBase = start;
-  control.programIdx = start + numBlocks;
-  control.programs = addBytes<ThreadBlockProgram**>(
-      control.programIdx, numBlocks * sizeof(int32_t));
-  control.operands =
-      addBytes<Operand***>(control.programs, exes.size() * sizeof(void*));
+  control.params.blockBase = start;
+  control.params.programIdx = start + numBlocks;
+  control.params.programs = addBytes<ThreadBlockProgram**>(
+      control.params.programIdx, numBlocks * sizeof(int32_t));
+  control.params.operands =
+      addBytes<Operand***>(control.params.programs, exes.size() * sizeof(void*));
   if (!inputControl) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
@@ -618,37 +639,51 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     // a single cardinality change, which will update the row counts in each TB.
     // Writing errors is not serialized but each lane with at least one error
     // will show one error.
-    control.status = addBytes<BlockStatus*>(start, statusOffset);
+    control.params.status = addBytes<BlockStatus*>(start, statusOffset);
     // Memory is already set to all 0.
     for (auto i = 0; i < blocksPerExe; ++i) {
-      auto status = &control.status[i];
+      auto status = &control.params.status[i];
       status->numRows =
           i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
   } else {
-    control.status = inputControl->status;
+    control.params.status = inputControl->params.status;
   }
   char* operandStart = addBytes<char*>(start, operandOffset);
   VELOX_CHECK_EQ(0, reinterpret_cast<uintptr_t>(operandStart) & 7);
   int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
-    control.programs[i] = exes[i]->program;
+    control.params.programs[i] = exes[i]->program;
 
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
-    control.operands[i] = operandPtrs;
+    control.params.operands[i] = operandPtrs;
     // The operands defined by the exe start after the input operands and are
     // all consecutive.
     exes[i]->operands = operandPtrs[exes[i]->inputOperands.size()];
     operandStart += info[i].totalBytes;
     for (auto tbIdx = 0; tbIdx < blocksPerExe; ++tbIdx) {
-      control.blockBase[fill] = i * blocksPerExe;
-      control.programIdx[fill] = i;
+      control.params.blockBase[fill] = i * blocksPerExe;
+      control.params.programIdx[fill] = i;
       ++fill;
+    }
+  }
+
+  // Fill in operator states, e.g. hash tables.
+  void** operatorStatePtrs = addBytes<void**>(start, operatorStateOffset);
+  control.params.operatorStates = operatorStatePtrs;
+  auto stateFill = operatorStatePtrs + info.size();
+  for (auto i = 0; i < info.size(); ++i) {
+    operatorStatePtrs[i] = stateFill;
+    auto& ptrs = info[i].operatorStates;
+    for (auto j = 0; j < ptrs.size(); ++j) {
+      *stateFill = ptrs[j];
+      ++stateFill;
     }
   }
   if (!exes.empty()) {
     ++stats_.numKernels;
   }
+
   stats_.numPrograms += exes.size();
   stats_.numThreadBlocks += blocksPerExe * exes.size();
   stats_.numThreads += numRows_ * exes.size();
@@ -666,7 +701,7 @@ int32_t WaveStream::getOutput(
   auto it = launchControl_.find(operatorId);
   VELOX_CHECK(it != launchControl_.end());
   auto* control = it->second[0].get();
-  auto* status = control->status;
+  auto* status = control->params.status;
   auto numBlocks = bits::roundUp(control->inputRows, kBlockSize) / kBlockSize;
   if (operands.empty()) {
     return statusNumRows(status, numBlocks);
@@ -691,15 +726,39 @@ int32_t WaveStream::getOutput(
   return vectors[0]->size();
 }
 
+void WaveStream::makeAggregate(AbstractAggregation& inst, OperatorState& state) {
+  VELOX_CHECK(inst.keys.empty());
+  int32_t size = inst.rowSize();
+  auto stream = newStream();
+  auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation);
+  state.buffers.push_back(buffer);
+  stream->initAggregation(buffer);
+}
+
+  
 WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
 
+  void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
+    ptrs.resize(operatorStates_.size());
+    for (auto i = 0; i < operatorStates_.size(); ++i) {
+      auto& operatorState = operatorStates_[i];
+      auto* state = stream.operatorState(operatorState.stateId);
+      if (!state) {
+	VELOX_CHECK_NOT_NULL(operatorState.init);
+	state = stream.newState(operatorState);
+      }
+      ptrs[i] = state->buffers[0]->as<char>();
+    }
+  }
+
+  
 #define IN_HEAD(abstract, physical, _op)             \
   auto* abstractInst = &instruction->as<abstract>(); \
   space->opCode = _op;                               \
   auto physicalInst = new (&space->_) physical();
-
+  
 #define IN_OPERAND(member) \
   physicalInst->member = operandIndex(abstractInst->member)
 
@@ -750,7 +809,23 @@ void Program::prepareForDevice(GpuArena& arena) {
       }
       case OpCode::kReturn:
         break;
-      default:
+    case OpCode::kAggregate: {
+      auto& agg = instruction->as<AbstractAggregation>();
+      for (auto& key : agg.keys) {
+	markInput(key);
+      }
+      // The literal area has first IUpdateAggs and then Operandindex's for the keys.
+      int32_t extra = bits::roundUp(agg.keys.size() * sizeof(OperandIndex), sizeof(IUpdateAgg)) / sizeof(IUpdateAgg);
+      std::vector<IUpdateAgg> temp(agg.aggregates.size() + extra);
+      agg.literalOffset = addLiteral(temp.data(), temp.size());
+      for (auto& op : agg.aggregates) {
+	for (auto& arg : op.args) {
+	  markInput(arg);
+	}
+      }
+      break;
+    }
+    default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
     }
@@ -805,7 +880,44 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-      case OpCode::kReturn: {
+      case OpCode::kAggregate: {
+        IN_HEAD(AbstractAggregation, IAggregate, OpCode::kAggregate);
+
+
+	physicalInst->numKeys = abstractInst->keys.size();
+        physicalInst->numAggregates = abstractInst->aggregates.size();
+	physicalInst->stateIndex = stateIndices_.size();
+	ProgramState programState;
+	programState = abstrattInst->stateId;
+	programState.isGlobal = true;
+	programState.init = [inst = &abstractInst](WaveStream& stream, OperatorState& state) {
+			      stream.makeAggregate(*Inst, state);
+			    };
+	operatorState_.push_back(programState);
+        physicalInst->updates = reinterpret_cast<IUpdateAgg*>(
+            deviceLiterals_ + abstractInst->literalOffset);
+	OperandIndex* keys = reinterpret_cast<OperandIndex*>(physicalInst->updates + physicalInst->numAggregates);
+	for (auto i = 0; i < logicalInst->keys.size(); ++i) {
+	  keys[i] = operandIndex(logicalInst->keys[i]);
+	}
+        for (auto i = 0; i < logicalInst->aggregates.size(); ++i) {
+	  auto physicalAgg = physicalInst->updates + i;
+	  auto& abstractAgg = abstractInst->aggregates[i];
+	  physicalAgg->op = abstractAgg.op;
+	  physicalAgg->nullOffset = abstractAgg.nullOffset;
+	  physicalAgg->accumulatorOffset = abstractAgg.accumulatorOffset;
+	  if (abstractAgg.args.size() > 0) {
+	    physicalAgg->arg1 = operandIndex(abstractAgg.args[0]);
+	  }
+	  if (abstractAgg.args.size() > 1) {
+	    physicalAgg->arg2 = operandIndex(abstractAgg.args[1]);
+	  }
+
+        }
+        break;
+      }
+
+    case OpCode::kReturn: {
         IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
         break;
       }

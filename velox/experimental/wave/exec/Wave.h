@@ -184,6 +184,11 @@ struct OperatorState {
   /// Owns the device side data. Starting address of first is passed to the kernel. Layout depends on operator. 
   std::vector<WaveBufferPtr> buffers;
 };
+
+
+struct OperatorStateMap {
+  folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
+};
   
 /// Represents a kernel or data transfer. Many executables can be in one kernel
 /// launch on different thread blocks. Owns the output and intermediate memory
@@ -287,6 +292,17 @@ struct Executable {
   std::function<void(std::unique_ptr<Executable>&)> releaser;
 };
 
+  /// Describes the OperatorStates touched by a Program.
+struct ProgramState {
+  // Task-wide id.
+  int32_t stateId;
+  // Function for initializing a state. nullptr if the state must exist before creating an executable.
+  std::function<void(WaveStream& stream, OperatorState& state)> init;
+  // True if the state is shared across all streams.
+  bool isGlobal{true};
+  };
+  
+  
 class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -354,6 +370,17 @@ class Program : public std::enable_shared_from_this<Program> {
     label_ = label_ + " " + label;
   }
 
+  /// Fills 'ptrs' with device side global/stream states. Creates the states if necessary.
+  void getOperatorStates(WaveStream& stream, std::vector<void*> ptrs); 
+
+  /// True if begins with a source instruction, like reading and aggregate result or exchange.
+  bool isSource() {
+    return !instructions_.empty() && instructions_.front()->opCode == OpCode::kReadAggregation;
+  }
+  
+  /// If isSource() is true, returns the next number of rows to schedule on 'stream'. 'stream' may or may not have an executable of 'this'.
+  int32_t canAdvance(WaveStream& stream);
+  
   std::string toString() const;
 
  private:
@@ -432,13 +459,13 @@ class Program : public std::enable_shared_from_this<Program> {
   // a pool of ready to run executables.
   std::vector<std::unique_ptr<Executable>> prepared_;
 
-  // 
-  folly::F14FastMap<int32_t, OperatorState*> state_;
+  // Globals accessed by id from instructions. 
+  std::vector<ProgramState> operatorStates_;
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
 
-class WaveDataSource;
+class WaveSplitReader;
 struct LaunchControl;
 
 /// Represents consecutive data dependent kernel launches.
@@ -459,8 +486,9 @@ class WaveStream {
   WaveStream(
       GpuArena& arena,
       GpuArena& hostArena,
-      const std::vector<std::unique_ptr<AbstractOperand>>* operands)
-      : arena_(arena), hostArena_(hostArena), operands_(operands) {
+      const std::vector<std::unique_ptr<AbstractOperand>>* operands,
+	     OperatorStateMap* stateMap)
+    : arena_(arena), hostArena_(hostArena), operands_(operands), taskStateMap_(stateMap) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -569,6 +597,7 @@ class WaveStream {
   Device* device() const {
     return getDevice();
   }
+
   /// Returns a new stream, assigns it an id and keeps it owned by 'this'. The
   /// Stream will be returned to the static pool of streams on destruction of
   /// 'this'.
@@ -624,6 +653,7 @@ class WaveStream {
     int32_t totalBytes{0};
     folly::F14FastMap<int32_t, int32_t**> inputWrap;
     folly::F14FastMap<int32_t, int32_t**> localWrap;
+    std::vector<void*> operatorStates; 
   };
 
   void
@@ -649,6 +679,13 @@ class WaveStream {
   void clearLaunch(int32_t id) {
     launchControl_[id].clear();
   }
+
+  OperatorState* operatorState(int32_t id);
+
+  OperatorState* newState(ProgramState& init);
+
+  /// Initializes 'state' to the device side state for 'inst'. Returns after 'state' is ready to use on device.
+  void makeAggregate(AbstractAggregation& inst, OperatorState& state);
   
  private:
   // true if 'op' is nullable in the context of 'this'.
@@ -673,6 +710,12 @@ class WaveStream {
   // True at '[i]' if in this stream 'operands_[i]' should have null flags.
   std::vector<bool> operandNullable_;
 
+  // Task-wide states like join hash tables.
+  OperatorStateMap* taskStateMap_;
+
+  // Stream level states like small partial aggregates.
+  OperatorStateMap streamStateMap_;
+  
   // Number of rows to allocate for top level vectors for the next kernel
   // launch.
   int32_t numRows_{0};

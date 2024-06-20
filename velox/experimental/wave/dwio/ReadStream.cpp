@@ -348,7 +348,7 @@ void ReadStream::makeControl() {
   auto deviceBytes = statusBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
-  control->status = control->deviceData->as<BlockStatus>();
+  control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {
       auto* operand = reader->operand();

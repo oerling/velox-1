@@ -55,6 +55,13 @@ class CompileState {
 
   AbstractOperand* addIdentityProjections(AbstractOperand* source);
   AbstractOperand* findCurrentValue(Value value);
+
+  AbstractOperand* findCurrentValue(const std::shared_ptr<core::FieldaccessTypedExpr>&  field) {
+    Value value;
+    value.expr = field;
+    return findcurrentValue(value);
+  }
+
   AbstractOperand* addExpr(const exec::Expr& expr);
 
   void addInstruction(
@@ -89,6 +96,10 @@ class CompileState {
       RowTypePtr& outputType,
       int32_t& nodeIndex);
 
+  void makeAggregateLayout(AbstractAggregate& aggregate);
+  
+  void makeAggregateAccumulate(const core::AggregationNode* node);
+  
   bool reserveMemory();
 
   // Adds 'instruction' to the suitable program and records the result
@@ -135,6 +146,7 @@ class CompileState {
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
+  std::vector<std::unique_ptr<AbstractState>> operatorStates_;
 
   // The Wave operators generated so far.
   std::vector<std::unique_ptr<WaveOperator>> operators_;
@@ -148,7 +160,9 @@ class CompileState {
   // Sequence number for operands.
   int32_t operandCounter_{0};
   int32_t wrapCounter_{0};
+  int32_t stateCounter_{0};
 
+  int32_t nthContinuable_{0};
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;
 };

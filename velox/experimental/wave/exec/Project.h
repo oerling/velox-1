@@ -33,9 +33,13 @@ class Project : public WaveOperator {
   AbstractWrap* findWrap() const override;
 
   bool isStreaming() const override {
+    if (levels_[0].size() == 1 && levels_[0][0]->isSource()) {
+      return false;
+    }
     return true;
   }
-
+  int32_t canAdvance(WaveStream& Stream) override;
+  
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
   vector_size_t outputSize(WaveStream& stream) const override;

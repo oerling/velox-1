@@ -29,7 +29,8 @@ WaveDriver::WaveDriver(
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     std::vector<OperandId> resultOrder,
     SubfieldMap subfields,
-    std::vector<std::unique_ptr<AbstractOperand>> operands)
+    std::vector<std::unique_ptr<AbstractOperand>> operands,
+		           std::vector<std::unique_ptr<AbstractState>> states)
     : exec::SourceOperator(
           driverCtx,
           outputType,
@@ -39,7 +40,8 @@ WaveDriver::WaveDriver(
       arena_(std::move(arena)),
       resultOrder_(std::move(resultOrder)),
       subfields_(std::move(subfields)),
-      operands_(std::move(operands)) {
+      operands_(std::move(operands)),
+      states_(std::move(states)){
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
   hostArena_ = std::make_unique<GpuArena>(
@@ -158,7 +160,7 @@ void WaveDriver::startMore() {
       return;
     }
     auto stream =
-        std::make_unique<WaveStream>(*arena_, *hostArena_, &operands());
+      std::make_unique<WaveStream>(*arena_, *hostArena_, &operands(), &stateMap_);
     stream->setState(WaveStream::State::kHost);
 
     if (auto rows = ops[0]->canAdvance(*stream)) {

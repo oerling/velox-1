@@ -203,25 +203,67 @@ struct AbstractUnary : public AbstractInstruction {
   AbstractOperand* predicate;
 };
 
+  enum class StateKind : uint8_t {kGroupBy};
+  
   /// Represents a shared state operated on by instructions. For example, a join/group by table, destination buffers for repartition etc. Device side memory owned by a group of WaveBufferPtrs in the Program or WaveStream.
-  struct AbstractHandle {
-    // Index in 'handles' section of program launch.
-    int32_t index;
+  struct AbstractState {
+    AbstractState(int32_t id, StateKind kind, std::string& idString, std::string& label)
+      : id(id), kind(kind), idString(idString), label(label) {}
+    
+    /// serial numbr.
+    int32_t id;
 
+    StateKind kind;
+
+    /// PlanNodeId for joins/aggregates, other velox::Task scoped id.
+    std::string idString;
+
+    /// Comment
+    std::string label;
+    
     /// True if there is one item per WaveDriver, If false, there is one item per WaveStream.
     bool isGlobal;
   };
 
   
-struct AbstractOperator {
-  // Identifier of operation if unusual, index in registered ops table.
-  int32_t operatorTypeIdx_{0};
+  struct AbstractOperator : public AbstractInstruction {
+    AbstractOperator(OpCode opCode, int32_t serial, AbstractState* state, RowTypePtr outputType)
+      : AbstractInstruction(opCode), serial(serial), state(state), outputType(outputType) {}
+
 
   // Identifies the bit in 'continuable' to indicate need for post-return action.
   int32_t serial;
 
-  // Handle on device side state, e.g. hash table or repartitioning output buffers.
-  AbstractHandle* handle;
+  // Handle on device side state, e.g. aggregate hash table or repartitioning output buffers.
+  AbstractState* state;
+    RowTypePtr outputType;
+  };
+
+
+struct AbstractAggInstruction {
+  AggregateOp op;
+  // Offset of null indicator byte on accumulator row.
+  int32_t nullOffset;
+  // Offset of accumulator on accumulator row. Aligned at 8.
+  int32_t accumulatorOffset;
+  std::vector<AbstractOperand*> args;
 };
+  
+struct AbstractAggregation : public AbstractOperator {
+  AbstractAggregation(std::vector<AbstractOperand*> keys, std::vector<AbstractAggInstruction> aggregates, AbstractState* state, RowTypePtr outputType)
+    : AbstractOperator(OpCode::kAggregate, serial, state, outputType), keys(std::move(keys)), aggregates(std::move(aggregates)) {} 
+
+  int32_t rowSize() {
+    aggregates.back().accumulatorOffset + sizeof(int64_t);
+  }
+  
+  std::vector <AbstractOperand*> keys;
+  std::vector<AbstractAggInstruction> aggregates;
+  int32_t stateId;
+  int32_t literalOffset;
+};
+
+  /// Serializes 'row' to characters interpretable on device.
+  std::string rowTypeString(const RowTypePtr& row);
   
 } // namespace facebook::velox::wave

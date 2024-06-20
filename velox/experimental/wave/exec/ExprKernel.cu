@@ -159,18 +159,27 @@ __device__ void wrapKernel(
         instruction->_.binary,                               \
         operands,                                            \
         blockBase,                                           \
-        shared,                                              \
+        &shared->data,                                              \
         status);                                             \
     break;
 
 __global__ void waveBaseKernel(
 			       KernelParams params) {
-  extern __shared__ __align__(16) char shared[];
+  extern __shared__ __align__(16) char sharedchar[];
+  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);
   int programIndex = params.programIdx[blockIdx.x];
   auto* program = params.programs[programIndex];
-  auto* operands = params.operands[programIndex];
-  auto* status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
-  int32_t blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
+  if (threadIdx.x == 0) {
+    shared->operands = params.operands[programIndex];
+    shared->status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
+    shared->blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
+    shared->states = params.states[programIdx];
+    shared->stop = false;
+  }
+  __syncthreads();
+  auto blockBase = shared->blockBase;
+  auto operands = shared->operands;
+  auto status = shared->status; 
   auto instruction = program->instructions;
   for (;;) {
     switch (instruction->opCode) {
@@ -182,7 +191,7 @@ __global__ void waveBaseKernel(
             instruction->_.filter,
             operands,
             blockBase,
-            shared,
+            &shared->data,
             status->numRows);
         break;
 
@@ -190,8 +199,13 @@ __global__ void waveBaseKernel(
         wrapKernel(
             instruction->_.wrap, operands, blockBase, status->numRows, shared);
         break;
-
-        BINARY_TYPES(OpCode::kPlus, +);
+    case OpCode::kAggregate:
+      aggKernel(instruction->_.aggregate, operands, blockBase, status->numRows, &shared->data);
+      break;
+    case OpCode::kReadAggregate:
+      readAggKernel(instruction->_.aggregat, shared);
+      break;
+      BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
     }
     ++instruction;
@@ -201,9 +215,9 @@ __global__ void waveBaseKernel(
 int32_t instructionSharedMemory(const Instruction& instruction) {
   switch (instruction.opCode) {
     case OpCode::kFilter:
-      return (2 + (kBlockSize / kWarpThreads)) * sizeof(int32_t);
-    default:
-      return 0;
+      return sizeof(WaveShared) + (2 + (kBlockSize / kWarpThreads)) * sizeof(int32_t);
+  default:
+    return sizeof(WaveShared);
   }
 }
 
@@ -222,7 +236,21 @@ void WaveKernelStream::call(
     (alias ? alias : this)->wait();
   }
 }
-
+  
 REGISTER_KERNEL("expr", waveBaseKernel);
 
+  void __global__ setupAggregationKernel(AggregationControl op) {
+  assert(op.maxTableEntries == 0);
+  auto* data = new(op.head) DeviceAggregation();
+  data->rowSize = rowSize;
+  data->singleRow = reinterpret_cast<char*>(data + 1);
+  memset(data->singleRow, 0, op.rowSize);
+}
+  
+  void WaveKernelStream::setupAggregation(AggregationControl& op) {
+    setupAggregationKernel<<<1, 1, 0, stream_.stream>>>(op);
+    wait();
+  }
+
+  
 } // namespace facebook::velox::wave

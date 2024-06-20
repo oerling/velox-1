@@ -77,6 +77,15 @@ AbstractOperand* CompileState::newOperand(
   return op;
 }
 
+  AbstractState* CompileState::newState(StateKind kind,
+					const std::string& idString,
+    const std::string& label) {
+    states_.push_back(
+		      std::make_unique<Abstractstate>(stateCounter_++, kind, idString, label));
+    auto state = states_.back().get();
+  return state;
+}
+
 AbstractOperand* CompileState::addIdentityProjections(AbstractOperand* source) {
   AbstractOperand* result = nullptr;
 
@@ -398,7 +407,78 @@ CompileState::aggregateFunctionRegistry() {
   return aggregateFunctionRegistry_;
 }
 
-bool CompileState::addOperator(
+  void CompileState::setAggregateFromPlan(AbstractAggInstruction& agg, core::AggregationNode::Aggregate& planAggregate) {
+    agg.op = AggregateOp::kSum;
+  }
+  
+void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
+  // First key nulls, then key wirds. Then accumulator nulls, then accumulators.
+  int32_t numKeys = aggregate.keys().size();
+  int32_t startOffset = bits::roundUp(numKeys, 8) + 8 * numKeys;
+  int32_t accNullOffset = startOffset;
+  auto numAggs = inst.aggregates.size();
+  int32_t accOffset = accNullOffset + bits::roundUp(numAggs, 8);
+  for (auto i = 0; i < numAggs; ++i) {
+    auto& agg = aggregate.aggregates[i];
+    agg.nullOffset =accNullOffset + i;
+    agg->accumulatorOffset = accOffset + i * sizeof(int64_t);
+  }
+}
+  
+void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
+  auto* state = newState(StateKind::kGroupBy, node->id(), "");
+  std::vector<AbstractOperand*> keys;
+  folly::F14FastSet<AbstractOperand*> uniqueArgs;
+  folly::F14FastSet<Program*> programs;
+  std::vector<AbstractOperand*> allArgs;
+  std::vector<AbstractAggInstruction> aggregates;
+  for (auto& key : node->groupingKeys()) {
+    auto arg = findCurrentValue(key);
+    allArgs.push_back(arg);
+    keys.push_back(arg);
+    if (auto source = definedIn_[arg]) {
+      programs.insert(source);
+    }
+  }
+  std::vector<AbstractAggInstruction> aggregates;
+  for (auto& planAggregate : node->aggregates()) {
+    aggregates.emplace_back();
+    auto& aggregate = aggregates.back();
+    setAggregateFromPlan(aggregate, planAggregate);
+    for (auto& arg : planAggregate->call()->inputs()) {
+      argTypes.push_back(fromCpuType(arg->type()));
+      
+      auto op = findCurrentValue(arg);
+      aggregate.args.push_back(op);
+      bool isNew = uniqueArgs.insert(op).second;
+      if (isNew) {
+	allArgs.push_back(op);
+	if (auto source = definedIn_[op]) {
+	  programs.insert(source);
+	}
+      }
+    }
+    auto func =
+	functionRegistry_->getFunction(aggregate.call->name(), argTypes);
+      VELOX_CHECK_NOT_NULL(func);
+
+  }
+  auto instruction = std::make_unique<AbstractAggregation>(nthContinuable_++, std::move(keys), std::move(aggregates), state);
+  makeAggregateLayout(*instruction);
+  std::vector<programPtr> source*;
+  if (sources.empty) {
+    sourceList.push_back(newProgram());
+  } else if (sources.size() == 1) {
+    sourceList.push_back(*sources.begin());
+  } else {
+    for (auto& s : sources) {
+      sourceList.push_back(s);
+    }
+  }
+  addInstruction(std::move(instruction),nullptr, sourceList);
+}
+
+  bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
     RowTypePtr& outputType) {
@@ -424,6 +504,7 @@ bool CompileState::addOperator(
     auto* node = dynamic_cast<const core::AggregationNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
+    makeAggregateAccumulate(node);
     operators_.push_back(std::make_unique<Aggregation>(
         *this, *node, aggregateFunctionRegistry()));
     outputType = node->outputType();
@@ -535,7 +616,8 @@ bool CompileState::compile() {
       std::move(operators_),
       std::move(resultOrder),
       std::move(subfields_),
-      std::move(operands_));
+      std::move(operands_),
+      std::move(operatorStates_));
   auto waveOp = waveOpUnique.get();
   waveOp->initialize();
   std::vector<std::unique_ptr<exec::Operator>> added;

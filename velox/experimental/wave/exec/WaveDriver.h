@@ -33,7 +33,8 @@ class WaveDriver : public exec::SourceOperator {
       std::vector<std::unique_ptr<WaveOperator>> waveOperators,
       std::vector<OperandId> resultOrder_,
       SubfieldMap subfields,
-      std::vector<std::unique_ptr<AbstractOperand>> operands);
+      std::vector<std::unique_ptr<AbstractOperand>> operands,
+      std::vector<std::unique_ptr<AbstractState>> states);
 
   RowVectorPtr getOutput() override;
 
@@ -144,7 +145,11 @@ class WaveDriver : public exec::SourceOperator {
   SubfieldMap subfields_;
   // Operands handed over by compilation.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
+  std::vector<std::unique_ptr<AbstractState>> states_;
   WaveStats waveStats_;
+
+  // States shared between WaveStreams and WaveDrivers, for example join/group by tables.
+  OperatorStateMap stateMap_;
 };
 
 } // namespace facebook::velox::wave
