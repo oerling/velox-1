@@ -274,7 +274,7 @@ struct AbstractAggregation : public AbstractOperator {
         aggregates(std::move(aggregates)) {}
 
   int32_t rowSize() {
-    aggregates.back().accumulatorOffset + sizeof(int64_t);
+    return aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
 
   bool intermediateInput{false};

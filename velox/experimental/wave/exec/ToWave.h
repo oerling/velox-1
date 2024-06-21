@@ -53,13 +53,14 @@ class CompileState {
 
   Value toValue(const exec::Expr& expr);
 
+    Value toValue(const core::FieldAccessTypedExpr& field);
+
   AbstractOperand* addIdentityProjections(AbstractOperand* source);
   AbstractOperand* findCurrentValue(Value value);
 
   AbstractOperand* findCurrentValue(
-      const std::shared_ptr<core::FieldaccessTypedExpr>& field) {
-    Value value;
-    value.expr = field;
+      const std::shared_ptr<const core::FieldAccessTypedExpr>& field) {
+    Value value = toValue(*field);
     return findcurrentValue(value);
   }
 
@@ -166,6 +167,7 @@ class CompileState {
   int32_t nthContinuable_{0};
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;
+  folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

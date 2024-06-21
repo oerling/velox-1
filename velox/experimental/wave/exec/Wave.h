@@ -379,7 +379,7 @@ class Program : public std::enable_shared_from_this<Program> {
   /// result or exchange.
   bool isSource() {
     return !instructions_.empty() &&
-        instructions_.front()->opCode == OpCode::kReadAggregation;
+        instructions_.front()->opCode == OpCode::kReadAggregate;
   }
 
   /// If isSource() is true, returns the next number of rows to schedule on

@@ -174,7 +174,7 @@ __global__ void waveBaseKernel(
     shared->operands = params.operands[programIndex];
     shared->status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
     shared->blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
-    shared->states = params.states[programIdx];
+    shared->states = params.operatorStates[programIndex];
     shared->stop = false;
   }
   __syncthreads();
@@ -201,10 +201,10 @@ __global__ void waveBaseKernel(
             instruction->_.wrap, operands, blockBase, status->numRows, shared);
         break;
     case OpCode::kAggregate:
-      aggKernel(instruction->_.aggregate, operands, blockBase, status->numRows, &shared->data);
+      aggregateKernel(instruction->_.aggregate, shared);
       break;
     case OpCode::kReadAggregate:
-      readAggKernel(instruction->_.aggregat, shared);
+      readAggregateKernel(instruction->_.aggregate, shared);
       break;
       BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
@@ -241,15 +241,15 @@ void WaveKernelStream::call(
 REGISTER_KERNEL("expr", waveBaseKernel);
 
   void __global__ setupAggregationKernel(AggregationControl op) {
-  assert(op.maxTableEntries == 0);
+  //    assert(op.maxTableEntries == 0);
   auto* data = new(op.head) DeviceAggregation();
-  data->rowSize = rowSize;
+  data->rowSize = op.rowSize;
   data->singleRow = reinterpret_cast<char*>(data + 1);
   memset(data->singleRow, 0, op.rowSize);
 }
   
   void WaveKernelStream::setupAggregation(AggregationControl& op) {
-    setupAggregationKernel<<<1, 1, 0, stream_.stream>>>(op);
+    setupAggregationKernel<<<1, 1, 0, stream_->stream>>>(op);
     wait();
   }
 

@@ -62,6 +62,19 @@ Value CompileState::toValue(const Expr& expr) {
   return Value(&expr);
 }
 
+  Value CompileState::toValue(const core::FieldAccessTypedExpr& field) {
+    auto it = fieldToExpr_.find(field.name());
+    exec::Expr* expr;
+    if (it != fieldToExpr_.end()) {
+      expr = it->second.get();
+    } else {
+      ExprPtr newExpr = std::make_shared<exec::FieldReference>(field->type(), {}, field->name());
+      expr = newExpr.get();
+      fieldToExpr_[name] = std::move(newExpr);
+    }
+    return toValue(expr);
+  }
+
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
   auto newOp = std::make_unique<AbstractOperand>(other, operandCounter_++);
   operands_.push_back(std::move(newOp));

@@ -672,8 +672,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
 
   // Fill in operator states, e.g. hash tables.
-  void** operatorStatePtrs = addBytes<void**>(start, operatorStateOffset);
-  control.params.operatorStates = operatorStatePtrs;
+  void**operatorStatePtrs = addBytes<void**>(start, operatorStateOffset);
+  control.params.operatorStates = reinterpret_cast<void***>(operatorStatePtrs);
   auto stateFill = operatorStatePtrs + info.size();
   for (auto i = 0; i < info.size(); ++i) {
     operatorStatePtrs[i] = stateFill;
@@ -734,10 +734,15 @@ void WaveStream::makeAggregate(
     OperatorState& state) {
   VELOX_CHECK(inst.keys.empty());
   int32_t size = inst.rowSize();
-  auto stream = newStream();
-  auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation);
+  auto stream = streamFromReserve();
+  auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation));
   state.buffers.push_back(buffer);
-  stream->initAggregation(buffer);
+  AggregationControl control;
+  control.head = buffer->as<char>();
+  control.headSize = buffer->size();
+  control.rowSize = size;
+  reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
+  releaseStream(stream);
 }
 
 WaveTypeKind typeKindCode(TypeKind kind) {
