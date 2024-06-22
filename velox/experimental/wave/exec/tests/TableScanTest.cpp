@@ -255,3 +255,37 @@ TEST_F(TableScanTest, filterInScanNull) {
       splits,
       "SELECT c0, c1, c1 + 100000000, c2 + 1, c3, c3 + 2, rn FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
+
+TEST_F(TableScanTest, scanAgg) {
+  auto type =
+      ROW({"c0", "c1", "c2", "c3", "rn"},
+          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  auto vectors = makeVectors(type, 10, 20'000, 0.1);
+  int32_t cnt = 0;
+  for (auto& vector : vectors) {
+    makeRange(vector, 1000000000, false);
+    auto rn = vector->childAt(4)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < rn->size(); ++i) {
+      rn->set(i, cnt++);
+    }
+  }
+  auto splits = makeTable("test", vectors);
+  createDuckDbTable(vectors);
+
+  auto plan =
+      PlanBuilder(pool_.get())
+          .tableScan(type, {"c0 < 950000000"})
+          .project(
+              {"c0",
+               "c1 + 1 as c1",
+               "c2 + 2 as c2",
+               "c3 + c2 as c3",
+               "rn + 1 as rn"})
+    .singleAggregation({}, {"sum(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
+    .planNode();
+  auto task = assertQuery(
+      plan,
+      splits,
+      "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
+}
+

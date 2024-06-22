@@ -232,9 +232,9 @@ OperatorState* WaveStream::operatorState(int32_t id) {
   }
   return nullptr;
 }
+
 OperatorState* WaveStream::newState(ProgramState& init) {
-  auto stateShared = std::make_shared<OperatorState>();
-  init.init(*this, *stateShared);
+  auto stateShared = init.create(*this);
   taskStateMap_->states[init.stateId] = stateShared;
   return stateShared.get();
 }
@@ -731,7 +731,7 @@ int32_t WaveStream::getOutput(
 
 void WaveStream::makeAggregate(
     AbstractAggregation& inst,
-    OperatorState& state) {
+    AggregateOperatorState& state) {
   VELOX_CHECK(inst.keys.empty());
   int32_t size = inst.rowSize();
   auto stream = streamFromReserve();
@@ -755,7 +755,7 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
     auto& operatorState = *operatorStates_[i];
     auto* state = stream.operatorState(operatorState.stateId);
     if (!state) {
-      VELOX_CHECK_NOT_NULL(operatorState.init);
+      VELOX_CHECK_NOT_NULL(operatorState.create);
       state = stream.newState(operatorState);
     }
     ptrs[i] = state->buffers[0]->as<char>();
@@ -911,9 +911,12 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = abstractInst->stateId;
         programState->isGlobal = true;
-        programState->init = [inst = abstractInst](
-                                 WaveStream& stream, OperatorState& toInit) {
-          stream.makeAggregate(*inst, toInit);
+        programState->create = [inst = abstractInst](
+						     WaveStream& stream) -> std::shared_ptr<OperatorState> {
+				 auto newState = std::make_shared<AggregateOperatorState>();
+				 newState->instruction = inst;
+				 stream.makeAggregate(*inst, *newState);
+				 return newState;
         };
         operatorStates_.push_back(std::move(programState));
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(

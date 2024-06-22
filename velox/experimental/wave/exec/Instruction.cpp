@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/Instruction.h"
+#include "velox/experimental/wave/exec/Wave.h"
 
 namespace facebook::velox::wave {
 
@@ -22,4 +22,13 @@ std::string rowTypeString(const Type& type) {
   return "";
 }
 
+int32_t AbstractReadAggregation::canAdvance(WaveStream& stream, OperatorState* state) const {
+  auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
+  if (aggState->isNew) {
+    aggState->isNew = false;
+    return 1;
+  }
+  return 0;
+}
+  
 } // namespace facebook::velox::wave

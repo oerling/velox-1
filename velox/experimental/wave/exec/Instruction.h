@@ -125,6 +125,11 @@ struct AbstractInstruction {
     return std::nullopt;
   }
 
+  /// True if assigns 'op'.
+  virtual bool isOutput(const AbstractOperand* op) const {
+    return false;
+  }
+  
   virtual bool isContinuable(WaveStream& stream) const {
     return false;
   }
@@ -202,6 +207,10 @@ struct AbstractBinary : public AbstractInstruction {
   AbstractOperand* result;
   AbstractOperand* predicate;
 
+  bool isOutput(const AbstractOperand* op) const override {
+    return op == result;
+  }
+  
   std::string toString() const override;
 };
 
@@ -318,7 +327,7 @@ struct AbstractAggregation : public AbstractOperator {
 };
 
 struct AbstractReadAggregation : public AbstractOperator {
-  AbstractReadAggregation(AbstractAggregation* aggregation)
+  AbstractReadAggregation(int32_t serial, AbstractAggregation* aggregation)
       : AbstractOperator(
             OpCode::kReadAggregate,
             serial,

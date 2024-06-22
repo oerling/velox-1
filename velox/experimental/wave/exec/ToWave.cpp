@@ -358,7 +358,7 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
   operators_.push_back(std::make_unique<Project>(
-      *this, outputType, std::vector<AbstractOperand*>{}, levels, wrap));
+      *this, outputType, levels, wrap));
 }
 
 void CompileState::addFilterProject(
@@ -395,7 +395,7 @@ void CompileState::addFilterProject(
   }
   auto levels = makeLevels(numPrograms);
   operators_.push_back(
-      std::make_unique<Project>(*this, outputType, operands, levels));
+      std::make_unique<Project>(*this, outputType, levels));
   for (auto& [value, operand] : pairs) {
     operators_.back()->defined(value, operand);
   }
@@ -459,11 +459,14 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       programs.insert(source);
     }
   }
+  auto numKeys = node->groupingKeys().size();
   for (auto& planAggregate : node->aggregates()) {
     aggregates.emplace_back();
     std::vector<PhysicalType> argTypes;
     auto& aggregate = aggregates.back();
     setAggregateFromPlan(planAggregate, aggregate);
+    auto i = numKeys + aggregates.size() - 1;
+    aggregate.result = newOperand(node->outputType()->childAt(i), node->outputType()->nameOf(i));
     for (auto& arg : planAggregate.call->inputs()) {
       argTypes.push_back(fromCpuType(*arg->type()));
       auto field =
@@ -501,9 +504,32 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       sourceList.push_back(s);
     }
   }
+  int numPrograms = allPrograms_.size();
+  auto aggInstruction = instruction.get();
   addInstruction(std::move(instruction), nullptr, sourceList);
+  if (allPrograms_.size() > numPrograms) {
+    makeProject(numPrograms, node->outputType());
+  }
+  numPrograms = allPrograms_.size();
+  auto reader = newProgram();
+  reader->add(std::make_unique<AbstractReadAggregation>(nthContinuable_++, aggInstruction));
+  
+  makeProject(numPrograms, node->outputType());
+  for (auto i = 0; i < node->groupingKeys().size(); ++i) {
+    VELOX_NYI();
+  }
+  for (auto i = 0; i < aggInstruction->aggregates.size(); ++i) {
+    definedIn_[aggInstruction->aggregates[i].result] = reader;
+  }
 }
 
+  void CompileState::makeProject(int firstProgram, RowTypePtr outputType) {
+    auto levels = makeLevels(firstProgram);
+    operators_.push_back(
+			 std::make_unique<Project>(*this, outputType, std::move(levels)));
+
+  }
+  
 bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
@@ -531,8 +557,10 @@ bool CompileState::addOperator(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
     makeAggregateAccumulate(node);
+#if 0
     operators_.push_back(std::make_unique<Aggregation>(
         *this, *node, aggregateFunctionRegistry()));
+#endif
     outputType = node->outputType();
   } else if (name == "TableScan") {
     if (!reserveMemory()) {

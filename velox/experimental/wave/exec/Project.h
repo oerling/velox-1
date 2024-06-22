@@ -23,7 +23,6 @@ class Project : public WaveOperator {
   Project(
       CompileState& state,
       RowTypePtr outputType,
-      std::vector<AbstractOperand*> operands,
       std::vector<std::vector<ProgramPtr>> levels,
       AbstractWrap* filterWrap = nullptr)
       : WaveOperator(state, outputType, ""),

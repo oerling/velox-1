@@ -187,6 +187,12 @@ struct OperatorState {
   std::vector<WaveBufferPtr> buffers;
 };
 
+struct AggregateOperatorState : public OperatorState {
+    AbstractAggregation* instruction;
+    // True after first created.
+    bool isNew{true};
+};
+  
 struct OperatorStateMap {
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
 };
@@ -297,9 +303,9 @@ struct Executable {
 struct ProgramState {
   // Task-wide id.
   int32_t stateId;
-  // Function for initializing a state. nullptr if the state must exist before
+  // Function for creating a state. nullptr if the state must exist before
   // creating an executable.
-  std::function<void(WaveStream& stream, OperatorState& state)> init;
+  std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> create;
   // True if the state is shared across all streams.
   bool isGlobal{true};
 };
@@ -694,7 +700,7 @@ class WaveStream {
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after
   /// 'state' is ready to use on device.
-  void makeAggregate(AbstractAggregation& inst, OperatorState& state);
+  void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
 
  private:
   // true if 'op' is nullable in the context of 'this'.
