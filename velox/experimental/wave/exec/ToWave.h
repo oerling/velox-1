@@ -53,7 +53,7 @@ class CompileState {
 
   Value toValue(const exec::Expr& expr);
 
-    Value toValue(const core::FieldAccessTypedExpr& field);
+  Value toValue(const core::FieldAccessTypedExpr& field);
 
   AbstractOperand* addIdentityProjections(AbstractOperand* source);
   AbstractOperand* findCurrentValue(Value value);
@@ -93,11 +93,11 @@ class CompileState {
 
   void addFilter(const exec::Expr& expr, const RowTypePtr& outputType);
 
-AbstractState* newState(
-    StateKind kind,
-    const std::string& idString,
-    const std::string& label);
-  
+  AbstractState* newState(
+      StateKind kind,
+      const std::string& idString,
+      const std::string& label);
+
   void addFilterProject(
       exec::Operator* op,
       RowTypePtr& outputType,
@@ -105,10 +105,10 @@ AbstractState* newState(
 
   void makeAggregateLayout(AbstractAggregation& aggregate);
 
-void setAggregateFromPlan(
-			  const core::AggregationNode::Aggregate& planAggregate,
-			  AbstractAggInstruction& agg);
-  
+  void setAggregateFromPlan(
+      const core::AggregationNode::Aggregate& planAggregate,
+      AbstractAggInstruction& agg);
+
   void makeAggregateAccumulate(const core::AggregationNode* node);
 
   bool reserveMemory();

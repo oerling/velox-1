@@ -128,7 +128,7 @@ struct AggregationControl {
   /// Size of single row allocation. Required on first init.
   int32_t rowSize{0};
   //// Number of slots in HashTable, must be a powr of two. 0 means no hash
-  ///table (aggregation without grouping keys).
+  /// table (aggregation without grouping keys).
   int32_t maxTableEntries{0};
   /// Number of allocators for the hash table, if any. Must be a powr of two.
   int32_t numPartitions{1};

@@ -62,20 +62,21 @@ Value CompileState::toValue(const Expr& expr) {
   return Value(&expr);
 }
 
-  Value CompileState::toValue(const core::FieldAccessTypedExpr& field) {
-    auto it = fieldToExpr_.find(field.name());
-    exec::Expr* expr;
-    if (it != fieldToExpr_.end()) {
-      expr = it->second.get();
-    } else {
-      auto name = field.name();
-      static std::vector<exec::ExprPtr> empty;
-      exec::ExprPtr newExpr = std::make_shared<exec::FieldReference>(field.type(), empty, name);
-      expr = newExpr.get();
-      fieldToExpr_[name] = std::move(newExpr);
-    }
-    return toValue(*expr);
+Value CompileState::toValue(const core::FieldAccessTypedExpr& field) {
+  auto it = fieldToExpr_.find(field.name());
+  exec::Expr* expr;
+  if (it != fieldToExpr_.end()) {
+    expr = it->second.get();
+  } else {
+    auto name = field.name();
+    static std::vector<exec::ExprPtr> empty;
+    exec::ExprPtr newExpr =
+        std::make_shared<exec::FieldReference>(field.type(), empty, name);
+    expr = newExpr.get();
+    fieldToExpr_[name] = std::move(newExpr);
   }
+  return toValue(*expr);
+}
 
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
   auto newOp = std::make_unique<AbstractOperand>(other, operandCounter_++);
@@ -424,8 +425,8 @@ CompileState::aggregateFunctionRegistry() {
 }
 
 void CompileState::setAggregateFromPlan(
-					const core::AggregationNode::Aggregate& planAggregate, 
-					AbstractAggInstruction& agg) {
+    const core::AggregationNode::Aggregate& planAggregate,
+    AbstractAggInstruction& agg) {
   agg.op = AggregateOp::kSum;
 }
 
@@ -465,7 +466,8 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     setAggregateFromPlan(planAggregate, aggregate);
     for (auto& arg : planAggregate.call->inputs()) {
       argTypes.push_back(fromCpuType(*arg->type()));
-      auto field = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(arg);
+      auto field =
+          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(arg);
       auto op = findCurrentValue(field);
       aggregate.args.push_back(op);
       bool isNew = uniqueArgs.insert(op).second;
@@ -483,7 +485,11 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
 #endif
   }
   auto instruction = std::make_unique<AbstractAggregation>(
-							   nthContinuable_++, std::move(keys), std::move(aggregates), state, node->outputType());
+      nthContinuable_++,
+      std::move(keys),
+      std::move(aggregates),
+      state,
+      node->outputType());
   makeAggregateLayout(*instruction);
   std::vector<Program*> sourceList;
   if (programs.empty()) {
@@ -496,7 +502,6 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     }
   }
   addInstruction(std::move(instruction), nullptr, sourceList);
-  
 }
 
 bool CompileState::addOperator(

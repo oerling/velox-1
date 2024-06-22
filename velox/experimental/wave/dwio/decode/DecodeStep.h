@@ -18,8 +18,8 @@
 
 #include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
-#include "velox/experimental/wave/vector/Operand.h"
 #include "velox/experimental/wave/common/ResultStaging.h"
+#include "velox/experimental/wave/vector/Operand.h"
 
 namespace facebook::velox::wave {
 

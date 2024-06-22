@@ -18,8 +18,8 @@
 
 #include <vector>
 
-#include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/Cuda.h"
 
 namespace facebook::velox::wave {
 
@@ -31,30 +31,27 @@ struct ResultBuffer {
 
   void transfer(Stream& stream) const {
     if (result) {
-    if (!hostResult) {
-      stream.prefetch(
-          nullptr, result->as<char>(), result->size());
-    } else {
-      stream.deviceToHostAsync(
-          hostResult->as<char>(),
-          result->as<char>(),
-          hostResult->size());
-    }
+      if (!hostResult) {
+        stream.prefetch(nullptr, result->as<char>(), result->size());
+      } else {
+        stream.deviceToHostAsync(
+            hostResult->as<char>(), result->as<char>(), hostResult->size());
+      }
     }
   }
 
   WaveBufferPtr result;
   WaveBufferPtr hostResult;
 };
-  
+
 using BufferId = int32_t;
 constexpr BufferId kNoBufferId = -1;
-
 
 class ResultStaging {
  public:
   /// Reserves 'bytes' bytes in result buffer to be brought to host after
-  /// the next kernel completes on device. The caller of the kernel calls transfer().
+  /// the next kernel completes on device. The caller of the kernel calls
+  /// transfer().
   BufferId reserve(int32_t bytes);
 
   /// Registers '*pointer' to be patched to the buffer. The starting address of
@@ -93,4 +90,4 @@ class ResultStaging {
   std::vector<WaveBufferPtr> buffers_;
 };
 
-}
+} // namespace facebook::velox::wave

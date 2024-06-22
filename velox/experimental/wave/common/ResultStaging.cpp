@@ -20,7 +20,6 @@
 
 namespace facebook::velox::wave {
 
-  
 BufferId ResultStaging::reserve(int32_t bytes) {
   offsets_.push_back(fill_);
   fill_ += bits::roundUp(bytes, 8);
@@ -82,4 +81,4 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, ResultBuffer& result) {
   fill_ = 0;
 }
 
-}
+} // namespace facebook::velox::wave

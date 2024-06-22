@@ -672,7 +672,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   }
 
   // Fill in operator states, e.g. hash tables.
-  void**operatorStatePtrs = addBytes<void**>(start, operatorStateOffset);
+  void** operatorStatePtrs = addBytes<void**>(start, operatorStateOffset);
   control.params.operatorStates = reinterpret_cast<void***>(operatorStatePtrs);
   auto stateFill = operatorStatePtrs + info.size();
   for (auto i = 0; i < info.size(); ++i) {
@@ -762,17 +762,16 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   }
 }
 
-  int32_t Program::canAdvance(WaveStream& stream) {
-    AbstractInstruction* source = instructions_.front().get();
-    OperatorState* state = nullptr;
-    auto stateIndex = source->stateIndex();
-    if (stateIndex.has_value()) {
-      state = stream.operatorState(stateIndex.value());
-    }
-    return source->canAdvance(stream, state);
+int32_t Program::canAdvance(WaveStream& stream) {
+  AbstractInstruction* source = instructions_.front().get();
+  OperatorState* state = nullptr;
+  auto stateIndex = source->stateIndex();
+  if (stateIndex.has_value()) {
+    state = stream.operatorState(stateIndex.value());
+  }
+  return source->canAdvance(stream, state);
 }
- 
-  
+
 #define IN_HEAD(abstract, physical, _op)             \
   auto* abstractInst = &instruction->as<abstract>(); \
   space->opCode = _op;                               \
@@ -909,11 +908,11 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numKeys = abstractInst->keys.size();
         physicalInst->numAggregates = abstractInst->aggregates.size();
         physicalInst->stateIndex = operatorStates_.size();
-	auto programState = std::make_unique<ProgramState>();
+        auto programState = std::make_unique<ProgramState>();
         programState->stateId = abstractInst->stateId;
         programState->isGlobal = true;
         programState->init = [inst = abstractInst](
-                                WaveStream& stream, OperatorState& toInit) {
+                                 WaveStream& stream, OperatorState& toInit) {
           stream.makeAggregate(*inst, toInit);
         };
         operatorStates_.push_back(std::move(programState));
