@@ -103,9 +103,10 @@ class CompileState {
       RowTypePtr& outputType,
       int32_t& nodeIndex);
 
-  /// Adds a projection operator containing programs starting at 'firstProgram' for the rest of 'allPrograms_'..
+  /// Adds a projection operator containing programs starting at 'firstProgram'
+  /// for the rest of 'allPrograms_'..
   void makeProject(int32_t firstProgram, RowTypePtr outputType);
-  
+
   void makeAggregateLayout(AbstractAggregation& aggregate);
 
   void setAggregateFromPlan(
@@ -159,7 +160,7 @@ class CompileState {
   std::vector<ProgramPtr> allPrograms_;
 
   std::vector<std::vector<ProgramPtr>> pendingLevels_;
-  
+
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
   std::vector<std::unique_ptr<AbstractOperand>> operands_;
   std::vector<std::unique_ptr<AbstractState>> operatorStates_;

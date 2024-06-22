@@ -129,7 +129,7 @@ struct AbstractInstruction {
   virtual bool isOutput(const AbstractOperand* op) const {
     return false;
   }
-  
+
   virtual bool isContinuable(WaveStream& stream) const {
     return false;
   }
@@ -210,7 +210,7 @@ struct AbstractBinary : public AbstractInstruction {
   bool isOutput(const AbstractOperand* op) const override {
     return op == result;
   }
-  
+
   std::string toString() const override;
 };
 

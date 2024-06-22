@@ -357,8 +357,8 @@ void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   auto wrap = wrapUnique.get();
   program->add(std::move(wrapUnique));
   auto levels = makeLevels(numPrograms);
-  operators_.push_back(std::make_unique<Project>(
-      *this, outputType, levels, wrap));
+  operators_.push_back(
+      std::make_unique<Project>(*this, outputType, levels, wrap));
 }
 
 void CompileState::addFilterProject(
@@ -394,8 +394,7 @@ void CompileState::addFilterProject(
     pairs.push_back(std::make_pair(value, operands[i]));
   }
   auto levels = makeLevels(numPrograms);
-  operators_.push_back(
-      std::make_unique<Project>(*this, outputType, levels));
+  operators_.push_back(std::make_unique<Project>(*this, outputType, levels));
   for (auto& [value, operand] : pairs) {
     operators_.back()->defined(value, operand);
   }
@@ -466,7 +465,8 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     auto& aggregate = aggregates.back();
     setAggregateFromPlan(planAggregate, aggregate);
     auto i = numKeys + aggregates.size() - 1;
-    aggregate.result = newOperand(node->outputType()->childAt(i), node->outputType()->nameOf(i));
+    aggregate.result = newOperand(
+        node->outputType()->childAt(i), node->outputType()->nameOf(i));
     for (auto& arg : planAggregate.call->inputs()) {
       argTypes.push_back(fromCpuType(*arg->type()));
       auto field =
@@ -512,8 +512,9 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
   }
   numPrograms = allPrograms_.size();
   auto reader = newProgram();
-  reader->add(std::make_unique<AbstractReadAggregation>(nthContinuable_++, aggInstruction));
-  
+  reader->add(std::make_unique<AbstractReadAggregation>(
+      nthContinuable_++, aggInstruction));
+
   makeProject(numPrograms, node->outputType());
   for (auto i = 0; i < node->groupingKeys().size(); ++i) {
     VELOX_NYI();
@@ -523,13 +524,12 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
   }
 }
 
-  void CompileState::makeProject(int firstProgram, RowTypePtr outputType) {
-    auto levels = makeLevels(firstProgram);
-    operators_.push_back(
-			 std::make_unique<Project>(*this, outputType, std::move(levels)));
+void CompileState::makeProject(int firstProgram, RowTypePtr outputType) {
+  auto levels = makeLevels(firstProgram);
+  operators_.push_back(
+      std::make_unique<Project>(*this, outputType, std::move(levels)));
+}
 
-  }
-  
 bool CompileState::addOperator(
     exec::Operator* op,
     int32_t& nodeIndex,

@@ -281,11 +281,11 @@ TEST_F(TableScanTest, scanAgg) {
                "c2 + 2 as c2",
                "c3 + c2 as c3",
                "rn + 1 as rn"})
-    .singleAggregation({}, {"sum(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
-    .planNode();
+          .singleAggregation(
+              {}, {"sum(c0)", "sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
+          .planNode();
   auto task = assertQuery(
       plan,
       splits,
       "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
 }
-

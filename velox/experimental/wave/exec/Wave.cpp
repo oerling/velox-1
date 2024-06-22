@@ -911,12 +911,13 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = abstractInst->stateId;
         programState->isGlobal = true;
-        programState->create = [inst = abstractInst](
-						     WaveStream& stream) -> std::shared_ptr<OperatorState> {
-				 auto newState = std::make_shared<AggregateOperatorState>();
-				 newState->instruction = inst;
-				 stream.makeAggregate(*inst, *newState);
-				 return newState;
+        programState->create =
+            [inst = abstractInst](
+                WaveStream& stream) -> std::shared_ptr<OperatorState> {
+          auto newState = std::make_shared<AggregateOperatorState>();
+          newState->instruction = inst;
+          stream.makeAggregate(*inst, *newState);
+          return newState;
         };
         operatorStates_.push_back(std::move(programState));
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(

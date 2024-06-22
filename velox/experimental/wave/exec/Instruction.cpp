@@ -22,7 +22,9 @@ std::string rowTypeString(const Type& type) {
   return "";
 }
 
-int32_t AbstractReadAggregation::canAdvance(WaveStream& stream, OperatorState* state) const {
+int32_t AbstractReadAggregation::canAdvance(
+    WaveStream& stream,
+    OperatorState* state) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
   if (aggState->isNew) {
     aggState->isNew = false;
@@ -30,5 +32,5 @@ int32_t AbstractReadAggregation::canAdvance(WaveStream& stream, OperatorState* s
   }
   return 0;
 }
-  
+
 } // namespace facebook::velox::wave

@@ -188,11 +188,11 @@ struct OperatorState {
 };
 
 struct AggregateOperatorState : public OperatorState {
-    AbstractAggregation* instruction;
-    // True after first created.
-    bool isNew{true};
+  AbstractAggregation* instruction;
+  // True after first created.
+  bool isNew{true};
 };
-  
+
 struct OperatorStateMap {
   folly::F14FastMap<int32_t, std::shared_ptr<OperatorState>> states;
 };
