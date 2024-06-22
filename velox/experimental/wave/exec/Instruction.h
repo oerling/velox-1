@@ -17,8 +17,11 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/ExprKernel.h"
+#include "velox/experimental/wave/common/ResultStaging.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
+#include "velox/exec/Operator.h"
+#include "velox/exec/Driver.h"
 
 namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a device
@@ -87,7 +90,9 @@ struct AbstractOperand {
 
   std::string toString() const;
 };
-
+  class WaveStream;
+  struct OperatorState;
+  
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode) : opCode(opCode) {}
 
@@ -98,6 +103,28 @@ struct AbstractInstruction {
     return *reinterpret_cast<T*>(this);
   }
 
+  /// Checks blocking for external reasons for a source instruction in a source executable. Applies to e.g. exchange.
+  virtual exec::BlockingReason isBlocked(WaveStream& stream, OperatorState* state, ContinueFuture* future) const {
+    return exec::BlockingReason::kNotBlocked;
+  }
+  
+  /// Prepares the source instruction of a Program that begins with a
+  /// source instruction, like reading an aggregation or an
+  /// exchange. 'state' is a handle to the state on device. The
+  /// Executable is found in 'stream'. The 'this' contains no state
+  /// and is only used to dispatch on the operator. 
+  virtual int32_t canAdvance(WaveStream& stream, OperatorState* state) const {
+    return 0;
+  }
+
+  std::optional<int32_t> stateIndex() const {
+    return std::nullopt;
+  }
+
+  virtual bool isContinuable(WaveStream& stream) const {
+    return false;
+  }
+  
   OpCode opCode;
 
   virtual std::string toString() const {
@@ -212,8 +239,8 @@ struct AbstractState {
   AbstractState(
       int32_t id,
       StateKind kind,
-      std::string& idString,
-      std::string& label)
+      const std::string& idString,
+      const std::string& label)
       : id(id), kind(kind), idString(idString), label(label) {}
 
   /// serial numbr.
@@ -265,7 +292,8 @@ struct AbstractAggInstruction {
 
 struct AbstractAggregation : public AbstractOperator {
   AbstractAggregation(
-      std::vector<AbstractOperand*> keys,
+		      int32_t serial,
+		      std::vector<AbstractOperand*> keys,
       std::vector<AbstractAggInstruction> aggregates,
       AbstractState* state,
       RowTypePtr outputType)
@@ -285,6 +313,17 @@ struct AbstractAggregation : public AbstractOperator {
   int32_t literalOffset;
 };
 
+  struct AbstractReadAggregation : public AbstractOperator {
+    AbstractReadAggregation(AbstractAggregation* aggregation)
+      : AbstractOperator(OpCode::kReadAggregate, serial, aggregation->state, aggregation->outputType),
+	aggregation(aggregation) {}
+
+    int32_t canAdvance(WaveStream& stream, OperatorState* state) const override;
+
+    AbstractAggregation* aggregation;
+    
+  };
+  
 /// Serializes 'row' to characters interpretable on device.
 std::string rowTypeString(const RowTypePtr& row);
 

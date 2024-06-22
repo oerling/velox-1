@@ -343,7 +343,7 @@ void Aggregation::schedule(WaveStream& waveStream, int32_t maxRows) {
             aggregation::ExtractKeys::sharedSize(),
             aggregation::ExtractValues::sharedSize());
         auto control = std::make_unique<LaunchControl>(id_, maxRows);
-        control->status = rowStatus;
+        control->params.status = rowStatus;
         waveStream.addLaunchControl(id_, std::move(control));
         aggregation::call(
             *stream, numColumns, programs, nullptr, status, sharedSize);

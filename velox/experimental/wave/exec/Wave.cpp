@@ -742,7 +742,7 @@ void WaveStream::makeAggregate(
   control.headSize = buffer->size();
   control.rowSize = size;
   reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
-  releaseStream(stream);
+  releaseStream(std::move(stream));
 }
 
 WaveTypeKind typeKindCode(TypeKind kind) {
@@ -752,7 +752,7 @@ WaveTypeKind typeKindCode(TypeKind kind) {
 void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
-    auto& operatorState = operatorStates_[i];
+    auto& operatorState = *operatorStates_[i];
     auto* state = stream.operatorState(operatorState.stateId);
     if (!state) {
       VELOX_CHECK_NOT_NULL(operatorState.init);
@@ -762,6 +762,17 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   }
 }
 
+  int32_t Program::canAdvance(WaveStream& stream) {
+    AbstractInstruction* source = instructions_.front().get();
+    OperatorState* state = nullptr;
+    auto stateIndex = source->stateIndex();
+    if (stateIndex.has_value()) {
+      state = stream.operatorState(stateIndex.value());
+    }
+    return source->canAdvance(stream, state);
+}
+ 
+  
 #define IN_HEAD(abstract, physical, _op)             \
   auto* abstractInst = &instruction->as<abstract>(); \
   space->opCode = _op;                               \
@@ -897,23 +908,23 @@ void Program::prepareForDevice(GpuArena& arena) {
 
         physicalInst->numKeys = abstractInst->keys.size();
         physicalInst->numAggregates = abstractInst->aggregates.size();
-        physicalInst->stateIndex = stateIndices_.size();
-        ProgramState programState;
-        programState = abstrattInst->stateId;
-        programState.isGlobal = true;
-        programState.init = [inst = &abstractInst](
-                                WaveStream& stream, OperatorState& state) {
-          stream.makeAggregate(*Inst, state);
+        physicalInst->stateIndex = operatorStates_.size();
+	auto programState = std::make_unique<ProgramState>();
+        programState->stateId = abstractInst->stateId;
+        programState->isGlobal = true;
+        programState->init = [inst = abstractInst](
+                                WaveStream& stream, OperatorState& toInit) {
+          stream.makeAggregate(*inst, toInit);
         };
-        operatorState_.push_back(programState);
+        operatorStates_.push_back(std::move(programState));
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
         OperandIndex* keys = reinterpret_cast<OperandIndex*>(
             physicalInst->aggregates + physicalInst->numAggregates);
-        for (auto i = 0; i < logicalInst->keys.size(); ++i) {
-          keys[i] = operandIndex(logicalInst->keys[i]);
+        for (auto i = 0; i < abstractInst->keys.size(); ++i) {
+          keys[i] = operandIndex(abstractInst->keys[i]);
         }
-        for (auto i = 0; i < logicalInst->aggregates.size(); ++i) {
+        for (auto i = 0; i < abstractInst->aggregates.size(); ++i) {
           auto physicalAgg = physicalInst->aggregates + i;
           auto& abstractAgg = abstractInst->aggregates[i];
           physicalAgg->op = abstractAgg.op;

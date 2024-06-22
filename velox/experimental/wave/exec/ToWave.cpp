@@ -68,11 +68,13 @@ Value CompileState::toValue(const Expr& expr) {
     if (it != fieldToExpr_.end()) {
       expr = it->second.get();
     } else {
-      ExprPtr newExpr = std::make_shared<exec::FieldReference>(field->type(), {}, field->name());
+      auto name = field.name();
+      static std::vector<exec::ExprPtr> empty;
+      exec::ExprPtr newExpr = std::make_shared<exec::FieldReference>(field.type(), empty, name);
       expr = newExpr.get();
       fieldToExpr_[name] = std::move(newExpr);
     }
-    return toValue(expr);
+    return toValue(*expr);
   }
 
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
@@ -94,9 +96,9 @@ AbstractState* CompileState::newState(
     StateKind kind,
     const std::string& idString,
     const std::string& label) {
-  states_.push_back(
-      std::make_unique<Abstractstate>(stateCounter_++, kind, idString, label));
-  auto state = states_.back().get();
+  operatorStates_.push_back(
+      std::make_unique<AbstractState>(stateCounter_++, kind, idString, label));
+  auto state = operatorStates_.back().get();
   return state;
 }
 
@@ -422,22 +424,22 @@ CompileState::aggregateFunctionRegistry() {
 }
 
 void CompileState::setAggregateFromPlan(
-    AbstractAggInstruction& agg,
-    core::AggregationNode::Aggregate& planAggregate) {
+					const core::AggregationNode::Aggregate& planAggregate, 
+					AbstractAggInstruction& agg) {
   agg.op = AggregateOp::kSum;
 }
 
 void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
   // First key nulls, then key wirds. Then accumulator nulls, then accumulators.
-  int32_t numKeys = aggregate.keys().size();
+  int32_t numKeys = aggregate.keys.size();
   int32_t startOffset = bits::roundUp(numKeys, 8) + 8 * numKeys;
   int32_t accNullOffset = startOffset;
-  auto numAggs = inst.aggregates.size();
+  auto numAggs = aggregate.aggregates.size();
   int32_t accOffset = accNullOffset + bits::roundUp(numAggs, 8);
   for (auto i = 0; i < numAggs; ++i) {
     auto& agg = aggregate.aggregates[i];
     agg.nullOffset = accNullOffset + i;
-    agg->accumulatorOffset = accOffset + i * sizeof(int64_t);
+    agg.accumulatorOffset = accOffset + i * sizeof(int64_t);
   }
 }
 
@@ -456,15 +458,15 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       programs.insert(source);
     }
   }
-  std::vector<AbstractAggInstruction> aggregates;
   for (auto& planAggregate : node->aggregates()) {
     aggregates.emplace_back();
+    std::vector<PhysicalType> argTypes;
     auto& aggregate = aggregates.back();
-    setAggregateFromPlan(aggregate, planAggregate);
-    for (auto& arg : planAggregate->call()->inputs()) {
-      argTypes.push_back(fromCpuType(arg->type()));
-
-      auto op = findCurrentValue(arg);
+    setAggregateFromPlan(planAggregate, aggregate);
+    for (auto& arg : planAggregate.call->inputs()) {
+      argTypes.push_back(fromCpuType(*arg->type()));
+      auto field = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(arg);
+      auto op = findCurrentValue(field);
       aggregate.args.push_back(op);
       bool isNew = uniqueArgs.insert(op).second;
       if (isNew) {
@@ -474,24 +476,27 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
         }
       }
     }
+#if 0
     auto func =
         functionRegistry_->getFunction(aggregate.call->name(), argTypes);
     VELOX_CHECK_NOT_NULL(func);
+#endif
   }
   auto instruction = std::make_unique<AbstractAggregation>(
-      nthContinuable_++, std::move(keys), std::move(aggregates), state);
+							   nthContinuable_++, std::move(keys), std::move(aggregates), state, node->outputType());
   makeAggregateLayout(*instruction);
-  std::vector<programPtr> source*;
-  if (sources.empty) {
+  std::vector<Program*> sourceList;
+  if (programs.empty()) {
     sourceList.push_back(newProgram());
-  } else if (sources.size() == 1) {
-    sourceList.push_back(*sources.begin());
+  } else if (programs.size() == 1) {
+    sourceList.push_back(*programs.begin());
   } else {
-    for (auto& s : sources) {
+    for (auto& s : programs) {
       sourceList.push_back(s);
     }
   }
   addInstruction(std::move(instruction), nullptr, sourceList);
+  
 }
 
 bool CompileState::addOperator(

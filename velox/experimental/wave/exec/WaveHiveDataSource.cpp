@@ -100,7 +100,7 @@ int32_t WaveHiveDataSource::canAdvance(WaveStream& stream) {
 
 void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
   splitReader_->schedule(stream, maxRows);
-  stream.setDataSource(shared_from_this());
+  stream.setSplitReader(splitReader_);
 }
 
 vector_size_t WaveHiveDataSource::outputSize(WaveStream& stream) const {

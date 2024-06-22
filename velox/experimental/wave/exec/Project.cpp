@@ -25,7 +25,7 @@ AbstractWrap* Project::findWrap() const {
   return filterWrap_;
 }
 
-int32_t Project::canAdvance(WaveStream& stream) override {
+int32_t Project::canAdvance(WaveStream& stream) {
   VELOX_CHECK(isSource());
   return levels_[0][0]->canAdvance(stream);
 }
@@ -49,12 +49,8 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,
-              control->blockBase,
-              control->programIdx,
-              control->programs,
-              control->operands,
-              inputControl->status,
-              control->sharedMemorySize);
+              control->sharedMemorySize,
+	      control->params);
         });
   }
 }

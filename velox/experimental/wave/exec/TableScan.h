@@ -162,6 +162,6 @@ class TableScan : public WaveSourceOperator {
 
   // True if canAdvance() should do waveDataSource_->canAdvance() instead of
   // returning 'nextAvailableRows_'.
-  isNewSplit_{false};
+  bool isNewSplit_{false};
 };
 } // namespace facebook::velox::wave

@@ -25,8 +25,6 @@
 #include <folly/Range.h>
 
 namespace facebook::velox::wave {
-using BufferId = int32_t;
-constexpr BufferId kNoBufferId = -1;
 
 class ReadStream;
 class WaveStream;
@@ -96,48 +94,6 @@ class SplitStaging {
 
   // Total device side space reserved so farr.
   int64_t fill_{0};
-};
-
-class ResultStaging {
- public:
-  /// Reserves 'bytes' bytes in result buffer to be brought to host after
-  /// Decodeprograms completes on device.
-  BufferId reserve(int32_t bytes);
-
-  /// Registers '*pointer' to be patched to the buffer. The starting address of
-  /// the buffer is added to *pointer, so that if *pointer was 16, *pointer will
-  /// come to point to the 16th byte in the buffer. If 'clear' is true, *ptr is
-  /// set to nullptr first.
-  template <typename T>
-  void registerPointer(BufferId id, T pointer, bool clear) {
-    registerPointerInternal(
-        id,
-        reinterpret_cast<void**>(reinterpret_cast<uint64_t>(pointer)),
-        clear);
-  }
-
-  /// Creates a device side buffer for the reserved space and patches all the
-  /// registered pointers to offsets inside the device side buffer.  Retains
-  /// ownership of the device side buffer. Clears any reservations and
-  /// registrations so that new ones can be reserved and registered. This cycle
-  /// may repeat multiple times.  The device side buffers are freed on
-  /// destruction.
-  void makeDeviceBuffer(GpuArena& arena);
-
-  void setReturnBuffer(GpuArena& arena, DecodePrograms& programs);
-
- private:
-  void registerPointerInternal(BufferId id, void** pointer, bool clear);
-
-  // Offset of each result in either buffer.
-  std::vector<int32_t> offsets_;
-  // Patch addresses. The int64_t* is updated to point to the result buffer once
-  // it is allocated.
-  std::vector<std::pair<int32_t, void**>> patch_;
-  int32_t fill_{0};
-  WaveBufferPtr deviceBuffer_;
-  WaveBufferPtr hostBuffer_;
-  std::vector<WaveBufferPtr> buffers_;
 };
 
 using RowSet = folly::Range<const int32_t*>;

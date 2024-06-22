@@ -272,7 +272,7 @@ bool ReadStream::makePrograms(bool& needSync) {
     programs_.programs.back().push_back(std::move(setCount));
   }
   ++nthWave_;
-  resultStaging_.setReturnBuffer(waveStream->arena(), programs_);
+  resultStaging_.setReturnBuffer(waveStream->arena(), programs_.result);
   return allDone;
 }
 

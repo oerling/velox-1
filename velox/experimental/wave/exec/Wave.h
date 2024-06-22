@@ -465,7 +465,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::vector<std::unique_ptr<Executable>> prepared_;
 
   // Globals accessed by id from instructions.
-  std::vector<ProgramState> operatorStates_;
+  std::vector<std::unique_ptr<ProgramState>> operatorStates_;
 };
 
 using ProgramPtr = std::shared_ptr<Program>;
@@ -680,8 +680,8 @@ class WaveStream {
     return stats_;
   }
 
-  void setSplitReader(const std::shared_ptr<WaveSplitReader>& source) {
-    dataSource_ = source;
+  void setSplitReader(const std::shared_ptr<WaveSplitReader>& reader) {
+    splitReader_ = reader;
   }
 
   void clearLaunch(int32_t id) {
@@ -782,7 +782,7 @@ class WaveStream {
 
   WaveStats stats_;
 
-  std::shared_ptr<WaveSplitReader> dataSource_;
+  std::shared_ptr<WaveSplitReader> splitReader_;
 };
 
 /// Describes all the control data for launching a kernel executing
@@ -814,6 +814,7 @@ struct LaunchControl {
 
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
+  ResultStaging staging;
 };
 
 } // namespace facebook::velox::wave

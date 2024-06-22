@@ -61,7 +61,7 @@ class CompileState {
   AbstractOperand* findCurrentValue(
       const std::shared_ptr<const core::FieldAccessTypedExpr>& field) {
     Value value = toValue(*field);
-    return findcurrentValue(value);
+    return findCurrentValue(value);
   }
 
   AbstractOperand* addExpr(const exec::Expr& expr);
@@ -93,13 +93,22 @@ class CompileState {
 
   void addFilter(const exec::Expr& expr, const RowTypePtr& outputType);
 
+AbstractState* newState(
+    StateKind kind,
+    const std::string& idString,
+    const std::string& label);
+  
   void addFilterProject(
       exec::Operator* op,
       RowTypePtr& outputType,
       int32_t& nodeIndex);
 
-  void makeAggregateLayout(AbstractAggregate& aggregate);
+  void makeAggregateLayout(AbstractAggregation& aggregate);
 
+void setAggregateFromPlan(
+			  const core::AggregationNode::Aggregate& planAggregate,
+			  AbstractAggInstruction& agg);
+  
   void makeAggregateAccumulate(const core::AggregationNode* node);
 
   bool reserveMemory();

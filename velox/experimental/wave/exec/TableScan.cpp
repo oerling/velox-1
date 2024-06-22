@@ -38,7 +38,7 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-int32_t TableScan::canAdvance(WaveStream& stream) override {
+int32_t TableScan::canAdvance(WaveStream& stream) {
   if (!dataSource_ || needNewSplit_) {
     return 0;
   }
@@ -54,7 +54,7 @@ void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
   // The stream must hold the reader tree. 'this' can initiate many
   // concurrently running streams over potentially multiple splits.
   stream.setSplitReader(waveDataSource_->splitReader());
-  nextAvailableRows_ = waveDataSource_->canAdvance();
+  nextAvailableRows_ = waveDataSource_->canAdvance(stream);
   if (nextAvailableRows_ == 0) {
     needNewSplit_ = true;
   }

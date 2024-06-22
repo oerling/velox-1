@@ -54,7 +54,7 @@ class WaveHiveDataSource : public WaveDataSource {
 
   bool isFinished() override;
 
-  std::shared_ptr<WaveSplitReader> splitReadr() override {
+  std::shared_ptr<WaveSplitReader> splitReader() override {
     return splitReader_;
   }
 
