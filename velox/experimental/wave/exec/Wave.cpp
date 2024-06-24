@@ -857,7 +857,7 @@ void Program::prepareForDevice(GpuArena& arena) {
             sizeof(IUpdateAgg);
         std::vector<IUpdateAgg> temp(agg.aggregates.size() + extra);
         agg.literalOffset = addLiteral(temp.data(), temp.size());
-	agg.literalBytes = temp.size() * sizeof(IUpdateAgg);
+        agg.literalBytes = temp.size() * sizeof(IUpdateAgg);
         for (auto& op : agg.aggregates) {
           for (auto& arg : op.args) {
             markInput(arg);
@@ -865,9 +865,9 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-	      case OpCode::kReadAggregate: {
+      case OpCode::kReadAggregate: {
         auto& read = instruction->as<AbstractReadAggregation>();
-	auto& agg = *read.aggregation;
+        auto& agg = *read.aggregation;
         for (auto& key : agg.keys) {
           markResult(key);
         }
@@ -875,14 +875,14 @@ void Program::prepareForDevice(GpuArena& arena) {
         int32_t extra = agg.literalBytes;
         std::vector<IUpdateAgg> temp(extra / sizeof(IUpdateAgg));
         read.literalOffset = addLiteral(temp.data(), temp.size());
-	for (auto& key : agg.keys) {
-	  markResult(key);
-	}
-        for (auto& op : agg.aggregates) {
-	  markResult(op.result);
+        for (auto& key : agg.keys) {
+          markResult(key);
         }
-	break;
-	      }
+        for (auto& op : agg.aggregates) {
+          markResult(op.result);
+        }
+        break;
+      }
       default:
         VELOX_UNSUPPORTED(
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
@@ -958,8 +958,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         operatorStates_.push_back(std::move(programState));
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
-	// the literal is copied when making the reader for aggregates.
-	abstractInst->literal = physicalInst->aggregates;
+        // the literal is copied when making the reader for aggregates.
+        abstractInst->literal = physicalInst->aggregates;
         OperandIndex* keys = reinterpret_cast<OperandIndex*>(
             physicalInst->aggregates + physicalInst->numAggregates);
         for (auto i = 0; i < abstractInst->keys.size(); ++i) {
@@ -982,7 +982,7 @@ void Program::prepareForDevice(GpuArena& arena) {
       }
       case OpCode::kReadAggregate: {
         IN_HEAD(AbstractReadAggregation, IAggregate, OpCode::kReadAggregate);
-	auto& agg = *abstractInst->aggregation;
+        auto& agg = *abstractInst->aggregation;
         physicalInst->numKeys = agg.keys.size();
         physicalInst->numAggregates = agg.aggregates.size();
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
@@ -991,20 +991,22 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.stateId;
         programState->isGlobal = true;
-	physicalInst->stateIndex = operatorStates_.size();
+        physicalInst->stateIndex = operatorStates_.size();
         operatorStates_.push_back(std::move(programState));
-	memcpy(physicalInst->aggregates, agg.literal, agg.literalBytes);
-	auto numKeys =  agg.keys.size();
-	auto* keys = reinterpret_cast<OperandIndex*>(&physicalInst->aggregates[physicalInst->numAggregates]);
-	for (auto i = 0; i <numKeys; ++i) {
-	  keys[i] = operandIndex(agg.keys[i]);
-	}
-	for (auto i = 0; agg.aggregates.size(); ++i) {
-	  physicalInst->aggregates[i].result = operandIndex(agg.aggregates[i].result);
-	}
-	break;
+        memcpy(physicalInst->aggregates, agg.literal, agg.literalBytes);
+        auto numKeys = agg.keys.size();
+        auto* keys = reinterpret_cast<OperandIndex*>(
+            &physicalInst->aggregates[physicalInst->numAggregates]);
+        for (auto i = 0; i < numKeys; ++i) {
+          keys[i] = operandIndex(agg.keys[i]);
+        }
+        for (auto i = 0; agg.aggregates.size(); ++i) {
+          physicalInst->aggregates[i].result =
+              operandIndex(agg.aggregates[i].result);
+        }
+        break;
       }
-	case OpCode::kReturn: {
+      case OpCode::kReturn: {
         IN_HEAD(AbstractReturn, IReturn, OpCode::kReturn);
         break;
       }

@@ -328,9 +328,10 @@ struct AbstractAggregation : public AbstractOperator {
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
   int32_t literalOffset;
-  
+
   int32_t literalBytes{0};
-  // The data area of the physical instruction. Copied by the reading istruction.
+  // The data area of the physical instruction. Copied by the reading
+  // istruction.
   IUpdateAgg* literal{nullptr};
 };
 

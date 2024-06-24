@@ -158,7 +158,6 @@ struct IAggregate {
   IUpdateAgg* aggregates;
 };
 
-  
 struct Instruction {
   OpCode opCode;
   union {
