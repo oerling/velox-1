@@ -18,8 +18,10 @@
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 
-DEFINE_int32(max_streams_per_driver, 4,
-	     "Number of parallel Cuda streams per CPU thread");
+DEFINE_int32(
+    max_streams_per_driver,
+    4,
+    "Number of parallel Cuda streams per CPU thread");
 
 namespace facebook::velox::wave {
 
@@ -64,54 +66,58 @@ RowVectorPtr WaveDriver::getOutput() {
   int32_t last = pipelines_.size() - 1;
   for (int32_t i = last; i >= 0; --i) {
     auto status = advance(i);
-    switch(status) {
-    case Advance::kBlocked:
-      return nullptr;
-    case Advance::kResult:
-      if (i == last) {
-	return result_;
-      }
-      pipelines_[i + 1].canAdvance = true;
-      pipelines_[i + 1].hasFlush = false;
-      i += 2;
-      break;
-    case Advance::kFinished:
-      pipelines_[i].canAdvance = false;
-      if (i < last) {
-	if (pipelines_[i + 1].hasFlush) {
-	pipelines_[i + 1].hasFlush = true;
-	i += 2;
-	break;
-	}
-      }
-      break;
+    switch (status) {
+      case Advance::kBlocked:
+        return nullptr;
+      case Advance::kResult:
+        if (i == last) {
+          return result_;
+        }
+        pipelines_[i + 1].canAdvance = true;
+        pipelines_[i + 1].hasFlush = false;
+        i += 2;
+        break;
+      case Advance::kFinished:
+        pipelines_[i].canAdvance = false;
+        if (i < last) {
+          if (pipelines_[i + 1].hasFlush) {
+            pipelines_[i + 1].hasFlush = true;
+            i += 2;
+            break;
+          }
+        }
+        break;
     }
   }
   finished_ = true;
   return nullptr;
 }
 
-  namespace {
-void moveTo(std::vector<std::unique_ptr<WaveStream>>& from, int32_t i, std::vector<std::unique_ptr<WaveStream>>& to) {
+namespace {
+void moveTo(
+    std::vector<std::unique_ptr<WaveStream>>& from,
+    int32_t i,
+    std::vector<std::unique_ptr<WaveStream>>& to) {
   to.push_back(std::move(from[i]));
   from.erase(from.begin() + i);
 }
-  }
+} // namespace
 
 exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
   for (auto i = 0; i < pipeline.arrived.size(); ++i) {
     bool continued = false;
-    for (int32_t i =  pipeline.operators.size() - 1; i >= 0; --i) {
+    for (int32_t i = pipeline.operators.size() - 1; i >= 0; --i) {
       auto reason = pipeline.operators[i]->isBlocked(&blockingFuture_);
       if (reason != exec::BlockingReason::kNotBlocked) {
-	return reason;
+        return reason;
       }
-      if (auto numRows = pipeline.operators[i]->canAdvance(*pipeline.arrived[i])) {
-	runOperators(pipeline, *pipeline.arrived[i], i, numRows);
-	moveTo(pipeline.arrived, i, pipeline.running);
-	continued = true;
-	--i;
-	break;
+      if (auto numRows =
+              pipeline.operators[i]->canAdvance(*pipeline.arrived[i])) {
+        runOperators(pipeline, *pipeline.arrived[i], i, numRows);
+        moveTo(pipeline.arrived, i, pipeline.running);
+        continued = true;
+        --i;
+        break;
       }
     }
 
@@ -124,19 +130,23 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
   return exec::BlockingReason::kNotBlocked;
 }
 
-  void WaveDriver::runOperators(Pipeline& pipeline, WaveStream& stream, int32_t from, int32_t numRows) {
-    for (auto i = from; i < pipeline.operators.size(); ++i) {
-      pipeline.operators[i]->schedule(stream, numRows);
-    }
+void WaveDriver::runOperators(
+    Pipeline& pipeline,
+    WaveStream& stream,
+    int32_t from,
+    int32_t numRows) {
+  for (auto i = from; i < pipeline.operators.size(); ++i) {
+    pipeline.operators[i]->schedule(stream, numRows);
   }
-  
+}
+
 void WaveDriver::waitForArrival(Pipeline& pipeline) {
   auto set = pipeline.operators.back()->syncSet();
   while (!pipeline.running.empty()) {
     for (auto i = 0; i < pipeline.running.size(); ++i) {
       if (pipeline.running[i]->isArrived(set, 10, 0)) {
-		   incStats((pipeline.running[i]->stats()));
-		   moveTo(pipeline.running, i, pipeline.arrived);
+        incStats((pipeline.running[i]->stats()));
+        moveTo(pipeline.running, i, pipeline.arrived);
       }
     }
   }
@@ -145,49 +155,50 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
 Advance WaveDriver::advance(int pipelineIdx) {
   auto& pipeline = pipelines_[pipelineIdx];
   for (;;) {
-  if (pipeline.sinkFull) {
-    pipeline.sinkFull = false;
-    for (auto i = 0; i < pipeline.arrived.size(); ++i) {
-      pipeline.arrived[i]->resetSink();
+    if (pipeline.sinkFull) {
+      pipeline.sinkFull = false;
+      for (auto i = 0; i < pipeline.arrived.size(); ++i) {
+        pipeline.arrived[i]->resetSink();
+      }
+    }
+    blockingReason_ = processArrived(pipeline);
+    if (blockingReason_ != exec::BlockingReason::kNotBlocked) {
+      return Advance::kBlocked;
+    }
+    if (pipeline.running.empty() && !pipeline.finished.empty()) {
+      return Advance::kFinished;
+    }
+    auto& op = *pipeline.operators.back();
+    auto& lastSet = op.syncSet();
+    for (auto i = 0; i < pipeline.running.size(); ++i) {
+      if (pipeline.running[i]->isArrived(lastSet)) {
+        auto arrived = pipeline.running[i].get();
+        incStats(arrived->stats());
+        moveTo(pipeline.running, i, pipeline.arrived);
+        if (pipeline.makesHostResult) {
+          result_ = makeResult(*arrived, lastSet);
+          if (result_->size() != 0) {
+            return Advance::kResult;
+          }
+          --i;
+        } else if (arrived->isSinkFull()) {
+          pipeline.sinkFull = true;
+          waitForArrival(pipeline);
+          return Advance::kResult;
+        }
+      }
+      if (pipeline.finished.empty() &&
+          pipeline.running.size() + pipeline.arrived.size() <
+              FLAGS_max_streams_per_driver) {
+        auto stream = std::make_unique<WaveStream>(
+            *arena_, *hostArena_, &operands(), &stateMap_);
+        ++stream->stats().numWaves;
+        stream->setState(WaveStream::State::kHost);
+        pipeline.arrived.push_back(std::move(stream));
+      }
     }
   }
-  blockingReason_ = processArrived(pipeline);
-  if (blockingReason_ != exec::BlockingReason::kNotBlocked) {
-    return Advance::kBlocked;
-  }
-  if (pipeline.running.empty() && !pipeline.finished.empty()) {
-    return Advance::kFinished;
-   }
-  auto& op = *pipeline.operators.back();
-  auto& lastSet = op.syncSet();
-  for (auto i = 0; i < pipeline.running.size(); ++i) {
-      if (pipeline.running[i]->isArrived(lastSet)) {
-	auto arrived = pipeline.running[i].get();
-	incStats(arrived->stats());
-	  moveTo(pipeline.running, i, pipeline.arrived);
-	if (pipeline.makesHostResult) {
-	  result_ = makeResult(*arrived, lastSet);
-	  if (result_->size() != 0) {
-	    return Advance::kResult;
-	  }
-	  --i;
-	} else if (arrived->isSinkFull()) {
-	  pipeline.sinkFull = true;
-	  waitForArrival(pipeline);
-	  return Advance::kResult;
-	}
-      }
-      if (pipeline.finished.empty() && pipeline.running.size() + pipeline.arrived.size() < FLAGS_max_streams_per_driver) {
-	auto stream = std::make_unique<WaveStream>(
-        *arena_, *hostArena_, &operands(), &stateMap_);
-	++stream->stats().numWaves;
-	stream->setState(WaveStream::State::kHost);
-    pipeline.arrived.push_back(std::move(stream));
-      }
-  }
-  }
 }
-  
 
 RowVectorPtr WaveDriver::makeResult(
     WaveStream& stream,

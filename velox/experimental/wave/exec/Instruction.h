@@ -93,7 +93,7 @@ struct AbstractOperand {
 class WaveStream;
 struct OperatorState;
 struct LaunchControl;
-  
+
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode) : opCode(opCode) {}
 
@@ -135,7 +135,7 @@ struct AbstractInstruction {
     return false;
   }
 
-  /// Sets up status return. The 
+  /// Sets up status return. The
   virtual void setupReturn(WaveStream& stream, LaunchControl& control) const {}
 
   OpCode opCode;

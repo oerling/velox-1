@@ -23,7 +23,6 @@
 namespace facebook::velox::wave {
 enum class Advance { kBlocked, kResult, kFinished };
 
-  
 class WaveDriver : public exec::SourceOperator {
  public:
   WaveDriver(
@@ -92,25 +91,24 @@ class WaveDriver : public exec::SourceOperator {
   }
 
  private:
-
-    struct Pipeline {
+  struct Pipeline {
     // Wave operators replacing 'cpuOperators_' on GPU path.
     std::vector<std::unique_ptr<WaveOperator>> operators;
 
     // The set of currently pending kernel DAGs for this Pipeline.  If the
     // source operator can produce multiple consecutive batches before the batch
     // is executed to completion, multiple such batches can be on device
-    // independently of each other. Limited by max_streams_per_driver. 
+    // independently of each other. Limited by max_streams_per_driver.
     std::vector<std::unique_ptr<WaveStream>> running;
 
     std::vector<std::unique_ptr<WaveStream>> arrived;
 
-    
-        std::vector<std::unique_ptr<WaveStream>> continuable;
+    std::vector<std::unique_ptr<WaveStream>> continuable;
 
-            std::vector<std::unique_ptr<WaveStream>> blocked;
+    std::vector<std::unique_ptr<WaveStream>> blocked;
 
-    /// Streams ready to recycle. A stream's device side resources are usually reusable for a new batch from the source operator.
+    /// Streams ready to recycle. A stream's device side resources are usually
+    /// reusable for a new batch from the source operator.
     std::vector<std::unique_ptr<WaveStream>> finished;
 
     /// True if status copy to host is needed after the last kernel. True if
@@ -119,12 +117,11 @@ class WaveDriver : public exec::SourceOperator {
     bool needStatus{false};
     bool sinkFull{false};
 
-      /// True if produces Batches in RowVectors.
+    /// True if produces Batches in RowVectors.
     bool makesHostResult{false};
     bool canAdvance{false};
     bool hasFlush{false};
   };
-
 
   // True if all output from 'stream' is fetched.
   bool streamAtEnd(WaveStream& stream);
@@ -135,7 +132,11 @@ class WaveDriver : public exec::SourceOperator {
   Advance advance(int pipelineIdx);
   exec::BlockingReason processArrived(Pipeline& pipeline);
   void waitForArrival(Pipeline& pipeline);
-  void runOperators(Pipeline& pipeline, WaveStream& stream, int32_t from, int32_t numRows);
+  void runOperators(
+      Pipeline& pipeline,
+      WaveStream& stream,
+      int32_t from,
+      int32_t numRows);
 
   void updateStats();
 
@@ -152,7 +153,7 @@ class WaveDriver : public exec::SourceOperator {
     waveStats_.add(stats);
     stats.clear();
   }
-  
+
   std::vector<Pipeline> pipelines_;
 
   // The replaced Operators from the Driver. Can be used for a CPU fallback.

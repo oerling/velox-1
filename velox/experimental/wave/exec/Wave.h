@@ -703,9 +703,12 @@ class WaveStream {
   /// 'state' is ready to use on device.
   void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
 
-  std::unique_ptr<Executable> recycleExecutable(Program* program, int32_t numRows);
+  std::unique_ptr<Executable> recycleExecutable(
+      Program* program,
+      int32_t numRows);
 
-  /// True if ends with a resettable sink like partial aggregation and the sink is full.
+  /// True if ends with a resettable sink like partial aggregation and the sink
+  /// is full.
   bool isSinkFull() const {
     return false;
   }
@@ -713,10 +716,8 @@ class WaveStream {
   /// Clears the state in final sink, e.g. partial agregation. The
   /// stream can be continuable at this point and the new sink state
   /// will get the data not produced so far.
-  void resetSink() {
-  }
-  
-  
+  void resetSink() {}
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;

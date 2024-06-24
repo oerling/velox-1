@@ -38,7 +38,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
       auto& program = level[i];
       exes[i] = stream.recycleExecutable(program.get(), maxRows);
       if (!exes[i]) {
-	exes[i] = program->getExecutable(maxRows, driver_->operands());
+        exes[i] = program->getExecutable(maxRows, driver_->operands());
       }
     }
     auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
