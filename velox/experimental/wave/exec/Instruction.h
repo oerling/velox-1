@@ -328,6 +328,10 @@ struct AbstractAggregation : public AbstractOperator {
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
   int32_t literalOffset;
+  
+  int32_t literalBytes{0};
+  // The data area of the physical instruction. Copied by the reading istruction.
+  IUpdateAgg* literal{nullptr};
 };
 
 struct AbstractReadAggregation : public AbstractOperator {
@@ -342,6 +346,7 @@ struct AbstractReadAggregation : public AbstractOperator {
   int32_t canAdvance(WaveStream& stream, OperatorState* state) const override;
 
   AbstractAggregation* aggregation;
+  int32_t literalOffset{0};
 };
 
 /// Serializes 'row' to characters interpretable on device.
