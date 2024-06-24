@@ -36,7 +36,10 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     std::vector<std::unique_ptr<Executable>> exes(level.size());
     for (auto i = 0; i < level.size(); ++i) {
       auto& program = level[i];
-      exes[i] = program->getExecutable(maxRows, driver_->operands());
+      exes[i] = stream.recycleExecutable(program.get(), maxRows);
+      if (!exes[i]) {
+	exes[i] = program->getExecutable(maxRows, driver_->operands());
+      }
     }
     auto blocksPerExe = bits::roundUp(maxRows, kBlockSize) / kBlockSize;
     auto* data = exes.data();

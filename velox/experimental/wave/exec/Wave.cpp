@@ -40,6 +40,10 @@ void WaveStats::add(const WaveStats& other) {
   waitTime += other.waitTime;
 }
 
+  void WaveStats::clear() {
+    new(this) WaveStats();
+  }
+  
 const SubfieldMap*& threadSubfieldMap() {
   thread_local const SubfieldMap* subfields;
   return subfields;
@@ -308,6 +312,19 @@ void Executable::startTransfer(
       });
 }
 
+std::unique_ptr<Executable> WaveStream::recycleExecutable(Program* program, int32_t numRows) {
+  for (auto i = 0; i < executables_.size(); ++i) {
+    if (executables_[i]->programShared.get() == program) {
+      auto result = std::move(executables_[i]);
+      executables_.erase(executables_.begin() + i);
+      return result;
+    }
+  }
+  return nullptr;
+}
+
+
+  
 void WaveStream::installExecutables(
     folly::Range<std::unique_ptr<Executable>*> executables,
     std::function<void(Stream*, folly::Range<Executable**>)> launch) {

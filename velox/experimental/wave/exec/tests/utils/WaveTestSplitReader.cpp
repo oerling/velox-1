@@ -56,6 +56,8 @@ void WaveTestSplitReader::schedule(WaveStream& waveStream, int32_t maxRows) {
   auto numRows = std::min<int32_t>(maxRows, available());
   scheduledRows_ = numRows;
   auto rowSet = folly::Range<const int32_t*>(iota(numRows, rows_), numRows);
+  // Remove a possible previous exe.
+  waveStream.recycleExecutable(nullptr, 0);
   auto readStream = std::make_unique<ReadStream>(
       reinterpret_cast<StructColumnReader*>(columnReader_.get()),
       0,
