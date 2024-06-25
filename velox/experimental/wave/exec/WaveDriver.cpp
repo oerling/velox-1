@@ -68,48 +68,48 @@ WaveDriver::WaveDriver(
 RowVectorPtr WaveDriver::getOutput() {
   int32_t last = pipelines_.size() - 1;
   for (;;) {
-  for (int32_t i = last; i >= 0; --i) {
-    if (!pipelines_[i].canAdvance) {
-      continue;
+    for (int32_t i = last; i >= 0; --i) {
+      if (!pipelines_[i].canAdvance) {
+        continue;
+      }
+      auto status = advance(i);
+      switch (status) {
+        case Advance::kBlocked:
+          return nullptr;
+        case Advance::kResult:
+          if (i == last) {
+            if (pipelines_[i].makesHostResult) {
+              return result_;
+            } else {
+              break;
+            }
+          }
+          pipelines_[i + 1].canAdvance = true;
+          i += 2;
+          break;
+        case Advance::kFinished:
+          pipelines_[i].canAdvance = false;
+          if (i == 0 || pipelines_[i].noMoreInput) {
+            flush(i);
+            if (i < last)
+              pipelines_[i + 1].noMoreInput = true;
+            pipelines_[i + 1].canAdvance = true;
+            i += 2;
+            break;
+          }
+          break;
+      }
     }
-    auto status = advance(i);
-    switch (status) {
-      case Advance::kBlocked:
-        return nullptr;
-      case Advance::kResult:
-        if (i == last) {
-	  if (pipelines_[i].makesHostResult) {
-	    return result_;
-	  } else {
-	    break;
-	  }
-        }
-        pipelines_[i + 1].canAdvance = true;
-        i += 2;
-        break;
-      case Advance::kFinished:
-        pipelines_[i].canAdvance = false;
-	if (i == 0 || pipelines_[i].noMoreInput) {
-	  flush(i);
-	  if (i < last)
-	    pipelines_[i + 1].noMoreInput = true;
-	  pipelines_[i + 1]. canAdvance = true;
-	  i += 2;
-	  break;
-	}
-	break;
-    }
+    finished_ = true;
+    return nullptr;
   }
-  finished_ = true;
-  return nullptr;
-  }
-  }
+}
 
 void WaveDriver::flush(int32_t pipelineIdx) {
-  // 
+  //
   ;
 }
-  
+
 namespace {
 void moveTo(
     std::vector<std::unique_ptr<WaveStream>>& from,
@@ -206,10 +206,10 @@ Advance WaveDriver::advance(int pipelineIdx) {
       }
     }
     if (pipeline.finished.empty() &&
-	pipeline.running.size() + pipeline.arrived.size() <
-	FLAGS_max_streams_per_driver) {
+        pipeline.running.size() + pipeline.arrived.size() <
+            FLAGS_max_streams_per_driver) {
       auto stream = std::make_unique<WaveStream>(
-						 *arena_, *hostArena_, &operands(), &stateMap_);
+          *arena_, *hostArena_, &operands(), &stateMap_);
       ++stream->stats().numWaves;
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));

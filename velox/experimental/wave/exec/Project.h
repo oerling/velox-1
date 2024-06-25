@@ -71,7 +71,8 @@ class Project : public WaveOperator {
   // Index in 'levels_' where the next schedule() starts.
   int32_t continueLevel_{0};
 
-  // If non-empty, represents the programs and lane masks that need to be continued.
+  // If non-empty, represents the programs and lane masks that need to be
+  // continued.
   std::vector<ContinuePoint> continuePoints_;
 };
 

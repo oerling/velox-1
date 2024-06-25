@@ -32,13 +32,14 @@ int32_t Project::canAdvance(WaveStream& stream) {
       auto* program = level[i].get();
       auto point = program->continuable(stream);
       if (!point.empty()) {
-	continueLevel_ = i;
-	continuePoints_.push_back(std::move(point));
+        continueLevel_ = i;
+        continuePoints_.push_back(std::move(point));
       }
       if (continuePoints_.empty()) {
-	continue;
+        continue;
       }
-      // Return at least 1 to mean continuable even if continuing partially completed lanes.
+      // Return at least 1 to mean continuable even if continuing partially
+      // completed lanes.
       continueLevel_ = i;
       return std::max(1, continuePoints_.front().sourceRows);
     }

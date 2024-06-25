@@ -1204,21 +1204,21 @@ std::unique_ptr<Executable> Program::getExecutable(
   return exe;
 }
 
-  ContinuePoint Program::continuable(WaveStream& stream) const {
-    // First check previous execution to see if there is any partially executed rows, e.g. aggregation was out of space nand needs retry.
-    OperatorState* state = nullptr;
-    auto stateIdx = instructions_[0]->stateIndex();
-    if (stateIdx.has_value()) {
-      state = stream.operatorState(stateIdx.value());
-    }
-      int32_t numRows = instructions_[0]->canAdvance(stream, state);
-    if (numRows > 0) {
-      return ContinuePoint(0, numRows);
-    }
-    return ContinuePoint();
+ContinuePoint Program::continuable(WaveStream& stream) const {
+  // First check previous execution to see if there is any partially executed
+  // rows, e.g. aggregation was out of space nand needs retry.
+  OperatorState* state = nullptr;
+  auto stateIdx = instructions_[0]->stateIndex();
+  if (stateIdx.has_value()) {
+    state = stream.operatorState(stateIdx.value());
   }
+  int32_t numRows = instructions_[0]->canAdvance(stream, state);
+  if (numRows > 0) {
+    return ContinuePoint(0, numRows);
+  }
+  return ContinuePoint();
+}
 
-  
 std::string AbstractOperand::toString() const {
   if (constant) {
     return fmt::format(
