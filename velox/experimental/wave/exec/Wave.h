@@ -311,6 +311,25 @@ struct ProgramState {
   bool isGlobal{true};
 };
 
+  /// Describes a point to pick up execution of a partially executed program.
+  struct ContinuePoint {
+    ContinuePoint() = default;
+    ContinuePoint(int32_t instruction, int32_t rows)
+      : instructionIdx(instruction), sourceRows(rows) {}
+    
+    bool empty() const {
+      return laneMask.empty() && sourceRows == 0;
+    }
+
+    /// The index of the instruction where to pick up execution. Must be set if !this->empty().
+    int32_t instructionIdx{-1};
+
+    /// If non-zero, the continue makes up to 'sourceRows' new values.
+    int32_t sourceRows{0};
+    /// If non-empty, 'sourceRows' must be 0 and  laneMask gives the lanes for in the previous invocation that need to be continued. 
+    std::vector<uint64_t> laneMask;
+  };
+  
 class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -370,6 +389,9 @@ class Program : public std::enable_shared_from_this<Program> {
     return output_;
   }
 
+  /// Returns the position of the latest continuable instruction in 'this' based on the state in 'stream'. 'stream' may hold return state from a previous execution. If not
+  ContinuePoint continuable(WaveStream& stream) const;
+  
   const std::string& label() const {
     return label_;
   }

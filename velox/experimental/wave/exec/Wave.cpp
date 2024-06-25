@@ -318,6 +318,7 @@ std::unique_ptr<Executable> WaveStream::recycleExecutable(
   for (auto i = 0; i < executables_.size(); ++i) {
     if (executables_[i]->programShared.get() == program) {
       auto result = std::move(executables_[i]);
+      result->stream = nullptr;
       executables_.erase(executables_.begin() + i);
       return result;
     }
@@ -1000,7 +1001,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         for (auto i = 0; i < numKeys; ++i) {
           keys[i] = operandIndex(agg.keys[i]);
         }
-        for (auto i = 0; agg.aggregates.size(); ++i) {
+        for (auto i = 0; i < agg.aggregates.size(); ++i) {
           physicalInst->aggregates[i].result =
               operandIndex(agg.aggregates[i].result);
         }
@@ -1203,6 +1204,21 @@ std::unique_ptr<Executable> Program::getExecutable(
   return exe;
 }
 
+  ContinuePoint Program::continuable(WaveStream& stream) const {
+    // First check previous execution to see if there is any partially executed rows, e.g. aggregation was out of space nand needs retry.
+    OperatorState* state = nullptr;
+    auto stateIdx = instructions_[0]->stateIndex();
+    if (stateIdx.has_value()) {
+      state = stream.operatorState(stateIdx.value());
+    }
+      int32_t numRows = instructions_[0]->canAdvance(stream, state);
+    if (numRows > 0) {
+      return ContinuePoint(0, numRows);
+    }
+    return ContinuePoint();
+  }
+
+  
 std::string AbstractOperand::toString() const {
   if (constant) {
     return fmt::format(

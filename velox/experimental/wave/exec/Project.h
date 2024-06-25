@@ -37,6 +37,11 @@ class Project : public WaveOperator {
     }
     return true;
   }
+
+  bool isSource() const override {
+    return !isStreaming();
+  }
+
   int32_t canAdvance(WaveStream& Stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
@@ -54,9 +59,20 @@ class Project : public WaveOperator {
   }
 
  private:
+  struct ContinueLocation {
+    int32_t programIdx;
+    int32_t instructionIdx;
+  };
+
   std::vector<std::vector<ProgramPtr>> levels_;
   OperandSet computedSet_;
   AbstractWrap* filterWrap_{nullptr};
+
+  // Index in 'levels_' where the next schedule() starts.
+  int32_t continueLevel_{0};
+
+  // If non-empty, represents the programs and lane masks that need to be continued.
+  std::vector<ContinuePoint> continuePoints_;
 };
 
 } // namespace facebook::velox::wave

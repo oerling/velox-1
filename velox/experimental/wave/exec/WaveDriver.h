@@ -120,7 +120,7 @@ class WaveDriver : public exec::SourceOperator {
     /// True if produces Batches in RowVectors.
     bool makesHostResult{false};
     bool canAdvance{false};
-    bool hasFlush{false};
+    bool noMoreInput{false};
   };
 
   // True if all output from 'stream' is fetched.
@@ -137,7 +137,7 @@ class WaveDriver : public exec::SourceOperator {
       WaveStream& stream,
       int32_t from,
       int32_t numRows);
-
+  void flush(int32_t pipelineIdx);
   void updateStats();
 
   std::unique_ptr<GpuArena> arena_;

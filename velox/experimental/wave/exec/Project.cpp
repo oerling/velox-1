@@ -26,8 +26,25 @@ AbstractWrap* Project::findWrap() const {
 }
 
 int32_t Project::canAdvance(WaveStream& stream) {
-  VELOX_CHECK(isSource());
-  return levels_[0][0]->canAdvance(stream);
+  for (int32_t i = levels_.size() - 1; i >= 0; --i) {
+    auto& level = levels_[i];
+    for (auto j = 0; j < level.size(); ++j) {
+      auto* program = level[i].get();
+      auto point = program->continuable(stream);
+      if (!point.empty()) {
+	continueLevel_ = i;
+	continuePoints_.push_back(std::move(point));
+      }
+      if (continuePoints_.empty()) {
+	continue;
+      }
+      // Return at least 1 to mean continuable even if continuing partially completed lanes.
+      continueLevel_ = i;
+      return std::max(1, continuePoints_.front().sourceRows);
+    }
+  }
+  continueLevel_ = 0;
+  return 0;
 }
 
 void Project::schedule(WaveStream& stream, int32_t maxRows) {

@@ -184,7 +184,7 @@ encodeBits(uint64_t* bits, int32_t numBits, memory::MemoryPool* pool) {
   column->values = AlignedBuffer::allocate<bool>(numBits, pool);
   memcpy(column->values->asMutable<char>(), bits, bits::nbytes(numBits));
   column->bitWidth = 1;
-  printSums(bits, numBits);
+  //printSums(bits, numBits);
   return column;
 }
 
