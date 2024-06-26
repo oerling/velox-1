@@ -619,21 +619,22 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     controlPtr = launchVector[nthLaunch].get();
   }
   auto& control = *controlPtr;
-    //  First calculate total size.
+  control.programInfo.resize(exes.size());
+  //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
-  // 2 pointers per exe: TB program and start of its param array.
-  size += exes.size() * sizeof(void*) * 2;
+  // 2 pointers per exe: TB program and start of its param array and 1 int for start PC. Round to 3 for alignment.
+  size += exes.size() * sizeof(void*) * 3;
   auto operandOffset = size;
   // Exe dependent sizes for operands.
   int32_t operandBytes = 0;
   int32_t operatorStateBytes = 0;
   int32_t shared = 0;
   for (auto i = 0; i < exes.size(); ++i) {
-    exeLaunchInfo(*exes[i], numBlocks, info[i]);
+    exeLaunchInfo(*exes[i], numBlocks, info[i], i, control[i]);
     operandBytes += info[i].totalBytes;
     markLaunch(*stream, *exes[i]);
     shared = std::max(shared, exes[i]->programShared->sharedMemorySize());
@@ -662,6 +663,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.operands = addBytes<Operand***>(
       control.params.programs, exes.size() * sizeof(void*));
+  control.params.startPC = addBytes<int32_t>(control.params.operands, exes.size() * sizeof(void*));
+
   if (!inputControl) {
     // If the launch produces new statuses (as opposed to updating status of a
     // previous launch), there is an array with a status for each TB. If there
@@ -684,7 +687,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     control.params.programs[i] = exes[i]->program;
-
+    control.params.startPC[i] = control.programInfo[i].instructionIdx;
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
     control.params.operands[i] = operandPtrs;
     // The operands defined by the exe start after the input operands and are

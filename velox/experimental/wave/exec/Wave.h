@@ -307,7 +307,12 @@ struct ProgramState {
   // Function for creating a state. nullptr if the state must exist before
   // creating an executable.
   std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> create;
-  // True if the state is shared across all streams.
+
+  /// The instruction using the state. This is where to continue if
+  /// the return indicates the instruction is not fully processed.
+  int32_t instructionIdx;
+
+  // True if the state is shared across all streams, e.g. hash join build side.
   bool isGlobal{true};
   ///
   
