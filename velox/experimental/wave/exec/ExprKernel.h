@@ -188,6 +188,7 @@ struct WaveShared {
   /// If true, all threads in block return before starting next instruction.
   bool stop;
   int32_t blockBase;
+  int32_t numRows;
   // Scratch data area. Size depends on shared memory size for instructions.
   char data;
 };
@@ -206,7 +207,7 @@ struct KernelParams {
   /// The instruction where to start the execution. If nullptr,
   /// 0. Otherwise subscript is programIdx. The active lanes are given
   /// in 'blockStatus'. Used when restarting program at a specific
-  /// instruction, e.g. after allocating new memory on host.
+  /// instruction, e.g. after allocating new memory on host. nullptr means first launch, starting at 0.
   int32_t* startPC{nullptr};
   
   // For each exe, the start of the array of Operand*. Instructions reference

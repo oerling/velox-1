@@ -346,8 +346,14 @@ struct ContinuePoint {
 
   /// State of one Program in LaunchControl.
   struct ProgramLaunch {
-    /// Host side address of status for status-returning instructions. Subscript is the stateIndex in the instructions. Corresponds 1:1 to the device side pointers in KernelParams::operatorStates[programIdx].
+    Program* program{nullptr};
+    bool isStaged{false};
+    /// Device side buffer for status returning instructions.
     std::vector<void*> returnBuffers;
+    /// Host side address 1:1 to 'returnBuffers'.
+    std::vector<void*> hostReturnBuffers;
+    /// Device side temp status for instructions. 
+    std::vector<void*> deviceBuffers;
     
     /// Where to continue if previous execution was incomplete.
     ContinuePoint continuePoint;

@@ -22,6 +22,10 @@
 
 namespace facebook::velox::wave {
 
+inline bool __device__ laneActive(ErrorCode code) {
+              return static_cast<uint8_t>(code) <= ErrorCode::kContinue;
+}
+
 template <typename T>
 __device__ inline T& flatValue(void* base, int32_t blockBase) {
   return reinterpret_cast<T*>(base)[blockBase + threadIdx.x];

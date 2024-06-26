@@ -38,8 +38,8 @@ __device__ inline void binaryOpKernel(
     Operand** operands,
     int32_t blockBase,
     char* shared,
-    BlockStatus* status) {
-  if (threadIdx.x >= status->numRows) {
+    ErrorCode& laneStatus) {
+  if (!laneActive(laneStatus)) {
     return;
   }
   T left;
@@ -58,49 +58,41 @@ __device__ void filterKernel(
     Operand** operands,
     int32_t blockBase,
     char* shared,
-    int32_t& numRows) {
-  auto* flags = operands[filter.flags];
-  auto* indices = operands[filter.indices];
-  __syncthreads();
-  if (flags->nulls) {
-    bool256ToIndices<int32_t>(
-        [&](int32_t group) -> uint64_t {
-          int32_t offset = group * 8;
-          int32_t base = blockBase + offset;
-          if (offset + 8 <= numRows) {
-            return *addCast<uint64_t>(flags->base, base) &
-                *addCast<uint64_t>(flags->nulls, base);
-          }
-          if (offset >= numRows) {
-            return 0;
-          }
-          return lowMask<uint64_t>((offset + 8 - numRows) * 8) &
-              *addCast<uint64_t>(flags->base, base) &
-              *addCast<uint64_t>(flags->nulls, base);
-        },
-        blockBase,
-        reinterpret_cast<int32_t*>(indices->base) + blockBase,
-        numRows,
-        shared);
-  } else {
-    bool256ToIndices<int32_t>(
-        [&](int32_t group) -> uint64_t {
-          int32_t offset = group * 8;
-          int32_t base = blockBase + offset;
-          if (offset + 8 <= numRows) {
-            return *addCast<uint64_t>(flags->base, base);
-          }
-          if (offset >= numRows) {
-            return 0;
-          }
-          return lowMask<uint64_t>((numRows - offset) * 8) &
-              *addCast<uint64_t>(flags->base, base);
-        },
-        blockBase,
-        reinterpret_cast<int32_t*>(indices->base) + blockBase,
-        numRows,
-        shared);
+    int32_t& numRows,
+    ErrorCode& laneStatus) {
+  bool isPassed = laneActive(laneStatus);
+  if (isPassed) {
+    if (!operandOrNull(operands, inst.flags, blockBase, &shared->data, isPassed)) {
+      isPassed = false;
+    }
   }
+  uint32_t bits = __ballot_sync(0xffffffff, isPassed);
+  if (threadIdx.x == 0) {
+    reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads] = __popc(bits);
+  }
+  __syncthreads();
+  if (threadIdx.x < kWarpThreads) {
+    constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
+    int32_t cnt = threadIdx.x < kNumWarps ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] : 0;
+    int32_t sum;
+    using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
+    Scan(reinterpret_cast<Scan::TempStorage>(shared)).exclusiveSum(cnt, sum);
+    if (threadIdx.x < kNumWarps) {
+      if (threadIdx.x == kNumWarps - 1) {
+	shared->numRows = cnt + sum;
+      }
+      reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] = sum;
+      }
+  }
+  __syncthreads();
+  if (bits & (1 << threadIdx.x & (kWarpThreads-1))) {
+    auto* indices = operands[filter.indices];
+    auto start = reinterpret_cast<int32_t*>(&shared.data)[threadIdx.x / kWarpThreads];
+    auto bit = start + __popc(bits & lowMask(threadIdx.x & (kWarpThreads - 1)));
+    indices[bit] = threadIdx.x;
+    
+  }
+  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOK : ErrorCode::kInactive;
 }
 
 __device__ void wrapKernel(
@@ -161,7 +153,7 @@ __device__ void wrapKernel(
         operands,                                            \
         blockBase,                                           \
         &shared->data,                                              \
-        status);                                             \
+        laneStatus);                                             \
     break;
 
 __global__ void waveBaseKernel(
@@ -173,6 +165,7 @@ __global__ void waveBaseKernel(
   if (threadIdx.x == 0) {
     shared->operands = params.operands[programIndex];
     shared->status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
+    shared->numRows = shared->status.numRows;
     shared->blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
     shared->states = params.operatorStates[programIndex];
     shared->stop = false;
@@ -180,11 +173,22 @@ __global__ void waveBaseKernel(
   __syncthreads();
   auto blockBase = shared->blockBase;
   auto operands = shared->operands;
-  auto status = shared->status; 
-  auto instruction = program->instructions;
+  ErrorCode laneStatus;
+    Instruction* instruction;
+  if (params.startPC == nullptr) {
+    instruction = program->instructions;
+    laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOK : ErrorCode::kInactive;
+  } else {
+    instruction = program->instructions + params.startPC;
+    laneStatus = shared->status.errors[threadIdx.x];
+  }
   for (;;) {
     switch (instruction->opCode) {
       case OpCode::kReturn:
+	if (threadIdx.x == 0) {
+	  shared->status->numRows = shared->numRows;
+	}
+	  shared->status->errorCode[threadIdx.x] = lanestatus;
         __syncthreads();
         return;
       case OpCode::kFilter:
