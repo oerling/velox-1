@@ -203,6 +203,12 @@ struct KernelParams {
   // The TB program for each exe. The subscript is programIdx[blockIdx.x].
   ThreadBlockProgram** programs{nullptr};
 
+  /// The instruction where to start the execution. If nullptr,
+  /// 0. Otherwise subscript is programIdx. The active lanes are given
+  /// in 'blockStatus'. Used when restarting program at a specific
+  /// instruction, e.g. after allocating new memory on host.
+  int32_t* startPC{nullptr};
+  
   // For each exe, the start of the array of Operand*. Instructions reference
   // operands via offset in this array. The subscript is
   // programIndx[blockIdx.x].

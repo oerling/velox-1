@@ -309,6 +309,13 @@ struct ProgramState {
   std::function<std::shared_ptr<OperatorState>(WaveStream& stream)> create;
   // True if the state is shared across all streams.
   bool isGlobal{true};
+  ///
+  
+  /// If non-0, size of device memory scratch area per TB.
+  int32_t tempBytesPerTB{0};
+
+  /// If non-0, size of status to return to host for each TB. The device side address goes via and the host side address goes to the LaunchControl.
+  int32_t returnBytesPerTB{0};
 };
 
 /// Describes a point to pick up execution of a partially executed program.
@@ -332,6 +339,15 @@ struct ContinuePoint {
   std::vector<uint64_t> laneMask;
 };
 
+  /// State of one Program in LaunchControl.
+  struct ProgramLaunch {
+    /// Host side address of status for status-returning instructions. Subscript is the stateIndex in the instructions. Corresponds 1:1 to the device side pointers in KernelParams::operatorStates[programIdx].
+    std::vector<void*> returnBuffers;
+    
+    /// Where to continue if previous execution was incomplete.
+    ContinuePoint continuePoint;
+  };
+  
 class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -658,13 +674,16 @@ class WaveStream {
   /// row counts. The LaunchControl is in host memory, the arrays
   /// referenced from it are in unified memory, owned by
   /// LaunchControl. 'key' identifies the issuing
-  /// WaveOperator. 'inputRows' is the logical number of input rows,
-  /// not all TBs are necessarily full. 'exes' are the programs
-  /// launched together, e.g. different exprs on different
-  /// columns. 'blocks{PerExe' is the number of TBs running each exe. 'stream'
-  /// enqueus the data transfer.
+  /// WaveOperator. 'nthLaunch' is the serial number of the kernel
+  /// within the operator. Multiple launches can have the same serial
+  /// for continuing partially executed operations. 'inputRows' is the
+  /// logical number of input rows, not all TBs are necessarily
+  /// full. 'exes' are the programs launched together, e.g. different
+  /// exprs on different columns. 'blocks{PerExe' is the number of TBs
+  /// running each exe. 'stream' enqueus the data transfer.
   LaunchControl* prepareProgramLaunch(
       int32_t key,
+      int32_t nthlaunch,
       int32_t inputRows,
       folly::Range<Executable**> exes,
       int32_t blocksPerExe,
@@ -862,7 +881,19 @@ struct LaunchControl {
 
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
-  ResultStaging staging;
+  
+  /// Staging for device side temp storage.
+  ResultStaging tempStaging;
+
+  /// Staging for device data to be copied to host.
+  ResultStaging returnStaging;
+
+  /// Staging for host side buffers that receive the data from 'returnStaging'.
+  ResultStaging hostReturnStaging;
+
+  /// Continue info for each Program in the launch.
+  std::vector<ProgramLaunch> programInfo;
+  
 };
 
 } // namespace facebook::velox::wave

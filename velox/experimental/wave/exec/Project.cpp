@@ -26,6 +26,7 @@ AbstractWrap* Project::findWrap() const {
 }
 
 int32_t Project::canAdvance(WaveStream& stream) {
+  auto& controls = stream.launchControl(id_);
   for (int32_t i = levels_.size() - 1; i >= 0; --i) {
     auto& level = levels_[i];
     for (auto j = 0; j < level.size(); ++j) {
@@ -49,8 +50,10 @@ int32_t Project::canAdvance(WaveStream& stream) {
 }
 
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
+
   stream.clearLaunch(id_);
-  for (auto& level : levels_) {
+  for (auto levelIdx = 0; levelIdx < levels_.size(); ++levelIdx) {
+    auto& level = levels_[levelIdx];
     std::vector<std::unique_ptr<Executable>> exes(level.size());
     for (auto i = 0; i < level.size(); ++i) {
       auto& program = level[i];
@@ -66,7 +69,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
         range, [&](Stream* out, folly::Range<Executable**> exes) {
           auto inputControl = driver_->inputControl(stream, id_);
           auto control = stream.prepareProgramLaunch(
-              id_, maxRows, exes, blocksPerExe, inputControl, out);
+						     id_, levelIdx, maxRows, exes, blocksPerExe, inputControl, out);
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,

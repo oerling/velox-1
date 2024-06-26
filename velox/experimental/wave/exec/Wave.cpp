@@ -525,7 +525,9 @@ void WaveStream::exeLaunchInfo(
       sizeof(Operand) * info.numLocalOps +
       // Space for the 'indices' for each distinct wrappedAt.
       (info.localWrap.size() * numBlocks * sizeof(void*));
-  exe.programShared->getOperatorStates(*this, info.operatorStates);
+  if (exe.programShared) {
+    exe.programShared->getOperatorStates(*this, info.operatorStates);
+  }
 }
 
 Operand**
@@ -600,14 +602,24 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
 
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
+    int32_t nthLaunch,
     int32_t inputRows,
     folly::Range<Executable**> exes,
     int32_t blocksPerExe,
     const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
-
-  //  First calculate total size.
+  auto& controlVector = launchControl_[id];
+  LaunchControl* controlPtr;
+  if (controlVector.size() > nthLaunch) {
+    controlPtr = controlVector[nthLaunch].get();
+  } else {
+    launchVector.resize(nthLaunch + 1);
+    launchVector[nthLaunch] = std::make_unique<LaunchControl>(id);
+    controlPtr = launchVector[nthLaunch].get();
+  }
+  auto& control = *controlPtr;
+    //  First calculate total size.
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
@@ -639,9 +651,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   size += exes.size() * sizeof(void*) + operatorStateBytes;
   auto buffer = arena_.allocate<char>(size);
   memset(buffer->as<char>(), 0, size);
-
-  auto controlUnique = std::make_unique<LaunchControl>(key, inputRows);
-  auto& control = *controlUnique;
 
   control.sharedMemorySize = shared;
   // Now we fill in the various arrays and put their start addresses in
@@ -710,7 +719,6 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   stats_.numThreads += numRows_ * exes.size();
 
   control.deviceData = std::move(buffer);
-  launchControl_[key].push_back(std::move(controlUnique));
   return &control;
 }
 

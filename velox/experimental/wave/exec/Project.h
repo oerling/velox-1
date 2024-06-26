@@ -67,13 +67,6 @@ class Project : public WaveOperator {
   std::vector<std::vector<ProgramPtr>> levels_;
   OperandSet computedSet_;
   AbstractWrap* filterWrap_{nullptr};
-
-  // Index in 'levels_' where the next schedule() starts.
-  int32_t continueLevel_{0};
-
-  // If non-empty, represents the programs and lane masks that need to be
-  // continued.
-  std::vector<ContinuePoint> continuePoints_;
 };
 
 } // namespace facebook::velox::wave
