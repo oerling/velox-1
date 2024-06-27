@@ -71,6 +71,7 @@ AdvanceResult Project::canAdvance(WaveStream& stream) {
 	  return true;
 	}
       }
+      return false;
     }
   }
   

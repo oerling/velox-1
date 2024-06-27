@@ -610,6 +610,27 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
   auto& controlVector = launchControl_[key];
+  LaunchControl* controlPtr;
+  if (controlVector.size() > nthLaunch) {
+    controlPtr = controlVector[nthLaunch].get();
+  } else {
+    controlVector.resize(nthLaunch + 1);
+    controlVector[nthLaunch] = std::make_unique<LaunchControl>(key, inputRows);
+    controlPtr = controlVector[nthLaunch].get();
+  }
+  bool isContinue = false;
+  auto& control = *controlPtr;
+  if (control.programInfo.empty()) {
+    control.programInfo.resize(exes.size());
+  } else {
+    VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
+    for (auto& info : control.programInfo) {
+      if (info.advance.isRetry) {
+	isContinue = true;
+	break;
+      }
+    }
+  }
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
@@ -655,7 +676,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.operands = addBytes<Operand***>(
       control.params.programs, exes.size() * sizeof(void*));
-  control.params.startPC = addBytes<int32_t>(control.params.operands, exes.size() * sizeof(void*));
+  control.params.startPC = isContinue ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*)) : nullptr;
 
   if (!inputControl) {
     // If the launch produces new statuses (as opposed to updating status of a
@@ -679,8 +700,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t fill = 0;
   for (auto i = 0; i < exes.size(); ++i) {
     control.params.programs[i] = exes[i]->program;
-    control.params.startPC[i] = control.programInfo[i].instructionIdx;
-    auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
+    if (isContinue) {
+      control.params.startPC[i] = control.programInfo[i].advance.instructionIdx;
+    }
+      auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
     control.params.operands[i] = operandPtrs;
     // The operands defined by the exe start after the input operands and are
     // all consecutive.
@@ -783,14 +806,14 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   }
 }
 
-  AdvanceResult Program::canAdvance(LaunchControl& stream, int32_t programIdx) {
+  AdvanceResult Program::canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx) {
   AbstractInstruction* source = instructions_.front().get();
   OperatorState* state = nullptr;
   auto stateIndex = source->stateIndex();
   if (stateIndex.has_value()) {
     state = stream.operatorState(stateIndex.value());
   }
-  return source->canAdvance(stream, state, programIdx);
+  return source->canAdvance(stream, control, state, programIdx);
 }
 
 #define IN_HEAD(abstract, physical, _op)             \
