@@ -25,44 +25,70 @@ AbstractWrap* Project::findWrap() const {
   return filterWrap_;
 }
 
-int32_t Project::canAdvance(WaveStream& stream) {
-  auto& controls = stream.launchControl(id_);
+AdvanceResult Project::canAdvance(WaveStream& stream) {
+  auto& controls = stream.launchControls(id_);
   if (controls.empty()) {
     /// No previous execution on the stream. If the first program starts with a source we can continue that.
     if (!isSource()) {
-      return 0;
+      return {};
     }
     auto* program = levels_[0][0].get();
-    
-    return program->canadvance(stream);
-
+    auto advance = program->canAdvance(stream, nullptr, 0);
+    if (!advance.empty()) {
+      advance.programIdx = 0;
+  }
+    return advance;
   }
   for (int32_t i = levels_.size() - 1; i >= 0; --i) {
     auto& level = levels_[i];
+    AdvanceResult first;
+    VELOX_CHECK_EQ(controls[i]->programInfo.size(), level.size());
     for (auto j = 0; j < level.size(); ++j) {
       auto* program = level[i].get();
-      auto point = program->continuable(stream);
-      if (!point.empty()) {
-        continueLevel_ = i;
-        continuePoints_.push_back(std::move(point));
+      auto advance = program->canAdvance(stream, controls[i].get(), j);
+      if (!advance.empty()) {
+	if (first.empty()) {
+	  first = advance;
+	}
+	controls[i]->programInfo[j].advance = advance;
+      } else {
+	controls[i]->programInfo[j].advance = {};
       }
-      if (continuePoints_.empty()) {
-        continue;
+      if (!first.empty()) {
+	return first;
       }
-      // Return at least 1 to mean continuable even if continuing partially
-      // completed lanes.
-      continueLevel_ = i;
-      return std::max(1, continuePoints_.front().sourceRows);
+      
     }
   }
-  continueLevel_ = 0;
-  return 0;
+
+  return {};
 }
 
+  namespace {
+    bool anyContinuable(LaunchControl& control) {
+      for (auto& info : control.programInfo) {
+	if (!info.advance.empty()) {
+	  return true;
+	}
+      }
+    }
+  }
+  
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
-
-  stream.clearLaunch(id_);
-  for (auto levelIdx = 0; levelIdx < levels_.size(); ++levelIdx) {
+  int32_t firstLevel = 0;
+  auto& controls = stream.launchControls(id_);
+  bool isContinue = false;
+  // firstLevel is 0 if no previous activity, otherwise it is the last level with continuable activity. If continuable activity,'isContinue' is true.
+  if (!controls.empty()) {
+    for (int32_t i = levels_.size() - 1; i >= 0; --i) {
+      if (anyContinuable(*controls[i])) {
+	firstLevel = i;
+	isContinue = true;
+	break;
+      }
+    }
+  }
+  for (auto levelIdx = firstLevel; levelIdx < levels_.size(); ++levelIdx) {
     auto& level = levels_[levelIdx];
     std::vector<std::unique_ptr<Executable>> exes(level.size());
     for (auto i = 0; i < level.size(); ++i) {
@@ -77,16 +103,20 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     auto range = folly::Range(data, data + exes.size());
     stream.installExecutables(
         range, [&](Stream* out, folly::Range<Executable**> exes) {
-          auto inputControl = driver_->inputControl(stream, id_);
-          auto control = stream.prepareProgramLaunch(
-						     id_, levelIdx, maxRows, exes, blocksPerExe, inputControl, out);
+		 LaunchControl* inputControl = nullptr;
+		 if (!isContinue) {
+		   inputControl = driver_->inputControl(stream, id_);
+		 }
+		 auto control = stream.prepareProgramLaunch(
+							    id_, levelIdx, isContinue ? -1 : maxRows, exes, blocksPerExe, inputControl, out);
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,
               control->sharedMemorySize,
               control->params);
         });
-  }
+  isContinue = false;
+}
 }
 
 void Project::finalize(CompileState& state) {

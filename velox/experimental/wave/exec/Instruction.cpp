@@ -22,15 +22,17 @@ std::string rowTypeString(const Type& type) {
   return "";
 }
 
-int32_t AbstractReadAggregation::canAdvance(
-    WaveStream& stream,
-    OperatorState* state) const {
+  AdvanceResult AbstractReadAggregation::canAdvance(
+					    WaveStream& stream,
+					    LaunchControl* control,
+					    OperatorState* state,
+					    int32_t programIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
   if (aggState->isNew) {
     aggState->isNew = false;
-    return 1;
+    return {.numRows = 1};
   }
-  return 0;
+  return {};
 }
 
 } // namespace facebook::velox::wave

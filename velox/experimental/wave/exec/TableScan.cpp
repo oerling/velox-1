@@ -38,15 +38,15 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-int32_t TableScan::canAdvance(WaveStream& stream) {
+  AdvanceResult TableScan::canAdvance(WaveStream& stream) {
   if (!dataSource_ || needNewSplit_) {
-    return 0;
+    return {};
   }
   if (isNewSplit_) {
     isNewSplit_ = false;
-    return waveDataSource_->canAdvance(stream);
+    return {.numRows = waveDataSource_->canAdvance(stream)};
   }
-  return nextAvailableRows_;
+  return {.numRows = nextAvailableRows_};
 }
 
 void TableScan::schedule(WaveStream& stream, int32_t maxRows) {

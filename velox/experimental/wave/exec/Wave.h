@@ -339,7 +339,7 @@ struct ContinuePoint {
 
   /// If non-zero, the continue makes up to 'sourceRows' new values.
   int32_t sourceRows{0};
-  /// If non-empty, 'sourceRows' must be 0 and  laneMask gives the lanes for in
+  /// If non-empty, 'sourceRows' must be 0 and  laneMask gives the lanes in
   /// the previous invocation that need to be continued.
   std::vector<uint64_t> laneMask;
 };
@@ -356,7 +356,7 @@ struct ContinuePoint {
     std::vector<void*> deviceBuffers;
     
     /// Where to continue if previous execution was incomplete.
-    ContinuePoint continuePoint;
+    AdvanceResult advance;
   };
   
 class Program : public std::enable_shared_from_this<Program> {
@@ -418,11 +418,6 @@ class Program : public std::enable_shared_from_this<Program> {
     return output_;
   }
 
-  /// Returns the position of the latest continuable instruction in 'this' based
-  /// on the state in 'stream'. 'stream' may hold return state from a previous
-  /// execution. If not
-  ContinuePoint continuable(WaveStream& stream) const;
-
   const std::string& label() const {
     return label_;
   }
@@ -442,9 +437,14 @@ class Program : public std::enable_shared_from_this<Program> {
         instructions_.front()->opCode == OpCode::kReadAggregate;
   }
 
-  /// If isSource() is true, returns the next number of rows to schedule on
-  /// 'stream'. 'stream' may or may not have an executable of 'this'.
-  int32_t canAdvance(WaveStream& stream);
+  /// If partially executed instructions in the call of 'control',
+  /// returns the point where to pick up. If fully executed or not
+  /// started, returns the number of rows to obtain from the
+  /// source. If no source and no partial execution or source at end
+  /// returns empty. If picking up from a partially executed
+  /// instruction, sets the lanes to continue in the status of
+  /// 'control'.
+  AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
   std::string toString() const;
 

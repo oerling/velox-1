@@ -186,7 +186,7 @@ __global__ void waveBaseKernel(
 	if (threadIdx.x == 0) {
 	  shared->status->numRows = shared->numRows;
 	}
-	  shared->status->errorCode[threadIdx.x] = lanestatus;
+	  shared->status->errors[threadIdx.x] = laneStatus;
         __syncthreads();
         return;
       case OpCode::kFilter:
@@ -200,7 +200,7 @@ __global__ void waveBaseKernel(
 
       case OpCode::kWrap:
         wrapKernel(
-            instruction->_.wrap, operands, blockBase, status->numRows, shared);
+            instruction->_.wrap, operands, blockBase, shared->numRows, shared);
         break;
     case OpCode::kAggregate:
       aggregateKernel(instruction->_.aggregate, shared);

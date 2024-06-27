@@ -90,6 +90,29 @@ struct AbstractOperand {
 
   std::string toString() const;
 };
+
+struct AdvanceResult {
+
+  bool empty() const {
+    return numRows == 0 && !isRetry;
+  }
+  
+  ///  Max umber of result rows.
+  int32_t numRows{0};
+
+  /// The sequence number of kernel launch that needs continue.
+  int32_t nthLaunch{0};
+
+  /// The ordinal of the program i the launch.
+  int32_t programIdx{0};
+  
+  /// The instruction where to pick up. If not 0, must have 'isRetry' true.
+  int32_t instructionIdx{0};
+
+  /// True if continuing execution of a partially executed instruction. false if getting a new batch from a source. If true, the kernel launch must specify continuable lanes in BlockStatus.
+  bool isRetry{false};
+};
+
 class WaveStream;
 struct OperatorState;
 struct LaunchControl;
@@ -118,8 +141,8 @@ struct AbstractInstruction {
   /// exchange. 'state' is a handle to the state on device. The
   /// Executable is found in 'stream'. The 'this' contains no state
   /// and is only used to dispatch on the operator.
-  virtual int32_t canAdvance(WaveStream& stream, OperatorState* state) const {
-    return 0;
+  virtual AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, OperatorState* state, int32_t programIdx) const {
+    return {};
   }
 
   std::optional<int32_t> stateIndex() const {
@@ -135,7 +158,7 @@ struct AbstractInstruction {
     return false;
   }
 
-  /// Sets up status return. The
+  /// Sets up status return.
   virtual void setupReturn(WaveStream& stream, LaunchControl& control) const {}
 
   OpCode opCode;
@@ -344,7 +367,7 @@ struct AbstractReadAggregation : public AbstractOperator {
             aggregation->outputType),
         aggregation(aggregation) {}
 
-  int32_t canAdvance(WaveStream& stream, OperatorState* state) const override;
+  AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, OperatorState* state, int32_t programIdx) const override;
 
   AbstractAggregation* aggregation;
   int32_t literalOffset{0};

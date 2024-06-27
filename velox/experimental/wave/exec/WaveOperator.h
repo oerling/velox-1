@@ -78,8 +78,8 @@ class WaveOperator {
   /// Returns how many rows of output are available from 'this'. Source
   /// operators and cardinality increasing operators must return a correct
   /// answer if they are ready to produce data. Others should return 0.
-  virtual int32_t canAdvance(WaveStream& stream) {
-    return 0;
+  virtual AdvanceResult canAdvance(WaveStream& stream) {
+    return {.numRows = 0};
   }
 
   /// Adds processing for 'this' to 'stream'. If 'maxRows' is given,

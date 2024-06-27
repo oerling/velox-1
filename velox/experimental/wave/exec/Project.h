@@ -42,7 +42,7 @@ class Project : public WaveOperator {
     return !isStreaming();
   }
 
-  int32_t canAdvance(WaveStream& Stream) override;
+  AdvanceResult canAdvance(WaveStream& Stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 

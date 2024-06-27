@@ -128,9 +128,10 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
       if (reason != exec::BlockingReason::kNotBlocked) {
         return reason;
       }
-      if (auto numRows =
-              pipeline.operators[i]->canAdvance(*pipeline.arrived[i])) {
-        runOperators(pipeline, *pipeline.arrived[i], i, numRows);
+      auto advance =
+	pipeline.operators[i]->canAdvance(*pipeline.arrived[i]);
+      if (!advance.empty()) {
+        runOperators(pipeline, *pipeline.arrived[i], i, advance.numRows);
         moveTo(pipeline.arrived, i, pipeline.running);
         continued = true;
         --i;

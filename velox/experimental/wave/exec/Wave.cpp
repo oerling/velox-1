@@ -609,18 +609,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     const LaunchControl* inputControl,
     Stream* stream) {
   static_assert(Operand::kPointersInOperand * sizeof(void*) == sizeof(Operand));
-  auto& controlVector = launchControl_[id];
-  LaunchControl* controlPtr;
-  if (controlVector.size() > nthLaunch) {
-    controlPtr = controlVector[nthLaunch].get();
-  } else {
-    launchVector.resize(nthLaunch + 1);
-    launchVector[nthLaunch] = std::make_unique<LaunchControl>(id);
-    controlPtr = launchVector[nthLaunch].get();
-  }
-  auto& control = *controlPtr;
-  control.programInfo.resize(exes.size());
-  //  First calculate total size.
+  auto& controlVector = launchControl_[key];
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
@@ -634,11 +623,14 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t operatorStateBytes = 0;
   int32_t shared = 0;
   for (auto i = 0; i < exes.size(); ++i) {
-    exeLaunchInfo(*exes[i], numBlocks, info[i], i, control[i]);
+    exeLaunchInfo(*exes[i], numBlocks, info[i]);
     operandBytes += info[i].totalBytes;
     markLaunch(*stream, *exes[i]);
     shared = std::max(shared, exes[i]->programShared->sharedMemorySize());
     operatorStateBytes += info[i].operatorStates.size() * sizeof(void*);
+    if (exes[i]->programShared) {
+      exes[i]->programShared->getOperatorStates(*this, info[i].operatorStates);
+    }
   }
   size += operandBytes;
   int32_t statusOffset = 0;
@@ -791,14 +783,14 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   }
 }
 
-int32_t Program::canAdvance(WaveStream& stream) {
+  AdvanceResult Program::canAdvance(LaunchControl& stream, int32_t programIdx) {
   AbstractInstruction* source = instructions_.front().get();
   OperatorState* state = nullptr;
   auto stateIndex = source->stateIndex();
   if (stateIndex.has_value()) {
     state = stream.operatorState(stateIndex.value());
   }
-  return source->canAdvance(stream, state);
+  return source->canAdvance(stream, state, programIdx);
 }
 
 #define IN_HEAD(abstract, physical, _op)             \
@@ -1213,21 +1205,6 @@ std::unique_ptr<Executable> Program::getExecutable(
     };
   }
   return exe;
-}
-
-ContinuePoint Program::continuable(WaveStream& stream) const {
-  // First check previous execution to see if there is any partially executed
-  // rows, e.g. aggregation was out of space nand needs retry.
-  OperatorState* state = nullptr;
-  auto stateIdx = instructions_[0]->stateIndex();
-  if (stateIdx.has_value()) {
-    state = stream.operatorState(stateIdx.value());
-  }
-  int32_t numRows = instructions_[0]->canAdvance(stream, state);
-  if (numRows > 0) {
-    return ContinuePoint(0, numRows);
-  }
-  return ContinuePoint();
 }
 
 std::string AbstractOperand::toString() const {
