@@ -27,6 +27,16 @@ AbstractWrap* Project::findWrap() const {
 
 int32_t Project::canAdvance(WaveStream& stream) {
   auto& controls = stream.launchControl(id_);
+  if (controls.empty()) {
+    /// No previous execution on the stream. If the first program starts with a source we can continue that.
+    if (!isSource()) {
+      return 0;
+    }
+    auto* program = levels_[0][0].get();
+    
+    return program->canadvance(stream);
+
+  }
   for (int32_t i = levels_.size() - 1; i >= 0; --i) {
     auto& level = levels_[i];
     for (auto j = 0; j < level.size(); ++j) {

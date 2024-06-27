@@ -754,7 +754,7 @@ int32_t WaveStream::getOutput(
         numBlocks,
         status,
         &exe->operands[exe->firstOutputOperandIdx + ordinal]);
-  }
+     }
   return vectors[0]->size();
 }
 

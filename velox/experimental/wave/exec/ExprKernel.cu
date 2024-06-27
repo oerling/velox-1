@@ -20,7 +20,7 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
-#include "velox/experimental/wave/exec/Aggregate.cuh"/
+#include "velox/experimental/wave/exec/Aggregate.cuh"
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
@@ -57,12 +57,11 @@ __device__ void filterKernel(
     const IFilter& filter,
     Operand** operands,
     int32_t blockBase,
-    char* shared,
-    int32_t& numRows,
+        WaveShared* shared,
     ErrorCode& laneStatus) {
   bool isPassed = laneActive(laneStatus);
   if (isPassed) {
-    if (!operandOrNull(operands, inst.flags, blockBase, &shared->data, isPassed)) {
+    if (!operandOrNull(operands, filter.flags, blockBase, &shared->data, isPassed)) {
       isPassed = false;
     }
   }
@@ -76,7 +75,7 @@ __device__ void filterKernel(
     int32_t cnt = threadIdx.x < kNumWarps ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] : 0;
     int32_t sum;
     using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
-    Scan(reinterpret_cast<Scan::TempStorage>(shared)).exclusiveSum(cnt, sum);
+    Scan(*reinterpret_cast<Scan::TempStorage*>(shared)).ExclusiveSum(cnt, sum);
     if (threadIdx.x < kNumWarps) {
       if (threadIdx.x == kNumWarps - 1) {
 	shared->numRows = cnt + sum;
@@ -86,13 +85,12 @@ __device__ void filterKernel(
   }
   __syncthreads();
   if (bits & (1 << threadIdx.x & (kWarpThreads-1))) {
-    auto* indices = operands[filter.indices];
-    auto start = reinterpret_cast<int32_t*>(&shared.data)[threadIdx.x / kWarpThreads];
-    auto bit = start + __popc(bits & lowMask(threadIdx.x & (kWarpThreads - 1)));
-    indices[bit] = threadIdx.x;
-    
+    auto* indices = reinterpret_cast<int32_t*>(operands[filter.indices]->base);
+    auto start = reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads];
+    auto bit = start + __popc(bits & lowMask<uint32_t>(threadIdx.x & (kWarpThreads - 1)));
+    indices[bit] = blockBase + threadIdx.x;
   }
-  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOK : ErrorCode::kInactive;
+  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
 }
 
 __device__ void wrapKernel(
@@ -165,7 +163,7 @@ __global__ void waveBaseKernel(
   if (threadIdx.x == 0) {
     shared->operands = params.operands[programIndex];
     shared->status = &params.status[blockIdx.x - params.blockBase[blockIdx.x]];
-    shared->numRows = shared->status.numRows;
+    shared->numRows = shared->status->numRows;
     shared->blockBase = (blockIdx.x - params.blockBase[blockIdx.x]) * blockDim.x;
     shared->states = params.operatorStates[programIndex];
     shared->stop = false;
@@ -177,10 +175,10 @@ __global__ void waveBaseKernel(
     Instruction* instruction;
   if (params.startPC == nullptr) {
     instruction = program->instructions;
-    laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOK : ErrorCode::kInactive;
+    laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
   } else {
-    instruction = program->instructions + params.startPC;
-    laneStatus = shared->status.errors[threadIdx.x];
+    instruction = program->instructions + params.startPC[programIndex];
+    laneStatus = shared->status->errors[threadIdx.x];
   }
   for (;;) {
     switch (instruction->opCode) {
@@ -196,8 +194,8 @@ __global__ void waveBaseKernel(
             instruction->_.filter,
             operands,
             blockBase,
-            &shared->data,
-            status->numRows);
+	    shared,
+	    laneStatus);
         break;
 
       case OpCode::kWrap:
