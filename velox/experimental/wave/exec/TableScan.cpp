@@ -38,7 +38,7 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-  AdvanceResult TableScan::canAdvance(WaveStream& stream) {
+AdvanceResult TableScan::canAdvance(WaveStream& stream) {
   if (!dataSource_ || needNewSplit_) {
     return {};
   }

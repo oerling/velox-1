@@ -315,11 +315,12 @@ struct ProgramState {
   // True if the state is shared across all streams, e.g. hash join build side.
   bool isGlobal{true};
   ///
-  
+
   /// If non-0, size of device memory scratch area per TB.
   int32_t tempBytesPerTB{0};
 
-  /// If non-0, size of status to return to host for each TB. The device side address goes via and the host side address goes to the LaunchControl.
+  /// If non-0, size of status to return to host for each TB. The device side
+  /// address goes via and the host side address goes to the LaunchControl.
   int32_t returnBytesPerTB{0};
 };
 
@@ -344,21 +345,21 @@ struct ContinuePoint {
   std::vector<uint64_t> laneMask;
 };
 
-  /// State of one Program in LaunchControl.
-  struct ProgramLaunch {
-    Program* program{nullptr};
-    bool isStaged{false};
-    /// Device side buffer for status returning instructions.
-    std::vector<void*> returnBuffers;
-    /// Host side address 1:1 to 'returnBuffers'.
-    std::vector<void*> hostReturnBuffers;
-    /// Device side temp status for instructions. 
-    std::vector<void*> deviceBuffers;
-    
-    /// Where to continue if previous execution was incomplete.
-    AdvanceResult advance;
-  };
-  
+/// State of one Program in LaunchControl.
+struct ProgramLaunch {
+  Program* program{nullptr};
+  bool isStaged{false};
+  /// Device side buffer for status returning instructions.
+  std::vector<void*> returnBuffers;
+  /// Host side address 1:1 to 'returnBuffers'.
+  std::vector<void*> hostReturnBuffers;
+  /// Device side temp status for instructions.
+  std::vector<void*> deviceBuffers;
+
+  /// Where to continue if previous execution was incomplete.
+  AdvanceResult advance;
+};
+
 class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -444,12 +445,13 @@ class Program : public std::enable_shared_from_this<Program> {
   /// returns empty. If picking up from a partially executed
   /// instruction, sets the lanes to continue in the status of
   /// 'control'.
-  AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
+  AdvanceResult
+  canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
   bool isSink() const {
     return instructions_.back()->isSink();
   }
-  
+
   std::string toString() const;
 
  private:
@@ -896,7 +898,7 @@ struct LaunchControl {
 
   // Storage for all the above in a contiguous unified memory piece.
   WaveBufferPtr deviceData;
-  
+
   /// Staging for device side temp storage.
   ResultStaging tempStaging;
 
@@ -908,7 +910,6 @@ struct LaunchControl {
 
   /// Continue info for each Program in the launch.
   std::vector<ProgramLaunch> programInfo;
-  
 };
 
 } // namespace facebook::velox::wave

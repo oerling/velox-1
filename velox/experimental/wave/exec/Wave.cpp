@@ -354,8 +354,9 @@ void WaveStream::installExecutables(
     });
     dependences[streamSet].push_back(exe);
     exe->outputOperands.forEach([&](int32_t id) {
-				  // The stream may have the same or different exe in place from a previous launch. 
-				  operandToExecutable_[id] = exe;
+      // The stream may have the same or different exe in place from a previous
+      // launch.
+      operandToExecutable_[id] = exe;
     });
   }
 
@@ -626,8 +627,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     VELOX_CHECK_EQ(exes.size(), control.programInfo.size());
     for (auto& info : control.programInfo) {
       if (info.advance.isRetry) {
-	isContinue = true;
-	break;
+        isContinue = true;
+        break;
       }
     }
   }
@@ -643,7 +644,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
-  // 2 pointers per exe: TB program and start of its param array and 1 int for start PC. Round to 3 for alignment.
+  // 2 pointers per exe: TB program and start of its param array and 1 int for
+  // start PC. Round to 3 for alignment.
   size += exes.size() * sizeof(void*) * 3;
   auto operandOffset = size;
   // Exe dependent sizes for operands.
@@ -680,7 +682,9 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       control.params.programIdx, numBlocks * sizeof(int32_t));
   control.params.operands = addBytes<Operand***>(
       control.params.programs, exes.size() * sizeof(void*));
-  control.params.startPC = isContinue ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*)) : nullptr;
+  control.params.startPC = isContinue
+      ? addBytes<int32_t*>(control.params.operands, exes.size() * sizeof(void*))
+      : nullptr;
 
   if (!inputControl) {
     // If the launch produces new statuses (as opposed to updating status of a
@@ -707,7 +711,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     if (isContinue) {
       control.params.startPC[i] = control.programInfo[i].advance.instructionIdx;
     }
-      auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
+    auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
     control.params.operands[i] = operandPtrs;
     // The operands defined by the exe start after the input operands and are
     // all consecutive.
@@ -773,7 +777,7 @@ int32_t WaveStream::getOutput(
         numBlocks,
         status,
         &exe->operands[exe->firstOutputOperandIdx + ordinal]);
-     }
+  }
   return vectors[0]->size();
 }
 
@@ -810,7 +814,10 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   }
 }
 
-  AdvanceResult Program::canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx) {
+AdvanceResult Program::canAdvance(
+    WaveStream& stream,
+    LaunchControl* control,
+    int32_t programIdx) {
   AbstractInstruction* source = instructions_.front().get();
   OperatorState* state = nullptr;
   auto stateId = source->stateId();

@@ -100,7 +100,7 @@ class WaveOperator {
   virtual bool isSink() const {
     return false;
   }
-  
+
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(

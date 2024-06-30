@@ -22,11 +22,11 @@ std::string rowTypeString(const Type& type) {
   return "";
 }
 
-  AdvanceResult AbstractReadAggregation::canAdvance(
-					    WaveStream& stream,
-					    LaunchControl* control,
-					    OperatorState* state,
-					    int32_t programIdx) const {
+AdvanceResult AbstractReadAggregation::canAdvance(
+    WaveStream& stream,
+    LaunchControl* control,
+    OperatorState* state,
+    int32_t programIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
   if (aggState->isNew) {
     aggState->isNew = false;

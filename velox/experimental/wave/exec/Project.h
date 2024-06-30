@@ -42,12 +42,14 @@ class Project : public WaveOperator {
     return !isStreaming();
   }
 
-  /// True if the last  level is a sink like aggregation or partitioned output or hash build. No output operands but the output will be consumed in another pipeline.
+  /// True if the last  level is a sink like aggregation or partitioned output
+  /// or hash build. No output operands but the output will be consumed in
+  /// another pipeline.
   bool isSink() const override {
     auto& last = levels_.back();
     return last.size() == 1 && last[0]->isSink();
   }
-  
+
   AdvanceResult canAdvance(WaveStream& Stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;

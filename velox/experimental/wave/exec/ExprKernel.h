@@ -207,9 +207,10 @@ struct KernelParams {
   /// The instruction where to start the execution. If nullptr,
   /// 0. Otherwise subscript is programIdx. The active lanes are given
   /// in 'blockStatus'. Used when restarting program at a specific
-  /// instruction, e.g. after allocating new memory on host. nullptr means first launch, starting at 0.
+  /// instruction, e.g. after allocating new memory on host. nullptr means first
+  /// launch, starting at 0.
   int32_t* startPC{nullptr};
-  
+
   // For each exe, the start of the array of Operand*. Instructions reference
   // operands via offset in this array. The subscript is
   // programIndx[blockIdx.x].
@@ -244,15 +245,15 @@ class WaveKernelStream : public Stream {
 
   /// Sets up or updates an aggregation.
   void setupAggregation(AggregationControl& op);
-private:
 
-  // Debug implementation of call() where each instruction is a separate kernel launch.
+ private:
+  // Debug implementation of call() where each instruction is a separate kernel
+  // launch.
   void callOne(
       Stream* alias,
       int32_t numBlocks,
       int32_t sharedSize,
       KernelParams& params);
-
 };
 
 } // namespace facebook::velox::wave

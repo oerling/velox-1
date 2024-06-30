@@ -524,9 +524,11 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
   }
   for (auto i = 0; i < aggInstruction->aggregates.size(); ++i) {
     std::string name = aggInstruction->aggregates[i].result->label;
-    operators_.back()->defined(Value(toSubfield(name)), aggInstruction->aggregates[i].result);
+    operators_.back()->defined(
+        Value(toSubfield(name)), aggInstruction->aggregates[i].result);
     definedIn_[aggInstruction->aggregates[i].result] = reader;
-    //project->definesSubfield(*this, aggInstruction->aggregates[i].result->type, name, false);
+    // project->definesSubfield(*this,
+    // aggInstruction->aggregates[i].result->type, name, false);
   }
 }
 
@@ -629,8 +631,8 @@ bool CompileState::compile() {
     for (auto newIndex = previousNumOperators; newIndex < operators_.size();
          ++newIndex) {
       if (operators_[newIndex]->isSink()) {
-	// No output operands.
-	continue;
+        // No output operands.
+        continue;
       }
       for (auto i = 0; i < outputType->size(); ++i) {
         auto& name = outputType->nameOf(i);

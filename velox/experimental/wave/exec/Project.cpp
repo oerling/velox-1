@@ -28,7 +28,8 @@ AbstractWrap* Project::findWrap() const {
 AdvanceResult Project::canAdvance(WaveStream& stream) {
   auto& controls = stream.launchControls(id_);
   if (controls.empty()) {
-    /// No previous execution on the stream. If the first program starts with a source we can continue that.
+    /// No previous execution on the stream. If the first program starts with a
+    /// source we can continue that.
     if (!isSource()) {
       return {};
     }
@@ -36,7 +37,7 @@ AdvanceResult Project::canAdvance(WaveStream& stream) {
     auto advance = program->canAdvance(stream, nullptr, 0);
     if (!advance.empty()) {
       advance.programIdx = 0;
-  }
+    }
     return advance;
   }
   for (int32_t i = levels_.size() - 1; i >= 0; --i) {
@@ -47,45 +48,45 @@ AdvanceResult Project::canAdvance(WaveStream& stream) {
       auto* program = level[i].get();
       auto advance = program->canAdvance(stream, controls[i].get(), j);
       if (!advance.empty()) {
-	if (first.empty()) {
-	  first = advance;
-	}
-	controls[i]->programInfo[j].advance = advance;
+        if (first.empty()) {
+          first = advance;
+        }
+        controls[i]->programInfo[j].advance = advance;
       } else {
-	controls[i]->programInfo[j].advance = {};
+        controls[i]->programInfo[j].advance = {};
       }
       if (!first.empty()) {
-	return first;
+        return first;
       }
-      
     }
   }
 
   return {};
 }
 
-  namespace {
-    bool anyContinuable(LaunchControl& control) {
-      for (auto& info : control.programInfo) {
-	if (!info.advance.empty()) {
-	  return true;
-	}
-      }
-      return false;
+namespace {
+bool anyContinuable(LaunchControl& control) {
+  for (auto& info : control.programInfo) {
+    if (!info.advance.empty()) {
+      return true;
     }
   }
-  
+  return false;
+}
+} // namespace
+
 void Project::schedule(WaveStream& stream, int32_t maxRows) {
   int32_t firstLevel = 0;
   auto& controls = stream.launchControls(id_);
   bool isContinue = false;
-  // firstLevel is 0 if no previous activity, otherwise it is the last level with continuable activity. If continuable activity,'isContinue' is true.
+  // firstLevel is 0 if no previous activity, otherwise it is the last level
+  // with continuable activity. If continuable activity,'isContinue' is true.
   if (!controls.empty()) {
     for (int32_t i = levels_.size() - 1; i >= 0; --i) {
       if (anyContinuable(*controls[i])) {
-	firstLevel = i;
-	isContinue = true;
-	break;
+        firstLevel = i;
+        isContinue = true;
+        break;
       }
     }
   }
@@ -104,20 +105,26 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     auto range = folly::Range(data, data + exes.size());
     stream.installExecutables(
         range, [&](Stream* out, folly::Range<Executable**> exes) {
-		 LaunchControl* inputControl = nullptr;
-		 if (!isContinue && !isSource()) {
-		   inputControl = driver_->inputControl(stream, id_);
-		 }
-		 auto control = stream.prepareProgramLaunch(
-							    id_, levelIdx, isContinue ? -1 : maxRows, exes, blocksPerExe, inputControl, out);
+          LaunchControl* inputControl = nullptr;
+          if (!isContinue && !isSource()) {
+            inputControl = driver_->inputControl(stream, id_);
+          }
+          auto control = stream.prepareProgramLaunch(
+              id_,
+              levelIdx,
+              isContinue ? -1 : maxRows,
+              exes,
+              blocksPerExe,
+              inputControl,
+              out);
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,
               control->sharedMemorySize,
               control->params);
         });
-  isContinue = false;
-}
+    isContinue = false;
+  }
 }
 
 void Project::finalize(CompileState& state) {

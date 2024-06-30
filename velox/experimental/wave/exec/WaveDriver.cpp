@@ -70,45 +70,45 @@ RowVectorPtr WaveDriver::getOutput() {
     return nullptr;
   }
   int32_t last = pipelines_.size() - 1;
-    for (int32_t i = last; i >= 0; --i) {
-      if (!pipelines_[i].canAdvance) {
-        continue;
-      }
-      auto status = advance(i);
-      switch (status) {
-        case Advance::kBlocked:
-          return nullptr;
-        case Advance::kResult:
-          if (i == last) {
-            if (pipelines_[i].makesHostResult) {
-              return result_;
-            } else {
-              break;
-            }
-          }
-          pipelines_[i + 1].canAdvance = true;
-          i += 2;
-          break;
-        case Advance::kFinished:
-          pipelines_[i].canAdvance = false;
-          if (i == 0 || pipelines_[i].noMoreInput) {
-            flush(i);
-            if (i < last) {
-              pipelines_[i + 1].noMoreInput = true;
-	      pipelines_[i + 1].canAdvance = true;
-	      i += 2;
-	      break;
-	    } else {
-	      // Last finished.
-	      finished_ = true;
-	      return nullptr;
-	    }
-	  }
-          break;
-      }
+  for (int32_t i = last; i >= 0; --i) {
+    if (!pipelines_[i].canAdvance) {
+      continue;
     }
-    finished_ = true;
-    return nullptr;
+    auto status = advance(i);
+    switch (status) {
+      case Advance::kBlocked:
+        return nullptr;
+      case Advance::kResult:
+        if (i == last) {
+          if (pipelines_[i].makesHostResult) {
+            return result_;
+          } else {
+            break;
+          }
+        }
+        pipelines_[i + 1].canAdvance = true;
+        i += 2;
+        break;
+      case Advance::kFinished:
+        pipelines_[i].canAdvance = false;
+        if (i == 0 || pipelines_[i].noMoreInput) {
+          flush(i);
+          if (i < last) {
+            pipelines_[i + 1].noMoreInput = true;
+            pipelines_[i + 1].canAdvance = true;
+            i += 2;
+            break;
+          } else {
+            // Last finished.
+            finished_ = true;
+            return nullptr;
+          }
+        }
+        break;
+    }
+  }
+  finished_ = true;
+  return nullptr;
 }
 
 void WaveDriver::flush(int32_t pipelineIdx) {
@@ -135,9 +135,10 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
         return reason;
       }
       auto advance =
-	pipeline.operators[i]->canAdvance(*pipeline.arrived[streamIdx]);
+          pipeline.operators[i]->canAdvance(*pipeline.arrived[streamIdx]);
       if (!advance.empty()) {
-        runOperators(pipeline, *pipeline.arrived[streamIdx], i, advance.numRows);
+        runOperators(
+            pipeline, *pipeline.arrived[streamIdx], i, advance.numRows);
         moveTo(pipeline.arrived, i, pipeline.running);
         continued = true;
         --i;
@@ -171,7 +172,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
       if (pipeline.running[i]->isArrived(set, 10, 0)) {
         incStats((pipeline.running[i]->stats()));
         moveTo(pipeline.running, i, pipeline.arrived);
-	return;
+        return;
       }
     }
   }
