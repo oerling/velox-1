@@ -145,7 +145,12 @@ struct AbstractInstruction {
     return {};
   }
 
-  std::optional<int32_t> stateIndex() const {
+
+  virtual bool isSink() const {
+    return false;
+  }
+
+  virtual std::optional<int32_t> stateId() const {
     return std::nullopt;
   }
 
@@ -310,6 +315,14 @@ struct AbstractOperator : public AbstractInstruction {
         state(state),
         outputType(outputType) {}
 
+  std::optional<int32_t> stateId() const override {
+    if (!state) {
+      return std::nullopt;
+    }
+    return state->id;
+  }
+
+  
   // Identifies the bit in 'continuable' to indicate need for post-return
   // action.
   int32_t serial;
@@ -341,10 +354,15 @@ struct AbstractAggregation : public AbstractOperator {
         keys(std::move(keys)),
         aggregates(std::move(aggregates)) {}
 
+  
   int32_t rowSize() {
     return aggregates.back().accumulatorOffset + sizeof(int64_t);
   }
 
+  bool isSink() const override {
+    return true;
+  }
+  
   bool intermediateInput{false};
   bool intermediateOutput{false};
   std::vector<AbstractOperand*> keys;
@@ -367,6 +385,7 @@ struct AbstractReadAggregation : public AbstractOperator {
             aggregation->outputType),
         aggregation(aggregation) {}
 
+  
   AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, OperatorState* state, int32_t programIdx) const override;
 
   AbstractAggregation* aggregation;

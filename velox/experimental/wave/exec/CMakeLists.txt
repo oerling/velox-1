@@ -21,6 +21,7 @@ add_library(
   Aggregation.cpp
   AggregationInstructions.cu
   ExprKernel.cu
+  ExprKernel2.cu
   Instruction.cpp
   ToWave.cpp
   WaveOperator.cpp

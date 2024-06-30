@@ -428,7 +428,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
   /// Fills 'ptrs' with device side global/stream states. Creates the states if
   /// necessary.
-  void getOperatorStates(WaveStream& stream, std::vector<void*> ptrs);
+  void getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs);
 
   /// True if begins with a source instruction, like reading and aggregate
   /// result or exchange.
@@ -446,6 +446,10 @@ class Program : public std::enable_shared_from_this<Program> {
   /// 'control'.
   AdvanceResult canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
+  bool isSink() const {
+    return instructions_.back()->isSink();
+  }
+  
   std::string toString() const;
 
  private:

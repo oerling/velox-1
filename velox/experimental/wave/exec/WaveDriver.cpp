@@ -66,8 +66,10 @@ WaveDriver::WaveDriver(
 }
 
 RowVectorPtr WaveDriver::getOutput() {
+  if (finished_) {
+    return nullptr;
+  }
   int32_t last = pipelines_.size() - 1;
-  for (;;) {
     for (int32_t i = last; i >= 0; --i) {
       if (!pipelines_[i].canAdvance) {
         continue;
@@ -91,18 +93,22 @@ RowVectorPtr WaveDriver::getOutput() {
           pipelines_[i].canAdvance = false;
           if (i == 0 || pipelines_[i].noMoreInput) {
             flush(i);
-            if (i < last)
+            if (i < last) {
               pipelines_[i + 1].noMoreInput = true;
-            pipelines_[i + 1].canAdvance = true;
-            i += 2;
-            break;
-          }
+	      pipelines_[i + 1].canAdvance = true;
+	      i += 2;
+	      break;
+	    } else {
+	      // Last finished.
+	      finished_ = true;
+	      return nullptr;
+	    }
+	  }
           break;
       }
     }
     finished_ = true;
     return nullptr;
-  }
 }
 
 void WaveDriver::flush(int32_t pipelineIdx) {
@@ -121,7 +127,7 @@ void moveTo(
 } // namespace
 
 exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
-  for (auto i = 0; i < pipeline.arrived.size(); ++i) {
+  for (auto streamIdx = 0; streamIdx < pipeline.arrived.size(); ++streamIdx) {
     bool continued = false;
     for (int32_t i = pipeline.operators.size() - 1; i >= 0; --i) {
       auto reason = pipeline.operators[i]->isBlocked(&blockingFuture_);
@@ -129,9 +135,9 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
         return reason;
       }
       auto advance =
-	pipeline.operators[i]->canAdvance(*pipeline.arrived[i]);
+	pipeline.operators[i]->canAdvance(*pipeline.arrived[streamIdx]);
       if (!advance.empty()) {
-        runOperators(pipeline, *pipeline.arrived[i], i, advance.numRows);
+        runOperators(pipeline, *pipeline.arrived[streamIdx], i, advance.numRows);
         moveTo(pipeline.arrived, i, pipeline.running);
         continued = true;
         --i;
@@ -141,8 +147,8 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
 
     if (!continued) {
       /// Not blocked and not continuable, so must be at end.
-      moveTo(pipeline.arrived, i, pipeline.finished);
-      --i;
+      moveTo(pipeline.arrived, streamIdx, pipeline.finished);
+      --streamIdx;
     }
   }
   return exec::BlockingReason::kNotBlocked;
@@ -165,6 +171,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
       if (pipeline.running[i]->isArrived(set, 10, 0)) {
         incStats((pipeline.running[i]->stats()));
         moveTo(pipeline.running, i, pipeline.arrived);
+	return;
       }
     }
   }

@@ -354,8 +354,8 @@ void WaveStream::installExecutables(
     });
     dependences[streamSet].push_back(exe);
     exe->outputOperands.forEach([&](int32_t id) {
-      VELOX_CHECK_EQ(0, operandToExecutable_.count(id));
-      operandToExecutable_[id] = exe;
+				  // The stream may have the same or different exe in place from a previous launch. 
+				  operandToExecutable_[id] = exe;
     });
   }
 
@@ -631,6 +631,13 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       }
     }
   }
+  if (isContinue) {
+    VELOX_CHECK_EQ(-1, inputRows);
+  } else {
+    VELOX_CHECK_LT(0, inputRows);
+    numRows_ = inputRows;
+  }
+
   // 2 int arrays: blockBase, programIdx.
   int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
@@ -649,16 +656,13 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     markLaunch(*stream, *exes[i]);
     shared = std::max(shared, exes[i]->programShared->sharedMemorySize());
     operatorStateBytes += info[i].operatorStates.size() * sizeof(void*);
-    if (exes[i]->programShared) {
-      exes[i]->programShared->getOperatorStates(*this, info[i].operatorStates);
-    }
   }
   size += operandBytes;
   int32_t statusOffset = 0;
   if (!inputControl) {
     statusOffset = size;
     //  Pointer to return block for each tB.
-    size += blocksPerExe * sizeof(BlockStatus);
+    size += bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
   }
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
@@ -793,7 +797,7 @@ WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
 
-void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
+void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
     auto& operatorState = *operatorStates_[i];
@@ -809,9 +813,9 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*> ptrs) {
   AdvanceResult Program::canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx) {
   AbstractInstruction* source = instructions_.front().get();
   OperatorState* state = nullptr;
-  auto stateIndex = source->stateIndex();
-  if (stateIndex.has_value()) {
-    state = stream.operatorState(stateIndex.value());
+  auto stateId = source->stateId();
+  if (stateId.has_value()) {
+    state = stream.operatorState(stateId.value());
   }
   return source->canAdvance(stream, control, state, programIdx);
 }
@@ -972,7 +976,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numAggregates = abstractInst->aggregates.size();
         physicalInst->stateIndex = operatorStates_.size();
         auto programState = std::make_unique<ProgramState>();
-        programState->stateId = abstractInst->stateId;
+        programState->stateId = abstractInst->state->id;
         programState->isGlobal = true;
         programState->create =
             [inst = abstractInst](
@@ -1014,9 +1018,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numAggregates = agg.aggregates.size();
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
-        physicalInst->stateIndex = agg.stateId;
         auto programState = std::make_unique<ProgramState>();
-        programState->stateId = agg.stateId;
+        programState->stateId = agg.state->id;
         programState->isGlobal = true;
         physicalInst->stateIndex = operatorStates_.size();
         operatorStates_.push_back(std::move(programState));

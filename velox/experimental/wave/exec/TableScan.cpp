@@ -103,13 +103,13 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
       connectorSplit->connectorId,
       "Got splits with different connector IDs");
 
+  WithSubfieldMap subfields(driver_->subfields());
   if (!dataSource_) {
     connectorQueryCtx_ = driver_->operatorCtx()->createConnectorQueryCtx(
         connectorSplit->connectorId, planNodeId_, connectorPool_);
     dataSource_ = connector_->createDataSource(
         outputType_, tableHandle_, columnHandles_, connectorQueryCtx_.get());
     waveDataSource_ = dataSource_->toWaveDataSource();
-    WithSubfieldMap subfields(driver_->subfields());
     waveDataSource_->setOutputOperands(defines_);
     waveDataSource_->addSplit(connectorSplit);
   } else {

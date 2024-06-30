@@ -244,6 +244,15 @@ class WaveKernelStream : public Stream {
 
   /// Sets up or updates an aggregation.
   void setupAggregation(AggregationControl& op);
+private:
+
+  // Debug implementation of call() where each instruction is a separate kernel launch.
+  void callOne(
+      Stream* alias,
+      int32_t numBlocks,
+      int32_t sharedSize,
+      KernelParams& params);
+
 };
 
 } // namespace facebook::velox::wave

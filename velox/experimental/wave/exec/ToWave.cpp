@@ -467,6 +467,8 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     auto i = numKeys + aggregates.size() - 1;
     aggregate.result = newOperand(
         node->outputType()->childAt(i), node->outputType()->nameOf(i));
+    auto subfield = toSubfield(node->outputType()->nameOf(i));
+    definedBy_[Value(subfield)] = aggregate.result;
     for (auto& arg : planAggregate.call->inputs()) {
       argTypes.push_back(fromCpuType(*arg->type()));
       auto field =
@@ -516,11 +518,15 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       nthContinuable_++, aggInstruction));
 
   makeProject(numPrograms, node->outputType());
+  auto project = reinterpret_cast<Project*>(operators_.back().get());
   for (auto i = 0; i < node->groupingKeys().size(); ++i) {
     VELOX_NYI();
   }
   for (auto i = 0; i < aggInstruction->aggregates.size(); ++i) {
+    std::string name = aggInstruction->aggregates[i].result->label;
+    operators_.back()->defined(Value(toSubfield(name)), aggInstruction->aggregates[i].result);
     definedIn_[aggInstruction->aggregates[i].result] = reader;
+    //project->definesSubfield(*this, aggInstruction->aggregates[i].result->type, name, false);
   }
 }
 
@@ -622,6 +628,10 @@ bool CompileState::compile() {
     ++nodeIndex;
     for (auto newIndex = previousNumOperators; newIndex < operators_.size();
          ++newIndex) {
+      if (operators_[newIndex]->isSink()) {
+	// No output operands.
+	continue;
+      }
       for (auto i = 0; i < outputType->size(); ++i) {
         auto& name = outputType->nameOf(i);
         Value value = Value(toSubfield(name));
@@ -653,13 +663,15 @@ bool CompileState::compile() {
   if (operators_.empty()) {
     return false;
   }
-  for (auto& op : operators_) {
-    op->finalize(*this);
-  }
   std::vector<OperandId> resultOrder;
   for (auto i = 0; i < outputType->size(); ++i) {
     auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
+    auto source = programOf(operand, false);
+    source->markOutput(operand->id);
     resultOrder.push_back(operand->id);
+  }
+  for (auto& op : operators_) {
+    op->finalize(*this);
   }
   auto waveOpUnique = std::make_unique<WaveDriver>(
       driver_.driverCtx(),

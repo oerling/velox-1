@@ -39,7 +39,7 @@ __device__ T& sharedMemoryOperand(char* shared, OperandIndex op) {
 /// Returns true if operand is non null. Sets 'value' to the value of the
 /// operand.
 template <typename T>
-__device__ inline bool operandOrNull(
+__device__ __forceinline__ bool operandOrNull(
     Operand** operands,
     OperandIndex opIdx,
     int32_t blockBase,
@@ -146,5 +146,40 @@ template <typename T>
 __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
   return flatResult<T>(&op, 0, blockBase, nullptr);
 }
+
+#define PROGRAM_PREAMBLE(blockOffset) \
+  extern __shared__ __align__(16) char sharedChar[];\
+  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);\
+  int programIndex = params.programIdx[blockIdx.x + blockOffset];\
+  auto* program = params.programs[programIndex];\
+  if (threadIdx.x == 0) {\
+    shared->operands = params.operands[programIndex];\
+    shared->status = &params.status[blockIdx.x + blockOffset - params.blockBase[blockIdx.x + blockOffset]];\
+    shared->numRows = shared->status->numRows;\
+    shared->blockBase = (blockIdx.x + blockOffset - params.blockBase[blockIdx.x + blockOffset]) * blockDim.x;\
+    shared->states = params.operatorStates[programIndex];\
+    shared->stop = false;\
+  }\
+  __syncthreads();\
+  auto blockBase = shared->blockBase;\
+  auto operands = shared->operands;\
+  ErrorCode laneStatus;\
+    Instruction* instruction;\
+  if (params.startPC == nullptr) {\
+    instruction = program->instructions;\
+    laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;\
+  } else {\
+    instruction = program->instructions + params.startPC[programIndex];\
+    laneStatus = shared->status->errors[threadIdx.x];\
+  }
+
+#define PROGRAM_EPILOGUE() \
+	if (threadIdx.x == 0) { \
+	  shared->status->numRows = shared->numRows; \
+	}\
+	  shared->status->errors[threadIdx.x] = laneStatus;\
+        __syncthreads(); \
+
+
 
 } // namespace facebook::velox::wave

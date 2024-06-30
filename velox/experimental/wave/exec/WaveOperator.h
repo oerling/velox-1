@@ -97,6 +97,10 @@ class WaveOperator {
     VELOX_FAIL("Override for source or blocking operator");
   }
 
+  virtual bool isSink() const {
+    return false;
+  }
+  
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(
