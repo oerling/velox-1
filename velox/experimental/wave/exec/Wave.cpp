@@ -130,8 +130,8 @@ WaveStream::~WaveStream() {
   releaseStreamsAndEvents();
 }
 
-  void WaveStream::releaseStreamsAndEvents() {
-      for (auto& stream : streams_) {
+void WaveStream::releaseStreamsAndEvents() {
+  for (auto& stream : streams_) {
     releaseStream(std::move(stream));
   }
   for (auto& event : allEvents_) {
@@ -142,8 +142,8 @@ WaveStream::~WaveStream() {
   streams_.clear();
   lastEvent_.clear();
   hostReturnEvent_ = nullptr;
-  }
-  
+}
+
 void WaveStream::setState(WaveStream::State state) {
   if (state == state_) {
     return;
