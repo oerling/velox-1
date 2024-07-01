@@ -824,7 +824,7 @@ bool Program::isSink() const {
   }
   return instructions_[size - 1]->isSink();
 }
-  
+
 AdvanceResult Program::canAdvance(
     WaveStream& stream,
     LaunchControl* control,

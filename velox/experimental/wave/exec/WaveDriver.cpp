@@ -177,9 +177,9 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
       auto waitUs = pipeline.running.size() == 1 ? 0 : 10;
       if (pipeline.running[i]->isArrived(set, waitUs, 0)) {
         incStats((pipeline.running[i]->stats()));
-	pipeline.running[i]->setState(WaveStream::State::kNotRunning);
+        pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         moveTo(pipeline.running, i, pipeline.arrived);
-	totalWaitLoops += waitLoops;
+        totalWaitLoops += waitLoops;
       }
       ++waitLoops;
     }
@@ -215,14 +215,14 @@ Advance WaveDriver::advance(int pipelineIdx) {
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
           if (result_->size() != 0) {
-	    totalWaitLoops += waitLoops;
+            totalWaitLoops += waitLoops;
             return Advance::kResult;
           }
           --i;
         } else if (arrived->isSinkFull()) {
           pipeline.sinkFull = true;
           waitForArrival(pipeline);
-	  totalWaitLoops += waitLoops;
+          totalWaitLoops += waitLoops;
           return Advance::kResult;
         }
       }

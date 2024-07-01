@@ -53,7 +53,7 @@ struct WaveTime {
 };
 
 class WaveTimer {
-public:
+ public:
   WaveTimer(WaveTime& accumulator)
       : accumulator_(accumulator), start_(WaveTime::now()) {}
   ~WaveTimer() {
@@ -449,7 +449,8 @@ class Program : public std::enable_shared_from_this<Program> {
   AdvanceResult
   canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
-  /// True if last non-return instruction is a sink, e.g. build, repartition. No output vectors,, synced on 'hostReturnEvent_'.
+  /// True if last non-return instruction is a sink, e.g. build, repartition. No
+  /// output vectors,, synced on 'hostReturnEvent_'.
   bool isSink() const;
 
   std::string toString() const;
