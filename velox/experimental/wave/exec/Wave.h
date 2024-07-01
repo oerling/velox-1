@@ -781,6 +781,11 @@ class WaveStream {
   /// will get the data not produced so far.
   void resetSink() {}
 
+  // Releases and clears streams and events. Done at destruction or
+  // before reuse. All device side activity is expected to be
+  // complete.
+  void releaseStreamsAndEvents();
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -824,7 +829,7 @@ class WaveStream {
   // The most recent event recorded on the pairwise corresponding element of
   // 'streams_'.
   std::vector<Event*> lastEvent_;
-  // If status return copy has been initiated, then this is th event to sync
+  // If status return copy has been initiated, then this is the event to sync
   // with before accessing the 'hostReturnData_'
   Event* hostReturnEvent_{nullptr};
 

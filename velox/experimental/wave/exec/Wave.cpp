@@ -127,15 +127,23 @@ WaveStream::~WaveStream() {
       exe->releaser(exe);
     }
   }
-  for (auto& stream : streams_) {
+  releaseStreamsAndEvents();
+}
+
+  void WaveStream::releaseStreamsAndEvents() {
+      for (auto& stream : streams_) {
     releaseStream(std::move(stream));
   }
   for (auto& event : allEvents_) {
     std::unique_ptr<Event> temp(event);
     releaseEvent(std::move(temp));
   }
-}
-
+  allEvents_.clear();
+  streams_.clear();
+  lastEvent_.clear();
+  hostReturnEvent_ = nullptr;
+  }
+  
 void WaveStream::setState(WaveStream::State state) {
   if (state == state_) {
     return;
@@ -337,7 +345,6 @@ void WaveStream::installExecutables(
       OperandSetHasher,
       OperandSetComparer>
       dependences;
-  VELOX_CHECK_NULL(hostReturnEvent_);
   for (auto& exeUnique : executables) {
     executables_.push_back(std::move(exeUnique));
     auto exe = executables_.back().get();
@@ -400,7 +407,11 @@ bool WaveStream::isArrived(
     int32_t timeoutMicro) {
   OperandSet waitSet;
   if (hostReturnEvent_) {
-    return hostReturnEvent_->query();
+    bool done = hostReturnEvent_->query();
+    if (done) {
+      releaseStreamsAndEvents();
+    }
+    return done;
   }
   ids.forEach([&](int32_t id) {
     auto exe = operandToExecutable_[id];
@@ -419,6 +430,7 @@ bool WaveStream::isArrived(
     waitSet.add(streamId);
   });
   if (waitSet.empty()) {
+    releaseStreamsAndEvents();
     return true;
   }
   if (sleepMicro == -1) {
@@ -434,6 +446,7 @@ bool WaveStream::isArrived(
       }
     });
     if (ready) {
+      releaseStreamsAndEvents();
       return true;
     }
     std::this_thread::sleep_for(std::chrono::microseconds(sleepMicro));
