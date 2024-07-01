@@ -131,13 +131,26 @@ class WaveDriver : public exec::SourceOperator {
   RowVectorPtr makeResult(WaveStream& stream, const OperandSet& outputIds);
   Advance advance(int pipelineIdx);
   exec::BlockingReason processArrived(Pipeline& pipeline);
+
+  // Waits for all streams of 'pipeline' to arrive. used for sink
+  // full, where we need a barrier between updating and processing the
+  // sink, like repartitioning or aggregation.
   void waitForArrival(Pipeline& pipeline);
+
+  // Runs or continues operators starting at 'from'.
   void runOperators(
       Pipeline& pipeline,
       WaveStream& stream,
       int32_t from,
       int32_t numRows);
+
+  // Finishes any pending activity, so that the final result at the
+  // end is ready to consume by another pipeline. This is called once,
+  // after there is guaranteed no more input.
   void flush(int32_t pipelineIdx);
+
+  // Copies from 'waveStats_' to runtimeStates consumed by
+  // exec::Driver.
   void updateStats();
 
   std::unique_ptr<GpuArena> arena_;

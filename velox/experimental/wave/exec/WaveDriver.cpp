@@ -165,7 +165,8 @@ void WaveDriver::runOperators(
   }
 }
 
-int64_t totalWaitLoops;
+// Global counter for busy wait iterations.
+tsan_atomic<int64_t> totalWaitLoops;
 
 void WaveDriver::waitForArrival(Pipeline& pipeline) {
   auto set = pipeline.operators.back()->syncSet();
@@ -179,7 +180,6 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
 	pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         moveTo(pipeline.running, i, pipeline.arrived);
 	totalWaitLoops += waitLoops;
-        return;
       }
       ++waitLoops;
     }
@@ -188,6 +188,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
 
 Advance WaveDriver::advance(int pipelineIdx) {
   auto& pipeline = pipelines_[pipelineIdx];
+  int64_t waitLoops = 0;
   for (;;) {
     if (pipeline.sinkFull) {
       pipeline.sinkFull = false;
@@ -197,9 +198,11 @@ Advance WaveDriver::advance(int pipelineIdx) {
     }
     blockingReason_ = processArrived(pipeline);
     if (blockingReason_ != exec::BlockingReason::kNotBlocked) {
+      totalWaitLoops += waitLoops;
       return Advance::kBlocked;
     }
     if (pipeline.running.empty() && !pipeline.finished.empty()) {
+      totalWaitLoops += waitLoops;
       return Advance::kFinished;
     }
     auto& op = *pipeline.operators.back();
@@ -212,15 +215,18 @@ Advance WaveDriver::advance(int pipelineIdx) {
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
           if (result_->size() != 0) {
+	    totalWaitLoops += waitLoops;
             return Advance::kResult;
           }
           --i;
         } else if (arrived->isSinkFull()) {
           pipeline.sinkFull = true;
           waitForArrival(pipeline);
+	  totalWaitLoops += waitLoops;
           return Advance::kResult;
         }
       }
+      ++waitLoops;
     }
     if (pipeline.finished.empty() &&
         pipeline.running.size() + pipeline.arrived.size() <
