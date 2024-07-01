@@ -160,6 +160,9 @@ void WaveDriver::runOperators(
     WaveStream& stream,
     int32_t from,
     int32_t numRows) {
+  // The stream is in 'host' state for any host to device data
+  // transfer, then in parallel state after first kernel launch.
+  stream.setState(WaveStream::State::kHost);
   for (auto i = from; i < pipeline.operators.size(); ++i) {
     pipeline.operators[i]->schedule(stream, numRows);
   }
@@ -209,7 +212,8 @@ Advance WaveDriver::advance(int pipelineIdx) {
     auto& lastSet = op.syncSet();
     for (auto i = 0; i < pipeline.running.size(); ++i) {
       if (pipeline.running[i]->isArrived(lastSet)) {
-        auto arrived = pipeline.running[i].get();
+	auto arrived = pipeline.running[i].get();
+	arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
