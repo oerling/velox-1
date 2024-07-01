@@ -165,15 +165,23 @@ void WaveDriver::runOperators(
   }
 }
 
+int64_t totalWaitLoops;
+
 void WaveDriver::waitForArrival(Pipeline& pipeline) {
   auto set = pipeline.operators.back()->syncSet();
+  int64_t waitLoops = 0;
+  WaveTimer timer(waveStats_.waitTime);
   while (!pipeline.running.empty()) {
     for (auto i = 0; i < pipeline.running.size(); ++i) {
-      if (pipeline.running[i]->isArrived(set, 10, 0)) {
+      auto waitUs = pipeline.running.size() == 1 ? 0 : 10;
+      if (pipeline.running[i]->isArrived(set, waitUs, 0)) {
         incStats((pipeline.running[i]->stats()));
+	pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         moveTo(pipeline.running, i, pipeline.arrived);
+	totalWaitLoops += waitLoops;
         return;
       }
+      ++waitLoops;
     }
   }
 }

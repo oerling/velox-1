@@ -53,6 +53,7 @@ struct WaveTime {
 };
 
 class WaveTimer {
+public:
   WaveTimer(WaveTime& accumulator)
       : accumulator_(accumulator), start_(WaveTime::now()) {}
   ~WaveTimer() {

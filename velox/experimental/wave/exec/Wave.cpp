@@ -265,7 +265,9 @@ void WaveStream::resultToHost() {
           deviceReturnData_->as<char>(),
           hostReturnDataUsed_);
     }
-    hostReturnEvent_ = newEvent();
+    if (!hostReturnEvent_) {
+      hostReturnEvent_ = newEvent();
+    }
     hostReturnEvent_->record(*streams_[0]);
   } else {
     VELOX_NYI();
