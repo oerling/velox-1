@@ -816,6 +816,15 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   }
 }
 
+bool Program::isSink() const {
+  int32_t size = instructions_.size();
+  if (instructions_[size - 1]->opCode == OpCode::kReturn) {
+    VELOX_CHECK_GE(size, 2);
+    return instructions_[size - 2]->isSink();
+  }
+  return instructions_[size - 1]->isSink();
+}
+  
 AdvanceResult Program::canAdvance(
     WaveStream& stream,
     LaunchControl* control,

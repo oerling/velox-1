@@ -449,9 +449,8 @@ class Program : public std::enable_shared_from_this<Program> {
   AdvanceResult
   canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
-  bool isSink() const {
-    return instructions_.back()->isSink();
-  }
+  /// True if last non-return instruction is a sink, e.g. build, repartition. No output vectors,, synced on 'hostReturnEvent_'.
+  bool isSink() const;
 
   std::string toString() const;
 
