@@ -46,6 +46,10 @@ class Project : public WaveOperator {
   /// or hash build. No output operands but the output will be consumed in
   /// another pipeline.
   bool isSink() const override {
+    if (levels_.empty()) {
+      // Can be temporarily empty if all instructions are fused into previous and this is only to designate a wrap.
+      return false;
+    }
     auto& last = levels_.back();
     return last.size() == 1 && last[0]->isSink();
   }
