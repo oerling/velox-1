@@ -669,7 +669,12 @@ bool CompileState::compile() {
   for (auto i = 0; i < outputType->size(); ++i) {
     auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
     auto source = programOf(operand, false);
-    source->markOutput(operand->id);
+    // Operands produced by programs, when projected out of Wave, must
+    // be marked as output of their respective programs. Some
+    // operands, e.g. table scan results are not from programs.
+    if (source) {
+      source->markOutput(operand->id);
+    }
     resultOrder.push_back(operand->id);
   }
   for (auto& op : operators_) {
