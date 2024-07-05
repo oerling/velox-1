@@ -789,9 +789,9 @@ class WaveStream {
   void setError() {
     hasError_ = true;
   }
-  
+
   std::string toString() const;
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -877,7 +877,7 @@ class WaveStream {
   State state_{State::kNotRunning};
 
   bool hasError_{false};
-  
+
   WaveStats stats_;
 
   std::shared_ptr<WaveSplitReader> splitReader_;

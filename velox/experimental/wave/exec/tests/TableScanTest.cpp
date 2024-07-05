@@ -55,21 +55,25 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     HiveConnectorTestBase::TearDown();
   }
 
-  auto makeData(const RowTypePtr& type, int32_t numVectors, int32_t vectorSize, bool notNull) {
+  auto makeData(
+      const RowTypePtr& type,
+      int32_t numVectors,
+      int32_t vectorSize,
+      bool notNull) {
     auto vectors = makeVectors(type, numVectors, vectorSize);
     int32_t cnt = 0;
-  for (auto& vector : vectors) {
-    makeRange(vector, 1000000000, notNull);
-    auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
-    for (auto i = 0; i < rn->size(); ++i) {
-      rn->set(i, cnt++);
+    for (auto& vector : vectors) {
+      makeRange(vector, 1000000000, notNull);
+      auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
+      for (auto i = 0; i < rn->size(); ++i) {
+        rn->set(i, cnt++);
+      }
     }
+    auto splits = makeTable("test", vectors);
+    createDuckDbTable(vectors);
+    return splits;
   }
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
-  return splits;
-  }
-  
+
   std::vector<RowVectorPtr> makeVectors(
       const RowTypePtr& rowType,
       int32_t numVectors,

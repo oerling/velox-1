@@ -32,7 +32,8 @@ class Project : public WaveOperator {
   AbstractWrap* findWrap() const override;
 
   bool isStreaming() const override {
-    if (!levels_.empty() && levels_[0].size() == 1 && levels_[0][0]->isSource()) {
+    if (!levels_.empty() && levels_[0].size() == 1 &&
+        levels_[0][0]->isSource()) {
       return false;
     }
     return true;
@@ -47,7 +48,8 @@ class Project : public WaveOperator {
   /// another pipeline.
   bool isSink() const override {
     if (levels_.empty()) {
-      // Can be temporarily empty if all instructions are fused into previous and this is only to designate a wrap.
+      // Can be temporarily empty if all instructions are fused into previous
+      // and this is only to designate a wrap.
       return false;
     }
     auto& last = levels_.back();

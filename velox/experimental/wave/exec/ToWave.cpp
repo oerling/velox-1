@@ -230,9 +230,10 @@ void CompileState::addNullableIf(
       nullableIf.push_back(op->id);
     } else if (op->conditionalNonNull) {
       for (auto& i : op->nullableIf) {
-	if (std::find(nullableIf.begin(), nullableIf.end(), i) == nullableIf.end()) {
-	  nullableIf.push_back(i);
-	}
+        if (std::find(nullableIf.begin(), nullableIf.end(), i) ==
+            nullableIf.end()) {
+          nullableIf.push_back(i);
+        }
       }
     }
   }

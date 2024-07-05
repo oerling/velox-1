@@ -15,10 +15,10 @@
  */
 
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/common/testutil/TestValue.h"
+#include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
-#include "velox/exec/Task.h"
-#include "velox/common/testutil/TestValue.h"
 
 DEFINE_int32(
     max_streams_per_driver,
@@ -67,17 +67,17 @@ WaveDriver::WaveDriver(
   pipelines_.front().canAdvance = true;
 }
 
-  bool WaveDriver::shouldYield(exec::StopReason taskStopReason, size_t startTimeMs)
-    const {
+bool WaveDriver::shouldYield(
+    exec::StopReason taskStopReason,
+    size_t startTimeMs) const {
   // Checks task-level yield signal, driver-level yield signal and table scan
   // output processing time limit.
-    return taskStopReason == exec::StopReason::kYield ||
+  return taskStopReason == exec::StopReason::kYield ||
       operatorCtx()->driverCtx()->driver->shouldYield() ||
       ((getOutputTimeLimitMs_ != 0) &&
        (getCurrentTimeMs() - startTimeMs) >= getOutputTimeLimitMs_);
 }
 
-  
 RowVectorPtr WaveDriver::getOutput() {
   if (finished_) {
     return nullptr;
@@ -85,43 +85,43 @@ RowVectorPtr WaveDriver::getOutput() {
   startTimeMs_ = getCurrentTimeMs();
   int32_t last = pipelines_.size() - 1;
   try {
-  for (int32_t i = last; i >= 0; --i) {
-    if (!pipelines_[i].canAdvance) {
-      continue;
-    }
-    auto status = advance(i);
-    switch (status) {
-      case Advance::kBlocked:
-        return nullptr;
-      case Advance::kResult:
-        if (i == last) {
-          if (pipelines_[i].makesHostResult) {
-            return result_;
-          } else {
-            break;
+    for (int32_t i = last; i >= 0; --i) {
+      if (!pipelines_[i].canAdvance) {
+        continue;
+      }
+      auto status = advance(i);
+      switch (status) {
+        case Advance::kBlocked:
+          return nullptr;
+        case Advance::kResult:
+          if (i == last) {
+            if (pipelines_[i].makesHostResult) {
+              return result_;
+            } else {
+              break;
+            }
           }
-        }
-        pipelines_[i + 1].canAdvance = true;
-        i += 2;
-        break;
-      case Advance::kFinished:
-        pipelines_[i].canAdvance = false;
-        if (i == 0 || pipelines_[i].noMoreInput) {
-          flush(i);
-          if (i < last) {
-            pipelines_[i + 1].noMoreInput = true;
-            pipelines_[i + 1].canAdvance = true;
-            i += 2;
-            break;
-          } else {
-            // Last finished.
-            finished_ = true;
-            return nullptr;
+          pipelines_[i + 1].canAdvance = true;
+          i += 2;
+          break;
+        case Advance::kFinished:
+          pipelines_[i].canAdvance = false;
+          if (i == 0 || pipelines_[i].noMoreInput) {
+            flush(i);
+            if (i < last) {
+              pipelines_[i + 1].noMoreInput = true;
+              pipelines_[i + 1].canAdvance = true;
+              i += 2;
+              break;
+            } else {
+              // Last finished.
+              finished_ = true;
+              return nullptr;
+            }
           }
-        }
-        break;
+          break;
+      }
     }
-  }
   } catch (const std::exception& e) {
     setError();
     throw;
@@ -207,26 +207,26 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
     }
   }
 }
-  namespace {
-    bool shouldStop(exec::StopReason taskStopReason) {
-      return taskStopReason != exec::StopReason::kNone &&
-	taskStopReason != exec::StopReason::kYield;
+namespace {
+bool shouldStop(exec::StopReason taskStopReason) {
+  return taskStopReason != exec::StopReason::kNone &&
+      taskStopReason != exec::StopReason::kYield;
 }
-  }
-  
-  
+} // namespace
+
 Advance WaveDriver::advance(int pipelineIdx) {
   auto& pipeline = pipelines_[pipelineIdx];
   int64_t waitLoops = 0;
   for (;;) {
-    const exec::StopReason taskStopReason = operatorCtx()->driverCtx()->task->shouldStop();
+    const exec::StopReason taskStopReason =
+        operatorCtx()->driverCtx()->task->shouldStop();
     if (shouldStop(taskStopReason) ||
-	shouldYield(taskStopReason, startTimeMs_)) {
+        shouldYield(taskStopReason, startTimeMs_)) {
       blockingReason_ = exec::BlockingReason::kYield;
       blockingFuture_ = ContinueFuture{folly::Unit{}};
       // A point for test code injection.
       common::testutil::TestValue::adjust(
-			"facebook::velox::wave::WaveDriver::getOutput::yield", this);
+          "facebook::velox::wave::WaveDriver::getOutput::yield", this);
       return Advance::kBlocked;
     }
 
@@ -249,8 +249,8 @@ Advance WaveDriver::advance(int pipelineIdx) {
     auto& lastSet = op.syncSet();
     for (auto i = 0; i < pipeline.running.size(); ++i) {
       if (pipeline.running[i]->isArrived(lastSet)) {
-	auto arrived = pipeline.running[i].get();
-	arrived->setState(WaveStream::State::kNotRunning);
+        auto arrived = pipeline.running[i].get();
+        arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
@@ -341,7 +341,7 @@ void WaveDriver::setError() {
     }
   }
 }
-  
+
 void WaveDriver::updateStats() {
   auto lockedStats = stats_.wlock();
   lockedStats->addRuntimeStat(
