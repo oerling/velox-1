@@ -139,7 +139,11 @@ namespace {
 void moveTo(
     std::vector<std::unique_ptr<WaveStream>>& from,
     int32_t i,
-    std::vector<std::unique_ptr<WaveStream>>& to) {
+    std::vector<std::unique_ptr<WaveStream>>& to,
+	    bool toRun = false) {
+  if (!toRun) {
+    VELOX_CHECK(from[i]->state() != WaveStream::State::kParallel);
+  }
   to.push_back(std::move(from[i]));
   from.erase(from.begin() + i);
 }
@@ -158,14 +162,15 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
       if (!advance.empty()) {
         runOperators(
             pipeline, *pipeline.arrived[streamIdx], i, advance.numRows);
-        moveTo(pipeline.arrived, i, pipeline.running);
+        moveTo(pipeline.arrived, i, pipeline.running, true);
         continued = true;
-        --i;
         break;
       }
     }
 
-    if (!continued) {
+    if (continued) {
+      --streamIdx;
+    } else {
       /// Not blocked and not continuable, so must be at end.
       moveTo(pipeline.arrived, streamIdx, pipeline.finished);
       --streamIdx;
@@ -241,7 +246,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
       totalWaitLoops += waitLoops;
       return Advance::kBlocked;
     }
-    if (pipeline.running.empty() && !pipeline.finished.empty()) {
+    if (pipeline.running.empty() && pipeline.arrived.empty() && !pipeline.finished.empty()) {
       totalWaitLoops += waitLoops;
       return Advance::kFinished;
     }

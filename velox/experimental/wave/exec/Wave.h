@@ -739,6 +739,10 @@ class WaveStream {
 
   Operand** fillOperands(Executable& exe, char* start, ExeLaunchInfo& info);
 
+  State state() const {
+    return state_;
+  }
+  
   /// Sets the state for stats collection.
   void setState(WaveStream::State state);
 
