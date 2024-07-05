@@ -37,7 +37,7 @@ __device__ __forceinline__ void binaryOpKernel(
     IBinary& instr,
     Operand** operands,
     int32_t blockBase,
-    char* shared,
+    void* shared,
     ErrorCode& laneStatus) {
   if (!laneActive(laneStatus)) {
     return;
@@ -53,95 +53,6 @@ __device__ __forceinline__ void binaryOpKernel(
   }
 }
 
-__device__ void filterKernel(
-    const IFilter& filter,
-    Operand** operands,
-    int32_t blockBase,
-        WaveShared* shared,
-    ErrorCode& laneStatus) {
-  bool isPassed = laneActive(laneStatus);
-  if (isPassed) {
-    if (!operandOrNull(operands, filter.flags, blockBase, &shared->data, isPassed)) {
-      isPassed = false;
-    }
-  }
-  uint32_t bits = __ballot_sync(0xffffffff, isPassed);
-  if (threadIdx.x == 0) {
-    reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads] = __popc(bits);
-  }
-  __syncthreads();
-  if (threadIdx.x < kWarpThreads) {
-    constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
-    int32_t cnt = threadIdx.x < kNumWarps ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] : 0;
-    int32_t sum;
-    using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
-    Scan(*reinterpret_cast<Scan::TempStorage*>(shared)).ExclusiveSum(cnt, sum);
-    if (threadIdx.x < kNumWarps) {
-      if (threadIdx.x == kNumWarps - 1) {
-	shared->numRows = cnt + sum;
-      }
-      reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] = sum;
-      }
-  }
-  __syncthreads();
-  if (bits & (1 << threadIdx.x & (kWarpThreads-1))) {
-    auto* indices = reinterpret_cast<int32_t*>(operands[filter.indices]->base);
-    auto start = reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads];
-    auto bit = start + __popc(bits & lowMask<uint32_t>(threadIdx.x & (kWarpThreads - 1)));
-    indices[bit] = blockBase + threadIdx.x;
-  }
-  laneStatus = threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
-}
-
-__device__ void wrapKernel(
-    const IWrap& wrap,
-    Operand** operands,
-    int32_t blockBase,
-    int32_t numRows,
-    void* shared) {
-  Operand* op = operands[wrap.indices];
-  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
-  if (filterIndices[blockBase + numRows - 1] == numRows + blockBase - 1) {
-    // There is no cardinality change.
-    return;
-  }
-
-  struct WrapState {
-    int32_t* indices;
-  };
-
-  auto* state = reinterpret_cast<WrapState*>(shared);
-  bool rowActive = threadIdx.x < numRows;
-  for (auto column = 0; column < wrap.numColumns; ++column) {
-    if (threadIdx.x == 0) {
-      auto opIndex = wrap.columns[column];
-      auto* op = operands[opIndex];
-      int32_t** opIndices = &op->indices[blockBase / kBlockSize];
-      if (!*opIndices) {
-        *opIndices = filterIndices + blockBase;
-        state->indices = nullptr;
-      } else {
-        state->indices = *opIndices;
-      }
-    }
-    __syncthreads();
-    // Every thread sees the decision on thred 0 above.
-    if (!state->indices) {
-      continue;
-    }
-    int32_t newIndex;
-    if (rowActive) {
-      newIndex =
-          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
-    }
-    // All threads hit this.
-    __syncthreads();
-    if (rowActive) {
-      state->indices[threadIdx.x] = newIndex;
-    }
-  }
-  __syncthreads();
-}
 
 #define BINARY_TYPES(opCode, OP)                             \
   case OP_MIX(opCode, WaveTypeKind::BIGINT):                 \
@@ -171,7 +82,7 @@ __global__ void onePlus(
   PROGRAM_PREAMBLE(base);
     binaryOpKernel<T>(                                 
         [](auto left, auto right) { return left + right; }, 
-        instruction->_.binary,                               
+        instruction[pc]._.binary,                               
         operands,                                            
         blockBase,                                           
         &shared->data,                                              
@@ -185,7 +96,7 @@ __global__ void oneLt(
   PROGRAM_PREAMBLE(base);
     binaryOpKernel<T>(                                 
         [](auto left, auto right) { return left < right; }, 
-        instruction->_.binary,                               
+        instruction[pc]._.binary,                               
         operands,                                            
         blockBase,                                           
         &shared->data,                                              
@@ -193,14 +104,9 @@ __global__ void oneLt(
     PROGRAM_EPILOGUE();
 }
 
-  
   __global__ void oneFilter(
-			       KernelParams params, int32_t pc, int32_t base) {
-  PROGRAM_PREAMBLE(base);
-  filterKernel(instruction[pc]._.filter, operands, blockBase, shared, laneStatus);
-  wrapKernel(instruction[pc + 1]._.wrap, operands, blockBase, shared->numRows, &shared->data);
-      PROGRAM_EPILOGUE();
-}
+			    KernelParams params, int32_t pc, int32_t base);
+  
 
   
   
@@ -208,7 +114,6 @@ __global__ void waveBaseKernel(
 			       KernelParams params) {
   PROGRAM_PREAMBLE(0);
   for (;;) {
-#if 0
     switch (instruction->opCode) {
       case OpCode::kReturn:
 	PROGRAM_EPILOGUE();
@@ -228,7 +133,7 @@ __global__ void waveBaseKernel(
             instruction->_.wrap, operands, blockBase, shared->numRows, &shared->data);
         break;
     case OpCode::kAggregate:
-      aggregateKernel(instruction->_.aggregate, shared);
+      aggregateKernel(instruction->_.aggregate, shared, laneStatus);
       break;
     case OpCode::kReadAggregate:
       readAggregateKernel(instruction->_.aggregate, shared);
@@ -236,7 +141,6 @@ __global__ void waveBaseKernel(
       BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
     }
-    #endif
     ++instruction;
   }
 }

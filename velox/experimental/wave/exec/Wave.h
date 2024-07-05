@@ -783,9 +783,15 @@ class WaveStream {
 
   // Releases and clears streams and events. Done at destruction or
   // before reuse. All device side activity is expected to be
-  // complete.
+  // complete. Resets conditional nullability info.
   void releaseStreamsAndEvents();
 
+  void setError() {
+    hasError_ = true;
+  }
+  
+  std::string toString() const;
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -870,6 +876,8 @@ class WaveStream {
 
   State state_{State::kNotRunning};
 
+  bool hasError_{false};
+  
   WaveStats stats_;
 
   std::shared_ptr<WaveSplitReader> splitReader_;

@@ -55,6 +55,21 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     HiveConnectorTestBase::TearDown();
   }
 
+  auto makeData(const RowTypePtr& type, int32_t numVectors, int32_t vectorSize, bool notNull) {
+    auto vectors = makeVectors(type, numVectors, vectorSize);
+    int32_t cnt = 0;
+  for (auto& vector : vectors) {
+    makeRange(vector, 1000000000, notNull);
+    auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < rn->size(); ++i) {
+      rn->set(i, cnt++);
+    }
+  }
+  auto splits = makeTable("test", vectors);
+  createDuckDbTable(vectors);
+  return splits;
+  }
+  
   std::vector<RowVectorPtr> makeVectors(
       const RowTypePtr& rowType,
       int32_t numVectors,
@@ -187,6 +202,24 @@ TEST_F(TableScanTest, filter) {
   }
   auto splits = makeTable("test", vectors);
   createDuckDbTable(vectors);
+
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(type)
+                  .filter("c0 < 500000000")
+                  .project({"c0", "c1 + 100000000 as c1", "c2", "c3"})
+                  .filter("c1 < 500000000")
+                  .project({"c0", "c1", "c2 + 1", "c3", "c3 + 2"})
+                  .planNode();
+  auto task = assertQuery(
+      plan,
+      splits,
+      "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
+}
+
+TEST_F(TableScanTest, filterNull) {
+  auto type =
+      ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  auto splits = makeData(type, 1, 1500, false);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)

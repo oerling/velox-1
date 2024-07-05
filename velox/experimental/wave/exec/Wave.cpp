@@ -116,12 +116,15 @@ WaveVector* Executable::operandVector(OperandId id, const TypePtr& type) {
 }
 
 WaveStream::~WaveStream() {
-  VELOX_CHECK(
-      state_ == State::kHost || state_ == State::kNotRunning,
-      "Bad state at ~WaveStream: {}",
+  if (!hasError_) {
+    VELOX_CHECK(
+		state_ == State::kHost || state_ == State::kNotRunning,
+		"Bad state at ~WaveStream: {}",
       static_cast<int32_t>(state_));
-  // TODO: wait for device side work to finish before freeing associated memory
-  // owned by exes and buffers in 'this'.
+  }
+  for (auto& stream : streams_) { 
+    stream->wait();
+  }
   for (auto& exe : executables_) {
     if (exe->releaser) {
       exe->releaser(exe);
@@ -142,6 +145,8 @@ void WaveStream::releaseStreamsAndEvents() {
   streams_.clear();
   lastEvent_.clear();
   hostReturnEvent_ = nullptr;
+  // Conditional nullability will be set by the source.
+  std::fill(operandNullable_.begin(), operandNullable_.end(), true);
 }
 
 void WaveStream::setState(WaveStream::State state) {
@@ -382,8 +387,25 @@ void WaveStream::installExecutables(
       continue;
     }
     if (required.empty()) {
-      auto stream = newStream();
-      launch(stream, exes);
+      Stream* stream = nullptr;
+      Event* event = nullptr;
+      for (auto i = 0; i < streams_.size(); ++i) {
+	if (Stream* candidate = streams_[i].get()) {
+	  VELOX_CHECK_GT(lastEvent_.size(), i);
+	  if (!lastEvent_[i] || lastEvent_[i]->query()) {
+	    stream = candidate;
+	    event = lastEvent_[i];
+	    break;
+	  }
+	}
+      }
+      if (!stream) {
+	stream = newStream();
+      }
+	launch(stream, exes);
+	if (event) {
+	  event->record(*stream);
+	}
     } else {
       for (auto* req : required) {
         auto id = reinterpret_cast<uintptr_t>(req->userData());
@@ -812,6 +834,23 @@ void WaveStream::makeAggregate(
   releaseStream(std::move(stream));
 }
 
+  std::string WaveStream::toString() const {
+    std::stringstream out;
+    out << "{WaveStream ";
+    for (auto& exe :executables_) {
+      out << exe->toString() << std::endl;
+    }
+    out << "}";
+    if (hostReturnEvent_) {
+      out << fmt::format("hostReturnEvent={}", hostReturnEvent_->query()) << std::endl;
+    }
+    for (auto i = 0; i < streams_.size(); ++i) {
+      out << fmt::format("stream {} {}, ", streams_[i]->userData(),
+			 lastEvent_[i] ? fmt::format("event={}", lastEvent_[i]->query()) : fmt::format("no event"));
+    }
+    return out.str();
+  }
+  
 WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
@@ -1269,12 +1308,14 @@ std::string AbstractOperand::toString() const {
     return fmt::format(
         "<literal {} {}>", constant->toString(0), type->toString());
   }
-  return fmt::format("<{}: {} {}>", id, label, type->toString());
+  const char* nulls = notNull ? "NN" : conditionalNonNull ? "CN" : sourceNullable ? "SN" : "?";
+  return fmt::format("<{} {}: {} {}>", id, label, nulls, type->toString());
 }
 
 std::string Executable::toString() const {
   std::stringstream out;
-  out << "{Exe produces ";
+  out << "{Exe "
+      << (stream ? fmt::format("stream {}", stream->userData()) : fmt::format(" no stream ")) << " produces ";
   bool first = true;
   outputOperands.forEach([&](auto id) {
     if (!first) {
@@ -1285,7 +1326,7 @@ std::string Executable::toString() const {
   });
   if (programShared) {
     out << std::endl;
-    out << "program " << programShared->label();
+    out << "program " << programShared->toString();
   }
   return out.str();
 }

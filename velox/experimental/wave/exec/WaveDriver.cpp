@@ -17,6 +17,8 @@
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/exec/Task.h"
+#include "velox/common/testutil/TestValue.h"
 
 DEFINE_int32(
     max_streams_per_driver,
@@ -65,11 +67,24 @@ WaveDriver::WaveDriver(
   pipelines_.front().canAdvance = true;
 }
 
+  bool WaveDriver::shouldYield(exec::StopReason taskStopReason, size_t startTimeMs)
+    const {
+  // Checks task-level yield signal, driver-level yield signal and table scan
+  // output processing time limit.
+    return taskStopReason == exec::StopReason::kYield ||
+      operatorCtx()->driverCtx()->driver->shouldYield() ||
+      ((getOutputTimeLimitMs_ != 0) &&
+       (getCurrentTimeMs() - startTimeMs) >= getOutputTimeLimitMs_);
+}
+
+  
 RowVectorPtr WaveDriver::getOutput() {
   if (finished_) {
     return nullptr;
   }
+  startTimeMs_ = getCurrentTimeMs();
   int32_t last = pipelines_.size() - 1;
+  try {
   for (int32_t i = last; i >= 0; --i) {
     if (!pipelines_[i].canAdvance) {
       continue;
@@ -106,6 +121,10 @@ RowVectorPtr WaveDriver::getOutput() {
         }
         break;
     }
+  }
+  } catch (const std::exception& e) {
+    setError();
+    throw;
   }
   finished_ = true;
   return nullptr;
@@ -188,11 +207,29 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
     }
   }
 }
-
+  namespace {
+    bool shouldStop(exec::StopReason taskStopReason) {
+      return taskStopReason != exec::StopReason::kNone &&
+	taskStopReason != exec::StopReason::kYield;
+}
+  }
+  
+  
 Advance WaveDriver::advance(int pipelineIdx) {
   auto& pipeline = pipelines_[pipelineIdx];
   int64_t waitLoops = 0;
   for (;;) {
+    const exec::StopReason taskStopReason = operatorCtx()->driverCtx()->task->shouldStop();
+    if (shouldStop(taskStopReason) ||
+	shouldYield(taskStopReason, startTimeMs_)) {
+      blockingReason_ = exec::BlockingReason::kYield;
+      blockingFuture_ = ContinueFuture{folly::Unit{}};
+      // A point for test code injection.
+      common::testutil::TestValue::adjust(
+			"facebook::velox::wave::WaveDriver::getOutput::yield", this);
+      return Advance::kBlocked;
+    }
+
     if (pipeline.sinkFull) {
       pipeline.sinkFull = false;
       for (auto i = 0; i < pipeline.arrived.size(); ++i) {
@@ -218,7 +255,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
-          if (result_->size() != 0) {
+          if (result_ && result_->size() != 0) {
             totalWaitLoops += waitLoops;
             return Advance::kResult;
           }
@@ -297,6 +334,14 @@ std::string WaveDriver::toString() const {
   return out.str();
 }
 
+void WaveDriver::setError() {
+  for (auto& pipeline : pipelines_) {
+    for (auto& stream : pipeline.running) {
+      stream->setError();
+    }
+  }
+}
+  
 void WaveDriver::updateStats() {
   auto lockedStats = stats_.wlock();
   lockedStats->addRuntimeStat(

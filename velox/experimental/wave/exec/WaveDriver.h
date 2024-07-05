@@ -153,6 +153,12 @@ class WaveDriver : public exec::SourceOperator {
   // exec::Driver.
   void updateStats();
 
+  bool shouldYield(exec::StopReason taskStopReason, size_t startTimeMs)
+    const;
+  
+  // Sets the WaveStreams to error state.
+  void setError();
+  
   std::unique_ptr<GpuArena> arena_;
   std::unique_ptr<GpuArena> deviceArena_;
   std::unique_ptr<GpuArena> hostArena_;
@@ -160,6 +166,8 @@ class WaveDriver : public exec::SourceOperator {
   ContinueFuture blockingFuture_{ContinueFuture::makeEmpty()};
   exec::BlockingReason blockingReason_;
 
+  size_t startTimeMs_;
+  size_t getOutputTimeLimitMs_{0};
   bool finished_{false};
 
   void incStats(WaveStats& stats) {

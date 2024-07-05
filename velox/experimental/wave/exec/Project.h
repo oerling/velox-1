@@ -32,7 +32,7 @@ class Project : public WaveOperator {
   AbstractWrap* findWrap() const override;
 
   bool isStreaming() const override {
-    if (levels_[0].size() == 1 && levels_[0][0]->isSource()) {
+    if (!levels_.empty() && levels_[0].size() == 1 && levels_[0][0]->isSource()) {
       return false;
     }
     return true;

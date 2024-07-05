@@ -226,7 +226,15 @@ void CompileState::addNullableIf(
   }
   if (std::find(nullableIf.begin(), nullableIf.end(), op->id) ==
       nullableIf.end()) {
-    nullableIf.push_back(op->id);
+    if (op->sourceNullable) {
+      nullableIf.push_back(op->id);
+    } else if (op->conditionalNonNull) {
+      for (auto& i : op->nullableIf) {
+	if (std::find(nullableIf.begin(), nullableIf.end(), i) == nullableIf.end()) {
+	  nullableIf.push_back(i);
+	}
+      }
+    }
   }
 }
 

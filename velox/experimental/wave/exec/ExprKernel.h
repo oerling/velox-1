@@ -189,8 +189,8 @@ struct WaveShared {
   bool stop;
   int32_t blockBase;
   int32_t numRows;
-  // Scratch data area. Size depends on shared memory size for instructions.
-  char data;
+  // Scratch data area. Size depends on shared memory size for instructions. Align 8.
+  int64_t data;
 };
 
 /// Parameters for a Wave kernel. All pointers are device side readable.
