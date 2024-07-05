@@ -18,9 +18,7 @@
 
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/file/tests/FaultyFileSystem.h"
-#include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
-#include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 
@@ -146,7 +144,9 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
     dwio::common::FileFormat format,
     const std::optional<
         std::unordered_map<std::string, std::optional<std::string>>>&
-        partitionKeys) {
+        partitionKeys,
+    const std::optional<std::unordered_map<std::string, std::string>>&
+        infoColumns) {
   auto file =
       filesystems::getFileSystem(filePath, nullptr)->openFileForRead(filePath);
   const int64_t fileSize = file->size();
@@ -159,6 +159,11 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
                             .fileFormat(format)
                             .start(i * splitSize)
                             .length(splitSize);
+    if (infoColumns.has_value()) {
+      for (auto infoColumn : infoColumns.value()) {
+        splitBuilder.infoColumn(infoColumn.first, infoColumn.second);
+      }
+    }
     if (partitionKeys.has_value()) {
       for (auto partitionKey : partitionKeys.value()) {
         splitBuilder.partitionKey(partitionKey.first, partitionKey.second);
@@ -171,7 +176,7 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
   return splits;
 }
 
-std::shared_ptr<connector::hive::HiveColumnHandle>
+std::unique_ptr<connector::hive::HiveColumnHandle>
 HiveConnectorTestBase::makeColumnHandle(
     const std::string& name,
     const TypePtr& type,
@@ -179,7 +184,7 @@ HiveConnectorTestBase::makeColumnHandle(
   return makeColumnHandle(name, type, type, requiredSubfields);
 }
 
-std::shared_ptr<connector::hive::HiveColumnHandle>
+std::unique_ptr<connector::hive::HiveColumnHandle>
 HiveConnectorTestBase::makeColumnHandle(
     const std::string& name,
     const TypePtr& dataType,
@@ -192,7 +197,7 @@ HiveConnectorTestBase::makeColumnHandle(
     subfields.emplace_back(path);
   }
 
-  return std::make_shared<connector::hive::HiveColumnHandle>(
+  return std::make_unique<connector::hive::HiveColumnHandle>(
       name, columnType, dataType, hiveType, std::move(subfields));
 }
 
@@ -211,7 +216,7 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
   return splits;
 }
 
-std::shared_ptr<connector::ConnectorSplit>
+std::shared_ptr<connector::hive::HiveConnectorSplit>
 HiveConnectorTestBase::makeHiveConnectorSplit(
     const std::string& filePath,
     uint64_t start,
@@ -224,7 +229,7 @@ HiveConnectorTestBase::makeHiveConnectorSplit(
       .build();
 }
 
-std::shared_ptr<connector::ConnectorSplit>
+std::shared_ptr<connector::hive::HiveConnectorSplit>
 HiveConnectorTestBase::makeHiveConnectorSplit(
     const std::string& filePath,
     int64_t fileSize,

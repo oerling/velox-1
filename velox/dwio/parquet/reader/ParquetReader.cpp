@@ -25,8 +25,6 @@
 
 namespace facebook::velox::parquet {
 
-using dwio::common::ColumnSelector;
-
 /// Metadata and options for reading Parquet.
 class ReaderBase {
  public:
@@ -65,7 +63,11 @@ class ReaderBase {
   }
 
   bool isFileColumnNamesReadAsLowerCase() const {
-    return options_.isFileColumnNamesReadAsLowerCase();
+    return options_.fileColumnNamesReadAsLowerCase();
+  }
+
+  const date::time_zone* sessionTimezone() const {
+    return options_.getSessionTimezone();
   }
 
   /// Ensures that streams are enqueued and loading for the row group at
@@ -127,9 +129,9 @@ class ReaderBase {
 ReaderBase::ReaderBase(
     std::unique_ptr<dwio::common::BufferedInput> input,
     const dwio::common::ReaderOptions& options)
-    : pool_{options.getMemoryPool()},
-      footerEstimatedSize_{options.getFooterEstimatedSize()},
-      filePreloadThreshold_{options.getFilePreloadThreshold()},
+    : pool_{options.memoryPool()},
+      footerEstimatedSize_{options.footerEstimatedSize()},
+      filePreloadThreshold_{options.filePreloadThreshold()},
       options_{options},
       input_{std::move(input)},
       fileLength_{input_->getReadFile()->size()} {
@@ -751,7 +753,7 @@ class ParquetRowReader::Impl {
           "Input Table Schema (with partition columns): {}\n",
           readerBase_->bufferedInput().getReadFile()->getName(),
           readerBase_->schema()->toString(),
-          requestedType_->type()->toString());
+          requestedType_->toString());
       return exceptionMessageContext;
     };
 
@@ -759,10 +761,12 @@ class ParquetRowReader::Impl {
       return; // TODO
     }
     ParquetParams params(
-        pool_, columnReaderStats_, readerBase_->fileMetaData());
-    auto columnSelector = std::make_shared<ColumnSelector>(
-        ColumnSelector::apply(options_.getSelector(), readerBase_->schema()));
-    requestedType_ = columnSelector->getSchemaWithId();
+        pool_,
+        columnReaderStats_,
+        readerBase_->fileMetaData(),
+        readerBase->sessionTimezone());
+    requestedType_ = options_.requestedType() ? options_.requestedType()
+                                              : readerBase_->schema();
     columnReader_ = ParquetColumnReader::build(
         requestedType_,
         readerBase_->schemaWithId(), // Id is schema id
@@ -913,7 +917,7 @@ class ParquetRowReader::Impl {
 
   std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
 
-  std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
+  TypePtr requestedType_;
 
   dwio::common::ColumnReaderStatistics columnReaderStats_;
 };

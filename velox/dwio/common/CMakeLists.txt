@@ -57,12 +57,11 @@ add_library(
   SelectiveStructColumnReader.cpp
   SortingWriter.cpp
   SortingWriter.h
+  Throttler.cpp
   TypeUtils.cpp
   TypeWithId.cpp
   Writer.cpp
   WriterFactory.cpp)
-
-target_include_directories(velox_dwio_common PRIVATE ${Protobuf_INCLUDE_DIRS})
 
 target_link_libraries(
   velox_dwio_common
@@ -77,4 +76,5 @@ target_link_libraries(
   velox_memory
   Boost::regex
   Folly::folly
-  glog::glog)
+  glog::glog
+  protobuf::libprotobuf)

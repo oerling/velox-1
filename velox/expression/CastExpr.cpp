@@ -144,6 +144,18 @@ Status detail::parseHugeInt(
   return Status::OK();
 }
 
+namespace {
+const date::time_zone* getTimeZoneFromConfig(const core::QueryConfig& config) {
+  if (config.adjustTimestampToTimezone()) {
+    const auto sessionTzName = config.sessionTimezone();
+    if (!sessionTzName.empty()) {
+      return date::locate_zone(sessionTzName);
+    }
+  }
+  return nullptr;
+}
+} // namespace
+
 VectorPtr CastExpr::castFromDate(
     const SelectivityVector& rows,
     const BaseVector& input,
@@ -180,12 +192,8 @@ VectorPtr CastExpr::castFromDate(
     }
     case TypeKind::TIMESTAMP: {
       static const int64_t kMillisPerDay{86'400'000};
-      const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
-      const auto sessionTzName = queryConfig.sessionTimezone();
       const auto* timeZone =
-          (queryConfig.adjustTimestampToTimezone() && !sessionTzName.empty())
-          ? date::locate_zone(sessionTzName)
-          : nullptr;
+          getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
       auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         auto timestamp = Timestamp::fromMillis(
@@ -234,7 +242,7 @@ VectorPtr CastExpr::castToDate(
                         makeErrorMessage(input, row, DATE()),
                         result.error().message()));
               } else {
-                context.setStatus(row, Status::UserError(""));
+                context.setStatus(row, Status::UserError());
               }
             }
           } else {
@@ -255,14 +263,13 @@ VectorPtr CastExpr::castToDate(
       return castResult;
     }
     case TypeKind::TIMESTAMP: {
-      const auto& queryConfig = context.execCtx()->queryCtx()->queryConfig();
-      auto sessionTzName = queryConfig.sessionTimezone();
-      if (queryConfig.adjustTimestampToTimezone() && !sessionTzName.empty()) {
-        auto* timeZone = date::locate_zone(sessionTzName);
-        castTimestampToDate<true>(rows, input, context, castResult, timeZone);
-      } else {
-        castTimestampToDate<false>(rows, input, context, castResult);
-      }
+      auto* inputVector = input.as<SimpleVector<Timestamp>>();
+      const auto* timeZone =
+          getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
+      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+        const auto days = util::toDate(inputVector->valueAt(row), timeZone);
+        resultFlatVector->set(row, days);
+      });
       return castResult;
     }
     default:
@@ -321,7 +328,7 @@ void propagateErrorsOrSetNulls(
     const SelectivityVector& nestedRows,
     const BufferPtr& elementToTopLevelRows,
     VectorPtr& result,
-    ErrorVectorPtr& oldErrors) {
+    EvalErrorsPtr& oldErrors) {
   if (context.errors()) {
     if (setNullInResultAtError) {
       // Errors in context.errors() should be translated to nulls in the top
@@ -368,7 +375,7 @@ VectorPtr CastExpr::applyMap(
         mapKeys->size(), rows, input, context.pool());
   }
 
-  ErrorVectorPtr oldErrors;
+  EvalErrorsPtr oldErrors;
   context.swapErrors(oldErrors);
 
   // Cast keys
@@ -463,7 +470,7 @@ VectorPtr CastExpr::applyArray(
   auto elementToTopLevelRows = functions::getElementToTopLevelRows(
       arrayElements->size(), rows, input, context.pool());
 
-  ErrorVectorPtr oldErrors;
+  EvalErrorsPtr oldErrors;
   context.swapErrors(oldErrors);
 
   VectorPtr newElements;
@@ -533,7 +540,7 @@ VectorPtr CastExpr::applyRow(
   std::vector<VectorPtr> newChildren;
   newChildren.reserve(numOutputChildren);
 
-  ErrorVectorPtr oldErrors;
+  EvalErrorsPtr oldErrors;
   if (setNullInResultAtError()) {
     // We need to isolate errors that happen during the cast from previous
     // errors since those translate to nulls, unlike exisiting errors.
@@ -602,7 +609,7 @@ VectorPtr CastExpr::applyRow(
     // Set errors as nulls.
     if (auto errors = context.errors()) {
       rows.applyToSelected([&](auto row) {
-        if (errors->isIndexInRange(row) && !errors->isNullAt(row)) {
+        if (errors->hasErrorAt(row)) {
           result->setNull(row, true);
         }
       });
@@ -719,7 +726,7 @@ void CastExpr::applyPeeled(
       // This can be optimized by passing setNullInResultAtError() to castTo and
       // castFrom operations.
 
-      ErrorVectorPtr oldErrors;
+      EvalErrorsPtr oldErrors;
       context.swapErrors(oldErrors);
 
       applyCustomCast();
@@ -729,7 +736,7 @@ void CastExpr::applyPeeled(
         auto rawNulls = result->mutableRawNulls();
 
         rows.applyToSelected([&](auto row) {
-          if (errors->isIndexInRange(row) && !errors->isNullAt(row)) {
+          if (errors->hasErrorAt(row)) {
             bits::setNull(rawNulls, row, true);
           }
         });

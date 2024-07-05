@@ -30,7 +30,6 @@
 #include "velox/functions/prestosql/URLFunctions.h"
 #include "velox/functions/sparksql/ArrayFlattenFunction.h"
 #include "velox/functions/sparksql/ArrayMinMaxFunction.h"
-#include "velox/functions/sparksql/ArraySizeFunction.h"
 #include "velox/functions/sparksql/ArraySort.h"
 #include "velox/functions/sparksql/Bitwise.h"
 #include "velox/functions/sparksql/DateTimeFunctions.h"
@@ -39,6 +38,7 @@
 #include "velox/functions/sparksql/LeastGreatest.h"
 #include "velox/functions/sparksql/MightContain.h"
 #include "velox/functions/sparksql/MonotonicallyIncreasingId.h"
+#include "velox/functions/sparksql/RaiseError.h"
 #include "velox/functions/sparksql/RegexFunctions.h"
 #include "velox/functions/sparksql/RegisterArithmetic.h"
 #include "velox/functions/sparksql/RegisterCompare.h"
@@ -101,9 +101,14 @@ static void workAroundRegistrationMacro(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, prefix + "array_distinct");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, prefix + "array_position");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_zip_with, prefix + "zip_with");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_all_match, prefix + "forall");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_any_match, prefix + "exists");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, prefix + "arrays_zip");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_entries, prefix + "map_entries");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_keys, prefix + "map_keys");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_values, prefix + "map_values");
+  VELOX_REGISTER_VECTOR_FUNCTION(udf_map_zip_with, prefix + "map_zip_with");
 
   // This is the semantics of spark.sql.ansi.enabled = false.
   registerElementAtFunction(prefix + "element_at", true);
@@ -164,9 +169,6 @@ inline void registerArrayMinMaxFunctions(const std::string& prefix) {
 
 void registerFunctions(const std::string& prefix) {
   registerAllSpecialFormGeneralFunctions();
-
-  registerFunction<sparksql::ArraySizeFunction, int32_t, Array<Any>>(
-      {prefix + "array_size"});
 
   // Register size functions
   registerSize(prefix + "size");
@@ -460,6 +462,9 @@ void registerFunctions(const std::string& prefix) {
       Array<Array<Generic<T1>>>>({prefix + "flatten"});
 
   registerFunction<SoundexFunction, Varchar, Varchar>({prefix + "soundex"});
+
+  registerFunction<RaiseErrorFunction, UnknownValue, Varchar>(
+      {prefix + "raise_error"});
 }
 
 } // namespace sparksql

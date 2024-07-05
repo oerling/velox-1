@@ -111,13 +111,12 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   static constexpr int32_t kConstantChildSpecSubscript = -1;
 
   SelectiveStructColumnReaderBase(
-      const std::shared_ptr<const dwio::common::TypeWithId>& requestedType,
+      const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       FormatParams& params,
       velox::common::ScanSpec& scanSpec,
       bool isRoot = false)
-      : SelectiveColumnReader(fileType->type(), fileType, params, scanSpec),
-        requestedType_(requestedType),
+      : SelectiveColumnReader(requestedType, fileType, params, scanSpec),
         debugString_(
             getExceptionContext().message(VeloxException::Type::kSystem)),
         isRoot_(isRoot) {}
@@ -128,8 +127,8 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   // know how much to skip when seeking forward within the row group.
   void recordParentNullsInChildren(vector_size_t offset, RowSet rows);
 
-  bool hasMutation() const override {
-    return hasMutation_;
+  bool hasDeletion() const final {
+    return hasDeletion_;
   }
 
   // Returns true if we'll return a constant for that childSpec (i.e. we don't
@@ -137,8 +136,6 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   bool isChildConstant(const velox::common::ScanSpec& childSpec) const;
 
   void fillOutputRowsFromMutation(vector_size_t size);
-
-  const std::shared_ptr<const dwio::common::TypeWithId> requestedType_;
 
   std::vector<SelectiveColumnReader*> children_;
 
@@ -155,7 +152,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
 
   // After read() call mutation_ could go out of scope.  Need to keep this
   // around for lazy columns.
-  bool hasMutation_ = false;
+  bool hasDeletion_ = false;
 
   bool fillMutatedOutputRows_ = false;
 
@@ -210,7 +207,7 @@ class SelectiveFlatMapColumnReaderHelper {
       reader_.children_[i] = keyNodes_[i].reader.get();
       reader_.children_[i]->setIsFlatMapValue(true);
     }
-    if (auto type = reader_.requestedType_->type()->childAt(1); type->isRow()) {
+    if (auto type = reader_.requestedType_->childAt(1); type->isRow()) {
       childValues_ = BaseVector::create(type, 0, &reader_.memoryPool_);
     }
   }
@@ -228,7 +225,7 @@ class SelectiveFlatMapColumnReaderHelper {
     } else {
       VLOG(1) << "Reallocating result MAP vector of size " << size;
       result = BaseVector::create(
-          reader_.requestedType_->type(), size, &reader_.memoryPool_);
+          reader_.requestedType_, size, &reader_.memoryPool_);
     }
     return *result->asUnchecked<MapVector>();
   }
@@ -274,7 +271,7 @@ void SelectiveFlatMapColumnReaderHelper<T, KeyNode, FormatData>::read(
     const uint64_t* incomingNulls) {
   reader_.numReads_ = reader_.scanSpec_->newRead();
   reader_.prepareRead<char>(offset, rows, incomingNulls);
-  VELOX_DCHECK(!reader_.hasMutation());
+  VELOX_DCHECK(!reader_.hasDeletion());
   auto activeRows = rows;
   auto* mapNulls = reader_.nullsInReadRange_
       ? reader_.nullsInReadRange_->as<uint64_t>()
