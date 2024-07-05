@@ -26,6 +26,8 @@ namespace facebook::verax {
 /// concurrent Optimizations may access and update the same History.
 class History {
  public:
+  virtual ~History() = default;
+
   /// Returns a historical cost for 'op' or nullopt ir if no data. Matches the
   /// full 'op' tree to history. The exactness of the match depends on the
   /// History implementation. Implementations may extrapolate  from approximate

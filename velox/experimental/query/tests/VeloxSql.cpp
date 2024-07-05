@@ -26,6 +26,7 @@
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
+#include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/Exchange.h"
 
@@ -94,6 +95,8 @@ DEFINE_string(
 
 DEFINE_string(ssd_path, "", "Directory for local SSD cache");
 DEFINE_int32(ssd_cache_gb, 0, "Size of local SSD cache in GB");
+DEFINE_int32(ssd_checkpoint_interval_gb, 8,
+	     "Make a checkpoint after every n GB added to SSD cache");
 
 DEFINE_int32(optimizer_trace, 0, "Optimizer trace level");
 
@@ -180,12 +183,13 @@ class VeloxRunner {
         constexpr int32_t kNumSsdShards = 16;
         cacheExecutor_ =
             std::make_unique<folly::IOThreadPoolExecutor>(kNumSsdShards);
-        ssdCache = std::make_unique<cache::SsdCache>(
+        const cache::SsdCache::Config config(
             FLAGS_ssd_path,
             static_cast<uint64_t>(FLAGS_ssd_cache_gb) << 30,
             kNumSsdShards,
             cacheExecutor_.get(),
-            static_cast<uint64_t>(8) << 30);
+            static_cast<uint64_t>(FLAGS_ssd_checkpoint_interval_gb) << 30);
+        ssdCache = std::make_unique<cache::SsdCache>(config);
       }
 
       cache_ = cache::AsyncDataCache::create(
@@ -244,7 +248,8 @@ class VeloxRunner {
         "scan_for_schema",
         "schema",
         "N/a",
-        0);
+        0,
+	schemaQueryCtx_->queryConfig().sessionTimezone());
 
     schema_ = std::make_unique<facebook::verax::LocalSchema>(
         FLAGS_data_path,

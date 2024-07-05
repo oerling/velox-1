@@ -28,6 +28,7 @@ namespace facebook::velox::exec {
 /// scan.
 class SplitSource {
  public:
+  virtual ~SplitSource() = default;
   /// Returns a split for 'worker'. This may implement soft affinity or strict
   /// bucket to worker mapping.
   virtual Split next(int32_t worker) = 0;
@@ -37,6 +38,8 @@ class SplitSource {
 /// may depend on partition keys, buckets etc mentioned by each tableScan.
 class SplitSourceFactory {
  public:
+  virtual ~SplitSourceFactory() = default;
+
   /// Returns a splitSource for one TableScan across all Tasks of
   /// the fragment. The source will be invoked to produce splits for
   /// each individual worker runnin the scan.

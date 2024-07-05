@@ -222,9 +222,9 @@ void LocalSchema::readTable(
     readerOptions.setFileFormat(format_);
     auto input = std::make_unique<dwio::common::BufferedInput>(
         std::make_shared<LocalReadFile>(dirEntry.path().string()),
-        readerOptions.getMemoryPool());
+        readerOptions.memoryPool());
     std::unique_ptr<dwio::common::Reader> reader =
-        dwio::common::getReaderFactory(readerOptions.getFileFormat())
+        dwio::common::getReaderFactory(readerOptions.fileFormat())
             ->createReader(std::move(input), readerOptions);
     const auto fileType = reader->rowType();
     if (!tableType) {
