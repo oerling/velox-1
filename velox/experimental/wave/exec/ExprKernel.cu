@@ -19,8 +19,8 @@
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
-#include "velox/experimental/wave/exec/WaveCore.cuh"
 #include "velox/experimental/wave/exec/Aggregate.cuh"
+#include "velox/experimental/wave/exec/WaveCore.cuh"
 
 DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
@@ -53,7 +53,6 @@ __device__ __forceinline__ void binaryOpKernel(
   }
 }
 
-
 #define BINARY_TYPES(opCode, OP)                             \
   case OP_MIX(opCode, WaveTypeKind::BIGINT):                 \
     binaryOpKernel<int64_t>(                                 \
@@ -61,84 +60,74 @@ __device__ __forceinline__ void binaryOpKernel(
         instruction->_.binary,                               \
         operands,                                            \
         blockBase,                                           \
-        &shared->data,                                              \
-        laneStatus);                                             \
+        &shared->data,                                       \
+        laneStatus);                                         \
     break;
 
-  
-__global__ void oneAggregate(
-			       KernelParams params, int32_t pc, int32_t base) {
+__global__ void oneAggregate(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_PREAMBLE(base);
   aggregateKernel(instruction[pc]._.aggregate, shared, laneStatus);
-      PROGRAM_EPILOGUE();
+  PROGRAM_EPILOGUE();
 }
 
-__global__ void oneReadAggregate(
-				 KernelParams params, int32_t pc, int32_t base);
+__global__ void oneReadAggregate(KernelParams params, int32_t pc, int32_t base);
 
-  template <typename T>
-__global__ void onePlus(
-			       KernelParams params, int32_t pc, int32_t base) {
+template <typename T>
+__global__ void onePlus(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_PREAMBLE(base);
-    binaryOpKernel<T>(                                 
-        [](auto left, auto right) { return left + right; }, 
-        instruction[pc]._.binary,                               
-        operands,                                            
-        blockBase,                                           
-        &shared->data,                                              
-        laneStatus);                                             
-    PROGRAM_EPILOGUE();
+  binaryOpKernel<T>(
+      [](auto left, auto right) { return left + right; },
+      instruction[pc]._.binary,
+      operands,
+      blockBase,
+      &shared->data,
+      laneStatus);
+  PROGRAM_EPILOGUE();
 }
 
-    template <typename T>
-__global__ void oneLt(
-			       KernelParams params, int32_t pc, int32_t base) {
+template <typename T>
+__global__ void oneLt(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_PREAMBLE(base);
-    binaryOpKernel<T>(                                 
-        [](auto left, auto right) { return left < right; }, 
-        instruction[pc]._.binary,                               
-        operands,                                            
-        blockBase,                                           
-        &shared->data,                                              
-        laneStatus);                                             
-    PROGRAM_EPILOGUE();
+  binaryOpKernel<T>(
+      [](auto left, auto right) { return left < right; },
+      instruction[pc]._.binary,
+      operands,
+      blockBase,
+      &shared->data,
+      laneStatus);
+  PROGRAM_EPILOGUE();
 }
 
-  __global__ void oneFilter(
-			    KernelParams params, int32_t pc, int32_t base);
-  
+__global__ void oneFilter(KernelParams params, int32_t pc, int32_t base);
 
-  
-  
-__global__ void waveBaseKernel(
-			       KernelParams params) {
+__global__ void waveBaseKernel(KernelParams params) {
   PROGRAM_PREAMBLE(0);
   for (;;) {
     switch (instruction->opCode) {
       case OpCode::kReturn:
-	PROGRAM_EPILOGUE();
+        PROGRAM_EPILOGUE();
         return;
 
-    case OpCode::kFilter:
+      case OpCode::kFilter:
         filterKernel(
-            instruction->_.filter,
-            operands,
-            blockBase,
-	    shared,
-	    laneStatus);
+            instruction->_.filter, operands, blockBase, shared, laneStatus);
         break;
 
       case OpCode::kWrap:
         wrapKernel(
-            instruction->_.wrap, operands, blockBase, shared->numRows, &shared->data);
+            instruction->_.wrap,
+            operands,
+            blockBase,
+            shared->numRows,
+            &shared->data);
         break;
-    case OpCode::kAggregate:
-      aggregateKernel(instruction->_.aggregate, shared, laneStatus);
-      break;
-    case OpCode::kReadAggregate:
-      readAggregateKernel(instruction->_.aggregate, shared);
-      break;
-      BINARY_TYPES(OpCode::kPlus, +);
+      case OpCode::kAggregate:
+        aggregateKernel(instruction->_.aggregate, shared, laneStatus);
+        break;
+      case OpCode::kReadAggregate:
+        readAggregateKernel(instruction->_.aggregate, shared);
+        break;
+        BINARY_TYPES(OpCode::kPlus, +);
         BINARY_TYPES(OpCode::kLT, <);
     }
     ++instruction;
@@ -148,22 +137,20 @@ __global__ void waveBaseKernel(
 int32_t instructionSharedMemory(const Instruction& instruction) {
   switch (instruction.opCode) {
     case OpCode::kFilter:
-      return sizeof(WaveShared) + (2 + (kBlockSize / kWarpThreads)) * sizeof(int32_t);
-  default:
-    return sizeof(WaveShared);
+      return sizeof(WaveShared) +
+          (2 + (kBlockSize / kWarpThreads)) * sizeof(int32_t);
+    default:
+      return sizeof(WaveShared);
   }
 }
 
 #define CALL_ONE(k, params, pc, base) \
-  k<<< \
-      blocksPerExe,\
-      kBlockSize,\
-      sharedSize,\
-      alias ? alias->stream()->stream : stream()->stream>>>(\
-							    params, pc, base);
+  k<<<blocksPerExe,                   \
+      kBlockSize,                     \
+      sharedSize,                     \
+      alias ? alias->stream()->stream : stream()->stream>>>(params, pc, base);
 
-
-  void WaveKernelStream::callOne(
+void WaveKernelStream::callOne(
     Stream* alias,
     int32_t numBlocks,
     int32_t sharedSize,
@@ -195,30 +182,28 @@ int32_t instructionSharedMemory(const Instruction& instruction) {
     }
     for (auto pc = start; pc < program.size(); ++pc) {
       switch (program[pc]) {
-      case OpCode::kFilter:
-	CALL_ONE(oneFilter, params, pc, base)
-	  ++pc;
-	break;
-      case OpCode::kAggregate:
-	CALL_ONE(oneAggregate, params, pc, base)
-	  break;
-      case OpCode::kReadAggregate:
-	CALL_ONE(oneReadAggregate, params, pc, base)
-	break;
-      case OP_MIX(OpCode::kPlus, WaveTypeKind::BIGINT):
-	CALL_ONE(onePlus<int64_t>, params, pc, base);
-	break;
-      case OP_MIX(OpCode::kLT, WaveTypeKind::BIGINT):
-	CALL_ONE(oneLt<int64_t>, params, pc, base);
-	break;
+        case OpCode::kFilter:
+          CALL_ONE(oneFilter, params, pc, base)
+          ++pc;
+          break;
+        case OpCode::kAggregate:
+          CALL_ONE(oneAggregate, params, pc, base)
+          break;
+        case OpCode::kReadAggregate:
+          CALL_ONE(oneReadAggregate, params, pc, base)
+          break;
+        case OP_MIX(OpCode::kPlus, WaveTypeKind::BIGINT):
+          CALL_ONE(onePlus<int64_t>, params, pc, base);
+          break;
+        case OP_MIX(OpCode::kLT, WaveTypeKind::BIGINT):
+          CALL_ONE(oneLt<int64_t>, params, pc, base);
+          break;
       }
     }
     params.startPC = nullptr;
   }
 }
 
-
-  
 void WaveKernelStream::call(
     Stream* alias,
     int32_t numBlocks,
@@ -234,24 +219,22 @@ void WaveKernelStream::call(
       numBlocks,
       kBlockSize,
       sharedSize,
-      alias ? alias->stream()->stream : stream()->stream>>>(
-							    params);
+      alias ? alias->stream()->stream : stream()->stream>>>(params);
 }
-  
+
 REGISTER_KERNEL("expr", waveBaseKernel);
 
-  void __global__ setupAggregationKernel(AggregationControl op) {
+void __global__ setupAggregationKernel(AggregationControl op) {
   //    assert(op.maxTableEntries == 0);
-  auto* data = new(op.head) DeviceAggregation();
+  auto* data = new (op.head) DeviceAggregation();
   data->rowSize = op.rowSize;
   data->singleRow = reinterpret_cast<char*>(data + 1);
   memset(data->singleRow, 0, op.rowSize);
 }
-  
-  void WaveKernelStream::setupAggregation(AggregationControl& op) {
-    setupAggregationKernel<<<1, 1, 0, stream_->stream>>>(op);
-    wait();
-  }
 
-  
+void WaveKernelStream::setupAggregation(AggregationControl& op) {
+  setupAggregationKernel<<<1, 1, 0, stream_->stream>>>(op);
+  wait();
+}
+
 } // namespace facebook::velox::wave

@@ -19,20 +19,24 @@
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
-#include "velox/experimental/wave/exec/WaveCore.cuh"
 #include "velox/experimental/wave/exec/Aggregate.cuh"
+#include "velox/experimental/wave/exec/WaveCore.cuh"
 
 DECLARE_bool(kernel_gdb);
 
 namespace facebook::velox::wave {
 
-  __global__ void oneFilter(
-			       KernelParams params, int32_t pc, int32_t base) {
+__global__ void oneFilter(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_PREAMBLE(base);
-  filterKernel(instruction[pc]._.filter, operands, blockBase, shared, laneStatus);
-  wrapKernel(instruction[pc + 1]._.wrap, operands, blockBase, shared->numRows, &shared->data);
-      PROGRAM_EPILOGUE();
+  filterKernel(
+      instruction[pc]._.filter, operands, blockBase, shared, laneStatus);
+  wrapKernel(
+      instruction[pc + 1]._.wrap,
+      operands,
+      blockBase,
+      shared->numRows,
+      &shared->data);
+  PROGRAM_EPILOGUE();
 }
 
-
-}
+} // namespace facebook::velox::wave
