@@ -24,7 +24,7 @@ class Schema;
 class SchemaSource {
  public:
   virtual ~SchemaSource() = default;
-  
+
   // Creates information on 'table' in 'schema'. The information is allocated in
   // the QueryGraphContext of the calling thread. Adds a table to 'schema' using
   // addTable, which takes a const Schema*.
