@@ -61,9 +61,6 @@ class MemoryManager;
 
 constexpr int64_t kMaxMemory = std::numeric_limits<int64_t>::max();
 
-/// Sets the memory reclaimer to the provided memory pool.
-using SetMemoryReclaimer = std::function<void(MemoryPool*)>;
-
 /// This class provides the memory allocation interfaces for a query execution.
 /// Each query execution entity creates a dedicated memory pool object. The
 /// memory pool objects from a query are organized as a tree with four levels
@@ -208,11 +205,11 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     return threadSafe_;
   }
 
-  /// Invoked to traverse the memory pool subtree rooted at this, and calls
-  /// 'visitor' on each visited child memory pool with the parent pool's
-  /// 'poolMutex_' reader lock held. The 'visitor' must not access the
-  /// parent memory pool to avoid the potential recursive locking issues. Note
-  /// that the traversal stops if 'visitor' returns false.
+  /// Invoked to visit the memory pool's direct children, and calls 'visitor' on
+  /// each visited child memory pool with the parent pool's 'poolMutex_' reader
+  /// lock held. The 'visitor' must not access the parent memory pool to avoid
+  /// the potential recursive locking issues. Note that the traversal stops if
+  /// 'visitor' returns false.
   virtual void visitChildren(
       const std::function<bool(MemoryPool*)>& visitor) const;
 
@@ -321,27 +318,28 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   virtual int64_t capacity() const = 0;
 
   /// Returns the currently used memory in bytes of this memory pool. For
-  /// non-leaf memory pool, the function returns the aggregated memory
-  /// reservation from all its child memory pools.
-  virtual int64_t currentBytes() const = 0;
-
-  /// Returns the currently used memory in bytes of this memory pool. It returns
-  /// the same usage as currentBytes() for leaf memory pool. But for non-leaf
-  /// memory pool, the function returns the aggregated used memory from all its
-  /// child memory pools.
+  /// non-leaf memory pool, the function returns the aggregated used memory from
+  /// all its child memory pools.
   virtual int64_t usedBytes() const = 0;
 
   /// Returns the peak memory usage in bytes of this memory pool.
   virtual int64_t peakBytes() const = 0;
 
-  /// Returns the reserved but not used memory reservation in bytes of this
-  /// memory pool.
+  /// Returns the reserved but not used memory in bytes of this memory pool.
   ///
-  /// NOTE: this is always zero for non-leaf memory pool as it only aggregate
+  /// NOTE: this is always zero for non-leaf memory pool as it only aggregates
   /// the memory reservations from its child memory pools but not
   /// differentiating whether the aggregated reservations have been actually
   /// used in child pools or not.
   virtual int64_t availableReservation() const = 0;
+
+  /// Returns the reserved but not used memory in bytes that can be released by
+  /// calling 'release()'. This might be different from 'availableReservation()'
+  /// because leaf memory pool makes quantized memory reservation.
+  ///
+  /// NOTE: For non-leaf memory pool, it returns the aggregated releasable
+  /// memory reservations from all its leaf memory pool.
+  virtual int64_t releasableReservation() const = 0;
 
   /// Returns the reserved memory reservation in bytes including both used and
   /// unused reservations.
@@ -419,7 +417,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// The memory pool's execution stats.
   struct Stats {
     /// The current memory usage.
-    uint64_t currentBytes{0};
+    uint64_t usedBytes{0};
     /// The current reserved memory.
     uint64_t reservedBytes{0};
     /// The peak memory usage.
@@ -462,7 +460,7 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
     /// Note that peak or cumulative bytes might be non-zero and we are still
     /// empty at this moment.
     bool empty() const {
-      return currentBytes == 0 && reservedBytes == 0;
+      return usedBytes == 0 && reservedBytes == 0;
     }
   };
 
@@ -574,7 +572,7 @@ std::ostream& operator<<(std::ostream& os, const MemoryPool::Stats& stats);
 class MemoryPoolImpl : public MemoryPool {
  public:
   /// The callback invoked on the root memory pool destruction. It is set by
-  /// memory manager to return back the allocated memory capacity.
+  /// memory manager to removes the pool from 'MemoryManager::pools_'.
   using DestructionCallback = std::function<void(MemoryPool*)>;
   /// The callback invoked when the used memory reservation of the root memory
   /// pool exceed its capacity. It is set by memory manager to grow the memory
@@ -626,11 +624,6 @@ class MemoryPoolImpl : public MemoryPool {
 
   int64_t capacity() const override;
 
-  int64_t currentBytes() const override {
-    std::lock_guard<std::mutex> l(mutex_);
-    return currentBytesLocked();
-  }
-
   int64_t usedBytes() const override;
 
   int64_t peakBytes() const override {
@@ -643,8 +636,9 @@ class MemoryPoolImpl : public MemoryPool {
     return availableReservationLocked();
   }
 
+  int64_t releasableReservation() const override;
+
   int64_t reservedBytes() const override {
-    std::lock_guard<std::mutex> l(mutex_);
     return reservationBytes_;
   }
 
@@ -765,10 +759,6 @@ class MemoryPoolImpl : public MemoryPool {
 
   FOLLY_ALWAYS_INLINE int64_t capacityLocked() const {
     return parent_ != nullptr ? toImpl(parent_)->capacity_ : capacity_;
-  }
-
-  FOLLY_ALWAYS_INLINE int64_t currentBytesLocked() const {
-    return isLeaf() ? usedReservationBytes_ : reservationBytes_;
   }
 
   FOLLY_ALWAYS_INLINE int64_t availableReservationLocked() const {
@@ -951,7 +941,7 @@ class MemoryPoolImpl : public MemoryPool {
     } else {
       out << "unlimited capacity ";
     }
-    out << "used " << succinctBytes(currentBytesLocked()) << " available "
+    out << "used " << succinctBytes(usedBytes()) << " available "
         << succinctBytes(availableReservationLocked());
     out << " reservation [used " << succinctBytes(usedReservationBytes_)
         << ", reserved " << succinctBytes(reservationBytes_) << ", min "
@@ -1018,7 +1008,7 @@ class MemoryPoolImpl : public MemoryPool {
   // name matches the specified regular expression 'debugPoolNameRegex_'.
   const std::string debugPoolNameRegex_;
 
-  // Serializes updates on 'grantedReservationBytes_', 'usedReservationBytes_'
+  // Serializes updates on 'reservationBytes_', 'usedReservationBytes_'
   // and 'minReservationBytes_' to make reservation decision on a consistent
   // read/write of those counters. incrementReservation()/decrementReservation()
   // work based on atomic 'reservationBytes_' without mutex as children updating

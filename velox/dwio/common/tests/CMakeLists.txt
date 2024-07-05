@@ -34,6 +34,7 @@ add_executable(
   ReaderTest.cpp
   RetryTests.cpp
   TestBufferedInput.cpp
+  ThrottlerTest.cpp
   TypeTests.cpp
   UnitLoaderToolsTests.cpp
   WriterTest.cpp
@@ -53,7 +54,8 @@ target_link_libraries(
   gtest_main
   gmock
   glog::glog
-  fmt::fmt)
+  fmt::fmt
+  protobuf::libprotobuf)
 
 add_executable(velox_dwio_common_data_buffer_benchmark DataBufferBenchmark.cpp)
 

@@ -88,7 +88,7 @@ PositionalDeleteFileReader::PositionalDeleteFileReader(
   configureReaderOptions(
       deleteReaderOpts,
       hiveConfig_,
-      connectorQueryCtx->sessionProperties(),
+      connectorQueryCtx,
       deleteFileSchema,
       deleteSplit_);
 
@@ -102,7 +102,7 @@ PositionalDeleteFileReader::PositionalDeleteFileReader(
       executor_);
 
   auto deleteReader =
-      dwio::common::getReaderFactory(deleteReaderOpts.getFileFormat())
+      dwio::common::getReaderFactory(deleteReaderOpts.fileFormat())
           ->createReader(std::move(deleteFileInput), deleteReaderOpts);
 
   // Check if the whole delete file split can be skipped. This could happen when

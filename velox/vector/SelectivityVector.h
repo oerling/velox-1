@@ -134,6 +134,10 @@ class SelectivityVector {
     return MutableRange<bool>(bits_.data(), begin_, end_);
   }
 
+  const uint64_t* allBits() const {
+    return bits_.data();
+  }
+
   vector_size_t begin() const {
     return begin_;
   }
@@ -433,7 +437,8 @@ class SelectivityIterator {
 template <typename Callable>
 inline void SelectivityVector::applyToSelected(Callable func) const {
   if (isAllSelected()) {
-    for (vector_size_t row = begin_; row < end_; ++row) {
+    const auto end = end_;
+    for (vector_size_t row = begin_; row < end; ++row) {
       func(row);
     }
   } else {

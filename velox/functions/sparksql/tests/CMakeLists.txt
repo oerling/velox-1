@@ -19,9 +19,9 @@ add_executable(
   ArrayGetTest.cpp
   ArrayMaxTest.cpp
   ArrayMinTest.cpp
-  ArraySizeTest.cpp
   ArraySortTest.cpp
   ArrayShuffleTest.cpp
+  ArgGeneratorTest.cpp
   BitwiseTest.cpp
   ComparisonsTest.cpp
   DateTimeFunctionsTest.cpp
@@ -38,6 +38,7 @@ add_executable(
   MapTest.cpp
   MightContainTest.cpp
   MonotonicallyIncreasingIdTest.cpp
+  RaiseErrorTest.cpp
   RandTest.cpp
   RegexFunctionsTest.cpp
   SizeTest.cpp
@@ -58,6 +59,8 @@ target_link_libraries(
   velox_functions_spark
   velox_functions_test_lib
   velox_exec_test_lib
+  velox_expression_fuzzer_test_utility
+  velox_expression_fuzzer
   fmt::fmt
   gtest
   gtest_main

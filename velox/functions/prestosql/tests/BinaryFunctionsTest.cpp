@@ -411,7 +411,20 @@ TEST_F(BinaryFunctionsTest, toBase64Url) {
 
 TEST_F(BinaryFunctionsTest, fromBase64) {
   const auto fromBase64 = [&](std::optional<std::string> value) {
-    return evaluateOnce<std::string>("from_base64(c0)", value);
+    // from_base64 allows VARCHAR and VARBINARY inputs.
+    auto result =
+        evaluateOnce<std::string>("from_base64(c0)", VARCHAR(), value);
+    auto otherResult =
+        evaluateOnce<std::string>("from_base64(c0)", VARBINARY(), value);
+
+    VELOX_CHECK_EQ(result.has_value(), otherResult.has_value());
+
+    if (!result.has_value()) {
+      return result;
+    }
+
+    VELOX_CHECK_EQ(result.value(), otherResult.value());
+    return result;
   };
 
   EXPECT_EQ(std::nullopt, fromBase64(std::nullopt));
@@ -424,8 +437,12 @@ TEST_F(BinaryFunctionsTest, fromBase64) {
       "Hello World from Velox!",
       fromBase64("SGVsbG8gV29ybGQgZnJvbSBWZWxveCE="));
 
-  EXPECT_THROW(fromBase64("YQ="), VeloxUserError);
-  EXPECT_THROW(fromBase64("YQ==="), VeloxUserError);
+  VELOX_ASSERT_USER_THROW(
+      fromBase64("YQ="),
+      "Base64::decode() - invalid input string: string length is not a multiple of 4.");
+  VELOX_ASSERT_USER_THROW(
+      fromBase64("YQ==="),
+      "Base64::decode() - invalid input string: string length is not a multiple of 4.");
 
   // Check encoded strings without padding
   EXPECT_EQ("a", fromBase64("YQ"));
@@ -747,4 +764,67 @@ TEST_F(BinaryFunctionsTest, fromIEEE754Bits32) {
       fromIEEE754Bits32(hexToDec("0000000000000001")),
       "Input floating-point value must be exactly 4 bytes long");
 }
+
+TEST_F(BinaryFunctionsTest, rpad) {
+  const auto rpad = [&](std::optional<StringView> arg,
+                        std::optional<int32_t> size,
+                        std::optional<StringView> key) {
+    return evaluateOnce<std::string, StringView, int32_t, StringView>(
+        "rpad(c0, c1, c2)",
+        {VARBINARY(), INTEGER(), VARBINARY()},
+        {arg},
+        {size},
+        {key});
+  };
+  EXPECT_EQ(rpad("1234", 14, "45"), ("12344545454545"));
+  EXPECT_EQ(
+      rpad("123456789012", 24, "4444555566667777"),
+      ("123456789012444455556666"));
+  EXPECT_EQ(
+      rpad("1234567890", 30, "44445555666677778888"),
+      ("123456789044445555666677778888"));
+  EXPECT_EQ(rpad("1234", 15, "45"), ("123445454545454"));
+  EXPECT_EQ(rpad("1234", 14, "4524"), ("12344524452445"));
+  EXPECT_EQ(rpad("1234", 6, "4524"), ("123445"));
+  EXPECT_EQ(rpad("23", 0, "4524"), (""));
+  EXPECT_EQ(rpad("∆", 2, "˚"), ("∆˚"));
+  EXPECT_EQ(rpad("©", 4, "£"), ("©£££"));
+  EXPECT_EQ(rpad("1234", 2, "4524"), ("12"));
+  EXPECT_EQ(rpad(std::nullopt, 0, std::nullopt), std::nullopt);
+  VELOX_ASSERT_USER_THROW(
+      rpad("2312", -1, "4524"), "pad size must be in the range [0..1048576)");
+  VELOX_ASSERT_USER_THROW(rpad("2312", 1, ""), "padString must not be empty");
+}
+
+TEST_F(BinaryFunctionsTest, lpad) {
+  const auto lpad = [&](std::optional<StringView> arg,
+                        std::optional<int32_t> size,
+                        std::optional<StringView> key) {
+    return evaluateOnce<std::string, StringView, int32_t, StringView>(
+        "lpad(c0, c1, c2)",
+        {VARBINARY(), INTEGER(), VARBINARY()},
+        {arg},
+        {size},
+        {key});
+  };
+  EXPECT_EQ(lpad("1234", 14, "45"), ("45454545451234"));
+  EXPECT_EQ(lpad("1234", 15, "45"), ("454545454541234"));
+  EXPECT_EQ(
+      lpad("123456789012", 24, "4444555566667777"),
+      ("444455556666123456789012"));
+  EXPECT_EQ(
+      lpad("1234567890", 30, "44445555666677778888"),
+      ("444455556666777788881234567890"));
+  EXPECT_EQ(lpad("∆", 2, "˚"), ("˚∆"));
+  EXPECT_EQ(lpad("©", 4, "£"), ("£££©"));
+  EXPECT_EQ(lpad("1234", 14, "4524"), ("45244524451234"));
+  EXPECT_EQ(lpad("1234", 6, "4524"), ("451234"));
+  EXPECT_EQ(lpad("1234", 0, "4524"), (""));
+  EXPECT_EQ(lpad("1234", 2, "4524"), ("12"));
+  EXPECT_EQ(lpad(std::nullopt, 0, std::nullopt), std::nullopt);
+  VELOX_ASSERT_USER_THROW(
+      lpad("2312", -1, "4524"), "pad size must be in the range [0..1048576)");
+  VELOX_ASSERT_USER_THROW(lpad("2312", 1, ""), "padString must not be empty");
+}
+
 } // namespace
