@@ -63,7 +63,8 @@ class ColumnReader {
     return operand_;
   }
 
-  /// Initializes 'op' for the column of 'this'. The op is made once and used for possibly multiple row ranges later.
+  /// Initializes 'op' for the column of 'this'. The op is made once and used
+  /// for possibly multiple row ranges later.
   virtual void makeOp(
       ReadStream* readStream,
       ColumnAction action,
@@ -77,7 +78,8 @@ class ColumnReader {
     return staging_;
   }
 
-  /// Records an event after the first griddize. many decodes may proceed for different rows on different streams after the griddize.
+  /// Records an event after the first griddize. many decodes may proceed for
+  /// different rows on different streams after the griddize.
   void recordGriddize(Stream& stream) {
     VELOX_CHECK_NULL(griddizeEvent_);
     griddizeEvent_ = std::make_unique<Event>();
@@ -87,7 +89,7 @@ class ColumnReader {
   Event* griddizeEvent() const {
     return griddizeEvent_.get();
   }
-  
+
  protected:
   TypePtr requestedType_;
   std::shared_ptr<const dwio::common::TypeWithId> fileType_;
@@ -103,7 +105,8 @@ class ColumnReader {
   // Staging of encoded data on device. Only set in the top struct reader.
   std::vector<std::unique_ptr<SplitStaging>> staging_;
 
-  // Event realized after griddize completes. Non-first ReadStream launches must wait for this.
+  // Event realized after griddize completes. Non-first ReadStream launches must
+  // wait for this.
   std::unique_ptr<Event> griddizeEvent_;
 };
 
@@ -122,7 +125,8 @@ class ReadStream : public Executable {
   /// columns have their last kernel in flight.  Transfers ownership
   /// of 'readStream' to its WaveStream. 'row' is the start relative
   /// to split start. 'rows' are offsets relative to 'row'.
-    static void launch(std::unique_ptr<ReadStream> readStream, int32_t row, RowSet rows);
+  static void
+  launch(std::unique_ptr<ReadStream> readStream, int32_t row, RowSet rows);
 
   DecodePrograms& programs() {
     return programs_;
@@ -143,7 +147,7 @@ class ReadStream : public Executable {
   StructColumnReader* reader() const {
     return reader_;
   }
-  
+
  private:
   // Computes starting points for multiple TBs per column if more rows are
   // needed than is good per TB.
@@ -186,7 +190,8 @@ class ReadStream : public Executable {
   // Count of KBlockSize blocks in max top level rows.
   int32_t numBlocks_{0};
 
-  // Pointer to staging owned by reader tree root. Not owned here because lifetime is the split, not the batch.
+  // Pointer to staging owned by reader tree root. Not owned here because
+  // lifetime is the split, not the batch.
   SplitStaging* currentStaging_;
 
   // Data to be copied from device, e.g. filter selectivities.

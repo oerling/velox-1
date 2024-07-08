@@ -207,15 +207,15 @@ bool ReadStream::decodenonFiltersInFiltersKernel() {
   return ops_.size() == 1;
 }
 
-  void ReadStream::prepareRead() {
-    filtersDone_ = false;
-    for (auto& op : ops_) {
-      op.reader->formatData()->newBatch(row_);
-      op.isFinal = false;
-      op.rows = rows_;
-    }
+void ReadStream::prepareRead() {
+  filtersDone_ = false;
+  for (auto& op : ops_) {
+    op.reader->formatData()->newBatch(row_);
+    op.isFinal = false;
+    op.rows = rows_;
   }
-  
+}
+
 bool ReadStream::makePrograms(bool& needSync) {
   bool allDone = true;
   needSync = false;
@@ -282,15 +282,18 @@ bool ReadStream::makePrograms(bool& needSync) {
   return allDone;
 }
 
-  void ReadStream::launch(std::unique_ptr<ReadStream> readStream, int32_t row, RowSet rows) {
-    using UniqueExe = std::unique_ptr<Executable>;
-readStream->row_ = row;
- readStream->rows_ = rows;
+void ReadStream::launch(
+    std::unique_ptr<ReadStream> readStream,
+    int32_t row,
+    RowSet rows) {
+  using UniqueExe = std::unique_ptr<Executable>;
+  readStream->row_ = row;
+  readStream->rows_ = rows;
 
-    // The function of control here is to have a status and row count for each
+  // The function of control here is to have a status and row count for each
   // kBlockSize top level rows of output and to have Operand structs for the
   // produced column.
-    readStream->makeControl();
+  readStream->makeControl();
   auto numRows = readStream->rows_.size();
   auto waveStream = readStream->waveStream;
   WaveStats& stats = waveStream->stats();
@@ -300,14 +303,14 @@ readStream->row_ = row;
       [&](Stream* stream, folly::Range<Executable**> exes) {
         auto* readStream = reinterpret_cast<ReadStream*>(exes[0]);
         bool needSync = false;
-	bool griddizedHere = false;
-	if (!readStream->inited_) {
-	  readStream->makeGrid(stream);
-	  griddizedHere = true;
-	  readStream->makeOps();
-	  readStream->inited_ = true;
-	}
-	readStream->prepareRead();
+        bool griddizedHere = false;
+        if (!readStream->inited_) {
+          readStream->makeGrid(stream);
+          griddizedHere = true;
+          readStream->makeOps();
+          readStream->inited_ = true;
+        }
+        readStream->prepareRead();
         for (;;) {
           bool done = readStream->makePrograms(needSync);
           stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();
@@ -322,22 +325,24 @@ readStream->row_ = row;
           readStream->setBlockStatusAndTemp();
           readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
           WaveBufferPtr extra;
-	  if (!griddizedHere && firstLaunch) {
-	    // If the same split is read on multiple streams for
-	    // different row ranges, the non-first will have to sync
-	    // on the griddize of the first.
-	    if (auto* event = readStream->reader_->griddizeEvent()) {
-	      event->wait(*stream);
-	    }
-	  }
-	  firstLaunch = false;
-	    launchDecode(
+          if (!griddizedHere && firstLaunch) {
+            // If the same split is read on multiple streams for
+            // different row ranges, the non-first will have to sync
+            // on the griddize of the first.
+            if (auto* event = readStream->reader_->griddizeEvent()) {
+              event->wait(*stream);
+            }
+          }
+          firstLaunch = false;
+          launchDecode(
               readStream->programs(), &waveStream->arena(), extra, stream);
           if (extra) {
             readStream->commands_.push_back(std::move(extra));
           }
-          readStream->reader_->splitStaging().push_back(std::make_unique<SplitStaging>());
-          readStream->currentStaging_ = readStream->reader_->splitStaging().back().get();
+          readStream->reader_->splitStaging().push_back(
+              std::make_unique<SplitStaging>());
+          readStream->currentStaging_ =
+              readStream->reader_->splitStaging().back().get();
           if (needSync) {
             waveStream->setState(WaveStream::State::kWait);
             stream->wait();
@@ -373,7 +378,8 @@ void ReadStream::makeControl() {
   auto deviceBytes = statusBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
-  // Zero initialization is expected, for example for operands and arrays in Operand::indices.
+  // Zero initialization is expected, for example for operands and arrays in
+  // Operand::indices.
   memset(control->deviceData->as<char>(), 0, deviceBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
@@ -385,7 +391,7 @@ void ReadStream::makeControl() {
     }
   }
   operands = waveStream->fillOperands(
-				      *this, control->deviceData->as<char>() + statusBytes, info)[0];
+      *this, control->deviceData->as<char>() + statusBytes, info)[0];
   control_ = control.get();
   waveStream->setLaunchControl(0, 0, std::move(control));
 }

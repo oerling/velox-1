@@ -140,7 +140,7 @@ void moveTo(
     std::vector<std::unique_ptr<WaveStream>>& from,
     int32_t i,
     std::vector<std::unique_ptr<WaveStream>>& to,
-	    bool toRun = false) {
+    bool toRun = false) {
   if (!toRun) {
     VELOX_CHECK(from[i]->state() != WaveStream::State::kParallel);
   }
@@ -246,7 +246,8 @@ Advance WaveDriver::advance(int pipelineIdx) {
       totalWaitLoops += waitLoops;
       return Advance::kBlocked;
     }
-    if (pipeline.running.empty() && pipeline.arrived.empty() && !pipeline.finished.empty()) {
+    if (pipeline.running.empty() && pipeline.arrived.empty() &&
+        !pipeline.finished.empty()) {
       totalWaitLoops += waitLoops;
       return Advance::kFinished;
     }
