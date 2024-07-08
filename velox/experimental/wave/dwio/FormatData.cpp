@@ -38,13 +38,19 @@ void SplitStaging::registerPointerInternal(
   if (clear) {
     *ptr = nullptr;
   }
+#ifndef NDEBUG
+  for (auto& pair : patch_) {
+    VELOX_CHECK(
+        pair.second != ptr, "Must not register the same pointer twice");
+  }
+#endif
   patch_.push_back(std::make_pair(id, ptr));
 }
 
 // Starts the transfers registered with add(). 'stream' is set to a stream
 // where operations depending on the transfer may be queued.
-void SplitStaging::transfer(WaveStream& waveStream, Stream& stream) {
-  if (fill_ == 0) {
+  void SplitStaging::transfer(WaveStream& waveStream, Stream& stream, bool recordEvent) {
+  if (fill_ == 0 || deviceBuffer_ != nullptr) {
     return;
   }
   deviceBuffer_ = waveStream.arena().allocate<char>(fill_);
@@ -57,6 +63,10 @@ void SplitStaging::transfer(WaveStream& waveStream, Stream& stream) {
   for (auto& pair : patch_) {
     *reinterpret_cast<int64_t*>(pair.second) +=
         reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
+  }
+  if (recordEvent) {
+    event_ = std::make_unique<Event>();
+    event_->record(stream);
   }
 }
 

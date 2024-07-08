@@ -107,6 +107,8 @@ int32_t WaveHiveDataSource::canAdvance(WaveStream& stream) {
 
 void WaveHiveDataSource::schedule(WaveStream& stream, int32_t maxRows) {
   splitReader_->schedule(stream, maxRows);
+  // The stream must hold the reader tree. 'this' can initiate many
+  // concurrently running streams over potentially multiple splits.
   stream.setSplitReader(splitReader_);
 }
 

@@ -59,7 +59,7 @@ class TableScanTest : public virtual HiveConnectorTestBase {
       const RowTypePtr& type,
       int32_t numVectors,
       int32_t vectorSize,
-      bool notNull) {
+      bool notNull = true) {
     auto vectors = makeVectors(type, numVectors, vectorSize);
     int32_t cnt = 0;
     for (auto& vector : vectors) {
@@ -179,10 +179,8 @@ class TableScanTest : public virtual HiveConnectorTestBase {
 
 TEST_F(TableScanTest, basic) {
   auto type = ROW({"c0"}, {BIGINT()});
-  auto vectors = makeVectors(type, 10, 1'000);
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
-
+  auto splits = makeData(type, 10, 1000);
+  
   auto plan = tableScanNode(type);
   auto task = assertQuery(plan, splits, "SELECT * FROM tmp");
 
@@ -195,17 +193,7 @@ TEST_F(TableScanTest, basic) {
 TEST_F(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 1, 1'500);
-  int32_t cnt = 0;
-  for (auto& vector : vectors) {
-    makeRange(vector, 1000000000);
-    auto rn = vector->childAt(3)->as<FlatVector<int64_t>>();
-    for (auto i = 0; i < rn->size(); ++i) {
-      rn->set(i, cnt++);
-    }
-  }
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
+    auto splits = makeData(type, 2, 20'000);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
@@ -223,7 +211,7 @@ TEST_F(TableScanTest, filter) {
 TEST_F(TableScanTest, filterNull) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 1, 1500, false);
+  auto splits = makeData(type, 10, 20'000, false);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
@@ -241,12 +229,7 @@ TEST_F(TableScanTest, filterNull) {
 TEST_F(TableScanTest, filterInScan) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 10, 2'000);
-  for (auto& vector : vectors) {
-    makeRange(vector, 1000000000);
-  }
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
+  auto splits = makeData(type, 10, 20'000);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
@@ -263,17 +246,7 @@ TEST_F(TableScanTest, filterInScanNull) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 10, 20'000, 0.1);
-  int32_t cnt = 0;
-  for (auto& vector : vectors) {
-    makeRange(vector, 1000000000, false);
-    auto rn = vector->childAt(4)->as<FlatVector<int64_t>>();
-    for (auto i = 0; i < rn->size(); ++i) {
-      rn->set(i, cnt++);
-    }
-  }
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
+  auto splits = makeData(type, 10, 20'000, false);
 
   auto plan =
       PlanBuilder(pool_.get())
@@ -297,17 +270,8 @@ TEST_F(TableScanTest, scanAgg) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto vectors = makeVectors(type, 10, 20'000, 0.1);
-  int32_t cnt = 0;
-  for (auto& vector : vectors) {
-    makeRange(vector, 1000000000, false);
-    auto rn = vector->childAt(4)->as<FlatVector<int64_t>>();
-    for (auto i = 0; i < rn->size(); ++i) {
-      rn->set(i, cnt++);
-    }
-  }
-  auto splits = makeTable("test", vectors);
-  createDuckDbTable(vectors);
+  auto splits = makeData(type, 10, 20'000);
+
 
   auto plan =
       PlanBuilder(pool_.get())

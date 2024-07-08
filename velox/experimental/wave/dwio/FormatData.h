@@ -59,7 +59,7 @@ class SplitStaging {
   /// Registers '*ptr' to be patched to the device side address of the transfer
   /// identified by 'id'. The *ptr is an offset into the buffer identified by
   /// id, so that the actual start of the area is added to the offset at *ptr.
-  /// If 'clear' is true, *ptr is set to nullptr first.
+  /// If 'clear' is true, *ptr is set to nullptr first. This may not be called after transfer().
   template <typename T>
   void registerPointer(BufferId id, T pointer, bool clear) {
     registerPointerInternal(
@@ -71,9 +71,13 @@ class SplitStaging {
   int64_t bytesToDevice() const {
     return fill_;
   }
-  // Starts the transfers registered with add( on 'stream').
-  void transfer(WaveStream& waveStream, Stream& stream);
+  // Starts the transfers registered with add( on 'stream'). Does nothing after first call or if no pointers are registered. If 'recordEvent' is true, records an event that is completed after the transfer arrives. Use event() to access the event.
+  void transfer(WaveStream& waveStream, Stream& stream, bool recordEvent = false);
 
+  Event* event() const {
+    return event_.get();
+  }
+  
  private:
   void registerPointerInternal(BufferId id, void** ptr, bool clear);
 
@@ -94,6 +98,9 @@ class SplitStaging {
 
   // Total device side space reserved so farr.
   int64_t fill_{0};
+
+  // Optional event recorded after end of transfer. Use to sync dependent kernels on other streams.
+  std::unique_ptr<Event> event_;
 };
 
 using RowSet = folly::Range<const int32_t*>;

@@ -717,6 +717,15 @@ class WaveStream {
     launchControl_[key].push_back(std::move(control));
   }
 
+  void setLaunchControl(int32_t key, int32_t nth, std::unique_ptr<LaunchControl> control) {
+    auto& controls = launchControl_[key];
+    if (controls.size() <= nth) {
+      controls.resize(nth + 1);
+    }
+    controls[nth] = std::move(control);
+  }
+
+  
   const AbstractOperand* operandAt(int32_t id) {
     VELOX_CHECK_LT(id, operands_->size());
     return (*operands_)[id].get();

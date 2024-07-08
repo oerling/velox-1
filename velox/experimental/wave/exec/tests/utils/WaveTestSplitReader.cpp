@@ -56,14 +56,20 @@ void WaveTestSplitReader::schedule(WaveStream& waveStream, int32_t maxRows) {
   auto numRows = std::min<int32_t>(maxRows, available());
   scheduledRows_ = numRows;
   auto rowSet = folly::Range<const int32_t*>(iota(numRows, rows_), numRows);
-  // Remove a possible previous exe.
-  waveStream.recycleExecutable(nullptr, 0);
-  auto readStream = std::make_unique<ReadStream>(
-      reinterpret_cast<StructColumnReader*>(columnReader_.get()),
-      0,
-      rowSet,
-      waveStream);
-  ReadStream::launch(std::move(readStream));
+  std::unique_ptr<ReadStream> exe(reinterpret_cast<ReadStream*>(waveStream.recycleExecutable(nullptr, 0).release()));
+  if (exe) {
+    VELOX_DCHECK_NOT_NULL(dynamic_cast<ReadStream*>(reinterpret_cast<Executable*>(exe.get())));
+    if (reinterpret_cast<ColumnReader*>(exe->reader()) != columnReader_.get()) {
+      // The previous read exe on the WaveStream is a different split. Make new.
+      exe.reset();
+    }
+  }
+  if (!exe) {
+    exe = std::make_unique<ReadStream>(
+						   reinterpret_cast<StructColumnReader*>(columnReader_.get()),
+						   waveStream);
+  }
+  ReadStream::launch(std::move(exe), nextRow_, rowSet);
   nextRow_ += scheduledRows_;
 }
 

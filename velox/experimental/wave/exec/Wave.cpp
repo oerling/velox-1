@@ -707,6 +707,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t operatorStateOffset = size;
   size += exes.size() * sizeof(void*) + operatorStateBytes;
   auto buffer = arena_.allocate<char>(size);
+  // Zero initialization is expected, for example for operands and arrays in Operand::indices.
   memset(buffer->as<char>(), 0, size);
 
   control.sharedMemorySize = shared;

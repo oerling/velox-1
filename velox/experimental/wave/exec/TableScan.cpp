@@ -51,9 +51,6 @@ AdvanceResult TableScan::canAdvance(WaveStream& stream) {
 
 void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
   waveDataSource_->schedule(stream, maxRows);
-  // The stream must hold the reader tree. 'this' can initiate many
-  // concurrently running streams over potentially multiple splits.
-  stream.setSplitReader(waveDataSource_->splitReader());
   nextAvailableRows_ = waveDataSource_->canAdvance(stream);
   if (nextAvailableRows_ == 0) {
     needNewSplit_ = true;
