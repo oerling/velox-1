@@ -309,7 +309,7 @@ FOLLY_ALWAYS_INLINE bool md5_radix(
 
 namespace {
 FOLLY_ALWAYS_INLINE int64_t asciiWhitespaces() {
-  std::vector<int32_t> codes = {9, 10, 11, 12, 13, 28, 29, 30, 31, 32};
+  int8_t codes[] = {9, 10, 11, 12, 13, 28, 29, 30, 31, 32};
   int64_t bitMask = 0;
   for (auto code : codes) {
     bits::setBit(&bitMask, code, true);
@@ -318,7 +318,7 @@ FOLLY_ALWAYS_INLINE int64_t asciiWhitespaces() {
 }
 
 FOLLY_ALWAYS_INLINE int64_t asciiWhitespaceCodes() {
-  std::vector<int32_t> codes = {9, 10, 11, 12, 13, 28, 29, 30, 31, 32};
+  int8_t codes[] = {9, 10, 11, 12, 13, 28, 29, 30, 31, 32};
   int64_t bitMask = 0;
   for (auto code : codes) {
     bits::setBit(&bitMask, code, true);
@@ -327,7 +327,7 @@ FOLLY_ALWAYS_INLINE int64_t asciiWhitespaceCodes() {
 }
 
 FOLLY_ALWAYS_INLINE std::array<int64_t, 2> unicodeWhitespaceCodes() {
-  std::vector<int32_t> codes = {
+  int16_t codes[] = {
       8192,
       8193,
       8194,
@@ -599,7 +599,8 @@ FOLLY_ALWAYS_INLINE void pad(
   // and return it as the result.
   if (UNLIKELY(stringCharLength >= size)) {
     size_t prefixByteSize =
-        stringCore::getByteRange<isAscii>(string.data(), 1, size).second;
+        stringCore::getByteRange<isAscii>(string.data(), string.size(), 1, size)
+            .second;
     output.resize(prefixByteSize);
     if (LIKELY(prefixByteSize > 0)) {
       std::memcpy(output.data(), string.data(), prefixByteSize);
@@ -615,10 +616,12 @@ FOLLY_ALWAYS_INLINE void pad(
   // If the length of padString does not evenly divide the length of the
   // padding we need to add, how long of a prefix of padString needs to be
   // added at the end of the padding.  Will be 0 if it is evenly divisible.
-  size_t padPrefixByteLength =
-      stringCore::getByteRange<isAscii>(
-          padString.data(), 1, fullPaddingCharLength % padStringCharLength)
-          .second;
+  size_t padPrefixByteLength = stringCore::getByteRange<isAscii>(
+                                   padString.data(),
+                                   padString.size(),
+                                   1,
+                                   fullPaddingCharLength % padStringCharLength)
+                                   .second;
   int64_t fullPaddingByteLength =
       padString.size() * fullPadCopies + padPrefixByteLength;
   // The final size of the output string in bytes.

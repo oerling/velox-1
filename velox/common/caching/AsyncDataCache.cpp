@@ -25,6 +25,15 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/caching/FileIds.h"
 
+#define VELOX_CACHE_ERROR(errorMessage)                             \
+  _VELOX_THROW(                                                     \
+      ::facebook::velox::VeloxRuntimeError,                         \
+      ::facebook::velox::error_source::kErrorSourceRuntime.c_str(), \
+      ::facebook::velox::error_code::kNoCacheSpace.c_str(),         \
+      /* isRetriable */ true,                                       \
+      "{}",                                                         \
+      errorMessage);
+
 namespace facebook::velox::cache {
 
 using memory::MachinePageCount;
@@ -120,13 +129,10 @@ void AsyncDataCacheEntry::initialize(FileCacheKey key) {
     } else {
       // No memory to cover 'this'.
       release();
-      _VELOX_THROW(
-          VeloxRuntimeError,
-          error_source::kErrorSourceRuntime.c_str(),
-          error_code::kNoCacheSpace.c_str(),
-          /* isRetriable */ true,
-          "Failed to allocate {} bytes for cache",
-          size_);
+      VELOX_CACHE_ERROR(fmt::format(
+          "Failed to allocate {} bytes for cache: {}",
+          size_,
+          cache->allocator()->getAndClearFailureMessage()));
     }
   }
 }
@@ -200,6 +206,8 @@ CachePin CacheShard::findOrCreate(
           << " requested size " << size;
       // The old entry is superseded. Possible readers of the old entry still
       // retain a valid read pin.
+      RECORD_METRIC_VALUE(kMetricMemoryCacheNumStaleEntries);
+      ++numStales_;
       foundEntry->key_.fileNum.clear();
       entryMap_.erase(it);
     }
@@ -363,7 +371,8 @@ uint64_t CacheShard::evict(
     MachinePageCount pagesToAcquire,
     memory::Allocation& acquired) {
   auto* ssdCache = cache_->ssdCache();
-  const bool skipSsdSaveable = ssdCache && ssdCache->writeInProgress();
+  const bool skipSsdSaveable =
+      (ssdCache != nullptr) && ssdCache->writeInProgress();
   auto now = accessTime();
   std::vector<memory::Allocation> toFree;
   int64_t tinyEvicted = 0;
@@ -411,6 +420,9 @@ uint64_t CacheShard::evict(
         if (skipSsdSaveable && candidate->ssdSaveable() && !evictAllUnpinned) {
           ++evictSaveableSkipped;
           continue;
+        }
+        if (candidate->ssdSaveable()) {
+          ++numSavableEvict_;
         }
         largeEvicted += candidate->data_.byteSize();
         if (pagesToAcquire > 0) {
@@ -531,20 +543,24 @@ void CacheShard::updateStats(CacheStats& stats) {
   stats.hitBytes += hitBytes_;
   stats.numNew += numNew_;
   stats.numEvict += numEvict_;
+  stats.numSavableEvict += numSavableEvict_;
   stats.numEvictChecks += numEvictChecks_;
   stats.numWaitExclusive += numWaitExclusive_;
   stats.numAgedOut += numAgedOut_;
+  stats.numStales += numStales_;
   stats.sumEvictScore += sumEvictScore_;
   stats.allocClocks += allocClocks_;
 }
 
-void CacheShard::appendSsdSaveable(std::vector<CachePin>& pins) {
+void CacheShard::appendSsdSaveable(bool saveAll, std::vector<CachePin>& pins) {
   std::lock_guard<std::mutex> l(mutex_);
   // Do not add entries to a write batch more than maxWriteRatio_. If SSD save
   // is slower than storage read, we must not have a situation where SSD save
   // pins everything and stops reading.
-  const auto limit = static_cast<int32_t>(
-      static_cast<double>(entries_.size()) * maxWriteRatio_);
+  const int32_t limit = saveAll
+      ? std::numeric_limits<int32_t>::max()
+      : static_cast<int32_t>(
+            static_cast<double>(entries_.size()) * maxWriteRatio_);
   VELOX_CHECK(cache_->ssdCache()->writeInProgress());
   for (auto& entry : entries_) {
     if (entry && (entry->ssdFile_ == nullptr) && !entry->isExclusive() &&
@@ -610,20 +626,26 @@ bool CacheShard::removeFileEntries(
   return true;
 }
 
-CacheStats CacheStats::operator-(CacheStats& other) const {
+CacheStats CacheStats::operator-(const CacheStats& other) const {
   CacheStats result;
   result.numHit = numHit - other.numHit;
   result.hitBytes = hitBytes - other.hitBytes;
   result.numNew = numNew - other.numNew;
   result.numEvict = numEvict - other.numEvict;
+  result.numSavableEvict = numSavableEvict - other.numSavableEvict;
   result.numEvictChecks = numEvictChecks - other.numEvictChecks;
   result.numWaitExclusive = numWaitExclusive - other.numWaitExclusive;
   result.numAgedOut = numAgedOut - other.numAgedOut;
+  result.numStales = numStales - other.numStales;
   result.allocClocks = allocClocks - other.allocClocks;
   result.sumEvictScore = sumEvictScore - other.sumEvictScore;
-  if (ssdStats != nullptr && other.ssdStats != nullptr) {
-    result.ssdStats =
-        std::make_shared<SsdCacheStats>(*ssdStats - *other.ssdStats);
+  if (ssdStats != nullptr) {
+    if (other.ssdStats != nullptr) {
+      result.ssdStats =
+          std::make_shared<SsdCacheStats>(*ssdStats - *other.ssdStats);
+    } else {
+      result.ssdStats = std::make_shared<SsdCacheStats>(*ssdStats);
+    }
   }
   return result;
 }
@@ -676,11 +698,11 @@ AsyncDataCache** AsyncDataCache::getInstancePtr() {
 }
 
 void AsyncDataCache::shutdown() {
-  for (auto& shard : shards_) {
-    shard->shutdown();
-  }
   if (ssdCache_) {
     ssdCache_->shutdown();
+  }
+  for (auto& shard : shards_) {
+    shard->shutdown();
   }
 }
 
@@ -895,12 +917,12 @@ void AsyncDataCache::possibleSsdSave(uint64_t bytes) {
   }
 }
 
-void AsyncDataCache::saveToSsd() {
+void AsyncDataCache::saveToSsd(bool saveAll) {
   std::vector<CachePin> pins;
   VELOX_CHECK(ssdCache_->writeInProgress());
   ssdSaveable_ = 0;
   for (auto& shard : shards_) {
-    shard->appendSsdSaveable(pins);
+    shard->appendSsdSaveable(saveAll, pins);
   }
   ssdCache_->write(std::move(pins));
 }
@@ -937,7 +959,7 @@ CacheStats AsyncDataCache::refreshStats() const {
   return stats;
 }
 
-void AsyncDataCache::testingClear() {
+void AsyncDataCache::clear() {
   for (auto& shard : shards_) {
     memory::Allocation unused;
     shard->evict(std::numeric_limits<uint64_t>::max(), true, 0, unused);
@@ -992,7 +1014,9 @@ std::string CacheStats::toString() const {
       // Cache access stats.
       << "Cache access miss: " << numNew << " hit: " << numHit
       << " hit bytes: " << succinctBytes(hitBytes) << " eviction: " << numEvict
+      << " savable eviction: " << numSavableEvict
       << " eviction checks: " << numEvictChecks << " aged out: " << numAgedOut
+      << " stales: " << numStales
       << "\n"
       // Cache prefetch stats.
       << "Prefetch entries: " << numPrefetch

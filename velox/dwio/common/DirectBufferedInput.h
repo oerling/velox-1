@@ -134,6 +134,10 @@ class DirectBufferedInput : public BufferedInput {
       velox::common::Region region,
       const StreamIdentifier* sid) override;
 
+  bool supportSyncLoad() const override {
+    return false;
+  }
+
   void load(const LogType /*unused*/) override;
 
   bool isBuffered(uint64_t offset, uint64_t length) const override;
@@ -167,6 +171,9 @@ class DirectBufferedInput : public BufferedInput {
   /// access.
   std::shared_ptr<DirectCoalescedLoad> coalescedLoad(
       const SeekableInputStream* stream);
+
+  std::unique_ptr<SeekableInputStream>
+  read(uint64_t offset, uint64_t length, LogType logType) const override;
 
   folly::Executor* executor() const override {
     return executor_;

@@ -233,6 +233,7 @@ MemoryPool::~MemoryPool() {
   VELOX_CHECK(children_.empty());
 }
 
+// static
 std::string MemoryPool::kindString(Kind kind) {
   switch (kind) {
     case Kind::kLeaf:
@@ -287,16 +288,15 @@ void MemoryPool::visitChildren(
     }
   }
 
-  // NOTE: we should call 'visitor' on child pool object out of
-  // 'poolMutex_' to avoid potential recursive locking issues. Firstly, the
-  // user provided 'visitor' might try to acquire this memory pool lock again.
-  // Secondly, the shared child pool reference created from the weak pointer
-  // might be the last reference if some other threads drop all the external
-  // references during this time window. Then drop of this last shared reference
-  // after 'visitor' call will trigger child memory pool destruction in that
-  // case. The child memory pool destructor will remove its weak pointer
-  // reference from the parent pool which needs to acquire this memory pool lock
-  // again.
+  // NOTE: we should call 'visitor' on child pool object out of 'poolMutex_' to
+  // avoid potential recursive locking issues. Firstly, the user provided
+  // 'visitor' might try to acquire this memory pool lock again. Secondly, the
+  // shared child pool reference created from the weak pointer might be the last
+  // reference if some other threads drop all the external references during
+  // this time window. Then drop of this last shared reference after 'visitor'
+  // call will trigger child memory pool destruction in that case. The child
+  // memory pool destructor will remove its weak pointer reference from the
+  // parent pool which needs to acquire this memory pool lock again.
   for (auto& child : children) {
     if (!visitor(child.get())) {
       return;
@@ -323,7 +323,7 @@ std::shared_ptr<MemoryPool> MemoryPool::addLeafChild(
       0,
       "Leaf child memory pool {} already exists in {}",
       name,
-      toString());
+      name_);
   auto child = genChild(
       shared_from_this(),
       name,
@@ -352,7 +352,7 @@ std::shared_ptr<MemoryPool> MemoryPool::addAggregateChild(
       0,
       "Child memory pool {} already exists in {}",
       name,
-      toString());
+      name_);
   auto child = genChild(
       shared_from_this(),
       name,
@@ -701,6 +701,23 @@ int64_t MemoryPoolImpl::usedBytes() const {
     return true;
   });
   return usedBytes;
+}
+
+int64_t MemoryPoolImpl::releasableReservation() const {
+  if (isLeaf()) {
+    std::lock_guard<std::mutex> l(mutex_);
+    return std::max<int64_t>(
+        0, reservationBytes_ - quantizedSize(usedReservationBytes_));
+  }
+  if (reservedBytes() == 0) {
+    return 0;
+  }
+  int64_t releasableBytes{0};
+  visitChildren([&](MemoryPool* pool) {
+    releasableBytes += pool->releasableReservation();
+    return true;
+  });
+  return releasableBytes;
 }
 
 std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(

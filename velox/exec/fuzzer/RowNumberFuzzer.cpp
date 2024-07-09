@@ -20,8 +20,6 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/dwio/dwrf/reader/DwrfReader.h"
-#include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/ReferenceQueryRunner.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -51,6 +49,11 @@ DEFINE_double(
     "(expressed as double from 0 to 1).");
 
 DEFINE_bool(enable_spill, true, "Whether to test plans with spilling enabled.");
+
+DEFINE_int32(
+    max_spill_level,
+    -1,
+    "Max spill level, -1 means random [0, 7], otherwise the actual level.");
 
 DEFINE_bool(
     enable_oom_injection,
@@ -282,7 +285,10 @@ RowVectorPtr RowNumberFuzzer::execute(
   int32_t spillPct{0};
   if (injectSpill) {
     spillDirectory = exec::test::TempDirectoryPath::create();
+    const auto maxSpillLevel =
+        FLAGS_max_spill_level == -1 ? randInt(0, 7) : FLAGS_max_spill_level;
     builder.config(core::QueryConfig::kSpillEnabled, true)
+        .config(core::QueryConfig::kMaxSpillLevel, maxSpillLevel)
         .config(core::QueryConfig::kRowNumberSpillEnabled, true)
         .spillDirectory(spillDirectory->getPath());
     spillPct = 10;

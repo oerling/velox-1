@@ -74,9 +74,10 @@ function install_gcs-sdk-cpp {
     -DABSL_ENABLE_INSTALL=ON
 
   # protobuf
-  github_checkout protocolbuffers/protobuf v21.4 --depth 1
+  github_checkout protocolbuffers/protobuf v21.8 --depth 1
   cmake_install \
-    -Dprotobuf_BUILD_TESTS=OFF
+    -Dprotobuf_BUILD_TESTS=OFF \
+    -Dprotobuf_ABSL_PROVIDER=package
 
   # grpc
   github_checkout grpc/grpc v1.48.1 --depth 1

@@ -54,10 +54,10 @@ class TableScanTest : public virtual HiveConnectorTestBase,
                       public testing::WithParamInterface<WaveScanTestParam> {
  protected:
   void SetUp() override {
+    HiveConnectorTestBase::SetUp();
     if (int device; cudaGetDevice(&device) != cudaSuccess) {
       GTEST_SKIP() << "No CUDA detected, skipping all tests";
     }
-    HiveConnectorTestBase::SetUp();
     wave::registerWave();
     wave::WaveHiveDataSource::registerConnector();
     wave::test::WaveTestSplitReader::registerTestSplitReader();

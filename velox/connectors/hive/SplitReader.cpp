@@ -28,6 +28,7 @@
 
 namespace facebook::velox::connector::hive {
 namespace {
+
 template <TypeKind kind>
 VectorPtr newConstantFromString(
     const TypePtr& type,
@@ -134,7 +135,7 @@ void SplitReader::configureReaderOptions(
   hive::configureReaderOptions(
       baseReaderOpts_,
       hiveConfig_,
-      connectorQueryCtx_->sessionProperties(),
+      connectorQueryCtx_,
       hiveTableHandle_,
       hiveSplit_);
   baseReaderOpts_.setRandomSkip(std::move(randomSkip));
@@ -263,7 +264,7 @@ void SplitReader::createReader(
   auto columnTypes = adaptColumns(fileType, baseReaderOpts_.fileSchema());
   auto columnNames = fileType->names();
   if (rowIndexColumn != nullptr) {
-    setRowIndexColumn(fileType, rowIndexColumn);
+    setRowIndexColumn(rowIndexColumn);
   }
   configureRowReaderOptions(
       baseRowReaderOpts_,
@@ -304,22 +305,16 @@ bool SplitReader::checkIfSplitIsEmpty(
 }
 
 void SplitReader::createRowReader() {
-  // NOTE: we firstly reset the finished 'baseRowReader_' of previous split
-  // before setting up for the next one to avoid doubling the peak memory usage.
-  baseRowReader_.reset();
+  VELOX_CHECK_NULL(baseRowReader_);
   baseRowReader_ = baseReader_->createRowReader(baseRowReaderOpts_);
 }
 
 void SplitReader::setRowIndexColumn(
-    const RowTypePtr& fileType,
     const std::shared_ptr<HiveColumnHandle>& rowIndexColumn) {
-  auto rowIndexColumnName = rowIndexColumn->name();
-  auto rowIndexMetaColIdx =
-      readerOutputType_->getChildIdxIfExists(rowIndexColumnName);
   dwio::common::RowNumberColumnInfo rowNumberColumnInfo;
-  VELOX_CHECK(rowIndexMetaColIdx.has_value());
-  rowNumberColumnInfo.insertPosition = rowIndexMetaColIdx.value();
-  rowNumberColumnInfo.name = rowIndexColumnName;
+  rowNumberColumnInfo.insertPosition =
+      readerOutputType_->getChildIdx(rowIndexColumn->name());
+  rowNumberColumnInfo.name = rowIndexColumn->name();
   baseRowReaderOpts_.setRowNumberColumnInfo(std::move(rowNumberColumnInfo));
 }
 
@@ -423,14 +418,3 @@ void SplitReader::setPartitionValue(
 }
 
 } // namespace facebook::velox::connector::hive
-
-template <>
-struct fmt::formatter<facebook::velox::dwio::common::FileFormat>
-    : formatter<std::string> {
-  auto format(
-      facebook::velox::dwio::common::FileFormat fmt,
-      format_context& ctx) {
-    return formatter<std::string>::format(
-        facebook::velox::dwio::common::toString(fmt), ctx);
-  }
-};

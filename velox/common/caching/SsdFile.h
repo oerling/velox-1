@@ -141,6 +141,7 @@ struct SsdCacheStats {
     bytesWritten = tsanAtomicValue(other.bytesWritten);
     checkpointsWritten = tsanAtomicValue(other.checkpointsWritten);
     entriesRead = tsanAtomicValue(other.entriesRead);
+    entriesRecovered = tsanAtomicValue(other.entriesRecovered);
     bytesRead = tsanAtomicValue(other.bytesRead);
     checkpointsRead = tsanAtomicValue(other.checkpointsRead);
     entriesCached = tsanAtomicValue(other.entriesCached);
@@ -162,6 +163,8 @@ struct SsdCacheStats {
     readSsdErrors = tsanAtomicValue(other.readSsdErrors);
     readCheckpointErrors = tsanAtomicValue(other.readCheckpointErrors);
     readSsdCorruptions = tsanAtomicValue(other.readSsdCorruptions);
+    readWithoutChecksumChecks =
+        tsanAtomicValue(other.readWithoutChecksumChecks);
   }
 
   SsdCacheStats operator-(const SsdCacheStats& other) const {
@@ -170,6 +173,7 @@ struct SsdCacheStats {
     result.bytesWritten = bytesWritten - other.bytesWritten;
     result.checkpointsWritten = checkpointsWritten - other.checkpointsWritten;
     result.entriesRead = entriesRead - other.entriesRead;
+    result.entriesRecovered = entriesRecovered - other.entriesRecovered;
     result.bytesRead = bytesRead - other.bytesRead;
     result.checkpointsRead = checkpointsRead - other.checkpointsRead;
     result.entriesAgedOut = entriesAgedOut - other.entriesAgedOut;
@@ -190,6 +194,8 @@ struct SsdCacheStats {
     result.readSsdErrors = readSsdErrors - other.readSsdErrors;
     result.readCheckpointErrors =
         readCheckpointErrors - other.readCheckpointErrors;
+    result.readWithoutChecksumChecks =
+        readWithoutChecksumChecks - other.readWithoutChecksumChecks;
     return result;
   }
 
@@ -204,6 +210,7 @@ struct SsdCacheStats {
   tsan_atomic<uint64_t> bytesWritten{0};
   tsan_atomic<uint64_t> checkpointsWritten{0};
   tsan_atomic<uint64_t> entriesRead{0};
+  tsan_atomic<uint64_t> entriesRecovered{0};
   tsan_atomic<uint64_t> bytesRead{0};
   tsan_atomic<uint64_t> checkpointsRead{0};
   tsan_atomic<uint64_t> entriesAgedOut{0};
@@ -220,6 +227,7 @@ struct SsdCacheStats {
   tsan_atomic<uint32_t> readSsdErrors{0};
   tsan_atomic<uint32_t> readCheckpointErrors{0};
   tsan_atomic<uint32_t> readSsdCorruptions{0};
+  tsan_atomic<uint32_t> readWithoutChecksumChecks{0};
 };
 
 /// A shard of SsdCache. Corresponds to one file on SSD. The data backed by each
@@ -342,10 +350,10 @@ class SsdFile {
       const folly::F14FastSet<uint64_t>& filesToRemove,
       folly::F14FastSet<uint64_t>& filesRetained);
 
-  /// Writes a checkpoint state that can be recovered from. The
-  /// checkpoint is serialized on 'mutex_'. If 'force' is false,
-  /// rechecks that at least 'checkpointIntervalBytes_' have been
-  /// written since last checkpoint and silently returns if not.
+  /// Writes a checkpoint state that can be recovered from. The checkpoint is
+  /// serialized on 'mutex_'. If 'force' is false, rechecks that at least
+  /// 'checkpointIntervalBytes_' have been written since last checkpoint and
+  /// silently returns if not.
   void checkpoint(bool force = false);
 
   /// Deletes checkpoint files. If 'keepLog' is true, truncates and syncs the
@@ -371,7 +379,9 @@ class SsdFile {
   void testingDeleteFile();
 
   /// Resets this' to a post-construction empty state. See SsdCache::clear().
-  void testingClear();
+  ///
+  /// NOTE: this is only used by test and Prestissimo worker operation.
+  void clear();
 
   /// Returns true if copy on write is disabled for this file. Used in testing.
   bool testingIsCowDisabled() const;
