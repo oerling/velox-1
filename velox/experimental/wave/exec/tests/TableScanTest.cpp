@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include <cuda_runtime.h> // @manual
+#include "velox/common/base/tests/GTestUtils.h"
+
 #include "velox/exec/ExchangeSource.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -26,12 +28,27 @@
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
+DECLARE_int32(wave_max_reader_batch_rows);
+DECLARE_int32(max_streams_per_driver);
+
 using namespace facebook::velox;
 using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-class TableScanTest : public virtual HiveConnectorTestBase {
+struct WaveScanTestParam {
+  int32_t numStreams{1};
+  int32_t batchSize{20000};
+};
+
+std::vector<WaveScanTestParam> waveScanTestParams() {
+  return {WaveScanTestParam{}, WaveScanTestParam{.numStreams = 4},
+	  // *** Not all size combinations work, e.eg. : WaveScanTestParam{.numStreams = 4, .batchSize = 1111}, WaveScanTestParam{ .numStreams = 9, .batchSize = 16500}
+  }; 
+}
+
+class TableScanTest : public virtual HiveConnectorTestBase,
+      public testing::WithParamInterface<WaveScanTestParam> {
  protected:
   void SetUp() override {
     if (int device; cudaGetDevice(&device) != cudaSuccess) {
@@ -44,6 +61,9 @@ class TableScanTest : public virtual HiveConnectorTestBase {
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
     fuzzer_ = std::make_unique<VectorFuzzer>(options_, pool_.get());
+    auto param = GetParam();
+    FLAGS_max_streams_per_driver = param.numStreams;
+    FLAGS_wave_max_reader_batch_rows = param.batchSize;
   }
 
   static void SetUpTestCase() {
@@ -175,11 +195,13 @@ class TableScanTest : public virtual HiveConnectorTestBase {
 
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
+  int32_t numBatches_ = 3;
+  int32_t batchSize_ = 20'000;
 };
 
-TEST_F(TableScanTest, basic) {
+TEST_P(TableScanTest, basic) {
   auto type = ROW({"c0"}, {BIGINT()});
-  auto splits = makeData(type, 10, 1000);
+  auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan = tableScanNode(type);
   auto task = assertQuery(plan, splits, "SELECT * FROM tmp");
@@ -190,10 +212,10 @@ TEST_F(TableScanTest, basic) {
   ASSERT_TRUE(it != planStats.end());
 }
 
-TEST_F(TableScanTest, filter) {
+TEST_P(TableScanTest, filter) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 2, 20'000);
+  auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
@@ -208,10 +230,10 @@ TEST_F(TableScanTest, filter) {
       "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
 
-TEST_F(TableScanTest, filterNull) {
+TEST_P(TableScanTest, filterNull) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 10, 20'000, false);
+  auto splits = makeData(type, numBatches_, batchSize_, false);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type)
@@ -226,10 +248,10 @@ TEST_F(TableScanTest, filterNull) {
       "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
 
-TEST_F(TableScanTest, filterInScan) {
+TEST_P(TableScanTest, filterInScan) {
   auto type =
       ROW({"c0", "c1", "c2", "c3"}, {BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 10, 20'000);
+  auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan = PlanBuilder(pool_.get())
                   .tableScan(type, {"c0 < 500000000", "c1 < 400000000"})
@@ -242,11 +264,11 @@ TEST_F(TableScanTest, filterInScan) {
       "SELECT c0, c1 + 100000000, c2 + 1, c3, c3 + 2 FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
 
-TEST_F(TableScanTest, filterInScanNull) {
+TEST_P(TableScanTest, filterInScanNull) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 10, 20'000, false);
+  auto splits = makeData(type, numBatches_, batchSize_, false);
 
   auto plan =
       PlanBuilder(pool_.get())
@@ -266,11 +288,11 @@ TEST_F(TableScanTest, filterInScanNull) {
       "SELECT c0, c1, c1 + 100000000, c2 + 1, c3, c3 + 2, rn FROM tmp where c0 < 500000000 and c1 + 100000000 < 500000000");
 }
 
-TEST_F(TableScanTest, scanAgg) {
+TEST_P(TableScanTest, scanAgg) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, 10, 20'000);
+  auto splits = makeData(type, numBatches_, batchSize_);
 
   auto plan =
       PlanBuilder(pool_.get())
@@ -289,3 +311,9 @@ TEST_F(TableScanTest, scanAgg) {
       splits,
       "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
 }
+
+VELOX_INSTANTIATE_TEST_SUITE_P(
+			       TableScanTests,
+    TableScanTest,
+    testing::ValuesIn(waveScanTestParams()));
+

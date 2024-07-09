@@ -209,6 +209,11 @@ bool ReadStream::decodenonFiltersInFiltersKernel() {
 
 void ReadStream::prepareRead() {
   filtersDone_ = false;
+  for (auto& op : filters_) {
+    op.reader->formatData()->newBatch(row_);
+    op.isFinal = false;
+    op.rows = rows_;
+  }
   for (auto& op : ops_) {
     op.reader->formatData()->newBatch(row_);
     op.isFinal = false;
