@@ -16,10 +16,28 @@
 
 #include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/GpuArena.h"
+#include "velox/common/base/Exceptions.h"
+#include "velox/common/base/SuccinctPrinter.h"
+#include "velox/experimental/wave/common/Exception.h"
 
 namespace facebook::velox::wave {
 
+void Buffer::check() const {
+    if (*magicPtr() != kMagic) {
+      VELOX_FAIL("Buffer tail overrun: {}", toString());
+    }
+}
+
+void Buffer::setMagic() {
+  *magicPtr() = kMagic;
+}
+  
+  std::string Buffer::toString() const {
+    return fmt::format("<Buffer {} capacity={} ref={} pin={} dbg={}>", ptr_, capacity_, referenceCount_, pinCount_, debugInfo_); 
+  }
+  
 void Buffer::release() {
+  check();
   if (referenceCount_.fetch_sub(1) == 1) {
     arena_->free(this);
   }

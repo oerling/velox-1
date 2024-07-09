@@ -287,7 +287,7 @@ GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator)
   currentArena_ = arena;
 }
 
-WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
+  WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t capacity, size_t size) {
   auto result = firstFreeBuffer_;
   if (!result) {
     allBuffers_.push_back(std::make_unique<Buffers>());
@@ -303,39 +303,40 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t size) {
   result->arena_ = this;
   result->ptr_ = ptr;
   result->size_ = size;
-  result->capacity_ = size;
+  result->capacity_ = capacity;
+  result->setMagic();
   return result;
 }
 
 WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
-  bytes = GpuSlab::roundBytes(bytes);
+  auto roundedBytes = GpuSlab::roundBytes(bytes + sizeof(int64_t));
   std::lock_guard<std::mutex> l(mutex_);
-  auto* result = currentArena_->allocate(bytes);
+  auto* result = currentArena_->allocate(roundedBytes);
   if (result != nullptr) {
-    return getBuffer(result, bytes);
+    return getBuffer(result, bytes, roundedBytes);
   }
   for (auto pair : arenas_) {
-    if (pair.second == currentArena_ || pair.second->freeBytes() < bytes) {
+    if (pair.second == currentArena_ || pair.second->freeBytes() < roundedBytes) {
       continue;
     }
     result = pair.second->allocate(bytes);
     if (result) {
       currentArena_ = pair.second;
-      return getBuffer(result, bytes);
+      return getBuffer(result, bytes, roundedBytes);
     }
   }
 
   // If first allocation fails we create a new GpuSlab for another attempt. If
   // it ever fails again then it means requested bytes is larger than a single
   // GpuSlab's capacity. No further attempts will happen.
-  auto arenaBytes = std::max<uint64_t>(singleArenaCapacity_, bytes);
+  auto arenaBytes = std::max<uint64_t>(singleArenaCapacity_, roundedBytes);
   auto newArena = std::make_shared<GpuSlab>(
       allocator_->allocate(arenaBytes), arenaBytes, allocator_);
   arenas_.emplace(reinterpret_cast<uint64_t>(newArena->address()), newArena);
   currentArena_ = newArena;
   result = currentArena_->allocate(bytes);
   if (result) {
-    return getBuffer(result, bytes);
+    return getBuffer(result, bytes, roundedBytes);
   }
   VELOX_FAIL("Failed to allocate {} bytes of universal address space", bytes);
 }
@@ -364,4 +365,20 @@ void GpuArena::free(Buffer* buffer) {
   firstFreeBuffer_ = buffer;
 }
 
+ArenaStatus   GpuArena::checkBuffers() {
+  ArenaStatus status;
+  std::lock_guard<std::mutex> l(mutex_);
+  for (auto& buffers : allBuffers_) {
+    for (auto& buffer : buffers->buffers) {
+      if (buffer.referenceCount_) {
+	++status.numBuffers;
+	status.capacity += buffer.capacity_;
+	status.allocatedBytes += buffer.size_;
+	buffer.check();
+      }
+    }
+  }
+  return status;
+}
+  
 } // namespace facebook::velox::wave
