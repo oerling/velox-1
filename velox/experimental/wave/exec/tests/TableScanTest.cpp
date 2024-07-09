@@ -42,13 +42,16 @@ struct WaveScanTestParam {
 };
 
 std::vector<WaveScanTestParam> waveScanTestParams() {
-  return {WaveScanTestParam{}, WaveScanTestParam{.numStreams = 4},
-	  // *** Not all size combinations work, e.eg. : WaveScanTestParam{.numStreams = 4, .batchSize = 1111}, WaveScanTestParam{ .numStreams = 9, .batchSize = 16500}
-  }; 
+  return {
+      WaveScanTestParam{}, WaveScanTestParam{.numStreams = 4},
+      // *** Not all size combinations work, e.eg. :
+      // WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
+      // WaveScanTestParam{ .numStreams = 9, .batchSize = 16500}
+  };
 }
 
 class TableScanTest : public virtual HiveConnectorTestBase,
-      public testing::WithParamInterface<WaveScanTestParam> {
+                      public testing::WithParamInterface<WaveScanTestParam> {
  protected:
   void SetUp() override {
     if (int device; cudaGetDevice(&device) != cudaSuccess) {
@@ -313,7 +316,6 @@ TEST_P(TableScanTest, scanAgg) {
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
-			       TableScanTests,
+    TableScanTests,
     TableScanTest,
     testing::ValuesIn(waveScanTestParams()));
-
