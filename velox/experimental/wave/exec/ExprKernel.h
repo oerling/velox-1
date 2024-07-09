@@ -45,24 +45,11 @@ enum class OpCode {
   kReturn,
 
   // From here, only OpCodes that have variants for scalar types.
-  kPlus,
-  kMinus,
-  kTimes,
-  kDivide,
-  kEquals,
-  kLT,
-  kLTE,
-  kGT,
-  kGTE,
-  kNE,
-
+  kPlus_BIGINT,
+  kLT_BIGINT
 };
-constexpr int32_t kLastScalarKind = static_cast<int32_t>(WaveTypeKind::HUGEINT);
 
-#define OP_MIX(op, t)           \
-  static_cast<OpCode>(          \
-      static_cast<int32_t>(t) + \
-      (kLastScalarKind + 1) * static_cast<int32_t>(op))
+constexpr int32_t kLastScalarKind = static_cast<int32_t>(WaveTypeKind::HUGEINT);
 
 struct IBinary {
   OperandIndex left;

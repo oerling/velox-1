@@ -933,8 +933,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         }
         break;
       }
-      case OpCode::kPlus:
-      case OpCode::kLT: {
+      case OpCode::kPlus_BIGINT:
+      case OpCode::kLT_BIGINT: {
         auto& bin = instruction->as<AbstractBinary>();
         markInput(bin.left);
         markInput(bin.right);
@@ -1013,14 +1013,9 @@ void Program::prepareForDevice(GpuArena& arena) {
 
   for (auto& instruction : instructions_) {
     switch (instruction->opCode) {
-      case OpCode::kPlus:
-      case OpCode::kLT: {
-        IN_HEAD(
-            AbstractBinary,
-            IBinary,
-            OP_MIX(
-                instruction->opCode,
-                instruction->as<AbstractBinary>().left->type->kind()));
+      case OpCode::kPlus_BIGINT:
+      case OpCode::kLT_BIGINT: {
+        IN_HEAD(AbstractBinary, IBinary, instruction->opCode)
 
         IN_OPERAND(left);
         IN_OPERAND(right);

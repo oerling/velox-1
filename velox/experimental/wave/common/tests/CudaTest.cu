@@ -900,7 +900,7 @@ __global__ void addOne4x64SMemFuncKernel(
     *smem = *addCast<long2>(numbers, sizeof(int64_t) * index);
     smem[1] = *addCast<long2>(numbers, sizeof(int64_t) * (index + halfStride));
     for (auto counter = 0; counter < repeats; ++counter) {
-testFuncs4SMem[counter & 1](
+      testFuncs4SMem[counter & 1](
           reinterpret_cast<int64_t*>(smem), index, nullptr);
     }
     *addCast<long2>(numbers, sizeof(int64_t) * (index)) = smem[0];

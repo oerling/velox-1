@@ -53,9 +53,9 @@ __device__ __forceinline__ void binaryOpKernel(
   }
 }
 
-#define BINARY_TYPES(opCode, OP)                             \
-  case OP_MIX(opCode, WaveTypeKind::BIGINT):                 \
-    binaryOpKernel<int64_t>(                                 \
+#define BINARY_TYPES(opCode, TP, OP)                         \
+  case opCode:                                               \
+    binaryOpKernel<TP>(                                      \
         [](auto left, auto right) { return left OP right; }, \
         instruction->_.binary,                               \
         operands,                                            \
@@ -127,8 +127,8 @@ __global__ void waveBaseKernel(KernelParams params) {
       case OpCode::kReadAggregate:
         readAggregateKernel(instruction->_.aggregate, shared);
         break;
-        BINARY_TYPES(OpCode::kPlus, +);
-        BINARY_TYPES(OpCode::kLT, <);
+        BINARY_TYPES(OpCode::kPlus_BIGINT, int64_t, +);
+        BINARY_TYPES(OpCode::kLT_BIGINT, int64_t, <);
     }
     ++instruction;
   }
@@ -192,12 +192,14 @@ void WaveKernelStream::callOne(
         case OpCode::kReadAggregate:
           CALL_ONE(oneReadAggregate, params, pc, base)
           break;
-        case OP_MIX(OpCode::kPlus, WaveTypeKind::BIGINT):
+        case OpCode::kPlus_BIGINT:
           CALL_ONE(onePlus<int64_t>, params, pc, base);
           break;
-        case OP_MIX(OpCode::kLT, WaveTypeKind::BIGINT):
+        case OpCode::kLT_BIGINT:
           CALL_ONE(oneLt<int64_t>, params, pc, base);
           break;
+        default:
+          assert(false);
       }
     }
     params.startPC = nullptr;

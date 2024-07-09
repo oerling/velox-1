@@ -148,11 +148,16 @@ AbstractOperand* CompileState::findCurrentValue(Value value) {
 
 std::optional<OpCode> binaryOpCode(const Expr& expr) {
   auto& name = expr.name();
+  // Only BIGINT + and <.
+  if (expr.inputs().size() != 2 ||
+      expr.inputs()[0]->type()->kind() != TypeKind::BIGINT) {
+    return std::nullopt;
+  }
   if (name == "plus") {
-    return OpCode::kPlus;
+    return OpCode::kPlus_BIGINT;
   }
   if (name == "lt") {
-    return OpCode::kLT;
+    return OpCode::kLT_BIGINT;
   }
   return std::nullopt;
 }

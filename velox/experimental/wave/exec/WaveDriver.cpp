@@ -308,7 +308,6 @@ RowVectorPtr WaveDriver::makeResult(
   return result;
 }
 
-
 LaunchControl* WaveDriver::inputControl(
     WaveStream& stream,
     int32_t operatorId) {

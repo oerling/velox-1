@@ -65,10 +65,8 @@ class ColumnReader {
 
   /// Initializes 'op' for the column of 'this'. The op is made once and used
   /// for possibly multiple row ranges later.
-  virtual void makeOp(
-      ReadStream* readStream,
-      ColumnAction action,
-      ColumnOp& op);
+  virtual void
+  makeOp(ReadStream* readStream, ColumnAction action, ColumnOp& op);
 
   FormatData* formatData() const {
     return formatData_.get();

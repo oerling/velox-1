@@ -55,6 +55,8 @@ class AggregationTest : public OperatorTestBase {
       GTEST_SKIP() << "No CUDA detected, skipping all tests";
     }
   }
+
+  void TearDown() override {}
 };
 
 TEST_F(AggregationTest, singleKeySingleAggregate) {
