@@ -21,9 +21,14 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/wave/common/Exception.h"
 
+DEFINE_bool(wave_buffer_end_guard, false, "Use buffer  end guard to detect overruns");
+
 namespace facebook::velox::wave {
 
 uint64_t GpuSlab::roundBytes(uint64_t bytes) {
+  if (FLAGS_wave_buffer_end_guard) {
+    bytes += sizeof(int64_t);
+  }
   return bits::nextPowerOfTwo(std::max<int64_t>(16, bytes));
 }
 
@@ -309,7 +314,7 @@ GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator)
 }
 
 WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
-  auto roundedBytes = GpuSlab::roundBytes(bytes + sizeof(int64_t));
+  auto roundedBytes = GpuSlab::roundBytes(bytes);
   std::lock_guard<std::mutex> l(mutex_);
   auto* result = currentArena_->allocate(roundedBytes);
   if (result != nullptr) {

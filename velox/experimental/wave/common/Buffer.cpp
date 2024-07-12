@@ -20,15 +20,23 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/wave/common/Exception.h"
 
+DECLARE_bool(wave_buffer_end_guard);
+
 namespace facebook::velox::wave {
 
 void Buffer::check() const {
-    if (*magicPtr() != kMagic) {
+  if (!FLAGS_wave_buffer_end_guard) {
+    return;
+  }
+  if (*magicPtr() != kMagic) {
       VELOX_FAIL("Buffer tail overrun: {}", toString());
     }
 }
 
 void Buffer::setMagic() {
+  if (!FLAGS_wave_buffer_end_guard) {
+    return;
+  }
   *magicPtr() = kMagic;
 }
   
