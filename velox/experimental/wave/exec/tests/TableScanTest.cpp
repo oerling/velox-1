@@ -74,6 +74,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
   }
 
   void TearDown() override {
+    vectors_.clear();
     wave::test::Table::dropAll();
     HiveConnectorTestBase::TearDown();
   }
@@ -94,6 +95,9 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     }
     auto splits = makeTable("test", vectors_);
     createDuckDbTable(vectors_);
+    if (dumpData_) {
+      toFile();
+    }
     return splits;
   }
 
@@ -190,14 +194,28 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     size_t iteration{0};
     while (task->numFinishedDrivers() < n and iteration < 100) {
       /* sleep override */
-      usvectors.txt") 
+      usleep(100'000); // 0.1 second.
+      ++iteration;
+    }
+    ASSERT_EQ(n, task->numFinishedDrivers());
   }
-  
+ 
+  FOLLY_NOINLINE void toFile() {
+    std::ofstream out("/tmp/file.txt");
+    int32_t row = 0;
+    for (auto i = 0; i < vectors_.size(); ++i) {
+      out << "\n\n*** " << row ;
+      out << vectors_[i]->toString(0, vectors_[i]->size(), "\n", true);
+    }
+    out.close();
+  }
+
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
   int32_t numBatches_ = 3;
   int32_t batchSize_ = 20'000;
   std::vector<RowVectorPtr> vectors_;
+  bool dumpData_{false};
 };
 
 TEST_P(TableScanTest, basic) {

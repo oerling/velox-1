@@ -116,7 +116,7 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
     step->nonNullBases = grid_.numNonNull;
     step->nulls = grid_.nulls;
   }
-  step->numRowsPerThread = rowsPerBlock / kBlockSize;
+  step->numRowsPerThread = bits::roundUp(rowsInBlock, kBlockSize) / kBlockSize;
   setFilter(step.get(), op.reader, nullptr);
   bool dense = previousFilter == nullptr &&
       simd::isDense(op.rows.data(), op.rows.size());

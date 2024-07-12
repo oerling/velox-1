@@ -368,6 +368,7 @@ void GpuArena::free(Buffer* buffer) {
 ArenaStatus   GpuArena::checkBuffers() {
   ArenaStatus status;
   std::lock_guard<std::mutex> l(mutex_);
+  std::vector<Buffer*> usedBuffers;
   for (auto& buffers : allBuffers_) {
     for (auto& buffer : buffers->buffers) {
       if (buffer.referenceCount_) {
@@ -375,7 +376,15 @@ ArenaStatus   GpuArena::checkBuffers() {
 	status.capacity += buffer.capacity_;
 	status.allocatedBytes += buffer.size_;
 	buffer.check();
+	usedBuffers.push_back(&buffer);
       }
+    }
+  }
+  std::sort(usedBuffers.begin(), usedBuffers.end(), [](Buffer*& left, Buffer*& right) { return (uintptr_t)left->ptr_ < (uintptr_t)right->ptr_;});
+  for (auto i = 0; i < usedBuffers.size() - 1; ++i) {
+    void* end = reinterpret_cast<char*>(usedBuffers[i]->ptr_) + usedBuffers[i]->size_;
+    if (end > usedBuffers[i + 1]->ptr_) {
+      VELOX_FAIL("Overlapping buffers in GpuArena");
     }
   }
   return status;
