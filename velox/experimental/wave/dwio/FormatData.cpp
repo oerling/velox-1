@@ -137,7 +137,7 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
           op.extraRowCountId, &op.extraRowCount, true);
     } else {
       step->filterRowCount = reinterpret_cast<int32_t*>(
-							blockIdx * sizeof(int32_t) * maxRowsPerThread);
+          blockIdx * sizeof(int32_t) * maxRowsPerThread);
       deviceStaging.registerPointer(
           op.extraRowCountId, &step->filterRowCount, false);
     }

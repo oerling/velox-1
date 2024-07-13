@@ -21,7 +21,10 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/wave/common/Exception.h"
 
-DEFINE_bool(wave_buffer_end_guard, false, "Use buffer  end guard to detect overruns");
+DEFINE_bool(
+    wave_buffer_end_guard,
+    false,
+    "Use buffer  end guard to detect overruns");
 
 namespace facebook::velox::wave {
 
@@ -292,7 +295,7 @@ GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator)
   currentArena_ = arena;
 }
 
-  WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t capacity, size_t size) {
+WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t capacity, size_t size) {
   auto result = firstFreeBuffer_;
   if (!result) {
     allBuffers_.push_back(std::make_unique<Buffers>());
@@ -321,7 +324,8 @@ WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
     return getBuffer(result, bytes, roundedBytes);
   }
   for (auto pair : arenas_) {
-    if (pair.second == currentArena_ || pair.second->freeBytes() < roundedBytes) {
+    if (pair.second == currentArena_ ||
+        pair.second->freeBytes() < roundedBytes) {
       continue;
     }
     result = pair.second->allocate(bytes);
@@ -370,29 +374,35 @@ void GpuArena::free(Buffer* buffer) {
   firstFreeBuffer_ = buffer;
 }
 
-ArenaStatus   GpuArena::checkBuffers() {
+ArenaStatus GpuArena::checkBuffers() {
   ArenaStatus status;
   std::lock_guard<std::mutex> l(mutex_);
   std::vector<Buffer*> usedBuffers;
   for (auto& buffers : allBuffers_) {
     for (auto& buffer : buffers->buffers) {
       if (buffer.referenceCount_) {
-	++status.numBuffers;
-	status.capacity += buffer.capacity_;
-	status.allocatedBytes += buffer.size_;
-	buffer.check();
-	usedBuffers.push_back(&buffer);
+        ++status.numBuffers;
+        status.capacity += buffer.capacity_;
+        status.allocatedBytes += buffer.size_;
+        buffer.check();
+        usedBuffers.push_back(&buffer);
       }
     }
   }
-  std::sort(usedBuffers.begin(), usedBuffers.end(), [](Buffer*& left, Buffer*& right) { return (uintptr_t)left->ptr_ < (uintptr_t)right->ptr_;});
+  std::sort(
+      usedBuffers.begin(),
+      usedBuffers.end(),
+      [](Buffer*& left, Buffer*& right) {
+        return (uintptr_t)left->ptr_ < (uintptr_t)right->ptr_;
+      });
   for (auto i = 0; i < usedBuffers.size() - 1; ++i) {
-    void* end = reinterpret_cast<char*>(usedBuffers[i]->ptr_) + usedBuffers[i]->size_;
+    void* end =
+        reinterpret_cast<char*>(usedBuffers[i]->ptr_) + usedBuffers[i]->size_;
     if (end > usedBuffers[i + 1]->ptr_) {
       VELOX_FAIL("Overlapping buffers in GpuArena");
     }
   }
   return status;
 }
-  
+
 } // namespace facebook::velox::wave

@@ -15,10 +15,10 @@
  */
 
 #include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/wave/common/Exception.h"
+#include "velox/experimental/wave/common/GpuArena.h"
 
 DECLARE_bool(wave_buffer_end_guard);
 
@@ -29,8 +29,8 @@ void Buffer::check() const {
     return;
   }
   if (*magicPtr() != kMagic) {
-      VELOX_FAIL("Buffer tail overrun: {}", toString());
-    }
+    VELOX_FAIL("Buffer tail overrun: {}", toString());
+  }
 }
 
 void Buffer::setMagic() {
@@ -39,11 +39,17 @@ void Buffer::setMagic() {
   }
   *magicPtr() = kMagic;
 }
-  
-  std::string Buffer::toString() const {
-    return fmt::format("<Buffer {} capacity={} ref={} pin={} dbg={}>", ptr_, capacity_, referenceCount_, pinCount_, debugInfo_); 
-  }
-  
+
+std::string Buffer::toString() const {
+  return fmt::format(
+      "<Buffer {} capacity={} ref={} pin={} dbg={}>",
+      ptr_,
+      capacity_,
+      referenceCount_,
+      pinCount_,
+      debugInfo_);
+}
+
 void Buffer::release() {
   check();
   if (referenceCount_.fetch_sub(1) == 1) {

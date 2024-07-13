@@ -129,7 +129,9 @@ void ReadStream::makeCompact(bool isSerial) {
         auto step = std::make_unique<GpuDecode>();
         step->step = DecodeStep::kCompact64;
         step->nthBlock = blockIdx;
-        step->numRowsPerThread =  blockIdx == numTBs - 1 ? numBlocks_ - (numTBs - 1) * maxRowsPerThread : maxRowsPerThread;
+        step->numRowsPerThread = blockIdx == numTBs - 1
+            ? numBlocks_ - (numTBs - 1) * maxRowsPerThread
+            : maxRowsPerThread;
         if (filters_.back().deviceResult) {
           step->data.compact.finalRows =
               filters_.back().deviceResult + blockIdx * rowsPerBlock;

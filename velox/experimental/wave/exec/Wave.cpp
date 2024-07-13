@@ -1309,10 +1309,8 @@ std::string AbstractOperand::toString() const {
     return fmt::format(
         "<literal {} {}>", constant->toString(0), type->toString());
   }
-  const char* nulls = notNull ? "NN"
-      : conditionalNonNull    ? "CN"
-      : sourceNullable        ? "SN"
-                              : "?";
+  const char* nulls =
+      notNull ? "NN" : conditionalNonNull ? "CN" : sourceNullable ? "SN" : "?";
   return fmt::format("<{} {}: {} {}>", id, label, nulls, type->toString());
 }
 

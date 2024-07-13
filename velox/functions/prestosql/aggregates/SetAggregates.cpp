@@ -603,10 +603,7 @@ void registerSetUnionAggregate(
       overwrite);
 }
 
-void registerCountDistinctAggregate(
-    const std::string& prefix,
-    bool withCompanionFunctions,
-    bool overwrite) {
+void registerCountDistinctAggregate(const std::string& prefix) {
   std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures = {
       exec::AggregateFunctionSignatureBuilder()
           .typeVariable("T")
@@ -675,8 +672,8 @@ void registerCountDistinctAggregate(
                 "Unexpected type {}", mapTypeKindToName(typeKind));
         }
       },
-      withCompanionFunctions,
-      overwrite);
+      /*withCompanionFunctions*/ false,
+      /*overwrite*/ false);
 }
 
 } // namespace facebook::velox::aggregate::prestosql

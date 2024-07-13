@@ -207,7 +207,9 @@ VectorPtr WaveVector::toVelox(
   // with size_ of WaveVector. If there is no wrap, it is mapped to
   // the end of the last BlockStatus. If the blocks are densely filled
   // we have the vector at right size with no wrap on top.
-  int32_t filledSize = operandIndices ? size_ : (kBlockSize * (numBlocks - 1)) + status[numBlocks - 1].numRows;
+  int32_t filledSize = operandIndices
+      ? size_
+      : (kBlockSize * (numBlocks - 1)) + status[numBlocks - 1].numRows;
   auto base = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
       toVeloxTyped, type_->kind(), filledSize, pool, type_, values_, nulls_);
   if (!status || !operand) {

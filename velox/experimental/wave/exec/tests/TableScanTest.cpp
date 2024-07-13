@@ -43,10 +43,10 @@ struct WaveScanTestParam {
 
 std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
-      WaveScanTestParam{}, WaveScanTestParam{.numStreams = 4},
+      WaveScanTestParam{},
+      WaveScanTestParam{.numStreams = 4},
       WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
-      WaveScanTestParam{ .numStreams = 9, .batchSize = 16500}
-  };
+      WaveScanTestParam{.numStreams = 9, .batchSize = 16500}};
 }
 
 class TableScanTest : public virtual HiveConnectorTestBase,
@@ -198,12 +198,12 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     }
     ASSERT_EQ(n, task->numFinishedDrivers());
   }
- 
+
   FOLLY_NOINLINE void toFile() {
     std::ofstream out("/tmp/file.txt");
     int32_t row = 0;
     for (auto i = 0; i < vectors_.size(); ++i) {
-      out << "\n\n*** " << row ;
+      out << "\n\n*** " << row;
       out << vectors_[i]->toString(0, vectors_[i]->size(), "\n", true);
     }
     out.close();

@@ -678,7 +678,8 @@ std::string makeErrorMessage(
   message << extraRows.size() << " extra rows, " << missingRows.size()
           << " missing rows" << std::endl;
 
-  auto extraRowsToPrint = std::min((size_t)FLAGS_max_error_rows, extraRows.size());
+  auto extraRowsToPrint =
+      std::min((size_t)FLAGS_max_error_rows, extraRows.size());
   message << extraRowsToPrint << " of extra rows:" << std::endl;
 
   for (int32_t i = 0; i < extraRowsToPrint; i++) {
@@ -688,7 +689,8 @@ std::string makeErrorMessage(
   }
   message << std::endl;
 
-  auto missingRowsToPrint = std::min((size_t)FLAGS_max_error_rows, missingRows.size());
+  auto missingRowsToPrint =
+      std::min((size_t)FLAGS_max_error_rows, missingRows.size());
   message << missingRowsToPrint << " of missing rows:" << std::endl;
   for (int32_t i = 0; i < missingRowsToPrint; i++) {
     message << "\t";
