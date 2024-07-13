@@ -24,7 +24,9 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/core/Config.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/PrefixSortUtils.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
@@ -116,12 +118,14 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         connectorPool_.get(),
         connectorSessionProperties_.get(),
         nullptr,
+        exec::test::defaultPrefixSortConfig(),
         nullptr,
         nullptr,
         "query.HiveDataSinkTest",
         "task.HiveDataSinkTest",
         "planNodeId.HiveDataSinkTest",
-        0);
+        0,
+        "");
   }
 
   std::shared_ptr<connector::hive::HiveInsertTableHandle>
@@ -621,7 +625,7 @@ TEST_F(HiveDataSinkTest, abort) {
   }
 }
 
-TEST_F(HiveDataSinkTest, memoryReclaim) {
+DEBUG_ONLY_TEST_F(HiveDataSinkTest, memoryReclaim) {
   const int numBatches = 200;
   auto vectors = createVectors(500, 200);
 
@@ -644,7 +648,7 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
           expectedWriterReclaimed);
     }
   } testSettings[] = {
-      //    {dwio::common::FileFormat::DWRF, true, true, 1 << 30, true, true},
+      {dwio::common::FileFormat::DWRF, true, true, 1 << 30, true, true},
       {dwio::common::FileFormat::DWRF, true, true, 1, true, true},
       {dwio::common::FileFormat::DWRF, true, false, 1 << 30, false, false},
       {dwio::common::FileFormat::DWRF, true, false, 1, false, false},
@@ -664,6 +668,13 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
       {dwio::common::FileFormat::PARQUET, false, false, 1, false, false}
 #endif
   };
+  SCOPED_TESTVALUE_SET(
+      "facebook::velox::dwrf::Writer::MemoryReclaimer::reclaimableBytes",
+      std::function<void(dwrf::Writer*)>([&](dwrf::Writer* writer) {
+        // Release before reclaim to make it not able to reclaim from reserved
+        // memory.
+        writer->getContext().releaseMemoryReservation();
+      }));
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
     setupMemoryPools();
@@ -693,12 +704,14 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
           connectorPool_.get(),
           connectorSessionProperties_.get(),
           spillConfig.get(),
+          exec::test::defaultPrefixSortConfig(),
           nullptr,
           nullptr,
           "query.HiveDataSinkTest",
           "task.HiveDataSinkTest",
           "planNodeId.HiveDataSinkTest",
-          0);
+          0,
+          "");
       setConnectorQueryContext(std::move(connectorQueryCtx));
     } else {
       auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
@@ -706,12 +719,14 @@ TEST_F(HiveDataSinkTest, memoryReclaim) {
           connectorPool_.get(),
           connectorSessionProperties_.get(),
           nullptr,
+          exec::test::defaultPrefixSortConfig(),
           nullptr,
           nullptr,
           "query.HiveDataSinkTest",
           "task.HiveDataSinkTest",
           "planNodeId.HiveDataSinkTest",
-          0);
+          0,
+          "");
       setConnectorQueryContext(std::move(connectorQueryCtx));
     }
 
@@ -830,12 +845,14 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
           connectorPool_.get(),
           connectorSessionProperties_.get(),
           spillConfig.get(),
+          exec::test::defaultPrefixSortConfig(),
           nullptr,
           nullptr,
           "query.HiveDataSinkTest",
           "task.HiveDataSinkTest",
           "planNodeId.HiveDataSinkTest",
-          0);
+          0,
+          "");
       setConnectorQueryContext(std::move(connectorQueryCtx));
     } else {
       auto connectorQueryCtx = std::make_unique<connector::ConnectorQueryCtx>(
@@ -843,12 +860,14 @@ TEST_F(HiveDataSinkTest, memoryReclaimAfterClose) {
           connectorPool_.get(),
           connectorSessionProperties_.get(),
           nullptr,
+          exec::test::defaultPrefixSortConfig(),
           nullptr,
           nullptr,
           "query.HiveDataSinkTest",
           "task.HiveDataSinkTest",
           "planNodeId.HiveDataSinkTest",
-          0);
+          0,
+          "");
       setConnectorQueryContext(std::move(connectorQueryCtx));
     }
 
@@ -922,12 +941,14 @@ DEBUG_ONLY_TEST_F(HiveDataSinkTest, sortWriterFailureTest) {
       connectorPool_.get(),
       connectorSessionProperties_.get(),
       spillConfig.get(),
+      exec::test::defaultPrefixSortConfig(),
       nullptr,
       nullptr,
       "query.HiveDataSinkTest",
       "task.HiveDataSinkTest",
       "planNodeId.HiveDataSinkTest",
-      0);
+      0,
+      "");
   setConnectorQueryContext(std::move(connectorQueryCtx));
 
   auto dataSink = createDataSink(
