@@ -118,7 +118,6 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
               inputControl,
               out);
           stream.setState(WaveStream::State::kParallel);
-          stream.arena().checkBuffers();
           reinterpret_cast<WaveKernelStream*>(out)->call(
               out,
               exes.size() * blocksPerExe,

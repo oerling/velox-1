@@ -13,24 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include "velox/functions/Macros.h"
+#include <string>
 
 namespace facebook::velox::functions {
 
-template <typename T>
-struct CardinalityFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
+void registerReduceRewrites(const std::string& prefix);
 
-  void call(int64_t& out, const arg_type<Array<Generic<T1>>>& input) {
-    out = input.size();
-  }
-
-  void call(
-      int64_t& out,
-      const arg_type<Map<Generic<T1>, Generic<T2>>>& input) {
-    out = input.size();
-  }
-};
-} // namespace facebook::velox::functions
+}
