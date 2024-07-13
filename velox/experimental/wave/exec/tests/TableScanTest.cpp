@@ -45,7 +45,7 @@ std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{}, WaveScanTestParam{.numStreams = 4},
       // *** Not all size combinations work, e.eg. :
-      // WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
+      WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
       WaveScanTestParam{ .numStreams = 9, .batchSize = 16500}
   };
 }
