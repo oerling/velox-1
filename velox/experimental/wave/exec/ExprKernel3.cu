@@ -39,7 +39,6 @@ __global__ void oneFilter(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_EPILOGUE();
 }
 
-
 __global__ void onePlusBigint(KernelParams params, int32_t pc, int32_t base) {
   PROGRAM_PREAMBLE(base);
   binaryOpKernel<int64_t>(
@@ -51,7 +50,5 @@ __global__ void onePlusBigint(KernelParams params, int32_t pc, int32_t base) {
       laneStatus);
   PROGRAM_EPILOGUE();
 }
-
-
 
 } // namespace facebook::velox::wave

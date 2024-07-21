@@ -26,7 +26,6 @@ DEFINE_bool(kernel_gdb, false, "Run kernels sequentially for debugging");
 
 namespace facebook::velox::wave {
 
-
 #define BINARY_TYPES(opCode, TP, OP)                         \
   case opCode:                                               \
     binaryOpKernel<TP>(                                      \

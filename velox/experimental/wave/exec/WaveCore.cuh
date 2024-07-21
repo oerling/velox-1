@@ -278,7 +278,6 @@ __device__ inline T opFunc_kPlus(T left, T right) {
   return left + right;
 }
 
-
 template <typename T, typename OpFunc>
 __device__ __forceinline__ void binaryOpKernel(
     OpFunc func,
@@ -300,6 +299,5 @@ __device__ __forceinline__ void binaryOpKernel(
     resultNull(operands, instr.result, blockBase, shared);
   }
 }
-
 
 } // namespace facebook::velox::wave
