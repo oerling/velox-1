@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-#include "velox/benchmarks/QueryBenchmarkBase.h"
+
+#include "velox/benchmark/QueryBenchmarkBase.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+
+
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -25,17 +29,8 @@ using namespace facebook::velox::dwio::common;
 DEFINE_string(
     data_path,
     "",
-    "Root path of TPC-H data. Data layout must follow Hive-style partitioning. "
-    "Example layout for '-data_path=/data/tpch10'\n"
-    "       /data/tpch10/customer\n"
-    "       /data/tpch10/lineitem\n"
-    "       /data/tpch10/nation\n"
-    "       /data/tpch10/orders\n"
-    "       /data/tpch10/part\n"
-    "       /data/tpch10/partsupp\n"
-    "       /data/tpch10/region\n"
-    "       /data/tpch10/supplier\n"
-    "If the above are directories, they contain the data files for "
+    "Root path of test data. Data layout must follow Hive-style partitioning. "
+    "If the content are directories, they contain the data files for "
     "each table. If they are files, they contain a file system path for each "
     "data file, one per line. This allows running against cloud storage or "
     "HDFS");
@@ -47,28 +42,92 @@ static bool notEmpty(const char* /*flagName*/, const std::string& value) {
 
 DEFINE_validator(data_path, &notEmpty);
 
+DEFINE_bool(wave, true, "Run benchmark with Wave");
+
 DEFINE_int32(
     run_query_verbose,
     -1,
     "Run a given query and print execution statistics");
-DEFINE_int32(
-    io_meter_column_pct,
-    0,
-    "Percentage of lineitem columns to "
-    "include in IO meter query. The columns are sorted by name and the n% first "
-    "are scanned");
 
-std::shared_ptr<TpchQueryBuilder> queryBuilder;
 
-class TpchBenchmark : public QueryBenchmarkBase {
+class WaveBenchmark : public QueryBenchmarkBase {
  public:
+  void initialize() override {
+    if (FLAGS_wave) {
+      if (int device; cudaGetDevice(&device) != cudaSuccess) {
+	GTEST_SKIP() << "No CUDA detected, skipping all tests";
+      }
+      wave::registerWave();
+      wave::WaveHiveDataSource::registerConnector();
+      wave::test::WaveTestSplitReader::registerTestSplitReader();
+    }
+  }
+
+  auto makeData(
+      const RowTypePtr& type,
+      int32_t numVectors,
+      int32_t vectorSize,
+      bool notNull = true) {
+    vectors_ = makeVectors(type, numVectors, vectorSize);
+    int32_t cnt = 0;
+    for (auto& vector : vectors_) {
+      makeRange(vector, 1000000000, notNull);
+      auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
+      for (auto i = 0; i < rn->size(); ++i) {
+        rn->set(i, cnt++);
+      }
+    }
+    auto splits = makeTable("test", vectors_);
+    return splits;
+  }
+
+  wave::test::SplitVector makeTable(
+      const std::string& name,
+      std::vector<RowVectorPtr>& rows) {
+    wave::test::Table::dropTable(name);
+    return wave::test::Table::defineTable(name, rows)->splits();
+  }
+
+void writeToFile(
+    const std::string& filePath,
+    const std::vector<RowVectorPtr>& vectors,
+    std::shared_ptr<dwrf::Config> config,
+    const TypePtr& schema) {
+  velox::dwrf::WriterOptions options;
+  options.config = config;
+  options.schema = schema;
+  auto localWriteFile = std::make_unique<LocalWriteFile>(filePath, true, false);
+  auto sink = std::make_unique<dwio::common::WriteFileSink>(
+      std::move(localWriteFile), filePath);
+  auto childPool = rootPool_->addAggregateChild("HiveConnectorTestBase.Writer");
+  options.memoryPool = childPool.get();
+  facebook::velox::dwrf::Writer writer{std::move(sink), options};
+  for (size_t i = 0; i < vectors.size(); ++i) {
+    writer.write(vectors[i]);
+  }
+  writer.close();
+}
+
+  TpChPlan getQueryPlan(int32_t query) {
+    
+  }
+
+  std::vector<std::shared_ptr><connector::ConnectorSplit>> listSplits(const std::string& path, int32_t numSplitsPerFile, const TpchPlan& plan) override {
+    if (plan.fileFormat == FileFormat::UNKNOWN){
+      auto table = wave::test::Table::getTable(path);
+      return table.splits();
+    }
+    return QueryBenchmarkBase::listSplits(path, numSplitsPerFile, plan);
+}
+
+
+  
   void runMain(std::ostream& out, RunStats& runStats) override {
-    if (FLAGS_run_query_verbose == -1 && FLAGS_io_meter_column_pct == 0) {
+    if (FLAGS_run_query_verbose == -1) {
       folly::runBenchmarks();
     } else {
-      const auto queryPlan = FLAGS_io_meter_column_pct > 0
-          ? queryBuilder->getIoMeterPlan(FLAGS_io_meter_column_pct)
-          : queryBuilder->getQueryPlan(FLAGS_run_query_verbose);
+      const auto queryPlan = 
+         getQueryPlan(FLAGS_run_query_verbose);
       auto [cursor, actualResults] = run(queryPlan);
       if (!cursor) {
         LOG(ERROR) << "Query terminated with error. Exiting";
@@ -106,7 +165,7 @@ class TpchBenchmark : public QueryBenchmarkBase {
   }
 };
 
-TpchBenchmark benchmark;
+WaveBenchmark benchmark;
 
 BENCHMARK(q1) {
   const auto planContext = queryBuilder->getQueryPlan(1);
@@ -213,7 +272,7 @@ BENCHMARK(q22) {
   benchmark.run(planContext);
 }
 
-int tpchBenchmarkMain() {
+int WaveBenchmarkMain() {
   benchmark.initialize();
   queryBuilder =
       std::make_shared<TpchQueryBuilder>(toFileFormat(FLAGS_data_format));
@@ -228,3 +287,4 @@ int tpchBenchmarkMain() {
   queryBuilder.reset();
   return 0;
 }
+
