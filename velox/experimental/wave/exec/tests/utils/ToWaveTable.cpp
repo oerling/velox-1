@@ -16,13 +16,10 @@
 
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 
-
-
 DEFINE_int32(
     wave_stripe_rows,
     100000,
     "Stripe size for Wave recoding of test data");
-
 
 namespace facebook::velox::wave::test {
 
@@ -126,8 +123,6 @@ class WaveRecodeFactory : public Operator::PlanNodeTranslator {
  private:
 };
 
-
-
 TpchPlan TpchQueryBuilder::getWaveRecodePlan(
     const std::string& tableName) const {
   static bool inited = false;
@@ -165,5 +160,4 @@ TpchPlan TpchQueryBuilder::getWaveRecodePlan(
   return context;
 }
 
-
-}
+} // namespace facebook::velox::wave::test

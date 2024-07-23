@@ -21,10 +21,8 @@
 
 namespace facebook::velox::wave::test {
 
-  /// Reads the data in files in 'directory' and  fills Wave table 'waveName' with the data in Wave test file format.
-  void toWaveTable(const std::string waveName, std::string& directory);
-  
-  
-  
-}
+/// Reads the data in files in 'directory' and  fills Wave table 'waveName' with
+/// the data in Wave test file format.
+void toWaveTable(const std::string waveName, std::string& directory);
 
+} // namespace facebook::velox::wave::test

@@ -87,7 +87,10 @@ class QueryBenchmarkBase {
   std::pair<std::unique_ptr<exec::test::TaskCursor>, std::vector<RowVectorPtr>>
   run(const exec::test::TpchPlan& tpchPlan);
 
-  virtual   std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(const std::string& path, int32_t numSplitsPerFile, const exec::test::TpchPlan& plan);
+  virtual std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
+      const std::string& path,
+      int32_t numSplitsPerFile,
+      const exec::test::TpchPlan& plan);
 
   static void ensureTaskCompletion(exec::Task* task);
 

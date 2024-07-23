@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-
 #include "velox/benchmarks/QueryBenchmarkBase.h"
-#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
+#include "velox/dwio/dwrf/writer/Writer.h"
+#include "velox/dwio/dwrf/writer/WriterContext.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/WaveHiveDataSource.h"
+#include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/dwio/dwrf/writer/WriterContext.h"
-#include "velox/dwio/dwrf/writer/Writer.h"
-
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
-
 
 DEFINE_string(
     data_path,
@@ -40,10 +37,11 @@ DEFINE_string(
     "data file, one per line. This allows running against cloud storage or "
     "HDFS");
 
-
-DEFINE_bool(generate, true, "Generate input data. If false, data_path must "
-	    "contain a directory with a subdirectory per table.");
-
+DEFINE_bool(
+    generate,
+    true,
+    "Generate input data. If false, data_path must "
+    "contain a directory with a subdirectory per table.");
 
 DEFINE_bool(wave, true, "Run benchmark with Wave");
 
@@ -58,7 +56,6 @@ DEFINE_int32(
     -1,
     "Run a given query and print execution statistics");
 
-
 class WaveBenchmark : public QueryBenchmarkBase {
  public:
   void initialize() override {
@@ -69,7 +66,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
     }
     rootPool_ = memory::memoryManager()->addRootPool("WaveBenchmark");
     leafPool_ = rootPool_->addLeafChild("WaveBenchmark");
-
   }
 
   void makeData(
@@ -113,7 +109,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
     return vectors;
   }
 
-  
   void makeRange(
       RowVectorPtr row,
       int64_t mod = std::numeric_limits<int64_t>::max(),
@@ -133,77 +128,81 @@ class WaveBenchmark : public QueryBenchmarkBase {
       }
     }
   }
-  
+
   wave::test::SplitVector makeTable(
-				    const std::string& name,
-				    std::vector<RowVectorPtr>& rows) {
+      const std::string& name,
+      std::vector<RowVectorPtr>& rows) {
     wave::test::Table::dropTable(name);
     return wave::test::Table::defineTable(name, rows)->splits();
   }
 
   void writeToFile(
-		   const std::string& filePath,
-		   const std::vector<RowVectorPtr>& vectors,
-		   std::shared_ptr<dwrf::Config> config,
-    const TypePtr& schema) {
+      const std::string& filePath,
+      const std::vector<RowVectorPtr>& vectors,
+      std::shared_ptr<dwrf::Config> config,
+      const TypePtr& schema) {
     dwrf::WriterOptions options;
-  options.config = config;
-  options.schema = schema;
-  auto localWriteFile = std::make_unique<LocalWriteFile>(filePath, true, false);
-  auto sink = std::make_unique<dwio::common::WriteFileSink>(
-      std::move(localWriteFile), filePath);
-  auto childPool = rootPool_->addAggregateChild("HiveConnectorTestBase.Writer");
-  options.memoryPool = childPool.get();
-  facebook::velox::dwrf::Writer writer{std::move(sink), options};
-  for (size_t i = 0; i < vectors.size(); ++i) {
-    writer.write(vectors[i]);
-  }
-  writer.close();
+    options.config = config;
+    options.schema = schema;
+    auto localWriteFile =
+        std::make_unique<LocalWriteFile>(filePath, true, false);
+    auto sink = std::make_unique<dwio::common::WriteFileSink>(
+        std::move(localWriteFile), filePath);
+    auto childPool =
+        rootPool_->addAggregateChild("HiveConnectorTestBase.Writer");
+    options.memoryPool = childPool.get();
+    facebook::velox::dwrf::Writer writer{std::move(sink), options};
+    for (size_t i = 0; i < vectors.size(); ++i) {
+      writer.write(vectors[i]);
+    }
+    writer.close();
   }
 
   exec::test::TpchPlan getQueryPlan(int32_t query) {
     switch (query) {
-    case 1: {
-      exec::test::TpchPlan plan;
-      if (FLAGS_wave) {
-	plan.dataFiles["0"] = {"test"}; 
-      } else {
-	plan.dataFiles["0"]
-	  = {"tmp/test.dwrf"};
+      case 1: {
+        exec::test::TpchPlan plan;
+        if (FLAGS_wave) {
+          plan.dataFiles["0"] = {"test"};
+        } else {
+          plan.dataFiles["0"] = {"tmp/test.dwrf"};
+        }
+        return plan;
       }
-      return plan;
-    }
-    default: VELOX_FAIL("Bad query number");
+      default:
+        VELOX_FAIL("Bad query number");
     }
   }
 
   void prepareQuery(int32_t query) {
     switch (query) {
-    case 1: {
-      auto type = makeType();
-      auto numVectors = std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
-      makeData(type, numVectors, FLAGS_num_rows / numVectors);
-      break;
-    }
-    default: VELOX_FAIL("Bad query number");
+      case 1: {
+        auto type = makeType();
+        auto numVectors =
+            std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
+        makeData(type, numVectors, FLAGS_num_rows / numVectors);
+        break;
+      }
+      default:
+        VELOX_FAIL("Bad query number");
     }
   }
-  std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(const std::string& path, int32_t numSplitsPerFile, const TpchPlan& plan) override {
-    if (plan.dataFileFormat == FileFormat::UNKNOWN){
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
+      const std::string& path,
+      int32_t numSplitsPerFile,
+      const TpchPlan& plan) override {
+    if (plan.dataFileFormat == FileFormat::UNKNOWN) {
       auto table = wave::test::Table::getTable(path);
       return table->splits();
     }
     return QueryBenchmarkBase::listSplits(path, numSplitsPerFile, plan);
-}
+  }
 
-
-  
   void runMain(std::ostream& out, RunStats& runStats) override {
     if (FLAGS_run_query_verbose == -1) {
       folly::runBenchmarks();
     } else {
-      const auto queryPlan = 
-         getQueryPlan(FLAGS_run_query_verbose);
+      const auto queryPlan = getQueryPlan(FLAGS_run_query_verbose);
       auto [cursor, actualResults] = run(queryPlan);
       if (!cursor) {
         LOG(ERROR) << "Query terminated with error. Exiting";
@@ -247,10 +246,10 @@ class WaveBenchmark : public QueryBenchmarkBase {
       names.push_back(fmt::format("c{}", i));
       types.push_back(BIGINT());
     }
-    return  ROW(std::move(names), std::move(types));
+    return ROW(std::move(names), std::move(types));
   }
 
-    std::shared_ptr<memory::MemoryPool> rootPool_;
+  std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> leafPool_;
 
   VectorFuzzer::Options options_;
@@ -258,7 +257,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
 };
 
 WaveBenchmark benchmark;
-
 
 void waveBenchmarkMain() {
   benchmark.initialize();
@@ -279,4 +277,3 @@ int main(int argc, char** argv) {
   waveBenchmarkMain();
   return 0;
 }
-
