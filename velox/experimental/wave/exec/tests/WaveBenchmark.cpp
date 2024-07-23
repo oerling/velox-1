@@ -55,7 +55,10 @@ DEFINE_int32(num_column_filters, 0, "Number of columns wit a filter");
 
 DEFINE_int32(num_expr_filters, 0, "Number of columns  with a filter expr");
 
-DEFINE_int32(num_arithmetic, 0, "Number of arithmetic ops per column after filters");
+DEFINE_int32(
+    num_arithmetic,
+    0,
+    "Number of arithmetic ops per column after filters");
 
 DEFINE_int32(rows_per_stripe, 200000, "Rows in a stripe");
 
@@ -171,9 +174,9 @@ class WaveBenchmark : public QueryBenchmarkBase {
   exec::test::TpchPlan getQueryPlan(int32_t query) {
     switch (query) {
       case 1: {
-	if (!type_) {
-	  type_ = makeType();
-	}
+        if (!type_) {
+          type_ = makeType();
+        }
 
         exec::test::TpchPlan plan;
         if (FLAGS_wave) {
@@ -181,46 +184,46 @@ class WaveBenchmark : public QueryBenchmarkBase {
         } else {
           plan.dataFiles["0"] = {"tmp/test.dwrf"};
         }
-	int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
-	std::vector<std::string> scanFilters;
-	for (auto i = 0; i < FLAGS_num_column_filters; ++i) {
-	  scanFilters.push_back(fmt::format("c{} < {}", i, bound));
-	}
-	  auto builder = PlanBuilder(leafPool_.get())
-	    .tableScan(type_, scanFilters);
+        int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
+        std::vector<std::string> scanFilters;
+        for (auto i = 0; i < FLAGS_num_column_filters; ++i) {
+          scanFilters.push_back(fmt::format("c{} < {}", i, bound));
+        }
+        auto builder =
+            PlanBuilder(leafPool_.get()).tableScan(type_, scanFilters);
 
-	for (auto i = 0; i < FLAGS_num_expr_filters; ++i) {
-	  builder = builder.filter(fmt::format("c{} < {}", FLAGS_num_column_filters + i, bound));
-	}
-	
-	std::vector<std::string> aggInputs;
-	if (FLAGS_num_arithmetic > 0) {
-	  std::vector<std::string> projects;
-	  for (auto c = 0; c < type_->size(); ++c) {
-	    std::string expr = fmt::format("c{} ", c);
-	    for (auto i = 0; i < FLAGS_num_arithmetic; ++i) {
-	      expr += fmt::format(" + c{}", c);
-	    }
-	    expr += fmt::format(" as f{}", c);
-	    projects.push_back(std::move(expr));
-	    aggInputs.push_back(fmt::format("f{}", c));
-	  }
-	  builder = builder.project(std::move(projects));
-	} else {
-	  for (auto i = 0; i < type_->size(); ++i) {
-	    aggInputs.push_back(fmt::format("c{}", i));
-	  }
-	} 
-	std::vector<std::string> aggs;
-	for (auto i = 0; i < aggInputs.size(); ++i) {
-	  aggs.push_back(fmt::format("sum({})", aggInputs[i]));
-	}
+        for (auto i = 0; i < FLAGS_num_expr_filters; ++i) {
+          builder = builder.filter(
+              fmt::format("c{} < {}", FLAGS_num_column_filters + i, bound));
+        }
 
-	plan.plan = builder.singleAggregation(
-              {}, aggs)
-          .planNode();
+        std::vector<std::string> aggInputs;
+        if (FLAGS_num_arithmetic > 0) {
+          std::vector<std::string> projects;
+          for (auto c = 0; c < type_->size(); ++c) {
+            std::string expr = fmt::format("c{} ", c);
+            for (auto i = 0; i < FLAGS_num_arithmetic; ++i) {
+              expr += fmt::format(" + c{}", c);
+            }
+            expr += fmt::format(" as f{}", c);
+            projects.push_back(std::move(expr));
+            aggInputs.push_back(fmt::format("f{}", c));
+          }
+          builder = builder.project(std::move(projects));
+        } else {
+          for (auto i = 0; i < type_->size(); ++i) {
+            aggInputs.push_back(fmt::format("c{}", i));
+          }
+        }
+        std::vector<std::string> aggs;
+        for (auto i = 0; i < aggInputs.size(); ++i) {
+          aggs.push_back(fmt::format("sum({})", aggInputs[i]));
+        }
 
-	plan.dataFileFormat = FLAGS_wave ? FileFormat::UNKNOWN : FileFormat::DWRF;
+        plan.plan = builder.singleAggregation({}, aggs).planNode();
+
+        plan.dataFileFormat =
+            FLAGS_wave ? FileFormat::UNKNOWN : FileFormat::DWRF;
         return plan;
       }
       default:
@@ -234,7 +237,8 @@ class WaveBenchmark : public QueryBenchmarkBase {
         type_ = makeType();
         auto numVectors =
             std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
-        makeData(type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
+        makeData(
+            type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
         break;
       }
       default:
