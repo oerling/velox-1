@@ -193,10 +193,15 @@ void QueryBenchmarkBase::initialize() {
   connector::registerConnector(hiveConnector);
 }
 
-  std::vector<std::shared_ptr><connector::ConnectorSplit>> listSplits(const std::string& path, int32_t numSplitsPerFile, const TpchPlan& plan) {
-  HiveConnectorTestBase::makeHiveConnectorSplits(
-						 path, numSplitsPerFile, tpchPlan.dataFileFormat);
-}
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(const std::string& path, int32_t numSplitsPerFile, const exec::test::TpchPlan& plan) {
+    std::vector<std::shared_ptr<connector::ConnectorSplit>> result;
+    auto temp = HiveConnectorTestBase::makeHiveConnectorSplits(
+						 path, numSplitsPerFile, plan.dataFileFormat);
+    for (auto& i : temp) {
+      result.push_back(i);
+    }
+    return result;
+  }
   
 void QueryBenchmarkBase::shutdown() {
   cache_->shutdown();
@@ -219,10 +224,10 @@ QueryBenchmarkBase::run(const TpchPlan& tpchPlan) {
         if (!noMoreSplits) {
           for (const auto& entry : tpchPlan.dataFiles) {
             for (const auto& path : entry.second) {
-              auto const splits =
+              auto splits =
 		listSplits(path, numSplitsPerFile, tpchPlan);
-              for (const auto& split : splits) {
-                task->addSplit(entry.first, exec::Split(split));
+              for (auto split : splits) {
+                task->addSplit(entry.first, exec::Split(std::move(split)));
               }
             }
             task->noMoreSplits(entry.first);

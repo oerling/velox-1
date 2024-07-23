@@ -17,12 +17,10 @@ add_subdirectory(utils)
 add_executable(velox_wave_exec_test FilterProjectTest.cpp TableScanTest.cpp
                                     AggregationTest.cpp Main.cpp)
 
-add_test(velox_wave_exec_test velox_wave_exec_test)
-
-target_link_libraries(
-  velox_wave_exec_test
+set(wave_TEST_LINK_LIBS
   velox_wave_exec
   velox_wave_mock_reader
+  velox_wave_mock_file
   velox_aggregates
   velox_dwio_common
   velox_dwio_common_exception
@@ -58,3 +56,17 @@ target_link_libraries(
   glog::glog
   fmt::fmt
   ${FILESYSTEM})
+
+				  
+add_test(velox_wave_exec_test velox_wave_exec_test)
+
+target_link_libraries(
+  velox_wave_exec_test
+  ${wave_test_link_libs})
+
+add_executable(velox_wave_benchmark WaveBenchmark.cpp)
+
+target_link_libraries(
+  velox_wave_benchmark 
+  velox_query_benchmark
+  ${wave_test_link_libs})
