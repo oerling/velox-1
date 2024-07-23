@@ -47,6 +47,16 @@ DEFINE_bool(wave, true, "Run benchmark with Wave");
 
 DEFINE_int32(num_columns, 10, "Number of columns in test table");
 
+DEFINE_int64(filter_pass_pct, 100, "Passing % for one filter");
+
+DEFINE_int32(null_pct, 0, "Pct of null values in columns");
+
+DEFINE_int32(num_column_filters, 0, "Number of columns wit a filter");
+
+DEFINE_int32(num_expr_filters, 0, "Number of columns  with a filter expr");
+
+DEFINE_int32(num_arithmetic, 0, "Number of arithmetic ops per column after filters");
+
 DEFINE_int32(rows_per_stripe, 200000, "Rows in a stripe");
 
 DEFINE_int64(num_rows, 1000000000, "Rows in test table");
@@ -72,11 +82,11 @@ class WaveBenchmark : public QueryBenchmarkBase {
       const RowTypePtr& type,
       int32_t numVectors,
       int32_t vectorSize,
-      bool notNull = true) {
-    auto vectors = makeVectors(type, numVectors, vectorSize);
+      float nullPct = 0) {
+    auto vectors = makeVectors(type, numVectors, vectorSize, nullPct / 100);
     int32_t cnt = 0;
     for (auto& vector : vectors) {
-      makeRange(vector, 1000000000, notNull);
+      makeRange(vector, 1000000000, nullPct == 0);
       auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
       for (auto i = 0; i < rn->size(); ++i) {
         rn->set(i, cnt++);
@@ -161,12 +171,56 @@ class WaveBenchmark : public QueryBenchmarkBase {
   exec::test::TpchPlan getQueryPlan(int32_t query) {
     switch (query) {
       case 1: {
+	if (!type_) {
+	  type_ = makeType();
+	}
+
         exec::test::TpchPlan plan;
         if (FLAGS_wave) {
           plan.dataFiles["0"] = {"test"};
         } else {
           plan.dataFiles["0"] = {"tmp/test.dwrf"};
         }
+	int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
+	std::vector<std::string> scanFilters;
+	for (auto i = 0; i < FLAGS_num_column_filters; ++i) {
+	  scanFilters.push_back(fmt::format("c{} < {}", i, bound));
+	}
+	  auto builder = PlanBuilder(leafPool_.get())
+	    .tableScan(type_, scanFilters);
+
+	for (auto i = 0; i < FLAGS_num_expr_filters; ++i) {
+	  builder = builder.filter(fmt::format("c{} < {}", FLAGS_num_column_filters + i, bound));
+	}
+	
+	std::vector<std::string> aggInputs;
+	if (FLAGS_num_arithmetic > 0) {
+	  std::vector<std::string> projects;
+	  for (auto c = 0; c < type_->size(); ++c) {
+	    std::string expr = fmt::format("c{} ", c);
+	    for (auto i = 0; i < FLAGS_num_arithmetic; ++i) {
+	      expr += fmt::format(" + c{}", c);
+	    }
+	    expr += fmt::format(" as f{}", c);
+	    projects.push_back(std::move(expr));
+	    aggInputs.push_back(fmt::format("f{}", c));
+	  }
+	  builder = builder.project(std::move(projects));
+	} else {
+	  for (auto i = 0; i < type_->size(); ++i) {
+	    aggInputs.push_back(fmt::format("c{}", i));
+	  }
+	} 
+	std::vector<std::string> aggs;
+	for (auto i = 0; i < aggInputs.size(); ++i) {
+	  aggs.push_back(fmt::format("sum({})", aggInputs[i]));
+	}
+
+	plan.plan = builder.singleAggregation(
+              {}, aggs)
+          .planNode();
+
+	plan.dataFileFormat = FLAGS_wave ? FileFormat::UNKNOWN : FileFormat::DWRF;
         return plan;
       }
       default:
@@ -177,10 +231,10 @@ class WaveBenchmark : public QueryBenchmarkBase {
   void prepareQuery(int32_t query) {
     switch (query) {
       case 1: {
-        auto type = makeType();
+        type_ = makeType();
         auto numVectors =
             std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
-        makeData(type, numVectors, FLAGS_num_rows / numVectors);
+        makeData(type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
         break;
       }
       default:
@@ -251,7 +305,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
 
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> leafPool_;
-
+  RowTypePtr type_;
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
 };
