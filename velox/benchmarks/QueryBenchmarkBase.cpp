@@ -193,7 +193,7 @@ void QueryBenchmarkBase::initialize() {
   connector::registerConnector(hiveConnector);
 }
 
-std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> QueryBenchmarkBase::listSplits(
     const std::string& path,
     int32_t numSplitsPerFile,
     const exec::test::TpchPlan& plan) {
@@ -207,7 +207,9 @@ std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
 }
 
 void QueryBenchmarkBase::shutdown() {
-  cache_->shutdown();
+  if (cache_) {
+    cache_->shutdown();
+  }
 }
 
 std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>>

@@ -72,6 +72,7 @@ DEFINE_int32(
 class WaveBenchmark : public QueryBenchmarkBase {
  public:
   void initialize() override {
+    QueryBenchmarkBase::initialize();
     if (FLAGS_wave) {
       wave::registerWave();
       wave::WaveHiveDataSource::registerConnector();
@@ -113,8 +114,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
     std::vector<RowVectorPtr> vectors;
     options_.vectorSize = rowsPerVector;
     options_.nullRatio = nullRatio;
-    fuzzer_->setOptions(options_);
-
+    fuzzer_ = std::make_unique<VectorFuzzer>(options_, leafPool_.get());
     for (int32_t i = 0; i < numVectors; ++i) {
       auto vector = fuzzer_->fuzzInputFlatRow(rowType);
       vectors.push_back(vector);
@@ -318,6 +318,9 @@ WaveBenchmark benchmark;
 
 void waveBenchmarkMain() {
   benchmark.initialize();
+  if (FLAGS_run_query_verbose != -1) {
+    benchmark.prepareQuery(FLAGS_run_query_verbose);
+  }
   if (FLAGS_test_flags_file.empty()) {
     RunStats ignore;
     benchmark.runMain(std::cout, ignore);

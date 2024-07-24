@@ -893,6 +893,9 @@ AdvanceResult Program::canAdvance(
   if (stateId.has_value()) {
     state = stream.operatorState(stateId.value());
   }
+  if (state == nullptr) {
+    return {};
+  }
   return source->canAdvance(stream, control, state, programIdx);
 }
 
