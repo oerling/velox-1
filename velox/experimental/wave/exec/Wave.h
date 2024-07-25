@@ -39,7 +39,7 @@ struct WaveTime {
   }
 
   WaveTime operator-(const WaveTime right) const {
-    return {right.micros - micros, right.clocks - clocks};
+    return {micros - right.micros, clocks - right.clocks};
   }
 
   WaveTime operator+(const WaveTime right) const {

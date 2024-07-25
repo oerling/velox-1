@@ -373,16 +373,16 @@ void WaveDriver::updateStats() {
       "wave.bytesToHost",
       RuntimeCounter(waveStats_.bytesToHost, RuntimeCounter::Unit::kBytes));
   lockedStats->addRuntimeStat(
-      "wave.hostOnlyTime",
+      "wave.hostOnlyNanos",
       RuntimeCounter(
           waveStats_.hostOnlyTime.micros * 1000, RuntimeCounter::Unit::kNanos));
   lockedStats->addRuntimeStat(
-      "wave.hostParallelTime",
+      "wave.hostParallelNanos",
       RuntimeCounter(
           waveStats_.hostParallelTime.micros * 1000,
           RuntimeCounter::Unit::kNanos));
   lockedStats->addRuntimeStat(
-      "wave.waitTime",
+      "wave.waitNanos",
       RuntimeCounter(
           waveStats_.waitTime.micros * 1000, RuntimeCounter::Unit::kNanos));
 }

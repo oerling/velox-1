@@ -49,7 +49,7 @@ void allOperands(
 ReadStream::ReadStream(
     StructColumnReader* columnReader,
     WaveStream& _waveStream,
-    io::IoStatistics* iostats,
+    io::IoStatistics* ioStats,
     const OperandSet* firstColumns)
   : Executable(), ioStats_(ioStats) {
   waveStream = &_waveStream;

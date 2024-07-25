@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/TableScan.h"
+#include "velox/experimental/wave/exec/WaveSplitReader.h"
 #include "velox/common/time/Timer.h"
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
@@ -53,7 +54,7 @@ void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
   waveDataSource_->schedule(stream, maxRows);
   nextAvailableRows_ = waveDataSource_->canAdvance(stream);
   if (nextAvailableRows_ == 0) {
-    updatestats(waveDataSource_->splitReader()->runtimeStats();
+    updateStats(waveDataSource_->splitReader()->runtimeStats());
     needNewSplit_ = true;
   }
 }

@@ -19,6 +19,7 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/FormatData.h"
 #include "velox/experimental/wave/exec/Wave.h"
+#include "velox/common/io/IoStatistics.h"
 
 namespace facebook::velox::wave {
 
@@ -113,7 +114,7 @@ class ReadStream : public Executable {
   ReadStream(
       StructColumnReader* columnReader,
       WaveStream& waveStream,
-      io::IoStatistics* ioStats,
+      velox::io::IoStatistics* ioStats,
       const OperandSet* firstColumns = nullptr);
 
   void setNullable(const AbstractOperand& op, bool nullable) {

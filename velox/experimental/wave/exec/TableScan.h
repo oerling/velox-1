@@ -98,6 +98,8 @@ class TableScan : public WaveSourceOperator {
   // needed before prepare is done, it will be made when needed.
   void preload(std::shared_ptr<connector::ConnectorSplit> split);
 
+  void updateStats(std::unordered_map<std::string, RuntimeCounter> stats);
+  
   // Process-wide IO wait time.
   static std::atomic<uint64_t> ioWaitNanos_;
 
