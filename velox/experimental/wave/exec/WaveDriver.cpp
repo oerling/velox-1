@@ -92,10 +92,12 @@ RowVectorPtr WaveDriver::getOutput() {
       auto status = advance(i);
       switch (status) {
         case Advance::kBlocked:
+	  updateStats();
           return nullptr;
         case Advance::kResult:
           if (i == last) {
             if (pipelines_[i].makesHostResult) {
+	      updateStats();
               return result_;
             } else {
               break;
@@ -116,6 +118,7 @@ RowVectorPtr WaveDriver::getOutput() {
             } else {
               // Last finished.
               finished_ = true;
+	      updateStats();
               return nullptr;
             }
           }
@@ -123,10 +126,12 @@ RowVectorPtr WaveDriver::getOutput() {
       }
     }
   } catch (const std::exception& e) {
+    updateStats();
     setError();
     throw;
   }
   finished_ = true;
+  updateStats();
   return nullptr;
 }
 

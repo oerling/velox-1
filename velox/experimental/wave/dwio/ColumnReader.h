@@ -113,6 +113,7 @@ class ReadStream : public Executable {
   ReadStream(
       StructColumnReader* columnReader,
       WaveStream& waveStream,
+      io::IoStatistics* ioStats,
       const OperandSet* firstColumns = nullptr);
 
   void setNullable(const AbstractOperand& op, bool nullable) {
@@ -160,6 +161,8 @@ class ReadStream : public Executable {
   void prepareRead();
   void makeControl();
 
+  io::IoStatistics* const ioStats_;
+  
   // Makes steps to align values from non-last filters to the selection of the
   // last filter.
   void makeCompact(bool isSerial);

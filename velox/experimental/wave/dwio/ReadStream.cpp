@@ -49,8 +49,9 @@ void allOperands(
 ReadStream::ReadStream(
     StructColumnReader* columnReader,
     WaveStream& _waveStream,
+    io::IoStatistics* iostats,
     const OperandSet* firstColumns)
-    : Executable() {
+  : Executable(), ioStats_(ioStats) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());

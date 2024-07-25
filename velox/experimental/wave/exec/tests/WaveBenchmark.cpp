@@ -71,6 +71,10 @@ DEFINE_int32(
 
 class WaveBenchmark : public QueryBenchmarkBase {
  public:
+  ~WaveBenchmark() {
+    wave::test::Table::dropAll();
+  }
+  
   void initialize() override {
     QueryBenchmarkBase::initialize();
     if (FLAGS_wave) {
@@ -314,25 +318,25 @@ class WaveBenchmark : public QueryBenchmarkBase {
   std::unique_ptr<VectorFuzzer> fuzzer_;
 };
 
-WaveBenchmark benchmark;
 
 void waveBenchmarkMain() {
-  benchmark.initialize();
+  auto benchmark = std::make_unique<WaveBenchmark>();
+  benchmark->initialize();
   if (FLAGS_run_query_verbose != -1) {
-    benchmark.prepareQuery(FLAGS_run_query_verbose);
+    benchmark->prepareQuery(FLAGS_run_query_verbose);
   }
   if (FLAGS_test_flags_file.empty()) {
     RunStats ignore;
-    benchmark.runMain(std::cout, ignore);
+    benchmark->runMain(std::cout, ignore);
   } else {
-    benchmark.runAllCombinations();
+    benchmark->runAllCombinations();
   }
-  benchmark.shutdown();
+  benchmark->shutdown();
 }
 
 int main(int argc, char** argv) {
   std::string kUsage(
-      "This program benchmarks Wave. Run 'velox_tpch_benchmark -helpon=WaveBenchmark' for available options.\n");
+      "This program benchmarks Wave. Run 'velox_wave_benchmark -helpon=WaveBenchmark' for available options.\n");
   gflags::SetUsageMessage(kUsage);
   folly::Init init{&argc, &argv, false};
   waveBenchmarkMain();

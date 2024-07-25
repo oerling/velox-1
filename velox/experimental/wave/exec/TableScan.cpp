@@ -53,10 +53,29 @@ void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
   waveDataSource_->schedule(stream, maxRows);
   nextAvailableRows_ = waveDataSource_->canAdvance(stream);
   if (nextAvailableRows_ == 0) {
+    updatestats(waveDataSource_->splitReader()->runtimeStats();
     needNewSplit_ = true;
   }
 }
 
+  void TableScan::updateStats(std::unordered_map<std::string, RuntimeCounter> connectorStats) {
+          auto lockedStats = stats().wlock();
+      for (const auto& [name, counter] : connectorStats) {
+        if (name == "ioWaitNanos") {
+          ioWaitNanos_ += counter.value - lastIoWaitNanos_;
+          lastIoWaitNanos_ = counter.value;
+        }
+        if (UNLIKELY(lockedStats->runtimeStats.count(name) == 0)) {
+          lockedStats->runtimeStats.insert(
+					   std::make_pair(name, RuntimeMetric(counter.unit)));
+        } else {
+          VELOX_CHECK_EQ(lockedStats->runtimeStats.at(name).unit, counter.unit);
+        }
+        lockedStats->runtimeStats.at(name).addValue(counter.value);
+      }
+    }
+
+  
 BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   exec::Split split;
   blockingReason_ = driverCtx_->task->getSplitOrFuture(
@@ -73,23 +92,9 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
   if (!split.hasConnectorSplit()) {
     noMoreSplits_ = true;
     if (dataSource_) {
-      auto connectorStats = dataSource_->runtimeStats();
-      auto lockedStats = stats().wlock();
-      for (const auto& [name, counter] : connectorStats) {
-        if (name == "ioWaitNanos") {
-          ioWaitNanos_ += counter.value - lastIoWaitNanos_;
-          lastIoWaitNanos_ = counter.value;
-        }
-        if (UNLIKELY(lockedStats->runtimeStats.count(name) == 0)) {
-          lockedStats->runtimeStats.insert(
-              std::make_pair(name, RuntimeMetric(counter.unit)));
-        } else {
-          VELOX_CHECK_EQ(lockedStats->runtimeStats.at(name).unit, counter.unit);
-        }
-        lockedStats->runtimeStats.at(name).addValue(counter.value);
-      }
+      updateStats(dataSource_->runtimeStats());
     }
-    return BlockingReason::kNotBlocked;
+      return BlockingReason::kNotBlocked;
   }
 
   const auto& connectorSplit = split.connectorSplit;
@@ -129,6 +134,8 @@ BlockingReason TableScan::nextSplit(ContinueFuture* future) {
       waveDataSource_->addSplit(connectorSplit);
     }
   }
+  ++stats().wlock()->numSplits;
+
   for (const auto& entry : pendingDynamicFilters_) {
     waveDataSource_->addDynamicFilter(entry.first, entry.second);
   }
