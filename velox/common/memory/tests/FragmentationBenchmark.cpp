@@ -43,7 +43,9 @@ struct Block {
     if (allocation != nullptr) {
       allocator.freeNonContiguous(*allocation);
     }
-    allocator.freeContiguous(contiguous);
+    if (contiguous.size() > 0) {
+      allocator.freeContiguous(contiguous);
+    }
   }
 
   MemoryAllocator& allocator;
