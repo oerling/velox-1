@@ -103,8 +103,10 @@ class TableScan : public WaveSourceOperator {
   // 'splitReader' is given, the completed rows/bytes from
   // 'splitReader' are added. These do not come in the runtimeStats()
   // map.
-  void updateStats(std::unordered_map<std::string, RuntimeCounter> stats, WaveSplitReader* splitReader = nullptr);
-  
+  void updateStats(
+      std::unordered_map<std::string, RuntimeCounter> stats,
+      WaveSplitReader* splitReader = nullptr);
+
   // Process-wide IO wait time.
   static std::atomic<uint64_t> ioWaitNanos_;
 

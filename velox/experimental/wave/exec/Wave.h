@@ -563,7 +563,7 @@ class WaveStream {
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap)
       : arena_(arena),
-	deviceArena_(deviceArena),
+        deviceArena_(deviceArena),
         hostArena_(hostArena),
         operands_(operands),
         taskStateMap_(stateMap) {
@@ -586,7 +586,7 @@ class WaveStream {
   GpuArena& hostArena() {
     return hostArena_;
   }
-  
+
   GpuArena& deviceArena() {
     return deviceArena_;
   }
@@ -818,7 +818,7 @@ class WaveStream {
 
   static folly::CPUThreadPoolExecutor* copyExecutor();
   static folly::CPUThreadPoolExecutor* syncExecutor();
-  
+
   std::string toString() const;
 
  private:
@@ -837,11 +837,12 @@ class WaveStream {
   static bool exitInited_;
   static std::unique_ptr<folly::CPUThreadPoolExecutor> copyExecutor_;
   static std::unique_ptr<folly::CPUThreadPoolExecutor> syncExecutor_;
-  
+
   static void clearReusable();
 
-  static folly::CPUThreadPoolExecutor* getExecutor(std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
-  
+  static folly::CPUThreadPoolExecutor* getExecutor(
+      std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
+
   // Unified memory.
   GpuArena& arena_;
 

@@ -16,10 +16,10 @@
 
 #pragma once
 
+#include "velox/common/io/IoStatistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/FormatData.h"
 #include "velox/experimental/wave/exec/Wave.h"
-#include "velox/common/io/IoStatistics.h"
 
 namespace facebook::velox::wave {
 
@@ -163,7 +163,7 @@ class ReadStream : public Executable {
   void makeControl();
 
   io::IoStatistics* const ioStats_;
-  
+
   // Makes steps to align values from non-last filters to the selection of the
   // last filter.
   void makeCompact(bool isSerial);

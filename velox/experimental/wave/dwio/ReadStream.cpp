@@ -51,7 +51,7 @@ ReadStream::ReadStream(
     WaveStream& _waveStream,
     io::IoStatistics* ioStats,
     const OperandSet* firstColumns)
-  : Executable(), ioStats_(ioStats) {
+    : Executable(), ioStats_(ioStats) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());
@@ -100,7 +100,7 @@ void ReadStream::makeGrid(Stream* stream) {
   }
   if (!programs_.programs.empty()) {
     WaveStats& stats = waveStream->stats();
-    auto  bytes =currentStaging_->bytesToDevice();
+    auto bytes = currentStaging_->bytesToDevice();
     ioStats_->incRawBytesRead(bytes);
     stats.bytesToDevice += bytes;
     ++stats.numKernels;
@@ -324,8 +324,8 @@ void ReadStream::launch(
         readStream->prepareRead();
         for (;;) {
           bool done = readStream->makePrograms(needSync);
-	  auto bytes = readStream->currentStaging_->bytesToDevice();
-	  readStream->ioStats_->incRawBytesRead(bytes);
+          auto bytes = readStream->currentStaging_->bytesToDevice();
+          readStream->ioStats_->incRawBytesRead(bytes);
           stats.bytesToDevice += bytes;
           ++stats.numKernels;
           stats.numPrograms += readStream->programs_.programs.size();

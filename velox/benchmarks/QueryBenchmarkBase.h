@@ -108,7 +108,7 @@ class QueryBenchmarkBase {
   virtual void runMain(std::ostream& out, RunStats& runStats) = 0;
 
   void runOne(std::ostream& outtt, RunStats& stats);
-  
+
   void runCombinations(int32_t level);
 
   void runAllCombinations();

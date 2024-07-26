@@ -82,9 +82,11 @@ class SplitStaging {
   // soon as the work is enqueud. If asyncTail is not given,
   // transfer() returns after the transfer is enqueued on
   // 'stream'. event() is not set until the transfer is enqueued.
-  void
-  transfer(WaveStream& waveStream, Stream& stream, bool recordEvent = false,
-	   std::function<void(WaveStream&, Stream&)> asyncTail = nullptr);
+  void transfer(
+      WaveStream& waveStream,
+      Stream& stream,
+      bool recordEvent = false,
+      std::function<void(WaveStream&, Stream&)> asyncTail = nullptr);
 
   Event* event() const {
     return event_.get();
@@ -94,7 +96,7 @@ class SplitStaging {
   void registerPointerInternal(BufferId id, void** ptr, bool clear);
 
   void copyColumns(int32_t begin, int32_t end, char* destination, bool release);
-  
+
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
   WaveBufferPtr hostBuffer_;

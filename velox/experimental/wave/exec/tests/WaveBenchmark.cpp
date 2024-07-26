@@ -74,7 +74,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
   ~WaveBenchmark() {
     wave::test::Table::dropAll();
   }
-  
+
   void initialize() override {
     QueryBenchmarkBase::initialize();
     if (FLAGS_wave) {
@@ -317,7 +317,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
   VectorFuzzer::Options options_;
   std::unique_ptr<VectorFuzzer> fuzzer_;
 };
-
 
 void waveBenchmarkMain() {
   auto benchmark = std::make_unique<WaveBenchmark>();
