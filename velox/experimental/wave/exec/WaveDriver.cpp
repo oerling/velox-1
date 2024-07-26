@@ -53,7 +53,10 @@ WaveDriver::WaveDriver(
   auto returnBatchSize = 10000 * outputType_->size() * 10;
   hostArena_ = std::make_unique<GpuArena>(
       returnBatchSize * 10, getHostAllocator(getDevice()));
-  pipelines_.emplace_back();
+  deviceArena_ = std::make_unique<GpuArena>(
+					    100000000,
+					    getDeviceAllocator(getDevice()));
+					    pipelines_.emplace_back();
   for (auto& op : waveOperators) {
     op->setDriver(this);
     if (!op->isStreaming()) {
@@ -284,7 +287,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
         pipeline.running.size() + pipeline.arrived.size() <
             FLAGS_max_streams_per_driver) {
       auto stream = std::make_unique<WaveStream>(
-          *arena_, *hostArena_, &operands(), &stateMap_);
+						 *arena_, *deviceArena_, *hostArena_, &operands(), &stateMap_);
       ++stream->stats().numWaves;
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));

@@ -100,7 +100,9 @@ void ReadStream::makeGrid(Stream* stream) {
   }
   if (!programs_.programs.empty()) {
     WaveStats& stats = waveStream->stats();
-    stats.bytesToDevice += currentStaging_->bytesToDevice();
+    auto  bytes =currentStaging_->bytesToDevice();
+    ioStats_->incRawBytesRead(bytes);
+    stats.bytesToDevice += bytes;
     ++stats.numKernels;
     stats.numPrograms += programs_.programs.size();
     stats.numThreads +=
@@ -322,7 +324,9 @@ void ReadStream::launch(
         readStream->prepareRead();
         for (;;) {
           bool done = readStream->makePrograms(needSync);
-          stats.bytesToDevice += readStream->currentStaging_->bytesToDevice();
+	  auto bytes = readStream->currentStaging_->bytesToDevice();
+	  readStream->ioStats_->incRawBytesRead(bytes);
+          stats.bytesToDevice += bytes;
           ++stats.numKernels;
           stats.numPrograms += readStream->programs_.programs.size();
           stats.numThreads += readStream->programs_.programs.size() *

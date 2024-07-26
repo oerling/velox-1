@@ -54,14 +54,18 @@ void TableScan::schedule(WaveStream& stream, int32_t maxRows) {
   waveDataSource_->schedule(stream, maxRows);
   nextAvailableRows_ = waveDataSource_->canAdvance(stream);
   if (nextAvailableRows_ == 0) {
-    updateStats(waveDataSource_->splitReader()->runtimeStats());
+    updateStats(waveDataSource_->splitReader()->runtimeStats(), waveDataSource_->splitReader().get());
     needNewSplit_ = true;
   }
 }
 
-  void TableScan::updateStats(std::unordered_map<std::string, RuntimeCounter> connectorStats) {
+  void TableScan::updateStats(std::unordered_map<std::string, RuntimeCounter> connectorStats, WaveSplitReader* splitReader) {
           auto lockedStats = stats().wlock();
-      for (const auto& [name, counter] : connectorStats) {
+	  if (splitReader) {
+	    lockedStats->rawInputPositions = splitReader->getCompletedRows();
+	    lockedStats->rawInputBytes = splitReader->getCompletedBytes();
+	  }
+	  for (const auto& [name, counter] : connectorStats) {
         if (name == "ioWaitNanos") {
           ioWaitNanos_ += counter.value - lastIoWaitNanos_;
           lastIoWaitNanos_ = counter.value;

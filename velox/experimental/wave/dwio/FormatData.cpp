@@ -16,8 +16,12 @@
 
 #include "velox/experimental/wave/dwio/FormatData.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
+#include "velox/experimental/wave/exec/Wave.h"
 
 DECLARE_int32(wave_reader_rows_per_tb);
+
+DEFINE_int32(staging_bytes_per_thread, 300000, "Make a parallel memcpy shard per this many bytes");
+
 
 namespace facebook::velox::wave {
 
@@ -46,32 +50,95 @@ void SplitStaging::registerPointerInternal(
   patch_.push_back(std::make_pair(id, ptr));
 }
 
+  void
+  SplitStaging::copyColumns(int32_t begin, int32_t end, char* destination, bool release) {
+    for (auto i = begin; i < end; ++i) {
+      memcpy(
+          destination,
+          staging_[i].hostData,
+          staging_[i].size);
+      destination += staging_[i].size;
+    }
+    if (release) {
+      sem_.release();
+    }
+  }
+
+  
 // Starts the transfers registered with add(). 'stream' is set to a stream
 // where operations depending on the transfer may be queued.
 void SplitStaging::transfer(
     WaveStream& waveStream,
     Stream& stream,
-    bool recordEvent) {
+    bool recordEvent,
+    std::function<void(WaveStream&, Stream&)> asyncTail) {
   if (fill_ == 0 || deviceBuffer_ != nullptr) {
+    if (recordEvent) {
+      event_ = std::make_unique<Event>();
+      event_->record(stream);
+    }
+    if (asyncTail) {
+      asyncTail(waveStream, stream);
+    }
     return;
   }
-  deviceBuffer_ = waveStream.arena().allocate<char>(fill_);
-  auto universal = deviceBuffer_->as<char>();
-  for (auto i = 0; i < offsets_.size(); ++i) {
-    memcpy(universal + offsets_[i], staging_[i].hostData, staging_[i].size);
-  }
-  stream.prefetch(
-      getDevice(), deviceBuffer_->as<char>(), deviceBuffer_->size());
-  for (auto& pair : patch_) {
-    *reinterpret_cast<int64_t*>(pair.second) +=
-        reinterpret_cast<int64_t>(universal) + offsets_[pair.first];
-  }
-  if (recordEvent) {
+  deviceBuffer_ = waveStream.deviceArena().allocate<char>(fill_);
+  hostBuffer_ = waveStream.hostArena().allocate<char>(fill_);
+  auto transferBuffer = hostBuffer_->as<char>();
+  int firstToCopy = 0;
+  int32_t numCopies = staging_.size();
+      int64_t copySize = 0;
+    auto targetCopySize = FLAGS_staging_bytes_per_thread;
+    int32_t numThreads = 0;
+    if (fill_ > 2000000) {
+      for (auto i = 0; i < staging_.size(); ++i) {
+	auto columnSize = staging_[i].size;
+	copySize += columnSize;
+	if (copySize >= targetCopySize && i < staging_.size() - 1) {
+	  ++numThreads;
+	  WaveStream::copyExecutor()->add([i, firstToCopy, transferBuffer, this]() {
+					    copyColumns(firstToCopy, i + 1, transferBuffer, true);
+					  });
+	  transferBuffer += copySize;
+	  copySize = 0;
+	  firstToCopy = i + 1;
+	}
+      }
+    }
+    auto deviceData = deviceBuffer_->as<char>();
+    for (auto& pair : patch_) {
+      *reinterpret_cast<int64_t*>(pair.second) +=
+        reinterpret_cast<int64_t>(deviceData) + offsets_[pair.first];
+    }
+
+    if (asyncTail) {
+      WaveStream::syncExecutor()->add([firstToCopy, numThreads, transferBuffer, asyncTail, &waveStream, &stream, recordEvent, this]() {
+					copyColumns(firstToCopy, staging_.size(), transferBuffer, false);
+					for (auto i = 0; i < numThreads; ++i) {
+					  sem_.acquire();
+					}
+					stream.hostToDeviceAsync(
+								 deviceBuffer_->as<char>(), hostBuffer_->as<char>(), fill_);
+					if (recordEvent) {
+					  event_ = std::make_unique<Event>();
+					  event_->record(stream);
+					}
+				      });
+    } else {
+      copyColumns(firstToCopy, staging_.size(), transferBuffer, false);
+      for (auto i = 0; i < numThreads; ++i) {
+	sem_.acquire();
+      }
+      stream.hostToDeviceAsync(
+			       deviceBuffer_->as<char>(), hostBuffer_->as<char>(), fill_);
+
+      if (recordEvent) {
     event_ = std::make_unique<Event>();
     event_->record(stream);
   }
 }
-
+}
+  
 namespace {
 void setFilter(GpuDecode* step, ColumnReader* reader, Stream* stream) {
   auto* veloxFilter = reader->scanSpec().filter();

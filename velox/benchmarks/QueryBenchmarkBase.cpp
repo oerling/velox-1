@@ -345,6 +345,28 @@ void QueryBenchmarkBase::runCombinations(int32_t level) {
   }
 }
 
+  void QueryBenchmarkBase::runOne(std::ostream& out, RunStats& stats) {
+    std::stringstream result;
+    uint64_t micros = 0;
+    {
+      struct rusage start;
+      getrusage(RUSAGE_SELF, &start);
+      MicrosecondTimer timer(&micros);
+      runMain(out, stats);
+      struct rusage final;
+      getrusage(RUSAGE_SELF, &final);
+      auto tvNanos = [](struct timeval tv) {
+        return tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
+      };
+      stats.userNanos = tvNanos(final.ru_utime) - tvNanos(start.ru_utime);
+      stats.systemNanos = tvNanos(final.ru_stime) - tvNanos(start.ru_stime);
+    }
+    stats.micros = micros;
+    stats.output = result.str();
+    out << result.str();
+  }
+
+  
 void QueryBenchmarkBase::runAllCombinations() {
   readCombinations();
   runCombinations(0);

@@ -280,7 +280,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
       int64_t rawInputBytes = 0;
       for (auto& pipeline : stats.pipelineStats) {
         auto& first = pipeline.operatorStats[0];
-        if (first.operatorType == "TableScan") {
+        if (first.operatorType == "TableScan" || first.operatorType == "Wave") {
           rawInputBytes += first.rawInputBytes;
         }
       }
@@ -326,8 +326,9 @@ void waveBenchmarkMain() {
     benchmark->prepareQuery(FLAGS_run_query_verbose);
   }
   if (FLAGS_test_flags_file.empty()) {
-    RunStats ignore;
-    benchmark->runMain(std::cout, ignore);
+    RunStats stats;
+    benchmark->runOne(std::cout, stats);
+    std::cout << stats.toString(false);
   } else {
     benchmark->runAllCombinations();
   }

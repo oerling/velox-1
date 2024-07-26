@@ -43,11 +43,11 @@ class WaveTestSplitReader : public WaveSplitReader {
   bool isFinished() const override;
 
   uint64_t getCompletedBytes() override {
-    return 0;
+    return params_.ioStats->rawBytesRead();
   }
 
   uint64_t getCompletedRows() override {
-    return 0;
+    return nextRow_;
   }
 
   std::unordered_map<std::string, RuntimeCounter> runtimeStats() override {

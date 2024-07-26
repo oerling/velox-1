@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/base/Semaphore.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
@@ -72,12 +73,18 @@ class SplitStaging {
   int64_t bytesToDevice() const {
     return fill_;
   }
-  // Starts the transfers registered with add( on 'stream'). Does nothing after
-  // first call or if no pointers are registered. If 'recordEvent' is true,
-  // records an event that is completed after the transfer arrives. Use event()
-  // to access the event.
+  // Starts the transfers registered with add( on 'stream'). Does
+  // nothing after first call or if no pointers are registered. If
+  // 'recordEvent' is true, records an event that is completed after
+  // the transfer arrives. Use event() to access the event. If
+  // 'asyncTail' is non-nullptr, it is called after the data transfer
+  // is enqueued. The call is on an executor and transfer() returns as
+  // soon as the work is enqueud. If asyncTail is not given,
+  // transfer() returns after the transfer is enqueued on
+  // 'stream'. event() is not set until the transfer is enqueued.
   void
-  transfer(WaveStream& waveStream, Stream& stream, bool recordEvent = false);
+  transfer(WaveStream& waveStream, Stream& stream, bool recordEvent = false,
+	   std::function<void(WaveStream&, Stream&)> asyncTail = nullptr);
 
   Event* event() const {
     return event_.get();
@@ -86,6 +93,8 @@ class SplitStaging {
  private:
   void registerPointerInternal(BufferId id, void** ptr, bool clear);
 
+  void copyColumns(int32_t begin, int32_t end, char* destination, bool release);
+  
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
   WaveBufferPtr hostBuffer_;
@@ -107,6 +116,9 @@ class SplitStaging {
   // Optional event recorded after end of transfer. Use to sync dependent
   // kernels on other streams.
   std::unique_ptr<Event> event_;
+
+  // Synchronizes arrival of multithreaded memcpy
+  Semaphore sem_{0};
 };
 
 using RowSet = folly::Range<const int32_t*>;

@@ -98,7 +98,12 @@ class TableScan : public WaveSourceOperator {
   // needed before prepare is done, it will be made when needed.
   void preload(std::shared_ptr<connector::ConnectorSplit> split);
 
-  void updateStats(std::unordered_map<std::string, RuntimeCounter> stats);
+  // Adds 'stats' to operator stats of the containing WaveDriver. Some
+  // stats come from DataSource, others from SplitReader. If
+  // 'splitReader' is given, the completed rows/bytes from
+  // 'splitReader' are added. These do not come in the runtimeStats()
+  // map.
+  void updateStats(std::unordered_map<std::string, RuntimeCounter> stats, WaveSplitReader* splitReader = nullptr);
   
   // Process-wide IO wait time.
   static std::atomic<uint64_t> ioWaitNanos_;

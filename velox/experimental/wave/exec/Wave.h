@@ -26,6 +26,7 @@
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
 
+#include <folly/executors/CPUThreadPoolExecutor.h>
 namespace facebook::velox::wave {
 
 /// A host side time point for measuring wait and launch prepare latency. Counts
@@ -557,10 +558,12 @@ class WaveStream {
 
   WaveStream(
       GpuArena& arena,
+      GpuArena& deviceArena,
       GpuArena& hostArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap)
       : arena_(arena),
+	deviceArena_(deviceArena),
         hostArena_(hostArena),
         operands_(operands),
         taskStateMap_(stateMap) {
@@ -578,6 +581,14 @@ class WaveStream {
 
   GpuArena& arena() {
     return arena_;
+  }
+
+  GpuArena& hostArena() {
+    return hostArena_;
+  }
+  
+  GpuArena& deviceArena() {
+    return deviceArena_;
   }
 
   /// Sets nullability of a source column. This is runtime, since may depend on
@@ -805,6 +816,9 @@ class WaveStream {
     hasError_ = true;
   }
 
+  static folly::CPUThreadPoolExecutor* copyExecutor();
+  static folly::CPUThreadPoolExecutor* syncExecutor();
+  
   std::string toString() const;
 
  private:
@@ -821,10 +835,20 @@ class WaveStream {
   static std::vector<std::unique_ptr<Event>> eventsForReuse_;
   static std::vector<std::unique_ptr<Stream>> streamsForReuse_;
   static bool exitInited_;
-
+  static std::unique_ptr<folly::CPUThreadPoolExecutor> copyExecutor_;
+  static std::unique_ptr<folly::CPUThreadPoolExecutor> syncExecutor_;
+  
   static void clearReusable();
 
+  static folly::CPUThreadPoolExecutor* getExecutor(std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr);
+  
+  // Unified memory.
   GpuArena& arena_;
+
+  // Device memory.
+  GpuArena& deviceArena_;
+
+  // Pinned host memory.
   GpuArena& hostArena_;
   const std::vector<std::unique_ptr<AbstractOperand>>* const operands_;
   // True at '[i]' if in this stream 'operands_[i]' should have null flags.

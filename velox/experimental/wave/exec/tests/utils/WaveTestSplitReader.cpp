@@ -27,6 +27,7 @@ WaveTestSplitReader::WaveTestSplitReader(
     const std::shared_ptr<connector::ConnectorSplit>& split,
     const SplitReaderParams& params,
     const DefinesMap* defines) {
+  params_ = params;
   auto hiveSplit =
       dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
   VELOX_CHECK_NOT_NULL(hiveSplit);

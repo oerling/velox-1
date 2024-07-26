@@ -178,7 +178,30 @@ std::mutex WaveStream::reserveMutex_;
 std::vector<std::unique_ptr<Stream>> WaveStream::streamsForReuse_;
 std::vector<std::unique_ptr<Event>> WaveStream::eventsForReuse_;
 bool WaveStream::exitInited_{false};
+  std::unique_ptr<folly::CPUThreadPoolExecutor> WaveStream::copyExecutor_;
+  std::unique_ptr<folly::CPUThreadPoolExecutor> WaveStream::syncExecutor_;
 
+  folly::CPUThreadPoolExecutor* WaveStream::copyExecutor() {
+    return getExecutor(copyExecutor_);
+  }
+
+  folly::CPUThreadPoolExecutor* WaveStream::syncExecutor() {
+    return getExecutor(syncExecutor_);
+  }
+  
+  folly::CPUThreadPoolExecutor* WaveStream::getExecutor(std::unique_ptr<folly::CPUThreadPoolExecutor>& ptr) {
+    if (ptr) {
+      return ptr.get();
+    }
+    std::lock_guard<std::mutex>  l(reserveMutex_);
+      if (!ptr) {
+	ptr = std::make_unique<folly::CPUThreadPoolExecutor>(32);
+      }
+      return ptr.get();
+  }
+
+    
+  
 Stream* WaveStream::newStream() {
   auto stream = streamFromReserve();
   auto id = streams_.size();
