@@ -27,7 +27,7 @@ namespace facebook::velox::wave::test {
 
 class Table;
 
-  enum Encoding : uint8_t { kFlat, kDict, kStruct, kNone };
+enum Encoding : uint8_t { kFlat, kDict, kStruct, kNone };
 
 struct Column {
   void load(
@@ -71,7 +71,10 @@ struct Stripe {
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
       int32_t numRows,
       std::string path = "")
-    : typeWithId(type), numRows(numRows), columns(std::move(in)), path(std::move(path)) {}
+      : typeWithId(type),
+        numRows(numRows),
+        columns(std::move(in)),
+        path(std::move(path)) {}
 
   const Column* findColumn(const dwio::common::TypeWithId& child) const;
 

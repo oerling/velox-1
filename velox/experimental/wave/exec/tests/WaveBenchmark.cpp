@@ -103,11 +103,12 @@ class WaveBenchmark : public QueryBenchmarkBase {
       }
     }
     if (FLAGS_wave) {
-	makeTable(FLAGS_data_path + "/test.wave", vectors);
-	if (FLAGS_generate) {
-	  auto table = wave::test::Table::getTable(FLAGS_data_path + "/test.wave");
-	  table->toFile(FLAGS_data_path + "/test.wave");
-	}
+      makeTable(FLAGS_data_path + "/test.wave", vectors);
+      if (FLAGS_generate) {
+        auto table =
+            wave::test::Table::getTable(FLAGS_data_path + "/test.wave");
+        table->toFile(FLAGS_data_path + "/test.wave");
+      }
     } else {
       std::string temp = "/tmp/data.dwrf";
       auto config = std::make_shared<dwrf::Config>();

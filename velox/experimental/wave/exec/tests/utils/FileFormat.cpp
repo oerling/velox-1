@@ -369,7 +369,7 @@ void Writer::finishStripe() {
   }
   int32_t numRows = columns[0]->numValues;
   stripes_.push_back(std::make_unique<Stripe>(
-					      std::move(columns), dwio::common::TypeWithId::create(type_), numRows));
+      std::move(columns), dwio::common::TypeWithId::create(type_), numRows));
   encoders_.clear();
   rowsInStripe_ = 0;
 }
@@ -521,7 +521,8 @@ void Table::toFile(const std::string& path) {
   auto fileSystem = filesystems::getFileSystem(path, nullptr);
   try {
     fileSystem->remove(path);
-  } catch (const std::exception& e) {}
+  } catch (const std::exception& e) {
+  }
   auto file = fileSystem->openFileForWrite(path);
   std::vector<std::string> footers;
   for (auto stripeIdx = 0; stripeIdx < stripes_.size(); ++stripeIdx) {
@@ -593,7 +594,7 @@ void Table::fromFile(
     auto dataStart = *reinterpret_cast<int64_t*>(tail.data() + offset + i * 16);
     if (dataStart >= splitStart && dataStart < splitStart + splitSize) {
       auto footerStart =
-	size - *reinterpret_cast<int64_t*>(tail.data() + offset + 8 + i * 16);
+          size - *reinterpret_cast<int64_t*>(tail.data() + offset + 8 + i * 16);
       auto footerOff = tail.size() - footerStart;
       std::stringstream footerStream(tail);
       // skip 3 first,i.e. kStruct, TypeKind::ROW, kNone.
@@ -601,8 +602,8 @@ void Table::fromFile(
       int32_t numRows;
       readNumber(footerStream, numRows);
       auto columns = readColumns(footerStream);
-      stripes.push_back(
-			std::make_unique<Stripe>(std::move(columns), typeWithId, numRows, path));
+      stripes.push_back(std::make_unique<Stripe>(
+          std::move(columns), typeWithId, numRows, path));
     }
   }
   addStripes(std::move(stripes), nullptr);
