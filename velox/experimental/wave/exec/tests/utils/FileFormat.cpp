@@ -445,6 +445,7 @@ void writeColumns(
     WriteFile& file,
     std::stringstream& footer) {
   footer << static_cast<char>(Encoding::kStruct);
+  footer << static_cast<char>(TypeKind::ROW);
   if (nulls) {
     writeColumn(*nulls, file, footer);
   } else {
@@ -511,9 +512,12 @@ void Table::toFile(const std::string& path) {
   std::vector<int64_t> stripeStart;
   auto type = stripes_.front()->typeWithId->type();
   auto fileSystem = filesystems::getFileSystem(path, nullptr);
+  try {
+    fileSystem->remove(path);
+  } catch (const std::exception& e) {}
   auto file = fileSystem->openFileForWrite(path);
   std::vector<std::string> footers;
-  for (int32_t stripeIdx; stripeIdx < stripes_.size(); ++stripeIdx) {
+  for (auto stripeIdx = 0; stripeIdx < stripes_.size(); ++stripeIdx) {
     auto stripe = stripes_[stripeIdx].get();
     stripeStart.push_back(file->size());
     std::stringstream footer;

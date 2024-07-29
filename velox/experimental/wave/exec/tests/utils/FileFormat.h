@@ -76,7 +76,7 @@ struct Stripe {
 
   bool isLoaded() const {
     for (auto i = 0; i < columns.size(); ++i) {
-      if (columns[i]->values) {
+      if (!columns[i]->values) {
         return false;
       }
     }
