@@ -27,7 +27,7 @@ namespace facebook::velox::wave::test {
 
 class Table;
 
-enum Encoding { kFlat, kDict, kStruct, kNone };
+  enum Encoding : uint8_t { kFlat, kDict, kStruct, kNone };
 
 struct Column {
   void load(
@@ -37,7 +37,7 @@ struct Column {
 
   Encoding encoding;
   TypeKind kind;
-  // Number of encoded values.
+  // Number of encoded values including nulls.
   int32_t numValues{0};
 
   // Distinct values in kDict.
@@ -69,8 +69,9 @@ struct Stripe {
   Stripe(
       std::vector<std::unique_ptr<Column>>&& in,
       const std::shared_ptr<const dwio::common::TypeWithId>& type,
+      int32_t numRows,
       std::string path = "")
-      : typeWithId(type), columns(std::move(in)), path(std::move(path)) {}
+    : typeWithId(type), numRows(numRows), columns(std::move(in)), path(std::move(path)) {}
 
   const Column* findColumn(const dwio::common::TypeWithId& child) const;
 
@@ -87,6 +88,9 @@ struct Stripe {
   std::string name;
 
   std::shared_ptr<const dwio::common::TypeWithId> typeWithId;
+
+  /// Number of rows. Needed for counting if no columns.
+  int32_t numRows{0};
 
   // Top level columns.
   std::vector<std::unique_ptr<Column>> columns;

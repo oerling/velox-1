@@ -367,8 +367,9 @@ void Writer::finishStripe() {
   for (auto& encoder : encoders_) {
     columns.push_back(encoder->toColumn());
   }
+  int32_t numRows = columns[0]->numValues;
   stripes_.push_back(std::make_unique<Stripe>(
-      std::move(columns), dwio::common::TypeWithId::create(type_)));
+					      std::move(columns), dwio::common::TypeWithId::create(type_), numRows));
   encoders_.clear();
   rowsInStripe_ = 0;
 }
@@ -381,8 +382,8 @@ Table* Writer::finalize(std::string tableName) {
 }
 
 template <typename T>
-void writeNumber(std::ostream& stream, T& n) {
-  stream.write(reinterpret_cast<char*>(&n), sizeof(T));
+void writeNumber(std::ostream& stream, const T& n) {
+  stream.write(reinterpret_cast<const char*>(&n), sizeof(T));
 }
 
 void Column::load(
@@ -425,7 +426,12 @@ void writeColumn(Column& column, WriteFile& file, std::stringstream& footer) {
   if (column.nulls) {
     writeColumn(*column.nulls, file, footer);
   } else {
-    footer << static_cast<char>(Encoding::kNone);
+    writeNumber(footer, Encoding::kNone);
+  }
+  writeNumber(footer, column.numValues);
+  if (Encoding::kStruct == column.encoding) {
+    VELOX_NYI();
+    return;
   }
   if (Encoding::kDict == column.encoding) {
     writeColumn(*column.alphabet, file, footer);
@@ -444,13 +450,14 @@ void writeColumns(
     Column* nulls,
     WriteFile& file,
     std::stringstream& footer) {
-  footer << static_cast<char>(Encoding::kStruct);
-  footer << static_cast<char>(TypeKind::ROW);
+  writeNumber(footer, Encoding::kStruct);
+  writeNumber(footer, TypeKind::ROW);
   if (nulls) {
     writeColumn(*nulls, file, footer);
   } else {
-    footer << static_cast<char>(Encoding::kNone);
+    writeNumber(footer, Encoding::kNone);
   }
+  writeNumber(footer, columns[0]->numValues);
   int32_t numColumns = columns.size();
   writeNumber(footer, numColumns);
   std::vector<std::string> columnFooters;
@@ -480,11 +487,11 @@ std::unique_ptr<Column> readColumn(std::stringstream& in) {
   column->encoding = encoding;
   readNumber(in, column->kind);
   column->nulls = readColumn(in);
+  readNumber(in, column->numValues);
   if (encoding == Encoding::kStruct) {
     column->children = readColumns(in);
     return column;
   }
-
   if (encoding == Encoding::kDict) {
     column->alphabet = readColumn(in);
   }
@@ -560,42 +567,42 @@ void Table::fromFile(
   file->pread(size - tail.size(), tail.size(), tail.data());
   char* end = tail.data() + tail.size();
   auto numStripes = *reinterpret_cast<int32_t*>(end - 28);
-  auto offsetStart = *reinterpret_cast<int32_t*>(end - 24);
-  auto footerStart = *reinterpret_cast<int64_t*>(end - 16);
-  auto typeStart = *reinterpret_cast<int64_t*>(end - 8);
-  int64_t tailSize = file->size() - footerStart;
-  int64_t tailOffset = tail.size() - tailSize;
+  auto offsetStart = size - *reinterpret_cast<int32_t*>(end - 24);
+  auto typeStart = size - *reinterpret_cast<int64_t*>(end - 16);
+  auto footerStart = size - *reinterpret_cast<int64_t*>(end - 8);
+  int64_t tailSize = footerStart;
   if (tailSize > tail.size()) {
     std::string moreTail;
     moreTail.resize(tailSize - tail.size());
     file->pread(footerStart, moreTail.size(), moreTail.data());
     moreTail += tail;
     tail = std::move(moreTail);
-    tailOffset = 0;
   }
   // Read the type.
-  int64_t typeOff = tailSize - (size - typeStart);
   std::stringstream typeStream(tail);
-  typeStream.seekg(typeOff);
+  typeStream.seekg(tail.size() - typeStart);
   auto type = restoreType(typeStream);
   auto typeWithIdUnique = dwio::common::TypeWithId::create(
       std::static_pointer_cast<const RowType>(type));
   std::shared_ptr<const dwio::common::TypeWithId> typeWithId(
       typeWithIdUnique.release());
   // Loop over offsets and make stripes for the ones in range.
-  auto offset = tailSize - (size - offsetStart);
+  auto offset = tail.size() - offsetStart;
   std::vector<std::unique_ptr<Stripe>> stripes;
   for (auto i = 0; i < numStripes; ++i) {
     auto dataStart = *reinterpret_cast<int64_t*>(tail.data() + offset + i * 16);
     if (dataStart >= splitStart && dataStart < splitStart + splitSize) {
       auto footerStart =
-          *reinterpret_cast<int64_t*>(tail.data() + offset + 8 + i * 16);
-      auto off = tailSize - (size - footerStart);
+	size - *reinterpret_cast<int64_t*>(tail.data() + offset + 8 + i * 16);
+      auto footerOff = tail.size() - footerStart;
       std::stringstream footerStream(tail);
-      footerStream.seekg(off);
+      // skip 3 first,i.e. kStruct, TypeKind::ROW, kNone.
+      footerStream.seekg(footerOff + 3);
+      int32_t numRows;
+      readNumber(footerStream, numRows);
       auto columns = readColumns(footerStream);
       stripes.push_back(
-          std::make_unique<Stripe>(std::move(columns), typeWithId, path));
+			std::make_unique<Stripe>(std::move(columns), typeWithId, numRows, path));
     }
   }
   addStripes(std::move(stripes), nullptr);
