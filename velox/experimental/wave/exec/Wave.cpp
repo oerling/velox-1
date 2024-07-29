@@ -38,6 +38,7 @@ void WaveStats::add(const WaveStats& other) {
   hostOnlyTime += other.hostOnlyTime;
   hostParallelTime += other.hostParallelTime;
   waitTime += other.waitTime;
+  stagingTime += other.stagingTime;
 }
 
 void WaveStats::clear() {

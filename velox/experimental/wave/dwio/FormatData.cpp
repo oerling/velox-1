@@ -83,6 +83,7 @@ void SplitStaging::transfer(
     }
     return;
   }
+  WaveTime startTime = WaveTime::now();
   deviceBuffer_ = waveStream.deviceArena().allocate<char>(fill_);
   hostBuffer_ = waveStream.hostArena().allocate<char>(fill_);
   auto transferBuffer = hostBuffer_->as<char>();
@@ -121,6 +122,7 @@ void SplitStaging::transfer(
                                      &waveStream,
                                      &stream,
                                      recordEvent,
+				     startTime,
                                      this]() {
       copyColumns(firstToCopy, staging_.size(), transferBuffer, false);
       for (auto i = 0; i < numThreads; ++i) {
@@ -128,6 +130,7 @@ void SplitStaging::transfer(
       }
       stream.hostToDeviceAsync(
           deviceBuffer_->as<char>(), hostBuffer_->as<char>(), fill_);
+      waveStream.stats().stagingTime += WaveTime::now() - startTime;
       if (recordEvent) {
         event_ = std::make_unique<Event>();
         event_->record(stream);
@@ -140,7 +143,7 @@ void SplitStaging::transfer(
     }
     stream.hostToDeviceAsync(
         deviceBuffer_->as<char>(), hostBuffer_->as<char>(), fill_);
-
+    waveStream.stats().stagingTime += WaveTime::now() - startTime;
     if (recordEvent) {
       event_ = std::make_unique<Event>();
       event_->record(stream);

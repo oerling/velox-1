@@ -18,11 +18,12 @@
 
 #include "velox/common/base/Semaphore.h"
 #include "velox/dwio/common/ScanSpec.h"
+#include "velox/common/caching/AsyncDataCache.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
-
+#include "velox/common/file/Region.h"
 #include <folly/Range.h>
 
 namespace facebook::velox::wave {
@@ -33,8 +34,8 @@ class WaveStream;
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
-  Staging(const void* hostData, int32_t size)
-      : hostData(hostData), size(size) {}
+  Staging(const void* hostData, int32_t size, const common::Region& region)
+    : hostData(hostData), size(hostData? size : region.length), fileOffset(region.offset) {}
 
   // Pointer to data in pageable host memory, if applicable.
   const void* hostData{nullptr};
@@ -42,14 +43,25 @@ struct Staging {
   //  Size in bytes.
   size_t size;
 
-  // Add members here to describe locations in storage for GPU direct transfer.
+  /// If 'hostData' is nullptr, this is the start offset for 'size'
+  /// bytes in 'fileInfo_' of containing SplitStaging.
+  int64_t fileOffset{0};
 };
 
+struct FileInfo {
+  ReadFile* file{nullptr};
+  StringIdLease* fileId{nullptr};
+  cache::AsyncDataCache* cache{nullptr};
+};
+  
 /// Describes how columns to be read together are staged on device. This is
 /// anything from a set of host to device copies, GPU direct IO, or no-op if
 /// data already on device.
 class SplitStaging {
  public:
+  SplitStaging(FileInfo& fileInfo)
+    : fileInfo_(fileInfo) {}
+  
   /// Adds a transfer described by 'staging'. Returns an id of the
   /// device side buffer. The id will be mapped to an actual buffer
   /// when the transfers are queud. At this time, pointers that
@@ -121,6 +133,8 @@ class SplitStaging {
 
   // Synchronizes arrival of multithreaded memcpy
   Semaphore sem_{0};
+
+  FileInfo& fileInfo_;
 };
 
 using RowSet = folly::Range<const int32_t*>;

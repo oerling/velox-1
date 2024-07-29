@@ -115,6 +115,7 @@ class ReadStream : public Executable {
       StructColumnReader* columnReader,
       WaveStream& waveStream,
       velox::io::IoStatistics* ioStats,
+      FileInfo& fileInfo,
       const OperandSet* firstColumns = nullptr);
 
   void setNullable(const AbstractOperand& op, bool nullable) {
@@ -215,6 +216,7 @@ class ReadStream : public Executable {
 
   // Set to true when after first griddize() and akeOps().
   bool inited_{false};
+  FileInfo fileInfo_;
 };
 
 } // namespace facebook::velox::wave

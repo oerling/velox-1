@@ -50,13 +50,14 @@ ReadStream::ReadStream(
     StructColumnReader* columnReader,
     WaveStream& _waveStream,
     io::IoStatistics* ioStats,
+    FileInfo& fileInfo,
     const OperandSet* firstColumns)
-    : Executable(), ioStats_(ioStats) {
+  : Executable(), ioStats_(ioStats), fileInfo_(fileInfo) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());
   reader_ = columnReader;
-  reader_->splitStaging().push_back(std::make_unique<SplitStaging>());
+  reader_->splitStaging().push_back(std::make_unique<SplitStaging>(fileInfo_));
   currentStaging_ = reader_->splitStaging().back().get();
 }
 
@@ -116,7 +117,7 @@ void ReadStream::makeGrid(Stream* stream) {
     if (extra) {
       commands_.push_back(std::move(extra));
     }
-    reader_->splitStaging().push_back(std::make_unique<SplitStaging>());
+    reader_->splitStaging().push_back(std::make_unique<SplitStaging>(fileInfo_));
     currentStaging_ = reader_->splitStaging().back().get();
   }
 }
@@ -353,7 +354,7 @@ void ReadStream::launch(
             readStream->commands_.push_back(std::move(extra));
           }
           readStream->reader_->splitStaging().push_back(
-              std::make_unique<SplitStaging>());
+              std::make_unique<SplitStaging>(readStream->fileInfo_));
           readStream->currentStaging_ =
               readStream->reader_->splitStaging().back().get();
           if (needSync) {

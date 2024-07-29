@@ -43,6 +43,8 @@ DEFINE_bool(
     "Generate input data. If false, data_path must "
     "contain a directory with a subdirectory per table.");
 
+DEFINE_bool(preload, false, "Preload Wave data into RAM before starting query");
+
 DEFINE_bool(wave, true, "Run benchmark with Wave");
 
 DEFINE_int32(num_columns, 10, "Number of columns in test table");
@@ -102,6 +104,8 @@ class WaveBenchmark : public QueryBenchmarkBase {
     }
     if (FLAGS_wave) {
       makeTable("test", vectors);
+      if (FLAGS_generate) {
+      }
     } else {
       std::string temp = "/tmp/data.dwrf";
       auto config = std::make_shared<dwrf::Config>();
@@ -184,9 +188,9 @@ class WaveBenchmark : public QueryBenchmarkBase {
 
         exec::test::TpchPlan plan;
         if (FLAGS_wave) {
-          plan.dataFiles["0"] = {"test"};
+          plan.dataFiles["0"] = {FLAGS_data_path + "/test.wave"};
         } else {
-          plan.dataFiles["0"] = {"tmp/test.dwrf"};
+          plan.dataFiles["0"] = {FLAGS_data_path + "/test.dwrf"};
         }
         int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
         std::vector<std::string> scanFilters;
@@ -241,14 +245,29 @@ class WaveBenchmark : public QueryBenchmarkBase {
         type_ = makeType();
         auto numVectors =
             std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
-        makeData(
-            type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
+	if (FLAGS_data_path.empty() || !FLAGS_generate) {
+	  makeData(
+		   type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
+	} else {
+	  loadData();
+	}
         break;
       }
       default:
         VELOX_FAIL("Bad query number");
     }
   }
+
+  void loadData() {
+    if (FLAGS_wave) {
+      auto table = wave::test::Table::getTable(FLAGS_data_path + "/test.wave", true);
+      table->fromFile(FLAGS_data_path + "/test.wave");
+      if (FLAGS_preload) {
+	table->loadData(leafPool_);
+      }
+    }
+  }
+  
   std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
       const std::string& path,
       int32_t numSplitsPerFile,
