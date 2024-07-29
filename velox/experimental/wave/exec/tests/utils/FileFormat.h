@@ -30,7 +30,10 @@ class Table;
 enum Encoding { kFlat, kDict, kStruct, kNone };
 
 struct Column {
-  void load(std::unique_ptr<ReadFile>& file, const std::string& path, memory::MemoryPool* pool);
+  void load(
+      std::unique_ptr<ReadFile>& file,
+      const std::string& path,
+      memory::MemoryPool* pool);
 
   Encoding encoding;
   TypeKind kind;

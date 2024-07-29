@@ -385,27 +385,30 @@ void writeNumber(std::ostream& stream, T& n) {
   stream.write(reinterpret_cast<char*>(&n), sizeof(T));
 }
 
-  void Column::  load(std::unique_ptr<ReadFile>& file, const std::string& path, memory::MemoryPool* pool) {
-    VELOX_CHECK(region.length > 0 || nulls || !children.empty());
-    if (nulls) {
-      nulls->load(file, path, pool);
-    }
-    if (alphabet) {
-      alphabet->load(file, path, pool);
-    }
-    if (region.length > 0) {
-      values = AlignedBuffer::allocate<char>(region.length, pool);
-      if (!file) {
-	auto fileSystem = filesystems::getFileSystem(path, nullptr);
-	file = fileSystem->openFileForRead(path);
-      }
-      file->pread(region.offset, region.length, values->asMutable<char>());
-    }
-    for (auto& child : children) {
-      child->load(file, path, pool);
-    }
+void Column::load(
+    std::unique_ptr<ReadFile>& file,
+    const std::string& path,
+    memory::MemoryPool* pool) {
+  VELOX_CHECK(region.length > 0 || nulls || !children.empty());
+  if (nulls) {
+    nulls->load(file, path, pool);
   }
-      
+  if (alphabet) {
+    alphabet->load(file, path, pool);
+  }
+  if (region.length > 0) {
+    values = AlignedBuffer::allocate<char>(region.length, pool);
+    if (!file) {
+      auto fileSystem = filesystems::getFileSystem(path, nullptr);
+      file = fileSystem->openFileForRead(path);
+    }
+    file->pread(region.offset, region.length, values->asMutable<char>());
+  }
+  for (auto& child : children) {
+    child->load(file, path, pool);
+  }
+}
+
 template <typename T>
 void readNumber(std::istream& stream, T& n) {
   stream.read(reinterpret_cast<char*>(&n), sizeof(n));
@@ -618,7 +621,7 @@ void Table::loadData(std::shared_ptr<memory::MemoryPool> pool) {
   }
   pools_.push_back(pool);
 }
-  
+
 // static
 const Table* Table::defineTable(
     const std::string& name,
