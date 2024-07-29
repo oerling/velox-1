@@ -52,7 +52,7 @@ ReadStream::ReadStream(
     io::IoStatistics* ioStats,
     FileInfo& fileInfo,
     const OperandSet* firstColumns)
-  : Executable(), ioStats_(ioStats), fileInfo_(fileInfo) {
+    : Executable(), ioStats_(ioStats), fileInfo_(fileInfo) {
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());
@@ -117,7 +117,8 @@ void ReadStream::makeGrid(Stream* stream) {
     if (extra) {
       commands_.push_back(std::move(extra));
     }
-    reader_->splitStaging().push_back(std::make_unique<SplitStaging>(fileInfo_));
+    reader_->splitStaging().push_back(
+        std::make_unique<SplitStaging>(fileInfo_));
     currentStaging_ = reader_->splitStaging().back().get();
   }
 }

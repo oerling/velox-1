@@ -229,7 +229,8 @@ bool shouldStop(exec::StopReason taskStopReason) {
 Advance WaveDriver::advance(int pipelineIdx) {
   auto& pipeline = pipelines_[pipelineIdx];
   int64_t waitLoops = 0;
-  // Set to true when any stream is seen not ready, false when any stream is seen ready.
+  // Set to true when any stream is seen not ready, false when any stream is
+  // seen ready.
   bool isWaiting = false;
   // Time when a stream was first seen not ready.
   int64_t waitingSince = 0;
@@ -274,16 +275,16 @@ Advance WaveDriver::advance(int pipelineIdx) {
         auto arrived = pipeline.running[i].get();
         arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
-	if (isWaiting) {
-	  waitUs += getCurrentTimeMicro() - waitingSince;
-	  isWaiting = false;
-	}
+        if (isWaiting) {
+          waitUs += getCurrentTimeMicro() - waitingSince;
+          isWaiting = false;
+        }
         moveTo(pipeline.running, i, pipeline.arrived);
         if (pipeline.makesHostResult) {
           result_ = makeResult(*arrived, lastSet);
           if (result_ && result_->size() != 0) {
             totalWaitLoops += waitLoops;
-	    waveStats_.waitTime.micros += waitUs;
+            waveStats_.waitTime.micros += waitUs;
             return Advance::kResult;
           }
           --i;
@@ -291,12 +292,12 @@ Advance WaveDriver::advance(int pipelineIdx) {
           pipeline.sinkFull = true;
           waitForArrival(pipeline);
           totalWaitLoops += waitLoops;
-	  waveStats_.waitTime.micros += waitUs;
+          waveStats_.waitTime.micros += waitUs;
           return Advance::kResult;
         }
       } else if (!isWaiting) {
-	waitingSince = getCurrentTimeMicro();
-	isWaiting = true;
+        waitingSince = getCurrentTimeMicro();
+        isWaiting = true;
       }
       ++waitLoops;
     }

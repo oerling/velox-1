@@ -36,15 +36,16 @@ WaveTestSplitReader::WaveTestSplitReader(
   if (!stripe_->isLoaded()) {
     try {
       fileHandle_ = params_.fileHandleFactory->generate(
-							stripe_->path, hiveSplit->properties.has_value() ? &*hiveSplit->properties
-							       : nullptr);
+          stripe_->path,
+          hiveSplit->properties.has_value() ? &*hiveSplit->properties
+                                            : nullptr);
       VELOX_CHECK_NOT_NULL(fileHandle_.get());
     } catch (const VeloxRuntimeError& e) {
       if (e.errorCode() == error_code::kFileNotFound &&
-	  params_.hiveConfig->ignoreMissingFiles(
-					  params_.connectorQueryCtx->sessionProperties())) {
-	emptySplit_ = true;
-	return;
+          params_.hiveConfig->ignoreMissingFiles(
+              params_.connectorQueryCtx->sessionProperties())) {
+        emptySplit_ = true;
+        return;
       }
       throw;
     }
@@ -65,7 +66,7 @@ WaveTestSplitReader::WaveTestSplitReader(
     fileInfo_.file = fileHandle_->file.get();
     fileInfo_.fileId = &fileHandle_->uuid;
     fileInfo_.cache = params_.connectorQueryCtx->cache();
-}
+  }
 }
 
 int32_t WaveTestSplitReader::canAdvance(WaveStream& stream) {
@@ -94,7 +95,7 @@ void WaveTestSplitReader::schedule(WaveStream& waveStream, int32_t maxRows) {
         reinterpret_cast<StructColumnReader*>(columnReader_.get()),
         waveStream,
         params_.ioStats.get(),
-				       fileInfo_);
+        fileInfo_);
   }
   ReadStream::launch(std::move(exe), nextRow_, rowSet);
   nextRow_ += scheduledRows_;

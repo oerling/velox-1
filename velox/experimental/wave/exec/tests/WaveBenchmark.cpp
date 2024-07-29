@@ -245,12 +245,12 @@ class WaveBenchmark : public QueryBenchmarkBase {
         type_ = makeType();
         auto numVectors =
             std::max<int64_t>(1, FLAGS_num_rows / FLAGS_rows_per_stripe);
-	if (FLAGS_data_path.empty() || !FLAGS_generate) {
-	  makeData(
-		   type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
-	} else {
-	  loadData();
-	}
+        if (FLAGS_data_path.empty() || !FLAGS_generate) {
+          makeData(
+              type_, numVectors, FLAGS_num_rows / numVectors, FLAGS_null_pct);
+        } else {
+          loadData();
+        }
         break;
       }
       default:
@@ -260,14 +260,15 @@ class WaveBenchmark : public QueryBenchmarkBase {
 
   void loadData() {
     if (FLAGS_wave) {
-      auto table = wave::test::Table::getTable(FLAGS_data_path + "/test.wave", true);
+      auto table =
+          wave::test::Table::getTable(FLAGS_data_path + "/test.wave", true);
       table->fromFile(FLAGS_data_path + "/test.wave");
       if (FLAGS_preload) {
-	table->loadData(leafPool_);
+        table->loadData(leafPool_);
       }
     }
   }
-  
+
   std::vector<std::shared_ptr<connector::ConnectorSplit>> listSplits(
       const std::string& path,
       int32_t numSplitsPerFile,

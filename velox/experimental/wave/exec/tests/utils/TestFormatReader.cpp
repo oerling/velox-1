@@ -91,7 +91,8 @@ void TestFormatData::startOp(
   stageNulls(deviceStaging, splitStaging);
   if (!staged_) {
     staged_ = true;
-    Staging staging(column_->values->as<char>(), column_->values->size(), column_->region);
+    Staging staging(
+        column_->values->as<char>(), column_->values->size(), column_->region);
     id = splitStaging.add(staging);
   }
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;

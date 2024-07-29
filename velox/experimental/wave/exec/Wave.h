@@ -100,9 +100,12 @@ struct WaveStats {
   /// Time a host thread waits for device.
   WaveTime waitTime;
 
-  /// Time a host thread is synchronously staging data to device. This is either the wall time of multithreaded memcpy to pinned host or the wall time of multithreaded GPU Direct NVME read. This does not include the time of hostToDeviceAsync.
+  /// Time a host thread is synchronously staging data to device. This is either
+  /// the wall time of multithreaded memcpy to pinned host or the wall time of
+  /// multithreaded GPU Direct NVME read. This does not include the time of
+  /// hostToDeviceAsync.
   WaveTime stagingTime;
-  
+
   void clear();
   void add(const WaveStats& other);
 };
