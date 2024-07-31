@@ -18,6 +18,7 @@
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/common/process/TraceContext.h"
 
 namespace facebook::velox::wave {
 
@@ -118,12 +119,15 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
               inputControl,
               out);
           stream.setState(WaveStream::State::kParallel);
-          reinterpret_cast<WaveKernelStream*>(out)->call(
-              out,
+	  {
+	    PrintTime c("expr");
+	    reinterpret_cast<WaveKernelStream*>(out)->call(
+							   out,
               exes.size() * blocksPerExe,
               control->sharedMemorySize,
               control->params);
-          // A sink at the end has no output params but need to wait for host
+	  }
+	    // A sink at the end has no output params but need to wait for host
           // return event before reusing the stream.
           if (exes.size() == 1 && exes[0]->programShared->isSink()) {
             stream.resultToHost();

@@ -32,7 +32,10 @@ uint64_t GpuSlab::roundBytes(uint64_t bytes) {
   if (FLAGS_wave_buffer_end_guard) {
     bytes += sizeof(int64_t);
   }
-  return bits::nextPowerOfTwo(std::max<int64_t>(16, bytes));
+  if (bytes > 32 << 10) {
+    return bits::roundUp(bytes, 32 << 10); 
+  } else {
+    return bits::nextPowerOfTwo(std::max<int64_t>(16, bytes));}
 }
 
 GpuSlab::GpuSlab(void* ptr, size_t capacityBytes, GpuAllocator* allocator)
@@ -365,7 +368,7 @@ void GpuArena::free(Buffer* buffer) {
         iter->first + singleArenaCapacity_, addressU64 + buffer->size_);
   }
   iter->second->free(buffer->ptr_, buffer->size_);
-  if (iter->second->empty() && iter->second != currentArena_) {
+  if (0 && iter->second->empty() && iter->second != currentArena_) {
     arenas_.erase(iter);
   }
   buffer->ptr_ = firstFreeBuffer_;
@@ -405,4 +408,12 @@ ArenaStatus GpuArena::checkBuffers() {
   return status;
 }
 
+std::string GpuArena::toString() const {
+  std::stringstream out;
+  for (auto& pair : arenas_) {
+    out << pair.second->toString() << std::endl;
+  }
+  return out.str();
+}
+  
 } // namespace facebook::velox::wave

@@ -156,6 +156,8 @@ class GpuArena {
   /// sizes are padded to larger.
   ArenaStatus checkBuffers();
 
+  std::string toString() const;
+  
  private:
   // A preallocated array of Buffer handles for memory of 'this'.
   struct Buffers {

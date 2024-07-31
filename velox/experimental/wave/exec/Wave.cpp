@@ -17,8 +17,19 @@
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/exec/Vectors.h"
 
+DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
+
 namespace facebook::velox::wave {
 
+
+PrintTime::PrintTime(const char* title)
+  :title_(title), start_(getCurrentTimeMicro()) {}
+
+PrintTime::~PrintTime () {
+  std::cout << title_ << "=" << start_ - getCurrentTimeMicro();
+}
+
+  
 std::string WaveTime::toString() const {
   if (micros < 20) {
     return fmt::format("{} ({} clocks)", succinctNanos(micros * 1000), clocks);
@@ -452,9 +463,12 @@ bool WaveStream::isArrived(
     int32_t timeoutMicro) {
   OperandSet waitSet;
   if (hostReturnEvent_) {
+    hostReturnEvent_->wait();
     bool done = hostReturnEvent_->query();
     if (done) {
       releaseStreamsAndEvents();
+    } else {
+      printf("bing\n");
     }
     return done;
   }
@@ -475,6 +489,13 @@ bool WaveStream::isArrived(
     waitSet.add(streamId);
   });
   if (waitSet.empty()) {
+    releaseStreamsAndEvents();
+    return true;
+  }
+  if (1) {
+    waitSet.forEach([&](int32_t id) {
+		      streams_[id]->wait();
+		    });
     releaseStreamsAndEvents();
     return true;
   }

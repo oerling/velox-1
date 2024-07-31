@@ -16,6 +16,7 @@
 
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/dwio/StructColumnReader.h"
+#include "velox/common/process/TraceContext.h"
 
 DEFINE_int32(
     wave_reader_rows_per_tb,
@@ -349,9 +350,12 @@ void ReadStream::launch(
             }
           }
           firstLaunch = false;
-          launchDecode(
-              readStream->programs(), &waveStream->arena(), extra, stream);
-          if (extra) {
+	  {
+	    PrintTime l("decode");
+	    launchDecode(
+			 readStream->programs(), &waveStream->arena(), extra, stream);
+	  }
+	  if (extra) {
             readStream->commands_.push_back(std::move(extra));
           }
           readStream->reader_->splitStaging().push_back(

@@ -19,6 +19,8 @@
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/common/process/TraceContext.h"
+#include <iostream>
 
 DEFINE_int32(
     max_streams_per_driver,
@@ -51,8 +53,8 @@ WaveDriver::WaveDriver(
       states_(std::move(states)) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
-  hostArena_ = std::make_unique<GpuArena>(
-      returnBatchSize * 10, getHostAllocator(getDevice()));
+  //hostArena_ = std::make_unique<GpuArena>(
+  //      returnBatchSize * 10, getHostAllocator(getDevice()));
   deviceArena_ =
       std::make_unique<GpuArena>(100000000, getDeviceAllocator(getDevice()));
   pipelines_.emplace_back();
@@ -99,7 +101,6 @@ RowVectorPtr WaveDriver::getOutput() {
         case Advance::kResult:
           if (i == last) {
             if (pipelines_[i].makesHostResult) {
-              updateStats();
               return result_;
             } else {
               break;
@@ -213,13 +214,14 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
         incStats((pipeline.running[i]->stats()));
         pipeline.running[i]->setState(WaveStream::State::kNotRunning);
         moveTo(pipeline.running, i, pipeline.arrived);
-        totalWaitLoops += waitLoops;
       }
       ++waitLoops;
     }
   }
+  totalWaitLoops += waitLoops;
 }
-namespace {
+
+  namespace {
 bool shouldStop(exec::StopReason taskStopReason) {
   return taskStopReason != exec::StopReason::kNone &&
       taskStopReason != exec::StopReason::kYield;
@@ -271,12 +273,17 @@ Advance WaveDriver::advance(int pipelineIdx) {
     auto& op = *pipeline.operators.back();
     auto& lastSet = op.syncSet();
     for (auto i = 0; i < pipeline.running.size(); ++i) {
-      if (pipeline.running[i]->isArrived(lastSet)) {
-        auto arrived = pipeline.running[i].get();
+      bool isArrived;
+      int64_t start = WaveTime::getMicro();
+      isArrived = pipeline.running[i]->isArrived(lastSet);
+	waveStats_.waitTime.micros += WaveTime::getMicro() - start;
+	if (isArrived) {
+	  std::cout << process::TraceContext::statusLine();
+	  auto arrived = pipeline.running[i].get();
         arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
         if (isWaiting) {
-          waitUs += getCurrentTimeMicro() - waitingSince;
+          waitUs += WaveTime::getMicro() - waitingSince;
           isWaiting = false;
         }
         moveTo(pipeline.running, i, pipeline.arrived);
@@ -296,10 +303,11 @@ Advance WaveDriver::advance(int pipelineIdx) {
           return Advance::kResult;
         }
       } else if (!isWaiting) {
-        waitingSince = getCurrentTimeMicro();
+        waitingSince = WaveTime::getMicro();
         isWaiting = true;
+      } else {
+	++waitLoops;
       }
-      ++waitLoops;
     }
     if (pipeline.finished.empty() &&
         pipeline.running.size() + pipeline.arrived.size() <
@@ -374,6 +382,8 @@ void WaveDriver::setError() {
 }
 
 void WaveDriver::updateStats() {
+    std::cout << process::TraceContext::statusLine() << std::endl;
+
   auto lockedStats = stats_.wlock();
   lockedStats->addRuntimeStat(
       "wave.numWaves", RuntimeCounter(waveStats_.numWaves));

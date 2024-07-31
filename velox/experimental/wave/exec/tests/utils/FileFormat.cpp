@@ -568,14 +568,14 @@ void Table::fromFile(
   file->pread(size - tail.size(), tail.size(), tail.data());
   char* end = tail.data() + tail.size();
   auto numStripes = *reinterpret_cast<int32_t*>(end - 28);
-  auto offsetStart = size - *reinterpret_cast<int32_t*>(end - 24);
+  auto offsetStart = size - *reinterpret_cast<int64_t*>(end - 24);
   auto typeStart = size - *reinterpret_cast<int64_t*>(end - 16);
   auto footerStart = size - *reinterpret_cast<int64_t*>(end - 8);
   int64_t tailSize = footerStart;
   if (tailSize > tail.size()) {
     std::string moreTail;
     moreTail.resize(tailSize - tail.size());
-    file->pread(footerStart, moreTail.size(), moreTail.data());
+    file->pread(size - footerStart, moreTail.size(), moreTail.data());
     moreTail += tail;
     tail = std::move(moreTail);
   }

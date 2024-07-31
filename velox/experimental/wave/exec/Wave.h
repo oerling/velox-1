@@ -27,15 +27,35 @@
 #include "velox/experimental/wave/vector/WaveVector.h"
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
-namespace facebook::velox::wave {
 
+DECLARE_bool(wave_timing);
+
+namespace facebook::velox::wave {
+  class PrintTime {
+  public:
+    PrintTime(const char* title);
+    ~PrintTime();
+  private:
+    const char* title_;
+    uint64_t start_;
+  };
+
+
+  
 /// A host side time point for measuring wait and launch prepare latency. Counts
 /// both wall microseconds and clocks.
 struct WaveTime {
   size_t micros{0};
   uint64_t clocks{0};
 
+  static uint64_t getMicro() {
+    return FLAGS_wave_timing ? getCurrentTimeMicro() : 0;
+  }
+  
   static WaveTime now() {
+    if (!FLAGS_wave_timing) {
+      return {0, 0};
+    }
     return {getCurrentTimeMicro(), folly::hardware_timestamp()};
   }
 

@@ -44,7 +44,7 @@ void SplitStaging::registerPointerInternal(
   if (clear) {
     *ptr = nullptr;
   }
-#ifndef NDEBUG
+#if 0 //ndef NDEBUG
   for (auto& pair : patch_) {
     VELOX_CHECK(pair.second != ptr, "Must not register the same pointer twice");
   }
@@ -66,6 +66,11 @@ void SplitStaging::copyColumns(
   }
 }
 
+GpuArena& getTransferArena() {
+  static std::unique_ptr<GpuArena> arena = std::make_unique<GpuArena>(1 << 30, getHostAllocator(nullptr));
+  return *arena;
+}
+
 // Starts the transfers registered with add(). 'stream' is set to a stream
 // where operations depending on the transfer may be queued.
 void SplitStaging::transfer(
@@ -85,7 +90,7 @@ void SplitStaging::transfer(
   }
   WaveTime startTime = WaveTime::now();
   deviceBuffer_ = waveStream.deviceArena().allocate<char>(fill_);
-  hostBuffer_ = waveStream.hostArena().allocate<char>(fill_);
+  hostBuffer_ = getTransferArena().allocate<char>(fill_);
   auto transferBuffer = hostBuffer_->as<char>();
   int firstToCopy = 0;
   int32_t numCopies = staging_.size();
