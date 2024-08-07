@@ -31,6 +31,8 @@
 DECLARE_bool(wave_timing);
 
 namespace facebook::velox::wave {
+
+  /// Scoped guard, prints the time spent inside if 
 class PrintTime {
  public:
   PrintTime(const char* title);
@@ -584,12 +586,10 @@ class WaveStream {
   WaveStream(
       GpuArena& arena,
       GpuArena& deviceArena,
-      GpuArena& hostArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap)
       : arena_(arena),
         deviceArena_(deviceArena),
-        hostArena_(hostArena),
         operands_(operands),
         taskStateMap_(stateMap) {
     operandNullable_.resize(operands_->size(), true);
@@ -606,10 +606,6 @@ class WaveStream {
 
   GpuArena& arena() {
     return arena_;
-  }
-
-  GpuArena& hostArena() {
-    return hostArena_;
   }
 
   GpuArena& deviceArena() {
@@ -874,8 +870,6 @@ class WaveStream {
   // Device memory.
   GpuArena& deviceArena_;
 
-  // Pinned host memory.
-  GpuArena& hostArena_;
   const std::vector<std::unique_ptr<AbstractOperand>>* const operands_;
   // True at '[i]' if in this stream 'operands_[i]' should have null flags.
   std::vector<bool> operandNullable_;

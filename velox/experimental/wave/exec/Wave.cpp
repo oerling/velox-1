@@ -19,14 +19,18 @@
 #include "velox/experimental/wave/exec/Vectors.h"
 
 DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
+DEFINE_bool(wave_print_time, false,
+	    "Enables printing times inside PrinTime guard.");
 
 namespace facebook::velox::wave {
 
 PrintTime::PrintTime(const char* title)
-    : title_(title), start_(getCurrentTimeMicro()) {}
+  : title_(title), start_(FLAGS_wave_print_time ? getCurrentTimeMicro() : 0) {}
 
 PrintTime::~PrintTime() {
-  std::cout << title_ << "=" << getCurrentTimeMicro() - start_;
+  if (FLAGS_wave_print_time) {
+    std::cout << title_ << "=" << getCurrentTimeMicro() - start_;
+  }
 }
 
 std::string WaveTime::toString() const {

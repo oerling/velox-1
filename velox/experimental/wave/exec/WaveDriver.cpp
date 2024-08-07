@@ -53,8 +53,6 @@ WaveDriver::WaveDriver(
       states_(std::move(states)) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
-  // hostArena_ = std::make_unique<GpuArena>(
-  //      returnBatchSize * 10, getHostAllocator(getDevice()));
   deviceArena_ =
       std::make_unique<GpuArena>(100000000, getDeviceAllocator(getDevice()));
   pipelines_.emplace_back();
@@ -278,7 +276,6 @@ Advance WaveDriver::advance(int pipelineIdx) {
       isArrived = pipeline.running[i]->isArrived(lastSet);
       waveStats_.waitTime.micros += WaveTime::getMicro() - start;
       if (isArrived) {
-        std::cout << process::TraceContext::statusLine();
         auto arrived = pipeline.running[i].get();
         arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
@@ -313,7 +310,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
         pipeline.running.size() + pipeline.arrived.size() <
             FLAGS_max_streams_per_driver) {
       auto stream = std::make_unique<WaveStream>(
-          *arena_, *deviceArena_, *hostArena_, &operands(), &stateMap_);
+          *arena_, *deviceArena_, &operands(), &stateMap_);
       ++stream->stats().numWaves;
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));
@@ -382,8 +379,6 @@ void WaveDriver::setError() {
 }
 
 void WaveDriver::updateStats() {
-  std::cout << process::TraceContext::statusLine() << std::endl;
-
   auto lockedStats = stats_.wlock();
   lockedStats->addRuntimeStat(
       "wave.numWaves", RuntimeCounter(waveStats_.numWaves));
