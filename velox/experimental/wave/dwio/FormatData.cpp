@@ -44,7 +44,7 @@ void SplitStaging::registerPointerInternal(
   if (clear) {
     *ptr = nullptr;
   }
-#if 0 //ndef NDEBUG
+#if 0 // ndef NDEBUG
   for (auto& pair : patch_) {
     VELOX_CHECK(pair.second != ptr, "Must not register the same pointer twice");
   }
@@ -67,7 +67,8 @@ void SplitStaging::copyColumns(
 }
 
 GpuArena& getTransferArena() {
-  static std::unique_ptr<GpuArena> arena = std::make_unique<GpuArena>(1 << 30, getHostAllocator(nullptr));
+  static std::unique_ptr<GpuArena> arena =
+      std::make_unique<GpuArena>(1 << 30, getHostAllocator(nullptr));
   return *arena;
 }
 

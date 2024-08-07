@@ -203,5 +203,5 @@ KernelInfo kernelInfo(const void* func);
 std::unordered_map<std::string, KernelInfo>& kernelRegistry();
 /// Prints summary of registered kernels.
 void printKernels();
-  
+
 } // namespace facebook::velox::wave

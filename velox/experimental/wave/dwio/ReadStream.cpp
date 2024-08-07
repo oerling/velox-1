@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
+#include "velox/common/process/TraceContext.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/dwio/StructColumnReader.h"
-#include "velox/common/process/TraceContext.h"
 
 DEFINE_int32(
     wave_reader_rows_per_tb,
@@ -117,7 +117,7 @@ void ReadStream::makeGrid(Stream* stream) {
       PrintTime l("grid");
       launchDecode(programs_, &waveStream->arena(), extra, stream);
     }
-      reader_->recordGriddize(*stream);
+    reader_->recordGriddize(*stream);
     if (extra) {
       commands_.push_back(std::move(extra));
     }
@@ -353,12 +353,12 @@ void ReadStream::launch(
             }
           }
           firstLaunch = false;
-	  {
-	    PrintTime l("decode");
-	    launchDecode(
-			 readStream->programs(), &waveStream->arena(), extra, stream);
-	  }
-	  if (extra) {
+          {
+            PrintTime l("decode");
+            launchDecode(
+                readStream->programs(), &waveStream->arena(), extra, stream);
+          }
+          if (extra) {
             readStream->commands_.push_back(std::move(extra));
           }
           readStream->reader_->splitStaging().push_back(
@@ -377,14 +377,14 @@ void ReadStream::launch(
         readStream->setBlockStatusAndTemp();
         readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
         WaveBufferPtr extra;
-	{
-	  PrintTime l("decode-f");
-	  launchDecode(
-		       readStream->programs(),
-		       &readStream->waveStream->arena(),
-		       extra,
-		       stream);
-	}
+        {
+          PrintTime l("decode-f");
+          launchDecode(
+              readStream->programs(),
+              &readStream->waveStream->arena(),
+              extra,
+              stream);
+        }
         if (extra) {
           readStream->commands_.push_back(std::move(extra));
         }

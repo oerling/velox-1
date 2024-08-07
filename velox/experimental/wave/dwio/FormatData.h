@@ -137,7 +137,7 @@ class SplitStaging {
 
   FileInfo& fileInfo_;
 };
-  
+
 using RowSet = folly::Range<const int32_t*>;
 class ColumnReader;
 

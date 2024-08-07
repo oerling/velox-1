@@ -33,9 +33,10 @@ uint64_t GpuSlab::roundBytes(uint64_t bytes) {
     bytes += sizeof(int64_t);
   }
   if (bytes > 32 << 10) {
-    return bits::roundUp(bytes, 32 << 10); 
+    return bits::roundUp(bytes, 32 << 10);
   } else {
-    return bits::nextPowerOfTwo(std::max<int64_t>(16, bytes));}
+    return bits::nextPowerOfTwo(std::max<int64_t>(16, bytes));
+  }
 }
 
 GpuSlab::GpuSlab(void* ptr, size_t capacityBytes, GpuAllocator* allocator)
@@ -415,5 +416,5 @@ std::string GpuArena::toString() const {
   }
   return out.str();
 }
-  
+
 } // namespace facebook::velox::wave

@@ -15,6 +15,7 @@
  */
 
 #include "velox/benchmarks/QueryBenchmarkBase.h"
+#include "velox/common/process/TraceContext.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/dwio/dwrf/writer/WriterContext.h"
 #include "velox/experimental/wave/exec/ToWave.h"
@@ -22,7 +23,6 @@
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/experimental/wave/exec/tests/utils/WaveTestSplitReader.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
-#include "velox/common/process/TraceContext.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -114,7 +114,9 @@ class WaveBenchmark : public QueryBenchmarkBase {
       std::string temp = FLAGS_data_path + "/data.dwrf";
       auto config = std::make_shared<dwrf::Config>();
       config->set(dwrf::Config::COMPRESSION, common::CompressionKind_NONE);
-      config->set(dwrf::Config::STRIPE_SIZE, static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
+      config->set(
+          dwrf::Config::STRIPE_SIZE,
+          static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
       writeToFile(temp, vectors, config, vectors.front()->type());
     }
   }

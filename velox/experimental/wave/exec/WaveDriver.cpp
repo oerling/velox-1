@@ -15,12 +15,12 @@
  */
 
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include <iostream>
+#include "velox/common/process/TraceContext.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Task.h"
 #include "velox/experimental/wave/exec/Instruction.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
-#include "velox/common/process/TraceContext.h"
-#include <iostream>
 
 DEFINE_int32(
     max_streams_per_driver,
@@ -53,7 +53,7 @@ WaveDriver::WaveDriver(
       states_(std::move(states)) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
-  //hostArena_ = std::make_unique<GpuArena>(
+  // hostArena_ = std::make_unique<GpuArena>(
   //      returnBatchSize * 10, getHostAllocator(getDevice()));
   deviceArena_ =
       std::make_unique<GpuArena>(100000000, getDeviceAllocator(getDevice()));
@@ -221,7 +221,7 @@ void WaveDriver::waitForArrival(Pipeline& pipeline) {
   totalWaitLoops += waitLoops;
 }
 
-  namespace {
+namespace {
 bool shouldStop(exec::StopReason taskStopReason) {
   return taskStopReason != exec::StopReason::kNone &&
       taskStopReason != exec::StopReason::kYield;
@@ -276,10 +276,10 @@ Advance WaveDriver::advance(int pipelineIdx) {
       bool isArrived;
       int64_t start = WaveTime::getMicro();
       isArrived = pipeline.running[i]->isArrived(lastSet);
-	waveStats_.waitTime.micros += WaveTime::getMicro() - start;
-	if (isArrived) {
-	  std::cout << process::TraceContext::statusLine();
-	  auto arrived = pipeline.running[i].get();
+      waveStats_.waitTime.micros += WaveTime::getMicro() - start;
+      if (isArrived) {
+        std::cout << process::TraceContext::statusLine();
+        auto arrived = pipeline.running[i].get();
         arrived->setState(WaveStream::State::kNotRunning);
         incStats(arrived->stats());
         if (isWaiting) {
@@ -306,7 +306,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
         waitingSince = WaveTime::getMicro();
         isWaiting = true;
       } else {
-	++waitLoops;
+        ++waitLoops;
       }
     }
     if (pipeline.finished.empty() &&
@@ -382,7 +382,7 @@ void WaveDriver::setError() {
 }
 
 void WaveDriver::updateStats() {
-    std::cout << process::TraceContext::statusLine() << std::endl;
+  std::cout << process::TraceContext::statusLine() << std::endl;
 
   auto lockedStats = stats_.wlock();
   lockedStats->addRuntimeStat(
