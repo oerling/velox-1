@@ -19,15 +19,6 @@
 #include <cub/cub.cuh> // @manual
 #include "velox/experimental/wave/common/Bits.cuh"
 
-#ifndef NDEBUG
-#define LPRI(s)                              \
-  if (threadIdx.x == 0 && blockIdx.x == 0) { \
-    printf("%d%s\n", __LINE__, s);           \
-  };
-#else
-#define LPRI(s)
-#endif
-
 namespace facebook::velox::wave {
 
 namespace detail {
@@ -679,7 +670,6 @@ __device__ void makeResult(
       // last row.
       return;
     }
-    LPRI("r");
     auto resultIdx = base + threadIdx.x;
     reinterpret_cast<T*>(op->result)[resultIdx] = data;
     if (kHasNulls && op->resultNulls) {
@@ -698,8 +688,9 @@ __device__ void decodeSelective(GpuDecode* op) {
   int32_t nthLoop = 0;
   switch (op->nullMode) {
     case NullMode::kDenseNonNull: {
-#if 1
-      auto base = op->baseRow;
+#if 0
+      //  No-filter case with everything inlined.
+auto base = op->baseRow;
       auto i = threadIdx.x;
       auto& d = op->data.dictionaryOnBitpack;
       auto end = op->maxRow - op->baseRow;
@@ -1048,7 +1039,6 @@ __device__ void selectiveSwitch(GpuDecode* op) {
 template <int32_t kBlockSize>
 __device__ void decodeSwitch(GpuDecode& op) {
   switch (op.step) {
-#if 1
     case DecodeStep::kSelective32:
       selectiveSwitch<int32_t, kBlockSize>(&op);
       break;
@@ -1064,11 +1054,9 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kTrivial:
       detail::decodeTrivial(op);
       break;
-#endif
     case DecodeStep::kDictionaryOnBitpack:
       detail::decodeDictionaryOnBitpack(op);
       break;
-#if 1
     case DecodeStep::kSparseBool:
       detail::decodeSparseBool(op.data.sparseBool);
       break;
@@ -1087,7 +1075,6 @@ __device__ void decodeSwitch(GpuDecode& op) {
     case DecodeStep::kMakeScatterIndices:
       detail::makeScatterIndices<kBlockSize>(op.data.makeScatterIndices);
       break;
-#endif
     case DecodeStep::kRowCountNoFilter:
       detail::setRowCountNoFilter<kBlockSize>(op.data.rowCountNoFilter);
       break;

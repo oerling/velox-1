@@ -275,8 +275,6 @@ class GpuDecoderTest : public ::testing::Test {
           callViaPrograms(ops.get(), numOps);
 #else
           decodeGlobal<kBlockSize>(ops.get(), numOps);
-#else
-
 #endif
         },
         numValues * sizeof(T),
