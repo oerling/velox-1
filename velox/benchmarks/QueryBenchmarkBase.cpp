@@ -270,8 +270,9 @@ void QueryBenchmarkBase::readCombinations() {
     if (previous < line.size()) {
       dim.values.push_back(line.substr(previous, line.size() - previous));
     }
-
-    parameters_.push_back(dim);
+    if (!dim.flag.empty() && !dim.values.empty()) {
+      parameters_.push_back(dim);
+    }
   }
 }
 

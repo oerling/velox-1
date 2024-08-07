@@ -29,6 +29,9 @@ namespace {
 
 using namespace facebook::velox;
 
+  // define to use the flexible call path wiht multiple ops per TB
+#define USE_PROGRAM_API
+  
 // Returns the number of bytes the "values" will occupy after varint encoding.
 uint64_t bulkVarintSize(const uint64_t* values, int count) {
   constexpr uint8_t kLookupSizeTable64[64] = {
@@ -84,6 +87,10 @@ inline const T* addBytes(const T* ptr, int bytes) {
   return reinterpret_cast<const T*>(reinterpret_cast<const char*>(ptr) + bytes);
 }
 
+void prefetchToDevice(void* ptr, size_t size) {
+  CUDA_CHECK_FATAL(cudaMemPrefetchAsync(ptr, size, FLAGS_device_id, nullptr));
+}
+  
 template <typename T>
 void makeBitpackDict(
     int32_t bitWidth,
@@ -92,8 +99,9 @@ void makeBitpackDict(
     T*& dict,
     uint64_t*& bits,
     T*& result,
-    int32_t** scatter) {
-  int64_t dictBytes = sizeof(T) << bitWidth;
+    int32_t** scatter,
+    bool bitsOnly) {
+  int64_t dictBytes = bitsOnly ? 0 : sizeof(T) << bitWidth;
   int64_t bitBytes = (roundUp(numValues * bitWidth, 128) / 8) + 16;
   int64_t resultBytes = numValues * sizeof(T);
   int scatterBytes =
@@ -104,7 +112,7 @@ void makeBitpackDict(
   cudaPtr = allocate<char>(dictBytes + bitBytes + scatterBytes + resultBytes);
   T* memory = (T*)cudaPtr.get();
 
-  dict = memory;
+  dict = bitsOnly ? nullptr : memory;
 
   static int sequence = 1;
   ++sequence;
@@ -126,8 +134,10 @@ void makeBitpackDict(
   }
   result = addBytes(
       reinterpret_cast<T*>(memory), dictBytes + bitBytes + scatterBytes);
+  prefetchToDevice(memory, dictBytes + bitBytes + scatterBytes + resultBytes);
 }
 
+  
 class GpuDecoderTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -220,7 +230,8 @@ class GpuDecoderTest : public ::testing::Test {
       int32_t bitWidth,
       int64_t numValues,
       int numBlocks,
-      bool useScatter) {
+      bool useScatter,
+		    bool bitsOnly = false) {
     gpu::CudaPtr<char[]> ptr;
     T* dict;
     uint64_t* bits;
@@ -233,7 +244,8 @@ class GpuDecoderTest : public ::testing::Test {
         dict,
         bits,
         result,
-        useScatter ? &scatter : nullptr);
+        useScatter ? &scatter : nullptr,
+	bitsOnly);
     result[numValues] = 0xdeadbeef;
     int valuesPerOp = roundUp(numValues / numBlocks, kBlockSize);
     int numOps = roundUp(numValues, valuesPerOp) / valuesPerOp;
@@ -254,21 +266,30 @@ class GpuDecoderTest : public ::testing::Test {
     }
     testCase(
         fmt::format(
-            "bitpack dictplan {} numValues={} useScatter={}",
-            sizeof(T) * 8,
+            "bitpack dictplan {} -> {} numValues={} useScatter={}",
+            bitWidth, sizeof(T) * 8,
             numValues,
             useScatter),
-        [&] { decodeGlobal<kBlockSize>(ops.get(), numOps); },
+        [&] {
+#ifdef USE_PROGRAM_API
+	  callViaPrograms(ops.get(), numOps);
+#else
+	  decodeGlobal<kBlockSize>(ops.get(), numOps);
+#else
+
+#endif
+	},
         numValues * sizeof(T),
         10);
     if (!scatter) {
       EXPECT_EQ(0xdeadbeef, result[numValues]);
     }
-    auto mask = (1u << bitWidth) - 1;
+    auto mask = (1uL << bitWidth) - 1;
     for (auto i = 0; i < numValues; ++i) {
       int32_t bit = i * bitWidth;
       uint64_t word = *addBytes(bits, bit / 8);
-      T expected = dict[(word >> (bit & 7)) & mask];
+      uint64_t index = (word >> (bit & 7))  & mask;
+      T expected = bitsOnly ? index : dict[index];
       ASSERT_EQ(result[scatter ? scatter[i] : i], expected) << i;
     }
   }
@@ -512,6 +533,20 @@ class GpuDecoderTest : public ::testing::Test {
     }
   }
 
+  void callViaPrograms(GpuDecode* ops, int32_t numOps) {
+    auto stream = std::make_unique<Stream>();
+    WaveBufferPtr extra;
+    DecodePrograms programs;
+    for (int i = 0; i < numOps; ++i) {
+      programs.programs.emplace_back();
+      programs.programs.back().push_back(std::make_unique<GpuDecode>());
+      auto opPtr = programs.programs.back().front().get();
+      *opPtr = ops[i];
+    }
+    launchDecode(programs, arena_.get(), extra, stream.get());
+    stream->wait();
+  }
+  
   void testMakeScatterIndicesStream(int numValues, int numBlocks) {
     auto bits = allocate<uint8_t>((numValues * numBlocks + 7) / 8);
     fillRandomBits(bits.get(), 0.5, numValues * numBlocks);
@@ -601,6 +636,16 @@ TEST_F(GpuDecoderTest, dictionaryOnBitpack) {
   dictTestPlan<int64_t, 256>(11, 40'000'003, 1024, true);
 }
 
+TEST_F(GpuDecoderTest, bitpack) {
+  dictTestPlan<int32_t, 256>(27, 4000001, 1024, false, true);
+  dictTestPlan<int64_t, 256>(28, 4'000'037, 1024, false, true);
+  dictTestPlan<int32_t, 256>(26, 40'000'003, 1024, false, true);
+  dictTestPlan<int64_t, 256>(30, 40'000'003, 1024, false, true);
+  dictTestPlan<int64_t, 256>(47, 40'000'003, 1024, false, true);
+  dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, true, true);
+}
+
+  
 TEST_F(GpuDecoderTest, sparseBool) {
   testSparseBool<256>(40013, 1024);
 }
@@ -676,5 +721,8 @@ int main(int argc, char** argv) {
   printFuncAttrs("decode blocksize 512", attrs);
   CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<1024>));
   printFuncAttrs("decode blocksize 1024", attrs);
+  printFuncAttrs("decode2", attrs);
+  
+  printKernels();
   return RUN_ALL_TESTS();
 }

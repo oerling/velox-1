@@ -111,9 +111,10 @@ class WaveBenchmark : public QueryBenchmarkBase {
         table->toFile(FLAGS_data_path + "/test.wave");
       }
     } else {
-      std::string temp = "/tmp/data.dwrf";
+      std::string temp = FLAGS_data_path + "/data.dwrf";
       auto config = std::make_shared<dwrf::Config>();
       config->set(dwrf::Config::COMPRESSION, common::CompressionKind_NONE);
+      config->set(dwrf::Config::STRIPE_SIZE, static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
       writeToFile(temp, vectors, config, vectors.front()->type());
     }
   }
@@ -194,7 +195,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
         if (FLAGS_wave) {
           plan.dataFiles["0"] = {FLAGS_data_path + "/test.wave"};
         } else {
-          plan.dataFiles["0"] = {FLAGS_data_path + "/test.dwrf"};
+          plan.dataFiles["0"] = {FLAGS_data_path + "/data.dwrf"};
         }
         int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
         std::vector<std::string> scanFilters;
@@ -363,6 +364,7 @@ int main(int argc, char** argv) {
       "This program benchmarks Wave. Run 'velox_wave_benchmark -helpon=WaveBenchmark' for available options.\n");
   gflags::SetUsageMessage(kUsage);
   folly::Init init{&argc, &argv, false};
+  facebook::velox::wave::printKernels();
   waveBenchmarkMain();
   return 0;
 }

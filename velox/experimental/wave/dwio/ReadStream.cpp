@@ -113,8 +113,11 @@ void ReadStream::makeGrid(Stream* stream) {
     deviceStaging_.makeDeviceBuffer(waveStream->arena());
     currentStaging_->transfer(*waveStream, *stream);
     WaveBufferPtr extra;
-    launchDecode(programs_, &waveStream->arena(), extra, stream);
-    reader_->recordGriddize(*stream);
+    {
+      PrintTime l("grid");
+      launchDecode(programs_, &waveStream->arena(), extra, stream);
+    }
+      reader_->recordGriddize(*stream);
     if (extra) {
       commands_.push_back(std::move(extra));
     }
@@ -374,11 +377,14 @@ void ReadStream::launch(
         readStream->setBlockStatusAndTemp();
         readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
         WaveBufferPtr extra;
-        launchDecode(
-            readStream->programs(),
-            &readStream->waveStream->arena(),
-            extra,
-            stream);
+	{
+	  PrintTime l("decode-f");
+	  launchDecode(
+		       readStream->programs(),
+		       &readStream->waveStream->arena(),
+		       extra,
+		       stream);
+	}
         if (extra) {
           readStream->commands_.push_back(std::move(extra));
         }

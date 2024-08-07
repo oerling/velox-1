@@ -16,6 +16,7 @@
 
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/exec/Vectors.h"
+#include <iostream>
 
 DEFINE_bool(wave_timing, true, "Enable Wave perf timers");
 
@@ -26,7 +27,7 @@ PrintTime::PrintTime(const char* title)
   :title_(title), start_(getCurrentTimeMicro()) {}
 
 PrintTime::~PrintTime () {
-  std::cout << title_ << "=" << start_ - getCurrentTimeMicro();
+  std::cout << title_ << "=" << getCurrentTimeMicro() - start_;
 }
 
   
