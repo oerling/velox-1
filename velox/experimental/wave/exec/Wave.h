@@ -32,7 +32,7 @@ DECLARE_bool(wave_timing);
 
 namespace facebook::velox::wave {
 
-  /// Scoped guard, prints the time spent inside if 
+/// Scoped guard, prints the time spent inside if
 class PrintTime {
  public:
   PrintTime(const char* title);

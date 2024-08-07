@@ -130,7 +130,10 @@ struct ArenaStatus {
 /// fragmentation happens.
 class GpuArena {
  public:
-  GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator, uint64_t standbyCapacity = 0);
+  GpuArena(
+      uint64_t singleArenaCapacity,
+      GpuAllocator* allocator,
+      uint64_t standbyCapacity = 0);
 
   WaveBufferPtr allocateBytes(uint64_t bytes);
 
@@ -182,13 +185,13 @@ class GpuArena {
 
   // Total capacity in all arenas.
   uint64_t capacity_{0};
-  
+
   // Capacity in bytes for a single GpuSlab managed by this.
   const uint64_t singleArenaCapacity_;
 
   // Lower bound of capacity to keep around even if usage is below this.
   uint64_t standbyCapacity_{0};
-  
+
   GpuAllocator* const allocator_;
 
   // A sorted list of GpuSlab by its initial address

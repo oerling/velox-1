@@ -66,11 +66,11 @@ void SplitStaging::copyColumns(
   }
 }
 
-  // Shared pool of 1-2GB of pinned host memory for staging. May
-  // transiently exceed 2GB but settles to 2GB after the peak.
+// Shared pool of 1-2GB of pinned host memory for staging. May
+// transiently exceed 2GB but settles to 2GB after the peak.
 GpuArena& getTransferArena() {
-  static std::unique_ptr<GpuArena> arena =
-    std::make_unique<GpuArena>(1UL << 30, getHostAllocator(nullptr), 2UL << 30);
+  static std::unique_ptr<GpuArena> arena = std::make_unique<GpuArena>(
+      1UL << 30, getHostAllocator(nullptr), 2UL << 30);
   return *arena;
 }
 
