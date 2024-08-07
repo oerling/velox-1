@@ -29,9 +29,9 @@ namespace {
 
 using namespace facebook::velox;
 
-  // define to use the flexible call path wiht multiple ops per TB
+// define to use the flexible call path wiht multiple ops per TB
 #define USE_PROGRAM_API
-  
+
 // Returns the number of bytes the "values" will occupy after varint encoding.
 uint64_t bulkVarintSize(const uint64_t* values, int count) {
   constexpr uint8_t kLookupSizeTable64[64] = {
@@ -90,7 +90,7 @@ inline const T* addBytes(const T* ptr, int bytes) {
 void prefetchToDevice(void* ptr, size_t size) {
   CUDA_CHECK_FATAL(cudaMemPrefetchAsync(ptr, size, FLAGS_device_id, nullptr));
 }
-  
+
 template <typename T>
 void makeBitpackDict(
     int32_t bitWidth,
@@ -137,7 +137,6 @@ void makeBitpackDict(
   prefetchToDevice(memory, dictBytes + bitBytes + scatterBytes + resultBytes);
 }
 
-  
 class GpuDecoderTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -231,7 +230,7 @@ class GpuDecoderTest : public ::testing::Test {
       int64_t numValues,
       int numBlocks,
       bool useScatter,
-		    bool bitsOnly = false) {
+      bool bitsOnly = false) {
     gpu::CudaPtr<char[]> ptr;
     T* dict;
     uint64_t* bits;
@@ -245,7 +244,7 @@ class GpuDecoderTest : public ::testing::Test {
         bits,
         result,
         useScatter ? &scatter : nullptr,
-	bitsOnly);
+        bitsOnly);
     result[numValues] = 0xdeadbeef;
     int valuesPerOp = roundUp(numValues / numBlocks, kBlockSize);
     int numOps = roundUp(numValues, valuesPerOp) / valuesPerOp;
@@ -267,18 +266,19 @@ class GpuDecoderTest : public ::testing::Test {
     testCase(
         fmt::format(
             "bitpack dictplan {} -> {} numValues={} useScatter={}",
-            bitWidth, sizeof(T) * 8,
+            bitWidth,
+            sizeof(T) * 8,
             numValues,
             useScatter),
         [&] {
 #ifdef USE_PROGRAM_API
-	  callViaPrograms(ops.get(), numOps);
+          callViaPrograms(ops.get(), numOps);
 #else
-	  decodeGlobal<kBlockSize>(ops.get(), numOps);
+          decodeGlobal<kBlockSize>(ops.get(), numOps);
 #else
 
 #endif
-	},
+        },
         numValues * sizeof(T),
         10);
     if (!scatter) {
@@ -288,7 +288,7 @@ class GpuDecoderTest : public ::testing::Test {
     for (auto i = 0; i < numValues; ++i) {
       int32_t bit = i * bitWidth;
       uint64_t word = *addBytes(bits, bit / 8);
-      uint64_t index = (word >> (bit & 7))  & mask;
+      uint64_t index = (word >> (bit & 7)) & mask;
       T expected = bitsOnly ? index : dict[index];
       ASSERT_EQ(result[scatter ? scatter[i] : i], expected) << i;
     }
@@ -546,7 +546,7 @@ class GpuDecoderTest : public ::testing::Test {
     launchDecode(programs, arena_.get(), extra, stream.get());
     stream->wait();
   }
-  
+
   void testMakeScatterIndicesStream(int numValues, int numBlocks) {
     auto bits = allocate<uint8_t>((numValues * numBlocks + 7) / 8);
     fillRandomBits(bits.get(), 0.5, numValues * numBlocks);
@@ -645,7 +645,6 @@ TEST_F(GpuDecoderTest, bitpack) {
   dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, true, true);
 }
 
-  
 TEST_F(GpuDecoderTest, sparseBool) {
   testSparseBool<256>(40013, 1024);
 }
@@ -722,7 +721,7 @@ int main(int argc, char** argv) {
   CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<1024>));
   printFuncAttrs("decode blocksize 1024", attrs);
   printFuncAttrs("decode2", attrs);
-  
+
   printKernels();
   return RUN_ALL_TESTS();
 }

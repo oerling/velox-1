@@ -21,7 +21,6 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
 
-
 DEFINE_string(
     data_path,
     "",
