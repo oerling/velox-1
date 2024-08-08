@@ -23,6 +23,7 @@
 
 DEFINE_int32(device_id, 0, "");
 DEFINE_bool(benchmark, false, "");
+DEFINE_bool(print_kernels, false, "Print register and smem usage");
 
 namespace facebook::velox::wave {
 namespace {
@@ -709,17 +710,19 @@ int main(int argc, char** argv) {
   CUDA_CHECK_FATAL(cudaGetDeviceProperties(&prop, FLAGS_device_id));
   printf("Running on device: %s\n", prop.name);
   CUDA_CHECK_FATAL(cudaSetDevice(FLAGS_device_id));
-  cudaFuncAttributes attrs;
-  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<128>));
-  printFuncAttrs("decode blocksize 128", attrs);
-  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<256>));
-  printFuncAttrs("decode blocksize 256", attrs);
-  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<512>));
-  printFuncAttrs("decode blocksize 512", attrs);
-  CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<1024>));
-  printFuncAttrs("decode blocksize 1024", attrs);
-  printFuncAttrs("decode2", attrs);
+  if (FLAGS_print_kernels) {
+    cudaFuncAttributes attrs;
+    CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<128>));
+    printFuncAttrs("decode blocksize 128", attrs);
+    CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<256>));
+    printFuncAttrs("decode blocksize 256", attrs);
+    CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<512>));
+    printFuncAttrs("decode blocksize 512", attrs);
+    CUDA_CHECK_FATAL(cudaFuncGetAttributes(&attrs, detail::decodeGlobal<1024>));
+    printFuncAttrs("decode blocksize 1024", attrs);
+    printFuncAttrs("decode2", attrs);
 
-  printKernels();
+    printKernels();
+  }
   return RUN_ALL_TESTS();
 }
