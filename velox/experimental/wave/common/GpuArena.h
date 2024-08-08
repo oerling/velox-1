@@ -162,7 +162,7 @@ class GpuArena {
   uint64_t totalAllocated() const {
     return totalAllocated_;
   }
-  
+
   uint64_t numAllocations() const {
     return numAllocations_;
   }
@@ -170,13 +170,12 @@ class GpuArena {
   uint64_t retainedSize() const {
     return capacity_;
   }
-  
+
   void setSizes(uint64_t arenaSize, uint64_t standbyCapacity) {
     singleArenaCapacity_ = arenaSize;
     standbyCapacity_ = standbyCapacity;
   }
 
-  
   /// Checks magic numbers and returns the sum of allocated capacity. Actual
   /// sizes are padded to larger.
   ArenaStatus checkBuffers();
