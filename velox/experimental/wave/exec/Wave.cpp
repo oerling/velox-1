@@ -466,12 +466,9 @@ bool WaveStream::isArrived(
     int32_t timeoutMicro) {
   OperandSet waitSet;
   if (hostReturnEvent_) {
-    hostReturnEvent_->wait();
     bool done = hostReturnEvent_->query();
     if (done) {
       releaseStreamsAndEvents();
-    } else {
-      printf("bing\n");
     }
     return done;
   }
@@ -492,11 +489,6 @@ bool WaveStream::isArrived(
     waitSet.add(streamId);
   });
   if (waitSet.empty()) {
-    releaseStreamsAndEvents();
-    return true;
-  }
-  if (1) {
-    waitSet.forEach([&](int32_t id) { streams_[id]->wait(); });
     releaseStreamsAndEvents();
     return true;
   }

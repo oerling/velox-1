@@ -372,6 +372,7 @@ void GpuArena::free(Buffer* buffer) {
   }
   iter->second->free(buffer->ptr_, buffer->size_);
   if (iter->second->empty() && iter->second != currentArena_ && capacity_ - iter->second->byteSize() >= standbyCapacity_) {
+    capacity_ -= iter->second->byteSize();
     arenas_.erase(iter);
   }
   buffer->ptr_ = firstFreeBuffer_;
