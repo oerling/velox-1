@@ -150,10 +150,4 @@ void Project::finalize(CompileState& state) {
   }
 }
 
-vector_size_t Project::outputSize(WaveStream& stream) const {
-  auto& control = stream.launchControls(id_);
-  VELOX_CHECK(!control.empty());
-  return control[0]->inputRows;
-}
-
 } // namespace facebook::velox::wave

@@ -289,8 +289,13 @@ GpuArena::Buffers::Buffers() {
   }
 }
 
-  GpuArena::GpuArena(uint64_t singleArenaCapacity, GpuAllocator* allocator, uint64_t standbyCapacity)
-    : singleArenaCapacity_(singleArenaCapacity), standbyCapacity_(standbyCapacity), allocator_(allocator) {
+GpuArena::GpuArena(
+    uint64_t singleArenaCapacity,
+    GpuAllocator* allocator,
+    uint64_t standbyCapacity)
+    : singleArenaCapacity_(singleArenaCapacity),
+      standbyCapacity_(standbyCapacity),
+      allocator_(allocator) {
   auto arena = std::make_shared<GpuSlab>(
       allocator_->allocate(singleArenaCapacity),
       singleArenaCapacity,
@@ -324,6 +329,8 @@ WaveBufferPtr GpuArena::getBuffer(void* ptr, size_t capacity, size_t size) {
 WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
   auto roundedBytes = GpuSlab::roundBytes(bytes);
   std::lock_guard<std::mutex> l(mutex_);
+  totalAllocated_ += roundedBytes;
+  ++numAllocations_;
   auto* result = currentArena_->allocate(roundedBytes);
   if (result != nullptr) {
     return getBuffer(result, bytes, roundedBytes);
@@ -348,6 +355,9 @@ WaveBufferPtr GpuArena::allocateBytes(uint64_t bytes) {
       allocator_->allocate(arenaBytes), arenaBytes, allocator_);
   arenas_.emplace(reinterpret_cast<uint64_t>(newArena->address()), newArena);
   capacity_ += newArena->byteSize();
+  if (capacity_ > maxCapacity_) {
+    maxCapacity_ = capacity_;
+  }
   currentArena_ = newArena;
   result = currentArena_->allocate(bytes);
   if (result) {
@@ -371,7 +381,8 @@ void GpuArena::free(Buffer* buffer) {
         iter->first + singleArenaCapacity_, addressU64 + buffer->size_);
   }
   iter->second->free(buffer->ptr_, buffer->size_);
-  if (iter->second->empty() && iter->second != currentArena_ && capacity_ - iter->second->byteSize() >= standbyCapacity_) {
+  if (iter->second->empty() && iter->second != currentArena_ &&
+      capacity_ - iter->second->byteSize() >= standbyCapacity_) {
     capacity_ -= iter->second->byteSize();
     arenas_.erase(iter);
   }

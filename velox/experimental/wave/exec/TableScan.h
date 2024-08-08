@@ -54,10 +54,6 @@ class TableScan : public WaveSourceOperator {
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
-  vector_size_t outputSize(WaveStream& stream) const {
-    return waveDataSource_->outputSize(stream);
-  }
-
   bool isStreaming() const override {
     return true;
   }
