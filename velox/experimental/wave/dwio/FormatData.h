@@ -320,6 +320,8 @@ class FormatData {
       WaveTypeKind columnKind,
       int32_t blockIdx);
 
+  // Staging id for nulls.
+  int32_t nullsStagingId_{SplitStaging::kNoStaging};
   // id of last splitStaging 'this' depends on.
   int32_t lastStagingId_{SplitStaging::kNoStaging};
 

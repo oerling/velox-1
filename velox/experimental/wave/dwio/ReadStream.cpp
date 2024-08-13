@@ -59,7 +59,7 @@ ReadStream::ReadStream(
   output.resize(outputOperands.size());
   reader_ = columnReader;
   reader_->splitStaging().push_back(
-      std::make_unique<SplitStaging>(fileInfo_, 1));
+      std::make_unique<SplitStaging>(fileInfo_, 0));
   currentStaging_ = reader_->splitStaging().back().get();
 }
 
@@ -112,7 +112,7 @@ void ReadStream::makeGrid(Stream* stream) {
         programs_.programs.size() * std::min<int32_t>(rows_.size(), kBlockSize);
     setBlockStatusAndTemp();
     deviceStaging_.makeDeviceBuffer(waveStream->arena());
-    currentStaging_->transfer(*waveStream, *stream);
+    currentStaging_->transfer(*waveStream, *stream, true);
     LaunchParams params(waveStream->deviceArena());
     WaveBufferPtr extra;
     {
@@ -353,7 +353,7 @@ void ReadStream::launch(
           stats.numPrograms += readStream->programs_.programs.size();
           stats.numThreads += readStream->programs_.programs.size() *
               std::min<int32_t>(readStream->rows_.size(), kBlockSize);
-          readStream->currentStaging_->transfer(*waveStream, *stream);
+          readStream->currentStaging_->transfer(*waveStream, *stream, true);
           if (done) {
             break;
           }

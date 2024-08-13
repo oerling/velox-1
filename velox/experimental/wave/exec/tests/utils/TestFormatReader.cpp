@@ -35,21 +35,23 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
 int TestFormatData::stageNulls(
     ResultStaging& deviceStaging,
     SplitStaging& splitStaging) {
+  if (!column_->nulls) {
+    nullsStaged_ = true;
+    return kNotRegistered;
+  }
+
   if (nullsStaged_) {
-    splitStaging.addDependency(lastStagingId_);
+    splitStaging.addDependency(nullsStagingId_);
     return kNotRegistered;
   }
   nullsStaged_ = true;
   auto* nulls = column_->nulls.get();
-  if (!nulls) {
-    return kNotRegistered;
-  }
   Staging staging(
       nulls->values->as<char>(),
       bits::nwords(column_->numValues) * sizeof(uint64_t),
       column_->region);
   auto id = splitStaging.add(staging);
-  lastStagingId_ = splitStaging.id();
+  nullsStagingId_ = splitStaging.id();
   splitStaging.registerPointer(id, &grid_.nulls, true);
   return id;
 }
