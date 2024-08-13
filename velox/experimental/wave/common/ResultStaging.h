@@ -93,12 +93,11 @@ class ResultStaging {
   /// Manages parameters of kernel launch. Provides pinned host buffer and a device side copy destination.
 struct LaunchParams {
   LaunchParams(GpuArena& arena)
-    arena(arena) {}
+    : arena(arena) {}
 
   /// Returns a host, device address pair of 'size' bytes.
   std::pair<char*, char*> setup(size_t size);
-  
-  
+    
   void transfer(Stream& stream);
   
   GpuArena& arena;

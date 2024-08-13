@@ -163,6 +163,12 @@ class ReadStream : public Executable {
   void prepareRead();
   void makeControl();
 
+  // Enqueues waits on stream for the transfers the 'currentStaging_'
+  // depends on. Fist batch on stripe enqueues transfer, next batches
+  // are enqueued on a different stream but still depend on the first
+  // transfers completing on the first stream.
+  void syncStaging(Stream& stream);
+  
   io::IoStatistics* const ioStats_;
 
   // Makes steps to align values from non-last filters to the selection of the

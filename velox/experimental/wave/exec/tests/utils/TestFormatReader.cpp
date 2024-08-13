@@ -36,7 +36,7 @@ int TestFormatData::stageNulls(
     ResultStaging& deviceStaging,
     SplitStaging& splitStaging) {
   if (nullsStaged_) {
-    splitStaging->addDependency(lastStaging_);
+    splitStaging.addDependency(lastStagingId_);
     return kNotRegistered;
   }
   nullsStaged_ = true;
@@ -49,7 +49,7 @@ int TestFormatData::stageNulls(
       bits::nwords(column_->numValues) * sizeof(uint64_t),
       column_->region);
   auto id = splitStaging.add(staging);
-  lastStaging_ = splitStaging.id();
+  lastStagingId_ = splitStaging.id();
   splitStaging.registerPointer(id, &grid_.nulls, true);
   return id;
 }
@@ -96,9 +96,9 @@ void TestFormatData::startOp(
     Staging staging(
         column_->values->as<char>(), column_->values->size(), column_->region);
     id = splitStaging.add(staging);
-    lastStaging_ = splitStaging.id();
+    lastStagingId_ = splitStaging.id();
   } else {
-    splitStaging->addDependency(lastStaging_);
+    splitStaging.addDependency(lastStagingId_);
   }
   auto rowsPerBlock = FLAGS_wave_reader_rows_per_tb;
   int32_t numBlocks =

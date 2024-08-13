@@ -129,12 +129,12 @@ class GpuAllocator {
   virtual void free(void* ptr, size_t bytes) = 0;
 
   /// True if allocates host pinned memory.
-  virtual isHost() const {
+  virtual bool isHost() const {
     return false;
   }
 
   /// True if allocates device side memory.
-  virtual isDevice() const {
+  virtual bool isDevice() const {
     return false;
   }
 

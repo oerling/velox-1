@@ -91,13 +91,13 @@ GpuArena& getSmallTransferArena() {
   std::pair<char*, char*> LaunchParams::setup(size_t size) {
     if (!arena.isDevice()) {
       // Unified memory.
-      device = arena.allocate(size);
-      return {device.as<char>(), device->as<char>()};
+      device = arena.allocate<char>(size);
+      return {device->as<char>(), device->as<char>()};
     } else {
       // Separate host and device side buffers.
-      device = arena.allocate(size);
-          host = getsmallTransferArena().allocate(size);
-      return {host.as<char>(), device->as<char>()};
+      device = arena.allocate<char>(size);
+      host = getSmallTransferArena().allocate<char>(size);
+      return {host->as<char>(), device->as<char>()};
 }
   }
 
@@ -107,7 +107,7 @@ GpuArena& getSmallTransferArena() {
       if (arena.isDevice()) {
 	stream.hostToDeviceAsync(device->as<char>(), host->as<char>(), host->size());
       } else {
-	stream->prefetch(getDevice(), device->as<char>(), device->size());
+	stream.prefetch(getDevice(), device->as<char>(), device->size());
       }
     }
   }

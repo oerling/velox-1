@@ -401,8 +401,7 @@ struct DecodePrograms {
  
 void launchDecode(
     const DecodePrograms& programs,
-    GpuArena* arena,
-    WaveBufferPtr& extra,
+    LaunchParams& params,
     Stream* stream);
 
 } // namespace facebook::velox::wave

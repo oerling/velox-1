@@ -534,7 +534,7 @@ class GpuDecoderTest : public ::testing::Test {
 
   void callViaPrograms(GpuDecode* ops, int32_t numOps) {
     auto stream = std::make_unique<Stream>();
-    LaunchParams params(*stream);
+        LaunchParams params(*arena_);
     DecodePrograms programs;
     for (int i = 0; i < numOps; ++i) {
       programs.programs.emplace_back();
@@ -566,7 +566,7 @@ class GpuDecoderTest : public ::testing::Test {
       op.indicesCount = indicesCounts.get() + i;
     }
     auto stream = std::make_unique<Stream>();
-    LaunchParams params(*stream);
+    LaunchParams params(*arena_);
     launchDecode(programs, params, stream.get());
     stream->wait();
     for (int i = 0; i < numBlocks; ++i) {
@@ -600,7 +600,7 @@ class GpuDecoderTest : public ::testing::Test {
     op.resultStride = stride;
     opPtr->result = result.get();
     auto stream = std::make_unique<Stream>();
-    LaunchParams params(*stream);
+    LaunchParams params(*arena_);
     launchDecode(programs, params, stream.get());
     stream->wait();
     auto numResults = ((numWords * 64) - 1) / stride;
