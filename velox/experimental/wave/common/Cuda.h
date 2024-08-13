@@ -138,7 +138,6 @@ class GpuAllocator {
     return false;
   }
 
-  
   class Deleter;
 
   template <typename T>

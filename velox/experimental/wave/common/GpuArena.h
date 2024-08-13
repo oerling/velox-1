@@ -178,7 +178,7 @@ class GpuArena {
 
   bool isDevice() const {
     return allocator_->isDevice();
-  }  
+  }
 
   /// Checks magic numbers and returns the sum of allocated capacity. Actual
   /// sizes are padded to larger.

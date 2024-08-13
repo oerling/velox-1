@@ -24,17 +24,17 @@
 #include "velox/dwio/common/Statistics.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
-#include "velox/experimental/wave/vector/WaveVector.h"
 #include "velox/experimental/wave/exec/OperandSet.h"
+#include "velox/experimental/wave/vector/WaveVector.h"
 
 namespace facebook::velox::wave {
 
 class ReadStream;
 class WaveStream;
 
-  /// Use generic bit set to track depemdemce pon staging.
-  using StagingSet = OperandSet;
-  
+/// Use generic bit set to track depemdemce pon staging.
+using StagingSet = OperandSet;
+
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
@@ -123,14 +123,14 @@ class SplitStaging {
   const StagingSet& dependsOn() {
     return dependsOn_;
   }
-  
+
  private:
   void registerPointerInternal(BufferId id, void** ptr, bool clear);
-  
+
   void copyColumns(int32_t begin, int32_t end, char* destination, bool release);
 
   const int32_t id_;
-  
+
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
   WaveBufferPtr hostBuffer_;
@@ -161,7 +161,7 @@ class SplitStaging {
   // Set of other SplitStaging ids of which 'this' is a
   // duplicate. These need to be complete efore dependents of 'this'
   // can run. A staging can both have transfers and dependencies.
-  StagingSet dependsOn_; 
+  StagingSet dependsOn_;
 };
 
 using RowSet = folly::Range<const int32_t*>;
@@ -322,7 +322,7 @@ class FormatData {
 
   // id of last splitStaging 'this' depends on.
   int32_t lastStagingId_{SplitStaging::kNoStaging};
-  
+
   // First unaccessed row number relative to start of 'this'.
   int32_t currentRow_{0};
 

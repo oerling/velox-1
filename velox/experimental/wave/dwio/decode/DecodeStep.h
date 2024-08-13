@@ -398,7 +398,6 @@ struct DecodePrograms {
   ResultBuffer result;
 };
 
- 
 void launchDecode(
     const DecodePrograms& programs,
     LaunchParams& params,
