@@ -67,10 +67,15 @@ class CudaDeviceAllocator : public GpuAllocator {
 
   void free(void* ptr, size_t /*size*/) override {
     cudaFree(ptr);
+
+
+  }
+  bool isDevice() const override {
+    return true;
   }
 };
-
-class CudaHostAllocator : public GpuAllocator {
+  
+  class CudaHostAllocator : public GpuAllocator {
  public:
   void* allocate(size_t size) override {
     void* ret;
@@ -81,7 +86,11 @@ class CudaHostAllocator : public GpuAllocator {
   void free(void* ptr, size_t /*size*/) override {
     cudaFreeHost(ptr);
   };
-};
+
+    bool isHost() const override {
+      return true;
+    }
+  };
 
 } // namespace
 

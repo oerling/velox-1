@@ -74,8 +74,7 @@ void __global__ __launch_bounds__(1024)
 
 void launchDecode(
     const DecodePrograms& programs,
-    GpuArena* arena,
-    WaveBufferPtr& extra,
+    LaunchParams& params,
     Stream* stream) {
   int32_t numBlocks = programs.programs.size();
   int32_t numOps = 0;
@@ -100,15 +99,15 @@ void launchDecode(
   GpuDecodeParams* params = &localParams;
 
   if (numOps > GpuDecodeParams::kMaxInlineOps || allSingle) {
-    extra = arena->allocate<char>(
-        (numOps + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
+    auto [host, device] = params.setup((numOps + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
     uintptr_t aligned =
-        roundUp(reinterpret_cast<uintptr_t>(extra->as<char>()), 16);
+        roundUp(reinterpret_cast<uintptr_t>(host), 16);
     params = reinterpret_cast<GpuDecodeParams*>(aligned);
   }
   int32_t end = programs.programs[0].size();
   GpuDecode* decodes =
       reinterpret_cast<GpuDecode*>(&params->ends[0] + roundUp(numBlocks, 4));
+  uintptr_t decodeOffset = reinterpret_cast<char*>(decodes) - host;
   int32_t fill = 0;
   for (auto i = 0; i < programs.programs.size(); ++i) {
     params->ends[i] =
@@ -118,16 +117,16 @@ void launchDecode(
     }
   }
   if (allSingle) {
-    stream->prefetch(getDevice(), extra->as<char>(), extra->size());
+    params.transfer(*stream);
     detail::decodeGlobal<kBlockSize>
-        <<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(decodes);
+      <<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(reinterpret_cast<DecodeStep*>(device + decodeOffset));
     CUDA_CHECK(cudaGetLastError());
     programs.result.transfer(*stream);
     return;
   }
-  if (extra) {
-    localParams.external = params;
-    stream->prefetch(getDevice(), extra->as<char>(), extra->size());
+  if (params.device) {
+    localParams.external = device;
+    params.transfer(*stream);
   }
 
   decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(

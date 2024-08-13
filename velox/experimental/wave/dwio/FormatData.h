@@ -25,12 +25,16 @@
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/experimental/wave/dwio/decode/DecodeStep.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/experimental/wave/exec/OperandSet.h"
 
 namespace facebook::velox::wave {
 
 class ReadStream;
 class WaveStream;
 
+  /// Use generic bit set to track depemdemce pon staging.
+  using StagingSet = OperandSet;
+  
 // Describes how a column is staged on GPU, for example, copy from host RAM,
 // direct read, already on device etc.
 struct Staging {
@@ -61,7 +65,10 @@ struct FileInfo {
 /// data already on device.
 class SplitStaging {
  public:
-  SplitStaging(FileInfo& fileInfo) : fileInfo_(fileInfo) {}
+  /// id indicating no dependence on other staging.
+  static constexpr int32_t kNoStaging = ~0;
+
+  SplitStaging(FileInfo& fileInfo, int32_t id) : id_(id), fileInfo_(fileInfo) {}
 
   /// Adds a transfer described by 'staging'. Returns an id of the
   /// device side buffer. The id will be mapped to an actual buffer
@@ -105,11 +112,25 @@ class SplitStaging {
     return event_.get();
   }
 
+  int32_t id() const {
+    return id_;
+  }
+
+  void addDependency(int32_t id) {
+    dependsOn_.add(id);
+  }
+
+  const StagingSet& dependsOn() {
+    return dependsOn_;
+  }
+  
  private:
   void registerPointerInternal(BufferId id, void** ptr, bool clear);
-
+  
   void copyColumns(int32_t begin, int32_t end, char* destination, bool release);
 
+  const int32_t id_;
+  
   // Pinned host memory for transfer to device. May be nullptr if using unified
   // memory.
   WaveBufferPtr hostBuffer_;
@@ -136,6 +157,11 @@ class SplitStaging {
   Semaphore sem_{0};
 
   FileInfo& fileInfo_;
+
+  // Set of other SplitStaging ids of which 'this' is a
+  // duplicate. These need to be complete efore dependents of 'this'
+  // can run. A staging can both have transfers and dependencies.
+  StagingSet dependsOn_; 
 };
 
 using RowSet = folly::Range<const int32_t*>;
@@ -294,6 +320,9 @@ class FormatData {
       WaveTypeKind columnKind,
       int32_t blockIdx);
 
+  // id of last splitStaging 'this' depends on.
+  int32_t lastStagingId_{SplitStaging::kNoStaging};
+  
   // First unaccessed row number relative to start of 'this'.
   int32_t currentRow_{0};
 

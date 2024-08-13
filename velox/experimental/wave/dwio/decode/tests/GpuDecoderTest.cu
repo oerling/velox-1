@@ -534,7 +534,7 @@ class GpuDecoderTest : public ::testing::Test {
 
   void callViaPrograms(GpuDecode* ops, int32_t numOps) {
     auto stream = std::make_unique<Stream>();
-    WaveBufferPtr extra;
+    LaunchParams params(*stream);
     DecodePrograms programs;
     for (int i = 0; i < numOps; ++i) {
       programs.programs.emplace_back();
@@ -542,7 +542,7 @@ class GpuDecoderTest : public ::testing::Test {
       auto opPtr = programs.programs.back().front().get();
       *opPtr = ops[i];
     }
-    launchDecode(programs, arena_.get(), extra, stream.get());
+    launchDecode(programs, params, stream.get());
     stream->wait();
   }
 
@@ -566,8 +566,8 @@ class GpuDecoderTest : public ::testing::Test {
       op.indicesCount = indicesCounts.get() + i;
     }
     auto stream = std::make_unique<Stream>();
-    WaveBufferPtr extra;
-    launchDecode(programs, arena_.get(), extra, stream.get());
+    LaunchParams params(*stream);
+    launchDecode(programs, params, stream.get());
     stream->wait();
     for (int i = 0; i < numBlocks; ++i) {
       auto& op = programs.programs[i].front()->data.makeScatterIndices;
@@ -600,8 +600,8 @@ class GpuDecoderTest : public ::testing::Test {
     op.resultStride = stride;
     opPtr->result = result.get();
     auto stream = std::make_unique<Stream>();
-    WaveBufferPtr extra;
-    launchDecode(programs, arena_.get(), extra, stream.get());
+    LaunchParams params(*stream);
+    launchDecode(programs, params, stream.get());
     stream->wait();
     auto numResults = ((numWords * 64) - 1) / stride;
     auto* rawResult = result.get();

@@ -203,7 +203,7 @@ class ReadStream : public Executable {
   // Intermediate data to stay on device, e.g. selected rows.
   ResultStaging deviceStaging_;
   // Owning references to decode programs. Must be live for duration of kernels.
-  std::vector<WaveBufferPtr> commands_;
+  std::vector<LaunchParams> commands_;
   // Reusable control block for launching decode kernels.
   DecodePrograms programs_;
   // If no filters, the starting RowSet directly initializes the BlockStatus'es

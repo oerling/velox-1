@@ -128,6 +128,17 @@ class GpuAllocator {
   /// to allocate(). A Memory must be freed to the same allocator it came from.
   virtual void free(void* ptr, size_t bytes) = 0;
 
+  /// True if allocates host pinned memory.
+  virtual isHost() const {
+    return false;
+  }
+
+  /// True if allocates device side memory.
+  virtual isDevice() const {
+    return false;
+  }
+
+  
   class Deleter;
 
   template <typename T>

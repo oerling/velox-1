@@ -81,4 +81,36 @@ void ResultStaging::setReturnBuffer(GpuArena& arena, ResultBuffer& result) {
   fill_ = 0;
 }
 
+GpuArena& getSmallTransferArena() {
+  static std::unique_ptr<GpuArena> arena = std::make_unique<GpuArena>(
+      10UL << 20, getHostAllocator(nullptr), 20UL << 20);
+  return *arena;
+}
+
+  
+  std::pair<char*, char*> LaunchParams::setup(size_t size) {
+    if (!arena.isDevice()) {
+      // Unified memory.
+      device = arena.allocate(size);
+      return {device.as<char>(), device->as<char>()};
+    } else {
+      // Separate host and device side buffers.
+      device = arena.allocate(size);
+          host = getsmallTransferArena().allocate(size);
+      return {host.as<char>(), device->as<char>()};
+}
+  }
+
+
+  void LaunchParams::transfer(Stream& stream) {
+    if (device) {
+      if (arena.isDevice()) {
+	stream.hostToDeviceAsync(device->as<char>(), host->as<char>(), host->size());
+      } else {
+	stream->prefetch(getDevice(), device->as<char>(), device->size());
+      }
+    }
+  }
+
+  
 } // namespace facebook::velox::wave

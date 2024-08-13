@@ -58,7 +58,7 @@ ReadStream::ReadStream(
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());
   reader_ = columnReader;
-  reader_->splitStaging().push_back(std::make_unique<SplitStaging>(fileInfo_));
+  reader_->splitStaging().push_back(std::make_unique<SplitStaging>(fileInfo_, 1));
   currentStaging_ = reader_->splitStaging().back().get();
 }
 
@@ -112,17 +112,19 @@ void ReadStream::makeGrid(Stream* stream) {
     setBlockStatusAndTemp();
     deviceStaging_.makeDeviceBuffer(waveStream->arena());
     currentStaging_->transfer(*waveStream, *stream);
+    LaunchParams params(waveStream->deviceArena());
     WaveBufferPtr extra;
     {
       PrintTime l("grid");
-      launchDecode(programs_, &waveStream->arena(), extra, stream);
+      launchDecode(programs_, params, stream);
     }
     reader_->recordGriddize(*stream);
-    if (extra) {
-      commands_.push_back(std::move(extra));
+    if (params.device) {
+      commands_.push_back(std::move(params));
     }
+    auto nth = reader->splitStaging().size() + 1;
     reader_->splitStaging().push_back(
-        std::make_unique<SplitStaging>(fileInfo_));
+				      std::make_unique<SplitStaging>(fileInfo_, nth));
     currentStaging_ = reader_->splitStaging().back().get();
   }
 }
@@ -299,6 +301,20 @@ bool ReadStream::makePrograms(bool& needSync) {
   return allDone;
 }
 
+void ReadStream::syncStaging(Stream& stream) {
+  auto& set = currentStaging_->dependsOn();
+  if (set.empty()) {
+    return;
+  }
+  set.forEach([&](int32_t id) {
+    auto dep = reader_->staging()[id - 1].get();
+    auto event = dep->event();
+    VELOX_CHECK(event);
+    event->wait(stream);
+  });
+  }
+
+  
 void ReadStream::launch(
     std::unique_ptr<ReadStream> readStream,
     int32_t row,
@@ -353,16 +369,19 @@ void ReadStream::launch(
             }
           }
           firstLaunch = false;
+	  readStream->syncStaging();
+	  LaunchParams params(waveStream->deviceArena());
           {
             PrintTime l("decode");
             launchDecode(
-                readStream->programs(), &waveStream->arena(), extra, stream);
+                readStream->programs(), params, stream);
           }
           if (extra) {
             readStream->commands_.push_back(std::move(extra));
           }
+	  auto nth = readStream->reader_->splitStaging().size() + 1;
           readStream->reader_->splitStaging().push_back(
-              std::make_unique<SplitStaging>(readStream->fileInfo_));
+							std::make_unique<SplitStaging>(readStream->fileInfo_, nth));
           readStream->currentStaging_ =
               readStream->reader_->splitStaging().back().get();
           if (needSync) {
@@ -376,17 +395,17 @@ void ReadStream::launch(
 
         readStream->setBlockStatusAndTemp();
         readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
-        WaveBufferPtr extra;
+        LaunchParams params(readStream->waveStream->deviceArena());
+	readStream->syncStaging();
         {
           PrintTime l("decode-f");
           launchDecode(
               readStream->programs(),
-              &readStream->waveStream->arena(),
-              extra,
+              params,
               stream);
         }
-        if (extra) {
-          readStream->commands_.push_back(std::move(extra));
+        if (params.device) {
+          readStream->commands_.push_back(std::move(params));
         }
         readStream->waveStream->setState(WaveStream::State::kParallel);
         readStream->waveStream->markLaunch(*stream, *readStream);
