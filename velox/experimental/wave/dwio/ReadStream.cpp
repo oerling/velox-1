@@ -429,7 +429,8 @@ void ReadStream::makeControl() {
   auto deviceBytes = statusBytes_ + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
-  // The operand section must be cleared before written on host. The statuses are cleared on device.
+  // The operand section must be cleared before written on host. The statuses
+  // are cleared on device.
   memset(control->deviceData->as<char>(), 0, deviceBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
