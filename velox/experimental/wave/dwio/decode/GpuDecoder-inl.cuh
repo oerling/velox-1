@@ -705,6 +705,9 @@ auto base = op->baseRow;
       for (; i < end; i += blockDim.x) {
         int32_t bitIndex = (i + base) * bitWidth + alignOffset;
         int32_t wordIndex = bitIndex >> 6;
+	if (threadIdx.x < 3) {
+	  asm volatile("prefetch.global.L1 [%0];" ::"l"(&words[wordIndex + 48 + threadIdx.x * 4]));
+	}
         int32_t bit = bitIndex & 63;
         uint64_t word = words[wordIndex];
         uint64_t index = word >> bit;

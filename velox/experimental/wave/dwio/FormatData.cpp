@@ -82,7 +82,7 @@ void SplitStaging::transfer(
     bool recordEvent,
     std::function<void(WaveStream&, Stream&)> asyncTail) {
   if (fill_ == 0 || deviceBuffer_ != nullptr) {
-    if (recordEvent) {
+    if (recordEvent && !event_) {
       event_ = std::make_unique<Event>();
       event_->record(stream);
     }
@@ -121,7 +121,6 @@ void SplitStaging::transfer(
     *reinterpret_cast<int64_t*>(pair.second) +=
         reinterpret_cast<int64_t>(deviceData) + offsets_[pair.first];
   }
-
   if (asyncTail) {
     WaveStream::syncExecutor()->add([firstToCopy,
                                      numThreads,
@@ -143,7 +142,11 @@ void SplitStaging::transfer(
         event_ = std::make_unique<Event>();
         event_->record(stream);
       }
-    });
+      fill_ = 0;
+      patch_.clear();
+      offsets_.clear();
+      asyncTail(waveStream, stream);
+				    });
   } else {
     copyColumns(firstToCopy, staging_.size(), transferBuffer, false);
     for (auto i = 0; i < numThreads; ++i) {
@@ -156,6 +159,9 @@ void SplitStaging::transfer(
       event_ = std::make_unique<Event>();
       event_->record(stream);
     }
+    fill_ = 0;
+    patch_.clear();
+    offsets_.clear();
   }
 }
 

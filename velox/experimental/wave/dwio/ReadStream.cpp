@@ -63,8 +63,11 @@ ReadStream::ReadStream(
   currentStaging_ = reader_->splitStaging().back().get();
 }
 
-void ReadStream::setBlockStatusAndTemp() {
+void ReadStream::setBlockStatusAndTemp(Stream* stream) {
   auto* status = control_->deviceData->as<BlockStatus>();
+  if (stream) {
+    clearAndPrefetchStatus(stream);
+  }
   auto maxRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
   auto tempSize = programs_.programs[0][0]->tempSize();
   auto size = programs_.programs.size() * tempSize;
@@ -78,6 +81,13 @@ void ReadStream::setBlockStatusAndTemp() {
     }
   }
 }
+
+void ReadStream::clearAndPrefetchStatus(Stream* stream) {
+    char* data = control_->deviceData->as<char>();
+    auto size = control_->deviceData->size();
+    stream->prefetch(getDevice(), data + statusBytes_, size - statusBytes_);
+    stream->memset(data, 0, statusBytes_);
+  }
 
 void ReadStream::makeGrid(Stream* stream) {
   programs_.clear();
@@ -357,7 +367,7 @@ void ReadStream::launch(
           if (done) {
             break;
           }
-          readStream->setBlockStatusAndTemp();
+          readStream->setBlockStatusAndTemp(stream);
           readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
           WaveBufferPtr extra;
           if (!griddizedHere && firstLaunch) {
@@ -392,11 +402,12 @@ void ReadStream::launch(
           }
         }
 
-        readStream->setBlockStatusAndTemp();
+        readStream->setBlockStatusAndTemp(stream);
         readStream->deviceStaging_.makeDeviceBuffer(waveStream->arena());
         LaunchParams params(readStream->waveStream->deviceArena());
         readStream->syncStaging(*stream);
         {
+	  //stream->wait();
           PrintTime l("decode-f");
           launchDecode(readStream->programs(), params, stream);
         }
@@ -414,13 +425,10 @@ void ReadStream::makeControl() {
   waveStream->setNumRows(numRows);
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
-  auto statusBytes = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
-  auto deviceBytes = statusBytes + info.totalBytes;
+  statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
+  auto deviceBytes = statusBytes_ + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
-  // Zero initialization is expected, for example for operands and arrays in
-  // Operand::indices.
-  memset(control->deviceData->as<char>(), 0, deviceBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {
@@ -431,7 +439,7 @@ void ReadStream::makeControl() {
     }
   }
   operands = waveStream->fillOperands(
-      *this, control->deviceData->as<char>() + statusBytes, info)[0];
+      *this, control->deviceData->as<char>() + statusBytes_, info)[0];
   control_ = control.get();
   waveStream->setLaunchControl(0, 0, std::move(control));
 }

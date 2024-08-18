@@ -154,8 +154,8 @@ class ReadStream : public Executable {
   // needed than is good per TB.
   void makeGrid(Stream* stream);
 
-  // Sets consistent blockStatus and temp across 'programs_'
-  void setBlockStatusAndTemp();
+  // Sets consistent blockStatus and temp across 'programs_'. If 'stream is given, prefetches BlockStatus on device on 'stream'.
+  void setBlockStatusAndTemp(Stream* stream = nullptr);
 
   /// Makes column dependencies.
   void makeOps();
@@ -175,6 +175,9 @@ class ReadStream : public Executable {
   // last filter.
   void makeCompact(bool isSerial);
 
+  // Clears the status part of 'control_->deviceData ' and prefetches it on device. 
+  void clearAndPrefetchStatus(Stream* stream);
+  
   // True if non-filter columns will be done sequentially in the
   // filters kernel. This will never loose if there is an always read
   // single column. This may loose if it were better to take the
@@ -218,6 +221,9 @@ class ReadStream : public Executable {
   bool filtersDone_{false};
   //  Sequence number of kernel launch.
   int32_t nthWave_{0};
+
+  // Leading bytes in control_->deviceData used for BlockStatus. Cleared on device. The bytes after that are set on host and then prefetched to device.
+  int32_t statusBytes_{0};
   LaunchControl* control_{nullptr};
 
   // Set to true when after first griddize() and akeOps().

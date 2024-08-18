@@ -48,10 +48,14 @@ class Stream {
   /// Waits  until the stream is completed.
   void wait();
 
+  /// Enqueus a memset on 'device'.
+  void memset(void* address, int32_t value, size_t size);
+
   /// Enqueus a prefetch. Prefetches to host if 'device' is nullptr, otherwise
   /// to 'device'.
   void prefetch(Device* device, void* address, size_t size);
 
+  
   // Enqueues a copy from host to device.
   void
   hostToDeviceAsync(void* deviceAddress, const void* hostAddress, size_t size);

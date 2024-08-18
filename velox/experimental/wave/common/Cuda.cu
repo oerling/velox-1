@@ -136,6 +136,12 @@ void Stream::prefetch(Device* device, void* ptr, size_t size) {
       ptr, size, device ? device->deviceId : cudaCpuDeviceId, stream_->stream));
 }
 
+  void Stream::memset(void* ptr, int32_t value, size_t size) {
+  CUDA_CHECK(cudaMemsetAsync(
+			     ptr, value, size, stream_->stream));
+}
+
+  
 void Stream::hostToDeviceAsync(
     void* deviceAddress,
     const void* hostAddress,

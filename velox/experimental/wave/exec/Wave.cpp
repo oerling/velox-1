@@ -32,7 +32,7 @@ PrintTime::PrintTime(const char* title)
 
 PrintTime::~PrintTime() {
   if (FLAGS_wave_print_time) {
-    std::cout << title_ << "=" << getCurrentTimeMicro() - start_;
+    std::cout << title_ << "=" << getCurrentTimeMicro() - start_ << std::endl;
   }
 }
 
@@ -747,6 +747,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
   int32_t operatorStateOffset = size;
   size += exes.size() * sizeof(void*) + operatorStateBytes;
   auto buffer = arena_.allocate<char>(size);
+  stream->prefetch(nullptr, buffer->as<char>(), buffer->size());
   // Zero initialization is expected, for example for operands and arrays in
   // Operand::indices.
   memset(buffer->as<char>(), 0, size);

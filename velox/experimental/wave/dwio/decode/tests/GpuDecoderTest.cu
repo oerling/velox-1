@@ -24,6 +24,7 @@
 DEFINE_int32(device_id, 0, "");
 DEFINE_bool(benchmark, false, "");
 DEFINE_bool(print_kernels, false, "Print register and smem usage");
+DEFINE_bool(use_selective, false, "Use selective path for test");
 
 namespace facebook::velox::wave {
 namespace {
@@ -32,7 +33,8 @@ using namespace facebook::velox;
 
 // define to use the flexible call path wiht multiple ops per TB
 #define USE_PROGRAM_API
-
+#define USE_SEL_BITPACK true
+  
 // Returns the number of bytes the "values" will occupy after varint encoding.
 uint64_t bulkVarintSize(const uint64_t* values, int count) {
   constexpr uint8_t kLookupSizeTable64[64] = {
@@ -101,16 +103,20 @@ void makeBitpackDict(
     uint64_t*& bits,
     T*& result,
     int32_t** scatter,
-    bool bitsOnly) {
+    bool bitsOnly,
+    BlockStatus*& blockStatus,
+    int32_t numBlocks,
+    int32_t blockSize) {
   int64_t dictBytes = bitsOnly ? 0 : sizeof(T) << bitWidth;
   int64_t bitBytes = (roundUp(numValues * bitWidth, 128) / 8) + 16;
   int64_t resultBytes = numValues * sizeof(T);
   int scatterBytes =
       scatter ? roundUp(numValues * sizeof(int32_t), sizeof(T)) : 0;
+  int32_t statusBytes = sizeof(BlockStatus) * numBlocks;
   if (scatterBytes) {
     resultBytes += resultBytes / 2;
   }
-  cudaPtr = allocate<char>(dictBytes + bitBytes + scatterBytes + resultBytes);
+  cudaPtr = allocate<char>(dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
   T* memory = (T*)cudaPtr.get();
 
   dict = bitsOnly ? nullptr : memory;
@@ -135,7 +141,11 @@ void makeBitpackDict(
   }
   result = addBytes(
       reinterpret_cast<T*>(memory), dictBytes + bitBytes + scatterBytes);
-  prefetchToDevice(memory, dictBytes + bitBytes + scatterBytes + resultBytes);
+  blockStatus = reinterpret_cast<BlockStatus*>(addBytes(result, numValues * sizeof(T)));
+  for(auto i = 0; i < numBlocks; ++i) {
+    blockStatus[i].numRows =i < numBlocks - 1 ? blockSize : numValues - (i * blockSize);
+  }
+  prefetchToDevice(memory, dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
 }
 
 class GpuDecoderTest : public ::testing::Test {
@@ -231,12 +241,14 @@ class GpuDecoderTest : public ::testing::Test {
       int64_t numValues,
       int numBlocks,
       bool useScatter,
-      bool bitsOnly = false) {
+      bool bitsOnly = false,
+		    bool useSelective = false) {
     gpu::CudaPtr<char[]> ptr;
     T* dict;
     uint64_t* bits;
     T* result;
     int32_t* scatter = nullptr;
+    BlockStatus* blockStatus;
     makeBitpackDict(
         bitWidth,
         numValues,
@@ -245,14 +257,28 @@ class GpuDecoderTest : public ::testing::Test {
         bits,
         result,
         useScatter ? &scatter : nullptr,
-        bitsOnly);
+        bitsOnly,
+	blockStatus,
+	roundUp(numValues, kBlockSize) / kBlockSize,
+	kBlockSize);
     result[numValues] = 0xdeadbeef;
     int valuesPerOp = roundUp(numValues / numBlocks, kBlockSize);
     int numOps = roundUp(numValues, valuesPerOp) / valuesPerOp;
+    auto valuesPerThread = valuesPerOp / kBlockSize;
     auto ops = allocate<GpuDecode>(numOps);
     for (auto i = 0; i < numOps; ++i) {
       int32_t begin = i * valuesPerOp;
-      ops[i].step = DecodeStep::kDictionaryOnBitpack;
+      ops[i].step = useSelective ? (sizeof(T) == 8 ? DecodeStep::kSelective64 : DecodeStep::kSelective32) : DecodeStep::kDictionaryOnBitpack;
+      ops[i].encoding = DecodeStep::kDictionaryOnBitpack;
+      ops[i].dataType = WaveTypeTrait<T>::typeKind;
+      ops[i].nullMode = NullMode::kDenseNonNull;
+      ops[i].nthBlock = i;
+      ops[i].numRowsPerThread = i == numOps - 1 ? roundUp(numValues - (valuesPerOp * i), kBlockSize) / kBlockSize : valuesPerThread;
+      ops[i].baseRow = i * valuesPerOp;
+      ops[i].maxRow = std::min<int32_t>((i + 1) * valuesPerOp, numValues);
+      ops[i].result = reinterpret_cast<T*>(result) + i * valuesPerOp;
+
+      ops[i].blockStatus = blockStatus + (i * valuesPerThread);
       auto& op = ops[i].data.dictionaryOnBitpack;
       op.begin = begin;
       op.end = std::min<int>(numValues, (i + 1) * valuesPerOp);
@@ -636,12 +662,13 @@ TEST_F(GpuDecoderTest, dictionaryOnBitpack) {
 }
 
 TEST_F(GpuDecoderTest, bitpack) {
-  dictTestPlan<int32_t, 256>(27, 4000001, 1024, false, true);
-  dictTestPlan<int64_t, 256>(28, 4'000'037, 1024, false, true);
-  dictTestPlan<int32_t, 256>(26, 40'000'003, 1024, false, true);
-  dictTestPlan<int64_t, 256>(30, 40'000'003, 1024, false, true);
-  dictTestPlan<int64_t, 256>(47, 40'000'003, 1024, false, true);
-  dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, true, true);
+  bool useSelective = FLAGS_use_selective;
+  dictTestPlan<int32_t, 256>(27, 4000001, 1024, false, true, useSelective);
+  dictTestPlan<int64_t, 256>(28, 4'000'037, 1024, false, true, useSelective);
+  dictTestPlan<int32_t, 256>(26, 40'000'003, 1024, false, true, useSelective);
+  dictTestPlan<int64_t, 256>(30, 40'000'003, 1024, false, true, useSelective);
+  dictTestPlan<int64_t, 256>(47, 40'000'003, 1024, false, true, useSelective);
+  dictTestPlan<int64_t, 256>(22, 40'000'003, 1024, true, true, false);
 }
 
 TEST_F(GpuDecoderTest, sparseBool) {
