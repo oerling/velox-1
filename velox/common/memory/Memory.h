@@ -92,7 +92,7 @@ struct MemoryManagerOptions {
   /// std::malloc.
   bool useMmapAllocator{false};
 
-  // Number of pages in the largest size class in MmapAllocator.
+  /// Number of pages in the largest size class in MmapAllocator.
   int32_t largestSizeClassPages{256};
 
   /// If true, allocations larger than largest size class size will be delegated
@@ -174,6 +174,27 @@ struct MemoryManagerOptions {
   /// The minimal memory capacity to transfer out of or into a memory pool
   /// during the memory arbitration.
   uint64_t memoryPoolTransferCapacity{128 << 20};
+
+  /// When growing capacity, the growth bytes will be adjusted in the
+  /// following way:
+  ///  - If 2 * current capacity is less than or equal to
+  ///    'fastExponentialGrowthCapacityLimit', grow through fast path by at
+  ///    least doubling the current capacity, when conditions allow (see below
+  ///    NOTE section).
+  ///  - If 2 * current capacity is greater than
+  ///    'fastExponentialGrowthCapacityLimit', grow through slow path by growing
+  ///    capacity by at least 'slowCapacityGrowPct' * current capacity if
+  ///    allowed (see below NOTE section).
+  ///
+  /// NOTE: If original requested growth bytes is larger than the adjusted
+  /// growth bytes or adjusted growth bytes reaches max capacity limit, the
+  /// adjusted growth bytes will not be respected.
+  ///
+  /// NOTE: Capacity growth adjust is only enabled if both
+  /// 'fastExponentialGrowthCapacityLimit' and 'slowCapacityGrowPct' are set,
+  /// otherwise it is disabled.
+  uint64_t fastExponentialGrowthCapacityLimit{512 << 20};
+  double slowCapacityGrowPct{0.25};
 
   /// Specifies the max time to wait for memory reclaim by arbitration. The
   /// memory reclaim might fail if the max wait time has exceeded. If it is
@@ -307,10 +328,6 @@ class MemoryManager {
  private:
   void dropPool(MemoryPool* pool);
 
-  // Invoked to grow a memory pool's free capacity with at least
-  // 'incrementBytes'. The function returns true on success, otherwise false.
-  bool growPool(MemoryPool* pool, uint64_t incrementBytes);
-
   //  Returns the shared references to all the alive memory pools in 'pools_'.
   std::vector<std::shared_ptr<MemoryPool>> getAlivePools() const;
 
@@ -328,8 +345,6 @@ class MemoryManager {
   // tracked by 'pools_'. It is invoked on the root pool destruction and removes
   // the pool from 'pools_'.
   const MemoryPoolImpl::DestructionCallback poolDestructionCb_;
-  // Callback invoked by the root memory pool to request memory capacity growth.
-  const MemoryPoolImpl::GrowCapacityCallback poolGrowCb_;
 
   const std::shared_ptr<MemoryPool> sysRoot_;
   const std::shared_ptr<MemoryPool> spillPool_;

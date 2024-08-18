@@ -75,13 +75,20 @@ std::unique_ptr<MemoryArbitrator> createArbitrator(
       // SharedArbitrator class. After Prestissimo switches, this part of the
       // code will be removed.
       extraArbitratorConfigs["reserved-capacity"] =
-          folly::to<std::string>(options.arbitratorReservedCapacity);
+          folly::to<std::string>(options.arbitratorReservedCapacity) + "B";
+      extraArbitratorConfigs["memory-pool-initial-capacity"] =
+          folly::to<std::string>(options.memoryPoolInitCapacity) + "B";
       extraArbitratorConfigs["memory-pool-reserved-capacity"] =
-          folly::to<std::string>(options.memoryPoolReservedCapacity);
+          folly::to<std::string>(options.memoryPoolReservedCapacity) + "B";
       extraArbitratorConfigs["memory-pool-transfer-capacity"] =
-          folly::to<std::string>(options.memoryPoolTransferCapacity);
-      extraArbitratorConfigs["memory-reclaim-wait-ms"] =
-          folly::to<std::string>(options.memoryReclaimWaitMs);
+          folly::to<std::string>(options.memoryPoolTransferCapacity) + "B";
+      extraArbitratorConfigs["fast-exponential-growth-capacity-limit"] =
+          folly::to<std::string>(options.fastExponentialGrowthCapacityLimit) +
+          "B";
+      extraArbitratorConfigs["slow-capacity-grow-pct"] =
+          folly::to<std::string>(options.slowCapacityGrowPct);
+      extraArbitratorConfigs["memory-reclaim-max-wait-time"] =
+          folly::to<std::string>(options.memoryReclaimWaitMs) + "ms";
       extraArbitratorConfigs["global-arbitration-enabled"] =
           folly::to<std::string>(options.globalArbitrationEnabled);
       extraArbitratorConfigs["check-usage-leak"] =
@@ -129,14 +136,10 @@ MemoryManager::MemoryManager(const MemoryManagerOptions& options)
       debugEnabled_(options.debugEnabled),
       coreOnAllocationFailureEnabled_(options.coreOnAllocationFailureEnabled),
       poolDestructionCb_([&](MemoryPool* pool) { dropPool(pool); }),
-      poolGrowCb_([&](MemoryPool* pool, uint64_t targetBytes) {
-        return growPool(pool, targetBytes);
-      }),
       sysRoot_{std::make_shared<MemoryPoolImpl>(
           this,
           std::string(kSysRootName),
           MemoryPool::Kind::kAggregate,
-          nullptr,
           nullptr,
           nullptr,
           nullptr,
@@ -266,13 +269,11 @@ std::shared_ptr<MemoryPool> MemoryManager::addRootPool(
       MemoryPool::Kind::kAggregate,
       nullptr,
       std::move(reclaimer),
-      poolGrowCb_,
       poolDestructionCb_,
       options);
   pools_.emplace(poolName, pool);
   VELOX_CHECK_EQ(pool->capacity(), 0);
-  arbitrator_->growCapacity(
-      pool.get(), std::min<uint64_t>(poolInitCapacity_, maxCapacity));
+  arbitrator_->addPool(pool);
   RECORD_HISTOGRAM_METRIC_VALUE(
       kMetricMemoryPoolInitialCapacityBytes, pool->capacity());
   return pool;
@@ -289,18 +290,11 @@ std::shared_ptr<MemoryPool> MemoryManager::addLeafPool(
   return sysRoot_->addLeafChild(poolName, threadSafe, nullptr);
 }
 
-bool MemoryManager::growPool(MemoryPool* pool, uint64_t incrementBytes) {
-  VELOX_CHECK_NOT_NULL(pool);
-  VELOX_CHECK_NE(pool->capacity(), kMaxMemory);
-  return arbitrator_->growCapacity(pool, getAlivePools(), incrementBytes);
-}
-
 uint64_t MemoryManager::shrinkPools(
     uint64_t targetBytes,
     bool allowSpill,
     bool allowAbort) {
-  return arbitrator_->shrinkCapacity(
-      getAlivePools(), targetBytes, allowSpill, allowAbort);
+  return arbitrator_->shrinkCapacity(targetBytes, allowSpill, allowAbort);
 }
 
 void MemoryManager::dropPool(MemoryPool* pool) {
@@ -312,7 +306,7 @@ void MemoryManager::dropPool(MemoryPool* pool) {
   }
   pools_.erase(it);
   VELOX_DCHECK_EQ(pool->reservedBytes(), 0);
-  arbitrator_->shrinkCapacity(pool, 0);
+  arbitrator_->removePool(pool);
 }
 
 MemoryPool& MemoryManager::deprecatedSharedLeafPool() {

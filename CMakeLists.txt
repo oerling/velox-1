@@ -211,6 +211,11 @@ if(${VELOX_FORCE_COLORED_OUTPUT})
   endif()
 endif()
 
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"
+   AND "${CMAKE_CXX_COMPILER_VERSION}" VERSION_GREATER_EQUAL 15)
+  set(CMAKE_EXE_LINKER_FLAGS "-latomic")
+endif()
+
 # At the moment we prefer static linking but by default cmake looks for shared
 # libs first. This will still fallback to shared libs when static ones are not
 # found
@@ -540,8 +545,8 @@ include_directories(SYSTEM velox/external)
 
 # these were previously vendored in third-party/
 if(NOT VELOX_DISABLE_GOOGLETEST)
-  set(gtest_SOURCE AUTO)
-  resolve_dependency(gtest)
+  set(GTest_SOURCE AUTO)
+  resolve_dependency(GTest)
   set(VELOX_GTEST_INCUDE_DIR
       "${gtest_SOURCE_DIR}/googletest/include"
       PARENT_SCOPE)

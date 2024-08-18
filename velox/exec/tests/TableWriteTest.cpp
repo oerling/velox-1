@@ -2387,8 +2387,8 @@ TEST_P(UnpartitionedTableWriterTest, immutableSettings) {
     std::unordered_map<std::string, std::string> propFromFile{
         {"hive.immutable-partitions",
          testData.immutablePartitionsEnabled ? "true" : "false"}};
-    std::shared_ptr<const Config> config{
-        std::make_shared<core::MemConfig>(propFromFile)};
+    std::shared_ptr<const config::ConfigBase> config{
+        std::make_shared<config::ConfigBase>(std::move(propFromFile))};
     resetHiveConnector(config);
 
     auto input = makeVectors(10, 10);
@@ -3742,8 +3742,7 @@ DEBUG_ONLY_TEST_F(TableWriterArbitrationTest, writerFlushThreshold) {
     ASSERT_GE(arbitrator->stats().numReclaimedBytes, testParam.bytesToReserve);
     waitForAllTasksToBeDeleted(3'000'000);
     queryCtx.reset();
-    ASSERT_EQ(arbitrator->stats().numReserves, 1);
-    ASSERT_EQ(arbitrator->stats().numReleases, 1);
+    ASSERT_EQ(arbitrator->stats().numShrinks, 1);
   }
 }
 
@@ -3823,7 +3822,6 @@ DEBUG_ONLY_TEST_F(
 
   ASSERT_EQ(arbitrator->stats().numFailures, 1);
   ASSERT_EQ(arbitrator->stats().numNonReclaimableAttempts, 1);
-  ASSERT_EQ(arbitrator->stats().numReserves, 1);
   waitForAllTasksToBeDeleted();
 }
 
@@ -3916,7 +3914,6 @@ DEBUG_ONLY_TEST_F(
   ASSERT_EQ(arbitrator->stats().numNonReclaimableAttempts, 0);
   ASSERT_EQ(arbitrator->stats().numFailures, 0);
   ASSERT_GT(arbitrator->stats().numReclaimedBytes, 0);
-  ASSERT_EQ(arbitrator->stats().numReserves, 1);
   waitForAllTasksToBeDeleted();
 }
 
@@ -4014,7 +4011,6 @@ DEBUG_ONLY_TEST_F(
 
   ASSERT_EQ(arbitrator->stats().numFailures, 1);
   ASSERT_EQ(arbitrator->stats().numNonReclaimableAttempts, 1);
-  ASSERT_EQ(arbitrator->stats().numReserves, 1);
   const auto updatedSpillStats = common::globalSpillStats();
   ASSERT_EQ(updatedSpillStats, spillStats);
   waitForAllTasksToBeDeleted();

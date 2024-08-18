@@ -183,7 +183,7 @@ void QueryBenchmarkBase::initialize() {
   configurationValues[connector::hive::HiveConfig::kPrefetchRowGroups] =
       std::to_string(FLAGS_parquet_prefetch_rowgroups);
   auto properties =
-      std::make_shared<const core::MemConfig>(configurationValues);
+    std::make_shared<const config::ConfigBase>(std::move(configurationValues));
 
   // Create hive connector with config...
   auto hiveConnector =
