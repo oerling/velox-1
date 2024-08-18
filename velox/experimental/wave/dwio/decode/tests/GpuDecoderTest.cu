@@ -34,7 +34,7 @@ using namespace facebook::velox;
 // define to use the flexible call path wiht multiple ops per TB
 #define USE_PROGRAM_API
 #define USE_SEL_BITPACK true
-  
+
 // Returns the number of bytes the "values" will occupy after varint encoding.
 uint64_t bulkVarintSize(const uint64_t* values, int count) {
   constexpr uint8_t kLookupSizeTable64[64] = {
@@ -116,7 +116,8 @@ void makeBitpackDict(
   if (scatterBytes) {
     resultBytes += resultBytes / 2;
   }
-  cudaPtr = allocate<char>(dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
+  cudaPtr = allocate<char>(
+      dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
   T* memory = (T*)cudaPtr.get();
 
   dict = bitsOnly ? nullptr : memory;
@@ -141,11 +142,14 @@ void makeBitpackDict(
   }
   result = addBytes(
       reinterpret_cast<T*>(memory), dictBytes + bitBytes + scatterBytes);
-  blockStatus = reinterpret_cast<BlockStatus*>(addBytes(result, numValues * sizeof(T)));
-  for(auto i = 0; i < numBlocks; ++i) {
-    blockStatus[i].numRows =i < numBlocks - 1 ? blockSize : numValues - (i * blockSize);
+  blockStatus =
+      reinterpret_cast<BlockStatus*>(addBytes(result, numValues * sizeof(T)));
+  for (auto i = 0; i < numBlocks; ++i) {
+    blockStatus[i].numRows =
+        i < numBlocks - 1 ? blockSize : numValues - (i * blockSize);
   }
-  prefetchToDevice(memory, dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
+  prefetchToDevice(
+      memory, dictBytes + bitBytes + scatterBytes + resultBytes + statusBytes);
 }
 
 class GpuDecoderTest : public ::testing::Test {
@@ -242,7 +246,7 @@ class GpuDecoderTest : public ::testing::Test {
       int numBlocks,
       bool useScatter,
       bool bitsOnly = false,
-		    bool useSelective = false) {
+      bool useSelective = false) {
     gpu::CudaPtr<char[]> ptr;
     T* dict;
     uint64_t* bits;
@@ -258,9 +262,9 @@ class GpuDecoderTest : public ::testing::Test {
         result,
         useScatter ? &scatter : nullptr,
         bitsOnly,
-	blockStatus,
-	roundUp(numValues, kBlockSize) / kBlockSize,
-	kBlockSize);
+        blockStatus,
+        roundUp(numValues, kBlockSize) / kBlockSize,
+        kBlockSize);
     result[numValues] = 0xdeadbeef;
     int valuesPerOp = roundUp(numValues / numBlocks, kBlockSize);
     int numOps = roundUp(numValues, valuesPerOp) / valuesPerOp;
@@ -268,12 +272,16 @@ class GpuDecoderTest : public ::testing::Test {
     auto ops = allocate<GpuDecode>(numOps);
     for (auto i = 0; i < numOps; ++i) {
       int32_t begin = i * valuesPerOp;
-      ops[i].step = useSelective ? (sizeof(T) == 8 ? DecodeStep::kSelective64 : DecodeStep::kSelective32) : DecodeStep::kDictionaryOnBitpack;
+      ops[i].step = useSelective ? (sizeof(T) == 8 ? DecodeStep::kSelective64
+                                                   : DecodeStep::kSelective32)
+                                 : DecodeStep::kDictionaryOnBitpack;
       ops[i].encoding = DecodeStep::kDictionaryOnBitpack;
       ops[i].dataType = WaveTypeTrait<T>::typeKind;
       ops[i].nullMode = NullMode::kDenseNonNull;
       ops[i].nthBlock = i;
-      ops[i].numRowsPerThread = i == numOps - 1 ? roundUp(numValues - (valuesPerOp * i), kBlockSize) / kBlockSize : valuesPerThread;
+      ops[i].numRowsPerThread = i == numOps - 1
+          ? roundUp(numValues - (valuesPerOp * i), kBlockSize) / kBlockSize
+          : valuesPerThread;
       ops[i].baseRow = i * valuesPerOp;
       ops[i].maxRow = std::min<int32_t>((i + 1) * valuesPerOp, numValues);
       ops[i].result = reinterpret_cast<T*>(result) + i * valuesPerOp;
@@ -560,7 +568,7 @@ class GpuDecoderTest : public ::testing::Test {
 
   void callViaPrograms(GpuDecode* ops, int32_t numOps) {
     auto stream = std::make_unique<Stream>();
-        LaunchParams params(*arena_);
+    LaunchParams params(*arena_);
     DecodePrograms programs;
     for (int i = 0; i < numOps; ++i) {
       programs.programs.emplace_back();

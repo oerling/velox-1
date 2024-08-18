@@ -98,13 +98,13 @@ void launchDecode(
   GpuDecodeParams localParams;
   GpuDecodeParams* params = &localParams;
   char* host = nullptr;
-  	char* device = nullptr;
+  char* device = nullptr;
   if (numOps > GpuDecodeParams::kMaxInlineOps || allSingle) {
-        auto pair = launchParams.setup((numOps + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
-	host = pair.first;
-	     device = pair.second;
-uintptr_t aligned =
-        roundUp(reinterpret_cast<uintptr_t>(host), 16);
+    auto pair = launchParams.setup(
+        (numOps + 1) * (sizeof(GpuDecode) + sizeof(int32_t)) + 16);
+    host = pair.first;
+    device = pair.second;
+    uintptr_t aligned = roundUp(reinterpret_cast<uintptr_t>(host), 16);
     params = reinterpret_cast<GpuDecodeParams*>(aligned);
   }
   int32_t end = programs.programs[0].size();
@@ -122,14 +122,15 @@ uintptr_t aligned =
   if (allSingle) {
     launchParams.transfer(*stream);
     detail::decodeGlobal<kBlockSize>
-      <<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(reinterpret_cast<GpuDecode*>(device + decodeOffset));
+        <<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(
+            reinterpret_cast<GpuDecode*>(device + decodeOffset));
     CUDA_CHECK(cudaGetLastError());
     programs.result.transfer(*stream);
     return;
   }
   if (launchParams.device) {
     localParams.external = reinterpret_cast<GpuDecodeParams*>(device);
-            launchParams.transfer(*stream);
+    launchParams.transfer(*stream);
   }
 
   decodeKernel<<<numBlocks, kBlockSize, shared, stream->stream()->stream>>>(
