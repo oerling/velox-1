@@ -55,7 +55,6 @@ class Stream {
   /// to 'device'.
   void prefetch(Device* device, void* address, size_t size);
 
-  
   // Enqueues a copy from host to device.
   void
   hostToDeviceAsync(void* deviceAddress, const void* hostAddress, size_t size);

@@ -53,8 +53,8 @@ WaveDriver::WaveDriver(
       states_(std::move(states)) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
-  deviceArena_ =
-    std::make_unique<GpuArena>(100000000, getDeviceAllocator(getDevice()), 400000000);
+  deviceArena_ = std::make_unique<GpuArena>(
+      100000000, getDeviceAllocator(getDevice()), 400000000);
   pipelines_.emplace_back();
   for (auto& op : waveOperators) {
     op->setDriver(this);

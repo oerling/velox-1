@@ -118,7 +118,6 @@ struct alignas(16) GpuDecode {
 
   NullMode nullMode;
 
-  
   /// Number of chunks (e.g. Parquet pages). If > 1, different rows row ranges
   /// have different encodings. The first chunk's encoding is in 'data'. The
   /// next chunk's encoding is in the next GpuDecode's 'data'. Each chunk has

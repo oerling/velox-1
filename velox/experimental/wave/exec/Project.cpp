@@ -118,7 +118,10 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
               blocksPerExe,
               inputControl,
               out);
-	  out->prefetch(getDevice(), control->deviceData->as<char>(), control->deviceData->size());
+          out->prefetch(
+              getDevice(),
+              control->deviceData->as<char>(),
+              control->deviceData->size());
           stream.setState(WaveStream::State::kParallel);
           {
             PrintTime c("expr");

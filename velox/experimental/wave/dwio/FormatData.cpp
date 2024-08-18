@@ -146,7 +146,7 @@ void SplitStaging::transfer(
       patch_.clear();
       offsets_.clear();
       asyncTail(waveStream, stream);
-				    });
+    });
   } else {
     copyColumns(firstToCopy, staging_.size(), transferBuffer, false);
     for (auto i = 0; i < numThreads; ++i) {

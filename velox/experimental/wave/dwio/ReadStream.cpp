@@ -83,11 +83,11 @@ void ReadStream::setBlockStatusAndTemp(Stream* stream) {
 }
 
 void ReadStream::clearAndPrefetchStatus(Stream* stream) {
-    char* data = control_->deviceData->as<char>();
-    auto size = control_->deviceData->size();
-    stream->prefetch(getDevice(), data + statusBytes_, size - statusBytes_);
-    stream->memset(data, 0, statusBytes_);
-  }
+  char* data = control_->deviceData->as<char>();
+  auto size = control_->deviceData->size();
+  stream->prefetch(getDevice(), data + statusBytes_, size - statusBytes_);
+  stream->memset(data, 0, statusBytes_);
+}
 
 void ReadStream::makeGrid(Stream* stream) {
   programs_.clear();
@@ -407,7 +407,7 @@ void ReadStream::launch(
         LaunchParams params(readStream->waveStream->deviceArena());
         readStream->syncStaging(*stream);
         {
-	  //stream->wait();
+          // stream->wait();
           PrintTime l("decode-f");
           launchDecode(readStream->programs(), params, stream);
         }
