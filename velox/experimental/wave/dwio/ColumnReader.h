@@ -176,9 +176,7 @@ class ReadStream : public Executable {
   // last filter.
   void makeCompact(bool isSerial);
 
-  // Clears the status part of 'control_->deviceData ' and prefetches it on
-  // device.
-  void clearAndPrefetchStatus(Stream* stream);
+  void prefetchStatus(Stream* stream);
 
   // True if non-filter columns will be done sequentially in the
   // filters kernel. This will never loose if there is an always read

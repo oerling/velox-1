@@ -65,9 +65,7 @@ ReadStream::ReadStream(
 
 void ReadStream::setBlockStatusAndTemp(Stream* stream) {
   auto* status = control_->deviceData->as<BlockStatus>();
-  if (stream) {
-    clearAndPrefetchStatus(stream);
-  }
+  prefetchStatus(stream);
   auto maxRowsPerThread = FLAGS_wave_reader_rows_per_tb / kBlockSize;
   auto tempSize = programs_.programs[0][0]->tempSize();
   auto size = programs_.programs.size() * tempSize;
@@ -82,11 +80,13 @@ void ReadStream::setBlockStatusAndTemp(Stream* stream) {
   }
 }
 
-void ReadStream::clearAndPrefetchStatus(Stream* stream) {
+void ReadStream::prefetchStatus(Stream* stream) {
+  if (!stream) {
+    return;
+  }
   char* data = control_->deviceData->as<char>();
   auto size = control_->deviceData->size();
-  stream->prefetch(getDevice(), data + statusBytes_, size - statusBytes_);
-  stream->memset(data, 0, statusBytes_);
+  stream->prefetch(getDevice(), data, size);
 }
 
 void ReadStream::makeGrid(Stream* stream) {
@@ -429,6 +429,8 @@ void ReadStream::makeControl() {
   auto deviceBytes = statusBytes_ + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
+  // The operand section must be cleared before written on host. The statuses are cleared on device.
+  memset(control->deviceData->as<char>(), 0, deviceBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {
