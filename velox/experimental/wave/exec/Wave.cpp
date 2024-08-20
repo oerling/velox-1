@@ -310,21 +310,59 @@ void WaveStream::setReturnData(bool needStatus) {
   }
 }
 
-void WaveStream::resultToHost() {
-  if (streams_.size() == 1) {
-    if (hostReturnDataUsed_ > 0) {
-      streams_[0]->deviceToHostAsync(
-          hostReturnData_->as<char>(),
-          deviceReturnData_->as<char>(),
-          hostReturnDataUsed_);
+  LaunchControl* WaveStream::lastControl() const {
+    LaunchControl* last = nullptr;
+    int id = -1;
+    for (auto& pair : launchControl_) {
+      if (pair.first > id) {
+	id = pair.first;
+	last = pair.second.back().get();
+      }
     }
-    if (!hostReturnEvent_) {
-      hostReturnEvent_ = newEvent();
-    }
-    hostReturnEvent_->record(*streams_[0]);
-  } else {
-    VELOX_NYI();
+    return last;
   }
+
+  
+void WaveStream::resultToHost() {
+  if (!hostReturnEvent_) {
+    hostReturnEvent_ = newEvent();
+  }
+  auto numBlocks = bits::roundUp(numRows, kBlocksize) / kBlockSize;
+  if (!hostBlockStatus_ || hostBlockStatus_->size() < numBlocks * sizeof(BlockStatus)) {
+    hostBlockStatus_ = getSmallTransferArena().allocate<BlockStatus>(numBlocks);
+  }
+  auto* outputControl = lastControl();
+  Stream* transferStream = streams_[0].get();
+  if (streams_.size() > 1) {
+    // If many events, queue up the transfer on the first after 
+    transferStream = streams_[0];
+    for (auto i = 1; i < streams_.size(); ++i) {
+      lastEvent_[i]->wait(*transferStream);
+    }
+  }
+  if (hostReturnDataUsed_ > 0) {
+    transferStream->deviceToHostAsync(
+				   hostReturnData_->as<char>(),
+				   deviceReturnData_->as<char>(),
+				   hostReturnDataUsed_);
+  }
+    
+  transferStream->deviceToHostAsync(
+				 hostBlockStatus_->as<char>(),
+				 inputControl->params.blockStatus,
+				 numBlocks * sizeof(BlockStatus)_);
+  
+  hostReturnEvent_->record(*transferStream);
+}
+
+bool WaveStream::interpretArrival() {
+  auto numBlocks = bits::roundUp(numRows_, kBlockStatus) / kBlockStatus;
+  uint8_t last = 255;
+  std::vector<uint64_t> bits;
+  uint8_t lastOp;
+  do {
+    lastOp = getLastContinuable(lastOp, bits);
+  } while ();
 }
 
 namespace {

@@ -211,10 +211,36 @@ class Program;
 /// Represents a device side operator state, like a join/group by hash table or
 /// repartition output. Can be scoped to a WaveStream or to a Program.
 struct OperatorState {
+  /// Marks that 'stream' will enqueue a program touching 'this'. Blocks until 'this' is available. Throws an error if 'this' has entered an error state, e.g. out of memory.
+  void enter(WaveStream* stream);
+
+  /// Marks that 'stream' has completed a program touching 'this'.
+  void leave(WaveStream* stream);
+
+  /// Acquires a process-wide exclusive hold on 'this' This is done
+  /// e.g. to rehash a hash table. 'stream' must have called enter()
+  /// on 'this' previously. If successful returns true after waiting
+  /// for the caller to be the only stream holding this. Returns false
+  /// If another stream called this before, returns false after
+  /// waiting for the exclusive owner to finish. If 'this' is in an
+  /// error state, throws the error. In any return except true, the
+  /// caller is not an owner of 'this'. After completing the activity,
+  /// the caller must call leave() when done.
+  bool enterExclusive(WaveStream* stream);
+
+  /// Sets an error. Any thread calling enter() or enterExclusive() will throw the error. The caller must have successfully called enterExclusive() first.
+  void setError(WaveStream* stream, std::exception_ptr error);
+
   int32_t id;
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
+
+  std::mutex mutex_;
+  // Count of streams with programs touching this enqueued.
+  int32_t numStreams_{0};
+  // The stream with exclusive access via enterExclusive().
+  WaveStream* owner{nullptr};
 };
 
 struct AggregateOperatorState : public OperatorState {
@@ -842,12 +868,19 @@ class WaveStream {
 
   std::string toString() const;
 
+  /// Reads the BlockStatus from device and marks programs that need to be continued.
+  bool interpretArrival();
+
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
 
   Event* newEvent();
 
+  LaunchControl* lastControl() const;
+
+  
   static std::unique_ptr<Event> eventFromReserve();
   static void releaseEvent(std::unique_ptr<Event>&& event);
 
@@ -897,7 +930,7 @@ class WaveStream {
   // If status return copy has been initiated, then this is the event to sync
   // with before accessing the 'hostReturnData_'
   Event* hostReturnEvent_{nullptr};
-
+  
   // all events recorded on any stream. Events, once seen realized, are moved
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
