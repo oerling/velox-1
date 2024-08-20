@@ -355,6 +355,22 @@ void WaveStream::resultToHost() {
   hostReturnEvent_->record(*transferStream);
 }
 
+  uint8_t getLastContinuable(uint8_t lastOp, int32_t numBlocks, BlockStatus* status, std::vector<uint64_t>& bits) {
+    // Get the highest number <= lastOp and return that. Set a bit in 'bits' for the positions where the numbver occurs.
+    using Batch = xsimd::batch<uint8_t>;
+    constexpr kBatchSize = Batch::size;
+    uint8_t max = 0;
+    auto lastOpVec = Batch::broadcast(lastOp);
+    for (auto i = 0; i < numBlocks; ++i) {
+      for (auto j = 0; j < kBlockSize; j += kBatchSize) {
+	auto lanes = Batch::load(&status[i].errors[j]);
+	lanes = xsimd::blend(lanes > lastOpVec, Batch::broadcast(0) : lanes);
+	
+      }
+      auto bytes = xsimd::batch<uint8_t>::load_unaligned(
+    }
+  }    
+  
 bool WaveStream::interpretArrival() {
   auto numBlocks = bits::roundUp(numRows_, kBlockStatus) / kBlockStatus;
   uint8_t last = 255;
@@ -1176,6 +1192,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.state->id;
         programState->isGlobal = true;
+	physicalInst->serial = agg.serial;
         physicalInst->stateIndex = operatorStates_.size();
         operatorStates_.push_back(std::move(programState));
         memcpy(physicalInst->aggregates, agg.literal, agg.literalBytes);
