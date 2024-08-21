@@ -21,13 +21,6 @@
 
 namespace facebook::velox::tests::utils {
 namespace {
-// Extracts the delegated real file path by removing the faulty file system
-// scheme prefix.
-inline std::string extractPath(std::string_view path) {
-  VELOX_CHECK_EQ(path.find(FaultyFileSystem::scheme()), 0);
-  return std::string(path.substr(FaultyFileSystem::scheme().length()));
-}
-
 // Constructs the faulty file path based on the delegated read file 'path'. It
 // pre-appends the faulty file system scheme.
 inline std::string faultyPath(const std::string& path) {
@@ -45,9 +38,9 @@ std::function<bool(std::string_view)> schemeMatcher() {
 folly::once_flag faultFilesystemInitOnceFlag;
 
 std::function<std::shared_ptr<
-    FileSystem>(std::shared_ptr<const Config>, std::string_view)>
+    FileSystem>(std::shared_ptr<const config::ConfigBase>, std::string_view)>
 fileSystemGenerator() {
-  return [](std::shared_ptr<const Config> properties,
+  return [](std::shared_ptr<const config::ConfigBase> properties,
             std::string_view /*unused*/) {
     // One instance of faulty FileSystem is sufficient. Initializes on first
     // access and reuse after that.
@@ -63,19 +56,20 @@ fileSystemGenerator() {
 std::unique_ptr<ReadFile> FaultyFileSystem::openFileForRead(
     std::string_view path,
     const FileOptions& options) {
-  const std::string delegatedPath = extractPath(path);
+  const std::string delegatedPath = std::string(extractPath(path));
   auto delegatedFile = getFileSystem(delegatedPath, config_)
                            ->openFileForRead(delegatedPath, options);
   return std::make_unique<FaultyReadFile>(
-      std::string(path), std::move(delegatedFile), [&](FaultFileOperation* op) {
-        maybeInjectFileFault(op);
-      });
+      std::string(path),
+      std::move(delegatedFile),
+      [&](FaultFileOperation* op) { maybeInjectFileFault(op); },
+      executor_);
 }
 
 std::unique_ptr<WriteFile> FaultyFileSystem::openFileForWrite(
     std::string_view path,
     const FileOptions& options) {
-  const std::string delegatedPath = extractPath(path);
+  const std::string delegatedPath = std::string(extractPath(path));
   auto delegatedFile = getFileSystem(delegatedPath, config_)
                            ->openFileForWrite(delegatedPath, options);
   return std::make_unique<FaultyWriteFile>(
@@ -85,7 +79,7 @@ std::unique_ptr<WriteFile> FaultyFileSystem::openFileForWrite(
 }
 
 void FaultyFileSystem::remove(std::string_view path) {
-  const std::string delegatedPath = extractPath(path);
+  const std::string delegatedPath = std::string(extractPath(path));
   getFileSystem(delegatedPath, config_)->remove(delegatedPath);
 }
 

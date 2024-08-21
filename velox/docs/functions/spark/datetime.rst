@@ -93,6 +93,12 @@ These functions support TIMESTAMP and DATE input types.
         SELECT from_unixtime(3600, 'yyyy'); -- '1970'
         SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");  -- '1969-12-31 23:59:59'
 
+    If we run the following query in the `Asia/Shanghai` time zone: ::
+
+        SELECT from_unixtime(100, 'yyyy-MM-dd HH:mm:ss'); -- '1970-01-01 08:01:40'
+        SELECT from_unixtime(3600, 'yyyy'); -- '1970'
+        SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");  -- '1970-01-01 07:59:59'
+
 .. spark:function:: from_utc_timestamp(timestamp, string) -> timestamp
 
     Returns the timestamp value from UTC timezone to the given timezone. ::
@@ -217,7 +223,7 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: second(timestamp) -> integer
 
-    Returns the seconds of ``timestamp``.::
+    Returns the seconds of ``timestamp``. ::
 
         SELECT second('2009-07-30 12:58:59'); -- 59
 
@@ -252,7 +258,7 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: unix_date(date) -> integer
 
-    Returns the number of days since 1970-01-01.::
+    Returns the number of days since 1970-01-01. ::
 
         SELECT unix_date('1970-01-01'); -- '0'
         SELECT unix_date('1970-01-02'); -- '1'
@@ -270,6 +276,12 @@ These functions support TIMESTAMP and DATE input types.
     higher levels of precision.::
 
         SELECT unix_millis('1970-01-01 00:00:01'); -- 1000
+
+.. spark:function:: unix_seconds(timestamp) -> bigint
+    
+    Returns the number of seconds since 1970-01-01 00:00:00 UTC. ::
+
+        SELECT unix_seconds('1970-01-01 00:00:01'); -- 1
 
 .. spark:function:: unix_timestamp() -> integer
 
@@ -299,7 +311,7 @@ These functions support TIMESTAMP and DATE input types.
 
 .. function:: weekday(date) -> integer
 
-    Returns the day of the week for date (0 = Monday, 1 = Tuesday, …, 6 = Sunday).::
+    Returns the day of the week for date (0 = Monday, 1 = Tuesday, …, 6 = Sunday). ::
 
         SELECT weekday('2015-04-08'); -- 2
         SELECT weekday('2024-02-10'); -- 5

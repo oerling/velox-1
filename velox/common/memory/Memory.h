@@ -82,6 +82,7 @@ struct MemoryManagerOptions {
   bool coreOnAllocationFailureEnabled{false};
 
   /// ================== 'MemoryAllocator' settings ==================
+
   /// Specifies the max memory allocation capacity in bytes enforced by
   /// MemoryAllocator, default unlimited.
   int64_t allocatorCapacity{kMaxMemory};
@@ -91,6 +92,9 @@ struct MemoryManagerOptions {
   /// false, use MallocAllocator which delegates the memory allocation to
   /// std::malloc.
   bool useMmapAllocator{false};
+
+  /// Number of pages in the largest size class in MmapAllocator.
+  int32_t largestSizeClassPages{256};
 
   /// If true, allocations larger than largest size class size will be delegated
   /// to ManagedMmapArena. Otherwise a system mmap call will be issued for each
@@ -172,10 +176,52 @@ struct MemoryManagerOptions {
   /// during the memory arbitration.
   uint64_t memoryPoolTransferCapacity{128 << 20};
 
+  /// When growing capacity, the growth bytes will be adjusted in the
+  /// following way:
+  ///  - If 2 * current capacity is less than or equal to
+  ///    'fastExponentialGrowthCapacityLimit', grow through fast path by at
+  ///    least doubling the current capacity, when conditions allow (see below
+  ///    NOTE section).
+  ///  - If 2 * current capacity is greater than
+  ///    'fastExponentialGrowthCapacityLimit', grow through slow path by growing
+  ///    capacity by at least 'slowCapacityGrowPct' * current capacity if
+  ///    allowed (see below NOTE section).
+  ///
+  /// NOTE: If original requested growth bytes is larger than the adjusted
+  /// growth bytes or adjusted growth bytes reaches max capacity limit, the
+  /// adjusted growth bytes will not be respected.
+  ///
+  /// NOTE: Capacity growth adjust is only enabled if both
+  /// 'fastExponentialGrowthCapacityLimit' and 'slowCapacityGrowPct' are set,
+  /// otherwise it is disabled.
+  uint64_t fastExponentialGrowthCapacityLimit{512 << 20};
+  double slowCapacityGrowPct{0.25};
+
+  /// When shrinking capacity, the shrink bytes will be adjusted in a way such
+  /// that AFTER shrink, the stricter (whichever is smaller) of the following
+  /// conditions is met, in order to better fit the pool's current memory
+  /// usage:
+  /// - Free capacity is greater or equal to capacity *
+  /// 'memoryPoolMinFreeCapacityPct'
+  /// - Free capacity is greater or equal to 'memoryPoolMinFreeCapacity'
+  ///
+  /// NOTE: In the conditions when original requested shrink bytes ends up
+  /// with more free capacity than above 2 conditions, the adjusted shrink
+  /// bytes is not respected.
+  ///
+  /// NOTE: Capacity shrink adjustment is enabled when both
+  /// 'memoryPoolMinFreeCapacityPct' and 'memoryPoolMinFreeCapacity' are set.
+  uint64_t memoryPoolMinFreeCapacity{128 << 20};
+  double memoryPoolMinFreeCapacityPct{0.25};
+
   /// Specifies the max time to wait for memory reclaim by arbitration. The
   /// memory reclaim might fail if the max wait time has exceeded. If it is
   /// zero, then there is no timeout. The default is 5 mins.
   uint64_t memoryReclaimWaitMs{300'000};
+
+  /// If true, it allows memory arbitrator to reclaim used memory cross query
+  /// memory pools.
+  bool globalArbitrationEnabled{false};
 
   /// Provided by the query system to validate the state after a memory pool
   /// enters arbitration if not null. For instance, Prestissimo provides
@@ -184,6 +230,12 @@ struct MemoryManagerOptions {
   /// potential deadlock when reclaim memory from the task of the request memory
   /// pool.
   MemoryArbitrationStateCheckCB arbitrationStateCheckCb{nullptr};
+
+  /// TODO(jtan6): [Config Refactor] Remove above shared arbitrator specific
+  /// configs after Prestissimo switch to use extra configs map.
+  ///
+  /// Additional configs that are arbitrator implementation specific.
+  std::unordered_map<std::string, std::string> extraArbitratorConfigs{};
 };
 
 /// 'MemoryManager' is responsible for creating allocator, arbitrator and
@@ -279,7 +331,7 @@ class MemoryManager {
   /// Returns the memory manger's internal default root memory pool for testing
   /// purpose.
   MemoryPool& testingDefaultRoot() const {
-    return *defaultRoot_;
+    return *sysRoot_;
   }
 
   /// Returns the process wide leaf memory pool used for disk spilling.
@@ -293,10 +345,6 @@ class MemoryManager {
 
  private:
   void dropPool(MemoryPool* pool);
-
-  // Invoked to grow a memory pool's free capacity with at least
-  // 'incrementBytes'. The function returns true on success, otherwise false.
-  bool growPool(MemoryPool* pool, uint64_t incrementBytes);
 
   //  Returns the shared references to all the alive memory pools in 'pools_'.
   std::vector<std::shared_ptr<MemoryPool>> getAlivePools() const;
@@ -315,13 +363,10 @@ class MemoryManager {
   // tracked by 'pools_'. It is invoked on the root pool destruction and removes
   // the pool from 'pools_'.
   const MemoryPoolImpl::DestructionCallback poolDestructionCb_;
-  // Callback invoked by the root memory pool to request memory capacity growth.
-  const MemoryPoolImpl::GrowCapacityCallback poolGrowCb_;
 
-  const std::shared_ptr<MemoryPool> defaultRoot_;
+  const std::shared_ptr<MemoryPool> sysRoot_;
   const std::shared_ptr<MemoryPool> spillPool_;
-
-  std::vector<std::shared_ptr<MemoryPool>> sharedLeafPools_;
+  const std::vector<std::shared_ptr<MemoryPool>> sharedLeafPools_;
 
   mutable folly::SharedMutex mutex_;
   // All user root pools allocated from 'this'.

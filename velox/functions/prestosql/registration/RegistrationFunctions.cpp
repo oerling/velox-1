@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 #include <string>
+#include "velox/functions/prestosql/IPAddressFunctions.h"
+#include "velox/functions/prestosql/UuidFunctions.h"
 
 namespace facebook::velox::functions {
 
-extern void registerArithmeticFunctions(const std::string& prefix);
+extern void registerMathematicalFunctions(const std::string& prefix);
+extern void registerMathematicalOperators(const std::string& prefix);
+extern void registerProbabilityTrigonometryFunctions(const std::string& prefix);
 extern void registerArrayFunctions(const std::string& prefix);
 extern void registerBitwiseFunctions(const std::string& prefix);
 extern void registerCheckedArithmeticFunctions(const std::string& prefix);
@@ -37,7 +41,9 @@ extern void registerInternalArrayFunctions();
 
 namespace prestosql {
 void registerArithmeticFunctions(const std::string& prefix) {
-  functions::registerArithmeticFunctions(prefix);
+  functions::registerMathematicalOperators(prefix);
+  functions::registerMathematicalFunctions(prefix);
+  functions::registerProbabilityTrigonometryFunctions(prefix);
 }
 
 void registerCheckedArithmeticFunctions(const std::string& prefix) {
@@ -102,6 +108,8 @@ void registerAllScalarFunctions(const std::string& prefix) {
   registerStringFunctions(prefix);
   registerBinaryFunctions(prefix);
   registerBitwiseFunctions(prefix);
+  registerUuidFunctions(prefix);
+  registerIPAddressFunctions(prefix);
 }
 
 void registerMapAllowingDuplicates(

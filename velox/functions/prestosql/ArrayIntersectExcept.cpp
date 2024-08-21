@@ -16,11 +16,11 @@
 #include "velox/expression/VectorFunction.h"
 #include "velox/functions/lib/LambdaFunctionUtil.h"
 #include "velox/functions/lib/RowsTranslationUtil.h"
+#include "velox/type/FloatingPointUtil.h"
 
 namespace facebook::velox::functions {
 namespace {
 template <typename T>
-
 struct SetWithNull {
   SetWithNull(vector_size_t initialSetSize = kInitialSetSize) {
     set.reserve(initialSetSize);
@@ -31,17 +31,22 @@ struct SetWithNull {
     hasNull = false;
   }
 
-  folly::F14FastSet<T> set;
+  bool empty() const {
+    return !hasNull && set.empty();
+  }
+
+  util::floating_point::HashSetNaNAware<T> set;
   bool hasNull{false};
   static constexpr vector_size_t kInitialSetSize{128};
 };
+
 // Generates a set based on the elements of an ArrayVector. Note that we take
 // rightSet as a parameter (instead of returning a new one) to reuse the
 // allocated memory.
-template <typename T, typename TVector>
+template <typename T>
 void generateSet(
     const ArrayVector* arrayVector,
-    const TVector* arrayElements,
+    const DecodedVector* arrayElements,
     vector_size_t idx,
     SetWithNull<T>& rightSet) {
   auto size = arrayVector->sizeAt(idx);
@@ -52,13 +57,7 @@ void generateSet(
     if (arrayElements->isNullAt(i)) {
       rightSet.hasNull = true;
     } else {
-      // Function can be called with either FlatVector or DecodedVector, but
-      // their APIs are slightly different.
-      if constexpr (std::is_same_v<TVector, DecodedVector>) {
-        rightSet.set.insert(arrayElements->template valueAt<T>(i));
-      } else {
-        rightSet.set.insert(arrayElements->valueAt(i));
-      }
+      rightSet.set.insert(arrayElements->template valueAt<T>(i));
     }
   }
 }
@@ -168,7 +167,6 @@ class ArrayIntersectExceptFunction : public exec::VectorFunction {
 
       outputSet.reset();
       rawNewOffsets[row] = indicesCursor;
-
       // Scans the array elements on the left-hand side.
       for (vector_size_t i = offset; i < (offset + size); ++i) {
         if (decodedLeftElements->isNullAt(i)) {
@@ -285,6 +283,10 @@ class ArraysOverlapFunction : public exec::VectorFunction {
       auto offset = baseLeftArray->offsetAt(idx);
       auto size = baseLeftArray->sizeAt(idx);
       bool hasNull = rightSet.hasNull;
+      if (size == 0 || rightSet.empty()) {
+        resultBoolVector->set(row, false);
+        return;
+      }
       for (auto i = offset; i < (offset + size); ++i) {
         // For each element in the current row search for it in the rightSet.
         if (decodedLeftElements->isNullAt(i)) {

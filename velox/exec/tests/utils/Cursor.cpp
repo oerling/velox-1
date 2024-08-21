@@ -151,10 +151,11 @@ class TaskCursorBase : public TaskCursor {
       // activities to finish on TaskCursor destruction.
       executor_ = executor;
       static std::atomic<uint64_t> cursorQueryId{0};
-      queryCtx_ = std::make_shared<core::QueryCtx>(
+      queryCtx_ = core::QueryCtx::create(
           executor_.get(),
           core::QueryConfig({}),
-          std::unordered_map<std::string, std::shared_ptr<Config>>{},
+          std::
+              unordered_map<std::string, std::shared_ptr<config::ConfigBase>>{},
           cache::AsyncDataCache::getInstance(),
           nullptr,
           nullptr,
@@ -368,8 +369,22 @@ class SingleThreadedTaskCursor : public TaskCursorBase {
     if (!task_->isRunning()) {
       return false;
     }
-    next_ = task_->next();
-    return next_ != nullptr;
+    while (true) {
+      ContinueFuture future = ContinueFuture::makeEmpty();
+      RowVectorPtr next = task_->next(&future);
+      if (next != nullptr) {
+        next_ = next;
+        return true;
+      }
+      // When next is returned from task as a null pointer.
+      if (!future.valid()) {
+        VELOX_CHECK(!task_->isRunning());
+        return false;
+      }
+      // Task is blocked for some reason. Wait and try again.
+      VELOX_CHECK_NULL(next)
+      future.wait();
+    }
   };
 
   RowVectorPtr& current() override {

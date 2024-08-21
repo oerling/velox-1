@@ -17,6 +17,8 @@
 #pragma once
 
 #include <folly/experimental/ThreadedRepeatingFunctionRunner.h>
+#include "velox/common/caching/AsyncDataCache.h"
+#include "velox/common/caching/SsdFile.h"
 #include "velox/common/memory/MemoryArbitrator.h"
 
 namespace folly {
@@ -39,17 +41,30 @@ class PeriodicStatsReporter {
   struct Options {
     Options() {}
 
+    const velox::memory::MemoryAllocator* allocator{nullptr};
+    uint64_t allocatorStatsIntervalMs{2'000};
+
+    const velox::cache::AsyncDataCache* cache{nullptr};
+    uint64_t cacheStatsIntervalMs{60'000};
+
+    const memory::MemoryArbitrator* arbitrator{nullptr};
     uint64_t arbitratorStatsIntervalMs{60'000};
+
+    const memory::MemoryPool* spillMemoryPool{nullptr};
+    uint64_t spillStatsIntervalMs{60'000};
 
     std::string toString() const {
       return fmt::format(
-          "arbitratorStatsIntervalMs:{}", arbitratorStatsIntervalMs);
+          "allocatorStatsIntervalMs:{}, cacheStatsIntervalMs:{}, "
+          "arbitratorStatsIntervalMs:{}, spillStatsIntervalMs:{}",
+          allocatorStatsIntervalMs,
+          cacheStatsIntervalMs,
+          arbitratorStatsIntervalMs,
+          spillStatsIntervalMs);
     }
   };
 
-  PeriodicStatsReporter(
-      const velox::memory::MemoryArbitrator* arbitrator,
-      const Options& options = Options());
+  PeriodicStatsReporter(const Options& options = Options());
 
   /// Invoked to start the report daemon in background.
   void start();
@@ -76,11 +91,28 @@ class PeriodicStatsReporter {
         });
   }
 
+  void reportCacheStats();
+  void reportAllocatorStats();
   void reportArbitratorStats();
+  void reportSpillStats();
 
+  const velox::memory::MemoryAllocator* const allocator_{nullptr};
+  const velox::cache::AsyncDataCache* const cache_{nullptr};
   const velox::memory::MemoryArbitrator* const arbitrator_{nullptr};
+  const velox::memory::MemoryPool* const spillMemoryPool_{nullptr};
   const Options options_;
+
+  cache::CacheStats lastCacheStats_;
 
   folly::ThreadedRepeatingFunctionRunner scheduler_;
 };
+
+/// Initializes and starts the process-wide periodic stats reporter. Before
+/// 'stopPeriodicStatsReporter()' is called, this method can only be called once
+/// process-wide, and additional calls to this method will throw.
+void startPeriodicStatsReporter(const PeriodicStatsReporter::Options& options);
+
+/// Stops the process-wide periodic stats reporter.
+void stopPeriodicStatsReporter();
+
 } // namespace facebook::velox

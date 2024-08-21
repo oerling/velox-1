@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/connectors/hive/FileHandle.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/type/Subfield.h"
@@ -24,6 +25,8 @@ namespace facebook::velox::wave::test {
 
 class TestFormatData : public wave::FormatData {
  public:
+  static constexpr int32_t kNotRegistered = -1;
+
   TestFormatData(
       OperandId operand,
       int32_t totalRows,
@@ -31,7 +34,7 @@ class TestFormatData : public wave::FormatData {
       : operand_(operand), totalRows_(totalRows), column_(column) {}
 
   bool hasNulls() const override {
-    return false;
+    return column_->nulls != nullptr;
   }
 
   int32_t totalRows() const override {
@@ -43,6 +46,15 @@ class TestFormatData : public wave::FormatData {
     queued_ = false;
   }
 
+  void griddize(
+      int32_t blockSize,
+      int32_t numBlocks,
+      ResultStaging& deviceStaging,
+      ResultStaging& resultStaging,
+      SplitStaging& staging,
+      DecodePrograms& programs,
+      ReadStream& stream) override;
+
   void startOp(
       ColumnOp& op,
       const ColumnOp* previousFilter,
@@ -53,14 +65,19 @@ class TestFormatData : public wave::FormatData {
       ReadStream& stream) override;
 
  private:
+  // Stages movement of nulls to device if any. Returns the id of the buffer or
+  // kNotRegisterd.
+  int32_t stageNulls(ResultStaging& deviceStaging, SplitStaging& splitStaging);
+
   const OperandId operand_;
+
   int32_t totalRows_{0};
 
   const test::Column* column_;
   bool staged_{false};
+  bool nullsStaged_{false};
   bool queued_{false};
   int32_t numStaged_{0};
-  int32_t currentRow_{0};
   // The device side data area start, set after the staged transfer is done.
   void* deviceBuffer_{nullptr};
 };

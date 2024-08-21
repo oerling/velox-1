@@ -180,7 +180,7 @@ void fixedWidthScan(
       [&](T value, int32_t rowIndex) {
         if (!hasFilter) {
           if (hasHook) {
-            hook.addValue(scatterRows[rowIndex], &value);
+            hook.addValueTyped(scatterRows[rowIndex], value);
           } else {
             auto targetRow = scatter ? scatterRows[rowIndex] : rowIndex;
             rawValues[targetRow] = value;
@@ -214,8 +214,7 @@ void fixedWidthScan(
                   hook.addValues(
                       scatterRows + rowIndex,
                       buffer + firstRow - rowOffset,
-                      kStep,
-                      sizeof(T));
+                      kStep);
                 } else {
                   if (scatter) {
                     scatterDense(
@@ -266,7 +265,9 @@ void fixedWidthScan(
                 if (!hasFilter) {
                   if (hasHook) {
                     hook.addValues(
-                        scatterRows + rowIndex, &values, kWidth, sizeof(T));
+                        scatterRows + rowIndex,
+                        reinterpret_cast<T*>(&values),
+                        kWidth);
                   } else {
                     if (scatter) {
                       scatterDense<T>(
@@ -322,7 +323,9 @@ void fixedWidthScan(
                 if (!hasFilter) {
                   if (hasHook) {
                     hook.addValues(
-                        scatterRows + rowIndex, &values, width, sizeof(T));
+                        scatterRows + rowIndex,
+                        reinterpret_cast<T*>(&values),
+                        width);
                   } else {
                     if (scatter) {
                       scatterDense<T>(
@@ -385,8 +388,21 @@ bool nonNullRowsFromSparse(
     RowSet rows,
     raw_vector<int32_t>& innerRows,
     raw_vector<int32_t>& outerRows,
-    uint64_t* resultNulls,
+    uint8_t* resultNulls,
     int32_t& tailSkip);
+
+template <bool isFilter, bool outputNulls>
+bool nonNullRowsFromSparse(
+    const uint64_t* nulls,
+    RowSet rows,
+    raw_vector<int32_t>& innerRows,
+    raw_vector<int32_t>& outerRows,
+    uint64_t* resultNulls,
+    int32_t& tailSkip) {
+  auto* resultNullBytes = reinterpret_cast<uint8_t*>(resultNulls);
+  return nonNullRowsFromSparse<isFilter, outputNulls>(
+      nulls, rows, innerRows, outerRows, resultNullBytes, tailSkip);
+}
 
 // See SelectiveColumnReader::useBulkPath.
 template <typename Visitor, bool hasNulls>
@@ -399,6 +415,12 @@ bool useFastPath(Visitor& visitor) {
        !hasNulls || !visitor.allowNulls()) &&
       (std::is_same_v<typename Visitor::HookType, NoHook> || !hasNulls ||
        Visitor::HookType::kSkipNulls);
+}
+
+template <typename Visitor>
+bool useFastPath(Visitor& visitor, bool hasNulls) {
+  return hasNulls ? useFastPath<Visitor, true>(visitor)
+                  : useFastPath<Visitor, false>(visitor);
 }
 
 // Scatters 'numValues' elements of 'data' starting at data[sourceBegin] to
@@ -454,7 +476,7 @@ void processFixedWidthRun(
   constexpr bool hasHook = !std::is_same_v<THook, NoHook>;
   if (!hasFilter) {
     if (hasHook) {
-      hook.addValues(scatterRows + rowIndex, values, rows.size(), sizeof(T));
+      hook.addValues(scatterRows + rowIndex, values, rows.size());
     } else if (scatter) {
       scatterNonNulls(rowIndex, numInput, numValues, scatterRows, values);
       numValues = scatterRows[rowIndex + numInput - 1] + 1;

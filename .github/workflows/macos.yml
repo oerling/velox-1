@@ -61,19 +61,18 @@ jobs:
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "TRUE"
         run: |
-          brew install \
-            bison boost ccache double-conversion flex fmt gflags glog \
-            icu4c libevent libsodium lz4 lzo ninja openssl range-v3 simdjson \
-            snappy thrift xz xsimd zstd
+          source scripts/setup-macos.sh
+          brew install $MACOS_BUILD_DEPS $MACOS_VELOX_DEPS
 
           echo "NJOBS=`sysctl -n hw.ncpu`" >> $GITHUB_ENV
+          brew unlink protobuf || echo "protobuf not installed"
+          brew link --force protobuf@21
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: assignUser/stash/restore@v1
         with:
           path: '${{ env.CCACHE_DIR }}'
-          key: ccache-macos-${{ matrix.os }}-${{ hashFiles('velox/*') }}
-          restore-keys: ccache-macos-${{ matrix.os }}
+          key: ccache-macos-${{ matrix.os }}
 
       - name: Configure Build
         env:
@@ -92,6 +91,12 @@ jobs:
         run: |
             cmake --build _build/debug -j $NJOBS
             ccache -s
+
+      - uses: assignUser/stash/save@v1
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-macos-${{ matrix.os }}
+
       - name: Run Tests
         if: false
         run: ctest -j $NJOBS --test-dir _build/debug --output-on-failure

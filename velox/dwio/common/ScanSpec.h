@@ -222,9 +222,11 @@ class ScanSpec {
     valueHook_ = valueHook;
   }
 
-  // Returns true if the corresponding reader only needs to reference
-  // the nulls stream. True if filter is is-null with or without value
-  // extraction or if filter is is-not-null and no value is extracted.
+  // Returns true if the corresponding reader only needs to reference the nulls
+  // stream.  True if filter is is-null with or without value extraction or if
+  // filter is is-not-null and no value is extracted.  Note that this does not
+  // apply to Nimble format leaf nodes, because nulls are mixed in the encoding
+  // with actual values.
   bool readsNullsOnly() const {
     if (filter_) {
       if (filter_->kind() == FilterKind::kIsNull) {
@@ -252,6 +254,12 @@ class ScanSpec {
   //
   // This may change as a result of runtime adaptation.
   bool hasFilter() const;
+
+  /// Assume this field is read as null constant vector (usually due to missing
+  /// field), check if any filter in the struct subtree would make the whole
+  /// vector to be filtered out.  Return false when the whole vector should be
+  /// filtered out.
+  bool testNull() const;
 
   // Resets cached values after this or children were updated, e.g. a new filter
   // was added or existing filter was modified.
@@ -325,6 +333,14 @@ class ScanSpec {
   /// Invoke the function provided on each node of the ScanSpec tree.
   template <typename F>
   void visit(const Type& type, F&& f);
+
+  bool isFlatMapAsStruct() const {
+    return isFlatMapAsStruct_;
+  }
+
+  void setFlatMapAsStruct(bool value) {
+    isFlatMapAsStruct_ = value;
+  }
 
  private:
   void reorder();
@@ -405,6 +421,10 @@ class ScanSpec {
 
   // Used only for bulk reader to project flat map features.
   std::vector<std::string> flatMapFeatureSelection_;
+
+  // This node represents a flat map column that need to be read as struct,
+  // i.e. in table schema it is a MAP, but in result vector it is ROW.
+  bool isFlatMapAsStruct_ = false;
 };
 
 template <typename F>

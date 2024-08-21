@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include "folly/CPortability.h"
+
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/AggregationHook.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -29,6 +31,9 @@ struct SumRow {
 };
 
 template <typename InputType, typename ResultType, bool Overflow = false>
+#if defined(FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER)
+FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER("signed-integer-overflow")
+#endif
 void testHookLimits(bool expectOverflow = false) {
   // Pair of <limit, value to overflow>.
   std::vector<std::pair<InputType, InputType>> limits = {
@@ -41,7 +46,7 @@ void testHookLimits(bool expectOverflow = false) {
     ResultType expected = 0;
     char* row = reinterpret_cast<char*>(&sumRow);
     uint64_t numNulls = 0;
-    facebook::velox::aggregate::SumHook<InputType, ResultType, Overflow> hook(
+    facebook::velox::aggregate::SumHook<ResultType, Overflow> hook(
         offsetof(SumRow<ResultType>, sum),
         offsetof(SumRow<ResultType>, nulls),
         0,
@@ -49,14 +54,14 @@ void testHookLimits(bool expectOverflow = false) {
         &numNulls);
 
     // Adding limit should not overflow.
-    ASSERT_NO_THROW(hook.addValue(0, &limit));
+    ASSERT_NO_THROW(hook.addValueTyped(0, limit));
     expected += limit;
     EXPECT_EQ(expected, sumRow.sum);
     // Adding overflow based on the ResultType should throw.
     if (expectOverflow) {
-      VELOX_ASSERT_THROW(hook.addValue(0, &overflow), "overflow");
+      VELOX_ASSERT_THROW(hook.addValueTyped(0, overflow), "overflow");
     } else {
-      ASSERT_NO_THROW(hook.addValue(0, &overflow));
+      ASSERT_NO_THROW(hook.addValueTyped(0, overflow));
       expected += overflow;
       EXPECT_EQ(expected, sumRow.sum);
     }
@@ -67,7 +72,6 @@ class SumTestBase : public AggregationTestBase {
  protected:
   void SetUp() override {
     AggregationTestBase::SetUp();
-    allowInputShuffle();
   }
 
   template <
@@ -104,10 +108,8 @@ void verifyAggregates(
 }
 
 template <typename InputType, typename ResultType, typename IntermediateType>
-#if defined(__has_feature)
-#if __has_feature(__address_sanitizer__)
-__attribute__((no_sanitize("integer")))
-#endif
+#if defined(FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER)
+FOLLY_DISABLE_UNDEFINED_BEHAVIOR_SANITIZER("signed-integer-overflow")
 #endif
 void SumTestBase::testAggregateOverflow(
     const std::string& function,

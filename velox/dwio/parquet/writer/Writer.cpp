@@ -18,7 +18,9 @@
 #include <arrow/c/bridge.h>
 #include <arrow/io/interfaces.h>
 #include <arrow/table.h>
+#include "velox/common/config/Config.h"
 #include "velox/common/testutil/TestValue.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/dwio/parquet/writer/arrow/Properties.h"
 #include "velox/dwio/parquet/writer/arrow/Writer.h"
 #include "velox/exec/MemoryReclaimer.h"
@@ -131,8 +133,8 @@ std::shared_ptr<WriterProperties> getArrowParquetWriterOptions(
   if (!options.enableDictionary) {
     properties = properties->disable_dictionary();
   }
-  properties =
-      properties->compression(getArrowParquetCompression(options.compression));
+  properties = properties->compression(getArrowParquetCompression(
+      options.compressionKind.value_or(common::CompressionKind_NONE)));
   for (const auto& columnCompressionValues : options.columnCompressionsMap) {
     properties->compression(
         columnCompressionValues.first,
@@ -175,7 +177,7 @@ std::shared_ptr<::arrow::Field> updateFieldNameRecursive(
     const Type& type,
     const std::string& name = "") {
   if (type.isRow()) {
-    auto rowType = type.asRow();
+    auto& rowType = type.asRow();
     auto newField = field->WithName(name);
     auto structType =
         std::dynamic_pointer_cast<::arrow::StructType>(newField->type());
@@ -236,10 +238,12 @@ Writer::Writer(
     flushPolicy_ = std::make_unique<DefaultFlushPolicy>();
   }
   options_.timestampUnit =
-      static_cast<TimestampUnit>(options.parquetWriteTimestampUnit);
+      options.parquetWriteTimestampUnit.value_or(TimestampUnit::kNano);
+  options_.timestampTimeZone = options.parquetWriteTimestampTimeZone;
   arrowContext_->properties =
       getArrowParquetWriterOptions(options, flushPolicy_);
   setMemoryReclaimers();
+  writeInt96AsTimestamp_ = options.writeInt96AsTimestamp;
 }
 
 Writer::Writer(
@@ -257,7 +261,11 @@ Writer::Writer(
 void Writer::flush() {
   if (arrowContext_->stagingRows > 0) {
     if (!arrowContext_->writer) {
-      auto arrowProperties = ArrowWriterProperties::Builder().build();
+      ArrowWriterProperties::Builder builder;
+      if (writeInt96AsTimestamp_) {
+        builder.enable_deprecated_int96_timestamps();
+      }
+      auto arrowProperties = builder.build();
       PARQUET_ASSIGN_OR_THROW(
           arrowContext_->writer,
           FileWriter::Open(
@@ -383,20 +391,6 @@ void Writer::abort() {
   arrowContext_.reset();
 }
 
-parquet::WriterOptions getParquetOptions(
-    const dwio::common::WriterOptions& options) {
-  parquet::WriterOptions parquetOptions;
-  parquetOptions.memoryPool = options.memoryPool;
-  if (options.compressionKind.has_value()) {
-    parquetOptions.compression = options.compressionKind.value();
-  }
-  if (options.parquetWriteTimestampUnit.has_value()) {
-    parquetOptions.parquetWriteTimestampUnit =
-        options.parquetWriteTimestampUnit.value();
-  }
-  return parquetOptions;
-}
-
 void Writer::setMemoryReclaimers() {
   VELOX_CHECK(
       !pool_->isLeaf(),
@@ -414,12 +408,67 @@ void Writer::setMemoryReclaimers() {
   generalPool_->setReclaimer(exec::MemoryReclaimer::create());
 }
 
+namespace {
+
+std::optional<TimestampUnit> getTimestampUnit(
+    const config::ConfigBase& config,
+    const char* configKey) {
+  if (const auto unit = config.get<uint8_t>(configKey)) {
+    VELOX_CHECK(
+        unit == 0 /*second*/ || unit == 3 /*milli*/ || unit == 6 /*micro*/ ||
+            unit == 9 /*nano*/,
+        "Invalid timestamp unit: {}",
+        unit.value());
+    return std::optional(static_cast<TimestampUnit>(unit.value()));
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> getTimestampTimeZone(
+    const config::ConfigBase& config,
+    const char* configKey) {
+  if (const auto timezone = config.get<std::string>(configKey)) {
+    return timezone.value();
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+void WriterOptions::processConfigs(
+    const config::ConfigBase& connectorConfig,
+    const config::ConfigBase& session) {
+  if (!parquetWriteTimestampUnit) {
+    parquetWriteTimestampUnit =
+        getTimestampUnit(session, kParquetSessionWriteTimestampUnit).has_value()
+        ? getTimestampUnit(session, kParquetSessionWriteTimestampUnit)
+        : getTimestampUnit(connectorConfig, kParquetSessionWriteTimestampUnit);
+  }
+  if (!parquetWriteTimestampTimeZone) {
+    parquetWriteTimestampTimeZone =
+        getTimestampTimeZone(session, core::QueryConfig::kSessionTimezone)
+            .has_value()
+        ? getTimestampTimeZone(session, core::QueryConfig::kSessionTimezone)
+        : getTimestampTimeZone(
+              connectorConfig, core::QueryConfig::kSessionTimezone);
+  }
+}
+
 std::unique_ptr<dwio::common::Writer> ParquetWriterFactory::createWriter(
     std::unique_ptr<dwio::common::FileSink> sink,
-    const dwio::common::WriterOptions& options) {
-  auto parquetOptions = getParquetOptions(options);
+    const std::shared_ptr<dwio::common::WriterOptions>& options) {
+  auto parquetOptions =
+      std::dynamic_pointer_cast<parquet::WriterOptions>(options);
+  VELOX_CHECK_NOT_NULL(
+      parquetOptions,
+      "Parquet writer factory expected a Parquet WriterOptions object.");
   return std::make_unique<Writer>(
-      std::move(sink), parquetOptions, asRowType(options.schema));
+      std::move(sink), *parquetOptions, asRowType(options->schema));
+}
+
+std::unique_ptr<dwio::common::WriterOptions>
+ParquetWriterFactory::createWriterOptions() {
+  return std::make_unique<parquet::WriterOptions>();
 }
 
 } // namespace facebook::velox::parquet

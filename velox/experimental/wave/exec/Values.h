@@ -20,11 +20,11 @@
 
 namespace facebook::velox::wave {
 
-class Values : public WaveOperator {
+class Values : public WaveSourceOperator {
  public:
   Values(CompileState& state, const core::ValuesNode& values);
 
-  int32_t canAdvance() override;
+  AdvanceResult canAdvance(WaveStream& stream) override;
 
   bool isStreaming() const override {
     return true;
@@ -34,12 +34,6 @@ class Values : public WaveOperator {
 
   bool isFinished() const override {
     return roundsLeft_ == (current_ == values_.size());
-  }
-
-  vector_size_t outputSize(WaveStream& stream) const override {
-    // Must not be called before schedule().
-    VELOX_CHECK_LT(0, current_);
-    return values_[current_ - 1]->size();
   }
 
   std::string toString() const override;

@@ -72,19 +72,19 @@ using normalized_key_t = uint64_t;
 struct RowContainerIterator {
   int32_t allocationIndex = 0;
   int32_t rowOffset = 0;
-  // Number of unvisited entries that are prefixed by an uint64_t for
-  // normalized key. Set in listRows() on first call.
+  /// Number of unvisited entries that are prefixed by an uint64_t for
+  /// normalized key. Set in listRows() on first call.
   int64_t normalizedKeysLeft = 0;
   int normalizedKeySize = 0;
 
-  // Ordinal position of 'currentRow' in RowContainer.
+  /// Ordinal position of 'currentRow' in RowContainer.
   int32_t rowNumber{0};
   char* rowBegin{nullptr};
-  // First byte after the end of the range containing 'currentRow'.
+  /// First byte after the end of the range containing 'currentRow'.
   char* endOfRun{nullptr};
 
-  // Returns the current row, skipping a possible normalized key below the first
-  // byte of row.
+  /// Returns the current row, skipping a possible normalized key below the
+  /// first byte of row.
   inline char* currentRow() const {
     return (rowBegin && normalizedKeysLeft) ? rowBegin + normalizedKeySize
                                             : rowBegin;
@@ -149,16 +149,16 @@ class RowColumn {
     return packedOffsets_ & 0xff;
   }
 
-  // The null bits and the initialized bits for accumulators start at the
-  // beginning of the first byte following the null bits for the keys.  This
-  // guarantees that they always appear on the same byte for any given
-  // accumulator (since 2 evenly divides 8).
+  /// The null bits and the initialized bits for accumulators start at the
+  /// beginning of the first byte following the null bits for the keys.  This
+  /// guarantees that they always appear on the same byte for any given
+  /// accumulator (since 2 evenly divides 8).
   int32_t initializedByte() const {
     return nullByte();
   }
 
-  // The initialized bit for an accumulator is guaranteed to appear on the same
-  // byte immediately following the null bit for that accumulator.
+  /// The initialized bit for an accumulator is guaranteed to appear on the same
+  /// byte immediately following the null bit for that accumulator.
   int32_t initializedMask() const {
     return nullMask() << 1;
   }
@@ -182,8 +182,8 @@ class RowColumn {
 class RowContainer {
  public:
   static constexpr uint64_t kUnlimited = std::numeric_limits<uint64_t>::max();
-  // The number of flags (bits) per accumulator, one for null and one for
-  // initialized.
+  /// The number of flags (bits) per accumulator, one for null and one for
+  /// initialized.
   static constexpr size_t kNumAccumulatorFlags = 2;
   using Eraser = std::function<void(folly::Range<char**> rows)>;
 
@@ -446,18 +446,18 @@ class RowContainer {
     return 1 << (nullOffset & 7);
   }
 
-  // Only accumulators have initialized flags. accumulatorFlagsOffset is the
-  // offset at which the flags for an accumulator begin. Currently this is the
-  // null flag, followed by the initialized flag.  So it's equivalent to the
-  // nullOffset.
-
-  // It's guaranteed that the flags for an accumulator appear in the same byte.
+  /// Only accumulators have initialized flags. accumulatorFlagsOffset is the
+  /// offset at which the flags for an accumulator begin. Currently this is the
+  /// null flag, followed by the initialized flag. So it's equivalent to the
+  /// nullOffset.
+  ///
+  /// It's guaranteed that the flags for an accumulator appear in the same byte.
   static inline int32_t initializedByte(int32_t accumulatorFlagsOffset) {
     return nullByte(accumulatorFlagsOffset);
   }
 
-  // accumulatorFlagsOffset is the offset at which the flags for an accumulator
-  // begin.
+  /// accumulatorFlagsOffset is the offset at which the flags for an accumulator
+  /// begin.
   static inline int32_t initializedMask(int32_t accumulatorFlagsOffset) {
     return nullMask(accumulatorFlagsOffset) << 1;
   }
@@ -620,6 +620,13 @@ class RowContainer {
     return rowColumns_[index];
   }
 
+  /// Returns the size of a string or complex types value stored in the
+  /// specified row and column.
+  int32_t variableSizeAt(const char* row, column_index_t column);
+
+  /// Returns the per row size of a fixed size column.
+  int32_t fixedSizeAt(column_index_t column);
+
   /// Bit offset of the probed flag for a full or right outer join  payload.
   /// 0 if not applicable.
   int32_t probedFlagOffset() const {
@@ -639,9 +646,9 @@ class RowContainer {
     return nextOffset_;
   }
 
-  // Create a next-row-vector if it doesn't exist. Append the row address to
-  // the next-row-vector, and store the address of the next-row-vector in the
-  // nextOffset_ slot for all duplicate rows.
+  /// Creates a next-row-vector if it doesn't exist. Appends the row address to
+  /// the next-row-vector, and store the address of the next-row-vector in the
+  /// 'nextOffset_' slot for all duplicate rows.
   void appendNextRow(char* current, char* nextRow);
 
   NextRowVector*& getNextRowVector(char* row) const {
@@ -784,24 +791,20 @@ class RowContainer {
     return *reinterpret_cast<T*>(group + offset);
   }
 
-  /// Returns the size of a string or complex types value stored in the
-  /// specified row and column.
-  int32_t variableSizeAt(const char* row, column_index_t column);
-
-  /// Copies a string or complex type value from the specified row and column
-  /// into provided buffer. Stored the size of the data in the first 4 bytes of
-  /// the buffer. If the value is null, writes zero into the first 4 bytes of
-  /// destination and returns.
-  /// @return The number of bytes written to 'destination' including the 4 bytes
-  /// of the size.
+  // Copies a string or complex type value from the specified row and column
+  // into provided buffer. Stored the size of the data in the first 4 bytes of
+  // the buffer. If the value is null, writes zero into the first 4 bytes of
+  // destination and returns.
+  // @return The number of bytes written to 'destination' including the 4 bytes
+  // of the size.
   int32_t
   extractVariableSizeAt(const char* row, column_index_t column, char* output);
 
-  /// Copies a string or complex type value from 'data' into the specified row
-  /// and column. Expects first 4 bytes in 'data' to contain the size of the
-  /// string or complex value.
-  /// @return The number of bytes read from 'data': 4 bytes for size + that many
-  /// bytes.
+  // Copies a string or complex type value from 'data' into the specified row
+  // and column. Expects first 4 bytes in 'data' to contain the size of the
+  // string or complex value.
+  // @return The number of bytes read from 'data': 4 bytes for size + that many
+  // bytes.
   int32_t
   storeVariableSizeAt(const char* data, char* row, column_index_t column);
 
@@ -833,7 +836,8 @@ class RowContainer {
     // Resize the result vector before all copies.
     result->resize(numRows + resultOffset);
 
-    if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
+    if constexpr (
+        Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
         Kind == TypeKind::MAP) {
       extractComplexType<useRowNumbers>(
           rows, rowNumbers, numRows, column, resultOffset, result);
@@ -925,7 +929,7 @@ class RowContainer {
     BufferPtr& nullBuffer = result->mutableNulls(maxRows);
     auto nulls = nullBuffer->asMutable<uint64_t>();
     BufferPtr valuesBuffer = result->mutableValues(maxRows);
-    auto values = valuesBuffer->asMutableRange<T>();
+    [[maybe_unused]] auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
       const char* row;
       if constexpr (useRowNumbers) {
@@ -959,7 +963,7 @@ class RowContainer {
     auto maxRows = numRows + resultOffset;
     VELOX_DCHECK_LE(maxRows, result->size());
     BufferPtr valuesBuffer = result->mutableValues(maxRows);
-    auto values = valuesBuffer->asMutableRange<T>();
+    [[maybe_unused]] auto values = valuesBuffer->asMutableRange<T>();
     for (int32_t i = 0; i < numRows; ++i) {
       const char* row;
       if constexpr (useRowNumbers) {
@@ -982,7 +986,9 @@ class RowContainer {
     }
   }
 
-  static ByteInputStream prepareRead(const char* row, int32_t offset);
+  static std::unique_ptr<ByteInputStream> prepareRead(
+      const char* row,
+      int32_t offset);
 
   template <TypeKind Kind>
   void hashTyped(
@@ -1047,11 +1053,12 @@ class RowContainer {
     if (indexIsNull) {
       return flags.nullsFirst ? 1 : -1;
     }
-    if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
+    if constexpr (
+        Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
         Kind == TypeKind::MAP) {
       return compareComplexType(row, column.offset(), decoded, index, flags);
     }
-    if (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
+    if constexpr (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
       auto result = compareStringAsc(
           valueAt<StringView>(row, column.offset()), decoded, index);
       return flags.ascending ? result : result * -1;
@@ -1084,12 +1091,13 @@ class RowContainer {
 
     auto leftOffset = leftColumn.offset();
     auto rightOffset = rightColumn.offset();
-    if (Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
+    if constexpr (
+        Kind == TypeKind::ROW || Kind == TypeKind::ARRAY ||
         Kind == TypeKind::MAP) {
       return compareComplexType(
           left, right, type, leftOffset, rightOffset, flags);
     }
-    if (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
+    if constexpr (Kind == TypeKind::VARCHAR || Kind == TypeKind::VARBINARY) {
       auto leftValue = valueAt<StringView>(left, leftOffset);
       auto rightValue = valueAt<StringView>(right, rightOffset);
       auto result = compareStringAsc(leftValue, rightValue);
@@ -1147,7 +1155,7 @@ class RowContainer {
         result->setNull(resultIndex, true);
       } else {
         auto stream = prepareRead(row, offset);
-        ContainerRowSerde::deserialize(stream, resultIndex, result.get());
+        ContainerRowSerde::deserialize(*stream, resultIndex, result.get());
       }
     }
   }
@@ -1380,10 +1388,12 @@ inline void RowContainer::storeWithNulls<TypeKind::HUGEINT>(
     int32_t offset,
     int32_t nullByte,
     uint8_t nullMask) {
-  HugeInt::serialize(decoded.valueAt<int128_t>(index), row + offset);
   if (decoded.isNullAt(index)) {
     row[nullByte] |= nullMask;
+    memset(row + offset, 0, sizeof(int128_t));
+    return;
   }
+  HugeInt::serialize(decoded.valueAt<int128_t>(index), row + offset);
 }
 
 template <>

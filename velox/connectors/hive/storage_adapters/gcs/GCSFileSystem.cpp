@@ -16,10 +16,11 @@
 
 #include "velox/connectors/hive/storage_adapters/gcs/GCSFileSystem.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/config/Config.h"
 #include "velox/common/file/File.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/storage_adapters/gcs/GCSUtil.h"
-#include "velox/core/Config.h"
+#include "velox/core/QueryConfig.h"
 
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -257,9 +258,9 @@ auto constexpr kGCSInvalidPath = "File {} is not a valid gcs file";
 
 class GCSFileSystem::Impl {
  public:
-  Impl(const Config* config)
+  Impl(const config::ConfigBase* config)
       : hiveConfig_(std::make_shared<HiveConfig>(
-            std::make_shared<core::MemConfig>(config->values()))) {}
+            std::make_shared<config::ConfigBase>(config->rawConfigsCopy()))) {}
 
   ~Impl() = default;
 
@@ -274,6 +275,20 @@ class GCSFileSystem::Impl {
       options.set<gc::UnifiedCredentialsOption>(gc::MakeInsecureCredentials());
     }
     options.set<gcs::UploadBufferSizeOption>(kUploadBufferSize);
+
+    auto max_retry_count = hiveConfig_->gcsMaxRetryCount();
+    if (max_retry_count) {
+      options.set<gcs::RetryPolicyOption>(
+          gcs::LimitedErrorCountRetryPolicy(max_retry_count.value()).clone());
+    }
+
+    auto max_retry_time = hiveConfig_->gcsMaxRetryTime();
+    if (max_retry_time) {
+      auto retry_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+          facebook::velox::config::toDuration(max_retry_time.value()));
+      options.set<gcs::RetryPolicyOption>(
+          gcs::LimitedTimeRetryPolicy(retry_time).clone());
+    }
 
     auto endpointOverride = hiveConfig_->gcsEndpoint();
     if (!endpointOverride.empty()) {
@@ -300,7 +315,7 @@ class GCSFileSystem::Impl {
   std::shared_ptr<gcs::Client> client_;
 };
 
-GCSFileSystem::GCSFileSystem(std::shared_ptr<const Config> config)
+GCSFileSystem::GCSFileSystem(std::shared_ptr<const config::ConfigBase> config)
     : FileSystem(config) {
   impl_ = std::make_shared<Impl>(config.get());
 }

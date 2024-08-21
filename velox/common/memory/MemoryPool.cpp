@@ -27,6 +27,11 @@
 
 #include <re2/re2.h>
 
+DEFINE_bool(
+    velox_memory_pool_capacity_transfer_across_tasks,
+    false,
+    "Whether allow to memory capacity transfer between memory pools from different tasks, which might happen in use case like Spark-Gluten");
+
 DECLARE_bool(velox_suppress_memory_capacity_exceeding_error_message);
 
 using facebook::velox::common::testutil::TestValue;
@@ -67,10 +72,10 @@ struct MemoryUsage {
   uint64_t peakUsage;
 
   bool operator>(const MemoryUsage& other) const {
-    return std::tie(currentUsage, reservedUsage, peakUsage, name) >
+    return std::tie(reservedUsage, currentUsage, peakUsage, name) >
         std::tie(
-               other.currentUsage,
                other.reservedUsage,
+               other.currentUsage,
                other.peakUsage,
                other.name);
   }
@@ -121,7 +126,7 @@ void treeMemoryUsageVisitor(
   }
   const MemoryUsage usage{
       .name = pool->name(),
-      .currentUsage = stats.currentBytes,
+      .currentUsage = stats.usedBytes,
       .reservedUsage = stats.reservedBytes,
       .peakUsage = stats.peakBytes,
   };
@@ -165,8 +170,8 @@ std::string capacityToString(int64_t capacity) {
 
 std::string MemoryPool::Stats::toString() const {
   return fmt::format(
-      "currentBytes:{} reservedBytes:{} peakBytes:{} cumulativeBytes:{} numAllocs:{} numFrees:{} numReserves:{} numReleases:{} numShrinks:{} numReclaims:{} numCollisions:{} numCapacityGrowths:{}",
-      succinctBytes(currentBytes),
+      "usedBytes:{} reservedBytes:{} peakBytes:{} cumulativeBytes:{} numAllocs:{} numFrees:{} numReserves:{} numReleases:{} numShrinks:{} numReclaims:{} numCollisions:{} numCapacityGrowths:{}",
+      succinctBytes(usedBytes),
       succinctBytes(reservedBytes),
       succinctBytes(peakBytes),
       succinctBytes(cumulativeBytes),
@@ -182,7 +187,7 @@ std::string MemoryPool::Stats::toString() const {
 
 bool MemoryPool::Stats::operator==(const MemoryPool::Stats& other) const {
   return std::tie(
-             currentBytes,
+             usedBytes,
              reservedBytes,
              peakBytes,
              cumulativeBytes,
@@ -193,7 +198,7 @@ bool MemoryPool::Stats::operator==(const MemoryPool::Stats& other) const {
              numCollisions,
              numCapacityGrowths) ==
       std::tie(
-             other.currentBytes,
+             other.usedBytes,
              other.reservedBytes,
              other.peakBytes,
              other.cumulativeBytes,
@@ -233,6 +238,7 @@ MemoryPool::~MemoryPool() {
   VELOX_CHECK(children_.empty());
 }
 
+// static
 std::string MemoryPool::kindString(Kind kind) {
   switch (kind) {
     case Kind::kLeaf:
@@ -287,16 +293,15 @@ void MemoryPool::visitChildren(
     }
   }
 
-  // NOTE: we should call 'visitor' on child pool object out of
-  // 'poolMutex_' to avoid potential recursive locking issues. Firstly, the
-  // user provided 'visitor' might try to acquire this memory pool lock again.
-  // Secondly, the shared child pool reference created from the weak pointer
-  // might be the last reference if some other threads drop all the external
-  // references during this time window. Then drop of this last shared reference
-  // after 'visitor' call will trigger child memory pool destruction in that
-  // case. The child memory pool destructor will remove its weak pointer
-  // reference from the parent pool which needs to acquire this memory pool lock
-  // again.
+  // NOTE: we should call 'visitor' on child pool object out of 'poolMutex_' to
+  // avoid potential recursive locking issues. Firstly, the user provided
+  // 'visitor' might try to acquire this memory pool lock again. Secondly, the
+  // shared child pool reference created from the weak pointer might be the last
+  // reference if some other threads drop all the external references during
+  // this time window. Then drop of this last shared reference after 'visitor'
+  // call will trigger child memory pool destruction in that case. The child
+  // memory pool destructor will remove its weak pointer reference from the
+  // parent pool which needs to acquire this memory pool lock again.
   for (auto& child : children) {
     if (!visitor(child.get())) {
       return;
@@ -307,8 +312,15 @@ void MemoryPool::visitChildren(
 std::shared_ptr<MemoryPool> MemoryPool::addLeafChild(
     const std::string& name,
     bool threadSafe,
-    std::unique_ptr<MemoryReclaimer> reclaimer) {
+    std::unique_ptr<MemoryReclaimer> _reclaimer) {
   CHECK_POOL_MANAGEMENT_OP(addLeafChild);
+  // NOTE: we shall only set reclaimer in a child pool if its parent has also
+  // set. Otherwise it should be mis-configured.
+  VELOX_CHECK(
+      reclaimer() != nullptr || _reclaimer == nullptr,
+      "Child memory pool {} shall only set memory reclaimer if its parent {} has also set",
+      name,
+      name_);
 
   std::unique_lock guard{poolMutex_};
   VELOX_CHECK_EQ(
@@ -316,21 +328,28 @@ std::shared_ptr<MemoryPool> MemoryPool::addLeafChild(
       0,
       "Leaf child memory pool {} already exists in {}",
       name,
-      toString());
+      name_);
   auto child = genChild(
       shared_from_this(),
       name,
       MemoryPool::Kind::kLeaf,
       threadSafe,
-      std::move(reclaimer));
+      std::move(_reclaimer));
   children_.emplace(name, child);
   return child;
 }
 
 std::shared_ptr<MemoryPool> MemoryPool::addAggregateChild(
     const std::string& name,
-    std::unique_ptr<MemoryReclaimer> reclaimer) {
+    std::unique_ptr<MemoryReclaimer> _reclaimer) {
   CHECK_POOL_MANAGEMENT_OP(addAggregateChild);
+  // NOTE: we shall only set reclaimer in a child pool if its parent has also
+  // set. Otherwise it should be mis-configured.
+  VELOX_CHECK(
+      reclaimer() != nullptr || _reclaimer == nullptr,
+      "Child memory pool {} shall only set memory reclaimer if its parent {} has also set",
+      name,
+      name_);
 
   std::unique_lock guard{poolMutex_};
   VELOX_CHECK_EQ(
@@ -338,13 +357,13 @@ std::shared_ptr<MemoryPool> MemoryPool::addAggregateChild(
       0,
       "Child memory pool {} already exists in {}",
       name,
-      toString());
+      name_);
   auto child = genChild(
       shared_from_this(),
       name,
       MemoryPool::Kind::kAggregate,
       true,
-      std::move(reclaimer));
+      std::move(_reclaimer));
   children_.emplace(name, child);
   return child;
 }
@@ -399,13 +418,12 @@ MemoryPoolImpl::MemoryPoolImpl(
     Kind kind,
     std::shared_ptr<MemoryPool> parent,
     std::unique_ptr<MemoryReclaimer> reclaimer,
-    GrowCapacityCallback growCapacityCb,
     DestructionCallback destructionCb,
     const Options& options)
     : MemoryPool{name, kind, parent, options},
       manager_{memoryManager},
       allocator_{manager_->allocator()},
-      growCapacityCb_(std::move(growCapacityCb)),
+      arbitrator_{manager_->arbitrator()},
       destructionCb_(std::move(destructionCb)),
       debugPoolNameRegex_(debugEnabled_ ? *(debugPoolNameRegex().rlock()) : ""),
       reclaimer_(std::move(reclaimer)),
@@ -413,17 +431,9 @@ MemoryPoolImpl::MemoryPoolImpl(
       // actually used memory arbitration policy.
       capacity_(parent_ != nullptr ? kMaxMemory : 0) {
   VELOX_CHECK(options.threadSafe || isLeaf());
-  // NOTE: we shall only set reclaimer in a child pool if its parent has also
-  // set. Otherwise. it should be mis-configured.
   VELOX_CHECK(
-      parent_ == nullptr || parent_->reclaimer() != nullptr ||
-          reclaimer_ == nullptr,
-      "Child memory pool {} shall only set memory reclaimer if its parent {} has also set",
-      name_,
-      parent_->name());
-  VELOX_CHECK(
-      isRoot() || (destructionCb_ == nullptr && growCapacityCb_ == nullptr),
-      "Only root memory pool allows to set destruction and capacity grow callbacks: {}",
+      isRoot() || destructionCb_ == nullptr,
+      "Only root memory pool allows to set destruction callbacks: {}",
       name_);
 }
 
@@ -469,7 +479,7 @@ MemoryPool::Stats MemoryPoolImpl::stats() const {
 
 MemoryPool::Stats MemoryPoolImpl::statsLocked() const {
   Stats stats;
-  stats.currentBytes = currentBytesLocked();
+  stats.usedBytes = usedBytes();
   stats.reservedBytes = reservationBytes_;
   stats.peakBytes = peakBytes_;
   stats.cumulativeBytes = cumulativeBytes_;
@@ -682,6 +692,38 @@ int64_t MemoryPoolImpl::capacity() const {
   return capacity_;
 }
 
+int64_t MemoryPoolImpl::usedBytes() const {
+  if (isLeaf()) {
+    return usedReservationBytes_;
+  }
+  if (reservedBytes() == 0) {
+    return 0;
+  }
+  int64_t usedBytes{0};
+  visitChildren([&](MemoryPool* pool) {
+    usedBytes += pool->usedBytes();
+    return true;
+  });
+  return usedBytes;
+}
+
+int64_t MemoryPoolImpl::releasableReservation() const {
+  if (isLeaf()) {
+    std::lock_guard<std::mutex> l(mutex_);
+    return std::max<int64_t>(
+        0, reservationBytes_ - quantizedSize(usedReservationBytes_));
+  }
+  if (reservedBytes() == 0) {
+    return 0;
+  }
+  int64_t releasableBytes{0};
+  visitChildren([&](MemoryPool* pool) {
+    releasableBytes += pool->releasableReservation();
+    return true;
+  });
+  return releasableBytes;
+}
+
 std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(
     std::shared_ptr<MemoryPool> parent,
     const std::string& name,
@@ -694,7 +736,6 @@ std::shared_ptr<MemoryPool> MemoryPoolImpl::genChild(
       kind,
       parent,
       std::move(reclaimer),
-      nullptr,
       nullptr,
       Options{
           .alignment = alignment_,
@@ -804,8 +845,7 @@ bool MemoryPoolImpl::incrementReservationThreadSafe(
 
   VELOX_CHECK_NULL(parent_);
 
-  ++numCapacityGrowths_;
-  if (growCapacityCb_(requestor, size)) {
+  if (growCapacity(requestor, size)) {
     TestValue::adjust(
         "facebook::velox::memory::MemoryPoolImpl::incrementReservationThreadSafe::AfterGrowCallback",
         this);
@@ -814,15 +854,25 @@ bool MemoryPoolImpl::incrementReservationThreadSafe(
     return true;
   }
   VELOX_MEM_POOL_CAP_EXCEEDED(fmt::format(
-      "Exceeded memory pool cap of {} with max {} when requesting {}, memory "
-      "manager cap is {}, requestor '{}' with current usage {}\n{}",
+      "Exceeded memory pool capacity after attempt to grow capacity "
+      "through arbitration. Requestor pool name '{}', request size {}, memory "
+      "pool capacity {}, memory pool max capacity {}, memory manager capacity "
+      "{}, current usage {}\n{}",
+      requestor->name(),
+      succinctBytes(size),
       capacityToString(capacity()),
       capacityToString(maxCapacity_),
-      succinctBytes(size),
       capacityToString(manager_->capacity()),
-      requestor->name(),
-      succinctBytes(requestor->currentBytes()),
+      succinctBytes(requestor->usedBytes()),
       treeMemoryUsage()));
+}
+
+bool MemoryPoolImpl::growCapacity(MemoryPool* requestor, uint64_t size) {
+  VELOX_CHECK(requestor->isLeaf());
+  ++numCapacityGrowths_;
+
+  ScopedMemoryPoolArbitrationCtx arbitrationCtx(requestor);
+  return arbitrator_->growCapacity(this, size);
 }
 
 bool MemoryPoolImpl::maybeIncrementReservation(uint64_t size) {
@@ -832,8 +882,8 @@ bool MemoryPoolImpl::maybeIncrementReservation(uint64_t size) {
 
     // NOTE: we allow memory pool to overuse its memory during the memory
     // arbitration process. The memory arbitration process itself needs to
-    // ensure the the memory pool usage of the memory pool is within the
-    // capacity limit after the arbitration operation completes.
+    // ensure the memory pool usage of the memory pool is within the capacity
+    // limit after the arbitration operation completes.
     if (FOLLY_UNLIKELY(
             (reservationBytes_ + size > capacity_) &&
             !underMemoryArbitration())) {
@@ -923,7 +973,7 @@ std::string MemoryPoolImpl::treeMemoryUsage(bool skipEmptyPool) const {
     const Stats stats = statsLocked();
     const MemoryUsage usage{
         .name = name(),
-        .currentUsage = stats.currentBytes,
+        .currentUsage = stats.usedBytes,
         .reservedUsage = stats.reservedBytes,
         .peakUsage = stats.peakBytes};
     out << usage.toString() << "\n";
@@ -954,7 +1004,11 @@ uint64_t MemoryPoolImpl::freeBytes() const {
   if (capacity_ == kMaxMemory) {
     return 0;
   }
-  VELOX_CHECK_GE(capacity_, reservationBytes_);
+  if (capacity_ < reservationBytes_) {
+    // NOTE: the memory reservation could be temporarily larger than its
+    // capacity if this memory pool is under memory arbitration processing.
+    return 0;
+  }
   return capacity_ - reservationBytes_;
 }
 
@@ -1014,7 +1068,7 @@ void MemoryPoolImpl::leaveArbitration() noexcept {
 
 uint64_t MemoryPoolImpl::shrink(uint64_t targetBytes) {
   if (parent_ != nullptr) {
-    return parent_->shrink(targetBytes);
+    return toImpl(parent_)->shrink(targetBytes);
   }
   std::lock_guard<std::mutex> l(mutex_);
   // We don't expect to shrink a memory pool without capacity limit.
@@ -1029,7 +1083,7 @@ uint64_t MemoryPoolImpl::shrink(uint64_t targetBytes) {
 
 bool MemoryPoolImpl::grow(uint64_t growBytes, uint64_t reservationBytes) {
   if (parent_ != nullptr) {
-    return parent_->grow(growBytes, reservationBytes);
+    return toImpl(parent_)->grow(growBytes, reservationBytes);
   }
   // TODO: add to prevent from growing beyond the max capacity and the
   // corresponding support in memory arbitrator.
@@ -1198,11 +1252,34 @@ void MemoryPoolImpl::leakCheckDbg() {
   std::ostream oss(&buf);
   oss << "Detected total of " << debugAllocRecords_.size()
       << " leaked allocations:\n";
+  struct AllocationStats {
+    uint64_t size{0};
+    uint64_t numAllocations{0};
+  };
+  std::unordered_map<std::string, AllocationStats> sizeAggregatedRecords;
   for (const auto& itr : debugAllocRecords_) {
     const auto& allocationRecord = itr.second;
-    oss << "======== Leaked memory allocation of " << allocationRecord.size
-        << " bytes ========\n"
-        << allocationRecord.callStack.toString();
+    const auto stackStr = allocationRecord.callStack.toString();
+    if (sizeAggregatedRecords.count(stackStr) == 0) {
+      sizeAggregatedRecords[stackStr] = AllocationStats();
+    }
+    sizeAggregatedRecords[stackStr].size += allocationRecord.size;
+    ++sizeAggregatedRecords[stackStr].numAllocations;
+  }
+  std::vector<std::pair<std::string, AllocationStats>> sortedRecords(
+      sizeAggregatedRecords.begin(), sizeAggregatedRecords.end());
+  std::sort(
+      sortedRecords.begin(),
+      sortedRecords.end(),
+      [](const std::pair<std::string, AllocationStats>& a,
+         std::pair<std::string, AllocationStats>& b) {
+        return a.second.size > b.second.size;
+      });
+  for (const auto& pair : sortedRecords) {
+    oss << "======== Leaked memory from " << pair.second.numAllocations
+        << " total allocations of " << succinctBytes(pair.second.size)
+        << " total size ========\n"
+        << pair.first << "\n";
   }
   VELOX_FAIL(buf.str());
 }

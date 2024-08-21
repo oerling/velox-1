@@ -73,6 +73,13 @@ class HashProbe : public Operator {
   }
 
  private:
+  // Indicates if the join type includes misses from the left side in the
+  // output.
+  static bool joinIncludesMissesFromLeft(core::JoinType joinType) {
+    return isLeftJoin(joinType) || isFullJoin(joinType) ||
+        isAntiJoin(joinType) || isLeftSemiProjectJoin(joinType);
+  }
+
   void setState(ProbeOperatorState state);
   void checkStateTransition(ProbeOperatorState state);
 
@@ -86,11 +93,14 @@ class HashProbe : public Operator {
   // the hash table.
   void asyncWaitForHashTable();
 
-  // Sets up 'filter_' and related members.p
+  // Sets up 'filter_' and related members.
   void initializeFilter(
       const core::TypedExprPtr& filter,
       const RowTypePtr& probeType,
       const RowTypePtr& tableType);
+
+  // Setup 'resultIter_'.
+  void initializeResultIter();
 
   // If 'toSpillOutput', the produced output is spilled to disk for memory
   // arbitration.
@@ -157,6 +167,8 @@ class HashProbe : public Operator {
       std::function<int32_t(char**, int32_t)> iterator);
 
   void ensureLoadedIfNotAtEnd(column_index_t channel);
+
+  void ensureLoaded(column_index_t channel);
 
   // Indicates if the operator has more probe inputs from either the upstream
   // operator or the spill input reader.
@@ -291,8 +303,6 @@ class HashProbe : public Operator {
   // Wake up the peer hash probe operators when last probe operator finishes.
   void wakeupPeerOperators();
 
-  void ensureFilterInput(vector_size_t size);
-
   //  std::vector<Operator*> findPeerOperators();
 
   // TODO: Define batch size as bytes based on RowContainer row sizes.
@@ -389,7 +399,9 @@ class HashProbe : public Operator {
   // Type of the RowVector for filter inputs.
   RowTypePtr filterInputType_;
 
-  RowVectorPtr filterInput_;
+  // The input channels that are projected to the output.
+  std::unordered_set<column_index_t> projectedInputColumns_;
+
 
   // Maps input channels to channels in 'filterInputType_'.
   std::vector<IdentityProjection> filterInputProjections_;
@@ -603,21 +615,21 @@ class HashProbe : public Operator {
 
   BaseHashTable::RowsIterator lastProbeIterator_;
 
-  /// For left and anti join with filter, tracks the probe side rows which had
-  /// matches on the build side but didn't pass the filter.
+  // For left and anti join with filter, tracks the probe side rows which had
+  // matches on the build side but didn't pass the filter.
   NoMatchDetector noMatchDetector_;
 
-  /// For left semi join filter with extra filter, de-duplicates probe side rows
-  /// with multiple matches.
+  // For left semi join filter with extra filter, de-duplicates probe side rows
+  // with multiple matches.
   LeftSemiFilterJoinTracker leftSemiFilterJoinTracker_;
 
-  /// For left semi join project with filter, de-duplicates probe side rows with
-  /// multiple matches.
+  // For left semi join project with filter, de-duplicates probe side rows with
+  // multiple matches.
   LeftSemiProjectJoinTracker leftSemiProjectJoinTracker_;
 
   // Keeps track of returned results between successive batches of
   // output for a batch of input.
-  BaseHashTable::JoinResultIterator results_;
+  std::unique_ptr<BaseHashTable::JoinResultIterator> resultIter_;
 
   RowVectorPtr output_;
 
@@ -629,7 +641,7 @@ class HashProbe : public Operator {
   SelectivityVector activeRows_;
 
   // True if passingInputRows is up to date.
-  bool passingInputRowsInitialized_;
+  bool passingInputRowsInitialized_ = false;
 
   // Set of input rows for which there is at least one join hit. All
   // set if right side optional. Used when loading lazy vectors for
