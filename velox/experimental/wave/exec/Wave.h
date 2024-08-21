@@ -960,9 +960,9 @@ class WaveStream {
   // Host pinned memory to which 'deviceReturnData' is copied.
   WaveBufferPtr hostReturnData_;
 
-  // Pointer to statuses inside 'hostReturnData_'.
-  BlockStatus* hostStatus_{nullptr};
-
+  // Host side copy of BlockStatus.
+  WaveBufferPtr hostBlockStatus_;
+  
   // Time when host side activity last started on 'this'.
   WaveTime start_;
 

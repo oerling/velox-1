@@ -322,12 +322,13 @@ void WaveStream::setReturnData(bool needStatus) {
     return last;
   }
 
+
   
 void WaveStream::resultToHost() {
   if (!hostReturnEvent_) {
     hostReturnEvent_ = newEvent();
   }
-  auto numBlocks = bits::roundUp(numRows, kBlocksize) / kBlockSize;
+  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   if (!hostBlockStatus_ || hostBlockStatus_->size() < numBlocks * sizeof(BlockStatus)) {
     hostBlockStatus_ = getSmallTransferArena().allocate<BlockStatus>(numBlocks);
   }
@@ -335,7 +336,7 @@ void WaveStream::resultToHost() {
   Stream* transferStream = streams_[0].get();
   if (streams_.size() > 1) {
     // If many events, queue up the transfer on the first after 
-    transferStream = streams_[0];
+    transferStream = streams_[0].get();
     for (auto i = 1; i < streams_.size(); ++i) {
       lastEvent_[i]->wait(*transferStream);
     }
@@ -349,8 +350,8 @@ void WaveStream::resultToHost() {
     
   transferStream->deviceToHostAsync(
 				 hostBlockStatus_->as<char>(),
-				 inputControl->params.blockStatus,
-				 numBlocks * sizeof(BlockStatus)_);
+				 outputControl->params.status,
+				 numBlocks * sizeof(BlockStatus));
   
   hostReturnEvent_->record(*transferStream);
 }
@@ -358,27 +359,50 @@ void WaveStream::resultToHost() {
   uint8_t getLastContinuable(uint8_t lastOp, int32_t numBlocks, BlockStatus* status, std::vector<uint64_t>& bits) {
     // Get the highest number <= lastOp and return that. Set a bit in 'bits' for the positions where the numbver occurs.
     using Batch = xsimd::batch<uint8_t>;
-    constexpr kBatchSize = Batch::size;
+    constexpr int32_t kBatchSize = Batch::size;
     uint8_t max = 0;
+    auto as8 = [](ErrorCode* c) {return reinterpret_cast<uint8_t*>(c); };
     auto lastOpVec = Batch::broadcast(lastOp);
+    auto maxLanes = Batch::broadcast(0);
     for (auto i = 0; i < numBlocks; ++i) {
       for (auto j = 0; j < kBlockSize; j += kBatchSize) {
-	auto lanes = Batch::load(&status[i].errors[j]);
-	lanes = xsimd::blend(lanes > lastOpVec, Batch::broadcast(0) : lanes);
-	
+	auto lanes = Batch::load_unaligned(as8(&status[i].errors[j]));
+	lanes = xsimd::select(lanes > lastOpVec, Batch::broadcast(0),  lanes);
+	maxLanes = xsimd::select(lanes > maxLanes, lanes, maxLanes);
       }
-      auto bytes = xsimd::batch<uint8_t>::load_unaligned(
     }
+    uint8_t values[kBatchSize];
+    *reinterpret_cast<Batch*>(&values[0]) = maxLanes;
+    uint8_t maxInData = 0;
+    for (auto i = 0; i < kBatchSize; ++i) {
+      maxInData = std::max(maxInData, values[i]);
+    }
+
+    bits.resize(numBlocks * kBlockSize / 64);
+    auto maxVec = Batch::broadcast(maxInData);
+    int32_t fill = 0;
+    for (auto i = 0; i < numBlocks; ++i) {
+      for (auto j = 0; j < kBlockSize; j += kBatchSize * 2) {
+	uint64_t low = simd::toBitMask(maxVec == Batch::load_unaligned(as8(&status[i].errors[j])));
+	uint64_t high = simd::toBitMask(maxVec == Batch::load_unaligned(as8(&status[i].errors[j + kBatchSize])));
+	bits[fill++] = low | (high << kBatchSize);
+      }
+    }
+
+    return maxInData;
   }    
   
 bool WaveStream::interpretArrival() {
-  auto numBlocks = bits::roundUp(numRows_, kBlockStatus) / kBlockStatus;
+  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   uint8_t last = 255;
-  std::vector<uint64_t> bits;
   uint8_t lastOp;
+  auto* status = hostBlockStatus_->as<BlockStatus>();
   do {
-    lastOp = getLastContinuable(lastOp, bits);
-  } while ();
+    std::vector<uint64_t> bits;
+    lastOp = getLastContinuable(lastOp, numBlocks, status, bits);
+    
+  } while (lastOp > 1);
+  return true;
 }
 
 namespace {
