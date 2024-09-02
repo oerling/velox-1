@@ -265,6 +265,7 @@ VectorPtr wrapOne(
     BufferPtr extraNulls,
     WrapState& state) {
   if (!mapping) {
+    VELOX_CHECK_NULL(extraNulls);
     return vector;
   }
   if (vector->encoding() != VectorEncoding::Simple::DICTIONARY) {

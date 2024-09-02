@@ -3314,7 +3314,7 @@ TEST_F(
   ASSERT_FALSE(c1Dict->isNullAt(0));
   ASSERT_EQ(c1Dict->valueAt(0), 0);
   ASSERT_EQ(
-      c1Dict->valueVector()->encoding(), VectorEncoding::Simple::DICTIONARY);
+      c1Dict->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
   c1Dict = c1Dict->valueVector()->asUnchecked<DictionaryVector<int64_t>>();
   ASSERT_EQ(c1Dict->valueVector()->size(), 2);
   ASSERT_FALSE(cursor->moveNext());
