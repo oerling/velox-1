@@ -17,6 +17,7 @@
 #include "velox/exec/Unnest.h"
 #include "velox/common/base/Nulls.h"
 #include "velox/vector/FlatVector.h"
+#include "velox/exec/OperatorUtils.h"
 
 namespace facebook::velox::exec {
 Unnest::Unnest(

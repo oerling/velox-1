@@ -1085,7 +1085,6 @@ bool HashProbe::maybeReadSpillOutput() {
 RowVectorPtr HashProbe::createFilterInput(vector_size_t size) {
   std::vector<VectorPtr> filterColumns(filterInputType_->size());
   WrapState state;
-  ensureFilterInput(size);
   for (auto projection : filterInputProjections_) {
     if (projectedInputColumns_.find(projection.inputChannel) !=
         projectedInputColumns_.end()) {
@@ -1100,7 +1099,7 @@ RowVectorPtr HashProbe::createFilterInput(vector_size_t size) {
       ensureLoadedIfNotAtEnd(projection.inputChannel);
     }
 
-    filterColumns[projection.outputChannel] = wrapChild(
+    filterColumns[projection.outputChannel] = wrapOne(
 							size, outputRowMapping_, input_->childAt(projection.inputChannel), nullptr, state);
   }
 
