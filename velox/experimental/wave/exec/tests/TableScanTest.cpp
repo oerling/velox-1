@@ -88,9 +88,9 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     int32_t cnt = 0;
     for (auto& vector : vectors_) {
       if (custom) {
-	custom(vector);
+        custom(vector);
       } else {
-	makeRange(vector, 1000000000, notNull);
+        makeRange(vector, 1000000000, notNull);
       }
       auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
       for (auto i = 0; i < rn->size(); ++i) {
@@ -347,29 +347,27 @@ TEST_P(TableScanTest, scanGroupBy) {
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
-  auto splits = makeData(type, numBatches_, batchSize_, true,
-			 [](RowVectorPtr row) {
-			   makeRange(row, 1000000000, true, 1, -1);
-			 });
+  auto splits =
+      makeData(type, numBatches_, batchSize_, true, [](RowVectorPtr row) {
+        makeRange(row, 1000000000, true, 1, -1);
+      });
 
-  auto plan =
-      PlanBuilder(pool_.get())
-          .tableScan(type, {"c1 < 950000000"})
-          .project(
-              {"c0",
-               "c1 + 1 as c1",
-               "c2 + 2 as c2",
-               "c3 + c2 as c3",
-               "rn + 1 as rn"})
-          .singleAggregation(
-              {"c0"}, {"sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
-          .planNode();
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(type, {"c1 < 950000000"})
+                  .project(
+                      {"c0",
+                       "c1 + 1 as c1",
+                       "c2 + 2 as c2",
+                       "c3 + c2 as c3",
+                       "rn + 1 as rn"})
+                  .singleAggregation(
+                      {"c0"}, {"sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
+                  .planNode();
   auto task = assertQuery(
       plan,
       splits,
       "SELECT c0, sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000 group by c0");
 }
-
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     TableScanTests,

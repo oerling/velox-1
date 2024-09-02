@@ -211,7 +211,9 @@ class Program;
 /// Represents a device side operator state, like a join/group by hash table or
 /// repartition output. Can be scoped to a WaveStream or to a Program.
 struct OperatorState {
-  /// Marks that 'stream' will enqueue a program touching 'this'. Blocks until 'this' is available. Throws an error if 'this' has entered an error state, e.g. out of memory.
+  /// Marks that 'stream' will enqueue a program touching 'this'. Blocks until
+  /// 'this' is available. Throws an error if 'this' has entered an error state,
+  /// e.g. out of memory.
   void enter(WaveStream* stream);
 
   /// Marks that 'stream' has completed a program touching 'this'.
@@ -228,7 +230,9 @@ struct OperatorState {
   /// the caller must call leave() when done.
   bool enterExclusive(WaveStream* stream);
 
-  /// Sets an error. Any thread calling enter() or enterExclusive() will throw the error. The caller must have successfully called enterExclusive() first.
+  /// Sets an error. Any thread calling enter() or enterExclusive() will throw
+  /// the error. The caller must have successfully called enterExclusive()
+  /// first.
   void setError(WaveStream* stream, std::exception_ptr error);
 
   int32_t id;
@@ -619,7 +623,7 @@ class WaveStream {
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
-	instructionStatus_(state) {
+        instructionStatus_(state) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -870,7 +874,8 @@ class WaveStream {
 
   std::string toString() const;
 
-  /// Reads the BlockStatus from device and marks programs that need to be continued.
+  /// Reads the BlockStatus from device and marks programs that need to be
+  /// continued.
   bool interpretArrival();
 
   const InstructionStatus& instructionStatus() const {
@@ -885,7 +890,6 @@ class WaveStream {
 
   LaunchControl* lastControl() const;
 
-  
   static std::unique_ptr<Event> eventFromReserve();
   static void releaseEvent(std::unique_ptr<Event>&& event);
 
@@ -918,7 +922,6 @@ class WaveStream {
   // Stream level states like small partial aggregates.
   OperatorStateMap streamStateMap_;
 
-
   // Space reserved for per-instruction return state above BlockStatus array.
   InstructionStatus instructionStatus_;
 
@@ -939,7 +942,7 @@ class WaveStream {
   // If status return copy has been initiated, then this is the event to sync
   // with before accessing the 'hostReturnData_'
   Event* hostReturnEvent_{nullptr};
-  
+
   // all events recorded on any stream. Events, once seen realized, are moved
   // back to reserve from here.
   folly::F14FastSet<Event*> allEvents_;
@@ -971,7 +974,7 @@ class WaveStream {
 
   // Host side copy of BlockStatus.
   WaveBufferPtr hostBlockStatus_;
-  
+
   // Time when host side activity last started on 'this'.
   WaveTime start_;
 

@@ -36,7 +36,7 @@ class WaveDriver : public exec::SourceOperator {
       SubfieldMap subfields,
       std::vector<std::unique_ptr<AbstractOperand>> operands,
       std::vector<std::unique_ptr<AbstractState>> states,
-	     InstructionStatus instructionStatus);
+      InstructionStatus instructionStatus);
 
   RowVectorPtr getOutput() override;
 
@@ -193,7 +193,7 @@ class WaveDriver : public exec::SourceOperator {
 
   // Space reserved in BlockStatus array for instruction level return state.
   InstructionStatus instructionStatus_;
-  
+
   RowVectorPtr result_;
 };
 

@@ -23,13 +23,12 @@ std::string rowTypeString(const Type& type) {
 }
 
 void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
-  instructionStatus =reserved;
+  instructionStatus = reserved;
   // A group by produces 8 bytes of grid level state and 1 byte per lane.
   reservedState.gridState += 8;
   ReservedState.blockState += kBlockSize;
 }
 
-  
 AdvanceResult AbstractReadAggregation::canAdvance(
     WaveStream& stream,
     LaunchControl* control,

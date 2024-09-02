@@ -312,7 +312,7 @@ Advance WaveDriver::advance(int pipelineIdx) {
         pipeline.running.size() + pipeline.arrived.size() <
             FLAGS_max_streams_per_driver) {
       auto stream = std::make_unique<WaveStream>(
-						 *arena_, *deviceArena_, &operands(), &stateMap_, instructionStatus_);
+          *arena_, *deviceArena_, &operands(), &stateMap_, instructionStatus_);
       ++stream->stats().numWaves;
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));

@@ -537,9 +537,8 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
   for (auto i = 0; i < node->groupingKeys().size(); ++i) {
     std::string name = aggInstruction->keys[i]->label;
     operators_.back()->defined(
-			       Value(toSubfield(name)), aggInstruction->keys[i]);
+        Value(toSubfield(name)), aggInstruction->keys[i]);
     definedIn_[aggInstruction->keys[i]] = reader;
-
   }
   for (auto i = 0; i < aggInstruction->aggregates.size(); ++i) {
     std::string name = aggInstruction->aggregates[i].result->label;

@@ -310,32 +310,31 @@ void WaveStream::setReturnData(bool needStatus) {
   }
 }
 
-  LaunchControl* WaveStream::lastControl() const {
-    LaunchControl* last = nullptr;
-    int id = -1;
-    for (auto& pair : launchControl_) {
-      if (pair.first > id) {
-	id = pair.first;
-	last = pair.second.back().get();
-      }
+LaunchControl* WaveStream::lastControl() const {
+  LaunchControl* last = nullptr;
+  int id = -1;
+  for (auto& pair : launchControl_) {
+    if (pair.first > id) {
+      id = pair.first;
+      last = pair.second.back().get();
     }
-    return last;
   }
+  return last;
+}
 
-
-  
 void WaveStream::resultToHost() {
   if (!hostReturnEvent_) {
     hostReturnEvent_ = newEvent();
   }
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
-  if (!hostBlockStatus_ || hostBlockStatus_->size() < numBlocks * sizeof(BlockStatus)) {
+  if (!hostBlockStatus_ ||
+      hostBlockStatus_->size() < numBlocks * sizeof(BlockStatus)) {
     hostBlockStatus_ = getSmallTransferArena().allocate<BlockStatus>(numBlocks);
   }
   auto* outputControl = lastControl();
   Stream* transferStream = streams_[0].get();
   if (streams_.size() > 1) {
-    // If many events, queue up the transfer on the first after 
+    // If many events, queue up the transfer on the first after
     transferStream = streams_[0].get();
     for (auto i = 1; i < streams_.size(); ++i) {
       lastEvent_[i]->wait(*transferStream);
@@ -343,55 +342,63 @@ void WaveStream::resultToHost() {
   }
   if (hostReturnDataUsed_ > 0) {
     transferStream->deviceToHostAsync(
-				   hostReturnData_->as<char>(),
-				   deviceReturnData_->as<char>(),
-				   hostReturnDataUsed_);
+        hostReturnData_->as<char>(),
+        deviceReturnData_->as<char>(),
+        hostReturnDataUsed_);
   }
-    
+
   transferStream->deviceToHostAsync(
-				 hostBlockStatus_->as<char>(),
-				 outputControl->params.status,
-				 numBlocks * sizeof(BlockStatus));
-  
+      hostBlockStatus_->as<char>(),
+      outputControl->params.status,
+      numBlocks * sizeof(BlockStatus));
+
   hostReturnEvent_->record(*transferStream);
 }
 
-  uint8_t getLastContinuable(uint8_t lastOp, int32_t numBlocks, BlockStatus* status, std::vector<uint64_t>& bits) {
-    // Get the highest number <= lastOp and return that. Set a bit in 'bits' for the positions where the numbver occurs.
-    using Batch = xsimd::batch<uint8_t>;
-    constexpr int32_t kBatchSize = Batch::size;
-    uint8_t max = 0;
-    auto as8 = [](ErrorCode* c) {return reinterpret_cast<uint8_t*>(c); };
-    auto lastOpVec = Batch::broadcast(lastOp);
-    auto maxLanes = Batch::broadcast(0);
-    for (auto i = 0; i < numBlocks; ++i) {
-      for (auto j = 0; j < kBlockSize; j += kBatchSize) {
-	auto lanes = Batch::load_unaligned(as8(&status[i].errors[j]));
-	lanes = xsimd::select(lanes > lastOpVec, Batch::broadcast(0),  lanes);
-	maxLanes = xsimd::select(lanes > maxLanes, lanes, maxLanes);
-      }
+uint8_t getLastContinuable(
+    uint8_t lastOp,
+    int32_t numBlocks,
+    BlockStatus* status,
+    std::vector<uint64_t>& bits) {
+  // Get the highest number <= lastOp and return that. Set a bit in 'bits' for
+  // the positions where the numbver occurs.
+  using Batch = xsimd::batch<uint8_t>;
+  constexpr int32_t kBatchSize = Batch::size;
+  uint8_t max = 0;
+  auto as8 = [](ErrorCode* c) { return reinterpret_cast<uint8_t*>(c); };
+  auto lastOpVec = Batch::broadcast(lastOp);
+  auto maxLanes = Batch::broadcast(0);
+  for (auto i = 0; i < numBlocks; ++i) {
+    for (auto j = 0; j < kBlockSize; j += kBatchSize) {
+      auto lanes = Batch::load_unaligned(as8(&status[i].errors[j]));
+      lanes = xsimd::select(lanes > lastOpVec, Batch::broadcast(0), lanes);
+      maxLanes = xsimd::select(lanes > maxLanes, lanes, maxLanes);
     }
-    uint8_t values[kBatchSize];
-    *reinterpret_cast<Batch*>(&values[0]) = maxLanes;
-    uint8_t maxInData = 0;
-    for (auto i = 0; i < kBatchSize; ++i) {
-      maxInData = std::max(maxInData, values[i]);
-    }
+  }
+  uint8_t values[kBatchSize];
+  *reinterpret_cast<Batch*>(&values[0]) = maxLanes;
+  uint8_t maxInData = 0;
+  for (auto i = 0; i < kBatchSize; ++i) {
+    maxInData = std::max(maxInData, values[i]);
+  }
 
-    bits.resize(numBlocks * kBlockSize / 64);
-    auto maxVec = Batch::broadcast(maxInData);
-    int32_t fill = 0;
-    for (auto i = 0; i < numBlocks; ++i) {
-      for (auto j = 0; j < kBlockSize; j += kBatchSize * 2) {
-	uint64_t low = simd::toBitMask(maxVec == Batch::load_unaligned(as8(&status[i].errors[j])));
-	uint64_t high = simd::toBitMask(maxVec == Batch::load_unaligned(as8(&status[i].errors[j + kBatchSize])));
-	bits[fill++] = low | (high << kBatchSize);
-      }
+  bits.resize(numBlocks * kBlockSize / 64);
+  auto maxVec = Batch::broadcast(maxInData);
+  int32_t fill = 0;
+  for (auto i = 0; i < numBlocks; ++i) {
+    for (auto j = 0; j < kBlockSize; j += kBatchSize * 2) {
+      uint64_t low = simd::toBitMask(
+          maxVec == Batch::load_unaligned(as8(&status[i].errors[j])));
+      uint64_t high = simd::toBitMask(
+          maxVec ==
+          Batch::load_unaligned(as8(&status[i].errors[j + kBatchSize])));
+      bits[fill++] = low | (high << kBatchSize);
     }
+  }
 
-    return maxInData;
-  }    
-  
+  return maxInData;
+}
+
 bool WaveStream::interpretArrival() {
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   uint8_t last = 255;
@@ -400,7 +407,7 @@ bool WaveStream::interpretArrival() {
   do {
     std::vector<uint64_t> bits;
     lastOp = getLastContinuable(lastOp, numBlocks, status, bits);
-    
+
   } while (lastOp > 1);
   return true;
 }
@@ -1182,7 +1189,7 @@ void Program::prepareForDevice(GpuArena& arena) {
           return newState;
         };
         operatorStates_.push_back(std::move(programState));
-	physicalInst->state = abstractInst->state;
+        physicalInst->state = abstractInst->state;
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
         // the literal is copied when making the reader for aggregates.
@@ -1217,7 +1224,7 @@ void Program::prepareForDevice(GpuArena& arena) {
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.state->id;
         programState->isGlobal = true;
-	physicalInst->serial = agg.serial;
+        physicalInst->serial = agg.serial;
         physicalInst->stateIndex = operatorStates_.size();
         operatorStates_.push_back(std::move(programState));
         memcpy(physicalInst->aggregates, agg.literal, agg.literalBytes);

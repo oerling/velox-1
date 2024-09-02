@@ -303,13 +303,13 @@ bool ReadStream::makePrograms(bool& needSync) {
     setCount->step = DecodeStep::kRowCountNoFilter;
     setCount->data.rowCountNoFilter.numRows = rows_.size();
     setCount->data.rowCountNoFilter.status =
-      setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
+        setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
     setCount->data.rowCountNoFilter.gridOnly = !filters.empty();
-    
+
     control_->deviceData->as<BlockStatus>();
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
-  }
+    }
   ++nthWave_;
   resultStaging_.setReturnBuffer(waveStream->arena(), programs_.result);
   return allDone;
@@ -429,14 +429,18 @@ void ReadStream::makeControl() {
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
   auto instructionStatus = waveStream->instructionStatus();
-  int32_t instructionBytes = instructionStatus.gridStateSize + numBlocks * instructionStatus.blockSize;
+  int32_t instructionBytes =
+      instructionStatus.gridStateSize + numBlocks * instructionStatus.blockSize;
   statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
   auto deviceBytes = statusBytes_ + instructionBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
   // The operand section must be cleared before written on host. The statuses
   // are cleared on device.
-  memset(control->deviceData->as<char>() + statusBytes_ + instructionBytes, 0, info.totalBytes);
+  memset(
+      control->deviceData->as<char>() + statusBytes_ + instructionBytes,
+      0,
+      info.totalBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {
@@ -447,7 +451,9 @@ void ReadStream::makeControl() {
     }
   }
   operands = waveStream->fillOperands(
-      *this, control->deviceData->as<char>() + statusBytes_ + instructionBytes, info)[0];
+      *this,
+      control->deviceData->as<char>() + statusBytes_ + instructionBytes,
+      info)[0];
   control_ = control.get();
   waveStream->setLaunchControl(0, 0, std::move(control));
 }
