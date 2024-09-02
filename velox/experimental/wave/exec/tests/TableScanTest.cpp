@@ -82,11 +82,16 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       const RowTypePtr& type,
       int32_t numVectors,
       int32_t vectorSize,
-      bool notNull = true) {
+      bool notNull = true,
+      std::function<void(RowVectorPtr)> custom = nullptr) {
     vectors_ = makeVectors(type, numVectors, vectorSize);
     int32_t cnt = 0;
     for (auto& vector : vectors_) {
-      makeRange(vector, 1000000000, notNull);
+      if (custom) {
+	custom(vector);
+      } else {
+	makeRange(vector, 1000000000, notNull);
+      }
       auto rn = vector->childAt(type->size() - 1)->as<FlatVector<int64_t>>();
       for (auto i = 0; i < rn->size(); ++i) {
         rn->set(i, cnt++);
@@ -120,8 +125,16 @@ class TableScanTest : public virtual HiveConnectorTestBase,
   void makeRange(
       RowVectorPtr row,
       int64_t mod = std::numeric_limits<int64_t>::max(),
-      bool notNull = true) {
-    for (auto i = 0; i < row->type()->size(); ++i) {
+      bool notNull = true,
+      int32_t begin = -1,
+      int32_t end = -1) {
+    if (begin == -1) {
+      begin = 0;
+    }
+    if (end == -1) {
+      end = row->type()->size();
+    }
+    for (auto i = begin; i < end; ++i) {
       auto child = row->childAt(i);
       if (auto ints = child->as<FlatVector<int64_t>>()) {
         for (auto i = 0; i < child->size(); ++i) {
@@ -329,6 +342,34 @@ TEST_P(TableScanTest, scanAgg) {
       splits,
       "SELECT sum(c0), sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000");
 }
+
+TEST_P(TableScanTest, scanGroupBy) {
+  auto type =
+      ROW({"c0", "c1", "c2", "c3", "rn"},
+          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
+  auto splits = makeData(type, numBatches_, batchSize_, true,
+			 [](RowVectorPtr row) {
+			   makeRange(row, 1000000000, true, 1, -1);
+			 });
+
+  auto plan =
+      PlanBuilder(pool_.get())
+          .tableScan(type, {"c1 < 950000000"})
+          .project(
+              {"c0",
+               "c1 + 1 as c1",
+               "c2 + 2 as c2",
+               "c3 + c2 as c3",
+               "rn + 1 as rn"})
+          .singleAggregation(
+              {"c0"}, {"sum(c1)", "sum(c2)", "sum(c3)", "sum(rn)"})
+          .planNode();
+  auto task = assertQuery(
+      plan,
+      splits,
+      "SELECT c0, sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000 group by c0");
+}
+
 
 VELOX_INSTANTIATE_TEST_SUITE_P(
     TableScanTests,

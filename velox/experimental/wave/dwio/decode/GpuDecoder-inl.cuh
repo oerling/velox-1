@@ -909,6 +909,17 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   auto numRows = op.numRows;
   auto* status = op.status;
   auto numCounts = roundUp(numRows, kBlockSize) / kBlockSize;
+  if (op.gridStatussize > 0) {
+    uintptr_t grid = roundUp(static_cast<uintptr_t>(op.status) + numBlocks * sizeof(BlockStatus) , 8);
+    auto end = reinterpret_cast<int64_t*>(grid + op.gridStatusSize;);
+    auto ptr = reinterpret_cast<int64_t*>(grid)+ threadIdx.x;
+    for (; ptr < end; ptr += kBlockSize) {
+      *ptr = 0;
+    }
+    if (op.gridOnly) {
+      return;
+    }
+  }
   for (auto base = 0; base < numCounts; base += kBlockSize) {
     auto idx = threadIdx.x + base;
     if (idx < numCounts) {

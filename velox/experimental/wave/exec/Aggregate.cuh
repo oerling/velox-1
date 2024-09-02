@@ -23,6 +23,12 @@
 
 namespace facebook::velox::wave {
 
+__device__ void clearReturnState(
+    const IAggregate& agg,
+    WaveShared* shared) {
+  char* lanes = laneStatus(shared, agg.state);
+}
+
 __device__ __forceinline__ void aggregateKernel(
     const IAggregate& agg,
     WaveShared* shared,

@@ -325,6 +325,8 @@ struct alignas(16) GpuDecode {
   struct RowCountNoFilter {
     int32_t numRows;
     BlockStatus* status;
+    int32_t gridStatusSize;
+    bool gridOnly;
   };
 
   struct CountBits {

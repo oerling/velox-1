@@ -143,6 +143,7 @@ struct IAggregate {
   // Serial is used in BlockStatus to identify 'this' for continue.
   uint8_t serial;
   uint8_t stateIndex;
+  InstructionStatus status;
   //  'numAggre gates' Updates followed by key 'numKeys' key operand indices.
   IUpdateAgg* aggregates;
 };

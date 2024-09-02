@@ -85,8 +85,8 @@ void ReadStream::prefetchStatus(Stream* stream) {
     return;
   }
   char* data = control_->deviceData->as<char>();
-  auto size = control_->deviceData->size();
-  stream->prefetch(getDevice(), data, size);
+  auto size = control_->deviceData->size() - (statusBytes_ + gridStatusBytes_);
+  stream->prefetch(getDevice(), data + statusBytes_ + gridStatusBytes_, size);
 }
 
 void ReadStream::makeGrid(Stream* stream) {
@@ -298,12 +298,15 @@ bool ReadStream::makePrograms(bool& needSync) {
     }
   }
   filtersDone_ = true;
-  if (filters_.empty() && allDone) {
+  if (filters_.empty() || gridStateBytes_ > 0) && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
     setCount->data.rowCountNoFilter.numRows = rows_.size();
     setCount->data.rowCountNoFilter.status =
-        control_->deviceData->as<BlockStatus>();
+      setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
+    setCount->data.rowCountNoFilter.gridOnly = !filters.empty();
+    
+    control_->deviceData->as<BlockStatus>();
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
   }
@@ -425,13 +428,15 @@ void ReadStream::makeControl() {
   waveStream->setNumRows(numRows);
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
+  auto instructionStatus = waveStream->instructionStatus();
+  int32_t instructionBytes = instructionStatus.gridStateSize + numBlocks * instructionStatus.blockSize;
   statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
-  auto deviceBytes = statusBytes_ + info.totalBytes;
+  auto deviceBytes = statusBytes_ + instructionBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
   control->deviceData = waveStream->arena().allocate<char>(deviceBytes);
   // The operand section must be cleared before written on host. The statuses
   // are cleared on device.
-  memset(control->deviceData->as<char>(), 0, deviceBytes);
+  memset(control->deviceData->as<char>() + statusBytes_ + instructionBytes, 0, info.totalBytes);
   control->params.status = control->deviceData->as<BlockStatus>();
   for (auto& reader : reader_->children()) {
     if (!reader->formatData()->hasNulls() || reader->hasNonNullFilter()) {
@@ -442,7 +447,7 @@ void ReadStream::makeControl() {
     }
   }
   operands = waveStream->fillOperands(
-      *this, control->deviceData->as<char>() + statusBytes_, info)[0];
+      *this, control->deviceData->as<char>() + statusBytes_ + instructionBytes, info)[0];
   control_ = control.get();
   waveStream->setLaunchControl(0, 0, std::move(control));
 }

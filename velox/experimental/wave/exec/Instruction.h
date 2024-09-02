@@ -167,6 +167,8 @@ struct AbstractInstruction {
     return false;
   }
 
+  virtual void reserveState(InstructionStatus& state) {}
+  
   /// Sets up status return.
   virtual void setupReturn(WaveStream& stream, LaunchControl& control) const {}
 
@@ -364,6 +366,10 @@ struct AbstractAggregation : public AbstractOperator {
   bool isSink() const override {
     return true;
   }
+
+  void reserveState(InstructionStatus& state) override;
+  
+  InstructionStatus instructionStatus;
 
   bool intermediateInput{false};
   bool intermediateOutput{false};

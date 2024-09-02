@@ -613,11 +613,13 @@ class WaveStream {
       GpuArena& arena,
       GpuArena& deviceArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
-      OperatorStateMap* stateMap)
+      OperatorStateMap* stateMap,
+      InstructionStatus state)
       : arena_(arena),
         deviceArena_(deviceArena),
         operands_(operands),
-        taskStateMap_(stateMap) {
+        taskStateMap_(stateMap),
+	instructionStatus_(state) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -871,7 +873,10 @@ class WaveStream {
   /// Reads the BlockStatus from device and marks programs that need to be continued.
   bool interpretArrival();
 
-  
+  const InstructionStatus& instructionStatus() const {
+    return instructionStatus_;
+  }
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -912,6 +917,10 @@ class WaveStream {
 
   // Stream level states like small partial aggregates.
   OperatorStateMap streamStateMap_;
+
+
+  // Space reserved for per-instruction return state above BlockStatus array.
+  InstructionStatus instructionStatus_;
 
   // Number of rows to allocate for top level vectors for the next kernel
   // launch.

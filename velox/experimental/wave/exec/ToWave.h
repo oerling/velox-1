@@ -178,7 +178,8 @@ class CompileState {
   int32_t operandCounter_{0};
   int32_t wrapCounter_{0};
   int32_t stateCounter_{0};
-
+  InstructionStatus instructionStatus_;
+  
   int32_t nthContinuable_{0};
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;

@@ -1182,6 +1182,7 @@ void Program::prepareForDevice(GpuArena& arena) {
           return newState;
         };
         operatorStates_.push_back(std::move(programState));
+	physicalInst->state = abstractInst->state;
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
         // the literal is copied when making the reader for aggregates.
