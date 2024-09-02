@@ -492,41 +492,41 @@ uint64_t SharedArbitrator::shrinkCapacity(
     bool allowSpill,
     bool allowAbort) {
   incrementGlobalArbitrationCount();
-  requestBytes = requestBytes == 0 ? capacity_ : requestBytes;
-  ArbitrationOperation op(requestBytes);
+  const uint64_t targetBytes = requestBytes == 0 ? capacity_ : requestBytes;
+  ArbitrationOperation op(targetBytes);
   ScopedArbitration scopedArbitration(this, &op);
-
-  uint64_t fastReclaimTargetBytes =
-      std::max(memoryPoolTransferCapacity_, requestBytes);
 
   std::lock_guard<std::shared_mutex> exclusiveLock(arbitrationLock_);
   getCandidates(&op);
-  uint64_t freedBytes =
-      reclaimFreeMemoryFromCandidates(&op, fastReclaimTargetBytes, false);
-  auto freeGuard = folly::makeGuard([&]() {
-    // Returns the freed memory capacity back to the arbitrator.
+
+  uint64_t reclaimedBytes{0};
+  RECORD_METRIC_VALUE(kMetricArbitratorSlowGlobalArbitrationCount);
+
+  if (allowSpill) {
+    uint64_t freedBytes{0};
+    reclaimUsedMemoryFromCandidatesBySpill(&op, freedBytes);
+    reclaimedBytes += freedBytes;
     if (freedBytes > 0) {
       incrementFreeCapacity(freedBytes);
     }
-  });
-  if (freedBytes >= op.requestBytes) {
-    return freedBytes;
-  }
-  RECORD_METRIC_VALUE(kMetricArbitratorSlowGlobalArbitrationCount);
-  if (allowSpill) {
-    reclaimUsedMemoryFromCandidatesBySpill(&op, freedBytes);
-    if (freedBytes >= op.requestBytes) {
-      return freedBytes;
+    if (reclaimedBytes >= op.requestBytes) {
+      return reclaimedBytes;
     }
     if (allowAbort) {
       // Candidate stats may change after spilling.
       getCandidates(&op);
     }
   }
+
   if (allowAbort) {
+    uint64_t freedBytes{0};
     reclaimUsedMemoryFromCandidatesByAbort(&op, freedBytes);
+    reclaimedBytes += freedBytes;
+    if (freedBytes > 0) {
+      incrementFreeCapacity(freedBytes);
+    }
   }
-  return freedBytes;
+  return reclaimedBytes;
 }
 
 void SharedArbitrator::testingFreeCapacity(uint64_t capacity) {

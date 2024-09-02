@@ -618,11 +618,14 @@ struct WriterOptions {
   std::optional<uint8_t> zlibCompressionLevel;
   std::optional<uint8_t> zstdCompressionLevel;
 
+  std::function<std::unique_ptr<dwio::common::FlushPolicy>()>
+      flushPolicyFactory;
+
   // WriterOption implementations should provide this function to specify how to
   // process format-specific session and connector configs.
   virtual void processConfigs(
       const config::ConfigBase& connectorConfig,
-      const config::ConfigBase& session) {};
+      const config::ConfigBase& session) = 0;
 
   virtual ~WriterOptions() = default;
 };

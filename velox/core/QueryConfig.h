@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/common/config/Config.h"
+#include "velox/vector/TypeAliases.h"
 
 namespace facebook::velox::core {
 
@@ -346,6 +347,16 @@ class QueryConfig {
   /// derived using micro-benchmarking.
   static constexpr const char* kPrefixSortMinRows = "prefixsort_min_rows";
 
+  /// Enable query tracing flag.
+  static constexpr const char* kQueryTraceEnabled = "query_trace_enabled";
+
+  /// Base dir of a query to store tracing data.
+  static constexpr const char* kQueryTraceDir = "query_trace_dir";
+
+  /// A comma-separated list of plan node ids whose input data will be traced.
+  /// Empty string if only want to trace the query metadata.
+  static constexpr const char* kQueryTraceNodeIds = "query_trace_node_ids";
+
   uint64_t queryMaxMemoryPerNode() const {
     return config::toCapacity(
         get<std::string>(kQueryMaxMemoryPerNode, "0B"),
@@ -429,12 +440,17 @@ class QueryConfig {
     return get<uint64_t>(kPreferredOutputBatchBytes, kDefault);
   }
 
-  uint32_t preferredOutputBatchRows() const {
-    return get<uint32_t>(kPreferredOutputBatchRows, 1024);
+  vector_size_t preferredOutputBatchRows() const {
+    const uint32_t batchRows = get<uint32_t>(kPreferredOutputBatchRows, 1024);
+    VELOX_USER_CHECK_LE(batchRows, std::numeric_limits<vector_size_t>::max());
+    return batchRows;
   }
 
-  uint32_t maxOutputBatchRows() const {
-    return get<uint32_t>(kMaxOutputBatchRows, 10'000);
+  vector_size_t maxOutputBatchRows() const {
+    const uint32_t maxBatchRows = get<uint32_t>(kMaxOutputBatchRows, 10'000);
+    VELOX_USER_CHECK_LE(
+        maxBatchRows, std::numeric_limits<vector_size_t>::max());
+    return maxBatchRows;
   }
 
   uint32_t tableScanGetOutputTimeLimitMs() const {
@@ -609,6 +625,21 @@ class QueryConfig {
   int32_t spillableReservationGrowthPct() const {
     constexpr int32_t kDefaultPct = 10;
     return get<int32_t>(kSpillableReservationGrowthPct, kDefaultPct);
+  }
+
+  /// Returns true if query tracing is enabled.
+  bool queryTraceEnabled() const {
+    return get<bool>(kQueryTraceEnabled, false);
+  }
+
+  std::string queryTraceDir() const {
+    // The default query trace dir, empty by default.
+    return get<std::string>(kQueryTraceDir, "");
+  }
+
+  std::string queryTraceNodeIds() const {
+    // The default query trace nodes, empty by default.
+    return get<std::string>(kQueryTraceNodeIds, "");
   }
 
   bool prestoArrayAggIgnoreNulls() const {

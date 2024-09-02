@@ -21,14 +21,16 @@
 
 namespace facebook::velox::exec::trace {
 struct QueryTraceConfig {
-  /// Target query trace nodes
+  /// Target query trace nodes.
   std::unordered_set<std::string> queryNodes;
-  /// Base dir of query trace, normmaly it is $prefix/$taskId.
+  /// Base dir of query trace.
   std::string queryTraceDir;
 
   QueryTraceConfig(
       std::unordered_set<std::string> _queryNodeIds,
       std::string _queryTraceDir);
+
+  QueryTraceConfig(std::string _queryTraceDir);
 
   QueryTraceConfig() = default;
 };

@@ -18,6 +18,7 @@
 
 #include <vector>
 
+#include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Portability.h"
 #include "velox/common/base/SuccinctPrinter.h"
@@ -64,7 +65,7 @@ class MemoryArbitrator {
     MemoryArbitrationStateCheckCB arbitrationStateCheckCb{nullptr};
 
     /// Additional configs that are arbitrator implementation specific.
-    std::unordered_map<std::string, std::string> extraConfigs;
+    std::unordered_map<std::string, std::string> extraConfigs{};
   };
 
   using Factory = std::function<std::unique_ptr<MemoryArbitrator>(
@@ -126,15 +127,23 @@ class MemoryArbitrator {
   /// pool. The function returns the actual freed capacity from 'pool'.
   virtual uint64_t shrinkCapacity(MemoryPool* pool, uint64_t targetBytes) = 0;
 
-  /// Invoked by the memory manager to shrink memory capacity from memory pools
-  /// by reclaiming free and used memory. The freed memory capacity is given
-  /// back to the arbitrator.  If 'targetBytes' is zero, then try to reclaim all
-  /// the memory from 'pools'. The function returns the actual freed memory
-  /// capacity in bytes. If 'allowSpill' is true, it reclaims the used memory by
-  /// spilling. If 'allowAbort' is true, it reclaims the used memory by aborting
-  /// the queries with the most memory usage. If both are true, it first
-  /// reclaims the used memory by spilling and then abort queries to reach the
-  /// reclaim target.
+  /// Invoked by the memory manager to globally shrink memory from
+  /// memory pools by reclaiming only used memory, to reduce system memory
+  /// pressure. The freed memory capacity is given back to the arbitrator.  If
+  /// 'targetBytes' is zero, then try to reclaim all the memory from 'pools'.
+  /// The function returns the actual freed memory capacity in bytes. If
+  /// 'allowSpill' is true, it reclaims the used memory by spilling. If
+  /// 'allowAbort' is true, it reclaims the used memory by aborting the queries
+  /// with the most memory usage. If both are true, it first reclaims the used
+  /// memory by spilling and then abort queries to reach the reclaim target.
+  ///
+  /// NOTE: The actual reclaimed used memory (hence system memory) may be less
+  /// than 'targetBytes' due to the accounting of free capacity reclaimed. This
+  /// is okay because when this method is called, system is normally under
+  /// memory pressure, and there normally isn't much free capacity to reclaim.
+  /// So the reclaimed used memory in this case should be very close to
+  /// 'targetBytes' if enough used memory is reclaimable. We should improve this
+  /// in the future.
   virtual uint64_t shrinkCapacity(
       uint64_t targetBytes,
       bool allowSpill = true,
@@ -411,13 +420,6 @@ class ScopedMemoryArbitrationContext {
  public:
   explicit ScopedMemoryArbitrationContext(const MemoryPool* requestor);
 
-  /// Can be used to restore a previously captured MemoryArbitrationContext.
-  /// contextToRestore can be nullptr if there was no context at the time it was
-  /// captured, in which case arbitrationCtx is unchanged upon
-  /// contruction/destruction of this object.
-  explicit ScopedMemoryArbitrationContext(
-      const MemoryArbitrationContext* contextToRestore);
-
   ~ScopedMemoryArbitrationContext();
 
  private:
@@ -442,6 +444,23 @@ const MemoryArbitrationContext* memoryArbitrationContext();
 
 /// Returns true if the running thread is under memory arbitration or not.
 bool underMemoryArbitration();
+
+/// Creates an async memory reclaim task with memory arbitration context set.
+/// This is to avoid recursive memory arbitration during memory reclaim.
+///
+/// NOTE: this must be called under memory arbitration.
+template <typename Item>
+std::shared_ptr<AsyncSource<Item>> createAsyncMemoryReclaimTask(
+    std::function<std::unique_ptr<Item>()> task) {
+  auto* arbitrationCtx = memory::memoryArbitrationContext();
+  VELOX_CHECK_NOT_NULL(arbitrationCtx);
+  return std::make_shared<AsyncSource<Item>>(
+      [asyncTask = std::move(task), arbitrationCtx]() -> std::unique_ptr<Item> {
+        VELOX_CHECK_NOT_NULL(arbitrationCtx);
+        memory::ScopedMemoryArbitrationContext ctx(arbitrationCtx->requestor);
+        return asyncTask();
+      });
+}
 
 /// The function triggers memory arbitration by shrinking memory pools from
 /// 'manager' by invoking shrinkPools API. If 'manager' is not set, then it

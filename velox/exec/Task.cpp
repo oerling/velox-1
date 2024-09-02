@@ -27,11 +27,11 @@
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/LocalPlanner.h"
 #include "velox/exec/MemoryReclaimer.h"
-#include "velox/exec/Merge.h"
 #include "velox/exec/NestedLoopJoinBuild.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/Task.h"
+#include "velox/exec/trace/QueryTraceUtil.h"
 
 using facebook::velox::common::testutil::TestValue;
 
@@ -293,6 +293,7 @@ Task::Task(
       planFragment_(std::move(planFragment)),
       destination_(destination),
       queryCtx_(std::move(queryCtx)),
+      traceConfig_(maybeMakeTraceConfig()),
       mode_(mode),
       consumerSupplier_(std::move(consumerSupplier)),
       onError_(std::move(onError)),
@@ -304,6 +305,8 @@ Task::Task(
     VELOX_CHECK_NULL(
         dynamic_cast<const folly::InlineLikeExecutor*>(queryCtx_->executor()));
   }
+
+  maybeInitQueryTrace();
 }
 
 Task::~Task() {
@@ -547,7 +550,7 @@ velox::memory::MemoryPool* Task::addExchangeClientPool(
   return childPools_.back().get();
 }
 
-bool Task::supportsSingleThreadedExecution() const {
+bool Task::supportSerialExecutionMode() const {
   if (consumerSupplier_) {
     return false;
   }
@@ -557,7 +560,7 @@ bool Task::supportsSingleThreadedExecution() const {
       planFragment_, nullptr, &driverFactories, queryCtx_->queryConfig(), 1);
 
   for (const auto& factory : driverFactories) {
-    if (!factory->supportsSingleThreadedExecution()) {
+    if (!factory->supportsSerialExecution()) {
       return false;
     }
   }
@@ -567,18 +570,18 @@ bool Task::supportsSingleThreadedExecution() const {
 
 RowVectorPtr Task::next(ContinueFuture* future) {
   checkExecutionMode(ExecutionMode::kSerial);
-  // NOTE: Task::next() is single-threaded execution so locking is not required
+  // NOTE: Task::next() is serial execution so locking is not required
   // to access Task object.
   VELOX_CHECK_EQ(
       core::ExecutionStrategy::kUngrouped,
       planFragment_.executionStrategy,
-      "Single-threaded execution supports only ungrouped execution");
+      "Serial execution mode supports only ungrouped execution");
 
   if (!splitsStates_.empty()) {
     for (const auto& it : splitsStates_) {
       VELOX_CHECK(
           it.second.noMoreSplits,
-          "Single-threaded execution requires all splits to be added before "
+          "Serial execution mode requires all splits to be added before "
           "calling Task::next().");
     }
   }
@@ -592,7 +595,7 @@ RowVectorPtr Task::next(ContinueFuture* future) {
   if (driverFactories_.empty()) {
     VELOX_CHECK_NULL(
         consumerSupplier_,
-        "Single-threaded execution doesn't support delivering results to a "
+        "Serial execution mode doesn't support delivering results to a "
         "callback");
 
     taskStats_.executionStartTimeMs = getCurrentTimeMs();
@@ -602,7 +605,7 @@ RowVectorPtr Task::next(ContinueFuture* future) {
 
     // In Task::next() we always assume ungrouped execution.
     for (const auto& factory : driverFactories_) {
-      VELOX_CHECK(factory->supportsSingleThreadedExecution());
+      VELOX_CHECK(factory->supportsSerialExecution());
       numDriversUngrouped_ += factory->numDrivers;
       numTotalDrivers_ += factory->numTotalDrivers;
       taskStats_.pipelineStats.emplace_back(
@@ -940,7 +943,7 @@ void Task::resume(std::shared_ptr<Task> self) {
           // event. The Driver gets enqueued by the promise realization.
           //
           // Do not continue the driver if no executor is supplied,
-          // This usually happens in single-threaded execution.
+          // This usually happens in serial execution mode.
           Driver::enqueue(driver);
         }
       }
@@ -2687,6 +2690,7 @@ StopReason Task::leaveSuspended(ThreadState& state) {
   VELOX_CHECK(!state.hasBlockingFuture);
   VELOX_CHECK(state.isOnThread());
 
+  TestValue::adjust("facebook::velox::exec::Task::leaveSuspended", this);
   for (;;) {
     {
       std::lock_guard<std::timed_mutex> l(mutex_);
@@ -2833,6 +2837,43 @@ std::shared_ptr<ExchangeClient> Task::getExchangeClientLocked(
   return exchangeClients_[pipelineId];
 }
 
+std::optional<trace::QueryTraceConfig> Task::maybeMakeTraceConfig() const {
+  const auto& queryConfig = queryCtx_->queryConfig();
+  if (!queryConfig.queryTraceEnabled()) {
+    return std::nullopt;
+  }
+
+  VELOX_USER_CHECK(
+      !queryConfig.queryTraceDir().empty(),
+      "Query trace enabled but the trace dir is not set");
+
+  const auto queryTraceNodes = queryConfig.queryTraceNodeIds();
+  if (queryTraceNodes.empty()) {
+    return trace::QueryTraceConfig(queryConfig.queryTraceDir());
+  }
+
+  std::vector<std::string> nodes;
+  folly::split(',', queryTraceNodes, nodes);
+  std::unordered_set<std::string> nodeSet(nodes.begin(), nodes.end());
+  VELOX_CHECK_EQ(nodeSet.size(), nodes.size());
+  LOG(INFO) << "Query trace plan node ids: " << queryTraceNodes;
+  return trace::QueryTraceConfig(
+      std::move(nodeSet), queryConfig.queryTraceDir());
+}
+
+void Task::maybeInitQueryTrace() {
+  if (!traceConfig_) {
+    return;
+  }
+
+  const auto traceTaskDir =
+      fmt::format("{}/{}", traceConfig_->queryTraceDir, taskId_);
+  trace::createTraceDirectory(traceTaskDir);
+  const auto queryMetadatWriter = std::make_unique<trace::QueryMetadataWriter>(
+      traceTaskDir, memory::traceMemoryPool());
+  queryMetadatWriter->write(queryCtx_, planFragment_.planNode);
+}
+
 void Task::testingVisitDrivers(const std::function<void(Driver*)>& callback) {
   std::lock_guard<std::timed_mutex> l(mutex_);
   for (int i = 0; i < drivers_.size(); ++i) {
@@ -2944,6 +2985,7 @@ void Task::MemoryReclaimer::abort(
   VELOX_CHECK_EQ(task->pool()->name(), pool->name());
 
   task->setError(error);
+  // TODO: respect the memory arbitration request timeout later.
   const static uint32_t maxTaskAbortWaitUs = 6'000'000; // 60s
   if (task->taskCompletionFuture().wait(
           std::chrono::microseconds(maxTaskAbortWaitUs))) {
