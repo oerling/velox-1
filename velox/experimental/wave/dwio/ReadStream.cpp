@@ -298,15 +298,15 @@ bool ReadStream::makePrograms(bool& needSync) {
     }
   }
   filtersDone_ = true;
-  if (filters_.empty() || gridStateBytes_ > 0) && allDone) {
+  if ((filters_.empty() || gridStatusBytes_ > 0) && allDone) {
     auto setCount = std::make_unique<GpuDecode>();
     setCount->step = DecodeStep::kRowCountNoFilter;
     setCount->data.rowCountNoFilter.numRows = rows_.size();
     setCount->data.rowCountNoFilter.status =
-        setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
-    setCount->data.rowCountNoFilter.gridOnly = !filters.empty();
+      control_->deviceData->as<BlockStatus>();
+    setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
+    setCount->data.rowCountNoFilter.gridOnly = !filters_.empty();
 
-    control_->deviceData->as<BlockStatus>();
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
     }
@@ -430,7 +430,7 @@ void ReadStream::makeControl() {
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
   auto instructionStatus = waveStream->instructionStatus();
   int32_t instructionBytes =
-      instructionStatus.gridStateSize + numBlocks * instructionStatus.blockSize;
+      instructionStatus.gridStateSize + numBlocks_ * instructionStatus.blockState;
   statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
   auto deviceBytes = statusBytes_ + instructionBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);

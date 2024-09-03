@@ -32,7 +32,7 @@ inline T*  __device__ gridStatus(const WaveShared* shared, const InstructionStat
 }
 
 template <typename T>
-inline T*  __device__ laneStatus(const WaveShared* shared, const InstructionStatus& status) {
+inline T*  __device__ laneStatus(const WaveShared* shared, const InstructionStatus& status, int32_t nthBlock ) {
   int32_t numBlocks = roundUp(shared->numRows, kBlockSize) / kBlockSize;
   return reinterpret_cast<T*>(roundUp(reinterpret_cast<uintptr_t>(shared->status) + numBlocks * sizeof(BlockStatus), 8) + status.gridStateSize + status.blockState * numBlocks); 
 }

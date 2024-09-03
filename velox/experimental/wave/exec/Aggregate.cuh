@@ -26,7 +26,8 @@ namespace facebook::velox::wave {
 __device__ void clearReturnState(
     const IAggregate& agg,
     WaveShared* shared) {
-  char* lanes = laneStatus(shared, agg.state);
+      auto* lanes = laneStatus<uint8_t>(shared, agg.status, 0);
+  lanes[threadIdx.x] = 0;
 }
 
 __device__ __forceinline__ void aggregateKernel(

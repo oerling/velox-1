@@ -348,7 +348,7 @@ TEST_P(TableScanTest, scanGroupBy) {
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto splits =
-      makeData(type, numBatches_, batchSize_, true, [](RowVectorPtr row) {
+      makeData(type, numBatches_, batchSize_, true, [&](RowVectorPtr row) {
         makeRange(row, 1000000000, true, 1, -1);
       });
 

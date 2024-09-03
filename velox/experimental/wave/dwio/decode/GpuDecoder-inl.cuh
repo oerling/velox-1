@@ -908,25 +908,25 @@ template <int kBlockSize>
 __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   auto numRows = op.numRows;
   auto* status = op.status;
-  auto numCounts = roundUp(numRows, kBlockSize) / kBlockSize;
-  if (op.gridStatussize > 0) {
-    uintptr_t grid = roundUp(static_cast<uintptr_t>(op.status) + numBlocks * sizeof(BlockStatus) , 8);
-    auto end = reinterpret_cast<int64_t*>(grid + op.gridStatusSize;);
+  auto numBlocks = roundUp(numRows, kBlockSize) / kBlockSize;
+  if (op.gridStatusSize > 0) {
+    auto grid = roundUp(reinterpret_cast<uintptr_t>(status) + numBlocks * sizeof(BlockStatus), 8);
+    int64_t* statusEnd = reinterpret_cast<int64_t*>(grid + op.gridStatusSize);
     auto ptr = reinterpret_cast<int64_t*>(grid)+ threadIdx.x;
-    for (; ptr < end; ptr += kBlockSize) {
+    for (; ptr < statusEnd; ptr += kBlockSize) {
       *ptr = 0;
     }
     if (op.gridOnly) {
       return;
     }
   }
-  for (auto base = 0; base < numCounts; base += kBlockSize) {
+  for (auto base = 0; base < numBlocks; base += kBlockSize) {
     auto idx = threadIdx.x + base;
-    if (idx < numCounts) {
+    if (idx < numBlocks) {
       // Every thread writes a row count and errors for kBlockSize rows. All
       // errors are cleared and all row counts except the last are kBlockSize.
       status[idx].numRows =
-          idx < numCounts - 1 ? kBlockSize : numRows - idx * kBlockSize;
+          idx < numBlocks - 1 ? kBlockSize : numRows - idx * kBlockSize;
       memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
     }
   }
