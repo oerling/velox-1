@@ -143,7 +143,7 @@ void MergeJoin::initializeFilter(
     types.emplace_back(inputType->childAt(channel));
 
     for (const auto [inputChannel, outputChannel] : outputs) {
-      if (false && inputChannel == channel) {
+      if (inputChannel == channel) {
         filterInputToOutputChannel_.emplace(filterChannel++, outputChannel);
         return;
       }
@@ -433,7 +433,7 @@ bool MergeJoin::prepareOutput(
       std::move(localColumns));
   outputSize_ = 0;
 
-  if (filterInput_ != nullptr) {
+    if (filterInput_ != nullptr) {
     for (auto i = 0; i < filterInputType_->size(); ++i) {
       auto& child = filterInput_->childAt(i);
       // If 'child' is also projected to output, make 'child' to use the same
@@ -456,12 +456,9 @@ bool MergeJoin::prepareOutput(
     }
   }
 
+
   if (filter_ != nullptr && filterInput_ == nullptr) {
     std::vector<VectorPtr> inputs(filterInputType_->size());
-    for (const auto [filterInputChannel, outputChannel] :
-         filterInputToOutputChannel_) {
-      inputs[filterInputChannel] = output_->childAt(outputChannel);
-    }
     for (auto i = 0; i < filterInputType_->size(); ++i) {
       if (filterInputToOutputChannel_.find(i) !=
           filterInputToOutputChannel_.end()) {
@@ -534,6 +531,14 @@ void MergeJoin::wrapOutput() {
   leftNulls_ = nullptr;
   rightNulls_ = nullptr;
   output_->resize(outputSize_);
+
+  // Patch the filter inputs that are also projected out so that the
+  // filter input references the child vector from 'output_'
+  auto& inputs = filterInput_->children();
+  for (const auto [filterInputChannel, outputChannel] :
+         filterInputToOutputChannel_) {
+      inputs[filterInputChannel] = output_->childAt(outputChannel);
+    }
 }
 
 bool MergeJoin::addToOutput() {
