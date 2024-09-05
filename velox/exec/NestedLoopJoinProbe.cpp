@@ -17,6 +17,7 @@
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/FieldReference.h"
+#include <iostream>
 
 namespace facebook::velox::exec {
 namespace {
@@ -176,6 +177,7 @@ void NestedLoopJoinProbe::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
   input_ = std::move(input);
+  //std::cout << input_->toString(0, input_->size(), "\n", true) << std::endl;
   if (input_->size() > 0) {
     probeSideEmpty_ = false;
   }
@@ -253,20 +255,29 @@ RowVectorPtr NestedLoopJoinProbe::getOutput() {
 
 RowVectorPtr NestedLoopJoinProbe::generateOutput() {
   // If addToOutput() returns false, output_ is filled. Need to produce it.
+  bool probeDone = false;
   if (!addToOutput()) {
     VELOX_CHECK_GT(output_->size(), 0);
+    fillInIdentityProjections();
     return std::move(output_);
   }
 
   // Try to advance the probe cursor; call finish if no more probe input.
   if (advanceProbe()) {
-    finishProbeInput();
+    probeDone = true;
   }
 
   if (output_ != nullptr && output_->size() == 0) {
     output_ = nullptr;
   }
-  return std::move(output_);
+  if (output_) {
+    fillInIdentityProjections();
+  }
+  // Probe must not be cleared before identity projections are done.
+  if (probeDone) {
+    finishProbeInput();
+  }
+    return std::move(output_);
 }
 
 bool NestedLoopJoinProbe::advanceProbe() {
@@ -371,16 +382,17 @@ void NestedLoopJoinProbe::prepareOutput() {
     return;
   }
   std::vector<VectorPtr> localColumns(outputType_->size());
-
+  WrapState state;
   probeOutputIndices_ = allocateIndices(outputBatchSize_, pool());
   rawProbeOutputIndices_ = probeOutputIndices_->asMutable<vector_size_t>();
 
   for (const auto& projection : identityProjections_) {
-    localColumns[projection.outputChannel] = BaseVector::wrapInDictionary(
-        {},
-        probeOutputIndices_,
-        outputBatchSize_,
-        input_->childAt(projection.inputChannel));
+    localColumns[projection.outputChannel] = wrapOne(
+						     outputBatchSize_,
+						     probeOutputIndices_,
+						     input_->childAt(projection.inputChannel),
+						     nullptr,
+						     state);
   }
 
   for (const auto& projection : buildProjections_) {
@@ -395,6 +407,22 @@ void NestedLoopJoinProbe::prepareOutput() {
       pool(), outputType_, nullptr, outputBatchSize_, std::move(localColumns));
 }
 
+void NestedLoopJoinProbe::fillInIdentityProjections() {
+  if (isCrossJoin()) {
+    // A cross join does not use probeOutputIndices.
+    return;
+  }
+  WrapState state;
+  for (const auto& projection : identityProjections_) {
+    output_->children()[projection.outputChannel] = wrapOne(
+						     numOutputRows_,
+						     probeOutputIndices_,
+						     input_->childAt(projection.inputChannel),
+						     nullptr,
+						     state);
+  }
+}
+  
 void NestedLoopJoinProbe::evaluateJoinFilter(const RowVectorPtr& buildVector) {
   // First step to process is to get a batch so we can evaluate the join
   // filter.
