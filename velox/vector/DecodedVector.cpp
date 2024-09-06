@@ -179,10 +179,10 @@ void DecodedVector::combineWrappers(
         setBaseData(*values, rows);
         return;
       case VectorEncoding::Simple::DICTIONARY: {
-	if (!wasLazy) {
-	  // LOG(ERROR) << "Multilevel dict ";
-	  VELOX_FAIL("Limit to one level");
-	}
+        if (!wasLazy) {
+          // LOG(ERROR) << "Multilevel dict ";
+          VELOX_FAIL("Limit to one level");
+        }
         applyDictionaryWrapper(*values, rows);
         values = values->valueVector().get();
         break;

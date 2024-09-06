@@ -1124,7 +1124,11 @@ RowVectorPtr HashProbe::createFilterInput(vector_size_t size) {
     }
 
     filterColumns[projection.outputChannel] = wrapOne(
-							size, outputRowMapping_, input_->childAt(projection.inputChannel), nullptr, state);
+        size,
+        outputRowMapping_,
+        input_->childAt(projection.inputChannel),
+        nullptr,
+        state);
   }
 
   extractColumns(

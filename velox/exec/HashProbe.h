@@ -408,7 +408,6 @@ class HashProbe : public Operator {
   // The input channels that are projected to the output.
   std::unordered_set<column_index_t> projectedInputColumns_;
 
-
   // Maps input channels to channels in 'filterInputType_'.
   std::vector<IdentityProjection> filterInputProjections_;
 

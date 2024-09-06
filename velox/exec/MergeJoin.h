@@ -249,7 +249,8 @@ class MergeJoin : public Operator {
   void addNull(BufferPtr& nulls);
 
   // Adds a row of nulls for right side columns. Uses 'rightNulls_' if
-  // '!isRightFlattened_', else sets the row to null in the flattened right side.
+  // '!isRightFlattened_', else sets the row to null in the flattened right
+  // side.
   void addRightNulls();
 
   /// As we populate the results of the join, we track whether a given

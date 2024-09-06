@@ -140,7 +140,6 @@ class NestedLoopJoinProbe : public Operator {
   // involve combining dictionaries.
   void fillInIdentityProjections();
 
-  
   // Evaluates the joinCondition for a given build vector. This method sets
   // `filterOutput_` and `decodedFilterResult_`, which will be ready to be used
   // by `isJoinConditionMatch(buildRow)` below.

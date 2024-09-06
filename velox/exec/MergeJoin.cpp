@@ -326,12 +326,13 @@ void MergeJoin::flattenRightProjections() {
     VectorPtr currentVector;
     if (currentRight_) {
       currentVector = BaseVector::wrapInDictionary(
-						   rightNulls_,
-						   rightIndices_,
-						   outputSize_,
-						   currentRight_->childAt(projection.inputChannel));
+          rightNulls_,
+          rightIndices_,
+          outputSize_,
+          currentRight_->childAt(projection.inputChannel));
     } else {
-      currentVector = BaseVector::createNullConstant(          outputType_->childAt(projection.outputChannel),
+      currentVector = BaseVector::createNullConstant(
+          outputType_->childAt(projection.outputChannel),
           outputSize_,
           operatorCtx_->pool());
     }
@@ -433,7 +434,7 @@ bool MergeJoin::prepareOutput(
       std::move(localColumns));
   outputSize_ = 0;
 
-    if (filterInput_ != nullptr) {
+  if (filterInput_ != nullptr) {
     for (auto i = 0; i < filterInputType_->size(); ++i) {
       auto& child = filterInput_->childAt(i);
       // If 'child' is also projected to output, make 'child' to use the same
@@ -455,7 +456,6 @@ bool MergeJoin::prepareOutput(
       }
     }
   }
-
 
   if (filter_ != nullptr && filterInput_ == nullptr) {
     std::vector<VectorPtr> inputs(filterInputType_->size());
@@ -536,9 +536,9 @@ void MergeJoin::wrapOutput() {
   // filter input references the child vector from 'output_'
   auto& inputs = filterInput_->children();
   for (const auto [filterInputChannel, outputChannel] :
-         filterInputToOutputChannel_) {
-      inputs[filterInputChannel] = output_->childAt(outputChannel);
-    }
+       filterInputToOutputChannel_) {
+    inputs[filterInputChannel] = output_->childAt(outputChannel);
+  }
 }
 
 bool MergeJoin::addToOutput() {
@@ -812,12 +812,12 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // If output_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(input_, nullptr)) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
         while (true) {
           if (outputSize_ == outputBatchSize_) {
-	    wrapOutput();
+            wrapOutput();
             return std::move(output_);
           }
           addOutputRowForLeftJoin(input_, index_);
@@ -832,7 +832,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
       }
 
       if (noMoreInput_ && output_) {
-	wrapOutput();
+        wrapOutput();
         return std::move(output_);
       }
     } else if (isRightJoin(joinType_)) {
@@ -840,13 +840,13 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // If output_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(nullptr, rightInput_)) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
 
         while (true) {
           if (outputSize_ == outputBatchSize_) {
-	    wrapOutput();
+            wrapOutput();
             return std::move(output_);
           }
 
@@ -862,13 +862,13 @@ RowVectorPtr MergeJoin::doGetOutput() {
       }
 
       if (noMoreRightInput_ && output_) {
-	wrapOutput();
+        wrapOutput();
         return std::move(output_);
       }
     } else {
       if (noMoreInput_ || noMoreRightInput_) {
         if (output_) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
         input_ = nullptr;
@@ -889,12 +889,12 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // If output_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(input_, nullptr)) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
 
         if (outputSize_ == outputBatchSize_) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
         addOutputRowForLeftJoin(input_, index_);
@@ -917,12 +917,12 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // If output_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(nullptr, rightInput_)) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
 
         if (outputSize_ == outputBatchSize_) {
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
 
@@ -989,7 +989,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
       }
 
       if (addToOutput()) {
-	wrapOutput();
+        wrapOutput();
         return std::move(output_);
       }
 

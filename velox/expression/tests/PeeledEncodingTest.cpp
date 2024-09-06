@@ -224,8 +224,7 @@ TEST_P(PeeledEncodingBasicTests, commonDictionaryLayersAndAConstant) {
   //    Peel: Dict1(Dict2) => collapsed into one dictionary
   auto input1 = wrapInDictionaryLayers(flat1, {&dictWrap1});
   auto input2 = const1;
-  auto input3 =
-      wrapInDictionaryLayers(flat2, {&dictWrap1});
+  auto input3 = wrapInDictionaryLayers(flat2, {&dictWrap1});
   std::vector<VectorPtr> peeledVectors;
   auto peeledEncoding = PeeledEncoding::peel(
       {input1, input2, input3}, rows, localDecodedVector, true, peeledVectors);

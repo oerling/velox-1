@@ -16,8 +16,8 @@
 
 #include "velox/exec/Unnest.h"
 #include "velox/common/base/Nulls.h"
-#include "velox/vector/FlatVector.h"
 #include "velox/exec/OperatorUtils.h"
+#include "velox/vector/FlatVector.h"
 
 namespace facebook::velox::exec {
 Unnest::Unnest(
@@ -170,9 +170,9 @@ void Unnest::generateRepeatedColumns(
         numElements,
         repeatedIndices,
         input_->childAt(projection.inputChannel),
-	nullptr /*nulls*/,
+        nullptr /*nulls*/,
 
-	repeatedState);
+        repeatedState);
   }
 }
 

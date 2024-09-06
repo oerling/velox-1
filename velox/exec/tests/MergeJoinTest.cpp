@@ -109,7 +109,7 @@ class MergeJoinTest : public HiveConnectorTestBase {
       startRow += key->size();
     }
     addIdentityWrap(left);
-    
+
     std::vector<RowVectorPtr> right;
     right.reserve(rightKeys.size());
     startRow = 0;
@@ -222,14 +222,18 @@ class MergeJoinTest : public HiveConnectorTestBase {
     AssertQueryBuilder(rightPlan).assertResults(expectedResult);
   }
 
-  // Wraps each member in 'rows' in an identity dictionary. Tests dictionary combining in different cases of merge join with eager collapsing of multilevel dictionaries.
+  // Wraps each member in 'rows' in an identity dictionary. Tests dictionary
+  // combining in different cases of merge join with eager collapsing of
+  // multilevel dictionaries.
   void addIdentityWrap(std::vector<RowVectorPtr>& rows) {
     for (auto& r : rows) {
       identityWrap(r);
     }
   }
 
-  // Wraps each member of 'row' in an identity dictionary. Tests dictionary combining in different cases of merge join with eager collapsing of multilevel dictionaries.
+  // Wraps each member of 'row' in an identity dictionary. Tests dictionary
+  // combining in different cases of merge join with eager collapsing of
+  // multilevel dictionaries.
   RowVectorPtr identityWrap(RowVectorPtr& row) {
     auto indices = allocateIndices(row->size(), pool_.get());
     auto rawIndices = indices->asMutable<vector_size_t>();
@@ -237,7 +241,8 @@ class MergeJoinTest : public HiveConnectorTestBase {
       rawIndices[i] = i;
     }
     for (auto i = 0; i < row->childrenSize(); ++i) {
-      row->children()[i] = BaseVector::wrapInDictionary(nullptr, indices, row->size(), row->children()[i]);
+      row->children()[i] = BaseVector::wrapInDictionary(
+          nullptr, indices, row->size(), row->children()[i]);
     }
     return row;
   }

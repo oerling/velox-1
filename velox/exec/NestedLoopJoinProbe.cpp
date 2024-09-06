@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 #include "velox/exec/NestedLoopJoinProbe.h"
+#include <iostream>
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/FieldReference.h"
-#include <iostream>
 
 namespace facebook::velox::exec {
 namespace {
@@ -177,7 +177,7 @@ void NestedLoopJoinProbe::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
   input_ = std::move(input);
-  //std::cout << input_->toString(0, input_->size(), "\n", true) << std::endl;
+  // std::cout << input_->toString(0, input_->size(), "\n", true) << std::endl;
   if (input_->size() > 0) {
     probeSideEmpty_ = false;
   }
@@ -277,7 +277,7 @@ RowVectorPtr NestedLoopJoinProbe::generateOutput() {
   if (probeDone) {
     finishProbeInput();
   }
-    return std::move(output_);
+  return std::move(output_);
 }
 
 bool NestedLoopJoinProbe::advanceProbe() {
@@ -388,11 +388,11 @@ void NestedLoopJoinProbe::prepareOutput() {
 
   for (const auto& projection : identityProjections_) {
     localColumns[projection.outputChannel] = wrapOne(
-						     outputBatchSize_,
-						     probeOutputIndices_,
-						     input_->childAt(projection.inputChannel),
-						     nullptr,
-						     state);
+        outputBatchSize_,
+        probeOutputIndices_,
+        input_->childAt(projection.inputChannel),
+        nullptr,
+        state);
   }
 
   for (const auto& projection : buildProjections_) {
@@ -415,14 +415,14 @@ void NestedLoopJoinProbe::fillInIdentityProjections() {
   WrapState state;
   for (const auto& projection : identityProjections_) {
     output_->children()[projection.outputChannel] = wrapOne(
-						     numOutputRows_,
-						     probeOutputIndices_,
-						     input_->childAt(projection.inputChannel),
-						     nullptr,
-						     state);
+        numOutputRows_,
+        probeOutputIndices_,
+        input_->childAt(projection.inputChannel),
+        nullptr,
+        state);
   }
 }
-  
+
 void NestedLoopJoinProbe::evaluateJoinFilter(const RowVectorPtr& buildVector) {
   // First step to process is to get a batch so we can evaluate the join
   // filter.

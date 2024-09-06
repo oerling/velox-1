@@ -15,8 +15,8 @@
  */
 
 #include "velox/exec/LocalPartition.h"
-#include "velox/exec/Task.h"
 #include "velox/exec/OperatorUtils.h"
+#include "velox/exec/Task.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -286,8 +286,8 @@ wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
   wrappedChildren.reserve(input->type()->size());
   WrapState state;
   for (auto i = 0; i < input->type()->size(); i++) {
-    wrappedChildren.emplace_back(wrapOne(
-					 size, indices, input->childAt(i), nullptr, state));
+    wrappedChildren.emplace_back(
+        wrapOne(size, indices, input->childAt(i), nullptr, state));
   }
 
   return std::make_shared<RowVector>(

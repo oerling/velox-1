@@ -3338,8 +3338,7 @@ TEST_F(
   auto* c1Dict = c1->asUnchecked<DictionaryVector<int64_t>>();
   ASSERT_FALSE(c1Dict->isNullAt(0));
   ASSERT_EQ(c1Dict->valueAt(0), 0);
-  ASSERT_EQ(
-	    c1Dict->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
+  ASSERT_EQ(c1Dict->valueVector()->encoding(), VectorEncoding::Simple::FLAT);
   auto c1Values = c1Dict->valueVector();
   ASSERT_EQ(c1Values->size(), 2);
   ASSERT_FALSE(cursor->moveNext());
