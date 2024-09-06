@@ -1426,8 +1426,7 @@ class StatefulVectorFunction : public exec::VectorFunction {
     return {exec::FunctionSignatureBuilder()
                 .typeVariable("T")
                 .returnType("integer")
-                .argumentType("T")
-                .variableArity()
+                .variableArity("T")
                 .build()};
   }
 
@@ -2010,8 +2009,7 @@ class NullArrayFunction : public exec::VectorFunction {
     return {exec::FunctionSignatureBuilder()
                 .typeVariable("T")
                 .returnType("array(varchar)")
-                .argumentType("T")
-                .variableArity()
+                .variableArity("T")
                 .build()};
   }
 };
