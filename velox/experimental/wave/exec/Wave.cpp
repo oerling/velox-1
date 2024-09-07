@@ -402,7 +402,7 @@ uint8_t getLastContinuable(
 bool WaveStream::interpretArrival() {
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
   uint8_t last = 255;
-  uint8_t lastOp;
+  uint8_t lastOp = 0;
   auto* status = hostBlockStatus_->as<BlockStatus>();
   do {
     std::vector<uint64_t> bits;
