@@ -26,18 +26,31 @@
 namespace facebook::velox::wave {
 
 template <typename T>
-inline T*  __device__ gridStatus(const WaveShared* shared, const InstructionStatus& status) {
+inline T* __device__
+gridStatus(const WaveShared* shared, const InstructionStatus& status) {
   int32_t numBlocks = roundUp(shared->numRows, kBlockSize) / kBlockSize;
-  return reinterpret_cast<T*>(roundUp(reinterpret_cast<uintptr_t>(shared->status) + numBlocks * sizeof(BlockStatus), 8) + status.gridState); 
+  return reinterpret_cast<T*>(
+      roundUp(
+          reinterpret_cast<uintptr_t>(shared->status) +
+              numBlocks * sizeof(BlockStatus),
+          8) +
+      status.gridState);
 }
 
 template <typename T>
-inline T*  __device__ laneStatus(const WaveShared* shared, const InstructionStatus& status, int32_t nthBlock ) {
+inline T* __device__ laneStatus(
+    const WaveShared* shared,
+    const InstructionStatus& status,
+    int32_t nthBlock) {
   int32_t numBlocks = roundUp(shared->numRows, kBlockSize) / kBlockSize;
-  return reinterpret_cast<T*>(roundUp(reinterpret_cast<uintptr_t>(shared->status) + numBlocks * sizeof(BlockStatus), 8) + status.gridStateSize + status.blockState * numBlocks); 
+  return reinterpret_cast<T*>(
+      roundUp(
+          reinterpret_cast<uintptr_t>(shared->status) +
+              numBlocks * sizeof(BlockStatus),
+          8) +
+      status.gridStateSize + status.blockState * numBlocks);
 }
 
-  
 inline bool __device__ laneActive(ErrorCode code) {
   return static_cast<uint8_t>(code) <=
       static_cast<uint8_t>(ErrorCode::kContinue);
@@ -312,7 +325,5 @@ __device__ __forceinline__ void binaryOpKernel(
     resultNull(operands, instr.result, blockBase, shared);
   }
 }
-
-
 
 } // namespace facebook::velox::wave
