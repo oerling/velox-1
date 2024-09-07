@@ -303,13 +303,13 @@ bool ReadStream::makePrograms(bool& needSync) {
     setCount->step = DecodeStep::kRowCountNoFilter;
     setCount->data.rowCountNoFilter.numRows = rows_.size();
     setCount->data.rowCountNoFilter.status =
-      control_->deviceData->as<BlockStatus>();
+        control_->deviceData->as<BlockStatus>();
     setCount->data.rowCountNoFilter.gridStatusSize = gridStatusBytes_;
     setCount->data.rowCountNoFilter.gridOnly = !filters_.empty();
 
     programs_.programs.emplace_back();
     programs_.programs.back().push_back(std::move(setCount));
-    }
+  }
   ++nthWave_;
   resultStaging_.setReturnBuffer(waveStream->arena(), programs_.result);
   return allDone;
@@ -429,8 +429,8 @@ void ReadStream::makeControl() {
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
   auto instructionStatus = waveStream->instructionStatus();
-  int32_t instructionBytes =
-      instructionStatus.gridStateSize + numBlocks_ * instructionStatus.blockState;
+  int32_t instructionBytes = instructionStatus.gridStateSize +
+      numBlocks_ * instructionStatus.blockState;
   statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
   auto deviceBytes = statusBytes_ + instructionBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);
