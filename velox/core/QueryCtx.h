@@ -65,7 +65,6 @@ class QueryCtx : public std::enable_shared_from_this<QueryCtx> {
 
   folly::Executor* executor() const {
     return executor_;
-    ;
   }
 
   bool isExecutorSupplied() const {
@@ -83,6 +82,11 @@ class QueryCtx : public std::enable_shared_from_this<QueryCtx> {
       return getEmptyConfig();
     }
     return it->second.get();
+  }
+
+  const std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>&
+  connectorSessionProperties() const {
+    return connectorSessionProperties_;
   }
 
   /// Overrides the previous configuration. Note that this function is NOT

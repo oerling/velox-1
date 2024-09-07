@@ -3153,6 +3153,31 @@ TEST_F(TableScanTest, mapIsNullFilter) {
       "SELECT * FROM tmp WHERE c0 is null");
 }
 
+TEST_F(TableScanTest, compactComplexNulls) {
+  constexpr int kSize = 10;
+  auto iota = makeFlatVector<int64_t>(kSize, folly::identity);
+  std::vector<vector_size_t> offsets(kSize);
+  for (int i = 0; i < kSize; ++i) {
+    offsets[i] = (i + 1) / 2 * 2;
+  }
+  auto c0 = makeRowVector(
+      {
+          makeArrayVector(offsets, iota, {1, 3, 5, 7, 9}),
+          iota,
+      },
+      [](auto i) { return i == 2; });
+  auto data = makeRowVector({c0});
+  auto schema = asRowType(data->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {data});
+  auto plan = PlanBuilder().tableScan(schema, {"(c0).c1 > 0"}).planNode();
+  auto split = makeHiveConnectorSplit(file->getPath());
+  const vector_size_t indices[] = {1, 3, 4, 5, 6, 7, 8, 9};
+  auto expected = makeRowVector({wrapInDictionary(
+      makeIndices(8, [&](auto i) { return indices[i]; }), c0)});
+  AssertQueryBuilder(plan).split(split).assertResults(expected);
+}
+
 TEST_F(TableScanTest, remainingFilter) {
   auto rowType = ROW(
       {"c0", "c1", "c2", "c3"}, {INTEGER(), INTEGER(), DOUBLE(), BOOLEAN()});
@@ -3252,7 +3277,7 @@ TEST_F(TableScanTest, remainingFilterLazyWithMultiReferences) {
   writeToFile(file->getPath(), {vector});
   CursorParameters params;
   params.copyResult = false;
-  params.singleThreaded = true;
+  params.serialExecution = true;
   params.planNode =
       PlanBuilder()
           .tableScan(schema, {}, "NOT (c0 % 2 == 0 AND c2 % 3 == 0)")
@@ -3278,6 +3303,47 @@ TEST_F(TableScanTest, remainingFilterLazyWithMultiReferences) {
   ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
 }
 
+TEST_F(TableScanTest, sharedNullBufferFromComplexResult) {
+  // Set the map vector to trigger map null buffer writable check.
+  const auto mapVector = makeNullableMapVector<StringView, int64_t>(
+      {{std::nullopt},
+       {{{"0"_sv, 0}, {"1"_sv, std::nullopt}}},
+       {{{"2"_sv, 2}, {"3"_sv, std::nullopt}}},
+       {{{"4"_sv, 4}, {"5"_sv, std::nullopt}}},
+       {{{"6"_sv, 6}, {"7"_sv, std::nullopt}}}});
+  auto file = TempFilePath::create();
+  const auto rowVector = makeRowVector({mapVector});
+  auto schema = asRowType(rowVector->type());
+  writeToFile(file->getPath(), {rowVector});
+
+  CursorParameters params;
+  params.copyResult = false;
+  params.serialExecution = true;
+  params.planNode = PlanBuilder().tableScan(schema, {}).planNode();
+  std::unordered_map<std::string, std::string> config;
+  // Set output buffer row limit to 1 to trigger one batch read at a time.
+  params.queryConfigs.emplace(
+      QueryConfig::kPreferredOutputBatchBytes, folly::to<std::string>(1));
+
+  auto cursor = TaskCursor::create(params);
+  cursor->task()->addSplit(
+      "0", exec::Split(makeHiveConnectorSplit(file->getPath())));
+  cursor->task()->noMoreSplits("0");
+  int i = 0;
+  BufferPtr nullBufferHolder;
+  while (cursor->moveNext()) {
+    auto* result = cursor->current()->asUnchecked<RowVector>();
+    ASSERT_TRUE(isLazyNotLoaded(*result->childAt(0)));
+    result->loadedVector();
+    // The first batch contains null in map child and hold a shared reference to
+    // trigger the case that the null buffer is not writable in second read.
+    if (i++ == 0) {
+      nullBufferHolder = result->childAt(0)->nulls();
+    }
+  }
+  ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
+}
+
 // When the multi-referenced fields are in AND clauses without any other
 // conditionals, they should not be eagerly materialized.
 TEST_F(
@@ -3293,7 +3359,7 @@ TEST_F(
   writeToFile(file->getPath(), {vector});
   CursorParameters params;
   params.copyResult = false;
-  params.singleThreaded = true;
+  params.serialExecution = true;
   params.planNode = PlanBuilder()
                         .tableScan(schema, {}, "c0 % 7 == 0 AND c1 % 2 == 0")
                         .planNode();

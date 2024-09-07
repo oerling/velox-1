@@ -52,25 +52,6 @@ class CastExprTest : public functions::test::CastBaseTest {
         {"error_on_odd_else_unknown"});
   }
 
-  void setLegacyCast(bool value) {
-    queryCtx_->testingOverrideConfigUnsafe({
-        {core::QueryConfig::kLegacyCast, std::to_string(value)},
-    });
-  }
-
-  void setCastMatchStructByName(bool value) {
-    queryCtx_->testingOverrideConfigUnsafe({
-        {core::QueryConfig::kCastMatchStructByName, std::to_string(value)},
-    });
-  }
-
-  void setTimezone(const std::string& value) {
-    queryCtx_->testingOverrideConfigUnsafe({
-        {core::QueryConfig::kSessionTimezone, value},
-        {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
-    });
-  }
-
   std::shared_ptr<core::ConstantTypedExpr> makeConstantNullExpr(TypeKind kind) {
     return std::make_shared<core::ConstantTypedExpr>(
         createType(kind, {}), variant(kind));
@@ -1022,6 +1003,12 @@ TEST_F(CastExprTest, primitiveInvalidCornerCases) {
         "bigint", {"infinity"}, "Invalid leading character");
     testInvalidCast<std::string>(
         "bigint", {"nan"}, "Invalid leading character");
+    testInvalidCast<std::string>(
+        "bigint",
+        {"٣"},
+        "Unicode characters are not supported for conversion to integer types",
+        VARCHAR(),
+        true);
   }
 
   // To floating-point.

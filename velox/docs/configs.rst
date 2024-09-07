@@ -414,6 +414,14 @@ Each query can override the config by setting corresponding query session proper
      - bool
      - true
      - If true, the partition directory will be converted to lowercase when executing a table write operation.
+   * - allow-null-partition-keys
+     - allow_null_partition_keys
+     - bool
+     - true
+     - Determines whether null values for partition keys are allowed or not. If not, fails with "Partition key must
+       not be null" error message when writing data with null partition key.
+       Null check for partitioning key should be used only when partitions are generated dynamically during query execution.
+       For queries that write to fixed partitions, this check should happen much earlier before the Velox execution even starts.
    * - ignore_missing_files
      -
      - bool
@@ -517,6 +525,7 @@ Each query can override the config by setting corresponding query session proper
        and also skip staging to the ssd cache. This helps to prevent the cache space pollution
        from the one-time table scan by large batch query when mixed running with interactive
        query which has high data locality.
+
 
 ``Amazon S3 Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -686,4 +695,29 @@ Spark-specific Configuration
        the value of this config can not exceed the default value.
    * - spark.partition_id
      - integer
+     -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+
+Tracing
+--------
+.. list-table::
+   :widths: 30 10 10 70
+   :header-rows: 1
+
+   * - Property Name
+     - Type
+     - Default Value
+     - Description
+   * - query_trace_enabled
+     - bool
+     - true
+     - If true, enable query tracing.
+   * - query_trace_dir
+     - string
+     -
+     - The root directory to store the tracing data and metadata for a query.
+   * - query_trace_node_ids
+     - string
+     -
+     - A comma-separated list of plan node ids whose input data will be trace. If it is empty, then we only trace the
+       query metadata which includes the query plan and configs etc.

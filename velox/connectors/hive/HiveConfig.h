@@ -135,6 +135,11 @@ class HiveConfig {
   static constexpr const char* kPartitionPathAsLowerCaseSession =
       "partition_path_as_lower_case";
 
+  static constexpr const char* kAllowNullPartitionKeys =
+      "allow-null-partition-keys";
+  static constexpr const char* kAllowNullPartitionKeysSession =
+      "allow_null_partition_keys";
+
   static constexpr const char* kIgnoreMissingFilesSession =
       "ignore_missing_files";
 
@@ -292,6 +297,8 @@ class HiveConfig {
 
   bool isPartitionPathAsLowerCase(const config::ConfigBase* session) const;
 
+  bool allowNullPartitionKeys(const config::ConfigBase* session) const;
+
   bool ignoreMissingFiles(const config::ConfigBase* session) const;
 
   int64_t maxCoalescedBytes() const;
@@ -325,6 +332,12 @@ class HiveConfig {
   uint64_t orcWriterMinCompressionSize(const config::ConfigBase* session) const;
 
   std::optional<uint8_t> orcWriterCompressionLevel(
+      const config::ConfigBase* session) const;
+
+  uint8_t orcWriterZLIBCompressionLevel(
+      const config::ConfigBase* session) const;
+
+  uint8_t orcWriterZSTDCompressionLevel(
       const config::ConfigBase* session) const;
 
   std::string writeFileCreateConfig() const;

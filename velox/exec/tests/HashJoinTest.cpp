@@ -6627,6 +6627,48 @@ TEST_F(HashJoinTest, leftJoinWithMissAtEndOfBatchMultipleBuildMatches) {
   test("t_k2 != 4 and t_k2 != 8");
 }
 
+TEST_F(HashJoinTest, leftJoinPreserveProbeOrder) {
+  const std::vector<RowVectorPtr> probeVectors = {
+      makeRowVector(
+          {"k1", "v1"},
+          {
+              makeConstant<int64_t>(0, 2),
+              makeFlatVector<int64_t>({1, 0}),
+          }),
+  };
+  const std::vector<RowVectorPtr> buildVectors = {
+      makeRowVector(
+          {"k2", "v2"},
+          {
+              makeConstant<int64_t>(0, 2),
+              makeConstant<int64_t>(0, 2),
+          }),
+  };
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  auto plan =
+      PlanBuilder(planNodeIdGenerator)
+          .values(probeVectors)
+          .hashJoin(
+              {"k1"},
+              {"k2"},
+              PlanBuilder(planNodeIdGenerator).values(buildVectors).planNode(),
+              "v1 % 2 = v2 % 2",
+              {"v1"},
+              core::JoinType::kLeft)
+          .planNode();
+  auto result = AssertQueryBuilder(plan)
+                    .config(core::QueryConfig::kPreferredOutputBatchRows, "1")
+                    .serialExecution(true)
+                    .copyResults(pool_.get());
+  ASSERT_EQ(result->size(), 3);
+  auto* v1 =
+      result->childAt(0)->loadedVector()->asUnchecked<SimpleVector<int64_t>>();
+  ASSERT_FALSE(v1->mayHaveNulls());
+  ASSERT_EQ(v1->valueAt(0), 1);
+  ASSERT_EQ(v1->valueAt(1), 0);
+  ASSERT_EQ(v1->valueAt(2), 0);
+}
+
 DEBUG_ONLY_TEST_F(HashJoinTest, minSpillableMemoryReservation) {
   constexpr int64_t kMaxBytes = 1LL << 30; // 1GB
   VectorFuzzer fuzzer({.vectorSize = 1000}, pool());
@@ -6895,6 +6937,7 @@ TEST_F(HashJoinTest, reclaimFromJoinBuilderWithMultiDrivers) {
           vectors,
           newQueryCtx(
               memoryManagerWithoutArbitrator.get(), executor_.get(), 8L << 30),
+          false,
           numDrivers,
           pool(),
           false)
@@ -6907,6 +6950,7 @@ TEST_F(HashJoinTest, reclaimFromJoinBuilderWithMultiDrivers) {
       vectors,
       newQueryCtx(
           memoryManagerWithArbitrator.get(), executor_.get(), 128 << 20),
+      false,
       numDrivers,
       pool(),
       true,
@@ -6937,7 +6981,7 @@ DEBUG_ONLY_TEST_F(
   std::shared_ptr<core::QueryCtx> queryCtx =
       newQueryCtx(memory::memoryManager(), executor_.get(), 512 << 20);
   const auto expectedResult =
-      runHashJoinTask(vectors, queryCtx, numDrivers, pool(), false).data;
+      runHashJoinTask(vectors, queryCtx, false, numDrivers, pool(), false).data;
 
   std::atomic_bool nonReclaimableSectionWaitFlag{true};
   std::atomic_bool reclaimerInitializationWaitFlag{true};
@@ -6986,7 +7030,7 @@ DEBUG_ONLY_TEST_F(
 
   std::thread joinThread([&]() {
     const auto result = runHashJoinTask(
-        vectors, queryCtx, numDrivers, pool(), true, expectedResult);
+        vectors, queryCtx, false, numDrivers, pool(), true, expectedResult);
     auto taskStats = exec::toPlanStats(result.task->taskStats());
     auto& planStats = taskStats.at(result.planNodeId);
     ASSERT_EQ(planStats.spilledBytes, 0);
@@ -7396,7 +7440,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, taskWaitTimeout) {
       createVectors(rowType, queryMemoryCapacity / 2, fuzzerOpts_);
   const int numDrivers = 4;
   const auto expectedResult =
-      runHashJoinTask(vectors, nullptr, numDrivers, pool(), false).data;
+      runHashJoinTask(vectors, nullptr, false, numDrivers, pool(), false).data;
 
   for (uint64_t timeoutMs : {0, 1'000, 30'000}) {
     SCOPED_TRACE(fmt::format("timeout {}", succinctMillis(timeoutMs)));
@@ -7436,12 +7480,18 @@ DEBUG_ONLY_TEST_F(HashJoinTest, taskWaitTimeout) {
       if (timeoutMs == 1'000) {
         VELOX_ASSERT_THROW(
             runHashJoinTask(
-                vectors, queryCtx, numDrivers, pool(), true, expectedResult),
+                vectors,
+                queryCtx,
+                false,
+                numDrivers,
+                pool(),
+                true,
+                expectedResult),
             "Memory reclaim failed to wait");
       } else {
         // We expect succeed on large time out or no timeout.
         const auto result = runHashJoinTask(
-            vectors, queryCtx, numDrivers, pool(), true, expectedResult);
+            vectors, queryCtx, false, numDrivers, pool(), true, expectedResult);
         auto taskStats = exec::toPlanStats(result.task->taskStats());
         auto& planStats = taskStats.at(result.planNodeId);
         ASSERT_GT(planStats.spilledBytes, 0);
@@ -7978,10 +8028,6 @@ DEBUG_ONLY_TEST_F(HashJoinTest, spillCheckOnLeftSemiFilterWithDynamicFilters) {
                        .values(buildVectors)
                        .project({"c0 AS u_c0", "c1 AS u_c1"})
                        .planNode();
-  auto keyOnlyBuildSide = PlanBuilder(planNodeIdGenerator, pool_.get())
-                              .values(keyOnlyBuildVectors)
-                              .project({"c0 AS u_c0"})
-                              .planNode();
 
   // Left semi join.
   core::PlanNodeId probeScanId;
@@ -8028,7 +8074,7 @@ DEBUG_ONLY_TEST_F(HashJoinTest, spillCheckOnLeftSemiFilterWithDynamicFilters) {
         // Verify spill hasn't triggered.
         auto taskStats = exec::toPlanStats(task->taskStats());
         auto& planStats = taskStats.at(joinNodeId);
-        ASSERT_EQ(planStats.spilledBytes, 0);
+        ASSERT_GT(planStats.spilledBytes, 0);
       })
       .run();
 }

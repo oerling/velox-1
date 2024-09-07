@@ -99,9 +99,6 @@ struct WriterOptions : public dwio::common::WriterOptions {
 
   arrow::Encoding::type encoding = arrow::Encoding::PLAIN;
 
-  // The default factory allows the writer to construct the default flush
-  // policy with the configs in its ctor.
-  std::function<std::unique_ptr<DefaultFlushPolicy>()> flushPolicyFactory;
   std::shared_ptr<CodecOptions> codecOptions;
   std::unordered_map<std::string, common::CompressionKind>
       columnCompressionsMap;
@@ -121,11 +118,6 @@ struct WriterOptions : public dwio::common::WriterOptions {
       "hive.parquet.writer.timestamp_unit";
   static constexpr const char* kParquetHiveConnectorWriteTimestampUnit =
       "hive.parquet.writer.timestamp-unit";
-
-  // Process hive connector and session configs.
-  void processConfigs(
-      const config::ConfigBase& connectorConfig,
-      const config::ConfigBase& session) override;
 };
 
 // Writes Velox vectors into  a DataSink using Arrow Parquet writer.

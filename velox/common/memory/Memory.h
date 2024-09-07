@@ -81,7 +81,11 @@ struct MemoryManagerOptions {
   /// Terminates the process and generates a core file on an allocation failure
   bool coreOnAllocationFailureEnabled{false};
 
+  /// Disables the memory manager's tracking on memory pools.
+  bool disableMemoryPoolTracking{false};
+
   /// ================== 'MemoryAllocator' settings ==================
+
   /// Specifies the max memory allocation capacity in bytes enforced by
   /// MemoryAllocator, default unlimited.
   int64_t allocatorCapacity{kMaxMemory};
@@ -195,6 +199,23 @@ struct MemoryManagerOptions {
   /// otherwise it is disabled.
   uint64_t fastExponentialGrowthCapacityLimit{512 << 20};
   double slowCapacityGrowPct{0.25};
+
+  /// When shrinking capacity, the shrink bytes will be adjusted in a way such
+  /// that AFTER shrink, the stricter (whichever is smaller) of the following
+  /// conditions is met, in order to better fit the pool's current memory
+  /// usage:
+  /// - Free capacity is greater or equal to capacity *
+  /// 'memoryPoolMinFreeCapacityPct'
+  /// - Free capacity is greater or equal to 'memoryPoolMinFreeCapacity'
+  ///
+  /// NOTE: In the conditions when original requested shrink bytes ends up
+  /// with more free capacity than above 2 conditions, the adjusted shrink
+  /// bytes is not respected.
+  ///
+  /// NOTE: Capacity shrink adjustment is enabled when both
+  /// 'memoryPoolMinFreeCapacityPct' and 'memoryPoolMinFreeCapacity' are set.
+  uint64_t memoryPoolMinFreeCapacity{128 << 20};
+  double memoryPoolMinFreeCapacityPct{0.25};
 
   /// Specifies the max time to wait for memory reclaim by arbitration. The
   /// memory reclaim might fail if the max wait time has exceeded. If it is
@@ -321,26 +342,36 @@ class MemoryManager {
     return spillPool_.get();
   }
 
+  /// Returns the process wide leaf memory pool used for query tracing.
+  MemoryPool* tracePool() const {
+    return tracePool_.get();
+  }
+
   const std::vector<std::shared_ptr<MemoryPool>>& testingSharedLeafPools() {
     return sharedLeafPools_;
   }
 
  private:
+  std::shared_ptr<MemoryPool> createRootPool(
+      std::string poolName,
+      std::unique_ptr<MemoryReclaimer>& reclaimer,
+      MemoryPool::Options& options);
+
   void dropPool(MemoryPool* pool);
 
   //  Returns the shared references to all the alive memory pools in 'pools_'.
   std::vector<std::shared_ptr<MemoryPool>> getAlivePools() const;
 
   const std::shared_ptr<MemoryAllocator> allocator_;
-  // Specifies the capacity to allocate from 'arbitrator_' for a newly created
-  // root memory pool.
-  const uint64_t poolInitCapacity_;
+
   // If not null, used to arbitrate the memory capacity among 'pools_'.
   const std::unique_ptr<MemoryArbitrator> arbitrator_;
   const uint16_t alignment_;
   const bool checkUsageLeak_;
   const bool debugEnabled_;
   const bool coreOnAllocationFailureEnabled_;
+  const bool disableMemoryPoolTracking_;
+
   // The destruction callback set for the allocated root memory pools which are
   // tracked by 'pools_'. It is invoked on the root pool destruction and removes
   // the pool from 'pools_'.
@@ -348,6 +379,7 @@ class MemoryManager {
 
   const std::shared_ptr<MemoryPool> sysRoot_;
   const std::shared_ptr<MemoryPool> spillPool_;
+  const std::shared_ptr<MemoryPool> tracePool_;
   const std::vector<std::shared_ptr<MemoryPool>> sharedLeafPools_;
 
   mutable folly::SharedMutex mutex_;
@@ -393,6 +425,9 @@ memory::MemoryPool* spillMemoryPool();
 
 /// Returns true if the provided 'pool' is the spilling memory pool.
 bool isSpillMemoryPool(memory::MemoryPool* pool);
+
+/// Returns the system-wide memory pool for tracing memory usage.
+memory::MemoryPool* traceMemoryPool();
 
 FOLLY_ALWAYS_INLINE int32_t alignmentPadding(void* address, int32_t alignment) {
   auto extra = reinterpret_cast<uintptr_t>(address) % alignment;

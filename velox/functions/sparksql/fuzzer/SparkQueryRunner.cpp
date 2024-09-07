@@ -73,6 +73,23 @@ void writeToFile(
 
 } // namespace
 
+const std::vector<TypePtr>& SparkQueryRunner::supportedScalarTypes() const {
+  static const std::vector<TypePtr> kScalarTypes{
+      BOOLEAN(),
+      TINYINT(),
+      SMALLINT(),
+      INTEGER(),
+      BIGINT(),
+      REAL(),
+      DOUBLE(),
+      VARCHAR(),
+      VARBINARY(),
+      TIMESTAMP(),
+      DATE(),
+  };
+  return kScalarTypes;
+}
+
 std::optional<std::string> SparkQueryRunner::toSql(
     const velox::core::PlanNodePtr& plan) {
   if (const auto aggregationNode =
@@ -106,7 +123,7 @@ std::vector<RowVectorPtr> SparkQueryRunner::executeVector(
   // Write the input to a Parquet file.
   auto tempFile = exec::test::TempFilePath::create();
   const auto& filePath = tempFile->getPath();
-  auto writerPool = rootPool()->addAggregateChild("writer");
+  auto writerPool = aggregatePool()->addAggregateChild("writer");
   writeToFile(filePath, input, writerPool.get());
 
   // Create temporary view 'tmp' in Spark by reading the generated Parquet file.
