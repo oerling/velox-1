@@ -84,7 +84,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
       int32_t vectorSize,
       bool notNull = true,
       std::function<void(RowVectorPtr)> custom = nullptr) {
-    vectors_ = makeVectors(type, numVectors, vectorSize);
+    vectors_ = makeVectors(type, numVectors, vectorSize, notNull ? 0 : 0.1);
     int32_t cnt = 0;
     for (auto& vector : vectors_) {
       if (custom) {
