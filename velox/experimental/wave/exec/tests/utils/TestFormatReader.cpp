@@ -64,17 +64,19 @@ void TestFormatData::griddize(
     SplitStaging& staging,
     DecodePrograms& programs,
     ReadStream& stream) {
+  constexpr int32_t kCountStride = 1024;
   griddized_ = true;
   auto id = stageNulls(deviceStaging, staging);
   if (column_->nulls) {
     auto count = std::make_unique<GpuDecode>();
     staging.registerPointer(id, &count->data.countBits.bits, true);
-    auto resultId = deviceStaging.reserve(sizeof(int32_t) * numBlocks);
+    auto numStrides = bits::roundUp(column_->numValues, kCountStride) / kCountStride;
+    auto resultId = deviceStaging.reserve(sizeof(int32_t) * numStrides);
     deviceStaging.registerPointer(resultId, &count->result, true);
     deviceStaging.registerPointer(resultId, &grid_.numNonNull, true);
     count->step = DecodeStep::kCountBits;
     count->data.countBits.numBits = column_->numValues;
-    count->data.countBits.resultStride = FLAGS_wave_reader_rows_per_tb;
+    count->data.countBits.resultStride = kCountStride;
     programs.programs.emplace_back();
     programs.programs.back().push_back(std::move(count));
   }
@@ -108,7 +110,7 @@ void TestFormatData::startOp(
   if (numBlocks > 1) {
     VELOX_CHECK(griddized_);
   }
-  VELOX_CHECK_LT(numBlocks, 256);
+  VELOX_CHECK_LT(numBlocks, 256 * 256, "Overflow 16 bit block number");
   for (auto blockIdx = 0; blockIdx < numBlocks; ++blockIdx) {
     auto rowsInBlock = std::min<int32_t>(
         rowsPerBlock, op.rows.size() - (blockIdx * rowsPerBlock));

@@ -54,6 +54,8 @@ ReadStream::ReadStream(
     FileInfo& fileInfo,
     const OperandSet* firstColumns)
     : Executable(), ioStats_(ioStats), fileInfo_(fileInfo) {
+  VELOX_CHECK_EQ(0, FLAGS_wave_reader_rows_per_tb & 1023,
+		 "wave_reader_rows_per_tb must be a multiple of 1K");
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());

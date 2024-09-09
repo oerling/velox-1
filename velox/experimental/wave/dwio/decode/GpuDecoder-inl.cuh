@@ -762,7 +762,7 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+	  op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->numRowsPerThread / (1024 / kBlockSize )) - 1];
         state->nonNullsBelowRow =
             op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
@@ -807,7 +807,7 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->numRowsPerThread / (1024 / kBlockSize )) - 1];
         state->nonNullsBelowRow =
             op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
