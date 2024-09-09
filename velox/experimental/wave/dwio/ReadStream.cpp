@@ -104,9 +104,6 @@ void ReadStream::makeGrid(Stream* stream) {
   programs_.clear();
   auto total = reader_->formatData()->totalRows();
   auto blockSize = FLAGS_wave_reader_rows_per_tb;
-  if (total < blockSize) {
-    return;
-  }
   auto numBlocks = bits::roundUp(total, blockSize) / blockSize;
   auto& children = reader_->children();
   for (auto i = 0; i < children.size(); ++i) {

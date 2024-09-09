@@ -30,6 +30,7 @@
 
 DECLARE_int32(wave_max_reader_batch_rows);
 DECLARE_int32(max_streams_per_driver);
+DECLARE_int32(wave_reader_rows_per_tb);
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;
@@ -39,14 +40,16 @@ using namespace facebook::velox::exec::test;
 struct WaveScanTestParam {
   int32_t numStreams{1};
   int32_t batchSize{20000};
+  int32_t rowsPerTB{1024};
 };
 
 std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{},
-      WaveScanTestParam{.numStreams = 4},
+      WaveScanTestParam{.numStreams = 4, .rowsPerTB=4096},
       WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
-      WaveScanTestParam{.numStreams = 9, .batchSize = 16500}};
+      WaveScanTestParam{.numStreams = 9, .batchSize = 16500},
+      WaveScanTestParam{.numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
 }
 
 class TableScanTest : public virtual HiveConnectorTestBase,
@@ -66,6 +69,7 @@ class TableScanTest : public virtual HiveConnectorTestBase,
     auto param = GetParam();
     FLAGS_max_streams_per_driver = param.numStreams;
     FLAGS_wave_max_reader_batch_rows = param.batchSize;
+    FLAGS_wave_reader_rows_per_tb = param.rowsPerTB;
   }
 
   static void SetUpTestCase() {

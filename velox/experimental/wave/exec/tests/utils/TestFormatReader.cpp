@@ -32,7 +32,7 @@ std::unique_ptr<FormatData> TestFormatParams::toFormatData(
       operand, stripe_->columns[0]->numValues, column);
 }
 
-int TestFormatData::stageNulls(
+BufferId TestFormatData::stageNulls(
     ResultStaging& deviceStaging,
     SplitStaging& splitStaging) {
   if (!column_->nulls) {
@@ -50,10 +50,10 @@ int TestFormatData::stageNulls(
       nulls->values->as<char>(),
       bits::nwords(column_->numValues) * sizeof(uint64_t),
       column_->region);
-  auto id = splitStaging.add(staging);
+  nullsBufferId_ = splitStaging.add(staging);
   nullsStagingId_ = splitStaging.id();
-  splitStaging.registerPointer(id, &grid_.nulls, true);
-  return id;
+  splitStaging.registerPointer(nullsBufferId_, &grid_.nulls, true);
+  return nullsBufferId_;
 }
 
 void TestFormatData::griddize(
@@ -69,20 +69,26 @@ void TestFormatData::griddize(
     return;
   }
   griddized_ = true;
-  auto id = stageNulls(deviceStaging, staging);
-  if (column_->nulls) {
-    auto count = std::make_unique<GpuDecode>();
-    staging.registerPointer(id, &count->data.countBits.bits, true);
-    auto numStrides = bits::roundUp(column_->numValues, kCountStride) / kCountStride;
-    auto resultId = deviceStaging.reserve(sizeof(int32_t) * numStrides);
-    deviceStaging.registerPointer(resultId, &count->result, true);
-    deviceStaging.registerPointer(resultId, &grid_.numNonNull, true);
-    count->step = DecodeStep::kCountBits;
-    count->data.countBits.numBits = column_->numValues;
-    count->data.countBits.resultStride = kCountStride;
-    programs.programs.emplace_back();
-    programs.programs.back().push_back(std::move(count));
+  if (!column_->nulls) {
+    return;
   }
+  // If the whole stripe is covered by a single TB, there is no need for a separate griddize kernel.
+  if (blockSize >= column_->numValues) {
+    return;
+  }
+  auto id = stageNulls(deviceStaging, staging);
+
+  auto count = std::make_unique<GpuDecode>();
+  staging.registerPointer(id, &count->data.countBits.bits, true);
+  auto numStrides = bits::roundUp(column_->numValues, kCountStride) / kCountStride;
+  auto resultId = deviceStaging.reserve(sizeof(int32_t) * numStrides);
+  deviceStaging.registerPointer(resultId, &count->result, true);
+  deviceStaging.registerPointer(resultId, &grid_.numNonNull, true);
+  count->step = DecodeStep::kCountBits;
+  count->data.countBits.numBits = column_->numValues;
+  count->data.countBits.resultStride = kCountStride;
+  programs.programs.emplace_back();
+  programs.programs.back().push_back(std::move(count));
 }
 
 void TestFormatData::startOp(
@@ -120,7 +126,7 @@ void TestFormatData::startOp(
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
 
     auto step = makeStep(
-        op, previousFilter, deviceStaging, stream, columnKind, blockIdx);
+			 op, previousFilter, deviceStaging, splitStaging, stream, columnKind, blockIdx);
     if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&
           (column_->bitWidth == 32 || column_->bitWidth == 64)) {
