@@ -736,4 +736,4 @@ void registerWave() {
   exec::DriverAdapter waveAdapter{"Wave", {}, waveDriverAdapter};
   exec::DriverFactory::registerAdapter(waveAdapter);
 }
-} // namespace facebook::velox::wav
+} // namespace facebook::velox::wave

@@ -89,15 +89,15 @@ void ReadStream::prefetchStatus(Stream* stream) {
   stream->prefetch(getDevice(), data + statusBytes_ + gridStatusBytes_, size);
 }
 
-    namespace {
-      void maybeRecordTransferTime(Stream& stream, WaveStream& waveStream) {
+namespace {
+void maybeRecordTransferTime(Stream& stream, WaveStream& waveStream) {
   if (stream.getAndClearIsTransfer() && FLAGS_wave_transfer_timing) {
     WaveTimer t(waveStream.mutableStats().transferWaitTime);
     stream.wait();
   }
 }
-  }  
-  
+} // namespace
+
 void ReadStream::makeGrid(Stream* stream) {
   programs_.clear();
   auto total = reader_->formatData()->totalRows();
@@ -395,7 +395,7 @@ void ReadStream::launch(
           readStream->syncStaging(*stream);
           LaunchParams params(waveStream->deviceArena());
           {
-	    maybeRecordTransferTime(*stream, *readStream->waveStream);
+            maybeRecordTransferTime(*stream, *readStream->waveStream);
             PrintTime l("decode");
             launchDecode(readStream->programs(), params, stream);
           }
@@ -421,7 +421,7 @@ void ReadStream::launch(
         LaunchParams params(readStream->waveStream->deviceArena());
         readStream->syncStaging(*stream);
         {
-	  maybeRecordTransferTime(*stream, *readStream->waveStream);
+          maybeRecordTransferTime(*stream, *readStream->waveStream);
           PrintTime l("decode-f");
           launchDecode(readStream->programs(), params, stream);
         }
@@ -440,7 +440,8 @@ void ReadStream::makeControl() {
   WaveStream::ExeLaunchInfo info;
   waveStream->exeLaunchInfo(*this, numBlocks_, info);
   auto instructionStatus = waveStream->instructionStatus();
-  int32_t instructionBytes = instructionStatusSize(instructionStatus, numBlocks_);
+  int32_t instructionBytes =
+      instructionStatusSize(instructionStatus, numBlocks_);
   statusBytes_ = bits::roundUp(sizeof(BlockStatus) * numBlocks_, 8);
   auto deviceBytes = statusBytes_ + instructionBytes + info.totalBytes;
   auto control = std::make_unique<LaunchControl>(0, numRows);

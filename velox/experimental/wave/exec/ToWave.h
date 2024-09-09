@@ -180,9 +180,10 @@ class CompileState {
   int32_t stateCounter_{0};
   InstructionStatus instructionStatus_;
 
-  // All InstructionStatus records in instructions that have them. Used for patching the final grid size when this is known.
+  // All InstructionStatus records in instructions that have them. Used for
+  // patching the final grid size when this is known.
   std::vector<InstructionStatus*> allStatuses_;
-  
+
   int32_t nthContinuable_{0};
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;

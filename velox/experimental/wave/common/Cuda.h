@@ -80,12 +80,12 @@ class Stream {
     isTransfer_ = false;
     return flag;
   }
-  
+
  protected:
   std::unique_ptr<StreamImpl> stream_;
   void* userData_{nullptr};
   bool isTransfer_{false};
-  
+
   friend class Event;
 };
 

@@ -420,9 +420,10 @@ void WaveDriver::updateStats() {
           waveStats_.stagingTime.micros * 1000, RuntimeCounter::Unit::kNanos));
   if (FLAGS_wave_transfer_timing) {
     lockedStats->addRuntimeStat(
-				"wave.transferWaitNanos",
-				RuntimeCounter(
-					       waveStats_.transferWaitTime.micros * 1000, RuntimeCounter::Unit::kNanos));
+        "wave.transferWaitNanos",
+        RuntimeCounter(
+            waveStats_.transferWaitTime.micros * 1000,
+            RuntimeCounter::Unit::kNanos));
   }
 }
 

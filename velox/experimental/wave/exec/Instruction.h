@@ -375,14 +375,13 @@ struct AbstractAggregation : public AbstractOperator {
   InstructionStatus* mutableInstructionStatus() override {
     return &instructionStatus;
   }
-  
-  AdvanceResult canAdvance(
-				   WaveStream& stream,
-				   LaunchControl* control,
-				   OperatorState* state,
-				   int32_t programIdx) const override;
 
-  
+  AdvanceResult canAdvance(
+      WaveStream& stream,
+      LaunchControl* control,
+      OperatorState* state,
+      int32_t programIdx) const override;
+
   InstructionStatus instructionStatus;
 
   bool intermediateInput{false};

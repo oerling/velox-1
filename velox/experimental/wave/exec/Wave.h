@@ -130,7 +130,7 @@ struct WaveStats {
 
   /// Optionally measured host to device transfer latency.
   WaveTime transferWaitTime;
-  
+
   void clear();
   void add(const WaveStats& other);
 };
@@ -516,7 +516,7 @@ class Program : public std::enable_shared_from_this<Program> {
   bool isSink() const;
 
   void registerStatus(WaveStream& stream);
-  
+
   std::string toString() const;
 
  private:
@@ -599,11 +599,15 @@ class Program : public std::enable_shared_from_this<Program> {
   std::vector<std::unique_ptr<ProgramState>> operatorStates_;
 };
 
-  inline int32_t instructionStatusSize(InstructionStatus& status, int32_t numBlocks) {
-    return bits::roundUp(static_cast<uint32_t>(status.gridStateSize) +
-			 numBlocks * static_cast<uint32_t>(status.blockState), 8);
-  }
-  
+inline int32_t instructionStatusSize(
+    InstructionStatus& status,
+    int32_t numBlocks) {
+  return bits::roundUp(
+      static_cast<uint32_t>(status.gridStateSize) +
+          numBlocks * static_cast<uint32_t>(status.blockState),
+      8);
+}
+
 using ProgramPtr = std::shared_ptr<Program>;
 
 class WaveSplitReader;
@@ -792,7 +796,7 @@ class WaveStream {
     launchControl_[key].push_back(std::move(control));
   }
 
-    void setLaunchControl(
+  void setLaunchControl(
       int32_t key,
       int32_t nth,
       std::unique_ptr<LaunchControl> control);
@@ -834,7 +838,6 @@ class WaveStream {
     return stats_;
   }
 
-  
   WaveStats& stats() {
     return stats_;
   }
@@ -982,9 +985,11 @@ class WaveStream {
   // Host pinned memory to which 'deviceReturnData' is copied.
   WaveBufferPtr hostReturnData_;
 
-  // Device/unified pointer to BlockStatus and memory for areas for instructionStatus_. Allocated before first launch and copied to 'hostBlockStatus_' after last kernel in pipeline. 
+  // Device/unified pointer to BlockStatus and memory for areas for
+  // instructionStatus_. Allocated before first launch and copied to
+  // 'hostBlockStatus_' after last kernel in pipeline.
   BlockStatus* deviceBlockStatus_{nullptr};
-  
+
   // Host side copy of BlockStatus.
   WaveBufferPtr hostBlockStatus_;
 

@@ -24,9 +24,11 @@ DEFINE_bool(
     false,
     "Enables printing times inside PrinTime guard.");
 
-DEFINE_bool(wave_transfer_timing, false,
-	    "Enables measuring host to device transfer latency separet "
-	    "from wait time for compute");
+DEFINE_bool(
+    wave_transfer_timing,
+    false,
+    "Enables measuring host to device transfer latency separet "
+    "from wait time for compute");
 
 namespace facebook::velox::wave {
 
@@ -320,9 +322,9 @@ void WaveStream::resultToHost() {
     hostReturnEvent_ = newEvent();
   }
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
-  int32_t statusBytes = bits::roundUp(sizeof(BlockStatus) * numBlocks, 8) + instructionStatusSize(instructionStatus_, numBlocks);
-  if (!hostBlockStatus_ ||
-      hostBlockStatus_->size() < statusBytes) {
+  int32_t statusBytes = bits::roundUp(sizeof(BlockStatus) * numBlocks, 8) +
+      instructionStatusSize(instructionStatus_, numBlocks);
+  if (!hostBlockStatus_ || hostBlockStatus_->size() < statusBytes) {
     hostBlockStatus_ = getSmallTransferArena().allocate<char>(statusBytes);
   }
   Stream* transferStream = streams_[0].get();
@@ -339,9 +341,7 @@ void WaveStream::resultToHost() {
         hostReturnDataUsed_);
   }
   transferStream->deviceToHostAsync(
-      hostBlockStatus_->as<char>(),
-      deviceBlockStatus_,
-      statusBytes);
+      hostBlockStatus_->as<char>(), deviceBlockStatus_, statusBytes);
   hostReturnEvent_->record(*transferStream);
 }
 
@@ -697,9 +697,9 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
 }
 
 void WaveStream::setLaunchControl(
-				  int32_t key,
-				  int32_t nth,
-      std::unique_ptr<LaunchControl> control) {
+    int32_t key,
+    int32_t nth,
+    std::unique_ptr<LaunchControl> control) {
   if (key == 0 && nth == 0) {
     deviceBlockStatus_ = control->params.status;
   }
@@ -709,7 +709,7 @@ void WaveStream::setLaunchControl(
   }
   controls[nth] = std::move(control);
 }
-  
+
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
     int32_t nthLaunch,
@@ -774,7 +774,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     statusOffset = size;
     //  Pointer to return block for each tB.
     size += bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
-    size += bits::roundUp(instructionStatus_.gridStateSize + instructionStatus_.blockState * numBlocks, 8); 
+    size += bits::roundUp(
+        instructionStatus_.gridStateSize +
+            instructionStatus_.blockState * numBlocks,
+        8);
   }
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
@@ -937,7 +940,7 @@ std::string WaveStream::toString() const {
 WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
-  
+
 void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
