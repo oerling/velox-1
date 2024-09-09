@@ -54,8 +54,10 @@ ReadStream::ReadStream(
     FileInfo& fileInfo,
     const OperandSet* firstColumns)
     : Executable(), ioStats_(ioStats), fileInfo_(fileInfo) {
-  VELOX_CHECK_EQ(0, FLAGS_wave_reader_rows_per_tb & 1023,
-		 "wave_reader_rows_per_tb must be a multiple of 1K");
+  VELOX_CHECK_EQ(
+      0,
+      FLAGS_wave_reader_rows_per_tb & 1023,
+      "wave_reader_rows_per_tb must be a multiple of 1K");
   waveStream = &_waveStream;
   allOperands(columnReader, outputOperands, &abstractOperands_);
   output.resize(outputOperands.size());
@@ -163,7 +165,7 @@ void ReadStream::makeCompact(bool isSerial) {
         step->numRowsPerThread = blockIdx == numTBs - 1
             ? numBlocks_ - (numTBs - 1) * maxRowsPerThread
             : maxRowsPerThread;
-	step->gridNumRowsPerThread = maxRowsPerThread;
+        step->gridNumRowsPerThread = maxRowsPerThread;
         if (filters_.back().deviceResult) {
           step->data.compact.finalRows =
               filters_.back().deviceResult + blockIdx * rowsPerBlock;

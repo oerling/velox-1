@@ -214,7 +214,8 @@ std::unique_ptr<GpuDecode> FormatData::makeStep(
       step->nonNullBases = grid_.numNonNull;
       step->nulls = grid_.nulls;
     } else {
-      // The nulls transfer is staged but no pointer yet. Happens when the nulls decoding is in the same kernel as decode, i.e. single TB per column.
+      // The nulls transfer is staged but no pointer yet. Happens when the nulls
+      // decoding is in the same kernel as decode, i.e. single TB per column.
       splitStaging.registerPointer(nullsBufferId_, &step->nulls, true);
       step->nonNullBases = nullptr;
     }

@@ -130,10 +130,12 @@ struct alignas(16) GpuDecode {
   // launched in the same grid but are independent. The ordinal for non-first
   // TBs gets the base index for values.
   uint16_t nthBlock{0};
-  /// Number of rows to process per thread of this block. This is equal across the grid, except for last block.
+  /// Number of rows to process per thread of this block. This is equal across
+  /// the grid, except for last block.
   uint16_t numRowsPerThread{1};
 
-  /// Number of rows per thread in the grid, same for all blocks including the last one.
+  /// Number of rows per thread in the grid, same for all blocks including the
+  /// last one.
   uint16_t gridNumRowsPerThread{1};
 
   /// Number of rows to decode. if kFilterHits, the previous GpuDecode gives

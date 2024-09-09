@@ -46,10 +46,11 @@ struct WaveScanTestParam {
 std::vector<WaveScanTestParam> waveScanTestParams() {
   return {
       WaveScanTestParam{},
-      WaveScanTestParam{.numStreams = 4, .rowsPerTB=4096},
+      WaveScanTestParam{.numStreams = 4, .rowsPerTB = 4096},
       WaveScanTestParam{.numStreams = 4, .batchSize = 1111},
       WaveScanTestParam{.numStreams = 9, .batchSize = 16500},
-      WaveScanTestParam{.numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
+      WaveScanTestParam{
+          .numStreams = 2, .batchSize = 20000, .rowsPerTB = 20480}};
 }
 
 class TableScanTest : public virtual HiveConnectorTestBase,

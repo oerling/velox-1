@@ -72,7 +72,8 @@ void TestFormatData::griddize(
   if (!column_->nulls) {
     return;
   }
-  // If the whole stripe is covered by a single TB, there is no need for a separate griddize kernel.
+  // If the whole stripe is covered by a single TB, there is no need for a
+  // separate griddize kernel.
   if (blockSize >= column_->numValues) {
     return;
   }
@@ -80,7 +81,8 @@ void TestFormatData::griddize(
 
   auto count = std::make_unique<GpuDecode>();
   staging.registerPointer(id, &count->data.countBits.bits, true);
-  auto numStrides = bits::roundUp(column_->numValues, kCountStride) / kCountStride;
+  auto numStrides =
+      bits::roundUp(column_->numValues, kCountStride) / kCountStride;
   auto resultId = deviceStaging.reserve(sizeof(int32_t) * numStrides);
   deviceStaging.registerPointer(resultId, &count->result, true);
   deviceStaging.registerPointer(resultId, &grid_.numNonNull, true);
@@ -126,7 +128,13 @@ void TestFormatData::startOp(
     auto columnKind = static_cast<WaveTypeKind>(column_->kind);
 
     auto step = makeStep(
-			 op, previousFilter, deviceStaging, splitStaging, stream, columnKind, blockIdx);
+        op,
+        previousFilter,
+        deviceStaging,
+        splitStaging,
+        stream,
+        columnKind,
+        blockIdx);
     if (column_->encoding == Encoding::kFlat) {
       if (column_->baseline == 0 &&
           (column_->bitWidth == 32 || column_->bitWidth == 64)) {

@@ -323,7 +323,8 @@ class FormatData {
 
   // Staging id for nulls.
   int32_t nullsStagingId_{SplitStaging::kNoStaging};
-  // Id for nulls buffer. The nulls buffer has no address at time of scheduling if nulls decode is in the same kernel as decoding.
+  // Id for nulls buffer. The nulls buffer has no address at time of scheduling
+  // if nulls decode is in the same kernel as decoding.
   BufferId nullsBufferId_{kNoBufferId};
   // id of last splitStaging 'this' depends on.
   int32_t lastStagingId_{SplitStaging::kNoStaging};
