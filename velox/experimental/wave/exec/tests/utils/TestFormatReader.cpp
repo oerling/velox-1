@@ -64,6 +64,9 @@ void TestFormatData::griddize(
     SplitStaging& staging,
     DecodePrograms& programs,
     ReadStream& stream) {
+  if (griddized_) {
+    return;
+  }
   griddized_ = true;
   auto id = stageNulls(deviceStaging, staging);
   if (column_->nulls) {

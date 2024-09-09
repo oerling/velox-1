@@ -164,6 +164,7 @@ void ReadStream::makeCompact(bool isSerial) {
         step->numRowsPerThread = blockIdx == numTBs - 1
             ? numBlocks_ - (numTBs - 1) * maxRowsPerThread
             : maxRowsPerThread;
+	step->gridNumRowsPerThread = maxRowsPerThread;
         if (filters_.back().deviceResult) {
           step->data.compact.finalRows =
               filters_.back().deviceResult + blockIdx * rowsPerBlock;
