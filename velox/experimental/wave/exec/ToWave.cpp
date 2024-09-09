@@ -522,6 +522,7 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     }
   }
   instruction->reserveState(instructionStatus_);
+  allStatuses_.push_back(instruction->mutableInstructionStatus());
   auto aggInstruction = instruction.get();
   addInstruction(std::move(instruction), nullptr, sourceList);
   if (allPrograms_.size() > numPrograms) {
@@ -698,6 +699,10 @@ bool CompileState::compile() {
   for (auto& op : operators_) {
     op->finalize(*this);
   }
+  instructionStatus_.gridStateSize = instructionStatus_.gridState;
+  for (auto* status : allStatuses_) {
+    status->gridStateSize = instructionStatus_.gridState;
+  }
   auto waveOpUnique = std::make_unique<WaveDriver>(
       driver_.driverCtx(),
       outputType,
@@ -731,4 +736,4 @@ void registerWave() {
   exec::DriverAdapter waveAdapter{"Wave", {}, waveDriverAdapter};
   exec::DriverFactory::registerAdapter(waveAdapter);
 }
-} // namespace facebook::velox::wave
+} // namespace facebook::velox::wav

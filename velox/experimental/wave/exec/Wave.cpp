@@ -24,6 +24,10 @@ DEFINE_bool(
     false,
     "Enables printing times inside PrinTime guard.");
 
+DEFINE_bool(wave_transfer_timing, false,
+	    "Enables measuring host to device transfer latency separet "
+	    "from wait time for compute");
+
 namespace facebook::velox::wave {
 
 PrintTime::PrintTime(const char* title)
@@ -55,6 +59,7 @@ void WaveStats::add(const WaveStats& other) {
   hostOnlyTime += other.hostOnlyTime;
   hostParallelTime += other.hostParallelTime;
   waitTime += other.waitTime;
+  transferWaitTime += other.transferWaitTime;
   stagingTime += other.stagingTime;
 }
 
@@ -310,32 +315,19 @@ void WaveStream::setReturnData(bool needStatus) {
   }
 }
 
-LaunchControl* WaveStream::lastControl() const {
-  LaunchControl* last = nullptr;
-  int id = -1;
-  for (auto& pair : launchControl_) {
-    if (pair.first > id) {
-      id = pair.first;
-      last = pair.second.back().get();
-    }
-  }
-  return last;
-}
-
 void WaveStream::resultToHost() {
   if (!hostReturnEvent_) {
     hostReturnEvent_ = newEvent();
   }
   auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
+  int32_t statusBytes = bits::roundUp(sizeof(BlockStatus) * numBlocks, 8) + instructionStatusSize(instructionStatus_, numBlocks);
   if (!hostBlockStatus_ ||
-      hostBlockStatus_->size() < numBlocks * sizeof(BlockStatus)) {
-    hostBlockStatus_ = getSmallTransferArena().allocate<BlockStatus>(numBlocks);
+      hostBlockStatus_->size() < statusBytes) {
+    hostBlockStatus_ = getSmallTransferArena().allocate<char>(statusBytes);
   }
-  auto* outputControl = lastControl();
   Stream* transferStream = streams_[0].get();
   if (streams_.size() > 1) {
     // If many events, queue up the transfer on the first after
-    transferStream = streams_[0].get();
     for (auto i = 1; i < streams_.size(); ++i) {
       lastEvent_[i]->wait(*transferStream);
     }
@@ -346,70 +338,11 @@ void WaveStream::resultToHost() {
         deviceReturnData_->as<char>(),
         hostReturnDataUsed_);
   }
-
   transferStream->deviceToHostAsync(
       hostBlockStatus_->as<char>(),
-      outputControl->params.status,
-      numBlocks * sizeof(BlockStatus));
-
+      deviceBlockStatus_,
+      statusBytes);
   hostReturnEvent_->record(*transferStream);
-}
-
-uint8_t getLastContinuable(
-    uint8_t lastOp,
-    int32_t numBlocks,
-    BlockStatus* status,
-    std::vector<uint64_t>& bits) {
-  // Get the highest number <= lastOp and return that. Set a bit in 'bits' for
-  // the positions where the numbver occurs.
-  using Batch = xsimd::batch<uint8_t>;
-  constexpr int32_t kBatchSize = Batch::size;
-  uint8_t max = 0;
-  auto as8 = [](ErrorCode* c) { return reinterpret_cast<uint8_t*>(c); };
-  auto lastOpVec = Batch::broadcast(lastOp);
-  auto maxLanes = Batch::broadcast(0);
-  for (auto i = 0; i < numBlocks; ++i) {
-    for (auto j = 0; j < kBlockSize; j += kBatchSize) {
-      auto lanes = Batch::load_unaligned(as8(&status[i].errors[j]));
-      lanes = xsimd::select(lanes > lastOpVec, Batch::broadcast(0), lanes);
-      maxLanes = xsimd::select(lanes > maxLanes, lanes, maxLanes);
-    }
-  }
-  uint8_t values[kBatchSize];
-  *reinterpret_cast<Batch*>(&values[0]) = maxLanes;
-  uint8_t maxInData = 0;
-  for (auto i = 0; i < kBatchSize; ++i) {
-    maxInData = std::max(maxInData, values[i]);
-  }
-
-  bits.resize(numBlocks * kBlockSize / 64);
-  auto maxVec = Batch::broadcast(maxInData);
-  int32_t fill = 0;
-  for (auto i = 0; i < numBlocks; ++i) {
-    for (auto j = 0; j < kBlockSize; j += kBatchSize * 2) {
-      uint64_t low = simd::toBitMask(
-          maxVec == Batch::load_unaligned(as8(&status[i].errors[j])));
-      uint64_t high = simd::toBitMask(
-          maxVec ==
-          Batch::load_unaligned(as8(&status[i].errors[j + kBatchSize])));
-      bits[fill++] = low | (high << kBatchSize);
-    }
-  }
-
-  return maxInData;
-}
-
-bool WaveStream::interpretArrival() {
-  auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
-  uint8_t last = 255;
-  uint8_t lastOp = 0;
-  auto* status = hostBlockStatus_->as<BlockStatus>();
-  do {
-    std::vector<uint64_t> bits;
-    lastOp = getLastContinuable(lastOp, numBlocks, status, bits);
-
-  } while (lastOp > 1);
-  return true;
 }
 
 namespace {
@@ -763,6 +696,20 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
   return addBytes<Operand**>(start, 0);
 }
 
+void WaveStream::setLaunchControl(
+				  int32_t key,
+				  int32_t nth,
+      std::unique_ptr<LaunchControl> control) {
+  if (key == 0 && nth == 0) {
+    deviceBlockStatus_ = control->params.status;
+  }
+  auto& controls = launchControl_[key];
+  if (controls.size() <= nth) {
+    controls.resize(nth + 1);
+  }
+  controls[nth] = std::move(control);
+}
+  
 LaunchControl* WaveStream::prepareProgramLaunch(
     int32_t key,
     int32_t nthLaunch,
@@ -827,6 +774,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     statusOffset = size;
     //  Pointer to return block for each tB.
     size += bits::roundUp(blocksPerExe * sizeof(BlockStatus), 8);
+    size += bits::roundUp(instructionStatus_.gridStateSize + instructionStatus_.blockState * numBlocks, 8); 
   }
   // 1 pointer per exe and an exe-dependent data area.
   int32_t operatorStateOffset = size;
@@ -864,6 +812,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     // Memory is already set to all 0.
     for (auto i = 0; i < blocksPerExe; ++i) {
       auto status = &control.params.status[i];
+      deviceBlockStatus_ = status;
       status->numRows =
           i == blocksPerExe - 1 ? inputRows % kBlockSize : kBlockSize;
     }
@@ -988,7 +937,7 @@ std::string WaveStream::toString() const {
 WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
-
+  
 void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {
@@ -1015,16 +964,19 @@ AdvanceResult Program::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
     int32_t programIdx) {
-  AbstractInstruction* source = instructions_.front().get();
-  OperatorState* state = nullptr;
-  auto stateId = source->stateId();
-  if (stateId.has_value()) {
-    state = stream.operatorState(stateId.value());
+  for (int32_t i = instructions_.size() - 1; i >= 0; --i) {
+    auto* instruction = instructions_[i].get();
+    OperatorState* state = nullptr;
+    auto stateId = instruction->stateId();
+    if (stateId.has_value()) {
+      state = stream.operatorState(stateId.value());
+    }
+    auto result = instruction->canAdvance(stream, control, state, programIdx);
+    if (!result.empty()) {
+      return result;
+    }
   }
-  if (state == nullptr) {
-    return {};
-  }
-  return source->canAdvance(stream, control, state, programIdx);
+  return {};
 }
 
 #define IN_HEAD(abstract, physical, _op)             \
