@@ -65,6 +65,9 @@ void TestFormatData::griddize(
     DecodePrograms& programs,
     ReadStream& stream) {
   constexpr int32_t kCountStride = 1024;
+  if (griddized_) {
+    return;
+  }
   griddized_ = true;
   auto id = stageNulls(deviceStaging, staging);
   if (column_->nulls) {

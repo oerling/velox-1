@@ -659,7 +659,7 @@ __device__ void makeResult(
       op->resultRows[resultIdx] = row;
       if (kHasResult) {
         reinterpret_cast<T*>(op->result)[resultIdx] = data;
-        if (kHasNulls) {
+        if (kHasNulls && op->resultNulls) {
           op->resultNulls[resultIdx] = nullFlag;
         }
       }
@@ -762,9 +762,9 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-	  op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->numRowsPerThread / (1024 / kBlockSize )) - 1];
+	  op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->gridNumRowsPerThread / (1024 / kBlockSize )) - 1];
         state->nonNullsBelowRow =
-            op->numRowsPerThread * op->nthBlock * kBlockSize;
+            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
@@ -807,9 +807,9 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->numRowsPerThread / (1024 / kBlockSize )) - 1];
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->gridNumRowsPerThread / (1024 / kBlockSize )) - 1];
         state->nonNullsBelowRow =
-            op->numRowsPerThread * op->nthBlock * kBlockSize;
+            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
