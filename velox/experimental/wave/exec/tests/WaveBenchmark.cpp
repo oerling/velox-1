@@ -17,6 +17,7 @@
 #include "velox/benchmarks/QueryBenchmarkBase.h"
 #include "velox/common/process/TraceContext.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
+#include "velox/dwio/parquet/writer/Writer.h"
 #include "velox/dwio/dwrf/writer/WriterContext.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/WaveHiveDataSource.h"
@@ -72,6 +73,8 @@ DEFINE_int32(
     -1,
     "Run a given query and print execution statistics");
 
+DECLARE_string(data_format);
+
 class WaveBenchmark : public QueryBenchmarkBase {
  public:
   ~WaveBenchmark() {
@@ -112,12 +115,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
       }
     } else {
       std::string temp = FLAGS_data_path + "/data." + FLAGS_data_format;
-      auto config = std::make_shared<dwrf::Config>();
-      config->set(dwrf::Config::COMPRESSION, common::CompressionKind_NONE);
-      config->set(
-          dwrf::Config::STRIPE_SIZE,
-          static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
-      writeToFile(temp, vectors, config, vectors.front()->type());
+      writeToFile(temp, vectors, vectors.front()->type());
     }
   }
 
@@ -167,24 +165,53 @@ class WaveBenchmark : public QueryBenchmarkBase {
   void writeToFile(
       const std::string& filePath,
       const std::vector<RowVectorPtr>& vectors,
-      std::shared_ptr<dwrf::Config> config,
       const TypePtr& schema) {
-    dwrf::WriterOptions options;
-    options.config = config;
-    options.schema = schema;
     auto localWriteFile =
-        std::make_unique<LocalWriteFile>(filePath, true, false);
+      std::make_unique<LocalWriteFile>(filePath, true, false);
     auto sink = std::make_unique<dwio::common::WriteFileSink>(
-        std::move(localWriteFile), filePath);
+							      std::move(localWriteFile), filePath);
     auto childPool =
-        rootPool_->addAggregateChild("HiveConnectorTestBase.Writer");
-    options.memoryPool = childPool.get();
-    facebook::velox::dwrf::Writer writer{std::move(sink), options};
-    for (size_t i = 0; i < vectors.size(); ++i) {
-      writer.write(vectors[i]);
+      rootPool_->addAggregateChild("HiveConnectorTestBase.Writer");
+    if (FLAGS_data_format == "dwrf") {
+      auto config = std::make_shared<dwrf::Config>();
+      config->set(dwrf::Config::COMPRESSION, common::CompressionKind_NONE);
+      config->set(
+		  dwrf::Config::STRIPE_SIZE,
+		  static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
+
+      dwrf::WriterOptions options;
+      options.config = config;
+      options.schema = schema;
+      
+      options.memoryPool = childPool.get();
+      facebook::velox::dwrf::Writer writer{std::move(sink), options};
+      for (size_t i = 0; i < vectors.size(); ++i) {
+	writer.write(vectors[i]);
+      }
+      writer.close();
+    } else if (FLAGS_data_format == "parquet") {
+      facebook::velox::parquet::WriterOptions options;
+      options.memoryPool = childPool.get();
+    int32_t flushCounter = 0;
+    options.flushPolicyFactory = [&]() {
+				   return std::make_unique<facebook::velox::parquet::LambdaFlushPolicy>(
+													1000000, 1000000000, [&]() {
+					       return (++flushCounter % 1 == 0);
+					     });
+				  };
+    options.compressionKind = common::CompressionKind_NONE;
+    auto writer = std::make_unique<facebook::velox::parquet::Writer>(
+        std::move(sink), options, asRowType(schema));
+    for (auto& batch : vectors) {
+      writer->write(batch);
     }
-    writer.close();
-  }
+    writer->flush();
+    writer->close();
+
+    } else {
+      VELOX_FAIL("Bad file format {}", FLAGS_data_format)
+    }
+    }
 
   exec::test::TpchPlan getQueryPlan(int32_t query) {
     switch (query) {
@@ -196,6 +223,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
         exec::test::TpchPlan plan;
         if (FLAGS_wave) {
           plan.dataFiles["0"] = {FLAGS_data_path + "/test.wave"};
+	  plan.dataFileFormat = FileFormat::UNKNOWN;
         } else {
           plan.dataFiles["0"] = {FLAGS_data_path + "/data.dwrf"};
           plan.dataFileFormat = toFileFormat(FLAGS_data_format);
@@ -238,8 +266,6 @@ class WaveBenchmark : public QueryBenchmarkBase {
 
         plan.plan = builder.singleAggregation({}, aggs).planNode();
 
-        plan.dataFileFormat =
-            FLAGS_wave ? FileFormat::UNKNOWN : FileFormat::DWRF;
         return plan;
       }
       default:
