@@ -169,7 +169,7 @@ struct KernelError {
   int64_t number;
   char* ptr;
 };
-  
+
 /// Describes the location of an instruction's return state in the
 /// BlockStatus area. The return states are allocated right above
 /// the BlockStatus array. First are grid level statuses for instructions that
