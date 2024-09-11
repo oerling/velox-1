@@ -305,7 +305,7 @@ class GpuHashTable : public GpuHashTableBase {
             goto reprobe;
           }
           if (success == ProbeState::kNeedSpace) {
-            addHostRetry(sharedState, i, probe);
+            ops.addHostRetry(sharedState, i, probe);
           }
           hit = toInsert;
           break;
@@ -331,7 +331,7 @@ class GpuHashTable : public GpuHashTableBase {
               success = ops.update(this, bucket, writable, idxToUpdate, probe);
             }
             if (success == ProbeState::kNeedSpace) {
-              addHostRetry(sharedState, idxToUpdate, probe);
+              ops.addHostRetry(sharedState, idxToUpdate, probe);
             }
             if (success != ProbeState::kDone) {
               printf("");
