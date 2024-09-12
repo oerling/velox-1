@@ -923,15 +923,16 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   for (auto base = 0; base < numBlocks; base += kBlockSize) {
     auto idx = threadIdx.x + base;
     if (idx < numBlocks) {
-      // Every thread writes a row count and errors for kBlockSize rows. All
-      // errors are cleared and all row counts except the last are kBlockSize.
+      // Every thread writes a row count for kBlockSize rows.  all row
+      // counts except the last are kBlockSize. The next kernel sets
+      // lane status to active for rows below rowCount and to inactive
+      // for others.
       status[idx].numRows =
           idx < numBlocks - 1 ? kBlockSize : numRows - idx * kBlockSize;
-      //memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
     }
   }
 }
-
+  
 template <int32_t kBlockSize, int32_t kWidth>
 inline __device__ void reduceCase(
     int32_t cnt,
