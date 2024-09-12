@@ -17,6 +17,7 @@
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/FieldReference.h"
+#include <iostream>
 
 namespace facebook::velox::exec {
 namespace {
@@ -176,6 +177,7 @@ void NestedLoopJoinProbe::addInput(RowVectorPtr input) {
     child->loadedVector();
   }
   input_ = std::move(input);
+  std::cout << input_->toString(0, input_->size(), "\n", true) << std::endl;
   if (input_->size() > 0) {
     probeSideEmpty_ = false;
   }
