@@ -135,6 +135,15 @@ struct GpuHashTableBase {
 
   /// A RowAllocator for each partition.
   RowAllocator* allocators;
+
+  /// Count of entries in buckets.
+  int64_t numDistinct{0};
+
+  /// Maximum number of entries. Incremented by atomic add at warp
+  /// level. Must be at least 32 belo count of slots. If numDistinct
+  /// after add exceeds max, the inserts in the warp fail and will be
+  /// retried after rehash.
+  int64_t maxEntries{0};
 };
 
 } // namespace facebook::velox::wave

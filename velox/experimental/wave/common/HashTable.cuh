@@ -158,44 +158,13 @@ struct GpuBucket : public GpuBucketMembers {
 
 /// Shared memory state for an updating probe.
 struct ProbeShared {
-  int32_t* inputRetries;
-  int32_t* outputRetries;
-  uint32_t numKernelRetries;
-  uint32_t numHostRetries;
   int32_t blockBase;
   int32_t blockEnd;
-  int32_t numRounds;
-  int32_t toDo;
-  int32_t done;
-  int32_t numUpdated;
-  int32_t numTried;
 
   /// Initializes a probe. Sets outputRetries and clears inputRetries and other
   /// state.
   void __device__ init(HashProbe* probe, int32_t base) {
-    inputRetries = nullptr;
-    outputRetries = probe->kernelRetries1;
-    numKernelRetries = 0;
-    numHostRetries = 0;
     blockBase = base;
-    toDo = 0;
-    done = 0;
-    numRounds = 0;
-  }
-
-  // Resets retrry count and swaps input and output retries.
-  void __device__ nextRound(HashProbe* probe) {
-    numKernelRetries = 0;
-    if (!inputRetries) {
-      // This is after the initial round where there are no input retries.
-      inputRetries = outputRetries;
-      outputRetries = probe->kernelRetries2;
-    } else {
-      // swap input and output retries.
-      auto temp = outputRetries;
-      outputRetries = inputRetries;
-      inputRetries = temp;
-    }
   }
 };
 
@@ -255,8 +224,12 @@ class GpuHashTable : public GpuHashTableBase {
     for (auto i = threadIdx.x + sharedState->blockBase; i < end;
          i += blockDim.x) {
       auto start = i & ~(kWarpThreads - 1);
+      bool isActive = ops.isLaneActive();
       uint32_t laneMask =
-          start + kWarpThreads <= end ? ~0 : lowMask<uint32_t>(end - start);
+	__ballot_sync(0xffffffff, isLaneActive);	start + kWarpThreads <= end ? ~0 : lowMask<uint32_t>(end - start);
+      if (!isLaneActive) {
+	goto next;
+      }
       auto h = ops.hash(i, probe);
       uint32_t tagWord = hashTag(h);
       tagWord |= tagWord << 8;
@@ -305,7 +278,8 @@ class GpuHashTable : public GpuHashTableBase {
             goto reprobe;
           }
           if (success == ProbeState::kNeedSpace) {
-            ops.addHostRetry(sharedState, i, probe);
+            ops.addHostRetry(i, probe);
+	    goto next;
           }
           hit = toInsert;
           break;
@@ -322,29 +296,19 @@ class GpuHashTable : public GpuHashTableBase {
           writable = ops.getExclusive(this, bucket, hit, hitIdx, warp);
         }
         auto toUpdate = peers;
-        ProbeState success = ProbeState::kDone;
         while (toUpdate) {
           auto peer = __ffs(toUpdate) - 1;
           auto idxToUpdate = __shfl_sync(peers, i, peer);
           if (lane == leader) {
-            if (success == ProbeState::kDone) {
-              success = ops.update(this, bucket, writable, idxToUpdate, probe);
-            }
-            if (success == ProbeState::kNeedSpace) {
-              ops.addHostRetry(sharedState, idxToUpdate, probe);
-            }
-            if (success != ProbeState::kDone) {
-              printf("");
-            }
+	    ops.update(this, bucket, writable, idxToUpdate, probe);
           }
           toUpdate &= toUpdate - 1;
         }
         if (lane == leader) {
           ops.writeDone(writable);
         }
-      } else {
-        printf("");
       }
+    next: ;
     }
   }
 
@@ -358,11 +322,5 @@ class GpuHashTable : public GpuHashTableBase {
     return (h & partitionMask) >> partitionShift;
   }
 
- private:
-  static void __device__
-  addHostRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
-    probe->hostRetries
-        [shared->blockBase + atomicAdd(&shared->numHostRetries, 1)] = i;
-  }
 };
 } // namespace facebook::velox::wave

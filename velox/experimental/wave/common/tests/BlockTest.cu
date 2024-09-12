@@ -278,9 +278,11 @@ ProbeState __device__ arrayAgg64Append(
   return ProbeState::kDone;
 }
 
-/// An mock Ops parameter class to do group by.
+/// A mock Ops parameter class to do group by.
 class MockGroupByOps {
  public:
+  __device__ MockGroupByOps(int32_t end) : end(end) {}
+
   int32_t __device__ blockBase(HashProbe* probe) {
     return probe->numRowsPerThread * blockDim.x * blockIdx.x;
   }
@@ -289,6 +291,10 @@ class MockGroupByOps {
     return probe->numRows[blockIdx.x];
   }
 
+  bool __device__ isLaneActive(int32_t idx) {
+    return idx < end_;
+  }
+  
   uint64_t __device__ hash(int32_t i, HashProbe* probe) {
     auto key = reinterpret_cast<int64_t**>(probe->keys)[0];
     return hashMix(1, key[i]);
@@ -336,6 +342,10 @@ class MockGroupByOps {
     return ProbeState::kDone;
   }
 
+  void __device__   addHostRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
+    assert(false);  			      
+  }
+
   TestingRow* __device__ getExclusive(
       GpuHashTable* table,
       GpuBucket* bucket,
@@ -374,6 +384,8 @@ class MockGroupByOps {
     __threadfence();
     return state;
   }
+
+  int32_t end_;
 };
 
 void __global__ __launch_bounds__(1024) hashTestKernel(
@@ -382,7 +394,7 @@ void __global__ __launch_bounds__(1024) hashTestKernel(
     BlockTestStream::HashCase mode) {
   switch (mode) {
     case BlockTestStream::HashCase::kGroup: {
-      table->updatingProbe<TestingRow>(probe, MockGroupByOps());
+      table->updatingProbe<TestingRow>(probe, MockGroupByOps( ));
       break;
     }
     case BlockTestStream::HashCase::kBuild:
