@@ -281,36 +281,25 @@ ProbeState __device__ arrayAgg64Append(
 /// A mock Ops parameter class to do group by.
 class MockGroupByOps {
  public:
-  __device__ MockGroupByOps(int32_t end) : end(end) {}
+  __device__ MockGroupByOps(HashProbe* probe) : probe(probe) ()
 
-  int32_t __device__ blockBase(HashProbe* probe) {
-    return probe->numRowsPerThread * blockDim.x * blockIdx.x;
-  }
-
-  int32_t __device__ numRowsInBlock(HashProbe* probe) {
-    return probe->numRows[blockIdx.x];
-  }
-
-  bool __device__ isLaneActive(int32_t idx) {
-    return idx < end_;
-  }
   
   uint64_t __device__ hash(int32_t i, HashProbe* probe) {
-    auto key = reinterpret_cast<int64_t**>(probe->keys)[0];
+    auto key = reinterpret_cast<int64_t**>(probe_->keys)[0];
     return hashMix(1, key[i]);
   }
 
   bool __device__
-  compare(GpuHashTable* table, TestingRow* row, int32_t i, HashProbe* probe) {
-    return row->key == reinterpret_cast<int64_t**>(probe->keys)[0][i];
+  compare(GpuHashTable* table, TestingRow* row, int32_t i) {
+    return row->key == reinterpret_cast<int64_t**>(probe_->keys)[0][i];
   }
 
   TestingRow* __device__
-  newRow(GpuHashTable* table, int32_t partition, int32_t i, HashProbe* probe) {
+  newRow(GpuHashTable* table, int32_t partition, int32_t i) {
     auto* allocator = &table->allocators[partition];
     auto row = allocator->allocateRow<TestingRow>();
     if (row) {
-      row->key = reinterpret_cast<int64_t**>(probe->keys)[0][i];
+      row->key = reinterpret_cast<int64_t**>(probe_->keys)[0][i];
       row->flags = 0;
       row->count = 0;
       new (&row->concatenation) ArrayAgg64();
@@ -326,10 +315,9 @@ class MockGroupByOps {
       uint32_t oldTags,
       uint32_t tagWord,
       int32_t i,
-      HashProbe* probe,
       TestingRow*& row) {
     if (!row) {
-      row = newRow(table, partition, i, probe);
+      row = newRow(table, partition, i);
       if (!row) {
         return ProbeState::kNeedSpace;
       }
@@ -342,7 +330,7 @@ class MockGroupByOps {
     return ProbeState::kDone;
   }
 
-  void __device__   addHostRetry(ProbeShared* shared, int32_t i, HashProbe* probe) {
+  void __device__   addHostRetry(int32_t i) {
     assert(false);  			      
   }
 
@@ -350,8 +338,7 @@ class MockGroupByOps {
       GpuHashTable* table,
       GpuBucket* bucket,
       TestingRow* row,
-      int32_t hitIdx,
-      int32_t warp) {
+      int32_t hitIdx) {
     return row;
     int32_t nanos = 1;
     for (;;) {
@@ -371,9 +358,8 @@ class MockGroupByOps {
       GpuHashTable* table,
       GpuBucket* bucket,
       TestingRow* row,
-      int32_t i,
-      HashProbe* probe) {
-    auto* keys = reinterpret_cast<int64_t**>(probe->keys);
+      int32_t i) {
+    auto* keys = reinterpret_cast<int64_t**>(probe_->keys);
     atomicAdd((unsigned long long*)&row->count, (unsigned long long)keys[1][i]);
     return ProbeState::kDone;
     int64_t arg = keys[1][i];
@@ -385,7 +371,7 @@ class MockGroupByOps {
     return state;
   }
 
-  int32_t end_;
+  HashProbe* probe_;
 };
 
 void __global__ __launch_bounds__(1024) hashTestKernel(
@@ -394,7 +380,13 @@ void __global__ __launch_bounds__(1024) hashTestKernel(
     BlockTestStream::HashCase mode) {
   switch (mode) {
     case BlockTestStream::HashCase::kGroup: {
-      table->updatingProbe<TestingRow>(probe, MockGroupByOps( ));
+      MockGroupByOps(probe);
+      int32_t begin = blockIdx.x * probe->numRowsPerThread * blockDim.x;
+      int32_t end = begin + probe->numRows[blockIdx.x];
+      
+      for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
+	table->updatingProbe<TestingRow>(i, cub::laneId(), i < end, ops);
+      }
       break;
     }
     case BlockTestStream::HashCase::kBuild:
