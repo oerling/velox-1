@@ -659,7 +659,7 @@ __device__ void makeResult(
       op->resultRows[resultIdx] = row;
       if (kHasResult) {
         reinterpret_cast<T*>(op->result)[resultIdx] = data;
-        if (kHasNulls && op->resultNulls) {
+        if (kHasNulls) {
           op->resultNulls[resultIdx] = nullFlag;
         }
       }
@@ -688,53 +688,53 @@ __device__ void decodeSelective(GpuDecode* op) {
   int32_t nthLoop = 0;
   switch (op->nullMode) {
     case NullMode::kDenseNonNull: {
-      if (kFilterKind == WaveFilterKind::kAlwaysTrue) {
-	//  No-filter case with everything inlined.
-	auto base = op->baseRow;
-	auto i = threadIdx.x;
-	auto& d = op->data.dictionaryOnBitpack;
-	auto end = op->maxRow - op->baseRow;
-	auto address = reinterpret_cast<uint64_t>(d.indices);
-	int32_t alignOffset = (address & 7) * 8;
-	address &= ~7UL;
-	auto words = reinterpret_cast<uint64_t*>(address);
-	auto baseline = d.baseline;
-	auto bitWidth = d.bitWidth;
-	uint64_t mask = (1LU << bitWidth) - 1;
-	auto* result = reinterpret_cast<T*>(op->result);
-	for (; i < end; i += blockDim.x) {
-	  int32_t bitIndex = (i + base) * bitWidth + alignOffset;
-	  int32_t wordIndex = bitIndex >> 6;
-	  if (threadIdx.x < 3) {
-	    asm volatile("prefetch.global.L1 [%0];" ::"l"(&words[wordIndex + 48 + threadIdx.x * 4]));
-	  }
-	  int32_t bit = bitIndex & 63;
-	  uint64_t word = words[wordIndex];
-	  uint64_t index = word >> bit;
-	  if (bitWidth + bit > 64) {
-	    uint64_t nextWord = words[wordIndex + 1];
-	    index |= nextWord << (64 - bit);
-	  }
-	  index &= mask;
-	  result[i] = index + baseline;
+#if 0
+      //  No-filter case with everything inlined.
+auto base = op->baseRow;
+      auto i = threadIdx.x;
+      auto& d = op->data.dictionaryOnBitpack;
+      auto end = op->maxRow - op->baseRow;
+      auto address = reinterpret_cast<uint64_t>(d.indices);
+      int32_t alignOffset = (address & 7) * 8;
+      address &= ~7UL;
+      auto words = reinterpret_cast<uint64_t*>(address);
+      auto baseline = d.baseline;
+      auto bitWidth = d.bitWidth;
+      uint64_t mask = (1LU << bitWidth) - 1;
+      auto* result = reinterpret_cast<T*>(op->result);
+      for (; i < end; i += blockDim.x) {
+        int32_t bitIndex = (i + base) * bitWidth + alignOffset;
+        int32_t wordIndex = bitIndex >> 6;
+	if (threadIdx.x < 3) {
+	  asm volatile("prefetch.global.L1 [%0];" ::"l"(&words[wordIndex + 48 + threadIdx.x * 4]));
 	}
-      } else {
-	do {
-	  int32_t row = threadIdx.x + op->baseRow + nthLoop * kBlockSize;
-	  bool filterPass = false;
-	  T data{};
-	  if (row < op->maxRow) {
-	    data = randomAccessDecode<T, kEncoding>(op, row);
-	    filterPass = testFilter<T, kFilterKind, true>(op, data);
-	  }
-	  makeResult<
+        int32_t bit = bitIndex & 63;
+        uint64_t word = words[wordIndex];
+        uint64_t index = word >> bit;
+        if (bitWidth + bit > 64) {
+          uint64_t nextWord = words[wordIndex + 1];
+          index |= nextWord << (64 - bit);
+        }
+        index &= mask;
+        result[i] = index + baseline;
+      }
+#else
+      do {
+        int32_t row = threadIdx.x + op->baseRow + nthLoop * kBlockSize;
+        bool filterPass = false;
+        T data{};
+        if (row < op->maxRow) {
+          data = randomAccessDecode<T, kEncoding>(op, row);
+          filterPass = testFilter<T, kFilterKind, true>(op, data);
+        }
+        makeResult<
             T,
             kBlockSize,
             kFilterKind != WaveFilterKind::kAlwaysTrue,
             kHasResult,
             false>(op, data, row, filterPass, nthLoop, kNotNull, op->temp);
-	} while (++nthLoop < op->numRowsPerThread);
-      }
+      } while (++nthLoop < op->numRowsPerThread);
+#endif
       break;
     }
     case NullMode::kSparseNonNull:
@@ -762,9 +762,9 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-	  op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->gridNumRowsPerThread / (1024 / kBlockSize )) - 1];
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
         state->nonNullsBelowRow =
-            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
+            op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
@@ -807,9 +807,9 @@ __device__ void decodeSelective(GpuDecode* op) {
       auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
         state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock * (op->gridNumRowsPerThread / (1024 / kBlockSize )) - 1];
+            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
         state->nonNullsBelowRow =
-            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
+            op->numRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
@@ -910,9 +910,11 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   auto* status = op.status;
   auto numBlocks = roundUp(numRows, kBlockSize) / kBlockSize;
   if (op.gridStatusSize > 0) {
-    auto grid = roundUp(reinterpret_cast<uintptr_t>(status) + numBlocks * sizeof(BlockStatus), 8);
+    auto grid = roundUp(
+        reinterpret_cast<uintptr_t>(status) + numBlocks * sizeof(BlockStatus),
+        8);
     int64_t* statusEnd = reinterpret_cast<int64_t*>(grid + op.gridStatusSize);
-    auto ptr = reinterpret_cast<int64_t*>(grid)+ threadIdx.x;
+    auto ptr = reinterpret_cast<int64_t*>(grid) + threadIdx.x;
     for (; ptr < statusEnd; ptr += kBlockSize) {
       *ptr = 0;
     }
@@ -923,11 +925,12 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
   for (auto base = 0; base < numBlocks; base += kBlockSize) {
     auto idx = threadIdx.x + base;
     if (idx < numBlocks) {
-      // Every thread writes a row count and errors for kBlockSize rows. All
-      // errors are cleared and all row counts except the last are kBlockSize.
+      // Every thread writes a row count for kBlockSize rows.  all row
+      // counts except the last are kBlockSize. The next kernel sets
+      // lane status to active for rows below rowCount and to inactive
+      // for others.
       status[idx].numRows =
           idx < numBlocks - 1 ? kBlockSize : numRows - idx * kBlockSize;
-      //memset(&status[base + threadIdx.x].errors, 0, sizeof(status->errors));
     }
   }
 }
