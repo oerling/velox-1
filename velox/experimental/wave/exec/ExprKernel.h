@@ -109,9 +109,9 @@ struct AggregationControl {
   void* head;
   /// Size of block starting at 'head'. Must be set on first setup.
   int64_t headSize{0};
-  /// For a rehashing request, space for a new head and a new HashTable.
-  void* newHead{nullptr};
-  int64_t newHeadSize{0};
+  /// For a rehashing request, space for the new table.
+  void* newTable{nullptr};
+  int64_t newTableSize{0};
   /// Size of single row allocation. Required on first init.
   int32_t rowSize{0};
   //// Number of slots in HashTable, must be a powr of two. 0 means no hash

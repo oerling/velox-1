@@ -903,17 +903,33 @@ int32_t WaveStream::getOutput(
 void WaveStream::makeAggregate(
     AbstractAggregation& inst,
     AggregateOperatorState& state) {
+  AggregationControl control;
+  auto stream = streamFromReserve();
   if (inst.keys.empty()) {
   int32_t size = inst.rowSize();
-  auto stream = streamFromReserve();
   auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation));
   state.buffers.push_back(buffer);
-  AggregationControl control;
   control.head = buffer->as<char>();
   control.headSize = buffer->size();
   control.rowSize = size;
   } else {
-    
+    int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTable) + sizeof(RowAllocator);
+  auto buffer = arena_.allocate<char>(size);
+  state.buffers.push_back(buffer);
+  control.head = buffer->as<char>();
+  control.headSize = buffer->size();
+  control.rowSize = size;
+  int32_t numBuckets = 2048;
+  WaveBufferPtr table = arena_.allocate<char>(sizeof(GpuBucket) * numBuckets);
+  state.buffers.push_back(table);
+  WaveBufferPtr rows =  arena_.allocate<char>(rowSize * numBuckets * 3);
+  state.buffers.push_back(rows);
+
+  control.headSize = buffer->size();
+  control.rowSize = size;
+  control.table = table->as<GpuHashTable>();
+  control.extraSpace = rows->as<char>();
+  control.extraSize = rows->size();
   }
   reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   releaseStream(std::move(stream));
