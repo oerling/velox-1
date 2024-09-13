@@ -903,7 +903,7 @@ int32_t WaveStream::getOutput(
 void WaveStream::makeAggregate(
     AbstractAggregation& inst,
     AggregateOperatorState& state) {
-  VELOX_CHECK(inst.keys.empty());
+  if (inst.keys.empty()) {
   int32_t size = inst.rowSize();
   auto stream = streamFromReserve();
   auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation));
@@ -912,6 +912,9 @@ void WaveStream::makeAggregate(
   control.head = buffer->as<char>();
   control.headSize = buffer->size();
   control.rowSize = size;
+  } else {
+    
+  }
   reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   releaseStream(std::move(stream));
 }

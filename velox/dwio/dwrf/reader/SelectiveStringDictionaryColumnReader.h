@@ -32,6 +32,13 @@ class SelectiveStringDictionaryColumnReader
       DwrfParams& params,
       common::ScanSpec& scanSpec);
 
+  bool hasBulkPath() const override {
+    // Only ORC uses RLEv2 encoding. Currently, ORC string data does not
+    // support fastpath reads. When reading RLEv2-encoded string data
+    // with null, the query will fail.
+    return version_ != velox::dwrf::RleVersion_2;
+  }
+
   void seekToRowGroup(uint32_t index) override {
     SelectiveColumnReader::seekToRowGroup(index);
     auto positionsProvider = formatData_->as<DwrfData>().seekToRowGroup(index);
@@ -53,25 +60,28 @@ class SelectiveStringDictionaryColumnReader
 
   uint64_t skip(uint64_t numValues) override;
 
-  void read(vector_size_t offset, RowSet rows, const uint64_t* incomingNulls)
-      override;
+  void read(
+      vector_size_t offset,
+      const RowSet& rows,
+      const uint64_t* incomingNulls) override;
 
-  void getValues(RowSet rows, VectorPtr* result) override;
+  void getValues(const RowSet& rows, VectorPtr* result) override;
 
  private:
   void loadStrideDictionary();
   void makeDictionaryBaseVector();
 
   template <typename TVisitor>
-  void readWithVisitor(RowSet rows, TVisitor visitor);
+  void readWithVisitor(const RowSet& rows, TVisitor visitor);
 
   template <typename TFilter, bool isDense, typename ExtractValues>
-  void readHelper(common::Filter* filter, RowSet rows, ExtractValues values);
+  void
+  readHelper(common::Filter* filter, const RowSet& rows, ExtractValues values);
 
   template <bool isDense, typename ExtractValues>
   void processFilter(
       common::Filter* filter,
-      RowSet rows,
+      const RowSet& rows,
       ExtractValues extractValues);
 
   // Fills 'values' from 'data' and 'lengthDecoder'. The count of
@@ -109,7 +119,7 @@ class SelectiveStringDictionaryColumnReader
 
 template <typename TVisitor>
 void SelectiveStringDictionaryColumnReader::readWithVisitor(
-    RowSet rows,
+    const RowSet& /*rows*/,
     TVisitor visitor) {
   if (version_ == velox::dwrf::RleVersion_1) {
     decodeWithVisitor<velox::dwrf::RleDecoderV1<false>>(
@@ -123,7 +133,7 @@ void SelectiveStringDictionaryColumnReader::readWithVisitor(
 template <typename TFilter, bool isDense, typename ExtractValues>
 void SelectiveStringDictionaryColumnReader::readHelper(
     common::Filter* filter,
-    RowSet rows,
+    const RowSet& rows,
     ExtractValues values) {
   readWithVisitor(
       rows,
@@ -135,7 +145,7 @@ void SelectiveStringDictionaryColumnReader::readHelper(
 template <bool isDense, typename ExtractValues>
 void SelectiveStringDictionaryColumnReader::processFilter(
     common::Filter* filter,
-    RowSet rows,
+    const RowSet& rows,
     ExtractValues extractValues) {
   if (filter == nullptr) {
     readHelper<common::AlwaysTrue, isDense>(

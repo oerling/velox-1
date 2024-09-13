@@ -52,11 +52,13 @@ inline void __device__ atomicUnlock(T* lock) {
 struct RowAllocator : public HashPartitionAllocator {
   template <typename T>
   T* __device__ allocateRow() {
+#if 0
     auto fromFree = getFromFree();
     if (fromFree != kEmpty) {
       ++numFromFree;
       return reinterpret_cast<T*>(base + fromFree);
     }
+#endif
     auto offset = atomicAdd(&rowOffset, rowSize);
 
     if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
@@ -156,24 +158,13 @@ struct GpuBucket : public GpuBucketMembers {
   }
 };
 
-/// Shared memory state for an updating probe.
-struct ProbeShared {
-  int32_t blockBase;
-  int32_t blockEnd;
-
-  /// Initializes a probe. Sets outputRetries and clears inputRetries and other
-  /// state.
-  void __device__ init(HashProbe* probe, int32_t base) {
-    blockBase = base;
-  }
-};
 
 class GpuHashTable : public GpuHashTableBase {
  public:
   static constexpr int32_t kExclusive = 1;
 
   static int32_t updatingProbeSharedSize() {
-    return sizeof(ProbeShared);
+    return 0;
   }
 
   template <typename RowType, typename Ops>
@@ -210,27 +201,13 @@ class GpuHashTable : public GpuHashTableBase {
   }
 
   template <typename RowType, typename Ops>
-  void __device__ updatingProbe(HashProbe* probe, Ops ops) {
-    extern __shared__ __align__(16) char smem[];
-    auto* sharedState = reinterpret_cast<ProbeShared*>(smem);
-    if (threadIdx.x == 0) {
-      sharedState->init(probe, ops.blockBase(probe));
-    }
-    __syncthreads();
-    auto lane = cub::LaneId();
-    constexpr int32_t kWarpThreads = 1 << CUB_LOG_WARP_THREADS(0);
-    auto warp = threadIdx.x / kWarpThreads;
-    int32_t end = ops.numRowsInBlock(probe) + sharedState->blockBase;
-    for (auto i = threadIdx.x + sharedState->blockBase; i < end;
-         i += blockDim.x) {
-      auto start = i & ~(kWarpThreads - 1);
-      bool isActive = ops.isLaneActive();
-      uint32_t laneMask =
-	__ballot_sync(0xffffffff, isLaneActive);	start + kWarpThreads <= end ? ~0 : lowMask<uint32_t>(end - start);
-      if (!isLaneActive) {
-	goto next;
+  void __device__ updatingProbe(int32_t i, int32_t lane, bool isLaneActive, Ops& ops) {
+    uint32_t laneMask =
+      __ballot_sync(0xffffffff, isLaneActive);
+    if (!isLaneActive) {
+      return;
       }
-      auto h = ops.hash(i, probe);
+      auto h = ops.hash(i);
       uint32_t tagWord = hashTag(h);
       tagWord |= tagWord << 8;
       tagWord = tagWord | tagWord << 16;
@@ -250,7 +227,7 @@ class GpuHashTable : public GpuHashTableBase {
         while (hits) {
           hitIdx = (__ffs(hits) - 1) / 8;
           auto candidate = bucket->loadWithWait<RowType>(hitIdx);
-          if (ops.compare(this, candidate, i, probe)) {
+          if (ops.compare(this, candidate, i)) {
             if (toInsert) {
               freeInsertable(toInsert, h);
             }
@@ -272,14 +249,13 @@ class GpuHashTable : public GpuHashTableBase {
               tags,
               tagWord,
               i,
-              probe,
               toInsert);
           if (success == ProbeState::kRetry) {
             goto reprobe;
           }
           if (success == ProbeState::kNeedSpace) {
-            ops.addHostRetry(i, probe);
-	    goto next;
+            ops.addHostRetry(i);
+	    return;
           }
           hit = toInsert;
           break;
@@ -293,14 +269,14 @@ class GpuHashTable : public GpuHashTableBase {
         int32_t leader = (kWarpThreads - 1) - __clz(peers);
         RowType* writable = nullptr;
         if (lane == leader) {
-          writable = ops.getExclusive(this, bucket, hit, hitIdx, warp);
+          writable = ops.getExclusive(this, bucket, hit, hitIdx);
         }
         auto toUpdate = peers;
         while (toUpdate) {
           auto peer = __ffs(toUpdate) - 1;
           auto idxToUpdate = __shfl_sync(peers, i, peer);
           if (lane == leader) {
-	    ops.update(this, bucket, writable, idxToUpdate, probe);
+	    ops.update(this, bucket, writable, idxToUpdate);
           }
           toUpdate &= toUpdate - 1;
         }
@@ -308,13 +284,12 @@ class GpuHashTable : public GpuHashTableBase {
           ops.writeDone(writable);
         }
       }
-    next: ;
     }
-  }
 
+  
   template <typename RowType>
   void __device__ freeInsertable(RowType*& row, uint64_t h) {
-    allocators[partitionIdx(h)].freeRow(row);
+    //allocators[partitionIdx(h)].freeRow(row);
     row = nullptr;
   }
 

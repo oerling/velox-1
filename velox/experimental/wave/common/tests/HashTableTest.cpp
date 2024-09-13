@@ -24,6 +24,9 @@
 
 #include <iostream>
 
+DEFINE_int32(hash_num_rows_per_thread, 32,
+  "Number of rows per thread in hash table tests");
+
 namespace facebook::velox::wave {
 
 class CpuMockGroupByOps {
@@ -150,11 +153,7 @@ class HashTableTest : public testing::Test {
         UPDATE_CASE("sum1Mtx", updateSum1Mtx, true, 1);
         UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 0);
         UPDATE_CASE("sum1Part", updateSum1Part, true, 0);
-        // Commenting out Order and Exch functions as they are too slow.
-        // (for case when only 1 distinct element).
-
-        // UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
-        // UPDATE_CASE("sum1Exch", updateSum1Exch, false, 0);
+        //UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
 
         break;
       default:
@@ -210,7 +209,7 @@ class HashTableTest : public testing::Test {
       run.numSlots = bits::nextPowerOfTwo(numDistinct);
     }
     run.numColumns = 2;
-    run.numRowsPerThread = 32;
+    run.numRowsPerThread = FLAGS_hash_num_rows_per_thread;
 
     initializeHashTestInput(run, arena_.get());
     fillHashTestInput(

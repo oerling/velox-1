@@ -14,14 +14,24 @@
  * limitations under the License.
  */
 
-#include "velox/expression/ReverseSignatureBinder.h"
+#pragma once
 
-namespace facebook::velox::exec {
+#include <vector>
 
-bool ReverseSignatureBinder::tryBind() {
-  tryBindSucceeded_ =
-      SignatureBinderBase::tryBind(signature_.returnType(), returnType_);
-  return tryBindSucceeded_;
-}
+namespace facebook::velox::dwio::common {
 
-} // namespace facebook::velox::exec
+class PositionProvider {
+ public:
+  explicit PositionProvider(const std::vector<uint64_t>& positions)
+      : position_{positions.begin()}, end_{positions.end()} {}
+
+  uint64_t next();
+
+  bool hasNext() const;
+
+ private:
+  std::vector<uint64_t>::const_iterator position_;
+  std::vector<uint64_t>::const_iterator end_;
+};
+
+} // namespace facebook::velox::dwio::common

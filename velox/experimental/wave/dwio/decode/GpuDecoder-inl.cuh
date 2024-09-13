@@ -934,7 +934,7 @@ __device__ void setRowCountNoFilter(GpuDecode::RowCountNoFilter& op) {
     }
   }
 }
-
+  
 template <int32_t kBlockSize, int32_t kWidth>
 inline __device__ void reduceCase(
     int32_t cnt,
