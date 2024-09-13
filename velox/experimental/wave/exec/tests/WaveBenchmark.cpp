@@ -115,7 +115,12 @@ class WaveBenchmark : public QueryBenchmarkBase {
       }
     } else {
       std::string temp = FLAGS_data_path + "/data." + FLAGS_data_format;
-      writeToFile(temp, vectors, vectors.front()->type());
+      auto config = std::make_shared<dwrf::Config>();
+      config->set(dwrf::Config::COMPRESSION, common::CompressionKind_NONE);
+      config->set(
+          dwrf::Config::STRIPE_SIZE,
+          static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 4));
+      writeToFile(temp, vectors, config, vectors.front()->type());
     }
   }
 

@@ -26,7 +26,7 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   instructionStatus = reservedState;
   // A group by produces 8 bytes of grid level state and uses the main main
   // BlockStatus for lane status.
-  reservedState.gridState += 8;
+  reservedState.gridState += sizeof(AggregationReturn);
 }
 
 AdvanceResult AbstractAggregation::canAdvance(

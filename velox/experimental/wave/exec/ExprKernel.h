@@ -177,10 +177,22 @@ struct WaveShared {
   BlockStatus* status;
   Operand** operands;
   void** states;
+
+  /// True if some lane needs a continue. Used inside a kernel to
+  /// indicate that the grid level status should be set to indicate
+  /// continue. Reset before end of instruction.
+  bool hasContinue;
+
   /// If true, all threads in block return before starting next instruction.
   bool stop;
   int32_t blockBase;
   int32_t numRows;
+  /// Number of blocks for the program. Return statuses are at '&blockStatus[numBlocks']
+  int32_t numBlocks;
+
+  /// Number of items in blockStatus covered by each TB.
+  int32_t numRowsPerThread;
+
   // Scratch data area. Size depends on shared memory size for instructions.
   // Align 8.
   int64_t data;
@@ -212,9 +224,18 @@ struct KernelParams {
   // the status return block for each TB. The subscript is blockIdx.x -
   // (blockBase[blockIdx.x] / kBlockSize). Shared between all programs.
   BlockStatus* status{nullptr};
+
   // Address of global states like hash tables. Subscript is 'programIdx' and
   // next subscript is state id in the instruction.
   void*** operatorStates;
+
+  /// Number of blocks in each program. gridDim.x can be a multiple if many
+  ///programs in launch.
+  int32_t numBlocks{0};
+
+  /// Number of elements of blockStatus covered by each TB.
+  int32_t numRowsPerThread{1};
+
 };
 
 /// Returns the shared memory size for instruction for kBlockSize.

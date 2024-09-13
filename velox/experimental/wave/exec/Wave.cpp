@@ -855,6 +855,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       ++stateFill;
     }
   }
+  control.params.numBlocks = blocksPerExe;
   if (!exes.empty()) {
     ++stats_.numKernels;
   }

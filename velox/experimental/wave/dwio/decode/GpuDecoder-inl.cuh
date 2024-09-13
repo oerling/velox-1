@@ -659,7 +659,7 @@ __device__ void makeResult(
       op->resultRows[resultIdx] = row;
       if (kHasResult) {
         reinterpret_cast<T*>(op->result)[resultIdx] = data;
-        if (kHasNulls) {
+        if (kHasNulls && op->resultNulls) {
           op->resultNulls[resultIdx] = nullFlag;
         }
       }
@@ -688,53 +688,54 @@ __device__ void decodeSelective(GpuDecode* op) {
   int32_t nthLoop = 0;
   switch (op->nullMode) {
     case NullMode::kDenseNonNull: {
-#if 0
-      //  No-filter case with everything inlined.
-auto base = op->baseRow;
-      auto i = threadIdx.x;
-      auto& d = op->data.dictionaryOnBitpack;
-      auto end = op->maxRow - op->baseRow;
-      auto address = reinterpret_cast<uint64_t>(d.indices);
-      int32_t alignOffset = (address & 7) * 8;
-      address &= ~7UL;
-      auto words = reinterpret_cast<uint64_t*>(address);
-      auto baseline = d.baseline;
-      auto bitWidth = d.bitWidth;
-      uint64_t mask = (1LU << bitWidth) - 1;
-      auto* result = reinterpret_cast<T*>(op->result);
-      for (; i < end; i += blockDim.x) {
-        int32_t bitIndex = (i + base) * bitWidth + alignOffset;
-        int32_t wordIndex = bitIndex >> 6;
-	if (threadIdx.x < 3) {
-	  asm volatile("prefetch.global.L1 [%0];" ::"l"(&words[wordIndex + 48 + threadIdx.x * 4]));
-	}
-        int32_t bit = bitIndex & 63;
-        uint64_t word = words[wordIndex];
-        uint64_t index = word >> bit;
-        if (bitWidth + bit > 64) {
-          uint64_t nextWord = words[wordIndex + 1];
-          index |= nextWord << (64 - bit);
+      if (kFilterKind == WaveFilterKind::kAlwaysTrue) {
+        //  No-filter case with everything inlined.
+        auto base = op->baseRow;
+        auto i = threadIdx.x;
+        auto& d = op->data.dictionaryOnBitpack;
+        auto end = op->maxRow - op->baseRow;
+        auto address = reinterpret_cast<uint64_t>(d.indices);
+        int32_t alignOffset = (address & 7) * 8;
+        address &= ~7UL;
+        auto words = reinterpret_cast<uint64_t*>(address);
+        auto baseline = d.baseline;
+        auto bitWidth = d.bitWidth;
+        uint64_t mask = (1LU << bitWidth) - 1;
+        auto* result = reinterpret_cast<T*>(op->result);
+        for (; i < end; i += blockDim.x) {
+          int32_t bitIndex = (i + base) * bitWidth + alignOffset;
+          int32_t wordIndex = bitIndex >> 6;
+          if (threadIdx.x < 3) {
+            asm volatile("prefetch.global.L1 [%0];" ::"l"(
+                &words[wordIndex + 48 + threadIdx.x * 4]));
+          }
+          int32_t bit = bitIndex & 63;
+          uint64_t word = words[wordIndex];
+          uint64_t index = word >> bit;
+          if (bitWidth + bit > 64) {
+            uint64_t nextWord = words[wordIndex + 1];
+            index |= nextWord << (64 - bit);
+          }
+          index &= mask;
+          result[i] = index + baseline;
         }
-        index &= mask;
-        result[i] = index + baseline;
+      } else {
+        do {
+          int32_t row = threadIdx.x + op->baseRow + nthLoop * kBlockSize;
+          bool filterPass = false;
+          T data{};
+          if (row < op->maxRow) {
+            data = randomAccessDecode<T, kEncoding>(op, row);
+            filterPass = testFilter<T, kFilterKind, true>(op, data);
+          }
+          makeResult<
+              T,
+              kBlockSize,
+              kFilterKind != WaveFilterKind::kAlwaysTrue,
+              kHasResult,
+              false>(op, data, row, filterPass, nthLoop, kNotNull, op->temp);
+        } while (++nthLoop < op->numRowsPerThread);
       }
-#else
-      do {
-        int32_t row = threadIdx.x + op->baseRow + nthLoop * kBlockSize;
-        bool filterPass = false;
-        T data{};
-        if (row < op->maxRow) {
-          data = randomAccessDecode<T, kEncoding>(op, row);
-          filterPass = testFilter<T, kFilterKind, true>(op, data);
-        }
-        makeResult<
-            T,
-            kBlockSize,
-            kFilterKind != WaveFilterKind::kAlwaysTrue,
-            kHasResult,
-            false>(op, data, row, filterPass, nthLoop, kNotNull, op->temp);
-      } while (++nthLoop < op->numRowsPerThread);
-#endif
       break;
     }
     case NullMode::kSparseNonNull:
@@ -761,10 +762,14 @@ auto base = op->baseRow;
       int32_t dataIdx = 0;
       auto* state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-        state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+        state->nonNullsBelow = op->nthBlock == 0
+            ? 0
+            : op->nonNullBases
+                  [op->nthBlock *
+                       (op->gridNumRowsPerThread / (1024 / kBlockSize)) -
+                   1];
         state->nonNullsBelowRow =
-            op->numRowsPerThread * op->nthBlock * kBlockSize;
+            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
@@ -806,10 +811,14 @@ auto base = op->baseRow;
     case NullMode::kSparseNullable: {
       auto state = reinterpret_cast<NonNullState*>(op->temp);
       if (threadIdx.x == 0) {
-        state->nonNullsBelow =
-            op->nthBlock == 0 ? 0 : op->nonNullBases[op->nthBlock - 1];
+        state->nonNullsBelow = op->nthBlock == 0
+            ? 0
+            : op->nonNullBases
+                  [op->nthBlock *
+                       (op->gridNumRowsPerThread / (1024 / kBlockSize)) -
+                   1];
         state->nonNullsBelowRow =
-            op->numRowsPerThread * op->nthBlock * kBlockSize;
+            op->gridNumRowsPerThread * op->nthBlock * kBlockSize;
       }
       __syncthreads();
       do {
