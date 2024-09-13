@@ -52,11 +52,13 @@ inline void __device__ atomicUnlock(T* lock) {
 struct RowAllocator : public HashPartitionAllocator {
   template <typename T>
   T* __device__ allocateRow() {
+#if 0
     auto fromFree = getFromFree();
     if (fromFree != kEmpty) {
       ++numFromFree;
       return reinterpret_cast<T*>(base + fromFree);
     }
+#endif
     auto offset = atomicAdd(&rowOffset, rowSize);
 
     if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
@@ -162,7 +164,7 @@ class GpuHashTable : public GpuHashTableBase {
   static constexpr int32_t kExclusive = 1;
 
   static int32_t updatingProbeSharedSize() {
-    return sizeof(ProbeShared);
+    return 0;
   }
 
   template <typename RowType, typename Ops>
@@ -198,9 +200,8 @@ class GpuHashTable : public GpuHashTableBase {
     }
   }
 
-
   template <typename RowType, typename Ops>
-  void __device__ updateingProbe1(int32_t i, int32_t lane, bool isLaneActive, Ops& ops) {
+  void __device__ updatingProbe(int32_t i, int32_t lane, bool isLaneActive, Ops& ops) {
     uint32_t laneMask =
       __ballot_sync(0xffffffff, isLaneActive);
     if (!isLaneActive) {
@@ -288,7 +289,7 @@ class GpuHashTable : public GpuHashTableBase {
   
   template <typename RowType>
   void __device__ freeInsertable(RowType*& row, uint64_t h) {
-    allocators[partitionIdx(h)].freeRow(row);
+    //allocators[partitionIdx(h)].freeRow(row);
     row = nullptr;
   }
 

@@ -281,10 +281,9 @@ ProbeState __device__ arrayAgg64Append(
 /// A mock Ops parameter class to do group by.
 class MockGroupByOps {
  public:
-  __device__ MockGroupByOps(HashProbe* probe) : probe(probe) ()
+  __device__ MockGroupByOps(HashProbe* probe) : probe_(probe) {}
 
-  
-  uint64_t __device__ hash(int32_t i, HashProbe* probe) {
+  uint64_t __device__ hash(int32_t i) {
     auto key = reinterpret_cast<int64_t**>(probe_->keys)[0];
     return hashMix(1, key[i]);
   }
@@ -327,6 +326,7 @@ class MockGroupByOps {
       return ProbeState::kRetry;
     }
     bucket->store(missShift / 8, row);
+    atomicAdd((unsigned long long*)&table->numDistinct, 1);
     return ProbeState::kDone;
   }
 
@@ -374,18 +374,18 @@ class MockGroupByOps {
   HashProbe* probe_;
 };
 
-void __global__ __launch_bounds__(1024) hashTestKernel(
+void __global__ /* __launch_bounds__(1024) */ hashTestKernel(
     GpuHashTable* table,
     HashProbe* probe,
     BlockTestStream::HashCase mode) {
   switch (mode) {
     case BlockTestStream::HashCase::kGroup: {
-      MockGroupByOps(probe);
+      MockGroupByOps ops(probe);
       int32_t begin = blockIdx.x * probe->numRowsPerThread * blockDim.x;
       int32_t end = begin + probe->numRows[blockIdx.x];
       
       for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-	table->updatingProbe<TestingRow>(i, cub::laneId(), i < end, ops);
+	table->updatingProbe<TestingRow>(i, cub::LaneId(), i < end, ops);
       }
       break;
     }
@@ -511,7 +511,6 @@ UPDATE_CASE(
     updateSum1AtomicCoalesceShmem,
     testSumAtomicCoalesceShmem,
     run.blockSize * sizeof(int64_t));
-UPDATE_CASE(updateSum1Exch, testSumExch, sizeof(ProbeShared));
 UPDATE_CASE(updateSum1Order, testSumOrder, 0);
 
 void __global__ __launch_bounds__(1024) update1PartitionKernel(
@@ -671,7 +670,6 @@ REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
 REGISTER_KERNEL("sum1atm", updateSum1AtomicKernel);
 REGISTER_KERNEL("sum1atmCoaShfl", updateSum1AtomicCoalesceShflKernel);
 REGISTER_KERNEL("sum1atmCoaShmem", updateSum1AtomicCoalesceShmemKernel);
-REGISTER_KERNEL("sum1Exch", updateSum1ExchKernel);
 REGISTER_KERNEL("sum1Part", updateSum1PartKernel);
 REGISTER_KERNEL("partSum", update1PartitionKernel);
 REGISTER_KERNEL("scatterBits", scatterBitsKernel);
