@@ -47,64 +47,66 @@ template <typename T>
 inline void __device__ atomicUnlock(T* lock) {
   asDeviceAtomic<int32_t>(lock)->store(0, cuda::memory_order_release);
 }
+  namespace detail {
+  template <typename T>
+inline __device__ T* allocateFixed(AllocationRange& range, int32_t size) {
+    if (range.fixedFull) {
+      return nullptr;
+    }
+    auto offset = atomicAdd(&range.rowOffset, size);
+    if (offset + size  < range.rowLimit) {
+      return reinterpret_cast<T*>(range.base + offset);
+    }
+    range.fixedFull = true;
+    return nullptr;
+  }
 
+  template <typename T>
+inline __device__ T* allocate(AllocationRange& range, int32_t count) {
+    if (range.variableFull) {
+      return nullptr;
+    }
+    auto size = sizeof(T) * count;
+    auto offset = atomicAdd(&range.stringOffset, -size);
+    if (offset - size  >= range.rowLimit) {
+      return reinterpret_cast<T*>(range.base + offset);
+    }
+    range.variableFull = true;
+    return nullptr;
+  }
+  }
+  
 /// Allocator subclass that defines device member functions.
 struct RowAllocator : public HashPartitionAllocator {
   template <typename T>
   T* __device__ allocateRow() {
-#if 0
-    auto fromFree = getFromFree();
-    if (fromFree != kEmpty) {
-      ++numFromFree;
-      return reinterpret_cast<T*>(base + fromFree);
-    }
-#endif
-    auto offset = atomicAdd(&rowOffset, rowSize);
-
-    if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
-      if (!inRange(base + offset)) {
-        GPF();
+    if (!ranges[0].fixedFull) {
+      auto ptr = detail::allocateFixed<T>(ranges[0], rowSize);
+      if (ptr) {
+	return ptr;
       }
-      return reinterpret_cast<T*>(base + offset);
+      if (ranges[1].fixedFull) {
+	return nullptr;
+      }
     }
-    return nullptr;
-  }
-
-  uint32_t __device__ getFromFree() {
-    uint32_t item = reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->get();
-    if (item != kEmpty) {
-      ++numFromFree;
-    }
-    return item;
-  }
-
-  void __device__ freeRow(void* row) {
-    if (!inRange(row)) {
-      GPF();
-    }
-    uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
-    numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(
-                   offset) == false;
+    return detail::allocateFixed<T>(ranges[1], rowSize);
   }
 
   template <typename T>
-  T* __device__ allocate(int32_t cnt) {
-    uint32_t size = sizeof(T) * cnt;
-    auto offset = atomicSub(&stringOffset, size);
-    if (offset - size > cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
-      if (!inRange(base + offset - size)) {
-        GPF();
+  T* __device__ allocate(int32_t count) {
+    if (!ranges[0].variableFull) {
+      auto ptr = detail::allocate<T>(ranges[0], count);
+      if (ptr) {
+	return ptr;
       }
-      return reinterpret_cast<T*>(base + offset - size);
+      if (ranges[1].variableFull) {
+	return nullptr;
+      }
     }
-    return nullptr;
+    return detail::allocate<T>(ranges[1], count);
   }
 
-  template <typename T>
-  bool __device__ inRange(T ptr) {
-    return reinterpret_cast<uint64_t>(ptr) >= base &&
-        reinterpret_cast<uint64_t>(ptr) < base + capacity;
-  }
+
 };
 
 inline uint8_t __device__ hashTag(uint64_t h) {

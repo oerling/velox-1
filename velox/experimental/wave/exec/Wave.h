@@ -255,6 +255,8 @@ struct AggregateOperatorState : public OperatorState {
   AbstractAggregation* instruction;
   // True after first created.
   bool isNew{true};
+  // Row ranges from filled alocators.
+  std::vector<AllocationRange> ranges;
 };
 
 struct OperatorStateMap {

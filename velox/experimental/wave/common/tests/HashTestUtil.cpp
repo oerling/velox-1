@@ -143,13 +143,11 @@ void setupGpuTable(
     GpuArena* arena,
     GpuHashTableBase*& table,
     WaveBufferPtr& buffer) {
-  using FreeSetType = FreeSetBase<void*, 1024>;
   // GPU cache lines are 128 bytes divided in 4 separately loadable 32 byte
   // sectors.
   constexpr int32_t kAlignment = 128;
   int32_t numBuckets = bits::nextPowerOfTwo(numSlots / 4);
-  int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator) +
-      sizeof(FreeSetType) + sizeof(GpuBucketMembers) * numBuckets +
+  int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator)  + sizeof(GpuBucketMembers) * numBuckets +
       maxRows * rowSize;
   buffer = arena->allocate<char>(bytes + kAlignment);
   table = buffer->as<GpuHashTableBase>();
@@ -160,9 +158,6 @@ void setupGpuTable(
   auto allocatorBase =
       reinterpret_cast<HashPartitionAllocator*>(table->allocators);
   data += sizeof(HashPartitionAllocator);
-  auto freeSet = reinterpret_cast<FreeSetType*>(data);
-  new (freeSet) FreeSetType();
-  data += sizeof(FreeSetType);
   // The buckets start at aligned address.
   data = reinterpret_cast<char*>(
       bits::roundUp(reinterpret_cast<uint64_t>(data), kAlignment));
@@ -170,7 +165,7 @@ void setupGpuTable(
   data += sizeof(GpuBucketMembers) * numBuckets;
   auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
   new (allocator)
-      HashPartitionAllocator(data, maxRows * rowSize, rowSize, freeSet);
+    HashPartitionAllocator(data, maxRows * rowSize, maxRows * rowSize, rowSize);
   table->partitionMask = 0;
   table->partitionShift = 0;
   memset(table->buckets, 0, sizeof(GpuBucketMembers) * (table->sizeMask + 1));

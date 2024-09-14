@@ -45,31 +45,39 @@ class FreeSetBase {
   T items_[kSize] = {};
 };
 
+  /// Range of addresses. fixed length from bottom and variable length from top. if 'rowOffset' goes above 'rowLimit' then rows are full. If 'stringOffset' goes below 'rowLimit' then strings are full.
+struct AllocationRange {
+  AllocationRange() = default;
+  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit) : fixedFull(false), variableFull(false), base(base), capacity(capacity), rowLimit(rowLimit), stringOffset(capacity) {}
+  
+  bool fixedFull{true};
+  bool variableFull{true};
+  /// Number of the partition. Used when filing away ranges on the control plane.
+  uint8_t partition{0};
+  uint64_t base{0};
+  uint32_t capacity{0};
+  uint32_t rowLimit{0};
+  uint32_t rowOffset{0};
+  uint32_t stringOffset{0};
+};
+  
 /// A device arena for device side allocation.
 struct HashPartitionAllocator {
   static constexpr uint32_t kEmpty = ~0;
 
   HashPartitionAllocator(
       char* data,
-      uint32_t size,
-      uint32_t rowSize,
-      void* freeSet)
-      : rowSize(rowSize),
-        base(reinterpret_cast<uint64_t>(data)),
-        capacity(size),
-        stringOffset(capacity),
-        freeSet(freeSet) {}
+      uint32_t capacity,
+      uint32_t rowLimit,
+      uint32_t rowSize)
+      : rowSize(rowSize) {
+    ranges[0] = AllocationRange(reinterpret_cast<uintptr_t>(data), capacity, rowLimit);
+  }
 
   const int32_t rowSize{0};
-  const uint64_t base{0};
-  uint32_t rowOffset{0};
-  const uint32_t capacity{0};
-  uint32_t stringOffset{0};
-  void* freeSet{nullptr};
-  int32_t numFromFree{0};
-  int32_t numFull{0};
+  AllocationRange ranges[2];
 };
-
+  
 /// Implementation of HashPartitionAllocator, defined in .cuh.
 struct RowAllocator;
 

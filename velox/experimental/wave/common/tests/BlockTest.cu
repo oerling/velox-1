@@ -18,6 +18,9 @@
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
+#include "velox/experimental/wave/common/ArenaWithFree.cuh"
+#include "velox/experimental/wave/common/tests/Updates.cuh"
+
 #include "velox/experimental/wave/common/tests/BlockTest.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 #include "velox/experimental/wave/common/tests/Updates.cuh"
@@ -459,7 +462,7 @@ void __global__ allocatorTestKernel(
   __syncthreads();
 }
 
-void __global__ initAllocatorKernel(RowAllocator* allocator) {
+void __global__ initAllocatorKernel(ArenaWithFree* allocator) {
   if (threadIdx.x == 0) {
     if (allocator->freeSet) {
       reinterpret_cast<FreeSet<uint32_t, 1024>*>(allocator->freeSet)->clear();
@@ -473,9 +476,9 @@ int32_t BlockTestStream::freeSetSize() {
   return sizeof(FreeSet<uint32_t, 1024>);
 }
 
-void BlockTestStream::initAllocator(HashPartitionAllocator* allocator) {
+void BlockTestStream::initAllocator(ArenaWithFree* allocator) {
   initAllocatorKernel<<<1, 1, 0, stream_->stream>>>(
-      reinterpret_cast<RowAllocator*>(allocator));
+      reinterpret_cast<ArenaWithFree*>(allocator));
   CUDA_CHECK(cudaGetLastError());
 }
 

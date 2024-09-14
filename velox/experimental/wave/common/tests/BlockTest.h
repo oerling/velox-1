@@ -18,6 +18,7 @@
 
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/HashTable.h"
+#include "velox/experimental/wave/common/ArenaWithFreeBase.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
 /// Sample header for testing Wave Utilities.
@@ -60,7 +61,7 @@ struct TestingRow {
 
 /// Result of allocator test kernel.
 struct AllocatorTestResult {
-  RowAllocator* allocator;
+  ArenaWithFree* allocator;
   int32_t numRows;
   int32_t numStrings;
   int64_t* rows[200000];
@@ -135,7 +136,7 @@ class BlockTestStream : public Stream {
 
   static int32_t freeSetSize();
 
-  void initAllocator(HashPartitionAllocator* allocator);
+  void initAllocator(ArenaWithFree* allocator);
 
   /// tests RowAllocator.
   void rowAllocatorTest(

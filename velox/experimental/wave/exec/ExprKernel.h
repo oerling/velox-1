@@ -150,6 +150,14 @@ struct IAggregate {
   IUpdateAgg* aggregates;
 };
 
+struct AggregationReturn {
+  /// Count of rows in the table. Triggers rehash when high enough.
+  int64_t numDistinct;
+
+  /// Copy of each RowAllocator.
+  RowAllocator allocators[1];
+};
+  
 struct Instruction {
   OpCode opCode;
   union {
@@ -178,6 +186,12 @@ struct WaveShared {
   Operand** operands;
   void** states;
 
+  /// True if continuing the first instruction. The instructoin will
+  /// pick up its lane status from blockStatus or an
+  /// instruction-specific source. The instruction must clear this
+  /// before executing the next instruction.
+  bool isContinue;
+  
   /// True if some lane needs a continue. Used inside a kernel to
   /// indicate that the grid level status should be set to indicate
   /// continue. Reset before end of instruction.

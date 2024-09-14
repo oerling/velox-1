@@ -293,24 +293,24 @@ TEST_F(HashTableTest, allocator) {
   constexpr int32_t kNumThreads = 256;
   constexpr int32_t kTotal = 1 << 22;
   WaveBufferPtr data = arena_->allocate<char>(kTotal);
-  auto* allocator = data->as<HashPartitionAllocator>();
+  auto* allocator = data->as<ArenaWithFreeBase>();
   auto freeSetSize = BlockTestStream::freeSetSize();
-  new (allocator) HashPartitionAllocator(
-      data->as<char>() + sizeof(HashPartitionAllocator) + freeSetSize,
-      kTotal - sizeof(HashPartitionAllocator) - freeSetSize,
+  new (allocator) ArenaWithFreeBase(
+      data->as<char>() + sizeof(ArenaWithFreeBase) + freeSetSize,
+      kTotal - sizeof(ArenaWithFreeBase) - freeSetSize,
       16,
       allocator + 1);
   memset(allocator->freeSet, 0, freeSetSize);
   WaveBufferPtr allResults = arena_->allocate<AllocatorTestResult>(kNumThreads);
   auto results = allResults->as<AllocatorTestResult>();
   for (auto i = 0; i < kNumThreads; ++i) {
-    results[i].allocator = reinterpret_cast<RowAllocator*>(allocator);
+    results[i].allocator = reinterpret_cast<ArenaWithFree*>(allocator);
     results[i].numRows = 0;
     results[i].numStrings = 0;
   }
   auto stream1 = std::make_unique<BlockTestStream>();
   auto stream2 = std::make_unique<BlockTestStream>();
-  stream1->initAllocator(allocator);
+  stream1->initAllocator(reinterpret_cast<ArenaWithFree*>(allocator));
   stream1->wait();
   stream1->rowAllocatorTest(2, 4, 3, 2, results);
   stream2->rowAllocatorTest(2, 4, 3, 2, results + 128);

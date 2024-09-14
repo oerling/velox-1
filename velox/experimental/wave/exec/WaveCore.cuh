@@ -190,9 +190,11 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     instruction = program->instructions;                                       \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
+    shared->isContinue = false; \
   } else {                                                                     \
     instruction = program->instructions + params.startPC[programIndex];        \
     laneStatus = shared->status->errors[threadIdx.x];                          \
+    shared->isContinue = true; \
   }
 
 #define PROGRAM_EPILOGUE()                          \

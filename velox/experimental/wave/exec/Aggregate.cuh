@@ -87,6 +87,7 @@ class SumGroupByOps {
       return ProbeState::kRetry;
     }
     bucket->store(missShift / 8, row);
+    increment(table->numDistinct, 1);
     return ProbeState::kDone;
   }
 
@@ -117,14 +118,24 @@ class SumGroupByOps {
 
  
 
-void __device__ __forceinline__ interpretedGroupBy(    shared, deviceAggregation, agg, lanestatus) {
+void __device__ __forceinline__ interpretedGroupBy(    shared, deviceAggregation* deviceAggregation, IAggregate* agg, lanestatus) {
   SumGroupOps ops(shared. agg);
+  auto* table = deviceAggregation->table;
+  if (shared->isContinue) {
+    laneStatus = laneStatus == ErrorCode::kInsufficientMemory ? ErrorCode::kOk : ErrorCode::kInactive;
+  }
+    table->updatingProbe(thradIdx.x, cub::LaneId(), laneActive(laneStatus),  ops);
   __syncthreads();
   if (threadIdx.x == 0 && shared->hasContinue) {
-    
+    auto ret = gridStatus(shared, inst_->status);
+    ret->numDistinct = table->numDistinct;
   }
+  __syncthreads();
+  if (threadIdx.x == 0 && shared->isContinue) {
+    shared->isContinue = false;
+  }
+  __syncthreads();
 }
-
 
 
   
