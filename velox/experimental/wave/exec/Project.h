@@ -70,7 +70,9 @@ class Project : public WaveOperator {
     return computedSet_;
   }
 
- private:
+  void callUpdateStatus(AdvanceResult& advance);
+
+private:
   struct ContinueLocation {
     int32_t programIdx;
     int32_t instructionIdx;

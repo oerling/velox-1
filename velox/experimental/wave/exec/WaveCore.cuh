@@ -178,23 +178,26 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->states = params.operatorStates[programIndex];                      \
     shared->numBlocks = params.numBlocks;				\
     shared->numRowsPerThread = params.numRowsPerThread; \
-    shared->hasContinue = false; \
-  shared->stop = false;							\
+    shared->isContinue = params.startPC != nullptr; \
+    shared->hasContinue = false;					\
+    shared->stop = false;							\
   }                                                                            \
   __syncthreads();                                                             \
   auto blockBase = shared->blockBase;                                          \
   auto operands = shared->operands;                                            \
   ErrorCode laneStatus;                                                        \
   Instruction* instruction;                                                    \
-  if (params.startPC == nullptr) {                                             \
+  if (!shared->isContinue) {                                             \
     instruction = program->instructions;                                       \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
-    shared->isContinue = false; \
   } else {                                                                     \
-    instruction = program->instructions + params.startPC[programIndex];        \
+    auto start = params.startPC[programIndex];				\
+    if (start == ~0) { \
+      return; /* no continue in this program*/				\
+    }									\
+    instruction = program->instructions + start;				\
     laneStatus = shared->status->errors[threadIdx.x];                          \
-    shared->isContinue = true; \
   }
 
 #define PROGRAM_EPILOGUE()                          \

@@ -23,6 +23,61 @@
 namespace facebook::velox::wave {
 enum class Advance { kBlocked, kResult, kFinished };
 
+  /// Synchronizes between WaveDrivers on different Drivers of a Task
+  /// pipeline. All threads inside WaveDriver::getOutput are the
+  /// coordinated set. One or more of these cn acquire the barrier in
+  /// exclusive mode. When all threads have arrived, the exclusive
+  /// requesting thread returns from acquire with true. After it calls
+  /// release(), the next exclusive thread, if any returns from its
+  /// acquire(). If no more exclusive requesting threads, all arrive()
+  /// calls return. arrive() returns immediately if no exclusive is
+  /// requested by any thread.
+  class WaveBarrier {
+  public:
+    ~WaveBarrier();
+
+    /// Calling thread joins the set to being coordinated. If a thread holds or is waiting for exclusive, the caller blocks until the exclusive is over.
+    void enter();
+
+    /// Calling thread leaves the set being coordinated. Never blocks.
+    void leave();
+
+
+    /// Gets exclusive access. All other threads in the coordinated set are stopped wen this returns true. If this returns false, another thread already acquired and released the barrier for 'reason'. 
+    bool acquire(void* reason);
+
+    /// Releases exclusive. The calling thread must have called acquire() first and received a true return value. 
+    void release();
+
+    /// Calling thread arrives. If there is no acquire() pending,
+    /// returns immediately. If there is an acquire() pending, blocks
+    /// until all threads with acquire() have called
+    /// release(). Acquires are continued one by one after all threads
+    /// are either blocked in arrive() or acquire().
+    void arrive();
+    
+    static std::shared_ptr<WaveBarrier> get(const std::string& taskId, int32_t driverId, int32_t operatorId);
+  private:
+    // Serializes all non-static state.
+    std::mutex mutex_;
+    
+    // Concatenation of task id and pipeline and driver id.
+    std::string idString_;
+
+    // Number of threads to coordinate.
+    int32_t numJoined_{0};
+
+    // Number of threads blocked in arrive().
+    int32_t numInArrive_{0};
+    std::vector<ContinuePromise> arrivedPromises_;
+    std::vector<folly::Promise<bool>> exclusivePromises_;
+    std::vector<void*> exclusiveTokens_;
+    void* exclusiveToken_{nullptr};
+
+    static std::mutex barriersMutex_;
+    static std::unordered_map<std::string, std::weak_ptr<WaveBarrier>> barriers_;
+  };
+  
 class WaveDriver : public exec::SourceOperator {
  public:
   WaveDriver(
@@ -141,6 +196,13 @@ class WaveDriver : public exec::SourceOperator {
       int32_t from,
       int32_t numRows);
 
+  // Carries out advance actions like rehashing tables or getting more memory. Synchronizes with 'barrier_' if needed.
+  void prepareAdvance(
+    Pipeline& pipeline,
+    WaveStream& stream,
+    int32_t from,
+    std::vector<AdvanceResult>& advance);
+  
   // Finishes any pending activity, so that the final result at the
   // end is ready to consume by another pipeline. This is called once,
   // after there is guaranteed no more input.
@@ -170,6 +232,9 @@ class WaveDriver : public exec::SourceOperator {
     stats.clear();
   }
 
+  // Supports Task-wide sync between WaveDrivers on different exec::Drivers.
+  std::shared_ptr<WaveBarrier> barrier_;
+  
   std::vector<Pipeline> pipelines_;
 
   // The replaced Operators from the Driver. Can be used for a CPU fallback.

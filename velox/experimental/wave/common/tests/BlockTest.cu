@@ -353,6 +353,10 @@ class MockGroupByOps {
     }
   }
 
+  void freeInsertable(TestingRow* row, uint64_t /*h*/) {
+    row->flags = 2;
+  }
+  
   void __device__ writeDone(TestingRow* row) {
     // atomicUnlock(&row->flags);
   }

@@ -33,9 +33,18 @@ AdvanceResult AbstractAggregation::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
     OperatorState* state,
-    int32_t programIdx) const {
+    int32_t instructionIdx) const {
+  auto state = stream.gridStatus<AggregationReturn>(instructionState);
+  if (state->numDistinct) {
+    // The hash table needs memory or rehash. Request a Task-wide break to resupply the device side hash table.
+    return {.instructionIdx = instructionIdx, .isRetry = true, syncDrivers = true, .updateStatus = resupplyHashTable, reason = state };
+  }
   return {};
 }
+
+  bool AbstractAggregation::interpretReturn(WaveStream& stream, LaunchControl& control, int32_t programIdx, int32_t instructionIdx) {
+
+  }
 
 AdvanceResult AbstractReadAggregation::canAdvance(
     WaveStream& stream,

@@ -231,7 +231,7 @@ class GpuHashTable : public GpuHashTableBase {
           auto candidate = bucket->loadWithWait<RowType>(hitIdx);
           if (ops.compare(this, candidate, i)) {
             if (toInsert) {
-              freeInsertable(toInsert, h);
+              ops.freeInsertable(toInsert, h);
             }
             hit = candidate;
             break;
@@ -288,15 +288,39 @@ class GpuHashTable : public GpuHashTableBase {
       }
     }
 
-  
-  template <typename RowType>
-  void __device__ freeInsertable(RowType*& row, uint64_t h) {
-    //allocators[partitionIdx(h)].freeRow(row);
-    row = nullptr;
-  }
+  template <typename Ops>
+  void __device__ rehash(GpuBucket* ondBuckets, int32_t numOldBuckets, Ops& ops) {
+    int32_t stride = blockDim.x * 4 * gridDim.x;
+    for (idx = threadIdx.x * blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
+      for (auto slot = 0; slot < 4; ++slot) {
+	auto* row = oldBuckets[idx].load(i);
+	if (row) {
+	  h = ops.hashRow(row);
+	  auto bucketIdx = h & sizeMask_;
+	        uint32_t tagWord = hashTag(h);
+      tagWord |= tagWord << 8;
+      tagWord = tagWord | tagWord << 16;
 
-  int32_t __device__ partitionIdx(uint64_t h) const {
-    return (h & partitionMask) >> partitionShift;
+	  for (;;) {
+	    bucket = buckets + bucketIdx;
+	  reprobe:
+	    tags = asDeviceAtomic<uint32_t>(&bucket->tags)
+	      ->load(cuda::memory_order_consume);
+	    auto misses = __vcmpeq4(tags, 0) & 0x01010101;
+	    while (misses) {
+    auto missShift = __ffs(misses) - 1;
+    if (!bucket->addNewTag(tagWord, tags, missShift)) {
+      goto reprobe;
+    }
+    bucket->store(missShift / 8, row);
+    goto next;
+	    }
+	    bucketIdx = (bucketIdx + 1) & sizeMask_;
+	  }
+	}
+      next: ;
+      }
+    }
   }
 
 };

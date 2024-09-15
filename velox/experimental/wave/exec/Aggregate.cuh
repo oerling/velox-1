@@ -103,6 +103,11 @@ class SumGroupByOps {
     shared_->hasContinue = true;
     shared_->status[i / kBlockSize].errors[i & (kBlockSize - 1)] = ErrorCode::kInsufficientMemory;
   }
+
+  void __device__ freeInsertable(TestingRow* row, uint64_t /*h*/) {
+    row->lock = 2;
+  }
+
   
   SumGroupRow* __device__ getExclusive(
       GpuHashTable* table,
@@ -139,7 +144,13 @@ void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAg
   auto* table = reinterpret_cast<GpuHashTable*>(deviceAggregation->table);
   if (shared->isContinue) {
     laneStatus = laneStatus == ErrorCode::kInsufficientMemory ? ErrorCode::kOk : ErrorCode::kInactive;
+    // Reset the return status for this stream.
+    if (threadIdx.x == 0) {
+      auto status = gridStatus<AggregateReturn>(shared, agg.instructionStatus);
+      status->numDistinct = 0;
+    }
   }
+
   table->updatingProbe<SumGroupRow>(threadIdx.x, cub::LaneId(), laneActive(laneStatus), ops);
   __syncthreads();
   if (threadIdx.x == 0 && shared->hasContinue) {
