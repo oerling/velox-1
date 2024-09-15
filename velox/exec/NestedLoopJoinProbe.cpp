@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 #include "velox/exec/NestedLoopJoinProbe.h"
+#include <iostream>
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
 #include "velox/expression/FieldReference.h"
-#include <iostream>
 
 namespace facebook::velox::exec {
 namespace {

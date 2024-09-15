@@ -16,19 +16,13 @@
 
 #pragma once
 
-
-
 namespace facebook::velox::wave {
 
 /// A device arena for device side allocation.
 struct ArenaWithFreeBase {
   static constexpr uint32_t kEmpty = ~0;
 
-  ArenaWithFreeBase(
-      char* data,
-      uint32_t size,
-      uint32_t rowSize,
-      void* freeSet)
+  ArenaWithFreeBase(char* data, uint32_t size, uint32_t rowSize, void* freeSet)
       : rowSize(rowSize),
         base(reinterpret_cast<uint64_t>(data)),
         capacity(size),
@@ -45,6 +39,5 @@ struct ArenaWithFreeBase {
   int32_t numFull{0};
 };
 
-
 struct ArenaWithFree;
-}
+} // namespace facebook::velox::wave

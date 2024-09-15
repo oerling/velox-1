@@ -154,7 +154,7 @@ struct AggregationReturn {
   /// Count of rows in the table. Triggers rehash when high enough.
   int64_t numDistinct;
 };
-  
+
 struct Instruction {
   OpCode opCode;
   union {
@@ -188,7 +188,7 @@ struct WaveShared {
   /// instruction-specific source. The instruction must clear this
   /// before executing the next instruction.
   bool isContinue;
-  
+
   /// True if some lane needs a continue. Used inside a kernel to
   /// indicate that the grid level status should be set to indicate
   /// continue. Reset before end of instruction.
@@ -198,7 +198,8 @@ struct WaveShared {
   bool stop;
   int32_t blockBase;
   int32_t numRows;
-  /// Number of blocks for the program. Return statuses are at '&blockStatus[numBlocks']
+  /// Number of blocks for the program. Return statuses are at
+  /// '&blockStatus[numBlocks']
   int32_t numBlocks;
 
   /// Number of items in blockStatus covered by each TB.
@@ -241,12 +242,11 @@ struct KernelParams {
   void*** operatorStates;
 
   /// Number of blocks in each program. gridDim.x can be a multiple if many
-  ///programs in launch.
+  /// programs in launch.
   int32_t numBlocks{0};
 
   /// Number of elements of blockStatus covered by each TB.
   int32_t numRowsPerThread{1};
-
 };
 
 /// Returns the shared memory size for instruction for kBlockSize.

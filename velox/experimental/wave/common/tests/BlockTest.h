@@ -16,9 +16,9 @@
 
 #pragma once
 
+#include "velox/experimental/wave/common/ArenaWithFreeBase.h"
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/HashTable.h"
-#include "velox/experimental/wave/common/ArenaWithFreeBase.h"
 #include "velox/experimental/wave/common/tests/HashTestUtil.h"
 
 /// Sample header for testing Wave Utilities.

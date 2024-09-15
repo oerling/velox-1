@@ -147,8 +147,8 @@ void setupGpuTable(
   // sectors.
   constexpr int32_t kAlignment = 128;
   int32_t numBuckets = bits::nextPowerOfTwo(numSlots / 4);
-  int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator)  + sizeof(GpuBucketMembers) * numBuckets +
-      maxRows * rowSize;
+  int64_t bytes = sizeof(GpuHashTableBase) + sizeof(HashPartitionAllocator) +
+      sizeof(GpuBucketMembers) * numBuckets + maxRows * rowSize;
   buffer = arena->allocate<char>(bytes + kAlignment);
   table = buffer->as<GpuHashTableBase>();
   new (table) GpuHashTableBase();
@@ -164,8 +164,8 @@ void setupGpuTable(
   table->buckets = reinterpret_cast<GpuBucket*>(data);
   data += sizeof(GpuBucketMembers) * numBuckets;
   auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);
-  new (allocator)
-    HashPartitionAllocator(data, maxRows * rowSize, maxRows * rowSize, rowSize);
+  new (allocator) HashPartitionAllocator(
+      data, maxRows * rowSize, maxRows * rowSize, rowSize);
   table->partitionMask = 0;
   table->partitionShift = 0;
   memset(table->buckets, 0, sizeof(GpuBucketMembers) * (table->sizeMask + 1));

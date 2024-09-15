@@ -45,14 +45,23 @@ class FreeSetBase {
   T items_[kSize] = {};
 };
 
-  /// Range of addresses. fixed length from bottom and variable length from top. if 'rowOffset' goes above 'rowLimit' then rows are full. If 'stringOffset' goes below 'rowLimit' then strings are full.
+/// Range of addresses. fixed length from bottom and variable length from top.
+/// if 'rowOffset' goes above 'rowLimit' then rows are full. If 'stringOffset'
+/// goes below 'rowLimit' then strings are full.
 struct AllocationRange {
   AllocationRange() = default;
-  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit) : fixedFull(false), variableFull(false), base(base), capacity(capacity), rowLimit(rowLimit), stringOffset(capacity) {}
-  
+  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit)
+      : fixedFull(false),
+        variableFull(false),
+        base(base),
+        capacity(capacity),
+        rowLimit(rowLimit),
+        stringOffset(capacity) {}
+
   bool fixedFull{true};
   bool variableFull{true};
-  /// Number of the partition. Used when filing away ranges on the control plane.
+  /// Number of the partition. Used when filing away ranges on the control
+  /// plane.
   uint8_t partition{0};
   uint64_t base{0};
   uint32_t capacity{0};
@@ -60,7 +69,7 @@ struct AllocationRange {
   uint32_t rowOffset{0};
   uint32_t stringOffset{0};
 };
-  
+
 /// A device arena for device side allocation.
 struct HashPartitionAllocator {
   static constexpr uint32_t kEmpty = ~0;
@@ -71,13 +80,14 @@ struct HashPartitionAllocator {
       uint32_t rowLimit,
       uint32_t rowSize)
       : rowSize(rowSize) {
-    ranges[0] = AllocationRange(reinterpret_cast<uintptr_t>(data), capacity, rowLimit);
+    ranges[0] =
+        AllocationRange(reinterpret_cast<uintptr_t>(data), capacity, rowLimit);
   }
 
   const int32_t rowSize{0};
   AllocationRange ranges[2];
 };
-  
+
 /// Implementation of HashPartitionAllocator, defined in .cuh.
 struct RowAllocator;
 

@@ -24,8 +24,10 @@
 
 #include <iostream>
 
-DEFINE_int32(hash_num_rows_per_thread, 32,
-  "Number of rows per thread in hash table tests");
+DEFINE_int32(
+    hash_num_rows_per_thread,
+    32,
+    "Number of rows per thread in hash table tests");
 
 namespace facebook::velox::wave {
 
@@ -153,7 +155,7 @@ class HashTableTest : public testing::Test {
         UPDATE_CASE("sum1Mtx", updateSum1Mtx, true, 1);
         UPDATE_CASE("sum1MtxCoa", updateSum1MtxCoalesce, true, 0);
         UPDATE_CASE("sum1Part", updateSum1Part, true, 0);
-        //UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
+        // UPDATE_CASE("sum1Order", updateSum1Order, true, 0);
 
         break;
       default:
