@@ -178,7 +178,7 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->states = params.operatorStates[programIndex];                      \
     shared->numBlocks = params.numBlocks;				\
     shared->numRowsPerThread = params.numRowsPerThread; \
-    shared->hasContinue = false;
+    shared->hasContinue = false; \
   shared->stop = false;							\
   }                                                                            \
   __syncthreads();                                                             \

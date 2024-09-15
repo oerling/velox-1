@@ -1,4 +1,4 @@
-s/*
+/*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,16 +146,13 @@ struct IAggregate {
   uint8_t stateIndex;
   /// Position of status return block in operator status returned to host.
   InstructionStatus status;
-  //  'numAggre gates' Updates followed by key 'numKeys' key operand indices.
+  //  'numAggregates' Updates followed by key 'numKeys' key operand indices.
   IUpdateAgg* aggregates;
 };
 
 struct AggregationReturn {
   /// Count of rows in the table. Triggers rehash when high enough.
   int64_t numDistinct;
-
-  /// Copy of each RowAllocator.
-  RowAllocator allocators[1];
 };
   
 struct Instruction {

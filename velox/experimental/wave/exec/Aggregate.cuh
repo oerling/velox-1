@@ -18,12 +18,13 @@
 
 #include <gflags/gflags.h>
 #include "velox/experimental/wave/common/Block.cuh"
+#include "velox/experimental/wave/common/HashTable.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
 
 namespace facebook::velox::wave {
 
-struct sumGroupRow {
+struct SumGroupRow {
   uint32_t nulls;
   int32_t lock{1};
   int64_t key;
@@ -36,13 +37,23 @@ inline void __device__ increment(int64_t& a, int64_t i) {
 
 class SumGroupByOps {
  public:
-  __device__ SumGroupByOps(WaveShared* shared, IAggregate* inst)
+  __device__ SumGroupByOps(WaveShared* shared, const IAggregate* inst)
     : shared_(shared), inst_(inst) {}
+
+  uint64_t __device__ hash(int32_t i) {
+    int64_t key;
+    if (operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]), shared_->blockBase, &shared_->data, key)) {
+      constexpr uint64_t kMul = 0x9ddfea08eb382d69ULL;
+      return kMul * key;
+    }
+    return 1;
+    
+  }
   
   bool __device__
   compare(GpuHashTable* table, SumGroupRow* row, int32_t i) {
     int64_t key;
-    if (operandOrNull(shared_->operands, inst_->keys[0], shared_->blockBase, shared_->data, key)) {
+    if (operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]), shared_->blockBase, &shared_->data, key)) {
       return row->key == key;
     }
     return false;
@@ -54,12 +65,10 @@ class SumGroupByOps {
     auto row = allocator->allocateRow<SumGroupRow>();
     new(row) SumGroupRow();
     if (row) {
-      operandorNull(shared_->operands, inst_->keys[0], &shared->data, row->key);
-
-
+      operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]),shared_->blockBase,  &shared_->data, row->key);
       for (auto i = 0; i < inst_->numAggregates; ++i) {
 	int64_t x;
-	operandOrNull(shared_->operands, inst_->aggregates[i].arg1, shared_->data, x);
+	operandOrNull(shared_->operands, inst_->aggregates[i].arg1, shared_->blockBase,  &shared_->data, x);
 	row->sums[i] = x;
       }
     }
@@ -78,8 +87,7 @@ class SumGroupByOps {
     if (!row) {
       row = newRow(table, partition, i);
       if (!row) {
-	shared->hasContinue = true;
-        shared->laneStatus[threadIdx.x] = ErrorCode::kInsufficientMemory;
+	return ProbeState::kNeedSpace;
       }
     }
     auto missShift = __ffs(misses) - 1;
@@ -91,6 +99,11 @@ class SumGroupByOps {
     return ProbeState::kDone;
   }
 
+  void __device__ addHostRetry(int32_t i) {
+    shared_->hasContinue = true;
+    shared_->status[i / kBlockSize].errors[i & (kBlockSize - 1)] = ErrorCode::kInsufficientMemory;
+  }
+  
   SumGroupRow* __device__ getExclusive(
       GpuHashTable* table,
       GpuBucket* bucket,
@@ -99,7 +112,7 @@ class SumGroupByOps {
     return row;
   }
 
-  void __device__ writeDone(TestingRow* row) {}
+  void __device__ writeDone(SumGroupRow* row) {}
 
   ProbeState __device__ update(
       GpuHashTable* table,
@@ -109,25 +122,28 @@ class SumGroupByOps {
     int32_t numAggs = inst_->numAggregates;
     for (auto acc = 0; acc < numAggs; ++acc) {
       int64_t x;
-      operandOrNull(shared_->operands, inst_->aggregates[acc].arg1, &shared_->data, x);
+      operandOrNull(shared_->operands, inst_->aggregates[acc].arg1, shared_->blockBase, &shared_->data, x);
       increment(row->sums[acc], x);
     }
     return ProbeState::kDone;
   }
+
+  WaveShared* shared_;
+  const IAggregate* inst_;
 };
 
  
 
-void __device__ __forceinline__ interpretedGroupBy(    shared, deviceAggregation* deviceAggregation, IAggregate* agg, lanestatus) {
-  SumGroupOps ops(shared. agg);
-  auto* table = deviceAggregation->table;
+void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAggregation* deviceAggregation, const IAggregate* agg, ErrorCode laneStatus) {
+  SumGroupByOps ops(shared, agg);
+  auto* table = reinterpret_cast<GpuHashTable*>(deviceAggregation->table);
   if (shared->isContinue) {
     laneStatus = laneStatus == ErrorCode::kInsufficientMemory ? ErrorCode::kOk : ErrorCode::kInactive;
   }
-    table->updatingProbe(thradIdx.x, cub::LaneId(), laneActive(laneStatus),  ops);
+  table->updatingProbe<SumGroupRow>(threadIdx.x, cub::LaneId(), laneActive(laneStatus), ops);
   __syncthreads();
   if (threadIdx.x == 0 && shared->hasContinue) {
-    auto ret = gridStatus(shared, inst_->status);
+    auto ret = gridStatus<AggregationReturn>(shared, agg->status);
     ret->numDistinct = table->numDistinct;
   }
   __syncthreads();
@@ -145,8 +161,8 @@ __device__ __forceinline__ void aggregateKernel(
     ErrorCode& laneStatus) {
   auto state =
       reinterpret_cast<DeviceAggregation*>(shared->states[agg.stateIndex]);
-  if (agg->numKeys) {
-    interpretedGroupBy(    shared, deviceAggregation, agg, lanestatus); 
+  if (agg.numKeys) {
+    interpretedGroupBy(    shared, state, &agg, laneStatus); 
   } else {
     char* row = state->singleRow;
     for (auto i = 0; i < agg.numAggregates; ++i) {
