@@ -422,7 +422,8 @@ struct ProgramLaunch {
   /// Device side temp status for instructions.
   std::vector<void*> deviceBuffers;
 #endif
-  /// Where to continue if previous execution was incomplete. The last advances first and is popped off.
+  /// Where to continue if previous execution was incomplete. The last advances
+  /// first and is popped off.
   AdvanceResult advance;
 };
 
@@ -518,14 +519,18 @@ class Program : public std::enable_shared_from_this<Program> {
   /// output vectors,, synced on 'hostReturnEvent_'.
   bool isSink() const;
 
-  /// Records instruction return status. The status os accessed by canAdvance(). 
-  void interpretReturn(WaveStream& stream, LaunchControl* control, int32_t programIdx);
+  /// Records instruction return status. The status os accessed by canAdvance().
+  void interpretReturn(
+      WaveStream& stream,
+      LaunchControl* control,
+      int32_t programIdx);
 
   void registerStatus(WaveStream& stream);
 
-  /// Runs the update callback in 'advance' with the right instruction.  E.g. rehash device side table,. Caller synchronizes.
+  /// Runs the update callback in 'advance' with the right instruction.  E.g.
+  /// rehash device side table,. Caller synchronizes.
   void callUpdateStatus(WaveStream& stream, AdvanceResult& result);
-  
+
   std::string toString() const;
 
  private:
@@ -904,16 +909,19 @@ class WaveStream {
     return instructionStatus_;
   }
 
-  /// Returns the grid level return status for instruction with 'status' or nullptr if no status in place.
-  template<typename T>
+  /// Returns the grid level return status for instruction with 'status' or
+  /// nullptr if no status in place.
+  template <typename T>
   T* gridStatus(const InstructionStatus& status) {
     if (!hostBlockStatus_) {
       return nullptr;
     }
     auto numBlocks = bits::roundUp(numRows_, kBlockSize);
-    return reinterpret_cast<T*>(hostBlockStatus_->as<char>() + numBlocks * sizeof(BlockStatus) + status.gridState);
+    return reinterpret_cast<T*>(
+        hostBlockStatus_->as<char>() + numBlocks * sizeof(BlockStatus) +
+        status.gridState);
   }
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;

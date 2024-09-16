@@ -25,7 +25,7 @@ Values::Values(CompileState& state, const core::ValuesNode& values)
       values_(values.values()),
       roundsLeft_(values.repeatTimes()) {}
 
-  std::vector<AdvanceResult> Values::canAdvance(WaveStream& stream) {
+std::vector<AdvanceResult> Values::canAdvance(WaveStream& stream) {
   if (current_ < values_.size()) {
     return {{.numRows = values_[current_]->size()}};
   }

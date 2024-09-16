@@ -829,9 +829,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     control.params.programs[i] = exes[i]->program;
     if (isContinue) {
       if (control.programInfo[i].advance.empty()) {
-	control.params.startPC[i] = -1;
+        control.params.startPC[i] = -1;
       } else {
-	control.params.startPC[i] = control.programInfo[i].advance.instructionIdx;
+        control.params.startPC[i] =
+            control.programInfo[i].advance.instructionIdx;
       }
     }
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
@@ -1008,13 +1009,12 @@ AdvanceResult Program::canAdvance(
   return {};
 }
 
-  void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
-    if (advance.updateStatus) {
-      advance.updateStatus(stream, *instructions_[advance.instructionIdx]);
-    }
+void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
+  if (advance.updateStatus) {
+    advance.updateStatus(stream, *instructions_[advance.instructionIdx]);
   }
-  
-  
+}
+
 #define IN_HEAD(abstract, physical, _op)             \
   auto* abstractInst = &instruction->as<abstract>(); \
   space->opCode = _op;                               \

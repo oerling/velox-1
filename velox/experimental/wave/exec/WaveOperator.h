@@ -104,7 +104,7 @@ class WaveOperator {
   virtual void callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
     VELOX_FAIL("Only Project supports callUpdateStatus()");
   }
-  
+
   virtual std::string toString() const;
 
   AbstractOperand* definesSubfield(

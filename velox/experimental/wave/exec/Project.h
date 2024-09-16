@@ -72,7 +72,7 @@ class Project : public WaveOperator {
 
   void callUpdateStatus(WaveStream& stream, AdvanceResult& advance) override;
 
-private:
+ private:
   struct ContinueLocation {
     int32_t programIdx;
     int32_t instructionIdx;

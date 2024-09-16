@@ -279,7 +279,7 @@ void Aggregation::flush(bool noMoreInput) {
   flushDone_.record(*flushStream_);
 }
 
-  std::vector<AdvanceResult> Aggregation::canAdvance(WaveStream& stream) {
+std::vector<AdvanceResult> Aggregation::canAdvance(WaveStream& stream) {
   if (!noMoreInput_ || finished_) {
     return {};
   }

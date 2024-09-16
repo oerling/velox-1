@@ -94,9 +94,8 @@ struct AbstractOperand {
 class WaveStream;
 struct OperatorState;
 struct LaunchControl;
-  struct AbstractInstruction;
-  
-  
+struct AbstractInstruction;
+
 struct AdvanceResult {
   bool empty() const {
     return numRows == 0 && !isRetry;
@@ -105,7 +104,8 @@ struct AdvanceResult {
   ///  Max number of result rows.
   int32_t numRows{0};
 
-  /// The sequence number of kernel launch that needs continue. (level idx in Project).
+  /// The sequence number of kernel launch that needs continue. (level idx in
+  /// Project).
   int32_t nthLaunch{0};
 
   /// The ordinal of the program in the launch.
@@ -119,13 +119,16 @@ struct AdvanceResult {
   /// continue in the next kernel launch.
   bool isRetry{false};
 
-  /// Stop all Drivers in Task pipeline for the time of 'statusUpdate'. Use this for e.g. rehashing a table shared between all WaveDrivers.
+  /// Stop all Drivers in Task pipeline for the time of 'statusUpdate'. Use this
+  /// for e.g. rehashing a table shared between all WaveDrivers.
   bool syncDrivers{false};
 
   /// Stop all streams in WaveDriver for the time of updateStatus(). Use
   bool syncStreams{false};
-  
-  /// Action to run before continue. If the update is visible between streams/Drivers, use the right sync flag above. No sync needed if e.g. adding space to a string buffer on the 'stream's' vectors.
+
+  /// Action to run before continue. If the update is visible between
+  /// streams/Drivers, use the right sync flag above. No sync needed if e.g.
+  /// adding space to a string buffer on the 'stream's' vectors.
   std::function<void(WaveStream&, AbstractInstruction&)> updateStatus;
 
   /// Extra token to mark reason for 'syncDrivers', e.g. the host side
@@ -396,7 +399,7 @@ struct AbstractAggregation : public AbstractOperator {
       LaunchControl* control,
       OperatorState* state,
       int32_t programIdx) const override;
-  
+
   InstructionStatus instructionStatus;
 
   bool intermediateInput{false};

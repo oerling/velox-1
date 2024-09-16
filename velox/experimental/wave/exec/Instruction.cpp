@@ -29,9 +29,8 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   reservedState.gridState += sizeof(AggregateReturn);
 }
 
-  void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
-  }
-  
+void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {}
+
 AdvanceResult AbstractAggregation::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
@@ -42,8 +41,13 @@ AdvanceResult AbstractAggregation::canAdvance(
   }
   auto gridState = stream.gridStatus<AggregateReturn>(instructionStatus);
   if (gridState->numDistinct) {
-    // The hash table needs memory or rehash. Request a Task-wide break to resupply the device side hash table.
-    return {.instructionIdx = instructionIdx, .isRetry = true, .syncDrivers = true /*, .updateStatus = resupplyHashTable, .reason = state*/ };
+    // The hash table needs memory or rehash. Request a Task-wide break to
+    // resupply the device side hash table.
+    return {
+        .instructionIdx = instructionIdx,
+        .isRetry = true,
+        .syncDrivers =
+            true /*, .updateStatus = resupplyHashTable, .reason = state*/};
   }
   return {};
 }

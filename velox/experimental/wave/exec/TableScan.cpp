@@ -39,7 +39,7 @@ BlockingReason TableScan::isBlocked(ContinueFuture* future) {
   return BlockingReason::kNotBlocked;
 }
 
-  std::vector<AdvanceResult> TableScan::canAdvance(WaveStream& stream) {
+std::vector<AdvanceResult> TableScan::canAdvance(WaveStream& stream) {
   if (!dataSource_ || needNewSplit_) {
     return {};
   }
