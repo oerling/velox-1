@@ -66,7 +66,7 @@ std::vector<AdvanceResult> Project::canAdvance(WaveStream& stream) {
 
   void Project::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
   if (advance.updateStatus) {
-    levels_[advance.nthLaunch][advance.programIdx].callUpdateStatus(stream, advance);
+    levels_[advance.nthLaunch][advance.programIdx]->callUpdateStatus(stream, advance);
   }
 }
 
@@ -153,15 +153,5 @@ void Project::finalize(CompileState& state) {
     }
   }
 }
-
-void Project::interpretReturn(WaveStream& stream) {} {
-  for (auto levelIdx = 0; levelIdx < levels_.size(); ++levelIdx) {
-    auto& levl = levels_[levelIdx];
-    for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
-      level[programIdx]->interpretReturn(stream);
-    }
-  }
-}
-
   
 } // namespace facebook::velox::wave

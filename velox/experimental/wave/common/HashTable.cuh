@@ -288,23 +288,23 @@ class GpuHashTable : public GpuHashTableBase {
       }
     }
 
-  template <typename Ops>
-  void __device__ rehash(GpuBucket* ondBuckets, int32_t numOldBuckets, Ops& ops) {
+  template <typename RowType, typename Ops>
+  void __device__ rehash(GpuBucket* oldBuckets, int32_t numOldBuckets, Ops& ops) {
     int32_t stride = blockDim.x * 4 * gridDim.x;
-    for (idx = threadIdx.x * blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
+    for (auto idx = threadIdx.x * blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
       for (auto slot = 0; slot < 4; ++slot) {
-	auto* row = oldBuckets[idx].load(i);
+	auto* row = oldBuckets[idx].load<RowType>(slot);
 	if (row) {
-	  h = ops.hashRow(row);
-	  auto bucketIdx = h & sizeMask_;
+	  uint64_t h = ops.hashRow(row);
+	  auto bucketIdx = h & sizeMask;
 	        uint32_t tagWord = hashTag(h);
       tagWord |= tagWord << 8;
       tagWord = tagWord | tagWord << 16;
 
 	  for (;;) {
-	    bucket = buckets + bucketIdx;
+	    GpuBucket* bucket = buckets + bucketIdx;
 	  reprobe:
-	    tags = asDeviceAtomic<uint32_t>(&bucket->tags)
+	    uint32_t tags = asDeviceAtomic<uint32_t>(&bucket->tags)
 	      ->load(cuda::memory_order_consume);
 	    auto misses = __vcmpeq4(tags, 0) & 0x01010101;
 	    while (misses) {
@@ -315,7 +315,7 @@ class GpuHashTable : public GpuHashTableBase {
     bucket->store(missShift / 8, row);
     goto next;
 	    }
-	    bucketIdx = (bucketIdx + 1) & sizeMask_;
+	    bucketIdx = (bucketIdx + 1) & sizeMask;
 	  }
 	}
       next: ;
@@ -323,5 +323,8 @@ class GpuHashTable : public GpuHashTableBase {
     }
   }
 
+    int32_t __device__ partitionIdx(uint64_t h) const {
+    return (h & partitionMask) >> partitionShift;
+  }
 };
 } // namespace facebook::velox::wave

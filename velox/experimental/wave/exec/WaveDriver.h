@@ -34,6 +34,8 @@ enum class Advance { kBlocked, kResult, kFinished };
   /// requested by any thread.
   class WaveBarrier {
   public:
+    WaveBarrier(std::string idString);
+    
     ~WaveBarrier();
 
     /// Calling thread joins the set to being coordinated. If a thread holds or is waiting for exclusive, the caller blocks until the exclusive is over.
@@ -58,6 +60,10 @@ enum class Advance { kBlocked, kResult, kFinished };
     
     static std::shared_ptr<WaveBarrier> get(const std::string& taskId, int32_t driverId, int32_t operatorId);
   private:
+    // Releases an exclusive waiting caller if non-exclusives are in
+    // arrive or have left.
+    void maybeReleaseAcquireLocked();
+
     // Serializes all non-static state.
     std::mutex mutex_;
     
@@ -69,7 +75,7 @@ enum class Advance { kBlocked, kResult, kFinished };
 
     // Number of threads blocked in arrive().
     int32_t numInArrive_{0};
-    std::vector<ContinuePromise> arrivedPromises_;
+    std::vector<ContinuePromise> promises_;
     std::vector<folly::Promise<bool>> exclusivePromises_;
     std::vector<void*> exclusiveTokens_;
     void* exclusiveToken_{nullptr};
@@ -217,6 +223,9 @@ class WaveDriver : public exec::SourceOperator {
   // Sets the WaveStreams to error state.
   void setError();
 
+  // Supports Task-wide sync between WaveDrivers on different exec::Drivers.
+  std::shared_ptr<WaveBarrier> barrier_;
+  
   std::unique_ptr<GpuArena> arena_;
   std::unique_ptr<GpuArena> deviceArena_;
 
@@ -231,9 +240,6 @@ class WaveDriver : public exec::SourceOperator {
     waveStats_.add(stats);
     stats.clear();
   }
-
-  // Supports Task-wide sync between WaveDrivers on different exec::Drivers.
-  std::shared_ptr<WaveBarrier> barrier_;
   
   std::vector<Pipeline> pipelines_;
 

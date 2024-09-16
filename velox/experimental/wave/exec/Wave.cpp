@@ -1008,7 +1008,7 @@ AdvanceResult Program::canAdvance(
   return {};
 }
 
-  void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& result) {
+  void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
     if (advance.updateStatus) {
       advance.updateStatus(stream, *instructions_[advance.instructionIdx]);
     }

@@ -141,7 +141,7 @@ void WaveKernelStream::callOne(
     if (params.startPC) {
       start = params.startPC[programIdx];
     }
-    if (startPc == ~0) {
+    if (start == ~0) {
       // No continu in this program.
       continue;
     }

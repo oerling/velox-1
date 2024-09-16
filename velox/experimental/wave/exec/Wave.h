@@ -423,7 +423,7 @@ struct ProgramLaunch {
   std::vector<void*> deviceBuffers;
 #endif
   /// Where to continue if previous execution was incomplete. The last advances first and is popped off.
-  std::vector<AdvanceResult> advance;
+  AdvanceResult advance;
 };
 
 class Program : public std::enable_shared_from_this<Program> {
@@ -907,7 +907,7 @@ class WaveStream {
   /// Returns the grid level return status for instruction with 'status' or nullptr if no status in place.
   template<typename T>
   T* gridStatus(const InstructionStatus& status) {
-    if (!hostBlockStatus) {
+    if (!hostBlockStatus_) {
       return nullptr;
     }
     auto numBlocks = bits::roundUp(numRows_, kBlockSize);

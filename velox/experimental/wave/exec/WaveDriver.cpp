@@ -34,7 +34,7 @@ namespace facebook::velox::wave {
   std::unordered_map<std::string, std::weak_ptr<WaveBarrier>> WaveBarrier::barriers_;
 
   WaveBarrier::WaveBarrier(std::string idString)
-    : idString_(idString) {}
+    : idString_(std::move(idString)) {}
 
   std::shared_ptr<WaveBarrier> WaveBarrier::get(const std::string& taskId, int32_t driverId, int32_t operatorId) {
     auto id = fmt::format("{}:{}:{}", taskId, driverId, operatorId);
@@ -63,7 +63,7 @@ namespace facebook::velox::wave {
   }
 
   bool waitForBool(folly::SemiFuture<bool> future) {
-        std::move(future)
+    return std::move(future)
             .via(&folly::QueuedImmediateExecutor::instance())
             .value();
   }
@@ -74,7 +74,7 @@ namespace facebook::velox::wave {
     for (;;) {
       ContinueFuture waitFuture;
       {
-	std::lock_guard>std::mutex> l(mutex_);
+	std::lock_guard<std::mutex> l(mutex_);
 	if (!exclusiveToken_) {
 	  ++numJoined_;
 	  return;
@@ -84,15 +84,9 @@ namespace facebook::velox::wave {
 	promises_.push_back(std::move(promise));
 	
       }
-      waitFor(waitFuture);
+      waitFor(std::move(waitFuture));
     }
   }
-  void WaveBarrier::maybeContinueLocked() {
-    if (
-  }
-
-  }
-
 
   void WaveBarrier::maybeReleaseAcquireLocked() {
     if (numJoined_ - numInArrive_ == exclusivePromises_.size()) {
@@ -104,7 +98,7 @@ namespace facebook::velox::wave {
   }
   
   
-  void leave() {
+  void WaveBarrier::leave() {
     VELOX_CHECK_NULL(exclusiveToken_);
     std::lock_guard<std::mutex> l(mutex_);
     --numJoined_;
@@ -112,17 +106,17 @@ namespace facebook::velox::wave {
   }
 
   bool WaveBarrier::acquire(void* reason) {
-    folly::Promise<bool> promise;
+    folly::SemiFuture<bool> future(false);
     {
       std::lock_guard<std::mutex> l(mutex_);
       if (numJoined_ == 1) {
 	exclusiveToken_ = reason;
-	return;
+	return true;
       }
       auto promise = folly::Promise<bool>();
       auto future = promise.getSemiFuture();
       exclusivePromises_.push_back(std::move(promise));
-      exclusiveTokens_.push_back(token);
+      exclusiveTokens_.push_back(reason);
       maybeReleaseAcquireLocked();
     }
     return waitForBool(std::move(future));
@@ -138,17 +132,18 @@ namespace facebook::velox::wave {
       return;
     }
     if (exclusivePromises_.empty()) {
-      for (auto promise : promises_) {
+      for (auto& promise : promises_) {
 	promise.setValue();
       }
+      numInArrive_ = 0;
       return;
     }
-    auto [promise, waitFuture] = makeVeloxContinuePromiseContract("WaveDriver");
+    auto [promise, future] = makeVeloxContinuePromiseContract("WaveDriver");
     promises_.push_back(std::move(promise));
     waitFuture = std::move(future);
     maybeReleaseAcquireLocked();
     }
-  waitFor(waitPromise);
+    waitFor(std::move(waitFuture));
 }
   
   void WaveBarrier::arrive() {
@@ -158,13 +153,13 @@ namespace facebook::velox::wave {
       if (exclusiveTokens_.empty()) {
 	return;
       }
-      ++numInArrived_;
-      auto [promise, waitFuture] = makeVeloxContinuePromiseContract("WaveDriver");
+      ++numInArrive_;
+      auto [promise, future] = makeVeloxContinuePromiseContract("WaveDriver");
       promises_.push_back(std::move(promise));
       waitFuture = std::move(future);
       maybeReleaseAcquireLocked();
     }
-    waitFor(waitFuture);
+    waitFor(std::move(waitFuture));
   }
     
   
@@ -186,7 +181,7 @@ WaveDriver::WaveDriver(
           operatorId,
           planNodeId,
           "Wave"),
-      barrier_(WaveBarrier::get(driverCtx->taskId(), driverCtx->driverId, operatorId)),
+      barrier_(WaveBarrier::get(driverCtx->task->taskId(), driverCtx->driverId, operatorId)),
       arena_(std::move(arena)),
       resultOrder_(std::move(resultOrder)),
       subfields_(std::move(subfields)),
@@ -310,7 +305,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
       auto advance =
           pipeline.operators[i]->canAdvance(*pipeline.arrived[streamIdx]);
       if (!advance.empty()) {
-        prepareContinue(
+        prepareAdvance(
 		     pipeline, *pipeline.arrived[streamIdx], i, advance);
 
         runOperators(
@@ -336,29 +331,31 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
     Pipeline& pipeline,
     WaveStream& stream,
     int32_t from,
-    std::vector<AdvanceResult>& advance) {
+    std::vector<AdvanceResult>& advanceVector) {
     void* driversToken = nullptr;
     bool syncStreams = false;
-    for (auto& advance : advances) {
+    int32_t exclusiveIndex = 0;
+    for (auto i = 0; i < advanceVector.size(); ++i) {
+	 auto& advance = advanceVector[i];
       if (advance.syncDrivers) {
 	VELOX_CHECK_NULL(driversToken);
 	driversToken = advance.reason;
 	VELOX_CHECK_NOT_NULL(driversToken);
+	exclusiveIndex = i;
       } else if (advance.syncStreams) {
 	syncStreams = true;
       } else {
 	// No sync, like adding memory to string pool for func.
-	pipeline.operators[i]->callUpdateStatus(stream, advance);
+	pipeline.operators[from]->callUpdateStatus(stream, advance);
       }
     }
     if (driversToken) {
       barrier_->acquire(driversToken);
-      waitForArrival();
-      pipeline.operators[i]->callUpdateStatus(stream, advance);
+      waitForArrival(pipeline);
+      pipeline.operators[from]->callUpdateStatus(stream, advanceVector[exclusiveIndex]);
       barrier_->release();
     }
   }
-
   
 void WaveDriver::runOperators(
     Pipeline& pipeline,
@@ -375,9 +372,6 @@ void WaveDriver::runOperators(
     pipeline.operators[i]->schedule(stream, numRows);
   }
   stream.resultToHost();
-  for (auto i = 0; i < pipeline.operators.size(); ++i) {
-    pipeline.operator[i]->interpretReturn(stream);
-  }
 }
 
 // Global counter for busy wait iterations.

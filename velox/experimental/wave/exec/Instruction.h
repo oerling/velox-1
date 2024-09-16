@@ -91,6 +91,12 @@ struct AbstractOperand {
   std::string toString() const;
 };
 
+class WaveStream;
+struct OperatorState;
+struct LaunchControl;
+  struct AbstractInstruction;
+  
+  
 struct AdvanceResult {
   bool empty() const {
     return numRows == 0 && !isRetry;
@@ -120,13 +126,12 @@ struct AdvanceResult {
   bool syncStreams{false};
   
   /// Action to run before continue. If the update is visible between streams/Drivers, use the right sync flag above. No sync needed if e.g. adding space to a string buffer on the 'stream's' vectors.
-  std::function<void(WaveStream*, Instruction*)> updateStatus;
+  std::function<void(WaveStream&, AbstractInstruction&)> updateStatus;
 
+  /// Extra token to mark reason for 'syncDrivers', e.g. the host side
+  /// handle to a device hash table to rehash.
+  void* reason{nullptr};
 };
-
-class WaveStream;
-struct OperatorState;
-struct LaunchControl;
 
 struct AbstractInstruction {
   AbstractInstruction(OpCode opCode) : opCode(opCode) {}

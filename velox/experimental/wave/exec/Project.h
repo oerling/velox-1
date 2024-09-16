@@ -56,7 +56,7 @@ class Project : public WaveOperator {
     return last.size() == 1 && last[0]->isSink();
   }
 
-  AdvanceResult canAdvance(WaveStream& Stream) override;
+  std::vector<AdvanceResult> canAdvance(WaveStream& Stream) override;
 
   void schedule(WaveStream& stream, int32_t maxRows = 0) override;
 
@@ -70,7 +70,7 @@ class Project : public WaveOperator {
     return computedSet_;
   }
 
-  void callUpdateStatus(AdvanceResult& advance);
+  void callUpdateStatus(WaveStream& stream, AdvanceResult& advance) override;
 
 private:
   struct ContinueLocation {

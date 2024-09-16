@@ -150,7 +150,7 @@ struct IAggregate {
   IUpdateAgg* aggregates;
 };
 
-struct AggregationReturn {
+struct AggregateReturn {
   /// Count of rows in the table. Triggers rehash when high enough.
   int64_t numDistinct;
 };
