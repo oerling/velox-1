@@ -336,6 +336,9 @@ void WaveDriver::prepareAdvance(
   int32_t exclusiveIndex = 0;
   for (auto i = 0; i < advanceVector.size(); ++i) {
     auto& advance = advanceVector[i];
+    if (!advance.updateStatus) {
+      continue;
+    }
     if (advance.syncDrivers) {
       VELOX_CHECK_NULL(driversToken);
       driversToken = advance.reason;
