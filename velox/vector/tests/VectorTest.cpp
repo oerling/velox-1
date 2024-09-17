@@ -2884,7 +2884,7 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
 
   // Test array.
   {
-    auto offsets = makeIndices({1, 1, 1, 1});
+    auto offsets = makeIndices({0, 1, 2, 3});
     auto sizes = makeIndices({1, 1, 1, 1});
 
     auto* rawSizes = sizes->as<vector_size_t>();
@@ -2909,7 +2909,7 @@ TEST_F(VectorTest, resizeArrayAndMapResetOffsets) {
 
   // Test map.
   {
-    auto offsets = makeIndices({1, 1, 1, 1});
+    auto offsets = makeIndices({0, 1, 2, 3});
     auto sizes = makeIndices({1, 1, 1, 1});
 
     auto* rawSizes = sizes->as<vector_size_t>();
@@ -3799,6 +3799,86 @@ TEST_F(VectorTest, mapUpdateMultipleUpdates) {
   }
 }
 
+TEST_F(VectorTest, pushDictionaryToRowVectorLeaves) {
+  auto iota = makeFlatVector<int64_t>(10, folly::identity);
+  auto output = RowVector::pushDictionaryToRowVectorLeaves(iota);
+  ASSERT_EQ(output, iota);
+
+  auto input = wrapInDictionary(makeIndicesInReverse(10), iota);
+  output = RowVector::pushDictionaryToRowVectorLeaves(input);
+  ASSERT_EQ(output, input);
+
+  {
+    SCOPED_TRACE("General");
+    input = wrapInDictionary(
+        makeIndicesInReverse(10),
+        makeRowVector({
+            // c0
+            iota,
+            // c1
+            makeRowVector({iota}),
+            // c2
+            BaseVector::wrapInDictionary(
+                makeNulls(10, nullEvery(3)),
+                makeIndicesInReverse(10),
+                10,
+                iota),
+            // c3
+            iota,
+            // c4
+            wrapInDictionary(
+                makeIndicesInReverse(10),
+                makeRowVector({
+                    iota,
+                    wrapInDictionary(makeIndicesInReverse(10), iota),
+                    iota,
+                })),
+            // c5
+            BaseVector::wrapInDictionary(
+                makeNulls(10, nullEvery(7)),
+                makeIndicesInReverse(10),
+                10,
+                makeRowVector({iota, iota})),
+        }));
+    output = RowVector::pushDictionaryToRowVectorLeaves(input);
+    test::assertEqualVectors(input, output);
+    ASSERT_EQ(output->encoding(), VectorEncoding::Simple::ROW);
+    auto* outputRow = output->asUnchecked<RowVector>();
+    auto& c0 = outputRow->childAt(0);
+    ASSERT_EQ(c0->encoding(), VectorEncoding::Simple::DICTIONARY);
+    ASSERT_EQ(c0->wrapInfo().get(), input->wrapInfo().get());
+    auto& c1 = outputRow->childAt(1);
+    ASSERT_EQ(c1->encoding(), VectorEncoding::Simple::ROW);
+    auto* c1Row = c1->asUnchecked<RowVector>();
+    auto& c1c0 = c1Row->childAt(0);
+    ASSERT_EQ(c1c0->encoding(), VectorEncoding::Simple::DICTIONARY);
+    ASSERT_EQ(c1c0->wrapInfo().get(), c0->wrapInfo().get());
+    auto& c2 = outputRow->childAt(2);
+    ASSERT_EQ(c2->encoding(), VectorEncoding::Simple::DICTIONARY);
+    auto& c3 = outputRow->childAt(3);
+    ASSERT_EQ(c3->encoding(), VectorEncoding::Simple::DICTIONARY);
+    ASSERT_EQ(c3->wrapInfo().get(), c0->wrapInfo().get());
+    auto& c4 = outputRow->childAt(4);
+    ASSERT_EQ(c4->encoding(), VectorEncoding::Simple::ROW);
+    auto* c4Row = c4->asUnchecked<RowVector>();
+    auto& c4c0 = c4Row->childAt(0);
+    ASSERT_EQ(c4c0->encoding(), VectorEncoding::Simple::DICTIONARY);
+    auto& c4c1 = c4Row->childAt(1);
+    ASSERT_EQ(c4c1->encoding(), VectorEncoding::Simple::DICTIONARY);
+    auto& c4c2 = c4Row->childAt(2);
+    ASSERT_EQ(c4c2->encoding(), VectorEncoding::Simple::DICTIONARY);
+    ASSERT_EQ(c4c0->wrapInfo().get(), c4c2->wrapInfo().get());
+    auto& c5 = outputRow->childAt(5);
+    ASSERT_EQ(c5->encoding(), VectorEncoding::Simple::DICTIONARY);
+    ASSERT_EQ(c5->valueVector()->encoding(), VectorEncoding::Simple::ROW);
+    auto* c5Row = c5->valueVector()->asUnchecked<RowVector>();
+    auto& c5c0 = c5Row->childAt(0);
+    ASSERT_EQ(c5c0->encoding(), VectorEncoding::Simple::FLAT);
+    auto& c5c1 = c5Row->childAt(1);
+    ASSERT_EQ(c5c1->encoding(), VectorEncoding::Simple::FLAT);
+  }
+}
+
 TEST_F(VectorTest, arrayCopyTargetNullOffsets) {
   auto target = BaseVector::create(ARRAY(BIGINT()), 11, pool());
   auto offsetsRef = target->asUnchecked<ArrayVector>()->offsets();
@@ -3819,6 +3899,40 @@ TEST_F(VectorTest, testOverSizedArray) {
   auto array = makeArrayVector(offsets, flat);
   auto constArray = BaseVector::wrapInConstant(21474830, 0, array);
   EXPECT_THROW(BaseVector::flattenVector(constArray), VeloxUserError);
+}
+
+TEST_F(VectorTest, hasOverlappingRanges) {
+  auto test = [this](
+                  vector_size_t length,
+                  const std::vector<bool>& nulls,
+                  const std::vector<vector_size_t>& offsets,
+                  const std::vector<vector_size_t>& sizes,
+                  bool overlap) {
+    auto makeArray = [&] {
+      return std::make_shared<ArrayVector>(
+          pool(),
+          ARRAY(BIGINT()),
+          makeNulls(nulls),
+          length,
+          makeIndices(length, [&](auto i) { return offsets[i]; }),
+          makeIndices(length, [&](auto i) { return sizes[i]; }),
+          makeNullConstant(
+              TypeKind::BIGINT, std::numeric_limits<vector_size_t>::max()));
+    };
+    if (!overlap) {
+      ASSERT_FALSE(makeArray()->hasOverlappingRanges());
+    } else {
+      ASSERT_TRUE(makeArray()->hasOverlappingRanges());
+    }
+  };
+  test(3, {false, false, false}, {0, 1, 2}, {1, 1, 1}, false);
+  test(3, {false, true, false}, {0, 0, 2}, {1, 1, 1}, false);
+  test(3, {false, false, false}, {0, 0, 2}, {1, 0, 1}, false);
+  test(3, {false, false, false}, {0, 0, 2}, {1, 1, 1}, true);
+  test(3, {false, false, false}, {2, 1, 0}, {1, 1, 1}, false);
+  test(3, {false, false, false}, {2, 1, 0}, {1, 2, 1}, true);
+  test(2, {false, false}, {0, 1}, {3, 1}, true);
+  test(2, {false, false}, {1, 0}, {1, 3}, true);
 }
 
 } // namespace

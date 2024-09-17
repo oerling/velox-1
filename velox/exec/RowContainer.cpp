@@ -139,17 +139,14 @@ RowContainer::RowContainer(
     bool isJoinBuild,
     bool hasProbedFlag,
     bool hasNormalizedKeys,
-    memory::MemoryPool* pool,
-    std::shared_ptr<HashStringAllocator> stringAllocator)
+    memory::MemoryPool* pool)
     : keyTypes_(keyTypes),
       nullableKeys_(nullableKeys),
       isJoinBuild_(isJoinBuild),
-      accumulators_(accumulators),
       hasNormalizedKeys_(hasNormalizedKeys),
-      rows_(pool),
-      stringAllocator_(
-          stringAllocator ? stringAllocator
-                          : std::make_shared<HashStringAllocator>(pool)) {
+      stringAllocator_(std::make_unique<HashStringAllocator>(pool)),
+      accumulators_(accumulators),
+      rows_(pool) {
   // Compute the layout of the payload row.  The row has keys, null flags,
   // accumulators, dependent fields. All fields are fixed width. If variable
   // width data is referenced, this is done with StringView(for VARCHAR) and
@@ -392,13 +389,15 @@ int32_t RowContainer::findRows(folly::Range<char**> rows, char** result) {
   return numRows;
 }
 
-void RowContainer::appendNextRow(char* current, char* nextRow) {
+void RowContainer::appendNextRow(
+    char* current,
+    char* nextRow,
+    HashStringAllocator* allocator) {
   VELOX_CHECK(getNextRowVector(nextRow) == nullptr);
   NextRowVector*& nextRowArrayPtr = getNextRowVector(current);
   if (nextRowArrayPtr == nullptr) {
-    nextRowArrayPtr =
-        new (stringAllocator_->allocate(kNextRowVectorSize)->begin())
-            NextRowVector(StlAllocator<char*>(stringAllocator_.get()));
+    nextRowArrayPtr = new (allocator->allocate(kNextRowVectorSize)->begin())
+        NextRowVector(StlAllocator<char*>(allocator));
     hasDuplicateRows_ = true;
     nextRowArrayPtr->emplace_back(current);
   }
@@ -534,6 +533,35 @@ void RowContainer::store(
         index,
         isKey,
         row,
+        rowColumn.offset(),
+        rowColumn.nullByte(),
+        rowColumn.nullMask(),
+        column);
+  }
+}
+
+void RowContainer::store(
+    const DecodedVector& decoded,
+    folly::Range<char**> rows,
+    int32_t column) {
+  VELOX_CHECK_GE(decoded.size(), rows.size());
+  const bool isKey = column < keyTypes_.size();
+  if ((isKey && !nullableKeys_) || !decoded.mayHaveNulls()) {
+    VELOX_DYNAMIC_TYPE_DISPATCH(
+        storeNoNullsBatch,
+        typeKinds_[column],
+        decoded,
+        rows,
+        isKey,
+        offsets_[column]);
+  } else {
+    const auto rowColumn = rowColumns_[column];
+    VELOX_DYNAMIC_TYPE_DISPATCH_ALL(
+        storeWithNullsBatch,
+        typeKinds_[column],
+        decoded,
+        rows,
+        isKey,
         rowColumn.offset(),
         rowColumn.nullByte(),
         rowColumn.nullMask(),
@@ -905,9 +933,7 @@ void RowContainer::hash(
 }
 
 void RowContainer::clear() {
-  const bool sharedStringAllocator = !stringAllocator_.unique();
-  if (checkFree_ || sharedStringAllocator || usesExternalMemory_ ||
-      hasDuplicateRows_) {
+  if (usesExternalMemory_) {
     constexpr int32_t kBatch = 1000;
     std::vector<char*> rows(kBatch);
     RowContainerIterator iter;
@@ -915,30 +941,15 @@ void RowContainer::clear() {
       freeRowsExtraMemory(folly::Range<char**>(rows.data(), numRows), true);
     }
   }
+  hasDuplicateRows_ = false;
+
   rows_.clear();
-  if (!sharedStringAllocator) {
-    if (checkFree_) {
-      stringAllocator_->checkEmpty();
-    }
-    stringAllocator_->clear();
-  }
+  stringAllocator_->clear();
   numRows_ = 0;
   numRowsWithNormalizedKey_ = 0;
   normalizedKeySize_ = originalNormalizedKeySize_;
   numFreeRows_ = 0;
   firstFreeRow_ = nullptr;
-}
-
-void RowContainer::clearNextRowVectors() {
-  if (hasDuplicateRows_) {
-    constexpr int32_t kBatch = 1000;
-    std::vector<char*> rows(kBatch);
-    RowContainerIterator iter;
-    while (auto numRows = listRows(&iter, kBatch, rows.data())) {
-      freeNextRowVectors(folly::Range<char**>(rows.data(), numRows), true);
-    }
-    hasDuplicateRows_ = false;
-  }
 }
 
 void RowContainer::setProbedFlag(char** rows, int32_t numRows) {

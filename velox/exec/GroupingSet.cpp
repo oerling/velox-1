@@ -311,10 +311,10 @@ void initializeAggregates(
   int i = 0;
   for (auto& aggregate : aggregates) {
     auto& function = aggregate.function;
+    function->setAllocator(&rows.stringAllocator());
     if (excludeToIntermediate && function->supportsToIntermediate()) {
       continue;
     }
-    function->setAllocator(&rows.stringAllocator());
 
     const auto rowColumn = rows.columnAt(numKeys + i);
     function->setOffsets(
@@ -1055,13 +1055,12 @@ bool GroupingSet::getOutputWithSpill(
           false,
           false,
           false,
-          &pool_,
-          table_->rows()->stringAllocatorShared());
+          &pool_);
 
       initializeAggregates(aggregates_, *mergeRows_, false);
     }
-
     VELOX_CHECK_EQ(table_->rows()->numRows(), 0);
+    table_->clear(/*freeTable=*/true);
 
     VELOX_CHECK_NULL(merge_);
     spiller_->finishSpill(spillPartitionSet_);
@@ -1274,8 +1273,7 @@ void GroupingSet::abandonPartialAggregation() {
       false,
       false,
       false,
-      &pool_,
-      table_->rows()->stringAllocatorShared());
+      &pool_);
   initializeAggregates(aggregates_, *intermediateRows_, true);
   table_.reset();
 }
@@ -1371,9 +1369,6 @@ void GroupingSet::toIntermediate(
   if (intermediateRows_) {
     intermediateRows_->eraseRows(folly::Range<char**>(
         intermediateGroups_.data(), intermediateGroups_.size()));
-    if (intermediateRows_->checkFree()) {
-      intermediateRows_->stringAllocator().checkEmpty();
-    }
   }
 
   // It's unnecessary to call function->clear() to reset the internal states of
