@@ -227,9 +227,6 @@ class RowContainer {
   /// into one word for faster comparison. The bulk allocation is done
   /// from 'allocator'. ContainerRowSerde is used for serializing complex
   /// type values into the container.
-  /// 'stringAllocator' allows sharing the variable length data arena with
-  /// another RowContainer. This is needed for spilling where the same
-  /// aggregates are used for reading one container and merging into another.
   RowContainer(
       const std::vector<TypePtr>& keyTypes,
       bool nullableKeys,
@@ -239,8 +236,7 @@ class RowContainer {
       bool isJoinBuild,
       bool hasProbedFlag,
       bool hasNormalizedKey,
-      memory::MemoryPool* pool,
-      std::shared_ptr<HashStringAllocator> stringAllocator = nullptr);
+      memory::MemoryPool* pool);
 
   /// Allocates a new row and initializes possible aggregates to null.
   char* newRow();
@@ -302,12 +298,15 @@ class RowContainer {
       char* row,
       int32_t columnIndex);
 
+  /// Stores the first 'rows.size' values from the 'decoded' vector into the
+  /// 'columnIndex' column of 'rows'.
+  void store(
+      const DecodedVector& decoded,
+      folly::Range<char**> rows,
+      int32_t columnIndex);
+
   HashStringAllocator& stringAllocator() {
     return *stringAllocator_;
-  }
-
-  const std::shared_ptr<HashStringAllocator>& stringAllocatorShared() {
-    return stringAllocator_;
   }
 
   /// Returns the number of used rows in 'this'. This is the number of rows a
@@ -679,8 +678,10 @@ class RowContainer {
 
   /// Creates a next-row-vector if it doesn't exist. Appends the row address to
   /// the next-row-vector, and store the address of the next-row-vector in the
-  /// 'nextOffset_' slot for all duplicate rows.
-  void appendNextRow(char* current, char* nextRow);
+  /// 'nextOffset_' slot for all duplicate rows. 'allocator' is provided for the
+  /// duplicate row vector allocations.
+  void
+  appendNextRow(char* current, char* nextRow, HashStringAllocator* allocator);
 
   NextRowVector*& getNextRowVector(char* row) const {
     return *reinterpret_cast<NextRowVector**>(row + nextOffset_);
@@ -717,9 +718,6 @@ class RowContainer {
 
   /// Resets the state to be as after construction. Frees memory for payload.
   void clear();
-
-  /// Frees memory for next row vectors.
-  void clearNextRowVectors();
 
   int32_t compareRows(
       const char* left,
@@ -799,10 +797,6 @@ class RowContainer {
 
   bool testingMutable() const {
     return mutable_;
-  }
-
-  bool checkFree() const {
-    return checkFree_;
   }
 
   /// Returns a summary of the container: key types, dependent types, number of
@@ -962,6 +956,32 @@ class RowContainer {
       stringAllocator_->copyMultipart(decoded.valueAt<T>(index), group, offset);
     } else {
       *reinterpret_cast<T*>(group + offset) = decoded.valueAt<T>(index);
+    }
+  }
+
+  template <TypeKind Kind>
+  inline void storeWithNullsBatch(
+      const DecodedVector& decoded,
+      folly::Range<char**> rows,
+      bool isKey,
+      int32_t offset,
+      int32_t nullByte,
+      uint8_t nullMask,
+      int32_t column) {
+    for (int32_t i = 0; i < rows.size(); ++i) {
+      storeWithNulls<Kind>(
+          decoded, i, isKey, rows[i], offset, nullByte, nullMask, column);
+    }
+  }
+
+  template <TypeKind Kind>
+  inline void storeNoNullsBatch(
+      const DecodedVector& decoded,
+      folly::Range<char**> rows,
+      bool isKey,
+      int32_t offset) {
+    for (int32_t i = 0; i < rows.size(); ++i) {
+      storeNoNulls<Kind>(decoded, i, isKey, rows[i], offset);
     }
   }
 
@@ -1248,7 +1268,6 @@ class RowContainer {
       CompareFlags flags = CompareFlags());
 
   // Free variable-width fields at column `column_index` associated with the
-  // 'rows', and if 'checkFree_' is true, zero out complex-typed field in
   // 'rows'. `FieldType` is the type of data representation of the fields in
   // row, and can be one of StringView(represents VARCHAR) and
   // std::string_view(represents ARRAY, MAP or ROW).
@@ -1277,9 +1296,6 @@ class RowContainer {
         }
       }
       stringAllocator_->free(HashStringAllocator::headerOf(view.data()));
-      if (checkFree_) {
-        view = FieldType();
-      }
     }
   }
 
@@ -1301,11 +1317,12 @@ class RowContainer {
     columnHasNulls_[columnIndex] = columnHasNulls_[columnIndex] || hasNulls;
   }
 
-  const bool checkFree_ = false;
-
   const std::vector<TypePtr> keyTypes_;
   const bool nullableKeys_;
   const bool isJoinBuild_;
+  // True if normalized keys are enabled in initial state.
+  const bool hasNormalizedKeys_;
+  const std::unique_ptr<HashStringAllocator> stringAllocator_;
 
   std::vector<bool> columnHasNulls_;
 
@@ -1322,7 +1339,9 @@ class RowContainer {
   std::vector<TypePtr> types_;
   std::vector<TypeKind> typeKinds_;
   int32_t nextOffset_ = 0;
-  bool hasDuplicateRows_{false};
+  // Indicates if this row container has rows with duplicate keys. This only
+  // applies if 'nextOffset_' is set.
+  tsan_atomic<bool> hasDuplicateRows_{false};
   // Bit position of null bit  in the row. 0 if no null flag. Order is keys,
   // accumulators, dependent.
   std::vector<int32_t> nullOffsets_;
@@ -1342,8 +1361,6 @@ class RowContainer {
   int32_t fixedRowSize_;
   // How many bytes do the flags (null, probed, free) occupy.
   int32_t flagBytes_;
-  // True if normalized keys are enabled in initial state.
-  const bool hasNormalizedKeys_;
   // The count of entries that have an extra normalized_key_t before the
   // start.
   int64_t numRowsWithNormalizedKey_ = 0;
@@ -1362,7 +1379,6 @@ class RowContainer {
   uint64_t numFreeRows_ = 0;
 
   memory::AllocationPool rows_;
-  std::shared_ptr<HashStringAllocator> stringAllocator_;
 
   int alignment_ = 1;
 };
