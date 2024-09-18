@@ -324,7 +324,7 @@ class GpuHashTable : public GpuHashTableBase {
   }
 
     int32_t __device__ partitionIdx(uint64_t h) const {
-    return (h & partitionMask) >> partitionShift;
+    return partitionMask == 0 ? 0 : (h >> 41) & partitionMask;
   }
 };
 } // namespace facebook::velox::wave

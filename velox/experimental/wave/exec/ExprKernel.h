@@ -105,25 +105,25 @@ struct DeviceAggregation {
 /// Parameters for creating/updating a group by.
 struct AggregationControl {
   /// Pointer to uninitialized first buffer in the case of initializing and to
-  /// the previous head in the case of rehashing. Must always be set.
+  /// the previous head in the case of rehashing. Must always be set. Contains a DeviceAggregation followed by single row or GpuHashTable. This is followed by one or more HashPartitionAllocator structs, one per partition. This is unified memory that can be updated by host prior to rehash.
   void* head;
+
   /// Size of block starting at 'head'. Must be set on first setup.
   int64_t headSize{0};
+
   /// For a rehashing request, space for the new table.
   void* newTable{nullptr};
-  int64_t newTableSize{0};
+
+  /// Count of buckets in 'newTable' for rehash and count of buckets in table in 'head' for initial setup. 0 if no table.
+  int64_t newNumBuckets{0};
   /// Size of single row allocation. Required on first init.
   int32_t rowSize{0};
-  //// Number of slots in HashTable, must be a powr of two. 0 means no hash
-  /// table (aggregation without grouping keys).
+  
+  /// Count of entries after which a rehash is due.
   int32_t maxTableEntries{0};
+
   /// Number of allocators for the hash table, if any. Must be a powr of two.
   int32_t numPartitions{1};
-  /// Uninitialized space to be added to the allocators of an existing
-  /// HashTable.
-  char* extraSpace{nullptr};
-  /// Usable bytes starting at extraSpace.
-  int64_t extraSpaceSize{0};
 };
 
 struct IUpdateAgg {

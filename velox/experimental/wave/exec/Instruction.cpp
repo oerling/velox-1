@@ -29,7 +29,12 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   reservedState.gridState += sizeof(AggregateReturn);
 }
 
-void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {}
+void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
+  auto* agg = inst->as<AbstractAggregation>();
+  auto stateId = agg->stateId).value();
+  auto* state = stream.operatorState(operatorState.stateId)->as<AggregateOperatorState>();
+  
+}
 
 AdvanceResult AbstractAggregation::canAdvance(
     WaveStream& stream,
@@ -47,7 +52,7 @@ AdvanceResult AbstractAggregation::canAdvance(
         .instructionIdx = instructionIdx,
         .isRetry = true,
         .syncDrivers =
-            true /*, .updateStatus = resupplyHashTable, .reason = state*/};
+            true, .updateStatus = resupplyHashTable, .reason = state};
   }
   return {};
 }

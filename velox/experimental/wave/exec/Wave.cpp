@@ -918,27 +918,31 @@ void WaveStream::makeAggregate(
     control.head = buffer->as<char>();
     control.headSize = buffer->size();
     control.rowSize = size;
+      reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   } else {
+    const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
-        sizeof(HashPartitionAllocator);
+        sizeof(HashPartitionAllocator) * numPartitions;
     auto buffer = arena_.allocate<char>(size);
     state.buffers.push_back(buffer);
     control.head = buffer->as<char>();
-    control.headSize = buffer->size();
-    control.rowSize = size;
-    int32_t numBuckets = 2048;
+    auto  header = head->as<DeviceAggregation>();
+    hashTable = reinterpret_cast<GpuHashTableBase>(header + 1);
+    HashPartitionAllocator* allocators =  reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
     WaveBufferPtr table =
-        arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
+      int32_t numBuckets = 2048;
+      arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
-    WaveBufferPtr rows = arena_.allocate<char>(inst.rowSize() * numBuckets);
+
+    new(hashTable) GpuHashTableBase(table->as<GpuBucket>(), numBuckets - 1, 0, allocators);
+    auto rowSize = inst.rowSize();
+    auto numRows = numBuckets * GpuBucketMembers::kNumSlots;
+    WaveBufferPtr rows = arena_.allocate<char>(rowSize * numRows);
     state.buffers.push_back(rows);
-    control.headSize = buffer->size();
-    control.rowSize = size;
-    // control.table = table->as<char>();
-    control.extraSpace = rows->as<char>();
-    // control.extraSize = rows->size();
+    new(allocators) HashPartitionAllocator(rows->as<char>(), rows->size(), rows->size(), rowSize); 
+    stream->prefetch(getDevice, head->as<char>(), head->size());
+    stream->memset(table->as<char>(), 0, table->size());
   }
-  reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   releaseStream(std::move(stream));
 }
 

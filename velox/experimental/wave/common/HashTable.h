@@ -25,6 +25,8 @@ namespace facebook::velox::wave {
 /// A 32 byte tagged bucket with 4 tags, 4 flag bytes and 4 6-byte
 /// pointers. Fits in one 32 byte GPU cache sector.
 struct GpuBucketMembers {
+  static constexpr int32_t kNumSlots = 4;
+  
   uint32_t tags;
   uint32_t flags;
   uint16_t data[12];
@@ -138,18 +140,20 @@ struct HashProbe {
 struct GpuBucket;
 
 struct GpuHashTableBase {
-  /// Bucket array. Size is 'sizeMask + 1'.
+  GpuHashTableBase(GpuBucket* buckets, int32_t sizeMask_, int32_t partitionMask, HashPartitionAllocator* allocators)
+    : buckets(buckets), sizeMask(sizeMask), partitionMask(partitionMask), allocators(allocators), maxRows((numBuckets * GpuBucketMembers::kNumSlots) / 8 * 5) {}
+
+      /// Bucket array. Size is 'sizeMask + 1'.
   GpuBucket* buckets{nullptr};
 
   // Mask to extract index into 'buckets' from a hash number. a
   // sizemask of 63 means 64 buckets, which is up to 256 entries.
   uint32_t sizeMask;
 
-  // Translates a hash number to a partition number '(hash &
-  // partitionMask) >> partitionShift' is a partition number used as
-  // a physical partition of the table. Used as index into 'allocators'.
+  // Translates a hash number to a partition number '(hash >> 41) &
+  // partitionMask gives a physical partition of the table. Used as
+  // index into 'allocators'.
   uint32_t partitionMask{0};
-  uint8_t partitionShift{0};
 
   /// A RowAllocator for each partition.
   RowAllocator* allocators;

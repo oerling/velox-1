@@ -213,49 +213,40 @@ class WaveStream;
 class Program;
 
 /// Represents a device side operator state, like a join/group by hash table or
-/// repartition output. Can be scoped to a WaveStream or to a Program.
+/// repartition output. Can be scoped to a Task pipeline (all Drivers), WaveStream or to a Program.
 struct OperatorState {
-  /// Marks that 'stream' will enqueue a program touching 'this'. Blocks until
-  /// 'this' is available. Throws an error if 'this' has entered an error state,
-  /// e.g. out of memory.
-  void enter(WaveStream* stream);
+  virtual ~OperatorState() = default;
 
-  /// Marks that 'stream' has completed a program touching 'this'.
-  void leave(WaveStream* stream);
-
-  /// Acquires a process-wide exclusive hold on 'this' This is done
-  /// e.g. to rehash a hash table. 'stream' must have called enter()
-  /// on 'this' previously. If successful returns true after waiting
-  /// for the caller to be the only stream holding this. Returns false
-  /// If another stream called this before, returns false after
-  /// waiting for the exclusive owner to finish. If 'this' is in an
-  /// error state, throws the error. In any return except true, the
-  /// caller is not an owner of 'this'. After completing the activity,
-  /// the caller must call leave() when done.
-  bool enterExclusive(WaveStream* stream);
+  template<typename T>
+  T* as() {
+    return reinterpret_cast<T*>(this);
+  }
 
   /// Sets an error. Any thread calling enter() or enterExclusive() will throw
   /// the error. The caller must have successfully called enterExclusive()
   /// first.
-  void setError(WaveStream* stream, std::exception_ptr error);
+  void setError(std::exception_ptr _error) {
+    error = _error;
+  }
 
   int32_t id;
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
 
-  std::mutex mutex_;
-  // Count of streams with programs touching this enqueued.
-  int32_t numStreams_{0};
-  // The stream with exclusive access via enterExclusive().
-  WaveStream* owner{nullptr};
+  std::exception_ptr error;
 };
 
 struct AggregateOperatorState : public OperatorState {
   AbstractAggregation* instruction;
-  // True after first created.
+
+  /// True after first created.
   bool isNew{true};
-  // Row ranges from filled alocators.
+
+  ///Number of allocators after hash GpuHashTable.
+  int32_t numPartitions{1};
+
+  /// Row ranges from filled alocators.
   std::vector<AllocationRange> ranges;
 };
 
