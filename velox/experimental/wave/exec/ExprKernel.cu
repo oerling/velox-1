@@ -194,7 +194,11 @@ void WaveKernelStream::call(
 REGISTER_KERNEL("expr", waveBaseKernel);
 
 void __global__ setupAggregationKernel(AggregationControl op) {
-  //    assert(op.maxTableEntries == 0);
+  if (op.oldBuckets) {
+    auto table = op.head->table;
+    table->rehash(op.oldTable, op.numOldBuckets, SumGroupOps());
+    return;
+  }
   auto* data = new (op.head) DeviceAggregation();
   data->rowSize = op.rowSize;
   data->singleRow = reinterpret_cast<char*>(data + 1);
@@ -202,7 +206,14 @@ void __global__ setupAggregationKernel(AggregationControl op) {
 }
 
 void WaveKernelStream::setupAggregation(AggregationControl& op) {
-  setupAggregationKernel<<<1, 1, 0, stream_->stream>>>(op);
+  int32_t numBlocks = 1;
+  int32_t numThreads = 1;
+  if (op.oldTable) {
+    // One thread per bucket.
+    numThreads = kBlockSize;
+    numBlocks = std::min(roundUp(numOldBuckets, kBlockSize) / kBlockSize, 640);
+  }
+  setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   wait();
 }
 

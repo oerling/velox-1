@@ -60,6 +60,25 @@ struct AllocationRange {
         rowLimit(rowLimit),
         stringOffset(capacity) {}
 
+  void AllocationRange(AllocationRange&& other) {
+    *this = other;
+    new(&other) AllocationRange();
+  }
+
+  void operator=(AllocationRange&& other) {
+    *this = other;
+    new(&other) AllocationRange();
+  }
+  
+  int64_t availableFixed() {
+    return rowOffset > rowLimit ? 0 : rowLimit - rowOffset;
+  }
+
+  /// True if in post-default constructed state.
+  bool empty() {
+    return capacity_ == 0;
+  }
+  
   bool fixedFull{true};
   bool variableFull{true};
   /// Number of the partition. Used when filing away ranges on the control
@@ -85,7 +104,11 @@ struct HashPartitionAllocator {
     ranges[0] =
         AllocationRange(reinterpret_cast<uintptr_t>(data), capacity, rowLimit);
   }
-
+  /// Returns the available bytes  in fixed size pools.
+  int64_t availableFixed() {
+    return ranges[0].availableFixed() + ranges[1].availableFixed();
+  }
+  
   const int32_t rowSize{0};
   AllocationRange ranges[2];
 };

@@ -906,27 +906,35 @@ int32_t WaveStream::getOutput(
   return vectors[0]->size();
 }
 
+void AggregateOperatorState::allocateAggregateHeader(int32_t size, GpuArena& arena) {
+    // Size and alignment of page of unified memory. Swappable host-device at page granularity.
+    constexpr kUnifiedPageSize = 4096;
+    int32_t alignedSize = bits::roundUp(size, kUnifiedPageSize) + kUnifiedPageSize;
+    WaveBufferPtr head = arena.allocate<char>(alignedSize);
+    VELOX_CHECK(buffers.empty());
+    buffers.push_back(head);
+    alignedHead = reinterpret_cast<DeviceAggregation*>(bits::roundUp(address, kUnifiedPage));
+    headSize = size;
+}
+  
 void WaveStream::makeAggregate(
     AbstractAggregation& inst,
     AggregateOperatorState& state) {
   AggregationControl control;
   auto stream = streamFromReserve();
   if (inst.keys.empty()) {
-    int32_t size = inst.rowSize();
-    auto buffer = arena_.allocate<char>(size + sizeof(DeviceAggregation));
-    state.buffers.push_back(buffer);
-    control.head = buffer->as<char>();
-    control.headSize = buffer->size();
-    control.rowSize = size;
+    int32_t size = inst.rowSize() + sizeof(DeviceAggregation);;
+    state.allocateHeader(size, arena_);
+    control.head = alignedHead;
+    control.headSize = size;
+    control.rowSize = inst->rowSize();
       reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   } else {
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
         sizeof(HashPartitionAllocator) * numPartitions;
-    auto buffer = arena_.allocate<char>(size);
-    state.buffers.push_back(buffer);
-    control.head = buffer->as<char>();
-    auto  header = head->as<DeviceAggregation>();
+    state.allocateHead(size, arena_);
+    auto  header = state.alignedHead;
     hashTable = reinterpret_cast<GpuHashTableBase>(header + 1);
     HashPartitionAllocator* allocators =  reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
     WaveBufferPtr table =
@@ -940,7 +948,7 @@ void WaveStream::makeAggregate(
     WaveBufferPtr rows = arena_.allocate<char>(rowSize * numRows);
     state.buffers.push_back(rows);
     new(allocators) HashPartitionAllocator(rows->as<char>(), rows->size(), rows->size(), rowSize); 
-    stream->prefetch(getDevice, head->as<char>(), head->size());
+    stream->prefetch(getDevice, state.alignedHed, state.headSize);
     stream->memset(table->as<char>(), 0, table->size());
   }
   releaseStream(std::move(stream));

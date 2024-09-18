@@ -238,7 +238,16 @@ struct OperatorState {
 };
 
 struct AggregateOperatorState : public OperatorState {
+
+  void allocateAggregateHeader(int32_t size, GpuArena& arena);
+
   AbstractAggregation* instruction;
+
+  // 4K aligned header. Must be full pages, pageable in unified memory without affecting surrounding data.
+  DeviceAggregation* alignedHead;
+
+  // Used bytes counting from 'alignedHead'.
+  int32_t alignedHeadSize;
 
   /// True after first created.
   bool isNew{true};
@@ -246,7 +255,7 @@ struct AggregateOperatorState : public OperatorState {
   ///Number of allocators after hash GpuHashTable.
   int32_t numPartitions{1};
 
-  /// Row ranges from filled alocators.
+  /// Row ranges from filled allocators.
   std::vector<AllocationRange> ranges;
 };
 
@@ -861,7 +870,7 @@ class WaveStream {
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after
   /// 'state' is ready to use on device.
-  void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
+  void makeAggregate(AbstractAggregation& inst, AggregateOpratorState& state);
 
   std::unique_ptr<Executable> recycleExecutable(
       Program* program,
