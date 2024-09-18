@@ -870,7 +870,7 @@ class WaveStream {
 
   /// Initializes 'state' to the device side state for 'inst'. Returns after
   /// 'state' is ready to use on device.
-  void makeAggregate(AbstractAggregation& inst, AggregateOpratorState& state);
+  void makeAggregate(AbstractAggregation& inst, AggregateOperatorState& state);
 
   std::unique_ptr<Executable> recycleExecutable(
       Program* program,

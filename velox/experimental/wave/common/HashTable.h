@@ -60,11 +60,12 @@ struct AllocationRange {
         rowLimit(rowLimit),
         stringOffset(capacity) {}
 
-  void AllocationRange(AllocationRange&& other) {
-    *this = other;
-    new(&other) AllocationRange();
+  AllocationRange(AllocationRange&& other) {
+    *this = std::move(other);
   }
 
+  AllocationRange& operator=(const AllocationRange& other) = default;
+  
   void operator=(AllocationRange&& other) {
     *this = other;
     new(&other) AllocationRange();
@@ -76,7 +77,7 @@ struct AllocationRange {
 
   /// True if in post-default constructed state.
   bool empty() {
-    return capacity_ == 0;
+    return capacity == 0;
   }
   
   bool fixedFull{true};
@@ -163,8 +164,8 @@ struct HashProbe {
 struct GpuBucket;
 
 struct GpuHashTableBase {
-  GpuHashTableBase(GpuBucket* buckets, int32_t sizeMask_, int32_t partitionMask, HashPartitionAllocator* allocators)
-    : buckets(buckets), sizeMask(sizeMask), partitionMask(partitionMask), allocators(allocators), maxRows((numBuckets * GpuBucketMembers::kNumSlots) / 8 * 5) {}
+  GpuHashTableBase(GpuBucket* buckets, int32_t sizeMask, int32_t partitionMask, RowAllocator* allocators)
+    : buckets(buckets), sizeMask(sizeMask), partitionMask(partitionMask), allocators(allocators), maxEntries(((sizeMask + 1) * GpuBucketMembers::kNumSlots) / 6 * 5) {}
 
       /// Bucket array. Size is 'sizeMask + 1'.
   GpuBucket* buckets{nullptr};

@@ -196,7 +196,7 @@ REGISTER_KERNEL("expr", waveBaseKernel);
 void __global__ setupAggregationKernel(AggregationControl op) {
   if (op.oldBuckets) {
     auto table = op.head->table;
-    table->rehash(op.oldTable, op.numOldBuckets, SumGroupOps());
+    reinterpret_cast<GpuHashTable*>(table)->rehash<SumGroupRow>(reinterpret_cast<GpuBucket*>(op.oldBuckets), op.numOldBuckets, SumGroupByOps(nullptr, nullptr));
     return;
   }
   auto* data = new (op.head) DeviceAggregation();
@@ -208,10 +208,10 @@ void __global__ setupAggregationKernel(AggregationControl op) {
 void WaveKernelStream::setupAggregation(AggregationControl& op) {
   int32_t numBlocks = 1;
   int32_t numThreads = 1;
-  if (op.oldTable) {
-    // One thread per bucket.
+  if (op.oldBuckets) {
+    // One thread per bucket. Enough TBs for full device.
     numThreads = kBlockSize;
-    numBlocks = std::min(roundUp(numOldBuckets, kBlockSize) / kBlockSize, 640);
+    numBlocks = std::min<int64_t>(roundUp(op.numOldBuckets, kBlockSize) / kBlockSize, 640);
   }
   setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   wait();

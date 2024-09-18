@@ -47,7 +47,11 @@ class SumGroupByOps {
       return kMul * key;
     }
     return 1;
-    
+  }
+
+  uint64_t __device__ hashRow(SumGroupRow* row) {
+    constexpr uint64_t kMul = 0x9ddfea08eb382d69ULL;
+    return kMul * row->key;
   }
   
   bool __device__

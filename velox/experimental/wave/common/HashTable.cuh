@@ -289,7 +289,7 @@ class GpuHashTable : public GpuHashTableBase {
     }
 
   template <typename RowType, typename Ops>
-  void __device__ rehash(GpuBucket* oldBuckets, int32_t numOldBuckets, Ops& ops) {
+  void __device__ rehash(GpuBucket* oldBuckets, int32_t numOldBuckets, Ops ops) {
     int32_t stride = blockDim.x * 4 * gridDim.x;
     for (auto idx = threadIdx.x * blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
       for (auto slot = 0; slot < 4; ++slot) {

@@ -30,6 +30,7 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
 }
 
   int32_t countErrors(BlockStatus* status, int32_t numBlocks, ErrorCode error) {
+    int32_t count = 0;
     for (auto i = 0; i < numBlocks; ++i) {
       for (auto j = 0; j < status[i].numRows; ++j) {
 	count += status[i].errors[j] == error;
@@ -38,16 +39,16 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
     return count;
   }
 
-  void restockAllocator(AggregateOperatorState* state, GpuArena& arena, int32_t size, HashPartitionAllocator* allocator) {
+  void restockAllocator(AggregateOperatorState& state, GpuArena& arena, int32_t size, HashPartitionAllocator* allocator) {
     if (allocator->ranges[0].fixedFull) {
-      state->ranges.push_back(allocator->ranges[0]);
+      state.ranges.push_back(allocator->ranges[0]);
       allocator->ranges[0] = std::move(allocator->ranges[1]);
     }
     auto buffer = arena.allocate<char>(size);
     state.buffers.push_back(buffer);
-    AllocationRange newRange = AllocationRange(buffer->as<char>, size, size);
+    AllocationRange newRange(reinterpret_cast<uintptr_t>(buffer->as<char>()), size, size);
     if (allocator->ranges[0].empty()) {
-      allocator.ranges[0] = std::move(newRange);
+      allocator->ranges[0] = std::move(newRange);
     } else {
       allocator->ranges[1] = std::move(newRange);
     }
@@ -55,7 +56,7 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
 
   
   void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
-    auto* agg = inst->as<AbstractAggregation>();
+    auto* agg = inst.as<AbstractAggregation>();
     auto* deviceStream = WaveStream::streamFrommReserve();
     auto stateId = agg->stateId).value();
   auto* state = stream.operatorState(operatorState.stateId)->as<AggregateOperatorState>();
@@ -72,7 +73,7 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator = &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
     if (allocator->availableFixed() < increment) {
-      restockAllocator(state, stream.arena(), increment, allocator); 
+      restockAllocator(*state, stream.arena(), increment, allocator); 
     }
   }
   bool rehash = false;
