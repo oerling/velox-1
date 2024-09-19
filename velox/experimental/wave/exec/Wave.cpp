@@ -908,13 +908,14 @@ int32_t WaveStream::getOutput(
 
 void AggregateOperatorState::allocateAggregateHeader(int32_t size, GpuArena& arena) {
     // Size and alignment of page of unified memory. Swappable host-device at page granularity.
-    constexpr kUnifiedPageSize = 4096;
+    constexpr size_t kUnifiedPageSize = 4096;
     int32_t alignedSize = bits::roundUp(size, kUnifiedPageSize) + kUnifiedPageSize;
     WaveBufferPtr head = arena.allocate<char>(alignedSize);
     VELOX_CHECK(buffers.empty());
     buffers.push_back(head);
-    alignedHead = reinterpret_cast<DeviceAggregation*>(bits::roundUp(address, kUnifiedPage));
-    headSize = size;
+    auto address = reinterpret_cast<uintptr_t>(head->as<char>());
+    alignedHead = reinterpret_cast<DeviceAggregation*>(bits::roundUp(address, kUnifiedPageSize));
+    alignedHeadSize = size;
 }
   
 void WaveStream::makeAggregate(
@@ -924,31 +925,31 @@ void WaveStream::makeAggregate(
   auto stream = streamFromReserve();
   if (inst.keys.empty()) {
     int32_t size = inst.rowSize() + sizeof(DeviceAggregation);;
-    state.allocateHeader(size, arena_);
-    control.head = alignedHead;
+    state.allocateAggregateHeader(size, arena_);
+    control.head = state.alignedHead;
     control.headSize = size;
-    control.rowSize = inst->rowSize();
+    control.rowSize = inst.rowSize();
       reinterpret_cast<WaveKernelStream*>(stream.get())->setupAggregation(control);
   } else {
     const int32_t numPartitions = 1;
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
         sizeof(HashPartitionAllocator) * numPartitions;
-    state.allocateHead(size, arena_);
+    state.allocateAggregateHeader(size, arena_);
     auto  header = state.alignedHead;
-    hashTable = reinterpret_cast<GpuHashTableBase>(header + 1);
+    auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =  reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
+    int32_t numBuckets = 2048;
     WaveBufferPtr table =
-      int32_t numBuckets = 2048;
       arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
 
-    new(hashTable) GpuHashTableBase(table->as<GpuBucket>(), numBuckets - 1, 0, allocators);
+    new(hashTable) GpuHashTableBase(table->as<GpuBucket>(), numBuckets - 1, 0, reinterpret_cast<RowAllocator*>(allocators));
     auto rowSize = inst.rowSize();
     auto numRows = numBuckets * GpuBucketMembers::kNumSlots;
     WaveBufferPtr rows = arena_.allocate<char>(rowSize * numRows);
     state.buffers.push_back(rows);
     new(allocators) HashPartitionAllocator(rows->as<char>(), rows->size(), rows->size(), rowSize); 
-    stream->prefetch(getDevice, state.alignedHed, state.headSize);
+    stream->prefetch(getDevice(), state.alignedHead, state.alignedHeadSize);
     stream->memset(table->as<char>(), 0, table->size());
   }
   releaseStream(std::move(stream));

@@ -41,7 +41,7 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
 
   void restockAllocator(AggregateOperatorState& state, GpuArena& arena, int32_t size, HashPartitionAllocator* allocator) {
     if (allocator->ranges[0].fixedFull) {
-      state.ranges.push_back(allocator->ranges[0]);
+      state.ranges.push_back(std::move(allocator->ranges[0]));
       allocator->ranges[0] = std::move(allocator->ranges[1]);
     }
     auto buffer = arena.allocate<char>(size);
@@ -56,20 +56,20 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
 
   
   void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
-    auto* agg = inst.as<AbstractAggregation>();
-    auto* deviceStream = WaveStream::streamFrommReserve();
-    auto stateId = agg->stateId).value();
-  auto* state = stream.operatorState(operatorState.stateId)->as<AggregateOperatorState>();
-  auto* head = state->buffers.front()->as<DeviceAggregation>();
+    auto* agg = &inst.as<AbstractAggregation>();
+    auto deviceStream = WaveStream::streamFromReserve();
+    auto stateId = agg->state->id;
+  auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();
+  auto* head = state->alignedHead;
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
-  auto* gridState = stream.gridState<AggregateStatus>(agg->status);
-  BlockStatus* status = stream.hostBlockStatus();
+  auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
+  auto* blockStatus = stream.hostBlockStatus();
   int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize);
   int32_t numFailed = countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
   int32_t rowSize = agg->rowSize();
+  int32_t numPartitions = hashTable->partitionMask + 1;
   int64_t newSize = bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
   int64_t increment = rowSize * (newSize - hashTable->numDistinct) / numPartitions;
-  int32_t numPartitions = hashTable->partitionMask + 1;
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator = &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
     if (allocator->availableFixed() < increment) {
@@ -79,21 +79,25 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   bool rehash = false;
   WaveBufferPtr oldBuckets;
   int32_t numOldBuckets;
-  if (gridState->numEntries > hashTable->maxEntries) {
+  if (gridState->numDistinct > hashTable->maxEntries) {
     // Would need rehash.
-    oldBuckets = state.buffers[1];
+    oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
-    state.buffers[1] = stream.arena().allocate<GpuBucketMembers>(newSize / GpuBucketMembers::kNumSlots);
+    state->buffers[1] = stream.arena().allocate<GpuBucketMembers>(newSize / GpuBucketMembers::kNumSlots);
     hashTable->sizeMask = (newSize / GpuBucketMembers::kNumSlots) - 1;
-    hashTable->buckets = state.buffers[1]->as<GpuBucket>();
+    hashTable->buckets = state->buffers[1]->as<GpuBucket>();
     rehash = true;
   }
-  stream->prefetch(getDevice(), state.alignedHead, state.headSize);
+  deviceStream->prefetch(getDevice(), state->alignedHead, state->alignedHeadSize);
   if (rehash) {
     AggregationControl control;
-    control.oldBuckets = 
+    control.oldBuckets =  oldBuckets->as<char>();
+    control.numOldBuckets = numOldBuckets;
+    reinterpret_cast<WaveKernelStream*>(deviceStream.get())->setupAggregation(control);
   }
-}
+  deviceStream->wait();
+  WaveStream::releaseStream(std::move(deviceStream));
+  }
 
 AdvanceResult AbstractAggregation::canAdvance(
     WaveStream& stream,

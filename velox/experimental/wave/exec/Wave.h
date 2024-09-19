@@ -921,7 +921,10 @@ class WaveStream {
         hostBlockStatus_->as<char>() + numBlocks * sizeof(BlockStatus) +
         status.gridState);
   }
-
+  BlockStatus* hostBlockStatus() const {
+    return hostBlockStatus_->as<BlockStatus>();
+  }
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
