@@ -179,7 +179,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
       config->set(
           dwrf::Config::STRIPE_SIZE,
           static_cast<uint64_t>(FLAGS_rows_per_stripe * FLAGS_num_columns * 8));
-    config->set(dwrf::Config::USE_VINTS, FLAGS_dwrf_vints);
+      config->set(dwrf::Config::USE_VINTS, FLAGS_dwrf_vints);
 
       dwrf::WriterOptions options;
       options.config = config;
@@ -226,8 +226,9 @@ class WaveBenchmark : public QueryBenchmarkBase {
           plan.dataFiles["0"] = {FLAGS_data_path + "/test.wave"};
           plan.dataFileFormat = FileFormat::UNKNOWN;
         } else {
-          plan.dataFiles["0"] = {FLAGS_data_path + "/data." + FLAGS_data_format};
-	plan.dataFileFormat = toFileFormat(FLAGS_data_format);
+          plan.dataFiles["0"] = {
+              FLAGS_data_path + "/data." + FLAGS_data_format};
+          plan.dataFileFormat = toFileFormat(FLAGS_data_format);
         }
         int64_t bound = (1'000'000'000LL * FLAGS_filter_pass_pct) / 100;
         std::vector<std::string> scanFilters;
@@ -272,7 +273,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
       default:
         VELOX_FAIL("Bad query number");
     }
-}
+  }
 
   void prepareQuery(int32_t query) {
     switch (query) {

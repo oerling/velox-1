@@ -26,7 +26,7 @@ namespace facebook::velox::wave {
 /// pointers. Fits in one 32 byte GPU cache sector.
 struct GpuBucketMembers {
   static constexpr int32_t kNumSlots = 4;
-  
+
   uint32_t tags;
   uint32_t flags;
   uint16_t data[12];
@@ -65,12 +65,12 @@ struct AllocationRange {
   }
 
   AllocationRange& operator=(const AllocationRange& other) = default;
-  
+
   void operator=(AllocationRange&& other) {
     *this = other;
-    new(&other) AllocationRange();
+    new (&other) AllocationRange();
   }
-  
+
   int64_t availableFixed() {
     return rowOffset > rowLimit ? 0 : rowLimit - rowOffset;
   }
@@ -79,7 +79,7 @@ struct AllocationRange {
   bool empty() {
     return capacity == 0;
   }
-  
+
   bool fixedFull{true};
   bool variableFull{true};
   /// Number of the partition. Used when filing away ranges on the control
@@ -109,7 +109,7 @@ struct HashPartitionAllocator {
   int64_t availableFixed() {
     return ranges[0].availableFixed() + ranges[1].availableFixed();
   }
-  
+
   const int32_t rowSize{0};
   AllocationRange ranges[2];
 };
@@ -164,10 +164,18 @@ struct HashProbe {
 struct GpuBucket;
 
 struct GpuHashTableBase {
-  GpuHashTableBase(GpuBucket* buckets, int32_t sizeMask, int32_t partitionMask, RowAllocator* allocators)
-    : buckets(buckets), sizeMask(sizeMask), partitionMask(partitionMask), allocators(allocators), maxEntries(((sizeMask + 1) * GpuBucketMembers::kNumSlots) / 6 * 5) {}
+  GpuHashTableBase(
+      GpuBucket* buckets,
+      int32_t sizeMask,
+      int32_t partitionMask,
+      RowAllocator* allocators)
+      : buckets(buckets),
+        sizeMask(sizeMask),
+        partitionMask(partitionMask),
+        allocators(allocators),
+        maxEntries(((sizeMask + 1) * GpuBucketMembers::kNumSlots) / 6 * 5) {}
 
-      /// Bucket array. Size is 'sizeMask + 1'.
+  /// Bucket array. Size is 'sizeMask + 1'.
   GpuBucket* buckets{nullptr};
 
   // Mask to extract index into 'buckets' from a hash number. a

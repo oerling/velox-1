@@ -29,51 +29,59 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   reservedState.gridState += sizeof(AggregateReturn);
 }
 
-  int32_t countErrors(BlockStatus* status, int32_t numBlocks, ErrorCode error) {
-    int32_t count = 0;
-    for (auto i = 0; i < numBlocks; ++i) {
-      for (auto j = 0; j < status[i].numRows; ++j) {
-	count += status[i].errors[j] == error;
-      }
-    }
-    return count;
-  }
-
-  void restockAllocator(AggregateOperatorState& state, GpuArena& arena, int32_t size, HashPartitionAllocator* allocator) {
-    if (allocator->ranges[0].fixedFull) {
-      state.ranges.push_back(std::move(allocator->ranges[0]));
-      allocator->ranges[0] = std::move(allocator->ranges[1]);
-    }
-    auto buffer = arena.allocate<char>(size);
-    state.buffers.push_back(buffer);
-    AllocationRange newRange(reinterpret_cast<uintptr_t>(buffer->as<char>()), size, size);
-    if (allocator->ranges[0].empty()) {
-      allocator->ranges[0] = std::move(newRange);
-    } else {
-      allocator->ranges[1] = std::move(newRange);
+int32_t countErrors(BlockStatus* status, int32_t numBlocks, ErrorCode error) {
+  int32_t count = 0;
+  for (auto i = 0; i < numBlocks; ++i) {
+    for (auto j = 0; j < status[i].numRows; ++j) {
+      count += status[i].errors[j] == error;
     }
   }
+  return count;
+}
 
-  
-  void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
-    auto* agg = &inst.as<AbstractAggregation>();
-    auto deviceStream = WaveStream::streamFromReserve();
-    auto stateId = agg->state->id;
+void restockAllocator(
+    AggregateOperatorState& state,
+    GpuArena& arena,
+    int32_t size,
+    HashPartitionAllocator* allocator) {
+  if (allocator->ranges[0].fixedFull) {
+    state.ranges.push_back(std::move(allocator->ranges[0]));
+    allocator->ranges[0] = std::move(allocator->ranges[1]);
+  }
+  auto buffer = arena.allocate<char>(size);
+  state.buffers.push_back(buffer);
+  AllocationRange newRange(
+      reinterpret_cast<uintptr_t>(buffer->as<char>()), size, size);
+  if (allocator->ranges[0].empty()) {
+    allocator->ranges[0] = std::move(newRange);
+  } else {
+    allocator->ranges[1] = std::move(newRange);
+  }
+}
+
+void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
+  auto* agg = &inst.as<AbstractAggregation>();
+  auto deviceStream = WaveStream::streamFromReserve();
+  auto stateId = agg->state->id;
   auto* state = stream.operatorState(stateId)->as<AggregateOperatorState>();
   auto* head = state->alignedHead;
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
   auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
   int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize);
-  int32_t numFailed = countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
+  int32_t numFailed =
+      countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
   int32_t rowSize = agg->rowSize();
   int32_t numPartitions = hashTable->partitionMask + 1;
-  int64_t newSize = bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
-  int64_t increment = rowSize * (newSize - hashTable->numDistinct) / numPartitions;
+  int64_t newSize =
+      bits::nextPowerOfTwo(numFailed + hashTable->numDistinct * 2);
+  int64_t increment =
+      rowSize * (newSize - hashTable->numDistinct) / numPartitions;
   for (auto i = 0; i < numPartitions; ++i) {
-    auto* allocator = &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
+    auto* allocator =
+        &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
     if (allocator->availableFixed() < increment) {
-      restockAllocator(*state, stream.arena(), increment, allocator); 
+      restockAllocator(*state, stream.arena(), increment, allocator);
     }
   }
   bool rehash = false;
@@ -83,21 +91,24 @@ void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
     // Would need rehash.
     oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
-    state->buffers[1] = stream.arena().allocate<GpuBucketMembers>(newSize / GpuBucketMembers::kNumSlots);
+    state->buffers[1] = stream.arena().allocate<GpuBucketMembers>(
+        newSize / GpuBucketMembers::kNumSlots);
     hashTable->sizeMask = (newSize / GpuBucketMembers::kNumSlots) - 1;
     hashTable->buckets = state->buffers[1]->as<GpuBucket>();
     rehash = true;
   }
-  deviceStream->prefetch(getDevice(), state->alignedHead, state->alignedHeadSize);
+  deviceStream->prefetch(
+      getDevice(), state->alignedHead, state->alignedHeadSize);
   if (rehash) {
     AggregationControl control;
-    control.oldBuckets =  oldBuckets->as<char>();
+    control.oldBuckets = oldBuckets->as<char>();
     control.numOldBuckets = numOldBuckets;
-    reinterpret_cast<WaveKernelStream*>(deviceStream.get())->setupAggregation(control);
+    reinterpret_cast<WaveKernelStream*>(deviceStream.get())
+        ->setupAggregation(control);
   }
   deviceStream->wait();
   WaveStream::releaseStream(std::move(deviceStream));
-  }
+}
 
 AdvanceResult AbstractAggregation::canAdvance(
     WaveStream& stream,
@@ -114,8 +125,9 @@ AdvanceResult AbstractAggregation::canAdvance(
     return {
         .instructionIdx = instructionIdx,
         .isRetry = true,
-        .syncDrivers =
-            true, .updateStatus = resupplyHashTable, .reason = state};
+        .syncDrivers = true,
+        .updateStatus = resupplyHashTable,
+        .reason = state};
   }
   return {};
 }

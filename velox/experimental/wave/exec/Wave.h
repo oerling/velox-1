@@ -213,11 +213,12 @@ class WaveStream;
 class Program;
 
 /// Represents a device side operator state, like a join/group by hash table or
-/// repartition output. Can be scoped to a Task pipeline (all Drivers), WaveStream or to a Program.
+/// repartition output. Can be scoped to a Task pipeline (all Drivers),
+/// WaveStream or to a Program.
 struct OperatorState {
   virtual ~OperatorState() = default;
 
-  template<typename T>
+  template <typename T>
   T* as() {
     return reinterpret_cast<T*>(this);
   }
@@ -238,12 +239,12 @@ struct OperatorState {
 };
 
 struct AggregateOperatorState : public OperatorState {
-
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
   AbstractAggregation* instruction;
 
-  // 4K aligned header. Must be full pages, pageable in unified memory without affecting surrounding data.
+  // 4K aligned header. Must be full pages, pageable in unified memory without
+  // affecting surrounding data.
   DeviceAggregation* alignedHead;
 
   // Used bytes counting from 'alignedHead'.
@@ -252,7 +253,7 @@ struct AggregateOperatorState : public OperatorState {
   /// True after first created.
   bool isNew{true};
 
-  ///Number of allocators after hash GpuHashTable.
+  /// Number of allocators after hash GpuHashTable.
   int32_t numPartitions{1};
 
   /// Row ranges from filled allocators.
@@ -924,7 +925,7 @@ class WaveStream {
   BlockStatus* hostBlockStatus() const {
     return hostBlockStatus_->as<BlockStatus>();
   }
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
