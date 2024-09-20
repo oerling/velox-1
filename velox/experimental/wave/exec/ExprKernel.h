@@ -140,6 +140,8 @@ struct IAggregate {
   uint8_t stateIndex;
   /// Position of status return block in operator status returned to host.
   InstructionStatus status;
+  // Operand for rows to return in reading aggregation.
+  int16_t readRows{0};
   //  'numAggregates' Updates followed by key 'numKeys' key operand indices.
   IUpdateAgg* aggregates;
 };

@@ -238,11 +238,22 @@ struct OperatorState {
   std::exception_ptr error;
 };
 
+  /// Tracks the progress of reading a group by on one WaveStream.
+struct GroupReadState {
+  /// high byte is the range index, low 24 are the row number within the contiguous range.
+  WaveBufferPtr rowStarts;
+  /// Pairs of starting address, row count.
+  WaveBufferPtr ranges;
+};
+  
 struct AggregateOperatorState : public OperatorState {
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
   AbstractAggregation* instruction;
 
+  /// Mutex to serialize allocating row ranges to different Drivers in a multi-driver read.
+  std::mutex mutex;
+  
   // 4K aligned header. Must be full pages, pageable in unified memory without
   // affecting surrounding data.
   DeviceAggregation* alignedHead;
@@ -258,6 +269,14 @@ struct AggregateOperatorState : public OperatorState {
 
   /// Row ranges from filled allocators.
   std::vector<AllocationRange> ranges;
+
+  /// Device side copy of 'ranges', copied wen starting to read result.
+  WaveBufferPtr rangesOnDevice;
+  
+  ///
+  int32_t nextReadRange{0};
+  
+  std::unordered_map<WaveStream*, GroupReadState> readStates;
 };
 
 struct OperatorStateMap {

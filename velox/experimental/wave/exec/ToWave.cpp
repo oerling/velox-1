@@ -504,12 +504,17 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     VELOX_CHECK_NOT_NULL(func);
 #endif
   }
+  AbstractOperand readRows = nullptr;
+  if (!keys.empty()) {
+    readRows = newOperand(INTEGER(), "readRows");
+  }
   auto instruction = std::make_unique<AbstractAggregation>(
       nthContinuable_++,
       std::move(keys),
       std::move(aggregates),
       state,
       node->outputType());
+  instruction->readRows = readRows;
   makeAggregateLayout(*instruction);
   std::vector<Program*> sourceList;
   if (programs.empty()) {

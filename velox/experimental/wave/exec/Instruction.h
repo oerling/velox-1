@@ -411,8 +411,11 @@ struct AbstractAggregation : public AbstractOperator {
 
   int32_t literalBytes{0};
   // The data area of the physical instruction. Copied by the reading
-  // istruction.
+  // instruction.
   IUpdateAgg* literal{nullptr};
+
+  // Device side array of group by result rows for reading the result.
+  AbstractOperand* readRows;
 };
 
 struct AbstractReadAggregation : public AbstractOperator {

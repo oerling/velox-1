@@ -1120,6 +1120,9 @@ void Program::prepareForDevice(GpuArena& arena) {
       case OpCode::kReadAggregate: {
         auto& read = instruction->as<AbstractReadAggregation>();
         auto& agg = *read.aggregation;
+	if (agg.readRows) {
+	  markResult(agg.readRows);
+	}  
         for (auto& key : agg.keys) {
           markResult(key);
         }
@@ -1234,7 +1237,8 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numKeys = agg.keys.size();
         physicalInst->numAggregates = agg.aggregates.size();
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
-            deviceLiterals_ + abstractInst->literalOffset);
+								 physicalInst->readRows = operandIndex(inst->readRows;
+								 deviceLiterals_ + abstractInst->literalOffset);
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.state->id;
         programState->isGlobal = true;
