@@ -89,7 +89,7 @@ class SumGroupByOps {
       int32_t i,
       SumGroupRow*& row) {
     if (!row) {
-      row = newRow(table, partition, i);
+row = newRow(table, partition, i);
       if (!row) {
 	return ProbeState::kNeedSpace;
       }

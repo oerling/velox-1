@@ -263,6 +263,7 @@ class HashTableTest : public testing::Test {
     }
     run.addScore("gpu", micros);
     checkGroupBy(reference, gpuTable);
+    
   }
 
   void checkGroupBy(const CpuHashTable& reference, GpuHashTableBase* table) {
