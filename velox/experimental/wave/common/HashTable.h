@@ -52,13 +52,18 @@ class FreeSetBase {
 /// goes below 'rowLimit' then strings are full.
 struct AllocationRange {
   AllocationRange() = default;
-  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit)
-      : fixedFull(false),
-        variableFull(false),
-        base(base),
-        capacity(capacity),
-        rowLimit(rowLimit),
-        stringOffset(capacity) {}
+  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit, int32_t rowSize)
+    : fixedFull(false),
+      variableFull(false),
+      base(base),
+      capacity(capacity),
+      rowLimit(rowLimit),
+      // We leave n words of 64 bits, one bit for each possible row within 'capacity' below first row.
+      firstRowOffset(roundUp(capacity / rowSize, 64) / 8),
+      rowOffset(firstRowOffset),
+      stringOffset(capacity) {
+    memset(reinterpret_cast<char*>(base), 0, firstRowOffset);
+  }
 
   AllocationRange(AllocationRange&& other) {
     *this = std::move(other);
@@ -100,6 +105,7 @@ struct AllocationRange {
   uint64_t base{0};
   uint32_t capacity{0};
   uint32_t rowLimit{0};
+  int32_t firstRowOffset{0};
   uint32_t rowOffset{0};
   uint32_t stringOffset{0};
 };

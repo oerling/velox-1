@@ -105,7 +105,20 @@ struct RowAllocator : public HashPartitionAllocator {
     }
     return detail::allocate<T>(ranges[1], count);
   }
-
+  template <typename T>
+  void __device__ markRowFree(T* row)
+      auto ptr = reinterpret_cast<uintptr_t>(row);
+  
+  AllocationRange* rowRange;
+  if (row > ranges[0].base + ranges[0].firstRowOffset && row < ranges[0].base + ranges[0].rowLimit) {
+    rowRange = &range[0];
+  } else 
+    int32_t idx = ptr - (range.base + range.firstRowOffset) / rowSize;
+    atomicOr(reinterpret_cast<uint32_t>(range.base) + (idx >> 5), 1 << (idx & 31));
+    return true;
+  }
+  return false;
+}
 
 };
 
@@ -159,7 +172,6 @@ struct GpuBucket : public GpuBucketMembers {
     return (oldTags == atomicCAS(&tags, oldTags, newTags));
   }
 };
-
 
 class GpuHashTable : public GpuHashTableBase {
  public:

@@ -163,6 +163,30 @@ AdvanceResult AbstractReadAggregation::canAdvance(
     OperatorState* state,
     int32_t programIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
+  std::lock_guard<std::mutex> l(aggState->mutex);
+  if (!aggState->inst->keys.empty()) {
+    auto deviceStream = WaveStream::streamFromReserve();
+
+    // On first continue set up the device side row ranges.
+    if (aggState->isNew) {
+      aggState->isNew = false;
+      auto* hashTable = reinterpret_cast<GpuHashTableBase*>(aggState->alignedHead + 1);
+      auto* allocators = reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
+      int32_t numPartitions = hashTable->partitionMask + 1;
+      for (auto i = 0; i < numPartitions; ++i) {
+	for (auto j= 0; j <2; j++) {
+	  if (!allocators[i].ranges[j].empty()) {
+	    aggState->ranges.push_back(std::move(allocators[i].ranges[j]));
+	  }
+	}
+      }
+      aggState->deviceRanges = stream.arena().allocate<AllocationRange>(aggState->ranges.size());
+      deviceStream->hostToDevice(aggState->deviceRanges->as<char>(), &aggState->ranges[0], aggState->ranges.size() * sizeof(aggState->ranges[0]));
+      aggState->rangeIdx = 0;
+	}
+    }
+  }
+  // Single row case.
   if (aggState->isNew) {
     aggState->isNew = false;
     return {.numRows = 1};
