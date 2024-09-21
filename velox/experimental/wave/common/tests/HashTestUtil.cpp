@@ -158,9 +158,12 @@ void setupGpuTable(
   // The buckets start at aligned address.
   data = reinterpret_cast<char*>(
       bits::roundUp(reinterpret_cast<uint64_t>(data), kAlignment));
-   
-  new (table) GpuHashTableBase(reinterpret_cast<GpuBucket*>(data), numBuckets - 1,
-			       0, reinterpret_cast<RowAllocator*>(allocatorBase));
+
+  new (table) GpuHashTableBase(
+      reinterpret_cast<GpuBucket*>(data),
+      numBuckets - 1,
+      0,
+      reinterpret_cast<RowAllocator*>(allocatorBase));
 
   data += sizeof(GpuBucketMembers) * numBuckets;
   auto allocator = reinterpret_cast<HashPartitionAllocator*>(table->allocators);

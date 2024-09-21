@@ -81,12 +81,12 @@ struct AllocationRange {
     rowLimit += delta;
     return size - delta;
   }
-  
+
   int32_t trimFixed(int32_t target) {
     rowLimit = std::min<int32_t>(rowLimit, rowOffset + target);
     return target - (rowLimit - rowOffset);
   }
-  
+
   /// True if in post-default constructed state.
   bool empty() {
     return capacity == 0;
@@ -122,18 +122,20 @@ struct HashPartitionAllocator {
     return ranges[0].availableFixed() + ranges[1].availableFixed();
   }
 
-  /// Raises the row limit by up to size bytes. Returns 'size' minus the amount raised.
+  /// Raises the row limit by up to size bytes. Returns 'size' minus the amount
+  /// raised.
   int32_t raiseRowLimits(int32_t size) {
     size = ranges[0].raiseRowLimit(size);
     return ranges[1].raiseRowLimit(size);
   }
-  
-  /// sets rowLimit so that there will be at most 'maxSize' bytes of fixed length.
+
+  /// sets rowLimit so that there will be at most 'maxSize' bytes of fixed
+  /// length.
   void trimRows(int32_t target) {
     target = ranges[0].trimFixed(target);
     ranges[1].trimFixed(target);
   }
-  
+
   const int32_t rowSize{0};
   AllocationRange ranges[2];
 };

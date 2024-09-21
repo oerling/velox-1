@@ -65,7 +65,8 @@ void restockAllocator(
 }
 
 void AggregateOperatorState::setSizesToSafe() {
-  GpuHashTableBase* hashTable = reinterpret_cast<GpuHashTableBase*>(alignedHead + 1);
+  GpuHashTableBase* hashTable =
+      reinterpret_cast<GpuHashTableBase*>(alignedHead + 1);
   auto* allocators = reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
   int32_t numPartitions = hashTable->partitionMask + 1;
   int32_t available = 0;
@@ -81,7 +82,7 @@ void AggregateOperatorState::setSizesToSafe() {
     }
   }
 }
-  
+
 void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto* agg = &inst.as<AbstractAggregation>();
   auto deviceStream = WaveStream::streamFromReserve();
