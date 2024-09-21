@@ -278,10 +278,10 @@ struct AggregateOperatorState : public OperatorState {
   std::vector<AllocationRange> ranges;
 
   /// Device side copy of 'ranges', copied wen starting to read result.
-  WaveBufferPtr rangesOnDevice;
+  WaveBufferPtr deviceRanges;
 
-  ///
-  int32_t nextReadRange{0};
+  /// Next range to be prepared for return.
+  int32_t rangeIdx{0};
 
   std::unordered_map<WaveStream*, GroupReadState> readStates;
 };

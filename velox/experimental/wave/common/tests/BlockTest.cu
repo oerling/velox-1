@@ -357,8 +357,10 @@ class MockGroupByOps {
     }
   }
 
-  void __device__ freeInsertable(TestingRow* row, uint64_t /*h*/) {
-    row->flags = 2;
+  void __device__ freeInsertable(GpuHashTable* table, TestingRow* row, uint64_t h) {
+    int32_t partition = table->partitionIdx(h);
+    auto* allocator = table->allocators[h];
+    if (!allocator.ranges[0]
   }
   
   void __device__ writeDone(TestingRow* row) {

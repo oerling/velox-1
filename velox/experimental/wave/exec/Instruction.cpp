@@ -184,6 +184,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       deviceStream->hostToDevice(aggState->deviceRanges->as<char>(), &aggState->ranges[0], aggState->ranges.size() * sizeof(aggState->ranges[0]));
       aggState->rangeIdx = 0;
 	}
+    
     }
   }
   // Single row case.
