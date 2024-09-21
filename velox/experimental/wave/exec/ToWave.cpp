@@ -504,7 +504,7 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
     VELOX_CHECK_NOT_NULL(func);
 #endif
   }
-  AbstractOperand readRows = nullptr;
+  AbstractOperand* readRows = nullptr;
   if (!keys.empty()) {
     readRows = newOperand(INTEGER(), "readRows");
   }

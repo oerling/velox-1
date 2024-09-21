@@ -263,7 +263,16 @@ class HashTableTest : public testing::Test {
     }
     run.addScore("gpu", micros);
     checkGroupBy(reference, gpuTable);
-    
+    auto size = gpuTable->sizeMask + 1;
+    auto oldBuckets = gpuTable->buckets;;
+    WaveBufferPtr newBuckets = arena_->allocate<GpuBucketMembers>(size);
+    gpuTable->buckets = newBuckets->as<GpuBucket>();
+
+    streams_[0]->prefetch(getDevice(), gpuTable, sizeof(GpuHashTableBase));
+    streams_[0]->memset(newBuckets->as<char>(), 0, newBuckets->size());
+			  streams_[0]->rehash(gpuTable, oldBuckets, size);
+			  streams_[0]->wait();
+			  checkGroupBy(reference, gpuTable);
   }
 
   void checkGroupBy(const CpuHashTable& reference, GpuHashTableBase* table) {

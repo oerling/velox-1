@@ -134,6 +134,8 @@ class BlockTestStream : public Stream {
   /// 'numBlocks' gives how many TBs are run, the rows per TB are in 'probe'.
   void hashTest(GpuHashTableBase* table, HashRun& probe, HashCase mode);
 
+  void rehash(GpuHashTableBase* table, GpuBucket* oldBuckets, int32_t numOldBuckets);
+  
   static int32_t freeSetSize();
 
   void initAllocator(ArenaWithFree* allocator);

@@ -44,6 +44,11 @@ void restockAllocator(
     GpuArena& arena,
     int32_t size,
     HashPartitionAllocator* allocator) {
+  // If we can get rows by raising the row limit we do this first.
+  int32_t adjustedSize = size - allocator->raiseRowLimits(size);
+  if (adjustedSize <= 0) {
+    return;
+  }
   if (allocator->ranges[0].fixedFull) {
     state.ranges.push_back(std::move(allocator->ranges[0]));
     allocator->ranges[0] = std::move(allocator->ranges[1]);
@@ -59,6 +64,24 @@ void restockAllocator(
   }
 }
 
+void AggregateOperatorState::setSizesToSafe() {
+  GpuHashTableBase* hashTable = reinterpret_cast<GpuHashTableBase*>(alignedHead + 1);
+  auto* allocators = reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
+  int32_t numPartitions = hashTable->partitionMask + 1;
+  int32_t available = 0;
+  int32_t rowSize = allocators[0].rowSize;
+  for (auto i = 0; i < numPartitions; ++i) {
+    available += allocators[i].availableFixed() / rowSize;
+  }
+  int32_t spaceInTable = hashTable->maxEntries - hashTable->numDistinct;
+  if (available > spaceInTable) {
+    int32_t target = (available - spaceInTable) / numPartitions;
+    for (auto i = 0; i < numPartitions; ++i) {
+      allocators[i].trimRows(target * rowSize);
+    }
+  }
+}
+  
 void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto* agg = &inst.as<AbstractAggregation>();
   auto deviceStream = WaveStream::streamFromReserve();
@@ -87,7 +110,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   bool rehash = false;
   WaveBufferPtr oldBuckets;
   int32_t numOldBuckets;
-  if (gridState->numDistinct > hashTable->maxEntries) {
+  if (gridState->numDistinct >= hashTable->maxEntries) {
     // Would need rehash.
     oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
@@ -97,6 +120,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
     hashTable->buckets = state->buffers[1]->as<GpuBucket>();
     rehash = true;
   }
+  state->setSizesToSafe();
   deviceStream->prefetch(
       getDevice(), state->alignedHead, state->alignedHeadSize);
   if (rehash) {

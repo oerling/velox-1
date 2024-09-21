@@ -291,7 +291,11 @@ class MockGroupByOps {
     return hashMix(1, key[i]);
   }
 
-  bool __device__
+  uint64_t __device__ hashRow(TestingRow* row) {
+    return hashMix(1, row->key);
+  }
+
+    bool __device__
   compare(GpuHashTable* table, TestingRow* row, int32_t i) {
     return row->key == reinterpret_cast<int64_t**>(probe_->keys)[0][i];
   }
@@ -353,7 +357,7 @@ class MockGroupByOps {
     }
   }
 
-  void freeInsertable(TestingRow* row, uint64_t /*h*/) {
+  void __device__ freeInsertable(TestingRow* row, uint64_t /*h*/) {
     row->flags = 2;
   }
   
@@ -381,7 +385,7 @@ class MockGroupByOps {
   HashProbe* probe_;
 };
 
-void __global__ /* __launch_bounds__(1024) */ hashTestKernel(
+void __global__ __launch_bounds__(1024) hashTestKernel(
     GpuHashTable* table,
     HashProbe* probe,
     BlockTestStream::HashCase mode) {
@@ -416,6 +420,31 @@ void BlockTestStream::hashTest(
   CUDA_CHECK(cudaGetLastError());
 }
 
+
+void __global__  __launch_bounds__(1024)  rehashKernel(
+    GpuHashTable* table,
+    GpuBucket* oldBuckets,
+    int32_t numOldBuckets) {
+  MockGroupByOps ops(nullptr);
+  table->rehash<TestingRow>(oldBuckets, numOldBuckets, ops);
+  __syncthreads();
+}
+
+void BlockTestStream::rehash(
+    GpuHashTableBase* table,
+    GpuBucket* oldBuckets,
+    int32_t numOldBuckets) {
+  constexpr int32_t kBlockSize = 256;
+  int32_t numBlocks = roundUp(numOldBuckets, kBlockSize) / kBlockSize;
+  if (numBlocks > 640) {
+    numBlocks = 640;
+  }
+  rehashKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
+							      reinterpret_cast<GpuHashTable*>(table), oldBuckets, numOldBuckets);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+  
 void __global__ allocatorTestKernel(
     int32_t numAlloc,
     int32_t numFree,
@@ -673,7 +702,9 @@ REGISTER_KERNEL("bool256ToIndices", bool256ToIndicesKernel);
 REGISTER_KERNEL("sum64", sum64);
 REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
 REGISTER_KERNEL("hashTest", hashTestKernel);
-REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
+REGISTER_KERNEL("rehash", rehashKernel);
+
+  REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
 REGISTER_KERNEL("sum1atm", updateSum1AtomicKernel);
 REGISTER_KERNEL("sum1atmCoaShfl", updateSum1AtomicCoalesceShflKernel);
 REGISTER_KERNEL("sum1atmCoaShmem", updateSum1AtomicCoalesceShmemKernel);

@@ -249,6 +249,11 @@ struct GroupReadState {
 struct AggregateOperatorState : public OperatorState {
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
+  /// Sets the sizes in allocators so that the rows run out before the
+  /// table is full. In this way there is no need for a separate
+  /// rehash check or atomic rehash needed flag.
+  void setSizesToSafe();
+  
   AbstractAggregation* instruction;
 
   /// Mutex to serialize allocating row ranges to different Drivers in a multi-driver read.

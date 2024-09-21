@@ -1237,9 +1237,9 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numKeys = agg.keys.size();
         physicalInst->numAggregates = agg.aggregates.size();
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
-								 physicalInst->readRows = operandIndex(inst->readRows;
 								 deviceLiterals_ + abstractInst->literalOffset);
-        auto programState = std::make_unique<ProgramState>();
+	physicalInst->readRows = operandIndex(agg.readRows);
+	auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.state->id;
         programState->isGlobal = true;
         physicalInst->serial = agg.serial;
