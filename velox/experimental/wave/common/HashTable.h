@@ -47,25 +47,30 @@ class FreeSetBase {
   T items_[kSize] = {};
 };
 
-  int32_t roundUp64(int32_t value) {
+int32_t roundUp64(int32_t value) {
   return (value + 64 - 1) / 64 * 64;
-  }
-  
+}
+
 /// Range of addresses. fixed length from bottom and variable length from top.
 /// if 'rowOffset' goes above 'rowLimit' then rows are full. If 'stringOffset'
 /// goes below 'rowLimit' then strings are full.
 struct AllocationRange {
   AllocationRange() = default;
-  AllocationRange(uintptr_t base, uint32_t capacity, uint32_t rowLimit, int32_t rowSize)
-    : fixedFull(false),
-      variableFull(false),
-      base(base),
-      capacity(capacity),
-      rowLimit(rowLimit),
-      // We leave n words of 64 bits, one bit for each possible row within 'capacity' below first row.
-      firstRowOffset(roundUp64(capacity / rowSize) / 8),
-      rowOffset(firstRowOffset),
-      stringOffset(capacity) {
+  AllocationRange(
+      uintptr_t base,
+      uint32_t capacity,
+      uint32_t rowLimit,
+      int32_t rowSize)
+      : fixedFull(false),
+        variableFull(false),
+        base(base),
+        capacity(capacity),
+        rowLimit(rowLimit),
+        // We leave n words of 64 bits, one bit for each possible row within
+        // 'capacity' below first row.
+        firstRowOffset(roundUp64(capacity / rowSize) / 8),
+        rowOffset(firstRowOffset),
+        stringOffset(capacity) {
     memset(reinterpret_cast<char*>(base), 0, firstRowOffset);
   }
 
@@ -124,8 +129,8 @@ struct HashPartitionAllocator {
       uint32_t rowLimit,
       uint32_t rowSize)
       : rowSize(rowSize) {
-    ranges[0] =
-      AllocationRange(reinterpret_cast<uintptr_t>(data), capacity, rowLimit, rowSize);
+    ranges[0] = AllocationRange(
+        reinterpret_cast<uintptr_t>(data), capacity, rowLimit, rowSize);
   }
   /// Returns the available bytes  in fixed size pools.
   int64_t availableFixed() {

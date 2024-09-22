@@ -103,9 +103,9 @@ struct DeviceAggregation {
 
   /// Number of int64_t* in groupResultRows.
   int32_t numResultVectors{0};
-  
+
   /// Pointers to group by result row arrays. Subscripts is '[streamIdx][row]'.
-  int64_t**resultRowPointers{nullptr};
+  int64_t** resultRowPointers{nullptr};
 };
 
 /// Parameters for creating/updating a group by.
@@ -250,7 +250,8 @@ struct KernelParams {
   /// Number of elements of blockStatus covered by each TB.
   int16_t numRowsPerThread{1};
 
-  /// Id of stream <stream ordinal within WaveDriver> + (<driverId of WaveDriver> * <number of Drivers>.
+  /// Id of stream <stream ordinal within WaveDriver> + (<driverId of
+  /// WaveDriver> * <number of Drivers>.
   int16_t streamIdx{0};
 };
 
@@ -275,7 +276,7 @@ class WaveKernelStream : public Stream {
 
   /// Sets up or updates an aggregation.
   void setupAggregation(AggregationControl& op);
-  
+
  private:
   // Debug implementation of call() where each instruction is a separate kernel
   // launch.

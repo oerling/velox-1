@@ -238,7 +238,6 @@ struct OperatorState {
   std::exception_ptr error;
 };
 
-
 struct AggregateOperatorState : public OperatorState {
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
 
@@ -274,7 +273,7 @@ struct AggregateOperatorState : public OperatorState {
 
   /// Device side bytes in the hash table and rows.
   int64_t bytes{0};
-  
+
   /// Next range to be prepared for return.
   int32_t rangeIdx{0};
 
@@ -680,13 +679,13 @@ class WaveStream {
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap,
       InstructionStatus state,
-	     int16_t streamIdx)
+      int16_t streamIdx)
       : arena_(arena),
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
         instructionStatus_(state),
-	streamIdx_(streamIdx) {
+        streamIdx_(streamIdx) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -962,7 +961,7 @@ class WaveStream {
   int16_t streamIdx() const {
     return streamIdx_;
   }
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -1006,9 +1005,10 @@ class WaveStream {
   // Space reserved for per-instruction return state above BlockStatus array.
   InstructionStatus instructionStatus_;
 
-  // Identifies 'this' within parallel streams in the same WaveDriver or parallll WaveDrivers in other Driver pipelines.
+  // Identifies 'this' within parallel streams in the same WaveDriver or
+  // parallll WaveDrivers in other Driver pipelines.
   const int16_t streamIdx_;
-  
+
   // Number of rows to allocate for top level vectors for the next kernel
   // launch.
   int32_t numRows_{0};

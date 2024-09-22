@@ -922,7 +922,7 @@ void AggregateOperatorState::allocateAggregateHeader(
   alignedHead = reinterpret_cast<DeviceAggregation*>(
       bits::roundUp(address, kUnifiedPageSize));
   alignedHeadSize = size;
-  new(alignedHead) DeviceAggregation();
+  new (alignedHead) DeviceAggregation();
 }
 
 void WaveStream::makeAggregate(

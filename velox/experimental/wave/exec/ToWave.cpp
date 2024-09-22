@@ -512,7 +512,7 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       node->outputType());
   if (!keys.empty()) {
     instruction->maxReadStreams = FLAGS_max_streams_per_driver * 10;
-    }
+  }
 
   makeAggregateLayout(*instruction);
   std::vector<Program*> sourceList;
