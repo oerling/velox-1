@@ -238,7 +238,8 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       aggState->resultRowPointers =
           stream.arena().allocate<int64_t*>(maxReadStreams);
       deviceAgg->numReadStreams = maxReadStreams;
-      deviceAgg->resultRowPointers = aggState->resultRowPointers->as<uintptr_t*>();
+      deviceAgg->resultRowPointers =
+          aggState->resultRowPointers->as<uintptr_t*>();
       aggState->resultRows.resize(maxReadStreams);
       deviceStream->memset(
           aggState->resultRowPointers->as<char>(),
@@ -248,7 +249,8 @@ AdvanceResult AbstractReadAggregation::canAdvance(
           aggState->resultRowPointers->as<uintptr_t*>();
       deviceStream->prefetch(
           getDevice(), aggState->alignedHead, aggState->alignedHeadSize);
-      aggState->temp = getSmallTransferArena().allocate<int64_t*>(batchSize + 1);
+      aggState->temp =
+          getSmallTransferArena().allocate<int64_t*>(batchSize + 1);
     }
     auto streamIdx = stream.streamIdx();
     if (!aggState->resultRows[streamIdx]) {
@@ -262,7 +264,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
         batchSize,
         aggState->rangeIdx,
         aggState->rowIdx,
-        aggState->resultRows[streamIdx]->as<uintptr_t>() +1);
+        aggState->resultRows[streamIdx]->as<uintptr_t>() + 1);
     aggState->resultRows[streamIdx]->as<uintptr_t>()[0] = numRows;
     if (numRows == 0) {
       return {};
