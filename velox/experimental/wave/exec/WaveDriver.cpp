@@ -488,8 +488,10 @@ Advance WaveDriver::advance(int pipelineIdx) {
     if (pipeline.finished.empty() &&
         pipeline.running.size() + pipeline.arrived.size() <
             FLAGS_max_streams_per_driver) {
+      // Ordinal of WaveStream across this pipeline across all parallel WaveDrivers.
+      int16_t streamId = pipeline.arrived.size() + pipeline.running.size() * (FLAGS_max_streams_per_driver * operatorCtx_->driverCtx()->driverId);
       auto stream = std::make_unique<WaveStream>(
-          *arena_, *deviceArena_, &operands(), &stateMap_, instructionStatus_);
+						 *arena_, *deviceArena_, &operands(), &stateMap_, instructionStatus_, streamId);
       stream->setState(WaveStream::State::kHost);
       pipeline.arrived.push_back(std::move(stream));
     }

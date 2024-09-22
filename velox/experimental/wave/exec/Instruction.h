@@ -398,7 +398,7 @@ struct AbstractAggregation : public AbstractOperator {
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
-      int32_t programIdx) const override;
+      int32_t instructionIdx) const override;
 
   InstructionStatus instructionStatus;
 
@@ -414,8 +414,8 @@ struct AbstractAggregation : public AbstractOperator {
   // instruction.
   IUpdateAgg* literal{nullptr};
 
-  // Device side array of group by result rows for reading the result.
-  AbstractOperand* readRows;
+  /// Prepare up to this many result reading streams.
+  int16_t maxReadStreams{1};
 };
 
 struct AbstractReadAggregation : public AbstractOperator {
@@ -431,7 +431,7 @@ struct AbstractReadAggregation : public AbstractOperator {
       WaveStream& stream,
       LaunchControl* control,
       OperatorState* state,
-      int32_t programIdx) const override;
+      int32_t instructionIdx) const override;
 
   AbstractAggregation* aggregation;
   int32_t literalOffset{0};

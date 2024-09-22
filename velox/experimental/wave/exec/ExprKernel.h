@@ -100,6 +100,12 @@ struct DeviceAggregation {
   RowAllocator* allocator{nullptr};
 
   char* singleRow{nullptr};
+
+  /// Number of int64_t* in groupResultRows.
+  int32_t numResultVectors{0};
+  
+  /// Pointers to group by result row arrays. Subscripts is '[streamIdx][row]'.
+  int64_t**resultRowPointers{nullptr};
 };
 
 /// Parameters for creating/updating a group by.
@@ -140,8 +146,6 @@ struct IAggregate {
   uint8_t stateIndex;
   /// Position of status return block in operator status returned to host.
   InstructionStatus status;
-  // Operand for rows to return in reading aggregation.
-  int16_t readRows{0};
   //  'numAggregates' Updates followed by key 'numKeys' key operand indices.
   IUpdateAgg* aggregates;
 };
@@ -199,7 +203,9 @@ struct WaveShared {
   int32_t numBlocks;
 
   /// Number of items in blockStatus covered by each TB.
-  int32_t numRowsPerThread;
+  int16_t numRowsPerThread;
+
+  int16_t streamIdx;
 
   // Scratch data area. Size depends on shared memory size for instructions.
   // Align 8.
@@ -242,7 +248,10 @@ struct KernelParams {
   int32_t numBlocks{0};
 
   /// Number of elements of blockStatus covered by each TB.
-  int32_t numRowsPerThread{1};
+  int16_t numRowsPerThread{1};
+
+  /// Id of stream <stream ordinal within WaveDriver> + (<driverId of WaveDriver> * <number of Drivers>.
+  int16_t streamIdx{0};
 };
 
 /// Returns the shared memory size for instruction for kBlockSize.

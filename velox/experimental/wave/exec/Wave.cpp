@@ -861,6 +861,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     }
   }
   control.params.numBlocks = blocksPerExe;
+  control.params.streamIdx = streamIdx_;
   if (!exes.empty()) {
     ++stats_.numKernels;
   }
@@ -921,6 +922,7 @@ void AggregateOperatorState::allocateAggregateHeader(
   alignedHead = reinterpret_cast<DeviceAggregation*>(
       bits::roundUp(address, kUnifiedPageSize));
   alignedHeadSize = size;
+  new(alignedHead) DeviceAggregation();
 }
 
 void WaveStream::makeAggregate(
@@ -1120,9 +1122,6 @@ void Program::prepareForDevice(GpuArena& arena) {
       case OpCode::kReadAggregate: {
         auto& read = instruction->as<AbstractReadAggregation>();
         auto& agg = *read.aggregation;
-        if (agg.readRows) {
-          markResult(agg.readRows);
-        }
         for (auto& key : agg.keys) {
           markResult(key);
         }
@@ -1238,7 +1237,6 @@ void Program::prepareForDevice(GpuArena& arena) {
         physicalInst->numAggregates = agg.aggregates.size();
         physicalInst->aggregates = reinterpret_cast<IUpdateAgg*>(
             deviceLiterals_ + abstractInst->literalOffset);
-        physicalInst->readRows = operandIndex(agg.readRows);
         auto programState = std::make_unique<ProgramState>();
         programState->stateId = agg.state->id;
         programState->isGlobal = true;

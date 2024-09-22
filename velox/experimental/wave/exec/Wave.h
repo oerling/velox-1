@@ -238,14 +238,6 @@ struct OperatorState {
   std::exception_ptr error;
 };
 
-/// Tracks the progress of reading a group by on one WaveStream.
-struct GroupReadState {
-  /// high byte is the range index, low 24 are the row number within the
-  /// contiguous range.
-  WaveBufferPtr rowStarts;
-  /// Pairs of starting address, row count.
-  WaveBufferPtr ranges;
-};
 
 struct AggregateOperatorState : public OperatorState {
   void allocateAggregateHeader(int32_t size, GpuArena& arena);
@@ -277,13 +269,26 @@ struct AggregateOperatorState : public OperatorState {
   /// Row ranges from filled allocators.
   std::vector<AllocationRange> ranges;
 
-  /// Device side copy of 'ranges', copied wen starting to read result.
-  WaveBufferPtr deviceRanges;
+  /// Number of rows in 'ranges'.
+  int64_t numRows{0};
 
+  /// Device side bytes in the hash table and rows.
+  int64_t bytes{0};
+  
   /// Next range to be prepared for return.
   int32_t rangeIdx{0};
 
-  std::unordered_map<WaveStream*, GroupReadState> readStates;
+  /// Next row to return.
+  int32_t rowIdx{0};
+
+  /// Device side array of per-stream result rows.
+  WaveBufferPtr resultRowPointers;
+
+  /// Array of result rows for each streamId.
+  std::vector<WaveBufferPtr> resultRows;
+
+  /// A host pinned buffer for copying row pointer arrays to device.
+  WaveBufferPtr temp;
 };
 
 struct OperatorStateMap {
@@ -674,12 +679,14 @@ class WaveStream {
       GpuArena& deviceArena,
       const std::vector<std::unique_ptr<AbstractOperand>>* operands,
       OperatorStateMap* stateMap,
-      InstructionStatus state)
+      InstructionStatus state,
+	     int16_t streamIdx)
       : arena_(arena),
         deviceArena_(deviceArena),
         operands_(operands),
         taskStateMap_(stateMap),
-        instructionStatus_(state) {
+        instructionStatus_(state),
+	streamIdx_(streamIdx) {
     operandNullable_.resize(operands_->size(), true);
   }
 
@@ -952,6 +959,10 @@ class WaveStream {
     return hostBlockStatus_->as<BlockStatus>();
   }
 
+  int16_t streamIdx() const {
+    return streamIdx_;
+  }
+  
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;
@@ -995,6 +1006,9 @@ class WaveStream {
   // Space reserved for per-instruction return state above BlockStatus array.
   InstructionStatus instructionStatus_;
 
+  // Identifies 'this' within parallel streams in the same WaveDriver or parallll WaveDrivers in other Driver pipelines.
+  const int16_t streamIdx_;
+  
   // Number of rows to allocate for top level vectors for the next kernel
   // launch.
   int32_t numRows_{0};

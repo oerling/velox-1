@@ -105,20 +105,21 @@ struct RowAllocator : public HashPartitionAllocator {
     }
     return detail::allocate<T>(ranges[1], count);
   }
+
   template <typename T>
-  void __device__ markRowFree(T* row)
-      auto ptr = reinterpret_cast<uintptr_t>(row);
-  
-  AllocationRange* rowRange;
-  if (row > ranges[0].base + ranges[0].firstRowOffset && row < ranges[0].base + ranges[0].rowLimit) {
-    rowRange = &range[0];
-  } else 
-    int32_t idx = ptr - (range.base + range.firstRowOffset) / rowSize;
-    atomicOr(reinterpret_cast<uint32_t>(range.base) + (idx >> 5), 1 << (idx & 31));
-    return true;
+  void __device__ markRowFree(T* row) {
+    auto ptr = reinterpret_cast<uintptr_t>(row);
+    AllocationRange* rowRange;
+    if (row > ranges[0].base + ranges[0].firstRowOffset && row < ranges[0].base + ranges[0].rowLimit) {
+      rowRange = &ranges[0];
+    } else if (row > ranges[1].base + ranges[1].firstRowOffset && row < ranges[1].base + ranges[1].rowLimit) {
+      rowRange = &ranges[1];
+    } else {
+      return;
+    }
+      int32_t idx = ptr - (rowRange->base + rowRange->firstRowOffset) / rowSize;
+    atomicOr(reinterpret_cast<uint32_t*>(rowRange->base) + (idx >> 5), 1 << (idx & 31));
   }
-  return false;
-}
 
 };
 

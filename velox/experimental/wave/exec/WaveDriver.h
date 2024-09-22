@@ -20,6 +20,8 @@
 #include "velox/exec/Operator.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 
+DECLARE_int32(max_streams_per_driver);
+
 namespace facebook::velox::wave {
 enum class Advance { kBlocked, kResult, kFinished };
 

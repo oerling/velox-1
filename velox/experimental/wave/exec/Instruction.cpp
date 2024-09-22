@@ -56,7 +56,7 @@ void restockAllocator(
   auto buffer = arena.allocate<char>(size);
   state.buffers.push_back(buffer);
   AllocationRange newRange(
-      reinterpret_cast<uintptr_t>(buffer->as<char>()), size, size);
+			   reinterpret_cast<uintptr_t>(buffer->as<char>()), size, size, allocator->rowSize);
   if (allocator->ranges[0].empty()) {
     allocator->ranges[0] = std::move(newRange);
   } else {
@@ -157,14 +157,49 @@ AdvanceResult AbstractAggregation::canAdvance(
   return {};
 }
 
+  std::pair<int64_t, int64_t> countResultRows(std::vector<AllocationRange>& ranges, int32_t rowSize) {
+    int64_t count = 0;
+    int64_t bytes = 0;
+    for (auto& range : ranges) {
+      auto bits = reinterpret_cast<uint64_t*>(range.base);
+      int32_t numFree = bits::countBits(bits, 0, range.firstRowOffset * 8);
+      auto n = ((range.rowOffset - range.firstRowOffset) / rowSize) - numFree;
+      count += n;
+      bytes += n * rowSize + (range.capacity - range.stringOffset);
+    }
+    return {count, bytes};
+  }
+  
+  int32_t makeResultRows(AllocationRange* ranges, int32_t numRanges, int32_t rowSize, int32_t maxRows, int32_t& startRange, int32_t& startRow, uintptr_t* result) {
+    int32_t fill = 0;
+    for (; startRange < numRanges; ++startRange) {
+      auto& range = ranges[startRange];
+      uint64_t* bits = reinterpret_cast<uint64_t*>(range.base);
+      uint32_t limit = range.rowLimit;
+      auto firstRowOffset = range.firstRowOffset;
+      for (; (startRow + 1) * rowSize  <= limit; ++startRow) {
+	if (bits::isBitSet(bits, startRow)) {
+	  continue;
+	}
+	result[fill++] = range.base + firstRowOffset + startRow * rowSize;
+	if (fill >= maxRows) {
+	  return fill;
+	}
+      }
+    }
+    return fill;
+  }
+  
 AdvanceResult AbstractReadAggregation::canAdvance(
     WaveStream& stream,
     LaunchControl* control,
     OperatorState* state,
-    int32_t programIdx) const {
+    int32_t instructionIdx) const {
   auto* aggState = reinterpret_cast<AggregateOperatorState*>(state);
+  int32_t batchSize = 100'000;
+  int32_t rowSize = aggState->instruction->rowSize();
   std::lock_guard<std::mutex> l(aggState->mutex);
-  if (!aggState->inst->keys.empty()) {
+  if (!aggState->instruction->keys.empty()) {
     auto deviceStream = WaveStream::streamFromReserve();
 
     // On first continue set up the device side row ranges.
@@ -180,13 +215,32 @@ AdvanceResult AbstractReadAggregation::canAdvance(
 	  }
 	}
       }
-      aggState->deviceRanges = stream.arena().allocate<AllocationRange>(aggState->ranges.size());
-      deviceStream->hostToDevice(aggState->deviceRanges->as<char>(), &aggState->ranges[0], aggState->ranges.size() * sizeof(aggState->ranges[0]));
       aggState->rangeIdx = 0;
-	}
-    
+      aggState->rowIdx = 0;
+      auto[r, b] = countResultRows(aggState->ranges, rowSize);
+      aggState->numRows = r;
+       aggState->bytes = b; 
+       auto maxReadStreams = aggState->instruction->maxReadStreams;
+       aggState->resultRowPointers = stream.arena().allocate<int64_t*>(maxReadStreams);
+      aggState->resultRows.resize(maxReadStreams);
+      deviceStream->memset(aggState->resultRowPointers->as<char>(), 0, maxReadStreams * sizeof(void*));
+      aggState->alignedHead->resultRowPointers = aggState->resultRowPointers->as<int64_t*>();
+      deviceStream->prefetch(getDevice(), aggState->alignedHead, aggState->alignedHeadSize);
+      aggState->temp = getSmallTransferArena().allocate<int64_t*>(batchSize);
     }
+    auto streamIdx = stream.streamIdx();
+    if (!aggState->resultRows[streamIdx])  {
+      aggState->resultRows[streamIdx] = stream.arena().allocate<int64_t*>(batchSize);
+    }
+    auto numRows = makeResultRows(aggState->ranges.data(), aggState->ranges.size(), rowSize, batchSize, aggState->rangeIdx, aggState->rowIdx,  aggState->resultRows[streamIdx]->as<uintptr_t>());
+    if (numRows == 0) {
+      return {};
+    }
+    deviceStream->hostToDeviceAsync(aggState->resultRows[streamIdx]->as<char>(), aggState->temp->as<char>(), numRows * sizeof(int64_t*));
+    deviceStream->wait();
+    return {.numRows = numRows};
   }
+
   // Single row case.
   if (aggState->isNew) {
     aggState->isNew = false;
