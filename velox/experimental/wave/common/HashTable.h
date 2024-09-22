@@ -47,7 +47,7 @@ class FreeSetBase {
   T items_[kSize] = {};
 };
 
-  static inline int32_t roundUp64(int32_t value) {
+static inline int32_t roundUp64(int32_t value) {
   return (value + 64 - 1) / 64 * 64;
 }
 
