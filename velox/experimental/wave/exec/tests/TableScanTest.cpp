@@ -349,7 +349,6 @@ TEST_P(TableScanTest, scanAgg) {
 }
 
 TEST_P(TableScanTest, scanGroupBy) {
-  GTEST_SKIP();
   auto type =
       ROW({"c0", "c1", "c2", "c3", "rn"},
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
