@@ -101,11 +101,13 @@ struct DeviceAggregation {
 
   char* singleRow{nullptr};
 
-  /// Number of int64_t* in groupResultRows.
-  int32_t numResultVectors{0};
+  /// Number of int64_t* in groupResultRows. One for each potential
+  /// streamIdx of reading kernel.
+  int32_t numReadStreams{0};
 
-  /// Pointers to group by result row arrays. Subscripts is '[streamIdx][row]'.
-  int64_t** resultRowPointers{nullptr};
+  /// Pointers to group by result row arrays. Subscripts is
+  /// '[streamIdx][row + 1]'. Element 0 is the row count.
+  uintptr_t** resultRowPointers{nullptr};
 };
 
 /// Parameters for creating/updating a group by.

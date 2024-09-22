@@ -213,7 +213,7 @@ AdvanceResult AbstractReadAggregation::canAdvance(
   std::lock_guard<std::mutex> l(aggState->mutex);
   if (!aggState->instruction->keys.empty()) {
     auto deviceStream = WaveStream::streamFromReserve();
-
+    auto deviceAgg = aggState->alignedHead;
     // On first continue set up the device side row ranges.
     if (aggState->isNew) {
       aggState->isNew = false;
@@ -237,21 +237,23 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       auto maxReadStreams = aggState->instruction->maxReadStreams;
       aggState->resultRowPointers =
           stream.arena().allocate<int64_t*>(maxReadStreams);
+      deviceAgg->numReadStreams = maxReadStreams;
+      deviceAgg->resultRowPointers = aggState->resultRowPointers->as<uintptr_t*>();
       aggState->resultRows.resize(maxReadStreams);
       deviceStream->memset(
           aggState->resultRowPointers->as<char>(),
           0,
           maxReadStreams * sizeof(void*));
       aggState->alignedHead->resultRowPointers =
-          aggState->resultRowPointers->as<int64_t*>();
+          aggState->resultRowPointers->as<uintptr_t*>();
       deviceStream->prefetch(
           getDevice(), aggState->alignedHead, aggState->alignedHeadSize);
-      aggState->temp = getSmallTransferArena().allocate<int64_t*>(batchSize);
+      aggState->temp = getSmallTransferArena().allocate<int64_t*>(batchSize + 1);
     }
     auto streamIdx = stream.streamIdx();
     if (!aggState->resultRows[streamIdx]) {
       aggState->resultRows[streamIdx] =
-          stream.arena().allocate<int64_t*>(batchSize);
+          stream.arena().allocate<int64_t*>(batchSize + 1);
     }
     auto numRows = makeResultRows(
         aggState->ranges.data(),
@@ -260,14 +262,15 @@ AdvanceResult AbstractReadAggregation::canAdvance(
         batchSize,
         aggState->rangeIdx,
         aggState->rowIdx,
-        aggState->resultRows[streamIdx]->as<uintptr_t>());
+        aggState->resultRows[streamIdx]->as<uintptr_t>() +1);
+    aggState->resultRows[streamIdx]->as<uintptr_t>()[0] = numRows;
     if (numRows == 0) {
       return {};
     }
     deviceStream->hostToDeviceAsync(
         aggState->resultRows[streamIdx]->as<char>(),
         aggState->temp->as<char>(),
-        numRows * sizeof(int64_t*));
+        (numRows + 1) * sizeof(int64_t*));
     deviceStream->wait();
     return {.numRows = numRows};
   }

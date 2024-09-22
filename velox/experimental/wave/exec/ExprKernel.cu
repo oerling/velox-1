@@ -86,7 +86,7 @@ __global__ void waveBaseKernel(KernelParams params) {
         aggregateKernel(instruction->_.aggregate, shared, laneStatus);
         break;
       case OpCode::kReadAggregate:
-        readAggregateKernel(instruction->_.aggregate, shared);
+        readAggregateKernel(&instruction->_.aggregate, shared);
         break;
         BINARY_TYPES(OpCode::kPlus_BIGINT, int64_t, +);
         BINARY_TYPES(OpCode::kLT_BIGINT, int64_t, <);

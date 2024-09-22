@@ -198,28 +198,61 @@ __device__ __forceinline__ void aggregateKernel(
 }
 
 __device__ __forceinline__ void readAggregateKernel(
-    const IAggregate& agg,
+    const IAggregate* agg,
     WaveShared* shared) {
-  if (shared->blockBase > 0) {
-    if (threadIdx.x == 0) {
-      shared->status->numRows = 0;
+  auto state =
+    reinterpret_cast<DeviceAggregation*>(shared->states[agg->stateIndex]);
+  if (state->resultRowPointers) {
+    if (shared->streamIdx >= state->numReadStreams) {
+      if (threadIdx.x == 0) {
+	shared->status[blockIdx.x].numRows = 0;
+      }
+    } else {
+      auto rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;
+      auto numRows = state->resultRowPointers[shared->streamIdx][0];
+      if (rowIdx < numRows) {
+	int64_t* row = reinterpret_cast<int64_t*>(state->resultRowPointers[shared->streamIdx][rowIdx + 1]);
+	// Copy keys and accumulators to output.
+        auto* keys = reinterpret_cast<OperandIndex*>(
+            &agg->aggregates[agg->numAggregates]);
+	for (auto i = 0; i < agg->numKeys; ++i) {
+	  auto opIdx = keys[i];
+	  flatResult<int64_t>(
+			      shared->operands, opIdx, shared->blockBase, &shared->data) =
+	    *addCast<int64_t>(row, (i+1) * sizeof(int64_t));
+	}
+	for (auto i = 0; i < agg->numAggregates; ++i) {
+	  auto& acc = agg->aggregates[i];
+	  flatResult<int64_t>(
+			      shared->operands, acc.result, shared->blockBase, &shared->data) =
+	    *addCast<int64_t>(row, acc.accumulatorOffset);
+	}
     }
-    __syncthreads();
+      if (threadIdx.x == 0) {
+	shared->status[blockIdx.x].numRows = rowIdx + kBlockSize < numRows ? kBlockSize : numRows - blockIdx.x * kBlockSize;
+      }
+      __syncthreads();
+    }
+  }else {
+    if (shared->blockBase > 0) {
+      if (threadIdx.x == 0) {
+	shared->status->numRows = 0;
+      }
+      __syncthreads();
     return;
   }
-  if (threadIdx.x == 0) {
-    auto state =
-        reinterpret_cast<DeviceAggregation*>(shared->states[agg.stateIndex]);
+    if (threadIdx.x == 0) {
     char* row = state->singleRow;
     shared->status->numRows = 1;
-    for (auto i = 0; i < agg.numAggregates; ++i) {
-      auto& acc = agg.aggregates[i];
+    for (auto i = 0; i < agg->numAggregates; ++i) {
+      auto& acc = agg->aggregates[i];
       flatResult<int64_t>(
-          shared->operands, acc.result, shared->blockBase, &shared->data) =
-          *addCast<int64_t>(row, acc.accumulatorOffset);
+			  shared->operands, acc.result, shared->blockBase, &shared->data) =
+	*addCast<int64_t>(row, acc.accumulatorOffset);
     }
   }
   __syncthreads();
+  }
 }
 
 } // namespace facebook::velox::wave
