@@ -107,18 +107,19 @@ struct RowAllocator : public HashPartitionAllocator {
   }
 
   template <typename T>
-  void __device__ markRowFree(T* row) {
+  bool __device__ markRowFree(T* row) {
     auto ptr = reinterpret_cast<uintptr_t>(row);
     AllocationRange* rowRange;
-    if (row > ranges[0].base + ranges[0].firstRowOffset && row < ranges[0].base + ranges[0].rowLimit) {
+    if (ptr >= ranges[0].base + ranges[0].firstRowOffset && ptr < ranges[0].base + ranges[0].rowLimit) {
       rowRange = &ranges[0];
-    } else if (row > ranges[1].base + ranges[1].firstRowOffset && row < ranges[1].base + ranges[1].rowLimit) {
+    } else if (ptr >= ranges[1].base + ranges[1].firstRowOffset && ptr < ranges[1].base + ranges[1].rowLimit) {
       rowRange = &ranges[1];
     } else {
-      return;
+      return false;
     }
-      int32_t idx = ptr - (rowRange->base + rowRange->firstRowOffset) / rowSize;
+    int32_t idx = (ptr - (rowRange->base + rowRange->firstRowOffset)) / rowSize;
     atomicOr(reinterpret_cast<uint32_t*>(rowRange->base) + (idx >> 5), 1 << (idx & 31));
+    return true;
   }
 
 };
@@ -244,7 +245,7 @@ class GpuHashTable : public GpuHashTableBase {
           auto candidate = bucket->loadWithWait<RowType>(hitIdx);
           if (ops.compare(this, candidate, i)) {
             if (toInsert) {
-              ops.freeInsertable(toInsert, h);
+              ops.freeInsertable(this, toInsert, h);
             }
             hit = candidate;
             break;
@@ -303,9 +304,9 @@ class GpuHashTable : public GpuHashTableBase {
 
   template <typename RowType, typename Ops>
   void __device__ rehash(GpuBucket* oldBuckets, int32_t numOldBuckets, Ops ops) {
-    int32_t stride = blockDim.x * 4 * gridDim.x;
-    for (auto idx = threadIdx.x * blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
-      for (auto slot = 0; slot < 4; ++slot) {
+    int32_t stride = blockDim.x * gridDim.x;
+    for (auto idx = threadIdx.x + blockDim.x * blockIdx.x; idx < numOldBuckets; idx += stride) {
+      for (auto slot = 0; slot < GpuBucketMembers::kNumSlots; ++slot) {
 	auto* row = oldBuckets[idx].load<RowType>(slot);
 	if (row) {
 	  uint64_t h = ops.hashRow(row);
@@ -334,6 +335,7 @@ class GpuHashTable : public GpuHashTableBase {
       next: ;
       }
     }
+    __syncthreads();
   }
 
     int32_t __device__ partitionIdx(uint64_t h) const {

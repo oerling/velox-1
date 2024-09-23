@@ -67,8 +67,8 @@ class SumGroupByOps {
   newRow(GpuHashTable* table, int32_t partition, int32_t i) {
     auto* allocator = &table->allocators[partition];
     auto row = allocator->allocateRow<SumGroupRow>();
-    new(row) SumGroupRow();
     if (row) {
+      new(row) SumGroupRow();
       operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]),shared_->blockBase,  &shared_->data, row->key);
       for (auto i = 0; i < inst_->numAggregates; ++i) {
 	int64_t x;
@@ -108,8 +108,10 @@ row = newRow(table, partition, i);
     shared_->status[i / kBlockSize].errors[i & (kBlockSize - 1)] = ErrorCode::kInsufficientMemory;
   }
 
-  void __device__ freeInsertable(SumGroupRow* row, uint64_t /*h*/) {
-    row->lock = 2;
+  void __device__ freeInsertable(GpuHashTable* table, SumGroupRow* row, uint64_t h) {
+    int32_t partition = table->partitionIdx(h);
+    auto* allocator = &table->allocators[partition];
+    allocator->markRowFree(row);
   }
   
   SumGroupRow* __device__ getExclusive(

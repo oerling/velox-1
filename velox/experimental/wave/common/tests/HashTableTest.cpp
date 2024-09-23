@@ -265,7 +265,6 @@ class HashTableTest : public testing::Test {
     checkGroupBy(reference, gpuTable);
     auto size = gpuTable->sizeMask + 1;
     auto oldBuckets = gpuTable->buckets;
-    ;
     WaveBufferPtr newBuckets = arena_->allocate<GpuBucketMembers>(size);
     gpuTable->buckets = newBuckets->as<GpuBucket>();
 

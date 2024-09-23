@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string.h>
 
 /// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and
 /// .cu.
@@ -71,7 +72,7 @@ struct AllocationRange {
         firstRowOffset(roundUp64(capacity / rowSize) / 8),
         rowOffset(firstRowOffset),
         stringOffset(capacity) {
-    memset(reinterpret_cast<char*>(base), 0, firstRowOffset);
+    ::memset(reinterpret_cast<char*>(base), 0, firstRowOffset);
   }
 
   AllocationRange(AllocationRange&& other) {
@@ -96,6 +97,10 @@ struct AllocationRange {
     return size - delta;
   }
 
+  /// Sets row limit so that there are at most 'target' allocatable
+  /// bytes. If available space is less than the target, the available
+  /// space is not changed. Returns 'target' minus the decrement in
+  /// capacity.
   int32_t trimFixed(int32_t target) {
     rowLimit = std::min<int32_t>(rowLimit, rowOffset + target);
     return target - (rowLimit - rowOffset);

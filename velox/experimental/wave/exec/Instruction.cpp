@@ -78,10 +78,11 @@ void AggregateOperatorState::setSizesToSafe() {
     available += allocators[i].availableFixed() / rowSize;
   }
   int32_t spaceInTable = hashTable->maxEntries - hashTable->numDistinct;
-  if (available > spaceInTable) {
-    int32_t target = (available - spaceInTable) / numPartitions;
-    for (auto i = 0; i < numPartitions; ++i) {
-      allocators[i].trimRows(target * rowSize);
+  auto allowedPerPartition = spaceInTable / numPartitions;
+  for (auto i = 0; i < numPartitions; ++i) {
+    auto availableInAllocator = allocators[i].availableFixed() / rowSize;
+    if (availableInAllocator > allowedPerPartition) {
+      allocators[i].trimRows(allowedPerPartition * rowSize);
     }
   }
 }

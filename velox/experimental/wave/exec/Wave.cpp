@@ -932,7 +932,6 @@ void WaveStream::makeAggregate(
   auto stream = streamFromReserve();
   if (inst.keys.empty()) {
     int32_t size = inst.rowSize() + sizeof(DeviceAggregation);
-    ;
     state.allocateAggregateHeader(size, arena_);
     control.head = state.alignedHead;
     control.headSize = size;
@@ -944,11 +943,12 @@ void WaveStream::makeAggregate(
     int32_t size = sizeof(DeviceAggregation) + sizeof(GpuHashTableBase) +
         sizeof(HashPartitionAllocator) * numPartitions;
     state.allocateAggregateHeader(size, arena_);
-    auto header = state.alignedHead;
+    auto* header = state.alignedHead;
     auto* hashTable = reinterpret_cast<GpuHashTableBase*>(header + 1);
     HashPartitionAllocator* allocators =
         reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
     int32_t numBuckets = 2048;
+    header->table = hashTable;
     WaveBufferPtr table =
         arena_.allocate<char>(sizeof(GpuBucketMembers) * numBuckets);
     state.buffers.push_back(table);
@@ -964,6 +964,7 @@ void WaveStream::makeAggregate(
     state.buffers.push_back(rows);
     new (allocators) HashPartitionAllocator(
         rows->as<char>(), rows->size(), rows->size(), rowSize);
+    state.setSizesToSafe();
     stream->prefetch(getDevice(), state.alignedHead, state.alignedHeadSize);
     stream->memset(table->as<char>(), 0, table->size());
   }
@@ -1004,7 +1005,7 @@ void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
       VELOX_CHECK_NOT_NULL(operatorState.create);
       state = stream.newState(operatorState);
     }
-    ptrs[i] = state->buffers[0]->as<char>();
+    ptrs[i] = state->devicePtr();
   }
 }
 

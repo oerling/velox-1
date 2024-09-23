@@ -153,7 +153,7 @@ void setupGpuTable(
   table = buffer->as<GpuHashTableBase>();
   char* data = reinterpret_cast<char*>(table + 1);
   auto allocatorBase =
-      reinterpret_cast<HashPartitionAllocator*>(table->allocators);
+      reinterpret_cast<HashPartitionAllocator*>(data);
   data += sizeof(HashPartitionAllocator);
   // The buckets start at aligned address.
   data = reinterpret_cast<char*>(

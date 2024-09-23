@@ -510,7 +510,7 @@ void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
       std::move(aggregates),
       state,
       node->outputType());
-  if (!keys.empty()) {
+  if (!instruction->keys.empty()) {
     instruction->maxReadStreams = FLAGS_max_streams_per_driver * 10;
   }
 

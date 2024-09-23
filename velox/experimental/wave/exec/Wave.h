@@ -230,7 +230,11 @@ struct OperatorState {
     error = _error;
   }
 
+  /// Device readable pointer to the state. If unified memory, should be aligned to page boundary.
+  virtual void* devicePtr() const = 0;
+  
   int32_t id;
+
   /// Owns the device side data. Starting address of first is passed to the
   /// kernel. Layout depends on operator.
   std::vector<WaveBufferPtr> buffers;
@@ -246,7 +250,11 @@ struct AggregateOperatorState : public OperatorState {
   /// rehash check or atomic rehash needed flag.
   void setSizesToSafe();
 
-  AbstractAggregation* instruction;
+  void* devicePtr() const override {
+    return alignedHead;
+  }
+  
+  AbstractAggregation* instruction{nullptr};
 
   /// Mutex to serialize allocating row ranges to different Drivers in a
   /// multi-driver read.
