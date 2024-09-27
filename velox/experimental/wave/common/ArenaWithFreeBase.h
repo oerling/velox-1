@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace facebook::velox::wave {
 
 /// A device arena for device side allocation.

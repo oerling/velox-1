@@ -17,6 +17,10 @@
 #pragma once
 
 #include "velox/experimental/wave/common/ArenaWithFreeBase.h"
+#include <cub/thread/thread_load.cuh>
+#include <cub/util_ptx.cuh>
+#include <assert.h>
+#include "velox/experimental/wave/common/FreeSet.cuh"
 
 namespace facebook::velox::wave {
 
@@ -33,7 +37,7 @@ struct ArenaWithFree : public ArenaWithFreeBase {
 
     if (offset + rowSize < cub::ThreadLoad<cub::LOAD_CG>(&stringOffset)) {
       if (!inRange(base + offset)) {
-        GPF();
+        assert(false);
       }
       return reinterpret_cast<T*>(base + offset);
     }
@@ -50,7 +54,7 @@ struct ArenaWithFree : public ArenaWithFreeBase {
 
   void __device__ freeRow(void* row) {
     if (!inRange(row)) {
-      GPF();
+      assert(false);
     }
     uint32_t offset = reinterpret_cast<uint64_t>(row) - base;
     numFull += reinterpret_cast<FreeSet<uint32_t, 1024>*>(freeSet)->put(
@@ -63,7 +67,7 @@ struct ArenaWithFree : public ArenaWithFreeBase {
     auto offset = atomicSub(&stringOffset, size);
     if (offset - size > cub::ThreadLoad<cub::LOAD_CG>(&rowOffset)) {
       if (!inRange(base + offset - size)) {
-        GPF();
+        assert(false);
       }
       return reinterpret_cast<T*>(base + offset - size);
     }
