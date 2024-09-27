@@ -212,7 +212,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
     } else {
       VELOX_FAIL("Bad file format {}", FLAGS_data_format)
     }
-    }
+  }
 
   exec::test::TpchPlan getQueryPlan(int32_t query) {
     switch (query) {

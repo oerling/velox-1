@@ -105,12 +105,15 @@ int32_t instructionSharedMemory(const Instruction& instruction) {
   }
 }
 
-#define CALL_ONE(k, params, pc, base) {		\
-  k<<<blocksPerExe,                   \
-      kBlockSize,                     \
-      sharedSize,                     \
-      alias ? alias->stream()->stream : stream()->stream>>>(params, pc, base); \
-  CUDA_CHECK(cudaGetLastError()); };
+#define CALL_ONE(k, params, pc, base)                          \
+  {                                                            \
+    k<<<blocksPerExe,                                          \
+        kBlockSize,                                            \
+        sharedSize,                                            \
+        alias ? alias->stream()->stream : stream()->stream>>>( \
+        params, pc, base);                                     \
+    CUDA_CHECK(cudaGetLastError());                            \
+  };
 
 void WaveKernelStream::callOne(
     Stream* alias,
@@ -146,7 +149,7 @@ void WaveKernelStream::callOne(
       // No continu in this program.
       continue;
     }
-			 
+
     for (auto pc = start; pc < program.size(); ++pc) {
       assert(params.programs[0]->instructions != nullptr);
       switch (program[pc]) {
@@ -198,7 +201,10 @@ REGISTER_KERNEL("expr", waveBaseKernel);
 void __global__ setupAggregationKernel(AggregationControl op) {
   if (op.oldBuckets) {
     auto table = op.head->table;
-    reinterpret_cast<GpuHashTable*>(table)->rehash<SumGroupRow>(reinterpret_cast<GpuBucket*>(op.oldBuckets), op.numOldBuckets, SumGroupByOps(nullptr, nullptr));
+    reinterpret_cast<GpuHashTable*>(table)->rehash<SumGroupRow>(
+        reinterpret_cast<GpuBucket*>(op.oldBuckets),
+        op.numOldBuckets,
+        SumGroupByOps(nullptr, nullptr));
     return;
   }
   auto* data = new (op.head) DeviceAggregation();
@@ -213,7 +219,8 @@ void WaveKernelStream::setupAggregation(AggregationControl& op) {
   if (op.oldBuckets) {
     // One thread per bucket. Enough TBs for full device.
     numThreads = kBlockSize;
-    numBlocks = std::min<int64_t>(roundUp(op.numOldBuckets, kBlockSize) / kBlockSize, 640);
+    numBlocks = std::min<int64_t>(
+        roundUp(op.numOldBuckets, kBlockSize) / kBlockSize, 640);
   }
   setupAggregationKernel<<<numBlocks, numThreads, 0, stream_->stream>>>(op);
   wait();

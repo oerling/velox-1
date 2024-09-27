@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/common/ArenaWithFree.cuh"
 #include "velox/experimental/wave/common/Bits.cuh"
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/HashTable.cuh"
-#include "velox/experimental/wave/common/ArenaWithFree.cuh"
 #include "velox/experimental/wave/common/tests/Updates.cuh"
 
 #include "velox/experimental/wave/common/tests/BlockTest.h"
@@ -295,9 +295,10 @@ class MockGroupByOps {
     return hashMix(1, row->key);
   }
 
-    bool __device__
-  compare(GpuHashTable* table, TestingRow* row, int32_t i) {
-      return asDeviceAtomic<int64_t>(&row->key)->load(cuda::memory_order_consume) == reinterpret_cast<int64_t**>(probe_->keys)[0][i];
+  bool __device__ compare(GpuHashTable* table, TestingRow* row, int32_t i) {
+    return asDeviceAtomic<int64_t>(&row->key)->load(
+               cuda::memory_order_consume) ==
+        reinterpret_cast<int64_t**>(probe_->keys)[0][i];
   }
 
   TestingRow* __device__
@@ -309,7 +310,9 @@ class MockGroupByOps {
       row->count = 0;
 
       new (&row->concatenation) ArrayAgg64();
-      asDeviceAtomic<int64_t>(&row->key)->store(reinterpret_cast<int64_t**>(probe_->keys)[0][i], cuda::memory_order_release);
+      asDeviceAtomic<int64_t>(&row->key)->store(
+          reinterpret_cast<int64_t**>(probe_->keys)[0][i],
+          cuda::memory_order_release);
     }
     return row;
   }
@@ -338,8 +341,8 @@ class MockGroupByOps {
     return ProbeState::kDone;
   }
 
-  void __device__   addHostRetry(int32_t i) {
-    assert(false);  			      
+  void __device__ addHostRetry(int32_t i) {
+    assert(false);
   }
 
   TestingRow* __device__ getExclusive(
@@ -358,21 +361,19 @@ class MockGroupByOps {
     }
   }
 
-  void __device__ freeInsertable(GpuHashTable* table, TestingRow* row, uint64_t h) {
+  void __device__
+  freeInsertable(GpuHashTable* table, TestingRow* row, uint64_t h) {
     int32_t partition = table->partitionIdx(h);
     auto* allocator = &table->allocators[partition];
     allocator->markRowFree(row);
-  }   
-  
+  }
+
   void __device__ writeDone(TestingRow* row) {
     // atomicUnlock(&row->flags);
   }
 
-  ProbeState __device__ update(
-      GpuHashTable* table,
-      GpuBucket* bucket,
-      TestingRow* row,
-      int32_t i) {
+  ProbeState __device__
+  update(GpuHashTable* table, GpuBucket* bucket, TestingRow* row, int32_t i) {
     auto* keys = reinterpret_cast<int64_t**>(probe_->keys);
     atomicAdd((unsigned long long*)&row->count, (unsigned long long)keys[1][i]);
     return ProbeState::kDone;
@@ -397,9 +398,9 @@ void __global__ __launch_bounds__(1024) hashTestKernel(
       MockGroupByOps ops(probe);
       int32_t begin = blockIdx.x * probe->numRowsPerThread * blockDim.x;
       int32_t end = begin + probe->numRows[blockIdx.x];
-      
+
       for (auto i = begin + threadIdx.x; i < end; i += blockDim.x) {
-	table->updatingProbe<TestingRow>(i, cub::LaneId(), i < end, ops);
+        table->updatingProbe<TestingRow>(i, cub::LaneId(), i < end, ops);
       }
       break;
     }
@@ -423,8 +424,7 @@ void BlockTestStream::hashTest(
   CUDA_CHECK(cudaGetLastError());
 }
 
-
-void __global__  __launch_bounds__(1024)  rehashKernel(
+void __global__ __launch_bounds__(1024) rehashKernel(
     GpuHashTable* table,
     GpuBucket* oldBuckets,
     int32_t numOldBuckets) {
@@ -443,11 +443,10 @@ void BlockTestStream::rehash(
     numBlocks = 640;
   }
   rehashKernel<<<numBlocks, kBlockSize, 0, stream_->stream>>>(
-							      reinterpret_cast<GpuHashTable*>(table), oldBuckets, numOldBuckets);
+      reinterpret_cast<GpuHashTable*>(table), oldBuckets, numOldBuckets);
   CUDA_CHECK(cudaGetLastError());
 }
 
-  
 void __global__ allocatorTestKernel(
     int32_t numAlloc,
     int32_t numFree,
@@ -707,7 +706,7 @@ REGISTER_KERNEL("partitionShorts", partitionShortsKernel);
 REGISTER_KERNEL("hashTest", hashTestKernel);
 REGISTER_KERNEL("rehash", rehashKernel);
 
-  REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
+REGISTER_KERNEL("allocatorTest", allocatorTestKernel);
 REGISTER_KERNEL("sum1atm", updateSum1AtomicKernel);
 REGISTER_KERNEL("sum1atmCoaShfl", updateSum1AtomicCoalesceShflKernel);
 REGISTER_KERNEL("sum1atmCoaShmem", updateSum1AtomicCoalesceShmemKernel);

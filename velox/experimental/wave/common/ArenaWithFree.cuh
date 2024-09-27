@@ -20,7 +20,6 @@
 
 namespace facebook::velox::wave {
 
-
 /// Allocator subclass that defines device member functions.
 struct ArenaWithFree : public ArenaWithFreeBase {
   template <typename T>
@@ -78,4 +77,4 @@ struct ArenaWithFree : public ArenaWithFreeBase {
   }
 };
 
-}
+} // namespace facebook::velox::wave

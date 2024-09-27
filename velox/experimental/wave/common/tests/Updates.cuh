@@ -242,7 +242,7 @@ void __device__ testSumOrder(TestingRow* rows, HashProbe* probe) {
             ->store(0, cuda::memory_order_release);
         break;
       } else {
-	__nanosleep(10 * waitNano);
+        __nanosleep(10 * waitNano);
         waitNano += threadIdx.x & 31;
       }
     }

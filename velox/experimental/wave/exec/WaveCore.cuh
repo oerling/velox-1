@@ -30,7 +30,10 @@ inline T* __device__
 gridStatus(const WaveShared* shared, const InstructionStatus& status) {
   return reinterpret_cast<T*>(
       roundUp(
-          reinterpret_cast<uintptr_t>(&shared->status[shared->numBlocks - (shared->blockBase / kBlockSize) ]), 8) +
+          reinterpret_cast<uintptr_t>(
+              &shared->status
+                   [shared->numBlocks - (shared->blockBase / kBlockSize)]),
+          8) +
       status.gridState);
 }
 
@@ -174,28 +177,28 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
                          params.blockBase[blockIdx.x + blockOffset]) *         \
         blockDim.x;                                                            \
     shared->states = params.operatorStates[programIndex];                      \
-    shared->numBlocks = params.numBlocks;				\
-    shared->numRowsPerThread = params.numRowsPerThread; \
-    shared->streamIdx = params.streamIdx; \
-    shared->isContinue = params.startPC != nullptr; \
-    shared->hasContinue = false;					\
-    shared->stop = false;							\
+    shared->numBlocks = params.numBlocks;                                      \
+    shared->numRowsPerThread = params.numRowsPerThread;                        \
+    shared->streamIdx = params.streamIdx;                                      \
+    shared->isContinue = params.startPC != nullptr;                            \
+    shared->hasContinue = false;                                               \
+    shared->stop = false;                                                      \
   }                                                                            \
   __syncthreads();                                                             \
   auto blockBase = shared->blockBase;                                          \
   auto operands = shared->operands;                                            \
   ErrorCode laneStatus;                                                        \
   Instruction* instruction;                                                    \
-  if (!shared->isContinue) {                                             \
+  if (!shared->isContinue) {                                                   \
     instruction = program->instructions;                                       \
     laneStatus =                                                               \
         threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
   } else {                                                                     \
-    auto start = params.startPC[programIndex];				\
-    if (start == ~0) { \
-      return; /* no continue in this program*/				\
-    }									\
-    instruction = program->instructions + start;				\
+    auto start = params.startPC[programIndex];                                 \
+    if (start == ~0) {                                                         \
+      return; /* no continue in this program*/                                 \
+    }                                                                          \
+    instruction = program->instructions + start;                               \
     laneStatus = shared->status->errors[threadIdx.x];                          \
   }
 
