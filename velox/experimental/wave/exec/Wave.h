@@ -230,9 +230,10 @@ struct OperatorState {
     error = _error;
   }
 
-  /// Device readable pointer to the state. If unified memory, should be aligned to page boundary.
+  /// Device readable pointer to the state. If unified memory, should be aligned
+  /// to page boundary.
   virtual void* devicePtr() const = 0;
-  
+
   int32_t id;
 
   /// Owns the device side data. Starting address of first is passed to the
@@ -253,7 +254,7 @@ struct AggregateOperatorState : public OperatorState {
   void* devicePtr() const override {
     return alignedHead;
   }
-  
+
   AbstractAggregation* instruction{nullptr};
 
   /// Mutex to serialize allocating row ranges to different Drivers in a
@@ -959,8 +960,11 @@ class WaveStream {
     }
     auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
     return reinterpret_cast<T*>(
-				bits::roundUp(reinterpret_cast<uintptr_t>(&hostBlockStatus_->as<BlockStatus>()[numBlocks]), 8)
-				+ status.gridState);
+        bits::roundUp(
+            reinterpret_cast<uintptr_t>(
+                &hostBlockStatus_->as<BlockStatus>()[numBlocks]),
+            8) +
+        status.gridState);
   }
 
   BlockStatus* hostBlockStatus() const {

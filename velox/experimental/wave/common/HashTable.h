@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <string.h>
+#include <cstdint>
 
 /// Structs for tagged GPU hash table. Can be inclued in both Velox .cpp and
 /// .cu.
@@ -103,15 +103,16 @@ struct AllocationRange {
 
   void clearOverflows(int32_t rowSize) {
     if (rowOffset > rowLimit) {
-      // Set 'rowOffset' to the greatest multipl of rowSize from 'base' that is below the limit.
-      int32_t numRows = (rowLimit - firstRowOffset ) / rowSize;
+      // Set 'rowOffset' to the greatest multipl of rowSize from 'base' that is
+      // below the limit.
+      int32_t numRows = (rowLimit - firstRowOffset) / rowSize;
       rowOffset = firstRowOffset + numRows * rowSize;
     }
     if (stringOffset < rowLimit) {
       stringOffset = rowLimit;
     }
   }
-  
+
   /// Sets row limit so that there are at most 'target' allocatable
   /// bytes. If available space is less than the target, the available
   /// space is not changed. Returns 'target' minus the available space
@@ -167,7 +168,7 @@ struct HashPartitionAllocator {
     ranges[0].clearOverflows(rowSize);
     ranges[1].clearOverflows(rowSize);
   }
-  
+
   /// Raises the row limit by up to size bytes. Returns th amount raised.
   int32_t raiseRowLimits(int32_t size) {
     auto raised = ranges[0].raiseRowLimit(size);

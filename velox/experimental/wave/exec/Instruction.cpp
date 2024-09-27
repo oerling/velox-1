@@ -158,7 +158,7 @@ AdvanceResult AbstractAggregation::canAdvance(
     // The hash table needs memory or rehash. Request a Task-wide break to
     // resupply the device side hash table.
     return {
-	.numRows = stream.numRows(),
+        .numRows = stream.numRows(),
         .instructionIdx = instructionIdx,
         .isRetry = true,
         .syncDrivers = true,
@@ -270,8 +270,11 @@ AdvanceResult AbstractReadAggregation::canAdvance(
 
       // Put the new array in the per-stream array in device side state.
       tempPtr = aggState->resultRows[streamIdx]->as<int64_t>();
-      deviceStream->hostToDeviceAsync(          aggState->resultRowPointers->as<int64_t*>() + streamIdx, &tempPtr, sizeof(tempPtr));
-  }
+      deviceStream->hostToDeviceAsync(
+          aggState->resultRowPointers->as<int64_t*>() + streamIdx,
+          &tempPtr,
+          sizeof(tempPtr));
+    }
     auto numRows = makeResultRows(
         aggState->ranges.data(),
         aggState->ranges.size(),

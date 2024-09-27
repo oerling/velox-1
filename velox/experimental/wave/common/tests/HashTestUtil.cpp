@@ -152,8 +152,7 @@ void setupGpuTable(
   buffer = arena->allocate<char>(bytes + kAlignment);
   table = buffer->as<GpuHashTableBase>();
   char* data = reinterpret_cast<char*>(table + 1);
-  auto allocatorBase =
-      reinterpret_cast<HashPartitionAllocator*>(data);
+  auto allocatorBase = reinterpret_cast<HashPartitionAllocator*>(data);
   data += sizeof(HashPartitionAllocator);
   // The buckets start at aligned address.
   data = reinterpret_cast<char*>(
