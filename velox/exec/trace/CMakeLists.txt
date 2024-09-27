@@ -31,7 +31,7 @@ velox_link_libraries(
     velox_presto_serializer)
 
 velox_add_library(velox_query_trace_retrieve QueryDataReader.cpp
-                  QueryMetadataReader.cpp)
+                  QueryMetadataReader.cpp QueryTraceUtil.cpp)
 
 velox_link_libraries(
   velox_query_trace_retrieve

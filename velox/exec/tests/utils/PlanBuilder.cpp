@@ -434,7 +434,7 @@ PlanBuilder& PlanBuilder::tableWrite(
       connector::hive::LocationHandle::TableType::kNew,
       outputFileName);
   std::shared_ptr<HiveBucketProperty> bucketProperty;
-  if (!partitionBy.empty() && bucketCount != 0) {
+  if (bucketCount != 0) {
     bucketProperty =
         buildHiveBucketProperty(rowType, bucketCount, bucketedBy, sortBy);
   }
@@ -471,7 +471,8 @@ PlanBuilder& PlanBuilder::tableWrite(
       rowType->names(),
       aggregationNode,
       insertHandle,
-      false,
+      !partitionBy.empty(),
+      bucketProperty != nullptr,
       TableWriteTraits::outputType(aggregationNode),
       connector::CommitStrategy::kNoCommit,
       planNode_);
@@ -801,7 +802,7 @@ PlanBuilder::AggregatesAndNames PlanBuilder::createAggregateExpressionsAndNames(
             step == core::AggregationNode::Step::kSingle,
             "Order sensitive aggregation over sorted inputs cannot be split "
             "into partial and final: {}.",
-            aggregate)
+            aggregate);
       }
     }
 
@@ -968,7 +969,7 @@ PlanBuilder& PlanBuilder::expand(
 
   for (auto i = 0; i < numRows; i++) {
     std::vector<core::TypedExprPtr> projectExpr;
-    VELOX_CHECK_EQ(numColumns, projections[i].size())
+    VELOX_CHECK_EQ(numColumns, projections[i].size());
     for (auto j = 0; j < numColumns; j++) {
       auto untypedExpression = parse::parseExpr(projections[i][j], options_);
       auto typedExpression = inferTypes(untypedExpression);

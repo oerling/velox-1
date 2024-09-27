@@ -1130,6 +1130,7 @@ bool MergeJoinNode::isSupported(core::JoinType joinType) {
     case core::JoinType::kLeftSemiFilter:
     case core::JoinType::kRightSemiFilter:
     case core::JoinType::kAnti:
+    case core::JoinType::kFull:
       return true;
 
     default:
@@ -1606,7 +1607,7 @@ MarkDistinctNode::MarkDistinctNode(
       sources_{std::move(source)},
       outputType_(
           getMarkDistinctOutputType(sources_[0]->outputType(), markerName_)) {
-  VELOX_USER_CHECK_GT(markerName_.size(), 0)
+  VELOX_USER_CHECK_GT(markerName_.size(), 0);
   VELOX_USER_CHECK_GT(distinctKeys_.size(), 0);
 }
 
@@ -1852,6 +1853,7 @@ folly::dynamic TableWriteNode::serialize() const {
   obj["connectorInsertTableHandle"] =
       insertTableHandle_->connectorInsertTableHandle()->serialize();
   obj["hasPartitioningScheme"] = hasPartitioningScheme_;
+  obj["hasBucketProperty"] = hasBucketProperty_;
   obj["outputType"] = outputType_->serialize();
   obj["commitStrategy"] = connector::commitStrategyToString(commitStrategy_);
   return obj;
@@ -1874,6 +1876,7 @@ PlanNodePtr TableWriteNode::create(const folly::dynamic& obj, void* context) {
           ISerializable::deserialize<connector::ConnectorInsertTableHandle>(
               obj["connectorInsertTableHandle"]));
   const bool hasPartitioningScheme = obj["hasPartitioningScheme"].asBool();
+  const bool hasBucketProperty = obj["hasBucketProperty"].asBool();
   auto outputType = deserializeRowType(obj["outputType"]);
   auto commitStrategy =
       connector::stringToCommitStrategy(obj["commitStrategy"].asString());
@@ -1886,6 +1889,7 @@ PlanNodePtr TableWriteNode::create(const folly::dynamic& obj, void* context) {
       std::make_shared<InsertTableHandle>(
           connectorId, connectorInsertTableHandle),
       hasPartitioningScheme,
+      hasBucketProperty,
       outputType,
       commitStrategy,
       source);

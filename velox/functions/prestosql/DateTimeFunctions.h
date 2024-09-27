@@ -401,28 +401,26 @@ struct LastDayOfMonthFunction : public InitSessionTimezone<T>,
       out_type<Date>& result,
       const arg_type<Timestamp>& timestamp) {
     auto dt = getDateTime(timestamp, this->timeZone_);
-    int64_t daysSinceEpochFromDate;
-    auto status =
-        util::lastDayOfMonthSinceEpochFromDate(dt, daysSinceEpochFromDate);
-    if (!status.ok()) {
-      VELOX_DCHECK(status.isUserError());
-      VELOX_USER_FAIL(status.message());
+    Expected<int64_t> daysSinceEpochFromDate =
+        util::lastDayOfMonthSinceEpochFromDate(dt);
+    if (daysSinceEpochFromDate.hasError()) {
+      VELOX_DCHECK(daysSinceEpochFromDate.error().isUserError());
+      VELOX_USER_FAIL(daysSinceEpochFromDate.error().message());
     }
-    result = daysSinceEpochFromDate;
+    result = daysSinceEpochFromDate.value();
   }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Date>& result,
       const arg_type<Date>& date) {
     auto dt = getDateTime(date);
-    int64_t daysSinceEpochFromDate;
-    auto status =
-        util::lastDayOfMonthSinceEpochFromDate(dt, daysSinceEpochFromDate);
-    if (!status.ok()) {
-      VELOX_DCHECK(status.isUserError());
-      VELOX_USER_FAIL(status.message());
+    Expected<int64_t> lastDayOfMonthSinceEpoch =
+        util::lastDayOfMonthSinceEpochFromDate(dt);
+    if (lastDayOfMonthSinceEpoch.hasError()) {
+      VELOX_DCHECK(lastDayOfMonthSinceEpoch.error().isUserError());
+      VELOX_USER_FAIL(lastDayOfMonthSinceEpoch.error().message());
     }
-    result = daysSinceEpochFromDate;
+    result = lastDayOfMonthSinceEpoch.value();
   }
 
   FOLLY_ALWAYS_INLINE void call(
@@ -430,14 +428,13 @@ struct LastDayOfMonthFunction : public InitSessionTimezone<T>,
       const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
     auto timestamp = this->toTimestamp(timestampWithTimezone);
     auto dt = getDateTime(timestamp, nullptr);
-    int64_t daysSinceEpochFromDate;
-    auto status =
-        util::lastDayOfMonthSinceEpochFromDate(dt, daysSinceEpochFromDate);
-    if (!status.ok()) {
-      VELOX_DCHECK(status.isUserError());
-      VELOX_USER_FAIL(status.message());
+    Expected<int64_t> lastDayOfMonthSinceEpoch =
+        util::lastDayOfMonthSinceEpochFromDate(dt);
+    if (lastDayOfMonthSinceEpoch.hasError()) {
+      VELOX_DCHECK(lastDayOfMonthSinceEpoch.error().isUserError());
+      VELOX_USER_FAIL(lastDayOfMonthSinceEpoch.error().message());
     }
-    result = daysSinceEpochFromDate;
+    result = lastDayOfMonthSinceEpoch.value();
   }
 };
 
@@ -533,11 +530,22 @@ struct TimestampPlusInterval {
     result = Timestamp::fromMillisNoError(a.toMillis() + b);
   }
 
+  // We only need to capture the time zone session config if we are operating on
+  // a timestamp and a IntervalYearMonth.
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const arg_type<Timestamp>*,
+      const arg_type<IntervalYearMonth>*) {
+    sessionTimeZone_ = getTimeZoneFromConfig(config);
+  }
+
   FOLLY_ALWAYS_INLINE void call(
       out_type<Timestamp>& result,
       const arg_type<Timestamp>& timestamp,
       const arg_type<IntervalYearMonth>& interval) {
-    result = addToTimestamp(timestamp, DateTimeUnit::kMonth, interval);
+    result = addToTimestamp(
+        timestamp, DateTimeUnit::kMonth, interval, sessionTimeZone_);
   }
 
   FOLLY_ALWAYS_INLINE void call(
@@ -555,6 +563,10 @@ struct TimestampPlusInterval {
     result = addToTimestampWithTimezone(
         timestampWithTimezone, DateTimeUnit::kMonth, interval);
   }
+
+ private:
+  // Only set if the parameters are timestamp and IntervalYearMonth.
+  const tz::TimeZone* sessionTimeZone_ = nullptr;
 };
 
 template <typename T>
@@ -574,11 +586,22 @@ struct IntervalPlusTimestamp {
     result = Timestamp::fromMillisNoError(a + b.toMillis());
   }
 
+  // We only need to capture the time zone session config if we are operating on
+  // a timestamp and a IntervalYearMonth.
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const arg_type<IntervalYearMonth>*,
+      const arg_type<Timestamp>*) {
+    sessionTimeZone_ = getTimeZoneFromConfig(config);
+  }
+
   FOLLY_ALWAYS_INLINE void call(
       out_type<Timestamp>& result,
       const arg_type<IntervalYearMonth>& interval,
       const arg_type<Timestamp>& timestamp) {
-    result = addToTimestamp(timestamp, DateTimeUnit::kMonth, interval);
+    result = addToTimestamp(
+        timestamp, DateTimeUnit::kMonth, interval, sessionTimeZone_);
   }
 
   FOLLY_ALWAYS_INLINE void call(
@@ -596,6 +619,10 @@ struct IntervalPlusTimestamp {
     result = addToTimestampWithTimezone(
         timestampWithTimezone, DateTimeUnit::kMonth, interval);
   }
+
+ private:
+  // Only set if the parameters are timestamp and IntervalYearMonth.
+  const tz::TimeZone* sessionTimeZone_ = nullptr;
 };
 
 template <typename T>
@@ -615,11 +642,22 @@ struct TimestampMinusInterval {
     result = Timestamp::fromMillisNoError(a.toMillis() - b);
   }
 
+  // We only need to capture the time zone session config if we are operating on
+  // a timestamp and a IntervalYearMonth.
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const arg_type<Timestamp>*,
+      const arg_type<IntervalYearMonth>*) {
+    sessionTimeZone_ = getTimeZoneFromConfig(config);
+  }
+
   FOLLY_ALWAYS_INLINE void call(
       out_type<Timestamp>& result,
       const arg_type<Timestamp>& timestamp,
       const arg_type<IntervalYearMonth>& interval) {
-    result = addToTimestamp(timestamp, DateTimeUnit::kMonth, -interval);
+    result = addToTimestamp(
+        timestamp, DateTimeUnit::kMonth, -interval, sessionTimeZone_);
   }
 
   FOLLY_ALWAYS_INLINE void call(
@@ -637,6 +675,10 @@ struct TimestampMinusInterval {
     result = addToTimestampWithTimezone(
         timestampWithTimezone, DateTimeUnit::kMonth, -interval);
   }
+
+ private:
+  // Only set if the parameters are timestamp and IntervalYearMonth.
+  const tz::TimeZone* sessionTimeZone_ = nullptr;
 };
 
 template <typename T>
@@ -1333,9 +1375,8 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
       const arg_type<Varchar>& unitString,
       const arg_type<Timestamp>& timestamp1,
       const arg_type<Timestamp>& timestamp2) {
-    const auto unit = unit_.has_value()
-        ? unit_.value()
-        : fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value();
+    const auto unit = unit_.value_or(
+        fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value());
 
     if (LIKELY(sessionTimeZone_ != nullptr)) {
       // sessionTimeZone not null means that the config
@@ -1374,13 +1415,19 @@ struct DateDiffFunction : public TimestampWithTimezoneSupport<T> {
   FOLLY_ALWAYS_INLINE void call(
       int64_t& result,
       const arg_type<Varchar>& unitString,
-      const arg_type<TimestampWithTimezone>& timestamp1,
-      const arg_type<TimestampWithTimezone>& timestamp2) {
-    call(
-        result,
-        unitString,
-        this->toTimestamp(timestamp1, true),
-        this->toTimestamp(timestamp2, true));
+      const arg_type<TimestampWithTimezone>& timestampWithTz1,
+      const arg_type<TimestampWithTimezone>& timestampWithTz2) {
+    const auto unit = unit_.value_or(
+        fromDateTimeUnitString(unitString, true /*throwIfInvalid*/).value());
+
+    // Presto's behavior is to use the time zone of the first parameter to
+    // perform the calculation. Note that always normalizing to UTC is not
+    // correct as calculations may cross daylight savings boundaries.
+    auto timestamp1 = this->toTimestamp(timestampWithTz1, false);
+    auto timestamp2 = this->toTimestamp(timestampWithTz2, true);
+    timestamp2.toTimezone(*tz::locateZone(unpackZoneKeyId(timestampWithTz1)));
+
+    result = diffTimestamp(unit, timestamp1, timestamp2);
   }
 };
 

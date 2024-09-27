@@ -13,12 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/TableScan.h"
-#include <folly/synchronization/Baton.h>
-#include <folly/synchronization/Latch.h>
 #include <atomic>
 #include <shared_mutex>
-#include "folly/experimental/EventCount.h"
+
+#include <fmt/ranges.h>
+#include <folly/experimental/EventCount.h>
+#include <folly/synchronization/Baton.h>
+#include <folly/synchronization/Latch.h>
+
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/file/tests/FaultyFile.h"
@@ -34,6 +36,7 @@
 #include "velox/exec/Exchange.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/TableScan.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -1536,7 +1539,7 @@ TEST_F(TableScanTest, preloadingSplitClose) {
       latch.count_down();
     });
   }
-  ASSERT_EQ(Task::numCreatedTasks(), Task::numDeletedTasks());
+  ASSERT_EQ(Task::numRunningTasks(), 0);
   auto task = assertQuery(tableScanNode(), filePaths, "SELECT * FROM tmp", 2);
   auto stats = getTableScanRuntimeStats(task);
 
@@ -1544,9 +1547,8 @@ TEST_F(TableScanTest, preloadingSplitClose) {
   ASSERT_GT(stats.at("preloadedSplits").sum, 1);
 
   task.reset();
-  // Once all task references are cleared, the count of deleted tasks should
-  // promptly match the count of created tasks.
-  ASSERT_EQ(Task::numCreatedTasks(), Task::numDeletedTasks());
+  // Once all task references are cleared, all the tasks should be destroyed.
+  ASSERT_EQ(Task::numRunningTasks(), 0);
   // Clean blocking items in the IO thread pool.
   for (auto& baton : batons) {
     baton.post();
@@ -4802,6 +4804,67 @@ TEST_F(TableScanTest, dynamicFilters) {
       .assertResults(makeRowVector({makeFlatVector<int64_t>(0)}));
 }
 
+TEST_F(TableScanTest, dynamicFilterWithRowIndexColumn) {
+  // This test ensures dynamic filters can be mapped to correct field when there
+  // is row_index column.
+  auto aVector =
+      makeRowVector({"a"}, {makeFlatVector<int64_t>(10, folly::identity)});
+  auto bVector = makeRowVector({"b"}, {makeFlatVector<int64_t>(10, [](auto i) {
+                                 if (i < 5) {
+                                   return i;
+                                 } else {
+                                   return 10 + i;
+                                 }
+                               })});
+  auto resVector = makeRowVector(
+      {"row_index", "a"},
+      {makeFlatVector<int64_t>(5, folly::identity),
+       makeFlatVector<int64_t>(5, folly::identity)});
+  std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+      assignments;
+  assignments["a"] = std::make_shared<connector::hive::HiveColumnHandle>(
+      "a",
+      connector::hive::HiveColumnHandle::ColumnType::kRegular,
+      BIGINT(),
+      BIGINT());
+  assignments["row_index"] =
+      std::make_shared<connector::hive::HiveColumnHandle>(
+          "row_index",
+          connector::hive::HiveColumnHandle::ColumnType::kRowIndex,
+          BIGINT(),
+          BIGINT());
+  std::shared_ptr<TempFilePath> files[2];
+  files[0] = TempFilePath::create();
+  writeToFile(files[0]->getPath(), {aVector});
+  files[1] = TempFilePath::create();
+  writeToFile(files[1]->getPath(), {bVector});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  core::PlanNodeId aScanId;
+  core::PlanNodeId bScanId;
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .tableScan(
+                      ROW({"row_index", "a"}, {BIGINT(), BIGINT()}),
+                      {},
+                      "",
+                      nullptr,
+                      assignments)
+                  .capturePlanNodeId(aScanId)
+                  .hashJoin(
+                      {"a"},
+                      {"b"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(ROW({"b"}, {BIGINT()}))
+                          .capturePlanNodeId(bScanId)
+                          .planNode(),
+                      "", /*filter*/
+                      {"row_index", "a"})
+                  .planNode();
+  AssertQueryBuilder(plan)
+      .split(aScanId, makeHiveConnectorSplit(files[0]->getPath()))
+      .split(bScanId, makeHiveConnectorSplit(files[1]->getPath()))
+      .assertResults(resVector);
+}
+
 // TODO: re-enable this test once we add back driver suspension support for
 // table scan.
 TEST_F(TableScanTest, DISABLED_memoryArbitrationWithSlowTableScan) {
@@ -5016,4 +5079,38 @@ DEBUG_ONLY_TEST_F(TableScanTest, cancellationToken) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   queryThread.join();
+}
+
+TEST_F(TableScanTest, rowNumberInRemainingFilter) {
+  constexpr int kSize = 100;
+  auto vector = makeRowVector({
+      makeFlatVector<int64_t>(kSize, folly::identity),
+  });
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  auto outputType = ROW({"c0"}, {BIGINT()});
+  auto remainingFilter = parseExpr("r1 % 2 == 0", ROW({"r1"}, {BIGINT()}));
+  auto tableHandle = makeTableHandle(SubfieldFilters{}, remainingFilter);
+  auto plan = PlanBuilder()
+                  .startTableScan()
+                  .outputType(outputType)
+                  .tableHandle(tableHandle)
+                  .assignments({
+                      {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                      {"r1",
+                       std::make_shared<HiveColumnHandle>(
+                           "r1",
+                           HiveColumnHandle::ColumnType::kRowIndex,
+                           BIGINT(),
+                           BIGINT())},
+                  })
+                  .endTableScan()
+                  .planNode();
+  auto expected = makeRowVector(
+      {"c0"}, {makeFlatVector<int64_t>(kSize / 2, [](vector_size_t row) {
+        return row * 2;
+      })});
+  AssertQueryBuilder(plan)
+      .split(makeHiveConnectorSplit(file->getPath()))
+      .assertResults(expected);
 }

@@ -364,9 +364,18 @@ struct ArrayVectorBase : BaseVector {
     sizes_->asMutable<vector_size_t>()[i] = size;
   }
 
-  /// Verify that an ArrayVector/MapVector does not contain overlapping [offset,
-  /// size] ranges. Throws in case overlaps are found.
-  void checkRanges() const;
+  /// Check if there is any overlapping [offset, size] ranges.
+  bool hasOverlappingRanges() const {
+    return hasOverlappingRanges(size(), rawNulls(), rawOffsets_, rawSizes_);
+  }
+
+  /// Check if there is any overlapping [offset, size] ranges for any non-null
+  /// non-empty rows.
+  static bool hasOverlappingRanges(
+      vector_size_t size,
+      const uint64_t* nulls,
+      const vector_size_t* offsets,
+      const vector_size_t* sizes);
 
  protected:
   ArrayVectorBase(

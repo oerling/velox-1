@@ -218,7 +218,7 @@ class HiveInsertTableHandle : public ConnectorInsertTableHandle {
     if (compressionKind.has_value()) {
       VELOX_CHECK(
           compressionKind.value() != common::CompressionKind_MAX,
-          "Unsupported compression type: CompressionKind_MAX")
+          "Unsupported compression type: CompressionKind_MAX");
     }
   }
 
@@ -626,7 +626,7 @@ struct fmt::formatter<facebook::velox::connector::hive::HiveDataSink::State>
     : formatter<int> {
   auto format(
       facebook::velox::connector::hive::HiveDataSink::State s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };
@@ -637,7 +637,7 @@ struct fmt::formatter<
     : formatter<int> {
   auto format(
       facebook::velox::connector::hive::LocationHandle::TableType s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };

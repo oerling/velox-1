@@ -1052,7 +1052,7 @@ uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
         break;
       case DateTimeFormatSpecifier::TIMEZONE:
         if (timezone == nullptr) {
-          VELOX_USER_FAIL("Timezone unknown")
+          VELOX_USER_FAIL("Timezone unknown");
         }
         size += std::max(
             token.pattern.minRepresentDigits, timezone->name().length());
@@ -1295,10 +1295,10 @@ int32_t DateTimeFormatter::format(
           // TODO: implement short name time zone, need a map from full name to
           // short name
           if (token.pattern.minRepresentDigits <= 3) {
-            VELOX_UNSUPPORTED("short name time zone is not yet supported")
+            VELOX_UNSUPPORTED("short name time zone is not yet supported");
           }
           if (timezone == nullptr) {
-            VELOX_USER_FAIL("Timezone unknown")
+            VELOX_USER_FAIL("Timezone unknown");
           }
           const auto& piece = timezone->name();
           std::memcpy(result, piece.data(), piece.length());
@@ -1423,27 +1423,27 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
   }
 
   // Convert the parsed date/time into a timestamp.
-  int64_t daysSinceEpoch;
-  Status status;
+  Expected<int64_t> daysSinceEpoch;
   if (date.weekDateFormat) {
-    status = util::daysSinceEpochFromWeekDate(
-        date.year, date.week, date.dayOfWeek, daysSinceEpoch);
+    daysSinceEpoch =
+        util::daysSinceEpochFromWeekDate(date.year, date.week, date.dayOfWeek);
   } else if (date.dayOfYearFormat) {
-    status = util::daysSinceEpochFromDayOfYear(
-        date.year, date.dayOfYear, daysSinceEpoch);
+    daysSinceEpoch =
+        util::daysSinceEpochFromDayOfYear(date.year, date.dayOfYear);
   } else {
-    status = util::daysSinceEpochFromDate(
-        date.year, date.month, date.day, daysSinceEpoch);
+    daysSinceEpoch =
+        util::daysSinceEpochFromDate(date.year, date.month, date.day);
   }
-  if (!status.ok()) {
-    VELOX_DCHECK(status.isUserError());
-    return folly::makeUnexpected(status);
+  if (daysSinceEpoch.hasError()) {
+    VELOX_DCHECK(daysSinceEpoch.error().isUserError());
+    return folly::makeUnexpected(daysSinceEpoch.error());
   }
 
   int64_t microsSinceMidnight =
       util::fromTime(date.hour, date.minute, date.second, date.microsecond);
   return DateTimeResult{
-      util::fromDatetime(daysSinceEpoch, microsSinceMidnight), date.timezoneId};
+      util::fromDatetime(daysSinceEpoch.value(), microsSinceMidnight),
+      date.timezoneId};
 }
 
 std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
@@ -1558,7 +1558,7 @@ std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
         case 'w':
         case 'X':
           VELOX_UNSUPPORTED(
-              "Date format specifier is not supported: %{}", *tokenEnd)
+              "Date format specifier is not supported: %{}", *tokenEnd);
         default:
           builder.appendLiteral(tokenEnd, 1);
           break;
@@ -1695,6 +1695,131 @@ std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
     }
   }
   return builder.setType(DateTimeFormatterType::JODA).build();
+}
+
+std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
+    const std::string_view& format,
+    bool lenient) {
+  VELOX_USER_CHECK(!format.empty(), "Format pattern should not be empty.");
+
+  DateTimeFormatterBuilder builder(format.size());
+  const char* cur = format.data();
+  const char* end = cur + format.size();
+
+  while (cur < end) {
+    const char* startTokenPtr = cur;
+
+    // For literal case, literal should be quoted using single quotes ('). If
+    // there is no quotes, it is interpreted as pattern letters. If there is
+    // only single quote, a user error will be thrown.
+    if (*startTokenPtr == '\'') {
+      // Append single literal quote for 2 consecutive single quote.
+      if (cur + 1 < end && *(cur + 1) == '\'') {
+        builder.appendLiteral("'");
+        cur += 2;
+      } else {
+        // Append literal characters from the start until the next closing
+        // literal sequence single quote.
+        int64_t count = numLiteralChars(startTokenPtr + 1, end);
+        VELOX_USER_CHECK_NE(count, -1, "No closing single quote for literal");
+        for (int64_t i = 1; i <= count; i++) {
+          builder.appendLiteral(startTokenPtr + i, 1);
+          if (*(startTokenPtr + i) == '\'') {
+            i += 1;
+          }
+        }
+        cur += count + 2;
+      }
+    } else {
+      // Append format specifier according to pattern letters. If pattern letter
+      // is not supported, a user error will be thrown.
+      int count = 1;
+      ++cur;
+      while (cur < end && *startTokenPtr == *cur) {
+        ++count;
+        ++cur;
+      }
+      switch (*startTokenPtr) {
+        case 'a':
+          builder.appendHalfDayOfDay();
+          break;
+        case 'C':
+          builder.appendCenturyOfEra(count);
+          break;
+        case 'd':
+          builder.appendDayOfMonth(count);
+          break;
+        case 'D':
+          builder.appendDayOfYear(count);
+          break;
+        case 'e':
+          builder.appendDayOfWeek1Based(count);
+          break;
+        case 'E':
+          builder.appendDayOfWeekText(count);
+          break;
+        case 'G':
+          builder.appendEra();
+          break;
+        case 'h':
+          builder.appendClockHourOfHalfDay(count);
+          break;
+        case 'H':
+          builder.appendHourOfDay(count);
+          break;
+        case 'K':
+          builder.appendHourOfHalfDay(count);
+          break;
+        case 'k':
+          builder.appendClockHourOfDay(count);
+          break;
+        case 'm':
+          builder.appendMinuteOfHour(count);
+          break;
+        case 'M':
+          if (count <= 2) {
+            builder.appendMonthOfYear(count);
+          } else {
+            builder.appendMonthOfYearText(count);
+          }
+          break;
+        case 's':
+          builder.appendSecondOfMinute(count);
+          break;
+        case 'S':
+          builder.appendFractionOfSecond(count);
+          break;
+        case 'w':
+          builder.appendWeekOfWeekYear(count);
+          break;
+        case 'x':
+          builder.appendWeekYear(count);
+          break;
+        case 'y':
+          builder.appendYear(count);
+          break;
+        case 'Y':
+          builder.appendYearOfEra(count);
+          break;
+        case 'z':
+          builder.appendTimeZone(count);
+          break;
+        case 'Z':
+          builder.appendTimeZoneOffsetId(count);
+          break;
+        default:
+          if (isalpha(*startTokenPtr)) {
+            VELOX_UNSUPPORTED("Specifier {} is not supported.", *startTokenPtr);
+          } else {
+            builder.appendLiteral(startTokenPtr, cur - startTokenPtr);
+          }
+          break;
+      }
+    }
+  }
+  DateTimeFormatterType type = lenient ? DateTimeFormatterType::LENIENT_SIMPLE
+                                       : DateTimeFormatterType::STRICT_SIMPLE;
+  return builder.setType(type).build();
 }
 
 } // namespace facebook::velox::functions

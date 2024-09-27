@@ -384,6 +384,10 @@ Table Writer
    * - task_partitioned_writer_count
      - integer
      - task_writer_count
+     - The number of parallel table writer threads per task for partitioned table writes. If not set, use 'task_writer_count' as default.
+   * - task_bucketed_writer_count
+     - integer
+     - task_writer_count
      - The number of parallel table writer threads per task for bucketed table writes. If not set, use 'task_writer_count' as default.
 
 Hive Connector
@@ -713,6 +717,13 @@ Spark-specific Configuration
      - integer
      -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+   * - spark.legacy_date_formatter
+     - bool
+     - false
+     - If true, `Simple <https://docs.oracle.com/javase/8/docs/api/java/text/SimpleDateFormat.html>` date formatter is used for time formatting and parsing. Joda date formatter is used by default.
+     - Joda date formatter performs strict checking of its input and uses different pattern string.
+     - For example, the 2015-07-22 10:00:00 timestamp cannot be parse if pattern is yyyy-MM-dd because the parser does not consume whole input.
+     - Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
 
 Tracing
 --------
@@ -737,3 +748,11 @@ Tracing
      -
      - A comma-separated list of plan node ids whose input data will be trace. If it is empty, then we only trace the
        query metadata which includes the query plan and configs etc.
+   * - query_trace_task_reg_exp
+     - string
+     -
+     - The regexp of traced task id. We only enable trace on a task if its id matches.
+   * - query_trace_max_bytes
+     - integer
+     - 0
+     - The max trace bytes limit. Tracing is disabled if zero.

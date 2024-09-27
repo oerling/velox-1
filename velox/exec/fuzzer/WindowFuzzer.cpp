@@ -208,17 +208,25 @@ std::vector<SortingKeyAndOrder> WindowFuzzer::generateSortingKeysAndOrders(
 void WindowFuzzer::go() {
   VELOX_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
-      "Either --steps or --duration_sec needs to be greater than zero.")
+      "Either --steps or --duration_sec needs to be greater than zero.");
 
   auto startTime = std::chrono::system_clock::now();
   size_t iteration = 0;
 
+  auto vectorOptions = vectorFuzzer_.getOptions();
   while (!isDone(iteration, startTime)) {
     LOG(INFO) << "==============================> Started iteration "
               << iteration << " (seed: " << currentSeed_ << ")";
 
     auto signatureWithStats = pickSignature();
     signatureWithStats.second.numRuns++;
+    if (functionDataSpec_.count(signatureWithStats.first.name) > 0) {
+      vectorOptions.dataSpec =
+          functionDataSpec_.at(signatureWithStats.first.name);
+    } else {
+      vectorOptions.dataSpec = {true, true};
+    }
+    vectorFuzzer_.setOptions(vectorOptions);
 
     const auto signature = signatureWithStats.first;
     stats_.functionNames.insert(signature.name);
@@ -485,6 +493,7 @@ void windowFuzzer(
     const std::unordered_map<std::string, std::shared_ptr<InputGenerator>>&
         customInputGenerators,
     const std::unordered_set<std::string>& orderDependentFunctions,
+    const std::unordered_map<std::string, DataSpec>& functionDataSpec,
     VectorFuzzer::Options::TimestampPrecision timestampPrecision,
     const std::unordered_map<std::string, std::string>& queryConfigs,
     const std::unordered_map<std::string, std::string>& hiveConfigs,
@@ -498,6 +507,7 @@ void windowFuzzer(
       customVerificationFunctions,
       customInputGenerators,
       orderDependentFunctions,
+      functionDataSpec,
       timestampPrecision,
       queryConfigs,
       hiveConfigs,

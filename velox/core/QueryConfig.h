@@ -287,6 +287,11 @@ class QueryConfig {
   /// The current spark partition id.
   static constexpr const char* kSparkPartitionId = "spark.partition_id";
 
+  /// If true, simple date formatter is used for time formatting and parsing.
+  /// Joda date formatter is used by default.
+  static constexpr const char* kSparkLegacyDateFormatter =
+      "spark.legacy_date_formatter";
+
   /// The number of local parallel table writer operators per task.
   static constexpr const char* kTaskWriterCount = "task_writer_count";
 
@@ -294,6 +299,11 @@ class QueryConfig {
   /// partitioned writes. If not set, use "task_writer_count".
   static constexpr const char* kTaskPartitionedWriterCount =
       "task_partitioned_writer_count";
+
+  /// The number of local parallel table writer operators per task for
+  /// bucketed writes. If not set, use "task_writer_count".
+  static constexpr const char* kTaskBucketedWriterCount =
+      "task_bucketed_writer_count";
 
   /// If true, finish the hash probe on an empty build table for a specific set
   /// of hash joins.
@@ -356,6 +366,14 @@ class QueryConfig {
   /// A comma-separated list of plan node ids whose input data will be traced.
   /// Empty string if only want to trace the query metadata.
   static constexpr const char* kQueryTraceNodeIds = "query_trace_node_ids";
+
+  /// The max trace bytes limit. Tracing is disabled if zero.
+  static constexpr const char* kQueryTraceMaxBytes = "query_trace_max_bytes";
+
+  /// The regexp of traced task id. We only enable trace on a task if its id
+  /// matches.
+  static constexpr const char* kQueryTraceTaskRegExp =
+      "query_trace_task_reg_exp";
 
   /// Disable optimization in expression evaluation to peel common dictionary
   /// layer from inputs.
@@ -689,6 +707,15 @@ class QueryConfig {
     return get<std::string>(kQueryTraceNodeIds, "");
   }
 
+  uint64_t queryTraceMaxBytes() const {
+    return get<uint64_t>(kQueryTraceMaxBytes, 0);
+  }
+
+  std::string queryTraceTaskRegExp() const {
+    // The default query trace task regexp, empty by default.
+    return get<std::string>(kQueryTraceTaskRegExp, "");
+  }
+
   bool prestoArrayAggIgnoreNulls() const {
     return get<bool>(kPrestoArrayAggIgnoreNulls, false);
   }
@@ -724,6 +751,10 @@ class QueryConfig {
     return value;
   }
 
+  bool sparkLegacyDateFormatter() const {
+    return get<bool>(kSparkLegacyDateFormatter, false);
+  }
+
   bool exprTrackCpuUsage() const {
     return get<bool>(kExprTrackCpuUsage, false);
   }
@@ -739,6 +770,10 @@ class QueryConfig {
   uint32_t taskPartitionedWriterCount() const {
     return get<uint32_t>(kTaskPartitionedWriterCount)
         .value_or(taskWriterCount());
+  }
+
+  uint32_t taskBucketedWriterCount() const {
+    return get<uint32_t>(kTaskBucketedWriterCount).value_or(taskWriterCount());
   }
 
   bool hashProbeFinishEarlyOnEmptyBuild() const {

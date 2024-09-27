@@ -112,6 +112,11 @@ struct TableParameter {
 struct RowNumberColumnInfo {
   column_index_t insertPosition;
   std::string name;
+  // This flag is used to distinguish the explicit and implicit use cases. In
+  // explicit case, row index column is declared in the output type or used in
+  // subfield filters or remaining filter. In implicit case, it's not declared
+  // in the output columns but only in the split reader.
+  bool isExplicit;
 };
 
 class FormatSpecificOptions {
@@ -639,9 +644,8 @@ template <>
 struct fmt::formatter<facebook::velox::dwio::common::FileFormat>
     : fmt::formatter<std::string_view> {
   template <typename FormatContext>
-  auto format(
-      facebook::velox::dwio::common::FileFormat fmt,
-      FormatContext& ctx) {
+  auto format(facebook::velox::dwio::common::FileFormat fmt, FormatContext& ctx)
+      const {
     return formatter<std::string_view>::format(
         facebook::velox::dwio::common::toString(fmt), ctx);
   }

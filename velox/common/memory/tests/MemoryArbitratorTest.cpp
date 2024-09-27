@@ -112,7 +112,9 @@ TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
     MemoryManagerOptions options;
     options.allocatorCapacity = 8L << 20;
     options.arbitratorCapacity = 4L << 20;
-    options.arbitratorReservedCapacity = 2L << 20;
+    using ExtraConfig = SharedArbitrator::ExtraConfig;
+    options.extraArbitratorConfigs = {
+        {std::string(ExtraConfig::kReservedCapacity), "2MB"}};
     MemoryManager manager(options);
     auto rootPool = manager.addRootPool("root-1", 8L << 20);
     auto leafPool = rootPool->addLeafChild("leaf-1.0");
@@ -127,10 +129,12 @@ TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
     MemoryManagerOptions options;
     options.allocatorCapacity = 16L << 20;
     options.arbitratorCapacity = 6L << 20;
-    options.arbitratorReservedCapacity = 2L << 20;
     options.arbitratorKind = "SHARED";
-    options.memoryPoolInitCapacity = 1 << 20;
-    options.memoryPoolReservedCapacity = 1 << 20;
+    using ExtraConfig = SharedArbitrator::ExtraConfig;
+    options.extraArbitratorConfigs = {
+        {std::string(ExtraConfig::kMemoryPoolInitialCapacity), "1MB"},
+        {std::string(ExtraConfig::kReservedCapacity), "2MB"},
+        {std::string(ExtraConfig::kMemoryPoolReservedCapacity), "1MB"}};
     MemoryManager manager(options);
     auto rootPool =
         manager.addRootPool("root-1", 8L << 20, MemoryReclaimer::create());
@@ -140,6 +144,7 @@ TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
     ASSERT_FALSE(manager.arbitrator()->growCapacity(rootPool.get(), 6 << 20));
     ASSERT_EQ(rootPool->capacity(), 1 << 20);
     ASSERT_TRUE(manager.arbitrator()->growCapacity(rootPool.get(), 2 << 20));
+    ASSERT_TRUE(manager.arbitrator()->growCapacity(rootPool.get(), 1 << 20));
     ASSERT_EQ(rootPool->capacity(), 4 << 20);
     ASSERT_EQ(manager.arbitrator()->stats().freeCapacityBytes, 2 << 20);
     ASSERT_EQ(manager.arbitrator()->stats().freeReservedCapacityBytes, 2 << 20);
@@ -150,19 +155,19 @@ TEST_F(MemoryArbitrationTest, queryMemoryCapacity) {
         "Exceeded memory pool capacity after attempt to grow capacity through "
         "arbitration. Requestor pool name 'leaf-1.0', request size 7.00MB, "
         "memory pool capacity 4.00MB, memory pool max capacity 8.00MB");
-    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(rootPool.get(), 0), 1 << 20);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(rootPool.get(), 0), 0);
     ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 0), 0);
     ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 1), 0);
     ASSERT_EQ(manager.arbitrator()->shrinkCapacity(rootPool.get(), 1), 0);
-    ASSERT_EQ(rootPool->capacity(), 3 << 20);
+    ASSERT_EQ(rootPool->capacity(), 4 << 20);
     static_cast<MemoryPoolImpl*>(rootPool.get())->testingSetReservation(0);
     ASSERT_EQ(
         manager.arbitrator()->shrinkCapacity(leafPool.get(), 1 << 20), 1 << 20);
     ASSERT_EQ(
         manager.arbitrator()->shrinkCapacity(rootPool.get(), 1 << 20), 1 << 20);
-    ASSERT_EQ(rootPool->capacity(), 1 << 20);
-    ASSERT_EQ(leafPool->capacity(), 1 << 20);
-    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 0), 1 << 20);
+    ASSERT_EQ(rootPool->capacity(), 2 << 20);
+    ASSERT_EQ(leafPool->capacity(), 2 << 20);
+    ASSERT_EQ(manager.arbitrator()->shrinkCapacity(leafPool.get(), 0), 2 << 20);
     ASSERT_EQ(rootPool->capacity(), 0);
     ASSERT_EQ(leafPool->capacity(), 0);
   }
@@ -209,12 +214,18 @@ TEST_F(MemoryArbitrationTest, memoryPoolCapacityOnCreation) {
 
     MemoryManagerOptions options;
     options.arbitratorKind = "SHARED";
-    options.arbitratorReservedCapacity = testData.freeReservedCapacity;
     options.arbitratorCapacity =
         testData.freeReservedCapacity + testData.freeNonReservedCapacity;
     options.allocatorCapacity = options.arbitratorCapacity;
-    options.memoryPoolInitCapacity = testData.poolInitCapacity;
-    options.memoryPoolReservedCapacity = testData.poolReservedCapacity;
+
+    using ExtraConfig = SharedArbitrator::ExtraConfig;
+    options.extraArbitratorConfigs = {
+        {std::string(ExtraConfig::kMemoryPoolInitialCapacity),
+         folly::to<std::string>(testData.poolInitCapacity) + "B"},
+        {std::string(ExtraConfig::kMemoryPoolReservedCapacity),
+         folly::to<std::string>(testData.poolReservedCapacity) + "B"},
+        {std::string(ExtraConfig::kReservedCapacity),
+         folly::to<std::string>(testData.freeReservedCapacity) + "B"}};
 
     MemoryManager manager(options);
     auto rootPool = manager.addRootPool("root-1", kMaxMemory);
@@ -225,11 +236,13 @@ TEST_F(MemoryArbitrationTest, memoryPoolCapacityOnCreation) {
 TEST_F(MemoryArbitrationTest, reservedCapacityFreeByPoolRelease) {
   MemoryManagerOptions options;
   options.arbitratorKind = "SHARED";
-  options.arbitratorReservedCapacity = 4 << 20;
   options.arbitratorCapacity = 9 << 20;
   options.allocatorCapacity = options.arbitratorCapacity;
-  options.memoryPoolInitCapacity = 3 << 20;
-  options.memoryPoolReservedCapacity = 1 << 20;
+  using ExtraConfig = SharedArbitrator::ExtraConfig;
+  options.extraArbitratorConfigs = {
+      {std::string(ExtraConfig::kMemoryPoolInitialCapacity), "3MB"},
+      {std::string(ExtraConfig::kMemoryPoolReservedCapacity), "1MB"},
+      {std::string(ExtraConfig::kReservedCapacity), "4MB"}};
 
   MemoryManager manager(options);
   auto* arbitrator = manager.arbitrator();

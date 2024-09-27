@@ -363,7 +363,7 @@ variant mapVariantAt(const ::duckdb::Value& vector, const TypePtr& mapType) {
     variant variantValue;
     auto value = ::duckdb::StructValue::GetChildren(valueList[i]);
     // Map key cannot be null.
-    VELOX_CHECK(!value[0].IsNull())
+    VELOX_CHECK(!value[0].IsNull());
     variantKey = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
         variantAt, keyType->kind(), value[0]);
 
@@ -936,7 +936,7 @@ void DuckDbQueryRunner::createTable(
               type->equivalent(*columnVector->type()),
               "{} vs. {}",
               type->toString(),
-              columnVector->toString())
+              columnVector->toString());
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, type->kind(), columnVector, row);
           appender.Append(value);
@@ -1068,26 +1068,44 @@ void assertEqualTypeAndNumRows(
   EXPECT_EQ(expectedNumRows, actualNumRows);
 }
 
+bool containsFloatingPoint(const TypePtr& type) {
+  if (type->isPrimitiveType()) {
+    return type->isReal() || type->isDouble();
+  } else if (type->isArray()) {
+    return containsFloatingPoint(type->as<TypeKind::ARRAY>().elementType());
+  } else if (type->isMap()) {
+    // We currently don't support comparing maps with floating-point keys with
+    // epsilon. This is because fuzzer can generate floating-point keys that are
+    // very close, causing one key incorrectly match another during the
+    // comparison.
+    return containsFloatingPoint(type->as<TypeKind::MAP>().valueType());
+  } else if (type->isRow()) {
+    for (auto& child : type->as<TypeKind::ROW>().children()) {
+      if (containsFloatingPoint(child)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /// Returns the number of floating-point columns and a list of columns indices
 /// with floating-point columns placed at the end.
 std::tuple<uint32_t, std::vector<velox::column_index_t>>
-findFloatingPointColumns(const MaterializedRow& row) {
-  auto isFloatingPointColumn = [&](size_t i) {
-    return row[i].kind() == TypeKind::REAL || row[i].kind() == TypeKind::DOUBLE;
-  };
-
+findFloatingPointColumns(const TypePtr& type) {
+  const auto rowType = asRowType(type);
   uint32_t numFloatingPointColumns = 0;
   std::vector<velox::column_index_t> indices;
-  for (auto i = 0; i < row.size(); ++i) {
-    if (isFloatingPointColumn(i)) {
+  for (auto i = 0; i < rowType->children().size(); ++i) {
+    if (containsFloatingPoint(rowType->childAt(i))) {
       ++numFloatingPointColumns;
     } else {
       indices.push_back(i);
     }
   }
 
-  for (auto i = 0; i < row.size(); ++i) {
-    if (isFloatingPointColumn(i)) {
+  for (auto i = 0; i < rowType->children().size(); ++i) {
+    if (containsFloatingPoint(rowType->childAt(i))) {
       indices.push_back(i);
     }
   }
@@ -1107,8 +1125,8 @@ bool assertEqualResults(
     const MaterializedRowMultiset& actualRows,
     const TypePtr& actualType,
     const std::string& message) {
+  const auto& type = (!expectedRows.empty()) ? expectedType : actualType;
   if (expectedRows.empty() != actualRows.empty()) {
-    const auto& type = (!expectedRows.empty()) ? expectedType : actualType;
     ADD_FAILURE() << generateUserFriendlyDiff(expectedRows, actualRows, type)
                   << message;
     return false;
@@ -1125,8 +1143,7 @@ bool assertEqualResults(
     return false;
   }
 
-  auto [numFloatingPointColumns, columns] =
-      findFloatingPointColumns(*expectedRows.begin());
+  auto [numFloatingPointColumns, columns] = findFloatingPointColumns(type);
   if (numFloatingPointColumns) {
     MaterializedRowEpsilonComparator comparator{
         numFloatingPointColumns, columns};
@@ -1214,10 +1231,11 @@ using OrderedPartition = std::pair<MaterializedRow, MaterializedRowMultiset>;
 
 // Special function to compare ordered partitions in a way that
 // we compare all floating point values inside using 'epsilon' constant.
-// Returns true if equal.
+// Returns true if equal. valueType is the type of expected.second.
 static bool compareOrderedPartitions(
     const OrderedPartition& expected,
-    const OrderedPartition& actual) {
+    const OrderedPartition& actual,
+    const RowTypePtr& valueType) {
   if (expected.first.size() != actual.first.size() or
       expected.second.size() != actual.second.size()) {
     return false;
@@ -1238,8 +1256,9 @@ static bool compareOrderedPartitions(
     return false;
   }
 
-  auto [numFloatingPointColumns, columns] =
-      findFloatingPointColumns(*expected.second.begin());
+  // valueType is needed by findFloatingPointColumns() to avoid having to infer
+  // the type from expected.second.
+  auto [numFloatingPointColumns, columns] = findFloatingPointColumns(valueType);
   if (numFloatingPointColumns) {
     MaterializedRowEpsilonComparator comparator{
         numFloatingPointColumns, columns};
@@ -1255,16 +1274,17 @@ static bool compareOrderedPartitions(
 
 // Special function to compare vectors of ordered partitions in a way that
 // we compare all floating point values inside using 'epsilon' constant.
-// Returns true if equal.
+// Returns true if equal. valueType is the type of expected[i].second.
 static bool compareOrderedPartitionsVectors(
     const std::vector<OrderedPartition>& expected,
-    const std::vector<OrderedPartition>& actual) {
+    const std::vector<OrderedPartition>& actual,
+    const RowTypePtr& valueType) {
   if (expected.size() != actual.size()) {
     return false;
   }
 
   for (size_t i = 0; i < expected.size(); ++i) {
-    if (not compareOrderedPartitions(expected[i], actual[i])) {
+    if (not compareOrderedPartitions(expected[i], actual[i], valueType)) {
       return false;
     }
   }
@@ -1302,12 +1322,13 @@ void assertResultsOrdered(
   }
 
   if (not compareOrderedPartitionsVectors(
-          expectedPartitions, actualPartitions)) {
+          expectedPartitions, actualPartitions, resultType)) {
     auto actualPartIter = actualPartitions.begin();
     auto expectedPartIter = expectedPartitions.begin();
     while (expectedPartIter != expectedPartitions.end() &&
            actualPartIter != actualPartitions.end()) {
-      if (not compareOrderedPartitions(*expectedPartIter, *actualPartIter)) {
+      if (not compareOrderedPartitions(
+              *expectedPartIter, *actualPartIter, resultType)) {
         break;
       }
       ++expectedPartIter;
@@ -1453,48 +1474,28 @@ bool waitForTaskStateChange(
 }
 
 void waitForAllTasksToBeDeleted(uint64_t maxWaitUs) {
-  const uint64_t numCreatedTasks = Task::numCreatedTasks();
-  uint64_t numDeletedTasks = Task::numDeletedTasks();
   uint64_t waitUs = 0;
-  while (numCreatedTasks > numDeletedTasks) {
+  while (Task::numRunningTasks() != 0) {
     constexpr uint64_t kWaitInternalUs = 1'000;
     std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
     waitUs += kWaitInternalUs;
-    numDeletedTasks = Task::numDeletedTasks();
     if (waitUs >= maxWaitUs) {
       break;
     }
   }
-  VELOX_CHECK_EQ(
-      numDeletedTasks,
-      numCreatedTasks,
-      "{} tasks have been created while only {} have been deleted after waiting for {} us",
-      numCreatedTasks,
-      numDeletedTasks,
-      waitUs);
-}
-
-void waitForAllTasksToBeDeleted(
-    uint64_t expectedDeletedTasks,
-    uint64_t maxWaitUs) {
-  uint64_t numDeletedTasks = Task::numDeletedTasks();
-  uint64_t waitUs = 0;
-  while (expectedDeletedTasks > numDeletedTasks) {
-    constexpr uint64_t kWaitInternalUs = 1'000;
-    std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
-    waitUs += kWaitInternalUs;
-    numDeletedTasks = Task::numDeletedTasks();
-    if (waitUs >= maxWaitUs) {
-      break;
-    }
+  std::vector<std::shared_ptr<Task>> pendingTasks = Task::getRunningTasks();
+  if (pendingTasks.empty()) {
+    return;
   }
-  VELOX_CHECK_EQ(
-      numDeletedTasks,
-      expectedDeletedTasks,
-      "expected {} tasks to be deleted but only {} have been deleted after waiting for {} us",
-      expectedDeletedTasks,
-      numDeletedTasks,
-      waitUs);
+  std::vector<std::string> pendingTaskStats;
+  pendingTaskStats.reserve(pendingTasks.size());
+  for (const auto& task : pendingTasks) {
+    pendingTaskStats.push_back(task->toString());
+  }
+  VELOX_FAIL(
+      "{} pending tasks\n{}",
+      pendingTasks.size(),
+      folly::join("\n", pendingTaskStats));
 }
 
 std::shared_ptr<Task> assertQuery(
@@ -1597,7 +1598,7 @@ std::unordered_map<std::string, OperatorStats> toOperatorStats(
 
 template <>
 struct fmt::formatter<::duckdb::LogicalTypeId> : formatter<int> {
-  auto format(::duckdb::LogicalTypeId s, format_context& ctx) {
+  auto format(::duckdb::LogicalTypeId s, format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };
