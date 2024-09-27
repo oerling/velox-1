@@ -151,11 +151,12 @@ void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAg
   auto* table = reinterpret_cast<GpuHashTable*>(deviceAggregation->table);
   if (shared->isContinue) {
     laneStatus = laneStatus == ErrorCode::kInsufficientMemory ? ErrorCode::kOk : ErrorCode::kInactive;
-    // Reset the return status for this stream.
-    if (threadIdx.x == 0) {
-      auto status = gridStatus<AggregateReturn>(shared, agg->status);
-      status->numDistinct = 0;
-    }
+    shared->status->errors[threadIdx.x] = laneStatus;
+  }
+  // Reset the return status for this stream.
+  if (threadIdx.x == 0) {
+    auto status = gridStatus<AggregateReturn>(shared, agg->status);
+    status->numDistinct = 0;
   }
 
   table->updatingProbe<SumGroupRow>(threadIdx.x, cub::LaneId(), laneActive(laneStatus), ops);
