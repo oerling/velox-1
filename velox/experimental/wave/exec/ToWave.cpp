@@ -446,7 +446,7 @@ void CompileState::setAggregateFromPlan(
 void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
   // First key nulls, then key wirds. Then accumulator nulls, then accumulators.
   int32_t numKeys = aggregate.keys.size();
-  int32_t startOffset = bits::roundUp(numKeys, 8) + 8 * numKeys;
+  int32_t startOffset = bits::roundUp(numKeys + 4, 8) + 8 * numKeys;
   int32_t accNullOffset = startOffset;
   auto numAggs = aggregate.aggregates.size();
   int32_t accOffset = accNullOffset + bits::roundUp(numAggs, 8);

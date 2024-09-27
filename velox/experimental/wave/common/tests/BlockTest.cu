@@ -297,7 +297,7 @@ class MockGroupByOps {
 
     bool __device__
   compare(GpuHashTable* table, TestingRow* row, int32_t i) {
-    return row->key == reinterpret_cast<int64_t**>(probe_->keys)[0][i];
+      return asDeviceAtomic<int64_t>(&row->key)->load(cuda::memory_order_consume) == reinterpret_cast<int64_t**>(probe_->keys)[0][i];
   }
 
   TestingRow* __device__
@@ -305,10 +305,11 @@ class MockGroupByOps {
     auto* allocator = &table->allocators[partition];
     auto row = allocator->allocateRow<TestingRow>();
     if (row) {
-      row->key = reinterpret_cast<int64_t**>(probe_->keys)[0][i];
       row->flags = 0;
       row->count = 0;
+
       new (&row->concatenation) ArrayAgg64();
+      asDeviceAtomic<int64_t>(&row->key)->store(reinterpret_cast<int64_t**>(probe_->keys)[0][i], cuda::memory_order_release);
     }
     return row;
   }

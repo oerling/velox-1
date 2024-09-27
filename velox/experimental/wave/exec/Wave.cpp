@@ -487,11 +487,7 @@ bool WaveStream::isArrived(
     int32_t timeoutMicro) {
   OperandSet waitSet;
   if (hostReturnEvent_) {
-    bool done = hostReturnEvent_->query();
-    if (done) {
-      releaseStreamsAndEvents();
-    }
-    return done;
+    return hostReturnEvent_->query();
   }
   ids.forEach([&](int32_t id) {
     auto exe = operandToExecutable_[id];

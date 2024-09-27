@@ -25,9 +25,10 @@
 namespace facebook::velox::wave {
 
 struct SumGroupRow {
+  uint32_t lock;
   uint32_t nulls;
-  int32_t lock{1};
   int64_t key;
+  int32_t accNulls;
   int64_t sums[20];
 };
 
@@ -57,8 +58,9 @@ class SumGroupByOps {
   bool __device__
   compare(GpuHashTable* table, SumGroupRow* row, int32_t i) {
     int64_t key;
+    auto k = asDeviceAtomic<int64_t>(&row->key)->load(cuda::memory_order_consume);
     if (operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]), shared_->blockBase, &shared_->data, key)) {
-      return row->key == key;
+      return k == key;
     }
     return false;
   }
@@ -68,13 +70,13 @@ class SumGroupByOps {
     auto* allocator = &table->allocators[partition];
     auto row = allocator->allocateRow<SumGroupRow>();
     if (row) {
-      new(row) SumGroupRow();
-      operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]),shared_->blockBase,  &shared_->data, row->key);
       for (auto i = 0; i < inst_->numAggregates; ++i) {
-	int64_t x;
-	operandOrNull(shared_->operands, inst_->aggregates[i].arg1, shared_->blockBase,  &shared_->data, x);
-	row->sums[i] = x;
+	row->sums[i] = 0;
       }
+      int64_t k;
+      operandOrNull(shared_->operands, *reinterpret_cast<int16_t*>(&inst_->aggregates[inst_->numAggregates]),shared_->blockBase,  &shared_->data, k);
+      asDeviceAtomic<int64_t>(&row->key)
+            ->store(k, cuda::memory_order_release);
     }
     return row;
   }
@@ -144,7 +146,7 @@ row = newRow(table, partition, i);
 
  
 
-void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAggregation* deviceAggregation, const IAggregate* agg, ErrorCode laneStatus) {
+void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAggregation* deviceAggregation, const IAggregate* agg, ErrorCode& laneStatus) {
   SumGroupByOps ops(shared, agg);
   auto* table = reinterpret_cast<GpuHashTable*>(deviceAggregation->table);
   if (shared->isContinue) {
@@ -158,6 +160,7 @@ void __device__ __forceinline__  interpretedGroupBy(WaveShared* shared, DeviceAg
 
   table->updatingProbe<SumGroupRow>(threadIdx.x, cub::LaneId(), laneActive(laneStatus), ops);
   __syncthreads();
+  laneStatus = shared->status->errors[threadIdx.x];
   if (threadIdx.x == 0 && shared->hasContinue) {
     auto ret = gridStatus<AggregateReturn>(shared, agg->status);
     ret->numDistinct = table->numDistinct;
@@ -212,16 +215,17 @@ __device__ __forceinline__ void readAggregateKernel(
     } else {
       auto rowIdx = blockIdx.x * kBlockSize + threadIdx.x + 1;
       auto numRows = state->resultRowPointers[shared->streamIdx][0];
-      if (rowIdx < numRows) {
-	int64_t* row = reinterpret_cast<int64_t*>(state->resultRowPointers[shared->streamIdx][rowIdx + 1]);
+      if (rowIdx <= numRows) {
+	int64_t* row = reinterpret_cast<int64_t*>(state->resultRowPointers[shared->streamIdx][rowIdx]);
 	// Copy keys and accumulators to output.
         auto* keys = reinterpret_cast<OperandIndex*>(
             &agg->aggregates[agg->numAggregates]);
 	for (auto i = 0; i < agg->numKeys; ++i) {
 	  auto opIdx = keys[i];
+	  auto k = *addCast<int64_t>(row, (i+1) * sizeof(int64_t));
 	  flatResult<int64_t>(
 			      shared->operands, opIdx, shared->blockBase, &shared->data) =
-	    *addCast<int64_t>(row, (i+1) * sizeof(int64_t));
+	    k;
 	}
 	for (auto i = 0; i < agg->numAggregates; ++i) {
 	  auto& acc = agg->aggregates[i];
@@ -231,14 +235,13 @@ __device__ __forceinline__ void readAggregateKernel(
 	}
     }
       if (threadIdx.x == 0) {
-	shared->status[blockIdx.x].numRows = rowIdx + kBlockSize < numRows ? kBlockSize : numRows - blockIdx.x * kBlockSize;
+	shared->numRows = rowIdx + kBlockSize <= numRows ? kBlockSize : numRows - blockIdx.x * kBlockSize;
       }
-      __syncthreads();
     }
   }else {
     if (shared->blockBase > 0) {
       if (threadIdx.x == 0) {
-	shared->status->numRows = 0;
+	shared->numRows = 0;
       }
       __syncthreads();
     return;
@@ -253,8 +256,8 @@ __device__ __forceinline__ void readAggregateKernel(
 	*addCast<int64_t>(row, acc.accumulatorOffset);
     }
   }
-  __syncthreads();
   }
+  __syncthreads();
 }
 
 } // namespace facebook::velox::wave

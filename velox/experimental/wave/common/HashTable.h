@@ -90,19 +90,37 @@ struct AllocationRange {
     return rowOffset > rowLimit ? 0 : rowLimit - rowOffset;
   }
 
+  /// Raises rowLimit by up to 'size'. Returns the amount raised.
   int32_t raiseRowLimit(int32_t size) {
     auto space = stringOffset - rowLimit;
     auto delta = std::min<int32_t>(space, size);
     rowLimit += delta;
-    return size - delta;
+    if (delta > 0) {
+      fixedFull = false;
+    }
+    return delta;
   }
 
+  void clearOverflows(int32_t rowSize) {
+    if (rowOffset > rowLimit) {
+      // Set 'rowOffset' to the greatest multipl of rowSize from 'base' that is below the limit.
+      int32_t numRows = (rowLimit - firstRowOffset ) / rowSize;
+      rowOffset = firstRowOffset + numRows * rowSize;
+    }
+    if (stringOffset < rowLimit) {
+      stringOffset = rowLimit;
+    }
+  }
+  
   /// Sets row limit so that there are at most 'target' allocatable
   /// bytes. If available space is less than the target, the available
-  /// space is not changed. Returns 'target' minus the decrement in
-  /// capacity.
+  /// space is not changed. Returns 'target' minus the available space
+  // in 'this'.
   int32_t trimFixed(int32_t target) {
-    rowLimit = std::min<int32_t>(rowLimit, rowOffset + target);
+    auto available = rowLimit - rowOffset;
+    if (available > target) {
+      rowLimit = rowOffset + target;
+    }
     return target - (rowLimit - rowOffset);
   }
 
@@ -142,11 +160,18 @@ struct HashPartitionAllocator {
     return ranges[0].availableFixed() + ranges[1].availableFixed();
   }
 
-  /// Raises the row limit by up to size bytes. Returns 'size' minus the amount
-  /// raised.
+  /// Sets allocated offsets to limit if these are over the
+  /// limit. They are over limit and available is negative after many
+  /// concurrent failed allocations.
+  void clearOverflows() {
+    ranges[0].clearOverflows(rowSize);
+    ranges[1].clearOverflows(rowSize);
+  }
+  
+  /// Raises the row limit by up to size bytes. Returns th amount raised.
   int32_t raiseRowLimits(int32_t size) {
-    size = ranges[0].raiseRowLimit(size);
-    return ranges[1].raiseRowLimit(size);
+    auto raised = ranges[0].raiseRowLimit(size);
+    return raised + ranges[1].raiseRowLimit(size - raised);
   }
 
   /// sets rowLimit so that there will be at most 'maxSize' bytes of fixed

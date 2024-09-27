@@ -30,9 +30,7 @@ inline T* __device__
 gridStatus(const WaveShared* shared, const InstructionStatus& status) {
   return reinterpret_cast<T*>(
       roundUp(
-          reinterpret_cast<uintptr_t>(shared->status) +
-              shared->numBlocks * sizeof(BlockStatus),
-          8) +
+          reinterpret_cast<uintptr_t>(&shared->status[shared->numBlocks - (shared->blockBase / kBlockSize) ]), 8) +
       status.gridState);
 }
 

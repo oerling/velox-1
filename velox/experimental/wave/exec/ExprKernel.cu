@@ -105,11 +105,12 @@ int32_t instructionSharedMemory(const Instruction& instruction) {
   }
 }
 
-#define CALL_ONE(k, params, pc, base) \
+#define CALL_ONE(k, params, pc, base) {		\
   k<<<blocksPerExe,                   \
       kBlockSize,                     \
       sharedSize,                     \
-      alias ? alias->stream()->stream : stream()->stream>>>(params, pc, base);
+      alias ? alias->stream()->stream : stream()->stream>>>(params, pc, base); \
+  CUDA_CHECK(cudaGetLastError()); };
 
 void WaveKernelStream::callOne(
     Stream* alias,
@@ -150,14 +151,14 @@ void WaveKernelStream::callOne(
       assert(params.programs[0]->instructions != nullptr);
       switch (program[pc]) {
         case OpCode::kFilter:
-          CALL_ONE(oneFilter, params, pc, base)
+          CALL_ONE(oneFilter, params, pc, base);
           ++pc;
           break;
         case OpCode::kAggregate:
-          CALL_ONE(oneAggregate, params, pc, base)
+          CALL_ONE(oneAggregate, params, pc, base);
           break;
         case OpCode::kReadAggregate:
-          CALL_ONE(oneReadAggregate, params, pc, base)
+          CALL_ONE(oneReadAggregate, params, pc, base);
           break;
         case OpCode::kPlus_BIGINT:
           CALL_ONE(onePlusBigint, params, pc, base);
@@ -189,6 +190,7 @@ void WaveKernelStream::call(
       kBlockSize,
       sharedSize,
       alias ? alias->stream()->stream : stream()->stream>>>(params);
+  CUDA_CHECK(cudaGetLastError());
 }
 
 REGISTER_KERNEL("expr", waveBaseKernel);

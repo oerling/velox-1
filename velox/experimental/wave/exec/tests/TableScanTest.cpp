@@ -354,7 +354,7 @@ TEST_P(TableScanTest, scanGroupBy) {
           {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BIGINT()});
   auto splits =
       makeData(type, numBatches_, batchSize_, true, [&](RowVectorPtr row) {
-        makeRange(row, 1000000000, true, 1, -1);
+        makeRange(row, 1000000000, true);
       });
 
   auto plan = PlanBuilder(pool_.get())
@@ -371,7 +371,7 @@ TEST_P(TableScanTest, scanGroupBy) {
   auto task = assertQuery(
       plan,
       splits,
-      "SELECT c0, sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c0 < 950000000 group by c0");
+      "SELECT c0, sum(c1 + 1), sum(c2 + 2), sum(c3 + c2), sum(rn + 1) FROM tmp where c1 < 950000000 group by c0");
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

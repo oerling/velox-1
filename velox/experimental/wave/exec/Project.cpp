@@ -113,7 +113,7 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
     stream.installExecutables(
         range, [&](Stream* out, folly::Range<Executable**> exes) {
           LaunchControl* inputControl = nullptr;
-          if (!isContinue && !isSource()) {
+          if (!isSource()) {
             inputControl = driver_->inputControl(stream, id_);
           }
           auto control = stream.prepareProgramLaunch(

@@ -309,7 +309,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
 
         runOperators(
             pipeline, *pipeline.arrived[streamIdx], i, advance[0].numRows);
-        moveTo(pipeline.arrived, i, pipeline.running, true);
+        moveTo(pipeline.arrived, streamIdx, pipeline.running, true);
         continued = true;
         break;
       }
@@ -319,6 +319,7 @@ exec::BlockingReason WaveDriver::processArrived(Pipeline& pipeline) {
       --streamIdx;
     } else {
       /// Not blocked and not continuable, so must be at end.
+      pipeline.arrived[streamIdx]->releaseStreamsAndEvents();
       moveTo(pipeline.arrived, streamIdx, pipeline.finished);
       --streamIdx;
     }

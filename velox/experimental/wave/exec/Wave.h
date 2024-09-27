@@ -957,11 +957,12 @@ class WaveStream {
     if (!hostBlockStatus_) {
       return nullptr;
     }
-    auto numBlocks = bits::roundUp(numRows_, kBlockSize);
+    auto numBlocks = bits::roundUp(numRows_, kBlockSize) / kBlockSize;
     return reinterpret_cast<T*>(
-        hostBlockStatus_->as<char>() + numBlocks * sizeof(BlockStatus) +
-        status.gridState);
+				bits::roundUp(reinterpret_cast<uintptr_t>(&hostBlockStatus_->as<BlockStatus>()[numBlocks]), 8)
+				+ status.gridState);
   }
+
   BlockStatus* hostBlockStatus() const {
     return hostBlockStatus_->as<BlockStatus>();
   }

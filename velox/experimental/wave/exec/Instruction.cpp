@@ -96,7 +96,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   auto* hashTable = reinterpret_cast<GpuHashTableBase*>(head + 1);
   auto* gridState = stream.gridStatus<AggregateReturn>(agg->instructionStatus);
   auto* blockStatus = stream.hostBlockStatus();
-  int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize);
+  int32_t numBlocks = bits::roundUp(stream.numRows(), kBlockSize) / kBlockSize;
   int32_t numFailed =
       countErrors(blockStatus, numBlocks, ErrorCode::kInsufficientMemory);
   int32_t rowSize = agg->rowSize();
@@ -108,6 +108,9 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   for (auto i = 0; i < numPartitions; ++i) {
     auto* allocator =
         &reinterpret_cast<HashPartitionAllocator*>(hashTable + 1)[i];
+    // Many concurrent failed allocation attempts can leave the fill way past
+    // limit. Reset fills to limits if over limit.
+    allocator->clearOverflows();
     if (allocator->availableFixed() < increment) {
       restockAllocator(*state, stream.arena(), increment, allocator);
     }
@@ -115,14 +118,16 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
   bool rehash = false;
   WaveBufferPtr oldBuckets;
   int32_t numOldBuckets;
-  if (gridState->numDistinct >= hashTable->maxEntries) {
-    // Would need rehash.
+  // Rehash if close to max. We can have growth from variable length
+  // accumulators so rehash is not always right.
+  if (gridState->numDistinct >= hashTable->maxEntries / 10 * 9) {
     oldBuckets = state->buffers[1];
     numOldBuckets = hashTable->sizeMask + 1;
     state->buffers[1] = stream.arena().allocate<GpuBucketMembers>(
         newSize / GpuBucketMembers::kNumSlots);
     hashTable->sizeMask = (newSize / GpuBucketMembers::kNumSlots) - 1;
     hashTable->buckets = state->buffers[1]->as<GpuBucket>();
+    hashTable->maxEntries = newSize / 6 * 5;
     rehash = true;
   }
   state->setSizesToSafe();
@@ -130,6 +135,7 @@ void resupplyHashTable(WaveStream& stream, AbstractInstruction& inst) {
       getDevice(), state->alignedHead, state->alignedHeadSize);
   if (rehash) {
     AggregationControl control;
+    control.head = head;
     control.oldBuckets = oldBuckets->as<char>();
     control.numOldBuckets = numOldBuckets;
     reinterpret_cast<WaveKernelStream*>(deviceStream.get())
@@ -152,6 +158,7 @@ AdvanceResult AbstractAggregation::canAdvance(
     // The hash table needs memory or rehash. Request a Task-wide break to
     // resupply the device side hash table.
     return {
+	.numRows = stream.numRows(),
         .instructionIdx = instructionIdx,
         .isRetry = true,
         .syncDrivers = true,
@@ -188,17 +195,19 @@ int32_t makeResultRows(
   for (; startRange < numRanges; ++startRange) {
     auto& range = ranges[startRange];
     uint64_t* bits = reinterpret_cast<uint64_t*>(range.base);
-    uint32_t limit = range.rowLimit;
     auto firstRowOffset = range.firstRowOffset;
-    for (; (startRow + 1) * rowSize <= limit; ++startRow) {
+    uint32_t offset = startRow * rowSize + firstRowOffset;
+    uint32_t limit = range.rowOffset - rowSize;
+    for (; offset <= limit; offset += rowSize, ++startRow) {
       if (bits::isBitSet(bits, startRow)) {
         continue;
       }
-      result[fill++] = range.base + firstRowOffset + startRow * rowSize;
+      result[fill++] = range.base + offset;
       if (fill >= maxRows) {
         return fill;
       }
     }
+    startRow = 0;
   }
   return fill;
 }
@@ -253,11 +262,16 @@ AdvanceResult AbstractReadAggregation::canAdvance(
       aggState->temp =
           getSmallTransferArena().allocate<int64_t*>(batchSize + 1);
     }
+    int64_t* tempPtr;
     auto streamIdx = stream.streamIdx();
     if (!aggState->resultRows[streamIdx]) {
       aggState->resultRows[streamIdx] =
           stream.arena().allocate<int64_t*>(batchSize + 1);
-    }
+
+      // Put the new array in the per-stream array in device side state.
+      tempPtr = aggState->resultRows[streamIdx]->as<int64_t>();
+      deviceStream->hostToDeviceAsync(          aggState->resultRowPointers->as<int64_t*>() + streamIdx, &tempPtr, sizeof(tempPtr));
+  }
     auto numRows = makeResultRows(
         aggState->ranges.data(),
         aggState->ranges.size(),
@@ -265,8 +279,8 @@ AdvanceResult AbstractReadAggregation::canAdvance(
         batchSize,
         aggState->rangeIdx,
         aggState->rowIdx,
-        aggState->resultRows[streamIdx]->as<uintptr_t>() + 1);
-    aggState->resultRows[streamIdx]->as<uintptr_t>()[0] = numRows;
+        aggState->temp->as<uintptr_t>() + 1);
+    aggState->temp->as<uintptr_t>()[0] = numRows;
     if (numRows == 0) {
       return {};
     }

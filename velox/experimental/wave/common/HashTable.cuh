@@ -54,7 +54,7 @@ inline __device__ T* allocateFixed(AllocationRange& range, int32_t size) {
       return nullptr;
     }
     auto offset = atomicAdd(&range.rowOffset, size);
-    if (offset + size  < range.rowLimit) {
+    if (offset + size  <= range.rowLimit) {
       return reinterpret_cast<T*>(range.base + offset);
     }
     range.fixedFull = true;
@@ -235,7 +235,7 @@ class GpuHashTable : public GpuHashTableBase {
       GpuBucket* bucket;
       uint32_t tags;
       for (;;) {
-        bucket = buckets + bucketIdx;
+bucket = buckets + bucketIdx;
       reprobe:
         tags = asDeviceAtomic<uint32_t>(&bucket->tags)
                    ->load(cuda::memory_order_consume);
@@ -271,7 +271,8 @@ class GpuHashTable : public GpuHashTableBase {
           }
           if (success == ProbeState::kNeedSpace) {
             ops.addHostRetry(i);
-	    return;
+	    hit = nullptr;
+	    break;
           }
           hit = toInsert;
           break;
