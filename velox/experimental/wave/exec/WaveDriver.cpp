@@ -333,7 +333,6 @@ void WaveDriver::prepareAdvance(
     int32_t from,
     std::vector<AdvanceResult>& advanceVector) {
   void* driversToken = nullptr;
-  bool syncStreams = false;
   int32_t exclusiveIndex = 0;
   for (auto i = 0; i < advanceVector.size(); ++i) {
     auto& advance = advanceVector[i];
@@ -346,7 +345,6 @@ void WaveDriver::prepareAdvance(
       VELOX_CHECK_NOT_NULL(driversToken);
       exclusiveIndex = i;
     } else if (advance.syncStreams) {
-      syncStreams = true;
     } else {
       // No sync, like adding memory to string pool for func.
       pipeline.operators[from]->callUpdateStatus(stream, advance);

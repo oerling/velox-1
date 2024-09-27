@@ -72,11 +72,7 @@ void AggregateOperatorState::setSizesToSafe() {
       reinterpret_cast<GpuHashTableBase*>(alignedHead + 1);
   auto* allocators = reinterpret_cast<HashPartitionAllocator*>(hashTable + 1);
   int32_t numPartitions = hashTable->partitionMask + 1;
-  int32_t available = 0;
   int32_t rowSize = allocators[0].rowSize;
-  for (auto i = 0; i < numPartitions; ++i) {
-    available += allocators[i].availableFixed() / rowSize;
-  }
   int32_t spaceInTable = hashTable->maxEntries - hashTable->numDistinct;
   auto allowedPerPartition = spaceInTable / numPartitions;
   for (auto i = 0; i < numPartitions; ++i) {
