@@ -20,6 +20,8 @@
 #include "velox/experimental/wave/exec/Wave.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 
+#include <iostream>
+
 namespace facebook::velox::wave {
 
 AbstractWrap* Project::findWrap() const {
@@ -38,15 +40,16 @@ std::vector<AdvanceResult> Project::canAdvance(WaveStream& stream) {
     auto advance = program->canAdvance(stream, nullptr, 0);
     if (!advance.empty()) {
       advance.programIdx = 0;
+      return {advance};
     }
-    return {advance};
+    return {};
   }
   std::vector<AdvanceResult> result;
   for (int32_t i = levels_.size() - 1; i >= 0; --i) {
     auto& level = levels_[i];
     VELOX_CHECK_EQ(controls[i]->programInfo.size(), level.size());
     for (auto j = 0; j < level.size(); ++j) {
-      auto* program = level[i].get();
+      auto* program = level[j].get();
       auto advance = program->canAdvance(stream, controls[i].get(), j);
       if (!advance.empty()) {
         advance.nthLaunch = i;
@@ -55,9 +58,9 @@ std::vector<AdvanceResult> Project::canAdvance(WaveStream& stream) {
       } else {
         controls[i]->programInfo[j].advance = {};
       }
-      if (!result.empty()) {
-        return result;
-      }
+    }
+    if (!result.empty()) {
+      return result;
     }
   }
 

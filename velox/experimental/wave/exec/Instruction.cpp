@@ -22,6 +22,19 @@ std::string rowTypeString(const Type& type) {
   return "";
 }
 
+std::string AdvanceResult::toString() const {
+  if (empty()) {
+    return "AdvanceResult::empty";
+  }
+  return fmt::format(
+      "AdvanceResult(.numRows={}, .isRetry={}, .sync={})",
+      numRows,
+      isRetry,
+      syncDrivers       ? "drivers"
+          : syncStreams ? "streams"
+                        : "none");
+}
+
 void AbstractAggregation::reserveState(InstructionStatus& reservedState) {
   instructionStatus = reservedState;
   // A group by produces 8 bytes of grid level state and uses the main main

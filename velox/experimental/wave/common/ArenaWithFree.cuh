@@ -16,10 +16,10 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/ArenaWithFreeBase.h"
+#include <assert.h>
 #include <cub/thread/thread_load.cuh>
 #include <cub/util_ptx.cuh>
-#include <assert.h>
+#include "velox/experimental/wave/common/ArenaWithFreeBase.h"
 #include "velox/experimental/wave/common/FreeSet.cuh"
 
 namespace facebook::velox::wave {

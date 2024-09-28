@@ -101,6 +101,8 @@ struct AdvanceResult {
     return numRows == 0 && !isRetry;
   }
 
+  std::string toString() const;
+
   ///  Max number of result rows.
   int32_t numRows{0};
 
