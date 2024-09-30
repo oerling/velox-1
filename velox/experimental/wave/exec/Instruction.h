@@ -82,6 +82,14 @@ struct AbstractOperand {
   // by e.g. file metadata but not set at plan time.
   bool sourceNullable{false};
 
+  /// True if represents a column. May be subject to lazy load.
+  bool isColumn{false};
+
+  bool isHostReturn{false};
+
+  /// If Expr is short enough to be inlined at call site.
+  exec::Expr* inlinedExpr{nullptr};
+  
   // Ordinal of the wrap instruction that first wraps this. All operands wrapped
   // by the same wrap share 'Operand.indices'. All Operands that are wrapped at
   // some point get indices when first created. When they get wrapped, there is
@@ -361,6 +369,13 @@ struct AbstractOperator : public AbstractInstruction {
   RowTypePtr outputType;
 };
 
+  /// Describes a field in a row-wise container for hash build/group by.
+struct AbstractField {
+  TypePtr type;
+  int32_t fieldIdx;
+  int32_t nullIdx{0};
+};
+  
 struct AbstractAggInstruction {
   AggregateOp op;
   // Offset of null indicator byte on accumulator row.

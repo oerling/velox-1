@@ -26,6 +26,16 @@ namespace facebook::velox::wave {
 using SubfieldMap =
     folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
+  /// Branch targets when generating device code.
+struct Branches {
+  int32_t trueLabel;
+  int32_t falseLabel;
+  int32_t errorLabel;
+  int32_t nullLabel;
+  int32_t nextLabel;
+};
+
+  
 class CompileState {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
@@ -188,6 +198,10 @@ class CompileState {
   std::shared_ptr<aggregation::AggregateFunctionRegistry>
       aggregateFunctionRegistry_;
   folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
+
+  
+  std::stringstream generated_;
+  Branches branches_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

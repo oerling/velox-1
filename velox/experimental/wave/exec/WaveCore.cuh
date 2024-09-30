@@ -97,9 +97,6 @@ __device__ inline T getOperand(
     OperandIndex opIdx,
     int32_t blockBase,
     void* shared) {
-  if (opIdx > kMinSharedMemIndex) {
-    assert(false);
-  }
   auto op = operands[opIdx];
   int32_t index = (threadIdx.x + blockBase) & op->indexMask;
   if (auto indicesInOp = op->indices) {
@@ -110,6 +107,23 @@ __device__ inline T getOperand(
   }
   return reinterpret_cast<const T*>(op->base)[index];
 }
+
+template <typename T>
+__device__ inline T operand(
+    Operand** operands,
+    OperandIndex opIdx,
+    int32_t blockBase) {
+  auto op = operands[opIdx];
+  int32_t index = (threadIdx.x + blockBase) & op->indexMask;
+  if (auto indicesInOp = op->indices) {
+    auto indices = indicesInOp[blockBase / kBlockSize];
+    if (indices) {
+      index = indices[index];
+    }
+  }
+  return reinterpret_cast<const T*>(op->base)[index];
+}
+
 
 template <typename T>
 __device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
