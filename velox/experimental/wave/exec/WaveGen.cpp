@@ -1,17 +1,4 @@
 
-struct GenCtx {
-  std::stringstream code;
-  int32_t numNullFlags{0};
-};
-
-struct Branches {
-  int32_t trueLabel;
-  int32_t falseLabel;
-  int32_t errorLabel;
-  int32_t nullLabel;
-  int32_t nextLabel;
-};
-
 const std::string typeName(Type& type) {
   switch (type.kind()) {
   case TypeKind::BIGINT: return "int64_t ";
@@ -19,9 +6,9 @@ const std::string typeName(Type& type) {
   }
 }
 
-void CompileState::varDecl(AbstractOperand& op) {
+void CompileState::varDecl(const AbstractOperand& op) {
   generated_ << fmt::format("{} v{};\n", typeName(op.type), op.id)
-  generated_ <<  fmt::format("v{} = operand(shared->operands, {};\n", op.id);
+    generated_ <<  fmt::format("v{} = operand(shared->operands, {};\n", op.id, op.id);
 }
 
 
@@ -37,7 +24,7 @@ int32_t CompileState::generateOperand(const AbstractOperand& op) {
 
 
 
-void CompileState::makeOperand(AbstractOperand& op, ) {
+void CompileState::makeOperand(AbstractOperand& op) {
   int32_t v;
   if (op->inlineExpr) {
     v = generateInline(op->expr);
@@ -46,9 +33,14 @@ void CompileState::makeOperand(AbstractOperand& op, ) {
   }
 }
 
-void CompileState::makeComparison(Type& type, AbstractOperand* left, AbstractOperand* right, bool nullEq) {
+void CompileState::makeComparison(Type& type, AbstractOperand& left, AbstractOperand& right, bool nullEq) {
   
 }
+
+void CompileState::makeComparison(AbstractField& left, AbstractOperand& right, bool nullEq) {
+  
+}
+
 
 void CompileState::generateGroupBy(AbstractAggregationInstruction& inst) {
   

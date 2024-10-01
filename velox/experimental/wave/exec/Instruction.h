@@ -373,11 +373,12 @@ struct AbstractOperator : public AbstractInstruction {
 struct AbstractField {
   TypePtr type;
   int32_t fieldIdx;
-  int32_t nullIdx{0};
+  int32_t nullIdx{-1};
 };
   
 struct AbstractAggInstruction {
   AggregateOp op;
+
   // Offset of null indicator byte on accumulator row.
   int32_t nullOffset;
   // Offset of accumulator on accumulator row. Aligned at 8.
@@ -422,6 +423,7 @@ struct AbstractAggregation : public AbstractOperator {
   bool intermediateInput{false};
   bool intermediateOutput{false};
   std::vector<AbstractOperand*> keys;
+  std::vector<AbstractField> keyFields;
   std::vector<AbstractAggInstruction> aggregates;
   int32_t stateId;
   int32_t literalOffset;
