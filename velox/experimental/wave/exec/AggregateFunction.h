@@ -22,11 +22,23 @@ namespace facebook::velox::wave::aggregation {
 
   /// Describes an aggregate host side for generating device side operations.
   class AggregateOperation {
-
+  public:
     /// Emits a target language declaration for an accumulator.
-    declare(std::vector<TypePtr>& types, const std::string& fieldName, std::ostream);
+    declare(std::vector<TypePtr>& types, const std::string& fieldName, std::ostream& out);
 
-    void addRaw(std::vector<AbstractOperand*> operands);
+    void addRaw(const char* group, bool isGroup, std::vector<AbstractOperand*> operands, std::ostream& out);
+
+    void addAccumulator(const char* group, bool isGroup, std::vector<TypePtr>& types, std::vector<AbstractOperand*> operands, std::ostream& out);
+
+    void extractValue(AbstractOperand* result, std::ostream& out);
+    
+    void extractAccumulator(AbstractOperand* result, std::ostream& out);
+
+    void resultElements(AbstractOperand& result, std::ostream& out);
+
+
+    
+    
 
   };
 

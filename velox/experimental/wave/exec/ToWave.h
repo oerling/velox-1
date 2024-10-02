@@ -53,6 +53,10 @@ struct Segment {
   int32_t ordinl;;
 };
 
+  struct Scope {
+    definesMap operandMap;
+    Scope* outerScope{nullptr};
+  };
   
 class CompileState {
  public:
@@ -199,9 +203,6 @@ class CompileState {
   // The program being generated.
   std::shared_ptr<Program> currentProgram_;
 
-  // Boolean to select the instruction. Set for conditionl sections.
-  AbstractOperand* predicate_{nullptr};
-
   // Sequence number for operands.
   int32_t operandCounter_{0};
   int32_t wrapCounter_{0};
@@ -220,6 +221,9 @@ class CompileState {
   
   std::stringstream generated_;
   Branches branches_;
+  std::vector<Segment> segments_;
+  DefinesMap operandMap_;
+  std::vector<folly::F14fastMap<std::string, std::string>> renames_;;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

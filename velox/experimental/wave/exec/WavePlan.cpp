@@ -33,7 +33,59 @@ using exec::Expr;
 
 
 
+  AbstractOperand* CompileState::fieldToOperand(Subfield& field) {
 
+  }
+  
+  AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
+  auto value = toValue(expr);
+  auto it = operandMap_.find(value);
+  
+  if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
+    VELOX_FAIL("Should have been defined");
+  } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
+    if (predicate_) {
+      auto result = newOperand(constant->type(), constant->toString());
+      currentProgram_->add(std::make_unique<AbstractLiteral>(
+          constant->value(), result, predicate_));
+      return result;
+    } else {
+      auto op = newOperand(constant->value()->type(), constant->toString());
+      op->constant = constant->value();
+      if (constant->value()->isNullAt(0)) {
+        op->literalNull = true;
+      } else {
+        op->notNull = true;
+      }
+      return op;
+    }
+  } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
+    VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
+  }
+  auto opCode = binaryOpCode(expr);
+  if (!opCode.has_value()) {
+    VELOX_UNSUPPORTED("Expr not supported: {}", expr.toString());
+  }
+  auto result = newOperand(expr.type(), "r");
+  auto leftOp = addExpr(*expr.inputs()[0]);
+  auto rightOp = addExpr(*expr.inputs()[1]);
+  auto instruction =
+      std::make_unique<AbstractBinary>(opCode.value(), leftOp, rightOp, result);
+  setConditionalNullable(*instruction);
+
+  auto leftProgram = definedIn_[leftOp];
+  auto rightProgram = definedIn_[rightOp];
+  std::vector<Program*> sources;
+  if (leftProgram) {
+    sources.push_back(leftProgram);
+  }
+  if (rightProgram) {
+    sources.push_back(rightProgram);
+  }
+  addInstruction(std::move(instruction), result, sources);
+  return result;
+}
+  
 void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
   int32_t numPrograms = allPrograms_.size();
   auto condition = addExpr(expr);
@@ -299,7 +351,12 @@ bool isProjectedThrough(
   return false;
 }
 
-bool CompileState::compile() {
+  bool CompileState::tryAddOperator(const exec::Operator&op, const PlanNode& node)
+    
+    }
+
+    
+bool CompileState::prepare() {
   auto operators = driver_.operators();
   auto& nodes = driverFactory_.planNodes;
 
@@ -313,17 +370,9 @@ bool CompileState::compile() {
   RowTypePtr inputType;
   for (; operatorIndex < operators.size(); ++operatorIndex) {
     int32_t previousNumOperators = operators_.size();
-    auto& identity = operators[operatorIndex]->identityProjections();
-    // The columns that are projected through are renamed. They may also get an
-    // indirection after the new operator is placed.
-    std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
-    for (auto& projection : identity) {
-      identityProjected.push_back(std::make_pair(
-          findCurrentValue(
-              Value(toSubfield(inputType->nameOf(projection.inputChannel)))),
-          projection.outputChannel));
-    }
-    if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
+
+
+    if (!tryAddOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
     ++nodeIndex;
@@ -332,26 +381,6 @@ bool CompileState::compile() {
       if (operators_[newIndex]->isSink()) {
         // No output operands.
         continue;
-      }
-      for (auto i = 0; i < outputType->size(); ++i) {
-        auto& name = outputType->nameOf(i);
-        Value value = Value(toSubfield(name));
-        int32_t inputChannel;
-        if (isProjectedThrough(identity, i, inputChannel)) {
-          continue;
-        }
-        auto operand = operators_[newIndex]->defines(value);
-        if (!operand &&
-            (operators_[newIndex]->isSource() ||
-             !operators_[newIndex]->isStreaming())) {
-          operand = operators_[newIndex]->definesSubfield(
-              *this, outputType->childAt(i), name, newIndex == 0);
-        }
-        if (operand) {
-          operators_[newIndex]->addOutputId(operand->id);
-          definedBy_[value] = operand;
-          operandOperatorIndex_[operand] = operators_.size() - 1;
-        }
       }
     }
     for (auto& [op, channel] : identityProjected) {
