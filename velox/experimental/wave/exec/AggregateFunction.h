@@ -20,7 +20,17 @@
 
 namespace facebook::velox::wave::aggregation {
 
-struct AggregateFunction {
+  /// Describes an aggregate host side for generating device side operations.
+  class AggregateOperation {
+
+    /// Emits a target language declaration for an accumulator.
+    declare(std::vector<TypePtr>& types, const std::string& fieldName, std::ostream);
+
+    void addRaw(std::vector<AbstractOperand*> operands);
+
+  };
+
+  struct AggregateFunction {
   int accumulatorSize;
 
   ErrorCode (

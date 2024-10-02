@@ -87,8 +87,29 @@ struct AbstractOperand {
 
   bool isHostReturn{false};
 
-  /// If Expr is short enough to be inlined at call site.
-  exec::Expr* inlinedExpr{nullptr};
+  /// Corresponding Expr. Needs to be set if inlinable.
+  exec::Expr* expr{nullptr};
+
+  // True if value must be stored in memory, e.g. accessed in different kernel or if operand of retriable.
+  bool needsStore{false};
+
+  // True if this may need retry, e.g. like string concat that allocates.
+  bool retriable{false};
+
+  // Number of references.
+  int32_t numUses{0};
+
+  // Cost to compute, excl. children. Determines if worth storing or recomputing.
+  int32_t cost{0};
+
+  // Cost to compute, incl children.
+  int32_t costWithChildren{0};
+  
+  // Segment ordinal where value is generated.
+  int32_t definingSegment{0};
+
+  // Segment ordinal where value is last accessed.
+  int32_t lastUseSegment{0};
   
   // Ordinal of the wrap instruction that first wraps this. All operands wrapped
   // by the same wrap share 'Operand.indices'. All Operands that are wrapped at

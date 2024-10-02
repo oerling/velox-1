@@ -35,6 +35,24 @@ struct Branches {
   int32_t nextLabel;
 };
 
+  /// Describes the operation at the start of a segment.
+enum class BoundaryType {
+			   // Table scan, values, exchange
+			   kSource,
+			   // Filter in join or standalone
+			   kFilter,
+			   // n:Guaranteed 1 join, e.g, semi/antijoin.
+			   kReducingJoin,
+			   // Join that can produce multiple hits
+			   kJoin,
+  };
+  
+  /// Describes the space between cardinality changes in an operator pipeline.
+struct Segment {
+  BoundaryType start;
+  int32_t ordinl;;
+};
+
   
 class CompileState {
  public:
