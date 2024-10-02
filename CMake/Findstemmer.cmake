@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_gcsfile_test GCSUtilTest.cpp GCSFileSystemTest.cpp)
-add_test(velox_gcsfile_test velox_gcsfile_test)
-target_link_libraries(
-  velox_gcsfile_test
-  velox_core
-  velox_dwio_common_exception
-  velox_exec
-  velox_file
-  velox_gcs
-  velox_hive_connector
-  velox_temp_path
-  GTest::gmock
-  GTest::gtest
-  GTest::gtest_main)
+find_library(STEMMER_LIB libstemmer.a)
+if("${STEMMER_LIB}" STREQUAL "STEMMER_LIB-NOTFOUND")
+  set(stemmer_FOUND false)
+  return()
+endif()
+
+set(stemmer_FOUND true)
+if(NOT TARGET stemmer::stemmer)
+  add_library(stemmer::stemmer STATIC IMPORTED GLOBAL)
+
+  find_path(STEMMER_INCLUDE_PATH libstemmer.h)
+  set_target_properties(
+    stemmer::stemmer
+    PROPERTIES IMPORTED_LOCATION ${STEMMER_LIB} INTERFACE_INCLUDE_DIRECTORIES
+                                                ${STEMMER_INCLUDE_PATH})
+endif()

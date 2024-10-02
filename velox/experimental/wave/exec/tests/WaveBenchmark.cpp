@@ -210,7 +210,7 @@ class WaveBenchmark : public QueryBenchmarkBase {
       writer->close();
 
     } else {
-      VELOX_FAIL("Bad file format {}", FLAGS_data_format)
+      VELOX_FAIL("Bad file format {}", FLAGS_data_format);
     }
   }
 
