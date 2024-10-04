@@ -26,7 +26,7 @@ namespace facebook::velox::wave {
 using SubfieldMap =
     folly::F14FastMap<std::string, std::unique_ptr<common::Subfield>>;
 
-  /// Branch targets when generating device code.
+/// Branch targets when generating device code.
 struct Branches {
   int32_t trueLabel;
   int32_t falseLabel;
@@ -35,28 +35,189 @@ struct Branches {
   int32_t nextLabel;
 };
 
-  /// Describes the operation at the start of a segment.
-enum class BoundaryType {
-			   // Table scan, values, exchange
-			   kSource,
-			   // Filter in join or standalone
-			   kFilter,
-			   // n:Guaranteed 1 join, e.g, semi/antijoin.
-			   kReducingJoin,
-			   // Join that can produce multiple hits
-			   kJoin,
-  };
-  
-  /// Describes the space between cardinality changes in an operator pipeline.
-struct Segment {
-  BoundaryType start;
-  int32_t ordinl;;
+struct Scope {
+  definesMap operandMap;
+  Scope* parent{nullptr};
 };
 
-  struct Scope {
-    definesMap operandMap;
-    Scope* outerScope{nullptr};
-  };
+struct KernelStep {
+  virtual ~KernelStep() = default;
+
+  virtual bool isWrap() const {
+    return false;
+  }
+}
+
+struct Compute : public KernelStep {
+  AbstractOperand* operand;
+};
+
+struct Filter : public KernelStep {
+  bool isWrap() const override {
+    return true;
+  }
+
+  AbstractOperand* flag;
+  AbstractOperand* indices;
+};
+
+struct AggregateFunc {
+  std::string name;
+  std::vector<AbstractOperand*> args;
+  AbstractOperand* condition{nullptr};
+  bool distinct{false};
+  std::vector<AbstractOperand*> sort;
+  AbstratOperand* pushdownColumn;
+  std::optional<int32_t> restartNumber;
+};
+
+struct AggregateFused : public KernelStep {
+  AbstractState* state;
+  std::vector<AbstractOperand*> keys;
+  std::vector<AggregateFunc> aggregates;
+};
+
+struct AggregateProbe : public KernelStep {
+  AbstractState* state;
+  std::vector<AbstractOperand*> keys;
+  AbstractOperand* rows;
+};
+
+struct AggregateUpdate : public KernelStep {
+  AbstractOperand* rows;
+  std::vector<AggregateFunc> updates;
+};
+
+struct ReadAggregate : public KernelStep {
+  std::vector<AbstractOperand*> columns;
+};
+
+struct JoinBuild : public KernelStep {
+  AbstractState* state;
+  std::vector<AbstractOperand*> keys;
+  std::vector<AbstractOperand*> dependent;
+};
+
+struct JoinProbe : public KernelStep {
+  bool isWrap() const override {
+    return true;
+  }
+
+
+  AbstractState* state;
+  std::vector<AbstractOperand*> keys;
+  AbstractOperand* hits;
+};
+
+struct JoinExpand : public KernelStep {
+  bool isWrap() const override {
+    return true;
+  }
+
+  AbstractOperand* hits;
+  std::vector<int32_t> columns;
+  std::vector<AbstractOperand*> extract;
+};
+
+struct KernelBox {
+  std::vector<KernelStep*> steps;
+};
+
+// Position of a definition or use of data in a pipeline grid.
+struct CodePosition {
+  static constexpr uint16_t kNone = ~0;
+
+  CodePosition(uint16_t s) : kernelSeq(s) {}
+  CodePosition(uint16_t s, uint16_t step) : kernelSeq(s), step(step) {}
+
+  bool empty() const {
+    return definedIn == kNone;
+  }
+  
+  // Index of kernelBox in PipelineCandidate.
+  uint16_t kernelSeq{kNone};
+  // Position of program in KernelBox.
+  uint16_t step{kNone};
+  // If many kernelBoxes each with an independent program overlap, index of the
+  // program.
+  uint16_t kernelBranch{kNone};
+};
+
+struct OperandFlags {
+  CodePosition definedIn;
+  CodePosition firstUse;
+  CodePosition lastUse;
+  CodePosition wrappedAt;
+  bool needStore{0};
+};
+
+struct PipelineCandidate {
+
+  OperandFlags& flags(AbstractOperand* op) {
+    if (op->id >= operandFlags.size()) {
+      operandFlags.resize(op->id + 10);
+    }
+    return operandFlags[op->id];
+  }
+
+  KernelBox* boxOf(CodePosition pos) {
+    return &steps[pos.kernelSeq][pos.branchIdx];
+  }
+  
+  std::vector<OperandFlags> operandFlags;
+  std::vector<std::vector<KernelBox>> steps;
+  KernelBox* currentBox{nullptr};
+  int32_t boxIdx{0};
+};
+
+/// Describes the operation at the start of a segment.
+enum class BoundaryType {
+  // Table scan, values, exchange
+  kSource,
+  // Expressions. May or may not produce named projected columns. May be
+  // generated at place of use or generated in place and written to memory.
+  kExpr,
+  // Filter in join or standalone
+  kFilter,
+  // n:Guaranteed 1 join, e.g, semi/antijoin.
+  kReducingJoin,
+  // Join that can produce multiple hits
+  kJoin,
+
+  // Filter associated to non-inner join.
+  kJoinFilter,
+};
+
+/// Describes the space between cardinality changes in an operator pipeline.
+struct Segment {
+  BoundaryType boundary;
+
+  int32_t ordinl;
+
+  core::PlanNode* planNode{nullptr};
+
+  // Operands defined here. These can be referenced by subsequent segments.
+  // Local intermediates like ones created inside conditionals or lambdas are
+  // not included. If this is a filter, this is the bool filter  value.
+  std::vector<AbstractOperand*> topLevelDefined;
+
+  // If this projects out columns, these are the column names, 1:1 to
+  // topLevelDefined.
+  std::vector<Subfield*> projectedName;
+
+  // intermediates that are unconditionally computed and could be referenced
+  // from subsequent places for optimization, e.g. dedupping. Does not include
+  // intermediates inside conditional branches.
+  std::vector<AbstractOperand*> definedIntermediate;
+
+  // Aggregation, read aggregation, join, ... References planned operands via
+  // AbstractOperand.
+  std::vector<KernelStep*> steps;
+
+  // Cardinality change. 0.5 means that half the input passes.
+  float fanout{1};
+};
+
   
 class CompileState {
  public:
@@ -173,6 +334,14 @@ class CompileState {
   const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
   aggregateFunctionRegistry();
 
+  template <typename T>
+  T* makeStep() {
+    auto unq = std::make_unique<T>();
+    auto* ptr = unq.get();
+    allSteps_.push_back(std::move(unq));
+    return ptr;
+  }
+  
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
@@ -218,12 +387,19 @@ class CompileState {
       aggregateFunctionRegistry_;
   folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
 
-  
   std::stringstream generated_;
   Branches branches_;
   std::vector<Segment> segments_;
-  DefinesMap operandMap_;
-  std::vector<folly::F14fastMap<std::string, std::string>> renames_;;
+  Scope topScope_;
+
+  // Owns the steps of pipeline candidates.
+  std::vector<std::unique_ptr<kernelStep>> allSteps_;
+
+  // Candidates being considered for a pipeline.
+  std::vector<PipelineCandidate> candidates_;
+
+  // Selected candidates for all stages, e.g. from scan to agg and from agg to end. These are actually generated.
+  std::vector<PipelineCandidate> bestPipelines_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

@@ -25,6 +25,7 @@ velox_add_library(
   ExprKernel3.cu
   Instruction.cpp
   ToWave.cpp
+  WavePlan.cpp
   WaveOperator.cpp
   Vectors.cpp
   Values.cpp

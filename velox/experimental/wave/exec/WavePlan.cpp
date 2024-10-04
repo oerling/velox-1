@@ -14,96 +14,189 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/exec/FilterProject.h"
 #include "velox/experimental/wave/exec/Aggregation.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
+#include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Values.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
 
-DEFINE_int64(velox_wave_arena_unit_size, 1 << 30, "Per Driver GPU memory size");
+DEFINE_int32(ld_cost, 10, "Cost of load from memory");
+DEFINE_int32(st_cost, 40, "Cost of store to memory");
 
 namespace facebook::velox::wave {
 
 using exec::Expr;
 
-
-
-
-  AbstractOperand* CompileState::fieldToOperand(Subfield& field) {
-
+AbstractOperand* Scope::findValue(Value& value) {
+  auto it = operandMap.find(value);
+  if (it == operandMap.end()) {
+    if (scope->parent) {
+      return parent->findValue(value);
+    }
+    return nullptr;
   }
-  
-  AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
+  return it->second;
+}
+
+AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
+  bool renamed = false;
+  auto* name =
+      &reinterpret_cast<Subfield::NestedField*>(subfield->path()[0].get())
+           ->name();
+  for (int32_t i = renames.size() - 1; i >= 0; --i) {
+    auto it = renames_[i].find(*name);
+    if (it == renames_[i].end()) {
+      break;
+    }
+    name = &it->second;
+    renamed = true;
+  }
+  if (!renamed) {
+    auto op = scope->findValue(Value(subfield));
+  } else {
+    auto renamedstring = name;
+    std::string temp;
+    if (subfield.path().size() > 1) {
+      VELOX_UNSUPPORTED("no nested fields");
+    }
+    auto newSubfield = toSubfield(*renamedField);
+    op = scope->findValue(Value(newSubfield));
+  }
+  if (op->firstUseSegment == AbstractInstruction::kNotAccessed) {
+    op->firstUseSegment = segments_.size() - 1;
+  }
+  op->lastUseSegment = segments_.size() - 1;
+  return op;
+}
+
+AbstractOperand* CompileState::fieldToOperand(
+    const core::FieldAccessTypedExprPtr& field,
+    Scope* scope) {
+  Subfield* subfield = toSubfield(field->name());
+  return fieldToOperand(*subfield, scope);
+}
+
+AbstractOperand* CompileState::switchOperand(
+    exec::SwitchExpr* switchExpr,
+    Scope* scope) {
+  auto& inputs = switchExpr->inputs();
+  std::vector<AbstractOperand*> opInputs;
+  Scoep clauseScope(scope);
+  for (auto i = 0; i < inputs.size(); i += 2) {
+    opInputs.push_back(exprToOperand(*inputs[i], &clauseScope));
+    if (i + 1 < inputs.size()) {
+      opInputs.push_back(exprToOperand(*inputs[i + 1], &clauseScope));
+    }
+    clauseScope.operandMap.clear();
+  }
+  auto result = newOperand(expr.type(), "r");
+  result->inputs = std::move(opInputs);
+  scope->operandMap[value] = result;
+  return result;
+}
+
+bool functionRetriable(Expr& expr) {
+    if (expr.name() == ' CONCAT") {
+      return true;
+}
+return false;
+}
+
+int32_t functionCost(Expr& expr) {
+  // Arithmetic
+  return 1;
+}
+
+AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
   auto value = toValue(expr);
-  auto it = operandMap_.find(value);
-  
+  auto op = scope->findValue(value);
+  if (op) {
+    ++op->numUses;
+    return op;
+  }
+
   if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
     VELOX_FAIL("Should have been defined");
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
-    if (predicate_) {
-      auto result = newOperand(constant->type(), constant->toString());
-      currentProgram_->add(std::make_unique<AbstractLiteral>(
-          constant->value(), result, predicate_));
-      return result;
+    auto op = newOperand(constant->value()->type(), constant->toString());
+    op->constant = constant->value();
+    if (constant->value()->isNullAt(0)) {
+      op->literalNull = true;
     } else {
-      auto op = newOperand(constant->value()->type(), constant->toString());
-      op->constant = constant->value();
-      if (constant->value()->isNullAt(0)) {
-        op->literalNull = true;
-      } else {
-        op->notNull = true;
-      }
-      return op;
+      op->notNull = true;
     }
-  } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
+    return op;
+  } else if (auto special = dynamic_cast<const exec::SpecialForm*>(&expr)) {
+    if (auto* switchExpr = dynamic_cast<const exec::SwitchExpr*>(special)) {
+      return switchOperand(switchExpr, scope);
+    }
     VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
   }
-  auto opCode = binaryOpCode(expr);
-  if (!opCode.has_value()) {
-    VELOX_UNSUPPORTED("Expr not supported: {}", expr.toString());
+  std::vector<AbstractOperand*> inputs;
+  int32_t totalCost = 0;
+  for (auto& in : expr.inputs()) {
+    inputs.push_back(exprToOperand(*in, scope));
+
+    totalCost += inputs.back()->costWithChildren;
   }
   auto result = newOperand(expr.type(), "r");
-  auto leftOp = addExpr(*expr.inputs()[0]);
-  auto rightOp = addExpr(*expr.inputs()[1]);
-  auto instruction =
-      std::make_unique<AbstractBinary>(opCode.value(), leftOp, rightOp, result);
-  setConditionalNullable(*instruction);
-
-  auto leftProgram = definedIn_[leftOp];
-  auto rightProgram = definedIn_[rightOp];
-  std::vector<Program*> sources;
-  if (leftProgram) {
-    sources.push_back(leftProgram);
-  }
-  if (rightProgram) {
-    sources.push_back(rightProgram);
-  }
-  addInstruction(std::move(instruction), result, sources);
+  result->retriable = functionRetriable(expr);
+  result->cost = functionCost(expr);
+  result->costWithChildren = totalCost + result->cost;
+  result->inputs = std::move(inputs);
+  scope->operandMap[value] = result;
   return result;
 }
-  
-void CompileState::addFilter(const Expr& expr, const RowTypePtr& outputType) {
-  int32_t numPrograms = allPrograms_.size();
-  auto condition = addExpr(expr);
-  auto indices = newOperand(INTEGER(), "indices");
-  indices->notNull = true;
-  auto program = programOf(condition);
-  program->addLabel(expr.toString(true));
-  program->markOutput(indices->id);
-  program->add(std::make_unique<AbstractFilter>(condition, indices));
-  auto wrapUnique = std::make_unique<AbstractWrap>(indices, wrapCounter_++);
-  auto wrap = wrapUnique.get();
-  program->add(std::move(wrapUnique));
-  auto levels = makeLevels(numPrograms);
-  operators_.push_back(
-      std::make_unique<Project>(*this, outputType, levels, wrap));
+
+Segment& CompileState::addSegment(
+    BoundaryType boundary,
+    core::PlanNode* node,
+    RowTypePtr& outputType) {
+  segments_.emplace_back();
+  auto& last = segments_.back();
+  last.ordinal = segments_.size() - 1;
+  last.boundary = boundaryType;
+  last->planNode = node;
+  if (outputType) {
+    int32_t size = outputType->size();
+    for (auto i = 0; i < size; ++i) {
+      auto subfield = toSubfield(outputType->nameOf(i));
+      Value value(subfield);
+      auto* op = newOperand(outputType->childAt(i), outputType->nameOf(i));
+      op->definedInSegment = last.ordinal;
+      op->sourceNullable = boundary == BoundaryType::kSource;
+      op->needsStore = boundary == BoundaryType::kSource;
+      topScope_.operandMap[value] = op;
+        segment->opernadMap(value] = op;
+    }
+  }
+  return last;
 }
 
-void CompileState::addFilterProject(
+void CompileState::tryFilter(const Expr& expr, const RowTypePtr& outputType) {
+  auto& last = addSegment(BoundaryType::kExpr, nullptr, nullptr);
+  last.topLevelDefined.push_back(exprToOperand(expr, &topScope_));
+}
+
+void CompileState::tryExprSet(
+    const exec::ExprSet& exprSet,
+    int32_t begin,
+    int32_t end,
+    const RowTypePtr& outputType) {
+  auto& exprs = exprSet.exprs();
+  auto& result = segments_.back().topLevelDefined;
+  for (auto i = begin; i < end; ++i) {
+    result.push_back(tryExpr(*exprs[i]));
+    auto* subfield = toSubfield(outputType->nameOf(i - begin));
+    segments_.back().projectedName.push_back(subfield);
+  }
+}
+
+void CompileState::tryFilterProject(
     exec::Operator* op,
     RowTypePtr& outputType,
     int32_t& nodeIndex) {
@@ -113,14 +206,16 @@ void CompileState::addFilterProject(
   auto& identityProjections = filterProject->identityProjections();
   int32_t firstProjection = 0;
   if (data.hasFilter) {
-    addFilter(*data.exprs->exprs()[0], outputType);
+    tryFilter(*data.exprs->exprs()[0], outputType);
+    addSegment(BoundaryType::kFilter, nullptr, outputType);
     firstProjection = 1;
     ++nodeIndex;
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+  } else {
+    addSegment(BoundaryType::kExpr, nullptr, nullptr);
   }
-  int32_t numPrograms = allPrograms_.size();
-  auto operands =
-      addExprSet(*data.exprs, firstProjection, data.exprs->exprs().size());
+  tryExprSet(
+      *data.exprs, firstProjection, data.exprs->exprs().size(), outputType);
   std::vector<std::pair<Value, AbstractOperand*>> pairs;
   for (auto i = 0; i < operands.size(); ++i) {
     int32_t channel =
@@ -135,228 +230,55 @@ void CompileState::addFilterProject(
     definedBy_[value] = operands[i];
     pairs.push_back(std::make_pair(value, operands[i]));
   }
-  auto levels = makeLevels(numPrograms);
-  operators_.push_back(std::make_unique<Project>(*this, outputType, levels));
-  for (auto& [value, operand] : pairs) {
-    operators_.back()->defined(value, operand);
-  }
 }
 
-bool CompileState::reserveMemory() {
-  if (arena_) {
-    return true;
-  }
-  auto* allocator = getAllocator(getDevice());
-  arena_ =
-      std::make_unique<GpuArena>(FLAGS_velox_wave_arena_unit_size, allocator);
-  return true;
-}
-
-const std::shared_ptr<aggregation::AggregateFunctionRegistry>&
-CompileState::aggregateFunctionRegistry() {
-  if (!aggregateFunctionRegistry_) {
-    aggregateFunctionRegistry_ =
-        std::make_shared<aggregation::AggregateFunctionRegistry>(
-            getAllocator(getDevice()));
-    Stream stream;
-    aggregateFunctionRegistry_->addAllBuiltInFunctions(stream);
-    stream.wait();
-  }
-  return aggregateFunctionRegistry_;
-}
-
-void CompileState::setAggregateFromPlan(
-    const core::AggregationNode::Aggregate& planAggregate,
-    AbstractAggInstruction& agg) {
-  agg.op = AggregateOp::kSum;
-}
-
-void CompileState::makeAggregateLayout(AbstractAggregation& aggregate) {
-  // First key nulls, then key wirds. Then accumulator nulls, then accumulators.
-  int32_t numKeys = aggregate.keys.size();
-  int32_t startOffset = bits::roundUp(numKeys + 4, 8) + 8 * numKeys;
-  int32_t accNullOffset = startOffset;
-  auto numAggs = aggregate.aggregates.size();
-  int32_t accOffset = accNullOffset + bits::roundUp(numAggs, 8);
-  for (auto i = 0; i < numAggs; ++i) {
-    auto& agg = aggregate.aggregates[i];
-    agg.nullOffset = accNullOffset + i;
-    agg.accumulatorOffset = accOffset + i * sizeof(int64_t);
-  }
-}
-
-void CompileState::makeAggregateAccumulate(const core::AggregationNode* node) {
-  auto* state = newState(StateKind::kGroupBy, node->id(), "");
-  std::vector<AbstractOperand*> keys;
-  folly::F14FastSet<AbstractOperand*> uniqueArgs;
-  folly::F14FastSet<Program*> programs;
-  std::vector<AbstractOperand*> allArgs;
-  std::vector<AbstractAggInstruction> aggregates;
-  int numPrograms = allPrograms_.size();
-  for (auto& key : node->groupingKeys()) {
-    auto arg = findCurrentValue(key);
-    allArgs.push_back(arg);
-    keys.push_back(arg);
-    if (auto source = definedIn_[arg]) {
-      programs.insert(source);
-    }
-  }
-  auto numKeys = node->groupingKeys().size();
-  for (auto& planAggregate : node->aggregates()) {
-    aggregates.emplace_back();
-    std::vector<PhysicalType> argTypes;
-    auto& aggregate = aggregates.back();
-    setAggregateFromPlan(planAggregate, aggregate);
-    auto i = numKeys + aggregates.size() - 1;
-    aggregate.result = newOperand(
-        node->outputType()->childAt(i), node->outputType()->nameOf(i));
-    auto subfield = toSubfield(node->outputType()->nameOf(i));
-    definedBy_[Value(subfield)] = aggregate.result;
-    for (auto& arg : planAggregate.call->inputs()) {
-      argTypes.push_back(fromCpuType(*arg->type()));
-      auto field =
-          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(arg);
-      auto op = findCurrentValue(field);
-      aggregate.args.push_back(op);
-      bool isNew = uniqueArgs.insert(op).second;
-      if (isNew) {
-        allArgs.push_back(op);
-        if (auto source = definedIn_[op]) {
-          programs.insert(source);
-        }
-      }
-    }
-#if 0
-    auto func =
-        functionRegistry_->getFunction(aggregate.call->name(), argTypes);
-    VELOX_CHECK_NOT_NULL(func);
-#endif
-  }
-  auto instruction = std::make_unique<AbstractAggregation>(
-      nthContinuable_++,
-      std::move(keys),
-      std::move(aggregates),
-      state,
-      node->outputType());
-  if (!instruction->keys.empty()) {
-    instruction->maxReadStreams = FLAGS_max_streams_per_driver * 10;
-  }
-
-  makeAggregateLayout(*instruction);
-  std::vector<Program*> sourceList;
-  if (programs.empty()) {
-    sourceList.push_back(newProgram());
-  } else if (programs.size() == 1) {
-    sourceList.push_back(*programs.begin());
-  } else {
-    for (auto& s : programs) {
-      sourceList.push_back(s);
-    }
-  }
-  instruction->reserveState(instructionStatus_);
-  allStatuses_.push_back(instruction->mutableInstructionStatus());
-  auto aggInstruction = instruction.get();
-  addInstruction(std::move(instruction), nullptr, sourceList);
-  if (allPrograms_.size() > numPrograms) {
-    makeProject(numPrograms, node->outputType());
-  }
-  numPrograms = allPrograms_.size();
-  auto reader = newProgram();
-  reader->add(std::make_unique<AbstractReadAggregation>(
-      nthContinuable_++, aggInstruction));
-
-  makeProject(numPrograms, node->outputType());
-  auto project = reinterpret_cast<Project*>(operators_.back().get());
-  for (auto i = 0; i < node->groupingKeys().size(); ++i) {
-    std::string name = aggInstruction->keys[i]->label;
-    operators_.back()->defined(
-        Value(toSubfield(name)), aggInstruction->keys[i]);
-    definedIn_[aggInstruction->keys[i]] = reader;
-  }
-  for (auto i = 0; i < aggInstruction->aggregates.size(); ++i) {
-    std::string name = aggInstruction->aggregates[i].result->label;
-    operators_.back()->defined(
-        Value(toSubfield(name)), aggInstruction->aggregates[i].result);
-    definedIn_[aggInstruction->aggregates[i].result] = reader;
-    // project->definesSubfield(*this,
-    // aggInstruction->aggregates[i].result->type, name, false);
-  }
-}
-
-void CompileState::makeProject(int firstProgram, RowTypePtr outputType) {
-  auto levels = makeLevels(firstProgram);
-  operators_.push_back(
-      std::make_unique<Project>(*this, outputType, std::move(levels)));
-}
-
-bool CompileState::addOperator(
+bool CompileState::tryPlanOperator(
     exec::Operator* op,
     int32_t& nodeIndex,
     RowTypePtr& outputType) {
   auto& name = op->operatorType();
-  if (name == "Values") {
-    if (!reserveMemory()) {
-      return false;
-    }
-    operators_.push_back(std::make_unique<Values>(
-        *this,
-        *reinterpret_cast<const core::ValuesNode*>(
-            driverFactory_.planNodes[nodeIndex].get())));
+  if (name == "Values" || name == "TableScan") {
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+    addSegment(
+        BoundaryType::ksource,
+        driverFactory_.planNodes[nodeIndex].get(),
+        outputType);
   } else if (name == "FilterProject") {
-    if (!reserveMemory()) {
-      return false;
-    }
-    addFilterProject(op, outputType, nodeIndex);
+    tryFilterProject(op, outputType, nodeIndex);
   } else if (name == "Aggregation") {
-    if (!reserveMemory()) {
-      return false;
-    }
     auto* node = dynamic_cast<const core::AggregationNode*>(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
-    makeAggregateAccumulate(node);
-#if 0
-    operators_.push_back(std::make_unique<Aggregation>(
-        *this, *node, aggregateFunctionRegistry()));
-#endif
-    outputType = node->outputType();
-  } else if (name == "TableScan") {
-    if (!reserveMemory()) {
-      return false;
+    auto step = makeStep<AggregateFused>();
+    for (auto& key : node->groupingKeys()) {
+      step->keys.push_back(fieldToOperand(key, topScope_));
     }
-    auto scan = reinterpret_cast<const core::TableScanNode*>(
-        driverFactory_.planNodes[nodeIndex].get());
-    outputType = driverFactory_.planNodes[nodeIndex]->outputType();
-
-    operators_.push_back(
-        std::make_unique<TableScan>(*this, operators_.size(), *scan));
-    outputType = scan->outputType();
+    for (auto& agg : node->aggregates()) {
+      AggregateFunc func;
+      func.name = agg->call->name();
+      for (auto& expr : agg->call->inputs()) {
+        func.args.push_back(fieldToOperand(
+            std::dynamic_pointer_cast<fieldAccessTypedExpr>(expr),
+            &topLevelScope_));
+      }
+      step->aggregates.push_back(std::move(func));
+    }
+    segments_.back().steps.push_back(step);
+    outputType = node->outputType();
+    addSegment(BoundaryType::kSource, node, outputType);
+    auto read = makeStep<readAggregation>();
+    for (auto i = 0; i < outputType->size(); ++i) {
+      read->columns.push_back(
+          fieldToOperand(toSubfield(outputType->nameOf(i)), &topLevelScope_));
+    }
+    segments_.back().steps.push_back(step.get());
   } else {
     return false;
   }
   return true;
 }
 
-bool isProjectedThrough(
-    const std::vector<exec::IdentityProjection>& projectedThrough,
-    int32_t i,
-    int32_t& inputChannel) {
-  for (auto& projection : projectedThrough) {
-    if (projection.outputChannel == i) {
-      inputChannel = projection.inputChannel;
-      return true;
-    }
-  }
-  return false;
-}
-
-  bool CompileState::tryAddOperator(const exec::Operator&op, const PlanNode& node)
-    
-    }
-
-    
-bool CompileState::prepare() {
+bool CompileState::makeSegments() {
   auto operators = driver_.operators();
   auto& nodes = driverFactory_.planNodes;
 
@@ -371,8 +293,7 @@ bool CompileState::prepare() {
   for (; operatorIndex < operators.size(); ++operatorIndex) {
     int32_t previousNumOperators = operators_.size();
 
-
-    if (!tryAddOperator(operators[operatorIndex], nodeIndex, outputType)) {
+    if (!tryPlanOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
     }
     ++nodeIndex;
@@ -385,55 +306,111 @@ bool CompileState::prepare() {
     }
     for (auto& [op, channel] : identityProjected) {
       Value value(toSubfield(outputType->nameOf(channel)));
-      auto newOp = addIdentityProjections(op);
-      projectedTo_[value] = newOp;
+      // Mark the last segment that references.
+      auto* result = fieldToOperand(value, &globalScope_);
+      // Returned to host, must be in memory.
+      result->needsStore = true;
     }
     inputType = outputType;
   }
-  if (operators_.empty()) {
-    return false;
-  }
-  std::vector<OperandId> resultOrder;
-  for (auto i = 0; i < outputType->size(); ++i) {
-    auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
-    auto source = programOf(operand, false);
-    // Operands produced by programs, when projected out of Wave, must
-    // be marked as output of their respective programs. Some
-    // operands, e.g. table scan results are not from programs.
-    if (source) {
-      source->markOutput(operand->id);
-    }
-    resultOrder.push_back(operand->id);
-  }
-  for (auto& op : operators_) {
-    op->finalize(*this);
-  }
-  instructionStatus_.gridStateSize = instructionStatus_.gridState;
-  for (auto* status : allStatuses_) {
-    status->gridStateSize = instructionStatus_.gridState;
-  }
-  auto waveOpUnique = std::make_unique<WaveDriver>(
-      driver_.driverCtx(),
-      outputType,
-      operators[first]->planNodeId(),
-      operators[first]->operatorId(),
-      std::move(arena_),
-      std::move(operators_),
-      std::move(resultOrder),
-      std::move(subfields_),
-      std::move(operands_),
-      std::move(operatorStates_),
-      instructionStatus_);
-  auto waveOp = waveOpUnique.get();
-  waveOp->initialize();
-  std::vector<std::unique_ptr<exec::Operator>> added;
-  added.push_back(std::move(waveOpUnique));
-  auto replaced = driverFactory_.replaceOperators(
-      driver_, first, operatorIndex, std::move(added));
-  waveOp->setReplaced(std::move(replaced));
-  return true;
 }
 
-  
-  
+void CompileState::makeStored(PipelineCandidate& candidate, Segment& seg) {
+  for (auto& out : segment.topLevelDefined) {
+    auto& f = candidate.flags(op->id);
+    flags.needStore = true;
+    flags.defined = CodePosition(0);
+  }
+}
+
+int32_t countLoads(PipelineCandidate& candidate, AbstractOperand* op) {
+  int32_t count = 0;
+  auto& f = candidate.flags(op);
+  if (f.needStore) {
+    return 1;
+  }
+  for (auto* in : op->inputs) {
+    count += countLoads(candidate, in);
+  }
+  return count;
+}
+
+bool isInlinable(PipelineCandidate& candidate, AbstractOperand* op) {
+  auto& flags = candidate.flags(op);
+  if (flags.needStore) {
+    return true;
+  }
+  int32_t numLoads = countLoads(candidate, op);
+  if (op->numUses < 2) {
+    return true;
+  }
+  return numLoads * op->numUses < 5;
+}
+
+void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
+  auto& flags = candidate.flags(op);
+  auto* box = candidate.boxOf(flags.definedIn);
+  if (flags.firstUse.empty()) {
+    flags.firstUse = CodePosition(
+        camdidate.steps.size(),
+        candidate.currentBox->steps.size(),
+        candidate.boxIdx);
+  }
+  if (flags.wrappedAt.empty()) {
+    bool first = true;
+    for (seq = flags.definedIn.kernelSeq; seq < candidate.steps.size(); ++seq) {
+      auto branch = first ? flags.definedIn.branchIdx : 0;
+      auto* box = &candidate.steps[seq][branch];
+      if (!first) {
+        flags.needStore;
+        if (candidate.steps[seq].size() > 1) {
+          // if multiple parallel kernel boxes, no cardinality change.
+          continue;
+        }
+      }
+      for (i = isFirst ? flags.definedIn.step + 1 : 0; i < box->steps.size();
+           ++i) {
+        if (box->steps[i]->isWrap()) {
+          flags.wrappedAt = CodePosition(seq, i, 0);
+          break;
+        }
+      }
+    }
+  }
+  flags.lastUse = CodePosition(seq, box->steps.size(), boxIdx);
+}
+
+void CompileState::placeExpr(AbstractOperand* op, bool mayDelay) {
+  auto& flags = candidate.flags(op);
+  if (!flags.defined.empty()) {
+    recordReference(candidate, op);
+  } else {
+    for (auto* in : op->inputs) {
+      placeExp(candidate, in, false);
+    }
+    flags.definedIn = CodePosition(
+        candidate.steps.size() - 1,
+        candidate.currentBox->size(),
+        candidate.boxIdx);
+    auto inst = makeStep<Compute>();
+    inst->op = op;
+    currentBox->steps.push_back(inst);
+  }
+}
+
+void CompileState::addSegment(
+    PipelineCandidate& candidate,
+    float inputBatch,
+    int32_t segmentIdx) {
+  auto& segment = segments_[segmentIdx];
+  if (segment.boundary == BoundaryType::kSource) {
+    candidate.steps.emplace_back();
+    markOutputStored(candidate, segment);
+  }
+  switch (segment.boundary) {}
+}
+
+void makeCandidate() {
+  PipelineCandidate candidate;
+}
 }

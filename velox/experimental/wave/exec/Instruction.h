@@ -37,6 +37,7 @@ T addBytes(U* p, int32_t bytes) {
 struct AbstractOperand {
   static constexpr int32_t kNoConstant = ~0;
   static constexpr int32_t kNoWrap = ~0;
+  static constexpr int32_t kNotAccessed = ~0;
 
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
@@ -90,12 +91,23 @@ struct AbstractOperand {
   /// Corresponding Expr. Needs to be set if inlinable.
   exec::Expr* expr{nullptr};
 
+  // 1:1 to inputs of 'expr'. The same Expr will be different trees of
+  // AbstractOperand if these are in different conditional
+  // branches. Dedupping CSEs is only for non-conditionally executed.
+  std::vector<AbstractOperand*> inputs;
+  
   // True if value must be stored in memory, e.g. accessed in different kernel or if operand of retriable.
   bool needsStore{false};
 
   // True if this may need retry, e.g. like string concat that allocates.
   bool retriable{false};
 
+  // True of a column whose first access is conditional, e.g. behind a filter or join.
+  bool maybeLazy{false};
+
+  // True of a column whose only use is as argument of a single pushdown compatible agg.
+  bool aggPushdown{false};
+  
   // Number of references.
   int32_t numUses{0};
 
@@ -108,6 +120,8 @@ struct AbstractOperand {
   // Segment ordinal where value is generated.
   int32_t definingSegment{0};
 
+  // Segment ordinal where value is first accessed.
+  int32_t firstUseSegment{kNotAccessed};
   // Segment ordinal where value is last accessed.
   int32_t lastUseSegment{0};
   
@@ -117,6 +131,7 @@ struct AbstractOperand {
   // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
 
+ 
   std::string toString() const;
 };
 
@@ -390,7 +405,13 @@ struct AbstractOperator : public AbstractInstruction {
   RowTypePtr outputType;
 };
 
-  /// Describes a field in a row-wise container for hash build/group by.
+  /// Represents a block of generated code possibly with a retry entry point.
+  struct AbstractBlock : public AbstractInstruction {
+    const int32_t serial;
+    InstructionState status;
+  };
+  
+/// Describes a field in a row-wise container for hash build/group by.
 struct AbstractField {
   TypePtr type;
   int32_t fieldIdx;
@@ -477,6 +498,8 @@ struct AbstractReadAggregation : public AbstractOperator {
   int32_t literalOffset{0};
 };
 
+
+  
 /// Serializes 'row' to characters interpretable on device.
 std::string rowTypeString(const RowTypePtr& row);
 

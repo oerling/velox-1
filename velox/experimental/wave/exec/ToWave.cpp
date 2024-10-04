@@ -80,6 +80,7 @@ Value CompileState::toValue(const core::FieldAccessTypedExpr& field) {
 
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
   auto newOp = std::make_unique<AbstractOperand>(other, operandCounter_++);
+  newOp->definedInSegment = segments_.size() - 1;
   operands_.push_back(std::move(newOp));
   return operands_.back().get();
 }
@@ -90,6 +91,7 @@ AbstractOperand* CompileState::newOperand(
   operands_.push_back(
       std::make_unique<AbstractOperand>(operandCounter_++, type, label));
   auto op = operands_.back().get();
+  op->definedInSegment = segments_.size() - 1;
   return op;
 }
 
