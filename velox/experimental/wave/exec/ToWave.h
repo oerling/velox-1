@@ -18,8 +18,10 @@
 
 #include "velox/exec/Operator.h"
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
+#include "velox/experimental/wave/exec/Accumulators.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/SwitchExpr.h"
 
 namespace facebook::velox::wave {
 
@@ -36,69 +38,104 @@ struct Branches {
 };
 
 struct Scope {
-  definesMap operandMap;
+  Scope() = default;
+  Scope(Scope* parent) : parent(parent) {}
+
+  AbstractOperand* findValue(const Value& value);
+
+  DefinesMap operandMap;
   Scope* parent{nullptr};
 };
 
+  enum class StepKind : int8_t {
+				kOperand,
+				kTableScan,
+				kFilter,
+				kAggregateFused,
+				ekAggregateProbe,
+				kAggregateUpdate,
+				kJoinBuild,
+				kJoinProbe,
+				kJoinExpand
+  };
+  
 struct KernelStep {
   virtual ~KernelStep() = default;
-
+  virtual StepKind kind() const = 0;
   virtual bool isWrap() const {
     return false;
   }
-}
 
+  template <typename T>
+  T& as() {
+    return *reinterpret_cast<T*>(this);
+  }
+};
+
+struct TableScanStep : public KernelStep {
+  StepKind kind() const override { return StepKind::kTableScan; }
+  TableScanNode* node;
+};
+  
 struct Compute : public KernelStep {
+  StepKind kind() const override { return StepKind::kOperand; }
   AbstractOperand* operand;
 };
 
 struct Filter : public KernelStep {
+  StepKind kind() const override { return StepKind::kFilter; }
+
   bool isWrap() const override {
     return true;
   }
 
   AbstractOperand* flag;
   AbstractOperand* indices;
+  int32_t nthWrap{-1};
 };
 
-struct AggregateFunc {
-  std::string name;
-  std::vector<AbstractOperand*> args;
+  struct AggregateUpdate : public KernelStep {
+      StepKind kind() const override { return StepKind::kAggregateUpdate; }
+
+    std::string name;
+    AbstractOperand* row;
+  core::AggregationNode::Step step;
+    int32_t accumulatorIdx;
+    std::vector<AbstractOperand*> args;
   AbstractOperand* condition{nullptr};
   bool distinct{false};
   std::vector<AbstractOperand*> sort;
-  AbstratOperand* pushdownColumn;
+  AbstractOperand* pushdownColumn;
   std::optional<int32_t> restartNumber;
-};
+    AbstractOperand* result;
+  };
 
-struct AggregateFused : public KernelStep {
-  AbstractState* state;
-  std::vector<AbstractOperand*> keys;
-  std::vector<AggregateFunc> aggregates;
-};
 
 struct AggregateProbe : public KernelStep {
+  StepKind kind() const override { return StepKind::kAggregateProbe; }
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   AbstractOperand* rows;
 };
 
-struct AggregateUpdate : public KernelStep {
-  AbstractOperand* rows;
-  std::vector<AggregateFunc> updates;
-};
 
-struct ReadAggregate : public KernelStep {
-  std::vector<AbstractOperand*> columns;
+struct ReadAggregation : public KernelStep {
+  StepKind kind() const override { return StepKind::kReadAggregation; }
+  core::AggregationNode::Step step;
+  AbstractState* state;
+  std::vector<AbstractOperand*> keys;
+  std::vector<AggregateFunc*> funcs;
 };
 
 struct JoinBuild : public KernelStep {
+  StepKind kind() const override { return StepKind::kJoinBuild; }
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> dependent;
 };
 
 struct JoinProbe : public KernelStep {
+  StepKind kind() const override { return StepKind::kJoinProbe; }
   bool isWrap() const override {
     return true;
   }
@@ -110,6 +147,7 @@ struct JoinProbe : public KernelStep {
 };
 
 struct JoinExpand : public KernelStep {
+  StepKind kind() const override { return StepKind::kJoinExpand; }
   bool isWrap() const override {
     return true;
   }
@@ -121,17 +159,21 @@ struct JoinExpand : public KernelStep {
 
 struct KernelBox {
   std::vector<KernelStep*> steps;
+  // Number of consecutive wraps (filter, join, unnest...).
+  int32_t numWraps{0};
 };
 
 // Position of a definition or use of data in a pipeline grid.
 struct CodePosition {
   static constexpr uint16_t kNone = ~0;
 
+  CodePosition() = default;
   CodePosition(uint16_t s) : kernelSeq(s) {}
   CodePosition(uint16_t s, uint16_t step) : kernelSeq(s), step(step) {}
+  CodePosition(uint16_t s, uint16_t step, uint16_t branchIdx) : kernelSeq(s), step(step), branchIdx(branchIdx) {}
 
   bool empty() const {
-    return definedIn == kNone;
+    return kernelSeq == kNone;
   }
   
   // Index of kernelBox in PipelineCandidate.
@@ -140,7 +182,7 @@ struct CodePosition {
   uint16_t step{kNone};
   // If many kernelBoxes each with an independent program overlap, index of the
   // program.
-  uint16_t kernelBranch{kNone};
+  uint16_t branchIdx{kNone};
 };
 
 struct OperandFlags {
@@ -186,15 +228,16 @@ enum class BoundaryType {
 
   // Filter associated to non-inner join.
   kJoinFilter,
+  kAggregation
 };
 
 /// Describes the space between cardinality changes in an operator pipeline.
 struct Segment {
   BoundaryType boundary;
 
-  int32_t ordinl;
+  int32_t ordinal;
 
-  core::PlanNode* planNode{nullptr};
+  const core::PlanNode* planNode{nullptr};
 
   // Operands defined here. These can be referenced by subsequent segments.
   // Local intermediates like ones created inside conditionals or lambdas are
@@ -203,7 +246,7 @@ struct Segment {
 
   // If this projects out columns, these are the column names, 1:1 to
   // topLevelDefined.
-  std::vector<Subfield*> projectedName;
+  std::vector<common::Subfield*> projectedName;
 
   // intermediates that are unconditionally computed and could be referenced
   // from subsequent places for optimization, e.g. dedupping. Does not include
@@ -218,7 +261,6 @@ struct Segment {
   float fanout{1};
 };
 
-  
 class CompileState {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
@@ -341,6 +383,55 @@ class CompileState {
     allSteps_.push_back(std::move(unq));
     return ptr;
   }
+
+  AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
+
+  AbstractOperand* fieldToOperand(
+    const core::FieldAccessTypedExpr& field,
+    Scope* scope);
+
+  AbstractOperand* switchOperand(
+				 const exec::SwitchExpr& switchExpr,
+    Scope* scope);
+
+  AbstractOperand* exprToOperand(const exec::Expr& expr, Scope* scope);
+  
+Segment& addSegment(
+    BoundaryType boundary,
+    const core::PlanNode* node,
+    RowTypePtr outputType);
+
+    std::vector<AbstractOperand*> tryExprSet(
+    const exec::ExprSet& exprSet,
+    int32_t begin,
+    int32_t end,
+    const RowTypePtr& outputType);
+
+  void tryFilter(const exec::Expr& expr, const RowTypePtr& outputType); 
+
+  void tryFilterProject(
+    exec::Operator* op,
+    RowTypePtr& outputType,
+    int32_t& nodeIndex);
+
+  bool tryPlanOperator(
+    exec::Operator* op,
+    int32_t& nodeIndex,
+    RowTypePtr& outputType);
+
+  void placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
+
+  void markOutputStored(PipelineCandidate& candidate, Segment& segment);
+  
+  bool makeSegments();
+
+  void recordCandidate(PipelineCandidate& candidate);
+  
+  void planSegment(
+    PipelineCandidate& candidate,
+    float inputBatch,
+    int32_t segmentIdx);
+  
   
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
@@ -393,13 +484,22 @@ class CompileState {
   Scope topScope_;
 
   // Owns the steps of pipeline candidates.
-  std::vector<std::unique_ptr<kernelStep>> allSteps_;
+  std::vector<std::unique_ptr<KernelStep>> allSteps_;
 
+  // The number of the pipeline being generated.
+  int32_t pipelineIdx_{0};
+  
   // Candidates being considered for a pipeline.
   std::vector<PipelineCandidate> candidates_;
 
   // Selected candidates for all stages, e.g. from scan to agg and from agg to end. These are actually generated.
   std::vector<PipelineCandidate> bestPipelines_;
+
+  // Renames of columns introduced by project nodes that rename a top level column to something else with no expression.
+  std::vector<std::unordered_map<std::string, std::string>> renames_;
+
+  // For each in 'renames_', a copy of 'topScope' before the rename was installed.
+  std::vector<Scope> topScopes_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

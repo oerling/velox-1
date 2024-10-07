@@ -467,6 +467,17 @@ struct ProgramLaunch {
   AdvanceResult advance;
 };
 
+  /// Identifies a compiled kernel. The text is the full description
+  /// of the work. The operator ids are the ids in the plan making the
+  /// lookup so that every placeholder in the text corresponds to one
+  /// operand id. A single id can occur in 'operandIds' multiple times.
+  struct ProgramKey {
+    std::string text;
+    std::vector<AbstractOperand*> input;
+    std::vector<AbstractOperand*> output;
+  };
+
+  
 class Program : public std::enable_shared_from_this<Program> {
  public:
   void add(std::unique_ptr<AbstractInstruction> instruction) {
@@ -537,7 +548,10 @@ class Program : public std::enable_shared_from_this<Program> {
   /// Fills 'ptrs' with device side global/stream states. Creates the states if
   /// necessary.
   void getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs);
-
+  void setExtraWraps(std::vector<AbstractOperand*> operands) {
+    extraWraps_ = std::move(operands);
+  }
+  
   /// True if begins with a source instruction, like reading and aggregate
   /// result or exchange.
   bool isSource() {
@@ -649,8 +663,15 @@ class Program : public std::enable_shared_from_this<Program> {
   // a pool of ready to run executables.
   std::vector<std::unique_ptr<Executable>> prepared_;
 
+  // Number of alternative programs. A grid of 100 blocks is launched
+  // for 400 blocks if 4 alternate paths. Each block executes one of 4
+  // alternatives. This is like multiple parallel programs in one
+  // kernel.
+  int32_t numAlternates_{1};
+  
   // Globals accessed by id from instructions.
   std::vector<std::unique_ptr<ProgramState>> operatorStates_;
+  std::vector<AbstractOperand*> extraWraps_;
 };
 
 inline int32_t instructionStatusSize(

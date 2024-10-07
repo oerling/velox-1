@@ -196,7 +196,7 @@ GpuAllocator::UniquePtr<T> GpuAllocator::allocate() {
   return UniquePtr<T>(ptr, Deleter(this, bytes));
 }
 
-template <typename T>
+  template <typename T>
 GpuAllocator::UniquePtr<T[]> GpuAllocator::allocate(size_t n) {
   static_assert(std::is_trivially_destructible_v<T>);
   auto bytes = n * sizeof(T);
@@ -211,11 +211,58 @@ struct KernelInfo {
   int32_t sharedMemory{0};
   int32_t maxOccupancy0{0};
   int32_t maxOccupancy32{0};
-
+  
   std::string toString() const;
 };
 
-KernelInfo getRegisteredKernelInfo(const char* name);
+        /// Specification of code to compile.
+    struct KernelSpec {
+      std::string code;
+      std::vector<std::string> entryPoints;
+    };
+
+  /// Represents the result of compilation. Wrapped accessed through CompiledKernel.
+  struct CompiledModule {
+  virtual ~CompiledModule() = default;
+    /// Compiles 'spec' and returns the result.
+    std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
+    
+  std::vector<void*> entryPoints;
+  std::optional<std::string> error;
+};
+
+
+    /// Represents a run-time compiled kernel. These are returned immediately from a kernel cache. The compilation takes place in the background. The member functions block until a possibly pending compilation completes.
+  class CompiledKernel {
+public:
+  virtual ~CompiledKernel();
+
+  /// Returns the occupancy info for the entry points in the kernel.
+  virtual std::vector<KernelInfo>& info() = 0;
+
+  ///  Returns a handle for cuLaunchKernel  for each entry point.
+  virtual const std::vector<void*>& getHandles() = 0;
+
+  /// Returns an error message produced by the compilation.
+  virtual std::optional<std::string>> error() = 0;
+};
+
+  /// Key for accessing kernel cache. The 
+  struct KernelKey {
+    bool operator==(const KernelKey& other) {
+      return  key == other.key;
+    }
+
+    /// Opaque key. Uniquely identifies the code to compile.
+    std::string key;
+
+    /// Returns  the source code to compile. Called in the background compilation thread.
+    std::function<KernelSpec()> generator;
+  };
+  /// Returns the compiled kernel for 'key'. Starts background compilation if 'key's kernel is not compiled. 
+std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
+
+  KernelInfo getRegisteredKernelInfo(const char* name);
 
 KernelInfo kernelInfo(const void* func);
 

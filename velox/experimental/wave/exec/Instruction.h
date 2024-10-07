@@ -22,6 +22,7 @@
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a device
@@ -407,8 +408,8 @@ struct AbstractOperator : public AbstractInstruction {
 
   /// Represents a block of generated code possibly with a retry entry point.
   struct AbstractBlock : public AbstractInstruction {
-    const int32_t serial;
-    InstructionState status;
+    int32_t serial;
+    InstructionStatus status;
   };
   
 /// Describes a field in a row-wise container for hash build/group by.
