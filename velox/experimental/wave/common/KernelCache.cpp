@@ -29,40 +29,48 @@ namespace facebook::velox::wave {
   class KernelGenerator {
   public:
     std::shared_ptr<CompiledKernel> generate(const KernelKey& key) {
-      folly::SharedPromise<std::shared_ptr<CompiledKernel>> promise;
-      auto future = promise.getFuture()
-	compilerExecutor()->add([key]() {
-				  auto code = key.generate();
-				  auto[handle, error] = compileKernel(code);
-				});
+      folly::SharedPromise<std::shared_ptr<CompiledModule>> promise;
+      auto future = promise.getFuture();
+      compilerExecutor()->add([key, capturedPromise = std::move]promise() {
+				  auto spec = key.generate();
+				  auto module = CompiledModule::create(spec);
+				  capturedPromise.setValue(module);
+      });
 	return std::make_shared<AsyncCompiledKernel>(std::move(future));
     }
   };
 
   class AsyncCompiledKernel : public CompiledKernel {
   public:
-    AsyncCompiledKernel(folly::Future<std::shared_ptr<ConpiledKernel> future)
+    AsyncCompiledKernel(folly::Future<std::shared_ptr<CompiledModule> future)
       : future_(std::move(future)) {}
     
   private:
-    folly::Future<
+    folly::Future<std::shared_ptr<CompiledModule>> future_;
+
   };
 
+  using KernelCache =   CachedFactory<KernelKey, std::shared_ptr<CompiledKernel>, KernelGenerator>;
   
-    auto generator = std::make_unique<DoublerGenerator>();
+
+  KernelCache makeCache() {
+    auto generator = std::make_unique<KernelGenerator>();
   auto* generated = &generator->generated;
-  CachedFactory<int, int, DoublerGenerator> factory(
-      std::make_unique<SimpleLRUCache<int, int>>(1000), std::move(generator));
+  KernelCache factory(
+		      std::make_unique<SimpleLRUCache<KernelKey, std::shared_ptr<CompiledKernel>>>(1000), std::move(generator));
+		      return factory;
+  }
 
+  KernelCache& kernelCache() {
+    static cache = makeCache();
+    return cache;
+  }
+
+
+  //  static 
+    std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
+  return kernelCache().get(key);
   
-
-  using CacheType = 
-  static 
-  
-  std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
-
-  
-
 }
 
 

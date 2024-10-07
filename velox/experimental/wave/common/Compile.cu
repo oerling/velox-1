@@ -16,6 +16,7 @@
 
 
 
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <nvrtc.h>
 
 #include <gflags/gflags.h>
@@ -97,3 +98,14 @@ cuLaunchKernel(kernel,
 
  return std::make_shared<CompiledModuleImpl>(module, 
 }
+
+
+   CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream stream, void** args) {
+			      
+   cuLaunchKernel(kernels[idx],
+            numBlocks, 1, 1,   // grid dim
+            numThreads, 1, 1,    // block dim
+		  shared, stream,             // shared mem and stream
+            args,                // arguments
+            0);
+  };
