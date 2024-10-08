@@ -226,6 +226,8 @@ struct KernelInfo {
   virtual ~CompiledModule() = default;
     /// Compiles 'spec' and returns the result.
     std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
+
+    virtual void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, void* stream, void** args);
     
   std::vector<void*> entryPoints;
   std::optional<std::string> error;

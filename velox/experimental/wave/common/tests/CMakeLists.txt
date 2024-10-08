@@ -17,6 +17,7 @@ add_executable(
   GpuArenaTest.cpp
   CudaTest.cpp
   CudaTest.cu
+  CompileTest.cpp
   BlockTest.cpp
   BlockTest.cu
   HashTableTest.cpp

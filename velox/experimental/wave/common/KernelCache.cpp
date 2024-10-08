@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/executor/wave/common/Cuda.h"
+#include "velox/experimental/wave/common/Cuda.h"
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
 
@@ -66,12 +66,22 @@ namespace facebook::velox::wave {
     return cache;
   }
 
-
+  std::unordered_map<std::string, std::shared_ptr<CompiledKernel> debugKernels;
+  
   //  static 
     std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
-  return kernelCache().get(key);
-  
+  if (!debugKernels.empty()) {
+    auto it = debugKernels.find(key.key);
+    if (it != debugKernels.end()) {
+      return it->second;
+    }
+  }
+  auto ptr = kernelCache().get(key);
+  return nullptr;
 }
+
+void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints);
+
 
 
 

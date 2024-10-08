@@ -78,9 +78,18 @@ char* kernelText =
 
 
   TEST_F(CompileTest, module) {
-    KernelSpec spec = KernelSpec{
+    KernelSpec spec = KernelSpec{kernelText, {"add1", "add2"}};
+    auto module = CompiledModule::create(key);
+    int32_t* ptr;
+    cuCheck(cuMemAllocManaged(&ptr, 1000 * sizeof(int32_t)));
+    KernelParams record{ptr, 1000};
+    memset(ptr, 0, 1000 * sizeof(int32_t));
+    void** params = {&record};
+    module->launch(0, 1, 256, 0, nullptr, params);
+    
   }
-  #if 0
+
+#if 0
     TEST_F(CompileTest, basic) {
       kernelKey key{"pfaal", []() -> KernelSpec {
 	return KernelSpec{kernelText,

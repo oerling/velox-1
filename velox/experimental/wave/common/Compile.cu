@@ -16,13 +16,15 @@
 
 
 
+#include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/common/Exception.h"
 #include <nvrtc.h>
 
 #include <gflags/gflags.h>
 
 
-DEFINE_string(wavegen_include_path, "path to velox/experimental/wave. Mustt contain the cuh headers for runtime compilation");
+DEFINE_string(wavegen_include_path, "", "path to velox/experimental/wave. Mustt contain the cuh headers for runtime compilation");
 
 namespace facebook::velox::wave {
 
@@ -94,7 +96,7 @@ namespace facebook::velox::wave {
 }
 
 
-  CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, CUstream stream, void** args) {
+  CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, void* stream, void** args) {
 			      
    cuLaunchKernel(kernels[idx],
             numBlocks, 1, 1,   // grid dim
