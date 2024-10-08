@@ -25,6 +25,14 @@
 
 namespace facebook::velox::wave {
 
+  void cuCheck(CUresult result, const char* file, int32_t line) {
+    if (result != CUDA_SUCCESS) {
+      waveError(
+      fmt::format("Cuda error: {}:{} {}", file, line, cuGetErrorString(result)));
+
+    }
+  }
+  
 void cudaCheck(cudaError_t err, const char* file, int line) {
   if (err == cudaSuccess) {
     return;
@@ -42,6 +50,20 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
   std::cerr << err << std::endl;
   exit(1);
 }
+
+bool  driverInited = false;
+CUdevice globalDevice;
+CUcontext globalContext;
+  
+  void getDeviceAndContext(CUdevice& device, CUcontext& context) {
+    if (!driverInited) {
+      cuInit(0);
+      cuDeviceGet(&globalDevice, 0);	   
+      cuDevicePrimaryCtxRetain(&globalContext, globalDevice);
+    }
+    context = globalContext;
+    device = globalDevice;
+  }
 
 namespace {
 class CudaManagedAllocator : public GpuAllocator {

@@ -26,6 +26,11 @@ DEFINE_string(wavegen_include_path, "path to velox/experimental/wave. Mustt cont
 
 namespace facebook::velox::wave {
 
+  void nvrtcCheck(nvrtcResult result) {
+    if (result != NVRTC_SUCCESS) {                                
+      waveError(nvrtcGetErrorString(result));
+    }
+  }
 
   class CompiledModuleImpl  : public CompiledModule {
     
@@ -41,66 +46,55 @@ namespace facebook::velox::wave {
   std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
 
     nvrtcProgram prog;
-    nvrtcCreateProgram(&prog, // prog
-		       code.c_str(),         // buffer
-        "saxpy.cu",    // name
+    nvrtcCreateProgram(&prog,
+		       spec.code.c_str(),         // buffer
+        "rtctest.cu",    // name
         0,             // numHeaders
         NULL,          // headers
-        NULL);         // includeNames
+		       NULL);         // includeNames
+    for (auto& name : spec.entryPoints) {
+      nvrtcCheck(nvrtcAddNameExpression(entry.c_str()));
+    }
+    const char *opts[] = {"--gpu-architecture=compute_80", "-g", "-G"};
+    nvrtcCompileProgram(prog,     // prog
+			3,        // numOptions
+			opts);    // options
+    
 
-const char *opts[] = {"--gpu-architecture=compute_80"};
- nvrtcCompileProgram(prog,     // prog
-		    1,        // numOptions
-		    opts);    // options
+    size_t logSize;
 
+    nvrtcGetProgramLogSize(prog, &logSize);
+    char *log = new char[logSize];
+    nvrtcGetProgramLog(prog, log);
+    // Obtain PTX from the program.
+    size_t ptxSize;
+    nvrtcGetPTXSize(prog, &ptxSize);
+    char *ptx = new char[ptxSize];
+    nvrtcGetPTX(prog, ptx);
+    std::vector<std::string> loweredNames;
+    for (auto& entry : spec.entryPoints) {
+      const char * temp;
+      nvrtcCheck(nvrtcGetLoweredName(prog, entry.c_str(), &temp));
+      loweredNames.push_back(std::string(temp));
+    }
+ 
+    nvrtcDestroyProgram(&prog);
 
-size_t logSize;
-
-nvrtcGetProgramLogSize(prog, &logSize);
-char *log = new char[logSize];
-nvrtcGetProgramLog(prog, log);
-// Obtain PTX from the program.
-size_t ptxSize;
-nvrtcGetPTXSize(prog, &ptxSize);
-char *ptx = new char[ptxSize];
-nvrtcGetPTX(prog, ptx);
-
-nvrtcDestroyProgram(&prog);
-
-CUdevice cuDevice;
-CUcontext context;
-CUmodule module;
-CUfunction kernel;
-cuDeviceGet(&cuDevice, 0);
-cuCtxCreate(&context, 0, cuDevice);
-cuModuleLoadDataEx(&module, ptx, 0, 0, 0);
- std::vector<CUfunction> funcs;
- for (auto& name : spec.entryPoints) {
-   funcs.emplace_back();
-   cuModuleGetFunction(&funcs.back(), module, entry.c_str());
-size_t n = size_t n = NUM_THREADS * NUM_BLOCKS;
-size_t bufferSize = n * sizeof(float);
-float a = ...;
-float *hX = ..., *hY = ..., *hOut = ...;
-CUdeviceptr dX, dY, dOut;
-cuMemAlloc(&dX, bufferSize);
-cuMemAlloc(&dY, bufferSize);
-cuMemAlloc(&dOut, bufferSize);
-cuMemcpyHtoD(dX, hX, bufferSize);
-cuMemcpyHtoD(dY, hY, bufferSize);
-void *args[] = { &a, &dX, &dY, &dOut, &n };
-cuLaunchKernel(kernel,
-            NUM_THREADS, 1, 1,   // grid dim
-            NUM_BLOCKS, 1, 1,    // block dim
-            0, NULL,             // shared mem and stream
-            args,                // arguments
-            0);
-
- return std::make_shared<CompiledModuleImpl>(module, 
+    CUdevice cuDevice;
+    CUcontext context;
+    getDeviceAndContext(dvice, context);
+    CUmodule module;
+    cuModuleLoadDataEx(&module, ptx, 0, 0, 0);
+    std::vector<CUfunction> funcs;
+    for (auto& name : loweredNames) {
+      funcs.emplace_back();
+      cuModuleGetFunction(&funcs.back(), module, name.c_str());
+    }
+    return std::make_shared<CompiledModuleImpl>(module, std::move(funcs));
 }
 
 
-   CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream stream, void** args) {
+  CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, CUstream stream, void** args) {
 			      
    cuLaunchKernel(kernels[idx],
             numBlocks, 1, 1,   // grid dim

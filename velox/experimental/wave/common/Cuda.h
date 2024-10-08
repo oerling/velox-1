@@ -237,17 +237,24 @@ struct KernelInfo {
 public:
   virtual ~CompiledKernel();
 
-  /// Returns the occupancy info for the entry points in the kernel.
-  virtual std::vector<KernelInfo>& info() = 0;
-
-  ///  Returns a handle for cuLaunchKernel  for each entry point.
-  virtual const std::vector<void*>& getHandles() = 0;
-
-  /// Returns an error message produced by the compilation.
+    /// Returns an error message produced by the compilation.
   virtual std::optional<std::string>> error() = 0;
-};
 
-  /// Key for accessing kernel cache. The 
+    virtual void launch(int32_t idx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) = 0;
+  };
+
+  /// An implementation of CompiledKernel that exposes kernels from the executable as dynamically compiled ones.
+  class DebugCompiledKernel : public CompiledKernel {
+  /// Returns an error message produced by the compilation.
+    std::optional<std::string>> error() override {
+      return std::nullopt;
+    }
+
+    void launch(int32_t idx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) override;
+
+  };
+  
+  /// Key for accessing compiled kernel cache.
   struct KernelKey {
     bool operator==(const KernelKey& other) {
       return  key == other.key;
@@ -262,6 +269,12 @@ public:
   /// Returns the compiled kernel for 'key'. Starts background compilation if 'key's kernel is not compiled. 
 std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
 
+  /// Registers a set of kernel entry points from the executable as a
+  /// compiled module. Used for debugging generated code, where the
+  /// generated code has been build as part of the exe with manual
+  /// changes and debug info.
+void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints);
+  
   KernelInfo getRegisteredKernelInfo(const char* name);
 
 KernelInfo kernelInfo(const void* func);
