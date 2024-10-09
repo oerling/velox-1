@@ -65,7 +65,7 @@ struct KernelParams {
 };
 
 const char* kernelText =
-    "#include <cstdint>\n"
+    "using int32_t = int; //#include <cstdint>\n"
     "namespace facebook::velox::wave {\n"
     "  struct KernelParams {\n"
     "    int32_t* array;\n"
@@ -86,7 +86,7 @@ const char* kernelText =
     "} // namespace\n";
 
 TEST_F(CompileTest, module) {
-  KernelSpec spec = KernelSpec{kernelText, {"add1", "add2"}};
+  KernelSpec spec = KernelSpec{kernelText, {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}, "/tmp/add1.cu"};
   auto module = CompiledModule::create(spec);
   int32_t* ptr;
   testCuCheck(cuMemAllocManaged(
@@ -102,13 +102,14 @@ TEST_F(CompileTest, module) {
   module->launch(0, 1, 256, 0, stream.get(), &recordPtr);
   testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
   EXPECT_EQ(1, ptr[0]);
+  
 }
 
 #if 0
     TEST_F(CompileTest, basic) {
       kernelKey key{"pfaal", []() -> KernelSpec {
 	return KernelSpec{kernelText,
-			  {"add1", "add2"}};
+			  {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}};
       }};
       
 

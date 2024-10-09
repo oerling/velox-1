@@ -58,10 +58,11 @@ CUcontext globalContext;
   
   void getDeviceAndContext(CUdevice& device, CUcontext& context) {
     if (!driverInited) {
-      cuInit(0);
-      cuDeviceGet(&globalDevice, 0);	   
-      cuDevicePrimaryCtxRetain(&globalContext, globalDevice);
+      CU_CHECK(cuInit(0));
+            CU_CHECK(cuDeviceGet(&globalDevice, 0));	   
+	    CU_CHECK(      cuDevicePrimaryCtxRetain(&globalContext, globalDevice));
     }
+    cuCtxPushCurrent(globalContext);
     context = globalContext;
     device = globalDevice;
   }

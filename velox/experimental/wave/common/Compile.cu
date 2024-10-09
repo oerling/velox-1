@@ -54,7 +54,7 @@ namespace facebook::velox::wave {
     nvrtcProgram prog;
     nvrtcCreateProgram(&prog,
 		       spec.code.c_str(),         // buffer
-        "rtctest.cu",    // name
+		       spec.filePath.c_str(),    // name
         0,             // numHeaders
         NULL,          // headers
 		       NULL);         // includeNames
@@ -66,7 +66,7 @@ namespace facebook::velox::wave {
 			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include/cuda/std/detail/libcxx/include",
 			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include"};
     auto compileResult = nvrtcCompileProgram(prog,     // prog
-					     3,        // numOptions
+					     4,        // numOptions
 			opts);    // options
     
 
@@ -99,7 +99,7 @@ namespace facebook::velox::wave {
     CUcontext context;
     getDeviceAndContext(device, context);
     CUmodule module;
-    cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0);
+    CU_CHECK(cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0));
     std::vector<CUfunction> funcs;
     for (auto& name : loweredNames) {
       funcs.emplace_back();

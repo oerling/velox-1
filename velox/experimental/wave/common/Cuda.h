@@ -221,6 +221,7 @@ struct KernelInfo {
 struct KernelSpec {
   std::string code;
   std::vector<std::string> entryPoints;
+  std::string filePath;
 };
 
 /// Represents the result of compilation. Wrapped accessed through
