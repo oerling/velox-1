@@ -20,7 +20,7 @@
 
 namespace facebook::velox::wave::aggregation {
 
-  struct AggregateFunction {
+struct AggregateFunction {
   int accumulatorSize;
 
   ErrorCode (

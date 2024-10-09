@@ -30,9 +30,7 @@ std::string AdvanceResult::toString() const {
       "AdvanceResult(.numRows={}, .isRetry={}, .sync={})",
       numRows,
       isRetry,
-      syncDrivers       ? "drivers"
-          : syncStreams ? "streams"
-                        : "none");
+      syncDrivers ? "drivers" : syncStreams ? "streams" : "none");
 }
 
 void AbstractAggregation::reserveState(InstructionStatus& reservedState) {

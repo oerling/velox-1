@@ -20,9 +20,9 @@
 #include "velox/exec/Operator.h"
 #include "velox/experimental/wave/common/ResultStaging.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
+#include "velox/expression/Expr.h"
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
-#include "velox/expression/Expr.h"
 
 namespace facebook::velox::wave {
 /// Abstract representation of Wave instructions. These translate to a device
@@ -96,28 +96,32 @@ struct AbstractOperand {
   // AbstractOperand if these are in different conditional
   // branches. Dedupping CSEs is only for non-conditionally executed.
   std::vector<AbstractOperand*> inputs;
-  
-  // True if value must be stored in memory, e.g. accessed in different kernel or if operand of retriable.
+
+  // True if value must be stored in memory, e.g. accessed in different kernel
+  // or if operand of retriable.
   bool needsStore{false};
 
   // True if this may need retry, e.g. like string concat that allocates.
   bool retriable{false};
 
-  // True of a column whose first access is conditional, e.g. behind a filter or join.
+  // True of a column whose first access is conditional, e.g. behind a filter or
+  // join.
   bool maybeLazy{false};
 
-  // True of a column whose only use is as argument of a single pushdown compatible agg.
+  // True of a column whose only use is as argument of a single pushdown
+  // compatible agg.
   bool aggPushdown{false};
-  
+
   // Number of references.
   int32_t numUses{0};
 
-  // Cost to compute, excl. children. Determines if worth storing or recomputing.
+  // Cost to compute, excl. children. Determines if worth storing or
+  // recomputing.
   int32_t cost{0};
 
   // Cost to compute, incl children.
   int32_t costWithChildren{0};
-  
+
   // Segment ordinal where value is generated.
   int32_t definingSegment{0};
 
@@ -125,14 +129,13 @@ struct AbstractOperand {
   int32_t firstUseSegment{kNotAccessed};
   // Segment ordinal where value is last accessed.
   int32_t lastUseSegment{0};
-  
+
   // Ordinal of the wrap instruction that first wraps this. All operands wrapped
   // by the same wrap share 'Operand.indices'. All Operands that are wrapped at
   // some point get indices when first created. When they get wrapped, there is
   // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
 
- 
   std::string toString() const;
 };
 
@@ -406,19 +409,19 @@ struct AbstractOperator : public AbstractInstruction {
   RowTypePtr outputType;
 };
 
-  /// Represents a block of generated code possibly with a retry entry point.
-  struct AbstractBlock : public AbstractInstruction {
-    int32_t serial;
-    InstructionStatus status;
-  };
-  
+/// Represents a block of generated code possibly with a retry entry point.
+struct AbstractBlock : public AbstractInstruction {
+  int32_t serial;
+  InstructionStatus status;
+};
+
 /// Describes a field in a row-wise container for hash build/group by.
 struct AbstractField {
   TypePtr type;
   int32_t fieldIdx;
   int32_t nullIdx{-1};
 };
-  
+
 struct AbstractAggInstruction {
   AggregateOp op;
 
@@ -499,8 +502,6 @@ struct AbstractReadAggregation : public AbstractOperator {
   int32_t literalOffset{0};
 };
 
-
-  
 /// Serializes 'row' to characters interpretable on device.
 std::string rowTypeString(const RowTypePtr& row);
 

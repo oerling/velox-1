@@ -17,8 +17,8 @@
 #pragma once
 
 #include "velox/exec/Operator.h"
-#include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/Accumulators.h"
+#include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/SwitchExpr.h"
@@ -47,17 +47,17 @@ struct Scope {
   Scope* parent{nullptr};
 };
 
-  enum class StepKind : int8_t {
-				kOperand,
-				kTableScan,
-				kFilter,
-				kkAggregateProbe,
-				kAggregateUpdate,
-				kJoinBuild,
-				kJoinProbe,
-				kJoinExpand
-  };
-  
+enum class StepKind : int8_t {
+  kOperand,
+  kTableScan,
+  kFilter,
+  kkAggregateProbe,
+  kAggregateUpdate,
+  kJoinBuild,
+  kJoinProbe,
+  kJoinExpand
+};
+
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
@@ -72,17 +72,23 @@ struct KernelStep {
 };
 
 struct TableScanStep : public KernelStep {
-  StepKind kind() const override { return StepKind::kTableScan; }
+  StepKind kind() const override {
+    return StepKind::kTableScan;
+  }
   core::TableScanNode* node;
 };
-  
+
 struct Compute : public KernelStep {
-  StepKind kind() const override { return StepKind::kOperand; }
+  StepKind kind() const override {
+    return StepKind::kOperand;
+  }
   AbstractOperand* operand;
 };
 
 struct Filter : public KernelStep {
-  StepKind kind() const override { return StepKind::kFilter; }
+  StepKind kind() const override {
+    return StepKind::kFilter;
+  }
 
   bool isWrap() const override {
     return true;
@@ -93,33 +99,37 @@ struct Filter : public KernelStep {
   int32_t nthWrap{-1};
 };
 
-  struct AggregateUpdate : public KernelStep {
-      StepKind kind() const override { return StepKind::kAggregateUpdate; }
+struct AggregateUpdate : public KernelStep {
+  StepKind kind() const override {
+    return StepKind::kAggregateUpdate;
+  }
 
-    std::string name;
-    AbstractOperand* row;
+  std::string name;
+  AbstractOperand* row;
   core::AggregationNode::Step step;
-    int32_t accumulatorIdx;
-    std::vector<AbstractOperand*> args;
+  int32_t accumulatorIdx;
+  std::vector<AbstractOperand*> args;
   AbstractOperand* condition{nullptr};
   bool distinct{false};
   std::vector<AbstractOperand*> sort;
   AbstractOperand* pushdownColumn;
   std::optional<int32_t> restartNumber;
-    AbstractOperand* result;
-  };
-
+  AbstractOperand* result;
+};
 
 struct AggregateProbe : public KernelStep {
-  StepKind kind() const override { return StepKind::kAggregateProbe; }
+  StepKind kind() const override {
+    return StepKind::kAggregateProbe;
+  }
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   AbstractOperand* rows;
 };
 
-
 struct ReadAggregation : public KernelStep {
-  StepKind kind() const override { return StepKind::kReadAggregation; }
+  StepKind kind() const override {
+    return StepKind::kReadAggregation;
+  }
   core::AggregationNode::Step step;
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
@@ -127,18 +137,21 @@ struct ReadAggregation : public KernelStep {
 };
 
 struct JoinBuild : public KernelStep {
-  StepKind kind() const override { return StepKind::kJoinBuild; }
+  StepKind kind() const override {
+    return StepKind::kJoinBuild;
+  }
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   std::vector<AbstractOperand*> dependent;
 };
 
 struct JoinProbe : public KernelStep {
-  StepKind kind() const override { return StepKind::kJoinProbe; }
+  StepKind kind() const override {
+    return StepKind::kJoinProbe;
+  }
   bool isWrap() const override {
     return true;
   }
-
 
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
@@ -146,7 +159,9 @@ struct JoinProbe : public KernelStep {
 };
 
 struct JoinExpand : public KernelStep {
-  StepKind kind() const override { return StepKind::kJoinExpand; }
+  StepKind kind() const override {
+    return StepKind::kJoinExpand;
+  }
   bool isWrap() const override {
     return true;
   }
@@ -169,12 +184,13 @@ struct CodePosition {
   CodePosition() = default;
   CodePosition(uint16_t s) : kernelSeq(s) {}
   CodePosition(uint16_t s, uint16_t step) : kernelSeq(s), step(step) {}
-  CodePosition(uint16_t s, uint16_t step, uint16_t branchIdx) : kernelSeq(s), step(step), branchIdx(branchIdx) {}
+  CodePosition(uint16_t s, uint16_t step, uint16_t branchIdx)
+      : kernelSeq(s), step(step), branchIdx(branchIdx) {}
 
   bool empty() const {
     return kernelSeq == kNone;
   }
-  
+
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
   // Position of program in KernelBox.
@@ -193,7 +209,6 @@ struct OperandFlags {
 };
 
 struct PipelineCandidate {
-
   OperandFlags& flags(AbstractOperand* op) {
     if (op->id >= operandFlags.size()) {
       operandFlags.resize(op->id + 10);
@@ -204,7 +219,7 @@ struct PipelineCandidate {
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
-  
+
   std::vector<OperandFlags> operandFlags;
   std::vector<std::vector<KernelBox>> steps;
   KernelBox* currentBox{nullptr};
@@ -386,52 +401,52 @@ class CompileState {
   AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
 
   AbstractOperand* fieldToOperand(
-    const core::FieldAccessTypedExpr& field,
-    Scope* scope);
+      const core::FieldAccessTypedExpr& field,
+      Scope* scope);
 
   AbstractOperand* switchOperand(
-				 const exec::SwitchExpr& switchExpr,
-    Scope* scope);
+      const exec::SwitchExpr& switchExpr,
+      Scope* scope);
 
   AbstractOperand* exprToOperand(const exec::Expr& expr, Scope* scope);
-  
-Segment& addSegment(
-    BoundaryType boundary,
-    const core::PlanNode* node,
-    RowTypePtr outputType);
 
-    std::vector<AbstractOperand*> tryExprSet(
-    const exec::ExprSet& exprSet,
-    int32_t begin,
-    int32_t end,
-    const RowTypePtr& outputType);
+  Segment& addSegment(
+      BoundaryType boundary,
+      const core::PlanNode* node,
+      RowTypePtr outputType);
 
-  void tryFilter(const exec::Expr& expr, const RowTypePtr& outputType); 
+  std::vector<AbstractOperand*> tryExprSet(
+      const exec::ExprSet& exprSet,
+      int32_t begin,
+      int32_t end,
+      const RowTypePtr& outputType);
+
+  void tryFilter(const exec::Expr& expr, const RowTypePtr& outputType);
 
   void tryFilterProject(
-    exec::Operator* op,
-    RowTypePtr& outputType,
-    int32_t& nodeIndex);
+      exec::Operator* op,
+      RowTypePtr& outputType,
+      int32_t& nodeIndex);
 
   bool tryPlanOperator(
-    exec::Operator* op,
-    int32_t& nodeIndex,
-    RowTypePtr& outputType);
+      exec::Operator* op,
+      int32_t& nodeIndex,
+      RowTypePtr& outputType);
 
-  void placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
+  void
+  placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
-  
+
   bool makeSegments();
 
   void recordCandidate(PipelineCandidate& candidate);
-  
+
   void planSegment(
-    PipelineCandidate& candidate,
-    float inputBatch,
-    int32_t segmentIdx);
-  
-  
+      PipelineCandidate& candidate,
+      float inputBatch,
+      int32_t segmentIdx);
+
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
@@ -487,17 +502,20 @@ Segment& addSegment(
 
   // The number of the pipeline being generated.
   int32_t pipelineIdx_{0};
-  
+
   // Candidates being considered for a pipeline.
   std::vector<PipelineCandidate> candidates_;
 
-  // Selected candidates for all stages, e.g. from scan to agg and from agg to end. These are actually generated.
+  // Selected candidates for all stages, e.g. from scan to agg and from agg to
+  // end. These are actually generated.
   std::vector<PipelineCandidate> bestPipelines_;
 
-  // Renames of columns introduced by project nodes that rename a top level column to something else with no expression.
+  // Renames of columns introduced by project nodes that rename a top level
+  // column to something else with no expression.
   std::vector<std::unordered_map<std::string, std::string>> renames_;
 
-  // For each in 'renames_', a copy of 'topScope' before the rename was installed.
+  // For each in 'renames_', a copy of 'topScope' before the rename was
+  // installed.
   std::vector<Scope> topScopes_;
 };
 

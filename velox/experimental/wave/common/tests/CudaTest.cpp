@@ -698,22 +698,21 @@ class RoundtripThread {
             if (stats.isCpu) {
               addOneCpu(op.param1 * 256, op.param2);
             } else {
-	      auto [numStreams, numPerStream] = ensureStreams(op.param1);
-	      for (int32_t i = 0; i < numStreams; i++) {
-              streams_[i]->addOne(
-                  deviceBuffer_->as<int32_t>() + i * numPerStream,
-                  op.param1 * 256 / numStreams,
-                  op.param2,
-                  op.param3);
-	      events_[i]->record(*streams_[i]);
-	      events_[i]->wait(*stream_);
-	      }
-	      stream_->wait();
-	    }
+              auto [numStreams, numPerStream] = ensureStreams(op.param1);
+              for (int32_t i = 0; i < numStreams; i++) {
+                streams_[i]->addOne(
+                    deviceBuffer_->as<int32_t>() + i * numPerStream,
+                    op.param1 * 256 / numStreams,
+                    op.param2,
+                    op.param3);
+                events_[i]->record(*streams_[i]);
+                events_[i]->wait(*stream_);
+              }
+              stream_->wait();
+            }
             stats.numAdds += op.param1 * op.param2 * 256;
             break;
 
-	    
           case OpCode::kAddFuncStore:
             VELOX_CHECK_LE(op.param1, kNumKB);
             if (stats.isCpu) {
@@ -1012,19 +1011,21 @@ class RoundtripThread {
     return result;
   }
 
-  // Returns number of streams, number of items per stream for multi-stream execution over 'kb' KB of input. Ensures enough streams and events in 'streams_' and 'events_'. Take min 4KB per TB.
-  std::pair<int32_t, int32_t>  ensureStreams(int32_t kb) {
+  // Returns number of streams, number of items per stream for multi-stream
+  // execution over 'kb' KB of input. Ensures enough streams and events in
+  // 'streams_' and 'events_'. Take min 4KB per TB.
+  std::pair<int32_t, int32_t> ensureStreams(int32_t kb) {
     VELOX_CHECK_EQ(kb & 3, 0);
     int32_t numStreams = kb / 4;
     if (streams_.size() < numStreams) {
       for (auto i = streams_.size(); i < numStreams; ++i) {
-	streams_.push_back(std::make_unique<TestStream>());
-	events_.push_back(std::make_unique<Event>());
+        streams_.push_back(std::make_unique<TestStream>());
+        events_.push_back(std::make_unique<Event>());
       }
     }
     return {numStreams, kb / numStreams / 256};
   }
-  
+
   ArenaSet* const arenas_;
   Device* device_{nullptr};
   WaveBufferPtr deviceBuffer_;
@@ -1037,7 +1038,7 @@ class RoundtripThread {
 
   std::vector<std::unique_ptr<TestStream>> streams_;
   std::vector<std::unique_ptr<Event>> events_;
-  
+
   int32_t serial_{0};
   static inline std::atomic<int32_t> serialCounter_{0};
 };

@@ -20,26 +20,45 @@
 
 namespace facebook::velox::wave::aggregation {
 
-  /// Generates code for updating and accessing accumulators. Specialized for different aggregate functions.
-  class AccumulatorGenerator {
-  public:
-    /// Emits a target language declaration for an accumulator.
-    virtual void declare(std::vector<TypePtr>& types, const std::string& fieldName, std::ostream& out);
+/// Generates code for updating and accessing accumulators. Specialized for
+/// different aggregate functions.
+class AccumulatorGenerator {
+ public:
+  /// Emits a target language declaration for an accumulator.
+  virtual void declare(
+      std::vector<TypePtr>& types,
+      const std::string& fieldName,
+      std::ostream& out);
 
-    virtual void addRaw(const char* group, const std::string& fieldName, bool isGroup, std::vector<AbstractOperand*> operands, std::ostream& out);
+  virtual void addRaw(
+      const char* group,
+      const std::string& fieldName,
+      bool isGroup,
+      std::vector<AbstractOperand*> operands,
+      std::ostream& out);
 
-    virtual void addAccumulator(const char* group, const std::string& fieldName, bool isGroup, std::vector<TypePtr>& types, std::vector<AbstractOperand*> operands, std::ostream& out);
+  virtual void addAccumulator(
+      const char* group,
+      const std::string& fieldName,
+      bool isGroup,
+      std::vector<TypePtr>& types,
+      std::vector<AbstractOperand*> operands,
+      std::ostream& out);
 
-    virtual void extractValue(AbstractOperand* result, const std::string& fieldName, std::ostream& out);
-    
-    virtual void extractAccumulator(AbstractOperand* result, const std::string& fieldName, std::ostream& out);
+  virtual void extractValue(
+      AbstractOperand* result,
+      const std::string& fieldName,
+      std::ostream& out);
 
-    virtual void resultElements(AbstractOperand& result, const std::string& fieldName, std::ostream& out);
-  };
+  virtual void extractAccumulator(
+      AbstractOperand* result,
+      const std::string& fieldName,
+      std::ostream& out);
 
+  virtual void resultElements(
+      AbstractOperand& result,
+      const std::string& fieldName,
+      std::ostream& out);
+};
 
 } // namespace facebook::velox::wave::aggregation
-
-
-
-

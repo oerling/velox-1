@@ -37,5 +37,4 @@ target_link_libraries(
   glog::glog
   Folly::folly
   /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so
-  /usr/lib/x86_64-linux-gnu/libcuda.so
-  )
+  /usr/lib/x86_64-linux-gnu/libcuda.so)

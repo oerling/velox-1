@@ -29,15 +29,14 @@ DEFINE_int32(st_cost, 40, "Cost of store to memory");
 
 namespace facebook::velox::wave {
 
+using common::Subfield;
 using exec::Expr;
-  using common::Subfield;
 
+AbstractOperand* markUse(AbstractOperand* op) {
+  ++op->numUses;
+  return op;
+}
 
-  AbstractOperand* markUse(AbstractOperand* op) {
-    ++op->numUses;
-    return op;
-  }
-  
 AbstractOperand* Scope::findValue(const Value& value) {
   auto it = operandMap.find(value);
   if (it == operandMap.end()) {
@@ -55,7 +54,7 @@ AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
     return markUse(op);
   }
   auto* name =
-    &reinterpret_cast<common::Subfield::NestedField*>(field.path()[0].get())
+      &reinterpret_cast<common::Subfield::NestedField*>(field.path()[0].get())
            ->name();
   for (int32_t i = renames_.size() - 1; i >= 0; --i) {
     auto it = renames_[i].find(*name);
@@ -73,7 +72,7 @@ AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
 }
 
 AbstractOperand* CompileState::fieldToOperand(
-					      const core::FieldAccessTypedExpr& field,
+    const core::FieldAccessTypedExpr& field,
     Scope* scope) {
   Subfield* subfield = toSubfield(field.name());
   return fieldToOperand(*subfield, scope);
@@ -99,10 +98,10 @@ AbstractOperand* CompileState::switchOperand(
 }
 
 bool functionRetriable(const Expr& expr) {
-    if (expr.name() == "CONCAT") {
-      return true;
-}
-return false;
+  if (expr.name() == "CONCAT") {
+    return true;
+  }
+  return false;
 }
 
 int32_t functionCost(const Expr& expr) {
@@ -179,7 +178,7 @@ void CompileState::tryFilter(const Expr& expr, const RowTypePtr& outputType) {
   last.topLevelDefined.push_back(exprToOperand(expr, &topScope_));
 }
 
-  std::vector<AbstractOperand*> CompileState::tryExprSet(
+std::vector<AbstractOperand*> CompileState::tryExprSet(
     const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end,
@@ -194,14 +193,18 @@ void CompileState::tryFilter(const Expr& expr, const RowTypePtr& outputType) {
   return result;
 }
 
-  std::unordered_map<std::string, std::string> makeRenames(const std::vector<exec::IdentityProjection>& identities, const RowTypePtr inputType, const RowTypePtr& outputType) {
-    std::unordered_map<std::string, std::string> map;
-    for (auto p : identities) {
-      map[outputType->nameOf(p.outputChannel)] = inputType->nameOf(p.inputChannel);
-    }
-    return map;
+std::unordered_map<std::string, std::string> makeRenames(
+    const std::vector<exec::IdentityProjection>& identities,
+    const RowTypePtr inputType,
+    const RowTypePtr& outputType) {
+  std::unordered_map<std::string, std::string> map;
+  for (auto p : identities) {
+    map[outputType->nameOf(p.outputChannel)] =
+        inputType->nameOf(p.inputChannel);
   }
-  
+  return map;
+}
+
 void CompileState::tryFilterProject(
     exec::Operator* op,
     RowTypePtr& outputType,
@@ -253,19 +256,19 @@ bool CompileState::tryPlanOperator(
     VELOX_CHECK_NOT_NULL(node);
     addSegment(BoundaryType::kAggregation, node, nullptr);
     auto step = makeStep<Aggregateprobe>();
-      auto* state = newState(StateKind::kGroupBy, node->id(), "");
-      auto aggregationStep = node->step();
-      step->state = state;
-      step->rows = newOperand(BIGINT(), "rows");
-      for (auto& key : node->groupingKeys()) {
+    auto* state = newState(StateKind::kGroupBy, node->id(), "");
+    auto aggregationStep = node->step();
+    step->state = state;
+    step->rows = newOperand(BIGINT(), "rows");
+    for (auto& key : node->groupingKeys()) {
       step->keys.push_back(fieldToOperand(*key, &topScope_));
     }
-      std::vector<AggregateUpdate*> allUpdates;
-      for (auto& agg : node->aggregates()) {
+    std::vector<AggregateUpdate*> allUpdates;
+    for (auto& agg : node->aggregates()) {
       std::vector<AbstractOperand*> args;
       for (auto& expr : agg.call->inputs()) {
         args.push_back(fieldToOperand(
-					   *std::dynamic_pointer_cast<core::FieldAccessTypedExpr>(expr),
+            *std::dynamic_pointer_cast<core::FieldAccessTypedExpr>(expr),
             &topScope_));
       }
 
@@ -274,7 +277,8 @@ bool CompileState::tryPlanOperator(
       func->name = agg.call->name();
       func->rows = step->rows;
       func->args = std::move(args);
-      func->result = fieldToOperand(*toField(output->nameOf(i + step->keys.size())), &topScope_);
+      func->result = fieldToOperand(
+          *toField(output->nameOf(i + step->keys.size())), &topScope_);
       allUpdates.push_back(func);
     }
     segments_.back().steps.push_back(step);
@@ -315,13 +319,13 @@ bool CompileState::makeSegments() {
     ++nodeIndex;
   }
   for (auto i = 0; i < outputType->size(); ++i) {
-    auto* result = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
+    auto* result =
+        fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
     // Returned to host, must be in memory.
     result->needsStore = true;
   }
   return true;
 }
-
 
 int32_t countLoads(PipelineCandidate& candidate, AbstractOperand* op) {
   int32_t count = 0;
@@ -352,13 +356,14 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   auto* box = candidate.boxOf(flags.definedIn);
   if (flags.firstUse.empty()) {
     flags.firstUse = CodePosition(
-				  candidate.steps.size(),
+        candidate.steps.size(),
         candidate.currentBox->steps.size(),
         candidate.boxIdx);
   }
   if (flags.wrappedAt.empty()) {
     bool first = true;
-    for (auto seq = flags.definedIn.kernelSeq; seq < candidate.steps.size(); ++seq) {
+    for (auto seq = flags.definedIn.kernelSeq; seq < candidate.steps.size();
+         ++seq) {
       auto branch = first ? flags.definedIn.branchIdx : 0;
       auto* box = &candidate.steps[seq][branch];
       if (!first) {
@@ -378,10 +383,14 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       first = false;
     }
   }
-  flags.lastUse = CodePosition(candidate.steps.size() - 1, box->steps.size(), candidate.boxIdx);
+  flags.lastUse = CodePosition(
+      candidate.steps.size() - 1, box->steps.size(), candidate.boxIdx);
 }
 
-  void CompileState::placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay) {
+void CompileState::placeExpr(
+    PipelineCandidate& candidate,
+    AbstractOperand* op,
+    bool mayDelay) {
   auto& flags = candidate.flags(op);
   if (!flags.definedIn.empty()) {
     recordReference(candidate, op);
@@ -399,208 +408,206 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   }
 }
 
-  void CompileState::    markOutputStored(PipelineCandidate& candidate, Segment& segment) {
-    auto& RowTypePtr type = segment.outputType;
-    for (auto i = 0; i < type->size(); ++i) {
-      auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
-      candidate.flags(op).needStore = true;
-    }
+void CompileState::markOutputStored(
+    PipelineCandidate& candidate,
+    Segment& segment) {
+  auto& RowTypePtr type = segment.outputType;
+  for (auto i = 0; i < type->size(); ++i) {
+    auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
+    candidate.flags(op).needStore = true;
   }
+}
 
-
-  void newKernel(PipelineCandidate& candidate) {
-    candidate.steps.emplace_back();
-    candidate.steps.back().emplace_back(); 
-    candidate.currentBox = &candidate.steps.back()[0];
+void newKernel(PipelineCandidate& candidate) {
+  candidate.steps.emplace_back();
+  candidate.steps.back().emplace_back();
+  candidate.currentBox = &candidate.steps.back()[0];
   candidate.boxIdx = 0;
-  }
+}
 
-  void CompileState::recordCandidate(PipelineCandidate& candidate) {
-    candidates_.push_back(std::move(candidate));
-  }
-  
+void CompileState::recordCandidate(PipelineCandidate& candidate) {
+  candidates_.push_back(std::move(candidate));
+}
+
 void CompileState::planSegment(
     PipelineCandidate& candidate,
     float inputBatch,
     int32_t segmentIdx) {
-
   auto& segment = segments_[segmentIdx];
   switch (segment.boundary) {
-  case BoundaryType::kSource: {
-    if (!candidate.steps.size() > 1 || !candidate.currentBox->steps.empty()) {
-      // A pipeline barrier.
-      recordCandidate(candidate);
-      return;
-    }
-    auto* node = segment.planNode;
-  if (auto* scan = dynamic_cast<const core::TableScanNode>(node)) {
-    auto step = makeStep<TableScanStep>();
-    step->node = scan;
-    candidate.currentBox->steps.push_back(step);
-    newKernel(candidate);
-  } else if (auto* read = dynamic_cast<const core::AggregationNode*>(node)) {
-    auto* step = segment.steps[0];
-    candidate.currentBox->steps.push_back(step);
-  }
-  markOutputStored(candidate, segment);
-  break;
-  }
-  case BoundaryType::kExpr: {
-    for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
-      placeExpr(candidate, segment.topLevelDefined[i], true);
-    }
-    break;
-    break;
-  }
-    case BoundaryType::kFilter: {
-    placeExpr(candidate, segment.topLevelDefined[0], false);
-    auto filter = reinterpret_cast<Filter*>(segment.steps[0]);
-    candidate.currentBox->steps.push_back(filter);
-    break;
-    }
-      case BoundaryType::kAggregation: {
-    if (candidate.steps.back().size() > 1) {
-      newKernel(candidate);
-    }
-    candidate->currentBox->steps.push_back(segment.steps[]);
-    break;
+    case BoundaryType::kSource: {
+      if (!candidate.steps.size() > 1 || !candidate.currentBox->steps.empty()) {
+        // A pipeline barrier.
+        recordCandidate(candidate);
+        return;
       }
+      auto* node = segment.planNode;
+      if (auto* scan = dynamic_cast<const core::TableScanNode>(node)) {
+        auto step = makeStep<TableScanStep>();
+        step->node = scan;
+        candidate.currentBox->steps.push_back(step);
+        newKernel(candidate);
+      } else if (
+          auto* read = dynamic_cast<const core::AggregationNode*>(node)) {
+        auto* step = segment.steps[0];
+        candidate.currentBox->steps.push_back(step);
+      }
+      markOutputStored(candidate, segment);
+      break;
+    }
+    case BoundaryType::kExpr: {
+      for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
+        placeExpr(candidate, segment.topLevelDefined[i], true);
+      }
+      break;
+      break;
+    }
+    case BoundaryType::kFilter: {
+      placeExpr(candidate, segment.topLevelDefined[0], false);
+      auto filter = reinterpret_cast<Filter*>(segment.steps[0]);
+      candidate.currentBox->steps.push_back(filter);
+      break;
+    }
+    case BoundaryType::kAggregation: {
+      if (candidate.steps.back().size() > 1) {
+        newKernel(candidate);
+      }
+      candidate->currentBox->steps.push_back(segment.steps[]);
+      break;
+    }
   }
   if (segmentIdx == segments_.size() - 1 {
-      recordCandidate(candidate);
-      return;
-    });
+        recordCandidate(candidate);
+        return;
+      })
+    ;
   planSegment(candidate, inputBatch, segmentIdx + 1);
 }
 
-
-  void CompileState::planPipelines() {
-    int32_t startIdx = 0;
-    for (;;) {
-      PipelineCandidate candidate;
-      newKernel(candidate);
-      planSegment(candidate, 100000, startIdx); 
-      pickBest();
-      bool found = false;
-      for (auto i = startIdx + 1; i < segments_.size(); ++i) {
-	if (segments_[i].boundary == BoundaryType::kSource) {
-	  startIdx = i;
-	  found = true;
-	  break;
-	}
-      }
-      if (!found) {
-	break;
+void CompileState::planPipelines() {
+  int32_t startIdx = 0;
+  for (;;) {
+    PipelineCandidate candidate;
+    newKernel(candidate);
+    planSegment(candidate, 100000, startIdx);
+    pickBest();
+    bool found = false;
+    for (auto i = startIdx + 1; i < segments_.size(); ++i) {
+      if (segments_[i].boundary == BoundaryType::kSource) {
+        startIdx = i;
+        found = true;
+        break;
       }
     }
-    makeDriver();
+    if (!found) {
+      break;
+    }
   }
+  makeDriver();
+}
 
 ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
-    std::vector<AbstractParameter*> input;
-    std::vector<AbstractParameter*> output;
-    std::stringstream out;
-    auto& level = candidate.steps[stepIdx];
-    folly::F14FastMap<int32_t, int32_t> renamed;
-    for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
-      auto& box = level[programIdx];
-      for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-	auto renamedId= [&](AbstractOperand* op) ->int32_t {
-			  auto it = renamed.find(op->id);
-			  if (it == renamed.end()) {
-			    return renamed[op->id] = renamed.size();
-			  }
-			  return it->second;
-			}; 
-	
-	auto markOutput = [&](AbstractOperand* op) {
-			    auto& flags = candidate.flags(op);
-			    if (flags.lastUse.kernelSeq > kernelIdx) {
-			    out << fmt::format("<O {} {}>=", output.size(), op->type->toString());
-			    output.push_back(op);
-			    } else {
-			      out << fmt::format("<T {} {}>=", renamedId(op), op->type->toString());
-			    }
-			  };
+  std::vector<AbstractParameter*> input;
+  std::vector<AbstractParameter*> output;
+  std::stringstream out;
+  auto& level = candidate.steps[stepIdx];
+  folly::F14FastMap<int32_t, int32_t> renamed;
+  for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
+    auto& box = level[programIdx];
+    for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+      auto renamedId = [&](AbstractOperand* op) -> int32_t {
+        auto it = renamed.find(op->id);
+        if (it == renamed.end()) {
+          return renamed[op->id] = renamed.size();
+        }
+        return it->second;
+      };
 
-	auto markInput = [&](AbstractOperand* op) {
-			   auto& flags = candidate.flags(op);
-			   if (flags.definedIn.kernelSeq < kernelIdx) {
-			     out << fmt::format("<I {} {}>", input.size(), op->type->toString());
-			     input.push_back(op);
-			   } else {
-			     out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
-			   }
-			 };
+      auto markOutput = [&](AbstractOperand* op) {
+        auto& flags = candidate.flags(op);
+        if (flags.lastUse.kernelSeq > kernelIdx) {
+          out << fmt::format("<O {} {}>=", output.size(), op->type->toString());
+          output.push_back(op);
+        } else {
+          out << fmt::format("<T {} {}>=", renamedId(op), op->type->toString());
+        }
+      };
 
-	switch (step->kind()) {
-	case StepKind::kOperand: {
-	  auto& compute = step.as<Compute>();
-	  markOutput(op);
-	  out << op->expr->name();
-	  out << "(";
-	  for (auto* in :op->inputs) {
-	    markInput(in);
-	  }
-	  out << ")\n";
-	  break;
-	}
-	  case StepKind::kFilter: {
-	    auto& filter = step->as<Filter>();
-	    out << "filter(";
-	    markInput(filter.flag);
-	    out << ")\n";
-	    break;
-	  }
-	    case StepKind::kAggregateProbe: {
-	      auto& agg = step.as<AggregateProbe>();
-	      out << "Aggregate(";
-	      for (auto& k : agg.keys) {
-		markInput(k);
-	      }
-	      out << ") =";
-	      markOutput(agg.rows);
-	      out << "\n";
-	      break;
-	    }
-	      case StepKind::kAggregateUpdate: {
-		auto& func = step->as<AggregateUpdate>();
-		out << "update " << step->name << "(";
-		markInput(func->rows);
-		for (auto& op : func->args) {
-		  markInput(op);
-		}
-		out << ")\n";
-		break;
-	      }
-		case StepKind::kReadAggregation: {
-		  auto& read = step.as<ReadAggregation>();
-		  out << "readAgg " << static_cast<int32_t>(read->step) << "(";
-		  for (auto* key : read->columns) {
-		    markOutput(key);
-		  }
-		  for (auto i = 0; i < read.updates.size(); ++i) {
-		    out << fmt::format("A:{} ", i);
-		    markOutput(read.updates[i]->result);
-		  }
-		  out << ")\n";
-		  break;
-		}
-	}
+      auto markInput = [&](AbstractOperand* op) {
+        auto& flags = candidate.flags(op);
+        if (flags.definedIn.kernelSeq < kernelIdx) {
+          out << fmt::format("<I {} {}>", input.size(), op->type->toString());
+          input.push_back(op);
+        } else {
+          out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
+        }
+      };
 
+      switch (step->kind()) {
+        case StepKind::kOperand: {
+          auto& compute = step.as<Compute>();
+          markOutput(op);
+          out << op->expr->name();
+          out << "(";
+          for (auto* in : op->inputs) {
+            markInput(in);
+          }
+          out << ")\n";
+          break;
+        }
+        case StepKind::kFilter: {
+          auto& filter = step->as<Filter>();
+          out << "filter(";
+          markInput(filter.flag);
+          out << ")\n";
+          break;
+        }
+        case StepKind::kAggregateProbe: {
+          auto& agg = step.as<AggregateProbe>();
+          out << "Aggregate(";
+          for (auto& k : agg.keys) {
+            markInput(k);
+          }
+          out << ") =";
+          markOutput(agg.rows);
+          out << "\n";
+          break;
+        }
+        case StepKind::kAggregateUpdate: {
+          auto& func = step->as<AggregateUpdate>();
+          out << "update " << step->name << "(";
+          markInput(func->rows);
+          for (auto& op : func->args) {
+            markInput(op);
+          }
+          out << ")\n";
+          break;
+        }
+        case StepKind::kReadAggregation: {
+          auto& read = step.as<ReadAggregation>();
+          out << "readAgg " << static_cast<int32_t>(read->step) << "(";
+          for (auto* key : read->columns) {
+            markOutput(key);
+          }
+          for (auto i = 0; i < read.updates.size(); ++i) {
+            out << fmt::format("A:{} ", i);
+            markOutput(read.updates[i]->result);
+          }
+          out << ")\n";
+          break;
+        }
       }
     }
-    return ProgramKey{
-      .text =  out.str(),
-	.input = std::move(input),
-	.output = std::move(output)};
-}
-  
-  void CompileState::makeDriver() {
-    makeSegments();
-    planPipelines();
-    
   }
-
-  
+  return ProgramKey{
+      .text = out.str(),
+      .input = std::move(input),
+      .output = std::move(output)};
 }
+
+void CompileState::makeDriver() {
+  makeSegments();
+  planPipelines();
+}
+
+} // namespace facebook::velox::wave

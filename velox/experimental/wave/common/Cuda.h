@@ -196,7 +196,7 @@ GpuAllocator::UniquePtr<T> GpuAllocator::allocate() {
   return UniquePtr<T>(ptr, Deleter(this, bytes));
 }
 
-  template <typename T>
+template <typename T>
 GpuAllocator::UniquePtr<T[]> GpuAllocator::allocate(size_t n) {
   static_assert(std::is_trivially_destructible_v<T>);
   auto bytes = n * sizeof(T);
@@ -211,53 +211,69 @@ struct KernelInfo {
   int32_t sharedMemory{0};
   int32_t maxOccupancy0{0};
   int32_t maxOccupancy32{0};
-  
+
   std::string toString() const;
 };
 
-        /// Specification of code to compile.
-    struct KernelSpec {
-      std::string code;
-      std::vector<std::string> entryPoints;
-    };
+/// Specification of code to compile.
+struct KernelSpec {
+  std::string code;
+  std::vector<std::string> entryPoints;
+};
 
-  /// Represents the result of compilation. Wrapped accessed through CompiledKernel.
-  struct CompiledModule {
+/// Represents the result of compilation. Wrapped accessed through
+/// CompiledKernel.
+struct CompiledModule {
   virtual ~CompiledModule() = default;
-    /// Compiles 'spec' and returns the result.
-    static std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
+  /// Compiles 'spec' and returns the result.
+  static std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
 
-    virtual void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) = 0;
-    
+  virtual void launch(
+      int32_t kernelIdx,
+      int32_t numBlocks,
+      int32_t numThreads,
+      int32_t shared,
+      Stream* stream,
+      void** args) = 0;
+
   std::vector<void*> entryPoints;
   std::optional<std::string> error;
 };
 
-  using KernelGenFunc = std::function<KernelSpec()>;
+using KernelGenFunc = std::function<KernelSpec()>;
 
-    /// Represents a run-time compiled kernel. These are returned
-    /// immediately from a kernel cache. The compilation takes place
-    /// in the background. The member functions block until a possibly
-    /// pending compilation completes.
-  class CompiledKernel {
-public:
+/// Represents a run-time compiled kernel. These are returned
+/// immediately from a kernel cache. The compilation takes place
+/// in the background. The member functions block until a possibly
+/// pending compilation completes.
+class CompiledKernel {
+ public:
   virtual ~CompiledKernel();
 
-    virtual void launch(int32_t idx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) = 0;
-  };
+  virtual void launch(
+      int32_t idx,
+      int32_t numBlocks,
+      int32_t numThreads,
+      int32_t shared,
+      Stream* stream,
+      void** args) = 0;
+};
 
+/// Key for accessing compiled kernel cache.
+/// Returns the compiled kernel for 'key'. Starts background compilation if
+/// 'key's kernel is not compiled. Lightweight reference to state owned by
+/// compiled kernel cache.
+std::unique_ptr<CompiledKernel> getKernel(
+    const std::string& key,
+    KernelGenFunc func);
 
-  /// Key for accessing compiled kernel cache.
-  /// Returns the compiled kernel for 'key'. Starts background compilation if 'key's kernel is not compiled. Lightweight reference to state owned by compiled kernel cache. 
-  std::unique_ptr<CompiledKernel> getKernel(const std::string& key, KernelGenFunc func);
-
-  /// Registers a set of kernel entry points from the executable as a
-  /// compiled module. Used for debugging generated code, where the
-  /// generated code has been build as part of the exe with manual
-  /// changes and debug info.
+/// Registers a set of kernel entry points from the executable as a
+/// compiled module. Used for debugging generated code, where the
+/// generated code has been build as part of the exe with manual
+/// changes and debug info.
 void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints);
-  
-  KernelInfo getRegisteredKernelInfo(const char* name);
+
+KernelInfo getRegisteredKernelInfo(const char* name);
 
 KernelInfo kernelInfo(const void* func);
 
