@@ -15,73 +15,129 @@
  */
 
 #include "velox/experimental/wave/common/Cuda.h"
+#include "velox/common/caching/CachedFactory.h"
 
+#include <folly/futures/Future.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 
 
 namespace facebook::velox::wave {
 
+  using ModulePtr = std::shared_ptr<CompiledModule>;
+  
   static folly::CPUThreadPoolExecutor* compilerExecutor() {
-    static std::unique_ptr<folly::CPUThreadPoolExecutor> pool = std::make_unique<folly::CPIUThreadPoolExecutor>(10);
+    static std::unique_ptr<folly::CPUThreadPoolExecutor> pool = std::make_unique<folly::CPUThreadPoolExecutor>(10);
     return pool.get();
   }
 
-  class KernelGenerator {
+  class FutureCompiledModule : public CompiledModule {
   public:
-    std::shared_ptr<CompiledKernel> generate(const KernelKey& key) {
-      folly::SharedPromise<std::shared_ptr<CompiledModule>> promise;
-      auto future = promise.getFuture();
-      compilerExecutor()->add([key, capturedPromise = std::move]promise() {
-				  auto spec = key.generate();
-				  auto module = CompiledModule::create(spec);
-				  capturedPromise.setValue(module);
-      });
-	return std::make_shared<AsyncCompiledKernel>(std::move(future));
+      FutureCompiledModule(folly::Future<ModulePtr> future)
+      : future_(std::move(future)) {}
+
+    void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) {
+      ensureReady();
+      module_->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
     }
-  };
+    
+  private:
+    void ensureReady() {
+      std::lock_guard<std::mutex> l(mutex_);
+      if (module_) {
+	return;
+      }
+      module_ = std::move(future_).get();
+    }
+
+  private:
+    std::mutex mutex_;
+    ModulePtr module_;
+    folly::Future<ModulePtr> future_;
+    };
+
+  
+  using KernelPtr = CachedPtr<std::string, ModulePtr>;
 
   class AsyncCompiledKernel : public CompiledKernel {
   public:
-    AsyncCompiledKernel(folly::Future<std::shared_ptr<CompiledModule> future)
-      : future_(std::move(future)) {}
-    
+    AsyncCompiledKernel(KernelPtr ptr) : ptr_(std::move(ptr)) {}
+
+    void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args)    override {
+      (*ptr_)->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
+    }
+
   private:
-    folly::Future<std::shared_ptr<CompiledModule>> future_;
-
+    KernelPtr ptr_;
   };
+  
+  class DebugCompiledKernel : public CompiledKernel {
+  public:
+    DebugCompiledKernel(CompiledModule* module) : module_(module) {}
 
-  using KernelCache =   CachedFactory<KernelKey, std::shared_ptr<CompiledKernel>, KernelGenerator>;
+    void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args)    override {
+      module_->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
+    }
+
+  private:
+    CompiledModule* const module_;
+  };
   
 
-  KernelCache makeCache() {
+ 
+  class KernelGenerator {
+  public:
+    std::unique_ptr<ModulePtr> operator()(const std::string, const KernelGenFunc* gen) {
+      using ModulePromise = folly::Promise<ModulePtr>;
+      struct PromiseHolder {
+	ModulePromise promise;
+      };
+      auto holder = std::make_shared<PromiseHolder>();
+
+      auto future = holder->promise.getFuture();
+      compilerExecutor()->add([genCopy = *gen, holder]() {
+				auto spec = genCopy();
+				  auto module = CompiledModule::create(spec);
+				  holder->promise.setValue(module);
+      });
+      ModulePtr result = std::make_shared<FutureCompiledModule>(std::move(future));
+      return std::make_unique<ModulePtr>(result);
+    }
+  };
+
+
+  using KernelCache =   CachedFactory<std::string, ModulePtr, KernelGenerator, KernelGenFunc>;
+  
+
+  std::unique_ptr<KernelCache> makeCache() {
     auto generator = std::make_unique<KernelGenerator>();
-  auto* generated = &generator->generated;
-  KernelCache factory(
-		      std::make_unique<SimpleLRUCache<KernelKey, std::shared_ptr<CompiledKernel>>>(1000), std::move(generator));
-		      return factory;
+    return std::make_unique<KernelCache>(
+					 std::make_unique<SimpleLRUCache<std::string, ModulePtr>>(1000), std::move(generator));
   }
 
   KernelCache& kernelCache() {
-    static cache = makeCache();
-    return cache;
+    static std::unique_ptr<KernelCache> cache = makeCache();
+    return *cache;
   }
 
-  std::unordered_map<std::string, std::shared_ptr<CompiledKernel> debugKernels;
+  std::unordered_map<std::string, std::unique_ptr<CompiledModule>> debugKernels;
   
   //  static 
-    std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
-  if (!debugKernels.empty()) {
-    auto it = debugKernels.find(key.key);
-    if (it != debugKernels.end()) {
-      return it->second;
+  std::unique_ptr<CompiledKernel> getKernel(const std::string& key, const KernelGenFunc* gen) {
+    if (!debugKernels.empty()) {
+      auto it = debugKernels.find(key);
+      if (it != debugKernels.end()) {
+	return std::make_unique<DebugCompiledKernel>(it->second.get());
+      }
     }
+    auto ptr = kernelCache().generate(key, gen);
+    return  std::make_unique<AsyncCompiledKernel>(std::move(ptr));
   }
-  auto ptr = kernelCache().get(key);
-  return nullptr;
+
+void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints) {
+
 }
 
-void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints);
 
 
 
-
+}

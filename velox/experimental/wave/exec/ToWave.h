@@ -51,8 +51,7 @@ struct Scope {
 				kOperand,
 				kTableScan,
 				kFilter,
-				kAggregateFused,
-				ekAggregateProbe,
+				kkAggregateProbe,
 				kAggregateUpdate,
 				kJoinBuild,
 				kJoinProbe,
@@ -74,7 +73,7 @@ struct KernelStep {
 
 struct TableScanStep : public KernelStep {
   StepKind kind() const override { return StepKind::kTableScan; }
-  TableScanNode* node;
+  core::TableScanNode* node;
 };
   
 struct Compute : public KernelStep {

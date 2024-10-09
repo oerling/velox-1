@@ -27,9 +27,10 @@ namespace facebook::velox::wave {
 
   void cuCheck(CUresult result, const char* file, int32_t line) {
     if (result != CUDA_SUCCESS) {
+      const char* str;
+      cuGetErrorString(result, &str);
       waveError(
-      fmt::format("Cuda error: {}:{} {}", file, line, cuGetErrorString(result)));
-
+      fmt::format("Cuda error: {}:{} {}", file, line, str));
     }
   }
   

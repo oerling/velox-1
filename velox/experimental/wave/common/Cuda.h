@@ -225,51 +225,31 @@ struct KernelInfo {
   struct CompiledModule {
   virtual ~CompiledModule() = default;
     /// Compiles 'spec' and returns the result.
-    std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
+    static std::shared_ptr<CompiledModule> create(const KernelSpec& spec);
 
-    virtual void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, void* stream, void** args);
+    virtual void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) = 0;
     
   std::vector<void*> entryPoints;
   std::optional<std::string> error;
 };
 
+  using KernelGenFunc = std::function<KernelSpec()>;
 
-    /// Represents a run-time compiled kernel. These are returned immediately from a kernel cache. The compilation takes place in the background. The member functions block until a possibly pending compilation completes.
+    /// Represents a run-time compiled kernel. These are returned
+    /// immediately from a kernel cache. The compilation takes place
+    /// in the background. The member functions block until a possibly
+    /// pending compilation completes.
   class CompiledKernel {
 public:
   virtual ~CompiledKernel();
 
-    /// Returns an error message produced by the compilation.
-  virtual std::optional<std::string>> error() = 0;
-
     virtual void launch(int32_t idx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) = 0;
   };
 
-  /// An implementation of CompiledKernel that exposes kernels from the executable as dynamically compiled ones.
-  class DebugCompiledKernel : public CompiledKernel {
-  /// Returns an error message produced by the compilation.
-    std::optional<std::string>> error() override {
-      return std::nullopt;
-    }
 
-    void launch(int32_t idx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) override;
-
-  };
-  
   /// Key for accessing compiled kernel cache.
-  struct KernelKey {
-    bool operator==(const KernelKey& other) {
-      return  key == other.key;
-    }
-
-    /// Opaque key. Uniquely identifies the code to compile.
-    std::string key;
-
-    /// Returns  the source code to compile. Called in the background compilation thread.
-    std::function<KernelSpec()> generator;
-  };
-  /// Returns the compiled kernel for 'key'. Starts background compilation if 'key's kernel is not compiled. 
-std::shared_ptr<CompiledKernel> getKernel(KernelKey& key);
+  /// Returns the compiled kernel for 'key'. Starts background compilation if 'key's kernel is not compiled. Lightweight reference to state owned by compiled kernel cache. 
+  std::unique_ptr<CompiledKernel> getKernel(const std::string& key, KernelGenFunc func);
 
   /// Registers a set of kernel entry points from the executable as a
   /// compiled module. Used for debugging generated code, where the

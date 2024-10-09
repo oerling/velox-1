@@ -17,19 +17,30 @@
 #include <gtest/gtest.h>
 #include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/Buffer.h"
-#include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/common/tests/CpuTable.h"
-#include "velox/experimental/wave/common/tests/HashTestUtil.h"
+#include "velox/experimental/wave/common/GpuArena.h"
+#include <cuda.h>
+#include "velox/experimental/wave/common/Exception.h"
 
 #include <iostream>
 
 
 namespace facebook::velox::wave {
 
+  void testCuCheck(CUresult result) {
+    if (result != CUDA_SUCCESS) {
+      const char* str;
+      cuGetErrorString(result, &str);
+      waveError(
+		std::string("Cuda error: ") + str);
+    }
+  }
+
+  
 class CompileTest : public testing::Test {
  protected:
   void SetUp() override {
+    return;
     device_ = getDevice();
     setDevice(device_);
     allocator_ = getAllocator(device_);
@@ -49,12 +60,8 @@ class CompileTest : public testing::Test {
     int32_t* array;
     int32_t size;
   };
-
-
-  
-  
-  
-char* kernelText = 
+   
+const char* kernelText = 
 "#include <cstdint>\n"
     "namespace facebook::velox::wave {\n"
     "  struct KernelParams {\n"
@@ -72,21 +79,21 @@ char* kernelText =
 "    for (auto i = threadIdx.x; i < params.size; i += blockDim.x) {\n"
 "      params.array[i] += 2;\n"
 "    }\n"
-  "  }\n";
+  "  }\n"
   "} // namespace\n";
   
 
 
   TEST_F(CompileTest, module) {
     KernelSpec spec = KernelSpec{kernelText, {"add1", "add2"}};
-    auto module = CompiledModule::create(key);
+    auto module = CompiledModule::create(spec);
     int32_t* ptr;
-    cuCheck(cuMemAllocManaged(&ptr, 1000 * sizeof(int32_t)));
+    testCuCheck(cuMemAllocManaged(reinterpret_cast<CUdeviceptr*>(&ptr), 1000 * sizeof(int32_t), CU_MEM_ATTACH_GLOBAL));
     KernelParams record{ptr, 1000};
     memset(ptr, 0, 1000 * sizeof(int32_t));
-    void** params = {&record};
-    module->launch(0, 1, 256, 0, nullptr, params);
-    
+    void* recordPtr = &record;
+    module->launch(0, 1, 256, 0, nullptr, &recordPtr);
+    EXPECT_EQ(1, ptr[0]);
   }
 
 #if 0
@@ -99,5 +106,6 @@ char* kernelText =
 
     }
 #endif
-  
+}
+
   

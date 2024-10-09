@@ -35,18 +35,22 @@ namespace facebook::velox::wave {
   }
 
   class CompiledModuleImpl  : public CompiledModule {
+  public:
+    CompiledModuleImpl(CUmodule module, std::vector<CUfunction> kernels)
+      : module(module), kernels(std::move(kernels)) {}
     
     ~CompiledModuleImpl() {
       cuModuleUnload(module);
     }
 
-    
+    void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) override;
+
+  private:
     CUmodule module;
     std::vector<CUfunction> kernels;
   };
   
   std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
-
     nvrtcProgram prog;
     nvrtcCreateProgram(&prog,
 		       spec.code.c_str(),         // buffer
@@ -55,7 +59,7 @@ namespace facebook::velox::wave {
         NULL,          // headers
 		       NULL);         // includeNames
     for (auto& name : spec.entryPoints) {
-      nvrtcCheck(nvrtcAddNameExpression(entry.c_str()));
+      nvrtcCheck(nvrtcAddNameExpression(prog, name.c_str()));
     }
     const char *opts[] = {"--gpu-architecture=compute_80", "-g", "-G"};
     nvrtcCompileProgram(prog,     // prog
@@ -82,9 +86,9 @@ namespace facebook::velox::wave {
  
     nvrtcDestroyProgram(&prog);
 
-    CUdevice cuDevice;
+    CUdevice device;
     CUcontext context;
-    getDeviceAndContext(dvice, context);
+    getDeviceAndContext(device, context);
     CUmodule module;
     cuModuleLoadDataEx(&module, ptx, 0, 0, 0);
     std::vector<CUfunction> funcs;
@@ -95,13 +99,14 @@ namespace facebook::velox::wave {
     return std::make_shared<CompiledModuleImpl>(module, std::move(funcs));
 }
 
-
-  CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, void* stream, void** args) {
-			      
-   cuLaunchKernel(kernels[idx],
+  void CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) {
+    auto result = cuLaunchKernel(kernels[kernelIdx],
             numBlocks, 1, 1,   // grid dim
             numThreads, 1, 1,    // block dim
-		  shared, stream,             // shared mem and stream
+		  shared, stream->stream()->stream,             // shared mem and stream
             args,                // arguments
             0);
+    CU_CHECK(result);
   };
+
+}
