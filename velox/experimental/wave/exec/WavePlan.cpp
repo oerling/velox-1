@@ -220,7 +220,7 @@ void CompileState::tryFilterProject(
     auto filterOp = segments_.back().topLevelDefined[0];
     addSegment(BoundaryType::kFilter, nullptr, outputType);
     auto filterStep = makeStep<Filter>();
-    filter->operand = filterOp;
+    filterStep->flag = filterOp;
     segments_.back().steps.push_back(filterStep);
     firstProjection = 1;
     ++nodeIndex;
@@ -255,7 +255,7 @@ bool CompileState::tryPlanOperator(
         driverFactory_.planNodes[nodeIndex].get());
     VELOX_CHECK_NOT_NULL(node);
     addSegment(BoundaryType::kAggregation, node, nullptr);
-    auto step = makeStep<Aggregateprobe>();
+    auto step = makeStep<AggregateProbe>();
     auto* state = newState(StateKind::kGroupBy, node->id(), "");
     auto aggregationStep = node->step();
     step->state = state;

@@ -61,22 +61,31 @@ namespace facebook::velox::wave {
     for (auto& name : spec.entryPoints) {
       nvrtcCheck(nvrtcAddNameExpression(prog, name.c_str()));
     }
-    const char *opts[] = {"--gpu-architecture=compute_80", "-g", "-G"};
-    nvrtcCompileProgram(prog,     // prog
-			3,        // numOptions
+    const char *opts[] = {"--gpu-architecture=compute_80",
+			  "-G",
+			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include/cuda/std/detail/libcxx/include",
+			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include"};
+    auto compileResult = nvrtcCompileProgram(prog,     // prog
+					     3,        // numOptions
 			opts);    // options
     
 
     size_t logSize;
 
     nvrtcGetProgramLogSize(prog, &logSize);
-    char *log = new char[logSize];
-    nvrtcGetProgramLog(prog, log);
+    std::string log;
+    log.resize(logSize);
+    nvrtcGetProgramLog(prog, log.data());
+
+    if (compileResult != NVRTC_SUCCESS) {
+      waveError(std::string("Cuda compilation error: ") + log);
+    }
     // Obtain PTX from the program.
     size_t ptxSize;
-    nvrtcGetPTXSize(prog, &ptxSize);
-    char *ptx = new char[ptxSize];
-    nvrtcGetPTX(prog, ptx);
+    nvrtcCheck(nvrtcGetPTXSize(prog, &ptxSize));
+    std::string ptx;
+    ptx.resize(ptxSize);
+    nvrtcCheck(nvrtcGetPTX(prog, ptx.data()));
     std::vector<std::string> loweredNames;
     for (auto& entry : spec.entryPoints) {
       const char * temp;
@@ -90,11 +99,11 @@ namespace facebook::velox::wave {
     CUcontext context;
     getDeviceAndContext(device, context);
     CUmodule module;
-    cuModuleLoadDataEx(&module, ptx, 0, 0, 0);
+    cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0);
     std::vector<CUfunction> funcs;
     for (auto& name : loweredNames) {
       funcs.emplace_back();
-      cuModuleGetFunction(&funcs.back(), module, name.c_str());
+      CU_CHECK(cuModuleGetFunction(&funcs.back(), module, name.c_str()));
     }
     return std::make_shared<CompiledModuleImpl>(module, std::move(funcs));
 }
@@ -103,7 +112,7 @@ namespace facebook::velox::wave {
     auto result = cuLaunchKernel(kernels[kernelIdx],
             numBlocks, 1, 1,   // grid dim
             numThreads, 1, 1,    // block dim
-		  shared, stream->stream()->stream,             // shared mem and stream
+		  shared, (CUstream)stream->stream()->cuStream,             // shared mem and stream
             args,                // arguments
             0);
     CU_CHECK(result);

@@ -139,13 +139,23 @@ void setDevice(Device* device) {
   CUDA_CHECK(cudaSetDevice(device->deviceId));
 }
 
+
+  Stream::Stream(std::unique_ptr<StreamImpl> impl)
+    : stream_(std::move(impl)) {}
+
+  
 Stream::Stream() {
   stream_ = std::make_unique<StreamImpl>();
   CUDA_CHECK(cudaStreamCreate(&stream_->stream));
 }
 
 Stream::~Stream() {
-  cudaStreamDestroy(stream_->stream);
+  if (stream_->stream) {
+    cudaStreamDestroy(stream_->stream);
+  }
+  if (stream_->cuStream) {
+    cuStreamDestroy((CUstream)stream_->cuStream);
+  }
 }
 
 void Stream::wait() {

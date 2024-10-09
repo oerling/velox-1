@@ -42,6 +42,8 @@ struct StreamImpl;
 
 class Stream {
  public:
+  Stream(std::unique_ptr<StreamImpl> impl);
+
   Stream();
   virtual ~Stream();
 
@@ -80,7 +82,7 @@ class Stream {
     isTransfer_ = false;
     return flag;
   }
-
+  
  protected:
   std::unique_ptr<StreamImpl> stream_;
   void* userData_{nullptr};

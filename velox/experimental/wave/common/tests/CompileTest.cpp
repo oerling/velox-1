@@ -26,6 +26,14 @@
 
 namespace facebook::velox::wave {
 
+struct StreamImpl {
+  void* stream{};
+  void* cuStream{};
+};
+
+  
+
+  
 void testCuCheck(CUresult result) {
   if (result != CUDA_SUCCESS) {
     const char* str;
@@ -88,7 +96,11 @@ TEST_F(CompileTest, module) {
   KernelParams record{ptr, 1000};
   memset(ptr, 0, 1000 * sizeof(int32_t));
   void* recordPtr = &record;
-  module->launch(0, 1, 256, 0, nullptr, &recordPtr);
+  auto impl = std::make_unique<StreamImpl>();
+  testCuCheck(cuStreamCreate((CUstream*)&impl->cuStream, CU_STREAM_DEFAULT));
+  auto stream = std::make_unique<Stream>(std::move(impl));
+  module->launch(0, 1, 256, 0, stream.get(), &recordPtr);
+  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
   EXPECT_EQ(1, ptr[0]);
 }
 

@@ -51,8 +51,9 @@ enum class StepKind : int8_t {
   kOperand,
   kTableScan,
   kFilter,
-  kkAggregateProbe,
+  kAggregateProbe,
   kAggregateUpdate,
+  kReadAggregation,
   kJoinBuild,
   kJoinProbe,
   kJoinExpand
@@ -103,7 +104,7 @@ struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
   }
-
+  
   std::string name;
   AbstractOperand* row;
   core::AggregationNode::Step step;
@@ -133,7 +134,7 @@ struct ReadAggregation : public KernelStep {
   core::AggregationNode::Step step;
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
-  std::vector<AggregateFunc*> funcs;
+  std::vector<AggregateUpdate*> funcs;
 };
 
 struct JoinBuild : public KernelStep {
