@@ -51,7 +51,6 @@ class FutureCompiledModule : public CompiledModule {
     return module_->info(kernelIdx);
   }
 
-  
  private:
   void ensureReady() {
     std::lock_guard<std::mutex> l(mutex_);
@@ -126,14 +125,12 @@ KernelCache& kernelCache() {
   return *cache;
 }
 
-
 //  static
-  std::unique_ptr<CompiledKernel> CompiledKernel::getKernel(
+std::unique_ptr<CompiledKernel> CompiledKernel::getKernel(
     const std::string& key,
     KernelGenFunc gen) {
   auto ptr = kernelCache().generate(key, &gen);
   return std::make_unique<AsyncCompiledKernel>(std::move(ptr));
 }
-
 
 } // namespace facebook::velox::wave

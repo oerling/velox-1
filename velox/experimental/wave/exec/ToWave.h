@@ -104,7 +104,7 @@ struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
   }
-  
+
   std::string name;
   AbstractOperand* row;
   core::AggregationNode::Step step;

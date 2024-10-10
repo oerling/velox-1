@@ -29,11 +29,11 @@ struct Device {
   explicit Device(int32_t id) : deviceId(id) {}
 
   std::string toString() const;
-  
+
   int32_t deviceId;
 
   /// Excerpt from device properties.
-  std::string  model;
+  std::string model;
   int32_t major;
   int32_t minor;
   int32_t globalMB;
@@ -43,16 +43,16 @@ struct Device {
   int32_t persistingL2MaxSize;
 };
 
-  
-/// Checks that the machine has the right capability and returns the device for 'id'
+/// Checks that the machine has the right capability and returns the device for
+/// 'id'
 Device* getDevice(int32_t id = 0);
 
-  /// Binds subsequent Cuda operations of the calling thread to 'device'.
+/// Binds subsequent Cuda operations of the calling thread to 'device'.
 void setDevice(Device* device);
 
-  /// Returns the device bound to te calling thread or nullptr if none.
-  Device* currentDevice();
-  
+/// Returns the device bound to te calling thread or nullptr if none.
+Device* currentDevice();
+
 struct StreamImpl;
 
 class Stream {
@@ -97,7 +97,7 @@ class Stream {
     isTransfer_ = false;
     return flag;
   }
-  
+
  protected:
   std::unique_ptr<StreamImpl> stream_;
   void* userData_{nullptr};
@@ -258,7 +258,7 @@ struct CompiledModule {
       void** args) = 0;
 
   /// Returns resource utilization for 'kernelIdx'th entry point.
-virtual   KernelInfo info(int32_t kernelIdx) = 0;
+  virtual KernelInfo info(int32_t kernelIdx) = 0;
 };
 
 using KernelGenFunc = std::function<KernelSpec()>;
@@ -272,11 +272,11 @@ class CompiledKernel {
   virtual ~CompiledKernel() = default;
 
   /// Returns the compiled kernel for 'key'. Starts background compilation if
-/// 'key's kernel is not compiled. Returns lightweight reference to state owned by
-/// compiled kernel cache.
-static   std::unique_ptr<CompiledKernel> getKernel(
-					    const std::string& key,
-					    KernelGenFunc func);
+  /// 'key's kernel is not compiled. Returns lightweight reference to state
+  /// owned by compiled kernel cache.
+  static std::unique_ptr<CompiledKernel> getKernel(
+      const std::string& key,
+      KernelGenFunc func);
 
   virtual void launch(
       int32_t idx,
@@ -286,7 +286,6 @@ static   std::unique_ptr<CompiledKernel> getKernel(
       Stream* stream,
       void** args) = 0;
 };
-
 
 KernelInfo getRegisteredKernelInfo(const char* name);
 
