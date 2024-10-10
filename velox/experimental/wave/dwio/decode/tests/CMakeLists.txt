@@ -28,4 +28,4 @@ target_link_libraries(
   gflags::gflags
   glog::glog
   Folly::folly
-    CUDA::nvrtc)
+  CUDA::nvrtc)
