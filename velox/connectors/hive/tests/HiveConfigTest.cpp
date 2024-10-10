@@ -16,15 +16,17 @@
 
 #include "velox/connectors/hive/HiveConfig.h"
 #include "gtest/gtest.h"
-#include "velox/core/Config.h"
+#include "velox/common/config/Config.h"
 
+using namespace facebook::velox;
 using namespace facebook::velox::connector::hive;
-using namespace facebook::velox::core;
 using facebook::velox::connector::hive::HiveConfig;
 
 TEST(HiveConfigTest, defaultConfig) {
-  HiveConfig hiveConfig(std::make_shared<MemConfig>());
-  const auto emptySession = std::make_unique<MemConfig>();
+  HiveConfig hiveConfig(std::make_shared<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>()));
+  const auto emptySession = std::make_unique<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>());
   ASSERT_EQ(
       hiveConfig.insertExistingPartitionsBehavior(emptySession.get()),
       facebook::velox::connector::hive::HiveConfig::
@@ -42,7 +44,7 @@ TEST(HiveConfigTest, defaultConfig) {
   ASSERT_EQ(hiveConfig.s3IAMRoleSessionName(), "velox-session");
   ASSERT_EQ(hiveConfig.gcsEndpoint(), "");
   ASSERT_EQ(hiveConfig.gcsScheme(), "https");
-  ASSERT_EQ(hiveConfig.gcsCredentials(), "");
+  ASSERT_EQ(hiveConfig.gcsCredentialsPath(), "");
   ASSERT_EQ(hiveConfig.isOrcUseColumnNames(emptySession.get()), false);
   ASSERT_EQ(
       hiveConfig.isFileColumnNamesReadAsLowerCase(emptySession.get()), false);
@@ -57,10 +59,18 @@ TEST(HiveConfigTest, defaultConfig) {
   ASSERT_EQ(
       hiveConfig.orcWriterMaxDictionaryMemory(emptySession.get()),
       16L * 1024L * 1024L);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterIntegerDictionaryEncodingEnabled(
+          emptySession.get()),
+      true);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterStringDictionaryEncodingEnabled(emptySession.get()),
+      true);
   ASSERT_EQ(hiveConfig.sortWriterMaxOutputRows(emptySession.get()), 1024);
   ASSERT_EQ(
       hiveConfig.sortWriterMaxOutputBytes(emptySession.get()), 10UL << 20);
   ASSERT_EQ(hiveConfig.isPartitionPathAsLowerCase(emptySession.get()), true);
+  ASSERT_EQ(hiveConfig.allowNullPartitionKeys(emptySession.get()), true);
   ASSERT_EQ(hiveConfig.orcWriterMinCompressionSize(emptySession.get()), 1024);
   ASSERT_EQ(
       hiveConfig.orcWriterCompressionLevel(emptySession.get()), std::nullopt);
@@ -70,7 +80,7 @@ TEST(HiveConfigTest, defaultConfig) {
 }
 
 TEST(HiveConfigTest, overrideConfig) {
-  const std::unordered_map<std::string, std::string> configFromFile = {
+  std::unordered_map<std::string, std::string> configFromFile = {
       {HiveConfig::kInsertExistingPartitionsBehavior, "OVERWRITE"},
       {HiveConfig::kMaxPartitionsPerWriters, "120"},
       {HiveConfig::kImmutablePartitions, "true"},
@@ -85,23 +95,28 @@ TEST(HiveConfigTest, overrideConfig) {
       {HiveConfig::kS3IamRoleSessionName, "velox"},
       {HiveConfig::kGCSEndpoint, "hey"},
       {HiveConfig::kGCSScheme, "http"},
-      {HiveConfig::kGCSCredentials, "hey"},
+      {HiveConfig::kGCSCredentialsPath, "hey"},
       {HiveConfig::kOrcUseColumnNames, "true"},
       {HiveConfig::kFileColumnNamesReadAsLowerCase, "true"},
+      {HiveConfig::kAllowNullPartitionKeys, "false"},
       {HiveConfig::kMaxCoalescedBytes, "100"},
       {HiveConfig::kMaxCoalescedDistanceBytes, "100"},
       {HiveConfig::kNumCacheFileHandles, "100"},
       {HiveConfig::kEnableFileHandleCache, "false"},
       {HiveConfig::kOrcWriterMaxStripeSize, "100MB"},
       {HiveConfig::kOrcWriterMaxDictionaryMemory, "100MB"},
+      {HiveConfig::kOrcWriterIntegerDictionaryEncodingEnabled, "false"},
+      {HiveConfig::kOrcWriterStringDictionaryEncodingEnabled, "false"},
       {HiveConfig::kSortWriterMaxOutputRows, "100"},
       {HiveConfig::kSortWriterMaxOutputBytes, "100MB"},
       {HiveConfig::kOrcWriterLinearStripeSizeHeuristics, "false"},
       {HiveConfig::kOrcWriterMinCompressionSize, "512"},
       {HiveConfig::kOrcWriterCompressionLevel, "1"},
       {HiveConfig::kCacheNoRetention, "true"}};
-  HiveConfig hiveConfig(std::make_shared<MemConfig>(configFromFile));
-  auto emptySession = std::make_unique<MemConfig>();
+  HiveConfig hiveConfig(
+      std::make_shared<config::ConfigBase>(std::move(configFromFile)));
+  auto emptySession = std::make_shared<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>());
   ASSERT_EQ(
       hiveConfig.insertExistingPartitionsBehavior(emptySession.get()),
       facebook::velox::connector::hive::HiveConfig::
@@ -119,10 +134,11 @@ TEST(HiveConfigTest, overrideConfig) {
   ASSERT_EQ(hiveConfig.s3IAMRoleSessionName(), "velox");
   ASSERT_EQ(hiveConfig.gcsEndpoint(), "hey");
   ASSERT_EQ(hiveConfig.gcsScheme(), "http");
-  ASSERT_EQ(hiveConfig.gcsCredentials(), "hey");
+  ASSERT_EQ(hiveConfig.gcsCredentialsPath(), "hey");
   ASSERT_EQ(hiveConfig.isOrcUseColumnNames(emptySession.get()), true);
   ASSERT_EQ(
       hiveConfig.isFileColumnNamesReadAsLowerCase(emptySession.get()), true);
+  ASSERT_EQ(hiveConfig.allowNullPartitionKeys(emptySession.get()), false);
   ASSERT_EQ(hiveConfig.maxCoalescedBytes(), 100);
   ASSERT_EQ(hiveConfig.maxCoalescedDistanceBytes(), 100);
   ASSERT_EQ(hiveConfig.numCacheFileHandles(), 100);
@@ -133,6 +149,13 @@ TEST(HiveConfigTest, overrideConfig) {
   ASSERT_EQ(
       hiveConfig.orcWriterMaxDictionaryMemory(emptySession.get()),
       100L * 1024L * 1024L);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterIntegerDictionaryEncodingEnabled(
+          emptySession.get()),
+      false);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterStringDictionaryEncodingEnabled(emptySession.get()),
+      false);
   ASSERT_EQ(hiveConfig.sortWriterMaxOutputRows(emptySession.get()), 100);
   ASSERT_EQ(
       hiveConfig.sortWriterMaxOutputBytes(emptySession.get()), 100UL << 20);
@@ -145,22 +168,27 @@ TEST(HiveConfigTest, overrideConfig) {
 }
 
 TEST(HiveConfigTest, overrideSession) {
-  HiveConfig hiveConfig(std::make_shared<MemConfig>());
-  const std::unordered_map<std::string, std::string> sessionOverride = {
+  HiveConfig hiveConfig(std::make_shared<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>()));
+  std::unordered_map<std::string, std::string> sessionOverride = {
       {HiveConfig::kInsertExistingPartitionsBehaviorSession, "OVERWRITE"},
       {HiveConfig::kOrcUseColumnNamesSession, "true"},
       {HiveConfig::kFileColumnNamesReadAsLowerCaseSession, "true"},
       {HiveConfig::kOrcWriterMaxStripeSizeSession, "22MB"},
       {HiveConfig::kOrcWriterMaxDictionaryMemorySession, "22MB"},
+      {HiveConfig::kOrcWriterIntegerDictionaryEncodingEnabledSession, "false"},
+      {HiveConfig::kOrcWriterStringDictionaryEncodingEnabledSession, "false"},
       {HiveConfig::kSortWriterMaxOutputRowsSession, "20"},
       {HiveConfig::kSortWriterMaxOutputBytesSession, "20MB"},
       {HiveConfig::kPartitionPathAsLowerCaseSession, "false"},
+      {HiveConfig::kAllowNullPartitionKeysSession, "false"},
       {HiveConfig::kIgnoreMissingFilesSession, "true"},
       {HiveConfig::kOrcWriterMinCompressionSizeSession, "512"},
       {HiveConfig::kOrcWriterCompressionLevelSession, "1"},
       {HiveConfig::kOrcWriterLinearStripeSizeHeuristicsSession, "false"},
       {HiveConfig::kCacheNoRetentionSession, "true"}};
-  const auto session = std::make_unique<MemConfig>(sessionOverride);
+  const auto session =
+      std::make_unique<config::ConfigBase>(std::move(sessionOverride));
   ASSERT_EQ(
       hiveConfig.insertExistingPartitionsBehavior(session.get()),
       facebook::velox::connector::hive::HiveConfig::
@@ -178,7 +206,7 @@ TEST(HiveConfigTest, overrideSession) {
   ASSERT_EQ(hiveConfig.s3IAMRoleSessionName(), "velox-session");
   ASSERT_EQ(hiveConfig.gcsEndpoint(), "");
   ASSERT_EQ(hiveConfig.gcsScheme(), "https");
-  ASSERT_EQ(hiveConfig.gcsCredentials(), "");
+  ASSERT_EQ(hiveConfig.gcsCredentialsPath(), "");
   ASSERT_EQ(hiveConfig.isOrcUseColumnNames(session.get()), true);
   ASSERT_EQ(hiveConfig.isFileColumnNamesReadAsLowerCase(session.get()), true);
 
@@ -191,9 +219,16 @@ TEST(HiveConfigTest, overrideSession) {
   ASSERT_EQ(
       hiveConfig.orcWriterMaxDictionaryMemory(session.get()),
       22L * 1024L * 1024L);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterIntegerDictionaryEncodingEnabled(session.get()),
+      false);
+  ASSERT_EQ(
+      hiveConfig.isOrcWriterStringDictionaryEncodingEnabled(session.get()),
+      false);
   ASSERT_EQ(hiveConfig.sortWriterMaxOutputRows(session.get()), 20);
   ASSERT_EQ(hiveConfig.sortWriterMaxOutputBytes(session.get()), 20UL << 20);
   ASSERT_EQ(hiveConfig.isPartitionPathAsLowerCase(session.get()), false);
+  ASSERT_EQ(hiveConfig.allowNullPartitionKeys(session.get()), false);
   ASSERT_EQ(hiveConfig.ignoreMissingFiles(session.get()), true);
   ASSERT_EQ(
       hiveConfig.orcWriterLinearStripeSizeHeuristics(session.get()), false);

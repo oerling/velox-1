@@ -13,11 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/TableScan.h"
+#include <atomic>
+#include <shared_mutex>
+
+#include <fmt/ranges.h>
+#include <folly/experimental/EventCount.h>
 #include <folly/synchronization/Baton.h>
 #include <folly/synchronization/Latch.h>
-#include <atomic>
-#include "folly/experimental/EventCount.h"
+
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/file/tests/FaultyFile.h"
@@ -33,6 +36,7 @@
 #include "velox/exec/Exchange.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/exec/TableScan.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -292,8 +296,8 @@ TEST_F(TableScanTest, directBufferInputRawInputBytes) {
                   .planNode();
 
   std::unordered_map<std::string, std::string> config;
-  std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs =
-      {};
+  std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
+      connectorConfigs = {};
   auto queryCtx = core::QueryCtx::create(
       executor_.get(),
       core::QueryConfig(std::move(config)),
@@ -330,17 +334,30 @@ TEST_F(TableScanTest, connectorStats) {
   EXPECT_NE(nullptr, hiveConnector);
   verifyCacheStats(hiveConnector->fileHandleCacheStats(), 0, 0, 0);
 
-  for (size_t i = 0; i < 99; i++) {
+  // Vector to store file paths
+  std::vector<std::shared_ptr<TempFilePath>> filePaths;
+
+  for (size_t i = 0; i < 49; i++) {
     auto vectors = makeVectors(10, 10);
     auto filePath = TempFilePath::create();
     writeToFile(filePath->getPath(), vectors);
+    filePaths.push_back(filePath); // Store the file path
     createDuckDbTable(vectors);
     auto plan = tableScanNode();
     assertQuery(plan, {filePath}, "SELECT * FROM tmp");
   }
 
-  verifyCacheStats(hiveConnector->fileHandleCacheStats(), 99, 0, 99);
-  verifyCacheStats(hiveConnector->clearFileHandleCache(), 0, 0, 99);
+  // Verify cache stats after the first loop
+  verifyCacheStats(hiveConnector->fileHandleCacheStats(), 49, 0, 49);
+
+  // Second loop to query using the stored file paths
+  for (const auto& filePath : filePaths) {
+    auto plan = tableScanNode();
+    assertQuery(plan, {filePath}, "SELECT * FROM tmp");
+  }
+
+  // Verify cache stats, expecting numHits to have increased
+  verifyCacheStats(hiveConnector->fileHandleCacheStats(), 49, 49, 98);
 }
 
 TEST_F(TableScanTest, columnAliases) {
@@ -610,6 +627,12 @@ DEBUG_ONLY_TEST_F(TableScanTest, timeLimitInGetOutput) {
 }
 
 TEST_F(TableScanTest, subfieldPruningRowType) {
+  // rowType: ROW
+  // └── "e": ROW
+  //     ├── "c": ROW
+  //     │   ├── "a": BIGINT
+  //     │   └── "b": DOUBLE
+  //     └── "d": BIGINT
   auto innerType = ROW({"a", "b"}, {BIGINT(), DOUBLE()});
   auto columnType = ROW({"c", "d"}, {innerType, BIGINT()});
   auto rowType = ROW({"e"}, {columnType});
@@ -644,6 +667,7 @@ TEST_F(TableScanTest, subfieldPruningRowType) {
   auto c = e->childAt(0)->as<RowVector>();
   ASSERT_EQ(c->childrenSize(), 2);
   int j = 0;
+  // assert scanned result is matching input vectors
   for (auto& vec : vectors) {
     ASSERT_LE(j + vec->size(), c->size());
     auto ee = vec->childAt(0)->as<RowVector>();
@@ -659,6 +683,7 @@ TEST_F(TableScanTest, subfieldPruningRowType) {
   }
   ASSERT_EQ(j, c->size());
   auto d = e->childAt(1);
+  // assert e.d is pruned(using null)
   ASSERT_EQ(d->size(), e->size());
   for (int i = 0; i < d->size(); ++i) {
     ASSERT_TRUE(e->isNullAt(i) || d->isNullAt(i));
@@ -701,6 +726,25 @@ TEST_F(TableScanTest, subfieldPruningRemainingFilterSubfieldsMissing) {
   auto a = e->childAt(0);
   for (int i = 0; i < a->size(); ++i) {
     ASSERT_TRUE(e->isNullAt(i) || a->isNullAt(i));
+  }
+
+  op = PlanBuilder()
+           .startTableScan()
+           .outputType(rowType)
+           .remainingFilter("e.a is not null")
+           .assignments(assignments)
+           .endTableScan()
+           .planNode();
+  result = AssertQueryBuilder(op).split(split).copyResults(pool());
+  rows = result->as<RowVector>();
+  e = rows->childAt(0)->as<RowVector>();
+  ASSERT_TRUE(e);
+  ASSERT_EQ(e->childrenSize(), 3);
+  a = e->childAt(0);
+  for (int i = 0; i < a->size(); ++i) {
+    if (!e->isNullAt(i)) {
+      ASSERT_TRUE(!a->isNullAt(i));
+    }
   }
 }
 
@@ -917,19 +961,19 @@ TEST_F(TableScanTest, subfieldPruningMapType) {
         kSize, [i](auto j) { return j >= i + 1 && j % 17 == (i + 1) % 17; });
     auto offsets = allocateOffsets(kSize, pool());
     auto* rawOffsets = offsets->asMutable<vector_size_t>();
-    auto lengths = allocateOffsets(kSize, pool());
-    auto* rawLengths = lengths->asMutable<vector_size_t>();
-    int mapEntrySize = 0;
+    auto sizes = allocateSizes(kSize, pool());
+    auto* rawLengths = sizes->asMutable<vector_size_t>();
+    int totalSize = 0;
     for (int j = 0; j < kSize; ++j) {
-      rawOffsets[j] = mapEntrySize;
+      rawOffsets[j] = totalSize;
       rawLengths[j] = bits::isBitNull(nulls->as<uint64_t>(), j) ? 0 : kMapSize;
-      mapEntrySize += rawLengths[j];
+      totalSize += rawLengths[j];
     }
     auto keys = makeFlatVector<int64_t>(
-        mapEntrySize, [](auto row) { return row % kMapSize; });
-    auto values = makeVectors(1, mapEntrySize, valueType)[0];
+        totalSize, [](auto row) { return row % kMapSize; });
+    auto values = makeVectors(1, totalSize, valueType)[0];
     auto maps = std::make_shared<MapVector>(
-        pool(), mapType, nulls, kSize, offsets, lengths, keys, values);
+        pool(), mapType, nulls, kSize, offsets, sizes, keys, values);
     vectors.push_back(makeRowVector({"c"}, {maps}));
   }
   auto rowType = asRowType(vectors[0]->type());
@@ -959,25 +1003,36 @@ TEST_F(TableScanTest, subfieldPruningMapType) {
   auto rows = result->as<RowVector>();
   ASSERT_TRUE(rows);
   ASSERT_EQ(rows->childrenSize(), 1);
-  auto maps = rows->childAt(0)->as<MapVector>();
-  ASSERT_TRUE(maps);
-  ASSERT_EQ(maps->size(), result->size());
-  for (int i = 0; i < maps->size(); ++i) {
-    auto expected =
-        vectors[i / kSize]->as<RowVector>()->childAt(0)->as<MapVector>();
+  auto outputFlat = rows->childAt(0)->as<MapVector>();
+  ASSERT_TRUE(outputFlat);
+  ASSERT_EQ(outputFlat->size(), result->size());
+  auto currentVectorIndex = -1;
+  const MapVector* inputVector = nullptr;
+  for (int i = 0; i < outputFlat->size(); ++i) {
+    // Create inputVector only when needed
+    int newVectorIndex = i / kSize;
+    if (newVectorIndex != currentVectorIndex) {
+      currentVectorIndex = newVectorIndex;
+      inputVector = vectors[currentVectorIndex]
+                        ->as<RowVector>()
+                        ->childAt(0)
+                        ->as<MapVector>();
+    }
     int j = i % kSize;
-    if (expected->isNullAt(j)) {
-      ASSERT_TRUE(maps->isNullAt(i));
+    if (inputVector->isNullAt(j)) {
+      ASSERT_TRUE(outputFlat->isNullAt(i));
       continue;
     }
-    ASSERT_EQ(maps->sizeAt(i), 3);
+    ASSERT_EQ(outputFlat->sizeAt(i), 3);
     for (int k = 0; k < 3; ++k) {
-      int ki = maps->offsetAt(i) + k;
-      int kj = expected->offsetAt(j) + 2 * k;
-      ASSERT_TRUE(
-          maps->mapKeys()->equalValueAt(expected->mapKeys().get(), ki, kj));
-      ASSERT_TRUE(
-          maps->mapValues()->equalValueAt(expected->mapValues().get(), ki, kj));
+      // Verify pruned output map (offset_output: 0, 1, 2) matches the
+      // entries from the original input map (offset_input: 0, 2, 4)
+      int offset_output = outputFlat->offsetAt(i) + k;
+      int offset_input = inputVector->offsetAt(j) + 2 * k;
+      ASSERT_TRUE(outputFlat->mapKeys()->equalValueAt(
+          inputVector->mapKeys().get(), offset_output, offset_input));
+      ASSERT_TRUE(outputFlat->mapValues()->equalValueAt(
+          inputVector->mapValues().get(), offset_output, offset_input));
     }
   }
 }
@@ -993,7 +1048,7 @@ TEST_F(TableScanTest, subfieldPruningArrayType) {
         kSize, [i](auto j) { return j >= i + 1 && j % 17 == (i + 1) % 17; });
     auto offsets = allocateOffsets(kSize, pool());
     auto* rawOffsets = offsets->asMutable<vector_size_t>();
-    auto lengths = allocateOffsets(kSize, pool());
+    auto lengths = allocateSizes(kSize, pool());
     auto* rawLengths = lengths->asMutable<vector_size_t>();
     int arrayElementSize = 0;
     for (int j = 0; j < kSize; ++j) {
@@ -1035,20 +1090,29 @@ TEST_F(TableScanTest, subfieldPruningArrayType) {
   auto arrays = rows->childAt(0)->as<ArrayVector>();
   ASSERT_TRUE(arrays);
   ASSERT_EQ(arrays->size(), result->size());
+  auto currentVectorIndex = -1;
+  const ArrayVector* inputVector = nullptr;
   for (int i = 0; i < arrays->size(); ++i) {
-    auto expected =
-        vectors[i / kSize]->as<RowVector>()->childAt(0)->as<ArrayVector>();
+    int newVectorIndex = i / kSize;
+    // Create inputVector only when needed
+    if (newVectorIndex != currentVectorIndex) {
+      currentVectorIndex = newVectorIndex;
+      inputVector = vectors[currentVectorIndex]
+                        ->as<RowVector>()
+                        ->childAt(0)
+                        ->as<ArrayVector>();
+    }
     int j = i % kSize;
-    if (expected->isNullAt(j)) {
+    if (inputVector->isNullAt(j)) {
       ASSERT_TRUE(arrays->isNullAt(i));
       continue;
     }
     ASSERT_EQ(arrays->sizeAt(i), 3);
     for (int k = 0; k < 3; ++k) {
       int ki = arrays->offsetAt(i) + k;
-      int kj = expected->offsetAt(j) + k;
-      ASSERT_TRUE(
-          arrays->elements()->equalValueAt(expected->elements().get(), ki, kj));
+      int kj = inputVector->offsetAt(j) + k;
+      ASSERT_TRUE(arrays->elements()->equalValueAt(
+          inputVector->elements().get(), ki, kj));
     }
   }
 }
@@ -1206,6 +1270,54 @@ TEST_F(TableScanTest, missingColumns) {
            .planNode();
 
   assertQuery(op, filePaths, "SELECT * FROM tmp", 0);
+}
+
+TEST_F(TableScanTest, missingColumnsInRepeatedColumns) {
+  constexpr int kSize = 10;
+  auto bigints = makeFlatVector<int64_t>(kSize, folly::identity);
+  auto structs =
+      makeRowVector({makeFlatVector<int64_t>(kSize, folly::identity)});
+  std::vector<vector_size_t> offsets(kSize);
+  std::iota(offsets.begin(), offsets.end(), 0);
+  auto vector = makeRowVector({
+      bigints,
+      makeArrayVector(offsets, structs),
+      makeMapVector(offsets, bigints, structs),
+  });
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  auto structType = ROW({"c0", "c1"}, {BIGINT(), BIGINT()});
+  auto c1Type = ARRAY(structType);
+  auto c2Type = MAP(BIGINT(), structType);
+  auto plan = PlanBuilder()
+                  .tableScan(
+                      ROW({"c1", "c2"}, {c1Type, c2Type}),
+                      {},
+                      "c0 % 2 = 0",
+                      ROW({"c0", "c1", "c2"}, {BIGINT(), c1Type, c2Type}))
+                  .planNode();
+  auto structs2 = makeRowVector({
+      makeFlatVector<int64_t>(kSize, folly::identity),
+      makeNullConstant(TypeKind::BIGINT, kSize),
+  });
+  auto indices = makeIndices(kSize, [](auto i) {
+    auto index = 2 * i;
+    if (index >= kSize) {
+      index -= kSize;
+    }
+    return index;
+  });
+  auto expected = makeRowVector(
+      {"c1", "c2"},
+      {
+          wrapInDictionary(indices, makeArrayVector(offsets, structs2)),
+          wrapInDictionary(indices, makeMapVector(offsets, bigints, structs2)),
+      });
+  AssertQueryBuilder(plan)
+      .splits(
+          {makeHiveConnectorSplit(file->getPath()),
+           makeHiveConnectorSplit(file->getPath())})
+      .assertResults(expected);
 }
 
 // Tests queries that use Lazy vectors with multiple layers of wrapping.
@@ -1487,7 +1599,7 @@ TEST_F(TableScanTest, preloadingSplitClose) {
       latch.count_down();
     });
   }
-  ASSERT_EQ(Task::numCreatedTasks(), Task::numDeletedTasks());
+  ASSERT_EQ(Task::numRunningTasks(), 0);
   auto task = assertQuery(tableScanNode(), filePaths, "SELECT * FROM tmp", 2);
   auto stats = getTableScanRuntimeStats(task);
 
@@ -1495,9 +1607,8 @@ TEST_F(TableScanTest, preloadingSplitClose) {
   ASSERT_GT(stats.at("preloadedSplits").sum, 1);
 
   task.reset();
-  // Once all task references are cleared, the count of deleted tasks should
-  // promptly match the count of created tasks.
-  ASSERT_EQ(Task::numCreatedTasks(), Task::numDeletedTasks());
+  // Once all task references are cleared, all the tasks should be destroyed.
+  ASSERT_EQ(Task::numRunningTasks(), 0);
   // Clean blocking items in the IO thread pool.
   for (auto& baton : batons) {
     baton.post();
@@ -3104,6 +3215,74 @@ TEST_F(TableScanTest, mapIsNullFilter) {
       "SELECT * FROM tmp WHERE c0 is null");
 }
 
+TEST_F(TableScanTest, stringIsNullFilter) {
+  constexpr int kSize = 1000;
+  const char* baseStrings[] = {
+      "qwertyuiopasdfghjklzxcvbnm",
+      "qazwsxedcrfvtgbyhnujmikolp",
+  };
+  auto indices = allocateIndices(kSize, pool_.get());
+  for (int i = 0; i < kSize; ++i) {
+    indices->asMutable<vector_size_t>()[i] = i % 2;
+  }
+  auto nullBuffer =
+      AlignedBuffer::allocate<bool>(kSize, pool_.get(), bits::kNotNull);
+  auto* rawNullBuffer = nullBuffer->asMutable<uint64_t>();
+  for (int i = 0; i < kSize; i += 100) {
+    bits::setNull(rawNullBuffer, i);
+  }
+  auto dict = BaseVector::wrapInDictionary(
+      nullBuffer,
+      indices,
+      kSize,
+      makeFlatVector<std::string>({baseStrings[0], baseStrings[1]}));
+
+  auto rows = makeRowVector({"c0", "c1"}, {dict, dict});
+  auto tableType = asRowType(rows->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {rows});
+  createDuckDbTable({rows});
+
+  const auto outputType = ROW({"c1"}, {VARCHAR()});
+  auto makePlan = [&](const std::vector<std::string>& filters) {
+    return PlanBuilder()
+        .tableScan(outputType, filters, "", tableType)
+        .planNode();
+  };
+
+  assertQuery(
+      makePlan({"c0 is not null"}),
+      {file},
+      "SELECT c1 FROM tmp WHERE c0 is not null");
+  assertQuery(
+      makePlan({"c0 is null"}), {file}, "SELECT c1 FROM tmp WHERE c0 is null");
+}
+
+TEST_F(TableScanTest, compactComplexNulls) {
+  constexpr int kSize = 10;
+  auto iota = makeFlatVector<int64_t>(kSize, folly::identity);
+  std::vector<vector_size_t> offsets(kSize);
+  for (int i = 0; i < kSize; ++i) {
+    offsets[i] = (i + 1) / 2 * 2;
+  }
+  auto c0 = makeRowVector(
+      {
+          makeArrayVector(offsets, iota, {1, 3, 5, 7, 9}),
+          iota,
+      },
+      [](auto i) { return i == 2; });
+  auto data = makeRowVector({c0});
+  auto schema = asRowType(data->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {data});
+  auto plan = PlanBuilder().tableScan(schema, {"(c0).c1 > 0"}).planNode();
+  auto split = makeHiveConnectorSplit(file->getPath());
+  const vector_size_t indices[] = {1, 3, 4, 5, 6, 7, 8, 9};
+  auto expected = makeRowVector({wrapInDictionary(
+      makeIndices(8, [&](auto i) { return indices[i]; }), c0)});
+  AssertQueryBuilder(plan).split(split).assertResults(expected);
+}
+
 TEST_F(TableScanTest, remainingFilter) {
   auto rowType = ROW(
       {"c0", "c1", "c2", "c3"}, {INTEGER(), INTEGER(), DOUBLE(), BOOLEAN()});
@@ -3203,7 +3382,7 @@ TEST_F(TableScanTest, remainingFilterLazyWithMultiReferences) {
   writeToFile(file->getPath(), {vector});
   CursorParameters params;
   params.copyResult = false;
-  params.singleThreaded = true;
+  params.serialExecution = true;
   params.planNode =
       PlanBuilder()
           .tableScan(schema, {}, "NOT (c0 % 2 == 0 AND c2 % 3 == 0)")
@@ -3226,6 +3405,90 @@ TEST_F(TableScanTest, remainingFilterLazyWithMultiReferences) {
     }
   }
   ASSERT_EQ(i, vector->size());
+  ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
+}
+
+TEST_F(TableScanTest, sharedNullBufferFromComplexResult) {
+  // Set the map vector to trigger map null buffer writable check.
+  const auto mapVector = makeNullableMapVector<StringView, int64_t>(
+      {{std::nullopt},
+       {{{"0"_sv, 0}, {"1"_sv, std::nullopt}}},
+       {{{"2"_sv, 2}, {"3"_sv, std::nullopt}}},
+       {{{"4"_sv, 4}, {"5"_sv, std::nullopt}}},
+       {{{"6"_sv, 6}, {"7"_sv, std::nullopt}}}});
+  auto file = TempFilePath::create();
+  const auto rowVector = makeRowVector({mapVector});
+  auto schema = asRowType(rowVector->type());
+  writeToFile(file->getPath(), {rowVector});
+
+  CursorParameters params;
+  params.copyResult = false;
+  params.serialExecution = true;
+  params.planNode = PlanBuilder().tableScan(schema, {}).planNode();
+  std::unordered_map<std::string, std::string> config;
+  // Set output buffer row limit to 1 to trigger one batch read at a time.
+  params.queryConfigs.emplace(
+      QueryConfig::kPreferredOutputBatchBytes, folly::to<std::string>(1));
+
+  auto cursor = TaskCursor::create(params);
+  cursor->task()->addSplit(
+      "0", exec::Split(makeHiveConnectorSplit(file->getPath())));
+  cursor->task()->noMoreSplits("0");
+  int i = 0;
+  BufferPtr nullBufferHolder;
+  while (cursor->moveNext()) {
+    auto* result = cursor->current()->asUnchecked<RowVector>();
+    ASSERT_TRUE(isLazyNotLoaded(*result->childAt(0)));
+    result->loadedVector();
+    // The first batch contains null in map child and hold a shared reference to
+    // trigger the case that the null buffer is not writable in second read.
+    if (i++ == 0) {
+      nullBufferHolder = result->childAt(0)->nulls();
+    }
+  }
+  ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
+}
+
+// When the multi-referenced fields are in AND clauses without any other
+// conditionals, they should not be eagerly materialized.
+TEST_F(
+    TableScanTest,
+    remainingFilterLazyWithMultiReferencesDirectlyInAndClause) {
+  constexpr int kSize = 10;
+  auto vector = makeRowVector({
+      makeFlatVector<int64_t>(kSize, folly::identity),
+      makeFlatVector<int64_t>(kSize, folly::identity),
+  });
+  auto schema = asRowType(vector->type());
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  CursorParameters params;
+  params.copyResult = false;
+  params.serialExecution = true;
+  params.planNode = PlanBuilder()
+                        .tableScan(schema, {}, "c0 % 7 == 0 AND c1 % 2 == 0")
+                        .planNode();
+  auto cursor = TaskCursor::create(params);
+  cursor->task()->addSplit(
+      "0", exec::Split(makeHiveConnectorSplit(file->getPath())));
+  cursor->task()->noMoreSplits("0");
+  ASSERT_TRUE(cursor->moveNext());
+  auto* result = cursor->current()->asUnchecked<RowVector>();
+  ASSERT_EQ(result->size(), 1);
+  auto* c0 =
+      result->childAt(0)->loadedVector()->asUnchecked<SimpleVector<int64_t>>();
+  ASSERT_FALSE(c0->isNullAt(0));
+  ASSERT_EQ(c0->valueAt(0), 0);
+  auto* c1 = result->childAt(1)->loadedVector();
+  ASSERT_EQ(c1->encoding(), VectorEncoding::Simple::DICTIONARY);
+  auto* c1Dict = c1->asUnchecked<DictionaryVector<int64_t>>();
+  ASSERT_FALSE(c1Dict->isNullAt(0));
+  ASSERT_EQ(c1Dict->valueAt(0), 0);
+  ASSERT_EQ(
+      c1Dict->valueVector()->encoding(), VectorEncoding::Simple::DICTIONARY);
+  c1Dict = c1Dict->valueVector()->asUnchecked<DictionaryVector<int64_t>>();
+  ASSERT_EQ(c1Dict->valueVector()->size(), 2);
+  ASSERT_FALSE(cursor->moveNext());
   ASSERT_TRUE(waitForTaskCompletion(cursor->task().get()));
 }
 
@@ -3529,6 +3792,65 @@ TEST_F(TableScanTest, bitwiseAggregationPushdown) {
       "SELECT c5, bit_or(c0), bit_or(c1), bit_or(c2), bit_or(c6) FROM tmp group by c5");
 }
 
+TEST_F(TableScanTest, aggregationPushdownSchemaEvolution) {
+  const std::unordered_map<std::string, const char*> duckDbAgg = {
+      {"bitwise_and_agg", "bit_and"},
+      {"bitwise_or_agg", "bit_or"},
+  };
+  auto test = [&](const TypePtr& dataType,
+                  const TypePtr& schemaType,
+                  const std::vector<const char*>& aggs) {
+    SCOPED_TRACE(
+        fmt::format("{} to {}", dataType->toString(), schemaType->toString()));
+    constexpr int kSize = 1000;
+    auto vectors =
+        makeVectors(1, kSize, ROW({"c0", "c1"}, {TINYINT(), dataType}));
+    auto filePath = TempFilePath::create();
+    createDuckDbTable(vectors);
+    writeToFile(filePath->getPath(), vectors);
+    for (const char* agg : aggs) {
+      SCOPED_TRACE(agg);
+      auto plan = PlanBuilder()
+                      .tableScan(ROW({"c0", "c1"}, {TINYINT(), schemaType}))
+                      .singleAggregation({"c0"}, {fmt::format("{}(c1)", agg)})
+                      .planNode();
+      auto it = duckDbAgg.find(agg);
+      auto task = assertQuery(
+          plan,
+          {filePath},
+          fmt::format(
+              "SELECT c0, {}(c1) FROM tmp GROUP BY 1",
+              it == duckDbAgg.end() ? agg : it->second));
+      auto stats = task->taskStats();
+      ASSERT_EQ(
+          stats.pipelineStats[0]
+              .operatorStats[1]
+              .runtimeStats.at("loadedToValueHook")
+              .sum,
+          kSize);
+    }
+  };
+  test(BOOLEAN(), TINYINT(), {"min", "max"});
+  test(BOOLEAN(), BIGINT(), {"min", "max"});
+  test(
+      TINYINT(),
+      INTEGER(),
+      {"min", "max", "sum", "bitwise_and_agg", "bitwise_or_agg"});
+  test(
+      TINYINT(),
+      BIGINT(),
+      {"min", "max", "sum", "bitwise_and_agg", "bitwise_or_agg"});
+  test(
+      SMALLINT(),
+      INTEGER(),
+      {"min", "max", "sum", "bitwise_and_agg", "bitwise_or_agg"});
+  test(
+      INTEGER(),
+      BIGINT(),
+      {"min", "max", "sum", "bitwise_and_agg", "bitwise_or_agg"});
+  test(REAL(), DOUBLE(), {"min", "max", "sum"});
+}
+
 TEST_F(TableScanTest, structLazy) {
   vector_size_t size = 1'000;
   auto rowVector = makeRowVector(
@@ -3553,7 +3875,12 @@ TEST_F(TableScanTest, structLazy) {
                 .project({"cardinality(c2.c0)"})
                 .planNode();
 
-  assertQuery(op, {filePath}, "select c0 % 3 from tmp");
+  auto task = assertQuery(op, {filePath}, "select c0 % 3 from tmp");
+
+  // Ensure lazy stats are attributed to table scan.
+  const auto stats = task->taskStats();
+  EXPECT_GT(stats.pipelineStats[0].operatorStats[0].inputBytes, 0);
+  EXPECT_GT(stats.pipelineStats[0].operatorStats[0].outputBytes, 0);
 }
 
 TEST_F(TableScanTest, interleaveLazyEager) {
@@ -4134,6 +4461,41 @@ TEST_F(TableScanTest, readMissingFieldsInMap) {
       AssertQueryBuilder(op).split(split).copyResults(pool()), VeloxUserError);
 }
 
+TEST_F(TableScanTest, filterMissingFields) {
+  constexpr int kSize = 10;
+  auto iota = makeFlatVector<int64_t>(kSize, folly::identity);
+  auto data = makeRowVector({makeRowVector({iota})});
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {data});
+  auto schema = makeRowType({
+      makeRowType({BIGINT(), BIGINT()}),
+      makeRowType({BIGINT()}),
+      BIGINT(),
+  });
+  auto test = [&](const std::vector<std::string>& subfieldFilters,
+                  int expectedSize) {
+    SCOPED_TRACE(fmt::format("{}", fmt::join(subfieldFilters, " AND ")));
+    auto plan = PlanBuilder()
+                    .tableScan(ROW({}, {}), subfieldFilters, "", schema)
+                    .planNode();
+    auto split = makeHiveConnectorSplit(file->getPath());
+    auto result = AssertQueryBuilder(plan).split(split).copyResults(pool());
+    ASSERT_EQ(result->size(), expectedSize);
+  };
+  test({"c0.c1 = 0"}, 0);
+  test({"c0.c1 IS NULL"}, kSize);
+  test({"c1 IS NOT NULL"}, 0);
+  test({"c1 IS NULL"}, kSize);
+  test({"c1.c0 = 0"}, 0);
+  test({"c1.c0 IS NULL"}, kSize);
+  test({"c2 = 0"}, 0);
+  test({"c2 IS NULL"}, kSize);
+  test({"c2 = 0", "c0.c1 IS NULL"}, 0);
+  test({"c2 IS NULL", "c0.c1 = 0"}, 0);
+  test({"c0.c0 = 0", "c1.c0 = 0"}, 0);
+  test({"c0.c0 = 0", "c1.c0 IS NULL"}, 1);
+}
+
 // Tests various projections of top level columns using the output type passed
 // into TableScan.
 TEST_F(TableScanTest, tableScanProjections) {
@@ -4435,13 +4797,14 @@ TEST_F(TableScanTest, partitionKeyNotMatchPartitionKeysHandle) {
 TEST_F(TableScanTest, readFlatMapAsStruct) {
   constexpr int kSize = 10;
   std::vector<std::string> keys = {"1", "2", "3"};
-  auto vector = makeRowVector({makeRowVector(
+  auto c0 = makeRowVector(
       keys,
       {
           makeFlatVector<int64_t>(kSize, folly::identity),
           makeFlatVector<int64_t>(kSize, folly::identity, nullEvery(5)),
           makeFlatVector<int64_t>(kSize, folly::identity, nullEvery(7)),
-      })});
+      });
+  auto vector = makeRowVector({c0});
   auto config = std::make_shared<dwrf::Config>();
   config->set(dwrf::Config::FLATTEN_MAP, true);
   config->set<const std::vector<uint32_t>>(dwrf::Config::MAP_FLAT_COLS, {0});
@@ -4455,6 +4818,129 @@ TEST_F(TableScanTest, readFlatMapAsStruct) {
       PlanBuilder().tableScan(readSchema, {}, "", writeSchema).planNode();
   auto split = makeHiveConnectorSplit(file->getPath());
   AssertQueryBuilder(plan).split(split).assertResults(vector);
+  readSchema =
+      ROW({"c0"}, {ROW({"1", "4", "2"}, {BIGINT(), BIGINT(), BIGINT()})});
+  plan = PlanBuilder().tableScan(readSchema, {}, "", writeSchema).planNode();
+  split = makeHiveConnectorSplit(file->getPath());
+  auto expected = makeRowVector({makeRowVector(
+      {"1", "4", "2"},
+      {
+          c0->childAt(0),
+          makeNullConstant(TypeKind::BIGINT, kSize),
+          c0->childAt(1),
+      })});
+  AssertQueryBuilder(plan).split(split).assertResults(expected);
+}
+
+TEST_F(TableScanTest, dynamicFilters) {
+  // Make sure filters on same column from multiple downstream operators are
+  // merged properly without overwriting each other.
+  auto aVector =
+      makeRowVector({"a"}, {makeFlatVector<int64_t>(20'000, folly::identity)});
+  auto bVector =
+      makeRowVector({"b"}, {makeFlatVector<int64_t>(10'000, folly::identity)});
+  auto cVector = makeRowVector(
+      {"c"},
+      {makeFlatVector<int64_t>(10'000, [](auto i) { return i + 10'000; })});
+  std::shared_ptr<TempFilePath> files[3];
+  files[0] = TempFilePath::create();
+  writeToFile(files[0]->getPath(), {aVector});
+  files[1] = TempFilePath::create();
+  writeToFile(files[1]->getPath(), {bVector});
+  files[2] = TempFilePath::create();
+  writeToFile(files[2]->getPath(), {cVector});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  core::PlanNodeId aScanId;
+  core::PlanNodeId bScanId;
+  core::PlanNodeId cScanId;
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .tableScan(ROW({"a"}, {BIGINT()}))
+                  .capturePlanNodeId(aScanId)
+                  .hashJoin(
+                      {"a"},
+                      {"b"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(ROW({"b"}, {BIGINT()}))
+                          .capturePlanNodeId(bScanId)
+                          .planNode(),
+                      "", /*filter*/
+                      {"a"})
+                  .hashJoin(
+                      {"a"},
+                      {"c"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(ROW({"c"}, {BIGINT()}))
+                          .capturePlanNodeId(cScanId)
+                          .planNode(),
+                      "", /*filter*/
+                      {"a"})
+                  .planNode();
+  AssertQueryBuilder(plan)
+      .split(aScanId, makeHiveConnectorSplit(files[0]->getPath()))
+      .split(bScanId, makeHiveConnectorSplit(files[1]->getPath()))
+      .split(cScanId, makeHiveConnectorSplit(files[2]->getPath()))
+      .assertResults(makeRowVector({makeFlatVector<int64_t>(0)}));
+}
+
+TEST_F(TableScanTest, dynamicFilterWithRowIndexColumn) {
+  // This test ensures dynamic filters can be mapped to correct field when there
+  // is row_index column.
+  auto aVector =
+      makeRowVector({"a"}, {makeFlatVector<int64_t>(10, folly::identity)});
+  auto bVector = makeRowVector({"b"}, {makeFlatVector<int64_t>(10, [](auto i) {
+                                 if (i < 5) {
+                                   return i;
+                                 } else {
+                                   return 10 + i;
+                                 }
+                               })});
+  auto resVector = makeRowVector(
+      {"row_index", "a"},
+      {makeFlatVector<int64_t>(5, folly::identity),
+       makeFlatVector<int64_t>(5, folly::identity)});
+  std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+      assignments;
+  assignments["a"] = std::make_shared<connector::hive::HiveColumnHandle>(
+      "a",
+      connector::hive::HiveColumnHandle::ColumnType::kRegular,
+      BIGINT(),
+      BIGINT());
+  assignments["row_index"] =
+      std::make_shared<connector::hive::HiveColumnHandle>(
+          "row_index",
+          connector::hive::HiveColumnHandle::ColumnType::kRowIndex,
+          BIGINT(),
+          BIGINT());
+  std::shared_ptr<TempFilePath> files[2];
+  files[0] = TempFilePath::create();
+  writeToFile(files[0]->getPath(), {aVector});
+  files[1] = TempFilePath::create();
+  writeToFile(files[1]->getPath(), {bVector});
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  core::PlanNodeId aScanId;
+  core::PlanNodeId bScanId;
+  auto plan = PlanBuilder(planNodeIdGenerator)
+                  .tableScan(
+                      ROW({"row_index", "a"}, {BIGINT(), BIGINT()}),
+                      {},
+                      "",
+                      nullptr,
+                      assignments)
+                  .capturePlanNodeId(aScanId)
+                  .hashJoin(
+                      {"a"},
+                      {"b"},
+                      PlanBuilder(planNodeIdGenerator)
+                          .tableScan(ROW({"b"}, {BIGINT()}))
+                          .capturePlanNodeId(bScanId)
+                          .planNode(),
+                      "", /*filter*/
+                      {"row_index", "a"})
+                  .planNode();
+  AssertQueryBuilder(plan)
+      .split(aScanId, makeHiveConnectorSplit(files[0]->getPath()))
+      .split(bScanId, makeHiveConnectorSplit(files[1]->getPath()))
+      .assertResults(resVector);
 }
 
 // TODO: re-enable this test once we add back driver suspension support for
@@ -4671,4 +5157,38 @@ DEBUG_ONLY_TEST_F(TableScanTest, cancellationToken) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   queryThread.join();
+}
+
+TEST_F(TableScanTest, rowNumberInRemainingFilter) {
+  constexpr int kSize = 100;
+  auto vector = makeRowVector({
+      makeFlatVector<int64_t>(kSize, folly::identity),
+  });
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  auto outputType = ROW({"c0"}, {BIGINT()});
+  auto remainingFilter = parseExpr("r1 % 2 == 0", ROW({"r1"}, {BIGINT()}));
+  auto tableHandle = makeTableHandle(SubfieldFilters{}, remainingFilter);
+  auto plan = PlanBuilder()
+                  .startTableScan()
+                  .outputType(outputType)
+                  .tableHandle(tableHandle)
+                  .assignments({
+                      {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                      {"r1",
+                       std::make_shared<HiveColumnHandle>(
+                           "r1",
+                           HiveColumnHandle::ColumnType::kRowIndex,
+                           BIGINT(),
+                           BIGINT())},
+                  })
+                  .endTableScan()
+                  .planNode();
+  auto expected = makeRowVector(
+      {"c0"}, {makeFlatVector<int64_t>(kSize / 2, [](vector_size_t row) {
+        return row * 2;
+      })});
+  AssertQueryBuilder(plan)
+      .split(makeHiveConnectorSplit(file->getPath()))
+      .assertResults(expected);
 }

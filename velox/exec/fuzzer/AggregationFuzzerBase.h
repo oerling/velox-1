@@ -63,20 +63,25 @@ class AggregationFuzzerBase {
           customInputGenerators,
       VectorFuzzer::Options::TimestampPrecision timestampPrecision,
       const std::unordered_map<std::string, std::string>& queryConfigs,
+      const std::unordered_map<std::string, std::string>& hiveConfigs,
+      bool orderableGroupKeys,
       std::unique_ptr<ReferenceQueryRunner> referenceQueryRunner)
       : customVerificationFunctions_{customVerificationFunctions},
         customInputGenerators_{customInputGenerators},
         queryConfigs_{queryConfigs},
+        orderableGroupKeys_{orderableGroupKeys},
         persistAndRunOnce_{FLAGS_persist_and_run_once},
         reproPersistPath_{FLAGS_repro_persist_path},
         referenceQueryRunner_{std::move(referenceQueryRunner)},
         vectorFuzzer_{getFuzzerOptions(timestampPrecision), pool_.get()} {
     filesystems::registerLocalFileSystem();
+    auto configs = hiveConfigs;
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(
-                kHiveConnectorId, std::make_shared<core::MemConfig>());
+                kHiveConnectorId,
+                std::make_shared<config::ConfigBase>(std::move(configs)));
     connector::registerConnector(hiveConnector);
 
     seed(initialSeed);
@@ -100,12 +105,6 @@ class AggregationFuzzerBase {
 
     /// Number of times generated query plan failed.
     size_t numFailed{0};
-  };
-
-  enum ReferenceQueryErrorCode {
-    kSuccess,
-    kReferenceQueryFail,
-    kReferenceQueryUnsupported
   };
 
  protected:
@@ -136,8 +135,7 @@ class AggregationFuzzerBase {
 
     void print(size_t numIterations) const;
 
-    void updateReferenceQueryStats(
-        AggregationFuzzerBase::ReferenceQueryErrorCode errorCode);
+    void updateReferenceQueryStats(ReferenceQueryErrorCode errorCode);
   };
 
   int32_t randInt(int32_t min, int32_t max);
@@ -185,11 +183,13 @@ class AggregationFuzzerBase {
       std::vector<TypePtr>& types);
 
   // Similar to generateKeys, but restricts types to orderable types (i.e. no
-  // maps).
+  // maps). For k-RANGE frame bounds, rangeFrame must be set to true so only
+  // one sorting key is generated.
   std::vector<std::string> generateSortingKeys(
       const std::string& prefix,
       std::vector<std::string>& names,
-      std::vector<TypePtr>& types);
+      std::vector<TypePtr>& types,
+      bool rangeFrame = false);
 
   std::pair<CallableSignature, SignatureStats&> pickSignature();
 
@@ -208,26 +208,12 @@ class AggregationFuzzerBase {
       const std::vector<std::string>& partitionKeys,
       const CallableSignature& signature);
 
-  std::pair<std::optional<MaterializedRowMultiset>, ReferenceQueryErrorCode>
-  computeReferenceResults(
-      const core::PlanNodePtr& plan,
-      const std::vector<RowVectorPtr>& input);
-
   velox::fuzzer::ResultOrError execute(
       const core::PlanNodePtr& plan,
       const std::vector<exec::Split>& splits = {},
       bool injectSpill = false,
       bool abandonPartial = false,
       int32_t maxDrivers = 2);
-
-  // Will throw if referenceQueryRunner doesn't support
-  // returning results as a vector.
-  std::pair<
-      std::optional<std::vector<RowVectorPtr>>,
-      AggregationFuzzerBase::ReferenceQueryErrorCode>
-  computeReferenceResultsAsVector(
-      const core::PlanNodePtr& plan,
-      const std::vector<RowVectorPtr>& input);
 
   void compare(
       const velox::fuzzer::ResultOrError& actual,
@@ -264,6 +250,9 @@ class AggregationFuzzerBase {
   const std::unordered_map<std::string, std::shared_ptr<InputGenerator>>
       customInputGenerators_;
   const std::unordered_map<std::string, std::string> queryConfigs_;
+
+  // Whether group keys must be orderable or be just comparable.
+  bool orderableGroupKeys_;
   const bool persistAndRunOnce_;
   const std::string reproPersistPath_;
 
@@ -328,6 +317,7 @@ void persistReproInfo(
 // returns a DuckQueryRunner instance and set disabled aggregation functions
 // properly.
 std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
+    memory::MemoryPool* aggregatePool,
     const std::string& prestoUrl,
     const std::string& runnerName,
     const uint32_t& reqTimeoutMs);

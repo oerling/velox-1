@@ -57,14 +57,18 @@ class ParquetTpchTest : public testing::Test {
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(
-                kHiveConnectorId, std::make_shared<core::MemConfig>());
+                kHiveConnectorId,
+                std::make_shared<config::ConfigBase>(
+                    std::unordered_map<std::string, std::string>()));
     connector::registerConnector(hiveConnector);
 
     auto tpchConnector =
         connector::getConnectorFactory(
             connector::tpch::TpchConnectorFactory::kTpchConnectorName)
             ->newConnector(
-                kTpchConnectorId, std::make_shared<core::MemConfig>());
+                kTpchConnectorId,
+                std::make_shared<config::ConfigBase>(
+                    std::unordered_map<std::string, std::string>()));
     connector::registerConnector(tpchConnector);
 
     saveTpchTablesAsParquet();
@@ -169,6 +173,11 @@ TEST_F(ParquetTpchTest, Q2) {
 TEST_F(ParquetTpchTest, Q3) {
   std::vector<uint32_t> sortingKeys{1, 2};
   assertQuery(3, std::move(sortingKeys));
+}
+
+TEST_F(ParquetTpchTest, Q4) {
+  std::vector<uint32_t> sortingKeys{0};
+  assertQuery(4, std::move(sortingKeys));
 }
 
 TEST_F(ParquetTpchTest, Q5) {

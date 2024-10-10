@@ -204,7 +204,6 @@ void CacheFuzzer::initializeCache() {
   options.useMmapAllocator = true;
   options.allocatorCapacity = FLAGS_memory_cache_bytes;
   options.arbitratorCapacity = FLAGS_memory_cache_bytes;
-  options.arbitratorReservedCapacity = 0;
   options.trackDefaultUsage = true;
   memoryManager_ = std::make_unique<memory::MemoryManager>(options);
 
@@ -254,7 +253,7 @@ void CacheFuzzer::readCache() {
   std::vector<std::thread> threads;
   threads.reserve(FLAGS_num_threads);
   for (int32_t i = 0; i < FLAGS_num_threads; ++i) {
-    threads.emplace_back([&]() {
+    threads.emplace_back([&, i]() {
       FuzzerGenerator rng(currentSeed_ + i);
       while (!readStopped) {
         const auto fileIdx = boost::random::uniform_int_distribution<int32_t>(
@@ -275,7 +274,7 @@ void CacheFuzzer::readCache() {
 
 void CacheFuzzer::reset() {
   cache_->shutdown();
-  cache_->ssdCache()->testingWaitForWriteToFinish();
+  cache_->ssdCache()->waitForWriteToFinish();
   executor_->join();
   executor_.reset();
   fileNames_.clear();
@@ -325,7 +324,7 @@ void CacheFuzzer::read(uint32_t fileIdx, int32_t fragmentIdx) {
 void CacheFuzzer::go() {
   VELOX_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
-      "Either --steps or --duration_sec needs to be greater than zero.")
+      "Either --steps or --duration_sec needs to be greater than zero.");
 
   auto startTime = std::chrono::system_clock::now();
   size_t iteration = 0;

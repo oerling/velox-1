@@ -50,7 +50,11 @@ class WriterFactory {
   /// @return writer object
   virtual std::unique_ptr<Writer> createWriter(
       std::unique_ptr<dwio::common::FileSink> sink,
-      const dwio::common::WriterOptions& options) = 0;
+      const std::shared_ptr<dwio::common::WriterOptions>& options) = 0;
+
+  /// Creates a polymorphic writer options object.
+  virtual std::unique_ptr<dwio::common::WriterOptions>
+  createWriterOptions() = 0;
 
  private:
   const FileFormat format_;

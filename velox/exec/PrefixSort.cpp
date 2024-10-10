@@ -51,6 +51,10 @@ FOLLY_ALWAYS_INLINE void extractRowColumnToPrefix(
     char* const row,
     char* const prefix) {
   switch (typeKind) {
+    case TypeKind::SMALLINT: {
+      encodeRowColumn<int16_t>(prefixSortLayout, index, rowColumn, row, prefix);
+      return;
+    }
     case TypeKind::INTEGER: {
       encodeRowColumn<int32_t>(prefixSortLayout, index, rowColumn, row, prefix);
       return;
@@ -183,8 +187,6 @@ int PrefixSort::comparePartNormalizedKeys(char* left, char* right) {
 PrefixSort::PrefixSort(
     memory::MemoryPool* pool,
     RowContainer* rowContainer,
-    const std::vector<CompareFlags>& keyCompareFlags,
-    const PrefixSortConfig& config,
     const PrefixSortLayout& sortLayout)
     : pool_(pool), sortLayout_(sortLayout), rowContainer_(rowContainer) {}
 

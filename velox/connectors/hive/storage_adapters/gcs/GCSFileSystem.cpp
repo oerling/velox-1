@@ -16,10 +16,10 @@
 
 #include "velox/connectors/hive/storage_adapters/gcs/GCSFileSystem.h"
 #include "velox/common/base/Exceptions.h"
+#include "velox/common/config/Config.h"
 #include "velox/common/file/File.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/storage_adapters/gcs/GCSUtil.h"
-#include "velox/core/Config.h"
 #include "velox/core/QueryConfig.h"
 
 #include <fmt/format.h>
@@ -258,9 +258,9 @@ auto constexpr kGCSInvalidPath = "File {} is not a valid gcs file";
 
 class GCSFileSystem::Impl {
  public:
-  Impl(const Config* config)
+  Impl(const config::ConfigBase* config)
       : hiveConfig_(std::make_shared<HiveConfig>(
-            std::make_shared<core::MemConfig>(config->values()))) {}
+            std::make_shared<config::ConfigBase>(config->rawConfigsCopy()))) {}
 
   ~Impl() = default;
 
@@ -285,7 +285,7 @@ class GCSFileSystem::Impl {
     auto max_retry_time = hiveConfig_->gcsMaxRetryTime();
     if (max_retry_time) {
       auto retry_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-          facebook::velox::core::toDuration(max_retry_time.value()));
+          facebook::velox::config::toDuration(max_retry_time.value()));
       options.set<gcs::RetryPolicyOption>(
           gcs::LimitedTimeRetryPolicy(retry_time).clone());
     }
@@ -295,12 +295,21 @@ class GCSFileSystem::Impl {
       options.set<gcs::RestEndpointOption>(scheme + "://" + endpointOverride);
     }
 
-    auto cred = hiveConfig_->gcsCredentials();
-    if (!cred.empty()) {
-      auto credentials = gc::MakeServiceAccountCredentials(cred);
-      options.set<gc::UnifiedCredentialsOption>(credentials);
+    auto credFile = hiveConfig_->gcsCredentialsPath();
+    if (!credFile.empty() && std::filesystem::exists(credFile)) {
+      std::ifstream jsonFile(credFile, std::ios::in);
+      if (!jsonFile.is_open()) {
+        LOG(WARNING) << "Error opening file " << credFile;
+      } else {
+        std::stringstream credsBuffer;
+        credsBuffer << jsonFile.rdbuf();
+        auto creds = credsBuffer.str();
+        auto credentials = gc::MakeServiceAccountCredentials(std::move(creds));
+        options.set<gc::UnifiedCredentialsOption>(credentials);
+      }
     } else {
-      LOG(WARNING) << "Config::gcsCredentials is empty";
+      LOG(WARNING)
+          << "Config hive.gcs.json-key-file-path is empty or key file path not found";
     }
 
     client_ = std::make_shared<gcs::Client>(options);
@@ -315,7 +324,7 @@ class GCSFileSystem::Impl {
   std::shared_ptr<gcs::Client> client_;
 };
 
-GCSFileSystem::GCSFileSystem(std::shared_ptr<const Config> config)
+GCSFileSystem::GCSFileSystem(std::shared_ptr<const config::ConfigBase> config)
     : FileSystem(config) {
   impl_ = std::make_shared<Impl>(config.get());
 }

@@ -82,12 +82,30 @@ Details on the dependencies and how Velox manages some of them for you
 Velox also provides the following scripts to help developers setup and install Velox
 dependencies for a given platform.
 
+### Setting up dependencies
+
+The following setup scripts use the `DEPENDENCY_DIR` environment variable to set the
+location to download and build packages. This defaults to `deps-download` in the current
+working directory.
+
+Use `INSTALL_PREFIX` to set the install directory of the packages. This defaults to
+`deps-install` in the current working directory on macOS and to the default install
+location (eg. `/usr/local`) on linux.
+Using the default install location `/usr/local` on macOS is discouraged since this
+location is used by certain Homebrew versions.
+
+Manually add the `INSTALL_PREFIX` value in the IDE or bash environment,
+say `export INSTALL_PREFIX=/Users/$USERNAME/velox/deps-install` to `~/.zshrc` so that
+subsequent Velox builds can use the installed packages.
+
+*You can reuse `DEPENDENCY_INSTALL` and `INSTALL_PREFIX` for Velox clients such as Prestissimo
+by specifying a common shared directory.`*
+
 ### Setting up on macOS
 
-On a MacOS machine (either Intel or Apple silicon) you can setup and then build like so:
+On a macOS machine (either Intel or Apple silicon) you can setup and then build like so:
 
 ```shell
-$ export INSTALL_PREFIX=/Users/$USERNAME/velox/velox_dependency_install
 $ ./scripts/setup-macos.sh
 $ make
 ```
@@ -103,8 +121,6 @@ $ export PATH=/opt/homebrew/opt/m4/bin:$PATH
 ```shell
 $ M4=/usr/bin/gm4 make
 ```
-
-You can also produce intel binaries on an M1, use `CPU_TARGET="sse"` for the above.
 
 ### Setting up on Ubuntu (20.04 or later)
 
@@ -128,7 +144,23 @@ $ ./scripts/setup-adapters.sh
 $ make
 ```
 
-Note that `setup-adapters.sh` supports MacOS and Ubuntu 20.04 or later.
+Note that `setup-adapters.sh` supports macOS and Ubuntu 20.04 or later.
+
+### Using Clang on Linux
+
+Clang 15 can be additionally installed during the setup step for Ubuntu 22.04/24.04
+and CentOS 9 by setting the `USE_CLANG` environment variable prior to running the platform specific setup script.
+```shell
+$ export USE_CLANG=true
+```
+This will install and use Clang 15 to build the dependencies instead of using the default GCC compiler.
+
+Once completed, and before running any `make` command, set the compiler to be used:
+```shell
+$ export CC=/usr/bin/clang-15
+$ export CXX=/usr/bin/clang++-15
+$ make
+```
 
 ### Building Velox
 
@@ -150,6 +182,8 @@ Note that,
   * On ARM
     * Neon
     * Neon64
+
+Build metrics for Velox are published at <https://facebookincubator.github.io/velox/bm-report/>
 
 ### Building Velox with docker-compose
 

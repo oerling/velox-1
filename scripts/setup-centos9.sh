@@ -30,18 +30,27 @@ set -efx -o pipefail
 # so that some low level types are the same size. Also, disable warnings.
 SCRIPTDIR=$(dirname "${BASH_SOURCE[0]}")
 source $SCRIPTDIR/setup-helper-functions.sh
-CPU_TARGET="${CPU_TARGET:-avx}"
 NPROC=$(getconf _NPROCESSORS_ONLN)
-export CFLAGS=$(get_cxx_flags $CPU_TARGET)  # Used by LZO.
-export CXXFLAGS=$CFLAGS  # Used by boost.
-export CPPFLAGS=$CFLAGS  # Used by LZO.
+export CXXFLAGS=$(get_cxx_flags) # Used by boost.
+export CFLAGS=${CXXFLAGS//"-std=c++17"/} # Used by LZO.
 CMAKE_BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_DUCKDB="${BUILD_DUCKDB:-true}"
-export CC=/opt/rh/gcc-toolset-12/root/bin/gcc
-export CXX=/opt/rh/gcc-toolset-12/root/bin/g++
+USE_CLANG="${USE_CLANG:-false}"
+export INSTALL_PREFIX=${INSTALL_PREFIX:-"/usr/local"}
+DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)/deps-download}
+
+FB_OS_VERSION="v2024.07.01.00"
+FMT_VERSION="10.1.1"
+BOOST_VERSION="boost-1.84.0"
+ARROW_VERSION="15.0.0"
+STEMMER_VERSION="2.2.0"
 
 function dnf_install {
   dnf install -y -q --setopt=install_weak_deps=False "$@"
+}
+
+function install_clang15 {
+  dnf_install clang15 gcc-toolset-13-libatomic-devel
 }
 
 # Install packages required for build.
@@ -52,7 +61,12 @@ function install_build_prerequisites {
   dnf update -y
   dnf_install ninja-build cmake ccache gcc-toolset-12 git wget which
   dnf_install autoconf automake python3-devel pip libtool
+
   pip install cmake==3.28.3
+
+  if [[ ${USE_CLANG} != "false" ]]; then
+    install_clang15
+  fi
 }
 
 # Install dependencies from the package managers.
@@ -74,125 +88,110 @@ function install_gflags {
   # Remove an older version if present.
   dnf remove -y gflags
   wget_and_untar https://github.com/gflags/gflags/archive/v2.2.2.tar.gz gflags
-  (
-    cd gflags
-    cmake_install -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=ON -DBUILD_gflags_LIB=ON -DLIB_SUFFIX=64
-  )
+  cmake_install_dir gflags -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=ON -DBUILD_gflags_LIB=ON -DLIB_SUFFIX=64
 }
 
 function install_glog {
   wget_and_untar https://github.com/google/glog/archive/v0.6.0.tar.gz glog
-  (
-    cd glog
-    cmake_install -DBUILD_SHARED_LIBS=ON
-  )
+  cmake_install_dir glog -DBUILD_SHARED_LIBS=ON
 }
 
 function install_lzo {
   wget_and_untar http://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz lzo
   (
-    cd lzo
-    ./configure --prefix=/usr --enable-shared --disable-static --docdir=/usr/share/doc/lzo-2.10
+    cd ${DEPENDENCY_DIR}/lzo
+    ./configure --prefix=${INSTALL_PREFIX} --enable-shared --disable-static --docdir=/usr/share/doc/lzo-2.10
     make "-j$(nproc)"
     make install
   )
 }
 
 function install_boost {
-  wget_and_untar https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.gz boost
+  wget_and_untar https://github.com/boostorg/boost/releases/download/${BOOST_VERSION}/${BOOST_VERSION}.tar.gz boost
   (
-   cd boost
-   ./bootstrap.sh --prefix=/usr/local
-   ./b2 "-j$(nproc)" -d0 install threading=multi --without-python
+    cd ${DEPENDENCY_DIR}/boost
+    if [[ ${USE_CLANG} != "false" ]]; then
+      ./bootstrap.sh --prefix=${INSTALL_PREFIX} --with-toolset="clang-15"
+      # Switch the compiler from the clang-15 toolset which doesn't exist (clang-15.jam) to
+      # clang of version 15 when toolset clang-15 is used.
+      # This reconciles the project-config.jam generation with what the b2 build system allows for customization.
+      sed -i 's/using clang-15/using clang : 15/g' project-config.jam
+      ${SUDO} ./b2 "-j$(nproc)" -d0 install threading=multi toolset=clang-15 --without-python
+    else
+      ./bootstrap.sh --prefix=${INSTALL_PREFIX}
+      ${SUDO} ./b2 "-j$(nproc)" -d0 install threading=multi --without-python
+    fi
   )
 }
 
 function install_snappy {
   wget_and_untar https://github.com/google/snappy/archive/1.1.8.tar.gz snappy
-  (
-    cd snappy
-    cmake_install -DSNAPPY_BUILD_TESTS=OFF
-  )
+  cmake_install_dir snappy -DSNAPPY_BUILD_TESTS=OFF
 }
 
 function install_fmt {
-  wget_and_untar https://github.com/fmtlib/fmt/archive/10.1.1.tar.gz fmt
-  (
-    cd fmt
-    cmake_install -DFMT_TEST=OFF
-  )
+  wget_and_untar https://github.com/fmtlib/fmt/archive/${FMT_VERSION}.tar.gz fmt
+  cmake_install_dir fmt -DFMT_TEST=OFF
 }
 
 function install_protobuf {
   wget_and_untar https://github.com/protocolbuffers/protobuf/releases/download/v21.8/protobuf-all-21.8.tar.gz protobuf
   (
-    cd protobuf
-    ./configure --prefix=/usr
+    cd ${DEPENDENCY_DIR}/protobuf
+    ./configure --prefix=${INSTALL_PREFIX}
     make "-j${NPROC}"
     make install
     ldconfig
   )
 }
 
-FB_OS_VERSION="v2024.05.20.00"
-
 function install_fizz {
   wget_and_untar https://github.com/facebookincubator/fizz/archive/refs/tags/${FB_OS_VERSION}.tar.gz fizz
-  (
-    cd fizz/fizz
-    cmake_install -DBUILD_TESTS=OFF
-  )
+  cmake_install_dir fizz/fizz -DBUILD_TESTS=OFF
 }
 
 function install_folly {
   wget_and_untar https://github.com/facebook/folly/archive/refs/tags/${FB_OS_VERSION}.tar.gz folly
-  (
-    cd folly
-    cmake_install -DFOLLY_HAVE_INT128_T=ON
-  )
+  cmake_install_dir folly -DBUILD_TESTS=OFF -DFOLLY_HAVE_INT128_T=ON
 }
 
 function install_wangle {
   wget_and_untar https://github.com/facebook/wangle/archive/refs/tags/${FB_OS_VERSION}.tar.gz wangle
-  (
-    cd wangle/wangle
-    cmake_install -DBUILD_TESTS=OFF
-  )
+  cmake_install_dir wangle/wangle -DBUILD_TESTS=OFF
 }
 
 function install_fbthrift {
   wget_and_untar https://github.com/facebook/fbthrift/archive/refs/tags/${FB_OS_VERSION}.tar.gz fbthrift
-  (
-    cd fbthrift
-    cmake_install -Denable_tests=OFF -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
-  )
+  cmake_install_dir fbthrift -Denable_tests=OFF -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
 }
 
 function install_mvfst {
   wget_and_untar https://github.com/facebook/mvfst/archive/refs/tags/${FB_OS_VERSION}.tar.gz mvfst
-  (
-   cd mvfst
-   cmake_install -DBUILD_TESTS=OFF
-  )
+  cmake_install_dir mvfst -DBUILD_TESTS=OFF
 }
 
 function install_duckdb {
   if $BUILD_DUCKDB ; then
     echo 'Building DuckDB'
     wget_and_untar https://github.com/duckdb/duckdb/archive/refs/tags/v0.8.1.tar.gz duckdb
-    (
-      cd duckdb
-      cmake_install -DBUILD_UNITTESTS=OFF -DENABLE_SANITIZER=OFF -DENABLE_UBSAN=OFF -DBUILD_SHELL=OFF -DEXPORT_DLL_SYMBOLS=OFF -DCMAKE_BUILD_TYPE=Release
-    )
+    cmake_install_dir duckdb -DBUILD_UNITTESTS=OFF -DENABLE_SANITIZER=OFF -DENABLE_UBSAN=OFF -DBUILD_SHELL=OFF -DEXPORT_DLL_SYMBOLS=OFF -DCMAKE_BUILD_TYPE=Release
   fi
 }
 
-ARROW_VERSION=15.0.0
+function install_stemmer {
+  wget_and_untar https://snowballstem.org/dist/libstemmer_c-${STEMMER_VERSION}.tar.gz stemmer
+  (
+    cd ${DEPENDENCY_DIR}/stemmer
+    sed -i '/CPPFLAGS=-Iinclude/ s/$/ -fPIC/' Makefile
+    make clean && make "-j${NPROC}"
+    ${SUDO} cp libstemmer.a ${INSTALL_PREFIX}/lib/
+    ${SUDO} cp include/libstemmer.h ${INSTALL_PREFIX}/include/
+  )
+}
 
 function install_arrow {
   wget_and_untar https://archive.apache.org/dist/arrow/arrow-${ARROW_VERSION}/apache-arrow-${ARROW_VERSION}.tar.gz arrow
-  cd arrow/cpp
-  cmake_install \
+  cmake_install_dir arrow/cpp \
     -DARROW_PARQUET=OFF \
     -DARROW_WITH_THRIFT=ON \
     -DARROW_WITH_LZ4=ON \
@@ -204,10 +203,17 @@ function install_arrow {
     -DARROW_RUNTIME_SIMD_LEVEL=NONE \
     -DARROW_WITH_UTF8PROC=OFF \
     -DARROW_TESTING=ON \
-    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
     -DCMAKE_BUILD_TYPE=Release \
     -DARROW_BUILD_STATIC=ON \
-    -DThrift_SOURCE=BUNDLED
+    -DThrift_SOURCE=BUNDLED \
+    -DBOOST_ROOT=${INSTALL_PREFIX}
+
+  (
+    # Install thrift.
+    cd ${DEPENDENCY_DIR}/arrow/cpp/_build/thrift_ep-prefix/src/thrift_ep-build
+    cmake --install ./ --prefix ${INSTALL_PREFIX}
+  )
 }
 
 function install_cuda {
@@ -232,6 +238,7 @@ function install_velox_deps {
   run_and_time install_mvfst
   run_and_time install_fbthrift
   run_and_time install_duckdb
+  run_and_time install_stemmer
   run_and_time install_arrow
 }
 
@@ -239,9 +246,15 @@ function install_velox_deps {
 
 (
   if [[ $# -ne 0 ]]; then
-    # Activate gcc12; enable errors on unset variables afterwards.
-    source /opt/rh/gcc-toolset-12/enable || exit 1
-    set -u
+    if [[ ${USE_CLANG} != "false" ]]; then
+      export CC=/usr/bin/clang-15
+      export CXX=/usr/bin/clang++-15
+    else
+      # Activate gcc12; enable errors on unset variables afterwards.
+      source /opt/rh/gcc-toolset-12/enable || exit 1
+      set -u
+    fi
+
     for cmd in "$@"; do
       run_and_time "${cmd}"
     done
@@ -253,11 +266,21 @@ function install_velox_deps {
     else
       echo "Skipping installation of build dependencies since INSTALL_PREREQUISITES is not set"
     fi
-    # Activate gcc12; enable errors on unset variables afterwards.
-    source /opt/rh/gcc-toolset-12/enable || exit 1
-    set -u
+    if [[ ${USE_CLANG} != "false" ]]; then
+      export CC=/usr/bin/clang-15
+      export CXX=/usr/bin/clang++-15
+    else
+      # Activate gcc12; enable errors on unset variables afterwards.
+      source /opt/rh/gcc-toolset-12/enable || exit 1
+      set -u
+    fi
     install_velox_deps
     echo "All dependencies for Velox installed!"
+    if [[ ${USE_CLANG} != "false" ]]; then
+      echo "To use clang for the Velox build set the CC and CXX environment variables in your session."
+      echo "  export CC=/usr/bin/clang-15"
+      echo "  export CXX=/usr/bin/clang++-15"
+    fi
     dnf clean all
   fi
 )

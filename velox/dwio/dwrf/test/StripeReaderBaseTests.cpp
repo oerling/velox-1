@@ -65,7 +65,6 @@ class StripeLoadKeysTest : public Test {
     auto handler =
         DecryptionHandler::create(FooterWrapper(footer_.get()), &factory);
     pool_ = memoryManager()->addLeafPool();
-
     reader_ = std::make_unique<ReaderBase>(
         *pool_,
         std::make_unique<BufferedInput>(
@@ -87,10 +86,10 @@ class StripeLoadKeysTest : public Test {
         FooterWrapper(footer_.get()).stripes(index));
 
     auto handler = std::make_unique<encryption::DecryptionHandler>(
-        reader_->getDecryptionHandler());
+        reader_->decryptionHandler());
 
     stripeReader_->loadEncryptionKeys(
-        index, *stripeFooter_, *handler, *stripeInfo_);
+        index, *stripeFooter_, *stripeInfo_, *handler);
 
     handler_ = std::move(handler);
 

@@ -24,10 +24,12 @@
 #include "velox/functions/prestosql/fuzzer/ApproxDistinctInputGenerator.h"
 #include "velox/functions/prestosql/fuzzer/ApproxDistinctResultVerifier.h"
 #include "velox/functions/prestosql/fuzzer/ApproxPercentileInputGenerator.h"
+#include "velox/functions/prestosql/fuzzer/ApproxPercentileResultVerifier.h"
 #include "velox/functions/prestosql/fuzzer/MinMaxInputGenerator.h"
 #include "velox/functions/prestosql/fuzzer/WindowOffsetInputGenerator.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/prestosql/window/WindowFunctionsRegistration.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 DEFINE_int64(
     seed,
@@ -117,16 +119,17 @@ int main(int argc, char** argv) {
   // fields.
   // TODO: allow custom result verifiers.
   using facebook::velox::exec::test::ApproxDistinctResultVerifier;
+  using facebook::velox::exec::test::ApproxPercentileResultVerifier;
 
   static const std::unordered_map<
       std::string,
       std::shared_ptr<facebook::velox::exec::test::ResultVerifier>>
       customVerificationFunctions = {
           // Approx functions.
-          // https://github.com/facebookincubator/velox/issues/9531
-          {"approx_distinct", nullptr},
+          {"approx_distinct", std::make_shared<ApproxDistinctResultVerifier>()},
           {"approx_set", nullptr},
-          {"approx_percentile", nullptr},
+          {"approx_percentile",
+           std::make_shared<ApproxPercentileResultVerifier>()},
           {"approx_most_frequent", nullptr},
           {"merge", nullptr},
           // Semantically inconsistent functions
@@ -137,6 +140,24 @@ int main(int argc, char** argv) {
           {"max_data_size_for_stats", nullptr},
           {"sum_data_size_for_stats", nullptr},
       };
+
+  using facebook::velox::DataSpec;
+  // For some functions, velox supports NaN, Infinity better than presto query
+  // runner, which makes the comparison impossible.
+  // Add data spec in vector fuzzer to enforce to not generate such data
+  // for those functions before they are fixed in presto query runner
+  static const std::unordered_map<std::string, DataSpec> functionDataSpec = {
+      {"regr_avgx", DataSpec{false, false}},
+      {"regr_avgy", DataSpec{false, false}},
+      {"regr_r2", DataSpec{false, false}},
+      {"regr_sxx", DataSpec{false, false}},
+      {"regr_syy", DataSpec{false, false}},
+      {"regr_sxy", DataSpec{false, false}},
+      {"regr_slope", DataSpec{false, false}},
+      {"regr_replacement", DataSpec{false, false}},
+      {"covar_pop", DataSpec{true, false}},
+      {"covar_samp", DataSpec{true, false}},
+  };
 
   static const std::unordered_set<std::string> orderDependentFunctions = {
       // Window functions.
@@ -178,9 +199,15 @@ int main(int argc, char** argv) {
   options.orderDependentFunctions = orderDependentFunctions;
   options.timestampPrecision =
       facebook::velox::VectorFuzzer::Options::TimestampPrecision::kMilliSeconds;
+  options.functionDataSpec = functionDataSpec;
+  std::shared_ptr<facebook::velox::memory::MemoryPool> rootPool{
+      facebook::velox::memory::memoryManager()->addRootPool()};
   return Runner::run(
       initialSeed,
       setupReferenceQueryRunner(
-          FLAGS_presto_url, "window_fuzzer", FLAGS_req_timeout_ms),
+          rootPool.get(),
+          FLAGS_presto_url,
+          "window_fuzzer",
+          FLAGS_req_timeout_ms),
       options);
 }

@@ -17,6 +17,7 @@
 
 #include "folly/CancellationToken.h"
 #include "velox/common/base/AsyncSource.h"
+#include "velox/common/base/PrefixSortConfig.h"
 #include "velox/common/base/RuntimeMetrics.h"
 #include "velox/common/base/SpillConfig.h"
 #include "velox/common/base/SpillStats.h"
@@ -28,15 +29,17 @@
 
 #include <folly/Synchronized.h>
 
+namespace facebook::velox {
+class Config;
+}
 namespace facebook::velox::wave {
 class WaveDataSource;
 }
 namespace facebook::velox::common {
 class Filter;
 }
-
-namespace facebook::velox {
-class Config;
+namespace facebook::velox::config {
+class ConfigBase;
 }
 
 namespace facebook::velox::connector {
@@ -45,7 +48,7 @@ class DataSource;
 
 /// A split represents a chunk of data that a connector should load and return
 /// as a RowVectorPtr, potentially after processing pushdowns.
-struct ConnectorSplit {
+struct ConnectorSplit : public ISerializable {
   const std::string connectorId;
   const int64_t splitWeight{0};
 
@@ -55,6 +58,11 @@ struct ConnectorSplit {
       const std::string& _connectorId,
       int64_t _splitWeight = 0)
       : connectorId(_connectorId), splitWeight(_splitWeight) {}
+
+  folly::dynamic serialize() const override {
+    VELOX_UNSUPPORTED();
+    return nullptr;
+  }
 
   virtual ~ConnectorSplit() {}
 
@@ -112,6 +120,8 @@ class ConnectorInsertTableHandle : public ISerializable {
     return false;
   }
 
+  virtual std::string toString() const = 0;
+
   folly::dynamic serialize() const override {
     VELOX_NYI();
   }
@@ -146,6 +156,7 @@ class DataSink {
   struct Stats {
     uint64_t numWrittenBytes{0};
     uint32_t numWrittenFiles{0};
+    uint64_t writeIOTimeUs{0};
     common::SpillStats spillStats;
 
     bool empty() const;
@@ -253,8 +264,9 @@ class ConnectorQueryCtx {
   ConnectorQueryCtx(
       memory::MemoryPool* operatorPool,
       memory::MemoryPool* connectorPool,
-      const Config* sessionProperties,
+      const config::ConfigBase* sessionProperties,
       const common::SpillConfig* spillConfig,
+      common::PrefixSortConfig prefixSortConfig,
       std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator,
       cache::AsyncDataCache* cache,
       const std::string& queryId,
@@ -262,11 +274,13 @@ class ConnectorQueryCtx {
       const std::string& planNodeId,
       int driverId,
       const std::string& sessionTimezone,
+      bool adjustTimestampToTimezone = false,
       folly::CancellationToken cancellationToken = {})
       : operatorPool_(operatorPool),
         connectorPool_(connectorPool),
         sessionProperties_(sessionProperties),
         spillConfig_(spillConfig),
+        prefixSortConfig_(prefixSortConfig),
         expressionEvaluator_(std::move(expressionEvaluator)),
         cache_(cache),
         scanId_(fmt::format("{}.{}", taskId, planNodeId)),
@@ -275,6 +289,7 @@ class ConnectorQueryCtx {
         driverId_(driverId),
         planNodeId_(planNodeId),
         sessionTimezone_(sessionTimezone),
+        adjustTimestampToTimezone_(adjustTimestampToTimezone),
         cancellationToken_(std::move(cancellationToken)) {
     VELOX_CHECK_NOT_NULL(sessionProperties);
   }
@@ -292,12 +307,16 @@ class ConnectorQueryCtx {
     return connectorPool_;
   }
 
-  const Config* sessionProperties() const {
+  const config::ConfigBase* sessionProperties() const {
     return sessionProperties_;
   }
 
   const common::SpillConfig* spillConfig() const {
     return spillConfig_;
+  }
+
+  const common::PrefixSortConfig& prefixSortConfig() const {
+    return prefixSortConfig_;
   }
 
   core::ExpressionEvaluator* expressionEvaluator() const {
@@ -339,16 +358,32 @@ class ConnectorQueryCtx {
     return sessionTimezone_;
   }
 
+  /// Whether to adjust Timestamp to the timeZone obtained through
+  /// sessionTimezone(). This is used to be compatible with the
+  /// old logic of Presto.
+  bool adjustTimestampToTimezone() const {
+    return adjustTimestampToTimezone_;
+  }
+
   /// Returns the cancellation token associated with this task.
   const folly::CancellationToken& cancellationToken() const {
     return cancellationToken_;
   }
 
+  bool selectiveNimbleReaderEnabled() const {
+    return selectiveNimbleReaderEnabled_;
+  }
+
+  void setSelectiveNimbleReaderEnabled(bool value) {
+    selectiveNimbleReaderEnabled_ = value;
+  }
+
  private:
   memory::MemoryPool* const operatorPool_;
   memory::MemoryPool* const connectorPool_;
-  const Config* const sessionProperties_;
+  const config::ConfigBase* const sessionProperties_;
   const common::SpillConfig* const spillConfig_;
+  const common::PrefixSortConfig prefixSortConfig_;
   std::unique_ptr<core::ExpressionEvaluator> expressionEvaluator_;
   cache::AsyncDataCache* cache_;
   const std::string scanId_;
@@ -357,7 +392,9 @@ class ConnectorQueryCtx {
   const int driverId_;
   const std::string planNodeId_;
   const std::string sessionTimezone_;
+  const bool adjustTimestampToTimezone_;
   const folly::CancellationToken cancellationToken_;
+  bool selectiveNimbleReaderEnabled_{false};
 };
 
 class Connector {
@@ -370,7 +407,8 @@ class Connector {
     return id_;
   }
 
-  virtual const std::shared_ptr<const Config>& connectorConfig() const {
+  virtual const std::shared_ptr<const config::ConfigBase>& connectorConfig()
+      const {
     VELOX_NYI("connectorConfig is not supported yet");
   }
 
@@ -439,7 +477,7 @@ class ConnectorFactory {
 
   virtual std::shared_ptr<Connector> newConnector(
       const std::string& id,
-      std::shared_ptr<const Config> config,
+      std::shared_ptr<const config::ConfigBase> config,
       folly::Executor* executor = nullptr) = 0;
 
  private:

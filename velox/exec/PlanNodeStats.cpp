@@ -48,6 +48,7 @@ void PlanNodeStats::addTotals(const OperatorStats& stats) {
   cpuWallTiming.add(stats.addInputTiming);
   cpuWallTiming.add(stats.getOutputTiming);
   cpuWallTiming.add(stats.finishTiming);
+  cpuWallTiming.add(stats.isBlockedTiming);
 
   backgroundTiming.add(stats.backgroundTiming);
 
@@ -95,8 +96,11 @@ std::string PlanNodeStats::toString(bool includeInputStats) const {
     }
   }
   out << "Output: " << outputRows << " rows (" << succinctBytes(outputBytes)
-      << ", " << outputVectors << " batches)"
-      << ", Cpu time: " << succinctNanos(cpuWallTiming.cpuNanos)
+      << ", " << outputVectors << " batches)";
+  if (physicalWrittenBytes > 0) {
+    out << ", Physical written output: " << succinctBytes(physicalWrittenBytes);
+  }
+  out << ", Cpu time: " << succinctNanos(cpuWallTiming.cpuNanos)
       << ", Blocked wall time: " << succinctNanos(blockedWallNanos)
       << ", Peak memory: " << succinctBytes(peakMemoryBytes)
       << ", Memory allocations: " << numMemoryAllocations;

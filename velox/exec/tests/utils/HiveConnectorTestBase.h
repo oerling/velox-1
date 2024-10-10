@@ -20,6 +20,7 @@
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/dwrf/common/Config.h"
+#include "velox/dwio/dwrf/writer/FlushPolicy.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/TempFilePath.h"
@@ -39,7 +40,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void resetHiveConnector(const std::shared_ptr<const Config>& config);
+  void resetHiveConnector(
+      const std::shared_ptr<const config::ConfigBase>& config);
 
   void writeToFile(const std::string& filePath, RowVectorPtr vector);
 
@@ -47,13 +49,17 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::string& filePath,
       const std::vector<RowVectorPtr>& vectors,
       std::shared_ptr<dwrf::Config> config =
-          std::make_shared<facebook::velox::dwrf::Config>());
+          std::make_shared<facebook::velox::dwrf::Config>(),
+      const std::function<std::unique_ptr<dwrf::DWRFFlushPolicy>()>&
+          flushPolicyFactory = nullptr);
 
   void writeToFile(
       const std::string& filePath,
       const std::vector<RowVectorPtr>& vectors,
       std::shared_ptr<dwrf::Config> config,
-      const TypePtr& schema);
+      const TypePtr& schema,
+      const std::function<std::unique_ptr<dwrf::DWRFFlushPolicy>()>&
+          flushPolicyFactory = nullptr);
 
   std::vector<RowVectorPtr> makeVectors(
       const RowTypePtr& rowType,
@@ -167,6 +173,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
   /// table.
   /// @param locationHandle Location handle for the table write.
   /// @param compressionKind compression algorithm to use for table write.
+  /// @param serdeParameters Table writer configuration parameters.
   static std::shared_ptr<connector::hive::HiveInsertTableHandle>
   makeHiveInsertTableHandle(
       const std::vector<std::string>& tableColumnNames,
@@ -176,7 +183,10 @@ class HiveConnectorTestBase : public OperatorTestBase {
       std::shared_ptr<connector::hive::LocationHandle> locationHandle,
       const dwio::common::FileFormat tableStorageFormat =
           dwio::common::FileFormat::DWRF,
-      const std::optional<common::CompressionKind> compressionKind = {});
+      const std::optional<common::CompressionKind> compressionKind = {},
+      const std::unordered_map<std::string, std::string>& serdeParameters = {},
+      const std::shared_ptr<dwio::common::WriterOptions>& writerOptions =
+          nullptr);
 
   static std::shared_ptr<connector::hive::HiveInsertTableHandle>
   makeHiveInsertTableHandle(
@@ -186,7 +196,9 @@ class HiveConnectorTestBase : public OperatorTestBase {
       std::shared_ptr<connector::hive::LocationHandle> locationHandle,
       const dwio::common::FileFormat tableStorageFormat =
           dwio::common::FileFormat::DWRF,
-      const std::optional<common::CompressionKind> compressionKind = {});
+      const std::optional<common::CompressionKind> compressionKind = {},
+      const std::shared_ptr<dwio::common::WriterOptions>& writerOptions =
+          nullptr);
 
   static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
       const std::string& name,

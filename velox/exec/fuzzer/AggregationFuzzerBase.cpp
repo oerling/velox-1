@@ -227,7 +227,12 @@ std::vector<std::string> AggregationFuzzerBase::generateKeys(
     keys.push_back(fmt::format("{}{}", prefix, i));
 
     // Pick random, possibly complex, type.
-    types.push_back(vectorFuzzer_.randType(kNonFloatingPointTypes, 2));
+    if (orderableGroupKeys_) {
+      types.push_back(
+          vectorFuzzer_.randOrderableType(kNonFloatingPointTypes, 2));
+    } else {
+      types.push_back(vectorFuzzer_.randType(kNonFloatingPointTypes, 2));
+    }
     names.push_back(keys.back());
   }
   return keys;
@@ -236,14 +241,35 @@ std::vector<std::string> AggregationFuzzerBase::generateKeys(
 std::vector<std::string> AggregationFuzzerBase::generateSortingKeys(
     const std::string& prefix,
     std::vector<std::string>& names,
-    std::vector<TypePtr>& types) {
+    std::vector<TypePtr>& types,
+    bool rangeFrame) {
   std::vector<std::string> keys;
-  auto numKeys = boost::random::uniform_int_distribution<uint32_t>(1, 5)(rng_);
+  vector_size_t numKeys;
+  vector_size_t maxDepth;
+  std::vector<TypePtr> sortingKeyTypes = defaultScalarTypes();
+
+  // If frame has k-RANGE bound, only one sorting key should be present, and it
+  // should be a scalar type which supports '+', '-' arithmetic operations.
+  if (rangeFrame) {
+    numKeys = 1;
+    sortingKeyTypes = {
+        TINYINT(),
+        SMALLINT(),
+        INTEGER(),
+        BIGINT(),
+        HUGEINT(),
+        REAL(),
+        DOUBLE()};
+    maxDepth = 0;
+  } else {
+    numKeys = randInt(1, 5);
+    // Pick random, possibly complex, type.
+    maxDepth = 2;
+  }
+
   for (auto i = 0; i < numKeys; ++i) {
     keys.push_back(fmt::format("{}{}", prefix, i));
-
-    // Pick random, possibly complex, type.
-    types.push_back(vectorFuzzer_.randOrderableType(2));
+    types.push_back(vectorFuzzer_.randOrderableType(sortingKeyTypes, maxDepth));
     names.push_back(keys.back());
   }
 
@@ -481,57 +507,6 @@ velox::fuzzer::ResultOrError AggregationFuzzerBase::execute(
   return resultOrError;
 }
 
-std::pair<
-    std::optional<MaterializedRowMultiset>,
-    AggregationFuzzerBase::ReferenceQueryErrorCode>
-AggregationFuzzerBase::computeReferenceResults(
-    const core::PlanNodePtr& plan,
-    const std::vector<RowVectorPtr>& input) {
-  if (auto sql = referenceQueryRunner_->toSql(plan)) {
-    try {
-      return std::make_pair(
-          referenceQueryRunner_->execute(
-              sql.value(), input, plan->outputType()),
-          ReferenceQueryErrorCode::kSuccess);
-    } catch (...) {
-      LOG(WARNING) << "Query failed in the reference DB";
-      return std::make_pair(
-          std::nullopt, ReferenceQueryErrorCode::kReferenceQueryFail);
-    }
-  }
-
-  LOG(INFO) << "Query not supported by the reference DB";
-  return std::make_pair(
-      std::nullopt, ReferenceQueryErrorCode::kReferenceQueryUnsupported);
-}
-
-std::pair<
-    std::optional<std::vector<RowVectorPtr>>,
-    AggregationFuzzerBase::ReferenceQueryErrorCode>
-AggregationFuzzerBase::computeReferenceResultsAsVector(
-    const core::PlanNodePtr& plan,
-    const std::vector<RowVectorPtr>& input) {
-  VELOX_CHECK(referenceQueryRunner_->supportsVeloxVectorResults());
-
-  if (auto sql = referenceQueryRunner_->toSql(plan)) {
-    try {
-      return std::make_pair(
-          referenceQueryRunner_->executeVector(
-              sql.value(), input, plan->outputType()),
-          ReferenceQueryErrorCode::kSuccess);
-    } catch (...) {
-      LOG(WARNING) << "Query failed in the reference DB";
-      return std::make_pair(
-          std::nullopt, ReferenceQueryErrorCode::kReferenceQueryFail);
-    }
-  } else {
-    LOG(INFO) << "Query not supported by the reference DB";
-  }
-
-  return std::make_pair(
-      std::nullopt, ReferenceQueryErrorCode::kReferenceQueryUnsupported);
-}
-
 void AggregationFuzzerBase::testPlan(
     const PlanWithSplits& planWithSplits,
     bool injectSpill,
@@ -622,7 +597,7 @@ void writeToFile(
 } // namespace
 
 void AggregationFuzzerBase::Stats::updateReferenceQueryStats(
-    AggregationFuzzerBase::ReferenceQueryErrorCode errorCode) {
+    ReferenceQueryErrorCode errorCode) {
   if (errorCode == ReferenceQueryErrorCode::kReferenceQueryFail) {
     ++numReferenceQueryFailed;
   } else if (errorCode == ReferenceQueryErrorCode::kReferenceQueryUnsupported) {
@@ -777,11 +752,12 @@ void persistReproInfo(
 }
 
 std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
+    memory::MemoryPool* aggregatePool,
     const std::string& prestoUrl,
     const std::string& runnerName,
     const uint32_t& reqTimeoutMs) {
   if (prestoUrl.empty()) {
-    auto duckQueryRunner = std::make_unique<DuckQueryRunner>();
+    auto duckQueryRunner = std::make_unique<DuckQueryRunner>(aggregatePool);
     duckQueryRunner->disableAggregateFunctions({
         "skewness",
         // DuckDB results on constant inputs are incorrect. Should be NaN,
@@ -795,6 +771,7 @@ std::unique_ptr<ReferenceQueryRunner> setupReferenceQueryRunner(
     return duckQueryRunner;
   } else {
     return std::make_unique<PrestoQueryRunner>(
+        aggregatePool,
         prestoUrl,
         runnerName,
         static_cast<std::chrono::milliseconds>(reqTimeoutMs));

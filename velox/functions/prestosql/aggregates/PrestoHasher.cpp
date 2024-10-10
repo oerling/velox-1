@@ -44,7 +44,7 @@ FOLLY_ALWAYS_INLINE void applyHashFunction(
     const DecodedVector& vector,
     BufferPtr& hashes,
     Callable func) {
-  VELOX_CHECK_GE(hashes->size(), rows.end())
+  VELOX_CHECK_GE(hashes->size(), rows.end());
   auto rawHashes = hashes->asMutable<int64_t>();
 
   rows.applyToSelected([&](auto row) {
@@ -78,12 +78,16 @@ FOLLY_ALWAYS_INLINE void hashFloating(
   using IntegralType =
       std::conditional_t<std::is_same_v<T, float>, int32_t, int64_t>;
   applyHashFunction(rows, vector, hashes, [&](auto row) {
-    if (std::isnan(vector.valueAt<T>(row))) {
+    auto value = vector.valueAt<T>(row);
+    if (std::isnan(value)) {
       if constexpr (std::is_same_v<T, float>) {
         return hashInteger<IntegralType>(0x7fc00000);
       } else {
         return hashInteger<IntegralType>(0x7ff8000000000000L);
       }
+    } else if (value == (T{})) {
+      // If -0.0 treat it same as 0
+      return hashInteger<IntegralType>(0);
     } else {
       return hashInteger<IntegralType>(vector.valueAt<IntegralType>(row));
     }
@@ -229,8 +233,14 @@ void PrestoHasher::hash<TypeKind::ARRAY>(
     BufferPtr& hashes) {
   auto baseArray = vector_->base()->as<ArrayVector>();
   auto indices = vector_->indices();
+
+  auto nonNullRows = SelectivityVector(rows);
+  if (vector_->nulls(&nonNullRows)) {
+    nonNullRows.deselectNulls(vector_->nulls(), 0, nonNullRows.end());
+  }
+
   auto elementRows = functions::toElementRows(
-      baseArray->elements()->size(), rows, baseArray, indices);
+      baseArray->elements()->size(), nonNullRows, baseArray, indices);
 
   BufferPtr elementHashes =
       AlignedBuffer::allocate<int64_t>(elementRows.end(), baseArray->pool());
@@ -239,13 +249,13 @@ void PrestoHasher::hash<TypeKind::ARRAY>(
 
   auto rawSizes = baseArray->rawSizes();
   auto rawOffsets = baseArray->rawOffsets();
-  auto rawNulls = baseArray->rawNulls();
   auto rawElementHashes = elementHashes->as<int64_t>();
   auto rawHashes = hashes->asMutable<int64_t>();
+  auto decodedNulls = vector_->nulls();
 
   rows.applyToSelected([&](auto row) {
     int64_t hash = 0;
-    if (!(rawNulls && bits::isBitNull(rawNulls, indices[row]))) {
+    if (!((decodedNulls && bits::isBitNull(decodedNulls, row)))) {
       auto size = rawSizes[indices[row]];
       auto offset = rawOffsets[indices[row]];
 
@@ -263,10 +273,15 @@ void PrestoHasher::hash<TypeKind::MAP>(
     BufferPtr& hashes) {
   auto baseMap = vector_->base()->as<MapVector>();
   auto indices = vector_->indices();
-  VELOX_CHECK_EQ(children_.size(), 2)
+  VELOX_CHECK_EQ(children_.size(), 2);
+
+  auto nonNullRows = SelectivityVector(rows);
+  if (vector_->nulls(&nonNullRows)) {
+    nonNullRows.deselectNulls(vector_->nulls(), 0, nonNullRows.end());
+  }
 
   auto elementRows = functions::toElementRows(
-      baseMap->mapKeys()->size(), rows, baseMap, indices);
+      baseMap->mapKeys()->size(), nonNullRows, baseMap, indices);
   BufferPtr keyHashes =
       AlignedBuffer::allocate<int64_t>(elementRows.end(), baseMap->pool());
 
@@ -282,11 +297,11 @@ void PrestoHasher::hash<TypeKind::MAP>(
 
   auto rawSizes = baseMap->rawSizes();
   auto rawOffsets = baseMap->rawOffsets();
-  auto rawNulls = baseMap->rawNulls();
+  auto decodedNulls = vector_->nulls();
 
   rows.applyToSelected([&](auto row) {
     int64_t hash = 0;
-    if (!(rawNulls && bits::isBitNull(rawNulls, indices[row]))) {
+    if (!((decodedNulls && bits::isBitNull(decodedNulls, row)))) {
       auto size = rawSizes[indices[row]];
       auto offset = rawOffsets[indices[row]];
 
@@ -358,7 +373,7 @@ void PrestoHasher::hash(
       *vector->type() == *type_,
       "Vector type: {} != initialized type: {}",
       vector->type()->toString(),
-      type_->toString())
+      type_->toString());
   vector_->decode(*vector, rows);
   auto kind = vector_->base()->typeKind();
   VELOX_DYNAMIC_TYPE_DISPATCH(hash, kind, rows, hashes);

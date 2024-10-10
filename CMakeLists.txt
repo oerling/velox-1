@@ -45,11 +45,17 @@ if(DEFINED ENV{CONDA_PREFIX})
   endif()
 endif()
 
+if(DEFINED ENV{INSTALL_PREFIX})
+  message(STATUS "Dependency install directory set to: $ENV{INSTALL_PREFIX}")
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{INSTALL_PREFIX}")
+endif()
+
 list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMake"
      "${PROJECT_SOURCE_DIR}/CMake/third-party")
 
 # Include our ThirdPartyToolchain dependencies macros
 include(ResolveDependency)
+include(VeloxUtils)
 
 set_with_default(VELOX_DEPENDENCY_SOURCE_DEFAULT VELOX_DEPENDENCY_SOURCE AUTO)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
@@ -68,6 +74,7 @@ option(
   "Build a minimal set of components, including DWIO (file format readers/writers).
    This will override other build options."
   OFF)
+option(VELOX_MONO_LIBRARY "Build single unified library." OFF)
 
 # option() always creates a BOOL variable so we have to use a normal cache
 # variable with STRING type for this option.
@@ -94,9 +101,9 @@ option(VELOX_ENABLE_TPCH_CONNECTOR "Build TPC-H connector." ON)
 option(VELOX_ENABLE_PRESTO_FUNCTIONS "Build Presto SQL functions." ON)
 option(VELOX_ENABLE_SPARK_FUNCTIONS "Build Spark SQL functions." ON)
 option(VELOX_ENABLE_EXPRESSION "Build expression." ON)
-option(VELOX_ENABLE_EXAMPLES
-       "Build examples. This will enable VELOX_ENABLE_EXPRESSION automatically."
-       OFF)
+option(
+  VELOX_ENABLE_EXAMPLES
+  "Build examples. This will enable VELOX_ENABLE_EXPRESSION automatically." OFF)
 option(VELOX_ENABLE_SUBSTRAIT "Build Substrait-to-Velox converter." OFF)
 option(VELOX_ENABLE_BENCHMARKS "Enable Velox top level benchmarks." OFF)
 option(VELOX_ENABLE_BENCHMARKS_BASIC "Enable Velox basic benchmarks." OFF)
@@ -150,6 +157,7 @@ if(${VELOX_BUILD_TESTING})
   set(VELOX_ENABLE_TPCH_CONNECTOR ON)
   set(VELOX_ENABLE_SPARK_FUNCTIONS ON)
   set(VELOX_ENABLE_EXAMPLES ON)
+  set(VELOX_ENABLE_PARQUET ON)
 endif()
 
 if(${VELOX_ENABLE_BENCHMARKS})
@@ -181,6 +189,18 @@ if(${VELOX_BUILD_PYTHON_PACKAGE})
   set(VELOX_ENABLE_SPARK_FUNCTIONS ON)
 endif()
 
+if(${VELOX_ENABLE_DUCKDB})
+  set_source(DuckDB)
+  resolve_dependency(DuckDB)
+endif()
+
+if(DEFINED ENV{INSTALL_PREFIX})
+  # Allow installed package headers to be picked up before brew/system package
+  # headers. We set this after DuckDB bundling since DuckDB uses its own
+  # dependencies.
+  include_directories(BEFORE "$ENV{INSTALL_PREFIX}/include")
+endif()
+
 # We look for OpenSSL here to cache the result enforce the version across our
 # dependencies.
 find_package(OpenSSL REQUIRED)
@@ -207,6 +227,11 @@ if(${VELOX_FORCE_COLORED_OUTPUT})
          OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     add_compile_options(-fcolor-diagnostics)
   endif()
+endif()
+
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"
+   AND "${CMAKE_CXX_COMPILER_VERSION}" VERSION_GREATER_EQUAL 15)
+  set(CMAKE_EXE_LINKER_FLAGS "-latomic")
 endif()
 
 # At the moment we prefer static linking but by default cmake looks for shared
@@ -337,7 +362,6 @@ if("${ENABLE_ALL_WARNINGS}")
        -Wno-unused-parameter \
        -Wno-sign-compare \
        -Wno-ignored-qualifiers \
-       -Wnon-virtual-dtor \
        ${KNOWN_COMPILER_SPECIFIC_WARNINGS}")
 
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra ${KNOWN_WARNINGS}")
@@ -398,11 +422,6 @@ else()
 endif()
 resolve_dependency(glog)
 
-if(${VELOX_ENABLE_DUCKDB})
-  set_source(DuckDB)
-  resolve_dependency(DuckDB)
-endif()
-
 set_source(fmt)
 resolve_dependency(fmt 9.0.0)
 
@@ -453,6 +472,20 @@ resolve_dependency(simdjson 3.9.3)
 add_compile_definitions(FOLLY_HAVE_INT128_T=1)
 set_source(folly)
 resolve_dependency(folly)
+
+if(${VELOX_BUILD_TESTING})
+  # Spark qury runner depends on absl, gRPC.
+  set_source(absl)
+  resolve_dependency(absl)
+
+  # 'gRPC_CARES_PROVIDER' is set as 'package', which means c-ares library needs
+  # to be installed on the system, instead of being built by gRPC.
+  set_source(c-ares)
+  resolve_dependency(c-ares)
+
+  set_source(gRPC)
+  resolve_dependency(gRPC)
+endif()
 
 if(VELOX_ENABLE_REMOTE_FUNCTIONS)
   # TODO: Move this to use resolve_dependency(). For some reason, FBThrift
@@ -538,8 +571,8 @@ include_directories(SYSTEM velox/external)
 
 # these were previously vendored in third-party/
 if(NOT VELOX_DISABLE_GOOGLETEST)
-  set(gtest_SOURCE AUTO)
-  resolve_dependency(gtest)
+  set(GTest_SOURCE AUTO)
+  resolve_dependency(GTest)
   set(VELOX_GTEST_INCUDE_DIR
       "${gtest_SOURCE_DIR}/googletest/include"
       PARENT_SCOPE)
@@ -548,7 +581,7 @@ endif()
 set_source(xsimd)
 resolve_dependency(xsimd 10.0.0)
 
-set(stemmer_SOURCE BUNDLED)
+set_source(stemmer)
 resolve_dependency(stemmer)
 
 if(VELOX_BUILD_TESTING)

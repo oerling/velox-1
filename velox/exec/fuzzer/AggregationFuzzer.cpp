@@ -26,6 +26,7 @@
 
 #include "velox/exec/PartitionFunction.h"
 #include "velox/exec/fuzzer/AggregationFuzzerBase.h"
+#include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/expression/fuzzer/FuzzerToolkit.h"
 #include "velox/vector/VectorSaver.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
@@ -58,8 +59,11 @@ class AggregationFuzzer : public AggregationFuzzerBase {
           customVerificationFunctions,
       const std::unordered_map<std::string, std::shared_ptr<InputGenerator>>&
           customInputGenerators,
+      const std::unordered_map<std::string, DataSpec>& functionDataSpec,
       VectorFuzzer::Options::TimestampPrecision timestampPrecision,
       const std::unordered_map<std::string, std::string>& queryConfigs,
+      const std::unordered_map<std::string, std::string>& hiveConfigs,
+      bool orderableGroupKeys,
       std::unique_ptr<ReferenceQueryRunner> referenceQueryRunner);
 
   void go();
@@ -198,6 +202,7 @@ class AggregationFuzzer : public AggregationFuzzerBase {
   }
 
   Stats stats_;
+  const std::unordered_map<std::string, DataSpec> functionDataSpec_;
 };
 } // namespace
 
@@ -208,8 +213,11 @@ void aggregateFuzzer(
         customVerificationFunctions,
     const std::unordered_map<std::string, std::shared_ptr<InputGenerator>>&
         customInputGenerators,
+    const std::unordered_map<std::string, DataSpec>& functionDataSpec,
     VectorFuzzer::Options::TimestampPrecision timestampPrecision,
     const std::unordered_map<std::string, std::string>& queryConfigs,
+    const std::unordered_map<std::string, std::string>& hiveConfigs,
+    bool orderableGroupKeys,
     const std::optional<std::string>& planPath,
     std::unique_ptr<ReferenceQueryRunner> referenceQueryRunner) {
   auto aggregationFuzzer = AggregationFuzzer(
@@ -217,8 +225,11 @@ void aggregateFuzzer(
       seed,
       customVerificationFunctions,
       customInputGenerators,
+      functionDataSpec,
       timestampPrecision,
       queryConfigs,
+      hiveConfigs,
+      orderableGroupKeys,
       std::move(referenceQueryRunner));
   planPath.has_value() ? aggregationFuzzer.go(planPath.value())
                        : aggregationFuzzer.go();
@@ -233,16 +244,14 @@ AggregationFuzzer::AggregationFuzzer(
         customVerificationFunctions,
     const std::unordered_map<std::string, std::shared_ptr<InputGenerator>>&
         customInputGenerators,
+    const std::unordered_map<std::string, DataSpec>& functionDataSpec,
     VectorFuzzer::Options::TimestampPrecision timestampPrecision,
     const std::unordered_map<std::string, std::string>& queryConfigs,
+    const std::unordered_map<std::string, std::string>& hiveConfigs,
+    bool orderableGroupKeys,
     std::unique_ptr<ReferenceQueryRunner> referenceQueryRunner)
-    : AggregationFuzzerBase{
-          seed,
-          customVerificationFunctions,
-          customInputGenerators,
-          timestampPrecision,
-          queryConfigs,
-          std::move(referenceQueryRunner)} {
+    : AggregationFuzzerBase{seed, customVerificationFunctions, customInputGenerators, timestampPrecision, queryConfigs, hiveConfigs, orderableGroupKeys, std::move(referenceQueryRunner)},
+      functionDataSpec_{functionDataSpec} {
   VELOX_CHECK(!signatureMap.empty(), "No function signatures available.");
 
   if (persistAndRunOnce_ && reproPersistPath_.empty()) {
@@ -302,28 +311,31 @@ bool canSortInputs(const CallableSignature& signature) {
 }
 
 // Returns true if specified aggregate function can be applied to distinct
-// inputs.
-bool supportsDistinctInputs(const CallableSignature& signature) {
+// inputs. If 'orderableGroupKeys' is true the argument type must be orderable,
+// otherwise it must be comparable.
+bool supportsDistinctInputs(
+    const CallableSignature& signature,
+    bool orderableGroupKeys) {
   if (signature.args.empty()) {
     return false;
   }
 
   const auto& arg = signature.args.at(0);
-  if (!arg->isComparable()) {
-    return false;
+  if (orderableGroupKeys) {
+    return arg->isOrderable();
   }
-
-  return true;
+  return arg->isComparable();
 }
 
 void AggregationFuzzer::go() {
   VELOX_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
-      "Either --steps or --duration_sec needs to be greater than zero.")
+      "Either --steps or --duration_sec needs to be greater than zero.");
 
   auto startTime = std::chrono::system_clock::now();
   size_t iteration = 0;
 
+  auto vectorOptions = vectorFuzzer_.getOptions();
   while (!isDone(iteration, startTime)) {
     LOG(INFO) << "==============================> Started iteration "
               << iteration << " (seed: " << currentSeed_ << ")";
@@ -344,6 +356,15 @@ void AggregationFuzzer::go() {
     } else {
       // Pick a random signature.
       auto signatureWithStats = pickSignature();
+
+      if (functionDataSpec_.count(signatureWithStats.first.name) > 0) {
+        vectorOptions.dataSpec =
+            functionDataSpec_.at(signatureWithStats.first.name);
+
+      } else {
+        vectorOptions.dataSpec = {true, true};
+      }
+      vectorFuzzer_.setOptions(vectorOptions);
       signatureWithStats.second.numRuns++;
 
       auto signature = signatureWithStats.first;
@@ -390,7 +411,8 @@ void AggregationFuzzer::go() {
         // x).
         const bool distinctInputs = !sortedInputs &&
             (signature.name.find("approx_") == std::string::npos) &&
-            supportsDistinctInputs(signature) && vectorFuzzer_.coinToss(0.2);
+            supportsDistinctInputs(signature, orderableGroupKeys_) &&
+            vectorFuzzer_.coinToss(0.2);
 
         auto call = makeFunctionCall(
             signature.name, argNames, sortedInputs, distinctInputs);
@@ -699,7 +721,8 @@ bool AggregationFuzzer::verifyWindow(
 
     if (!customVerification && enableWindowVerification) {
       if (resultOrError.result) {
-        auto referenceResult = computeReferenceResults(plan, input);
+        auto referenceResult =
+            computeReferenceResults(plan, input, referenceQueryRunner_.get());
         stats_.updateReferenceQueryStats(referenceResult.second);
         if (auto expectedResult = referenceResult.first) {
           ++stats_.numVerified;
@@ -994,7 +1017,8 @@ void AggregationFuzzer::verifyAggregation(
 
   std::optional<MaterializedRowMultiset> expectedResult;
   if (!customVerification) {
-    auto referenceResult = computeReferenceResults(plan, input);
+    auto referenceResult =
+        computeReferenceResults(plan, input, referenceQueryRunner_.get());
     stats_.updateReferenceQueryStats(referenceResult.second);
     expectedResult = referenceResult.first;
   }
@@ -1075,7 +1099,8 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
 
     if (resultOrError.result != nullptr) {
       if (!customVerification) {
-        auto referenceResult = computeReferenceResults(firstPlan, input);
+        auto referenceResult = computeReferenceResults(
+            firstPlan, input, referenceQueryRunner_.get());
         stats_.updateReferenceQueryStats(referenceResult.second);
         auto expectedResult = referenceResult.first;
 
@@ -1092,8 +1117,8 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
       } else if (referenceQueryRunner_->supportsVeloxVectorResults()) {
         if (isSupportedType(firstPlan->outputType()) &&
             isSupportedType(input.front()->type())) {
-          auto referenceResult =
-              computeReferenceResultsAsVector(firstPlan, input);
+          auto referenceResult = computeReferenceResultsAsVector(
+              firstPlan, input, referenceQueryRunner_.get());
           stats_.updateReferenceQueryStats(referenceResult.second);
 
           if (referenceResult.first) {

@@ -78,8 +78,9 @@ class GroupingSet {
 
   /// Resets the hash table inside the grouping set when partial aggregation
   /// is full or reclaims memory from distinct aggregation after it has received
-  /// all the inputs.
-  void resetTable();
+  /// all the inputs. If 'freeTable' is false, then hash table itself is not
+  /// freed but only table content.
+  void resetTable(bool freeTable);
 
   /// Returns true if 'this' should start producing partial
   /// aggregation results. Checks the memory consumption against
@@ -263,7 +264,7 @@ class GroupingSet {
   // groups.
   void extractSpillResult(const RowVectorPtr& result);
 
-  // Return a list of accumulators for 'aggregates_', plus one more accumulator
+  // Returns a list of accumulators for 'aggregates_', plus one more accumulator
   // for 'sortedAggregations_', and one for each 'distinctAggregations_'.  When
   // 'excludeToIntermediate' is true, skip the functions that support
   // 'toIntermediate'.

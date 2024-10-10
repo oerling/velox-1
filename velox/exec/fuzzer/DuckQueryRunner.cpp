@@ -14,61 +14,12 @@
  * limitations under the License.
  */
 #include "velox/exec/fuzzer/DuckQueryRunner.h"
+#include "velox/exec/fuzzer/ToSQLUtil.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 
 namespace facebook::velox::exec::test {
 
 namespace {
-
-void appendComma(int32_t i, std::stringstream& sql) {
-  if (i > 0) {
-    sql << ", ";
-  }
-}
-
-std::string toCallSql(const core::CallTypedExprPtr& call) {
-  std::stringstream sql;
-  sql << call->name() << "(";
-  for (auto i = 0; i < call->inputs().size(); ++i) {
-    appendComma(i, sql);
-    sql << std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
-               call->inputs()[i])
-               ->name();
-  }
-  sql << ")";
-  return sql.str();
-}
-
-std::string toAggregateCallSql(
-    const core::CallTypedExprPtr& call,
-    const std::vector<core::FieldAccessTypedExprPtr>& sortingKeys,
-    const std::vector<core::SortOrder>& sortingOrders,
-    bool distinct) {
-  std::stringstream sql;
-  sql << call->name() << "(";
-
-  if (distinct) {
-    sql << "distinct ";
-  }
-
-  for (auto i = 0; i < call->inputs().size(); ++i) {
-    appendComma(i, sql);
-    sql << std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
-               call->inputs()[i])
-               ->name();
-  }
-
-  if (!sortingKeys.empty()) {
-    sql << " order by ";
-    for (auto i = 0; i < sortingKeys.size(); ++i) {
-      appendComma(i, sql);
-      sql << sortingKeys[i]->name() << " " << sortingOrders[i].toString();
-    }
-  }
-
-  sql << ")";
-  return sql.str();
-}
 
 bool isSupported(const TypePtr& type) {
   // DuckDB doesn't support nanosecond precision for timestamps.
@@ -102,14 +53,30 @@ std::unordered_set<std::string> getAggregateFunctions() {
 }
 } // namespace
 
-DuckQueryRunner::DuckQueryRunner()
-    : aggregateFunctionNames_{getAggregateFunctions()} {}
+DuckQueryRunner::DuckQueryRunner(memory::MemoryPool* aggregatePool)
+    : ReferenceQueryRunner(aggregatePool),
+      aggregateFunctionNames_{getAggregateFunctions()} {}
 
 void DuckQueryRunner::disableAggregateFunctions(
     const std::vector<std::string>& names) {
   for (const auto& name : names) {
     aggregateFunctionNames_.erase(name);
   }
+}
+
+const std::vector<TypePtr>& DuckQueryRunner::supportedScalarTypes() const {
+  static const std::vector<TypePtr> kScalarTypes{
+      BOOLEAN(),
+      TINYINT(),
+      SMALLINT(),
+      INTEGER(),
+      BIGINT(),
+      REAL(),
+      DOUBLE(),
+      VARCHAR(),
+      DATE(),
+  };
+  return kScalarTypes;
 }
 
 std::multiset<std::vector<velox::variant>> DuckQueryRunner::execute(

@@ -15,6 +15,7 @@
  */
 
 #include "velox/type/Conversions.h"
+#include "velox/functions/lib/string/StringImpl.h"
 
 DEFINE_bool(
     experimental_enable_legacy_cast,
@@ -26,32 +27,80 @@ DEFINE_bool(
 
 namespace facebook::velox::util {
 
-// This is based on Presto java's castToBoolean method.
-Expected<bool> castToBoolean(const char* data, size_t len) {
-  const auto& TU = static_cast<int (*)(int)>(std::toupper);
+/// folly's tryTo doesn't ignore control characters or other unicode whitespace.
+/// We trim the string for control and unicode whitespace
+/// from both directions and return a StringView of the result.
+StringView trimWhiteSpace(const char* data, size_t length) {
+  if (length == 0) {
+    return StringView(data, 0);
+  }
 
-  if (len == 1) {
-    auto character = TU(data[0]);
-    if (character == 'T' || character == '1') {
-      return true;
+  int startIndex = 0;
+  int endIndex = length - 1;
+  const auto end = data + length;
+  int size = 0;
+
+  // We need to trim unicode chars and control chars
+  // from left side of the string.
+  for (auto i = 0; i < length;) {
+    size = 0;
+    auto isWhiteSpaceOrControlChar = false;
+
+    if (data[i] & 0x80) {
+      // Unicode - only check for whitespace.
+      auto codePoint = utf8proc_codepoint(data + i, end, size);
+      isWhiteSpaceOrControlChar =
+          velox::functions::stringImpl::isUnicodeWhiteSpace(codePoint);
+    } else {
+      // Ascii - Check for both whitespace and control chars
+      isWhiteSpaceOrControlChar =
+          velox::functions::stringImpl::isAsciiWhiteSpace(data[i]) ||
+          (data[i] > 0 && data[i] < 32);
     }
-    if (character == 'F' || character == '0') {
-      return false;
+
+    if (!isWhiteSpaceOrControlChar) {
+      startIndex = i;
+      break;
+    }
+
+    i += size > 0 ? size : 1;
+  }
+
+  // Trim whitespace from right side.
+  for (auto i = length - 1; i > startIndex;) {
+    size = 0;
+    auto isWhiteSpaceOrControlChar = false;
+
+    if (data[i] & 0x80) {
+      // Unicode - only check for whitespace.
+      utf8proc_int32_t codePoint;
+      // Find the right codepoint
+      while ((codePoint = utf8proc_codepoint(data + i, end, size)) < 0 &&
+             i > startIndex) {
+        i--;
+      }
+      isWhiteSpaceOrControlChar =
+          velox::functions::stringImpl::isUnicodeWhiteSpace(codePoint);
+    } else {
+      // Ascii - check if control char or whitespace
+      isWhiteSpaceOrControlChar =
+          velox::functions::stringImpl::isAsciiWhiteSpace(data[i]) ||
+          (data[i] > 0 && data[i] < 32);
+    }
+
+    if (!isWhiteSpaceOrControlChar) {
+      endIndex = i;
+      break;
+    }
+
+    if (i > 0) {
+      i--;
     }
   }
 
-  if ((len == 4) && (TU(data[0]) == 'T') && (TU(data[1]) == 'R') &&
-      (TU(data[2]) == 'U') && (TU(data[3]) == 'E')) {
-    return true;
-  }
-
-  if ((len == 5) && (TU(data[0]) == 'F') && (TU(data[1]) == 'A') &&
-      (TU(data[2]) == 'L') && (TU(data[3]) == 'S') && (TU(data[4]) == 'E')) {
-    return false;
-  }
-
-  const std::string errorMessage =
-      fmt::format("Cannot cast {} to BOOLEAN", StringView(data, len));
-  return folly::makeUnexpected(Status::UserError(errorMessage));
+  // If we end on a unicode char make sure we add that to the end.
+  auto charSize = size > 0 ? size : 1;
+  return StringView(data + startIndex, endIndex - startIndex + charSize);
 }
+
 } // namespace facebook::velox::util

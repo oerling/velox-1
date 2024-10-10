@@ -23,6 +23,7 @@
 #include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox::exec::test {
+
 template <typename T>
 T extractSingleValue(const std::vector<RowVectorPtr>& data) {
   auto simpleVector = data[0]->childAt(0)->as<SimpleVector<T>>();
@@ -30,15 +31,27 @@ T extractSingleValue(const std::vector<RowVectorPtr>& data) {
   return simpleVector->valueAt(0);
 }
 
+class QueryRunnerContext {
+ public:
+  std::unordered_map<core::PlanNodeId, std::vector<std::string>> windowFrames_;
+};
+
 class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
  public:
   /// @param coordinatorUri Presto REST API endpoint, e.g. http://127.0.0.1:8080
   /// @param user Username to use in X-Presto-User header.
   /// @param timeout Timeout in milliseconds of an HTTP request.
   PrestoQueryRunner(
+      memory::MemoryPool* aggregatePool,
       std::string coordinatorUri,
       std::string user,
       std::chrono::milliseconds timeout);
+
+  RunnerType runnerType() const override {
+    return RunnerType::kPrestoQueryRunner;
+  }
+
+  const std::vector<TypePtr>& supportedScalarTypes() const override;
 
   /// Converts Velox query plan to Presto SQL. Supports Values -> Aggregation or
   /// Window with an optional Project on top.
@@ -91,12 +104,12 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
       const std::vector<RowVectorPtr>& buildInput,
       const RowTypePtr& resultType) override;
 
- private:
-  velox::memory::MemoryPool* rootPool() {
-    return rootPool_.get();
+  std::shared_ptr<QueryRunnerContext> queryRunnerContext() {
+    return queryRunnerContext_;
   }
 
-  velox::memory::MemoryPool* pool() {
+ private:
+  memory::MemoryPool* pool() {
     return pool_.get();
   }
 
@@ -136,10 +149,8 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   const std::string user_;
   const std::chrono::milliseconds timeout_;
   folly::EventBaseThread eventBaseThread_{false};
-  std::shared_ptr<velox::memory::MemoryPool> rootPool_{
-      velox::memory::memoryManager()->addRootPool()};
-  std::shared_ptr<velox::memory::MemoryPool> pool_{
-      rootPool_->addLeafChild("leaf")};
+  std::shared_ptr<memory::MemoryPool> pool_;
+  std::shared_ptr<QueryRunnerContext> queryRunnerContext_;
 };
 
 } // namespace facebook::velox::exec::test

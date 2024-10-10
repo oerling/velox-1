@@ -299,7 +299,7 @@ void Expr::computeMetadata() {
   }
 
   // (5) Compute hasConditionals_.
-  hasConditionals_ = hasConditionals(this);
+  hasConditionals_ = exec::hasConditionals(this);
 
   metaDataComputed_ = true;
 }
@@ -708,7 +708,7 @@ void Expr::evalFlatNoNulls(
     EvalCtx& context,
     VectorPtr& result,
     const ExprSet* parentExprSet) {
-  if (shouldEvaluateSharedSubexp()) {
+  if (shouldEvaluateSharedSubexp(context)) {
     evaluateSharedSubexpr(
         rows,
         context,
@@ -819,7 +819,8 @@ void Expr::eval(
   //
   // TODO: Re-work the logic of deciding when to load which field.
   if (!hasConditionals_ || distinctFields_.size() == 1 ||
-      shouldEvaluateSharedSubexp()) {
+      shouldEvaluateSharedSubexp(context) ||
+      !context.deferredLazyLoadingEnabled()) {
     // Load lazy vectors if any.
     for (auto* field : distinctFields_) {
       context.ensureFieldLoaded(field->index(context), rows);
@@ -852,21 +853,30 @@ void Expr::evaluateSharedSubexpr(
     VectorPtr& result,
     TEval eval) {
   // Captures the inputs referenced by distinctFields_.
-  std::vector<const BaseVector*> expressionInputFields;
+  InputForSharedResults expressionInputFields;
   for (auto* field : distinctFields_) {
-    expressionInputFields.push_back(
-        context.getField(field->index(context)).get());
+    expressionInputFields.addInput(context.getField(field->index(context)));
   }
 
   // Find the cached results for the same inputs, or create an entry if one
   // doesn't exist.
   auto sharedSubexprResultsIter =
       sharedSubexprResults_.find(expressionInputFields);
+
+  // If any of the input vector is freed/expired, remove the entry from the
+  // results cache.
+  if (sharedSubexprResultsIter != sharedSubexprResults_.end() &&
+      sharedSubexprResultsIter->first.isExpired()) {
+    sharedSubexprResults_.erase(sharedSubexprResultsIter);
+    VELOX_DCHECK(
+        sharedSubexprResults_.find(expressionInputFields) ==
+        sharedSubexprResults_.end());
+    sharedSubexprResultsIter = sharedSubexprResults_.end();
+  }
+
   if (sharedSubexprResultsIter == sharedSubexprResults_.end()) {
-    auto maxSharedSubexprResultsCached = context.execCtx()
-                                             ->queryCtx()
-                                             ->queryConfig()
-                                             .maxSharedSubexprResultsCached();
+    auto maxSharedSubexprResultsCached =
+        context.maxSharedSubexprResultsCached();
     if (sharedSubexprResults_.size() < maxSharedSubexprResultsCached) {
       // If we have room left in the cache, add it.
       sharedSubexprResultsIter =
@@ -1028,7 +1038,7 @@ Expr::PeelEncodingsResult Expr::peelEncodings(
 
   // If the expression depends on one dictionary, results are cacheable.
   bool mayCache = false;
-  if (context.cacheEnabled()) {
+  if (context.dictionaryMemoizationEnabled()) {
     mayCache = distinctFields_.size() == 1 &&
         VectorEncoding::isDictionary(context.wrapEncoding()) &&
         !peeledVectors[0]->memoDisabled();
@@ -1043,7 +1053,8 @@ void Expr::evalEncodings(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
-  if (deterministic_ && !skipFieldDependentOptimizations()) {
+  if (deterministic_ && !skipFieldDependentOptimizations() &&
+      context.peelingEnabled()) {
     bool hasFlat = false;
     for (auto* field : distinctFields_) {
       if (isFlat(*context.getField(field->index(context)))) {
@@ -1370,7 +1381,7 @@ void Expr::evalAll(
     return;
   }
 
-  if (shouldEvaluateSharedSubexp()) {
+  if (shouldEvaluateSharedSubexp(context)) {
     evaluateSharedSubexpr(
         rows,
         context,
@@ -1451,6 +1462,16 @@ bool Expr::applyFunctionWithPeeling(
     VectorPtr& result) {
   LocalDecodedVector localDecoded(context);
   LocalSelectivityVector newRowsHolder(context);
+  if (!context.peelingEnabled()) {
+    if (inputValues_.size() == 1) {
+      // If we have a single input, velox needs to ensure that the
+      // vectorFunction would receive a flat input.
+      BaseVector::flattenVector(inputValues_[0]);
+      applyFunction(applyRows, context, result);
+      return true;
+    }
+    return false;
+  }
   // Attempt peeling.
   std::vector<VectorPtr> peeledVectors;
   auto peeledEncoding = PeeledEncoding::peel(

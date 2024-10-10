@@ -110,6 +110,7 @@ void checkSpillStats(PlanNodeStats& stats, bool expectedSpill) {
     ASSERT_GT(stats.customStats[Operator::kSpillRuns].sum, 0);
     ASSERT_GT(stats.customStats[Operator::kSpillFillTime].sum, 0);
     ASSERT_GT(stats.customStats[Operator::kSpillSortTime].sum, 0);
+    ASSERT_GT(stats.customStats[Operator::kSpillExtractVectorTime].sum, 0);
     ASSERT_GT(stats.customStats[Operator::kSpillSerializationTime].sum, 0);
     ASSERT_GT(stats.customStats[Operator::kSpillFlushTime].sum, 0);
     ASSERT_GT(stats.customStats[Operator::kSpillWrites].sum, 0);
@@ -123,6 +124,7 @@ void checkSpillStats(PlanNodeStats& stats, bool expectedSpill) {
     ASSERT_EQ(stats.customStats[Operator::kSpillRuns].sum, 0);
     ASSERT_EQ(stats.customStats[Operator::kSpillFillTime].sum, 0);
     ASSERT_EQ(stats.customStats[Operator::kSpillSortTime].sum, 0);
+    ASSERT_EQ(stats.customStats[Operator::kSpillExtractVectorTime].sum, 0);
     ASSERT_EQ(stats.customStats[Operator::kSpillSerializationTime].sum, 0);
     ASSERT_EQ(stats.customStats[Operator::kSpillFlushTime].sum, 0);
     ASSERT_EQ(stats.customStats[Operator::kSpillWrites].sum, 0);
@@ -1212,11 +1214,11 @@ TEST_F(AggregationTest, memoryAllocations) {
 
   task = assertQuery(plan, "SELECT c0, sum(c0 + c1) FROM tmp GROUP BY 1");
 
-  // Verify memory allocations. Aggregation should make 5 allocations: 1 for the
-  // hash table, 1 for the RowContainer holding accumulators, 3 for results (2
-  // for values and nulls buffers of the grouping key column, 1 for sum column).
+  // Verify memory allocations. Aggregation should make 4 allocations: 1 for the
+  // hash table, 1 for the RowContainer holding accumulators, 2 for results (1
+  // for values of the grouping key column, 1 for sum column).
   planStats = toPlanStats(task->taskStats());
-  ASSERT_EQ(5, planStats.at(aggNodeId).numMemoryAllocations);
+  ASSERT_EQ(4, planStats.at(aggNodeId).numMemoryAllocations);
 }
 
 TEST_F(AggregationTest, groupingSets) {
@@ -1811,26 +1813,45 @@ DEBUG_ONLY_TEST_F(AggregationTest, minSpillableMemoryReservation) {
 }
 
 TEST_F(AggregationTest, distinctWithSpilling) {
-  auto vectors = makeVectors(rowType_, 10, 100);
-  createDuckDbTable(vectors);
-  auto spillDirectory = exec::test::TempDirectoryPath::create();
-  core::PlanNodeId aggrNodeId;
-  TestScopedSpillInjection scopedSpillInjection(100);
-  auto task = AssertQueryBuilder(duckDbQueryRunner_)
-                  .spillDirectory(spillDirectory->getPath())
-                  .config(QueryConfig::kSpillEnabled, true)
-                  .config(QueryConfig::kAggregationSpillEnabled, true)
-                  .plan(PlanBuilder()
-                            .values(vectors)
-                            .singleAggregation({"c0"}, {}, {})
-                            .capturePlanNodeId(aggrNodeId)
-                            .planNode())
-                  .assertResults("SELECT distinct c0 FROM tmp");
-  // Verify that spilling is not triggered.
-  ASSERT_GT(toPlanStats(task->taskStats()).at(aggrNodeId).spilledInputBytes, 0);
-  ASSERT_EQ(toPlanStats(task->taskStats()).at(aggrNodeId).spilledPartitions, 8);
-  ASSERT_GT(toPlanStats(task->taskStats()).at(aggrNodeId).spilledBytes, 0);
-  OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
+  struct TestParam {
+    std::vector<RowVectorPtr> inputs;
+    std::function<void(uint32_t)> expectedSpillFilesCheck{nullptr};
+  };
+
+  std::vector<TestParam> testParams{
+      {makeVectors(rowType_, 10, 100),
+       [](uint32_t spilledFiles) { ASSERT_GE(spilledFiles, 100); }},
+      {{makeRowVector(
+           {"c0"},
+           {makeFlatVector<int64_t>(
+               2'000, [](vector_size_t /* unused */) { return 100; })})},
+       [](uint32_t spilledFiles) { ASSERT_EQ(spilledFiles, 1); }}};
+
+  for (const auto& testParam : testParams) {
+    createDuckDbTable(testParam.inputs);
+    auto spillDirectory = exec::test::TempDirectoryPath::create();
+    core::PlanNodeId aggrNodeId;
+    TestScopedSpillInjection scopedSpillInjection(100);
+    auto task = AssertQueryBuilder(duckDbQueryRunner_)
+                    .spillDirectory(spillDirectory->getPath())
+                    .config(QueryConfig::kSpillEnabled, true)
+                    .config(QueryConfig::kAggregationSpillEnabled, true)
+                    .plan(PlanBuilder()
+                              .values(testParam.inputs)
+                              .singleAggregation({"c0"}, {}, {})
+                              .capturePlanNodeId(aggrNodeId)
+                              .planNode())
+                    .assertResults("SELECT distinct c0 FROM tmp");
+
+    // Verify that spilling is not triggered.
+    const auto planNodeStatsMap = toPlanStats(task->taskStats());
+    const auto& aggrNodeStats = planNodeStatsMap.at(aggrNodeId);
+    ASSERT_GT(aggrNodeStats.spilledInputBytes, 0);
+    ASSERT_EQ(aggrNodeStats.spilledPartitions, 8);
+    ASSERT_GT(aggrNodeStats.spilledBytes, 0);
+    testParam.expectedSpillFilesCheck(aggrNodeStats.spilledFiles);
+    OperatorTestBase::deleteTaskAndCheckSpillDirectory(task);
+  }
 }
 
 TEST_F(AggregationTest, spillingForAggrsWithDistinct) {
@@ -2007,6 +2028,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
     }
   } testSettings[] = {
       {0, true, true}, {0, false, false}, {1, true, true}, {1, false, false}};
+
   for (const auto& testData : testSettings) {
     SCOPED_TRACE(testData.debugString());
 
@@ -2024,12 +2046,12 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
             .copyResults(pool_.get());
 
     folly::EventCount driverWait;
-    auto driverWaitKey = driverWait.prepareWait();
+    std::atomic_bool driverWaitFlag{true};
     folly::EventCount testWait;
-    auto testWaitKey = testWait.prepareWait();
+    std::atomic_bool testWaitFlag{true};
 
     std::atomic_int numInputs{0};
-    Operator* op;
+    Operator* op{nullptr};
     SCOPED_TESTVALUE_SET(
         "facebook::velox::exec::Driver::runInternal::addInput",
         std::function<void(Operator*)>(([&](Operator* testOp) {
@@ -2058,8 +2080,9 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
           } else {
             ASSERT_EQ(reclaimableBytes, 0);
           }
-          testWait.notify();
-          driverWait.wait(driverWaitKey);
+          testWaitFlag = false;
+          testWait.notifyAll();
+          driverWait.await([&] { return !driverWaitFlag.load(); });
         })));
 
     std::thread taskThread([&]() {
@@ -2087,11 +2110,13 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
       }
     });
 
-    testWait.wait(testWaitKey);
+    testWait.await([&]() { return !testWaitFlag.load(); });
     ASSERT_TRUE(op != nullptr);
     auto task = op->testingOperatorCtx()->task();
     auto taskPauseWait = task->requestPause();
-    driverWait.notify();
+
+    driverWaitFlag = false;
+    driverWait.notifyAll();
     taskPauseWait.wait();
 
     uint64_t reclaimableBytes{0};
@@ -2105,23 +2130,27 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringInputProcessing) {
     }
 
     if (testData.expectedReclaimable) {
-      const auto usedMemory = op->pool()->usedBytes();
-      op->pool()->reclaim(
-          folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
-          0,
-          reclaimerStats_);
+      {
+        memory::ScopedMemoryArbitrationContext ctx(op->pool());
+        op->pool()->reclaim(
+            folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+            0,
+            reclaimerStats_);
+      }
       ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
       ASSERT_GT(reclaimerStats_.reclaimedBytes, 0);
       reclaimerStats_.reset();
-      // The hash table itself in the grouping set is not cleared so it still
-      // uses some memory.
-      ASSERT_LT(op->pool()->usedBytes(), usedMemory);
+      // We expect all the memory has been freed from the hash table.
+      ASSERT_EQ(op->pool()->usedBytes(), 0);
     } else {
-      VELOX_ASSERT_THROW(
-          op->reclaim(
-              folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
-              reclaimerStats_),
-          "");
+      {
+        memory::ScopedMemoryArbitrationContext ctx(op->pool());
+        VELOX_ASSERT_THROW(
+            op->reclaim(
+                folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+                reclaimerStats_),
+            "");
+      }
     }
 
     Task::resume(task);
@@ -2230,10 +2259,13 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringReserve) {
   ASSERT_GT(reclaimableBytes, 0);
 
   const auto usedMemory = op->pool()->usedBytes();
-  op->pool()->reclaim(
-      folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
-      0,
-      reclaimerStats_);
+  {
+    memory::ScopedMemoryArbitrationContext ctx(op->pool());
+    op->pool()->reclaim(
+        folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
+        0,
+        reclaimerStats_);
+  }
   ASSERT_GT(reclaimerStats_.reclaimExecTimeUs, 0);
   ASSERT_GE(reclaimerStats_.reclaimedBytes, 0);
   reclaimerStats_.reset();
@@ -2473,6 +2505,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringOutputProcessing) {
     if (enableSpilling) {
       ASSERT_GT(reclaimableBytes, 0);
       const auto usedMemory = op->pool()->usedBytes();
+      memory::ScopedMemoryArbitrationContext ctx(op->pool());
       op->pool()->reclaim(
           folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
           0,
@@ -2484,6 +2517,7 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimDuringOutputProcessing) {
       reclaimerStats_.reset();
     } else {
       ASSERT_EQ(reclaimableBytes, 0);
+      memory::ScopedMemoryArbitrationContext ctx(op->pool());
       VELOX_ASSERT_THROW(
           op->reclaim(
               folly::Random::oneIn(2) ? 0 : folly::Random::rand32(rng_),
@@ -3104,10 +3138,12 @@ DEBUG_ONLY_TEST_F(AggregationTest, reclaimEmptyOutput) {
         {
           MemoryReclaimer::Stats stats;
           SuspendedSection suspendedSection(driver);
+          memory::ScopedMemoryArbitrationContext ctx(op->pool());
           task->pool()->reclaim(kMaxBytes, 0, stats);
           ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
           ASSERT_GT(stats.reclaimExecTimeUs, 0);
-          ASSERT_EQ(stats.reclaimedBytes, 0);
+          // We expect to reclaim the memory from the hash table.
+          ASSERT_GT(stats.reclaimedBytes, 0);
           ASSERT_GT(stats.reclaimWaitTimeUs, 0);
         }
       })));
@@ -3706,5 +3742,4 @@ TEST_F(AggregationTest, nanKeys) {
       {makeRowVector({c0, c1}), c1},
       {makeRowVector({e0, e1}), e1});
 }
-
 } // namespace facebook::velox::exec::test

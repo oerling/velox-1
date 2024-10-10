@@ -268,9 +268,7 @@ TEST_F(ExprCompilerTest, functionSignatureNotRegistered) {
 
   VELOX_ASSERT_THROW(
       compile(expression),
-      "Scalar function concat not registered with arguments: (BIGINT, BIGINT). "
-      "Found function registered with the following signatures:\n"
-      "((varchar,varchar...) -> varchar)");
+      "Scalar function concat not registered with arguments: (BIGINT, BIGINT)");
 }
 
 TEST_F(ExprCompilerTest, constantFromFlatVector) {
@@ -302,6 +300,30 @@ TEST_F(ExprCompilerTest, rewrites) {
           makeTypedExpr("c1 + 5", rowType),
       },
       execCtx_.get()));
+
+  auto exprSet = compile(makeTypedExpr(
+      "reduce(c0, 1, (s, x) -> s + x * 2, s -> s)",
+      ROW({"c0"}, {ARRAY(BIGINT())})));
+  ASSERT_EQ(exprSet->size(), 1);
+  ASSERT_EQ(
+      exprSet->expr(0)->toString(),
+      "plus(1:BIGINT, array_sum_propagate_element_null(transform(c0, (x) -> multiply(x, 2:BIGINT))))");
+
+  exprSet = compile(makeTypedExpr(
+      "reduce(c0, 1, (s, x) -> (s + 2) - x, s -> s)",
+      ROW({"c0"}, {ARRAY(BIGINT())})));
+  ASSERT_EQ(exprSet->size(), 1);
+  ASSERT_EQ(
+      exprSet->expr(0)->toString(),
+      "plus(1:BIGINT, array_sum_propagate_element_null(transform(c0, (x) -> minus(2:BIGINT, x))))");
+
+  exprSet = compile(makeTypedExpr(
+      "reduce(c0, 1, (s, x) -> if(x % 2 = 0, s + 3, s), s -> s)",
+      ROW({"c0"}, {ARRAY(BIGINT())})));
+  ASSERT_EQ(exprSet->size(), 1);
+  ASSERT_EQ(
+      exprSet->expr(0)->toString(),
+      "plus(1:BIGINT, array_sum_propagate_element_null(transform(c0, (x) -> switch(eq(mod(x, 2:BIGINT), 0:BIGINT), 3:BIGINT, 0:BIGINT))))");
 }
 
 TEST_F(ExprCompilerTest, eliminateUnnecessaryCast) {

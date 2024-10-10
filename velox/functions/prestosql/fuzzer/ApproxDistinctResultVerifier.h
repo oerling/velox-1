@@ -17,6 +17,7 @@
 
 #include <string>
 
+#include "velox/common/hyperloglog/HllUtils.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/fuzzer/ResultVerifier.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -63,6 +64,7 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
   void initializeWindow(
       const std::vector<RowVectorPtr>& input,
       const std::vector<std::string>& partitionByKeys,
+      const std::vector<SortingKeyAndOrder>& /*sortingKeysAndOrders*/,
       const core::WindowNode::Function& function,
       const std::string& frame,
       const std::string& windowName) override {
@@ -120,8 +122,8 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
 
     std::vector<double> largeGaps;
     for (auto i = 0; i < numGroups; ++i) {
-      VELOX_CHECK(!actual->isNullAt(i))
-      VELOX_CHECK(!expected->isNullAt(i))
+      VELOX_CHECK(!actual->isNullAt(i));
+      VELOX_CHECK(!expected->isNullAt(i));
 
       const auto actualCnt = actual->valueAt(i);
       const auto expectedCnt = expected->valueAt(i);
@@ -194,6 +196,13 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
     const auto numGroups = combined->size();
 
     std::vector<double> largeGaps;
+    // Standard error would likely exceed the error bound when the number of
+    // groups is small and the error bound is large. So we only check the
+    // standard error when the numGroups >= 50 and the error bound is smaller
+    // than or equan to the default error bound.
+    bool checkError =
+        (error_ <= common::hll::kDefaultApproxDistinctStandardError ||
+         numGroups >= 50);
     for (auto i = 0; i < numGroups; ++i) {
       const auto gap =
           combined->children().back()->as<SimpleVector<double>>()->valueAt(i);
@@ -208,10 +217,18 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
             gap);
       }
     }
+    if (!checkError) {
+      LOG(WARNING) << fmt::format(
+          "{} groups have large errors that exceed the error bound, but we don't fail the verification because current numGroups = {} and error bound is {}.",
+          largeGaps.size(),
+          numGroups,
+          error_);
+      return true;
+    }
 
     // We expect large deviations (>2 stddev) in < 5% of values.
     if (numGroups >= 50) {
-      return largeGaps.size() <= 3;
+      return largeGaps.size() <= 0.05 * numGroups;
     }
 
     return largeGaps.empty();
@@ -243,10 +260,10 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
   static std::string makeCountDistinctCall(
       const core::AggregationNode::Aggregate& aggregate) {
     const auto& args = aggregate.call->inputs();
-    VELOX_CHECK_GE(args.size(), 1)
+    VELOX_CHECK_GE(args.size(), 1);
 
     auto inputField = core::TypedExprs::asFieldAccess(args[0]);
-    VELOX_CHECK_NOT_NULL(inputField)
+    VELOX_CHECK_NOT_NULL(inputField);
 
     std::string countDistinctCall =
         fmt::format("count(distinct {})", inputField->name());
@@ -263,10 +280,10 @@ class ApproxDistinctResultVerifier : public ResultVerifier {
       const core::WindowNode::Function& function,
       const std::string& frame) {
     const auto& args = function.functionCall->inputs();
-    VELOX_CHECK_GE(args.size(), 1)
+    VELOX_CHECK_GE(args.size(), 1);
 
     auto inputField = core::TypedExprs::asFieldAccess(args[0]);
-    VELOX_CHECK_NOT_NULL(inputField)
+    VELOX_CHECK_NOT_NULL(inputField);
 
     std::string countDistinctCall =
         fmt::format("\"$internal$count_distinct\"({})", inputField->name());

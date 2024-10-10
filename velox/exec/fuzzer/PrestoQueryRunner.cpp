@@ -17,6 +17,7 @@
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
 #include <cpr/cpr.h> // @manual
 #include <folly/json.h>
+#include <velox/dwio/dwrf/writer/Writer.h>
 #include <iostream>
 #include "velox/common/base/Fs.h"
 #include "velox/common/encode/Base64.h"
@@ -25,6 +26,8 @@
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/Expressions.h"
 #include "velox/dwio/common/WriterFactory.h"
+#include "velox/exec/fuzzer/FuzzerUtil.h"
+#include "velox/exec/fuzzer/ToSQLUtil.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/type/parser/TypeParser.h"
@@ -34,7 +37,6 @@
 using namespace facebook::velox;
 
 namespace facebook::velox::exec::test {
-
 namespace {
 
 void writeToFile(
@@ -43,9 +45,10 @@ void writeToFile(
     memory::MemoryPool* pool) {
   VELOX_CHECK_GT(data.size(), 0);
 
-  dwio::common::WriterOptions options;
-  options.schema = data[0]->type();
-  options.memoryPool = pool;
+  std::shared_ptr<dwio::common::WriterOptions> options =
+      std::make_shared<dwrf::WriterOptions>();
+  options->schema = data[0]->type();
+  options->memoryPool = pool;
 
   auto writeFile = std::make_unique<LocalWriteFile>(path, true, false);
   auto sink =
@@ -58,13 +61,13 @@ void writeToFile(
   writer->close();
 }
 
-ByteInputStream toByteStream(const std::string& input) {
+std::unique_ptr<ByteInputStream> toByteStream(const std::string& input) {
   std::vector<ByteRange> ranges;
   ranges.push_back(
       {reinterpret_cast<uint8_t*>(const_cast<char*>(input.data())),
        (int32_t)input.length(),
        0});
-  return ByteInputStream(std::move(ranges));
+  return std::make_unique<BufferInputStream>(std::move(ranges));
 }
 
 RowVectorPtr deserialize(
@@ -74,30 +77,8 @@ RowVectorPtr deserialize(
   auto byteStream = toByteStream(input);
   auto serde = std::make_unique<serializer::presto::PrestoVectorSerde>();
   RowVectorPtr result;
-  serde->deserialize(&byteStream, pool, rowType, &result, nullptr);
+  serde->deserialize(byteStream.get(), pool, rowType, &result, nullptr);
   return result;
-}
-
-RowVectorPtr makeNullRows(
-    const std::vector<velox::RowVectorPtr>& input,
-    const std::string& colName,
-    memory::MemoryPool* pool) {
-  // The query doesn't need to read any columns, but it needs to see a
-  // specific number of rows. Make new 'input' as single all-null BIGINT
-  // column with as many rows as original input. This way we'll be able to
-  // create a temporary test table with the necessary number of rows.
-  vector_size_t numInput = 0;
-  for (const auto& v : input) {
-    numInput += v->size();
-  }
-
-  auto column = BaseVector::createNullConstant(BIGINT(), numInput, pool);
-  return std::make_shared<RowVector>(
-      pool,
-      ROW({colName}, {BIGINT()}),
-      nullptr,
-      numInput,
-      std::vector<VectorPtr>{column});
 }
 
 class ServerResponse {
@@ -159,16 +140,21 @@ class ServerResponse {
  private:
   folly::dynamic response_;
 };
+
 } // namespace
 
 PrestoQueryRunner::PrestoQueryRunner(
+    memory::MemoryPool* pool,
     std::string coordinatorUri,
     std::string user,
     std::chrono::milliseconds timeout)
-    : coordinatorUri_{std::move(coordinatorUri)},
+    : ReferenceQueryRunner(pool),
+      coordinatorUri_{std::move(coordinatorUri)},
       user_{std::move(user)},
       timeout_(timeout) {
   eventBaseThread_.start("PrestoQueryRunner");
+  pool_ = aggregatePool()->addLeafChild("leaf");
+  queryRunnerContext_ = std::make_shared<QueryRunnerContext>();
 }
 
 std::optional<std::string> PrestoQueryRunner::toSql(
@@ -213,12 +199,6 @@ std::optional<std::string> PrestoQueryRunner::toSql(
 
 namespace {
 
-void appendComma(int32_t i, std::stringstream& sql) {
-  if (i > 0) {
-    sql << ", ";
-  }
-}
-
 std::string toTypeSql(const TypePtr& type) {
   switch (type->kind()) {
     case TypeKind::ARRAY:
@@ -246,80 +226,6 @@ std::string toTypeSql(const TypePtr& type) {
       }
       VELOX_UNSUPPORTED("Type is not supported: {}", type->toString());
   }
-}
-
-std::string toCallSql(const core::CallTypedExprPtr& call);
-
-void toCallInputsSql(
-    const std::vector<core::TypedExprPtr>& inputs,
-    std::stringstream& sql) {
-  for (auto i = 0; i < inputs.size(); ++i) {
-    appendComma(i, sql);
-
-    const auto& input = inputs.at(i);
-    if (auto field =
-            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
-                input)) {
-      sql << field->name();
-    } else if (
-        auto call =
-            std::dynamic_pointer_cast<const core::CallTypedExpr>(input)) {
-      sql << toCallSql(call);
-    } else if (
-        auto lambda =
-            std::dynamic_pointer_cast<const core::LambdaTypedExpr>(input)) {
-      const auto& signature = lambda->signature();
-      const auto& body =
-          std::dynamic_pointer_cast<const core::CallTypedExpr>(lambda->body());
-      VELOX_CHECK_NOT_NULL(body);
-
-      sql << "(";
-      for (auto j = 0; j < signature->size(); ++j) {
-        appendComma(j, sql);
-        sql << signature->nameOf(j);
-      }
-
-      sql << ") -> " << toCallSql(body);
-    } else {
-      VELOX_NYI();
-    }
-  }
-}
-
-std::string toCallSql(const core::CallTypedExprPtr& call) {
-  std::stringstream sql;
-  sql << call->name() << "(";
-  toCallInputsSql(call->inputs(), sql);
-  sql << ")";
-  return sql.str();
-}
-
-std::string toAggregateCallSql(
-    const core::CallTypedExprPtr& call,
-    const std::vector<core::FieldAccessTypedExprPtr>& sortingKeys,
-    const std::vector<core::SortOrder>& sortingOrders,
-    bool distinct) {
-  VELOX_CHECK_EQ(sortingKeys.size(), sortingOrders.size());
-  std::stringstream sql;
-  sql << call->name() << "(";
-
-  if (distinct) {
-    sql << "distinct ";
-  }
-
-  toCallInputsSql(call->inputs(), sql);
-
-  if (!sortingKeys.empty()) {
-    sql << " ORDER BY ";
-
-    for (int i = 0; i < sortingKeys.size(); i++) {
-      appendComma(i, sql);
-      sql << sortingKeys[i]->name() << " " << sortingOrders[i].toString();
-    }
-  }
-
-  sql << ")";
-  return sql.str();
 }
 
 std::string toWindowCallSql(
@@ -350,6 +256,22 @@ bool isSupportedDwrfType(const TypePtr& type) {
 }
 
 } // namespace
+
+const std::vector<TypePtr>& PrestoQueryRunner::supportedScalarTypes() const {
+  static const std::vector<TypePtr> kScalarTypes{
+      BOOLEAN(),
+      TINYINT(),
+      SMALLINT(),
+      INTEGER(),
+      BIGINT(),
+      REAL(),
+      DOUBLE(),
+      VARCHAR(),
+      VARBINARY(),
+      TIMESTAMP(),
+  };
+  return kScalarTypes;
+}
 
 std::optional<std::string> PrestoQueryRunner::toSql(
     const std::shared_ptr<const core::AggregationNode>& aggregationNode) {
@@ -431,56 +353,6 @@ std::optional<std::string> PrestoQueryRunner::toSql(
   return sql.str();
 }
 
-namespace {
-
-void appendWindowFrame(
-    const core::WindowNode::Frame& frame,
-    std::stringstream& sql) {
-  // TODO: Add support for k Range Frames by retrieving the original range bound
-  // from WindowNode.
-  switch (frame.type) {
-    case core::WindowNode::WindowType::kRange:
-      sql << " RANGE";
-      break;
-    case core::WindowNode::WindowType::kRows:
-      sql << " ROWS";
-      break;
-    default:
-      VELOX_UNREACHABLE();
-  }
-  sql << " BETWEEN";
-
-  auto appendBound = [&sql](
-                         const core::WindowNode::BoundType& bound,
-                         const core::TypedExprPtr& value) {
-    switch (bound) {
-      case core::WindowNode::BoundType::kUnboundedPreceding:
-        sql << " UNBOUNDED PRECEDING";
-        break;
-      case core::WindowNode::BoundType::kUnboundedFollowing:
-        sql << " UNBOUNDED FOLLOWING";
-        break;
-      case core::WindowNode::BoundType::kCurrentRow:
-        sql << " CURRENT ROW";
-        break;
-      case core::WindowNode::BoundType::kPreceding:
-        sql << " " << value->toString() << " PRECEDING";
-        break;
-      case core::WindowNode::BoundType::kFollowing:
-        sql << " " << value->toString() << " FOLLOWING";
-        break;
-      default:
-        VELOX_UNREACHABLE();
-    }
-  };
-
-  appendBound(frame.startType, frame.startValue);
-  sql << " AND";
-  appendBound(frame.endType, frame.endValue);
-}
-
-} // namespace
-
 std::optional<std::string> PrestoQueryRunner::toSql(
     const std::shared_ptr<const core::WindowNode>& windowNode) {
   if (!isSupportedDwrfType(windowNode->sources()[0]->outputType())) {
@@ -525,7 +397,7 @@ std::optional<std::string> PrestoQueryRunner::toSql(
       }
     }
 
-    appendWindowFrame(functions[i].frame, sql);
+    sql << " " << queryRunnerContext_->windowFrames_.at(windowNode->id()).at(i);
     sql << ")";
   }
 
@@ -833,7 +705,7 @@ std::vector<velox::RowVectorPtr> PrestoQueryRunner::executeVector(
                            .string()
                            .substr(strlen("file:"));
 
-  auto writerPool = rootPool()->addAggregateChild("writer");
+  auto writerPool = aggregatePool()->addAggregateChild("writer");
   writeToFile(probeFilePath, probeInput, writerPool.get());
   writeToFile(buildFilePath, buildInput, writerPool.get());
 
@@ -859,7 +731,7 @@ std::vector<velox::RowVectorPtr> PrestoQueryRunner::executeVector(
                          .string()
                          .substr(strlen("file:"));
 
-  auto writerPool = rootPool()->addAggregateChild("writer");
+  auto writerPool = aggregatePool()->addAggregateChild("writer");
   writeToFile(newFilePath, input, writerPool.get());
 
   // Run the query.

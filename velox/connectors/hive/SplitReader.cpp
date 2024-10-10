@@ -34,7 +34,8 @@ VectorPtr newConstantFromString(
     const TypePtr& type,
     const std::optional<std::string>& value,
     vector_size_t size,
-    velox::memory::MemoryPool* pool) {
+    velox::memory::MemoryPool* pool,
+    const std::string& sessionTimezone) {
   using T = typename TypeTraits<kind>::NativeType;
   if (!value.has_value()) {
     return std::make_shared<ConstantVector<T>>(pool, size, true, type, T());
@@ -90,7 +91,7 @@ std::unique_ptr<SplitReader> SplitReader::create(
         executor,
         scanSpec);
   } else {
-    return std::make_unique<SplitReader>(
+    return std::unique_ptr<SplitReader>(new SplitReader(
         hiveSplit,
         hiveTableHandle,
         partitionKeys,
@@ -100,7 +101,7 @@ std::unique_ptr<SplitReader> SplitReader::create(
         ioStats,
         fileHandleFactory,
         executor,
-        scanSpec);
+        scanSpec));
   }
 }
 
@@ -264,15 +265,18 @@ void SplitReader::createReader(
   auto columnTypes = adaptColumns(fileType, baseReaderOpts_.fileSchema());
   auto columnNames = fileType->names();
   if (rowIndexColumn != nullptr) {
-    setRowIndexColumn(rowIndexColumn);
+    bool isExplicit = scanSpec_->childByName(rowIndexColumn->name()) != nullptr;
+    setRowIndexColumn(rowIndexColumn, isExplicit);
   }
   configureRowReaderOptions(
-      baseRowReaderOpts_,
       hiveTableHandle_->tableParameters(),
       scanSpec_,
       std::move(metadataFilter),
       ROW(std::move(columnNames), std::move(columnTypes)),
-      hiveSplit_);
+      hiveSplit_,
+      hiveConfig_,
+      connectorQueryCtx_->sessionProperties(),
+      baseRowReaderOpts_);
 }
 
 bool SplitReader::checkIfSplitIsEmpty(
@@ -283,7 +287,6 @@ bool SplitReader::checkIfSplitIsEmpty(
     return true;
   }
 
-  // Note that this doesn't apply to Hudi tables.
   if (!baseReader_ || baseReader_->numberOfRows() == 0) {
     emptySplit_ = true;
   } else {
@@ -310,11 +313,13 @@ void SplitReader::createRowReader() {
 }
 
 void SplitReader::setRowIndexColumn(
-    const std::shared_ptr<HiveColumnHandle>& rowIndexColumn) {
+    const std::shared_ptr<HiveColumnHandle>& rowIndexColumn,
+    bool isExplicit) {
   dwio::common::RowNumberColumnInfo rowNumberColumnInfo;
   rowNumberColumnInfo.insertPosition =
       readerOutputType_->getChildIdx(rowIndexColumn->name());
   rowNumberColumnInfo.name = rowIndexColumn->name();
+  rowNumberColumnInfo.isExplicit = isExplicit;
   baseRowReaderOpts_.setRowNumberColumnInfo(std::move(rowNumberColumnInfo));
 }
 
@@ -361,9 +366,10 @@ std::vector<TypePtr> SplitReader::adaptColumns(
           infoColumnType,
           iter->second,
           1,
-          connectorQueryCtx_->memoryPool());
+          connectorQueryCtx_->memoryPool(),
+          connectorQueryCtx_->sessionTimezone());
       childSpec->setConstantValue(constant);
-    } else {
+    } else if (!childSpec->isExplicitRowNumber()) {
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);
       if (!fileTypeIdx.has_value()) {
         // Column is missing. Most likely due to schema evolution.
@@ -413,7 +419,8 @@ void SplitReader::setPartitionValue(
       type,
       value,
       1,
-      connectorQueryCtx_->memoryPool());
+      connectorQueryCtx_->memoryPool(),
+      connectorQueryCtx_->sessionTimezone());
   spec->setConstantValue(constant);
 }
 

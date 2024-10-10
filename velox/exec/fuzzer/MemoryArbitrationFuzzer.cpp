@@ -85,15 +85,13 @@ class MemoryArbitrationFuzzer {
 
   struct Stats {
     size_t successCount{0};
-    size_t failureCount{0};
     size_t oomCount{0};
     size_t abortCount{0};
 
     void print() const {
       std::stringstream ss;
-      ss << "Success count = " << successCount
-         << ", failure count = " << failureCount
-         << ". OOM count  = " << oomCount << " Abort count = " << abortCount;
+      ss << "Success count = " << successCount << ". OOM count  = " << oomCount
+         << " Abort count = " << abortCount;
       LOG(INFO) << ss.str();
     }
   };
@@ -220,13 +218,14 @@ class MemoryArbitrationFuzzer {
 MemoryArbitrationFuzzer::MemoryArbitrationFuzzer(size_t initialSeed)
     : vectorFuzzer_{getFuzzerOptions(), pool_.get()} {
   // Make sure not to run out of open file descriptors.
-  const std::unordered_map<std::string, std::string> hiveConfig = {
+  std::unordered_map<std::string, std::string> hiveConfig = {
       {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
   const auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
-              kHiveConnectorId, std::make_shared<core::MemConfig>(hiveConfig));
+              kHiveConnectorId,
+              std::make_shared<config::ConfigBase>(std::move(hiveConfig)));
   connector::registerConnector(hiveConnector);
   seed(initialSeed);
 }
@@ -713,7 +712,7 @@ void MemoryArbitrationFuzzer::verify() {
           } else if (e.errorCode() == error_code::kMemAborted.c_str()) {
             ++lockedStats->abortCount;
           } else {
-            ++lockedStats->failureCount;
+            LOG(ERROR) << "Unexpected exception: " << e.what();
             std::rethrow_exception(std::current_exception());
           }
         }
@@ -733,7 +732,7 @@ void MemoryArbitrationFuzzer::verify() {
 void MemoryArbitrationFuzzer::go() {
   VELOX_USER_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
-      "Either --steps or --duration_sec needs to be greater than zero.")
+      "Either --steps or --duration_sec needs to be greater than zero.");
   VELOX_USER_CHECK_GE(FLAGS_batch_size, 10, "Batch size must be at least 10.");
 
   const auto startTime = std::chrono::system_clock::now();

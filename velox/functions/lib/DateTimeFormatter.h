@@ -23,7 +23,19 @@
 
 namespace facebook::velox::functions {
 
-enum class DateTimeFormatterType { JODA, MYSQL, UNKNOWN };
+enum class DateTimeFormatterType {
+  JODA,
+  MYSQL,
+  // Corresponding to java.text.SimpleDateFormat in lenient mode. It is used by
+  // the 'date_format', 'from_unixtime', 'unix_timestamp' and
+  // 'to_unix_timestamp' Spark functions.
+  // TODO: this is currently no different from STRICT_SIMPLE.
+  LENIENT_SIMPLE,
+  // Corresponding to java.text.SimpleDateFormat in strict(lenient=false) mode.
+  // It is used by Spark 'cast date to string'.
+  STRICT_SIMPLE,
+  UNKNOWN
+};
 
 enum class DateTimeFormatSpecifier : uint8_t {
   // Era, e.g: "AD"
@@ -181,7 +193,7 @@ class DateTimeFormatter {
 
   /// Returns max size of the formatted string. Can be used to preallocate
   /// memory before calling format() to avoid extra copy.
-  uint32_t maxResultSize(const date::time_zone* timezone) const;
+  uint32_t maxResultSize(const tz::TimeZone* timezone) const;
 
   /// Result buffer is pre-allocated according to maxResultSize.
   /// Returns actual size.
@@ -191,7 +203,7 @@ class DateTimeFormatter {
   /// allowed in converting to milliseconds.
   int32_t format(
       const Timestamp& timestamp,
-      const date::time_zone* timezone,
+      const tz::TimeZone* timezone,
       const uint32_t maxResultSize,
       char* result,
       bool allowOverflow = false) const;
@@ -209,6 +221,10 @@ std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
 std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
     const std::string_view& format);
 
+std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
+    const std::string_view& format,
+    bool lenient);
+
 } // namespace facebook::velox::functions
 
 template <>
@@ -216,7 +232,7 @@ struct fmt::formatter<facebook::velox::functions::DateTimeFormatterType>
     : formatter<int> {
   auto format(
       facebook::velox::functions::DateTimeFormatterType s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };
@@ -226,7 +242,7 @@ struct fmt::formatter<facebook::velox::functions::DateTimeFormatSpecifier>
     : formatter<int> {
   auto format(
       facebook::velox::functions::DateTimeFormatSpecifier s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };

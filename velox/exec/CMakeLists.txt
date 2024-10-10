@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_library(
+velox_add_library(
   velox_exec
   AddressableNonNullValueList.cpp
   Aggregate.cpp
@@ -57,11 +57,20 @@ add_library(
   OrderBy.cpp
   OutputBuffer.cpp
   OutputBufferManager.cpp
+  QueryDataReader.cpp
+  QueryDataWriter.cpp
+  QueryMetadataReader.cpp
+  QueryMetadataWriter.cpp
+  QueryTraceConfig.cpp
+  QueryTraceScan.cpp
+  QueryTraceUtil.cpp
   PartitionedOutput.cpp
   PartitionFunction.cpp
+  PartitionStreamingWindowBuild.cpp
   PlanNodeStats.cpp
   PrefixSort.cpp
   ProbeOperatorState.cpp
+  RowsStreamingWindowBuild.cpp
   RowContainer.cpp
   RowNumber.cpp
   SortBuffer.cpp
@@ -71,7 +80,6 @@ add_library(
   SpillFile.cpp
   Spiller.cpp
   StreamingAggregation.cpp
-  StreamingWindowBuild.cpp
   Strings.cpp
   TableScan.cpp
   TableWriteMerge.cpp
@@ -87,7 +95,7 @@ add_library(
   WindowFunction.cpp
   WindowPartition.cpp)
 
-target_link_libraries(
+velox_link_libraries(
   velox_exec
   velox_file
   velox_core

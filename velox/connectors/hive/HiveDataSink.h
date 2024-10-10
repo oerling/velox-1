@@ -29,6 +29,7 @@ class Writer;
 }
 
 namespace facebook::velox::connector::hive {
+
 class HiveColumnHandle;
 
 class LocationHandle;
@@ -47,13 +48,19 @@ class LocationHandle : public ISerializable {
   LocationHandle(
       std::string targetPath,
       std::string writePath,
-      TableType tableType)
+      TableType tableType,
+      std::string targetFileName = "")
       : targetPath_(std::move(targetPath)),
+        targetFileName_(std::move(targetFileName)),
         writePath_(std::move(writePath)),
         tableType_(tableType) {}
 
   const std::string& targetPath() const {
     return targetPath_;
+  }
+
+  const std::string& targetFileName() const {
+    return targetFileName_;
   }
 
   const std::string& writePath() const {
@@ -79,6 +86,8 @@ class LocationHandle : public ISerializable {
  private:
   // Target directory path.
   const std::string targetPath_;
+  // If non-empty, use this name instead of generating our own.
+  const std::string targetFileName_;
   // Staging directory path.
   const std::string writePath_;
   // Whether the table to be written is new, already existing or temporary.
@@ -186,9 +195,7 @@ FOLLY_ALWAYS_INLINE std::ostream& operator<<(
 class HiveInsertTableHandle;
 using HiveInsertTableHandlePtr = std::shared_ptr<HiveInsertTableHandle>;
 
-/**
- * Represents a request for Hive write.
- */
+/// Represents a request for Hive write.
 class HiveInsertTableHandle : public ConnectorInsertTableHandle {
  public:
   HiveInsertTableHandle(
@@ -196,19 +203,22 @@ class HiveInsertTableHandle : public ConnectorInsertTableHandle {
       std::shared_ptr<const LocationHandle> locationHandle,
       dwio::common::FileFormat tableStorageFormat =
           dwio::common::FileFormat::DWRF,
-      std::shared_ptr<HiveBucketProperty> bucketProperty = nullptr,
+      std::shared_ptr<const HiveBucketProperty> bucketProperty = nullptr,
       std::optional<common::CompressionKind> compressionKind = {},
-      const std::unordered_map<std::string, std::string>& serdeParameters = {})
+      const std::unordered_map<std::string, std::string>& serdeParameters = {},
+      const std::shared_ptr<dwio::common::WriterOptions>& writerOptions =
+          nullptr)
       : inputColumns_(std::move(inputColumns)),
         locationHandle_(std::move(locationHandle)),
         tableStorageFormat_(tableStorageFormat),
         bucketProperty_(std::move(bucketProperty)),
         compressionKind_(compressionKind),
-        serdeParameters_(serdeParameters) {
+        serdeParameters_(serdeParameters),
+        writerOptions_(writerOptions) {
     if (compressionKind.has_value()) {
       VELOX_CHECK(
           compressionKind.value() != common::CompressionKind_MAX,
-          "Unsupported compression type: CompressionKind_MAX")
+          "Unsupported compression type: CompressionKind_MAX");
     }
   }
 
@@ -235,6 +245,10 @@ class HiveInsertTableHandle : public ConnectorInsertTableHandle {
     return serdeParameters_;
   }
 
+  const std::shared_ptr<dwio::common::WriterOptions>& writerOptions() const {
+    return writerOptions_;
+  }
+
   bool supportsMultiThreading() const override {
     return true;
   }
@@ -253,15 +267,16 @@ class HiveInsertTableHandle : public ConnectorInsertTableHandle {
 
   static void registerSerDe();
 
-  std::string toString() const;
+  std::string toString() const override;
 
  private:
   const std::vector<std::shared_ptr<const HiveColumnHandle>> inputColumns_;
   const std::shared_ptr<const LocationHandle> locationHandle_;
   const dwio::common::FileFormat tableStorageFormat_;
-  const std::shared_ptr<HiveBucketProperty> bucketProperty_;
+  const std::shared_ptr<const HiveBucketProperty> bucketProperty_;
   const std::optional<common::CompressionKind> compressionKind_;
   const std::unordered_map<std::string, std::string> serdeParameters_;
+  const std::shared_ptr<dwio::common::WriterOptions> writerOptions_;
 };
 
 /// Parameters for Hive writers.
@@ -611,7 +626,7 @@ struct fmt::formatter<facebook::velox::connector::hive::HiveDataSink::State>
     : formatter<int> {
   auto format(
       facebook::velox::connector::hive::HiveDataSink::State s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };
@@ -622,7 +637,7 @@ struct fmt::formatter<
     : formatter<int> {
   auto format(
       facebook::velox::connector::hive::LocationHandle::TableType s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };

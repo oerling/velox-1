@@ -76,3 +76,7 @@ endif()
 if(VELOX_ENABLE_PARQUET)
   add_subdirectory(experimental/query)
 endif()
+
+if(${VELOX_BUILD_TESTING})
+  add_subdirectory(tool)
+endif()

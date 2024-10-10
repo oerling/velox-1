@@ -16,11 +16,12 @@
 
 #pragma once
 
+#include <gflags/gflags.h>
+#include <shared_mutex>
+
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/SsdFileTracker.h"
 #include "velox/common/file/File.h"
-
-#include <gflags/gflags.h>
 
 DECLARE_bool(ssd_odirect);
 DECLARE_bool(ssd_verify_write);
@@ -141,6 +142,7 @@ struct SsdCacheStats {
     bytesWritten = tsanAtomicValue(other.bytesWritten);
     checkpointsWritten = tsanAtomicValue(other.checkpointsWritten);
     entriesRead = tsanAtomicValue(other.entriesRead);
+    entriesRecovered = tsanAtomicValue(other.entriesRecovered);
     bytesRead = tsanAtomicValue(other.bytesRead);
     checkpointsRead = tsanAtomicValue(other.checkpointsRead);
     entriesCached = tsanAtomicValue(other.entriesCached);
@@ -172,6 +174,7 @@ struct SsdCacheStats {
     result.bytesWritten = bytesWritten - other.bytesWritten;
     result.checkpointsWritten = checkpointsWritten - other.checkpointsWritten;
     result.entriesRead = entriesRead - other.entriesRead;
+    result.entriesRecovered = entriesRecovered - other.entriesRecovered;
     result.bytesRead = bytesRead - other.bytesRead;
     result.checkpointsRead = checkpointsRead - other.checkpointsRead;
     result.entriesAgedOut = entriesAgedOut - other.entriesAgedOut;
@@ -197,6 +200,10 @@ struct SsdCacheStats {
     return result;
   }
 
+  void clear() {
+    *this = SsdCacheStats();
+  }
+
   /// Snapshot stats
   tsan_atomic<uint64_t> entriesCached{0};
   tsan_atomic<uint64_t> regionsCached{0};
@@ -208,6 +215,7 @@ struct SsdCacheStats {
   tsan_atomic<uint64_t> bytesWritten{0};
   tsan_atomic<uint64_t> checkpointsWritten{0};
   tsan_atomic<uint64_t> entriesRead{0};
+  tsan_atomic<uint64_t> entriesRecovered{0};
   tsan_atomic<uint64_t> bytesRead{0};
   tsan_atomic<uint64_t> checkpointsRead{0};
   tsan_atomic<uint64_t> entriesAgedOut{0};
@@ -297,7 +305,6 @@ class SsdFile {
 
   /// Erases 'key'
   bool erase(RawFileCacheKey key);
-
   /// Copies the data in 'ssdPins' into 'pins'. Coalesces IO for nearby
   /// entries if they are in ascending order and near enough.
   CoalesceIoStats load(
@@ -316,16 +323,6 @@ class SsdFile {
   void checkPinned(uint64_t offset) const {
     tsan_lock_guard<std::shared_mutex> l(mutex_);
     VELOX_CHECK_GT(regionPins_[regionIndex(offset)], 0);
-  }
-
-  /// Returns the region number corresponding to offset.
-  static int32_t regionIndex(uint64_t offset) {
-    return offset / kRegionSize;
-  }
-
-  /// Updates the read count of a region.
-  void regionRead(int32_t region, int32_t size) {
-    tracker_.regionRead(region, size);
   }
 
   int32_t maxRegions() const {
@@ -347,10 +344,10 @@ class SsdFile {
       const folly::F14FastSet<uint64_t>& filesToRemove,
       folly::F14FastSet<uint64_t>& filesRetained);
 
-  /// Writes a checkpoint state that can be recovered from. The
-  /// checkpoint is serialized on 'mutex_'. If 'force' is false,
-  /// rechecks that at least 'checkpointIntervalBytes_' have been
-  /// written since last checkpoint and silently returns if not.
+  /// Writes a checkpoint state that can be recovered from. The checkpoint is
+  /// serialized on 'mutex_'. If 'force' is false, rechecks that at least
+  /// 'checkpointIntervalBytes_' have been written since last checkpoint and
+  /// silently returns if not.
   void checkpoint(bool force = false);
 
   /// Deletes checkpoint files. If 'keepLog' is true, truncates and syncs the
@@ -376,7 +373,9 @@ class SsdFile {
   void testingDeleteFile();
 
   /// Resets this' to a post-construction empty state. See SsdCache::clear().
-  void testingClear();
+  ///
+  /// NOTE: this is only used by test and Prestissimo worker operation.
+  void clear();
 
   /// Returns true if copy on write is disabled for this file. Used in testing.
   bool testingIsCowDisabled() const;
@@ -393,10 +392,6 @@ class SsdFile {
     return entries_;
   }
 
-  SsdCacheStats testingStats() const {
-    return stats_;
-  }
-
   bool testingChecksumReadVerificationEnabled() const {
     return checksumReadVerificationEnabled_;
   }
@@ -409,6 +404,21 @@ class SsdFile {
   static constexpr int64_t kCheckpointEndMarker = 0xcbedf11e;
 
   static constexpr int kMaxErasedSizePct = 50;
+
+  // Updates the read count of a region.
+  void regionRead(int32_t region, int32_t size) {
+    tracker_.regionRead(region, size);
+  }
+
+  // Returns the region number corresponding to 'offset'.
+  static int32_t regionIndex(uint64_t offset) {
+    return offset / kRegionSize;
+  }
+
+  // Returns the offset within a region corresponding to 'offset'.
+  static int32_t regionOffset(uint64_t offset) {
+    return offset % kRegionSize;
+  }
 
   // The first 4 bytes of a checkpoint file contains version string to indicate
   // if checksum write is enabled or not.

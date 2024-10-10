@@ -151,12 +151,13 @@ class PrestoSerializerTest
     return {static_cast<int64_t>(size), sizeEstimate};
   }
 
-  ByteInputStream toByteStream(const std::string& input) {
+  std::unique_ptr<ByteInputStream> toByteStream(const std::string& input) {
     ByteRange byteRange{
         reinterpret_cast<uint8_t*>(const_cast<char*>(input.data())),
         (int32_t)input.length(),
         0};
-    return ByteInputStream({byteRange});
+    return std::make_unique<BufferInputStream>(
+        std::vector<ByteRange>{{byteRange}});
   }
 
   void validateLexer(
@@ -199,7 +200,7 @@ class PrestoSerializerTest
     validateLexer(input, paramOptions);
     RowVectorPtr result;
     serde_->deserialize(
-        &byteStream, pool_.get(), rowType, &result, 0, &paramOptions);
+        byteStream.get(), pool_.get(), rowType, &result, 0, &paramOptions);
     return result;
   }
 
@@ -276,7 +277,12 @@ class PrestoSerializerTest
     for (auto i = 0; i < serialized.size(); ++i) {
       auto byteStream = toByteStream(serialized[i]);
       serde_->deserialize(
-          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
+          byteStream.get(),
+          pool_.get(),
+          rowType,
+          &result,
+          offset,
+          &paramOptions);
       offset = result->size();
     }
 
@@ -386,7 +392,12 @@ class PrestoSerializerTest
     for (auto i = 0; i < 3; ++i) {
       auto byteStream = toByteStream(serialized);
       serde_->deserialize(
-          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
+          byteStream.get(),
+          pool_.get(),
+          rowType,
+          &result,
+          offset,
+          &paramOptions);
       offset = result->size();
     }
 
@@ -445,7 +456,7 @@ class PrestoSerializerTest
       auto piece = pieces[pieceIdx];
       auto byteStream = toByteStream(piece);
       serde_->deserialize(
-          &byteStream,
+          byteStream.get(),
           pool_.get(),
           rowType,
           &deserialized,
@@ -456,14 +467,14 @@ class PrestoSerializerTest
           BaseVector::create<RowVector>(rowType, 0, pool_.get());
       byteStream = toByteStream(piece);
       serde_->deserialize(
-          &byteStream, pool_.get(), rowType, &single, 0, &paramOptions);
+          byteStream.get(), pool_.get(), rowType, &single, 0, &paramOptions);
       assertEqualVectors(single->childAt(0), vectors[pieceIdx]);
 
       RowVectorPtr single2 =
           BaseVector::create<RowVector>(rowType, 0, pool_.get());
       byteStream = toByteStream(reusedPieces[pieceIdx]);
       serde_->deserialize(
-          &byteStream, pool_.get(), rowType, &single2, 0, &paramOptions);
+          byteStream.get(), pool_.get(), rowType, &single2, 0, &paramOptions);
       assertEqualVectors(single2->childAt(0), vectors[pieceIdx]);
     }
     assertEqualVectors(concatenation, deserialized);
@@ -764,6 +775,15 @@ TEST_P(PrestoSerializerTest, basic) {
   testRoundTrip(rowVector);
 }
 
+TEST_P(PrestoSerializerTest, basicLarge) {
+  const vector_size_t numRows = 80'000;
+  auto rowVector = makeRowVector(
+      {makeFlatVector<int64_t>(numRows, [](vector_size_t row) { return row; }),
+       makeFlatVector<std::string>(
+           numRows, [](vector_size_t row) { return std::string(1024, 'x'); })});
+  testRoundTrip(rowVector);
+}
+
 /// Test serialization of a dictionary vector that adds nulls to the base
 /// vector.
 TEST_P(PrestoSerializerTest, dictionaryWithExtraNulls) {
@@ -931,7 +951,12 @@ TEST_P(PrestoSerializerTest, unknown) {
     for (auto i = 0; i < serialized.size(); ++i) {
       auto byteStream = toByteStream(serialized[i]);
       serde_->deserialize(
-          &byteStream, pool_.get(), rowType, &result, offset, &paramOptions);
+          byteStream.get(),
+          pool_.get(),
+          rowType,
+          &result,
+          offset,
+          &paramOptions);
       offset = result->size();
     }
 
@@ -974,11 +999,16 @@ TEST_P(PrestoSerializerTest, multiPage) {
   for (int i = 0; i < testVectors.size(); i++) {
     RowVectorPtr& vec = testVectors[i];
     serde_->deserialize(
-        &byteStream, pool_.get(), rowType, &deserialized, 0, &paramOptions);
+        byteStream.get(),
+        pool_.get(),
+        rowType,
+        &deserialized,
+        0,
+        &paramOptions);
     if (i < testVectors.size() - 1) {
-      ASSERT_FALSE(byteStream.atEnd());
+      ASSERT_FALSE(byteStream->atEnd());
     } else {
-      ASSERT_TRUE(byteStream.atEnd());
+      ASSERT_TRUE(byteStream->atEnd());
     }
     assertEqualVectors(deserialized, vec);
     deserialized->validate({});
@@ -1434,7 +1464,7 @@ TEST_P(PrestoSerializerTest, checksum) {
   // This should fail because the checksums don't match.
   VELOX_ASSERT_THROW(
       serde_->deserialize(
-          &byteStream,
+          byteStream.get(),
           pool->addLeafChild("child").get(),
           ROW({BIGINT()}),
           &result,
@@ -1484,7 +1514,7 @@ TEST_F(PrestoSerializerTest, deserializeSingleColumn) {
     auto byteStream = toByteStream(input);
     VectorPtr deserialized;
     serde_->deserializeSingleColumn(
-        &byteStream, pool(), vector->type(), &deserialized, nullptr);
+        byteStream.get(), pool(), vector->type(), &deserialized, nullptr);
     assertEqualVectors(vector, deserialized);
   };
 
