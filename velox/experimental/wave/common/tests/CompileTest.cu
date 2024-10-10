@@ -15,21 +15,20 @@
  */
 
 #include <cuda.h>
+#include <cuda_runtime.h>
+
 #include <gtest/gtest.h>
-#include "velox/common/time/Timer.h"
 #include "velox/experimental/wave/common/Buffer.h"
 #include "velox/experimental/wave/common/Exception.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
+
 
 #include <iostream>
 
 namespace facebook::velox::wave {
 
-struct StreamImpl {
-  void* stream{};
-  void* cuStream{};
-};
 
   
 
@@ -45,7 +44,6 @@ void testCuCheck(CUresult result) {
 class CompileTest : public testing::Test {
  protected:
   void SetUp() override {
-    return;
     device_ = getDevice();
     setDevice(device_);
     allocator_ = getAllocator(device_);
@@ -85,6 +83,13 @@ const char* kernelText =
     "  }\n"
     "} // namespace\n";
 
+  void __global__ add3(KernelParams params) {
+    for (auto i = threadIdx.x; i < params.size; i += blockDim.x) {
+      params.array[i] += 3;
+    }
+  }
+
+  
 TEST_F(CompileTest, module) {
   KernelSpec spec = KernelSpec{kernelText, {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}, "/tmp/add1.cu"};
   auto module = CompiledModule::create(spec);
@@ -102,7 +107,21 @@ TEST_F(CompileTest, module) {
   module->launch(0, 1, 256, 0, stream.get(), &recordPtr);
   testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
   EXPECT_EQ(1, ptr[0]);
+  auto info = module->info(0);
+  EXPECT_EQ(1024, info.maxThreadsPerBlock);
+
+
+  // See if runtime API kernel works on driver API stream.
+  add3<<<1, 256, 0, (cudaStream_t)stream->stream()->cuStream>>>(record);
+  CUDA_CHECK(cudaGetLastError());
+  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
+  EXPECT_EQ(4, ptr[0]);
+
+
+  auto stream2 = std::make_unique<Stream>();
+  stream2->stream()->cuStream = stream
   
+
 }
 
 #if 0

@@ -52,21 +52,69 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
   exit(1);
 }
 
+  namespace {
+  std::mutex ctxMutex;
 bool  driverInited = false;
-CUdevice globalDevice;
-CUcontext globalContext;
+
+  // A context for each device. Each is initialized on first use and made the primary context for the device.
+std::vector<CUcontext> deviceContexts;
+  // Device structs to 1:1 to contexts.
+  std::vector<std::unique_ptr<Device>> devices;
+  }
   
-  void getDeviceAndContext(CUdevice& device, CUcontext& context) {
+  void setDriverDevice(int32_t deviceId) {
     if (!driverInited) {
+      std::lock_guard<std::mutex> l(ctxMutex);
       CU_CHECK(cuInit(0));
-            CU_CHECK(cuDeviceGet(&globalDevice, 0));	   
-	    CU_CHECK(      cuDevicePrimaryCtxRetain(&globalContext, globalDevice));
+      int32_t cnt;
+      CU_CHECK(cuDeviceGetCount(&cnt));
+      contexts.resize(cnt);
+      devices.resize(cnt);
+      if (cnt == 0) {
+	waveError("No Cuda devices found");
+      }
     }
-    cuCtxPushCurrent(globalContext);
-    context = globalContext;
-    device = globalDevice;
+    if (deviceId >= contexts.size()) {
+      waveError(std::string("Bad device id ") + deviceId);
+    }
+    if (contexts[deviceId] != nullptr) {
+      cuCtxSetCurrent(contexts[deviceId]);
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> l(ctxMutex);
+      CUdevice dev;
+      CU_CHECK(cuDeviceGet(&dev, deviceId));	   
+      CU_CHECK(      cuDevicePrimaryCtxRetain(&contexts[deviceId], dev));
+    }
+    CU_CHECK(cuCtxSetCurrent(contexts[deviceId]));
   }
 
+
+  Device* currentDevice() {
+    CUdevice dev;
+    CU_CHECK(cuCtxGetCurrent(&dev));
+    if (!dev) {
+      return nullptr;
+    }
+    for (auto i = 0; i < contexts 
+  }
+
+Device* getDevice(int32_t deviceId/) {
+  Device* save = nullptr;
+  if (driverInited) {
+    save = currentDevice();
+  }
+    
+  auto* dev = driverSetDevice(deviceId);
+}
+
+void setDevice(Device* device) {
+  driverSetDevice(device->id);
+  CUDA_CHECK(cudaSetDevice(device->deviceId));
+}
+
+    
 namespace {
 class CudaManagedAllocator : public GpuAllocator {
  public:
@@ -130,15 +178,6 @@ GpuAllocator* getHostAllocator(Device* /*device*/) {
   return allocator;
 }
 
-// Always returns device 0.
-Device* getDevice(int32_t /*preferredDevice*/) {
-  static Device device(0);
-  return &device;
-}
-
-void setDevice(Device* device) {
-  CUDA_CHECK(cudaSetDevice(device->deviceId));
-}
 
 
   Stream::Stream(std::unique_ptr<StreamImpl> impl)

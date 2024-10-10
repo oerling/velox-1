@@ -37,17 +37,18 @@ namespace facebook::velox::wave {
   class CompiledModuleImpl  : public CompiledModule {
   public:
     CompiledModuleImpl(CUmodule module, std::vector<CUfunction> kernels)
-      : module(module), kernels(std::move(kernels)) {}
+      : module_(module), kernels_(std::move(kernels)) {}
     
     ~CompiledModuleImpl() {
-      cuModuleUnload(module);
+      cuModuleUnload(module_);
     }
 
     void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) override;
+    KernelInfo info(int32_t kernelIdx) override;
 
   private:
-    CUmodule module;
-    std::vector<CUfunction> kernels;
+    CUmodule module_;
+    std::vector<CUfunction> kernels_;
   };
   
   std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
@@ -95,9 +96,6 @@ namespace facebook::velox::wave {
  
     nvrtcDestroyProgram(&prog);
 
-    CUdevice device;
-    CUcontext context;
-    getDeviceAndContext(device, context);
     CUmodule module;
     CU_CHECK(cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0));
     std::vector<CUfunction> funcs;
@@ -109,7 +107,7 @@ namespace facebook::velox::wave {
 }
 
   void CompiledModuleImpl::launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) {
-    auto result = cuLaunchKernel(kernels[kernelIdx],
+    auto result = cuLaunchKernel(kernels_[kernelIdx],
             numBlocks, 1, 1,   // grid dim
             numThreads, 1, 1,    // block dim
 		  shared, (CUstream)stream->stream()->cuStream,             // shared mem and stream
@@ -117,5 +115,19 @@ namespace facebook::velox::wave {
             0);
     CU_CHECK(result);
   };
+
+  KernelInfo CompiledModuleImpl::info(int32_t kernelIdx) {
+    KernelInfo info;
+    auto f = kernels_[kernelIdx];
+    cuFuncGetAttribute(&info.numRegs, CU_FUNC_ATTRIBUTE_NUM_REGS, f);
+    cuFuncGetAttribute(&info.sharedMemory,CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, f);
+    cuFuncGetAttribute(&info.maxThreadsPerBlock, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK, f);
+    int32_t max;
+    cuOccupancyMaxActiveBlocksPerMultiprocessor(&max, f, 256, 0);
+  info.maxOccupancy0 = max;
+  cuOccupancyMaxActiveBlocksPerMultiprocessor(&max, f, 256, 256 * 32);
+  info.maxOccupancy32 = max;
+  return info;
+  }
 
 }

@@ -46,9 +46,16 @@ class FutureCompiledModule : public CompiledModule {
     module_->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
   }
 
+  KernelInfo info(int32_t kernelIdx) {
+    ensureReady();
+    return module_->info(kernelIdx);
+  }
+
+  
  private:
   void ensureReady() {
     std::lock_guard<std::mutex> l(mutex_);
+    // 'module_' is a shared_ptr, so read is not atomic. Read inside the mutex.
     if (module_) {
       return;
     }

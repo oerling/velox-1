@@ -29,15 +29,29 @@ struct Device {
   explicit Device(int32_t id) : deviceId(id) {}
 
   int32_t deviceId;
+
+  // Initialized driver API CUcontext for the device.
+  void*  context;
 };
 
+  /// Scoped guard for binding a Cuda device to the calling thread. The binding reverts to previous on exit. Does initializatoin on first use.
+  class WithDevice {
+  public:
+    WithDevice(int32_t deviceId);
+    ~WithDevice();
+  };
+  
 /// Checks that the machine has the right capability and returns a Device
 /// struct. If 'preferredId' is given tries to return  a Device on that device
 /// id.
 Device* getDevice(int32_t preferredId = -1);
-/// Binds subsequent Cuda operations of the calling thread to 'device'.
+
+  /// Binds subsequent Cuda operations of the calling thread to 'device'.
 void setDevice(Device* device);
 
+  /// Returns the device bound to te calling thread or nullptr if none.
+  Device* currentDevice();
+  
 struct StreamImpl;
 
 class Stream {
@@ -239,8 +253,8 @@ struct CompiledModule {
       Stream* stream,
       void** args) = 0;
 
-  std::vector<void*> entryPoints;
-  std::optional<std::string> error;
+  /// Returns resource utilization for 'kernelIdx'th entry point.
+virtual   KernelInfo info(int32_t kernelIdx) = 0;
 };
 
 using KernelGenFunc = std::function<KernelSpec()>;
