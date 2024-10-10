@@ -99,8 +99,10 @@ class KernelGenerator {
     auto holder = std::make_shared<PromiseHolder>();
 
     auto future = holder->promise.getFuture();
-    compilerExecutor()->add([genCopy = *gen, holder]() {
-      auto spec = genCopy();
+    auto* device = currentDevice();
+    compilerExecutor()->add([genCopy = *gen, holder, device]() {
+			      setDevice(device);
+			      auto spec = genCopy();
       auto module = CompiledModule::create(spec);
       holder->promise.setValue(module);
     });
