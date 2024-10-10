@@ -19,20 +19,15 @@
 
 #include <gtest/gtest.h>
 #include "velox/experimental/wave/common/Buffer.h"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/common/CudaUtil.cuh"
-
 
 #include <iostream>
 
 namespace facebook::velox::wave {
 
-
-  
-
-  
 void testCuCheck(CUresult result) {
   if (result != CUDA_SUCCESS) {
     const char* str;
@@ -83,15 +78,17 @@ const char* kernelText =
     "  }\n"
     "} // namespace\n";
 
-  void __global__ add3(KernelParams params) {
-    for (auto i = threadIdx.x; i < params.size; i += blockDim.x) {
-      params.array[i] += 3;
-    }
+void __global__ add3(KernelParams params) {
+  for (auto i = threadIdx.x; i < params.size; i += blockDim.x) {
+    params.array[i] += 3;
   }
+}
 
-  
 TEST_F(CompileTest, module) {
-  KernelSpec spec = KernelSpec{kernelText, {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}, "/tmp/add1.cu"};
+  KernelSpec spec = KernelSpec{
+      kernelText,
+      {"facebook::velox::wave::add1", "facebook::velox::wave::add2"},
+      "/tmp/add1.cu"};
   auto module = CompiledModule::create(spec);
   int32_t* ptr;
   testCuCheck(cuMemAllocManaged(
@@ -110,25 +107,25 @@ TEST_F(CompileTest, module) {
   auto info = module->info(0);
   EXPECT_EQ(1024, info.maxThreadsPerBlock);
 
-
   // See if runtime API kernel works on driver API stream.
   add3<<<1, 256, 0, (cudaStream_t)stream->stream()->stream>>>(record);
   CUDA_CHECK(cudaGetLastError());
   testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->stream));
   EXPECT_EQ(4, ptr[0]);
 
-
   auto stream2 = std::make_unique<Stream>();
   module->launch(1, 1, 256, 0, stream2.get(), &recordPtr);
   stream2->wait();
-    EXPECT_EQ(6, ptr[0]);
+  EXPECT_EQ(6, ptr[0]);
 }
-  
-    TEST_F(CompileTest, cache) {
-  KernelSpec spec = KernelSpec{kernelText, {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}, "/tmp/add1.cu"};
-  auto kernel = CompiledKernel::getKernel("add1", [&]() -> KernelSpec {
-				 return spec;
-			       });
+
+TEST_F(CompileTest, cache) {
+  KernelSpec spec = KernelSpec{
+      kernelText,
+      {"facebook::velox::wave::add1", "facebook::velox::wave::add2"},
+      "/tmp/add1.cu"};
+  auto kernel =
+      CompiledKernel::getKernel("add1", [&]() -> KernelSpec { return spec; });
   auto buffer = arena_->allocate<int32_t>(1000);
   memset(buffer->as<int32_t>(), 0, sizeof(int32_t) * 1000);
   KernelParams record{buffer->as<int32_t>(), 1000};
@@ -137,6 +134,6 @@ TEST_F(CompileTest, module) {
   kernel->launch(1, 1, 256, 0, stream.get(), &recordPtr);
   stream->wait();
   EXPECT_EQ(2, buffer->as<int32_t>()[0]);
-    }
+}
 
 } // namespace facebook::velox::wave
