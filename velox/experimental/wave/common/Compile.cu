@@ -77,9 +77,12 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
       fmt::format("--gpu-architecture={}", FLAGS_wavegen_architecture);
   const char* opts[] = {
       architecture.c_str(),
-      "-G",
-      "-I/usr/local/cuda-12.1/targets/x86_64-linux/include/cuda/std/detail/libcxx/include",
-      "-I/usr/local/cuda-12.1/targets/x86_64-linux/include"};
+#ifndef NDEBUG
+      "-G"
+      #else
+      "-O3"
+#endif
+  };
   auto compileResult = nvrtcCompileProgram(
       prog, // prog
       sizeof(opts) / sizeof(char*), // numOptions
