@@ -80,7 +80,8 @@ class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
   std::exception_ptr error_;
   bool tasksCreated_{false};
 };
-class LocalSplitSource : public SplitSource {
+
+  class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const verax::LocalTable* table, int32_t splitsPerFile)
       : table_(table), splitsPerFile_(splitsPerFile) {}
