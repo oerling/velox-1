@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <cstdint>
 
 /// Utilities header to include in Cuda code for Velox Wave. Do not combine with
@@ -28,12 +28,11 @@ void cudaCheck(cudaError_t err, const char* file, int line);
 
 void cudaCheckFatal(cudaError_t err, const char* file, int line);
 
-  void cuCheck(CUresult result, const char* file, int32_t line);
+void cuCheck(CUresult result, const char* file, int32_t line);
 
 #define CUDA_CHECK(e) ::facebook::velox::wave::cudaCheck(e, __FILE__, __LINE__)
 
 #define CU_CHECK(e) ::facebook::velox::wave::cuCheck(e, __FILE__, __LINE__)
-
 
 #ifndef CUDA_CHECK_FATAL
 #define CUDA_CHECK_FATAL(e) \
