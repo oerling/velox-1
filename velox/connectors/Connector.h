@@ -48,7 +48,7 @@ class DataSource;
 
 /// A split represents a chunk of data that a connector should load and return
 /// as a RowVectorPtr, potentially after processing pushdowns.
-struct ConnectorSplit {
+struct ConnectorSplit : public ISerializable {
   const std::string connectorId;
   const int64_t splitWeight{0};
 
@@ -58,6 +58,11 @@ struct ConnectorSplit {
       const std::string& _connectorId,
       int64_t _splitWeight = 0)
       : connectorId(_connectorId), splitWeight(_splitWeight) {}
+
+  folly::dynamic serialize() const override {
+    VELOX_UNSUPPORTED();
+    return nullptr;
+  }
 
   virtual ~ConnectorSplit() {}
 
@@ -269,6 +274,7 @@ class ConnectorQueryCtx {
       const std::string& planNodeId,
       int driverId,
       const std::string& sessionTimezone,
+      bool adjustTimestampToTimezone = false,
       folly::CancellationToken cancellationToken = {})
       : operatorPool_(operatorPool),
         connectorPool_(connectorPool),
@@ -283,6 +289,7 @@ class ConnectorQueryCtx {
         driverId_(driverId),
         planNodeId_(planNodeId),
         sessionTimezone_(sessionTimezone),
+        adjustTimestampToTimezone_(adjustTimestampToTimezone),
         cancellationToken_(std::move(cancellationToken)) {
     VELOX_CHECK_NOT_NULL(sessionProperties);
   }
@@ -351,6 +358,13 @@ class ConnectorQueryCtx {
     return sessionTimezone_;
   }
 
+  /// Whether to adjust Timestamp to the timeZone obtained through
+  /// sessionTimezone(). This is used to be compatible with the
+  /// old logic of Presto.
+  bool adjustTimestampToTimezone() const {
+    return adjustTimestampToTimezone_;
+  }
+
   /// Returns the cancellation token associated with this task.
   const folly::CancellationToken& cancellationToken() const {
     return cancellationToken_;
@@ -378,6 +392,7 @@ class ConnectorQueryCtx {
   const int driverId_;
   const std::string planNodeId_;
   const std::string sessionTimezone_;
+  const bool adjustTimestampToTimezone_;
   const folly::CancellationToken cancellationToken_;
   bool selectiveNimbleReaderEnabled_{false};
 };

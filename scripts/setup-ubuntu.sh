@@ -54,7 +54,7 @@ function install_clang15 {
   ${SUDO} apt install ${CLANG_PACKAGE_LIST} -y
 }
 
-FB_OS_VERSION="v2024.05.20.00"
+FB_OS_VERSION="v2024.07.01.00"
 FMT_VERSION="10.1.1"
 BOOST_VERSION="boost-1.84.0"
 ARROW_VERSION="15.0.0"
@@ -132,6 +132,17 @@ function install_boost {
       ./bootstrap.sh --prefix=${INSTALL_PREFIX}
       ${SUDO} ./b2 "-j$(nproc)" -d0 install threading=multi --without-python
     fi
+  )
+}
+
+function install_protobuf {
+  wget_and_untar https://github.com/protocolbuffers/protobuf/releases/download/v21.8/protobuf-all-21.8.tar.gz protobuf
+  (
+    cd ${DEPENDENCY_DIR}/protobuf
+    ./configure CXXFLAGS="-fPIC" --prefix=${INSTALL_PREFIX}
+    make "-j${NPROC}"
+    make install
+    ldconfig
   )
 }
 
@@ -214,7 +225,8 @@ function install_arrow {
     -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
     -DCMAKE_BUILD_TYPE=Release \
     -DARROW_BUILD_STATIC=ON \
-    -DThrift_SOURCE=BUNDLED
+    -DThrift_SOURCE=BUNDLED \
+    -DBOOST_ROOT=${INSTALL_PREFIX}
 
   (
     # Install thrift.
@@ -237,6 +249,7 @@ function install_cuda {
 function install_velox_deps {
   run_and_time install_velox_deps_from_apt
   run_and_time install_fmt
+  run_and_time install_protobuf
   run_and_time install_boost
   run_and_time install_folly
   run_and_time install_fizz

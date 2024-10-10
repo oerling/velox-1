@@ -154,6 +154,7 @@ PrestoQueryRunner::PrestoQueryRunner(
       timeout_(timeout) {
   eventBaseThread_.start("PrestoQueryRunner");
   pool_ = aggregatePool()->addLeafChild("leaf");
+  queryRunnerContext_ = std::make_shared<QueryRunnerContext>();
 }
 
 std::optional<std::string> PrestoQueryRunner::toSql(
@@ -272,6 +273,29 @@ const std::vector<TypePtr>& PrestoQueryRunner::supportedScalarTypes() const {
   return kScalarTypes;
 }
 
+const std::unordered_map<std::string, DataSpec>&
+PrestoQueryRunner::aggregationFunctionDataSpecs() const {
+  // For some functions, velox supports NaN, Infinity better than presto query
+  // runner, which makes the comparison impossible.
+  // Add data constraint in vector fuzzer to enforce to not generate such data
+  // for those functions before they are fixed in presto query runner
+  static const std::unordered_map<std::string, DataSpec>
+      kAggregationFunctionDataSpecs{
+          {"regr_avgx", DataSpec{false, false}},
+          {"regr_avgy", DataSpec{false, false}},
+          {"regr_r2", DataSpec{false, false}},
+          {"regr_sxx", DataSpec{false, false}},
+          {"regr_syy", DataSpec{false, false}},
+          {"regr_sxy", DataSpec{false, false}},
+          {"regr_slope", DataSpec{false, false}},
+          {"regr_replacement", DataSpec{false, false}},
+          {"covar_pop", DataSpec{true, false}},
+          {"covar_samp", DataSpec{true, false}},
+      };
+
+  return kAggregationFunctionDataSpecs;
+}
+
 std::optional<std::string> PrestoQueryRunner::toSql(
     const std::shared_ptr<const core::AggregationNode>& aggregationNode) {
   // Assume plan is Aggregation over Values.
@@ -352,56 +376,6 @@ std::optional<std::string> PrestoQueryRunner::toSql(
   return sql.str();
 }
 
-namespace {
-
-void appendWindowFrame(
-    const core::WindowNode::Frame& frame,
-    std::stringstream& sql) {
-  // TODO: Add support for k Range Frames by retrieving the original range bound
-  // from WindowNode.
-  switch (frame.type) {
-    case core::WindowNode::WindowType::kRange:
-      sql << " RANGE";
-      break;
-    case core::WindowNode::WindowType::kRows:
-      sql << " ROWS";
-      break;
-    default:
-      VELOX_UNREACHABLE();
-  }
-  sql << " BETWEEN";
-
-  auto appendBound = [&sql](
-                         const core::WindowNode::BoundType& bound,
-                         const core::TypedExprPtr& value) {
-    switch (bound) {
-      case core::WindowNode::BoundType::kUnboundedPreceding:
-        sql << " UNBOUNDED PRECEDING";
-        break;
-      case core::WindowNode::BoundType::kUnboundedFollowing:
-        sql << " UNBOUNDED FOLLOWING";
-        break;
-      case core::WindowNode::BoundType::kCurrentRow:
-        sql << " CURRENT ROW";
-        break;
-      case core::WindowNode::BoundType::kPreceding:
-        sql << " " << value->toString() << " PRECEDING";
-        break;
-      case core::WindowNode::BoundType::kFollowing:
-        sql << " " << value->toString() << " FOLLOWING";
-        break;
-      default:
-        VELOX_UNREACHABLE();
-    }
-  };
-
-  appendBound(frame.startType, frame.startValue);
-  sql << " AND";
-  appendBound(frame.endType, frame.endValue);
-}
-
-} // namespace
-
 std::optional<std::string> PrestoQueryRunner::toSql(
     const std::shared_ptr<const core::WindowNode>& windowNode) {
   if (!isSupportedDwrfType(windowNode->sources()[0]->outputType())) {
@@ -446,7 +420,7 @@ std::optional<std::string> PrestoQueryRunner::toSql(
       }
     }
 
-    appendWindowFrame(functions[i].frame, sql);
+    sql << " " << queryRunnerContext_->windowFrames_.at(windowNode->id()).at(i);
     sql << ")";
   }
 

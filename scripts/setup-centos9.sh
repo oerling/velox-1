@@ -39,7 +39,7 @@ USE_CLANG="${USE_CLANG:-false}"
 export INSTALL_PREFIX=${INSTALL_PREFIX:-"/usr/local"}
 DEPENDENCY_DIR=${DEPENDENCY_DIR:-$(pwd)/deps-download}
 
-FB_OS_VERSION="v2024.05.20.00"
+FB_OS_VERSION="v2024.07.01.00"
 FMT_VERSION="10.1.1"
 BOOST_VERSION="boost-1.84.0"
 ARROW_VERSION="15.0.0"
@@ -138,7 +138,7 @@ function install_protobuf {
   wget_and_untar https://github.com/protocolbuffers/protobuf/releases/download/v21.8/protobuf-all-21.8.tar.gz protobuf
   (
     cd ${DEPENDENCY_DIR}/protobuf
-    ./configure --prefix=${INSTALL_PREFIX}
+    ./configure CXXFLAGS="-fPIC" --prefix=${INSTALL_PREFIX}
     make "-j${NPROC}"
     make install
     ldconfig
@@ -206,7 +206,8 @@ function install_arrow {
     -DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX} \
     -DCMAKE_BUILD_TYPE=Release \
     -DARROW_BUILD_STATIC=ON \
-    -DThrift_SOURCE=BUNDLED
+    -DThrift_SOURCE=BUNDLED \
+    -DBOOST_ROOT=${INSTALL_PREFIX}
 
   (
     # Install thrift.

@@ -31,6 +31,11 @@ T extractSingleValue(const std::vector<RowVectorPtr>& data) {
   return simpleVector->valueAt(0);
 }
 
+class QueryRunnerContext {
+ public:
+  std::unordered_map<core::PlanNodeId, std::vector<std::string>> windowFrames_;
+};
+
 class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
  public:
   /// @param coordinatorUri Presto REST API endpoint, e.g. http://127.0.0.1:8080
@@ -47,6 +52,9 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   }
 
   const std::vector<TypePtr>& supportedScalarTypes() const override;
+
+  const std::unordered_map<std::string, DataSpec>&
+  aggregationFunctionDataSpecs() const override;
 
   /// Converts Velox query plan to Presto SQL. Supports Values -> Aggregation or
   /// Window with an optional Project on top.
@@ -99,6 +107,10 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
       const std::vector<RowVectorPtr>& buildInput,
       const RowTypePtr& resultType) override;
 
+  std::shared_ptr<QueryRunnerContext> queryRunnerContext() {
+    return queryRunnerContext_;
+  }
+
  private:
   memory::MemoryPool* pool() {
     return pool_.get();
@@ -141,6 +153,7 @@ class PrestoQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   const std::chrono::milliseconds timeout_;
   folly::EventBaseThread eventBaseThread_{false};
   std::shared_ptr<memory::MemoryPool> pool_;
+  std::shared_ptr<QueryRunnerContext> queryRunnerContext_;
 };
 
 } // namespace facebook::velox::exec::test
