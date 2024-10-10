@@ -22,6 +22,7 @@
 #include "velox/experimental/wave/common/Exception.h"
 
 #include <sstream>
+#include <mutex>
 
 namespace facebook::velox::wave {
 
@@ -57,12 +58,12 @@ void cudaCheckFatal(cudaError_t err, const char* file, int line) {
 bool  driverInited = false;
 
   // A context for each device. Each is initialized on first use and made the primary context for the device.
-std::vector<CUcontext> deviceContexts;
+std::vector<CUcontext> contexts;
   // Device structs to 1:1 to contexts.
   std::vector<std::unique_ptr<Device>> devices;
-  }
+
   
-  void setDriverDevice(int32_t deviceId) {
+  Device* setDriverDevice(int32_t deviceId) {
     if (!driverInited) {
       std::lock_guard<std::mutex> l(ctxMutex);
       CU_CHECK(cuInit(0));
@@ -75,42 +76,65 @@ std::vector<CUcontext> deviceContexts;
       }
     }
     if (deviceId >= contexts.size()) {
-      waveError(std::string("Bad device id ") + deviceId);
+      waveError(fmt::format("Bad device id {}", deviceId));
     }
     if (contexts[deviceId] != nullptr) {
       cuCtxSetCurrent(contexts[deviceId]);
-      return;
+      return devices[deviceId].get();
     }
     {
       std::lock_guard<std::mutex> l(ctxMutex);
       CUdevice dev;
       CU_CHECK(cuDeviceGet(&dev, deviceId));	   
       CU_CHECK(      cuDevicePrimaryCtxRetain(&contexts[deviceId], dev));
+      devices[deviceId] = std::make_unique<Device>(deviceId);
+      cudaDeviceProp prop;
+      CUDA_CHECK(cudaGetDeviceProperties(&prop, deviceId));
+      auto& device = devices[deviceId];
+      device->model = prop.name;
+      device->major = prop.major;
+      device->minor = prop.minor;
+      device->globalMB = prop.totalGlobalMem >> 20;
+      device->numSM = prop.multiProcessorCount; 
+      device->sharedMemPerSM = prop.sharedMemPerMultiprocessor ;
+      device->L2Size = prop.l2CacheSize;
+	device->persistingL2MaxSize = prop.persistingL2CacheMaxSize;
     }
     CU_CHECK(cuCtxSetCurrent(contexts[deviceId]));
+    return devices[deviceId].get();
   }
 
-
+  }
+    
   Device* currentDevice() {
-    CUdevice dev;
-    CU_CHECK(cuCtxGetCurrent(&dev));
-    if (!dev) {
+    CUcontext ctx;
+    CU_CHECK(cuCtxGetCurrent(&ctx));
+    if (!ctx) {
       return nullptr;
     }
-    for (auto i = 0; i < contexts 
+    for (auto i = 0; i < contexts.size(); ++i) {
+      if (contexts[i] == ctx) {
+	return devices[i].get();
+      }
+    }
+    waveError("Device context not found. Inconsistent state.");
+    return nullptr;
   }
 
-Device* getDevice(int32_t deviceId/) {
+Device* getDevice(int32_t deviceId) {
   Device* save = nullptr;
   if (driverInited) {
     save = currentDevice();
   }
-    
-  auto* dev = driverSetDevice(deviceId);
+  auto* dev = setDriverDevice(deviceId);
+  if (save) {
+    setDevice(save);
+  }
+  return dev;
 }
 
 void setDevice(Device* device) {
-  driverSetDevice(device->id);
+  setDriverDevice(device->deviceId);
   CUDA_CHECK(cudaSetDevice(device->deviceId));
 }
 
@@ -192,9 +216,6 @@ Stream::Stream() {
 Stream::~Stream() {
   if (stream_->stream) {
     cudaStreamDestroy(stream_->stream);
-  }
-  if (stream_->cuStream) {
-    cuStreamDestroy((CUstream)stream_->cuStream);
   }
 }
 

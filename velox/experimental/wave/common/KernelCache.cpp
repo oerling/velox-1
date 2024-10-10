@@ -88,24 +88,6 @@ class AsyncCompiledKernel : public CompiledKernel {
   KernelPtr ptr_;
 };
 
-class DebugCompiledKernel : public CompiledKernel {
- public:
-  DebugCompiledKernel(CompiledModule* module) : module_(module) {}
-
-  void launch(
-      int32_t kernelIdx,
-      int32_t numBlocks,
-      int32_t numThreads,
-      int32_t shared,
-      Stream* stream,
-      void** args) override {
-    module_->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
-  }
-
- private:
-  CompiledModule* const module_;
-};
-
 class KernelGenerator {
  public:
   std::unique_ptr<ModulePtr> operator()(
@@ -144,22 +126,14 @@ KernelCache& kernelCache() {
   return *cache;
 }
 
-std::unordered_map<std::string, std::unique_ptr<CompiledModule>> debugKernels;
 
 //  static
-std::unique_ptr<CompiledKernel> getKernel(
+  std::unique_ptr<CompiledKernel> CompiledKernel::getKernel(
     const std::string& key,
-    const KernelGenFunc* gen) {
-  if (!debugKernels.empty()) {
-    auto it = debugKernels.find(key);
-    if (it != debugKernels.end()) {
-      return std::make_unique<DebugCompiledKernel>(it->second.get());
-    }
-  }
-  auto ptr = kernelCache().generate(key, gen);
+    KernelGenFunc gen) {
+  auto ptr = kernelCache().generate(key, &gen);
   return std::make_unique<AsyncCompiledKernel>(std::move(ptr));
 }
 
-void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints) {}
 
 } // namespace facebook::velox::wave

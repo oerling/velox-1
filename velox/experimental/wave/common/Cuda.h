@@ -28,23 +28,24 @@ namespace facebook::velox::wave {
 struct Device {
   explicit Device(int32_t id) : deviceId(id) {}
 
+  std::string toString() const;
+  
   int32_t deviceId;
 
-  // Initialized driver API CUcontext for the device.
-  void*  context;
+  /// Excerpt from device properties.
+  std::string  model;
+  int32_t major;
+  int32_t minor;
+  int32_t globalMB;
+  int32_t numSM;
+  int32_t sharedMemPerSM;
+  int32_t L2Size;
+  int32_t persistingL2MaxSize;
 };
 
-  /// Scoped guard for binding a Cuda device to the calling thread. The binding reverts to previous on exit. Does initializatoin on first use.
-  class WithDevice {
-  public:
-    WithDevice(int32_t deviceId);
-    ~WithDevice();
-  };
   
-/// Checks that the machine has the right capability and returns a Device
-/// struct. If 'preferredId' is given tries to return  a Device on that device
-/// id.
-Device* getDevice(int32_t preferredId = -1);
+/// Checks that the machine has the right capability and returns the device for 'id'
+Device* getDevice(int32_t id = 0);
 
   /// Binds subsequent Cuda operations of the calling thread to 'device'.
 void setDevice(Device* device);
@@ -236,6 +237,9 @@ struct KernelSpec {
   std::string code;
   std::vector<std::string> entryPoints;
   std::string filePath;
+  int32_t numHeaders{0};
+  const char** headers;
+  const char** headerNames{nullptr};
 };
 
 /// Represents the result of compilation. Wrapped accessed through
@@ -265,7 +269,14 @@ using KernelGenFunc = std::function<KernelSpec()>;
 /// pending compilation completes.
 class CompiledKernel {
  public:
-  virtual ~CompiledKernel();
+  virtual ~CompiledKernel() = default;
+
+  /// Returns the compiled kernel for 'key'. Starts background compilation if
+/// 'key's kernel is not compiled. Returns lightweight reference to state owned by
+/// compiled kernel cache.
+static   std::unique_ptr<CompiledKernel> getKernel(
+					    const std::string& key,
+					    KernelGenFunc func);
 
   virtual void launch(
       int32_t idx,
@@ -276,19 +287,6 @@ class CompiledKernel {
       void** args) = 0;
 };
 
-/// Key for accessing compiled kernel cache.
-/// Returns the compiled kernel for 'key'. Starts background compilation if
-/// 'key's kernel is not compiled. Lightweight reference to state owned by
-/// compiled kernel cache.
-std::unique_ptr<CompiledKernel> getKernel(
-    const std::string& key,
-    KernelGenFunc func);
-
-/// Registers a set of kernel entry points from the executable as a
-/// compiled module. Used for debugging generated code, where the
-/// generated code has been build as part of the exe with manual
-/// changes and debug info.
-void registerPrebuiltKernel(std::string key, std::vector<void*> entryPoints);
 
 KernelInfo getRegisteredKernelInfo(const char* name);
 

@@ -20,11 +20,10 @@
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
 #include <nvrtc.h>
-
+#include <fmt/format.h>
 #include <gflags/gflags.h>
 
-
-DEFINE_string(wavegen_include_path, "", "path to velox/experimental/wave. Mustt contain the cuh headers for runtime compilation");
+DEFINE_string(wavegen_architecture, "compute_80", "--gpu-architecture flag for generated code");
 
 namespace facebook::velox::wave {
 
@@ -40,10 +39,14 @@ namespace facebook::velox::wave {
       : module_(module), kernels_(std::move(kernels)) {}
     
     ~CompiledModuleImpl() {
-      cuModuleUnload(module_);
+      auto result = cuModuleUnload(module_);
+      if (result != CUDA_SUCCESS) {
+	LOG(ERROR) << "Error in unloading module " << result;
+      }
     }
 
     void launch(int32_t kernelIdx, int32_t numBlocks, int32_t numThreads, int32_t shared, Stream* stream, void** args) override;
+
     KernelInfo info(int32_t kernelIdx) override;
 
   private:
@@ -56,18 +59,19 @@ namespace facebook::velox::wave {
     nvrtcCreateProgram(&prog,
 		       spec.code.c_str(),         // buffer
 		       spec.filePath.c_str(),    // name
-        0,             // numHeaders
-        NULL,          // headers
-		       NULL);         // includeNames
+        spec.numHeaders,             // numHeaders
+		       spec.headers,          // headers
+		       spec.headerNames);         // includeNames
     for (auto& name : spec.entryPoints) {
       nvrtcCheck(nvrtcAddNameExpression(prog, name.c_str()));
     }
-    const char *opts[] = {"--gpu-architecture=compute_80",
+    auto architecture = fmt::format("--gpu-architecture={}", FLAGS_wavegen_architecture);
+    const char *opts[] = {architecture.c_str(),
 			  "-G",
 			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include/cuda/std/detail/libcxx/include",
 			  "-I/usr/local/cuda-12.1/targets/x86_64-linux/include"};
     auto compileResult = nvrtcCompileProgram(prog,     // prog
-					     4,        // numOptions
+					     sizeof(opts) / sizeof(char*),        // numOptions
 			opts);    // options
     
 
@@ -79,6 +83,7 @@ namespace facebook::velox::wave {
     nvrtcGetProgramLog(prog, log.data());
 
     if (compileResult != NVRTC_SUCCESS) {
+      nvrtcDestroyProgram(&prog);
       waveError(std::string("Cuda compilation error: ") + log);
     }
     // Obtain PTX from the program.
@@ -110,8 +115,9 @@ namespace facebook::velox::wave {
     auto result = cuLaunchKernel(kernels_[kernelIdx],
             numBlocks, 1, 1,   // grid dim
             numThreads, 1, 1,    // block dim
-		  shared, (CUstream)stream->stream()->cuStream,             // shared mem and stream
-            args,                // arguments
+				 shared,
+				 reinterpret_cast<CUstream>(stream->stream()->stream),
+            args,
             0);
     CU_CHECK(result);
   };

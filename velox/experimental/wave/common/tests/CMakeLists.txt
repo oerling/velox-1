@@ -36,5 +36,4 @@ target_link_libraries(
   gflags::gflags
   glog::glog
   Folly::folly
-  /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so
-  /usr/lib/x86_64-linux-gnu/libcuda.so)
+  CUDA::nvrtc)

@@ -101,7 +101,6 @@ inline uint32_t __device__ deviceScale32(uint32_t n, uint32_t scale) {
 
 struct StreamImpl {
   cudaStream_t stream{};
-  void* cuStream{};
 };
 
 bool registerKernel(const char* name, const void* func);

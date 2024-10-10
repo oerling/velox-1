@@ -102,36 +102,41 @@ TEST_F(CompileTest, module) {
   memset(ptr, 0, 1000 * sizeof(int32_t));
   void* recordPtr = &record;
   auto impl = std::make_unique<StreamImpl>();
-  testCuCheck(cuStreamCreate((CUstream*)&impl->cuStream, CU_STREAM_DEFAULT));
+  testCuCheck(cuStreamCreate((CUstream*)&impl->stream, CU_STREAM_DEFAULT));
   auto stream = std::make_unique<Stream>(std::move(impl));
   module->launch(0, 1, 256, 0, stream.get(), &recordPtr);
-  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
+  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->stream));
   EXPECT_EQ(1, ptr[0]);
   auto info = module->info(0);
   EXPECT_EQ(1024, info.maxThreadsPerBlock);
 
 
   // See if runtime API kernel works on driver API stream.
-  add3<<<1, 256, 0, (cudaStream_t)stream->stream()->cuStream>>>(record);
+  add3<<<1, 256, 0, (cudaStream_t)stream->stream()->stream>>>(record);
   CUDA_CHECK(cudaGetLastError());
-  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->cuStream));
+  testCuCheck(cuStreamSynchronize((CUstream)stream->stream()->stream));
   EXPECT_EQ(4, ptr[0]);
 
 
   auto stream2 = std::make_unique<Stream>();
-  stream2->stream()->cuStream = stream
-  
-
+  module->launch(1, 1, 256, 0, stream2.get(), &recordPtr);
+  stream2->wait();
+    EXPECT_EQ(6, ptr[0]);
 }
-
-#if 0
-    TEST_F(CompileTest, basic) {
-      kernelKey key{"pfaal", []() -> KernelSpec {
-	return KernelSpec{kernelText,
-			  {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}};
-      }};
-      
-
+  
+    TEST_F(CompileTest, cache) {
+  KernelSpec spec = KernelSpec{kernelText, {"facebook::velox::wave::add1", "facebook::velox::wave::add2"}, "/tmp/add1.cu"};
+  auto kernel = CompiledKernel::getKernel("add1", [&]() -> KernelSpec {
+				 return spec;
+			       });
+  auto buffer = arena_->allocate<int32_t>(1000);
+  memset(buffer->as<int32_t>(), 0, sizeof(int32_t) * 1000);
+  KernelParams record{buffer->as<int32_t>(), 1000};
+  void* recordPtr = &record;
+  auto stream = std::make_unique<Stream>();
+  kernel->launch(1, 1, 256, 0, stream.get(), &recordPtr);
+  stream->wait();
+  EXPECT_EQ(2, buffer->as<int32_t>()[0]);
     }
-#endif
+
 } // namespace facebook::velox::wave
