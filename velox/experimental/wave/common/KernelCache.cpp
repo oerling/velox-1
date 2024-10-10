@@ -101,8 +101,8 @@ class KernelGenerator {
     auto future = holder->promise.getFuture();
     auto* device = currentDevice();
     compilerExecutor()->add([genCopy = *gen, holder, device]() {
-			      setDevice(device);
-			      auto spec = genCopy();
+      setDevice(device);
+      auto spec = genCopy();
       auto module = CompiledModule::create(spec);
       holder->promise.setValue(module);
     });
