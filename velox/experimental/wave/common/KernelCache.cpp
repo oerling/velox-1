@@ -30,9 +30,10 @@ static folly::CPUThreadPoolExecutor* compilerExecutor() {
   return pool.get();
 }
 
+namespace {
 class FutureCompiledModule : public CompiledModule {
  public:
-  FutureCompiledModule(folly::Future<ModulePtr> future)
+  explicit FutureCompiledModule(folly::Future<ModulePtr> future)
       : future_(std::move(future)) {}
 
   void launch(
@@ -41,12 +42,12 @@ class FutureCompiledModule : public CompiledModule {
       int32_t numThreads,
       int32_t shared,
       Stream* stream,
-      void** args) {
+      void** args) override {
     ensureReady();
     module_->launch(kernelIdx, numBlocks, numThreads, shared, stream, args);
   }
 
-  KernelInfo info(int32_t kernelIdx) {
+  KernelInfo info(int32_t kernelIdx) override {
     ensureReady();
     return module_->info(kernelIdx);
   }
@@ -71,7 +72,7 @@ using KernelPtr = CachedPtr<std::string, ModulePtr>;
 
 class AsyncCompiledKernel : public CompiledKernel {
  public:
-  AsyncCompiledKernel(KernelPtr ptr) : ptr_(std::move(ptr)) {}
+  explicit AsyncCompiledKernel(KernelPtr ptr) : ptr_(std::move(ptr)) {}
 
   void launch(
       int32_t kernelIdx,
@@ -126,6 +127,7 @@ KernelCache& kernelCache() {
   static std::unique_ptr<KernelCache> cache = makeCache();
   return *cache;
 }
+} // namespace
 
 //  static
 std::unique_ptr<CompiledKernel> CompiledKernel::getKernel(

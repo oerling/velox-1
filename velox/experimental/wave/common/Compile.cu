@@ -28,6 +28,7 @@ DEFINE_string(
 
 namespace facebook::velox::wave {
 
+namespace {
 void nvrtcCheck(nvrtcResult result) {
   if (result != NVRTC_SUCCESS) {
     waveError(nvrtcGetErrorString(result));
@@ -60,6 +61,7 @@ class CompiledModuleImpl : public CompiledModule {
   CUmodule module_;
   std::vector<CUfunction> kernels_;
 };
+} // namespace
 
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   nvrtcProgram prog;
