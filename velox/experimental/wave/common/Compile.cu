@@ -23,7 +23,7 @@
 
 DEFINE_string(
     wavegen_architecture,
-    "compute_80",
+    "compute_70",
     "--gpu-architecture flag for generated code");
 
 namespace facebook::velox::wave {
@@ -76,11 +76,13 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   auto architecture =
       fmt::format("--gpu-architecture={}", FLAGS_wavegen_architecture);
   const char* opts[] = {
-      architecture.c_str(),
+      architecture.c_str() //,
+#if 0
 #ifndef NDEBUG
       "-G"
-      #else
+#else
       "-O3"
+#endif
 #endif
   };
   auto compileResult = nvrtcCompileProgram(
@@ -113,9 +115,24 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   }
 
   nvrtcDestroyProgram(&prog);
+  CUjit_option options[] = {
+      CU_JIT_INFO_LOG_BUFFER,
+      CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
+      CU_JIT_ERROR_LOG_BUFFER,
+      CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES};
+  char info[1024];
+  char error[1024];
+  uint32_t infoSize = sizeof(info);
+  uint32_t errorSize = sizeof(error);
+  void* values[] = {info, &infoSize, error, &errorSize};
 
   CUmodule module;
-  CU_CHECK(cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0));
+  auto loadResult = cuModuleLoadDataEx(
+      &module, ptx.data(), sizeof(values) / sizeof(void*), options, values);
+  if (loadResult != CUDA_SUCCESS) {
+    LOG(ERROR) << "Load error " << errorSize << " " << infoSize;
+    waveError(fmt::format("Error in load module: {} {}", info, error));
+  }
   std::vector<CUfunction> funcs;
   for (auto& name : loweredNames) {
     funcs.emplace_back();

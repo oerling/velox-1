@@ -76,7 +76,7 @@ struct TableScanStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kTableScan;
   }
-  core::TableScanNode* node;
+  const core::TableScanNode* node;
 };
 
 struct Compute : public KernelStep {
@@ -106,7 +106,7 @@ struct AggregateUpdate : public KernelStep {
   }
 
   std::string name;
-  AbstractOperand* row;
+  AbstractOperand* rows;
   core::AggregationNode::Step step;
   int32_t accumulatorIdx;
   std::vector<AbstractOperand*> args;
@@ -274,6 +274,9 @@ struct Segment {
 
   // Cardinality change. 0.5 means that half the input passes.
   float fanout{1};
+
+  // Projected top level columns if this is not a sink.
+  RowTypePtr outputType;
 };
 
 class CompileState {
@@ -448,6 +451,12 @@ class CompileState {
       float inputBatch,
       int32_t segmentIdx);
 
+  void planPipelines();
+
+  ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
+
+  void makeDriver();
+  
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;

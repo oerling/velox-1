@@ -80,7 +80,7 @@ Value CompileState::toValue(const core::FieldAccessTypedExpr& field) {
 
 AbstractOperand* CompileState::newOperand(AbstractOperand& other) {
   auto newOp = std::make_unique<AbstractOperand>(other, operandCounter_++);
-  newOp->definedInSegment = segments_.size() - 1;
+  newOp->definingSegment = segments_.size() - 1;
   operands_.push_back(std::move(newOp));
   return operands_.back().get();
 }
@@ -91,7 +91,7 @@ AbstractOperand* CompileState::newOperand(
   operands_.push_back(
       std::make_unique<AbstractOperand>(operandCounter_++, type, label));
   auto op = operands_.back().get();
-  op->definedInSegment = segments_.size() - 1;
+  op->definingSegment = segments_.size() - 1;
   return op;
 }
 
@@ -264,21 +264,14 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
   if (auto* field = dynamic_cast<const exec::FieldReference*>(&expr)) {
     VELOX_FAIL("Should have been defined");
   } else if (auto* constant = dynamic_cast<const exec::ConstantExpr*>(&expr)) {
-    if (predicate_) {
-      auto result = newOperand(constant->type(), constant->toString());
-      currentProgram_->add(std::make_unique<AbstractLiteral>(
-          constant->value(), result, predicate_));
-      return result;
+    auto op = newOperand(constant->value()->type(), constant->toString());
+    op->constant = constant->value();
+    if (constant->value()->isNullAt(0)) {
+      op->literalNull = true;
     } else {
-      auto op = newOperand(constant->value()->type(), constant->toString());
-      op->constant = constant->value();
-      if (constant->value()->isNullAt(0)) {
-        op->literalNull = true;
-      } else {
         op->notNull = true;
       }
       return op;
-    }
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
     VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
   }

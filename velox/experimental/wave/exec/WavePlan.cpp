@@ -170,6 +170,7 @@ Segment& CompileState::addSegment(
       topScope_.operandMap[value] = op;
     }
   }
+  last.outputType = outputType;
   return last;
 }
 
@@ -264,11 +265,13 @@ bool CompileState::tryPlanOperator(
       step->keys.push_back(fieldToOperand(*key, &topScope_));
     }
     std::vector<AggregateUpdate*> allUpdates;
-    for (auto& agg : node->aggregates()) {
+    auto& output = node->outputType();
+    for (auto i = 0; i < node->aggregates().size(); ++i) {
+      auto& agg = node->aggregates()[i];
       std::vector<AbstractOperand*> args;
       for (auto& expr : agg.call->inputs()) {
         args.push_back(fieldToOperand(
-            *std::dynamic_pointer_cast<core::FieldAccessTypedExpr>(expr),
+            *std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(expr),
             &topScope_));
       }
 
@@ -278,7 +281,7 @@ bool CompileState::tryPlanOperator(
       func->rows = step->rows;
       func->args = std::move(args);
       func->result = fieldToOperand(
-          *toField(output->nameOf(i + step->keys.size())), &topScope_);
+          *toSubfield(output->nameOf(i + step->keys.size())), &topScope_);
       allUpdates.push_back(func);
     }
     segments_.back().steps.push_back(step);
@@ -286,11 +289,11 @@ bool CompileState::tryPlanOperator(
     addSegment(BoundaryType::kSource, node, outputType);
     auto read = makeStep<ReadAggregation>();
     read->state = state;
-    for (auto i = 0; i < agg->keys.size(); ++i) {
-      read->columns.push_back(
+    for (auto i = 0; i < node->groupingKeys().size(); ++i) {
+      read->keys.push_back(
           fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
     }
-    read->updates = std::move(allUpdates);
+    read->funcs = std::move(allUpdates);
     segments_.back().steps.push_back(read);
   } else {
     return false;
@@ -411,7 +414,7 @@ void CompileState::placeExpr(
 void CompileState::markOutputStored(
     PipelineCandidate& candidate,
     Segment& segment) {
-  auto& RowTypePtr type = segment.outputType;
+  auto& type = segment.outputType;
   for (auto i = 0; i < type->size(); ++i) {
     auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
     candidate.flags(op).needStore = true;
@@ -436,13 +439,13 @@ void CompileState::planSegment(
   auto& segment = segments_[segmentIdx];
   switch (segment.boundary) {
     case BoundaryType::kSource: {
-      if (!candidate.steps.size() > 1 || !candidate.currentBox->steps.empty()) {
+      if (candidate.steps.size() > 1 || !candidate.currentBox->steps.empty()) {
         // A pipeline barrier.
         recordCandidate(candidate);
         return;
       }
       auto* node = segment.planNode;
-      if (auto* scan = dynamic_cast<const core::TableScanNode>(node)) {
+      if (auto* scan = dynamic_cast<const core::TableScanNode*>(node)) {
         auto step = makeStep<TableScanStep>();
         step->node = scan;
         candidate.currentBox->steps.push_back(step);
@@ -472,15 +475,16 @@ void CompileState::planSegment(
       if (candidate.steps.back().size() > 1) {
         newKernel(candidate);
       }
-      candidate->currentBox->steps.push_back(segment.steps[]);
+      candidate.currentBox->steps.push_back(segment.steps.back());
       break;
     }
+  default: VELOX_NYI();
   }
-  if (segmentIdx == segments_.size() - 1 {
-        recordCandidate(candidate);
-        return;
-      })
-    ;
+  if (segmentIdx == segments_.size() - 1) {
+    recordCandidate(candidate);
+    return;
+  }
+
   planSegment(candidate, inputBatch, segmentIdx + 1);
 }
 
@@ -490,7 +494,7 @@ void CompileState::planPipelines() {
     PipelineCandidate candidate;
     newKernel(candidate);
     planSegment(candidate, 100000, startIdx);
-    pickBest();
+    //pickBest();
     bool found = false;
     for (auto i = startIdx + 1; i < segments_.size(); ++i) {
       if (segments_[i].boundary == BoundaryType::kSource) {
@@ -507,10 +511,10 @@ void CompileState::planPipelines() {
 }
 
 ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
-  std::vector<AbstractParameter*> input;
-  std::vector<AbstractParameter*> output;
+  std::vector<AbstractOperand*> input;
+  std::vector<AbstractOperand*> output;
   std::stringstream out;
-  auto& level = candidate.steps[stepIdx];
+  auto& level = candidate.steps[kernelIdx];
   folly::F14FastMap<int32_t, int32_t> renamed;
   for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
     auto& box = level[programIdx];
@@ -542,10 +546,11 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
           out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
         }
       };
-
+      auto* step =  box.steps[stepIdx];
       switch (step->kind()) {
         case StepKind::kOperand: {
-          auto& compute = step.as<Compute>();
+          auto& compute = step->as<Compute>();
+	  auto* op = compute.operand;
           markOutput(op);
           out << op->expr->name();
           out << "(";
@@ -563,7 +568,7 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
           break;
         }
         case StepKind::kAggregateProbe: {
-          auto& agg = step.as<AggregateProbe>();
+          auto& agg = step->as<AggregateProbe>();
           out << "Aggregate(";
           for (auto& k : agg.keys) {
             markInput(k);
@@ -575,27 +580,28 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
         }
         case StepKind::kAggregateUpdate: {
           auto& func = step->as<AggregateUpdate>();
-          out << "update " << step->name << "(";
-          markInput(func->rows);
-          for (auto& op : func->args) {
+          out << "update " << func.name << "(";
+          markInput(func.rows);
+          for (auto& op : func.args) {
             markInput(op);
           }
           out << ")\n";
           break;
         }
         case StepKind::kReadAggregation: {
-          auto& read = step.as<ReadAggregation>();
-          out << "readAgg " << static_cast<int32_t>(read->step) << "(";
-          for (auto* key : read->columns) {
+          auto& read = step->as<ReadAggregation>();
+          out << "readAgg " << static_cast<int32_t>(read.funcs[0]->step) << "(";
+          for (auto* key : read.keys) {
             markOutput(key);
           }
-          for (auto i = 0; i < read.updates.size(); ++i) {
+          for (auto i = 0; i < read.funcs.size(); ++i) {
             out << fmt::format("A:{} ", i);
-            markOutput(read.updates[i]->result);
+            markOutput(read.funcs[i]->result);
           }
           out << ")\n";
           break;
         }
+      default: VELOX_NYI();
       }
     }
   }
