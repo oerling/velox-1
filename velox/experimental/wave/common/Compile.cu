@@ -20,6 +20,7 @@
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
+#include <iostream>
 
 DEFINE_string(
     wavegen_architecture,
@@ -76,11 +77,13 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   auto architecture =
       fmt::format("--gpu-architecture={}", FLAGS_wavegen_architecture);
   const char* opts[] = {
-      architecture.c_str(),
+    architecture.c_str() //,
+#if 0
 #ifndef NDEBUG
       "-G"
-      #else
+#else
       "-O3"
+#endif
 #endif
   };
   auto compileResult = nvrtcCompileProgram(
@@ -103,8 +106,10 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   size_t ptxSize;
   nvrtcCheck(nvrtcGetPTXSize(prog, &ptxSize));
   std::string ptx;
-  ptx.resize(ptxSize);
+  ptx.resize(ptxSize + 1);
   nvrtcCheck(nvrtcGetPTX(prog, ptx.data()));
+  ptx.back() = 0;
+  std::cout << ptx;
   std::vector<std::string> loweredNames;
   for (auto& entry : spec.entryPoints) {
     const char* temp;
@@ -113,9 +118,25 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   }
 
   nvrtcDestroyProgram(&prog);
-
+  CUjit_option options[] = {
+    CU_JIT_INFO_LOG_BUFFER,
+    CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
+    CU_JIT_ERROR_LOG_BUFFER,
+    CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES};
+  char info[1024];
+  char error[1024];
+  uint32_t infoSize = sizeof(info);
+  uint32_t errorSize = sizeof(error);
+  auto infoPtr = info;
+  auto errorPtr = error;
+  void* values[] = {infoPtr, &infoSize, errorPtr, &errorSize};
+    
   CUmodule module;
-  CU_CHECK(cuModuleLoadDataEx(&module, ptx.data(), 0, 0, 0));
+  auto loadResult = cuModuleLoadDataEx(&module, ptx.data(), 4, options, values);
+  if (loadResult != CUDA_SUCCESS) {
+    LOG(ERROR) << "Load error " << errorSize << " " << infoSize;
+    waveError(fmt::format("Error in load module: {} {}", info, error));
+  }
   std::vector<CUfunction> funcs;
   for (auto& name : loweredNames) {
     funcs.emplace_back();
