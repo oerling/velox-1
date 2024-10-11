@@ -478,7 +478,8 @@ void CompileState::planSegment(
       candidate.currentBox->steps.push_back(segment.steps.back());
       break;
     }
-  default: VELOX_NYI();
+    default:
+      VELOX_NYI();
   }
   if (segmentIdx == segments_.size() - 1) {
     recordCandidate(candidate);
@@ -494,7 +495,7 @@ void CompileState::planPipelines() {
     PipelineCandidate candidate;
     newKernel(candidate);
     planSegment(candidate, 100000, startIdx);
-    //pickBest();
+    // pickBest();
     bool found = false;
     for (auto i = startIdx + 1; i < segments_.size(); ++i) {
       if (segments_[i].boundary == BoundaryType::kSource) {
@@ -546,11 +547,11 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
           out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
         }
       };
-      auto* step =  box.steps[stepIdx];
+      auto* step = box.steps[stepIdx];
       switch (step->kind()) {
         case StepKind::kOperand: {
           auto& compute = step->as<Compute>();
-	  auto* op = compute.operand;
+          auto* op = compute.operand;
           markOutput(op);
           out << op->expr->name();
           out << "(";
@@ -601,7 +602,8 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
           out << ")\n";
           break;
         }
-      default: VELOX_NYI();
+        default:
+          VELOX_NYI();
       }
     }
   }

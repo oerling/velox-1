@@ -269,8 +269,8 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
     if (constant->value()->isNullAt(0)) {
       op->literalNull = true;
     } else {
-        op->notNull = true;
-      }
+      op->notNull = true;
+    }
       return op;
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
     VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));

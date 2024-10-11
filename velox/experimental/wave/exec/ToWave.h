@@ -456,7 +456,7 @@ class CompileState {
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
   void makeDriver();
-  
+
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
