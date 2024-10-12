@@ -95,6 +95,8 @@ class PlanBuilder {
   explicit PlanBuilder(memory::MemoryPool* pool = nullptr)
       : PlanBuilder(std::make_shared<core::PlanNodeIdGenerator>(), pool) {}
 
+  virtual ~PlanBuilder() = default;
+  
   static constexpr const std::string_view kHiveDefaultConnectorId{"test-hive"};
   static constexpr const std::string_view kTpchDefaultConnectorId{"test-tpch"};
 
@@ -1002,7 +1004,9 @@ class PlanBuilder {
     return *this;
   }
 
-  /// Return the latest plan node, e.g. the root node of the plan tree.
+  /// Return the latest plan node, e.g. the root node of the plan
+  /// tree. The DistributedPlanBuilder override additionally moves stage
+  /// information to a parent PlanBuilder.
   const core::PlanNodePtr& planNode() const {
     return planNode_;
   }
@@ -1098,6 +1102,32 @@ class PlanBuilder {
       const std::vector<std::string>& windowFunctions,
       bool inputSorted);
 
+  /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so far is shuffled and subsequent nodes consume the shuffle. Arguments are as in partitionedOutput().
+  virtual PlanBuilder& shuffle(
+						    const std::vector<std::string>& keys,
+						    int numPartitions,
+						    bool replicateNullsAndAny,
+						    const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
+  /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built so far and couples it to the current stage in the enclosing builder. Arguments are as in shuffle().
+virtual   const core::PlanNodePtr& planNode() shuffleResult(
+						    const std::vector<std::string>& keys,
+						    int numPartitions,
+						    bool replicateNullsAndAny,
+						    const std::vector<std::string>& outputLayout = {}) {
+  VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+}
+  
+  auto planNodeIdGenerator() const {
+    return planNodeIdGenerator_;
+  }
+
+  memory::MemoryPool() const {
+    return pool_;
+  }
+  
  protected:
   core::PlanNodePtr planNode_;
   parse::ParseOptions options_;

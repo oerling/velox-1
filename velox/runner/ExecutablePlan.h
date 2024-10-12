@@ -35,7 +35,7 @@ struct InputStage {
 /// of workers and mode of exchange are up to the runtime.
 struct ExecutableFragment {
   std::string taskPrefix;
-  int32_t width;
+  int32_t width{0};
   velox::core::PlanFragment fragment;
   std::vector<InputStage> inputStages;
   std::vector<std::shared_ptr<const core::TableScanNode>> scans;

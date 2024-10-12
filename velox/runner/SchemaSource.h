@@ -16,7 +16,7 @@
 
 #pragma once
 
-namespace facebook::verax {
+namespace facebook::velox/exec {
 
 class Schema;
 
@@ -25,12 +25,13 @@ class SchemaSource {
  public:
   virtual ~SchemaSource() = default;
 
-  // Creates information on 'table' in 'schema'. The information is allocated in
-  // the QueryGraphContext of the calling thread. Adds a table to 'schema' using
-  // addTable, which takes a const Schema*.
+  /// Returns an empty Schema of the type corresponding to 'this'.
+  std::shared_ptr<Schema> createSchema() = 0;
+  
+  // Adds the definition of 'table'to 'schema'.
   virtual void fetchSchemaTable(
       std::string_view name,
-      const Schema* schema) = 0;
+      Schema* schema) = 0;
 };
 
 } // namespace facebook::verax
