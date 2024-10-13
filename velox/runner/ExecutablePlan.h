@@ -44,6 +44,9 @@ struct ExecutableFragment {
 
 /// Describes options for generating an executable plan.
 struct ExecutablePlanOptions {
+  /// Query id used as a prefix for tasks ids.
+  std::string queryId;
+
   // Maximum Number of independent Tasks for one stage of execution. If 1, there
   // are no exchanges.
   int32_t numWorkers;

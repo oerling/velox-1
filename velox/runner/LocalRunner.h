@@ -18,9 +18,9 @@
 #include "velox/connectors/Connector.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/Cursor.h"
-#include "velox/experimental/query/ExecutablePlan.h"
-#include "velox/experimental/query/LocalSchema.h"
-#include "velox/experimental/query/SchemaSource.h"
+#include "velox/runner/ExecutablePlan.h"
+#include "velox/runner/LocalSchema.h"
+#include "velox/runner/SchemaSource.h"
 
 namespace facebook::velox::exec {
 

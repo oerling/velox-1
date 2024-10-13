@@ -14,18 +14,15 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/LocalSchema.h"
+#include "velox/runner/LocalSchema.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
-#include "velox/experimental/query/QueryGraph.h"
 
 #include "velox/common/base/Fs.h"
-#include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
-namespace facebook::verax {
-using namespace facebook::velox;
+namespace facebook::velox::exec {
 
 LocalSchema::LocalSchema(
     const std::string& path,
@@ -38,7 +35,6 @@ LocalSchema::LocalSchema(
       pool_(connectorQueryCtx_->memoryPool()) {
   format_ = fmt;
   initialize(path);
-  locus_ = std::make_unique<Locus>(connectorId_.c_str());
 }
 
 void LocalSchema::initialize(const std::string& path) {

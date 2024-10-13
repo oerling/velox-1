@@ -15,51 +15,17 @@
  */
 
 
-using namespace facebook::velox::exec;
 
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 
+using namespace facebook::velox::exec;
+using namespace facebook::velox::exec;::test;
 
-struct TableSpec {
-  std::string name;
-  RowTypePtr columns;
-  int32_t rowsPerVector{10000};
-  int32_t numVectorsPerFile{5};
-  int32_t numFiles{5};
-  std::function<void(const RowVectorPtr& vector)> patch;
-};
-
-class LocalRunnerTest : public     HiveConnectorTestBase   {
+class LocalRunnerTest : public     LocalRunnerTestBase {
  protected:
-  void SetUp() override {
-exec::ExchangeSource::factories().clear();
-    exec::ExchangeSource::registerFactory(createLocalExchangeSource);
-
-    filesystems::registerLocalFileSystem();
-  }
-
-
+}
   
-  void makeTables(std::vector<TableSpec> specs) {
-    const auto testDirectory = exec::test::TempDirectoryPath::create();
-    for (auto& spec : specs) {
-      tablePath = fmt::format("{}/{}", testDirectory->getPath(), spec.table);
-      auto fs = getFileSystem(tablePath);
-      fs->mkdir(tablePath);
-      for (auto i = 0; i < spec.numFiles; spec) {
-	auto vectors = HiveConnectorTestBase::makeVectors(spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
-	if (spec.patch) {
-	  for (auto& vector : vectors) {
-	    spec.patch(vector);
-	  }
-	}
-	writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
-      }
-    }
-  }
-  
-};
 
 TEST_F(LocalRunnerTest, count) {
   auto rowType = ROW({"c0"}, {BIGINT()});

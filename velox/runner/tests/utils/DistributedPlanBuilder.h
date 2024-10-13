@@ -36,59 +36,24 @@ namespace facebook::velox::exec::test {
     root->stack_.push_back(this);
   }
   
-  std::vector<ExecutableFragment> fragments() const {
-  }
-  
+  std::vector<ExecutableFragment> fragments();
+
+
     PlanBuilder& shuffle(
       const std::vector<std::string>& keys,
       int numPartitions,
       bool replicateNullsAndAny,
-      const std::vector<std::string>& outputLayout = {}) override {
-      partitionedOutput(keys, numPartitions, replicateNullsAndAny, outputLayout);
-      auto* output = dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
-      auto producerPrefix = current_.taskPrefix;
-      newFragment();
-      current_.width = numPartitions;
-      exchange(output->outputType());
-      auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
-      current_.inputs.push_back(InputStage{exchange->id(), producerPrefix});
-    }
+      const std::vector<std::string>& outputLayout = {}) override;
 
-    
-    const core::PlanNodePtr& planNode() shuffleResult(
+    core::PlanNodePtr planNode() shuffleResult(
 						      const std::vector<std::string>& keys,
 						      int numPartitions,
 						      bool replicateNullsAndAny,
-						      const std::vector<std::string>& outputLayout = {}) override {
-      partitionedOutput(keys, numPartitions, replicateNullsAndAny, outputLayout);
-      auto* output = dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
-      auto producerPrefix = current_.taskPrefix;
-      auto result = planNode_;
-      newFragment();
-      auto* consumer = root->stack_.back();
-      if (consumer->current_.width != 0) {
-	VELOX_CHECK_EQ(numPartitions, consumer->current_.width, "The consumer width should match the producer fanout");
-      } else {
-	consumer->current_.width = numPartitions;
-      }
-
-      root->stack_.pop_back();
-      exchange(output->outputType());
-      auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
-      consumer->current_.inputs.push_back(InputStage{exchange->id(), producerPrefix});
-      return std::move(planNode_);
-    }
+						      const std::vector<std::string>& outputLayout = {}) override; 
 
  private:
-      void newFragment() {
-	if (!current_.taskPrefix.empty()){
-	  current_.fragment = core::PlanFragment(std::move(planNode_));
-	  fragments_.push_back(std::move(current_));
-	}
-	auto* root = rootBuilder();
-	current_.taskPrefix = fmt::format("{}.{}", options_.queryId, root->taskCounter_++);
+    void newFragment();
 
-      }
 
       DistributedPlanBuilder& rootBuilder() {
 	auto* parent = this;
@@ -97,6 +62,9 @@ namespace facebook::velox::exec::test {
 	}
 	return parent;
       }
+
+      void gatherScans(PlanNodePtr plan);
+
       const ExecutablePlanOptions& options_;
   DistributedPlanBuilder* parent{nullptr};
   // 

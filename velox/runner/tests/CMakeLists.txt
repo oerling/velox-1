@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_subdirectory(utils)
+
 add_executable(velox_local_runner_test LocalRunnerTest.cpp)
 
-add_test( velox_local_Runner_test)
+add_test( velox_local_Runner_test velox_local_Runner_test)
 
 
 target_link_libraries(
   velox_local_runner_test
   velox_local_runner
+  velox_runner_test_lib
   velox_exec_test_lib
   velox_dwio_common
   velox_dwio_parquet_reader

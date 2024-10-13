@@ -1112,11 +1112,11 @@ class PlanBuilder {
   }
 
   /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built so far and couples it to the current stage in the enclosing builder. Arguments are as in shuffle().
-virtual   const core::PlanNodePtr& planNode() shuffleResult(
-						    const std::vector<std::string>& keys,
-						    int numPartitions,
-						    bool replicateNullsAndAny,
-						    const std::vector<std::string>& outputLayout = {}) {
+  virtual    core::PlanNodePtr planNode() shuffleResult(
+							const std::vector<std::string>& keys,
+							int numPartitions,
+							bool replicateNullsAndAny,
+							const std::vector<std::string>& outputLayout = {}) {
   VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
 }
   

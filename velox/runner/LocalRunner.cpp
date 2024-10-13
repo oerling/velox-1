@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/LocalRunner.h"
+#include "velox/runner/LocalRunner.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
