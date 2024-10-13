@@ -16,22 +16,20 @@
 
 #pragma once
 
-namespace facebook::velox/exec {
+namespace facebook::velox / exec {
 
-class Schema;
+  class Schema;
 
-/// Abstract class for accessing schema information.
-class SchemaSource {
- public:
-  virtual ~SchemaSource() = default;
+  /// Abstract class for accessing schema information.
+  class SchemaSource {
+   public:
+    virtual ~SchemaSource() = default;
 
-  /// Returns an empty Schema of the type corresponding to 'this'.
-  std::shared_ptr<Schema> createSchema() = 0;
-  
-  // Adds the definition of 'table'to 'schema'.
-  virtual void fetchSchemaTable(
-      std::string_view name,
-      Schema* schema) = 0;
-};
+    /// Returns an empty Schema of the type corresponding to 'this'.
+    std::shared_ptr<Schema> createSchema() = 0;
 
-} // namespace facebook::verax
+    // Adds the definition of 'table'to 'schema'.
+    virtual void fetchSchemaTable(std::string_view name, Schema* schema) = 0;
+  };
+
+} // namespace facebook::velox/exec

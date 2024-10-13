@@ -14,29 +14,23 @@
  * limitations under the License.
  */
 
-
-
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
-
 using namespace facebook::velox::exec;
-using namespace facebook::velox::exec;::test;
+using namespace facebook::velox::exec;
+::test;
 
-class LocalRunnerTest : public     LocalRunnerTestBase {
- protected:
-}
-  
+class LocalRunnerTest : public LocalRunnerTestBase{protected : }
 
-TEST_F(LocalRunnerTest, count) {
+                        TEST_F(LocalRunnerTest, count) {
   auto rowType = ROW({"c0"}, {BIGINT()});
   TableSpec spec{.name = "T", .columns = rowType};
   makeTables({spec});
-  
+
   auto ids = std::make_shared<PlanNodeIdGenerator>();
   DistributedPlanBuilder rootBuilder(ids, pool_.get());
 
-  builder
-    	      .tableScan("T", rowType);
+  builder.tableScan("T", rowType);
   .shuffle({"c0"})
     .hashJoin({"c0"}, {"b0"},
 	      DistributedPlanBuilder(rootBuilder)
@@ -46,10 +40,5 @@ TEST_F(LocalRunnerTest, count) {
 
 	      .shuffle({})
 	      .aggregation({}, {"count(c0)"});
-	      auto stages = rootBuilder.fragments();	      
-
-	      
-
-
-  
+	      auto stages = rootBuilder.fragments();
 }

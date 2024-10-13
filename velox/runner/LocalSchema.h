@@ -96,4 +96,4 @@ class LocalSchema : public SchemaSource {
   velox::memory::MemoryPool* pool_;
 };
 
-} // namespace facebook::verax
+} // namespace facebook::velox::exec

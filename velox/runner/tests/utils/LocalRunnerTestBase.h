@@ -14,14 +14,10 @@
  * limitations under the License.
  */
 
-
-#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
 
 namespace facebook::velox::exec::test {
-
-
 
 struct TableSpec {
   std::string name;
@@ -32,19 +28,15 @@ struct TableSpec {
   std::function<void(const RowVectorPtr& vector)> patch;
 };
 
-class LocalRunnerTest : public     HiveConnectorTestBase   {
+class LocalRunnerTest : public HiveConnectorTestBase {
  protected:
   void SetUp() override {
-exec::ExchangeSource::factories().clear();
+    exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
 
     filesystems::registerLocalFileSystem();
   }
 
-
-
-
-  
   void makeTables(std::vector<TableSpec> specs) {
     const auto testDirectory = exec::test::TempDirectoryPath::create();
     for (auto& spec : specs) {
@@ -52,17 +44,17 @@ exec::ExchangeSource::factories().clear();
       auto fs = getFileSystem(tablePath);
       fs->mkdir(tablePath);
       for (auto i = 0; i < spec.numFiles; spec) {
-	auto vectors = HiveConnectorTestBase::makeVectors(spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
-	if (spec.patch) {
-	  for (auto& vector : vectors) {
-	    spec.patch(vector);
-	  }
-	}
-	writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
+        auto vectors = HiveConnectorTestBase::makeVectors(
+            spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
+        if (spec.patch) {
+          for (auto& vector : vectors) {
+            spec.patch(vector);
+          }
+        }
+        writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
       }
     }
   }
-  
 };
 
-}
+} // namespace facebook::velox::exec::test

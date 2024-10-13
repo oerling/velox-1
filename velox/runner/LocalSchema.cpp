@@ -316,4 +316,4 @@ void LocalSchema::fetchSchemaTable(
   schema->addTable(schemaTable);
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::exec

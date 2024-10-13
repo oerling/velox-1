@@ -102,8 +102,8 @@ inline bool registerAggregateFunc(
              [&](core::AggregationNode::Step step,
                  const std::vector<TypePtr>& argTypes,
                  const TypePtr& resultType,
-                 const core::QueryConfig& /*config*/)
-                 -> std::unique_ptr<exec::Aggregate> {
+                 const core::QueryConfig &
+                 /*config*/) -> std::unique_ptr<exec::Aggregate> {
                if (exec::isPartialOutput(step)) {
                  if (argTypes.empty()) {
                    return std::make_unique<AggregateFunc>(resultType);
