@@ -16,8 +16,7 @@ add_subdirectory(utils)
 
 add_executable(velox_local_runner_test LocalRunnerTest.cpp)
 
-add_test( velox_local_Runner_test velox_local_Runner_test)
-
+add_test(velox_local_Runner_test velox_local_Runner_test)
 
 target_link_libraries(
   velox_local_runner_test
