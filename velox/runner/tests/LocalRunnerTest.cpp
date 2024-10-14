@@ -15,12 +15,13 @@
  */
 
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/runner/tests/utils/LocalRunnerTestBase.h"
 
 using namespace facebook::velox::exec;
-using namespace facebook::velox::exec;
-::test;
+using namespace facebook::velox::exec::test;
 
-class LocalRunnerTest : public LocalRunnerTestBase{protected : }
+class LocalRunnerTest : public LocalRunnerTestBase {
+protected : }
 
                         TEST_F(LocalRunnerTest, count) {
   auto rowType = ROW({"c0"}, {BIGINT()});

@@ -1039,7 +1039,16 @@ class PlanBuilder {
 
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const std::shared_ptr<const core::IExpr>& untypedExpr);
+  
+  auto planNodeIdGenerator() const {
+    return planNodeIdGenerator_;
+  }
 
+  memory::MemoryPool* pool() const {
+    return pool_;
+  }
+
+  
  private:
   std::shared_ptr<const core::FieldAccessTypedExpr> field(column_index_t index);
 
@@ -1116,20 +1125,12 @@ class PlanBuilder {
   /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built
   /// so far and couples it to the current stage in the enclosing builder.
   /// Arguments are as in shuffle().
-  virtual core::PlanNodePtr planNode() shuffleResult(
+  virtual core::PlanNodePtr shuffleResult(
       const std::vector<std::string>& keys,
       int numPartitions,
       bool replicateNullsAndAny,
       const std::vector<std::string>& outputLayout = {}) {
     VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
-  }
-
-  auto planNodeIdGenerator() const {
-    return planNodeIdGenerator_;
-  }
-
-  memory::MemoryPool() const {
-    return pool_;
   }
 
  protected:

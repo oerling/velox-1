@@ -18,7 +18,7 @@
 
 namespace facebook::velox::exec::test {
 
-std::vector<ExecutableFragment> DistributedPlanBuilder::fragments() const {
+std::vector<ExecutableFragment> DistributedPlanBuilder::fragments()  {
   newFragment();
   return std::move(fragments_);
 }
@@ -39,7 +39,7 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
     const std::vector<std::string>& keys,
     int numPartitions,
     bool replicateNullsAndAny,
-    const std::vector<std::string>& outputLayout = {}) override {
+    const std::vector<std::string>& outputLayout) {
   partitionedOutput(keys, numPartitions, replicateNullsAndAny, outputLayout);
   auto* output =
       dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
@@ -48,21 +48,22 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
   current_.width = numPartitions;
   exchange(output->outputType());
   auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
-  current_.inputs.push_back(InputStage{exchange->id(), producerPrefix});
+  current_.inputStages.push_back(InputStage{exchange->id(), producerPrefix});
   return *this;
 }
 
-core::PlanNodePtr planNode() shuffleResult(
+  core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
     const std::vector<std::string>& keys,
     int numPartitions,
     bool replicateNullsAndAny,
-    const std::vector<std::string>& outputLayout = {}) override {
+    const std::vector<std::string>& outputLayout) {
   partitionedOutput(keys, numPartitions, replicateNullsAndAny, outputLayout);
   auto* output =
       dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
   auto producerPrefix = current_.taskPrefix;
   auto result = planNode_;
   newFragment();
+  auto* root = rootBuilder();
   auto* consumer = root->stack_.back();
   if (consumer->current_.width != 0) {
     VELOX_CHECK_EQ(
@@ -76,21 +77,22 @@ core::PlanNodePtr planNode() shuffleResult(
   root->stack_.pop_back();
 
   for (auto& fragment : fragments_) {
-    root_->fragments_.push_back(std::move(fragment));
+    root->fragments_.push_back(std::move(fragment));
   }
   exchange(output->outputType());
   auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
-  consumer->current_.inputs.push_back(
+  consumer->current_.inputStages.push_back(
       InputStage{exchange->id(), producerPrefix});
   return std::move(planNode_);
 }
 
-void DistributedPlanBuilder::gatherScans(const PlanNodePtr& plan.get()) {
-  if (auto scan = std::dynamic_pointer_cast<const TableScanNode>(plan)) {
-    current_.scans.push_back(scan);
-    return;
-  }
-  for (auto& in : plan->sources()) {
-    gatherScans(in);
+  void DistributedPlanBuilder::gatherScans(const core::PlanNodePtr& plan) {
+    if (auto scan = std::dynamic_pointer_cast<const core::TableScanNode>(plan)) {
+      current_.scans.push_back(scan);
+      return;
+    }
+    for (auto& in : plan->sources()) {
+      gatherScans(in);
+    }
   }
 }

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/runner/ExecutablePlan.h"
 
 namespace facebook::velox::exec::test {
 
@@ -25,17 +26,18 @@ class DistributedPlanBuilder : public PlanBuilder {
   DistributedPlanBuilder(
 			 const ExecutablePlanOptions& options,
 			 std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
-      memory::MemoryPool* pool = nullptr))
+      memory::MemoryPool* pool = nullptr)
     : PlanBuilder(planNodeIdGenerator, pool), options_(options) {}
 
   DistributedPlanBuilder(DistributedPlanBuilder& parent)
-      : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
+    : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
         options_(parent.options_),
         parent_(&parent) {
     auto* root = rootBuilder();
     root->stack_.push_back(this);
   }
 
+  /// Returns the planned fragments. The builder will be empty after this.
   std::vector<ExecutableFragment> fragments();
 
   PlanBuilder& shuffle(
@@ -44,7 +46,7 @@ class DistributedPlanBuilder : public PlanBuilder {
       bool replicateNullsAndAny,
       const std::vector<std::string>& outputLayout = {}) override;
 
-  core::PlanNodePtr planNode() shuffleResult(
+  core::PlanNodePtr shuffleResult(
       const std::vector<std::string>& keys,
       int numPartitions,
       bool replicateNullsAndAny,
@@ -53,18 +55,19 @@ class DistributedPlanBuilder : public PlanBuilder {
  private:
   void newFragment();
 
-  DistributedPlanBuilder& rootBuilder() {
+  DistributedPlanBuilder* rootBuilder() {
     auto* parent = this;
     while (parent->parent_) {
-      parent parent->parent_;
+      parent = parent->parent_;
     }
     return parent;
   }
 
-  void gatherScans(PlanNodePtr plan);
+  void gatherScans(const core::PlanNodePtr& plan);
 
   const ExecutablePlanOptions& options_;
-  DistributedPlanBuilder* parent{nullptr};
+  DistributedPlanBuilder* parent_{nullptr};
+
   //
   // Stack of outstanding builders. The last element is the immediately
   // enclosing one. When returning an ExchangeNode from returnShuffle, the stack
@@ -72,6 +75,7 @@ class DistributedPlanBuilder : public PlanBuilder {
   // builder and the fragment current in the calling builder. Only filled in the
   // root builder.
   std::vector<DistributedPlanBuilder*> stack_;
+
   // Fragment counter. Only used in root builder.
   int32_t taskCounter_{0};
   ExecutableFragment current_;
