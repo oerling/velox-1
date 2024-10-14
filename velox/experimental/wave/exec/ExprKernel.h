@@ -185,7 +185,10 @@ struct WaveShared {
   Operand** operands;
   void** states;
 
-  /// True if continuing the first instruction. The instructoin will
+  int32_t* extraWraps;
+  int16_t numExtraWraps;
+  
+  /// True if continuing the first instruction. The instruction will
   /// pick up its lane status from blockStatus or an
   /// instruction-specific source. The instruction must clear this
   /// before executing the next instruction.
@@ -234,7 +237,7 @@ struct KernelParams {
 
   // For each exe, the start of the array of Operand*. Instructions reference
   // operands via offset in this array. The subscript is
-  // programIndx[blockIdx.x].
+  // programIdx[blockIdx.x].
   Operand*** operands{nullptr};
 
   // the status return block for each TB. The subscript is blockIdx.x -
@@ -245,6 +248,10 @@ struct KernelParams {
   // next subscript is state id in the instruction.
   void*** operatorStates;
 
+  ///  Extra wraps applied by all wraps in the kernel.
+  OperandIndex* extraWraps{nullptr};
+  int16_t numExtraWraps{0};
+  
   /// Number of blocks in each program. gridDim.x can be a multiple if many
   /// programs in launch.
   int32_t numBlocks{0};

@@ -39,7 +39,9 @@ struct AbstractOperand {
   static constexpr int32_t kNoConstant = ~0;
   static constexpr int32_t kNoWrap = ~0;
   static constexpr int32_t kNotAccessed = ~0;
+  static constexpr int32_t kNoNullBit = ~0;
 
+  
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
@@ -136,6 +138,15 @@ struct AbstractOperand {
   // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
 
+  /// If true, during code gen, r<id> has the value.
+  bool inRegister{false};
+
+  ///
+
+  /// Bit field in register with null flags.
+  int32_t registerNullBit{kNoNullBit};
+  
+  
   std::string toString() const;
 };
 

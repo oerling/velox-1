@@ -49,6 +49,8 @@ struct Scope {
 
 enum class StepKind : int8_t {
   kOperand,
+  kNullCheck,
+  kEndNullCheck,
   kTableScan,
   kFilter,
   kAggregateProbe,
@@ -59,13 +61,31 @@ enum class StepKind : int8_t {
   kJoinExpand
 };
 
+class CompileState;
+  
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
   virtual bool isWrap() const {
     return false;
   }
+  virtual bool hasContinue() const {
+    return false;
+  }
 
+  virtual void generateMain(CompileState& state) {
+    VELOX_NYI();
+  }
+
+  virtual void generateContinue(CompileState& state) {};
+
+  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor) {};
+  
+  virtual void visitResults(std::function<void(AbstractOperand*)> visitor) {};
+
+  bool references(AbstractOperand* op);
+
+  
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);
@@ -79,10 +99,35 @@ struct TableScanStep : public KernelStep {
   const core::TableScanNode* node;
 };
 
+  struct NullCheck : public KernelStep {
+    StepKind kind() const override {
+      return StepKind::kNullCheck;
+    }
+
+    std::vector<AbstractOperand*> operands;
+    AbstractOperand* result;
+    int32_t label;
+  };
+
+  struct EndNullCheck : public KernelStep {
+    StepKind kind() const override {
+      return StepKind::kEndNullCheck;
+    }
+
+    int32_t label;
+  };
+
+  
 struct Compute : public KernelStep {
   StepKind kind() const override {
     return StepKind::kOperand;
   }
+  bool hasContinue() const override {
+    return operand->retriable;
+  }
+
+  void generateMain(CompileState& state) override;
+  
   AbstractOperand* operand;
 };
 
@@ -95,6 +140,9 @@ struct Filter : public KernelStep {
     return true;
   }
 
+  void generateMain(CompileState& state) override;
+
+  
   AbstractOperand* flag;
   AbstractOperand* indices;
   int32_t nthWrap{-1};
@@ -104,6 +152,8 @@ struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
   }
+
+  void generateMain(CompileState& state) override;
 
   std::string name;
   AbstractOperand* rows;
@@ -122,6 +172,13 @@ struct AggregateProbe : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateProbe;
   }
+
+  bool hasContinue() const override {
+    return true;
+  }
+
+    void generateMain(CompileState& state) override;
+
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   AbstractOperand* rows;
@@ -340,6 +397,14 @@ class CompileState {
     return *arena_;
   }
 
+  std::stringstream& generated() {
+    return generated_;
+  }
+
+  PipelineCandidate& candidate() {
+    return *currentCandidate_;
+  }
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -440,6 +505,8 @@ class CompileState {
   void
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
+  NullCheck* addNullCheck(AbstractOperand* op);
+  
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
 
   bool makeSegments();
@@ -453,6 +520,8 @@ class CompileState {
 
   void planPipelines();
 
+  void pickBest();
+  
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
   void makeDriver();
@@ -502,7 +571,20 @@ class CompileState {
       aggregateFunctionRegistry_;
   folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
 
+  //  Text of the kernel being generated.
   std::stringstream generated_;
+  bool insideNullPropagating_{false};
+  int32_t labelCounter_{0};
+  
+  PipelineCandidate* currentCandidate_{nullptr};
+  KernelBox* currentBox_{nullptr};
+  
+  // The programs generated for a kernel.
+  std::vector<ProgramPtr> programs_;
+  
+  // Process wide counter for kernels.
+  static std::atomic<int32_t> kernelCounter_;
+
   Branches branches_;
   std::vector<Segment> segments_;
   Scope topScope_;
@@ -518,8 +600,9 @@ class CompileState {
 
   // Selected candidates for all stages, e.g. from scan to agg and from agg to
   // end. These are actually generated.
-  std::vector<PipelineCandidate> bestPipelines_;
+  std::vector<PipelineCandidate> selectedPipelines_;
 
+  
   // Renames of columns introduced by project nodes that rename a top level
   // column to something else with no expression.
   std::vector<std::unordered_map<std::string, std::string>> renames_;

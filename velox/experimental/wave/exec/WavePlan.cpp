@@ -390,7 +390,17 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       candidate.steps.size() - 1, box->steps.size(), candidate.boxIdx);
 }
 
-void CompileState::placeExpr(
+  NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
+    auto* check = makeStep<NullCheck>();
+    for (auto& field : op->expr->distinctFields()) {
+      check->operands.push_back(fieldToOperand(field));
+    }
+    check->label = ++labelCounter_;
+    check->result = op;
+    return check;
+  }
+
+  void CompileState::placeExpr(
     PipelineCandidate& candidate,
     AbstractOperand* op,
     bool mayDelay) {
@@ -398,6 +408,12 @@ void CompileState::placeExpr(
   if (!flags.definedIn.empty()) {
     recordReference(candidate, op);
   } else {
+    bool checkNulls = !insideNullPropagating_ && op->expr->propagatesNulls();
+    ScopedVarSetter s(insideNullPropagating_, true, checkNulls);
+    NullCheck* check;
+    if (checkNulls) {
+      check = addNullCheck(op);
+    }
     for (auto* in : op->inputs) {
       placeExpr(candidate, in, false);
     }
@@ -408,6 +424,10 @@ void CompileState::placeExpr(
     auto inst = makeStep<Compute>();
     inst->operand = op;
     candidate.currentBox->steps.push_back(inst);
+    if (checkNulls) {
+      auto end = makeStep<EndNullCheck>();
+      end->label = check->label;
+    }
   }
 }
 
@@ -489,13 +509,20 @@ void CompileState::planSegment(
   planSegment(candidate, inputBatch, segmentIdx + 1);
 }
 
+  void CompileState::pickBest() {
+    // There is only one candidate. Pick that.
+    int32_t selectedIdx = 0;
+    selectedPipelines_.push_back(std::move(candidates_[selectedIdx]));
+    candidates_.clear();
+  }
+  
 void CompileState::planPipelines() {
   int32_t startIdx = 0;
   for (;;) {
     PipelineCandidate candidate;
     newKernel(candidate);
     planSegment(candidate, 100000, startIdx);
-    // pickBest();
+    pickBest();
     bool found = false;
     for (auto i = startIdx + 1; i < segments_.size(); ++i) {
       if (segments_[i].boundary == BoundaryType::kSource) {
@@ -508,7 +535,6 @@ void CompileState::planPipelines() {
       break;
     }
   }
-  makeDriver();
 }
 
 ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
@@ -616,6 +642,8 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
 void CompileState::makeDriver() {
   makeSegments();
   planPipelines();
+  generatePrograms();
+  
 }
 
 } // namespace facebook::velox::wave

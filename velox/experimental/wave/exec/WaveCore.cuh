@@ -216,6 +216,46 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     laneStatus = shared->status->errors[threadIdx.x];                          \
   }
 
+#define GENERATED_PREAMBLE(blockOffset)                                          \
+  extern __shared__ char sharedChar[];                                         \
+  WaveShared* shared = reinterpret_cast<WaveShared*>(sharedChar);              \
+  int programIndex = params.programIdx[blockIdx.x + blockOffset];              \
+  if (threadIdx.x == 0) {                                                      \
+    shared->operands = params.operands[programIndex];                          \
+    shared->status = &params.status                                            \
+                          [blockIdx.x + blockOffset -                          \
+                           params.blockBase[blockIdx.x + blockOffset]];        \
+    shared->numRows = shared->status->numRows;                                 \
+    shared->blockBase = (blockIdx.x + blockOffset -                            \
+                         params.blockBase[blockIdx.x + blockOffset]) *         \
+        blockDim.x;                                                            \
+    shared->states = params.operatorStates[programIndex];                      \
+    shared->numBlocks = params.numBlocks;                                      \
+    shared->numRowsPerThread = params.numRowsPerThread;                        \
+    shared->streamIdx = params.streamIdx;                                      \
+    shared->isContinue = params.startPC != nullptr;                            \
+    shared->extraWraps = params.extraWraps; \
+    shared.numExtraWraps = params.numExtraWraps; \
+shared->hasContinue = false;                                               \
+    shared->stop = false;                                                      \
+  }                                                                            \
+  __syncthreads();                                                             \
+  auto blockBase = shared->blockBase;                                          \
+  auto operands = shared->operands;                                            \
+  ErrorCode laneStatus;                                                        \
+  int32_t entryPoint = 0; \
+  if (!shared->isContinue) {						\
+    laneStatus =                                                               \
+        threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive; \
+  } else {                                                                     \
+    entryPoint = params.startPC[programIndex];                                 \
+    if (entryPoint == ~0) {                                                         \
+      return; /* no continue in this program*/                                 \
+    }                                                                          \
+    laneStatus = shared->status->errors[threadIdx.x];                          \
+  }
+
+
 #define PROGRAM_EPILOGUE()                          \
   if (threadIdx.x == 0) {                           \
     shared->status->numRows = shared->numRows;      \

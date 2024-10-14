@@ -30,6 +30,10 @@ namespace facebook::velox::wave {
 
 using exec::Expr;
 
+  //  static
+  std::atomic<int32_t> CompileState::kernelCounter_{0};
+
+  
 common::Subfield* CompileState::toSubfield(const Expr& expr) {
   std::string name = expr.toString();
   return toSubfield(name);
