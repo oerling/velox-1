@@ -16,7 +16,7 @@
 
 #pragma once
 
-namespace facebook::velox / exec {
+namespace facebook::velox::exec {
 
   class Schema;
 
@@ -28,8 +28,6 @@ namespace facebook::velox / exec {
     /// Returns an empty Schema of the type corresponding to 'this'.
     std::shared_ptr<Schema> createSchema() = 0;
 
-    // Adds the definition of 'table'to 'schema'.
-    virtual void fetchSchemaTable(std::string_view name, Schema* schema) = 0;
   };
 
 } // namespace facebook::velox/exec

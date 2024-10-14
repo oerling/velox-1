@@ -21,20 +21,19 @@
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
-
-
+#include "velox/common/memory/HashStringAllocator.h"
 
 namespace facebook::velox::exec {
 
 struct LocalColumn {
-  LocalColumn(const std::string& name, velox::TypePtr type)
+  LocalColumn(const std::string& name, TypePtr type)
       : name(name), type(type) {}
 
-  void addStats(std::unique_ptr<velox::dwio::common::ColumnStatistics> stats);
+  void addStats(std::unique_ptr<dwio::common::ColumnStatistics> stats);
 
   std::string name;
-  velox::TypePtr type;
-  std::unique_ptr<velox::dwio::common::ColumnStatistics> stats;
+  TypePtr type;
+  std::unique_ptr<dwio::common::ColumnStatistics> stats;
   int64_t numDistinct;
 };
 
@@ -42,11 +41,11 @@ class LocalSchema;
 struct LocalTable {
   LocalTable(
       const std::string& name,
-      velox::dwio::common::FileFormat format,
+      dwio::common::FileFormat format,
       LocalSchema* schema)
       : name(name), format(format), schema(schema) {}
 
-  const velox::RowTypePtr& rowType() const {
+  const RowTypePtr& rowType() const {
     return type;
   }
 
@@ -57,9 +56,9 @@ struct LocalTable {
   /// rows matching 'filter' in a sample of 'pct'% of the table.
   std::pair<int64_t, int64_t> sample(
       float pct,
-      const std::vector<velox::common::Subfield>& columns,
-      velox::connector::hive::SubfieldFilters filters,
-      const velox::core::TypedExprPtr& remainingFilter,
+      const std::vector<common::Subfield>& columns,
+      connector::hive::SubfieldFilters filters,
+      const core::TypedExprPtr& remainingFilter,
       velox::HashStringAllocator* allocator = nullptr,
       std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>* stats =
           nullptr);
@@ -74,7 +73,7 @@ struct LocalTable {
   int64_t numSampledRows{0};
 };
 
-class LocalSchema : public SchemaSource {
+class LocalSchema {
  public:
   LocalSchema(
       const std::string& path,

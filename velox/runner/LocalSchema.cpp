@@ -65,9 +65,9 @@ std::pair<int64_t, int64_t> LocalTable::sample(
     const std::vector<common::Subfield>& fields,
     velox::connector::hive::SubfieldFilters filters,
     const velox::core::TypedExprPtr& remainingFilter,
-    HashStringAllocator* allocator,
+    HashStringAllocator* /*allocator*/,
     std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>* stats) {
-  dwrf::StatisticsBuilderOptions options(100, 0, true, allocator);
+  dwrf::StatisticsBuilderOptions options(100, 0, true);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;
   auto tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
       schema->connector()->connectorId(),
@@ -289,31 +289,5 @@ void LocalColumn::addStats(
   }
 }
 
-void LocalSchema::fetchSchemaTable(
-    std::string_view name,
-    const Schema* schema) {
-  auto str = std::string(name);
-  auto it = tables_.find(str);
-  if (it == tables_.end()) {
-    return;
-  }
-  auto table = it->second.get();
-  Declare(SchemaTable, schemaTable, toName(str), table->rowType());
-  ColumnVector columns;
-  for (auto& pair : table->columns) {
-    auto& tableColumn = pair.second;
-    float cardinality = tableColumn->numDistinct;
-    Value value(tableColumn->type.get(), cardinality);
-    auto columnName = toName(pair.first);
-    Declare(Column, column, columnName, nullptr, value);
-    schemaTable->columns[columnName] = column;
-    columns.push_back(column);
-  }
-  DistributionType defaultDist;
-  defaultDist.locus = locus_.get();
-  schemaTable->addIndex(
-      toName("pk"), table->numRows, 0, 0, {}, defaultDist, {}, columns);
-  schema->addTable(schemaTable);
-}
 
 } // namespace facebook::velox::exec
