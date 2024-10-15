@@ -185,8 +185,8 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   auto tableHandle = dynamic_cast<const connector::hive::HiveTableHandle*>(
       tableScan.tableHandle().get());
   VELOX_CHECK(tableHandle);
-  auto it = schema_.tables().find(tableHandle->tableName());
-  VELOX_CHECK(it != schema_.tables().end());
+  auto it = schema_->tables().find(tableHandle->tableName());
+  VELOX_CHECK(it != schema_->tables().end());
   auto table = it->second.get();
   return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
 }

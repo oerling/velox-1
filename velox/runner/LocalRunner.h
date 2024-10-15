@@ -51,10 +51,10 @@ class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
   LocalRunner(
       std::vector<ExecutableFragment> plan,
       std::shared_ptr<core::QueryCtx> queryCtx,
-      SplitSourceFactory* splitSourceFactory,
+      std::shared_ptr<SplitSourceFactory> splitSourceFactory,
       ExecutablePlanOptions options)
       : plan_(std::move(plan)),
-        splitSourceFactory_(splitSourceFactory),
+        splitSourceFactory_(std::move(splitSourceFactory)),
         options_(options) {
     params_.queryCtx = queryCtx;
   }
@@ -72,7 +72,7 @@ class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
   std::vector<std::shared_ptr<RemoteConnectorSplit>> makeStages();
   test::CursorParameters params_;
   std::vector<ExecutableFragment> plan_;
-  SplitSourceFactory* splitSourceFactory_;
+  std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
   ExecutablePlanOptions options_;
   std::unique_ptr<test::TaskCursor> cursor_;
   std::vector<std::vector<std::shared_ptr<Task>>> stages_;
@@ -98,14 +98,14 @@ class LocalSplitSource : public SplitSource {
 
 class LocalSplitSourceFactory : public SplitSourceFactory {
  public:
-  LocalSplitSourceFactory(LocalSchema& schema, int32_t splitsPerFile)
+  LocalSplitSourceFactory(std::shared_ptr<LocalSchema> schema, int32_t splitsPerFile)
       : schema_(schema), splitsPerFile_(splitsPerFile) {}
 
   std::unique_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
 
  private:
-  LocalSchema& schema_;
+  std::shared_ptr<LocalSchema> schema_;
   const int32_t splitsPerFile_;
 };
 

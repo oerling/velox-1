@@ -16,6 +16,7 @@
 
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/tests/utils/DistributedPlanBuilder.h"
+#include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
 
 using namespace facebook::velox;
@@ -36,7 +37,7 @@ TEST_F(LocalRunnerTest, count) {
   };
   TableSpec spec{.name = "T", .columns = rowType, .patch = patch};
   std::shared_ptr<TempDirectoryPath> files;
-  makeTables({spec}, files);
+  auto schema = makeTables({spec}, files);
 
   ExecutablePlanOptions options = {
       .queryId = "test.", .numWorkers = 4, .numDrivers = 2};
@@ -57,4 +58,8 @@ TEST_F(LocalRunnerTest, count) {
       .shuffle({}, 1, false)
       .finalAggregation({}, {"count(1)"}, {{BIGINT()}});
   auto stages = rootBuilder.fragments();
+
+  auto sourceFactory = std::make_shared<LocalSplitSourceFactory>(schema, 2);
+  auto localRunner = std::make_shared<LocalRunner>(std::move(stages), makeQueryCtx("q1"), sourceFactory,  options);
+  auto results = readCursor(localRunner, 5000);
 }
