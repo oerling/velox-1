@@ -81,8 +81,6 @@ class LocalSchema {
       velox::connector::hive::HiveConnector* hiveConector,
       std::shared_ptr<velox::connector::ConnectorQueryCtx> ctx);
 
-  void fetchSchemaTable(std::string_view name, const Schema* schema) override;
-
   const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables() {
     return tables_;
   }

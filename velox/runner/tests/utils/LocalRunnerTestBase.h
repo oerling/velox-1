@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/exec/ExchangeSource.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 
 namespace facebook::velox::exec::test {
 
@@ -30,31 +34,15 @@ struct TableSpec {
 
 class LocalRunnerTest : public HiveConnectorTestBase {
  protected:
-  void SetUp() override {
-    exec::ExchangeSource::factories().clear();
-    exec::ExchangeSource::registerFactory(createLocalExchangeSource);
+  void SetUp() override {);
 
-    filesystems::registerLocalFileSystem();
-  }
+  std::unique_ptr<LocalSchema> makeTables(std::vector<TableSpec> specs);
 
-  void makeTables(std::vector<TableSpec> specs) {
-    const auto testDirectory = exec::test::TempDirectoryPath::create();
-    for (auto& spec : specs) {
-      tablePath = fmt::format("{}/{}", testDirectory->getPath(), spec.table);
-      auto fs = getFileSystem(tablePath);
-      fs->mkdir(tablePath);
-      for (auto i = 0; i < spec.numFiles; spec) {
-        auto vectors = HiveConnectorTestBase::makeVectors(
-            spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
-        if (spec.patch) {
-          for (auto& vector : vectors) {
-            spec.patch(vector);
-          }
-        }
-        writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
-      }
-    }
-  }
+  std::shared_ptr<memory::MemoryPool> rootPool_;
+  std::shared_ptr<memory::MemoryPool> schemaPool_;
+  std::shared_ptr<memory::MemoryPool> schemaRootPool_;
+
+
 };
 
 } // namespace facebook::velox::exec::test

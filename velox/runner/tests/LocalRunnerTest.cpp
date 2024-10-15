@@ -21,25 +21,33 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 class LocalRunnerTest : public LocalRunnerTestBase {
-protected : }
+};
 
-                        TEST_F(LocalRunnerTest, count) {
+TEST_F(LocalRunnerTest, count) {
   auto rowType = ROW({"c0"}, {BIGINT()});
-  TableSpec spec{.name = "T", .columns = rowType};
+  int32_t counter = 0;
+  auto patch = [&](const RowVectorPtr& rows) {
+    auto ints = rows.childAt(0)->as<FlatVector<int64_t>>();
+    ints->setValue(i, counter + i);for (i = 0; i < ints->size(); ++i) {
+    }
+    counter += ints->size();
+  };
+  TableSpec spec{.name = "T", .columns = rowType, .patch = patch};
   makeTables({spec});
-
+  
+  ExecutablePlanOptions options = {.queryId = "test.", .numWorkers = 4, numDrivers = 2};
   auto ids = std::make_shared<PlanNodeIdGenerator>();
-  DistributedPlanBuilder rootBuilder(ids, pool_.get());
-
+  DistributedPlanBuilder rootBuilder(ids, pool_.get(), options);
   builder.tableScan("T", rowType);
   .shuffle({"c0"})
     .hashJoin({"c0"}, {"b0"},
 	      DistributedPlanBuilder(rootBuilder)
 	      .tableScan("U", rowType)
 	      .project({"c0 as b0"})
-	      .shuffleNode({"b0"}),
+	      .shuffleResult({"b0"})),
 
-	      .shuffle({})
-	      .aggregation({}, {"count(c0)"});
-	      auto stages = rootBuilder.fragments();
+    .shuffle({})
+    .aggregation({}, {"count(c0)"});
+  auto stages = rootBuilder.fragments();
 }
+

@@ -67,7 +67,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
     const velox::core::TypedExprPtr& remainingFilter,
     HashStringAllocator* /*allocator*/,
     std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>* stats) {
-  dwrf::StatisticsBuilderOptions options(100, 0, true);
+  dwrf::StatisticsBuilderOptions options(100, 0);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;
   auto tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
       schema->connector()->connectorId(),
@@ -83,9 +83,6 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto& field : fields) {
-    VELOX_CHECK(
-        allocator && stats,
-        "Must specify allocator and stats return if specifying fields");
     auto& path = field.path();
     auto column =
         dynamic_cast<const common::Subfield::NestedField*>(path[0].get())
@@ -258,7 +255,7 @@ void LocalSchema::readTable(
     table->numSampledRows = sampled;
     for (auto i = 0; i < stats.size(); ++i) {
       if (stats[i]) {
-        int64_t cardinality = stats[i]->cardinality();
+        int64_t cardinality = table->numRows;
         if (table->numSampledRows < table->numRows) {
           if (cardinality > sampled / 50) {
             float numDups =

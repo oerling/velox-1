@@ -20,7 +20,6 @@
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/runner/ExecutablePlan.h"
 #include "velox/runner/LocalSchema.h"
-#include "velox/runner/SchemaSource.h"
 
 namespace facebook::velox::exec {
 
@@ -83,14 +82,14 @@ class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
 
 class LocalSplitSource : public SplitSource {
  public:
-  LocalSplitSource(const verax::LocalTable* table, int32_t splitsPerFile)
+  LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
       : table_(table), splitsPerFile_(splitsPerFile) {}
 
   Split next(int32_t worker) override;
 
  private:
   std::mutex mutex_;
-  const verax::LocalTable* table_;
+  const LocalTable* table_;
   std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
   const int32_t splitsPerFile_;
   int32_t currentFile_{-1};
@@ -99,14 +98,14 @@ class LocalSplitSource : public SplitSource {
 
 class LocalSplitSourceFactory : public SplitSourceFactory {
  public:
-  LocalSplitSourceFactory(verax::LocalSchema& schema, int32_t splitsPerFile)
+  LocalSplitSourceFactory(LocalSchema& schema, int32_t splitsPerFile)
       : schema_(schema), splitsPerFile_(splitsPerFile) {}
 
   std::unique_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
 
  private:
-  verax::LocalSchema& schema_;
+  LocalSchema& schema_;
   const int32_t splitsPerFile_;
 };
 
