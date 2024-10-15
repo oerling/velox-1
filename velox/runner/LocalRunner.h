@@ -98,7 +98,9 @@ class LocalSplitSource : public SplitSource {
 
 class LocalSplitSourceFactory : public SplitSourceFactory {
  public:
-  LocalSplitSourceFactory(std::shared_ptr<LocalSchema> schema, int32_t splitsPerFile)
+  LocalSplitSourceFactory(
+      std::shared_ptr<LocalSchema> schema,
+      int32_t splitsPerFile)
       : schema_(schema), splitsPerFile_(splitsPerFile) {}
 
   std::unique_ptr<SplitSource> splitSourceForScan(
