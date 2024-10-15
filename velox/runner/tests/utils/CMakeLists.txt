@@ -17,6 +17,7 @@ add_library(velox_runner_test_lib DistributedPlanBuilder.cpp
 
 target_link_libraries(
   velox_runner_test_lib
+  velox_exec_test_lib
   velox_vector_test_lib
   velox_temp_path
   velox_core
