@@ -16,7 +16,9 @@
 
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/runner/tests/utils/LocalRunnerTestBase.h"
+#include "velox/runner/tests/utils/DistributedPlanBuilder.h"
 
+using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
@@ -27,27 +29,30 @@ TEST_F(LocalRunnerTest, count) {
   auto rowType = ROW({"c0"}, {BIGINT()});
   int32_t counter = 0;
   auto patch = [&](const RowVectorPtr& rows) {
-    auto ints = rows.childAt(0)->as<FlatVector<int64_t>>();
-    ints->setValue(i, counter + i);for (i = 0; i < ints->size(); ++i) {
+    auto ints = rows->childAt(0)->as<FlatVector<int64_t>>();
+    for (auto i = 0; i < ints->size(); ++i) {
+            ints->set(i, counter + i);
     }
     counter += ints->size();
   };
   TableSpec spec{.name = "T", .columns = rowType, .patch = patch};
-  makeTables({spec});
+  std::shared_ptr<TempDirectoryPath> files;
+  makeTables({spec}, files);
   
-  ExecutablePlanOptions options = {.queryId = "test.", .numWorkers = 4, numDrivers = 2};
-  auto ids = std::make_shared<PlanNodeIdGenerator>();
-  DistributedPlanBuilder rootBuilder(ids, pool_.get(), options);
-  builder.tableScan("T", rowType);
-  .shuffle({"c0"})
+  ExecutablePlanOptions options = {.queryId = "test.", .numWorkers = 4, .numDrivers = 2};
+  const int32_t width = 3;
+  auto ids = std::make_shared<core::PlanNodeIdGenerator>();
+  DistributedPlanBuilder rootBuilder(options, ids, pool_.get());
+  rootBuilder.tableScan("T", rowType)
+    .shuffle({"c0"}, 3, false)
     .hashJoin({"c0"}, {"b0"},
 	      DistributedPlanBuilder(rootBuilder)
 	      .tableScan("U", rowType)
 	      .project({"c0 as b0"})
-	      .shuffleResult({"b0"})),
-
-    .shuffle({})
-    .aggregation({}, {"count(c0)"});
+	      .shuffleResult({"b0"}, width, false),
+	      "", {"c0", "b0"})
+    .shuffle({}, 1, false)
+    .finalAggregation({}, {"count(1)"}, {{BIGINT()}});
   auto stages = rootBuilder.fragments();
 }
 

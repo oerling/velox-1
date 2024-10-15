@@ -26,9 +26,9 @@ namespace facebook::velox::exec {
 
 LocalSchema::LocalSchema(
     const std::string& path,
-    velox::dwio::common::FileFormat fmt,
-    velox::connector::hive::HiveConnector* hiveConnector,
-    std::shared_ptr<velox::connector::ConnectorQueryCtx> ctx)
+    dwio::common::FileFormat fmt,
+    connector::hive::HiveConnector* hiveConnector,
+    std::shared_ptr<connector::ConnectorQueryCtx> ctx)
     : hiveConnector_(hiveConnector),
       connectorId_(hiveConnector_->connectorId()),
       connectorQueryCtx_(ctx),

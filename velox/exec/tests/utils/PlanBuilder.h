@@ -1042,6 +1042,31 @@ class PlanBuilder {
     return *this;
   }
 
+
+  /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so
+  /// far is shuffled and subsequent nodes consume the shuffle. Arguments are as
+  /// in partitionedOutput().
+  virtual PlanBuilder& shuffle(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
+  /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built
+  /// so far and couples it to the current stage in the enclosing builder.
+  /// Arguments are as in shuffle().
+  virtual core::PlanNodePtr shuffleResult(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
+
+  
  protected:
   // Users who create custom operators might want to extend the PlanBuilder to
   // customize extended plan builders. Those functions are needed in such
@@ -1122,29 +1147,7 @@ class PlanBuilder {
       const std::vector<std::string>& windowFunctions,
       bool inputSorted);
 
-  /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so
-  /// far is shuffled and subsequent nodes consume the shuffle. Arguments are as
-  /// in partitionedOutput().
-  virtual PlanBuilder& shuffle(
-      const std::vector<std::string>& keys,
-      int numPartitions,
-      bool replicateNullsAndAny,
-      const std::vector<std::string>& outputLayout = {}) {
-    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
-  }
-
-  /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built
-  /// so far and couples it to the current stage in the enclosing builder.
-  /// Arguments are as in shuffle().
-  virtual core::PlanNodePtr shuffleResult(
-      const std::vector<std::string>& keys,
-      int numPartitions,
-      bool replicateNullsAndAny,
-      const std::vector<std::string>& outputLayout = {}) {
-    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
-  }
-
- protected:
+protected:
   core::PlanNodePtr planNode_;
   parse::ParseOptions options_;
   std::shared_ptr<TableScanBuilder> tableScanBuilder_;

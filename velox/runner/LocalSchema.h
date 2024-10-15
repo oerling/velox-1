@@ -38,6 +38,7 @@ struct LocalColumn {
 };
 
 class LocalSchema;
+
 struct LocalTable {
   LocalTable(
       const std::string& name,
@@ -59,13 +60,13 @@ struct LocalTable {
       const std::vector<common::Subfield>& columns,
       connector::hive::SubfieldFilters filters,
       const core::TypedExprPtr& remainingFilter,
-      velox::HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>* stats =
+      HashStringAllocator* allocator = nullptr,
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats =
           nullptr);
 
   std::string name;
-  velox::dwio::common::FileFormat format;
-  velox::RowTypePtr type;
+  dwio::common::FileFormat format;
+  RowTypePtr type;
   std::vector<std::string> files;
   std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns;
   int64_t numRows{0};
@@ -77,9 +78,9 @@ class LocalSchema {
  public:
   LocalSchema(
       const std::string& path,
-      velox::dwio::common::FileFormat format,
-      velox::connector::hive::HiveConnector* hiveConector,
-      std::shared_ptr<velox::connector::ConnectorQueryCtx> ctx);
+      dwio::common::FileFormat format,
+      connector::hive::HiveConnector* hiveConector,
+      std::shared_ptr<connector::ConnectorQueryCtx> ctx);
 
   const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables() {
     return tables_;
@@ -91,16 +92,16 @@ class LocalSchema {
     return it->second.get();
   }
 
-  velox::connector::Connector* connector() const {
+  connector::Connector* connector() const {
     return hiveConnector_;
   }
 
-  const std::shared_ptr<velox::connector::ConnectorQueryCtx>&
+  const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const {
     return connectorQueryCtx_;
   }
 
-  velox::memory::MemoryPool* pool() {
+  memory::MemoryPool* pool() {
     return pool_;
   }
 
@@ -109,13 +110,13 @@ class LocalSchema {
 
   void readTable(const std::string& tableName, const fs::path& tablePath);
 
-  velox::connector::hive::HiveConnector* hiveConnector_;
+  connector::hive::HiveConnector* hiveConnector_;
   std::string connectorId_;
-  std::shared_ptr<velox::connector::ConnectorQueryCtx> connectorQueryCtx_;
-  velox::dwio::common::FileFormat format_;
+  std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
+  dwio::common::FileFormat format_;
 
   std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
-  velox::memory::MemoryPool* pool_;
+  memory::MemoryPool* pool_;
 };
 
 } // namespace facebook::velox::exec

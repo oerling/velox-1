@@ -16,7 +16,7 @@
 
 #include "velox/runner/tests/utils/LocalRunnerTestBase.h"
 namespace facebook::velox::exec::test {
-  void LocalRunnerTestBase::SetUp() override {
+  void LocalRunnerTestBase::SetUp() {
     HiveConnectorTestBase::SetUp();
     exec::ExchangeSource::factories().clear();
     exec::ExchangeSource::registerFactory(createLocalExchangeSource);
@@ -24,11 +24,11 @@ namespace facebook::velox::exec::test {
     filesystems::registerLocalFileSystem();
   }
 
-  std::unique_ptr<LocalSchema> LocalRunnerTestBase::makeTables(std::vector<TableSpec> specs) {
-    const auto testDirectory = exec::test::TempDirectoryPath::create();
+  std::unique_ptr<LocalSchema> LocalRunnerTestBase::makeTables(std::vector<TableSpec> specs, std::shared_ptr<TempDirectoryPath>& directory) {
+    directory = exec::test::TempDirectoryPath::create();
     for (auto& spec : specs) {
-      auto tablePath = fmt::format("{}/{}", testDirectory->getPath(), spec.name);
-      auto fs = filesystems::getFileSystem(tablePath);
+      auto tablePath = fmt::format("{}/{}", directory->getPath(), spec.name);
+      auto fs = filesystems::getFileSystem(tablePath, {});
       fs->mkdir(tablePath);
       for (auto i = 0; i < spec.numFiles; spec) {
         auto vectors = HiveConnectorTestBase::makeVectors(
@@ -42,6 +42,7 @@ namespace facebook::velox::exec::test {
       }
     }
 
+        std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
     std::unordered_map<std::string, std::string> empty;
     connectorConfigs[kHiveConnectorId] =
       std::make_shared<config::ConfigBase>(std::move(empty));
@@ -64,25 +65,25 @@ namespace facebook::velox::exec::test {
         nullptr,
         "schema");
 
-        connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
+  auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
         schemaPool_.get(),
         schemaRootPool_.get(),
-        schemaQueryCtx_->connectorSessionProperties(kHiveConnectorId),
+        schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
 	&spillConfig,
 	prefixSortConfig,
         std::make_unique<exec::SimpleExpressionEvaluator>(
-            schemaQueryCtx_.get(), schemaPool_.get()),
-        schemaQueryCtx_->cache(),
+            schemaQueryCtx.get(), schemaPool_.get()),
+        schemaQueryCtx->cache(),
         "scan_for_schema",
         "schema",
         "N/a",
         0,
-        schemaQueryCtx_->queryConfig().sessionTimezone());
+        schemaQueryCtx->queryConfig().sessionTimezone());
 
     
-    auto connector = getConnector(kHiveConnectorName );
+  auto connector = connector::getConnector(kHiveConnectorId );
     
-    return schema = std::make_unique<LocalSchema>(testDirectory, dwio::common::FileFormat::DWRF, connector, connectorQueryCtx_);
+  return std::make_unique<LocalSchema>(directory->getPath(), dwio::common::FileFormat::DWRF, reinterpret_cast<velox::connector::hive::HiveConnector*>(connector.get()), connectorQueryCtx);
   }
   
 
