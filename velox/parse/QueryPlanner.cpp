@@ -620,7 +620,7 @@ PlanNodePtr toVeloxPlan(
   auto outputType = ROW(std::move(names), std::move(types));
   TypedExprPtr filter;
   if (!join.expressions.empty()) {
-    VELOX_CHECK_EQ(1, join.expressions.size())
+    VELOX_CHECK_EQ(1, join.expressions.size());
     filter = toVeloxExpression(*join.expressions.front(), outputType);
   }
   std::vector<FieldAccessTypedExprPtr> leftKeys;

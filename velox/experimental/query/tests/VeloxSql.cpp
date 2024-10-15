@@ -217,17 +217,18 @@ class VeloxRunner {
         exec::test::createLocalExchangeSource);
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
-
-    auto config = std::make_shared<core::MemConfig>();
+    std::unordered_map<std::string, std::string> empty;
+    auto config = std::make_shared<config::ConfigBase>(std::move(empty));
     auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
 
-    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
+    auto copy = hiveConfig_;
     connectorConfigs[kHiveConnectorId] =
-        std::make_shared<core::MemConfig>(hiveConfig_);
+      std::make_shared<config::ConfigBase>(std::move(copy));
 
     schemaQueryCtx_ = core::QueryCtx::create(
         executor_.get(),
@@ -237,13 +238,16 @@ class VeloxRunner {
         rootPool_->addAggregateChild("schemaCtxPool"),
         spillExecutor_.get(),
         "schema");
-
+    common::SpillConfig spillConfig;
+    common::PrefixSortConfig prefixSortConfig(100);
+    
     schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
     connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
         schemaPool_.get(),
         schemaRootPool_.get(),
         schemaQueryCtx_->connectorSessionProperties(kHiveConnectorId),
-        nullptr,
+	&spillConfig,
+	prefixSortConfig,
         std::make_unique<exec::SimpleExpressionEvaluator>(
             schemaQueryCtx_.get(), schemaPool_.get()),
         schemaQueryCtx_->cache(),
@@ -431,9 +435,10 @@ class VeloxRunner {
       std::string* planString = nullptr,
       std::string* errorString = nullptr) {
     std::shared_ptr<LocalRunner> runner;
-    std::unordered_map<std::string, std::shared_ptr<Config>> connectorConfigs;
+    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
+    auto copy = hiveConfig_;
     connectorConfigs[kHiveConnectorId] =
-        std::make_shared<core::MemConfig>(hiveConfig_);
+      std::make_shared<config::ConfigBase>(std::move(copy));
     ++queryCounter_;
     auto queryCtx = core::QueryCtx::create(
         executor_.get(),
