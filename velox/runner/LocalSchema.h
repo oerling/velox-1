@@ -17,17 +17,16 @@
 #pragma once
 
 #include "velox/common/base/Fs.h"
+#include "velox/common/memory/HashStringAllocator.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
-#include "velox/common/memory/HashStringAllocator.h"
 
 namespace facebook::velox::exec {
 
 struct LocalColumn {
-  LocalColumn(const std::string& name, TypePtr type)
-      : name(name), type(type) {}
+  LocalColumn(const std::string& name, TypePtr type) : name(name), type(type) {}
 
   void addStats(std::unique_ptr<dwio::common::ColumnStatistics> stats);
 
@@ -61,8 +60,7 @@ struct LocalTable {
       connector::hive::SubfieldFilters filters,
       const core::TypedExprPtr& remainingFilter,
       HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats =
-          nullptr);
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats = nullptr);
 
   std::string name;
   dwio::common::FileFormat format;
@@ -96,8 +94,8 @@ class LocalSchema {
     return hiveConnector_;
   }
 
-  const std::shared_ptr<connector::ConnectorQueryCtx>&
-  connectorQueryCtx() const {
+  const std::shared_ptr<connector::ConnectorQueryCtx>& connectorQueryCtx()
+      const {
     return connectorQueryCtx_;
   }
 

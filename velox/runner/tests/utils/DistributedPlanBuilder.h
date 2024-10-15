@@ -24,13 +24,13 @@ namespace facebook::velox::exec::test {
 class DistributedPlanBuilder : public PlanBuilder {
  public:
   DistributedPlanBuilder(
-			 const ExecutablePlanOptions& options,
-			 std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
+      const ExecutablePlanOptions& options,
+      std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
       memory::MemoryPool* pool = nullptr)
-    : PlanBuilder(planNodeIdGenerator, pool), options_(options) {}
+      : PlanBuilder(planNodeIdGenerator, pool), options_(options) {}
 
   DistributedPlanBuilder(DistributedPlanBuilder& parent)
-    : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
+      : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
         options_(parent.options_),
         parent_(&parent) {
     auto* root = rootBuilder();

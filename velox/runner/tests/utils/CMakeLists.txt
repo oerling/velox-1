@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(velox_runner_test_lib DistributedPlanBuilder.cpp LocalRunnerTestBase.cpp)
+add_library(velox_runner_test_lib DistributedPlanBuilder.cpp
+                                  LocalRunnerTestBase.cpp)
 
 target_link_libraries(
   velox_runner_test_lib

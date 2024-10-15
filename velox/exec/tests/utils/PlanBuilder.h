@@ -107,7 +107,7 @@ class PlanBuilder {
         pool_{pool} {}
 
   virtual ~PlanBuilder() = default;
-  
+
   static constexpr const std::string_view kHiveDefaultConnectorId{"test-hive"};
   static constexpr const std::string_view kTpchDefaultConnectorId{"test-tpch"};
 
@@ -1042,7 +1042,6 @@ class PlanBuilder {
     return *this;
   }
 
-
   /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so
   /// far is shuffled and subsequent nodes consume the shuffle. Arguments are as
   /// in partitionedOutput().
@@ -1065,8 +1064,6 @@ class PlanBuilder {
     VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
   }
 
-
-  
  protected:
   // Users who create custom operators might want to extend the PlanBuilder to
   // customize extended plan builders. Those functions are needed in such
@@ -1075,7 +1072,7 @@ class PlanBuilder {
 
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const std::shared_ptr<const core::IExpr>& untypedExpr);
-  
+
   auto planNodeIdGenerator() const {
     return planNodeIdGenerator_;
   }
@@ -1084,7 +1081,6 @@ class PlanBuilder {
     return pool_;
   }
 
-  
  private:
   std::shared_ptr<const core::FieldAccessTypedExpr> field(column_index_t index);
 
@@ -1147,7 +1143,7 @@ class PlanBuilder {
       const std::vector<std::string>& windowFunctions,
       bool inputSorted);
 
-protected:
+ protected:
   core::PlanNodePtr planNode_;
   parse::ParseOptions options_;
   std::shared_ptr<TableScanBuilder> tableScanBuilder_;

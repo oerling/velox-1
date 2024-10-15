@@ -286,5 +286,4 @@ void LocalColumn::addStats(
   }
 }
 
-
 } // namespace facebook::velox::exec

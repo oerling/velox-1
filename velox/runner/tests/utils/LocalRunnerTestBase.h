@@ -16,11 +16,11 @@
 
 #pragma once
 
-#include "velox/runner/LocalRunner.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-#include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/ExchangeSource.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/runner/LocalRunner.h"
 
 namespace facebook::velox::exec::test {
 
@@ -37,7 +37,9 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
  protected:
   void SetUp() override;
 
-  std::unique_ptr<LocalSchema> makeTables(std::vector<TableSpec> specs, std::shared_ptr<TempDirectoryPath>& directory);
+  std::unique_ptr<LocalSchema> makeTables(
+      std::vector<TableSpec> specs,
+      std::shared_ptr<TempDirectoryPath>& directory);
 
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> schemaRootPool_;

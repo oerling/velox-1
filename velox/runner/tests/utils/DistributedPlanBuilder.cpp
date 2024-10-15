@@ -18,7 +18,7 @@
 
 namespace facebook::velox::exec::test {
 
-std::vector<ExecutableFragment> DistributedPlanBuilder::fragments()  {
+std::vector<ExecutableFragment> DistributedPlanBuilder::fragments() {
   newFragment();
   return std::move(fragments_);
 }
@@ -52,7 +52,7 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
   return *this;
 }
 
-  core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
+core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
     const std::vector<std::string>& keys,
     int numPartitions,
     bool replicateNullsAndAny,
@@ -86,13 +86,13 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
   return std::move(planNode_);
 }
 
-  void DistributedPlanBuilder::gatherScans(const core::PlanNodePtr& plan) {
-    if (auto scan = std::dynamic_pointer_cast<const core::TableScanNode>(plan)) {
-      current_.scans.push_back(scan);
-      return;
-    }
-    for (auto& in : plan->sources()) {
-      gatherScans(in);
-    }
+void DistributedPlanBuilder::gatherScans(const core::PlanNodePtr& plan) {
+  if (auto scan = std::dynamic_pointer_cast<const core::TableScanNode>(plan)) {
+    current_.scans.push_back(scan);
+    return;
+  }
+  for (auto& in : plan->sources()) {
+    gatherScans(in);
   }
 }
+} // namespace facebook::velox::exec::test
