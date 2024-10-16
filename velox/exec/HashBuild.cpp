@@ -73,7 +73,7 @@ HashBuild::HashBuild(
 
   joinBridge_->addBuilder();
 
-  auto inputType = joinNode_->sources()[1]->outputType();
+  const auto& inputType = joinNode_->sources()[1]->outputType();
 
   const auto numKeys = joinNode_->rightKeys().size();
   keyChannels_.reserve(numKeys);
@@ -444,8 +444,6 @@ void HashBuild::ensureInputFits(RowVectorPtr& input) {
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
   const auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  const auto outOfLineBytesPerRow =
-      std::max<uint64_t>(1, numRows == 0 ? 0 : outOfLineBytes / numRows);
   const auto currentUsage = pool()->usedBytes();
 
   if (numRows != 0) {

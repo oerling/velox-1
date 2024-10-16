@@ -22,6 +22,8 @@
 #include "velox/common/memory/SharedArbitrator.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/dwrf/RegisterDwrfReader.h" // @manual
+#include "velox/dwio/dwrf/RegisterDwrfWriter.h" // @manual
 #include "velox/exec/MemoryReclaimer.h"
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
@@ -220,6 +222,8 @@ MemoryArbitrationFuzzer::MemoryArbitrationFuzzer(size_t initialSeed)
   // Make sure not to run out of open file descriptors.
   std::unordered_map<std::string, std::string> hiveConfig = {
       {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
+  connector::registerConnectorFactory(
+      std::make_shared<connector::hive::HiveConnectorFactory>());
   const auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
@@ -227,6 +231,8 @@ MemoryArbitrationFuzzer::MemoryArbitrationFuzzer(size_t initialSeed)
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(std::move(hiveConfig)));
   connector::registerConnector(hiveConnector);
+  dwrf::registerDwrfReaderFactory();
+  dwrf::registerDwrfWriterFactory();
   seed(initialSeed);
 }
 
