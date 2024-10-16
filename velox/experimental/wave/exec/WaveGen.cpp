@@ -77,8 +77,12 @@ const std::string typeName(Type& type) {
       if (op->inRegister) {
 	if (op->notNull) {
 	  continue;
+	} else {
+	  state.generated() << fmt::format("if (isRegNull(nulls{}, {}) { null{} = true; }", op->registerNullBit / 32, op->registerNullBit & 31, label, label);
 	}
-	state.generated() << "if (
+      } else {
+	state.declareVariable(op);
+	state.generated() << "if (isOperandNull(operands, {}) { null{s} |= (1 << {}); }", operandIdx(op), op->nullReg / 32, op->nullReg & 31)
       }
     }
   }

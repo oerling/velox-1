@@ -23,6 +23,7 @@
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
+#include "velox/expression/ScopedVarSetter.h"
 
 DEFINE_int32(ld_cost, 10, "Cost of load from memory");
 DEFINE_int32(st_cost, 40, "Cost of store to memory");
@@ -393,7 +394,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
     auto* check = makeStep<NullCheck>();
     for (auto& field : op->expr->distinctFields()) {
-      check->operands.push_back(fieldToOperand(field));
+      check->operands.push_back(fieldToOperand(*toSubfield(*field), &topScope_));
     }
     check->label = ++labelCounter_;
     check->result = op;
@@ -409,7 +410,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
     recordReference(candidate, op);
   } else {
     bool checkNulls = !insideNullPropagating_ && op->expr->propagatesNulls();
-    ScopedVarSetter s(insideNullPropagating_, true, checkNulls);
+    ScopedVarSetter s(&insideNullPropagating_, true, checkNulls);
     NullCheck* check;
     if (checkNulls) {
       check = addNullCheck(op);

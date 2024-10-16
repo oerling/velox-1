@@ -26,6 +26,7 @@ velox_add_library(
   Instruction.cpp
   ToWave.cpp
   WavePlan.cpp
+  WaveGen.cpp
   WaveOperator.cpp
   Vectors.cpp
   Values.cpp

@@ -521,6 +521,8 @@ class CompileState {
   void planPipelines();
 
   void pickBest();
+
+  void generatePrograms();
   
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
