@@ -104,6 +104,9 @@ struct TableScanStep : public KernelStep {
       return StepKind::kNullCheck;
     }
 
+    void generateMain(CompileState& state) override;
+
+    
     std::vector<AbstractOperand*> operands;
     AbstractOperand* result;
     int32_t label;
@@ -266,6 +269,15 @@ struct OperandFlags {
   bool needStore{0};
 };
 
+
+  /// Contains input/local/output param sets for each level of a PipelineCandidate.
+  struct LevelParams {
+    OperandSet input;
+    OperandSet local;
+    OperandSet output;
+  };
+ 
+  
 struct PipelineCandidate {
   OperandFlags& flags(AbstractOperand* op) {
     if (op->id >= operandFlags.size()) {
@@ -274,12 +286,19 @@ struct PipelineCandidate {
     return operandFlags[op->id];
   }
 
+  void makeOperandSets(int32_t kernelSeq);
+
+  void markParams(KernelBox& box, int32_t kernelSeq, LevelParams& params);
+  
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
 
   std::vector<OperandFlags> operandFlags;
   std::vector<std::vector<KernelBox>> steps;
+
+  /// Params for each vector of KernelBox.
+  std::vector<LevelParams> levelParams;
   KernelBox* currentBox{nullptr};
   int32_t boxIdx{0};
 };
@@ -528,6 +547,13 @@ class CompileState {
 
   void makeDriver();
 
+  void declareVariable(const AbstractOperand& op, bool create);
+
+  bool hasMoreReferences(AbstractOperand* op, int32_t pc);
+
+  void clearInRegister();
+
+  
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
@@ -597,6 +623,9 @@ class CompileState {
   // The number of the pipeline being generated.
   int32_t pipelineIdx_{0};
 
+  // The sequence number of the kernel in the pipeline being generated.
+  int32_t kernelSeq_;
+  
   // Candidates being considered for a pipeline.
   std::vector<PipelineCandidate> candidates_;
 

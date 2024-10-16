@@ -37,8 +37,12 @@ const std::string typeName(Type& type) {
     return found;
   }
 
+  int32_t CompileState::ordinal(AbstractOperand* op) {
+    auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
+  }
+  
   void CompileState::declareVariable(const AbstractOperand& op, bool create) {
-    generated_ << fmt::format("{} r{}", typeName(op.type), op.id);
+    generated_ << fmt::format("{} r{}", typeName(*op.type), op.id);
     if (create) {
       generated_ << " = ";
     } else {
@@ -172,8 +176,8 @@ void CompileState::makeComparison(
   }
 
   void CompileState::generatePrograms() {
-    for (stageIdx = 0; stageIdx < selectedPipelines_.size(); ++stageIdx) {
-      currentCandidate_ = &selectedPipelines_[stageIdx];
+    for (pipelineIdx_= 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
+      currentCandidate_ = &selectedPipelines_[pipelineIdx];
       auto& firstStep = currentCandidate_->steps[0][0].steps.front();
       int32_t start = 0;
       if (firstStep.stepKind() == StepKind::kTableScan) {
@@ -181,14 +185,14 @@ void CompileState::makeComparison(
 			 std::make_unique<TableScan>(*this, operators_.size(), *firstStep.as<TableScanStep>().node));
     start = 1;
 	}
-      for (auto i = start; i < currentCandidate_->steps.size(); ++i)  {
-	makeLevel(currentCandidate_->steps[i]);
+      for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size(); ++kernelSeq_) {
+	makeLevel(currentCandidate_->steps[kernelSeq_]);
       }
       operators_.push_back(std::make_unique<Project>(this, std::move(programs), nullptr));
     }	  
   }
 
-    }
+
 
   
 

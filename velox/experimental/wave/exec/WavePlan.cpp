@@ -516,7 +516,37 @@ void CompileState::planSegment(
     selectedPipelines_.push_back(std::move(candidates_[selectedIdx]));
     candidates_.clear();
   }
-  
+
+  void PipelineCandidate::markParams(KernelBox& box, int32_t kernelSeq, std::vector<LevelParams>& params) {
+    for (stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+      box.steps[stepIdx].visitReferences([&](AbstractOperand* op) {
+					   auto& flags = flags(op);
+					   if (flags.definedIn.kernelSeq < kernelSeq) {
+					     levelParams[kernelSeq].input.add(op);
+					   }
+					 });
+      box.steps[stepIdx].visitResults([&](AbstractOperand* op) {
+					auto& flags = flags(op);
+					if (op.lastUse.kernelSeq > kernelSeq) {
+					  levelParams[kernelSeq].output.add(op);
+					} else {
+					  levelParams[kernelSeq].local.add(op);
+
+					}
+				      });
+    }
+  }
+
+
+  void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
+    levelParams.resize(steps.size());
+    for (auto kernelSeq = 0; kernelSeq < steps.size(); ++kernelSeq) {
+      for (auto i = 0; i < steps[kernelSeq].size(); ++i) {
+	markParams(steps[kernelSeq][i], kernelSeq, levelParams);
+      }
+    }
+  }
+
 void CompileState::planPipelines() {
   int32_t startIdx = 0;
   for (;;) {
@@ -536,8 +566,12 @@ void CompileState::planPipelines() {
       break;
     }
   }
+  for (auto kernelSeq = 0; kernelSeq < selectedPipelines.size(); ++kernelSeq) {
+    selectedPipelines[levelIdx].makeOperandSets(kernelSeq);
+  }
 }
 
+  
 ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
   std::vector<AbstractOperand*> input;
   std::vector<AbstractOperand*> output;

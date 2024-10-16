@@ -141,8 +141,6 @@ struct AbstractOperand {
   /// If true, during code gen, r<id> has the value.
   bool inRegister{false};
 
-  ///
-
   /// Bit field in register with null flags.
   int32_t registerNullBit{kNoNullBit};
   
