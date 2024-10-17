@@ -78,6 +78,9 @@ __device__ __forceinline__ bool operandOrNull(
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
       index = indices[index];
+      if (index == kNullIndex) {
+	return false;
+      }
     } else {
       index += blockBase;
     }
@@ -91,44 +94,58 @@ __device__ __forceinline__ bool operandOrNull(
   return true;
 }
 
-template <typename T>
-__device__ inline T getOperand(
-    Operand** operands,
-    OperandIndex opIdx,
-    int32_t blockBase,
-    void* shared) {
+template <bool mayWrap, typename T>
+bool valueOrNull<mayWrap>(Operand** operands, OperandIndex opIdx, int32_t blockBase, T&) {
   auto op = operands[opIdx];
-  int32_t index = (threadIdx.x + blockBase) & op->indexMask;
+  int32_t index = threadIdx.x;
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
       index = indices[index];
+      if (index == kNullIndex) {
+	return false;
+      }
+} else {
+      index += blockBase;
     }
+  } else {
+    index = (index + blockBase) & op->indexMask;
   }
-  return reinterpret_cast<const T*>(op->base)[index];
+  if (op->nulls && op->nulls[index] == kNull) {
+    return false;
+  }
+  value = reinterpret_cast<const T*>(op->base)[index];
+  return true;
 }
 
 template <typename T>
-__device__ inline T operand(
+__device__ inline T& flatOperand(
     Operand** operands,
     OperandIndex opIdx,
     int32_t blockBase) {
-  auto op = operands[opIdx];
-  int32_t index = (threadIdx.x + blockBase) & op->indexMask;
-  if (auto indicesInOp = op->indices) {
-    auto indices = indicesInOp[blockBase / kBlockSize];
-    if (indices) {
-      index = indices[index];
-    }
+  auto* op = operands[opIdx];
+  if (op->nulls) {
+    op->nulls[blockBase + threadIdx.x] = kNotNull;
   }
-  return reinterpret_cast<const T*>(op->base)[index];
+  return reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
 }
 
+  
+bool  __device__ __forceinline__ setNullRegister(uint32_t& flags, int8_t bit, bool notNull) {
+  if (!notNull) {
+    mask &= ~(1 << bit);
+  }
+  return notNull;
+}
 
+bool isRegisterNull(uint32_t flags, int8_t bit) {
+  return (mask & (1 << bit)) == 0;
+}
+  
 template <typename T>
-__device__ inline T value(Operand* op, int32_t blockBase, char* shared) {
-  return getOperand<T>(&op, 0, blockBase, shared);
-}
+bool constantOrNull(Operand** operands, OperandIndex opIdx, T& value)
+
+
 
 template <typename T>
 __device__ inline T value(Operand* op, int index) {
@@ -161,9 +178,6 @@ __device__ inline T& flatResult(
     OperandIndex opIdx,
     int32_t blockBase,
     void* shared) {
-  if (opIdx >= kMinSharedMemIndex) {
-    assert(false);
-  }
   auto* op = operands[opIdx];
   if (op->nulls) {
     op->nulls[blockBase + threadIdx.x] = kNotNull;

@@ -427,6 +427,8 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
     candidate.currentBox->steps.push_back(inst);
     if (checkNulls) {
       auto end = makeStep<EndNullCheck>();
+      check->endIdx = currentBox_->steps.size();
+      end->result = op;
       end->label = check->label;
     }
   }

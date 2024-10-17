@@ -110,6 +110,7 @@ struct TableScanStep : public KernelStep {
     std::vector<AbstractOperand*> operands;
     AbstractOperand* result;
     int32_t label;
+    int32_t endIdx{-1};
   };
 
   struct EndNullCheck : public KernelStep {
@@ -547,13 +548,14 @@ class CompileState {
 
   void makeDriver();
 
-  void declareVariable(const AbstractOperand& op, bool create);
+  int32_t declareVariable(const AbstractOperand& op, bool create);
 
   bool hasMoreReferences(AbstractOperand* op, int32_t pc);
 
   void clearInRegister();
 
-  
+  int32_t ordinal(AbstractOperand* op);
+
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;

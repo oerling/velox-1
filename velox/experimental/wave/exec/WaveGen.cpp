@@ -37,11 +37,22 @@ const std::string typeName(Type& type) {
     return found;
   }
 
-  int32_t CompileState::ordinal(AbstractOperand* op) {
+  int32_t CompileState::ordinal(const AbstractOperand& op) {
     auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
+    if (params.input.contains(op.id)) {
+      return params.input.ordinal(op.id);
+    }
+    if (params.local.contains(op.id)) {
+      return params.input.size() + params.local.ordinal(op.id);
+    }
+    if (params.output.contains(op.id)) {
+      return params.input.size() + params.local.size() + params.output.ordinal(op.id);
+    }
+    VELOX_UNREACHABLE();
   }
   
-  void CompileState::declareVariable(const AbstractOperand& op, bool create) {
+int32_t CompileState::declareVariable(const AbstractOperand& op, bool create) {
+    auto ord = ordinal(op);
     generated_ << fmt::format("{} r{}", typeName(*op.type), op.id);
     if (create) {
       generated_ << " = ";
@@ -49,7 +60,8 @@ const std::string typeName(Type& type) {
       generated_ << fmt::format(
 				"r{} = operand(shared->operands, {};\n", op.id, op.id);
     }
-  }
+    return ord;
+}
   
   bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
     for (auto i = pc; i < ccurrentBox_->steps.size(); ++i) {
@@ -75,7 +87,21 @@ const std::string typeName(Type& type) {
     }
   }
 
-  void NullCheck::generateMain(CompileState& state) {
+void NullCheck::generateMain(CompileState& state) {
+  std::vector<AbstractOperand*> lastUse;
+  bool isFirst = true;
+  for (auto* op : operands) {
+    if (!op->inRegister && state.hasMoreReferences(op, endIdx)) {
+      if (first) {
+	state.generated() << fmt::format("bool anyNull{} = false;\n", label);
+	first = false;
+      }
+      auto ordinal = state.declareVariable(op);
+      state.generated() << fmt::format("anyNull |= setRegisterNull(nulls{}, {}, valueOrNull(operands, {}, blockBase, r{}))
+    } else {
+      lastUse.push_back(op);
+    }
+  }
     state.generated() << fmt::format("bool anyNull{} = false;\n", label);
     for (auto* op : operators) {
       if (op->inRegister) {
