@@ -27,65 +27,71 @@ const std::string typeName(Type& type) {
   }
 }
 
-  bool KernelStep::references(AbstractOperand* op) {
-    bool found = false;
-    visitReferences([&](AbstractOperand* referenced) {
-		      if (found) {return;}
-		      if (op == referenced) {
-			found = true;
-		      }});
-    return found;
-  }
-
-  int32_t CompileState::ordinal(const AbstractOperand& op) {
-    auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
-    if (params.input.contains(op.id)) {
-      return params.input.ordinal(op.id);
+bool KernelStep::references(AbstractOperand* op) {
+  bool found = false;
+  visitReferences([&](AbstractOperand* referenced) {
+    if (found) {
+      return;
     }
-    if (params.local.contains(op.id)) {
-      return params.input.size() + params.local.ordinal(op.id);
+    if (op == referenced) {
+      found = true;
     }
-    if (params.output.contains(op.id)) {
-      return params.input.size() + params.local.size() + params.output.ordinal(op.id);
-    }
-    VELOX_UNREACHABLE();
-  }
-  
-int32_t CompileState::declareVariable(const AbstractOperand& op, bool create) {
-    auto ord = ordinal(op);
-    generated_ << fmt::format("{} r{}", typeName(*op.type), op.id);
-    if (create) {
-      generated_ << " = ";
-    } else {
-      generated_ << fmt::format(
-				"r{} = operand(shared->operands, {};\n", op.id, op.id);
-    }
-    return ord;
+  });
+  return found;
 }
-  
-  bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
-    for (auto i = pc; i < ccurrentBox_->steps.size(); ++i) {
-      if (!currentBox_->steps[i]->preservesRegisters()) {
-	return false;
-      }
-      if (currentBox_->steps[i]->references(op)) {
-	return true;
-      }
-    }
-    return false;
-  }
 
-  std::string isRegisterNull(AbstractOperand* op) {
-    VELOX_CHECK_NE(op->registerNullBit, AbstractOperand::kNoNullFlag);
-    return fmt::format("(0 != (nullReg{} & (1 << {})))", op->registerNullBit / 32, registerNullBit & 31);
+int32_t CompileState::ordinal(const AbstractOperand& op) {
+  auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
+  if (params.input.contains(op.id)) {
+    return params.input.ordinal(op.id);
   }
-  
-  void CompileState::clearInRegister() {
-    for (auto& op : operands_) {
-      op->inRegister = false;
-      op->registerNullBit = AbstractOperand::kNoNullBit;
+  if (params.local.contains(op.id)) {
+    return params.input.size() + params.local.ordinal(op.id);
+  }
+  if (params.output.contains(op.id)) {
+    return params.input.size() + params.local.size() +
+        params.output.ordinal(op.id);
+  }
+  VELOX_UNREACHABLE();
+}
+
+int32_t CompileState::declareVariable(const AbstractOperand& op) {
+  auto ord = ordinal(op);
+  generated_ << fmt::format("{} r{};", typeName(*op.type), ord);
+  return ord;
+}
+
+void EndNullCheck::generateMain(CompileState& state) {
+  auto ord = state.ordinal(result);
+  state.generated() << fmt::format("goto skip{};\n", label)
+                    << fmt::format("end{}: \n", label);
+  auto flags = state.flags(result);
+    fmt::format(setRegisterNull(nulls{}, {});\n", ord / 32, ord &31, true);
+    if (flags.needStore) {
+    state.generated() << fmt::format(
+        "setNull(operands, {}, blockBase, true);n", ord);
+    }
+		state.generated() << fmt::format("skip{}: ;\n", label);
+}
+
+bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
+  for (auto i = pc; i < ccurrentBox_->steps.size(); ++i) {
+    if (!currentBox_->steps[i]->preservesRegisters()) {
+      return false;
+    }
+    if (currentBox_->steps[i]->references(op)) {
+      return true;
     }
   }
+  return false;
+}
+
+void CompileState::clearInRegister() {
+  for (auto& op : operands_) {
+    op->inRegister = false;
+    op->registerNullBit = AbstractOperand::kNoNullBit;
+  }
+}
 
 void NullCheck::generateMain(CompileState& state) {
   std::vector<AbstractOperand*> lastUse;
@@ -93,136 +99,138 @@ void NullCheck::generateMain(CompileState& state) {
   for (auto* op : operands) {
     if (!op->inRegister && state.hasMoreReferences(op, endIdx)) {
       if (first) {
-	state.generated() << fmt::format("bool anyNull{} = false;\n", label);
-	first = false;
+        state.generated() << fmt::format("bool anyNull{} = false;\n", label);
+        first = false;
       }
+      auto& flags = state.flags(op);
+      bool mayWrap = flags.wrappedAt.empty() ||
+          flags.wrappedAt.isBefore(state.currentPosition());
       auto ordinal = state.declareVariable(op);
-      state.generated() << fmt::format("anyNull |= setRegisterNull(nulls{}, {}, valueOrNull(operands, {}, blockBase, r{}))
+      state.generated() << fmt::format(
+          "anyNull{} |= setRegisterNull(nulls{}, {}, valueOrNull<{}>(operands, {}, blockBase, r{}));\n",
+          label,
+          ord / 32,
+          ord & 31,
+          mayWrap ? "true" : "false",
+          ord);
     } else {
       lastUse.push_back(op);
     }
   }
-    state.generated() << fmt::format("bool anyNull{} = false;\n", label);
-    for (auto* op : operators) {
-      if (op->inRegister) {
-	if (op->notNull) {
-	  continue;
-	} else {
-	  state.generated() << fmt::format("if (isRegNull(nulls{}, {}) { null{} = true; }", op->registerNullBit / 32, op->registerNullBit & 31, label, label);
-	}
-      } else {
-	state.declareVariable(op);
-	state.generated() << "if (isOperandNull(operands, {}) { null{s} |= (1 << {}); }", operandIdx(op), op->nullReg / 32, op->nullReg & 31)
+  if (!isFirst) {
+    state.generated() << fmt::format(
+        "if (anyNull{}) { goto end{};}\n", label, label);
+  }
+  for (auto* op : lastUse) {
+    if (op->inRegister) {
+      auto ord = state.ordinal(op);
+      state.generated() << fmt::format(
+          "if (isRegisterNull(nulls{}, {})) {goto end{};}\n",
+          ord / 32,
+          ord & 31,
+          label);
+      continue;
+    }
+    auto ord = state.declareVariable(op);
+    state.generated() << fmt::format(
+        "if (!valueOrNull(operands, {}, blockBase, r{})) {goto end{};}\n",
+        ord,
+        label);
+  }
+}
+
+int32_t CompileState::generateOperand(const AbstractOperand& op) {
+  if (op->inRegister && insideNullPropagating_) {
+    generated << fmt::format(" r{} ", ordinal(op));
+    return;
+  }
+  if (op->notNull || insideNullPropagating_) {
+    auto flags& = flags(op);
+    bool mayWrap =
+        flags.wrappedAt.empty() || flags.wrappedAt.isBefore(currentPosition());
+    generated_ << fmt::format(
+        "nonNullOperand<{}, {}>(operands, {}, blockBase)",
+        typeName(op->type),
+        mayWrap,
+        ordinal(op));
+  }
+}
+
+void Compute::generateMain(CompileState& state) {
+  VELOX_CHECK_NOT_NULL(operand->expr);
+  auto& flags = state.flags(operand);
+  state.declareVariable(operand);
+  state.generated() << "r" << ord operand-><< " = " << expr->name() << "(";
+  for (auto i = 0; i < operand->input.size(); ++i) {
+    state.generateOperand(operand->inputs[i]);
+    if (i < operand->inputs.size() - 1) {
+      state.generated() << ", ";
+    }
+  }
+  state.generated() << ")\n";
+  if (flags.needStore) {
+    state.generated() << fmt::format(
+        "flatValue(operands, {}, blockBase) = r{};\n", ord, ord);
+  }
+}
+
+void Filter::generateMain(CompileState& state) {}
+
+void AggregateProbe::generateMain(CompileState& state) {}
+
+CompileState::makeLevel(std::vector<KernelBox>& level) {
+  VELOX_CHECK(1, level.size(), "Only one program per level supported");
+  generated_ << "void __global__ __launch_bounds__(1024) waveGen"
+             << ++kernelCounter << "(KernelParams params) {\n";
+  generated_ << "  GENERATED_PREAMBLE(0);\n";
+  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
+    auto& box = level[branchIdx_];
+    currentBox_ = &box;
+    clearInRegister();
+    bool anyRetry = false;
+    for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
+      if (box.steps[stepIdx_]->hasContinue()) {
+        if (!anyRetry) {
+          anyRetry = true;
+          generated_ << "if (shared->isContinue) {\n"
+                     << "switch(entryPoint) {n";
+        }
+        generated_ << fmt::format(
+            "case {}: goto continue{};\n", stepIdx_, stepIdx_);
+      }
+      if (anyRetry) {
+        generated_ << "}\n}\n";
+      }
+      // Generate the  code for first execution.
+      for (auto i = 0; i < box.steps.size()) {
+        auto step = steps[i];
+        if (step->hasContinue) {
+          generated_ << fmt::format("enter{}: \n", i);
+        }
+        step->generateMain(this);
       }
     }
   }
-  
-int32_t CompileState::generateOperand(const AbstractOperand& op) {
-  if (op->inRegister && insideNullPropagating_) {
-    generated << fmt::format(" r{} ", op->id);
-    return;
-  }
-  if (op->notNull) {
-    generated_ << fmt::format(
-        "{} v{};\noperand(shared, {}, v{});",
-        typeDecl(op->type),
-        op->id,
-        op->id,
-        op->id);
-    return op->id;
-  }
 }
 
-void CompileState::makeOperand(AbstractOperand& op) {
-  int32_t v;
-  if (op->inlineExpr) {
-    v = generateInline(op->expr);
-  } else {
-    v = generateOperand(op);
-  }
-}
-
-void CompileState::makeComparison(
-    Type& type,
-    AbstractOperand& left,
-    AbstractOperand& right,
-    bool nullEq) {}
-
-void CompileState::makeComparison(
-    AbstractField& left,
-    AbstractOperand& right,
-    bool nullEq) {}
-
-  void NullCheck::generateMain(CompileState& state) {
-
-  }
-  
-  void Compute::generateMain(CompileState& state) {
-    auto& flags = state.candidate().flags(operand);
-    auto* name = operand->expr ? &operand->expr->name() : nullptr;
-    auto& out = state.generated();
-    out << varDecl(operand);
-  }
-  
-  void AggregateProbe::generateMain(CompileState& state);
-
-
-  CompileState::makeLevel(std::vector<KernelBox>& level) {
-    VELOX_CHECK(1, level.size(), "Only one program per level supported");
-    generated_ << "void __global__ __launch_bounds__(1024) waveGen" << ++kernelCounter
-	       << "(KernelParams params) {\n";
-    generated_ << "  GENERATED_PREAMBLE(0);\n";
-    for (auto boxIdx = 0; boxIdx < level.size(); ++boxIdx) {
-      auto& box = level[boxIdx];
-      currentBox_ = &box;
-      clearInRegister();
-      bool anyRetry = false;
-      for (auto i = 0; i < box.steps.size(); ++i) {
-	if (box.steps[i]->hasContinue()) {
-	  if (!anyRetry) {
-	    anyRetry = true;
-	    generated_ << "if (shared->isContinue) {\n" 
-		       << "switch(entryPoint) {n";
-	  }
-	  generated_ << fmt::format("case {}: goto continue{};\n", i, i);
-	}
-	if (anyRetry) {
-	  generated_ << "}\n}\n";
-	}
-	// Generate the  code for first execution.
-	for (auto i = 0; i < box.steps.size()) {
-	  auto step = steps[i];
-	  if (step->hasContinue) {
-	    generated_ << fmt::format("enter{}: \n", i);
-	  }
-	  step->generateMain(this);
-	}
-      }
-      }
-  }
-
-  void CompileState::generatePrograms() {
-    for (pipelineIdx_= 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
-      currentCandidate_ = &selectedPipelines_[pipelineIdx];
-      auto& firstStep = currentCandidate_->steps[0][0].steps.front();
-      int32_t start = 0;
-      if (firstStep.stepKind() == StepKind::kTableScan) {
+void CompileState::generatePrograms() {
+  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
+       ++pipelineIdx_) {
+    currentCandidate_ = &selectedPipelines_[pipelineIdx];
+    auto& firstStep = currentCandidate_->steps[0][0].steps.front();
+    int32_t start = 0;
+    if (firstStep.stepKind() == StepKind::kTableScan) {
+      operators_.push_back(std::make_unique<TableScan>(
+          *this, operators_.size(), *firstStep.as<TableScanStep>().node));
+      start = 1;
+    }
+    for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
+         ++kernelSeq_) {
+      makeLevel(currentCandidate_->steps[kernelSeq_]);
+    }
     operators_.push_back(
-			 std::make_unique<TableScan>(*this, operators_.size(), *firstStep.as<TableScanStep>().node));
-    start = 1;
-	}
-      for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size(); ++kernelSeq_) {
-	makeLevel(currentCandidate_->steps[kernelSeq_]);
-      }
-      operators_.push_back(std::make_unique<Project>(this, std::move(programs), nullptr));
-    }	  
+        std::make_unique<Project>(this, std::move(programs), nullptr));
   }
+}
 
-
-
-  
-
-  
-
-
-
+} // namespace facebook::velox::wave

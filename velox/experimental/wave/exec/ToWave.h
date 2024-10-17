@@ -62,7 +62,7 @@ enum class StepKind : int8_t {
 };
 
 class CompileState;
-  
+
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
@@ -77,15 +77,14 @@ struct KernelStep {
     VELOX_NYI();
   }
 
-  virtual void generateContinue(CompileState& state) {};
+  virtual void generateContinue(CompileState& state){};
 
-  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor) {};
-  
-  virtual void visitResults(std::function<void(AbstractOperand*)> visitor) {};
+  virtual void visitReferences(std::function<void(AbstractOperand*)> visitor){};
+
+  virtual void visitResults(std::function<void(AbstractOperand*)> visitor){};
 
   bool references(AbstractOperand* op);
 
-  
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);
@@ -99,29 +98,27 @@ struct TableScanStep : public KernelStep {
   const core::TableScanNode* node;
 };
 
-  struct NullCheck : public KernelStep {
-    StepKind kind() const override {
-      return StepKind::kNullCheck;
-    }
+struct NullCheck : public KernelStep {
+  StepKind kind() const override {
+    return StepKind::kNullCheck;
+  }
 
-    void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state) override;
 
-    
-    std::vector<AbstractOperand*> operands;
-    AbstractOperand* result;
-    int32_t label;
-    int32_t endIdx{-1};
-  };
+  std::vector<AbstractOperand*> operands;
+  AbstractOperand* result;
+  int32_t label;
+  int32_t endIdx{-1};
+};
 
-  struct EndNullCheck : public KernelStep {
-    StepKind kind() const override {
-      return StepKind::kEndNullCheck;
-    }
+struct EndNullCheck : public KernelStep {
+  StepKind kind() const override {
+    return StepKind::kEndNullCheck;
+  }
 
-    int32_t label;
-  };
+  int32_t label;
+};
 
-  
 struct Compute : public KernelStep {
   StepKind kind() const override {
     return StepKind::kOperand;
@@ -131,7 +128,7 @@ struct Compute : public KernelStep {
   }
 
   void generateMain(CompileState& state) override;
-  
+
   AbstractOperand* operand;
 };
 
@@ -146,7 +143,6 @@ struct Filter : public KernelStep {
 
   void generateMain(CompileState& state) override;
 
-  
   AbstractOperand* flag;
   AbstractOperand* indices;
   int32_t nthWrap{-1};
@@ -181,7 +177,7 @@ struct AggregateProbe : public KernelStep {
     return true;
   }
 
-    void generateMain(CompileState& state) override;
+  void generateMain(CompileState& state) override;
 
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
@@ -253,6 +249,15 @@ struct CodePosition {
     return kernelSeq == kNone;
   }
 
+  bool isBefore(const CodePosition& other) {
+    if (kernelSeq == other.kernelSeq && branch != other.branch) {
+      VELOX_FAIL(
+          "Bad comparison of CodePosition in between parallel  kernel boxes");
+    }
+    return kernelSeq < other.kernelSeq ||
+        (kernelSeq == other.kernelSeq && step < other.step);
+  }
+
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
   // Position of program in KernelBox.
@@ -270,15 +275,14 @@ struct OperandFlags {
   bool needStore{0};
 };
 
+/// Contains input/local/output param sets for each level of a
+/// PipelineCandidate.
+struct LevelParams {
+  OperandSet input;
+  OperandSet local;
+  OperandSet output;
+};
 
-  /// Contains input/local/output param sets for each level of a PipelineCandidate.
-  struct LevelParams {
-    OperandSet input;
-    OperandSet local;
-    OperandSet output;
-  };
- 
-  
 struct PipelineCandidate {
   OperandFlags& flags(AbstractOperand* op) {
     if (op->id >= operandFlags.size()) {
@@ -290,7 +294,7 @@ struct PipelineCandidate {
   void makeOperandSets(int32_t kernelSeq);
 
   void markParams(KernelBox& box, int32_t kernelSeq, LevelParams& params);
-  
+
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
@@ -424,6 +428,10 @@ class CompileState {
   PipelineCandidate& candidate() {
     return *currentCandidate_;
   }
+
+  CodePosition currentPosition() {
+    return CodePosition(kernelSeq_, branchIdx_, stepIdx_);
+  }
   
  private:
   bool
@@ -526,7 +534,7 @@ class CompileState {
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
   NullCheck* addNullCheck(AbstractOperand* op);
-  
+
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
 
   bool makeSegments();
@@ -543,7 +551,7 @@ class CompileState {
   void pickBest();
 
   void generatePrograms();
-  
+
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
   void makeDriver();
@@ -605,13 +613,13 @@ class CompileState {
   std::stringstream generated_;
   bool insideNullPropagating_{false};
   int32_t labelCounter_{0};
-  
+
   PipelineCandidate* currentCandidate_{nullptr};
   KernelBox* currentBox_{nullptr};
-  
+
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;
-  
+
   // Process wide counter for kernels.
   static std::atomic<int32_t> kernelCounter_;
 
@@ -627,6 +635,10 @@ class CompileState {
 
   // The sequence number of the kernel in the pipeline being generated.
   int32_t kernelSeq_;
+
+  int32_t branchIdx_;
+
+  int32_t stepIdx_;
   
   // Candidates being considered for a pipeline.
   std::vector<PipelineCandidate> candidates_;
@@ -635,7 +647,6 @@ class CompileState {
   // end. These are actually generated.
   std::vector<PipelineCandidate> selectedPipelines_;
 
-  
   // Renames of columns introduced by project nodes that rename a top level
   // column to something else with no expression.
   std::vector<std::unordered_map<std::string, std::string>> renames_;

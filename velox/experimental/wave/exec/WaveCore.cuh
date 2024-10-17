@@ -118,6 +118,19 @@ bool valueOrNull<mayWrap>(Operand** operands, OperandIndex opIdx, int32_t blockB
   return true;
 }
 
+bool __device__ __forceinline__ setRegisterNull(uint32_t& flags, int8_t bit, bool notnull) {
+  if (!notNull) {
+    flags &= ~(1 << bit);
+  }
+  return !notNull;
+}
+
+  bool __device__ __forceinline__ isRegisterNull(uint32_t flags, int8_t bit) {
+    return 0 == (flags & (1 << bit ));
+  }
+  
+
+  
 template <typename T>
 __device__ inline T& flatOperand(
     Operand** operands,
