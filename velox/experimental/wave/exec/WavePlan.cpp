@@ -451,8 +451,9 @@ void newKernel(PipelineCandidate& candidate) {
   candidate.boxIdx = 0;
 }
 
-void CompileState::recordCandidate(PipelineCandidate& candidate) {
-  candidates_.push_back(std::move(candidate));
+  void CompileState::recordCandidate(PipelineCandidate& candidate, int32_t lastSegmentIdx) {
+    candidate.outputType = segments_[lastSegmentIdx].outputType;
+    candidates_.push_back(std::move(candidate));
 }
 
 void CompileState::planSegment(
@@ -464,7 +465,7 @@ void CompileState::planSegment(
     case BoundaryType::kSource: {
       if (candidate.steps.size() > 1 || !candidate.currentBox->steps.empty()) {
         // A pipeline barrier.
-        recordCandidate(candidate);
+        recordCandidate(candidate, segmentIdx - 1);
         return;
       }
       auto* node = segment.planNode;
@@ -505,7 +506,7 @@ void CompileState::planSegment(
       VELOX_NYI();
   }
   if (segmentIdx == segments_.size() - 1) {
-    recordCandidate(candidate);
+    recordCandidate(candidate, segmentIdx);
     return;
   }
 

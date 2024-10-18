@@ -89,7 +89,7 @@ template <typename T>
 __device__ ErrorCode
 normalize(BlockInfo* block, void* idMap, Operand* key, int32_t& result) {
   auto* typedIdMap = reinterpret_cast<IdMap<T>*>(idMap);
-  auto id = typedIdMap->makeId(value<T>(key, block->base, block->shared));
+  auto id = typedIdMap->makeId(value<T>(key, block->base));
   if (id == -1) {
     return ErrorCode::kInsufficientMemory;
   }
@@ -106,7 +106,7 @@ __device__ ErrorCode setGroupKey(
     int groupIndex) {
   auto* container = normalizeKeys->container;
   *reinterpret_cast<T*>(container->groups[groupIndex].keys[keyIndex]) =
-      value<T>(&normalizeKeys->inputs[keyIndex], block->base, block->shared);
+      value<T>(&normalizeKeys->inputs[keyIndex], block->base);
   return ErrorCode::kOk;
 }
 

@@ -73,6 +73,10 @@ struct KernelStep {
     return false;
   }
 
+  virtual bool preservesRegisters() const {
+    return !isWrap();
+  }
+  
   virtual void generateMain(CompileState& state) {
     VELOX_NYI();
   }
@@ -115,7 +119,9 @@ struct EndNullCheck : public KernelStep {
   StepKind kind() const override {
     return StepKind::kEndNullCheck;
   }
-
+  void generateMain(CompileState& state) override;
+  
+  AbstractOperand* result;
   int32_t label;
 };
 
@@ -250,7 +256,7 @@ struct CodePosition {
   }
 
   bool isBefore(const CodePosition& other) {
-    if (kernelSeq == other.kernelSeq && branch != other.branch) {
+    if (kernelSeq == other.kernelSeq && branchIdx != other.branchIdx) {
       VELOX_FAIL(
           "Bad comparison of CodePosition in between parallel  kernel boxes");
     }
@@ -284,7 +290,7 @@ struct LevelParams {
 };
 
 struct PipelineCandidate {
-  OperandFlags& flags(AbstractOperand* op) {
+  OperandFlags& flags(const AbstractOperand* op) {
     if (op->id >= operandFlags.size()) {
       operandFlags.resize(op->id + 10);
     }
@@ -306,6 +312,8 @@ struct PipelineCandidate {
   std::vector<LevelParams> levelParams;
   KernelBox* currentBox{nullptr};
   int32_t boxIdx{0};
+
+  RowTypePtr outputType;
 };
 
 /// Describes the operation at the start of a segment.
@@ -432,6 +440,19 @@ class CompileState {
   CodePosition currentPosition() {
     return CodePosition(kernelSeq_, branchIdx_, stepIdx_);
   }
+
+  int32_t declareVariable(const AbstractOperand& op);
+
+    int32_t ordinal(const AbstractOperand& op);
+
+  OperandFlags& flags(const AbstractOperand& op) const {
+    return currentCandidate_->flags(&op);
+  }
+
+  bool hasMoreReferences(AbstractOperand* op, int32_t pc);
+
+  void generateOperand(const AbstractOperand& op);
+
   
  private:
   bool
@@ -539,7 +560,7 @@ class CompileState {
 
   bool makeSegments();
 
-  void recordCandidate(PipelineCandidate& candidate);
+  void recordCandidate(PipelineCandidate& candidate, int32_t lastSegmentIdx);
 
   void planSegment(
       PipelineCandidate& candidate,
@@ -552,17 +573,15 @@ class CompileState {
 
   void generatePrograms();
 
+  void makeLevel(std::vector<KernelBox>& level);
+
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
   void makeDriver();
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
 
-  bool hasMoreReferences(AbstractOperand* op, int32_t pc);
-
   void clearInRegister();
-
-  int32_t ordinal(AbstractOperand* op);
 
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.

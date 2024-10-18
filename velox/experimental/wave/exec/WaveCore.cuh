@@ -67,11 +67,7 @@ __device__ __forceinline__ bool operandOrNull(
     Operand** operands,
     OperandIndex opIdx,
     int32_t blockBase,
-    void* shared,
     T& value) {
-  if (opIdx > kMinSharedMemIndex) {
-    assert(false);
-  }
   auto op = operands[opIdx];
   int32_t index = threadIdx.x;
   if (auto indicesInOp = op->indices) {
@@ -94,10 +90,18 @@ __device__ __forceinline__ bool operandOrNull(
   return true;
 }
 
-template <bool mayWrap, typename T>
-bool valueOrNull<mayWrap>(Operand** operands, OperandIndex opIdx, int32_t blockBase, T&) {
+template <bool kMayWrap, typename T>
+bool __device__ __forceinline__ valueOrNull(Operand** operands, OperandIndex opIdx, int32_t blockBase, T& value) {
   auto op = operands[opIdx];
   int32_t index = threadIdx.x;
+  if (!kMayWrap) {
+    index = (index + blockBase) & op->indexMask;
+    if (op->nulls && op->nulls[index] == kNull) {
+      return false;
+    }
+    value = reinterpret_cast<const T*>(op->base)[index];
+    return true;
+  }
   if (auto indicesInOp = op->indices) {
     auto indices = indicesInOp[blockBase / kBlockSize];
     if (indices) {
@@ -118,7 +122,29 @@ bool valueOrNull<mayWrap>(Operand** operands, OperandIndex opIdx, int32_t blockB
   return true;
 }
 
-bool __device__ __forceinline__ setRegisterNull(uint32_t& flags, int8_t bit, bool notnull) {
+template <bool kMayWrap, typename T>
+T __device__ __forceinline__ nonNullOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
+  auto op = operands[opIdx];
+  int32_t index = threadIdx.x;
+  if (!kMayWrap) {
+    index = (index + blockBase) & op->indexMask;
+    return reinterpret_cast<const T*>(op->base)[index];
+  }
+  if (auto indicesInOp = op->indices) {
+    auto indices = indicesInOp[blockBase / kBlockSize];
+    if (indices) {
+      index = indices[index];
+} else {
+      index += blockBase;
+    }
+  } else {
+    index = (index + blockBase) & op->indexMask;
+  }
+  return reinterpret_cast<const T*>(op->base)[index];
+}
+
+  
+bool __device__ __forceinline__ setRegisterNull(uint32_t& flags, int8_t bit, bool notNull) {
   if (!notNull) {
     flags &= ~(1 << bit);
   }
@@ -128,8 +154,6 @@ bool __device__ __forceinline__ setRegisterNull(uint32_t& flags, int8_t bit, boo
   bool __device__ __forceinline__ isRegisterNull(uint32_t flags, int8_t bit) {
     return 0 == (flags & (1 << bit ));
   }
-  
-
   
 template <typename T>
 __device__ inline T& flatOperand(
@@ -143,54 +167,30 @@ __device__ inline T& flatOperand(
   return reinterpret_cast<T*>(op->base)[blockBase + threadIdx.x];
 }
 
-  
+
+  /// Clears 'bit' from 'flags' if notNull is false. Returns true if bit cleared.
 bool  __device__ __forceinline__ setNullRegister(uint32_t& flags, int8_t bit, bool notNull) {
   if (!notNull) {
-    mask &= ~(1 << bit);
+    flags &= ~(1 << bit);
   }
-  return notNull;
-}
-
-bool isRegisterNull(uint32_t flags, int8_t bit) {
-  return (mask & (1 << bit)) == 0;
-}
-  
-template <typename T>
-bool constantOrNull(Operand** operands, OperandIndex opIdx, T& value)
-
-
-
-template <typename T>
-__device__ inline T value(Operand* op, int index) {
-  if (auto indicesInOp = op->indices) {
-    auto indices = indicesInOp[0];
-    if (indices) {
-      index = indices[index];
-    }
-  }
-  return reinterpret_cast<const T*>(op->base)[index];
+  return !notNull;
 }
 
 /// Sets the lane's result to null for opIdx.
 __device__ inline void resultNull(
     Operand** operands,
     OperandIndex opIdx,
-    int32_t blockBase,
-    void* shared) {
-  if (opIdx >= kMinSharedMemIndex) {
-    assert(false);
-  } else {
+    int32_t blockBase) {
     auto* op = operands[opIdx];
     op->nulls[blockBase + threadIdx.x] = kNull;
   }
-}
+
 
 template <typename T>
 __device__ inline T& flatResult(
-    Operand** operands,
+				Operand** operands,
     OperandIndex opIdx,
-    int32_t blockBase,
-    void* shared) {
+    int32_t blockBase) {
   auto* op = operands[opIdx];
   if (op->nulls) {
     op->nulls[blockBase + threadIdx.x] = kNotNull;
@@ -200,7 +200,7 @@ __device__ inline T& flatResult(
 
 template <typename T>
 __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
-  return flatResult<T>(&op, 0, blockBase, nullptr);
+  return flatResult<T>(&op, 0, blockBase);
 }
 
 #define PROGRAM_PREAMBLE(blockOffset)                                          \
@@ -299,7 +299,7 @@ __device__ __forceinline__ void filterKernel(
   bool isPassed = laneActive(laneStatus);
   if (isPassed) {
     if (!operandOrNull(
-            operands, filter.flags, blockBase, &shared->data, isPassed)) {
+            operands, filter.flags, blockBase, isPassed)) {
       isPassed = false;
     }
   }
@@ -406,13 +406,20 @@ __device__ __forceinline__ void binaryOpKernel(
   }
   T left;
   T right;
-  if (operandOrNull(operands, instr.left, blockBase, shared, left) &&
-      operandOrNull(operands, instr.right, blockBase, shared, right)) {
+  if (operandOrNull(operands, instr.left, blockBase, left) &&
+      operandOrNull(operands, instr.right, blockBase, right)) {
     flatResult<decltype(func(left, right))>(
-        operands, instr.result, blockBase, shared) = func(left, right);
+        operands, instr.result, blockBase) = func(left, right);
   } else {
-    resultNull(operands, instr.result, blockBase, shared);
+    resultNull(operands, instr.result, blockBase);
   }
 }
 
+  template <typename T>
+  __device__ T value(Operand* operands, OperandIndex opIdx) {
+    // Obsolete signature. call sites must be changed.
+    assert(false);
+    return T{};
+  }
+  
 } // namespace facebook::velox::wave
