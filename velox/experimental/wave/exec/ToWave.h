@@ -592,7 +592,7 @@ class CompileState {
 
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
-  void makeDriver();
+  void makeOperators();
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
 

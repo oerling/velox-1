@@ -705,7 +705,7 @@ ProgramKey CompileState::makeKey() {
       .output = std::move(output)};
 }
 
-void CompileState::makeDriver() {
+void CompileState::makeOperators() {
   makeSegments();
   planPipelines();
   generatePrograms();

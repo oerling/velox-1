@@ -181,6 +181,8 @@ void Filter::generateMain(CompileState& state) {}
 
 void AggregateProbe::generateMain(CompileState& state) {}
 
+void AggregateUpdate::generateMain(CompileState& state) {}
+  
 void writeDebugFile(const KernelSpec& spec) {
   try {
     std::ofstream out(

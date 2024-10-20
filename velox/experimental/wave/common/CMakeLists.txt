@@ -24,7 +24,8 @@ velox_add_library(
   ResultStaging.cpp)
 
 velox_link_libraries(velox_wave_common velox_exception velox_common_base
-                     velox_type)
+  velox_type
+  CUDA::nvrtc)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

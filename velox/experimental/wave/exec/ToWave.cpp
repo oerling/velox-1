@@ -622,6 +622,7 @@ bool isProjectedThrough(
 }
 
 bool CompileState::compile() {
+  constexpr bool kCodeGen = true;
   auto operators = driver_.operators();
   auto& nodes = driverFactory_.planNodes;
 
@@ -633,6 +634,9 @@ bool CompileState::compile() {
   // them during the transformation.
   driver_.initializeOperators();
   RowTypePtr inputType;
+  if (kCodeGen) {
+    makeOperators();
+  } else {
   for (; operatorIndex < operators.size(); ++operatorIndex) {
     int32_t previousNumOperators = operators_.size();
     auto& identity = operators[operatorIndex]->identityProjections();
@@ -683,11 +687,16 @@ bool CompileState::compile() {
     }
     inputType = outputType;
   }
+  }
   if (operators_.empty()) {
     return false;
   }
   std::vector<OperandId> resultOrder;
   for (auto i = 0; i < outputType->size(); ++i) {
+    if (kCodeGen) {
+      auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
+      resultOrder.push_back(op->id);
+    } else {
     auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
     auto source = programOf(operand, false);
     // Operands produced by programs, when projected out of Wave, must
@@ -697,6 +706,7 @@ bool CompileState::compile() {
       source->markOutput(operand->id);
     }
     resultOrder.push_back(operand->id);
+  }
   }
   for (auto& op : operators_) {
     op->finalize(*this);
