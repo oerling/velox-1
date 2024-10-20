@@ -992,21 +992,18 @@ WaveTypeKind typeKindCode(TypeKind kind) {
   return static_cast<WaveTypeKind>(kind);
 }
 
-  Program::Program(OperandSet input, OperandSet local, OperandSet output, const std::vector<std::unique_ptr<AbstractOperand>>& allOperands, std::unique_ptr<CompiledKernel> kernel)
+Program::Program(
+    OperandSet input,
+    OperandSet local,
+    OperandSet output,
+    const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
+    std::unique_ptr<CompiledKernel> kernel)
     : kernel_(std::move(kernel)) {
-    input.forEach([&](int32_t id) {
-		    input_[allOperands[id].get()] = id;
-		  });
-    local.forEach([&](int32_t id) {
-		    local_[allOperands[id].get()] = id;
-		  });
-        output.forEach([&](int32_t id) {
-			 output_[allOperands[id].get()] = id;
-		  });
+  input.forEach([&](int32_t id) { input_[allOperands[id].get()] = id; });
+  local.forEach([&](int32_t id) { local_[allOperands[id].get()] = id; });
+  output.forEach([&](int32_t id) { output_[allOperands[id].get()] = id; });
+}
 
-
-  }
-  
 void Program::getOperatorStates(WaveStream& stream, std::vector<void*>& ptrs) {
   ptrs.resize(operatorStates_.size());
   for (auto i = 0; i < operatorStates_.size(); ++i) {

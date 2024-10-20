@@ -30,10 +30,9 @@ namespace facebook::velox::wave {
 
 using exec::Expr;
 
-  //  static
-  std::atomic<int32_t> CompileState::kernelCounter_{0};
+//  static
+std::atomic<int32_t> CompileState::kernelCounter_{0};
 
-  
 common::Subfield* CompileState::toSubfield(const Expr& expr) {
   std::string name = expr.toString();
   return toSubfield(name);
@@ -275,7 +274,7 @@ AbstractOperand* CompileState::addExpr(const Expr& expr) {
     } else {
       op->notNull = true;
     }
-      return op;
+    return op;
   } else if (dynamic_cast<const exec::SpecialForm*>(&expr)) {
     VELOX_UNSUPPORTED("No special forms: {}", expr.toString(1));
   }

@@ -391,17 +391,17 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       candidate.steps.size() - 1, box->steps.size(), candidate.boxIdx);
 }
 
-  NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
-    auto* check = makeStep<NullCheck>();
-    for (auto& field : op->expr->distinctFields()) {
-      check->operands.push_back(fieldToOperand(*toSubfield(*field), &topScope_));
-    }
-    check->label = ++labelCounter_;
-    check->result = op;
-    return check;
+NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
+  auto* check = makeStep<NullCheck>();
+  for (auto& field : op->expr->distinctFields()) {
+    check->operands.push_back(fieldToOperand(*toSubfield(*field), &topScope_));
   }
+  check->label = ++labelCounter_;
+  check->result = op;
+  return check;
+}
 
-  void CompileState::placeExpr(
+void CompileState::placeExpr(
     PipelineCandidate& candidate,
     AbstractOperand* op,
     bool mayDelay) {
@@ -451,9 +451,11 @@ void newKernel(PipelineCandidate& candidate) {
   candidate.boxIdx = 0;
 }
 
-  void CompileState::recordCandidate(PipelineCandidate& candidate, int32_t lastSegmentIdx) {
-    candidate.outputType = segments_[lastSegmentIdx].outputType;
-    candidates_.push_back(std::move(candidate));
+void CompileState::recordCandidate(
+    PipelineCandidate& candidate,
+    int32_t lastSegmentIdx) {
+  candidate.outputType = segments_[lastSegmentIdx].outputType;
+  candidates_.push_back(std::move(candidate));
 }
 
 void CompileState::planSegment(
@@ -513,41 +515,43 @@ void CompileState::planSegment(
   planSegment(candidate, inputBatch, segmentIdx + 1);
 }
 
-  void CompileState::pickBest() {
-    // There is only one candidate. Pick that.
-    int32_t selectedIdx = 0;
-    selectedPipelines_.push_back(std::move(candidates_[selectedIdx]));
-    candidates_.clear();
-  }
+void CompileState::pickBest() {
+  // There is only one candidate. Pick that.
+  int32_t selectedIdx = 0;
+  selectedPipelines_.push_back(std::move(candidates_[selectedIdx]));
+  candidates_.clear();
+}
 
-  void PipelineCandidate::markParams(KernelBox& box, int32_t kernelSeq, std::vector<LevelParams>& params) {
-    for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-      box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
-					    auto& flags = this->flags(op);
-					   if (flags.definedIn.kernelSeq < kernelSeq) {
-					     levelParams[kernelSeq].input.add(op->id);
-					   }
-					 });
-      box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
-					auto& flags = this->flags(op);
-					if (flags.lastUse.kernelSeq > kernelSeq) {
-					  levelParams[kernelSeq].output.add(op->id);
-					} else {
-					  levelParams[kernelSeq].local.add(op->id);
-					}
-				      });
-    }
-  }
-
-
-  void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
-    levelParams.resize(steps.size());
-    for (auto kernelSeq = 0; kernelSeq < steps.size(); ++kernelSeq) {
-      for (auto i = 0; i < steps[kernelSeq].size(); ++i) {
-	markParams(steps[kernelSeq][i], kernelSeq, levelParams);
+void PipelineCandidate::markParams(
+    KernelBox& box,
+    int32_t kernelSeq,
+    std::vector<LevelParams>& params) {
+  for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+    box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
+      auto& flags = this->flags(op);
+      if (flags.definedIn.kernelSeq < kernelSeq) {
+        levelParams[kernelSeq].input.add(op->id);
       }
+    });
+    box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
+      auto& flags = this->flags(op);
+      if (flags.lastUse.kernelSeq > kernelSeq) {
+        levelParams[kernelSeq].output.add(op->id);
+      } else {
+        levelParams[kernelSeq].local.add(op->id);
+      }
+    });
+  }
+}
+
+void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
+  levelParams.resize(steps.size());
+  for (auto kernelSeq = 0; kernelSeq < steps.size(); ++kernelSeq) {
+    for (auto i = 0; i < steps[kernelSeq].size(); ++i) {
+      markParams(steps[kernelSeq][i], kernelSeq, levelParams);
     }
   }
+}
 
 void CompileState::planPipelines() {
   int32_t startIdx = 0;
@@ -568,14 +572,13 @@ void CompileState::planPipelines() {
       break;
     }
   }
-  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
+  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
+       ++pipelineIdx_) {
     selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
 }
 
-
-  
-  ProgramKey CompileState::makeKey() {
+ProgramKey CompileState::makeKey() {
   auto& candidate = selectedPipelines_[pipelineIdx_];
   auto& params = candidate.levelParams[kernelSeq_];
   std::stringstream out;
@@ -586,31 +589,30 @@ void CompileState::planPipelines() {
   std::vector<AbstractOperand*> output;
 
   params.input.forEach([&](int32_t id) {
-			 auto op = operands_[id].get();
-			 input.push_back(op);
-			 out << fmt::format("I{} {} ", ordinal(*op), op->type->toString());
-		       });
+    auto op = operands_[id].get();
+    input.push_back(op);
+    out << fmt::format("I{} {} ", ordinal(*op), op->type->toString());
+  });
 
   params.local.forEach([&](int32_t id) {
-			 auto op = operands_[id].get();
-			 local.push_back(op);
-			 out << fmt::format("L{} {} ", ordinal(*op), op->type->toString());
-		       });
+    auto op = operands_[id].get();
+    local.push_back(op);
+    out << fmt::format("L{} {} ", ordinal(*op), op->type->toString());
+  });
 
-    params.output.forEach([&](int32_t id) {
-			 auto op = operands_[id].get();
-			 output.push_back(op);
-			 out << fmt::format("O{} {} ", ordinal(*op), op->type->toString());
-		       });
+  params.output.forEach([&](int32_t id) {
+    auto op = operands_[id].get();
+    output.push_back(op);
+    out << fmt::format("O{} {} ", ordinal(*op), op->type->toString());
+  });
 
   for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
     auto& box = level[programIdx];
     for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-
-      auto paramString = [&](const AbstractOperand& op) ->std::string {
-	return fmt::format("P{}", ordinal(op));
+      auto paramString = [&](const AbstractOperand& op) -> std::string {
+        return fmt::format("P{}", ordinal(op));
       };
-      
+
       auto renamedId = [&](AbstractOperand* op) -> int32_t {
         auto it = renamed.find(op->id);
         if (it == renamed.end()) {
@@ -621,7 +623,7 @@ void CompileState::planPipelines() {
 
       auto markOutput = [&](AbstractOperand* op) {
         auto& flags = candidate.flags(op);
-	out << fmt::format("<P{} =", ordinal(*op));
+        out << fmt::format("<P{} =", ordinal(*op));
         if (flags.lastUse.kernelSeq > kernelSeq_) {
           output.push_back(op);
         }
@@ -707,7 +709,6 @@ void CompileState::makeDriver() {
   makeSegments();
   planPipelines();
   generatePrograms();
-  
 }
 
 } // namespace facebook::velox::wave

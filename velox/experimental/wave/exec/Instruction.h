@@ -41,7 +41,6 @@ struct AbstractOperand {
   static constexpr int32_t kNotAccessed = ~0;
   static constexpr int32_t kNoNullBit = ~0;
 
-  
   AbstractOperand(int32_t id, const TypePtr& type, std::string label)
       : id(id), type(type), label(label) {}
 
@@ -143,8 +142,7 @@ struct AbstractOperand {
 
   /// Bit field in register with null flags.
   int32_t registerNullBit{kNoNullBit};
-  
-  
+
   std::string toString() const;
 };
 

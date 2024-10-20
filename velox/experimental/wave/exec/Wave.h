@@ -482,7 +482,12 @@ class Program : public std::enable_shared_from_this<Program> {
  public:
   Program() = default;
 
-  Program(OperandSet input, OperandSet local, OperandSet output, const std::vector<std::unique_ptr<AbstractOperand>>& allOperands, std::unique_ptr<CompiledKernel> kernel);
+  Program(
+      OperandSet input,
+      OperandSet local,
+      OperandSet output,
+      const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
+      std::unique_ptr<CompiledKernel> kernel);
 
   void add(std::unique_ptr<AbstractInstruction> instruction) {
     instructions_.push_back(std::move(instruction));
@@ -594,7 +599,7 @@ class Program : public std::enable_shared_from_this<Program> {
   CompiledKernel* kernel() const {
     return kernel_.get();
   }
-  
+
  private:
   template <TypeKind kind>
   int32_t addLiteralTyped(AbstractOperand* op);

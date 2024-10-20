@@ -187,7 +187,7 @@ struct WaveShared {
 
   int32_t* extraWraps;
   int16_t numExtraWraps;
-  
+
   /// True if continuing the first instruction. The instruction will
   /// pick up its lane status from blockStatus or an
   /// instruction-specific source. The instruction must clear this
@@ -251,7 +251,7 @@ struct KernelParams {
   ///  Extra wraps applied by all wraps in the kernel.
   OperandIndex* extraWraps{nullptr};
   int16_t numExtraWraps{0};
-  
+
   /// Number of blocks in each program. gridDim.x can be a multiple if many
   /// programs in launch.
   int32_t numBlocks{0};

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/wave/exec/ToWave.h"
-#include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/Project.h"
+#include "velox/experimental/wave/exec/TableScan.h"
+#include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {
 
@@ -63,17 +63,17 @@ int32_t CompileState::declareVariable(const AbstractOperand& op) {
   return ord;
 }
 
-  void EndNullCheck::generateMain(CompileState& state) {
+void EndNullCheck::generateMain(CompileState& state) {
   auto ord = state.ordinal(*result);
   state.generated() << fmt::format("goto skip{};\n", label)
                     << fmt::format("end{}: \n", label);
   auto flags = state.flags(*result);
-    fmt::format("setRegisterNull(nulls{}, {});\n", ord / 32, ord &31, true);
-    if (flags.needStore) {
+  fmt::format("setRegisterNull(nulls{}, {});\n", ord / 32, ord & 31, true);
+  if (flags.needStore) {
     state.generated() << fmt::format(
         "setNull(operands, {}, blockBase, true);n", ord);
-    }
-		state.generated() << fmt::format("skip{}: ;\n", label);
+  }
+  state.generated() << fmt::format("skip{}: ;\n", label);
 }
 
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
@@ -181,23 +181,28 @@ void Filter::generateMain(CompileState& state) {}
 
 void AggregateProbe::generateMain(CompileState& state) {}
 
-  void writeDebugFile(const KernelSpec& spec) {
-    try {
-      std::ofstream out(fmt::format("/tmp/{}", spec.filePath), std::ios_base::out | std::ios_base::trunc);
-      out << spec.code;
-      out.close();
-    } catch (const std::exception& e) {
-      LOG(ERROR) << "Error saving compiled file /tmp/" << spec.filePath << " " << e.what();
-    }
+void writeDebugFile(const KernelSpec& spec) {
+  try {
+    std::ofstream out(
+        fmt::format("/tmp/{}", spec.filePath),
+        std::ios_base::out | std::ios_base::trunc);
+    out << spec.code;
+    out.close();
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Error saving compiled file /tmp/" << spec.filePath << " "
+               << e.what();
   }
-  
+}
+
 ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
   auto& level = selectedPipelines_[pipelineIdx_].steps[kernelSeq_];
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
   std::vector<std::string> entryPoints = {kernelName};
-  head << fmt::format("void __global__ __launch_bounds__(1024) {}(KernelParams params) {\n", kernelName);
+  head << fmt::format(
+      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {\n",
+      kernelName);
 
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
@@ -230,7 +235,8 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
   }
   generated_ << " PROGRAM_EPILOGUE()\n}";
   auto& params = currentCandidate_->levelParams[kernelSeq_];
-  int32_t numRegs = params.input.size() + params.local.size() + params.output.size();
+  int32_t numRegs =
+      params.input.size() + params.local.size() + params.output.size();
   for (auto i = 0; i < numRegs; i += 32) {
     head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
   }
@@ -239,16 +245,13 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
   std::vector<AbstractOperand*> input;
   std::vector<AbstractOperand*> local;
   std::vector<AbstractOperand*> output;
-  params.input.forEach([&](int32_t id) {
-			   input.push_back(operands_[id].get());
-		       });
+  params.input.forEach(
+      [&](int32_t id) { input.push_back(operands_[id].get()); });
 
-  params.local.forEach([&](int32_t id) {
-			 local.push_back(operands_[id].get());
-		       });
-  params.output.forEach([&](int32_t id) {
-			  output.push_back(operands_[id].get());
-		       });
+  params.local.forEach(
+      [&](int32_t id) { local.push_back(operands_[id].get()); });
+  params.output.forEach(
+      [&](int32_t id) { output.push_back(operands_[id].get()); });
 
   spec.code = head.str();
   spec.entryPoints = std::move(entryPoints);
@@ -257,20 +260,21 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
   // Write the geneerated code to a file for debugger.
   writeDebugFile(spec);
 #endif
-  return ProgramKey{head.str(), std::move(input), std::move(local), std::move(output)};
+  return ProgramKey{
+      head.str(), std::move(input), std::move(local), std::move(output)};
 }
-   
+
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   auto key = makeKey();
   KernelSpec spec;
-  auto kernel = CompiledKernel::getKernel(key.text,
-					  [&]() {
-					    makeLevelText(spec);
-					    return spec;
-					  });
+  auto kernel = CompiledKernel::getKernel(key.text, [&]() {
+    makeLevelText(spec);
+    return spec;
+  });
   auto& params = currentCandidate_->levelParams[kernelSeq_];
-  auto program = std::make_shared<Program>(params.input, params.local, params.output, operands_, std::move(kernel));
+  auto program = std::make_shared<Program>(
+      params.input, params.local, params.output, operands_, std::move(kernel));
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
@@ -279,7 +283,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   }
   programs_.push_back(std::move(program));
 }
-  
+
 void CompileState::generatePrograms() {
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
@@ -300,8 +304,11 @@ void CompileState::generatePrograms() {
       levels.emplace_back();
       levels.back().push_back(std::move(program));
     }
-    operators_.push_back(
-			 std::make_unique<Project>(*this, selectedPipelines_[pipelineIdx_].outputType, std::move(levels), nullptr));
+    operators_.push_back(std::make_unique<Project>(
+        *this,
+        selectedPipelines_[pipelineIdx_].outputType,
+        std::move(levels),
+        nullptr));
   }
 }
 
