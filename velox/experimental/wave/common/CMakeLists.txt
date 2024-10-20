@@ -23,7 +23,10 @@ velox_add_library(
   Type.cpp
   ResultStaging.cpp)
 
-velox_link_libraries(velox_wave_common velox_exception velox_common_base
+velox_link_libraries(
+  velox_wave_common
+  velox_exception
+  velox_common_base
   velox_type
   CUDA::nvrtc)
 

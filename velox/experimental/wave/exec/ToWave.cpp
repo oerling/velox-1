@@ -637,56 +637,56 @@ bool CompileState::compile() {
   if (kCodeGen) {
     makeOperators();
   } else {
-  for (; operatorIndex < operators.size(); ++operatorIndex) {
-    int32_t previousNumOperators = operators_.size();
-    auto& identity = operators[operatorIndex]->identityProjections();
-    // The columns that are projected through are renamed. They may also get an
-    // indirection after the new operator is placed.
-    std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
-    for (auto& projection : identity) {
-      identityProjected.push_back(std::make_pair(
-          findCurrentValue(
-              Value(toSubfield(inputType->nameOf(projection.inputChannel)))),
-          projection.outputChannel));
-    }
-    if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
-      break;
-    }
-    ++nodeIndex;
-    for (auto newIndex = previousNumOperators; newIndex < operators_.size();
-         ++newIndex) {
-      if (operators_[newIndex]->isSink()) {
-        // No output operands.
-        continue;
+    for (; operatorIndex < operators.size(); ++operatorIndex) {
+      int32_t previousNumOperators = operators_.size();
+      auto& identity = operators[operatorIndex]->identityProjections();
+      // The columns that are projected through are renamed. They may also get
+      // an indirection after the new operator is placed.
+      std::vector<std::pair<AbstractOperand*, int32_t>> identityProjected;
+      for (auto& projection : identity) {
+        identityProjected.push_back(std::make_pair(
+            findCurrentValue(
+                Value(toSubfield(inputType->nameOf(projection.inputChannel)))),
+            projection.outputChannel));
       }
-      for (auto i = 0; i < outputType->size(); ++i) {
-        auto& name = outputType->nameOf(i);
-        Value value = Value(toSubfield(name));
-        int32_t inputChannel;
-        if (isProjectedThrough(identity, i, inputChannel)) {
+      if (!addOperator(operators[operatorIndex], nodeIndex, outputType)) {
+        break;
+      }
+      ++nodeIndex;
+      for (auto newIndex = previousNumOperators; newIndex < operators_.size();
+           ++newIndex) {
+        if (operators_[newIndex]->isSink()) {
+          // No output operands.
           continue;
         }
-        auto operand = operators_[newIndex]->defines(value);
-        if (!operand &&
-            (operators_[newIndex]->isSource() ||
-             !operators_[newIndex]->isStreaming())) {
-          operand = operators_[newIndex]->definesSubfield(
-              *this, outputType->childAt(i), name, newIndex == 0);
-        }
-        if (operand) {
-          operators_[newIndex]->addOutputId(operand->id);
-          definedBy_[value] = operand;
-          operandOperatorIndex_[operand] = operators_.size() - 1;
+        for (auto i = 0; i < outputType->size(); ++i) {
+          auto& name = outputType->nameOf(i);
+          Value value = Value(toSubfield(name));
+          int32_t inputChannel;
+          if (isProjectedThrough(identity, i, inputChannel)) {
+            continue;
+          }
+          auto operand = operators_[newIndex]->defines(value);
+          if (!operand &&
+              (operators_[newIndex]->isSource() ||
+               !operators_[newIndex]->isStreaming())) {
+            operand = operators_[newIndex]->definesSubfield(
+                *this, outputType->childAt(i), name, newIndex == 0);
+          }
+          if (operand) {
+            operators_[newIndex]->addOutputId(operand->id);
+            definedBy_[value] = operand;
+            operandOperatorIndex_[operand] = operators_.size() - 1;
+          }
         }
       }
+      for (auto& [op, channel] : identityProjected) {
+        Value value(toSubfield(outputType->nameOf(channel)));
+        auto newOp = addIdentityProjections(op);
+        projectedTo_[value] = newOp;
+      }
+      inputType = outputType;
     }
-    for (auto& [op, channel] : identityProjected) {
-      Value value(toSubfield(outputType->nameOf(channel)));
-      auto newOp = addIdentityProjections(op);
-      projectedTo_[value] = newOp;
-    }
-    inputType = outputType;
-  }
   }
   if (operators_.empty()) {
     return false;
@@ -697,16 +697,16 @@ bool CompileState::compile() {
       auto op = fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_);
       resultOrder.push_back(op->id);
     } else {
-    auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
-    auto source = programOf(operand, false);
-    // Operands produced by programs, when projected out of Wave, must
-    // be marked as output of their respective programs. Some
-    // operands, e.g. table scan results are not from programs.
-    if (source) {
-      source->markOutput(operand->id);
+      auto operand = findCurrentValue(Value(toSubfield(outputType->nameOf(i))));
+      auto source = programOf(operand, false);
+      // Operands produced by programs, when projected out of Wave, must
+      // be marked as output of their respective programs. Some
+      // operands, e.g. table scan results are not from programs.
+      if (source) {
+        source->markOutput(operand->id);
+      }
+      resultOrder.push_back(operand->id);
     }
-    resultOrder.push_back(operand->id);
-  }
   }
   for (auto& op : operators_) {
     op->finalize(*this);
