@@ -15,6 +15,8 @@
  */
 
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/TableScan.h"
+#include "velox/experimental/wave/exec/Project.h"
 
 namespace facebook::velox::wave {
 
@@ -179,10 +181,22 @@ void Filter::generateMain(CompileState& state) {}
 
 void AggregateProbe::generateMain(CompileState& state) {}
 
-void CompileState::makeLevel(std::vector<KernelBox>& level) {
+  void writeDebugFile(const KernelSpec& spec) {
+    try {
+      std::ofstream out(fmt::format("/tmp/{}", spec.filePath), std::ios_base::out | std::ios_base::trunc);
+      out << spec.code;
+      out.close();
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Error saving compiled file /tmp/" << spec.filePath << " " << e.what();
+    }
+  }
+  
+ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
+  auto& level = selectedPipelines_[pipelineIdx_].steps[kernelSeq_];
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
+  std::vector<std::string> entryPoints = {kernelName};
   head << fmt::format("void __global__ __launch_bounds__(1024) {}(KernelParams params) {\n", kernelName);
 
   generated_ << "  GENERATED_PREAMBLE(0);\n";
@@ -221,25 +235,73 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
     head << fmt::format(" uint32_t nulls{} = ~0;\n", i / 32);
   }
   head << generated_.str();
-}
 
+  std::vector<AbstractOperand*> input;
+  std::vector<AbstractOperand*> local;
+  std::vector<AbstractOperand*> output;
+  params.input.forEach([&](int32_t id) {
+			   input.push_back(operands_[id].get());
+		       });
+
+  params.local.forEach([&](int32_t id) {
+			 local.push_back(operands_[id].get());
+		       });
+  params.output.forEach([&](int32_t id) {
+			  output.push_back(operands_[id].get());
+		       });
+
+  spec.code = head.str();
+  spec.entryPoints = std::move(entryPoints);
+  spec.filePath = fmt::format("/tmp/{}.cu", kernelName);
+#ifndef NDEBUG
+  // Write the geneerated code to a file for debugger.
+  writeDebugFile(spec);
+#endif
+  return ProgramKey{head.str(), std::move(input), std::move(local), std::move(output)};
+}
+   
+void CompileState::makeLevel(std::vector<KernelBox>& level) {
+  VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
+  auto key = makeKey();
+  KernelSpec spec;
+  auto kernel = CompiledKernel::getKernel(key.text,
+					  [&]() {
+					    makeLevelText(spec);
+					    return spec;
+					  });
+  auto& params = currentCandidate_->levelParams[kernelSeq_];
+  auto program = std::make_shared<Program>(params.input, params.local, params.output, operands_, std::move(kernel));
+  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
+    currentBox_ = &level[branchIdx_];
+    for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
+      currentBox_->steps[stepIdx_]->addInstruction(*this, *program);
+    }
+  }
+  programs_.push_back(std::move(program));
+}
+  
 void CompileState::generatePrograms() {
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
     currentCandidate_ = &selectedPipelines_[pipelineIdx_];
     auto& firstStep = currentCandidate_->steps[0][0].steps.front();
     int32_t start = 0;
-    if (firstStep->stepKind() == StepKind::kTableScan) {
+    if (firstStep->kind() == StepKind::kTableScan) {
       operators_.push_back(std::make_unique<TableScan>(
-          *this, operators_.size(), *firstStep.as<TableScanStep>().node));
+          *this, operators_.size(), *firstStep->as<TableScanStep>().node));
       start = 1;
     }
     for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
          ++kernelSeq_) {
       makeLevel(currentCandidate_->steps[kernelSeq_]);
     }
+    std::vector<std::vector<ProgramPtr>> levels;
+    for (auto& program : programs_) {
+      levels.emplace_back();
+      levels.back().push_back(std::move(program));
+    }
     operators_.push_back(
-			 std::make_unique<Project>(this, selectedPipelines_[pipelineIdx_].outputType, std::move(programs), nullptr));
+			 std::make_unique<Project>(*this, selectedPipelines_[pipelineIdx_].outputType, std::move(levels), nullptr));
   }
 }
 

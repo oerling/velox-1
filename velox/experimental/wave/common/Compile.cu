@@ -61,6 +61,46 @@ class CompiledModuleImpl : public CompiledModule {
   std::vector<CUfunction> kernels_;
 };
 
+  void addFlag(const char* flag, const char* value, int32_t length, std::vector<std::string>& data) {
+    std::string str(flag);
+    str.resize(str.size() + length + 1);
+    memcpy(str.data() + strlen(flag), value, length);
+    str.back() = 0;
+    data.push_back(std::move(str));
+  }
+  
+
+  // Gets compiler options from the environment and appends  them  to 'opts''. The memory is owned by  'data'.
+  void getNvrtcOptions(std::vector<const char*>& opts, std::vector<std::string>& data) {
+    const char* includes = getenv("WAVE_NVRTC_INCLUDE_PATH");
+    if (includes && strlen(includes) > 0) {
+      for (;;) {
+	const char* end = strchr(includes, ':');
+	if (!end) {
+	  addFlag("-I", includes, strlen(includes), data);
+	  break;
+	}
+	addFlag("-I", includes, end - includes, data);
+	includes = end + 1;
+      }
+    }
+    const char* flags = getenv("WAVE_NVRTC_FLAGS");
+    if (flags && strlen(flags)) {
+      for (;;) {
+	auto end = strchr(flags, ' ');
+	if (!end) {
+	  addFlag("", flags, strlen(flags), data);
+	  break;
+	}
+	addFlag("", flags, end - flags, data);
+	flags = end + 1;
+      }
+    }
+    for (auto& str : data) {
+      opts.push_back(str.data());
+    }
+  }
+  
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   nvrtcProgram prog;
   nvrtcCreateProgram(
@@ -73,22 +113,19 @@ std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   for (auto& name : spec.entryPoints) {
     nvrtcCheck(nvrtcAddNameExpression(prog, name.c_str()));
   }
-  auto architecture =
-      fmt::format("--gpu-architecture={}", FLAGS_wavegen_architecture);
-  const char* opts[] = {
-      architecture.c_str() //,
-#if 0
+  std::vector<const char*> opts;
+  std::vector<std::string> optsData;
 #ifndef NDEBUG
-      "-G"
+  optsData.push_back("-G");
 #else
-      "-O3"
+  optsData.push_back("-O3");
 #endif
-#endif
-  };
+  getNvrtcOptions(opts, optsData);
+
   auto compileResult = nvrtcCompileProgram(
       prog, // prog
-      sizeof(opts) / sizeof(char*), // numOptions
-      opts); // options
+      opts.size(), // numOptions
+      opts.data()); // options
 
   size_t logSize;
 

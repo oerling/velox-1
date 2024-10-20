@@ -470,15 +470,20 @@ struct ProgramLaunch {
 /// Identifies a compiled kernel. The text is the full description
 /// of the work. The operator ids are the ids in the plan making the
 /// lookup so that every placeholder in the text corresponds to one
-/// operand id. A single id can occur in 'operandIds' multiple times.
+/// operand id.
 struct ProgramKey {
   std::string text;
   std::vector<AbstractOperand*> input;
+  std::vector<AbstractOperand*> local;
   std::vector<AbstractOperand*> output;
 };
 
 class Program : public std::enable_shared_from_this<Program> {
  public:
+  Program() = default;
+
+  Program(OperandSet input, OperandSet local, OperandSet output, const std::vector<std::unique_ptr<AbstractOperand>>& allOperands, std::unique_ptr<CompiledKernel> kernel);
+
   void add(std::unique_ptr<AbstractInstruction> instruction) {
     instructions_.push_back(std::move(instruction));
   }
@@ -569,7 +574,7 @@ class Program : public std::enable_shared_from_this<Program> {
   canAdvance(WaveStream& stream, LaunchControl* control, int32_t programIdx);
 
   /// True if last non-return instruction is a sink, e.g. build, repartition. No
-  /// output vectors,, synced on 'hostReturnEvent_'.
+  /// output vectors, synced on 'hostReturnEvent_'.
   bool isSink() const;
 
   /// Records instruction return status. The status os accessed by canAdvance().
@@ -586,6 +591,10 @@ class Program : public std::enable_shared_from_this<Program> {
 
   std::string toString() const;
 
+  CompiledKernel* kernel() const {
+    return kernel_.get();
+  }
+  
  private:
   template <TypeKind kind>
   int32_t addLiteralTyped(AbstractOperand* op);
@@ -596,6 +605,8 @@ class Program : public std::enable_shared_from_this<Program> {
   int32_t addLiteral(T* value, int32_t count);
 
   void literalToOperand(AbstractOperand* abstractOp, Operand& op);
+
+  std::unique_ptr<CompiledKernel> kernel_;
 
   GpuArena* arena_{nullptr};
   std::vector<Program*> dependsOn_;
@@ -670,6 +681,7 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // Globals accessed by id from instructions.
   std::vector<std::unique_ptr<ProgramState>> operatorStates_;
+
   std::vector<AbstractOperand*> extraWraps_;
 };
 

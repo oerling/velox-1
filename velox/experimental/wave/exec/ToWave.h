@@ -89,6 +89,9 @@ struct KernelStep {
 
   bool references(AbstractOperand* op);
 
+  /// Adds the AbstractInstruction to the current Program to interpret return state and hold OperatorStates. Only steps with retry or operator state add an instruction.
+  virtual void addInstruction(CompileState& state, Program& program) {}
+  
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);
@@ -299,7 +302,7 @@ struct PipelineCandidate {
 
   void makeOperandSets(int32_t kernelSeq);
 
-  void markParams(KernelBox& box, int32_t kernelSeq, LevelParams& params);
+  void markParams(KernelBox& box, int32_t kernelSeq, std::vector<LevelParams>& params);
 
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
@@ -453,6 +456,12 @@ class CompileState {
 
   void generateOperand(const AbstractOperand& op);
 
+  /// Returns a key for kernel cache lookup for the step at 'pipelineIdx_', 'kernelSeq_'
+  ProgramKey makeKey();
+
+  /// Makes the source text for kernels for the level of 'pipelineIdx_', 'kernelSeq_'. 
+  ProgramKey makeLevelText(KernelSpec& spec);
+
   
  private:
   bool
@@ -599,8 +608,6 @@ class CompileState {
   exec::Driver& driver_;
   SubfieldMap subfields_;
 
-  std::vector<ProgramPtr> allPrograms_;
-
   std::vector<std::vector<ProgramPtr>> pendingLevels_;
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
@@ -639,6 +646,10 @@ class CompileState {
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;
 
+  // All programs for the interpreted generation.
+  std::vector<ProgramPtr> allPrograms_;
+
+  
   // Process wide counter for kernels.
   static std::atomic<int32_t> kernelCounter_;
 

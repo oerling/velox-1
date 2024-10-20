@@ -521,20 +521,19 @@ void CompileState::planSegment(
   }
 
   void PipelineCandidate::markParams(KernelBox& box, int32_t kernelSeq, std::vector<LevelParams>& params) {
-    for (stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
-      box.steps[stepIdx].visitReferences([&](AbstractOperand* op) {
-					   auto& flags = flags(op);
+    for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+      box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
+					    auto& flags = this->flags(op);
 					   if (flags.definedIn.kernelSeq < kernelSeq) {
-					     levelParams[kernelSeq].input.add(op);
+					     levelParams[kernelSeq].input.add(op->id);
 					   }
 					 });
-      box.steps[stepIdx].visitResults([&](AbstractOperand* op) {
-					auto& flags = flags(op);
-					if (op.lastUse.kernelSeq > kernelSeq) {
-					  levelParams[kernelSeq].output.add(op);
+      box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
+					auto& flags = this->flags(op);
+					if (flags.lastUse.kernelSeq > kernelSeq) {
+					  levelParams[kernelSeq].output.add(op->id);
 					} else {
-					  levelParams[kernelSeq].local.add(op);
-
+					  levelParams[kernelSeq].local.add(op->id);
 					}
 				      });
     }
@@ -569,21 +568,49 @@ void CompileState::planPipelines() {
       break;
     }
   }
-  for (auto kernelSeq = 0; kernelSeq < selectedPipelines.size(); ++kernelSeq) {
-    selectedPipelines[levelIdx].makeOperandSets(kernelSeq);
+  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
+    selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
 }
 
+
   
-ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
-  std::vector<AbstractOperand*> input;
-  std::vector<AbstractOperand*> output;
+  ProgramKey CompileState::makeKey() {
+  auto& candidate = selectedPipelines_[pipelineIdx_];
+  auto& params = candidate.levelParams[kernelSeq_];
   std::stringstream out;
-  auto& level = candidate.steps[kernelIdx];
+  auto& level = candidate.steps[kernelSeq_];
   folly::F14FastMap<int32_t, int32_t> renamed;
+  std::vector<AbstractOperand*> input;
+  std::vector<AbstractOperand*> local;
+  std::vector<AbstractOperand*> output;
+
+  params.input.forEach([&](int32_t id) {
+			 auto op = operands_[id].get();
+			 input.push_back(op);
+			 out << fmt::format("I{} {} ", ordinal(*op), op->type->toString());
+		       });
+
+  params.local.forEach([&](int32_t id) {
+			 auto op = operands_[id].get();
+			 local.push_back(op);
+			 out << fmt::format("L{} {} ", ordinal(*op), op->type->toString());
+		       });
+
+    params.output.forEach([&](int32_t id) {
+			 auto op = operands_[id].get();
+			 output.push_back(op);
+			 out << fmt::format("O{} {} ", ordinal(*op), op->type->toString());
+		       });
+
   for (auto programIdx = 0; programIdx < level.size(); ++programIdx) {
     auto& box = level[programIdx];
     for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+
+      auto paramString = [&](const AbstractOperand& op) ->std::string {
+	return fmt::format("P{}", ordinal(op));
+      };
+      
       auto renamedId = [&](AbstractOperand* op) -> int32_t {
         auto it = renamed.find(op->id);
         if (it == renamed.end()) {
@@ -594,18 +621,16 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
 
       auto markOutput = [&](AbstractOperand* op) {
         auto& flags = candidate.flags(op);
-        if (flags.lastUse.kernelSeq > kernelIdx) {
-          out << fmt::format("<O {} {}>=", output.size(), op->type->toString());
+	out << fmt::format("<P{} =", ordinal(*op));
+        if (flags.lastUse.kernelSeq > kernelSeq_) {
           output.push_back(op);
-        } else {
-          out << fmt::format("<T {} {}>=", renamedId(op), op->type->toString());
         }
       };
 
       auto markInput = [&](AbstractOperand* op) {
         auto& flags = candidate.flags(op);
-        if (flags.definedIn.kernelSeq < kernelIdx) {
-          out << fmt::format("<I {} {}>", input.size(), op->type->toString());
+        if (flags.definedIn.kernelSeq < kernelSeq_) {
+          out << fmt::format("P{} ", ordinal(*op));
           input.push_back(op);
         } else {
           out << fmt::format("<T {} {}>", renamedId(op), op->type->toString());
@@ -674,6 +699,7 @@ ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx) {
   return ProgramKey{
       .text = out.str(),
       .input = std::move(input),
+      .local = std::move(local),
       .output = std::move(output)};
 }
 

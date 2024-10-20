@@ -58,7 +58,9 @@ struct KernelParams {
 };
 
 const char* kernelText =
-    "using int32_t = int; //#include <cstdint>\n"
+    "#include <atomic>\n"
+    "#include <semaphore>\n"
+  "using int32_t = int;\n"
     "namespace facebook::velox::wave {\n"
     "  struct KernelParams {\n"
     "    int32_t* array;\n"
