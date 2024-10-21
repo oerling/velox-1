@@ -15,12 +15,12 @@
  */
 
 #include "velox/runner/LocalSchema.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
 
 #include "velox/common/base/Fs.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 
 namespace facebook::velox::exec {
 
@@ -127,8 +127,10 @@ std::pair<int64_t, int64_t> LocalTable::sample(
         columnHandles,
         schema->connectorQueryCtx().get());
 
-    auto split =
-        exec::test::HiveConnectorSplitBuilder(file).fileFormat(format).build();
+    auto split = connector::hive::HiveConnectorSplitBuilder(file)
+                     .fileFormat(format)
+                     .connectorId(schema->connector()->connectorId())
+                     .build();
     dataSource->addSplit(split);
     constexpr int32_t kBatchSize = 1000;
     for (;;) {

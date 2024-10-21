@@ -16,7 +16,7 @@
 
 #include "velox/runner/LocalRunner.h"
 #include "velox/connectors/hive/HiveConnector.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
 
 namespace facebook::velox::exec {
 namespace {
@@ -193,11 +193,13 @@ Split LocalSplitSource::next(int32_t /*worker*/) {
     // Take the upper bound.
     const int splitSize = std::ceil((fileSize) / splitsPerFile_);
     for (int i = 0; i < splitsPerFile_; i++) {
-      fileSplits_.push_back(test::HiveConnectorSplitBuilder(filePath)
-                                .fileFormat(table_->format)
-                                .start(i * splitSize)
-                                .length(splitSize)
-                                .build());
+      fileSplits_.push_back(
+          connector::hive::HiveConnectorSplitBuilder(filePath)
+              .connectorId(table_->schema->connector()->connectorId())
+              .fileFormat(table_->format)
+              .start(i * splitSize)
+              .length(splitSize)
+              .build());
     }
   }
   return Split(std::move(fileSplits_[currentSplit_++]));
