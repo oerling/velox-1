@@ -41,12 +41,13 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
       std::vector<TableSpec> specs,
       std::shared_ptr<TempDirectoryPath>& directory);
 
-  std::shared_ptr<SplitSourceFactory> splitSourceFactory(const LocalSchema& schema);
+  std::shared_ptr<SplitSourceFactory> splitSourceFactory(
+      const LocalSchema& schema);
   std::shared_ptr<core::QueryCtx> makeQueryCtx(const std::string& queryId);
 
   std::unordered_map<std::string, std::string> config_;
   std::unordered_map<std::string, std::string> hiveConfig_;
-  
+
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> schemaRootPool_;
   std::shared_ptr<memory::MemoryPool> schemaPool_;

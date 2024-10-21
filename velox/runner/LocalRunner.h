@@ -67,8 +67,10 @@ class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
   /// Tasks and to be deleted. Throws if 'runner' is not unique. Used
   /// in tests to make sure that execution memory pools are gone
   /// before the test fixture exits.
-  static void waitForAllDeleted(std::shared_ptr<LocalRunner>&& runner, int32_t maxWaitMicros);
-  
+  static void waitForAllDeleted(
+      std::shared_ptr<LocalRunner>&& runner,
+      int32_t maxWaitMicros);
+
  private:
   // Propagates 'error_' to 'stages_' and 'cursor_' if set
   void terminate();

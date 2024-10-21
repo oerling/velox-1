@@ -144,37 +144,38 @@ std::pair<int64_t, int64_t> LocalTable::sample(
           continue;
         }
         auto builder = builders[column].get();
-	auto loadChild = [](RowVectorPtr data, int32_t column) {
-	  data->childAt(column) = BaseVector::loadedVectorShared(data->childAt(column));
-	};
+        auto loadChild = [](RowVectorPtr data, int32_t column) {
+          data->childAt(column) =
+              BaseVector::loadedVectorShared(data->childAt(column));
+        };
         switch (type->childAt(column)->kind()) {
           case TypeKind::SMALLINT:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, short>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::INTEGER:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, int32_t>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::BIGINT:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, int64_t>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::REAL:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<dwrf::DoubleStatisticsBuilder, double, float>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::DOUBLE:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<dwrf::DoubleStatisticsBuilder, double, double>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::VARCHAR:
-	    loadChild(data, column);
+            loadChild(data, column);
             addStats<
                 dwrf::StringStatisticsBuilder,
                 folly::StringPiece,

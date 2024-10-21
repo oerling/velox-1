@@ -65,7 +65,9 @@ void LocalRunner::terminate() {
 }
 
 // static
-  void LocalRunner::waitForAllDeleted(std::shared_ptr<LocalRunner>&& runner, int32_t maxWaitMicros) {
+void LocalRunner::waitForAllDeleted(
+    std::shared_ptr<LocalRunner>&& runner,
+    int32_t maxWaitMicros) {
   VELOX_CHECK(runner->tasksCreated_);
   std::vector<ContinueFuture> futures;
   for (auto& stage : runner->stages_) {

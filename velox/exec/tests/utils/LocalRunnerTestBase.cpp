@@ -22,17 +22,17 @@ void LocalRunnerTestBase::SetUp() {
   exec::ExchangeSource::registerFactory(createLocalExchangeSource);
 }
 
-  std::shared_ptr<core::QueryCtx> LocalRunnerTestBase::makeQueryCtx(const std::string& queryId) {
-    auto config = config_;
+std::shared_ptr<core::QueryCtx> LocalRunnerTestBase::makeQueryCtx(
+    const std::string& queryId) {
+  auto config = config_;
   auto hiveConfig = hiveConfig_;
-    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
-    auto copy = hiveConfig_;
-    connectorConfigs[kHiveConnectorId] =
+  std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
+      connectorConfigs;
+  auto copy = hiveConfig_;
+  connectorConfigs[kHiveConnectorId] =
       std::make_shared<config::ConfigBase>(std::move(copy));
 
-  
-
-    return core::QueryCtx::create(
+  return core::QueryCtx::create(
       executor_.get(),
       core::QueryConfig(config),
       std::move(connectorConfigs),
@@ -40,8 +40,8 @@ void LocalRunnerTestBase::SetUp() {
       nullptr,
       nullptr,
       queryId);
-  }
-  
+}
+
 std::shared_ptr<LocalSchema> LocalRunnerTestBase::makeTables(
     std::vector<TableSpec> specs,
     std::shared_ptr<TempDirectoryPath>& directory) {
@@ -62,13 +62,13 @@ std::shared_ptr<LocalSchema> LocalRunnerTestBase::makeTables(
     }
   }
   auto schemaQueryCtx = makeQueryCtx("schema");
-    common::SpillConfig spillConfig;
-    common::PrefixSortConfig prefixSortConfig(100);
-    auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
-    auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
-									    leafPool.get(),
-									    schemaQueryCtx->pool(),
-									    schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
+  common::SpillConfig spillConfig;
+  common::PrefixSortConfig prefixSortConfig(100);
+  auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
+  auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
+      leafPool.get(),
+      schemaQueryCtx->pool(),
+      schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
       &spillConfig,
       prefixSortConfig,
       std::make_unique<exec::SimpleExpressionEvaluator>(
