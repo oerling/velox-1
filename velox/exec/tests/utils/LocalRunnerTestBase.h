@@ -46,8 +46,6 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   std::unordered_map<std::string, std::string> config_;
   std::unordered_map<std::string, std::string> hiveConfig_;
-
-  
   
   std::shared_ptr<memory::MemoryPool> rootPool_;
   std::shared_ptr<memory::MemoryPool> schemaRootPool_;

@@ -26,16 +26,8 @@ class DistributedPlanBuilder : public PlanBuilder {
   DistributedPlanBuilder(
       const ExecutablePlanOptions& options,
       std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
-      memory::MemoryPool* pool = nullptr)
-      : PlanBuilder(planNodeIdGenerator, pool), options_(options) {}
-
-  DistributedPlanBuilder(DistributedPlanBuilder& parent)
-      : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
-        options_(parent.options_),
-        parent_(&parent) {
-    auto* root = rootBuilder();
-    root->stack_.push_back(this);
-  }
+      memory::MemoryPool* pool = nullptr);
+  DistributedPlanBuilder(DistributedPlanBuilder& parent);
 
   /// Returns the planned fragments. The builder will be empty after this.
   std::vector<ExecutableFragment> fragments();

@@ -20,8 +20,6 @@ void LocalRunnerTestBase::SetUp() {
   HiveConnectorTestBase::SetUp();
   exec::ExchangeSource::factories().clear();
   exec::ExchangeSource::registerFactory(createLocalExchangeSource);
-
-  filesystems::registerLocalFileSystem();
 }
 
   std::shared_ptr<core::QueryCtx> LocalRunnerTestBase::makeQueryCtx(const std::string& queryId) {
@@ -39,7 +37,7 @@ void LocalRunnerTestBase::SetUp() {
       core::QueryConfig(config),
       std::move(connectorConfigs),
       cache::AsyncDataCache::getInstance(),
-      rootPool_->addAggregateChild("schemaCtxPool"),
+      nullptr,
       nullptr,
       queryId);
   }
@@ -52,7 +50,7 @@ std::shared_ptr<LocalSchema> LocalRunnerTestBase::makeTables(
     auto tablePath = fmt::format("{}/{}", directory->getPath(), spec.name);
     auto fs = filesystems::getFileSystem(tablePath, {});
     fs->mkdir(tablePath);
-    for (auto i = 0; i < spec.numFiles; spec) {
+    for (auto i = 0; i < spec.numFiles; ++i) {
       auto vectors = HiveConnectorTestBase::makeVectors(
           spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
       if (spec.patch) {
@@ -63,19 +61,14 @@ std::shared_ptr<LocalSchema> LocalRunnerTestBase::makeTables(
       writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);
     }
   }
-
-  rootPool_ = memory::memoryManager()->addRootPool("velox_sql");
-  schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
-  schemaPool_ = schemaRootPool_->addLeafChild("schema");
-
   auto schemaQueryCtx = makeQueryCtx("schema");
     common::SpillConfig spillConfig;
     common::PrefixSortConfig prefixSortConfig(100);
-  
+    auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
     auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
-      schemaPool_.get(),
-      schemaRootPool_.get(),
-      schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
+									    leafPool.get(),
+									    schemaQueryCtx->pool(),
+									    schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
       &spillConfig,
       prefixSortConfig,
       std::make_unique<exec::SimpleExpressionEvaluator>(

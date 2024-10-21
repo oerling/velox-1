@@ -31,8 +31,8 @@ LocalSchema::LocalSchema(
     std::shared_ptr<connector::ConnectorQueryCtx> ctx)
     : hiveConnector_(hiveConnector),
       connectorId_(hiveConnector_->connectorId()),
-      connectorQueryCtx_(ctx),
-      pool_(connectorQueryCtx_->memoryPool()) {
+      pool_(ctx->memoryPool()->shared_from_this()),
+      connectorQueryCtx_(ctx) {
   format_ = fmt;
   initialize(path);
 }
@@ -144,28 +144,37 @@ std::pair<int64_t, int64_t> LocalTable::sample(
           continue;
         }
         auto builder = builders[column].get();
+	auto loadChild = [](RowVectorPtr data, int32_t column) {
+	  data->childAt(column) = BaseVector::loadedVectorShared(data->childAt(column));
+	};
         switch (type->childAt(column)->kind()) {
           case TypeKind::SMALLINT:
+	    loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, short>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::INTEGER:
+	    loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, int32_t>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::BIGINT:
+	    loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, int64_t>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::REAL:
+	    loadChild(data, column);
             addStats<dwrf::DoubleStatisticsBuilder, double, float>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::DOUBLE:
+	    loadChild(data, column);
             addStats<dwrf::DoubleStatisticsBuilder, double, double>(
                 builder, *data->childAt(column));
             break;
           case TypeKind::VARCHAR:
+	    loadChild(data, column);
             addStats<
                 dwrf::StringStatisticsBuilder,
                 folly::StringPiece,
@@ -173,7 +182,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
             break;
 
           default:
-            VELOX_UNREACHABLE();
+            break;
         }
       }
       break;
@@ -211,7 +220,7 @@ void LocalSchema::readTable(
           std::make_unique<LocalTable>(tableName, format_, this);
       table = tables_[tableName].get();
     }
-    dwio::common::ReaderOptions readerOptions{pool_};
+    dwio::common::ReaderOptions readerOptions{pool_.get()};
     readerOptions.setFileFormat(format_);
     auto input = std::make_unique<dwio::common::BufferedInput>(
         std::make_shared<LocalReadFile>(dirEntry.path().string()),

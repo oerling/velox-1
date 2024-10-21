@@ -40,6 +40,8 @@ struct ExecutableFragment {
   std::vector<InputStage> inputStages;
   std::vector<std::shared_ptr<const core::TableScanNode>> scans;
   int32_t numBroadcastDestinations{0};
+
+  static std::string toString(std::vector<ExecutableFragment>& fragments);
 };
 
 /// Describes options for generating an executable plan.

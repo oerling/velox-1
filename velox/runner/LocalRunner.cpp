@@ -64,6 +64,27 @@ void LocalRunner::terminate() {
   }
 }
 
+// static
+  void LocalRunner::waitForAllDeleted(std::shared_ptr<LocalRunner>&& runner, int32_t maxWaitMicros) {
+  VELOX_CHECK(runner->tasksCreated_);
+  std::vector<ContinueFuture> futures;
+  for (auto& stage : runner->stages_) {
+    for (auto& task : stage) {
+      futures.push_back(task->taskDeletionFuture());
+    }
+    stage.clear();
+  }
+  runner.reset();
+  for (auto& future : futures) {
+    auto& executor = folly::QueuedImmediateExecutor::instance();
+
+    std::move(future)
+        .within(std::chrono::microseconds(maxWaitMicros))
+        .via(&executor)
+        .wait();
+  }
+}
+
 std::vector<std::shared_ptr<RemoteConnectorSplit>> LocalRunner::makeStages() {
   std::unordered_map<std::string, int32_t> prefixMap;
   auto sharedRunner = shared_from_this();
@@ -212,6 +233,29 @@ std::vector<TaskStats> LocalRunner::stats() const {
     result.push_back(std::move(stats));
   }
   return result;
+}
+
+// static
+std::string ExecutableFragment::toString(
+    std::vector<ExecutableFragment>& fragments) {
+  std::stringstream out;
+  for (auto i = 0; i < fragments.size(); ++i) {
+    out << fmt::format(
+        "Fragment {}: {} numWorkers={}:\n",
+        i,
+        fragments[i].taskPrefix,
+        fragments[i].width);
+    out << fragments[i].fragment.planNode->toString(true, true) << std::endl;
+    if (!fragments[i].inputStages.empty()) {
+      out << "Inputs: ";
+      for (auto& input : fragments[i].inputStages) {
+        out << fmt::format(
+            " {} <- {} ", input.consumer, input.producerTaskPrefix);
+      }
+      out << std::endl;
+    }
+  }
+  return out.str();
 }
 
 } // namespace facebook::velox::exec

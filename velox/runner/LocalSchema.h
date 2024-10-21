@@ -100,7 +100,7 @@ class LocalSchema {
   }
 
   memory::MemoryPool* pool() {
-    return pool_;
+    return pool_.get();
   }
 
  private:
@@ -110,11 +110,12 @@ class LocalSchema {
 
   connector::hive::HiveConnector* hiveConnector_;
   std::string connectorId_;
+  std::shared_ptr<memory::MemoryPool> pool_;
+
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   dwio::common::FileFormat format_;
 
   std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
-  memory::MemoryPool* pool_;
 };
 
 } // namespace facebook::velox::exec

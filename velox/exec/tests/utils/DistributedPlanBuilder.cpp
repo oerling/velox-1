@@ -18,6 +18,30 @@
 
 namespace facebook::velox::exec::test {
 
+DistributedPlanBuilder::DistributedPlanBuilder(
+    const ExecutablePlanOptions& options,
+    std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
+    memory::MemoryPool* pool)
+    : PlanBuilder(planNodeIdGenerator, pool), options_(options) {
+  auto* root = rootBuilder();
+  VELOX_CHECK(
+      root->stack_.empty(),
+      "Cannot make a top level DistributedPlanBuilder inside an open one");
+  root->stack_.push_back(this);
+  newFragment();
+  current_.width = options_.numWorkers;
+}
+
+DistributedPlanBuilder::DistributedPlanBuilder(DistributedPlanBuilder& parent)
+    : PlanBuilder(parent.planNodeIdGenerator(), parent.pool()),
+      options_(parent.options_),
+      parent_(&parent) {
+  auto* root = rootBuilder();
+  root->stack_.push_back(this);
+  newFragment();
+  current_.width = options_.numWorkers;
+}
+
 std::vector<ExecutableFragment> DistributedPlanBuilder::fragments() {
   newFragment();
   return std::move(fragments_);
@@ -33,6 +57,7 @@ void DistributedPlanBuilder::newFragment() {
   auto* root = rootBuilder();
   current_.taskPrefix =
       fmt::format("{}.{}", options_.queryId, root->taskCounter_++);
+  planNode_ = nullptr;
 }
 
 PlanBuilder& DistributedPlanBuilder::shuffle(
@@ -64,6 +89,7 @@ core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
   auto result = planNode_;
   newFragment();
   auto* root = rootBuilder();
+  root->stack_.pop_back();
   auto* consumer = root->stack_.back();
   if (consumer->current_.width != 0) {
     VELOX_CHECK_EQ(
@@ -73,8 +99,6 @@ core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
   } else {
     consumer->current_.width = numPartitions;
   }
-
-  root->stack_.pop_back();
 
   for (auto& fragment : fragments_) {
     root->fragments_.push_back(std::move(fragment));
