@@ -73,7 +73,7 @@ HashBuild::HashBuild(
 
   joinBridge_->addBuilder();
 
-  auto inputType = joinNode_->sources()[1]->outputType();
+  const auto& inputType = joinNode_->sources()[1]->outputType();
 
   const auto numKeys = joinNode_->rightKeys().size();
   keyChannels_.reserve(numKeys);
@@ -194,7 +194,7 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
   VELOX_CHECK_NULL(spiller_);
   VELOX_CHECK_NULL(spillInputReader_);
 
-  if (!spillEnabled()) {
+  if (!canSpill()) {
     return;
   }
   if (spillType_ == nullptr) {
@@ -220,9 +220,9 @@ void HashBuild::setupSpiller(SpillPartition* spillPartition) {
     // out of memory if the restored partition still can't fit in memory.
     if (config->exceedSpillLevelLimit(startPartitionBit)) {
       RECORD_METRIC_VALUE(kMetricMaxSpillLevelExceededCount);
-      FB_LOG_EVERY_MS(WARNING, 1'000)
-          << "Exceeded spill level limit: " << config->maxSpillLevel
-          << ", and disable spilling for memory pool: " << pool()->name();
+      LOG(WARNING) << "Exceeded spill level limit: " << config->maxSpillLevel
+                   << ", and disable spilling for memory pool: "
+                   << pool()->name();
       ++spillStats_.wlock()->spillMaxLevelExceededCount;
       exceededMaxSpillLevelLimit_ = true;
       return;
@@ -428,7 +428,7 @@ void HashBuild::addInput(RowVectorPtr input) {
 void HashBuild::ensureInputFits(RowVectorPtr& input) {
   // NOTE: we don't need memory reservation if all the partitions are spilling
   // as we spill all the input rows to disk directly.
-  if (!spillEnabled() || spiller_ == nullptr || spiller_->isAllSpilled()) {
+  if (!canSpill() || spiller_ == nullptr || spiller_->isAllSpilled()) {
     return;
   }
 
@@ -436,7 +436,7 @@ void HashBuild::ensureInputFits(RowVectorPtr& input) {
   // spilling directly. It is okay as we will accumulate the extra reservation
   // in the operator's memory pool, and won't make any new reservation if there
   // is already sufficient reservations.
-  VELOX_CHECK(spillEnabled());
+  VELOX_CHECK(canSpill());
 
   auto* rows = table_->rows();
   const auto numRows = rows->numRows();
@@ -444,8 +444,6 @@ void HashBuild::ensureInputFits(RowVectorPtr& input) {
   auto [freeRows, outOfLineFreeBytes] = rows->freeSpace();
   const auto outOfLineBytes =
       rows->stringAllocator().retainedSize() - outOfLineFreeBytes;
-  const auto outOfLineBytesPerRow =
-      std::max<uint64_t>(1, numRows == 0 ? 0 : outOfLineBytes / numRows);
   const auto currentUsage = pool()->usedBytes();
 
   if (numRows != 0) {
@@ -495,21 +493,27 @@ void HashBuild::ensureInputFits(RowVectorPtr& input) {
 
   {
     Operator::ReclaimableSectionGuard guard(this);
-    if (!pool()->maybeReserve(targetIncrementBytes)) {
-      LOG(WARNING) << "Failed to reserve "
-                   << succinctBytes(targetIncrementBytes) << " for memory pool "
-                   << pool()->name()
-                   << ", usage: " << succinctBytes(pool()->usedBytes())
-                   << ", reservation: "
-                   << succinctBytes(pool()->reservedBytes());
+    if (pool()->maybeReserve(targetIncrementBytes)) {
+      // If above reservation triggers the spilling of 'HashBuild' operator
+      // itself, we will no longer need the reserved memory for building hash
+      // table as the table is spilled, and the input will be directly spilled,
+      // too.
+      if (spiller_->isAllSpilled()) {
+        pool()->release();
+      }
+      return;
     }
   }
+  LOG(WARNING) << "Failed to reserve " << succinctBytes(targetIncrementBytes)
+               << " for memory pool " << pool()->name()
+               << ", usage: " << succinctBytes(pool()->usedBytes())
+               << ", reservation: " << succinctBytes(pool()->reservedBytes());
 }
 
 void HashBuild::spillInput(const RowVectorPtr& input) {
   VELOX_CHECK_EQ(input->size(), activeRows_.size());
 
-  if (!spillEnabled() || spiller_ == nullptr || !spiller_->isAnySpilled() ||
+  if (!canSpill() || spiller_ == nullptr || !spiller_->isAnySpilled() ||
       !activeRows_.hasSelections()) {
     return;
   }
@@ -609,7 +613,7 @@ void HashBuild::spillPartition(
     vector_size_t size,
     const BufferPtr& indices,
     const RowVectorPtr& input) {
-  VELOX_DCHECK(spillEnabled());
+  VELOX_DCHECK(canSpill());
 
   if (isInputFromSpill()) {
     spiller_->spill(partition, wrap(size, indices, input));
@@ -774,7 +778,7 @@ bool HashBuild::finishHashBuild() {
   addRuntimeStats();
   joinBridge_->setHashTable(
       std::move(table_), std::move(spillPartitions), joinHasNullKeys_);
-  if (spillEnabled()) {
+  if (canSpill()) {
     stateCleared_ = true;
   }
   return true;
@@ -783,7 +787,7 @@ bool HashBuild::finishHashBuild() {
 void HashBuild::ensureTableFits(uint64_t numRows) {
   // NOTE: we don't need memory reservation if all the partitions have been
   // spilled as nothing need to be built.
-  if (!spillEnabled() || spiller_ == nullptr || spiller_->isAllSpilled() ||
+  if (!canSpill() || spiller_ == nullptr || spiller_->isAllSpilled() ||
       numRows == 0) {
     return;
   }
@@ -806,6 +810,12 @@ void HashBuild::ensureTableFits(uint64_t numRows) {
   {
     Operator::ReclaimableSectionGuard guard(this);
     if (pool()->maybeReserve(memoryBytesToReserve)) {
+      // If reservation triggers the spilling of 'HashBuild' operator itself, we
+      // will no longer need the reserved memory for building hash table as the
+      // table is spilled.
+      if (spiller_->isAllSpilled()) {
+        pool()->release();
+      }
       return;
     }
   }
@@ -820,7 +830,7 @@ void HashBuild::ensureTableFits(uint64_t numRows) {
 void HashBuild::postHashBuildProcess() {
   checkRunning();
 
-  if (!spillEnabled()) {
+  if (!canSpill()) {
     setState(State::kFinish);
     return;
   }
@@ -985,7 +995,7 @@ void HashBuild::checkStateTransition(State state) {
   VELOX_CHECK_NE(state_, state);
   switch (state) {
     case State::kRunning:
-      if (!spillEnabled()) {
+      if (!canSpill()) {
         VELOX_CHECK_EQ(state_, State::kWaitForBuild);
       } else {
         VELOX_CHECK_NE(state_, State::kFinish);
@@ -1025,21 +1035,36 @@ std::string HashBuild::stateName(State state) {
   }
 }
 
+bool HashBuild::canSpill() const {
+  return Operator::canSpill() &&
+      !operatorCtx_->task()->hasMixedExecutionGroup();
+}
+
 bool HashBuild::canReclaim() const {
-  return canSpill() && !operatorCtx_->task()->hasMixedExecutionGroup();
+  return canSpill() && !exceededMaxSpillLevelLimit_;
 }
 
 void HashBuild::reclaim(
     uint64_t /*unused*/,
     memory::MemoryReclaimer::Stats& stats) {
-  VELOX_CHECK(canReclaim());
+  TestValue::adjust("facebook::velox::exec::HashBuild::reclaim", this);
+  VELOX_CHECK(canSpill());
   auto* driver = operatorCtx_->driver();
   VELOX_CHECK_NOT_NULL(driver);
   VELOX_CHECK(!nonReclaimableSection_);
 
-  TestValue::adjust("facebook::velox::exec::HashBuild::reclaim", this);
-
-  if (exceededMaxSpillLevelLimit_) {
+  if (UNLIKELY(exceededMaxSpillLevelLimit_)) {
+    // 'canReclaim()' already checks the spill limit is not exceeding max, there
+    // is only a small chance from the time 'canReclaim()' is checked to the
+    // actual reclaim happens that the operator has spilled such that the spill
+    // level exceeds max.
+    const auto* config = spillConfig();
+    VELOX_CHECK_NOT_NULL(config);
+    LOG(WARNING)
+        << "Can't reclaim from hash build operator, exceeded maximum spill "
+           "level of "
+        << config->maxSpillLevel << ", " << pool()->name() << ", usage "
+        << succinctBytes(pool()->usedBytes());
     return;
   }
 
@@ -1049,15 +1074,14 @@ void HashBuild::reclaim(
     // TODO: reduce the log frequency if it is too verbose.
     RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
     ++stats.numNonReclaimableAttempts;
-    FB_LOG_EVERY_MS(WARNING, 1'000)
-        << "Can't reclaim from hash build operator, state_["
-        << stateName(state_) << "], nonReclaimableSection_["
-        << nonReclaimableSection_ << "], spiller_["
-        << (stateCleared_
-                ? "cleared"
-                : (spiller_->finalized() ? "finalized" : "non-finalized"))
-        << "] " << pool()->name()
-        << ", usage: " << succinctBytes(pool()->usedBytes());
+    LOG(WARNING) << "Can't reclaim from hash build operator, state_["
+                 << stateName(state_) << "], nonReclaimableSection_["
+                 << nonReclaimableSection_ << "], spiller_["
+                 << (stateCleared_ ? "cleared"
+                                   : (spiller_->finalized() ? "finalized"
+                                                            : "non-finalized"))
+                 << "] " << pool()->name()
+                 << ", usage: " << succinctBytes(pool()->usedBytes());
     return;
   }
 
@@ -1068,16 +1092,16 @@ void HashBuild::reclaim(
   for (auto* op : operators) {
     HashBuild* buildOp = dynamic_cast<HashBuild*>(op);
     VELOX_CHECK_NOT_NULL(buildOp);
-    VELOX_CHECK(buildOp->canReclaim());
+    VELOX_CHECK(buildOp->canSpill());
     if (buildOp->nonReclaimableState()) {
       // TODO: reduce the log frequency if it is too verbose.
       RECORD_METRIC_VALUE(kMetricMemoryNonReclaimableCount);
       ++stats.numNonReclaimableAttempts;
-      FB_LOG_EVERY_MS(WARNING, 1'000)
-          << "Can't reclaim from hash build operator, state_["
-          << stateName(buildOp->state_) << "], nonReclaimableSection_["
-          << buildOp->nonReclaimableSection_ << "], " << buildOp->pool()->name()
-          << ", usage: " << succinctBytes(buildOp->pool()->usedBytes());
+      LOG(WARNING) << "Can't reclaim from hash build operator, state_["
+                   << stateName(buildOp->state_) << "], nonReclaimableSection_["
+                   << buildOp->nonReclaimableSection_ << "], "
+                   << buildOp->pool()->name() << ", usage: "
+                   << succinctBytes(buildOp->pool()->usedBytes());
       return;
     }
   }

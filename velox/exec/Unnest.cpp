@@ -35,7 +35,7 @@ Unnest::Unnest(
   const auto& unnestVariables = unnestNode->unnestVariables();
   for (const auto& variable : unnestVariables) {
     if (!variable->type()->isArray() && !variable->type()->isMap()) {
-      VELOX_UNSUPPORTED("Unnest operator supports only ARRAY and MAP types")
+      VELOX_UNSUPPORTED("Unnest operator supports only ARRAY and MAP types");
     }
     unnestChannels_.push_back(inputType->getChildIdx(variable->name()));
   }
@@ -46,7 +46,7 @@ Unnest::Unnest(
     VELOX_CHECK_EQ(
         outputType_->children().back(),
         BIGINT(),
-        "Ordinality column should be BIGINT type.")
+        "Ordinality column should be BIGINT type.");
   }
 
   column_index_t outputChannel = 0;

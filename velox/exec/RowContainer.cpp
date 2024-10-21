@@ -336,7 +336,7 @@ char* RowContainer::initializeRow(char* row, bool reuse) {
 }
 
 void RowContainer::eraseRows(folly::Range<char**> rows) {
-  freeRowsExtraMemory(rows, false);
+  freeRowsExtraMemory(rows, /*freeNextRowVector=*/true);
   for (auto* row : rows) {
     VELOX_CHECK(!bits::isBitSet(row, freeFlagOffset_), "Double free of row");
     bits::setBit(row, freeFlagOffset_);
@@ -457,28 +457,8 @@ void RowContainer::freeAggregates(folly::Range<char**> rows) {
   }
 }
 
-void RowContainer::freeNextRowVectors(folly::Range<char**> rows, bool clear) {
+void RowContainer::freeNextRowVectors(folly::Range<char**> rows) {
   if (!nextOffset_ || !hasDuplicateRows_) {
-    return;
-  }
-
-  if (clear) {
-    for (auto row : rows) {
-      auto vector = getNextRowVector(row);
-      if (vector) {
-        // Clear all rows, we can clear the nextOffset_ slots and delete the
-        // next-row-vector.
-        for (auto& next : *vector) {
-          getNextRowVector(next) = nullptr;
-        }
-        // Because of 'parallelJoinBuild', the memory for the next row vector
-        // may not be allocated from the RowContainer to which the row belongs,
-        // hence we need to release memory through the vector's allocator.
-        auto allocator = vector->get_allocator().allocator();
-        std::destroy_at(vector);
-        allocator->free(HashStringAllocator::headerOf(vector));
-      }
-    }
     return;
   }
 
@@ -500,10 +480,14 @@ void RowContainer::freeNextRowVectors(folly::Range<char**> rows, bool clear) {
   }
 }
 
-void RowContainer::freeRowsExtraMemory(folly::Range<char**> rows, bool clear) {
+void RowContainer::freeRowsExtraMemory(
+    folly::Range<char**> rows,
+    bool freeNextRowVector) {
   freeVariableWidthFields(rows);
   freeAggregates(rows);
-  freeNextRowVectors(rows, clear);
+  if (freeNextRowVector) {
+    freeNextRowVectors(rows);
+  }
   numRows_ -= rows.size();
 }
 
@@ -868,7 +852,7 @@ int32_t RowContainer::compareComplexType(
   return compareComplexType(left, right, type, offset, offset, flags);
 }
 
-template <TypeKind Kind>
+template <bool typeProvidesCustomComparison, TypeKind Kind>
 void RowContainer::hashTyped(
     const Type* type,
     RowColumn column,
@@ -881,6 +865,7 @@ void RowContainer::hashTyped(
   auto offset = column.offset();
   std::string storage;
   auto numRows = rows.size();
+
   for (int32_t i = 0; i < numRows; ++i) {
     char* row = rows[i];
     if (nullable && isNullAt(row, column)) {
@@ -897,6 +882,9 @@ void RowContainer::hashTyped(
           Kind == TypeKind::MAP) {
         auto in = prepareRead(row, offset);
         hash = ContainerRowSerde::hash(*in, type);
+      } else if constexpr (typeProvidesCustomComparison) {
+        hash = static_cast<const CanProvideCustomComparisonType<Kind>*>(type)
+                   ->hash(valueAt<T>(row, offset));
       } else if constexpr (std::is_floating_point_v<T>) {
         hash = util::floating_point::NaNAwareHash<T>()(valueAt<T>(row, offset));
       } else {
@@ -921,15 +909,32 @@ void RowContainer::hash(
   }
 
   bool nullable = column >= keyTypes_.size() || nullableKeys_;
-  VELOX_DYNAMIC_TYPE_DISPATCH(
-      hashTyped,
-      typeKinds_[column],
-      types_[column].get(),
-      columnAt(column),
-      nullable,
-      rows,
-      mix,
-      result);
+
+  const auto& type = types_[column];
+
+  if (type->providesCustomComparison()) {
+    VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
+        hashTyped,
+        true,
+        typeKinds_[column],
+        type.get(),
+        columnAt(column),
+        nullable,
+        rows,
+        mix,
+        result);
+  } else {
+    VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
+        hashTyped,
+        false,
+        typeKinds_[column],
+        type.get(),
+        columnAt(column),
+        nullable,
+        rows,
+        mix,
+        result);
+  }
 }
 
 void RowContainer::clear() {
@@ -938,7 +943,9 @@ void RowContainer::clear() {
     std::vector<char*> rows(kBatch);
     RowContainerIterator iter;
     while (auto numRows = listRows(&iter, kBatch, rows.data())) {
-      freeRowsExtraMemory(folly::Range<char**>(rows.data(), numRows), true);
+      freeRowsExtraMemory(
+          folly::Range<char**>(rows.data(), numRows),
+          /*freeNextRowVector=*/false);
     }
   }
   hasDuplicateRows_ = false;

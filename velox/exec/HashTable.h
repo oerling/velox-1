@@ -643,6 +643,10 @@ class HashTable : public BaseHashTable {
     return rehashSize();
   }
 
+  char** testingTable() const {
+    return table_;
+  }
+
   void extractColumn(
       folly::Range<char* const*> rows,
       int32_t columnIndex,
@@ -1098,7 +1102,7 @@ struct fmt::formatter<facebook::velox::exec::BaseHashTable::HashMode>
     : formatter<std::string> {
   auto format(
       facebook::velox::exec::BaseHashTable::HashMode s,
-      format_context& ctx) {
+      format_context& ctx) const {
     return formatter<std::string>::format(
         facebook::velox::exec::BaseHashTable::modeString(s), ctx);
   }

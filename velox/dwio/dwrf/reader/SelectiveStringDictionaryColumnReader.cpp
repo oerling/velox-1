@@ -203,7 +203,6 @@ void SelectiveStringDictionaryColumnReader::read(
     const RowSet& rows,
     const uint64_t* incomingNulls) {
   prepareRead<int32_t>(offset, rows, incomingNulls);
-  bool isDense = rows.back() == rows.size() - 1;
   const auto* nullsPtr =
       nullsInReadRange_ ? nullsInReadRange_->as<uint64_t>() : nullptr;
   // lazy loading dictionary data when first hit
@@ -228,37 +227,10 @@ void SelectiveStringDictionaryColumnReader::read(
     loadStrideDictionary();
   }
 
-  if (scanSpec_->keepValues()) {
-    if (scanSpec_->valueHook()) {
-      if (isDense) {
-        readHelper<common::AlwaysTrue, true>(
-            &alwaysTrue(),
-            rows,
-            ExtractStringDictionaryToGenericHook(
-                scanSpec_->valueHook(), rows, scanState_.rawState));
-      } else {
-        readHelper<common::AlwaysTrue, false>(
-            &alwaysTrue(),
-            rows,
-            ExtractStringDictionaryToGenericHook(
-                scanSpec_->valueHook(), rows, scanState_.rawState));
-      }
-    } else {
-      if (isDense) {
-        processFilter<true>(scanSpec_->filter(), rows, ExtractToReader(this));
-      } else {
-        processFilter<false>(scanSpec_->filter(), rows, ExtractToReader(this));
-      }
-    }
-  } else {
-    if (isDense) {
-      processFilter<true>(
-          scanSpec_->filter(), rows, dwio::common::DropValues());
-    } else {
-      processFilter<false>(
-          scanSpec_->filter(), rows, dwio::common::DropValues());
-    }
-  }
+  dwio::common::StringColumnReadWithVisitorHelper<true, true>(
+      *this, rows)([&](auto visitor) {
+    readWithVisitor(visitor.toStringDictionaryColumnVisitor());
+  });
 
   readOffset_ += rows.back() + 1;
   numRowsScanned_ = readOffset_ - offset;

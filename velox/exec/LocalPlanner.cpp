@@ -34,6 +34,7 @@
 #include "velox/exec/NestedLoopJoinProbe.h"
 #include "velox/exec/OrderBy.h"
 #include "velox/exec/PartitionedOutput.h"
+#include "velox/exec/QueryTraceScan.h"
 #include "velox/exec/RowNumber.h"
 #include "velox/exec/StreamingAggregation.h"
 #include "velox/exec/TableScan.h"
@@ -253,7 +254,7 @@ uint32_t maxDrivers(
             *result,
             0,
             "maxDrivers must be greater than 0. Plan node: {}",
-            node->toString())
+            node->toString());
         if (*result == 1) {
           return 1;
         }
@@ -591,6 +592,12 @@ std::shared_ptr<Driver> DriverFactory::createDriver(
           assignUniqueIdNode,
           assignUniqueIdNode->taskUniqueId(),
           assignUniqueIdNode->uniqueIdCounter()));
+    } else if (
+        const auto queryReplayScanNode =
+            std::dynamic_pointer_cast<const core::QueryTraceScanNode>(
+                planNode)) {
+      operators.push_back(std::make_unique<trace::QueryTraceScan>(
+          id, ctx.get(), queryReplayScanNode));
     } else {
       std::unique_ptr<Operator> extended;
       if (planNode->requiresExchangeClient()) {
