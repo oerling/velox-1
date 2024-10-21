@@ -137,7 +137,11 @@ struct Compute : public KernelStep {
   bool hasContinue() const override {
     return operand->retriable;
   }
+  void visitReferences(std::function<void(AbstractOperand*)> visitor){} override;
 
+  void visitResults(std::function<void(AbstractOperand*)> visitor){} override;
+
+  
   void generateMain(CompileState& state) override;
 
   AbstractOperand* operand;

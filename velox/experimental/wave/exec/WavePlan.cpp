@@ -33,6 +33,16 @@ namespace facebook::velox::wave {
 using common::Subfield;
 using exec::Expr;
 
+  void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor){} {
+    for (auto& in : operand->inputs) {
+      visitor(in);
+    }
+  }
+
+  void Compute::visitResults(std::function<void(AbstractOperand*)> visitor){} {
+    visitor(result);}
+
+  
 AbstractOperand* markUse(AbstractOperand* op) {
   ++op->numUses;
   return op;
