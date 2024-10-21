@@ -154,7 +154,7 @@ struct DateTimeToken {
 
 struct DateTimeResult {
   Timestamp timestamp;
-  int64_t timezoneId{-1};
+  const tz::TimeZone* timezone = nullptr;
 };
 
 /// A user defined formatter that formats/parses time to/from user provided
@@ -215,13 +215,13 @@ class DateTimeFormatter {
   DateTimeFormatterType type_;
 };
 
-std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
     const std::string_view& format);
 
-std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format);
 
-std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,
     bool lenient);
 

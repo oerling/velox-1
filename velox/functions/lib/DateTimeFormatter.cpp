@@ -57,7 +57,7 @@ struct Date {
   int32_t second = 0;
   int32_t microsecond = 0;
   bool isAm = true; // AM -> true, PM -> false
-  int64_t timezoneId = -1;
+  const tz::TimeZone* timezone = nullptr;
 
   bool isClockHour = false; // Whether most recent hour specifier is clockhour
   bool isHourOfHalfDay =
@@ -318,28 +318,29 @@ int64_t parseTimezone(const char* cur, const char* end, Date& date) {
   if (cur < end) {
     // If there are at least 3 letters left.
     if (end - cur >= 3) {
-      static std::unordered_map<std::string_view, int64_t> defaultTzNames{
-          {"UTC", 0},
-          {"GMT", 0},
-          {"EST", tz::getTimeZoneID("America/New_York")},
-          {"EDT", tz::getTimeZoneID("America/New_York")},
-          {"CST", tz::getTimeZoneID("America/Chicago")},
-          {"CDT", tz::getTimeZoneID("America/Chicago")},
-          {"MST", tz::getTimeZoneID("America/Denver")},
-          {"MDT", tz::getTimeZoneID("America/Denver")},
-          {"PST", tz::getTimeZoneID("America/Los_Angeles")},
-          {"PDT", tz::getTimeZoneID("America/Los_Angeles")},
-      };
+      static std::unordered_map<std::string_view, const tz::TimeZone*>
+          defaultTzNames{
+              {"UTC", tz::locateZone("UTC")},
+              {"GMT", tz::locateZone("GMT")},
+              {"EST", tz::locateZone("America/New_York")},
+              {"EDT", tz::locateZone("America/New_York")},
+              {"CST", tz::locateZone("America/Chicago")},
+              {"CDT", tz::locateZone("America/Chicago")},
+              {"MST", tz::locateZone("America/Denver")},
+              {"MDT", tz::locateZone("America/Denver")},
+              {"PST", tz::locateZone("America/Los_Angeles")},
+              {"PDT", tz::locateZone("America/Los_Angeles")},
+          };
 
       auto it = defaultTzNames.find(std::string_view(cur, 3));
       if (it != defaultTzNames.end()) {
-        date.timezoneId = it->second;
+        date.timezone = it->second;
         return 3;
       }
     }
     // The format 'UT' is also accepted for UTC.
     else if ((end - cur == 2) && (*cur == 'U') && (*(cur + 1) == 'T')) {
-      date.timezoneId = 0;
+      date.timezone = tz::locateZone("UTC");
       return 2;
     }
   }
@@ -358,68 +359,52 @@ int64_t parseTimezoneOffset(const char* cur, const char* end, Date& date) {
     if (*cur == '-' || *cur == '+') {
       // Long format: "+00:00"
       if ((end - cur) >= 6 && *(cur + 3) == ':') {
-        // Fast path for the common case ("+00:00" or "-00:00"), to prevent
-        // calling getTimeZoneID(), which does a map lookup.
-        if (std::strncmp(cur + 1, "00:00", 5) == 0) {
-          date.timezoneId = 0;
-        } else {
-          date.timezoneId = tz::getTimeZoneID(std::string_view(cur, 6), false);
-          if (date.timezoneId == -1) {
-            return -1;
-          }
+        date.timezone = tz::locateZone(std::string_view(cur, 6), false);
+        if (!date.timezone) {
+          return -1;
         }
         return 6;
       }
       // Long format without colon: "+0000"
       else if ((end - cur) >= 5 && *(cur + 3) != ':') {
-        // Same fast path described above.
-        if (std::strncmp(cur + 1, "0000", 4) == 0) {
-          date.timezoneId = 0;
-        } else {
-          // We need to concatenate the 3 first chars with ":" followed by the
-          // last 2 chars before calling getTimeZoneID, so we use a static
-          // thread_local buffer to prevent extra allocations.
-          std::memcpy(&timezoneBuffer[0], cur, 3);
-          std::memcpy(&timezoneBuffer[4], cur + 3, 2);
-          date.timezoneId = tz::getTimeZoneID(timezoneBuffer, false);
-          if (date.timezoneId == -1) {
-            return -1;
-          }
+        // We need to concatenate the 3 first chars with ":" followed by the
+        // last 2 chars before calling locateZone, so we use a static
+        // thread_local buffer to prevent extra allocations.
+        std::memcpy(&timezoneBuffer[0], cur, 3);
+        std::memcpy(&timezoneBuffer[4], cur + 3, 2);
+        date.timezone = tz::locateZone(timezoneBuffer, false);
+        if (!date.timezone) {
+          return -1;
         }
         return 5;
       }
       // Short format: "+00"
       else if ((end - cur) >= 3) {
-        // Same fast path described above.
-        if (std::strncmp(cur + 1, "00", 2) == 0) {
-          date.timezoneId = 0;
-        } else {
-          // We need to concatenate the 3 first chars with a trailing ":00"
-          // before calling getTimeZoneID, so we use a static thread_local
-          // buffer to prevent extra allocations.
-          std::memcpy(&timezoneBuffer[0], cur, 3);
-          std::memcpy(&timezoneBuffer[4], defaultTrailingOffset, 2);
-          date.timezoneId = tz::getTimeZoneID(timezoneBuffer, false);
-          if (date.timezoneId == -1) {
-            return -1;
-          }
+        // We need to concatenate the 3 first chars with a trailing ":00"
+        // before calling getTimeZoneID, so we use a static thread_local
+        // buffer to prevent extra allocations.
+        std::memcpy(&timezoneBuffer[0], cur, 3);
+        std::memcpy(&timezoneBuffer[4], defaultTrailingOffset, 2);
+        date.timezone = tz::locateZone(timezoneBuffer, false);
+        if (!date.timezone) {
+          return -1;
         }
         return 3;
       }
     }
     // Single 'Z' character maps to GMT.
     else if (*cur == 'Z') {
-      date.timezoneId = 0;
+      date.timezone = tz::locateZone("GMT");
       return 1;
     }
     // "UTC", "UCT", "GMT" and "GMT0" are also acceptable by joda.
     else if ((end - cur) >= 3) {
       if (std::strncmp(cur, "UTC", 3) == 0 ||
           std::strncmp(cur, "UCT", 3) == 0) {
-        date.timezoneId = 0;
+        date.timezone = tz::locateZone("UTC");
         return 3;
       } else if (std::strncmp(cur, "GMT", 3) == 0) {
-        date.timezoneId = 0;
+        date.timezone = tz::locateZone("GMT");
         if ((end - cur) >= 4 && *(cur + 3) == '0') {
           return 4;
         }
@@ -1443,13 +1428,17 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
       util::fromTime(date.hour, date.minute, date.second, date.microsecond);
   return DateTimeResult{
       util::fromDatetime(daysSinceEpoch.value(), microsSinceMidnight),
-      date.timezoneId};
+      date.timezone};
 }
 
-std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
     const std::string_view& format) {
   if (format.empty()) {
-    VELOX_USER_FAIL("Both printing and parsing not supported");
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError("Both printing and parsing not supported"));
   }
 
   // For %r we should reserve 1 extra space because it has 3 literals ':' ':'
@@ -1557,8 +1546,11 @@ std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
         case 'V':
         case 'w':
         case 'X':
-          VELOX_UNSUPPORTED(
-              "Date format specifier is not supported: %{}", *tokenEnd);
+          if (threadSkipErrorDetails()) {
+            return folly::makeUnexpected(Status::UserError());
+          }
+          return folly::makeUnexpected(Status::UserError(
+              "Date format specifier is not supported: %{}", *tokenEnd));
         default:
           builder.appendLiteral(tokenEnd, 1);
           break;
@@ -1575,10 +1567,14 @@ std::shared_ptr<DateTimeFormatter> buildMysqlDateTimeFormatter(
   return builder.setType(DateTimeFormatterType::MYSQL).build();
 }
 
-std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format) {
   if (format.empty()) {
-    VELOX_USER_FAIL("Invalid pattern specification");
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError("Invalid pattern specification"));
   }
 
   DateTimeFormatterBuilder builder(format.size());
@@ -1598,16 +1594,19 @@ std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
         // Case 2: find closing single quote
         int64_t count = numLiteralChars(startTokenPtr + 1, end);
         if (count == -1) {
-          VELOX_USER_FAIL("No closing single quote for literal");
-        } else {
-          for (int64_t i = 1; i <= count; i++) {
-            builder.appendLiteral(startTokenPtr + i, 1);
-            if (*(startTokenPtr + i) == '\'') {
-              i += 1;
-            }
+          if (threadSkipErrorDetails()) {
+            return folly::makeUnexpected(Status::UserError());
           }
-          cur += count + 2;
+          return folly::makeUnexpected(
+              Status::UserError("No closing single quote for literal"));
         }
+        for (int64_t i = 1; i <= count; i++) {
+          builder.appendLiteral(startTokenPtr + i, 1);
+          if (*(startTokenPtr + i) == '\'') {
+            i += 1;
+          }
+        }
+        cur += count + 2;
       }
     } else {
       int count = 1;
@@ -1686,7 +1685,11 @@ std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
           break;
         default:
           if (isalpha(*startTokenPtr)) {
-            VELOX_UNSUPPORTED("Specifier {} is not supported.", *startTokenPtr);
+            if (threadSkipErrorDetails()) {
+              return folly::makeUnexpected(Status::UserError());
+            }
+            return folly::makeUnexpected(Status::UserError(
+                "Specifier {} is not supported.", *startTokenPtr));
           } else {
             builder.appendLiteral(startTokenPtr, cur - startTokenPtr);
           }
@@ -1697,10 +1700,16 @@ std::shared_ptr<DateTimeFormatter> buildJodaDateTimeFormatter(
   return builder.setType(DateTimeFormatterType::JODA).build();
 }
 
-std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,
     bool lenient) {
-  VELOX_USER_CHECK(!format.empty(), "Format pattern should not be empty.");
+  if (format.empty()) {
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError("Format pattern should not be empty"));
+  }
 
   DateTimeFormatterBuilder builder(format.size());
   const char* cur = format.data();
@@ -1721,7 +1730,13 @@ std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
         // Append literal characters from the start until the next closing
         // literal sequence single quote.
         int64_t count = numLiteralChars(startTokenPtr + 1, end);
-        VELOX_USER_CHECK_NE(count, -1, "No closing single quote for literal");
+        if (count == -1) {
+          if (threadSkipErrorDetails()) {
+            return folly::makeUnexpected(Status::UserError());
+          }
+          return folly::makeUnexpected(
+              Status::UserError("No closing single quote for literal"));
+        }
         for (int64_t i = 1; i <= count; i++) {
           builder.appendLiteral(startTokenPtr + i, 1);
           if (*(startTokenPtr + i) == '\'') {
@@ -1809,7 +1824,11 @@ std::shared_ptr<DateTimeFormatter> buildSimpleDateTimeFormatter(
           break;
         default:
           if (isalpha(*startTokenPtr)) {
-            VELOX_UNSUPPORTED("Specifier {} is not supported.", *startTokenPtr);
+            if (threadSkipErrorDetails()) {
+              return folly::makeUnexpected(Status::UserError());
+            }
+            return folly::makeUnexpected(Status::UserError(
+                "Specifier {} is not supported.", *startTokenPtr));
           } else {
             builder.appendLiteral(startTokenPtr, cur - startTokenPtr);
           }
