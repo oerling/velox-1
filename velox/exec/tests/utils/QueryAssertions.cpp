@@ -22,6 +22,7 @@
 #include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
+#include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/VectorTypeUtils.h"
 
 using facebook::velox::duckdb::duckdbTimestampToVelox;
@@ -363,7 +364,7 @@ variant mapVariantAt(const ::duckdb::Value& vector, const TypePtr& mapType) {
     variant variantValue;
     auto value = ::duckdb::StructValue::GetChildren(valueList[i]);
     // Map key cannot be null.
-    VELOX_CHECK(!value[0].IsNull())
+    VELOX_CHECK(!value[0].IsNull());
     variantKey = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
         variantAt, keyType->kind(), value[0]);
 
@@ -530,6 +531,12 @@ variant variantAt(const VectorPtr& vector, vector_size_t row) {
 
   if (typeKind == TypeKind::MAP) {
     return mapVariantAt(vector, row);
+  }
+
+  if (isTimestampWithTimeZoneType(vector->type())) {
+    return variant::typeWithCustomComparison<TypeKind::BIGINT>(
+        vector->as<SimpleVector<int64_t>>()->valueAt(row),
+        TIMESTAMP_WITH_TIME_ZONE());
   }
 
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(variantAt, typeKind, vector, row);
@@ -936,7 +943,7 @@ void DuckDbQueryRunner::createTable(
               type->equivalent(*columnVector->type()),
               "{} vs. {}",
               type->toString(),
-              columnVector->toString())
+              columnVector->toString());
           auto value = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
               duckValueAt, type->kind(), columnVector, row);
           appender.Append(value);
@@ -1474,48 +1481,28 @@ bool waitForTaskStateChange(
 }
 
 void waitForAllTasksToBeDeleted(uint64_t maxWaitUs) {
-  const uint64_t numCreatedTasks = Task::numCreatedTasks();
-  uint64_t numDeletedTasks = Task::numDeletedTasks();
   uint64_t waitUs = 0;
-  while (numCreatedTasks > numDeletedTasks) {
+  while (Task::numRunningTasks() != 0) {
     constexpr uint64_t kWaitInternalUs = 1'000;
     std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
     waitUs += kWaitInternalUs;
-    numDeletedTasks = Task::numDeletedTasks();
     if (waitUs >= maxWaitUs) {
       break;
     }
   }
-  VELOX_CHECK_EQ(
-      numDeletedTasks,
-      numCreatedTasks,
-      "{} tasks have been created while only {} have been deleted after waiting for {} us",
-      numCreatedTasks,
-      numDeletedTasks,
-      waitUs);
-}
-
-void waitForAllTasksToBeDeleted(
-    uint64_t expectedDeletedTasks,
-    uint64_t maxWaitUs) {
-  uint64_t numDeletedTasks = Task::numDeletedTasks();
-  uint64_t waitUs = 0;
-  while (expectedDeletedTasks > numDeletedTasks) {
-    constexpr uint64_t kWaitInternalUs = 1'000;
-    std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
-    waitUs += kWaitInternalUs;
-    numDeletedTasks = Task::numDeletedTasks();
-    if (waitUs >= maxWaitUs) {
-      break;
-    }
+  std::vector<std::shared_ptr<Task>> pendingTasks = Task::getRunningTasks();
+  if (pendingTasks.empty()) {
+    return;
   }
-  VELOX_CHECK_EQ(
-      numDeletedTasks,
-      expectedDeletedTasks,
-      "expected {} tasks to be deleted but only {} have been deleted after waiting for {} us",
-      expectedDeletedTasks,
-      numDeletedTasks,
-      waitUs);
+  std::vector<std::string> pendingTaskStats;
+  pendingTaskStats.reserve(pendingTasks.size());
+  for (const auto& task : pendingTasks) {
+    pendingTaskStats.push_back(task->toString());
+  }
+  VELOX_FAIL(
+      "{} pending tasks\n{}",
+      pendingTasks.size(),
+      folly::join("\n", pendingTaskStats));
 }
 
 std::shared_ptr<Task> assertQuery(
@@ -1618,7 +1605,7 @@ std::unordered_map<std::string, OperatorStats> toOperatorStats(
 
 template <>
 struct fmt::formatter<::duckdb::LogicalTypeId> : formatter<int> {
-  auto format(::duckdb::LogicalTypeId s, format_context& ctx) {
+  auto format(::duckdb::LogicalTypeId s, format_context& ctx) const {
     return formatter<int>::format(static_cast<int>(s), ctx);
   }
 };

@@ -844,7 +844,7 @@ TEST_F(StringFunctionsTest, concat) {
   size_t maxStringLength = 100;
 
   std::vector<std::vector<std::string>> inputTable;
-  for (int argsCount = 1; argsCount <= maxArgsCount; argsCount++) {
+  for (int argsCount = 2; argsCount <= maxArgsCount; argsCount++) {
     inputTable.clear();
 
     // Create table with argsCount columns
@@ -929,6 +929,13 @@ TEST_F(StringFunctionsTest, concat) {
     });
 
     test::assertEqualVectors(expected, result);
+  }
+
+  // Less than 2 concatenation arguments throws exception.
+  {
+    VELOX_ASSERT_THROW(
+        evaluateOnce<std::string>("concat('a')", {}),
+        "Scalar function signature is not supported: concat(VARCHAR).");
   }
 }
 
@@ -1456,11 +1463,14 @@ TEST_F(StringFunctionsTest, replace) {
       {{"123tech123", "123", "tech"}, {"techtechtech"}},
       {{"123tech123", "123", ""}, {"tech"}},
       {{"222tech", "2", "3"}, {"333tech"}},
+      {{"", "", "K"}, {"K"}},
+      {{"", "", ""}, {""}},
   };
 
   replace_input_test_t testsTwoArgs = {
       {{"abcdefabcdef", "cd", ""}, {"abefabef"}},
       {{"123tech123", "123", ""}, {"tech"}},
+      {{"", "K", ""}, {""}},
       {{"", "", ""}, {""}},
   };
 
@@ -2153,4 +2163,20 @@ TEST_F(StringFunctionsTest, normalize) {
   VELOX_ASSERT_THROW(
       normalizeWithForm("sch\u00f6n", "NFKE"),
       "Normalization form must be one of [NFD, NFC, NFKD, NFKC]");
+}
+
+TEST_F(StringFunctionsTest, trail) {
+  auto trail = [&](std::optional<std::string> string,
+                   std::optional<int64_t> N) {
+    return evaluateOnce<std::string>("trail(c0, c1)", string, N);
+  };
+
+  // Basic Test
+  EXPECT_EQ("bar", trail("foobar", 3));
+  EXPECT_EQ("foobar", trail("foobar", 7));
+  EXPECT_EQ("", trail("foobar", 0));
+  EXPECT_EQ("", trail("foobar", -1));
+
+  // Test empty
+  EXPECT_EQ("", trail("", 3));
 }

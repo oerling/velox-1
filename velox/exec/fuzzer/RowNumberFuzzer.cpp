@@ -20,6 +20,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/ReferenceQueryRunner.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -171,10 +172,13 @@ RowNumberFuzzer::RowNumberFuzzer(
     : vectorFuzzer_{getFuzzerOptions(), pool_.get()},
       referenceQueryRunner_{std::move(referenceQueryRunner)} {
   filesystems::registerLocalFileSystem();
+  dwrf::registerDwrfReaderFactory();
 
   // Make sure not to run out of open file descriptors.
   std::unordered_map<std::string, std::string> hiveConfig = {
       {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
+  connector::registerConnectorFactory(
+      std::make_shared<connector::hive::HiveConnectorFactory>());
   auto hiveConnector =
       connector::getConnectorFactory(
           connector::hive::HiveConnectorFactory::kHiveConnectorName)
@@ -460,7 +464,7 @@ void RowNumberFuzzer::verify() {
 void RowNumberFuzzer::go() {
   VELOX_USER_CHECK(
       FLAGS_steps > 0 || FLAGS_duration_sec > 0,
-      "Either --steps or --duration_sec needs to be greater than zero.")
+      "Either --steps or --duration_sec needs to be greater than zero.");
   VELOX_USER_CHECK_GE(FLAGS_batch_size, 10, "Batch size must be at least 10.");
 
   const auto startTime = std::chrono::system_clock::now();

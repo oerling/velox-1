@@ -41,6 +41,11 @@ Window::Window(
       stringAllocator_(pool()) {
   auto* spillConfig =
       spillConfig_.has_value() ? &spillConfig_.value() : nullptr;
+  if (spillConfig == nullptr &&
+      operatorCtx_->driverCtx()->queryConfig().windowSpillEnabled()) {
+    auto lockedStats = stats_.wlock();
+    lockedStats->runtimeStats.emplace(kSpillNotSupported, RuntimeMetric(1));
+  }
   if (windowNode->inputsSorted()) {
     if (supportRowsStreaming()) {
       windowBuild_ = std::make_unique<RowsStreamingWindowBuild>(
@@ -51,7 +56,14 @@ Window::Window(
     }
   } else {
     windowBuild_ = std::make_unique<SortWindowBuild>(
-        windowNode, pool(), spillConfig, &nonReclaimableSection_, &spillStats_);
+        windowNode,
+        pool(),
+        common::PrefixSortConfig{
+            driverCtx->queryConfig().prefixSortNormalizedKeyMaxBytes(),
+            driverCtx->queryConfig().prefixSortMinRows()},
+        spillConfig,
+        &nonReclaimableSection_,
+        &spillStats_);
   }
 }
 
