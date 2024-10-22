@@ -985,12 +985,12 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // first.
         if (prepareOutput(input_, nullptr)) {
           output_->resize(outputSize_);
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
         while (true) {
           if (outputSize_ == outputBatchSize_) {
-	    wrapOutput();
+            wrapOutput();
             return std::move(output_);
           }
           addOutputRowForLeftJoin(input_, index_);
@@ -1006,7 +1006,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
 
       if (noMoreInput_ && output_) {
         output_->resize(outputSize_);
-	wrapOutput();
+        wrapOutput();
         return std::move(output_);
       }
 
@@ -1015,13 +1015,13 @@ RowVectorPtr MergeJoin::doGetOutput() {
         // first.
         if (prepareOutput(nullptr, rightInput_)) {
           output_->resize(outputSize_);
-	  wrapOutput();
+          wrapOutput();
           return std::move(output_);
         }
 
         while (true) {
           if (outputSize_ == outputBatchSize_) {
-	    wrapOutput();
+            wrapOutput();
             return std::move(output_);
           }
 
@@ -1038,7 +1038,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
 
       if (noMoreRightInput_ && output_) {
         output_->resize(outputSize_);
-	wrapOutput();
+        wrapOutput();
         return std::move(output_);
       }
     } else {
