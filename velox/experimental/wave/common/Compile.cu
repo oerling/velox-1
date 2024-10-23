@@ -61,48 +61,6 @@ class CompiledModuleImpl : public CompiledModule {
   std::vector<CUfunction> kernels_;
 };
 
-<<<<<<< HEAD
-  void addFlag(const char* flag, const char* value, int32_t length, std::vector<std::string>& data) {
-    std::string str(flag);
-    str.resize(str.size() + length + 1);
-    memcpy(str.data() + strlen(flag), value, length);
-    str.back() = 0;
-    data.push_back(std::move(str));
-  }
-  
-
-  // Gets compiler options from the environment and appends  them  to 'opts''. The memory is owned by  'data'.
-  void getNvrtcOptions(std::vector<const char*>& opts, std::vector<std::string>& data) {
-    const char* includes = getenv("WAVE_NVRTC_INCLUDE_PATH");
-    if (includes && strlen(includes) > 0) {
-      for (;;) {
-	const char* end = strchr(includes, ':');
-	if (!end) {
-	  addFlag("-I", includes, strlen(includes), data);
-	  break;
-	}
-	addFlag("-I", includes, end - includes, data);
-	includes = end + 1;
-      }
-    }
-    const char* flags = getenv("WAVE_NVRTC_FLAGS");
-    if (flags && strlen(flags)) {
-      for (;;) {
-	auto end = strchr(flags, ' ');
-	if (!end) {
-	  addFlag("", flags, strlen(flags), data);
-	  break;
-	}
-	addFlag("", flags, end - flags, data);
-	flags = end + 1;
-      }
-    }
-    for (auto& str : data) {
-      opts.push_back(str.data());
-    }
-  }
-  
-=======
 void addFlag(
     const char* flag,
     const char* value,
@@ -149,7 +107,6 @@ void getNvrtcOptions(
   }
 }
 
->>>>>>> main
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   nvrtcProgram prog;
   nvrtcCreateProgram(
