@@ -413,6 +413,9 @@ bool Expr::evalArgsDefaultNulls(
     }
   }
 
+  // Default-null behavior has taken place if rows has changed.
+  stats_.defaultNullRowsSkipped |= rows.hasChanged();
+
   mergeOrThrowArgumentErrors(
       rows.rows(), originalErrors, argumentErrors, context);
 
@@ -887,7 +890,6 @@ void Expr::evaluateSharedSubexpr(
     } else {
       // Otherwise, simply evaluate it and return without caching the results.
       eval(rows, context, result);
-
       return;
     }
   }
@@ -929,7 +931,7 @@ void Expr::evaluateSharedSubexpr(
   // Identify a subset of rows that need to be computed: rows -
   // sharedSubexprRows_.
   LocalSelectivityVector missingRowsHolder(context, rows);
-  auto missingRows = missingRowsHolder.get();
+  auto* missingRows = missingRowsHolder.get();
   missingRows->deselect(*sharedSubexprRows);
   VELOX_DCHECK(missingRows->hasSelections());
 
@@ -937,7 +939,7 @@ void Expr::evaluateSharedSubexpr(
   // Final selection of rows need to include sharedSubexprRows_, missingRows and
   // current final selection of rows if set.
   LocalSelectivityVector newFinalSelectionHolder(context, *sharedSubexprRows);
-  auto newFinalSelection = newFinalSelectionHolder.get();
+  auto* newFinalSelection = newFinalSelectionHolder.get();
   newFinalSelection->select(*missingRows);
   if (!context.isFinalSelection()) {
     newFinalSelection->select(*context.finalSelection());
@@ -1131,7 +1133,12 @@ bool Expr::removeSureNulls(
   }
   if (result) {
     result->updateBounds();
-    return result->countSelected() != rows.countSelected();
+    // Default-null behavior has taken place if some sure nulls has been removed
+    // from rows.
+    if (result->countSelected() < rows.countSelected()) {
+      stats_.defaultNullRowsSkipped = true;
+      return true;
+    }
   }
   return false;
 }
@@ -1783,7 +1790,7 @@ void addStats(
   uniqueExprs.insert(&expr);
 
   // Do not aggregate empty stats.
-  if (expr.stats().numProcessedRows) {
+  if (expr.stats().numProcessedRows || expr.stats().defaultNullRowsSkipped) {
     stats[expr.name()].add(expr.stats());
   }
 
@@ -1954,6 +1961,12 @@ void ExprSet::clear() {
   }
   distinctFields_.clear();
   multiplyReferencedFields_.clear();
+}
+
+void ExprSet::clearCache() {
+  for (auto& expr : exprs_) {
+    expr->clearCache();
+  }
 }
 
 void ExprSetSimplified::eval(

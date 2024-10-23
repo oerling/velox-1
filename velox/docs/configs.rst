@@ -76,6 +76,13 @@ Generic Configuration
      - integer
      - 32MB
      - Used for backpressure to block local exchange producers when the local exchange buffer reaches or exceeds this size.
+  * - max_local_exchange_partition_count
+     - integer
+     - 2^32
+     - Limits the number of partitions created by a local exchange. Partitioning data too granularly can lead to poor performance.
+       This setting allows increasing the task concurrency for all pipelines except the ones that require a local partitioning.
+       Affects the number of drivers for pipelines containing LocalPartitionNode and cannot exceed the maximum number of
+       pipeline drivers configured for the task.
    * - exchange.max_buffer_size
      - integer
      - 32MB
@@ -168,6 +175,10 @@ Expression Evaluation Configuration
      - bool
      - false
      - This flag makes the Row conversion to by applied in a way that the casting row field are matched by name instead of position.
+   * - expression.max_array_size_in_reduce
+     - integer
+     - 100000
+     - ``Reduce`` function will throw an error if encountered an array of size greater than this.
    * - debug_disable_expression_with_peeling
      - bool
      - false
@@ -619,6 +630,7 @@ Each query can override the config by setting corresponding query session proper
        Legacy mode only enables throttled retry for transient errors.
        Standard mode is built on top of legacy mode and has throttled retry enabled for throttling errors apart from transient errors.
        Adaptive retry mode dynamically limits the rate of AWS requests to maximize success rate.
+
 ``Google Cloud Storage Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 .. list-table::
@@ -633,10 +645,6 @@ Each query can override the config by setting corresponding query session proper
      - string
      -
      - The GCS storage endpoint server.
-   * - hive.gcs.scheme
-     - string
-     -
-     - The GCS storage scheme, https for default credentials.
    * - hive.gcs.json-key-file-path
      - string
      -

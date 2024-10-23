@@ -26,7 +26,7 @@
 namespace facebook::velox::functions::sparksql {
 
 namespace detail {
-std::shared_ptr<DateTimeFormatter> getDateTimeFormatter(
+Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
     const std::string_view& format,
     DateTimeFormatterType type) {
   switch (type) {
@@ -127,10 +127,12 @@ struct UnixTimestampParseFunction {
       const std::vector<TypePtr>& /*inputTypes*/,
       const core::QueryConfig& config,
       const arg_type<Varchar>* /*input*/) {
-    format_ = detail::getDateTimeFormatter(
+    auto formatter = detail::getDateTimeFormatter(
         kDefaultFormat_,
         config.sparkLegacyDateFormatter() ? DateTimeFormatterType::STRICT_SIMPLE
                                           : DateTimeFormatterType::JODA);
+    VELOX_CHECK(!formatter.hasError(), "Default format should always be valid");
+    format_ = formatter.value();
     setTimezone(config);
   }
 
@@ -157,8 +159,7 @@ struct UnixTimestampParseFunction {
 
   const tz::TimeZone* getTimeZone(const DateTimeResult& result) {
     // If timezone was not parsed, fallback to the session timezone.
-    return result.timezoneId != -1 ? tz::locateZone(result.timezoneId)
-                                   : sessionTimeZone_;
+    return result.timezone ? result.timezone : sessionTimeZone_;
   }
 
   // Default if format is not specified, as per Spark documentation.
@@ -181,13 +182,14 @@ struct UnixTimestampParseWithFormatFunction
       const arg_type<Varchar>* format) {
     legacyFormatter_ = config.sparkLegacyDateFormatter();
     if (format != nullptr) {
-      try {
-        this->format_ = detail::getDateTimeFormatter(
-            std::string_view(format->data(), format->size()),
-            legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
-                             : DateTimeFormatterType::JODA);
-      } catch (const VeloxUserError&) {
+      auto formatter = detail::getDateTimeFormatter(
+          std::string_view(format->data(), format->size()),
+          legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
+                           : DateTimeFormatterType::JODA);
+      if (formatter.hasError()) {
         invalidFormat_ = true;
+      } else {
+        this->format_ = formatter.value();
       }
       isConstFormat_ = true;
     }
@@ -203,15 +205,15 @@ struct UnixTimestampParseWithFormatFunction
     }
 
     // Format error returns null.
-    try {
-      if (!isConstFormat_) {
-        this->format_ = detail::getDateTimeFormatter(
-            std::string_view(format.data(), format.size()),
-            legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
-                             : DateTimeFormatterType::JODA);
+    if (!isConstFormat_) {
+      auto formatter = detail::getDateTimeFormatter(
+          std::string_view(format.data(), format.size()),
+          legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
+                           : DateTimeFormatterType::JODA);
+      if (formatter.hasError()) {
+        return false;
       }
-    } catch (const VeloxUserError&) {
-      return false;
+      this->format_ = formatter.value();
     }
     auto dateTimeResult =
         this->format_->parse(std::string_view(input.data(), input.size()));
@@ -266,9 +268,12 @@ struct FromUnixtimeFunction {
  private:
   FOLLY_ALWAYS_INLINE void setFormatter(const arg_type<Varchar>& format) {
     formatter_ = detail::getDateTimeFormatter(
-        std::string_view(format.data(), format.size()),
-        legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
-                         : DateTimeFormatterType::JODA);
+                     std::string_view(format.data(), format.size()),
+                     legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
+                                      : DateTimeFormatterType::JODA)
+                     .thenOrThrow(folly::identity, [&](const Status& status) {
+                       VELOX_USER_FAIL("{}", status.message());
+                     });
     maxResultSize_ = formatter_->maxResultSize(sessionTimeZone_);
   }
 
@@ -357,9 +362,12 @@ struct GetTimestampFunction {
     }
     if (format != nullptr) {
       formatter_ = detail::getDateTimeFormatter(
-          std::string_view(*format),
-          legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
-                           : DateTimeFormatterType::JODA);
+                       std::string_view(*format),
+                       legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
+                                        : DateTimeFormatterType::JODA)
+                       .thenOrThrow(folly::identity, [&](const Status& status) {
+                         VELOX_USER_FAIL("{}", status.message());
+                       });
       isConstantTimeFormat_ = true;
     }
   }
@@ -370,9 +378,12 @@ struct GetTimestampFunction {
       const arg_type<Varchar>& format) {
     if (!isConstantTimeFormat_) {
       formatter_ = detail::getDateTimeFormatter(
-          std::string_view(format),
-          legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
-                           : DateTimeFormatterType::JODA);
+                       std::string_view(format),
+                       legacyFormatter_ ? DateTimeFormatterType::STRICT_SIMPLE
+                                        : DateTimeFormatterType::JODA)
+                       .thenOrThrow(folly::identity, [&](const Status& status) {
+                         VELOX_USER_FAIL("{}", status.message());
+                       });
     }
     auto dateTimeResult = formatter_->parse(std::string_view(input));
     // Null as result for parsing error.
@@ -388,8 +399,7 @@ struct GetTimestampFunction {
   const tz::TimeZone* getTimeZone(const DateTimeResult& result) const {
     // If timezone was not parsed, fallback to the session timezone. If there's
     // no session timezone, fallback to 0 (GMT).
-    return result.timezoneId != -1 ? tz::locateZone(result.timezoneId)
-                                   : sessionTimeZone_;
+    return result.timezone ? result.timezone : sessionTimeZone_;
   }
 
   std::shared_ptr<DateTimeFormatter> formatter_{nullptr};

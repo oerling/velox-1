@@ -98,10 +98,25 @@ class QueryConfig {
   static constexpr const char* kCastMatchStructByName =
       "cast_match_struct_by_name";
 
+  /// Reduce() function will throw an error if encountered an array of size
+  /// greater than this.
+  static constexpr const char* kExprMaxArraySizeInReduce =
+      "expression.max_array_size_in_reduce";
+
   /// Used for backpressure to block local exchange producers when the local
   /// exchange buffer reaches or exceeds this size.
   static constexpr const char* kMaxLocalExchangeBufferSize =
       "max_local_exchange_buffer_size";
+
+  /// Limits the number of partitions created by a local exchange.
+  /// Partitioning data too granularly can lead to poor performance.
+  /// This setting allows increasing the task concurrency for all
+  /// pipelines except the ones that require a local partitioning.
+  /// Affects the number of drivers for pipelines containing
+  /// LocalPartitionNode and cannot exceed the maximum number of
+  /// pipeline drivers configured for the task.
+  static constexpr const char* kMaxLocalExchangePartitionCount =
+      "max_local_exchange_partition_count";
 
   /// Maximum size in bytes to accumulate in ExchangeQueue. Enforced
   /// approximately, not strictly.
@@ -485,6 +500,12 @@ class QueryConfig {
     return get<uint64_t>(kMaxLocalExchangeBufferSize, kDefault);
   }
 
+  uint32_t maxLocalExchangePartitionCount() const {
+    // defaults to unlimited
+    static constexpr uint32_t kDefault = std::numeric_limits<uint32_t>::max();
+    return get<uint32_t>(kMaxLocalExchangePartitionCount, kDefault);
+  }
+
   uint64_t maxExchangeBufferSize() const {
     static constexpr uint64_t kDefault = 32UL << 20;
     return get<uint64_t>(kMaxExchangeBufferSize, kDefault);
@@ -541,6 +562,10 @@ class QueryConfig {
 
   bool isMatchStructByName() const {
     return get<bool>(kCastMatchStructByName, false);
+  }
+
+  uint64_t exprMaxArraySizeInReduce() const {
+    return get<uint64_t>(kExprMaxArraySizeInReduce, 100'000);
   }
 
   bool adjustTimestampToTimezone() const {

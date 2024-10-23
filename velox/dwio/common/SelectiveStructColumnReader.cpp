@@ -149,7 +149,7 @@ void SelectiveStructColumnReaderBase::next(
 }
 
 void SelectiveStructColumnReaderBase::read(
-    vector_size_t offset,
+    int64_t offset,
     const RowSet& rows,
     const uint64_t* incomingNulls) {
   numReads_ = scanSpec_->newRead();
@@ -208,7 +208,7 @@ void SelectiveStructColumnReaderBase::read(
     const auto fieldIndex = childSpec->subscript();
     auto* reader = children_.at(fieldIndex);
     if (reader->isTopLevel() && childSpec->projectOut() &&
-        !childSpec->hasFilter() && !childSpec->extractValues()) {
+        !childSpec->hasFilter()) {
       // Will make a LazyVector.
       continue;
     }
@@ -247,7 +247,7 @@ void SelectiveStructColumnReaderBase::read(
 }
 
 void SelectiveStructColumnReaderBase::recordParentNullsInChildren(
-    vector_size_t offset,
+    int64_t offset,
     const RowSet& rows) {
   if (formatData_->parentNullsInLeaves()) {
     return;
@@ -427,8 +427,7 @@ void SelectiveStructColumnReaderBase::getValues(
       continue;
     }
 
-    if (childSpec->extractValues() || childSpec->hasFilter() ||
-        !children_[index]->isTopLevel()) {
+    if (childSpec->hasFilter() || !children_[index]->isTopLevel()) {
       children_[index]->getValues(rows, &childResult);
       continue;
     }

@@ -139,10 +139,6 @@ std::string HiveConfig::gcsEndpoint() const {
   return config_->get<std::string>(kGCSEndpoint, std::string(""));
 }
 
-std::string HiveConfig::gcsScheme() const {
-  return config_->get<std::string>(kGCSScheme, std::string("https"));
-}
-
 std::string HiveConfig::gcsCredentialsPath() const {
   return config_->get<std::string>(kGCSCredentialsPath, std::string(""));
 }
@@ -312,6 +308,13 @@ uint64_t HiveConfig::sortWriterMaxOutputBytes(
           kSortWriterMaxOutputBytesSession,
           config_->get<std::string>(kSortWriterMaxOutputBytes, "10MB")),
       config::CapacityUnit::BYTE);
+}
+
+uint64_t HiveConfig::sortWriterFinishTimeSliceLimitMs(
+    const config::ConfigBase* session) const {
+  return session->get<uint64_t>(
+      kSortWriterFinishTimeSliceLimitMsSession,
+      config_->get<uint64_t>(kSortWriterFinishTimeSliceLimitMs, 5'000));
 }
 
 uint64_t HiveConfig::footerEstimatedSize() const {

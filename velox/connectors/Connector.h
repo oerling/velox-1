@@ -170,8 +170,12 @@ class DataSink {
   /// TODO maybe at some point we want to make it async.
   virtual void appendData(RowVectorPtr input) = 0;
 
-  /// Returns the stats of this data sink.
-  virtual Stats stats() const = 0;
+  /// Called after all data has been added via possibly multiple calls to
+  /// appendData() This function finishes the data procesing like sort all the
+  /// added data and write them to the file writer. The finish might take long
+  /// time so it returns false to yield in the middle of processing. The
+  /// function returns true if it has processed all data. This call is blocking.
+  virtual bool finish() = 0;
 
   /// Called once after all data has been added via possibly multiple calls to
   /// appendData(). The function returns the metadata of written data in string
@@ -181,6 +185,9 @@ class DataSink {
   /// Called to abort this data sink object and we don't expect any appendData()
   /// calls on an aborted data sink object.
   virtual void abort() = 0;
+
+  /// Returns the stats of this data sink.
+  virtual Stats stats() const = 0;
 };
 
 class DataSource {
@@ -468,9 +475,6 @@ class ConnectorFactory {
 
   virtual ~ConnectorFactory() = default;
 
-  /// Initialize is called during the factory registration.
-  virtual void initialize() {}
-
   const std::string& connectorName() const {
     return name_;
   }
@@ -520,9 +524,4 @@ std::shared_ptr<Connector> getConnector(const std::string& connectorId);
 const std::unordered_map<std::string, std::shared_ptr<Connector>>&
 getAllConnectors();
 
-#define VELOX_REGISTER_CONNECTOR_FACTORY(theFactory)                      \
-  namespace {                                                             \
-  static bool FB_ANONYMOUS_VARIABLE(g_ConnectorFactory) =                 \
-      facebook::velox::connector::registerConnectorFactory((theFactory)); \
-  }
 } // namespace facebook::velox::connector

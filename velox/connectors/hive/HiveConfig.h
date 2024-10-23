@@ -107,9 +107,6 @@ class HiveConfig {
   /// The GCS storage endpoint server.
   static constexpr const char* kGCSEndpoint = "hive.gcs.endpoint";
 
-  /// The GCS storage scheme, https for default credentials.
-  static constexpr const char* kGCSScheme = "hive.gcs.scheme";
-
   /// The GCS service account configuration JSON key file.
   static constexpr const char* kGCSCredentialsPath =
       "hive.gcs.json-key-file-path";
@@ -240,6 +237,13 @@ class HiveConfig {
   static constexpr const char* kSortWriterMaxOutputBytesSession =
       "sort_writer_max_output_bytes";
 
+  /// Sort Writer will exit finish() method after this many milliseconds even if
+  /// it has not completed its work yet. Zero means no time limit.
+  static constexpr const char* kSortWriterFinishTimeSliceLimitMs =
+      "sort-writer_finish_time_slice_limit_ms";
+  static constexpr const char* kSortWriterFinishTimeSliceLimitMsSession =
+      "sort_writer_finish_time_slice_limit_ms";
+
   static constexpr const char* kS3UseProxyFromEnv =
       "hive.s3.use-proxy-from-env";
 
@@ -288,8 +292,6 @@ class HiveConfig {
   std::optional<std::string> s3RetryMode() const;
 
   std::string gcsEndpoint() const;
-
-  std::string gcsScheme() const;
 
   std::string gcsCredentialsPath() const;
 
@@ -354,6 +356,9 @@ class HiveConfig {
   uint32_t sortWriterMaxOutputRows(const config::ConfigBase* session) const;
 
   uint64_t sortWriterMaxOutputBytes(const config::ConfigBase* session) const;
+
+  uint64_t sortWriterFinishTimeSliceLimitMs(
+      const config::ConfigBase* session) const;
 
   uint64_t footerEstimatedSize() const;
 
