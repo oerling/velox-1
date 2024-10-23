@@ -14,10 +14,20 @@
  * limitations under the License.
  */
 
-#include "velox/vector/SequenceVector.h"
+#pragma once
 
-namespace facebook::velox {
+namespace facebook::velox::aggregate::prestosql {
 
-template class SequenceVector<int32_t>;
+enum ApproxPercentileIntermediateTypeChildIndex {
+  kPercentiles = 0,
+  kPercentilesIsArray = 1,
+  kAccuracy = 2,
+  kK = 3,
+  kN = 4,
+  kMinValue = 5,
+  kMaxValue = 6,
+  kItems = 7,
+  kLevels = 8,
+};
 
-} // namespace facebook::velox
+} // namespace facebook::velox::aggregate::prestosql
