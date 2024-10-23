@@ -280,6 +280,9 @@ VectorPtr wrapOne(
   }
   auto indices = vector->wrapInfo();
   auto base = vector->valueVector();
+  // The base will be wrapped again without loading any lazy. The
+  // rewrapping is permitted in this case.
+  base->clearContainingLazyAndWrapped();
   auto rawNulls = vector->rawNulls();
   if (!rawNulls) {
     // if another column had the same indices as this one and this one does not
