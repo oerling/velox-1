@@ -178,71 +178,85 @@ void Compute::generateMain(CompileState& state) {
   }
 }
 
-  std::string CompileState::generateIsTrue(const AbstractOperand& op) {
-    auto ord = ordinal(op);
-    if (op.inRegister) {
+std::string CompileState::generateIsTrue(const AbstractOperand& op) {
+  auto ord = ordinal(op);
+  if (op.inRegister) {
     if (op.notNull) {
       generated_ << fmt::format("bool flag{} = r{}", ord, ord);
     } else {
-      generated_ << fmt::format("bool flag{} = {} && !isRegisterNull(nulls{}, {});\n", ord, ord / 32, ord & 31);
+      generated_ << fmt::format(
+          "bool flag{} = {} && !isRegisterNull(nulls{}, {});\n",
+          ord,
+          ord / 32,
+          ord & 31);
     }
-    } else {
-      auto& flags = this->flags(op);
-      bool mayWrap =
+  } else {
+    auto& flags = this->flags(op);
+    bool mayWrap =
         flags.wrappedAt.empty() || flags.wrappedAt.isBefore(currentPosition());
-      if (op.notNull || insideNullPropagating_) {
-    generated_ << fmt::format(
-        "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
-        mayWrap,
-        ord);
+    if (op.notNull || insideNullPropagating_) {
+      generated_ << fmt::format(
+          "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
+          mayWrap,
+          ord);
     } else {
       generated_ << fmt::format("bool flag{};\n", ord);
-      generated_ << fmt::format("if (!valueOrNull<{}, bool>(operands, {}, blockBase, flags{})) {flags{} = false;};\n", mayWrap, ord, ord, ord); 
+      generated_ << fmt::format(
+          "if (!valueOrNull<{}, bool>(operands, {}, blockBase, flags{})) {flags{} = false;};\n",
+          mayWrap,
+          ord,
+          ord,
+          ord);
     }
-    }
-    return fmt::format("flag{}", ord);
   }
-  
+  return fmt::format("flag{}", ord);
+}
 
-   int32_t CompileState::nextWrapId() {
-    return ++wrapId_;
-  }
+int32_t CompileState::nextWrapId() {
+  return ++wrapId_;
+}
 
-  int32_t CompileState::wrapLiteral(int32_t id) {
-    // We take one Operand of each group of Operands that shares a wrappedAt such that the Operand's lifetime crosses the filter.
-    CodePosition filter(kernelSeq_, stepIdx_, 0);
-    std::unordered_set<CodePosition> wraps;
-    std::vector<OperandIndex> ops;
-    for (auto& op : operands_) {
-      auto& flags = currentCandidate_->flags(op.get());
-      if (filter.isBefore(flags.lastUse ) && flags.definedIn.isBefore(filter)) {
-	auto& wrappedAt = flags.wrappedAt;
-	if (wraps.count(wrappedAt)) {
-	  continue;
-	}
-	wraps.insert(wrappedAt);
-	ops.push_back(op->id);
+int32_t CompileState::wrapLiteral(int32_t id) {
+  // We take one Operand of each group of Operands that shares a wrappedAt such
+  // that the Operand's lifetime crosses the filter.
+  CodePosition filter(kernelSeq_, stepIdx_, 0);
+  std::unordered_set<CodePosition> wraps;
+  std::vector<OperandIndex> ops;
+  for (auto& op : operands_) {
+    auto& flags = currentCandidate_->flags(op.get());
+    if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
+      auto& wrappedAt = flags.wrappedAt;
+      if (wraps.count(wrappedAt)) {
+        continue;
       }
+      wraps.insert(wrappedAt);
+      ops.push_back(op->id);
     }
-    generated_ << fmt::format("const OperandIndex wraps{}[] = {", id);
-    for (auto i = 0; i < ops.size(); ++i) {
-      generated_ << i;
-      if (i < ops.size() - 1) {
-	generated_ << ", ";
-      }
-    }
-    generated_ << "};\n"; 
-    return ops.size();
   }
+  generated_ << fmt::format("const OperandIndex wraps{}[] = {", id);
+  for (auto i = 0; i < ops.size(); ++i) {
+    generated_ << i;
+    if (i < ops.size() - 1) {
+      generated_ << ", ";
+    }
+  }
+  generated_ << "};\n";
+  return ops.size();
+}
 
-  
 void Filter::generateMain(CompileState& state) {
   auto flagValue = state.generateIsTrue(*flag);
-  state.generated() <<
-    fmt::format("filterKernel({}, operands, {}, blockBase, shared, laneStatus);\n", flagValue, state.ordinal(*indices));
+  state.generated() << fmt::format(
+      "filterKernel({}, operands, {}, blockBase, shared, laneStatus);\n",
+      flagValue,
+      state.ordinal(*indices));
   auto id = state.nextWrapId();
   auto numWraps = state.wrapLiteral(id);
-  state.generated() << fmt::format("wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n", id, numWraps, state.ordinal(*indices));
+  state.generated() << fmt::format(
+      "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
+      id,
+      numWraps,
+      state.ordinal(*indices));
 }
 
 void AggregateProbe::generateMain(CompileState& state) {}
@@ -293,14 +307,14 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
       }
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
-    // Generate the  code for first execution.
-        auto step = box.steps[stepIdx_];
-        if (step->hasContinue()) {
-          generated_ << fmt::format("enter{}: \n", stepIdx_);
-        }
-        step->generateMain(*this);
+      // Generate the  code for first execution.
+      auto step = box.steps[stepIdx_];
+      if (step->hasContinue()) {
+        generated_ << fmt::format("enter{}: \n", stepIdx_);
       }
+      step->generateMain(*this);
     }
+  }
 
   generated_ << " PROGRAM_EPILOGUE()\n}";
   auto& params = currentCandidate_->levelParams[kernelSeq_];
@@ -353,10 +367,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   programs_.push_back(std::move(program));
 }
 
-  bool emptyLevel(std::vector<KernelBox> level) {
-    return level.empty() || level[0].steps.empty();
-  }
-  
+bool emptyLevel(std::vector<KernelBox> level) {
+  return level.empty() || level[0].steps.empty();
+}
+
 void CompileState::generatePrograms() {
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
@@ -369,16 +383,16 @@ void CompileState::generatePrograms() {
       start = 1;
     }
     if (firstStep->kind() == StepKind::kValues) {
-      operators_.push_back(std::make_unique<Values>(
-          *this, *firstStep->as<ValuesStep>().node));
+      operators_.push_back(
+          std::make_unique<Values>(*this, *firstStep->as<ValuesStep>().node));
       start = 1;
     }
 
     for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
          ++kernelSeq_) {
       if (emptyLevel(currentCandidate_->steps[kernelSeq_)) {
-	  continue;
-	}
+        continue;
+      }
       makeLevel(currentCandidate_->steps[kernelSeq_]);
     }
     std::vector<std::vector<ProgramPtr>> levels;

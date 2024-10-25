@@ -101,13 +101,13 @@ struct KernelStep {
   }
 };
 
-  struct ValuesStep : public KernelStep {
+struct ValuesStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kValues;
   }
   const core::ValuesNode* node;
 };
-  
+
 struct TableScanStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kTableScan;
@@ -149,7 +149,6 @@ struct Compute : public KernelStep {
 
   void visitResults(std::function<void(AbstractOperand*)> visitor) override;
 
-  
   void generateMain(CompileState& state) override;
 
   AbstractOperand* operand;
@@ -282,10 +281,10 @@ struct CodePosition {
   }
 
   bool operator==(const CodePosition& other) const {
-    return kernelSeq == other.kernelSeq && branchIdx == other.branchIdx && step == other.step;
+    return kernelSeq == other.kernelSeq && branchIdx == other.branchIdx &&
+        step == other.step;
   }
 
-  
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
   // Position of program in KernelBox.
@@ -400,7 +399,6 @@ class CompileState {
     setDevice(getDevice());
   }
 
-  
   exec::Driver& driver() {
     return driver_;
   }
@@ -492,11 +490,11 @@ class CompileState {
   std::string generateIsTrue(const AbstractOperand& op);
 
   int32_t nextWrapId();
- 
-  // Generates an array of operands to wrap. Returns the number of distinct wraps. 'id' is a sequence number from nextWrapId().
+
+  // Generates an array of operands to wrap. Returns the number of distinct
+  // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(int32_t id);
 
-  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -720,7 +718,7 @@ class CompileState {
 
   // Counter for making names for wraps.
   int32_t wrapId_{0};
-  };
+};
 
 /// Registers adapter to add Wave operators to Drivers.
 void registerWave();
@@ -731,7 +729,7 @@ namespace std {
 template <>
 struct hash<::facebook::velox::wave::CodePosition> {
   size_t operator()(const ::facebook::velox::wave::CodePosition pos) const {
-    return (1 + pos.kernelSeq) *211  + pos.branchIdx * 31 + pos.step * 29;
+    return (1 + pos.kernelSeq) * 211 + pos.branchIdx * 31 + pos.step * 29;
   }
 };
 } // namespace std
