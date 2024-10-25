@@ -51,6 +51,7 @@ enum class StepKind : int8_t {
   kOperand,
   kNullCheck,
   kEndNullCheck,
+  kValues,
   kTableScan,
   kFilter,
   kAggregateProbe,
@@ -100,6 +101,13 @@ struct KernelStep {
   }
 };
 
+  struct ValuesStep : public KernelStep {
+  StepKind kind() const override {
+    return StepKind::kValues;
+  }
+  const core::ValuesNode* node;
+};
+  
 struct TableScanStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kTableScan;
