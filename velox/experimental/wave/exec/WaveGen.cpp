@@ -390,7 +390,7 @@ void CompileState::generatePrograms() {
 
     for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
          ++kernelSeq_) {
-      if (emptyLevel(currentCandidate_->steps[kernelSeq_)) {
+      if (emptyLevel(currentCandidate_->steps[kernelSeq_])) {
         continue;
       }
       makeLevel(currentCandidate_->steps[kernelSeq_]);
@@ -399,6 +399,9 @@ void CompileState::generatePrograms() {
     for (auto& program : programs_) {
       levels.emplace_back();
       levels.back().push_back(std::move(program));
+    }
+    if (levels.empty()) {
+      return;
     }
     operators_.push_back(std::make_unique<Project>(
         *this,

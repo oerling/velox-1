@@ -45,6 +45,8 @@ struct Scope {
 
   DefinesMap operandMap;
   Scope* parent{nullptr};
+
+  std::string toString() const;
 };
 
 enum class StepKind : int8_t {
@@ -618,7 +620,7 @@ class CompileState {
 
   ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
 
-  void makeOperators();
+  RowTypePtr makeOperators();
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
 

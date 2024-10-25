@@ -69,6 +69,16 @@ void WaveStats::clear() {
   new (this) WaveStats();
 }
 
+  std::string Value::toString() const {
+    std::stringstream out;
+    if (subfield) {
+      out << "<F " << subfield->toString() << ">";
+    } else {
+      out << "<E " << expr->toString(1) << ">"; 
+    }
+    return out.str();
+  }
+  
 const SubfieldMap*& threadSubfieldMap() {
   thread_local const SubfieldMap* subfields;
   return subfields;

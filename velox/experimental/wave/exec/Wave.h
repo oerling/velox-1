@@ -149,6 +149,8 @@ struct Value {
     return expr == other.expr && subfield == other.subfield;
   }
 
+  std::string toString() const;
+  
   const exec::Expr* expr;
   const common::Subfield* subfield;
 };

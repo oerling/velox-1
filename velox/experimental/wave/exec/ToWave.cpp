@@ -635,7 +635,7 @@ bool CompileState::compile() {
   driver_.initializeOperators();
   RowTypePtr inputType;
   if (kCodeGen) {
-    makeOperators();
+    outputType = makeOperators();
   } else {
     for (; operatorIndex < operators.size(); ++operatorIndex) {
       int32_t previousNumOperators = operators_.size();

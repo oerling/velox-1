@@ -59,6 +59,15 @@ AbstractOperand* Scope::findValue(const Value& value) {
   return it->second;
 }
 
+  std::string Scope::toString() const {
+  std::stringstream out;
+  for (auto& pair : operandMap) {
+    out << pair.first.toString() << " = " << pair.second->toString() << "\n";
+  }
+  return out.str();
+}
+
+  
 AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
   auto* op = scope->findValue(Value(&field));
   if (op) {
@@ -67,7 +76,12 @@ AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
   auto* name =
       &reinterpret_cast<common::Subfield::NestedField*>(field.path()[0].get())
            ->name();
+  VELOX_CHECK_EQ(topScopes_.size(), renames_.size());
   for (int32_t i = renames_.size() - 1; i >= 0; --i) {
+    auto* op = topScopes_[i].findValue(Value(&field));
+    if (op) {
+      return markUse(op);
+    }
     auto it = renames_[i].find(*name);
     if (it == renames_[i].end()) {
       VELOX_FAIL("Can't resolve {}", *name);
@@ -200,6 +214,7 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
   for (auto i = begin; i < end; ++i) {
     result.push_back(exprToOperand(*exprs[i], &topScope_));
     auto* subfield = toSubfield(outputType->nameOf(i - begin));
+    topScope_.operandMap[Value(subfield)] = result.back();
     segments_.back().projectedName.push_back(subfield);
   }
   return result;
@@ -243,10 +258,8 @@ void CompileState::tryFilterProject(
 
   auto operands = tryExprSet(
       *data.exprs, firstProjection, data.exprs->exprs().size(), outputType);
-  if (!identityProjections.empty()) {
-    renames_.push_back(makeRenames(identityProjections, inputType, outputType));
-    topScopes_.push_back(std::move(topScope_));
-  }
+  renames_.push_back(makeRenames(identityProjections, inputType, outputType));
+  topScopes_.push_back(std::move(topScope_));
 }
 
 bool CompileState::tryPlanOperator(
@@ -715,10 +728,11 @@ ProgramKey CompileState::makeKey() {
       .output = std::move(output)};
 }
 
-void CompileState::makeOperators() {
+RowTypePtr CompileState::makeOperators() {
   makeSegments();
   planPipelines();
   generatePrograms();
+  return segments_.back().outputType;
 }
 
 } // namespace facebook::velox::wave
