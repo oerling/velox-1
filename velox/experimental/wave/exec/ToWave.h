@@ -281,6 +281,11 @@ struct CodePosition {
         (kernelSeq == other.kernelSeq && step < other.step);
   }
 
+  bool operator==(const CodePosition& other) const {
+    return kernelSeq == other.kernelSeq && branchIdx == other.branchIdx && step == other.step;
+  }
+
+  
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
   // Position of program in KernelBox.
@@ -481,6 +486,14 @@ class CompileState {
   /// 'kernelSeq_'.
   ProgramKey makeLevelText(KernelSpec& spec);
 
+  std::string generateIsTrue(const AbstractOperand& op);
+
+  int32_t nextWrapId();
+ 
+  // Generates an array of operands to wrap. Returns the number of distinct wraps. 'id' is a sequence number from nextWrapId().
+  int32_t wrapLiteral(int32_t id);
+
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -701,9 +714,21 @@ class CompileState {
   // For each in 'renames_', a copy of 'topScope' before the rename was
   // installed.
   std::vector<Scope> topScopes_;
-};
+
+  // Counter for making names for wraps.
+  int32_t wrapId_{0};
+  };
 
 /// Registers adapter to add Wave operators to Drivers.
 void registerWave();
 
 } // namespace facebook::velox::wave
+
+namespace std {
+template <>
+struct hash<::facebook::velox::wave::CodePosition> {
+  size_t operator()(const ::facebook::velox::wave::CodePosition pos) const {
+    return (1 + pos.kernelSeq) *211  + pos.branchIdx * 31 + pos.step * 29;
+  }
+};
+} // namespace std

@@ -338,6 +338,50 @@ __device__ __forceinline__ void filterKernel(
   __syncthreads();
 }
 
+__device__ __forceinline__ void filterKernel(
+    bool flag,
+    Operand** operands,
+    OperandIndex indicesIdx,
+int32_t blockBase,
+    WaveShared* shared,
+    ErrorCode& laneStatus) {
+  bool isPassed = flag && laneActive(laneStatus);
+  uint32_t bits = __ballot_sync(0xffffffff, isPassed);
+  if ((threadIdx.x & (kWarpThreads - 1)) == 0) {
+    reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads] =
+        __popc(bits);
+  }
+  __syncthreads();
+  if (threadIdx.x < kWarpThreads) {
+    constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
+    int32_t cnt = threadIdx.x < kNumWarps
+        ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x]
+        : 0;
+    int32_t sum;
+    using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
+    Scan(*reinterpret_cast<Scan::TempStorage*>(shared)).ExclusiveSum(cnt, sum);
+    if (threadIdx.x < kNumWarps) {
+      if (threadIdx.x == kNumWarps - 1) {
+        shared->numRows = cnt + sum;
+      }
+      reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x] = sum;
+    }
+  }
+  __syncthreads();
+  if (bits & (1 << (threadIdx.x & (kWarpThreads - 1)))) {
+    auto* indices = reinterpret_cast<int32_t*>(operands[indicesIdx]->base);
+    auto start = blockBase +
+        reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x / kWarpThreads];
+    auto bit = start +
+        __popc(bits & lowMask<uint32_t>(threadIdx.x & (kWarpThreads - 1)));
+    indices[bit] = blockBase + threadIdx.x;
+  }
+  laneStatus =
+      threadIdx.x < shared->numRows ? ErrorCode::kOk : ErrorCode::kInactive;
+  __syncthreads();
+}
+
+
 __device__ void __forceinline__ wrapKernel(
     const IWrap& wrap,
     Operand** operands,
@@ -387,6 +431,59 @@ __device__ void __forceinline__ wrapKernel(
   }
   __syncthreads();
 }
+
+__device__ void __forceinline__ wrapKernel(
+					   OperandIndex* wraps,
+					   int32_t numWraps,
+					   OperandIndex indicesIdx,
+					   Operand** operands,
+    int32_t blockBase,
+					   WaveShared* shared) {
+  Operand* op = operands[indicesIdx];
+  auto* filterIndices = reinterpret_cast<int32_t*>(op->base);
+  if (filterIndices[blockBase + shared->numRows - 1] == shared->numRows + blockBase - 1) {
+    // There is no cardinality change.
+    return;
+  }
+
+  struct WrapState {
+    int32_t* indices;
+  };
+
+  auto* state = reinterpret_cast<WrapState*>(&shared->data);
+  bool rowActive = threadIdx.x < shared->numRows;
+  int32_t totalWrap = numWraps + shared->numExtraWraps;
+  for (auto column = 0; column < totalWrap; ++column) {
+    if (threadIdx.x == 0) {
+      auto opIndex = column < numWraps ? wraps[column] : shared->extraWraps[column - numWraps];
+      auto* op = operands[opIndex];
+      int32_t** opIndices = &op->indices[blockBase / kBlockSize];
+      if (!*opIndices) {
+        *opIndices = filterIndices + blockBase;
+        state->indices = nullptr;
+      } else {
+        state->indices = *opIndices;
+      }
+    }
+    __syncthreads();
+    // Every thread sees the decision on thred 0 above.
+    if (!state->indices) {
+      continue;
+    }
+    int32_t newIndex;
+    if (rowActive) {
+      newIndex =
+          state->indices[filterIndices[blockBase + threadIdx.x] - blockBase];
+    }
+    // All threads hit this.
+    __syncthreads();
+    if (rowActive) {
+      state->indices[threadIdx.x] = newIndex;
+    }
+  }
+  __syncthreads();
+}
+
 
 template <typename T>
 __device__ inline T opFunc_kPlus(T left, T right) {

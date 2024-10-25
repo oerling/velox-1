@@ -321,12 +321,8 @@ bool CompileState::makeSegments() {
   int32_t operatorIndex = 0;
   int32_t nodeIndex = 0;
   RowTypePtr outputType;
-  // Make sure operator states are initialized.  We will need to inspect some of
-  // them during the transformation.
-  driver_.initializeOperators();
   RowTypePtr inputType;
   for (; operatorIndex < operators.size(); ++operatorIndex) {
-    int32_t previousNumOperators = operators_.size();
 
     if (!tryPlanOperator(operators[operatorIndex], nodeIndex, outputType)) {
       break;
@@ -485,6 +481,11 @@ void CompileState::planSegment(
       if (auto* scan = dynamic_cast<const core::TableScanNode*>(node)) {
         auto step = makeStep<TableScanStep>();
         step->node = scan;
+        candidate.currentBox->steps.push_back(step);
+        newKernel(candidate);
+      } else if (auto* values = dynamic_cast<const core::ValuesNode*>(node)) {
+        auto step = makeStep<ValuesStep>();
+        step->node = values;
         candidate.currentBox->steps.push_back(step);
         newKernel(candidate);
       } else if (
