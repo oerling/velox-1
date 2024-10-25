@@ -353,6 +353,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   programs_.push_back(std::move(program));
 }
 
+  bool emptyLevel(std::vector<KernelBox> level) {
+    return level.empty() || level[0].steps.empty();
+  }
+  
 void CompileState::generatePrograms() {
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
@@ -372,6 +376,9 @@ void CompileState::generatePrograms() {
 
     for (kernelSeq_ = start; kernelSeq_ < currentCandidate_->steps.size();
          ++kernelSeq_) {
+      if (emptyLevel(currentCandidate_->steps[kernelSeq_)) {
+	  continue;
+	}
       makeLevel(currentCandidate_->steps[kernelSeq_]);
     }
     std::vector<std::vector<ProgramPtr>> levels;

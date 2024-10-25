@@ -396,8 +396,11 @@ struct Segment {
 class CompileState {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
-      : driverFactory_(driverFactory), driver_(driver) {}
+      : driverFactory_(driverFactory), driver_(driver) {
+    setDevice(getDevice());
+  }
 
+  
   exec::Driver& driver() {
     return driver_;
   }
