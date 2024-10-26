@@ -150,7 +150,7 @@ struct Value {
   }
 
   std::string toString() const;
-  
+
   const exec::Expr* expr;
   const common::Subfield* subfield;
 };

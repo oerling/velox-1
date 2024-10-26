@@ -59,7 +59,7 @@ AbstractOperand* Scope::findValue(const Value& value) {
   return it->second;
 }
 
-  std::string Scope::toString() const {
+std::string Scope::toString() const {
   std::stringstream out;
   for (auto& pair : operandMap) {
     out << pair.first.toString() << " = " << pair.second->toString() << "\n";
@@ -67,7 +67,6 @@ AbstractOperand* Scope::findValue(const Value& value) {
   return out.str();
 }
 
-  
 AbstractOperand* CompileState::fieldToOperand(Subfield& field, Scope* scope) {
   auto* op = scope->findValue(Value(&field));
   if (op) {
@@ -219,8 +218,8 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     int32_t outputIdx = -1;
     for (auto& projection : *resultProjections) {
       if (projection.inputChannel == i - begin) {
-	outputIdx = projection.outputChannel;
-	break;
+        outputIdx = projection.outputChannel;
+        break;
       }
     }
     VELOX_CHECK_NE(-1, outputIdx);
@@ -268,7 +267,11 @@ void CompileState::tryFilterProject(
   }
 
   auto operands = tryExprSet(
-			     *data.exprs, firstProjection, data.exprs->exprs().size(), data.resultProjections, outputType);
+      *data.exprs,
+      firstProjection,
+      data.exprs->exprs().size(),
+      data.resultProjections,
+      outputType);
   renames_.push_back(makeRenames(identityProjections, inputType, outputType));
   topScopes_.push_back(std::move(topScope_));
 }
@@ -522,8 +525,8 @@ void CompileState::planSegment(
       }
       auto pos = CodePosition(0, 0, candidate.currentBox->steps.size());
       for (auto* op : segment.topLevelDefined) {
-	auto& flags = candidate.flags(op);
-	flags.definedIn = pos;
+        auto& flags = candidate.flags(op);
+        flags.definedIn = pos;
       }
 
       markOutputStored(candidate, segment);
@@ -697,17 +700,18 @@ ProgramKey CompileState::makeKey() {
           out << ")\n";
           break;
         }
-      case StepKind::kNullCheck: {
-	auto& check = step->as<NullCheck>();
-	out << "nullCheck(";
-	for (auto* op : check.operands) {
-	  out << op->id << " ";
-	}
-	out << ") -> " << check.result->id << "\n";
-	break;
-      }
-      case StepKind::kEndNullCheck: break;
-      case StepKind::kFilter: {
+        case StepKind::kNullCheck: {
+          auto& check = step->as<NullCheck>();
+          out << "nullCheck(";
+          for (auto* op : check.operands) {
+            out << op->id << " ";
+          }
+          out << ") -> " << check.result->id << "\n";
+          break;
+        }
+        case StepKind::kEndNullCheck:
+          break;
+        case StepKind::kFilter: {
           auto& filter = step->as<Filter>();
           out << "filter(";
           markInput(filter.flag);

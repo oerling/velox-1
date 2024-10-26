@@ -140,12 +140,13 @@ void NullCheck::generateMain(CompileState& state) {
     auto& flags = this->flags(op);
 
     bool mayWrap = flags.wrappedAt.empty() ||
-      flags.wrappedAt.isBefore(state.currentPosition());
+        flags.wrappedAt.isBefore(state.currentPosition());
     auto ord = state.declareVariable(*op);
     state.generated() << fmt::format(
         "if (!valueOrNull<{}>(operands, {}, blockBase, r{})) {goto end{};}\n",
-	mayWrap ? "true" : "false",
-        ord, ord,
+        mayWrap ? "true" : "false",
+        ord,
+        ord,
         label);
   }
 }
@@ -284,7 +285,10 @@ void writeDebugFile(const KernelSpec& spec) {
   }
 }
 
-  ProgramKey CompileState::makeLevelText(int32_t pipelineIdx, int32_t kernelSeq, KernelSpec& spec) {
+ProgramKey CompileState::makeLevelText(
+    int32_t pipelineIdx,
+    int32_t kernelSeq,
+    KernelSpec& spec) {
   std::lock_guard<std::mutex> l(generateMutex_);
   insideNullPropagating_ = false;
   currentCandidate_ = &selectedPipelines_[pipelineIdx];
@@ -296,8 +300,8 @@ void writeDebugFile(const KernelSpec& spec) {
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
   std::vector<std::string> entryPoints = {kernelName};
   head << fmt::format(
-		      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
-		      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
+      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
+      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
       kernelName);
 
   generated_ << "  GENERATED_PREAMBLE(0);\n";
@@ -368,11 +372,13 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   // The generator function captures a shared 'this'. The
   // code generation and compilation are on an executor and run after
   // the plan transformation has returned.
-  auto kernel = CompiledKernel::getKernel(key.text, [sharedState, pipelineIdx = pipelineIdx_, kernelSeq = kernelSeq_]() {
-						      KernelSpec spec;
-						      sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
-    return spec;
-  });
+  auto kernel = CompiledKernel::getKernel(
+      key.text,
+      [sharedState, pipelineIdx = pipelineIdx_, kernelSeq = kernelSeq_]() {
+        KernelSpec spec;
+        sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
+        return spec;
+      });
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   auto program = std::make_shared<Program>(
       params.input, params.local, params.output, operands_, std::move(kernel));

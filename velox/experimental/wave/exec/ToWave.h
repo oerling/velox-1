@@ -394,7 +394,7 @@ struct Segment {
   RowTypePtr outputType;
 };
 
-  class CompileState : public std::enable_shared_from_this<CompileState> {
+class CompileState : public std::enable_shared_from_this<CompileState> {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
       : driverFactory_(driverFactory), driver_(driver) {
@@ -487,7 +487,8 @@ struct Segment {
 
   /// Makes the source text for kernels for the level of 'pipelineIdx',
   /// 'kernelSeq'.
-  ProgramKey makeLevelText(int32_t pipelineIdx, int32_t kernelSeq, KernelSpec& spec);
+  ProgramKey
+  makeLevelText(int32_t pipelineIdx, int32_t kernelSeq, KernelSpec& spec);
 
   std::string generateIsTrue(const AbstractOperand& op);
 
@@ -497,10 +498,10 @@ struct Segment {
   // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(int32_t id);
 
-    void setInsideNullPropagating(bool flag) {
-      insideNullPropagating_ = flag;
-    }
-    
+  void setInsideNullPropagating(bool flag) {
+    insideNullPropagating_ = flag;
+  }
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -726,8 +727,9 @@ struct Segment {
   // Counter for making names for wraps.
   int32_t wrapId_{0};
 
-    // Mutex serializing the background code generation after missing kernel cache.
-    std::mutex generateMutex_;
+  // Mutex serializing the background code generation after missing kernel
+  // cache.
+  std::mutex generateMutex_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.
