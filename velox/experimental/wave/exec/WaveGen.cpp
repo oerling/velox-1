@@ -137,7 +137,7 @@ void NullCheck::generateMain(CompileState& state) {
           label);
       continue;
     }
-    auto& flags = this->flags(op);
+    auto& flags = state.flags(*op);
 
     bool mayWrap = flags.wrappedAt.empty() ||
         flags.wrappedAt.isBefore(state.currentPosition());
