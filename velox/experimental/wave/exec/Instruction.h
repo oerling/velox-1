@@ -91,7 +91,7 @@ struct AbstractOperand {
   bool isHostReturn{false};
 
   /// Corresponding Expr. Needs to be set if inlinable.
-  exec::Expr* expr{nullptr};
+  const exec::Expr* expr{nullptr};
 
   // 1:1 to inputs of 'expr'. The same Expr will be different trees of
   // AbstractOperand if these are in different conditional

@@ -167,6 +167,7 @@ AbstractOperand* CompileState::exprToOperand(const Expr& expr, Scope* scope) {
   }
   auto result = newOperand(expr.type(), "r");
   result->retriable = functionRetriable(expr);
+  result->expr = &expr;
   result->cost = functionCost(expr);
   result->costWithChildren = totalCost + result->cost;
   result->inputs = std::move(inputs);
@@ -193,6 +194,7 @@ Segment& CompileState::addSegment(
       op->sourceNullable = boundary == BoundaryType::kSource;
       op->needsStore = boundary == BoundaryType::kSource;
       topScope_.operandMap[value] = op;
+      last.topLevelDefined.push_back(op);
     }
   }
   last.outputType = outputType;
@@ -208,12 +210,21 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     const exec::ExprSet& exprSet,
     int32_t begin,
     int32_t end,
+    const std::vector<exec::IdentityProjection>* resultProjections,
     const RowTypePtr& outputType) {
   auto& exprs = exprSet.exprs();
   auto& result = segments_.back().topLevelDefined;
   for (auto i = begin; i < end; ++i) {
     result.push_back(exprToOperand(*exprs[i], &topScope_));
-    auto* subfield = toSubfield(outputType->nameOf(i - begin));
+    int32_t outputIdx = -1;
+    for (auto& projection : *resultProjections) {
+      if (projection.inputChannel == i - begin) {
+	outputIdx = projection.outputChannel;
+	break;
+      }
+    }
+    VELOX_CHECK_NE(-1, outputIdx);
+    auto* subfield = toSubfield(outputType->nameOf(outputIdx));
     topScope_.operandMap[Value(subfield)] = result.back();
     segments_.back().projectedName.push_back(subfield);
   }
@@ -257,7 +268,7 @@ void CompileState::tryFilterProject(
   }
 
   auto operands = tryExprSet(
-      *data.exprs, firstProjection, data.exprs->exprs().size(), outputType);
+			     *data.exprs, firstProjection, data.exprs->exprs().size(), data.resultProjections, outputType);
   renames_.push_back(makeRenames(identityProjections, inputType, outputType));
   topScopes_.push_back(std::move(topScope_));
 }
@@ -339,6 +350,9 @@ bool CompileState::makeSegments() {
       break;
     }
     ++nodeIndex;
+  }
+  if (!segments_.back().outputType) {
+    segments_.back().outputType = outputType;
   }
   for (auto i = 0; i < outputType->size(); ++i) {
     auto* result =
@@ -432,6 +446,7 @@ void CompileState::placeExpr(
     NullCheck* check;
     if (checkNulls) {
       check = addNullCheck(op);
+      candidate.currentBox->steps.push_back(check);
     }
     for (auto* in : op->inputs) {
       placeExpr(candidate, in, false);
@@ -445,9 +460,10 @@ void CompileState::placeExpr(
     candidate.currentBox->steps.push_back(inst);
     if (checkNulls) {
       auto end = makeStep<EndNullCheck>();
-      check->endIdx = currentBox_->steps.size();
+      check->endIdx = candidate.currentBox->steps.size();
       end->result = op;
       end->label = check->label;
+      candidate.currentBox->steps.push_back(end);
     }
   }
 }
@@ -504,6 +520,12 @@ void CompileState::planSegment(
         auto* step = segment.steps[0];
         candidate.currentBox->steps.push_back(step);
       }
+      auto pos = CodePosition(0, 0, candidate.currentBox->steps.size());
+      for (auto* op : segment.topLevelDefined) {
+	auto& flags = candidate.flags(op);
+	flags.definedIn = pos;
+      }
+
       markOutputStored(candidate, segment);
       break;
     }
@@ -675,7 +697,17 @@ ProgramKey CompileState::makeKey() {
           out << ")\n";
           break;
         }
-        case StepKind::kFilter: {
+      case StepKind::kNullCheck: {
+	auto& check = step->as<NullCheck>();
+	out << "nullCheck(";
+	for (auto* op : check.operands) {
+	  out << op->id << " ";
+	}
+	out << ") -> " << check.result->id << "\n";
+	break;
+      }
+      case StepKind::kEndNullCheck: break;
+      case StepKind::kFilter: {
           auto& filter = step->as<Filter>();
           out << "filter(";
           markInput(filter.flag);

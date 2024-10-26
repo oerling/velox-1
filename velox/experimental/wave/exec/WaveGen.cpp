@@ -75,6 +75,7 @@ void EndNullCheck::generateMain(CompileState& state) {
         "setNull(operands, {}, blockBase, true);n", ord);
   }
   state.generated() << fmt::format("skip{}: ;\n", label);
+  state.setInsideNullPropagating(false);
 }
 
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
@@ -99,6 +100,8 @@ void CompileState::clearInRegister() {
 void NullCheck::generateMain(CompileState& state) {
   std::vector<AbstractOperand*> lastUse;
   bool isFirst = true;
+  state.setInsideNullPropagating(true);
+
   for (auto* op : operands) {
     if (!op->inRegister && state.hasMoreReferences(op, endIdx)) {
       if (isFirst) {
@@ -122,22 +125,27 @@ void NullCheck::generateMain(CompileState& state) {
   }
   if (!isFirst) {
     state.generated() << fmt::format(
-        "if (anyNull{}) { goto end{};}\n", label, label);
+        "if (anyNull{}) {{ goto end{};}}\n", label, label);
   }
   for (auto* op : lastUse) {
     if (op->inRegister) {
       auto ord = state.ordinal(*op);
       state.generated() << fmt::format(
-          "if (isRegisterNull(nulls{}, {})) {goto end{};}\n",
+          "if (isRegisterNull(nulls{}, {})) {{goto end{};}}\n",
           ord / 32,
           ord & 31,
           label);
       continue;
     }
+    auto& flags = this->flags(op);
+
+    bool mayWrap = flags.wrappedAt.empty() ||
+      flags.wrappedAt.isBefore(state.currentPosition());
     auto ord = state.declareVariable(*op);
     state.generated() << fmt::format(
-        "if (!valueOrNull(operands, {}, blockBase, r{})) {goto end{};}\n",
-        ord,
+        "if (!valueOrNull<{}>(operands, {}, blockBase, r{})) {goto end{};}\n",
+	mayWrap ? "true" : "false",
+        ord, ord,
         label);
   }
 }
@@ -170,7 +178,7 @@ void Compute::generateMain(CompileState& state) {
       state.generated() << ", ";
     }
   }
-  state.generated() << ")\n";
+  state.generated() << ");\n";
   operand->inRegister = true;
   if (flags.needStore) {
     state.generated() << fmt::format(
@@ -202,8 +210,8 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
     } else {
       generated_ << fmt::format("bool flag{};\n", ord);
       generated_ << fmt::format(
-          "if (!valueOrNull<{}, bool>(operands, {}, blockBase, flags{})) {flags{} = false;};\n",
-          mayWrap,
+          "if (!valueOrNull<{}, bool>(operands, {}, blockBase, flags{})) {{ flags{} = false; }};\n",
+          mayWrap ? "true" : "false",
           ord,
           ord,
           ord);
@@ -276,14 +284,20 @@ void writeDebugFile(const KernelSpec& spec) {
   }
 }
 
-ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
+  ProgramKey CompileState::makeLevelText(int32_t pipelineIdx, int32_t kernelSeq, KernelSpec& spec) {
+  std::lock_guard<std::mutex> l(generateMutex_);
+  insideNullPropagating_ = false;
+  currentCandidate_ = &selectedPipelines_[pipelineIdx];
+  pipelineIdx_ = pipelineIdx;
+  kernelSeq_ = kernelSeq;
   auto& level = selectedPipelines_[pipelineIdx_].steps[kernelSeq_];
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
   std::vector<std::string> entryPoints = {kernelName};
   head << fmt::format(
-      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {\n",
+		      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
+		      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
       kernelName);
 
   generated_ << "  GENERATED_PREAMBLE(0);\n";
@@ -303,7 +317,7 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
             "case {}: goto continue{};\n", stepIdx_, stepIdx_);
       }
       if (anyRetry) {
-        generated_ << "}\n}\n";
+        generated_ << "}}\n}\n";
       }
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
@@ -350,9 +364,13 @@ ProgramKey CompileState::makeLevelText(KernelSpec& spec) {
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   auto key = makeKey();
-  KernelSpec spec;
-  auto kernel = CompiledKernel::getKernel(key.text, [&]() {
-    makeLevelText(spec);
+  auto sharedState = shared_from_this();
+  // The generator function captures a shared 'this'. The
+  // code generation and compilation are on an executor and run after
+  // the plan transformation has returned.
+  auto kernel = CompiledKernel::getKernel(key.text, [sharedState, pipelineIdx = pipelineIdx_, kernelSeq = kernelSeq_]() {
+						      KernelSpec spec;
+						      sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
     return spec;
   });
   auto& params = currentCandidate_->levelParams[kernelSeq_];

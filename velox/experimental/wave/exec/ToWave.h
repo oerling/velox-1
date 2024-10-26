@@ -394,7 +394,7 @@ struct Segment {
   RowTypePtr outputType;
 };
 
-class CompileState {
+  class CompileState : public std::enable_shared_from_this<CompileState> {
  public:
   CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
       : driverFactory_(driverFactory), driver_(driver) {
@@ -485,9 +485,9 @@ class CompileState {
   /// 'kernelSeq_'
   ProgramKey makeKey();
 
-  /// Makes the source text for kernels for the level of 'pipelineIdx_',
-  /// 'kernelSeq_'.
-  ProgramKey makeLevelText(KernelSpec& spec);
+  /// Makes the source text for kernels for the level of 'pipelineIdx',
+  /// 'kernelSeq'.
+  ProgramKey makeLevelText(int32_t pipelineIdx, int32_t kernelSeq, KernelSpec& spec);
 
   std::string generateIsTrue(const AbstractOperand& op);
 
@@ -497,6 +497,10 @@ class CompileState {
   // wraps. 'id' is a sequence number from nextWrapId().
   int32_t wrapLiteral(int32_t id);
 
+    void setInsideNullPropagating(bool flag) {
+      insideNullPropagating_ = flag;
+    }
+    
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -580,6 +584,7 @@ class CompileState {
       const exec::ExprSet& exprSet,
       int32_t begin,
       int32_t end,
+      const std::vector<exec::IdentityProjection>* resultProjections,
       const RowTypePtr& outputType);
 
   void tryFilter(const exec::Expr& expr, const RowTypePtr& outputType);
@@ -720,6 +725,9 @@ class CompileState {
 
   // Counter for making names for wraps.
   int32_t wrapId_{0};
+
+    // Mutex serializing the background code generation after missing kernel cache.
+    std::mutex generateMutex_;
 };
 
 /// Registers adapter to add Wave operators to Drivers.

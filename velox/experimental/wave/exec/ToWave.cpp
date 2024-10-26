@@ -740,8 +740,8 @@ bool CompileState::compile() {
 bool waveDriverAdapter(
     const exec::DriverFactory& factory,
     exec::Driver& driver) {
-  CompileState state(factory, driver);
-  return state.compile();
+  auto state = std::make_shared<CompileState>(factory, driver);
+  return state->compile();
 }
 
 void registerWave() {

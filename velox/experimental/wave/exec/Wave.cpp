@@ -1071,6 +1071,10 @@ void Program::callUpdateStatus(WaveStream& stream, AdvanceResult& advance) {
   physicalInst->member = operandIndex(abstractInst->member)
 
 void Program::prepareForDevice(GpuArena& arena) {
+  arena_ = &arena;
+  if (kernel_) {
+    return;
+  }
   VELOX_CHECK(!instructions_.empty());
   if (instructions_.back()->opCode != OpCode::kReturn) {
     instructions_.push_back(std::make_unique<AbstractReturn>());
@@ -1161,7 +1165,6 @@ void Program::prepareForDevice(GpuArena& arena) {
             "OpCode {}", static_cast<int32_t>(instruction->opCode));
     }
   sortSlots();
-  arena_ = &arena;
   deviceData_ = arena.allocate<char>(
       codeSize + literalArea_.size() + sizeof(ThreadBlockProgram));
   uintptr_t end = reinterpret_cast<uintptr_t>(
