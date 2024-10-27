@@ -20,6 +20,7 @@
 #include "velox/experimental/wave/exec/Accumulators.h"
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/SwitchExpr.h"
 
@@ -72,6 +73,11 @@ struct KernelStep {
   virtual bool isWrap() const {
     return false;
   }
+
+  virtual bool isSink() const {
+    return false;
+  }
+
   virtual bool hasContinue() const {
     return false;
   }
@@ -175,6 +181,10 @@ struct Filter : public KernelStep {
 struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
+  }
+
+  bool isSink() const {
+    return true;
   }
 
   void generateMain(CompileState& state) override;
@@ -294,6 +304,8 @@ struct CodePosition {
   // If many kernelBoxes each with an independent program overlap, index of the
   // program.
   uint16_t branchIdx{kNone};
+
+  std::string toString() const;
 };
 
 struct OperandFlags {
@@ -302,6 +314,8 @@ struct OperandFlags {
   CodePosition lastUse;
   CodePosition wrappedAt;
   bool needStore{0};
+
+  std::string toString() const;
 };
 
 /// Contains input/local/output param sets for each level of a
@@ -396,10 +410,7 @@ struct Segment {
 
 class CompileState : public std::enable_shared_from_this<CompileState> {
  public:
-  CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
-      : driverFactory_(driverFactory), driver_(driver) {
-    setDevice(getDevice());
-  }
+  CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver);
 
   exec::Driver& driver() {
     return driver_;
@@ -646,13 +657,14 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   const exec::DriverFactory& driverFactory_;
   exec::Driver& driver_;
-  SubfieldMap subfields_;
+  std::shared_ptr<WaveRuntimeObjects> runtime_;
+  SubfieldMap& subfields_;
 
   std::vector<std::vector<ProgramPtr>> pendingLevels_;
 
   // All AbstractOperands. Handed off to WaveDriver after plan conversion.
-  std::vector<std::unique_ptr<AbstractOperand>> operands_;
-  std::vector<std::unique_ptr<AbstractState>> operatorStates_;
+  std::vector<std::unique_ptr<AbstractOperand>>& operands_;
+  std::vector<std::unique_ptr<AbstractState>>& operatorStates_;
 
   // The Wave operators generated so far.
   std::vector<std::unique_ptr<WaveOperator>> operators_;

@@ -60,23 +60,10 @@ int32_t CompileState::ordinal(const AbstractOperand& op) {
 
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
   auto ord = ordinal(op);
-  generated_ << fmt::format("{} r{};", typeName(*op.type), ord);
+  generated_ << fmt::format("{} r{};\n", typeName(*op.type), ord);
   return ord;
 }
 
-void EndNullCheck::generateMain(CompileState& state) {
-  auto ord = state.ordinal(*result);
-  state.generated() << fmt::format("goto skip{};\n", label)
-                    << fmt::format("end{}: \n", label);
-  auto flags = state.flags(*result);
-  fmt::format("setRegisterNull(nulls{}, {});\n", ord / 32, ord & 31, true);
-  if (flags.needStore) {
-    state.generated() << fmt::format(
-        "setNull(operands, {}, blockBase, true);n", ord);
-  }
-  state.generated() << fmt::format("skip{}: ;\n", label);
-  state.setInsideNullPropagating(false);
-}
 
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
   for (auto i = pc; i < currentBox_->steps.size(); ++i) {
@@ -109,7 +96,7 @@ void NullCheck::generateMain(CompileState& state) {
         isFirst = false;
       }
       auto& flags = state.flags(*op);
-      bool mayWrap = flags.wrappedAt.empty() ||
+      bool mayWrap = !flags.wrappedAt.empty() &&
           flags.wrappedAt.isBefore(state.currentPosition());
       auto ordinal = state.declareVariable(*op);
       state.generated() << fmt::format(
@@ -119,6 +106,7 @@ void NullCheck::generateMain(CompileState& state) {
           ordinal & 31,
           mayWrap ? "true" : "false",
           ordinal);
+      op->inRegister = true;
     } else {
       lastUse.push_back(op);
     }
@@ -139,16 +127,31 @@ void NullCheck::generateMain(CompileState& state) {
     }
     auto& flags = state.flags(*op);
 
-    bool mayWrap = flags.wrappedAt.empty() ||
+    bool mayWrap = !flags.wrappedAt.empty() &&
         flags.wrappedAt.isBefore(state.currentPosition());
     auto ord = state.declareVariable(*op);
     state.generated() << fmt::format(
-        "if (!valueOrNull<{}>(operands, {}, blockBase, r{})) {goto end{};}\n",
+        "if (!valueOrNull<{}>(operands, {}, blockBase, r{})) {{goto end{};}}\n",
         mayWrap ? "true" : "false",
         ord,
         ord,
         label);
+    op->inRegister = true;
   }
+}
+
+void EndNullCheck::generateMain(CompileState& state) {
+  auto ord = state.ordinal(*result);
+  state.generated() << fmt::format("goto skip{};\n", label)
+                    << fmt::format("end{}: \n", label);
+  auto flags = state.flags(*result);
+  fmt::format("setRegisterNull(nulls{}, {});\n", ord / 32, ord & 31, true);
+  if (flags.needStore) {
+    state.generated() << fmt::format(
+        "setNull(operands, {}, blockBase, true);\n", ord);
+  }
+  state.generated() << fmt::format("skip{}: ;\n", label);
+  state.setInsideNullPropagating(false);
 }
 
 void CompileState::generateOperand(const AbstractOperand& op) {
@@ -159,7 +162,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
   if (op.notNull || insideNullPropagating_) {
     auto& flags = this->flags(op);
     bool mayWrap =
-        flags.wrappedAt.empty() || flags.wrappedAt.isBefore(currentPosition());
+        !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
     generated_ << fmt::format(
         "nonNullOperand<{}, {}>(operands, {}, blockBase)",
         typeName(*op.type),
@@ -202,7 +205,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   } else {
     auto& flags = this->flags(op);
     bool mayWrap =
-        flags.wrappedAt.empty() || flags.wrappedAt.isBefore(currentPosition());
+      !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
     if (op.notNull || insideNullPropagating_) {
       generated_ << fmt::format(
           "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
@@ -275,8 +278,8 @@ void AggregateUpdate::generateMain(CompileState& state) {}
 void writeDebugFile(const KernelSpec& spec) {
   try {
     std::ofstream out(
-        fmt::format("/tmp/{}", spec.filePath),
-        std::ios_base::out | std::ios_base::trunc);
+		      spec.filePath,
+		      std::ios_base::out | std::ios_base::trunc);
     out << spec.code;
     out.close();
   } catch (const std::exception& e) {
@@ -357,10 +360,9 @@ ProgramKey CompileState::makeLevelText(
   spec.code = head.str();
   spec.entryPoints = std::move(entryPoints);
   spec.filePath = fmt::format("/tmp/{}.cu", kernelName);
-#ifndef NDEBUG
   // Write the geneerated code to a file for debugger.
   writeDebugFile(spec);
-#endif
+
   return ProgramKey{
       head.str(), std::move(input), std::move(local), std::move(output)};
 }

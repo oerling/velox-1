@@ -168,9 +168,7 @@ WaveDriver::WaveDriver(
     std::unique_ptr<GpuArena> arena,
     std::vector<std::unique_ptr<WaveOperator>> waveOperators,
     std::vector<OperandId> resultOrder,
-    SubfieldMap subfields,
-    std::vector<std::unique_ptr<AbstractOperand>> operands,
-    std::vector<std::unique_ptr<AbstractState>> states,
+    std::shared_ptr<WaveRuntimeObjects> runtime,
     InstructionStatus instructionStatus)
     : exec::SourceOperator(
           driverCtx,
@@ -184,9 +182,10 @@ WaveDriver::WaveDriver(
           operatorId)),
       arena_(std::move(arena)),
       resultOrder_(std::move(resultOrder)),
-      subfields_(std::move(subfields)),
-      operands_(std::move(operands)),
-      states_(std::move(states)),
+      runtime_(std::move(runtime)),
+      subfields_(runtime_->subfields),
+  operands_(runtime_->operands),
+  states_(runtime_->states),
       instructionStatus_(instructionStatus) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;

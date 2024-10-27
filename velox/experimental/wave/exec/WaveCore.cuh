@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <assert.h>
 #include <cuda_runtime.h> // @manual
 
 #include "velox/experimental/wave/common/Block.cuh"
@@ -515,7 +514,8 @@ __device__ __forceinline__ void binaryOpKernel(
   template <typename T>
   __device__ T value(Operand* operands, OperandIndex opIdx) {
     // Obsolete signature. call sites must be changed.
-    assert(false);
+    //    assert(false);
+    *(long*)0 = 0;
     return T{};
   }
   

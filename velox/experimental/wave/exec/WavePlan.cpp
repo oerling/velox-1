@@ -33,6 +33,18 @@ namespace facebook::velox::wave {
 using common::Subfield;
 using exec::Expr;
 
+  std::string CodePosition::toString() const {
+    if (empty()) {
+      return "empty";
+    }
+    return fmt::format("<K:{}, S:{}, B:{}>", kernelSeq, step, branchIdx);
+  }
+
+  std::string OperandFlags::toString() const {
+    return fmt::format("{{flags: def={} first={} last={} wrap={} store={}}}", definedIn.toString(), firstUse.toString(), lastUse.toString(), wrappedAt.toString(), needStore);
+  }
+
+  
 void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) {
   for (auto& in : operand->inputs) {
     visitor(in);
@@ -488,10 +500,34 @@ void newKernel(PipelineCandidate& candidate) {
   candidate.boxIdx = 0;
 }
 
+bool isSink(const PipelineCandidate& candidate) {
+  auto& level = candidate.steps.back();
+  bool result;
+  for (auto i = 0; i < level.size(); ++i) {
+    auto& box = level[i];
+    bool sink = box.steps.back()->isSink();
+    if (i == 0) {
+      result = sink;
+    } else {
+      VELOX_CHECK_EQ(result, sink, "All levels must be either sink or not sink");
+    }
+  }
+  return result;
+}
+  
 void CompileState::recordCandidate(
     PipelineCandidate& candidate,
     int32_t lastSegmentIdx) {
-  candidate.outputType = segments_[lastSegmentIdx].outputType;
+  auto& segment = segments_[lastSegmentIdx];
+  candidate.outputType = segment.outputType;
+  // Mark store needed for output operands if the segment does not end with a sink.
+  if (!isSink(candidate)) {
+    for (auto i = 0; i < segment.outputType->size(); ++ i) {
+      auto* op = fieldToOperand(*toSubfield(segment.outputType->nameOf(i)), &topScope_);
+      auto& flags = candidate.flags(op);
+      flags.needStore = true;
+    }
+  }
   candidates_.push_back(std::move(candidate));
 }
 
