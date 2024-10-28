@@ -662,7 +662,7 @@ void CompileState::planPipelines() {
   }
 }
 
-ProgramKey CompileState::makeKey() {
+ProgramKey CompileState::makeKey(int32_t& sharedSize) {
   auto& candidate = selectedPipelines_[pipelineIdx_];
   auto& params = candidate.levelParams[kernelSeq_];
   std::stringstream out;
@@ -723,6 +723,7 @@ ProgramKey CompileState::makeKey() {
         }
       };
       auto* step = box.steps[stepIdx];
+      sharedSize = std::max<int32_t>(sharedSize, step->sharedMemorySize());
       switch (step->kind()) {
         case StepKind::kOperand: {
           auto& compute = step->as<Compute>();

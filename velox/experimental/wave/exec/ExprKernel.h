@@ -185,7 +185,8 @@ struct WaveShared {
   Operand** operands;
   void** states;
 
-  int32_t* extraWraps;
+  /// Every wrap in the kernel will also wrap these otherwise not accessed Operands.
+  OperandIndex extraWraps;
   int16_t numExtraWraps;
 
   /// True if continuing the first instruction. The instruction will
@@ -222,7 +223,7 @@ struct KernelParams {
   /// The first thread block with the program. Subscript is blockIdx.x.
   int32_t* blockBase{nullptr};
   // The ordinal of the program. All blocks with the same program have the same
-  // number here. Subscript is blockIdx.x.
+  // number here. Subscript is blockIdx.x. For compiled kernels, this gives the branch to follow for the TB at blockIdx.x.
   int32_t* programIdx{nullptr};
 
   // The TB program for each exe. The subscript is programIdx[blockIdx.x].
@@ -248,8 +249,9 @@ struct KernelParams {
   // next subscript is state id in the instruction.
   void*** operatorStates;
 
-  ///  Extra wraps applied by all wraps in the kernel.
-  OperandIndex* extraWraps{nullptr};
+  /// first operand index for extra wraps. 'numExtraWraps' next
+  /// operands get wrapped by all wraps in the kernel.
+  OperandIndex extraWraps{0};
   int16_t numExtraWraps{0};
 
   /// Number of blocks in each program. gridDim.x can be a multiple if many

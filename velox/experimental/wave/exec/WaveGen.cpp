@@ -21,6 +21,12 @@
 
 namespace facebook::velox::wave {
 
+  thread_local int32_t CompileState::pipelineIdx_;
+  thread_local int32_t CompileState::kernelSeq_;
+  thread_local int32_t CompileState::branchIdx_;
+  thread_local PipelineCandidate* CompileState::currentCandidate_;
+thread_local   KernelBox* CompileState::currentBox_;
+
 const std::string typeName(const Type& type) {
   switch (type.kind()) {
     case TypeKind::BIGINT:
@@ -367,9 +373,10 @@ ProgramKey CompileState::makeLevelText(
       head.str(), std::move(input), std::move(local), std::move(output)};
 }
 
-void CompileState::makeLevel(std::vector<KernelBox>& level) {
+  void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
-  auto key = makeKey();
+  int32_t sharedSize = 0;
+  auto key = makeKey(sharedSize);
   auto sharedState = shared_from_this();
   // The generator function captures a shared 'this'. The
   // code generation and compilation are on an executor and run after
@@ -382,8 +389,10 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         return spec;
       });
   auto& params = currentCandidate_->levelParams[kernelSeq_];
+  auto numBranches = currentCandidate_->steps[kernelSeq_].size();
+  OperandSet extraWrap;
   auto program = std::make_shared<Program>(
-      params.input, params.local, params.output, operands_, std::move(kernel));
+					   params.input, params.local, params.output, extraWrap, numBranches, sharedSize, operands_, std::move(kernel));
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {

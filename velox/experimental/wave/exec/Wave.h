@@ -488,6 +488,9 @@ class Program : public std::enable_shared_from_this<Program> {
       OperandSet input,
       OperandSet local,
       OperandSet output,
+      OperandSet extraWrap,
+      int32_t numBranches,
+      int32_t sharedSize,
       const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
       std::unique_ptr<CompiledKernel> kernel);
 
@@ -596,11 +599,20 @@ class Program : public std::enable_shared_from_this<Program> {
   /// rehash device side table,. Caller synchronizes.
   void callUpdateStatus(WaveStream& stream, AdvanceResult& result);
 
-  std::string toString() const;
 
   CompiledKernel* kernel() const {
     return kernel_.get();
   }
+
+  OperandSet& extraWrap() {
+    return extraWrap_;
+  }
+
+  int32_t numBranches() const {
+    return numBranches_;
+  }
+  
+  std::string toString() const;
 
  private:
   template <TypeKind kind>
@@ -612,6 +624,7 @@ class Program : public std::enable_shared_from_this<Program> {
   int32_t addLiteral(T* value, int32_t count);
 
   void literalToOperand(AbstractOperand* abstractOp, Operand& op);
+
 
   std::unique_ptr<CompiledKernel> kernel_;
 
@@ -637,6 +650,8 @@ class Program : public std::enable_shared_from_this<Program> {
   /// Operands array.
   OperandSet outputIds_;
 
+  OperandSet extraWrap_;
+  
   // Local Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
   // Output Operand offset in operands array.
@@ -661,7 +676,10 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // Device resident program.
   ThreadBlockProgram* program_;
+  // Number of distinct code paths in the kernel. The 
+  int32_t numBranches_{0};
 
+  
   int32_t sharedMemorySize_{0};
 
   // Host side image of device side Operands that reference 'constantArea_'.
@@ -679,12 +697,6 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // a pool of ready to run executables.
   std::vector<std::unique_ptr<Executable>> prepared_;
-
-  // Number of alternative programs. A grid of 100 blocks is launched
-  // for 400 blocks if 4 alternate paths. Each block executes one of 4
-  // alternatives. This is like multiple parallel programs in one
-  // kernel.
-  int32_t numAlternates_{1};
 
   // Globals accessed by id from instructions.
   std::vector<std::unique_ptr<ProgramState>> operatorStates_;
@@ -910,6 +922,8 @@ class WaveStream {
     int32_t totalBytes{0};
     folly::F14FastMap<int32_t, int32_t**> inputWrap;
     folly::F14FastMap<int32_t, int32_t**> localWrap;
+    int32_t numExtraWrap{0};
+    int32_t firstExtraWrap{0};
     std::vector<void*> operatorStates;
   };
 

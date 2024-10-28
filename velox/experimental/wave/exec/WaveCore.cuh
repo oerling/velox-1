@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+/* Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -454,7 +454,7 @@ __device__ void __forceinline__ wrapKernel(
   int32_t totalWrap = numWraps + shared->numExtraWraps;
   for (auto column = 0; column < totalWrap; ++column) {
     if (threadIdx.x == 0) {
-      auto opIndex = column < numWraps ? wraps[column] : shared->extraWraps[column - numWraps];
+      auto opIndex = column < numWraps ? wraps[column] : shared->extraWraps + column - numWraps;
       auto* op = operands[opIndex];
       int32_t** opIndices = &op->indices[blockBase / kBlockSize];
       if (!*opIndices) {

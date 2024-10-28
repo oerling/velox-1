@@ -86,6 +86,11 @@ struct KernelStep {
     return !isWrap();
   }
 
+  /// Returns the dynamic shared memort needed by 'this'.
+  virtual int32_t sharedMemorySize() const {
+    return sizeof(WaveShared);
+  }
+  
   virtual void generateMain(CompileState& state) {
     VELOX_NYI();
   }
@@ -171,6 +176,10 @@ struct Filter : public KernelStep {
     return true;
   }
 
+  int32_t sharedMemorySize() const {
+    return sizeof(WaveShared) + (kBlockSize / 32) * sizeof (int32_t);
+  }
+  
   void generateMain(CompileState& state) override;
 
   AbstractOperand* flag;
@@ -492,9 +501,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void generateOperand(const AbstractOperand& op);
 
-  /// Returns a key for kernel cache lookup for the step at 'pipelineIdx_',
-  /// 'kernelSeq_'
-  ProgramKey makeKey();
+  /// Returns a key for kernel cache lookup for the step at
+  /// 'pipelineIdx_', 'kernelSeq_'. Updates 'sharedSize' to the
+  /// maximum dynamic shared memory needed by steps in the level.
+  ProgramKey makeKey(int32_t& sharedSize);
 
   /// Makes the source text for kernels for the level of 'pipelineIdx',
   /// 'kernelSeq'.
@@ -635,8 +645,6 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void makeLevel(std::vector<KernelBox>& level);
 
-  ProgramKey makeKey(PipelineCandidate& candidate, int32_t kernelIdx);
-
   RowTypePtr makeOperators();
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
@@ -692,8 +700,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   bool insideNullPropagating_{false};
   int32_t labelCounter_{0};
 
-  PipelineCandidate* currentCandidate_{nullptr};
-  KernelBox* currentBox_{nullptr};
+  thread_local static PipelineCandidate* currentCandidate_;
+thread_local static   KernelBox* currentBox_;
 
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;
@@ -712,12 +720,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::vector<std::unique_ptr<KernelStep>> allSteps_;
 
   // The number of the pipeline being generated.
-  int32_t pipelineIdx_{0};
+  thread_local static int32_t pipelineIdx_;
 
   // The sequence number of the kernel in the pipeline being generated.
-  int32_t kernelSeq_;
+  thread_local static int32_t kernelSeq_;
 
-  int32_t branchIdx_;
+  thread_local static int32_t branchIdx_;
 
   int32_t stepIdx_;
 

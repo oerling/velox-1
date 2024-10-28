@@ -617,13 +617,22 @@ void WaveStream::exeLaunchInfo(
       }
     }
   });
+  info.numExtraWrap = exe.programShared->extraWrap().size();
+  exe.programShared->extraWrap().forEach([&](auto id) {
+    auto op = operandAt(id);
+    auto* inputExe = operandExecutable(op->id);
+    VELOX_CHECK(op->wrappedAt != AbstractOperand::kNoWrap);
+    auto* indices = inputExe->wraps[op->wrappedAt];
+    VELOX_CHECK_NOT_NULL(indices);
+					 });
+
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
   info.numLocalOps =
       exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
   info.totalBytes =
-      // Pointer to Operand for input and local Operands.
-      sizeof(void*) * (info.numLocalOps + exe.inputOperands.size()) +
-      // Flat array of Operand for all but input.
+      // Pointer to Operand for input and local Operands and extra wraps.
+      sizeof(void*) * (info.numLocalOps + exe.inputOperands.size() + info.numExtraWrap) +
+      // Flat array of Operand for all but input and extra wrap.
       sizeof(Operand) * info.numLocalOps +
       // Space for the 'indices' for each distinct wrappedAt.
       (info.localWrap.size() * numBlocks * sizeof(void*));
@@ -635,6 +644,7 @@ void WaveStream::exeLaunchInfo(
 Operand**
 WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
   Operand** operandPtrBegin = addBytes<Operand**>(start, 0);
+  auto initialOperandBegin = operandPtrBegin;
   exe.inputOperands.forEach([&](int32_t id) {
     auto* inputExe = operandToExecutable_[id];
     int32_t ordinal = inputExe->outputOperands.ordinal(id);
@@ -643,7 +653,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     ++operandPtrBegin;
   });
   Operand* operandBegin = addBytes<Operand*>(
-      start, (info.numInput + info.numLocalOps) * sizeof(void*));
+      start, (info.numInput + info.numLocalOps + info.numExtraWrap) * sizeof(void*));
   VELOX_CHECK_EQ(0, reinterpret_cast<uintptr_t>(operandBegin) & 7);
   int32_t* indicesBegin =
       addBytes<int32_t*>(operandBegin, info.numLocalOps * sizeof(Operand));
@@ -698,6 +708,14 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
       ++operandBegin;
     }
   }
+  info.firstExtraWrap = operandPtrBegin - initialOperandBegin;
+  exe.programShared->extraWrap().forEach([&](int32_t id) {
+    auto* inputExe = operandToExecutable_[id];
+    int32_t ordinal = inputExe->outputOperands.ordinal(id);
+    *operandPtrBegin =
+        &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
+    ++operandPtrBegin;
+					  });
 
   return addBytes<Operand**>(start, 0);
 }
@@ -753,9 +771,13 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     VELOX_CHECK_LT(0, inputRows);
     numRows_ = inputRows;
   }
-
+  int32_t numBranches = 1;
+  if (exes[0]->programShared->kernel()) {
+    numBranches = exes[0]->programShared->numBranches();
+    VELOX_CHECK_EQ(1, exes.size());
+  }
   // 2 int arrays: blockBase, programIdx.
-  int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe;
+  int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe * numBranches;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
@@ -842,6 +864,10 @@ LaunchControl* WaveStream::prepareProgramLaunch(
       }
     }
     auto operandPtrs = fillOperands(*exes[i], operandStart, info[i]);
+    if (exes.size() == 1) {
+      control.params.extraWraps = info[0].firstExtraWrap;
+      control.params.numExtraWraps = exes[0]->programShared->extraWrap().size();
+    }
     control.params.operands[i] = operandPtrs;
     // The operands defined by the exe start after the input operands and are
     // all consecutive.
@@ -1006,9 +1032,16 @@ Program::Program(
     OperandSet input,
     OperandSet local,
     OperandSet output,
+    OperandSet extraWrap,
+    int32_t numBranches,
+    int32_t sharedSize,
     const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
     std::unique_ptr<CompiledKernel> kernel)
-    : kernel_(std::move(kernel)) {
+  :     kernel_(std::move(kernel)),
+	outputIds_(output),
+    extraWrap_(extraWrap),
+    numBranches_(numBranches),
+    sharedMemorySize_(sharedSize) {
   input.forEach([&](int32_t id) { input_[allOperands[id].get()] = id; });
   local.forEach([&](int32_t id) { local_[allOperands[id].get()] = id; });
   output.forEach([&](int32_t id) { output_[allOperands[id].get()] = id; });
