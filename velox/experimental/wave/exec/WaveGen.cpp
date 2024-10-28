@@ -21,11 +21,11 @@
 
 namespace facebook::velox::wave {
 
-  thread_local int32_t CompileState::pipelineIdx_;
-  thread_local int32_t CompileState::kernelSeq_;
-  thread_local int32_t CompileState::branchIdx_;
-  thread_local PipelineCandidate* CompileState::currentCandidate_;
-thread_local   KernelBox* CompileState::currentBox_;
+thread_local int32_t CompileState::pipelineIdx_;
+thread_local int32_t CompileState::kernelSeq_;
+thread_local int32_t CompileState::branchIdx_;
+thread_local PipelineCandidate* CompileState::currentCandidate_;
+thread_local KernelBox* CompileState::currentBox_;
 
 const std::string typeName(const Type& type) {
   switch (type.kind()) {
@@ -69,7 +69,6 @@ int32_t CompileState::declareVariable(const AbstractOperand& op) {
   generated_ << fmt::format("{} r{};\n", typeName(*op.type), ord);
   return ord;
 }
-
 
 bool CompileState::hasMoreReferences(AbstractOperand* op, int32_t pc) {
   for (auto i = pc; i < currentBox_->steps.size(); ++i) {
@@ -211,7 +210,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   } else {
     auto& flags = this->flags(op);
     bool mayWrap =
-      !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
+        !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
     if (op.notNull || insideNullPropagating_) {
       generated_ << fmt::format(
           "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
@@ -283,9 +282,7 @@ void AggregateUpdate::generateMain(CompileState& state) {}
 
 void writeDebugFile(const KernelSpec& spec) {
   try {
-    std::ofstream out(
-		      spec.filePath,
-		      std::ios_base::out | std::ios_base::trunc);
+    std::ofstream out(spec.filePath, std::ios_base::out | std::ios_base::trunc);
     out << spec.code;
     out.close();
   } catch (const std::exception& e) {
@@ -373,7 +370,7 @@ ProgramKey CompileState::makeLevelText(
       head.str(), std::move(input), std::move(local), std::move(output)};
 }
 
-  void CompileState::makeLevel(std::vector<KernelBox>& level) {
+void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   int32_t sharedSize = 0;
   auto key = makeKey(sharedSize);
@@ -392,7 +389,14 @@ ProgramKey CompileState::makeLevelText(
   auto numBranches = currentCandidate_->steps[kernelSeq_].size();
   OperandSet extraWrap;
   auto program = std::make_shared<Program>(
-					   params.input, params.local, params.output, extraWrap, numBranches, sharedSize, operands_, std::move(kernel));
+      params.input,
+      params.local,
+      params.output,
+      extraWrap,
+      numBranches,
+      sharedSize,
+      operands_,
+      std::move(kernel));
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     currentBox_ = &level[branchIdx_];
     for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {

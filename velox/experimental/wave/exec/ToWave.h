@@ -19,8 +19,8 @@
 #include "velox/exec/Operator.h"
 #include "velox/experimental/wave/exec/Accumulators.h"
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
-#include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
+#include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/SwitchExpr.h"
 
@@ -90,7 +90,7 @@ struct KernelStep {
   virtual int32_t sharedMemorySize() const {
     return sizeof(WaveShared);
   }
-  
+
   virtual void generateMain(CompileState& state) {
     VELOX_NYI();
   }
@@ -177,9 +177,9 @@ struct Filter : public KernelStep {
   }
 
   int32_t sharedMemorySize() const {
-    return sizeof(WaveShared) + (kBlockSize / 32) * sizeof (int32_t);
+    return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
-  
+
   void generateMain(CompileState& state) override;
 
   AbstractOperand* flag;
@@ -701,7 +701,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   int32_t labelCounter_{0};
 
   thread_local static PipelineCandidate* currentCandidate_;
-thread_local static   KernelBox* currentBox_;
+  thread_local static KernelBox* currentBox_;
 
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;

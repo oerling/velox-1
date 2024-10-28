@@ -91,7 +91,9 @@ class WaveBarrier {
   static std::unordered_map<std::string, std::weak_ptr<WaveBarrier>> barriers_;
 };
 
-/// Collection of object handed over to execution from plan transformation. Since codegen and execution overlap, this is owned by shared pointer from both sides after being prepared by plan transformation.
+/// Collection of object handed over to execution from plan transformation.
+/// Since codegen and execution overlap, this is owned by shared pointer from
+/// both sides after being prepared by plan transformation.
 struct WaveRuntimeObjects {
   // Dedupped Subfields. Handed over by CompileState.
   SubfieldMap subfields;
@@ -101,7 +103,7 @@ struct WaveRuntimeObjects {
   std::vector<std::unique_ptr<AbstractState>> states;
 };
 
-/// Operator that replaces a sequence of Velox Operators offloaded to Wave.  
+/// Operator that replaces a sequence of Velox Operators offloaded to Wave.
 class WaveDriver : public exec::SourceOperator {
  public:
   WaveDriver(
@@ -268,7 +270,7 @@ class WaveDriver : public exec::SourceOperator {
 
   /// Owns 'subfields_', 'operands_' and 'states_'
   std::shared_ptr<WaveRuntimeObjects> runtime_;
-  
+
   // Dedupped Subfields. Handed over by CompileState.
   SubfieldMap& subfields_;
   // Operands handed over by compilation.

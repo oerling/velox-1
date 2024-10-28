@@ -624,14 +624,15 @@ void WaveStream::exeLaunchInfo(
     VELOX_CHECK(op->wrappedAt != AbstractOperand::kNoWrap);
     auto* indices = inputExe->wraps[op->wrappedAt];
     VELOX_CHECK_NOT_NULL(indices);
-					 });
+  });
 
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
   info.numLocalOps =
       exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
   info.totalBytes =
       // Pointer to Operand for input and local Operands and extra wraps.
-      sizeof(void*) * (info.numLocalOps + exe.inputOperands.size() + info.numExtraWrap) +
+      sizeof(void*) *
+          (info.numLocalOps + exe.inputOperands.size() + info.numExtraWrap) +
       // Flat array of Operand for all but input and extra wrap.
       sizeof(Operand) * info.numLocalOps +
       // Space for the 'indices' for each distinct wrappedAt.
@@ -653,7 +654,8 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     ++operandPtrBegin;
   });
   Operand* operandBegin = addBytes<Operand*>(
-      start, (info.numInput + info.numLocalOps + info.numExtraWrap) * sizeof(void*));
+      start,
+      (info.numInput + info.numLocalOps + info.numExtraWrap) * sizeof(void*));
   VELOX_CHECK_EQ(0, reinterpret_cast<uintptr_t>(operandBegin) & 7);
   int32_t* indicesBegin =
       addBytes<int32_t*>(operandBegin, info.numLocalOps * sizeof(Operand));
@@ -715,7 +717,7 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     *operandPtrBegin =
         &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
     ++operandPtrBegin;
-					  });
+  });
 
   return addBytes<Operand**>(start, 0);
 }
@@ -777,7 +779,8 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     VELOX_CHECK_EQ(1, exes.size());
   }
   // 2 int arrays: blockBase, programIdx.
-  int32_t numBlocks = std::max<int32_t>(1, exes.size()) * blocksPerExe * numBranches;
+  int32_t numBlocks =
+      std::max<int32_t>(1, exes.size()) * blocksPerExe * numBranches;
   int32_t size = 2 * numBlocks * sizeof(int32_t);
   std::vector<ExeLaunchInfo> info(exes.size());
   auto exeOffset = size;
@@ -1037,11 +1040,11 @@ Program::Program(
     int32_t sharedSize,
     const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
     std::unique_ptr<CompiledKernel> kernel)
-  :     kernel_(std::move(kernel)),
-	outputIds_(output),
-    extraWrap_(extraWrap),
-    numBranches_(numBranches),
-    sharedMemorySize_(sharedSize) {
+    : kernel_(std::move(kernel)),
+      outputIds_(output),
+      extraWrap_(extraWrap),
+      numBranches_(numBranches),
+      sharedMemorySize_(sharedSize) {
   input.forEach([&](int32_t id) { input_[allOperands[id].get()] = id; });
   local.forEach([&](int32_t id) { local_[allOperands[id].get()] = id; });
   output.forEach([&](int32_t id) { output_[allOperands[id].get()] = id; });

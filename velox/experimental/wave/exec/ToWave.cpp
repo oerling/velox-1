@@ -30,17 +30,18 @@ namespace facebook::velox::wave {
 
 using exec::Expr;
 
-  
-  CompileState::CompileState(const exec::DriverFactory& driverFactory, exec::Driver& driver)
-    : driverFactory_(driverFactory), driver_(driver),
+CompileState::CompileState(
+    const exec::DriverFactory& driverFactory,
+    exec::Driver& driver)
+    : driverFactory_(driverFactory),
+      driver_(driver),
       runtime_(std::make_shared<WaveRuntimeObjects>()),
       subfields_(runtime_->subfields),
       operands_(runtime_->operands),
       operatorStates_(runtime_->states) {
-    setDevice(getDevice());
-  }
+  setDevice(getDevice());
+}
 
-  
 //  static
 std::atomic<int32_t> CompileState::kernelCounter_{0};
 

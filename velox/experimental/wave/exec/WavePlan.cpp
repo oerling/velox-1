@@ -33,18 +33,23 @@ namespace facebook::velox::wave {
 using common::Subfield;
 using exec::Expr;
 
-  std::string CodePosition::toString() const {
-    if (empty()) {
-      return "empty";
-    }
-    return fmt::format("<K:{}, S:{}, B:{}>", kernelSeq, step, branchIdx);
+std::string CodePosition::toString() const {
+  if (empty()) {
+    return "empty";
   }
+  return fmt::format("<K:{}, S:{}, B:{}>", kernelSeq, step, branchIdx);
+}
 
-  std::string OperandFlags::toString() const {
-    return fmt::format("{{flags: def={} first={} last={} wrap={} store={}}}", definedIn.toString(), firstUse.toString(), lastUse.toString(), wrappedAt.toString(), needStore);
-  }
+std::string OperandFlags::toString() const {
+  return fmt::format(
+      "{{flags: def={} first={} last={} wrap={} store={}}}",
+      definedIn.toString(),
+      firstUse.toString(),
+      lastUse.toString(),
+      wrappedAt.toString(),
+      needStore);
+}
 
-  
 void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) {
   for (auto& in : operand->inputs) {
     visitor(in);
@@ -509,21 +514,24 @@ bool isSink(const PipelineCandidate& candidate) {
     if (i == 0) {
       result = sink;
     } else {
-      VELOX_CHECK_EQ(result, sink, "All levels must be either sink or not sink");
+      VELOX_CHECK_EQ(
+          result, sink, "All levels must be either sink or not sink");
     }
   }
   return result;
 }
-  
+
 void CompileState::recordCandidate(
     PipelineCandidate& candidate,
     int32_t lastSegmentIdx) {
   auto& segment = segments_[lastSegmentIdx];
   candidate.outputType = segment.outputType;
-  // Mark store needed for output operands if the segment does not end with a sink.
+  // Mark store needed for output operands if the segment does not end with a
+  // sink.
   if (!isSink(candidate)) {
-    for (auto i = 0; i < segment.outputType->size(); ++ i) {
-      auto* op = fieldToOperand(*toSubfield(segment.outputType->nameOf(i)), &topScope_);
+    for (auto i = 0; i < segment.outputType->size(); ++i) {
+      auto* op = fieldToOperand(
+          *toSubfield(segment.outputType->nameOf(i)), &topScope_);
       auto& flags = candidate.flags(op);
       flags.needStore = true;
     }

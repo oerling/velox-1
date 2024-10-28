@@ -134,17 +134,23 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
           stream.setState(WaveStream::State::kParallel);
           {
             PrintTime c("expr");
-	    if (auto* kernel = exes[0]->programShared->kernel()) {
-	      auto numBranches = exes[0]->programShared->numBranches();
-	      void* params = &control->params;
-	      kernel->launch(0, blocksPerExe * numBranches, kBlockSize, control->sharedMemorySize, out, &params);
-	    } else {
-	      reinterpret_cast<WaveKernelStream*>(out)->call(
-							     out,
-							     exes.size() * blocksPerExe,
-							     control->sharedMemorySize,
-							     control->params);
-	    }
+            if (auto* kernel = exes[0]->programShared->kernel()) {
+              auto numBranches = exes[0]->programShared->numBranches();
+              void* params = &control->params;
+              kernel->launch(
+                  0,
+                  blocksPerExe * numBranches,
+                  kBlockSize,
+                  control->sharedMemorySize,
+                  out,
+                  &params);
+            } else {
+              reinterpret_cast<WaveKernelStream*>(out)->call(
+                  out,
+                  exes.size() * blocksPerExe,
+                  control->sharedMemorySize,
+                  control->params);
+            }
           }
         });
     isContinue = false;

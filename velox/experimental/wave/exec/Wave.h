@@ -599,7 +599,6 @@ class Program : public std::enable_shared_from_this<Program> {
   /// rehash device side table,. Caller synchronizes.
   void callUpdateStatus(WaveStream& stream, AdvanceResult& result);
 
-
   CompiledKernel* kernel() const {
     return kernel_.get();
   }
@@ -611,7 +610,7 @@ class Program : public std::enable_shared_from_this<Program> {
   int32_t numBranches() const {
     return numBranches_;
   }
-  
+
   std::string toString() const;
 
  private:
@@ -624,7 +623,6 @@ class Program : public std::enable_shared_from_this<Program> {
   int32_t addLiteral(T* value, int32_t count);
 
   void literalToOperand(AbstractOperand* abstractOp, Operand& op);
-
 
   std::unique_ptr<CompiledKernel> kernel_;
 
@@ -651,7 +649,7 @@ class Program : public std::enable_shared_from_this<Program> {
   OperandSet outputIds_;
 
   OperandSet extraWrap_;
-  
+
   // Local Operand offset in operands array.
   folly::F14FastMap<AbstractOperand*, int32_t> local_;
   // Output Operand offset in operands array.
@@ -676,10 +674,9 @@ class Program : public std::enable_shared_from_this<Program> {
 
   // Device resident program.
   ThreadBlockProgram* program_;
-  // Number of distinct code paths in the kernel. The 
+  // Number of distinct code paths in the kernel. The
   int32_t numBranches_{0};
 
-  
   int32_t sharedMemorySize_{0};
 
   // Host side image of device side Operands that reference 'constantArea_'.

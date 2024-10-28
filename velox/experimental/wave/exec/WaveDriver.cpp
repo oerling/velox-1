@@ -184,8 +184,8 @@ WaveDriver::WaveDriver(
       resultOrder_(std::move(resultOrder)),
       runtime_(std::move(runtime)),
       subfields_(runtime_->subfields),
-  operands_(runtime_->operands),
-  states_(runtime_->states),
+      operands_(runtime_->operands),
+      states_(runtime_->states),
       instructionStatus_(instructionStatus) {
   VELOX_CHECK(!waveOperators.empty());
   auto returnBatchSize = 10000 * outputType_->size() * 10;
