@@ -20,11 +20,8 @@
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
+#include "velox/experimental/wave/common/jitify.hpp"
 
-DEFINE_string(
-    wavegen_architecture,
-    "compute_70",
-    "--gpu-architecture flag for generated code");
 
 namespace facebook::velox::wave {
 
@@ -89,6 +86,8 @@ void getNvrtcOptions(
       addFlag("-I", includes, end - includes, data);
       includes = end + 1;
     }
+  } else {
+    addFlag("-I", "/usr/local/cuda/include", strlen("/usr/local/cuda/include"), data);
   }
   const char* flags = getenv("WAVE_NVRTC_FLAGS");
   if (flags && strlen(flags)) {
@@ -106,6 +105,50 @@ void getNvrtcOptions(
     opts.push_back(str.data());
   }
 }
+
+namespace {
+std::map<std::string, std::string> waveHeaders;
+std::mutex initMutex;
+
+void ensureInit() {
+  static bool inited = false;
+  if (inited) {
+    return;
+  }
+  std::lock_guard<std::mutex> l(initMutex);
+
+  if (inited) {
+    return;
+  }
+
+  const char* sampleText =
+"Sample.cu\n"
+"#include "velox/experimental/wave/common/Bits.cuh"\n"
+"#include "velox/experimental/wave/common/Block.cuh"\n"
+"#include "velox/experimental/wave/common/HashTable.cuh"\n"
+"namespace facebook::velox::wave {\n"
+"void __global__ sample(int* s) {\n"
+"  *s = 1;\n"
+"}\n"
+"\n"
+"}\n";
+  std::vector<const char*>& opts;
+      std::vector<std::string>& data;
+      getNvrtcOptions(opts, data);
+  
+    static jitify::JitCache kernel_cache;
+
+    auto program = kernel_cache.program(sampleText,
+					{}, data);
+    waveIncludes = std::move(program._sources);
+    waveIncludes.erase("sample.cu");
+}
+
+  inited = true;
+}
+
+}
+
 
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   nvrtcProgram prog;

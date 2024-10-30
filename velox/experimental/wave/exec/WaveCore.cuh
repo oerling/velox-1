@@ -13,10 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #pragma once
-
-#include <cuda_runtime.h> // @manual
 
 #include "velox/experimental/wave/common/Block.cuh"
 #include "velox/experimental/wave/exec/ExprKernel.h"
