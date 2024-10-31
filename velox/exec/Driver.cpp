@@ -95,8 +95,8 @@ const core::QueryConfig& DriverCtx::queryConfig() const {
   return task->queryCtx()->queryConfig();
 }
 
-const std::optional<trace::QueryTraceConfig>& DriverCtx::traceConfig() const {
-  return task->queryTraceConfig();
+const std::optional<trace::TraceConfig>& DriverCtx::traceConfig() const {
+  return task->traceConfig();
 }
 
 velox::memory::MemoryPool* DriverCtx::addOperatorPool(
@@ -618,6 +618,7 @@ StopReason Driver::runInternal(
                   lockedStats->addInputVector(
                       resultBytes, intermediateResult->size());
                 }
+                nextOp->traceInput(intermediateResult);
                 TestValue::adjust(
                     "facebook::velox::exec::Driver::runInternal::addInput",
                     nextOp);
@@ -1144,7 +1145,6 @@ std::string blockingReasonToString(BlockingReason reason) {
       return "kWaitForArbitration";
   }
   VELOX_UNREACHABLE();
-  return "";
 }
 
 DriverThreadContext* driverThreadContext() {
@@ -1153,7 +1153,16 @@ DriverThreadContext* driverThreadContext() {
 
 ScopedDriverThreadContext::ScopedDriverThreadContext(const DriverCtx& driverCtx)
     : savedDriverThreadCtx_(driverThreadCtx),
-      currentDriverThreadCtx_{.driverCtx = driverCtx} {
+      currentDriverThreadCtx_(DriverThreadContext(&driverCtx)) {
+  driverThreadCtx = &currentDriverThreadCtx_;
+}
+
+ScopedDriverThreadContext::ScopedDriverThreadContext(
+    const DriverThreadContext* _driverThreadCtx)
+    : savedDriverThreadCtx_(driverThreadCtx),
+      currentDriverThreadCtx_(
+          _driverThreadCtx == nullptr ? nullptr
+                                      : _driverThreadCtx->driverCtx()) {
   driverThreadCtx = &currentDriverThreadCtx_;
 }
 

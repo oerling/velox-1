@@ -13,28 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #pragma once
 
-#include "velox/common/file/FileSystems.h"
-#include "velox/core/PlanNode.h"
-#include "velox/core/QueryCtx.h"
+#include "velox/exec/ExchangeQueue.h"
+#include "velox/exec/OutputBufferManager.h"
+#include "velox/vector/ComplexVector.h"
 #include "velox/vector/VectorStream.h"
 
-namespace facebook::velox::exec::trace {
-class QueryMetadataWriter {
- public:
-  explicit QueryMetadataWriter(std::string traceDir, memory::MemoryPool* pool);
+namespace facebook::velox::exec::test {
 
-  void write(
-      const std::shared_ptr<core::QueryCtx>& queryCtx,
-      const core::PlanNodePtr& planNode);
+/// Helper function for serializing RowVector to PrestoPage format.
+std::unique_ptr<SerializedPage> toSerializedPage(
+    const RowVectorPtr& vector,
+    const std::shared_ptr<OutputBufferManager>& bufferManager,
+    memory::MemoryPool* pool);
 
- private:
-  const std::string traceDir_;
-  const std::shared_ptr<filesystems::FileSystem> fs_;
-  const std::string metaFilePath_;
-  memory::MemoryPool* const pool_;
-  bool finished_{false};
-};
-} // namespace facebook::velox::exec::trace
+} // namespace facebook::velox::exec::test

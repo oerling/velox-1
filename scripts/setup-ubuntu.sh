@@ -128,10 +128,10 @@ function install_boost {
       # clang of version 15 when toolset clang-15 is used.
       # This reconciles the project-config.jam generation with what the b2 build system allows for customization.
       sed -i 's/using clang-15/using clang : 15/g' project-config.jam
-      ${SUDO} ./b2 "-j$(nproc)" -d0 install threading=multi toolset=clang-15 --without-python
+      ${SUDO} ./b2 "-j${NPROC}" -d0 install threading=multi toolset=clang-15 --without-python
     else
       ./bootstrap.sh --prefix=${INSTALL_PREFIX}
-      ${SUDO} ./b2 "-j$(nproc)" -d0 install threading=multi --without-python
+      ${SUDO} ./b2 "-j${NPROC}" -d0 install threading=multi --without-python
     fi
   )
 }
@@ -244,7 +244,8 @@ function install_cuda {
     rm cuda-keyring_1.1-1_all.deb
     $SUDO apt update
   fi
-  $SUDO apt install -y cuda-nvcc-$(echo $1 | tr '.' '-') cuda-cudart-dev-$(echo $1 | tr '.' '-')
+  local dashed="$(echo $1 | tr '.' '-')"
+  $SUDO apt install -y cuda-nvcc-$dashed cuda-cudart-dev-$dashed cuda-nvrtc-dev-$dashed cuda-driver-dev-$dashed
 }
 
 function install_velox_deps {
@@ -296,4 +297,3 @@ function install_apt_deps {
     fi
   fi
 )
-

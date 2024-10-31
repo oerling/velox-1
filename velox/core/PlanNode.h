@@ -314,13 +314,17 @@ class ArrowStreamNode : public PlanNode {
   std::shared_ptr<ArrowArrayStream> arrowStream_;
 };
 
-class QueryTraceScanNode final : public PlanNode {
+class TraceScanNode final : public PlanNode {
  public:
-  QueryTraceScanNode(
+  TraceScanNode(
       const PlanNodeId& id,
       const std::string& traceDir,
+      uint32_t pipelineId,
       const RowTypePtr& outputType)
-      : PlanNode(id), traceDir_(traceDir), outputType_(outputType) {}
+      : PlanNode(id),
+        traceDir_(traceDir),
+        pipelineId_(pipelineId),
+        outputType_(outputType) {}
 
   const RowTypePtr& outputType() const override {
     return outputType_;
@@ -333,17 +337,22 @@ class QueryTraceScanNode final : public PlanNode {
   }
 
   folly::dynamic serialize() const override {
-    VELOX_UNSUPPORTED("QueryReplayScanNode is not serializable");
+    VELOX_UNSUPPORTED("TraceScanNode is not serializable");
     return nullptr;
   }
 
   std::string traceDir() const;
+
+  uint32_t pipelineId() const {
+    return pipelineId_;
+  }
 
  private:
   void addDetails(std::stringstream& stream) const override;
 
   // Directory of traced data, which is $traceRoot/$taskId/$nodeId.
   const std::string traceDir_;
+  const uint32_t pipelineId_;
   const RowTypePtr outputType_;
 };
 
@@ -1131,8 +1140,11 @@ class PartitionFunction {
 /// Factory class for creating PartitionFunction instances.
 class PartitionFunctionSpec : public ISerializable {
  public:
+  /// If 'localExchange' is true, the partition function is used for local
+  /// exchange within a velox task.
   virtual std::unique_ptr<PartitionFunction> create(
-      int numPartitions) const = 0;
+      int numPartitions,
+      bool localExchange = false) const = 0;
 
   virtual ~PartitionFunctionSpec() = default;
 
@@ -1144,7 +1156,8 @@ using PartitionFunctionSpecPtr = std::shared_ptr<const PartitionFunctionSpec>;
 class GatherPartitionFunctionSpec : public PartitionFunctionSpec {
  public:
   std::unique_ptr<PartitionFunction> create(
-      int /* numPartitions */) const override {
+      int /*numPartitions*/,
+      bool /*localExchange*/) const override {
     VELOX_UNREACHABLE();
   }
 

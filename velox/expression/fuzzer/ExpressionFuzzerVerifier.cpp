@@ -23,6 +23,7 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/dwio/dwrf/RegisterDwrfWriter.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/FunctionSignature.h"
@@ -35,9 +36,8 @@ namespace {
 
 using exec::SignatureBinder;
 
-/// Returns row numbers for non-null rows among all children in'data' or null
-/// if all rows are null.
-BufferPtr extractNonNullIndices(const RowVectorPtr& data) {
+/// Returns all non-null rows among all children in 'data'.
+SelectivityVector extractNonNullRows(const RowVectorPtr& data) {
   DecodedVector decoded;
   SelectivityVector nonNullRows(data->size());
 
@@ -47,19 +47,8 @@ BufferPtr extractNonNullIndices(const RowVectorPtr& data) {
     if (rawNulls) {
       nonNullRows.deselectNulls(rawNulls, 0, data->size());
     }
-    if (!nonNullRows.hasSelections()) {
-      return nullptr;
-    }
   }
-
-  BufferPtr indices = allocateIndices(nonNullRows.end(), data->pool());
-  auto rawIndices = indices->asMutable<vector_size_t>();
-  vector_size_t cnt = 0;
-  nonNullRows.applyToSelected(
-      [&](vector_size_t row) { rawIndices[cnt++] = row; });
-  VELOX_CHECK_GT(cnt, 0);
-  indices->setSize(cnt * sizeof(vector_size_t));
-  return indices;
+  return nonNullRows;
 }
 
 /// Wraps child vectors of the specified 'rowVector' in dictionary using
@@ -109,7 +98,10 @@ ExpressionFuzzerVerifier::ExpressionFuzzerVerifier(
       referenceQueryRunner_{
           options_.expressionFuzzerOptions.referenceQueryRunner} {
   filesystems::registerLocalFileSystem();
+  connector::registerConnectorFactory(
+      std::make_shared<connector::hive::HiveConnectorFactory>());
   exec::test::registerHiveConnector({});
+  dwrf::registerDwrfWriterFactory();
 
   seed(initialSeed);
 
@@ -257,6 +249,7 @@ void ExpressionFuzzerVerifier::retryWithTry(
     tryResult = verifier_.verify(
         tryPlans,
         rowVector,
+        std::nullopt,
         resultVector ? BaseVector::copy(*resultVector) : nullptr,
         false, // canThrow
         columnsToWrapInLazy);
@@ -267,6 +260,7 @@ void ExpressionFuzzerVerifier::retryWithTry(
           *vectorFuzzer_,
           plans,
           rowVector,
+          std::nullopt,
           columnsToWrapInLazy);
     }
     throw;
@@ -279,21 +273,18 @@ void ExpressionFuzzerVerifier::retryWithTry(
 
   // Re-evaluate the original expression on rows that didn't produce an
   // error (i.e. returned non-NULL results when evaluated with TRY).
-  BufferPtr noErrorIndices = extractNonNullIndices(tryResult.result);
+  SelectivityVector noErrorRows = extractNonNullRows(tryResult.result);
 
-  if (noErrorIndices != nullptr) {
-    auto noErrorRowVector = wrapChildren(noErrorIndices, rowVector);
-
-    LOG(INFO) << "Retrying original expression on " << noErrorRowVector->size()
+  if (noErrorRows.hasSelections()) {
+    LOG(INFO) << "Retrying original expression on " << noErrorRows.end()
               << " rows without errors";
 
     try {
       verifier_.verify(
           plans,
-          noErrorRowVector,
-          resultVector ? BaseVector::copy(*resultVector)
-                             ->slice(0, noErrorRowVector->size())
-                       : nullptr,
+          rowVector,
+          noErrorRows,
+          resultVector ? BaseVector::copy(*resultVector) : nullptr,
           false, // canThrow
           columnsToWrapInLazy);
     } catch (const std::exception&) {
@@ -302,7 +293,8 @@ void ExpressionFuzzerVerifier::retryWithTry(
             {&execCtx_, {false, ""}, referenceQueryRunner_},
             *vectorFuzzer_,
             plans,
-            noErrorRowVector,
+            rowVector,
+            noErrorRows,
             columnsToWrapInLazy);
       }
       throw;
@@ -375,6 +367,7 @@ void ExpressionFuzzerVerifier::go() {
       result = verifier_.verify(
           plans,
           rowVector,
+          std::nullopt,
           resultVectors ? BaseVector::copy(*resultVectors) : nullptr,
           true, // canThrow
           columnsToWrapInLazy);
@@ -385,6 +378,7 @@ void ExpressionFuzzerVerifier::go() {
             *vectorFuzzer_,
             plans,
             rowVector,
+            std::nullopt,
             columnsToWrapInLazy);
       }
       throw;

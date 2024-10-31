@@ -124,12 +124,12 @@ TEST(TimeZoneMapTest, timePointBoundary) {
 
   auto trySysYear = [&](year y) {
     auto date = year_month_day(y, month(1), day(1));
-    return tz->to_sys(sys_days{date}.time_since_epoch());
+    return tz->to_sys(seconds(sys_days{date}.time_since_epoch()));
   };
 
   auto tryLocalYear = [&](year y) {
     auto date = year_month_day(y, month(1), day(1));
-    return tz->to_local(sys_days{date}.time_since_epoch());
+    return tz->to_local(seconds(sys_days{date}.time_since_epoch()));
   };
 
   EXPECT_NO_THROW(trySysYear(year(0)));
@@ -234,5 +234,54 @@ TEST(TimeZoneMapTest, invalid) {
   VELOX_ASSERT_THROW(getTimeZoneID("etc/GMT+300"), "Unknown time zone");
 }
 
+TEST(TimeZoneMapTest, getShortName) {
+  auto toShortName = [&](std::string_view name, size_t ts) {
+    const auto* tz = locateZone(name);
+    EXPECT_NE(tz, nullptr);
+    return tz->getShortName(milliseconds{ts});
+  };
+
+  // Test an offset that maps to an actual time zone.
+  EXPECT_EQ("UTC", toShortName("+00:00", 0));
+
+  // Test offsets that do not map to named time zones.
+  EXPECT_EQ("+00:01", toShortName("+00:01", 0));
+  EXPECT_EQ("-00:01", toShortName("-00:01", 0));
+  EXPECT_EQ("+01:00", toShortName("+01:00", 0));
+  EXPECT_EQ("-01:01", toShortName("-01:01", 0));
+
+  // In "2024-07-25", America/Los_Angeles was in daylight savings time (UTC-07).
+  size_t ts = 1721890800000;
+  EXPECT_EQ("PDT", toShortName("America/Los_Angeles", ts));
+
+  // In "2024-01-01", it was not (UTC-08).
+  ts = 1704096000000;
+  EXPECT_EQ("PST", toShortName("America/Los_Angeles", ts));
+}
+
+TEST(TimeZoneMapTest, getLongName) {
+  auto toLongName = [&](std::string_view name, size_t ts) {
+    const auto* tz = locateZone(name);
+    EXPECT_NE(tz, nullptr);
+    return tz->getLongName(milliseconds{ts});
+  };
+
+  // Test an offset that maps to an actual time zone.
+  EXPECT_EQ("Coordinated Universal Time", toLongName("+00:00", 0));
+
+  // Test offsets that do not map to named time zones.
+  EXPECT_EQ("+00:01", toLongName("+00:01", 0));
+  EXPECT_EQ("-00:01", toLongName("-00:01", 0));
+  EXPECT_EQ("+01:00", toLongName("+01:00", 0));
+  EXPECT_EQ("-01:01", toLongName("-01:01", 0));
+
+  // In "2024-07-25", America/Los_Angeles was in daylight savings time (UTC-07).
+  size_t ts = 1721890800000;
+  EXPECT_EQ("Pacific Daylight Time", toLongName("America/Los_Angeles", ts));
+
+  // In "2024-01-01", it was not (UTC-08).
+  ts = 1704096000000;
+  EXPECT_EQ("Pacific Standard Time", toLongName("America/Los_Angeles", ts));
+}
 } // namespace
 } // namespace facebook::velox::tz

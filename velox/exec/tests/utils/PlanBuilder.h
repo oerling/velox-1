@@ -324,9 +324,12 @@ class PlanBuilder {
   /// Adds a QueryReplayNode for query tracing.
   ///
   /// @param traceNodeDir The trace directory for a given plan node.
+  /// @param pipelineId The pipeline id for the traced operator instantiated
+  /// from the given plan node.
   /// @param outputType The type of the tracing data.
   PlanBuilder& traceScan(
       const std::string& traceNodeDir,
+      uint32_t pipelineId,
       const RowTypePtr& outputType);
 
   /// Add an ExchangeNode.
@@ -830,6 +833,13 @@ class PlanBuilder {
   /// A convenience method to add a LocalPartitionNode with a single source (the
   /// current plan node).
   PlanBuilder& localPartition(const std::vector<std::string>& keys);
+
+  /// A convenience method to add a LocalPartitionNode with hive partition
+  /// function.
+  PlanBuilder& localPartition(
+      int numBuckets,
+      const std::vector<column_index_t>& channels,
+      const std::vector<VectorPtr>& constValues);
 
   /// A convenience method to add a LocalPartitionNode with a single source (the
   /// current plan node) and hive bucket property.

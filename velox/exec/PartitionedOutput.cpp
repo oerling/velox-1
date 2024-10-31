@@ -139,9 +139,10 @@ PartitionedOutput::PartitionedOutput(
       numDestinations_(planNode->numPartitions()),
       replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
       partitionFunction_(
-          numDestinations_ == 1
-              ? nullptr
-              : planNode->partitionFunctionSpec().create(numDestinations_)),
+          numDestinations_ == 1 ? nullptr
+                                : planNode->partitionFunctionSpec().create(
+                                      numDestinations_,
+                                      /*localExchange=*/false)),
       outputChannels_(calculateOutputChannels(
           planNode->inputType(),
           planNode->outputType(),
@@ -232,8 +233,6 @@ void PartitionedOutput::estimateRowSizes() {
 }
 
 void PartitionedOutput::addInput(RowVectorPtr input) {
-  traceInput(input);
-
   initializeInput(std::move(input));
   initializeDestinations();
   initializeSizeBuffers();

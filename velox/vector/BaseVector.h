@@ -39,8 +39,7 @@
 #include "velox/vector/VectorEncoding.h"
 #include "velox/vector/VectorUtil.h"
 
-namespace facebook {
-namespace velox {
+namespace facebook::velox {
 
 template <typename T>
 class SimpleVector;
@@ -144,6 +143,28 @@ class BaseVector {
         typeid(T).name(),
         typeid(*this).name());
     return static_cast<const T*>(this);
+  }
+
+  template <typename T>
+  T* asChecked() {
+    auto* casted = as<T>();
+    VELOX_CHECK_NOT_NULL(
+        casted,
+        "Wrong type cast expected {}, but got {}",
+        typeid(T).name(),
+        typeid(*this).name());
+    return casted;
+  }
+
+  template <typename T>
+  const T* asChecked() const {
+    auto* casted = as<T>();
+    VELOX_CHECK_NOT_NULL(
+        casted,
+        "Wrong type cast expected {}, but got {}",
+        typeid(T).name(),
+        typeid(*this).name());
+    return casted;
   }
 
   template <typename T>
@@ -1006,8 +1027,7 @@ std::string printIndices(
     const BufferPtr& indices,
     vector_size_t maxIndicesToPrint = 10);
 
-} // namespace velox
-} // namespace facebook
+} // namespace facebook::velox
 
 namespace folly {
 
