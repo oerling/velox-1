@@ -50,7 +50,7 @@ class LocalRunner : public Runner,
   RunnerState state() const override {
     return state_;
   }
-  
+
  private:
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
   // Serializes 'cursor_' and 'error_'.
