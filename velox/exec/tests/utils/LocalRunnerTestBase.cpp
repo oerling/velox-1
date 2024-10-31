@@ -17,7 +17,7 @@
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
 namespace facebook::velox::exec::test {
 
-  void LocalRunnerTestBase::SetUp() {
+void LocalRunnerTestBase::SetUp() {
   HiveConnectorTestBase::SetUp();
   exec::ExchangeSource::factories().clear();
   exec::ExchangeSource::registerFactory(createLocalExchangeSource);
@@ -43,7 +43,7 @@ std::shared_ptr<core::QueryCtx> LocalRunnerTestBase::makeQueryCtx(
       queryId);
 }
 
-  std::shared_ptr<runner::LocalSchema> LocalRunnerTestBase::makeTables(
+std::shared_ptr<runner::LocalSchema> LocalRunnerTestBase::makeTables(
     std::vector<TableSpec> specs,
     std::shared_ptr<TempDirectoryPath>& directory) {
   directory = exec::test::TempDirectoryPath::create();

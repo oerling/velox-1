@@ -20,17 +20,19 @@
 
 namespace facebook::velox::runner {
 namespace {
-  std::shared_ptr<exec::RemoteConnectorSplit>  remoteSplit(const std::string& taskId) {
-    return std::make_shared<exec::RemoteConnectorSplit>(taskId);
+std::shared_ptr<exec::RemoteConnectorSplit> remoteSplit(
+    const std::string& taskId) {
+  return std::make_shared<exec::RemoteConnectorSplit>(taskId);
 }
 } // namespace
 
-  exec::test::TaskCursor* LocalRunner::start() {
+exec::test::TaskCursor* LocalRunner::start() {
   auto lastStage = makeStages();
   params_.planNode = plan_->fragments().back().fragment.planNode;
   auto cursor = exec::test::TaskCursor::create(params_);
   stages_.push_back({cursor->task()});
-  // If the plan only has the last stage, there are no shuffles between the last and previous stages to set up.
+  // If the plan only has the last stage, there are no shuffles between the last
+  // and previous stages to set up.
   if (!lastStage.empty()) {
     auto node = fragments_.back().inputStages[0].consumer;
     for (auto& remote : lastStage) {
@@ -73,19 +75,17 @@ void LocalRunner::abort() {
   }
 }
 
-
-void LocalRunner::waitForCompletion(
-    int32_t maxWaitMicros) {
+void LocalRunner::waitForCompletion(int32_t maxWaitMicros) {
   VELOX_CHECK(tasksCreated_);
   std::vector<ContinueFuture> futures;
   {
     std::lock_guard<std::mutex> l(mutex_);
-  for (auto& stage : stages_) {
-    for (auto& task : stage) {
-      futures.push_back(task->taskDeletionFuture());
+    for (auto& stage : stages_) {
+      for (auto& task : stage) {
+        futures.push_back(task->taskDeletionFuture());
+      }
+      stage.clear();
     }
-    stage.clear();
-  }
   }
   for (auto& future : futures) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
@@ -97,7 +97,8 @@ void LocalRunner::waitForCompletion(
   }
 }
 
-  std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> LocalRunner::makeStages() {
+std::vector<std::shared_ptr<exec::RemoteConnectorSplit>>
+LocalRunner::makeStages() {
   std::unordered_map<std::string, int32_t> stageMap;
   auto sharedRunner = shared_from_this();
   auto onError = [self = sharedRunner, this](std::exception_ptr error) {
@@ -185,8 +186,8 @@ void LocalRunner::waitForCompletion(
   return lastStage;
 }
 
-  exec::Split LocalSplitSource::next(int32_t /*worker*/) {
-    if (currentFile_ >= static_cast<int32_t>(table_->files().size())) {
+exec::Split LocalSplitSource::next(int32_t /*worker*/) {
+  if (currentFile_ >= static_cast<int32_t>(table_->files().size())) {
     return exec::Split();
   }
   if (currentSplit_ >= fileSplits_.size()) {
@@ -203,8 +204,8 @@ void LocalRunner::waitForCompletion(
     for (int i = 0; i < splitsPerFile_; i++) {
       fileSplits_.push_back(
           connector::hive::HiveConnectorSplitBuilder(filePath)
-	  .connectorId(table_->schema()->connector()->connectorId())
-	  .fileFormat(table_->format())
+              .connectorId(table_->schema()->connector()->connectorId())
+              .fileFormat(table_->format())
               .start(i * splitSize)
               .length(splitSize)
               .build());
@@ -224,8 +225,8 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
 }
 
-  std::vector<exec::TaskStats> LocalRunner::stats() const {
-    std::vector<exec::TaskStats> result;
+std::vector<exec::TaskStats> LocalRunner::stats() const {
+  std::vector<exec::TaskStats> result;
   std::lock_guard<std::mutex> l(mutex_);
   for (auto i = 0; i < stages_.size(); ++i) {
     auto& tasks = stages_[i];
@@ -248,8 +249,7 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   return result;
 }
 
-
-  std::string MultiFragmentPlan::toString() const {
+std::string MultiFragmentPlan::toString() const {
   std::stringstream out;
   for (auto i = 0; i < fragments_.size(); ++i) {
     out << fmt::format(
@@ -270,4 +270,4 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   return out.str();
 }
 
-} // namespace facebook::velox::exec
+} // namespace facebook::velox::runner

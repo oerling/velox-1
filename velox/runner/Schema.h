@@ -23,15 +23,19 @@
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
 
-/// Base classes for schema elements used in execution. A Schema is a collection of Tables. A Table is a collection of Columns. Tables and Columns have statistics and Tables can be sampled. Derived classes connect to different metadata stores and provide different metadata, e.g. order, partitioning, bucketing etc.
+/// Base classes for schema elements used in execution. A Schema is a collection
+/// of Tables. A Table is a collection of Columns. Tables and Columns have
+/// statistics and Tables can be sampled. Derived classes connect to different
+/// metadata stores and provide different metadata, e.g. order, partitioning,
+/// bucketing etc.
 namespace facebook::velox::runner {
 
-  /// Base class for column. 
+/// Base class for column.
 class Column {
  public:
   virtual ~Column() = default;
 
- Column(const std::string& name, TypePtr type) : name_(name), type_(type) {}
+  Column(const std::string& name, TypePtr type) : name_(name), type_(type) {}
 
   void addStats(std::unique_ptr<dwio::common::ColumnStatistics> stats);
 
@@ -42,7 +46,7 @@ class Column {
   const TypePtr& type() const {
     return type_;
   }
-  
+
   const dwio::common::ColumnStatistics* stats() const {
     return stats_.get();
   }
@@ -54,24 +58,24 @@ class Column {
   std::optional<int64_t> numDistinct_;
 };
 
+class Schema;
 
- class Schema;
-
-/// Base class for table. This is used to identify a table  for purposes of Split generation, statistics, sampling etc.
+/// Base class for table. This is used to identify a table  for purposes of
+/// Split generation, statistics, sampling etc.
 class Table {
  public:
   virtual ~Table() = default;
-  
- Table(
+
+  Table(
       const std::string& name,
       dwio::common::FileFormat format,
       Schema* schema)
-    : schema_(schema), name_(name), format_(format) {}
+      : schema_(schema), name_(name), format_(format) {}
 
   const std::string& name() const {
     return name_;
   }
-  
+
   const RowTypePtr& rowType() const {
     return type_;
   }
@@ -79,7 +83,7 @@ class Table {
   dwio::common::FileFormat format() const {
     return format_;
   }
-  
+
   /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
   /// before sampling. Returns {count of sampled, count matching filters}.
   /// Returns statistics for the post-filtering values in 'stats' for each of
@@ -105,17 +109,16 @@ class Table {
   RowTypePtr type_;
 };
 
- /// Base class for collection of tables. A query executes against a
- /// Schema and its tables and columns are resolved against the
- /// Schema. The schema is mutable and may acquire tabless and the
- /// tables may acquire stats during their lifetime.
+/// Base class for collection of tables. A query executes against a
+/// Schema and its tables and columns are resolved against the
+/// Schema. The schema is mutable and may acquire tabless and the
+/// tables may acquire stats during their lifetime.
 class Schema {
  public:
   virtual ~Schema() = default;
 
- Schema(const std::string& name, std::shared_ptr<memory::MemoryPool> pool)
-   : name_(name), pool_(std::move(pool)) {}
-  
+  Schema(const std::string& name, std::shared_ptr<memory::MemoryPool> pool)
+      : name_(name), pool_(std::move(pool)) {}
 
   Table* findTable(const std::string& name) {
     auto it = tables_.find(name);
@@ -125,8 +128,8 @@ class Schema {
 
   virtual connector::Connector* connector() const = 0;
 
-  virtual const std::shared_ptr<connector::ConnectorQueryCtx>& connectorQueryCtx()
-    const = 0;
+  virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
+  connectorQueryCtx() const = 0;
 
   memory::MemoryPool* pool() {
     return pool_.get();
@@ -137,11 +140,7 @@ class Schema {
 
   std::shared_ptr<memory::MemoryPool> pool_;
 
-
-    std::unordered_map<std::string, std::unique_ptr<Table>> tables_;
-
+  std::unordered_map<std::string, std::unique_ptr<Table>> tables_;
 };
 
-} // namespace facebook::velox::exec
-
-
+} // namespace facebook::velox::runner

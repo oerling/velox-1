@@ -19,7 +19,7 @@
 namespace facebook::velox::exec::test {
 
 DistributedPlanBuilder::DistributedPlanBuilder(
-					       const runner::MultiFragmentPlan::Options& options,
+    const runner::MultiFragmentPlan::Options& options,
     std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
     memory::MemoryPool* pool)
     : PlanBuilder(planNodeIdGenerator, pool), options_(options) {
@@ -42,7 +42,7 @@ DistributedPlanBuilder::DistributedPlanBuilder(DistributedPlanBuilder& parent)
   current_.width = options_.numWorkers;
 }
 
-  std::vector<runner::ExecutableFragment> DistributedPlanBuilder::fragments() {
+std::vector<runner::ExecutableFragment> DistributedPlanBuilder::fragments() {
   newFragment();
   return std::move(fragments_);
 }
@@ -73,7 +73,8 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
   current_.width = numPartitions;
   exchange(output->outputType());
   auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
-  current_.inputStages.push_back(runner::InputStage{exchange->id(), producerPrefix});
+  current_.inputStages.push_back(
+      runner::InputStage{exchange->id(), producerPrefix});
   return *this;
 }
 
@@ -106,7 +107,7 @@ core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
   exchange(output->outputType());
   auto* exchange = dynamic_cast<const core::ExchangeNode*>(planNode_.get());
   consumer->current_.inputStages.push_back(
-					   runner::InputStage{exchange->id(), producerPrefix});
+      runner::InputStage{exchange->id(), producerPrefix});
   return std::move(planNode_);
 }
 

@@ -24,7 +24,7 @@ namespace facebook::velox::exec::test {
 class DistributedPlanBuilder : public PlanBuilder {
  public:
   DistributedPlanBuilder(
-			 const runner::MultiFragmentPlan::Options& options,
+      const runner::MultiFragmentPlan::Options& options,
       std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
       memory::MemoryPool* pool = nullptr);
   DistributedPlanBuilder(DistributedPlanBuilder& parent);
@@ -72,7 +72,8 @@ class DistributedPlanBuilder : public PlanBuilder {
 
   runner::ExecutableFragment current_;
 
-  // The fragments gathered under this builder. Moved to the root builder when returning the subplan.
+  // The fragments gathered under this builder. Moved to the root builder when
+  // returning the subplan.
   std::vector<runner::ExecutableFragment> fragments_;
 };
 } // namespace facebook::velox::exec::test

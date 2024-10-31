@@ -29,11 +29,11 @@ LocalSchema::LocalSchema(
     dwio::common::FileFormat format,
     connector::hive::HiveConnector* hiveConnector,
     std::shared_ptr<connector::ConnectorQueryCtx> ctx)
-  : Schema(path, ctx->memoryPool()->shared_from_this()),
-    hiveConnector_(hiveConnector),
+    : Schema(path, ctx->memoryPool()->shared_from_this()),
+      hiveConnector_(hiveConnector),
       connectorId_(hiveConnector_->connectorId()),
-    connectorQueryCtx_(ctx),
-    format_(format) {
+      connectorQueryCtx_(ctx),
+      format_(format) {
   initialize(path);
 }
 
@@ -298,4 +298,4 @@ void LocalColumn::addStats(
   }
 }
 
-} // namespace facebook::velox::exec
+} // namespace facebook::velox::runner

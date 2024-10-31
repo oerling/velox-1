@@ -18,8 +18,8 @@
 #include "velox/connectors/Connector.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/Cursor.h"
-#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/runner/LocalSchema.h"
+#include "velox/runner/MultiFragmentPlan.h"
 
 /// Base classes for multifragment Velox query execution.
 namespace facebook::velox::runner {

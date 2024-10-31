@@ -39,41 +39,40 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     if (files_) {
       return;
     }
-  constexpr int32_t kNumFiles = 5;
-  constexpr int32_t kNumVectors = 5;
-  constexpr int32_t kRowsPerVector = 10000;
-  constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
+    constexpr int32_t kNumFiles = 5;
+    constexpr int32_t kNumVectors = 5;
+    constexpr int32_t kRowsPerVector = 10000;
+    constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
 
-  int32_t counter1 = 0;
-  auto patch1 = [&](const RowVectorPtr& rows) {
-    makeAscending(rows, counter1);
-  };
+    int32_t counter1 = 0;
+    auto patch1 = [&](const RowVectorPtr& rows) {
+      makeAscending(rows, counter1);
+    };
 
-  int32_t counter2 = 0;
-  auto patch2 = [&](const RowVectorPtr& rows) {
-    makeAscending(rows, counter2);
-  };
+    int32_t counter2 = 0;
+    auto patch2 = [&](const RowVectorPtr& rows) {
+      makeAscending(rows, counter2);
+    };
 
-  rowType_ = ROW({"c0"}, {BIGINT()});
-  std::vector<TableSpec> specs = {
-      TableSpec{
-          .name = "T",
-          .columns = rowType_,
-          .rowsPerVector = kRowsPerVector,
-          .numVectorsPerFile = kNumVectors,
-          .numFiles = kNumFiles,
-          .patch = patch1},
-      TableSpec{
-          .name = "U",
-          .columns = rowType_,
-          .rowsPerVector = kRowsPerVector,
-          .numVectorsPerFile = kNumVectors,
-          .numFiles = kNumFiles,
-          .patch = patch2}};
+    rowType_ = ROW({"c0"}, {BIGINT()});
+    std::vector<TableSpec> specs = {
+        TableSpec{
+            .name = "T",
+            .columns = rowType_,
+            .rowsPerVector = kRowsPerVector,
+            .numVectorsPerFile = kNumVectors,
+            .numFiles = kNumFiles,
+            .patch = patch1},
+        TableSpec{
+            .name = "U",
+            .columns = rowType_,
+            .rowsPerVector = kRowsPerVector,
+            .numVectorsPerFile = kNumVectors,
+            .numFiles = kNumFiles,
+            .patch = patch2}};
 
-  schema_ = makeTables(specs, files_);
-  sourceFactory_ = std::make_shared<LocalSplitSourceFactory>(schema_, 2);
-
+    schema_ = makeTables(specs, files_);
+    sourceFactory_ = std::make_shared<LocalSplitSourceFactory>(schema_, 2);
   }
 
   static void TearDownTestSuite() {
@@ -88,10 +87,9 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     const int32_t width = 3;
 
     DistributedPlanBuilder rootBuilder(options, idGenerator_, pool_.get());
-    rootBuilder
-      .tableScan("T", rowType_);
+    rootBuilder.tableScan("T", rowType_);
     return std::make_shared<MultiFragmentPlan>(
-            rootBuilder.fragments(), std::move(options));
+        rootBuilder.fragments(), std::move(options));
   }
 
   MultiFragmentPlanPtr makeJoin(std::string project = "c0") {
@@ -101,8 +99,8 @@ class LocalRunnerTest : public LocalRunnerTestBase {
 
     DistributedPlanBuilder rootBuilder(options, idGenerator_, pool_.get());
     rootBuilder.tableScan("T", rowType_)
-      .project({project})
-      .shuffle({"c0"}, 3, false)
+        .project({project})
+        .shuffle({"c0"}, 3, false)
         .hashJoin(
             {"c0"},
             {"b0"},
@@ -118,7 +116,6 @@ class LocalRunnerTest : public LocalRunnerTestBase {
         rootBuilder.fragments(), std::move(options));
   }
 
-  
   void makeAscending(const RowVectorPtr& rows, int32_t& counter) {
     auto ints = rows->childAt(0)->as<FlatVector<int64_t>>();
     for (auto i = 0; i < ints->size(); ++i) {
@@ -131,20 +128,14 @@ class LocalRunnerTest : public LocalRunnerTestBase {
       std::make_shared<core::PlanNodeIdGenerator>()};
 
   inline static RowTypePtr rowType_;
-  inline static  std::shared_ptr<LocalSchema> schema_;
+  inline static std::shared_ptr<LocalSchema> schema_;
   inline static std::shared_ptr<TempDirectoryPath> files_;
-  inline static std::shared_ptr<SplitSourceFactory> sourceFactory_; 
+  inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
 
-
-TEST_F(LocalRunnerTest, schemaAndSample) {
-}
+TEST_F(LocalRunnerTest, schemaAndSample) {}
 
 TEST_F(LocalRunnerTest, count) {
-
- 
-
-
   auto join = makeJoin();
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx("q1"), sourceFactory_);
