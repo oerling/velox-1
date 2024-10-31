@@ -36,10 +36,6 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     ensureDataset();
   }
 
-  static void SetUpTestCase() {
-    memory::MemoryManager::testingSetInstance({});
-  }
-
   void ensureDataset() {
     if (files_) {
       return;
@@ -76,10 +72,11 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     sourceFactory_ = std::make_shared<LocalSplitSourceFactory>(schema_, 2);
   }
 
-  static void TearDownTestSuite() {
+  void TearDown() override {
     schema_.reset();
     files_.reset();
     sourceFactory_.reset();
+    LocalRunnerTestBase::TearDown();
   }
 
   MultiFragmentPlanPtr makeScan() {
@@ -127,14 +124,14 @@ class LocalRunnerTest : public LocalRunnerTestBase {
 
   std::shared_ptr<core::PlanNodeIdGenerator> idGenerator_{
       std::make_shared<core::PlanNodeIdGenerator>()};
-
+  // The below are declared static to be scoped to TestCase so as to reuse the dataset between tests.
+  
   inline static RowTypePtr rowType_;
   inline static std::shared_ptr<LocalSchema> schema_;
   inline static std::shared_ptr<TempDirectoryPath> files_;
   inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
 
-TEST_F(LocalRunnerTest, schemaAndSample) {}
 
 TEST_F(LocalRunnerTest, count) {
   auto join = makeJoin();

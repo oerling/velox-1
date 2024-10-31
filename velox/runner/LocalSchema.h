@@ -121,8 +121,6 @@ class LocalSchema : public Schema {
 
   connector::hive::HiveConnector* hiveConnector_;
   std::string connectorId_;
-  std::shared_ptr<memory::MemoryPool> pool_;
-
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   dwio::common::FileFormat format_;
 
