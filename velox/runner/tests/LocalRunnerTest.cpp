@@ -124,14 +124,14 @@ class LocalRunnerTest : public LocalRunnerTestBase {
 
   std::shared_ptr<core::PlanNodeIdGenerator> idGenerator_{
       std::make_shared<core::PlanNodeIdGenerator>()};
-  // The below are declared static to be scoped to TestCase so as to reuse the dataset between tests.
-  
+  // The below are declared static to be scoped to TestCase so as to reuse the
+  // dataset between tests.
+
   inline static RowTypePtr rowType_;
   inline static std::shared_ptr<LocalSchema> schema_;
   inline static std::shared_ptr<TempDirectoryPath> files_;
   inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
-
 
 TEST_F(LocalRunnerTest, count) {
   auto join = makeJoin();
