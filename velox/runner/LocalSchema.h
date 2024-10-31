@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/runner/Schema.h"
 #include "velox/common/base/Fs.h"
 #include "velox/common/memory/HashStringAllocator.h"
 #include "velox/connectors/hive/HiveConnector.h"
@@ -23,31 +24,42 @@
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
 
-namespace facebook::velox::exec {
+namespace facebook::velox::runner {
 
-struct LocalColumn {
-  LocalColumn(const std::string& name, TypePtr type) : name(name), type(type) {}
+  
+class LocalColumn : public Column {
+public:
+  LocalColumn(const std::string& name, TypePtr type) : Column(name, type) {}
 
   void addStats(std::unique_ptr<dwio::common::ColumnStatistics> stats);
 
-  std::string name;
-  TypePtr type;
   std::unique_ptr<dwio::common::ColumnStatistics> stats;
-  int64_t numDistinct;
+
+  friend class LocalSchema;
 };
 
-class LocalSchema;
+  class LocalSchema;
 
-struct LocalTable {
+
+  class LocalTable : public Table {
+public:
   LocalTable(
       const std::string& name,
       dwio::common::FileFormat format,
-      LocalSchema* schema)
-      : name(name), format(format), schema(schema) {}
+      Schema* schema)
+    : Table(name, format, schema) {}
 
-  const RowTypePtr& rowType() const {
-    return type;
-  }
+    std::unordered_map<std::string, std::unique_ptr<LocalColumn>>&columns() {
+      return columns_;
+    }
+
+    LocalSchema* schema() const {
+      return reinterpret_cast<LocalSchema*>(schema_);
+    }
+    
+    void setType(const RowTypePtr& type) {
+      type_ = type;
+    }
 
   /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
   /// before sampling. Returns {count of sampled, count matching filters}.
@@ -60,19 +72,26 @@ struct LocalTable {
       connector::hive::SubfieldFilters filters,
       const core::TypedExprPtr& remainingFilter,
       HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats = nullptr);
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats = nullptr) override;
 
-  std::string name;
-  dwio::common::FileFormat format;
-  RowTypePtr type;
-  std::vector<std::string> files;
-  std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns;
-  int64_t numRows{0};
-  LocalSchema* schema;
-  int64_t numSampledRows{0};
-};
+    const std::vector<std::string>& files() const {
+      return files_;
+    }
 
-class LocalSchema {
+    
+  private:
+
+  // All columns. Not const, filled in by subclass initialization.
+  std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns_;
+
+  std::vector<std::string> files_;
+  int64_t numRows_{0};
+  int64_t numSampledRows_{0};
+
+    friend class LocalSchema;
+  };
+
+  class LocalSchema : public Schema {
  public:
   LocalSchema(
       const std::string& path,
@@ -80,17 +99,8 @@ class LocalSchema {
       connector::hive::HiveConnector* hiveConector,
       std::shared_ptr<connector::ConnectorQueryCtx> ctx);
 
-  const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables() {
-    return tables_;
-  }
 
-  LocalTable* findTable(const std::string& name) {
-    auto it = tables_.find(name);
-    VELOX_CHECK(it != tables_.end(), "Table {} not found", name);
-    return it->second.get();
-  }
-
-  connector::Connector* connector() const {
+  connector::Connector* connector() const override {
     return hiveConnector_;
   }
 
@@ -103,6 +113,10 @@ class LocalSchema {
     return pool_.get();
   }
 
+    const  std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables() const {
+      return tables_;
+    }
+    
  private:
   void initialize(const std::string& path);
 

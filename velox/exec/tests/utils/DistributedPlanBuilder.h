@@ -17,20 +17,20 @@
 #pragma once
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/runner/ExecutablePlan.h"
+#include "velox/runner/MultiFragmentPlan.h"
 
 namespace facebook::velox::exec::test {
 
 class DistributedPlanBuilder : public PlanBuilder {
  public:
   DistributedPlanBuilder(
-      const ExecutablePlanOptions& options,
+			 const runner::MultiFragmentPlan::Options& options,
       std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
       memory::MemoryPool* pool = nullptr);
   DistributedPlanBuilder(DistributedPlanBuilder& parent);
 
   /// Returns the planned fragments. The builder will be empty after this.
-  std::vector<ExecutableFragment> fragments();
+  std::vector<runner::ExecutableFragment> fragments();
 
   PlanBuilder& shuffle(
       const std::vector<std::string>& keys,
@@ -57,10 +57,9 @@ class DistributedPlanBuilder : public PlanBuilder {
 
   void gatherScans(const core::PlanNodePtr& plan);
 
-  const ExecutablePlanOptions& options_;
+  const runner::MultiFragmentPlan::Options& options_;
   DistributedPlanBuilder* parent_{nullptr};
 
-  //
   // Stack of outstanding builders. The last element is the immediately
   // enclosing one. When returning an ExchangeNode from returnShuffle, the stack
   // is used to establish the linkage between the fragment of the returning
@@ -70,7 +69,10 @@ class DistributedPlanBuilder : public PlanBuilder {
 
   // Fragment counter. Only used in root builder.
   int32_t taskCounter_{0};
-  ExecutableFragment current_;
-  std::vector<ExecutableFragment> fragments_;
+
+  runner::ExecutableFragment current_;
+
+  // The fragments gathered under this builder. Moved to the root builder when returning the subplan.
+  std::vector<runner::ExecutableFragment> fragments_;
 };
 } // namespace facebook::velox::exec::test

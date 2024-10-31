@@ -22,18 +22,18 @@
 
 #include "velox/common/base/Fs.h"
 
-namespace facebook::velox::exec {
+namespace facebook::velox::runner {
 
 LocalSchema::LocalSchema(
     const std::string& path,
-    dwio::common::FileFormat fmt,
+    dwio::common::FileFormat format,
     connector::hive::HiveConnector* hiveConnector,
     std::shared_ptr<connector::ConnectorQueryCtx> ctx)
-    : hiveConnector_(hiveConnector),
+  : Schema(path, ctx->memoryPool()->shared_from_this()),
+    hiveConnector_(hiveConnector),
       connectorId_(hiveConnector_->connectorId()),
-      pool_(ctx->memoryPool()->shared_from_this()),
-      connectorQueryCtx_(ctx) {
-  format_ = fmt;
+    connectorQueryCtx_(ctx),
+    format_(format) {
   initialize(path);
 }
 
@@ -70,8 +70,8 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   dwrf::StatisticsBuilderOptions options(100, 0);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;
   auto tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
-      schema->connector()->connectorId(),
-      name,
+      schema_->connector()->connectorId(),
+      name_,
       true,
       std::move(filters),
       remainingFilter);
@@ -87,9 +87,9 @@ std::pair<int64_t, int64_t> LocalTable::sample(
     auto column =
         dynamic_cast<const common::Subfield::NestedField*>(path[0].get())
             ->name();
-    auto idx = type->getChildIdx(column);
-    names.push_back(type->nameOf(idx));
-    types.push_back(type->childAt(idx));
+    auto idx = type_->getChildIdx(column);
+    names.push_back(type_->nameOf(idx));
+    types.push_back(type_->childAt(idx));
     columnHandles[names.back()] =
         std::make_shared<connector::hive::HiveColumnHandle>(
             names.back(),
@@ -120,16 +120,16 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   auto outputType = ROW(std::move(names), std::move(types));
   int64_t passingRows = 0;
   int64_t scannedRows = 0;
-  for (auto& file : files) {
-    auto dataSource = schema->connector()->createDataSource(
+  for (auto& file : files_) {
+    auto dataSource = schema_->connector()->createDataSource(
         outputType,
         tableHandle,
         columnHandles,
-        schema->connectorQueryCtx().get());
+        schema_->connectorQueryCtx().get());
 
     auto split = connector::hive::HiveConnectorSplitBuilder(file)
-                     .fileFormat(format)
-                     .connectorId(schema->connector()->connectorId())
+                     .fileFormat(format_)
+                     .connectorId(schema_->connector()->connectorId())
                      .build();
     dataSource->addSplit(split);
     constexpr int32_t kBatchSize = 1000;
@@ -150,7 +150,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
           data->childAt(column) =
               BaseVector::loadedVectorShared(data->childAt(column));
         };
-        switch (type->childAt(column)->kind()) {
+        switch (type_->childAt(column)->kind()) {
           case TypeKind::SMALLINT:
             loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, int64_t, short>(
@@ -191,7 +191,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
       break;
     }
     scannedRows += dataSource->getCompletedRows();
-    if (scannedRows > numRows * (pct / 100)) {
+    if (scannedRows > numRows_ * (pct / 100)) {
       break;
     }
   }
@@ -237,25 +237,25 @@ void LocalSchema::readTable(
     }
     auto rows = reader->numberOfRows();
     if (rows.has_value()) {
-      table->numRows += rows.value();
+      table->numRows_ += rows.value();
     }
     for (auto i = 0; i < fileType->size(); ++i) {
       auto name = fileType->nameOf(i);
       LocalColumn* column;
-      auto columnIt = table->columns.find(name);
-      if (columnIt != table->columns.end()) {
+      auto columnIt = table->columns().find(name);
+      if (columnIt != table->columns().end()) {
         column = columnIt->second.get();
       } else {
-        table->columns[name] =
+        table->columns()[name] =
             std::make_unique<LocalColumn>(name, fileType->childAt(i));
-        column = table->columns[name].get();
+        column = table->columns()[name].get();
       }
       column->addStats(reader->columnStatistics(i));
     }
-    table->files.push_back(dirEntry.path());
+    table->files_.push_back(dirEntry.path());
   }
   if (table) {
-    table->type = tableType;
+    table->setType(tableType);
     std::vector<common::Subfield> fields;
     for (auto i = 0; i < tableType->size(); ++i) {
       fields.push_back(common::Subfield(tableType->nameOf(i)));
@@ -264,16 +264,16 @@ void LocalSchema::readTable(
     std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> stats;
     auto [sampled, passed] =
         table->sample(2, fields, {}, nullptr, allocator.get(), &stats);
-    table->numSampledRows = sampled;
+    table->numSampledRows_ = sampled;
     for (auto i = 0; i < stats.size(); ++i) {
       if (stats[i]) {
-        int64_t cardinality = table->numRows;
-        if (table->numSampledRows < table->numRows) {
+        int64_t cardinality = table->numRows_;
+        if (table->numSampledRows_ < table->numRows_) {
           if (cardinality > sampled / 50) {
             float numDups =
-                table->numSampledRows / static_cast<float>(cardinality);
+                table->numSampledRows_ / static_cast<float>(cardinality);
             cardinality =
-                std::min<float>(table->numRows, table->numRows / numDups);
+                std::min<float>(table->numRows_, table->numRows_ / numDups);
             if (auto ints = dynamic_cast<dwrf::IntegerStatisticsBuilder*>(
                     stats[i].get())) {
               auto min = ints->getMinimum();
@@ -285,7 +285,7 @@ void LocalSchema::readTable(
             }
           }
         }
-        table->columns[tableType->nameOf(i)]->numDistinct = cardinality;
+        table->columns()[tableType->nameOf(i)]->numDistinct_ = cardinality;
       }
     }
   }

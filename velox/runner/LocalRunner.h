@@ -15,89 +15,68 @@
  */
 #pragma once
 
+#include "velox/runner/Runner.h"
 #include "velox/connectors/Connector.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/tests/utils/Cursor.h"
-#include "velox/runner/ExecutablePlan.h"
+#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/runner/LocalSchema.h"
 
-namespace facebook::velox::exec {
+namespace facebook::velox::runner {
 
-/// Iterator for obtaining splits for a scan. One is created for each table
-/// scan.
-class SplitSource {
- public:
-  virtual ~SplitSource() = default;
-  /// Returns a split for 'worker'. This may implement soft affinity or strict
-  /// bucket to worker mapping.
-  virtual Split next(int32_t worker) = 0;
-};
-
-/// A factory for getting a SplitSource for each TableScan. The splits produced
-/// may depend on partition keys, buckets etc mentioned by each tableScan.
-class SplitSourceFactory {
- public:
-  virtual ~SplitSourceFactory() = default;
-
-  /// Returns a splitSource for one TableScan across all Tasks of
-  /// the fragment. The source will be invoked to produce splits for
-  /// each individual worker runnin the scan.
-  virtual std::unique_ptr<SplitSource> splitSourceForScan(
-      const core::TableScanNode& scan) = 0;
-};
-
-class LocalRunner : public std::enable_shared_from_this<LocalRunner> {
+  
+  /// 
+  class LocalRunner : public Runner, public std::enable_shared_from_this<LocalRunner> {
  public:
   LocalRunner(
-      std::vector<ExecutableFragment> plan,
+	      MultiFragmentPlanPtr plan,
       std::shared_ptr<core::QueryCtx> queryCtx,
-      std::shared_ptr<SplitSourceFactory> splitSourceFactory,
-      ExecutablePlanOptions options)
+      std::shared_ptr<SplitSourceFactory> splitSourceFactory)
       : plan_(std::move(plan)),
-        splitSourceFactory_(std::move(splitSourceFactory)),
-        options_(options) {
-    params_.queryCtx = queryCtx;
+	fragments_(plan_->fragments()),
+	options_(plan_->options()),
+        splitSourceFactory_(std::move(splitSourceFactory)) {
+    params_.queryCtx = std::move(queryCtx);
   }
 
-  test::TaskCursor* cursor();
+    exec::test::TaskCursor* start() override;
 
-  std::vector<TaskStats> stats() const;
+    std::vector<exec::TaskStats> stats() const override;
 
-  /// Receives the final reference to 'runner' and waits for drivers
-  /// Tasks and to be deleted. Throws if 'runner' is not unique. Used
-  /// in tests to make sure that execution memory pools are gone
-  /// before the test fixture exits.
-  static void waitForAllDeleted(
-      std::shared_ptr<LocalRunner>&& runner,
-      int32_t maxWaitMicros);
+    void abort() override;
+    
+    void waitForCompletion( int32_t maxWaitMicros) override;
 
  private:
-  // Propagates 'error_' to 'stages_' and 'cursor_' if set
-  void terminate();
-
+    
+    std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
   // Serializes 'cursor_' and 'error_'.
-  std::mutex mutex_;
-  std::vector<std::shared_ptr<RemoteConnectorSplit>> makeStages();
-  test::CursorParameters params_;
-  std::vector<ExecutableFragment> plan_;
-  std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
-  ExecutablePlanOptions options_;
-  std::unique_ptr<test::TaskCursor> cursor_;
-  std::vector<std::vector<std::shared_ptr<Task>>> stages_;
+    mutable std::mutex mutex_;
+
+    exec::test::CursorParameters params_;
+    MultiFragmentPlanPtr const plan_;
+    std::vector<ExecutableFragment> fragments_;
+    const MultiFragmentPlan::Options& options_;
+
+    std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
+    std::unique_ptr<exec::test::TaskCursor> cursor_;
+    std::vector<std::vector<std::shared_ptr<exec::Task>>> stages_;
   std::exception_ptr error_;
   bool tasksCreated_{false};
 };
 
+  /// 
 class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
       : table_(table), splitsPerFile_(splitsPerFile) {}
 
-  Split next(int32_t worker) override;
+  exec::Split next(int32_t worker) override;
 
  private:
-  std::mutex mutex_;
-  const LocalTable* table_;
+
+
+  const LocalTable* const table_;
   std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
   const int32_t splitsPerFile_;
   int32_t currentFile_{-1};

@@ -306,11 +306,10 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
     return current_;
   }
 
-  void setError(std::exception_ptr e) override {
-    auto task = task_;
-    error_ = e;
-    if (task) {
-      task->setError(e);
+  void setError(std::exception_ptr error) override {
+    error_ = error;
+    if (task_) {
+      task_->setError(error);
     }
     // Wake up the consumer if blocked.
     queue_->enqueue(nullptr, nullptr);

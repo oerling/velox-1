@@ -37,12 +37,12 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
  protected:
   void SetUp() override;
 
-  std::shared_ptr<LocalSchema> makeTables(
+  std::shared_ptr<runner::LocalSchema> makeTables(
       std::vector<TableSpec> specs,
       std::shared_ptr<TempDirectoryPath>& directory);
 
-  std::shared_ptr<SplitSourceFactory> splitSourceFactory(
-      const LocalSchema& schema);
+  std::shared_ptr<runner::SplitSourceFactory> splitSourceFactory(
+							 const runner::LocalSchema& schema);
   std::shared_ptr<core::QueryCtx> makeQueryCtx(const std::string& queryId);
 
   std::unordered_map<std::string, std::string> config_;
