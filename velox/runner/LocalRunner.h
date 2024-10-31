@@ -47,6 +47,10 @@ class LocalRunner : public Runner,
 
   void waitForCompletion(int32_t maxWaitMicros) override;
 
+  RunnerState state() const override {
+    return state_;
+  }
+  
  private:
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
   // Serializes 'cursor_' and 'error_'.
@@ -62,6 +66,8 @@ class LocalRunner : public Runner,
   std::vector<std::vector<std::shared_ptr<exec::Task>>> stages_;
   std::exception_ptr error_;
   bool tasksCreated_{false};
+
+  RunnerState state_;
 };
 
 ///

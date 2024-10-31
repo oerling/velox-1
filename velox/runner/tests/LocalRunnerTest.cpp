@@ -26,6 +26,11 @@ using namespace facebook::velox::exec::test;
 
 class LocalRunnerTest : public LocalRunnerTestBase {
  protected:
+  static constexpr int32_t kNumFiles = 5;
+  static constexpr int32_t kNumVectors = 5;
+  static constexpr int32_t kRowsPerVector = 10000;
+  static constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
+
   void SetUp() override {
     LocalRunnerTestBase::SetUp();
     ensureDataset();
@@ -39,10 +44,6 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     if (files_) {
       return;
     }
-    constexpr int32_t kNumFiles = 5;
-    constexpr int32_t kNumVectors = 5;
-    constexpr int32_t kRowsPerVector = 10000;
-    constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
 
     int32_t counter1 = 0;
     auto patch1 = [&](const RowVectorPtr& rows) {
@@ -141,7 +142,7 @@ TEST_F(LocalRunnerTest, count) {
       std::move(join), makeQueryCtx("q1"), sourceFactory_);
   auto results = readCursor(localRunner);
   auto stats = localRunner->stats();
-  E XPECT_EQ(1, results.size());
+  EXPECT_EQ(1, results.size());
   EXPECT_EQ(1, results[0]->size());
   EXPECT_EQ(
       kNumRows, results[0]->childAt(0)->as<FlatVector<int64_t>>()->valueAt(0));
