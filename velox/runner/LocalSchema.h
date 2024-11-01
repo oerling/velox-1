@@ -110,8 +110,6 @@ class LocalSchema : public Schema {
   std::string connectorId_;
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   dwio::common::FileFormat format_;
-
-  std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
 };
 
 } // namespace facebook::velox::runner

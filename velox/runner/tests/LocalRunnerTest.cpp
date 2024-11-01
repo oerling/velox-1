@@ -147,16 +147,11 @@ TEST_F(LocalRunnerTest, count) {
   localRunner->waitForCompletion(5000);
 }
 
-TEST_F(LocalRunnerTest, count) {
+TEST_F(LocalRunnerTest, error) {
   auto join = makeJoin("if (c0 = 111, c0 / 0, c0 + 1) as c0");
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx("q1"), sourceFactory_);
-  auto results = readCursor(localRunner);
-  auto stats = localRunner->stats();
-  EXPECT_EQ(1, results.size());
-  EXPECT_EQ(1, results[0]->size());
-  EXPECT_EQ(
-      kNumRows, results[0]->childAt(0)->as<FlatVector<int64_t>>()->valueAt(0));
-  results.clear();
+  EXPECT_THROW(
+	       readCursor(localRunner), VeloxUserError);
   localRunner->waitForCompletion(5000);
 }

@@ -217,11 +217,11 @@ void LocalSchema::loadTable(
     }
     auto it = tables_.find(tableName);
     if (it != tables_.end()) {
-      table = it->second.get();
+      table = reinterpret_cast<LocalTable*>(it->second.get());
     } else {
       tables_[tableName] =
           std::make_unique<LocalTable>(tableName, format_, this);
-      table = tables_[tableName].get();
+      table = reinterpret_cast<LocalTable*>(tables_[tableName].get());
     }
     dwio::common::ReaderOptions readerOptions{pool_};
     readerOptions.setFileFormat(format_);
