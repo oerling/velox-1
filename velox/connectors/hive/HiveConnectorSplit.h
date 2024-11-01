@@ -183,9 +183,8 @@ class HiveConnectorSplitBuilder {
     fileProperties_ = fileProperties;
     return *this;
   }
-  
-  std::shared_ptr<connector::hive::HiveConnectorSplit> build() const {
 
+  std::shared_ptr<connector::hive::HiveConnectorSplit> build() const {
     return std::make_shared<connector::hive::HiveConnectorSplit>(
         connectorId_,
         filePath_,

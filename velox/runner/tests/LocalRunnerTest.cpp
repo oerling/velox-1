@@ -133,8 +133,6 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
 
-
-
 TEST_F(LocalRunnerTest, count) {
   auto join = makeJoin();
   auto localRunner = std::make_shared<LocalRunner>(

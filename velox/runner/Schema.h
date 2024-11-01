@@ -107,7 +107,8 @@ class Table {
 
   const dwio::common::FileFormat format_;
 
-  // type. Discovered from data. In the event of different types, we take the latest (i.e. widest) table type.
+  // type. Discovered from data. In the event of different types, we take the
+  // latest (i.e. widest) table type.
   RowTypePtr type_;
 };
 
