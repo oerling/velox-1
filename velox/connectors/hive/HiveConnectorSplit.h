@@ -179,10 +179,13 @@ class HiveConnectorSplitBuilder {
     return *this;
   }
 
+  HiveConnectorSplitBuilder& fileProperties(FileProperties fileProperties) {
+    fileProperties_ = fileProperties;
+    return *this;
+  }
+  
   std::shared_ptr<connector::hive::HiveConnectorSplit> build() const {
-    static const std::unordered_map<std::string, std::string> customSplitInfo;
-    static const std::shared_ptr<std::string> extraFileInfo;
-    static const std::unordered_map<std::string, std::string> serdeParameters;
+
     return std::make_shared<connector::hive::HiveConnectorSplit>(
         connectorId_,
         filePath_,
@@ -191,12 +194,12 @@ class HiveConnectorSplitBuilder {
         length_,
         partitionKeys_,
         tableBucketNumber_,
-        customSplitInfo,
-        extraFileInfo,
-        serdeParameters,
+        customSplitInfo_,
+        extraFileInfo_,
+        serdeParameters_,
         splitWeight_,
         infoColumns_,
-        std::nullopt);
+        fileProperties_);
   }
 
  private:
@@ -212,6 +215,7 @@ class HiveConnectorSplitBuilder {
   std::unordered_map<std::string, std::string> infoColumns_ = {};
   std::string connectorId_;
   int64_t splitWeight_{0};
+  std::optional<FileProperties> fileProperties_;
 };
 
 } // namespace facebook::velox::connector::hive

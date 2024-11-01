@@ -52,8 +52,8 @@ class Column {
   }
 
  protected:
-  std::string name_;
-  TypePtr type_;
+  const std::string name_;
+  const TypePtr type_;
   std::unique_ptr<dwio::common::ColumnStatistics> stats_;
   std::optional<int64_t> numDistinct_;
 };
@@ -89,6 +89,8 @@ class Table {
   /// Returns statistics for the post-filtering values in 'stats' for each of
   /// 'fields'. If 'fields' is empty, simply returns the number of
   /// rows matching 'filter' in a sample of 'pct'% of the table.
+  ///
+  /// TODO: Introduce generic statistics builder in dwio/common.
   virtual std::pair<int64_t, int64_t> sample(
       float pct,
       const std::vector<common::Subfield>& columns,
@@ -105,19 +107,19 @@ class Table {
 
   const dwio::common::FileFormat format_;
 
-  // type. Discovered from data, not const.
+  // type. Discovered from data. In the event of different types, we take the latest (i.e. widest) table type.
   RowTypePtr type_;
 };
 
 /// Base class for collection of tables. A query executes against a
 /// Schema and its tables and columns are resolved against the
-/// Schema. The schema is mutable and may acquire tabless and the
+/// Schema. The schema is mutable and may acquire tables and the
 /// tables may acquire stats during their lifetime.
 class Schema {
  public:
   virtual ~Schema() = default;
 
-  Schema(const std::string& name, std::shared_ptr<memory::MemoryPool> pool)
+  Schema(const std::string& name, memory::MemoryPool* pool)
       : name_(name), pool_(std::move(pool)) {}
 
   Table* findTable(const std::string& name) {
@@ -131,14 +133,10 @@ class Schema {
   virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const = 0;
 
-  memory::MemoryPool* pool() {
-    return pool_.get();
-  }
-
  protected:
   const std::string name_;
 
-  std::shared_ptr<memory::MemoryPool> pool_;
+  memory::MemoryPool* const pool_;
 
   std::unordered_map<std::string, std::unique_ptr<Table>> tables_;
 };

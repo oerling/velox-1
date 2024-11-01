@@ -311,8 +311,6 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
     if (task_) {
       task_->setError(error);
     }
-    // Wake up the consumer if blocked.
-    queue_->enqueue(nullptr, nullptr);
   }
 
   const std::shared_ptr<Task>& task() override {

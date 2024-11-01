@@ -29,7 +29,7 @@ LocalSchema::LocalSchema(
     dwio::common::FileFormat format,
     connector::hive::HiveConnector* hiveConnector,
     std::shared_ptr<connector::ConnectorQueryCtx> ctx)
-    : Schema(path, ctx->memoryPool()->shared_from_this()),
+    : Schema(path, ctx->memoryPool()),
       hiveConnector_(hiveConnector),
       connectorId_(hiveConnector_->connectorId()),
       connectorQueryCtx_(ctx),
@@ -43,7 +43,7 @@ void LocalSchema::initialize(const std::string& path) {
         dirEntry.path().filename().c_str()[0] == '.') {
       continue;
     }
-    readTable(dirEntry.path().filename(), dirEntry.path());
+    loadTable(dirEntry.path().filename(), dirEntry.path());
   }
 }
 
@@ -201,7 +201,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   return std::pair(scannedRows, passingRows);
 }
 
-void LocalSchema::readTable(
+void LocalSchema::loadTable(
     const std::string& tableName,
     const fs::path& tablePath) {
   RowTypePtr tableType;
@@ -223,7 +223,7 @@ void LocalSchema::readTable(
           std::make_unique<LocalTable>(tableName, format_, this);
       table = tables_[tableName].get();
     }
-    dwio::common::ReaderOptions readerOptions{pool_.get()};
+    dwio::common::ReaderOptions readerOptions{pool_};
     readerOptions.setFileFormat(format_);
     auto input = std::make_unique<dwio::common::BufferedInput>(
         std::make_shared<LocalReadFile>(dirEntry.path().string()),
@@ -260,7 +260,7 @@ void LocalSchema::readTable(
     for (auto i = 0; i < tableType->size(); ++i) {
       fields.push_back(common::Subfield(tableType->nameOf(i)));
     }
-    auto allocator = std::make_unique<HashStringAllocator>(pool());
+    auto allocator = std::make_unique<HashStringAllocator>(pool_);
     std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> stats;
     auto [sampled, passed] =
         table->sample(2, fields, {}, nullptr, allocator.get(), &stats);

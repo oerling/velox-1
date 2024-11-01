@@ -59,11 +59,6 @@ class LocalTable : public Table {
     type_ = type;
   }
 
-  /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
-  /// before sampling. Returns {count of sampled, count matching filters}.
-  /// Returns statistics for the post-filtering values in 'stats' for each of
-  /// 'fields'. If 'fields' is empty, simply returns the number of
-  /// rows matching 'filter' in a sample of 'pct'% of the table.
   std::pair<int64_t, int64_t> sample(
       float pct,
       const std::vector<common::Subfield>& columns,
@@ -90,6 +85,7 @@ class LocalTable : public Table {
 
 class LocalSchema : public Schema {
  public:
+  /// 'path' is the directory containing a subdirectory per table.
   LocalSchema(
       const std::string& path,
       dwio::common::FileFormat format,
@@ -105,19 +101,10 @@ class LocalSchema : public Schema {
     return connectorQueryCtx_;
   }
 
-  memory::MemoryPool* pool() {
-    return pool_.get();
-  }
-
-  const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables()
-      const {
-    return tables_;
-  }
-
  private:
   void initialize(const std::string& path);
 
-  void readTable(const std::string& tableName, const fs::path& tablePath);
+  void loadTable(const std::string& tableName, const fs::path& tablePath);
 
   connector::hive::HiveConnector* hiveConnector_;
   std::string connectorId_;

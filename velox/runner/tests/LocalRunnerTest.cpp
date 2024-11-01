@@ -133,8 +133,24 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
 
+
+
 TEST_F(LocalRunnerTest, count) {
   auto join = makeJoin();
+  auto localRunner = std::make_shared<LocalRunner>(
+      std::move(join), makeQueryCtx("q1"), sourceFactory_);
+  auto results = readCursor(localRunner);
+  auto stats = localRunner->stats();
+  EXPECT_EQ(1, results.size());
+  EXPECT_EQ(1, results[0]->size());
+  EXPECT_EQ(
+      kNumRows, results[0]->childAt(0)->as<FlatVector<int64_t>>()->valueAt(0));
+  results.clear();
+  localRunner->waitForCompletion(5000);
+}
+
+TEST_F(LocalRunnerTest, count) {
+  auto join = makeJoin("if (c0 = 111, c0 / 0, c0 + 1) as c0");
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx("q1"), sourceFactory_);
   auto results = readCursor(localRunner);
