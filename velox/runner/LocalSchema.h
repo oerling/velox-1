@@ -64,9 +64,10 @@ class LocalTable : public Table {
       std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
           nullptr) override;
 
-  /// Samples  'samplePct' % rows of the table and sets the num distincts estimate for the columns. uses 'pool' for temporary data.
+  /// Samples  'samplePct' % rows of the table and sets the num distincts
+  /// estimate for the columns. uses 'pool' for temporary data.
   void sampleNumDistincts(float samplePct, memory::MemoryPool* pool);
-  
+
   const std::vector<std::string>& files() const {
     return files_;
   }

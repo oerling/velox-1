@@ -179,9 +179,8 @@ std::pair<int64_t, int64_t> LocalTable::sample(
             break;
           case TypeKind::VARCHAR:
             loadChild(data, column);
-            addStats<
-                dwrf::StringStatisticsBuilder,
-                StringView>(builder, *data->childAt(column));
+            addStats<dwrf::StringStatisticsBuilder, StringView>(
+                builder, *data->childAt(column));
             break;
 
           default:
@@ -236,7 +235,7 @@ void LocalSchema::loadTable(
     const auto fileType = reader->rowType();
     if (!tableType) {
       tableType = fileType;
-    } else if (fileType->size() > tableType->size()){
+    } else if (fileType->size() > tableType->size()) {
       // The larger type is the later since there is only addition of columns.
       // TODO: Check the column types are compatible where they overlap.
       tableType = fileType;
@@ -270,7 +269,7 @@ void LocalSchema::loadTable(
   table->sampleNumDistincts(2, pool_);
 }
 
-  void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
+void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
   std::vector<common::Subfield> fields;
   for (auto i = 0; i < type_->size(); ++i) {
     fields.push_back(common::Subfield(type_->nameOf(i)));

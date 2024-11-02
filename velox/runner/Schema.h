@@ -30,7 +30,8 @@
 /// bucketing etc.
 namespace facebook::velox::runner {
 
-/// Base class for column. The column's name and type are immutable but the stats may be set multiple times. 
+/// Base class for column. The column's name and type are immutable but the
+/// stats may be set multiple times.
 class Column {
  public:
   virtual ~Column() = default;
@@ -40,7 +41,7 @@ class Column {
   dwio::common::ColumnStatistics* stats() const {
     return latestStats_;
   }
-  
+
   /// Sets statistics. May be called multipl times if table contents change.
   void setStats(std::unique_ptr<dwio::common::ColumnStatistics> stats) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -66,14 +67,15 @@ class Column {
 
   // The latest element added to  'allStats_'.
   tsan_atomic<dwio::common::ColumnStatistics*> latestStats_{nullptr};
-  
-  // All statistics recorded for this column. Old values can be purged when the containing Schema is not in use.
+
+  // All statistics recorded for this column. Old values can be purged when the
+  // containing Schema is not in use.
   std::vector<std::unique_ptr<dwio::common::ColumnStatistics>> allStats_;
 
   // Latest approximate count of distinct values.
   std::optional<int64_t> numDistinct_;
 
-private:
+ private:
   // Serializes changes to statistics.
   std::mutex mutex_;
 };
@@ -117,7 +119,8 @@ class Table {
       connector::hive::SubfieldFilters filters,
       const core::TypedExprPtr& remainingFilter,
       HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders = nullptr) {
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
+          nullptr) {
     VELOX_UNSUPPORTED("Table class does not support sampling.");
   }
 
