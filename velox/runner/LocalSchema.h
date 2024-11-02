@@ -30,10 +30,6 @@ class LocalColumn : public Column {
  public:
   LocalColumn(const std::string& name, TypePtr type) : Column(name, type) {}
 
-  void addStats(std::unique_ptr<dwio::common::ColumnStatistics> stats);
-
-  std::unique_ptr<dwio::common::ColumnStatistics> stats;
-
   friend class LocalSchema;
 };
 
@@ -65,15 +61,18 @@ class LocalTable : public Table {
       connector::hive::SubfieldFilters filters,
       const core::TypedExprPtr& remainingFilter,
       HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* stats =
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
           nullptr) override;
 
+  /// Samples  'samplePct' % rows of the table and sets the num distincts estimate for the columns. uses 'pool' for temporary data.
+  void sampleNumDistincts(float samplePct, memory::MemoryPool* pool);
+  
   const std::vector<std::string>& files() const {
     return files_;
   }
 
  private:
-  // All columns. Not const, filled in by subclass initialization.
+  // All columns. Filled by loadTable().
   std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns_;
 
   std::vector<std::string> files_;
@@ -106,10 +105,10 @@ class LocalSchema : public Schema {
 
   void loadTable(const std::string& tableName, const fs::path& tablePath);
 
-  connector::hive::HiveConnector* hiveConnector_;
-  std::string connectorId_;
-  std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
-  dwio::common::FileFormat format_;
+  connector::hive::HiveConnector* const hiveConnector_;
+  const std::string connectorId_;
+  const std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
+  const dwio::common::FileFormat format_;
 };
 
 } // namespace facebook::velox::runner
