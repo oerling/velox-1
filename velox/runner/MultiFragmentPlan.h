@@ -21,7 +21,10 @@ namespace facebook::velox::runner {
 
 /// Describes an exchange source for an ExchangeNode a non-leaf stage.
 struct InputStage {
-  core::PlanNodeId consumer;
+  // Id of ExchangeNode in the consumer fragment.
+  core::PlanNodeId consumerNodeId;
+
+  /// Task prefix of producer stage.
   std::string producerTaskPrefix;
 };
 
@@ -37,7 +40,11 @@ struct ExecutableFragment {
   std::string taskPrefix;
   int32_t width{0};
   velox::core::PlanFragment fragment;
+
+  /// Source fragments and Exchange node ids for remote shuffles producing input for 'this'.
   std::vector<InputStage> inputStages;
+
+  /// Table scan nodes in 'this'.
   std::vector<std::shared_ptr<const core::TableScanNode>> scans;
   int32_t numBroadcastDestinations{0};
 };
@@ -80,6 +87,7 @@ class MultiFragmentPlan {
   std::vector<ExecutableFragment> fragments_;
   Options options_;
 };
-using MultiFragmentPlanPtr = std::shared_ptr<const MultiFragmentPlan>;
+
+  using MultiFragmentPlanPtr = std::shared_ptr<const MultiFragmentPlan>;
 
 } // namespace facebook::velox::runner

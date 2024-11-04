@@ -58,14 +58,14 @@ class Column {
   }
 
   void setNumDistinct(int64_t numDistinct) {
-    numDistinct_ = numDistinct;
+    approxNumDistinct_ = numDistinct;
   }
 
  protected:
   const std::string name_;
   const TypePtr type_;
 
-  // The latest element added to  'allStats_'.
+  // The latest element added to 'allStats_'.
   tsan_atomic<dwio::common::ColumnStatistics*> latestStats_{nullptr};
 
   // All statistics recorded for this column. Old values can be purged when the
@@ -73,7 +73,7 @@ class Column {
   std::vector<std::unique_ptr<dwio::common::ColumnStatistics>> allStats_;
 
   // Latest approximate count of distinct values.
-  std::optional<int64_t> numDistinct_;
+  std::optional<int64_t> approxNumDistinct_;
 
  private:
   // Serializes changes to statistics.
@@ -130,7 +130,7 @@ class Table {
 
   const dwio::common::FileFormat format_;
 
-  // type. Discovered from data. In the event of different types, we take the
+  // Discovered from data. In the event of different types, we take the
   // latest (i.e. widest) table type.
   RowTypePtr type_;
 };

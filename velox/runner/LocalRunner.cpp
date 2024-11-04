@@ -30,16 +30,16 @@ RowVectorPtr LocalRunner::next() {
   if (!cursor_) {
     start();
   }
-  bool isNext = cursor_->moveNext();
-  if (!isNext) {
-    state_ = RunnerState::kFinished;
+  bool hasNext = cursor_->moveNext();
+  if (!hasNext) {
+    state_ = State::kFinished;
     return nullptr;
   }
   return cursor_->current();
 }
 
 void LocalRunner::start() {
-  VELOX_CHECK_EQ(state_, RunnerState::kInitialized);
+  VELOX_CHECK_EQ(state_, State::kInitialized);
   auto lastStage = makeStages();
   params_.planNode = plan_->fragments().back().fragment.planNode;
   auto cursor = exec::test::TaskCursor::create(params_);
@@ -47,17 +47,17 @@ void LocalRunner::start() {
   // If the plan only has the last stage, there are no shuffles between the last
   // and previous stages to set up.
   if (!lastStage.empty()) {
-    auto node = fragments_.back().inputStages[0].consumer;
+    const auto finalStageConsumer = fragments_.back().inputStages[0].consumerNodeId;
     for (auto& remote : lastStage) {
-      cursor->task()->addSplit(node, exec::Split(remote));
+      cursor->task()->addSplit(finalStageConsumer, exec::Split(remote));
     }
-    cursor->task()->noMoreSplits(node);
+    cursor->task()->noMoreSplits(finalStageConsumer);
   }
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (!error_) {
       cursor_ = std::move(cursor);
-      state_ = RunnerState::kRunning;
+      state_ = State::kRunning;
     }
   }
   if (!cursor_) {
@@ -71,13 +71,13 @@ void LocalRunner::abort() {
   // If called without previous error, we set the error to be cancellation.
   if (!error_) {
     try {
-      state_ = RunnerState::kCancelled;
+      state_ = State::kCancelled;
       VELOX_FAIL("Query cancelled");
     } catch (const std::exception& e) {
       error_ = std::current_exception();
     }
   }
-  VELOX_CHECK(state_ != RunnerState::kInitialized);
+  VELOX_CHECK(state_ != State::kInitialized);
   // Setting errors is thred safe. The stages do not change after
   // initialization.
   for (auto& stage : stages_) {
@@ -90,8 +90,8 @@ void LocalRunner::abort() {
   }
 }
 
-void LocalRunner::waitForCompletion(int32_t maxWaitMicros) {
-  VELOX_CHECK_NE(state_, RunnerState::kInitialized);
+void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
+  VELOX_CHECK_NE(state_, State::kInitialized);
   std::vector<ContinueFuture> futures;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -105,8 +105,9 @@ void LocalRunner::waitForCompletion(int32_t maxWaitMicros) {
   for (auto& future : futures) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
 
+    // TODO: Error out if more than maxWaitUs elapsed since first wait.
     std::move(future)
-        .within(std::chrono::microseconds(maxWaitMicros))
+        .within(std::chrono::microseconds(maxWaitUs))
         .via(&executor)
         .wait();
   }
@@ -122,7 +123,7 @@ LocalRunner::makeStages() {
       if (error_) {
         return;
       }
-      state_ = RunnerState::kError;
+      state_ = State::kError;
       error_ = error;
     }
     if (cursor_) {
@@ -151,6 +152,7 @@ LocalRunner::makeStages() {
           onError);
       stages_.back().push_back(task);
       if (fragment.numBroadcastDestinations) {
+	// TODO: Add support for Arbitrary partition type.
         task->updateOutputBuffers(fragment.numBroadcastDestinations, true);
       }
       task->start(options_.numDrivers);
@@ -188,13 +190,15 @@ LocalRunner::makeStages() {
       }
       for (auto& task : stages_[fragmentIndex]) {
         for (auto& remote : sourceSplits) {
-          task->addSplit(input.consumer, exec::Split(remote));
+          task->addSplit(input.consumerNodeId, exec::Split(remote));
         }
-        task->noMoreSplits(input.consumer);
+        task->noMoreSplits(input.consumerNodeId);
       }
     }
   }
-  VELOX_CHECK(!stages_.empty());
+  if (stages_.empty()) {
+    return {};
+  }
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> lastStage;
   for (auto& task : stages_.back()) {
     lastStage.push_back(remoteSplit(task->taskId()));
@@ -206,18 +210,20 @@ exec::Split LocalSplitSource::next(int32_t /*worker*/) {
   if (currentFile_ >= static_cast<int32_t>(table_->files().size())) {
     return exec::Split();
   }
+
   if (currentSplit_ >= fileSplits_.size()) {
     fileSplits_.clear();
     ++currentFile_;
     if (currentFile_ >= table_->files().size()) {
       return exec::Split();
     }
+
     currentSplit_ = 0;
     auto filePath = table_->files()[currentFile_];
-    const int fileSize = fs::file_size(filePath);
+    const auto fileSize = fs::file_size(filePath);
     // Take the upper bound.
     const int splitSize = std::ceil((fileSize) / splitsPerFile_);
-    for (int i = 0; i < splitsPerFile_; i++) {
+    for (int i = 0; i < splitsPerFile_; ++i) {
       fileSplits_.push_back(
           connector::hive::HiveConnectorSplitBuilder(filePath)
               .connectorId(table_->schema()->connector()->connectorId())
@@ -232,11 +238,12 @@ exec::Split LocalSplitSource::next(int32_t /*worker*/) {
 
 std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
     const core::TableScanNode& tableScan) {
-  auto tableHandle = dynamic_cast<const connector::hive::HiveTableHandle*>(
+  auto* tableHandle = dynamic_cast<const connector::hive::HiveTableHandle*>(
       tableScan.tableHandle().get());
-  VELOX_CHECK(tableHandle);
+  VELOX_CHECK_NOT_NULL(tableHandle);
   auto* table = reinterpret_cast<LocalTable*>(
       schema_->findTable(tableHandle->tableName()));
+  
   return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
 }
 
@@ -262,43 +269,6 @@ std::vector<exec::TaskStats> LocalRunner::stats() const {
     result.push_back(std::move(stats));
   }
   return result;
-}
-
-std::string MultiFragmentPlan::toString() const {
-  std::stringstream out;
-  for (auto i = 0; i < fragments_.size(); ++i) {
-    out << fmt::format(
-        "Fragment {}: {} numWorkers={}:\n",
-        i,
-        fragments_[i].taskPrefix,
-        fragments_[i].width);
-    out << fragments_[i].fragment.planNode->toString(true, true) << std::endl;
-    if (!fragments_[i].inputStages.empty()) {
-      out << "Inputs: ";
-      for (auto& input : fragments_[i].inputStages) {
-        out << fmt::format(
-            " {} <- {} ", input.consumer, input.producerTaskPrefix);
-      }
-      out << std::endl;
-    }
-  }
-  return out.str();
-}
-
-std::string runnerStateString(RunnerState state) {
-  switch (state) {
-    case RunnerState::kInitialized:
-      return "initialized";
-    case RunnerState::kRunning:
-      return "running";
-    case RunnerState::kCancelled:
-      return "cancelled";
-    case RunnerState::kError:
-      return "error";
-    case RunnerState::kFinished:
-      return "finished";
-  }
-  return "invalid state";
 }
 
 } // namespace facebook::velox::runner

@@ -144,7 +144,7 @@ TEST_F(LocalRunnerTest, count) {
   EXPECT_EQ(
       kNumRows, results[0]->childAt(0)->as<FlatVector<int64_t>>()->valueAt(0));
   results.clear();
-  EXPECT_EQ(RunnerState::kFinished, localRunner->state());
+  EXPECT_EQ(Runner::State::kFinished, localRunner->state());
   localRunner->waitForCompletion(5000);
 }
 
@@ -153,6 +153,6 @@ TEST_F(LocalRunnerTest, error) {
   auto localRunner = std::make_shared<LocalRunner>(
       std::move(join), makeQueryCtx("q1"), sourceFactory_);
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
-  EXPECT_EQ(RunnerState::kError, localRunner->state());
+  EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(5000);
 }

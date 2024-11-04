@@ -88,7 +88,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
     auto column =
         dynamic_cast<const common::Subfield::NestedField*>(path[0].get())
             ->name();
-    auto idx = type_->getChildIdx(column);
+    const auto idx = type_->getChildIdx(column);
     names.push_back(type_->nameOf(idx));
     types.push_back(type_->childAt(idx));
     columnHandles[names.back()] =
@@ -118,7 +118,8 @@ std::pair<int64_t, int64_t> LocalTable::sample(
         builders.push_back(nullptr);
     }
   }
-  auto outputType = ROW(std::move(names), std::move(types));
+
+  const auto outputType = ROW(std::move(names), std::move(types));
   int64_t passingRows = 0;
   int64_t scannedRows = 0;
   for (auto& file : files_) {
@@ -146,7 +147,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
         if (!builders[column]) {
           continue;
         }
-        auto builder = builders[column].get();
+        auto* builder = builders[column].get();
         auto loadChild = [](RowVectorPtr data, int32_t column) {
           data->childAt(column) =
               BaseVector::loadedVectorShared(data->childAt(column));
@@ -263,7 +264,7 @@ void LocalSchema::loadTable(
     }
     table->files_.push_back(dirEntry.path());
   }
-  VELOX_CHECK_NOT_NULL(table, "Directory {} is empty", tablePath);
+  VELOX_CHECK_NOT_NULL(table, "Table directory {} is empty", tablePath);
 
   table->setType(tableType);
   table->sampleNumDistincts(2, pool_);

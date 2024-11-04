@@ -14,7 +14,7 @@
 
 add_subdirectory(tests)
 
-add_library(velox_local_runner LocalRunner.cpp LocalSchema.cpp)
+add_library(velox_local_runner LocalRunner.cpp LocalSchema.cpp Runner.cpp)
 
 target_link_libraries(
   velox_local_runner velox_exec_test_lib velox_exec)

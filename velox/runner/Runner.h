@@ -47,13 +47,6 @@ class SplitSourceFactory {
       const core::TableScanNode& scan) = 0;
 };
 
-enum class RunnerState {
-  kInitialized,
-  kRunning,
-  kFinished,
-  kError,
-  kCancelled
-};
 
 /// Base class for executing multifragment Velox queries. One instance
 /// of a Runner coordinates the execution of one multifragment
@@ -63,6 +56,16 @@ enum class RunnerState {
 /// the caller holds an owning reference to the runner.
 class Runner {
  public:
+
+  enum class State {
+  kInitialized,
+  kRunning,
+  kFinished,
+  kError,
+  kCancelled
+};
+
+
   virtual ~Runner() = default;
 
   /// Returns the next batch of results. Returns nullptr when no more results.
@@ -77,7 +80,7 @@ class Runner {
   virtual std::vector<exec::TaskStats> stats() const = 0;
 
   /// Returns the state of execution.
-  virtual RunnerState state() const = 0;
+  virtual State state() const = 0;
 
   /// Cancels the possibly pending execution. Returns immediately, thus before
   /// the execution is actually finished. Use waitForCompletion() to wait for
@@ -85,19 +88,18 @@ class Runner {
   /// serialization.
   virtual void abort() = 0;
 
-  /// Waits up to 'maxWaitMicros' for all activity of the execution to cease.
-  /// Call this in a test to make sure execution threads have stopped and memory
-  /// is freed before destroying the test fixture and its memory pools.
+  /// Waits up to 'maxWaitMicros' for all activity of the execution to cease. This is used in tests to ensure that all pools are empty and unreferenced before teradown.
+
   virtual void waitForCompletion(int32_t maxWaitMicros) = 0;
 };
-std::string runnerStateString(RunnerState state);
+  std::string runnerStateString(Runner::State state);
 
 } // namespace facebook::velox::runner
 
 template <>
-struct fmt::formatter<facebook::velox::runner::RunnerState>
+struct fmt::formatter<facebook::velox::runner::Runner::State>
     : formatter<std::string> {
-  auto format(facebook::velox::runner::RunnerState state, format_context& ctx)
+  auto format(facebook::velox::runner::Runner::State state, format_context& ctx)
       const {
     return formatter<std::string>::format(
         facebook::velox::runner::runnerStateString(state), ctx);

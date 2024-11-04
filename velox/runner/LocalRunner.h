@@ -24,7 +24,8 @@
 
 namespace facebook::velox::runner {
 
-///
+
+  /// Runner for in-process execution of a distributed plan.
 class LocalRunner : public Runner,
                     public std::enable_shared_from_this<LocalRunner> {
  public:
@@ -47,31 +48,34 @@ class LocalRunner : public Runner,
 
   void waitForCompletion(int32_t maxWaitMicros) override;
 
-  RunnerState state() const override {
+  State state() const override {
     return state_;
   }
 
  private:
   void start();
 
+  // Creates all stages except for the single worker final consumer stage.
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
+
   // Serializes 'cursor_' and 'error_'.
   mutable std::mutex mutex_;
 
-  exec::test::CursorParameters params_;
-  MultiFragmentPlanPtr const plan_;
-  std::vector<ExecutableFragment> fragments_;
+  const MultiFragmentPlanPtr plan_;
+  const std::vector<ExecutableFragment> fragments_;
   const MultiFragmentPlan::Options& options_;
+  const std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
 
-  std::shared_ptr<SplitSourceFactory> splitSourceFactory_;
+  exec::test::CursorParameters params_;
+
+  tsan_atomic<State> state_{State::kInitialized};
+
   std::unique_ptr<exec::test::TaskCursor> cursor_;
   std::vector<std::vector<std::shared_ptr<exec::Task>>> stages_;
   std::exception_ptr error_;
-
-  RunnerState state_{RunnerState::kInitialized};
 };
 
-///
+/// Split source that produces splits from a LocalSchema.
 class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
@@ -81,8 +85,9 @@ class LocalSplitSource : public SplitSource {
 
  private:
   const LocalTable* const table_;
-  std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
   const int32_t splitsPerFile_;
+
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
   int32_t currentFile_{-1};
   int32_t currentSplit_{0};
 };
@@ -92,13 +97,13 @@ class LocalSplitSourceFactory : public SplitSourceFactory {
   LocalSplitSourceFactory(
       std::shared_ptr<LocalSchema> schema,
       int32_t splitsPerFile)
-      : schema_(schema), splitsPerFile_(splitsPerFile) {}
+    : schema_(std::move(schema)), splitsPerFile_(splitsPerFile) {}
 
   std::unique_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;
 
  private:
-  std::shared_ptr<LocalSchema> schema_;
+  const std::shared_ptr<LocalSchema> schema_;
   const int32_t splitsPerFile_;
 };
 
