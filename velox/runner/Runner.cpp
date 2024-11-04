@@ -18,17 +18,17 @@
 
 namespace facebook::velox::runner {
 
-  std::string runnerStateString(Runner::State state) {
+std::string runnerStateString(Runner::State state) {
   switch (state) {
-  case Runner::State::kInitialized:
+    case Runner::State::kInitialized:
       return "initialized";
-  case Runner::State::kRunning:
+    case Runner::State::kRunning:
       return "running";
-  case Runner::State::kCancelled:
+    case Runner::State::kCancelled:
       return "cancelled";
-  case Runner::State::kError:
+    case Runner::State::kError:
       return "error";
-  case Runner::State::kFinished:
+    case Runner::State::kFinished:
       return "finished";
   }
   return fmt::format("invalid state {}", static_cast<int32_t>(state));
