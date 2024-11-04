@@ -1439,14 +1439,11 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
 
 std::vector<RowVectorPtr> readCursor(
     std::shared_ptr<runner::LocalRunner> runner) {
-  auto cursor = runner->start();
   // 'result' borrows memory from cursor so the life cycle must be shorter.
   std::vector<RowVectorPtr> result;
-  auto task = cursor->task().get();
 
-  while (cursor->moveNext()) {
-    result.push_back(cursor->current());
-    testingMaybeTriggerAbort(task);
+  while (auto rows = runner->next()) {
+    result.push_back(rows);
   }
   return result;
 }

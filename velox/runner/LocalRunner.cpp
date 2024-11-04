@@ -26,7 +26,21 @@ std::shared_ptr<exec::RemoteConnectorSplit> remoteSplit(
 }
 } // namespace
 
-exec::test::TaskCursor* LocalRunner::start() {
+  RowVectorPtr LocalRunner::next() {
+    if (!cursor_) {
+      start();
+    }
+    bool isNext = cursor_->moveNext();
+    if (!isNext) {
+      state_ = RunnerState::kFinished;
+      return nullptr;
+    }
+    return cursor_->current();
+  }
+
+  
+void LocalRunner::start() {
+  VELOX_CHECK_EQ(state_, RunnerState::kInitialized);
   auto lastStage = makeStages();
   params_.planNode = plan_->fragments().back().fragment.planNode;
   auto cursor = exec::test::TaskCursor::create(params_);
@@ -42,9 +56,9 @@ exec::test::TaskCursor* LocalRunner::start() {
   }
   {
     std::lock_guard<std::mutex> l(mutex_);
-    tasksCreated_ = true;
     if (!error_) {
       cursor_ = std::move(cursor);
+      state_ = RunnerState::kRunning;
     }
   }
   if (!cursor_) {
@@ -52,19 +66,20 @@ exec::test::TaskCursor* LocalRunner::start() {
     abort();
     std::rethrow_exception(error_);
   }
-  return cursor_.get();
 }
 
 void LocalRunner::abort() {
   // If called without previous error, we set the error to be cancellation.
   if (!error_) {
     try {
+      state_ = RunnerState::kCancelled;
       VELOX_FAIL("Query cancelled");
     } catch (const std::exception& e) {
       error_ = std::current_exception();
     }
   }
-  VELOX_CHECK(tasksCreated_);
+  VELOX_CHECK(state_ != RunnerState::kInitialized);
+  // Setting errors is thred safe. The stages do not change after initialization.
   for (auto& stage : stages_) {
     for (auto& task : stage) {
       task->setError(error_);
@@ -76,7 +91,7 @@ void LocalRunner::abort() {
 }
 
 void LocalRunner::waitForCompletion(int32_t maxWaitMicros) {
-  VELOX_CHECK(tasksCreated_);
+  VELOX_CHECK_NE(state_, RunnerState::kInitialized);
   std::vector<ContinueFuture> futures;
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -107,6 +122,7 @@ LocalRunner::makeStages() {
       if (error_) {
         return;
       }
+      state_ = RunnerState::kError;
       error_ = error;
     }
     if (cursor_) {
@@ -269,4 +285,16 @@ std::string MultiFragmentPlan::toString() const {
   return out.str();
 }
 
+  std::string runnerStateString(RunnerState state) {
+    switch (state) {
+    case RunnerState::kInitialized: return "initialized";
+    case RunnerState::kRunning: return "running";
+    case RunnerState::kCancelled: return "cancelled";
+    case RunnerState::kError: return "error";
+    case RunnerState::kFinished: return "finished";
+    }
+    return "invalid state";
+  }
+
+  
 } // namespace facebook::velox::runner

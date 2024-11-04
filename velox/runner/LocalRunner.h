@@ -39,7 +39,8 @@ class LocalRunner : public Runner,
     params_.queryCtx = std::move(queryCtx);
   }
 
-  exec::test::TaskCursor* start() override;
+
+  RowVectorPtr next() override;
 
   std::vector<exec::TaskStats> stats() const override;
 
@@ -52,6 +53,9 @@ class LocalRunner : public Runner,
   }
 
  private:
+  void start();
+
+
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
   // Serializes 'cursor_' and 'error_'.
   mutable std::mutex mutex_;
@@ -65,9 +69,8 @@ class LocalRunner : public Runner,
   std::unique_ptr<exec::test::TaskCursor> cursor_;
   std::vector<std::vector<std::shared_ptr<exec::Task>>> stages_;
   std::exception_ptr error_;
-  bool tasksCreated_{false};
 
-  RunnerState state_;
+  RunnerState state_{RunnerState::kInitialized};
 };
 
 ///

@@ -47,7 +47,7 @@ class SplitSourceFactory {
       const core::TableScanNode& scan) = 0;
 };
 
-enum class RunnerState { kRunning, kFinished, kError, kCancelled };
+  enum class RunnerState { kInitialized, kRunning, kFinished, kError, kCancelled };
 
 /// Base class for executing multifragment Velox queries. One instance
 /// of a Runner coordinates the execution of one multifragment
@@ -59,11 +59,9 @@ class Runner {
  public:
   virtual ~Runner() = default;
 
-  /// Starts execution and returns a TaskCursor for consuming the results.
-  /// moveNext on the cursor throws the first error encountered in the
-  /// execution. This may be called only once.
-  virtual exec::test::TaskCursor* start() = 0;
-
+  /// Returns the next batch of results. Returns nullptr when no more results. Throws any execution time errors. The result is allocated in the pool of QueryCtx given to the Runner implementation. The caller is responsible for serializing calls from different threads.
+  virtual RowVectorPtr next() = 0;
+  
   /// Returns Task stats for each fragment of the plan. The stats correspond 1:1
   /// to the stages in the MultiFragmentPlan. This may be called at any time.
   /// before waitForCompletion() or abort().
@@ -72,9 +70,9 @@ class Runner {
   /// Returns the state of execution.
   virtual RunnerState state() const = 0;
 
-  /// Cancels the possibly pending execution. Returns before the execution is
-  /// finished. Use waitForCompletion() to wait for all execution resources to
-  /// be freed.
+  /// Cancels the possibly pending execution. Returns immediately, thus before the execution is
+  /// actually finished. Use waitForCompletion() to wait for all execution resources to
+  /// be freed. May be called from any thread without serialization.
   virtual void abort() = 0;
 
   /// Waits up to 'maxWaitMicros' for all activity of the execution to cease.
@@ -82,5 +80,17 @@ class Runner {
   /// is freed before destroying the test fixture and its memory pools.
   virtual void waitForCompletion(int32_t maxWaitMicros) = 0;
 };
+std::string runnerStateString(RunnerState state);
 
+  
 } // namespace facebook::velox::runner
+
+template <>
+struct fmt::formatter<facebook::velox::runner::RunnerState>
+    : formatter<std::string> {
+  auto format(facebook::velox::runner::RunnerState state, format_context& ctx)
+      const {
+    return formatter<std::string>::format(
+        facebook::velox::runner::runnerStateString(state), ctx);
+  }
+};
