@@ -47,7 +47,8 @@ void LocalRunner::start() {
   // If the plan only has the last stage, there are no shuffles between the last
   // and previous stages to set up.
   if (!lastStage.empty()) {
-    const auto finalStageConsumer = fragments_.back().inputStages[0].consumerNodeId;
+    const auto finalStageConsumer =
+        fragments_.back().inputStages[0].consumerNodeId;
     for (auto& remote : lastStage) {
       cursor->task()->addSplit(finalStageConsumer, exec::Split(remote));
     }
@@ -152,7 +153,7 @@ LocalRunner::makeStages() {
           onError);
       stages_.back().push_back(task);
       if (fragment.numBroadcastDestinations) {
-	// TODO: Add support for Arbitrary partition type.
+        // TODO: Add support for Arbitrary partition type.
         task->updateOutputBuffers(fragment.numBroadcastDestinations, true);
       }
       task->start(options_.numDrivers);
@@ -243,7 +244,7 @@ std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
   VELOX_CHECK_NOT_NULL(tableHandle);
   auto* table = reinterpret_cast<LocalTable*>(
       schema_->findTable(tableHandle->tableName()));
-  
+
   return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
 }
 

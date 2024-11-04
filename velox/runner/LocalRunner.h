@@ -24,8 +24,7 @@
 
 namespace facebook::velox::runner {
 
-
-  /// Runner for in-process execution of a distributed plan.
+/// Runner for in-process execution of a distributed plan.
 class LocalRunner : public Runner,
                     public std::enable_shared_from_this<LocalRunner> {
  public:
@@ -97,7 +96,7 @@ class LocalSplitSourceFactory : public SplitSourceFactory {
   LocalSplitSourceFactory(
       std::shared_ptr<LocalSchema> schema,
       int32_t splitsPerFile)
-    : schema_(std::move(schema)), splitsPerFile_(splitsPerFile) {}
+      : schema_(std::move(schema)), splitsPerFile_(splitsPerFile) {}
 
   std::unique_ptr<SplitSource> splitSourceForScan(
       const core::TableScanNode& scan) override;

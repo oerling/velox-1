@@ -21,18 +21,19 @@
 
 namespace facebook::velox::exec::test {
 
-  /// Builder for distributed plans. Adds a shuffle() and related
-  /// methods for building PartitionedOutput-Exchange pairs between
-  /// fragments. Not thread safe.
+/// Builder for distributed plans. Adds a shuffle() and related
+/// methods for building PartitionedOutput-Exchange pairs between
+/// fragments. Not thread safe.
 class DistributedPlanBuilder : public PlanBuilder {
  public:
-  /// Constructs a top level DistributedPlanBuilder. 
+  /// Constructs a top level DistributedPlanBuilder.
   DistributedPlanBuilder(
       const runner::MultiFragmentPlan::Options& options,
       std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
       memory::MemoryPool* pool = nullptr);
 
-  /// Constructs a child builder. Used for branching plans, e.g. the subplan for a join build side.
+  /// Constructs a child builder. Used for branching plans, e.g. the subplan for
+  /// a join build side.
   DistributedPlanBuilder(DistributedPlanBuilder& parent);
 
   /// Returns the planned fragments. The builder will be empty after this.

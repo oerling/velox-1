@@ -47,7 +47,6 @@ class SplitSourceFactory {
       const core::TableScanNode& scan) = 0;
 };
 
-
 /// Base class for executing multifragment Velox queries. One instance
 /// of a Runner coordinates the execution of one multifragment
 /// query. Different derived classes can support different shuffles
@@ -56,15 +55,7 @@ class SplitSourceFactory {
 /// the caller holds an owning reference to the runner.
 class Runner {
  public:
-
-  enum class State {
-  kInitialized,
-  kRunning,
-  kFinished,
-  kError,
-  kCancelled
-};
-
+  enum class State { kInitialized, kRunning, kFinished, kError, kCancelled };
 
   virtual ~Runner() = default;
 
@@ -88,11 +79,13 @@ class Runner {
   /// serialization.
   virtual void abort() = 0;
 
-  /// Waits up to 'maxWaitMicros' for all activity of the execution to cease. This is used in tests to ensure that all pools are empty and unreferenced before teradown.
+  /// Waits up to 'maxWaitMicros' for all activity of the execution to cease.
+  /// This is used in tests to ensure that all pools are empty and unreferenced
+  /// before teradown.
 
   virtual void waitForCompletion(int32_t maxWaitMicros) = 0;
 };
-  std::string runnerStateString(Runner::State state);
+std::string runnerStateString(Runner::State state);
 
 } // namespace facebook::velox::runner
 

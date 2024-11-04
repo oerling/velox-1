@@ -41,7 +41,8 @@ struct ExecutableFragment {
   int32_t width{0};
   velox::core::PlanFragment fragment;
 
-  /// Source fragments and Exchange node ids for remote shuffles producing input for 'this'.
+  /// Source fragments and Exchange node ids for remote shuffles producing input
+  /// for 'this'.
   std::vector<InputStage> inputStages;
 
   /// Table scan nodes in 'this'.
@@ -88,6 +89,6 @@ class MultiFragmentPlan {
   Options options_;
 };
 
-  using MultiFragmentPlanPtr = std::shared_ptr<const MultiFragmentPlan>;
+using MultiFragmentPlanPtr = std::shared_ptr<const MultiFragmentPlan>;
 
 } // namespace facebook::velox::runner
