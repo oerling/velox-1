@@ -494,4 +494,15 @@ void projectChildren(
         : wrapChild(size, mapping, src[projection.inputChannel]);
   }
 }
+
+std::unique_ptr<Operator> BlockedOperatorFactory::toOperator(
+    DriverCtx* ctx,
+    int32_t id,
+    const core::PlanNodePtr& node) {
+  if (std::dynamic_pointer_cast<const BlockedNode>(node)) {
+    return std::make_unique<BlockedOperator>(
+        ctx, id, node, std::move(blockedCb_));
+  }
+  return nullptr;
+}
 } // namespace facebook::velox::exec

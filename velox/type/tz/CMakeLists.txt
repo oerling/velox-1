@@ -14,8 +14,12 @@
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()
-velox_add_library(velox_type_tz TimeZoneMap.h TimeZoneDatabase.cpp
-                  TimeZoneMap.cpp)
+velox_add_library(
+  velox_type_tz
+  TimeZoneMap.h
+  TimeZoneDatabase.cpp
+  TimeZoneLinks.cpp
+  TimeZoneMap.cpp)
 
 velox_link_libraries(
   velox_type_tz
@@ -23,4 +27,6 @@ velox_link_libraries(
   velox_external_date
   Boost::regex
   fmt::fmt
-  Folly::folly)
+  Folly::folly
+  ICU::i18n
+  ICU::uc)

@@ -37,7 +37,6 @@ using namespace facebook::velox::connector;
 using namespace facebook::velox::connector::hive;
 
 namespace facebook::velox::exec::test {
-
 namespace {
 
 core::TypedExprPtr parseExpr(
@@ -133,6 +132,26 @@ PlanBuilder& PlanBuilder::tpchTableScan(
       .endTableScan();
 }
 
+PlanBuilder::TableScanBuilder& PlanBuilder::TableScanBuilder::subfieldFilters(
+    std::vector<std::string> subfieldFilters) {
+  subfieldFilters_.clear();
+  subfieldFilters_.reserve(subfieldFilters.size());
+
+  for (const auto& filter : subfieldFilters) {
+    subfieldFilters_.emplace_back(
+        parse::parseExpr(filter, planBuilder_.options_));
+  }
+  return *this;
+}
+
+PlanBuilder::TableScanBuilder& PlanBuilder::TableScanBuilder::remainingFilter(
+    std::string remainingFilter) {
+  if (!remainingFilter.empty()) {
+    remainingFilter_ = parse::parseExpr(remainingFilter, planBuilder_.options_);
+  }
+  return *this;
+}
+
 core::PlanNodePtr PlanBuilder::TableScanBuilder::build(core::PlanNodeId id) {
   VELOX_CHECK_NOT_NULL(outputType_, "outputType must be specified");
   std::unordered_map<std::string, core::TypedExprPtr> typedMapping;
@@ -167,9 +186,10 @@ core::PlanNodePtr PlanBuilder::TableScanBuilder::build(core::PlanNodeId id) {
   filters.reserve(subfieldFilters_.size());
   auto queryCtx = core::QueryCtx::create();
   exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), planBuilder_.pool_);
+
   for (const auto& filter : subfieldFilters_) {
     auto filterExpr =
-        parseExpr(filter, parseType, planBuilder_.options_, planBuilder_.pool_);
+        core::Expressions::inferTypes(filter, parseType, planBuilder_.pool_);
     auto [subfield, subfieldFilter] =
         exec::toSubfieldFilter(filterExpr, &evaluator);
 
@@ -187,12 +207,9 @@ core::PlanNodePtr PlanBuilder::TableScanBuilder::build(core::PlanNodeId id) {
   }
 
   core::TypedExprPtr remainingFilterExpr;
-  if (!remainingFilter_.empty()) {
-    remainingFilterExpr = parseExpr(
-                              remainingFilter_,
-                              parseType,
-                              planBuilder_.options_,
-                              planBuilder_.pool_)
+  if (remainingFilter_) {
+    remainingFilterExpr = core::Expressions::inferTypes(
+                              remainingFilter_, parseType, planBuilder_.pool_)
                               ->rewriteInputNames(typedMapping);
   }
 
@@ -222,9 +239,10 @@ PlanBuilder& PlanBuilder::values(
 
 PlanBuilder& PlanBuilder::traceScan(
     const std::string& traceNodeDir,
+    uint32_t pipelineId,
     const RowTypePtr& outputType) {
-  planNode_ = std::make_shared<core::QueryTraceScanNode>(
-      nextPlanNodeId(), traceNodeDir, outputType);
+  planNode_ = std::make_shared<core::TraceScanNode>(
+      nextPlanNodeId(), traceNodeDir, pipelineId, outputType);
   return *this;
 }
 
@@ -1250,6 +1268,21 @@ PlanBuilder& PlanBuilder::localPartition(const std::vector<std::string>& keys) {
   return *this;
 }
 
+PlanBuilder& PlanBuilder::localPartition(
+    int numBuckets,
+    const std::vector<column_index_t>& bucketChannels,
+    const std::vector<VectorPtr>& constValues) {
+  auto hivePartitionFunctionFactory =
+      std::make_shared<HivePartitionFunctionSpec>(
+          numBuckets, bucketChannels, constValues);
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
+      nextPlanNodeId(),
+      core::LocalPartitionNode::Type::kRepartition,
+      std::move(hivePartitionFunctionFactory),
+      std::vector<core::PlanNodePtr>{planNode_});
+  return *this;
+}
+
 PlanBuilder& PlanBuilder::localPartitionByBucket(
     const std::shared_ptr<connector::hive::HiveBucketProperty>&
         bucketProperty) {
@@ -1323,7 +1356,8 @@ class RoundRobinRowPartitionFunction : public core::PartitionFunction {
 class RoundRobinRowPartitionFunctionSpec : public core::PartitionFunctionSpec {
  public:
   std::unique_ptr<core::PartitionFunction> create(
-      int numPartitions) const override {
+      int numPartitions,
+      bool /*localExchange*/) const override {
     return std::make_unique<RoundRobinRowPartitionFunction>(numPartitions);
   }
 

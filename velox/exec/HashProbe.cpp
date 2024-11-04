@@ -1778,7 +1778,7 @@ void HashProbe::reclaim(
   table_->clear(true);
   // Sets the spilled hash table in the join bridge.
   if (!spillPartitionIdSet.empty()) {
-    joinBridge_->setSpilledHashTable(std::move(spillPartitionSet));
+    joinBridge_->appendSpilledHashTablePartitions(std::move(spillPartitionSet));
   }
 }
 

@@ -51,7 +51,9 @@ SortWindowBuild::SortWindowBuild(
       compareFlags_{makeCompareFlags(numPartitionKeys_, node->sortingOrders())},
       pool_(pool),
       prefixSortConfig_(prefixSortConfig),
-      spillStats_(spillStats) {
+      spillStats_(spillStats),
+      sortedRows_(0, memory::StlAllocator<char*>(*pool)),
+      partitionStartRows_(0, memory::StlAllocator<char*>(*pool)) {
   VELOX_CHECK_NOT_NULL(pool_);
   allKeyInfo_.reserve(partitionKeyInfo_.size() + sortKeyInfo_.size());
   allKeyInfo_.insert(
@@ -136,6 +138,43 @@ void SortWindowBuild::ensureInputFits(const RowVectorPtr& input) {
                << ", usage: " << succinctBytes(data_->pool()->usedBytes())
                << ", reservation: "
                << succinctBytes(data_->pool()->reservedBytes());
+}
+
+void SortWindowBuild::ensureSortFits() {
+  // Check if spilling is enabled or not.
+  if (spillConfig_ == nullptr) {
+    return;
+  }
+
+  // Test-only spill path.
+  if (testingTriggerSpill(pool_->name())) {
+    spill();
+    return;
+  }
+
+  if (spiller_ != nullptr) {
+    return;
+  }
+
+  // The memory for std::vector sorted rows, `partitionStartRows_` and prefix
+  // sort required buffer.
+  uint64_t sortBufferToReserve =
+      numRows_ * (sizeof(char*) + sizeof(vector_size_t)) +
+      PrefixSort::maxRequiredBytes(
+          pool_, data_.get(), compareFlags_, prefixSortConfig_);
+  {
+    memory::ReclaimableSectionGuard guard(nonReclaimableSection_);
+    if (pool_->maybeReserve(sortBufferToReserve)) {
+      return;
+    }
+  }
+
+  LOG(WARNING) << fmt::format(
+      "Failed to reserve {} for sort window build from memory pool {}, usage: {}, reservation: {}",
+      succinctBytes(sortBufferToReserve),
+      pool_->name(),
+      succinctBytes(pool_->usedBytes()),
+      succinctBytes(pool_->reservedBytes()));
 }
 
 void SortWindowBuild::setupSpiller() {
@@ -229,6 +268,8 @@ void SortWindowBuild::noMoreInput() {
     return;
   }
 
+  ensureSortFits();
+
   if (spiller_ != nullptr) {
     // Spill remaining data to avoid running out of memory while sort-merging
     // spilled data.
@@ -248,10 +289,14 @@ void SortWindowBuild::noMoreInput() {
     // the partition. This will order the rows for getOutput().
     sortPartitions();
   }
+
+  // Releases the unused memory reservation after procesing input.
+  pool_->release();
 }
 
 void SortWindowBuild::loadNextPartitionFromSpill() {
   sortedRows_.clear();
+  sortedRows_.shrink_to_fit();
   data_->clear();
 
   for (;;) {

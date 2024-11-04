@@ -194,6 +194,22 @@ uint32_t SharedArbitrator::ExtraConfig::globalArbitrationMemoryReclaimPct(
       kDefaultGlobalMemoryArbitrationReclaimPct);
 }
 
+bool SharedArbitrator::ExtraConfig::globalArbitrationWithoutSpill(
+    const std::unordered_map<std::string, std::string>& configs) {
+  return getConfig<bool>(
+      configs,
+      kGlobalArbitrationWithoutSpill,
+      kDefaultGlobalArbitrationWithoutSpill);
+}
+
+double SharedArbitrator::ExtraConfig::globalArbitrationAbortTimeRatio(
+    const std::unordered_map<std::string, std::string>& configs) {
+  return getConfig<double>(
+      configs,
+      kGlobalArbitrationAbortTimeRatio,
+      kDefaultGlobalArbitrationAbortTimeRatio);
+}
+
 SharedArbitrator::SharedArbitrator(const Config& config)
     : MemoryArbitrator(config),
       reservedCapacity_(ExtraConfig::reservedCapacity(config.extraConfigs)),
@@ -216,6 +232,10 @@ SharedArbitrator::SharedArbitrator(const Config& config)
           ExtraConfig::globalArbitrationEnabled(config.extraConfigs)),
       globalArbitrationMemoryReclaimPct_(
           ExtraConfig::globalArbitrationMemoryReclaimPct(config.extraConfigs)),
+      globalArbitrationAbortTimeRatio_(
+          ExtraConfig::globalArbitrationAbortTimeRatio(config.extraConfigs)),
+      globalArbitrationWithoutSpill_(
+          ExtraConfig::globalArbitrationWithoutSpill(config.extraConfigs)),
       freeReservedCapacity_(reservedCapacity_),
       freeNonReservedCapacity_(capacity_ - freeReservedCapacity_) {
   VELOX_CHECK_EQ(kind_, config.kind);
@@ -252,7 +272,11 @@ SharedArbitrator::SharedArbitrator(const Config& config)
     VELOX_MEM_LOG(INFO) << "Arbitration config: max arbitration time "
                         << succinctMillis(maxArbitrationTimeMs_)
                         << ", global memory reclaim percentage "
-                        << globalArbitrationMemoryReclaimPct_;
+                        << globalArbitrationMemoryReclaimPct_
+                        << ", global arbitration abort time ratio "
+                        << globalArbitrationAbortTimeRatio_
+                        << ", global arbitration skip spill "
+                        << globalArbitrationWithoutSpill_;
   }
   VELOX_MEM_LOG(INFO) << "Memory pool participant config: "
                       << participantConfig_.toString();
@@ -325,7 +349,7 @@ void SharedArbitrator::shutdownGlobalArbitration() {
 }
 
 void SharedArbitrator::wakeupGlobalArbitrationThread() {
-  VELOX_CHECK(globalArbitrationEnabled_);
+  checkGlobalArbitrationEnabled();
   VELOX_CHECK_NOT_NULL(globalArbitrationController_);
   incrementGlobalArbitrationWaitCount();
   globalArbitrationThreadCv_.notify_one();
@@ -721,9 +745,12 @@ bool SharedArbitrator::growCapacity(ArbitrationOperation& op) {
   reclaimUnusedCapacity();
   RETURN_IF_TRUE(growWithFreeCapacity(op));
 
-  if (!globalArbitrationEnabled_ &&
-      op.participant()->reclaimableUsedCapacity() >=
-          participantConfig_.minReclaimBytes) {
+  if (!globalArbitrationEnabled_) {
+    if (op.participant()->reclaimableUsedCapacity() <
+        participantConfig_.minReclaimBytes) {
+      return false;
+    }
+
     // NOTE: if global memory arbitration is not enabled, we will try to
     // reclaim from the participant itself before failing this operation.
     reclaim(
@@ -739,7 +766,7 @@ bool SharedArbitrator::growCapacity(ArbitrationOperation& op) {
 }
 
 bool SharedArbitrator::startAndWaitGlobalArbitration(ArbitrationOperation& op) {
-  VELOX_CHECK(globalArbitrationEnabled_);
+  checkGlobalArbitrationEnabled();
   checkIfTimeout(op);
 
   std::unique_ptr<ArbitrationWait> arbitrationWait;
@@ -830,17 +857,29 @@ void SharedArbitrator::globalArbitrationMain() {
   VELOX_MEM_LOG(INFO) << "Global arbitration controller stopped";
 }
 
-void SharedArbitrator::runGlobalArbitration() {
-  TestValue::adjust(
-      "facebook::velox::memory::SharedArbitrator::runGlobalArbitration", this);
+bool SharedArbitrator::globalArbitrationShouldReclaimByAbort(
+    uint64_t globalRunElapsedTimeMs,
+    bool hasReclaimedByAbort,
+    bool allParticipantsReclaimed,
+    uint64_t lastReclaimedBytes) const {
+  return globalArbitrationWithoutSpill_ ||
+      (globalRunElapsedTimeMs >
+           maxArbitrationTimeMs_ * globalArbitrationAbortTimeRatio_ &&
+       (hasReclaimedByAbort ||
+        (allParticipantsReclaimed && lastReclaimedBytes == 0)));
+}
 
+void SharedArbitrator::runGlobalArbitration() {
   const uint64_t startTimeMs = getCurrentTimeMs();
   uint64_t totalReclaimedBytes{0};
-  bool reclaimByAbort{false};
+  bool shouldReclaimByAbort{false};
   uint64_t reclaimedBytes{0};
   std::unordered_set<uint64_t> reclaimedParticipants;
   std::unordered_set<uint64_t> failedParticipants;
   bool allParticipantsReclaimed{false};
+
+  TestValue::adjust(
+      "facebook::velox::memory::SharedArbitrator::runGlobalArbitration", this);
 
   size_t round{0};
   for (;; ++round) {
@@ -854,19 +893,19 @@ void SharedArbitrator::runGlobalArbitration() {
 
       // Check if we need to abort participant to reclaim used memory to
       // accelerate global arbitration.
-      //
-      // TODO: make the time based condition check configurable.
-      reclaimByAbort =
-          (getCurrentTimeMs() - startTimeMs) < maxArbitrationTimeMs_ / 2 &&
-          (reclaimByAbort || (allParticipantsReclaimed && reclaimedBytes == 0));
-      if (!reclaimByAbort) {
+      shouldReclaimByAbort = globalArbitrationShouldReclaimByAbort(
+          getCurrentTimeMs() - startTimeMs,
+          shouldReclaimByAbort,
+          allParticipantsReclaimed,
+          reclaimedBytes);
+      if (shouldReclaimByAbort) {
+        reclaimedBytes = reclaimUsedMemoryByAbort(/*force=*/true);
+      } else {
         reclaimedBytes = reclaimUsedMemoryBySpill(
             targetBytes,
             reclaimedParticipants,
             failedParticipants,
             allParticipantsReclaimed);
-      } else {
-        reclaimedBytes = reclaimUsedMemoryByAbort(/*force=*/true);
       }
       totalReclaimedBytes += reclaimedBytes;
       reclaimUnusedCapacity();

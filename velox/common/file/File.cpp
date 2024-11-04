@@ -170,9 +170,10 @@ void LocalReadFile::preadInternal(uint64_t offset, uint64_t length, char* pos)
   VELOX_CHECK_EQ(
       bytesRead,
       length,
-      "fread failure in LocalReadFile::PReadInternal, {} vs {}.",
+      "fread failure in LocalReadFile::PReadInternal, {} vs {}: {}",
       bytesRead,
-      length);
+      length,
+      folly::errnoStr(errno));
 }
 
 std::string_view
@@ -376,6 +377,21 @@ void LocalWriteFile::write(
 void LocalWriteFile::truncate(int64_t newSize) {
   checkNotClosed(closed_);
   VELOX_CHECK_GE(newSize, 0, "New size cannot be negative.");
+#ifdef linux
+  if (newSize > size_) {
+    // Use fallocate to extend the file.
+    const auto ret = ::fallocate(fd_, 0, 0, newSize);
+    VELOX_CHECK_EQ(
+        ret,
+        0,
+        "fallocate failed in LocalWriteFile::truncate: {}.",
+        folly::errnoStr(errno));
+    size_ = newSize;
+    return;
+  }
+#endif // linux
+
+  // Fallback to ftruncate.
   const auto ret = ::ftruncate(fd_, newSize);
   VELOX_CHECK_EQ(
       ret,

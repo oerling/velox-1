@@ -29,6 +29,7 @@
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/SerializedPageUtil.h"
 
 using namespace facebook::velox::exec::test;
 
@@ -154,23 +155,11 @@ class MultiFragmentTest : public HiveConnectorTestBase {
     createDuckDbTable(vectors_);
   }
 
-  std::unique_ptr<SerializedPage> toSerializedPage(const RowVectorPtr& vector) {
-    auto data = std::make_unique<VectorStreamGroup>(pool());
-    auto size = vector->size();
-    auto range = IndexRange{0, size};
-    data->createStreamTree(asRowType(vector->type()), size);
-    data->append(vector, folly::Range(&range, 1));
-    auto listener = bufferManager_->newListener();
-    IOBufOutputStream stream(*pool(), listener.get(), data->size());
-    data->flush(&stream);
-    return std::make_unique<SerializedPage>(stream.getIOBuf(), nullptr, size);
-  }
-
   int32_t enqueue(
       const std::string& taskId,
       int32_t destination,
       const RowVectorPtr& data) {
-    auto page = toSerializedPage(data);
+    auto page = toSerializedPage(data, bufferManager_, pool());
     const auto pageSize = page->size();
 
     ContinueFuture unused;
@@ -575,6 +564,160 @@ TEST_F(MultiFragmentTest, partitionedOutput) {
     bufferManager_->deleteResults(leafTaskId, 0);
 
     ASSERT_TRUE(waitForTaskCompletion(leafTask.get())) << leafTask->taskId();
+  }
+}
+
+TEST_F(MultiFragmentTest, noHashPartitionSkew) {
+  setupSources(10, 1000);
+
+  // Update the key column.
+  int count{0};
+  for (auto& vector : vectors_) {
+    vector->childAt(0) = makeFlatVector<int64_t>(
+        vector->childAt(0)->size(), [&](auto /*unused*/) { return count++; });
+  };
+
+  // Test dropping columns only.
+  const int numPartitions{8};
+  auto producerTaskId = makeTaskId("producer", 0);
+  auto producerPlan =
+      PlanBuilder()
+          .values(vectors_)
+          .partitionedOutput({"c0"}, numPartitions, {"c0", "c1"})
+          .planNode();
+  auto producerTask = makeTask(producerTaskId, producerPlan, 0);
+  producerTask->start(1);
+
+  core::PlanNodeId partialAggregationNodeId;
+  auto consumerPlan = PlanBuilder()
+                          .exchange(producerPlan->outputType())
+                          .localPartition({"c0"})
+                          .partialAggregation({"c0"}, {"count(1)"})
+                          .capturePlanNodeId(partialAggregationNodeId)
+                          .localPartition({})
+                          .finalAggregation()
+                          .singleAggregation({}, {"sum(1)"})
+                          .planNode();
+
+  // This is computed based offline and shouldn't change across runs.
+  const std::vector<int> expectedValues{
+      1'189, 1'266, 1'274, 1'228, 1'250, 1'225, 1'308, 1'260};
+
+  const int numConsumerDriverThreads{4};
+  const auto runConsumer = [&](int partition) {
+    const auto expectedResult = makeRowVector({makeFlatVector<int64_t>(
+        std::vector<int64_t>{expectedValues[partition]})});
+    SCOPED_TRACE(fmt::format("partition {}", partition));
+    auto consumerTask = test::AssertQueryBuilder(consumerPlan)
+                            .split(remoteSplit(producerTaskId))
+                            .destination(partition)
+                            .maxDrivers(numConsumerDriverThreads)
+                            .assertResults(expectedResult);
+
+    // Verifies that each partial aggregation operator process a number of
+    // inputs.
+    auto consumerTaskStats = exec::toPlanStats(consumerTask->taskStats());
+    const auto& partialAggregationNodeStats =
+        consumerTaskStats.at(partialAggregationNodeId);
+    ASSERT_EQ(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct")
+            .count,
+        numConsumerDriverThreads);
+    ASSERT_GT(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct").min,
+        0);
+    ASSERT_GT(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct").max,
+        0);
+  };
+
+  std::vector<std::thread> consumerThreads;
+  for (int partition = 0; partition < numPartitions; ++partition) {
+    consumerThreads.emplace_back([&, partition]() { runConsumer(partition); });
+  }
+
+  for (auto& consumerThread : consumerThreads) {
+    consumerThread.join();
+  }
+}
+
+TEST_F(MultiFragmentTest, noHivePartitionSkew) {
+  setupSources(10, 1000);
+
+  // Update the key column.
+  int count{0};
+  for (auto& vector : vectors_) {
+    vector->childAt(0) = makeFlatVector<int64_t>(
+        vector->childAt(0)->size(), [&](auto /*unused*/) { return count++; });
+  };
+
+  // Test dropping columns only.
+  const int numBuckets = 256;
+  const int numPartitions{8};
+  auto producerTaskId = makeTaskId("producer", 0);
+  auto producerPlan =
+      PlanBuilder()
+          .values(vectors_)
+          .partitionedOutput(
+              {"c0"},
+              numPartitions,
+              false,
+              std::make_shared<connector::hive::HivePartitionFunctionSpec>(
+                  numBuckets,
+                  std::vector<column_index_t>{0},
+                  std::vector<VectorPtr>{}),
+              {"c0", "c1"})
+          .planNode();
+  auto producerTask = makeTask(producerTaskId, producerPlan, 0);
+  producerTask->start(1);
+
+  core::PlanNodeId partialAggregationNodeId;
+  auto consumerPlan = PlanBuilder()
+                          .exchange(producerPlan->outputType())
+                          .localPartition(numBuckets, {0}, {})
+                          .partialAggregation({"c0"}, {"count(1)"})
+                          .capturePlanNodeId(partialAggregationNodeId)
+                          .localPartition({})
+                          .finalAggregation()
+                          .singleAggregation({}, {"sum(1)"})
+                          .planNode();
+
+  const int numConsumerDriverThreads{4};
+  const auto runConsumer = [&](int partition) {
+    // Hive partition evenly distribute rows across nodes.
+    const auto expectedResult =
+        makeRowVector({makeFlatVector<int64_t>(std::vector<int64_t>{1'250})});
+    SCOPED_TRACE(fmt::format("partition {}", partition));
+    auto consumerTask = test::AssertQueryBuilder(consumerPlan)
+                            .split(remoteSplit(producerTaskId))
+                            .destination(partition)
+                            .maxDrivers(numConsumerDriverThreads)
+                            .assertResults(expectedResult);
+
+    // Verifies that each partial aggregation operator process a number of
+    // inputs.
+    auto consumerTaskStats = exec::toPlanStats(consumerTask->taskStats());
+    const auto& partialAggregationNodeStats =
+        consumerTaskStats.at(partialAggregationNodeId);
+    ASSERT_EQ(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct")
+            .count,
+        numConsumerDriverThreads);
+    ASSERT_GT(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct").min,
+        0);
+    ASSERT_GT(
+        partialAggregationNodeStats.customStats.at("hashtable.numDistinct").max,
+        0);
+  };
+
+  std::vector<std::thread> consumerThreads;
+  for (int partition = 0; partition < numPartitions; ++partition) {
+    consumerThreads.emplace_back([&, partition]() { runConsumer(partition); });
+  }
+
+  for (auto& consumerThread : consumerThreads) {
+    consumerThread.join();
   }
 }
 
