@@ -26,19 +26,18 @@ std::shared_ptr<exec::RemoteConnectorSplit> remoteSplit(
 }
 } // namespace
 
-  RowVectorPtr LocalRunner::next() {
-    if (!cursor_) {
-      start();
-    }
-    bool isNext = cursor_->moveNext();
-    if (!isNext) {
-      state_ = RunnerState::kFinished;
-      return nullptr;
-    }
-    return cursor_->current();
+RowVectorPtr LocalRunner::next() {
+  if (!cursor_) {
+    start();
   }
+  bool isNext = cursor_->moveNext();
+  if (!isNext) {
+    state_ = RunnerState::kFinished;
+    return nullptr;
+  }
+  return cursor_->current();
+}
 
-  
 void LocalRunner::start() {
   VELOX_CHECK_EQ(state_, RunnerState::kInitialized);
   auto lastStage = makeStages();
@@ -79,7 +78,8 @@ void LocalRunner::abort() {
     }
   }
   VELOX_CHECK(state_ != RunnerState::kInitialized);
-  // Setting errors is thred safe. The stages do not change after initialization.
+  // Setting errors is thred safe. The stages do not change after
+  // initialization.
   for (auto& stage : stages_) {
     for (auto& task : stage) {
       task->setError(error_);
@@ -285,16 +285,20 @@ std::string MultiFragmentPlan::toString() const {
   return out.str();
 }
 
-  std::string runnerStateString(RunnerState state) {
-    switch (state) {
-    case RunnerState::kInitialized: return "initialized";
-    case RunnerState::kRunning: return "running";
-    case RunnerState::kCancelled: return "cancelled";
-    case RunnerState::kError: return "error";
-    case RunnerState::kFinished: return "finished";
-    }
-    return "invalid state";
+std::string runnerStateString(RunnerState state) {
+  switch (state) {
+    case RunnerState::kInitialized:
+      return "initialized";
+    case RunnerState::kRunning:
+      return "running";
+    case RunnerState::kCancelled:
+      return "cancelled";
+    case RunnerState::kError:
+      return "error";
+    case RunnerState::kFinished:
+      return "finished";
   }
+  return "invalid state";
+}
 
-  
 } // namespace facebook::velox::runner

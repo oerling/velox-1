@@ -39,7 +39,6 @@ class LocalRunner : public Runner,
     params_.queryCtx = std::move(queryCtx);
   }
 
-
   RowVectorPtr next() override;
 
   std::vector<exec::TaskStats> stats() const override;
@@ -54,7 +53,6 @@ class LocalRunner : public Runner,
 
  private:
   void start();
-
 
   std::vector<std::shared_ptr<exec::RemoteConnectorSplit>> makeStages();
   // Serializes 'cursor_' and 'error_'.

@@ -47,7 +47,13 @@ class SplitSourceFactory {
       const core::TableScanNode& scan) = 0;
 };
 
-  enum class RunnerState { kInitialized, kRunning, kFinished, kError, kCancelled };
+enum class RunnerState {
+  kInitialized,
+  kRunning,
+  kFinished,
+  kError,
+  kCancelled
+};
 
 /// Base class for executing multifragment Velox queries. One instance
 /// of a Runner coordinates the execution of one multifragment
@@ -59,9 +65,12 @@ class Runner {
  public:
   virtual ~Runner() = default;
 
-  /// Returns the next batch of results. Returns nullptr when no more results. Throws any execution time errors. The result is allocated in the pool of QueryCtx given to the Runner implementation. The caller is responsible for serializing calls from different threads.
+  /// Returns the next batch of results. Returns nullptr when no more results.
+  /// Throws any execution time errors. The result is allocated in the pool of
+  /// QueryCtx given to the Runner implementation. The caller is responsible for
+  /// serializing calls from different threads.
   virtual RowVectorPtr next() = 0;
-  
+
   /// Returns Task stats for each fragment of the plan. The stats correspond 1:1
   /// to the stages in the MultiFragmentPlan. This may be called at any time.
   /// before waitForCompletion() or abort().
@@ -70,9 +79,10 @@ class Runner {
   /// Returns the state of execution.
   virtual RunnerState state() const = 0;
 
-  /// Cancels the possibly pending execution. Returns immediately, thus before the execution is
-  /// actually finished. Use waitForCompletion() to wait for all execution resources to
-  /// be freed. May be called from any thread without serialization.
+  /// Cancels the possibly pending execution. Returns immediately, thus before
+  /// the execution is actually finished. Use waitForCompletion() to wait for
+  /// all execution resources to be freed. May be called from any thread without
+  /// serialization.
   virtual void abort() = 0;
 
   /// Waits up to 'maxWaitMicros' for all activity of the execution to cease.
@@ -82,7 +92,6 @@ class Runner {
 };
 std::string runnerStateString(RunnerState state);
 
-  
 } // namespace facebook::velox::runner
 
 template <>
