@@ -66,13 +66,19 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     LocalRunnerTestBase::SetUpTestCase();
   }
 
-  MultiFragmentPlanPtr makeScanPlan() {
+  // Returns a plan with a table scan. This is a single stage if 'numWorkers' is
+  // 1, otherwise this is a scan stage plus shuffle to a stage that gathers the
+  // scan results.
+  MultiFragmentPlanPtr makeScanPlan(const std::string& id, int32_t numWorkers) {
     MultiFragmentPlan::Options options = {
-        .queryId = "test.", .numWorkers = 4, .numDrivers = 2};
+        .queryId = id, .numWorkers = numWorkers, .numDrivers = 2};
     const int32_t width = 3;
 
     DistributedPlanBuilder rootBuilder(options, idGenerator_, pool_.get());
     rootBuilder.tableScan("T", rowType_);
+    if (numWorkers > 1) {
+      rootBuilder.shuffle({}, 1, false);
+    }
     return std::make_shared<MultiFragmentPlan>(
         rootBuilder.fragments(), std::move(options));
   }
@@ -109,6 +115,22 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     counter += ints->size();
   }
 
+  void checkScanCount(const std::string& id, int32_t numWorkers) {
+    auto scan = makeScanPlan(id, numWorkers);
+    auto localRunner = std::make_shared<LocalRunner>(
+        std::move(scan),
+        makeQueryCtx("q1", rootPool_.get()),
+        splitSourceFactory_);
+    auto results = readCursor(localRunner);
+
+    int32_t count = 0;
+    for (auto& rows : results) {
+      count += rows->size();
+    }
+    localRunner->waitForCompletion(5000);
+    EXPECT_EQ(250'000, count);
+  }
+
   std::shared_ptr<core::PlanNodeIdGenerator> idGenerator_{
       std::make_shared<core::PlanNodeIdGenerator>()};
   // The below are declared static to be scoped to TestCase so as to reuse the
@@ -143,4 +165,9 @@ TEST_F(LocalRunnerTest, error) {
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
   EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(5000);
+}
+
+TEST_F(LocalRunnerTest, scan) {
+  checkScanCount("s1", 1);
+  checkScanCount("s2", 3);
 }

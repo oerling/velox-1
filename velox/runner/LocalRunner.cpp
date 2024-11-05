@@ -44,7 +44,19 @@ void LocalRunner::start() {
   params_.planNode = plan_->fragments().back().fragment.planNode;
   auto cursor = exec::test::TaskCursor::create(params_);
   stages_.push_back({cursor->task()});
-  // If the plan only has the last stage, there are no shuffles between the last
+  // Add table scan splits to the final gathere stage.
+  for (auto& scan : fragments_.back().scans) {
+      auto source = splitSourceFactory_->splitSourceForScan(*scan);
+      for (;;) {
+	auto split = source->next(0);
+	if (!split.hasConnectorSplit()) {
+	  break;
+	}
+	cursor->task()->addSplit(scan->id(), std::move(split));
+      }
+      cursor->task()->noMoreSplits(scan->id());
+  }
+    // If the plan only has the final gather stage, there are no shuffles between the last
   // and previous stages to set up.
   if (!lastStage.empty()) {
     const auto finalStageConsumer =
