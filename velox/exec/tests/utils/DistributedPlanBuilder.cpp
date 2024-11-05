@@ -22,7 +22,7 @@ DistributedPlanBuilder::DistributedPlanBuilder(
     const runner::MultiFragmentPlan::Options& options,
     std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator,
     memory::MemoryPool* pool)
-  : PlanBuilder(planNodeIdGenerator, pool), options_(options), root_(this) {
+    : PlanBuilder(planNodeIdGenerator, pool), options_(options), root_(this) {
   root_->stack_.push_back(this);
   newFragment();
   current_->width = options_.numWorkers;
@@ -48,7 +48,8 @@ void DistributedPlanBuilder::newFragment() {
     current_->fragment = core::PlanFragment(std::move(planNode_));
     fragments_.push_back(std::move(*current_));
   }
-  current_ = std::make_unique<runner::ExecutableFragment>(fmt::format("{}.{}", options_.queryId, root_->fragmentCounter_++));
+  current_ = std::make_unique<runner::ExecutableFragment>(
+      fmt::format("{}.{}", options_.queryId, root_->fragmentCounter_++));
   planNode_ = nullptr;
 }
 
@@ -57,7 +58,8 @@ PlanBuilder& DistributedPlanBuilder::shuffle(
     int numPartitions,
     bool replicateNullsAndAny,
     const std::vector<std::string>& outputLayout) {
-  partitionedOutput(partitionKeys, numPartitions, replicateNullsAndAny, outputLayout);
+  partitionedOutput(
+      partitionKeys, numPartitions, replicateNullsAndAny, outputLayout);
   auto* output =
       dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
   VELOX_CHECK_NOT_NULL(output);
@@ -77,7 +79,8 @@ core::PlanNodePtr DistributedPlanBuilder::shuffleResult(
     int numPartitions,
     bool replicateNullsAndAny,
     const std::vector<std::string>& outputLayout) {
-  partitionedOutput(partitionKeys, numPartitions, replicateNullsAndAny, outputLayout);
+  partitionedOutput(
+      partitionKeys, numPartitions, replicateNullsAndAny, outputLayout);
   auto* output =
       dynamic_cast<const core::PartitionedOutputNode*>(planNode_.get());
   VELOX_CHECK_NOT_NULL(output);

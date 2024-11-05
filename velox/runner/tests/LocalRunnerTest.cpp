@@ -32,7 +32,8 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   static constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
 
   static void SetUpTestCase() {
-    // The lambdas will be run after this scope returns, so make captures static.
+    // The lambdas will be run after this scope returns, so make captures
+    // static.
     static int32_t counter1 = 0;
     auto patch1 = [&](const RowVectorPtr& rows) {
       makeAscending(rows, counter1);
@@ -59,8 +60,9 @@ class LocalRunnerTest : public LocalRunnerTestBase {
             .numVectorsPerFile = kNumVectors,
             .numFiles = kNumFiles,
             .patch = patch2}};
-    
-    // Creates the data and schema from 'testTables_'. These are created on the first test fixture initialization.
+
+    // Creates the data and schema from 'testTables_'. These are created on the
+    // first test fixture initialization.
     LocalRunnerTestBase::SetUpTestCase();
   }
 
@@ -118,7 +120,9 @@ class LocalRunnerTest : public LocalRunnerTestBase {
 TEST_F(LocalRunnerTest, count) {
   auto join = makeJoinPlan();
   auto localRunner = std::make_shared<LocalRunner>(
-						   std::move(join), makeQueryCtx("q1", rootPool_.get()), splitSourceFactory_);
+      std::move(join),
+      makeQueryCtx("q1", rootPool_.get()),
+      splitSourceFactory_);
   auto results = readCursor(localRunner);
   auto stats = localRunner->stats();
   EXPECT_EQ(1, results.size());
@@ -133,7 +137,9 @@ TEST_F(LocalRunnerTest, count) {
 TEST_F(LocalRunnerTest, error) {
   auto join = makeJoinPlan("if (c0 = 111, c0 / 0, c0 + 1) as c0");
   auto localRunner = std::make_shared<LocalRunner>(
-						   std::move(join), makeQueryCtx("q1", rootPool_.get()), splitSourceFactory_);
+      std::move(join),
+      makeQueryCtx("q1", rootPool_.get()),
+      splitSourceFactory_);
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
   EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(5000);

@@ -36,7 +36,8 @@ class DistributedPlanBuilder : public PlanBuilder {
   /// a join build side.
   DistributedPlanBuilder(DistributedPlanBuilder& root);
 
-  /// Returns the planned fragments. The builder will be empty after this. This is only called on the root builder.
+  /// Returns the planned fragments. The builder will be empty after this. This
+  /// is only called on the root builder.
   std::vector<runner::ExecutableFragment> fragments();
 
   PlanBuilder& shuffle(
@@ -69,7 +70,8 @@ class DistributedPlanBuilder : public PlanBuilder {
   // Fragment counter. Only used in root builder.
   int32_t fragmentCounter_{0};
 
-  // The fragment being built. Will be moved to the root builder's 'fragments_' when complete.
+  // The fragment being built. Will be moved to the root builder's 'fragments_'
+  // when complete.
   std::unique_ptr<runner::ExecutableFragment> current_;
 
   // The fragments gathered under this builder. Moved to the root builder when

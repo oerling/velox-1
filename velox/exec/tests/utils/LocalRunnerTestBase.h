@@ -33,7 +33,9 @@ struct TableSpec {
   std::function<void(const RowVectorPtr& vector)> patch;
 };
 
-  /// Test helper class that manages a TestCase with a set of generated tables and a LocalSchema and LocalSplitSource covering the test data. The lifetime of the test data is the test case consisting of multiple TEST_F's.
+/// Test helper class that manages a TestCase with a set of generated tables and
+/// a LocalSchema and LocalSplitSource covering the test data. The lifetime of
+/// the test data is the test case consisting of multiple TEST_F's.
 class LocalRunnerTestBase : public HiveConnectorTestBase {
  protected:
   static void SetUpTestCase() {
@@ -45,11 +47,11 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
     files_.reset();
     HiveConnectorTestBase::TearDownTestCase();
   }
-  
+
   void SetUp() override;
 
   void ensureTestData();
-  void makeSchema();  
+  void makeSchema();
 
   void makeTables(
       std::vector<TableSpec> specs,
@@ -57,26 +59,29 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   std::shared_ptr<runner::SplitSourceFactory> splitSourceFactory(
       const runner::LocalSchema& schema);
-  
+
   // Creates a QueryCtx with 'pool'. 'pool' must be a root pool.
-  static std::shared_ptr<core::QueryCtx> makeQueryCtx(const std::string& queryId, memory::MemoryPool* pool);
+  static std::shared_ptr<core::QueryCtx> makeQueryCtx(
+      const std::string& queryId,
+      memory::MemoryPool* pool);
 
   // Configs for creating QueryCtx.
   inline static std::unordered_map<std::string, std::string> config_;
   inline static std::unordered_map<std::string, std::string> hiveConfig_;
 
-  // The specification of the test data. The data is created in ensureTestData() called from each SetUp()(.
+  // The specification of the test data. The data is created in ensureTestData()
+  // called from each SetUp()(.
   inline static std::vector<TableSpec> testTables_;
-  
+
   // The top level directory with the test data.
   inline static std::shared_ptr<TempDirectoryPath> files_;
 
   // The schema built from the data in 'files_'.
   std::shared_ptr<runner::LocalSchema> schema_;
-  
-  // Split source factory for making SplitSources that range over tables inside 'files_'.
-  std::shared_ptr<runner::SplitSourceFactory> splitSourceFactory_;
 
+  // Split source factory for making SplitSources that range over tables inside
+  // 'files_'.
+  std::shared_ptr<runner::SplitSourceFactory> splitSourceFactory_;
 
   // Leaf pool for schema.
   std::shared_ptr<memory::MemoryPool> schemaPool_;
