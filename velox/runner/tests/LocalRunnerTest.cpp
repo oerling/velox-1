@@ -31,28 +31,20 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   static constexpr int32_t kRowsPerVector = 10000;
   static constexpr int32_t kNumRows = kNumFiles * kNumVectors * kRowsPerVector;
 
-  void SetUp() override {
-    LocalRunnerTestBase::SetUp();
-    ensureDataset();
-  }
-
-  void ensureDataset() {
-    if (files_) {
-      return;
-    }
-
-    int32_t counter1 = 0;
+  static void SetUpTestCase() {
+    // The lambdas will be run after this scope returns, so make captures static.
+    static int32_t counter1 = 0;
     auto patch1 = [&](const RowVectorPtr& rows) {
       makeAscending(rows, counter1);
     };
 
-    int32_t counter2 = 0;
+    static int32_t counter2 = 0;
     auto patch2 = [&](const RowVectorPtr& rows) {
       makeAscending(rows, counter2);
     };
 
     rowType_ = ROW({"c0"}, {BIGINT()});
-    std::vector<TableSpec> specs = {
+    testTables_ = {
         TableSpec{
             .name = "T",
             .columns = rowType_,
@@ -67,19 +59,12 @@ class LocalRunnerTest : public LocalRunnerTestBase {
             .numVectorsPerFile = kNumVectors,
             .numFiles = kNumFiles,
             .patch = patch2}};
-
-    schema_ = makeTables(specs, files_);
-    sourceFactory_ = std::make_shared<LocalSplitSourceFactory>(schema_, 2);
+    
+    // Creates the data and schema from 'testTables_'. These are created on the first test fixture initialization.
+    LocalRunnerTestBase::SetUpTestCase();
   }
 
-  void TearDown() override {
-    schema_.reset();
-    files_.reset();
-    sourceFactory_.reset();
-    LocalRunnerTestBase::TearDown();
-  }
-
-  MultiFragmentPlanPtr makeScan() {
+  MultiFragmentPlanPtr makeScanPlan() {
     MultiFragmentPlan::Options options = {
         .queryId = "test.", .numWorkers = 4, .numDrivers = 2};
     const int32_t width = 3;
@@ -90,7 +75,7 @@ class LocalRunnerTest : public LocalRunnerTestBase {
         rootBuilder.fragments(), std::move(options));
   }
 
-  MultiFragmentPlanPtr makeJoin(std::string project = "c0") {
+  MultiFragmentPlanPtr makeJoinPlan(std::string project = "c0") {
     MultiFragmentPlan::Options options = {
         .queryId = "test.", .numWorkers = 4, .numDrivers = 2};
     const int32_t width = 3;
@@ -114,7 +99,7 @@ class LocalRunnerTest : public LocalRunnerTestBase {
         rootBuilder.fragments(), std::move(options));
   }
 
-  void makeAscending(const RowVectorPtr& rows, int32_t& counter) {
+  static void makeAscending(const RowVectorPtr& rows, int32_t& counter) {
     auto ints = rows->childAt(0)->as<FlatVector<int64_t>>();
     for (auto i = 0; i < ints->size(); ++i) {
       ints->set(i, counter + i);
@@ -128,15 +113,12 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   // dataset between tests.
 
   inline static RowTypePtr rowType_;
-  inline static std::shared_ptr<LocalSchema> schema_;
-  inline static std::shared_ptr<TempDirectoryPath> files_;
-  inline static std::shared_ptr<SplitSourceFactory> sourceFactory_;
 };
 
 TEST_F(LocalRunnerTest, count) {
-  auto join = makeJoin();
+  auto join = makeJoinPlan();
   auto localRunner = std::make_shared<LocalRunner>(
-      std::move(join), makeQueryCtx("q1"), sourceFactory_);
+						   std::move(join), makeQueryCtx("q1", rootPool_.get()), splitSourceFactory_);
   auto results = readCursor(localRunner);
   auto stats = localRunner->stats();
   EXPECT_EQ(1, results.size());
@@ -149,9 +131,9 @@ TEST_F(LocalRunnerTest, count) {
 }
 
 TEST_F(LocalRunnerTest, error) {
-  auto join = makeJoin("if (c0 = 111, c0 / 0, c0 + 1) as c0");
+  auto join = makeJoinPlan("if (c0 = 111, c0 / 0, c0 + 1) as c0");
   auto localRunner = std::make_shared<LocalRunner>(
-      std::move(join), makeQueryCtx("q1"), sourceFactory_);
+						   std::move(join), makeQueryCtx("q1", rootPool_.get()), splitSourceFactory_);
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
   EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(5000);

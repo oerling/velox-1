@@ -34,9 +34,9 @@ class DistributedPlanBuilder : public PlanBuilder {
 
   /// Constructs a child builder. Used for branching plans, e.g. the subplan for
   /// a join build side.
-  DistributedPlanBuilder(DistributedPlanBuilder& parent);
+  DistributedPlanBuilder(DistributedPlanBuilder& root);
 
-  /// Returns the planned fragments. The builder will be empty after this.
+  /// Returns the planned fragments. The builder will be empty after this. This is only called on the root builder.
   std::vector<runner::ExecutableFragment> fragments();
 
   PlanBuilder& shuffle(
@@ -54,18 +54,10 @@ class DistributedPlanBuilder : public PlanBuilder {
  private:
   void newFragment();
 
-  DistributedPlanBuilder* rootBuilder() {
-    auto* parent = this;
-    while (parent->parent_) {
-      parent = parent->parent_;
-    }
-    return parent;
-  }
-
   void gatherScans(const core::PlanNodePtr& plan);
 
   const runner::MultiFragmentPlan::Options& options_;
-  DistributedPlanBuilder* parent_{nullptr};
+  DistributedPlanBuilder* const root_;
 
   // Stack of outstanding builders. The last element is the immediately
   // enclosing one. When returning an ExchangeNode from returnShuffle, the stack
@@ -75,12 +67,14 @@ class DistributedPlanBuilder : public PlanBuilder {
   std::vector<DistributedPlanBuilder*> stack_;
 
   // Fragment counter. Only used in root builder.
-  int32_t taskCounter_{0};
+  int32_t fragmentCounter_{0};
 
-  runner::ExecutableFragment current_;
+  // The fragment being built. Will be moved to the root builder's 'fragments_' when complete.
+  std::unique_ptr<runner::ExecutableFragment> current_;
 
   // The fragments gathered under this builder. Moved to the root builder when
   // returning the subplan.
   std::vector<runner::ExecutableFragment> fragments_;
 };
+
 } // namespace facebook::velox::exec::test
