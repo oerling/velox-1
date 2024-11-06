@@ -200,7 +200,7 @@ void Unnest::generateRepeatedColumns(
   // Wrap "replicated" columns in a dictionary using 'repeatedIndices'.
   for (const auto& projection : identityProjections_) {
     outputs.at(projection.outputChannel) = wrapOne(
-						   range.numElements,
+        range.numElements,
         repeatedIndices,
         input_->childAt(projection.inputChannel),
         nullptr /*nulls*/,
