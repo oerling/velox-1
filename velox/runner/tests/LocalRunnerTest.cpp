@@ -34,7 +34,7 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   static void SetUpTestCase() {
     // The lambdas will be run after this scope returns, so make captures
     // static.
-    static int32_t counter1 ;
+    static int32_t counter1;
     // Clear 'counter1' so that --gtest_repeat runs get the same data.
     counter1 = 0;
     auto customize1 = [&](const RowVectorPtr& rows) {

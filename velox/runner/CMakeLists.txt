@@ -17,4 +17,11 @@ add_subdirectory(tests)
 add_library(velox_local_runner LocalRunner.cpp LocalSchema.cpp Runner.cpp)
 
 target_link_libraries(
-  velox_local_runner velox_common_base velox_memory velox_hive_connector velox_dwio_common velox_dwio_dwrf_writer velox_exec_test_lib velox_exec)
+  velox_local_runner
+  velox_common_base
+  velox_memory
+  velox_hive_connector
+  velox_dwio_common
+  velox_dwio_dwrf_writer
+  velox_exec_test_lib
+  velox_exec)

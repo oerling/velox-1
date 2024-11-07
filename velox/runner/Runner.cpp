@@ -18,8 +18,8 @@
 
 namespace facebook::velox::runner {
 
-  // static
-  std::string Runner::stateString(Runner::State state) {
+// static
+std::string Runner::stateString(Runner::State state) {
   switch (state) {
     case Runner::State::kInitialized:
       return "initialized";

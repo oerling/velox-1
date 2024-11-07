@@ -1445,8 +1445,8 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
   return {std::move(cursor), std::move(result)};
 }
 
-  // static
-  std::vector<RowVectorPtr> readCursor(
+// static
+std::vector<RowVectorPtr> readCursor(
     std::shared_ptr<runner::LocalRunner> runner) {
   // 'result' borrows memory from cursor so the life cycle must be shorter.
   std::vector<RowVectorPtr> result;
