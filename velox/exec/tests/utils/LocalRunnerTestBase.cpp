@@ -92,9 +92,9 @@ void LocalRunnerTestBase::makeTables(
     for (auto i = 0; i < spec.numFiles; ++i) {
       auto vectors = HiveConnectorTestBase::makeVectors(
           spec.columns, spec.numVectorsPerFile, spec.rowsPerVector);
-      if (spec.patch) {
+      if (spec.customizeData) {
         for (auto& vector : vectors) {
-          spec.patch(vector);
+          spec.customizeData(vector);
         }
       }
       writeToFile(fmt::format("{}/f{}", tablePath, i), vectors);

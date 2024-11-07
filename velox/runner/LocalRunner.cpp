@@ -17,6 +17,7 @@
 #include "velox/runner/LocalRunner.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/common/time/Timer.h"
 
 namespace facebook::velox::runner {
 namespace {
@@ -108,7 +109,6 @@ void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
   VELOX_CHECK_NE(state_, State::kInitialized);
   std::vector<ContinueFuture> futures;
   {
-    auto startTime = getcurrentTimeMicro();
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stage : stages_) {
       for (auto& task : stage) {
@@ -117,13 +117,16 @@ void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
       stage.clear();
     }
   }
+  auto startTime = getCurrentTimeMicro();
   for (auto& future : futures) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
-
-    !!!check.std::move(future)
-           .within(std::chrono::microseconds(maxWaitUs))
-           .via(&executor)
-           .wait();
+    if (getCurrentTimeMicro() - startTime > maxWaitUs) {
+      VELOX_FAIL("LocalRunner did not finish within {} us", maxWaitUs);
+    }
+    std::move(future)
+        .within(std::chrono::microseconds(maxWaitUs))
+        .via(&executor)
+        .wait();
   }
 }
 

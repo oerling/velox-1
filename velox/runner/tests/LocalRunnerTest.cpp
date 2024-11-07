@@ -34,13 +34,16 @@ class LocalRunnerTest : public LocalRunnerTestBase {
   static void SetUpTestCase() {
     // The lambdas will be run after this scope returns, so make captures
     // static.
-    static int32_t counter1 = 0;
-    auto patch1 = [&](const RowVectorPtr& rows) {
+    static int32_t counter1 ;
+    // Clear 'counter1' so that --gtest_repeat runs get the same data.
+    counter1 = 0;
+    auto customize1 = [&](const RowVectorPtr& rows) {
       makeAscending(rows, counter1);
     };
 
-    static int32_t counter2 = 0;
-    auto patch2 = [&](const RowVectorPtr& rows) {
+    static int32_t counter2;
+    counter2 = 0;
+    auto customize2 = [&](const RowVectorPtr& rows) {
       makeAscending(rows, counter2);
     };
 
@@ -52,14 +55,14 @@ class LocalRunnerTest : public LocalRunnerTestBase {
             .rowsPerVector = kRowsPerVector,
             .numVectorsPerFile = kNumVectors,
             .numFiles = kNumFiles,
-            .patch = patch1},
+            .customizeData = customize1},
         TableSpec{
             .name = "U",
             .columns = rowType_,
             .rowsPerVector = kRowsPerVector,
             .numVectorsPerFile = kNumVectors,
             .numFiles = kNumFiles,
-            .patch = patch2}};
+            .customizeData = customize2}};
 
     // Creates the data and schema from 'testTables_'. These are created on the
     // first test fixture initialization.

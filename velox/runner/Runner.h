@@ -96,6 +96,6 @@ struct fmt::formatter<facebook::velox::runner::Runner::State>
   auto format(facebook::velox::runner::Runner::State state, format_context& ctx)
       const {
     return formatter<std::string>::format(
-        facebook::velox::runner::runnerStateString(state), ctx);
+					  facebook::velox::runner::Runner::stateString(state), ctx);
   }
 };
