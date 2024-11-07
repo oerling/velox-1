@@ -57,6 +57,8 @@ class Runner {
  public:
   enum class State { kInitialized, kRunning, kFinished, kError, kCancelled };
 
+  static std::string stateString(Runner::State state);
+
   virtual ~Runner() = default;
 
   /// Returns the next batch of results. Returns nullptr when no more results.
@@ -85,7 +87,6 @@ class Runner {
 
   virtual void waitForCompletion(int32_t maxWaitMicros) = 0;
 };
-std::string runnerStateString(Runner::State state);
 
 } // namespace facebook::velox::runner
 

@@ -178,7 +178,8 @@ std::pair<std::unique_ptr<TaskCursor>, std::vector<RowVectorPtr>> readCursor(
     std::function<void(exec::Task*)> addSplits,
     uint64_t maxWaitMicros = 5'000'000);
 
-std::vector<RowVectorPtr> readCursor(
+  /// Read all results from 'runner'.
+  static std::vector<RowVectorPtr> readCursor(
     std::shared_ptr<runner::LocalRunner> runner);
 
 /// The Task can return results before the Driver is finished executing.

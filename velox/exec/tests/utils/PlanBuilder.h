@@ -1080,7 +1080,7 @@ class PlanBuilder {
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const core::ExprPtr& untypedExpr);
 
-  auto planNodeIdGenerator() const {
+  std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator() const {
     return planNodeIdGenerator_;
   }
 

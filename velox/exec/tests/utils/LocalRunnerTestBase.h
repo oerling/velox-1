@@ -30,7 +30,9 @@ struct TableSpec {
   int32_t rowsPerVector{10000};
   int32_t numVectorsPerFile{5};
   int32_t numFiles{5};
-  std::function<void(const RowVectorPtr& vector)> patch;
+
+  /// Function  Applied to generated RowVectors for the table before writing. May be used to insert non-random data on top of the random datafrom HiveConnectorTestBase::makeVectors.
+  customizeData::function<void(const RowVectorPtr& vector)> patch;
 };
 
 /// Test helper class that manages a TestCase with a set of generated tables and
@@ -75,6 +77,7 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   // The top level directory with the test data.
   inline static std::shared_ptr<TempDirectoryPath> files_;
+  inline static std::unique_ptr<folly::CPUThreadPoolExecutor> schemaExecutor_;
 
   // The schema built from the data in 'files_'.
   std::shared_ptr<runner::LocalSchema> schema_;
@@ -85,7 +88,6 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
 
   // Leaf pool for schema.
   std::shared_ptr<memory::MemoryPool> schemaPool_;
-  inline static std::unique_ptr<folly::CPUThreadPoolExecutor> schemaExecutor_;
 };
 
 } // namespace facebook::velox::exec::test

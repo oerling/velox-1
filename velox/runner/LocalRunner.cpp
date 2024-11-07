@@ -108,6 +108,7 @@ void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
   VELOX_CHECK_NE(state_, State::kInitialized);
   std::vector<ContinueFuture> futures;
   {
+    auto startTime = getcurrentTimeMicro();
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stage : stages_) {
       for (auto& task : stage) {
@@ -119,7 +120,7 @@ void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
   for (auto& future : futures) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
 
-    // TODO: Error out if more than maxWaitUs elapsed since first wait.
+    !!! check.
     std::move(future)
         .within(std::chrono::microseconds(maxWaitUs))
         .via(&executor)

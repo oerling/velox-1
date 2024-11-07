@@ -37,7 +37,7 @@ struct InputStage {
 /// parallel execution. Decisions on number of workers, location
 /// of workers and mode of exchange are up to the runtime.
 struct ExecutableFragment {
-  ExecutableFragment(const std::string& taskPrefix) : taskPrefix(taskPrefix) {}
+  explicit ExecutableFragment(const std::string& taskPrefix) : taskPrefix(taskPrefix) {}
   std::string taskPrefix;
   int32_t width{0};
   velox::core::PlanFragment fragment;
@@ -86,8 +86,8 @@ class MultiFragmentPlan {
   std::string toString() const;
 
  private:
-  std::vector<ExecutableFragment> fragments_;
-  Options options_;
+  const std::vector<ExecutableFragment> fragments_;
+  const Options options_;
 };
 
 using MultiFragmentPlanPtr = std::shared_ptr<const MultiFragmentPlan>;
