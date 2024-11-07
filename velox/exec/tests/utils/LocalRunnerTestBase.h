@@ -34,7 +34,7 @@ struct TableSpec {
   /// Function  Applied to generated RowVectors for the table before writing.
   /// May be used to insert non-random data on top of the random datafrom
   /// HiveConnectorTestBase::makeVectors.
-  customizeData::function<void(const RowVectorPtr& vector)> patch;
+  std::function<void(const RowVectorPtr& vector)> customizeData;
 };
 
 /// Test helper class that manages a TestCase with a set of generated tables and
