@@ -31,7 +31,9 @@ struct TableSpec {
   int32_t numVectorsPerFile{5};
   int32_t numFiles{5};
 
-  /// Function  Applied to generated RowVectors for the table before writing. May be used to insert non-random data on top of the random datafrom HiveConnectorTestBase::makeVectors.
+  /// Function  Applied to generated RowVectors for the table before writing.
+  /// May be used to insert non-random data on top of the random datafrom
+  /// HiveConnectorTestBase::makeVectors.
   customizeData::function<void(const RowVectorPtr& vector)> patch;
 };
 

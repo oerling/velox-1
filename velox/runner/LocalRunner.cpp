@@ -120,11 +120,10 @@ void LocalRunner::waitForCompletion(int32_t maxWaitUs) {
   for (auto& future : futures) {
     auto& executor = folly::QueuedImmediateExecutor::instance();
 
-    !!! check.
-    std::move(future)
-        .within(std::chrono::microseconds(maxWaitUs))
-        .via(&executor)
-        .wait();
+    !!!check.std::move(future)
+           .within(std::chrono::microseconds(maxWaitUs))
+           .via(&executor)
+           .wait();
   }
 }
 
