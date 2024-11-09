@@ -157,7 +157,7 @@ void ensureInit() {
   }
   const char* sampleText =
 "Sample\n"
-    "#include \"velox/experimental/wave/jit/Runtime.cuh\"\n"
+    "#include <cuda/semaphore>\n"
 "__global__ void \n"
 "sampleKernel(unsigned char** bools, int** mtx, int* sizes) { \n"
   "__shared__ int32_t f;\n"

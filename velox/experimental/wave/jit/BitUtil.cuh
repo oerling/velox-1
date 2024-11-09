@@ -18,6 +18,9 @@
 
 #include <stdint.h>
 
+namespace facebook::velox::wave {
+
+constexpr int32_t kWarpThreads = 32;
 
 template <typename T, typename U>
 __host__ __device__ constexpr inline T roundUp(T value, U factor) {
@@ -71,17 +74,20 @@ memcmp(const void* lhs, const void* rhs, size_t n) {
   return 0;
 }
 
-inline unsigned int __device__ deviceScale32(unsigned int n, unsigned int scale) {
-  return (static_cast<unsigned long long>(static_cast<unsigned int>(n)) * scale) >> 32;
+inline unsigned int __device__
+deviceScale32(unsigned int n, unsigned int scale) {
+  return (static_cast<unsigned long long>(static_cast<unsigned int>(n)) *
+          scale) >>
+      32;
 }
 
-__device__ __forceinline__ unsigned int LaneId()
-{
-    unsigned int ret;
-    asm ("mov.u32 %0, %%laneid;" : "=r"(ret) );
-    return ret;
+__device__ __forceinline__ unsigned int LaneId() {
+  unsigned int ret;
+  asm("mov.u32 %0, %%laneid;" : "=r"(ret));
+  return ret;
 }
 
+/* Log2 included from cub */
 /**
  * \brief Statically determine log2(N), rounded up.
  *
@@ -90,10 +96,20 @@ __device__ __forceinline__ unsigned int LaneId()
  *     Log2<3>::VALUE   // 2
  */
 template <int N, int CURRENT_VAL = N, int COUNT = 0>
-struct Log2
-{
-    /// Static logarithm value
-    enum { VALUE = Log2<N, (CURRENT_VAL >> 1), COUNT + 1>::VALUE };         // Inductive case
+struct Log2 {
+  /// Static logarithm value
+  enum {
+    VALUE = Log2<N, (CURRENT_VAL >> 1), COUNT + 1>::VALUE
+  }; // Inductive case
 };
 
+template <int N, int COUNT>
+struct Log2<N, 0, COUNT> {
+  enum {
+    VALUE = (1 << (COUNT - 1) < N) ? // Base case
+        COUNT
+                                   : COUNT - 1
+  };
+};
 
+} // namespace facebook::velox::wave
