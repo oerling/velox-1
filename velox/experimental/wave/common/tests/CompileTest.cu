@@ -23,6 +23,7 @@
 #include "velox/experimental/wave/common/Exception.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
+#include "velox/experimental/wave/jit/JitLib.h"
 
 #include <iostream>
 
@@ -59,7 +60,7 @@ struct KernelParams {
 
 const char* kernelText =
     "using int32_t = int; //#include <cstdint>\n"
-    "namespace facebook::velox::wave {\n"
+  "namespace facebook::velox::wave {\n"
     "  struct KernelParams {\n"
     "    int32_t* array;\n"
     "    int32_t size;\n"
@@ -136,4 +137,36 @@ TEST_F(CompileTest, cache) {
   EXPECT_EQ(2, buffer->as<int32_t>()[0]);
 }
 
+
+TEST_F(CompileTest, scan) {
+  const char* text =
+    "#include \"velox/experimental/wave/jit/WarpScan.cuh\"\n"
+    "namespace facebook::veox::wave {\n"
+    "__global__ void scanKernel(int32_t* ints) {\n"
+    "  using Scan = WarpScan<uint32_t>;\n"
+    "uint32_t out;\n"
+    " Scan().exclusiveSum(ints[threadIdx.x], in);\m"
+    "ints[threadIdx.x] = out;\n"
+    "}\n";
+
+  WaveBufferPtr ints = arena_->allocate<uint32_t>(32);
+  for (auto i = 0; i < 32; ++i) {
+    ints->as<uint32_t>()[i] = i;
+  }
+  KernelSpec spec = {text, {"scanKernel"}};
+  auto module = CompiledModule::create(spec);
+  auto stream = std::make_unique<Stream>();
+  auto rawInts = ints->as<int32_t>();
+  void** params = reinterpret_cast<void**>(&rawInts);
+  module->launch(0, 1, 32, 0, stream.get(), params);
+  stream->wait();
+  int32_t sum = 0;
+  for (auto i = 0;  i < 32; ++i) {
+    EXPECT_EQ(rawInts[i], sum);
+    sum += i;
+  }
+}
+
+
+  
 } // namespace facebook::velox::wave

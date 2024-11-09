@@ -23,6 +23,7 @@
 
 #include <mutex>
 #include <sstream>
+#include <assert.h>
 
 namespace facebook::velox::wave {
 
@@ -383,5 +384,32 @@ void printKernels() {
               << std::endl;
   }
 }
+
+// Contents of registered headers. The pointers are to literal strings in the executable.
+std::vector<const char*> registeredHeaders;
+// Names extracted from registered headers. The strings have an extra null at the end so they can be used as const char*.
+std::vector<std::string> registeredHeaderNames;
+
+void registerHeader(const char* text) {
+  std::string name;
+  auto newline = strchr(text, '\n');
+  assert(newline != nullptr);
+  name.resize(newline - text + 1);
+  memcpy(name.data(), text, name.size() - 1);
+  name.back() = 0;
+  registeredHeaderNames.push_back(name);
+  registeredHeaders.push_back(newline + 1);
+}
+
+void  getRegisteredHeaders(std::vector<const char*> names, std::vector<const char*> headers) {
+  names.resize(registeredHeaderNames.size());
+  headers.resize(registeredHeaderNames.size());
+  for (auto i = 0; i < names.size(); ++i) {
+    names[i] = registeredHeaderNames[i].data();
+    headers[i] = registeredHeaders[i];
+  }
+}
+
+  
 
 } // namespace facebook::velox::wave

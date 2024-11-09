@@ -20,7 +20,10 @@
 #include "velox/experimental/wave/common/Cuda.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/common/Exception.h"
-#include "velox/experimental/wave/common/jitify.hpp"
+
+#define JITIFY_PRINT_HEADER_PATHS 1
+
+#include "velox/external/jitify/jitify.hpp"
 
 
 namespace facebook::velox::wave {
@@ -58,22 +61,21 @@ class CompiledModuleImpl : public CompiledModule {
   std::vector<CUfunction> kernels_;
 };
 
+  //  namespace {
+  
 void addFlag(
     const char* flag,
     const char* value,
     int32_t length,
     std::vector<std::string>& data) {
   std::string str(flag);
-  str.resize(str.size() + length + 1);
+  str.resize(str.size() + length);
   memcpy(str.data() + strlen(flag), value, length);
-  str.back() = 0;
   data.push_back(std::move(str));
 }
 
-// Gets compiler options from the environment and appends  them  to 'opts''. The
-// memory is owned by  'data'.
+// Gets compiler options from the environment and appends  them  to 'data'.
 void getNvrtcOptions(
-    std::vector<const char*>& opts,
     std::vector<std::string>& data) {
   const char* includes = getenv("WAVE_NVRTC_INCLUDE_PATH");
   if (includes && strlen(includes) > 0) {
@@ -101,17 +103,50 @@ void getNvrtcOptions(
       flags = end + 1;
     }
   }
-  for (auto& str : data) {
-    opts.push_back(str.data());
-  }
 }
 
-namespace {
-std::map<std::string, std::string> waveHeaders;
-std::mutex initMutex;
+  // Contains header names and file contents as a std::string with a trailing 0.
+  std::vector<std::string> waveHeaderName;
+  std::vector<std::string> waveHeaderText;
 
+  //  data area of waveheader* as a null terminated string.
+  std::vector<const char*> waveHeaderNameString;
+  std::vector<const char*> waveHeaderTextString;
+  std::mutex initMutex;
+
+std::vector<std::string> waveNvrtcFlags;
+std::vector<const char*> waveNvrtcFlagsString;
+  
+  
+  // Adds a trailing zero to make the string.data() a C char*.
+  void makeNTS(std::string& string) {
+    string.resize(string.size() + 1);
+    string.back() = 0;
+  }
+
+  void initializeWaveHeaders(const std::map<std::string, std::string>& headers, const std::string& except) {
+    for (auto& pair : headers) {
+      if (pair.first == except) {
+	continue;
+      }
+      waveHeaderName.push_back(pair.first);
+      makeNTS(waveHeaderName.back());
+      waveHeaderText.push_back(pair.second);
+      makeNTS(waveHeaderText.back());  
+    }
+    for (auto i = 0; i < waveHeaderName.size(); ++i) {
+      waveHeaderNameString.push_back(waveHeaderName[i].data());
+      waveHeaderTextString.push_back(waveHeaderText[i].data());
+    }
+  }
+
+// Uses Jitify to compile a sample program on initialization. This
+// gathers the JIT-safe includes from Jitify and Cuda and Cub and
+// Velox. This also decides flags architecture flags. The Wave kernel
+// cache differs from Jitify in having multiple entry points and doing
+// background compilation.
 void ensureInit() {
-  static bool inited = false;
+  static std::atomic<bool> inited = false;
   if (inited) {
     return;
   }
@@ -120,61 +155,83 @@ void ensureInit() {
   if (inited) {
     return;
   }
-
   const char* sampleText =
-"Sample.cu\n"
-"#include "velox/experimental/wave/common/Bits.cuh"\n"
-"#include "velox/experimental/wave/common/Block.cuh"\n"
-"#include "velox/experimental/wave/common/HashTable.cuh"\n"
-"namespace facebook::velox::wave {\n"
-"void __global__ sample(int* s) {\n"
-"  *s = 1;\n"
-"}\n"
-"\n"
-"}\n";
-  std::vector<const char*>& opts;
-      std::vector<std::string>& data;
-      getNvrtcOptions(opts, data);
-  
-    static jitify::JitCache kernel_cache;
+"Sample\n"
+    "#include \"velox/experimental/wave/jit/Runtime.cuh\"\n"
+"__global__ void \n"
+"sampleKernel(unsigned char** bools, int** mtx, int* sizes) { \n"
+  "__shared__ int32_t f;\n"
+  "typedef cuda::binary_semaphore<cuda::thread_scope_device> Mutex;\n"
+  "if (threadIdx.x == 0) {\n"
+  "		     f = 1;\n"
+"reinterpret_cast<Mutex*>(&f)->acquire();\n"
+  " assert(f == 0);\n"
+  " printf(\"pfaal\"); \n"
+		      "  atomicAdd(&f, 1);\n"
+  "}\n"
+  "} \n";
 
-    auto program = kernel_cache.program(sampleText,
-					{}, data);
-    waveIncludes = std::move(program._sources);
-    waveIncludes.erase("sample.cu");
-}
+ waveNvrtcFlags.push_back("-std=c++17");
+#ifndef NDEBUG
+ waveNvrtcFlags.push_back("-G");
+#else
+  waveMvrtcFlags.push_back("-O3");
+#endif
+  getNvrtcOptions(waveNvrtcFlags);
+  ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);
+
+  static jitify::JitCache kernel_cache;
+  
+  auto program = kernel_cache.program(sampleText,
+				      {}, waveNvrtcFlags);
+
+  initializeWaveHeaders(program._impl->_config->sources, "sample");
+
+  for (auto& str : waveNvrtcFlags) {
+    makeNTS(str);
+    waveNvrtcFlagsString.push_back(str.data());
+  }
 
   inited = true;
 }
 
-}
-
+  //}
 
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
+  ensureInit();
+  const char** headers = waveHeaderTextString.data();
+  const char** headerNames = waveHeaderNameString.data();
+  int32_t numHeaders = waveHeaderNameString.size();
+  std::vector<const char*> allHeaders;
+  std::vector<const char*> allHeaderNames;
+  // If spec has extra headers, add them after the system headers.
+  if (spec.numHeaders > 0) {
+    allHeaderNames = waveHeaderNameString;
+    allHeaders = waveHeaderTextString;
+    for (auto i = 0; i < spec.numHeaders; ++i) {
+      allHeaders.push_back(spec.headers[i]);
+      allHeaderNames.push_back(spec.headerNames[i]);
+    }
+    headers = allHeaders.data();
+      headerNames = allHeaderNames.data();
+      numHeaders += spec.numHeaders;
+    }
   nvrtcProgram prog;
   nvrtcCreateProgram(
       &prog,
       spec.code.c_str(), // buffer
       spec.filePath.c_str(), // name
-      spec.numHeaders, // numHeaders
-      spec.headers, // headers
-      spec.headerNames); // includeNames
+      numHeaders, // numHeaders
+      headers, // headers
+      headerNames); // includeNames
   for (auto& name : spec.entryPoints) {
     nvrtcCheck(nvrtcAddNameExpression(prog, name.c_str()));
   }
-  std::vector<const char*> opts;
-  std::vector<std::string> optsData;
-#ifndef NDEBUG
-  optsData.push_back("-G");
-#else
-  optsData.push_back("-O3");
-#endif
-  getNvrtcOptions(opts, optsData);
 
   auto compileResult = nvrtcCompileProgram(
       prog, // prog
-      opts.size(), // numOptions
-      opts.data()); // options
+      waveNvrtcFlagsString.size(), // numOptions
+      waveNvrtcFlagsString.data()); // options
 
   size_t logSize;
 

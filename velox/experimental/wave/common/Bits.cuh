@@ -19,7 +19,7 @@
 #include <cstdint>
 #include <cub/warp/warp_scan.cuh>
 #include "velox/experimental/wave/common/Block.cuh"
-#include "velox/experimental/wave/common/CudaUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 
 namespace facebook::velox::wave {
 
