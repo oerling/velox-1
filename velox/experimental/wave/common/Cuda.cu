@@ -385,27 +385,35 @@ void printKernels() {
   }
 }
 
-// Contents of registered headers. The pointers are to literal strings in the executable.
-std::vector<const char*> registeredHeaders;
-// Names extracted from registered headers. The strings have an extra null at the end so they can be used as const char*.
-std::vector<std::string> registeredHeaderNames;
 
-void registerHeader(const char* text) {
-  std::string name;
-  auto newline = strchr(text, '\n');
+
+
+
+
+  int32_t numRegisteredHeaders{0};
+  const char* registeredHeaders[100];
+  const char* registeredHeaderNames[100];
+  char nameString[5000];
+  int32_t nameStringFill{0};
+
+bool registerHeader(const char* header) {
+  assert(numRegisteredHeaders + 1 < sizeof(registeredHeaders) / sizeof(registeredHeaders[0]));
+  auto newline = strchr(header, '\n');
   assert(newline != nullptr);
-  name.resize(newline - text + 1);
-  memcpy(name.data(), text, name.size() - 1);
-  name.back() = 0;
-  registeredHeaderNames.push_back(name);
-  registeredHeaders.push_back(newline + 1);
+  registeredHeaderNames[numRegisteredHeaders] = &nameString[0] + nameStringFill;
+  int32_t nameLength= newline - header;
+  assert(sizeof(nameString) > nameLength + nameStringFill);
+  memcpy(&nameString[0] + nameStringFill, header, nameLength);
+  nameStringFill += nameLength + 1;
+
+  registeredHeaders[numRegisteredHeaders++] = newline + 1;
 }
 
-void  getRegisteredHeaders(std::vector<const char*> names, std::vector<const char*> headers) {
-  names.resize(registeredHeaderNames.size());
-  headers.resize(registeredHeaderNames.size());
+void  getRegisteredHeaders(std::vector<const char*>& names, std::vector<const char*>& headers) {
+  names.resize(numRegisteredHeaders);
+  headers.resize(numRegisteredHeaders);
   for (auto i = 0; i < names.size(); ++i) {
-    names[i] = registeredHeaderNames[i].data();
+    names[i] = registeredHeaderNames[i];
     headers[i] = registeredHeaders[i];
   }
 }

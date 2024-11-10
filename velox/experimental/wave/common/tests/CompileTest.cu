@@ -23,7 +23,6 @@
 #include "velox/experimental/wave/common/Exception.h"
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/common/tests/BlockTest.h"
-#include "velox/experimental/wave/jit/JitLib.h"
 
 #include <iostream>
 

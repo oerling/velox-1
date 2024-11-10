@@ -78,11 +78,11 @@ int main(int argc, char* argv[]) {
   std::string line;
   // Note: This puts "filename\n" at the beginning of the string, which is
   //         what jitify expects.
-  ostream << "registerHeader("
+  ostream << "const char* " << varname << " = " << std::endl 
           << "\"" << filename << "\\n\"" << std::endl;
   while (std::getline(istream, line)) {
     ostream << "\"" << sanitize_string_literal(line) << "\\n\"" << std::endl;
   }
-  ostream << ");" << std::endl;
+  ostream << ";" << std::endl << "bool " << varname << "_reg = registerHeader(" << varname << ");" << std::endl;
   return 0;
 }

@@ -69,7 +69,7 @@ class StringView {
   #ifdef __NVCC__
   __device__ StringView cas(StringView compare, StringView val);
 #endif
-#ifndef __NVCC__
+#if !defined(__NVCC__) && !defined(__CUDACC_RTC__)
   operator std::string_view() const {
     return {data(), size()};
   }

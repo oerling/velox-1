@@ -298,11 +298,11 @@ void printKernels();
 /// Registers an inline string as a header for use with KernelSpec and
 /// CompiledModule. The first line is the header path, the rest is the text of
 /// the header.
-void registerJitHeader(const char* text);
+bool registerHeader(const char* text);
 
 /// Returns the names and contents of headers registered with registerHeader().
 void getRegisteredHeaders(
-    std::vector<const char*> names,
-    std::vector<const char*> text);
+    std::vector<const char*>& names,
+    std::vector<const char*>& text);
 
 } // namespace facebook::velox::wave

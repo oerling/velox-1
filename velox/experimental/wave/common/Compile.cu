@@ -24,7 +24,7 @@
 #define JITIFY_PRINT_HEADER_PATHS 1
 
 #include "velox/external/jitify/jitify.hpp"
-
+#include "velox/experimental/wave/jit/Headers.h"
 
 namespace facebook::velox::wave {
 
@@ -61,7 +61,7 @@ class CompiledModuleImpl : public CompiledModule {
   std::vector<CUfunction> kernels_;
 };
 
-  //  namespace {
+namespace {
   
 void addFlag(
     const char* flag,
@@ -140,6 +140,7 @@ std::vector<const char*> waveNvrtcFlagsString;
     }
     std::vector<const char*> names;
     std::vector<const char*> text;
+    getRegisteredHeaders(names, text);
     for (auto i = 0; i < names.size(); ++i) {
       waveHeaderNameString.push_back(names[i]);
       waveHeaderTextString.push_back(text[i]);
@@ -203,7 +204,7 @@ const char* sampleText =
   inited = true;
 }
 
-  //}
+}
 
 std::shared_ptr<CompiledModule> CompiledModule::create(const KernelSpec& spec) {
   ensureInit();

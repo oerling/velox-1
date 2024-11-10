@@ -5,22 +5,25 @@
 
 JIT=velox/experimental/wave/jit
 
-head --lines 16 velox/experimental/wave/common/Cuda.h > $JIT/Headers.cpp
-echo "namespace facebook::velox::wave {" >> $JIT/Headers.cpp
+head --lines 16 velox/experimental/wave/common/Cuda.h > $JIT/Headers.h
+echo "namespace facebook::velox::wave {" >> $JIT/Headers.h
 
-echo "void registerHeader(const char* text);" >> $JIT/Headers.cpp
+echo "bool registerHeader(const char* text);" >> $JIT/Headers.h
 
-stringify $JIT/BitUtils.cuh >> $JIT/Headers.cpp
-stringify $JIT/Scan.cuh >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/exec/WaveCore.cuh" >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/exec/ExprKernel.h" >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/common/hashTable.h" >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/common/hashTable.cuh" >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/common/hash.cuh" >> $JIT/Headers.cpp
-stringify "velox/experimental/wave/common/StringView.cuh" >> $JIT/Headers.cpp
+stringify $JIT/BitUtil.cuh >> $JIT/Headers.h
+stringify $JIT/Scan.cuh >> $JIT/Headers.h
+stringify "velox/experimental/wave/exec/WaveCore.cuh" >> $JIT/Headers.h
+stringify "velox/experimental/wave/exec/ExprKernel.h" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/HashTable.h" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/HashTable.cuh" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/hash.cuh" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/StringView.cuh" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/StringView.h" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/Hash.h" >> $JIT/Headers.h
+stringify "velox/experimental/wave/common/CompilerDefines.h" >> $JIT/Headers.h
 
-echo "}" >> $JIT/Headers.cpp
+echo "}" >> $JIT/Headers.h
 
-clang-format -i $JIT/Headers.cpp
+clang-format -i $JIT/Headers.h
 
 
