@@ -66,9 +66,10 @@ class StringView {
     return !(*this == other);
   }
 
+  #ifdef __NVCC__
   __device__ StringView cas(StringView compare, StringView val);
-
-#if 0
+#endif
+#ifndef __NVCC__
   operator std::string_view() const {
     return {data(), size()};
   }
