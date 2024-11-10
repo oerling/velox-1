@@ -14,4 +14,3 @@
 
 add_executable(stringify Stringify.cpp)
 
-velox_add_library(velox_wave_headers Headers.cpp)

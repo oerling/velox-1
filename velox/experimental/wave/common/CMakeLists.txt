@@ -21,7 +21,8 @@ velox_add_library(
   Exception.cpp
   KernelCache.cpp
   Type.cpp
-  ResultStaging.cpp)
+  ResultStaging.cpp
+  ../jit/Headers.cpp)
 
 velox_link_libraries(
   velox_wave_common

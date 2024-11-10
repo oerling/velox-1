@@ -1,24 +1,26 @@
+#/bin/sh
 # Generates the inlined headers for Wave Jit.
 #
 # Run in the valox checkout root. 
 
-PATH=velox/experimental/wave/jit
+JIT=velox/experimental/wave/jit
 
-echo "namespace facebook::velox::wave {" > $PATH/Headers.cpp
+head --lines 16 velox/experimental/wave/common/Cuda.h > $JIT/Headers.cpp
+echo "namespace facebook::velox::wave {" >> $JIT/Headers.cpp
 
-echo "void registerHeader(const char* text);" >> $PATH/Headers.cpp
+echo "void registerHeader(const char* text);" >> $JIT/Headers.cpp
 
-stringify $PATH/BitUtils.cuh >> $PATH/Headers.cpp
-stringify $PATH/Scan.cuh >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/exec/WaveCore.cuh" >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/exec/ExprKernel.h" >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/common/hashTable.h" >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/common/hashTable.cuh" >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/common/hash.cuh" >> $PATH/Headers.cpp
-stringify "velox/experimental/wave/common/StringView.cuh" >> $PATH/Headers.cpp
+stringify $JIT/BitUtils.cuh >> $JIT/Headers.cpp
+stringify $JIT/Scan.cuh >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/exec/WaveCore.cuh" >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/exec/ExprKernel.h" >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/common/hashTable.h" >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/common/hashTable.cuh" >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/common/hash.cuh" >> $JIT/Headers.cpp
+stringify "velox/experimental/wave/common/StringView.cuh" >> $JIT/Headers.cpp
 
+echo "}" >> $JIT/Headers.cpp
 
-echo "}" >> $PATH/Headers.cpp
-
+clang-format -i $JIT/Headers.cpp
 
 
