@@ -34,7 +34,7 @@ struct GpuBucketMembers {
   uint32_t flags;
   uint16_t data[12];
 
-  #ifndef __CUDACC_RTC__
+#ifndef __CUDACC_RTC__
   template <typename T>
   T* testingLoad(int32_t idx) {
     auto uptr = static_cast<uint64_t>(data[8 + idx]) << 32;
@@ -52,19 +52,19 @@ class FreeSetBase {
   T items_[kSize] = {};
 };
 
-  #ifndef __CUDACC_RTC__
+#ifndef __CUDACC_RTC__
 static inline int32_t roundUp64(int32_t value) {
   return (value + 64 - 1) / 64 * 64;
 }
 #endif
 
-  /// Range of addresses. fixed length from bottom and variable length from top.
+/// Range of addresses. fixed length from bottom and variable length from top.
 /// if 'rowOffset' goes above 'rowLimit' then rows are full. If 'stringOffset'
 /// goes below 'rowLimit' then strings are full.
 struct AllocationRange {
   AllocationRange() = default;
 
-  #ifndef __CUDACC_RTC__
+#ifndef __CUDACC_RTC__
   AllocationRange(
       uintptr_t base,
       uint32_t capacity,
@@ -155,7 +155,7 @@ struct AllocationRange {
 struct HashPartitionAllocator {
   static constexpr uint32_t kEmpty = ~0;
 
-  #ifndef __CUDACC_RTC__
+#ifndef __CUDACC_RTC__
   HashPartitionAllocator(
       char* data,
       uint32_t capacity,
@@ -191,7 +191,7 @@ struct HashPartitionAllocator {
     ranges[1].trimFixed(target);
   }
 #endif
-  
+
   const int32_t rowSize{0};
   AllocationRange ranges[2];
 };
@@ -246,7 +246,6 @@ struct HashProbe {
 struct GpuBucket;
 
 struct GpuHashTableBase {
-
 #ifndef __CUDACC_RTC__
   GpuHashTableBase(
       GpuBucket* buckets,

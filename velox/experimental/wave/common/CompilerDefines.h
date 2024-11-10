@@ -16,7 +16,8 @@
 
 #pragma once
 
-// Macro to declare execution domain if the header can be included in a C++ file that is not compiled with nvcc
+// Macro to declare execution domain if the header can be included in a C++ file
+// that is not compiled with nvcc
 #if defined(__CUDACC_RTC__)
 #define WAVE_DEVICE_HOST __device__
 #elif defined(__NVCC__)

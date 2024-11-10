@@ -22,7 +22,6 @@
 
 namespace facebook::velox::wave {
 
-  
 class StringView {
  public:
   WAVE_DEVICE_HOST void init(const char* data, int32_t len) {
@@ -74,7 +73,7 @@ class StringView {
     return {data(), size()};
   }
 #endif
-  
+
  private:
   WAVE_DEVICE_HOST char* inlineData() {
     return reinterpret_cast<char*>(&data_) + kSizeBits / 8;
@@ -89,7 +88,7 @@ class StringView {
 
 // Non-trivial class does not play well in device code.
 #ifndef __CUDACC_RTC__
-  static_assert(std::is_trivial_v<StringView>);
+static_assert(std::is_trivial_v<StringView>);
 #endif
 // Ensure StringView is 64 bits so we can do atomic operations on it.
 static_assert(sizeof(StringView) == 8);
