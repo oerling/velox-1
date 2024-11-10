@@ -138,6 +138,12 @@ std::vector<const char*> waveNvrtcFlagsString;
       waveHeaderNameString.push_back(waveHeaderName[i].data());
       waveHeaderTextString.push_back(waveHeaderText[i].data());
     }
+    std::vector<const char*> names;
+    std::vector<const char*> text;
+    for (auto i = 0; i < names.size(); ++i) {
+      waveHeaderNameString.push_back(names[i]);
+      waveHeaderTextString.push_back(text[i]);
+    }
   }
 
 // Uses Jitify to compile a sample program on initialization. This
@@ -155,7 +161,9 @@ void ensureInit() {
   if (inited) {
     return;
   }
-  const char* sampleText =
+
+  // Sample kernel that pulls in system headers used by Wave. Checks that key headers are included and uses compile.
+const char* sampleText =
 "Sample\n"
     "#include <cuda/semaphore>\n"
 "__global__ void \n"
