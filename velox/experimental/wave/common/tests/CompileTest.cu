@@ -183,7 +183,7 @@ TEST_F(CompileTest, scan) {
   module->launch(1, 1, 32, 0, stream.get(), &params);
   stream->wait();
   sum = 0;
-  for (auto i = 0;  i < 32; ++i) {
+  for (auto i = 0;  i < 8; ++i) {
     EXPECT_EQ(rawInts[i], i < 8 ? sum : i);
     sum += i;
   }

@@ -16,6 +16,7 @@
 
 #include "velox/experimental/wave/exec/AggregationInstructions.h"
 
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <cub/cub.cuh> // @manual
 #include "velox/experimental/wave/common/IdMap.cuh"
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"

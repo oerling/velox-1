@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include "velox/experimental/wave/common/Block.cuh"
+#include "velox/experimental/wave/jit/Scan.cuh"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/experimental/wave/vector/Operand.h"
 
@@ -307,12 +307,12 @@ __device__ __forceinline__ void filterKernel(
   __syncthreads();
   if (threadIdx.x < kWarpThreads) {
     constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
-    int32_t cnt = threadIdx.x < kNumWarps
+    uint32_t cnt = threadIdx.x < kNumWarps
         ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x]
         : 0;
-    int32_t sum;
-    using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
-    Scan(*reinterpret_cast<Scan::TempStorage*>(shared)).ExclusiveSum(cnt, sum);
+    uint32_t sum;
+    using Scan = WarpScan<uint32_t, kBlockSize / kWarpThreads>;
+    Scan().exclusiveSum(cnt, sum);
     if (threadIdx.x < kNumWarps) {
       if (threadIdx.x == kNumWarps - 1) {
         shared->numRows = cnt + sum;
@@ -350,12 +350,12 @@ int32_t blockBase,
   __syncthreads();
   if (threadIdx.x < kWarpThreads) {
     constexpr int32_t kNumWarps = kBlockSize / kWarpThreads;
-    int32_t cnt = threadIdx.x < kNumWarps
+        uint32_t cnt = threadIdx.x < kNumWarps
         ? reinterpret_cast<int32_t*>(&shared->data)[threadIdx.x]
         : 0;
-    int32_t sum;
-    using Scan = cub::WarpScan<int32_t, kBlockSize / kWarpThreads>;
-    Scan(*reinterpret_cast<Scan::TempStorage*>(shared)).ExclusiveSum(cnt, sum);
+    uint32_t sum;
+    using Scan = WarpScan<uint32_t, kBlockSize / kWarpThreads>;
+    Scan().exclusiveSum(cnt, sum);
     if (threadIdx.x < kNumWarps) {
       if (threadIdx.x == kNumWarps - 1) {
         shared->numRows = cnt + sum;
