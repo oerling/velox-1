@@ -617,7 +617,7 @@ void WaveStream::exeLaunchInfo(
       }
     }
   });
-  if (exe->programShared) {
+  if (exe.programShared) {
     info.numExtraWrap = exe.programShared->extraWrap().size();
     exe.programShared->extraWrap().forEach([&](auto id) {
       auto op = operandAt(id);
@@ -712,14 +712,15 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
     }
   }
   info.firstExtraWrap = operandPtrBegin - initialOperandBegin;
-  exe.programShared->extraWrap().forEach([&](int32_t id) {
+  if (exe.programShared) {
+    exe.programShared->extraWrap().forEach([&](int32_t id) {
     auto* inputExe = operandToExecutable_[id];
     int32_t ordinal = inputExe->outputOperands.ordinal(id);
     *operandPtrBegin =
         &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
     ++operandPtrBegin;
   });
-
+  }
   return addBytes<Operand**>(start, 0);
 }
 
