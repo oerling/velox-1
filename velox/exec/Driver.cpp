@@ -95,8 +95,8 @@ const core::QueryConfig& DriverCtx::queryConfig() const {
   return task->queryCtx()->queryConfig();
 }
 
-const std::optional<trace::QueryTraceConfig>& DriverCtx::traceConfig() const {
-  return task->queryTraceConfig();
+const std::optional<trace::TraceConfig>& DriverCtx::traceConfig() const {
+  return task->traceConfig();
 }
 
 velox::memory::MemoryPool* DriverCtx::addOperatorPool(
@@ -141,6 +141,9 @@ std::optional<common::SpillConfig> DriverCtx::makeSpillConfig(
       queryConfig.maxSpillRunRows(),
       queryConfig.writerFlushThresholdBytes(),
       queryConfig.spillCompressionKind(),
+      queryConfig.spillEnablePrefixSort()
+          ? std::optional<common::PrefixSortConfig>(prefixSortConfig())
+          : std::nullopt,
       queryConfig.spillFileCreateConfig());
 }
 
@@ -317,7 +320,7 @@ RowVectorPtr Driver::next(ContinueFuture* future) {
   auto self = shared_from_this();
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(
       self->driverCtx()->threadDebugInfo);
-  ScopedDriverThreadContext scopedDriverThreadContext(*self->driverCtx());
+  ScopedDriverThreadContext scopedDriverThreadContext(self->driverCtx());
   std::shared_ptr<BlockingState> blockingState;
   RowVectorPtr result;
   const auto stop = runInternal(self, blockingState, result);
@@ -618,6 +621,7 @@ StopReason Driver::runInternal(
                   lockedStats->addInputVector(
                       resultBytes, intermediateResult->size());
                 }
+                nextOp->traceInput(intermediateResult);
                 TestValue::adjust(
                     "facebook::velox::exec::Driver::runInternal::addInput",
                     nextOp);
@@ -758,7 +762,7 @@ void Driver::run(std::shared_ptr<Driver> self) {
   process::TraceContext trace("Driver::run");
   facebook::velox::process::ScopedThreadDebugInfo scopedInfo(
       self->driverCtx()->threadDebugInfo);
-  ScopedDriverThreadContext scopedDriverThreadContext(*self->driverCtx());
+  ScopedDriverThreadContext scopedDriverThreadContext(self->driverCtx());
   std::shared_ptr<BlockingState> blockingState;
   RowVectorPtr nullResult;
   auto reason = self->runInternal(self, blockingState, nullResult);
@@ -1144,16 +1148,24 @@ std::string blockingReasonToString(BlockingReason reason) {
       return "kWaitForArbitration";
   }
   VELOX_UNREACHABLE();
-  return "";
 }
 
 DriverThreadContext* driverThreadContext() {
   return driverThreadCtx;
 }
 
-ScopedDriverThreadContext::ScopedDriverThreadContext(const DriverCtx& driverCtx)
+ScopedDriverThreadContext::ScopedDriverThreadContext(const DriverCtx* driverCtx)
     : savedDriverThreadCtx_(driverThreadCtx),
-      currentDriverThreadCtx_{.driverCtx = driverCtx} {
+      currentDriverThreadCtx_(DriverThreadContext(driverCtx)) {
+  driverThreadCtx = &currentDriverThreadCtx_;
+}
+
+ScopedDriverThreadContext::ScopedDriverThreadContext(
+    const DriverThreadContext* _driverThreadCtx)
+    : savedDriverThreadCtx_(driverThreadCtx),
+      currentDriverThreadCtx_(
+          _driverThreadCtx == nullptr ? nullptr
+                                      : _driverThreadCtx->driverCtx()) {
   driverThreadCtx = &currentDriverThreadCtx_;
 }
 

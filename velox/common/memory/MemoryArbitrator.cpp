@@ -91,6 +91,8 @@ class NoopArbitrator : public MemoryArbitrator {
     return "NOOP";
   }
 
+  void shutdown() override {}
+
   void addPool(const std::shared_ptr<MemoryPool>& pool) override {
     VELOX_CHECK_EQ(pool->capacity(), 0);
     growPool(pool.get(), pool->maxCapacity(), 0);
@@ -541,6 +543,13 @@ ScopedReclaimedBytesRecorder::~ScopedReclaimedBytesRecorder() {
     return;
   }
   const int64_t reservedBytesAfterReclaim = pool_->reservedBytes();
+  if (reservedBytesAfterReclaim > reservedBytesBeforeReclaim_) {
+    LOG(ERROR) << "Unexpected reserved bytes growth from " << pool_->name()
+               << " after memory reclaim from "
+               << succinctBytes(reservedBytesBeforeReclaim_) << " to "
+               << succinctBytes(reservedBytesAfterReclaim) << ", current usage "
+               << succinctBytes(pool_->usedBytes());
+  }
   *reclaimedBytes_ = reservedBytesBeforeReclaim_ - reservedBytesAfterReclaim;
 }
 } // namespace facebook::velox::memory

@@ -22,6 +22,8 @@
 #include "velox/common/memory/SharedArbitrator.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/dwio/dwrf/RegisterDwrfReader.h" // @manual
+#include "velox/dwio/dwrf/RegisterDwrfWriter.h" // @manual
 #include "velox/exec/MemoryReclaimer.h"
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
@@ -32,6 +34,8 @@
 #include "velox/functions/lib/aggregates/AverageAggregateBase.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
+
+DECLARE_int64(arbitrator_capacity);
 
 DEFINE_int32(steps, 10, "Number of test iterations.");
 
@@ -90,8 +94,8 @@ class MemoryArbitrationFuzzer {
 
     void print() const {
       std::stringstream ss;
-      ss << "Success count = " << successCount << ". OOM count  = " << oomCount
-         << " Abort count = " << abortCount;
+      ss << "success count = " << successCount << ", oom count  = " << oomCount
+         << ", abort count = " << abortCount;
       LOG(INFO) << ss.str();
     }
   };
@@ -229,6 +233,9 @@ MemoryArbitrationFuzzer::MemoryArbitrationFuzzer(size_t initialSeed)
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(std::move(hiveConfig)));
   connector::registerConnector(hiveConnector);
+  dwrf::registerDwrfReaderFactory();
+  dwrf::registerDwrfWriterFactory();
+
   seed(initialSeed);
 }
 
@@ -714,7 +721,7 @@ void MemoryArbitrationFuzzer::verify() {
           } else if (e.errorCode() == error_code::kMemAborted.c_str()) {
             ++lockedStats->abortCount;
           } else {
-            LOG(ERROR) << "Unexpected exception: " << e.what();
+            LOG(ERROR) << "Unexpected exception:\n" << e.what();
             std::rethrow_exception(std::current_exception());
           }
         }
@@ -740,16 +747,9 @@ void MemoryArbitrationFuzzer::go() {
   const auto startTime = std::chrono::system_clock::now();
   size_t iteration = 0;
 
-  bool enableGlobalArbitration = true;
   while (!isDone(iteration, startTime)) {
     LOG(WARNING) << "==============================> Started iteration "
                  << iteration << " (seed: " << currentSeed_ << ")";
-
-    // Test enable/disable global arbitration.
-    dynamic_cast<memory::SharedArbitrator*>(
-        memory::memoryManager()->arbitrator())
-        ->testingSetGlobalArbitration(enableGlobalArbitration);
-
     verify();
 
     LOG(INFO) << "==============================> Done with iteration "
@@ -758,8 +758,6 @@ void MemoryArbitrationFuzzer::go() {
 
     reSeed();
     ++iteration;
-    // Revert the flag.
-    enableGlobalArbitration = !enableGlobalArbitration;
   }
 }
 
