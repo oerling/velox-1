@@ -53,6 +53,15 @@ class TestRuntimeStatWriter : public BaseRuntimeStatWriter {
 };
 } // namespace
 
+struct TestParam {
+  common::CompressionKind compressionKind;
+  bool enablePrefixSort;
+
+  TestParam(common::CompressionKind _compressionKind, bool _enablePrefixSort)
+      : compressionKind(_compressionKind),
+        enablePrefixSort(_enablePrefixSort) {}
+};
+
 class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
                   public facebook::velox::test::VectorTestBase {
  public:
@@ -66,21 +75,36 @@ class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
     setThreadLocalRunTimeStatWriter(nullptr);
   }
 
+  static std::vector<common::CompressionKind> getTestParams() {
+    std::vector<common::CompressionKind> testParams;
+    testParams.emplace_back(common::CompressionKind::CompressionKind_NONE);
+    testParams.emplace_back(common::CompressionKind::CompressionKind_ZLIB);
+    testParams.emplace_back(common::CompressionKind::CompressionKind_SNAPPY);
+    testParams.emplace_back(common::CompressionKind::CompressionKind_ZSTD);
+    testParams.emplace_back(common::CompressionKind::CompressionKind_LZ4);
+    return testParams;
+  }
+
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
+    if (!isRegisteredVectorSerde()) {
+      facebook::velox::serializer::presto::PrestoVectorSerde::
+          registerVectorSerde();
+    }
+    if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+      facebook::velox::serializer::presto::PrestoVectorSerde::
+          registerNamedVectorSerde();
+    }
   }
 
   void SetUp() override {
     allocator_ = memory::memoryManager()->allocator();
     tempDir_ = exec::test::TempDirectoryPath::create();
-    if (!isRegisteredVectorSerde()) {
-      facebook::velox::serializer::presto::PrestoVectorSerde::
-          registerVectorSerde();
-    }
     filesystems::registerLocalFileSystem();
     rng_.seed(1);
     compressionKind_ = GetParam();
+    enablePrefixSort_ = true;
   }
 
   uint8_t randPartitionBitOffset() {
@@ -156,16 +180,22 @@ class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
     // the batch number of the vector in the partition. When read back, both
     // partitions produce an ascending sequence of integers without gaps.
     spillStats_.wlock()->reset();
+    const std::optional<common::PrefixSortConfig> prefixSortConfig =
+        enablePrefixSort_
+        ? std::optional<common::PrefixSortConfig>(common::PrefixSortConfig())
+        : std::nullopt;
+    const int32_t numSortKeys = 1;
     state_ = std::make_unique<SpillState>(
         [&]() -> const std::string& { return tempDir_->getPath(); },
         updateSpilledBytesCb_,
         fileNamePrefix_,
         numPartitions,
-        1,
+        numSortKeys,
         compareFlags,
         targetFileSize,
         writeBufferSize,
         compressionKind_,
+        prefixSortConfig,
         pool(),
         &spillStats_);
     ASSERT_EQ(targetFileSize, state_->targetFileSize());
@@ -174,6 +204,7 @@ class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
     ASSERT_EQ(spillStats_.rlock()->spilledPartitions, 0);
     ASSERT_TRUE(state_->spilledPartitionSet().empty());
     ASSERT_EQ(compressionKind_, state_->compressionKind());
+    ASSERT_EQ(state_->sortCompareFlags().size(), numSortKeys);
 
     for (auto partition = 0; partition < state_->maxPartitions(); ++partition) {
       ASSERT_FALSE(state_->isPartitionSpilled(partition));
@@ -435,6 +466,7 @@ class SpillTest : public ::testing::TestWithParam<common::CompressionKind>,
   std::shared_ptr<TempDirectoryPath> tempDir_;
   memory::MemoryAllocator* allocator_;
   common::CompressionKind compressionKind_;
+  bool enablePrefixSort_;
   std::vector<std::optional<int64_t>> values_;
   std::vector<std::vector<RowVectorPtr>> batchesByPartition_;
   std::string fileNamePrefix_;
@@ -478,7 +510,10 @@ TEST_P(SpillTest, spillTimestamp) {
       Timestamp{-1, 17'123'456},
       Timestamp{Timestamp::kMaxSeconds, Timestamp::kMaxNanos},
       Timestamp{Timestamp::kMinSeconds, 0}};
-
+  const std::optional<common::PrefixSortConfig> prefixSortConfig =
+      enablePrefixSort_
+      ? std::optional<common::PrefixSortConfig>(common::PrefixSortConfig())
+      : std::nullopt;
   SpillState state(
       [&]() -> const std::string& { return tempDirectory->getPath(); },
       updateSpilledBytesCb_,
@@ -489,6 +524,7 @@ TEST_P(SpillTest, spillTimestamp) {
       1024,
       0,
       compressionKind_,
+      prefixSortConfig,
       pool(),
       &spillStats_);
   int partitionIndex = 0;
@@ -865,13 +901,7 @@ TEST(SpillTest, scopedSpillInjectionRegex) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
+VELOX_INSTANTIATE_TEST_SUITE_P(
     SpillTestSuite,
     SpillTest,
-    ::testing::Values(
-        common::CompressionKind::CompressionKind_NONE,
-        common::CompressionKind::CompressionKind_ZLIB,
-        common::CompressionKind::CompressionKind_SNAPPY,
-        common::CompressionKind::CompressionKind_ZSTD,
-        common::CompressionKind::CompressionKind_LZ4,
-        common::CompressionKind::CompressionKind_GZIP));
+    ::testing::ValuesIn(SpillTest::getTestParams()));

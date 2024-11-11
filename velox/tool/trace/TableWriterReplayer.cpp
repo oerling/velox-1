@@ -16,8 +16,8 @@
 
 #include <folly/executors/IOThreadPoolExecutor.h>
 
-#include "velox/exec/QueryTraceUtil.h"
 #include "velox/exec/TableWriter.h"
+#include "velox/exec/TraceUtil.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/tool/trace/TableWriterReplayer.h"
 
@@ -38,7 +38,7 @@ makeHiveInsertTableHandle(
   const auto inputColumns = tracedHandle->inputColumns();
   const auto compressionKind =
       tracedHandle->compressionKind().value_or(common::CompressionKind_NONE);
-  const auto storageFormat = tracedHandle->tableStorageFormat();
+  const auto storageFormat = tracedHandle->storageFormat();
   const auto serdeParameters = tracedHandle->serdeParameters();
   const auto writerOptions = tracedHandle->writerOptions();
   return std::make_shared<connector::hive::HiveInsertTableHandle>(

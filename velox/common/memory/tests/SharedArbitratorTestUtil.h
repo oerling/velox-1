@@ -53,8 +53,8 @@ class SharedArbitratorTestHelper {
     }
   }
 
-  uint64_t maxArbitrationTimeMs() const {
-    return arbitrator_->maxArbitrationTimeMs_;
+  uint64_t maxArbitrationTimeNs() const {
+    return arbitrator_->maxArbitrationTimeNs_;
   }
 
   folly::CPUThreadPoolExecutor* memoryReclaimExecutor() const {
@@ -63,6 +63,15 @@ class SharedArbitratorTestHelper {
 
   std::thread* globalArbitrationController() const {
     return arbitrator_->globalArbitrationController_.get();
+  }
+
+  uint64_t globalArbitrationRuns() const {
+    return arbitrator_->globalArbitrationRuns_;
+  }
+
+  bool hasShutdown() const {
+    std::lock_guard<std::mutex> l(arbitrator_->stateLock_);
+    return arbitrator_->hasShutdownLocked();
   }
 
  private:

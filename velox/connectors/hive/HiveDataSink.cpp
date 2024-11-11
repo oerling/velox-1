@@ -396,8 +396,8 @@ HiveDataSink::HiveDataSink(
                              *insertTableHandle_->bucketProperty(),
                              inputType_)
                        : nullptr),
-      writerFactory_(dwio::common::getWriterFactory(
-          insertTableHandle_->tableStorageFormat())),
+      writerFactory_(
+          dwio::common::getWriterFactory(insertTableHandle_->storageFormat())),
       spillConfig_(connectorQueryCtx->spillConfig()),
       sortWriterFinishTimeSliceLimitMs_(getFinishTimeSliceLimitMsFromHiveConfig(
           hiveConfig_,
@@ -438,8 +438,7 @@ HiveDataSink::HiveDataSink(
 bool HiveDataSink::canReclaim() const {
   // Currently, we only support memory reclaim on dwrf file writer.
   return (spillConfig_ != nullptr) &&
-      (insertTableHandle_->tableStorageFormat() ==
-       dwio::common::FileFormat::DWRF);
+      (insertTableHandle_->storageFormat() == dwio::common::FileFormat::DWRF);
 }
 
 void HiveDataSink::appendData(RowVectorPtr input) {
@@ -488,6 +487,7 @@ void HiveDataSink::write(size_t index, RowVectorPtr input) {
   auto dataInput = makeDataInput(dataChannels_, input);
 
   writers_[index]->write(dataInput);
+  writerInfo_[index]->inputSizeInBytes += dataInput->estimateFlatSize();
   writerInfo_[index]->numWrittenRows += dataInput->size();
 }
 
@@ -661,9 +661,7 @@ std::vector<std::string> HiveDataSink::close() {
               ("targetFileName", info->writerParameters.targetFileName())
               ("fileSize", ioStats_.at(i)->rawBytesWritten())))
           ("rowCount", info->numWrittenRows)
-         // TODO(gaoge): track and send the fields when inMemoryDataSizeInBytes
-         // and containsNumberedFileNames are needed at coordinator when file_renaming_enabled are turned on.
-          ("inMemoryDataSizeInBytes", 0)
+          ("inMemoryDataSizeInBytes", info->inputSizeInBytes)
           ("onDiskDataSizeInBytes", ioStats_.at(i)->rawBytesWritten())
           ("containsNumberedFileNames", true));
     // clang-format on
@@ -783,7 +781,7 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
   }
 
   updateWriterOptionsFromHiveConfig(
-      insertTableHandle_->tableStorageFormat(),
+      insertTableHandle_->storageFormat(),
       hiveConfig_,
       connectorSessionProperties,
       options);
@@ -938,7 +936,7 @@ std::pair<std::string, std::string> HiveDataSink::getWriterFileNames(
       ? fmt::format(".tmp.velox.{}_{}", targetFileName, makeUuid())
       : targetFileName;
   if (generateFileName &&
-      insertTableHandle_->tableStorageFormat() ==
+      insertTableHandle_->storageFormat() ==
           dwio::common::FileFormat::PARQUET) {
     return {
         fmt::format("{}{}", targetFileName, ".parquet"),
@@ -1006,7 +1004,7 @@ folly::dynamic HiveInsertTableHandle::serialize() const {
 
   obj["inputColumns"] = arr;
   obj["locationHandle"] = locationHandle_->serialize();
-  obj["tableStorageFormat"] = dwio::common::toString(tableStorageFormat_);
+  obj["tableStorageFormat"] = dwio::common::toString(storageFormat_);
 
   if (bucketProperty_) {
     obj["bucketProperty"] = bucketProperty_->serialize();
@@ -1066,8 +1064,7 @@ void HiveInsertTableHandle::registerSerDe() {
 
 std::string HiveInsertTableHandle::toString() const {
   std::ostringstream out;
-  out << "HiveInsertTableHandle ["
-      << dwio::common::toString(tableStorageFormat_);
+  out << "HiveInsertTableHandle [" << dwio::common::toString(storageFormat_);
   if (compressionKind_.has_value()) {
     out << " " << common::compressionKindToString(compressionKind_.value());
   } else {

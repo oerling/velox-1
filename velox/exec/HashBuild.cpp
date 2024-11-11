@@ -745,16 +745,6 @@ bool HashBuild::finishHashBuild() {
   //  https://github.com/facebookincubator/velox/issues/3567 is fixed.
   CpuWallTiming timing;
   {
-    // If there is a chance the join build is parallel, we suspend the driver
-    // while the hash table is being built. This is because off-driver thread
-    // memory allocations inside parallel join build might trigger memory
-    // arbitration.
-    std::unique_ptr<SuspendedSection> suspendedSection;
-    if (allowParallelJoinBuild) {
-      suspendedSection = std::make_unique<SuspendedSection>(
-          driverThreadContext()->driverCtx.driver);
-    }
-
     CpuWallTimer cpuWallTimer{timing};
     table_->prepareJoinTable(
         std::move(otherTables),
@@ -768,8 +758,26 @@ bool HashBuild::finishHashBuild() {
       RuntimeCounter(timing.wallNanos, RuntimeCounter::Unit::kNanos));
 
   addRuntimeStats();
+
+  // Setup spill function for spilling hash table directly from hash join
+  // bridge after transferring of table ownership.
+  HashJoinTableSpillFunc tableSpillFunc;
+  if (canReclaim()) {
+    VELOX_CHECK_NOT_NULL(spiller_);
+    tableSpillFunc = [hashBitRange = spiller_->hashBits(),
+                      joinNode = joinNode_,
+                      spillConfig = spillConfig(),
+                      spillStats =
+                          &spillStats_](std::shared_ptr<BaseHashTable> table) {
+      return spillHashJoinTable(
+          table, hashBitRange, joinNode, spillConfig, spillStats);
+    };
+  }
   joinBridge_->setHashTable(
-      std::move(table_), std::move(spillPartitions), joinHasNullKeys_);
+      std::move(table_),
+      std::move(spillPartitions),
+      joinHasNullKeys_,
+      std::move(tableSpillFunc));
   if (canSpill()) {
     stateCleared_ = true;
   }
@@ -885,8 +893,8 @@ void HashBuild::addRuntimeStats() {
   // Report range sizes and number of distinct values for the join keys.
   const auto& hashers = table_->hashers();
   const auto hashTableStats = table_->stats();
-  uint64_t asRange;
-  uint64_t asDistinct;
+  uint64_t asRange{0};
+  uint64_t asDistinct{0};
   auto lockedStats = stats_.wlock();
 
   lockedStats->addInputTiming.add(table_->offThreadBuildTiming());

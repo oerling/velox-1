@@ -858,7 +858,7 @@ RowVectorPtr HashProbe::getBuildSideOutput() {
 }
 
 void HashProbe::clearIdentityProjectedOutput() {
-  if (!output_ || !output_.unique()) {
+  if (!output_ || output_.use_count() != 1) {
     return;
   }
   for (auto& projection : identityProjections_) {
@@ -1212,7 +1212,7 @@ const uint64_t* getFlatFilterResult(VectorPtr& result) {
   if (!flat->rawValues<uint64_t>()) {
     return flat->rawNulls();
   }
-  if (!result.unique()) {
+  if (result.use_count() != 1) {
     return nullptr;
   }
   auto* values = flat->mutableRawValues<uint64_t>();
@@ -1772,7 +1772,7 @@ void HashProbe::reclaim(
   table_->clear(true);
   // Sets the spilled hash table in the join bridge.
   if (!spillPartitionIdSet.empty()) {
-    joinBridge_->setSpilledHashTable(std::move(spillPartitionSet));
+    joinBridge_->appendSpilledHashTablePartitions(std::move(spillPartitionSet));
   }
 }
 

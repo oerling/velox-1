@@ -14,7 +14,11 @@
 
 add_executable(
   velox_tool_trace_test
-  AggregationReplayerTest.cpp PartitionedOutputReplayerTest.cpp
+  AggregationReplayerTest.cpp
+  FilterProjectReplayerTest.cpp
+  HashJoinReplayerTest.cpp
+  PartitionedOutputReplayerTest.cpp
+  TableScanReplayerTest.cpp
   TableWriterReplayerTest.cpp)
 
 add_test(
