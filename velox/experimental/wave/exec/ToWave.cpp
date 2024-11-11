@@ -647,7 +647,7 @@ bool CompileState::compile() {
   driver_.initializeOperators();
   RowTypePtr inputType;
   if (kCodeGen) {
-    outputType = makeOperators();
+    outputType = makeOperators(operatorIndex);
   } else {
     for (; operatorIndex < operators.size(); ++operatorIndex) {
       int32_t previousNumOperators = operators_.size();
@@ -726,6 +726,11 @@ bool CompileState::compile() {
   instructionStatus_.gridStateSize = instructionStatus_.gridState;
   for (auto* status : allStatuses_) {
     status->gridStateSize = instructionStatus_.gridState;
+  }
+  if (kCodeGen) {
+    if (!reserveMemory()) {
+      VELOX_FAIL("Failed to reserve unified memory for Wave");
+    }
   }
   auto waveOpUnique = std::make_unique<WaveDriver>(
       driver_.driverCtx(),

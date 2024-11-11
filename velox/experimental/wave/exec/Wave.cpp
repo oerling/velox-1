@@ -617,15 +617,16 @@ void WaveStream::exeLaunchInfo(
       }
     }
   });
-  info.numExtraWrap = exe.programShared->extraWrap().size();
-  exe.programShared->extraWrap().forEach([&](auto id) {
-    auto op = operandAt(id);
+  if (exe->programShared) {
+    info.numExtraWrap = exe.programShared->extraWrap().size();
+    exe.programShared->extraWrap().forEach([&](auto id) {
+					     auto op = operandAt(id);
     auto* inputExe = operandExecutable(op->id);
     VELOX_CHECK(op->wrappedAt != AbstractOperand::kNoWrap);
     auto* indices = inputExe->wraps[op->wrappedAt];
     VELOX_CHECK_NOT_NULL(indices);
   });
-
+  }
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
   info.numLocalOps =
       exe.localOperands.size() + exe.outputOperands.size() + numLiteral;
@@ -774,7 +775,7 @@ LaunchControl* WaveStream::prepareProgramLaunch(
     numRows_ = inputRows;
   }
   int32_t numBranches = 1;
-  if (exes[0]->programShared->kernel()) {
+  if (!exes.empty() && exes[0]->programShared->kernel()) {
     numBranches = exes[0]->programShared->numBranches();
     VELOX_CHECK_EQ(1, exes.size());
   }

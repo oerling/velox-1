@@ -628,7 +628,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void markOutputStored(PipelineCandidate& candidate, Segment& segment);
 
-  bool makeSegments();
+  // Partitions the Driver's Operators into segments, one per cardinality change. 'operatorIndex' is the index of the first considered operator and is set to one after the last converted operator. 
+  bool makeSegments(int32_t& operatorIndex);
 
   void recordCandidate(PipelineCandidate& candidate, int32_t lastSegmentIdx);
 
@@ -645,7 +646,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void makeLevel(std::vector<KernelBox>& level);
 
-  RowTypePtr makeOperators();
+  // Transforms the leading operators into WaveOperators with codegen. 'operatorIndex' is set to 1 after the index of the last transformed operator inde the original Driver.
+  RowTypePtr makeOperators(int32_t& operatorIndex);
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
 

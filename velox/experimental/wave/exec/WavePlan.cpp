@@ -356,12 +356,11 @@ bool CompileState::tryPlanOperator(
   return true;
 }
 
-bool CompileState::makeSegments() {
+bool CompileState::makeSegments(int32_t& operatorIndex) {
   auto operators = driver_.operators();
   auto& nodes = driverFactory_.planNodes;
 
   int32_t first = 0;
-  int32_t operatorIndex = 0;
   int32_t nodeIndex = 0;
   RowTypePtr outputType;
   RowTypePtr inputType;
@@ -809,8 +808,8 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
       .output = std::move(output)};
 }
 
-RowTypePtr CompileState::makeOperators() {
-  makeSegments();
+RowTypePtr CompileState::makeOperators(int32_t& operatorIndex) {
+  makeSegments(operatorIndex);
   planPipelines();
   generatePrograms();
   return segments_.back().outputType;
