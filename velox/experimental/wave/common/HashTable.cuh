@@ -18,12 +18,7 @@
 
 #include <cuda/atomic>
 #include <cuda/semaphore>
-
-#include <cub/thread/thread_load.cuh>
-#include <cub/util_ptx.cuh>
-
-#include "velox/experimental/wave/common/CudaUtil.cuh"
-#include "velox/experimental/wave/common/FreeSet.cuh"
+#include "velox/experimental/wave/jit/BitUtil.cuh"
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/HashTable.h"
 
@@ -183,9 +178,6 @@ class GpuHashTable : public GpuHashTableBase {
  public:
   static constexpr int32_t kExclusive = 1;
 
-  static int32_t updatingProbeSharedSize() {
-    return 0;
-  }
 
   template <typename RowType, typename Ops>
   void __device__ readOnlyProbe(HashProbe* probe, Ops ops) {
