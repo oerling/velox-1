@@ -84,7 +84,7 @@ class SharedArbitrator : public memory::MemoryArbitrator {
     static constexpr std::string_view kMemoryReclaimMaxWaitTime{
         "memory-reclaim-max-wait-time"};
     static constexpr std::string_view kDefaultMemoryReclaimMaxWaitTime{"5m"};
-    static uint64_t memoryReclaimMaxWaitTimeMs(
+    static uint64_t memoryReclaimMaxWaitTimeNs(
         const std::unordered_map<std::string, std::string>& configs);
 
     /// When shrinking capacity, the shrink bytes will be adjusted in a way such
@@ -199,6 +199,25 @@ class SharedArbitrator : public memory::MemoryArbitrator {
     static uint32_t globalArbitrationMemoryReclaimPct(
         const std::unordered_map<std::string, std::string>& configs);
 
+    /// The ratio used with 'memory-reclaim-max-wait-time', beyond which, global
+    /// arbitration will no longer reclaim memory by spilling, but instead
+    /// directly abort. It is only in effect when 'global-arbitration-enabled'
+    /// is true
+    static constexpr std::string_view kGlobalArbitrationAbortTimeRatio{
+        "global-arbitration-abort-time-ratio"};
+    static constexpr double kDefaultGlobalArbitrationAbortTimeRatio{0.5};
+    static double globalArbitrationAbortTimeRatio(
+        const std::unordered_map<std::string, std::string>& configs);
+
+    /// If true, global arbitration will not reclaim memory by spilling, but
+    /// only by aborting. This flag is only effective if
+    /// 'global-arbitration-enabled' is true
+    static constexpr std::string_view kGlobalArbitrationWithoutSpill{
+        "global-arbitration-without-spill"};
+    static constexpr bool kDefaultGlobalArbitrationWithoutSpill{false};
+    static bool globalArbitrationWithoutSpill(
+        const std::unordered_map<std::string, std::string>& configs);
+
     /// If true, do sanity check on the arbitrator state on destruction.
     ///
     /// TODO: deprecate this flag after all the existing memory leak use cases
@@ -216,6 +235,8 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   static void registerFactory();
 
   static void unregisterFactory();
+
+  void shutdown() override;
 
   void addPool(const std::shared_ptr<MemoryPool>& pool) final;
 
@@ -253,6 +274,16 @@ class SharedArbitrator : public memory::MemoryArbitrator {
       "globalArbitrationWaitWallNanos"};
 
  private:
+  // Define the internal execution states of the arbitrator.
+  enum class State {
+    kRunning,
+    // Indicates the arbitrator is shutting down. The arbitrator doesn't accept
+    // any new arbitration requests under this state except remove pool as the
+    // last pool reference might be still held by the background global memory
+    // arbitration.
+    kShutdown,
+  };
+
   // The kind string of shared arbitrator.
   inline static const std::string kind_{"SHARED"};
 
@@ -282,6 +313,19 @@ class SharedArbitrator : public memory::MemoryArbitrator {
     SharedArbitrator* const arbitrator_;
     const memory::ScopedMemoryArbitrationContext arbitrationCtx_{};
   };
+
+  FOLLY_ALWAYS_INLINE void checkRunning() {
+    std::lock_guard<std::mutex> l(stateLock_);
+    VELOX_CHECK(!hasShutdownLocked(), "SharedArbitrator is not running");
+  }
+
+  FOLLY_ALWAYS_INLINE bool hasShutdownLocked() const {
+    return state_ == State::kShutdown;
+  }
+
+  FOLLY_ALWAYS_INLINE void checkGlobalArbitrationEnabled() const {
+    VELOX_CHECK(globalArbitrationEnabled_, "Global arbitration is not enabled");
+  }
 
   // Invoked to get the arbitration participant by 'name'. The function returns
   // std::nullopt if the underlying query memory pool is destroyed.
@@ -351,6 +395,15 @@ class SharedArbitrator : public memory::MemoryArbitrator {
 
   // Invoked by global arbitration control thread to run global arbitration.
   void runGlobalArbitration();
+
+  // Helper method used by 'runGlobalArbitration()' to decide if current
+  // iteration of global run should directly reclaim capacity by aborting
+  // queries.
+  bool globalArbitrationShouldReclaimByAbort(
+      uint64_t globalRunElapsedTimeNs,
+      bool hasReclaimedByAbort,
+      bool allParticipantsReclaimed,
+      uint64_t lastReclaimedBytes) const;
 
   // Invoked to get the global arbitration target in bytes.
   uint64_t getGlobalArbitrationTarget();
@@ -450,7 +503,7 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   uint64_t reclaim(
       const ScopedArbitrationParticipant& participant,
       uint64_t targetBytes,
-      uint64_t timeoutMs,
+      uint64_t timeoutNs,
       bool localArbitration) noexcept;
 
   uint64_t shrink(
@@ -521,7 +574,7 @@ class SharedArbitrator : public memory::MemoryArbitrator {
 
   void updateMemoryReclaimStats(
       uint64_t reclaimedBytes,
-      uint64_t reclaimTimeMs,
+      uint64_t reclaimTimeNs,
       bool localArbitration,
       const MemoryReclaimer::Stats& stats);
 
@@ -530,16 +583,18 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   void updateArbitrationFailureStats();
 
   void updateGlobalArbitrationStats(
-      uint64_t arbitrationTimeMs,
+      uint64_t arbitrationTimeNs,
       uint64_t arbitrationBytes);
 
   const uint64_t reservedCapacity_;
   const bool checkUsageLeak_;
-  const uint64_t maxArbitrationTimeMs_;
+  const uint64_t maxArbitrationTimeNs_;
   const ArbitrationParticipant::Config participantConfig_;
   const double memoryReclaimThreadsHwMultiplier_;
   const bool globalArbitrationEnabled_;
   const uint32_t globalArbitrationMemoryReclaimPct_;
+  const double globalArbitrationAbortTimeRatio_;
+  const bool globalArbitrationWithoutSpill_;
 
   // The executor used to reclaim memory from multiple participants in parallel
   // at the background for global arbitration or external memory reclamation.
@@ -553,10 +608,11 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   // Lock used to protect the arbitrator internal state.
   mutable std::mutex stateLock_;
 
+  State state_{State::kRunning};
+
   tsan_atomic<uint64_t> freeReservedCapacity_{0};
   tsan_atomic<uint64_t> freeNonReservedCapacity_{0};
 
-  bool globalArbitrationStop_{false};
   // Indicates if the global arbitration is currently running or not.
   tsan_atomic<bool> globalArbitrationRunning_{false};
 
@@ -590,7 +646,7 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   std::map<uint64_t, ArbitrationWait*> globalArbitrationWaiters_;
 
   tsan_atomic<uint64_t> globalArbitrationRuns_{0};
-  tsan_atomic<uint64_t> globalArbitrationTimeMs_{0};
+  tsan_atomic<uint64_t> globalArbitrationTimeNs_{0};
   tsan_atomic<uint64_t> globalArbitrationBytes_{0};
 
   std::atomic_uint64_t numRequests_{0};

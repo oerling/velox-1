@@ -59,6 +59,7 @@ jobs:
     env:
       CCACHE_DIR: "${{ github.workspace }}/.ccache"
       VELOX_DEPENDENCY_SOURCE: SYSTEM
+      GTest_SOURCE: BUNDLED
       simdjson_SOURCE: BUNDLED
       xsimd_SOURCE: BUNDLED
       CUDA_VERSION: "12.4"
@@ -114,7 +115,7 @@ jobs:
             "-DVELOX_ENABLE_GCS=ON"
             "-DVELOX_ENABLE_ABFS=ON"
             "-DVELOX_ENABLE_REMOTE_FUNCTIONS=ON"
-            "-DVELOX_ENABLE_GPU=OFF"
+            "-DVELOX_ENABLE_GPU=ON"
             "-DVELOX_MONO_LIBRARY=ON"
           )
           make release EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS[*]}"
@@ -134,7 +135,8 @@ jobs:
           LIBHDFS3_CONF: "${{ github.workspace }}/scripts/hdfs-client.xml"
         working-directory: _build/release
         run: |
-          ctest -j 8 --output-on-failure --no-tests=error
+          export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
+          ctest -j 8 --label-exclude cuda_driver --output-on-failure --no-tests=error
 
   ubuntu-debug:
     runs-on: 8-core-ubuntu
@@ -175,6 +177,7 @@ jobs:
       - name: Make Debug Build
         env:
           VELOX_DEPENDENCY_SOURCE: BUNDLED
+          ICU_SOURCE: SYSTEM
           MAKEFLAGS: "NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=3"
           EXTRA_CMAKE_FLAGS: "-DVELOX_ENABLE_ARROW=ON -DVELOX_ENABLE_PARQUET=ON"
         run: |

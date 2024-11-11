@@ -349,6 +349,11 @@ Spilling
      - Specifies the compression algorithm type to compress the spilled data before write to disk to trade CPU for IO
        efficiency. The supported compression codecs are: ZLIB, SNAPPY, LZO, ZSTD, LZ4 and GZIP.
        NONE means no compression.
+   * - spill_enable_prefix_sort
+     - bool
+     - false
+     - Enable the prefix sort or fallback to timsort in spill. The prefix sort is faster than timsort but requires the
+       memory to build prefix data, which might have potential risk of running out of server memory.
    * - spiller_start_partition_bit
      - integer
      - 29
@@ -644,7 +649,7 @@ Each query can override the config by setting corresponding query session proper
    * - hive.gcs.endpoint
      - string
      -
-     - The GCS storage endpoint server.
+     - The GCS storage URI.
    * - hive.gcs.json-key-file-path
      - string
      -

@@ -19,10 +19,8 @@
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/Driver.h"
-#include "velox/exec/HashJoinBridge.h"
 #include "velox/exec/OperatorUtils.h"
-#include "velox/exec/QueryTraceUtil.h"
-#include "velox/exec/Task.h"
+#include "velox/exec/TraceUtil.h"
 #include "velox/expression/Expr.h"
 
 using facebook::velox::common::testutil::TestValue;
@@ -107,17 +105,13 @@ void Operator::maybeSetReclaimer() {
 }
 
 void Operator::maybeSetTracer() {
-  const auto& queryTraceConfig = operatorCtx_->driverCtx()->traceConfig();
-  if (!queryTraceConfig.has_value()) {
-    return;
-  }
-
-  if (operatorCtx_->driverCtx()->queryConfig().queryTraceMaxBytes() == 0) {
+  const auto& traceConfig = operatorCtx_->driverCtx()->traceConfig();
+  if (!traceConfig.has_value()) {
     return;
   }
 
   const auto nodeId = planNodeId();
-  if (queryTraceConfig->queryNodes.count(nodeId) == 0) {
+  if (traceConfig->queryNodes.count(nodeId) == 0) {
     return;
   }
 
@@ -132,22 +126,24 @@ void Operator::maybeSetTracer() {
   }
   tracedOpMap.emplace(operatorId(), operatorType());
 
+  if (!trace::canTrace(operatorType())) {
+    VELOX_UNSUPPORTED("{} does not support tracing", operatorType());
+  }
+
   const auto pipelineId = operatorCtx_->driverCtx()->pipelineId;
   const auto driverId = operatorCtx_->driverCtx()->driverId;
-  LOG(INFO) << "Trace data for operator type: " << operatorType()
+  LOG(INFO) << "Trace input for operator type: " << operatorType()
             << ", operator id: " << operatorId() << ", pipeline: " << pipelineId
             << ", driver: " << driverId << ", task: " << taskId();
-  const auto opTraceDirPath = fmt::format(
-      "{}/{}/{}/{}/data",
-      queryTraceConfig->queryTraceDir,
-      planNodeId(),
-      pipelineId,
-      driverId);
+  const auto opTraceDirPath = trace::getOpTraceDirectory(
+      traceConfig->queryTraceDir, planNodeId(), pipelineId, driverId);
   trace::createTraceDirectory(opTraceDirPath);
-  inputTracer_ = std::make_unique<trace::QueryDataWriter>(
-      opTraceDirPath,
-      memory::traceMemoryPool(),
-      queryTraceConfig->updateAndCheckTraceLimitCB);
+
+  if (operatorType() == "TableScan") {
+    setupSplitTracer(opTraceDirPath);
+  } else {
+    setupInputTracer(opTraceDirPath);
+  }
 }
 
 void Operator::traceInput(const RowVectorPtr& input) {
@@ -157,8 +153,13 @@ void Operator::traceInput(const RowVectorPtr& input) {
 }
 
 void Operator::finishTrace() {
+  VELOX_CHECK(inputTracer_ == nullptr || splitTracer_ == nullptr);
   if (inputTracer_ != nullptr) {
     inputTracer_->finish();
+  }
+
+  if (splitTracer_ != nullptr) {
+    splitTracer_->finish();
   }
 }
 
@@ -166,6 +167,19 @@ std::vector<std::unique_ptr<Operator::PlanNodeTranslator>>&
 Operator::translators() {
   static std::vector<std::unique_ptr<PlanNodeTranslator>> translators;
   return translators;
+}
+
+void Operator::setupInputTracer(const std::string& opTraceDirPath) {
+  inputTracer_ = std::make_unique<trace::OperatorTraceInputWriter>(
+      this,
+      opTraceDirPath,
+      memory::traceMemoryPool(),
+      operatorCtx_->driverCtx()->traceConfig()->updateAndCheckTraceLimitCB);
+}
+
+void Operator::setupSplitTracer(const std::string& opTraceDirPath) {
+  splitTracer_ =
+      std::make_unique<trace::OperatorTraceSplitWriter>(this, opTraceDirPath);
 }
 
 // static
@@ -317,6 +331,16 @@ OperatorStats Operator::stats(bool clear) {
 
   stats.memoryStats = MemoryStats::memStatsFromPool(pool());
   return stats;
+}
+
+void Operator::close() {
+  input_ = nullptr;
+  results_.clear();
+  recordSpillStats();
+  finishTrace();
+
+  // Release the unused memory reservation on close.
+  operatorCtx_->pool()->release();
 }
 
 vector_size_t Operator::outputBatchRows(
@@ -622,7 +646,7 @@ void Operator::MemoryReclaimer::enterArbitration() {
     return;
   }
 
-  Driver* const runningDriver = driverThreadCtx->driverCtx.driver;
+  Driver* const runningDriver = driverThreadCtx->driverCtx()->driver;
   if (!FLAGS_velox_memory_pool_capacity_transfer_across_tasks) {
     if (auto opDriver = ensureDriver()) {
       // NOTE: the current running driver might not be the driver of the
@@ -652,7 +676,7 @@ void Operator::MemoryReclaimer::leaveArbitration() noexcept {
     // is not issued from a driver thread.
     return;
   }
-  Driver* const runningDriver = driverThreadCtx->driverCtx.driver;
+  Driver* const runningDriver = driverThreadCtx->driverCtx()->driver;
   if (!FLAGS_velox_memory_pool_capacity_transfer_across_tasks) {
     if (auto opDriver = ensureDriver()) {
       VELOX_CHECK_EQ(
