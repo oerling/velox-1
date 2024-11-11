@@ -99,13 +99,17 @@ std::string getOpTraceDirectory(
 
 std::string getOpTraceDirectory(
     const std::string& nodeTraceDir,
-    int pipelineId,
+    uint32_t pipelineId,
     int driverId) {
   return fmt::format("{}/{}/{}", nodeTraceDir, pipelineId, driverId);
 }
 
 std::string getOpTraceInputFilePath(const std::string& opTraceDir) {
   return fmt::format("{}/{}", opTraceDir, OperatorTraceTraits::kInputFileName);
+}
+
+std::string getOpTraceSplitFilePath(const std::string& opTraceDir) {
+  return fmt::format("{}/{}", opTraceDir, OperatorTraceTraits::kSplitFileName);
 }
 
 std::string getOpTraceSummaryFilePath(const std::string& opTraceDir) {
@@ -160,6 +164,27 @@ RowTypePtr getDataType(
   return traceNode->sources().at(sourceIndex)->outputType();
 }
 
+std::vector<uint32_t> listPipelineIds(
+    const std::string& nodeTraceDir,
+    const std::shared_ptr<filesystems::FileSystem>& fs) {
+  const auto pipelineDirs = fs->list(nodeTraceDir);
+  std::vector<uint32_t> pipelineIds;
+  pipelineIds.reserve(pipelineDirs.size());
+  try {
+    for (const auto& pipelineDir : pipelineDirs) {
+      pipelineIds.emplace_back(
+          folly::to<uint32_t>(findLastPathNode(pipelineDir)));
+    }
+  } catch (std::exception& e) {
+    VELOX_FAIL(
+        "Failed to list pipeline IDs in '{}' with error: {}",
+        nodeTraceDir,
+        e.what());
+  }
+  std::sort(pipelineIds.begin(), pipelineIds.end());
+  return pipelineIds;
+}
+
 std::vector<uint32_t> listDriverIds(
     const std::string& nodeTraceDir,
     uint32_t pipelineId,
@@ -167,9 +192,18 @@ std::vector<uint32_t> listDriverIds(
   const auto pipelineDir = getPipelineTraceDirectory(nodeTraceDir, pipelineId);
   const auto driverDirs = fs->list(pipelineDir);
   std::vector<uint32_t> driverIds;
-  for (const auto& driverDir : driverDirs) {
-    driverIds.emplace_back(folly::to<uint32_t>(findLastPathNode(driverDir)));
+  driverIds.reserve(driverDirs.size());
+  try {
+    for (const auto& driverDir : driverDirs) {
+      driverIds.emplace_back(folly::to<uint32_t>(findLastPathNode(driverDir)));
+    }
+  } catch (std::exception& e) {
+    VELOX_FAIL(
+        "Failed to list driver IDs in '{}' with error: {}",
+        pipelineDir,
+        e.what());
   }
+  std::sort(driverIds.begin(), driverIds.end());
   return driverIds;
 }
 
@@ -182,13 +216,14 @@ size_t getNumDrivers(
 
 bool canTrace(const std::string& operatorType) {
   static const std::unordered_set<std::string> kSupportedOperatorTypes{
-      "FilterProject",
-      "TableWrite",
       "Aggregation",
+      "FilterProject",
+      "HashBuild",
+      "HashProbe",
       "PartialAggregation",
       "PartitionedOutput",
-      "HashBuild",
-      "HashProbe"};
+      "TableScan",
+      "TableWrite"};
   return kSupportedOperatorTypes.count(operatorType) > 0;
 }
 } // namespace facebook::velox::exec::trace

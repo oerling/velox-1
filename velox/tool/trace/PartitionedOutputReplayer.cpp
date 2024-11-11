@@ -109,22 +109,17 @@ PartitionedOutputReplayer::PartitionedOutputReplayer(
     const std::string& queryId,
     const std::string& taskId,
     const std::string& nodeId,
-    const int32_t pipelineId,
+    VectorSerde::Kind serdeKind,
     const std::string& operatorType,
     const ConsumerCallBack& consumerCb)
-    : OperatorReplayerBase(
-          traceDir,
-          queryId,
-          taskId,
-          nodeId,
-          pipelineId,
-          operatorType),
+    : OperatorReplayerBase(traceDir, queryId, taskId, nodeId, operatorType),
       originalNode_(dynamic_cast<const core::PartitionedOutputNode*>(
           core::PlanNode::findFirstNode(
               planFragment_.get(),
               [this](const core::PlanNode* node) {
                 return node->id() == nodeId_;
               }))),
+      serdeKind_(serdeKind),
       consumerCb_(consumerCb) {
   VELOX_CHECK_NOT_NULL(originalNode_);
   consumerExecutor_ = std::make_unique<folly::CPUThreadPoolExecutor>(
@@ -165,6 +160,7 @@ core::PlanNodePtr PartitionedOutputReplayer::createPlanNode(
       originalNode->isReplicateNullsAndAny(),
       originalNode->partitionFunctionSpecPtr(),
       originalNode->outputType(),
+      serdeKind_,
       source);
 }
 

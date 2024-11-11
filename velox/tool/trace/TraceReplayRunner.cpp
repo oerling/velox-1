@@ -40,11 +40,14 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/serializers/CompactRowSerializer.h"
+#include "velox/serializers/UnsafeRowSerializer.h"
 #include "velox/tool/trace/AggregationReplayer.h"
 #include "velox/tool/trace/FilterProjectReplayer.h"
 #include "velox/tool/trace/HashJoinReplayer.h"
 #include "velox/tool/trace/OperatorReplayerBase.h"
 #include "velox/tool/trace/PartitionedOutputReplayer.h"
+#include "velox/tool/trace/TableScanReplayer.h"
 #include "velox/tool/trace/TableWriterReplayer.h"
 #include "velox/type/Type.h"
 
@@ -67,19 +70,37 @@ DEFINE_string(
     "Specify the target task id, if empty, show the summary of all the traced "
     "query task.");
 DEFINE_string(node_id, "", "Specify the target node id.");
-DEFINE_int32(pipeline_id, 0, "Specify the target pipeline id.");
+DEFINE_int32(driver_id, -1, "Specify the target driver id.");
 DEFINE_string(operator_type, "", "Specify the target operator type.");
 DEFINE_string(
     table_writer_output_dir,
     "",
     "Specify output directory of TableWriter.");
 DEFINE_double(
-    hiveConnectorExecutorHwMultiplier,
+    hive_connector_executor_hw_multiplier,
     2.0,
     "Hardware multipler for hive connector.");
+DEFINE_int32(
+    shuffle_serialization_format,
+    0,
+    "Specify the shuffle serialization format, 0: presto columnar, 1: compact row, 2: spark unsafe row.");
 
 namespace facebook::velox::tool::trace {
 namespace {
+VectorSerde::Kind getVectorSerdeKind() {
+  switch (FLAGS_shuffle_serialization_format) {
+    case 0:
+      return VectorSerde::Kind::kPresto;
+    case 1:
+      return VectorSerde::Kind::kCompactRow;
+    case 2:
+      return VectorSerde::Kind::kUnsafeRow;
+    default:
+      VELOX_UNSUPPORTED(
+          "Unsupported shuffle serialization format: {}",
+          static_cast<int>(FLAGS_shuffle_serialization_format));
+  }
+}
 
 std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
   std::unique_ptr<tool::trace::OperatorReplayerBase> replayer;
@@ -92,7 +113,6 @@ std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
         FLAGS_query_id,
         FLAGS_task_id,
         FLAGS_node_id,
-        FLAGS_pipeline_id,
         FLAGS_operator_type,
         FLAGS_table_writer_output_dir);
   } else if (FLAGS_operator_type == "Aggregation") {
@@ -101,7 +121,6 @@ std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
         FLAGS_query_id,
         FLAGS_task_id,
         FLAGS_node_id,
-        FLAGS_pipeline_id,
         FLAGS_operator_type);
   } else if (FLAGS_operator_type == "PartitionedOutput") {
     replayer = std::make_unique<tool::trace::PartitionedOutputReplayer>(
@@ -109,7 +128,14 @@ std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
         FLAGS_query_id,
         FLAGS_task_id,
         FLAGS_node_id,
-        FLAGS_pipeline_id,
+        getVectorSerdeKind(),
+        FLAGS_operator_type);
+  } else if (FLAGS_operator_type == "TableScan") {
+    replayer = std::make_unique<tool::trace::TableScanReplayer>(
+        FLAGS_root_dir,
+        FLAGS_query_id,
+        FLAGS_task_id,
+        FLAGS_node_id,
         FLAGS_operator_type);
   } else if (FLAGS_operator_type == "FilterProject") {
     replayer = std::make_unique<tool::trace::FilterProjectReplayer>(
@@ -117,7 +143,6 @@ std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
         FLAGS_query_id,
         FLAGS_task_id,
         FLAGS_node_id,
-        FLAGS_pipeline_id,
         FLAGS_operator_type);
   } else if (FLAGS_operator_type == "HashJoin") {
     replayer = std::make_unique<tool::trace::HashJoinReplayer>(
@@ -125,7 +150,6 @@ std::unique_ptr<tool::trace::OperatorReplayerBase> createReplayer() {
         FLAGS_query_id,
         FLAGS_task_id,
         FLAGS_node_id,
-        FLAGS_pipeline_id,
         FLAGS_operator_type);
   } else {
     VELOX_UNSUPPORTED("Unsupported operator type: {}", FLAGS_operator_type);
@@ -163,31 +187,48 @@ void printTaskMetadata(
   oss << queryPlan->toString(true, true);
 }
 
+void printPipelineTraceSummary(
+    const std::string& taskTraceDir,
+    const std::string& nodeId,
+    uint32_t pipelineId,
+    uint32_t driverId,
+    memory::MemoryPool* pool,
+    std::ostringstream& oss) {
+  const auto opTraceDir = exec::trace::getOpTraceDirectory(
+      taskTraceDir, nodeId, pipelineId, driverId);
+  const auto opTraceSummary =
+      exec::trace::OperatorTraceSummaryReader(
+          exec::trace::getOpTraceDirectory(
+              taskTraceDir, nodeId, pipelineId, driverId),
+          pool)
+          .read();
+  oss << "driver " << driverId << ": " << opTraceSummary.toString() << "\n";
+}
+
 void printTaskTraceSummary(
     const std::string& traceDir,
     const std::string& queryId,
     const std::string& taskId,
     const std::string& nodeId,
-    uint32_t pipelineId,
     memory::MemoryPool* pool,
     std::ostringstream& oss) {
   auto fs = filesystems::getFileSystem(traceDir, nullptr);
   const auto taskTraceDir =
       exec::trace::getTaskTraceDirectory(traceDir, queryId, taskId);
+  const auto pipelineIds = exec::trace::listPipelineIds(
+      exec::trace::getNodeTraceDirectory(taskTraceDir, nodeId), fs);
 
-  const std::vector<uint32_t> driverIds = exec::trace::listDriverIds(
-      exec::trace::getNodeTraceDirectory(taskTraceDir, nodeId), pipelineId, fs);
   oss << "\n++++++Task " << taskId << "++++++\n";
-  for (const auto& driverId : driverIds) {
-    const auto opTraceDir = exec::trace::getOpTraceDirectory(
-        taskTraceDir, nodeId, pipelineId, driverId);
-    const auto opTraceSummary =
-        exec::trace::OperatorTraceSummaryReader(
-            exec::trace::getOpTraceDirectory(
-                taskTraceDir, nodeId, pipelineId, driverId),
-            pool)
-            .read();
-    oss << driverId << " driver, " << opTraceSummary.toString() << "\n";
+  for (const auto pipelineId : pipelineIds) {
+    oss << "\n++++++Pipeline " << pipelineId << "++++++\n";
+    const auto driverIds = exec::trace::listDriverIds(
+        exec::trace::getNodeTraceDirectory(taskTraceDir, nodeId),
+        pipelineId,
+        fs);
+    for (const auto& driverId : driverIds) {
+      printPipelineTraceSummary(
+          taskTraceDir, nodeId, pipelineId, driverId, pool, oss);
+    }
   }
 }
 
@@ -221,13 +262,7 @@ void printSummary(
   summary << "\n++++++Task Summaries++++++\n";
   for (const auto& taskId : summaryTaskIds) {
     printTaskTraceSummary(
-        rootDir,
-        queryId,
-        taskId,
-        FLAGS_node_id,
-        FLAGS_pipeline_id,
-        pool,
-        summary);
+        rootDir, queryId, taskId, FLAGS_node_id, pool, summary);
   }
   LOG(INFO) << summary.str();
 }
@@ -236,7 +271,7 @@ void printSummary(
 TraceReplayRunner::TraceReplayRunner()
     : ioExecutor_(std::make_unique<folly::IOThreadPoolExecutor>(
           std::thread::hardware_concurrency() *
-              FLAGS_hiveConnectorExecutorHwMultiplier,
+              FLAGS_hive_connector_executor_hw_multiplier,
           std::make_shared<folly::NamedThreadFactory>(
               "TraceReplayIoConnector"))) {}
 
@@ -261,6 +296,15 @@ void TraceReplayRunner::init() {
   exec::registerPartitionFunctionSerDe();
   if (!isRegisteredVectorSerde()) {
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
+  }
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+    serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
+  }
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kCompactRow)) {
+    serializer::CompactRowVectorSerde::registerNamedVectorSerde();
+  }
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kUnsafeRow)) {
+    serializer::spark::UnsafeRowVectorSerde::registerNamedVectorSerde();
   }
   connector::hive::HiveTableHandle::registerSerDe();
   connector::hive::LocationHandle::registerSerDe();
@@ -301,6 +345,7 @@ void TraceReplayRunner::run() {
     return;
   }
 
+  VELOX_USER_CHECK(!FLAGS_task_id.empty(), "--task_id must be provided");
   VELOX_USER_CHECK(
       !FLAGS_operator_type.empty(), "--operator_type must be provided");
   createReplayer()->run();
