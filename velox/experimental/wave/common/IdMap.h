@@ -28,7 +28,7 @@ class IdMap {
  public:
   void init(int capacity, T* values, int32_t* ids);
 
-  #ifdef __NVCC__
+#ifdef __NVCC__
   __device__ void clearTable();
 
   __device__ int32_t makeId(T value);
@@ -37,7 +37,7 @@ class IdMap {
     return lastId_;
   }
 #endif
-  
+
  private:
 #ifdef __NVCC__
   __device__ static T casValue(T* address, T compare, T val);

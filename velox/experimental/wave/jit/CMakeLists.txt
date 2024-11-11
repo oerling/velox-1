@@ -13,4 +13,3 @@
 # limitations under the License.
 
 add_executable(stringify Stringify.cpp)
-

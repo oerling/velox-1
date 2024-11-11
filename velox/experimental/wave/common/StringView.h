@@ -66,7 +66,7 @@ class StringView {
     return !(*this == other);
   }
 
-  #ifdef __NVCC__
+#ifdef __NVCC__
   __device__ StringView cas(StringView compare, StringView val);
 #endif
 #if !defined(__NVCC__) && !defined(__CUDACC_RTC__)

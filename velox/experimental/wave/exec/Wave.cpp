@@ -620,12 +620,12 @@ void WaveStream::exeLaunchInfo(
   if (exe->programShared) {
     info.numExtraWrap = exe.programShared->extraWrap().size();
     exe.programShared->extraWrap().forEach([&](auto id) {
-					     auto op = operandAt(id);
-    auto* inputExe = operandExecutable(op->id);
-    VELOX_CHECK(op->wrappedAt != AbstractOperand::kNoWrap);
-    auto* indices = inputExe->wraps[op->wrappedAt];
-    VELOX_CHECK_NOT_NULL(indices);
-  });
+      auto op = operandAt(id);
+      auto* inputExe = operandExecutable(op->id);
+      VELOX_CHECK(op->wrappedAt != AbstractOperand::kNoWrap);
+      auto* indices = inputExe->wraps[op->wrappedAt];
+      VELOX_CHECK_NOT_NULL(indices);
+    });
   }
   auto numLiteral = exe.literals ? exe.literals->size() : 0;
   info.numLocalOps =

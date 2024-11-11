@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/experimental/wave/common/StringView.h"
 #include "velox/experimental/wave/common/CompilerDefines.h"
+#include "velox/experimental/wave/common/StringView.h"
 
 namespace facebook::velox::wave {
 
@@ -94,7 +94,9 @@ WAVE_DEVICE_HOST inline uint32_t twang32From64(uint64_t key) {
   return static_cast<uint32_t>(key);
 }
 
-WAVE_DEVICE_HOST inline uint64_t hashMix(const uint64_t upper, const uint64_t lower) {
+WAVE_DEVICE_HOST inline uint64_t hashMix(
+    const uint64_t upper,
+    const uint64_t lower) {
   // Murmur-inspired hashing.
   const uint64_t kMul = 0x9ddfea08eb382d69ULL;
   uint64_t a = (lower ^ upper) * kMul;
