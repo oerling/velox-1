@@ -617,7 +617,7 @@ void WaveStream::exeLaunchInfo(
       }
     }
   });
-  if (exe->programShared) {
+  if (exe.programShared) {
     info.numExtraWrap = exe.programShared->extraWrap().size();
     exe.programShared->extraWrap().forEach([&](auto id) {
       auto op = operandAt(id);
