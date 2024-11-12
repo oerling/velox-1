@@ -33,6 +33,9 @@
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/functions/lib/aggregates/AverageAggregateBase.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
+#include "velox/serializers/CompactRowSerializer.h"
+#include "velox/serializers/PrestoSerializer.h"
+#include "velox/serializers/UnsafeRowSerializer.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 DECLARE_int64(arbitrator_capacity);
@@ -69,6 +72,17 @@ DEFINE_int32(
     "The number of threads to run queries concurrently for each iteration.");
 
 DEFINE_int64(arbitrator_capacity, 256L << 20, "Arbitrator capacity in bytes.");
+
+DEFINE_int32(
+    abort_injection_pct,
+    5,
+    "The percentage chance of triggering task abort");
+
+DEFINE_int32(
+    global_arbitration_pct,
+    5,
+    "Each second, the percentage chance of triggering global arbitration by "
+    "calling shrinking pools globally.");
 
 namespace facebook::velox::exec::test {
 namespace {
@@ -221,6 +235,15 @@ class MemoryArbitrationFuzzer {
 
 MemoryArbitrationFuzzer::MemoryArbitrationFuzzer(size_t initialSeed)
     : vectorFuzzer_{getFuzzerOptions(), pool_.get()} {
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+    serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
+  }
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kCompactRow)) {
+    serializer::CompactRowVectorSerde::registerNamedVectorSerde();
+  }
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kUnsafeRow)) {
+    serializer::spark::UnsafeRowVectorSerde::registerNamedVectorSerde();
+  }
   // Make sure not to run out of open file descriptors.
   std::unordered_map<std::string, std::string> hiveConfig = {
       {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
@@ -659,10 +682,23 @@ MemoryArbitrationFuzzer::orderByPlans(const std::string& tableDir) {
   return plans;
 }
 
+struct ThreadLocalStats {
+  uint64_t taskAbortCount{0};
+};
+
+// Stats that keeps track of per thread execution status in verify()
+thread_local ThreadLocalStats threadLocalStats;
+
 void MemoryArbitrationFuzzer::verify() {
   const auto outputDirectory = TempDirectoryPath::create();
   const auto spillDirectory = exec::test::TempDirectoryPath::create();
   const auto tableScanDir = exec::test::TempDirectoryPath::create();
+
+  // Set a percentage chance for the task to be externally aborted.
+  TestScopedAbortInjection scopedAbortInjection(
+      FLAGS_abort_injection_pct,
+      std::numeric_limits<int32_t>::max(),
+      [](Task* /* unused */) { ++threadLocalStats.taskAbortCount; });
 
   std::vector<PlanWithSplits> plans;
   for (const auto& plan : hashJoinPlans(tableScanDir->getPath())) {
@@ -691,6 +727,7 @@ void MemoryArbitrationFuzzer::verify() {
     queryThreads.emplace_back([&, i, seed]() {
       FuzzerGenerator rng(seed);
       while (!stop) {
+        const auto prevAbortCount = threadLocalStats.taskAbortCount;
         try {
           const auto queryCtx = newQueryCtx(
               memory::memoryManager(),
@@ -720,6 +757,12 @@ void MemoryArbitrationFuzzer::verify() {
             ++lockedStats->oomCount;
           } else if (e.errorCode() == error_code::kMemAborted.c_str()) {
             ++lockedStats->abortCount;
+          } else if (e.errorCode() == error_code::kInvalidState.c_str()) {
+            // Triggered abort on task.
+            VELOX_CHECK_GT(threadLocalStats.taskAbortCount, prevAbortCount);
+            VELOX_CHECK(
+                e.message().find("Aborted for external error") !=
+                std::string::npos);
           } else {
             LOG(ERROR) << "Unexpected exception:\n" << e.what();
             std::rethrow_exception(std::current_exception());
@@ -729,6 +772,16 @@ void MemoryArbitrationFuzzer::verify() {
     });
   }
 
+  // Inject global arbitration.
+  std::thread globalShrinkThread([&]() {
+    while (!stop) {
+      if (getRandomIndex(rng_, 99) < FLAGS_global_arbitration_pct) {
+        memory::memoryManager()->shrinkPools();
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  });
+
   std::this_thread::sleep_for(
       std::chrono::seconds(FLAGS_iteration_duration_sec));
   stop = true;
@@ -736,6 +789,7 @@ void MemoryArbitrationFuzzer::verify() {
   for (auto& queryThread : queryThreads) {
     queryThread.join();
   }
+  globalShrinkThread.join();
 }
 
 void MemoryArbitrationFuzzer::go() {

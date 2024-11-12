@@ -31,27 +31,6 @@ class QueryConfig {
 
   explicit QueryConfig(std::unordered_map<std::string, std::string>&& values);
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  static constexpr const char* kCodegenEnabled = "codegen.enabled";
-
-  static constexpr const char* kCodegenConfigurationFilePath =
-      "codegen.configuration_file_path";
-
-  static constexpr const char* kCodegenLazyLoading = "codegen.lazy_loading";
-
-  bool codegenEnabled() const {
-    return get<bool>(kCodegenEnabled, false);
-  }
-
-  std::string codegenConfigurationFilePath() const {
-    return get<std::string>(kCodegenConfigurationFilePath, "");
-  }
-
-  bool codegenLazyLoading() const {
-    return get<bool>(kCodegenLazyLoading, true);
-  }
-#endif
-
   /// Maximum memory that a query can use on a single host.
   static constexpr const char* kQueryMaxMemoryPerNode =
       "query_max_memory_per_node";
@@ -255,10 +234,10 @@ class QueryConfig {
       "spill_compression_codec";
 
   /// Enable the prefix sort or fallback to timsort in spill. The prefix sort is
-  /// faster than timsort but requires the memory to build prefix data, which
-  /// may cause out of memory.
-  static constexpr const char* kSpillEnablePrefixSort =
-      "spill_enable_prefix_sort";
+  /// faster than std::sort but requires the memory to build normalized prefix
+  /// keys, which might have potential risk of running out of server memory.
+  static constexpr const char* kSpillPrefixSortEnabled =
+      "spill_prefixsort_enabled";
 
   /// Specifies spill write buffer size in bytes. The spiller tries to buffer
   /// serialized spill data up to the specified size before write to storage
@@ -662,8 +641,8 @@ class QueryConfig {
     return get<std::string>(kSpillCompressionKind, "none");
   }
 
-  bool spillEnablePrefixSort() const {
-    return get<bool>(kSpillEnablePrefixSort, false);
+  bool spillPrefixSortEnabled() const {
+    return get<bool>(kSpillPrefixSortEnabled, false);
   }
 
   uint64_t spillWriteBufferSize() const {
