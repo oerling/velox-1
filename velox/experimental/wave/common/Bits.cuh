@@ -17,8 +17,8 @@
 #pragma once
 
 #include <cstdint>
-#include "velox/experimental/wave/jit/BitUtil.cuh"
-#include "velox/experimental/wave/jit/Scan.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
+#include "velox/experimental/wave/common/Scan.cuh"
 
 namespace facebook::velox::wave {
 

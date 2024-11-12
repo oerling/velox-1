@@ -25,8 +25,8 @@ echo "namespace facebook::velox::wave {" >> $JIT/Headers.h
 
 echo "bool registerHeader(const char* text);" >> $JIT/Headers.h
 
-stringify $JIT/BitUtil.cuh >> $JIT/Headers.h
-stringify $JIT/Scan.cuh >> $JIT/Headers.h
+stringify velox/experimental/wave/common/BitUtil.cuh >> $JIT/Headers.h
+stringify velox/experimental/wave/common/Scan.cuh >> $JIT/Headers.h
 stringify "velox/experimental/wave/exec/WaveCore.cuh" >> $JIT/Headers.h
 stringify "velox/experimental/wave/exec/ExprKernel.h" >> $JIT/Headers.h
 stringify "velox/experimental/wave/common/HashTable.h" >> $JIT/Headers.h

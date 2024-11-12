@@ -20,7 +20,7 @@
 #include <cuda/semaphore>
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/HashTable.h"
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 
 namespace facebook::velox::wave {
 

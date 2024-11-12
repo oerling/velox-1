@@ -19,7 +19,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cstdint>
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 
 /// Utilities header to include in Cuda code for Velox Wave. Do not combine with
 /// Velox *.h.n
