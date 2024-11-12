@@ -36,6 +36,12 @@ struct HiveBucketConversion {
   std::vector<std::unique_ptr<HiveColumnHandle>> bucketColumnHandles;
 };
 
+struct RowIdProperties {
+  int64_t metadataVersion;
+  int64_t partitionId;
+  std::string tableGuid;
+};
+
 struct HiveConnectorSplit : public connector::ConnectorSplit {
   const std::string filePath;
   dwio::common::FileFormat fileFormat;
@@ -62,6 +68,8 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
   /// the file handle.
   std::optional<FileProperties> properties;
 
+  std::optional<RowIdProperties> rowIdProperties;
+
   HiveConnectorSplit(
       const std::string& connectorId,
       const std::string& _filePath,
@@ -76,7 +84,8 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
       const std::unordered_map<std::string, std::string>& _serdeParameters = {},
       int64_t _splitWeight = 0,
       const std::unordered_map<std::string, std::string>& _infoColumns = {},
-      std::optional<FileProperties> _properties = std::nullopt)
+      std::optional<FileProperties> _properties = std::nullopt,
+      std::optional<RowIdProperties> _rowIdProperties = std::nullopt)
       : ConnectorSplit(connectorId, _splitWeight),
         filePath(_filePath),
         fileFormat(_fileFormat),
@@ -88,7 +97,8 @@ struct HiveConnectorSplit : public connector::ConnectorSplit {
         extraFileInfo(_extraFileInfo),
         serdeParameters(_serdeParameters),
         infoColumns(_infoColumns),
-        properties(_properties) {}
+        properties(_properties),
+        rowIdProperties(_rowIdProperties) {}
 
   std::string toString() const override;
 

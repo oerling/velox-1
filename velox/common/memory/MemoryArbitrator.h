@@ -103,6 +103,10 @@ class MemoryArbitrator {
 
   virtual ~MemoryArbitrator() = default;
 
+  /// Invoked by the memory manager to shutdown the memory arbitrator to stop
+  /// serving new memory arbitration requests.
+  virtual void shutdown() = 0;
+
   /// Invoked by the memory manager to add a newly created memory pool. The
   /// memory arbitrator allocates the initial capacity for 'pool' and
   /// dynamically adjusts its capacity based query memory needs through memory
@@ -264,7 +268,7 @@ class MemoryReclaimer {
     /// due to reclaiming at non-reclaimable stage.
     uint64_t numNonReclaimableAttempts{0};
 
-    /// The total execution time to do the reclaim in microseconds.
+    /// The total time to do the reclaim in microseconds.
     uint64_t reclaimExecTimeUs{0};
 
     /// The total reclaimed memory bytes.

@@ -1677,7 +1677,8 @@ DEBUG_ONLY_TEST_F(TableScanTest, tableScanSplitsAndWeights) {
   auto leafTaskId = "local://leaf-0";
   auto leafPlan = PlanBuilder()
                       .values(vectors)
-                      .partitionedOutput({}, 1, {"c0", "c1", "c2"})
+                      .partitionedOutput(
+                          {}, 1, {"c0", "c1", "c2"}, VectorSerde::Kind::kPresto)
                       .planNode();
   std::unordered_map<std::string, std::string> config;
   auto queryCtx = core::QueryCtx::create(
@@ -1696,24 +1697,23 @@ DEBUG_ONLY_TEST_F(TableScanTest, tableScanSplitsAndWeights) {
   // Main task plan with table scan and remote exchange.
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
   core::PlanNodeId scanNodeId, exchangeNodeId;
-  auto planNode = PlanBuilder(planNodeIdGenerator, pool_.get())
-                      .tableScan(rowType_)
-                      .capturePlanNodeId(scanNodeId)
-                      .project({"c0 AS t0", "c1 AS t1", "c2 AS t2"})
-                      .hashJoin(
-                          {"t0"},
-                          {"u0"},
-                          PlanBuilder(planNodeIdGenerator, pool_.get())
-                              .exchange(leafPlan->outputType())
-                              .capturePlanNodeId(exchangeNodeId)
-                              // .values(vectors)
-                              // .partitionedOutput({}, 1, {"c0", "c1", "c2"})
-                              .project({"c0 AS u0", "c1 AS u1", "c2 AS u2"})
-                              .planNode(),
-                          "",
-                          {"t1"},
-                          core::JoinType::kAnti)
-                      .planNode();
+  auto planNode =
+      PlanBuilder(planNodeIdGenerator, pool_.get())
+          .tableScan(rowType_)
+          .capturePlanNodeId(scanNodeId)
+          .project({"c0 AS t0", "c1 AS t1", "c2 AS t2"})
+          .hashJoin(
+              {"t0"},
+              {"u0"},
+              PlanBuilder(planNodeIdGenerator, pool_.get())
+                  .exchange(leafPlan->outputType(), VectorSerde::Kind::kPresto)
+                  .capturePlanNodeId(exchangeNodeId)
+                  .project({"c0 AS u0", "c1 AS u1", "c2 AS u2"})
+                  .planNode(),
+              "",
+              {"t1"},
+              core::JoinType::kAnti)
+          .planNode();
 
   // Create task, cursor, start the task and supply the table scan splits.
   const int32_t numDrivers = 6;
@@ -5191,4 +5191,133 @@ TEST_F(TableScanTest, rowNumberInRemainingFilter) {
   AssertQueryBuilder(plan)
       .split(makeHiveConnectorSplit(file->getPath()))
       .assertResults(expected);
+}
+
+TEST_F(TableScanTest, hugeStripe) {
+  CursorParameters params;
+  params.planNode =
+      PlanBuilder()
+          .tableScan(ROW({}, {}), {"c0 IS NULL"}, "", ROW({"c0"}, {TINYINT()}))
+          .planNode();
+  params.copyResult = false;
+  auto cursor = TaskCursor::create(params);
+  auto path = facebook::velox::test::getDataFilePath(
+      "velox/exec/tests", "data/many-nulls.dwrf");
+  cursor->task()->addSplit("0", makeHiveSplit(path));
+  cursor->task()->noMoreSplits("0");
+  int64_t numRows = 0;
+  while (cursor->moveNext()) {
+    auto& vector = cursor->current();
+    ASSERT_EQ(vector->childrenSize(), 0);
+    numRows += vector->size();
+  }
+  ASSERT_EQ(numRows, 4'294'980'000);
+}
+
+TEST_F(TableScanTest, rowId) {
+  const auto rowIdType =
+      ROW({"row_number",
+           "row_group_id",
+           "metadata_version",
+           "partition_id",
+           "table_guid"},
+          {BIGINT(), VARCHAR(), BIGINT(), BIGINT(), VARCHAR()});
+  auto data = makeFlatVector<int64_t>(10, [](auto i) { return i + 1; });
+  auto vector = makeRowVector({data});
+  auto file = TempFilePath::create();
+  writeToFile(file->getPath(), {vector});
+  auto makeRowIdColumnHandle = [&](auto& name) {
+    return std::make_shared<HiveColumnHandle>(
+        name, HiveColumnHandle::ColumnType::kRowId, rowIdType, rowIdType);
+  };
+  {
+    SCOPED_TRACE("Preload");
+    auto outputType = ROW({"c0", "c1"}, {BIGINT(), rowIdType});
+    auto plan = PlanBuilder()
+                    .startTableScan()
+                    .outputType(outputType)
+                    .assignments({
+                        {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                        {"c1", makeRowIdColumnHandle("c1")},
+                    })
+                    .endTableScan()
+                    .planNode();
+    auto query = AssertQueryBuilder(plan);
+    query.config(core::QueryConfig::kMaxSplitPreloadPerDriver, "4");
+    auto expected = BaseVector::create<RowVector>(outputType, 0, pool());
+    for (int i = 0; i < 10; ++i) {
+      auto split = makeHiveConnectorSplit(file->getPath());
+      split->rowIdProperties = {
+          .metadataVersion = i,
+          .partitionId = 2 * i,
+          .tableGuid = fmt::format("table-guid-{}", i),
+      };
+      query.split(split);
+      auto rowGroupId = split->getFileName();
+      auto newExpected = makeRowVector({
+          data,
+          makeRowVector({
+              makeFlatVector<int64_t>(10, folly::identity),
+              makeConstant(StringView(rowGroupId), 10),
+              makeConstant(split->rowIdProperties->metadataVersion, 10),
+              makeConstant(split->rowIdProperties->partitionId, 10),
+              makeConstant(StringView(split->rowIdProperties->tableGuid), 10),
+          }),
+      });
+      expected->append(newExpected.get());
+    }
+    auto task = query.assertResults(expected);
+    auto stats = getTableScanRuntimeStats(task);
+    ASSERT_GT(stats.at("preloadedSplits").sum, 0);
+  }
+  {
+    SCOPED_TRACE("Remaining filter only");
+    auto remainingFilter =
+        parseExpr("c1.row_number % 2 == 0", ROW({"c1"}, {rowIdType}));
+    auto plan = PlanBuilder()
+                    .startTableScan()
+                    .tableHandle(makeTableHandle({}, remainingFilter))
+                    .outputType(ROW({"c0"}, {BIGINT()}))
+                    .assignments({
+                        {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                        {"c1", makeRowIdColumnHandle("c1")},
+                    })
+                    .endTableScan()
+                    .planNode();
+    auto split = makeHiveConnectorSplit(file->getPath());
+    split->rowIdProperties = {
+        .metadataVersion = 42,
+        .partitionId = 24,
+        .tableGuid = "foo",
+    };
+    auto expected = makeRowVector(
+        {makeFlatVector<int64_t>(5, [](auto i) { return 1 + 2 * i; })});
+    AssertQueryBuilder(plan).split(split).assertResults(expected);
+  }
+  {
+    SCOPED_TRACE("Row ID only");
+    auto plan = PlanBuilder()
+                    .startTableScan()
+                    .outputType(ROW({"c0"}, {rowIdType}))
+                    .assignments({{"c0", makeRowIdColumnHandle("c0")}})
+                    .endTableScan()
+                    .planNode();
+    auto split = makeHiveConnectorSplit(file->getPath());
+    split->rowIdProperties = {
+        .metadataVersion = 42,
+        .partitionId = 24,
+        .tableGuid = "foo",
+    };
+    auto rowGroupId = split->getFileName();
+    auto expected = makeRowVector({
+        makeRowVector({
+            makeFlatVector<int64_t>(10, folly::identity),
+            makeConstant(StringView(rowGroupId), 10),
+            makeConstant(split->rowIdProperties->metadataVersion, 10),
+            makeConstant(split->rowIdProperties->partitionId, 10),
+            makeConstant(StringView(split->rowIdProperties->tableGuid), 10),
+        }),
+    });
+    AssertQueryBuilder(plan).split(split).assertResults(expected);
+  }
 }

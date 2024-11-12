@@ -75,6 +75,7 @@ option(
    This will override other build options."
   OFF)
 option(VELOX_MONO_LIBRARY "Build single unified library." OFF)
+option(ENABLE_ALL_WARNINGS "Enable -Wall and -Wextra compiler warnings." ON)
 
 # option() always creates a BOOL variable so we have to use a normal cache
 # variable with STRING type for this option.
@@ -241,7 +242,7 @@ list(INSERT CMAKE_FIND_LIBRARY_SUFFIXES 0 a)
 if(VELOX_ENABLE_S3)
   # Set AWS_ROOT_DIR if you have a custom install location of AWS SDK CPP.
   if(AWSSDK_ROOT_DIR)
-    set(CMAKE_PREFIX_PATH ${AWSSDK_ROOT_DIR})
+    list(APPEND CMAKE_PREFIX_PATH ${AWSSDK_ROOT_DIR})
   endif()
   find_package(AWSSDK REQUIRED COMPONENTS s3;identity-management)
   add_definitions(-DVELOX_ENABLE_S3)
@@ -259,11 +260,9 @@ if(VELOX_ENABLE_ABFS)
 endif()
 
 if(VELOX_ENABLE_HDFS)
-  find_library(
-    LIBHDFS3
-    NAMES libhdfs3.so libhdfs3.dylib
-    HINTS "${CMAKE_SOURCE_DIR}/hawq/depends/libhdfs3/_build/src/" REQUIRED)
-  add_definitions(-DVELOX_ENABLE_HDFS3)
+  add_definitions(-DVELOX_ENABLE_HDFS)
+  # JVM libhdfs requires arrow dependency.
+  set(VELOX_ENABLE_ARROW ON)
 endif()
 
 if(VELOX_ENABLE_PARQUET)
@@ -337,7 +336,7 @@ if("${MAX_LINK_JOBS}")
   set(CMAKE_JOB_POOL_LINK link_job_pool)
 endif()
 
-if("${ENABLE_ALL_WARNINGS}")
+if(ENABLE_ALL_WARNINGS)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(KNOWN_COMPILER_SPECIFIC_WARNINGS
         "-Wno-range-loop-analysis \
@@ -385,6 +384,31 @@ if(${VELOX_ENABLE_GPU})
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+  execute_process(
+    COMMAND brew --prefix icu4c
+    RESULT_VARIABLE BREW_ICU4C
+    OUTPUT_VARIABLE BREW_ICU4C_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(BREW_ICU4C EQUAL 0 AND EXISTS "${BREW_ICU4C_PREFIX}")
+    message(STATUS "Found icu4c installed by Homebrew at ${BREW_ICU4C_PREFIX}")
+    list(APPEND CMAKE_PREFIX_PATH "${BREW_ICU4C_PREFIX}")
+  else()
+    list(APPEND CMAKE_PREFIX_PATH "/usr/local/opt/icu4c")
+  endif()
+endif()
+
+set_source(ICU)
+resolve_dependency(
+  ICU
+  COMPONENTS
+  data
+  i18n
+  io
+  uc
+  tu
+  test)
 
 set(BOOST_INCLUDE_LIBRARIES
     atomic
@@ -570,7 +594,7 @@ include_directories(SYSTEM velox/external)
 
 # these were previously vendored in third-party/
 if(NOT VELOX_DISABLE_GOOGLETEST)
-  set(GTest_SOURCE AUTO)
+  set_source(GTest)
   resolve_dependency(GTest)
   set(VELOX_GTEST_INCUDE_DIR
       "${gtest_SOURCE_DIR}/googletest/include"
