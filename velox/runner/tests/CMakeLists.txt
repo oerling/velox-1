@@ -19,9 +19,6 @@ add_test(velox_local_Runner_test velox_local_Runner_test)
 
 target_link_libraries(
   velox_local_runner_test
+  velox_local_runner
   velox_exec_test_lib
-  velox_dwio_common
-  velox_dwio_parquet_reader
-  velox_dwio_native_parquet_reader
-  velox_parse_parser
-  velox_parse_expression)
+  velox_dwio_common)
