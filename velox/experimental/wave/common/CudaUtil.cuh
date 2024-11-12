@@ -43,7 +43,6 @@ void cuCheck(CUresult result, const char* file, int32_t line);
 // Gets device and context for Driver API. Initializes on first use.
 void getDeviceAndContext(CUdevice& device, CUcontext& context);
 
-
 struct StreamImpl {
   cudaStream_t stream{};
 };

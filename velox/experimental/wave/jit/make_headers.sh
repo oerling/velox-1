@@ -16,7 +16,7 @@
 
 # Generates the inlined headers for Wave Jit.
 #
-# Run in the valox checkout root. 
+# Run in the valox checkout root.
 
 JIT=velox/experimental/wave/jit
 
@@ -40,5 +40,3 @@ stringify "velox/experimental/wave/common/CompilerDefines.h" >> $JIT/Headers.h
 echo "}" >> $JIT/Headers.h
 
 clang-format -i $JIT/Headers.h
-
-

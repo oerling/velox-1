@@ -112,7 +112,6 @@ struct Log2<N, 0, COUNT> {
   };
 };
 
-
 namespace detail {
 inline __device__ bool isLastInWarp() {
   return (threadIdx.x & (kWarpThreads - 1)) == (kWarpThreads - 1);

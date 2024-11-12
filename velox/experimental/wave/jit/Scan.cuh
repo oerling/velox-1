@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "velox/experimental/wave/jit/BitUtil.cuh"
@@ -46,11 +45,10 @@ struct WarpScan {
   }
 
   __device__ __forceinline__ void ExclusiveSum(
-      T input, 
-      T& exclusive_output, 
+      T input,
+      T& exclusive_output,
       T initial_value,
-      T& warp_aggregate) 
-  {
+      T& warp_aggregate) {
     T inclusive_output;
     Inclusivesum(input, inclusive_output);
     warp_aggregate = __shfl_sync(member_mask, inclusive_output, kNumLanes - 1);
@@ -80,15 +78,13 @@ struct WarpScan {
     return output;
   }
 
-  __device__ __forceinline__ void inclusiveSum(
-      T input, 
-      T& inclusive_output) {
+  __device__ __forceinline__ void inclusiveSum(T input, T& inclusive_output) {
     inclusive_output = input;
     int segment_first_lane = 0;
 #pragma unroll
     for (int STEP = 0; STEP < STEPS; STEP++) {
-      inclusive_output = inclusiveSumStep(
-          inclusive_output, segment_first_lane, (1 << STEP));
+      inclusive_output =
+          inclusiveSumStep(inclusive_output, segment_first_lane, (1 << STEP));
     }
   }
 };
