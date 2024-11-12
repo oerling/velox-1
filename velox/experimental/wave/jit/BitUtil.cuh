@@ -62,18 +62,6 @@ inline const T* __device__ __host__ addCast(const void* ptr, int bytes) {
   return reinterpret_cast<const T*>(reinterpret_cast<const char*>(ptr) + bytes);
 }
 
-__device__ __host__ inline int
-memcmp(const void* lhs, const void* rhs, size_t n) {
-  auto* a = reinterpret_cast<const unsigned char*>(lhs);
-  auto* b = reinterpret_cast<const unsigned char*>(rhs);
-  for (size_t i = 0; i < n; ++i) {
-    if (int c = (int)a[i] - (int)b[i]) {
-      return c;
-    }
-  }
-  return 0;
-}
-
 inline unsigned int __device__
 deviceScale32(unsigned int n, unsigned int scale) {
   return (static_cast<unsigned long long>(static_cast<unsigned int>(n)) *

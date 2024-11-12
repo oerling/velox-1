@@ -404,6 +404,7 @@ bool registerHeader(const char* header) {
   nameStringFill += nameLength + 1;
 
   registeredHeaders[numRegisteredHeaders++] = newline + 1;
+  return true;
 }
 
 void getRegisteredHeaders(

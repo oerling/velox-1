@@ -19,9 +19,22 @@
 #include <cassert>
 #include <cstdint>
 #include "velox/experimental/wave/common/CompilerDefines.h"
+#include "velox/experimental/wave/jit/BitUtil.cuh"
 
 namespace facebook::velox::wave {
 
+WAVE_DEVICE_HOST inline int stringview_memcmp(const void* lhs, const void* rhs, size_t n) {
+  auto* a = reinterpret_cast<const unsigned char*>(lhs);
+  auto* b = reinterpret_cast<const unsigned char*>(rhs);
+  for (size_t i = 0; i < n; ++i) {
+    if (int c = (int)a[i] - (int)b[i]) {
+      return c;
+    }
+  }
+  return 0;
+}
+
+  
 class StringView {
  public:
   WAVE_DEVICE_HOST void init(const char* data, int32_t len) {
@@ -59,7 +72,7 @@ class StringView {
       return data_ == other.data_;
     }
     auto len = size();
-    return len == other.size() && memcmp(data(), other.data(), len) == 0;
+    return len == other.size() && stringview_memcmp(data(), other.data(), len) == 0;
   }
 
   WAVE_DEVICE_HOST bool operator!=(StringView other) const {
