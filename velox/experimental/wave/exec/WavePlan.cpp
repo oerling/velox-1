@@ -50,12 +50,26 @@ std::string OperandFlags::toString() const {
       needStore);
 }
 
+  void TableScanStep::visitResults(std::function<void(AbstractOperand*)> visitor) {
+  for (auto& out : results) {
+    visitor(out);
+  }
+}
+
+  void ValuesStep::visitResults(std::function<void(AbstractOperand*)> visitor) {
+  for (auto& out : results) {
+    visitor(out);
+  }
+}
+
 void Compute::visitReferences(std::function<void(AbstractOperand*)> visitor) {
   for (auto& in : operand->inputs) {
     visitor(in);
   }
 }
 
+  
+  
 void Compute::visitResults(std::function<void(AbstractOperand*)> visitor) {
   visitor(operand);
 }
@@ -119,6 +133,14 @@ AbstractOperand* CompileState::fieldToOperand(
   return fieldToOperand(*subfield, scope);
 }
 
+std::vector<AbstractOperand*> CompileState::rowTypeToOperands(const RowTypePtr& rowType) {
+  std::vector<AbstractOperand*> ops;
+  for (auto i = 0; i < rowType->size(); ++i) {
+    ops.push_back(fieldToOperand(*toSubfield(rowType->nameOf(i)), &topScope_));
+  }
+  return ops;
+}
+  
 AbstractOperand* CompileState::switchOperand(
     const exec::SwitchExpr& switchExpr,
     Scope* scope) {
@@ -550,29 +572,40 @@ void CompileState::planSegment(
         recordCandidate(candidate, segmentIdx - 1);
         return;
       }
+      bool needNewKernel = false;
       auto* node = segment.planNode;
       if (auto* scan = dynamic_cast<const core::TableScanNode*>(node)) {
         auto step = makeStep<TableScanStep>();
         step->node = scan;
+	step->results = rowTypeToOperands(scan->outputType());
         candidate.currentBox->steps.push_back(step);
-        newKernel(candidate);
+	needNewKernel = true;
       } else if (auto* values = dynamic_cast<const core::ValuesNode*>(node)) {
         auto step = makeStep<ValuesStep>();
         step->node = values;
         candidate.currentBox->steps.push_back(step);
-        newKernel(candidate);
+	step->results = rowTypeToOperands(values->outputType());
+	needNewKernel = true;
       } else if (
           auto* read = dynamic_cast<const core::AggregationNode*>(node)) {
         auto* step = segment.steps[0];
-        candidate.currentBox->steps.push_back(step);
-      }
-      auto pos = CodePosition(0, 0, candidate.currentBox->steps.size());
+	if (segmentIdx < segments_.size() - 1) {
+	  candidate.currentBox->steps.push_back(step);
+	}
+	}
+      VELOX_CHECK_LE(1, candidate.currentBox->steps.size());
+      auto pos = CodePosition(0, 0, candidate.currentBox->steps.size() - 1);
       for (auto* op : segment.topLevelDefined) {
         auto& flags = candidate.flags(op);
         flags.definedIn = pos;
       }
 
       markOutputStored(candidate, segment);
+      // If the source should be a standalone kernel, like Values or
+      // TableScan and there is more to plan, add a kernel boundary.
+      if (needNewKernel && segmentIdx < segments_.size() - 1) {
+	newKernel(candidate);
+      }
       break;
     }
     case BoundaryType::kExpr: {
@@ -644,6 +677,18 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
   }
 }
 
+void CompileState::markHostOutput() {
+  auto& candidate = selectedPipelines_.back();
+  auto& type = segments_.back().outputType;
+  CodePosition afterEnd(candidate.steps.size());
+  for (auto i = 0; i < type->size(); ++i) {
+    auto* op = fieldToOperand(*toSubfield(type->nameOf(i)), &topScope_);
+    auto& flags = candidate.flags(op);
+    flags.lastUse = afterEnd;
+    flags.needStore = true;
+  }
+}
+  
 void CompileState::planPipelines() {
   int32_t startIdx = 0;
   for (;;) {
@@ -665,6 +710,10 @@ void CompileState::planPipelines() {
   }
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
+    // Mark the operands to return to host as referenced in a fictitious step after the last. This makes them outputs of the producing level/operator.
+    if (pipelineIdx_ == selectedPipelines_.size() - 1) {
+      markHostOutput();
+    }
     selectedPipelines_[pipelineIdx_].makeOperandSets(pipelineIdx_);
   }
 }

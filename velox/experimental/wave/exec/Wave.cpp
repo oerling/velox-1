@@ -714,12 +714,12 @@ WaveStream::fillOperands(Executable& exe, char* start, ExeLaunchInfo& info) {
   info.firstExtraWrap = operandPtrBegin - initialOperandBegin;
   if (exe.programShared) {
     exe.programShared->extraWrap().forEach([&](int32_t id) {
-    auto* inputExe = operandToExecutable_[id];
-    int32_t ordinal = inputExe->outputOperands.ordinal(id);
-    *operandPtrBegin =
-        &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
-    ++operandPtrBegin;
-  });
+      auto* inputExe = operandToExecutable_[id];
+      int32_t ordinal = inputExe->outputOperands.ordinal(id);
+      *operandPtrBegin =
+          &inputExe->operands[inputExe->firstOutputOperandIdx + ordinal];
+      ++operandPtrBegin;
+    });
   }
   return addBytes<Operand**>(start, 0);
 }

@@ -86,7 +86,7 @@ struct KernelStep {
     return !isWrap();
   }
 
-  /// Returns the dynamic shared memort needed by 'this'.
+  /// Returns the dynamic shared memory needed by 'this'.
   virtual int32_t sharedMemorySize() const {
     return sizeof(WaveShared);
   }
@@ -118,14 +118,22 @@ struct ValuesStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kValues;
   }
+
+  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+
   const core::ValuesNode* node;
+  std::vector<AbstractOperand*> results;
 };
 
 struct TableScanStep : public KernelStep {
   StepKind kind() const override {
     return StepKind::kTableScan;
   }
+
+  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
+
   const core::TableScanNode* node;
+  std::vector<AbstractOperand*> results;
 };
 
 struct NullCheck : public KernelStep {
@@ -350,6 +358,9 @@ struct PipelineCandidate {
       int32_t kernelSeq,
       std::vector<LevelParams>& params);
 
+  /// marks 'op' as producing the output operands of steps from 'begin' to 'end'.
+  void setOutputIds(CompileState* state, WaveOperator* op, int32_t begin, int32_t end);
+  
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
@@ -523,6 +534,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     insideNullPropagating_ = flag;
   }
 
+  Scope* topScope() {
+    return &topScope_;
+  }
+
+  AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -585,8 +602,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return ptr;
   }
 
-  AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
-
+  /// Makes an array of AbstractOperands to correspond to the fields of 'rowType' in the top level scope.
+  std::vector<AbstractOperand*> rowTypeToOperands(const RowTypePtr& rowType);
+  
   AbstractOperand* fieldToOperand(
       const core::FieldAccessTypedExpr& field,
       Scope* scope);
@@ -642,6 +660,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void planPipelines();
 
+  // Marks the operands for the output type of the last segment as copied to host.
+  void markHostOutput();
+  
   void pickBest();
 
   void generatePrograms();
