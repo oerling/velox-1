@@ -239,7 +239,7 @@ class VeloxRunner {
         spillExecutor_.get(),
         "schema");
     common::SpillConfig spillConfig;
-    common::PrefixSortConfig prefixSortConfig(100);
+    common::PrefixSortConfig prefixSortConfig(100, 130);
     
     schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
     connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(

@@ -357,10 +357,11 @@ core::PlanNodePtr Optimization::makeOrderBy(
       false,
       std::make_shared<core::GatherPartitionFunctionSpec>(),
       localMerge->outputType(),
+      VectorSerde::Kind::kPresto,
       localMerge);
 
   core::PlanNodePtr merge = std::make_shared<core::MergeExchangeNode>(
-      idGenerator_.next(), localMerge->outputType(), keys, sortOrder);
+								      idGenerator_.next(), localMerge->outputType(), keys, sortOrder, VectorSerde::Kind::kPresto);
   fragment.width = 1;
   fragment.inputStages.push_back(InputStage{merge->id(), source.taskPrefix});
   stages.push_back(std::move(source));
@@ -379,9 +380,9 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
       : inputType_{inputType}, keys_{keys} {}
 
   std::unique_ptr<core::PartitionFunction> create(
-      int numPartitions) const override {
+						  int numPartitions, bool localExchange = false) const override {
     return std::make_unique<exec::HashPartitionFunction>(
-        numPartitions, inputType_, keys_);
+							 localExchange, numPartitions, inputType_, keys_);
   }
 
   folly::dynamic serialize() const override {
@@ -400,7 +401,7 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
 class BroadcastPartitionFunctionSpec : public core::PartitionFunctionSpec {
  public:
   std::unique_ptr<core::PartitionFunction> create(
-      int /* numPartitions */) const override {
+						  int /* numPartitions */, bool /*localExchange*/) const override {
     return nullptr;
   }
 
@@ -502,9 +503,10 @@ core::PlanNodePtr Optimization::makeFragment(
           false,
           std::move(partitionFunctionFactory),
           makeOutputType(repartition->columns()),
+	  VectorSerde::Kind::kPresto,
           partitioningInput);
       auto exchange = std::make_shared<core::ExchangeNode>(
-          idGenerator_.next(), sourcePlan->outputType());
+							   idGenerator_.next(), sourcePlan->outputType(), VectorSerde::Kind::kPresto);
       fragment.inputStages.push_back(
           InputStage{exchange->id(), source.taskPrefix});
       stages.push_back(std::move(source));
