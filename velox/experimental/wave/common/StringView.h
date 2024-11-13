@@ -19,7 +19,7 @@
 #include <cassert>
 #include <cstdint>
 #include "velox/experimental/wave/common/CompilerDefines.h"
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+
 
 namespace facebook::velox::wave {
 

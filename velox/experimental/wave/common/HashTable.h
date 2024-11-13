@@ -91,7 +91,7 @@ struct AllocationRange {
 
   void operator=(AllocationRange&& other) {
     *this = other;
-    new (&other) AllocationRange();
+    memset(&other, 0, sizeof(AllocationRange));
   }
 
   int64_t availableFixed() {

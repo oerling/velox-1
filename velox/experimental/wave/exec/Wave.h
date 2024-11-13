@@ -25,6 +25,7 @@
 #include "velox/experimental/wave/common/GpuArena.h"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/experimental/wave/vector/WaveVector.h"
+#include "velox/experimental/wave/exec/ExprKernelStream.h"
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
 

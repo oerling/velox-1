@@ -1,6 +1,6 @@
 #pragma once
 
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 
 namespace facebook::velox::wave {
 
