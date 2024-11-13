@@ -23,6 +23,7 @@
 
 #define JITIFY_PRINT_HEADER_PATHS 1
 
+#include <filesystem>
 #include "velox/experimental/wave/jit/Headers.h"
 #include "velox/external/jitify/jitify.hpp"
 
@@ -88,11 +89,53 @@ void getNvrtcOptions(std::vector<std::string>& data) {
       includes = end + 1;
     }
   } else {
-    addFlag(
-        "-I",
-        "/usr/local/cuda/include",
-        strlen("/usr/local/cuda/include"),
-        data);
+    std::string currentPath = std::filesystem::current_path().c_str();
+    LOG(INFO) << "Looking for Cuda includes. cwd=" << currentPath
+              << " Cuda=" << __CUDA_API_VER_MAJOR__ << "."
+              << __CUDA_API_VER_MINOR__;
+    auto pathCStr = currentPath.c_str();
+    if (auto fbsource = strstr(pathCStr, "fbsource")) {
+      // fbcode has cuda includes in fbsource/third-party/cuda/...
+      try {
+        auto fbsourcePath =
+            std::string(pathCStr, fbsource - pathCStr + strlen("fbsource")) +
+            "/third-party/cuda";
+        LOG(INFO) << "Guessing fbsource path =" << fbsourcePath;
+        auto tempPath = fmt::format("/tmp/cuda.{}", getpid());
+        auto command = fmt::format(
+            "(cd {}; du |grep \"{}\\.{}.*x64-linux.*/cuda$\" |grep -v thrust) >{}",
+            fbsourcePath,
+            __CUDA_API_VER_MAJOR__,
+            __CUDA_API_VER_MINOR__,
+            tempPath);
+        LOG(INFO) << "Running " << command;
+        system(command.c_str());
+        std::ifstream result(tempPath);
+        std::string line;
+        if (!std::getline(result, line)) {
+          LOG(ERROR) << "Cuda includes not found in fbcode/third-party";
+          return;
+        }
+        LOG(INFO) << "Got cuda line: " << line;
+        // Now trim the size and the trailing /cuda from the line.
+        const char* start = strstr(line.c_str(), "./");
+        if (!start) {
+          LOG(ERROR) << "Line " << line << " does not have ./";
+          return;
+        }
+        auto path = fbsourcePath + "/" + (start + 2);
+        // We add the cwd + the found path minus the trailing /cuda.
+        addFlag("-I", path.c_str(), path.size() - 5, data);
+      } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to infer fbcode Cuda include path: " << e.what();
+      }
+    } else {
+      addFlag(
+          "-I",
+          "/usr/local/cuda/include",
+          strlen("/usr/local/cuda/include"),
+          data);
+    }
   }
   const char* flags = getenv("WAVE_NVRTC_FLAGS");
   if (flags && strlen(flags)) {
@@ -189,7 +232,7 @@ void ensureInit() {
 #ifndef NDEBUG
   waveNvrtcFlags.push_back("-G");
 #else
-  waveMvrtcFlags.push_back("-O3");
+  // waveNvrtcFlags.push_back("-O3");
 #endif
   getNvrtcOptions(waveNvrtcFlags);
   ::jitify::detail::detect_and_add_cuda_arch(waveNvrtcFlags);

@@ -141,7 +141,7 @@ TEST_F(CompileTest, scan) {
   // of the warp.
 
   const char* text =
-      "#include \"velox/experimental/wave/jit/Scan.cuh\"\n"
+      "#include \"velox/experimental/wave/common/Scan.cuh\"\n"
       "namespace facebook::velox::wave {\n"
       "__global__ void scanKernel32(int32_t* ints) {\n"
       "  using Scan = WarpScan<uint32_t>;\n"
