@@ -18,7 +18,7 @@
 
 #include <cuda/atomic>
 #include <cuda/semaphore>
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 #include "velox/experimental/wave/common/Hash.h"
 #include "velox/experimental/wave/common/HashTable.h"
 
@@ -177,7 +177,6 @@ struct GpuBucket : public GpuBucketMembers {
 class GpuHashTable : public GpuHashTableBase {
  public:
   static constexpr int32_t kExclusive = 1;
-
 
   template <typename RowType, typename Ops>
   void __device__ readOnlyProbe(HashProbe* probe, Ops ops) {

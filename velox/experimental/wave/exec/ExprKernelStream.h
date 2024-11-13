@@ -53,4 +53,4 @@ class WaveKernelStream : public Stream {
       KernelParams& params);
 };
 
-} // namespace facebook::velox::exec
+} // namespace facebook::velox::wave

@@ -17,8 +17,8 @@
 #pragma once
 
 #include <cstdint>
-#include "velox/experimental/wave/jit/BitUtil.cuh"
-#include "velox/experimental/wave/jit/Scan.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
+#include "velox/experimental/wave/common/Scan.cuh"
 
 namespace facebook::velox::wave {
 
@@ -347,8 +347,7 @@ inline __device__ int32_t nonNullIndex256(
         ? state->temp[threadIdx.x]
         : 0;
     uint32_t start;
-    Scan()
-        .exclusiveSum(count, start);
+    Scan().exclusiveSum(count, start);
     if (threadIdx.x < blockDim.x / kWarpThreads) {
       state->temp[threadIdx.x] = start;
       if (threadIdx.x == (blockDim.x / kWarpThreads) - 1 && numRows == 256) {
@@ -393,8 +392,7 @@ inline __device__ int32_t nonNullIndex256Sparse(
     nonNullsBelow += countBits(
         reinterpret_cast<uint64_t*>(nulls), previousRow, rows[threadIdx.x]);
   }
-  Scan32()
-      .inclusiveSum(nonNullsBelow, nonNullsBelow);
+  Scan32().inclusiveSum(nonNullsBelow, nonNullsBelow);
   int32_t previousOffset = state->nonNullsBelow;
   if (detail::isLastInWarp()) {
     // The last thread of the warp writes warp total.
@@ -408,8 +406,7 @@ inline __device__ int32_t nonNullIndex256Sparse(
     }
     using Scan8 = WarpScan<int32_t, 8>;
     int32_t sum = 0;
-    Scan8()
-        .exclusiveSum(start, sum);
+    Scan8().exclusiveSum(start, sum);
     if (threadIdx.x == (blockDim.x / kWarpThreads) - 1) {
       // The last sum thread increments the running count of non-nulls
       // by the block total.

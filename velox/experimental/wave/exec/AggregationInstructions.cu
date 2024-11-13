@@ -15,6 +15,7 @@
  */
 
 #include "velox/experimental/wave/exec/AggregationInstructions.h"
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 #include <cub/cub.cuh> // @manual
@@ -22,6 +23,7 @@
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/BuiltInAggregateFunctions.cuh"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
+#include "velox/experimental/wave/exec/ExprKernelStream.h"
 
 #define VELOX_WAVE_RETURN_NOT_OK(_expr)            \
   if (auto _ec = (_expr); _ec != ErrorCode::kOk) { \

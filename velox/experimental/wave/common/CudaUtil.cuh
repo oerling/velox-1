@@ -19,7 +19,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cstdint>
-#include "velox/experimental/wave/jit/BitUtil.cuh"
+#include "velox/experimental/wave/common/BitUtil.cuh"
 
 /// Utilities header to include in Cuda code for Velox Wave. Do not combine with
 /// Velox *.h.n
@@ -42,7 +42,6 @@ void cuCheck(CUresult result, const char* file, int32_t line);
 
 // Gets device and context for Driver API. Initializes on first use.
 void getDeviceAndContext(CUdevice& device, CUcontext& context);
-
 
 struct StreamImpl {
   cudaStream_t stream{};
