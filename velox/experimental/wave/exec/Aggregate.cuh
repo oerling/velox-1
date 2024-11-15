@@ -208,11 +208,7 @@ __device__ __forceinline__ void aggregateKernel(
       auto& acc = agg.aggregates[i];
       int64_t value = 0;
       if (laneStatus == ErrorCode::kOk) {
-        operandOrNull(
-            shared->operands,
-            acc.arg1,
-            shared->blockBase,
-            value);
+        operandOrNull(shared->operands, acc.arg1, shared->blockBase, value);
       }
       using Reduce = cub::WarpReduce<int64_t>;
       auto sum =
@@ -247,13 +243,11 @@ __device__ __forceinline__ void readAggregateKernel(
         for (auto i = 0; i < agg->numKeys; ++i) {
           auto opIdx = keys[i];
           auto k = *addCast<int64_t>(row, (i + 1) * sizeof(int64_t));
-          flatResult<int64_t>(
-              shared->operands, opIdx, shared->blockBase) = k;
+          flatResult<int64_t>(shared->operands, opIdx, shared->blockBase) = k;
         }
         for (auto i = 0; i < agg->numAggregates; ++i) {
           auto& acc = agg->aggregates[i];
-          flatResult<int64_t>(
-              shared->operands, acc.result, shared->blockBase) =
+          flatResult<int64_t>(shared->operands, acc.result, shared->blockBase) =
               *addCast<int64_t>(row, acc.accumulatorOffset);
         }
       }
@@ -276,8 +270,7 @@ __device__ __forceinline__ void readAggregateKernel(
       shared->status->numRows = 1;
       for (auto i = 0; i < agg->numAggregates; ++i) {
         auto& acc = agg->aggregates[i];
-        flatResult<int64_t>(
-            shared->operands, acc.result, shared->blockBase) =
+        flatResult<int64_t>(shared->operands, acc.result, shared->blockBase) =
             *addCast<int64_t>(row, acc.accumulatorOffset);
       }
     }

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/common/CudaUtil.cuh"
 #include "velox/experimental/wave/exec/AggregationInstructions.h"
 #include "velox/experimental/wave/common/CudaUtil.cuh"
 
@@ -22,6 +23,7 @@
 #include "velox/experimental/wave/common/IdMap.cuh"
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/BuiltInAggregateFunctions.cuh"
+#include "velox/experimental/wave/exec/ExprKernelStream.h"
 #include "velox/experimental/wave/exec/WaveCore.cuh"
 #include "velox/experimental/wave/exec/ExprKernelStream.h"
 

@@ -81,6 +81,11 @@ FOLLY_ALWAYS_INLINE void extractRowColumnToPrefix(
           prefixSortLayout, index, rowColumn, row, prefixBuffer);
       return;
     }
+    case TypeKind::HUGEINT: {
+      encodeRowColumn<int128_t>(
+          prefixSortLayout, index, rowColumn, row, prefixBuffer);
+      return;
+    }
     default:
       VELOX_UNSUPPORTED(
           "prefix-sort does not support type kind: {}",
@@ -136,12 +141,10 @@ PrefixSortLayout PrefixSortLayout::makeSortLayout(
   uint32_t normalizedKeySize{0};
   uint32_t numNormalizedKeys{0};
   for (auto i = 0; i < numKeys; ++i) {
-    if (normalizedKeySize > maxNormalizedKeySize) {
-      break;
-    }
     const std::optional<uint32_t> encodedSize =
         PrefixSortEncoder::encodedSize(types[i]->kind());
-    if (!encodedSize.has_value()) {
+    if (!encodedSize.has_value() ||
+        normalizedKeySize + encodedSize.value() > maxNormalizedKeySize) {
       break;
     }
     prefixOffsets.push_back(normalizedKeySize);

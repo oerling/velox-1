@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include "velox/experimental/wave/common/Scan.cuh"
 #include "velox/experimental/wave/exec/ExprKernel.h"
 #include "velox/experimental/wave/common/Scan.cuh"
 #include "velox/experimental/wave/vector/Operand.h"
