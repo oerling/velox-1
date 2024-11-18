@@ -27,7 +27,7 @@ thread_local int32_t CompileState::branchIdx_;
 thread_local PipelineCandidate* CompileState::currentCandidate_;
 thread_local KernelBox* CompileState::currentBox_;
 
-const std::string typeName(const Type& type) {
+const std::string cudaTypeName(const Type& type) {
   switch (type.kind()) {
     case TypeKind::BIGINT:
       return "int64_t ";
@@ -66,7 +66,7 @@ int32_t CompileState::ordinal(const AbstractOperand& op) {
 
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
   auto ord = ordinal(op);
-  generated_ << fmt::format("{} r{};\n", typeName(*op.type), ord);
+  generated_ << fmt::format("{} r{};\n", cudaTypeName(*op.type), ord);
   return ord;
 }
 
@@ -170,7 +170,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
         !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
     generated_ << fmt::format(
         "nonNullOperand<{}, {}>(operands, {}, blockBase)",
-        typeName(*op.type),
+        cudaTypeName(*op.type),
         mayWrap,
         ordinal(op));
   }
@@ -191,7 +191,7 @@ void Compute::generateMain(CompileState& state) {
   operand->inRegister = true;
   if (flags.needStore) {
     state.generated() << fmt::format(
-        "flatValue(operands, {}, blockBase) = r{};\n", ord, ord);
+        "flatResult(operands, {}, blockBase) = r{};\n", ord, ord);
   }
 }
 
@@ -307,6 +307,7 @@ ProgramKey CompileState::makeLevelText(
   std::vector<std::string> entryPoints = {kernelName};
   head << fmt::format(
       "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
+      "namespace facebook::velox::wave {{\n"
       "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
       kernelName);
 
@@ -340,7 +341,7 @@ ProgramKey CompileState::makeLevelText(
     }
   }
 
-  generated_ << " PROGRAM_EPILOGUE()\n}";
+  generated_ << " PROGRAM_EPILOGUE();\n}\n}\n";
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   int32_t numRegs =
       params.input.size() + params.local.size() + params.output.size();

@@ -23,6 +23,7 @@
 #include "velox/experimental/wave/exec/WaveOperator.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/SwitchExpr.h"
+#include "velox/experimental/wave/exec/WaveRegistry.h"
 
 namespace facebook::velox::wave {
 
@@ -539,6 +540,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   }
 
   AbstractOperand* fieldToOperand(common::Subfield& field, Scope* scope);
+  static WaveRegistry& registry() {
+    return registry_;
+  }
   
  private:
   bool
@@ -722,6 +726,15 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
       aggregateFunctionRegistry_;
   folly::F14FastMap<std::string, std::shared_ptr<exec::Expr>> fieldToExpr_;
 
+  // Distinct includes pulled in by functions called from the generated kernel.
+  folly::F14FastSet<std::string> includes_;
+
+  // Text of the #include section for the generated kernel.
+  std::stringstream includeText_;
+  
+  // Concatenated text of inlineable definitions of functions called from the kerne;l.
+  std::stringstream inlines_;
+  
   //  Text of the kernel being generated.
   std::stringstream generated_;
   bool insideNullPropagating_{false};
@@ -730,6 +743,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   thread_local static PipelineCandidate* currentCandidate_;
   thread_local static KernelBox* currentBox_;
 
+  // Distinct functions inlined in kernel.
+  folly::F14FastSet<FunctionKey> functions_;
+  
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;
 
@@ -777,9 +793,15 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;
+
+  static WaveRegistry registry_;
 };
 
-/// Registers adapter to add Wave operators to Drivers.
+const std::string cudaTypeName(const Type& type);
+  
+  inline WaveRegistry& waveRegistry() { return CompileState::registry(); }
+  
+  /// Registers adapter to add Wave operators to Drivers.
 void registerWave();
 
 } // namespace facebook::velox::wave

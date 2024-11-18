@@ -25,6 +25,8 @@ add_library(
   ExprKernel2.cu
   ExprKernel3.cu
   Instruction.cpp
+  RegisterFunctions.cpp
+  WaveRegistry.cpp
   ToWave.cpp
   WavePlan.cpp
   WaveGen.cpp

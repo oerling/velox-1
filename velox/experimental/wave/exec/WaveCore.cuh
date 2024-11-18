@@ -183,6 +183,12 @@ resultNull(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
   op->nulls[blockBase + threadIdx.x] = kNull;
 }
 
+__device__ inline void
+setNull(Operand** operands, OperandIndex opIdx, int32_t blockBase, bool isNull) {
+  auto* op = operands[opIdx];
+  op->nulls[blockBase + threadIdx.x] = isNull ? kNull : kNotNull;
+}
+
 template <typename T>
 __device__ inline T&
 flatResult(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
@@ -257,7 +263,7 @@ __device__ inline T& flatResult(Operand* op, int32_t blockBase) {
     shared->streamIdx = params.streamIdx;                                      \
     shared->isContinue = params.startPC != nullptr;                            \
     shared->extraWraps = params.extraWraps;                                    \
-    shared.numExtraWraps = params.numExtraWraps;                               \
+    shared->numExtraWraps = params.numExtraWraps;                               \
     shared->hasContinue = false;                                               \
     shared->stop = false;                                                      \
   }                                                                            \

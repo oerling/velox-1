@@ -437,8 +437,10 @@ const char* velox_experimental_wave_vector_Operand_h =
     "};\n"
     "\n"
     "/// Returns the number of active rows in 'status' for 'numBlocks'.\n"
-    "int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks);\n"
-    "\n"
+    "#ifndef __CUDACC_RTC__\n"
+    "  int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks);\n"
+    "#endif\n"
+    "  \n"
     "} // namespace facebook::velox::wave\n";
 bool velox_experimental_wave_vector_Operand_h_reg =
     registerHeader(velox_experimental_wave_vector_Operand_h);
@@ -728,7 +730,7 @@ const char* velox_experimental_wave_exec_WaveCore_cuh =
     "    shared->streamIdx = params.streamIdx;                                      \\\n"
     "    shared->isContinue = params.startPC != nullptr;                            \\\n"
     "    shared->extraWraps = params.extraWraps;                                    \\\n"
-    "    shared.numExtraWraps = params.numExtraWraps;                               \\\n"
+    "    shared->numExtraWraps = params.numExtraWraps;                               \\\n"
     "    shared->hasContinue = false;                                               \\\n"
     "    shared->stop = false;                                                      \\\n"
     "  }                                                                            \\\n"
