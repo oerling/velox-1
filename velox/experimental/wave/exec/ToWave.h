@@ -21,9 +21,9 @@
 #include "velox/experimental/wave/exec/AggregateFunctionRegistry.h"
 #include "velox/experimental/wave/exec/WaveDriver.h"
 #include "velox/experimental/wave/exec/WaveOperator.h"
+#include "velox/experimental/wave/exec/WaveRegistry.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/SwitchExpr.h"
-#include "velox/experimental/wave/exec/WaveRegistry.h"
 
 namespace facebook::velox::wave {
 
@@ -359,9 +359,14 @@ struct PipelineCandidate {
       int32_t kernelSeq,
       std::vector<LevelParams>& params);
 
-  /// marks 'op' as producing the output operands of steps from 'begin' to 'end'.
-  void setOutputIds(CompileState* state, WaveOperator* op, int32_t begin, int32_t end);
-  
+  /// marks 'op' as producing the output operands of steps from 'begin' to
+  /// 'end'.
+  void setOutputIds(
+      CompileState* state,
+      WaveOperator* op,
+      int32_t begin,
+      int32_t end);
+
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
@@ -543,7 +548,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   static WaveRegistry& registry() {
     return registry_;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -606,9 +611,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return ptr;
   }
 
-  /// Makes an array of AbstractOperands to correspond to the fields of 'rowType' in the top level scope.
+  /// Makes an array of AbstractOperands to correspond to the fields of
+  /// 'rowType' in the top level scope.
   std::vector<AbstractOperand*> rowTypeToOperands(const RowTypePtr& rowType);
-  
+
   AbstractOperand* fieldToOperand(
       const core::FieldAccessTypedExpr& field,
       Scope* scope);
@@ -664,9 +670,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void planPipelines();
 
-  // Marks the operands for the output type of the last segment as copied to host.
+  // Marks the operands for the output type of the last segment as copied to
+  // host.
   void markHostOutput();
-  
+
   void pickBest();
 
   void generatePrograms();
@@ -731,10 +738,11 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   // Text of the #include section for the generated kernel.
   std::stringstream includeText_;
-  
-  // Concatenated text of inlineable definitions of functions called from the kerne;l.
+
+  // Concatenated text of inlineable definitions of functions called from the
+  // kerne;l.
   std::stringstream inlines_;
-  
+
   //  Text of the kernel being generated.
   std::stringstream generated_;
   bool insideNullPropagating_{false};
@@ -745,7 +753,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   // Distinct functions inlined in kernel.
   folly::F14FastSet<FunctionKey> functions_;
-  
+
   // The programs generated for a kernel.
   std::vector<ProgramPtr> programs_;
 
@@ -798,10 +806,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 };
 
 const std::string cudaTypeName(const Type& type);
-  
-  inline WaveRegistry& waveRegistry() { return CompileState::registry(); }
-  
-  /// Registers adapter to add Wave operators to Drivers.
+
+inline WaveRegistry& waveRegistry() {
+  return CompileState::registry();
+}
+
+/// Registers adapter to add Wave operators to Drivers.
 void registerWave();
 
 } // namespace facebook::velox::wave

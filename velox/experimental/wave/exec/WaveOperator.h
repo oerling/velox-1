@@ -127,11 +127,13 @@ class WaveOperator {
     defines_[value] = op;
   }
 
-  void addSubfieldAndType(const common::Subfield* subfield, const TypePtr& type) {
+  void addSubfieldAndType(
+      const common::Subfield* subfield,
+      const TypePtr& type) {
     subfields_.push_back(subfield);
     types_.push_back(type);
   }
-  
+
   void setDriver(WaveDriver* driver) {
     driver_ = driver;
   }

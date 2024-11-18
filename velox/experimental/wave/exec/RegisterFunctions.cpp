@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-
-#include "velox/experimental/wave/exec/WaveRegistry.h"
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/WaveRegistry.h"
 
 namespace facebook::velox::wave {
-  namespace {
-bool registerBinaryNumeric(const std::string&name, FunctionMetadata metadata, const std::string& text) {
-  static std::vector<TypePtr> types = {TINYINT(), SMALLINT(), INTEGER(), BIGINT(), REAL(), DOUBLE()};
+namespace {
+bool registerBinaryNumeric(
+    const std::string& name,
+    FunctionMetadata metadata,
+    const std::string& text) {
+  static std::vector<TypePtr> types = {
+      TINYINT(), SMALLINT(), INTEGER(), BIGINT(), REAL(), DOUBLE()};
   for (auto& type : types) {
     std::vector<TypePtr> args{type, type};
     FunctionKey key(name, args);
@@ -30,11 +33,15 @@ bool registerBinaryNumeric(const std::string&name, FunctionMetadata metadata, co
   return true;
 }
 
-    bool registered1 = registerBinaryNumeric("plus", FunctionMetadata(),
-			"$R$ plus($1$ x, $2$ y) { return x + y; }");
+bool registered1 = registerBinaryNumeric(
+    "plus",
+    FunctionMetadata(),
+    "$R$ plus($1$ x, $2$ y) { return x + y; }");
 
-bool registered2 =   registerBinaryNumeric("lt", FunctionMetadata(),
-			"bool lt($1$ x, $2$ y) { return x < y; }");
+bool registered2 = registerBinaryNumeric(
+    "lt",
+    FunctionMetadata(),
+    "bool lt($1$ x, $2$ y) { return x < y; }");
 
-}
-}
+} // namespace
+} // namespace facebook::velox::wave

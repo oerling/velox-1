@@ -14,39 +14,42 @@
  * limitations under the License.
  */
 
-#pragma once 
+#pragma once
 
 #include "velox/type/Type.h"
 
 namespace facebook::velox::wave {
 
-  struct FunctionDefinition {
-    /// Text of the function, e.g. "inline __device__ int32_t onePlus(WaveShared* /*s*/, int32_t a) { return a + 1; }"
-    std::string definition;
+struct FunctionDefinition {
+  /// Text of the function, e.g. "inline __device__ int32_t onePlus(WaveShared*
+  /// /*s*/, int32_t a) { return a + 1; }"
+  std::string definition;
 
-    // If non-empty, specifies an include to add to the translation unit. The content is the full #include line.
-    std::string includeLine;
-  };
-  /// Identifies a function by name and argument types.
-  struct FunctionKey {
-    FunctionKey(const std::string& name, const std::vector<TypePtr>& types) : name(name), types(types) {}
-    
-    const std::string name;
-    const std::vector<TypePtr> types;
+  // If non-empty, specifies an include to add to the translation unit. The
+  // content is the full #include line.
+  std::string includeLine;
+};
+/// Identifies a function by name and argument types.
+struct FunctionKey {
+  FunctionKey(const std::string& name, const std::vector<TypePtr>& types)
+      : name(name), types(types) {}
 
-    bool operator==(const FunctionKey& other) const {
-      if (name != other.name || types.size() != other.types.size()) {
-	return false;
-      }
-      for (auto i = 0; i < types.size(); ++i) {
-	if (!types[i]->kindEquals(types[i])) {
-	  return false;
-	}
-      }
-      return true;
+  const std::string name;
+  const std::vector<TypePtr> types;
+
+  bool operator==(const FunctionKey& other) const {
+    if (name != other.name || types.size() != other.types.size()) {
+      return false;
     }
-  };
-}
+    for (auto i = 0; i < types.size(); ++i) {
+      if (!types[i]->kindEquals(types[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+} // namespace facebook::velox::wave
 
 namespace std {
 template <>
@@ -57,46 +60,54 @@ struct hash<::facebook::velox::wave::FunctionKey> {
       typeHash *= key.types[i]->hashKind();
     }
     return std::hash<std::string>()(key.name) * typeHash;
-}
+  }
 };
-}
+} // namespace std
 
 namespace facebook::velox::wave {
-  
-  /// Wave-specific function properties.
-  struct FunctionMetadata {
-    /// True if may turn off the lane, e.g. for error.
-    bool maySetStatus{false};
 
-    /// True if needs the WaveShared* for context.
-    bool maySetShared{false};
-  };
+/// Wave-specific function properties.
+struct FunctionMetadata {
+  /// True if may turn off the lane, e.g. for error.
+  bool maySetStatus{false};
 
-  struct FunctionEntry {
-    FunctionMetadata metadata;
-    std::string includeLine;
-    // Text containing placeholders for argument/return types.
-    std::string text;
-  };
-  
-  /// Contains registration for Velox functions on GPU. The key is the name and argument type list. The result of retrieval is an inline __device__ function definition to add  to a generated kernel. Some functions like lambdas have a special codegen pattern. These are known separately.
-  class WaveRegistry {
-    public:
-    FunctionMetadata metadata(const FunctionKey& key) const;
+  /// True if needs the WaveShared* for context.
+  bool maySetShared{false};
+};
 
-    // Produces the text to include to the kernel. The return type is resolved at this time, so it does not have to be inferred again and is passed as 'returnType'.
-    FunctionDefinition makeDefinition(const FunctionKey& key, const TypePtr returnType) const;
+struct FunctionEntry {
+  FunctionMetadata metadata;
+  std::string includeLine;
+  // Text containing placeholders for argument/return types.
+  std::string text;
+};
 
-    void registerFunction(const FunctionKey& key, FunctionMetadata& metadata, const std::string& includeLine, const std::string& text); 
-    
-  private:
-    folly::F14FastMap<FunctionKey, FunctionEntry> data_;
+/// Contains registration for Velox functions on GPU. The key is the name and
+/// argument type list. The result of retrieval is an inline __device__ function
+/// definition to add  to a generated kernel. Some functions like lambdas have a
+/// special codegen pattern. These are known separately.
+class WaveRegistry {
+ public:
+  FunctionMetadata metadata(const FunctionKey& key) const;
 
-    
-  };
+  // Produces the text to include to the kernel. The return type is resolved at
+  // this time, so it does not have to be inferred again and is passed as
+  // 'returnType'.
+  FunctionDefinition makeDefinition(
+      const FunctionKey& key,
+      const TypePtr returnType) const;
 
-}
- 
+  void registerFunction(
+      const FunctionKey& key,
+      FunctionMetadata& metadata,
+      const std::string& includeLine,
+      const std::string& text);
+
+ private:
+  folly::F14FastMap<FunctionKey, FunctionEntry> data_;
+};
+
+} // namespace facebook::velox::wave
 
 namespace folly {
 template <>
@@ -107,7 +118,6 @@ struct hasher<::facebook::velox::wave::FunctionKey> {
       typeHash *= key.types[i]->hashKind();
     }
     return std::hash<std::string>()(key.name) * typeHash;
-}
+  }
 };
-}
-  
+} // namespace folly
