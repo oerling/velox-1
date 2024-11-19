@@ -180,6 +180,7 @@ void Compute::generateMain(CompileState& state) {
   VELOX_CHECK_NOT_NULL(operand->expr);
   auto& flags = state.flags(*operand);
   auto ord = state.declareVariable(*operand);
+  state.functionReferenced(operand);
   state.generated() << fmt::format("r{} = {}(", ord, operand->expr->name());
   for (auto i = 0; i < operand->inputs.size(); ++i) {
     state.generateOperand(*operand->inputs[i]);
@@ -191,7 +192,7 @@ void Compute::generateMain(CompileState& state) {
   operand->inRegister = true;
   if (flags.needStore) {
     state.generated() << fmt::format(
-        "flatResult(operands, {}, blockBase) = r{};\n", ord, ord);
+				     "flatResult<{}>(operands, {}, blockBase) = r{};\n", cudaTypeName(*operand->type), ord, ord);
   }
 }
 
@@ -229,6 +230,27 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   return fmt::format("flag{}", ord);
 }
 
+void CompileState::functionReferenced(const AbstractOperand* op) {
+  auto numInput = op->inputs.size();
+  std::vector<TypePtr> types;
+  types.reserve(numInput);
+  for (auto i = 0; i < numInput; ++i) {
+    types.push_back(op->expr->inputs()[i]->type());
+  }
+  FunctionKey key(op->expr->name(), types);
+
+  if (functions_.count(key)) {
+    return;
+  }
+  functions_.insert(key);
+  auto definition = registry_.makeDefinition(key, op->type);
+  if (!definition.includeLine.empty() && includes_.find(definition.includeLine) == includes_.end()) {
+    includes_.insert(definition.includeLine);
+    includeText_ << definition.includeLine << std::endl;
+  }
+  inlines_ << "inline __device__ " << definition.definition << std::endl;
+}
+  
 int32_t CompileState::nextWrapId() {
   return ++wrapId_;
 }
@@ -304,13 +326,7 @@ ProgramKey CompileState::makeLevelText(
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
-  std::vector<std::string> entryPoints = {kernelName};
-  head << fmt::format(
-      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
-      "namespace facebook::velox::wave {{\n"
-      "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
-      kernelName);
-
+  std::vector<std::string> entryPoints = {fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     auto& box = level[branchIdx_];
@@ -342,6 +358,14 @@ ProgramKey CompileState::makeLevelText(
   }
 
   generated_ << " PROGRAM_EPILOGUE();\n}\n}\n";
+  head << 
+      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
+      << includeText_.str() << std::endl
+      << "namespace facebook::velox::wave {\n"
+      << inlines_.str() << std::endl
+      << fmt::format("void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
+      kernelName);
+
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   int32_t numRegs =
       params.input.size() + params.local.size() + params.output.size();

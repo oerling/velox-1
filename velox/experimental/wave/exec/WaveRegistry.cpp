@@ -39,6 +39,7 @@ replaceAll(std::string str, const std::string& from, const std::string& to) {
   }
   return str;
 }
+
 FunctionDefinition WaveRegistry::makeDefinition(
     const FunctionKey& key,
     const TypePtr returnType) const {
@@ -55,7 +56,7 @@ FunctionDefinition WaveRegistry::makeDefinition(
   replaced = replaceAll(replaced, "$R$", cudaTypeName(*returnType));
   for (auto i = 0; i < key.types.size(); ++i) {
     replaced = replaceAll(
-        replaced, fmt::format("${}$", i), cudaTypeName(*key.types[i]));
+        replaced, fmt::format("${}$", i + 1), cudaTypeName(*key.types[i]));
   }
   return {replaced, entry.includeLine};
 }

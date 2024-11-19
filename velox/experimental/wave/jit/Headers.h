@@ -438,9 +438,9 @@ const char* velox_experimental_wave_vector_Operand_h =
     "\n"
     "/// Returns the number of active rows in 'status' for 'numBlocks'.\n"
     "#ifndef __CUDACC_RTC__\n"
-    "  int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks);\n"
+    "int32_t statusNumRows(const BlockStatus* status, int32_t numBlocks);\n"
     "#endif\n"
-    "  \n"
+    "\n"
     "} // namespace facebook::velox::wave\n";
 bool velox_experimental_wave_vector_Operand_h_reg =
     registerHeader(velox_experimental_wave_vector_Operand_h);
@@ -654,6 +654,12 @@ const char* velox_experimental_wave_exec_WaveCore_cuh =
     "resultNull(Operand** operands, OperandIndex opIdx, int32_t blockBase) {\n"
     "  auto* op = operands[opIdx];\n"
     "  op->nulls[blockBase + threadIdx.x] = kNull;\n"
+    "}\n"
+    "\n"
+    "__device__ inline void\n"
+    "setNull(Operand** operands, OperandIndex opIdx, int32_t blockBase, bool isNull) {\n"
+    "  auto* op = operands[opIdx];\n"
+    "  op->nulls[blockBase + threadIdx.x] = isNull ? kNull : kNotNull;\n"
     "}\n"
     "\n"
     "template <typename T>\n"

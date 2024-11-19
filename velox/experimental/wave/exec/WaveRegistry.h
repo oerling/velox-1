@@ -29,6 +29,7 @@ struct FunctionDefinition {
   // content is the full #include line.
   std::string includeLine;
 };
+
 /// Identifies a function by name and argument types.
 struct FunctionKey {
   FunctionKey(const std::string& name, const std::vector<TypePtr>& types)

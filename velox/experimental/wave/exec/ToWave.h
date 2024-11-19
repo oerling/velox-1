@@ -549,6 +549,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return registry_;
   }
 
+  void functionReferenced(const AbstractOperand* op);
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -740,7 +742,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::stringstream includeText_;
 
   // Concatenated text of inlineable definitions of functions called from the
-  // kerne;l.
+  // kernel.
   std::stringstream inlines_;
 
   //  Text of the kernel being generated.
@@ -805,6 +807,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   static WaveRegistry registry_;
 };
 
+  void registerWaveFunctions();
+  
 const std::string cudaTypeName(const Type& type);
 
 inline WaveRegistry& waveRegistry() {
