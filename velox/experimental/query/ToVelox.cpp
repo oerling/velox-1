@@ -28,6 +28,7 @@ namespace facebook::verax {
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+using namespace facebook::velox::runner;
 
 void filterUpdated(BaseTablePtr table) {
   auto optimization = queryCtx()->optimization();
@@ -116,7 +117,7 @@ RelationOpPtr addGather(RelationOpPtr op) {
 
 std::vector<ExecutableFragment> Optimization::toVeloxPlan(
     RelationOpPtr plan,
-    const ExecutablePlanOptions& options) {
+    const MultiFragmentPlan::Options& options) {
   options_ = options;
   std::vector<ExecutableFragment> stages;
   if (options_.numWorkers > 1) {

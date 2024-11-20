@@ -106,6 +106,12 @@ class Table {
     return format_;
   }
 
+  virtual std::unordered_map<char*, Column*>  columns() = 0;
+
+  Column* findColumn(const std::string& name, bool mustFind = false) {
+    
+  }
+
   /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
   /// before sampling. Returns {count of sampled, count matching filters}.
   /// Returns statistics for the post-filtering values in 'stats' for each of

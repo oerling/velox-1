@@ -20,7 +20,7 @@
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/Cost.h"
-#include "velox/experimental/query/ExecutablePlan.h"
+#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/experimental/query/RelationOp.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
 
@@ -359,9 +359,9 @@ class Optimization {
   PlanPtr bestPlan();
 
   /// Returns a set of per-stage Velox PlanNode trees.
-  std::vector<velox::exec::ExecutableFragment> toVeloxPlan(
+  std::vector<velox::runner::ExecutableFragment> toVeloxPlan(
       RelationOpPtr plan,
-      const velox::exec::ExecutablePlanOptions& options);
+      const velox::runner::MultiFragmentPlan::Options& options);
 
   // Produces trace output if event matches 'traceFlags_'.
   void trace(int32_t event, int32_t id, const Cost& cost, RelationOp& plan);
@@ -637,15 +637,15 @@ class Optimization {
   // Makes a Velox AggregationNode for a RelationOp.
   velox::core::PlanNodePtr makeAggregation(
       Aggregation& agg,
-      velox::exec::ExecutableFragment& fragment,
-      std::vector<velox::exec::ExecutableFragment>& stages);
+      velox::runner::ExecutableFragment& fragment,
+      std::vector<velox::runner::ExecutableFragment>& stages);
 
   // Makes partial + final order by fragments for order by with and without
   // limit.
   velox::core::PlanNodePtr makeOrderBy(
       OrderBy& op,
-      velox::exec::ExecutableFragment& fragment,
-      std::vector<velox::exec::ExecutableFragment>& stages);
+      velox::runner::ExecutableFragment& fragment,
+      std::vector<velox::runner::ExecutableFragment>& stages);
 
   // Makes a tree of PlanNode for a tree of
   // RelationOp. 'fragment' is the fragment that 'op'
@@ -655,8 +655,8 @@ class Optimization {
   // 'inputStages' and are returned in 'stages'.
   velox::core::PlanNodePtr makeFragment(
       RelationOpPtr op,
-      velox::exec::ExecutableFragment& fragment,
-      std::vector<velox::exec::ExecutableFragment>& stages);
+      velox::runner::ExecutableFragment& fragment,
+      std::vector<velox::runner::ExecutableFragment>& stages);
 
   // Returns a new PlanNodeId and associates the Cost of 'op' with it.
   velox::core::PlanNodeId nextId(const RelationOp& op);
@@ -730,7 +730,7 @@ class Optimization {
       std::shared_ptr<velox::connector::ConnectorTableHandle>>
       leafHandles_;
 
-  velox::exec::ExecutablePlanOptions options_;
+  velox::runner::MultiFragmentPlan::Options options_;
   velox::core::PlanNodeIdGenerator idGenerator_;
   // Limit for a possible limit/top k order by for while making a Velox plan. -1
   // means no limit.

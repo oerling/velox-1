@@ -19,6 +19,7 @@
 namespace facebook::verax {
 
 using namespace facebook::velox::exec;
+using namespace facebook::velox::runner;
 
 bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   auto optimization = queryCtx()->optimization();

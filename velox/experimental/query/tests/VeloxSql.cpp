@@ -34,13 +34,14 @@
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
-#include "velox/experimental/query/LocalRunner.h"
-#include "velox/experimental/query/LocalSchema.h"
+#include "velox/runner/LocalRunner.h"
+#include "velox/runner/LocalSchema.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/VeloxHistory.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/runner/LocalRunner.h"
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -48,6 +49,7 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+using namespace facebook::velox::runner;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
 
@@ -257,7 +259,7 @@ class VeloxRunner {
         0,
         schemaQueryCtx_->queryConfig().sessionTimezone());
 
-    schema_ = std::make_unique<facebook::verax::LocalSchema>(
+    schema_ = std::make_unique<facebook::velox::runner::LocalSchema>(
         FLAGS_data_path,
         toFileFormat(FLAGS_data_format),
         dynamic_cast<connector::hive::HiveConnector*>(hiveConnector.get()),
@@ -299,7 +301,7 @@ class VeloxRunner {
       auto projectedName = rowType->nameOf(i);
       auto& columnName = columnNames[i];
       VELOX_CHECK(
-          table->columns.find(columnName) != table->columns.end(),
+		  table->columns().find(columnName) != table->columns.end(),
           "No column {} in {}",
           columnName,
           name);
@@ -634,7 +636,7 @@ class VeloxRunner {
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
   std::shared_ptr<core::QueryCtx> schemaQueryCtx_;
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
-  std::unique_ptr<facebook::verax::LocalSchema> schema_;
+  std::unique_ptr<facebook::velox::runner::LocalSchema> schema_;
   std::unique_ptr<LocalSplitSourceFactory> splitSourceFactory_;
   std::unique_ptr<facebook::verax::VeloxHistory> history_;
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;

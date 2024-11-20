@@ -18,7 +18,7 @@
 
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/exec/TaskStats.h"
-#include "velox/experimental/query/ExecutablePlan.h"
+#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/experimental/query/Plan.h"
 
 namespace facebook::verax {
@@ -38,7 +38,7 @@ class VeloxHistory : public History {
   /// leaf scan selectivities  are recorded.
   void recordVeloxExecution(
       const RelationOp* op,
-      const std::vector<velox::exec::ExecutableFragment>& plan,
+      const std::vector<velox::runner::ExecutableFragment>& plan,
       const std::vector<velox::exec::TaskStats>& stats);
 };
 

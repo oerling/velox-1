@@ -101,6 +101,10 @@ class LocalSchema : public Schema {
     return connectorQueryCtx_;
   }
 
+  const std::unordered_map<std::string, std::unique_ptr<Table>>& tables() const {
+    return tables_;
+  }
+  
  private:
   void initialize(const std::string& path);
 
