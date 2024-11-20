@@ -18,7 +18,8 @@ target_link_libraries(
   velox_temp_path velox_exception)
 
 add_library(velox_cursor Cursor.cpp)
-target_link_libraries(velox_cursor 
+target_link_libraries(
+  velox_cursor
   velox_core
   velox_exception
   velox_expression
@@ -69,10 +70,9 @@ target_link_libraries(
   velox_functions_prestosql
   velox_aggregates)
 
-  if (${VELOX_BUILD_RUNNER})
-  add_library(velox_exec_runner_test_util
-              DistributedPlanBuilder.cpp
-              LocalRunnerTestBase.cpp)
+if(${VELOX_BUILD_RUNNER})
+  add_library(velox_exec_runner_test_util DistributedPlanBuilder.cpp
+                                          LocalRunnerTestBase.cpp)
 
   target_link_libraries(
     velox_exec_runner_test_util
@@ -86,4 +86,4 @@ target_link_libraries(
     velox_dwio_parquet_writer
     velox_local_runner)
 
-  endif()
+endif()
