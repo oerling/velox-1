@@ -1298,7 +1298,7 @@ Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
   }
 }
 
-Schema::Schema(const char* _name, SchemaSource* source)
+  Schema::Schema(const char* _name, velox::runner::Schema* source)
     : name_(_name), source_(source) {}
 
 SchemaTablePtr Schema::findTable(const std::string& name) const {
@@ -1316,6 +1316,34 @@ SchemaTablePtr Schema::findTable(const std::string& name) const {
   return it->second;
 }
 
+void Schema::fetchSchemaTable(
+    std::string_view name,
+    const Schema* schema) {
+  auto str = std::string(name);
+  auto it = tables_.find(str);
+  if (it != tables_.end()) {
+    return;
+  }
+  VELOX_CHECK_NOT_NULL(source_);
+  auto* table = source_->findTable(str);
+  Declare(SchemaTable, schemaTable, toName(str), table->rowType());
+  ColumnVector columns;
+  for (auto& pair : table->columnMap()) {
+    auto& tableColumn = *pair.second;
+    float cardinality = tableColumn->numDistinct;
+    Value value(tableColumn->type.get(), cardinality);
+    auto columnName = toName(pair.first);
+    Declare(Column, column, columnName, nullptr, value);
+    schemaTable->columns[columnName] = column;
+    columns.push_back(column);
+  }
+  DistributionType defaultDist;
+  defaultDist.locus = locus_.get();
+  schemaTable->addIndex(
+      toName("pk"), table->numRows, 0, 0, {}, defaultDist, {}, columns);
+  schema->addTable(schemaTable);
+}
+  
 void Schema::addTable(SchemaTablePtr table) const {
   tables_[table->name] = table;
 }

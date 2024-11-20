@@ -301,7 +301,7 @@ class VeloxRunner {
       auto projectedName = rowType->nameOf(i);
       auto& columnName = columnNames[i];
       VELOX_CHECK(
-		  table->columns().find(columnName) != table->columns.end(),
+		  table->columnMap().find(columnName) != table->columnMap().end(),
           "No column {} in {}",
           columnName,
           name);
@@ -463,7 +463,7 @@ class VeloxRunner {
     }
     facebook::verax::Optimization::PlanCostMap estimates;
     std::vector<ExecutableFragment> fragments;
-    ExecutablePlanOptions opts;
+    MultiFragmentPlan::Options opts;
     opts.numWorkers = FLAGS_num_workers;
     opts.numDrivers = FLAGS_num_drivers;
     auto allocator =

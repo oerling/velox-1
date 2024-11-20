@@ -320,4 +320,15 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
   }
 }
 
+const   std::unordered_map<std::string, const Column*>& LocalTable::columnMap() const  {
+    std::lock_guard<std::mutex>  l(mutex_);
+    if (columns_.empty()) {
+      return exportedColumns_;
+    }
+    for (auto& pair : columns_) {
+      exportedColumns_[pair.first] = pair.second.get();
+    }
+    return exportedColumns_;
+  }
+  
 } // namespace facebook::velox::runner

@@ -47,6 +47,8 @@ class LocalTable : public Table {
     return columns_;
   }
 
+  const std::unordered_map<std::string, const Column*>& columnMap() const override;
+  
   LocalSchema* schema() const {
     return reinterpret_cast<LocalSchema*>(schema_);
   }
@@ -73,8 +75,14 @@ class LocalTable : public Table {
   }
 
  private:
+  // Serializes initialization, e.g. exportedColumns_.
+  mutable std::mutex mutex_;
+
   // All columns. Filled by loadTable().
   std::unordered_map<std::string, std::unique_ptr<LocalColumn>> columns_;
+
+  // Non-owning columns map used for exporting the column set as abstract columns.
+  mutable std::unordered_map<std::string, const Column*> exportedColumns_;
 
   std::vector<std::string> files_;
   int64_t numRows_{0};
@@ -104,6 +112,8 @@ class LocalSchema : public Schema {
   const std::unordered_map<std::string, std::unique_ptr<Table>>& tables() const {
     return tables_;
   }
+
+
   
  private:
   void initialize(const std::string& path);

@@ -18,6 +18,7 @@
 
 #include "velox/experimental/query/PlanObject.h"
 #include "velox/experimental/query/SchemaSource.h"
+#include "velox/runner/Schema.h"
 
 /// Schema representation for use in query planning. All objects are
 /// arena allocated for the duration of planning the query. We do
@@ -409,7 +410,7 @@ struct SchemaTable {
 class Schema {
  public:
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
-  Schema(Name _name, SchemaSource* source);
+  Schema(Name _name, runner::Schema* source);
 
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
@@ -423,7 +424,7 @@ class Schema {
  private:
   Name name_;
   mutable NameMap<SchemaTablePtr> tables_;
-  SchemaSource* source_ = nullptr;
+  velox::runner::Schema* source_{nullptr};
 };
 
 using SchemaPtr = Schema*;
