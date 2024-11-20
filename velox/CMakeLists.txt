@@ -58,7 +58,10 @@ add_subdirectory(connectors)
 
 if(${VELOX_ENABLE_EXEC})
   add_subdirectory(exec)
-  add_subdirectory(runner)
+  # Disable runner from pyvelox builds
+  if(${VELOX_BUILD_RUNNER})
+    add_subdirectory(runner)
+  endif()
 endif()
 
 if(${VELOX_ENABLE_DUCKDB})

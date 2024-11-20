@@ -92,4 +92,11 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
   std::shared_ptr<memory::MemoryPool> schemaPool_;
 };
 
+<<<<<<< HEAD
+=======
+/// Reads all results from 'runner'.
+std::vector<RowVectorPtr> readCursor(
+    std::shared_ptr<runner::LocalRunner> runner);
+
+>>>>>>> runner3-dev
 } // namespace facebook::velox::exec::test

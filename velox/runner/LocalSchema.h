@@ -112,8 +112,6 @@ class LocalSchema : public Schema {
   const std::unordered_map<std::string, std::unique_ptr<Table>>& tables() const {
     return tables_;
   }
-
-
   
  private:
   void initialize(const std::string& path);
