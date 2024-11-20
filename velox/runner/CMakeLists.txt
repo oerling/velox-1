@@ -23,5 +23,5 @@ velox_link_libraries(
   velox_hive_connector
   velox_dwio_common
   velox_dwio_dwrf_writer
-  velox_exec_test_lib
-  velox_exec)
+  velox_exec
+  velox_cursor)

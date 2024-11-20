@@ -17,15 +17,27 @@ add_library(velox_temp_path TempFilePath.cpp TempDirectoryPath.cpp)
 target_link_libraries(
   velox_temp_path velox_exception)
 
+add_library(velox_cursor Cursor.cpp)
+target_link_libraries(velox_cursor 
+  velox_core
+  velox_exception
+  velox_expression
+  velox_dwio_common
+  velox_dwio_dwrf_reader
+  velox_dwio_dwrf_writer
+  velox_type_fbhive
+  velox_hive_connector
+  velox_tpch_connector
+  velox_presto_serializer
+  velox_functions_prestosql
+  velox_aggregates)
+
 add_library(
   velox_exec_test_lib
   AssertQueryBuilder.cpp
   ArbitratorTestUtil.cpp
-  Cursor.cpp
-  DistributedPlanBuilder.cpp
   HiveConnectorTestBase.cpp
   LocalExchangeSource.cpp
-  LocalRunnerTestBase.cpp
   OperatorTestBase.cpp
   PlanBuilder.cpp
   QueryAssertions.cpp
@@ -37,9 +49,9 @@ add_library(
 
 target_link_libraries(
   velox_exec_test_lib
-  velox_local_runner
   velox_vector_test_lib
   velox_temp_path
+  velox_cursor
   velox_core
   velox_exception
   velox_expression
