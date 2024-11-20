@@ -324,12 +324,10 @@ class VeloxRunner {
       struct rusage start;
       getrusage(RUSAGE_SELF, &start);
       MicrosecondTimer timer(&micros);
-      auto cursor = runner.cursor();
-      ;
-      while (cursor->moveNext()) {
-        result.push_back(cursor->current());
+      while (auto result = runner->next()) {
+        result.push_back(result());
       }
-      waitForTaskCompletion(cursor->task().get());
+      runner->waitForCompletion(50000);
 
       struct rusage final;
       getrusage(RUSAGE_SELF, &final);

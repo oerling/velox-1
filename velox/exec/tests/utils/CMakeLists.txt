@@ -37,11 +37,6 @@ add_library(
   velox_exec_test_lib
   AssertQueryBuilder.cpp
   ArbitratorTestUtil.cpp
-<<<<<<< HEAD
-  Cursor.cpp
-  DistributedPlanBuilder.cpp
-=======
->>>>>>> runner3-dev
   HiveConnectorTestBase.cpp
   LocalExchangeSource.cpp
   LocalRunnerTestBase.cpp

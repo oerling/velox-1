@@ -410,7 +410,7 @@ struct SchemaTable {
 class Schema {
  public:
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
-  Schema(Name _name, runner::Schema* source);
+  Schema(Name _name, velox::runner::Schema* source);
 
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTablePtr findTable(const std::string& name) const;
