@@ -376,14 +376,6 @@ std::unique_ptr<std::vector<TypeParameter>> RowType::makeParameters() const {
       createTypeParameters(children_));
 }
 
-uint32_t RowType::size() const {
-  return children_.size();
-}
-
-const TypePtr& RowType::childAt(uint32_t idx) const {
-  return children_.at(idx);
-}
-
 namespace {
 template <typename T>
 std::string makeFieldNotFoundErrorMessage(
@@ -718,6 +710,12 @@ OpaqueType::DeserializeFunc<void> OpaqueType::getDeserializeFunc() const {
 std::shared_ptr<const OpaqueType> OpaqueType::deserializeExtra(
     const folly::dynamic&) const {
   return nullptr;
+}
+
+void OpaqueType::clearSerializationRegistry() {
+  auto& registry = OpaqueSerdeRegistry::get();
+  registry.mapping.clear();
+  registry.reverse.clear();
 }
 
 void OpaqueType::registerSerializationTypeErased(

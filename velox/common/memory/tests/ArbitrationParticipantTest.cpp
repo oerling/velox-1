@@ -1419,7 +1419,7 @@ DEBUG_ONLY_TEST_F(ArbitrationParticipantTest, reclaimLock) {
   folly::EventCount reclaim1CompletedWait;
   std::thread reclaimThread1([&]() {
     memory::MemoryReclaimer::Stats stats;
-    ASSERT_EQ(scopedParticipant->reclaim(MB, 1'000'000, stats), 0);
+    ASSERT_EQ(scopedParticipant->reclaim(MB, 1'000'000'000'000, stats), 0);
     ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
     reclaim1CompletedFlag = true;
     reclaim1CompletedWait.notifyAll();
@@ -1454,7 +1454,7 @@ DEBUG_ONLY_TEST_F(ArbitrationParticipantTest, reclaimLock) {
   folly::EventCount reclaim2CompletedWait;
   std::thread reclaimThread2([&]() {
     memory::MemoryReclaimer::Stats stats;
-    ASSERT_EQ(scopedParticipant->reclaim(MB, 1'000'000, stats), 0);
+    ASSERT_EQ(scopedParticipant->reclaim(MB, 1'000'000'000'000, stats), 0);
     ASSERT_EQ(stats.numNonReclaimableAttempts, 0);
     reclaim2CompletedFlag = true;
     reclaim2CompletedWait.notifyAll();
@@ -1482,81 +1482,6 @@ DEBUG_ONLY_TEST_F(ArbitrationParticipantTest, reclaimLock) {
   ASSERT_EQ(scopedParticipant->stats().numReclaims, 2);
   ASSERT_EQ(scopedParticipant->stats().numShrinks, 3);
   ASSERT_EQ(scopedParticipant->stats().reclaimedBytes, 32 << 20);
-}
-
-DEBUG_ONLY_TEST_F(ArbitrationParticipantTest, waitForReclaimOrAbort) {
-  struct {
-    uint64_t waitTimeNs;
-    bool pendingReclaim;
-    uint64_t reclaimWaitMs{0};
-    bool expectedTimeout;
-
-    std::string debugString() const {
-      return fmt::format(
-          "waitTime {}, pendingReclaim {}, reclaimWait {}, expectedTimeout {}",
-          succinctNanos(waitTimeNs),
-          pendingReclaim,
-          succinctMillis(reclaimWaitMs),
-          expectedTimeout);
-    }
-  } testSettings[] = {
-      {0, true, 1'000, true},
-      {0, false, 1'000, true},
-      {1'000'000'000'000UL, true, 1'000, false},
-      {1'000'000'000'000UL, true, 1'000, false}};
-
-  for (const auto& testData : testSettings) {
-    SCOPED_TRACE(testData.debugString());
-
-    std::atomic_bool reclaimWaitFlag{false};
-    folly::EventCount reclaimWait;
-    SCOPED_TESTVALUE_SET(
-        "facebook::velox::memory::ArbitrationParticipant::reclaim",
-        std::function<void(ArbitrationParticipant*)>(
-            ([&](ArbitrationParticipant* /*unused*/) {
-              reclaimWaitFlag = true;
-              reclaimWait.notifyAll();
-              std::this_thread::sleep_for(
-                  std::chrono::milliseconds(testData.reclaimWaitMs)); // NOLINT
-            })));
-
-    SCOPED_TESTVALUE_SET(
-        "facebook::velox::memory::ArbitrationParticipant::abortLocked",
-        std::function<void(ArbitrationParticipant*)>(
-            ([&](ArbitrationParticipant* /*unused*/) {
-              reclaimWaitFlag = true;
-              reclaimWait.notifyAll();
-              std::this_thread::sleep_for(
-                  std::chrono::milliseconds(testData.reclaimWaitMs)); // NOLINT
-            })));
-
-    auto task = createTask(kMemoryCapacity);
-    const auto config = arbitrationConfig();
-    auto participant =
-        ArbitrationParticipant::create(10, task->pool(), &config);
-    task->allocate(MB);
-    auto scopedParticipant = participant->lock().value();
-
-    std::thread reclaimThread([&]() {
-      if (testData.pendingReclaim) {
-        memory::MemoryReclaimer::Stats stats;
-        ASSERT_EQ(
-            scopedParticipant->reclaim(MB, 1'000'000'000'000UL, stats), MB);
-      } else {
-        const std::string abortReason = "test abort";
-        try {
-          VELOX_FAIL(abortReason);
-        } catch (const VeloxRuntimeError& e) {
-          ASSERT_EQ(scopedParticipant->abort(std::current_exception()), MB);
-        }
-      }
-    });
-    reclaimWait.await([&]() { return reclaimWaitFlag.load(); });
-    ASSERT_EQ(
-        scopedParticipant->waitForReclaimOrAbort(testData.waitTimeNs),
-        !testData.expectedTimeout);
-    reclaimThread.join();
-  }
 }
 
 // This test verifies the aborted returns true until the participant has been
@@ -1950,5 +1875,54 @@ TEST_F(ArbitrationParticipantTest, arbitrationOperationState) {
           static_cast<ArbitrationOperation::State>(10)),
       "unknown state: 10");
 }
+
+#ifndef TSAN_BUILD
+TEST_F(ArbitrationParticipantTest, arbitrationOperationTimedLock) {
+  auto participantPool = manager_->addRootPool("arbitrationOperationTimedLock");
+  auto config = ArbitrationParticipant::Config(0, 1024, 0, 0, 0, 0, 128, 512);
+  auto participant = ArbitrationParticipant::create(
+      folly::Random::rand64(), participantPool, &config);
+
+  auto createLockHolderThread = [](std::timed_mutex& mutex,
+                                   uint64_t lockHoldTimeNs,
+                                   folly::EventCount& lockWait,
+                                   std::atomic_bool& lockWaitFlag) {
+    return std::thread([&, sleepNs = lockHoldTimeNs]() {
+      std::lock_guard<std::timed_mutex> l(mutex);
+      lockWaitFlag = false;
+      lockWait.notifyAll();
+      std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
+    });
+  };
+
+  struct TestData {
+    uint64_t lockHoldTimeNs;
+    uint64_t opTimeoutNs;
+  };
+
+  std::timed_mutex mutex;
+  std::vector<TestData> testDataVec{
+      {1'000'000'000UL, 2'000'000'000UL}, {2'000'000'000UL, 1'000'000'000UL}};
+
+  for (auto& testData : testDataVec) {
+    folly::EventCount lockWait;
+    std::atomic_bool lockWaitFlag{true};
+    auto lockHolder = createLockHolderThread(
+        mutex, testData.lockHoldTimeNs, lockWait, lockWaitFlag);
+    std::unique_ptr<ArbitrationTimedLock> timedLock{nullptr};
+    lockWait.await([&]() { return !lockWaitFlag.load(); });
+    if (testData.lockHoldTimeNs < testData.opTimeoutNs) {
+      timedLock =
+          std::make_unique<ArbitrationTimedLock>(mutex, testData.opTimeoutNs);
+      ASSERT_FALSE(mutex.try_lock());
+    } else {
+      VELOX_ASSERT_THROW(
+          std::make_unique<ArbitrationTimedLock>(mutex, testData.opTimeoutNs),
+          "Memory arbitration lock timed out");
+    }
+    lockHolder.join();
+  }
+}
+#endif
 } // namespace
 } // namespace facebook::velox::memory

@@ -28,6 +28,7 @@
 namespace facebook::velox::memory {
 
 class MemoryPool;
+class ArbitrationOperation;
 
 using MemoryArbitrationStateCheckCB = std::function<void(MemoryPool&)>;
 
@@ -398,11 +399,11 @@ class NonReclaimableSectionGuard {
   const bool oldNonReclaimableSectionValue_;
 };
 
-/// The memory arbitration context which is set on per-thread local variable by
-/// memory arbitrator. It is used to indicate a running thread is under memory
-/// arbitration processing or not. This helps to enable sanity check such as all
-/// the memory reservations during memory arbitration should come from the
-/// spilling memory pool.
+/// The memory arbitration context which is set as per-thread local variable by
+/// memory arbitrator. It is used to indicate if a running thread is under
+/// memory arbitration. This helps to enable sanity check such as all the memory
+/// reservations during memory arbitration should come from the spilling memory
+/// pool.
 struct MemoryArbitrationContext {
   /// Defines the type of memory arbitration.
   enum class Type {
@@ -429,10 +430,12 @@ struct MemoryArbitrationContext {
 /// under memory arbitration processing.
 class ScopedMemoryArbitrationContext {
  public:
-  explicit ScopedMemoryArbitrationContext(const MemoryPool* requestor);
   ScopedMemoryArbitrationContext();
+
   explicit ScopedMemoryArbitrationContext(
       const MemoryArbitrationContext* context);
+
+  explicit ScopedMemoryArbitrationContext(const MemoryPool* requestor);
 
   ~ScopedMemoryArbitrationContext();
 

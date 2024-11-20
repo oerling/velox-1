@@ -81,6 +81,11 @@ FOLLY_ALWAYS_INLINE void extractRowColumnToPrefix(
           prefixSortLayout, index, rowColumn, row, prefixBuffer);
       return;
     }
+    case TypeKind::HUGEINT: {
+      encodeRowColumn<int128_t>(
+          prefixSortLayout, index, rowColumn, row, prefixBuffer);
+      return;
+    }
     default:
       VELOX_UNSUPPORTED(
           "prefix-sort does not support type kind: {}",
@@ -136,12 +141,10 @@ PrefixSortLayout PrefixSortLayout::makeSortLayout(
   uint32_t normalizedKeySize{0};
   uint32_t numNormalizedKeys{0};
   for (auto i = 0; i < numKeys; ++i) {
-    if (normalizedKeySize > maxNormalizedKeySize) {
-      break;
-    }
     const std::optional<uint32_t> encodedSize =
         PrefixSortEncoder::encodedSize(types[i]->kind());
-    if (!encodedSize.has_value()) {
+    if (!encodedSize.has_value() ||
+        normalizedKeySize + encodedSize.value() > maxNormalizedKeySize) {
       break;
     }
     prefixOffsets.push_back(normalizedKeySize);
@@ -193,7 +196,7 @@ int PrefixSort::comparePartNormalizedKeys(char* left, char* right) {
 }
 
 PrefixSort::PrefixSort(
-    RowContainer* rowContainer,
+    const RowContainer* rowContainer,
     const PrefixSortLayout& sortLayout,
     memory::MemoryPool* pool)
     : rowContainer_(rowContainer), sortLayout_(sortLayout), pool_(pool) {}
@@ -229,7 +232,7 @@ void PrefixSort::extractRowAndEncodePrefixKeys(char* row, char* prefixBuffer) {
 
 // static.
 uint32_t PrefixSort::maxRequiredBytes(
-    RowContainer* rowContainer,
+    const RowContainer* rowContainer,
     const std::vector<CompareFlags>& compareFlags,
     const velox::common::PrefixSortConfig& config,
     memory::MemoryPool* pool) {
@@ -250,7 +253,7 @@ uint32_t PrefixSort::maxRequiredBytes(
 // static
 void PrefixSort::stdSort(
     std::vector<char*, memory::StlAllocator<char*>>& rows,
-    RowContainer* rowContainer,
+    const RowContainer* rowContainer,
     const std::vector<CompareFlags>& compareFlags) {
   std::sort(
       rows.begin(), rows.end(), [&](const char* leftRow, const char* rightRow) {
