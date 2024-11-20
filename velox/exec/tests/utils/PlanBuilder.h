@@ -105,6 +105,8 @@ class PlanBuilder {
         planNodeIdGenerator_{std::move(planNodeIdGenerator)},
         pool_{pool} {}
 
+  virtual ~PlanBuilder() = default;
+
   static constexpr const std::string_view kHiveDefaultConnectorId{"test-hive"};
   static constexpr const std::string_view kTpchDefaultConnectorId{"test-tpch"};
 
@@ -334,11 +336,6 @@ class PlanBuilder {
   ///
   /// @param outputType The type of the data coming in and out of the exchange.
   /// @param serdekind The kind of seralized data format.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  PlanBuilder& exchange(const RowTypePtr& outputType) {
-    return exchange(outputType, VectorSerde::Kind::kPresto);
-  }
-#endif
   PlanBuilder& exchange(
       const RowTypePtr& outputType,
       VectorSerde::Kind serdekind);
@@ -351,13 +348,6 @@ class PlanBuilder {
   ///
   /// By default, uses ASC NULLS LAST sort order, e.g. column "a" above will use
   /// ASC NULLS LAST and column "b" will use DESC NULLS LAST.
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  PlanBuilder& mergeExchange(
-      const RowTypePtr& outputType,
-      const std::vector<std::string>& keys) {
-    return mergeExchange(outputType, keys, VectorSerde::Kind::kPresto);
-  }
-#endif
   PlanBuilder& mergeExchange(
       const RowTypePtr& outputType,
       const std::vector<std::string>& keys,
@@ -1041,7 +1031,9 @@ class PlanBuilder {
     return *this;
   }
 
-  /// Return the latest plan node, e.g. the root node of the plan tree.
+  /// Return the latest plan node, e.g. the root node of the plan
+  /// tree. The DistributedPlanBuilder override additionally moves stage
+  /// information to a parent PlanBuilder.
   const core::PlanNodePtr& planNode() const {
     return planNode_;
   }
@@ -1066,6 +1058,28 @@ class PlanBuilder {
     return *this;
   }
 
+  /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so
+  /// far is shuffled and subsequent nodes consume the shuffle. Arguments are as
+  /// in partitionedOutput().
+  virtual PlanBuilder& shuffle(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
+  /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built
+  /// so far and couples it to the current stage in the enclosing builder.
+  /// Arguments are as in shuffle().
+  virtual core::PlanNodePtr shuffleResult(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
  protected:
   // Users who create custom operators might want to extend the PlanBuilder to
   // customize extended plan builders. Those functions are needed in such
@@ -1074,6 +1088,14 @@ class PlanBuilder {
 
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const core::ExprPtr& untypedExpr);
+
+  std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator() const {
+    return planNodeIdGenerator_;
+  }
+
+  memory::MemoryPool* pool() const {
+    return pool_;
+  }
 
  private:
   std::shared_ptr<const core::FieldAccessTypedExpr> field(column_index_t index);
