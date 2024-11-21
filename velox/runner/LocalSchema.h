@@ -72,7 +72,7 @@ class LocalTable : public Table {
       HashStringAllocator* allocator = nullptr,
       std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
           nullptr) override;
-  
+
   /// Samples  'samplePct' % rows of the table and sets the num distincts
   /// estimate for the columns. uses 'pool' for temporary data.
   void sampleNumDistincts(float samplePct, memory::MemoryPool* pool);

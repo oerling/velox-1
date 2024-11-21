@@ -19,7 +19,6 @@
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
-
 #include "velox/common/base/Fs.h"
 
 namespace facebook::velox::runner {
@@ -330,5 +329,5 @@ const   std::unordered_map<std::string, const Column*>& LocalTable::columnMap() 
     }
     return exportedColumns_;
   }
-  
+
 } // namespace facebook::velox::runner
