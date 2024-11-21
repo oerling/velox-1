@@ -39,7 +39,6 @@ add_library(
   ArbitratorTestUtil.cpp
   HiveConnectorTestBase.cpp
   LocalExchangeSource.cpp
-  LocalRunnerTestBase.cpp
   OperatorTestBase.cpp
   PlanBuilder.cpp
   QueryAssertions.cpp
@@ -51,7 +50,6 @@ add_library(
 
 target_link_libraries(
   velox_exec_test_lib
-  velox_local_runner
   velox_vector_test_lib
   velox_temp_path
   velox_cursor

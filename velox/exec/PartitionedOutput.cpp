@@ -18,8 +18,6 @@
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/Task.h"
 
-#include <iostream>
-
 namespace facebook::velox::exec {
 namespace detail {
 BlockingReason Destination::advance(

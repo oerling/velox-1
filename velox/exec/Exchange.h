@@ -70,9 +70,6 @@ class Exchange : public SourceOperator {
 
   bool isFinished() override;
 
-  /// Registers a testing in-process exchange source.
-  static void registerLocalExchangeSource();
-
  protected:
   virtual VectorSerde* getSerde();
 
