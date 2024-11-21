@@ -102,8 +102,6 @@ void LocalRunnerTestBase::makeTables(
   }
 }
 
-<<<<<<< HEAD
-=======
 std::vector<RowVectorPtr> readCursor(
     std::shared_ptr<runner::LocalRunner> runner) {
   // 'result' borrows memory from cursor so the life cycle must be shorter.
@@ -115,5 +113,4 @@ std::vector<RowVectorPtr> readCursor(
   return result;
 }
 
->>>>>>> runner3-dev
 } // namespace facebook::velox::exec::test

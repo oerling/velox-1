@@ -67,10 +67,16 @@ const char* QueryGraphContext::toName(std::string_view str) {
   return data;
 }
 
+  #if 0
 const char* toName(const std::string& str) {
   return queryCtx()->toName(std::string_view(str.data(), str.size()));
 }
+#endif
 
+Name toName(std::string_view string) {
+    return queryCtx()->toName(string);
+  }
+  
 float Value::byteSize() const {
   if (type->isFixedWidth()) {
     return type->cppSizeInBytes();
@@ -1301,47 +1307,36 @@ Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
   Schema::Schema(const char* _name, velox::runner::Schema* source)
     : name_(_name), source_(source) {}
 
-SchemaTablePtr Schema::findTable(const std::string& name) const {
-  auto it = tables_.find(toName(name));
-  if (it == tables_.end()) {
-    if (source_) {
-      source_->fetchSchemaTable(std::string_view(name), this);
-      it = tables_.find(toName(name));
-      if (it != tables_.end()) {
-        return it->second;
-      }
-    }
-    VELOX_FAIL("No table {}", name);
-  }
-  return it->second;
-}
 
-void Schema::fetchSchemaTable(
-    std::string_view name,
-    const Schema* schema) {
-  auto str = std::string(name);
-  auto it = tables_.find(str);
+SchemaTablePtr Schema::findTable(
+    std::string_view name) const {
+  auto internedName = toName(name);
+  auto it = tables_.find(internedName);
   if (it != tables_.end()) {
-    return;
+    return it->second;
   }
   VELOX_CHECK_NOT_NULL(source_);
-  auto* table = source_->findTable(str);
-  Declare(SchemaTable, schemaTable, toName(str), table->rowType());
+  auto* table = source_->findTable(std::string(name));
+  if (!table) {
+    return nullptr;
+  }
+  Declare(SchemaTable, schemaTable, internedName, table->rowType());
   ColumnVector columns;
   for (auto& pair : table->columnMap()) {
     auto& tableColumn = *pair.second;
-    float cardinality = tableColumn->numDistinct;
-    Value value(tableColumn->type.get(), cardinality);
+    float cardinality = tableColumn.approxNumDistinct(table->numRows());
+    Value value(tableColumn.type().get(), cardinality);
     auto columnName = toName(pair.first);
     Declare(Column, column, columnName, nullptr, value);
     schemaTable->columns[columnName] = column;
     columns.push_back(column);
   }
   DistributionType defaultDist;
-  defaultDist.locus = locus_.get();
+  defaultDist.locus = defaultLocus_;
   schemaTable->addIndex(
-      toName("pk"), table->numRows, 0, 0, {}, defaultDist, {}, columns);
-  schema->addTable(schemaTable);
+			toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
+  addTable(schemaTable);
+  return schemaTable;
 }
   
 void Schema::addTable(SchemaTablePtr table) const {

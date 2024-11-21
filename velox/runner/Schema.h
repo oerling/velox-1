@@ -61,6 +61,8 @@ class Column {
     approxNumDistinct_ = numDistinct;
   }
 
+  virtual uint64_t approxNumDistinct(uint64_t deflt = 0) const = 0;
+  
  protected:
   const std::string name_;
   const TypePtr type_;
@@ -130,6 +132,8 @@ class Table {
     VELOX_UNSUPPORTED("Table class does not support sampling.");
   }
 
+  virtual uint64_t numRows() const = 0;
+  
  protected:
   Schema* const schema_;
   const std::string name_;

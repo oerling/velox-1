@@ -413,7 +413,7 @@ class Schema {
   Schema(Name _name, velox::runner::Schema* source);
 
   /// Returns the table with 'name' or nullptr if not found.
-  SchemaTablePtr findTable(const std::string& name) const;
+  SchemaTablePtr findTable(std::string_view name) const;
 
   Name name() const {
     return name_;
@@ -425,6 +425,7 @@ class Schema {
   Name name_;
   mutable NameMap<SchemaTablePtr> tables_;
   velox::runner::Schema* source_{nullptr};
+  LocusPtr defaultLocus_{nullptr};
 };
 
 using SchemaPtr = Schema*;

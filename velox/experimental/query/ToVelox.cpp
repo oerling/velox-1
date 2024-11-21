@@ -115,7 +115,7 @@ RelationOpPtr addGather(RelationOpPtr op) {
   return gather;
 }
 
-std::vector<ExecutableFragment> Optimization::toVeloxPlan(
+MultiFragmentPlanPtr Optimization::toVeloxPlan(
     RelationOpPtr plan,
     const MultiFragmentPlan::Options& options) {
   options_ = options;
@@ -126,7 +126,7 @@ std::vector<ExecutableFragment> Optimization::toVeloxPlan(
   ExecutableFragment top;
   top.fragment.planNode = makeFragment(plan, top, stages);
   stages.push_back(std::move(top));
-  return stages;
+  return std::make_shared<velox::runner::MultiFragmentPlan>(std::move(stages), options);
 }
 
 RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {

@@ -359,7 +359,7 @@ class Optimization {
   PlanPtr bestPlan();
 
   /// Returns a set of per-stage Velox PlanNode trees.
-  std::vector<velox::runner::ExecutableFragment> toVeloxPlan(
+  velox::runner::MultiFragmentPlanPtr toVeloxPlan(
       RelationOpPtr plan,
       const velox::runner::MultiFragmentPlan::Options& options);
 

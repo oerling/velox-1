@@ -30,6 +30,13 @@ class LocalColumn : public Column {
  public:
   LocalColumn(const std::string& name, TypePtr type) : Column(name, type) {}
 
+  uint64_t approxNumDistinct(uint64_t deflt = 0) const override {
+    return approxNumDistinct_.has_value() ? approxNumDistinct_.value() : deflt;
+  }
+
+private:  
+  std::optional<uint64_t> approxNumDistinct_; 
+
   friend class LocalSchema;
 };
 
@@ -65,7 +72,7 @@ class LocalTable : public Table {
       HashStringAllocator* allocator = nullptr,
       std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
           nullptr) override;
-
+  
   /// Samples  'samplePct' % rows of the table and sets the num distincts
   /// estimate for the columns. uses 'pool' for temporary data.
   void sampleNumDistincts(float samplePct, memory::MemoryPool* pool);
@@ -74,6 +81,12 @@ class LocalTable : public Table {
     return files_;
   }
 
+
+  uint64_t numRows() const override {
+    return numRows_;
+  }
+
+  
  private:
   // Serializes initialization, e.g. exportedColumns_.
   mutable std::mutex mutex_;

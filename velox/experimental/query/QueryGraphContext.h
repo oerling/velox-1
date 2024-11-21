@@ -159,7 +159,8 @@ QueryGraphContext*& queryCtx();
 
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
-Name toName(const std::string& string);
+//Name toName(const std::string& string);
+Name toName(std::string_view string);
 
 /// STL compatible allocator that manages std:: containers allocated in the
 /// QueryGraphContext arena.
