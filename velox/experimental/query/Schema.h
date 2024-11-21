@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/experimental/query/PlanObject.h"
-#include "velox/experimental/query/SchemaSource.h"
 #include "velox/runner/Schema.h"
 
 /// Schema representation for use in query planning. All objects are
