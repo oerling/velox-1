@@ -915,6 +915,7 @@ int32_t WaveStream::getOutput(
     memory::MemoryPool& pool,
     folly::Range<const OperandId*> operands,
     VectorPtr* vectors) {
+  checkExecutables();
   auto it = launchControl_.find(operatorId);
   VELOX_CHECK(it != launchControl_.end());
   auto* control = it->second[0].get();
