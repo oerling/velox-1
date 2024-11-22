@@ -218,10 +218,15 @@ class VeloxRunner {
     exec::ExchangeSource::registerFactory(
         exec::test::createLocalExchangeSource);
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
+  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+    serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
+  }
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
     std::unordered_map<std::string, std::string> empty;
     auto config = std::make_shared<config::ConfigBase>(std::move(empty));
-    auto hiveConnector =
+  connector::registerConnectorFactory(
+      std::make_shared<connector::hive::HiveConnectorFactory>());
+  auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
@@ -237,7 +242,7 @@ class VeloxRunner {
         core::QueryConfig(config_),
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
-        rootPool_->addAggregateChild("schemaCtxPool"),
+        rootPool_->shared_from_this(),
         spillExecutor_.get(),
         "schema");
     common::SpillConfig spillConfig;
@@ -327,7 +332,6 @@ class VeloxRunner {
       while (auto rows = runner.next()) {
         result.push_back(rows);
       }
-      runner.waitForCompletion(50000);
 
       struct rusage final;
       getrusage(RUSAGE_SELF, &final);
@@ -352,13 +356,12 @@ class VeloxRunner {
 
   void run(const std::string& sql) {
     if (record_ || check_) {
-      std::shared_ptr<LocalRunner> localRunner;
       std::string error;
       std::string plan;
       std::vector<RowVectorPtr> result;
       run1(sql, nullptr, nullptr, &error);
       if (error.empty()) {
-        localRunner = run1(sql, &result, &plan, &error);
+        run1(sql, &result, &plan, &error);
       }
       if (record_) {
         if (!error.empty()) {
@@ -433,7 +436,8 @@ class VeloxRunner {
       const std::string& sql,
       std::vector<RowVectorPtr>* resultVector = nullptr,
       std::string* planString = nullptr,
-      std::string* errorString = nullptr) {
+      std::string* errorString = nullptr,
+      std::vector<exec::TaskStats>* statsReturn = nullptr) {
     std::shared_ptr<LocalRunner> runner;
     std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
     auto copy = hiveConfig_;
@@ -445,7 +449,7 @@ class VeloxRunner {
         core::QueryConfig(config_),
         std::move(connectorConfigs),
         cache::AsyncDataCache::getInstance(),
-        rootPool_->addAggregateChild(fmt::format("query_{}", queryCounter_)),
+        rootPool_->shared_from_this(),
         spillExecutor_.get(),
         fmt::format("query_{}", queryCounter_));
 
@@ -507,6 +511,9 @@ class VeloxRunner {
         *resultVector = results;
       }
       auto stats = runner->stats();
+      if (statsReturn) {
+	*statsReturn = stats;
+      }
       auto& fragments = fragmentedPlan->fragments();
       for (int32_t i = fragments.size() - 1; i >= 0; --i) {
         for (auto& pipeline : stats[i].pipelineStats) {
@@ -532,11 +539,24 @@ class VeloxRunner {
       if (errorString) {
         *errorString = fmt::format("Runtime error: {}", e.what());
       }
-      return nullptr;
+      waitForCompletion(runner);
+	return nullptr;
     }
+    waitForCompletion(runner);
     return runner;
   }
 
+
+  void waitForCompletion(const std::shared_ptr<LocalRunner>& runner) {
+          if (runner) {
+	try {
+	  runner->waitForCompletion(50000);
+	} catch (const std::exception& /*ignore*/) {
+	}
+      }
+
+  }
+  
   /// Returns exit status for run. 0 is passed, 1 is plan differences only, 2 is
   /// result differences.
   int32_t checkStatus() {
