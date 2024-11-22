@@ -87,6 +87,11 @@ struct KernelStep {
     return !isWrap();
   }
 
+  /// Returns true if contains a __syncthreads() so all lanes, including inactive must hit.
+  virtual bool isBarrier() const {
+    return false;
+  }
+  
   /// Returns the dynamic shared memory needed by 'this'.
   virtual int32_t sharedMemorySize() const {
     return sizeof(WaveShared);
@@ -185,6 +190,10 @@ struct Filter : public KernelStep {
     return true;
   }
 
+  bool isBarrier() const override {
+    return true;
+  }
+  
   int32_t sharedMemorySize() const {
     return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
@@ -749,7 +758,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::stringstream generated_;
   bool insideNullPropagating_{false};
   int32_t labelCounter_{0};
-
+  int32_t nextSyncLabel_{0};
+  
   thread_local static PipelineCandidate* currentCandidate_;
   thread_local static KernelBox* currentBox_;
 
