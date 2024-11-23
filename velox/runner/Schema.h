@@ -42,11 +42,12 @@ class Column {
     return latestStats_;
   }
 
-  /// Returns the column type. TODO: Support partition keys etc in local schemas.
+  /// Returns the column type. TODO: Support partition keys etc in local
+  /// schemas.
   connector::hive::HiveColumnHandle::ColumnType columnType() const {
-    return connector::hive::HiveColumnHandle::ColumnType::kRegular; 
+    return connector::hive::HiveColumnHandle::ColumnType::kRegular;
   }
-  
+
   /// Sets statistics. May be called multipl times if table contents change.
   void setStats(std::unique_ptr<dwio::common::ColumnStatistics> stats) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -67,7 +68,7 @@ class Column {
   }
 
   virtual uint64_t approxNumDistinct(uint64_t deflt = 0) const = 0;
-  
+
  protected:
   const std::string name_;
   const TypePtr type_;
@@ -117,14 +118,15 @@ class Table {
   /// columns. Implementations may hav different Column
   /// implementations with different options, so we do not return the
   /// implementation's columns but an abstract form.
-  virtual const std::unordered_map<std::string, const Column*>&  columnMap() const = 0;
+  virtual const std::unordered_map<std::string, const Column*>& columnMap()
+      const = 0;
 
   const Column* findColumn(const std::string& name) {
     auto& map = columnMap();
     auto it = map.find(name);
     return it == map.end() ? nullptr : it->second;
   }
-  
+
   /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
   /// before sampling. Returns {count of sampled, count matching filters}.
   /// Returns statistics for the post-filtering values in 'stats' for each of
@@ -144,7 +146,7 @@ class Table {
   }
 
   virtual uint64_t numRows() const = 0;
-  
+
  protected:
   Schema* const schema_;
   const std::string name_;

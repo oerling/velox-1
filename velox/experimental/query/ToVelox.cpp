@@ -128,10 +128,13 @@ MultiFragmentPlanPtr Optimization::toVeloxPlan(
   ExecutableFragment top;
   top.fragment.planNode = makeFragment(plan, top, stages);
   stages.push_back(std::move(top));
-  return std::make_shared<velox::runner::MultiFragmentPlan>(std::move(stages), options);
+  return std::make_shared<velox::runner::MultiFragmentPlan>(
+      std::move(stages), options);
 }
 
-  RowTypePtr Optimization::makeOutputType(const ColumnVector& columns, std::optional<connector::hive::HiveColumnHandle::ColumnType> columnType) {
+RowTypePtr Optimization::makeOutputType(
+    const ColumnVector& columns,
+    std::optional<connector::hive::HiveColumnHandle::ColumnType> columnType) {
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto i = 0; i < columns.size(); ++i) {
@@ -140,20 +143,21 @@ MultiFragmentPlanPtr Optimization::toVeloxPlan(
     if (relation->type() == PlanType::kTable && columnType.has_value()) {
       auto* schemaTable = relation->as<BaseTable>()->schemaTable;
       if (!schemaTable) {
-	continue;
+        continue;
       }
       auto* runnerTable = schemaTable->runnerTable;
       if (runnerTable) {
-	auto* runnerColumn = runnerTable->findColumn(std::string(column->name()));
-	VELOX_CHECK_NOT_NULL(runnerColumn);
-	if (runnerColumn->columnType() != columnType.value()) {
-	  continue;
-	}
+        auto* runnerColumn =
+            runnerTable->findColumn(std::string(column->name()));
+        VELOX_CHECK_NOT_NULL(runnerColumn);
+        if (runnerColumn->columnType() != columnType.value()) {
+          continue;
+        }
       }
     }
-          auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name())
-                                            : column->toString();
-	  names.push_back(name);
+    auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name())
+                                          : column->toString();
+    names.push_back(name);
     types.push_back(toTypePtr(columns[i]->value().type));
   }
   return ROW(std::move(names), std::move(types));
@@ -343,11 +347,12 @@ core::PlanNodePtr Optimization::makeOrderBy(
   std::vector<core::SortOrder> sortOrder;
   for (auto order : op.distribution().orderType) {
     sortOrder.push_back(
-        order == OrderType::kAscNullsFirst       ? core::SortOrder(true, true)
-            : order == OrderType ::kAscNullsLast ? core::SortOrder(true, false)
-            : order == OrderType::kDescNullsFirst
-            ? core::SortOrder(false, true)
-            : core::SortOrder(false, false));
+        order == OrderType::kAscNullsFirst ? core::SortOrder(true, true)
+                                           : order == OrderType ::kAscNullsLast
+                ? core::SortOrder(true, false)
+                : order == OrderType::kDescNullsFirst
+                    ? core::SortOrder(false, true)
+                    : core::SortOrder(false, false));
   }
   auto keys = projections.toFieldRefs(op.distribution().order);
   auto project = projections.maybeProject(input);
@@ -382,7 +387,11 @@ core::PlanNodePtr Optimization::makeOrderBy(
       localMerge);
 
   core::PlanNodePtr merge = std::make_shared<core::MergeExchangeNode>(
-								      idGenerator_.next(), localMerge->outputType(), keys, sortOrder, VectorSerde::Kind::kPresto);
+      idGenerator_.next(),
+      localMerge->outputType(),
+      keys,
+      sortOrder,
+      VectorSerde::Kind::kPresto);
   fragment.width = 1;
   fragment.inputStages.push_back(InputStage{merge->id(), source.taskPrefix});
   stages.push_back(std::move(source));
@@ -401,9 +410,10 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
       : inputType_{inputType}, keys_{keys} {}
 
   std::unique_ptr<core::PartitionFunction> create(
-						  int numPartitions, bool localExchange = false) const override {
+      int numPartitions,
+      bool localExchange = false) const override {
     return std::make_unique<exec::HashPartitionFunction>(
-							 localExchange, numPartitions, inputType_, keys_);
+        localExchange, numPartitions, inputType_, keys_);
   }
 
   folly::dynamic serialize() const override {
@@ -422,7 +432,8 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
 class BroadcastPartitionFunctionSpec : public core::PartitionFunctionSpec {
  public:
   std::unique_ptr<core::PartitionFunction> create(
-						  int /* numPartitions */, bool /*localExchange*/) const override {
+      int /* numPartitions */,
+      bool /*localExchange*/) const override {
     return nullptr;
   }
 
@@ -524,10 +535,12 @@ core::PlanNodePtr Optimization::makeFragment(
           false,
           std::move(partitionFunctionFactory),
           makeOutputType(repartition->columns()),
-	  VectorSerde::Kind::kPresto,
+          VectorSerde::Kind::kPresto,
           partitioningInput);
       auto exchange = std::make_shared<core::ExchangeNode>(
-							   idGenerator_.next(), sourcePlan->outputType(), VectorSerde::Kind::kPresto);
+          idGenerator_.next(),
+          sourcePlan->outputType(),
+          VectorSerde::Kind::kPresto);
       fragment.inputStages.push_back(
           InputStage{exchange->id(), source.taskPrefix});
       stages.push_back(std::move(source));
@@ -540,7 +553,8 @@ core::PlanNodePtr Optimization::makeFragment(
       if (!handle) {
         filterUpdated(scan->baseTable);
         handle = leafHandle(scan->baseTable->id());
-        VELOX_CHECK_NOT_NULL(handle, "No table for scan {}", scan->toString(true, true));
+        VELOX_CHECK_NOT_NULL(
+            handle, "No table for scan {}", scan->toString(true, true));
       }
       std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           assignments;

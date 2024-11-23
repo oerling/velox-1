@@ -73,7 +73,7 @@ class MultiFragmentPlan {
     // exchanges.
     int32_t numDrivers;
   };
-  
+
   MultiFragmentPlan(std::vector<ExecutableFragment> fragments, Options options)
       : fragments_(std::move(fragments)), options_(std::move(options)) {}
 

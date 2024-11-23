@@ -20,9 +20,9 @@
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/Cost.h"
-#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/experimental/query/RelationOp.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
+#include "velox/runner/MultiFragmentPlan.h"
 
 /// Planning-time data structures. Represent the state of the planning process
 /// plus utilities.
@@ -425,10 +425,13 @@ class Optimization {
     return makeVeloxExprWithNoAlias_;
   }
 
-  // Makes an output type for use in PlanNode et al. If 'columnType' is set, only considers base relation columns of the given type.
-  velox::RowTypePtr makeOutputType(const ColumnVector& columns, std::optional<velox::connector::hive::HiveColumnHandle::ColumnType> columnType = std::nullopt);
+  // Makes an output type for use in PlanNode et al. If 'columnType' is set,
+  // only considers base relation columns of the given type.
+  velox::RowTypePtr makeOutputType(
+      const ColumnVector& columns,
+      std::optional<velox::connector::hive::HiveColumnHandle::ColumnType>
+          columnType = std::nullopt);
 
-  
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 

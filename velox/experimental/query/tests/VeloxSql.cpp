@@ -34,16 +34,15 @@
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
-#include "velox/runner/LocalRunner.h"
-#include "velox/runner/LocalSchema.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/VeloxHistory.h"
 #include "velox/expression/Expr.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
-#include "velox/runner/LocalRunner.h"
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/runner/LocalRunner.h"
+#include "velox/runner/LocalSchema.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
 
@@ -218,24 +217,25 @@ class VeloxRunner {
     exec::ExchangeSource::registerFactory(
         exec::test::createLocalExchangeSource);
     serializer::presto::PrestoVectorSerde::registerVectorSerde();
-  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
-    serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
-  }
+    if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+      serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
+    }
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
     std::unordered_map<std::string, std::string> empty;
     auto config = std::make_shared<config::ConfigBase>(std::move(empty));
-  connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
-  auto hiveConnector =
+    connector::registerConnectorFactory(
+        std::make_shared<connector::hive::HiveConnectorFactory>());
+    auto hiveConnector =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
     connector::registerConnector(hiveConnector);
 
-    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
+    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
+        connectorConfigs;
     auto copy = hiveConfig_;
     connectorConfigs[kHiveConnectorId] =
-      std::make_shared<config::ConfigBase>(std::move(copy));
+        std::make_shared<config::ConfigBase>(std::move(copy));
 
     schemaQueryCtx_ = core::QueryCtx::create(
         executor_.get(),
@@ -247,14 +247,14 @@ class VeloxRunner {
         "schema");
     common::SpillConfig spillConfig;
     common::PrefixSortConfig prefixSortConfig(100, 130);
-    
+
     schemaRootPool_ = rootPool_->addAggregateChild("schemaRoot");
     connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
         schemaPool_.get(),
         schemaRootPool_.get(),
         schemaQueryCtx_->connectorSessionProperties(kHiveConnectorId),
-	&spillConfig,
-	prefixSortConfig,
+        &spillConfig,
+        prefixSortConfig,
         std::make_unique<exec::SimpleExpressionEvaluator>(
             schemaQueryCtx_.get(), schemaPool_.get()),
         schemaQueryCtx_->cache(),
@@ -283,7 +283,7 @@ class VeloxRunner {
           return toTableScan(id, name, rowType, columnNames);
         });
     splitSourceFactory_ = std::make_shared<LocalSplitSourceFactory>(
-								    schema_, FLAGS_num_splits_per_file);
+        schema_, FLAGS_num_splits_per_file);
     history_ = std::make_unique<facebook::verax::VeloxHistory>();
     executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
         FLAGS_num_drivers * 2 + 2);
@@ -306,7 +306,7 @@ class VeloxRunner {
       auto projectedName = rowType->nameOf(i);
       auto& columnName = columnNames[i];
       VELOX_CHECK(
-		  table->columnMap().find(columnName) != table->columnMap().end(),
+          table->columnMap().find(columnName) != table->columnMap().end(),
           "No column {} in {}",
           columnName,
           name);
@@ -439,10 +439,11 @@ class VeloxRunner {
       std::string* errorString = nullptr,
       std::vector<exec::TaskStats>* statsReturn = nullptr) {
     std::shared_ptr<LocalRunner> runner;
-    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>> connectorConfigs;
+    std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
+        connectorConfigs;
     auto copy = hiveConfig_;
     connectorConfigs[kHiveConnectorId] =
-      std::make_shared<config::ConfigBase>(std::move(copy));
+        std::make_shared<config::ConfigBase>(std::move(copy));
     ++queryCounter_;
     auto queryCtx = core::QueryCtx::create(
         executor_.get(),
@@ -502,7 +503,7 @@ class VeloxRunner {
     RunStats runStats;
     try {
       runner = std::make_shared<LocalRunner>(
-					     fragmentedPlan, queryCtx, splitSourceFactory_);
+          fragmentedPlan, queryCtx, splitSourceFactory_);
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 
@@ -512,7 +513,7 @@ class VeloxRunner {
       }
       auto stats = runner->stats();
       if (statsReturn) {
-	*statsReturn = stats;
+        *statsReturn = stats;
       }
       auto& fragments = fragmentedPlan->fragments();
       for (int32_t i = fragments.size() - 1; i >= 0; --i) {
@@ -525,7 +526,7 @@ class VeloxRunner {
         if (FLAGS_print_stats) {
           std::cout << "Fragment " << i << ":" << std::endl;
           std::cout << printPlanWithStats(
-					  *fragments[i].fragment.planNode,
+              *fragments[i].fragment.planNode,
               stats[i],
               FLAGS_include_custom_stats,
               [&](auto id) { return planCostString(id, estimates); });
@@ -540,23 +541,21 @@ class VeloxRunner {
         *errorString = fmt::format("Runtime error: {}", e.what());
       }
       waitForCompletion(runner);
-	return nullptr;
+      return nullptr;
     }
     waitForCompletion(runner);
     return runner;
   }
 
-
   void waitForCompletion(const std::shared_ptr<LocalRunner>& runner) {
-          if (runner) {
-	try {
-	  runner->waitForCompletion(50000);
-	} catch (const std::exception& /*ignore*/) {
-	}
+    if (runner) {
+      try {
+        runner->waitForCompletion(50000);
+      } catch (const std::exception& /*ignore*/) {
       }
-
+    }
   }
-  
+
   /// Returns exit status for run. 0 is passed, 1 is plan differences only, 2 is
   /// result differences.
   int32_t checkStatus() {

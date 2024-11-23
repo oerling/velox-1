@@ -67,16 +67,16 @@ const char* QueryGraphContext::toName(std::string_view str) {
   return data;
 }
 
-  #if 0
+#if 0
 const char* toName(const std::string& str) {
   return queryCtx()->toName(std::string_view(str.data(), str.size()));
 }
 #endif
 
 Name toName(std::string_view string) {
-    return queryCtx()->toName(string);
-  }
-  
+  return queryCtx()->toName(string);
+}
+
 float Value::byteSize() const {
   if (type->isFixedWidth()) {
     return type->cppSizeInBytes();
@@ -232,11 +232,11 @@ void Column::equals(ColumnPtr other) const {
 
 std::string Column::toString() const {
   Name cname = !relation_ ? ""
-      : relation_->type() == PlanType::kTable
-      ? relation_->as<BaseTable>()->cname
-      : relation_->type() == PlanType::kDerivedTable
-      ? relation_->as<DerivedTable>()->cname
-      : "--";
+                          : relation_->type() == PlanType::kTable
+          ? relation_->as<BaseTable>()->cname
+          : relation_->type() == PlanType::kDerivedTable
+              ? relation_->as<DerivedTable>()->cname
+              : "--";
 
   return fmt::format("{}.{}", cname, name_);
 }
@@ -1298,20 +1298,20 @@ ColumnPtr SchemaTable::findColumn(const std::string& name) const {
 }
 
 Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
-  : name_(_name),
-    defaultLocus_(std::make_unique<Locus>("local")) {
+    : name_(_name), defaultLocus_(std::make_unique<Locus>("local")) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }
 }
 
-  Schema::Schema(const char* _name, velox::runner::Schema* source)
-    : name_(_name), source_(source),
-      defaultLocus_(std::make_unique<Locus>(source->connector()->connectorId().c_str())) {}
+Schema::Schema(const char* _name, velox::runner::Schema* source)
+    : name_(_name),
+      source_(source),
+      defaultLocus_(
+          std::make_unique<Locus>(source->connector()->connectorId().c_str())) {
+}
 
-
-SchemaTablePtr Schema::findTable(
-    std::string_view name) const {
+SchemaTablePtr Schema::findTable(std::string_view name) const {
   auto internedName = toName(name);
   auto it = tables_.find(internedName);
   if (it != tables_.end()) {
@@ -1337,11 +1337,11 @@ SchemaTablePtr Schema::findTable(
   DistributionType defaultDist;
   defaultDist.locus = defaultLocus_.get();
   schemaTable->addIndex(
-			toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
+      toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
   addTable(schemaTable);
   return schemaTable;
 }
-  
+
 void Schema::addTable(SchemaTablePtr table) const {
   tables_[table->name] = table;
 }

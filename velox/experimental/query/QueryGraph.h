@@ -372,8 +372,8 @@ class JoinEdge {
     return leftTable_ == table && !leftOptional_
         ? std::pair<PlanObjectConstPtr, float>{rightTable_, lrFanout_}
         : rightTable_ == table && !rightOptional_ && !rightExists_
-        ? std::pair<PlanObjectConstPtr, float>{leftTable_, rlFanout_}
-        : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
+            ? std::pair<PlanObjectConstPtr, float>{leftTable_, rlFanout_}
+            : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
   }
 
   const ExprVector& filter() const {

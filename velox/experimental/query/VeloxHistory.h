@@ -18,8 +18,8 @@
 
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/exec/TaskStats.h"
-#include "velox/runner/MultiFragmentPlan.h"
 #include "velox/experimental/query/Plan.h"
+#include "velox/runner/MultiFragmentPlan.h"
 
 namespace facebook::verax {
 
