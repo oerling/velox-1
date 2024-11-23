@@ -465,7 +465,7 @@ struct BaseTable : public PlanObject {
   // Correlation name, distinguishes between uses of the same schema table.
   Name cname{nullptr};
 
-  SchemaTablePtr schemaTable;
+  SchemaTablePtr schemaTable{nullptr};
 
   /// All columns referenced from 'schemaTable' under this correlation name.
   /// Different indices may have to be combined in different TableScans to cover

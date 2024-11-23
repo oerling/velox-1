@@ -377,6 +377,7 @@ class Optimization {
     auto it = leafHandles_.find(id);
     return it != leafHandles_.end() ? it->second : nullptr;
   }
+
   // Translates from Expr to Velox.
   velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
   auto& idGenerator() {
@@ -424,6 +425,10 @@ class Optimization {
     return makeVeloxExprWithNoAlias_;
   }
 
+  // Makes an output type for use in PlanNode et al. If 'columnType' is set, only considers base relation columns of the given type.
+  velox::RowTypePtr makeOutputType(const ColumnVector& columns, std::optional<velox::connector::hive::HiveColumnHandle::ColumnType> columnType = std::nullopt);
+
+  
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
 
@@ -618,9 +623,6 @@ class Optimization {
       const JoinCandidate& candidate,
       PlanState& state,
       std::vector<NextJoin>& toTry);
-
-  // Makes an output type for PlanNode.
-  velox::RowTypePtr makeOutputType(const ColumnVector& columns);
 
   // Returns a filter expr that ands 'exprs'. nullptr if 'exprs' is empty.
   velox::core::TypedExprPtr toAnd(const ExprVector& exprs);

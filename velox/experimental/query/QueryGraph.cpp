@@ -1298,14 +1298,16 @@ ColumnPtr SchemaTable::findColumn(const std::string& name) const {
 }
 
 Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
-    : name_(_name) {
+  : name_(_name),
+    defaultLocus_(std::make_unique<Locus>("local")) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }
 }
 
   Schema::Schema(const char* _name, velox::runner::Schema* source)
-    : name_(_name), source_(source) {}
+    : name_(_name), source_(source),
+      defaultLocus_(std::make_unique<Locus>(source->connector()->connectorId().c_str())) {}
 
 
 SchemaTablePtr Schema::findTable(
@@ -1321,6 +1323,7 @@ SchemaTablePtr Schema::findTable(
     return nullptr;
   }
   Declare(SchemaTable, schemaTable, internedName, table->rowType());
+  schemaTable->runnerTable = table;
   ColumnVector columns;
   for (auto& pair : table->columnMap()) {
     auto& tableColumn = *pair.second;
@@ -1332,7 +1335,7 @@ SchemaTablePtr Schema::findTable(
     columns.push_back(column);
   }
   DistributionType defaultDist;
-  defaultDist.locus = defaultLocus_;
+  defaultDist.locus = defaultLocus_.get();
   schemaTable->addIndex(
 			toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
   addTable(schemaTable);

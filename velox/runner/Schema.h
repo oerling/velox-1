@@ -42,6 +42,11 @@ class Column {
     return latestStats_;
   }
 
+  /// Returns the column type. TODO: Support partition keys etc in local schemas.
+  connector::hive::HiveColumnHandle::ColumnType columnType() const {
+    return connector::hive::HiveColumnHandle::ColumnType::kRegular; 
+  }
+  
   /// Sets statistics. May be called multipl times if table contents change.
   void setStats(std::unique_ptr<dwio::common::ColumnStatistics> stats) {
     std::lock_guard<std::mutex> l(mutex_);
@@ -114,6 +119,12 @@ class Table {
   /// implementation's columns but an abstract form.
   virtual const std::unordered_map<std::string, const Column*>&  columnMap() const = 0;
 
+  const Column* findColumn(const std::string& name) {
+    auto& map = columnMap();
+    auto it = map.find(name);
+    return it == map.end() ? nullptr : it->second;
+  }
+  
   /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
   /// before sampling. Returns {count of sampled, count matching filters}.
   /// Returns statistics for the post-filtering values in 'stats' for each of

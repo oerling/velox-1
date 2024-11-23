@@ -402,10 +402,17 @@ struct SchemaTable {
 
   // All indices. Must contain at least one.
   std::vector<IndexPtr, QGAllocator<IndexPtr>> indices;
+  velox::runner::Table* runnerTable{nullptr};
 };
 
-/// Represents a collection of tables. Normally filled in ad hoc given the set
-/// of tables referenced by a query.
+/// Represents a collection of tables. Normally filled in ad hoc given
+/// the set of tables referenced by a query. The lifetime is a single
+/// optimization run. The owned objects are from the optimizer
+/// arena. Schema is owned by the application and is not from the
+/// optimization arena.  Objects of different catalogs/schemas get
+/// added to 'this' on first use. The Schema feeds from a
+/// runner::Schema which interfaces to a local/remote metadata
+/// repository. The objects have a default Locus for convenience.
 class Schema {
  public:
   Schema(Name _name, std::vector<SchemaTablePtr> tables);
@@ -424,7 +431,7 @@ class Schema {
   Name name_;
   mutable NameMap<SchemaTablePtr> tables_;
   velox::runner::Schema* source_{nullptr};
-  LocusPtr defaultLocus_{nullptr};
+  std::unique_ptr<Locus> defaultLocus_;
 };
 
 using SchemaPtr = Schema*;

@@ -63,6 +63,7 @@ void filterUpdated(BaseTablePtr table) {
           "and");
     }
   }
+  auto& dataColumns = table->schemaTable->runnerTable->rowType();
   const char* connector = table->schemaTable->indices[0]
                               ->distribution()
                               .distributionType.locus->name();
@@ -71,7 +72,8 @@ void filterUpdated(BaseTablePtr table) {
       table->schemaTable->name,
       true,
       std::move(subfieldFilters),
-      remainingFilter);
+      remainingFilter,
+      dataColumns);
   optimization->setLeafHandle(table->id(), handle);
   optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
 }
@@ -129,11 +131,29 @@ MultiFragmentPlanPtr Optimization::toVeloxPlan(
   return std::make_shared<velox::runner::MultiFragmentPlan>(std::move(stages), options);
 }
 
-RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
+  RowTypePtr Optimization::makeOutputType(const ColumnVector& columns, std::optional<connector::hive::HiveColumnHandle::ColumnType> columnType) {
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto i = 0; i < columns.size(); ++i) {
-    names.push_back(columns[i]->toString());
+    auto* column = columns[i];
+    auto relation = column->relation();
+    if (relation->type() == PlanType::kTable && columnType.has_value()) {
+      auto* schemaTable = relation->as<BaseTable>()->schemaTable;
+      if (!schemaTable) {
+	continue;
+      }
+      auto* runnerTable = schemaTable->runnerTable;
+      if (runnerTable) {
+	auto* runnerColumn = runnerTable->findColumn(std::string(column->name()));
+	VELOX_CHECK_NOT_NULL(runnerColumn);
+	if (runnerColumn->columnType() != columnType.value()) {
+	  continue;
+	}
+      }
+    }
+          auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name())
+                                            : column->toString();
+	  names.push_back(name);
     types.push_back(toTypePtr(columns[i]->value().type));
   }
   return ROW(std::move(names), std::move(types));
@@ -515,11 +535,12 @@ core::PlanNodePtr Optimization::makeFragment(
     }
     case RelType::kTableScan: {
       auto scan = op->as<TableScan>();
+      auto outputType = makeOutputType(scan->columns());
       auto handle = leafHandle(scan->baseTable->id());
       if (!handle) {
         filterUpdated(scan->baseTable);
         handle = leafHandle(scan->baseTable->id());
-        VELOX_CHECK(handle, "No table for scan {}", scan->toString(true, true));
+        VELOX_CHECK_NOT_NULL(handle, "No table for scan {}", scan->toString(true, true));
       }
       std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           assignments;
@@ -532,7 +553,7 @@ core::PlanNodePtr Optimization::makeFragment(
                 toTypePtr(column->value().type));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
-          nextId(*op), makeOutputType(scan->columns()), handle, assignments);
+          nextId(*op), outputType, handle, assignments);
       fragment.scans.push_back(scanNode);
       return scanNode;
     }
