@@ -33,9 +33,9 @@ struct Costs {
   }
 
   static float hashProbeCost(float cardinality) {
-    return cardinality < 10000
-        ? kArrayProbeCost
-        : cardinality < 500000 ? kSmallHashCost : kLargeHashCost;
+    return cardinality < 10000 ? kArrayProbeCost
+        : cardinality < 500000 ? kSmallHashCost
+                               : kLargeHashCost;
   }
 
   static constexpr float kKeyCompareCost =
