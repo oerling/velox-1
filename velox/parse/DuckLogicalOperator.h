@@ -226,7 +226,7 @@ class LogicalOrder : public LogicalOperator {
  public:
   explicit LogicalOrder(vector<BoundOrderByNode> orders)
       : LogicalOperator(LogicalOperatorType::LOGICAL_ORDER_BY),
-        orders(move(orders)) {}
+        orders(std::move(orders)) {}
 
   vector<BoundOrderByNode> orders;
 

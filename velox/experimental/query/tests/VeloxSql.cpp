@@ -488,7 +488,7 @@ class VeloxRunner {
         std::cout << "Plan: " << best->toString(true);
       }
       if (FLAGS_print_stats) {
-        estimates = std::move(opt.planCostMap());
+        estimates = opt.planCostMap();
       }
       fragmentedPlan = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {

@@ -19,7 +19,6 @@
 
 #include <folly/init/Init.h>
 #include <gtest/gtest.h>
-#include "expression/Expr.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
