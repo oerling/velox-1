@@ -313,6 +313,10 @@ void writeDebugFile(const KernelSpec& spec) {
   }
 }
 
+  void CompileState::generateSkip() {
+    generated_ << fmt::format("  if (laneStatus != ErrorCode::kOk) {{ goto sync{}; }}\n", nextSyncLabel_);
+  }
+
 ProgramKey CompileState::makeLevelText(
     int32_t pipelineIdx,
     int32_t kernelSeq,
@@ -333,6 +337,7 @@ ProgramKey CompileState::makeLevelText(
     currentBox_ = &box;
     clearInRegister();
     bool anyRetry = false;
+    bool needActiveCheck = true;
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
       if (box.steps[stepIdx_]->hasContinue()) {
         if (!anyRetry) {
@@ -348,15 +353,24 @@ ProgramKey CompileState::makeLevelText(
       }
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
-      // Generate the  code for first execution.
+      if (needActiveCheck) {
+	generateSkip();
+	needActiveCheck = false;
+      }
+	// Generate the  code for first execution.
       auto step = box.steps[stepIdx_];
+      if (step->isBarrier()) {
+	generated_ << fmt::format(" sync{}: \n", nextSyncLabel_);
+	++nextSyncLabel_;
+	needActiveCheck = true;
+      }
       if (step->hasContinue()) {
         generated_ << fmt::format("enter{}: \n", stepIdx_);
       }
       step->generateMain(*this);
     }
   }
-
+  generated_ << fmt::format("sync{}: ;\n", nextSyncLabel_); 
   generated_ << " PROGRAM_EPILOGUE();\n}\n}\n";
   head << 
       "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"

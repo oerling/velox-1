@@ -700,6 +700,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void clearInRegister();
 
+  // Generates a check for lane active.
+  void generateSkip();
+  
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
