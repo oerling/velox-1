@@ -904,7 +904,7 @@ const char* velox_experimental_wave_exec_WaveCore_cuh =
     "}\n"
     "\n"
     "__device__ void __forceinline__ wrapKernel(\n"
-    "    OperandIndex* wraps,\n"
+    "    const OperandIndex* wraps,\n"
     "    int32_t numWraps,\n"
     "    OperandIndex indicesIdx,\n"
     "    Operand** operands,\n"

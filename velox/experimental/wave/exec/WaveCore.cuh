@@ -431,7 +431,7 @@ __device__ void __forceinline__ wrapKernel(
 }
 
 __device__ void __forceinline__ wrapKernel(
-    OperandIndex* wraps,
+    const OperandIndex* wraps,
     int32_t numWraps,
     OperandIndex indicesIdx,
     Operand** operands,

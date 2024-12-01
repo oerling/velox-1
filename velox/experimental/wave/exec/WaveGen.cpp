@@ -31,6 +31,8 @@ const std::string cudaTypeName(const Type& type) {
   switch (type.kind()) {
     case TypeKind::BIGINT:
       return "int64_t ";
+    case TypeKind::BOOLEAN:
+      return "bool ";
     default:
       VELOX_UNSUPPORTED("No gen for type {}", type.toString());
   }
@@ -159,7 +161,30 @@ void EndNullCheck::generateMain(CompileState& state) {
   state.setInsideNullPropagating(false);
 }
 
+  std::string CompileState::literalText(const AbstractOperand& op) {
+    auto& constant = op.constant;
+    switch (op.type->kind()) {
+    case TypeKind::BIGINT:
+      return fmt::format("{}LL", constant->as<SimpleVector<int64_t>>()->valueAt(0));
+    case TypeKind::INTEGER:
+      return fmt::format("{} ", constant->as<SimpleVector<int32_t>>()->valueAt(0));
+    case TypeKind::SMALLINT:
+      return fmt::format("{} ", constant->as<SimpleVector<int16_t>>()->valueAt(0));
+      case TypeKind::TINYINT:
+	return fmt::format("{} ", constant->as<SimpleVector<int8_t>>()->valueAt(0));
+    case TypeKind::REAL:
+      return fmt::format("{} ", constant->as<SimpleVector<float>>()->valueAt(0));
+    case TypeKind::DOUBLE:
+      return fmt::format("{} ", constant->as<SimpleVector<double>>()->valueAt(0));
+    default: VELOX_NYI("Unsupported type");
+    }
+  }
+  
 void CompileState::generateOperand(const AbstractOperand& op) {
+  if (op.constant) {
+    generated_ << literalText(op);
+    return;
+  }
   if (op.inRegister && insideNullPropagating_) {
     generated_ << fmt::format(" r{} ", ordinal(op));
     return;
@@ -205,6 +230,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
       generated_ << fmt::format(
           "bool flag{} = {} && !isRegisterNull(nulls{}, {});\n",
           ord,
+	  ord,
           ord / 32,
           ord & 31);
     }
@@ -255,10 +281,10 @@ int32_t CompileState::nextWrapId() {
   return ++wrapId_;
 }
 
-int32_t CompileState::wrapLiteral(int32_t id) {
+int32_t CompileState::wrapLiteral(int32_t nthWrap) {
   // We take one Operand of each group of Operands that shares a wrappedAt such
   // that the Operand's lifetime crosses the filter.
-  CodePosition filter(kernelSeq_, stepIdx_, 0);
+  CodePosition filter(kernelSeq_, 0, stepIdx_);
   std::unordered_set<CodePosition> wraps;
   std::vector<OperandIndex> ops;
   for (auto& op : operands_) {
@@ -266,13 +292,15 @@ int32_t CompileState::wrapLiteral(int32_t id) {
     if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
       auto& wrappedAt = flags.wrappedAt;
       if (wraps.count(wrappedAt)) {
+	op->wrappedAt = nthWrap;
         continue;
       }
-      wraps.insert(wrappedAt);
+      op->wrappedAt = nthWrap;
+      wraps.insert(nthWrap);
       ops.push_back(op->id);
     }
   }
-  generated_ << fmt::format("const OperandIndex wraps{}[] = {", id);
+  generated_ << fmt::format("const OperandIndex wraps{}[] = {{", nthWrap);
   for (auto i = 0; i < ops.size(); ++i) {
     generated_ << i;
     if (i < ops.size() - 1) {
@@ -289,11 +317,10 @@ void Filter::generateMain(CompileState& state) {
       "filterKernel({}, operands, {}, blockBase, shared, laneStatus);\n",
       flagValue,
       state.ordinal(*indices));
-  auto id = state.nextWrapId();
-  auto numWraps = state.wrapLiteral(id);
+  auto numWraps = state.wrapLiteral(nthWrap);
   state.generated() << fmt::format(
       "wrapKernel(wraps{}, {}, {}, operands, blockBase, shared);\n",
-      id,
+      nthWrap,
       numWraps,
       state.ordinal(*indices));
 }
@@ -409,6 +436,38 @@ ProgramKey CompileState::makeLevelText(
       head.str(), std::move(input), std::move(local), std::move(output)};
 }
 
+void CompileState::fillExtraWrap(OperandSet& extraWrap) {
+  auto& candidate = selectedPipelines_[pipelineIdx_];
+  // Loop over all operands in the pipeline. If there are wraps in the current level, mark the operands not in the kernel but defined before and accessed after as extr raps.
+  if (candidate.steps[kernelSeq_].size() > 1) {
+    // If there are multiple branches there is no cardinality change or wraps from the level.
+    return;
+  }
+  auto& box = candidate.steps[kernelSeq_][0];
+  int32_t nthWrap = AbstractOperand::kNoWrap;
+  for (auto& step : box.steps) {
+    nthWrap = step->isWrap();
+    if (nthWrap != AbstractOperand::kNoWrap ) {
+      break;
+    }
+  }
+  if (nthWrap == AbstractOperand::kNoWrap) {
+    return;
+  }
+  auto params = candidate.levelParams[kernelSeq_];
+  for (auto i = 0; i < candidate.operandFlags.size(); ++i) {
+    auto& flags = candidate.operandFlags[i];
+    if (flags.definedIn.empty() || params.input.contains(i)) {
+      continue;
+    }
+    if (flags.definedIn.kernelSeq < kernelSeq_ && flags.lastUse.kernelSeq > kernelSeq_
+	&& (operands_[i]->wrappedAt == AbstractOperand::kNoWrap || operands_[i]->wrappedAt > nthWrap)) {
+      operands_[i]->wrappedAt = nthWrap;
+      extraWrap.add(i);
+    }
+  }
+}
+  
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   int32_t sharedSize = 0;
@@ -427,6 +486,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   auto numBranches = currentCandidate_->steps[kernelSeq_].size();
   OperandSet extraWrap;
+  fillExtraWrap(extraWrap);
   auto program = std::make_shared<Program>(
       params.input,
       params.local,

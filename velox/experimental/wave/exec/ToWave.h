@@ -71,8 +71,8 @@ class CompileState;
 struct KernelStep {
   virtual ~KernelStep() = default;
   virtual StepKind kind() const = 0;
-  virtual bool isWrap() const {
-    return false;
+  virtual int32_t isWrap() const {
+    return AbstractOperand::kNoWrap;
   }
 
   virtual bool isSink() const {
@@ -84,12 +84,16 @@ struct KernelStep {
   }
 
   virtual bool preservesRegisters() const {
-    return !isWrap();
+    return isWrap() == AbstractOperand::kNoWrap;
   }
 
   /// Returns true if contains a __syncthreads() so all lanes, including inactive must hit.
   virtual bool isBarrier() const {
     return false;
+  }
+
+  virtual std::string toString() const {
+    return fmt::format("step {} ", static_cast<int32_t>(kind()));
   }
   
   /// Returns the dynamic shared memory needed by 'this'.
@@ -186,8 +190,8 @@ struct Filter : public KernelStep {
     return StepKind::kFilter;
   }
 
-  bool isWrap() const override {
-    return true;
+  int32_t isWrap() const override {
+    return nthWrap;
   }
 
   bool isBarrier() const override {
@@ -198,6 +202,14 @@ struct Filter : public KernelStep {
     return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
 
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) override {
+    visitor(flag);
+  }
+
+  void visitResults(std::function<void(AbstractOperand*)> visitor) override {
+    visitor(indices);
+  }
+  
   void generateMain(CompileState& state) override;
 
   AbstractOperand* flag;
@@ -268,26 +280,28 @@ struct JoinProbe : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinProbe;
   }
-  bool isWrap() const override {
-    return true;
+  int32_t isWrap() const override {
+    return nthWrap;
   }
 
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
   AbstractOperand* hits;
+  int32_t nthWrap{-1};
 };
 
 struct JoinExpand : public KernelStep {
   StepKind kind() const override {
     return StepKind::kJoinExpand;
   }
-  bool isWrap() const override {
-    return true;
+  int32_t isWrap() const override {
+    return nthWrap;
   }
 
   AbstractOperand* hits;
   std::vector<int32_t> columns;
   std::vector<AbstractOperand*> extract;
+  int32_t nthWrap{-1};
 };
 
 struct KernelBox {
@@ -303,8 +317,8 @@ struct CodePosition {
   CodePosition() = default;
   CodePosition(uint16_t s) : kernelSeq(s) {}
   CodePosition(uint16_t s, uint16_t step) : kernelSeq(s), step(step) {}
-  CodePosition(uint16_t s, uint16_t step, uint16_t branchIdx)
-      : kernelSeq(s), step(step), branchIdx(branchIdx) {}
+  CodePosition(uint16_t s, uint16_t branchIdx, uint16_t step)
+      : kernelSeq(s), branchIdx(branchIdx), step(step) {}
 
   bool empty() const {
     return kernelSeq == kNone;
@@ -324,15 +338,18 @@ struct CodePosition {
         step == other.step;
   }
 
+
+  std::string toString() const;
+  
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
-  // Position of program in KernelBox.
-  uint16_t step{kNone};
+
   // If many kernelBoxes each with an independent program overlap, index of the
   // program.
   uint16_t branchIdx{kNone};
 
-  std::string toString() const;
+  // Position of program in KernelBox.
+  uint16_t step{kNone};
 };
 
 struct OperandFlags {
@@ -366,6 +383,7 @@ struct PipelineCandidate {
   void markParams(
       KernelBox& box,
       int32_t kernelSeq,
+      int32_t branchIdx,
       std::vector<LevelParams>& params);
 
   /// marks 'op' as producing the output operands of steps from 'begin' to
@@ -376,6 +394,8 @@ struct PipelineCandidate {
       int32_t begin,
       int32_t end);
 
+  std::string toString() const;
+  
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
@@ -441,6 +461,8 @@ struct Segment {
 
   // Projected top level columns if this is not a sink.
   RowTypePtr outputType;
+
+  std::string toString() const; 
 };
 
 class CompileState : public std::enable_shared_from_this<CompileState> {
@@ -559,6 +581,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   }
 
   void functionReferenced(const AbstractOperand* op);
+
+  std::string segmentString() const;
   
  private:
   bool
@@ -660,6 +684,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
       int32_t& nodeIndex,
       RowTypePtr& outputType);
 
+  std::string literalText(const AbstractOperand& op);
+  
   void
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
@@ -691,6 +717,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void makeLevel(std::vector<KernelBox>& level);
 
+  void fillExtraWrap(OperandSet& extraWrap);
+  
   // Transforms the leading operators into WaveOperators with codegen.
   // 'operatorIndex' is set to 1 after the index of the last transformed
   // operator inde the original Driver.

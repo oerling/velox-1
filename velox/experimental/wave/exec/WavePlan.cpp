@@ -222,7 +222,7 @@ Segment& CompileState::addSegment(
   last.ordinal = segments_.size() - 1;
   last.boundary = boundary;
   last.planNode = node;
-  if (outputType) {
+  if (outputType && boundary == BoundaryType::kSource) {
     int32_t size = outputType->size();
     for (auto i = 0; i < size; ++i) {
       auto* subfield = toSubfield(outputType->nameOf(i));
@@ -256,7 +256,7 @@ std::vector<AbstractOperand*> CompileState::tryExprSet(
     result.push_back(exprToOperand(*exprs[i], &topScope_));
     int32_t outputIdx = -1;
     for (auto& projection : *resultProjections) {
-      if (projection.inputChannel == i - begin) {
+      if (projection.inputChannel == i) {
         outputIdx = projection.outputChannel;
         break;
       }
@@ -297,6 +297,10 @@ void CompileState::tryFilterProject(
     addSegment(BoundaryType::kFilter, nullptr, outputType);
     auto filterStep = makeStep<Filter>();
     filterStep->flag = filterOp;
+    filterStep->nthWrap = wrapId_++;
+    filterStep->indices = newOperand(INTEGER(), "indices");
+    filterStep->indices->notNull = true;
+
     segments_.back().steps.push_back(filterStep);
     firstProjection = 1;
     ++nodeIndex;
@@ -434,8 +438,8 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
   if (flags.firstUse.empty()) {
     flags.firstUse = CodePosition(
         candidate.steps.size(),
-        candidate.currentBox->steps.size(),
-        candidate.boxIdx);
+	candidate.boxIdx,
+        candidate.currentBox->steps.size());
   }
   if (flags.wrappedAt.empty()) {
     bool first = true;
@@ -453,7 +457,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       for (auto i = first ? flags.definedIn.step + 1 : 0; i < box->steps.size();
            ++i) {
         if (box->steps[i]->isWrap()) {
-          flags.wrappedAt = CodePosition(seq, i, 0);
+          flags.wrappedAt = CodePosition(seq, 0, i);
           break;
         }
       }
@@ -461,7 +465,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
     }
   }
   flags.lastUse = CodePosition(
-      candidate.steps.size() - 1, box->steps.size(), candidate.boxIdx);
+      candidate.steps.size() - 1, candidate.boxIdx, box->steps.size());
 }
 
 NullCheck* CompileState::addNullCheck(AbstractOperand* op) {
@@ -478,6 +482,9 @@ void CompileState::placeExpr(
     PipelineCandidate& candidate,
     AbstractOperand* op,
     bool mayDelay) {
+  if (op->constant) {
+    return;
+  }
   auto& flags = candidate.flags(op);
   if (!flags.definedIn.empty()) {
     recordReference(candidate, op);
@@ -494,8 +501,8 @@ void CompileState::placeExpr(
     }
     flags.definedIn = CodePosition(
         candidate.steps.size() - 1,
-        candidate.currentBox->steps.size(),
-        candidate.boxIdx);
+	candidate.boxIdx,
+        candidate.currentBox->steps.size());
     auto inst = makeStep<Compute>();
     inst->operand = op;
     candidate.currentBox->steps.push_back(inst);
@@ -613,19 +620,23 @@ void CompileState::planSegment(
         placeExpr(candidate, segment.topLevelDefined[i], true);
       }
       break;
-      break;
     }
     case BoundaryType::kFilter: {
-      placeExpr(candidate, segment.topLevelDefined[0], false);
-      auto filter = reinterpret_cast<Filter*>(segment.steps[0]);
-      candidate.currentBox->steps.push_back(filter);
+      auto& filter = segment.steps[0]->as<Filter>();
+      placeExpr(candidate, filter.flag, false);
+      candidate.currentBox->steps.push_back(&filter);
+      for (auto i = 0; i < segment.topLevelDefined.size(); ++i) {
+        placeExpr(candidate, segment.topLevelDefined[i], true);
+      }
       break;
     }
     case BoundaryType::kAggregation: {
+      // If there are many parallel column groups, bring them to one.
       if (candidate.steps.back().size() > 1) {
         newKernel(candidate);
       }
-      candidate.currentBox->steps.push_back(segment.steps.back());
+      // Append the aggregate probe and updates. TODO: See if doing the updates at greater width is better.
+      candidate.currentBox->steps.insert(candidate.currentBox->steps.end(), segment.steps.begin(),  segment.steps.end());
       break;
     }
     default:
@@ -649,17 +660,25 @@ void CompileState::pickBest() {
 void PipelineCandidate::markParams(
     KernelBox& box,
     int32_t kernelSeq,
+    int32_t branchIdx,
     std::vector<LevelParams>& params) {
   for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
     box.steps[stepIdx]->visitReferences([&](AbstractOperand* op) {
-      auto& flags = this->flags(op);
+					  if (op->constant) {
+					    return;
+					  }
+					  auto& flags = this->flags(op);
       if (flags.definedIn.kernelSeq < kernelSeq) {
         levelParams[kernelSeq].input.add(op->id);
       }
     });
     box.steps[stepIdx]->visitResults([&](AbstractOperand* op) {
       auto& flags = this->flags(op);
-      if (flags.lastUse.kernelSeq > kernelSeq) {
+      if (flags.definedIn.empty()) {
+	flags.definedIn = CodePosition(kernelSeq, branchIdx, stepIdx);
+      }
+      // If used later or used in wrap (filter indices) the op goes to output.
+      if (flags.lastUse.kernelSeq > kernelSeq || box.steps[stepIdx]->kind() == StepKind::kFilter) {
         levelParams[kernelSeq].output.add(op->id);
       } else {
         levelParams[kernelSeq].local.add(op->id);
@@ -672,7 +691,7 @@ void PipelineCandidate::makeOperandSets(int32_t pipelineSeq) {
   levelParams.resize(steps.size());
   for (auto kernelSeq = 0; kernelSeq < steps.size(); ++kernelSeq) {
     for (auto i = 0; i < steps[kernelSeq].size(); ++i) {
-      markParams(steps[kernelSeq][i], kernelSeq, levelParams);
+      markParams(steps[kernelSeq][i], kernelSeq, i, levelParams);
     }
   }
 }
@@ -786,13 +805,17 @@ ProgramKey CompileState::makeKey(int32_t& sharedSize) {
           auto& compute = step->as<Compute>();
           auto* op = compute.operand;
           markOutput(op);
-          out << op->expr->name();
-          out << "(";
-          for (auto* in : op->inputs) {
-            markInput(in);
-          }
-          out << ")\n";
-          break;
+	  if (!op->expr) {
+	    out << op->toString();
+	  } else {
+	    out << op->expr->name();
+	    out << "(";
+	    for (auto* in : op->inputs) {
+	      markInput(in);
+	    }
+	    out << ")\n";
+	  }
+	  break;
         }
         case StepKind::kNullCheck: {
           auto& check = step->as<NullCheck>();
@@ -865,4 +888,43 @@ RowTypePtr CompileState::makeOperators(int32_t& operatorIndex) {
   return segments_.back().outputType;
 }
 
+  std::string CompileState::segmentString() const {
+    std::stringstream out;
+    for (auto i = 0; i < segments_.size(); ++i) {
+      out << segments_[i].toString() << std::endl;
+    }
+    return out.str();
+  }
+
+  std::string Segment::toString() const {
+    std::stringstream out;
+    out << fmt::format("Segment {}: ", static_cast<int32_t>(boundary)) << std::endl;
+    for (auto i = 0; i < steps.size(); ++i) {
+      out << i << ": "  << steps[i]->toString() << std::endl;
+    }
+    out << std::endl << "Results:" << std::endl;
+    for (auto i = 0; i < topLevelDefined.size(); ++i) {
+      out << fmt::format("{}: {} as {}", i, topLevelDefined[i]->toString(),
+			 projectedName.size() > i ? projectedName[i]->toString() : "-") << std::endl;
+    }
+    return out.str();
+  }
+
+  std::string PipelineCandidate::toString() const {
+    std::stringstream out;
+    for (auto kernelSeq = 0; kernelSeq < steps.size(); ++kernelSeq) {
+      out << fmt::format("Kernel {} branches={}:", kernelSeq, steps[kernelSeq].size())<< std::endl;
+      out << "  Input=" << levelParams[kernelSeq].input.toString() << std::endl 
+<< "  Local=" << levelParams[kernelSeq].local.toString() << std::endl
+	  << "  Output=" << levelParams[kernelSeq].output.toString() << std::endl;
+      for (auto branchIdx = 0; branchIdx < steps[kernelSeq].size(); ++branchIdx) {
+	auto& box = steps[kernelSeq][branchIdx];
+	for (auto stepIdx = 0; stepIdx < box.steps.size(); ++stepIdx) {
+	  out << fmt::format("  {}: {}", stepIdx, box.steps[stepIdx]->toString()) << std::endl;
+	}
+      }
+    }
+    return out.str();
+  }
+  
 } // namespace facebook::velox::wave
