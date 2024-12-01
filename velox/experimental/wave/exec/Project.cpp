@@ -132,13 +132,13 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
               control->deviceData->as<char>(),
               control->deviceData->size());
           stream.setState(WaveStream::State::kParallel);
-	  stream.checkExecutables();
+          stream.checkExecutables();
           {
             PrintTime c("expr");
             if (auto* kernel = exes[0]->programShared->kernel()) {
               auto numBranches = exes[0]->programShared->numBranches();
               void* params = &control->params;
-	      
+
               kernel->launch(
                   0,
                   blocksPerExe * numBranches,
@@ -154,8 +154,8 @@ void Project::schedule(WaveStream& stream, int32_t maxRows) {
                   control->params);
             }
           }
-	  stream.checkExecutables();
-	       });
+          stream.checkExecutables();
+        });
     isContinue = false;
   }
 }

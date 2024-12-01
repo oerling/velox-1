@@ -36,15 +36,10 @@ bool registerBinaryNumeric(
 } // namespace
 
 void registerWaveFunctions() {
- registerBinaryNumeric(
-    "plus",
-    FunctionMetadata(),
-    "$R$ plus($1$ x, $2$ y) { return x + y; }");
-    registerBinaryNumeric(
-    "lt",
-    FunctionMetadata(),
-    "bool lt($1$ x, $2$ y) { return x < y; }");
-  }  
-    
+  registerBinaryNumeric(
+      "plus", FunctionMetadata(), "$R$ plus($1$ x, $2$ y) { return x + y; }");
+  registerBinaryNumeric(
+      "lt", FunctionMetadata(), "bool lt($1$ x, $2$ y) { return x < y; }");
+}
 
 } // namespace facebook::velox::wave

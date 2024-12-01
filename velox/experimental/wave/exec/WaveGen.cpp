@@ -161,25 +161,32 @@ void EndNullCheck::generateMain(CompileState& state) {
   state.setInsideNullPropagating(false);
 }
 
-  std::string CompileState::literalText(const AbstractOperand& op) {
-    auto& constant = op.constant;
-    switch (op.type->kind()) {
+std::string CompileState::literalText(const AbstractOperand& op) {
+  auto& constant = op.constant;
+  switch (op.type->kind()) {
     case TypeKind::BIGINT:
-      return fmt::format("{}LL", constant->as<SimpleVector<int64_t>>()->valueAt(0));
+      return fmt::format(
+          "{}LL", constant->as<SimpleVector<int64_t>>()->valueAt(0));
     case TypeKind::INTEGER:
-      return fmt::format("{} ", constant->as<SimpleVector<int32_t>>()->valueAt(0));
+      return fmt::format(
+          "{} ", constant->as<SimpleVector<int32_t>>()->valueAt(0));
     case TypeKind::SMALLINT:
-      return fmt::format("{} ", constant->as<SimpleVector<int16_t>>()->valueAt(0));
-      case TypeKind::TINYINT:
-	return fmt::format("{} ", constant->as<SimpleVector<int8_t>>()->valueAt(0));
+      return fmt::format(
+          "{} ", constant->as<SimpleVector<int16_t>>()->valueAt(0));
+    case TypeKind::TINYINT:
+      return fmt::format(
+          "{} ", constant->as<SimpleVector<int8_t>>()->valueAt(0));
     case TypeKind::REAL:
-      return fmt::format("{} ", constant->as<SimpleVector<float>>()->valueAt(0));
+      return fmt::format(
+          "{} ", constant->as<SimpleVector<float>>()->valueAt(0));
     case TypeKind::DOUBLE:
-      return fmt::format("{} ", constant->as<SimpleVector<double>>()->valueAt(0));
-    default: VELOX_NYI("Unsupported type");
-    }
+      return fmt::format(
+          "{} ", constant->as<SimpleVector<double>>()->valueAt(0));
+    default:
+      VELOX_NYI("Unsupported type");
   }
-  
+}
+
 void CompileState::generateOperand(const AbstractOperand& op) {
   if (op.constant) {
     generated_ << literalText(op);
@@ -217,7 +224,10 @@ void Compute::generateMain(CompileState& state) {
   operand->inRegister = true;
   if (flags.needStore) {
     state.generated() << fmt::format(
-				     "flatResult<{}>(operands, {}, blockBase) = r{};\n", cudaTypeName(*operand->type), ord, ord);
+        "flatResult<{}>(operands, {}, blockBase) = r{};\n",
+        cudaTypeName(*operand->type),
+        ord,
+        ord);
   }
 }
 
@@ -230,7 +240,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
       generated_ << fmt::format(
           "bool flag{} = {} && !isRegisterNull(nulls{}, {});\n",
           ord,
-	  ord,
+          ord,
           ord / 32,
           ord & 31);
     }
@@ -270,13 +280,14 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   }
   functions_.insert(key);
   auto definition = registry_.makeDefinition(key, op->type);
-  if (!definition.includeLine.empty() && includes_.find(definition.includeLine) == includes_.end()) {
+  if (!definition.includeLine.empty() &&
+      includes_.find(definition.includeLine) == includes_.end()) {
     includes_.insert(definition.includeLine);
     includeText_ << definition.includeLine << std::endl;
   }
   inlines_ << "inline __device__ " << definition.definition << std::endl;
 }
-  
+
 int32_t CompileState::nextWrapId() {
   return ++wrapId_;
 }
@@ -292,7 +303,7 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
     if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
       auto& wrappedAt = flags.wrappedAt;
       if (wraps.count(wrappedAt)) {
-	op->wrappedAt = nthWrap;
+        op->wrappedAt = nthWrap;
         continue;
       }
       op->wrappedAt = nthWrap;
@@ -340,9 +351,11 @@ void writeDebugFile(const KernelSpec& spec) {
   }
 }
 
-  void CompileState::generateSkip() {
-    generated_ << fmt::format("  if (laneStatus != ErrorCode::kOk) {{ goto sync{}; }}\n", nextSyncLabel_);
-  }
+void CompileState::generateSkip() {
+  generated_ << fmt::format(
+      "  if (laneStatus != ErrorCode::kOk) {{ goto sync{}; }}\n",
+      nextSyncLabel_);
+}
 
 ProgramKey CompileState::makeLevelText(
     int32_t pipelineIdx,
@@ -357,7 +370,8 @@ ProgramKey CompileState::makeLevelText(
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
-  std::vector<std::string> entryPoints = {fmt::format("facebook::velox::wave::{}", kernelName)};
+  std::vector<std::string> entryPoints = {
+      fmt::format("facebook::velox::wave::{}", kernelName)};
   generated_ << "  GENERATED_PREAMBLE(0);\n";
   for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
     auto& box = level[branchIdx_];
@@ -381,15 +395,15 @@ ProgramKey CompileState::makeLevelText(
     }
     for (stepIdx_ = 0; stepIdx_ < box.steps.size(); ++stepIdx_) {
       if (needActiveCheck) {
-	generateSkip();
-	needActiveCheck = false;
+        generateSkip();
+        needActiveCheck = false;
       }
-	// Generate the  code for first execution.
+      // Generate the  code for first execution.
       auto step = box.steps[stepIdx_];
       if (step->isBarrier()) {
-	generated_ << fmt::format(" sync{}: \n", nextSyncLabel_);
-	++nextSyncLabel_;
-	needActiveCheck = true;
+        generated_ << fmt::format(" sync{}: \n", nextSyncLabel_);
+        ++nextSyncLabel_;
+        needActiveCheck = true;
       }
       if (step->hasContinue()) {
         generated_ << fmt::format("enter{}: \n", stepIdx_);
@@ -397,15 +411,16 @@ ProgramKey CompileState::makeLevelText(
       step->generateMain(*this);
     }
   }
-  generated_ << fmt::format("sync{}: ;\n", nextSyncLabel_); 
+  generated_ << fmt::format("sync{}: ;\n", nextSyncLabel_);
   generated_ << " PROGRAM_EPILOGUE();\n}\n}\n";
-  head << 
-      "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
+  head
+      << "#include \"velox/experimental/wave/exec/WaveCore.cuh\"\n"
       << includeText_.str() << std::endl
       << "namespace facebook::velox::wave {\n"
       << inlines_.str() << std::endl
-      << fmt::format("void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
-      kernelName);
+      << fmt::format(
+             "void __global__ __launch_bounds__(1024) {}(KernelParams params) {{\n",
+             kernelName);
 
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   int32_t numRegs =
@@ -438,16 +453,19 @@ ProgramKey CompileState::makeLevelText(
 
 void CompileState::fillExtraWrap(OperandSet& extraWrap) {
   auto& candidate = selectedPipelines_[pipelineIdx_];
-  // Loop over all operands in the pipeline. If there are wraps in the current level, mark the operands not in the kernel but defined before and accessed after as extr raps.
+  // Loop over all operands in the pipeline. If there are wraps in the current
+  // level, mark the operands not in the kernel but defined before and accessed
+  // after as extr raps.
   if (candidate.steps[kernelSeq_].size() > 1) {
-    // If there are multiple branches there is no cardinality change or wraps from the level.
+    // If there are multiple branches there is no cardinality change or wraps
+    // from the level.
     return;
   }
   auto& box = candidate.steps[kernelSeq_][0];
   int32_t nthWrap = AbstractOperand::kNoWrap;
   for (auto& step : box.steps) {
     nthWrap = step->isWrap();
-    if (nthWrap != AbstractOperand::kNoWrap ) {
+    if (nthWrap != AbstractOperand::kNoWrap) {
       break;
     }
   }
@@ -460,14 +478,16 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
     if (flags.definedIn.empty() || params.input.contains(i)) {
       continue;
     }
-    if (flags.definedIn.kernelSeq < kernelSeq_ && flags.lastUse.kernelSeq > kernelSeq_
-	&& (operands_[i]->wrappedAt == AbstractOperand::kNoWrap || operands_[i]->wrappedAt > nthWrap)) {
+    if (flags.definedIn.kernelSeq < kernelSeq_ &&
+        flags.lastUse.kernelSeq > kernelSeq_ &&
+        (operands_[i]->wrappedAt == AbstractOperand::kNoWrap ||
+         operands_[i]->wrappedAt > nthWrap)) {
       operands_[i]->wrappedAt = nthWrap;
       extraWrap.add(i);
     }
   }
 }
-  
+
 void CompileState::makeLevel(std::vector<KernelBox>& level) {
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   int32_t sharedSize = 0;

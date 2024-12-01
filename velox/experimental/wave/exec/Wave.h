@@ -1027,7 +1027,7 @@ class WaveStream {
   }
 
   void checkExecutables() const;
-  
+
  private:
   // true if 'op' is nullable in the context of 'this'.
   bool isNullable(const AbstractOperand& op) const;

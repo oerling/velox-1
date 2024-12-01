@@ -87,7 +87,8 @@ struct KernelStep {
     return isWrap() == AbstractOperand::kNoWrap;
   }
 
-  /// Returns true if contains a __syncthreads() so all lanes, including inactive must hit.
+  /// Returns true if contains a __syncthreads() so all lanes, including
+  /// inactive must hit.
   virtual bool isBarrier() const {
     return false;
   }
@@ -95,7 +96,7 @@ struct KernelStep {
   virtual std::string toString() const {
     return fmt::format("step {} ", static_cast<int32_t>(kind()));
   }
-  
+
   /// Returns the dynamic shared memory needed by 'this'.
   virtual int32_t sharedMemorySize() const {
     return sizeof(WaveShared);
@@ -197,7 +198,7 @@ struct Filter : public KernelStep {
   bool isBarrier() const override {
     return true;
   }
-  
+
   int32_t sharedMemorySize() const {
     return sizeof(WaveShared) + (kBlockSize / 32) * sizeof(int32_t);
   }
@@ -209,7 +210,7 @@ struct Filter : public KernelStep {
   void visitResults(std::function<void(AbstractOperand*)> visitor) override {
     visitor(indices);
   }
-  
+
   void generateMain(CompileState& state) override;
 
   AbstractOperand* flag;
@@ -338,9 +339,8 @@ struct CodePosition {
         step == other.step;
   }
 
-
   std::string toString() const;
-  
+
   // Index of kernelBox in PipelineCandidate.
   uint16_t kernelSeq{kNone};
 
@@ -395,7 +395,7 @@ struct PipelineCandidate {
       int32_t end);
 
   std::string toString() const;
-  
+
   KernelBox* boxOf(CodePosition pos) {
     return &steps[pos.kernelSeq][pos.branchIdx];
   }
@@ -462,7 +462,7 @@ struct Segment {
   // Projected top level columns if this is not a sink.
   RowTypePtr outputType;
 
-  std::string toString() const; 
+  std::string toString() const;
 };
 
 class CompileState : public std::enable_shared_from_this<CompileState> {
@@ -583,7 +583,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   void functionReferenced(const AbstractOperand* op);
 
   std::string segmentString() const;
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -685,7 +685,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
       RowTypePtr& outputType);
 
   std::string literalText(const AbstractOperand& op);
-  
+
   void
   placeExpr(PipelineCandidate& candidate, AbstractOperand* op, bool mayDelay);
 
@@ -718,7 +718,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   void makeLevel(std::vector<KernelBox>& level);
 
   void fillExtraWrap(OperandSet& extraWrap);
-  
+
   // Transforms the leading operators into WaveOperators with codegen.
   // 'operatorIndex' is set to 1 after the index of the last transformed
   // operator inde the original Driver.
@@ -730,7 +730,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   // Generates a check for lane active.
   void generateSkip();
-  
+
   std::unique_ptr<GpuArena> arena_;
   // The operator and output operand where the Value is first defined.
   DefinesMap definedBy_;
@@ -790,7 +790,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   bool insideNullPropagating_{false};
   int32_t labelCounter_{0};
   int32_t nextSyncLabel_{0};
-  
+
   thread_local static PipelineCandidate* currentCandidate_;
   thread_local static KernelBox* currentBox_;
 
@@ -848,8 +848,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   static WaveRegistry registry_;
 };
 
-  void registerWaveFunctions();
-  
+void registerWaveFunctions();
+
 const std::string cudaTypeName(const Type& type);
 
 inline WaveRegistry& waveRegistry() {

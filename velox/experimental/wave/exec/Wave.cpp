@@ -1013,14 +1013,14 @@ void checkOperand(Operand& op) {
     VELOX_FAIL("Corrupt operand in executable");
   }
 }
-  
+
 void WaveStream::checkExecutables() const {
   for (auto& pair : operandToExecutable_) {
     bool found = false;
     for (auto& exe : executables_) {
       if (exe.get() == pair.second) {
-	found = true;
-	break;
+        found = true;
+        break;
       }
     }
     if (!found) {
@@ -1028,10 +1028,11 @@ void WaveStream::checkExecutables() const {
     }
     auto* exe = pair.second;
     if (exe->operands) {
-      auto numOperands = exe->firstOutputOperandIdx + exe->outputOperands.size();
+      auto numOperands =
+          exe->firstOutputOperandIdx + exe->outputOperands.size();
       for (auto i = 0; i < numOperands; ++i) {
-	auto& op = exe->operands[i];
-	checkOperand(op);
+        auto& op = exe->operands[i];
+        checkOperand(op);
       }
     }
   }
