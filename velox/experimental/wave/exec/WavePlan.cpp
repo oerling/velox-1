@@ -462,9 +462,9 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       }
       for (auto i = first ? flags.definedIn.step + 1 : 0; i < box->steps.size();
            ++i) {
-	auto nthWrap = box->steps[i]->isWrap();
+        auto nthWrap = box->steps[i]->isWrap();
         if (nthWrap != AbstractOperand::kNoWrap) {
-	  op->wrappedAt = nthWrap;
+          op->wrappedAt = nthWrap;
           flags.wrappedAt = nthWrap;
           break;
         }

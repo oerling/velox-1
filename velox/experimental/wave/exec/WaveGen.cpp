@@ -150,7 +150,8 @@ void EndNullCheck::generateMain(CompileState& state) {
   state.generated() << fmt::format("goto skip{};\n", label)
                     << fmt::format("end{}: \n", label);
   auto flags = state.flags(*result);
-  state.generated() << fmt::format("setRegisterNull(nulls{}, {}, true);\n", ord / 32, ord & 31, true);
+  state.generated() << fmt::format(
+      "setRegisterNull(nulls{}, {}, true);\n", ord / 32, ord & 31, true);
   if (flags.needStore) {
     state.generated() << fmt::format(
         "setNull(operands, {}, blockBase, true);\n", ord);
@@ -354,23 +355,23 @@ void CompileState::generateSkip() {
       nextSyncLabel_);
 }
 
-  int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
-    int32_t nthWrap = -1;
-    for (int32_t k = kernelSeq - 1; k >= 0; --k) {
-      if (candidate.steps[k].size() > 1) {
-	continue;
-      }
-      auto& steps = candidate.steps[k][0].steps;
-      for (int32_t i = steps.size() - 1; i >= 0; --i) {
-	auto s = steps[i]->isWrap();
-	if (s != AbstractOperand::kNoWrap) {
-	  return s;
-	}
+int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
+  int32_t nthWrap = -1;
+  for (int32_t k = kernelSeq - 1; k >= 0; --k) {
+    if (candidate.steps[k].size() > 1) {
+      continue;
+    }
+    auto& steps = candidate.steps[k][0].steps;
+    for (int32_t i = steps.size() - 1; i >= 0; --i) {
+      auto s = steps[i]->isWrap();
+      if (s != AbstractOperand::kNoWrap) {
+        return s;
       }
     }
-    return -1;
   }
-  
+  return -1;
+}
+
 ProgramKey CompileState::makeLevelText(
     int32_t pipelineIdx,
     int32_t kernelSeq,
@@ -467,14 +468,13 @@ ProgramKey CompileState::makeLevelText(
       head.str(), std::move(input), std::move(local), std::move(output)};
 }
 
-  bool CompileState::isWrapInParams(int32_t nthWrap, const LevelParams& params) {
-    bool found = false;
-    params.input.forEach([&](int32_t id) {
-			   found |= operands_[id]->wrappedAt == nthWrap;
-			 });
-      return found;
+bool CompileState::isWrapInParams(int32_t nthWrap, const LevelParams& params) {
+  bool found = false;
+  params.input.forEach(
+      [&](int32_t id) { found |= operands_[id]->wrappedAt == nthWrap; });
+  return found;
 }
-  
+
 void CompileState::fillExtraWrap(OperandSet& extraWrap) {
   auto& candidate = selectedPipelines_[pipelineIdx_];
   // Loop over all operands in the pipeline. If there are wraps in the current
@@ -499,11 +499,11 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
   auto params = candidate.levelParams[kernelSeq_];
   OperandSet wraps;
   params.input.forEach([&](int32_t id) {
-			 auto* op = operands_[id].get();
-			 if (op->wrappedAt != AbstractOperand::kNoWrap) {
-			   wraps.add(op->wrappedAt);
-			 }
-		       });
+    auto* op = operands_[id].get();
+    if (op->wrappedAt != AbstractOperand::kNoWrap) {
+      wraps.add(op->wrappedAt);
+    }
+  });
   for (auto i = 0; i < candidate.operandFlags.size(); ++i) {
     auto& flags = candidate.operandFlags[i];
     if (flags.definedIn.empty() || params.input.contains(i)) {
@@ -514,9 +514,10 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
         (operands_[i]->wrappedAt == AbstractOperand::kNoWrap ||
          operands_[i]->wrappedAt > nthWrap)) {
       operands_[i]->wrappedAt = nthWrap;
-      // We need to add the wrap to extra wraps if no existing parameter of the kernel has the wrap.
+      // We need to add the wrap to extra wraps if no existing parameter of the
+      // kernel has the wrap.
       if (!wraps.contains(nthWrap)) {
-	extraWrap.add(nthWrap);
+        extraWrap.add(nthWrap);
       }
     }
   }
@@ -584,18 +585,21 @@ void PipelineCandidate::setOutputIds(
   }
 }
 
-  void CompileState::setOperandByCandidate(PipelineCandidate& candidate) {
-    for (auto i = 0; i < candidate.operandFlags.size() && i < operands_.size(); ++i) {
-      auto& flags = candidate.operandFlags[i];
-      if (!flags.definedIn.empty() && flags.wrappedAt != AbstractOperand::kNoWrap) {
-	operands_[i]->wrappedAt = flags.wrappedAt;
-      }
+void CompileState::setOperandByCandidate(PipelineCandidate& candidate) {
+  for (auto i = 0; i < candidate.operandFlags.size() && i < operands_.size();
+       ++i) {
+    auto& flags = candidate.operandFlags[i];
+    if (!flags.definedIn.empty() &&
+        flags.wrappedAt != AbstractOperand::kNoWrap) {
+      operands_[i]->wrappedAt = flags.wrappedAt;
     }
   }
-  
+}
+
 void CompileState::generatePrograms() {
-      // We can move the per-candidate Operand flags to the operands themselves.
-  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
+  // We can move the per-candidate Operand flags to the operands themselves.
+  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
+       ++pipelineIdx_) {
     setOperandByCandidate(selectedPipelines_[pipelineIdx_]);
   }
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();

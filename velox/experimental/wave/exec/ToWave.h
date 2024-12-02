@@ -584,16 +584,18 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   std::string segmentString() const;
 
-  /// The nthWrap of the last wrap generated into kernel code when emitting the code. Protected by 'mutex_'
+  /// The nthWrap of the last wrap generated into kernel code when emitting the
+  /// code. Protected by 'mutex_'
   int32_t& lastPlacedWrap() {
     return lastPlacedWrap_;
   }
 
-  /// Returns true if an access to an Operand wrapped at 'nthWrap' needs to check for wrap. Used during emitting code.
+  /// Returns true if an access to an Operand wrapped at 'nthWrap' needs to
+  /// check for wrap. Used during emitting code.
   bool mayWrap(int32_t nthWrap) {
     return nthWrap != AbstractOperand::kNoWrap && nthWrap <= lastPlacedWrap_;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -731,7 +733,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   bool isWrapInParams(int32_t nthWrap, const LevelParams& params);
 
   void setOperandByCandidate(PipelineCandidate& candidate);
-  
+
   void fillExtraWrap(OperandSet& extraWrap);
 
   // Transforms the leading operators into WaveOperators with codegen.
