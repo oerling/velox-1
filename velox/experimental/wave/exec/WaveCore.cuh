@@ -146,11 +146,11 @@ nonNullOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
 }
 
 bool __device__ __forceinline__
-setRegisterNull(uint32_t& flags, int8_t bit, bool notNull) {
-  if (!notNull) {
+setRegisterNull(uint32_t& flags, int8_t bit, bool isNull) {
+  if (isNull) {
     flags &= ~(1 << bit);
   }
-  return !notNull;
+  return isNull;
 }
 
 bool __device__ __forceinline__ isRegisterNull(uint32_t flags, int8_t bit) {

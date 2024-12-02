@@ -106,7 +106,7 @@ void NullCheck::generateMain(CompileState& state) {
       bool mayWrap = state.mayWrap(flags.wrappedAt);
       auto ordinal = state.declareVariable(*op);
       state.generated() << fmt::format(
-          "anyNull{} |= setRegisterNull(nulls{}, {}, valueOrNull<{}>(operands, {}, blockBase, r{}));\n",
+          "anyNull{} |= setRegisterNull(nulls{}, {}, !valueOrNull<{}>(operands, {}, blockBase, r{}));\n",
           label,
           ordinal / 32,
           ordinal & 31,
@@ -150,7 +150,7 @@ void EndNullCheck::generateMain(CompileState& state) {
   state.generated() << fmt::format("goto skip{};\n", label)
                     << fmt::format("end{}: \n", label);
   auto flags = state.flags(*result);
-  fmt::format("setRegisterNull(nulls{}, {});\n", ord / 32, ord & 31, true);
+  state.generated() << fmt::format("setRegisterNull(nulls{}, {}, true);\n", ord / 32, ord & 31, true);
   if (flags.needStore) {
     state.generated() << fmt::format(
         "setNull(operands, {}, blockBase, true);\n", ord);
@@ -235,7 +235,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
       generated_ << fmt::format("bool flag{} = r{}", ord, ord);
     } else {
       generated_ << fmt::format(
-          "bool flag{} = {} && !isRegisterNull(nulls{}, {});\n",
+          "bool flag{} = r{} && !isRegisterNull(nulls{}, {});\n",
           ord,
           ord,
           ord / 32,
