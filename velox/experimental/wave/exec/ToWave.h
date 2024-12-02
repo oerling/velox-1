@@ -356,8 +356,8 @@ struct OperandFlags {
   CodePosition definedIn;
   CodePosition firstUse;
   CodePosition lastUse;
-  int32_t wrappedAt;
-  bool needStore{0};
+  int32_t wrappedAt{AbstractOperand::kNoWrap};
+  bool needStore{false};
 
   std::string toString() const;
 };
@@ -596,6 +596,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return nthWrap != AbstractOperand::kNoWrap && nthWrap <= lastPlacedWrap_;
   }
 
+  /// Marks that register contents have to be reloaded, e.g. after
+  /// cardinality change. Used during emitting code.
+  void clearInRegister();
+
+
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -743,8 +749,6 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   int32_t declareVariable(const AbstractOperand& op, bool create);
 
-  void clearInRegister();
-
   // Generates a check for lane active.
   void generateSkip();
 
@@ -859,6 +863,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // Counter for making names for wraps.
   int32_t wrapId_{0};
 
+  // Operands that have a declaration. Set when emitting code.
+  OperandSet declared_;
+  
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;

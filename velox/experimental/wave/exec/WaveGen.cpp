@@ -68,6 +68,10 @@ int32_t CompileState::ordinal(const AbstractOperand& op) {
 
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
   auto ord = ordinal(op);
+  if (declared_.contains(op.id)) {
+    return ord;
+  }
+  declared_.add(op.id);
   generated_ << fmt::format("{} r{};\n", cudaTypeName(*op.type), ord);
   return ord;
 }
@@ -293,17 +297,20 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
   // We take one Operand of each group of Operands that shares a wrappedAt such
   // that the Operand's lifetime crosses the filter.
   CodePosition filter(kernelSeq_, 0, stepIdx_);
-  std::unordered_set<CodePosition> wraps;
+  std::unordered_set<int32_t> wraps;
   std::vector<OperandIndex> ops;
   for (auto& op : operands_) {
     auto& flags = currentCandidate_->flags(op.get());
     if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
-      auto& wrappedAt = flags.wrappedAt;
+      auto wrappedAt = flags.wrappedAt;
+      if (wrappedAt == AbstractOperand::kNoWrap) {
+	op->wrappedAt = nthWrap;
+	flags.wrappedAt = nthWrap;
+	wrappedAt = nthWrap;
+      }
       if (wraps.count(wrappedAt)) {
-        op->wrappedAt = nthWrap;
         continue;
       }
-      op->wrappedAt = nthWrap;
       wraps.insert(nthWrap);
       ops.push_back(op->id);
     }
@@ -332,6 +339,7 @@ void Filter::generateMain(CompileState& state) {
       numWraps,
       state.ordinal(*indices));
   state.lastPlacedWrap() = nthWrap;
+  state.clearInRegister();
 }
 
 void AggregateProbe::generateMain(CompileState& state) {}
@@ -378,6 +386,7 @@ ProgramKey CompileState::makeLevelText(
     KernelSpec& spec) {
   std::lock_guard<std::mutex> l(generateMutex_);
   insideNullPropagating_ = false;
+  declared_ = OperandSet();
   currentCandidate_ = &selectedPipelines_[pipelineIdx];
   pipelineIdx_ = pipelineIdx;
   kernelSeq_ = kernelSeq;
