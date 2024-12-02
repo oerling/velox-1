@@ -103,8 +103,7 @@ void NullCheck::generateMain(CompileState& state) {
         isFirst = false;
       }
       auto& flags = state.flags(*op);
-      bool mayWrap = !flags.wrappedAt.empty() &&
-          flags.wrappedAt.isBefore(state.currentPosition());
+      bool mayWrap = state.mayWrap(flags.wrappedAt);
       auto ordinal = state.declareVariable(*op);
       state.generated() << fmt::format(
           "anyNull{} |= setRegisterNull(nulls{}, {}, valueOrNull<{}>(operands, {}, blockBase, r{}));\n",
@@ -134,8 +133,7 @@ void NullCheck::generateMain(CompileState& state) {
     }
     auto& flags = state.flags(*op);
 
-    bool mayWrap = !flags.wrappedAt.empty() &&
-        flags.wrappedAt.isBefore(state.currentPosition());
+    bool mayWrap = state.mayWrap(flags.wrappedAt);
     auto ord = state.declareVariable(*op);
     state.generated() << fmt::format(
         "if (!valueOrNull<{}>(operands, {}, blockBase, r{})) {{goto end{};}}\n",
@@ -198,8 +196,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
   }
   if (op.notNull || insideNullPropagating_) {
     auto& flags = this->flags(op);
-    bool mayWrap =
-        !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
+    bool mayWrap = this->mayWrap(flags.wrappedAt);
     generated_ << fmt::format(
         "nonNullOperand<{}, {}>(operands, {}, blockBase)",
         cudaTypeName(*op.type),
@@ -246,8 +243,7 @@ std::string CompileState::generateIsTrue(const AbstractOperand& op) {
     }
   } else {
     auto& flags = this->flags(op);
-    bool mayWrap =
-        !flags.wrappedAt.empty() && flags.wrappedAt.isBefore(currentPosition());
+    bool mayWrap = this->mayWrap(!flags.wrappedAt);
     if (op.notNull || insideNullPropagating_) {
       generated_ << fmt::format(
           "bool flag{} = nonNullOperand<bool, {}>(operands, {}, blockBase)",
@@ -334,6 +330,7 @@ void Filter::generateMain(CompileState& state) {
       nthWrap,
       numWraps,
       state.ordinal(*indices));
+  state.lastPlacedWrap() = nthWrap;
 }
 
 void AggregateProbe::generateMain(CompileState& state) {}
@@ -357,6 +354,23 @@ void CompileState::generateSkip() {
       nextSyncLabel_);
 }
 
+  int32_t findLastWrap(const PipelineCandidate& candidate, int32_t kernelSeq) {
+    int32_t nthWrap = -1;
+    for (int32_t k = kernelSeq - 1; k >= 0; --k) {
+      if (candidate.steps[k].size() > 1) {
+	continue;
+      }
+      auto& steps = candidate.steps[k][0].steps;
+      for (int32_t i = steps.size() - 1; i >= 0; --i) {
+	auto s = steps[i]->isWrap();
+	if (s != AbstractOperand::kNoWrap) {
+	  return s;
+	}
+      }
+    }
+    return -1;
+  }
+  
 ProgramKey CompileState::makeLevelText(
     int32_t pipelineIdx,
     int32_t kernelSeq,
@@ -367,6 +381,8 @@ ProgramKey CompileState::makeLevelText(
   pipelineIdx_ = pipelineIdx;
   kernelSeq_ = kernelSeq;
   auto& level = selectedPipelines_[pipelineIdx_].steps[kernelSeq_];
+  lastPlacedWrap_ = findLastWrap(*currentCandidate_, kernelSeq);
+
   VELOX_CHECK_EQ(1, level.size(), "Only one program per level supported");
   std::stringstream head;
   auto kernelName = fmt::format("wavegen{}", ++kernelCounter_);
@@ -451,6 +467,14 @@ ProgramKey CompileState::makeLevelText(
       head.str(), std::move(input), std::move(local), std::move(output)};
 }
 
+  bool CompileState::isWrapInParams(int32_t nthWrap, const LevelParams& params) {
+    bool found = false;
+    params.input.forEach([&](int32_t id) {
+			   found |= operands_[id]->wrappedAt == nthWrap;
+			 });
+      return found;
+}
+  
 void CompileState::fillExtraWrap(OperandSet& extraWrap) {
   auto& candidate = selectedPipelines_[pipelineIdx_];
   // Loop over all operands in the pipeline. If there are wraps in the current
@@ -473,6 +497,13 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
     return;
   }
   auto params = candidate.levelParams[kernelSeq_];
+  OperandSet wraps;
+  params.input.forEach([&](int32_t id) {
+			 auto* op = operands_[id].get();
+			 if (op->wrappedAt != AbstractOperand::kNoWrap) {
+			   wraps.add(op->wrappedAt);
+			 }
+		       });
   for (auto i = 0; i < candidate.operandFlags.size(); ++i) {
     auto& flags = candidate.operandFlags[i];
     if (flags.definedIn.empty() || params.input.contains(i)) {
@@ -483,7 +514,10 @@ void CompileState::fillExtraWrap(OperandSet& extraWrap) {
         (operands_[i]->wrappedAt == AbstractOperand::kNoWrap ||
          operands_[i]->wrappedAt > nthWrap)) {
       operands_[i]->wrappedAt = nthWrap;
-      extraWrap.add(i);
+      // We need to add the wrap to extra wraps if no existing parameter of the kernel has the wrap.
+      if (!wraps.contains(nthWrap)) {
+	extraWrap.add(nthWrap);
+      }
     }
   }
 }
@@ -550,7 +584,20 @@ void PipelineCandidate::setOutputIds(
   }
 }
 
+  void CompileState::setOperandByCandidate(PipelineCandidate& candidate) {
+    for (auto i = 0; i < candidate.operandFlags.size() && i < operands_.size(); ++i) {
+      auto& flags = candidate.operandFlags[i];
+      if (!flags.definedIn.empty() && flags.wrappedAt != AbstractOperand::kNoWrap) {
+	operands_[i]->wrappedAt = flags.wrappedAt;
+      }
+    }
+  }
+  
 void CompileState::generatePrograms() {
+      // We can move the per-candidate Operand flags to the operands themselves.
+  for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size(); ++pipelineIdx_) {
+    setOperandByCandidate(selectedPipelines_[pipelineIdx_]);
+  }
   for (pipelineIdx_ = 0; pipelineIdx_ < selectedPipelines_.size();
        ++pipelineIdx_) {
     currentCandidate_ = &selectedPipelines_[pipelineIdx_];

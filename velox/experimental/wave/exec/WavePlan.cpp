@@ -46,7 +46,7 @@ std::string OperandFlags::toString() const {
       definedIn.toString(),
       firstUse.toString(),
       lastUse.toString(),
-      wrappedAt.toString(),
+      wrappedAt,
       needStore);
 }
 
@@ -302,9 +302,15 @@ void CompileState::tryFilterProject(
     filterStep->indices->notNull = true;
 
     segments_.back().steps.push_back(filterStep);
+    // If no projections, filter only. Done. Else take the output type
+    // from the project node that follows and place the exprs.
+    if (data.resultProjections->empty()) {
+      return;
+    }
     firstProjection = 1;
     ++nodeIndex;
     outputType = driverFactory_.planNodes[nodeIndex]->outputType();
+    segments_.back().outputType = outputType;
   } else {
     addSegment(BoundaryType::kExpr, nullptr, nullptr);
   }
@@ -441,7 +447,7 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
         candidate.boxIdx,
         candidate.currentBox->steps.size());
   }
-  if (flags.wrappedAt.empty()) {
+  if (flags.wrappedAt == AbstractOperand::kNoWrap) {
     bool first = true;
     for (auto seq = flags.definedIn.kernelSeq; seq < candidate.steps.size();
          ++seq) {
@@ -456,8 +462,10 @@ void recordReference(PipelineCandidate& candidate, AbstractOperand* op) {
       }
       for (auto i = first ? flags.definedIn.step + 1 : 0; i < box->steps.size();
            ++i) {
-        if (box->steps[i]->isWrap()) {
-          flags.wrappedAt = CodePosition(seq, 0, i);
+	auto nthWrap = box->steps[i]->isWrap();
+        if (nthWrap != AbstractOperand::kNoWrap) {
+	  op->wrappedAt = nthWrap;
+          flags.wrappedAt = nthWrap;
           break;
         }
       }
