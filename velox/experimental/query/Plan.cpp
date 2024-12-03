@@ -308,8 +308,7 @@ void reducingJoinsRecursive(
     PlanObjectSet& visited,
     PlanObjectSet& result,
     float& reduction,
-    std::function<
-        void(const std::vector<PlanObjectCP>& path, float reduction)>
+    std::function<void(const std::vector<PlanObjectCP>& path, float reduction)>
         resultFunc = nullptr) {
   bool isLeaf = true;
   for (auto join : joinedBy(candidate)) {
@@ -792,8 +791,7 @@ void Optimization::joinByIndex(
     }
 
     ColumnVector columns;
-    c.forEach(
-        [&](PlanObjectCP o) { columns.push_back(o->as<Column>()); });
+    c.forEach([&](PlanObjectCP o) { columns.push_back(o->as<Column>()); });
 
     auto* scan = make<TableScan>(
         newPartition,

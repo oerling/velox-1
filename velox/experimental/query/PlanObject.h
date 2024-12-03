@@ -229,15 +229,15 @@ class PlanObjectSet {
   std::vector<uint64_t, QGAllocator<uint64_t>> bits_;
 };
 
-using PlanObjectVector =
-    std::vector<PlanObjectCP, QGAllocator<PlanObjectCP>>;
+using PlanObjectVector = std::vector<PlanObjectCP, QGAllocator<PlanObjectCP>>;
 
 } // namespace facebook::velox::optimizer
 
 namespace std {
 template <>
 struct hash<::facebook::velox::optimizer::PlanObjectSet> {
-  size_t operator()(const ::facebook::velox::optimizer::PlanObjectSet& set) const {
+  size_t operator()(
+      const ::facebook::velox::optimizer::PlanObjectSet& set) const {
     return set.hash();
   }
 };

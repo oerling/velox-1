@@ -399,9 +399,8 @@ PlanObjectCP Expr::singleTable() const {
 
 PlanObjectSet Expr::allTables() const {
   PlanObjectSet set;
-  columns_.forEach([&](PlanObjectCP object) {
-    set.add(object->as<Column>()->relation());
-  });
+  columns_.forEach(
+      [&](PlanObjectCP object) { set.add(object->as<Column>()->relation()); });
   return set;
 }
 
@@ -673,8 +672,8 @@ std::pair<DerivedTableP, JoinEdgeP> makeExistsDtAndJoin(
   } else {
     existsDt = it->second;
   }
-  auto* joinWithDt =
-      QGC_MAKE_IN_ARENA(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
+  auto* joinWithDt = QGC_MAKE_IN_ARENA(JoinEdge)(
+      firstTable, existsDt, {}, false, false, true, false);
   joinWithDt->setFanouts(existsFanout, 1);
   for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
     joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
@@ -802,8 +801,7 @@ importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectCP FOLLY_NULLABLE
-otherSide(JoinEdgeP join, PlanObjectCP side) {
+PlanObjectCP FOLLY_NULLABLE otherSide(JoinEdgeP join, PlanObjectCP side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -874,8 +872,8 @@ JoinEdgeP importedJoin(
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
   auto otherKey = join->sideOf(other).keys[0];
-  auto* newJoin =
-      QGC_MAKE_IN_ARENA(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
+  auto* newJoin = QGC_MAKE_IN_ARENA(JoinEdge)(
+      left, other, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -888,8 +886,8 @@ JoinEdgeP importedDtJoin(
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
   auto otherKey = dt->columns[0];
-  auto* newJoin =
-      QGC_MAKE_IN_ARENA(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
+  auto* newJoin = QGC_MAKE_IN_ARENA(JoinEdge)(
+      left, dt, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -1064,8 +1062,8 @@ findJoin(DerivedTableP dt, std::vector<PlanObjectP>& tables, bool create) {
     }
   }
   if (create) {
-    auto* join =
-        QGC_MAKE_IN_ARENA(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
+    auto* join = QGC_MAKE_IN_ARENA(JoinEdge)(
+        tables[0], tables[1], {}, false, false, false, false);
     dt->joins.push_back(join);
     return join;
   }

@@ -367,8 +367,7 @@ class JoinEdge {
   /// Returns the table on the otherside of 'table' and the number of rows in
   /// the returned table for one row in 'table'. If the join is not inner
   /// returns nullptr, 0.
-  std::pair<PlanObjectCP, float> otherTable(
-      PlanObjectCP table) const {
+  std::pair<PlanObjectCP, float> otherTable(PlanObjectCP table) const {
     return leftTable_ == table && !leftOptional_
         ? std::pair<PlanObjectCP, float>{rightTable_, lrFanout_}
         : rightTable_ == table && !rightOptional_ && !rightExists_

@@ -411,8 +411,7 @@ void Optimization::translateNonEqualityJoin(
     tables.unionColumns(conjunct);
   }
   std::vector<PlanObjectCP> tableVector;
-  tables.forEach(
-      [&](PlanObjectCP table) { tableVector.push_back(table); });
+  tables.forEach([&](PlanObjectCP table) { tableVector.push_back(table); });
   if (tableVector.size() == 2) {
     auto* edge = make<JoinEdge>(
         tableVector[0], tableVector[1], conjuncts, false, false, false, false);

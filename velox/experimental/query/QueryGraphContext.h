@@ -45,8 +45,7 @@ struct PlanObjectPHasher {
 };
 
 struct PlanObjectPComparer {
-  bool operator()(const PlanObjectCP& lhs, const PlanObjectCP& rhs)
-      const;
+  bool operator()(const PlanObjectCP& lhs, const PlanObjectCP& rhs) const;
 };
 
 struct Plan;
@@ -157,8 +156,8 @@ inline _Tp* make(_Args&&... __args) {
       _Tp(std::forward<_Args>(__args)...);
 }
 
-  /// Macro to use instead of make() when make() errors out from too
-  /// many arguments.
+/// Macro to use instead of make() when make() errors out from too
+/// many arguments.
 #define QGC_MAKE_IN_ARENA(_Tp) new (queryCtx()->allocate(sizeof(_Tp))) _Tp
 
 /// Converts std::string to name used in query graph objects. raw pointer to

@@ -556,8 +556,7 @@ class Optimization {
 
   // Adds group by, order by, top k to 'plan'. Updates 'plan' if
   // relation ops added.  Sets cost in 'state'.
-  void
-  addPostprocess(DerivedTableP dt, RelationOpPtr& plan, PlanState& state);
+  void addPostprocess(DerivedTableP dt, RelationOpPtr& plan, PlanState& state);
 
   // Places a derived table as first table in a plan. Imports possibly reducing
   // joins into the plan if can.

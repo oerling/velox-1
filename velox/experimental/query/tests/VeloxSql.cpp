@@ -471,7 +471,8 @@ class VeloxRunner {
     auto allocator =
         std::make_unique<HashStringAllocator>(optimizerPool_.get());
     auto context =
-        std::make_unique<facebook::velox::optimizer::QueryGraphContext>(*allocator);
+        std::make_unique<facebook::velox::optimizer::QueryGraphContext>(
+            *allocator);
     facebook::velox::optimizer::queryCtx() = context.get();
     exec::SimpleExpressionEvaluator evaluator(
         queryCtx.get(), optimizerPool_.get());
