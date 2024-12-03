@@ -1515,6 +1515,7 @@ std::unique_ptr<Executable> Program::getExecutable(
     std::lock_guard<std::mutex> l(mutex_);
     if (!prepared_.empty()) {
       exe = std::move(prepared_.back());
+      exe->programShared = shared_from_this();
       prepared_.pop_back();
     }
   }

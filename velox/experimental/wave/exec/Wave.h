@@ -523,7 +523,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::unique_ptr<Executable> getExecutable(
       int32_t maxRows,
       const std::vector<std::unique_ptr<AbstractOperand>>& operands);
-
+  
   ThreadBlockProgram* threadBlockProgram() {
     return program_;
   }
@@ -541,6 +541,10 @@ class Program : public std::enable_shared_from_this<Program> {
   }
 
   void releaseExe(std::unique_ptr<Executable>&& exe) {
+    std::lock_guard<std::mutex> l(mutex_);
+    // The exe being freed should not be the last reference to the Program.
+    VELOX_CHECK(!exe->programShared.unique());
+    exe->programShared = nullptr;
     prepared_.push_back(std::move(exe));
   }
 
