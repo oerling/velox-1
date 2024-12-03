@@ -31,24 +31,24 @@ class ArenaCache {
       : allocator_(allocator), allocated_(kMaxSize / kGranularity) {}
 
   void* allocate(size_t size) {
-    auto roundedSize = velox::bits::roundUp(size, kGranularity) / kGranularity;
-    if (roundedSize < kMaxSize / kGranularity) {
-      if (!allocated_[roundedSize].empty()) {
-        void* result = allocated_[roundedSize].back();
-        allocated_[roundedSize].pop_back();
-        totalSize_ -= roundedSize;
+    auto sizeClass = velox::bits::roundUp(size, kGranularity) / kGranularity;
+    if (sizeClass < kMaxSize / kGranularity) {
+      if (!allocated_[sizeClass].empty()) {
+        void* result = allocated_[sizeClass].back();
+        allocated_[sizeClass].pop_back();
+        totalSize_ -= sizeClass;
         return result;
       }
     }
-    return allocator_.allocate(size)->begin();
+    return allocator_.allocate(sizeClass * kGranularity)->begin();
   }
 
   void free(void* ptr) {
     auto header = velox::HashStringAllocator::headerOf(ptr);
-    int32_t size = header->size() / kGranularity;
-    if (size < kMaxSize / kGranularity) {
-      totalSize_ += size;
-      allocated_[size].push_back(ptr);
+    int32_t sizeClass = header->size() / kGranularity;
+    if (sizeClass < kMaxSize / kGranularity) {
+      totalSize_ += sizeClass;
+      allocated_[sizeClass].push_back(ptr);
       return;
     }
     allocator_.free(header);

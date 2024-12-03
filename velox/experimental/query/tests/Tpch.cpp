@@ -80,9 +80,7 @@ SchemaTablePtr makeTable(
 
   auto type = tpch::getTableSchema(id);
   auto tableName = tpch::toTableName(id);
-  Declare(
-      SchemaTable,
-      table,
+  auto* table = make< SchemaTable>(
       toName(std::string(tableName.data(), tableName.size())),
       type);
   ColumnVector orderedColumns;
@@ -140,8 +138,7 @@ tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
           tpch::Table::TBL_REGION, scale, partitioned, ordered, secondary),
   };
 
-  Declare(Schema, schema, toName(title), std::move(tables));
-  return schema;
+  return make< Schema>( toName(title), std::move(tables));
 }
 
 } // namespace facebook::verax

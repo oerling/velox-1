@@ -41,7 +41,7 @@ void Optimization::setDerivedTableOutput(
     auto fieldName = outputType->nameOf(i);
     auto expr = translateColumn(fieldName);
     Value value(fieldType.get(), 0);
-    Declare(Column, column, toName(fieldName), dt, value);
+    auto* column = make<Column>(toName(fieldName), dt, value);
     dt->columns.push_back(column);
     dt->exprs.push_back(expr);
     renames_[fieldName] = column;
@@ -49,7 +49,7 @@ void Optimization::setDerivedTableOutput(
 }
 
 DerivedTablePtr Optimization::makeQueryGraph() {
-  Declare(DerivedTable, root);
+  auto* root = make<DerivedTable>();
   root_ = root;
   currentSelect_ = root_;
   root->cname = toName(fmt::format("dt{}", ++nameCounter_));
@@ -123,9 +123,7 @@ ExprPtr Optimization::tryFoldConstant(
     const ExprVector& literals) {
   try {
     Value value(call ? call->type().get() : cast->type().get(), 1);
-    Declare(
-        Call,
-        veraxExpr,
+    auto* veraxExpr = make<Call>(
         PlanType::kCall,
         cast ? toName("cast") : toName(call->name()),
         value,
@@ -139,8 +137,8 @@ ExprPtr Optimization::tryFoldConstant(
           toVariant, constantExpr->value()->typeKind(), *constantExpr->value());
       Value value(constantExpr->value()->type().get(), 1);
       // Copy the variant from value to allocated in arena.
-      Declare(variant, copy, variantLiteral);
-      Declare(Literal, literal, value, copy);
+      auto* copy = make<variant>(variantLiteral);
+      auto* literal = make<Literal>(value, copy);
       return literal;
     }
     return nullptr;
@@ -156,8 +154,8 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   }
   if (auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
-    Declare(
-        Literal, literal, Value(constant->type().get(), 1), &constant->value());
+    auto* literal =
+        make<Literal>(Value(constant->type().get(), 1), &constant->value());
     return literal;
   }
   auto it = exprDedup_.find(expr.get());
@@ -191,13 +189,8 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     auto name = toName(call->name());
     funcs = funcs | functionBits(name);
 
-    Declare(
-        Call,
-        callExpr,
-        name,
-        Value(call->type().get(), cardinality),
-        args,
-        funcs);
+    auto* callExpr =
+        make<Call>(name, Value(call->type().get(), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -205,13 +198,8 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
     auto name = toName("cast");
     funcs = funcs | functionBits(name);
 
-    Declare(
-        Call,
-        callExpr,
-        name,
-        Value(cast->type().get(), cardinality),
-        args,
-        funcs);
+    auto* callExpr =
+        make<Call>(name, Value(cast->type().get(), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -252,11 +240,8 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
 
   if (source.step() == AggregationNode::Step::kPartial ||
       source.step() == AggregationNode::Step::kSingle) {
-    Declare(
-        Aggregation,
-        aggregation,
-        nullptr,
-        translateColumns(source.groupingKeys()));
+    auto* aggregation =
+        make<Aggregation>(nullptr, translateColumns(source.groupingKeys()));
     for (auto i = 0; i < source.groupingKeys().size(); ++i) {
       if (aggregation->grouping[i]->type() == PlanType::kColumn) {
         aggregation->mutableColumns().push_back(
@@ -265,12 +250,9 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
         auto name = toName(source.outputType()->nameOf(i));
         auto type = source.outputType()->childAt(i);
         registerType(type);
-        Declare(
-            Column,
-            column,
-            name,
-            currentSelect_,
-            aggregation->grouping[i]->value());
+
+        auto* column = make<Column>(
+            name, currentSelect_, aggregation->grouping[i]->value());
         aggregation->mutableColumns().push_back(column);
       }
     }
@@ -285,9 +267,7 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
       VELOX_CHECK(source.aggregates()[i].sortingKeys.empty());
       auto accumulatorType = intermediateType(source.aggregates()[i].call);
       registerType(accumulatorType);
-      Declare(
-          Aggregate,
-          agg,
+      auto* agg = make<Aggregate>(
           rawFunc->name(),
           rawFunc->value(),
           rawFunc->args(),
@@ -297,12 +277,12 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
           false,
           accumulatorType.get());
       auto name = toName(source.aggregateNames()[i]);
-      Declare(Column, column, name, currentSelect_, agg->value());
+      auto* column = make<Column>(name, currentSelect_, agg->value());
       aggregation->mutableColumns().push_back(column);
       auto intermediateValue = agg->value();
       intermediateValue.type = accumulatorType.get();
-      Declare(
-          Column, intermediateColumn, name, currentSelect_, intermediateValue);
+      auto* intermediateColumn =
+          make<Column>(name, currentSelect_, intermediateValue);
       aggregation->intermediateColumns.push_back(intermediateColumn);
       auto dedupped = queryCtx()->dedup(agg);
       aggregation->aggregates.push_back(dedupped->as<Aggregate>());
@@ -324,7 +304,7 @@ OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
                                                   : OrderType::kDescNullsLast));
   }
   auto keys = translateColumns(order.sortingKeys());
-  Declare(OrderBy, orderBy, nullptr, keys, orderType, {});
+  auto* orderBy = MAKE(OrderBy)(nullptr, keys, orderType, {});
   return orderBy;
 }
 
@@ -333,7 +313,7 @@ ColumnPtr Optimization::makeMark(const core::AbstractJoinNode& join) {
   auto name = toName(type->nameOf(type->size() - 1));
   Value value(type->childAt(type->size() - 1).get(), 2);
   registerType(type->childAt(type->size() - 1));
-  Declare(Column, column, name, currentSelect_, value);
+  auto* column = make<Column>(name, currentSelect_, value);
   return column;
 }
 
@@ -392,9 +372,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
     std::vector<PlanObjectConstPtr> leftTableVector;
     leftTables.forEach(
         [&](PlanObjectConstPtr table) { leftTableVector.push_back(table); });
-    Declare(
-        JoinEdge,
-        edge,
+    auto* edge = make<JoinEdge>(
         leftTableVector.size() == 1 ? leftTableVector[0] : nullptr,
         rightTable,
         conjuncts,
@@ -436,16 +414,8 @@ void Optimization::translateNonEqualityJoin(
   tables.forEach(
       [&](PlanObjectConstPtr table) { tableVector.push_back(table); });
   if (tableVector.size() == 2) {
-    Declare(
-        JoinEdge,
-        edge,
-        tableVector[0],
-        tableVector[1],
-        conjuncts,
-        false,
-        false,
-        false,
-        false);
+    auto* edge = make<JoinEdge>(
+        tableVector[0], tableVector[1], conjuncts, false, false, false, false);
     edge->guessFanout();
     currentSelect_->joins.push_back(edge);
 
@@ -477,7 +447,7 @@ bool isDirectOver(const core::PlanNode& node, const std::string& name) {
 
 PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   DerivedTablePtr previousDt = currentSelect_;
-  Declare(DerivedTable, newDt);
+  auto* newDt = make<DerivedTable>();
   auto cname = toName(fmt::format("dt{}", ++nameCounter_));
   newDt->cname = cname;
   currentSelect_ = newDt;
@@ -490,7 +460,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
     registerType(type->childAt(i));
     ExprPtr inner = translateColumn(type->nameOf(i));
     newDt->exprs.push_back(inner);
-    Declare(Column, outer, toName(type->nameOf(i)), newDt, inner->value());
+    auto* outer = make<Column>(toName(type->nameOf(i)), newDt, inner->value());
     newDt->columns.push_back(outer);
     renames_[type->nameOf(i)] = outer;
   }
@@ -517,7 +487,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
     auto schemaTable = schema_.findTable(tableHandle->tableName());
     auto cname = fmt::format("t{}", ++nameCounter_);
 
-    Declare(BaseTable, baseTable);
+    auto* baseTable = make<BaseTable>();
     baseTable->cname = toName(cname);
     baseTable->schemaTable = schemaTable;
     ColumnVector columns;
@@ -528,7 +498,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
       auto schemaColumn = schemaTable->findColumn(handle->name());
       schemaColumns.push_back(schemaColumn);
       auto value = schemaColumn->value();
-      Declare(Column, column, toName(handle->name()), baseTable, value);
+      auto* column = make<Column>(toName(handle->name()), baseTable, value);
       columns.push_back(column);
       renames_[pair.first] = column;
     }
@@ -609,7 +579,7 @@ PlanObjectPtr Optimization::makeQueryGraph(
           *node.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
       auto agg = translateAggregation(aggNode);
       if (agg) {
-        Declare(AggregationPlan, aggPlan, agg);
+        auto* aggPlan = make<AggregationPlan>(agg);
         currentSelect_->aggregation = aggPlan;
       }
     } else {

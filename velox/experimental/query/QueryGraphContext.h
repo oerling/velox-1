@@ -82,7 +82,8 @@ class QueryGraphContext {
   /// Allocates 'size' bytes from the arena of 'this'. The allocation lives
   /// until free() is called on it or the arena is destroyed.
   void* allocate(size_t size) {
-#ifdef QG_USE_MALLOC
+#ifdef QG_TEST_USE_MALLOC
+    // Benchmark-only. Dropping the arena will not free un-free'd allocs.
     return ::malloc(size);
 #elif defined(QG_CACHE_ARENA)
     return cache_.allocate(size);
@@ -95,7 +96,7 @@ class QueryGraphContext {
   /// this is not mandatory since objects from the arena get freed at latest
   /// when the arena is destroyed.
   void free(void* ptr) {
-#ifdef QG_USE_MALLOC
+#ifdef QG_TEST_USE_MALLOC
     ::free(ptr);
 #elif defined(QG_CACHE_ARENA)
     cache_.free(ptr);
@@ -150,13 +151,15 @@ class QueryGraphContext {
 /// Returns a mutable reference to the calling thread's QueryGraphContext.
 QueryGraphContext*& queryCtx();
 
-/// Declares 'destination' as a pointer to T, allocated from the thread's
-/// QueryGraphContext arena. The remaining arguments are passed to the
-/// constructor of T.
-#define Declare(T, destination, ...)                                      \
-  T* destination = reinterpret_cast<T*>(queryCtx()->allocate(sizeof(T))); \
-  new (destination) T(__VA_ARGS__);
 
+template <class _Tp, class... _Args>
+inline _Tp* make(_Args&&... __args) {
+  return new (queryCtx()->allocate(sizeof(_Tp)))
+      _Tp(std::forward<_Args>(__args)...);
+}
+
+#define MAKE(_Tp) new (queryCtx()->allocate(sizeof(_Tp))) _Tp
+  
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
 // Name toName(const std::string& string);

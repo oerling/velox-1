@@ -104,13 +104,11 @@ RelationOpPtr addGather(RelationOpPtr op) {
     auto order = op->distribution();
     Distribution final = Distribution::gather(
         op->distribution().distributionType, order.order, order.orderType);
-    Declare(Repartition, gather, op, final, op->columns());
-    Declare(OrderBy, orderBy, gather, order.order, order.orderType);
+    auto* gather = make<Repartition>(op, final, op->columns());
+    auto* orderBy = make<OrderBy>(gather, order.order, order.orderType);
     return orderBy;
   }
-  Declare(
-      Repartition,
-      gather,
+  auto* gather = make<Repartition>(
       op,
       Distribution::gather(op->distribution().distributionType),
       op->columns());

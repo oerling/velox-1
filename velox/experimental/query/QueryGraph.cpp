@@ -208,7 +208,7 @@ std::string PlanObjectSet::toString(bool names) const {
 
 void Column::equals(ColumnPtr other) const {
   if (!equivalence_ && !other->equivalence_) {
-    Declare(Equivalence, equiv);
+    auto* equiv = make<Equivalence>();
     equiv->columns.push_back(this);
     equiv->columns.push_back(other);
     equivalence_ = equiv;
@@ -443,9 +443,7 @@ void DerivedTable::addJoinEquality(
       return;
     }
   }
-  Declare(
-      JoinEdge,
-      join,
+  auto* join = make<JoinEdge>(
       leftTable,
       rightTable,
       filter,
@@ -616,16 +614,8 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
       if (!tables.contains(join->rightTable())) {
         continue;
       }
-      Declare(
-          JoinEdge,
-          exists,
-          table,
-          join->rightTable(),
-          {},
-          false,
-          false,
-          true,
-          false);
+      auto* exists = new(queryCtx()->allocate(sizeof(JoinEdge))) JoinEdge(
+          table, join->rightTable(), {}, false, false, true, false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
         exists->addEquality(join->leftKeys()[i], join->rightKeys()[i]);
       }
@@ -636,16 +626,8 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
         continue;
       }
 
-      Declare(
-          JoinEdge,
-          exists,
-          table,
-          join->leftTable(),
-          {},
-          false,
-          false,
-          true,
-          false);
+      auto* exists = MAKE(JoinEdge)(
+          table, join->leftTable(), {}, false, false, true, false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
         exists->addEquality(join->rightKeys()[i], join->leftKeys()[i]);
       }
@@ -673,14 +655,12 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
   auto it = optimization->existenceDts().find(existsDtKey);
   DerivedTablePtr existsDt;
   if (it == optimization->existenceDts().end()) {
-    Declare(DerivedTable, newDt);
+    auto* newDt = make<DerivedTable>();
     existsDt = newDt;
     existsDt->cname = queryCtx()->optimization()->newCName("edt");
     existsDt->import(super, firstExistsTable, existsDtKey.tables, {});
     for (auto& k : existsJoin->rightKeys()) {
-      Declare(
-          Column,
-          existsColumn,
+      auto* existsColumn = make<Column>(
           toName(fmt::format("{}.{}", existsDt->cname, k->toString())),
           existsDt,
           k->value());
@@ -693,16 +673,8 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
   } else {
     existsDt = it->second;
   }
-  Declare(
-      JoinEdge,
-      joinWithDt,
-      firstTable,
-      existsDt,
-      {},
-      false,
-      false,
-      true,
-      false);
+  auto* joinWithDt =
+    MAKE(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
   joinWithDt->setFanouts(existsFanout, 1);
   for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
     joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
@@ -807,19 +779,12 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
           childVector.begin(), newChildren.begin(), newChildren.end());
       if (expr->type() == PlanType::kCall) {
         auto call = expr->as<Call>();
-        Declare(
-            Call,
-            copy,
-            call->name(),
-            call->value(),
-            std::move(childVector),
-            functions);
+        auto* copy = make<Call>
+            (call->name(), call->value(), std::move(childVector), functions);
         return copy;
       } else if (expr->type() == PlanType::kAggregate) {
         auto aggregate = expr->as<Aggregate>();
-        Declare(
-            Aggregate,
-            copy,
+        auto* copy = make<Aggregate>(
             aggregate->name(),
             aggregate->value(),
             std::move(childVector),
@@ -909,8 +874,8 @@ JoinEdgePtr importedJoin(
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
   auto otherKey = join->sideOf(other).keys[0];
-  Declare(
-      JoinEdge, newJoin, left, other, {}, false, false, !fullyImported, false);
+  auto* newJoin =
+    MAKE(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -923,7 +888,8 @@ JoinEdgePtr importedDtJoin(
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
   auto otherKey = dt->columns[0];
-  Declare(JoinEdge, newJoin, left, dt, {}, false, false, !fullyImported, false);
+  auto* newJoin =
+    MAKE(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -941,7 +907,8 @@ void eraseFirst(V& set, E element) {
 void DerivedTable::makeProjection(ExprVector exprs) {
   auto optimization = queryCtx()->optimization();
   for (auto& expr : exprs) {
-    Declare(Column, column, optimization->newCName("ec"), this, expr->value());
+    auto* column =
+        make<Column>(optimization->newCName("ec"), this, expr->value());
     columns.push_back(column);
     this->exprs.push_back(expr);
   }
@@ -967,7 +934,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     projected.unionColumns(expr);
   }
 
-  Declare(DerivedTable, newFirst, *firstDt->as<DerivedTable>());
+  auto* newFirst = make<DerivedTable>(*firstDt->as<DerivedTable>());
   newFirst->cname = firstDt->as<DerivedTable>()->cname;
   for (auto& join : joins) {
     auto other = otherSide(join, firstDt);
@@ -1008,7 +975,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
         newFirst->fullyImported.add(other);
       }
     } else {
-      Declare(DerivedTable, chainDt);
+      auto* chainDt = make<DerivedTable>();
       PlanObjectSet chainSet;
       chainSet.add(other);
       if (fullyImported) {
@@ -1097,8 +1064,8 @@ findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
     }
   }
   if (create) {
-    Declare(
-        JoinEdge, join, tables[0], tables[1], {}, false, false, false, false);
+    auto* join =
+      MAKE(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
     dt->joins.push_back(join);
     return join;
   }
@@ -1217,9 +1184,7 @@ void DerivedTable::makeInitialPlan() {
   auto orderType = distribution.orderType;
   replace(partition, exprs, columns.data());
   replace(order, exprs, columns.data());
-  Declare(
-      Distribution,
-      dtDist,
+  auto* dtDist = make<Distribution>(
       distribution.distributionType,
       distribution.cardinality,
       partition,
@@ -1277,7 +1242,7 @@ void SchemaTable::addIndex(
   appendToVector(distribution.order, keys);
   distribution.distributionType = distType;
   appendToVector(distribution.partition, partition);
-  Declare(Index, index, name, this, distribution, columns);
+  auto* index = make<Index>(name, this, distribution, columns);
   indices.push_back(index);
 }
 
@@ -1286,7 +1251,7 @@ ColumnPtr SchemaTable::column(const std::string& name, const Value& value) {
   if (it != columns.end()) {
     return it->second;
   }
-  Declare(Column, column, toName(name), nullptr, value);
+  auto* column = make<Column>(toName(name), nullptr, value);
   columns[toName(name)] = column;
   return column;
 }
@@ -1322,7 +1287,7 @@ SchemaTablePtr Schema::findTable(std::string_view name) const {
   if (!table) {
     return nullptr;
   }
-  Declare(SchemaTable, schemaTable, internedName, table->rowType());
+  auto* schemaTable = make<SchemaTable>(internedName, table->rowType());
   schemaTable->runnerTable = table;
   ColumnVector columns;
   for (auto& pair : table->columnMap()) {
@@ -1330,7 +1295,7 @@ SchemaTablePtr Schema::findTable(std::string_view name) const {
     float cardinality = tableColumn.approxNumDistinct(table->numRows());
     Value value(tableColumn.type().get(), cardinality);
     auto columnName = toName(pair.first);
-    Declare(Column, column, columnName, nullptr, value);
+    auto* column = make<Column>(columnName, nullptr, value);
     schemaTable->columns[columnName] = column;
     columns.push_back(column);
   }
