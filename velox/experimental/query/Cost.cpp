@@ -19,7 +19,7 @@
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 
@@ -180,4 +180,4 @@ void Filter::setCost(const PlanState& /*input*/) {
   cost_.fanout = pow(0.8, exprs_.size());
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

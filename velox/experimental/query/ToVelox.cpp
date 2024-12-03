@@ -24,7 +24,7 @@
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/ScopedVarSetter.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -610,4 +610,4 @@ core::PlanNodePtr Optimization::makeFragment(
   return nullptr;
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

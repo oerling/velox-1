@@ -25,7 +25,7 @@
 /// instantiate the relevant schema objects based on the query. The
 /// arena for these can be different from that for the PlanObjects,
 /// though, so that a schema cache can have its own lifetime.
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 template <typename T>
 using NameMap = std::unordered_map<
@@ -436,4 +436,4 @@ class Schema {
 
 using SchemaPtr = Schema*;
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

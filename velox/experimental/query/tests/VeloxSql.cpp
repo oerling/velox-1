@@ -284,7 +284,7 @@ class VeloxRunner {
         });
     splitSourceFactory_ = std::make_shared<LocalSplitSourceFactory>(
         schema_, FLAGS_num_splits_per_file);
-    history_ = std::make_unique<facebook::verax::VeloxHistory>();
+    history_ = std::make_unique<facebook::velox::optimizer::VeloxHistory>();
     executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
         FLAGS_num_drivers * 2 + 2);
     spillExecutor_ = std::make_shared<folly::IOThreadPoolExecutor>(4);
@@ -417,7 +417,7 @@ class VeloxRunner {
 
   std::string planCostString(
       const core::PlanNodeId& id,
-      const facebook::verax::Optimization::PlanCostMap& estimates) {
+      const facebook::velox::optimizer::Optimization::PlanCostMap& estimates) {
     auto it = estimates.find(id);
     if (it == estimates.end()) {
       return "";
@@ -464,21 +464,21 @@ class VeloxRunner {
       }
       return nullptr;
     }
-    facebook::verax::Optimization::PlanCostMap estimates;
+    facebook::velox::optimizer::Optimization::PlanCostMap estimates;
     MultiFragmentPlan::Options opts;
     opts.numWorkers = FLAGS_num_workers;
     opts.numDrivers = FLAGS_num_drivers;
     auto allocator =
         std::make_unique<HashStringAllocator>(optimizerPool_.get());
     auto context =
-        std::make_unique<facebook::verax::QueryGraphContext>(*allocator);
-    facebook::verax::queryCtx() = context.get();
+        std::make_unique<facebook::velox::optimizer::QueryGraphContext>(*allocator);
+    facebook::velox::optimizer::queryCtx() = context.get();
     exec::SimpleExpressionEvaluator evaluator(
         queryCtx.get(), optimizerPool_.get());
     MultiFragmentPlanPtr fragmentedPlan;
     try {
-      facebook::verax::Schema veraxSchema("test", schema_.get());
-      facebook::verax::Optimization opt(
+      facebook::velox::optimizer::Schema veraxSchema("test", schema_.get());
+      facebook::velox::optimizer::Optimization opt(
           *plan, veraxSchema, *history_, evaluator, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
       if (planString) {
@@ -492,14 +492,14 @@ class VeloxRunner {
       }
       fragmentedPlan = opt.toVeloxPlan(best->op, opts);
     } catch (const std::exception& e) {
-      facebook::verax::queryCtx() = nullptr;
+      facebook::velox::optimizer::queryCtx() = nullptr;
       std::cerr << "optimizer error: " << e.what() << std::endl;
       if (errorString) {
         *errorString = fmt::format("optimizer error: {}", e.what());
       }
       return nullptr;
     }
-    facebook::verax::queryCtx() = nullptr;
+    facebook::velox::optimizer::queryCtx() = nullptr;
     RunStats runStats;
     try {
       runner = std::make_shared<LocalRunner>(
@@ -656,7 +656,7 @@ class VeloxRunner {
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
   std::shared_ptr<facebook::velox::runner::LocalSchema> schema_;
   std::shared_ptr<LocalSplitSourceFactory> splitSourceFactory_;
-  std::unique_ptr<facebook::verax::VeloxHistory> history_;
+  std::unique_ptr<facebook::velox::optimizer::VeloxHistory> history_;
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;
   std::unordered_map<std::string, std::string> config_;
   std::unordered_map<std::string, std::string> hiveConfig_;

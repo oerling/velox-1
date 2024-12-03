@@ -26,7 +26,7 @@
 
 /// Planning-time data structures. Represent the state of the planning process
 /// plus utilities.
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 struct ITypedExprHasher {
   size_t operator()(const velox::core::ITypedExpr* expr) const {
@@ -322,18 +322,18 @@ struct MemoKey {
   std::vector<PlanObjectSet> existences;
 };
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer
 
 namespace std {
 template <>
-struct hash<::facebook::verax::MemoKey> {
-  size_t operator()(const ::facebook::verax::MemoKey& key) const {
+struct hash<::facebook::velox::optimizer::MemoKey> {
+  size_t operator()(const ::facebook::velox::optimizer::MemoKey& key) const {
     return key.hash();
   }
 };
 } // namespace std
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// Instance of query optimization. Comverts a plan and schema into an
 /// optimized plan. Depends on QueryGraphContext being set on the
@@ -758,4 +758,4 @@ const JoinEdgeVector& joinedBy(PlanObjectConstPtr table);
 
 void filterUpdated(BaseTablePtr baseTable);
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

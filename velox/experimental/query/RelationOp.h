@@ -23,7 +23,7 @@
 /// A candidate plan is constructed based  on the join graph/derived table
 /// tree.
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 struct PlanState;
 
@@ -407,4 +407,4 @@ struct OrderBy : public RelationOp {
   PlanObjectSet dependentKeys;
 };
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

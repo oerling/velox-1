@@ -21,7 +21,7 @@
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/expression/ConstantExpr.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 
@@ -304,7 +304,7 @@ OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
                                                   : OrderType::kDescNullsLast));
   }
   auto keys = translateColumns(order.sortingKeys());
-  auto* orderBy = MAKE(OrderBy)(nullptr, keys, orderType, {});
+  auto* orderBy = QGC_MAKE_IN_ARENA(OrderBy)(nullptr, keys, orderType, {});
   return orderBy;
 }
 
@@ -614,4 +614,4 @@ PlanObjectPtr Optimization::makeQueryGraph(
   return currentSelect_;
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

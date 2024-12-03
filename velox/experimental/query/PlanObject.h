@@ -18,7 +18,7 @@
 
 #include "velox/experimental/query/QueryGraphContext.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// Enum for types of query graph nodes. Used when making a tree into
 /// a query graph and later to differentiate between tables, derived
@@ -232,12 +232,12 @@ class PlanObjectSet {
 using PlanObjectVector =
     std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>;
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer
 
 namespace std {
 template <>
-struct hash<::facebook::verax::PlanObjectSet> {
-  size_t operator()(const ::facebook::verax::PlanObjectSet& set) const {
+struct hash<::facebook::velox::optimizer::PlanObjectSet> {
+  size_t operator()(const ::facebook::velox::optimizer::PlanObjectSet& set) const {
     return set.hash();
   }
 };

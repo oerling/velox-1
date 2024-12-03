@@ -33,7 +33,7 @@ DEFINE_string(data_path, "", "Path to directory for TPC-H files");
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
 
 using namespace facebook::velox;
-using namespace facebook::verax;
+using namespace facebook::velox::optimizer;
 
 std::string nodeString(core::PlanNode* node) {
   return node->toString(true, true);

@@ -16,7 +16,7 @@
 
 #include "velox/experimental/query/VeloxHistory.h"
 #include "velox/connectors/hive/TableHandle.h"
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox::exec;
 using namespace facebook::velox::runner;
@@ -63,4 +63,4 @@ void VeloxHistory::recordVeloxExecution(
   }
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

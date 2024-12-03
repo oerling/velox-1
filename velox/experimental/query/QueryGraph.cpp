@@ -20,7 +20,7 @@
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 QueryGraphContext*& queryCtx() {
   thread_local QueryGraphContext* context;
@@ -626,7 +626,7 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
         continue;
       }
 
-      auto* exists = MAKE(JoinEdge)(
+      auto* exists = QGC_MAKE_IN_ARENA(JoinEdge)(
           table, join->leftTable(), {}, false, false, true, false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
         exists->addEquality(join->rightKeys()[i], join->leftKeys()[i]);
@@ -674,7 +674,7 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
     existsDt = it->second;
   }
   auto* joinWithDt =
-      MAKE(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
+      QGC_MAKE_IN_ARENA(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
   joinWithDt->setFanouts(existsFanout, 1);
   for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
     joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
@@ -875,7 +875,7 @@ JoinEdgePtr importedJoin(
   VELOX_CHECK(left);
   auto otherKey = join->sideOf(other).keys[0];
   auto* newJoin =
-      MAKE(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
+      QGC_MAKE_IN_ARENA(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -889,7 +889,7 @@ JoinEdgePtr importedDtJoin(
   VELOX_CHECK(left);
   auto otherKey = dt->columns[0];
   auto* newJoin =
-      MAKE(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
+      QGC_MAKE_IN_ARENA(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -1065,7 +1065,7 @@ findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
   }
   if (create) {
     auto* join =
-        MAKE(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
+        QGC_MAKE_IN_ARENA(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
     dt->joins.push_back(join);
     return join;
   }
@@ -1600,4 +1600,4 @@ std::string Distribution::toString() const {
   return out.str();
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

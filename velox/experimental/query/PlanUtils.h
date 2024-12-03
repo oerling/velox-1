@@ -19,7 +19,7 @@
 #include <folly/Range.h>
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 template <typename T, typename U>
 bool isSubset(const T& subset, const U& superset) {
@@ -118,4 +118,4 @@ Target transform(const V& set, Func func) {
   return result;
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

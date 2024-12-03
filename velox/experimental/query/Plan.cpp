@@ -20,7 +20,7 @@
 
 #include <iostream>
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 using facebook::velox::core::JoinType;
@@ -1468,4 +1468,4 @@ PlanPtr Optimization::makePlan(
   return plans->best(distribution, needsShuffle);
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

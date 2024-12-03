@@ -17,7 +17,7 @@
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// Match the input 'value' to the most appropriate unit and return
 /// a string value. The units are specified in the 'units' array.
@@ -59,4 +59,4 @@ std::string succinctNumber(double value, int32_t precision) {
       precision);
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

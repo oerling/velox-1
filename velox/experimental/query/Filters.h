@@ -20,7 +20,7 @@
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 // Returns the cost and cardinality ('unitCost' and 'fanout') for 'conjuncts'.
 Cost filterCost(PtrSpan<Expr> conjuncts);
@@ -34,4 +34,4 @@ ExprVector extractCommonConjuncts(ExprVector conjuncts) {}
 // that can be resolved within 'table'.
 disjunctsForTable(ExprPtr or, PlanObjectConstPtr table);
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

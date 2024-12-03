@@ -18,7 +18,7 @@
 
 #include "velox/experimental/query/RelationOp.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// Interface to historical query cost and cardinality
 /// information. There is one long lived instance per
@@ -65,4 +65,4 @@ float shuffleCost(const ColumnVector& columns);
 
 float shuffleCost(const ExprVector& columns);
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

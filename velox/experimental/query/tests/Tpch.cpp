@@ -17,7 +17,7 @@
 #include "velox/experimental/query/tests/Tpch.h"
 #include "velox/tpch/gen/TpchGen.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 // Returns a map from column name to cardinality. Positive means fixed value
@@ -140,4 +140,4 @@ tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
   return make<Schema>(toName(title), std::move(tables));
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

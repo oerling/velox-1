@@ -25,7 +25,7 @@
 
 /// Thread local context and utilities for query planning.
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// Pointer to an arena allocated interned copy of a null terminated string.
 /// Used for identifiers. Allows comparing strings by comparing pointers.
@@ -157,7 +157,9 @@ inline _Tp* make(_Args&&... __args) {
       _Tp(std::forward<_Args>(__args)...);
 }
 
-#define MAKE(_Tp) new (queryCtx()->allocate(sizeof(_Tp))) _Tp
+  /// Macro to use instead of make() when make() errors out from too
+  /// many arguments.
+#define QGC_MAKE_IN_ARENA(_Tp) new (queryCtx()->allocate(sizeof(_Tp))) _Tp
 
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
@@ -202,4 +204,4 @@ using ColumnPtr = const Column*;
 using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
 using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

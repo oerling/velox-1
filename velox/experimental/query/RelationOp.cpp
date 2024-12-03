@@ -19,7 +19,7 @@
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 const Value& RelationOp::value(ExprPtr expr) const {
   // Compute new Value by applying restrictions from operators
@@ -263,4 +263,4 @@ std::string Project::toString(bool recursive, bool detail) const {
   return out.str();
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

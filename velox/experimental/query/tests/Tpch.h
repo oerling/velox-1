@@ -18,7 +18,7 @@
 
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 SchemaPtr
 tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary);

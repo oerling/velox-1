@@ -27,7 +27,7 @@
 /// generation. Sometimes new derived tables may be added for
 /// representing constraints on partial plans but otherwise these stay
 /// constant.
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 /// The join structure is described as a tree of derived tables with
 /// base tables as leaves. Joins are described as join graph
@@ -755,4 +755,4 @@ float tableCardinality(PlanObjectConstPtr table);
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

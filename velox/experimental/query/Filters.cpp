@@ -20,10 +20,10 @@
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/experimental/query/QueryGraph.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 Cost filterCost(PtrSpan<Expr> conjuncts) {
   return Cost();
 }
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

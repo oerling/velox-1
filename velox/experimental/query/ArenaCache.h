@@ -20,7 +20,7 @@
 #include "velox/common/base/BitUtil.h"
 #include "velox/common/memory/HashStringAllocator.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 class ArenaCache {
   static constexpr int32_t kMaxSize = 512;
@@ -60,4 +60,4 @@ class ArenaCache {
   uint64_t totalSize_{0};
 };
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer

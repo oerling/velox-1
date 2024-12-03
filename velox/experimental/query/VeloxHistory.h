@@ -21,7 +21,7 @@
 #include "velox/experimental/query/Plan.h"
 #include "velox/runner/MultiFragmentPlan.h"
 
-namespace facebook::verax {
+namespace facebook::velox::optimizer {
 
 class VeloxHistory : public History {
  public:
@@ -42,4 +42,4 @@ class VeloxHistory : public History {
       const std::vector<velox::exec::TaskStats>& stats);
 };
 
-} // namespace facebook::verax
+} // namespace facebook::velox::optimizer
