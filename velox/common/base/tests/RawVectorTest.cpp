@@ -111,22 +111,18 @@ TEST(RawVectorTest, toStdVector) {
   }
 }
 
-template<class _Tp, class... _Args>
-inline 
-_Tp*
-make(_Args&&... __args)
-{
-    return (new _Tp(std::forward<_Args>(__args)...));
+template <class _Tp, class... _Args>
+inline _Tp* make(_Args&&... __args) {
+  return (new _Tp(std::forward<_Args>(__args)...));
 }
 
-
 class Pfaal {
-public:
-  Pfaal(int x, int y) : n(x+y) {};
+ public:
+  Pfaal(int x, int y) : n(x + y){};
   int n;
 };
 
-  TEST(RawVectorTest, pfaal) {
+TEST(RawVectorTest, pfaal) {
   auto x = make<Pfaal>(1, 2);
   printf("%d", x->n);
 }

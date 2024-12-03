@@ -151,7 +151,6 @@ class QueryGraphContext {
 /// Returns a mutable reference to the calling thread's QueryGraphContext.
 QueryGraphContext*& queryCtx();
 
-
 template <class _Tp, class... _Args>
 inline _Tp* make(_Args&&... __args) {
   return new (queryCtx()->allocate(sizeof(_Tp)))
@@ -159,7 +158,7 @@ inline _Tp* make(_Args&&... __args) {
 }
 
 #define MAKE(_Tp) new (queryCtx()->allocate(sizeof(_Tp))) _Tp
-  
+
 /// Converts std::string to name used in query graph objects. raw pointer to
 /// arena allocated const chars.
 // Name toName(const std::string& string);

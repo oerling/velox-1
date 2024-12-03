@@ -614,8 +614,8 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
       if (!tables.contains(join->rightTable())) {
         continue;
       }
-      auto* exists = new(queryCtx()->allocate(sizeof(JoinEdge))) JoinEdge(
-          table, join->rightTable(), {}, false, false, true, false);
+      auto* exists = new (queryCtx()->allocate(sizeof(JoinEdge)))
+          JoinEdge(table, join->rightTable(), {}, false, false, true, false);
       for (auto i = 0; i < join->leftKeys().size(); ++i) {
         exists->addEquality(join->leftKeys()[i], join->rightKeys()[i]);
       }
@@ -674,7 +674,7 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
     existsDt = it->second;
   }
   auto* joinWithDt =
-    MAKE(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
+      MAKE(JoinEdge)(firstTable, existsDt, {}, false, false, true, false);
   joinWithDt->setFanouts(existsFanout, 1);
   for (auto i = 0; i < existsJoin->leftKeys().size(); ++i) {
     joinWithDt->addEquality(existsJoin->leftKeys()[i], existsDt->columns[i]);
@@ -779,8 +779,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
           childVector.begin(), newChildren.begin(), newChildren.end());
       if (expr->type() == PlanType::kCall) {
         auto call = expr->as<Call>();
-        auto* copy = make<Call>
-            (call->name(), call->value(), std::move(childVector), functions);
+        auto* copy = make<Call>(
+            call->name(), call->value(), std::move(childVector), functions);
         return copy;
       } else if (expr->type() == PlanType::kAggregate) {
         auto aggregate = expr->as<Aggregate>();
@@ -875,7 +875,7 @@ JoinEdgePtr importedJoin(
   VELOX_CHECK(left);
   auto otherKey = join->sideOf(other).keys[0];
   auto* newJoin =
-    MAKE(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
+      MAKE(JoinEdge)(left, other, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -889,7 +889,7 @@ JoinEdgePtr importedDtJoin(
   VELOX_CHECK(left);
   auto otherKey = dt->columns[0];
   auto* newJoin =
-    MAKE(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
+      MAKE(JoinEdge)(left, dt, {}, false, false, !fullyImported, false);
   newJoin->addEquality(innerKey, otherKey);
   return newJoin;
 }
@@ -1065,7 +1065,7 @@ findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
   }
   if (create) {
     auto* join =
-      MAKE(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
+        MAKE(JoinEdge)(tables[0], tables[1], {}, false, false, false, false);
     dt->joins.push_back(join);
     return join;
   }

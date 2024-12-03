@@ -599,7 +599,7 @@ RelationOpPtr repartitionForAgg(const RelationOpPtr& plan, PlanState& state) {
       plan->resultCardinality(),
       keyValues);
   auto* repartition =
-    make<Repartition>(plan, std::move(distribution), plan->columns());
+      make<Repartition>(plan, std::move(distribution), plan->columns());
   state.addCost(*repartition);
   return repartition;
 }
@@ -1251,7 +1251,7 @@ RelationOpPtr Optimization::placeSingleRowDt(
       resultColumns.end(),
       rightOp->columns().begin(),
       rightOp->columns().end());
-  auto* join = new(queryCtx()->allocate(sizeof(Join))) Join(
+  auto* join = new (queryCtx()->allocate(sizeof(Join))) Join(
       JoinMethod::kCross,
       JoinType::kInner,
       plan,
