@@ -20,7 +20,7 @@
 
 namespace facebook::velox::optimizer {
 
-SchemaPtr
+SchemaP
 tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary);
 
 }

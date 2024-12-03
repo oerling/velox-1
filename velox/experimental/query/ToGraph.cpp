@@ -32,7 +32,7 @@ std::string veloxToString(core::PlanNode* plan) {
 }
 
 void Optimization::setDerivedTableOutput(
-    DerivedTablePtr dt,
+    DerivedTableP dt,
     const velox::core::PlanNode& planNode) {
   auto& outputType = planNode.outputType();
   for (auto i = 0; i < outputType->size(); ++i) {
@@ -48,7 +48,7 @@ void Optimization::setDerivedTableOutput(
   }
 }
 
-DerivedTablePtr Optimization::makeQueryGraph() {
+DerivedTableP Optimization::makeQueryGraph() {
   auto* root = make<DerivedTable>();
   root_ = root;
   currentSelect_ = root_;
@@ -234,7 +234,7 @@ TypePtr intermediateType(const core::CallTypedExprPtr& call) {
   return exec::Aggregate::intermediateType(call->name(), types);
 }
 
-AggregationPtr FOLLY_NULLABLE
+AggregationP FOLLY_NULLABLE
 Optimization::translateAggregation(const core::AggregationNode& source) {
   using velox::core::AggregationNode;
 
@@ -294,7 +294,7 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
   return nullptr;
 }
 
-OrderByPtr Optimization::translateOrderBy(const core::OrderByNode& order) {
+OrderByP Optimization::translateOrderBy(const core::OrderByNode& order) {
   OrderTypeVector orderType;
   for (auto& sort : order.sortingOrders()) {
     orderType.push_back(
@@ -355,7 +355,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
     ;
 
     PlanObjectSet leftTables;
-    PlanObjectConstPtr rightTable = nullptr;
+    PlanObjectCP rightTable = nullptr;
 
     for (auto i = 0; i < leftKeys.size(); ++i) {
       auto l = leftKeys[i];
@@ -369,9 +369,9 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
       }
     }
     VELOX_CHECK(rightTable, "No right side in join");
-    std::vector<PlanObjectConstPtr> leftTableVector;
+    std::vector<PlanObjectCP> leftTableVector;
     leftTables.forEach(
-        [&](PlanObjectConstPtr table) { leftTableVector.push_back(table); });
+        [&](PlanObjectCP table) { leftTableVector.push_back(table); });
     auto* edge = make<JoinEdge>(
         leftTableVector.size() == 1 ? leftTableVector[0] : nullptr,
         rightTable,
@@ -410,9 +410,9 @@ void Optimization::translateNonEqualityJoin(
   for (auto& conjunct : conjuncts) {
     tables.unionColumns(conjunct);
   }
-  std::vector<PlanObjectConstPtr> tableVector;
+  std::vector<PlanObjectCP> tableVector;
   tables.forEach(
-      [&](PlanObjectConstPtr table) { tableVector.push_back(table); });
+      [&](PlanObjectCP table) { tableVector.push_back(table); });
   if (tableVector.size() == 2) {
     auto* edge = make<JoinEdge>(
         tableVector[0], tableVector[1], conjuncts, false, false, false, false);
@@ -445,8 +445,8 @@ bool isDirectOver(const core::PlanNode& node, const std::string& name) {
   return false;
 }
 
-PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
-  DerivedTablePtr previousDt = currentSelect_;
+PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
+  DerivedTableP previousDt = currentSelect_;
   auto* newDt = make<DerivedTable>();
   auto cname = toName(fmt::format("dt{}", ++nameCounter_));
   newDt->cname = cname;
@@ -471,7 +471,7 @@ PlanObjectPtr Optimization::wrapInDt(const core::PlanNode& node) {
   return newDt;
 }
 
-PlanObjectPtr Optimization::makeQueryGraph(
+PlanObjectP Optimization::makeQueryGraph(
     const core::PlanNode& node,
     uint64_t allowedInDt) {
   auto name = node.name();

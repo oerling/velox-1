@@ -30,7 +30,7 @@ using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::runner;
 
-void filterUpdated(BaseTablePtr table) {
+void filterUpdated(BaseTableCP table) {
   auto optimization = queryCtx()->optimization();
   std::vector<core::TypedExprPtr> remainingConjuncts;
   connector::hive::SubfieldFilters subfieldFilters;

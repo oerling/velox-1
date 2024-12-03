@@ -118,7 +118,7 @@ class Locus {
   Name name_;
 };
 
-using LocusPtr = const Locus*;
+using LocusCP = const Locus*;
 
 /// Method for determining a partition given an ordered list of partitioning
 /// keys. Hive hash is an example, range partitioning is another. Add values
@@ -136,7 +136,7 @@ struct DistributionType {
 
   ShuffleMode mode{ShuffleMode::kNone};
   int32_t numPartitions{1};
-  LocusPtr locus{nullptr};
+  LocusCP locus{nullptr};
   bool isGather{false};
 };
 
@@ -296,7 +296,7 @@ class Relation {
 };
 
 struct SchemaTable;
-using SchemaTablePtr = const SchemaTable*;
+using SchemaTableCP = const SchemaTable*;
 
 /// Represents a stored collection of rows. An index may have a uniqueness
 /// constraint over a set of columns, a partitioning and an ordering plus a
@@ -304,7 +304,7 @@ using SchemaTablePtr = const SchemaTable*;
 struct Index : public Relation {
   Index(
       Name _name,
-      SchemaTablePtr _table,
+      SchemaTableCP _table,
       Distribution distribution,
       const ColumnVector& _columns)
       : Relation(RelType::kBase, distribution, _columns),
@@ -312,7 +312,7 @@ struct Index : public Relation {
         table(_table) {}
 
   Name name;
-  SchemaTablePtr table;
+  SchemaTableCP table;
 
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,
@@ -320,14 +320,14 @@ struct Index : public Relation {
   float lookupCost(float range) const;
 };
 
-using IndexPtr = Index*;
+using ColumnGroupP = Index*;
 
 // Describes the number of rows to look at and the number of expected matches
 // given equality constraints for a set of columns. See
 // SchemaTable::indexInfo().
 struct IndexInfo {
   // Index chosen based on columns.
-  IndexPtr index;
+  ColumnGroupP index;
 
   // True if the column combination is unique. This can be true even if there
   // is no key order in 'index'.
@@ -387,7 +387,7 @@ struct SchemaTable {
 
   /// Returns   uniqueness and cardinality information for a lookup on 'index'
   /// where 'columns' have an equality constraint.
-  IndexInfo indexInfo(IndexPtr index, PtrSpan<Column> columns) const;
+  IndexInfo indexInfo(ColumnGroupP index, PtrSpan<Column> columns) const;
 
   /// Returns the best index to use for lookup where 'columns' have an
   /// equality constraint.
@@ -401,7 +401,7 @@ struct SchemaTable {
   NameMap<ColumnPtr> columns;
 
   // All indices. Must contain at least one.
-  std::vector<IndexPtr, QGAllocator<IndexPtr>> indices;
+  std::vector<ColumnGroupP, QGAllocator<ColumnGroupP>> indices;
   velox::runner::Table* runnerTable{nullptr};
 };
 
@@ -415,25 +415,25 @@ struct SchemaTable {
 /// repository. The objects have a default Locus for convenience.
 class Schema {
  public:
-  Schema(Name _name, std::vector<SchemaTablePtr> tables);
+  Schema(Name _name, std::vector<SchemaTableCP> tables);
   Schema(Name _name, velox::runner::Schema* source);
 
   /// Returns the table with 'name' or nullptr if not found.
-  SchemaTablePtr findTable(std::string_view name) const;
+  SchemaTableCP findTable(std::string_view name) const;
 
   Name name() const {
     return name_;
   }
 
-  void addTable(SchemaTablePtr table) const;
+  void addTable(SchemaTableCP table) const;
 
  private:
   Name name_;
-  mutable NameMap<SchemaTablePtr> tables_;
+  mutable NameMap<SchemaTableCP> tables_;
   velox::runner::Schema* source_{nullptr};
   std::unique_ptr<Locus> defaultLocus_;
 };
 
-using SchemaPtr = Schema*;
+using SchemaP = Schema*;
 
 } // namespace facebook::velox::optimizer

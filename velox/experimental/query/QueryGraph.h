@@ -51,7 +51,7 @@ class Expr : public PlanObject {
 
   // Returns the single base or derived table 'this' depends on, nullptr if
   // 'this' depends on none or multiple tables.
-  PlanObjectConstPtr singleTable() const;
+  PlanObjectCP singleTable() const;
 
   /// Returns all tables 'this' depends on.
   PlanObjectSet allTables() const;
@@ -82,10 +82,10 @@ class Expr : public PlanObject {
 };
 
 /// If 'object' is an Expr, returns Expr::singleTable, else nullptr.
-PlanObjectConstPtr singleTable(PlanObjectConstPtr object);
+PlanObjectCP singleTable(PlanObjectCP object);
 
 struct Equivalence;
-using EquivalencePtr = Equivalence*;
+using EquivalenceP = Equivalence*;
 
 /// Represents a literal.
 class Literal : public Expr {
@@ -105,13 +105,13 @@ class Literal : public Expr {
 /// or derived table.
 class Column : public Expr {
  public:
-  Column(Name _name, PlanObjectPtr _relation, const Value& value);
+  Column(Name _name, PlanObjectP _relation, const Value& value);
 
   Name name() const {
     return name_;
   }
 
-  PlanObjectConstPtr relation() const {
+  PlanObjectCP relation() const {
     return relation_;
   }
 
@@ -135,11 +135,11 @@ class Column : public Expr {
   Name name_;
 
   // The defining BaseTable or DerivedTable.
-  PlanObjectPtr relation_;
+  PlanObjectP relation_;
 
   // Equivalence class. Lists all columns directly or indirectly asserted equal
   // to 'this'.
-  mutable EquivalencePtr equivalence_{nullptr};
+  mutable EquivalenceP equivalence_{nullptr};
 
   // If this is a column of a BaseTable, points to the corresponding
   // column in the SchemaTable. Used for matching with
@@ -246,7 +246,7 @@ class Call : public Expr {
   const FunctionSet functions_;
 };
 
-using CallPtr = const Call*;
+using CallCP = const Call*;
 
 /// Represens a set of transitively equal columns.
 struct Equivalence {
@@ -257,7 +257,7 @@ struct Equivalence {
 /// Represents one side of a join. See Join below for the meaning of the
 /// members.
 struct JoinSide {
-  PlanObjectConstPtr table;
+  PlanObjectCP table;
   const ExprVector& keys;
   float fanout;
   const bool isOptional;
@@ -293,8 +293,8 @@ struct JoinSide {
 class JoinEdge {
  public:
   JoinEdge(
-      PlanObjectConstPtr leftTable,
-      PlanObjectConstPtr rightTable,
+      PlanObjectCP leftTable,
+      PlanObjectCP rightTable,
       ExprVector filter,
       bool leftOptional,
       bool rightOptional,
@@ -314,11 +314,11 @@ class JoinEdge {
     }
   }
 
-  PlanObjectConstPtr leftTable() const {
+  PlanObjectCP leftTable() const {
     return leftTable_;
   }
 
-  PlanObjectConstPtr rightTable() const {
+  PlanObjectCP rightTable() const {
     return rightTable_;
   }
 
@@ -362,18 +362,18 @@ class JoinEdge {
   }
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
-  const JoinSide sideOf(PlanObjectConstPtr side, bool other = false) const;
+  const JoinSide sideOf(PlanObjectCP side, bool other = false) const;
 
   /// Returns the table on the otherside of 'table' and the number of rows in
   /// the returned table for one row in 'table'. If the join is not inner
   /// returns nullptr, 0.
-  std::pair<PlanObjectConstPtr, float> otherTable(
-      PlanObjectConstPtr table) const {
+  std::pair<PlanObjectCP, float> otherTable(
+      PlanObjectCP table) const {
     return leftTable_ == table && !leftOptional_
-        ? std::pair<PlanObjectConstPtr, float>{rightTable_, lrFanout_}
+        ? std::pair<PlanObjectCP, float>{rightTable_, lrFanout_}
         : rightTable_ == table && !rightOptional_ && !rightExists_
-        ? std::pair<PlanObjectConstPtr, float>{leftTable_, rlFanout_}
-        : std::pair<PlanObjectConstPtr, float>{nullptr, 0};
+        ? std::pair<PlanObjectCP, float>{leftTable_, rlFanout_}
+        : std::pair<PlanObjectCP, float>{nullptr, 0};
   }
 
   const ExprVector& filter() const {
@@ -401,8 +401,8 @@ class JoinEdge {
   // Leading right side join keys, compared equals to 1:1 to 'leftKeys'.
   ExprVector rightKeys_;
 
-  PlanObjectConstPtr const leftTable_;
-  PlanObjectConstPtr const rightTable_;
+  PlanObjectCP const leftTable_;
+  PlanObjectCP const rightTable_;
 
   // 'rightKeys' select max 1 'leftTable' row.
   bool leftUnique_{false};
@@ -443,9 +443,9 @@ class JoinEdge {
   const ColumnPtr markColumn_;
 };
 
-using JoinEdgePtr = JoinEdge*;
+using JoinEdgeP = JoinEdge*;
 
-using JoinEdgeVector = std::vector<JoinEdgePtr, QGAllocator<JoinEdgePtr>>;
+using JoinEdgeVector = std::vector<JoinEdgeP, QGAllocator<JoinEdgeP>>;
 
 /// Adds 'element' to 'vector' if it is not in it.
 template <typename V, typename E>
@@ -465,7 +465,7 @@ struct BaseTable : public PlanObject {
   // Correlation name, distinguishes between uses of the same schema table.
   Name cname{nullptr};
 
-  SchemaTablePtr schemaTable{nullptr};
+  SchemaTableCP schemaTable{nullptr};
 
   /// All columns referenced from 'schemaTable' under this correlation name.
   /// Different indices may have to be combined in different TableScans to cover
@@ -494,7 +494,7 @@ struct BaseTable : public PlanObject {
     return true;
   }
 
-  void addJoinedBy(JoinEdgePtr join) {
+  void addJoinedBy(JoinEdgeP join) {
     pushBackUnique(joinedBy, join);
   }
 
@@ -504,7 +504,7 @@ struct BaseTable : public PlanObject {
   std::string toString() const override;
 };
 
-using BaseTablePtr = const BaseTable*;
+using BaseTableCP = const BaseTable*;
 
 using TypeVector =
     std::vector<const velox::Type*, QGAllocator<const velox::Type*>>;
@@ -569,23 +569,23 @@ class Aggregate : public Call {
   TypeVector rawInputType_;
 };
 
-using AggregatePtr = const Aggregate*;
+using AggregateCP = const Aggregate*;
 
 struct Aggregation;
-using AggregationPtr = Aggregation*;
+using AggregationP = Aggregation*;
 
 /// Wraps an Aggregation RelationOp. This gives the aggregation a PlanObject id
 struct AggregationPlan : public PlanObject {
-  AggregationPlan(AggregationPtr agg)
+  AggregationPlan(AggregationP agg)
       : PlanObject(PlanType::kAggregate), aggregation(agg) {}
 
-  AggregationPtr aggregation;
+  AggregationP aggregation;
 };
 
-using AggregationPlanPtr = const AggregationPlan*;
+using AggregationPlanCP = const AggregationPlan*;
 
 struct OrderBy;
-using OrderByPtr = OrderBy*;
+using OrderByP = OrderBy*;
 
 /// Represents a derived table, i.e. a select in a from clause. This is the
 /// basic unit of planning. Derived tables can be merged and split apart from
@@ -618,7 +618,7 @@ struct DerivedTable : public PlanObject {
   // All tables in from, either Table or DerivedTable. If Table, all
   // filters resolvable with the table alone are in single column filters or
   // 'filter' of BaseTable.
-  std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>> tables;
+  std::vector<PlanObjectCP, QGAllocator<PlanObjectCP>> tables;
 
   // Repeats the contents of 'tables'. Used for membership check. A DerivedTable
   // can be a subset of another, for example when planning a join for a build
@@ -657,9 +657,9 @@ struct DerivedTable : public PlanObject {
   // try to further restrict this with probe side.
   bool noImportOfExists{false};
   // Postprocessing clauses, group by, having, order by, limit, offset.
-  AggregationPlanPtr aggregation{nullptr};
+  AggregationPlanCP aggregation{nullptr};
   ExprVector having;
-  OrderByPtr orderBy{nullptr};
+  OrderByP orderBy{nullptr};
   int32_t limit{-1};
   int32_t offset{0};
 
@@ -689,7 +689,7 @@ struct DerivedTable : public PlanObject {
   /// 'firstTable' with 'existences'.
   void import(
       const DerivedTable& super,
-      PlanObjectConstPtr firstTable,
+      PlanObjectCP firstTable,
       const PlanObjectSet& tables,
       const std::vector<PlanObjectSet>& existences,
       float existsFanout = 1);
@@ -699,14 +699,14 @@ struct DerivedTable : public PlanObject {
   }
 
   //// True if 'table' is of 'this'.
-  bool hasTable(PlanObjectConstPtr table) const {
+  bool hasTable(PlanObjectCP table) const {
     return std::find(tables.begin(), tables.end(), table) != tables.end();
   }
 
   // True if 'join' exists in 'this'. Tables link to joins that may be
   // in different speculative candidate dts. So only consider joins
   // inside the current dt wen planning.
-  bool hasJoin(JoinEdgePtr join) const {
+  bool hasJoin(JoinEdgeP join) const {
     return std::find(joins.begin(), joins.end(), join) != joins.end();
   }
 
@@ -715,7 +715,7 @@ struct DerivedTable : public PlanObject {
   void setStartTables();
 
   std::string toString() const override;
-  void addJoinedBy(JoinEdgePtr join) {
+  void addJoinedBy(JoinEdgeP join) {
     pushBackUnique(joinedBy, join);
   }
 
@@ -748,9 +748,9 @@ struct DerivedTable : public PlanObject {
   void makeProjection(ExprVector exprs);
 };
 
-using DerivedTablePtr = DerivedTable*;
+using DerivedTableP = DerivedTable*;
 
-float tableCardinality(PlanObjectConstPtr table);
+float tableCardinality(PlanObjectCP table);
 
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);

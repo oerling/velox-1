@@ -69,7 +69,7 @@ Value columnValue(
   return Value(type.get(), it->second > 0 ? it->second : -it->second * scale);
 }
 
-SchemaTablePtr makeTable(
+SchemaTableCP makeTable(
     tpch::Table id,
     int32_t scale,
     bool partitioned,
@@ -115,11 +115,11 @@ SchemaTablePtr makeTable(
   return table;
 }
 
-SchemaPtr
+SchemaP
 tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
   auto title =
       fmt::format("tpch{}{}", partitioned ? "p" : "", ordered ? "o" : "");
-  std::vector<SchemaTablePtr> tables{
+  std::vector<SchemaTableCP> tables{
       makeTable(
           tpch::Table::TBL_LINEITEM, scale, partitioned, ordered, secondary),
       makeTable(

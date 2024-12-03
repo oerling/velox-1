@@ -38,7 +38,7 @@ std::string RelationOp::toString(bool recursive, bool detail) const {
 // static
 Distribution TableScan::outputDistribution(
     const BaseTable* baseTable,
-    IndexPtr index,
+    ColumnGroupP index,
     const ColumnVector& columns) {
   auto schemaColumns = transform<ColumnVector>(
       columns, [](auto& c) { return c->schemaColumn(); });
@@ -74,7 +74,7 @@ Distribution TableScan::outputDistribution(
 // static
 PlanObjectSet TableScan::availableColumns(
     const BaseTable* baseTable,
-    IndexPtr index) {
+    ColumnGroupP index) {
   // The columns of base table that exist in 'index'.
   PlanObjectSet result;
   for (auto column : index->columns()) {

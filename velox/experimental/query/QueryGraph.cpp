@@ -27,13 +27,13 @@ QueryGraphContext*& queryCtx() {
   return context;
 }
 
-size_t PlanObjectPtrHasher::operator()(const PlanObjectConstPtr& object) const {
+size_t PlanObjectPHasher::operator()(const PlanObjectCP& object) const {
   return object->hash();
 }
 
-bool PlanObjectPtrComparer::operator()(
-    const PlanObjectConstPtr& lhs,
-    const PlanObjectConstPtr& rhs) const {
+bool PlanObjectPComparer::operator()(
+    const PlanObjectCP& lhs,
+    const PlanObjectCP& rhs) const {
   if (rhs == lhs) {
     return true;
   }
@@ -50,7 +50,7 @@ size_t PlanObject::hash() const {
   return h;
 }
 
-PlanObjectPtr QueryGraphContext::dedup(PlanObjectPtr object) {
+PlanObjectP QueryGraphContext::dedup(PlanObjectP object) {
   auto pair = deduppedObjects_.insert(object);
   return *pair.first;
 }
@@ -266,7 +266,7 @@ std::string BaseTable::toString() const {
   return out.str();
 }
 
-const JoinSide JoinEdge::sideOf(PlanObjectConstPtr side, bool other) const {
+const JoinSide JoinEdge::sideOf(PlanObjectCP side, bool other) const {
   if ((side == rightTable_ && !other) || (side == leftTable_ && other)) {
     return {
         rightTable_,
@@ -373,20 +373,20 @@ bool Expr::sameOrEqual(const Expr& other) const {
   }
 }
 
-PlanObjectConstPtr FOLLY_NULLABLE singleTable(PlanObjectConstPtr object) {
+PlanObjectCP FOLLY_NULLABLE singleTable(PlanObjectCP object) {
   if (isExprType(object->type())) {
     return object->as<Expr>()->singleTable();
   }
   return nullptr;
 }
 
-PlanObjectConstPtr Expr::singleTable() const {
+PlanObjectCP Expr::singleTable() const {
   if (type() == PlanType::kColumn) {
     return as<Column>()->relation();
   }
-  PlanObjectConstPtr table = nullptr;
+  PlanObjectCP table = nullptr;
   bool multiple = false;
-  columns_.forEach([&](PlanObjectConstPtr object) {
+  columns_.forEach([&](PlanObjectCP object) {
     VELOX_CHECK(object->type() == PlanType::kColumn);
     if (!table) {
       table = object->template as<Column>()->relation();
@@ -399,7 +399,7 @@ PlanObjectConstPtr Expr::singleTable() const {
 
 PlanObjectSet Expr::allTables() const {
   PlanObjectSet set;
-  columns_.forEach([&](PlanObjectConstPtr object) {
+  columns_.forEach([&](PlanObjectCP object) {
     set.add(object->as<Column>()->relation());
   });
   return set;
@@ -414,7 +414,7 @@ PlanObjectSet allTables(PtrSpan<Expr> exprs) {
   return all;
 }
 
-Column::Column(Name name, PlanObjectPtr relation, const Value& value)
+Column::Column(Name name, PlanObjectP relation, const Value& value)
     : Expr(PlanType::kColumn, value), name_(name), relation_(relation) {
   columns_.add(this);
   if (relation_ && relation_->type() == PlanType::kTable) {
@@ -476,10 +476,10 @@ void addEdge(EdgeSet& edges, int32_t id1, int32_t id2) {
 }
 
 void fillJoins(
-    PlanObjectConstPtr column,
+    PlanObjectCP column,
     const Equivalence& equivalence,
     EdgeSet& edges,
-    DerivedTablePtr dt) {
+    DerivedTableP dt) {
   for (auto& other : equivalence.columns) {
     if (!hasEdge(edges, column->id(), other->id())) {
       addEdge(edges, column->id(), other->id());
@@ -542,7 +542,7 @@ void DerivedTable::setStartTables() {
   }
 }
 
-bool isSingleRowDt(PlanObjectConstPtr object) {
+bool isSingleRowDt(PlanObjectCP object) {
   if (object->type() == PlanType::kDerivedTable) {
     auto dt = object->as<DerivedTable>();
     return dt->limit == 1 ||
@@ -563,7 +563,7 @@ void DerivedTable::findSingleRowDts() {
       tablesCopy.except(filter->allTables());
     }
   }
-  tablesCopy.forEach([&](PlanObjectConstPtr object) {
+  tablesCopy.forEach([&](PlanObjectCP object) {
     if (isSingleRowDt(object)) {
       ++numSingle;
       singleRowDts.add(object);
@@ -595,7 +595,7 @@ void DerivedTable::linkTablesToJoins() {
         tables.unionSet(conjunct->allTables());
       }
     }
-    tables.forEachMutable([&](PlanObjectPtr table) {
+    tables.forEachMutable([&](PlanObjectP table) {
       if (table->type() == PlanType::kTable) {
         table->as<BaseTable>()->addJoinedBy(join);
       } else {
@@ -608,7 +608,7 @@ void DerivedTable::linkTablesToJoins() {
 
 // Returns a right exists (semijoin) with 'table' on the left and one of
 // 'tables' on the right.
-JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
+JoinEdgeP makeExists(PlanObjectCP table, PlanObjectSet tables) {
   for (auto join : joinedBy(table)) {
     if (join->leftTable() == table) {
       if (!tables.contains(join->rightTable())) {
@@ -637,12 +637,12 @@ JoinEdgePtr makeExists(PlanObjectConstPtr table, PlanObjectSet tables) {
   VELOX_UNREACHABLE("No join to make an exists build side restriction");
 }
 
-std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
+std::pair<DerivedTableP, JoinEdgeP> makeExistsDtAndJoin(
     const DerivedTable& super,
-    PlanObjectConstPtr firstTable,
+    PlanObjectCP firstTable,
     float existsFanout,
     PlanObjectVector& existsTables,
-    JoinEdgePtr existsJoin) {
+    JoinEdgeP existsJoin) {
   auto firstExistsTable = existsJoin->rightKeys()[0]->singleTable();
   VELOX_CHECK(firstExistsTable);
   MemoKey existsDtKey;
@@ -653,7 +653,7 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
   auto optimization = queryCtx()->optimization();
   existsDtKey.tables.unionObjects(existsTables);
   auto it = optimization->existenceDts().find(existsDtKey);
-  DerivedTablePtr existsDt;
+  DerivedTableP existsDt;
   if (it == optimization->existenceDts().end()) {
     auto* newDt = make<DerivedTable>();
     existsDt = newDt;
@@ -684,7 +684,7 @@ std::pair<DerivedTablePtr, JoinEdgePtr> makeExistsDtAndJoin(
 
 void DerivedTable::import(
     const DerivedTable& super,
-    PlanObjectConstPtr firstTable,
+    PlanObjectCP firstTable,
     const PlanObjectSet& _tables,
     const std::vector<PlanObjectSet>& existences,
     float existsFanout) {
@@ -802,8 +802,8 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectConstPtr FOLLY_NULLABLE
-otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
+PlanObjectCP FOLLY_NULLABLE
+otherSide(JoinEdgeP join, PlanObjectCP side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -812,24 +812,24 @@ otherSide(JoinEdgePtr join, PlanObjectConstPtr side) {
   return nullptr;
 }
 
-bool isProjected(PlanObjectConstPtr table, PlanObjectSet columns) {
+bool isProjected(PlanObjectCP table, PlanObjectSet columns) {
   bool projected = false;
-  columns.forEach([&](PlanObjectConstPtr column) {
+  columns.forEach([&](PlanObjectCP column) {
     projected |= column->as<Column>()->relation() == table;
   });
   return projected;
 }
 
 // True if 'join'  has max 1 match for a row of 'side'.
-bool isUnique(JoinEdgePtr join, PlanObjectConstPtr side) {
+bool isUnique(JoinEdgeP join, PlanObjectCP side) {
   return join->sideOf(side, true).isUnique;
 }
 
 // Returns a join partner of 'startin 'joins' ' where the partner is
 // not in 'visited' Sets 'isFullyImported' to false if the partner is
 // not guaranteed n:1 reducing or has columns that are projected out.
-PlanObjectConstPtr FOLLY_NULLABLE nextJoin(
-    PlanObjectConstPtr start,
+PlanObjectCP FOLLY_NULLABLE nextJoin(
+    PlanObjectCP start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
     PlanObjectSet visited,
@@ -851,12 +851,12 @@ PlanObjectConstPtr FOLLY_NULLABLE nextJoin(
 }
 
 void joinChain(
-    PlanObjectConstPtr start,
+    PlanObjectCP start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
     PlanObjectSet visited,
     bool& fullyImported,
-    std::vector<PlanObjectConstPtr>& path) {
+    std::vector<PlanObjectCP>& path) {
   auto next = nextJoin(start, joins, columns, visited, fullyImported);
   if (!next) {
     return;
@@ -866,9 +866,9 @@ void joinChain(
   joinChain(next, joins, columns, visited, fullyImported, path);
 }
 
-JoinEdgePtr importedJoin(
-    JoinEdgePtr join,
-    PlanObjectConstPtr other,
+JoinEdgeP importedJoin(
+    JoinEdgeP join,
+    PlanObjectCP other,
     ExprPtr innerKey,
     bool fullyImported) {
   auto left = singleTable(innerKey);
@@ -880,9 +880,9 @@ JoinEdgePtr importedJoin(
   return newJoin;
 }
 
-JoinEdgePtr importedDtJoin(
-    JoinEdgePtr join,
-    DerivedTablePtr dt,
+JoinEdgeP importedDtJoin(
+    JoinEdgeP join,
+    DerivedTableP dt,
     ExprPtr innerKey,
     bool fullyImported) {
   auto left = singleTable(innerKey);
@@ -959,7 +959,7 @@ void DerivedTable::importJoinsIntoFirstDt(const DerivedTable* firstDt) {
     PlanObjectSet visited;
     visited.add(firstDt);
     visited.add(other);
-    std::vector<PlanObjectConstPtr> path;
+    std::vector<PlanObjectCP> path;
     bool fullyImported = otherSide.isUnique;
     joinChain(other, joins, projected, visited, fullyImported, path);
     if (path.empty()) {
@@ -1030,7 +1030,7 @@ void BaseTable::addFilter(ExprPtr expr) {
   auto columns = expr->columns();
   bool isMultiColumn = false;
   bool isSingleColumn = false;
-  columns.forEach([&](PlanObjectConstPtr object) {
+  columns.forEach([&](PlanObjectCP object) {
     if (!isMultiColumn) {
       if (isSingleColumn) {
         isMultiColumn = true;
@@ -1052,8 +1052,8 @@ void BaseTable::addFilter(ExprPtr expr) {
 // and [1] to the right table of the found join. Returns the JoinEdge. If
 // 'create' is true and no edge is found, makes a new edge with tables[0] as
 // left and [1] as right.
-JoinEdgePtr
-findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
+JoinEdgeP
+findJoin(DerivedTableP dt, std::vector<PlanObjectP>& tables, bool create) {
   for (auto& join : dt->joins) {
     if (join->leftTable() == tables[0] && join->rightTable() == tables[1]) {
       return join;
@@ -1077,7 +1077,7 @@ findJoin(DerivedTablePtr dt, std::vector<PlanObjectPtr>& tables, bool create) {
 // the other in 'right'.
 bool isJoinEquality(
     ExprPtr expr,
-    std::vector<PlanObjectPtr>& tables,
+    std::vector<PlanObjectP>& tables,
     ExprPtr& left,
     ExprPtr& right) {
   if (expr->type() == PlanType::kCall) {
@@ -1100,10 +1100,10 @@ bool isJoinEquality(
 }
 
 void DerivedTable::distributeConjuncts() {
-  std::vector<DerivedTablePtr> changedDts;
+  std::vector<DerivedTableP> changedDts;
   for (auto i = 0; i < conjuncts.size(); ++i) {
     PlanObjectSet tableSet = conjuncts[i]->allTables();
-    std::vector<PlanObjectPtr> tables;
+    std::vector<PlanObjectP> tables;
     tableSet.forEachMutable([&](auto table) { tables.push_back(table); });
     if (tables.size() == 1) {
       if (tables[0] == this) {
@@ -1262,7 +1262,7 @@ ColumnPtr SchemaTable::findColumn(const std::string& name) const {
   return it->second;
 }
 
-Schema::Schema(const char* _name, std::vector<SchemaTablePtr> tables)
+Schema::Schema(const char* _name, std::vector<SchemaTableCP> tables)
     : name_(_name), defaultLocus_(std::make_unique<Locus>("local")) {
   for (auto& table : tables) {
     tables_[table->name] = table;
@@ -1276,7 +1276,7 @@ Schema::Schema(const char* _name, velox::runner::Schema* source)
           std::make_unique<Locus>(source->connector()->connectorId().c_str())) {
 }
 
-SchemaTablePtr Schema::findTable(std::string_view name) const {
+SchemaTableCP Schema::findTable(std::string_view name) const {
   auto internedName = toName(name);
   auto it = tables_.find(internedName);
   if (it != tables_.end()) {
@@ -1307,7 +1307,7 @@ SchemaTablePtr Schema::findTable(std::string_view name) const {
   return schemaTable;
 }
 
-void Schema::addTable(SchemaTablePtr table) const {
+void Schema::addTable(SchemaTableCP table) const {
   tables_[table->name] = table;
 }
 
@@ -1358,7 +1358,7 @@ float combine(float card, int32_t ith, float otherCard) {
   return card / otherCard;
 }
 
-IndexInfo SchemaTable::indexInfo(IndexPtr index, PtrSpan<Column> columns)
+IndexInfo SchemaTable::indexInfo(ColumnGroupP index, PtrSpan<Column> columns)
     const {
   IndexInfo info;
   info.index = index;
@@ -1455,7 +1455,7 @@ IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) const {
   return best;
 }
 
-IndexInfo joinCardinality(PlanObjectConstPtr table, PtrSpan<Column> keys) {
+IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys) {
   if (table->type() == PlanType::kTable) {
     auto schemaTable = table->as<BaseTable>()->schemaTable;
     return schemaTable->indexByColumns(keys);
@@ -1492,14 +1492,14 @@ ColumnPtr FOLLY_NULLABLE IndexInfo::schemaColumn(ColumnPtr keyValue) const {
 
 // The fraction of rows of a base table selected by non-join filters. 0.2
 // means 1 in 5 are selected.
-float baseSelectivity(PlanObjectConstPtr object) {
+float baseSelectivity(PlanObjectCP object) {
   if (object->type() == PlanType::kTable) {
     return object->as<BaseTable>()->filterSelectivity;
   }
   return 1;
 }
 
-float tableCardinality(PlanObjectConstPtr table) {
+float tableCardinality(PlanObjectCP table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()
         ->schemaTable->indices[0]

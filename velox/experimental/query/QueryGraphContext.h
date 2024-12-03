@@ -37,15 +37,15 @@ using PtrSpan = folly::Range<const T* const*>;
 
 class PlanObject;
 
-using PlanObjectPtr = PlanObject*;
-using PlanObjectConstPtr = const PlanObject*;
+using PlanObjectP = PlanObject*;
+using PlanObjectCP = const PlanObject*;
 
-struct PlanObjectPtrHasher {
-  size_t operator()(const PlanObjectConstPtr& object) const;
+struct PlanObjectPHasher {
+  size_t operator()(const PlanObjectCP& object) const;
 };
 
-struct PlanObjectPtrComparer {
-  bool operator()(const PlanObjectConstPtr& lhs, const PlanObjectConstPtr& rhs)
+struct PlanObjectPComparer {
+  bool operator()(const PlanObjectCP& lhs, const PlanObjectCP& rhs)
       const;
 };
 
@@ -108,14 +108,14 @@ class QueryGraphContext {
   /// Returns a canonical instance for all logically equal values of 'object'.
   /// Returns 'object' on first call with object, thereafter the same physical
   /// object if the argument is equal.
-  PlanObjectPtr dedup(PlanObjectPtr object);
+  PlanObjectP dedup(PlanObjectP object);
 
   /// Returns the object associated to 'id'. See newId()
-  PlanObjectConstPtr objectAt(int32_t id) {
+  PlanObjectCP objectAt(int32_t id) {
     return objects_[id];
   }
 
-  PlanObjectPtr mutableObjectAt(int32_t id) {
+  PlanObjectP mutableObjectAt(int32_t id) {
     return objects_[id];
   }
 
@@ -135,14 +135,14 @@ class QueryGraphContext {
   ArenaCache cache_;
 
   // PlanObjects are stored at the index given by their id.
-  std::vector<PlanObjectPtr> objects_;
+  std::vector<PlanObjectP> objects_;
 
   // Set of interned copies of identifiers. insert() into this returns the
   // canonical interned copy of any string. Lifetime is limited to 'allocator_'.
   std::unordered_set<std::string_view> names_;
 
   // Set for deduplicating planObject trees.
-  std::unordered_set<PlanObjectPtr, PlanObjectPtrHasher, PlanObjectPtrComparer>
+  std::unordered_set<PlanObjectP, PlanObjectPHasher, PlanObjectPComparer>
       deduppedObjects_;
   Plan* FOLLY_NULLABLE contextPlan_{nullptr};
   Optimization* FOLLY_NULLABLE optimization_{nullptr};

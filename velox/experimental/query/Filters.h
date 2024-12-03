@@ -32,6 +32,6 @@ ExprVector extractCommonConjuncts(ExprVector conjuncts) {}
 // Extracts an OR that can be resolved for 'table'.  This has a result
 // if each disjunct of 'or' is an and that specifies some condition
 // that can be resolved within 'table'.
-disjunctsForTable(ExprPtr or, PlanObjectConstPtr table);
+disjunctsForTable(ExprPtr or, PlanObjectCP table);
 
 } // namespace facebook::velox::optimizer

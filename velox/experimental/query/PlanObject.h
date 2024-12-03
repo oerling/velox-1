@@ -118,7 +118,7 @@ class PlanObject {
 class PlanObjectSet {
  public:
   /// True if id of 'object' is in 'this'.
-  bool contains(PlanObjectConstPtr object) const {
+  bool contains(PlanObjectCP object) const {
     return object->id() < bits_.size() * 64 &&
         velox::bits::isBitSet(bits_.data(), object->id());
   }
@@ -138,7 +138,7 @@ class PlanObjectSet {
   }
 
   /// Inserts id of 'object'.
-  void add(PlanObjectConstPtr object) {
+  void add(PlanObjectCP object) {
     auto id = object->id();
     ensureSize(id);
     velox::bits::setBit(bits_.data(), id);
@@ -148,7 +148,7 @@ class PlanObjectSet {
   bool isSubset(const PlanObjectSet& super) const;
 
   /// Erases id of 'object'.
-  void erase(PlanObjectConstPtr object) {
+  void erase(PlanObjectCP object) {
     if (object->id() < bits_.size() * 64) {
       velox::bits::clearBit(bits_.data(), object->id());
     }
@@ -202,7 +202,7 @@ class PlanObjectSet {
   }
 
   /// Returns the objects corresponding to ids in 'this' as a vector of T.
-  template <typename T = PlanObjectPtr>
+  template <typename T = PlanObjectP>
   std::vector<T> objects() const {
     std::vector<T> result;
     forEach(
@@ -230,7 +230,7 @@ class PlanObjectSet {
 };
 
 using PlanObjectVector =
-    std::vector<PlanObjectConstPtr, QGAllocator<PlanObjectConstPtr>>;
+    std::vector<PlanObjectCP, QGAllocator<PlanObjectCP>>;
 
 } // namespace facebook::velox::optimizer
 

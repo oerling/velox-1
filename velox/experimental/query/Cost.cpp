@@ -69,7 +69,7 @@ float Index::lookupCost(float range) const {
 
 float orderPrefixDistance(
     RelationOpPtr input,
-    IndexPtr index,
+    ColumnGroupP index,
     const ExprVector& keys) {
   int32_t i = 0;
   float selection = 1;

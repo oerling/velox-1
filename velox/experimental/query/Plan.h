@@ -128,21 +128,21 @@ struct PlanSet {
 struct JoinCandidate {
   JoinCandidate() = default;
 
-  JoinCandidate(JoinEdgePtr _join, PlanObjectConstPtr _right, float _fanout)
+  JoinCandidate(JoinEdgeP _join, PlanObjectCP _right, float _fanout)
       : join(_join), tables({_right}), fanout(_fanout) {}
 
   // Returns the join side info for 'table'. If 'other' is set, returns the
   // other side.
-  JoinSide sideOf(PlanObjectConstPtr side, bool other = false) const;
+  JoinSide sideOf(PlanObjectCP side, bool other = false) const;
 
   std::string toString() const;
 
   // The join between already placed tables and the table(s) in 'this'.
-  JoinEdgePtr join{nullptr};
+  JoinEdgeP join{nullptr};
 
   // Tables to join on the build side. The tables must not be already placed in
   // the plan. side, i.e. be alread
-  std::vector<PlanObjectConstPtr> tables;
+  std::vector<PlanObjectCP> tables;
 
   // Joins imported from the left side for reducing a build
   // size. These could be ignored without affecting the result but can
@@ -201,15 +201,15 @@ class Optimization;
 /// Tracks the set of tables / columns that have been placed or are still needed
 /// when constructing a partial plan.
 struct PlanState {
-  PlanState(Optimization& optimization, DerivedTablePtr dt)
+  PlanState(Optimization& optimization, DerivedTableP dt)
       : optimization(optimization), dt(dt) {}
 
-  PlanState(Optimization& optimization, DerivedTablePtr dt, PlanPtr plan)
+  PlanState(Optimization& optimization, DerivedTableP dt, PlanPtr plan)
       : optimization(optimization), dt(dt), cost(plan->cost) {}
 
   Optimization& optimization;
   // The derived table from which the tables are drawn.
-  DerivedTablePtr dt{nullptr};
+  DerivedTableP dt{nullptr};
 
   // The tables that have been placed so far.
   PlanObjectSet placed;
@@ -316,7 +316,7 @@ struct MemoKey {
   bool operator==(const MemoKey& other) const;
   size_t hash() const;
 
-  PlanObjectConstPtr firstTable;
+  PlanObjectCP firstTable;
   PlanObjectSet columns;
   PlanObjectSet tables;
   std::vector<PlanObjectSet> existences;
@@ -454,19 +454,19 @@ class Optimization {
 
   // Initializes a tree of DerivedTables with JoinEdges from 'plan' given at
   // construction. Sets 'root_' to the root DerivedTable.
-  DerivedTablePtr makeQueryGraph();
+  DerivedTableP makeQueryGraph();
 
   // Converts 'plan' to PlanObjects and records join edges into
   // 'currentSelect_'. If 'node' does not match  allowedInDt, wraps 'node' in a
   // new DerivedTable.
-  PlanObjectPtr makeQueryGraph(
+  PlanObjectP makeQueryGraph(
       const velox::core::PlanNode& node,
       uint64_t allowedInDt);
 
   // Sets the columns to project out from the root DerivedTable  based on
   // 'plan'.
   void setDerivedTableOutput(
-      DerivedTablePtr dt,
+      DerivedTableP dt,
       const velox::core::PlanNode& planNode);
 
   // Returns a literal from applying 'call' or 'cast' to 'literals'. nullptr if
@@ -508,18 +508,18 @@ class Optimization {
   void translateNonEqualityJoin(const velox::core::NestedLoopJoinNode& join);
 
   // Adds order by information to the enclosing DerivedTable.
-  OrderByPtr FOLLY_NULLABLE
+  OrderByP FOLLY_NULLABLE
   translateOrderBy(const velox::core::OrderByNode& order);
 
   // Adds aggregation information to the enclosing DerivedTable.
-  AggregationPtr FOLLY_NULLABLE
+  AggregationP FOLLY_NULLABLE
   translateAggregation(const velox::core::AggregationNode& aggregation);
 
   // Adds 'node' and descendants to query graph wrapped inside a
   // DerivedTable. Done for joins to the right of non-inner joins,
   // group bys as non-top operators, whenever descendents of 'node'
   // are not freely reorderable with its parents' descendents.
-  PlanObjectPtr wrapInDt(const velox::core::PlanNode& node);
+  PlanObjectP wrapInDt(const velox::core::PlanNode& node);
 
   /// Retrieves or makes a plan from 'key'. 'key' specifies a set of
   /// top level joined tables or a hash join build side table or
@@ -557,7 +557,7 @@ class Optimization {
   // Adds group by, order by, top k to 'plan'. Updates 'plan' if
   // relation ops added.  Sets cost in 'state'.
   void
-  addPostprocess(DerivedTablePtr dt, RelationOpPtr& plan, PlanState& state);
+  addPostprocess(DerivedTableP dt, RelationOpPtr& plan, PlanState& state);
 
   // Places a derived table as first table in a plan. Imports possibly reducing
   // joins into the plan if can.
@@ -682,10 +682,10 @@ class Optimization {
   History& history_;
   velox::core::ExpressionEvaluator& evaluator_;
   // Top DerivedTable when making a QueryGraph from PlanNode.
-  DerivedTablePtr root_;
+  DerivedTableP root_;
 
   // Innermost DerivedTable when making a QueryGraph from PlanNode.
-  DerivedTablePtr currentSelect_;
+  DerivedTableP currentSelect_;
 
   // Maps names in project noes of 'inputPlan_' to deduplicated Exprs.
   std::unordered_map<std::string, ExprPtr> renames_;
@@ -712,7 +712,7 @@ class Optimization {
 
   // Set of previously planned dts for importing probe side reducing joins to a
   // build side
-  std::unordered_map<MemoKey, DerivedTablePtr> existenceDts_;
+  std::unordered_map<MemoKey, DerivedTableP> existenceDts_;
 
   // The top level PlanState. Contains the set of top level interesting plans.
   // Must stay alive as long as the Plans and RelationOps are reeferenced.
@@ -754,8 +754,8 @@ class Optimization {
 /// Returns bits describing function 'name'.
 FunctionSet functionBits(Name name);
 
-const JoinEdgeVector& joinedBy(PlanObjectConstPtr table);
+const JoinEdgeVector& joinedBy(PlanObjectCP table);
 
-void filterUpdated(BaseTablePtr baseTable);
+void filterUpdated(BaseTableCP baseTable);
 
 } // namespace facebook::velox::optimizer

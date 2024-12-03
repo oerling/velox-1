@@ -158,7 +158,7 @@ struct TableScan : public RelationOp {
       RelationOpPtr input,
       Distribution _distribution,
       const BaseTable* table,
-      IndexPtr _index,
+      ColumnGroupP _index,
       float fanout,
       ColumnVector columns,
       ExprVector lookupKeys = {},
@@ -180,14 +180,14 @@ struct TableScan : public RelationOp {
   /// Columns of base table available in 'index'.
   static PlanObjectSet availableColumns(
       const BaseTable* baseTable,
-      IndexPtr index);
+      ColumnGroupP index);
 
   /// Returns the distribution given the table, index and columns. If
   /// partitioning/ordering columns are in the output columns, the
   /// distribution reflects the distribution of the index.
   static Distribution outputDistribution(
       const BaseTable* baseTable,
-      IndexPtr index,
+      ColumnGroupP index,
       const ColumnVector& columns);
 
   void setCost(const PlanState& input) override;
@@ -201,7 +201,7 @@ struct TableScan : public RelationOp {
 
   // Index (or other materialization of table) used for the physical data
   // access.
-  IndexPtr index;
+  ColumnGroupP index;
 
   // Columns read from 'baseTable'. Can be more than 'columns' if
   // there are filters that need columns that are not projected out to
@@ -374,7 +374,7 @@ struct Aggregation : public RelationOp {
   // to any() aggregates.
   PlanObjectSet dependentKeys;
 
-  std::vector<AggregatePtr, QGAllocator<AggregatePtr>> aggregates;
+  std::vector<AggregateCP, QGAllocator<AggregateCP>> aggregates;
 
   velox::core::AggregationNode::Step step{
       velox::core::AggregationNode::Step::kSingle};
