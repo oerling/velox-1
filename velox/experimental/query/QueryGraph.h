@@ -754,4 +754,7 @@ float tableCardinality(PlanObjectCP table);
 /// Returns all distinct tables 'exprs' depend on.
 PlanObjectSet allTables(PtrSpan<Expr> exprs);
 
+/// Appends the string representation of 'exprs' to 'out'.
+void exprsToString(const ExprVector& exprs, std::stringstream& out);
+  
 } // namespace facebook::velox::optimizer

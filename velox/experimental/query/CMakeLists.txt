@@ -18,7 +18,10 @@ add_library(
   velox_verax
   ToGraph.cpp
   Plan.cpp
+  PlanObject.cpp
+  Schema.cpp
   QueryGraph.cpp
+  QueryGraphContext.cpp
   Filters.cpp
   Cost.cpp
   PlanUtils.cpp

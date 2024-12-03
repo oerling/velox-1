@@ -357,6 +357,10 @@ struct IndexInfo {
   ColumnCP schemaColumn(ColumnCP keyValue) const;
 };
 
+IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys);
+
+  float baseSelectivity(PlanObjectCP object);
+    
 /// A table in a schema. The table may have multiple differently ordered and
 /// partitioned physical representations (indices). Not all indices need to
 /// contain all columns.
