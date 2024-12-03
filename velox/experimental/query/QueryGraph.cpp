@@ -141,7 +141,7 @@ size_t PlanObjectSet::hash() const {
   return hash * hash;
 }
 
-void PlanObjectSet::unionColumns(ExprPtr expr) {
+void PlanObjectSet::unionColumns(ExprCP expr) {
   switch (expr->type()) {
     case PlanType::kLiteral:
       return;
@@ -206,7 +206,7 @@ std::string PlanObjectSet::toString(bool names) const {
   return out.str();
 }
 
-void Column::equals(ColumnPtr other) const {
+void Column::equals(ColumnCP other) const {
   if (!equivalence_ && !other->equivalence_) {
     auto* equiv = make<Equivalence>();
     equiv->columns.push_back(this);
@@ -293,7 +293,7 @@ bool JoinEdge::isBroadcastableType() const {
   return !leftOptional_;
 }
 
-void JoinEdge::addEquality(ExprPtr left, ExprPtr right) {
+void JoinEdge::addEquality(ExprCP left, ExprCP right) {
   leftKeys_.push_back(left);
   rightKeys_.push_back(right);
   guessFanout();
@@ -424,8 +424,8 @@ Column::Column(Name name, PlanObjectP relation, const Value& value)
 }
 
 void DerivedTable::addJoinEquality(
-    ExprPtr left,
-    ExprPtr right,
+    ExprCP left,
+    ExprCP right,
     const ExprVector& filter,
     bool leftOptional,
     bool rightOptional,
@@ -733,8 +733,8 @@ void DerivedTable::import(
 
 // Returns a copy of 'expr,, replacing instances of columns in 'outer' with the
 // corresponding expression from 'inner'
-ExprPtr FOLLY_NULLABLE
-importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
+ExprCP FOLLY_NULLABLE
+importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   if (!expr) {
     return nullptr;
   }
@@ -751,7 +751,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
     case PlanType::kCall:
     case PlanType::kAggregate: {
       auto children = expr->children();
-      std::vector<ExprPtr> newChildren(children.size());
+      std::vector<ExprCP> newChildren(children.size());
       FunctionSet functions;
       bool anyChange = false;
       for (auto i = 0; i < children.size(); ++i) {
@@ -761,7 +761,7 @@ importExpr(ExprPtr expr, const ColumnVector& outer, const ExprVector& inner) {
           functions = functions | newChildren[i]->as<Call>()->functions();
         }
       }
-      ExprPtr newCondition = nullptr;
+      ExprCP newCondition = nullptr;
       if (expr->type() == PlanType::kAggregate) {
         newCondition =
             importExpr(expr->as<Aggregate>()->condition(), outer, inner);
@@ -869,7 +869,7 @@ void joinChain(
 JoinEdgeP importedJoin(
     JoinEdgeP join,
     PlanObjectCP other,
-    ExprPtr innerKey,
+    ExprCP innerKey,
     bool fullyImported) {
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
@@ -883,7 +883,7 @@ JoinEdgeP importedJoin(
 JoinEdgeP importedDtJoin(
     JoinEdgeP join,
     DerivedTableP dt,
-    ExprPtr innerKey,
+    ExprCP innerKey,
     bool fullyImported) {
   auto left = singleTable(innerKey);
   VELOX_CHECK(left);
@@ -1026,7 +1026,7 @@ void DerivedTable::flattenDt(const DerivedTable* dt) {
   having = dt->having;
 }
 
-void BaseTable::addFilter(ExprPtr expr) {
+void BaseTable::addFilter(ExprCP expr) {
   auto columns = expr->columns();
   bool isMultiColumn = false;
   bool isSingleColumn = false;
@@ -1076,10 +1076,10 @@ findJoin(DerivedTableP dt, std::vector<PlanObjectP>& tables, bool create) {
 // on the other. If true, returns the side depending on tables[0] in 'left' and
 // the other in 'right'.
 bool isJoinEquality(
-    ExprPtr expr,
+    ExprCP expr,
     std::vector<PlanObjectP>& tables,
-    ExprPtr& left,
-    ExprPtr& right) {
+    ExprCP& left,
+    ExprCP& right) {
   if (expr->type() == PlanType::kCall) {
     auto call = expr->as<Call>();
     if (call->name() == toName("eq")) {
@@ -1122,8 +1122,8 @@ void DerivedTable::distributeConjuncts() {
       continue;
     }
     if (tables.size() == 2) {
-      ExprPtr left = nullptr;
-      ExprPtr right = nullptr;
+      ExprCP left = nullptr;
+      ExprCP right = nullptr;
       // expr depends on 2 tables. If it is left = right or right = left and
       // there is no edge or the edge is inner, add the equality. For other
       // cases, leave the conjunct in place, to be evaluated when its
@@ -1213,9 +1213,9 @@ std::string DerivedTable::toString() const {
   return out.str();
 }
 
-std::vector<ColumnPtr> SchemaTable::toColumns(
+std::vector<ColumnCP> SchemaTable::toColumns(
     const std::vector<std::string>& names) {
-  std::vector<ColumnPtr> columns(names.size());
+  std::vector<ColumnCP> columns(names.size());
   assert(!columns.empty()); // lint
   for (auto i = 0; i < names.size(); ++i) {
     columns[i] = findColumn(name);
@@ -1246,7 +1246,7 @@ void SchemaTable::addIndex(
   indices.push_back(index);
 }
 
-ColumnPtr SchemaTable::column(const std::string& name, const Value& value) {
+ColumnCP SchemaTable::column(const std::string& name, const Value& value) {
   auto it = columns.find(toName(name));
   if (it != columns.end()) {
     return it->second;
@@ -1256,7 +1256,7 @@ ColumnPtr SchemaTable::column(const std::string& name, const Value& value) {
   return column;
 }
 
-ColumnPtr SchemaTable::findColumn(const std::string& name) const {
+ColumnCP SchemaTable::findColumn(const std::string& name) const {
   auto it = columns.find(toName(name));
   VELOX_CHECK(it != columns.end());
   return it->second;
@@ -1312,7 +1312,7 @@ void Schema::addTable(SchemaTableCP table) const {
 }
 
 template <typename T>
-ColumnPtr findColumnByName(const T& columns, Name name) {
+ColumnCP findColumnByName(const T& columns, Name name) {
   for (auto column : columns) {
     if (column->type() == PlanType::kColumn &&
         column->template as<Column>()->name() == name) {
@@ -1481,7 +1481,7 @@ IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys) {
   return result;
 }
 
-ColumnPtr FOLLY_NULLABLE IndexInfo::schemaColumn(ColumnPtr keyValue) const {
+ColumnCP FOLLY_NULLABLE IndexInfo::schemaColumn(ColumnCP keyValue) const {
   for (auto& column : index->columns()) {
     if (column->name() == keyValue->name()) {
       return column;

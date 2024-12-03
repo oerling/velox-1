@@ -198,10 +198,10 @@ struct QGAllocator {
 
 // Forward declarations of common types and collections.
 class Expr;
-using ExprPtr = const Expr*;
+using ExprCP = const Expr*;
 class Column;
-using ColumnPtr = const Column*;
-using ExprVector = std::vector<ExprPtr, QGAllocator<ExprPtr>>;
-using ColumnVector = std::vector<ColumnPtr, QGAllocator<ColumnPtr>>;
+using ColumnCP = const Column*;
+using ExprVector = std::vector<ExprCP, QGAllocator<ExprCP>>;
+using ColumnVector = std::vector<ColumnCP, QGAllocator<ColumnCP>>;
 
 } // namespace facebook::velox::optimizer

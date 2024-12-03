@@ -970,7 +970,7 @@ void Optimization::joinByHash(
 
   ColumnVector columns;
   PlanObjectSet columnSet;
-  ColumnPtr mark = nullptr;
+  ColumnCP mark = nullptr;
   PlanObjectSet probeColumns;
   probeColumns.unionColumns(plan->columns());
   auto joinType = build.leftJoinType();
@@ -979,7 +979,7 @@ void Optimization::joinByHash(
       joinType == JoinType::kLeftSemiProject;
   downstream = state.downstreamColumns();
   downstream.forEach([&](auto object) {
-    auto column = reinterpret_cast<ColumnPtr>(object);
+    auto column = reinterpret_cast<ColumnCP>(object);
     if (column == build.markColumn) {
       mark = column;
       columnSet.add(object);
@@ -1096,7 +1096,7 @@ void Optimization::joinByHashRight(
 
   ColumnVector columns;
   PlanObjectSet columnSet;
-  ColumnPtr mark = nullptr;
+  ColumnCP mark = nullptr;
   PlanObjectSet buildColumns;
   buildColumns.unionColumns(plan->columns());
   auto joinType = probe.leftJoinType();
@@ -1120,7 +1120,7 @@ void Optimization::joinByHashRight(
       joinType == JoinType::kRightSemiProject;
   downstream = state.downstreamColumns();
   downstream.forEach([&](auto object) {
-    auto column = reinterpret_cast<ColumnPtr>(object);
+    auto column = reinterpret_cast<ColumnCP>(object);
     if (column == probe.markColumn) {
       mark = column;
       return;
@@ -1228,7 +1228,7 @@ void Optimization::tryNextJoins(
 RelationOpPtr Optimization::placeSingleRowDt(
     RelationOpPtr plan,
     const DerivedTable* subq,
-    ExprPtr filter,
+    ExprCP filter,
     PlanState& state) {
   auto broadcast = Distribution::broadcast(DistributionType(), 1);
   MemoKey memoKey;

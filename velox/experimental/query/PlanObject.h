@@ -164,7 +164,7 @@ class PlanObjectSet {
   }
 
   /// Adds ids of all columns 'expr' depends on.
-  void unionColumns(ExprPtr expr);
+  void unionColumns(ExprCP expr);
 
   /// Adds ids of all columns 'exprs' depend on.
   void unionColumns(const ExprVector& exprs);

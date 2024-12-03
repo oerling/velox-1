@@ -175,7 +175,7 @@ core::TypedExprPtr Optimization::toAnd(const ExprVector& exprs) {
   return result;
 }
 
-core::TypedExprPtr Optimization::toTypedExpr(ExprPtr expr) {
+core::TypedExprPtr Optimization::toTypedExpr(ExprCP expr) {
   switch (expr->type()) {
     case PlanType::kColumn: {
       auto column = expr->as<Column>();
@@ -225,7 +225,7 @@ class TempProjections {
     exprs_.insert(exprs_.begin(), fieldRefs_.begin(), fieldRefs_.end());
   }
 
-  core::FieldAccessTypedExprPtr toFieldRef(ExprPtr expr) {
+  core::FieldAccessTypedExprPtr toFieldRef(ExprCP expr) {
     auto it = exprChannel_.find(expr);
     if (it == exprChannel_.end()) {
       VELOX_CHECK(expr->type() != PlanType::kColumn);
@@ -266,7 +266,7 @@ class TempProjections {
   std::vector<core::FieldAccessTypedExprPtr> fieldRefs_;
   std::vector<std::string> names_;
   std::vector<core::TypedExprPtr> exprs_;
-  std::unordered_map<ExprPtr, int32_t> exprChannel_;
+  std::unordered_map<ExprCP, int32_t> exprChannel_;
 };
 
 core::PlanNodePtr Optimization::makeAggregation(

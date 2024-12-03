@@ -117,7 +117,7 @@ variant toVariant(BaseVector& constantVector) {
   VELOX_FAIL("Literal not of foldable type");
 }
 
-ExprPtr Optimization::tryFoldConstant(
+ExprCP Optimization::tryFoldConstant(
     const core::CallTypedExpr* call,
     const core::CastTypedExpr* cast,
     const ExprVector& literals) {
@@ -147,7 +147,7 @@ ExprPtr Optimization::tryFoldConstant(
   }
 }
 
-ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
+ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
   registerType(expr->type());
   if (auto name = columnName(expr)) {
     return translateColumn(*name);
@@ -208,7 +208,7 @@ ExprPtr Optimization::translateExpr(const core::TypedExprPtr& expr) {
   return nullptr;
 }
 
-ExprPtr Optimization::translateColumn(const std::string& name) {
+ExprCP Optimization::translateColumn(const std::string& name) {
   auto column = renames_.find(name);
   if (column != renames_.end()) {
     return column->second;
@@ -260,7 +260,7 @@ Optimization::translateAggregation(const core::AggregationNode& source) {
     aggregation->intermediateColumns = aggregation->columns();
     for (auto i = 0; i < source.aggregateNames().size(); ++i) {
       auto rawFunc = translateExpr(source.aggregates()[i].call)->as<Call>();
-      ExprPtr condition = nullptr;
+      ExprCP condition = nullptr;
       if (source.aggregates()[i].mask) {
         condition = translateExpr(source.aggregates()[i].mask);
       }
@@ -308,7 +308,7 @@ OrderByP Optimization::translateOrderBy(const core::OrderByNode& order) {
   return orderBy;
 }
 
-ColumnPtr Optimization::makeMark(const core::AbstractJoinNode& join) {
+ColumnCP Optimization::makeMark(const core::AbstractJoinNode& join) {
   auto type = join.outputType();
   auto name = toName(type->nameOf(type->size() - 1));
   Value value(type->childAt(type->size() - 1).get(), 2);
@@ -350,7 +350,7 @@ void Optimization::translateJoin(const core::AbstractJoinNode& join) {
         joinType == core::JoinType::kLeft || joinType == core::JoinType::kFull;
     bool rightExists = joinType == core::JoinType::kLeftSemiFilter;
     bool rightNotExists = joinType == core::JoinType::kAnti;
-    ColumnPtr markColumn =
+    ColumnCP markColumn =
         joinType == core::JoinType::kLeftSemiProject ? makeMark(join) : nullptr;
     ;
 
@@ -458,7 +458,7 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
   // node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
   for (auto i = 0; i < type->size(); ++i) {
     registerType(type->childAt(i));
-    ExprPtr inner = translateColumn(type->nameOf(i));
+    ExprCP inner = translateColumn(type->nameOf(i));
     newDt->exprs.push_back(inner);
     auto* outer = make<Column>(toName(type->nameOf(i)), newDt, inner->value());
     newDt->columns.push_back(outer);

@@ -345,7 +345,7 @@ struct IndexInfo {
   // The lookup columns that match 'index'. These match 1:1 the leading keys
   // of 'index'. If 'index' has no ordering columns or if the lookup columns
   // are not a prefix of these, this is empty.
-  std::vector<ColumnPtr> lookupKeys;
+  std::vector<ColumnCP> lookupKeys;
 
   // The columns that were considered in 'scanCardinality' and
   // 'joinCardinality'. This may be fewer columns than given to
@@ -354,7 +354,7 @@ struct IndexInfo {
 
   /// Returns the schema column for the BaseTable column 'column' or nullptr
   /// if not in the index.
-  ColumnPtr schemaColumn(ColumnPtr keyValue) const;
+  ColumnCP schemaColumn(ColumnCP keyValue) const;
 };
 
 /// A table in a schema. The table may have multiple differently ordered and
@@ -378,9 +378,9 @@ struct SchemaTable {
       const ColumnVector& columns);
 
   /// Finds or adds a column with 'name' and 'value'.
-  ColumnPtr column(const std::string& name, const Value& value);
+  ColumnCP column(const std::string& name, const Value& value);
 
-  ColumnPtr findColumn(const std::string& name) const;
+  ColumnCP findColumn(const std::string& name) const;
 
   /// True if 'columns' match no more than one row.
   bool isUnique(PtrSpan<Column> columns) const;
@@ -393,12 +393,12 @@ struct SchemaTable {
   /// equality constraint.
   IndexInfo indexByColumns(PtrSpan<Column> columns) const;
 
-  std::vector<ColumnPtr> toColumns(const std::vector<std::string>& names);
+  std::vector<ColumnCP> toColumns(const std::vector<std::string>& names);
   Name name;
   const velox::RowTypePtr& type;
 
   // Lookup from name to column.
-  NameMap<ColumnPtr> columns;
+  NameMap<ColumnCP> columns;
 
   // All indices. Must contain at least one.
   std::vector<ColumnGroupP, QGAllocator<ColumnGroupP>> indices;

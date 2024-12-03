@@ -110,7 +110,7 @@ class RelationOp : public Relation {
   /// 'this'. For example, a filter or join may limit values. An Expr
   /// will for example have no more distinct values than the number of
   /// rows. This is computed on first use.
-  const Value& value(ExprPtr expr) const;
+  const Value& value(ExprCP expr) const;
 
   /// Fills in 'cost_' after construction. Depends on 'input' and is defined for
   /// each subclass.

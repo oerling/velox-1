@@ -21,7 +21,7 @@
 
 namespace facebook::velox::optimizer {
 
-const Value& RelationOp::value(ExprPtr expr) const {
+const Value& RelationOp::value(ExprCP expr) const {
   // Compute new Value by applying restrictions from operators
   // between the place Expr is first defined and the output of
   // 'this'. Memoize the result in 'this'.

@@ -45,7 +45,7 @@ struct ITypedExprComparer {
 // Map for deduplicating ITypedExpr trees.
 using ExprDedupMap = folly::F14FastMap<
     const velox::core::ITypedExpr*,
-    ExprPtr,
+    ExprCP,
     ITypedExprHasher,
     ITypedExprComparer>;
 
@@ -379,7 +379,7 @@ class Optimization {
   }
 
   // Translates from Expr to Velox.
-  velox::core::TypedExprPtr toTypedExpr(ExprPtr expr);
+  velox::core::TypedExprPtr toTypedExpr(ExprCP expr);
   auto& idGenerator() {
     return idGenerator_;
   }
@@ -471,13 +471,13 @@ class Optimization {
 
   // Returns a literal from applying 'call' or 'cast' to 'literals'. nullptr if
   // not successful.
-  ExprPtr tryFoldConstant(
+  ExprCP tryFoldConstant(
       const velox::core::CallTypedExpr* call,
       const velox::core::CastTypedExpr* cast,
       const ExprVector& literals);
 
   // Makes a deduplicated Expr tree from 'expr'.
-  ExprPtr translateExpr(const velox::core::TypedExprPtr& expr);
+  ExprCP translateExpr(const velox::core::TypedExprPtr& expr);
 
   // Adds conjuncts combined by any number of enclosing ands from 'input' to
   // 'flat'.
@@ -485,10 +485,10 @@ class Optimization {
       const velox::core::TypedExprPtr& input,
       ExprVector& flat);
 
-  // Converts 'name' to a deduplicated ExprPtr. If 'name' is assigned to an
+  // Converts 'name' to a deduplicated ExprCP. If 'name' is assigned to an
   // expression in a projection, returns the deduplicated ExprPtr of the
   // expression.
-  ExprPtr translateColumn(const std::string& name);
+  ExprCP translateColumn(const std::string& name);
 
   //  Applies translateColumn to a 'source'.
   ExprVector translateColumns(
@@ -502,7 +502,7 @@ class Optimization {
   void translateJoin(const velox::core::AbstractJoinNode& join);
 
   // Makes an extra column for existence flag.
-  ColumnPtr makeMark(const velox::core::AbstractJoinNode& join);
+  ColumnCP makeMark(const velox::core::AbstractJoinNode& join);
 
   // Adds a join edge for a join with no equalities.
   void translateNonEqualityJoin(const velox::core::NestedLoopJoinNode& join);
@@ -583,7 +583,7 @@ class Optimization {
   RelationOpPtr placeSingleRowDt(
       RelationOpPtr plan,
       const DerivedTable* subq,
-      ExprPtr filter,
+      ExprCP filter,
       PlanState& state);
 
   // Adds the join represented by'candidate' on top of 'plan'. Tries index and
@@ -688,7 +688,7 @@ class Optimization {
   DerivedTableP currentSelect_;
 
   // Maps names in project noes of 'inputPlan_' to deduplicated Exprs.
-  std::unordered_map<std::string, ExprPtr> renames_;
+  std::unordered_map<std::string, ExprCP> renames_;
 
   // Maps unique core::TypedExprs from 'inputPlan_' to deduplicated Exps.
   ExprDedupMap exprDedup_;

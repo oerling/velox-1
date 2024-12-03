@@ -115,14 +115,14 @@ class Column : public Expr {
     return relation_;
   }
 
-  ColumnPtr schemaColumn() const {
+  ColumnCP schemaColumn() const {
     return schemaColumn_;
   }
 
   /// Asserts that 'this' and 'other' are joined on equality. This has a
   /// transitive effect, so if a and b are previously asserted equal and c is
   /// asserted equal to b, a and c are also equal.
-  void equals(ColumnPtr other) const;
+  void equals(ColumnCP other) const;
 
   std::string toString() const override;
 
@@ -144,7 +144,7 @@ class Column : public Expr {
   // If this is a column of a BaseTable, points to the corresponding
   // column in the SchemaTable. Used for matching with
   // ordering/partitioning columns in the SchemaTable.
-  ColumnPtr schemaColumn_{nullptr};
+  ColumnCP schemaColumn_{nullptr};
 };
 
 template <typename T>
@@ -263,7 +263,7 @@ struct JoinSide {
   const bool isOptional;
   const bool isExists;
   const bool isNotExists;
-  ColumnPtr markColumn;
+  ColumnCP markColumn;
   const bool isUnique;
 
   /// Returns the join type to use if 'this' is the right side.
@@ -300,7 +300,7 @@ class JoinEdge {
       bool rightOptional,
       bool rightExists,
       bool rightNotExists,
-      ColumnPtr markColumn = nullptr)
+      ColumnCP markColumn = nullptr)
       : leftTable_(leftTable),
         rightTable_(rightTable),
         filter_(std::move(filter)),
@@ -342,7 +342,7 @@ class JoinEdge {
     return rightOptional_;
   }
 
-  void addEquality(ExprPtr left, ExprPtr right);
+  void addEquality(ExprCP left, ExprCP right);
 
   /// True if inner join.
   bool isInner() const {
@@ -440,7 +440,7 @@ class JoinEdge {
   const bool rightNotExists_;
 
   // Flag to set if right side has a match.
-  const ColumnPtr markColumn_;
+  const ColumnCP markColumn_;
 };
 
 using JoinEdgeP = JoinEdge*;
@@ -499,7 +499,7 @@ struct BaseTable : public PlanObject {
   }
 
   /// Adds 'expr' to 'filters' or 'columnFilters'.
-  void addFilter(ExprPtr expr);
+  void addFilter(ExprCP expr);
 
   std::string toString() const override;
 };
@@ -520,7 +520,7 @@ class Aggregate : public Call {
       ExprVector args,
       FunctionSet functions,
       bool isDistinct,
-      ExprPtr condition,
+      ExprCP condition,
       bool isAccumulator,
       const velox::Type* intermediateType)
       : Call(
@@ -541,7 +541,7 @@ class Aggregate : public Call {
     }
   }
 
-  ExprPtr condition() const {
+  ExprCP condition() const {
     return condition_;
   }
 
@@ -563,7 +563,7 @@ class Aggregate : public Call {
 
  private:
   bool isDistinct_;
-  ExprPtr condition_;
+  ExprCP condition_;
   bool isAccumulator_;
   const velox::Type* intermediateType_;
   TypeVector rawInputType_;
@@ -666,8 +666,8 @@ struct DerivedTable : public PlanObject {
   /// Adds an equijoin edge between 'left' and 'right'. The flags correspond to
   /// the like-named members in Join.
   void addJoinEquality(
-      ExprPtr left,
-      ExprPtr right,
+      ExprCP left,
+      ExprCP right,
       const ExprVector& filter,
       bool leftOptional,
       bool rightOptional,
