@@ -323,10 +323,14 @@ class PlanBuilder {
   /// @param traceNodeDir The trace directory for a given plan node.
   /// @param pipelineId The pipeline id for the traced operator instantiated
   /// from the given plan node.
+  /// @param driverIds The target driver ID list for replay. The replaying
+  /// operator uses its driver instance id as the list index to get the traced
+  /// driver id for replay.
   /// @param outputType The type of the tracing data.
   PlanBuilder& traceScan(
       const std::string& traceNodeDir,
       uint32_t pipelineId,
+      std::vector<uint32_t> driverIds,
       const RowTypePtr& outputType);
 
   /// Add an ExchangeNode.
@@ -479,6 +483,8 @@ class PlanBuilder {
   /// @param outputFileName Optional file name of the output. If specified
   /// (non-empty), use it instead of generating the file name in Velox. Should
   /// only be specified in non-bucketing write.
+  /// @param compressionKind Compression scheme to use for writing the
+  /// output data files.
   PlanBuilder& tableWrite(
       const std::string& outputDirectoryPath,
       const std::vector<std::string>& partitionBy,
@@ -492,7 +498,8 @@ class PlanBuilder {
       const std::string_view& connectorId = kHiveDefaultConnectorId,
       const std::unordered_map<std::string, std::string>& serdeParameters = {},
       const std::shared_ptr<dwio::common::WriterOptions>& options = nullptr,
-      const std::string& outputFileName = "");
+      const std::string& outputFileName = "",
+      const common::CompressionKind = common::CompressionKind_NONE);
 
   /// Add a TableWriteMergeNode.
   PlanBuilder& tableWriteMerge(

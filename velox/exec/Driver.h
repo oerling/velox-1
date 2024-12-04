@@ -203,9 +203,6 @@ enum class BlockingReason {
   kWaitForMergeJoinRightSide,
   kWaitForMemory,
   kWaitForConnector,
-  /// Build operator is blocked waiting for all its peers to stop to run group
-  /// spill on all of them.
-  kWaitForSpill,
   /// Some operators (like Table Scan) may run long loops and can 'voluntarily'
   /// exit them because Task requested to yield or stop or after a certain time.
   /// This is the blocking reason used in such cases.
@@ -712,24 +709,6 @@ struct DriverFactory {
   std::vector<core::PlanNodeId> needsNestedLoopJoinBridges() const;
 
   static std::vector<DriverAdapter> adapters;
-};
-
-/// Begins and ends a section where a thread is running but not counted in its
-/// Task. Using this, a Driver thread can for example stop its own Task. For
-/// arbitrating memory overbooking, the contending threads go suspended and each
-/// in turn enters a global critical section. When running the arbitration
-/// strategy, a thread can stop and restart Tasks, including its own. When a
-/// Task is stopped, its drivers are blocked or suspended and the strategy
-/// thread can alter the Task's memory including spilling or killing the whole
-/// Task. Other threads waiting to run the arbitration, are in a suspended state
-/// which also means that they are instantaneously killable or spillable.
-class SuspendedSection {
- public:
-  explicit SuspendedSection(Driver* driver);
-  ~SuspendedSection();
-
- private:
-  Driver* driver_;
 };
 
 /// Provides the execution context of a driver thread. This is set to a

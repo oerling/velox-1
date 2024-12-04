@@ -396,6 +396,12 @@ class QueryConfig {
   static constexpr const char* kQueryTraceTaskRegExp =
       "query_trace_task_reg_exp";
 
+  /// Config used to create operator trace directory. This config is provided to
+  /// underlying file system and the config is free form. The form should be
+  /// defined by the underlying file system.
+  static constexpr const char* kOpTraceDirectoryCreateConfig =
+      "op_trace_directory_create_config";
+
   /// Disable optimization in expression evaluation to peel common dictionary
   /// layer from inputs.
   static constexpr const char* kDebugDisableExpressionWithPeeling =
@@ -416,6 +422,14 @@ class QueryConfig {
   /// inputs unless required.
   static constexpr const char* kDebugDisableExpressionWithLazyInputs =
       "debug_disable_expression_with_lazy_inputs";
+
+  /// Fix the random seed used to create data structure used in
+  /// approx_percentile.  This makes the query result deterministic on single
+  /// node; multi-node partial aggregation is still subject to non-determinism
+  /// due to non-deterministic merge order.
+  static constexpr const char*
+      kDebugAggregationApproxPercentileFixedRandomSeed =
+          "debug_aggregation_approx_percentile_fixed_random_seed";
 
   /// Temporary flag to control whether selective Nimble reader should be used
   /// in this query or not.  Will be removed after the selective Nimble reader
@@ -441,6 +455,11 @@ class QueryConfig {
 
   bool debugDisableExpressionsWithLazyInputs() const {
     return get<bool>(kDebugDisableExpressionWithLazyInputs, false);
+  }
+
+  std::optional<uint32_t> debugAggregationApproxPercentileFixedRandomSeed()
+      const {
+    return get<uint32_t>(kDebugAggregationApproxPercentileFixedRandomSeed);
   }
 
   uint64_t queryMaxMemoryPerNode() const {
@@ -690,6 +709,10 @@ class QueryConfig {
   std::string queryTraceTaskRegExp() const {
     // The default query trace task regexp, empty by default.
     return get<std::string>(kQueryTraceTaskRegExp, "");
+  }
+
+  std::string opTraceDirectoryCreateConfig() const {
+    return get<std::string>(kOpTraceDirectoryCreateConfig, "");
   }
 
   bool prestoArrayAggIgnoreNulls() const {

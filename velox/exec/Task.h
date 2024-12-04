@@ -103,6 +103,12 @@ class Task : public std::enable_shared_from_this<Task> {
     spillDirectoryCreated_ = alreadyCreated;
   }
 
+  void setCreateSpillDirectoryCb(
+      std::function<std::string()> spillDirectoryCallback) {
+    VELOX_CHECK_NULL(spillDirectoryCallback_);
+    spillDirectoryCallback_ = std::move(spillDirectoryCallback);
+  }
+
   std::string toString() const;
 
   folly::dynamic toJson() const;
@@ -607,13 +613,13 @@ class Task : public std::enable_shared_from_this<Task> {
   /// realized when the last thread stops running for 'this'. This is used to
   /// mark cancellation by the user.
   ContinueFuture requestCancel() {
-    return terminate(kCanceled);
+    return terminate(TaskState::kCanceled);
   }
 
   /// Like requestCancel but sets end state to kAborted. This is for stopping
   /// Tasks due to failures of other parts of the query.
   ContinueFuture requestAbort() {
-    return terminate(kAborted);
+    return terminate(TaskState::kAborted);
   }
 
   void requestYield() {
@@ -642,6 +648,10 @@ class Task : public std::enable_shared_from_this<Task> {
 
   const std::string& spillDirectory() const {
     return spillDirectory_;
+  }
+
+  bool hasCreateSpillDirectoryCb() const {
+    return spillDirectoryCallback_ != nullptr;
   }
 
   /// Returns the spill directory path. Ensures that the spill directory is
@@ -1168,6 +1178,10 @@ class Task : public std::enable_shared_from_this<Task> {
   std::vector<ContinuePromise> resumePromises_;
   // Base spill directory for this task.
   std::string spillDirectory_;
+  // Spill directory callback for this task. This callback will be used to
+  // create the spill directory for this task. This callback returns
+  // a path that will be into spillDirectory_
+  std::function<std::string()> spillDirectoryCallback_;
 
   // Mutex to ensure only the first caller thread of 'getOrCreateSpillDirectory'
   // creates the directory.
@@ -1196,6 +1210,17 @@ class TaskListener {
       TaskState state,
       std::exception_ptr error,
       TaskStats stats) = 0;
+
+  // onTaskCompletion() overload for the case when we pass PlanFragment
+  virtual void onTaskCompletion(
+      const std::string& taskUuid,
+      const std::string& taskId,
+      TaskState state,
+      std::exception_ptr error,
+      const TaskStats& stats,
+      const core::PlanFragment& /*fragment*/) {
+    onTaskCompletion(taskUuid, taskId, state, error, stats);
+  }
 };
 
 /// Register a listener to be invoked on task completion. Returns true if

@@ -429,7 +429,9 @@ bool Task::allNodesReceivedNoMoreSplitsMessageLocked() const {
 }
 
 const std::string& Task::getOrCreateSpillDirectory() {
-  VELOX_CHECK(!spillDirectory_.empty(), "Spill directory not set");
+  VELOX_CHECK(
+      !spillDirectory_.empty() || spillDirectoryCallback_,
+      "Spill directory or spill directory callback must be set ");
   if (spillDirectoryCreated_) {
     return spillDirectory_;
   }
@@ -438,7 +440,16 @@ const std::string& Task::getOrCreateSpillDirectory() {
   if (spillDirectoryCreated_) {
     return spillDirectory_;
   }
+
   try {
+    // If callback is provided, we shall execute the callback instead
+    // of calling mkdir on the directory.
+    if (spillDirectoryCallback_) {
+      spillDirectory_ = spillDirectoryCallback_();
+      spillDirectoryCreated_ = true;
+      return spillDirectory_;
+    }
+
     auto fileSystem = filesystems::getFileSystem(spillDirectory_, nullptr);
     fileSystem->mkdir(spillDirectory_);
   } catch (const std::exception& e) {
@@ -636,9 +647,7 @@ RowVectorPtr Task::next(ContinueFuture* future) {
   }
 
   VELOX_CHECK_EQ(
-      static_cast<int>(state_),
-      static_cast<int>(kRunning),
-      "Task has already finished processing.");
+      state_, TaskState::kRunning, "Task has already finished processing.");
 
   // On first call, create the drivers.
   if (driverFactories_.empty()) {
@@ -1469,7 +1478,7 @@ void Task::noMoreSplits(const core::PlanNodeId& planNodeId) {
   }
 
   if (allFinished) {
-    terminate(kFinished);
+    terminate(TaskState::kFinished);
   }
 }
 
@@ -2309,7 +2318,8 @@ void Task::onTaskCompletion() {
     }
 
     for (auto& listener : listeners) {
-      listener->onTaskCompletion(uuid_, taskId_, state, exception, stats);
+      listener->onTaskCompletion(
+          uuid_, taskId_, state, exception, stats, planFragment_);
     }
   });
 }
