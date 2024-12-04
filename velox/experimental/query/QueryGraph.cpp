@@ -191,7 +191,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
   }
 }
 
-PlanObjectCP FOLLY_NULLABLE singleTable(PlanObjectCP object) {
+PlanObjectCP  singleTable(PlanObjectCP object) {
   if (isExprType(object->type())) {
     return object->as<Expr>()->singleTable();
   }
@@ -222,7 +222,7 @@ PlanObjectSet Expr::allTables() const {
   return set;
 }
 
-PlanObjectSet allTables(PtrSpan<Expr> exprs) {
+PlanObjectSet allTables(CPSpan<Expr> exprs) {
   PlanObjectSet all;
   for (auto expr : exprs) {
     auto set = expr->allTables();
@@ -550,7 +550,7 @@ void DerivedTable::import(
 
 // Returns a copy of 'expr,, replacing instances of columns in 'outer' with the
 // corresponding expression from 'inner'
-ExprCP FOLLY_NULLABLE
+ExprCP 
 importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   if (!expr) {
     return nullptr;
@@ -619,7 +619,7 @@ importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectCP FOLLY_NULLABLE otherSide(JoinEdgeP join, PlanObjectCP side) {
+PlanObjectCP  otherSide(JoinEdgeP join, PlanObjectCP side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -644,7 +644,7 @@ bool isUnique(JoinEdgeP join, PlanObjectCP side) {
 // Returns a join partner of 'startin 'joins' ' where the partner is
 // not in 'visited' Sets 'isFullyImported' to false if the partner is
 // not guaranteed n:1 reducing or has columns that are projected out.
-PlanObjectCP FOLLY_NULLABLE nextJoin(
+PlanObjectCP  nextJoin(
     PlanObjectCP start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
@@ -1032,7 +1032,7 @@ std::string DerivedTable::toString() const {
 float tableCardinality(PlanObjectCP table) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()
-        ->schemaTable->indices[0]
+        ->schemaTable->columnGroups[0]
         ->distribution()
         .cardinality;
   }

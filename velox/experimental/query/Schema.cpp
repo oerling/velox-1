@@ -64,8 +64,7 @@ void SchemaTable::addIndex(
   appendToVector(distribution.order, keys);
   distribution.distributionType = distType;
   appendToVector(distribution.partition, partition);
-  auto* index = make<Index>(name, this, distribution, columns);
-  indices.push_back(index);
+  columnGroups.push_back(make<ColumnGroup>(name, this, distribution, columns));
 }
 
 ColumnCP SchemaTable::column(const std::string& name, const Value& value) {
@@ -154,13 +153,13 @@ ColumnCP findColumnByName(const T& columns, Name name) {
   return nullptr;
 }
 
-bool SchemaTable::isUnique(PtrSpan<Column> columns) const {
+bool SchemaTable::isUnique(CPSpan<Column> columns) const {
   for (auto& column : columns) {
     if (column->type() != PlanType::kColumn) {
       return false;
     }
   }
-  for (auto index : indices) {
+  for (auto index : columnGroups) {
     auto nUnique = index->distribution().numKeysUnique;
     if (!nUnique) {
       continue;
@@ -193,7 +192,7 @@ float combine(float card, int32_t ith, float otherCard) {
   return card / otherCard;
 }
 
-IndexInfo SchemaTable::indexInfo(ColumnGroupP index, PtrSpan<Column> columns)
+IndexInfo SchemaTable::indexInfo(ColumnGroupP index, CPSpan<Column> columns)
     const {
   IndexInfo info;
   info.index = index;
@@ -254,7 +253,7 @@ IndexInfo SchemaTable::indexInfo(ColumnGroupP index, PtrSpan<Column> columns)
   return info;
 }
 
-IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) const {
+IndexInfo SchemaTable::indexByColumns(CPSpan<Column> columns) const {
   // Match 'columns' against all indices. Pick the one that has the
   // longest prefix intersection with 'columns'. If 'columns' are a
   // unique combination on any index, then unique is true of the
@@ -263,8 +262,8 @@ IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) const {
   IndexInfo best;
   bool unique = isUnique(columns);
   float bestPrediction = 0;
-  for (auto iIndex = 0; iIndex < indices.size(); ++iIndex) {
-    auto index = indices[iIndex];
+  for (auto iIndex = 0; iIndex < columnGroups.size(); ++iIndex) {
+    auto index = columnGroups[iIndex];
     auto candidate = indexInfo(index, columns);
     if (iIndex == 0) {
       pkInfo = candidate;
@@ -290,7 +289,7 @@ IndexInfo SchemaTable::indexByColumns(PtrSpan<Column> columns) const {
   return best;
 }
 
-IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys) {
+IndexInfo joinCardinality(PlanObjectCP table, CPSpan<Column> keys) {
   if (table->type() == PlanType::kTable) {
     auto schemaTable = table->as<BaseTable>()->schemaTable;
     return schemaTable->indexByColumns(keys);
@@ -316,7 +315,7 @@ IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys) {
   return result;
 }
 
-ColumnCP FOLLY_NULLABLE IndexInfo::schemaColumn(ColumnCP keyValue) const {
+ColumnCP  IndexInfo::schemaColumn(ColumnCP keyValue) const {
   for (auto& column : index->columns()) {
     if (column->name() == keyValue->name()) {
       return column;

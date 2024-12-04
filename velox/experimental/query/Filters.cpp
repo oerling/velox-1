@@ -22,7 +22,7 @@
 
 namespace facebook::velox::optimizer {
 
-Cost filterCost(PtrSpan<Expr> conjuncts) {
+Cost filterCost(CPSpan<Expr> conjuncts) {
   return Cost();
 }
 

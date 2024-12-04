@@ -198,7 +198,7 @@ std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
   return plan->toString(detail);
 }
 
-PlanPtr FOLLY_NULLABLE PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+PlanPtr  PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   bool insert = plans.empty();
   int32_t replaceIndex = -1;
   if (!insert) {
@@ -274,7 +274,7 @@ PlanPtr PlanSet::best(const Distribution& distribution, bool& needsShuffle) {
 float startingScore(PlanObjectCP table, DerivedTableP /*dt*/) {
   if (table->type() == PlanType::kTable) {
     return table->as<BaseTable>()
-        ->schemaTable->indices[0]
+        ->schemaTable->columnGroups[0]
         ->distribution()
         .cardinality;
   }
@@ -637,19 +637,19 @@ void Optimization::addPostprocess(
 }
 
 std::vector<ColumnGroupP> chooseLeafIndex(const BaseTable* table) {
-  assert(!table->schemaTable->indices.empty());
-  return {table->schemaTable->indices[0]};
+  assert(!table->schemaTable->columnGroups.empty());
+  return {table->schemaTable->columnGroups[0]};
 }
 
 template <typename V>
-PtrSpan<Column> leadingColumns(V& exprs) {
+CPSpan<Column> leadingColumns(V& exprs) {
   int32_t i = 0;
   for (; i < exprs.size(); ++i) {
     if (exprs[i]->type() != PlanType::kColumn) {
       break;
     }
   }
-  return PtrSpan<Column>(reinterpret_cast<const Column* const*>(&exprs[0]), i);
+  return CPSpan<Column>(reinterpret_cast<const Column* const*>(&exprs[0]), i);
 }
 
 bool isIndexColocated(
@@ -761,7 +761,7 @@ void Optimization::joinByIndex(
   if (keyColumns.empty()) {
     return;
   }
-  for (auto& index : rightTable->schemaTable->indices) {
+  for (auto& index : rightTable->schemaTable->columnGroups) {
     auto info = rightTable->schemaTable->indexInfo(index, keyColumns);
     if (info.lookupKeys.empty()) {
       continue;

@@ -57,7 +57,7 @@ DerivedTableP Optimization::makeQueryGraph() {
   return root_;
 }
 
-const std::string* FOLLY_NULLABLE columnName(const core::TypedExprPtr& expr) {
+const std::string*  columnName(const core::TypedExprPtr& expr) {
   if (auto column =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
     if (column->inputs().empty() ||
@@ -234,7 +234,7 @@ TypePtr intermediateType(const core::CallTypedExprPtr& call) {
   return exec::Aggregate::intermediateType(call->name(), types);
 }
 
-AggregationP FOLLY_NULLABLE
+AggregationP 
 Optimization::translateAggregation(const core::AggregationNode& source) {
   using velox::core::AggregationNode;
 
@@ -470,15 +470,7 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
   return newDt;
 }
 
-PlanObjectP Optimization::makeQueryGraph(
-    const core::PlanNode& node,
-    uint64_t allowedInDt) {
-  auto name = node.name();
-  if (isJoin(node) && !contains(allowedInDt, PlanType::kJoin)) {
-    return wrapInDt(node);
-  }
-  if (name == "TableScan") {
-    auto tableScan = reinterpret_cast<const core::TableScanNode*>(&node);
+  PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
     auto tableHandle =
         dynamic_cast<const HiveTableHandle*>(tableScan->tableHandle().get());
     VELOX_CHECK(tableHandle);
@@ -509,9 +501,8 @@ PlanObjectP Optimization::makeQueryGraph(
     currentSelect_->tableSet.add(baseTable);
     return baseTable;
   }
-  if (name == "Project") {
-    makeQueryGraph(*node.sources()[0], allowedInDt);
-    auto project = reinterpret_cast<const core::ProjectNode*>(&node);
+
+  void Optimization::addProjection(const core::ProjectNode* project) {
     auto names = project->names();
     auto exprs = project->projections();
     for (auto i = 0; i < names.size(); ++i) {
@@ -526,14 +517,12 @@ PlanObjectP Optimization::makeQueryGraph(
       auto expr = translateExpr(exprs.at(i));
       renames_[names[i]] = expr;
     }
-    return currentSelect_;
   }
-  if (name == "Filter") {
-    makeQueryGraph(*node.sources()[0], allowedInDt);
-    auto filter = reinterpret_cast<const core::FilterNode*>(&node);
+
+  void Optimization::addFilter(const core::FilterNode* filter) {
     ExprVector flat;
     translateConjuncts(filter->filter(), flat);
-    if (isDirectOver(node, "Aggregation")) {
+    if (isDirectOver(*filter, "Aggregation")) {
       VELOX_CHECK(
           currentSelect_->having.empty(),
           "Must have aall of HAVING in one filter");
@@ -542,6 +531,52 @@ PlanObjectP Optimization::makeQueryGraph(
       currentSelect_->conjuncts.insert(
           currentSelect_->conjuncts.end(), flat.begin(), flat.end());
     }
+  }
+
+  PlanObjectP Optimization::addAggregation(const core::AggregationNode& aggNode, uint64_t allowedInDt) {
+    using AggregationNode = velox::core::AggregationNode;
+    if (aggNode.step() == AggregationNode::Step::kPartial ||
+        aggNode.step() == AggregationNode::Step::kSingle) {
+      if (!contains(allowedInDt, PlanType::kAggregation)) {
+        return wrapInDt(aggNode);
+      }
+      if (aggNode.step() == AggregationNode::Step::kSingle) {
+        aggFinalType_ = aggNode.outputType();
+      }
+      makeQueryGraph(
+          *aggNode.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
+      auto agg = translateAggregation(aggNode);
+      if (agg) {
+        auto* aggPlan = make<AggregationPlan>(agg);
+        currentSelect_->aggregation = aggPlan;
+      }
+    } else {
+      if (aggNode.step() == AggregationNode::Step::kFinal) {
+        aggFinalType_ = aggNode.outputType();
+      }
+      makeQueryGraph(*aggNode.sources()[0], allowedInDt);
+    }
+    return currentSelect_;
+  }
+  
+PlanObjectP Optimization::makeQueryGraph(
+    const core::PlanNode& node,
+    uint64_t allowedInDt) {
+  auto name = node.name();
+  if (isJoin(node) && !contains(allowedInDt, PlanType::kJoin)) {
+    return wrapInDt(node);
+  }
+  if (name == "TableScan") {
+    return makeBaseTable(reinterpret_cast<const core::TableScanNode*>(&node));
+  }
+  if (name == "Project") {
+    makeQueryGraph(*node.sources()[0], allowedInDt);
+    addProjection(reinterpret_cast<const core::ProjectNode*>(&node));
+    return currentSelect_;
+  }
+  if (name == "Filter") {
+    makeQueryGraph(*node.sources()[0], allowedInDt);
+    addFilter(reinterpret_cast<const core::FilterNode*>(&node));
     return currentSelect_;
   }
   if (name == "HashJoin" || name == "MergeJoin") {
@@ -564,30 +599,7 @@ PlanObjectP Optimization::makeQueryGraph(
     return currentSelect_;
   }
   if (name == "Aggregation") {
-    using AggregationNode = velox::core::AggregationNode;
-    auto& aggNode = *reinterpret_cast<const core::AggregationNode*>(&node);
-    if (aggNode.step() == AggregationNode::Step::kPartial ||
-        aggNode.step() == AggregationNode::Step::kSingle) {
-      if (!contains(allowedInDt, PlanType::kAggregation)) {
-        return wrapInDt(node);
-      }
-      if (aggNode.step() == AggregationNode::Step::kSingle) {
-        aggFinalType_ = aggNode.outputType();
-      }
-      makeQueryGraph(
-          *node.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
-      auto agg = translateAggregation(aggNode);
-      if (agg) {
-        auto* aggPlan = make<AggregationPlan>(agg);
-        currentSelect_->aggregation = aggPlan;
-      }
-    } else {
-      if (aggNode.step() == AggregationNode::Step::kFinal) {
-        aggFinalType_ = aggNode.outputType();
-      }
-      makeQueryGraph(*aggNode.sources()[0], allowedInDt);
-    }
-    return currentSelect_;
+    return addAggregation(*reinterpret_cast<const core::AggregationNode*>(&node), allowedInDt);
   }
   if (name == "OrderBy") {
     if (!contains(allowedInDt, PlanType::kOrderBy)) {

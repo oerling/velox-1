@@ -84,8 +84,8 @@ class PlanObject {
   }
 
   /// Returns a view on children, e.g. arguments of a function call.
-  virtual PtrSpan<PlanObject> children() const {
-    return PtrSpan<PlanObject>(nullptr, nullptr);
+  virtual CPSpan<PlanObject> children() const {
+    return CPSpan<PlanObject>(nullptr, nullptr);
   }
 
   /// Returns true if 'this' is an expression with a value.

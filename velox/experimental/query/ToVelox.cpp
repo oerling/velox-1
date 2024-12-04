@@ -64,7 +64,7 @@ void filterUpdated(BaseTableCP table) {
     }
   }
   auto& dataColumns = table->schemaTable->runnerTable->rowType();
-  const char* connector = table->schemaTable->indices[0]
+  const char* connector = table->schemaTable->columnGroups[0]
                               ->distribution()
                               .distributionType.locus->name();
   auto handle = std::make_shared<connector::hive::HiveTableHandle>(

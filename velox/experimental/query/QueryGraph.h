@@ -153,8 +153,8 @@ inline folly::Range<T*> toRange(const std::vector<T, QGAllocator<T>>& v) {
 }
 
 template <typename T, typename U>
-inline PtrSpan<T> toRangeCast(U v) {
-  return PtrSpan<T>(reinterpret_cast<const T* const*>(v.data()), v.size());
+inline CPSpan<T> toRangeCast(U v) {
+  return CPSpan<T>(reinterpret_cast<const T* const*>(v.data()), v.size());
 }
 
 /// A bit set that qualifies a function call. Represents which functions/kinds
@@ -228,7 +228,7 @@ class Call : public Expr {
     return args_;
   }
 
-  PtrSpan<PlanObject> children() const override {
+  CPSpan<PlanObject> children() const override {
     return folly::Range<const PlanObject* const*>(
         reinterpret_cast<const PlanObject* const*>(args_.data()), args_.size());
   }
@@ -752,7 +752,7 @@ using DerivedTableP = DerivedTable*;
 float tableCardinality(PlanObjectCP table);
 
 /// Returns all distinct tables 'exprs' depend on.
-PlanObjectSet allTables(PtrSpan<Expr> exprs);
+PlanObjectSet allTables(CPSpan<Expr> exprs);
 
 /// Appends the string representation of 'exprs' to 'out'.
 void exprsToString(const ExprVector& exprs, std::stringstream& out);

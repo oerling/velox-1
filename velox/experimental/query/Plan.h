@@ -120,7 +120,7 @@ struct PlanSet {
   /// Compares 'plan' to already seen plans and retains it if it is
   /// interesting, e.g. better than the best so far or has an interesting
   /// order. Returns the plan if retained, nullptr if not.
-  PlanPtr FOLLY_NULLABLE addPlan(RelationOpPtr plan, PlanState& state);
+  PlanPtr  addPlan(RelationOpPtr plan, PlanState& state);
 };
 
 // Represents the next table/derived table to join. May consist of several
@@ -184,7 +184,7 @@ struct NextJoin {
         columns(columns),
         newBuilds(builds) {}
 
-  const JoinCandidate* FOLLY_NONNULL candidate;
+  const JoinCandidate*  candidate;
   RelationOpPtr plan;
   Cost cost;
   PlanObjectSet placed;
@@ -463,6 +463,19 @@ class Optimization {
       const velox::core::PlanNode& node,
       uint64_t allowedInDt);
 
+  // Converts a table scan into a BaseTable wen building a DerivedTable.
+  PlanObjectP makeBaseTable(const core::TableScanNode* tableScan);
+
+  // Interprets a Project node and adds its information into the DerivedTable being assembled.
+  void addProjection(const core::ProjectNode* project);
+
+  // Interprets a Filter node and adds its information into the DerivedTable being assembled.
+  void addFilter(const core::FilterNode* Filter);
+
+  // Interprets an AggregationNode and adds its information to the DerivedTable being assembled.
+  PlanObjectP addAggregation(const core::AggregationNode& aggNode, uint64_t allowedInDt);
+
+  
   // Sets the columns to project out from the root DerivedTable  based on
   // 'plan'.
   void setDerivedTableOutput(
@@ -508,11 +521,11 @@ class Optimization {
   void translateNonEqualityJoin(const velox::core::NestedLoopJoinNode& join);
 
   // Adds order by information to the enclosing DerivedTable.
-  OrderByP FOLLY_NULLABLE
+  OrderByP 
   translateOrderBy(const velox::core::OrderByNode& order);
 
   // Adds aggregation information to the enclosing DerivedTable.
-  AggregationP FOLLY_NULLABLE
+  AggregationP 
   translateAggregation(const velox::core::AggregationNode& aggregation);
 
   // Adds 'node' and descendants to query graph wrapped inside a

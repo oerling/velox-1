@@ -44,7 +44,7 @@ struct Value {
   /// result without dictionary or other encoding.
   float byteSize() const;
 
-  const velox::Type* FOLLY_NONNULL type;
+  const velox::Type*  type;
   const velox::variant* min{nullptr};
   const velox::variant* max{nullptr};
 
@@ -298,11 +298,14 @@ class Relation {
 struct SchemaTable;
 using SchemaTableCP = const SchemaTable*;
 
-/// Represents a stored collection of rows. An index may have a uniqueness
-/// constraint over a set of columns, a partitioning and an ordering plus a
-/// set of payload columns.
-struct Index : public Relation {
-  Index(
+/// Represents a stored collection of rows with part of or all columns
+/// of a table. A ColumnGroup may have a uniqueness constraint over a
+/// set of columns, a partitioning and an ordering plus a set of
+/// payload columns. An index is a ColumnGroup that may not have all
+/// columns but is organized to facilitate retrievel. We use the name
+/// index for ColumnGroup when using it for lookup.
+struct ColumnGroup : public Relation {
+  ColumnGroup(
       Name _name,
       SchemaTableCP _table,
       Distribution distribution,
@@ -320,7 +323,7 @@ struct Index : public Relation {
   float lookupCost(float range) const;
 };
 
-using ColumnGroupP = Index*;
+using ColumnGroupP = ColumnGroup*;
 
 // Describes the number of rows to look at and the number of expected matches
 // given equality constraints for a set of columns. See
@@ -357,14 +360,13 @@ struct IndexInfo {
   ColumnCP schemaColumn(ColumnCP keyValue) const;
 };
 
-IndexInfo joinCardinality(PlanObjectCP table, PtrSpan<Column> keys);
+IndexInfo joinCardinality(PlanObjectCP table, CPSpan<Column> keys);
 
   float baseSelectivity(PlanObjectCP object);
     
 /// A table in a schema. The table may have multiple differently ordered and
-/// partitioned physical representations (indices). Not all indices need to
+/// partitioned physical representations (ColumnGroups). Not all ColumnGroups (aka indices) need to
 /// contain all columns.
-
 struct SchemaTable {
   SchemaTable(Name _name, const velox::RowTypePtr& _type)
       : name(_name), type(_type) {}
@@ -387,15 +389,15 @@ struct SchemaTable {
   ColumnCP findColumn(const std::string& name) const;
 
   /// True if 'columns' match no more than one row.
-  bool isUnique(PtrSpan<Column> columns) const;
+  bool isUnique(CPSpan<Column> columns) const;
 
   /// Returns   uniqueness and cardinality information for a lookup on 'index'
   /// where 'columns' have an equality constraint.
-  IndexInfo indexInfo(ColumnGroupP index, PtrSpan<Column> columns) const;
+  IndexInfo indexInfo(ColumnGroupP index, CPSpan<Column> columns) const;
 
   /// Returns the best index to use for lookup where 'columns' have an
   /// equality constraint.
-  IndexInfo indexByColumns(PtrSpan<Column> columns) const;
+  IndexInfo indexByColumns(CPSpan<Column> columns) const;
 
   std::vector<ColumnCP> toColumns(const std::vector<std::string>& names);
   Name name;
@@ -405,7 +407,10 @@ struct SchemaTable {
   NameMap<ColumnCP> columns;
 
   // All indices. Must contain at least one.
-  std::vector<ColumnGroupP, QGAllocator<ColumnGroupP>> indices;
+  std::vector<ColumnGroupP, QGAllocator<ColumnGroupP>> columnGroups;
+
+  // Table description from external schema. This is the
+  // source-dependent representation from which 'this' was created.
   velox::runner::Table* runnerTable{nullptr};
 };
 
