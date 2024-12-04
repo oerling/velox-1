@@ -16,6 +16,9 @@
 
 #include "velox/experimental/query/VeloxHistory.h"
 #include "velox/connectors/hive/TableHandle.h"
+#include "velox/exec/TaskStats.h"
+#include "velox/exec/Operator.h"
+
 namespace facebook::velox::optimizer {
 
 using namespace facebook::velox::exec;
