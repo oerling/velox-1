@@ -57,7 +57,7 @@ DerivedTableP Optimization::makeQueryGraph() {
   return root_;
 }
 
-const std::string*  columnName(const core::TypedExprPtr& expr) {
+const std::string* columnName(const core::TypedExprPtr& expr) {
   if (auto column =
           dynamic_cast<const core::FieldAccessTypedExpr*>(expr.get())) {
     if (column->inputs().empty() ||
@@ -234,8 +234,8 @@ TypePtr intermediateType(const core::CallTypedExprPtr& call) {
   return exec::Aggregate::intermediateType(call->name(), types);
 }
 
-AggregationP 
-Optimization::translateAggregation(const core::AggregationNode& source) {
+AggregationP Optimization::translateAggregation(
+    const core::AggregationNode& source) {
   using velox::core::AggregationNode;
 
   if (source.step() == AggregationNode::Step::kPartial ||
@@ -470,95 +470,96 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
   return newDt;
 }
 
-  PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
-    auto tableHandle =
-        dynamic_cast<const HiveTableHandle*>(tableScan->tableHandle().get());
-    VELOX_CHECK(tableHandle);
-    auto assignments = tableScan->assignments();
-    auto schemaTable = schema_.findTable(tableHandle->tableName());
-    auto cname = fmt::format("t{}", ++nameCounter_);
+PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
+  auto tableHandle =
+      dynamic_cast<const HiveTableHandle*>(tableScan->tableHandle().get());
+  VELOX_CHECK(tableHandle);
+  auto assignments = tableScan->assignments();
+  auto schemaTable = schema_.findTable(tableHandle->tableName());
+  auto cname = fmt::format("t{}", ++nameCounter_);
 
-    auto* baseTable = make<BaseTable>();
-    baseTable->cname = toName(cname);
-    baseTable->schemaTable = schemaTable;
-    ColumnVector columns;
-    ColumnVector schemaColumns;
-    for (auto& pair : assignments) {
-      auto handle =
-          reinterpret_cast<const HiveColumnHandle*>(pair.second.get());
-      auto schemaColumn = schemaTable->findColumn(handle->name());
-      schemaColumns.push_back(schemaColumn);
-      auto value = schemaColumn->value();
-      auto* column = make<Column>(toName(handle->name()), baseTable, value);
-      columns.push_back(column);
-      renames_[pair.first] = column;
-    }
-    baseTable->columns = columns;
-
-    setLeafHandle(baseTable->id(), tableScan->tableHandle());
-    setLeafSelectivity(*baseTable);
-    currentSelect_->tables.push_back(baseTable);
-    currentSelect_->tableSet.add(baseTable);
-    return baseTable;
+  auto* baseTable = make<BaseTable>();
+  baseTable->cname = toName(cname);
+  baseTable->schemaTable = schemaTable;
+  ColumnVector columns;
+  ColumnVector schemaColumns;
+  for (auto& pair : assignments) {
+    auto handle = reinterpret_cast<const HiveColumnHandle*>(pair.second.get());
+    auto schemaColumn = schemaTable->findColumn(handle->name());
+    schemaColumns.push_back(schemaColumn);
+    auto value = schemaColumn->value();
+    auto* column = make<Column>(toName(handle->name()), baseTable, value);
+    columns.push_back(column);
+    renames_[pair.first] = column;
   }
+  baseTable->columns = columns;
 
-  void Optimization::addProjection(const core::ProjectNode* project) {
-    auto names = project->names();
-    auto exprs = project->projections();
-    for (auto i = 0; i < names.size(); ++i) {
-      if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(
-              exprs.at(i).get())) {
-        // A variable projected to itself adds no renames. Inputs contain this
-        // all the time.
-        if (field->name() == names[i]) {
-          continue;
-        }
-      }
-      auto expr = translateExpr(exprs.at(i));
-      renames_[names[i]] = expr;
-    }
-  }
+  setLeafHandle(baseTable->id(), tableScan->tableHandle());
+  setLeafSelectivity(*baseTable);
+  currentSelect_->tables.push_back(baseTable);
+  currentSelect_->tableSet.add(baseTable);
+  return baseTable;
+}
 
-  void Optimization::addFilter(const core::FilterNode* filter) {
-    ExprVector flat;
-    translateConjuncts(filter->filter(), flat);
-    if (isDirectOver(*filter, "Aggregation")) {
-      VELOX_CHECK(
-          currentSelect_->having.empty(),
-          "Must have aall of HAVING in one filter");
-      currentSelect_->having = flat;
-    } else {
-      currentSelect_->conjuncts.insert(
-          currentSelect_->conjuncts.end(), flat.begin(), flat.end());
+void Optimization::addProjection(const core::ProjectNode* project) {
+  auto names = project->names();
+  auto exprs = project->projections();
+  for (auto i = 0; i < names.size(); ++i) {
+    if (auto field = dynamic_cast<const core::FieldAccessTypedExpr*>(
+            exprs.at(i).get())) {
+      // A variable projected to itself adds no renames. Inputs contain this
+      // all the time.
+      if (field->name() == names[i]) {
+        continue;
+      }
     }
+    auto expr = translateExpr(exprs.at(i));
+    renames_[names[i]] = expr;
   }
+}
 
-  PlanObjectP Optimization::addAggregation(const core::AggregationNode& aggNode, uint64_t allowedInDt) {
-    using AggregationNode = velox::core::AggregationNode;
-    if (aggNode.step() == AggregationNode::Step::kPartial ||
-        aggNode.step() == AggregationNode::Step::kSingle) {
-      if (!contains(allowedInDt, PlanType::kAggregation)) {
-        return wrapInDt(aggNode);
-      }
-      if (aggNode.step() == AggregationNode::Step::kSingle) {
-        aggFinalType_ = aggNode.outputType();
-      }
-      makeQueryGraph(
-          *aggNode.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
-      auto agg = translateAggregation(aggNode);
-      if (agg) {
-        auto* aggPlan = make<AggregationPlan>(agg);
-        currentSelect_->aggregation = aggPlan;
-      }
-    } else {
-      if (aggNode.step() == AggregationNode::Step::kFinal) {
-        aggFinalType_ = aggNode.outputType();
-      }
-      makeQueryGraph(*aggNode.sources()[0], allowedInDt);
-    }
-    return currentSelect_;
+void Optimization::addFilter(const core::FilterNode* filter) {
+  ExprVector flat;
+  translateConjuncts(filter->filter(), flat);
+  if (isDirectOver(*filter, "Aggregation")) {
+    VELOX_CHECK(
+        currentSelect_->having.empty(),
+        "Must have aall of HAVING in one filter");
+    currentSelect_->having = flat;
+  } else {
+    currentSelect_->conjuncts.insert(
+        currentSelect_->conjuncts.end(), flat.begin(), flat.end());
   }
-  
+}
+
+PlanObjectP Optimization::addAggregation(
+    const core::AggregationNode& aggNode,
+    uint64_t allowedInDt) {
+  using AggregationNode = velox::core::AggregationNode;
+  if (aggNode.step() == AggregationNode::Step::kPartial ||
+      aggNode.step() == AggregationNode::Step::kSingle) {
+    if (!contains(allowedInDt, PlanType::kAggregation)) {
+      return wrapInDt(aggNode);
+    }
+    if (aggNode.step() == AggregationNode::Step::kSingle) {
+      aggFinalType_ = aggNode.outputType();
+    }
+    makeQueryGraph(
+        *aggNode.sources()[0], makeDtIf(allowedInDt, PlanType::kAggregation));
+    auto agg = translateAggregation(aggNode);
+    if (agg) {
+      auto* aggPlan = make<AggregationPlan>(agg);
+      currentSelect_->aggregation = aggPlan;
+    }
+  } else {
+    if (aggNode.step() == AggregationNode::Step::kFinal) {
+      aggFinalType_ = aggNode.outputType();
+    }
+    makeQueryGraph(*aggNode.sources()[0], allowedInDt);
+  }
+  return currentSelect_;
+}
+
 PlanObjectP Optimization::makeQueryGraph(
     const core::PlanNode& node,
     uint64_t allowedInDt) {
@@ -599,7 +600,8 @@ PlanObjectP Optimization::makeQueryGraph(
     return currentSelect_;
   }
   if (name == "Aggregation") {
-    return addAggregation(*reinterpret_cast<const core::AggregationNode*>(&node), allowedInDt);
+    return addAggregation(
+        *reinterpret_cast<const core::AggregationNode*>(&node), allowedInDt);
   }
   if (name == "OrderBy") {
     if (!contains(allowedInDt, PlanType::kOrderBy)) {

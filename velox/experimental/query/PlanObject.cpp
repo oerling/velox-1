@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/query/QueryGraph.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/common/base/SuccinctPrinter.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
+#include "velox/experimental/query/QueryGraph.h"
 
 namespace facebook::velox::optimizer {
 
-  
 size_t PlanObjectPHasher::operator()(const PlanObjectCP& object) const {
   return object->hash();
 }
@@ -46,7 +45,7 @@ size_t PlanObject::hash() const {
   return h;
 }
 
-  namespace {
+namespace {
 template <typename V>
 bool isZero(const V& bits, size_t begin, size_t end) {
   for (size_t i = begin; i < end; ++i) {
@@ -165,7 +164,4 @@ std::string PlanObjectSet::toString(bool names) const {
   return out.str();
 }
 
-
-  
-
-}
+} // namespace facebook::velox::optimizer

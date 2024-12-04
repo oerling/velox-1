@@ -44,7 +44,7 @@ struct Value {
   /// result without dictionary or other encoding.
   float byteSize() const;
 
-  const velox::Type*  type;
+  const velox::Type* type;
   const velox::variant* min{nullptr};
   const velox::variant* max{nullptr};
 
@@ -362,11 +362,11 @@ struct IndexInfo {
 
 IndexInfo joinCardinality(PlanObjectCP table, CPSpan<Column> keys);
 
-  float baseSelectivity(PlanObjectCP object);
-    
+float baseSelectivity(PlanObjectCP object);
+
 /// A table in a schema. The table may have multiple differently ordered and
-/// partitioned physical representations (ColumnGroups). Not all ColumnGroups (aka indices) need to
-/// contain all columns.
+/// partitioned physical representations (ColumnGroups). Not all ColumnGroups
+/// (aka indices) need to contain all columns.
 struct SchemaTable {
   SchemaTable(Name _name, const velox::RowTypePtr& _type)
       : name(_name), type(_type) {}

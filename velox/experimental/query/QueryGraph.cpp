@@ -22,7 +22,6 @@
 
 namespace facebook::velox::optimizer {
 
-  
 void Column::equals(ColumnCP other) const {
   if (!equivalence_ && !other->equivalence_) {
     auto* equiv = make<Equivalence>();
@@ -58,7 +57,6 @@ std::string Column::toString() const {
   return fmt::format("{}.{}", cname, name_);
 }
 
-  
 std::string Call::toString() const {
   std::stringstream out;
   out << name_ << "(";
@@ -191,7 +189,7 @@ bool Expr::sameOrEqual(const Expr& other) const {
   }
 }
 
-PlanObjectCP  singleTable(PlanObjectCP object) {
+PlanObjectCP singleTable(PlanObjectCP object) {
   if (isExprType(object->type())) {
     return object->as<Expr>()->singleTable();
   }
@@ -550,7 +548,7 @@ void DerivedTable::import(
 
 // Returns a copy of 'expr,, replacing instances of columns in 'outer' with the
 // corresponding expression from 'inner'
-ExprCP 
+ExprCP
 importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   if (!expr) {
     return nullptr;
@@ -619,7 +617,7 @@ importExpr(ExprCP expr, const ColumnVector& outer, const ExprVector& inner) {
   }
 }
 
-PlanObjectCP  otherSide(JoinEdgeP join, PlanObjectCP side) {
+PlanObjectCP otherSide(JoinEdgeP join, PlanObjectCP side) {
   if (side == join->leftTable()) {
     return join->rightTable();
   } else if (join->rightTable() == side) {
@@ -644,7 +642,7 @@ bool isUnique(JoinEdgeP join, PlanObjectCP side) {
 // Returns a join partner of 'startin 'joins' ' where the partner is
 // not in 'visited' Sets 'isFullyImported' to false if the partner is
 // not guaranteed n:1 reducing or has columns that are projected out.
-PlanObjectCP  nextJoin(
+PlanObjectCP nextJoin(
     PlanObjectCP start,
     const JoinEdgeVector& joins,
     PlanObjectSet columns,
@@ -1064,13 +1062,11 @@ void JoinEdge::guessFanout() {
   }
 }
 
-
 void exprsToString(const ExprVector& exprs, std::stringstream& out) {
   int32_t size = exprs.size();
   for (auto i = 0; i < size; ++i) {
     out << exprs[i]->toString() << (i < size - 1 ? ", " : "");
   }
 }
-
 
 } // namespace facebook::velox::optimizer

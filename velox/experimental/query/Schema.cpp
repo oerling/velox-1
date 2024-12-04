@@ -22,7 +22,6 @@
 
 namespace facebook::velox::optimizer {
 
-  
 float Value::byteSize() const {
   if (type->isFixedWidth()) {
     return type->cppSizeInBytes();
@@ -34,7 +33,6 @@ float Value::byteSize() const {
   }
 }
 
-  
 std::vector<ColumnCP> SchemaTable::toColumns(
     const std::vector<std::string>& names) {
   std::vector<ColumnCP> columns(names.size());
@@ -140,8 +138,7 @@ float baseSelectivity(PlanObjectCP object) {
   }
   return 1;
 }
-  
-  
+
 template <typename T>
 ColumnCP findColumnByName(const T& columns, Name name) {
   for (auto column : columns) {
@@ -178,9 +175,6 @@ bool SchemaTable::isUnique(CPSpan<Column> columns) const {
   }
   return false;
 }
-
-  
-
 
 float combine(float card, int32_t ith, float otherCard) {
   if (ith == 0) {
@@ -315,7 +309,7 @@ IndexInfo joinCardinality(PlanObjectCP table, CPSpan<Column> keys) {
   return result;
 }
 
-ColumnCP  IndexInfo::schemaColumn(ColumnCP keyValue) const {
+ColumnCP IndexInfo::schemaColumn(ColumnCP keyValue) const {
   for (auto& column : index->columns()) {
     if (column->name() == keyValue->name()) {
       return column;
@@ -324,7 +318,6 @@ ColumnCP  IndexInfo::schemaColumn(ColumnCP keyValue) const {
   return nullptr;
 }
 
-  
 bool Distribution::isSamePartition(const Distribution& other) const {
   if (!(distributionType == other.distributionType)) {
     return false;
@@ -348,7 +341,6 @@ bool Distribution::isSamePartition(const Distribution& other) const {
   return true;
 }
 
-  
 Distribution Distribution::rename(
     const ExprVector& exprs,
     const ColumnVector& names) const {
@@ -365,7 +357,6 @@ Distribution Distribution::rename(
   return result;
 }
 
-  
 std::string Distribution::toString() const {
   if (isBroadcast) {
     return "broadcast";
@@ -386,5 +377,4 @@ std::string Distribution::toString() const {
   return out.str();
 }
 
-  
-}
+} // namespace facebook::velox::optimizer

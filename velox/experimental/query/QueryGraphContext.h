@@ -73,7 +73,7 @@ class QueryGraphContext {
   /// Returns a new unique id to use for 'object' and associates 'object' to
   /// this id. Tagging objects with integere ids is useful for efficiently
   /// representing sets of objects as bitmaps.
-  int32_t newId(PlanObject*  object) {
+  int32_t newId(PlanObject* object) {
     objects_.push_back(object);
     return objects_.size() - 1;
   }
@@ -143,8 +143,8 @@ class QueryGraphContext {
   // Set for deduplicating planObject trees.
   std::unordered_set<PlanObjectP, PlanObjectPHasher, PlanObjectPComparer>
       deduppedObjects_;
-  Plan*  contextPlan_{nullptr};
-  Optimization*  optimization_{nullptr};
+  Plan* contextPlan_{nullptr};
+  Optimization* optimization_{nullptr};
 };
 
 /// Returns a mutable reference to the calling thread's QueryGraphContext.
@@ -175,12 +175,12 @@ struct QGAllocator {
   template <typename U>
   explicit QGAllocator(QGAllocator<U>) {}
 
-  T*  allocate(std::size_t n) {
+  T* allocate(std::size_t n) {
     return reinterpret_cast<T*>(
         queryCtx()->allocate(velox::checkedMultiply(n, sizeof(T)))); // NOLINT
   }
 
-  void deallocate(T*  p, std::size_t /*n*/) noexcept {
+  void deallocate(T* p, std::size_t /*n*/) noexcept {
     queryCtx()->free(p);
   }
 

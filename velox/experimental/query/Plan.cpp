@@ -198,7 +198,7 @@ std::string PlanState::printPlan(RelationOpPtr op, bool detail) const {
   return plan->toString(detail);
 }
 
-PlanPtr  PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
+PlanPtr PlanSet::addPlan(RelationOpPtr plan, PlanState& state) {
   bool insert = plans.empty();
   int32_t replaceIndex = -1;
   if (!insert) {

@@ -22,11 +22,10 @@
 
 namespace facebook::velox::optimizer {
 
-  QueryGraphContext*& queryCtx() {
+QueryGraphContext*& queryCtx() {
   thread_local QueryGraphContext* context;
   return context;
 }
-
 
 PlanObjectP QueryGraphContext::dedup(PlanObjectP object) {
   auto pair = deduppedObjects_.insert(object);
@@ -45,12 +44,8 @@ const char* QueryGraphContext::toName(std::string_view str) {
   return data;
 }
 
-  
 Name toName(std::string_view string) {
   return queryCtx()->toName(string);
 }
 
-
-  
-
-}
+} // namespace facebook::velox::optimizer

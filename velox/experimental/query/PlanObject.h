@@ -114,7 +114,6 @@ class PlanObject {
   const int32_t id_;
 };
 
-  
 /// Set of PlanObjects. Uses the objects id() as an index into a bitmap.
 class PlanObjectSet {
  public:

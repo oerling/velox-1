@@ -756,5 +756,5 @@ PlanObjectSet allTables(CPSpan<Expr> exprs);
 
 /// Appends the string representation of 'exprs' to 'out'.
 void exprsToString(const ExprVector& exprs, std::stringstream& out);
-  
+
 } // namespace facebook::velox::optimizer
