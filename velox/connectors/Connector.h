@@ -38,6 +38,10 @@ class WaveDataSource;
 namespace facebook::velox::common {
 class Filter;
 }
+namespace facebook::velox::runner {
+class TableLayout;
+class Column;
+} // namespace facebook::velox::runner
 namespace facebook::velox::config {
 class ConfigBase;
 }
@@ -423,6 +427,28 @@ class Connector {
   /// during query execution.
   virtual bool canAddDynamicFilter() const {
     return false;
+  }
+
+  /// Creates a ColumnHandle for 'column' in 'layout'. If the type is a complex
+  /// type, 'subfields' specifies which subfields need to be retrievd. empty
+  /// 'subfields' means all are returned.
+  virtual ColumnHandlePtr createColumnHandle(
+      const runner::TableLayout& layout,
+      const runner::Column& column,
+      std::vector<common::Subfield> subfields = {}) {
+    VELOX_UNSUPPORTED();
+  }
+
+  /// Returns a ConnectorTableHandle for use in createDataSource. 'filters' are
+  /// pushed down into the DataSource. 'filters' are expressions involving literals and columns of 'layout'. The filters not supported by the target
+  /// system are returned in 'rejectedFilters'. 'rejectedFilters'  will have to
+  /// be applied to the data returned by the DataSource.
+  virtual ConnectorTableHandlePtr createTableHandle(
+      const runner::TableLayout& layout,
+      std::vector<ColumnHandlePtr> columnHandles,
+      std::vector<core::TypedExpr> filters,
+      std::vector<core::TypedExpr>& rejectedFilters) {
+    VELOX_UNSUPPORTED();
   }
 
   virtual std::unique_ptr<DataSource> createDataSource(

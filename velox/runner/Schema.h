@@ -18,10 +18,7 @@
 
 #include "velox/common/base/Fs.h"
 #include "velox/common/memory/HashStringAllocator.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
-#include "velox/dwio/common/Options.h"
-#include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
+#include "velox/connectors/Connector.h"
 
 /// Base classes for schema elements used in execution. A Schema is a collection
 /// of Tables. A Table is a collection of Columns. Tables and Columns have
@@ -29,6 +26,44 @@
 /// metadata stores and provide different metadata, e.g. order, partitioning,
 /// bucketing etc.
 namespace facebook::velox::runner {
+
+/// Represents statistics of a column. The statistics may represent the column
+/// across the table or may be calculated over a sample of a layout of the
+/// table. All fields are optional.
+struct ColumnStatistics {
+  /// Empty for top level  column. Struct member name or string of key for
+  /// struct  or flat map subfield.
+  std::string name;
+
+  /// If true, the column cannot have nulls.
+  bool nonNull{false};
+
+  /// Observed percentage of nulls. 0 does not mean that there are no nulls.
+  float nullPct{0};
+
+  /// Minimum observed value for comparable scalar columns.
+  std::optional<variant> min;
+
+  /// Maximum observed value for a comparable scalar.
+  std::optional<variant> max;
+
+  /// For string, varbinary, array and map, the maximum observed number of
+  /// characters/bytes/elements/key-value pairs.
+  std::optional<int32_t> maxLength;
+
+  /// Average count of characters/bytes/elements/key-value pairs.
+  std::optional<int32_t> avgLength;
+
+  /// Estimated number of distinct values. Not specified for complex types.
+  std::optional<int64_t> numDistinct;
+
+  /// For complex type columns, statistics of children. For array, contains one
+  /// element describing the array elements. For struct, has one element for
+  /// each member. For map, has an element for keys and one for values. For flat
+  /// map, may have one element for each key. In all cases, stats may be
+  /// missing.
+  std::vector<ColumnStatistics> children;
+};
 
 /// Base class for column. The column's name and type are immutable but the
 /// stats may be set multiple times.
@@ -38,18 +73,12 @@ class Column {
 
   Column(const std::string& name, TypePtr type) : name_(name), type_(type) {}
 
-  dwio::common::ColumnStatistics* stats() const {
+  ColumnStatistics* stats() const {
     return latestStats_;
   }
 
-  /// Returns the column type. TODO: Support partition keys etc in local
-  /// schemas.
-  connector::hive::HiveColumnHandle::ColumnType columnType() const {
-    return connector::hive::HiveColumnHandle::ColumnType::kRegular;
-  }
-
   /// Sets statistics. May be called multipl times if table contents change.
-  void setStats(std::unique_ptr<dwio::common::ColumnStatistics> stats) {
+  void setStats(std::unique_ptr<ColumnStatistics> stats) {
     std::lock_guard<std::mutex> l(mutex_);
     allStats_.push_back(std::move(stats));
     latestStats_ = allStats_.back().get();
@@ -63,43 +92,104 @@ class Column {
     return type_;
   }
 
-  void setNumDistinct(int64_t numDistinct) {
-    approxNumDistinct_ = numDistinct;
-  }
-
-  virtual uint64_t approxNumDistinct(uint64_t deflt = 0) const = 0;
-
  protected:
   const std::string name_;
   const TypePtr type_;
 
   // The latest element added to 'allStats_'.
-  tsan_atomic<dwio::common::ColumnStatistics*> latestStats_{nullptr};
+  tsan_atomic<ColumnStatistics*> latestStats_{nullptr};
 
   // All statistics recorded for this column. Old values can be purged when the
   // containing Schema is not in use.
-  std::vector<std::unique_ptr<dwio::common::ColumnStatistics>> allStats_;
-
-  // Latest approximate count of distinct values.
-  std::optional<int64_t> approxNumDistinct_;
+  std::vector<std::unique_ptr<ColumnStatistics>> allStats_;
 
  private:
   // Serializes changes to statistics.
   std::mutex mutex_;
 };
 
+class Table
+
+    /// Represents a physical manifestation of a table. There is at least
+    /// one layout but for tables that have multiple sort orders,
+    /// partitionings, indices, column groups, etc, there is a separate
+    /// layout for each. Scans, index lookups, stats, sampling and split
+    /// enumeration are done with respect to table layout.
+    class TableLayout {
+ public:
+  TableLayout(
+      const std::string& name,
+      connector::Connector* connector,
+      std::vector<const Column*> columns,
+      std::vector<const Column*> partitioning,
+      const std::vector<const Column*> orderColumns,
+      std::vector<core::SortOrder> sortOrder)
+      : name(name),
+        connector_(connector),
+        columns_(std::move(columns)),
+        partitioning_(std::move(partitioning)),
+        orderColumns_(std::move(orderColumns)),
+        sortOrder_(std::move(sortOrder)) {}
+
+  /// Name for documentation. If there are multiple layouts, this is unique
+  /// within the table.
+  const std::string name() {
+    return name_;
+  }
+
+  /// List of columns present in this layout.
+  const std::vector<const Column*> columns() const;
+
+  /// Approximate number of rows
+  std::optional<uint64_t> approxCardinality() const;
+
+  /// Set of partitioning columns. The values in partitioning columns determine
+  /// the location of the row. Joins on equality of partitioning columns are are
+  /// co-located.
+  virtual const std::vector<const Column*> partitioningColumns() const;
+
+  /// Columns on which content is ordered within the range of rows covered by a
+  /// Split.
+  virtual const std::vector<const Column*> orderingColumns() const;
+
+  /// Returns the Connector to use for generating ColumnHandles and TableHandles
+  /// for operations against this layout.
+  connector::Connector* connector() const {
+    return connector_;
+  }
+
+  /// Samples 'pct' percent of rows for 'fields'. Applies filters in
+  /// 'handle' before sampling. Returns {count of sampled, count
+  /// matching filters}.  If 'statistics' is non-nullptr, fills it
+  /// with post-filter statistics for the columns in
+  /// 'handle'. 'allocator' is used for temporary memory in gathering
+  /// statistics.
+  virtual std::pair<int64_t, int64_t> sample(
+      const ConnectorTableHandle& handle,
+      float pct,
+      HashStringAllocator* allocator = nullptr,
+      std::vector<ColumnStatistics>* statistics = nullptr) {
+    VELOX_UNSUPPORTED("Table class does not support sampling.");
+  }
+
+ private:
+  const std::string name_;
+  connector::Connector* connector_;
+  std::vector<const Column*> columns_;
+  const std::vector<const Column*> partitioning_;
+  const std::vector<const Column*> orderColumns_;
+  const std::vector<core::SortOrder> sortOrder_;
+};
+
 class Schema;
 
-/// Base class for table. This is used to identify a table  for purposes of
-/// Split generation, statistics, sampling etc.
+/// Base class for table. This is used for name resolution. A TableLayout is
+/// used     for Split generation, statistics, sampling etc.
 class Table {
  public:
   virtual ~Table() = default;
 
-  Table(
-      const std::string& name,
-      dwio::common::FileFormat format,
-      Schema* schema)
+  Table(const std::string& name, Schema* schema)
       : schema_(schema), name_(name), format_(format) {}
 
   const std::string& name() const {
@@ -108,10 +198,6 @@ class Table {
 
   const RowTypePtr& rowType() const {
     return type_;
-  }
-
-  dwio::common::FileFormat format() const {
-    return format_;
   }
 
   /// Returns the set of columns as abstract, non-owned
@@ -127,31 +213,13 @@ class Table {
     return it == map.end() ? nullptr : it->second;
   }
 
-  /// Samples 'pct' percent of rows for 'fields'. Applies 'filters'
-  /// before sampling. Returns {count of sampled, count matching filters}.
-  /// Returns statistics for the post-filtering values in 'stats' for each of
-  /// 'fields'. If 'fields' is empty, simply returns the number of
-  /// rows matching 'filter' in a sample of 'pct'% of the table.
-  ///
-  /// TODO: Introduce generic statistics builder in dwio/common.
-  virtual std::pair<int64_t, int64_t> sample(
-      float pct,
-      const std::vector<common::Subfield>& columns,
-      connector::hive::SubfieldFilters filters,
-      const core::TypedExprPtr& remainingFilter,
-      HashStringAllocator* allocator = nullptr,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders =
-          nullptr) {
-    VELOX_UNSUPPORTED("Table class does not support sampling.");
-  }
+  virtual const std::vector<const TableLayout*>& layouts() const = 0;
 
   virtual uint64_t numRows() const = 0;
 
  protected:
   Schema* const schema_;
   const std::string name_;
-
-  const dwio::common::FileFormat format_;
 
   // Discovered from data. In the event of different types, we take the
   // latest (i.e. widest) table type.
@@ -174,8 +242,6 @@ class Schema {
     VELOX_CHECK(it != tables_.end(), "Table {} not found", name);
     return it->second.get();
   }
-
-  virtual connector::Connector* connector() const = 0;
 
   virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const = 0;
