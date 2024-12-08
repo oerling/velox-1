@@ -467,8 +467,7 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
 }
 
 PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
-  auto tableHandle =
-      tableScan->tableHandle().get();
+  auto tableHandle = tableScan->tableHandle().get();
   auto assignments = tableScan->assignments();
   auto schemaTable = schema_.findTable(tableHandle->tableName());
   auto cname = fmt::format("t{}", ++nameCounter_);

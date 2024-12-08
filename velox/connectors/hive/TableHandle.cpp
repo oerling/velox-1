@@ -101,8 +101,9 @@ ColumnHandlePtr HiveColumnHandle::create(const folly::dynamic& obj) {
 HiveColumnHandle::ColumnType HiveLayoutMetadata::columnType(
     const std::string& columnName) const {
   if (std::find(
-          hivePartitionColumns_.begin(), hivePartitionColumns_.end(), columnName) !=
-      hivePartitionColumns_.end()) {
+          hivePartitionColumns_.begin(),
+          hivePartitionColumns_.end(),
+          columnName) != hivePartitionColumns_.end()) {
     return HiveColumnHandle::ColumnType::kPartitionKey;
   }
   // TODO recognize special names like $path, $bucket etc.

@@ -377,9 +377,11 @@ class Optimization {
       std::vector<core::TypedExprPtr>>
   leafHandle(int32_t id) {
     auto it = leafHandles_.find(id);
-    return it != leafHandles_.end() ? it->second : std::make_pair<
-      std::shared_ptr<velox::connector::ConnectorTableHandle>,
-      std::vector<core::TypedExprPtr>>(nullptr, {});
+    return it != leafHandles_.end()
+        ? it->second
+        : std::make_pair<
+              std::shared_ptr<velox::connector::ConnectorTableHandle>,
+              std::vector<core::TypedExprPtr>>(nullptr, {});
   }
 
   // Translates from Expr to Velox.
@@ -431,8 +433,7 @@ class Optimization {
 
   // Makes an output type for use in PlanNode et al. If 'columnType' is set,
   // only considers base relation columns of the given type.
-  velox::RowTypePtr makeOutputType(
-      const ColumnVector& columns);
+  velox::RowTypePtr makeOutputType(const ColumnVector& columns);
 
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;

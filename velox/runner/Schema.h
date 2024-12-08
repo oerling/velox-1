@@ -98,9 +98,9 @@ class Column {
 
   int64_t approxNumDistinct(int64_t deflt = 1000) const {
     auto* s = stats();
-    return s && s->numDistinct.has_value() ? s->numDistinct.value()  : deflt;
+    return s && s->numDistinct.has_value() ? s->numDistinct.value() : deflt;
   }
-  
+
  protected:
   const std::string name_;
   const TypePtr type_;
@@ -117,8 +117,8 @@ class Column {
   std::mutex mutex_;
 };
 
-  class Table;
-  
+class Table;
+
 /// Represents a physical manifestation of a table. There is at least
 /// one layout but for tables that have multiple sort orders,
 /// partitionings, indices, column groups, etc, there is a separate
@@ -137,7 +137,7 @@ class TableLayout {
       std::vector<const Column*> lookupKeys,
       bool supportsScan)
       : name_(name),
-	table_(table),
+        table_(table),
         connector_(connector),
         columns_(std::move(columns)),
         partitionColumns_(std::move(partitionColumns)),
@@ -155,7 +155,7 @@ class TableLayout {
   }
 
   virtual ~TableLayout() = default;
-  
+
   /// Name for documentation. If there are multiple layouts, this is unique
   /// within the table.
   const std::string name() const {
@@ -165,7 +165,7 @@ class TableLayout {
   const Table* table() const {
     return table_;
   }
-  
+
   /// Returns a connector specific table and layout information that
   /// encapsulates details like synthetic columns that need to be known when
   /// making column and table handles.
@@ -272,7 +272,7 @@ class Table {
   const Schema* schema() const {
     return schema_;
   }
-  
+
   /// Returns the set of columns as abstract, non-owned
   /// columns. Implementations may hav different Column
   /// implementations with different options, so we do not return the
@@ -317,7 +317,7 @@ class Schema {
   }
 
   virtual connector::Connector* connector() const = 0;
-  
+
   virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const = 0;
 

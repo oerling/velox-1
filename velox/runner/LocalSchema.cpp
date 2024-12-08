@@ -24,8 +24,7 @@
 
 namespace facebook::velox::runner {
 
-std::unique_ptr<connector::LayoutMetadata> HiveTableLayout::metadata()
-    const {
+std::unique_ptr<connector::LayoutMetadata> HiveTableLayout::metadata() const {
   std::vector<std::string> names;
   for (auto& column : hivePartitionColumns_) {
     names.push_back(column->name());
@@ -247,7 +246,7 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
   return std::pair(scannedRows, passingRows);
 }
 
-  void LocalTable::makeDefaultLayout(std::vector<std::string> files) {
+void LocalTable::makeDefaultLayout(std::vector<std::string> files) {
   std::vector<const Column*> columns;
   for (auto i = 0; i < type_->size(); ++i) {
     auto name = type_->nameOf(i);

@@ -22,8 +22,8 @@
 #include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
 #include "velox/connectors/hive/TableHandle.h"
-#include "velox/expression/FieldReference.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/expression/FieldReference.h"
 
 #include <boost/lexical_cast.hpp>
 #include <memory>
@@ -62,11 +62,11 @@ ColumnHandlePtr HiveConnector::createColumnHandle(
     std::vector<common::Subfield> subfields) {
   auto* hiveLayout = reinterpret_cast<const HiveLayoutMetadata*>(&layout);
   auto handle = std::make_shared<HiveColumnHandle>(
-					    columnName,
+      columnName,
       hiveLayout->columnType(columnName),
       hiveLayout->dataType(columnName),
       hiveLayout->dataType(columnName),
-					    std::move(subfields));
+      std::move(subfields));
   return std::dynamic_pointer_cast<const ColumnHandle>(handle);
 }
 
@@ -81,7 +81,8 @@ ConnectorTableHandlePtr HiveConnector::createTableHandle(
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto& columnHandle : columnHandles) {
-    auto* hiveColumn = reinterpret_cast<const HiveColumnHandle*>(columnHandle.get());
+    auto* hiveColumn =
+        reinterpret_cast<const HiveColumnHandle*>(columnHandle.get());
     names.push_back(hiveColumn->name());
     types.push_back(hiveColumn->dataType());
   }
@@ -111,13 +112,14 @@ ConnectorTableHandlePtr HiveConnector::createTableHandle(
           "and");
     }
   }
-  return std::dynamic_pointer_cast<const ConnectorTableHandle>(std::make_shared<HiveTableHandle>(
-					   connectorId(),
-					   hiveLayout->tableName(),
-					   true,
-					   std::move(subfieldFilters),
-					   remainingFilter,
-					   std::move(dataColumns)));
+  return std::dynamic_pointer_cast<const ConnectorTableHandle>(
+      std::make_shared<HiveTableHandle>(
+          connectorId(),
+          hiveLayout->tableName(),
+          true,
+          std::move(subfieldFilters),
+          remainingFilter,
+          std::move(dataColumns)));
 }
 
 std::unique_ptr<DataSource> HiveConnector::createDataSource(

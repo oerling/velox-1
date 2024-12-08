@@ -15,8 +15,8 @@
  */
 
 #include "velox/experimental/query/VeloxHistory.h"
-#include "velox/exec/TaskStats.h"
 #include "velox/exec/Operator.h"
+#include "velox/exec/TaskStats.h"
 
 namespace facebook::velox::optimizer {
 
@@ -25,8 +25,7 @@ using namespace facebook::velox::runner;
 
 bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   auto optimization = queryCtx()->optimization();
-  auto handlePair = *
-      optimization->leafHandle(table.id());
+  auto handlePair = *optimization->leafHandle(table.id());
   auto handle = handlePair.first;
   auto string = handle.toString();
   {
@@ -48,8 +47,10 @@ bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
     return false;
   }
 
-  auto sample = runnerTable->layouts()[0]->sample(handlePair.first, 1, handlePair.second);
-  table.filterSelectivity = static_cast<float>(sample.second) / (sample.first; + 1);
+  auto sample =
+      runnerTable->layouts()[0]->sample(handlePair.first, 1, handlePair.second);
+  table.filterSelectivity =
+      static_cast<float>(sample.second) / (sample.first; + 1);
   recordLeafSelectivity(string, table.filterSelectivity, false);
   return true;
 }

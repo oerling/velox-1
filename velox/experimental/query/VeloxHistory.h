@@ -23,7 +23,8 @@
 
 namespace facebook::velox::optimizer {
 
-/// Records and retrieves estimated and actual cardinalities based on Velox handles and execution stats.
+/// Records and retrieves estimated and actual cardinalities based on Velox
+/// handles and execution stats.
 class VeloxHistory : public History {
  public:
   virtual std::optional<Cost> findCost(RelationOp& op) override {
@@ -32,7 +33,8 @@ class VeloxHistory : public History {
 
   void recordCost(const RelationOp& op, Cost cost) override {}
 
-  /// Sets the filter selectivity of a table scan. Returns true if there is data to back the estimate and false if this is a pure guess.
+  /// Sets the filter selectivity of a table scan. Returns true if there is data
+  /// to back the estimate and false if this is a pure guess.
   bool setLeafSelectivity(BaseTable& table) override;
 
   /// Stores observed costs and cardinalities from a query execution. If 'op' is
@@ -42,7 +44,6 @@ class VeloxHistory : public History {
       const RelationOp* op,
       const std::vector<velox::runner::ExecutableFragment>& plan,
       const std::vector<velox::exec::TaskStats>& stats);
-
 };
 
 } // namespace facebook::velox::optimizer

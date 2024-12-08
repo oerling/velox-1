@@ -78,8 +78,10 @@ class LocalRunner : public Runner,
 class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
-    : layout_(dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0])), splitsPerFile_(splitsPerFile) {
-    VELOX_CHECK_NOT_NULL(layout_, "Expecting a LocalTable with a LocalHiveTableLayout");
+      : layout_(dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0])),
+        splitsPerFile_(splitsPerFile) {
+    VELOX_CHECK_NOT_NULL(
+        layout_, "Expecting a LocalTable with a LocalHiveTableLayout");
   }
 
   exec::Split next(int32_t worker) override;

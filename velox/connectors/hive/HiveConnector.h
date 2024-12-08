@@ -49,7 +49,7 @@ class HiveConnector : public Connector {
       std::vector<common::Subfield> subfields = {}) override;
 
   ConnectorTableHandlePtr createTableHandle(
-					    const LayoutMetadata& layout,
+      const LayoutMetadata& layout,
       std::vector<ColumnHandlePtr> columnHandles,
       core::ExpressionEvaluator& evaluator,
       std::vector<core::TypedExprPtr> filters,

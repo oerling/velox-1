@@ -82,7 +82,10 @@ ColumnCP SchemaTable::findColumn(const std::string& name) const {
   return it->second;
 }
 
-  Schema::Schema(const char* _name, std::vector<SchemaTableCP> tables, connector::Connector* connector)
+Schema::Schema(
+    const char* _name,
+    std::vector<SchemaTableCP> tables,
+    connector::Connector* connector)
     : name_(_name), defaultLocus_(std::make_unique<Locus>("local", connector)) {
   for (auto& table : tables) {
     tables_[table->name] = table;
@@ -92,9 +95,9 @@ ColumnCP SchemaTable::findColumn(const std::string& name) const {
 Schema::Schema(const char* _name, velox::runner::Schema* source)
     : name_(_name),
       source_(source),
-      defaultLocus_(
-		    std::make_unique<Locus>(source->connector()->connectorId().c_str(), source->connector())) {
-}
+      defaultLocus_(std::make_unique<Locus>(
+          source->connector()->connectorId().c_str(),
+          source->connector())) {}
 
 SchemaTableCP Schema::findTable(std::string_view name) const {
   auto internedName = toName(name);

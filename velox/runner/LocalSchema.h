@@ -57,7 +57,7 @@ class HiveTableLayout : public TableLayout {
       dwio::common::FileFormat fileFormat)
       : TableLayout(
             name,
-	    table,
+            table,
             connector,
             columns,
             partitioning,
@@ -68,7 +68,6 @@ class HiveTableLayout : public TableLayout {
         fileFormat_(fileFormat),
         hivePartitionColumns_(hivePartitionColumns) {}
 
-
   dwio::common::FileFormat fileFormat() const {
     return fileFormat_;
   }
@@ -78,8 +77,8 @@ class HiveTableLayout : public TableLayout {
   const std::vector<const Column*>& hivePartitionColumns() const {
     return hivePartitionColumns_;
   }
-  
-protected:
+
+ protected:
   const dwio::common::FileFormat fileFormat_;
   const std::vector<const Column*> hivePartitionColumns_;
 };
@@ -101,7 +100,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       dwio::common::FileFormat fileFormat)
       : HiveTableLayout(
             name,
-	    table,
+            table,
             connector,
             columns,
             partitioning,
@@ -126,7 +125,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
   void setFiles(std::vector<std::string> files) {
     files_ = std::move(files);
   }
-  
+
   /// Like sample() above, but fills 'builders' with the data.
   std::pair<int64_t, int64_t> sample(
       const connector::ConnectorTableHandlePtr& handle,
@@ -135,8 +134,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       HashStringAllocator* allocator,
       std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders);
 
-   private:
-
+ private:
   std::vector<std::string> files_;
 };
 
@@ -165,7 +163,7 @@ class LocalTable : public Table {
   }
 
   void makeDefaultLayout(std::vector<std::string> files);
-  
+
   uint64_t numRows() const override {
     return numRows_;
   }
@@ -174,7 +172,6 @@ class LocalTable : public Table {
   /// estimate for the columns. uses 'pool' for temporary data.
   void sampleNumDistincts(float samplePct, memory::MemoryPool* pool);
 
-  
  private:
   // Serializes initialization, e.g. exportedColumns_.
   mutable std::mutex mutex_;
@@ -225,7 +222,7 @@ class LocalSchema : public Schema {
   dwio::common::FileFormat fileFormat() const {
     return format_;
   }
-  
+
  private:
   void initialize(const std::string& path);
 

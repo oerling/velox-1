@@ -88,7 +88,8 @@ class RelationOp;
 /// immutable and lives past the optimizer arena.
 class Locus {
  public:
-  explicit Locus(Name name, connector::Connector* connector) : name_(name), connector_(connector) {}
+  explicit Locus(Name name, connector::Connector* connector)
+      : name_(name), connector_(connector) {}
 
   virtual ~Locus() = default;
 
@@ -103,7 +104,7 @@ class Locus {
     VELOX_CHECK_NOT_NULL(connector_);
     return connector_;
   }
-  
+
   /// Sets the cardinality in op. Returns true if set. If false, default
   /// cardinality determination.
   virtual bool setCardinality(RelationOp& /*op*/) const {
@@ -321,12 +322,12 @@ struct ColumnGroup : public Relation {
       : Relation(RelType::kBase, distribution, _columns),
         name(_name),
         table(_table),
-	layout(layout) {}
+        layout(layout) {}
 
   Name name;
   SchemaTableCP table;
   runner::TableLayout* layout;
-  
+
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,
   /// then 'range' should be the cardinality of the index.
@@ -435,7 +436,10 @@ struct SchemaTable {
 class Schema {
  public:
   /// Constructs a testing schema without runner schema.
-  Schema(Name _name, std::vector<SchemaTableCP> tables, connector::Connector* connector);
+  Schema(
+      Name _name,
+      std::vector<SchemaTableCP> tables,
+      connector::Connector* connector);
 
   /// Constructs a Schema for producing executable plans, backed by 'source'.
   Schema(Name _name, velox::runner::Schema* source);

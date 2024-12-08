@@ -74,15 +74,20 @@ void filterUpdated(BaseTableCP table) {
     columns.push_back(connector->createColumnHandle(*layoutData, column->name());
   }
   auto handle = connector->createTableHandle(
-					     *layoutData,
-					     layout->name(),
-					     columns,
-					     optimization.evaluator(),
+      *layoutData,
+      layout->name(),
+      columns,
+      optimization.evaluator(),
       std::move(allFilters),
-					     rejectedFilters);
-					     );
-  optimization->setLeafHandle(table->id(), handle, std::move(rejectedFilters));
-  optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
+      rejectedFilters);
+                                             );
+                                             optimization->setLeafHandle(
+                                                 table->id(),
+                                                 handle,
+                                                 std::move(rejectedFilters));
+                                             optimization->setLeafSelectivity(
+                                                 *const_cast<BaseTable*>(
+                                                     table));
 }
 
 core::PlanNodeId Optimization::nextId(const RelationOp& op) {
@@ -137,8 +142,7 @@ MultiFragmentPlanPtr Optimization::toVeloxPlan(
       std::move(stages), options);
 }
 
-RowTypePtr Optimization::makeOutputType(
-    const ColumnVector& columns) {
+RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto i = 0; i < columns.size(); ++i) {
@@ -154,7 +158,6 @@ RowTypePtr Optimization::makeOutputType(
         auto* runnerColumn =
             runnerTable->findColumn(std::string(column->name()));
         VELOX_CHECK_NOT_NULL(runnerColumn);
-
       }
     }
     auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name())
