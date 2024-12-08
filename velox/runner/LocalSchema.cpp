@@ -110,8 +110,8 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
     float pct,
     const std::vector<common::Subfield>& fields,
     HashStringAllocator* /*allocator*/,
-    std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>*
-        statsBuilders) const {
+    std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>* statsBuilders)
+    const {
   dwrf::StatisticsBuilderOptions options(
       /*stringLengthLimit=*/100, /*initialSize=*/0);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;
@@ -332,11 +332,13 @@ void LocalSchema::loadTable(
       // Initialize the stats from the first file.
       if (column->stats() == nullptr) {
         auto readerStats = reader->columnStatistics(i);
-        auto numValues = readerStats->getNumberOfValues();
-        column->setStats(toRunnerStats(std::move(readerStats)));
-        if (rows.has_value() && rows.value() > 0 && numValues.has_value()) {
-          column->mutableStats()->nullPct =
-              100 * (rows.value() - numValues.value()) / rows.value();
+        if (readerStats) {
+          auto numValues = readerStats->getNumberOfValues();
+          column->setStats(toRunnerStats(std::move(readerStats)));
+          if (rows.has_value() && rows.value() > 0 && numValues.has_value()) {
+            column->mutableStats()->nullPct =
+                100 * (rows.value() - numValues.value()) / rows.value();
+          }
         }
       }
     }
@@ -407,8 +409,9 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
           }
         }
 
-        findColumn(type_->nameOf(i))->mutableStats()->numDistinct =
-            approxNumDistinct;
+        const_cast<Column*>(findColumn(type_->nameOf(i)))
+            ->mutableStats()
+            ->numDistinct = approxNumDistinct;
       }
     }
   }

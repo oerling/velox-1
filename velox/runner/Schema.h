@@ -77,7 +77,12 @@ class Column {
     return latestStats_;
   }
 
-  ColumnStatistics* mutableStats() const {
+  ColumnStatistics* mutableStats() {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (!latestStats_) {
+    allStats_.push_back(std::make_unique<ColumnStatistics>());
+    latestStats_ = allStats_.back().get();
+    }
     return latestStats_;
   }
 
