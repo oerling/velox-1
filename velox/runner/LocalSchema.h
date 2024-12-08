@@ -132,7 +132,8 @@ class LocalHiveTableLayout : public HiveTableLayout {
       float pct,
       const std::vector<common::Subfield>& fields,
       HashStringAllocator* allocator,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders) const;
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders)
+      const;
 
  private:
   std::vector<std::string> files_;

@@ -80,8 +80,8 @@ class Column {
   ColumnStatistics* mutableStats() {
     std::lock_guard<std::mutex> l(mutex_);
     if (!latestStats_) {
-    allStats_.push_back(std::make_unique<ColumnStatistics>());
-    latestStats_ = allStats_.back().get();
+      allStats_.push_back(std::make_unique<ColumnStatistics>());
+      latestStats_ = allStats_.back().get();
     }
     return latestStats_;
   }

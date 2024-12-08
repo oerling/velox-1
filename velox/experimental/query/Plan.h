@@ -372,9 +372,7 @@ class Optimization {
     leafHandles_[id] = std::make_pair(handle, extraFilters);
   }
 
-  std::pair<
-      connector::ConnectorTableHandlePtr,
-      std::vector<core::TypedExprPtr>>
+  std::pair<connector::ConnectorTableHandlePtr, std::vector<core::TypedExprPtr>>
   leafHandle(int32_t id) {
     auto it = leafHandles_.find(id);
     return it != leafHandles_.end()
