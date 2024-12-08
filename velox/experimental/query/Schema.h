@@ -318,7 +318,7 @@ struct ColumnGroup : public Relation {
       SchemaTableCP _table,
       Distribution distribution,
       const ColumnVector& _columns,
-      runner::TableLayout* layout = nullptr)
+      const runner::TableLayout* layout = nullptr)
       : Relation(RelType::kBase, distribution, _columns),
         name(_name),
         table(_table),
@@ -326,7 +326,7 @@ struct ColumnGroup : public Relation {
 
   Name name;
   SchemaTableCP table;
-  runner::TableLayout* layout;
+  const runner::TableLayout* layout;
 
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,

@@ -127,7 +127,7 @@ SchemaTableCP Schema::findTable(std::string_view name) const {
   auto* pk = schemaTable->addIndex(
       toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
   addTable(schemaTable);
-  pk->tableLayout = table->layouts()[0];
+  pk->layout = table->layouts()[0];
   return schemaTable;
 }
 

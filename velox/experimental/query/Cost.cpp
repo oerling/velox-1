@@ -15,7 +15,6 @@
  */
 
 #include "velox/experimental/query/Cost.h"
-#include "velox/connectors/hive/HiveConnector.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 

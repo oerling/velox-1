@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include "velox/connectors/hive/TableHandle.h"
 #include "velox/exec/TaskStats.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/runner/MultiFragmentPlan.h"

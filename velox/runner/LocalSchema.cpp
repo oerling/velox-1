@@ -81,7 +81,7 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
     std::vector<core::TypedExprPtr> extraFilters,
     const std::vector<common::Subfield>& fields,
     HashStringAllocator* allocator,
-    std::vector<ColumnStatistics>* statistics) {
+    std::vector<ColumnStatistics>* statistics) const {
   std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>> builders;
   VELOX_CHECK(extraFilters.empty());
   auto result = sample(handle, pct, fields, allocator, &builders);
@@ -111,7 +111,7 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
     const std::vector<common::Subfield>& fields,
     HashStringAllocator* /*allocator*/,
     std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>*
-        statsBuilders) {
+        statsBuilders) const {
   dwrf::StatisticsBuilderOptions options(
       /*stringLengthLimit=*/100, /*initialSize=*/0);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;

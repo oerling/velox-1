@@ -233,7 +233,7 @@ class TableLayout {
       std::vector<core::TypedExprPtr> extraFilters,
       const std::vector<common::Subfield>& fields = {},
       HashStringAllocator* allocator = nullptr,
-      std::vector<ColumnStatistics>* statistics = nullptr) {
+      std::vector<ColumnStatistics>* statistics = nullptr) const {
     VELOX_UNSUPPORTED("Table class does not support sampling.");
   }
 

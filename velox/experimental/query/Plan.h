@@ -367,13 +367,13 @@ class Optimization {
 
   void setLeafHandle(
       int32_t id,
-      std::shared_ptr<velox::connector::ConnectorTableHandle> handle,
+      connector::ConnectorTableHandlePtr handle,
       std::vector<core::TypedExprPtr> extraFilters) {
     leafHandles_[id] = std::make_pair(handle, extraFilters);
   }
 
   std::pair<
-      std::shared_ptr<velox::connector::ConnectorTableHandle>,
+      connector::ConnectorTableHandlePtr,
       std::vector<core::TypedExprPtr>>
   leafHandle(int32_t id) {
     auto it = leafHandles_.find(id);
@@ -752,7 +752,7 @@ class Optimization {
   std::unordered_map<
       int32_t,
       std::pair<
-          std::shared_ptr<velox::connector::ConnectorTableHandle>,
+          connector::ConnectorTableHandlePtr,
           std::vector<core::TypedExprPtr>>>
       leafHandles_;
 

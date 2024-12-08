@@ -43,7 +43,6 @@ void filterUpdated(BaseTableCP table) {
         continue;
       }
       pushdownConjuncts.push_back(typedExpr);
-      subfieldFilters[std::move(pair.first)] = std::move(pair.second);
     } catch (const std::exception& e) {
       remainingConjuncts.push_back(std::move(typedExpr));
     }
@@ -63,29 +62,29 @@ void filterUpdated(BaseTableCP table) {
     }
   }
   auto& dataColumns = table->schemaTable->runnerTable->rowType();
-  auto* layout = table->schemaTable->columnGroups[0];
+  auto* layout = table->schemaTable->columnGroups[0]->layout;
   auto connector = layout->connector();
-  auto layoutData = layout->layoutMetadata();
+  auto layoutData = layout->metadata();
   std::vector<connector::ColumnHandlePtr> columns;
-  for (auto column : dataColumns) {
+  for (int32_t i = 0; i < dataColumns->size(); ++i) {
     // Add subfield pruning here.
-    columns.push_back(connector->createColumnHandle(*layoutData, column->name());
+    columns.push_back(
+        connector->createColumnHandle(*layoutData, dataColumns->nameOf(i)));
   }
+  auto allFilters = std::move(pushdownConjuncts);
+  if (remainingFilter) {
+    allFilters.push_back(remainingFilter);
+  }
+  std::vector<core::TypedExprPtr> rejectedFilters;
   auto handle = connector->createTableHandle(
       *layoutData,
-      layout->name(),
       columns,
-      optimization.evaluator(),
+      *optimization->evaluator(),
       std::move(allFilters),
       rejectedFilters);
-                                             );
-                                             optimization->setLeafHandle(
-                                                 table->id(),
-                                                 handle,
-                                                 std::move(rejectedFilters));
-                                             y optimization->setLeafSelectivity(
-                                                 *const_cast<BaseTable*>(
-                                                     table));
+
+  optimization->setLeafHandle(table->id(), handle, std::move(rejectedFilters));
+  optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
 }
 
 core::PlanNodeId Optimization::nextId(const RelationOp& op) {
@@ -551,25 +550,33 @@ core::PlanNodePtr Optimization::makeFragment(
     case RelType::kTableScan: {
       auto scan = op->as<TableScan>();
       auto outputType = makeOutputType(scan->columns());
-      auto handle = leafHandle(scan->baseTable->id());
-      if (!handle) {
+      auto handlePair = leafHandle(scan->baseTable->id());
+      if (!handlePair.first) {
         filterUpdated(scan->baseTable);
-        handle = leafHandle(scan->baseTable->id());
+        handlePair = leafHandle(scan->baseTable->id());
         VELOX_CHECK_NOT_NULL(
-            handle, "No table for scan {}", scan->toString(true, true));
+            handlePair.first,
+            "No table for scan {}",
+            scan->toString(true, true));
       }
+      auto metadata = scan->index->layout->metadata();
       std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           assignments;
       for (auto column : scan->columns()) {
+        // TODO: Make assignments have a ConnectorTableHandlePtr instead of
+        // non-const shared_ptr.
         assignments[column->toString()] =
-            std::make_shared<connector::hive::HiveColumnHandle>(
-                column->name(),
-                connector::hive::HiveColumnHandle::ColumnType::kRegular,
-                toTypePtr(column->value().type),
-                toTypePtr(column->value().type));
+            std::const_pointer_cast<connector::ColumnHandle>(
+                scan->index->layout->connector()->createColumnHandle(
+                    *metadata, column->name()));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
-          nextId(*op), outputType, handle, assignments);
+          nextId(*op),
+          outputType,
+          std::const_pointer_cast<connector::ConnectorTableHandle>(
+              handlePair.first),
+          assignments);
+      VELOX_CHECK(handlePair.second.empty(), "Expecting no rejected filters");
       fragment.scans.push_back(scanNode);
       return scanNode;
     }

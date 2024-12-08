@@ -25,9 +25,9 @@ using namespace facebook::velox::runner;
 
 bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   auto optimization = queryCtx()->optimization();
-  auto handlePair = *optimization->leafHandle(table.id());
+  auto handlePair = optimization->leafHandle(table.id());
   auto handle = handlePair.first;
-  auto string = handle.toString();
+  auto string = handle->toString();
   {
     auto it = leafSelectivities_.find(string);
     if (it != leafSelectivities_.end()) {
@@ -36,7 +36,7 @@ bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
       return true;
     }
   }
-  auto* runnerTable = table.schemaTable->runnrTable;
+  auto* runnerTable = table.schemaTable->runnerTable;
   if (!runnerTable) {
     // If there is no physical table to go to: Assume 1/10 if any filters.
     if (table.columnFilters.empty() && table.filter.empty()) {
@@ -50,7 +50,7 @@ bool VeloxHistory::setLeafSelectivity(BaseTable& table) {
   auto sample =
       runnerTable->layouts()[0]->sample(handlePair.first, 1, handlePair.second);
   table.filterSelectivity =
-      static_cast<float>(sample.second) / (sample.first; + 1);
+      static_cast<float>(sample.second) / (sample.first + 1);
   recordLeafSelectivity(string, table.filterSelectivity, false);
   return true;
 }
@@ -74,7 +74,8 @@ void VeloxHistory::recordVeloxExecution(
       recordLeafSelectivity(
           handle,
           scanStats->outputPositions /
-              std::max<float>(1, scanStats->rawInputPositions));
+              std::max<float>(1, scanStats->rawInputPositions),
+          true);
     }
   }
 }

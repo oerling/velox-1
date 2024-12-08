@@ -116,7 +116,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       std::vector<core::TypedExprPtr> extraFilters,
       const std::vector<common::Subfield>& fields,
       HashStringAllocator* allocator = nullptr,
-      std::vector<ColumnStatistics>* statistics = nullptr) override;
+      std::vector<ColumnStatistics>* statistics = nullptr) const override;
 
   const std::vector<std::string>& files() const {
     return files_;
@@ -132,7 +132,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       float pct,
       const std::vector<common::Subfield>& fields,
       HashStringAllocator* allocator,
-      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders);
+      std::vector<std::unique_ptr<dwrf::StatisticsBuilder>>* statsBuilders) const;
 
  private:
   std::vector<std::string> files_;
