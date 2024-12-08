@@ -24,11 +24,11 @@
 #include "velox/common/memory/tests/SharedArbitratorTestUtil.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/exec/Cursor.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Values.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/Cursor.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
@@ -1543,7 +1543,9 @@ DEBUG_ONLY_TEST_F(TaskPauseTest, resumeFuture) {
   observeThread.join();
 
   ASSERT_EQ(task_->numTotalDrivers(), 1);
-  ASSERT_EQ(task_->numFinishedDrivers(), 1);
+  while (task_->numFinishedDrivers() != 1) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // NOLINT
+  }
   ASSERT_EQ(task_->numRunningDrivers(), 0);
 }
 

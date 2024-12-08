@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/exec/tests/utils/Cursor.h"
+#include "velox/exec/Cursor.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/exec/Operator.h"
 
@@ -243,6 +243,7 @@ class MultiThreadedTaskCursor : public TaskCursorBase {
           copy->copy(vector.get(), 0, 0, vector->size());
           return queue->enqueue(std::move(copy), future);
         },
+        0,
         [queue](std::exception_ptr) {
           // onError close the queue to unblock producers and consumers.
           // moveNext will handle rethrowing the error once it's

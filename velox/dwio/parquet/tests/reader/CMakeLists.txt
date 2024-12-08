@@ -43,7 +43,7 @@ target_link_libraries(
   velox_exec
   velox_hive_connector
   ${TEST_LINK_LIBS}
-  ${FOLLY_BENCHMARK}
+  Folly::follybenchmark
   Folly::folly)
 
 if(VELOX_ENABLE_BENCHMARKS)
@@ -61,7 +61,7 @@ add_test(
   COMMAND velox_dwio_parquet_reader_test
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
-  velox_dwio_parquet_reader_test velox_dwio_native_parquet_common
+  velox_dwio_parquet_reader_test velox_dwio_parquet_common
   velox_dwio_parquet_reader_benchmark_lib velox_link_libs)
 
 add_executable(velox_dwio_parquet_structure_decoder_test
@@ -79,7 +79,7 @@ if(VELOX_ENABLE_BENCHMARKS)
                  NestedStructureDecoderBenchmark.cpp)
   target_link_libraries(
     velox_dwio_parquet_structure_decoder_benchmark
-    velox_dwio_native_parquet_reader Folly::folly ${FOLLY_BENCHMARK})
+    velox_dwio_native_parquet_reader Folly::folly Folly::follybenchmark)
 endif()
 
 add_executable(velox_dwio_parquet_table_scan_test ParquetTableScanTest.cpp)

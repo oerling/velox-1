@@ -66,6 +66,7 @@ add_executable(
   PartitionedOutputTest.cpp
   PlanNodeSerdeTest.cpp
   PlanNodeToStringTest.cpp
+  PlanNodeToSummaryStringTest.cpp
   PrefixSortTest.cpp
   PrintPlanWithStatsTest.cpp
   ProbeOperatorStateTest.cpp
@@ -73,6 +74,7 @@ add_executable(
   RoundRobinPartitionFunctionTest.cpp
   RowContainerTest.cpp
   RowNumberTest.cpp
+  ScaleWriterLocalPartitionTest.cpp
   SortBufferTest.cpp
   SpillerTest.cpp
   SpillTest.cpp
@@ -158,8 +160,7 @@ target_link_libraries(
   Folly::folly
   gflags::gflags
   glog::glog
-  fmt::fmt
-  ${FILESYSTEM})
+  fmt::fmt)
 
 target_link_libraries(
   velox_exec_infra_test
@@ -196,8 +197,7 @@ target_link_libraries(
   Folly::folly
   gflags::gflags
   glog::glog
-  fmt::fmt
-  ${FILESYSTEM})
+  fmt::fmt)
 
 add_executable(velox_in_10_min_demo VeloxIn10MinDemo.cpp)
 
