@@ -20,8 +20,19 @@
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
+#include "velox/dwio/dwrf/common/Statistics.h"
 
 namespace facebook::velox::runner {
+
+std::unique_ptr<connector::LayoutMetadata> HiveTableLayout::metadata()
+    const {
+  std::vector<std::string> names;
+  for (auto& column : hivePartitionColumns_) {
+    names.push_back(column->name());
+  }
+  return std::make_unique<connector::hive::HiveLayoutMetadata>(
+      name(), rowType(), std::move(names));
+}
 
 LocalSchema::LocalSchema(
     const std::string& path,
@@ -57,24 +68,54 @@ void addStats(
     }
   }
 }
+std::unique_ptr<ColumnStatistics> toRunnerStats(
+    std::unique_ptr<dwio::common::ColumnStatistics> dwioStats) {
+  auto result = std::make_unique<ColumnStatistics>();
+  result->numDistinct = dwioStats->numDistinct();
 
-std::pair<int64_t, int64_t> LocalTable::sample(
+  return result;
+}
+
+std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
+    const connector::ConnectorTableHandlePtr& handle,
+    float pct,
+    std::vector<core::TypedExprPtr> extraFilters,
+    const std::vector<common::Subfield>& fields,
+    HashStringAllocator* allocator,
+    std::vector<ColumnStatistics>* statistics) {
+  std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>> builders;
+  VELOX_CHECK(extraFilters.empty());
+  auto result = sample(handle, pct, fields, allocator, &builders);
+  if (!statistics) {
+    return result;
+  }
+  statistics->resize(builders.size());
+  for (auto i = 0; i < builders.size(); ++i) {
+    ColumnStatistics runnerStats;
+    if (builders[i]) {
+      dwrf::proto::ColumnStatistics proto;
+      builders[i]->toProto(proto);
+      dwrf::StatsContext context("", dwrf::WriterVersion::ORIGINAL);
+      auto wrapper = dwrf::ColumnStatisticsWrapper(&proto);
+      auto stats = buildColumnStatisticsFromProto(wrapper, context);
+      runnerStats = *toRunnerStats(std::move(stats));
+    }
+
+    (*statistics)[i] = std::move(runnerStats);
+  }
+  return result;
+}
+
+std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
+    const connector::ConnectorTableHandlePtr& tableHandle,
     float pct,
     const std::vector<common::Subfield>& fields,
-    velox::connector::hive::SubfieldFilters filters,
-    const velox::core::TypedExprPtr& remainingFilter,
     HashStringAllocator* /*allocator*/,
     std::vector<std::unique_ptr<velox::dwrf::StatisticsBuilder>>*
         statsBuilders) {
   dwrf::StatisticsBuilderOptions options(
       /*stringLengthLimit=*/100, /*initialSize=*/0);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> builders;
-  auto tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
-      schema_->connector()->connectorId(),
-      name_,
-      true,
-      std::move(filters),
-      remainingFilter);
 
   std::unordered_map<
       std::string,
@@ -87,9 +128,9 @@ std::pair<int64_t, int64_t> LocalTable::sample(
     auto column =
         dynamic_cast<const common::Subfield::NestedField*>(path[0].get())
             ->name();
-    const auto idx = type_->getChildIdx(column);
-    names.push_back(type_->nameOf(idx));
-    types.push_back(type_->childAt(idx));
+    const auto idx = rowType()->getChildIdx(column);
+    names.push_back(rowType()->nameOf(idx));
+    types.push_back(rowType()->childAt(idx));
     columnHandles[names.back()] =
         std::make_shared<connector::hive::HiveColumnHandle>(
             names.back(),
@@ -122,15 +163,21 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   int64_t passingRows = 0;
   int64_t scannedRows = 0;
   for (auto& file : files_) {
-    auto dataSource = schema_->connector()->createDataSource(
+    // TODO: make createDataSource take a ConnectorTableHandlePtr instead of a
+    // shared_ptr to mutable handle.
+    auto handleCopy =
+        std::const_pointer_cast<connector::ConnectorTableHandle>(tableHandle);
+    auto dataSource = connector()->createDataSource(
         outputType,
-        tableHandle,
+        handleCopy,
         columnHandles,
-        schema_->connectorQueryCtx().get());
+        reinterpret_cast<const LocalSchema*>(table()->schema())
+            ->connectorQueryCtx()
+            .get());
 
     auto split = connector::hive::HiveConnectorSplitBuilder(file)
-                     .fileFormat(format_)
-                     .connectorId(schema_->connector()->connectorId())
+                     .fileFormat(fileFormat_)
+                     .connectorId(connector()->connectorId())
                      .build();
     dataSource->addSplit(split);
     constexpr int32_t kBatchSize = 1000;
@@ -151,7 +198,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
           data->childAt(column) =
               BaseVector::loadedVectorShared(data->childAt(column));
         };
-        switch (type_->childAt(column)->kind()) {
+        switch (rowType()->childAt(column)->kind()) {
           case TypeKind::SMALLINT:
             loadChild(data, column);
             addStats<dwrf::IntegerStatisticsBuilder, short>(
@@ -190,7 +237,7 @@ std::pair<int64_t, int64_t> LocalTable::sample(
       break;
     }
     scannedRows += dataSource->getCompletedRows();
-    if (scannedRows > numRows_ * (pct / 100)) {
+    if (scannedRows > table()->numRows() * (pct / 100)) {
       break;
     }
   }
@@ -200,6 +247,32 @@ std::pair<int64_t, int64_t> LocalTable::sample(
   return std::pair(scannedRows, passingRows);
 }
 
+  void LocalTable::makeDefaultLayout(std::vector<std::string> files) {
+  std::vector<const Column*> columns;
+  for (auto i = 0; i < type_->size(); ++i) {
+    auto name = type_->nameOf(i);
+    columns.push_back(columns_[name].get());
+  }
+  auto* localSchema = reinterpret_cast<const LocalSchema*>(schema());
+  auto* connector = localSchema->connector();
+  auto format = localSchema->fileFormat();
+  std::vector<const Column*> empty;
+  auto layout = std::make_unique<LocalHiveTableLayout>(
+      name_,
+      this,
+      connector,
+      std::move(columns),
+      empty,
+      empty,
+      std::vector<core::SortOrder>{},
+      empty,
+      empty,
+      format);
+  layout->setFiles(std::move(files));
+  exportedLayouts_.push_back(layout.get());
+  layouts_.push_back(std::move(layout));
+}
+
 void LocalSchema::loadTable(
     const std::string& tableName,
     const fs::path& tablePath) {
@@ -207,6 +280,7 @@ void LocalSchema::loadTable(
   // counts.
   RowTypePtr tableType;
   LocalTable* table = nullptr;
+  std::vector<std::string> files;
 
   for (auto const& dirEntry : fs::directory_iterator{tablePath}) {
     if (!dirEntry.is_regular_file()) {
@@ -258,14 +332,21 @@ void LocalSchema::loadTable(
       }
       // Initialize the stats from the first file.
       if (column->stats() == nullptr) {
-        column->setStats(reader->columnStatistics(i));
+        auto readerStats = reader->columnStatistics(i);
+        auto numValues = readerStats->getNumberOfValues();
+        column->setStats(toRunnerStats(std::move(readerStats)));
+        if (rows.has_value() && rows.value() > 0 && numValues.has_value()) {
+          column->mutableStats()->nullPct =
+              100 * (rows.value() - numValues.value()) / rows.value();
+        }
       }
     }
-    table->files_.push_back(dirEntry.path());
+    files.push_back(dirEntry.path());
   }
   VELOX_CHECK_NOT_NULL(table, "Table directory {} is empty", tablePath);
 
   table->setType(tableType);
+  table->makeDefaultLayout(std::move(files));
   table->sampleNumDistincts(2, pool_);
 }
 
@@ -277,9 +358,23 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
 
   // Sample the table. Adjust distinct values according to the samples.
   auto allocator = std::make_unique<HashStringAllocator>(pool);
+  auto* layout = layouts_[0].get();
+  std::vector<connector::ColumnHandlePtr> columns;
+  auto metadata = layout->metadata();
+  for (auto i = 0; i < type_->size(); ++i) {
+    columns.push_back(
+        layout->connector()->createColumnHandle(*metadata, type_->nameOf(i)));
+  }
+  auto* localSchema = dynamic_cast<const LocalSchema*>(schema());
+  auto& evaluator = *localSchema->connectorQueryCtx()->expressionEvaluator();
+  std::vector<core::TypedExprPtr> ignore;
+  auto handle = layout->connector()->createTableHandle(
+      *metadata, columns, evaluator, {}, ignore);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> statsBuilders;
-  auto [sampled, passed] =
-      sample(samplePct, fields, {}, nullptr, allocator.get(), &statsBuilders);
+  auto* localLayout = dynamic_cast<LocalHiveTableLayout*>(layout);
+  VELOX_CHECK_NOT_NULL(localLayout, "Expecting a local hive layout");
+  auto [sampled, passed] = localLayout->sample(
+      handle, samplePct, fields, allocator.get(), &statsBuilders);
   numSampledRows_ = sampled;
   for (auto i = 0; i < statsBuilders.size(); ++i) {
     if (statsBuilders[i]) {
@@ -313,7 +408,8 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
           }
         }
 
-        columns()[type_->nameOf(i)]->setNumDistinct(approxNumDistinct);
+        findColumn(type_->nameOf(i))->mutableStats()->numDistinct =
+            approxNumDistinct;
       }
     }
   }

@@ -137,7 +137,7 @@ tpchSchema(int32_t scale, bool partitioned, bool ordered, bool secondary) {
           tpch::Table::TBL_REGION, scale, partitioned, ordered, secondary),
   };
 
-  return make<Schema>(toName(title), std::move(tables));
+  return make<Schema>(toName(title), std::move(tables), nullptr);
 }
 
 } // namespace facebook::velox::optimizer

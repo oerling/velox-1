@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
@@ -25,8 +23,6 @@ namespace facebook::velox::optimizer {
 
 using namespace facebook::velox;
 
-using velox::connector::hive::HiveColumnHandle;
-using velox::connector::hive::HiveTableHandle;
 std::string veloxToString(core::PlanNode* plan) {
   return plan->toString(true, true);
 }
@@ -472,8 +468,7 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
 
 PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
   auto tableHandle =
-      dynamic_cast<const HiveTableHandle*>(tableScan->tableHandle().get());
-  VELOX_CHECK(tableHandle);
+      tableScan->tableHandle().get();
   auto assignments = tableScan->assignments();
   auto schemaTable = schema_.findTable(tableHandle->tableName());
   auto cname = fmt::format("t{}", ++nameCounter_);
@@ -484,17 +479,16 @@ PlanObjectP Optimization::makeBaseTable(const core::TableScanNode* tableScan) {
   ColumnVector columns;
   ColumnVector schemaColumns;
   for (auto& pair : assignments) {
-    auto handle = reinterpret_cast<const HiveColumnHandle*>(pair.second.get());
-    auto schemaColumn = schemaTable->findColumn(handle->name());
+    auto schemaColumn = schemaTable->findColumn(pair.second->name());
     schemaColumns.push_back(schemaColumn);
     auto value = schemaColumn->value();
-    auto* column = make<Column>(toName(handle->name()), baseTable, value);
+    auto* column = make<Column>(toName(pair.second->name()), baseTable, value);
     columns.push_back(column);
     renames_[pair.first] = column;
   }
   baseTable->columns = columns;
 
-  setLeafHandle(baseTable->id(), tableScan->tableHandle());
+  setLeafHandle(baseTable->id(), tableScan->tableHandle(), {});
   setLeafSelectivity(*baseTable);
   currentSelect_->tables.push_back(baseTable);
   currentSelect_->tableSet.add(baseTable);

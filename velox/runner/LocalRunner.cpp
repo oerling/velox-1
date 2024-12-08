@@ -224,27 +224,27 @@ LocalRunner::makeStages() {
 }
 
 exec::Split LocalSplitSource::next(int32_t /*worker*/) {
-  if (currentFile_ >= static_cast<int32_t>(table_->files().size())) {
+  if (currentFile_ >= static_cast<int32_t>(layout_->files().size())) {
     return exec::Split();
   }
 
   if (currentSplit_ >= fileSplits_.size()) {
     fileSplits_.clear();
     ++currentFile_;
-    if (currentFile_ >= table_->files().size()) {
+    if (currentFile_ >= layout_->files().size()) {
       return exec::Split();
     }
 
     currentSplit_ = 0;
-    auto filePath = table_->files()[currentFile_];
+    auto filePath = layout_->files()[currentFile_];
     const auto fileSize = fs::file_size(filePath);
     // Take the upper bound.
     const int splitSize = std::ceil((fileSize) / splitsPerFile_);
     for (int i = 0; i < splitsPerFile_; ++i) {
       fileSplits_.push_back(
           connector::hive::HiveConnectorSplitBuilder(filePath)
-              .connectorId(table_->schema()->connector()->connectorId())
-              .fileFormat(table_->format())
+              .connectorId(layout_->connector()->connectorId())
+              .fileFormat(layout_->fileFormat())
               .start(i * splitSize)
               .length(splitSize)
               .build());

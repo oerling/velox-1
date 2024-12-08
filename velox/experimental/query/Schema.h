@@ -88,7 +88,7 @@ class RelationOp;
 /// immutable and lives past the optimizer arena.
 class Locus {
  public:
-  explicit Locus(Name name) : name_(name) {}
+  explicit Locus(Name name, connector::Connector* connector) : name_(name), connector_(connector) {}
 
   virtual ~Locus() = default;
 
@@ -98,6 +98,12 @@ class Locus {
     return toName(name_);
   }
 
+  const connector::Connector* connector() const {
+    // // 'connector_' can be nullptr if no executable plans are made.
+    VELOX_CHECK_NOT_NULL(connector_);
+    return connector_;
+  }
+  
   /// Sets the cardinality in op. Returns true if set. If false, default
   /// cardinality determination.
   virtual bool setCardinality(RelationOp& /*op*/) const {
@@ -115,7 +121,8 @@ class Locus {
   }
 
  private:
-  Name name_;
+  const Name name_;
+  const connector::Connector* connector_;
 };
 
 using LocusCP = const Locus*;
@@ -309,14 +316,17 @@ struct ColumnGroup : public Relation {
       Name _name,
       SchemaTableCP _table,
       Distribution distribution,
-      const ColumnVector& _columns)
+      const ColumnVector& _columns,
+      runner::TableLayout* layout = nullptr)
       : Relation(RelType::kBase, distribution, _columns),
         name(_name),
-        table(_table) {}
+        table(_table),
+	layout(layout) {}
 
   Name name;
   SchemaTableCP table;
-
+  runner::TableLayout* layout;
+  
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,
   /// then 'range' should be the cardinality of the index.
@@ -373,7 +383,7 @@ struct SchemaTable {
 
   /// Adds an index. The arguments set the corresponding members of a
   /// Distribution.
-  void addIndex(
+  ColumnGroupP addIndex(
       Name name,
       float cardinality,
       int32_t numKeysUnique,
@@ -424,7 +434,10 @@ struct SchemaTable {
 /// repository. The objects have a default Locus for convenience.
 class Schema {
  public:
-  Schema(Name _name, std::vector<SchemaTableCP> tables);
+  /// Constructs a testing schema without runner schema.
+  Schema(Name _name, std::vector<SchemaTableCP> tables, connector::Connector* connector);
+
+  /// Constructs a Schema for producing executable plans, backed by 'source'.
   Schema(Name _name, velox::runner::Schema* source);
 
   /// Returns the table with 'name' or nullptr if not found.

@@ -48,7 +48,13 @@ class History {
 
   virtual void recordLeafSelectivity(
       const std::string& handle,
-      float selectivity) {
+      float selectivity,
+      bool overwrite) {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (!overwrite &&
+        leafSelectivities_.find(handle) != leafSelectivities_.end()) {
+      return;
+    }
     leafSelectivities_[handle] = selectivity;
   }
 

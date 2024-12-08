@@ -26,6 +26,8 @@
 #include "velox/common/future/VeloxPromise.h"
 #include "velox/core/ExpressionEvaluator.h"
 #include "velox/vector/ComplexVector.h"
+#include "velox/type/Subfield.h"
+#include "velox/core/ITypedExpr.h"
 
 #include <folly/Synchronized.h>
 
@@ -38,10 +40,6 @@ class WaveDataSource;
 namespace facebook::velox::common {
 class Filter;
 }
-namespace facebook::velox::runner {
-class TableLayout;
-class Column;
-} // namespace facebook::velox::runner
 namespace facebook::velox::config {
 class ConfigBase;
 }
@@ -75,10 +73,21 @@ struct ConnectorSplit : public ISerializable {
   }
 };
 
+  /// Interfaces to the connector-specific schema in order to resolve
+  ///  things like special column types, virtual columns and other details. This is needed for providing a connector-agnostic interface for creating ColumnHandles and TableHandles. This is obtained from runner::TableLayout. Using runner::TableLayout directly would create a circular dependency between connectors/ and runner/. 
+  class LayoutMetadata {
+  public:
+    virtual ~LayoutMetadata() = default;
+  };
+
+  
 class ColumnHandle : public ISerializable {
  public:
   virtual ~ColumnHandle() = default;
-
+  virtual const std::string& name() const {
+    VELOX_NYI();
+  }
+  
   folly::dynamic serialize() const override;
 
  protected:
@@ -102,6 +111,10 @@ class ConnectorTableHandle : public ISerializable {
     return connectorId_;
   }
 
+  virtual const std::string& tableName() const {
+    VELOX_UNSUPPORTED();
+  }
+  
   virtual folly::dynamic serialize() const override;
 
  protected:
@@ -429,12 +442,12 @@ class Connector {
     return false;
   }
 
-  /// Creates a ColumnHandle for 'column' in 'layout'. If the type is a complex
+  /// Creates a ColumnHandle for 'columnName'. If the type is a complex
   /// type, 'subfields' specifies which subfields need to be retrievd. empty
   /// 'subfields' means all are returned.
   virtual ColumnHandlePtr createColumnHandle(
-      const runner::TableLayout& layout,
-      const runner::Column& column,
+					     const LayoutMetadata& layoutData,
+					     const std::string& columnName,
       std::vector<common::Subfield> subfields = {}) {
     VELOX_UNSUPPORTED();
   }
@@ -442,12 +455,13 @@ class Connector {
   /// Returns a ConnectorTableHandle for use in createDataSource. 'filters' are
   /// pushed down into the DataSource. 'filters' are expressions involving literals and columns of 'layout'. The filters not supported by the target
   /// system are returned in 'rejectedFilters'. 'rejectedFilters'  will have to
-  /// be applied to the data returned by the DataSource.
+  /// be applied to the data returned by the DataSource. 'rejectedFilters' may or may not be a subset of 'filters' or subexpressions thereof.
   virtual ConnectorTableHandlePtr createTableHandle(
-      const runner::TableLayout& layout,
+						    const LayoutMetadata& layoutData,
       std::vector<ColumnHandlePtr> columnHandles,
-      std::vector<core::TypedExpr> filters,
-      std::vector<core::TypedExpr>& rejectedFilters) {
+						    core::ExpressionEvaluator& evaluator,
+						    std::vector<core::TypedExprPtr> filters,
+      std::vector<core::TypedExprPtr>& rejectedFilters) {
     VELOX_UNSUPPORTED();
   }
 

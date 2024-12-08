@@ -482,12 +482,7 @@ struct BaseTable : public PlanObject {
 
   // the fraction of base table rows selected by all filters involving this
   // table only.
-
   float filterSelectivity{1};
-
-  // System specific representation of filter on columns, e.g. set of
-  // common::Filter.
-  void* nativeFilter;
 
   bool isTable() const override {
     return true;

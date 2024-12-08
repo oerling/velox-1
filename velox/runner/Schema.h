@@ -73,7 +73,11 @@ class Column {
 
   Column(const std::string& name, TypePtr type) : name_(name), type_(type) {}
 
-  ColumnStatistics* stats() const {
+  const ColumnStatistics* stats() const {
+    return latestStats_;
+  }
+
+  ColumnStatistics* mutableStats() const {
     return latestStats_;
   }
 
@@ -92,6 +96,11 @@ class Column {
     return type_;
   }
 
+  int64_t approxNumDistinct(int64_t deflt = 1000) const {
+    auto* s = stats();
+    return s && s->numDistinct.has_value() ? s->numDistinct.value()  : deflt;
+  }
+  
  protected:
   const std::string name_;
   const TypePtr type_;
@@ -108,49 +117,96 @@ class Column {
   std::mutex mutex_;
 };
 
-class Table
-
-    /// Represents a physical manifestation of a table. There is at least
-    /// one layout but for tables that have multiple sort orders,
-    /// partitionings, indices, column groups, etc, there is a separate
-    /// layout for each. Scans, index lookups, stats, sampling and split
-    /// enumeration are done with respect to table layout.
-    class TableLayout {
+  class Table;
+  
+/// Represents a physical manifestation of a table. There is at least
+/// one layout but for tables that have multiple sort orders,
+/// partitionings, indices, column groups, etc, there is a separate
+/// layout for each. Scans, index lookups, stats, sampling and split
+/// enumeration are done with respect to table layout.
+class TableLayout {
  public:
   TableLayout(
       const std::string& name,
+      const Table* table,
       connector::Connector* connector,
       std::vector<const Column*> columns,
-      std::vector<const Column*> partitioning,
-      const std::vector<const Column*> orderColumns,
-      std::vector<core::SortOrder> sortOrder)
-      : name(name),
+      std::vector<const Column*> partitionColumns,
+      std::vector<const Column*> orderColumns,
+      std::vector<core::SortOrder> sortOrder,
+      std::vector<const Column*> lookupKeys,
+      bool supportsScan)
+      : name_(name),
+	table_(table),
         connector_(connector),
         columns_(std::move(columns)),
-        partitioning_(std::move(partitioning)),
+        partitionColumns_(std::move(partitionColumns)),
         orderColumns_(std::move(orderColumns)),
-        sortOrder_(std::move(sortOrder)) {}
+        sortOrder_(std::move(sortOrder)),
+        lookupKeys_(lookupKeys),
+        supportsScan_(supportsScan) {
+    std::vector<std::string> names;
+    std::vector<TypePtr> types;
+    for (auto& column : columns_) {
+      names.push_back(column->name());
+      types.push_back(column->type());
+    }
+    rowType_ = ROW(std::move(names), std::move(types));
+  }
 
+  virtual ~TableLayout() = default;
+  
   /// Name for documentation. If there are multiple layouts, this is unique
   /// within the table.
-  const std::string name() {
+  const std::string name() const {
     return name_;
   }
 
-  /// List of columns present in this layout.
-  const std::vector<const Column*> columns() const;
+  const Table* table() const {
+    return table_;
+  }
+  
+  /// Returns a connector specific table and layout information that
+  /// encapsulates details like synthetic columns that need to be known when
+  /// making column and table handles.
+  virtual std::unique_ptr<connector::LayoutMetadata> metadata() const = 0;
 
-  /// Approximate number of rows
-  std::optional<uint64_t> approxCardinality() const;
+  /// List of columns present in this layout.
+  const std::vector<const Column*>& columns() const;
 
   /// Set of partitioning columns. The values in partitioning columns determine
-  /// the location of the row. Joins on equality of partitioning columns are are
+  /// the location of the row. Joins on equality of partitioning columns are
   /// co-located.
-  virtual const std::vector<const Column*> partitioningColumns() const;
+  const std::vector<const Column*>& partitioningColumns() const {
+    return partitionColumns_;
+  }
 
   /// Columns on which content is ordered within the range of rows covered by a
   /// Split.
-  virtual const std::vector<const Column*> orderingColumns() const;
+  const std::vector<const Column*>& orderColumns() const {
+    return orderColumns_;
+  }
+
+  const std::vector<core::SortOrder>& sortOrder() const {
+    return sortOrder_;
+  }
+
+  /// Returns the key columns usable for index lookup. This is modeled
+  /// separately from sortedness since some sorted files may not
+  /// support lookup. An index lookup has 0 or more equalities
+  /// followed by up to one range. The equalities need to be on
+  /// contiguous, leading parts of the column list and the range must
+  /// be on the next. This coresponds to a multipart key.
+  const std::vector<const Column*>& lookupKeys() const {
+    return lookupKeys_;
+  }
+
+  /// True if a full table scan is supported. Some lookup sources prohibit this.
+  /// At the same time the dataset may be available in a scannable form in
+  /// another layout.
+  bool supportsScan() const {
+    return supportsScan_;
+  }
 
   /// Returns the Connector to use for generating ColumnHandles and TableHandles
   /// for operations against this layout.
@@ -158,15 +214,24 @@ class Table
     return connector_;
   }
 
-  /// Samples 'pct' percent of rows for 'fields'. Applies filters in
-  /// 'handle' before sampling. Returns {count of sampled, count
-  /// matching filters}.  If 'statistics' is non-nullptr, fills it
-  /// with post-filter statistics for the columns in
-  /// 'handle'. 'allocator' is used for temporary memory in gathering
-  /// statistics.
+  const RowTypePtr& rowType() const {
+    return rowType_;
+  }
+
+  /// Samples 'pct' percent of rows. Applies filters in 'handle'
+  /// before sampling. Returns {count of sampled, count matching
+  /// filters}. 'extraFilters' is a list of conjuncts to evaluate in
+  /// addition to the filters in 'handle'.  If 'statistics' is
+  /// non-nullptr, fills it with post-filter statistics for the
+  /// subfields in 'fields'. When sampling on demand, it is usually sufficient
+  /// to look at a subset of all accessed columns, so we specify these instead
+  /// of defaulting to the columns in 'handle'.  'allocator' is used for
+  /// temporary memory in gathering statistics.
   virtual std::pair<int64_t, int64_t> sample(
-      const ConnectorTableHandle& handle,
+      const connector::ConnectorTableHandlePtr& handle,
       float pct,
+      std::vector<core::TypedExprPtr> extraFilters,
+      const std::vector<common::Subfield>& fields = {},
       HashStringAllocator* allocator = nullptr,
       std::vector<ColumnStatistics>* statistics = nullptr) {
     VELOX_UNSUPPORTED("Table class does not support sampling.");
@@ -174,11 +239,15 @@ class Table
 
  private:
   const std::string name_;
+  const Table* table_;
   connector::Connector* connector_;
   std::vector<const Column*> columns_;
-  const std::vector<const Column*> partitioning_;
+  const std::vector<const Column*> partitionColumns_;
   const std::vector<const Column*> orderColumns_;
   const std::vector<core::SortOrder> sortOrder_;
+  const std::vector<const Column*> lookupKeys_;
+  const bool supportsScan_;
+  RowTypePtr rowType_;
 };
 
 class Schema;
@@ -189,8 +258,8 @@ class Table {
  public:
   virtual ~Table() = default;
 
-  Table(const std::string& name, Schema* schema)
-      : schema_(schema), name_(name), format_(format) {}
+  Table(const std::string& name, const Schema* schema)
+      : schema_(schema), name_(name) {}
 
   const std::string& name() const {
     return name_;
@@ -200,6 +269,10 @@ class Table {
     return type_;
   }
 
+  const Schema* schema() const {
+    return schema_;
+  }
+  
   /// Returns the set of columns as abstract, non-owned
   /// columns. Implementations may hav different Column
   /// implementations with different options, so we do not return the
@@ -218,7 +291,7 @@ class Table {
   virtual uint64_t numRows() const = 0;
 
  protected:
-  Schema* const schema_;
+  const Schema* const schema_;
   const std::string name_;
 
   // Discovered from data. In the event of different types, we take the
@@ -243,6 +316,8 @@ class Schema {
     return it->second.get();
   }
 
+  virtual connector::Connector* connector() const = 0;
+  
   virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const = 0;
 

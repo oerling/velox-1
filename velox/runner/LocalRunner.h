@@ -78,12 +78,14 @@ class LocalRunner : public Runner,
 class LocalSplitSource : public SplitSource {
  public:
   LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
-      : table_(table), splitsPerFile_(splitsPerFile) {}
+    : layout_(dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0])), splitsPerFile_(splitsPerFile) {
+    VELOX_CHECK_NOT_NULL(layout_, "Expecting a LocalTable with a LocalHiveTableLayout");
+  }
 
   exec::Split next(int32_t worker) override;
 
  private:
-  const LocalTable* const table_;
+  const LocalHiveTableLayout* layout_;
   const int32_t splitsPerFile_;
 
   std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;

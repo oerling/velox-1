@@ -25,7 +25,7 @@ namespace facebook::velox::connector::hive {
 
 using SubfieldFilters =
     std::unordered_map<common::Subfield, std::unique_ptr<common::Filter>>;
-
+  
 class HiveColumnHandle : public ColumnHandle {
  public:
   enum class ColumnType {
@@ -61,7 +61,7 @@ class HiveColumnHandle : public ColumnHandle {
         hiveType_->toString());
   }
 
-  const std::string& name() const {
+  const std::string& name() const override {
     return name_;
   }
 
@@ -120,6 +120,28 @@ class HiveColumnHandle : public ColumnHandle {
   const std::vector<common::Subfield> requiredSubfields_;
 };
 
+  /// Encodes Hive specifics needed for making column and table handles.
+class HiveLayoutMetadata : public LayoutMetadata {
+public:
+  HiveLayoutMetadata(const std::string& tableName, const RowTypePtr& rowType, std::vector<std::string> hivePartitionColumns)
+    : tableName_(tableName), rowType_(rowType), hivePartitionColumns_(hivePartitionColumns) {}
+
+  const std::string tableName() const {
+    return tableName_;
+  }
+
+  TypePtr dataType(const std::string& column) const {
+    return rowType_->findChild(column);
+  }
+  
+  HiveColumnHandle::ColumnType  columnType(const std::string& columnName) const;
+
+private:
+  const std::string tableName_;
+  const RowTypePtr rowType_;
+  const std::vector<std::string> hivePartitionColumns_;
+};
+  
 class HiveTableHandle : public ConnectorTableHandle {
  public:
   HiveTableHandle(
@@ -131,7 +153,7 @@ class HiveTableHandle : public ConnectorTableHandle {
       const RowTypePtr& dataColumns = nullptr,
       const std::unordered_map<std::string, std::string>& tableParameters = {});
 
-  const std::string& tableName() const {
+  const std::string& tableName() const override {
     return tableName_;
   }
 

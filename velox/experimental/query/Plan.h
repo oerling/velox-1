@@ -16,8 +16,7 @@
 #pragma once
 
 #include "velox/common/base/SimdUtil.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/Connector.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/Cost.h"
 #include "velox/experimental/query/RelationOp.h"
@@ -368,14 +367,19 @@ class Optimization {
 
   void setLeafHandle(
       int32_t id,
-      std::shared_ptr<velox::connector::ConnectorTableHandle> handle) {
-    leafHandles_[id] = handle;
+      std::shared_ptr<velox::connector::ConnectorTableHandle> handle,
+      std::vector<core::TypedExprPtr> extraFilters) {
+    leafHandles_[id] = std::make_pair(handle, extraFilters);
   }
 
-  std::shared_ptr<velox::connector::ConnectorTableHandle> leafHandle(
-      int32_t id) {
+  std::pair<
+      std::shared_ptr<velox::connector::ConnectorTableHandle>,
+      std::vector<core::TypedExprPtr>>
+  leafHandle(int32_t id) {
     auto it = leafHandles_.find(id);
-    return it != leafHandles_.end() ? it->second : nullptr;
+    return it != leafHandles_.end() ? it->second : std::make_pair<
+      std::shared_ptr<velox::connector::ConnectorTableHandle>,
+      std::vector<core::TypedExprPtr>>(nullptr, {});
   }
 
   // Translates from Expr to Velox.
@@ -428,9 +432,7 @@ class Optimization {
   // Makes an output type for use in PlanNode et al. If 'columnType' is set,
   // only considers base relation columns of the given type.
   velox::RowTypePtr makeOutputType(
-      const ColumnVector& columns,
-      std::optional<velox::connector::hive::HiveColumnHandle::ColumnType>
-          columnType = std::nullopt);
+      const ColumnVector& columns);
 
  private:
   static constexpr uint64_t kAllAllowedInDt = ~0UL;
@@ -744,10 +746,13 @@ class Optimization {
   // raw values). Records the output type of the final aggregation.
   velox::RowTypePtr aggFinalType_;
 
-  // Map from plan object id to handle with pushdown filters.
+  // Map from plan object id to pair of handle with pushdown filters and list of
+  // filters to eval on the result from the handle.
   std::unordered_map<
       int32_t,
-      std::shared_ptr<velox::connector::ConnectorTableHandle>>
+      std::pair<
+          std::shared_ptr<velox::connector::ConnectorTableHandle>,
+          std::vector<core::TypedExprPtr>>>
       leafHandles_;
 
   velox::runner::MultiFragmentPlan::Options options_;

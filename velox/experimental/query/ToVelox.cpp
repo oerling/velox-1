@@ -33,7 +33,7 @@ using namespace facebook::velox::runner;
 void filterUpdated(BaseTableCP table) {
   auto optimization = queryCtx()->optimization();
   std::vector<core::TypedExprPtr> remainingConjuncts;
-  connector::hive::SubfieldFilters subfieldFilters;
+  std::vector<core::TypedExprPtr> pushdownConjuncts;
   ScopedVarSetter noAlias(&optimization->makeVeloxExprWithNoAlias(), true);
   for (auto filter : table->columnFilters) {
     auto typedExpr = optimization->toTypedExpr(filter);
@@ -44,6 +44,7 @@ void filterUpdated(BaseTableCP table) {
         remainingConjuncts.push_back(std::move(typedExpr));
         continue;
       }
+      pushdownConjuncts.push_back(typedExpr);
       subfieldFilters[std::move(pair.first)] = std::move(pair.second);
     } catch (const std::exception& e) {
       remainingConjuncts.push_back(std::move(typedExpr));
@@ -64,17 +65,23 @@ void filterUpdated(BaseTableCP table) {
     }
   }
   auto& dataColumns = table->schemaTable->runnerTable->rowType();
-  const char* connector = table->schemaTable->columnGroups[0]
-                              ->distribution()
-                              .distributionType.locus->name();
-  auto handle = std::make_shared<connector::hive::HiveTableHandle>(
-      connector,
-      table->schemaTable->name,
-      true,
-      std::move(subfieldFilters),
-      remainingFilter,
-      dataColumns);
-  optimization->setLeafHandle(table->id(), handle);
+  auto* layout = table->schemaTable->columnGroups[0];
+  auto connector = layout->connector();
+  auto layoutData = layout->layoutMetadata();
+  std::vector<connector::ColumnHandlePtr> columns;
+  for (auto column : dataColumns) {
+    // Add subfield pruning here.
+    columns.push_back(connector->createColumnHandle(*layoutData, column->name());
+  }
+  auto handle = connector->createTableHandle(
+					     *layoutData,
+					     layout->name(),
+					     columns,
+					     optimization.evaluator(),
+      std::move(allFilters),
+					     rejectedFilters);
+					     );
+  optimization->setLeafHandle(table->id(), handle, std::move(rejectedFilters));
   optimization->setLeafSelectivity(*const_cast<BaseTable*>(table));
 }
 
@@ -131,14 +138,13 @@ MultiFragmentPlanPtr Optimization::toVeloxPlan(
 }
 
 RowTypePtr Optimization::makeOutputType(
-    const ColumnVector& columns,
-    std::optional<connector::hive::HiveColumnHandle::ColumnType> columnType) {
+    const ColumnVector& columns) {
   std::vector<std::string> names;
   std::vector<TypePtr> types;
   for (auto i = 0; i < columns.size(); ++i) {
     auto* column = columns[i];
     auto relation = column->relation();
-    if (relation->type() == PlanType::kTable && columnType.has_value()) {
+    if (relation->type() == PlanType::kTable) {
       auto* schemaTable = relation->as<BaseTable>()->schemaTable;
       if (!schemaTable) {
         continue;
@@ -148,9 +154,7 @@ RowTypePtr Optimization::makeOutputType(
         auto* runnerColumn =
             runnerTable->findColumn(std::string(column->name()));
         VELOX_CHECK_NOT_NULL(runnerColumn);
-        if (runnerColumn->columnType() != columnType.value()) {
-          continue;
-        }
+
       }
     }
     auto name = makeVeloxExprWithNoAlias_ ? std::string(column->name())

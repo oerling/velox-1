@@ -21,7 +21,9 @@
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/expression/FieldReference.h"
+#include "velox/expression/ExprToSubfieldFilter.h"
 
 #include <boost/lexical_cast.hpp>
 #include <memory>
@@ -52,6 +54,70 @@ HiveConnector::HiveConnector(
     LOG(INFO) << "Hive connector " << connectorId()
               << " created with file handle cache disabled";
   }
+}
+
+ColumnHandlePtr HiveConnector::createColumnHandle(
+    const LayoutMetadata& layout,
+    const std::string& columnName,
+    std::vector<common::Subfield> subfields) {
+  auto* hiveLayout = reinterpret_cast<const HiveLayoutMetadata*>(&layout);
+  auto handle = std::make_shared<HiveColumnHandle>(
+					    columnName,
+      hiveLayout->columnType(columnName),
+      hiveLayout->dataType(columnName),
+      hiveLayout->dataType(columnName),
+					    std::move(subfields));
+  return std::dynamic_pointer_cast<const ColumnHandle>(handle);
+}
+
+ConnectorTableHandlePtr HiveConnector::createTableHandle(
+    const LayoutMetadata& layout,
+    std::vector<ColumnHandlePtr> columnHandles,
+    velox::core::ExpressionEvaluator& evaluator,
+    std::vector<core::TypedExprPtr> filters,
+    std::vector<core::TypedExprPtr>& rejectedFilters) {
+  auto* hiveLayout = dynamic_cast<const HiveLayoutMetadata*>(&layout);
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  for (auto& columnHandle : columnHandles) {
+    auto* hiveColumn = reinterpret_cast<const HiveColumnHandle*>(columnHandle.get());
+    names.push_back(hiveColumn->name());
+    types.push_back(hiveColumn->dataType());
+  }
+  auto dataColumns = ROW(std::move(names), std::move(types));
+  std::vector<core::TypedExprPtr> remainingConjuncts;
+  SubfieldFilters subfieldFilters;
+  for (auto& typedExpr : filters) {
+    try {
+      auto pair = velox::exec::toSubfieldFilter(typedExpr, &evaluator);
+      if (!pair.second) {
+        remainingConjuncts.push_back(std::move(typedExpr));
+        continue;
+      }
+      subfieldFilters[std::move(pair.first)] = std::move(pair.second);
+    } catch (const std::exception& e) {
+      remainingConjuncts.push_back(std::move(typedExpr));
+    }
+  }
+  core::TypedExprPtr remainingFilter;
+  for (auto conjunct : remainingConjuncts) {
+    if (!remainingFilter) {
+      remainingFilter = conjunct;
+    } else {
+      remainingFilter = std::make_shared<core::CallTypedExpr>(
+          BOOLEAN(),
+          std::vector<core::TypedExprPtr>{remainingFilter, conjunct},
+          "and");
+    }
+  }
+  return std::dynamic_pointer_cast<const ConnectorTableHandle>(std::make_shared<HiveTableHandle>(
+					   connectorId(),
+					   hiveLayout->tableName(),
+					   true,
+					   std::move(subfieldFilters),
+					   remainingFilter,
+					   std::move(dataColumns)));
 }
 
 std::unique_ptr<DataSource> HiveConnector::createDataSource(

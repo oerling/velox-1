@@ -44,7 +44,7 @@ std::vector<ColumnCP> SchemaTable::toColumns(
   return columns;
 }
 
-void SchemaTable::addIndex(
+ColumnGroupP SchemaTable::addIndex(
     const char* name,
     float cardinality,
     int32_t numKeysUnique,
@@ -63,6 +63,7 @@ void SchemaTable::addIndex(
   distribution.distributionType = distType;
   appendToVector(distribution.partition, partition);
   columnGroups.push_back(make<ColumnGroup>(name, this, distribution, columns));
+  return columnGroups.back();
 }
 
 ColumnCP SchemaTable::column(const std::string& name, const Value& value) {
@@ -81,8 +82,8 @@ ColumnCP SchemaTable::findColumn(const std::string& name) const {
   return it->second;
 }
 
-Schema::Schema(const char* _name, std::vector<SchemaTableCP> tables)
-    : name_(_name), defaultLocus_(std::make_unique<Locus>("local")) {
+  Schema::Schema(const char* _name, std::vector<SchemaTableCP> tables, connector::Connector* connector)
+    : name_(_name), defaultLocus_(std::make_unique<Locus>("local", connector)) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }
@@ -92,7 +93,7 @@ Schema::Schema(const char* _name, velox::runner::Schema* source)
     : name_(_name),
       source_(source),
       defaultLocus_(
-          std::make_unique<Locus>(source->connector()->connectorId().c_str())) {
+		    std::make_unique<Locus>(source->connector()->connectorId().c_str(), source->connector())) {
 }
 
 SchemaTableCP Schema::findTable(std::string_view name) const {
