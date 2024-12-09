@@ -16,7 +16,6 @@
 
 #include "velox/core/PlanNode.h"
 #include "velox/exec/HashPartitionFunction.h"
-#include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/query/Plan.h"
 #include "velox/experimental/query/PlanUtils.h"
 #include "velox/expression/ExprToSubfieldFilter.h"

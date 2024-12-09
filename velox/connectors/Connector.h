@@ -25,7 +25,6 @@
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/future/VeloxPromise.h"
 #include "velox/core/ExpressionEvaluator.h"
-#include "velox/core/ITypedExpr.h"
 #include "velox/type/Subfield.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -42,6 +41,11 @@ class Filter;
 }
 namespace facebook::velox::config {
 class ConfigBase;
+}
+
+namespace facebook::velox::core {
+class ITypedExpr;
+using TypedExprPtr = std::shared_ptr<const ITypedExpr>;
 }
 
 namespace facebook::velox::connector {
