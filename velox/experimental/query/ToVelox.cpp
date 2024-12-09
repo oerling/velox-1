@@ -224,7 +224,7 @@ class TempProjections {
       exprChannel_[column] = nextChannel_++;
       names_.push_back(column->toString());
       fieldRefs_.push_back(std::make_shared<core::FieldAccessTypedExpr>(
-          optimization_.toTypePtr(column->value().type), column->toString()));
+          toTypePtr(column->value().type), column->toString()));
     }
     exprs_.insert(exprs_.begin(), fieldRefs_.begin(), fieldRefs_.end());
   }
@@ -237,7 +237,7 @@ class TempProjections {
       exprs_.push_back(optimization_.toTypedExpr(expr));
       names_.push_back(fmt::format("__r{}", nextChannel_ - 1));
       fieldRefs_.push_back(std::make_shared<core::FieldAccessTypedExpr>(
-          optimization_.toTypePtr(expr->value().type), names_.back()));
+          toTypePtr(expr->value().type), names_.back()));
       return fieldRefs_.back();
     }
     return fieldRefs_[it->second];

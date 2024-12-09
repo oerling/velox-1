@@ -113,10 +113,35 @@ class PlanTest : public testing::Test {
   std::shared_ptr<core::QueryCtx> queryCtx_;
   std::unique_ptr<core::ExpressionEvaluator> evaluator_;
   std::unique_ptr<exec::test::TpchQueryBuilder> builder_;
-  static bool registered;
+  static inline bool registered;
 };
 
-bool PlanTest::registered;
+TEST_F(PlanTest, queryGraph) {
+  TypePtr row1 = ROW({{"c1", ROW({{"c1a", INTEGER()}})}, {"c2", DOUBLE()}});
+  TypePtr row2 = row1 = ROW({{"c1", ROW({{"c1a", INTEGER()}})}, {"c2", DOUBLE()}});
+  TypePtr largeRow = ROW({{"c1", ROW({{"c1a", INTEGER()}})}, {"c2", DOUBLE()}, {"m1", MAP(INTEGER(), ARRAY(INTEGER())) }});
+  TypePtr differentNames = ROW({{"different", ROW({{"c1a", INTEGER()}})}, {"c2", DOUBLE()}});
+
+  auto* dedupRow1 = toType(row1);
+  auto* dedupRow2 = toType(row2);
+    auto* dedupLargeRow = toType(largeRow);
+    auto* dedupDifferentNames = toType(differentNames);
+
+    // dedupped complex types make a copy.
+    EXPECT_NE(row1.get(), dedupRow1);
+
+    // Identical types get equal pointers.
+    EXPECT_EQ(dedupRow1, dedupRow2);
+
+    // Different names differentiate types.
+    EXPECT_NE(dedupDifferentNames, dedupRow1);
+
+    // Shared complex substructure makes equal pointers.
+    EXPECT_EQ(dedupRow1->childAt(0).get(), dedupLargeRow->childAt(0).get());
+
+    // Identical child types with different names get equal pointers.
+    EXPECT_EQ(dedupRow1->childAt(0).get(), dedupDifferentNames->childAt(0).get());
+}
 
 TEST_F(PlanTest, q3) {
   auto q = builder_->getQueryPlan(3).plan;

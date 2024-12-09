@@ -33,10 +33,9 @@ void Optimization::setDerivedTableOutput(
   auto& outputType = planNode.outputType();
   for (auto i = 0; i < outputType->size(); ++i) {
     auto fieldType = outputType->childAt(i);
-    registerType(fieldType);
     auto fieldName = outputType->nameOf(i);
     auto expr = translateColumn(fieldName);
-    Value value(fieldType.get(), 0);
+    Value value(toType(fieldType), 0);
     auto* column = make<Column>(toName(fieldName), dt, value);
     dt->columns.push_back(column);
     dt->exprs.push_back(expr);
@@ -86,24 +85,6 @@ void Optimization::translateConjuncts(
   }
 }
 
-void Optimization::registerType(const TypePtr& type) {
-  if (toTypePtr_.find(type.get()) != toTypePtr_.end()) {
-    return;
-  }
-  toTypePtr_[type.get()] = type;
-  for (auto i = 0; i < type->size(); ++i) {
-    registerType(type->childAt(i));
-  }
-}
-
-TypePtr Optimization::toTypePtr(const Type* type) {
-  auto it = toTypePtr_.find(type);
-  if (it != toTypePtr_.end()) {
-    return it->second;
-  }
-  VELOX_FAIL("Cannot translate {} back to TypePtr", type->toString());
-}
-
 template <TypeKind kind>
 variant toVariant(BaseVector& constantVector) {
   using T = typename TypeTraits<kind>::NativeType;
@@ -118,7 +99,7 @@ ExprCP Optimization::tryFoldConstant(
     const core::CastTypedExpr* cast,
     const ExprVector& literals) {
   try {
-    Value value(call ? call->type().get() : cast->type().get(), 1);
+    Value value(call ? toType(call->type()) : toType(cast->type()), 1);
     auto* veraxExpr = make<Call>(
         PlanType::kCall,
         cast ? toName("cast") : toName(call->name()),
@@ -131,7 +112,7 @@ ExprCP Optimization::tryFoldConstant(
     if (auto constantExpr = dynamic_cast<const exec::ConstantExpr*>(first)) {
       auto variantLiteral = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           toVariant, constantExpr->value()->typeKind(), *constantExpr->value());
-      Value value(constantExpr->value()->type().get(), 1);
+      Value value(toType(constantExpr->value()->type()), 1);
       // Copy the variant from value to allocated in arena.
       auto* copy = make<variant>(variantLiteral);
       auto* literal = make<Literal>(value, copy);
@@ -144,14 +125,13 @@ ExprCP Optimization::tryFoldConstant(
 }
 
 ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
-  registerType(expr->type());
   if (auto name = columnName(expr)) {
     return translateColumn(*name);
   }
   if (auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
     auto* literal =
-        make<Literal>(Value(constant->type().get(), 1), &constant->value());
+      make<Literal>(Value(toType(constant->type()), 1), &constant->value());
     return literal;
   }
   auto it = exprDedup_.find(expr.get());
@@ -186,7 +166,7 @@ ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
     funcs = funcs | functionBits(name);
 
     auto* callExpr =
-        make<Call>(name, Value(call->type().get(), cardinality), args, funcs);
+      make<Call>(name, Value(toType(call->type()), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -195,7 +175,7 @@ ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
     funcs = funcs | functionBits(name);
 
     auto* callExpr =
-        make<Call>(name, Value(cast->type().get(), cardinality), args, funcs);
+      make<Call>(name, Value(toType(cast->type()), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -216,7 +196,6 @@ ExprVector Optimization::translateColumns(
     const std::vector<core::FieldAccessTypedExprPtr>& source) {
   ExprVector result{source.size()};
   for (auto i = 0; i < source.size(); ++i) {
-    registerType(source[i]->type());
     result[i] = translateColumn(source[i]->name()); // NOLINT
   }
   return result;
@@ -244,8 +223,7 @@ AggregationP Optimization::translateAggregation(
             aggregation->grouping[i]->as<Column>());
       } else {
         auto name = toName(source.outputType()->nameOf(i));
-        auto type = source.outputType()->childAt(i);
-        registerType(type);
+        auto type = toType(source.outputType()->childAt(i));
 
         auto* column = make<Column>(
             name, currentSelect_, aggregation->grouping[i]->value());
@@ -261,8 +239,7 @@ AggregationP Optimization::translateAggregation(
         condition = translateExpr(source.aggregates()[i].mask);
       }
       VELOX_CHECK(source.aggregates()[i].sortingKeys.empty());
-      auto accumulatorType = intermediateType(source.aggregates()[i].call);
-      registerType(accumulatorType);
+      auto accumulatorType = toType(intermediateType(source.aggregates()[i].call));
       auto* agg = make<Aggregate>(
           rawFunc->name(),
           rawFunc->value(),
@@ -271,12 +248,12 @@ AggregationP Optimization::translateAggregation(
           false,
           condition,
           false,
-          accumulatorType.get());
+          accumulatorType);
       auto name = toName(source.aggregateNames()[i]);
       auto* column = make<Column>(name, currentSelect_, agg->value());
       aggregation->mutableColumns().push_back(column);
       auto intermediateValue = agg->value();
-      intermediateValue.type = accumulatorType.get();
+      intermediateValue.type = accumulatorType;
       auto* intermediateColumn =
           make<Column>(name, currentSelect_, intermediateValue);
       aggregation->intermediateColumns.push_back(intermediateColumn);
@@ -307,8 +284,7 @@ OrderByP Optimization::translateOrderBy(const core::OrderByNode& order) {
 ColumnCP Optimization::makeMark(const core::AbstractJoinNode& join) {
   auto type = join.outputType();
   auto name = toName(type->nameOf(type->size() - 1));
-  Value value(type->childAt(type->size() - 1).get(), 2);
-  registerType(type->childAt(type->size() - 1));
+  Value value(toType(type->childAt(type->size() - 1)), 2);
   auto* column = make<Column>(name, currentSelect_, value);
   return column;
 }
@@ -452,7 +428,6 @@ PlanObjectP Optimization::wrapInDt(const core::PlanNode& node) {
   velox::RowTypePtr type = node.outputType();
   // node.name() == "Aggregation" ? aggFinalType_ : node.outputType();
   for (auto i = 0; i < type->size(); ++i) {
-    registerType(type->childAt(i));
     ExprCP inner = translateColumn(type->nameOf(i));
     newDt->exprs.push_back(inner);
     auto* outer = make<Column>(toName(type->nameOf(i)), newDt, inner->value());

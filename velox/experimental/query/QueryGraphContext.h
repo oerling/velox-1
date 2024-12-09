@@ -48,6 +48,19 @@ struct PlanObjectPComparer {
   bool operator()(const PlanObjectCP& lhs, const PlanObjectCP& rhs) const;
 };
 
+struct TypeHasher {
+  size_t operator()(const TypePtr& type) const {
+    return type->hashKind();
+  }
+};
+
+struct TypeComparer {
+  bool operator()(const TypePtr& lhs, const TypePtr& rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+  
 struct Plan;
 using PlanPtr = Plan*;
 class Optimization;
@@ -129,7 +142,16 @@ class QueryGraphContext {
     return optimization_;
   }
 
+  // Records the use of a TypePtr in optimization. Returns a canonical representative of the type, allowing pointer equality for exact match. Allows mapping from the Type* back
+  // to TypePtr.
+  const Type* toType(const velox::TypePtr& type);
+
+  /// Returns the canonical TypePtr corresponding to 'type'. 'type' must have been previously returned by toType().
+  const TypePtr& toTypePtr(const Type* type);
+  
  private:
+  TypePtr dedupType(const TypePtr& type);
+
   velox::HashStringAllocator& allocator_;
   ArenaCache cache_;
 
@@ -143,6 +165,11 @@ class QueryGraphContext {
   // Set for deduplicating planObject trees.
   std::unordered_set<PlanObjectP, PlanObjectPHasher, PlanObjectPComparer>
       deduppedObjects_;
+
+  std::unordered_set<TypePtr, TypeHasher, TypeComparer> deduppedTypes_;
+  // Maps raw Type* back to shared TypePtr. Used in toType()() and toTypePtr().
+  std::unordered_map<const velox::Type*, velox::TypePtr> toTypePtr_;
+
   Plan* contextPlan_{nullptr};
   Optimization* optimization_{nullptr};
 };
@@ -165,6 +192,11 @@ inline _Tp* make(_Args&&... __args) {
 // Name toName(const std::string& string);
 Name toName(std::string_view string);
 
+  /// Shorthand for toType() in thread's QueryGraphContext.
+  const Type* toType(const TypePtr& type);
+  /// Shorthand for toTypePtr() in thread's QueryGraphContext.
+  const TypePtr& toTypePtr(const Type* type);
+  
 /// STL compatible allocator that manages std:: containers allocated in the
 /// QueryGraphContext arena.
 template <class T>

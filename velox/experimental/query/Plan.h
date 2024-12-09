@@ -388,10 +388,6 @@ class Optimization {
     return idGenerator_;
   }
 
-  // Translates from Type* to the original TypePtr. Used when reconstructing
-  // Velox plans from RelationOp.
-  velox::TypePtr toTypePtr(const velox::Type* type);
-
   /// Sets 'filterSelectivity' of 'baseTable' from history. Returns True if set.
   bool setLeafSelectivity(BaseTable& baseTable) {
     return history_.setLeafSelectivity(baseTable);
@@ -511,10 +507,6 @@ class Optimization {
   //  Applies translateColumn to a 'source'.
   ExprVector translateColumns(
       const std::vector<velox::core::FieldAccessTypedExprPtr>& source);
-
-  // Records the use of a TypePtr in a Value. Allows mapping from the Type* back
-  // to TypePtr.
-  void registerType(const velox::TypePtr& type);
 
   // Adds a JoinEdge corresponding to 'join' to the enclosing DerivedTable.
   void translateJoin(const velox::core::AbstractJoinNode& join);
@@ -708,10 +700,6 @@ class Optimization {
 
   // Maps unique core::TypedExprs from 'inputPlan_' to deduplicated Exps.
   ExprDedupMap exprDedup_;
-
-  // Maps raw Type* back to shared TypePtr. Needed for  reconstructing
-  // core::PlanNodes from RelationOp.
-  std::unordered_map<const velox::Type*, velox::TypePtr> toTypePtr_;
 
   // Counter for generating unique correlation names for BaseTables and
   // DerivedTables.

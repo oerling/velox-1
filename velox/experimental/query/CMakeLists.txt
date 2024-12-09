@@ -32,4 +32,4 @@ add_library(
 add_dependencies(velox_verax velox_hive_connector)
 
 target_link_libraries(
-  velox_verax velox_core velox_hive_connector velox_dwio_dwrf_proto)
+  velox_verax velox_core velox_connector)
