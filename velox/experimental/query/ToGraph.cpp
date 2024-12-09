@@ -131,7 +131,7 @@ ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
   if (auto constant =
           dynamic_cast<const core::ConstantTypedExpr*>(expr.get())) {
     auto* literal =
-      make<Literal>(Value(toType(constant->type()), 1), &constant->value());
+        make<Literal>(Value(toType(constant->type()), 1), &constant->value());
     return literal;
   }
   auto it = exprDedup_.find(expr.get());
@@ -166,7 +166,7 @@ ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
     funcs = funcs | functionBits(name);
 
     auto* callExpr =
-      make<Call>(name, Value(toType(call->type()), cardinality), args, funcs);
+        make<Call>(name, Value(toType(call->type()), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -175,7 +175,7 @@ ExprCP Optimization::translateExpr(const core::TypedExprPtr& expr) {
     funcs = funcs | functionBits(name);
 
     auto* callExpr =
-      make<Call>(name, Value(toType(cast->type()), cardinality), args, funcs);
+        make<Call>(name, Value(toType(cast->type()), cardinality), args, funcs);
     exprDedup_[expr.get()] = callExpr;
     return callExpr;
   }
@@ -239,7 +239,8 @@ AggregationP Optimization::translateAggregation(
         condition = translateExpr(source.aggregates()[i].mask);
       }
       VELOX_CHECK(source.aggregates()[i].sortingKeys.empty());
-      auto accumulatorType = toType(intermediateType(source.aggregates()[i].call));
+      auto accumulatorType =
+          toType(intermediateType(source.aggregates()[i].call));
       auto* agg = make<Aggregate>(
           rawFunc->name(),
           rawFunc->value(),

@@ -60,7 +60,6 @@ struct TypeComparer {
   }
 };
 
-  
 struct Plan;
 using PlanPtr = Plan*;
 class Optimization;
@@ -142,13 +141,15 @@ class QueryGraphContext {
     return optimization_;
   }
 
-  // Records the use of a TypePtr in optimization. Returns a canonical representative of the type, allowing pointer equality for exact match. Allows mapping from the Type* back
-  // to TypePtr.
+  // Records the use of a TypePtr in optimization. Returns a canonical
+  // representative of the type, allowing pointer equality for exact match.
+  // Allows mapping from the Type* back to TypePtr.
   const Type* toType(const velox::TypePtr& type);
 
-  /// Returns the canonical TypePtr corresponding to 'type'. 'type' must have been previously returned by toType().
+  /// Returns the canonical TypePtr corresponding to 'type'. 'type' must have
+  /// been previously returned by toType().
   const TypePtr& toTypePtr(const Type* type);
-  
+
  private:
   TypePtr dedupType(const TypePtr& type);
 
@@ -192,11 +193,11 @@ inline _Tp* make(_Args&&... __args) {
 // Name toName(const std::string& string);
 Name toName(std::string_view string);
 
-  /// Shorthand for toType() in thread's QueryGraphContext.
-  const Type* toType(const TypePtr& type);
-  /// Shorthand for toTypePtr() in thread's QueryGraphContext.
-  const TypePtr& toTypePtr(const Type* type);
-  
+/// Shorthand for toType() in thread's QueryGraphContext.
+const Type* toType(const TypePtr& type);
+/// Shorthand for toTypePtr() in thread's QueryGraphContext.
+const TypePtr& toTypePtr(const Type* type);
+
 /// STL compatible allocator that manages std:: containers allocated in the
 /// QueryGraphContext arena.
 template <class T>
