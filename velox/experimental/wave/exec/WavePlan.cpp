@@ -348,6 +348,7 @@ bool CompileState::tryPlanOperator(
     auto aggregationStep = node->step();
     step->state = state;
     step->rows = newOperand(BIGINT(), "rows");
+    std::vector<AbstractOperand*> aggResults;
     for (auto& key : node->groupingKeys()) {
       step->keys.push_back(fieldToOperand(*key, &topScope_));
     }
@@ -367,8 +368,6 @@ bool CompileState::tryPlanOperator(
       func->name = agg.call->name();
       func->rows = step->rows;
       func->args = std::move(args);
-      func->result = fieldToOperand(
-          *toSubfield(output->nameOf(i + step->keys.size())), &topScope_);
       allUpdates.push_back(func);
     }
     segments_.back().steps.push_back(step);
@@ -381,7 +380,11 @@ bool CompileState::tryPlanOperator(
           fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
     }
     read->funcs = std::move(allUpdates);
-    segments_.back().steps.push_back(read);
+    for (auto i =0; i <read.funcs.size(); ++i) {
+      read->funcs[i]->result = fieldToOperand(
+          *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
+    }
+      segments_.back().steps.push_back(read);
   } else {
     return false;
   }
