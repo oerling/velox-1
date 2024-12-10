@@ -659,7 +659,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   /// cardinality change. Used during emitting code.
   void clearInRegister();
 
-
+  std::stringstream& inlines() {
+    return inlines_;
+  }
   
  private:
   bool
