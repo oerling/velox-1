@@ -219,12 +219,13 @@ struct Filter : public KernelStep {
 };
 
   struct AggregateUpdate;
+  struct AggregateProbe;
   
   /// Functions for generating different pieces of code for aggregates. Retrieved from registry based on function name and signature. The functions receive all details in 'update'.
 class AggregateGenerator {
 public:
   AggregateGenerator(bool needSync)
-    : updateNeedsSync(needSync) {}
+    : updateNeedsSync_(needSync) {}
 
   // True if  caller must ensure exclusive access to the row.
 
@@ -242,9 +243,12 @@ public:
 
     virtual void generateExtract(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
 
+  bool updateNeedsSync() const {
+    return updateNeedsSync_;
+  }
+  
 private:
-  const bool updateNeedsSync;
-
+  const bool updateNeedsSync_;
 };
 
   ///
@@ -298,7 +302,15 @@ struct AggregateProbe : public KernelStep {
 
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
+
+  /// Operand for accessing the row with accumulators in an update.
   AbstractOperand* rows;
+
+  /// All accumulator updates. Needed to generate the definition for the group row.
+  std::vector<const AggregateUpdate*> updates;
+
+  /// Accumulator updates that are inlined inside the probe code. Updates can also be in a separate, wider kernel that runs different accumulators in a different TB.
+  std::vector<AggregateUpdate*> inlinedUpdates;
 };
 
 struct ReadAggregation : public KernelStep {
