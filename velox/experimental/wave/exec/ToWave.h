@@ -218,6 +218,46 @@ struct Filter : public KernelStep {
   int32_t nthWrap{-1};
 };
 
+  struct AggregateUpdate;
+  
+  /// Functions for generating different pieces of code for aggregates. Retrieved from registry based on function name and signature. The functions receive all details in 'update'.
+class AggregateGenerator {
+public:
+  AggregateGenerator(bool needSync)
+    : updateNeedsSync(needSync) {}
+
+  // True if  caller must ensure exclusive access to the row.
+
+  /// Adds includes that may be needed by 'probe' or 'update'. May be called several times and should add the uncludes only once.
+  virtual generateInclude(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) {}
+
+  /// Adds inline definitions that may be needed by 'probe' or 'update'. May be called several times and should add the uncludes only once.
+  virtual generateInline(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) {} {}
+
+    /// Generates a declaration for the accumulator as part of a row.
+    virtual void generateAccumulator(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) = 0;
+
+    /// Generates an update.
+    virtual void generateUpdate(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
+
+    virtual void generateExtract(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
+
+private:
+  const bool updateNeedsSync;
+
+};
+
+  ///
+class AggregateRegistry {
+public:
+  const AggregateGenerator* getGenerator(const AggregateUpdate* update);
+
+  bool registerGenerator(std::string aggregateName, std::unique_ptr<AggregateGenerator> generator);
+
+private:
+  std::unordered_map<std::string, std::unique_ptr<AggregateGenerator>> generators_;
+};
+  
 struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
@@ -230,9 +270,12 @@ struct AggregateUpdate : public KernelStep {
   void generateMain(CompileState& state) override;
 
   std::string name;
-  AbstractOperand* rows;
   core::AggregationNode::Step step;
+  /// The original argument types. Identifies the aggregate.
+  std::vector<TypePtr> signature;
+  AbstractOperand* rows;
   int32_t accumulatorIdx;
+  // The arguments of the function. Types may differ from 'signature' for steps that take accumulators.
   std::vector<AbstractOperand*> args;
   AbstractOperand* condition{nullptr};
   bool distinct{false};
@@ -580,6 +623,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return registry_;
   }
 
+  static AggregateRegistry& aggregateRegistry() {
+    return aggregateRegistry_;
+  }
+  
   void functionReferenced(const AbstractOperand* op);
 
   std::string segmentString() const;
@@ -871,6 +918,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::mutex generateMutex_;
 
   static WaveRegistry registry_;
+  static AggregateRegistry aggregateRegistry_;
 };
 
 void registerWaveFunctions();
@@ -881,6 +929,11 @@ inline WaveRegistry& waveRegistry() {
   return CompileState::registry();
 }
 
+inline aggregateRegistry& waveRegistry() {
+  return CompileState::aggregateRegistry();
+}
+
+  
 /// Registers adapter to add Wave operators to Drivers.
 void registerWave();
 

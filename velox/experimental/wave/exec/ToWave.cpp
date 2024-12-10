@@ -1,4 +1,4 @@
-/*
+sreg/*
  * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,9 @@ namespace facebook::velox::wave {
 
 using exec::Expr;
 
+  //  static
+  AggregateRegistry CompileState::aggregateRegistry_;
+  
 CompileState::CompileState(
     const exec::DriverFactory& driverFactory,
     exec::Driver& driver)

@@ -28,6 +28,7 @@ add_library(
   RegisterFunctions.cpp
   WaveRegistry.cpp
   ToWave.cpp
+  SimpleAggregate.cpp
   WavePlan.cpp
   WaveGen.cpp
   WaveOperator.cpp
