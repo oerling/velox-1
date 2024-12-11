@@ -15,15 +15,11 @@
  */
 #pragma once
 
-
-
-
-
 /// Base classes for schema elements used in execution. A
-/// ConnectorMetadata provides access to table information.  A Table has a TableLayout for each of its physical
-/// organizations, e.g. base table, index, column group, sorted
-/// projection etc. A TableLayout has partitioning and ordering
-/// properties and a set of Columns. A Column has ColumnStatistics. A
+/// ConnectorMetadata provides access to table information.  A Table has a
+/// TableLayout for each of its physical organizations, e.g. base table, index,
+/// column group, sorted projection etc. A TableLayout has partitioning and
+/// ordering properties and a set of Columns. A Column has ColumnStatistics. A
 /// TableLayout combined with Column and Subfield selection and
 /// optional filters and lookup keys produces a ConnectorTableHandle. A
 /// ConnectorTableHandle can be used to build a table scan or index
@@ -37,7 +33,6 @@ class Connector;
 class ConnectorTableHandle;
 using ConnectorTableHandlePtr = std::shared_ptr<const ConnectorTableHandle>;
 
-  
 /// Represents statistics of a column. The statistics may represent the column
 /// across the table or may be calculated over a sample of a layout of the
 /// table. All fields are optional.
@@ -112,7 +107,8 @@ class Column {
     return type_;
   }
 
-  /// Returns approximate number of distinct values. Returns 'deflt' if no information.
+  /// Returns approximate number of distinct values. Returns 'deflt' if no
+  /// information.
   int64_t approxNumDistinct(int64_t deflt = 1000) const {
     auto* s = stats();
     return s && s->numDistinct.has_value() ? s->numDistinct.value() : deflt;
@@ -136,16 +132,18 @@ class Column {
 
 class Table;
 
-  /// Represents sorting order. Duplicate of core::SortOrder. Connectors 
-  struct SortOrder {
-    bool isAscending{true};
-    bool isNullsFirst{true};
-  };
-  
+/// Represents sorting order. Duplicate of core::SortOrder. Connectors
+struct SortOrder {
+  bool isAscending{true};
+  bool isNullsFirst{true};
+};
+
 /// Represents a physical manifestation of a table. There is at least
 /// one layout but for tables that have multiple sort orders,
 /// partitionings, indices, column groups, etc, there is a separate
-/// layout for each. The layout represents data at rest. The ConnectorTableHandle represents the query's constraints on the layout a scan or lookup is accessing.
+/// layout for each. The layout represents data at rest. The
+/// ConnectorTableHandle represents the query's constraints on the layout a scan
+/// or lookup is accessing.
 class TableLayout {
  public:
   TableLayout(
@@ -182,6 +180,12 @@ class TableLayout {
   /// within the table.
   const std::string name() const {
     return name_;
+  }
+
+  /// Returns the Connector to use for generating ColumnHandles and TableHandles
+  /// for operations against this layout.
+  connector::Connector* connector() const {
+    return connector_;
   }
 
   /// Returns the containing Table.
@@ -227,12 +231,6 @@ class TableLayout {
     return supportsScan_;
   }
 
-  /// Returns the Connector to use for generating ColumnHandles and TableHandles
-  /// for operations against this layout.
-  connector::Connector* connector() const {
-    return connector_;
-  }
-
   /// Returns the columns and their names as a RowType.
   const RowTypePtr& rowType() const {
     return rowType_;
@@ -272,7 +270,8 @@ class TableLayout {
 
 class Schema;
 
-/// Base class for table. This is used for name resolution. A TableLayout is used for accessing physical organization like partitioning  and sort order.
+/// Base class for table. This is used for name resolution. A TableLayout is
+/// used for accessing physical organization like partitioning  and sort order.
 class Table {
  public:
   virtual ~Table() = default;
@@ -315,15 +314,65 @@ class Table {
   RowTypePtr type_;
 };
 
+/// Describes a single partition of a TableLayout. A TableLayout has at least
+/// one partition, even if it has no partitioning columns.
+class PartitionHandle {
+ public:
+  virtual ~PartitionHandle() = default;
+};
+
+/// Enumerates splits. The table and partitions to cover are given in
+/// SplitSourceFactory.
+class SplitSource {
+ public:
+  /// Result of getSplits. Each split belongs to a group. A nullptr split for
+  /// group n means that there are on more splits for the group. In ungrouped
+  /// execution, the group is always 0.
+  struct SplitAndGroup {
+    std::shared_ptr<ConnectorSplit> split;
+    int32_t group;
+  };
+
+  virtual ~SplitSource() = default;
+
+  /// Returns a set of splits that cover up to 'targetBytes' of data.
+  virtual std::vector<SplitAndGroup> getSplits(int64_t targetBytes) = 0;
+};
+
+class SplitSourceFactory {
+ public:
+  virtual ~SplitSourceFactory() = default;
+
+  /// Returns a SplitSource that enumerates splits contained in 'partitions'.
+  std::shared_ptr<SplitSource> getSplitSource(
+      std::vector<std::shared_ptr<PartitionHandle>> partitions);
+};
+
+class ConnectorSplitManager {
+ public:
+  /// Returns the list of all partitions that match the filters in
+  /// 'tableHandle'.
+  std::vector<std::shared_ptr<PartitionHandle>> listPartitions(
+      const ConnectorTableHandle& tableHandle) = 0;
+
+  /// Returns a SplitSourceFactory for making SplitSources that enumerate splits
+  /// for 'tableHandle'.
+  std::shared_ptr<SplitSourceFactory> splitSource(
+      const ConnectorTableHandle& tableHandle) = 0;
+};
 
 class ConnectorMetadata {
-public:
+ public:
   virtual ~ConnectorMetadata() = default;
 
   const Table* findTable(const std::string& name) = 0;
-  
+
+  /// Returns a SplitManager for split enumeration for TableLayouts accessed
+  /// through 'this'.
+  virtual ConnectorSplitManager* splitManager() = 0;
+
   virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
   connectorQueryCtx() const = 0;
 };
 
-}
+} // namespace facebook::velox::connector
