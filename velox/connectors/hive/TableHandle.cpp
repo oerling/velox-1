@@ -98,18 +98,6 @@ ColumnHandlePtr HiveColumnHandle::create(const folly::dynamic& obj) {
       name, columnType, dataType, hiveType, std::move(requiredSubfields));
 }
 
-HiveColumnHandle::ColumnType HiveLayoutMetadata::columnType(
-    const std::string& columnName) const {
-  if (std::find(
-          hivePartitionColumns_.begin(),
-          hivePartitionColumns_.end(),
-          columnName) != hivePartitionColumns_.end()) {
-    return HiveColumnHandle::ColumnType::kPartitionKey;
-  }
-  // TODO recognize special names like $path, $bucket etc.
-  return HiveColumnHandle::ColumnType::kRegular;
-}
-
 void HiveColumnHandle::registerSerDe() {
   auto& registry = DeserializationRegistryForSharedPtr();
   registry.Register("HiveColumnHandle", HiveColumnHandle::create);

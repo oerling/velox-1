@@ -19,6 +19,7 @@
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/core/PlanNode.h"
+#include "velox/connectors/hive/HiveConnectorMetadata.h"
 
 namespace facebook::velox::dwio::common {
 class DataSink;
@@ -43,19 +44,25 @@ class HiveConnector : public Connector {
     return true;
   }
 
+  ConnectorMetadata* connectorMetadata() const override {
+    VELOX_CHECK_NOT_NULL(metadata_);
+    return metadata_.get();
+  }
+  
   ColumnHandlePtr createColumnHandle(
-      const LayoutMetadata& layout,
+      const TableLayout& layout,
       const std::string& columnName,
       std::vector<common::Subfield> subfields = {},
       std::optional<TypePtr> castToType = std::nullopt,
       SubfieldMapping subfieldMapping = {}) override;
 
   ConnectorTableHandlePtr createTableHandle(
-      const LayoutMetadata& layout,
+      const TableLayout& layout,
       std::vector<ColumnHandlePtr> columnHandles,
       core::ExpressionEvaluator& evaluator,
       std::vector<core::TypedExprPtr> filters,
-      std::vector<core::TypedExprPtr>& rejectedFilters) override;
+      std::vector<core::TypedExprPtr>& rejectedFilters,
+      std::optional<LookupKeys> lookupKeys = std::nullopt) override;
 
   std::unique_ptr<DataSource> createDataSource(
       const RowTypePtr& outputType,
@@ -93,6 +100,7 @@ class HiveConnector : public Connector {
   const std::shared_ptr<HiveConfig> hiveConfig_;
   FileHandleFactory fileHandleFactory_;
   folly::Executor* executor_;
+  std::unique_ptr<ConnectorMetadata> metadata_;
 };
 
 class HiveConnectorFactory : public ConnectorFactory {
@@ -163,4 +171,8 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 
 void registerHivePartitionFunctionSerDe();
 
+std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories();
+  
+  void registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
+  
 } // namespace facebook::velox::connector::hive

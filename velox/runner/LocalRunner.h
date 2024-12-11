@@ -18,7 +18,7 @@
 #include "velox/connectors/Connector.h"
 #include "velox/exec/Cursor.h"
 #include "velox/exec/Exchange.h"
-#include "velox/runner/LocalSchema.h"
+#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/runner/MultiFragmentPlan.h"
 #include "velox/runner/Runner.h"
 

@@ -54,18 +54,24 @@ HiveConnector::HiveConnector(
     LOG(INFO) << "Hive connector " << connectorId()
               << " created with file handle cache disabled";
   }
+  for (auto& factory : hiveConnectorMetadataFactories()) {
+    metadata_ = factory(hiveConfig_);
+    if (metadata_ != nullptr) {
+      break;
+    }
+  }
 }
 
 ColumnHandlePtr HiveConnector::createColumnHandle(
-    const LayoutMetadata& layout,
+						  const TableLayout& layout,
     const std::string& columnName,
     std::vector<common::Subfield> subfields,
     std::optional<TypePtr> castToType,
     SubfieldMapping subfieldMapping) {
-  auto* hiveLayout = reinterpret_cast<const HiveLayoutMetadata*>(&layout);
   // castToType and subfieldMapping are not yet supported.
   VELOX_CHECK(subfieldMapping.empty());
   VELOX_CHECK(!castToType.has_value());
+  auto* hiveLayout = reinterpret_cast<const HiveTableLayout*>(&layout);
   auto handle = std::make_shared<HiveColumnHandle>(
       columnName,
       hiveLayout->columnType(columnName),
@@ -76,12 +82,14 @@ ColumnHandlePtr HiveConnector::createColumnHandle(
 }
 
 ConnectorTableHandlePtr HiveConnector::createTableHandle(
-    const LayoutMetadata& layout,
+    const TableLayout& layout,
     std::vector<ColumnHandlePtr> columnHandles,
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<core::TypedExprPtr> filters,
-    std::vector<core::TypedExprPtr>& rejectedFilters) {
-  auto* hiveLayout = dynamic_cast<const HiveLayoutMetadata*>(&layout);
+    std::vector<core::TypedExprPtr>& rejectedFilters,
+    std::optional<LookupKeys> lookupKeys) {
+  VELOX_CHECK(!lookupKeys.has_value(), "Hive does not support lookup keys");
+  auto* hiveLayout = dynamic_cast<const HiveTableLayout*>(&layout);
 
   std::vector<std::string> names;
   std::vector<TypePtr> types;
@@ -252,5 +260,14 @@ void registerHivePartitionFunctionSerDe() {
   registry.Register(
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
 }
+
+  std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories() {
+    static  std::vector<HiveConnectorMetadataFactories> factories;
+    return factories;
+  }
+  
+  void registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory factory) {
+    hiveConnectorMetadataFactories().push_back(factory);
+  }
 
 } // namespace facebook::velox::connector::hive

@@ -22,17 +22,24 @@
 
 namespace facebook::velox::runner {
 
-/// Base class for collection of tables. A query executes against a
-/// Schema The schema is mutable and may acquire tables and the
-/// tables may acquire stats during their lifetime.
+/// Translates from table name to table. 'defaultConnector is used
+/// to look up the name if the name has no catalog. 'defaultSchema'
+/// is used to fill in the schema if the name has no schema.
 class Schema {
  public:
   virtual ~Schema() = default;
 
-  Schema(const std::string& name, memory::MemoryPool* pool)
-      : name_(name), pool_(std::move(pool)) {}
+  Schema(
+      const std::shared_ptr<connector::Connector>& defaultConnector,
+      const STD::STRING& defaultSchema)
+      : defaultConnector_(defaultConnector), defaultSchema_(defaultSchema) {}
 
   virtual const conector::Table* findTable(const std::string& name);
+
+ private:
+  // Connector to use if name does not specify a catalog.
+  const std::shared_ptr<Connector> defaultConnector_;
+  const std::string defaultSchema_;
 };
 
 } // namespace facebook::velox::runner

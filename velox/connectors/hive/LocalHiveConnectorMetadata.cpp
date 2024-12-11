@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "velox/runner/LocalSchema.h"
+#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/common/BufferedInput.h"
@@ -22,18 +22,9 @@
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/dwrf/common/Statistics.h"
 
-namespace facebook::velox::runner {
+namespace facebook::velox::connector::hive {
 
-std::unique_ptr<connector::LayoutMetadata> HiveTableLayout::metadata() const {
-  std::vector<std::string> names;
-  for (auto& column : hivePartitionColumns_) {
-    names.push_back(column->name());
-  }
-  return std::make_unique<connector::hive::HiveLayoutMetadata>(
-      name(), rowType(), std::move(names));
-}
-
-LocalSchema::LocalSchema(
+LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
     const std::string& path,
     dwio::common::FileFormat format,
     connector::hive::HiveConnector* hiveConnector,
@@ -46,7 +37,38 @@ LocalSchema::LocalSchema(
   initialize(path);
 }
 
-void LocalSchema::initialize(const std::string& path) {
+
+
+  std::shared_ptr<ConnectorQueryCtx> LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
+    
+    auto schemaQueryCtx = makeQueryCtx("schema", rootPool_.get());
+  common::SpillConfig spillConfig;
+  common::PrefixSortConfig prefixSortConfig(100, 130);
+  auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
+  auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
+      leafPool.get(),
+      schemaQueryCtx->pool(),
+      schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
+      &spillConfig,
+      prefixSortConfig,
+      std::make_unique<exec::SimpleExpressionEvaluator>(
+          schemaQueryCtx.get(), schemaPool_.get()),
+      schemaQueryCtx->cache(),
+      "scan_for_schema",
+      "schema",
+      "N/a",
+      0,
+      schemaQueryCtx->queryConfig().sessionTimezone());
+  auto connector = connector::getConnector(kHiveConnectorId);
+  schema_ = std::make_shared<runner::LocalSchema>(
+      files_->getPath(),
+      dwio::common::FileFormat::DWRF,
+      reinterpret_cast<velox::connector::hive::HiveConnector*>(connector.get()),
+      connectorQueryCtx);
+  }
+  
+  
+void LocalHiveConnectorMetadata::initialize(const std::string& path) {
   for (auto const& dirEntry : fs::directory_iterator{path}) {
     if (!dirEntry.is_directory() ||
         dirEntry.path().filename().c_str()[0] == '.') {
@@ -429,4 +451,18 @@ const std::unordered_map<std::string, const Column*>& LocalTable::columnMap()
   return exportedColumns_;
 }
 
+namespace {
+  std::unique_ptr<LocalHiveMetadataConnector> localHiveMetadataConnectorFactory(HiveConnector* connector) {
+    auto hiveConfig = dynamic_cast<HiveConfig*>(connector->connectorConfig().get());
+    VELOX_CHECK_NOT_NULL(hiveConfig);
+    auto path = hiveConfig->loclDataPath();
+    if (path.empty()) {
+      return nullptr;
+    }
+    return std::make_shared<LocalHiveConnectorMetadata>(connector);
+  }
+
+    bool dummy = registerConnectorMetadataFactory(localHiveMetadataFactory);
+  }
+  
 } // namespace facebook::velox::runner
