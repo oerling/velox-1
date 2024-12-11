@@ -15,12 +15,10 @@
  */
 #pragma once
 
-#include "velox/common/base/SimdUtil.h"
 #include "velox/connectors/Connector.h"
 #include "velox/core/PlanNode.h"
 #include "velox/experimental/query/Cost.h"
 #include "velox/experimental/query/RelationOp.h"
-#include "velox/parse/PlanNodeIdGenerator.h"
 #include "velox/runner/MultiFragmentPlan.h"
 
 /// Planning-time data structures. Represent the state of the planning process
@@ -742,8 +740,24 @@ class Optimization {
           std::vector<core::TypedExprPtr>>>
       leafHandles_;
 
+  class PlanNodeIdGenerator {
+   public:
+    explicit PlanNodeIdGenerator(int startId = 0) : nextId_{startId} {}
+
+    core::PlanNodeId next() {
+      return fmt::format("{}", nextId_++);
+    }
+
+    void reset(int startId = 0) {
+      nextId_ = startId;
+    }
+
+   private:
+    int nextId_;
+  };
+
   velox::runner::MultiFragmentPlan::Options options_;
-  velox::core::PlanNodeIdGenerator idGenerator_;
+  PlanNodeIdGenerator idGenerator_;
   // Limit for a possible limit/top k order by for while making a Velox plan. -1
   // means no limit.
   int32_t toVeloxLimit_{-1};

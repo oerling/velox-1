@@ -427,7 +427,23 @@ class ConnectorQueryCtx {
   const folly::CancellationToken cancellationToken_;
   bool selectiveNimbleReaderEnabled_{false};
 };
+  using SubfieldPtr = std::shared_ptr<const common::Subfield>;
 
+  struct SubfieldPtrHasher {
+  size_t operator()(const SubfieldPtr& subfield) const {
+    return subfield->hash();
+  }
+};
+
+struct SubfieldPtrComparer {
+  bool operator()(const SubfieldPtr& lhs, const SubfieldPtr& rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+  
+  using SubfieldMapping = std::unordered_map<SubfieldPtr, SubfieldPtr, SubfieldPtrHasher, SubfieldPtrComparer>;
+  
 class Connector {
  public:
   explicit Connector(const std::string& id) : id_(id) {}
@@ -455,7 +471,9 @@ class Connector {
   virtual ColumnHandlePtr createColumnHandle(
       const LayoutMetadata& layoutData,
       const std::string& columnName,
-      std::vector<common::Subfield> subfields = {}) {
+      std::vector<common::Subfield> subfields = {},
+      std::optional<TypePtr> castToType = std::nullopt,
+      SubfieldMapping subfieldMapping = {}) {
     VELOX_UNSUPPORTED();
   }
 

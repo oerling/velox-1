@@ -124,11 +124,16 @@ class Column {
 
 class Table;
 
+  /// Represents sorting order. Duplicate f core::SortOrder. Connectors 
+  struct SortOrder {
+    bool isAscending{true};
+    bool isNullsFirst{true};
+  };
+  
 /// Represents a physical manifestation of a table. There is at least
 /// one layout but for tables that have multiple sort orders,
 /// partitionings, indices, column groups, etc, there is a separate
-/// layout for each. Scans, index lookups, stats, sampling and split
-/// enumeration are done with respect to table layout.
+/// layout for each. The layout represents data at rest. The ConnectorTableHandle represents the query's constraints on the layout the scan is accessing.
 class TableLayout {
  public:
   TableLayout(
@@ -138,7 +143,7 @@ class TableLayout {
       std::vector<const Column*> columns,
       std::vector<const Column*> partitionColumns,
       std::vector<const Column*> orderColumns,
-      std::vector<core::SortOrder> sortOrder,
+      std::vector<SortOrder> sortOrder,
       std::vector<const Column*> lookupKeys,
       bool supportsScan)
       : name_(name),
@@ -192,7 +197,7 @@ class TableLayout {
     return orderColumns_;
   }
 
-  const std::vector<core::SortOrder>& sortOrder() const {
+  const std::vector<SortOrder>& sortOrder() const {
     return sortOrder_;
   }
 
@@ -249,7 +254,7 @@ class TableLayout {
   std::vector<const Column*> columns_;
   const std::vector<const Column*> partitionColumns_;
   const std::vector<const Column*> orderColumns_;
-  const std::vector<core::SortOrder> sortOrder_;
+  const std::vector<SortOrder> sortOrder_;
   const std::vector<const Column*> lookupKeys_;
   const bool supportsScan_;
   RowTypePtr rowType_;

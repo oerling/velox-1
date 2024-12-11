@@ -32,6 +32,8 @@ DEFINE_string(data_path, "", "Path to directory for TPC-H files");
 
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
 
+DEFINE_int32(num_repeats, 1, "Number of repeats for optimization timing");
+
 using namespace facebook::velox;
 using namespace facebook::velox::optimizer;
 
@@ -86,7 +88,7 @@ class PlanTest : public testing::Test {
       std::shared_ptr<const core::PlanNode> plan,
       bool partitioned,
       bool ordered,
-      int numRepeats = 1) {
+      int numRepeats = FLAGS_num_repeats) {
     auto schema = tpchSchema(100, partitioned, ordered, false);
     std::string string;
     for (auto counter = 0; counter < numRepeats; ++counter) {

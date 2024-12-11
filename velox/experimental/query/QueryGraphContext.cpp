@@ -15,10 +15,6 @@
  */
 
 #include "velox/experimental/query/QueryGraphContext.h"
-#include "velox/common/base/SimdUtil.h"
-#include "velox/common/base/SuccinctPrinter.h"
-#include "velox/experimental/query/Plan.h"
-#include "velox/experimental/query/PlanUtils.h"
 
 namespace facebook::velox::optimizer {
 

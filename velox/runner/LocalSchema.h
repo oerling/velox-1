@@ -51,7 +51,7 @@ class HiveTableLayout : public TableLayout {
       std::vector<const Column*> columns,
       std::vector<const Column*> partitioning,
       std::vector<const Column*> orderColumns,
-      std::vector<core::SortOrder> sortOrder,
+      std::vector<SortOrder> sortOrder,
       std::vector<const Column*> lookupKeys,
       std::vector<const Column*> hivePartitionColumns,
       dwio::common::FileFormat fileFormat)
@@ -94,7 +94,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       std::vector<const Column*> columns,
       std::vector<const Column*> partitioning,
       std::vector<const Column*> orderColumns,
-      std::vector<core::SortOrder> sortOrder,
+      std::vector<SortOrder> sortOrder,
       std::vector<const Column*> lookupKeys,
       std::vector<const Column*> hivePartitionColumns,
       dwio::common::FileFormat fileFormat)

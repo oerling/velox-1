@@ -59,8 +59,13 @@ HiveConnector::HiveConnector(
 ColumnHandlePtr HiveConnector::createColumnHandle(
     const LayoutMetadata& layout,
     const std::string& columnName,
-    std::vector<common::Subfield> subfields) {
+    std::vector<common::Subfield> subfields,
+    std::optional<TypePtr> castToType,
+    SubfieldMapping subfieldMapping) {
   auto* hiveLayout = reinterpret_cast<const HiveLayoutMetadata*>(&layout);
+  // castToType and subfieldMapping are not yet supported.
+  VELOX_CHECK(subfieldMapping.empty());
+  VELOX_CHECK(!castToType.has_value());
   auto handle = std::make_shared<HiveColumnHandle>(
       columnName,
       hiveLayout->columnType(columnName),

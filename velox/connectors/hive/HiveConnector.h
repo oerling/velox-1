@@ -46,7 +46,9 @@ class HiveConnector : public Connector {
   ColumnHandlePtr createColumnHandle(
       const LayoutMetadata& layout,
       const std::string& columnName,
-      std::vector<common::Subfield> subfields = {}) override;
+      std::vector<common::Subfield> subfields = {},
+      std::optional<TypePtr> castToType = std::nullopt,
+      SubfieldMapping subfieldMapping = {}) override;
 
   ConnectorTableHandlePtr createTableHandle(
       const LayoutMetadata& layout,

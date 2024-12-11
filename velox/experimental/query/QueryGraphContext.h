@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/common/memory/HashStringAllocator.h"
-#include "velox/core/PlanNode.h"
 #include "velox/experimental/query/ArenaCache.h"
 
 // #define QG_USE_MALLOC
@@ -50,6 +49,9 @@ struct PlanObjectPComparer {
 
 struct TypeHasher {
   size_t operator()(const TypePtr& type) const {
+    // hash on recursive TypeKind. Structs that differ in field names
+    // only or decimals with different precisions will collide, no
+    // other collisions expected.
     return type->hashKind();
   }
 };
