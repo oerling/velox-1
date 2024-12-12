@@ -56,25 +56,6 @@ void LocalRunnerTestBase::ensureTestData() {
 }
 
 void LocalRunnerTestBase::updateConnector() {
-#if 0
-  common::SpillConfig spillConfig;
-  common::PrefixSortConfig prefixSortConfig(100, 130);
-  auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
-  auto connectorQueryCtx = std::make_shared<connector::ConnectorQueryCtx>(
-      leafPool.get(),
-      schemaQueryCtx->pool(),
-      schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
-      &spillConfig,
-      prefixSortConfig,
-      std::make_unique<exec::SimpleExpressionEvaluator>(
-          schemaQueryCtx.get(), schemaPool_.get()),
-      schemaQueryCtx->cache(),
-      "scan_for_schema",
-      "schema",
-      "N/a",
-      0,
-      schemaQueryCtx->queryConfig().sessionTimezone());
-#endif
   connector::unregisterConnector(kHiveConnectorId);
 
   std::unordered_map<std::string, std::string> configs;
