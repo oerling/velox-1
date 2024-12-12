@@ -318,7 +318,7 @@ struct ColumnGroup : public Relation {
       SchemaTableCP _table,
       Distribution distribution,
       const ColumnVector& _columns,
-      const runner::TableLayout* layout = nullptr)
+      const connector::TableLayout* layout = nullptr)
       : Relation(RelType::kBase, distribution, _columns),
         name(_name),
         table(_table),
@@ -326,7 +326,7 @@ struct ColumnGroup : public Relation {
 
   Name name;
   SchemaTableCP table;
-  const runner::TableLayout* layout;
+  const connector::TableLayout* layout;
 
   /// Returns cost of next lookup when the hit is within 'range' rows
   /// of the previous hit. If lookups are not batched or not ordered,
@@ -422,7 +422,7 @@ struct SchemaTable {
 
   // Table description from external schema. This is the
   // source-dependent representation from which 'this' was created.
-  velox::runner::Table* runnerTable{nullptr};
+  const velox::connector::Table* connectorTable{nullptr};
 };
 
 /// Represents a collection of tables. Normally filled in ad hoc given
@@ -439,10 +439,10 @@ class Schema {
   Schema(
       Name _name,
       std::vector<SchemaTableCP> tables,
-      connector::Connector* connector);
+      LocusCP locus);
 
   /// Constructs a Schema for producing executable plans, backed by 'source'.
-  Schema(Name _name, velox::runner::Schema* source);
+  Schema(Name _name, velox::runner::Schema* source, LocusCP locus);
 
   /// Returns the table with 'name' or nullptr if not found.
   SchemaTableCP findTable(std::string_view name) const;
@@ -457,7 +457,7 @@ class Schema {
   Name name_;
   mutable NameMap<SchemaTableCP> tables_;
   velox::runner::Schema* source_{nullptr};
-  std::unique_ptr<Locus> defaultLocus_;
+  LocusCP defaultLocus_;
 };
 
 using SchemaP = Schema*;

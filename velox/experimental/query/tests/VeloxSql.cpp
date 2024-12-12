@@ -235,7 +235,7 @@ class VeloxRunner {
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
-    connector::registerConnector(hiveConnector);
+    connector::registerConnector(connector_);
 
     std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
         connectorConfigs;
@@ -304,7 +304,7 @@ class VeloxRunner {
     std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
         assignments;
 
-    auto table = hiveConnector_->metadata()->findTable(name);
+    auto table = connector_->metadata()->findTable(name);
     for (auto i = 0; i < rowType->size(); ++i) {
       auto projectedName = rowType->nameOf(i);
       auto& columnName = columnNames[i];
@@ -457,6 +457,8 @@ class VeloxRunner {
         spillExecutor_.get(),
         fmt::format("query_{}", queryCounter_));
 
+    // The default Locus for planning is the system and data of 'connector_'.
+    optimizer::Locus locus(connector_->connectorId().c_str(), connector_.get());
     core::PlanNodePtr plan;
     try {
       plan = planner_->plan(sql);
@@ -481,7 +483,7 @@ class VeloxRunner {
         queryCtx.get(), optimizerPool_.get());
     MultiFragmentPlanPtr fragmentedPlan;
     try {
-      facebook::velox::optimizer::Schema veraxSchema("test", schema_.get());
+      facebook::velox::optimizer::Schema veraxSchema("test", schema_.get(), &locus);
       facebook::velox::optimizer::Optimization opt(
           *plan, veraxSchema, *history_, evaluator, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
@@ -507,7 +509,7 @@ class VeloxRunner {
     RunStats runStats;
     try {
       runner = std::make_shared<LocalRunner>(
-          fragmentedPlan, queryCtx, splitSourceFactory_);
+          fragmentedPlan, queryCtx);
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 
@@ -658,7 +660,8 @@ class VeloxRunner {
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
   std::shared_ptr<core::QueryCtx> schemaQueryCtx_;
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
-  std::shared_ptr<Connector> connector_;
+  std::shared_ptr<connector::Connector> connector_;
+  std::shared_ptr<runner::Schema> schema_;
   std::unique_ptr<facebook::velox::optimizer::VeloxHistory> history_;
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;
   std::unordered_map<std::string, std::string> config_;

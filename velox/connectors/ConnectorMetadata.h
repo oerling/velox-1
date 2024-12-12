@@ -315,7 +315,7 @@ class Table {
   virtual const std::unordered_map<std::string, const Column*>& columnMap()
       const = 0;
 
-  const Column* findColumn(const std::string& name) {
+  const Column* findColumn(const std::string& name) const {
     auto& map = columnMap();
     auto it = map.find(name);
     return it == map.end() ? nullptr : it->second;

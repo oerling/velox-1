@@ -60,15 +60,14 @@ void filterUpdated(BaseTableCP table) {
           "and");
     }
   }
-  auto& dataColumns = table->schemaTable->runnerTable->rowType();
+  auto& dataColumns = table->schemaTable->connectorTable->rowType();
   auto* layout = table->schemaTable->columnGroups[0]->layout;
   auto connector = layout->connector();
-  auto layoutData = layout->metadata();
   std::vector<connector::ColumnHandlePtr> columns;
   for (int32_t i = 0; i < dataColumns->size(); ++i) {
     // Add subfield pruning here.
     columns.push_back(
-        connector->createColumnHandle(*layoutData, dataColumns->nameOf(i)));
+		      connector->createColumnHandle(*layout, dataColumns->nameOf(i)));
   }
   auto allFilters = std::move(pushdownConjuncts);
   if (remainingFilter) {
@@ -76,7 +75,7 @@ void filterUpdated(BaseTableCP table) {
   }
   std::vector<core::TypedExprPtr> rejectedFilters;
   auto handle = connector->createTableHandle(
-      *layoutData,
+					     *layout,
       columns,
       *optimization->evaluator(),
       std::move(allFilters),
@@ -149,7 +148,7 @@ RowTypePtr Optimization::makeOutputType(const ColumnVector& columns) {
       if (!schemaTable) {
         continue;
       }
-      auto* runnerTable = schemaTable->runnerTable;
+      auto* runnerTable = schemaTable->connectorTable;
       if (runnerTable) {
         auto* runnerColumn =
             runnerTable->findColumn(std::string(column->name()));
@@ -558,7 +557,6 @@ core::PlanNodePtr Optimization::makeFragment(
             "No table for scan {}",
             scan->toString(true, true));
       }
-      auto metadata = scan->index->layout->metadata();
       std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
           assignments;
       for (auto column : scan->columns()) {
@@ -567,7 +565,7 @@ core::PlanNodePtr Optimization::makeFragment(
         assignments[column->toString()] =
             std::const_pointer_cast<connector::ColumnHandle>(
                 scan->index->layout->connector()->createColumnHandle(
-                    *metadata, column->name()));
+								     *scan->index->layout, column->name()));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
           nextId(*op),

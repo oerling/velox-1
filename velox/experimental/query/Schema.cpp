@@ -85,19 +85,17 @@ ColumnCP SchemaTable::findColumn(const std::string& name) const {
 Schema::Schema(
     const char* _name,
     std::vector<SchemaTableCP> tables,
-    connector::Connector* connector)
-    : name_(_name), defaultLocus_(std::make_unique<Locus>("local", connector)) {
+    LocusCP locus)
+  : name_(_name), defaultLocus_(locus) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }
 }
 
-Schema::Schema(const char* _name, velox::runner::Schema* source)
+  Schema::Schema(const char* _name, velox::runner::Schema* source, LocusCP locus)
     : name_(_name),
       source_(source),
-      defaultLocus_(std::make_unique<Locus>(
-          source->connector()->connectorId().c_str(),
-          source->connector())) {}
+      defaultLocus_(locus) {}
 
 SchemaTableCP Schema::findTable(std::string_view name) const {
   auto internedName = toName(name);
@@ -111,7 +109,7 @@ SchemaTableCP Schema::findTable(std::string_view name) const {
     return nullptr;
   }
   auto* schemaTable = make<SchemaTable>(internedName, table->rowType());
-  schemaTable->runnerTable = table;
+  schemaTable->connectorTable = table;
   ColumnVector columns;
   for (auto& pair : table->columnMap()) {
     auto& tableColumn = *pair.second;
@@ -123,7 +121,7 @@ SchemaTableCP Schema::findTable(std::string_view name) const {
     columns.push_back(column);
   }
   DistributionType defaultDist;
-  defaultDist.locus = defaultLocus_.get();
+  defaultDist.locus = defaultLocus_;
   auto* pk = schemaTable->addIndex(
       toName("pk"), table->numRows(), 0, 0, {}, defaultDist, {}, columns);
   addTable(schemaTable);
