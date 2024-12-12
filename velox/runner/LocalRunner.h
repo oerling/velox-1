@@ -73,5 +73,4 @@ class LocalRunner : public Runner,
   std::exception_ptr error_;
 };
 
-
 } // namespace facebook::velox::runner
