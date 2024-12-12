@@ -941,7 +941,7 @@ TEST_F(AggregationTest, partialDistinctWithAbandon) {
   auto task = AssertQueryBuilder(duckDbQueryRunner_)
                   .config(QueryConfig::kAbandonPartialAggregationMinRows, 100)
                   .config(QueryConfig::kAbandonPartialAggregationMinPct, 50)
-                  .config("max_drivers_per_task", 1)
+                  .maxDrivers(1)
                   .plan(PlanBuilder()
                             .values(vectors)
                             .partialAggregation({"c0"}, {})
@@ -953,7 +953,7 @@ TEST_F(AggregationTest, partialDistinctWithAbandon) {
   task = AssertQueryBuilder(duckDbQueryRunner_)
              .config(QueryConfig::kAbandonPartialAggregationMinRows, 100)
              .config(QueryConfig::kAbandonPartialAggregationMinPct, 50)
-             .config("max_drivers_per_task", 1)
+             .maxDrivers(1)
              .plan(PlanBuilder()
                        .values(vectors)
                        .partialAggregation({"c0"}, {"sum(c0)"})
@@ -990,7 +990,7 @@ TEST_F(AggregationTest, distinctWithGroupingKeysReordered) {
                   .config(QueryConfig::kSpillEnabled, true)
                   .config(QueryConfig::kAggregationSpillEnabled, true)
                   .config(QueryConfig::kSpillPrefixSortEnabled, true)
-                  .config("max_drivers_per_task", 1)
+                  .maxDrivers(1)
                   .plan(PlanBuilder()
                             .values(vectors)
                             .singleAggregation({"c2", "c0"}, {})
@@ -1049,7 +1049,6 @@ TEST_F(AggregationTest, largeValueRangeArray) {
 
 TEST_F(AggregationTest, partialAggregationMemoryLimitIncrease) {
   constexpr int64_t kGB = 1 << 30;
-  constexpr int64_t kB = 1 << 10;
   auto vectors = {
       makeRowVector({makeFlatVector<int32_t>(
           100, [](auto row) { return row; }, nullEvery(5))}),
@@ -1141,7 +1140,6 @@ TEST_F(AggregationTest, partialAggregationMaybeReservationReleaseCheck) {
 
   constexpr int64_t kGB = 1 << 30;
   const int64_t kMaxPartialMemoryUsage = 1 * kGB;
-  const int64_t kMaxUserMemoryUsage = 2 * kMaxPartialMemoryUsage;
   // Make sure partial aggregation runs out of memory after first batch.
   CursorParameters params;
   params.queryCtx = core::QueryCtx::create(executor_.get());

@@ -443,9 +443,10 @@ PlanBuilder& PlanBuilder::tableWrite(
     const std::unordered_map<std::string, std::string>& serdeParameters,
     const std::shared_ptr<dwio::common::WriterOptions>& options,
     const std::string& outputFileName,
-    const common::CompressionKind compressionKind) {
+    const common::CompressionKind compressionKind,
+    const RowTypePtr& schema) {
   VELOX_CHECK_NOT_NULL(planNode_, "TableWrite cannot be the source node");
-  auto rowType = planNode_->outputType();
+  auto rowType = schema ? schema : planNode_->outputType();
 
   std::vector<std::shared_ptr<const connector::hive::HiveColumnHandle>>
       columnHandles;
@@ -1293,12 +1294,20 @@ PlanBuilder& PlanBuilder::localPartition(const std::vector<std::string>& keys) {
 
 PlanBuilder& PlanBuilder::scaleWriterlocalPartition(
     const std::vector<std::string>& keys) {
-  planNode_ = createLocalPartitionNode(
+  std::vector<column_index_t> keyIndices;
+  keyIndices.reserve(keys.size());
+  for (const auto& key : keys) {
+    keyIndices.push_back(planNode_->outputType()->getChildIdx(key));
+  }
+  auto hivePartitionFunctionFactory =
+      std::make_shared<HivePartitionFunctionSpec>(
+          1009, keyIndices, std::vector<VectorPtr>{});
+  planNode_ = std::make_shared<core::LocalPartitionNode>(
       nextPlanNodeId(),
-      exprs(keys, planNode_->outputType()),
-      /*scaleWriter=*/true,
-      {planNode_},
-      pool_);
+      core::LocalPartitionNode::Type::kRepartition,
+      true,
+      hivePartitionFunctionFactory,
+      std::vector{planNode_});
   return *this;
 }
 
