@@ -23,6 +23,7 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/common/memory/MemoryArbitrator.h"
 #include "velox/common/memory/SharedArbitrator.h"
+#include "velox/common/memory/tests/SharedArbitratorTestUtil.h"
 
 using namespace ::testing;
 
@@ -504,7 +505,8 @@ class MockLeafMemoryReclaimer : public MemoryReclaimer {
       std::atomic<uint64_t>& totalUsedBytes,
       bool reclaimable = true,
       bool* underArbitration = nullptr)
-      : reclaimable_(reclaimable),
+      : MemoryReclaimer(0),
+        reclaimable_(reclaimable),
         underArbitration_(underArbitration),
         totalUsedBytes_(totalUsedBytes) {}
 

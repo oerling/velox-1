@@ -274,6 +274,11 @@ class MemoryManager {
     return spillPool_.get();
   }
 
+  /// Returns the process wide leaf memory pool used for ssd cache.
+  MemoryPool* cachePool() {
+    return cachePool_.get();
+  }
+
   /// Returns the process wide leaf memory pool used for query tracing.
   MemoryPool* tracePool() const {
     return tracePool_.get();
@@ -311,6 +316,7 @@ class MemoryManager {
 
   const std::shared_ptr<MemoryPool> sysRoot_;
   const std::shared_ptr<MemoryPool> spillPool_;
+  const std::shared_ptr<MemoryPool> cachePool_;
   const std::shared_ptr<MemoryPool> tracePool_;
   const std::vector<std::shared_ptr<MemoryPool>> sharedLeafPools_;
 
@@ -346,7 +352,6 @@ std::shared_ptr<MemoryPool> deprecatedAddDefaultLeafMemoryPool(
 /// Default unmanaged leaf pool with no threadsafe stats support. Libraries
 /// using this method can get a pool that is shared with other threads. The goal
 /// is to minimize lock contention while supporting such use cases.
-///
 ///
 /// TODO: deprecate this API after all the use cases are able to manage the
 /// lifecycle of the allocated memory pools properly.

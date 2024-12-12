@@ -22,6 +22,7 @@
 
 #include <folly/init/Init.h>
 
+using namespace facebook;
 using namespace facebook::velox;
 using namespace facebook::velox::common;
 using namespace facebook::velox::dwio::common;
@@ -29,7 +30,8 @@ using namespace facebook::velox::parquet;
 
 using dwio::common::MemorySink;
 
-class E2EFilterTest : public E2EFilterTestBase, public test::VectorTestBase {
+class E2EFilterTest : public E2EFilterTestBase,
+                      public velox::test::VectorTestBase {
  protected:
   void SetUp() override {
     E2EFilterTestBase::SetUp();
@@ -256,6 +258,20 @@ TEST_F(E2EFilterTest, integerDictionary) {
       20);
 }
 
+TEST_F(E2EFilterTest, timestampDirect) {
+  options_.enableDictionary = false;
+  options_.dataPageSize = 4 * 1024;
+  options_.writeInt96AsTimestamp = true;
+
+  testWithTypes(
+      "timestamp_val_0:timestamp,"
+      "timestamp_val_1:timestamp",
+      [&]() {},
+      true,
+      {"timestamp_val_0", "timestamp_val_1"},
+      20);
+}
+
 TEST_F(E2EFilterTest, timestampDictionary) {
   options_.dataPageSize = 4 * 1024;
   options_.writeInt96AsTimestamp = true;
@@ -400,7 +416,7 @@ TEST_F(E2EFilterTest, longDecimalDictionary) {
               true);
         },
         true,
-        {},
+        {"longdecimal_val"},
         20);
   }
 }
@@ -429,7 +445,7 @@ TEST_F(E2EFilterTest, longDecimalDirect) {
               true);
         },
         true,
-        {},
+        {"longdecimal_val"},
         20);
   }
 
@@ -442,7 +458,7 @@ TEST_F(E2EFilterTest, longDecimalDirect) {
             {-479, HugeInt::build(1546093991, 4054979645)});
       },
       false,
-      {},
+      {"longdecimal_val"},
       20);
 }
 

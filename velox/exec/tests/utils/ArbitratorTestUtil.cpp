@@ -45,7 +45,7 @@ std::shared_ptr<core::QueryCtx> newQueryCtx(
 std::unique_ptr<memory::MemoryManager> createMemoryManager(
     int64_t arbitratorCapacity,
     uint64_t memoryPoolInitCapacity,
-    uint64_t maxReclaimWaitMs,
+    uint64_t maxArbitrationTimeMs,
     uint64_t fastExponentialGrowthCapacityLimit,
     double slowCapacityGrowPct) {
   memory::MemoryManagerOptions options;
@@ -58,8 +58,8 @@ std::unique_ptr<memory::MemoryManager> createMemoryManager(
   options.extraArbitratorConfigs = {
       {std::string(ExtraConfig::kMemoryPoolInitialCapacity),
        folly::to<std::string>(memoryPoolInitCapacity) + "B"},
-      {std::string(ExtraConfig::kMemoryReclaimMaxWaitTime),
-       folly::to<std::string>(maxReclaimWaitMs) + "ms"},
+      {std::string(ExtraConfig::kMaxMemoryArbitrationTime),
+       folly::to<std::string>(maxArbitrationTimeMs) + "ms"},
       {std::string(ExtraConfig::kGlobalArbitrationEnabled), "true"},
       {std::string(ExtraConfig::kFastExponentialGrowthCapacityLimit),
        folly::to<std::string>(fastExponentialGrowthCapacityLimit) + "B"},
@@ -373,5 +373,20 @@ QueryTestResult runWriteTask(
     assertEqualResults({result.data}, {expectedResult});
   }
   return result;
+}
+
+TestSuspendedSection::TestSuspendedSection(Driver* driver) : driver_(driver) {
+  if (driver->task()->enterSuspended(driver->state()) != StopReason::kNone) {
+    VELOX_FAIL("Terminate detected when entering suspended section");
+  }
+}
+
+TestSuspendedSection::~TestSuspendedSection() {
+  if (driver_->task()->leaveSuspended(driver_->state()) != StopReason::kNone) {
+    LOG(WARNING)
+        << "Terminate detected when leaving suspended section for driver "
+        << driver_->driverCtx()->driverId << " from task "
+        << driver_->task()->taskId();
+  }
 }
 } // namespace facebook::velox::exec::test

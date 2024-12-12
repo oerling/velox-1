@@ -28,15 +28,15 @@ class HashJoinReplayer final : public OperatorReplayerBase {
       const std::string& queryId,
       const std::string& taskId,
       const std::string& nodeId,
-      const int32_t pipelineId,
-      const std::string& operatorType)
+      const std::string& operatorType,
+      const std::string& driverIds)
       : OperatorReplayerBase(
             rootDir,
             queryId,
             taskId,
             nodeId,
-            pipelineId,
-            operatorType) {}
+            operatorType,
+            driverIds) {}
 
  private:
   core::PlanNodePtr createPlanNode(

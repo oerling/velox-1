@@ -25,7 +25,7 @@ namespace {
 
 using namespace facebook::velox::common;
 
-class ReaderTest : public testing::Test, public test::VectorTestBase {
+class ReaderTest : public testing::Test, public velox::test::VectorTestBase {
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
@@ -33,7 +33,6 @@ class ReaderTest : public testing::Test, public test::VectorTestBase {
 };
 
 TEST_F(ReaderTest, getOrCreateChild) {
-  constexpr int kSize = 5;
   auto input = makeRowVector(
       {"c.0", "c.1"},
       {

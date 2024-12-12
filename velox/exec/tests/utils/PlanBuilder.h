@@ -105,6 +105,8 @@ class PlanBuilder {
         planNodeIdGenerator_{std::move(planNodeIdGenerator)},
         pool_{pool} {}
 
+  virtual ~PlanBuilder() = default;
+
   static constexpr const std::string_view kHiveDefaultConnectorId{"test-hive"};
   static constexpr const std::string_view kTpchDefaultConnectorId{"test-tpch"};
 
@@ -321,10 +323,14 @@ class PlanBuilder {
   /// @param traceNodeDir The trace directory for a given plan node.
   /// @param pipelineId The pipeline id for the traced operator instantiated
   /// from the given plan node.
+  /// @param driverIds The target driver ID list for replay. The replaying
+  /// operator uses its driver instance id as the list index to get the traced
+  /// driver id for replay.
   /// @param outputType The type of the tracing data.
   PlanBuilder& traceScan(
       const std::string& traceNodeDir,
       uint32_t pipelineId,
+      std::vector<uint32_t> driverIds,
       const RowTypePtr& outputType);
 
   /// Add an ExchangeNode.
@@ -333,7 +339,10 @@ class PlanBuilder {
   /// splits.
   ///
   /// @param outputType The type of the data coming in and out of the exchange.
-  PlanBuilder& exchange(const RowTypePtr& outputType);
+  /// @param serdekind The kind of seralized data format.
+  PlanBuilder& exchange(
+      const RowTypePtr& outputType,
+      VectorSerde::Kind serdekind);
 
   /// Add a MergeExchangeNode using specified ORDER BY clauses.
   ///
@@ -345,7 +354,8 @@ class PlanBuilder {
   /// ASC NULLS LAST and column "b" will use DESC NULLS LAST.
   PlanBuilder& mergeExchange(
       const RowTypePtr& outputType,
-      const std::vector<std::string>& keys);
+      const std::vector<std::string>& keys,
+      VectorSerde::Kind serdekind);
 
   /// Add a ProjectNode using specified SQL expressions.
   ///
@@ -473,6 +483,10 @@ class PlanBuilder {
   /// @param outputFileName Optional file name of the output. If specified
   /// (non-empty), use it instead of generating the file name in Velox. Should
   /// only be specified in non-bucketing write.
+  /// @param compressionKind Compression scheme to use for writing the
+  /// output data files.
+  /// @param schema Output schema to be passed to the writer. By default use the
+  /// output of the previous operator.
   PlanBuilder& tableWrite(
       const std::string& outputDirectoryPath,
       const std::vector<std::string>& partitionBy,
@@ -486,7 +500,9 @@ class PlanBuilder {
       const std::string_view& connectorId = kHiveDefaultConnectorId,
       const std::unordered_map<std::string, std::string>& serdeParameters = {},
       const std::shared_ptr<dwio::common::WriterOptions>& options = nullptr,
-      const std::string& outputFileName = "");
+      const std::string& outputFileName = "",
+      const common::CompressionKind = common::CompressionKind_NONE,
+      const RowTypePtr& schema = nullptr);
 
   /// Add a TableWriteMergeNode.
   PlanBuilder& tableWriteMerge(
@@ -785,13 +801,15 @@ class PlanBuilder {
       const std::vector<std::string>& keys,
       int numPartitions,
       bool replicateNullsAndAny,
-      const std::vector<std::string>& outputLayout = {});
+      const std::vector<std::string>& outputLayout = {},
+      VectorSerde::Kind serdeKind = VectorSerde::Kind::kPresto);
 
   /// Same as above, but assumes 'replicateNullsAndAny' is false.
   PlanBuilder& partitionedOutput(
       const std::vector<std::string>& keys,
       int numPartitions,
-      const std::vector<std::string>& outputLayout = {});
+      const std::vector<std::string>& outputLayout = {},
+      VectorSerde::Kind serdeKind = VectorSerde::Kind::kPresto);
 
   /// Same as above, but allows to provide custom partition function.
   PlanBuilder& partitionedOutput(
@@ -799,7 +817,8 @@ class PlanBuilder {
       int numPartitions,
       bool replicateNullsAndAny,
       core::PartitionFunctionSpecPtr partitionFunctionSpec,
-      const std::vector<std::string>& outputLayout = {});
+      const std::vector<std::string>& outputLayout = {},
+      VectorSerde::Kind serdeKind = VectorSerde::Kind::kPresto);
 
   /// Adds a PartitionedOutputNode to broadcast the input data.
   ///
@@ -808,11 +827,13 @@ class PlanBuilder {
   /// some input columns may be missing in the output, some columns may be
   /// duplicated in the output.
   PlanBuilder& partitionedOutputBroadcast(
-      const std::vector<std::string>& outputLayout = {});
+      const std::vector<std::string>& outputLayout = {},
+      VectorSerde::Kind serdeKind = VectorSerde::Kind::kPresto);
 
   /// Adds a PartitionedOutputNode to put data into arbitrary buffer.
   PlanBuilder& partitionedOutputArbitrary(
-      const std::vector<std::string>& outputLayout = {});
+      const std::vector<std::string>& outputLayout = {},
+      VectorSerde::Kind serdeKind = VectorSerde::Kind::kPresto);
 
   /// Adds a LocalPartitionNode to hash-partition the input on the specified
   /// keys using exec::HashPartitionFunction. Number of partitions is determined
@@ -853,6 +874,14 @@ class PlanBuilder {
   /// A convenience method to add a LocalPartitionNode with a single source (the
   /// current plan node).
   PlanBuilder& localPartitionRoundRobin();
+
+  /// A convenience method to add a LocalPartitionNode for scale writer with
+  /// hash partitioning.
+  PlanBuilder& scaleWriterlocalPartition(const std::vector<std::string>& keys);
+
+  /// A convenience method to add a LocalPartitionNode for scale writer with
+  /// round-robin partitioning.
+  PlanBuilder& scaleWriterlocalPartitionRoundRobin();
 
   /// Add a LocalPartitionNode to partition the input using row-wise
   /// round-robin. Number of partitions is determined at runtime based on
@@ -1020,7 +1049,9 @@ class PlanBuilder {
     return *this;
   }
 
-  /// Return the latest plan node, e.g. the root node of the plan tree.
+  /// Return the latest plan node, e.g. the root node of the plan
+  /// tree. The DistributedPlanBuilder override additionally moves stage
+  /// information to a parent PlanBuilder.
   const core::PlanNodePtr& planNode() const {
     return planNode_;
   }
@@ -1045,6 +1076,28 @@ class PlanBuilder {
     return *this;
   }
 
+  /// In a DistributedPlanBuilder, introduces a shuffle boundary. The plan so
+  /// far is shuffled and subsequent nodes consume the shuffle. Arguments are as
+  /// in partitionedOutput().
+  virtual PlanBuilder& shuffle(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
+  /// In a DistributedPlanBuilder, returns an Exchange on top of the plan built
+  /// so far and couples it to the current stage in the enclosing builder.
+  /// Arguments are as in shuffle().
+  virtual core::PlanNodePtr shuffleResult(
+      const std::vector<std::string>& keys,
+      int numPartitions,
+      bool replicateNullsAndAny,
+      const std::vector<std::string>& outputLayout = {}) {
+    VELOX_UNSUPPORTED("Needs DistributedPlanBuilder");
+  }
+
  protected:
   // Users who create custom operators might want to extend the PlanBuilder to
   // customize extended plan builders. Those functions are needed in such
@@ -1053,6 +1106,14 @@ class PlanBuilder {
 
   std::shared_ptr<const core::ITypedExpr> inferTypes(
       const core::ExprPtr& untypedExpr);
+
+  std::shared_ptr<core::PlanNodeIdGenerator> planNodeIdGenerator() const {
+    return planNodeIdGenerator_;
+  }
+
+  memory::MemoryPool* pool() const {
+    return pool_;
+  }
 
  private:
   std::shared_ptr<const core::FieldAccessTypedExpr> field(column_index_t index);

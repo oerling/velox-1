@@ -192,8 +192,8 @@ TEST_F(FilterProjectReplayerTest, filterProject) {
                                task->queryCtx()->queryId(),
                                task->taskId(),
                                projectNodeId_,
-                               0,
-                               "FilterProject")
+                               "FilterProject",
+                               "")
                                .run();
     assertEqualResults({result}, {replayingResult});
   }
@@ -227,8 +227,8 @@ TEST_F(FilterProjectReplayerTest, filterOnly) {
                              task->queryCtx()->queryId(),
                              task->taskId(),
                              filterNodeId_,
-                             0,
-                             "FilterProject")
+                             "FilterProject",
+                             "")
                              .run();
   assertEqualResults({result}, {replayingResult});
 }
@@ -261,9 +261,27 @@ TEST_F(FilterProjectReplayerTest, projectOnly) {
                              task->queryCtx()->queryId(),
                              task->taskId(),
                              projectNodeId_,
-                             0,
-                             "FilterProject")
+                             "FilterProject",
+                             "")
                              .run();
   assertEqualResults({result}, {replayingResult});
+
+  auto replayingResult1 = FilterProjectReplayer(
+                              traceRoot,
+                              task->queryCtx()->queryId(),
+                              task->taskId(),
+                              projectNodeId_,
+                              "FilterProject",
+                              "0,2")
+                              .run();
+  auto replayingResult2 = FilterProjectReplayer(
+                              traceRoot,
+                              task->queryCtx()->queryId(),
+                              task->taskId(),
+                              projectNodeId_,
+                              "FilterProject",
+                              "1,3")
+                              .run();
+  assertEqualResults({result}, {replayingResult1, replayingResult2});
 }
 } // namespace facebook::velox::tool::trace::test

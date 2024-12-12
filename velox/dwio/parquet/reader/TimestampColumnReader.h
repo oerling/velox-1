@@ -20,6 +20,34 @@
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 
 namespace facebook::velox::parquet {
+namespace {
+
+Timestamp toInt96Timestamp(const int128_t& value) {
+  // Convert int128_t to Int96 Timestamp by extracting days and nanos.
+  const int32_t days = static_cast<int32_t>(value >> 64);
+  const uint64_t nanos = value & ((((1ULL << 63) - 1ULL) << 1) + 1);
+  return Timestamp::fromDaysAndNanos(days, nanos);
+}
+
+// Range filter for Parquet Int96 Timestamp.
+class ParquetInt96TimestampRange final : public common::TimestampRange {
+ public:
+  // @param lower Lower end of the range, inclusive.
+  // @param upper Upper end of the range, inclusive.
+  // @param nullAllowed Null values are passing the filter if true.
+  ParquetInt96TimestampRange(
+      const Timestamp& lower,
+      const Timestamp& upper,
+      bool nullAllowed)
+      : TimestampRange(lower, upper, nullAllowed) {}
+
+  bool testInt128(const int128_t& value) const final {
+    const auto ts = toInt96Timestamp(value);
+    return ts >= this->lower() && ts <= this->upper();
+  }
+};
+
+} // namespace
 
 class TimestampColumnReader : public IntegerColumnReader {
  public:
@@ -49,19 +77,41 @@ class TimestampColumnReader : public IntegerColumnReader {
       if (resultVector->isNullAt(i)) {
         continue;
       }
-      const auto timestamp = rawValues[i];
-      uint64_t nanos = timestamp.getNanos();
-      switch (timestampPrecision_) {
-        case TimestampPrecision::kMilliseconds:
-          nanos = nanos / 1'000'000 * 1'000'000;
-          break;
-        case TimestampPrecision::kMicroseconds:
-          nanos = nanos / 1'000 * 1'000;
-          break;
-        case TimestampPrecision::kNanoseconds:
-          break;
-      }
-      rawValues[i] = Timestamp(timestamp.getSeconds(), nanos);
+
+      const int128_t encoded = reinterpret_cast<int128_t&>(rawValues[i]);
+      rawValues[i] = toInt96Timestamp(encoded).toPrecision(timestampPrecision_);
+    }
+  }
+
+  template <
+      typename Reader,
+      typename TFilter,
+      bool isDense,
+      typename ExtractValues>
+  void readHelper(
+      velox::common::Filter* filter,
+      const RowSet& rows,
+      ExtractValues extractValues) {
+    if (auto* range = dynamic_cast<common::TimestampRange*>(filter)) {
+      // Convert TimestampRange to ParquetInt96TimestampRange.
+      ParquetInt96TimestampRange newRange = ParquetInt96TimestampRange(
+          range->lower(), range->upper(), range->nullAllowed());
+      this->readWithVisitor(
+          rows,
+          dwio::common::ColumnVisitor<
+              int128_t,
+              ParquetInt96TimestampRange,
+              ExtractValues,
+              isDense>(newRange, this, rows, extractValues));
+    } else {
+      this->readWithVisitor(
+          rows,
+          dwio::common::
+              ColumnVisitor<int128_t, TFilter, ExtractValues, isDense>(
+                  *reinterpret_cast<TFilter*>(filter),
+                  this,
+                  rows,
+                  extractValues));
     }
   }
 
@@ -69,17 +119,16 @@ class TimestampColumnReader : public IntegerColumnReader {
       int64_t offset,
       const RowSet& rows,
       const uint64_t* /*incomingNulls*/) override {
-    auto& data = formatData_->as<ParquetData>();
-    // Use int128_t as a workaroud. Timestamp in Velox is of 16-byte length.
+    // Use int128_t as a workaround. Timestamp in Velox is of 16-byte length.
     prepareRead<int128_t>(offset, rows, nullptr);
-    readCommon<IntegerColumnReader, true>(rows);
+    readCommon<TimestampColumnReader, true>(rows);
     readOffset_ += rows.back() + 1;
   }
 
  private:
   // The requested precision can be specified from HiveConfig to read timestamp
   // from Parquet.
-  TimestampPrecision timestampPrecision_;
+  const TimestampPrecision timestampPrecision_;
 };
 
 } // namespace facebook::velox::parquet

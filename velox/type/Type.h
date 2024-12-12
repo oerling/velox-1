@@ -487,6 +487,17 @@ class Type : public Tree<const TypePtr>, public velox::ISerializable {
 
   virtual std::string toString() const = 0;
 
+  /// Options to control the output of toSummaryString().
+  struct TypeSummaryOptions {
+    /// Maximum number of child types to include in the summary.
+    size_type maxChildren{0};
+  };
+
+  /// Returns human-readable summary of the type. Useful when full output of
+  /// toString() is too large.
+  std::string toSummaryString(
+      TypeSummaryOptions options = {.maxChildren = 0}) const;
+
   /// Types are weakly matched.
   /// Examples: Two RowTypes are equivalent if the children types are
   /// equivalent, but the children names could be different. Two OpaqueTypes are
@@ -993,9 +1004,14 @@ class RowType : public TypeBase<TypeKind::ROW> {
 
   ~RowType() override;
 
-  uint32_t size() const override;
+  uint32_t size() const final {
+    return children_.size();
+  }
 
-  const std::shared_ptr<const Type>& childAt(uint32_t idx) const override;
+  const TypePtr& childAt(uint32_t idx) const final {
+    VELOX_CHECK_LT(idx, children_.size());
+    return children_[idx];
+  }
 
   const std::vector<std::shared_ptr<const Type>>& children() const {
     return children_;
@@ -1200,6 +1216,8 @@ class OpaqueType : public TypeBase<TypeKind::OPAQUE> {
         serializeTypeErased,
         deserializeTypeErased);
   }
+
+  static void clearSerializationRegistry();
 
  protected:
   bool equals(const Type& other) const override;

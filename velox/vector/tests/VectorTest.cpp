@@ -107,7 +107,7 @@ struct NonPOD {
 
 int NonPOD::alive = 0;
 
-class VectorTest : public testing::Test, public test::VectorTestBase {
+class VectorTest : public testing::Test, public velox::test::VectorTestBase {
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance({});
@@ -164,7 +164,6 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     BufferPtr nulls;
     if (withNulls) {
       nulls = allocateNulls(numRows, pool());
-      int32_t childCounter = 0;
       auto rawNulls = nulls->asMutable<uint64_t>();
       for (int32_t i = 0; i < numRows; ++i) {
         bits::setNull(rawNulls, i, i % 8 == 0);
@@ -818,10 +817,10 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     auto sourceRow = makeRowVector({"c"}, {source});
     auto sourceRowType = asRowType(sourceRow->type());
 
-    VectorStreamGroup even(pool());
+    VectorStreamGroup even(pool(), nullptr);
     even.createStreamTree(sourceRowType, source->size() / 4);
 
-    VectorStreamGroup odd(pool());
+    VectorStreamGroup odd(pool(), nullptr);
     odd.createStreamTree(sourceRowType, source->size() / 3);
 
     std::vector<IndexRange> evenIndices;
@@ -847,9 +846,9 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     }
 
     VectorStreamGroup::estimateSerializedSize(
-        source.get(), evenIndices, evenSizePointers.data());
+        source.get(), evenIndices, nullptr, evenSizePointers.data());
     VectorStreamGroup::estimateSerializedSize(
-        source.get(), oddIndices, oddSizePointers.data());
+        source.get(), oddIndices, nullptr, oddSizePointers.data());
     even.append(
         sourceRow, folly::Range(evenIndices.data(), evenIndices.size() / 2));
     even.append(
@@ -878,7 +877,8 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     auto evenInput = prepareInput(evenString);
 
     RowVectorPtr resultRow;
-    VectorStreamGroup::read(evenInput.get(), pool(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(
+        evenInput.get(), pool(), sourceRowType, nullptr, &resultRow);
     VectorPtr result = resultRow->childAt(0);
     switch (source->encoding()) {
       case VectorEncoding::Simple::FLAT:
@@ -907,7 +907,8 @@ class VectorTest : public testing::Test, public test::VectorTestBase {
     auto oddString = oddStream.str();
     auto oddInput = prepareInput(oddString);
 
-    VectorStreamGroup::read(oddInput.get(), pool(), sourceRowType, &resultRow);
+    VectorStreamGroup::read(
+        oddInput.get(), pool(), sourceRowType, nullptr, &resultRow);
     result = resultRow->childAt(0);
     for (int32_t i = 0; i < oddIndices.size(); ++i) {
       EXPECT_TRUE(result->equalValueAt(source.get(), i, oddIndices[i].begin))
@@ -3899,6 +3900,38 @@ TEST_F(VectorTest, testOverSizedArray) {
   auto array = makeArrayVector(offsets, flat);
   auto constArray = BaseVector::wrapInConstant(21474830, 0, array);
   EXPECT_THROW(BaseVector::flattenVector(constArray), VeloxUserError);
+}
+
+TEST_F(VectorTest, testFlatteningOfRedundantDictionary) {
+  // Verify that BaseVector::wrapInDictionary() API flattens the output if
+  // 'flattenIfRedundant' is set to true and the wrapped vector has a size less
+  // than 1/8 the size of the base.
+  auto vectorSize = 100;
+  auto flat =
+      makeFlatVector<int32_t>(vectorSize, [](auto /*row*/) { return 1; });
+  {
+    auto dictionarySize = vectorSize / 10;
+    auto indices = makeIndices(dictionarySize, [](auto i) { return i; });
+    auto wrapped =
+        BaseVector::wrapInDictionary(nullptr, indices, dictionarySize, flat);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+
+    wrapped = BaseVector::wrapInDictionary(
+        nullptr, indices, dictionarySize, flat, true /*flattenIfRedundant*/);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::FLAT);
+  }
+
+  {
+    auto dictionarySize = vectorSize / 3;
+    auto indices = makeIndices(dictionarySize, [](auto i) { return i; });
+    auto wrapped =
+        BaseVector::wrapInDictionary(nullptr, indices, dictionarySize, flat);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+
+    wrapped = BaseVector::wrapInDictionary(
+        nullptr, indices, dictionarySize, flat, true /*flattenIfRedundant*/);
+    EXPECT_EQ(wrapped->encoding(), VectorEncoding::Simple::DICTIONARY);
+  }
 }
 
 TEST_F(VectorTest, hasOverlappingRanges) {

@@ -20,7 +20,6 @@
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
-#include "velox/exec/tests/utils/PrefixSortUtils.h"
 
 #include "velox/dwio/dwrf/writer/Writer.h"
 
@@ -53,7 +52,7 @@ TEST_F(HiveConnectorUtilTest, configureReaderOptions) {
       pool_.get(),
       &sessionProperties,
       nullptr,
-      exec::test::defaultPrefixSortConfig(),
+      common::PrefixSortConfig(),
       nullptr,
       nullptr,
       "query.HiveConnectorUtilTest",
@@ -135,7 +134,7 @@ TEST_F(HiveConnectorUtilTest, configureReaderOptions) {
   EXPECT_EQ(readerOptions.maxCoalesceBytes(), hiveConfig->maxCoalescedBytes());
   EXPECT_EQ(
       readerOptions.maxCoalesceDistance(),
-      hiveConfig->maxCoalescedDistanceBytes());
+      hiveConfig->maxCoalescedDistanceBytes(&sessionProperties));
   EXPECT_EQ(
       readerOptions.fileColumnNamesReadAsLowerCase(),
       hiveConfig->isFileColumnNamesReadAsLowerCase(&sessionProperties));
@@ -228,7 +227,7 @@ TEST_F(HiveConnectorUtilTest, configureReaderOptions) {
   std::unordered_map<std::string, std::string> customHiveConfigProps;
   customHiveConfigProps[hive::HiveConfig::kLoadQuantum] = "321";
   customHiveConfigProps[hive::HiveConfig::kMaxCoalescedBytes] = "129";
-  customHiveConfigProps[hive::HiveConfig::kMaxCoalescedDistanceBytes] = "513";
+  customHiveConfigProps[hive::HiveConfig::kMaxCoalescedDistance] = "513KB";
   customHiveConfigProps[hive::HiveConfig::kFileColumnNamesReadAsLowerCase] =
       "true";
   customHiveConfigProps[hive::HiveConfig::kOrcUseColumnNames] = "true";
@@ -242,7 +241,7 @@ TEST_F(HiveConnectorUtilTest, configureReaderOptions) {
   EXPECT_EQ(readerOptions.maxCoalesceBytes(), hiveConfig->maxCoalescedBytes());
   EXPECT_EQ(
       readerOptions.maxCoalesceDistance(),
-      hiveConfig->maxCoalescedDistanceBytes());
+      hiveConfig->maxCoalescedDistanceBytes(&sessionProperties));
   EXPECT_EQ(
       readerOptions.fileColumnNamesReadAsLowerCase(),
       hiveConfig->isFileColumnNamesReadAsLowerCase(&sessionProperties));

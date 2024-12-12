@@ -19,7 +19,9 @@
 #include "velox/common/testutil/TestValue.h"
 #include "velox/dwio/common/BufferUtil.h"
 #include "velox/dwio/common/ColumnVisitors.h"
+#include "velox/dwio/parquet/common/LevelConversion.h"
 #include "velox/dwio/parquet/thrift/ThriftTransport.h"
+
 #include "velox/vector/FlatVector.h"
 
 #include <thrift/protocol/TCompactProtocol.h> // @manual
@@ -42,7 +44,6 @@ void PageReader::seekToPage(int64_t row) {
   // 'rowOfPage_' is the row number of the first row of the next page.
   rowOfPage_ += numRowsInPage_;
   for (;;) {
-    auto dataStart = pageStart_;
     if (chunkSize_ <= pageStart_) {
       // This may happen if seeking to exactly end of row group.
       numRepDefsInPage_ = 0;
@@ -377,7 +378,7 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
       break;
     }
     case thrift::Type::INT96: {
-      auto numVeloxBytes = dictionary_.numValues * sizeof(Timestamp);
+      auto numVeloxBytes = dictionary_.numValues * sizeof(int128_t);
       dictionary_.values = AlignedBuffer::allocate<char>(numVeloxBytes, &pool_);
       auto numBytes = dictionary_.numValues * sizeof(Int96Timestamp);
       if (pageData_) {
@@ -392,23 +393,16 @@ void PageReader::prepareDictionary(const PageHeader& pageHeader) {
       }
       // Expand the Parquet type length values to Velox type length.
       // We start from the end to allow in-place expansion.
-      auto values = dictionary_.values->asMutable<Timestamp>();
+      auto values = dictionary_.values->asMutable<int128_t>();
       auto parquetValues = dictionary_.values->asMutable<char>();
 
       for (auto i = dictionary_.numValues - 1; i >= 0; --i) {
-        // Convert the timestamp into seconds and nanos since the Unix epoch,
-        // 00:00:00.000000 on 1 January 1970.
-        int64_t nanos;
+        int128_t result = 0;
         memcpy(
-            &nanos,
+            &result,
             parquetValues + i * sizeof(Int96Timestamp),
-            sizeof(int64_t));
-        int32_t days;
-        memcpy(
-            &days,
-            parquetValues + i * sizeof(Int96Timestamp) + sizeof(int64_t),
-            sizeof(int32_t));
-        values[i] = Timestamp::fromDaysAndNanos(days, nanos);
+            sizeof(Int96Timestamp));
+        values[i] = result;
       }
       break;
     }
@@ -601,19 +595,19 @@ void PageReader::decodeRepDefs(int32_t numTopLevelRows) {
 
 int32_t PageReader::getLengthsAndNulls(
     LevelMode mode,
-    const arrow::LevelInfo& info,
+    const LevelInfo& info,
     int32_t begin,
     int32_t end,
     int32_t maxItems,
     int32_t* lengths,
     uint64_t* nulls,
     int32_t nullsStartIndex) const {
-  arrow::ValidityBitmapInputOutput bits;
-  bits.values_read_upper_bound = maxItems;
-  bits.values_read = 0;
-  bits.null_count = 0;
-  bits.valid_bits = reinterpret_cast<uint8_t*>(nulls);
-  bits.valid_bits_offset = nullsStartIndex;
+  ValidityBitmapInputOutput bits;
+  bits.valuesReadUpperBound = maxItems;
+  bits.valuesRead = 0;
+  bits.nullCount = 0;
+  bits.validBits = reinterpret_cast<uint8_t*>(nulls);
+  bits.validBitsOffset = nullsStartIndex;
 
   switch (mode) {
     case LevelMode::kNulls:
@@ -621,7 +615,7 @@ int32_t PageReader::getLengthsAndNulls(
           definitionLevels_.data() + begin, end - begin, info, &bits);
       break;
     case LevelMode::kList: {
-      arrow::DefRepLevelsToList(
+      DefRepLevelsToList(
           definitionLevels_.data() + begin,
           repetitionLevels_.data() + begin,
           end - begin,
@@ -629,7 +623,7 @@ int32_t PageReader::getLengthsAndNulls(
           &bits,
           lengths);
       // Convert offsets to lengths.
-      for (auto i = 0; i < bits.values_read; ++i) {
+      for (auto i = 0; i < bits.valuesRead; ++i) {
         lengths[i] = lengths[i + 1] - lengths[i];
       }
       break;
@@ -644,7 +638,7 @@ int32_t PageReader::getLengthsAndNulls(
       break;
     }
   }
-  return bits.values_read;
+  return bits.valuesRead;
 }
 
 void PageReader::makeDecoder() {

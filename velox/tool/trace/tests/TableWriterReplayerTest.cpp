@@ -300,8 +300,8 @@ TEST_F(TableWriterReplayerTest, basic) {
                           task->queryCtx()->queryId(),
                           task->taskId(),
                           "1",
-                          0,
                           "TableWriter",
+                          "",
                           traceOutputDir->getPath())
                           .run();
 
@@ -426,8 +426,8 @@ TEST_F(TableWriterReplayerTest, partitionWrite) {
       task->queryCtx()->queryId(),
       task->taskId(),
       tableWriteNodeId,
-      0,
       "TableWriter",
+      "",
       traceOutputDir->getPath())
       .run();
   actualPartitionDirectories = getLeafSubdirectories(traceOutputDir->getPath());

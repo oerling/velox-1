@@ -904,9 +904,7 @@ int32_t parseFromPattern(
       int count = 0;
       while (cur < end && cur < startPos + maxDigitConsume &&
              characterIsDigit(*cur)) {
-        if (count < 3) {
-          number = number * 10 + (*cur - '0');
-        }
+        number = number * 10 + (*cur - '0');
         ++cur;
         ++count;
       }
@@ -1588,8 +1586,9 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
     }
   }
 
-  // Ensure all input was consumed.
-  if (cur < end) {
+  // Ensure all input was consumed if type_ is not simple datetime formatter.
+  if (type_ != DateTimeFormatterType::LENIENT_SIMPLE &&
+      type_ != DateTimeFormatterType::STRICT_SIMPLE && cur < end) {
     return parseFail(input, cur, end);
   }
 

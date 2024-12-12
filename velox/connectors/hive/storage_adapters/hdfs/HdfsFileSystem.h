@@ -15,11 +15,11 @@
  */
 #include "velox/common/file/FileSystems.h"
 
-namespace velox::filesystems::arrow::io::internal {
+namespace facebook::velox::filesystems {
+
+namespace arrow::io::internal {
 class LibHdfsShim;
 }
-
-namespace facebook::velox::filesystems {
 
 struct HdfsServiceEndpoint {
   HdfsServiceEndpoint(const std::string& hdfsHost, const std::string& hdfsPort)
@@ -78,7 +78,8 @@ class HdfsFileSystem : public FileSystem {
     VELOX_UNSUPPORTED("list for HDFS not implemented");
   }
 
-  void mkdir(std::string_view path) override {
+  void mkdir(std::string_view path, const DirectoryOptions& options = {})
+      override {
     VELOX_UNSUPPORTED("mkdir for HDFS not implemented");
   }
 

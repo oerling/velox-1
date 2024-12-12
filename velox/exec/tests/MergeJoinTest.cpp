@@ -45,6 +45,87 @@ class MergeJoinTest : public HiveConnectorTestBase {
     return params;
   }
 
+  std::vector<RowVectorPtr> generateInput(const std::vector<VectorPtr>& keys) {
+    std::vector<RowVectorPtr> data;
+    data.reserve(keys.size());
+    vector_size_t startRow = 0;
+
+    for (const auto& key : keys) {
+      auto payload = makeFlatVector<int32_t>(
+          key->size(), [startRow](auto row) { return (startRow + row) * 10; });
+      data.push_back(makeRowVector({key, payload}));
+      startRow += key->size();
+    }
+    return data;
+  }
+
+  // Lazy vector loader class to ensure they get loaded in the correct order,
+  // and only once.
+  class MySimpleVectorLoader : public VectorLoader {
+   public:
+    explicit MySimpleVectorLoader(
+        size_t batchId,
+        const std::shared_ptr<size_t>& count,
+        std::function<VectorPtr(RowSet)> loader)
+        : batchId_(batchId), count_(count), loader_(loader) {}
+
+    void loadInternal(
+        RowSet rows,
+        ValueHook* hook,
+        vector_size_t resultSize,
+        VectorPtr* result) override {
+      if (batchId_ > *count_) {
+        *count_ = batchId_;
+      }
+      VELOX_CHECK_GE(batchId_, *count_, "Lazy vectors loaded out of order.");
+      VELOX_CHECK(!loaded_, "Trying to load a lazy vector twice.");
+      *result = loader_(rows);
+      loaded_ = true;
+    }
+
+   private:
+    const size_t batchId_;
+    const std::shared_ptr<size_t> count_;
+    bool loaded_{false};
+    std::function<VectorPtr(RowSet)> loader_;
+  };
+
+  // Generates lazy vectors to ensure the merge join operator is loading them as
+  // expected.
+  std::vector<RowVectorPtr> generateLazyInput(
+      const std::vector<VectorPtr>& keys) {
+    std::vector<RowVectorPtr> data;
+    data.reserve(keys.size());
+    vector_size_t startRow = 0;
+
+    size_t batchId = 0;
+    auto counter = std::make_shared<size_t>(0);
+
+    for (const auto& key : keys) {
+      auto payload = std::make_shared<LazyVector>(
+          pool(),
+          CppToType<int32_t>::create(),
+          key->size(),
+          std::make_unique<MySimpleVectorLoader>(batchId, counter, [=](RowSet) {
+            return makeFlatVector<int32_t>(key->size(), [startRow](auto row) {
+              return (startRow + row) * 10;
+            });
+          }));
+
+      auto lazyKeys = std::make_shared<LazyVector>(
+          pool(),
+          CppToType<int32_t>::create(),
+          key->size(),
+          std::make_unique<MySimpleVectorLoader>(
+              batchId, counter, [=](RowSet) { return key; }));
+
+      data.push_back(makeRowVector({lazyKeys, payload}));
+      startRow += key->size();
+      ++batchId;
+    }
+    return data;
+  }
+
   template <typename T>
   void testJoin(
       std::function<T(vector_size_t /*row*/)> leftKeyAt,
@@ -127,12 +208,12 @@ class MergeJoinTest : public HiveConnectorTestBase {
     // Test INNER join.
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto plan = PlanBuilder(planNodeIdGenerator)
-                    .values(left)
+                    .values(generateLazyInput(leftKeys))
                     .mergeJoin(
                         {"c0"},
                         {"u_c0"},
                         PlanBuilder(planNodeIdGenerator)
-                            .values(right)
+                            .values(generateLazyInput(rightKeys))
                             .project({"c1 AS u_c1", "c0 AS u_c0"})
                             .planNode(),
                         "",
@@ -158,12 +239,12 @@ class MergeJoinTest : public HiveConnectorTestBase {
     // Test LEFT join.
     planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto leftPlan = PlanBuilder(planNodeIdGenerator)
-                        .values(left)
+                        .values(generateLazyInput(leftKeys))
                         .mergeJoin(
                             {"c0"},
                             {"u_c0"},
                             PlanBuilder(planNodeIdGenerator)
-                                .values(right)
+                                .values(generateLazyInput(rightKeys))
                                 .project({"c1 as u_c1", "c0 as u_c0"})
                                 .planNode(),
                             "",
@@ -189,12 +270,12 @@ class MergeJoinTest : public HiveConnectorTestBase {
     // Test RIGHT join.
     planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto rightPlan = PlanBuilder(planNodeIdGenerator)
-                         .values(right)
+                         .values(generateLazyInput(rightKeys))
                          .mergeJoin(
                              {"c0"},
                              {"u_c0"},
                              PlanBuilder(planNodeIdGenerator)
-                                 .values(left)
+                                 .values(generateLazyInput(leftKeys))
                                  .project({"c1 as u_c1", "c0 as u_c0"})
                                  .planNode(),
                              "",
@@ -224,12 +305,12 @@ class MergeJoinTest : public HiveConnectorTestBase {
     // Test FULL join.
     planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     auto fullPlan = PlanBuilder(planNodeIdGenerator)
-                        .values(right)
+                        .values(generateLazyInput(rightKeys))
                         .mergeJoin(
                             {"c0"},
                             {"u_c0"},
                             PlanBuilder(planNodeIdGenerator)
-                                .values(left)
+                                .values(generateLazyInput(leftKeys))
                                 .project({"c1 as u_c1", "c0 as u_c0"})
                                 .planNode(),
                             "",
@@ -309,8 +390,13 @@ TEST_F(MergeJoinTest, allRowsMatch) {
       makeFlatVector<int32_t>(7, [](auto /* row */) { return 5; })};
 
   testJoin(leftKeys, rightKeys);
-
   testJoin(rightKeys, leftKeys);
+}
+
+TEST_F(MergeJoinTest, keySkew) {
+  testJoin<int32_t>(
+      [](auto row) { return row; },
+      [](auto row) { return row < 10 ? row : row + 10240; });
 }
 
 TEST_F(MergeJoinTest, aggregationOverJoin) {
@@ -640,25 +726,30 @@ TEST_F(MergeJoinTest, numDrivers) {
 }
 
 TEST_F(MergeJoinTest, lazyVectors) {
-  // a dataset of multiple row groups with multiple columns. We create
+  // A dataset of multiple row groups with multiple columns. We create
   // different dictionary wrappings for different columns and load the
-  // rows in scope at different times.  We make 11000 repeats of 300
-  // followed by ascending rows. These will hits one 300 from the
+  // rows in scope at different times. We make 11000 repeats of 300
+  // followed by ascending rows. These will hit one 300 from the
   // right side and cover more than one batch, so that we test lazy
   // loading where we buffer multiple batches of input.
-  auto leftVectors = makeRowVector(
-      {makeFlatVector<int32_t>(
-           30'000, [](auto row) { return row < 11000 ? 300 : row; }),
-       makeFlatVector<int64_t>(30'000, [](auto row) { return row % 23; }),
-       makeFlatVector<int32_t>(30'000, [](auto row) { return row % 31; }),
-       makeFlatVector<StringView>(30'000, [](auto row) {
-         return StringView::makeInline(fmt::format("{}   string", row % 43));
-       })});
+  auto leftVectors = makeRowVector({
+      makeFlatVector<int32_t>(
+          30'000, [](auto row) { return row < 11000 ? 300 : row; }),
+      makeFlatVector<int64_t>(30'000, [](auto row) { return row % 23; }),
+      makeFlatVector<int32_t>(30'000, [](auto row) { return row % 31; }),
+      makeFlatVector<StringView>(
+          30'000,
+          [](auto row) {
+            return StringView::makeInline(fmt::format("{}   string", row % 43));
+          }),
+  });
 
   auto rightVectors = makeRowVector(
       {"rc0", "rc1"},
-      {makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
-       makeFlatVector<int64_t>(10'000, [](auto row) { return row % 31; })});
+      {
+          makeFlatVector<int32_t>(10'000, [](auto row) { return row * 3; }),
+          makeFlatVector<int64_t>(10'000, [](auto row) { return row % 31; }),
+      });
 
   auto leftFile = TempFilePath::create();
   writeToFile(leftFile->getPath(), leftVectors);

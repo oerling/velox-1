@@ -27,6 +27,7 @@ target_link_libraries(
   aggregate_companion_functions_test
   velox_exec
   velox_function_registry
+  velox_exec_test_lib
   GTest::gtest
   GTest::gtest_main)
 
@@ -65,6 +66,7 @@ add_executable(
   PartitionedOutputTest.cpp
   PlanNodeSerdeTest.cpp
   PlanNodeToStringTest.cpp
+  PlanNodeToSummaryStringTest.cpp
   PrefixSortTest.cpp
   PrintPlanWithStatsTest.cpp
   ProbeOperatorStateTest.cpp
@@ -72,6 +74,7 @@ add_executable(
   RoundRobinPartitionFunctionTest.cpp
   RowContainerTest.cpp
   RowNumberTest.cpp
+  ScaleWriterLocalPartitionTest.cpp
   SortBufferTest.cpp
   SpillerTest.cpp
   SpillTest.cpp
@@ -157,8 +160,7 @@ target_link_libraries(
   Folly::folly
   gflags::gflags
   glog::glog
-  fmt::fmt
-  ${FILESYSTEM})
+  fmt::fmt)
 
 target_link_libraries(
   velox_exec_infra_test
@@ -195,8 +197,7 @@ target_link_libraries(
   Folly::folly
   gflags::gflags
   glog::glog
-  fmt::fmt
-  ${FILESYSTEM})
+  fmt::fmt)
 
 add_executable(velox_in_10_min_demo VeloxIn10MinDemo.cpp)
 
@@ -283,45 +284,47 @@ target_link_libraries(
   velox_simple_aggregate
   velox_exec
   velox_functions_aggregates_test_lib
-  GTest::gtest
-  GTest::gtest_main)
+  GTest::gtest)
 
-add_library(velox_spiller_join_benchmark_base JoinSpillInputBenchmarkBase.cpp
-                                              SpillerBenchmarkBase.cpp)
-target_link_libraries(
-  velox_spiller_join_benchmark_base
-  velox_exec
-  velox_exec_test_lib
-  velox_memory
-  velox_vector_fuzzer
-  glog::glog
-  gflags::gflags
-  Folly::folly
-  pthread)
+add_test(velox_simple_aggregate_test velox_simple_aggregate_test)
 
-add_executable(velox_spiller_join_benchmark SpillerJoinInputBenchmarkTest.cpp)
-target_link_libraries(
-  velox_spiller_join_benchmark velox_exec velox_exec_test_lib
-  velox_spiller_join_benchmark_base)
+if(VELOX_ENABLE_BENCHMARKS)
+  add_library(velox_spiller_join_benchmark_base JoinSpillInputBenchmarkBase.cpp
+                                                SpillerBenchmarkBase.cpp)
+  target_link_libraries(
+    velox_spiller_join_benchmark_base
+    velox_exec
+    velox_exec_test_lib
+    velox_memory
+    velox_vector_fuzzer
+    glog::glog
+    gflags::gflags
+    Folly::folly
+    pthread)
 
-add_library(velox_spiller_aggregate_benchmark_base
-            AggregateSpillBenchmarkBase.cpp SpillerBenchmarkBase.cpp)
-target_link_libraries(
-  velox_spiller_aggregate_benchmark_base
-  velox_exec
-  velox_exec_test_lib
-  velox_memory
-  velox_vector_fuzzer
-  glog::glog
-  gflags::gflags
-  Folly::folly
-  pthread)
+  add_executable(velox_spiller_join_benchmark SpillerJoinInputBenchmarkTest.cpp)
+  target_link_libraries(velox_spiller_join_benchmark velox_exec
+                        velox_exec_test_lib velox_spiller_join_benchmark_base)
 
-add_executable(velox_spiller_aggregate_benchmark
-               SpillerAggregateBenchmarkTest.cpp)
-target_link_libraries(
-  velox_spiller_aggregate_benchmark velox_exec velox_exec_test_lib
-  velox_spiller_aggregate_benchmark_base)
+  add_library(velox_spiller_aggregate_benchmark_base
+              AggregateSpillBenchmarkBase.cpp SpillerBenchmarkBase.cpp)
+  target_link_libraries(
+    velox_spiller_aggregate_benchmark_base
+    velox_exec
+    velox_exec_test_lib
+    velox_memory
+    velox_vector_fuzzer
+    glog::glog
+    gflags::gflags
+    Folly::folly
+    pthread)
+
+  add_executable(velox_spiller_aggregate_benchmark
+                 SpillerAggregateBenchmarkTest.cpp)
+  target_link_libraries(
+    velox_spiller_aggregate_benchmark velox_exec velox_exec_test_lib
+    velox_spiller_aggregate_benchmark_base)
+endif()
 
 add_executable(cpr_http_client_test CprHttpClientTest.cpp)
 add_test(

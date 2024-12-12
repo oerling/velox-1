@@ -76,7 +76,7 @@ Generic Configuration
      - integer
      - 32MB
      - Used for backpressure to block local exchange producers when the local exchange buffer reaches or exceeds this size.
-  * - max_local_exchange_partition_count
+   * - max_local_exchange_partition_count
      - integer
      - 2^32
      - Limits the number of partitions created by a local exchange. Partitioning data too granularly can lead to poor performance.
@@ -142,7 +142,7 @@ Generic Configuration
      - Maximum number of bytes to use for the normalized key in prefix-sort. Use 0 to disable prefix-sort.
    * - prefixsort_min_rows
      - integer
-     - 130
+     - 128
      - Minimum number of rows to use prefix-sort. The default value has been derived using micro-benchmarking.
 
 .. _expression-evaluation-conf:
@@ -349,6 +349,11 @@ Spilling
      - Specifies the compression algorithm type to compress the spilled data before write to disk to trade CPU for IO
        efficiency. The supported compression codecs are: ZLIB, SNAPPY, LZO, ZSTD, LZ4 and GZIP.
        NONE means no compression.
+   * - spill_prefixsort_enabled
+     - bool
+     - false
+     - Enable the prefix sort or fallback to timsort in spill. The prefix sort is faster than std::sort but requires the
+       memory to build normalized prefix keys, which might have potential risk of running out of server memory.
    * - spiller_start_partition_bit
      - integer
      - 29
@@ -395,7 +400,32 @@ Table Writer
    * - task_partitioned_writer_count
      - integer
      - task_writer_count
-     - The number of parallel table writer threads per task for partitioned table writes. If not set, use 'task_writer_count' as default.
+     - The number of parallel table writer threads per task for partitioned
+       table writes. If not set, use 'task_writer_count' as default.
+   * - scaled_writer_rebalance_max_memory_usage_ratio
+     - double
+     - 0.7
+     - The max ratio of a query used memory to its max capacity, and the scale
+     - writer exchange stops scaling writer processing if the query's current
+     - memory usage exceeds this ratio. The value is in the range of (0, 1].
+   * - scaled_writer_max_partitions_per_writer
+     - integer
+     - 128
+     - The max number of logical table partitions that can be assigned to a
+     - single table writer thread. The logical table partition is used by local
+     - exchange writer for writer scaling, and multiple physical table
+     - partitions can be mapped to the same logical table partition based on the
+     - hash value of calculated partitioned ids.
+     - integer
+     - 128MB
+   * - scaled_writer_min_partition_processed_bytes_rebalance_threshold
+     - Minimum amount of data processed by a logical table partition to trigger
+     - writer scaling if it is detected as overloaded by scale wrirer exchange.
+   * - scaled_writer_min_processed_bytes_rebalance_threshold
+     - Minimum amount of data processed by all the logical table partitions to
+     - trigger skewed partition rebalancing by scale writer exchange.
+     - integer
+     - 256MB
 
 Hive Connector
 --------------
@@ -459,11 +489,11 @@ Each query can override the config by setting corresponding query session proper
      - integer
      - 128MB
      - Maximum size in bytes to coalesce requests to be fetched in a single request.
-   * - max-coalesced-distance-bytes
+   * - max-coalesced-distance
      -
      - integer
      - 512KB
-     - Maximum distance in bytes between chunks to be fetched that may be coalesced into a single request.
+     - Maximum distance in capacity units between chunks to be fetched that may be coalesced into a single request.
    * - load-quantum
      -
      - integer
@@ -578,7 +608,7 @@ Each query can override the config by setting corresponding query session proper
      - Default AWS secret key to use.
    * - hive.s3.endpoint
      - string
-     -
+     - us-east-1
      - The S3 storage endpoint server. This can be used to connect to an S3-compatible storage system instead of AWS.
    * - hive.s3.path-style-access
      - bool
@@ -631,6 +661,14 @@ Each query can override the config by setting corresponding query session proper
        Standard mode is built on top of legacy mode and has throttled retry enabled for throttling errors apart from transient errors.
        Adaptive retry mode dynamically limits the rate of AWS requests to maximize success rate.
 
+Bucket Level Configuration
+""""""""""""""""""""""""""
+All "hive.s3.*" config (except "hive.s3.log-level") can be set on a per-bucket basis. The bucket-specific option is set by
+replacing the "hive.s3." prefix on a config with "hive.s3.bucket.BUCKETNAME.", where BUCKETNAME is the name of the
+bucket. e.g. the endpoint for a bucket named "velox" can be specified by the config "hive.s3.bucket.velox.endpoint".
+When connecting to a bucket, all options explicitly set will override the base "hive.s3." values.
+These semantics are similar to the `Apache Hadoop-Aws module <https://hadoop.apache.org/docs/current/hadoop-aws/tools/hadoop-aws/index.html>`_.
+
 ``Google Cloud Storage Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 .. list-table::
@@ -668,12 +706,42 @@ Each query can override the config by setting corresponding query session proper
      - Type
      - Default Value
      - Description
+   * - fs.azure.account.auth.type.<storage-account>.dfs.core.windows.net
+     - string
+     - SharedKey
+     - Specifies the authentication mechanism to use for Azure storage accounts. 
+       **Allowed values:** "SharedKey", "OAuth", "SAS".
+       "SharedKey": Uses the storage account name and key for authentication.
+       "OAuth": Utilizes OAuth tokens for secure authentication.
+       "SAS": Employs Shared Access Signatures for granular access control.
    * - fs.azure.account.key.<storage-account>.dfs.core.windows.net
      - string
      -
-     -  The credentials to access the specific Azure Blob Storage account, replace <storage-account> with the name of your Azure Storage account.
-        This property aligns with how Spark configures Azure account key credentials for accessing Azure storage, by setting this property multiple
-        times with different storage account names, you can access multiple Azure storage accounts.
+     - The credentials to access the specific Azure Blob Storage account, replace <storage-account> with the name of your Azure Storage account.
+       This property aligns with how Spark configures Azure account key credentials for accessing Azure storage, by setting this property multiple
+       times with different storage account names, you can access multiple Azure storage accounts.
+   * - fs.azure.sas.fixed.token.<storage-account>.dfs.core.windows.net
+     - string
+     -
+     - Specifies a fixed SAS (Shared Access Signature) token for accessing Azure storage.
+       This token provides scoped and time-limited access to specific resources.
+       Use this property when a pre-generated SAS token is used for authentication.
+   * - fs.azure.account.oauth2.client.id.<storage-account>.dfs.core.windows.net
+     - string
+     -
+     - Specifies the client ID of the Azure AD application used for OAuth 2.0 authentication.
+       This client ID is required when using OAuth as the authentication type.
+   * - fs.azure.account.oauth2.client.secret.<storage-account>.dfs.core.windows.net
+     - string
+     -
+     - Specifies the client secret of the Azure AD application used for OAuth 2.0 authentication.
+       This secret is required in conjunction with the client ID to authenticate the application.
+   * - fs.azure.account.oauth2.client.endpoint.<storage-account>.dfs.core.windows.net
+     - string
+     -
+     - Specifies the OAuth 2.0 token endpoint URL for the Azure AD application.  
+       This endpoint is used to acquire access tokens for authenticating with Azure storage.
+       The URL follows the format: `https://login.microsoftonline.com/<tenant-id>/oauth2/token`.
 
 Presto-specific Configuration
 -----------------------------
@@ -724,10 +792,10 @@ Spark-specific Configuration
    * - spark.legacy_date_formatter
      - bool
      - false
-     - If true, `Simple <https://docs.oracle.com/javase/8/docs/api/java/text/SimpleDateFormat.html>` date formatter is used for time formatting and parsing. Joda date formatter is used by default.
-     - Joda date formatter performs strict checking of its input and uses different pattern string.
-     - For example, the 2015-07-22 10:00:00 timestamp cannot be parse if pattern is yyyy-MM-dd because the parser does not consume whole input.
-     - Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
+     - If true, `Simple Date Format <https://docs.oracle.com/javase/8/docs/api/java/text/SimpleDateFormat.html>`_ is used for time formatting and parsing. Joda date formatter is used by default.
+       Joda date formatter performs strict checking of its input and uses different pattern string.
+       For example, the 2015-07-22 10:00:00 timestamp cannot be parsed if pattern is yyyy-MM-dd because the parser does not consume whole input.
+       Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
 
 Tracing
 --------

@@ -18,6 +18,7 @@ add_executable(
   FilterProjectReplayerTest.cpp
   HashJoinReplayerTest.cpp
   PartitionedOutputReplayerTest.cpp
+  TableScanReplayerTest.cpp
   TableWriterReplayerTest.cpp)
 
 add_test(
@@ -39,5 +40,4 @@ target_link_libraries(
   Folly::folly
   gflags::gflags
   glog::glog
-  fmt::fmt
-  ${FILESYSTEM})
+  fmt::fmt)

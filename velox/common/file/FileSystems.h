@@ -66,6 +66,19 @@ struct FileOptions {
   bool bufferWrite{true};
 };
 
+/// Defines directory options
+struct DirectoryOptions : FileOptions {
+  /// Whether to throw an error if the directory already exists.
+  /// For POSIX systems, this is equivalent to handling EEXIST.
+  ///
+  /// NOTE: This is only applicable for mkdir
+  bool failIfExists{false};
+
+  /// This is similar to kFileCreateConfig
+  static constexpr folly::StringPiece kMakeDirectoryConfig{
+      "make-directory-config"};
+};
+
 /// An abstract FileSystem
 class FileSystem {
  public:
@@ -113,7 +126,9 @@ class FileSystem {
   virtual std::vector<std::string> list(std::string_view path) = 0;
 
   /// Create a directory (recursively). Throws velox exception on failure.
-  virtual void mkdir(std::string_view path) = 0;
+  virtual void mkdir(
+      std::string_view path,
+      const DirectoryOptions& options = {}) = 0;
 
   /// Remove a directory (all the files and sub-directories underneath
   /// recursively). Throws velox exception on failure.

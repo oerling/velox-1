@@ -17,12 +17,12 @@
 #pragma once
 
 #include <boost/random/uniform_01.hpp>
-#include <random>
 
 #include "velox/type/Type.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/fuzzer/GeneratorSpec.h"
+#include "velox/vector/fuzzer/Utils.h"
 
 namespace facebook::velox {
 
@@ -140,12 +140,7 @@ class VectorFuzzer {
 
     /// Control the precision of timestamps generated. By default generate using
     /// nanoseconds precision.
-    enum class TimestampPrecision : int8_t {
-      kNanoSeconds = 0,
-      kMicroSeconds = 1,
-      kMilliSeconds = 2,
-      kSeconds = 3,
-    };
+    using TimestampPrecision = FuzzerTimestampPrecision;
     TimestampPrecision timestampPrecision{TimestampPrecision::kNanoSeconds};
 
     /// If true, fuzz() will randomly generate lazy vectors and fuzzInputRow()
@@ -201,6 +196,11 @@ class VectorFuzzer {
   /// of opts.nullRatio).
   VectorPtr fuzzFlatNotNull(const TypePtr& type);
   VectorPtr fuzzFlatNotNull(const TypePtr& type, vector_size_t size);
+
+  /// Returns a map vector with randomized values and nulls. Returns a vector
+  /// containing `opts_.vectorSize` or `size` elements.
+  VectorPtr
+  fuzzMap(const TypePtr& keyType, const TypePtr& valueType, vector_size_t size);
 
   /// Returns a random constant vector (which could be a null constant). Returns
   /// a vector with size set to `opts_.vectorSize` or 'size'.
@@ -285,6 +285,13 @@ class VectorFuzzer {
       const std::vector<TypePtr>& scalarTypes,
       int maxDepth = 5);
 
+  /// Generates a random map type where keys cannot be nested. maxDepth limits
+  /// the maximum level of nesting for values.
+  TypePtr randMapType(int maxDepth = 5);
+
+  /// Returns a random integer between min and max inclusive
+  size_t randInRange(size_t min, size_t max);
+
   /// Generates short decimal TypePtr with random precision and scale.
   inline TypePtr randShortDecimalType() {
     auto [precision, scale] =
@@ -328,7 +335,7 @@ class VectorFuzzer {
       RowVectorPtr rowVector,
       const std::vector<int>& columnsToWrapInLazy);
 
-  /// Generate a random null buffer.
+  /// Generate a random null buffer. Can return nullptr if no nulls are set.
   BufferPtr fuzzNulls(vector_size_t size);
 
   /// Generate a random indices buffer of 'size' with maximum possible index
@@ -402,6 +409,13 @@ class VectorFuzzer {
 TypePtr randType(FuzzerGenerator& rng, int maxDepth = 5);
 
 TypePtr randType(
+    FuzzerGenerator& rng,
+    const std::vector<TypePtr>& scalarTypes,
+    int maxDepth = 5);
+
+/// Generates a random map type given a vector of scalarTypes as keys. maxDepth
+/// limits the maximum level of nesting for values.
+TypePtr randMapType(
     FuzzerGenerator& rng,
     const std::vector<TypePtr>& scalarTypes,
     int maxDepth = 5);

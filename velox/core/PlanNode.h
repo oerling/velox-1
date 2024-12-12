@@ -22,6 +22,7 @@
 #include "velox/connectors/Connector.h"
 #include "velox/core/Expressions.h"
 #include "velox/core/QueryConfig.h"
+#include "velox/vector/VectorStream.h"
 
 struct ArrowArrayStream;
 
@@ -107,6 +108,36 @@ extern const SortOrder kAscNullsLast;
 extern const SortOrder kDescNullsFirst;
 extern const SortOrder kDescNullsLast;
 
+struct PlanSummaryOptions {
+  /// Options that apply specifically to PROJECT nodes.
+  struct ProjectOptions {
+    /// For a given PROJECT node, maximum number of non-identity projection
+    /// expressions to include in the summary. By default, no expression is
+    /// included.
+    size_t maxProjections = 0;
+
+    /// For a given PROJECT node, maximum number of dereference (access of a
+    /// struct field) expressions to include in the summary. By default, no
+    /// expression is included.
+    size_t maxDereferences = 0;
+  };
+
+  ProjectOptions project = {};
+
+  /// For a given node, maximum number of output fields to include in the
+  /// summary. Each field has a name and a type. The amount of type information
+  /// is controlled by 'maxChildTypes' option. Use 0 to include only the number
+  /// of output fields.
+  size_t maxOutputFileds = 5;
+
+  /// For a given output type, maximum number of child types to include in the
+  /// summary. By default, only top-level type is included: BIGINT, ARRAY, MAP,
+  /// ROW. Set to 2 to include types of array elements, map keys and values as
+  /// well as up to 2 fields of a struct: ARRAY(REAL), MAP(INTEGER, ARRAY),
+  /// ROW(VARCHAR, ARRAY,...).
+  size_t maxChildTypes = 0;
+};
+
 class PlanNode : public ISerializable {
  public:
   explicit PlanNode(const PlanNodeId& id) : id_{id} {}
@@ -174,6 +205,12 @@ class PlanNode : public ISerializable {
     return stream.str();
   }
 
+  std::string toSummaryString(PlanSummaryOptions options = {}) const {
+    std::stringstream stream;
+    toSummaryString(options, stream, 0);
+    return stream.str();
+  }
+
   /// The name of the plan node, used in toString.
   virtual std::string_view name() const = 0;
 
@@ -215,6 +252,16 @@ class PlanNode : public ISerializable {
           const PlanNodeId& planNodeId,
           const std::string& indentation,
           std::stringstream& stream)>& addContext) const;
+
+  virtual void addSummaryDetails(
+      const std::string& indentation,
+      const PlanSummaryOptions& options,
+      std::stringstream& stream) const;
+
+  void toSummaryString(
+      const PlanSummaryOptions& options,
+      std::stringstream& stream,
+      size_t indentationSize) const;
 
   const std::string id_;
 };
@@ -320,10 +367,12 @@ class TraceScanNode final : public PlanNode {
       const PlanNodeId& id,
       const std::string& traceDir,
       uint32_t pipelineId,
+      std::vector<uint32_t> driverIds,
       const RowTypePtr& outputType)
       : PlanNode(id),
         traceDir_(traceDir),
         pipelineId_(pipelineId),
+        driverIds_(std::move(driverIds)),
         outputType_(outputType) {}
 
   const RowTypePtr& outputType() const override {
@@ -347,12 +396,17 @@ class TraceScanNode final : public PlanNode {
     return pipelineId_;
   }
 
+  std::vector<uint32_t> driverIds() const {
+    return driverIds_;
+  }
+
  private:
   void addDetails(std::stringstream& stream) const override;
 
   // Directory of traced data, which is $traceRoot/$taskId/$nodeId.
   const std::string traceDir_;
   const uint32_t pipelineId_;
+  const std::vector<uint32_t> driverIds_;
   const RowTypePtr outputType_;
 };
 
@@ -390,6 +444,11 @@ class FilterNode : public PlanNode {
   void addDetails(std::stringstream& stream) const override {
     stream << "expression: " << filter_->toString();
   }
+
+  void addSummaryDetails(
+      const std::string& indentation,
+      const PlanSummaryOptions& options,
+      std::stringstream& stream) const override;
 
   const std::vector<PlanNodePtr> sources_;
   const TypedExprPtr filter_;
@@ -447,6 +506,16 @@ class ProjectNode : public PlanNode {
 
  private:
   void addDetails(std::stringstream& stream) const override;
+
+  /// Append a summary of the plan node to 'stream'. Make sure to append full
+  /// lines that start with 'identation' and end with std::endl. It is append
+  /// one or multiple lines or not append anything. Make sure to truncate any
+  /// output that can be arbitrary long. The default implementation appends
+  /// truncated output of 'addDetails'.
+  void addSummaryDetails(
+      const std::string& indentation,
+      const PlanSummaryOptions& options,
+      std::stringstream& stream) const override;
 
   static RowTypePtr makeOutputType(
       const std::vector<std::string>& names,
@@ -727,8 +796,8 @@ class TableWriteNode : public PlanNode {
         hasPartitioningScheme_(hasPartitioningScheme),
         outputType_(std::move(outputType)),
         commitStrategy_(commitStrategy) {
-    VELOX_USER_CHECK_EQ(columns->size(), columnNames.size());
-    for (const auto& column : columns->names()) {
+    VELOX_USER_CHECK_EQ(columns_->size(), columnNames_.size());
+    for (const auto& column : columns_->names()) {
       VELOX_USER_CHECK(
           source->outputType()->containsChild(column),
           "Column {} not found in TableWriter input: {}",
@@ -736,30 +805,6 @@ class TableWriteNode : public PlanNode {
           source->outputType()->toString());
     }
   }
-
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  TableWriteNode(
-      const PlanNodeId& id,
-      const RowTypePtr& columns,
-      const std::vector<std::string>& columnNames,
-      std::shared_ptr<AggregationNode> aggregationNode,
-      std::shared_ptr<InsertTableHandle> insertTableHandle,
-      bool hasPartitioningScheme,
-      bool /*unused*/,
-      RowTypePtr outputType,
-      connector::CommitStrategy commitStrategy,
-      const PlanNodePtr& source)
-      : TableWriteNode(
-            id,
-            columns,
-            columnNames,
-            std::move(aggregationNode),
-            std::move(insertTableHandle),
-            hasPartitioningScheme,
-            std::move(outputType),
-            commitStrategy,
-            source) {}
-#endif
 
   const std::vector<PlanNodePtr>& sources() const override {
     return sources_;
@@ -1012,8 +1057,11 @@ class GroupIdNode : public PlanNode {
 
 class ExchangeNode : public PlanNode {
  public:
-  ExchangeNode(const PlanNodeId& id, RowTypePtr type)
-      : PlanNode(id), outputType_(type) {}
+  ExchangeNode(
+      const PlanNodeId& id,
+      RowTypePtr type,
+      VectorSerde::Kind serdeKind)
+      : PlanNode(id), outputType_(type), serdeKind_(serdeKind) {}
 
   const RowTypePtr& outputType() const override {
     return outputType_;
@@ -1033,6 +1081,10 @@ class ExchangeNode : public PlanNode {
     return "Exchange";
   }
 
+  VectorSerde::Kind serdeKind() const {
+    return serdeKind_;
+  }
+
   folly::dynamic serialize() const override;
 
   static PlanNodePtr create(const folly::dynamic& obj, void* context);
@@ -1040,19 +1092,18 @@ class ExchangeNode : public PlanNode {
  private:
   void addDetails(std::stringstream& stream) const override;
 
-  RowTypePtr outputType_;
+  const RowTypePtr outputType_;
+  const VectorSerde::Kind serdeKind_;
 };
 
 class MergeExchangeNode : public ExchangeNode {
  public:
-  explicit MergeExchangeNode(
+  MergeExchangeNode(
       const PlanNodeId& id,
       const RowTypePtr& type,
       const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
-      const std::vector<SortOrder>& sortingOrders)
-      : ExchangeNode(id, type),
-        sortingKeys_(sortingKeys),
-        sortingOrders_(sortingOrders) {}
+      const std::vector<SortOrder>& sortingOrders,
+      VectorSerde::Kind serdeKind);
 
   const std::vector<FieldAccessTypedExprPtr>& sortingKeys() const {
     return sortingKeys_;
@@ -1194,13 +1245,31 @@ class LocalPartitionNode : public PlanNode {
 
   static Type typeFromName(const std::string& name);
 
+#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
   LocalPartitionNode(
       const PlanNodeId& id,
       Type type,
       PartitionFunctionSpecPtr partitionFunctionSpec,
       std::vector<PlanNodePtr> sources)
+      : LocalPartitionNode(
+            id,
+            std::move(type),
+            /*scaleWriter=*/false,
+            std::move(partitionFunctionSpec),
+            std::move(sources)) {}
+#endif
+
+  /// If 'scaleWriter' is true, the local partition is used to scale the table
+  /// writer prcessing.
+  LocalPartitionNode(
+      const PlanNodeId& id,
+      Type type,
+      bool scaleWriter,
+      PartitionFunctionSpecPtr partitionFunctionSpec,
+      std::vector<PlanNodePtr> sources)
       : PlanNode(id),
         type_{type},
+        scaleWriter_(scaleWriter),
         sources_{std::move(sources)},
         partitionFunctionSpec_{std::move(partitionFunctionSpec)} {
     VELOX_USER_CHECK_GT(
@@ -1225,8 +1294,14 @@ class LocalPartitionNode : public PlanNode {
     return std::make_shared<LocalPartitionNode>(
         id,
         Type::kGather,
+        /*scaleWriter=*/false,
         std::make_shared<GatherPartitionFunctionSpec>(),
         std::move(sources));
+  }
+
+  /// Returns true if this is for table writer scaling.
+  bool scaleWriter() const {
+    return scaleWriter_;
   }
 
   Type type() const {
@@ -1257,6 +1332,7 @@ class LocalPartitionNode : public PlanNode {
   void addDetails(std::stringstream& stream) const override;
 
   const Type type_;
+  const bool scaleWriter_;
   const std::vector<PlanNodePtr> sources_;
   const PartitionFunctionSpecPtr partitionFunctionSpec_;
 };
@@ -1279,73 +1355,27 @@ class PartitionedOutputNode : public PlanNode {
       bool replicateNullsAndAny,
       PartitionFunctionSpecPtr partitionFunctionSpec,
       RowTypePtr outputType,
-      PlanNodePtr source)
-      : PlanNode(id),
-        kind_(kind),
-        sources_{{std::move(source)}},
-        keys_(keys),
-        numPartitions_(numPartitions),
-        replicateNullsAndAny_(replicateNullsAndAny),
-        partitionFunctionSpec_(std::move(partitionFunctionSpec)),
-        outputType_(std::move(outputType)) {
-    VELOX_USER_CHECK_GT(numPartitions, 0);
-    if (numPartitions_ == 1) {
-      VELOX_USER_CHECK(
-          keys_.empty(),
-          "Non-empty partitioning keys require more than one partition");
-    }
-    if (!isPartitioned()) {
-      VELOX_USER_CHECK(
-          keys_.empty(),
-          "{} partitioning doesn't allow for partitioning keys",
-          kindString(kind_));
-    }
-  }
+      VectorSerde::Kind serdeKind,
+      PlanNodePtr source);
 
   static std::shared_ptr<PartitionedOutputNode> broadcast(
       const PlanNodeId& id,
       int numPartitions,
       RowTypePtr outputType,
-      PlanNodePtr source) {
-    std::vector<TypedExprPtr> noKeys;
-    return std::make_shared<PartitionedOutputNode>(
-        id,
-        Kind::kBroadcast,
-        noKeys,
-        numPartitions,
-        false,
-        std::make_shared<GatherPartitionFunctionSpec>(),
-        std::move(outputType),
-        std::move(source));
-  }
+      VectorSerde::Kind serdeKind,
+      PlanNodePtr source);
 
-  static std::shared_ptr<PartitionedOutputNode>
-  arbitrary(const PlanNodeId& id, RowTypePtr outputType, PlanNodePtr source) {
-    std::vector<TypedExprPtr> noKeys;
-    return std::make_shared<PartitionedOutputNode>(
-        id,
-        Kind::kArbitrary,
-        noKeys,
-        1,
-        false,
-        std::make_shared<GatherPartitionFunctionSpec>(),
-        std::move(outputType),
-        std::move(source));
-  }
+  static std::shared_ptr<PartitionedOutputNode> arbitrary(
+      const PlanNodeId& id,
+      RowTypePtr outputType,
+      VectorSerde::Kind serdeKind,
+      PlanNodePtr source);
 
-  static std::shared_ptr<PartitionedOutputNode>
-  single(const PlanNodeId& id, RowTypePtr outputType, PlanNodePtr source) {
-    std::vector<TypedExprPtr> noKeys;
-    return std::make_shared<PartitionedOutputNode>(
-        id,
-        Kind::kPartitioned,
-        noKeys,
-        1,
-        false,
-        std::make_shared<GatherPartitionFunctionSpec>(),
-        std::move(outputType),
-        std::move(source));
-  }
+  static std::shared_ptr<PartitionedOutputNode> single(
+      const PlanNodeId& id,
+      RowTypePtr outputType,
+      VectorSerde::Kind VectorSerde,
+      PlanNodePtr source);
 
   const RowTypePtr& outputType() const override {
     return outputType_;
@@ -1383,6 +1413,10 @@ class PartitionedOutputNode : public PlanNode {
     return kind_;
   }
 
+  VectorSerde::Kind serdeKind() const {
+    return serdeKind_;
+  }
+
   /// Returns true if an arbitrary row and all rows with null keys must be
   /// replicated to all destinations. This is used to ensure correct results
   /// for anti-join which requires all nodes to know whether combined build
@@ -1416,6 +1450,7 @@ class PartitionedOutputNode : public PlanNode {
   const int numPartitions_;
   const bool replicateNullsAndAny_;
   const PartitionFunctionSpecPtr partitionFunctionSpec_;
+  const VectorSerde::Kind serdeKind_;
   const RowTypePtr outputType_;
 };
 

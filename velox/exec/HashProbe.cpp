@@ -167,12 +167,15 @@ void HashProbe::initialize() {
 
   size_t numIdentityProjections = 0;
   for (auto i = 0; i < probeType_->size(); ++i) {
-    auto name = probeType_->nameOf(i);
+    auto& name = probeType_->nameOf(i);
     auto outIndex = outputType_->getChildIdxIfExists(name);
-    if (outIndex.has_value()) {
-      projectedInputColumns_.insert(i);
-      identityProjections_.emplace_back(i, outIndex.value());
-      if (outIndex.value() == i) {
+    if (!outIndex.has_value()) {
+      continue;
+    }
+    projectedInputColumns_[i] = *outIndex;
+    if (!isRightJoin(joinType_) && !isFullJoin(joinType_)) {
+      identityProjections_.emplace_back(i, *outIndex);
+      if (*outIndex == i) {
         ++numIdentityProjections;
       }
     }
@@ -292,6 +295,57 @@ void HashProbe::maybeSetupSpillInputReader(
   inputSpillPartitionSet_.erase(iter);
 }
 
+std::optional<uint64_t> HashProbe::estimatedRowSize(
+    const std::vector<vector_size_t>& varSizedColumns,
+    uint64_t totalFixedColumnsBytes) {
+  static const double kToleranceRatio = 10.0;
+  std::vector<RowColumn::Stats> varSizeListColumnsStats;
+  varSizeListColumnsStats.reserve(varSizedColumns.size());
+  for (uint32_t i = 0; i < varSizedColumns.size(); ++i) {
+    auto statsOpt = columnStats(varSizedColumns[i]);
+    if (!statsOpt.has_value()) {
+      return std::nullopt;
+    }
+    varSizeListColumnsStats.push_back(statsOpt.value());
+  }
+
+  uint64_t totalAvgBytes{totalFixedColumnsBytes};
+  uint64_t totalMaxBytes{totalFixedColumnsBytes};
+  for (const auto& stats : varSizeListColumnsStats) {
+    totalAvgBytes += stats.avgBytes();
+    totalMaxBytes += stats.maxBytes();
+  }
+  if (totalAvgBytes == 0) {
+    if (totalMaxBytes == 0) {
+      return 0;
+    }
+    // Return nullopt to prevent memory exploding in extreme size skew cases:
+    // e.g. 1 row very large and all other rows of size 0.
+    return std::nullopt;
+  }
+  if (totalMaxBytes / totalAvgBytes >= kToleranceRatio) {
+    return std::nullopt;
+  }
+  // Make the total per batch size to be bounded by 2x 'outputBatchSize_':
+  // worst case size = (outputBatchSize_ / estimated size) * totalMaxBytes
+  return (totalMaxBytes + totalAvgBytes) / 2;
+}
+
+std::optional<RowColumn::Stats> HashProbe::columnStats(
+    int32_t columnIndex) const {
+  std::vector<RowColumn::Stats> columnStats;
+  const auto rowContainers = table_->allRows();
+  for (const auto* rowContainer : rowContainers) {
+    VELOX_CHECK_NOT_NULL(rowContainer);
+    auto statsOpt = rowContainer->columnStats(columnIndex);
+    if (!statsOpt.has_value()) {
+      return std::nullopt;
+    }
+    columnStats.push_back(statsOpt.value());
+  }
+  return RowColumn::Stats::merge(columnStats);
+}
+
 void HashProbe::initializeResultIter() {
   VELOX_CHECK_NOT_NULL(table_);
   if (resultIter_ != nullptr) {
@@ -312,8 +366,14 @@ void HashProbe::initializeResultIter() {
       varSizeListColumns.push_back(column);
     }
   }
+
+  auto rowSizeEstimation =
+      estimatedRowSize(varSizeListColumns, fixedSizeListColumnsSizeSum);
+  // TODO: Make tolerance ratio configurable if needed.
   resultIter_ = std::make_unique<BaseHashTable::JoinResultIterator>(
-      std::move(varSizeListColumns), fixedSizeListColumnsSizeSum);
+      std::move(varSizeListColumns),
+      fixedSizeListColumnsSizeSum,
+      rowSizeEstimation);
 }
 
 void HashProbe::asyncWaitForHashTable() {
@@ -772,7 +832,7 @@ void HashProbe::fillOutput(vector_size_t size) {
   prepareOutput(size);
   WrapState state;
 
-  for (auto projection : identityProjections_) {
+  for (auto [in, out] : projectedInputColumns_) {
     // Load input vector if it is being split into multiple batches. It is not
     // safe to wrap unloaded LazyVector into two different dictionaries.
     ensureLoadedIfNotAtEnd(projection.inputChannel);
@@ -826,9 +886,9 @@ RowVectorPtr HashProbe::getBuildSideOutput() {
   prepareOutput(numOut);
 
   // Populate probe-side columns of the output with nulls.
-  for (auto projection : identityProjections_) {
-    output_->childAt(projection.outputChannel) = BaseVector::createNullConstant(
-        outputType_->childAt(projection.outputChannel), numOut, pool());
+  for (auto [in, out] : projectedInputColumns_) {
+    output_->childAt(out) = BaseVector::createNullConstant(
+        outputType_->childAt(out), numOut, pool());
   }
 
   extractColumns(
@@ -858,12 +918,12 @@ RowVectorPtr HashProbe::getBuildSideOutput() {
   return output_;
 }
 
-void HashProbe::clearIdentityProjectedOutput() {
+void HashProbe::clearProjectedOutput() {
   if (!output_ || output_.use_count() != 1) {
     return;
   }
-  for (auto& projection : identityProjections_) {
-    output_->childAt(projection.outputChannel) = nullptr;
+  for (auto& [_, out] : projectedInputColumns_) {
+    output_->childAt(out) = nullptr;
   }
 }
 
@@ -949,7 +1009,7 @@ RowVectorPtr HashProbe::getOutputInternal(bool toSpillOutput) {
     return output_;
   }
 
-  clearIdentityProjectedOutput();
+  clearProjectedOutput();
 
   if (!input_) {
     if (hasMoreInput()) {
@@ -1948,5 +2008,4 @@ void HashProbe::clearBuffers() {
   operatorCtx_->execCtx()->vectorPool()->clear();
   filter_->clearCache();
 }
-
 } // namespace facebook::velox::exec

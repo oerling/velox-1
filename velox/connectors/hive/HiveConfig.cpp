@@ -64,92 +64,28 @@ uint32_t HiveConfig::maxPartitionsPerWriters(
     const config::ConfigBase* session) const {
   return session->get<uint32_t>(
       kMaxPartitionsPerWritersSession,
-      config_->get<uint32_t>(kMaxPartitionsPerWriters, 100));
+      config_->get<uint32_t>(kMaxPartitionsPerWriters, 128));
 }
 
 bool HiveConfig::immutablePartitions() const {
   return config_->get<bool>(kImmutablePartitions, false);
 }
 
-bool HiveConfig::s3UseVirtualAddressing() const {
-  return !config_->get(kS3PathStyleAccess, false);
-}
-
-std::string HiveConfig::s3GetLogLevel() const {
-  return config_->get(kS3LogLevel, std::string("FATAL"));
-}
-
-bool HiveConfig::s3UseSSL() const {
-  return config_->get(kS3SSLEnabled, true);
-}
-
-bool HiveConfig::s3UseInstanceCredentials() const {
-  return config_->get(kS3UseInstanceCredentials, false);
-}
-
-std::string HiveConfig::s3Endpoint() const {
-  return config_->get(kS3Endpoint, std::string(""));
-}
-
-std::optional<std::string> HiveConfig::s3AccessKey() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3AwsAccessKey));
-}
-
-std::optional<std::string> HiveConfig::s3SecretKey() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3AwsSecretKey));
-}
-
-std::optional<std::string> HiveConfig::s3IAMRole() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3IamRole));
-}
-
-std::string HiveConfig::s3IAMRoleSessionName() const {
-  return config_->get(kS3IamRoleSessionName, std::string("velox-session"));
-}
-
-std::optional<std::string> HiveConfig::s3ConnectTimeout() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3ConnectTimeout));
-}
-
-std::optional<std::string> HiveConfig::s3SocketTimeout() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3SocketTimeout));
-}
-
-std::optional<uint32_t> HiveConfig::s3MaxConnections() const {
-  return static_cast<std::optional<std::uint32_t>>(
-      config_->get<uint32_t>(kS3MaxConnections));
-}
-
-std::optional<int32_t> HiveConfig::s3MaxAttempts() const {
-  return static_cast<std::optional<std::int32_t>>(
-      config_->get<int32_t>(kS3MaxAttempts));
-}
-
-std::optional<std::string> HiveConfig::s3RetryMode() const {
-  return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kS3RetryMode));
-}
-
 std::string HiveConfig::gcsEndpoint() const {
-  return config_->get<std::string>(kGCSEndpoint, std::string(""));
+  return config_->get<std::string>(kGcsEndpoint, std::string(""));
 }
 
 std::string HiveConfig::gcsCredentialsPath() const {
-  return config_->get<std::string>(kGCSCredentialsPath, std::string(""));
+  return config_->get<std::string>(kGcsCredentialsPath, std::string(""));
 }
 
 std::optional<int> HiveConfig::gcsMaxRetryCount() const {
-  return static_cast<std::optional<int>>(config_->get<int>(kGCSMaxRetryCount));
+  return static_cast<std::optional<int>>(config_->get<int>(kGcsMaxRetryCount));
 }
 
 std::optional<std::string> HiveConfig::gcsMaxRetryTime() const {
   return static_cast<std::optional<std::string>>(
-      config_->get<std::string>(kGCSMaxRetryTime));
+      config_->get<std::string>(kGcsMaxRetryTime));
 }
 
 bool HiveConfig::isOrcUseColumnNames(const config::ConfigBase* session) const {
@@ -188,11 +124,23 @@ bool HiveConfig::ignoreMissingFiles(const config::ConfigBase* session) const {
 }
 
 int64_t HiveConfig::maxCoalescedBytes() const {
-  return config_->get<int64_t>(kMaxCoalescedBytes, 128 << 20);
+  return config_->get<int64_t>(kMaxCoalescedBytes, 128 << 20); // 128MB
 }
 
-int32_t HiveConfig::maxCoalescedDistanceBytes() const {
-  return config_->get<int32_t>(kMaxCoalescedDistanceBytes, 512 << 10);
+int32_t HiveConfig::maxCoalescedDistanceBytes(
+    const config::ConfigBase* session) const {
+  const auto distance = config::toCapacity(
+      session->get<std::string>(
+          kMaxCoalescedDistanceSession,
+          config_->get<std::string>(kMaxCoalescedDistance, "512kB")),
+      config::CapacityUnit::BYTE);
+  VELOX_USER_CHECK_LE(
+      distance,
+      std::numeric_limits<int32_t>::max(),
+      "The max merge distance to combine read requests must be less than 2GB."
+      " Got {} bytes.",
+      distance);
+  return int32_t(distance);
 }
 
 int32_t HiveConfig::prefetchRowGroups() const {
@@ -323,10 +271,6 @@ uint64_t HiveConfig::footerEstimatedSize() const {
 
 uint64_t HiveConfig::filePreloadThreshold() const {
   return config_->get<uint64_t>(kFilePreloadThreshold, 8UL << 20);
-}
-
-bool HiveConfig::s3UseProxyFromEnv() const {
-  return config_->get<bool>(kS3UseProxyFromEnv, false);
 }
 
 uint8_t HiveConfig::readTimestampUnit(const config::ConfigBase* session) const {

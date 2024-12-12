@@ -51,14 +51,14 @@ void DecodedVector::decode(
   reset(end(vector.size(), rows));
   partialRowsDecoded_ = rows != nullptr;
   loadLazy_ = loadLazy;
-  bool isTopLevelLazyAndLoaded =
+  const bool isTopLevelLazyAndLoaded =
       vector.isLazy() && vector.asUnchecked<LazyVector>()->isLoaded();
   if (isTopLevelLazyAndLoaded || (loadLazy_ && isLazyNotLoaded(vector))) {
     decode(*vector.loadedVector(), rows, loadLazy);
     return;
   }
 
-  auto encoding = vector.encoding();
+  const auto encoding = vector.encoding();
   switch (encoding) {
     case VectorEncoding::Simple::FLAT:
     case VectorEncoding::Simple::BIASED:
@@ -448,7 +448,7 @@ const uint64_t* DecodedVector::nulls(const SelectivityVector* rows) {
         // end but not greater.
         VELOX_CHECK_LE(rows->end(), size_);
       }
-      auto baseSize = baseVector_->size();
+      VELOX_DEBUG_ONLY const auto baseSize = baseVector_->size();
       applyToRows(rows, [&](auto i) {
         VELOX_DCHECK_LT(indices_[i], baseSize);
         bits::setNull(rawCopiedNulls, i, bits::isBitNull(nulls_, indices_[i]));

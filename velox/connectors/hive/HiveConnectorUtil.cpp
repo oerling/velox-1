@@ -558,17 +558,29 @@ void configureReaderOptions(
   auto sessionProperties = connectorQueryCtx->sessionProperties();
   readerOptions.setLoadQuantum(hiveConfig->loadQuantum());
   readerOptions.setMaxCoalesceBytes(hiveConfig->maxCoalescedBytes());
-  readerOptions.setMaxCoalesceDistance(hiveConfig->maxCoalescedDistanceBytes());
+  readerOptions.setMaxCoalesceDistance(
+      hiveConfig->maxCoalescedDistanceBytes(sessionProperties));
   readerOptions.setFileColumnNamesReadAsLowerCase(
       hiveConfig->isFileColumnNamesReadAsLowerCase(sessionProperties));
+  bool useColumnNamesForColumnMapping = false;
+  switch (hiveSplit->fileFormat) {
+    case dwio::common::FileFormat::DWRF:
+    case dwio::common::FileFormat::ORC: {
+      useColumnNamesForColumnMapping =
+          hiveConfig->isOrcUseColumnNames(sessionProperties);
+      break;
+    }
+    case dwio::common::FileFormat::PARQUET: {
+      useColumnNamesForColumnMapping =
+          hiveConfig->isParquetUseColumnNames(sessionProperties);
+      break;
+    }
+    default:
+      useColumnNamesForColumnMapping = false;
+  }
+
   readerOptions.setUseColumnNamesForColumnMapping(
-      (hiveSplit->fileFormat == dwio::common::FileFormat::DWRF ||
-       hiveSplit->fileFormat == dwio::common::FileFormat::ORC)
-          ? hiveConfig->isOrcUseColumnNames(sessionProperties)
-          : (hiveSplit->fileFormat == dwio::common::FileFormat::PARQUET)
-          ? hiveConfig->isParquetUseColumnNames(sessionProperties)
-          : false // or some default value if none of the conditions are met
-  );
+      useColumnNamesForColumnMapping);
   readerOptions.setFileSchema(fileSchema);
   readerOptions.setFooterEstimatedSize(hiveConfig->footerEstimatedSize());
   readerOptions.setFilePreloadThreshold(hiveConfig->filePreloadThreshold());
@@ -652,6 +664,13 @@ bool applyPartitionFilter(
     }
     case TypeKind::BOOLEAN: {
       return applyFilter(*filter, folly::to<bool>(partitionValue));
+    }
+    case TypeKind::TIMESTAMP: {
+      auto result = util::fromTimestampString(
+          StringView(partitionValue), util::TimestampParseMode::kPrestoCast);
+      VELOX_CHECK(!result.hasError());
+      result.value().toGMT(Timestamp::defaultTimezone());
+      return applyFilter(*filter, result.value());
     }
     case TypeKind::VARCHAR: {
       return applyFilter(*filter, partitionValue);
@@ -836,8 +855,9 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
   common::Filter* oldFilter = nullptr;
   try {
     common::Subfield subfield;
-    if (auto filter = exec::leafCallToSubfieldFilter(
-            *call, subfield, evaluator, negated)) {
+    if (auto filter = exec::ExprToSubfieldFilterParser::getInstance()
+                          ->leafCallToSubfieldFilter(
+                              *call, subfield, evaluator, negated)) {
       if (auto it = filters.find(subfield); it != filters.end()) {
         oldFilter = it->second.get();
         filter = filter->mergeWith(oldFilter);

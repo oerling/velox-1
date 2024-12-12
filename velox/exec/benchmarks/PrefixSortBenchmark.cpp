@@ -147,7 +147,7 @@ class PrefixSortBenchmark {
     auto sortedRows = std::vector<char*, memory::StlAllocator<char*>>(
         rows.begin(), rows.end(), *pool_);
     PrefixSort::sort(
-        sortedRows, pool_, rowContainer, compareFlags, kDefaultSortConfig);
+        rowContainer, compareFlags, kDefaultSortConfig, pool_, sortedRows);
   }
 
   void runStdSort(
@@ -157,7 +157,7 @@ class PrefixSortBenchmark {
     auto sortedRows = std::vector<char*, memory::StlAllocator<char*>>(
         rows.begin(), rows.end(), *pool_);
     PrefixSort::sort(
-        sortedRows, pool_, rowContainer, compareFlags, kStdSortConfig);
+        rowContainer, compareFlags, kStdSortConfig, pool_, sortedRows);
   }
 
   // Add benchmark manually to avoid writing a lot of BENCHMARK.
@@ -307,6 +307,21 @@ class PrefixSortBenchmark {
     bigint(false, iterations, batchSizes);
   }
 
+  void hugeInt() {
+    const auto iterations = 10;
+    const std::vector<vector_size_t> batchSizes = {
+        1'000, 10'000, 100'000, 1'000'000};
+    std::vector<RowTypePtr> rowTypes = {
+        ROW({DECIMAL(23, 2)}),
+        ROW({DECIMAL(30, 2), DECIMAL(32, 5)}),
+        ROW({DECIMAL(19, 5), DECIMAL(34, 8), DECIMAL(38, 2)}),
+        ROW({DECIMAL(30, 2), DECIMAL(24, 3), DECIMAL(32, 5), DECIMAL(34, 3)}),
+    };
+    std::vector<int> numKeys = {1, 2, 3, 4};
+    benchmark(
+        "no-payloads", "hugeint", batchSizes, rowTypes, numKeys, iterations);
+  }
+
   void largeVarchar() {
     const auto iterations = 10;
     const std::vector<vector_size_t> batchSizes = {
@@ -382,6 +397,7 @@ int main(int argc, char** argv) {
 
   bm.smallBigint();
   bm.largeBigint();
+  bm.hugeInt();
   bm.largeBigintWithPayloads();
   bm.smallBigintWithPayload();
   bm.largeVarchar();

@@ -1923,6 +1923,70 @@ TEST_F(DateTimeFunctionsTest, dateTruncTimestampWithTimezone) {
   evaluateDateTrunc("year", 123456789000, "+14:00", 94644000000);
   evaluateDateTrunc("year", -123456789000, "-09:30", -126196200000);
 
+  // Test cases that land on an ambiguous time.
+  // The first 1 AM
+  // 11/3/2024 01:01:01.01 AM GMT-07:00
+  evaluateDateTrunc(
+      "second", 1730620861100, "America/Los_Angeles", 1730620861000);
+  evaluateDateTrunc(
+      "minute", 1730620861100, "America/Los_Angeles", 1730620860000);
+  evaluateDateTrunc(
+      "hour", 1730620861100, "America/Los_Angeles", 1730620800000);
+
+  // The second 1AM
+  //  11/3/2024 01:01:01.01 AM GMT-08:00
+  evaluateDateTrunc(
+      "second", 1730624461100, "America/Los_Angeles", 1730624461000);
+  evaluateDateTrunc(
+      "minute", 1730624461100, "America/Los_Angeles", 1730624460000);
+  evaluateDateTrunc(
+      "hour", 1730624461100, "America/Los_Angeles", 1730624400000);
+
+  // Test cases that go back across a "fall back" daylight savings time
+  // boundary. (GMT-07:00 -> GMT-08:00)
+  //  11/3/2024 01:01:01.01 AM GMT-08:00
+  evaluateDateTrunc("day", 1730624461100, "America/Los_Angeles", 1730617200000);
+  evaluateDateTrunc(
+      "month", 1730624461100, "America/Los_Angeles", 1730444400000);
+  evaluateDateTrunc(
+      "quarter", 1730624461100, "America/Los_Angeles", 1727766000000);
+  // Technically this circles back again to the same daylight savings time zone,
+  // but just to make sure we're covered (and it also test leap years).
+  evaluateDateTrunc(
+      "year", 1730624461100, "America/Los_Angeles", 1704096000000);
+
+  // Test cases that go back across a "spring forward" daylight savings time
+  // boundary. (GMT-08:00 -> GMT-07:00)
+  //  3/10/2024 03:00:00 AM GMT-08:00
+  evaluateDateTrunc("day", 1710064800000, "America/Los_Angeles", 1710057600000);
+  evaluateDateTrunc(
+      "month", 1710064800000, "America/Los_Angeles", 1709280000000);
+  evaluateDateTrunc(
+      "quarter", 1710064800000, "America/Los_Angeles", 1704096000000);
+  // Technically this circles back again to the same daylight savings time zone,
+  // but just to make sure we're covered (and it also test leap years).
+  evaluateDateTrunc(
+      "year", 1710064800000, "America/Los_Angeles", 1704096000000);
+
+  // Test some cases that are close to hours that don't exist due to DST (it's
+  // impossible to truncate to a time in the hour that doesn't exist, so we
+  // don't test that case).
+  //  3/10/2024 03:01:01.01 AM GMT-08:00
+  evaluateDateTrunc(
+      "second", 1710064861100, "America/Los_Angeles", 1710064861000);
+  evaluateDateTrunc(
+      "minute", 1710064861100, "America/Los_Angeles", 1710064860000);
+  evaluateDateTrunc(
+      "hour", 1710064861100, "America/Los_Angeles", 1710064800000);
+
+  //  3/10/2024 01:59:59.999AM GMT-07:00
+  evaluateDateTrunc(
+      "second", 1710064799999, "America/Los_Angeles", 1710064799000);
+  evaluateDateTrunc(
+      "minute", 1710064799999, "America/Los_Angeles", 1710064740000);
+  evaluateDateTrunc(
+      "hour", 1710064799999, "America/Los_Angeles", 1710061200000);
+
   const auto evaluateDateTruncFromStrings = [&](const std::string& truncUnit,
                                                 const std::string&
                                                     inputTimestamp,
@@ -3119,6 +3183,42 @@ TEST_F(DateTimeFunctionsTest, dateDiffTimestampWithTimezone) {
           "year",
           "2024-03-11 00:00:00 America/Los_Angeles",
           "2023-03-11 00:00:00 America/Los_Angeles"));
+}
+
+TEST_F(DateTimeFunctionsTest, parseDatetimeRoundtrip) {
+  const auto parseDatetimeRoundTrip =
+      [&](const std::optional<std::string>& input,
+          const std::optional<std::string>& format) {
+        return evaluateOnce<std::string>(
+            "cast(parse_datetime(c0, c1) as varchar)", input, format);
+      };
+
+  EXPECT_EQ(
+      "2024-01-20 01:00:30.127 UTC",
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.12700", "yyyy-MM-dd HH:mm:ss.SSSSS"));
+  EXPECT_EQ(
+      "2024-01-20 01:00:30.459 UTC",
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.45900000", "yyyy-MM-dd HH:mm:ss.SSSSSSSS"));
+  EXPECT_EQ(
+      "2024-01-20 01:00:30.617 UTC",
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.6170", "yyyy-MM-dd HH:mm:ss.SSSSSSSS"));
+
+  EXPECT_EQ(
+      "2024-01-20 01:00:30.127 UTC",
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.127149", "yyyy-MM-dd HH:mm:ss.SSSSSS"));
+  EXPECT_EQ(
+      "2024-01-20 01:00:30.127 UTC",
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.127941", "yyyy-MM-dd HH:mm:ss.SSSSSS"));
+
+  VELOX_ASSERT_THROW(
+      parseDatetimeRoundTrip(
+          "2024-01-20 01:00:30.6170", "yyyy-MM-dd HH:mm:ss.SSS"),
+      "Invalid date format");
 }
 
 TEST_F(DateTimeFunctionsTest, parseDatetime) {

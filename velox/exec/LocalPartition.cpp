@@ -167,6 +167,11 @@ bool LocalExchangeQueue::isFinished() {
   return queue_.withWLock([&](auto& queue) { return isFinishedLocked(queue); });
 }
 
+bool LocalExchangeQueue::testingProducersDone() const {
+  return queue_.withRLock(
+      [&](auto& queue) { return noMoreProducers_ && pendingProducers_ == 0; });
+}
+
 void LocalExchangeQueue::close() {
   std::vector<ContinuePromise> consumerPromises;
   std::vector<ContinuePromise> memoryPromises;
@@ -257,28 +262,29 @@ LocalPartition::LocalPartition(
   for (auto& queue : queues_) {
     queue->addProducer();
   }
+  if (numPartitions_ > 0) {
+    indexBuffers_.resize(numPartitions_);
+    rawIndices_.resize(numPartitions_);
+  }
 }
 
-namespace {
-std::vector<BufferPtr> allocateIndexBuffers(
-    const std::vector<vector_size_t>& sizes,
-    memory::MemoryPool* pool) {
-  std::vector<BufferPtr> indexBuffers;
-  indexBuffers.reserve(sizes.size());
-  for (auto size : sizes) {
-    indexBuffers.push_back(allocateIndices(size, pool));
-  }
-  return indexBuffers;
-}
+void LocalPartition::allocateIndexBuffers(
+    const std::vector<vector_size_t>& sizes) {
+  VELOX_CHECK_EQ(indexBuffers_.size(), sizes.size());
+  VELOX_CHECK_EQ(rawIndices_.size(), sizes.size());
 
-std::vector<vector_size_t*> getRawIndices(
-    const std::vector<BufferPtr>& indexBuffers) {
-  std::vector<vector_size_t*> rawIndices;
-  rawIndices.reserve(indexBuffers.size());
-  for (auto& buffer : indexBuffers) {
-    rawIndices.emplace_back(buffer->asMutable<vector_size_t>());
+  for (auto i = 0; i < sizes.size(); ++i) {
+    const auto indicesBufferBytes = sizes[i] * sizeof(vector_size_t);
+    if ((indexBuffers_[i] == nullptr) ||
+        (indexBuffers_[i]->capacity() < indicesBufferBytes) ||
+        !indexBuffers_[i]->unique()) {
+      indexBuffers_[i] = allocateIndices(sizes[i], pool());
+    } else {
+      const auto indicesBufferBytes = sizes[i] * sizeof(vector_size_t);
+      indexBuffers_[i]->setSize(indicesBufferBytes);
+    }
+    rawIndices_[i] = indexBuffers_[i]->asMutable<vector_size_t>();
   }
-  return rawIndices;
 }
 
 RowVectorPtr
@@ -292,20 +298,11 @@ wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
   }
 
   return std::make_shared<RowVector>(
-      input->pool(), input->type(), BufferPtr(nullptr), size, wrappedChildren);
+      input->pool(), input->type(), BufferPtr(nullptr), size, childVectors_);
 }
-} // namespace
 
 void LocalPartition::addInput(RowVectorPtr input) {
-  {
-    auto lockedStats = stats_.wlock();
-    lockedStats->addOutputVector(input->estimateFlatSize(), input->size());
-  }
-
-  // Lazy vectors must be loaded or processed.
-  for (auto& child : input->children()) {
-    child->loadedVector();
-  }
+  prepareForInput(input);
 
   if (numPartitions_ == 1) {
     ContinueFuture future;
@@ -336,13 +333,12 @@ void LocalPartition::addInput(RowVectorPtr input) {
   for (auto i = 0; i < numInput; ++i) {
     ++maxIndex[partitions_[i]];
   }
-  auto indexBuffers = allocateIndexBuffers(maxIndex, pool());
-  auto rawIndices = getRawIndices(indexBuffers);
+  allocateIndexBuffers(maxIndex);
 
   std::fill(maxIndex.begin(), maxIndex.end(), 0);
   for (auto i = 0; i < numInput; ++i) {
     auto partition = partitions_[i];
-    rawIndices[partition][maxIndex[partition]] = i;
+    rawIndices_[partition][maxIndex[partition]] = i;
     ++maxIndex[partition];
   }
 
@@ -353,8 +349,7 @@ void LocalPartition::addInput(RowVectorPtr input) {
       // Do not enqueue empty partitions.
       continue;
     }
-    auto partitionData =
-        wrapChildren(input, partitionSize, std::move(indexBuffers[i]));
+    auto partitionData = wrapChildren(input, partitionSize, indexBuffers_[i]);
     ContinueFuture future;
     auto reason = queues_[i]->enqueue(
         partitionData, totalSize * partitionSize / numInput, &future);
@@ -362,6 +357,22 @@ void LocalPartition::addInput(RowVectorPtr input) {
       blockingReasons_.push_back(reason);
       futures_.push_back(std::move(future));
     }
+  }
+}
+
+void LocalPartition::prepareForInput(RowVectorPtr& input) {
+  {
+    auto lockedStats = stats_.wlock();
+    lockedStats->addOutputVector(input->estimateFlatSize(), input->size());
+  }
+
+  // Lazy vectors must be loaded or processed to ensure the late materialized in
+  // order.
+  for (auto& child : input->children()) {
+    child->loadedVector();
+  }
+  if (childVectors_.empty()) {
+    childVectors_.resize(input->type()->size());
   }
 }
 

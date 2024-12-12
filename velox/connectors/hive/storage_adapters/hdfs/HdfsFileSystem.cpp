@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 #include "velox/connectors/hive/storage_adapters/hdfs/HdfsFileSystem.h"
-#include <mutex>
 #include "velox/common/config/Config.h"
 #include "velox/connectors/hive/storage_adapters/hdfs/HdfsReadFile.h"
 #include "velox/connectors/hive/storage_adapters/hdfs/HdfsWriteFile.h"
@@ -31,7 +30,7 @@ class HdfsFileSystem::Impl {
       const HdfsServiceEndpoint& endpoint) {
     auto status = filesystems::arrow::io::internal::ConnectLibHdfs(&driver_);
     if (!status.ok()) {
-      LOG(ERROR) << "ConnectLibHdfs failed ";
+      LOG(ERROR) << "ConnectLibHdfs failed due to: " << status.ToString();
     }
 
     // connect to HDFS with the builder object

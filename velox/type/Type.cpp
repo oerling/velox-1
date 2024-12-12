@@ -376,14 +376,6 @@ std::unique_ptr<std::vector<TypeParameter>> RowType::makeParameters() const {
       createTypeParameters(children_));
 }
 
-uint32_t RowType::size() const {
-  return children_.size();
-}
-
-const TypePtr& RowType::childAt(uint32_t idx) const {
-  return children_.at(idx);
-}
-
 namespace {
 template <typename T>
 std::string makeFieldNotFoundErrorMessage(
@@ -720,6 +712,12 @@ std::shared_ptr<const OpaqueType> OpaqueType::deserializeExtra(
   return nullptr;
 }
 
+void OpaqueType::clearSerializationRegistry() {
+  auto& registry = OpaqueSerdeRegistry::get();
+  registry.mapping.clear();
+  registry.reverse.clear();
+}
+
 void OpaqueType::registerSerializationTypeErased(
     const std::shared_ptr<const OpaqueType>& type,
     const std::string& persistentName,
@@ -871,6 +869,33 @@ bool Type::containsUnknown() const {
     }
   }
   return false;
+}
+
+std::string Type::toSummaryString(TypeSummaryOptions options) const {
+  std::ostringstream out;
+  out << kindName();
+
+  const auto cnt = std::min(options.maxChildren, size());
+  if (cnt > 0) {
+    out << "(";
+    for (auto i = 0; i < cnt; ++i) {
+      if (i > 0) {
+        out << ", ";
+      }
+      out << childAt(i)->kindName();
+    }
+
+    if (cnt < size()) {
+      out << ", ..." << (size() - cnt) << " more";
+    }
+    out << ")";
+  } else {
+    if (kind_ == TypeKind::ROW) {
+      out << "(" << size() << ")";
+    }
+  }
+
+  return out.str();
 }
 
 namespace {

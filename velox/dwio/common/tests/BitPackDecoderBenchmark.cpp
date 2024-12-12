@@ -233,11 +233,9 @@ std::vector<int32_t> oddRowNumbers;
 RowSet allRows;
 RowSet oddRows;
 
-static size_t len_u32 = 0;
 std::vector<uint32_t> randomInts_u32;
 std::vector<uint64_t> randomInts_u32_result;
 
-static size_t len_u64 = 0;
 std::vector<uint64_t> randomInts_u64;
 std::vector<uint64_t> randomInts_u64_result;
 std::vector<char> buffer_u64;
@@ -544,7 +542,6 @@ void naiveDecodeBitsLE(
     }
     return;
   }
-  auto lastSafe = bufferEnd - sizeof(uint64_t);
   int32_t numSafeRows = numRows;
   bool anyUnsafe = false;
   if (bufferEnd) {

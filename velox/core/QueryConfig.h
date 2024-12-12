@@ -31,27 +31,6 @@ class QueryConfig {
 
   explicit QueryConfig(std::unordered_map<std::string, std::string>&& values);
 
-#ifdef VELOX_ENABLE_BACKWARD_COMPATIBILITY
-  static constexpr const char* kCodegenEnabled = "codegen.enabled";
-
-  static constexpr const char* kCodegenConfigurationFilePath =
-      "codegen.configuration_file_path";
-
-  static constexpr const char* kCodegenLazyLoading = "codegen.lazy_loading";
-
-  bool codegenEnabled() const {
-    return get<bool>(kCodegenEnabled, false);
-  }
-
-  std::string codegenConfigurationFilePath() const {
-    return get<std::string>(kCodegenConfigurationFilePath, "");
-  }
-
-  bool codegenLazyLoading() const {
-    return get<bool>(kCodegenLazyLoading, true);
-  }
-#endif
-
   /// Maximum memory that a query can use on a single host.
   static constexpr const char* kQueryMaxMemoryPerNode =
       "query_max_memory_per_node";
@@ -254,6 +233,12 @@ class QueryConfig {
   static constexpr const char* kSpillCompressionKind =
       "spill_compression_codec";
 
+  /// Enable the prefix sort or fallback to timsort in spill. The prefix sort is
+  /// faster than std::sort but requires the memory to build normalized prefix
+  /// keys, which might have potential risk of running out of server memory.
+  static constexpr const char* kSpillPrefixSortEnabled =
+      "spill_prefixsort_enabled";
+
   /// Specifies spill write buffer size in bytes. The spiller tries to buffer
   /// serialized spill data up to the specified size before write to storage
   /// underneath for io efficiency. If it is set to zero, then spill write
@@ -411,6 +396,12 @@ class QueryConfig {
   static constexpr const char* kQueryTraceTaskRegExp =
       "query_trace_task_reg_exp";
 
+  /// Config used to create operator trace directory. This config is provided to
+  /// underlying file system and the config is free form. The form should be
+  /// defined by the underlying file system.
+  static constexpr const char* kOpTraceDirectoryCreateConfig =
+      "op_trace_directory_create_config";
+
   /// Disable optimization in expression evaluation to peel common dictionary
   /// layer from inputs.
   static constexpr const char* kDebugDisableExpressionWithPeeling =
@@ -432,11 +423,44 @@ class QueryConfig {
   static constexpr const char* kDebugDisableExpressionWithLazyInputs =
       "debug_disable_expression_with_lazy_inputs";
 
+  /// Fix the random seed used to create data structure used in
+  /// approx_percentile.  This makes the query result deterministic on single
+  /// node; multi-node partial aggregation is still subject to non-determinism
+  /// due to non-deterministic merge order.
+  static constexpr const char*
+      kDebugAggregationApproxPercentileFixedRandomSeed =
+          "debug_aggregation_approx_percentile_fixed_random_seed";
+
   /// Temporary flag to control whether selective Nimble reader should be used
   /// in this query or not.  Will be removed after the selective Nimble reader
   /// is fully rolled out.
   static constexpr const char* kSelectiveNimbleReaderEnabled =
       "selective_nimble_reader_enabled";
+
+  /// The max ratio of a query used memory to its max capacity, and the scale
+  /// writer exchange stops scaling writer processing if the query's current
+  /// memory usage exceeds this ratio. The value is in the range of (0, 1].
+  static constexpr const char* kScaleWriterRebalanceMaxMemoryUsageRatio =
+      "scaled_writer_rebalance_max_memory_usage_ratio";
+
+  /// The max number of logical table partitions that can be assigned to a
+  /// single table writer thread. The logical table partition is used by local
+  /// exchange writer for writer scaling, and multiple physical table
+  /// partitions can be mapped to the same logical table partition based on the
+  /// hash value of calculated partitioned ids.
+  static constexpr const char* kScaleWriterMaxPartitionsPerWriter =
+      "scaled_writer_max_partitions_per_writer";
+
+  /// Minimum amount of data processed by a logical table partition to trigger
+  /// writer scaling if it is detected as overloaded by scale wrirer exchange.
+  static constexpr const char*
+      kScaleWriterMinPartitionProcessedBytesRebalanceThreshold =
+          "scaled_writer_min_partition_processed_bytes_rebalance_threshold";
+
+  /// Minimum amount of data processed by all the logical table partitions to
+  /// trigger skewed partition rebalancing by scale writer exchange.
+  static constexpr const char* kScaleWriterMinProcessedBytesRebalanceThreshold =
+      "scaled_writer_min_processed_bytes_rebalance_threshold";
 
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
@@ -456,6 +480,11 @@ class QueryConfig {
 
   bool debugDisableExpressionsWithLazyInputs() const {
     return get<bool>(kDebugDisableExpressionWithLazyInputs, false);
+  }
+
+  std::optional<uint32_t> debugAggregationApproxPercentileFixedRandomSeed()
+      const {
+    return get<uint32_t>(kDebugAggregationApproxPercentileFixedRandomSeed);
   }
 
   uint64_t queryMaxMemoryPerNode() const {
@@ -656,6 +685,10 @@ class QueryConfig {
     return get<std::string>(kSpillCompressionKind, "none");
   }
 
+  bool spillPrefixSortEnabled() const {
+    return get<bool>(kSpillPrefixSortEnabled, false);
+  }
+
   uint64_t spillWriteBufferSize() const {
     // The default write buffer size set to 1MB.
     return get<uint64_t>(kSpillWriteBufferSize, 1L << 20);
@@ -701,6 +734,10 @@ class QueryConfig {
   std::string queryTraceTaskRegExp() const {
     // The default query trace task regexp, empty by default.
     return get<std::string>(kQueryTraceTaskRegExp, "");
+  }
+
+  std::string opTraceDirectoryCreateConfig() const {
+    return get<std::string>(kOpTraceDirectoryCreateConfig, "");
   }
 
   bool prestoArrayAggIgnoreNulls() const {
@@ -799,12 +836,30 @@ class QueryConfig {
     return get<uint32_t>(kDriverCpuTimeSliceLimitMs, 0);
   }
 
-  int64_t prefixSortNormalizedKeyMaxBytes() const {
-    return get<int64_t>(kPrefixSortNormalizedKeyMaxBytes, 128);
+  uint32_t prefixSortNormalizedKeyMaxBytes() const {
+    return get<uint32_t>(kPrefixSortNormalizedKeyMaxBytes, 128);
   }
 
-  int32_t prefixSortMinRows() const {
-    return get<int32_t>(kPrefixSortMinRows, 130);
+  uint32_t prefixSortMinRows() const {
+    return get<uint32_t>(kPrefixSortMinRows, 128);
+  }
+
+  double scaleWriterRebalanceMaxMemoryUsageRatio() const {
+    return get<double>(kScaleWriterRebalanceMaxMemoryUsageRatio, 0.7);
+  }
+
+  uint32_t scaleWriterMaxPartitionsPerWriter() const {
+    return get<uint32_t>(kScaleWriterMaxPartitionsPerWriter, 128);
+  }
+
+  uint64_t scaleWriterMinPartitionProcessedBytesRebalanceThreshold() const {
+    return get<uint64_t>(
+        kScaleWriterMinPartitionProcessedBytesRebalanceThreshold, 128 << 20);
+  }
+
+  uint64_t scaleWriterMinProcessedBytesRebalanceThreshold() const {
+    return get<uint64_t>(
+        kScaleWriterMinProcessedBytesRebalanceThreshold, 256 << 20);
   }
 
   template <typename T>

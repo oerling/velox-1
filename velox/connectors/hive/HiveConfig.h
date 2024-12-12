@@ -57,65 +57,18 @@ class HiveConfig {
   static constexpr const char* kImmutablePartitions =
       "hive.immutable-partitions";
 
-  /// Virtual addressing is used for AWS S3 and is the default
-  /// (path-style-access is false). Path access style is used for some on-prem
-  /// systems like Minio.
-  static constexpr const char* kS3PathStyleAccess = "hive.s3.path-style-access";
-
-  /// Log granularity of AWS C++ SDK.
-  static constexpr const char* kS3LogLevel = "hive.s3.log-level";
-
-  /// Use HTTPS to communicate with the S3 API.
-  static constexpr const char* kS3SSLEnabled = "hive.s3.ssl.enabled";
-
-  /// Use the EC2 metadata service to retrieve API credentials.
-  static constexpr const char* kS3UseInstanceCredentials =
-      "hive.s3.use-instance-credentials";
-
-  /// The S3 storage endpoint server. This can be used to connect to an
-  /// S3-compatible storage system instead of AWS.
-  static constexpr const char* kS3Endpoint = "hive.s3.endpoint";
-
-  /// Default AWS access key to use.
-  static constexpr const char* kS3AwsAccessKey = "hive.s3.aws-access-key";
-
-  /// Default AWS secret key to use.
-  static constexpr const char* kS3AwsSecretKey = "hive.s3.aws-secret-key";
-
-  /// IAM role to assume.
-  static constexpr const char* kS3IamRole = "hive.s3.iam-role";
-
-  /// Session name associated with the IAM role.
-  static constexpr const char* kS3IamRoleSessionName =
-      "hive.s3.iam-role-session-name";
-
-  /// Socket connect timeout.
-  static constexpr const char* kS3ConnectTimeout = "hive.s3.connect-timeout";
-
-  /// Socket read timeout.
-  static constexpr const char* kS3SocketTimeout = "hive.s3.socket-timeout";
-
-  /// Maximum concurrent TCP connections for a single http client.
-  static constexpr const char* kS3MaxConnections = "hive.s3.max-connections";
-
-  /// Maximum retry attempts for a single http client.
-  static constexpr const char* kS3MaxAttempts = "hive.s3.max-attempts";
-
-  /// Retry mode for a single http client.
-  static constexpr const char* kS3RetryMode = "hive.s3.retry-mode";
-
   /// The GCS storage endpoint server.
-  static constexpr const char* kGCSEndpoint = "hive.gcs.endpoint";
+  static constexpr const char* kGcsEndpoint = "hive.gcs.endpoint";
 
   /// The GCS service account configuration JSON key file.
-  static constexpr const char* kGCSCredentialsPath =
+  static constexpr const char* kGcsCredentialsPath =
       "hive.gcs.json-key-file-path";
 
   /// The GCS maximum retry counter of transient errors.
-  static constexpr const char* kGCSMaxRetryCount = "hive.gcs.max-retry-count";
+  static constexpr const char* kGcsMaxRetryCount = "hive.gcs.max-retry-count";
 
   /// The GCS maximum time allowed to retry transient errors.
-  static constexpr const char* kGCSMaxRetryTime = "hive.gcs.max-retry-time";
+  static constexpr const char* kGcsMaxRetryTime = "hive.gcs.max-retry-time";
 
   /// Maps table field names to file field names using names, not indices.
   // TODO: remove hive_orc_use_column_names since it doesn't exist in presto,
@@ -150,9 +103,12 @@ class HiveConfig {
   /// The max coalesce bytes for a request.
   static constexpr const char* kMaxCoalescedBytes = "max-coalesced-bytes";
 
-  /// The max coalesce distance bytes for combining requests.
-  static constexpr const char* kMaxCoalescedDistanceBytes =
-      "max-coalesced-distance-bytes";
+  /// The max merge distance to combine read requests.
+  /// Note: The session property name differs from the constant name for
+  /// backward compatibility with Presto.
+  static constexpr const char* kMaxCoalescedDistance = "max-coalesced-distance";
+  static constexpr const char* kMaxCoalescedDistanceSession =
+      "orc_max_merge_distance";
 
   /// The number of prefetch rowgroups
   static constexpr const char* kPrefetchRowGroups = "prefetch-rowgroups";
@@ -244,9 +200,6 @@ class HiveConfig {
   static constexpr const char* kSortWriterFinishTimeSliceLimitMsSession =
       "sort_writer_finish_time_slice_limit_ms";
 
-  static constexpr const char* kS3UseProxyFromEnv =
-      "hive.s3.use-proxy-from-env";
-
   // The unit for reading timestamps from files.
   static constexpr const char* kReadTimestampUnit =
       "hive.reader.timestamp-unit";
@@ -262,34 +215,6 @@ class HiveConfig {
   uint32_t maxPartitionsPerWriters(const config::ConfigBase* session) const;
 
   bool immutablePartitions() const;
-
-  bool s3UseVirtualAddressing() const;
-
-  std::string s3GetLogLevel() const;
-
-  bool s3UseSSL() const;
-
-  bool s3UseInstanceCredentials() const;
-
-  std::string s3Endpoint() const;
-
-  std::optional<std::string> s3AccessKey() const;
-
-  std::optional<std::string> s3SecretKey() const;
-
-  std::optional<std::string> s3IAMRole() const;
-
-  std::string s3IAMRoleSessionName() const;
-
-  std::optional<std::string> s3ConnectTimeout() const;
-
-  std::optional<std::string> s3SocketTimeout() const;
-
-  std::optional<uint32_t> s3MaxConnections() const;
-
-  std::optional<int32_t> s3MaxAttempts() const;
-
-  std::optional<std::string> s3RetryMode() const;
 
   std::string gcsEndpoint() const;
 
@@ -314,7 +239,7 @@ class HiveConfig {
 
   int64_t maxCoalescedBytes() const;
 
-  int32_t maxCoalescedDistanceBytes() const;
+  int32_t maxCoalescedDistanceBytes(const config::ConfigBase* session) const;
 
   int32_t prefetchRowGroups() const;
 
@@ -363,8 +288,6 @@ class HiveConfig {
   uint64_t footerEstimatedSize() const;
 
   uint64_t filePreloadThreshold() const;
-
-  bool s3UseProxyFromEnv() const;
 
   // Returns the timestamp unit used when reading timestamps from files.
   uint8_t readTimestampUnit(const config::ConfigBase* session) const;

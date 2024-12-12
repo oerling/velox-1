@@ -20,6 +20,11 @@
 
 namespace facebook::velox {
 
+void writeBuffer(const BufferPtr& buffer, std::ostream& out);
+void writeOptionalBuffer(const BufferPtr& buffer, std::ostream& out);
+BufferPtr readBuffer(std::istream& in, memory::MemoryPool* pool);
+BufferPtr readOptionalBuffer(std::istream& in, memory::MemoryPool* pool);
+
 namespace {
 
 enum class Encoding : int8_t {
@@ -31,7 +36,7 @@ enum class Encoding : int8_t {
 
 template <typename T>
 void write(const T& value, std::ostream& out) {
-  out.write((char*)&value, sizeof(T));
+  out.write(reinterpret_cast<const char*>(&value), sizeof(T));
 }
 
 template <>
@@ -48,7 +53,7 @@ void write<std::string>(const std::string& value, std::ostream& out) {
 template <typename T>
 T read(std::istream& in) {
   T value;
-  in.read((char*)&value, sizeof(T));
+  in.read(reinterpret_cast<char*>(&value), sizeof(T));
   return value;
 }
 
@@ -73,16 +78,16 @@ void writeEncoding(VectorEncoding::Simple encoding, std::ostream& out) {
     case VectorEncoding::Simple::ROW:
     case VectorEncoding::Simple::ARRAY:
     case VectorEncoding::Simple::MAP:
-      write<int32_t>((int8_t)Encoding::kFlat, out);
+      write<int32_t>(static_cast<int8_t>(Encoding::kFlat), out);
       return;
     case VectorEncoding::Simple::CONSTANT:
-      write<int32_t>((int8_t)Encoding::kConstant, out);
+      write<int32_t>(static_cast<int8_t>(Encoding::kConstant), out);
       return;
     case VectorEncoding::Simple::DICTIONARY:
-      write<int32_t>((int8_t)Encoding::kDictionary, out);
+      write<int32_t>(static_cast<int8_t>(Encoding::kDictionary), out);
       return;
     case VectorEncoding::Simple::LAZY:
-      write<int32_t>((int8_t)Encoding::kLazy, out);
+      write<int32_t>(static_cast<int8_t>(Encoding::kLazy), out);
       return;
     default:
       VELOX_UNSUPPORTED("Unsupported encoding: {}", mapSimpleToName(encoding));
@@ -100,37 +105,6 @@ Encoding readEncoding(std::istream& in) {
     default:
       VELOX_UNSUPPORTED("Unsupported encoding: {}", encoding);
   }
-}
-
-void writeBuffer(const BufferPtr& buffer, std::ostream& out) {
-  write<int32_t>(buffer->size(), out);
-  out.write(buffer->as<char>(), buffer->size());
-}
-
-void writeOptionalBuffer(const BufferPtr& buffer, std::ostream& out) {
-  if (buffer) {
-    write<bool>(true, out);
-    writeBuffer(buffer, out);
-  } else {
-    write<bool>(false, out);
-  }
-}
-
-BufferPtr readBuffer(std::istream& in, memory::MemoryPool* pool) {
-  auto numBytes = read<int32_t>(in);
-  auto buffer = AlignedBuffer::allocate<char>(numBytes, pool);
-  auto rawBuffer = buffer->asMutable<char>();
-  in.read(rawBuffer, numBytes);
-  return buffer;
-}
-
-BufferPtr readOptionalBuffer(std::istream& in, memory::MemoryPool* pool) {
-  bool hasBuffer = read<bool>(in);
-  if (hasBuffer) {
-    return readBuffer(in, pool);
-  }
-
-  return nullptr;
 }
 
 template <TypeKind kind>
@@ -301,7 +275,7 @@ void writeScalarConstant(const BaseVector& vector, std::ostream& out) {
   using T = typename TypeTraits<kind>::NativeType;
 
   auto value = vector.as<ConstantVector<T>>()->valueAt(0);
-  out.write((const char*)&value, sizeof(T));
+  out.write(reinterpret_cast<const char*>(&value), sizeof(T));
 
   if constexpr (std::is_same_v<T, StringView>) {
     if (!value.isInline()) {
@@ -572,8 +546,39 @@ VectorPtr readLazyVector(
   return std::make_shared<LazyVector>(
       pool, type, size, std::make_unique<LoadedVectorShim>(loadedVector));
 }
-
 } // namespace
+
+void writeBuffer(const BufferPtr& buffer, std::ostream& out) {
+  VELOX_CHECK_NOT_NULL(buffer);
+  write<int32_t>(buffer->size(), out);
+  out.write(buffer->as<char>(), buffer->size());
+}
+
+void writeOptionalBuffer(const BufferPtr& buffer, std::ostream& out) {
+  if (buffer) {
+    write<bool>(true, out);
+    writeBuffer(buffer, out);
+  } else {
+    write<bool>(false, out);
+  }
+}
+
+BufferPtr readBuffer(std::istream& in, memory::MemoryPool* pool) {
+  auto numBytes = read<int32_t>(in);
+  auto buffer = AlignedBuffer::allocate<char>(numBytes, pool);
+  auto rawBuffer = buffer->asMutable<char>();
+  in.read(rawBuffer, numBytes);
+  return buffer;
+}
+
+BufferPtr readOptionalBuffer(std::istream& in, memory::MemoryPool* pool) {
+  bool hasBuffer = read<bool>(in);
+  if (hasBuffer) {
+    return readBuffer(in, pool);
+  }
+
+  return nullptr;
+}
 
 void saveType(const TypePtr& type, std::ostream& out) {
   auto serialized = toJson(type->serialize());
@@ -717,39 +722,6 @@ std::optional<std::string> generateFolderPath(
   return path;
 }
 
-template <typename T>
-void saveStdVectorToFile(const std::vector<T>& list, const char* filePath) {
-  std::ofstream outputFile(filePath, std::ofstream::binary);
-  // Size of the vector
-  write<int32_t>(list.size(), outputFile);
-
-  outputFile.write(
-      reinterpret_cast<const char*>(list.data()), list.size() * sizeof(T));
-  outputFile.close();
-}
-
-template void saveStdVectorToFile<column_index_t>(
-    const std::vector<column_index_t>& list,
-    const char* filePath);
-template void saveStdVectorToFile<int>(
-    const std::vector<int>& list,
-    const char* filePath);
-
-template <typename T>
-std::vector<T> restoreStdVectorFromFile(const char* filePath) {
-  std::ifstream in(filePath, std::ifstream::binary);
-  auto size = read<int32_t>(in);
-  std::vector<T> vec(size);
-
-  in.read(reinterpret_cast<char*>(vec.data()), size * sizeof(T));
-  in.close();
-  return vec;
-}
-
-template std::vector<column_index_t> restoreStdVectorFromFile<column_index_t>(
-    const char* filePath);
-template std::vector<int> restoreStdVectorFromFile<int>(const char* filePath);
-
 void saveSelectivityVector(const SelectivityVector& rows, std::ostream& out) {
   auto range = rows.asRange();
 
@@ -773,7 +745,6 @@ SelectivityVector restoreSelectivityVector(std::istream& in) {
   rows.setFromBits(reinterpret_cast<uint64_t*>(bits.data()), size);
   return rows;
 }
-
 } // namespace facebook::velox
 
 template <>

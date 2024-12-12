@@ -134,6 +134,10 @@ class MergeExchangeSource : public MergeSource {
     client_->noMoreRemoteTasks();
   }
 
+  ~MergeExchangeSource() override {
+    close();
+  }
+
   BlockingReason next(RowVectorPtr& data, ContinueFuture* future) override {
     data.reset();
 
@@ -163,6 +167,7 @@ class MergeExchangeSource : public MergeSource {
           inputStream_.get(),
           mergeExchange_->pool(),
           mergeExchange_->outputType(),
+          mergeExchange_->serde(),
           &data);
 
       auto lockedStats = mergeExchange_->stats().wlock();
