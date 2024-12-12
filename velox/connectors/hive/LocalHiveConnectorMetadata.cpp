@@ -97,10 +97,11 @@ std::vector<SplitSource::SplitAndGroup> LocalHiveSplitSource::getSplits(
 LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
     HiveConnector* hiveConnector)
     : hiveConnector_(hiveConnector),
-      hiveConfig_(std::make_shared<HiveConfig>(hiveConnector_->connectorConfig())),
+      hiveConfig_(
+          std::make_shared<HiveConfig>(hiveConnector_->connectorConfig())),
       splitManager_(this) {}
 
-  void LocalHiveConnectorMetadata::initialize() {
+void LocalHiveConnectorMetadata::initialize() {
   auto formatName = hiveConfig_->localDefaultFileFormat();
   auto path = hiveConfig_->localDataPath();
   format_ = formatName == "dwrf" ? dwio::common::FileFormat::DWRF

@@ -539,7 +539,7 @@ class Connector {
       std::optional<LookupKeys> = std::nullopt) {
     VELOX_UNSUPPORTED();
   }
-  
+
   virtual std::unique_ptr<DataSource> createDataSource(
       const RowTypePtr& outputType,
       const std::shared_ptr<ConnectorTableHandle>& tableHandle,

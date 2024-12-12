@@ -223,9 +223,12 @@ class VeloxRunner {
     }
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
     std::unordered_map<std::string, std::string> connectorConfig;
-    connectorConfig[connector::hive::HiveConfig::kLocalDataPath] = FLAGS_data_path;
-    connectorConfig[connector::hive::HiveConfig::kLocalDefaultFileFormat] = FLAGS_data_format;
-    auto config = std::make_shared<config::ConfigBase>(std::move(connectorConfig));
+    connectorConfig[connector::hive::HiveConfig::kLocalDataPath] =
+        FLAGS_data_path;
+    connectorConfig[connector::hive::HiveConfig::kLocalDefaultFileFormat] =
+        FLAGS_data_format;
+    auto config =
+        std::make_shared<config::ConfigBase>(std::move(connectorConfig));
     connector::registerConnectorFactory(
         std::make_shared<connector::hive::HiveConnectorFactory>());
     connector_ =
@@ -270,7 +273,9 @@ class VeloxRunner {
     schema_ = std::make_shared<facebook::velox::runner::Schema>(connector_, "");
 
     planner_ = std::make_unique<core::DuckDbQueryPlanner>(optimizerPool_.get());
-    auto& tables = dynamic_cast<connector::hive::LocalHiveConnectorMetadata*>(connector_->metadata())->tables();
+    auto& tables = dynamic_cast<connector::hive::LocalHiveConnectorMetadata*>(
+                       connector_->metadata())
+                       ->tables();
     for (auto& pair : tables) {
       planner_->registerTable(pair.first, pair.second->rowType());
     }

@@ -385,7 +385,7 @@ class ConnectorMetadata {
   /// the ConnectorMetadata to the connector so that Connector methods
   /// that refer to metadata are available.
   virtual void initialize() = 0;
-  
+
   virtual const Table* findTable(const std::string& name) = 0;
 
   /// Returns a SplitManager for split enumeration for TableLayouts accessed
