@@ -15,6 +15,20 @@
  */
 #pragma once
 
+#include "velox/type/Type.h"
+#include "velox/type/Subfield.h"
+#include "velox/type/Variant.h"
+#include "velox/common/memory/HashStringAllocator.h"
+
+namespace facebook::velox::core {
+  // Forward declare because used in sampling and filtering APIs in
+  // abstract Connector. The abstract interface does not depend on
+  // core:: but implementations do.
+  class ITypedExpr;
+using TypedExprPtr = std::shared_ptr<const ITypedExpr>;
+} // namespace facebook::velox::core
+
+
 /// Base classes for schema elements used in execution. A
 /// ConnectorMetadata provides access to table information.  A Table has a
 /// TableLayout for each of its physical organizations, e.g. base table, index,
@@ -27,12 +41,11 @@
 /// enumeration.  Derived classes of the above connect to different
 /// metadata stores and provide different metadata, e.g. order,
 /// partitioning, bucketing etc.
-
 namespace facebook::velox::connector {
 class Connector;
 class ConnectorTableHandle;
 using ConnectorTableHandlePtr = std::shared_ptr<const ConnectorTableHandle>;
-
+  class ConnectorSplit;
 /// Represents statistics of a column. The statistics may represent the column
 /// across the table or may be calculated over a sample of a layout of the
 /// table. All fields are optional.
@@ -276,8 +289,8 @@ class Table {
  public:
   virtual ~Table() = default;
 
-  Table(const std::string& name, const Schema* schema)
-      : schema_(schema), name_(name) {}
+  Table(const std::string& name)
+      : name_(name) {}
 
   const std::string& name() const {
     return name_;
@@ -321,8 +334,8 @@ class PartitionHandle {
   virtual ~PartitionHandle() = default;
 };
 
-/// Enumerates splits. The table and partitions to cover are given in
-/// SplitSourceFactory.
+/// Enumerates splits. The table and partitions to cover are given to
+/// ConnectorSplitManager.
 class SplitSource {
  public:
   /// Result of getSplits. Each split belongs to a group. A nullptr split for
@@ -336,43 +349,36 @@ class SplitSource {
   virtual ~SplitSource() = default;
 
   /// Returns a set of splits that cover up to 'targetBytes' of data.
-  virtual std::vector<SplitAndGroup> getSplits(int64_t targetBytes) = 0;
-};
-
-class SplitSourceFactory {
- public:
-  virtual ~SplitSourceFactory() = default;
-
-  /// Returns a SplitSource that enumerates splits contained in 'partitions'.
-  std::shared_ptr<SplitSource> getSplitSource(
-      std::vector<std::shared_ptr<PartitionHandle>> partitions);
+  virtual std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) = 0;
 };
 
 class ConnectorSplitManager {
  public:
-  /// Returns the list of all partitions that match the filters in
-  /// 'tableHandle'.
-  std::vector<std::shared_ptr<PartitionHandle>> listPartitions(
-      const ConnectorTableHandle& tableHandle) = 0;
+  virtual ~ConnectorSplitManager() = default;
 
-  /// Returns a SplitSourceFactory for making SplitSources that enumerate splits
-  /// for 'tableHandle'.
-  std::shared_ptr<SplitSourceFactory> splitSource(
-      const ConnectorTableHandle& tableHandle) = 0;
+  /// Returns the list of all partitions that match the filters in
+  /// 'tableHandle'. A non-partitioned table returns one partition.
+  virtual std::vector<std::shared_ptr<const PartitionHandle>> listPartitions(
+      const ConnectorTableHandlePtr& tableHandle) = 0;
+
+  /// Returns a SplitSource that covers the contents of 'partitions'. The set of
+  /// partitions is exposed separately so that the caller may process the
+  /// partitions in a specific order or distribute them to specific nodes in a
+  /// cluster.
+  virtual std::shared_ptr<SplitSource> getSplitSource(
+					      const ConnectorTableHandlePtr& tableHandle,
+					      std::vector<std::shared_ptr<const PartitionHandle>> partitions) = 0;
 };
 
 class ConnectorMetadata {
  public:
   virtual ~ConnectorMetadata() = default;
 
-  const Table* findTable(const std::string& name) = 0;
+  virtual const Table* findTable(const std::string& name) = 0;
 
   /// Returns a SplitManager for split enumeration for TableLayouts accessed
   /// through 'this'.
   virtual ConnectorSplitManager* splitManager() = 0;
-
-  virtual const std::shared_ptr<connector::ConnectorQueryCtx>&
-  connectorQueryCtx() const = 0;
 };
 
 } // namespace facebook::velox::connector

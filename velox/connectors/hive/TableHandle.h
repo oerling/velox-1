@@ -120,33 +120,6 @@ class HiveColumnHandle : public ColumnHandle {
   const std::vector<common::Subfield> requiredSubfields_;
 };
 
-/// Encodes Hive specifics needed for making column and table handles.
-class HiveLayoutMetadata : public LayoutMetadata {
- public:
-  HiveLayoutMetadata(
-      const std::string& tableName,
-      const RowTypePtr& rowType,
-      std::vector<std::string> hivePartitionColumns)
-      : tableName_(tableName),
-        rowType_(rowType),
-        hivePartitionColumns_(hivePartitionColumns) {}
-
-  const std::string tableName() const {
-    return tableName_;
-  }
-
-  TypePtr dataType(const std::string& column) const {
-    return rowType_->findChild(column);
-  }
-
-  HiveColumnHandle::ColumnType columnType(const std::string& columnName) const;
-
- private:
-  const std::string tableName_;
-  const RowTypePtr rowType_;
-  const std::vector<std::string> hivePartitionColumns_;
-};
-
 class HiveTableHandle : public ConnectorTableHandle {
  public:
   HiveTableHandle(

@@ -52,12 +52,10 @@ void LocalRunnerTestBase::ensureTestData() {
     makeTables(testTables_, files_);
   }
   makeSchema();
-  splitSourceFactory_ =
-      std::make_shared<runner::LocalSplitSourceFactory>(schema_, 2);
 }
 
 void LocalRunnerTestBase::makeSchema() {
-  auto schemaQueryCtx = makeQueryCtx("schema", rootPool_.get());
+
   common::SpillConfig spillConfig;
   common::PrefixSortConfig prefixSortConfig(100, 130);
   auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
@@ -75,12 +73,19 @@ void LocalRunnerTestBase::makeSchema() {
       "N/a",
       0,
       schemaQueryCtx->queryConfig().sessionTimezone());
-  auto connector = connector::getConnector(kHiveConnectorId);
-  schema_ = std::make_shared<runner::LocalSchema>(
-      files_->getPath(),
-      dwio::common::FileFormat::DWRF,
-      reinterpret_cast<velox::connector::hive::HiveConnector*>(connector.get()),
-      connectorQueryCtx);
+  unregisterConnector(kHiveConnectorId);
+
+  std::unordered_map<std::string, std::string> configs;
+  configs[connector::HiveConfig::kLocalDataPath] = files_->getPath();
+  auto hiveConnector =
+  getConnectorFactory(connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          ->newConnector(
+              kHiveConnectorId,
+              std::make_shared<config::ConfigBase>(
+						   configs),
+              ioExecutor_.get());
+  connector::registerConnector(hiveConnector);
+
 }
 
 void LocalRunnerTestBase::makeTables(

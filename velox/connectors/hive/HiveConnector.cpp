@@ -62,8 +62,22 @@ HiveConnector::HiveConnector(
   }
 }
 
+namespace {
+HiveColumnHandle::ColumnType columnType(
+    const HiveTableLayout& layout,
+    const std::string& columnName) const {
+  auto& columns = layout.hivePartitionColumns();
+  if (std::find(columns_.begin(), columns_.end(), columnName) !=
+      columns_.end()) {
+    return HiveColumnHandle::ColumnType::kPartitionKey;
+  }
+  // TODO recognize special names like $path, $bucket etc.
+  return HiveColumnHandle::ColumnType::kRegular;
+}
+} // namespace
+
 ColumnHandlePtr HiveConnector::createColumnHandle(
-						  const TableLayout& layout,
+    const TableLayout& layout,
     const std::string& columnName,
     std::vector<common::Subfield> subfields,
     std::optional<TypePtr> castToType,
@@ -74,7 +88,7 @@ ColumnHandlePtr HiveConnector::createColumnHandle(
   auto* hiveLayout = reinterpret_cast<const HiveTableLayout*>(&layout);
   auto handle = std::make_shared<HiveColumnHandle>(
       columnName,
-      hiveLayout->columnType(columnName),
+      columnType(hiveLayout, columnName),
       hiveLayout->dataType(columnName),
       hiveLayout->dataType(columnName),
       std::move(subfields));
@@ -261,13 +275,14 @@ void registerHivePartitionFunctionSerDe() {
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
 }
 
-  std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories() {
-    static  std::vector<HiveConnectorMetadataFactories> factories;
-    return factories;
-  }
-  
-  void registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory factory) {
-    hiveConnectorMetadataFactories().push_back(factory);
-  }
+std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories() {
+  static std::vector<HiveConnectorMetadataFactories> factories;
+  return factories;
+}
+
+void registerHiveConnectorMetadataFactory(
+    HiveConnectorMetadataFactory factory) {
+  hiveConnectorMetadataFactories().push_back(factory);
+}
 
 } // namespace facebook::velox::connector::hive

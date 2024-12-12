@@ -181,11 +181,25 @@ LocalRunner::makeStages() {
        ++fragmentIndex) {
     auto& fragment = fragments_[fragmentIndex];
     for (auto& scan : fragment.scans) {
-      auto source = splitSourceFactory_->splitSourceForScan(*scan);
+      auto handle =scan->tableHandle();
+      auto connector = connector::getConnector(handle->connectorId());
+      auto partitions = connector->metadata()->splitManager()->listPartitions(handle); 
+      auto source = connector->metadata()->splitManager()->getSplitSource(std::move(partitions));
+      std::vector<connector::SplitSource::SplitAndGroup> splits;
+      int32_t splitIdx = 0;
+      auto nextSplit = [&}() {
+	if (splitIdx < splits.size()) {
+	  return exec::Split(std::move(splits[splitIdx++].split));
+	}
+	splits = source->getSplits(std::numeric_limits<int64_t>::max());
+	splitIdx = 1;
+	return exec::Split(std::move(splits[0].split));
+      };
+
       bool allDone = false;
       do {
         for (auto i = 0; i < stages_[fragmentIndex].size(); ++i) {
-          auto split = source->next(i);
+          auto split = nextSplit();
           if (!split.hasConnectorSplit()) {
             allDone = true;
             break;
@@ -222,47 +236,6 @@ LocalRunner::makeStages() {
     lastStage.push_back(remoteSplit(task->taskId()));
   }
   return lastStage;
-}
-
-exec::Split LocalSplitSource::next(int32_t /*worker*/) {
-  if (currentFile_ >= static_cast<int32_t>(layout_->files().size())) {
-    return exec::Split();
-  }
-
-  if (currentSplit_ >= fileSplits_.size()) {
-    fileSplits_.clear();
-    ++currentFile_;
-    if (currentFile_ >= layout_->files().size()) {
-      return exec::Split();
-    }
-
-    currentSplit_ = 0;
-    auto filePath = layout_->files()[currentFile_];
-    const auto fileSize = fs::file_size(filePath);
-    // Take the upper bound.
-    const int splitSize = std::ceil((fileSize) / splitsPerFile_);
-    for (int i = 0; i < splitsPerFile_; ++i) {
-      fileSplits_.push_back(
-          connector::hive::HiveConnectorSplitBuilder(filePath)
-              .connectorId(layout_->connector()->connectorId())
-              .fileFormat(layout_->fileFormat())
-              .start(i * splitSize)
-              .length(splitSize)
-              .build());
-    }
-  }
-  return exec::Split(std::move(fileSplits_[currentSplit_++]));
-}
-
-std::unique_ptr<SplitSource> LocalSplitSourceFactory::splitSourceForScan(
-    const core::TableScanNode& tableScan) {
-  auto* tableHandle = dynamic_cast<const connector::hive::HiveTableHandle*>(
-      tableScan.tableHandle().get());
-  VELOX_CHECK_NOT_NULL(tableHandle);
-  auto* table = reinterpret_cast<LocalTable*>(
-      schema_->findTable(tableHandle->tableName()));
-
-  return std::make_unique<LocalSplitSource>(table, splitsPerFile_);
 }
 
 std::vector<exec::TaskStats> LocalRunner::stats() const {

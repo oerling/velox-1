@@ -304,9 +304,8 @@ class HiveConfig {
   /// Returns the file system path containing local data. If non-empty, initializes LocalHiveConnectorMetadata to provide metadata for the tables in the directory.
   std::string localDataPath() const;
 
-
   /// returns the name of the file format to use in interpreting the contents of localDataPath().
-  std::string localDeFaultFileFormat() const;
+  std::string localDefaultFileFormat() const;
  
   HiveConfig(std::shared_ptr<const config::ConfigBase> config) {
     VELOX_CHECK_NOT_NULL(

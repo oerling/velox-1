@@ -24,10 +24,10 @@
 #include "velox/common/caching/AsyncDataCache.h"
 #include "velox/common/caching/ScanTracker.h"
 #include "velox/common/future/VeloxPromise.h"
+#include "velox/connectors/ConnectorMetadata.h"
 #include "velox/core/ExpressionEvaluator.h"
 #include "velox/type/Subfield.h"
 #include "velox/vector/ComplexVector.h"
-#include "velox/connectors/ConnectorMetadata.h"
 
 #include <folly/Synchronized.h>
 
@@ -42,11 +42,6 @@ class Filter;
 }
 namespace facebook::velox::config {
 class ConfigBase;
-}
-
-namespace facebook::velox::core {
-class ITypedExpr;
-using TypedExprPtr = std::shared_ptr<const ITypedExpr>;
 }
 
 namespace facebook::velox::connector {
@@ -76,19 +71,6 @@ struct ConnectorSplit : public ISerializable {
   virtual std::string toString() const {
     return fmt::format("[split: {}]", connectorId);
   }
-};
-
-
-  
-/// Interfaces to the connector-specific schema in order to resolve
-///  things like special column types, virtual columns and other details. This
-///  is needed for providing a connector-agnostic interface for creating
-///  ColumnHandles and TableHandles. This is obtained from runner::TableLayout.
-///  Using runner::TableLayout directly would create a circular dependency
-///  between connectors/ and runner/.
-class LayoutMetadata {
- public:
-  virtual ~LayoutMetadata() = default;
 };
 
 class ColumnHandle : public ISerializable {
@@ -428,9 +410,9 @@ class ConnectorQueryCtx {
   const folly::CancellationToken cancellationToken_;
   bool selectiveNimbleReaderEnabled_{false};
 };
-  using SubfieldPtr = std::shared_ptr<const common::Subfield>;
+using SubfieldPtr = std::shared_ptr<const common::Subfield>;
 
-  struct SubfieldPtrHasher {
+struct SubfieldPtrHasher {
   size_t operator()(const SubfieldPtr& subfield) const {
     return subfield->hash();
   }
@@ -442,42 +424,51 @@ struct SubfieldPtrComparer {
   }
 };
 
-  struct TargetSubfield {
-    SubfieldPtr target;
-    variant defaultValue;
-  }
-  
-  using SubfieldMapping = std::unordered_map<SubfieldPtr, TargetSubfield>, SubfieldPtrHasher, SubfieldPtrComparer>;
+struct TargetSubfield {
+  SubfieldPtr target;
+  variant defaultValue;
+};
 
-  /// Describes a set of lookup keys. These should match a prefix of
-  /// lookupKeys() of the TableLayout when making a
-  /// ConnectorTableHandle. The leading keys are compared with
-  /// equality. A trailing key part may be compared with range
-  /// constraints. The flags have the same meaning as in
-  /// common::BigintRange and related.
-  struct LookupKeys {
-    /// Columns with equality constraints. Must be a prefix of the lookupKeys() in TableLayout.
-    std::vector<std::string> equalityColumns;
+using SubfieldMapping = std::unordered_map<
+    SubfieldPtr,
+    TargetSubfield,
+    SubfieldPtrHasher,
+    SubfieldPtrComparer>;
 
-    /// Column on which a range condition is applied in lookup. Must be the immediately following key in lookupKeys() order after the last column in 'equalities. If 'equalities' is empty, 'rangeColumn' must be the first in lookupKeys() order.
-    std::optional<std::string> rangeColumn;
+/// Describes a set of lookup keys. These should match a prefix of
+/// lookupKeys() of the TableLayout when making a
+/// ConnectorTableHandle. The leading keys are compared with
+/// equality. A trailing key part may be compared with range
+/// constraints. The flags have the same meaning as in
+/// common::BigintRange and related.
+struct LookupKeys {
+  /// Columns with equality constraints. Must be a prefix of the lookupKeys() in
+  /// TableLayout.
+  std::vector<std::string> equalityColumns;
 
-    // True if the lookup has no lower bound for 'rangeColumn'.
-    bool lowerUnbounded{true};
+  /// Column on which a range condition is applied in lookup. Must be the
+  /// immediately following key in lookupKeys() order after the last column in
+  /// 'equalities. If 'equalities' is empty, 'rangeColumn' must be the first in
+  /// lookupKeys() order.
+  std::optional<std::string> rangeColumn;
 
-    /// true if the  lookup specifies no upper bound for 'rangeColumn'.
-    bool upperUnbounded{true};
-    
-    /// True if rangeColumn > range lookup lower bound.
-    bool lowerExclusive{false};
+  // True if the lookup has no lower bound for 'rangeColumn'.
+  bool lowerUnbounded{true};
 
-    /// 'true' if rangeColum <  upper range lookup value.
-    bool upperExclusive{false};
-    
-    /// true if matches for a range lookup should be returned in ascending order of the range column. Some lookup sources may support descending order.
-    bool isAscending{true};
-  };
-  
+  /// true if the  lookup specifies no upper bound for 'rangeColumn'.
+  bool upperUnbounded{true};
+
+  /// True if rangeColumn > range lookup lower bound.
+  bool lowerExclusive{false};
+
+  /// 'true' if rangeColum <  upper range lookup value.
+  bool upperExclusive{false};
+
+  /// true if matches for a range lookup should be returned in ascending order
+  /// of the range column. Some lookup sources may support descending order.
+  bool isAscending{true};
+};
+
 class Connector {
  public:
   explicit Connector(const std::string& id) : id_(id) {}
@@ -502,12 +493,12 @@ class Connector {
   /// Returns a ConnectorMetadata for accessing table
   /// information. This and createColumnHandle and createTableHandle
   /// need to be supported for Connectors used with velox::runner. If
-  /// handles are always generated by an external system these
+  /// handles and splits are always generated by an external system these
   /// functions are not required.
   virtual ConnectorMetadata* metadata() const {
     VELOX_UNSUPPORTED();
   }
-  
+
   /// Creates a ColumnHandle for 'columnName'. If the type is a
   /// complex type, 'subfields' specifies which subfields need to be
   /// retrievd. empty 'subfields' means all are returned. If

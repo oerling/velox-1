@@ -30,12 +30,10 @@ class LocalRunner : public Runner,
  public:
   LocalRunner(
       MultiFragmentPlanPtr plan,
-      std::shared_ptr<core::QueryCtx> queryCtx,
-      std::shared_ptr<SplitSourceFactory> splitSourceFactory)
+      std::shared_ptr<core::QueryCtx> queryCtx)
       : plan_(std::move(plan)),
         fragments_(plan_->fragments()),
-        options_(plan_->options()),
-        splitSourceFactory_(std::move(splitSourceFactory)) {
+        options_(plan_->options()) {
     params_.queryCtx = std::move(queryCtx);
   }
 
@@ -74,40 +72,5 @@ class LocalRunner : public Runner,
   std::exception_ptr error_;
 };
 
-/// Split source that produces splits from a LocalSchema.
-class LocalSplitSource : public SplitSource {
- public:
-  LocalSplitSource(const LocalTable* table, int32_t splitsPerFile)
-      : layout_(dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0])),
-        splitsPerFile_(splitsPerFile) {
-    VELOX_CHECK_NOT_NULL(
-        layout_, "Expecting a LocalTable with a LocalHiveTableLayout");
-  }
-
-  exec::Split next(int32_t worker) override;
-
- private:
-  const LocalHiveTableLayout* layout_;
-  const int32_t splitsPerFile_;
-
-  std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
-  int32_t currentFile_{-1};
-  int32_t currentSplit_{0};
-};
-
-class LocalSplitSourceFactory : public SplitSourceFactory {
- public:
-  LocalSplitSourceFactory(
-      std::shared_ptr<LocalSchema> schema,
-      int32_t splitsPerFile)
-      : schema_(std::move(schema)), splitsPerFile_(splitsPerFile) {}
-
-  std::unique_ptr<SplitSource> splitSourceForScan(
-      const core::TableScanNode& scan) override;
-
- private:
-  const std::shared_ptr<LocalSchema> schema_;
-  const int32_t splitsPerFile_;
-};
 
 } // namespace facebook::velox::runner

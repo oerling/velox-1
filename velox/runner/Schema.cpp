@@ -28,7 +28,7 @@ const conector::Table* Schema::findTable(const std::string& name) {
     }
   }
   if (dots.empty) {
-    lookupName = fmt::format(defaultSchema_, name);
+    lookupName = defaultSchema.empty() ? name : fmt::format("{}.{}", defaultSchema_, name);
     connector = defaultConnector_.get();
   } else if (dots.back() == name.size() - 1) {
       VELOX_USER_ERROR(Table name ends in '.': {}", name);

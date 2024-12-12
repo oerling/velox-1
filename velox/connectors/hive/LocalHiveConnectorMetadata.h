@@ -22,9 +22,38 @@
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/StatisticsBuilder.h"
-#include "velox/runner/Schema.h"
 
 namespace facebook::velox::connector::hive {
+
+class LocalSplitSource : public SplitSource {
+ public:
+  LocalSplitSource(
+      std::vector<std::string> files,
+      int32_t splitsPerFile,
+      dwio::common::FileFormat format)
+      : splitsPerFile_(splitsPerFile), format_(format), files_(files) {}
+
+  std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) override;
+
+ private:
+  const int32_t splitsPerFile_;
+  const dwio::common::FileFormat format_;
+  std::vector<std::string> files_;
+  std::vector<std::shared_ptr<connector::ConnectorSplit>> fileSplits_;
+  int32_t currentFile_{-1};
+  int32_t currentSplit_{0};
+};
+
+class LocalHiveSplitManager : public ConnectorSplitManager {
+ public:
+  std::vector<std::shared_ptr<const PartitionHandle>> listPartitions(
+      const ConnectorTableHandlePtr& tableHandle) override;
+
+  std::shared_ptr<SplitSource> getSplitSource(
+      const ConnectorTableHandlePtr& tableHandle,
+      std::vector<std::shared_ptr<const PartitionHandle>> partitions) override;
+};
+
 /// A HiveTableLayout backed by local files. Implements sampling by reading
 /// local files and stores the file list inside 'this'.
 class LocalHiveTableLayout : public HiveTableLayout {
@@ -52,7 +81,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
             lookupKeys,
             hivePartitionColumns,
             fileFormat,
-			numBuckets) {}
+            numBuckets) {}
 
   std::pair<int64_t, int64_t> sample(
       const connector::ConnectorTableHandlePtr& handle,
@@ -83,14 +112,10 @@ class LocalHiveTableLayout : public HiveTableLayout {
   std::vector<std::string> files_;
 };
 
-
 class LocalTable : public Table {
  public:
-  LocalTable(
-      const std::string& name,
-      dwio::common::FileFormat format,
-      Schema* schema)
-      : Table(name, schema) {}
+  LocalTable(const std::string& name, dwio::common::FileFormat format)
+      : Table(name) {}
 
   std::unordered_map<std::string, std::unique_ptr<Column>>& columns() {
     return columns_;
@@ -142,22 +167,15 @@ class LocalTable : public Table {
 
 class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
  public:
-  LocalHiveConnectorMetadata(
-			     HiveConnector* hiveConector);
+  LocalHiveConnectorMetadata(HiveConnector* hiveConector);
 
+    const Table* findTable(const std::string& name) override;
 
-  const std::shared_ptr<connector::ConnectorQueryCtx>& connectorQueryCtx()
-      const {
-    return connectorQueryCtx_;
-  }
-
+  ConnectorSplitManager* splitManager() override;
+  
   const std::unordered_map<std::string, std::unique_ptr<Table>>& tables()
       const {
     return tables_;
-  }
-
-  connector::Connector* connector() const override {
-    return hiveConnector_;
   }
 
   dwio::common::FileFormat fileFormat() const {
@@ -165,19 +183,20 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
   }
 
  private:
-  std::shared_ptr<core::QueryCtx> makeQueryCtx();
-  std::shared_ptr<ConnectorQueryCtx> makeConnectorQueryCtx();
+  void makeQueryCtx();
+  void makeConnectorQueryCtx();
   void initialize(const std::string& path);
 
   void loadTable(const std::string& tableName, const fs::path& tablePath);
 
-  connector::hive::HiveConnector* const hiveConnector_;
+  HiveConnector* const hiveConnector_;
+  HiveConfig* const hiveConfig_;
   std::shared_ptr<memory::MemoryPool> rootPool_{
       memory::memoryManager()->addRootPool()};
 
-  std::shared_ptr<QueryCtx> queryCtx_;
-  std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
+  std::shared_ptr<core::QueryCtx> queryCtx_;
+  std::shared_ptr<ConnectorQueryCtx> connectorQueryCtx_;
   dwio::common::FileFormat format_;
 };
 
-} // namespace facebook::velox::runner
+} // namespace facebook::velox::connector::hive

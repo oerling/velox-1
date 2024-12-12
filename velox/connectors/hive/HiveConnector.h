@@ -44,7 +44,7 @@ class HiveConnector : public Connector {
     return true;
   }
 
-  ConnectorMetadata* connectorMetadata() const override {
+  ConnectorMetadata* metadata() const override {
     VELOX_CHECK_NOT_NULL(metadata_);
     return metadata_.get();
   }
@@ -171,7 +171,7 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 
 void registerHivePartitionFunctionSerDe();
 
-std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories();
+std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories();
   
   void registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
   
