@@ -381,6 +381,11 @@ class ConnectorMetadata {
  public:
   virtual ~ConnectorMetadata() = default;
 
+  /// Post-construction initialization. This is called after adding
+  /// the ConnectorMetadata to the connector so that Connector methods
+  /// that refer to metadata are available.
+  virtual void initialize() = 0;
+  
   virtual const Table* findTable(const std::string& name) = 0;
 
   /// Returns a SplitManager for split enumeration for TableLayouts accessed

@@ -24,6 +24,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/memory/MmapAllocator.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
@@ -42,7 +43,7 @@
 #include "velox/parse/QueryPlanner.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/runner/LocalRunner.h"
-#include "velox/runner/LocalSchema.h"
+#include "velox/runner/Schema.h"
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/VectorSaver.h"
 
@@ -221,11 +222,13 @@ class VeloxRunner {
       serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
     }
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(8);
-    std::unordered_map<std::string, std::string> empty;
-    auto config = std::make_shared<config::ConfigBase>(std::move(empty));
+    std::unordered_map<std::string, std::string> connectorConfig;
+    connectorConfig[connector::hive::HiveConfig::kLocalDataPath] = FLAGS_data_path;
+    connectorConfig[connector::hive::HiveConfig::kLocalDefaultFileFormat] = FLAGS_data_format;
+    auto config = std::make_shared<config::ConfigBase>(std::move(connectorConfig));
     connector::registerConnectorFactory(
         std::make_shared<connector::hive::HiveConnectorFactory>());
-    auto hiveConnector =
+    connector_ =
         connector::getConnectorFactory(
             connector::hive::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(kHiveConnectorId, config, ioExecutor_.get());
@@ -264,14 +267,11 @@ class VeloxRunner {
         0,
         schemaQueryCtx_->queryConfig().sessionTimezone());
 
-    schema_ = std::make_shared<facebook::velox::runner::LocalSchema>(
-        FLAGS_data_path,
-        toFileFormat(FLAGS_data_format),
-        dynamic_cast<connector::hive::HiveConnector*>(hiveConnector.get()),
-        connectorQueryCtx_);
+    schema_ = std::make_shared<facebook::velox::runner::Schema>(connector_, "");
 
     planner_ = std::make_unique<core::DuckDbQueryPlanner>(optimizerPool_.get());
-    for (auto& pair : schema_->tables()) {
+    auto& tables = dynamic_cast<connector::hive::LocalHiveConnectorMetadata*>(connector_->metadata())->tables();
+    for (auto& pair : tables) {
       planner_->registerTable(pair.first, pair.second->rowType());
     }
     planner_->registerTableScan(
@@ -282,8 +282,6 @@ class VeloxRunner {
             const std::vector<std::string>& columnNames) {
           return toTableScan(id, name, rowType, columnNames);
         });
-    splitSourceFactory_ = std::make_shared<LocalSplitSourceFactory>(
-        schema_, FLAGS_num_splits_per_file);
     history_ = std::make_unique<facebook::velox::optimizer::VeloxHistory>();
     executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
         FLAGS_num_drivers * 2 + 2);
@@ -301,7 +299,7 @@ class VeloxRunner {
     std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
         assignments;
 
-    auto table = schema_->findTable(name);
+    auto table = hiveConnector_->metadata()->findTable(name);
     for (auto i = 0; i < rowType->size(); ++i) {
       auto projectedName = rowType->nameOf(i);
       auto& columnName = columnNames[i];
@@ -655,8 +653,7 @@ class VeloxRunner {
   std::shared_ptr<folly::IOThreadPoolExecutor> spillExecutor_;
   std::shared_ptr<core::QueryCtx> schemaQueryCtx_;
   std::shared_ptr<connector::ConnectorQueryCtx> connectorQueryCtx_;
-  std::shared_ptr<facebook::velox::runner::LocalSchema> schema_;
-  std::shared_ptr<LocalSplitSourceFactory> splitSourceFactory_;
+  std::shared_ptr<Connector> connector_;
   std::unique_ptr<facebook::velox::optimizer::VeloxHistory> history_;
   std::unique_ptr<core::DuckDbQueryPlanner> planner_;
   std::unordered_map<std::string, std::string> config_;

@@ -39,6 +39,28 @@ RowVectorPtr LocalRunner::next() {
   return cursor_->current();
 }
 
+namespace {
+std::vector<exec::Split> listAllSplits(
+    std::shared_ptr<connector::SplitSource> source) {
+  std::vector<exec::Split> result;
+  bool done = false;
+  for (;;) {
+    auto splits = source->getSplits(std::numeric_limits<uint64_t>::max());
+    for (auto& split : splits) {
+      if (split.split == nullptr) {
+        done = true;
+        break;
+      }
+      result.push_back(exec::Split(std::move(split.split)));
+    }
+    if (done) {
+      break;
+    }
+  }
+  return result;
+}
+} // namespace
+
 void LocalRunner::start() {
   VELOX_CHECK_EQ(state_, State::kInitialized);
   auto lastStage = makeStages();
@@ -47,12 +69,8 @@ void LocalRunner::start() {
   stages_.push_back({cursor->task()});
   // Add table scan splits to the final gathere stage.
   for (auto& scan : fragments_.back().scans) {
-    auto source = splitSourceFactory_->splitSourceForScan(*scan);
-    for (;;) {
-      auto split = source->next(0);
-      if (!split.hasConnectorSplit()) {
-        break;
-      }
+    auto splits = listAllSplits(splitSourceForScan(*scan));
+    for (auto& split : splits) {
       cursor->task()->addSplit(scan->id(), std::move(split));
     }
     cursor->task()->noMoreSplits(scan->id());
@@ -80,6 +98,16 @@ void LocalRunner::start() {
     abort();
     std::rethrow_exception(error_);
   }
+}
+
+std::shared_ptr<connector::SplitSource> LocalRunner::splitSourceForScan(
+    const core::TableScanNode& scan) {
+  auto handle = scan.tableHandle();
+  auto connector = connector::getConnector(handle->connectorId());
+  auto partitions =
+      connector->metadata()->splitManager()->listPartitions(handle);
+  return connector->metadata()->splitManager()->getSplitSource(
+      handle, partitions);
 }
 
 void LocalRunner::abort() {
@@ -181,12 +209,7 @@ LocalRunner::makeStages() {
        ++fragmentIndex) {
     auto& fragment = fragments_[fragmentIndex];
     for (auto& scan : fragment.scans) {
-      auto handle = scan->tableHandle();
-      auto connector = connector::getConnector(handle->connectorId());
-      auto partitions =
-          connector->metadata()->splitManager()->listPartitions(handle);
-      auto source = connector->metadata()->splitManager()->getSplitSource(
-          handle, partitions);
+      auto source = splitSourceForScan(*scan);
       std::vector<connector::SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
       auto nextSplit = [&]() {

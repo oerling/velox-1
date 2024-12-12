@@ -185,6 +185,8 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
  public:
   LocalHiveConnectorMetadata(HiveConnector* hiveConector);
 
+  void initialize() override;
+  
   const Table* findTable(const std::string& name) override;
 
   ConnectorSplitManager* splitManager() override {
@@ -203,15 +205,23 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
     return hiveConnector_;
   }
 
+  /// returns the set of known tables. This is not part of the
+  /// ConnectorMetadata API. This This is only needed for running the
+  /// DuckDB parser on testing queries since the latter needs a set of
+  /// tables for name resolution.
+  const std::unordered_map<std::string, std::unique_ptr<LocalTable>>& tables() const {
+    return tables_;
+  }
+  
  private:
   void makeQueryCtx();
   void makeConnectorQueryCtx();
-  void initialize(const std::string& path);
+  void readTables(const std::string& path);
 
   void loadTable(const std::string& tableName, const fs::path& tablePath);
 
   HiveConnector* const hiveConnector_;
-  const HiveConfig* const hiveConfig_;
+  std::shared_ptr<HiveConfig> hiveConfig_;
   std::shared_ptr<memory::MemoryPool> rootPool_{
       memory::memoryManager()->addRootPool()};
   std::shared_ptr<memory::MemoryPool> schemaPool_;

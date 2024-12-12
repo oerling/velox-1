@@ -97,9 +97,10 @@ std::vector<SplitSource::SplitAndGroup> LocalHiveSplitSource::getSplits(
 LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
     HiveConnector* hiveConnector)
     : hiveConnector_(hiveConnector),
-      hiveConfig_(dynamic_cast<const HiveConfig*>(
-          hiveConnector_->connectorConfig().get())),
-      splitManager_(this) {
+      hiveConfig_(std::make_shared<HiveConfig>(hiveConnector_->connectorConfig())),
+      splitManager_(this) {}
+
+  void LocalHiveConnectorMetadata::initialize() {
   auto formatName = hiveConfig_->localDefaultFileFormat();
   auto path = hiveConfig_->localDataPath();
   format_ = formatName == "dwrf" ? dwio::common::FileFormat::DWRF
@@ -107,7 +108,7 @@ LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
                                  : dwio::common::FileFormat::UNKNOWN;
   makeQueryCtx();
   makeConnectorQueryCtx();
-  initialize(path);
+  readTables(path);
 }
 
 void LocalHiveConnectorMetadata::makeQueryCtx() {
@@ -147,7 +148,7 @@ void LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
       queryCtx_->queryConfig().sessionTimezone());
 }
 
-void LocalHiveConnectorMetadata::initialize(const std::string& path) {
+void LocalHiveConnectorMetadata::readTables(const std::string& path) {
   for (auto const& dirEntry : fs::directory_iterator{path}) {
     if (!dirEntry.is_directory() ||
         dirEntry.path().filename().c_str()[0] == '.') {
@@ -537,22 +538,5 @@ const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
   }
   return it->second.get();
 }
-
-namespace {
-std::unique_ptr<LocalHiveConnectorMetadata> localHiveConnectorMetadataFactory(
-    HiveConnector* connector) {
-  auto* hiveConfig =
-      dynamic_cast<const HiveConfig*>(connector->connectorConfig().get());
-  VELOX_CHECK_NOT_NULL(hiveConfig);
-  auto path = hiveConfig->localDataPath();
-  if (path.empty()) {
-    return nullptr;
-  }
-  return std::make_unique<LocalHiveConnectorMetadata>(connector);
-}
-
-bool dummy =
-    registerHiveConnectorMetadataFactory(localHiveConnectorMetadataFactory);
-} // namespace
 
 } // namespace facebook::velox::connector::hive

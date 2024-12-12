@@ -21,6 +21,7 @@
 #include "velox/connectors/hive/HiveDataSink.h"
 #include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
+#include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
@@ -57,6 +58,9 @@ HiveConnector::HiveConnector(
   for (auto& factory : hiveConnectorMetadataFactories()) {
     metadata_ = factory(this);
     if (metadata_ != nullptr) {
+      // Two-phase construction. The Connector and ConnectorMetadata need to be
+      // coupled to finalize metadata setup.
+      metadata_->initialize();
       break;
     }
   }
@@ -287,5 +291,20 @@ bool registerHiveConnectorMetadataFactory(
   hiveConnectorMetadataFactories().push_back(factory);
   return true;
 }
+
+namespace {
+std::unique_ptr<LocalHiveConnectorMetadata> localHiveConnectorMetadataFactory(
+    HiveConnector* connector) {
+  auto hiveConfig = std::make_shared<HiveConfig>(connector->connectorConfig());
+  auto path = hiveConfig->localDataPath();
+  if (path.empty()) {
+    return nullptr;
+  }
+  return std::make_unique<LocalHiveConnectorMetadata>(connector);
+}
+
+bool dummy =
+    registerHiveConnectorMetadataFactory(localHiveConnectorMetadataFactory);
+} // namespace
 
 } // namespace facebook::velox::connector::hive
