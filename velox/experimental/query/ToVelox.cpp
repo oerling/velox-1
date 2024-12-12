@@ -67,7 +67,7 @@ void filterUpdated(BaseTableCP table) {
   for (int32_t i = 0; i < dataColumns->size(); ++i) {
     // Add subfield pruning here.
     columns.push_back(
-		      connector->createColumnHandle(*layout, dataColumns->nameOf(i)));
+        connector->createColumnHandle(*layout, dataColumns->nameOf(i)));
   }
   auto allFilters = std::move(pushdownConjuncts);
   if (remainingFilter) {
@@ -75,7 +75,7 @@ void filterUpdated(BaseTableCP table) {
   }
   std::vector<core::TypedExprPtr> rejectedFilters;
   auto handle = connector->createTableHandle(
-					     *layout,
+      *layout,
       columns,
       *optimization->evaluator(),
       std::move(allFilters),
@@ -565,7 +565,7 @@ core::PlanNodePtr Optimization::makeFragment(
         assignments[column->toString()] =
             std::const_pointer_cast<connector::ColumnHandle>(
                 scan->index->layout->connector()->createColumnHandle(
-								     *scan->index->layout, column->name()));
+                    *scan->index->layout, column->name()));
       }
       auto scanNode = std::make_shared<core::TableScanNode>(
           nextId(*op),

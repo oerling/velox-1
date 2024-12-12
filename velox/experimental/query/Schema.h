@@ -436,10 +436,7 @@ struct SchemaTable {
 class Schema {
  public:
   /// Constructs a testing schema without runner schema.
-  Schema(
-      Name _name,
-      std::vector<SchemaTableCP> tables,
-      LocusCP locus);
+  Schema(Name _name, std::vector<SchemaTableCP> tables, LocusCP locus);
 
   /// Constructs a Schema for producing executable plans, backed by 'source'.
   Schema(Name _name, velox::runner::Schema* source, LocusCP locus);

@@ -86,16 +86,14 @@ Schema::Schema(
     const char* _name,
     std::vector<SchemaTableCP> tables,
     LocusCP locus)
-  : name_(_name), defaultLocus_(locus) {
+    : name_(_name), defaultLocus_(locus) {
   for (auto& table : tables) {
     tables_[table->name] = table;
   }
 }
 
-  Schema::Schema(const char* _name, velox::runner::Schema* source, LocusCP locus)
-    : name_(_name),
-      source_(source),
-      defaultLocus_(locus) {}
+Schema::Schema(const char* _name, velox::runner::Schema* source, LocusCP locus)
+    : name_(_name), source_(source), defaultLocus_(locus) {}
 
 SchemaTableCP Schema::findTable(std::string_view name) const {
   auto internedName = toName(name);

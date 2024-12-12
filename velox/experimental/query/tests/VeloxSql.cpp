@@ -483,7 +483,8 @@ class VeloxRunner {
         queryCtx.get(), optimizerPool_.get());
     MultiFragmentPlanPtr fragmentedPlan;
     try {
-      facebook::velox::optimizer::Schema veraxSchema("test", schema_.get(), &locus);
+      facebook::velox::optimizer::Schema veraxSchema(
+          "test", schema_.get(), &locus);
       facebook::velox::optimizer::Optimization opt(
           *plan, veraxSchema, *history_, evaluator, FLAGS_optimizer_trace);
       auto best = opt.bestPlan();
@@ -508,8 +509,7 @@ class VeloxRunner {
     facebook::velox::optimizer::queryCtx() = nullptr;
     RunStats runStats;
     try {
-      runner = std::make_shared<LocalRunner>(
-          fragmentedPlan, queryCtx);
+      runner = std::make_shared<LocalRunner>(fragmentedPlan, queryCtx);
       std::vector<RowVectorPtr> results;
       runInner(*runner, results, runStats);
 
