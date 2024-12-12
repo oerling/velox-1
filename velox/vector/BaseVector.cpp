@@ -189,7 +189,7 @@ VectorPtr BaseVector::wrapInDictionary(
       size,
       std::move(vector));
 
-  if (shouldFlatten) {
+  if (false /*shouldFlatten*/) {
     BaseVector::flattenVector(result);
   }
 
