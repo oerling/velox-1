@@ -24,105 +24,111 @@
 
 namespace facebook::velox::connector::hive {
 
-  std::vector<std::shared_ptr<PartitionHandle>> LocalHiveSplitManager::listPartitions(
-										      const ConnectorTableHandle& tableHandle) {
-    // 
-    return {std::make_shared<HivePartitionHandle>({}, std::nullopt)};
-  }
+std::vector<std::shared_ptr<const PartitionHandle>>
+LocalHiveSplitManager::listPartitions(
+    const ConnectorTableHandlePtr& tableHandle) {
+  // All tables are unpartitioned.
+  std::unordered_map<std::string, std::optional<std::string>> empty;
+  return {std::make_shared<HivePartitionHandle>(empty, std::nullopt)};
+}
 
+std::shared_ptr<SplitSource> LocalHiveSplitManager::getSplitSource(
+    const ConnectorTableHandlePtr& tableHandle,
+    std::vector<std::shared_ptr<const PartitionHandle>> partitions) {
+  // Since there are only unpartitioned tables now, always makes a SplitSource
+  // that goes over all the files in the handle's layout.
+  auto tableName = tableHandle->tableName();
+  auto* metadata = getConnector(tableHandle->connectorId())->metadata();
+  auto* table = metadata->findTable(tableName);
+  VELOX_CHECK_NOT_NULL(
+      table, "Could not find {} in its ConnectorMetadata", tableName);
+  auto* layout = dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0]);
+  VELOX_CHECK_NOT_NULL(layout);
+  auto files = layout->files();
+  return std::make_shared<LocalHiveSplitSource>(
+      files, 2, layout->fileFormat(), layout->connector()->connectorId());
+}
 
-  std::shared_ptr<SplitSource> LocalHiveSplitManager::getSplitSource(
-					      const ConnectorTableHandle& tableHandle,
-					      std::vector<std::shared_ptr<PartitionHandle>> partitions) {
-    // Since there are only unpartitioned tables now, always makes a SplitSource that goes over all the files in the handle's layout.
-    auto tableName = handle->tableName();
-    auto* metadata = getConnector(tableHandle->connectorId())->metadata();
-    auto* table = metadata->findTable(tableName);
-    VELOX_CHECK_NOT_NULL(table, "Could not find {} in its ConnectorMetadata", tableName);
-    auto* layout = dynamic_cast<const LocalHiveTableLayout*>(table->layouts()[0]);
-    VELOX_CHECK_NOT_NULL(layout);
-    auto files = <*>(llayout)->files();
-    return std::make_shared<LocalHiveSplitSource>(files, 2, layout->fileFormat());
-  }
-
-  
-
-  std::vector<SplitAndGroup> getSplits(uint64_t targetBytes) {
-    std::vector<SplitAndGroup> result;
-    uint64_t bytes = 0;
-    for (;;) { 
-      if (currentFile_ >= static_cast<int32_t>(files_.size())) {
-	result.push_back(SplitAndGroup{nullptr, std::nullopt});
-	return result;
-      }
-
-      if (currentSplit_ >= fileSplits_.size()) {
-	fileSplits_.clear();
-	++currentFile_;
-    if (currentFile_ >= files_.size()) {
-      result.push_back(SplitAndGroup{nullptr, std::nullopt});
+std::vector<SplitSource::SplitAndGroup> LocalHiveSplitSource::getSplits(
+    uint64_t targetBytes) {
+  std::vector<SplitAndGroup> result;
+  uint64_t bytes = 0;
+  for (;;) {
+    if (currentFile_ >= static_cast<int32_t>(files_.size())) {
+      result.push_back(SplitSource::SplitAndGroup{nullptr, 0});
       return result;
     }
 
-    currentSplit_ = 0;
-    auto filePath = files_[currentFile_];
-    const auto fileSize = fs::file_size(filePath);
-    // Take the upper bound.
-    const int splitSize = std::ceil((fileSize) / splitsPerFile_);
-    for (int i = 0; i < splitsPerFile_; ++i) {
-      fileSplits_.push_back(
-          connector::hive::HiveConnectorSplitBuilder(filePath)
-              .connectorId(layout_->connector()->connectorId())
-              .fileFormat(fileFormat_)
-              .start(i * splitSize)
-              .length(splitSize)
-              .build());
-    }
-  }
-      result.push_back(std::move(fileSplits_[currentSplit_++]));
-      bytes += result.back()->length;
-      if (bytes > targetBytes) {
-	return result;
+    if (currentSplit_ >= fileSplits_.size()) {
+      fileSplits_.clear();
+      ++currentFile_;
+      if (currentFile_ >= files_.size()) {
+        result.push_back(SplitSource::SplitAndGroup{nullptr, 0});
+        return result;
+      }
+
+      currentSplit_ = 0;
+      auto filePath = files_[currentFile_];
+      const auto fileSize = fs::file_size(filePath);
+      // Take the upper bound.
+      const int splitSize = std::ceil((fileSize) / splitsPerFile_);
+      for (int i = 0; i < splitsPerFile_; ++i) {
+        fileSplits_.push_back(
+            connector::hive::HiveConnectorSplitBuilder(filePath)
+                .connectorId(connectorId_)
+                .fileFormat(format_)
+                .start(i * splitSize)
+                .length(splitSize)
+                .build());
       }
     }
+    result.push_back(SplitAndGroup{std::move(fileSplits_[currentSplit_++]), 0});
+    bytes +=
+        reinterpret_cast<const HiveConnectorSplit*>(result.back().split.get())
+            ->length;
+    if (bytes > targetBytes) {
+      return result;
+    }
   }
-  
+}
+
 LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
-						       HiveConnector* hiveConnector) 
-  : hiveConnector_(hiveConnector),
-    hiveConfig_(dynamic_cast<const HiveConfig*>(hiveConnector_->connectorConfig().get()) {
-	auto formatName = hiveConfig->defaultLocalFileFormat();
-  auto path = config->localDataPath();
-  format_ = formatName == "dwrf" ? dwio::common::FileFormat::DWRF : formatName == "parquet" ? dwio::common::FileFormat::PARQUET : dwio::common::FileFormat::UNKNOWN;
-  makeQueryCtx()),
-      makeConnectorQueryCtx();
-      initialize(path);
+    HiveConnector* hiveConnector)
+    : hiveConnector_(hiveConnector),
+      hiveConfig_(dynamic_cast<const HiveConfig*>(
+          hiveConnector_->connectorConfig().get())),
+      splitManager_(this) {
+  auto formatName = hiveConfig_->localDefaultFileFormat();
+  auto path = hiveConfig_->localDataPath();
+  format_ = formatName == "dwrf" ? dwio::common::FileFormat::DWRF
+      : formatName == "parquet"  ? dwio::common::FileFormat::PARQUET
+                                 : dwio::common::FileFormat::UNKNOWN;
+  makeQueryCtx();
+  makeConnectorQueryCtx();
+  initialize(path);
 }
 
 void LocalHiveConnectorMetadata::makeQueryCtx() {
-  auto config = config_;
-  auto hiveConfig = hiveConfig_;
+
+  auto config = std::make_shared<<config::ConfigBase>();
   std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
       connectorConfigs;
   auto copy = *hiveConfig_;
   connectorConfigs[kHiveConnectorId] =
-    std::make_shared<config::ConfigBase>(std::move(copy));
+      std::make_shared<config::ConfigBase>(std::move(copy));
 
   return core::QueryCtx::create(
-				hiveConnector_->executor().get(),
+      hiveConnector_->executor().get(),
       core::QueryConfig(config),
       std::move(connectorConfigs),
       cache::AsyncDataCache::getInstance(),
       rootPool_->shared_from_this(),
       nullptr,
-				"local_hive_metadata");
+      "local_hive_metadata");
 }
 
-
-
-  void LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
-    
-    auto schemaQueryCtx = makeQueryCtx();
+void LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
+  auto schemaQueryCtx = makeQueryCtx();
   common::SpillConfig spillConfig;
   common::PrefixSortConfig prefixSortConfig(100, 130);
   auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
@@ -141,10 +147,9 @@ void LocalHiveConnectorMetadata::makeQueryCtx() {
       0,
       schemaQueryCtx->queryConfig().sessionTimezone());
   auto connector = connector::getConnector(kHiveConnectorId);
-;
-  }
-  
-  
+  ;
+}
+
 void LocalHiveConnectorMetadata::initialize(const std::string& path) {
   for (auto const& dirEntry : fs::directory_iterator{path}) {
     if (!dirEntry.is_directory() ||
@@ -154,6 +159,7 @@ void LocalHiveConnectorMetadata::initialize(const std::string& path) {
     loadTable(dirEntry.path().filename(), dirEntry.path());
   }
 }
+
 // Feeds the values in 'vector' into 'builder'.
 template <typename Builder, typename T>
 void addStats(
@@ -528,25 +534,28 @@ const std::unordered_map<std::string, const Column*>& LocalTable::columnMap()
   return exportedColumns_;
 }
 
-  const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
+const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
+  auto it = tables_.find(name);
+  if (it == tables_.end()) {
+    return nullptr;
   }
+  return it.second.get();
+}
 
-  ConnectorSplitManager* LocalHiveConnectorMetadata::splitManager() {}
-
-
-  
 namespace {
-  std::unique_ptr<LocalHiveMetadataConnector> localHiveMetadataConnectorFactory(HiveConnector* connector) {
-    auto hiveConfig = dynamic_cast<HiveConfig*>(connector->connectorConfig().get());
-    VELOX_CHECK_NOT_NULL(hiveConfig);
-    auto path = hiveConfig->loclDataPath();
-    if (path.empty()) {
-      return nullptr;
-    }
-    return std::make_unique<LocalHiveConnectorMetadata>(connector);
+std::unique_ptr<LocalHiveMetadataConnector> localHiveMetadataConnectorFactory(
+    HiveConnector* connector) {
+  auto hiveConfig =
+      dynamic_cast<HiveConfig*>(connector->connectorConfig().get());
+  VELOX_CHECK_NOT_NULL(hiveConfig);
+  auto path = hiveConfig->loclDataPath();
+  if (path.empty()) {
+    return nullptr;
   }
+  return std::make_unique<LocalHiveConnectorMetadata>(connector);
+}
 
-    bool dummy = registerConnectorMetadataFactory(localHiveMetadataFactory);
-  }
-  
-} // namespace facebook::velox::runner
+bool dummy = registerConnectorMetadataFactory(localHiveMetadataFactory);
+} // namespace
+
+} // namespace facebook::velox::connector::hive

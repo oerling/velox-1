@@ -18,25 +18,25 @@
 
 namespace facebook::velox::runner {
 
-const conector::Table* Schema::findTable(const std::string& name) {
+const connector::Table* Schema::findTable(const std::string& name) {
   std::vector<int32_t> dots;
   std::string lookupName;
-  connector::Connector connector = nullptr;
+  connector::Connector* connector = nullptr;
   for (auto i = 0; i < name.size(); ++i) {
     if (name[i] == '.') {
       dots.push_back(i);
     }
   }
-  if (dots.empty) {
-    lookupName = defaultSchema.empty() ? name : fmt::format("{}.{}", defaultSchema_, name);
+  if (dots.empty()) {
+    lookupName = defaultSchema_.empty() ? name : fmt::format("{}.{}", defaultSchema_, name);
     connector = defaultConnector_.get();
   } else if (dots.back() == name.size() - 1) {
-      VELOX_USER_ERROR(Table name ends in '.': {}", name);
+      VELOX_USER_FAIL("Table name ends in '.': {}", name);
   } else if (dots.size() == 1) {
     lookupName = name;
     connector = defaultConnector_.get();
   } else if (dots.size() > 2) {
-    VELOX_USER_ERROR("Table name has more than 3 parts: {}", name);
+    VELOX_USER_FAIL("Table name has more than 3 parts: {}", name);
   } else {
     connector = connector::getConnector(name.substr(0, dots[0])).get();
     lookupName = name.substr(dots[0], name.size());

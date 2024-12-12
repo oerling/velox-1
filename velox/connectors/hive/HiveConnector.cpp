@@ -55,7 +55,7 @@ HiveConnector::HiveConnector(
               << " created with file handle cache disabled";
   }
   for (auto& factory : hiveConnectorMetadataFactories()) {
-    metadata_ = factory(hiveConfig_);
+    metadata_ = factory(this);
     if (metadata_ != nullptr) {
       break;
     }
@@ -65,11 +65,12 @@ HiveConnector::HiveConnector(
 namespace {
 HiveColumnHandle::ColumnType columnType(
     const HiveTableLayout& layout,
-    const std::string& columnName) const {
+    const std::string& columnName) {
   auto& columns = layout.hivePartitionColumns();
-  if (std::find(columns_.begin(), columns_.end(), columnName) !=
-      columns_.end()) {
-    return HiveColumnHandle::ColumnType::kPartitionKey;
+  for (auto& c : columns) {
+    if (c->name() == columnName) {
+      return HiveColumnHandle::ColumnType::kPartitionKey;
+    }
   }
   // TODO recognize special names like $path, $bucket etc.
   return HiveColumnHandle::ColumnType::kRegular;
@@ -86,11 +87,12 @@ ColumnHandlePtr HiveConnector::createColumnHandle(
   VELOX_CHECK(subfieldMapping.empty());
   VELOX_CHECK(!castToType.has_value());
   auto* hiveLayout = reinterpret_cast<const HiveTableLayout*>(&layout);
+  auto* column = hiveLayout->findColumn(columnName);
   auto handle = std::make_shared<HiveColumnHandle>(
       columnName,
-      columnType(hiveLayout, columnName),
-      hiveLayout->dataType(columnName),
-      hiveLayout->dataType(columnName),
+      columnType(*hiveLayout, columnName),
+      column->type(),
+      column->type(),
       std::move(subfields));
   return std::dynamic_pointer_cast<const ColumnHandle>(handle);
 }
@@ -142,7 +144,7 @@ ConnectorTableHandlePtr HiveConnector::createTableHandle(
   return std::dynamic_pointer_cast<const ConnectorTableHandle>(
       std::make_shared<HiveTableHandle>(
           connectorId(),
-          hiveLayout->tableName(),
+          hiveLayout->table()->name(),
           true,
           std::move(subfieldFilters),
           remainingFilter,
@@ -275,8 +277,8 @@ void registerHivePartitionFunctionSerDe() {
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
 }
 
-std::vector<HiveConnectorMetadataFactories>& hiveConnectorMetadataFactories() {
-  static std::vector<HiveConnectorMetadataFactories> factories;
+std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories() {
+  static std::vector<HiveConnectorMetadataFactory> factories;
   return factories;
 }
 

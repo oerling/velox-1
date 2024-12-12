@@ -51,10 +51,10 @@ void LocalRunnerTestBase::ensureTestData() {
   if (!files_) {
     makeTables(testTables_, files_);
   }
-  makeSchema();
+  updateConnector();
 }
 
-void LocalRunnerTestBase::makeSchema() {
+void LocalRunnerTestBase::updateConnector() {
 
   common::SpillConfig spillConfig;
   common::PrefixSortConfig prefixSortConfig(100, 130);

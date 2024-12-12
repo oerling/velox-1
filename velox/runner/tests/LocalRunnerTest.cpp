@@ -130,7 +130,7 @@ class LocalRunnerTest : public LocalRunnerTestBase {
     auto scan = makeScanPlan(id, numWorkers);
     auto rootPool = makeRootPool(id);
     auto localRunner = std::make_shared<LocalRunner>(
-        std::move(scan), makeQueryCtx(id, rootPool.get()), splitSourceFactory_);
+        std::move(scan), makeQueryCtx(id, rootPool.get()));
     auto results = readCursor(localRunner);
 
     int32_t count = 0;
@@ -154,7 +154,7 @@ TEST_F(LocalRunnerTest, count) {
   const std::string id = "q1";
   auto rootPool = makeRootPool(id);
   auto localRunner = std::make_shared<LocalRunner>(
-      std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory_);
+      std::move(join), makeQueryCtx(id, rootPool.get()));
   auto results = readCursor(localRunner);
   auto stats = localRunner->stats();
   EXPECT_EQ(1, results.size());
@@ -171,7 +171,7 @@ TEST_F(LocalRunnerTest, error) {
   const std::string id = "q1";
   auto rootPool = makeRootPool(id);
   auto localRunner = std::make_shared<LocalRunner>(
-      std::move(join), makeQueryCtx(id, rootPool.get()), splitSourceFactory_);
+      std::move(join), makeQueryCtx(id, rootPool.get()));
   EXPECT_THROW(readCursor(localRunner), VeloxUserError);
   EXPECT_EQ(Runner::State::kError, localRunner->state());
   localRunner->waitForCompletion(kWaitTimeoutUs);

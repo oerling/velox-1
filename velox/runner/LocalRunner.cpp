@@ -184,7 +184,7 @@ LocalRunner::makeStages() {
       auto handle =scan->tableHandle();
       auto connector = connector::getConnector(handle->connectorId());
       auto partitions = connector->metadata()->splitManager()->listPartitions(handle); 
-      auto source = connector->metadata()->splitManager()->getSplitSource(std::move(partitions));
+      auto source = connector->metadata()->splitManager()->getSplitSource(handle, partitions);
       std::vector<connector::SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
       auto nextSplit = [&}() {

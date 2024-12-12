@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include "velox/common/base/Fs.h"
-#include "velox/common/memory/HashStringAllocator.h"
+#include <string>
 #include "velox/connectors/Connector.h"
+#include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox::runner {
 
@@ -31,14 +31,14 @@ class Schema {
 
   Schema(
       const std::shared_ptr<connector::Connector>& defaultConnector,
-      const STD::STRING& defaultSchema)
+      const std::string& defaultSchema)
       : defaultConnector_(defaultConnector), defaultSchema_(defaultSchema) {}
 
-  virtual const conector::Table* findTable(const std::string& name);
+  virtual const connector::Table* findTable(const std::string& name);
 
  private:
   // Connector to use if name does not specify a catalog.
-  const std::shared_ptr<Connector> defaultConnector_;
+  const std::shared_ptr<connector::Connector> defaultConnector_;
   const std::string defaultSchema_;
 };
 

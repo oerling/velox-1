@@ -15,19 +15,18 @@
  */
 #pragma once
 
-#include "velox/type/Type.h"
-#include "velox/type/Subfield.h"
-#include "velox/type/Variant.h"
 #include "velox/common/memory/HashStringAllocator.h"
+#include "velox/type/Subfield.h"
+#include "velox/type/Type.h"
+#include "velox/type/Variant.h"
 
 namespace facebook::velox::core {
-  // Forward declare because used in sampling and filtering APIs in
-  // abstract Connector. The abstract interface does not depend on
-  // core:: but implementations do.
-  class ITypedExpr;
+// Forward declare because used in sampling and filtering APIs in
+// abstract Connector. The abstract interface does not depend on
+// core:: but implementations do.
+class ITypedExpr;
 using TypedExprPtr = std::shared_ptr<const ITypedExpr>;
 } // namespace facebook::velox::core
-
 
 /// Base classes for schema elements used in execution. A
 /// ConnectorMetadata provides access to table information.  A Table has a
@@ -45,7 +44,7 @@ namespace facebook::velox::connector {
 class Connector;
 class ConnectorTableHandle;
 using ConnectorTableHandlePtr = std::shared_ptr<const ConnectorTableHandle>;
-  class ConnectorSplit;
+class ConnectorSplit;
 /// Represents statistics of a column. The statistics may represent the column
 /// across the table or may be calculated over a sample of a layout of the
 /// table. All fields are optional.
@@ -268,6 +267,15 @@ class TableLayout {
     VELOX_UNSUPPORTED("Table class does not support sampling.");
   }
 
+  const Column* findColumn(const std::string& name) const {
+    for (auto& column : columns_) {
+      if (column->name() == name) {
+        return column;
+      }
+    }
+    return nullptr;
+  }
+
  private:
   const std::string name_;
   const Table* table_;
@@ -289,8 +297,7 @@ class Table {
  public:
   virtual ~Table() = default;
 
-  Table(const std::string& name)
-      : name_(name) {}
+  Table(const std::string& name) : name_(name) {}
 
   const std::string& name() const {
     return name_;
@@ -366,8 +373,8 @@ class ConnectorSplitManager {
   /// partitions in a specific order or distribute them to specific nodes in a
   /// cluster.
   virtual std::shared_ptr<SplitSource> getSplitSource(
-					      const ConnectorTableHandlePtr& tableHandle,
-					      std::vector<std::shared_ptr<const PartitionHandle>> partitions) = 0;
+      const ConnectorTableHandlePtr& tableHandle,
+      std::vector<std::shared_ptr<const PartitionHandle>> partitions) = 0;
 };
 
 class ConnectorMetadata {
