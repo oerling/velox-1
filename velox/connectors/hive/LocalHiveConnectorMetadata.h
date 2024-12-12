@@ -31,8 +31,9 @@ class LocalHiveSplitSource : public SplitSource {
   LocalHiveSplitSource(
       std::vector<std::string> files,
       int32_t splitsPerFile,
-      dwio::common::FileFormat format)
-      : splitsPerFile_(splitsPerFile), format_(format), files_(files) {}
+      dwio::common::FileFormat format,
+      const std::string& connectorId)
+    : splitsPerFile_(splitsPerFile), format_(format), connectorId_(connectorId), files_(files) {}
 
   
   std::vector<SplitSource::SplitAndGroup> getSplits(uint64_t targetBytes) override;
@@ -79,7 +80,7 @@ class LocalHiveTableLayout : public HiveTableLayout {
       std::vector<const Column*> lookupKeys,
       std::vector<const Column*> hivePartitionColumns,
       dwio::common::FileFormat fileFormat,
-      std::optional<int32_t> numBuckets)
+      std::optional<int32_t> numBuckets = std::nullopt)
       : HiveTableLayout(
             name,
             table,
@@ -141,7 +142,7 @@ class LocalTable : public Table {
     type_ = type;
   }
 
-  void makeDefaultLayout(std::vector<std::string> files);
+  void makeDefaultLayout(std::vector<std::string> files, LocalHiveConnectorMetadata& metadata);
 
   uint64_t numRows() const override {
     return numRows_;
@@ -189,6 +190,14 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
     return format_;
   }
 
+  const std::shared_ptr<ConnectorQueryCtx>& connectorQueryCtx() const {
+    return connectorQueryCtx_;
+  }
+
+  HiveConnector* hiveConnector() const {
+    return hiveConnector_;
+  }
+  
  private:
   void makeQueryCtx();
   void makeConnectorQueryCtx();
@@ -200,7 +209,7 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
   const HiveConfig* const hiveConfig_;
   std::shared_ptr<memory::MemoryPool> rootPool_{
       memory::memoryManager()->addRootPool()};
-
+  std::shared_ptr<memory::MemoryPool> schemaPool_;
   std::shared_ptr<core::QueryCtx> queryCtx_;
   std::shared_ptr<ConnectorQueryCtx> connectorQueryCtx_;
   dwio::common::FileFormat format_;

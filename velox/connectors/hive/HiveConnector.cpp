@@ -282,9 +282,10 @@ std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories() {
   return factories;
 }
 
-void registerHiveConnectorMetadataFactory(
+bool registerHiveConnectorMetadataFactory(
     HiveConnectorMetadataFactory factory) {
   hiveConnectorMetadataFactories().push_back(factory);
+  return true;
 }
 
 } // namespace facebook::velox::connector::hive

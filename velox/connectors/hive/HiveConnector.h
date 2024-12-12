@@ -173,6 +173,6 @@ void registerHivePartitionFunctionSerDe();
 
 std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories();
   
-  void registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
+  bool registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
   
 } // namespace facebook::velox::connector::hive

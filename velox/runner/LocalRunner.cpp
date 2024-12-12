@@ -187,7 +187,7 @@ LocalRunner::makeStages() {
       auto source = connector->metadata()->splitManager()->getSplitSource(handle, partitions);
       std::vector<connector::SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
-      auto nextSplit = [&}() {
+      auto nextSplit = [&]() {
 	if (splitIdx < splits.size()) {
 	  return exec::Split(std::move(splits[splitIdx++].split));
 	}

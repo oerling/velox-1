@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/LocalHiveConnectorMetadata.h"
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
@@ -21,6 +22,7 @@
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/dwrf/common/Statistics.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::connector::hive {
 
@@ -109,16 +111,14 @@ LocalHiveConnectorMetadata::LocalHiveConnectorMetadata(
 }
 
 void LocalHiveConnectorMetadata::makeQueryCtx() {
-
-  auto config = std::make_shared<<config::ConfigBase>();
+  std::unordered_map<std::string, std::string> config;
   std::unordered_map<std::string, std::shared_ptr<config::ConfigBase>>
       connectorConfigs;
-  auto copy = *hiveConfig_;
-  connectorConfigs[kHiveConnectorId] =
-      std::make_shared<config::ConfigBase>(std::move(copy));
+  connectorConfigs[hiveConnector_->connectorId()] =
+    std::const_pointer_cast<config::ConfigBase>(hiveConfig_->config());
 
-  return core::QueryCtx::create(
-      hiveConnector_->executor().get(),
+  queryCtx_ = core::QueryCtx::create(
+      hiveConnector_->executor(),
       core::QueryConfig(config),
       std::move(connectorConfigs),
       cache::AsyncDataCache::getInstance(),
@@ -128,26 +128,23 @@ void LocalHiveConnectorMetadata::makeQueryCtx() {
 }
 
 void LocalHiveConnectorMetadata::makeConnectorQueryCtx() {
-  auto schemaQueryCtx = makeQueryCtx();
   common::SpillConfig spillConfig;
   common::PrefixSortConfig prefixSortConfig(100, 130);
-  auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
+  schemaPool_ = queryCtx_->pool()->addLeafChild("schemaReader");
   connectorQueryCtx_ = std::make_shared<connector::ConnectorQueryCtx>(
-      leafPool.get(),
-      schemaQueryCtx->pool(),
-      schemaQueryCtx->connectorSessionProperties(kHiveConnectorId),
+      schemaPool_.get(),
+      queryCtx_->pool(),
+      queryCtx_->connectorSessionProperties(hiveConnector_->connectorId()),
       &spillConfig,
       prefixSortConfig,
       std::make_unique<exec::SimpleExpressionEvaluator>(
-          schemaQueryCtx.get(), schemaPool_.get()),
-      schemaQueryCtx->cache(),
+          queryCtx_.get(), schemaPool_.get()),
+      queryCtx_->cache(),
       "scan_for_schema",
       "schema",
       "N/a",
       0,
-      schemaQueryCtx->queryConfig().sessionTimezone());
-  auto connector = connector::getConnector(kHiveConnectorId);
-  ;
+      queryCtx_->queryConfig().sessionTimezone());
 }
 
 void LocalHiveConnectorMetadata::initialize(const std::string& path) {
@@ -271,13 +268,12 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
     // shared_ptr to mutable handle.
     auto handleCopy =
         std::const_pointer_cast<connector::ConnectorTableHandle>(tableHandle);
+    auto connectorQueryCtx = reinterpret_cast<LocalHiveConnectorMetadata*>(connector()->metadata())->connectorQueryCtx();
     auto dataSource = connector()->createDataSource(
         outputType,
         handleCopy,
         columnHandles,
-        reinterpret_cast<const LocalSchema*>(table()->schema())
-            ->connectorQueryCtx()
-            .get());
+	connectorQueryCtx.get());
 
     auto split = connector::hive::HiveConnectorSplitBuilder(file)
                      .fileFormat(fileFormat_)
@@ -351,15 +347,14 @@ std::pair<int64_t, int64_t> LocalHiveTableLayout::sample(
   return std::pair(scannedRows, passingRows);
 }
 
-void LocalTable::makeDefaultLayout(std::vector<std::string> files) {
+  void LocalTable::makeDefaultLayout(std::vector<std::string> files, LocalHiveConnectorMetadata& metadata) {
   std::vector<const Column*> columns;
   for (auto i = 0; i < type_->size(); ++i) {
     auto name = type_->nameOf(i);
     columns.push_back(columns_[name].get());
   }
-  auto* localSchema = reinterpret_cast<const LocalSchema*>(schema());
-  auto* connector = localSchema->connector();
-  auto format = localSchema->fileFormat();
+  auto* connector = metadata.hiveConnector();
+  auto format = metadata.fileFormat();
   std::vector<const Column*> empty;
   auto layout = std::make_unique<LocalHiveTableLayout>(
       name_,
@@ -368,10 +363,11 @@ void LocalTable::makeDefaultLayout(std::vector<std::string> files) {
       std::move(columns),
       empty,
       empty,
-      std::vector<core::SortOrder>{},
+      std::vector<SortOrder>{},
       empty,
       empty,
-      format);
+      format,
+      std::nullopt);
   layout->setFiles(std::move(files));
   exportedLayouts_.push_back(layout.get());
   layouts_.push_back(std::move(layout));
@@ -399,10 +395,10 @@ void LocalHiveConnectorMetadata::loadTable(
       table = reinterpret_cast<LocalTable*>(it->second.get());
     } else {
       tables_[tableName] =
-          std::make_unique<LocalTable>(tableName, format_, this);
-      table = reinterpret_cast<LocalTable*>(tables_[tableName].get());
+          std::make_unique<LocalTable>(tableName, format_);
+      table = tables_[tableName].get();
     }
-    dwio::common::ReaderOptions readerOptions{pool_};
+    dwio::common::ReaderOptions readerOptions{schemaPool_.get()};
     readerOptions.setFileFormat(format_);
     auto input = std::make_unique<dwio::common::BufferedInput>(
         std::make_shared<LocalReadFile>(dirEntry.path().string()),
@@ -425,13 +421,13 @@ void LocalHiveConnectorMetadata::loadTable(
     }
     for (auto i = 0; i < fileType->size(); ++i) {
       auto name = fileType->nameOf(i);
-      LocalColumn* column;
+      Column* column;
       auto columnIt = table->columns().find(name);
       if (columnIt != table->columns().end()) {
         column = columnIt->second.get();
       } else {
         table->columns()[name] =
-            std::make_unique<LocalColumn>(name, fileType->childAt(i));
+            std::make_unique<Column>(name, fileType->childAt(i));
         column = table->columns()[name].get();
       }
       // Initialize the stats from the first file.
@@ -452,8 +448,8 @@ void LocalHiveConnectorMetadata::loadTable(
   VELOX_CHECK_NOT_NULL(table, "Table directory {} is empty", tablePath);
 
   table->setType(tableType);
-  table->makeDefaultLayout(std::move(files));
-  table->sampleNumDistincts(2, pool_);
+  table->makeDefaultLayout(std::move(files), *this);
+  table->sampleNumDistincts(2, schemaPool_.get());
 }
 
 void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
@@ -466,16 +462,15 @@ void LocalTable::sampleNumDistincts(float samplePct, memory::MemoryPool* pool) {
   auto allocator = std::make_unique<HashStringAllocator>(pool);
   auto* layout = layouts_[0].get();
   std::vector<connector::ColumnHandlePtr> columns;
-  auto metadata = layout->metadata();
   for (auto i = 0; i < type_->size(); ++i) {
     columns.push_back(
-        layout->connector()->createColumnHandle(*metadata, type_->nameOf(i)));
+        layout->connector()->createColumnHandle(*layout, type_->nameOf(i)));
   }
-  auto* localSchema = dynamic_cast<const LocalSchema*>(schema());
-  auto& evaluator = *localSchema->connectorQueryCtx()->expressionEvaluator();
+  auto* metadata = dynamic_cast<const LocalHiveConnectorMetadata*>(layout->connector()->metadata());
+  auto& evaluator = *metadata->connectorQueryCtx()->expressionEvaluator();
   std::vector<core::TypedExprPtr> ignore;
   auto handle = layout->connector()->createTableHandle(
-      *metadata, columns, evaluator, {}, ignore);
+						       *layout, columns, evaluator, {}, ignore);
   std::vector<std::unique_ptr<dwrf::StatisticsBuilder>> statsBuilders;
   auto* localLayout = dynamic_cast<LocalHiveTableLayout*>(layout);
   VELOX_CHECK_NOT_NULL(localLayout, "Expecting a local hive layout");
@@ -539,23 +534,23 @@ const Table* LocalHiveConnectorMetadata::findTable(const std::string& name) {
   if (it == tables_.end()) {
     return nullptr;
   }
-  return it.second.get();
+  return it->second.get();
 }
 
 namespace {
-std::unique_ptr<LocalHiveMetadataConnector> localHiveMetadataConnectorFactory(
+std::unique_ptr<LocalHiveConnectorMetadata> localHiveConnectorMetadataFactory(
     HiveConnector* connector) {
-  auto hiveConfig =
-      dynamic_cast<HiveConfig*>(connector->connectorConfig().get());
+  auto* hiveConfig =
+      dynamic_cast<const HiveConfig*>(connector->connectorConfig().get());
   VELOX_CHECK_NOT_NULL(hiveConfig);
-  auto path = hiveConfig->loclDataPath();
+  auto path = hiveConfig->localDataPath();
   if (path.empty()) {
     return nullptr;
   }
   return std::make_unique<LocalHiveConnectorMetadata>(connector);
 }
 
-bool dummy = registerConnectorMetadataFactory(localHiveMetadataFactory);
+bool dummy = registerHiveConnectorMetadataFactory(localHiveConnectorMetadataFactory);
 } // namespace
 
 } // namespace facebook::velox::connector::hive

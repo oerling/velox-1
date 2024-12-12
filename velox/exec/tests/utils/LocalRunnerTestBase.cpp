@@ -55,7 +55,7 @@ void LocalRunnerTestBase::ensureTestData() {
 }
 
 void LocalRunnerTestBase::updateConnector() {
-
+#if 0
   common::SpillConfig spillConfig;
   common::PrefixSortConfig prefixSortConfig(100, 130);
   auto leafPool = schemaQueryCtx->pool()->addLeafChild("schemaReader");
@@ -73,16 +73,18 @@ void LocalRunnerTestBase::updateConnector() {
       "N/a",
       0,
       schemaQueryCtx->queryConfig().sessionTimezone());
+#endif
   unregisterConnector(kHiveConnectorId);
 
   std::unordered_map<std::string, std::string> configs;
   configs[connector::HiveConfig::kLocalDataPath] = files_->getPath();
+  configs[connector::HiveConfig::kdefaultLocalFileFormat] = "dwrf";
   auto hiveConnector =
   getConnectorFactory(connector::hive::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(
-						   configs),
+						   std::move(configs)),
               ioExecutor_.get());
   connector::registerConnector(hiveConnector);
 
