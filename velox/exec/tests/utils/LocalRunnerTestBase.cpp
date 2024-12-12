@@ -15,8 +15,8 @@
  */
 
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
-#include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/connectors/hive/HiveConfig.h"
+#include "velox/exec/tests/utils/LocalExchangeSource.h"
 
 namespace facebook::velox::exec::test {
 
@@ -62,14 +62,13 @@ void LocalRunnerTestBase::updateConnector() {
   configs[connector::hive::HiveConfig::kLocalDataPath] = files_->getPath();
   configs[connector::hive::HiveConfig::kLocalDefaultFileFormat] = "dwrf";
   auto hiveConnector =
-    connector::getConnectorFactory(connector::hive::HiveConnectorFactory::kHiveConnectorName)
+      connector::getConnectorFactory(
+          connector::hive::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
-              std::make_shared<config::ConfigBase>(
-						   std::move(configs)),
+              std::make_shared<config::ConfigBase>(std::move(configs)),
               ioExecutor_.get());
   connector::registerConnector(hiveConnector);
-
 }
 
 void LocalRunnerTestBase::makeTables(

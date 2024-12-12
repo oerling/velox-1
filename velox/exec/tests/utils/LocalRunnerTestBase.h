@@ -60,9 +60,6 @@ class LocalRunnerTestBase : public HiveConnectorTestBase {
       std::vector<TableSpec> specs,
       std::shared_ptr<TempDirectoryPath>& directory);
 
-
-
-
   // Creates a QueryCtx with 'pool'. 'pool' must be a root pool.
   static std::shared_ptr<core::QueryCtx> makeQueryCtx(
       const std::string& queryId,

@@ -181,19 +181,21 @@ LocalRunner::makeStages() {
        ++fragmentIndex) {
     auto& fragment = fragments_[fragmentIndex];
     for (auto& scan : fragment.scans) {
-      auto handle =scan->tableHandle();
+      auto handle = scan->tableHandle();
       auto connector = connector::getConnector(handle->connectorId());
-      auto partitions = connector->metadata()->splitManager()->listPartitions(handle); 
-      auto source = connector->metadata()->splitManager()->getSplitSource(handle, partitions);
+      auto partitions =
+          connector->metadata()->splitManager()->listPartitions(handle);
+      auto source = connector->metadata()->splitManager()->getSplitSource(
+          handle, partitions);
       std::vector<connector::SplitSource::SplitAndGroup> splits;
       int32_t splitIdx = 0;
       auto nextSplit = [&]() {
-	if (splitIdx < splits.size()) {
-	  return exec::Split(std::move(splits[splitIdx++].split));
-	}
-	splits = source->getSplits(std::numeric_limits<int64_t>::max());
-	splitIdx = 1;
-	return exec::Split(std::move(splits[0].split));
+        if (splitIdx < splits.size()) {
+          return exec::Split(std::move(splits[splitIdx++].split));
+        }
+        splits = source->getSplits(std::numeric_limits<int64_t>::max());
+        splitIdx = 1;
+        return exec::Split(std::move(splits[0].split));
       };
 
       bool allDone = false;

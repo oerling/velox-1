@@ -33,10 +33,13 @@ class LocalHiveSplitSource : public SplitSource {
       int32_t splitsPerFile,
       dwio::common::FileFormat format,
       const std::string& connectorId)
-    : splitsPerFile_(splitsPerFile), format_(format), connectorId_(connectorId), files_(files) {}
+      : splitsPerFile_(splitsPerFile),
+        format_(format),
+        connectorId_(connectorId),
+        files_(files) {}
 
-  
-  std::vector<SplitSource::SplitAndGroup> getSplits(uint64_t targetBytes) override;
+  std::vector<SplitSource::SplitAndGroup> getSplits(
+      uint64_t targetBytes) override;
 
  private:
   const int32_t splitsPerFile_;
@@ -48,12 +51,12 @@ class LocalHiveSplitSource : public SplitSource {
   int32_t currentSplit_{0};
 };
 
-  class LocalHiveConnectorMetadata;
-  
+class LocalHiveConnectorMetadata;
+
 class LocalHiveSplitManager : public ConnectorSplitManager {
  public:
   LocalHiveSplitManager(LocalHiveConnectorMetadata* metadata)
-    : metadata_(metadata) {}
+      : metadata_(metadata) {}
   std::vector<std::shared_ptr<const PartitionHandle>> listPartitions(
       const ConnectorTableHandlePtr& tableHandle) override;
 
@@ -61,7 +64,7 @@ class LocalHiveSplitManager : public ConnectorSplitManager {
       const ConnectorTableHandlePtr& tableHandle,
       std::vector<std::shared_ptr<const PartitionHandle>> partitions) override;
 
-private:
+ private:
   LocalHiveConnectorMetadata* metadata_;
 };
 
@@ -142,7 +145,9 @@ class LocalTable : public Table {
     type_ = type;
   }
 
-  void makeDefaultLayout(std::vector<std::string> files, LocalHiveConnectorMetadata& metadata);
+  void makeDefaultLayout(
+      std::vector<std::string> files,
+      LocalHiveConnectorMetadata& metadata);
 
   uint64_t numRows() const override {
     return numRows_;
@@ -180,12 +185,12 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
  public:
   LocalHiveConnectorMetadata(HiveConnector* hiveConector);
 
-    const Table* findTable(const std::string& name) override;
+  const Table* findTable(const std::string& name) override;
 
   ConnectorSplitManager* splitManager() override {
     return &splitManager_;
   }
-  
+
   dwio::common::FileFormat fileFormat() const {
     return format_;
   }
@@ -197,7 +202,7 @@ class LocalHiveConnectorMetadata : public HiveConnectorMetadata {
   HiveConnector* hiveConnector() const {
     return hiveConnector_;
   }
-  
+
  private:
   void makeQueryCtx();
   void makeConnectorQueryCtx();

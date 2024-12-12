@@ -17,25 +17,14 @@ endif()
 
 velox_add_library(velox_schema Schema.cpp)
 
-velox_link_libraries(
-  velox_schema
-  velox_common_base
-  velox_memory
-  velox_connector)
-
+velox_link_libraries(velox_schema velox_common_base velox_memory
+                     velox_connector)
 
 velox_add_library(velox_multifragment_plan MultiFragmentPlan.cpp)
-velox_link_libraries(
-  velox_multifragment_plan
-  velox_common_base
-  velox_memory
-  velox_core)
+velox_link_libraries(velox_multifragment_plan velox_common_base velox_memory
+                     velox_core)
 
-
-velox_add_library(
-  velox_local_runner
-  LocalRunner.cpp
-  Runner.cpp)
+velox_add_library(velox_local_runner LocalRunner.cpp Runner.cpp)
 
 velox_link_libraries(
   velox_local_runner

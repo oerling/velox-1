@@ -28,10 +28,12 @@ const connector::Table* Schema::findTable(const std::string& name) {
     }
   }
   if (dots.empty()) {
-    lookupName = defaultSchema_.empty() ? name : fmt::format("{}.{}", defaultSchema_, name);
+    lookupName = defaultSchema_.empty()
+        ? name
+        : fmt::format("{}.{}", defaultSchema_, name);
     connector = defaultConnector_.get();
   } else if (dots.back() == name.size() - 1) {
-      VELOX_USER_FAIL("Table name ends in '.': {}", name);
+    VELOX_USER_FAIL("Table name ends in '.': {}", name);
   } else if (dots.size() == 1) {
     lookupName = name;
     connector = defaultConnector_.get();

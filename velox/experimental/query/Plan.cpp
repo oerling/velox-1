@@ -51,8 +51,9 @@ void Optimization::trace(
     RelationOp& plan) {
   if (event & traceFlags_) {
     std::cout << (event == kRetained ? "Retained: " : "Abandoned: ") << id
-              << ":" << " " << succinctNumber(cost.unitCost + cost.setupCost)
-              << " " << plan.toString(true, false) << std::endl;
+              << ":"
+              << " " << succinctNumber(cost.unitCost + cost.setupCost) << " "
+              << plan.toString(true, false) << std::endl;
   }
 }
 

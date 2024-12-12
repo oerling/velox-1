@@ -18,8 +18,8 @@
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/FileHandle.h"
 #include "velox/connectors/hive/HiveConfig.h"
-#include "velox/core/PlanNode.h"
 #include "velox/connectors/hive/HiveConnectorMetadata.h"
+#include "velox/core/PlanNode.h"
 
 namespace facebook::velox::dwio::common {
 class DataSink;
@@ -48,7 +48,7 @@ class HiveConnector : public Connector {
     VELOX_CHECK_NOT_NULL(metadata_);
     return metadata_.get();
   }
-  
+
   ColumnHandlePtr createColumnHandle(
       const TableLayout& layout,
       const std::string& columnName,
@@ -172,7 +172,7 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
 void registerHivePartitionFunctionSerDe();
 
 std::vector<HiveConnectorMetadataFactory>& hiveConnectorMetadataFactories();
-  
-  bool registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
-  
+
+bool registerHiveConnectorMetadataFactory(HiveConnectorMetadataFactory);
+
 } // namespace facebook::velox::connector::hive

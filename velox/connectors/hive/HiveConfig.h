@@ -210,7 +210,7 @@ class HiveConfig {
   static constexpr const char* kCacheNoRetentionSession = "cache.no_retention";
   static constexpr const char* kLocalDataPath = "hive_data";
   static constexpr const char* kLocalDefaultFileFormat = "hive_file_format";
-  
+
   InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const config::ConfigBase* session) const;
 
@@ -301,12 +301,15 @@ class HiveConfig {
   /// locality.
   bool cacheNoRetention(const config::ConfigBase* session) const;
 
-  /// Returns the file system path containing local data. If non-empty, initializes LocalHiveConnectorMetadata to provide metadata for the tables in the directory.
+  /// Returns the file system path containing local data. If non-empty,
+  /// initializes LocalHiveConnectorMetadata to provide metadata for the tables
+  /// in the directory.
   std::string localDataPath() const;
 
-  /// returns the name of the file format to use in interpreting the contents of localDataPath().
+  /// returns the name of the file format to use in interpreting the contents of
+  /// localDataPath().
   std::string localDefaultFileFormat() const;
- 
+
   HiveConfig(std::shared_ptr<const config::ConfigBase> config) {
     VELOX_CHECK_NOT_NULL(
         config, "Config is null for HiveConfig initialization");
