@@ -27,7 +27,7 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
-#include "velox/experimental/query/tests/TpchGen.h"
+#include "velox/experimental/query/tests/ParquetTpchTest.h"
 
 
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
@@ -36,12 +36,13 @@ DEFINE_int32(num_repeats, 1, "Number of repeats for optimization timing");
 
 using namespace facebook::velox;
 using namespace facebook::velox::optimizer;
+using namespace facebook::velox::optimizer::test;
 
 std::string nodeString(core::PlanNode* node) {
   return node->toString(true, true);
 }
 
-class PlanTest : public parquetTpchTest {
+class PlanTest : public ParquetTpchTest {
  protected:
   void SetUp() override {
     memory::MemoryManager::testingSetInstance({});
