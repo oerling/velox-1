@@ -20,6 +20,7 @@ target_link_libraries(
 add_library(
   velox_wave_exec
   AggregateGen.cpp
+  HashGen.cpp
   Aggregation.cpp
   AggregationInstructions.cu
   ExprKernel.cu
