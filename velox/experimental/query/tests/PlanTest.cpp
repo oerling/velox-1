@@ -27,8 +27,8 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/experimental/query/tests/TpchGen.h"
 
-DEFINE_string(data_path, "", "Path to directory for TPC-H files");
 
 DEFINE_int32(trace, 0, "Enable trace 1=retained plans, 2=abandoned, 3=both");
 
@@ -41,7 +41,7 @@ std::string nodeString(core::PlanNode* node) {
   return node->toString(true, true);
 }
 
-class PlanTest : public testing::Test {
+class PlanTest : public parquetTpchTest {
  protected:
   void SetUp() override {
     memory::MemoryManager::testingSetInstance({});
@@ -70,7 +70,7 @@ class PlanTest : public testing::Test {
   }
 
   void makeCheats() {
-    history_->recordLeafSelectivity(
+  history_->recordLeafSelectivity(
         "table: lineitem, range filters: [(l_shipdate, BigintRange: [9205, 9223372036854775807] no nulls)]",
         0.5);
     history_->recordLeafSelectivity(

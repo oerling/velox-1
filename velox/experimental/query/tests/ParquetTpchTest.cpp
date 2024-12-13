@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "velox/experimental/query/tests/TpchGen.h"
+
 
 DEFINE_string(
     data_path,
@@ -23,13 +25,11 @@ DEFINE_string(
     "Path to TPCH data directory. If empty, the test creates a temp directory and deletes it on exit");
 DEFINE_bool(create_dataset, true, "Creates the TPCH tables");
 
+
 namespace facebook::velox::optimizer::test {
 
-qu
-
-    class ParquetTpchTest : public testing::Test {
- protected:
-  static void SetUpTestSuite() {
+  //  static
+  void ParquetTpchTest::SetUpTestSuite() {
     memory::MemoryManager::testingSetInstance({});
 
     duckDb_ = std::make_shared<DuckDbQueryRunner>();
@@ -82,7 +82,9 @@ qu
     tpchBuilder_->initialize(path);
   }
 
-  static void TearDownTestSuite() {
+
+  //  static
+  void TearDownTestSuite() {
     connector::unregisterConnectorFactory(
         connector::hive::HiveConnectorFactory::kHiveConnectorName);
     connector::unregisterConnectorFactory(
@@ -96,7 +98,8 @@ qu
     }
   }
 
-  static void saveTpchTablesAsParquet() {
+  
+  void ParquetTpchTest::saveTpchTablesAsParquet() {
     std::shared_ptr<memory::MemoryPool> rootPool{
         memory::memoryManager()->addRootPool()};
     std::shared_ptr<memory::MemoryPool> pool{rootPool->addLeafChild("leaf")};
@@ -127,15 +130,7 @@ qu
     }
   }
 
-  void assertQuery(
-      int queryId,
-      const std::optional<std::vector<uint32_t>>& sortingKeys = {}) {
-    auto tpchPlan = tpchBuilder_->getQueryPlan(queryId);
-    auto duckDbSql = tpch::getQuery(queryId);
-    assertQuery(tpchPlan, duckDbSql, sortingKeys);
-  }
-
-  std::shared_ptr<Task> assertQuery(
+  std::shared_ptr<Task> ParquetTpchTest::assertQuery(
       const TpchPlan& tpchPlan,
       const std::string& duckQuery,
       const std::optional<std::vector<uint32_t>>& sortingKeys) const {
@@ -164,13 +159,7 @@ qu
         params, addSplits, duckQuery, *duckDb_, sortingKeys);
   }
 
-  static std::shared_ptr<DuckDbQueryRunner> duckDb_;
-  static std::string createPath_;
-  static std::string path_;
-  static std::shared_ptr<TempDirectoryPath> tempDirectory_;
-  static std::shared_ptr<TpchQueryBuilder> tpchBuilder_;
+  
 
-  static constexpr char const* kTpchConnectorId{"test-tpch"};
-};
-
-} // namespace facebook::velox::optimizer::test
+}
+qu
