@@ -835,10 +835,10 @@ void HashProbe::fillOutput(vector_size_t size) {
   for (auto [in, out] : projectedInputColumns_) {
     // Load input vector if it is being split into multiple batches. It is not
     // safe to wrap unloaded LazyVector into two different dictionaries.
-    ensureLoadedIfNotAtEnd(projection.inputChannel);
-    auto inputChild = input_->childAt(projection.inputChannel);
+    ensureLoadedIfNotAtEnd(in);
+    auto inputChild = input_->childAt(in);
 
-    output_->childAt(projection.outputChannel) =
+    output_->childAt(out) =
         wrapOne(size, outputRowMapping_, inputChild, nullptr, state);
   }
 

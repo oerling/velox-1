@@ -288,13 +288,12 @@ void LocalPartition::allocateIndexBuffers(
 }
 
 RowVectorPtr
-wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
-  std::vector<VectorPtr> wrappedChildren;
-  wrappedChildren.reserve(input->type()->size());
+LocalPartition::wrapChildren(const RowVectorPtr& input, vector_size_t size, BufferPtr indices) {
+  VELOX_CHECK_EQ(childVectors_.size(), input->type()->size());
   WrapState state;
   for (auto i = 0; i < input->type()->size(); i++) {
-    wrappedChildren.emplace_back(
-        wrapOne(size, indices, input->childAt(i), nullptr, state));
+    childVectors_[i] =
+        wrapOne(size, indices, input->childAt(i), nullptr, state);
   }
 
   return std::make_shared<RowVector>(
