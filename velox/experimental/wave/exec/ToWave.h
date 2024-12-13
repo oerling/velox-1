@@ -227,7 +227,6 @@ public:
   AggregateGenerator(bool needSync)
     : updateNeedsSync_(needSync) {}
 
-  // True if  caller must ensure exclusive access to the row.
 
   /// Adds includes that may be needed by 'probe' or 'update'. May be called several times and should add the uncludes only once.
   virtual generateInclude(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) {}
@@ -243,6 +242,7 @@ public:
 
     virtual void generateExtract(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
 
+  // True if  caller must ensure exclusive access to the row.
   bool updateNeedsSync() const {
     return updateNeedsSync_;
   }

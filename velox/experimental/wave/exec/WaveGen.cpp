@@ -342,7 +342,9 @@ void Filter::generateMain(CompileState& state) {
   state.clearInRegister();
 }
 
-void AggregateProbe::generateMain(CompileState& state) {}
+void AggregateProbe::generateMain(CompileState& state) {
+
+}
 
 void AggregateUpdate::generateMain(CompileState& state) {}
 

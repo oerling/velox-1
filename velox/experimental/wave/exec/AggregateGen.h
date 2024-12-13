@@ -18,7 +18,7 @@
 
 #include "velox/experimental/wave/exec/ToWave.h"
 
-namespace facebook::velox::exec {
+namespace facebook::velox::wave {
 
 void makeAggregateClass(CompileState* state, const AggregateProbe* probe, const std::vector<const AggregateUpdate*>& updates); 
   

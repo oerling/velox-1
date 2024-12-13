@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 
-namespace facebook::velox::exec {
+namespace facebook::velox::wave {
 
-  class SumAggregate : AggregateGenerator {
-
+  class SimpleAggregate : AggregateGenerator {
+  public:
+    SimpleAggregate(const std::string& binaryFunc)
+      : binaryFunc_(binaryFunc) {}
+      
+  protected:
+    std::string binaryFunc_;
   };
   
   namespace {
-    bool temp = CompileState::registerAggregate("SUM", std::make_unique<SumAggregate>());
+    bool temp = CompileState::registerAggregate("SUM", std::make_unique<SimpleAggregate>("plus"));
   }
   
 }
