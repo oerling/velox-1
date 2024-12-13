@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/wave/exec/AggregateGen.h"
 #include "velox/experimental/wave/exec/Project.h"
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Values.h"
-#include "velox/experimental/wave/exec/AggregateGen.h"
 
 namespace facebook::velox::wave {
 
@@ -305,9 +305,9 @@ int32_t CompileState::wrapLiteral(int32_t nthWrap) {
     if (filter.isBefore(flags.lastUse) && flags.definedIn.isBefore(filter)) {
       auto wrappedAt = flags.wrappedAt;
       if (wrappedAt == AbstractOperand::kNoWrap) {
-	op->wrappedAt = nthWrap;
-	flags.wrappedAt = nthWrap;
-	wrappedAt = nthWrap;
+        op->wrappedAt = nthWrap;
+        flags.wrappedAt = nthWrap;
+        wrappedAt = nthWrap;
       }
       if (wraps.count(wrappedAt)) {
         continue;

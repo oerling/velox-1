@@ -154,39 +154,34 @@ class SumGroupByOps {
   const IAggregate* inst_;
 };
 
- 
-  std::string makeAggregateRow(const AggregatProbe& probe) {
-    std::stringstream out;
-    out << "struct AggregateRow {\n"
-	"  int32_t flags;\n" << std::endl;
-    
-    makeKeyMembers(probe.keys, out);
-    int32_t numNullable = probe.keys.size() + probe.updates.size();
-    auto numFlagWords = bits::roundUp(numNullable, 32) / 32;
-    out << fmt::format("  nullFlags[{}];\n", numFlagWords);
-    for (auto i = 0; i < probe.updates.size(); ++i) {
-      out << probe.updates[i]->generateMember(state, probe, probe.updates[i]) << std::endl;  
-    }
-    out << "};\n\n";
-    return out.str();
-  }
-    
-  void makeAggregateClass(CompileState& state, const AggregateProbe* probe, bool forRead) {
-    auto& out = state.inlines();
-    out << makeAggregateRow(state, probe);
+std::string makeAggregateRow(const AggregatProbe& probe) {
+  std::stringstream out;
+  out << "struct AggregateRow {\n"
+         "  int32_t flags;\n"
+      << std::endl;
 
-    out << "class AggregateFuncs {\n";
-    
-    out << "};\n\n";
+  makeKeyMembers(probe.keys, out);
+  int32_t numNullable = probe.keys.size() + probe.updates.size();
+  auto numFlagWords = bits::roundUp(numNullable, 32) / 32;
+  out << fmt::format("  nullFlags[{}];\n", numFlagWords);
+  for (auto i = 0; i < probe.updates.size(); ++i) {
+    out << probe.updates[i]->generateMember(state, probe, probe.updates[i])
+        << std::endl;
   }
-
-  
+  out << "};\n\n";
+  return out.str();
 }
 
+void makeAggregateClass(
+    CompileState& state,
+    const AggregateProbe* probe,
+    bool forRead) {
+  auto& out = state.inlines();
+  out << makeAggregateRow(state, probe);
 
+  out << "class AggregateFuncs {\n";
 
+  out << "};\n\n";
+}
 
-
-
-
-
+} // namespace facebook::velox::exec

@@ -20,10 +20,8 @@
 
 namespace facebook::velox::wave {
 
-  void makeAggregateClass(CompileState& state, const AggregateProbe* probe);
-  
-  void makeAggregateProbe(CompileState& state, const AggregateProbe* probe);
+void makeAggregateClass(CompileState& state, const AggregateProbe* probe);
 
-}
+void makeAggregateProbe(CompileState& state, const AggregateProbe* probe);
 
-
+} // namespace facebook::velox::wave
