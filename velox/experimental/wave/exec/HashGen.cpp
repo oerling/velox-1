@@ -16,28 +16,28 @@
 
 #include "velox/experimental/wave/exec/HashGen.h"
 
-namespace  facebook::velox::wave {
+namespace facebook::velox::wave {
 
-  void makeKeyMembers(const std::vector<const AbstractOperand*>& keys, std::stringstream& out) {
-    for (auto i = 0; i < keys.size(); ++i) {
-      auto* key = keys[i];
-      out << cudaTypeName(*key->type) << " key" << i << ";\n";
-      
-    }
+void makeKeyMembers(
+    const std::vector<const AbstractOperand*>& keys,
+    std::stringstream& out) {
+  for (auto i = 0; i < keys.size(); ++i) {
+    auto* key = keys[i];
+    out << cudaTypeName(*key->type) << " key" << i << ";\n";
   }
-
-
-  void makeOperandHashFunction(CompileState* state, std::vector<const AbstractOperand*> keys, bool discardNulls, std::stringstream& out) {
-    out << "uint64_t __device__ __forceinline__ hash(Operands** operands, ErrorCode& laneStatus) {\n";
-    
-		       
-  }
-
-  void makeRowHashFunction(std::vector<const AbstractOperand*> keys, bool discardNulls, std::stringstream& out) {
-    
-  }
-
-  
-  
-
 }
+
+void makeOperandHashFunction(
+    CompileState* state,
+    std::vector<const AbstractOperand*> keys,
+    bool discardNulls,
+    std::stringstream& out) {
+  out << "uint64_t __device__ __forceinline__ hash(Operands** operands, ErrorCode& laneStatus) {\n";
+}
+
+void makeRowHashFunction(
+    std::vector<const AbstractOperand*> keys,
+    bool discardNulls,
+    std::stringstream& out) {}
+
+} // namespace facebook::velox::wave

@@ -523,7 +523,7 @@ class Program : public std::enable_shared_from_this<Program> {
   std::unique_ptr<Executable> getExecutable(
       int32_t maxRows,
       const std::vector<std::unique_ptr<AbstractOperand>>& operands);
-  
+
   ThreadBlockProgram* threadBlockProgram() {
     return program_;
   }

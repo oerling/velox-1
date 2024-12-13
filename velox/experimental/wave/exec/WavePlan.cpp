@@ -380,11 +380,11 @@ bool CompileState::tryPlanOperator(
           fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
     }
     read->funcs = std::move(allUpdates);
-    for (auto i =0; i <read.funcs.size(); ++i) {
+    for (auto i = 0; i < read.funcs.size(); ++i) {
       read->funcs[i]->result = fieldToOperand(
           *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
     }
-      segments_.back().steps.push_back(read);
+    segments_.back().steps.push_back(read);
   } else {
     return false;
   }

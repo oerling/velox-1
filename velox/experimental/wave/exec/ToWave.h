@@ -218,50 +218,70 @@ struct Filter : public KernelStep {
   int32_t nthWrap{-1};
 };
 
-  struct AggregateUpdate;
-  struct AggregateProbe;
-  
-  /// Functions for generating different pieces of code for aggregates. Retrieved from registry based on function name and signature. The functions receive all details in 'update'.
+struct AggregateUpdate;
+struct AggregateProbe;
+
+/// Functions for generating different pieces of code for aggregates. Retrieved
+/// from registry based on function name and signature. The functions receive
+/// all details in 'update'.
 class AggregateGenerator {
-public:
-  AggregateGenerator(bool needSync)
-    : updateNeedsSync_(needSync) {}
+ public:
+  AggregateGenerator(bool needSync) : updateNeedsSync_(needSync) {}
 
+  /// Adds includes that may be needed by 'probe' or 'update'. May be called
+  /// several times and should add the uncludes only once.
+  virtual generateInclude(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) {}
 
-  /// Adds includes that may be needed by 'probe' or 'update'. May be called several times and should add the uncludes only once.
-  virtual generateInclude(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) {}
+  /// Adds inline definitions that may be needed by 'probe' or 'update'. May be
+  /// called several times and should add the uncludes only once.
+  virtual generateInline(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update){} {}
 
-  /// Adds inline definitions that may be needed by 'probe' or 'update'. May be called several times and should add the uncludes only once.
-  virtual generateInline(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) {} {}
+  /// Generates a declaration for the accumulator as part of a row.
+  virtual void generateAccumulator(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) = 0;
 
-    /// Generates a declaration for the accumulator as part of a row.
-    virtual void generateAccumulator(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) = 0;
+  /// Generates an update.
+  virtual void generateUpdate(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) const = 0;
 
-    /// Generates an update.
-    virtual void generateUpdate(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
-
-    virtual void generateExtract(CompileState* state, const AggregateProbe* probe, const AggregateUpdate* update) const = 0;
+  virtual void generateExtract(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) const = 0;
 
   // True if  caller must ensure exclusive access to the row.
   bool updateNeedsSync() const {
     return updateNeedsSync_;
   }
-  
-private:
+
+ private:
   const bool updateNeedsSync_;
 };
 
-  ///
+///
 class AggregateRegistry {
-public:
+ public:
   const AggregateGenerator* getGenerator(const AggregateUpdate* update);
 
-  bool registerGenerator(std::string aggregateName, std::unique_ptr<AggregateGenerator> generator);
+  bool registerGenerator(
+      std::string aggregateName,
+      std::unique_ptr<AggregateGenerator> generator);
 
-private:
-  std::unordered_map<std::string, std::unique_ptr<AggregateGenerator>> generators_;
+ private:
+  std::unordered_map<std::string, std::unique_ptr<AggregateGenerator>>
+      generators_;
 };
-  
+
 struct AggregateUpdate : public KernelStep {
   StepKind kind() const override {
     return StepKind::kAggregateUpdate;
@@ -279,7 +299,8 @@ struct AggregateUpdate : public KernelStep {
   std::vector<TypePtr> signature;
   AbstractOperand* rows;
   int32_t accumulatorIdx;
-  // The arguments of the function. Types may differ from 'signature' for steps that take accumulators.
+  // The arguments of the function. Types may differ from 'signature' for steps
+  // that take accumulators.
   std::vector<AbstractOperand*> args;
   AbstractOperand* condition{nullptr};
   bool distinct{false};
@@ -306,10 +327,13 @@ struct AggregateProbe : public KernelStep {
   /// Operand for accessing the row with accumulators in an update.
   AbstractOperand* rows;
 
-  /// All accumulator updates. Needed to generate the definition for the group row.
+  /// All accumulator updates. Needed to generate the definition for the group
+  /// row.
   std::vector<const AggregateUpdate*> updates;
 
-  /// Accumulator updates that are inlined inside the probe code. Updates can also be in a separate, wider kernel that runs different accumulators in a different TB.
+  /// Accumulator updates that are inlined inside the probe code. Updates can
+  /// also be in a separate, wider kernel that runs different accumulators in a
+  /// different TB.
   std::vector<AggregateUpdate*> inlinedUpdates;
 };
 
@@ -638,7 +662,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   static AggregateRegistry& aggregateRegistry() {
     return aggregateRegistry_;
   }
-  
+
   void functionReferenced(const AbstractOperand* op);
 
   std::string segmentString() const;
@@ -662,7 +686,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::stringstream& inlines() {
     return inlines_;
   }
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -926,7 +950,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   // Operands that have a declaration. Set when emitting code.
   OperandSet declared_;
-  
+
   // Mutex serializing the background code generation after missing kernel
   // cache.
   std::mutex generateMutex_;
@@ -947,7 +971,6 @@ inline aggregateRegistry& waveRegistry() {
   return CompileState::aggregateRegistry();
 }
 
-  
 /// Registers adapter to add Wave operators to Drivers.
 void registerWave();
 

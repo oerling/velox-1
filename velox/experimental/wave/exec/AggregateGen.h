@@ -20,8 +20,9 @@
 
 namespace facebook::velox::wave {
 
-void makeAggregateClass(CompileState* state, const AggregateProbe* probe, const std::vector<const AggregateUpdate*>& updates); 
+  void makeAggregateClass(CompileState& state, const AggregateProbe* probe);
   
+  void makeAggregateProbe(CompileState& state, const AggregateProbe* probe);
 
 }
 

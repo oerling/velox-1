@@ -18,6 +18,7 @@
 #include "velox/experimental/wave/exec/TableScan.h"
 #include "velox/experimental/wave/exec/ToWave.h"
 #include "velox/experimental/wave/exec/Values.h"
+#include "velox/experimental/wave/exec/AggregateGen.h"
 
 namespace facebook::velox::wave {
 
@@ -343,7 +344,8 @@ void Filter::generateMain(CompileState& state) {
 }
 
 void AggregateProbe::generateMain(CompileState& state) {
-
+  makeAggregateClass(state, this);
+  makeAggregateProbe(state, this);
 }
 
 void AggregateUpdate::generateMain(CompileState& state) {}

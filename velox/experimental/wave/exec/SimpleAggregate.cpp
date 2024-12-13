@@ -16,20 +16,18 @@
 
 namespace facebook::velox::wave {
 
-  class SimpleAggregate : AggregateGenerator {
-  public:
-    SimpleAggregate(const std::string& binaryFunc)
-      : binaryFunc_(binaryFunc) {}
-      
-  protected:
-    std::string binaryFunc_;
-  };
-  
-  namespace {
-    bool temp = CompileState::registerAggregate("SUM", std::make_unique<SimpleAggregate>("plus"));
-  }
-  
+class SimpleAggregate : AggregateGenerator {
+ public:
+  SimpleAggregate(const std::string& binaryFunc) : binaryFunc_(binaryFunc) {}
+
+ protected:
+  std::string binaryFunc_;
+};
+
+namespace {
+bool temp = CompileState::registerAggregate(
+    "SUM",
+    std::make_unique<SimpleAggregate>("plus"));
 }
 
-
-
+} // namespace facebook::velox::wave

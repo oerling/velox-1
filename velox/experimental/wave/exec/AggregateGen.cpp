@@ -171,9 +171,13 @@ class SumGroupByOps {
     return out.str();
   }
     
-  void makeAggregateClass(CompileState* state, const AggregateProbe* probe, bool forRead) {
-    auto& out = state->inlines();
+  void makeAggregateClass(CompileState& state, const AggregateProbe* probe, bool forRead) {
+    auto& out = state.inlines();
     out << makeAggregateRow(state, probe);
+
+    out << "class AggregateFuncs {\n";
+    
+    out << "};\n\n";
   }
 
   

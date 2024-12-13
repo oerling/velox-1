@@ -21,9 +21,8 @@
 /// Functions for generating device side hash tables and functions on them.
 namespace facebook::velox::wave {
 
+void makeKeyMembers(
+    const std::vector<const AbstractOperand*>& keys,
+    std::stringstream& out);
 
-  void makeKeyMembers(const std::vector<const AbstractOperand*>& keys, std::stringstream& out);
-  
-
-  
 }
