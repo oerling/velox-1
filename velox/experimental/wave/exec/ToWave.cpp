@@ -1,4 +1,4 @@
-sreg /*
+/*
       * Copyright (c) Facebook, Inc. and its affiliates.
       *
       * Licensed under the Apache License, Version 2.0 (the "License");
@@ -764,6 +764,14 @@ bool waveDriverAdapter(
   return state->compile();
 }
 
+const AggregateGenerator* AggregateRegistry::getGenerator(AggregateUpdate* update) {
+  auto it = generators_.find(update->name);
+  if (it == generators_.end()) {
+    VELOX_USER_FAIL("No aggregate {}", update->name);
+  }
+  return it->second.get();
+}
+  
 void registerWave() {
   exec::DriverAdapter waveAdapter{"Wave", {}, waveDriverAdapter};
   exec::DriverFactory::registerAdapter(waveAdapter);

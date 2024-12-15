@@ -367,6 +367,8 @@ bool CompileState::tryPlanOperator(
       func->step = aggregationStep;
       func->name = agg.call->name();
       func->rows = step->rows;
+      func->signature = agg.rawInputTypes;
+      func->generator = aggregateRegistry_->getGenerator(func);
       func->args = std::move(args);
       allUpdates.push_back(func);
     }

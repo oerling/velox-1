@@ -137,9 +137,12 @@ struct AbstractOperand {
   // one wrap for all Operands with the same 'wrappedAt'
   int32_t wrappedAt{kNoWrap};
 
-  /// If true, during code gen, r<id> has the value.
+  /// If true, during code gen, r<ordinal(id)> has the value.
   bool inRegister{false};
 
+  /// During codegen, true if the value is in operands[ordinal(id)]. Applies to expression results. Leaf columns are always stored.
+  bool isStored{false};
+  
   /// Bit field in register with null flags.
   int32_t registerNullBit{kNoNullBit};
 

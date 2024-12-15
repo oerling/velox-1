@@ -27,17 +27,101 @@ void makeKeyMembers(
   }
 }
 
-void makeOperandHashFunction(
-    CompileState* state,
-    std::vector<const AbstractOperand*> keys,
-    bool discardNulls,
+void makeProbeKeyMembers(
+    const std::vector<const AbstractOperand*>& keys,
     std::stringstream& out) {
-  out << "uint64_t __device__ __forceinline__ hash(Operands** operands, ErrorCode& laneStatus) {\n";
+  for (auto i = 0; i < keys.size(); ++i) {
+    auto* key = keys[i];
+    out << cudaTypeName(*key->type) << " key" << i << ";\n";
+  }
+  for (auto n = 0; n < keys.size(); n += 32) {
+    out << fmt::format("  uint32_t nulls{};\n", n)
+  }
 }
 
+  void makeHash(CompileState& state, const std::vector<AbstractOperand*>& keys, bool nullableKeys, std::string nullCode) {
+    auto& out = state.generated();
+    out << "  uint64_t hash = 1;\n";
+    auto& out = state.generated();
+    for (auto i = 0; i < keys.size(); ++i) {
+      auto* op = keys[i];
+      state.ensureOperand(op);
+      if (!nullableKeys && !op->notNull) {
+	out << "  if (" << state.isNull(op) << ") { goto nullKey; }\n";
+      } else {
+	if (!keys[i]->notNull) {
+	  out << fmt::format("  if ({}) {{hash *= hashMix(hash, 13); }} else {{ hash = hashMix(hash, hashValue({})); }}", state.isNull(op),
+			     state.operandRef(op));
+	} else {
+	  out << fmt::format("  hash = hashMix(hash, hashValue({}));\n", state.operandRef(op));
+	}
+      }
+    }
+    if (!nullableKeys) {
+      out << " goto hashDone;\n";
+      << " nullKey: laneStatus = ErrorCode::kInactive;\n"
+	   << nullCode
+	   << "  hashDone: ;\n";
+      
+
+    }
+  }
+
+  void makeCompareLambda(CompileState& state, const std::vector<AbstractOperand>& keys,  bool nullableKeys) {
+    auto& out = state.generated();
+    out << "  [&](HashTableRow* row) -> bool {\n";
+      for (auto i = 0; i < keys.size(); ++i) {
+	auto* op = keys[i];
+	if (nullableKeys && !op->notNull) {
+	  out << fmt::format("  if (({} != (0 == (row->nulls{} & (1U << {})))) return false;\n", state.isNull(op), i / 32, i & 31);
+	}
+	out << fmt::format("  if ({} != row->key{}) return false;\n", state.operandRef(op), i); 
+	}
+    out << "  return true;\n}\n";
+  }
+
+  void makeInitKey(CompileState& state, const std::vector<AbstractOperand*>& keys, bool nullableKeys) {
+    auto& out = state.generated();
+    out << "  [&](HashRow* row) {\n";
+    if (nullableKeys) {
+      for (auto i = 0; i < keys.size(); i += 32) {
+	out << fmt::format("  row->nulls{} = ~0U;\n", i / 32);
+      }
+    }
+
+  for (auto i = 0; i < keys.size(); ++i) {
+    auto op = keys[i];
+    if (nullableKeys) {
+      out << fmt::format("    if ({}) {{ nulls{} &= ~(1U << {});\n", state.isNull(op), i / 32, i & 31);
+    }
+    out << fmt::format("      row->key{} = {};\n", i, state.operandRef(keys[i]));
+    out << "}\n";
+    if (nullableKeys) {
+      out << "}\n"
+	}
+  }
+  out << "}\n";
+}
+
+  
 void makeRowHashFunction(
-    std::vector<const AbstractOperand*> keys,
-    bool discardNulls,
-    std::stringstream& out) {}
+			 CompileState& state,
+			 std::vector<const AbstractOperand*> keys,
+			 bool nullableKeys) {
+  auto& out = state.inlines();
+  out << "  uint64_t hash = 1;\n";
+  for (auto i = 0; i < keys.size(); ++i) {
+    if (nullableKeys) {
+      out << fmt::format("    if (0 == (nulls{} & (1U << {}))) {{ hash = hashMix(hash, 13)); }} else {{", i / 32, i & 32);
+    }
+    out << fmt::format("    hash = hashMix(hash, hashValue(row->key{}));\n", i);
+    if (nullableKeys) {
+      out << "  }}\n";
+    }
+  }
+  out << "  return hash;\n}\n";
+}
+
+
 
 } // namespace facebook::velox::wave

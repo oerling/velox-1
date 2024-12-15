@@ -124,6 +124,17 @@ bool __device__ __forceinline__ valueOrNull(
 }
 
 template <bool kMayWrap, typename T>
+void __device__ __forceinline__ loadValueOrNull(
+    Operand** operands,
+    OperandIndex opIdx,
+    int32_t blockBase,
+    T& value,
+						uint32_t& nulls) {
+  nulls = (nulls & ~(1U << (opIdx & 31))) |
+    (static_cast<uint32_t>(valueOrNull<kMayWrap>(operands, opIdx, blockBase, value)) << (opIdx & 31));
+}
+  
+template <bool kMayWrap, typename T>
 T __device__ __forceinline__
 nonNullOperand(Operand** operands, OperandIndex opIdx, int32_t blockBase) {
   auto op = operands[opIdx];

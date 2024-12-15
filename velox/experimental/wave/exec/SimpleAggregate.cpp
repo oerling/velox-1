@@ -13,19 +13,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/experimental/wave/exec/ToWave.h"
 
 namespace facebook::velox::wave {
 
-class SimpleAggregate : AggregateGenerator {
+class SimpleAggregate : public AggregateGenerator {
  public:
-  SimpleAggregate(const std::string& binaryFunc) : binaryFunc_(binaryFunc) {}
+  explicit SimpleAggregate(const std::string& binaryFunc)
+    : AggregateGenerator(false), binaryFunc_(binaryFunc) {}
+
+  void generateInline(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) override {
+    std::vector<TypePtr> types;
+    state->functionReferenced(binaryFunction, types);
+  }
+
+  std::string generateAccumulator(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) {
+    std::stringstream out;
+    out << cudaTypeName(*update->result->type); << " ";
+    return out.str();
+  }
+
+  virtual std::string generateUpdate(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) const = 0;
+
+  virtual std::string generateExtract(
+      CompileState* state,
+      const AggregateProbe* probe,
+      const AggregateUpdate* update) const = 0;
 
  protected:
   std::string binaryFunc_;
 };
 
 namespace {
-bool temp = CompileState::registerAggregate(
+  bool temp = CompileState::aggregateRegistry().registerGenerator(
     "SUM",
     std::make_unique<SimpleAggregate>("plus"));
 }

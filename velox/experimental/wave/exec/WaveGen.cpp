@@ -210,7 +210,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
         ordinal(op));
   }
 }
-
+  
 void Compute::generateMain(CompileState& state) {
   VELOX_CHECK_NOT_NULL(operand->expr);
   auto& flags = state.flags(*operand);
@@ -226,6 +226,7 @@ void Compute::generateMain(CompileState& state) {
   state.generated() << ");\n";
   operand->inRegister = true;
   if (flags.needStore) {
+    op->isStored = true;
     state.generated() << fmt::format(
         "flatResult<{}>(operands, {}, blockBase) = r{};\n",
         cudaTypeName(*operand->type),
@@ -234,6 +235,38 @@ void Compute::generateMain(CompileState& state) {
   }
 }
 
+  void CompileState::ensureOperand(AbstractOperand* op) {
+    if (op->inRegister) {
+      return;
+    }
+    auto& flags = state.flags(*op);
+    bool mayWrap = state.mayWrap(flags.wrappedAt);
+    if (op->isStored) {
+      auto ord = declareVariable(op);
+      if (op->notNull) {
+	out << fmt::format("  r{} = nonNullOperand<{}>(operands, {}, blockBase);\n", mayWrap, ord, ord);
+      } else {
+	out << fmt::format("  loadValueOrNull<{}>(operands, {}, blockBase, r{}, nulls{});\n", mayWrap, ord, ord, ord / 32);
+      }
+      op->inRegister = true;
+    } else {
+      VELOX_FAIL("Expression should have been generated at this point.");
+    }
+  }
+
+  std::string CompileState::IsNull(AbstractOperand* op) {
+  auto ord = ordinal(op);
+  if (op->inRegister) {
+    return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
+  }
+  
+}
+
+  std::string CompileState::operandValue(AbstractOperand* op) {
+    VELOX_CHECK(op->inRegister);
+    return fmt::format("r{}", ordinal(op));
+  }
+  
 std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   auto ord = ordinal(op);
   if (op.inRegister) {
@@ -275,7 +308,11 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   for (auto i = 0; i < numInput; ++i) {
     types.push_back(op->expr->inputs()[i]->type());
   }
-  FunctionKey key(op->expr->name(), types);
+  functionReferenced(op->expr->name(), types);
+}
+
+  void CompileState::functionReferenced(const std::string& name, const std::vector<TypePtr>& types) {
+  FunctionKey key(name(), types);
 
   if (functions_.count(key)) {
     return;

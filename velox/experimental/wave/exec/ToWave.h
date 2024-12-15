@@ -230,31 +230,31 @@ class AggregateGenerator {
 
   /// Adds includes that may be needed by 'probe' or 'update'. May be called
   /// several times and should add the uncludes only once.
-  virtual generateInclude(
+  virtual void generateInclude(
       CompileState* state,
       const AggregateProbe* probe,
       const AggregateUpdate* update) {}
 
   /// Adds inline definitions that may be needed by 'probe' or 'update'. May be
   /// called several times and should add the uncludes only once.
-  virtual generateInline(
+  virtual void generateInline(
       CompileState* state,
       const AggregateProbe* probe,
-      const AggregateUpdate* update){} {}
+      const AggregateUpdate* update) {}
 
   /// Generates a declaration for the accumulator as part of a row.
-  virtual void generateAccumulator(
+  virtual std::string generateAccumulator(
       CompileState* state,
       const AggregateProbe* probe,
       const AggregateUpdate* update) = 0;
 
   /// Generates an update.
-  virtual void generateUpdate(
+  virtual std::string generateUpdate(
       CompileState* state,
       const AggregateProbe* probe,
       const AggregateUpdate* update) const = 0;
 
-  virtual void generateExtract(
+  virtual std::string generateExtract(
       CompileState* state,
       const AggregateProbe* probe,
       const AggregateUpdate* update) const = 0;
@@ -297,6 +297,10 @@ struct AggregateUpdate : public KernelStep {
   core::AggregationNode::Step step;
   /// The original argument types. Identifies the aggregate.
   std::vector<TypePtr> signature;
+
+  // Class for generating code for the aggregate of 'name' and 'signature'.
+  AggregateGenerator* generator{nullptr};
+
   AbstractOperand* rows;
   int32_t accumulatorIdx;
   // The arguments of the function. Types may differ from 'signature' for steps
@@ -665,6 +669,8 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void functionReferenced(const AbstractOperand* op);
 
+  void functionReferenced(const std::string& name, const std::vector<TypePtr>& types);
+
   std::string segmentString() const;
 
   /// The nthWrap of the last wrap generated into kernel code when emitting the
@@ -687,6 +693,12 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
     return inlines_;
   }
 
+  void ensureOperand(AbstractOperand* op);
+
+  std::string IsNull(AbstractOperand* op);
+
+  std::string operandValue(AbstractOperand* op);
+  
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
@@ -967,7 +979,7 @@ inline WaveRegistry& waveRegistry() {
   return CompileState::registry();
 }
 
-inline aggregateRegistry& waveRegistry() {
+inline AggregateRegistry& aggregateRegistry() {
   return CompileState::aggregateRegistry();
 }
 

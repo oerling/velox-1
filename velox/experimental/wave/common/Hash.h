@@ -132,4 +132,9 @@ struct Hasher<int32_t, uint32_t> : IntHasher32<int32_t> {};
 template <>
 struct Hasher<int64_t, uint32_t> : IntHasher32<int64_t> {};
 
+template <typename T>
+inline WAVE_DEVICE_HOST uint64_t hashValue(T value) {
+  return Hasher<T, uint64_t>()(value);
+}
+  
 } // namespace facebook::velox::wave
