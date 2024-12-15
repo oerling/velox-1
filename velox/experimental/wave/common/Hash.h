@@ -136,5 +136,5 @@ template <typename T>
 inline WAVE_DEVICE_HOST uint64_t hashValue(T value) {
   return Hasher<T, uint64_t>()(value);
 }
-  
+
 } // namespace facebook::velox::wave

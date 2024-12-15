@@ -28,16 +28,30 @@ void makeKeyMembers(
 /// number. 'nullableKeys' is true for group by and false for join. If
 /// 'nullableKeys' is true, 'anyNullCode' is emitted for the case of
 /// at least one null in the keys.
-void makeHash(CompileState& state, const std::vector<AbstractOperand*>& keys, bool nullableKeys, std::string anyNullCode = "");
+void makeHash(
+    CompileState& state,
+    const std::vector<AbstractOperand*>& keys,
+    bool nullableKeys,
+    std::string anyNullCode = "");
 
- /// Emits a lambda for comparing hash table row with probe keys. 'nullableKeys' is true for group by. Te signature is [&](HashRow* row) -> bool.
- void makeCompareLambda(CompileState& state, const std::vector<AbstractOperand*>& keys,  bool nullableKeys);
+/// Emits a lambda for comparing hash table row with probe keys. 'nullableKeys'
+/// is true for group by. Te signature is [&](HashRow* row) -> bool.
+void makeCompareLambda(
+    CompileState& state,
+    const std::vector<AbstractOperand*>& keys,
+    bool nullableKeys);
 
- /// Emits a lambda to initialize a new group by row or keys of a hash join build row. 'nullableKeys' is true for group by. The signature is [&](GroupRow* row).
- void makeInitKey(CompileState& state, const std::vector<AbstractOperand*>& keys, bool nullableKeys);
+/// Emits a lambda to initialize a new group by row or keys of a hash join build
+/// row. 'nullableKeys' is true for group by. The signature is [&](GroupRow*
+/// row).
+void makeInitKey(
+    CompileState& state,
+    const std::vector<AbstractOperand*>& keys,
+    bool nullableKeys);
 
+void makeRowHash(
+    CompileState& state,
+    const std::vector<AbstractOperand*>& keys,
+    bool nullableKeys);
 
- void makeRowHash(CompileState& state, const std::vector<AbstractOperand*>& keys, bool nullableKeys);
- 
- 
-}
+} // namespace facebook::velox::wave

@@ -210,7 +210,7 @@ void CompileState::generateOperand(const AbstractOperand& op) {
         ordinal(op));
   }
 }
-  
+
 void Compute::generateMain(CompileState& state) {
   VELOX_CHECK_NOT_NULL(operand->expr);
   auto& flags = state.flags(*operand);
@@ -235,26 +235,35 @@ void Compute::generateMain(CompileState& state) {
   }
 }
 
-  void CompileState::ensureOperand(AbstractOperand* op) {
-    if (op->inRegister) {
-      return;
-    }
-    auto& flags = this->flags(*op);
-    bool mayWrap = this->mayWrap(flags.wrappedAt);
-    if (op->isStored) {
-      auto ord = declareVariable(*op);
-      if (op->notNull) {
-	generated_ << fmt::format("  r{} = nonNullOperand<{}>(operands, {}, blockBase);\n", mayWrap, ord, ord);
-      } else {
-	generated_ << fmt::format("  loadValueOrNull<{}>(operands, {}, blockBase, r{}, nulls{});\n", mayWrap, ord, ord, ord / 32);
-      }
-      op->inRegister = true;
-    } else {
-      VELOX_FAIL("Expression should have been generated at this point.");
-    }
+void CompileState::ensureOperand(AbstractOperand* op) {
+  if (op->inRegister) {
+    return;
   }
+  auto& flags = this->flags(*op);
+  bool mayWrap = this->mayWrap(flags.wrappedAt);
+  if (op->isStored) {
+    auto ord = declareVariable(*op);
+    if (op->notNull) {
+      generated_ << fmt::format(
+          "  r{} = nonNullOperand<{}>(operands, {}, blockBase);\n",
+          mayWrap,
+          ord,
+          ord);
+    } else {
+      generated_ << fmt::format(
+          "  loadValueOrNull<{}>(operands, {}, blockBase, r{}, nulls{});\n",
+          mayWrap,
+          ord,
+          ord,
+          ord / 32);
+    }
+    op->inRegister = true;
+  } else {
+    VELOX_FAIL("Expression should have been generated at this point.");
+  }
+}
 
-  std::string CompileState::isNull(AbstractOperand* op) {
+std::string CompileState::isNull(AbstractOperand* op) {
   auto ord = ordinal(*op);
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
@@ -262,11 +271,11 @@ void Compute::generateMain(CompileState& state) {
   VELOX_FAIL("Expecting op in register");
 }
 
-  std::string CompileState::operandValue(AbstractOperand* op) {
-    VELOX_CHECK(op->inRegister);
-    return fmt::format("r{}", ordinal(*op));
-  }
-  
+std::string CompileState::operandValue(AbstractOperand* op) {
+  VELOX_CHECK(op->inRegister);
+  return fmt::format("r{}", ordinal(*op));
+}
+
 std::string CompileState::generateIsTrue(const AbstractOperand& op) {
   auto ord = ordinal(op);
   if (op.inRegister) {
@@ -311,7 +320,10 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   functionReferenced(op->expr->name(), types, op->type);
 }
 
-  void CompileState::functionReferenced(const std::string& name, const std::vector<TypePtr>& types, const TypePtr& resultType) {
+void CompileState::functionReferenced(
+    const std::string& name,
+    const std::vector<TypePtr>& types,
+    const TypePtr& resultType) {
   FunctionKey key(name, types);
 
   if (functions_.count(key)) {

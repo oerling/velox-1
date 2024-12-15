@@ -20,7 +20,7 @@ namespace facebook::velox::wave {
 class SimpleAggregate : public AggregateGenerator {
  public:
   explicit SimpleAggregate(const std::string& binaryFunc)
-    : AggregateGenerator(false), binaryFunc_(binaryFunc) {}
+      : AggregateGenerator(false), binaryFunc_(binaryFunc) {}
 
   void generateInline(
       CompileState& state,
@@ -60,7 +60,7 @@ class SimpleAggregate : public AggregateGenerator {
 };
 
 namespace {
-  bool temp = CompileState::aggregateRegistry().registerGenerator(
+bool temp = CompileState::aggregateRegistry().registerGenerator(
     "SUM",
     std::make_unique<SimpleAggregate>("plus"));
 }

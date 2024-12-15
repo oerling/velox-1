@@ -140,9 +140,10 @@ struct AbstractOperand {
   /// If true, during code gen, r<ordinal(id)> has the value.
   bool inRegister{false};
 
-  /// During codegen, true if the value is in operands[ordinal(id)]. Applies to expression results. Leaf columns are always stored.
+  /// During codegen, true if the value is in operands[ordinal(id)]. Applies to
+  /// expression results. Leaf columns are always stored.
   bool isStored{false};
-  
+
   /// Bit field in register with null flags.
   int32_t registerNullBit{kNoNullBit};
 

@@ -669,7 +669,10 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void functionReferenced(const AbstractOperand* op);
 
-  void functionReferenced(const std::string& name, const std::vector<TypePtr>& types, const TypePtr& resultType);
+  void functionReferenced(
+      const std::string& name,
+      const std::vector<TypePtr>& types,
+      const TypePtr& resultType);
 
   std::string segmentString() const;
 
@@ -698,7 +701,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   std::string isNull(AbstractOperand* op);
 
   std::string operandValue(AbstractOperand* op);
-  
+
  private:
   bool
   addOperator(exec::Operator* op, int32_t& nodeIndex, RowTypePtr& outputType);
