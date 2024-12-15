@@ -18,7 +18,7 @@
 
 namespace facebook::velox::wave {
 
-  std::string makeAggregateRow(CompileState* state, const AggregateProbe& probe) {
+  std::string makeAggregateRow(CompileState& state, const AggregateProbe& probe) {
   std::stringstream out;
   out << "struct AggregateRow {\n"
          "  int32_t flags;\n"
@@ -30,7 +30,7 @@ namespace facebook::velox::wave {
   out << fmt::format("  nullFlags[{}];\n", numFlagWords);
   for (auto i = 0; i < probe.updates.size(); ++i) {
 
-    out << probe.updates[i]->generator->generateAccumulator(state, probe, probe.updates[i])
+    out << probe.updates[i]->generator->generateAccumulator(state, probe, *probe.updates[i])
         << std::endl
 	<< " acc" << i << ";\n";
   }
@@ -40,22 +40,21 @@ namespace facebook::velox::wave {
 
 void makeAggregateOps(
     CompileState& state,
-    const AggregateProbe* probe,
+    const AggregateProbe& probe,
     bool forRead) {
   auto& out = state.inlines();
-  out << makeAggregateRow(&state, probe);
+  out << makeAggregateRow(state, probe);
 
   out << "struct AggregateOps {\n"
       << "  AggreegateOps(uintt64_t hash, WaveShared* shared) : hash(hash), shared(shared){}\n"
       << "  uint64_t hash = 1;\n"
-      << "  WaveShared* shared;\n"
-    if (forRead) {
+      << "  WaveShared* shared;\n";
+  if (forRead) {
 
     } else {
       out << "  uint64_t hash() const { return hash; }\n";
-      out << makeRowHash(state, update);
-      out << makeInsert(state, update);
-    }
+      makeRowHash(state, probe.keys, true);
+  }
       out << "};\n\n";
 }
 
@@ -63,9 +62,9 @@ void makeAggregateOps(
  void makeUpdate(CompileState& state, AggregateUpdate* update);
 
   
-void makeAggregateProbe(CompileState& state, const AggregateProbe* probe) {
+void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   auto& out = state.generated();
-  makeHash(state, update->keys, true, "")
-}
+  makeHash(state, probe.keys, true, "");
+    }
   
 } // namespace facebook::velox::wave

@@ -764,10 +764,10 @@ bool waveDriverAdapter(
   return state->compile();
 }
 
-const AggregateGenerator* AggregateRegistry::getGenerator(AggregateUpdate* update) {
-  auto it = generators_.find(update->name);
+const AggregateGenerator* AggregateRegistry::getGenerator(const AggregateUpdate& update) {
+  auto it = generators_.find(update.name);
   if (it == generators_.end()) {
-    VELOX_USER_FAIL("No aggregate {}", update->name);
+    VELOX_USER_FAIL("No aggregate {}", update.name);
   }
   return it->second.get();
 }

@@ -226,7 +226,7 @@ void Compute::generateMain(CompileState& state) {
   state.generated() << ");\n";
   operand->inRegister = true;
   if (flags.needStore) {
-    op->isStored = true;
+    operand->isStored = true;
     state.generated() << fmt::format(
         "flatResult<{}>(operands, {}, blockBase) = r{};\n",
         cudaTypeName(*operand->type),
@@ -239,14 +239,14 @@ void Compute::generateMain(CompileState& state) {
     if (op->inRegister) {
       return;
     }
-    auto& flags = state.flags(*op);
-    bool mayWrap = state.mayWrap(flags.wrappedAt);
+    auto& flags = this->flags(*op);
+    bool mayWrap = this->mayWrap(flags.wrappedAt);
     if (op->isStored) {
-      auto ord = declareVariable(op);
+      auto ord = declareVariable(*op);
       if (op->notNull) {
-	out << fmt::format("  r{} = nonNullOperand<{}>(operands, {}, blockBase);\n", mayWrap, ord, ord);
+	generated_ << fmt::format("  r{} = nonNullOperand<{}>(operands, {}, blockBase);\n", mayWrap, ord, ord);
       } else {
-	out << fmt::format("  loadValueOrNull<{}>(operands, {}, blockBase, r{}, nulls{});\n", mayWrap, ord, ord, ord / 32);
+	generated_ << fmt::format("  loadValueOrNull<{}>(operands, {}, blockBase, r{}, nulls{});\n", mayWrap, ord, ord, ord / 32);
       }
       op->inRegister = true;
     } else {
@@ -254,17 +254,17 @@ void Compute::generateMain(CompileState& state) {
     }
   }
 
-  std::string CompileState::IsNull(AbstractOperand* op) {
-  auto ord = ordinal(op);
+  std::string CompileState::isNull(AbstractOperand* op) {
+  auto ord = ordinal(*op);
   if (op->inRegister) {
     return fmt::format("(0 == (nulls{} & (1U << {})))", ord / 32, ord & 31);
   }
-  
+  VELOX_FAIL("Expecting op in register");
 }
 
   std::string CompileState::operandValue(AbstractOperand* op) {
     VELOX_CHECK(op->inRegister);
-    return fmt::format("r{}", ordinal(op));
+    return fmt::format("r{}", ordinal(*op));
   }
   
 std::string CompileState::generateIsTrue(const AbstractOperand& op) {
@@ -308,17 +308,17 @@ void CompileState::functionReferenced(const AbstractOperand* op) {
   for (auto i = 0; i < numInput; ++i) {
     types.push_back(op->expr->inputs()[i]->type());
   }
-  functionReferenced(op->expr->name(), types);
+  functionReferenced(op->expr->name(), types, op->type);
 }
 
-  void CompileState::functionReferenced(const std::string& name, const std::vector<TypePtr>& types) {
-  FunctionKey key(name(), types);
+  void CompileState::functionReferenced(const std::string& name, const std::vector<TypePtr>& types, const TypePtr& resultType) {
+  FunctionKey key(name, types);
 
   if (functions_.count(key)) {
     return;
   }
   functions_.insert(key);
-  auto definition = registry_.makeDefinition(key, op->type);
+  auto definition = registry_.makeDefinition(key, resultType);
   if (!definition.includeLine.empty() &&
       includes_.find(definition.includeLine) == includes_.end()) {
     includes_.insert(definition.includeLine);
@@ -381,8 +381,8 @@ void Filter::generateMain(CompileState& state) {
 }
 
 void AggregateProbe::generateMain(CompileState& state) {
-  makeAggregateClass(state, this);
-  makeAggregateProbe(state, this);
+  makeAggregateOps(state, *this);
+  makeAggregateProbe(state, *this);
 }
 
 void AggregateUpdate::generateMain(CompileState& state) {}

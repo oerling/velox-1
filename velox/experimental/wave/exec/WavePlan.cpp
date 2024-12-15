@@ -368,7 +368,7 @@ bool CompileState::tryPlanOperator(
       func->name = agg.call->name();
       func->rows = step->rows;
       func->signature = agg.rawInputTypes;
-      func->generator = aggregateRegistry_->getGenerator(func);
+      func->generator = aggregateRegistry_.getGenerator(*func);
       func->args = std::move(args);
       allUpdates.push_back(func);
     }
@@ -382,7 +382,7 @@ bool CompileState::tryPlanOperator(
           fieldToOperand(*toSubfield(outputType->nameOf(i)), &topScope_));
     }
     read->funcs = std::move(allUpdates);
-    for (auto i = 0; i < read.funcs.size(); ++i) {
+    for (auto i = 0; i < read->funcs.size(); ++i) {
       read->funcs[i]->result = fieldToOperand(
           *toSubfield(output->nameOf(i + read->keys.size())), &topScope_);
     }

@@ -23,31 +23,37 @@ class SimpleAggregate : public AggregateGenerator {
     : AggregateGenerator(false), binaryFunc_(binaryFunc) {}
 
   void generateInline(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) override {
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const override {
     std::vector<TypePtr> types;
-    state->functionReferenced(binaryFunction, types);
+    types.push_back(update.result->type);
+    types.push_back(update.result->type);
+    state.functionReferenced(binaryFunc_, types, types[0]);
   }
 
   std::string generateAccumulator(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) {
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const override {
     std::stringstream out;
-    out << cudaTypeName(*update->result->type); << " ";
+    out << cudaTypeName(*update.result->type) << " ";
     return out.str();
   }
 
-  virtual std::string generateUpdate(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) const = 0;
+  std::string generateUpdate(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const override {
+    return "";
+  }
 
-  virtual std::string generateExtract(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) const = 0;
+  std::string generateExtract(
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const override {
+    return "";
+  }
 
  protected:
   std::string binaryFunc_;

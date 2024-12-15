@@ -231,33 +231,33 @@ class AggregateGenerator {
   /// Adds includes that may be needed by 'probe' or 'update'. May be called
   /// several times and should add the uncludes only once.
   virtual void generateInclude(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) {}
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const {}
 
   /// Adds inline definitions that may be needed by 'probe' or 'update'. May be
   /// called several times and should add the uncludes only once.
   virtual void generateInline(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) {}
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const {}
 
   /// Generates a declaration for the accumulator as part of a row.
   virtual std::string generateAccumulator(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) = 0;
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const = 0;
 
   /// Generates an update.
   virtual std::string generateUpdate(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) const = 0;
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const = 0;
 
   virtual std::string generateExtract(
-      CompileState* state,
-      const AggregateProbe* probe,
-      const AggregateUpdate* update) const = 0;
+      CompileState& state,
+      const AggregateProbe& probe,
+      const AggregateUpdate& update) const = 0;
 
   // True if  caller must ensure exclusive access to the row.
   bool updateNeedsSync() const {
@@ -271,7 +271,7 @@ class AggregateGenerator {
 ///
 class AggregateRegistry {
  public:
-  const AggregateGenerator* getGenerator(const AggregateUpdate* update);
+  const AggregateGenerator* getGenerator(const AggregateUpdate& update);
 
   bool registerGenerator(
       std::string aggregateName,
@@ -299,7 +299,7 @@ struct AggregateUpdate : public KernelStep {
   std::vector<TypePtr> signature;
 
   // Class for generating code for the aggregate of 'name' and 'signature'.
-  AggregateGenerator* generator{nullptr};
+  const AggregateGenerator* generator{nullptr};
 
   AbstractOperand* rows;
   int32_t accumulatorIdx;
@@ -669,7 +669,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void functionReferenced(const AbstractOperand* op);
 
-  void functionReferenced(const std::string& name, const std::vector<TypePtr>& types);
+  void functionReferenced(const std::string& name, const std::vector<TypePtr>& types, const TypePtr& resultType);
 
   std::string segmentString() const;
 
@@ -695,7 +695,7 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   void ensureOperand(AbstractOperand* op);
 
-  std::string IsNull(AbstractOperand* op);
+  std::string isNull(AbstractOperand* op);
 
   std::string operandValue(AbstractOperand* op);
   
@@ -843,8 +843,6 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
   // 'operatorIndex' is set to 1 after the index of the last transformed
   // operator inde the original Driver.
   RowTypePtr makeOperators(int32_t& operatorIndex);
-
-  int32_t declareVariable(const AbstractOperand& op, bool create);
 
   // Generates a check for lane active.
   void generateSkip();

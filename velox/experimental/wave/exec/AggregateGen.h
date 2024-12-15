@@ -17,12 +17,13 @@
 #pragma once
 
 #include "velox/experimental/wave/exec/ToWave.h"
+#include "velox/experimental/wave/exec/HashGen.h"
 
 namespace facebook::velox::wave {
 
-void makeAggregateOps(CompileState& state, const AggregateProbe* probe);
+void makeAggregateOps(CompileState& state, const AggregateProbe& probe);
 
-void makeAggregateProbe(CompileState& state, const AggregateProbe* probe);
+void makeAggregateProbe(CompileState& state, const AggregateProbe& probe);
 
 
  
