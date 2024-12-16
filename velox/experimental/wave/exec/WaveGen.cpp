@@ -39,6 +39,14 @@ const std::string cudaTypeName(const Type& type) {
   }
 }
 
+  const std::string cudaAtomicName(const Type& type) {
+    switch (type.kind()) {
+    case TypeKind::BIGINT: return "long long";
+    case TypeKind::INTEGER: return "int";
+    default: VELOX_UNSUPPORTED("Type not supported for Cuda atomic {}", type.toString());
+    }
+  }
+  
 bool KernelStep::references(AbstractOperand* op) {
   bool found = false;
   visitReferences([&](AbstractOperand* referenced) {
@@ -67,6 +75,11 @@ int32_t CompileState::ordinal(const AbstractOperand& op) {
   VELOX_UNREACHABLE();
 }
 
+int32_t CompileState::stateOrdinal(const AbstractState& state) {
+  auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
+  auto params.states.ordinal(state.id);
+}
+  
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
   auto ord = ordinal(op);
   if (declared_.contains(op.id)) {
@@ -397,6 +410,13 @@ void AggregateProbe::generateMain(CompileState& state) {
   makeAggregateProbe(state, *this);
 }
 
+  AbstractInstruction* AggregateProbe::addInstruction(CompileState& state, Program& program) {
+    auto agg = std::make_unique<AbstractAggregation>(0, {},  {}, state, ROW({}, {}));
+  auto ret = agg.get();
+  program->add(std::move(agg));
+  return ret;
+}
+
 void AggregateUpdate::generateMain(CompileState& state) {}
 
 void writeDebugFile(const KernelSpec& spec) {
@@ -600,10 +620,40 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
         sharedState->makeLevelText(pipelineIdx, kernelSeq, spec);
         return spec;
       });
+  std::vector<std::unique_ptr<AbstractInstruction>> instructions;
+  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
+    currentBox_ = &level[branchIdx_];
+    for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
+      auto instruction = currentBox_->steps[stepIdx_]->addInstruction(*this, instructions);
+      if (instruction) {
+	instruction->reserveState(instructionStatus_);
+	auto* status= instruction->instructionStatus();
+	currentBox_->steps[stepIdx_]->status = *status;
+      }
+    }
+  }
+
   auto& params = currentCandidate_->levelParams[kernelSeq_];
   auto numBranches = currentCandidate_->steps[kernelSeq_].size();
   OperandSet extraWrap;
   fillExtraWrap(extraWrap);
+  std::vector<std::unique_ptr<ProgramState>> states;
+  params.states.forEach([&](int32_t id) {
+			  auto* abstractState = operatorStates_[id].get();
+			  auto programState = std::make_unique<ProgramState>();
+			  programState->stateId = abstractState->id;
+			  programState->isGlobal = true;
+			  programState->create =
+			    [inst = abstractInst](
+						  WaveStream& stream) -> std::shared_ptr<OperatorState> {
+													 auto newState = std::make_shared<AggregateOperatorState>();
+													 newState->instruction = inst;
+													 stream.makeAggregate(*inst, *newState);
+													 return newState;
+			  };
+
+			  states.push_back(std::move(programState));
+			});
   auto program = std::make_shared<Program>(
       params.input,
       params.local,
@@ -612,13 +662,8 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
       numBranches,
       sharedSize,
       operands_,
+      std::move(states),
       std::move(kernel));
-  for (branchIdx_ = 0; branchIdx_ < level.size(); ++branchIdx_) {
-    currentBox_ = &level[branchIdx_];
-    for (stepIdx_ = 0; stepIdx_ < currentBox_->steps.size(); ++stepIdx_) {
-      currentBox_->steps[stepIdx_]->addInstruction(*this, *program);
-    }
-  }
   programs_.push_back(std::move(program));
 }
 

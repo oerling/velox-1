@@ -112,17 +112,25 @@ struct KernelStep {
 
   virtual void visitResults(std::function<void(AbstractOperand*)> visitor){};
 
+  virtual void visitStates(std::function<void(AbstractState*)> visitor){};
+
+  
   bool references(AbstractOperand* op);
 
   /// Adds the AbstractInstruction to the current Program to interpret return
   /// state and hold OperatorStates. Only steps with retry or operator state add
   /// an instruction.
-  virtual void addInstruction(CompileState& state, Program& program) {}
+  virtual std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) {
+    return nullptr;
+  }
 
   template <typename T>
   T& as() {
     return *reinterpret_cast<T*>(this);
   }
+
+  /// Placeholder for instruction return status.
+  InstructionStatus status;
 };
 
 struct ValuesStep : public KernelStep {
@@ -248,6 +256,12 @@ class AggregateGenerator {
       const AggregateProbe& probe,
       const AggregateUpdate& update) const = 0;
 
+  /// Generates an init of an accumulator.
+  virtual std::string generateInit(
+      CompileState& state,
+      const AggregateUpdate& update) const = 0;
+
+  
   /// Generates an update.
   virtual std::string generateUpdate(
       CompileState& state,
@@ -291,6 +305,8 @@ struct AggregateUpdate : public KernelStep {
     return true;
   }
 
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+
   void generateMain(CompileState& state) override;
 
   std::string name;
@@ -325,6 +341,15 @@ struct AggregateProbe : public KernelStep {
 
   void generateMain(CompileState& state) override;
 
+  void visitReferences(std::function<void(AbstractOperand*)> visitor) override;
+  
+  void visitStates(std::function<void(AbstractState*)> visitor) override {
+    visitor(state);
+  }(
+
+    std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
+
+    
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
 
@@ -345,6 +370,16 @@ struct ReadAggregation : public KernelStep {
   StepKind kind() const override {
     return StepKind::kReadAggregation;
   }
+
+  void visitResults(std::function<void(AbstractState*)> visitor) override;
+  
+  void visitStates(std::function<void(AbstractState*)> visitor) override {
+    visitor(state);
+  }(
+
+    std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
+
+    
   core::AggregationNode::Step step;
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
@@ -451,6 +486,7 @@ struct LevelParams {
   OperandSet input;
   OperandSet local;
   OperandSet output;
+  operandSet states;
 };
 
 struct PipelineCandidate {
@@ -624,6 +660,9 @@ class CompileState : public std::enable_shared_from_this<CompileState> {
 
   int32_t ordinal(const AbstractOperand& op);
 
+  int32_t stateOrdinal(const AbstractState& state);
+
+  
   OperandFlags& flags(const AbstractOperand& op) const {
     return currentCandidate_->flags(&op);
   }
@@ -976,6 +1015,9 @@ void registerWaveFunctions();
 
 const std::string cudaTypeName(const Type& type);
 
+const std::string cudaAtomicName(const Type& type);
+
+  
 inline WaveRegistry& waveRegistry() {
   return CompileState::registry();
 }

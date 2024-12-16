@@ -493,9 +493,12 @@ class Program : public std::enable_shared_from_this<Program> {
       int32_t numBranches,
       int32_t sharedSize,
       const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
+      std::vector<std::unique_ptr<ProgramState>> operatorStates,
       std::unique_ptr<CompiledKernel> kernel);
 
   void add(std::unique_ptr<AbstractInstruction> instruction) {
+    agg.stateId = stateId;
+    agg.
     instructions_.push_back(std::move(instruction));
   }
 

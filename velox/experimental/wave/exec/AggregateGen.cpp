@@ -65,6 +65,11 @@ void makeUpdate(CompileState& state, AggregateUpdate* update);
 void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   auto& out = state.generated();
   makeHash(state, probe.keys, true, "");
-}
+  out << "  AggregateOps ops(hash, shared);\n"
+      << fmt::format(    
+		     "  auto state =\n"
+		     "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);", stateOrdinal(probe.state->id));
+  
+    }
 
 } // namespace facebook::velox::wave

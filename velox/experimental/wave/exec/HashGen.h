@@ -47,6 +47,8 @@ void makeCompareLambda(
 void makeInitKey(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
+    const std::vector<AbstractOperand*>& dependent,
+    const std::vector<AggregateUpdate*>& aaggregates,
     bool nullableKeys);
 
 void makeRowHash(

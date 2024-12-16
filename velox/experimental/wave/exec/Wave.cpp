@@ -1071,12 +1071,14 @@ Program::Program(
     int32_t numBranches,
     int32_t sharedSize,
     const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
+    std::vector<std::unieuq_ptr<OperatorState>> states,
     std::unique_ptr<CompiledKernel> kernel)
     : kernel_(std::move(kernel)),
       outputIds_(output),
       extraWrap_(extraWrap),
       numBranches_(numBranches),
-      sharedMemorySize_(sharedSize) {
+      sharedMemorySize_(sharedSize),
+      operatorStates_(std::move(states)){
   input.forEach([&](int32_t id) { input_[allOperands[id].get()] = id; });
   local.forEach([&](int32_t id) { local_[allOperands[id].get()] = id; });
   output.forEach([&](int32_t id) { output_[allOperands[id].get()] = id; });
