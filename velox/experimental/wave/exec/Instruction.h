@@ -389,6 +389,7 @@ struct AbstractState {
   /// True if there is one item per WaveDriver, If false, there is one item per
   /// WaveStream.
   bool isGlobal;
+  AbstractInstruction* instruction;
 };
 
 struct AbstractOperator : public AbstractInstruction {

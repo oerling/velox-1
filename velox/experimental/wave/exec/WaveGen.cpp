@@ -629,7 +629,12 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
 	instruction->reserveState(instructionStatus_);
 	auto* status= instruction->instructionStatus();
 	currentBox_->steps[stepIdx_]->status = *status;
-      }
+	auto opInst = dynamic_cast<AbstractOperator*>(instruction.get());
+	if (opInst) {
+	  AbstractState* state = opInst->state();
+	  state->instruction = instruction.get();
+	}
+	}
     }
   }
 
@@ -642,6 +647,7 @@ void CompileState::makeLevel(std::vector<KernelBox>& level) {
 			  auto* abstractState = operatorStates_[id].get();
 			  auto programState = std::make_unique<ProgramState>();
 			  programState->stateId = abstractState->id;
+			  AbstractInstruction* abstractInst = abstractState->instruction;;
 			  programState->isGlobal = true;
 			  programState->create =
 			    [inst = abstractInst](
