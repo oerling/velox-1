@@ -428,7 +428,8 @@ void HashProbe::asyncWaitForHashTable() {
     }
   } else if (
       (isInnerJoin(joinType_) || isLeftSemiFilterJoin(joinType_) ||
-       isRightSemiFilterJoin(joinType_) || isRightSemiProjectJoin(joinType_)) &&
+       isRightSemiFilterJoin(joinType_) ||
+       (isRightSemiProjectJoin(joinType_) && !nullAware_)) &&
       table_->hashMode() != BaseHashTable::HashMode::kHash && !isSpillInput() &&
       !hasMoreSpillData()) {
     // Find out whether there are any upstream operators that can accept dynamic
@@ -443,13 +444,9 @@ void HashProbe::asyncWaitForHashTable() {
     const auto channels = operatorCtx_->driverCtx()->driver->canPushdownFilters(
         this, keyChannels_);
 
-    // Null aware Right Semi Project join needs to know whether there are any
-    // nulls on the probe side. Hence, cannot filter these out.
-    const auto nullAllowed = isRightSemiProjectJoin(joinType_) && nullAware_;
-
     for (auto i = 0; i < keyChannels_.size(); ++i) {
       if (channels.find(keyChannels_[i]) != channels.end()) {
-        if (auto filter = buildHashers[i]->getFilter(nullAllowed)) {
+        if (auto filter = buildHashers[i]->getFilter(/*nullAllowed=*/false)) {
           dynamicFilters_.emplace(keyChannels_[i], std::move(filter));
         }
       }
@@ -1228,21 +1225,24 @@ void HashProbe::prepareFilterRowsForNullAwareJoin(
       filterInputColumnDecodedVector_.decode(
           *filterInput->childAt(projection.outputChannel), filterInputRows_);
       if (filterInputColumnDecodedVector_.mayHaveNulls()) {
-        SelectivityVector nullsInActiveRows(numRows);
-        memcpy(
-            nullsInActiveRows.asMutableRange().bits(),
-            filterInputColumnDecodedVector_.nulls(&filterInputRows_),
-            bits::nbytes(numRows));
-        // All rows that are not active count as non-null here.
-        bits::orWithNegatedBits(
-            nullsInActiveRows.asMutableRange().bits(),
-            filterInputRows_.asRange().bits(),
-            0,
-            numRows);
-        // NOTE: the false value of a raw null bit indicates null so we OR
-        // with negative of the raw bit.
-        bits::orWithNegatedBits(
-            rawNullRows, nullsInActiveRows.asRange().bits(), 0, numRows);
+        if (const uint64_t* nulls =
+                filterInputColumnDecodedVector_.nulls(&filterInputRows_)) {
+          SelectivityVector nullsInActiveRows(numRows);
+          memcpy(
+              nullsInActiveRows.asMutableRange().bits(),
+              nulls,
+              bits::nbytes(numRows));
+          // All rows that are not active count as non-null here.
+          bits::orWithNegatedBits(
+              nullsInActiveRows.asMutableRange().bits(),
+              filterInputRows_.asRange().bits(),
+              0,
+              numRows);
+          // NOTE: the false value of a raw null bit indicates null so we OR
+          // with negative of the raw bit.
+          bits::orWithNegatedBits(
+              rawNullRows, nullsInActiveRows.asRange().bits(), 0, numRows);
+        }
       }
     }
     nullFilterInputRows_.updateBounds();

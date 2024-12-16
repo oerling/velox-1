@@ -82,6 +82,11 @@ class QueryConfig {
   static constexpr const char* kExprMaxArraySizeInReduce =
       "expression.max_array_size_in_reduce";
 
+  /// Controls maximum number of compiled regular expression patterns per
+  /// function instance per thread of execution.
+  static constexpr const char* kExprMaxCompiledRegexes =
+      "expression.max_compiled_regexes";
+
   /// Used for backpressure to block local exchange producers when the local
   /// exchange buffer reaches or exceeds this size.
   static constexpr const char* kMaxLocalExchangeBufferSize =
@@ -378,6 +383,11 @@ class QueryConfig {
   /// derived using micro-benchmarking.
   static constexpr const char* kPrefixSortMinRows = "prefixsort_min_rows";
 
+  /// Maximum number of bytes to be stored in prefix-sort buffer for a string
+  /// key.
+  static constexpr const char* kPrefixSortMaxStringPrefixLength =
+      "prefixsort_max_string_prefix_length";
+
   /// Enable query tracing flag.
   static constexpr const char* kQueryTraceEnabled = "query_trace_enabled";
 
@@ -612,6 +622,10 @@ class QueryConfig {
     return get<uint64_t>(kExprMaxArraySizeInReduce, 100'000);
   }
 
+  uint64_t exprMaxCompiledRegexes() const {
+    return get<uint64_t>(kExprMaxCompiledRegexes, 100);
+  }
+
   bool adjustTimestampToTimezone() const {
     return get<bool>(kAdjustTimestampToTimezone, false);
   }
@@ -842,6 +856,10 @@ class QueryConfig {
 
   uint32_t prefixSortMinRows() const {
     return get<uint32_t>(kPrefixSortMinRows, 128);
+  }
+
+  uint32_t prefixSortMaxStringPrefixLength() const {
+    return get<uint32_t>(kPrefixSortMaxStringPrefixLength, 16);
   }
 
   double scaleWriterRebalanceMaxMemoryUsageRatio() const {
