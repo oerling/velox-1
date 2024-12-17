@@ -95,7 +95,7 @@ void makeInitKey(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     const std::vector<AbstractOperand*>& dependent,
-    const std::vector<AggregateUpdate*>& aaggregates,
+    const std::vector<AggregateUpdate*>& aggregates,
     bool nullableKeys) {
   auto& out = state.generated();
   out << "  [&](HashRow* row) {\n";
@@ -107,11 +107,11 @@ void makeInitKey(
     auto* op = dependent[i];
     auto nthNull = i + keys.size();
     out << fmt::format("   if ({}) { nulls{} &= ~(1U << {};\n    row->dep{} = {};\n",
-		       state.isNull(op), nthNull / 32, nthNull %\& 31, i, state.operandValue(op));
+		       state.isNull(op), nthNull / 32, nthNull & 31, i, state.operandValue(op));
   }
   for (auto i = 0; i < aggregates.size(); ++i) {
     auto* update = aggregates[i];
-    out << update->generator->generateInit(state, update);
+    out << update->generator->generateInit(state, *update);
   }
   // The first key is written last with a release semantic. At probe time the first key is read first with an acquire semantic.
   for (int32_t i = keys.size() - 10; i >= 0; --i) {

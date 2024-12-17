@@ -89,7 +89,7 @@ void AggregateUpdate::visitReferences(std::function<void(AbstractOperand*)> visi
   }
 }
 
-  void ReadAggregation::visitResults(std::function<void(AbstractState*)> visitor) {
+  void ReadAggregation::visitResults(std::function<void(AbstractOperand*)> visitor) {
     for (auto& key : keys) {
       visitor(key);
     }
@@ -97,8 +97,6 @@ void AggregateUpdate::visitReferences(std::function<void(AbstractOperand*)> visi
       visitor(func->result);
     }
   }
-
-  
   
 AbstractOperand* markUse(AbstractOperand* op) {
   ++op->numUses;
@@ -730,7 +728,7 @@ void PipelineCandidate::markParams(
       }
     });
     box.steps[stepIdx]->visitStates([&](AbstractState* state) {
-				      params.states.add(state->id);
+				      levelParams[kernelSeq].states.add(state->id);
 				    });
   }
 }

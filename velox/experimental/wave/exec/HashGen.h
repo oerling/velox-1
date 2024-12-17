@@ -48,7 +48,7 @@ void makeInitKey(
     CompileState& state,
     const std::vector<AbstractOperand*>& keys,
     const std::vector<AbstractOperand*>& dependent,
-    const std::vector<AggregateUpdate*>& aaggregates,
+    const std::vector<AggregateUpdate*>& aggregates,
     bool nullableKeys);
 
 void makeRowHash(

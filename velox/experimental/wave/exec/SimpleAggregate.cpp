@@ -43,8 +43,8 @@ class SimpleAggregate : public AggregateGenerator {
 
   std::string generateInit(
       CompileState& state,
-      const AggregateUpdate& update) const override override {
-    return fmt::format("  acc{} = 0;\n", update.ccumulatorIdx);
+      const AggregateUpdate& update) const override {
+    return fmt::format("  acc{} = 0;\n", update.accumulatorIdx);
   }
   
   std::string generateUpdate(
@@ -57,7 +57,7 @@ class SimpleAggregate : public AggregateGenerator {
       out << fmt::format("   if (!{}) {{\n", state.isNull(update.args[0]));
     }
     if (binaryFunc_ == "plus") {
-      out << fmt::format("      atomicAdd(reinterpret_cast<{}*>(&row->acc{}), {});\n", cudaAtomicType(*update.args[0]->type), update.accumulatorIdx, state.operandValue(update.keys[0]));
+      out << fmt::format("      atomicAdd(reinterpret_cast<{}*>(&row->acc{}), {});\n", cudaAtomicTypeName(*update.args[0]->type), update.accumulatorIdx, state.operandValue(update.args[0]));
     } else {
       VELOX_NYI("Only plus is supported as aggregate reduction");
     }
@@ -71,7 +71,7 @@ class SimpleAggregate : public AggregateGenerator {
       CompileState& state,
       const AggregateProbe& probe,
       const AggregateUpdate& update) const override {
-    auto ord = state.ordinal(update.result);
+    auto ord = state.ordinal(*update.result);
     auto nthNull = update.accumulatorIdx + probe.keys.size();
     return fmt::format("   setNull(operands, {}, blockBase, (row->nulls{} & (1U << {})) == 0);\n"
 		       "    flatValue<T>(operands, {}, blockBase) = {};\n" , ord, nthNull / 32, nthNull & 31,

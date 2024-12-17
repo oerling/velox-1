@@ -345,10 +345,9 @@ struct AggregateProbe : public KernelStep {
   
   void visitStates(std::function<void(AbstractState*)> visitor) override {
     visitor(state);
-  }(
+  }
 
-    std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
-
+  std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
     
   AbstractState* state;
   std::vector<AbstractOperand*> keys;
@@ -371,14 +370,13 @@ struct ReadAggregation : public KernelStep {
     return StepKind::kReadAggregation;
   }
 
-  void visitResults(std::function<void(AbstractState*)> visitor) override;
+  void visitResults(std::function<void(AbstractOperand*)> visitor) override;
   
   void visitStates(std::function<void(AbstractState*)> visitor) override {
     visitor(state);
-  }(
+  }
 
     std::unique_ptr<AbstractInstruction> addInstruction(CompileState& state) override;
-
     
   core::AggregationNode::Step step;
   AbstractState* state;
@@ -486,7 +484,7 @@ struct LevelParams {
   OperandSet input;
   OperandSet local;
   OperandSet output;
-  operandSet states;
+  OperandSet states;
 };
 
 struct PipelineCandidate {
@@ -1015,8 +1013,7 @@ void registerWaveFunctions();
 
 const std::string cudaTypeName(const Type& type);
 
-const std::string cudaAtomicName(const Type& type);
-
+const std::string cudaAtomicTypeName(const Type& type);
   
 inline WaveRegistry& waveRegistry() {
   return CompileState::registry();

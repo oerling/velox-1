@@ -68,7 +68,7 @@ void makeAggregateProbe(CompileState& state, const AggregateProbe& probe) {
   out << "  AggregateOps ops(hash, shared);\n"
       << fmt::format(    
 		     "  auto state =\n"
-		     "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);", stateOrdinal(probe.state->id));
+		     "    reinterpret_cast<DeviceAggregation*>(shared->states[{}]);\n", state.stateOrdinal(*probe.state));
   
     }
 

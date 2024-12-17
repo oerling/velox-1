@@ -1071,7 +1071,7 @@ Program::Program(
     int32_t numBranches,
     int32_t sharedSize,
     const std::vector<std::unique_ptr<AbstractOperand>>& allOperands,
-    std::vector<std::unieuq_ptr<OperatorState>> states,
+    std::vector<std::unique_ptr<ProgramState>> states,
     std::unique_ptr<CompiledKernel> kernel)
     : kernel_(std::move(kernel)),
       outputIds_(output),

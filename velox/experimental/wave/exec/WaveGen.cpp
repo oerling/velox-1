@@ -39,7 +39,7 @@ const std::string cudaTypeName(const Type& type) {
   }
 }
 
-  const std::string cudaAtomicName(const Type& type) {
+  const std::string cudaAtomicTypeName(const Type& type) {
     switch (type.kind()) {
     case TypeKind::BIGINT: return "long long";
     case TypeKind::INTEGER: return "int";
@@ -77,7 +77,7 @@ int32_t CompileState::ordinal(const AbstractOperand& op) {
 
 int32_t CompileState::stateOrdinal(const AbstractState& state) {
   auto& params = selectedPipelines_[pipelineIdx_].levelParams[kernelSeq_];
-  auto params.states.ordinal(state.id);
+  return params.states.ordinal(state.id);
 }
   
 int32_t CompileState::declareVariable(const AbstractOperand& op) {
@@ -410,11 +410,9 @@ void AggregateProbe::generateMain(CompileState& state) {
   makeAggregateProbe(state, *this);
 }
 
-  AbstractInstruction* AggregateProbe::addInstruction(CompileState& state, Program& program) {
-    auto agg = std::make_unique<AbstractAggregation>(0, {},  {}, state, ROW({}, {}));
-  auto ret = agg.get();
-  program->add(std::move(agg));
-  return ret;
+  std::unique_ptr<AbstractInstruction> AggregateProbe::addInstruction(CompileState& state) {
+    auto agg = std::make_unique<AbstractAggregation>(0, {}, {}, state, ROW({}, {}));
+  return agg;
 }
 
 void AggregateUpdate::generateMain(CompileState& state) {}
